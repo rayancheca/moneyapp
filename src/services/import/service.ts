@@ -130,7 +130,12 @@ import {
  * canonical rows → ownership/takeover → hash dedupe → statement periods →
  * reconciliation identities → quarantine → anchors → derived rebuild.
  * Import-order independence is an invariant: any permutation of the same
- * file set converges to an equivalent database.
+ * file set converges to an equivalent database — equivalent meaning every
+ * charge once, on the day it was MADE, for the same amount and status, every
+ * period reconciling the same way, every anchor the same. NOT which source's
+ * row records a charge two files both print: that row is the first read one's,
+ * and it brings its own text and its own POSTED day. Measured, and the cost in
+ * balances the owner sees: docs/schema.md, "the day a charge posts".
  */
 
 const FORMAT_PRIORITY: Record<FileFormat, number> = { ofx: 0, qfx: 0, csv: 1, pdf: 2 };

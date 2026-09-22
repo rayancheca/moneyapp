@@ -323,7 +323,40 @@ reconciliation is the backstop.
   owned range, its rows are content-matched (date ±1, amount, description similarity)
   against existing ones; user-set attributes migrate to the new rows; unmatched old rows go
   to the fuzzy review queue; replaced rows become `superseded`. **Invariant: importing the
-  same file set in any order permutation yields an equivalent database.**
+  same file set in any order permutation yields an equivalent database** — equivalent as
+  defined immediately below, which is not byte-identical.
+- **What "equivalent" means, exactly** (`scripts/probe-identity-transaction-day.ts --mode=orders`
+  grades it; `import.test.ts`, "two sources that date ONE charge differently", pins it): every
+  charge is there once, on the day it was MADE, for the same amount, in the same status; every
+  statement period reconciles the same way; every anchor is the same. What it does NOT promise is
+  which source's ROW records a charge that two files both print. That row belongs to whichever
+  file was read first, and it brings its own text and its own posted day with it.
+- **The day a charge posts is therefore order-dependent, and it is a balance the owner sees.**
+  A Chase card statement prints the day a charge was made and posts the row on it; the Spending
+  Report prints both and posts one to three days later. Neither owns the other (both are `pdf`,
+  so `fidelityOf` ties) and neither takes over, so absorption keeps the row already there.
+  Measured on a copy of the real ledger, 2026-09-22 — un-importing "Spending Report PDF (1).pdf"
+  and both downloads of 20260802-statements-9805-.pdf and reading the two back in each order:
+  18 of 10,320 rows differ, 14 of them posting on a different day, and with them 4 Chase Sapphire
+  daily balances — 2026-07-05 reads **+$65.90 read report-first against −$8.52 read
+  statement-first**. Either order leaves all 255 periods identical — 207 `reconciled`, 43
+  `value_anchor`, 5 `not_applicable` — and passes `pnpm ledger-check` against the recorded baseline,
+  so nothing is lost or double-counted: it is the same money, sitting on different days.
+  It shows in his ledger as a seam: the two Spending Reports own
+  Chase Sapphire's rows from 2025-02-04 to 2026-07-09 and date them by the day each charge settled,
+  and the statements own everything after and date them by the day each was made — of the Sapphire
+  rows posted in 2026, 323 of 370 through June carry a settle day later than the day the charge was
+  made, 12 of 17 over July 1–8, and 2 of 140 from July 9 on.
+- ⚖️ **Open, and the owner's call**: whether a later, better-dated source should re-date a charge
+  another file already recorded. Making it so is not a tidy-up. `reconcileAccounts` counts a
+  period's rows by `posted_on`, so moving a charge onto the later day its better-dated source gives
+  it can move it OUT of a period that reconciles today — 89 live rows (Robinhood Cash 33, Chase
+  Sapphire 26, Discover 23, Venture X 7) sit within three days of a reconciled period's end
+  carrying `posted_on = transacted_on`, and each is such a candidate. Guarding the move at the
+  period edge puts the order-dependence straight back for exactly those rows, and moving the row
+  at all breaks the rule `src/db/schema/transactions.ts` states over this table: "amount/date/
+  description never edited in place — corrections happen via re-parse or manual adjustment
+  transactions".
 - **Same-money rule** (`identityWeight`, and `duplicate-flags.ts` for the residual pass below):
   same account, same amount, and — where both records say which day the charge was made —
   **the same transaction day**, else the same posted day. Every source that fills `transacted_on`
@@ -536,7 +569,10 @@ only by `pnpm ledger-check --lower-marks=<kind> --confirm`.
    `gap`/`derived_unverified` — levels are never invented.
 3. Re-importing any file under the same parser_version adds 0 rows; re-parse under a newer
    version supersedes atomically and preserves user-set attributes.
-4. **Import-order independence**: any permutation of the same file set yields an equivalent database.
+4. **Import-order independence**: any permutation of the same file set yields an equivalent
+   database — every charge once, on the day it was made, every period reconciling the same way,
+   every anchor the same. The row that records a charge two files both print, and so its text and
+   its posted day, belongs to the file read first: see "What 'equivalent' means, exactly" above.
 5. Net-worth total on a complete day = assets − liabilities; incomplete days are marked
    partial, never silently understated.
 6. Every `transfer_group_id` has ≥1 counterpart leg.

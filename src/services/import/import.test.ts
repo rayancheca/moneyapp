@@ -147,6 +147,69 @@ describe("structured imports", () => {
     expect(stateB).toEqual(stateA);
   });
 
+  /**
+   * ⚠️ The one thing two read orders do NOT agree about, pinned so it cannot widen unnoticed.
+   *
+   * Two sources of ONE charge that date it differently — a Chase card statement, which prints the day the charge was
+   * MADE and posts the row on it, beside the Spending Report, which prints both and posts one to three days later.
+   * Same format and same profile, so neither owns the other's days (`fidelityOf`) and neither takes over: the row that
+   * records the money is whichever file was read first, and the day the ledger says the money left the card is that
+   * file's. Measured on a copy of the real ledger, 2026-09-22 (scripts/probe-identity-transaction-day.ts --mode=orders):
+   * 14 Chase Sapphire charges and 4 daily balances, the largest 2026-07-05 at +$65.90 read report-first against
+   * −$8.52 read statement-first.
+   *
+   * What holds in either order — the money — is asserted first, and is what docs/schema.md now calls equivalent.
+   * Making the posted day agree too is an OWNER decision, not a tidy-up, and the reason is in this file's own
+   * machinery: `reconcileAccounts` counts a period's rows by `posted_on`, so moving a charge onto the later day its
+   * better-dated source gives it can move it OUT of a period that reconciles today (89 live rows sit within three days
+   * of a reconciled period's end carrying posted == transacted). Guarding the move at the period edge would put the
+   * order-dependence back for exactly those rows. See docs/schema.md, "the day a charge posts".
+   */
+  test("two sources that date ONE charge differently: same money in either order, the posted day of the first read", async () => {
+    const CARD = "8888";
+    const HEADER = "Card,Transaction Date,Post Date,Description,Category,Type,Amount,Memo";
+    // the shape of a Chase card statement: it prints the day the charge was MADE and posts the row on it
+    const collapsed: ImportInput = {
+      name: "Chase8888_Activity_collapsed.CSV",
+      buffer: Buffer.from([HEADER, `${CARD},06/10/2026,06/10/2026,LA BOMBONIERA NEW YORK,Food & Drink,Sale,-15.24,`].join("\n")),
+    };
+    // …and of the Spending Report beside it: the same charge, made that day and POSTED two days later
+    const dated: ImportInput = {
+      name: "Chase8888_Activity_dated.CSV",
+      buffer: Buffer.from([HEADER, `${CARD},06/10/2026,06/12/2026,LA BOMBONIERA,Food & Drink,Sale,-15.24,`].join("\n")),
+    };
+
+    let nth = 0;
+    const readInOrder = async (files: readonly ImportInput[]): Promise<{ postedOn: string; transactedOn: string | null; amountCents: number }[]> => {
+      nth += 1;
+      bundle.sqlite.close();
+      process.env.MONEYAPP_ORIGINALS_DIR = path.join(dir, `originals-${nth}`);
+      bundle = createDatabase(path.join(dir, `order-${nth}.db`));
+      seedDatabase(bundle.db);
+      for (const file of files) await importStatementFiles(bundle.db, [file]);
+      const account = bundle.db.select().from(accounts).all().find((a) => a.last4 === CARD)!;
+      return bundle.db
+        .select({ postedOn: transactions.postedOn, transactedOn: transactions.transactedOn, amountCents: transactions.amountCents })
+        .from(transactions)
+        .where(and(eq(transactions.accountId, account.id), ne(transactions.status, "superseded")))
+        .all();
+    };
+
+    const collapsedFirst = await readInOrder([collapsed, dated]);
+    const datedFirst = await readInOrder([dated, collapsed]);
+
+    // the money is one charge either way — neither read counts it twice, and both agree about the day it was MADE
+    expect(collapsedFirst).toHaveLength(1);
+    expect(datedFirst).toHaveLength(1);
+    expect(collapsedFirst[0]!.amountCents).toBe(-1524);
+    expect(datedFirst[0]!.amountCents).toBe(-1524);
+    expect(collapsedFirst[0]!.transactedOn).toBe("2026-06-10");
+    expect(datedFirst[0]!.transactedOn).toBe("2026-06-10");
+    // …and the day it POSTED is the one the first file read gave it — the known limit above, not a rule worth having
+    expect(collapsedFirst[0]!.postedOn).toBe("2026-06-10");
+    expect(datedFirst[0]!.postedOn).toBe("2026-06-12");
+  });
+
   test("takeover picks the description-matching victim among same-day equal amounts", async () => {
     // lower-fidelity CSV: two identical-amount charges on the same day
     const csv = [
