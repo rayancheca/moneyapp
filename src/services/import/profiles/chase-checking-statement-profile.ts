@@ -176,21 +176,35 @@ export function isChaseCheckingStatementText(text: string): boolean {
 export const chaseCheckingStatementPdf: ParserProfile = {
   id: PROFILE_ID,
   /**
-   * v2: the right-margin statement identifier is dropped before parsing
-   * (`stripMarginIdentifier`). Every file already in the ledger was read
-   * without that rule, so the bump is what makes the archive re-readable — a
-   * parser fix never reaches an already-imported file, and
-   * `ux_import_files_sha_parser` would skip an unbumped re-import as a
-   * duplicate.
+   * v2: the right-margin statement identifier is dropped before parsing (`stripMarginIdentifier`). Every file already
+   * in the ledger was read without that rule, so the bump is what lets a file already in the ledger be read AGAIN at
+   * all — a parser fix never reaches an already-imported file, and `ux_import_files_sha_parser` would skip an
+   * unbumped re-import as a duplicate.
    *
-   * What the re-read changes, measured over all 48 statements in
-   * data/originals: one row appears (2025-02-28 +$33.99, the Zelle deposit the
-   * merged line dropped) and 20 descriptions across 17 files lose the margin
-   * digits they had swallowed. No period, no Beginning/Ending Balance and no
-   * other row moves. Carried attributes survive: `takeCarry` claims the
-   * prior-version row by account + posted day + amount and uses the
-   * description only to rank several equal amounts on one day, so a
-   * description-only change carries cleanly.
+   * What the parser fix buys, measured over the archive on disk (75 files, 48 unique statements): the drift between
+   * the printed Beginning/Ending Balance and the rows between them goes from one file at −$33.99
+   * (57eaf4fa39bd0797-20250312) to none, and the rows read go 2,649 → 2,650 — the 2025-02-28 +$33.99 Zelle deposit a
+   * merged line had swallowed.
+   *
+   * ⚠️ What the bump does NOT do. `retiredReadsOf` is keyed on the file's sha256, so one drop re-reads exactly the
+   * bytes dropped and nothing else in the archive. And Chase regenerates a statement's bytes on every download
+   * (scripts/trial-import.ts), so a statement downloaded fresh arrives under a NEW sha: it is a new import, read at
+   * v2 like any other, never a re-read. Its clean lines then dedupe against the rows already in the ledger, which
+   * keep the words the old read gave them. No drop the owner would normally make corrects a row already stored.
+   *
+   * That +$33.99 never reaches the ledger from this parser either: it is already there from
+   * Chase3522_Activity_20260710.CSV, whose `chase-deposit-csv` outranks a statement on the days it covers. Dropping
+   * this very statement's archived byte-copy at v2 is 1 parsed, 0 inserted, 58 skippedOwned, $0.00 moved.
+   *
+   * The 13 live rows that still carry the margin digits are corrected by ONE run and only that one: re-dropping the
+   * archived byte-copies the ledger itself holds, data/statements/chase-checking-3522 (76 files, the 75 the ledger
+   * records at v1). Measured on a python read-only copy of the real ledger, 2026-09-22 — 75 parsed, 1,536 inserted,
+   * 0 quarantined, active rows 10,320 → 10,320, net worth $110,914.77 → $110,914.77, rows carrying a 20-digit run
+   * 55 → 42 — 16 ledger lines move: those 13 descriptions, and three Fordham rows the merchant map re-derives
+   * Financial Aid → Education. Nothing else, and nothing crosses to another charge (`claimCarry`). That run is the
+   * owner's call to make and a step of its own, behind its own restore point — `pnpm import-statements
+   * data/statements/chase-checking-3522 --confirm`, after `pnpm trial-import` on the same folder — never a side
+   * effect of an upload.
    */
   version: 2,
   matches: (f) => f.format === "pdf",

@@ -1999,6 +1999,85 @@ describe("re-parse lifecycle: a parser-version bump preserves user work", () => 
     expect(lukas.categorizationSource).not.toBe("user");
     expect(lukas.categoryId).not.toBe(categoryId);
   });
+
+  /**
+   * …and the same day when the new parser rewrites BOTH descriptions past recognition, so neither hash nor words can
+   * tell the two charges apart (`descriptionScore` 1 both ways, on the shared "ZELLE PAYMENT " alone). What is left
+   * is the seat each charge held in its bucket, in print order — which only exists because a row the owner put
+   * nothing on stays in the pool, blank. Drop the blank seats and the first line printed takes the only row left,
+   * which is its neighbour's.
+   */
+  test("…even when neither the hash nor the words can tell the two charges apart", async () => {
+    const TWINS: ImportInput = {
+      name: "Chase7779_Activity_2026.CSV",
+      buffer: Buffer.from(
+        cardCsv([
+          "7779,03/09/2026,03/09/2026,ZELLE PAYMENT FROM LUKAS M IERA 18760352890,Shopping,Sale,-20.00,",
+          "7779,03/09/2026,03/09/2026,ZELLE PAYMENT FROM ADAM GODINA BACLGIXKTRYL,Shopping,Sale,-20.00,",
+        ]),
+      ),
+    };
+    await importStatementFiles(bundle.db, [TWINS]);
+    const [categoryId] = expenseCategoryIds(1) as [string];
+    bundle.db
+      .update(transactions)
+      .set({ categoryId, categorizationSource: "user", categorizationConfidence: 1, needsReview: false, notes: "Adam paid me back" })
+      .where(eq(transactions.id, liveRow("ADAM GODINA").id))
+      .run();
+    // the words the OLD read gave the two rows, and a hash that no longer matches: the parser change, on the DB side
+    for (const [fragment, words] of [["LUKAS M IERA", "ZELLE PAYMENT RECEIVED LUKAS"], ["ADAM GODINA", "ZELLE PAYMENT RECEIVED ADAM"]] as const) {
+      const row = liveRow(fragment);
+      bundle.db
+        .update(transactions)
+        .set({ normalizedDescription: words, dedupeHash: `the-old-read-${fragment}` })
+        .where(eq(transactions.id, row.id))
+        .run();
+    }
+
+    const [outcome] = await withBumpedParserVersion("chase-card-csv", () => importStatementFiles(bundle.db, [TWINS]));
+
+    expect(outcome).toMatchObject({ status: "parsed", carriedForward: 1 });
+    expect(liveRow("ADAM GODINA")).toMatchObject({ categoryId, categorizationSource: "user", notes: "Adam paid me back" });
+    const lukas = liveRow("LUKAS M IERA");
+    expect(lukas.notes).toBeNull();
+    expect(lukas.categorizationSource).not.toBe("user");
+    expect(lukas.categoryId).not.toBe(categoryId);
+  });
+
+  /**
+   * What a version bump does NOT do, as a guard rather than a claim in a commit message. `retiredReadsOf` is keyed on
+   * the file's sha256, so a bump re-reads exactly the bytes dropped. Chase regenerates a statement's bytes on every
+   * download (scripts/trial-import.ts), so a statement downloaded fresh arrives under a NEW sha: a new import at the
+   * new version, never a re-read. Its corrected words are absorbed by the row already stored, which keeps the words
+   * the old read gave it. The rows already in the ledger are corrected by re-dropping the ARCHIVED bytes, and by
+   * nothing else — a step of the owner's own, never a side effect of an upload.
+   */
+  test("the same statement downloaded again, under new bytes, is a new import: the stored row keeps the old read's words", async () => {
+    await importStatementFiles(bundle.db, [FILE]);
+    const stored = liveRow("SHELL OIL");
+
+    // the same month, downloaded again and read by the fixed parser: same money, the description no longer polluted
+    const reDownloaded: ImportInput = {
+      name: "Chase7777_Activity_2026 (1).CSV",
+      buffer: Buffer.from(
+        cardCsv([
+          "7777,03/02/2026,03/02/2026,SHELL OIL 555 MIAMI FL,Gas,Sale,-40.00,",
+          "7777,03/03/2026,03/03/2026,STARBUCKS STORE 77 MIAMI FL,Food & Drink,Sale,-25.00,",
+          "7777,03/04/2026,03/04/2026,AMZN MKTP US*4H2 MIAMI FL,Shopping,Sale,-60.00,",
+          "7777,03/05/2026,03/05/2026,NETFLIX.COM LOS GATOS CA,Entertainment,Sale,-15.99,",
+          "7777,03/06/2026,03/06/2026,MTA*NYCT PAYGO NEW YORK NY,Travel,Sale,-2.90,",
+        ]),
+      ),
+    };
+    const [outcome] = await withBumpedParserVersion("chase-card-csv", () => importStatementFiles(bundle.db, [reDownloaded]));
+
+    // read in full at the new version — and NOT as a re-read: the first file's read is still in place, with its rows
+    expect(outcome!.status).toBe("parsed");
+    expect(outcome!.inserted).toBe(1); // only the line the first download did not print
+    expect(bundle.db.select().from(transactions).where(eq(transactions.id, stored.id)).get()!.status).toBe("active");
+    expect(liveRow("SHELL OIL").id).toBe(stored.id);
+    expect(liveRow("SHELL OIL").rawDescription).toBe(stored.rawDescription);
+  });
 });
 
 /*
