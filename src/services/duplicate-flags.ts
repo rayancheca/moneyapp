@@ -49,7 +49,7 @@ import { formatCents } from "@/lib/money";
  *  - dropping the description gate pairs a $4,000 Microsoft buy with a $4,000
  *    crypto cash settlement that landed the same day.
  * With every clause in place the rule fires on ZERO rows of the real ledger —
- * and, since 2026-09-17, on zero before the reconciliation exemption below is
+ * and, since 2026-09-22, on zero before the reconciliation exemption below is
  * applied at all. That is the right answer, not a weak one: the ledger holds 0
  * quarantined rows and 0 gap periods, so there is no detectable cross-source
  * duplicate in it today. The one pair that used to survive every other clause
@@ -64,7 +64,7 @@ import { formatCents } from "@/lib/money";
  * day the charge was made. Every source that fills `transacted_on` fills it
  * with the real transaction, trade or activity day, so two records of one
  * charge never disagree about it: one that merely posts on another's day is the
- * next charge along. Measured on a copy of the real ledger, 2026-09-17: the
+ * next charge along. Measured on a copy of the real ledger, 2026-09-22: the
  * looser posted-day clause matched exactly one pair in 10,320 rows — Chase
  * Sapphire's CPI*CANTEEN VENDING −$1.25 made 07-08 against the −$1.25 made
  * 07-09, both posted 07-09, both real — and with this clause the rule matches

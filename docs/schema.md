@@ -329,7 +329,7 @@ reconciliation is the backstop.
   **the same transaction day**, else the same posted day. Every source that fills `transacted_on`
   fills it with the real transaction, trade or activity day, so two records of ONE charge never
   disagree about it; one that merely posts on another's day is the next charge along. Measured on
-  a copy of the real ledger, 2026-09-17: scoring a shared posted day alone let a re-read of
+  a copy of the real ledger, 2026-09-22: scoring a shared posted day alone let a re-read of
   "Spending Report PDF (1).pdf" at a bumped version absorb Chase Sapphire's CPI\*CANTEEN VENDING
   −$1.25 made 07-08 onto the −$1.25 made 07-09, and 2026-07-03 → 2026-08-02 went from
   `reconciled` to a −$1.25 gap with 72 rows quarantined; reading the two files the other way round

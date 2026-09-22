@@ -293,8 +293,8 @@ function existingIdentitySlots(
  * ⛔ When BOTH say which day the charge was made and they disagree, they are two charges and the posted day proves
  * nothing: every source that fills `transacted_on` fills it with the real transaction, trade or activity day, so two
  * records of ONE charge never disagree about it — one that posts on another's day is the next charge along.
- * 🔴 Scored `1` on the shared posted day, the money went where the matching happened to put it. Measured on a copy of
- * the real ledger, 2026-09-17: re-reading "Spending Report PDF (1).pdf" at a bumped version, with
+ * 🔴 Scored `1` on the shared posted day, the money went where the matching happened to put it. Reported by the
+ * review of 2026-09-17, re-measured on a copy of the real ledger 2026-09-22: re-reading "Spending Report PDF (1).pdf" at a bumped version, with
  * 20260802-statements-9805-.pdf holding the same July days, absorbed the report's CPI*CANTEEN VENDING −$1.25 made
  * 07-08 onto the statement's −$1.25 made 07-09 — both real, and the period that reconciles them says so — and Chase
  * Sapphire 2026-07-03 → 2026-08-02 went from `reconciled` to a −$1.25 gap with 72 rows quarantined. Reading the two

@@ -957,7 +957,7 @@ describe("cross-format reconciliation dedupe (the DB is master)", () => {
    * made. The identity match scored a shared POSTED day 1 whatever the two rows said about the day the charge was
    * made, so the export's 08th charge was absorbed by the statement's 09th charge and never stored.
    *
-   * Measured on a copy of the real ledger, 2026-09-17: a version bump of `chase-spending-report-pdf` re-read
+   * Reported by the review of 2026-09-17, re-measured on a copy of the real ledger 2026-09-22: a version bump of `chase-spending-report-pdf` re-read
    * "Spending Report PDF (1).pdf" while 20260802-statements-9805-.pdf held the same July days, and Chase Sapphire
    * 2026-07-03 → 2026-08-02 went from `reconciled` to a −$1.25 gap with all 72 of the statement's rows quarantined
    * and one CPI*CANTEEN VENDING charge gone. Reading the two files the other way round recorded both charges, which

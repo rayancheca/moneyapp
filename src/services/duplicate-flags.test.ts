@@ -205,7 +205,7 @@ describe("flagDuplicateCandidates", () => {
   });
 
   /**
-   * ⛔ Measured on a copy of the real ledger, 2026-09-17: this pair — Chase Sapphire's CPI*CANTEEN VENDING −$1.25 made
+   * ⛔ Measured on a copy of the real ledger, 2026-09-22: this pair — Chase Sapphire's CPI*CANTEEN VENDING −$1.25 made
    * 07-08 against the −$1.25 made 07-09, both posted 07-09 — was the ONLY match the posted-day clause produced in
    * 10,320 rows, and the period it sits in reconciles, which proves both charges are real. `identityWeight` refuses to
    * absorb it for the same reason. Nothing here may depend on the reconciliation exemption to get it right.

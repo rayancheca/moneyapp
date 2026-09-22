@@ -13,7 +13,7 @@
  * two files back in the named order — the ledger they leave must be the same one, and the digests printed here are
  * what says so.
  *
- * Measured on a copy of the real ledger, 2026-09-17, with `identityWeight` scoring a shared posted day alone:
+ * Measured on a copy of the real ledger, 2026-09-22, with `identityWeight` scoring a shared posted day alone:
  *
  *   reread          charges 10319 · 2026-07-03..08-02 gap −$1.25, 72 quarantined, 17 live · ledger-check FAILED
  *                   (Chase Sapphire 2026-07-02 → 2026-08-02 off by $185.78)
