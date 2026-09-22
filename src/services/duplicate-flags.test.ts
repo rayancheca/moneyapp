@@ -204,6 +204,35 @@ describe("flagDuplicateCandidates", () => {
     expect(isFlagged(b)).toBe(false);
   });
 
+  /**
+   * ⛔ Measured on a copy of the real ledger, 2026-09-17: this pair — Chase Sapphire's CPI*CANTEEN VENDING −$1.25 made
+   * 07-08 against the −$1.25 made 07-09, both posted 07-09 — was the ONLY match the posted-day clause produced in
+   * 10,320 rows, and the period it sits in reconciles, which proves both charges are real. `identityWeight` refuses to
+   * absorb it for the same reason. Nothing here may depend on the reconciliation exemption to get it right.
+   */
+  test("never flags two rows that disagree about the day the charge was made, however they post", () => {
+    const a = insertTxn({ description: "CPI*CANTEEN VENDING MIAMI FL", postedOn: "2026-07-09", transactedOn: "2026-07-08" });
+    const b = insertTxn({
+      importFileId: fileB,
+      description: "CPI*CANTEEN VENDING MIAMI FL",
+      postedOn: "2026-07-09",
+      transactedOn: "2026-07-09",
+    });
+
+    expect(flagDuplicateCandidates(bundle.db, [accountId])).toBe(0);
+    expect(isFlagged(a)).toBe(false);
+    expect(isFlagged(b)).toBe(false);
+  });
+
+  test("still matches on the posted day when only one source says when the charge was made", () => {
+    const a = insertTxn({ description: "CPI*CANTEEN VENDING MIAMI FL", postedOn: "2026-07-09", transactedOn: "2026-07-09" });
+    const b = insertTxn({ importFileId: fileB, description: "CPI*CANTEEN VENDING", postedOn: "2026-07-09" });
+
+    expect(flagDuplicateCandidates(bundle.db, [accountId])).toBe(2);
+    expect(isFlagged(a)).toBe(true);
+    expect(isFlagged(b)).toBe(true);
+  });
+
   test("never flags adjacent dates — a same-amount charge a day apart is ordinary spending", () => {
     // the "date ±1" of docs/schema.md would pair two distinct month-end ETH
     // buys of $9.90 whose descriptions normalize identically

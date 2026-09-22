@@ -289,11 +289,23 @@ function existingIdentitySlots(
  * The transaction day exists because a source can date the SAME charge differently: a Chase card statement prints the
  * TRANSACTION day, while the Spending Report export posts it one to three days later. Keyed only on posted_on,
  * re-stating a card period inserted a duplicate of nearly every row in it.
+ *
+ * ⛔ When BOTH say which day the charge was made and they disagree, they are two charges and the posted day proves
+ * nothing: every source that fills `transacted_on` fills it with the real transaction, trade or activity day, so two
+ * records of ONE charge never disagree about it — one that posts on another's day is the next charge along.
+ * 🔴 Scored `1` on the shared posted day, the money went where the matching happened to put it. Measured on a copy of
+ * the real ledger, 2026-09-17: re-reading "Spending Report PDF (1).pdf" at a bumped version, with
+ * 20260802-statements-9805-.pdf holding the same July days, absorbed the report's CPI*CANTEEN VENDING −$1.25 made
+ * 07-08 onto the statement's −$1.25 made 07-09 — both real, and the period that reconciles them says so — and Chase
+ * Sapphire 2026-07-03 → 2026-08-02 went from `reconciled` to a −$1.25 gap with 72 rows quarantined. Reading the two
+ * files the other way round kept both. `duplicate-flags.ts` holds the same clause, for the same pair.
  */
 function identityWeight(line: CanonicalTxn, slot: IdentitySlot): number {
   if (line.amountCents !== slot.amountCents) return 0;
-  const sameTransactionDay = line.transactedOn !== undefined && slot.transactedOn !== null && line.transactedOn === slot.transactedOn;
-  return (sameTransactionDay ? 2 : 0) + (line.postedOn === slot.postedOn ? 1 : 0);
+  const samePostedDay = line.postedOn === slot.postedOn ? 1 : 0;
+  // one of them does not know: the posted day is all there is, and a line re-dated by a better source still matches
+  if (line.transactedOn === undefined || slot.transactedOn === null) return samePostedDay;
+  return line.transactedOn === slot.transactedOn ? 2 + samePostedDay : 0;
 }
 
 /**

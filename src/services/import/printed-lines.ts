@@ -125,6 +125,15 @@ function transactionDayOf(line: PrintedLine): string {
  * 🔴 The two days weighed alike. Un-importing a more trusted file that printed two purchases of one shop and one day,
  * one posted that day and one the next, kept the charge posted before the period under the statement whose line the
  * other had taken over, deleted that other one, and put the reconciled period into a −$25.00 gap (found 2026-09-17).
+ *
+ * ⚠️ `identityWeight` scores 0 where a line and a row both say which day the charge was made and disagree — two
+ * charges, not one. This scale deliberately does NOT, for two reasons. A line's `transactedOn` here can be one
+ * `placeInsidePeriod` invented from the printed day where the source never stated one (`printedLineOf`), and
+ * `PrintedLine` does not record which it is, so the clause would read an invented day as a contradiction and stop a
+ * file printing a row it really does print. And the cost of the extra edge runs the safe way: with `identityWeight`
+ * refusing that pair, both charges have a row of their own, the matching prefers them (2 or 3 against this 1), and the
+ * most the loose edge can do is keep a row under a file that does not print it — never delete one. Recording whether
+ * the source stated the day is what tightening this would need first.
  */
 function weight(line: PrintedLine, row: Row): number {
   const storedDay = row.postedOn === line.postedOn ? 1 : 0;

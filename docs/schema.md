@@ -324,9 +324,18 @@ reconciliation is the backstop.
   against existing ones; user-set attributes migrate to the new rows; unmatched old rows go
   to the fuzzy review queue; replaced rows become `superseded`. **Invariant: importing the
   same file set in any order permutation yields an equivalent database.**
+- **Same-money rule** (`identityWeight`, and `duplicate-flags.ts` for the residual pass below):
+  same account, same amount, and — where both records say which day the charge was made —
+  **the same transaction day**, else the same posted day. Every source that fills `transacted_on`
+  fills it with the real transaction, trade or activity day, so two records of ONE charge never
+  disagree about it; one that merely posts on another's day is the next charge along. Measured on
+  a copy of the real ledger, 2026-09-17: scoring a shared posted day alone let a re-read of
+  "Spending Report PDF (1).pdf" at a bumped version absorb Chase Sapphire's CPI\*CANTEEN VENDING
+  −$1.25 made 07-08 onto the −$1.25 made 07-09, and 2026-07-03 → 2026-08-02 went from
+  `reconciled` to a −$1.25 gap with 72 rows quarantined; reading the two files the other way round
+  kept both, so the outcome turned on import order. Exact days only, never a window.
 - Residual cross-source pass flags probable duplicates for review — never silently deletes, and
-  never picks a winner. Matching is same account, same amount, **same day** (post-to-post, or
-  transaction-to-transaction when both rows carry one), from two DIFFERENT sources, with a
+  never picks a winner. Matching is the same-money rule above, from two DIFFERENT sources, with a
   non-zero description score. **Not date ±1**, which this doc prescribed until pass 35: measured
   against the real 9,827-row ledger, a ±1 window pairs two distinct month-end ETH buys (0.003247
   vs 0.003508 ETH, both $9.90, both normalizing to the same text) — 22 rows, mostly false. A pair

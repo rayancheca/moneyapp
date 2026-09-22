@@ -21,7 +21,7 @@ import { asParsedFile, fidelityOf, importStatementFiles, migrateStorageLayout, u
 import { merchants } from "@/db/schema/merchants";
 import { PROFILES } from "./profiles";
 import { parseChaseCardLines } from "./profiles/chase-card-statement-profile";
-import { ParseError, type AccountHint, type ParsedFile, type ParsedStatement, type ParserProfile } from "./types";
+import { ParseError, type AccountHint, type CanonicalTxn, type ParsedFile, type ParsedStatement, type ParserProfile } from "./types";
 import { provenanceFor } from "@/services/provenance";
 import { importFiles as importFilesTable } from "@/db/schema/imports";
 import { dedupeHash } from "@/lib/hash";
@@ -825,7 +825,7 @@ describe("cross-format reconciliation dedupe (the DB is master)", () => {
   describe("three same-amount charges an export posts days after the statement's transaction days", () => {
     const PREFIX = "ram-village-";
     const RAM = "RAM`S VILLAGE";
-    const statementLines = ["2026-05-05", "2026-05-08", "2026-05-11"].map((day) => ({ postedOn: day, transactedOn: day, amountCents: -1040, rawDescription: `${RAM} BRONX NY` }));
+    const statementLines: CanonicalTxn[] = ["2026-05-05", "2026-05-08", "2026-05-11"].map((day) => ({ postedOn: day, transactedOn: day, amountCents: -1040, rawDescription: `${RAM} BRONX NY` }));
     const exportLines = [
       ["2026-05-07", "2026-05-05"],
       ["2026-05-11", "2026-05-08"],
@@ -887,10 +887,15 @@ describe("cross-format reconciliation dedupe (the DB is master)", () => {
     });
 
     test("a line whose surest record another line needs more moves to its next record, rather than leave a line stored twice", async () => {
-      // the statement: one charge on 05-20, and one it prints on 05-20 that was made on 05-18
+      // the statement: one charge it dates 05-20, and one of the same amount that day it can only post
+      //
+      // ⚖️ The second row carries no transaction day on purpose. A source that HAS one and disagrees about it is
+      // recording another charge (`identityWeight`), so a fixture that gave this row 05-18 would be asserting that
+      // two charges are one — the displacement this test is about needs a row the second line may fall back to, not a
+      // contradiction.
       statementLines.splice(0, statementLines.length, ...[
         { postedOn: "2026-05-20", transactedOn: "2026-05-20", amountCents: -500, rawDescription: "DELI" },
-        { postedOn: "2026-05-20", transactedOn: "2026-05-18", amountCents: -500, rawDescription: "DELI" },
+        { postedOn: "2026-05-20", amountCents: -500, rawDescription: "DELI" },
       ]);
       // the export: the 05-20 charge, and one made on 05-20 that it posts on 05-22
       exportLines.splice(0, exportLines.length, ...[
@@ -943,6 +948,180 @@ describe("cross-format reconciliation dedupe (the DB is master)", () => {
 
       expect(statement).toMatchObject({ inserted: 0, dedupedCrossFormat: 3 });
       expect(liveMoney()).toEqual({ active: -3120, quarantined: 0, period: "reconciled" });
+    });
+  });
+
+  /**
+   * 🔴 Two vending charges of $1.25 each, one made on the 08th and one on the 09th, that two files date differently:
+   * the export posts the 08th charge on the 09th, and the card statement prints the 09th charge on the day it was
+   * made. The identity match scored a shared POSTED day 1 whatever the two rows said about the day the charge was
+   * made, so the export's 08th charge was absorbed by the statement's 09th charge and never stored.
+   *
+   * Measured on a copy of the real ledger, 2026-09-17: a version bump of `chase-spending-report-pdf` re-read
+   * "Spending Report PDF (1).pdf" while 20260802-statements-9805-.pdf held the same July days, and Chase Sapphire
+   * 2026-07-03 → 2026-08-02 went from `reconciled` to a −$1.25 gap with all 72 of the statement's rows quarantined
+   * and one CPI*CANTEEN VENDING charge gone. Reading the two files the other way round recorded both charges, which
+   * is what said the rule was wrong rather than merely unlucky.
+   */
+  describe("two sources that disagree about the day a charge was made", () => {
+    const PREFIX = "canteen-";
+    const VENDING = "CPI*CANTEEN VENDING";
+    const hint: AccountHint = { institution: "Chase", type: "credit", last4: "7806", name: "Vending test" };
+    /** a card statement's line: it prints ONE date and it is the day the charge was made */
+    const made = (day: string, amountCents = -125, rawDescription = `${VENDING} MIAMI FL`): CanonicalTxn => ({
+      postedOn: day,
+      transactedOn: day,
+      amountCents,
+      rawDescription,
+    });
+    /** an export's line: the day it posted, and the day the charge was made */
+    const posted = (postedOn: string, transactedOn: string, amountCents = -125, rawDescription = VENDING): CanonicalTxn => ({
+      postedOn,
+      transactedOn,
+      amountCents,
+      rawDescription,
+    });
+    const STATEMENT_LINES = [made("2026-07-08"), made("2026-07-09")];
+    /**
+     * The export runs out on the 09th, so of the two it prints only the 08th charge — posted a day later, with the day
+     * it was made. That is the real shape: the report's last July $1.25 is posted 07-09 and made 07-08, and the
+     * statement's own 07-08 line was absorbed by it when the statement landed second.
+     *
+     * The June line is load-bearing: it is the export's own row on a day no statement covers, so a re-read of the
+     * export still reads this account and answers for its own days. Without it the re-read reads nothing here, and a
+     * row it loses inside the statement's month is handed back by `settleHeldRows` — which is not what happens to the
+     * owner, whose report writes 355 rows.
+     */
+    const EXPORT_LINES = [posted("2026-06-20", "2026-06-19", -300, "GAS STATION"), posted("2026-07-09", "2026-07-08")];
+    let statementLines: CanonicalTxn[] = [...STATEMENT_LINES];
+    let exportLines: CanonicalTxn[] = [...EXPORT_LINES];
+    const statementProfile: ParserProfile = {
+      id: "test-canteen-statement",
+      version: 1,
+      matches: (f) => f.name.startsWith(`${PREFIX}statement`),
+      parse: (): ParsedStatement[] => [
+        {
+          accountHint: hint,
+          txns: statementLines,
+          // the period closes on what the statement itself prints, so a lost charge shows up as a gap
+          period: { start: "2026-07-03", end: "2026-08-02", beginCents: 0, endCents: statementLines.reduce((n, l) => n + l.amountCents, 0) },
+        },
+      ],
+    };
+    const exportProfile: ParserProfile = {
+      id: "test-canteen-export",
+      version: 1,
+      matches: (f) => f.name.startsWith(`${PREFIX}export`),
+      parse: (): ParsedStatement[] => [{ accountHint: hint, txns: exportLines }],
+    };
+    const STATEMENT: ImportInput = { name: `${PREFIX}statement.txt`, buffer: Buffer.from("statement") };
+    const EXPORT: ImportInput = { name: `${PREFIX}export.txt`, buffer: Buffer.from("export") };
+
+    beforeEach(() => {
+      PROFILES.unshift(statementProfile, exportProfile);
+    });
+    afterEach(() => {
+      for (const profile of [statementProfile, exportProfile]) PROFILES.splice(PROFILES.indexOf(profile), 1);
+      exportProfile.version = 1;
+      statementLines = [...STATEMENT_LINES];
+      exportLines = [...EXPORT_LINES];
+    });
+
+    /** Every live row of the test card, and what the statement's own period makes of them. */
+    const ledger = () => {
+      const card = bundle.db.select().from(accounts).where(eq(accounts.last4, "7806")).get()!;
+      const rows = bundle.db.select().from(transactions).where(eq(transactions.accountId, card.id)).all();
+      const live = rows.filter((r) => r.status === "active" || r.status === "excluded");
+      const period = bundle.db
+        .select()
+        .from(statementPeriods)
+        .where(and(eq(statementPeriods.accountId, card.id), eq(statementPeriods.periodStart, "2026-07-03")))
+        .get();
+      return {
+        // by the day each charge was MADE — the one thing the two files agree on, so it does not depend on which of
+        // them was read first
+        charges: live.map((r) => `${r.transactedOn ?? r.postedOn}:${r.amountCents}`).sort(),
+        activeCents: live.reduce((n, r) => n + r.amountCents, 0),
+        quarantined: rows.filter((r) => r.status === "quarantined").length,
+        period: period?.reconciliation,
+        gapCents: period?.gapCents ?? 0,
+      };
+    };
+
+    /** Both charges recorded once each, beside the export's own June row — whichever file was read first, and however many times. */
+    const BOTH_CHARGES = {
+      charges: ["2026-06-19:-300", "2026-07-08:-125", "2026-07-09:-125"],
+      activeCents: -550,
+      quarantined: 0,
+      period: "reconciled",
+      gapCents: 0,
+    };
+
+    /** The ledger the owner has: the export's row records the 08th charge, and the statement's 08th line is that row. */
+    async function exportThenStatement(): Promise<void> {
+      await importStatementFiles(bundle.db, [EXPORT]);
+      const [statement] = await importStatementFiles(bundle.db, [STATEMENT]);
+      expect(statement).toMatchObject({ inserted: 1, dedupedCrossFormat: 1 });
+      expect(ledger()).toEqual(BOTH_CHARGES);
+    }
+
+    test("the export first, then the statement: the 08th charge is the export's row, the 09th is stored", async () => {
+      await exportThenStatement();
+    });
+
+    test("the statement first, then the export: the same two charges", async () => {
+      await importStatementFiles(bundle.db, [STATEMENT]);
+      const [exported] = await importStatementFiles(bundle.db, [EXPORT]);
+
+      expect(exported).toMatchObject({ inserted: 1, dedupedCrossFormat: 1 });
+      expect(ledger()).toEqual(BOTH_CHARGES);
+    });
+
+    /**
+     * The owner's real scenario: the export's profile ships a new version, so the next drop of that same file is read
+     * again — and the only row left standing on the 08th charge's posted day is the statement's 09th charge.
+     */
+    test("a parser-version re-read of the export beside the statement keeps both charges", async () => {
+      await exportThenStatement();
+
+      exportProfile.version = 2;
+      const [reread] = await importStatementFiles(bundle.db, [EXPORT]);
+
+      expect(ledger()).toEqual(BOTH_CHARGES);
+      // both of the export's own lines written again, neither taken by the statement's row and neither handed back
+      expect(reread).toMatchObject({ status: "parsed", inserted: 2, dedupedCrossFormat: 0, keptByPrinters: 0 });
+    });
+
+    /**
+     * The same line re-dated by a better source is still one charge: the export prints only a post date, the
+     * statement knows the day the charge was made, and the posted lens is all there is to match on.
+     */
+    test("a source that does not know the day a charge was made still dedupes on the posted day", async () => {
+      statementLines = [made("2026-07-09")];
+      exportLines = [{ postedOn: "2026-07-09", amountCents: -125, rawDescription: VENDING }];
+      await importStatementFiles(bundle.db, [STATEMENT]);
+      const [exported] = await importStatementFiles(bundle.db, [EXPORT]);
+
+      expect(exported).toMatchObject({ inserted: 0, dedupedCrossFormat: 1 });
+      expect(ledger()).toMatchObject({ charges: ["2026-07-09:-125"], activeCents: -125, period: "reconciled" });
+    });
+
+    /**
+     * ⛔ Chase Checking printed two identical −$115.00 lines on 2026-03-02 and both are real. A second source
+     * printing the same pair records two charges, not one — the days they were made agree, so nothing about the rule
+     * above may collapse them into one.
+     */
+    test("two genuinely identical charges on one day stay two charges", async () => {
+      statementLines = [made("2026-07-15", -11500, "ONLINE TRANSFER"), made("2026-07-15", -11500, "ONLINE TRANSFER")];
+      exportLines = [
+        posted("2026-07-15", "2026-07-15", -11500, "ONLINE TRANSFER TO 1234"),
+        posted("2026-07-15", "2026-07-15", -11500, "ONLINE TRANSFER TO 1234"),
+      ];
+      await importStatementFiles(bundle.db, [STATEMENT]);
+      const [exported] = await importStatementFiles(bundle.db, [EXPORT]);
+
+      expect(exported).toMatchObject({ inserted: 0, dedupedCrossFormat: 2 });
+      expect(ledger()).toMatchObject({ charges: ["2026-07-15:-11500", "2026-07-15:-11500"], activeCents: -23000, period: "reconciled" });
     });
   });
 

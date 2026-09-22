@@ -58,6 +58,17 @@ import { formatCents } from "@/lib/money";
  * carry a NULL import_file_id, and `NULL != 'x'` is NULL, not true — the pass
  * this replaces was blind to every one of them. NULL-vs-NULL is correctly
  * false, so two hand-entered rows are not treated as two sources.
+ *
+ * ⛔ A shared POSTED day counts only where at least one side does not say which
+ * day the charge was made. Every source that fills `transacted_on` fills it
+ * with the real transaction, trade or activity day, so two records of one
+ * charge never disagree about it: one that merely posts on another's day is the
+ * next charge along. Measured on a copy of the real ledger, 2026-09-17: the
+ * looser posted-day clause matched exactly one pair in 10,320 rows — Chase
+ * Sapphire's CPI*CANTEEN VENDING −$1.25 made 07-08 against the −$1.25 made
+ * 07-09, both posted 07-09, both real — and with this clause the rule matches
+ * ZERO before `NOT_ALREADY_PROVEN` is applied at all. `identityWeight` in
+ * import/service.ts refuses to absorb that same pair for the same reason.
  */
 const IDENTITY_JOIN = sql`
       ON t1.account_id = t2.account_id
@@ -65,10 +76,11 @@ const IDENTITY_JOIN = sql`
      AND t1.id != t2.id
      AND t1.import_file_id IS NOT t2.import_file_id
      AND (
-           t1.posted_on = t2.posted_on
-        OR (t1.transacted_on IS NOT NULL
+           (t1.transacted_on IS NOT NULL
             AND t2.transacted_on IS NOT NULL
             AND t1.transacted_on = t2.transacted_on)
+        OR ((t1.transacted_on IS NULL OR t2.transacted_on IS NULL)
+            AND t1.posted_on = t2.posted_on)
          )
 `;
 
@@ -100,8 +112,11 @@ const BOTH_IN_REPLAY = sql`
  * times a day; on 2026-07-08 a single file records three separate $1.25
  * charges. Two $1.25 charges on 2026-07-09 arrived from two different files and
  * look exactly like the duplicate this module hunts — and the period they sit
- * in reconciles, which proves both are real. Without this clause the flagger's
- * only hit on the entire real ledger is that false positive.
+ * in reconciles, which proves both are real. That pair used to be the flagger's
+ * only hit on the entire real ledger, caught here; the identity above now
+ * refuses it outright, because the two files disagree about the day each charge
+ * was made, and this clause is the general net rather than the one that
+ * happened to save that pair.
  *
  * Guarding on t1 alone is deliberate and gives per-row precision: it asks "has
  * THIS row's own money been proved correct?". The join is symmetric, so the
