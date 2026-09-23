@@ -81,10 +81,19 @@ function yearBounds(year: number): { from: string; to: string } {
   return { from: `${year}-01-01`, to: `${year}-12-31` };
 }
 
-/** Income-side rows for one category name, in one year, with their documents. */
+/**
+ * Income-side rows for one category name, in one year, with their documents.
+ *
+ * ⚖️ `agentsCash` is POSITIONAL AND REQUIRED, not one more optional filter. It was an option
+ * (`accountIdNotIn`) that the Dividends line passed and the page's ten other lines did not, and every one of them
+ * read the agent's cash account as a result — see the scope's own test. A line cannot be written now without
+ * answering whose money it counts.
+ */
 function lineFor(
   db: AppDatabase,
   year: number,
+  /** `outsidePortfolioCashAccountIds` — never his, on any line (`ownPortfolioAccountIds`) */
+  agentsCash: readonly string[],
   opts: {
     categoryName: string;
     /** restrict to one account name */
@@ -95,8 +104,6 @@ function lineFor(
      * credited anywhere else belonged to neither and was counted in no total.
      */
     accountNameNotIn?: readonly string[];
-    /** …and never these accounts, by id */
-    accountIdNotIn?: readonly string[];
     /** SQL LIKE against the raw descriptor, or its negation */
     descriptorLike?: string;
     descriptorNotLike?: string;
@@ -118,9 +125,7 @@ function lineFor(
   if (opts.accountNameNotIn && opts.accountNameNotIn.length > 0) {
     where.push(notInArray(accounts.name, [...opts.accountNameNotIn]));
   }
-  if (opts.accountIdNotIn && opts.accountIdNotIn.length > 0) {
-    where.push(notInArray(accounts.id, [...opts.accountIdNotIn]));
-  }
+  if (agentsCash.length > 0) where.push(notInArray(accounts.id, [...agentsCash]));
   if (opts.descriptorLike) {
     where.push(sql`upper(${transactions.rawDescription}) LIKE ${opts.descriptorLike}`);
   }
@@ -391,10 +396,17 @@ export function yearSummaryView(db: AppDatabase, year: number, today: string): Y
 
   const realized = realizedFor(db, year);
   /*
-   * ⚖️ The Investment section is HIS returns, in one scope. Realized reads his books only (`realizedSalesByDay`), and
-   * the owner kept Robinhood Agentic out of his brokerage returns (2026-09-14) — so a dividend the agent's shares pay,
-   * credited to Agentic, is not his either. 🔴 Read from every account, the agent's $0.06 was in his Dividends while
-   * the agent's sale was not in his Realized (measured 2026-09-16).
+   * ⚖️ THE WHOLE PAGE IS HIS MONEY, in one scope. Realized reads his books only (`realizedSalesByDay`), and the owner
+   * kept Robinhood Agentic out of his brokerage returns (2026-09-14) — so a dividend the agent's shares pay, credited
+   * to Agentic, is not his either. 🔴 Read from every account, the agent's $0.06 was in his Dividends while the
+   * agent's sale was not in his Realized (measured 2026-09-16).
+   *
+   * 🔴 …and then the scope gated the Dividends line ALONE. The agent's cash is uninvested between its buys and
+   * Robinhood pays interest on it: filed `Income > Interest` on an account named neither "SoFi Savings" nor
+   * "Robinhood Cash", that interest fell into "Interest on other accounts" and was printed under "Money in that you
+   * did not earn" — his, on the page that had just refused his agent's dividends. Stock-lending pay, filed "Other
+   * Income", did the same one line below. So `lineFor` takes it as a REQUIRED argument now rather than an option a
+   * line can forget, and every line on the page reads the one scope.
    */
   const agentsCash = [...outsidePortfolioCashAccountIds(db)];
   // ONE decision for all three claims the cash-job line makes (see `cashJobNaming`)
@@ -406,14 +418,14 @@ export function yearSummaryView(db: AppDatabase, year: number, today: string): Y
       "Fordham work-study wages",
       "earned",
       "Biweekly ACH direct deposit described FORDHAM UNIVERSI PAYROLL — the first term in your own definition of earnings.",
-      lineFor(db, year, { categoryName: "Salary", descriptorLike: FORDHAM_DESCRIPTOR }),
+      lineFor(db, year, agentsCash, { categoryName: "Salary", descriptorLike: FORDHAM_DESCRIPTOR }),
     ),
     line(
       "cash-job",
       cashJob.label,
       "earned",
       cashJob.basis,
-      lineFor(db, year, { categoryName: "Salary", descriptorNotLike: FORDHAM_DESCRIPTOR }),
+      lineFor(db, year, agentsCash, { categoryName: "Salary", descriptorNotLike: FORDHAM_DESCRIPTOR }),
       cashJob.caveat,
     ),
     line(
@@ -421,28 +433,28 @@ export function yearSummaryView(db: AppDatabase, year: number, today: string): Y
       "Knack tutoring",
       "earned",
       "Payouts described KNACK PAYOUT — the second term in your definition of earnings.",
-      lineFor(db, year, { categoryName: "Tutoring" }),
+      lineFor(db, year, agentsCash, { categoryName: "Tutoring" }),
     ),
     line(
       "sofi-interest",
       "SoFi savings interest",
       "earned",
       "Interest credited to the SoFi savings account — the third term in your definition of earnings.",
-      lineFor(db, year, { categoryName: "Interest", accountName: "SoFi Savings" }),
+      lineFor(db, year, agentsCash, { categoryName: "Interest", accountName: "SoFi Savings" }),
     ),
     line(
       "dividends",
       "Dividends",
       "investment",
       "Dividends credited inside the brokerage.",
-      lineFor(db, year, { categoryName: "Dividends", accountIdNotIn: agentsCash }),
+      lineFor(db, year, agentsCash, { categoryName: "Dividends" }),
     ),
     line(
       "brokerage-interest",
       "Brokerage cash interest",
       "investment",
       "Interest paid on uninvested brokerage cash. Separated from SoFi savings interest, which your rule counts as earnings.",
-      lineFor(db, year, { categoryName: "Interest", accountName: "Robinhood Cash" }),
+      lineFor(db, year, agentsCash, { categoryName: "Interest", accountName: "Robinhood Cash" }),
     ),
     /*
      * ⛔ The two lines above split `Interest` by ACCOUNT NAME, so interest
@@ -455,7 +467,7 @@ export function yearSummaryView(db: AppDatabase, year: number, today: string): Y
       "Interest on other accounts",
       "notEarned",
       "Interest credited somewhere other than the SoFi savings account or brokerage cash — money in, but outside your definition of earnings.",
-      lineFor(db, year, {
+      lineFor(db, year, agentsCash, {
         categoryName: "Interest",
         accountNameNotIn: ["SoFi Savings", "Robinhood Cash"],
       }),
@@ -475,14 +487,14 @@ export function yearSummaryView(db: AppDatabase, year: number, today: string): Y
       "Financial aid refund",
       "notEarned",
       "Tuition is paid from an account this ledger does not hold; the aid is deducted and the balance refunded to you. Money in from outside, but not earned.",
-      lineFor(db, year, { categoryName: "Financial Aid" }),
+      lineFor(db, year, agentsCash, { categoryName: "Financial Aid" }),
     ),
     line(
       "reimbursements",
       "Refunds and reimbursements",
       "notEarned",
       "Money coming back to you, not money you were paid.",
-      lineFor(db, year, { categoryName: "Refunds & Reimbursements" }),
+      lineFor(db, year, agentsCash, { categoryName: "Refunds & Reimbursements" }),
     ),
     line(
       "other-income",
@@ -498,11 +510,11 @@ export function yearSummaryView(db: AppDatabase, year: number, today: string): Y
        * description says what it actually holds.
        */
       "Rows you filed to the Other Income category — money in that belongs to none of the named sources.",
-      lineFor(db, year, { categoryName: "Other Income" }),
+      lineFor(db, year, agentsCash, { categoryName: "Other Income" }),
     ),
     (() => {
-      const inbound = lineFor(db, year, { categoryName: "Pass-through" });
-      const outbound = lineFor(db, year, { categoryName: "Pass-through", direction: "out" });
+      const inbound = lineFor(db, year, agentsCash, { categoryName: "Pass-through" });
+      const outbound = lineFor(db, year, agentsCash, { categoryName: "Pass-through", direction: "out" });
       /*
        * 🔴 THE DESCRIPTION ASSERTED A LEG THE PAGE COULD NOT FIND. "…and money
        * held briefly for someone and handed back. Not income; both legs largely

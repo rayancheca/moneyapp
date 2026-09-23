@@ -596,3 +596,49 @@ describe("yearSummaryView — the Investment section reads one scope: the agent'
     expect(lines().map((l) => [l.id, l.amountCents, l.rowCount])).toEqual([["dividends", 706, 2]]);
   });
 });
+
+/**
+ * ⚖️ The same decision, asked of the page's OTHER lines. `agentsCash` gated the Dividends line and nothing else, so
+ * every other line on "All money in" still read the agent's cash account.
+ *
+ * 🔴 Robinhood pays interest on uninvested cash, and the agent's cash is uninvested between its buys. That interest
+ * is filed `Income > Interest` on an account named neither "SoFi Savings" nor "Robinhood Cash", so it fell into
+ * "Interest on other accounts" — the agent's return, printed under "Money in that you did not earn" and added to
+ * the year's total received, on the one page that already refuses the agent's dividends. Stock-lending pay, filed
+ * "Other Income", did the same thing one line below it.
+ */
+describe("yearSummaryView — ONE scope for the whole page, not for one line", () => {
+  test("⛔ interest and other income credited to the agent's cash account are on none of his lines", () => {
+    const rh = bundle.db.select().from(institutions).where(eq(institutions.name, "Robinhood")).get()!;
+    const robinhoodCash = createAccount(bundle.db, { institutionId: rh.id, name: "Robinhood Cash", type: "checking" });
+    createAccount(bundle.db, { institutionId: rh.id, name: "Robinhood Brokerage", type: "investment", subtype: "brokerage" });
+    const agentic = createAccount(bundle.db, { institutionId: rh.id, name: "Robinhood Agentic", type: "checking", last4: "9651" });
+    const book = createAccount(bundle.db, { institutionId: rh.id, name: "Robinhood Agentic Brokerage", type: "investment", subtype: "brokerage" });
+    bundle.db.update(accounts).set({ cashAccountId: agentic }).where(eq(accounts.id, book)).run();
+
+    insert({ postedOn: "2025-02-28", amountCents: 900, rawDescription: "CASH INTEREST PAYMENT", categoryName: "Interest", accountId: robinhoodCash });
+    insert({ postedOn: "2025-03-31", amountCents: 4, rawDescription: "CASH INTEREST PAYMENT", categoryName: "Interest", accountId: agentic });
+    insert({ postedOn: "2025-04-30", amountCents: 11, rawDescription: "STOCK LENDING PAYMENT", categoryName: "Other Income", accountId: agentic });
+
+    const v = yearSummaryView(bundle.db, YEAR, TODAY);
+    const byId = new Map(v.summary.sections.flatMap((s) => s.lines).map((l) => [l.id, l]));
+    // his brokerage cash interest, whole and alone
+    expect([byId.get("brokerage-interest")!.amountCents, byId.get("brokerage-interest")!.rowCount]).toEqual([900, 1]);
+    // the agent's $0.04 has no line to fall into, and neither does its $0.11 of lending pay
+    expect(byId.has("other-interest")).toBe(false);
+    expect(byId.has("other-income")).toBe(false);
+    expect(v.summary.totalReceivedCents).toBe(900);
+  });
+
+  test("⛔ the same rows are his again once the book is no longer the agent's", () => {
+    const rh = bundle.db.select().from(institutions).where(eq(institutions.name, "Robinhood")).get()!;
+    const agentic = createAccount(bundle.db, { institutionId: rh.id, name: "Robinhood Agentic", type: "checking", last4: "9651" });
+    const book = createAccount(bundle.db, { institutionId: rh.id, name: "Robinhood Agentic Brokerage", type: "investment", subtype: "brokerage" });
+    bundle.db.update(accounts).set({ cashAccountId: agentic }).where(eq(accounts.id, book)).run();
+    insert({ postedOn: "2025-03-31", amountCents: 4, rawDescription: "CASH INTEREST PAYMENT", categoryName: "Interest", accountId: agentic });
+
+    expect(yearSummaryView(bundle.db, YEAR, TODAY).summary.totalReceivedCents).toBe(0);
+    bundle.db.update(accounts).set({ cashAccountId: null }).where(eq(accounts.id, book)).run();
+    expect(yearSummaryView(bundle.db, YEAR, TODAY).summary.totalReceivedCents).toBe(4);
+  });
+});
