@@ -21,7 +21,8 @@ import { unimportedRowAttributes } from "@/db/schema/unimported-row-attributes";
  * categorized by hand and 17 with no recorded source.
  *
  * The record is claimed as the re-parse carry is (`takeCarry`, services/import/service.ts): the same account, amount and
- * day (posted, then transacted), and — since any later import may claim it, not only the same file's — the same line
+ * day — the day the charge was made first, then the posted day, and never a line that contradicts the day the record
+ * says it was made — and, since any later import may claim it, not only the same file's, the same line
  * (`dedupe_hash`) or words that describe the same charge (`descriptionScore` above 0). It lands where the carry lands,
  * and is spent once it has; a record whose line another record absorbs, or no import writes, waits.
  */
