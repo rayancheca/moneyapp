@@ -1003,6 +1003,42 @@ function statementPeriodProvenance(db: AppDatabase, id: string): Provenance | nu
   };
 }
 
+/**
+ * How far a figure standing on SEVERAL accounts is checked through, and the
+ * sentence that names whose word that day is when it is his count's.
+ *
+ * ⛔ One rule, because it had one caller and the second surface answered the
+ * old way. `footingThrough` says an account resting on a balance he TYPED
+ * bounds the picture at the day before nothing stands under it; net worth read
+ * it, and `summedRowsProvenance` compared `verifiedThrough` alone — so a
+ * count-only account left that comparison altogether and every row total's
+ * date ran past the day the same app calls the account unchecked.
+ *
+ * `first` is the oldest footing of any kind, his count included. `checked` is
+ * the oldest that is a CHECK, and it is null when nothing here is checked at
+ * all — a caller that must not date a total on a count alone reads that one.
+ */
+function footingBounds(coverage: readonly AccountCoverage[]): {
+  first: string | null;
+  checked: string | null;
+  noteFor: (day: string | null) => string;
+} {
+  const bounds = coverage
+    .map((c) => ({ name: c.accountName, bound: footingThrough(c) }))
+    .filter((b): b is { name: string; bound: { day: string; byCount: boolean } } => b.bound !== null)
+    .sort((a, b) => (a.bound.day < b.bound.day ? -1 : a.bound.day > b.bound.day ? 1 : 0));
+  return {
+    first: bounds[0]?.bound.day ?? null,
+    checked: bounds.find((b) => !b.bound.byCount)?.bound.day ?? null,
+    noteFor: (day) => {
+      const byCount = day === null ? undefined : bounds.find((b) => b.bound.day === day && b.bound.byCount);
+      return byCount
+        ? ` The date it is checked through, ${readableDay(byCount.bound.day)}, is the last day ${byCount.name} rests on the balance you counted — your word, not a check.`
+        : "";
+    },
+  };
+}
+
 /* ── net worth ────────────────────────────────────────────────────────── */
 
 function netWorthProvenance(db: AppDatabase, day: string | undefined): Provenance {
@@ -1167,17 +1203,11 @@ function netWorthProvenance(db: AppDatabase, day: string | undefined): Provenanc
    * stands under it — `footingThrough` has the rule and its measurement. That
    * day is his word, so the sentence says whose it is.
    */
-  const bounds = coverage
-    .map((c) => ({ name: c.accountName, bound: footingThrough(c) }))
-    .filter((b): b is { name: string; bound: { day: string; byCount: boolean } } => b.bound !== null)
-    .sort((a, b) => (a.bound.day < b.bound.day ? -1 : a.bound.day > b.bound.day ? 1 : 0));
+  const footing = footingBounds(coverage);
   // the OLDEST bound bounds the whole figure: the total cannot be proven past
   // the first account that stops being checked
-  const checkedThrough = bounds[0]?.bound.day ?? null;
-  const countBound = bounds.find((b) => b.bound.day === checkedThrough && b.bound.byCount);
-  const countText = countBound
-    ? ` The date it is checked through, ${readableDay(countBound.bound.day)}, is the last day ${countBound.name} rests on the balance you counted — your word, not a check.`
-    : "";
+  const checkedThrough = footing.first;
+  const countText = footing.noteFor(checkedThrough);
 
   return {
     verdict,
@@ -1973,12 +2003,29 @@ function summedRowsProvenance(
   if (byHand > 0) parts.push(`${grouped(byHand)} you entered yourself`);
   if (weak > 0) parts.push(`${grouped(weak)} ${weak === 1 ? "has" : "have"} nothing checking ${weak === 1 ? "it" : "them"}`);
 
-  // the last day EVERY contributing row is still covered — the first account to
-  // stop being checked bounds the whole total, exactly as it does for net worth
-  const closed = [...new Set(rows.map((r) => r.accountId))]
-    .map((a) => coverage.get(a)?.verifiedThrough)
-    .filter((d): d is string => typeof d === "string")
-    .sort();
+  /*
+   * The last day EVERY contributing row is still covered — the first account to
+   * stop being checked bounds the whole total, exactly as it does for net worth.
+   *
+   * 🔴 …and "exactly as it does for net worth" was a claim this code did not
+   * keep. It compared `verifiedThrough` alone, so an account resting on a
+   * balance he TYPED — which has none — dropped out of the comparison and the
+   * date ran past the day the app itself calls that account unchecked. Measured
+   * 2026-09-22 on a copy of the real ledger: /categories/Car Payment for August
+   * 2026 sums the $5,000.00 down payment out of Cash on Hand with one Chase
+   * Checking row and read "Checked through 2026-08-12" — Chase's chain — beside
+   * a trust card saying nothing has checked Cash on Hand since Aug 11.
+   *
+   * ⚠️ A count still never DATES a total on its own — "the count of its rows
+   * dates no check", the describe of that name — so with nothing checked at all
+   * this stays null exactly as it did. A count only pulls a check's date back
+   * to where the count stops standing.
+   */
+  const contributing = [...new Set(rows.map((r) => r.accountId))]
+    .map((a) => coverage.get(a))
+    .filter((c): c is AccountCoverage => c !== undefined);
+  const footing = footingBounds(contributing);
+  const checkedThrough = footing.checked === null ? null : footing.first;
 
   return {
     verdict,
@@ -1991,9 +2038,9 @@ function summedRowsProvenance(
           ? marketValueBadgeWord(held === 0)
           : undefined
         : `${grouped(rows.length - weak)} of ${grouped(rows.length)} checked`,
-    headline: `This total is the sum of ${parts.join(", ")}. A total is only as proven as its weakest row.`,
+    headline: `This total is the sum of ${parts.join(", ")}. A total is only as proven as its weakest row.${footing.noteFor(checkedThrough)}`,
     sources,
-    checkedThrough: closed[0] ?? null,
+    checkedThrough,
     inputs: [],
   };
 }

@@ -1172,6 +1172,69 @@ describe("provenanceFor — a category total", () => {
   });
 
   /*
+   * 🔴 A COUNT LEFT THE COMPARISON HERE TOO. `footingThrough` is the rule the
+   * net worth date reads — an account resting on a balance he TYPED bounds the
+   * picture at the day before nothing stands under it — and this path compared
+   * `verifiedThrough` alone, so a count-only account dropped out of the bound
+   * altogether. Every summed total holding one of its rows then dated itself
+   * past the day the trust card beside it calls unchecked. Measured 2026-09-22
+   * on a copy of the real ledger: /categories/Car Payment for August 2026 sums
+   * the $5,000.00 down payment out of Cash on Hand with one Chase Checking row,
+   * and read "Checked through 2026-08-12" — two days past Aug 11, which the
+   * same app gives as the day nothing checks Cash on Hand any more.
+   */
+  test("an account resting on his count bounds a summed total where the count stops standing", () => {
+    const cat = addCategory("c-food", "Fixture Food");
+
+    const coh = addAccount("coh", "Cash on Hand", "checking");
+    addAnchor(coh, "2026-08-03", "manual");
+    addDays(coh, [
+      { day: "2026-08-03", basis: "anchored" },
+      { day: "2026-08-05", basis: "carried" },
+      { day: "2026-08-11", basis: "derived_unverified" },
+    ]);
+    categorize(addTxn(coh, "2026-08-11"), cat);
+
+    const sofi = addAccount("sofi", "SoFi Checking", "checking");
+    addDays(sofi, [
+      { day: "2026-08-20", basis: "anchored" },
+      { day: "2026-08-21", basis: "derived" },
+    ]);
+    categorize(addTxn(sofi, "2026-08-21"), cat);
+
+    const p = provenanceFor(bundle.db, { kind: "categorySpend", categoryId: cat, from: "2026-08-01", to: "2026-08-31" })!;
+    expect(p.checkedThrough).toBe("2026-08-10");
+    // and the date says whose word it is, in net worth's own words
+    expect(p.headline).toMatch(
+      / The date it is checked through, Aug 10, 2026, is the last day Cash on Hand rests on the balance you counted — your word, not a check\.$/,
+    );
+    // one ledger, one day, one rule — net worth already answers it this way
+    expect(provenanceFor(bundle.db, { kind: "netWorth", day: "2026-09-16" })!.checkedThrough).toBe("2026-08-10");
+  });
+
+  /**
+   * ⚠️ …and a count still never DATES a total on its own. With nothing checked
+   * underneath it there is no "Checked through" to pull back, and printing his
+   * count's day there is the reading the /accounts work took out ("a balance he
+   * typed checks nothing"). The bound only ever limits a check.
+   */
+  test("a total standing on his count alone still dates no check", () => {
+    const cat = addCategory("c-food", "Fixture Food");
+    const coh = addAccount("coh", "Cash on Hand", "checking");
+    addAnchor(coh, "2026-08-03", "manual");
+    addDays(coh, [
+      { day: "2026-08-03", basis: "anchored" },
+      { day: "2026-08-05", basis: "carried" },
+      { day: "2026-08-11", basis: "derived_unverified" },
+    ]);
+    categorize(addTxn(coh, "2026-08-11"), cat);
+
+    const p = provenanceFor(bundle.db, { kind: "categorySpend", categoryId: cat, from: "2026-08-01", to: "2026-08-31" })!;
+    expect(p.checkedThrough).toBeNull();
+    expect(p.headline).not.toMatch(/checked through/i);
+  });
+
+  /*
    * 🔴 THE BADGE PRINTED RAW INTEGERS. `/accounts/<Robinhood Cash>` read "2,365
    * transactions landed in Robinhood Cash since it opened" beside a badge reading
    * "2364 of 2365 checked" on 2026-09-14 — one count spelled two ways on one
