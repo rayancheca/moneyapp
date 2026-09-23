@@ -277,7 +277,9 @@ export interface RestoreSnapshotData {
   transactionsAfter: number | null;
   /**
    * Imported files the restored ledger still has no record of what they print, after the restore recorded what it
-   * could (`recordImportedFiles`) — 0 when the snapshot's records were whole or are now.
+   * could (`recordImportedFiles`) — 0 when the snapshot's records were whole or are now. A file read at a version its
+   * profile has moved past is counted here whatever the snapshot held: no backfill can read it, so the restore cannot
+   * put it right either, and the count says so rather than leaving it out.
    */
   filesUnrecorded: number;
 }

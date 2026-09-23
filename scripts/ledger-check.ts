@@ -376,19 +376,40 @@ for (const [name, list] of Object.entries(valueAnchors)) {
  * way back to an older ledger needs the three backfills, in this order.
  */
 const unrecorded = filesWithoutPrintedLines(db);
-console.log(`import records: ${unrecorded.length} parsed file(s) read at their profile's current version with no record of what they print`);
-const recordFailures =
-  unrecorded.length === 0
+const backfillable = unrecorded.filter((f) => f.backfillCanRead);
+/*
+ * 🔴 …and the files the backfills CANNOT read. This line counted only files at their profile's CURRENT version, so
+ * the 34 live files at an older version were in neither the number nor the failure: no record of what they print, no
+ * backfill that can make one, and nothing said (measured on a copy of the real ledger, 2026-09-22 — the Discover CSV
+ * at v1 against a v2 profile, 30 Robinhood brokerage statements at v3 and 3 at v4 against v5; the check printed 0 and
+ * exited 0). They are NAMED here, because naming them is all this check can honestly do: only a re-read of the file,
+ * at the version the profile has now, records what it prints, and whether to re-read is the owner's call — it
+ * re-derives the account's categories (`engineCategoryCarry`).
+ */
+const beyondBackfills = unrecorded.filter((f) => !f.backfillCanRead);
+const named = (files: readonly { fileName: string }[]) =>
+  `${files.slice(0, 3).map((f) => f.fileName).join(", ")}${files.length > 3 ? ", …" : ""}`;
+console.log(
+  `import records: ${unrecorded.length} parsed file(s) with no record of what they print` +
+    ` — ${backfillable.length} the backfills can read, ${beyondBackfills.length} read at a version their profile has moved past`,
+);
+const recordFailures = [
+  ...(backfillable.length === 0
     ? []
     : [
-        `${unrecorded.length} imported file(s) have no record of what they print (${unrecorded
-          .slice(0, 3)
-          .map((f) => f.fileName)
-          .join(", ")}${unrecorded.length > 3 ? ", …" : ""}) — a ledger older than its records. Before any un-import, run:\n` +
+        `${backfillable.length} imported file(s) have no record of what they print (${named(backfillable)}) — a ledger older than its records. Before any un-import, run:\n` +
           "    pnpm tsx scripts/record-account-numbers.ts --db=<ledger> --confirm\n" +
           "    pnpm tsx scripts/record-statement-copies.ts --db=<ledger> --confirm\n" +
           "    pnpm tsx scripts/record-printed-lines.ts --db=<ledger> --confirm",
-      ];
+      ]),
+  ...(beyondBackfills.length === 0
+    ? []
+    : [
+        `${beyondBackfills.length} imported file(s) were read at a version their profile has moved past and have no record of what they print (${named(beyondBackfills)}). ` +
+          "The backfills read a file only at the version that imported it, so they cannot cover these: un-importing any file whose rows one of them also prints loses those rows. " +
+          "Only a re-read of the file records it — re-upload it deliberately, and read its account's categories afterwards.",
+      ]),
+];
 
 const observation: LedgerObservation = {
   accounts: accounts.map((a) => a.name),

@@ -162,11 +162,41 @@ describe("the records of what imported files print, for a ledger that has the fi
     });
   });
 
-  test("a file read at a version its profile has moved past is not named: its re-read records it", async () => {
+  /**
+   * 🔴 The rule counted only files at their profile's CURRENT version, so a file the profile has moved past was not
+   * named at all — and the backfills skip it too (`reread.ts`: a profile keeps one implementation, its current one).
+   * Nothing records what those files print and nothing says so: on the real ledger, 2026-09-22, 34 live files sat
+   * there (the Discover CSV at v1, 30 Robinhood brokerage statements at v3 and 3 at v4) while `pnpm ledger-check`
+   * printed "0 parsed file(s) ... with no record of what they print" and exited 0.
+   */
+  test("a file read at a version its profile has moved past is named too, as one the backfills cannot read", async () => {
     await ledger();
     forgetRecords();
     profile.version = 2;
-    expect(filesWithoutPrintedLines(bundle.db)).toEqual([]);
+
+    expect(filesWithoutPrintedLines(bundle.db).map((f) => `${f.fileName} ${f.backfillCanRead ? "backfill" : "beyond"}`).sort()).toEqual(
+      [MARCH, MARCH_AGAIN, APRIL, EXPORT].map((f) => `${f.name} beyond`).sort(),
+    );
+    // …and the backfills leave them where they are: only a re-read of the file records what it prints
     expect(await recordImportedFiles(bundle)).toMatchObject({ numbers: 0, copies: 0, printedLines: 0 });
+    expect(filesWithoutPrintedLines(bundle.db)).toHaveLength(4);
+  });
+
+  /** What the silence costs, in small: the protection the third test measures is the one these files do not have. */
+  test("until it is recorded, un-importing the first download takes the rows the second one prints", async () => {
+    const card = await ledger();
+    forgetRecords();
+    profile.version = 2;
+    const live = () =>
+      bundle.db
+        .select({ amountCents: transactions.amountCents, postedOn: transactions.postedOn })
+        .from(transactions)
+        .where(and(eq(transactions.accountId, card), ne(transactions.status, "superseded")))
+        .all();
+    const before = live().length;
+
+    unimportFile(bundle.db, fileId(MARCH));
+
+    expect(live().length).toBeLessThan(before);
   });
 });

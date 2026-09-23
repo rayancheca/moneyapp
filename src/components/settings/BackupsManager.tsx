@@ -97,11 +97,12 @@ export function BackupsManager({
           preRestoreName === null
             ? "No restore point was saved for this database."
             : `The state you replaced is saved as ${preRestoreName}.`;
-        // a snapshot older than the import records: what could not be read again is not safe to un-import yet
+        // a snapshot older than the import records: what could not be read again is not safe to un-import yet — and a
+        // file read at a version its profile has moved past is counted here too, which no backfill can put right
         const unrecorded =
           filesUnrecorded === 0
             ? ""
-            : ` ${filesUnrecorded} imported ${filesUnrecorded === 1 ? "file has" : "files have"} no record of what ${filesUnrecorded === 1 ? "it prints" : "they print"} — don’t un-import until the record backfills have run.`;
+            : ` ${filesUnrecorded} imported ${filesUnrecorded === 1 ? "file has" : "files have"} no record of what ${filesUnrecorded === 1 ? "it prints" : "they print"} — run \`pnpm ledger-check\`, which names them, before un-importing anything.`;
         toast({
           title: `Restored ${restoredFrom}`,
           description: `${saved}${unrecorded}`,

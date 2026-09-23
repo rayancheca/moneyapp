@@ -25,15 +25,29 @@ const LIVE_FILE = ["parsed", "parsed_with_claude"] as const;
 export interface UnrecordedFile {
   id: string;
   fileName: string;
+  /**
+   * Whether the three backfills can still read it. They read a file only at the version that imported it
+   * (`reread.ts`), and a profile carries ONE implementation — its current one — so a file read at an older version is
+   * beyond them: what it prints is recorded by a re-read of the file itself, at the version the profile has now, and
+   * by nothing else. Re-reading it at today's version and calling that a record of what it printed would be a record
+   * of lines the file never printed here.
+   */
+  backfillCanRead: boolean;
 }
 
 /**
- * Parsed files read at their profile's current version with no record of what they print. The import records every
- * statement it reads — a file whose every line another row absorbed included, which is the file an un-import must not
- * forget — so on a ledger whose records are whole this is empty: a file read at an older version has none until its
- * re-read, and the backfill reads a file only at the version that imported it. Left out: a file that wrote nothing and
- * withheld a section (it may have read no statement at all). Measured on a copy of the real ledger with the backfills
- * applied, 2026-09-16: 238 current files recorded, 34 at an older version, none missing; before the backfills, 238 missing.
+ * Parsed files with no record of what they print, each saying whether a backfill can still read it. The import records
+ * every statement it reads — a file whose every line another row absorbed included, which is the file an un-import
+ * must not forget — so on a ledger whose records are whole this is empty. Left out: a file that wrote nothing and
+ * withheld a section (it may have read no statement at all).
+ *
+ * 🔴 This named only files at their profile's CURRENT version, so a file the profile had moved past was not named at
+ * all — and the backfills skip it too, which is the pair that made the silence: no record, no way to make one, and
+ * nothing said. On a copy of the real ledger, 2026-09-22, 34 live files sat there (the Discover CSV at v1, 30
+ * Robinhood brokerage statements at v3 and 3 at v4, against profiles at v2 and v5) while `pnpm ledger-check` printed
+ * 0 and exited 0. Un-importing any file whose rows one of those 34 also prints loses them, because the hand-over
+ * (`printerHandOvers`) knows a printer only by its record. Measured with the backfills applied, 2026-09-16: 238
+ * current files recorded, none missing; before the backfills, 238 missing.
  */
 export function filesWithoutPrintedLines(db: AppDatabase): UnrecordedFile[] {
   const current = new Map(PROFILES.map((p) => [p.id, p.version] as const));
@@ -51,8 +65,11 @@ export function filesWithoutPrintedLines(db: AppDatabase): UnrecordedFile[] {
     )
     .orderBy(importFiles.importedAt, importFiles.id)
     .all()
-    .filter((f) => f.profile !== null && current.get(f.profile) === f.version)
-    .map(({ id, fileName }) => ({ id, fileName }));
+    .map(({ id, fileName, profile, version }) => ({
+      id,
+      fileName,
+      backfillCanRead: profile !== null && current.get(profile) === version,
+    }));
 }
 
 export interface RecordedFiles {
