@@ -2420,6 +2420,25 @@ function withheldOutcome(db: AppDatabase, section: WithheldSection): WithheldOut
  * rows sit under a lower-fidelity file once an un-import hands them to one that prints them (`printed-lines`); on a
  * copy of the real ledger, 2026-09-16, re-importing Discover-AllAvailable-20260710.csv that way took Discover from
  * 1,044 active rows to 1,039 and put three periods into gap.
+ *
+ * 🔴 …under the day the charge was MADE, as `identityWeight` reads it: a row that says another day than the line is
+ * the next charge along, and ranks under one that agrees. The posted day and the words decided alone, and two visits
+ * to one vending machine are worded by how each file spells the machine, not by which visit it was. Chase Sapphire
+ * prints CPI*CANTEEN VENDING −$1.25 made 07-08 and −$1.25 made 07-09, both posted 07-09; an activity file printing
+ * only the 07-09 charge took the 07-08 row, whose words its own read the closer, so the charge the owner made on the
+ * 8th left the ledger and the 9th was recorded twice — the same money either way, so the period still reconciled and
+ * nothing said so (found by the one-caller sweep, 2026-09-22).
+ *
+ * ⚠️ The day ranks UNDER the hash, and a row that DISAGREES about it still ranks last rather than being refused, where
+ * `identityWeight` scores it 0 and absorbs nothing. Both differences are deliberate.
+ * Under the hash, because a `dedupe_hash` the line will write is a row the line cannot coexist with: retire the other
+ * charge's row instead and the insert is deduped against this one, so the file writes nothing and the retired charge
+ * simply leaves — measured on this fixture with the two clauses the other way round, −$1.25 of a −$2.50 day.
+ * Not refused, because of `placeInsidePeriod`: a statement line printed before its period opens is stored on the
+ * period's first day with the printed day as its `transacted_on`, invented where the source never stated one, and no
+ * column records which it is (the same gap `printed-lines`' `weight` documents). Refusing that row would leave the
+ * line to be written a second time — the same money twice. Ranking it last cannot: where a row agrees, that row is
+ * taken over instead, and where none does the takeover is the one it always was.
  */
 function pickTakeoverVictim(
   tx: AppDatabase,
@@ -2455,7 +2474,13 @@ function pickTakeoverVictim(
   const sameLine = (c: typeof transactions.$inferSelect) => (c.dedupeHash === hash ? 1 : 0);
   const ranked = candidates
     .map((c) => ({ c, s: descriptionScore(c.normalizedDescription, incoming) }))
-    .sort((a, b) => sameLine(b.c) - sameLine(a.c) || b.s - a.s || a.c.id.localeCompare(b.c.id));
+    .sort(
+      (a, b) =>
+        sameLine(b.c) - sameLine(a.c) ||
+        identityWeight(t, b.c) - identityWeight(t, a.c) ||
+        b.s - a.s ||
+        a.c.id.localeCompare(b.c.id),
+    );
   return ranked[0]!.s > 0 ? ranked[0]!.c : undefined;
 }
 

@@ -270,6 +270,73 @@ describe("structured imports", () => {
     expect(starbucks.map((r) => r.status).sort()).toEqual(["active", "superseded"]);
   });
 
+  /**
+   * ⛔ A line and a row that BOTH say which day the charge was made and disagree are two charges, not one
+   * (`identityWeight`): every source that fills `transacted_on` fills it with the real transaction day. The takeover
+   * asked only the posted day and then the words, so where a day prints two charges of one amount the words decided —
+   * and two visits to one vending machine are worded by how each file spells the machine, not by which visit it was.
+   *
+   * 🔴 Chase Sapphire prints CPI*CANTEEN VENDING −$1.25 made 07-08 and −$1.25 made 07-09, both posted 07-09. The
+   * activity file printing only the 07-09 charge took the 07-08 row, whose words its own read the closer, so the
+   * charge the owner made on the 8th left the ledger and the 9th was recorded twice — for the same money, so the
+   * period still reconciled and nothing said so.
+   */
+  test("the takeover retires the row made on the line's transaction day, not the other charge that posted with it", async () => {
+    const HINT: AccountHint = { institution: "Chase", type: "checking", last4: "4207" };
+    const VENDING = { amountCents: -125, postedOn: "2026-07-09" };
+    const STATEMENT: ImportInput = { name: "takeover-transaction-day.csv", buffer: Buffer.from("statement") };
+    const ACTIVITY: ImportInput = { name: "takeover-transaction-day.ofx", buffer: Buffer.from("<OFX> activity") };
+    const vendingProfile: ParserProfile = {
+      id: "test-takeover-transaction-day",
+      version: 1,
+      matches: (f) => f.name === STATEMENT.name || f.name === ACTIVITY.name,
+      parse: (f) =>
+        f.name === STATEMENT.name
+          ? [
+              {
+                accountHint: HINT,
+                // two visits to one machine, posted together; the statement spells the 9th's terminal the longer way
+                txns: [
+                  { ...VENDING, transactedOn: "2026-07-08", rawDescription: "CPI*CANTEEN VENDING" },
+                  { ...VENDING, transactedOn: "2026-07-09", rawDescription: "CPI*CANTEEN VENDING SVC" },
+                ],
+              },
+            ]
+          : [
+              {
+                accountHint: HINT,
+                // the activity file prints the 9th's charge, in its own words: closer to the 8th's line than to the 9th's
+                txns: [{ ...VENDING, transactedOn: "2026-07-09", rawDescription: "CPI*CANTEEN VENDING MIAMI FL" }],
+              },
+            ],
+    };
+    PROFILES.unshift(vendingProfile);
+    try {
+      await importStatementFiles(bundle.db, [STATEMENT]);
+      const [taken] = await importStatementFiles(bundle.db, [ACTIVITY]);
+      expect(taken).toMatchObject({ status: "parsed", supersededTakeover: 1 });
+    } finally {
+      PROFILES.splice(PROFILES.indexOf(vendingProfile), 1);
+    }
+
+    const account = bundle.db.select().from(accounts).all().find((a) => a.last4 === "4207")!;
+    const live = bundle.db
+      .select()
+      .from(transactions)
+      .where(and(eq(transactions.accountId, account.id), ne(transactions.status, "superseded")))
+      .all();
+    // both charges are still here, each on the day it was made — the activity file took over the 9th's row only
+    expect(live.map((r) => r.transactedOn).sort()).toEqual(["2026-07-08", "2026-07-09"]);
+    // …and the day still holds both: equal money is what hides a wrong victim, never what catches one
+    expect(live.reduce((sum, r) => sum + r.amountCents, 0)).toBe(-250);
+    const retired = bundle.db
+      .select()
+      .from(transactions)
+      .where(and(eq(transactions.accountId, account.id), eq(transactions.status, "superseded")))
+      .all();
+    expect(retired.map((r) => r.transactedOn)).toEqual(["2026-07-09"]);
+  });
+
   test("an unrecognised file fails with a reason, and a scanned PDF says so specifically", async () => {
     // a real PDF header, but no extractable text and no known layout
     const scanned: ImportInput = { name: "scan.pdf", buffer: Buffer.from("%PDF-1.4\nnot really a pdf") };
