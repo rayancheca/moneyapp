@@ -263,6 +263,26 @@ Second round (memory `moneyapp-owner-decisions-2026-09-15`, same file):
    figure. The levelled wording (your ledger's ordinary case) is byte-identical.
    ⏳ Half-built and left as a patch: `scratchpad/five-week-wip.patch` (arrears + unbanked-income + a new
    `services/income-candidates.ts`) — the fixer died before finishing; do not apply it unverified.
+26. ❓ OPEN — **34 of your files have no record of what they print, and no backfill can make one.** They were read
+   at a parser version their profile has moved past: `Discover-AllAvailable-20260710.csv` (v1, profile v2) and 33
+   Robinhood brokerage statements (v3/v4, profile v5). Un-importing any file whose rows one of them also prints
+   loses those rows. `ledger-check` now NAMES them on every run as a warning (it does not fail: nothing you can run
+   clears them). (a) **Re-upload the 34** so the records exist — the re-read re-derives those accounts' categories,
+   which last time moved Robinhood Agentic's +$26.64 leg to Internal Transfer and nudged /summary's 2026 return
+   33.87% → 33.81%; or (b) **leave them** and treat the warning as a standing "do not un-import anything on
+   Discover or Robinhood Brokerage".
+27. ❓ OPEN — **the agent's dividends on the other three surfaces.** /summary now refuses them (your 09-16 answer),
+   and so does its cash-interest line. /spending's "Income" card, /budgets' "$X in so far" header and the
+   dashboard's attribution bridge still count a dividend paid into Robinhood Agentic as money you received. The
+   bridge must stay exhaustive (it explains every dollar of net-worth change), so this is not one rule for all
+   three: (a) keep them counted as money in but not as YOUR investment income (today's split), or (b) exclude the
+   agent's income everywhere except the bridge, which would name it separately.
+28. ❓ OPEN, minor — three judgement calls the fixers left rather than guess: when a better-dated file and the only
+   candidate row disagree about the day a charge was made, should a takeover still re-date your charge (invisible,
+   the money matches) or refuse and show a duplicate to resolve? When a transfer's partner is orphaned by deleting
+   the other leg, should it keep the Transfer category until the detector re-pairs it (today's behaviour, matching
+   un-import) or lose it? And should a summed total that rests only on a balance you typed print no date at all
+   (today) or print the day your count stops standing, the way net worth does?
 
 **B. Waiting on an event:**
 - **The Wells Fargo ····5481 statement covering early September:** trial-import → import →
@@ -271,6 +291,12 @@ Second round (memory `moneyapp-owner-decisions-2026-09-15`, same file):
   two-account build's runbook creates the Agentic brokerage account and reads positions (⏳).
 
 **C. Defects queued (no decision needed):**
+- ⚠️ (flake, seen once in ~12 gate runs, 2026-09-23) `e2e/networth-bridge.spec.ts:105` failed at its own restore
+  step — after switching the hero back, `getByRole('slider', {name: /Net worth over time/})` was not found; the
+  table assertions before it passed. The spec passes alone (4/4) and the very next full gate was 602/602. Its own
+  comment warns that leaving either toggle behind hands every later spec a dashboard with no net-worth chart, so
+  suspect the persisted view state, not the bridge.
+
 - ⛔ **ONE-CALLER SWEEP, 2026-09-22 — 12 HIGH/MEDIUM second surfaces, most with probe evidence, NOT yet fixed.**
    The rules added in the import rebuild were wired into the path that exposed them; these are the other paths that
    still answer the old way. Full evidence: session scratchpad `one-caller-candidates.json` (and the workflow
