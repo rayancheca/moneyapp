@@ -187,15 +187,22 @@ export function waitByRowsAgain(tx: AppDatabase, rowIds: readonly string[]): voi
 }
 
 /**
- * Each lost leg claims one candidate: same account, posted day and amount first, then transaction day and amount. A leg
- * no candidate matches is left out of the result.
+ * Each lost leg claims one candidate: same account and amount, and the day the charge was MADE first, then the posted
+ * day. A leg no candidate matches is left out of the result.
+ *
+ * ⛔ Never a candidate that contradicts the leg's transaction day: every source that fills it fills it with the real
+ * one, so two records of ONE charge never disagree about it (`identityWeight`, `claimCarry`).
+ * 🔴 The posted day came first and nothing refused a contradiction. A later download posts the leg on its own day, so
+ * the leg's posted day is a NEIGHBOURING charge of the same money: the returning leg the owner had linked by hand was
+ * passed over for the neighbour, and his pair came back around money that was never his transfer (the sweep of
+ * 2026-09-22, beside the same rule in the attribute memory).
  */
 function claim(lost: readonly Kept[], candidates: readonly Row[], taken: ReadonlySet<string>): Map<string, Row> {
   const held = new Set(taken);
   const claimed = new Map<string, Row>();
   const lenses: ((k: Kept, r: Row) => boolean)[] = [
-    (k, r) => k.postedOn === r.postedOn,
     (k, r) => k.transactedOn !== null && k.transactedOn === r.transactedOn,
+    (k, r) => k.postedOn === r.postedOn && (k.transactedOn === null || r.transactedOn === null || k.transactedOn === r.transactedOn),
   ];
   for (const leg of lost) {
     let winner: Row | undefined;

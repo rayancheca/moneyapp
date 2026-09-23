@@ -66,6 +66,19 @@ const SECTIONS: Record<string, ParsedStatement[]> = {
   "export miami": [{ accountHint: CHECKING, txns: [{ ...COFFEE, rawDescription: "COFFEE ROASTERS #12 MIAMI FL" }] }],
   // the savings side of the transfer he linked by hand
   partner: [{ accountHint: SAVINGS, txns: [SENT] }],
+  // …the same leg, on a download that says which day it was made
+  "partner dated": [{ accountHint: SAVINGS, txns: [{ ...SENT, transactedOn: "2026-03-04" }] }],
+  // …and a later download that posts it 03-07, beside a NEIGHBOURING credit of the same money made 03-05 and posted
+  // on the day the leg used to be posted
+  "partner again": [
+    {
+      accountHint: SAVINGS,
+      txns: [
+        { postedOn: "2026-03-07", transactedOn: "2026-03-04", amountCents: 1000, rawDescription: "TRANSFER TO CHECKING" },
+        { postedOn: "2026-03-05", transactedOn: "2026-03-05", amountCents: 1000, rawDescription: "DEPOSIT AT BRANCH" },
+      ],
+    },
+  ],
   // a statement over both months: two of its lines are one download's, the third the other's
   "statement q1": [
     {
@@ -118,6 +131,8 @@ const PART_CD = file("part-cd", "part cd");
 const PART_MOVIE = file("part-movie", "part movie");
 const MIAMI = file("export-miami", "export miami");
 const PARTNER = file("partner", "partner");
+const PARTNER_DATED = file("partner-dated", "partner dated");
+const PARTNER_AGAIN = file("partner-again", "partner again");
 
 beforeEach(() => {
   dir = fs.mkdtempSync(path.join(os.tmpdir(), "moneyapp-kept-by-printers-"));
@@ -735,5 +750,34 @@ describe("a held row that is a transfer leg waits by that row again", () => {
       importFileId: fileId(EXPORT_AGAIN),
     });
     expect(waiting().map((l) => l.transactionId).filter((id) => id !== null)).toEqual([coffee.id]);
+  });
+
+  /**
+   * 🔴 The lost leg claimed a candidate by the posted day first, and no lens refused one that contradicts the day the
+   * leg says the charge was made (`claim`, unimported-transfers.ts) — the same rule the attribute memory answered the
+   * old way (`claimCarry`, fixed 2026-09-22). A later download posts the leg on its own day, so the leg's posted day
+   * is a NEIGHBOURING credit's: his pair came back around the branch deposit, and the transfer he linked by hand was
+   * left pointing at money that was never his transfer.
+   */
+  test("the returning leg is the one made on the leg's transaction day, not the neighbour that shares its posted day", async () => {
+    await importStatementFiles(bundle.db, [EXPORT]);
+    await importStatementFiles(bundle.db, [PARTNER_DATED]);
+    const coffee = live().find((r) => r.amountCents === COFFEE.amountCents)!;
+    const sent = bundle.db.select().from(transactions).where(eq(transactions.importFileId, fileId(PARTNER_DATED))).get()!;
+    for (const id of [coffee.id, sent.id]) {
+      bundle.db.update(transactions).set({ transferGroupId: "g-by-hand" }).where(eq(transactions.id, id)).run();
+    }
+    unimportFile(bundle.db, fileId(PARTNER_DATED));
+
+    await importStatementFiles(bundle.db, [PARTNER_AGAIN]);
+
+    const savings = bundle.db.select().from(transactions).where(eq(transactions.importFileId, fileId(PARTNER_AGAIN))).all();
+    const back = savings.find((r) => r.rawDescription === "TRANSFER TO CHECKING")!;
+    const deposit = savings.find((r) => r.rawDescription === "DEPOSIT AT BRANCH")!;
+    const group = bundle.db.select().from(transactions).where(eq(transactions.id, coffee.id)).get()!.transferGroupId;
+    expect(group).not.toBeNull();
+    expect(back.transferGroupId).toBe(group);
+    expect(deposit.transferGroupId).toBeNull();
+    expect(bundle.db.select().from(unimportedTransferLegs).all()).toEqual([]);
   });
 });
