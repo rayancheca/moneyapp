@@ -711,7 +711,11 @@ function bucketCarry(map: Map<string, CarryRow[]>, key: string, row: CarryRow): 
   else map.set(key, [row]);
 }
 
-/** A candidate on the posted day outranks every candidate on the transaction day, as claiming one at a time did. */
+/**
+ * A candidate that agrees on the day the charge was MADE outranks one that only shares the posted day — the order
+ * `identityWeight` scores the same two lenses in, for the same reason.
+ */
+const TRANSACTED_DAY_TIER = 16;
 const POSTED_DAY_TIER = 8;
 
 /** One line of a statement, as `claimCarry` weighs it against the prior-version rows. */
@@ -737,8 +741,13 @@ interface ClaimingLine {
  * Zelle from Adam Godina, whose hand-set Reimbursements landed on the +$20.00 from Lukas M Iera printed above it while
  * Adam's row came back blank, and `pnpm ledger-check` exited 0 either way.
  *
- * Posted day first, then transaction day to transaction day — the fallback `identityWeight` already makes, for the
- * same reason: a card statement prints the TRANSACTION day. 🔴 Keyed on the posted day alone, Chase Sapphire's
+ * The transaction day first, then the posted day — the order `identityWeight` already scores the two lenses in, for
+ * the same reason: a card statement prints the TRANSACTION day, and every source that fills it fills it with the real
+ * one, so two records of ONE charge never disagree about it. 🔴 Ranked the other way round, and with no clause
+ * refusing a line that contradicts the day a row says the charge was made, a record went to the NEIGHBOURING charge
+ * that happened to share its posted day: a later file posts a charge on its own day, so the owner's category and note
+ * came back on the charge printed beside his (`recallPool`, the sweep of 2026-09-22).
+ * 🔴 Keyed on the posted day alone, Chase Sapphire's
  * +$100.00 payment (posted 2026-07-01, transacted and printed 06/30) lost its transfer link and its note to a version
  * bump of 20260702-statements-9805-.pdf, and Chase Checking's −$100.00 was left grouped with a superseded row while
  * `ledger-check` exited 0 (measured on a copy of the real ledger, 2026-09-15). Exact days only, never a window: a
@@ -755,13 +764,16 @@ function claimCarry(pool: CarryPool, accountId: string, lines: readonly Claiming
   const candidates = lines.map(({ printed, hash }) => {
     const incoming = normalizeDescription(printed.rawDescription);
     const best = new Map<string, { row: CarryRow; weight: number; near: number }>();
-    const weigh = (key: string, tier: number): void => {
-      const bucket = (tier === POSTED_DAY_TIER ? pool.byPosted : pool.byTransacted).get(key);
+    const weigh = (map: Map<string, CarryRow[]>, key: string, tier: number): void => {
+      const bucket = map.get(key);
       if (bucket === undefined) return;
       const seat = seats.get(key) ?? 0;
       seats.set(key, seat + 1);
       bucket.forEach((row, place) => {
         if (pool.taken.has(row.id)) return;
+        // ⛔ both say which day the charge was made and they disagree: two charges, and the shared posted day proves
+        // nothing — the clause `identityWeight` and `duplicate-flags` hold for the same pair
+        if (printed.transactedOn !== undefined && row.transactedOn !== null && printed.transactedOn !== row.transactedOn) return;
         // an unchanged dedupe hash is proof of the same parsed row
         const score = row.dedupeHash === hash ? 4 : descriptionScore(row.normalizedDescription, incoming);
         if (score < minScore) return;
@@ -773,8 +785,10 @@ function claimCarry(pool: CarryPool, accountId: string, lines: readonly Claiming
         }
       });
     };
-    weigh(carryKey(accountId, printed.postedOn, printed.amountCents), POSTED_DAY_TIER);
-    if (printed.transactedOn !== undefined) weigh(carryKey(accountId, printed.transactedOn, printed.amountCents), 0);
+    weigh(pool.byPosted, carryKey(accountId, printed.postedOn, printed.amountCents), POSTED_DAY_TIER);
+    if (printed.transactedOn !== undefined) {
+      weigh(pool.byTransacted, carryKey(accountId, printed.transactedOn, printed.amountCents), TRANSACTED_DAY_TIER);
+    }
     return [...best.values()].sort((a, b) => b.weight - a.weight || a.near - b.near || a.row.id.localeCompare(b.row.id));
   });
   const holder = new Map<string, number>();

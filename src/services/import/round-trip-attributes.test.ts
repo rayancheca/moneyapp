@@ -100,6 +100,32 @@ const SECTIONS: Record<string, ParsedStatement[]> = {
     },
   ],
   partnerReversed: [{ accountHint: CARD, txns: [{ postedOn: "2026-05-25", transactedOn: "2026-05-25", amountCents: -5100, rawDescription: "KIOSK N" }] }],
+  // one charge, made 06-08 and posted 06-12…
+  crossed: [{ accountHint: CARD, txns: [{ postedOn: "2026-06-12", transactedOn: "2026-06-08", amountCents: -4200, rawDescription: "ZQX ORCHARD CAFE" }] }],
+  // …and an export that posts it 06-14, beside a NEIGHBOURING charge of the same money made 06-11 and posted on the
+  // statement's posted day. Only the transaction day tells the two apart: the words share a prefix either way
+  crossedReport: [
+    {
+      accountHint: CARD,
+      txns: [
+        { postedOn: "2026-06-14", transactedOn: "2026-06-08", amountCents: -4200, rawDescription: "ZQX ORCHARD CAFE" },
+        { postedOn: "2026-06-12", transactedOn: "2026-06-11", amountCents: -4200, rawDescription: "ZQX ORCHARD CART" },
+      ],
+    },
+  ],
+  // the same, with the neighbour printed on its posted day alone: nothing contradicts the record, so only the order
+  // of the two lenses keeps the record on the charge it was made on
+  crossedUndated: [
+    {
+      accountHint: CARD,
+      txns: [
+        { postedOn: "2026-06-14", transactedOn: "2026-06-08", amountCents: -4200, rawDescription: "ZQX ORCHARD CAFE" },
+        { postedOn: "2026-06-12", amountCents: -4200, rawDescription: "ZQX ORCHARD CART" },
+      ],
+    },
+  ],
+  // the neighbour alone, on the record's posted day: the charge the record belongs to is in no file yet
+  crossedAlone: [{ accountHint: CARD, txns: [{ postedOn: "2026-06-12", transactedOn: "2026-06-11", amountCents: -4200, rawDescription: "ZQX ORCHARD CART" }] }],
 };
 SECTIONS["<OFX> statement"] = SECTIONS.statement!;
 
@@ -119,6 +145,10 @@ const PAIR = file("pair");
 const PARTNER = file("partner");
 const PAIR_REVERSED = file("pairReversed");
 const PARTNER_REVERSED = file("partnerReversed");
+const CROSSED = file("crossed");
+const CROSSED_REPORT = file("crossedReport");
+const CROSSED_UNDATED = file("crossedUndated");
+const CROSSED_ALONE = file("crossedAlone");
 /** the statement in a format more trusted than any CSV (`FORMAT_PRIORITY`) */
 const OFX_STATEMENT: ImportInput = { name: `${PREFIX}statement.ofx`, buffer: Buffer.from("<OFX> statement") };
 
@@ -454,6 +484,47 @@ describe("a round trip gives back what the owner set on the rows it removed", ()
     expect(byWords("ZQX KIOSK NORTH")).toMatchObject({ notes: "the kiosk" });
     expect(byWords("ALPHA BAKERY 3")).toMatchObject({ notes: "the bakery" });
     expect(records()).toEqual([]);
+  });
+
+  /*
+   * 🔴 The record was claimed on the posted day first, and no clause refused a line that disagrees about the day the
+   * charge was MADE (`claimCarry`). A later file posts a charge on its own day, so the record's posted day is the
+   * NEIGHBOURING charge's: the export's 06-12 cart charge outranked the 06-08 cafe charge it was made on, and the
+   * owner's category and note came back on the cart while the cafe came back bare. `identityWeight` reads the two
+   * days this way round already, and for the same reason: every source fills the transaction day with the real one,
+   * so two records of ONE charge never disagree about it.
+   */
+  test.each([
+    ["the neighbour prints its own transaction day", CROSSED_REPORT],
+    ["the neighbour prints its posted day alone", CROSSED_UNDATED],
+  ])("a record goes to the line made on its transaction day, not to the neighbouring charge that shares its posted day: %s", async (_, report) => {
+    await importStatementFiles(bundle.db, [CROSSED]);
+    const snacks = ownCategory("Snacks");
+    set("ZQX ORCHARD CAFE", { categoryId: snacks, categorizationSource: "user", categorizationConfidence: 1, needsReview: false, notes: "lunch with Carson" });
+    unimportFile(bundle.db, fileId(CROSSED));
+
+    const [back] = await importStatementFiles(bundle.db, [report]);
+
+    expect(back).toMatchObject({ status: "parsed", inserted: 2, givenBack: 1 });
+    expect(byWords("ZQX ORCHARD CAFE")).toMatchObject({ categoryId: snacks, categorizationSource: "user", notes: "lunch with Carson" });
+    const cart = byWords("ZQX ORCHARD CART");
+    expect(cart.notes).toBeNull();
+    expect(cart.categorizationSource).not.toBe("user");
+    expect(cart.categoryId).not.toBe(snacks);
+    expect(records()).toEqual([]);
+  });
+
+  test("…and where only the neighbour is printed, the record waits: a line made on another day is another charge", async () => {
+    await importStatementFiles(bundle.db, [CROSSED]);
+    const snacks = ownCategory("Snacks");
+    set("ZQX ORCHARD CAFE", { categoryId: snacks, categorizationSource: "user", categorizationConfidence: 1, needsReview: false, notes: "lunch with Carson" });
+    unimportFile(bundle.db, fileId(CROSSED));
+
+    const [alone] = await importStatementFiles(bundle.db, [CROSSED_ALONE]);
+
+    expect(alone).toMatchObject({ status: "parsed", inserted: 1, givenBack: 0 });
+    expect(byWords("ZQX ORCHARD CART")).toMatchObject({ categoryId: null, categorizationSource: null, notes: null });
+    expect(records()).toEqual([{ notes: "lunch with Carson" }]);
   });
 
   /*
