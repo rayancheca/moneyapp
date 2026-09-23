@@ -1,4 +1,6 @@
+import { inArray } from "drizzle-orm";
 import type { AppDatabase } from "@/db/client";
+import { transactions } from "@/db/schema/transactions";
 import { todayIso } from "@/lib/dates";
 import { absorbIntoLiveSeries, loadRecomputeCtx, recomputeSeriesStats } from "./recurring";
 import { linkFirstPostings } from "./recurring-first-posting";
@@ -92,4 +94,22 @@ export function settleSeriesStats(
   db.transaction((tx) => {
     for (const id of ids) recomputeSeriesStats(tx, id, today, ctx);
   });
+}
+
+/**
+ * The series these rows are linked to — the settle scope for a caller that is
+ * about to take them out of the ledger, or has just put them back. Read while
+ * the rows are still there; a hard delete leaves nothing to ask.
+ */
+export function seriesOfTransactions(
+  db: AppDatabase,
+  transactionIds: readonly string[],
+): string[] {
+  if (transactionIds.length === 0) return [];
+  return db
+    .selectDistinct({ seriesId: transactions.recurringSeriesId })
+    .from(transactions)
+    .where(inArray(transactions.id, [...transactionIds]))
+    .all()
+    .flatMap((r) => (r.seriesId === null ? [] : [r.seriesId]));
 }

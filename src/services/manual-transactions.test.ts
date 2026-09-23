@@ -10,6 +10,7 @@ import { balanceAnchors, dailyBalances } from "@/db/schema/balances";
 import { categories } from "@/db/schema/categories";
 import { importFiles, statementPeriods } from "@/db/schema/imports";
 import { institutions } from "@/db/schema/institutions";
+import { recurringSeries } from "@/db/schema/recurring";
 import { transactions } from "@/db/schema/transactions";
 import { MAX_FINANCIAL_DATE } from "@/lib/date-window";
 import { dedupeHash } from "@/lib/hash";
@@ -22,6 +23,7 @@ import {
   editManualTransaction,
   isCashWallet,
 } from "./manual-transactions";
+import { attachTransactions } from "./recurring-links";
 
 let dir: string;
 let bundle: DbBundle;
@@ -519,5 +521,42 @@ describe("editManualTransaction — user-authored rows are correctable", () => {
       /postedOn must be between/,
     );
     expect(() => editManualTransaction(bundle.db, "nope", { amountCents: -1 })).toThrow(/Unknown transaction/);
+  });
+});
+
+/**
+ * A manual row can be the LAST posting a recurring series has — the cash rent,
+ * the cash weekly pay. Deleting it takes the charge out of the ledger, and the
+ * series' stored stats still describe the set it used to have.
+ */
+describe("deleting a manual row re-settles the series it was linked to", () => {
+  function confirmedMonthly(name: string): string {
+    return bundle.db
+      .insert(recurringSeries)
+      .values({ name, kind: "bill", cadence: "monthly", status: "confirmed", intervalDaysAvg: 30 })
+      .returning({ id: recurringSeries.id })
+      .get().id;
+  }
+
+  function lastMatchedOn(seriesId: string): string | null {
+    return bundle.db.select().from(recurringSeries).where(eq(recurringSeries.id, seriesId)).get()!.lastMatchedOn;
+  }
+
+  test("the series stops naming the posting the deletion removed", () => {
+    // 🔴 `last_matched_on` is written only by recomputeSeriesStats, which counts
+    // active rows — and this hard delete never called it, so the series went on
+    // reporting a charge that is gone. Same failure un-importing a file had.
+    const acct = makeCashWallet();
+    const base = { accountId: acct, amountCents: -60_000, description: "Cash rent" };
+    const june = addManualTransaction(bundle.db, { ...base, postedOn: "2026-06-01" });
+    const july = addManualTransaction(bundle.db, { ...base, postedOn: "2026-07-01" });
+    const august = addManualTransaction(bundle.db, { ...base, postedOn: "2026-08-01" });
+    const series = confirmedMonthly("Cash rent");
+    attachTransactions(bundle.db, series, [june, july, august]);
+    expect(lastMatchedOn(series)).toBe("2026-08-01");
+
+    deleteManualTransaction(bundle.db, august);
+
+    expect(lastMatchedOn(series)).toBe("2026-07-01");
   });
 });

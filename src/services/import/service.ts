@@ -27,7 +27,7 @@ import { recordWithheldSections, withheldSectionNotice } from "@/lib/import-file
 import { categorizeAll, detectTransfers } from "../categorize";
 import { rebuildAccount } from "../derivation";
 import { flagDuplicateCandidates } from "../duplicate-flags";
-import { linkRowsMadeActive, settleSeriesStats } from "../recurring-import-links";
+import { linkRowsMadeActive, seriesOfTransactions, settleSeriesStats } from "../recurring-import-links";
 import { detachTransferLegs, type StaleTransferLeg } from "../transfer-links";
 import {
   accountsOfTransactions,
@@ -1319,7 +1319,8 @@ export async function importStatementFiles(db: AppDatabase, files: ImportInput[]
     // 2026-09-14); a row the reconcile quarantined is not active and waits for
     // its gap to be accepted, which links it then.
     linkRowsMadeActive(db, [...rowIdsOfFiles(db, writtenFileIds).filter((id) => !refiled.has(id)), ...quarantinedBefore]);
-    // …and a series a record gave a link back to counts that charge again (`unimported-attributes`)
+    // …and a series a record gave a link back to counts that charge again (`unimported-attributes`) — as does one
+    // whose linked copy this read retired again for the kept side it brought back (`retireStandIn`)
     settleSeriesStats(db, batch.givenBackSeries);
     for (const accountId of touchedAccounts) rebuildAccount(db, accountId);
     // AFTER the reconcile, never before — but NOT to catch the rows the
@@ -1539,7 +1540,7 @@ interface BatchItem {
 interface BatchState {
   readonly touchedAccounts: Set<string>;
   readonly writtenFileIds: Set<string>;
-  /** the recurring series a record gave a link back to (`MemberWrite.series`) */
+  /** the recurring series a record gave a link back to, or a retired stand-in copy left (`MemberWrite.series`) */
   readonly givenBackSeries: Set<string>;
   /** the reads each file of this call retires, by its bytes: its reads in place under an older parser version */
   readonly staleBySha: ReadonlyMap<string, readonly string[]>;
@@ -1914,7 +1915,7 @@ async function importTurn(db: AppDatabase, head: BatchItem, batch: BatchState): 
 interface MemberWrite {
   readonly tally: FileOutcome;
   readonly accounts: Set<string>;
-  /** the recurring series a record gave a link back to — their stats settle once the batch has (`settleSeriesStats`) */
+  /** the recurring series a record gave a link back to, or whose copy a stand-in retire took out — settled once the batch has (`settleSeriesStats`) */
   readonly series: Set<string>;
 }
 
@@ -2148,7 +2149,9 @@ function writeMember(db: AppDatabase, member: ReadMember, carryPool: CarryPool, 
         return r === undefined ? [] : [r];
       });
       for (const { standIn, keptId } of claimKeptSides(accountId, fresh, returning)) {
-        retireStandIn(tx, accountId, standIn, keptId);
+        // the copy leaves replay: the series counting it settles with the batch
+        const copySeries = retireStandIn(tx, accountId, standIn, keptId);
+        if (copySeries !== null) write.series.add(copySeries);
       }
 
       // anchors: point-in-time ledger observations and statement balances
@@ -3045,8 +3048,10 @@ export function unimportFile(db: AppDatabase, importFileId: string): void {
     // ledger — link it the way an import would. Nothing else may be claimed.
     linkRowsMadeActive(db, [...restored, ...quarantinedBefore]);
     // …and the series whose rows just went: `last_matched_on` must not keep
-    // naming a posting that no longer exists
-    settleSeriesStats(db, seriesLosingRows);
+    // naming a posting that no longer exists — nor leave out one that is back,
+    // because a restored copy that ALREADY carried a link is not absorbed by
+    // the linking above, which claims unlinked rows only.
+    settleSeriesStats(db, [...seriesLosingRows, ...seriesOfTransactions(db, [...restored, ...quarantinedBefore])]);
     for (const accountId of scope) rebuildAccount(db, accountId);
     // removing a file can CLOSE another file's gap, and reconcileAccounts then
     // promotes that period's quarantined rows — the same seam as an import

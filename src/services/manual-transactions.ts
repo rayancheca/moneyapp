@@ -12,6 +12,7 @@ import { dedupeHash } from "@/lib/hash";
 import { normalizeDescription } from "@/lib/normalize";
 import { rebuildAccount } from "./derivation";
 import { accountsOfTransactions, restoreDuplicatesLosingTheirSurvivor } from "./duplicate-lifecycle";
+import { seriesOfTransactions, settleSeriesStats } from "./recurring-import-links";
 import { CASH_INSTITUTION_NAME, cashWalletIds, cashWalletInstitutionId, isCashWallet } from "./cash-wallet-rule";
 
 /** The wallet rule has its own module so the budgets page can ask it without importing db/backup (see cash-wallet-rule.ts). */
@@ -237,5 +238,13 @@ export function deleteManualTransaction(db: AppDatabase, id: string): void {
     for (const accountId of new Set([txn.accountId, ...accountsOfTransactions(db, restored)])) {
       rebuildAccount(db, accountId);
     }
+    // …and the series that just lost this row, or got a restored copy back:
+    // `last_matched_on` must not go on naming a posting that is gone, and must
+    // not omit one that is back. Read the deleted row's series BEFORE the
+    // delete (nothing is left to ask afterwards), the restored copies' after.
+    settleSeriesStats(db, [
+      ...(txn.recurringSeriesId === null ? [] : [txn.recurringSeriesId]),
+      ...seriesOfTransactions(db, restored),
+    ]);
   });
 }

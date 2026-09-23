@@ -21,6 +21,7 @@ import {
   resolveDuplicate,
   undoDuplicateResolution,
 } from "./duplicate-resolution";
+import { attachTransactions } from "./recurring-links";
 
 let dir: string;
 let bundle: DbBundle;
@@ -432,6 +433,29 @@ describe("a hard delete must not take the money with it", () => {
     expect(bundle.db.select().from(transactions).where(eq(transactions.id, partner)).get()!.transferGroupId).toBeNull();
   });
 
+  test("retiring the stand-in names the series that was counting the copy, so the import can settle it", () => {
+    // It runs inside the write transaction and cannot open one of its own, so
+    // it hands the series back to the batch (`settleSeriesStats`) instead. The
+    // copy leaves replay; a series still naming its posting would report a
+    // charge the ledger no longer counts.
+    const { a, b, candidateId } = flaggedPair();
+    resolveDuplicate(bundle.db, { candidateId, decision: "confirmed_duplicate", retiredTransactionId: b });
+    const seriesId = bundle.db
+      .insert(recurringSeries)
+      .values({ name: "CPI canteen", kind: "bill", cadence: "monthly", status: "confirmed" })
+      .returning({ id: recurringSeries.id })
+      .get().id;
+    bundle.db.transaction((tx) => {
+      restoreDuplicatesLosingTheirSurvivor(tx, [a]);
+      tx.delete(transactions).where(eq(transactions.id, a)).run();
+    });
+    bundle.db.update(transactions).set({ recurringSeriesId: seriesId }).where(eq(transactions.id, b)).run();
+    const [standIn] = standInsOn(bundle.db, accountId);
+    const back = insertTxn({ description: "CPI CANTEEN VENDING MIAMI" });
+
+    expect(retireStandIn(bundle.db, accountId, standIn!, back)).toBe(seriesId);
+  });
+
   test("the restored copy takes the kept row's transfer link when it has none", () => {
     const { a, b, candidateId } = flaggedPair();
     resolveDuplicate(bundle.db, { candidateId, decision: "confirmed_duplicate", retiredTransactionId: b });
@@ -514,5 +538,72 @@ describe("a hard delete must not take the money with it", () => {
     // the charge is still recorded exactly once, by the copy that remains
     expect(statusOf(b)).toBe("active");
     expect(isFlagged(b)).toBe(true);
+  });
+});
+
+/**
+ * Retiring a row takes it out of balance replay and out of every total — and a
+ * series linked to it went on counting it. `recomputeSeriesStats` reads active
+ * rows only, so a series must be re-settled whenever a linked row leaves the
+ * ledger or comes back, exactly as an un-import already does.
+ */
+describe("a retired or restored row re-settles its recurring series", () => {
+  function confirmedMonthly(name: string): string {
+    return bundle.db
+      .insert(recurringSeries)
+      .values({ name, kind: "bill", cadence: "monthly", status: "confirmed", intervalDaysAvg: 30 })
+      .returning({ id: recurringSeries.id })
+      .get().id;
+  }
+
+  function lastMatchedOn(seriesId: string): string | null {
+    return bundle.db.select().from(recurringSeries).where(eq(recurringSeries.id, seriesId)).get()!.lastMatchedOn;
+  }
+
+  /** A monthly series whose newest posting is the copy the owner is about to retire. */
+  function seriesEndingOnThePair(): { series: string; retire: string; candidateId: string } {
+    const { b, candidateId } = flaggedPair(); // both sides posted 2026-07-09
+    // the older postings live in the COPY's file, so un-importing the survivor's
+    // file below takes no linked row with it — only the restore matters
+    const may = insertTxn({ importFileId: fileB, postedOn: "2026-05-09" });
+    const june = insertTxn({ importFileId: fileB, postedOn: "2026-06-09" });
+    const series = confirmedMonthly("CPI canteen");
+    attachTransactions(bundle.db, series, [may, june, b]);
+    expect(lastMatchedOn(series)).toBe("2026-07-09");
+    return { series, retire: b, candidateId };
+  }
+
+  test("confirming the duplicate stops the series naming the charge it just retired", () => {
+    const { series, retire, candidateId } = seriesEndingOnThePair();
+
+    resolveDuplicate(bundle.db, { candidateId, decision: "confirmed_duplicate", retiredTransactionId: retire });
+
+    expect(statusOf(retire)).toBe("superseded");
+    expect(lastMatchedOn(series)).toBe("2026-06-09");
+  });
+
+  test("undoing the confirmation puts the charge back into the series' stats", () => {
+    const { series, retire, candidateId } = seriesEndingOnThePair();
+    resolveDuplicate(bundle.db, { candidateId, decision: "confirmed_duplicate", retiredTransactionId: retire });
+
+    undoDuplicateResolution(bundle.db, { candidateId });
+
+    expect(statusOf(retire)).toBe("active");
+    expect(lastMatchedOn(series)).toBe("2026-07-09");
+  });
+
+  test("the copy an un-import puts back counts again, even though it kept its link", () => {
+    // Un-import links the rows it makes active, but that claims UNLINKED rows
+    // only — a copy that was already attached to a series comes back carrying
+    // its link, and nothing would settle the series it rejoins.
+    const { series, retire, candidateId } = seriesEndingOnThePair();
+    resolveDuplicate(bundle.db, { candidateId, decision: "confirmed_duplicate", retiredTransactionId: retire });
+    expect(lastMatchedOn(series)).toBe("2026-06-09");
+
+    // the owner removes the file the SURVIVING copy came from
+    unimportFile(bundle.db, fileA);
+
+    expect(statusOf(retire)).toBe("active");
+    expect(lastMatchedOn(series)).toBe("2026-07-09");
   });
 });

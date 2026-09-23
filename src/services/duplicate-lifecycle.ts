@@ -257,11 +257,15 @@ export function claimKeptSides(
  *
  * Call it with the transaction that wrote the kept row, so no reader ever sees
  * the charge twice.
+ *
+ * Returns the series the copy was linked to, if any: the copy leaves replay, so
+ * that series must be re-settled once the batch has (`settleSeriesStats`) — this
+ * runs inside the write transaction and cannot open one of its own.
  */
-export function retireStandIn(db: AppDatabase, accountId: string, standIn: StandIn, keptId: string): void {
+export function retireStandIn(db: AppDatabase, accountId: string, standIn: StandIn, keptId: string): string | null {
   const copy = rowById(db, standIn.copy.id);
   const kept = rowById(db, keptId);
-  if (!copy || !kept || !isReplayStatus(copy.status)) return;
+  if (!copy || !kept || !isReplayStatus(copy.status)) return null;
   db.update(transactions)
     .set({ status: "superseded", transferGroupId: null })
     .where(eq(transactions.id, copy.id))
@@ -285,6 +289,7 @@ export function retireStandIn(db: AppDatabase, accountId: string, standIn: Stand
     .where(eq(duplicateCandidates.id, standIn.candidateId))
     .run();
   clearReviewIfSettled(db, [copy.id]);
+  return copy.recurringSeriesId;
 }
 
 /** Confirmed pairs that keep this row — it is their kept side, not their retired one. */

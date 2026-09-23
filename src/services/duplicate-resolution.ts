@@ -16,6 +16,8 @@ import { flagDuplicateCandidates } from "./duplicate-flags";
 // the same "nothing else still asks about it" a re-import asks when it retires a copy again
 import { clearReviewIfSettled } from "./duplicate-lifecycle";
 import { reconcileAccounts } from "./import/service";
+// the same settling point an un-import uses when a linked row leaves the ledger
+import { settleSeriesStats } from "./recurring-import-links";
 import { hasSplits } from "./transaction-splits";
 
 /**
@@ -65,6 +67,8 @@ interface PairSide {
   status: TransactionStatus;
   transferGroupId: string | null;
   normalizedDescription: string;
+  /** the series counting this row — its stats settle when the row leaves replay or returns */
+  recurringSeriesId: string | null;
 }
 
 function loadSide(db: AppDatabase, id: string): PairSide | undefined {
@@ -76,6 +80,7 @@ function loadSide(db: AppDatabase, id: string): PairSide | undefined {
       status: transactions.status,
       transferGroupId: transactions.transferGroupId,
       normalizedDescription: transactions.normalizedDescription,
+      recurringSeriesId: transactions.recurringSeriesId,
     })
     .from(transactions)
     .where(eq(transactions.id, id))
@@ -99,7 +104,10 @@ function loadSide(db: AppDatabase, id: string): PairSide | undefined {
  * That is why this has to be asked again here, per side, about the side the owner
  * actually chose to retire.
  */
-function isProvenByReconciliation(db: AppDatabase, side: PairSide): boolean {
+function isProvenByReconciliation(
+  db: AppDatabase,
+  side: Pick<PairSide, "accountId" | "postedOn">,
+): boolean {
   const proven = db.get<{ n: number }>(sql`
     SELECT COUNT(*) AS n
       FROM statement_periods p
@@ -219,6 +227,11 @@ export function resolveDuplicate(
     // duplicate question again about whatever the reconcile promoted.
     reconcileAccounts(db, [candidate.accountId]);
     rebuildAccount(db, candidate.accountId);
+    // …and the series that was counting the retired row: `recomputeSeriesStats`
+    // reads active rows only, so without this `last_matched_on` goes on naming
+    // a charge the ledger no longer counts — the failure an un-import already
+    // settles (`settleSeriesStats`).
+    settleSeriesStats(db, retired.recurringSeriesId === null ? [] : [retired.recurringSeriesId]);
     clearReviewIfSettled(db, [a.id, b.id]);
     flagDuplicateCandidates(db, [candidate.accountId]);
   });
@@ -296,6 +309,9 @@ export function undoDuplicateResolution(
     });
     reconcileAccounts(db, [candidate.accountId]);
     rebuildAccount(db, candidate.accountId);
+    // the row is back in replay, and its series counts that charge again — the
+    // same settle the retire needed, in the other direction
+    settleSeriesStats(db, retired.recurringSeriesId === null ? [] : [retired.recurringSeriesId]);
     reflagPair(db, candidate.transactionIdA, candidate.transactionIdB);
   });
 
@@ -460,14 +476,8 @@ function loadPairSide(db: AppDatabase, id: string): DuplicatePairSideRow | undef
     // A null import file is a hand-entered row, not an unknown one — saying so
     // is the difference between "you typed this" and "some file did".
     sourceLabel: row.sourceLabel ?? "Entered by hand",
-    provenByStatement: isProvenByReconciliation(db, {
-      id: row.id,
-      accountId: row.accountId,
-      postedOn: row.postedOn,
-      status: row.status,
-      transferGroupId: null,
-      normalizedDescription: "",
-    }),
+    // only the account and the day decide it — the rest of a pair side is not asked for
+    provenByStatement: isProvenByReconciliation(db, { accountId: row.accountId, postedOn: row.postedOn }),
   };
 }
 
