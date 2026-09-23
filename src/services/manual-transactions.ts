@@ -13,6 +13,7 @@ import { normalizeDescription } from "@/lib/normalize";
 import { rebuildAccount } from "./derivation";
 import { accountsOfTransactions, restoreDuplicatesLosingTheirSurvivor } from "./duplicate-lifecycle";
 import { seriesOfTransactions, settleSeriesStats } from "./recurring-import-links";
+import { detachTransferLegs, staleTransferLegs } from "./transfer-links";
 import { CASH_INSTITUTION_NAME, cashWalletIds, cashWalletInstitutionId, isCashWallet } from "./cash-wallet-rule";
 
 /** The wallet rule has its own module so the budgets page can ask it without importing db/backup (see cash-wallet-rule.ts). */
@@ -233,6 +234,17 @@ export function deleteManualTransaction(db: AppDatabase, id: string): void {
     let restored: string[] = [];
     db.transaction((tx) => {
       restored = restoreDuplicatesLosingTheirSurvivor(tx, [id]);
+      // A partner left alone in this row's group is unlinked, exactly as
+      // `unimportFile` unlinks the legs its delete leaves alone: `detectTransfers`
+      // pairs only rows whose group IS NULL, so a leg still pointing at a group
+      // whose other half is gone could never be paired again — and it would keep
+      // wearing the Transfer category for a move with no second half. Read AFTER
+      // the restore, because a restored copy takes the deleted row's link and is
+      // the second leg itself; a group that keeps two legs is still a group.
+      if (txn.transferGroupId !== null) {
+        const left = staleTransferLegs(tx, txn.transferGroupId, [id]);
+        if (left.length === 1) detachTransferLegs(tx, left);
+      }
       tx.delete(transactions).where(eq(transactions.id, id)).run();
     });
     for (const accountId of new Set([txn.accountId, ...accountsOfTransactions(db, restored)])) {

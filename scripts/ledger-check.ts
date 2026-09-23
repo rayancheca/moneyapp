@@ -402,14 +402,24 @@ const recordFailures = [
           "    pnpm tsx scripts/record-statement-copies.ts --db=<ledger> --confirm\n" +
           "    pnpm tsx scripts/record-printed-lines.ts --db=<ledger> --confirm",
       ]),
-  ...(beyondBackfills.length === 0
-    ? []
-    : [
-        `${beyondBackfills.length} imported file(s) were read at a version their profile has moved past and have no record of what they print (${named(beyondBackfills)}). ` +
-          "The backfills read a file only at the version that imported it, so they cannot cover these: un-importing any file whose rows one of them also prints loses those rows. " +
-          "Only a re-read of the file records it — re-upload it deliberately, and read its account's categories afterwards.",
-      ]),
 ];
+
+/*
+ * The files beyond the backfills are NAMED, not failed. ⛔ Nothing the owner can run today clears them: only a
+ * deliberate re-upload records what such a file prints, and a re-read re-derives that account's categories
+ * (`engineCategoryCarry` — re-reading the 33 Robinhood statements at v5 moved Agentic's +$26.64 leg to Internal
+ * Transfer and took /summary's 2026 money-weighted return 33.87% → 33.81%). Failing on a state with no remedy would
+ * mean a red check on every commit until he chooses, which trains the hook to be ignored — the thing pass 74 built
+ * it to stop. So it warns, every run, until he answers the either/or in the handoff (§6A 26): re-upload the 34, or
+ * keep them as a standing "do not un-import anything on these accounts".
+ */
+if (beyondBackfills.length > 0) {
+  console.log(
+    `  ⚠️ ${beyondBackfills.length} of them were read at a version their profile has moved past (${named(beyondBackfills)}) — ` +
+      "the backfills read a file only at the version that imported it, so they cannot cover these. " +
+      "Un-importing any file whose rows one of them also prints loses those rows. Only a deliberate re-upload records it.",
+  );
+}
 
 const observation: LedgerObservation = {
   accounts: accounts.map((a) => a.name),

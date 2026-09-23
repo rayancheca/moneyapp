@@ -16,6 +16,7 @@ import { MAX_FINANCIAL_DATE } from "@/lib/date-window";
 import { dedupeHash } from "@/lib/hash";
 import { createAccount } from "./accounts";
 import { addManualAnchor } from "./anchors";
+import { linkTransferPair } from "./transfer-links";
 import {
   addManualTransaction,
   cashWalletIds,
@@ -415,6 +416,95 @@ describe("deleteManualTransaction", () => {
 
     deleteManualTransaction(bundle.db, manualId);
     expect(bundle.db.select().from(transactions).where(eq(transactions.id, manualId)).get()).toBeUndefined();
+  });
+
+  // Regression: the manual leg of a hand-linked transfer took its partner's
+  // link with it. `detectTransfers` pairs only rows whose group IS NULL, so a
+  // Chase row left pointing at the deleted row's id could never be paired
+  // again — and it kept wearing the Transfer category for a move with no
+  // second half. `unimportFile` already unlinks the legs its delete leaves
+  // alone (`legsLeftAloneBy`); this path did not.
+  test("unlinks the partner the delete would leave alone in its group", () => {
+    const wallet = makeCashWallet();
+    const chase = createAccount(bundle.db, { institutionId: chaseId, name: "Chase Checking", type: "checking" });
+    const manualId = addManualTransaction(bundle.db, {
+      accountId: wallet,
+      postedOn: "2026-07-02",
+      amountCents: -50_000,
+      description: "Cash deposited at the branch",
+    });
+    const importedId = bundle.db
+      .insert(transactions)
+      .values({
+        accountId: chase,
+        importFileId: makeImportFile(),
+        postedOn: "2026-07-02",
+        amountCents: 50_000,
+        rawDescription: "CASH DEPOSIT",
+        normalizedDescription: "CASH DEPOSIT",
+        dedupeHash: dedupeHash({
+          accountId: chase,
+          postedOn: "2026-07-02",
+          amountCents: 50_000,
+          rawDescription: "CASH DEPOSIT",
+          occurrenceIndex: 0,
+        }),
+      })
+      .returning({ id: transactions.id })
+      .get().id;
+    linkTransferPair(bundle.db, manualId, importedId);
+    expect(bundle.db.select().from(transactions).where(eq(transactions.id, importedId)).get()!.transferGroupId).toBe(
+      manualId,
+    );
+
+    deleteManualTransaction(bundle.db, manualId);
+
+    const partner = bundle.db.select().from(transactions).where(eq(transactions.id, importedId)).get()!;
+    expect(partner.transferGroupId).toBeNull();
+  });
+
+  test("leaves a group that keeps two other legs alone", () => {
+    const wallet = makeCashWallet();
+    const chase = createAccount(bundle.db, { institutionId: chaseId, name: "Chase Checking", type: "checking" });
+    const manualId = addManualTransaction(bundle.db, {
+      accountId: wallet,
+      postedOn: "2026-07-02",
+      amountCents: -50_000,
+      description: "Cash deposited at the branch",
+    });
+    const importFileId = makeImportFile();
+    const importedIds = [50_000, -50_000].map((amountCents, i) =>
+      bundle.db
+        .insert(transactions)
+        .values({
+          accountId: chase,
+          importFileId,
+          postedOn: "2026-07-02",
+          amountCents,
+          rawDescription: `CASH DEPOSIT ${i}`,
+          normalizedDescription: `CASH DEPOSIT ${i}`,
+          dedupeHash: dedupeHash({
+            accountId: chase,
+            postedOn: "2026-07-02",
+            amountCents,
+            rawDescription: `CASH DEPOSIT ${i}`,
+            occurrenceIndex: 0,
+          }),
+        })
+        .returning({ id: transactions.id })
+        .get().id,
+    );
+    // three legs in one group: the manual row plus two imported ones — taking
+    // the manual row away still leaves a group, so nothing is detached
+    for (const id of [manualId, ...importedIds]) {
+      bundle.db.update(transactions).set({ transferGroupId: manualId }).where(eq(transactions.id, id)).run();
+    }
+
+    deleteManualTransaction(bundle.db, manualId);
+
+    for (const id of importedIds) {
+      expect(bundle.db.select().from(transactions).where(eq(transactions.id, id)).get()!.transferGroupId).toBe(manualId);
+    }
   });
 
   test("snapshots the row before deleting it, and not when the delete is refused", () => {

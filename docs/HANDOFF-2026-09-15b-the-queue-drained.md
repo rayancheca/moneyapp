@@ -244,6 +244,25 @@ Second round (memory `moneyapp-owner-decisions-2026-09-15`, same file):
    disagrees; full order-independence would mean letting a later, better-dated read RE-DATE a charge an earlier
    file already recorded. That is a behavioural widening with its own double-count risk. (a) widen it, or
    (b) keep today's rule and accept that the first file to print a charge owns its day.
+25. ❓ OPEN, and **the statement carrying it is weeks away** — *what should the app do when ONE deposit pays five
+   weeks?* Measured on copies with a REHEARSAL of Thursday's deposit (nothing was written to your ledger):
+   the import gives it **no category, no series, needs_review**; the recurring matcher attaches **zero** paydays
+   (its key contains the posting date, and an ATM descriptor carries its own, so no automatic path can ever link a
+   cash payday); the income card still says *"the pay did not reach a bank"* **while the deposit sits in the
+   account it names**; /budgets says *"3 paydays … with no deposit against them"* about days the deposit covers;
+   and one deposit can settle only ONE payday, so the other four stay "passed unpaid" on the calendar forever.
+   (a) **Settle backwards** — a deposit attributed to a pay series clears the OLDEST unmet paydays up to its
+   amount (the calendar becomes truthful; the app must decide which weeks a lump paid). (b) **One deposit, one
+   payday**, and every "no deposit" sentence goes silent whenever the series banked at least as much over the same
+   window (smaller; the calendar still shows paid weeks as missed).
+   ⚠️ Related: should the series carry a **dated rate history** ($1,047.00 through August, $1,141.92 from
+   September), since some of the five weeks may pay the old rate? Today one figure re-rates all history, which
+   inflates both the "implied" pay and the never-banked gap.
+   ✅ Already fixed, words only, no rule changed: the runway card called a five-week catch-up *"what you earn a
+   month"* while its own tooltip said the opposite — it now says which of the three arithmetics produced the
+   figure. The levelled wording (your ledger's ordinary case) is byte-identical.
+   ⏳ Half-built and left as a patch: `scratchpad/five-week-wip.patch` (arrears + unbanked-income + a new
+   `services/income-candidates.ts`) — the fixer died before finishing; do not apply it unverified.
 
 **B. Waiting on an event:**
 - **The Wells Fargo ····5481 statement covering early September:** trial-import → import →
@@ -252,6 +271,48 @@ Second round (memory `moneyapp-owner-decisions-2026-09-15`, same file):
   two-account build's runbook creates the Agentic brokerage account and reads positions (⏳).
 
 **C. Defects queued (no decision needed):**
+- ⛔ **ONE-CALLER SWEEP, 2026-09-22 — 12 HIGH/MEDIUM second surfaces, most with probe evidence, NOT yet fixed.**
+   The rules added in the import rebuild were wired into the path that exposed them; these are the other paths that
+   still answer the old way. Full evidence: session scratchpad `one-caller-candidates.json` (and the workflow
+   journal `wf_6c605673-018`). 11 of 12 verifiers stalled under load, so these are hunter-demonstrated, not yet
+   independently verified — a fixer must re-prove RED before changing anything.
+   - [HIGH] The "import records" rule is blind to every file at an older parser version — 34 live files on the real ledger have no record of what they print, and both surfaces report zero
+     rule: filesWithoutPrintedLines — /Users/rayankarimcheca/dev/MoneyApp/src/services/import/import-records/index.ts:38 (the `.filter((f) => f.profile !== null 
+     second surface: /Users/rayankarimcheca/dev/MoneyApp/src/app/settings/actions.ts:291,297 (`recordRestoredImports`) → `RestoreSnapshotData.filesUnrecorded` → /Users/rayankarimcheca/dev/MoneyApp/src/components/settings/
+   - [MEDIUM] The witness floor compares counts, never the set it stores — a swap passes silently, and any raise erases the departed witness from the mark for good
+     rule: compareToMarks — /Users/rayankarimcheca/dev/MoneyApp/src/lib/witness-floor.ts:231 (`if (now.length < mark.count)` / `if (now.length > mark.count)`)
+     second surface: The data to catch it is already stored and already has a reader: `WitnessMark.witnesses` (witness-floor.ts:88) and `goneWitnesses` (witness-floor.ts:190), which are consulted ONLY inside the count-dro
+   - [HIGH] A higher-fidelity file's takeover retires the charge on the wrong transaction day — and the charge the owner actually made that Saturday leaves the ledger
+     rule: identityWeight's transaction-day clause (src/services/import/service.ts:308): when a line and a row both say which day the charge was made and they di
+     second surface: pickTakeoverVictim, src/services/import/service.ts:2424 — its candidate query is keyed on eq(transactions.postedOn, t.postedOn) + amount + lower-fidelity file (line 2439) and ranks by dedupeHash, then
+   - [MEDIUM] A round trip hands the owner's note, category and links back to the neighbouring charge, because a shared posted day outranks a stated transaction day 8 to 0
+     rule: identityWeight's transaction-day clause (src/services/import/service.ts:308).
+     second surface: claimCarry, src/services/import/service.ts:749 — it weighs the posted-day bucket at POSTED_DAY_TIER = 8 (line 776) and the transaction-day bucket at tier 0 (line 777), so a posted-day match ALWAYS out
+   - [MEDIUM, code-read only] A kept transfer leg claims the wrong charge back: the posted-day lens runs first and no clause refuses a contradicting transaction day
+     rule: identityWeight's transaction-day clause (src/services/import/service.ts:308).
+     second surface: claim, src/services/import/unimported-transfers.ts:193 (called once, at line 282). Its two lenses are `(k, r) => k.postedOn === r.postedOn` then `(k, r) => k.transactedOn !== null && k.transactedOn ==
+   - [MEDIUM] deleteManualTransaction never settles the recurring series its row left — last_matched_on goes on naming a day with nothing on it
+     rule: settleSeriesStats / recomputeSeriesStats — "a series' stats must be re-settled when its linked rows LEAVE the ledger" (/Users/rayankarimcheca/dev/Mone
+     second surface: /Users/rayankarimcheca/dev/MoneyApp/src/services/manual-transactions.ts:220 `deleteManualTransaction` — the app's only other HARD delete of a transaction row. It restores duplicate twins and calls `re
+   - [MEDIUM] Confirming or undoing a duplicate never settles the retired row's series — the same stale last_matched_on, on the surface the owner uses weekly
+     rule: settleSeriesStats / recomputeSeriesStats — a series must be re-settled when a linked row leaves replay. Superseding is leaving replay: `recomputeSerie
+     second surface: /Users/rayankarimcheca/dev/MoneyApp/src/services/duplicate-resolution.ts:197-226 `resolveDuplicate` (retire) and :287-303 `undoDuplicateResolution` (restore), plus /Users/rayankarimcheca/dev/MoneyApp/
+   - [MEDIUM] deleteManualTransaction strands the partner of a transfer whose manual leg it deletes — a one-leg group detection can never pair again
+     rule: legsLeftAloneBy + detachTransferLegs — "the transfer legs deleting a row would leave ALONE in their group must be unlinked, because detectTransfers pa
+     second surface: /Users/rayankarimcheca/dev/MoneyApp/src/services/manual-transactions.ts:220 `deleteManualTransaction`. `legsLeftAloneBy` has exactly one non-test caller, /Users/rayankarimcheca/dev/MoneyApp/src/servic
+   - [MEDIUM] migrateStorageLayout asks "which accounts did this file write to" with the pre-fix scope — it would move 59 real originals out of their per-account archive into a bare institution bucket
+     rule: accountsWrittenBy — "every account an import file wrote to: its rows, its periods, its ANCHORS" (/Users/rayankarimcheca/dev/MoneyApp/src/services/impo
+     second surface: /Users/rayankarimcheca/dev/MoneyApp/src/services/import/service.ts:2795-2839 `migrateStorageLayout`, which builds `accountIds` from `transactions` ∪ `statement_periods` only (lines 2798-2809) and feed
+   - [MEDIUM, code-read only] removeEmptyBooks deletes the accounts row while printed_lines / statement_copies / account_numbers / unimported_transfer_legs may still reference it — an FK abort after the un-import's transaction has committed
+     rule: "An un-import restores the ledger it found: a book that holds nothing leaves" — `removeEmptyBooks` (/Users/rayankarimcheca/dev/MoneyApp/src/services/i
+     second surface: The four tables added since that list was written. `PRAGMA foreign_key_list` on a copy of the real ledger shows `printed_lines.account_id`, `statement_copies.account_id`, `account_numbers.account_id` 
+   - [MEDIUM] Every summed-total proof drops an account resting on a balance he TYPED, so "Checked through" runs past the day the same app calls unchecked
+     rule: footingThrough (src/services/coverage.ts:236)
+     second surface: summedRowsProvenance (src/services/provenance.ts:1979-1996) — the shared proof behind categorySpend, merchantSpend, accountRows and allSpend: every /categories/[id] total, every merchant total, /spend
+   - [MEDIUM] The agent's dividends are kept out of HIS returns in exactly one place; every other income surface still counts them as his
+     rule: outsidePortfolioCashAccountIds (src/services/accounts.ts:92)
+     second surface: services/spending.ts periodTotals (earnedCents) and cashFlowByPeriod (income series) — /spending's Earned stat card and its income chart; services/sankey.ts spendingSankey — the "Dividends → Money in"
+
 - ⛔ (hosting phase, measured 2026-09-17) the build's file tracer follows the import service's archive paths
   under `data/`: every server trace listed the ledger databases, backups and statement files (630 in each route
   trace). `next.config.ts` now excludes `data/**` and the 23 route traces are clean, but
