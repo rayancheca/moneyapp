@@ -3087,6 +3087,10 @@ export function acceptGap(db: AppDatabase, statementPeriodId: string): void {
     categorizeAll(db);
     detectTransfers(db);
     linkRowsMadeActive(db, promoted);
+    // …and a promoted row that ALREADY carried a link is not claimed by the
+    // linking above, which absorbs unlinked rows only: its series counts that
+    // charge again and must say so (`settleSeriesStats`)
+    settleSeriesStats(db, seriesOfTransactions(db, promoted));
     rebuildAccount(db, period.accountId);
     // The rows just promoted were invisible to the import-time identity pool
     // for as long as they sat quarantined, so an overlapping export imported

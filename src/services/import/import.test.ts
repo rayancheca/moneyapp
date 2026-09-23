@@ -1631,6 +1631,31 @@ describe("an import links what it brought in to the series that already carry it
     );
   });
 
+  test("accepting a gap settles a promoted row that already carried its link", async () => {
+    // Linking claims UNLINKED rows only, so a row that was attached before the
+    // reconcile quarantined it is promoted carrying its series — and nothing
+    // would tell that series it counts the charge again.
+    await importStatementFiles(bundle.db, [
+      loadDir("discover", "corrupted")[0]!,
+      load("discover", "statements", "discover-card-2024-10-15_2024-11-14.pdf"),
+    ]);
+    const gap = bundle.db.select().from(statementPeriods).all().find((p) => p.reconciliation === "gap")!;
+    const [december] = bundle.db
+      .select()
+      .from(transactions)
+      .all()
+      .filter((t) => t.postedOn === "2024-12-07" && t.rawDescription.startsWith("SPOTIFY"));
+    expect(december!.status).toBe("quarantined");
+    const spotify = registerSeries("Spotify");
+    setLink(december!.id, spotify, "user");
+
+    acceptGap(bundle.db, gap.id);
+
+    expect(bundle.db.select().from(recurringSeries).where(eq(recurringSeries.id, spotify)).get()!.lastMatchedOn).toBe(
+      "2024-12-07",
+    );
+  });
+
   test("un-importing a file resettles every series it takes rows from", async () => {
     // 🔴 `last_matched_on` is written only by recomputeSeriesStats, and a hard
     // delete never called it: the series went on naming a charge that was gone.
