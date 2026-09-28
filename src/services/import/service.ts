@@ -1183,8 +1183,10 @@ function categoryIdForPath(db: AppDatabase, pathStr: string): string | null {
  * override (keeps the e2e harness + unit tests off the user's real archive); the
  * default relocated from data/originals to data/statements, and every original
  * now lives under a per-account subfolder (data/statements/<account-slug>/).
+ * Exported for the write that checks a re-read leaves the archive as it found it
+ * (scripts/reread-unrecorded-files.ts) — one answer to "where do originals live".
  */
-function statementsRoot(): string {
+export function statementsRoot(): string {
   return process.env.MONEYAPP_ORIGINALS_DIR ?? path.join(process.cwd(), "data", "statements");
 }
 

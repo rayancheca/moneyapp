@@ -292,6 +292,16 @@ function driverHandle(db: AppDatabase): Database.Database | null {
  * in this: if the restore point cannot be written the mutation never happens.
  */
 export function withPreMutationSnapshot<T>(db: AppDatabase, label: string, mutate: () => T): T {
+  takeRestorePoint(db, label);
+  return mutate();
+}
+
+/**
+ * The restore point `withPreMutationSnapshot` takes, handed back — for a write
+ * that must put the ledger back ITSELF when its own after-check fails
+ * (scripts/reread-unrecorded-files.ts restores from `path`). A skip says why.
+ */
+export function takeRestorePoint(db: AppDatabase, label: string): PreMutationSnapshotResult {
   const sqlite = driverHandle(db);
   if (sqlite === null) {
     throw new Error(
@@ -299,14 +309,13 @@ export function withPreMutationSnapshot<T>(db: AppDatabase, label: string, mutat
     );
   }
   try {
-    snapshotBeforeMutation(sqlite, label);
+    return snapshotBeforeMutation(sqlite, label);
   } catch (error: unknown) {
     // Say the outcome, not just the cause: the action was REFUSED, not
     // half-applied, so the user knows retrying is safe.
     const cause = error instanceof Error ? error.message : String(error);
     throw new Error(`Could not save a restore point, so nothing was changed: ${cause}`);
   }
-  return mutate();
 }
 
 /**
