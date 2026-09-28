@@ -8,6 +8,7 @@ import { closesDayChange, dayChangePhrase, dayChangeTerm } from "@/lib/day-chang
 import { formatDayShort } from "@/lib/format-date";
 import { resolvePeriod } from "@/lib/period";
 import { listAccounts } from "./accounts";
+import { agentsIncomeSeriesIds } from "./analytics";
 import { bridgedNetWorthSeries, type BridgedNetWorthPoint } from "./in-flight";
 import { forecastCurrentMonth } from "./forecast";
 import { ledgerOpens, ledgerReaches } from "./observation-frontier";
@@ -209,7 +210,11 @@ function upcomingBills(db: AppDatabase, today: string): UpcomingBills {
   // "before your next paycheck": look further out to find the next income
   // occurrence, then sum the spending occurrences that fall on or before it.
   const horizon = upcomingOccurrences(db, today, PAYCHECK_HORIZON_DAYS).filter((o) => o.kind !== "transfer");
-  const nextPaycheck = horizon.find((o) => o.kind === "income") ?? null;
+  // ⚖️ HIS paycheck: what the agent's cash is paid is not his pay (`isAgentsIncomeSeries`, owner decision
+  // 2026-09-28). 🔴 On a fixture, the agent's Oct 31 interest stood in for his Nov 5 pay, so "due before your
+  // next paycheck" stopped counting bills five days short
+  const agentsPay = agentsIncomeSeriesIds(db);
+  const nextPaycheck = horizon.find((o) => o.kind === "income" && !agentsPay.has(o.seriesId)) ?? null;
   const beforePaycheck = nextPaycheck
     ? {
         date: nextPaycheck.date,

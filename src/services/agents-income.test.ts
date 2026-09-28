@@ -8,6 +8,7 @@ import { seedDatabase } from "@/db/seed";
 import { accounts } from "@/db/schema/accounts";
 import { categories } from "@/db/schema/categories";
 import { institutions } from "@/db/schema/institutions";
+import { recurringSeries, type Cadence } from "@/db/schema/recurring";
 import { transactions } from "@/db/schema/transactions";
 import { parseFilters } from "@/components/transactions/query";
 import { dedupeHash } from "@/lib/hash";
@@ -18,7 +19,10 @@ import { incomeByMonth } from "./analytics";
 import { addManualAnchor } from "./anchors";
 import { netWorthAttribution } from "./attribution";
 import { incomeExpectation } from "./budgets";
+import { runwayCard } from "./committed";
+import { dashboardData } from "./dashboard";
 import { netWorthSeries, rebuildAccount } from "./derivation";
+import { forecastCurrentMonth } from "./forecast";
 import { periodActivity } from "./period-activity";
 import { spendingSankey } from "./sankey";
 import { cashFlowByPeriod, dailySpendHeatmap, periodTotals } from "./spending";
@@ -256,5 +260,150 @@ describe("the agent's income is not his — on every surface that says Income", 
       agentIncome: 0,
     });
     expect(got.closes).toBe(true);
+  });
+});
+
+/** A recurring series as detection or the owner leaves one: the fields every projection reads. */
+function schedule(input: {
+  name: string;
+  accountId: string;
+  cadence: Cadence;
+  intervalDaysAvg: number;
+  nextExpectedOn: string;
+  nextExpectedAmountCents: number;
+  lastMatchedOn: string;
+  status: "detected" | "confirmed";
+}): string {
+  return bundle.db
+    .insert(recurringSeries)
+    .values({ kind: "income", toleranceDays: 3, ...input })
+    .returning({ id: recurringSeries.id })
+    .get().id;
+}
+
+/** his pay as the payroll statement schedules it: $1,141.92 every Thursday, into Wells Fargo */
+function hisPay(): string {
+  return schedule({
+    name: "It America LLC (weekly pay)",
+    accountId: wellsFargo,
+    cadence: "weekly",
+    intervalDaysAvg: 7,
+    nextExpectedOn: "2026-10-01",
+    nextExpectedAmountCents: 114_192,
+    lastMatchedOn: "2026-09-24",
+    status: "confirmed",
+  });
+}
+
+/** the agent's month-end "Interest Payment", as detection would read it off the 09-30 row */
+function agentsInterest(): string {
+  return schedule({
+    name: "Interest Payment",
+    accountId: agentic,
+    cadence: "monthly",
+    intervalDaysAvg: 30,
+    nextExpectedOn: "2026-10-31",
+    nextExpectedAmountCents: 4,
+    lastMatchedOn: "2026-09-30",
+    status: "detected",
+  });
+}
+
+const OCT = { from: "2026-10-01", to: "2026-10-31" };
+
+describe("the agent's income SERIES is not his pay either", () => {
+  /*
+   * 🔴 Only the POSTED leg of /budgets' header had learned whose money is whose. Its forward legs and the income basis
+   * read every live income series, so "$X in so far" left the agent's interest out while "$Y still expected" on the
+   * same line counted its next payment — and the basis behind the runway's "What you earn a month", the forecast's
+   * "Projected income" and the dashboard's "before your next paycheck" did the same.
+   */
+  test("⛔ a series detected on the agent's cash moves no figure that projects his pay", () => {
+    hisPay();
+    const read = () => {
+      const f = forecastCurrentMonth(bundle.db, TODAY);
+      return {
+        budgets: incomeExpectation(bundle.db, OCT.from, OCT.to, TODAY),
+        runwayBurn: runwayCard(bundle.db, TODAY).runway.netBurnCents,
+        forecast: {
+          income: f.committed.incomeCents,
+          net: f.committed.netCents,
+          paceIncome: f.projectedIncomeCents,
+          paceNet: f.projectedNetCents,
+          unbanked: f.unbankedIncome,
+        },
+        // Oct 30: his Thursday has passed, and the agent's month-end interest falls before his next one
+        paycheck: dashboardData(bundle.db, "2026-10-30").upcoming.beforePaycheck,
+      };
+    };
+    const before = read();
+    expect(before.budgets.series.map((s) => s.name)).toEqual(["It America LLC (weekly pay)"]);
+    expect(before.paycheck?.date).toBe("2026-11-05");
+
+    agentsInterest();
+    expect(read()).toEqual(before);
+  });
+
+  /*
+   * The third leg, and the forecast card's note that publishes the same figure (`services/arrears`): a payday of the
+   * agent's that passes with nothing banked is not a payday of his that the imports have not reached.
+   */
+  test("⛔ …nor a payday of his that passed unbanked, on /budgets or on the forecast card", () => {
+    hisPay();
+    const DEC = { from: "2026-12-01", to: "2026-12-31", today: "2026-12-10" };
+    const read = () => {
+      const e = incomeExpectation(bundle.db, DEC.from, DEC.to, DEC.today);
+      return {
+        budgets: [e.passedUnpaidCents, e.passedUnpaidOccurrences, e.passedUnpaidCheckedOccurrences],
+        forecast: forecastCurrentMonth(bundle.db, DEC.today).unbankedIncome,
+      };
+    };
+    const before = read();
+    // his Thursdays Dec 3 and Dec 10… only Dec 3 has passed; nothing is imported past September
+    expect(before.budgets).toEqual([114_192, 1, 0]);
+
+    // the agent's quarterly WMT dividend — the 09-08 line's 0.25 share × $0.2475 — falls due Dec 8 and is not banked
+    schedule({
+      name: "Cash Div (WMT)",
+      accountId: agentic,
+      cadence: "quarterly",
+      intervalDaysAvg: 91,
+      nextExpectedOn: "2026-12-08",
+      nextExpectedAmountCents: 6,
+      lastMatchedOn: "2026-09-08",
+      status: "detected",
+    });
+    expect(read()).toEqual(before);
+  });
+
+  test("⚖️ …and the forecast's EOM net worth still counts what the agent's series pays, as the bridge does", () => {
+    hisPay();
+    const before = forecastCurrentMonth(bundle.db, TODAY);
+    agentsInterest();
+    const after = forecastCurrentMonth(bundle.db, TODAY);
+
+    // net worth holds the agent's money, so both readings' EOM net worth keep its Oct 31 $0.04
+    expect(after.committed.eomNetWorthCents - before.committed.eomNetWorthCents).toBe(4);
+    expect(after.projectedEomNetWorthCents - before.projectedEomNetWorthCents).toBe(4);
+    // it is not cash he can spend, and not his income: named on its own line, as the bridge names it
+    expect(after.committed.eomCashCents).toBe(before.committed.eomCashCents);
+    expect(after.projectedEomCashCents).toBe(before.projectedEomCashCents);
+    expect(after.components.map((c) => c.label)).toEqual(before.components.map((c) => c.label));
+    expect(after.agentsIncome).toEqual({ netCents: 4, committedNetCents: 4 });
+    expect(before.agentsIncome).toEqual({ netCents: 0, committedNetCents: 0 });
+  });
+
+  test("the rule's own edge: unpaired, the account is his, and so is the series", () => {
+    hisPay();
+    agentsInterest();
+    bundle.db.update(accounts).set({ cashAccountId: null }).where(eq(accounts.id, book)).run();
+
+    expect(incomeExpectation(bundle.db, OCT.from, OCT.to, TODAY).series.map((s) => s.name)).toEqual([
+      "It America LLC (weekly pay)",
+      "Interest Payment",
+    ]);
+    const f = forecastCurrentMonth(bundle.db, TODAY);
+    expect(f.committed.incomeCents).toBe(4 * 114_192 + 4);
+    expect(f.agentsIncome).toEqual({ netCents: 0, committedNetCents: 0 });
   });
 });

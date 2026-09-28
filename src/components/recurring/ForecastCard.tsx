@@ -39,8 +39,28 @@ export function UnbankedIncomeNote({ unbanked: u }: { unbanked: MonthForecast["u
 /** "A", "A and B", "A, B, and C" — the platform's own list rather than another hand-rolled join. */
 const ACCOUNT_LIST = new Intl.ListFormat("en", { style: "long", type: "conjunction" });
 
-/** How `OutsideCashNote` names each reading — the headline tiles, and the row beneath them. */
+/** How a note names each reading — the headline tiles, and the row beneath them. */
 const READING = { headline: "in the headline", pace: "at your recent pace" } as const;
+
+/** What a per-reading note says: one amount (under `reading`, which may be none), or both, each under its own. */
+type NamedReadings =
+  | { kind: "one"; cents: number; reading: string }
+  | { kind: "both"; headlineCents: number; paceCents: number };
+
+/**
+ * Which amounts a note on this card names, and under which reading — `OutsideCashNote`'s rule, stated there, and
+ * the one every note naming an amount per reading reads (`AgentsIncomeNote` too), so the two cannot name them two
+ * ways. Null when both halves are zero (`-0` included).
+ */
+function namedReadings(headlineCents: number, paceCents: number): NamedReadings | null {
+  if (headlineCents === 0 && paceCents === 0) return null;
+  if (headlineCents !== 0 && paceCents !== 0 && headlineCents !== paceCents) {
+    return { kind: "both", headlineCents, paceCents };
+  }
+  // one amount: both readings carry the same, or only one carries anything
+  const reading = headlineCents === paceCents ? "" : ` ${headlineCents === 0 ? READING.pace : READING.headline}`;
+  return { kind: "one", cents: headlineCents === 0 ? paceCents : headlineCents, reading };
+}
 
 /**
  * What both EOM cash figures leave out, and where it posts.
@@ -67,25 +87,51 @@ const READING = { headline: "in the headline", pace: "at your recent pace" } as 
  * printed "$0.00 in the headline and +$19.43 at your recent pace".
  */
 export function OutsideCashNote({ outside }: { outside: MonthForecast["outsideCash"] }) {
-  const headline = outside.committedNetCents;
-  const pace = outside.netCents;
-  if (headline === 0 && pace === 0) return null;
+  const named = namedReadings(outside.committedNetCents, outside.netCents);
+  if (named === null) return null;
   const posts = `projected to post to ${ACCOUNT_LIST.format(outside.accountNames)} by month end`;
   const why = "because that is money selling investments would add, not cash you can spend";
-  if (headline !== 0 && pace !== 0 && headline !== pace) {
+  if (named.kind === "both") {
     return (
       <p className="mt-1 text-xs text-ink-faint">
-        EOM cash leaves out what is {posts}, {why}: <Money cents={headline} flow /> {READING.headline} and{" "}
-        <Money cents={pace} flow /> {READING.pace}. EOM net worth keeps it.
+        EOM cash leaves out what is {posts}, {why}: <Money cents={named.headlineCents} flow /> {READING.headline} and{" "}
+        <Money cents={named.paceCents} flow /> {READING.pace}. EOM net worth keeps it.
       </p>
     );
   }
-  // one amount: both readings leave out the same, or only one leaves out anything
-  const reading = headline === pace ? "" : ` ${headline === 0 ? READING.pace : READING.headline}`;
   return (
     <p className="mt-1 text-xs text-ink-faint">
-      EOM cash{reading} leaves out the <Money cents={headline === 0 ? pace : headline} flow /> {posts}, {why}. EOM net
-      worth keeps it.
+      EOM cash{named.reading} leaves out the <Money cents={named.cents} flow /> {posts}, {why}. EOM net worth keeps
+      it.
+    </p>
+  );
+}
+
+/**
+ * What both EOM net worth figures count and no Income or Net on the card does: what the agent's own account is
+ * projected to be paid (`MonthForecast.agentsIncome`).
+ *
+ * ⚖️ Owner decision 2026-09-28 (§6A 27): the agent's interest and dividends are not his income, so no line here
+ * carries them — and net worth holds the agent's money, so EOM net worth still does, as the net-worth bridge names
+ * it on a band of its own. Without this sentence the two EOM net worth figures move by money no row on the card
+ * names. Amounts are named per reading by `namedReadings`, `OutsideCashNote`'s rule.
+ */
+export function AgentsIncomeNote({ agents }: { agents: MonthForecast["agentsIncome"] }) {
+  const named = namedReadings(agents.committedNetCents, agents.netCents);
+  if (named === null) return null;
+  const paid = "the agent's own account is projected to be paid by month end";
+  const whose = "That is the agent's money, not your income: your net worth holds it, and Income and Net leave it out.";
+  if (named.kind === "both") {
+    return (
+      <p className="mt-1 text-xs text-ink-faint">
+        EOM net worth counts what {paid}: <Money cents={named.headlineCents} flow /> {READING.headline} and{" "}
+        <Money cents={named.paceCents} flow /> {READING.pace}. {whose}
+      </p>
+    );
+  }
+  return (
+    <p className="mt-1 text-xs text-ink-faint">
+      EOM net worth{named.reading} counts the <Money cents={named.cents} flow /> {paid}. {whose}
     </p>
   );
 }
@@ -242,6 +288,8 @@ export function ForecastCard({ forecast: f }: ForecastCardProps) {
       {f.unbankedIncome.totalCents > 0 && <UnbankedIncomeNote unbanked={f.unbankedIncome} />}
 
       <OutsideCashNote outside={f.outsideCash} />
+
+      <AgentsIncomeNote agents={f.agentsIncome} />
 
       <ForecastComposition split={split} />
 

@@ -2,7 +2,7 @@ import { cache } from "react";
 import { and, eq, gte, inArray, isNotNull, isNull, lte, or, type SQL } from "drizzle-orm";
 import type { AppDatabase } from "@/db/client";
 import { categories, type CategoryKind } from "@/db/schema/categories";
-import { recurringSeries } from "@/db/schema/recurring";
+import { recurringSeries, type SeriesKind } from "@/db/schema/recurring";
 import { transactions } from "@/db/schema/transactions";
 import { addDays, monthKey, periodBounds, todayIso } from "@/lib/dates";
 import { outsidePortfolioCashAccountIds } from "./accounts";
@@ -353,6 +353,39 @@ export function isIncome(
     txn.amountCents > 0 &&
     idx.topLevelOf(txn.categoryId).kind === "income" &&
     !agentsCash.has(txn.accountId)
+  );
+}
+
+/**
+ * Whether a recurring series schedules the AGENT'S income rather than his: an income series on the agent's cash
+ * account — `isIncome`'s account half, asked of a schedule instead of a row. A series with no account reads as his.
+ *
+ * ⚖️ Owner decision 2026-09-28 (§6A 27). 🔴 Only /budgets' POSTED leg had learned it: "$X in so far" left the
+ * agent's interest out while "$Y still expected" on the same line counted its next payment, and the income basis
+ * behind the runway's "What you earn a month", the forecast's "Projected income" and the dashboard's next paycheck
+ * did the same — each read every live income series.
+ *
+ * ⛔ Not "drop the series". Net worth holds the agent's money, so the forecast still counts what it pays in EOM net
+ * worth (`MonthForecast.agentsIncome`), as the bridge names the agent's rows on a band of their own.
+ */
+export function isAgentsIncomeSeries(
+  agentsCash: ReadonlySet<string>,
+  series: { readonly kind: SeriesKind; readonly accountId: string | null },
+): boolean {
+  return series.kind === "income" && series.accountId !== null && agentsCash.has(series.accountId);
+}
+
+/** Every series `isAgentsIncomeSeries` names, by id — for a surface holding occurrences, which carry no account. */
+export function agentsIncomeSeriesIds(db: AppDatabase): Set<string> {
+  const agentsCash = outsidePortfolioCashAccountIds(db);
+  if (agentsCash.size === 0) return new Set();
+  return new Set(
+    db
+      .select({ id: recurringSeries.id, kind: recurringSeries.kind, accountId: recurringSeries.accountId })
+      .from(recurringSeries)
+      .all()
+      .filter((s) => isAgentsIncomeSeries(agentsCash, s))
+      .map((s) => s.id),
   );
 }
 
