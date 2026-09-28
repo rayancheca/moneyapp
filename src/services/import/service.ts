@@ -2655,8 +2655,13 @@ function quarantinedIdsOn(db: AppDatabase, accountIds: readonly string[]): strin
 /**
  * Takes away a file's balances — its anchors and its periods — for both paths that remove a file's contribution:
  * `supersedeFileContribution` and `unimportFile`. Each hands a period another download of the statement prints to that
- * download first (`statement-copies`: `lendToCopies`, `handOverToCopies`), so what is left here is the file's own; an
- * anchor another file's period still prints is handed over (`handOverPrintedAnchors`), not deleted.
+ * download first (`statement-copies`: `lendToCopies`, `handOverToCopies`), so what is left here is the file's own —
+ * with the balances those periods print, whichever download took them over last (`handOverPrintedAnchors`); an anchor
+ * another file's period still prints is handed over, not deleted.
+ *
+ * 🔴 The balances a copy took over were detached from the period and kept: a copy whose read failed is no heir to the
+ * period, and they stood under it with no period — a brokerage book kept standing and valued after its last month was
+ * un-imported (`printed-anchors`). No anchor names the file's periods once they are handed over or deleted here.
  *
  * An opening the file keeps for a statement he un-imported (`kept-openings`) goes with it — except while a re-read
  * retires the file (`keepOpenings`): the successor takes it once it is written (`settleKeptOpenings`).
@@ -2666,12 +2671,6 @@ function removeFileBalances(tx: AppDatabase, importFileId: string, { keepOpening
   tx.delete(balanceAnchors)
     .where(and(eq(balanceAnchors.importFileId, importFileId), keep ? ne(balanceAnchors.source, KEPT_OPENING_SOURCE) : undefined))
     .run();
-  // anchors owned by OTHER files may reference this file's periods — detach
-  // them before the periods go (FK integrity under foreign_keys=ON)
-  tx.run(sql`
-    UPDATE balance_anchors SET statement_period_id = NULL
-    WHERE statement_period_id IN (SELECT id FROM statement_periods WHERE import_file_id = ${importFileId})
-  `);
   tx.delete(statementPeriods).where(eq(statementPeriods.importFileId, importFileId)).run();
 }
 

@@ -21,6 +21,7 @@ import { portfolioSeries } from "@/services/portfolio";
 import { addManualAnchor } from "@/services/anchors";
 import { refreshPrices, type PriceProvider } from "@/services/prices";
 import { removeFileEvents, resolveBook, syncBookHoldings, writeStatementPositions } from "./brokerage-book";
+import { balancesRemovedByFile } from "./printed-anchors";
 import { PROFILES } from "./profiles";
 import type { Line } from "./profiles/pdf-profile";
 import { findAccountId, importStatementFiles, parseContextFor, resolveAccount, unimportFile, type ImportInput } from "./service";
@@ -1904,6 +1905,64 @@ describe("⛔ a book month downloaded twice — un-importing one copy leaves the
     expect([filesOn(statementCopies, agenticId), filesOn(printedLines, agenticId)]).toEqual([[FAILED], [FAILED]]);
     unimportFile(bundle.db, fileId(bundle.db, FAILED));
     expect(bundle.db.select().from(importFiles).all()).toEqual([]);
+  });
+
+  /**
+   * 🔴 …and it took over the balances the month prints (`upsertAnchor` moves an anchor to the file that wrote it last),
+   * though it inherits nothing else. With no live copy to take the month, un-importing the first download left those
+   * balances under the failed copy with no period: they held the book up after June, its last month, was un-imported —
+   * valued at $26.22 from Aug 31 with no share in it — and kept Agentic at August's $1.64 with none of its rows.
+   */
+  test("a copy that failed after writing the agent's section keeps none of the month's balances — the book leaves with its last month, and nothing values it", async () => {
+    const agenticId = ownersRobinhood(bundle.db);
+    const brokerageId = bundle.db.select().from(accounts).where(eq(accounts.name, "Robinhood Brokerage")).get()!.id;
+    const agenticBefore = stateOf(bundle.db, agenticId);
+    await importStatementFiles(bundle.db, [pdf(JUNE_FILE, [...JUNE_BROKERAGE, ...AGENT_FIRST_BUYS])]);
+    await importStatementFiles(bundle.db, [pdf(AUGUST_FILE, [...AGENT_HOLDS_AUGUST, ...AUGUST_BROKERAGE])]);
+    const bookId = bookOf(bundle.db, agenticId)!.id;
+    const FAILED = "48afc52f-8955-351d-bdad-7248305c5a2b (1).pdf";
+    Object.assign(SECTION_FAULT, { message: "disk I/O error", accountId: brokerageId });
+    try {
+      const [failed] = await importStatementFiles(bundle.db, [pdf(FAILED, [...AGENT_HOLDS_AUGUST, ...AUGUST_BROKERAGE])]);
+      expect([failed!.status, failed!.error]).toEqual(["failed", "disk I/O error"]);
+    } finally {
+      Object.assign(SECTION_FAULT, { message: null, accountId: null });
+    }
+    const balancesOn = (accountId: string) =>
+      bundle.db
+        .select({ on: balanceAnchors.anchoredOn, cents: balanceAnchors.balanceCents, file: importFiles.fileName })
+        .from(balanceAnchors)
+        .innerJoin(importFiles, eq(importFiles.id, balanceAnchors.importFileId))
+        .where(and(eq(balanceAnchors.accountId, accountId), eq(balanceAnchors.source, "statement")))
+        .orderBy(asc(balanceAnchors.anchoredOn))
+        .all();
+    // the premise: the failed copy holds the balances August prints, on the book and on Agentic
+    expect([balancesOn(bookId), balancesOn(agenticId)]).toEqual([
+      [
+        { on: "2026-07-31", cents: 2600, file: FAILED },
+        { on: "2026-08-31", cents: 2622, file: FAILED },
+      ],
+      [
+        { on: "2026-07-31", cents: 164, file: FAILED },
+        { on: "2026-08-31", cents: 164, file: FAILED },
+      ],
+    ]);
+    const anchorCount = () => bundle.db.select().from(balanceAnchors).all().length;
+    const [counted, before] = [balancesRemovedByFile(bundle.db).get(fileId(bundle.db, AUGUST_FILE)), anchorCount()];
+
+    unimportFile(bundle.db, fileId(bundle.db, AUGUST_FILE));
+
+    // August's balances leave with August — the ones the failed copy took over too, as the confirmation counted them
+    expect([balancesOn(bookId), balancesOn(agenticId)]).toEqual([[], []]);
+    expect(counted).toBe(before - anchorCount());
+
+    unimportFile(bundle.db, fileId(bundle.db, JUNE_FILE));
+
+    // the book leaves with its last month, and holds no value on the shares that left with it
+    expect(bookOf(bundle.db, agenticId)).toBeUndefined();
+    expect(stateOf(bundle.db, bookId)).toEqual({ periods: [], anchors: [], rows: [], days: [], events: [], holdings: [] });
+    // …and Agentic is the ledger before June
+    expect(stateOf(bundle.db, agenticId)).toEqual(agenticBefore);
   });
 });
 
