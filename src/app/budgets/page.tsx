@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { getDb } from "@/db/client";
 import { periodBounds, todayIso, type PeriodBounds } from "@/lib/dates";
 import { formatDayLong, formatDayShort } from "@/lib/format-date";
+import { paidByAnotherMonthNote } from "@/lib/paid-by-another-month";
 import { unbankedIncomeFrontierClause } from "@/lib/unbanked-income";
 import {
   budgetGuidanceCents,
@@ -72,6 +73,15 @@ export default async function BudgetsPage({
       frontier: income.passedUnpaidFrontier,
     },
     formatDayLong,
+  );
+  // the fourth leg: paydays this month that another month's money paid — null when none
+  const paidElsewhere = paidByAnotherMonthNote(
+    {
+      cents: income.paidByAnotherMonthCents,
+      occurrences: income.paidByAnotherMonthOccurrences,
+      deposits: income.paidByAnotherMonthDeposits,
+    },
+    monthBounds.start,
   );
   // Graded against the BASIS, not against the paydays that happen to fall in
   // this calendar month. Budgets here were sized from a weekly wage annualised
@@ -210,7 +220,8 @@ export default async function BudgetsPage({
             )}
             {(income.expectedCents > 0 ||
               income.postedCents > 0 ||
-              income.passedUnpaidCents > 0) && (
+              income.passedUnpaidCents > 0 ||
+              income.paidByAnotherMonthCents > 0) && (
               <>
                 {" · "}
                 <Money cents={income.postedCents} /> in so far,{" "}
@@ -260,6 +271,15 @@ export default async function BudgetsPage({
                 "That is evidence about what has been imported, not about whether the money was earned."}
             </p>
           )}
+          {/* 🔴 THE FOURTH LEG, NAMED — his answer to §6A 29. A payday paid by
+              money that landed in ANOTHER month is in none of the three: not
+              "in so far" (the deposit is last month's), not "still expected"
+              (it was paid), not "already passed" (settlement says it was met).
+              Read on 2026-10-02 with Thu Oct 1 paid by the deposit of Wed Sep
+              30: "$0.00 in so far, $4,567.68 still expected" under "5 paydays
+              fall in this month, scheduled at $5,709.60", and $1,141.92 called
+              nothing at all. */}
+          {paidElsewhere && <p className="mt-1 text-xs text-ink-faint">{paidElsewhere}</p>}
         </SurfaceCard>
       )}
 

@@ -313,11 +313,87 @@ describe("a payday paid by a deposit outside the window is still named by the wi
     deposit(PAY, "2026-09-30", WEEK);
   }
 
+  /** Every leg the /budgets header prints for the month's pay, summed. */
+  const allFourLegs = (i: ReturnType<typeof incomeExpectation>): number =>
+    i.postedCents + i.expectedCents + i.passedUnpaidCents + i.paidByAnotherMonthCents;
+
   test("October's income still adds up to October's schedule", () => {
     lastDayOfSeptember();
     const income = incomeExpectation(bundle.db, "2026-10-01", "2026-10-31", "2026-10-01");
     expect(income.scheduledCents).toBe(WEEK * 5);
-    expect(income.postedCents + income.expectedCents + income.passedUnpaidCents).toBe(WEEK * 5);
+    expect(allFourLegs(income)).toBe(WEEK * 5);
+  });
+
+  /*
+   * 🔴 THE PAST LEG — the residue the fix above left (§6A 29). Once today has
+   * passed the payday, the forward leg has moved beyond it, `passedUnpaidCents`
+   * cannot name it (settlement says it was met) and `postedCents` never held it
+   * (the money landed in September). Read on Fri 2026-10-02 with one deposit of
+   * $1,141.92 dated 2026-09-30:
+   *
+   *   posted $0.00 + expected $4,567.68 + passed-unpaid $0.00 = $4,567.68
+   *   against five paydays scheduled at $5,709.60 — $1,141.92 in no figure
+   *
+   * ⚖️ His answer (a): a FOURTH figure beside the other three, naming money
+   * that arrived in another month — "$1,141.92 paid early, in September" —
+   * rather than (b) a month that says nothing about money banked elsewhere.
+   */
+  test("the day after, a fourth figure names the payday September's money paid", () => {
+    lastDayOfSeptember();
+    const income = incomeExpectation(bundle.db, "2026-10-01", "2026-10-31", "2026-10-02");
+    expect(income.scheduledCents).toBe(WEEK * 5);
+    // the three figures the header already printed: one week short of the schedule…
+    expect(income.postedCents + income.expectedCents + income.passedUnpaidCents).toBe(WEEK * 4);
+    // …and the fourth, which names that week and the deposit that paid it
+    expect(income.paidByAnotherMonthCents).toBe(WEEK);
+    expect(income.paidByAnotherMonthOccurrences).toBe(1);
+    expect(income.paidByAnotherMonthDeposits).toEqual(["2026-09-30"]);
+    expect(allFourLegs(income)).toBe(income.scheduledCents);
+  });
+
+  /*
+   * ⛔ AND ON THE PAYDAY ITSELF. The fix above kept this one in `expectedCents`
+   * because no figure could name it otherwise. With one that can, "still
+   * expected" would be calling money that landed yesterday still to come — on
+   * the same Thursday /recurring draws Oct 1 "paid by the deposit of Sep 30"
+   * and the forecast projects four October paydays, not five. Nothing happens
+   * overnight, so nothing may move between the two readings either.
+   */
+  test("on the payday itself it is already paid early, as the forecast and the calendar say", () => {
+    lastDayOfSeptember();
+    const income = incomeExpectation(bundle.db, "2026-10-01", "2026-10-31", "2026-10-01");
+    expect(income.expectedCents).toBe(WEEK * 4);
+    expect(income.paidByAnotherMonthCents).toBe(WEEK);
+    expect(forecastCurrentMonth(bundle.db, "2026-10-01").committed.incomeCents).toBe(income.expectedCents);
+    expect(recurringCalendar(bundle.db, "2026-10", "2026-10-01").upcomingNetCents).toBe(income.expectedCents);
+    const dayAfter = incomeExpectation(bundle.db, "2026-10-01", "2026-10-31", "2026-10-02");
+    expect(dayAfter.paidByAnotherMonthCents).toBe(income.paidByAnotherMonthCents);
+    expect(dayAfter.expectedCents).toBe(income.expectedCents);
+  });
+
+  /* The window's two edges are this month's own money: a deposit on the 1st and
+     one read on the day it lands are in `postedCents`, and naming either again
+     as another month's would count the same week twice. */
+  test("a deposit on the month's first day, or on today, is this month's money", () => {
+    readThrough(WELLS, "2026-06-01", "2026-10-08");
+    deposit(PAY, "2026-10-01", WEEK);
+    deposit(PAY, "2026-10-08", WEEK);
+    const income = incomeExpectation(bundle.db, "2026-10-01", "2026-10-31", "2026-10-08");
+    expect(income.postedCents).toBe(WEEK * 2);
+    expect(income.paidByAnotherMonthCents).toBe(0);
+    expect(allFourLegs(income)).toBe(income.scheduledCents);
+  });
+
+  /* ⛔ Only money from ANOTHER month. September's lump and weekly deposit paid
+     September's paydays and sit in September's `postedCents`; naming those
+     paydays here as well would count the same money twice on one line. */
+  test("a payday paid by money inside the month is not named by the fourth figure", () => {
+    readThrough(WELLS, "2026-06-01", "2026-09-27");
+    hisSeptember();
+    const september = incomeExpectation(bundle.db, "2026-09-01", "2026-09-30", TODAY);
+    expect(september.paidByAnotherMonthCents).toBe(0);
+    expect(september.paidByAnotherMonthOccurrences).toBe(0);
+    expect(september.paidByAnotherMonthDeposits).toEqual([]);
   });
 
   test("October's calendar still adds up to October's schedule", () => {

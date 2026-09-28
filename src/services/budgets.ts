@@ -621,8 +621,9 @@ export interface IncomeExpectation {
   /** money already in, inside [start, today] */
   postedCents: number;
   /**
-   * money still expected, from TODAY through end — less today's occurrence
-   * once a deposit for it has posted (that money is in `postedCents`)
+   * money still expected, from TODAY through end — less every payday a deposit
+   * has already paid (that money is in `postedCents`, or in
+   * `paidByAnotherMonthCents` when it landed outside this window)
    */
   expectedCents: number;
   /**
@@ -638,8 +639,9 @@ export interface IncomeExpectation {
   scheduledOccurrences: number;
   /**
    * Paydays that have ALREADY passed inside this window with nothing banked
-   * against them — the third leg, and the reason the first two do not have to
-   * add up to `scheduledCents`.
+   * against them — the third leg, and one reason the first two do not have to
+   * add up to `scheduledCents` (the fourth leg, `paidByAnotherMonthCents`, is
+   * the other).
    *
    * ⛔ Never added to `expectedCents`, and that is doctrine rather than an
    * oversight: a payday that passed without a deposit is evidence about the
@@ -659,6 +661,26 @@ export interface IncomeExpectation {
   passedUnpaidCheckedOccurrences: number;
   /** how far the accounts the other passed paydays land in were checked — one day, per schedule, or not at all */
   passedUnpaidFrontier: UnbankedFrontier;
+  /**
+   * Paydays inside this window that money from ANOTHER month paid — the fourth
+   * leg. Settle-backwards (`paydaySettlement`) credits them to a deposit that
+   * lies outside the window `postedCents` covers: his Thursday Oct 1 paid by
+   * the deposit of Wed Sep 30.
+   *
+   * ⚖️ His decision (§6A 29): a fourth figure beside the other three, naming
+   * money that arrived in another month — "$1,141.92 paid early, in September"
+   * — rather than a month that says nothing about money banked elsewhere.
+   * Without it such a payday is in no leg once today has passed it: not posted
+   * (the money is another month's), not expected (it is behind the forward
+   * leg), not passed-unpaid (settlement says it was met).
+   *
+   * ⛔ Never added to `postedCents` or `expectedCents`: the money is in the other
+   * month's own posted figure, and adding it here too counts it twice.
+   */
+  paidByAnotherMonthCents: number;
+  paidByAnotherMonthOccurrences: number;
+  /** the `posted_on` of each deposit that paid one of them, oldest first, each once */
+  paidByAnotherMonthDeposits: string[];
   /** which figure budgets are graded against, and how this month sits on it */
   basis: IncomeBasis;
   /** the live income series contributing to expectedCents */
@@ -674,9 +696,11 @@ const BASIS_HORIZON_MONTHS = 12;
  * Ten budgets totalling more than the owner earns is the single most useful
  * thing the page could tell him, and before this nothing on it mentioned income
  * at all. `postedCents` is posted actuals over [start, today]; `expectedCents`
- * is the schedule from today on, minus today's occurrence once its deposit has
- * posted — disjoint by the one fact that matters, so a paycheque that has
- * already landed is never also forecast and one that has not is never lost.
+ * is the schedule from today on, minus every payday a deposit has already paid
+ * — disjoint by the one fact that matters, so a paycheque that has already
+ * landed is never also forecast and one that has not is never lost. The other
+ * two legs name what neither holds: paydays that passed unpaid, and paydays
+ * money from another month paid.
  * (⚠️ NOT built like `budgetTail`, which opens tomorrow: spending has an
  * arrears leg to own today, and income by doctrine has none — see `from`.)
  *
@@ -777,18 +801,27 @@ export function incomeExpectation(
    * (it walks `[start, today)` and settlement says the payday was met). Measured
    * on 2026-10-01 with one deposit of $1,141.92 dated 2026-09-30: posted $0.00 +
    * expected $4,567.68 + passed-unpaid $0.00, against five paydays scheduled at
-   * $5,709.60. So an occurrence leaves this leg only when the money that settled
-   * it is inside the window `postedCents` covers; otherwise it stays here, which
-   * is the old, safe answer and keeps the four figures the header prints side by
-   * side adding up.
+   * $5,709.60.
+   *
+   * ⚖️ HIS ANSWER (§6A 29) IS A FOURTH FIGURE, so a paid payday leaves this leg
+   * whichever month its money landed in: inside the window it is in
+   * `postedCents`, outside it `paidByAnotherMonthCents` names it. The 09-28 fix
+   * kept the outside case HERE, because no figure could name it otherwise — and
+   * that held only until the payday passed. The day after, it fell out of every
+   * leg (read on 2026-10-02: posted $0.00 + expected $4,567.68 + passed-unpaid
+   * $0.00 against $5,709.60 scheduled); and on the payday itself "still
+   * expected" called money that landed the day before still to come, while
+   * /recurring drew Oct 1 "paid by the deposit of Sep 30" and the forecast
+   * projected four October paydays, not five.
    */
   const settled = settledPaydaysBySeries(
     db,
     live.map((s) => s.id),
     today,
   );
-  const paidInsideWindow = (depositOn: string | undefined): boolean =>
-    depositOn !== undefined && compareDates(depositOn, start) >= 0 && compareDates(depositOn, postedThrough) <= 0;
+  /** whether a settling deposit's money is in `postedCents` — the window it covers */
+  const paidInsideWindow = (depositOn: string): boolean =>
+    compareDates(depositOn, start) >= 0 && compareDates(depositOn, postedThrough) <= 0;
   const series: IncomeExpectation["series"] = [];
   let expectedCents = 0;
   if (compareDates(from, end) <= 0) {
@@ -797,9 +830,9 @@ export function incomeExpectation(
       // money IN only — a refund-shaped income series must not subtract here
       const cents = projectOccurrences(toProjectable(s), from, end)
         .filter((o) => o.amountCents > 0)
-        // pay a deposit has already answered INSIDE this window: it is in
-        // postedCents, and so not also here
-        .filter((o) => !paidInsideWindow(met.get(o.date)))
+        // pay a deposit has already answered is not still to come: its money is
+        // in postedCents or, landed in another month, in the fourth leg below
+        .filter((o) => !met.has(o.date))
         .reduce((sum, o) => sum + o.amountCents, 0);
       if (cents === 0) continue;
       expectedCents += cents;
@@ -844,13 +877,32 @@ export function incomeExpectation(
    */
   const horizon = addDays(addCalendarMonths(start, BASIS_HORIZON_MONTHS), -1);
   let levelledCents = 0;
+  /*
+   * The fourth leg — paydays in this window that money from another month
+   * paid — read off the SAME walk as the schedule, for the schedule's own
+   * reason: the month note prints "5 paydays … $5,709.60" and this names some
+   * of those days, so the two cannot be allowed to describe different sets.
+   * Whether a payday was paid is `paydaySettlement`'s answer (`settled`), and
+   * whether its money is in `postedCents` is `paidInsideWindow` — no third
+   * spelling of either.
+   */
+  let paidByAnotherMonthCents = 0;
+  let paidByAnotherMonthOccurrences = 0;
+  const paidByAnotherMonthDeposits = new Set<string>();
   for (const s of live) {
     const inPeriod = projectOccurrences(toProjectable(s), start, end).filter(
       (o) => o.amountCents > 0,
     );
     scheduledOccurrences += inPeriod.length;
     scheduledCents += inPeriod.reduce((sum, o) => sum + o.amountCents, 0);
-
+    const met = settled.get(s.id);
+    for (const o of inPeriod) {
+      const depositOn = met?.get(o.date);
+      if (depositOn === undefined || paidInsideWindow(depositOn)) continue;
+      paidByAnotherMonthCents += o.amountCents;
+      paidByAnotherMonthOccurrences += 1;
+      paidByAnotherMonthDeposits.add(depositOn);
+    }
 
     const eff = effectiveSeries(s);
     const perOccurrenceCents = eff.nextExpectedAmountCents;
@@ -894,6 +946,9 @@ export function incomeExpectation(
     passedUnpaidOccurrences,
     passedUnpaidCheckedOccurrences: passed.checkedOccurrenceCount,
     passedUnpaidFrontier: passed.frontier,
+    paidByAnotherMonthCents,
+    paidByAnotherMonthOccurrences,
+    paidByAnotherMonthDeposits: [...paidByAnotherMonthDeposits].sort(compareDates),
     series,
   };
 }
