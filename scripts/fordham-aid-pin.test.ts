@@ -360,3 +360,32 @@ describe("the command line", () => {
     expect(() => parsePinCli(["--db=copy.db", "--scratch"], env)).toThrow(PinRefusal);
   });
 });
+
+describe("the runbook has one home: the header of scripts/pin-fordham-aid-2026-09-28.ts", () => {
+  /**
+   * 🔴 The review of uc/chase-redrop-runbook, 2026-09-28: the profile's version note and handoff §6A 23 still told the
+   * next session to re-drop data/statements/chase-checking-3522 itself, and the handoff called the side effect
+   * cosmetic. Measured on a copy of the ledger AND of the archive: that run moves the same money, but fails on the
+   * folder's archived activity CSV and writes 76 files into the archive — each of the 75 PDFs again as
+   * `<sha>-<sha>-<name>`, the CSV into data/statements/chase/ — files that restoring the ledger does not remove.
+   */
+  const read = (file: string) => fs.readFileSync(path.join(process.cwd(), file), "utf8");
+  // a comment may wrap the command: "`pnpm import-statements\n   * data/statements/chase-checking-3522 --confirm`"
+  const DIRECT = /import-statements\s*(?:\*\s*)?data\/statements\/chase-checking-3522/;
+  const RUNBOOK = "scripts/pin-fordham-aid-2026-09-28.ts";
+
+  test("the profile's version note points at it and prescribes no other run", () => {
+    const note = read("src/services/import/profiles/chase-checking-statement-profile.ts");
+    expect(note).not.toMatch(DIRECT);
+    expect(note).toContain(RUNBOOK);
+  });
+
+  test("handoff §6A 23 points at it, prescribes no other run, and calls none of it cosmetic", () => {
+    const handoff = read("docs/HANDOFF-2026-09-15b-the-queue-drained.md");
+    const entry = handoff.slice(handoff.indexOf("\n23. "), handoff.indexOf("\n24. "));
+    expect(entry).toMatch(/margin digits/);
+    expect(entry).not.toMatch(DIRECT);
+    expect(entry).toContain(RUNBOOK);
+    expect(entry).not.toMatch(/cosmetic/i);
+  });
+});

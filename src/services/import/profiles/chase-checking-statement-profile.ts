@@ -213,14 +213,15 @@ export const chaseCheckingStatementPdf: ParserProfile = {
    * this very statement's archived byte-copy at v2 is 1 parsed, 0 inserted, 58 skippedOwned, $0.00 moved.
    *
    * The 13 live rows that still carry the margin digits are corrected by ONE run and only that one: re-dropping the
-   * archived byte-copies the ledger itself holds, data/statements/chase-checking-3522 (76 files, the 75 the ledger
-   * records at v1). Measured on a python read-only copy of the real ledger, 2026-09-22 — 75 parsed, 1,536 inserted,
-   * 0 quarantined, active rows 10,320 → 10,320, net worth $110,914.77 → $110,914.77, rows carrying a 20-digit run
-   * 55 → 42 — 16 ledger lines move: those 13 descriptions, and three Fordham rows the merchant map re-derives
-   * Financial Aid → Education. Nothing else, and nothing crosses to another charge (`claimCarry`). That run is the
-   * owner's call to make and a step of its own, behind its own restore point — `pnpm import-statements
-   * data/statements/chase-checking-3522 --confirm`, after `pnpm trial-import` on the same folder — never a side
-   * effect of an upload.
+   * byte-copies of the 75 statements the ledger records at v1, which it archived in data/statements/chase-checking-3522.
+   * Measured on a python read-only copy of the real ledger, 2026-09-22 — 75 parsed, 1,536 inserted, 0 quarantined,
+   * active rows 10,320 → 10,320, net worth $110,914.77 → $110,914.77, rows carrying a 20-digit run 55 → 42 — 16 ledger
+   * lines move: those 13 descriptions, and three Fordham rows the merchant map re-derives Financial Aid → Education.
+   * Nothing else, and nothing crosses to another charge (`claimCarry`). That run is the owner's call to make and a step
+   * of its own, behind its own restore point, never a side effect of an upload. Its steps — the three Fordham rows
+   * pinned first, so only the 13 descriptions move, and the PDFs staged under the names the ledger recorded, never
+   * imported from the archive folder itself — are the header of scripts/pin-fordham-aid-2026-09-28.ts, and nowhere
+   * else.
    */
   version: 2,
   matches: (f) => f.format === "pdf",
