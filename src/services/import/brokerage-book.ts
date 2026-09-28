@@ -5,7 +5,7 @@ import { balanceAnchors, dailyBalances } from "@/db/schema/balances";
 import { duplicateCandidates } from "@/db/schema/duplicate-candidates";
 import { holdingEvents } from "@/db/schema/holding-events";
 import { holdings } from "@/db/schema/holdings";
-import { importFiles, statementPeriods } from "@/db/schema/imports";
+import { importFiles, printedLines, statementCopies, statementPeriods } from "@/db/schema/imports";
 import { recurringSeries } from "@/db/schema/recurring";
 import { transactions } from "@/db/schema/transactions";
 import { transferAmbiguities } from "@/db/schema/transfer-ambiguities";
@@ -190,7 +190,8 @@ export function removeFileEvents(tx: AppDatabase, importFileId: string): string[
 
 /**
  * Delete the books among `accountIds` that hold nothing at all any more — no event, statement period, balance, row,
- * duplicate question, transfer question or series — with their derived cache, holding rows and live values; their ids.
+ * duplicate question, transfer question or series — with their derived cache, holding rows, live values and what other
+ * files say they print on them; their ids.
  *
  * An un-import restores the ledger it found: a book exists only to hold what a statement proved, and the import that
  * created it is the one being removed. So does a re-read that no longer proves the month, and a statement that failed
@@ -201,6 +202,14 @@ export function removeFileEvents(tx: AppDatabase, importFileId: string): string[
  * a position — the book included, the moment its first statement lands — and it prices what the book held, which
  * the statements proved. Counted as a balance, it kept a book whose every statement had been un-imported, carrying
  * its last live value into net worth (measured: $27.37 after un-importing the only month, 2026-09-16).
+ *
+ * 🔴 Nor is another file's record of printing on it (`printed_lines`, `statement_copies`). A second download that
+ * FAILED mid-import keeps what its earlier sections wrote — that it prints the book's month as a copy, and the book's
+ * (empty) lines — and is no heir to the month (`copyHandOvers` hands it to a live file only), so the record outlives
+ * every period it names. Left in place, it made the book's delete fail on its foreign key after the un-import's own
+ * transaction had committed: June un-imported, the book still there, and Agentic's 124 stale balance days never
+ * rebuilt (agentic-book.test.ts, 2026-09-28). `account_numbers` and `unimported_transfer_legs` never name a book: its
+ * statements print no number of their own, and no row ever sits on one.
  */
 export function removeEmptyBooks(db: AppDatabase, accountIds: readonly string[]): string[] {
   if (accountIds.length === 0) return [];
@@ -228,6 +237,9 @@ export function removeEmptyBooks(db: AppDatabase, accountIds: readonly string[])
     tx.delete(balanceAnchors).where(and(inArray(balanceAnchors.accountId, empty), eq(balanceAnchors.source, "live"))).run();
     // what an un-import kept of the book's rows goes with the book (`unimported-attributes`)
     forgetRememberedOn(tx, empty);
+    // …and what other files say they print on it: with its periods gone, they name nothing
+    tx.delete(printedLines).where(inArray(printedLines.accountId, empty)).run();
+    tx.delete(statementCopies).where(inArray(statementCopies.accountId, empty)).run();
     tx.delete(accounts).where(inArray(accounts.id, empty)).run();
   });
   return empty;
