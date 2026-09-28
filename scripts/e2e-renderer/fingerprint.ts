@@ -165,12 +165,14 @@ function canarySize(recorded: CanaryFingerprint, current: CanaryFingerprint): st
   return before === after ? before : `${before} → ${after}`;
 }
 
-function macosLabel(macos: RendererRecord["macos"]): string {
+/** "27.2 (26B5091g)", or the product version alone when there is no build to name. */
+export function macosLabel(macos: RendererRecord["macos"]): string {
   if (macos.buildVersion === "") return macos.productVersion;
   return `${macos.productVersion} (${macos.buildVersion})`;
 }
 
-function oneLineRenderer(record: RendererRecord): string {
+/** The renderer a record names, on one line: what the gate and the re-base command print. */
+export function oneLineRenderer(record: RendererRecord): string {
   return (
     `macOS ${macosLabel(record.macos)} · chromium r${record.chromiumRevision} · ` +
     `playwright ${record.playwright} · canary ${short(record.canary.pixelSha256)}`
