@@ -11,7 +11,7 @@ import { formatDayShortIn } from "@/lib/format-date";
 import { formatCents } from "@/lib/money";
 import { allocationsFor } from "@/lib/transaction-splits";
 import { accountLiquidity, cashPosition, listAccountOptions, outsidePortfolioCashAccountIds } from "./accounts";
-import { isAgentsIncomeSeries } from "./analytics";
+import { isAgentsIncome, isAgentsIncomeSeries, isIncome, loadCategoryIndex } from "./analytics";
 import { latestBalances } from "./derivation";
 import { latestBridgedNetWorthCents } from "./in-flight";
 import {
@@ -749,7 +749,8 @@ function variableComponents(
  * trend nudge. Rows a series drawn as recurring owns are excluded
  * (`linkIsNotRecurring`) — a live series' deposits project via FIXED, an ended
  * one's stopped — while a DISMISSED series' deposits count here like any other.
- * Income is a positive inflow, so only positive-amount income-kind rows contribute.
+ * Income is `isIncome`'s rows — positive amounts in income-kind categories, off
+ * the agent's cash; the agent's are projected apart, for EOM net worth alone.
  */
 /**
  * Income subcategories that are event-driven windfalls / misc one-offs, NOT
@@ -772,25 +773,17 @@ function variableIncomeComponents(
   today: string,
   remainingDays: number,
   daysInMonth: number,
-  { notDrawn, outside }: ForecastReads,
+  { notDrawn, outside, agentsCash }: ForecastReads,
 ): ForecastLeg {
   const windows = trailingFullMonths(today, TRAILING_FULL_MONTHS);
   const rangeStart = windows[0]!.start;
   const rangeEnd = windows.at(-1)!.end;
 
-  const categoryRows = db
-    .select({ id: categories.id, name: categories.name, parentId: categories.parentId, kind: categories.kind })
-    .from(categories)
-    .all();
-  const categoryById = new Map(categoryRows.map((c) => [c.id, c]));
-  // the income subcategory a row belongs to, or null when it isn't ongoing income-kind
-  const incomeBucket = (categoryId: string): string | null => {
-    const cat = categoryById.get(categoryId);
-    if (!cat) return null;
-    const root = cat.parentId ? (categoryById.get(cat.parentId) ?? null) : cat;
-    if (!root || root.kind !== "income") return null;
-    if (EVENT_DRIVEN_INCOME.has(cat.name)) return null;
-    return cat.name;
+  const idx = loadCategoryIndex(db);
+  // an income row's bucket is its own (sub)category, unless that is an event-driven one
+  const ongoing = (categoryId: string): string | null => {
+    const name = idx.byId.get(categoryId)!.name;
+    return EVENT_DRIVEN_INCOME.has(name) ? null : name;
   };
 
   // trailing income EXCLUDES the rows a series drawn as recurring owns
@@ -798,10 +791,22 @@ function variableIncomeComponents(
   // stopped, and a dismissed series owns none — its deposits are pace here
   const rows = nonRecurringAllocations(db, rangeStart, rangeEnd, notDrawn);
 
+  /*
+   * ⚖️ WHICH rows are income is `isIncome`'s to say — a positive amount in an income-kind category, off the agent's
+   * cash — since it is the classifier behind every figure that says "Income", and this leg is the pace row's.
+   * 🔴 It kept its own copy, keyed on the category's root kind alone, so the agent's month-end interest was projected
+   * as HIS on a fixture (3-mo avg $0.04 × 27/31 days, a $0.03 "Interest" line) after every other Income figure had
+   * left it out (owner decision 2026-09-28). The agent's rows are bucketed apart and projected by the same gate and
+   * average, for EOM net worth alone (`ForecastLeg.agentsCents`).
+   */
   const buckets = bucketTrailing(
     rows,
-    // income is a positive inflow
-    (t) => (t.categoryId === null || t.amountCents <= 0 ? null : incomeBucket(t.categoryId)),
+    (t) => (isIncome(idx, agentsCash, t) ? ongoing(t.categoryId!) : null),
+    outside,
+  );
+  const agents = bucketTrailing(
+    rows,
+    (t) => (isAgentsIncome(idx, agentsCash, t) ? ongoing(t.categoryId!) : null),
     outside,
   );
 
@@ -833,7 +838,8 @@ function variableIncomeComponents(
     cashCents += cashLine;
     if (cashLine !== (lines.get(label) ?? 0)) for (const id of buckets.outsideAccounts.get(label) ?? []) outsideAccountIds.add(id);
   }
-  return { components, cashCents, outsideAccountIds, agentsCents: 0 };
+  const agentsCents = project(agents.all).reduce((sum, c) => sum + c.cents, 0);
+  return { components, cashCents, outsideAccountIds, agentsCents };
 }
 
 /**

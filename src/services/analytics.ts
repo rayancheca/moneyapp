@@ -332,7 +332,7 @@ export function spendingBucket(idx: CategoryIndex, txn: AnalyticsTxn): SpendingB
 /**
  * Whether a row is Income — money HE received: a positive amount in an income-kind category, on an account whose
  * money is his. The one classifier behind every figure that says "Income": /spending's card, its chart, heatmap and
- * Sankey, /budgets' "$X in so far", the dashboard's period panel.
+ * Sankey, /budgets' "$X in so far", the dashboard's period panel, the forecast's pace row.
  *
  * ⚖️ Owner decision 2026-09-28 (§6A 27): what the AGENT'S account is paid — a dividend its shares pay, interest on
  * its uninvested cash — is not his income. `agentsCash` is `outsidePortfolioCashAccountIds` (services/accounts), the
@@ -354,6 +354,22 @@ export function isIncome(
     idx.topLevelOf(txn.categoryId).kind === "income" &&
     !agentsCash.has(txn.accountId)
   );
+}
+
+/** No account is the agent's: `isIncome` asked of category and sign alone (`isAgentsIncome`). */
+const NO_AGENT: ReadonlySet<string> = new Set();
+
+/**
+ * The rows `isIncome` leaves out for WHOSE they are, and only those: income by category and sign, paid into the
+ * agent's cash. Not his (owner decision 2026-09-28) and still money net worth holds, which is why the forecast
+ * projects it into EOM net worth alone (`MonthForecast.agentsIncome`) — never into a line that says Income.
+ */
+export function isAgentsIncome(
+  idx: CategoryIndex,
+  agentsCash: ReadonlySet<string>,
+  txn: Pick<AnalyticsTxn, "accountId" | "categoryId" | "amountCents">,
+): boolean {
+  return agentsCash.has(txn.accountId) && isIncome(idx, NO_AGENT, txn);
 }
 
 /**

@@ -22,7 +22,7 @@ import { incomeExpectation } from "./budgets";
 import { runwayCard } from "./committed";
 import { dashboardData } from "./dashboard";
 import { netWorthSeries, rebuildAccount } from "./derivation";
-import { forecastCurrentMonth } from "./forecast";
+import { forecastCurrentMonth, forecastForMonth } from "./forecast";
 import { periodActivity } from "./period-activity";
 import { spendingSankey } from "./sankey";
 import { cashFlowByPeriod, dailySpendHeatmap, periodTotals } from "./spending";
@@ -379,8 +379,10 @@ describe("the agent's income SERIES is not his pay either", () => {
   test("⚖️ …and the forecast's EOM net worth still counts what the agent's series pays, as the bridge does", () => {
     hisPay();
     const before = forecastCurrentMonth(bundle.db, TODAY);
+    const beforeNov = forecastForMonth(bundle.db, "2026-11", TODAY)!;
     agentsInterest();
     const after = forecastCurrentMonth(bundle.db, TODAY);
+    const afterNov = forecastForMonth(bundle.db, "2026-11", TODAY)!;
 
     // net worth holds the agent's money, so both readings' EOM net worth keep its Oct 31 $0.04
     expect(after.committed.eomNetWorthCents - before.committed.eomNetWorthCents).toBe(4);
@@ -391,6 +393,11 @@ describe("the agent's income SERIES is not his pay either", () => {
     expect(after.components.map((c) => c.label)).toEqual(before.components.map((c) => c.label));
     expect(after.agentsIncome).toEqual({ netCents: 4, committedNetCents: 4 });
     expect(before.agentsIncome).toEqual({ netCents: 0, committedNetCents: 0 });
+    // November chains October's: Oct 31 and Nov 30, on both readings, and still no line of his
+    expect(afterNov.agentsIncome).toEqual({ netCents: 8, committedNetCents: 8 });
+    expect(afterNov.committed.eomNetWorthCents - beforeNov.committed.eomNetWorthCents).toBe(8);
+    expect(afterNov.projectedEomNetWorthCents - beforeNov.projectedEomNetWorthCents).toBe(8);
+    expect(afterNov.committed.incomeCents).toBe(beforeNov.committed.incomeCents);
   });
 
   test("the rule's own edge: unpaired, the account is his, and so is the series", () => {
@@ -405,5 +412,40 @@ describe("the agent's income SERIES is not his pay either", () => {
     const f = forecastCurrentMonth(bundle.db, TODAY);
     expect(f.committed.incomeCents).toBe(4 * 114_192 + 4);
     expect(f.agentsIncome).toEqual({ netCents: 0, committedNetCents: 0 });
+  });
+});
+
+describe("the agent's trailing income is not his pace either", () => {
+  /*
+   * 🔴 `variableIncomeComponents` bucketed income by the category's root kind alone — its own copy of the rule, which
+   * never asked whose account — so the pace row's "Income" projected the agent's interest as his, beside every figure
+   * `isIncome` had already taken it out of.
+   */
+  test("⛔ the forecast's pace Income leaves the agent's interest out, and its EOM net worth keeps it", () => {
+    // the agent's month-end interest in each trailing month — Sep 30 is the fixture's own; no series is detected
+    post(agentic, "2026-07-31", 4, "Income > Interest", "Interest Payment");
+    post(agentic, "2026-08-31", 4, "Income > Interest", "Interest Payment");
+    const paired = forecastCurrentMonth(bundle.db, TODAY);
+    const pairedNov = forecastForMonth(bundle.db, "2026-11", TODAY)!;
+    bundle.db.update(accounts).set({ cashAccountId: null }).where(eq(accounts.id, book)).run();
+    const unpaired = forecastCurrentMonth(bundle.db, TODAY);
+    const unpairedNov = forecastForMonth(bundle.db, "2026-11", TODAY)!;
+
+    // unpaired, the account is his and so is its interest: 3-mo avg $0.04 × 27/31 days
+    expect(unpaired.components.find((c) => c.label === "Interest")?.cents).toBe(3);
+
+    // paired, no line of his carries it — not the pace's Income, not its Net
+    expect(paired.components.find((c) => c.label === "Interest")).toBeUndefined();
+    expect(paired.projectedIncomeCents).toBe(unpaired.projectedIncomeCents - 3);
+    expect(paired.projectedNetCents).toBe(unpaired.projectedNetCents - 3);
+    expect(pairedNov.projectedIncomeCents).toBe(unpairedNov.projectedIncomeCents - 4);
+
+    // …and net worth still holds it, this month and chained into the next, as the bridge does
+    expect(paired.agentsIncome).toEqual({ netCents: 3, committedNetCents: 0 });
+    expect(paired.projectedEomNetWorthCents).toBe(unpaired.projectedEomNetWorthCents);
+    expect(pairedNov.agentsIncome).toEqual({ netCents: 3 + 4, committedNetCents: 0 });
+    expect(pairedNov.projectedEomNetWorthCents).toBe(unpairedNov.projectedEomNetWorthCents);
+    // the headline is the schedule, and no series is the agent's here
+    expect(paired.committed).toEqual(unpaired.committed);
   });
 });
