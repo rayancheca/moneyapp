@@ -1014,28 +1014,33 @@ function statementPeriodProvenance(db: AppDatabase, id: string): Provenance | nu
  * count-only account left that comparison altogether and every row total's
  * date ran past the day the same app calls the account unchecked.
  *
- * `first` is the oldest footing of any kind, his count included. `checked` is
- * the oldest that is a CHECK, and it is null when nothing here is checked at
- * all — a caller that must not date a total on a count alone reads that one.
+ * `through` is the OLDEST footing of any kind, his count included: a figure
+ * cannot be proven past the first account that stops being checked. `note` is
+ * the sentence saying that day is his word when it is his count's, and "" when
+ * it is a check's.
+ *
+ * ⛔ …his count included when it is ALL there is. Summed totals kept a second
+ * field, the oldest CHECK, and printed no date when there was none, while net
+ * worth dates the same count at the day it stops standing — measured
+ * 2026-09-28 on a copy of the real ledger, /accounts/<Cash on Hand>'s "1
+ * transaction landed" proof printed no date at all. His call, 2026-09-28
+ * (handoff §6A 28): make them agree, in net worth's words. One day, one
+ * sentence, and they travel together — a caller printing `through` without
+ * `note` would print his word as a check.
  */
-function footingBounds(coverage: readonly AccountCoverage[]): {
-  first: string | null;
-  checked: string | null;
-  noteFor: (day: string | null) => string;
-} {
+function footingBounds(coverage: readonly AccountCoverage[]): { through: string | null; note: string } {
   const bounds = coverage
     .map((c) => ({ name: c.accountName, bound: footingThrough(c) }))
     .filter((b): b is { name: string; bound: { day: string; byCount: boolean } } => b.bound !== null)
     .sort((a, b) => (a.bound.day < b.bound.day ? -1 : a.bound.day > b.bound.day ? 1 : 0));
+  const through = bounds[0]?.bound.day ?? null;
+  // a check stopping the same day does not make the day a check: his count still stops there
+  const byCount = through === null ? undefined : bounds.find((b) => b.bound.day === through && b.bound.byCount);
   return {
-    first: bounds[0]?.bound.day ?? null,
-    checked: bounds.find((b) => !b.bound.byCount)?.bound.day ?? null,
-    noteFor: (day) => {
-      const byCount = day === null ? undefined : bounds.find((b) => b.bound.day === day && b.bound.byCount);
-      return byCount
-        ? ` The date it is checked through, ${readableDay(byCount.bound.day)}, is the last day ${byCount.name} rests on the balance you counted — your word, not a check.`
-        : "";
-    },
+    through,
+    note: byCount
+      ? ` The date it is checked through, ${readableDay(byCount.bound.day)}, is the last day ${byCount.name} rests on the balance you counted — your word, not a check.`
+      : "",
   };
 }
 
@@ -1204,10 +1209,8 @@ function netWorthProvenance(db: AppDatabase, day: string | undefined): Provenanc
    * day is his word, so the sentence says whose it is.
    */
   const footing = footingBounds(coverage);
-  // the OLDEST bound bounds the whole figure: the total cannot be proven past
-  // the first account that stops being checked
-  const checkedThrough = footing.first;
-  const countText = footing.noteFor(checkedThrough);
+  const checkedThrough = footing.through;
+  const countText = footing.note;
 
   return {
     verdict,
@@ -1821,7 +1824,7 @@ function allSpendProvenance(
    * giving it the other window's rows would be a lie in an argument, waiting for
    * the day someone makes that argument matter.
    */
-  const combined = summedRowsProvenance(
+  const { provenance: combined, dateNote } = summedRowsProof(
     db,
     [...rows, ...priorRows],
     subject,
@@ -1833,10 +1836,20 @@ function allSpendProvenance(
   return {
     verdict: combined.verdict,
     badgeWord: combined.badgeWord,
+    /*
+     * 🔴 The date was borrowed and the sentence saying whose word it is was not.
+     * Measured 2026-09-28 on a copy of the real ledger: this proof of August 2026
+     * against July read "Checked through 2026-08-10" — the last day Cash on Hand
+     * rests on the balance he typed — under a headline that never says so. The
+     * one comparison the app renders, a year against the year before, is dated
+     * by SoFi's Jul 31 today and would read the same once SoFi's chain runs past
+     * Aug 10.
+     * Where the date goes, `dateNote` goes (owner decision 2026-09-28, §6A 28).
+     */
     headline:
       `This compares two windows, so it stands on both — and is only as proven as the weaker of them. ` +
       `${subject} holds ${count(rows.length)}; ${priorSubject} holds ${count(priorRows.length)}. ` +
-      `A change between two figures cannot be better evidenced than the figures themselves.`,
+      `A change between two figures cannot be better evidenced than the figures themselves.${dateNote}`,
     sources: combined.sources,
     checkedThrough: combined.checkedThrough,
     /*
@@ -1891,6 +1904,22 @@ function summedRowsProvenance(
   from: string,
   to: string,
 ): Provenance {
+  return summedRowsProof(db, rows, subject, from, to).provenance;
+}
+
+/**
+ * `summedRowsProvenance`, with the sentence that says whose word its date is
+ * handed back on its own as well — for a caller that writes its OWN headline
+ * over this proof and borrows its date (`allSpendProvenance`'s comparison).
+ * Where the date goes, that sentence goes (`footingBounds`).
+ */
+function summedRowsProof(
+  db: AppDatabase,
+  rows: readonly SummedRow[],
+  subject: string,
+  from: string,
+  to: string,
+): { provenance: Provenance; dateNote: string } {
   if (rows.length === 0) {
     /*
      * 🔴 A ZERO IS ONLY MEASURED IF SOMEONE LOOKED. This branch asserted "so
@@ -1917,7 +1946,7 @@ function summedRowsProvenance(
       ledgerReaches: ledgerReaches(db),
     });
     const window = `${readableDay(from)} and ${readableDay(to)}`;
-    return {
+    const provenance: Provenance = {
       verdict: "unknown",
       headline:
         reason.kind === "measured"
@@ -1927,6 +1956,7 @@ function summedRowsProvenance(
       checkedThrough: null,
       inputs: [],
     };
+    return { provenance, dateNote: "" };
   }
 
   const coverage = new Map(accountCoverage(db, to).map((c) => [c.accountId, c]));
@@ -2016,18 +2046,18 @@ function summedRowsProvenance(
    * Checking row and read "Checked through 2026-08-12" — Chase's chain — beside
    * a trust card saying nothing has checked Cash on Hand since Aug 11.
    *
-   * ⚠️ A count still never DATES a total on its own — "the count of its rows
-   * dates no check", the describe of that name — so with nothing checked at all
-   * this stays null exactly as it did. A count only pulls a check's date back
-   * to where the count stops standing.
+   * ⛔ …and a count dates a total standing on it ALONE, exactly as it dates net
+   * worth. This stayed null with nothing checked underneath, so a total over
+   * Cash on Hand alone printed no date beside a net worth that printed the day
+   * his count stops standing; his call, 2026-09-28 (handoff §6A 28), is that
+   * they agree. The sentence beside the date says the day is his word.
    */
   const contributing = [...new Set(rows.map((r) => r.accountId))]
     .map((a) => coverage.get(a))
     .filter((c): c is AccountCoverage => c !== undefined);
   const footing = footingBounds(contributing);
-  const checkedThrough = footing.checked === null ? null : footing.first;
 
-  return {
+  const provenance: Provenance = {
     verdict,
     // the badge only overrides when rows are genuinely UNCHECKED — a category
     // that is entirely market value should read "market value", not a fraction
@@ -2038,11 +2068,12 @@ function summedRowsProvenance(
           ? marketValueBadgeWord(held === 0)
           : undefined
         : `${grouped(rows.length - weak)} of ${grouped(rows.length)} checked`,
-    headline: `This total is the sum of ${parts.join(", ")}. A total is only as proven as its weakest row.${footing.noteFor(checkedThrough)}`,
+    headline: `This total is the sum of ${parts.join(", ")}. A total is only as proven as its weakest row.${footing.note}`,
     sources,
-    checkedThrough,
+    checkedThrough: footing.through,
     inputs: [],
   };
+  return { provenance, dateNote: footing.note };
 }
 
 /**
