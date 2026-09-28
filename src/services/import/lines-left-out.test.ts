@@ -9,6 +9,7 @@ import { accounts } from "@/db/schema/accounts";
 import { duplicateCandidates } from "@/db/schema/duplicate-candidates";
 import { importFiles, statementPeriods } from "@/db/schema/imports";
 import { transactions } from "@/db/schema/transactions";
+import { lineLeftOutNotice } from "@/lib/import-file-label";
 import { linesLeftOut } from "./lines-left-out";
 import { PROFILES } from "./profiles";
 import { importStatementFiles, type ImportInput } from "./service";
@@ -36,6 +37,9 @@ const OPENING = { postedOn: "2026-06-01", amountCents: 2500, rawDescription: "WF
 const COFFEE = { postedOn: "2026-06-03", amountCents: -1000, rawDescription: "COFFEE ROASTERS 12" };
 const GROCER = { postedOn: "2026-06-12", amountCents: -2500, rawDescription: "CORNER GROCER" };
 
+/** a week's pay: one amount, the same words, every week */
+const pay = (postedOn: string) => ({ postedOn, amountCents: 114_192, rawDescription: "IT AMERICA LLC PAYROLL" });
+
 /** June's statement: it prints the export's three lines, and balances that close across them */
 const JUNE = { start: "2026-06-01", end: "2026-06-30", beginCents: 10_000, endCents: 9_000 };
 
@@ -44,10 +48,16 @@ const SECTIONS: Record<string, ParsedStatement[]> = {
   statement: [{ accountHint: CHECKING, txns: [OPENING, COFFEE, GROCER], period: JUNE }],
   // another export of the account, of a later month
   other: [{ accountHint: CHECKING, txns: [{ postedOn: "2026-07-02", amountCents: -700, rawDescription: "LATE NIGHT TACOS" }] }],
+  // an export of the account ending sooner than `export`, which prints its lines again
+  earlier: [{ accountHint: CHECKING, txns: [OPENING, COFFEE] }],
+  // three weeks of pay
+  payroll: [{ accountHint: CHECKING, txns: [pay("2026-06-05"), pay("2026-06-12"), pay("2026-06-19")] }],
 };
 
 /** what version 2 reads of a file, by its text — every section when absent */
 let atVersion2: Record<string, ParsedStatement[]> = {};
+/** …and version 3 — version 2's reading when absent */
+let atVersion3: Record<string, ParsedStatement[]> = {};
 /** version 2 of the export: the same lines less the opening deposit */
 const DROPS_OPENING = { export: [{ accountHint: CHECKING, txns: [COFFEE, GROCER] }] };
 
@@ -57,7 +67,8 @@ const profile: ParserProfile = {
   matches: (f) => f.name.startsWith(PREFIX),
   parse: (f) => {
     const text = f.text.trim();
-    return profile.version === 2 && text in atVersion2 ? atVersion2[text]! : SECTIONS[text]!;
+    if (profile.version === 3 && text in atVersion3) return atVersion3[text]!;
+    return profile.version >= 2 && text in atVersion2 ? atVersion2[text]! : SECTIONS[text]!;
   },
 };
 
@@ -68,6 +79,11 @@ const EXPORT_AGAIN = file("export (1)", "export\n");
 const EXPORT_THIRD = file("export (2)", "export\n\n");
 const STATEMENT = file("statement-2026-06", "statement");
 const OTHER = file("export-july", "other");
+/** two exports of the account that overlap, named as Chase names them: the older one sorts first */
+const EXPORT_AUGUST = file("Chase4501_Activity_20260812", "earlier");
+const EXPORT_SEPTEMBER = file("Chase4501_Activity_20260901", "export");
+const PAYROLL = file("payroll", "payroll");
+const PAYROLL_AGAIN = file("payroll (1)", "payroll\n");
 
 beforeEach(() => {
   dir = fs.mkdtempSync(path.join(os.tmpdir(), "moneyapp-lines-left-out-"));
@@ -76,6 +92,7 @@ beforeEach(() => {
   seedDatabase(bundle.db);
   profile.version = 1;
   atVersion2 = {};
+  atVersion3 = {};
   PROFILES.unshift(profile);
 });
 
@@ -196,6 +213,21 @@ describe("a re-read that drops a line a still-imported file prints", () => {
     expect(linesLeftOut(bundle.db)).toEqual([expect.objectContaining({ printedOn: OPENING.postedOn, readBy: EXPORT.name })]);
   });
 
+  test("the file read again at a version that still leaves the line out: named by the read that left it out, not again", async () => {
+    await exportAndRedownload();
+    profile.version = 2;
+    atVersion2 = DROPS_OPENING;
+    const [second] = await importStatementFiles(bundle.db, [EXPORT]);
+    expect(second!.leftOut).toHaveLength(1);
+
+    profile.version = 3;
+    const [third] = await importStatementFiles(bundle.db, [EXPORT]);
+
+    // its retirement took no row the deposit had: version 2's read had none
+    expect(third!.leftOut).toEqual([]);
+    expect(linesLeftOut(bundle.db)).toEqual([expect.objectContaining({ printedOn: OPENING.postedOn, readBy: EXPORT.name })]);
+  });
+
   test("one charge two re-downloads print is one line left out, naming both", async () => {
     await exportAndRedownload();
     await importStatementFiles(bundle.db, [EXPORT_THIRD]);
@@ -211,7 +243,55 @@ describe("a re-read that drops a line a still-imported file prints", () => {
   });
 
   /**
-   * Only a new DAY pairs a line with the row it replaced (`writtenAgain`): at other money the two files disagree about
+   * Every read of the export retires the one before it, so the ledger holds a retired row of the deposit for each
+   * version that read it. 🔴 Two re-downloads read at versions that word it differently each took the row in their own
+   * words: the review of uc/loud-dropped-line, 2026-09-28, measured one $25.00 charge named twice by ledger-check and
+   * under the read on /imports, and once by the upload.
+   */
+  test("one charge two re-downloads print in two versions' words is one line left out, as the upload names it", async () => {
+    await exportAndRedownload();
+    profile.version = 2;
+    atVersion2 = { export: [{ accountHint: CHECKING, txns: [{ ...OPENING, rawDescription: "OPENING DEPOSIT" }, COFFEE, GROCER] }] };
+    await importStatementFiles(bundle.db, [EXPORT]);
+    await importStatementFiles(bundle.db, [EXPORT_THIRD]);
+    const before = money();
+
+    profile.version = 3;
+    atVersion3 = DROPS_OPENING;
+    const [outcome] = await importStatementFiles(bundle.db, [EXPORT]);
+
+    expect(money()).toBe(before - OPENING.amountCents);
+    const found = linesLeftOut(bundle.db);
+    expect(found).toEqual([
+      expect.objectContaining({ printedOn: OPENING.postedOn, printedBy: [EXPORT_AGAIN.name, EXPORT_THIRD.name], readBy: EXPORT.name }),
+    ]);
+    expect(found.map(lineLeftOutNotice)).toEqual(outcome!.leftOut.map((l) => l.notice));
+  });
+
+  /**
+   * A version between them re-dated the deposit, and the re-download still prints the first version's day: the row of it
+   * the version between wrote is the charge, and the first version's row is how the re-download's line finds it.
+   */
+  test("a line a version re-dated and a later version dropped: named for the re-download that prints the first day", async () => {
+    await exportAndRedownload();
+    profile.version = 2;
+    atVersion2 = { export: [{ accountHint: CHECKING, txns: [{ ...OPENING, postedOn: "2026-06-02" }, COFFEE, GROCER] }] };
+    await importStatementFiles(bundle.db, [EXPORT]);
+    expect(linesLeftOut(bundle.db)).toEqual([]);
+    const before = money();
+
+    profile.version = 3;
+    atVersion3 = DROPS_OPENING;
+    const [outcome] = await importStatementFiles(bundle.db, [EXPORT]);
+
+    expect(money()).toBe(before - OPENING.amountCents);
+    const found = linesLeftOut(bundle.db);
+    expect(found).toEqual([expect.objectContaining({ printedOn: OPENING.postedOn, printedBy: [EXPORT_AGAIN.name], readBy: EXPORT.name })]);
+    expect(found.map(lineLeftOutNotice)).toEqual(outcome!.leftOut.map((l) => l.notice));
+  });
+
+  /**
+   * Only a new DAY pairs a line with the row it replaced (`rowsWrittenAgain`): at other money the two files disagree about
    * the charge, the ledger holds the new read's, and the money the re-download prints is in no row.
    */
   test("a version that reads a line at other money: the money the re-download prints is named", async () => {
@@ -244,6 +324,81 @@ describe("a re-read that drops a line a still-imported file prints", () => {
     expect(outcome!.leftOut).toEqual([
       expect.objectContaining({ printedOn: OPENING.postedOn, printedBy: [EXPORT.name], readBy: STATEMENT.name }),
     ]);
+  });
+
+  /**
+   * An upload reads its files one turn at a time, and a later turn can read again the very file an earlier turn's
+   * outcome says still prints the line. 🔴 Each outcome was read at the end of its own turn: the review of
+   * uc/loud-dropped-line, 2026-09-28, measured the August export's outcome naming the +$25.00 as printed by the September
+   * export, while the same upload's read of September dropped it too and the ledger named nothing.
+   */
+  test("an upload that reads again the file an earlier outcome says still prints the line: the outcome is the ledger's", async () => {
+    await importStatementFiles(bundle.db, [EXPORT_AUGUST]);
+    await importStatementFiles(bundle.db, [EXPORT_SEPTEMBER]);
+    profile.version = 2;
+    atVersion2 = { ...DROPS_OPENING, earlier: [{ accountHint: CHECKING, txns: [COFFEE] }] };
+
+    const outcomes = await importStatementFiles(bundle.db, [EXPORT_SEPTEMBER, EXPORT_AUGUST]);
+
+    expect(outcomes.map((o) => [o.fileName, o.status])).toEqual([
+      [EXPORT_AUGUST.name, "parsed"],
+      [EXPORT_SEPTEMBER.name, "parsed"],
+    ]);
+    // no imported file prints the deposit now: nothing is left out, and no outcome says otherwise
+    expect(linesLeftOut(bundle.db)).toEqual([]);
+    expect(outcomes.flatMap((o) => o.leftOut)).toEqual([]);
+  });
+});
+
+/**
+ * A version that DATES a line differently writes it again (`settleHeldRows`), so the retired row of it is no money
+ * missing — only a line of the same money, moved by days, stands in for it. 🔴 Any row of the same money did, whatever
+ * its day: the review of uc/loud-dropped-line, 2026-09-28, measured a version that moved each week of pay a day later
+ * and dropped the 06-12 week name 06-19 as the week left out, and a version that dropped a week and read one the first
+ * version missed name nothing — the money gone from the ledger, and no surface saying so.
+ */
+describe("a version that dates a line differently and drops one of the same money", () => {
+  async function payrollAndRedownload(): Promise<void> {
+    await importStatementFiles(bundle.db, [PAYROLL]);
+    await importStatementFiles(bundle.db, [PAYROLL_AGAIN]);
+  }
+
+  test("each week moved a day later and one dropped: the week it dropped is named", async () => {
+    await payrollAndRedownload();
+    const before = money();
+    profile.version = 2;
+    atVersion2 = { payroll: [{ accountHint: CHECKING, txns: [pay("2026-06-06"), pay("2026-06-20")] }] };
+
+    const [outcome] = await importStatementFiles(bundle.db, [PAYROLL]);
+
+    expect(live().map((r) => r.postedOn)).toEqual(["2026-06-06", "2026-06-20"]);
+    expect(money()).toBe(before - 114_192);
+    expect(outcome!.leftOut.map((l) => [l.printedOn, l.printedBy])).toEqual([["2026-06-12", [PAYROLL_AGAIN.name]]]);
+    expect(linesLeftOut(bundle.db).map((l) => l.printedOn)).toEqual(["2026-06-12"]);
+  });
+
+  test("each week moved a day earlier and one dropped: the week it dropped is named, not the one read before it", async () => {
+    await payrollAndRedownload();
+    profile.version = 2;
+    atVersion2 = { payroll: [{ accountHint: CHECKING, txns: [pay("2026-06-04"), pay("2026-06-18")] }] };
+
+    const [outcome] = await importStatementFiles(bundle.db, [PAYROLL]);
+
+    // 06-18 is a day from 06-19 and six from 06-12: the nearer week is the one it re-dates
+    expect(outcome!.leftOut.map((l) => l.printedOn)).toEqual(["2026-06-12"]);
+    expect(linesLeftOut(bundle.db).map((l) => l.printedOn)).toEqual(["2026-06-12"]);
+  });
+
+  test("a week dropped and the next one read for the first time: the week dropped is named", async () => {
+    await payrollAndRedownload();
+    profile.version = 2;
+    atVersion2 = { payroll: [{ accountHint: CHECKING, txns: [pay("2026-06-05"), pay("2026-06-12"), pay("2026-06-26")] }] };
+
+    const [outcome] = await importStatementFiles(bundle.db, [PAYROLL]);
+
+    expect(live().map((r) => r.postedOn)).toEqual(["2026-06-05", "2026-06-12", "2026-06-26"]);
+    expect(outcome!.leftOut.map((l) => l.printedOn)).toEqual(["2026-06-19"]);
+    expect(linesLeftOut(bundle.db).map((l) => l.printedOn)).toEqual(["2026-06-19"]);
   });
 });
 
@@ -302,6 +457,20 @@ describe("nothing is left out where no money left", () => {
     atVersion2 = { export: [{ accountHint: CHECKING, txns: [OPENING, { ...COFFEE, postedOn: "2026-06-04" }, GROCER] }] };
 
     const [outcome] = await importStatementFiles(bundle.db, [EXPORT]);
+
+    expect(money()).toBe(before);
+    expect(outcome!.leftOut).toEqual([]);
+    expect(linesLeftOut(bundle.db)).toEqual([]);
+  });
+
+  test("a version that dates every week of the pay two days later", async () => {
+    await importStatementFiles(bundle.db, [PAYROLL]);
+    await importStatementFiles(bundle.db, [PAYROLL_AGAIN]);
+    const before = money();
+    profile.version = 2;
+    atVersion2 = { payroll: [{ accountHint: CHECKING, txns: [pay("2026-06-07"), pay("2026-06-14"), pay("2026-06-21")] }] };
+
+    const [outcome] = await importStatementFiles(bundle.db, [PAYROLL]);
 
     expect(money()).toBe(before);
     expect(outcome!.leftOut).toEqual([]);

@@ -157,13 +157,13 @@ function candidatesFor(line: PrintedLine, index: ReadonlyMap<string, Row[]>): Ro
 }
 
 /** A matching of one file's lines to rows: which line each row records, and which row each line has. */
-interface Matching {
+export interface Matching {
   lineOf: Map<string, number>;
   rowOf: Map<number, string>;
 }
 
 /** Kuhn's augmenting search from `line`, over rows `usable` allows. */
-function augment(line: number, candidates: readonly Row[][], usable: (row: Row) => boolean, m: Matching, seen: Set<string>): boolean {
+export function augment(line: number, candidates: readonly Row[][], usable: (row: Row) => boolean, m: Matching, seen: Set<string>): boolean {
   for (const row of candidates[line]!) {
     if (seen.has(row.id) || !usable(row)) continue;
     seen.add(row.id);
