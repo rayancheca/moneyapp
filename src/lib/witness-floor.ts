@@ -22,8 +22,10 @@ import { type LedgerFailure, type LedgerObservation, windowsSpanning } from "./l
  *   held       as many as the mark, every witness it lists still seen —
  *              nothing is written
  *   dropped    fewer than the mark, OR any witness it lists no longer seen,
- *              whatever the count — a `witness-drop` finding, and the mark
- *              stays until `--lower-marks=<kind> --confirm` lowers it
+ *              whatever the count — a `witness-drop` finding. What left stays
+ *              in the mark until `--lower-marks=<kind> --confirm` lowers it,
+ *              and what arrived meanwhile joins it, so an arrival that leaves
+ *              before the lowering is named too (`arrivalsJoining`)
  *
  * ⛔ The SET, not only the count. Compared by count alone, a witness could leave
  * unseen two ways (the one-caller sweep, 2026-09-22): one statement un-imported
@@ -159,13 +161,23 @@ export function witnessesOf(observed: LedgerObservation): Record<WitnessKind, Wi
 const namesNow = (observed: LedgerObservation): Record<string, string> =>
   Object.fromEntries(Object.entries(observed.accountIds).map(([name, id]) => [id, name]));
 
-/** The mark `witnesses` set: their count, and the name of every account they are on. */
-function markOf(observed: LedgerObservation, witnesses: Witness[]): WitnessMark {
+/**
+ * The mark `witnesses` set: their count, and the name of every account they are on. An account no longer in the
+ * ledger keeps the name `known` gave it: a joined mark still lists what left, and a row listing a witness on an
+ * account it names nowhere cannot be read back (`marksFromRows`).
+ */
+function markOf(
+  observed: LedgerObservation,
+  witnesses: Witness[],
+  known: Readonly<Record<string, string>> = {},
+): WitnessMark {
   const onAccounts = new Set(witnesses.map(([id]) => id));
   return {
     count: witnesses.length,
     witnesses,
-    accountNames: Object.fromEntries(Object.entries(namesNow(observed)).filter(([id]) => onAccounts.has(id))),
+    accountNames: Object.fromEntries(
+      Object.entries({ ...known, ...namesNow(observed) }).filter(([id]) => onAccounts.has(id)),
+    ),
   };
 }
 
@@ -228,11 +240,40 @@ function standingOf(
   return { gone, dropped: now.length < mark.count || gone.length > 0 };
 }
 
+/** two windows on one account that share any stretch of days — meeting at an end is not sharing */
+const overlap = ([id, from, to]: Witness, [otherId, otherFrom, otherTo]: Witness): boolean =>
+  id === otherId && `${from}` < `${otherTo}` && `${otherFrom}` < `${to}`;
+
+/**
+ * What joins the mark of a kind that DROPPED: every witness seen that the mark does not list. The mark keeps
+ * what left — named until `--lower-marks` approves it — and takes these in beside it. When a drop wrote nothing,
+ * a witness that arrived while its kind was failing and left before the lowering was named by no run, and the
+ * lowering, approved for the removal it did name, set the mark to what was seen and erased it without a word
+ * (review, 2026-09-28).
+ *
+ * ⛔ Never a chain window over days the mark already covers: one mark never holds two windows over the same
+ * days. Such a window is walked only because an anchor within those days left (it merges the mark's windows) or
+ * arrived (it divides one); with both in one mark, undoing the removal — a statement un-imported and imported
+ * again — walks fewer windows than the mark lists, and fails on the count with nothing gone. The mark's own
+ * windows measure those days, and the window's ends are chain endpoints, which that kind takes in and names like
+ * any other witness.
+ */
+function arrivalsJoining(kind: WitnessKind, mark: WitnessMark, now: readonly Witness[]): Witness[] {
+  const arrived = subtract(now, mark.witnesses);
+  if (kind !== "chain-windows") return arrived;
+  return arrived.filter((window) => !mark.witnesses.some((marked) => overlap(marked, window)));
+}
+
 const SHOWN = 10;
 
 /**
  * Gone witnesses as a person reads them, in name order. An account still in the
  * ledger is named as it is called now; one that is not, as the mark knew it.
+ *
+ * ⛔ Said without a WHEN. A failing kind's mark is written again when something
+ * joins it (`arrivalsJoining`), with what had already left kept in it, so "gone
+ * since the mark was set" would date a departure after a write it came before —
+ * and whoever looked for what removed it since that write would find nothing.
  */
 function describeGone(gone: readonly Witness[], mark: WitnessMark, observed: LedgerObservation): string {
   if (gone.length === 0) {
@@ -244,7 +285,9 @@ function describeGone(gone: readonly Witness[], mark: WitnessMark, observed: Led
     .map(([name, ...fields]) => (fields.length === 0 ? `${name}` : `${name} ${fields.join(" → ")}`))
     .sort();
   const more = labels.length - SHOWN;
-  return `gone since the mark was set: ${labels.slice(0, SHOWN).join(", ")}` + (more > 0 ? ` and ${more} more` : "");
+  return (
+    `listed in the mark, no longer seen: ${labels.slice(0, SHOWN).join(", ")}` + (more > 0 ? ` and ${more} more` : "")
+  );
 }
 
 const HOW_TO_LOWER =
@@ -253,7 +296,10 @@ const HOW_TO_LOWER =
   "owner approved that removal, lower the mark:";
 
 export interface FloorResult {
-  /** marks to store: kinds recorded for the first time, or raised — never a lowered one */
+  /**
+   * marks to store: kinds recorded for the first time, raised, or — a kind that dropped — joined by what arrived,
+   * what left kept in them. Never a lowered one.
+   */
   writes: WitnessMarks;
   failures: LedgerFailure[];
   /** one line, every kind: its count, and what happened to its mark */
@@ -270,6 +316,18 @@ function against(seen: number, mark: number): string {
   return seen === mark
     ? `as many as the mark of ${mark} but not the same ones`
     : `above the mark of ${mark} but not every one it lists`;
+}
+
+/**
+ * A dropped kind's part of the summary line. When anything joined its mark the new size is said, so the next
+ * run's "mark of N" is not a number that came from nowhere. It counts what JOINED — "N arrivals join it", never
+ * "the N that arrived": a chain window over days the mark covers arrives without joining (`arrivalsJoining`).
+ */
+function droppedSegment(seen: number, gone: number, mark: number, joining: number): string {
+  const standing = seen < mark ? `below its mark of ${mark}` : `${gone} gone from its mark of ${mark}`;
+  if (joining === 0) return standing;
+  const join = joining === 1 ? "arrival joins" : "arrivals join";
+  return `${standing}; ${joining} ${join} it: ${mark} → ${mark + joining}`;
 }
 
 /** The observation against the stored marks. */
@@ -290,11 +348,10 @@ export function compareToMarks(observed: LedgerObservation, marks: WitnessMarks)
     // ⛔ asked before any raise: a raise writes the mark afresh from what is seen, which would erase what left
     const { gone, dropped } = standingOf(kind, mark, now, observed);
     if (dropped) {
-      segments.push(
-        now.length < mark.count
-          ? `${counted} (below its mark of ${mark.count})`
-          : `${counted} (${gone.length} gone from its mark of ${mark.count})`,
-      );
+      // what left stays in the mark until it is lowered, and what arrived joins it (`arrivalsJoining`)
+      const joining = arrivalsJoining(kind, mark, now);
+      if (joining.length > 0) writes[kind] = markOf(observed, [...mark.witnesses, ...joining], mark.accountNames);
+      segments.push(`${counted} (${droppedSegment(now.length, gone.length, mark.count, joining.length)})`);
       failures.push({
         kind: "witness-drop",
         account: LABEL[kind],
@@ -318,7 +375,9 @@ export function compareToMarks(observed: LedgerObservation, marks: WitnessMarks)
  * What `--lower-marks=<kinds>` would do: each named kind that DROPPED — seen
  * below its mark, or missing any witness it lists — comes down to exactly what
  * is seen. It never touches a kind that did not drop (a plain run raises that)
- * or a kind it was not given.
+ * or a kind it was not given. What it names as gone is everything the mark
+ * lists and the ledger no longer shows — an arrival a plain run took in while
+ * the kind was failing, and that has left since, among them.
  */
 export function planLowering(
   observed: LedgerObservation,

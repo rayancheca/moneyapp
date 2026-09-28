@@ -8,6 +8,7 @@ import {
   marksFromRows,
   planLowering,
   witnessesOf,
+  type FloorResult,
   type WitnessMarks,
 } from "./witness-floor";
 
@@ -21,6 +22,7 @@ const B = "Robinhood Brokerage";
 const CC = "Chase Checking";
 const RC = "Robinhood Cash";
 const COH = "Cash on Hand";
+const WF = "Wells Fargo Everyday Checking";
 
 /** the owner's thirteen accounts and their ids, read off the same copy */
 const ID: Readonly<Record<string, string>> = {
@@ -67,6 +69,21 @@ const observation = (over: Partial<LedgerObservation> = {}): LedgerObservation =
 
 /** the marks a first run on `observed` would record */
 const marksAt = (observed: LedgerObservation): WitnessMarks => compareToMarks(observed, {}).writes;
+
+/** plain runs in order, each against the marks the run before it left — what the hook does commit by commit */
+function runInOrder(
+  marks: WitnessMarks,
+  states: readonly LedgerObservation[],
+): { results: FloorResult[]; marks: WitnessMarks } {
+  const results: FloorResult[] = [];
+  let current = marks;
+  for (const state of states) {
+    const result = compareToMarks(state, current);
+    results.push(result);
+    current = { ...current, ...result.writes };
+  }
+  return { results, marks: current };
+}
 
 const LOWER_HOW =
   "A witness this check counted has left the ledger, and nothing it proved is being checked any more. " +
@@ -181,7 +198,7 @@ describe("compareToMarks — a floor under every witness kind", () => {
         kind: "witness-drop",
         account: "value anchors",
         detail:
-          "1 seen, below the mark of 2 — gone since the mark was set: Robinhood Brokerage 2024-08-31. " +
+          "1 seen, below the mark of 2 — listed in the mark, no longer seen: Robinhood Brokerage 2024-08-31. " +
           `${LOWER_HOW} pnpm ledger-check --lower-marks=value-anchors, then the same with --confirm`,
       },
     ]);
@@ -231,7 +248,7 @@ describe("compareToMarks — a floor under every witness kind", () => {
 
     expect(result.failures.map((f) => f.account)).toEqual(["chain windows"]);
     expect(result.failures[0]?.detail).toContain(
-      "1 seen, below the mark of 2 — gone since the mark was set: Chase Checking 2022-08-24 → 2022-09-13, " +
+      "1 seen, below the mark of 2 — listed in the mark, no longer seen: Chase Checking 2022-08-24 → 2022-09-13, " +
         "Chase Checking 2022-09-13 → 2022-10-13. ",
     );
     expect(result.writes).toEqual({
@@ -261,7 +278,7 @@ describe("compareToMarks — a floor under every witness kind", () => {
         kind: "witness-drop",
         account: "chain endpoints",
         detail:
-          "0 seen, below the mark of 1 — gone since the mark was set: Cash on Hand 2026-08-03. " +
+          "0 seen, below the mark of 1 — listed in the mark, no longer seen: Cash on Hand 2026-08-03. " +
           `${LOWER_HOW} pnpm ledger-check --lower-marks=chain-endpoints, then the same with --confirm`,
       },
     ]);
@@ -298,7 +315,7 @@ describe("compareToMarks — a floor under every witness kind", () => {
     const [failure] = compareToMarks(after, marks).failures;
 
     expect(failure?.detail).toContain(
-      "3 seen, below the mark of 5 — gone since the mark was set: " +
+      "3 seen, below the mark of 5 — listed in the mark, no longer seen: " +
         "Chase Checking 2022-10-13 → 2022-11-10, Chase Checking 2022-11-10 → 2022-12-12, " +
         "Chase Checking 2022-12-12 → 2023-01-12, Discover 2023-01-01 → 2023-02-01. ",
     );
@@ -314,7 +331,7 @@ describe("compareToMarks — a floor under every witness kind", () => {
   describe("⛔ a witness that left fails whatever the count does — a swap or a raise hides nothing", () => {
     const before = observation({ valuedAnchorDays: { [B]: ["2024-08-31", "2024-09-30"] } });
     const gone =
-      "gone since the mark was set: Robinhood Brokerage 2024-08-31. " +
+      "listed in the mark, no longer seen: Robinhood Brokerage 2024-08-31. " +
       `${LOWER_HOW} pnpm ledger-check --lower-marks=value-anchors, then the same with --confirm`;
 
     it("a swap — one statement left, another arrived — holds the count, and fails naming the one that left", () => {
@@ -329,31 +346,47 @@ describe("compareToMarks — a floor under every witness kind", () => {
           detail: `2 seen, as many as the mark of 2 but not the same ones — ${gone}`,
         },
       ]);
-      // the mark stays as it was, the one that left still in it
-      expect(result.writes).toEqual({});
+      // the one that left stays in the mark, and the one that arrived joins it
+      expect(result.writes).toEqual({
+        "value-anchors": {
+          count: 3,
+          witnesses: [at(B, "2024-08-31"), at(B, "2024-09-30"), at(B, "2024-10-31")],
+          accountNames: named(B),
+        },
+      });
       expect(result.summary).toBe(
-        "witness marks: value anchors 2 (1 gone from its mark of 2) · chain endpoints 0 · chain windows 0 · " +
-          "statement periods 0 · accounts 0",
+        "witness marks: value anchors 2 (1 gone from its mark of 2; 1 arrival joins it: 2 → 3) · " +
+          "chain endpoints 0 · chain windows 0 · statement periods 0 · accounts 0",
       );
     });
 
     it("a raise with a departure fails naming it, and never erases it — the next run names it again", () => {
       const raised = observation({ valuedAnchorDays: { [B]: ["2024-09-30", "2024-10-31", "2024-11-30"] } });
-      const marks = marksAt(before);
 
-      const first = compareToMarks(raised, marks);
-      const second = compareToMarks(raised, { ...marks, ...first.writes });
+      const {
+        results: [first, second],
+      } = runInOrder(marksAt(before), [raised, raised]);
 
-      expect(first.failures).toEqual([
+      expect(first?.failures).toEqual([
         {
           kind: "witness-drop",
           account: "value anchors",
           detail: `3 seen, above the mark of 2 but not every one it lists — ${gone}`,
         },
       ]);
-      expect(first.writes).toEqual({});
-      expect(first.summary).toContain("value anchors 3 (1 gone from its mark of 2) · ");
-      expect(second.failures).toEqual(first.failures);
+      expect(first?.writes).toEqual({
+        "value-anchors": {
+          count: 4,
+          witnesses: [at(B, "2024-08-31"), at(B, "2024-09-30"), at(B, "2024-10-31"), at(B, "2024-11-30")],
+          accountNames: named(B),
+        },
+      });
+      expect(first?.summary).toContain(
+        "value anchors 3 (1 gone from its mark of 2; 2 arrivals join it: 2 → 4) · ",
+      );
+      // the same ledger again: the one that left is named again, and with nothing new arrived nothing is written
+      expect(second?.failures.map((f) => f.detail)).toEqual([`3 seen, below the mark of 4 — ${gone}`]);
+      expect(second?.writes).toEqual({});
     });
 
     it("a window an arriving anchor divided is a raise, not a departure — its span is still walked", () => {
@@ -402,11 +435,178 @@ describe("compareToMarks — a floor under every witness kind", () => {
       const result = compareToMarks(after, marksAt(marked));
 
       expect(result.failures.map((f) => f.detail)).toEqual([
-        "3 seen, as many as the mark of 3 but not the same ones — gone since the mark was set: " +
+        "3 seen, as many as the mark of 3 but not the same ones — listed in the mark, no longer seen: " +
           "Chase Checking 2022-10-13 → 2022-11-10, Chase Checking 2022-11-10 → 2022-12-12. " +
           `${LOWER_HOW} pnpm ledger-check --lower-marks=chain-windows, then the same with --confirm`,
       ]);
       expect(result.writes).toEqual({});
+    });
+  });
+
+  /*
+   * Review of the set floor (2026-09-28): a kind that dropped wrote nothing, so a witness that ARRIVED while it
+   * was failing never got into the mark. Un-imported again before the lowering, no run named it, and
+   * `--lower-marks` — approved for the removal it did name — set the mark to what was seen and erased it without
+   * a word. Main's drop path had the same hole; the set floor sends swaps and raises down it too.
+   */
+  describe("⛔ what arrives while a kind is failing joins its mark — named if it leaves before the lowering", () => {
+    const marked = observation({ valuedAnchorDays: { [B]: ["2024-08-31", "2024-09-30"] } });
+    const lower = `${LOWER_HOW} pnpm ledger-check --lower-marks=value-anchors, then the same with --confirm`;
+
+    it("a statement imported while the kind is failing, then un-imported again, is named by the next run and by the lowering", () => {
+      // the first statement un-imported and the next two imported; then the first of those un-imported again
+      const raised = observation({ valuedAnchorDays: { [B]: ["2024-09-30", "2024-10-31", "2024-11-30"] } });
+      const undone = observation({ valuedAnchorDays: { [B]: ["2024-09-30", "2024-11-30"] } });
+
+      const {
+        results: [, second],
+        marks,
+      } = runInOrder(marksAt(marked), [raised, undone]);
+      const plan = planLowering(undone, marks, ["value-anchors"]);
+
+      expect(second?.failures.map((f) => f.detail)).toEqual([
+        "2 seen, below the mark of 4 — listed in the mark, no longer seen: " +
+          `Robinhood Brokerage 2024-08-31, Robinhood Brokerage 2024-10-31. ${lower}`,
+      ]);
+      expect(plan.lines).toEqual([
+        "value anchors: lowers its mark 4 → 2 — listed in the mark, no longer seen: " +
+          "Robinhood Brokerage 2024-08-31, Robinhood Brokerage 2024-10-31",
+      ]);
+      expect(compareToMarks(undone, { ...marks, ...plan.writes }).failures).toEqual([]);
+    });
+
+    it("so is one imported and un-imported again while the count is below the mark — main's drop path", () => {
+      const dropped = observation({ valuedAnchorDays: { [B]: ["2024-09-30"] } });
+      const imported = observation({ valuedAnchorDays: { [B]: ["2024-09-30", "2024-10-31"] } });
+
+      const { results } = runInOrder(marksAt(marked), [dropped, imported, dropped]);
+
+      expect(results.map((r) => r.failures.map((f) => f.detail))).toEqual([
+        [
+          "1 seen, below the mark of 2 — listed in the mark, no longer seen: " +
+            `Robinhood Brokerage 2024-08-31. ${lower}`,
+        ],
+        [
+          "2 seen, as many as the mark of 2 but not the same ones — listed in the mark, no longer seen: " +
+            `Robinhood Brokerage 2024-08-31. ${lower}`,
+        ],
+        [
+          "1 seen, below the mark of 3 — listed in the mark, no longer seen: " +
+            `Robinhood Brokerage 2024-08-31, Robinhood Brokerage 2024-10-31. ${lower}`,
+        ],
+      ]);
+      // nothing arrived on the first run or the third, so they wrote nothing; the second took 2024-10-31 in
+      expect(results.map((r) => r.writes["value-anchors"]?.count)).toEqual([undefined, 3, undefined]);
+    });
+
+    it("⛔ a witness on an account that is itself gone keeps the name the mark knew it by — the row reads back", () => {
+      // Cash on Hand removed and Wells Fargo added between two runs: accounts fails, and takes Wells Fargo in
+      const before = observation({ accounts: [B, COH] });
+      const after = observation({ accounts: [B, WF], accountIds: { [B]: ID[B]!, [WF]: ID[WF]! } });
+
+      const { writes } = compareToMarks(after, marksAt(before));
+
+      expect(writes.accounts).toEqual({
+        count: 3,
+        witnesses: [at(COH), at(B), at(WF)],
+        accountNames: named(COH, B, WF),
+      });
+      const joined = writes.accounts!;
+      const stored = marksFromRows([
+        { kind: "accounts", mark: joined.count, witnesses: joined.witnesses, accountNames: joined.accountNames },
+      ]);
+      expect(compareToMarks(after, stored).failures[0]?.detail).toContain(
+        "2 seen, below the mark of 3 — listed in the mark, no longer seen: Cash on Hand. ",
+      );
+    });
+
+    describe("chain windows", () => {
+      const span = (from: string, to: string) => ({ from, to });
+      const two = marksAt(
+        observation({ chainWindows: { [CC]: [span("2022-08-24", "2022-09-13"), span("2022-09-13", "2022-10-13")] } }),
+      );
+
+      it("a window over days the mark does not cover joins it like any other witness", () => {
+        // 2022-09-13 un-imported and 2022-11-10 imported; then 2022-11-10 un-imported again
+        const imported = observation({
+          chainWindows: { [CC]: [span("2022-08-24", "2022-10-13"), span("2022-10-13", "2022-11-10")] },
+        });
+        const undone = observation({ chainWindows: { [CC]: [span("2022-08-24", "2022-10-13")] } });
+
+        const {
+          results: [first, second],
+        } = runInOrder(two, [imported, undone]);
+
+        expect(first?.writes).toEqual({
+          "chain-windows": {
+            count: 3,
+            witnesses: [
+              at(CC, "2022-08-24", "2022-09-13"),
+              at(CC, "2022-09-13", "2022-10-13"),
+              at(CC, "2022-10-13", "2022-11-10"),
+            ],
+            accountNames: named(CC),
+          },
+        });
+        // two windows arrived and one joined: the summary counts what joined, and claims no more arrived
+        expect(first?.summary).toContain("chain windows 2 (2 gone from its mark of 2; 1 arrival joins it: 2 → 3) · ");
+        expect(second?.failures[0]?.detail).toContain(
+          "1 seen, below the mark of 3 — listed in the mark, no longer seen: " +
+            "Chase Checking 2022-08-24 → 2022-09-13, Chase Checking 2022-09-13 → 2022-10-13, " +
+            "Chase Checking 2022-10-13 → 2022-11-10. ",
+        );
+      });
+
+      it("⛔ a window over days the mark already covers does not — a statement un-imported and imported again passes", () => {
+        // walked only because 2022-09-13 left: the mark keeps the two it merged, which name that departure
+        const unimported = observation({ chainWindows: { [CC]: [span("2022-08-24", "2022-10-13")] } });
+        const again = observation({
+          chainWindows: { [CC]: [span("2022-08-24", "2022-09-13"), span("2022-09-13", "2022-10-13")] },
+        });
+
+        const {
+          results: [first, second],
+        } = runInOrder(two, [unimported, again]);
+
+        expect(first?.failures.map((f) => f.account)).toEqual(["chain windows"]);
+        expect(first?.writes).toEqual({});
+        expect(second).toEqual({
+          writes: {},
+          failures: [],
+          summary:
+            "witness marks: value anchors 0 · chain endpoints 0 · chain windows 2 · statement periods 0 · accounts 0",
+        });
+      });
+
+      it("⛔ nor does one an arriving anchor divided — the mark's window measures its span, and a restored ledger passes", () => {
+        // 2022-11-10 un-imported while a 2022-09-13 statement is backfilled; then 2022-11-10 imported again
+        const marks = marksAt(
+          observation({ chainWindows: { [CC]: [span("2022-08-24", "2022-10-13"), span("2022-10-13", "2022-11-10")] } }),
+        );
+        const meanwhile = observation({
+          chainWindows: { [CC]: [span("2022-08-24", "2022-09-13"), span("2022-09-13", "2022-10-13")] },
+        });
+        const restored = observation({
+          chainWindows: {
+            [CC]: [
+              span("2022-08-24", "2022-09-13"),
+              span("2022-09-13", "2022-10-13"),
+              span("2022-10-13", "2022-11-10"),
+            ],
+          },
+        });
+
+        const {
+          results: [first, second],
+        } = runInOrder(marks, [meanwhile, restored]);
+
+        expect(first?.failures[0]?.detail).toContain(
+          "2 seen, as many as the mark of 2 but not the same ones — listed in the mark, no longer seen: " +
+            "Chase Checking 2022-10-13 → 2022-11-10. ",
+        );
+        expect(first?.writes).toEqual({});
+        expect(second?.failures).toEqual([]);
+      });
     });
   });
 
@@ -415,7 +615,7 @@ describe("compareToMarks — a floor under every witness kind", () => {
       "value-anchors": { count: 2, witnesses: [at(B, "2024-08-31"), at(B, "2024-08-31")], accountNames: named(B) },
     };
     const [failure] = compareToMarks(observation({ valuedAnchorDays: { [B]: ["2024-08-31"] } }), marks).failures;
-    expect(failure?.detail).toContain("1 seen, below the mark of 2 — gone since the mark was set: Robinhood Brokerage 2024-08-31. ");
+    expect(failure?.detail).toContain("1 seen, below the mark of 2 — listed in the mark, no longer seen: Robinhood Brokerage 2024-08-31. ");
   });
 
   it("a drop whose mark's witnesses are all still accounted for says it cannot tell which left — and still fails", () => {
@@ -442,7 +642,7 @@ describe("compareToMarks — a floor under every witness kind", () => {
     const [failure] = compareToMarks(observation(), marksAt(observation({ accounts: thirteen }))).failures;
     expect(failure?.account).toBe("accounts");
     expect(failure?.detail).toContain(
-      "0 seen, below the mark of 13 — gone since the mark was set: Capital One 360 Checking, Cash on Hand, " +
+      "0 seen, below the mark of 13 — listed in the mark, no longer seen: Capital One 360 Checking, Cash on Hand, " +
         "Chase Checking, Chase Sapphire, Discover, Robinhood Agentic, Robinhood Brokerage, Robinhood Cash, " +
         "Robinhood Crypto, SoFi Checking and 3 more. ",
     );
@@ -498,7 +698,7 @@ describe("compareToMarks — a floor under every witness kind", () => {
           kind: "witness-drop",
           account: "chain windows",
           detail:
-            "3 seen, below the mark of 4 — gone since the mark was set: " +
+            "3 seen, below the mark of 4 — listed in the mark, no longer seen: " +
             "Robinhood Cash 2024-06-30 → 2024-07-31, Robinhood Cash 2024-07-31 → 2024-08-31. " +
             `${LOWER_HOW} pnpm ledger-check --lower-marks=chain-windows, then the same with --confirm`,
         },
@@ -517,7 +717,7 @@ describe("compareToMarks — a floor under every witness kind", () => {
         },
       });
       expect(compareToMarks(dropped, recorded).failures[0]?.detail).toContain(
-        "3 seen, below the mark of 4 — gone since the mark was set: Chase Checking 3522 2022-09-13 → 2022-10-13. ",
+        "3 seen, below the mark of 4 — listed in the mark, no longer seen: Chase Checking 3522 2022-09-13 → 2022-10-13. ",
       );
     });
 
@@ -525,7 +725,7 @@ describe("compareToMarks — a floor under every witness kind", () => {
       const before = observation({ accounts: [B, COH] });
       const after = observation({ accounts: [B], accountIds: { [B]: ID[B]! } });
       expect(compareToMarks(after, marksAt(before)).failures[0]?.detail).toContain(
-        "1 seen, below the mark of 2 — gone since the mark was set: Cash on Hand. ",
+        "1 seen, below the mark of 2 — listed in the mark, no longer seen: Cash on Hand. ",
       );
     });
 
@@ -533,7 +733,7 @@ describe("compareToMarks — a floor under every witness kind", () => {
       const marks: WitnessMarks = { accounts: { count: 1, witnesses: [at(COH)], accountNames: {} } };
       const after = observation({ accountIds: {} });
       expect(compareToMarks(after, marks).failures[0]?.detail).toContain(
-        "0 seen, below the mark of 1 — gone since the mark was set: account 019fcd2f-0777-7000-9728-f51c9f2dbd7e. ",
+        "0 seen, below the mark of 1 — listed in the mark, no longer seen: account 019fcd2f-0777-7000-9728-f51c9f2dbd7e. ",
       );
     });
   });
@@ -555,7 +755,7 @@ describe("planLowering — the guarded way down, after a removal the owner appro
       "value-anchors": { count: 1, witnesses: [at(B, "2024-09-30")], accountNames: named(B) },
     });
     expect(plan.lines).toEqual([
-      "value anchors: lowers its mark 2 → 1 — gone since the mark was set: Robinhood Brokerage 2024-08-31",
+      "value anchors: lowers its mark 2 → 1 — listed in the mark, no longer seen: Robinhood Brokerage 2024-08-31",
       "chain windows: 1 seen, mark 1 — not below it and nothing it lists gone, nothing to lower",
       "statement periods: no mark recorded yet — nothing to lower (a plain run records one)",
     ]);
@@ -587,7 +787,7 @@ describe("planLowering — the guarded way down, after a removal the owner appro
         "value-anchors": { count: 2, witnesses: [at(B, "2024-09-30"), at(B, "2024-10-31")], accountNames: named(B) },
       });
       expect(plan.lines).toEqual([
-        "value anchors: sets its mark 2 → 2, forgetting what left — gone since the mark was set: Robinhood Brokerage 2024-08-31",
+        "value anchors: sets its mark 2 → 2, forgetting what left — listed in the mark, no longer seen: Robinhood Brokerage 2024-08-31",
       ]);
     });
 
@@ -598,7 +798,7 @@ describe("planLowering — the guarded way down, after a removal the owner appro
       const next = compareToMarks(raised, { ...marked, ...plan.writes });
 
       expect(plan.lines).toEqual([
-        "value anchors: sets its mark 2 → 3, forgetting what left — gone since the mark was set: Robinhood Brokerage 2024-08-31",
+        "value anchors: sets its mark 2 → 3, forgetting what left — listed in the mark, no longer seen: Robinhood Brokerage 2024-08-31",
       ]);
       expect(next.failures).toEqual([]);
       // held at exactly what the lowering set (the other kinds have no mark here, so they are recorded)
