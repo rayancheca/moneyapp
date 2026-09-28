@@ -82,6 +82,24 @@ export interface CalendarEntry {
   /** present only for posted charges (paid / paid_different) */
   transactionId: string | null;
   /**
+   * The `posted_on` of the deposit that paid this payday down, on an entry that
+   * carries no posting of its own. Non-null exactly when this is a settled
+   * payday (`services/payday-settlement`, his decision of 2026-09-28).
+   *
+   * ⛔ IT HAS TO BE NAMED, because the word beside it is borrowed. `paid` is
+   * defined in the legend as "a charge for this bill turned up on the expected
+   * day" (RECURRING_JARGON.paid) and nothing turned up on Aug 27 — the money
+   * landed Sep 24. The date makes the chip's own claim checkable: the cell's
+   * aria-label and the Day Sheet both print it, and the reader can go to that
+   * day and find the row.
+   *
+   * ⛔ AND IT DECIDES WHICH FOOTER FIGURE OWNS THE MONEY. A payday settled by a
+   * deposit from ANOTHER month is in no posted row this month draws, so the
+   * month's Settled total counts it here; one settled by a deposit inside the
+   * month is already inside that deposit's own row and must not be added again.
+   */
+  settledByDepositOn: string | null;
+  /**
    * Why the ledger cannot settle this. Non-null exactly when `state` is
    * "unsettled" — the state and its reason come from ONE `settledVerdict` call
    * so a cell can never print a verdict beside the wrong explanation.
@@ -138,6 +156,19 @@ export interface CalendarEntry {
    * cannot be determined, which draws a neutral tile rather than a guessed one.
    */
   hue: CategoryHueName | null;
+}
+
+/**
+ * A payday settled by a deposit that landed OUTSIDE the month being drawn.
+ *
+ * ⛔ ONE SPELLING, because two readers need the answer and they publish figures
+ * that sit beside each other: the month footer's Settled total counts this
+ * entry (no row this month draws contains its money), and the flow strip above
+ * that footer has to climb by the same money or the page repeats pass 58's
+ * failure — a line climbing to +$3,141 directly above "SETTLED $0.00".
+ */
+export function paidByAnotherMonth(e: CalendarEntry, monthKey: string): boolean {
+  return e.settledByDepositOn !== null && !e.settledByDepositOn.startsWith(`${monthKey}-`);
 }
 
 export interface RecurringCalendarMonth {
@@ -449,6 +480,7 @@ export function recurringCalendar(
         amountCents: p.amountCents,
         expectedAmountCents: expected,
         transactionId: p.id,
+        settledByDepositOn: null,
         unsettledReason: null,
         confidence: null,
         isStale: false,
@@ -525,9 +557,12 @@ export function recurringCalendar(
       /*
        * A payday a deposit has already paid down. It draws paid and carries no
        * transaction of its own: the money is on the lump's row, which is drawn
-       * on the day it actually landed.
+       * on the day it actually landed — and `settledByDepositOn` says which day
+       * that was, so the chip's claim can be checked and the footer knows
+       * whether this month's Settled total already contains the money.
        */
-      if (settledPaydays.get(s.id)?.has(o.date)) {
+      const settledOn = settledPaydays.get(s.id)?.get(o.date);
+      if (settledOn !== undefined) {
         pushEntry(o.date, {
           seriesId: s.id,
           name: s.name,
@@ -536,6 +571,7 @@ export function recurringCalendar(
           amountCents: o.amountCents,
           expectedAmountCents: o.amountCents,
           transactionId: null,
+          settledByDepositOn: settledOn,
           unsettledReason: null,
           confidence: null,
           isStale: false,
@@ -566,6 +602,7 @@ export function recurringCalendar(
         amountCents: o.amountCents,
         expectedAmountCents: o.amountCents,
         transactionId: null,
+        settledByDepositOn: null,
         unsettledReason: verdict?.reason ?? null,
         confidence: isFuture ? confidence : null,
         isStale: isFuture && isStale,
@@ -588,6 +625,22 @@ export function recurringCalendar(
     for (const e of entriesByDay[date]!) {
       entryCount += 1;
       if (e.transactionId !== null) postedNetCents += e.amountCents;
+      /*
+       * ⛔ A SETTLED PAYDAY WHOSE MONEY LANDED IN ANOTHER MONTH BELONGS TO THIS
+       * MONTH'S SETTLED TOTAL, because no row this month draws contains it.
+       *
+       * 🔴 Without this the chip stood in no figure at all. August 2026, read
+       * 2026-09-28: Aug 27 drawn green "Paid $1,141.92" directly above a footer
+       * reading SETTLED $0.00, EXPECTED $0.00 — the headline-contradicts-its-own
+       * -footer failure this file's own comments warn about twice. September
+       * drew three more such chips ($3,425.76) that appeared in no total.
+       *
+       * ⚠️ And only when it landed elsewhere. Sep 3, Sep 10 and Sep 17 were paid
+       * by the lump of Sep 23, which September already draws as a row of its
+       * own: counting them here as well would publish $9,135.36 of pay in a
+       * month that received $5,709.60.
+       */
+      else if (paidByAnotherMonth(e, month)) postedNetCents += e.amountCents;
       else if (e.state === "upcoming") upcomingNetCents += e.amountCents;
       else if (e.state === "unsettled") {
         unsettledCount += 1;

@@ -52,6 +52,20 @@ import { compareDates, diffDays } from "./dates";
  * early would delete a payday from the month's expectation on the strength of
  * money that answers a different week.
  *
+ * ⛔ THE MONEY POOLS ACROSS DEPOSITS, and the split must not change the answer.
+ * His decision is stated in AGGREGATE — "a deposit attributed to a pay series
+ * pays down the oldest unmet paydays up to its amount". Each deposit's leftover
+ * used to be dropped on the floor, so the same $4,567.68 retired four paydays
+ * as one lump and only three split in two ($1,700.00 + $2,867.68, or $2,000.00
+ * on the 22nd and $2,567.68 on the 24th): the first deposit's remainder never
+ * reached Sep 3, and /budgets printed "1 payday worth $1,141.92 already passed
+ * this month with no deposit against them" for a month carrying $4,567.68
+ * attributed to that very series. How his payer happens to split a transfer is
+ * not a fact about which weeks he was paid for.
+ *
+ * ⚖️ Only the MONEY pools. The anchor clause stays per-deposit: it is the link's
+ * statement about the one payday that deposit landed on, not a purse.
+ *
  * ⚠️ ONE CONSEQUENCE WORTH STATING. Where a series' tolerance is wide enough to
  * reach two of its own occurrences, one deposit used to meet both. It no longer
  * does — the second needs its own money. That is (A) rather than a regression:
@@ -92,13 +106,33 @@ export interface PaydaySettlementInput {
 }
 
 export interface PaydaySettlement {
-  /** the dates of the occurrences the deposits have paid down */
-  settledDates: ReadonlySet<string>;
-  /** deposit money that retired no payday — never carried forward */
+  /**
+   * Each payday the deposits have paid down → the date of the deposit that paid
+   * it.
+   *
+   * ⛔ WHICH DEPOSIT, and not merely THAT one exists. Every reader of this
+   * answer also publishes a figure covering a WINDOW — `incomeExpectation`'s
+   * `postedCents` is `[start, today]`, the recurring calendar's Settled total is
+   * the month it draws — and a settlement's deposit can lie outside it: a
+   * deposit on Sep 30 settles Oct 1, a lump on Sep 23 settles Aug 27. Told only
+   * "met", a reader drops the payday from its expectation while the money sits
+   * in a different period's total, and the payday is named by no figure at all.
+   * Measured on 2026-10-01 with one deposit of $1,141.92 on 2026-09-30:
+   * /budgets read posted $0.00 + expected $4,567.68 + passed-unpaid $0.00
+   * against five paydays scheduled at $5,709.60. That is the hole this map
+   * exists to let each reader close in its own terms.
+   */
+  settledBy: ReadonlyMap<string, string>;
+  /**
+   * Deposit money that retired no payday, after the whole walk.
+   *
+   * Not "per deposit": leftovers pool forward (see the header), so this is what
+   * is left when every deposit's money has been spent oldest-first.
+   */
   unallocatedCents: number;
 }
 
-const EMPTY: PaydaySettlement = { settledDates: new Set(), unallocatedCents: 0 };
+const empty = (): PaydaySettlement => ({ settledBy: new Map(), unallocatedCents: 0 });
 
 /**
  * Which of a series' paydays its deposits have retired.
@@ -112,21 +146,27 @@ export function settlePaydaysBackwards({
   deposits,
   toleranceDays,
 }: PaydaySettlementInput): PaydaySettlement {
-  if (occurrences.length === 0 || deposits.length === 0) return EMPTY;
+  if (occurrences.length === 0 || deposits.length === 0) return empty();
 
   // newest first: a deposit answers the most recent payday it can reach, and
   // only then the ones behind it
   const byDateDesc = [...occurrences].sort((a, b) => compareDates(b.date, a.date));
-  const settledDates = new Set<string>();
-  let unallocatedCents = 0;
+  const settledBy = new Map<string, string>();
+  /*
+   * What the deposits walked so far have not spent. It rides FORWARD into the
+   * next deposit rather than being written off, which is what makes one lump
+   * and two transfers of the same total retire the same weeks.
+   */
+  let pool = 0;
 
   // oldest first, so the queue drains in the order the money actually arrived
   for (const d of [...deposits].sort((a, b) => compareDates(a.postedOn, b.postedOn))) {
-    let remaining = d.amountCents;
+    let remaining = d.amountCents + pool;
+    pool = 0;
     let isAnchor = true;
     for (const o of byDateDesc) {
       if (remaining <= 0) break;
-      if (settledDates.has(o.date)) continue;
+      if (settledBy.has(o.date)) continue;
       // out of reach ahead: a deposit cannot pay a payday that had not happened
       // yet — `diffDays(a, b)` is b − a, so this is (occurrence − deposit)
       if (diffDays(d.postedOn, o.date) > toleranceDays) continue;
@@ -134,18 +174,20 @@ export function settlePaydaysBackwards({
       const withinTolerance = Math.abs(diffDays(d.postedOn, o.date)) <= toleranceDays;
       if (isAnchor && withinTolerance) {
         // the link itself says this deposit answers this payday, whatever it paid
-        settledDates.add(o.date);
+        settledBy.set(o.date, d.postedOn);
         remaining -= o.amountCents;
         isAnchor = false;
         continue;
       }
       isAnchor = false;
       if (remaining < o.amountCents) break; // the money stops here, and so does the walk
-      settledDates.add(o.date);
+      settledBy.set(o.date, d.postedOn);
       remaining -= o.amountCents;
     }
-    if (remaining > 0) unallocatedCents += remaining;
+    // an anchor may be answered by less than it was worth (his June week was
+    // $1,047.00 against $1,141.92); a short payday leaves no pool behind it
+    pool = Math.max(0, remaining);
   }
 
-  return { settledDates, unallocatedCents };
+  return { settledBy, unallocatedCents: pool };
 }

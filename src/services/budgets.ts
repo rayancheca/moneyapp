@@ -709,7 +709,13 @@ export function incomeExpectation(
   end: string,
   today: string,
 ): IncomeExpectation {
-  const postedCents = incomeTotalCents(db, start, compareDates(today, end) > 0 ? end : today);
+  /*
+   * The last day `postedCents` speaks for. Named because the forward leg has to
+   * ask the same question of the settling deposits: money outside this window
+   * is not in this figure, whatever payday it paid.
+   */
+  const postedThrough = compareDates(today, end) > 0 ? end : today;
+  const postedCents = incomeTotalCents(db, start, postedThrough);
 
   const live = db
     .select()
@@ -759,24 +765,41 @@ export function incomeExpectation(
    *
    * ⚖️ The old comment warned that widening to the series' tolerance would let
    * ONE deposit delete a payday it had already been counted against. Settlement
-   * is what makes the widening safe: an occurrence is dropped here only when a
-   * deposit actually paid for it, and each deposit's money is spent once.
+   * is what makes the widening safe INSIDE one month: an occurrence is dropped
+   * here only when a deposit actually paid for it, and each deposit's money is
+   * spent once.
+   *
+   * 🔴 ACROSS months it was not safe, and that is what `settledBy` answers.
+   * Settlement's deposit universe has no start bound — a deposit on Sep 30
+   * settles Oct 1 — while `postedCents` is cut at `start`. Dropped from
+   * `expectedCents` on the strength of money counted in the PREVIOUS month, the
+   * payday was named by no leg at all: `passedUnpaidCents` cannot name it either
+   * (it walks `[start, today)` and settlement says the payday was met). Measured
+   * on 2026-10-01 with one deposit of $1,141.92 dated 2026-09-30: posted $0.00 +
+   * expected $4,567.68 + passed-unpaid $0.00, against five paydays scheduled at
+   * $5,709.60. So an occurrence leaves this leg only when the money that settled
+   * it is inside the window `postedCents` covers; otherwise it stays here, which
+   * is the old, safe answer and keeps the four figures the header prints side by
+   * side adding up.
    */
   const settled = settledPaydaysBySeries(
     db,
     live.map((s) => s.id),
     today,
   );
+  const paidInsideWindow = (depositOn: string | undefined): boolean =>
+    depositOn !== undefined && compareDates(depositOn, start) >= 0 && compareDates(depositOn, postedThrough) <= 0;
   const series: IncomeExpectation["series"] = [];
   let expectedCents = 0;
   if (compareDates(from, end) <= 0) {
     for (const s of live) {
-      const met = settled.get(s.id) ?? new Set<string>();
+      const met = settled.get(s.id) ?? new Map<string, string>();
       // money IN only — a refund-shaped income series must not subtract here
       const cents = projectOccurrences(toProjectable(s), from, end)
         .filter((o) => o.amountCents > 0)
-        // pay a deposit has already answered: it is in postedCents, not here
-        .filter((o) => !met.has(o.date))
+        // pay a deposit has already answered INSIDE this window: it is in
+        // postedCents, and so not also here
+        .filter((o) => !paidInsideWindow(met.get(o.date)))
         .reduce((sum, o) => sum + o.amountCents, 0);
       if (cents === 0) continue;
       expectedCents += cents;

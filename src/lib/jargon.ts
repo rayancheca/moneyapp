@@ -249,7 +249,8 @@ export const RUNWAY_JARGON = {
  * beside a payday is indistinguishable from a rendering failure.
  */
 export const RECURRING_JARGON = {
-  paid: "A charge for this bill turned up on the expected day, for about the amount expected.",
+  paid:
+    "A charge for this bill turned up on the expected day, for about the amount expected — or, for pay, a deposit that landed on a different day has paid this payday down, and the mark names the day it landed.",
   paidDifferent:
     "The charge turned up, but for enough more or less than usual to be worth a look — measured against how much this bill normally varies, not against a fixed percentage.",
   missed:

@@ -402,7 +402,7 @@ function fixedComponents(
     const staleness = seriesStaleness(series, today);
     // only income has paydays to settle; a bill's absence is `overdueForSeries`'
     const settled =
-      series.kind === "income" ? settledPaydaysForSeries(db, series.id, today) : new Set<string>();
+      series.kind === "income" ? settledPaydaysForSeries(db, series.id, today) : new Map<string, string>();
     const occurrences: SeriesOccurrence[] = projectOccurrences(
       toProjectable(series, staleness),
       from,

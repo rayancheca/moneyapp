@@ -36,7 +36,7 @@ import { projectOccurrences, toProjectable } from "./recurring";
  */
 export function paydaySettlement(db: AppDatabase, seriesId: string, today: string): PaydaySettlement {
   const s = db.select().from(recurringSeries).where(eq(recurringSeries.id, seriesId)).get();
-  if (!s || s.kind !== "income") return { settledDates: new Set(), unallocatedCents: 0 };
+  if (!s || s.kind !== "income") return { settledBy: new Map(), unallocatedCents: 0 };
 
   const deposits = db
     .select({ postedOn: transactions.postedOn, amountCents: transactions.amountCents })
@@ -57,7 +57,7 @@ export function paydaySettlement(db: AppDatabase, seriesId: string, today: strin
       ),
     )
     .all();
-  if (deposits.length === 0) return { settledDates: new Set(), unallocatedCents: 0 };
+  if (deposits.length === 0) return { settledBy: new Map(), unallocatedCents: 0 };
 
   /*
    * The walk opens on the earliest evidence there is — the first attributed
@@ -77,9 +77,17 @@ export function paydaySettlement(db: AppDatabase, seriesId: string, today: strin
   return settlePaydaysBackwards({ occurrences, deposits, toleranceDays: s.toleranceDays });
 }
 
-/** Just the dates, for the surfaces that only ask "was this payday met?". */
-export function settledPaydaysForSeries(db: AppDatabase, seriesId: string, today: string): ReadonlySet<string> {
-  return paydaySettlement(db, seriesId, today).settledDates;
+/**
+ * Just the settlements, for the surfaces that ask "was this payday met?".
+ *
+ * ⛔ AND BY WHICH DEPOSIT — payday date → the settling deposit's `posted_on`.
+ * `.has(date)` reads exactly as the old set did; the value is there because
+ * every caller also publishes a figure over a window the settling money may sit
+ * outside of, and a payday dropped from one window without being added to
+ * another is named by nothing. See `lib/payday-settlement`'s `settledBy`.
+ */
+export function settledPaydaysForSeries(db: AppDatabase, seriesId: string, today: string): ReadonlyMap<string, string> {
+  return paydaySettlement(db, seriesId, today).settledBy;
 }
 
 /**
@@ -91,8 +99,8 @@ export function settledPaydaysBySeries(
   db: AppDatabase,
   seriesIds: readonly string[],
   today: string,
-): Map<string, ReadonlySet<string>> {
-  const out = new Map<string, ReadonlySet<string>>();
+): Map<string, ReadonlyMap<string, string>> {
+  const out = new Map<string, ReadonlyMap<string, string>>();
   for (const id of seriesIds) out.set(id, settledPaydaysForSeries(db, id, today));
   return out;
 }

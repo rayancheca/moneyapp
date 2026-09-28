@@ -150,7 +150,7 @@ function hisSeptember(): void {
   deposit(PAY, "2026-09-24", WEEK);
 }
 
-const settled = (today = TODAY): string[] => [...settledPaydaysForSeries(bundle.db, PAY, today)].sort();
+const settled = (today = TODAY): string[] => [...settledPaydaysForSeries(bundle.db, PAY, today).keys()].sort();
 
 describe("settledPaydaysForSeries — a deposit pays down the paydays behind it", () => {
   test("his five: the lump and the weekly deposit retire Aug 27 through Sep 24", () => {
@@ -218,7 +218,7 @@ describe("settledPaydaysForSeries — a deposit pays down the paydays behind it"
   test("the walk stops at the series' first attributed deposit", () => {
     addPaySeries("series-late", "Second job", "2026-09-03");
     deposit("series-late", "2026-09-17", WEEK * 4);
-    expect([...settledPaydaysForSeries(bundle.db, "series-late", TODAY)].sort()).toEqual([
+    expect([...settledPaydaysForSeries(bundle.db, "series-late", TODAY).keys()].sort()).toEqual([
       "2026-09-03",
       "2026-09-10",
       "2026-09-17",
@@ -281,5 +281,88 @@ describe("the surfaces agree about which paydays went unpaid", () => {
     const forecast = forecastCurrentMonth(bundle.db, "2026-09-23");
     expect(forecast.components.filter((c) => c.label === "It America LLC (weekly pay)")).toEqual([]);
     expect(forecast.unbankedIncome.occurrenceCount).toBe(0);
+  });
+});
+
+/**
+ * 🔴 A PAYDAY SETTLED BY ANOTHER MONTH'S DEPOSIT FELL OUT OF EVERY FIGURE.
+ *
+ * Settlement's deposit universe has no month in it — that is the whole point of
+ * it, and why Aug 27 can be retired by a deposit dated Sep 24. But every
+ * surface that reads the answer publishes totals over a WINDOW, and the money
+ * that settled a payday can lie outside the window the reader is describing:
+ *
+ *   /budgets   `postedCents` is `[start, today]`
+ *   calendar   the Settled total is the month being drawn
+ *
+ * Dropped from the expectation and absent from the posted total, the payday was
+ * named by NOTHING. Measured on 2026-10-01 — a Thursday, three days after the
+ * ledger's TODAY — with one deposit of $1,141.92 dated 2026-09-30:
+ *
+ *   /budgets   posted $0.00 + expected $4,567.68 + passed-unpaid $0.00
+ *              against five paydays scheduled at $5,709.60
+ *   calendar   Oct 1 drawn green "paid", footer Settled $0.00 Expected $4,567.68
+ *
+ * Both legs now have to add up to the schedule, which is the invariant the page
+ * prints side by side and the reader is entitled to check.
+ */
+describe("a payday paid by a deposit outside the window is still named by the window", () => {
+  /** One week's pay, landing the day before a payday that falls on the 1st. */
+  function lastDayOfSeptember(): void {
+    readThrough(WELLS, "2026-06-01", "2026-09-30");
+    deposit(PAY, "2026-09-30", WEEK);
+  }
+
+  test("October's income still adds up to October's schedule", () => {
+    lastDayOfSeptember();
+    const income = incomeExpectation(bundle.db, "2026-10-01", "2026-10-31", "2026-10-01");
+    expect(income.scheduledCents).toBe(WEEK * 5);
+    expect(income.postedCents + income.expectedCents + income.passedUnpaidCents).toBe(WEEK * 5);
+  });
+
+  test("October's calendar still adds up to October's schedule", () => {
+    lastDayOfSeptember();
+    const october = recurringCalendar(bundle.db, "2026-10", "2026-10-01");
+    expect(october.entriesByDay["2026-10-01"]?.map((e) => e.state)).toEqual(["paid"]);
+    expect(october.postedNetCents + october.upcomingNetCents).toBe(WEEK * 5);
+  });
+
+  /* ⛔ AND NO DOUBLE COUNT THE OTHER WAY. September's own lump is drawn on
+     September's grid as a real row; the three paydays behind it must NOT be
+     added to the month's Settled total on top of the money that paid them. */
+  test("a payday paid by a deposit inside the month is not counted twice", () => {
+    readThrough(WELLS, "2026-06-01", "2026-09-27");
+    hisSeptember();
+    const september = recurringCalendar(bundle.db, "2026-09", TODAY);
+    expect(september.postedNetCents).toBe(WEEK * 5);
+  });
+
+  /* August's Aug 27 was retired by the deposit of Sep 24, so the money is on
+     September's grid and August's chip must say whose money it was. */
+  test("August names the payday, the deposit that paid it, and counts it once", () => {
+    readThrough(WELLS, "2026-06-01", "2026-09-27");
+    hisSeptember();
+    const august = recurringCalendar(bundle.db, "2026-08", TODAY);
+    expect(august.entriesByDay["2026-08-27"]?.[0]).toMatchObject({
+      state: "paid",
+      settledByDepositOn: "2026-09-24",
+      transactionId: null,
+    });
+    expect(august.postedNetCents).toBe(WEEK);
+    expect(august.upcomingNetCents).toBe(0);
+    /*
+     * ⛔ THE FOOTER TALLIES, not just the states. The settled entry is the first
+     * in this codebase with `transactionId === null` and `state === "paid"`, and
+     * before the guard at the end of the month walk it fell straight through to
+     * the missed tally — /recurring printing a red "missed" count for the very
+     * paydays the same grid draws green. Mutating that guard back to the
+     * original `else missedCount += 1` left all 246 settlement tests passing.
+     */
+    expect(august.missedCount).toBe(0);
+    expect(august.unsettledCount).toBe(3);
+    expect(august.unsettledGrossCents).toBe(WEEK * 3);
+    const september = recurringCalendar(bundle.db, "2026-09", TODAY);
+    expect(september.missedCount).toBe(0);
+    expect(september.unsettledCount).toBe(0);
   });
 });

@@ -219,7 +219,7 @@ export function unbankedIncomeForSeries(
 
   const unmet = live
     .map((s) => {
-      const met = settled.get(s.id) ?? new Set<string>();
+      const met = settled.get(s.id) ?? new Map<string, string>();
       const occ = projectOccurrences(toProjectable(s), periodStart, addDays(today, -1))
         .filter((o) => o.amountCents > 0)
         .filter((o) => !met.has(o.date));

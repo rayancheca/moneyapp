@@ -23,7 +23,7 @@ const settle = (
   toleranceDays = 3,
 ): { dates: string[]; unallocatedCents: number } => {
   const s = settlePaydaysBackwards({ occurrences, deposits, toleranceDays });
-  return { dates: [...s.settledDates].sort(), unallocatedCents: s.unallocatedCents };
+  return { dates: [...s.settledBy.keys()].sort(), unallocatedCents: s.unallocatedCents };
 };
 
 describe("settlePaydaysBackwards", () => {
@@ -131,5 +131,43 @@ describe("settlePaydaysBackwards", () => {
       "2026-09-17",
       "2026-09-24",
     ]);
+  });
+});
+
+/**
+ * 🔴 THE SAME MONEY, SPLIT IN TWO, RETIRED FEWER PAYDAYS.
+ *
+ * His decision is stated in aggregate — "a deposit attributed to a pay series
+ * pays down the OLDEST unmet paydays up to its amount" — but each deposit's
+ * remainder was dropped on the floor rather than carried into the next, so the
+ * answer depended on how the payer happened to split the transfer. One lump of
+ * $4,567.68 retired four paydays; the same $4,567.68 sent as two transfers
+ * retired three, Sep 3 stayed red "unsettled (unbanked)" on /recurring, and
+ * /budgets printed "1 payday worth $1,141.92 already passed this month with no
+ * deposit against them" for a month carrying $4,567.68 attributed to that very
+ * series.
+ */
+describe("settlePaydaysBackwards — the money pools, however it was split", () => {
+  const his = (): PaydayOccurrence[] => weekly("2026-09-03", "2026-09-10", "2026-09-17", "2026-09-24");
+  const HIS_FOUR = ["2026-09-03", "2026-09-10", "2026-09-17", "2026-09-24"];
+
+  test("one lump retires four paydays", () => {
+    expect(settle(his(), [paid("2026-09-23", WEEK * 4)]).dates).toEqual(HIS_FOUR);
+  });
+
+  test("two transfers on the same day retire the same four", () => {
+    expect(settle(his(), [paid("2026-09-23", 170_000), paid("2026-09-23", 286_768)]).dates).toEqual(HIS_FOUR);
+  });
+
+  test("two transfers on different days retire the same four", () => {
+    expect(settle(his(), [paid("2026-09-22", 200_000), paid("2026-09-24", 256_768)]).dates).toEqual(HIS_FOUR);
+  });
+
+  /* ⛔ Pooling never invents money. Three weeks' worth split in two still buys
+     three weeks, and the change left over is still change. */
+  test("a pool short of a whole payday still buys nothing", () => {
+    const got = settle(his(), [paid("2026-09-23", 200_000), paid("2026-09-23", 142_576)]);
+    expect(got.dates).toEqual(["2026-09-10", "2026-09-17", "2026-09-24"]);
+    expect(got.unallocatedCents).toBe(0);
   });
 });

@@ -13,6 +13,7 @@ function entry(over: Partial<CalendarEntry> & Pick<CalendarEntry, "seriesId" | "
     kind: "bill",
     expectedAmountCents: over.amountCents,
     transactionId: null,
+    settledByDepositOn: null,
     unsettledReason: null,
     confidence: null,
     isStale: false,
@@ -87,5 +88,50 @@ describe("RecurringCalendar cell names", () => {
       'aria-label="Sep 11, 2026 — 1 item: Car insurance not yet known (too few charges to grade yet) -$361.49"',
     );
     expect(html).not.toContain("due date not established");
+  });
+});
+
+/**
+ * 🔴 A DAY WITH NO DEPOSIT ON IT READ "paid $1,141.92".
+ *
+ * The settled payday is the first entry in this codebase with no transaction
+ * and a `paid` state — his decision of 2026-09-28, where a deposit pays down the
+ * paydays behind it. It borrows a word the legend defines as "a charge for this
+ * bill turned up on the expected day", and nothing turned up on Aug 27: the
+ * money landed on Sep 24. The cell has to name the day it landed, or the chip
+ * asserts something the ledger will not support.
+ */
+describe("RecurringCalendar — a payday paid by a deposit on another day", () => {
+  const month: RecurringCalendarMonth = {
+    monthKey: "2026-08",
+    today: "2026-09-28",
+    entriesByDay: {
+      "2026-08-20": [
+        entry({ seriesId: "pay", name: "It America LLC (weekly pay)", kind: "income", state: "unsettled", amountCents: 114192, unsettledReason: "unbanked" }),
+      ],
+      "2026-08-27": [
+        entry({
+          seriesId: "pay",
+          name: "It America LLC (weekly pay)",
+          kind: "income",
+          state: "paid",
+          amountCents: 114192,
+          settledByDepositOn: "2026-09-24",
+        }),
+      ],
+    },
+    entryCount: 2,
+    postedNetCents: 114192,
+    upcomingNetCents: 0,
+    missedCount: 0,
+    unsettledCount: 1,
+    unsettledGrossCents: 114192,
+  };
+  const html = decode(renderToStaticMarkup(createElement(RecurringCalendar, { initialMonth: month, today: "2026-09-28" })));
+
+  test("the day names the deposit that paid it, rather than claiming a payment turned up", () => {
+    expect(html).toContain(
+      'aria-label="Aug 27, 2026 — 1 item: It America LLC (weekly pay) paid (paid by the deposit of Sep 24, 2026) $1,141.92"',
+    );
   });
 });

@@ -19,10 +19,11 @@ import { CALENDAR_DENSITY_CLASS } from "./recurring-view-spec";
 import { formatCents } from "@/lib/money";
 import type { ForecastConfidence } from "@/lib/occurrence-verdict";
 import { SERIES_EVIDENCE_LABEL } from "@/lib/series-evidence";
-import type {
-  CalendarEntry,
-  DayStateKind,
-  RecurringCalendarMonth,
+import {
+  paidByAnotherMonth,
+  type CalendarEntry,
+  type DayStateKind,
+  type RecurringCalendarMonth,
 } from "@/services/recurring-calendar";
 import { KIND_LABEL, longDate, monthLabel, unsettledReasonWord, upcomingEvidenceWord } from "./labels";
 import { MonthFlowStrip } from "./MonthFlowStrip";
@@ -188,13 +189,28 @@ const HATCH: React.CSSProperties = {
     "repeating-linear-gradient(135deg, transparent 0 2px, var(--color-surface-raised) 2px 4px)",
 };
 
+/**
+ * ⛔ A SETTLED PAYDAY SAYS WHOSE MONEY PAID IT. The word it borrows is `paid`,
+ * defined in the legend as a charge that "turned up on the expected day" — and
+ * nothing turned up on Aug 27; the money landed on Sep 24. Read aloud, the cell
+ * used to say "It America LLC (weekly pay) paid $1,141.92" for a day with no
+ * deposit on it. Named, the claim is checkable: the reader can go to that day
+ * and find the row.
+ */
+function settledByWord(e: CalendarEntry): string | null {
+  return e.settledByDepositOn === null ? null : `paid by the deposit of ${longDate(e.settledByDepositOn)}`;
+}
+
 function entrySummary(e: CalendarEntry): string {
   const evidence = upcomingEvidenceWord(e);
-  const qualifier = e.unsettledReason
-    ? ` (${unsettledReasonWord(e.unsettledReason)})`
-    : e.confidence
-      ? ` (${CONFIDENCE_WORD[e.confidence]}${evidence ? `, ${evidence}` : ""})`
-      : "";
+  const settledBy = settledByWord(e);
+  const qualifier = settledBy
+    ? ` (${settledBy})`
+    : e.unsettledReason
+      ? ` (${unsettledReasonWord(e.unsettledReason)})`
+      : e.confidence
+        ? ` (${CONFIDENCE_WORD[e.confidence]}${evidence ? `, ${evidence}` : ""})`
+        : "";
   return `${e.name} ${STATE_WORD[e.state]}${qualifier} ${formatCents(e.amountCents)}`;
 }
 
@@ -457,7 +473,9 @@ export function RecurringCalendar({ initialMonth, today, density = "tall", onMon
   for (const [iso, entries] of Object.entries(month.entriesByDay)) {
     flowEntries[iso] = entries.map((e) => ({
       amountCents: e.amountCents,
-      settled: e.transactionId !== null,
+      // …and a payday whose deposit landed in ANOTHER month, which the footer's
+      // Settled figure counts here for the same reason (`paidByAnotherMonth`).
+      settled: e.transactionId !== null || paidByAnotherMonth(e, month.monthKey),
     }));
   }
   const flow = monthFlow(daysInMonthOf(month.monthKey), month.monthKey, flowEntries, today);
@@ -509,9 +527,11 @@ export function RecurringCalendar({ initialMonth, today, density = "tall", onMon
                             entry, which carried them out of ONE `settledVerdict`
                             call. A cell can therefore never show "not yet known"
                             beside the wrong reason for it. */}
-                        {e.state === "unsettled" && e.unsettledReason
-                          ? `${STATE_WORD[e.state]} — ${unsettledReasonWord(e.unsettledReason)}`
-                          : STATE_WORD[e.state]}
+                        {settledByWord(e)
+                          ? `${STATE_WORD[e.state]} — ${settledByWord(e)}`
+                          : e.state === "unsettled" && e.unsettledReason
+                            ? `${STATE_WORD[e.state]} — ${unsettledReasonWord(e.unsettledReason)}`
+                            : STATE_WORD[e.state]}
                       </Badge>
                       {e.confidence ? (
                         <Badge tone="neutral">{CONFIDENCE_WORD[e.confidence]}</Badge>
