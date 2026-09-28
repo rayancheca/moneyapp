@@ -3371,6 +3371,36 @@ describe("a parser-version re-read that no longer writes an account", () => {
     }
   });
 
+  /**
+   * 🔴 `migrateStorageLayout` placed a file by the accounts its rows and periods name. A second download owns nothing
+   * but anchors, so it named no account and went to the bare institution bucket — out of the folder its import had
+   * archived it in, away from the first download. Measured on a copy of the real ledger, 2026-09-28: 59 originals
+   * (36 one-account statements, 23 SoFi combined) would have moved out of their per-account archive.
+   */
+  test.each([
+    ["three accounts, archived in the combined folder", "2026-03"],
+    ["one account, archived in that account's folder", "2026-03 anchor only"],
+  ])("the layout migration leaves a second download beside the first — a statement of %s", async (_, month) => {
+    const first = statementFor(month);
+    const second: ImportInput = { name: `${PREFIX}${month} (1).txt`, buffer: Buffer.from(`${month}\n`) };
+    await importStatementFiles(bundle.db, [first]);
+    await importStatementFiles(bundle.db, [second]);
+    const copy = liveFile(second);
+    const folderOf = (file: { storagePath: string }) => path.basename(path.dirname(file.storagePath));
+    // the premise: the copy wrote no row and no period — its anchors are all that names its accounts…
+    const copied = contributionOf(copy.id);
+    expect({ rows: copied.rows, periods: copied.periods }).toEqual({ rows: [], periods: [] });
+    expect(copied.anchors.length).toBeGreaterThan(0);
+    // …and the import archived it beside the first download, not in the institution's bucket
+    expect(folderOf(copy)).toBe(folderOf(liveFile(first)));
+    expect(folderOf(copy)).not.toBe("chase");
+
+    // every original is already where the import put it: nothing to move
+    expect(migrateStorageLayout(bundle.db, { move: true })).toEqual([]);
+    expect(liveFile(second).storagePath).toBe(copy.storagePath);
+    expect(fs.readFileSync(copy.storagePath)).toEqual(second.buffer);
+  });
+
   /** Every period, row and balance day of the three accounts, by content — the file that owns each left out. */
   function ledgerOf(): { periods: unknown[]; anchors: unknown[]; rows: unknown[]; days: unknown[] } {
     const ids = [KEPT, ANCHOR_ONLY, WITH_ROWS].map(accountIdOf);

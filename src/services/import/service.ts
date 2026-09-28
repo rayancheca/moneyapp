@@ -2829,28 +2829,21 @@ export interface StorageMigration {
 /**
  * Relocates already-imported originals into the per-account archive
  * (data/statements/<account-slug>/), for files ingested before per-account
- * storage existed. Each file's folder is derived from the account(s) its
- * transactions/periods resolve to — the real account, not the file's guessed
- * institution. With move: false it only rewrites storage_path (dry validation);
- * with move: true it also relocates the physical file. Idempotent.
+ * storage existed. Each file's folder is derived from every account it wrote to
+ * (`accountsWrittenBy`) — the real account, not the file's guessed institution.
+ * With move: false it only rewrites storage_path (dry validation); with move:
+ * true it also relocates the physical file. Idempotent.
+ *
+ * 🔴 It read the accounts from the file's rows and periods only. A second download
+ * of a statement owns nothing but anchors, so it named no account and was sent to
+ * the bare institution bucket, out of the folder its import had archived it in.
+ * Measured on a copy of the real ledger, 2026-09-28: 59 originals would have moved.
  */
 export function migrateStorageLayout(db: AppDatabase, opts: { move: boolean }): StorageMigration[] {
   const rows = db.select().from(importFiles).all();
   const results: StorageMigration[] = [];
   for (const row of rows) {
-    const fromTxns = db
-      .selectDistinct({ accountId: transactions.accountId })
-      .from(transactions)
-      .where(eq(transactions.importFileId, row.id))
-      .all()
-      .map((r) => r.accountId);
-    const fromPeriods = db
-      .selectDistinct({ accountId: statementPeriods.accountId })
-      .from(statementPeriods)
-      .where(eq(statementPeriods.importFileId, row.id))
-      .all()
-      .map((r) => r.accountId);
-    const accountIds = [...new Set([...fromTxns, ...fromPeriods])];
+    const accountIds = accountsWrittenBy(db, row.id);
 
     const fallback = db
       .select({ name: institutions.name })
@@ -2932,7 +2925,7 @@ function legsLeftAloneBy(tx: AppDatabase, importFileId: string): StaleTransferLe
  * Every account an import file wrote to: its rows, its periods, its anchors.
  * Read BEFORE the delete — afterwards nothing names the file. Both paths that
  * take a file's contribution away read it: `unimportFile` and
- * `supersedeFileContribution`.
+ * `supersedeFileContribution`; `migrateStorageLayout` files the original by it.
  *
  * 🔴 The rebuild scope was the accounts the file had ROWS on. A statement that
  * gave an account a period and a balance anchor and nothing else lost both and
