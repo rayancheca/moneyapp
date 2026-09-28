@@ -1,5 +1,9 @@
 import fs from "node:fs";
 import path from "node:path";
+import {
+  assertRendererMatchesBaselines,
+  describeRendererCheck,
+} from "../scripts/e2e-renderer/fingerprint";
 import { assertQuietBox } from "../scripts/quiet-box";
 import { E2E_FAKE_TODAY, seedE2eDatabase } from "./seed-helpers";
 
@@ -81,6 +85,13 @@ export default async function globalSetup(): Promise<void> {
     );
   }
   assertBundleIsFresh();
+  // Before anything is seeded: if this Mac no longer draws text the way it did when the
+  // baselines were drawn, nearly every visual spec fails for a reason that is not the change
+  // under test. On 2026-09-28 that took a 9-minute run and 107 failures to find out; the canary
+  // says it in under a second. E2E_RENDERER_CHECK=skip bypasses it (the re-base command does).
+  const renderer = await assertRendererMatchesBaselines();
+  if (renderer.verdict === "skipped") console.warn(describeRendererCheck(renderer));
+  else console.log(describeRendererCheck(renderer));
   const dbPath = path.join(process.cwd(), "data", "e2e.db");
   // NB: the db file is deliberately NOT unlinked — seedE2eDatabase wipes its
   // data in place so the webServer's open connection keeps the same inode and
