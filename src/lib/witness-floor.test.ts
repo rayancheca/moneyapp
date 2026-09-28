@@ -304,6 +304,112 @@ describe("compareToMarks — a floor under every witness kind", () => {
     );
   });
 
+  /*
+   * The one-caller sweep (2026-09-22): the stored SET was read only once the
+   * count had dropped. One statement un-imported and the next month's imported
+   * between two runs held the count and passed; with one more imported too, the
+   * raise rewrote the mark from what was seen, and the statement that left was
+   * gone from it for good — no later run could ever name it.
+   */
+  describe("⛔ a witness that left fails whatever the count does — a swap or a raise hides nothing", () => {
+    const before = observation({ valuedAnchorDays: { [B]: ["2024-08-31", "2024-09-30"] } });
+    const gone =
+      "gone since the mark was set: Robinhood Brokerage 2024-08-31. " +
+      `${LOWER_HOW} pnpm ledger-check --lower-marks=value-anchors, then the same with --confirm`;
+
+    it("a swap — one statement left, another arrived — holds the count, and fails naming the one that left", () => {
+      const swapped = observation({ valuedAnchorDays: { [B]: ["2024-09-30", "2024-10-31"] } });
+
+      const result = compareToMarks(swapped, marksAt(before));
+
+      expect(result.failures).toEqual([
+        {
+          kind: "witness-drop",
+          account: "value anchors",
+          detail: `2 seen, as many as the mark of 2 but not the same ones — ${gone}`,
+        },
+      ]);
+      // the mark stays as it was, the one that left still in it
+      expect(result.writes).toEqual({});
+      expect(result.summary).toBe(
+        "witness marks: value anchors 2 (1 gone from its mark of 2) · chain endpoints 0 · chain windows 0 · " +
+          "statement periods 0 · accounts 0",
+      );
+    });
+
+    it("a raise with a departure fails naming it, and never erases it — the next run names it again", () => {
+      const raised = observation({ valuedAnchorDays: { [B]: ["2024-09-30", "2024-10-31", "2024-11-30"] } });
+      const marks = marksAt(before);
+
+      const first = compareToMarks(raised, marks);
+      const second = compareToMarks(raised, { ...marks, ...first.writes });
+
+      expect(first.failures).toEqual([
+        {
+          kind: "witness-drop",
+          account: "value anchors",
+          detail: `3 seen, above the mark of 2 but not every one it lists — ${gone}`,
+        },
+      ]);
+      expect(first.writes).toEqual({});
+      expect(first.summary).toContain("value anchors 3 (1 gone from its mark of 2) · ");
+      expect(second.failures).toEqual(first.failures);
+    });
+
+    it("a window an arriving anchor divided is a raise, not a departure — its span is still walked", () => {
+      const whole = observation({ chainWindows: { [CC]: [{ from: "2022-08-24", to: "2022-10-13" }] } });
+      const divided = observation({
+        chainWindows: {
+          [CC]: [
+            { from: "2022-08-24", to: "2022-09-13" },
+            { from: "2022-09-13", to: "2022-10-13" },
+          ],
+        },
+      });
+
+      const result = compareToMarks(divided, marksAt(whole));
+
+      expect(result.failures).toEqual([]);
+      expect(result.writes).toEqual({
+        "chain-windows": {
+          count: 2,
+          witnesses: [at(CC, "2022-08-24", "2022-09-13"), at(CC, "2022-09-13", "2022-10-13")],
+          accountNames: named(CC),
+        },
+      });
+    });
+
+    it("a count held by one window divided while two others merged fails on the two that merged", () => {
+      const marked = observation({
+        chainWindows: {
+          [CC]: [
+            { from: "2022-08-24", to: "2022-10-13" },
+            { from: "2022-10-13", to: "2022-11-10" },
+            { from: "2022-11-10", to: "2022-12-12" },
+          ],
+        },
+      });
+      const after = observation({
+        chainWindows: {
+          [CC]: [
+            { from: "2022-08-24", to: "2022-09-13" },
+            { from: "2022-09-13", to: "2022-10-13" },
+            { from: "2022-10-13", to: "2022-12-12" },
+          ],
+        },
+      });
+
+      const result = compareToMarks(after, marksAt(marked));
+
+      expect(result.failures.map((f) => f.detail)).toEqual([
+        "3 seen, as many as the mark of 3 but not the same ones — gone since the mark was set: " +
+          "Chase Checking 2022-10-13 → 2022-11-10, Chase Checking 2022-11-10 → 2022-12-12. " +
+          `${LOWER_HOW} pnpm ledger-check --lower-marks=chain-windows, then the same with --confirm`,
+      ]);
+      expect(result.writes).toEqual({});
+    });
+  });
+
   it("a witness recorded twice and seen once is gone once", () => {
     const marks: WitnessMarks = {
       "value-anchors": { count: 2, witnesses: [at(B, "2024-08-31"), at(B, "2024-08-31")], accountNames: named(B) },
@@ -450,19 +556,76 @@ describe("planLowering — the guarded way down, after a removal the owner appro
     });
     expect(plan.lines).toEqual([
       "value anchors: lowers its mark 2 → 1 — gone since the mark was set: Robinhood Brokerage 2024-08-31",
-      "chain windows: 1 seen, mark 1 — not below it, nothing to lower",
+      "chain windows: 1 seen, mark 1 — not below it and nothing it lists gone, nothing to lower",
       "statement periods: no mark recorded yet — nothing to lower (a plain run records one)",
     ]);
   });
 
-  it("⛔ never raises — a kind seen above its mark is left for a plain run", () => {
+  it("⛔ never raises — a kind seen above its mark, with nothing it lists gone, is left for a plain run", () => {
     const plan = planLowering(seen, { "chain-windows": { count: 0, witnesses: [], accountNames: {} } }, ["chain-windows"]);
     expect(plan.writes).toEqual({});
-    expect(plan.lines).toEqual(["chain windows: 1 seen, mark 0 — not below it, nothing to lower"]);
+    expect(plan.lines).toEqual([
+      "chain windows: 1 seen, mark 0 — not below it and nothing it lists gone, nothing to lower",
+    ]);
   });
 
   it("⛔ touches only the kinds it was told to — a dropped kind nobody named keeps its mark", () => {
     expect(planLowering(seen, marks, ["chain-windows"]).writes).toEqual({});
+  });
+
+  describe("a witness that left while the count held or rose is approved the same way", () => {
+    const marked: WitnessMarks = {
+      "value-anchors": { count: 2, witnesses: [at(B, "2024-08-31"), at(B, "2024-09-30")], accountNames: named(B) },
+    };
+
+    it("a swap sets the mark to exactly what is seen, and says what it forgets", () => {
+      const swapped = observation({ valuedAnchorDays: { [B]: ["2024-09-30", "2024-10-31"] } });
+
+      const plan = planLowering(swapped, marked, ["value-anchors"]);
+
+      expect(plan.writes).toEqual({
+        "value-anchors": { count: 2, witnesses: [at(B, "2024-09-30"), at(B, "2024-10-31")], accountNames: named(B) },
+      });
+      expect(plan.lines).toEqual([
+        "value anchors: sets its mark 2 → 2, forgetting what left — gone since the mark was set: Robinhood Brokerage 2024-08-31",
+      ]);
+    });
+
+    it("a raise with a departure is lowered to what is seen, after which a plain run passes and writes nothing", () => {
+      const raised = observation({ valuedAnchorDays: { [B]: ["2024-09-30", "2024-10-31", "2024-11-30"] } });
+
+      const plan = planLowering(raised, marked, ["value-anchors"]);
+      const next = compareToMarks(raised, { ...marked, ...plan.writes });
+
+      expect(plan.lines).toEqual([
+        "value anchors: sets its mark 2 → 3, forgetting what left — gone since the mark was set: Robinhood Brokerage 2024-08-31",
+      ]);
+      expect(next.failures).toEqual([]);
+      // held at exactly what the lowering set (the other kinds have no mark here, so they are recorded)
+      expect(next.writes["value-anchors"]).toBeUndefined();
+      expect(next.summary).toContain("witness marks: value anchors 3 · ");
+    });
+
+    it("a window only divided is not lowered — nothing the mark lists has left", () => {
+      const whole: WitnessMarks = {
+        "chain-windows": { count: 1, witnesses: [at(CC, "2022-08-24", "2022-10-13")], accountNames: named(CC) },
+      };
+      const divided = observation({
+        chainWindows: {
+          [CC]: [
+            { from: "2022-08-24", to: "2022-09-13" },
+            { from: "2022-09-13", to: "2022-10-13" },
+          ],
+        },
+      });
+
+      const plan = planLowering(divided, whole, ["chain-windows"]);
+
+      expect(plan.writes).toEqual({});
+      expect(plan.lines).toEqual([
+        "chain windows: 2 seen, mark 1 — not below it and nothing it lists gone, nothing to lower",
+      ]);
+    });
   });
 });
 

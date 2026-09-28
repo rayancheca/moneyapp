@@ -17,13 +17,22 @@ import { type LedgerFailure, type LedgerObservation, windowsSpanning } from "./l
  * someone has to commit after every import.
  *
  *   recorded   no mark for the kind yet — the first run records what it sees
- *   raised     more than the mark — the mark becomes what was seen, no commit
- *   held       exactly the mark — nothing is written
- *   dropped    fewer than the mark — a `witness-drop` finding, and the mark
+ *   raised     more than the mark, every witness it lists still seen — the
+ *              mark becomes what was seen, no commit
+ *   held       as many as the mark, every witness it lists still seen —
+ *              nothing is written
+ *   dropped    fewer than the mark, OR any witness it lists no longer seen,
+ *              whatever the count — a `witness-drop` finding, and the mark
  *              stays until `--lower-marks=<kind> --confirm` lowers it
  *
- * ⚠️ A COUNT, as he said, not a set. One statement removed and a different one
- * imported between two runs holds the count, and passes.
+ * ⛔ The SET, not only the count. Compared by count alone, a witness could leave
+ * unseen two ways (the one-caller sweep, 2026-09-22): one statement un-imported
+ * and another imported between two runs held the count and passed; and with a
+ * second one imported, the RAISE rewrote the mark from what was seen, so the
+ * one that left was erased from it for good and no later run could name it.
+ * His rule is that a removal fails until someone looks, and that a mark comes
+ * down only by the guarded step. A departure that arrivals hide from the count
+ * is still a removal.
  *
  * ⛔ A witness is keyed by its account's ID, and named only when a message is
  * printed. A name is something the owner edits: keyed by name, renaming Chase
@@ -52,9 +61,11 @@ export type WitnessKind = (typeof WITNESS_KINDS)[number];
  *                      2026-09-15).
  *                      ⚠️ A moment-only account (no statement, no typed
  *                      balance) whose first statement arrives trades its
- *                      moments for that one endpoint, and both this count and
- *                      windows can fall; no account in the ledger is
- *                      moment-only today (measured).
+ *                      moments for that one endpoint: the moments leave this
+ *                      kind and windows, and the floor fails on them, whatever
+ *                      the counts, until `--lower-marks` approves the trade.
+ *                      No account in the ledger is moment-only today
+ *                      (measured).
  *   chain windows      every consecutive chain-grade anchor pair walked. The
  *                      break baseline is EMPTY, so every one of them was.
  *   statement periods  every stored verdict re-graded. Measured: 15 statement
@@ -195,6 +206,28 @@ function goneWitnesses(
   return unseen.filter(([id, from, to]) => windowsSpanning(walked[`${id}`] ?? [], `${from}`, `${to}`) === null);
 }
 
+interface Standing {
+  /** the witnesses the mark lists that are gone now */
+  gone: Witness[];
+  /** fewer seen than the mark, or any witness it lists gone: a plain run fails it, `--lower-marks` approves it */
+  dropped: boolean;
+}
+
+/**
+ * How a kind stands against its mark. The one rule both a plain run and
+ * `--lower-marks` ask, so the check never fails a kind the lowering will not
+ * lower, or lowers one the check would pass.
+ */
+function standingOf(
+  kind: WitnessKind,
+  mark: WitnessMark,
+  now: readonly Witness[],
+  observed: LedgerObservation,
+): Standing {
+  const gone = goneWitnesses(kind, mark.witnesses, now, observed);
+  return { gone, dropped: now.length < mark.count || gone.length > 0 };
+}
+
 const SHOWN = 10;
 
 /**
@@ -227,6 +260,18 @@ export interface FloorResult {
   summary: string;
 }
 
+/**
+ * How the count of a kind that dropped stands against its mark. Level with it or
+ * above it is said in so many words: a count that held reads as nothing wrong,
+ * and the kind failed only because others arrived in the place of what left.
+ */
+function against(seen: number, mark: number): string {
+  if (seen < mark) return `below the mark of ${mark}`;
+  return seen === mark
+    ? `as many as the mark of ${mark} but not the same ones`
+    : `above the mark of ${mark} but not every one it lists`;
+}
+
 /** The observation against the stored marks. */
 export function compareToMarks(observed: LedgerObservation, marks: WitnessMarks): FloorResult {
   const seen = witnessesOf(observed);
@@ -242,14 +287,19 @@ export function compareToMarks(observed: LedgerObservation, marks: WitnessMarks)
       segments.push(`${counted} (recorded)`);
       continue;
     }
-    if (now.length < mark.count) {
-      segments.push(`${counted} (below its mark of ${mark.count})`);
+    // ⛔ asked before any raise: a raise writes the mark afresh from what is seen, which would erase what left
+    const { gone, dropped } = standingOf(kind, mark, now, observed);
+    if (dropped) {
+      segments.push(
+        now.length < mark.count
+          ? `${counted} (below its mark of ${mark.count})`
+          : `${counted} (${gone.length} gone from its mark of ${mark.count})`,
+      );
       failures.push({
         kind: "witness-drop",
         account: LABEL[kind],
         detail:
-          `${now.length} seen, below the mark of ${mark.count} — ` +
-          `${describeGone(goneWitnesses(kind, mark.witnesses, now, observed), mark, observed)}. ` +
+          `${now.length} seen, ${against(now.length, mark.count)} — ${describeGone(gone, mark, observed)}. ` +
           `${HOW_TO_LOWER} pnpm ledger-check --lower-marks=${kind}, then the same with --confirm`,
       });
       continue;
@@ -265,9 +315,10 @@ export function compareToMarks(observed: LedgerObservation, marks: WitnessMarks)
 }
 
 /**
- * What `--lower-marks=<kinds>` would do: each named kind seen BELOW its mark
- * comes down to exactly what is seen. It never raises (a plain run does that)
- * and never touches a kind it was not given.
+ * What `--lower-marks=<kinds>` would do: each named kind that DROPPED — seen
+ * below its mark, or missing any witness it lists — comes down to exactly what
+ * is seen. It never touches a kind that did not drop (a plain run raises that)
+ * or a kind it was not given.
  */
 export function planLowering(
   observed: LedgerObservation,
@@ -284,15 +335,20 @@ export function planLowering(
       lines.push(`${LABEL[kind]}: no mark recorded yet — nothing to lower (a plain run records one)`);
       continue;
     }
-    if (now.length >= mark.count) {
-      lines.push(`${LABEL[kind]}: ${now.length} seen, mark ${mark.count} — not below it, nothing to lower`);
+    const { gone, dropped } = standingOf(kind, mark, now, observed);
+    if (!dropped) {
+      lines.push(
+        `${LABEL[kind]}: ${now.length} seen, mark ${mark.count} — ` +
+          "not below it and nothing it lists gone, nothing to lower",
+      );
       continue;
     }
     writes[kind] = markOf(observed, now);
-    lines.push(
-      `${LABEL[kind]}: lowers its mark ${mark.count} → ${now.length} — ` +
-        describeGone(goneWitnesses(kind, mark.witnesses, now, observed), mark, observed),
-    );
+    const change =
+      now.length < mark.count
+        ? `lowers its mark ${mark.count} → ${now.length}`
+        : `sets its mark ${mark.count} → ${now.length}, forgetting what left`;
+    lines.push(`${LABEL[kind]}: ${change} — ${describeGone(gone, mark, observed)}`);
   }
   return { writes, lines };
 }

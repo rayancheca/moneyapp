@@ -27,8 +27,9 @@
 # ⚠️ It WRITES, rarely. The first run on a ledger records a high-water mark per
 # kind of witness it counts (ledger_witness_marks, inside the ledger), and a run
 # that counts more raises it — so a new statement needs no commit. A run that
-# counts FEWER fails and names what left; lowering a mark after a removal the
-# owner approved is `pnpm ledger-check --lower-marks=<kind> --confirm`.
+# counts FEWER, or misses any witness the mark lists however many it counts,
+# fails and names what left; lowering a mark after a removal the owner approved
+# is `pnpm ledger-check --lower-marks=<kind> --confirm`.
 set -e
 
 DB="${MONEYAPP_DB_PATH:-data/moneyapp.db}"
