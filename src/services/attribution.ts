@@ -5,6 +5,7 @@ import { dailyBalances } from "@/db/schema/balances";
 import { transactions } from "@/db/schema/transactions";
 import { attribute, type Attribution, type Restatement } from "@/lib/attribution";
 import { compareDates } from "@/lib/dates";
+import { outsidePortfolioCashAccountIds } from "./accounts";
 import { loadCategoryIndex } from "./analytics";
 import { REPLAY_STATUSES } from "./derivation";
 import { inTransitAt } from "./in-flight";
@@ -110,6 +111,7 @@ function balanceAsOf(db: AppDatabase, accountId: string, day: string): number {
 
 interface KindTotals {
   earnedCents: number;
+  agentIncomeCents: number;
   refundsCents: number;
   spentCents: number;
   movedCents: number;
@@ -119,12 +121,19 @@ interface KindTotals {
  * Every replayed row in the window, summed by what its category KIND does to net
  * worth.
  *
- * ⚠️ Exhaustive by construction: every row lands in exactly one of the four
+ * ⚠️ Exhaustive by construction: every row lands in exactly one of the five
  * buckets, and `moved` is the catch-all rather than a `continue`. `periodTotals`
  * drops what it cannot classify — correct for a spending tab, fatal here, where
  * a dropped row becomes phantom `unexplained`. Measured over July–August it
  * discards +$18,870.53 of transfer- and investment-kind rows, which is seven
  * times the window's entire net movement.
+ *
+ * ⚖️ Income is split by WHOSE it is (owner decision 2026-09-28): on the agent's
+ * cash account (`outsidePortfolioCashAccountIds`, the rule `isIncome` reads) it is
+ * `agentIncome`, anywhere else `earned` — so the Income band is exactly the
+ * population /spending calls Income, and the agent's dividend is still named
+ * rather than dropped. ⛔ Not `isIncome` itself: that answers "is it his income?",
+ * and a row answering no must still land in a band here.
  */
 function kindTotals(
   db: AppDatabase,
@@ -133,6 +142,7 @@ function kindTotals(
   eligible: ReadonlySet<string>,
 ): KindTotals {
   const idx = loadCategoryIndex(db);
+  const agentsCash = outsidePortfolioCashAccountIds(db);
   const rows = db
     .select({
       accountId: transactions.accountId,
@@ -149,12 +159,13 @@ function kindTotals(
     )
     .all();
 
-  const t: KindTotals = { earnedCents: 0, refundsCents: 0, spentCents: 0, movedCents: 0 };
+  const t: KindTotals = { earnedCents: 0, agentIncomeCents: 0, refundsCents: 0, spentCents: 0, movedCents: 0 };
   for (const r of rows) {
     if (!eligible.has(r.accountId)) continue;
     const kind = r.categoryId === null ? null : idx.topLevelOf(r.categoryId).kind;
     if (kind === "income" && r.amountCents > 0) {
-      t.earnedCents += r.amountCents;
+      if (agentsCash.has(r.accountId)) t.agentIncomeCents += r.amountCents;
+      else t.earnedCents += r.amountCents;
       continue;
     }
     if (kind === "expense") {

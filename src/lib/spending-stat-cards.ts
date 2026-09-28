@@ -46,7 +46,8 @@ export function spendingStatCards(totals: PeriodTotals, range: DateRange): Spend
 
   /*
    * 🔴 S22 — "Earned" NAMED A POPULATION IT DID NOT HOLD. `earnedCents` is every
-   * positive row in an income-kind category (`isIncome`); /summary's "Earned" is
+   * positive row in an income-kind category (`isIncome`) — off the agent's cash
+   * account since 2026-09-28, and `?category=income` opens the same set; /summary's "Earned" is
    * wages, tutoring and savings interest, and files financial aid and
    * reimbursements under "Money in that you did not earn". Measured on the real
    * ledger 2026-09-15: `/spending?period=2024` read "Earned $32,717.06" over a

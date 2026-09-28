@@ -1,10 +1,11 @@
-import { and, count, eq, gt, gte, inArray, isNull, lt, lte, or, sql, type SQL } from "drizzle-orm";
+import { and, count, eq, gt, gte, inArray, isNull, lt, lte, notInArray, or, sql, type SQL } from "drizzle-orm";
 import { NO_MERCHANT } from "@/lib/ledger-href";
 import type { AppDatabase } from "@/db/client";
 import { categories, type CategoryKind } from "@/db/schema/categories";
 import { transactions } from "@/db/schema/transactions";
 import { transactionSplits } from "@/db/schema/transaction-splits";
 import type { TxnFilters, TxnView } from "@/components/transactions/query";
+import { outsidePortfolioCashAccountIds } from "./accounts";
 
 /**
  * The transactions filter/view SQL, extracted as a service (ux-overhaul-plan
@@ -60,6 +61,11 @@ export function viewCondition(view: TxnView): SQL {
 export function filterConditions(
   filters: TxnFilters,
   allCategories: readonly CategoryRef[],
+  /**
+   * `outsidePortfolioCashAccountIds` — the agent's cash, whose income is not his (`isIncome`). Required, as it is
+   * there: the `income` and `cashflow` scopes are the Income card's population and cannot be built without it.
+   */
+  agentsCash: readonly string[],
 ): SQL[] {
   const conds: SQL[] = [];
   if (filters.account) conds.push(eq(transactions.accountId, filters.account));
@@ -119,6 +125,10 @@ export function filterConditions(
     // opened exactly the rows behind them; Net and Savings rate opened the
     // whole ledger for the window, transfers, card payments and investment
     // flows included.
+    //
+    // ⚖️ …and income is `isIncome`: the agent's cash account is not his (owner
+    // decision 2026-09-28). The Income card stopped counting the agent's
+    // dividends and interest, so the link under it has to stop opening them.
     const expenseIds = idsWithTopKind(allCategories, "expense");
     const incomeIds = idsWithTopKind(allCategories, "income");
     const spendingScope = or(
@@ -127,7 +137,11 @@ export function filterConditions(
     ) as SQL;
     const incomeScope =
       incomeIds.length > 0
-        ? (and(inArray(transactions.categoryId, incomeIds), gt(transactions.amountCents, 0)) as SQL)
+        ? (and(
+            inArray(transactions.categoryId, incomeIds),
+            gt(transactions.amountCents, 0),
+            agentsCash.length > 0 ? notInArray(transactions.accountId, [...agentsCash]) : undefined,
+          ) as SQL)
         : (sql`0 = 1` as SQL);
     if (filters.category === "spending") conds.push(spendingScope);
     else if (filters.category === "income") conds.push(incomeScope);
@@ -196,9 +210,17 @@ function loadCategoryRefs(db: AppDatabase): CategoryRef[] {
     .all();
 }
 
+/** `filterConditions` with everything it reads from the ledger read here — the count and the ids share it. */
+function ledgerConditions(db: AppDatabase, filters: TxnFilters, view: TxnView): SQL[] {
+  return [
+    ...filterConditions(filters, loadCategoryRefs(db), [...outsidePortfolioCashAccountIds(db)]),
+    viewCondition(view),
+  ];
+}
+
 /** Server-computed blast radius for bulk confirms and the select-all copy. */
 export function countMatching(db: AppDatabase, filters: TxnFilters, view: TxnView): number {
-  const conds = [...filterConditions(filters, loadCategoryRefs(db)), viewCondition(view)];
+  const conds = ledgerConditions(db, filters, view);
   return (
     db
       .select({ n: count() })
@@ -214,7 +236,7 @@ export function matchingTransactionIds(
   filters: TxnFilters,
   view: TxnView,
 ): string[] {
-  const conds = [...filterConditions(filters, loadCategoryRefs(db)), viewCondition(view)];
+  const conds = ledgerConditions(db, filters, view);
   return db
     .select({ id: transactions.id })
     .from(transactions)

@@ -5,6 +5,7 @@ import { and, eq, isNull } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { createDatabase, type DbBundle } from "@/db/client";
 import { seedDatabase } from "@/db/seed";
+import { accounts } from "@/db/schema/accounts";
 import { categories } from "@/db/schema/categories";
 import { institutions } from "@/db/schema/institutions";
 import { transactions } from "@/db/schema/transactions";
@@ -172,6 +173,24 @@ describe("each kind definition agrees with the rule that counts it", () => {
     expect(CATEGORY_KIND_JARGON.income).not.toMatch(/nets against/);
     expect(CATEGORY_KIND_JARGON.income).toMatch(/left out/);
     expect(CATEGORY_KIND_JARGON.income).toMatch(/nets both/);
+  });
+
+  /*
+   * ⚖️ Owner decision 2026-09-28 (§6A 27): what the agent's account is paid is not his income. The definition said
+   * "Money arriving here is income" with no exception, over an income figure that now leaves the agent's out.
+   */
+  test("the income definition names the agent's account, and the income figure leaves it out", () => {
+    const rh = bundle.db.select().from(institutions).where(eq(institutions.name, "Robinhood")).get()!;
+    const agentic = createAccount(bundle.db, { institutionId: rh.id, name: "Robinhood Agentic", type: "checking", last4: "9651" });
+    const book = createAccount(bundle.db, { institutionId: rh.id, name: "Robinhood Agentic Brokerage", type: "investment", subtype: "brokerage" });
+    bundle.db.update(accounts).set({ cashAccountId: agentic }).where(eq(accounts.id, book)).run();
+    const dividends = childId(rootId("Income"), "Dividends");
+    addTxn(dividends, 7); // his GOOG dividend
+    addTxn(dividends, 6, agentic); // the agent's 0.25 WMT × $0.2475
+
+    expect(periodTotals(bundle.db, WINDOW).earnedCents).toBe(7);
+    expect(CATEGORY_KIND_JARGON.income).toMatch(/the agent's own account/);
+    expect(CATEGORY_KIND_JARGON.income).toMatch(/not yours/);
   });
 
   test("the transfer definition covers money to or from other people, not only money between your own accounts", () => {

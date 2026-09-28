@@ -1,7 +1,8 @@
 import type { AppDatabase } from "@/db/client";
 import { categories } from "@/db/schema/categories";
 import type { LedgerRow } from "@/components/transactions/TransactionsLedger";
-import { activeTxnsInRange, loadCategoryIndex, spendingBucket } from "./analytics";
+import { outsidePortfolioCashAccountIds } from "./accounts";
+import { activeTxnsInRange, isIncome, loadCategoryIndex, spendingBucket } from "./analytics";
 import { recentLedgerRows, type CategoryRow } from "./ledger-rows";
 
 /**
@@ -65,6 +66,7 @@ export function periodActivity(
   );
 
   // one pass over the window: income, gross spending, and per-category gross
+  const agentsCash = outsidePortfolioCashAccountIds(db);
   const inRange = activeTxnsInRange(db, from, to);
   let inCents = 0;
   let outCents = 0;
@@ -81,14 +83,9 @@ export function periodActivity(
       }
       continue;
     }
-    // income = a positive amount in an income-kind category (matches /spending)
-    if (
-      txn.categoryId !== null &&
-      txn.amountCents > 0 &&
-      idx.topLevelOf(txn.categoryId).kind === "income"
-    ) {
-      inCents += txn.amountCents;
-    }
+    // /spending's Income: the panel prints the same word, so it asks the same classifier — which
+    // leaves the agent's cash account out (`isIncome`, owner decision 2026-09-28)
+    if (isIncome(idx, agentsCash, txn)) inCents += txn.amountCents;
   }
 
   const topCategories: PeriodTopCategory[] = [...grossByCategory.entries()]
