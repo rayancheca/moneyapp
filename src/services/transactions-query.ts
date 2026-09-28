@@ -33,6 +33,15 @@ function idsWithTopKind(allCategories: readonly CategoryRef[], kind: CategoryKin
     .map((c) => c.id);
 }
 
+/**
+ * `isIncome`'s account half in SQL — off the agent's cash account — or nothing when there is no agent, so the query is
+ * the one it always was. One spelling for every filter that selects Income: the `income` scope and a single income
+ * category drilled with `flow=in`.
+ */
+function offAgentsCash(agentsCash: readonly string[]): SQL | undefined {
+  return agentsCash.length > 0 ? notInArray(transactions.accountId, [...agentsCash]) : undefined;
+}
+
 export function viewCondition(view: TxnView): SQL {
   switch (view) {
     case "review":
@@ -63,7 +72,8 @@ export function filterConditions(
   allCategories: readonly CategoryRef[],
   /**
    * `outsidePortfolioCashAccountIds` — the agent's cash, whose income is not his (`isIncome`). Required, as it is
-   * there: the `income` and `cashflow` scopes are the Income card's population and cannot be built without it.
+   * there: the `income` and `cashflow` scopes are the Income card's population, and an income category drilled
+   * `flow=in` is one category of it, so none of them can be built without it.
    */
   agentsCash: readonly string[],
 ): SQL[] {
@@ -140,7 +150,7 @@ export function filterConditions(
         ? (and(
             inArray(transactions.categoryId, incomeIds),
             gt(transactions.amountCents, 0),
-            agentsCash.length > 0 ? notInArray(transactions.accountId, [...agentsCash]) : undefined,
+            offAgentsCash(agentsCash),
           ) as SQL)
         : (sql`0 = 1` as SQL);
     if (filters.category === "spending") conds.push(spendingScope);
@@ -172,6 +182,15 @@ export function filterConditions(
           )})`,
         ) as SQL,
       );
+      /*
+       * ⚖️ An income category drilled `flow=in` IS `isIncome` narrowed to that category: the Sankey's income sources
+       * and the cash-flow chart's income segments link here, and both figures leave the agent's cash out (owner
+       * decision 2026-09-28). 🔴 Only the `income` scope had learned that, so "Dividends $0.07" — his GOOG — opened
+       * the agent's WMT $0.06 beside it. The sign half is `flow=in` below; this is the account half. Without `flow`
+       * the link is the category's own rows, both signs and every account, as `categorySpending` counts them.
+       */
+      const his = filters.flow === "in" ? offAgentsCash(agentsCash) : undefined;
+      if (his && idsWithTopKind(allCategories, "income").includes(filters.category)) conds.push(his);
     }
   }
   if (filters.from) conds.push(gte(transactions.postedOn, filters.from));

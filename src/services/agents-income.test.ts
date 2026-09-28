@@ -11,6 +11,7 @@ import { institutions } from "@/db/schema/institutions";
 import { transactions } from "@/db/schema/transactions";
 import { parseFilters } from "@/components/transactions/query";
 import { dedupeHash } from "@/lib/hash";
+import { cashFlowSegmentHref } from "@/lib/ledger-href";
 import { resolvePeriod } from "@/lib/period";
 import { createAccount } from "./accounts";
 import { incomeByMonth } from "./analytics";
@@ -184,6 +185,49 @@ describe("the agent's income is not his — on every surface that says Income", 
     expect(rows.some((r) => r.accountId === agentic)).toBe(false);
     // the Net card's population is spending ∪ income, and the agent's income is in neither
     expect(countMatching(bundle.db, parseFilters({ category: "cashflow", ...SEPT }), "all")).toBe(2);
+  });
+
+  /*
+   * 🔴 The drill-down contract, one category at a time. The Sankey's income sources and the cash-flow chart's income
+   * segments link to `category=<subcategory>&flow=in`, and only the `income` and `cashflow` scopes had learned whose
+   * money is whose: "Dividends $0.07" (his GOOG) opened his row AND the agent's WMT $0.06. On main the figure and the
+   * link had counted the agent's row together; the branch moved one and not the other.
+   */
+  test("⛔ a per-category income link — the Sankey's sources, the cash-flow chart's segments — opens exactly its rows", () => {
+    const opened = (href: string) => {
+      const filters = parseFilters(Object.fromEntries(new URL(href, "http://ledger.test").searchParams));
+      return bundle.db
+        .select({ accountId: transactions.accountId, amountCents: transactions.amountCents })
+        .from(transactions)
+        .where(inArray(transactions.id, matchingTransactionIds(bundle.db, filters, "all")))
+        .all();
+    };
+    const sum = (rows: readonly { amountCents: number }[]) => rows.reduce((s, r) => s + r.amountCents, 0);
+
+    const graph = spendingSankey(bundle.db, SEPT);
+    const sources = graph.nodes.filter((n) => n.meta?.kind === "income");
+    expect(sources.map((n) => n.label).sort()).toEqual(["Dividends", "Salary"]);
+    for (const node of sources) {
+      const rows = opened(node.href!);
+      expect(sum(rows), node.label).toBe(graph.links.find((l) => l.source === node.id)!.valueCents);
+      expect(rows.some((r) => r.accountId === agentic), node.label).toBe(false);
+    }
+
+    const flow = cashFlowByPeriod(bundle.db, resolvePeriod({ period: "2026-09" }, TODAY), TODAY);
+    let segments = 0;
+    for (const s of flow.incomeSeries) {
+      for (const b of flow.buckets) {
+        const cents = b.income[s.key] ?? 0;
+        if (cents === 0) continue;
+        segments += 1;
+        const rows = opened(cashFlowSegmentHref(s.key, s.categoryId, { from: b.from, to: b.to }, "in"));
+        expect(sum(rows), `${s.label} ${b.key}`).toBe(cents);
+      }
+    }
+    // his two rows are two segments; the agent's two days draw none, and a link on one opens none
+    expect(segments).toBe(2);
+    const dividends = flow.incomeSeries.find((s) => s.label === "Dividends")!;
+    expect(opened(cashFlowSegmentHref(dividends.key, dividends.categoryId, { from: "2026-09-08", to: "2026-09-08" }, "in"))).toEqual([]);
   });
 
   test("⚖️ the net-worth bridge still counts it — on its own band — and the window still closes", () => {
