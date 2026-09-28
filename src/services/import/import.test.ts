@@ -2640,6 +2640,11 @@ describe("a parser-version re-read that no longer writes an account", () => {
   const FEBRUARY = statementFor("2026-02");
   /** March downloaded a second time: the same statement in different bytes */
   const MARCH_COPY: ImportInput = { name: `${PREFIX}2026-03 (1).txt`, buffer: Buffer.from("2026-03\n") };
+  /** A month's `nth` download after the first: the same statement, in bytes of its own */
+  const downloadOf = (month: string, nth: number): ImportInput => ({
+    name: `${PREFIX}${month} (${nth}).txt`,
+    buffer: Buffer.from(`${month}${"\n".repeat(nth)}`),
+  });
 
   const row = (id: string) => bundle.db.select().from(transactions).where(eq(transactions.id, id)).get();
 
@@ -3399,6 +3404,92 @@ describe("a parser-version re-read that no longer writes an account", () => {
     expect(migrateStorageLayout(bundle.db, { move: true })).toEqual([]);
     expect(liveFile(second).storagePath).toBe(copy.storagePath);
     expect(fs.readFileSync(copy.storagePath)).toEqual(second.buffer);
+  });
+
+  /**
+   * 🔴 The migration filed a copy by what it WROTE, and a copy can lose all of it: an anchor goes to whichever file wrote
+   * its day last (`upsertAnchor`). With no row, no period and no anchor the copy named no account, and went to the bare
+   * institution bucket. What it prints stays recorded for as long as it is imported (`printed_lines`) — the review's
+   * probes P1–P3, 2026-09-28.
+   */
+  test.each([
+    ["a third download takes its days", () => importStatementFiles(bundle.db, [downloadOf("2026-03 anchor only", 2)])],
+    [
+      "the statements either side take its opening and its closing day",
+      async () => {
+        await importStatementFiles(bundle.db, [statementFor("2026-04")]);
+        await importStatementFiles(bundle.db, [FEBRUARY]);
+      },
+    ],
+    [
+      "its first download, read again, takes them back",
+      () => {
+        threeSectionProfile.version = 2;
+        return importStatementFiles(bundle.db, [statementFor("2026-03 anchor only")]);
+      },
+    ],
+  ])("the layout migration leaves a second download that lost every anchor beside the first — %s", async (_, after) => {
+    const first = statementFor("2026-03 anchor only");
+    const second = downloadOf("2026-03 anchor only", 1);
+    await importStatementFiles(bundle.db, [first]);
+    await importStatementFiles(bundle.db, [second]);
+    await after();
+    const copy = liveFile(second);
+    const folderOf = (file: { storagePath: string }) => path.basename(path.dirname(file.storagePath));
+    // the premise: nothing the copy wrote is left to name its account…
+    expect(contributionOf(copy.id)).toEqual({ rows: [], periods: [], anchors: [] });
+    // …and the import archived it in that account's folder, beside the first download
+    expect(folderOf(copy)).toBe("chase-checking-4102");
+    expect(folderOf(liveFile(first))).toBe(folderOf(copy));
+
+    expect(migrateStorageLayout(bundle.db, { move: true })).toEqual([]);
+    expect(liveFile(second).storagePath).toBe(copy.storagePath);
+    expect(fs.readFileSync(copy.storagePath)).toEqual(second.buffer);
+  });
+
+  /**
+   * 🔴 A re-read archives its original under the content-hashed name its older read already holds (`recordFile`), and
+   * `relocateArchive` drops the transient copy: the retired read and its successor are ONE file on disk. The migration
+   * placed each row on its own, so the retired copy — whose retirement forgot everything that named its account — took
+   * the file to the institution bucket, and left its live successor naming a path with nothing there (probe P8).
+   */
+  test.each([
+    ["where the import put it", false],
+    ["in the flat archive the per-account folders replaced", true],
+  ])("the layout migration moves a re-read second download's original with every read of it — an original %s", async (_, flat) => {
+    const first = statementFor("2026-03 kept only");
+    const second = downloadOf("2026-03 kept only", 1);
+    await importStatementFiles(bundle.db, [first]);
+    await importStatementFiles(bundle.db, [second]);
+    threeSectionProfile.version = 2;
+    await importStatementFiles(bundle.db, [first]);
+    await importStatementFiles(bundle.db, [second]);
+    const copy = liveFile(second);
+    const reads = () => bundle.db.select().from(importFilesTable).where(eq(importFilesTable.fileName, second.name)).all();
+    // the premise: the read it retired names the same original…
+    expect(reads().map((r) => [r.status, r.storagePath]).sort()).toEqual([
+      ["parsed", copy.storagePath],
+      ["superseded", copy.storagePath],
+    ]);
+    // …and the live read's own anchors name its account: nothing here turns on what a copy wrote
+    expect(contributionOf(copy.id).anchors.length).toBeGreaterThan(0);
+    const legacy = path.join(dir, "originals", path.basename(copy.storagePath));
+    if (flat) {
+      fs.renameSync(copy.storagePath, legacy);
+      bundle.db.update(importFilesTable).set({ storagePath: legacy }).where(eq(importFilesTable.fileName, second.name)).run();
+    }
+
+    const moves = migrateStorageLayout(bundle.db, { move: true });
+
+    // every read of every file names a path its original is at…
+    for (const file of bundle.db.select().from(importFilesTable).all()) {
+      expect(fs.existsSync(file.storagePath), `${file.fileName} (${file.status}) at ${file.storagePath}`).toBe(true);
+    }
+    // …the copy's, beside the first download, where the import put it
+    expect(reads().map((r) => r.storagePath)).toEqual([copy.storagePath, copy.storagePath]);
+    expect(fs.readFileSync(copy.storagePath)).toEqual(second.buffer);
+    expect(moves.map((m) => [m.from, m.to, m.moved])).toEqual(flat ? reads().map(() => [legacy, copy.storagePath, true]) : []);
+    expect(migrateStorageLayout(bundle.db, { move: true })).toEqual([]);
   });
 
   /** Every period, row and balance day of the three accounts, by content — the file that owns each left out. */
