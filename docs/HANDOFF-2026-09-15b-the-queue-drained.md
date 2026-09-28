@@ -18,7 +18,7 @@
 2. **Your ten answers (2026-09-15 → 09-17) are recorded** in memory `moneyapp-owner-decisions-2026-09-15` and in
    §3 / §6A — do not re-ask. One question is open and waiting for you: **§6A 21** (a re-read that drops a line a
    still-imported re-download prints — bring it back, or make the loss visible).
-3. **When the Wells Fargo ····5481 statement covering early September arrives** — before October's lands:
+3. ✅ **DONE 2026-09-28 — the Wells Fargo statement landed and is imported** (§2 rows 9–10). The old instruction, kept for the shape of the next one:
    `pnpm trial-import` it → import it → `pnpm tsx scripts/link-car-payments-2026-09.ts --db=data/moneyapp.db` (dry
    run: Car lease ← one −$695.04 row posted Sep 1–18; Car insurance ← one −$1,000.00 Progressive row) → `--confirm`.
    The early lease payment falls outside the ±3-day window and, left unlinked, blocks every later lease charge.
@@ -72,6 +72,9 @@
 | 7 | **Migrations 0018–0023 + the three record-keeping backfills** (your answer 19), 2026-09-17 | the first script's open applied 0018 `statement_positions`, 0019 `statement_copies`, 0020 `account_numbers`, 0021 `unimported_transfer_legs`, 0022 `printed_lines`, 0023 `unimported_row_attributes` (18 → 24 migrations; the two new columns are NULL on every existing row, and every old column is byte-identical). Then `record-account-numbers` (2: Venture X ····4208 also printed ····9082 and ····4147), `record-statement-copies` (105 — "keeps 103 periods and 3,269 rows under another download"), `record-printed-lines` ×6 chunks (305 records, 23,071 lines). Each: dry run first, own restore point, re-run = "Nothing to do" | every figure compared before/after: net worth, per-account latest balance, daily_balances digest, periods by verdict + gap, anchors by source, active rows + sum, categories by source, notes, transfer groups, attached rows, marks — **only the migration count moved**; `pnpm ledger-check` exit 0 with "import records: 0 parsed file(s) … with no record" | `data/backups/pre-2026-09-17-migrations-0018-0023.db` (WAL-inclusive, integrity ok, 25 tables identical) + each script's own `pre-*.db` |
 
 | 8 | **The cash job's weekly pay $1,047.00 → $1,141.92** (your word, 2026-09-22: FICA should never have been withheld), 2026-09-22 | one UPDATE on `recurring_series` `019f72da-1fbc…`'s `user_amount_cents`; 14 guards — every other series, transactions, daily_balances, anchors, periods, budgets, accounts, holdings, holding_events and net worth byte-identical. Levelled monthly **$4,537.00 → $4,948.32**; income-card rate follows; runway **26 → 29 days of cash**; /budgets September $4,188.00 → $4,567.68 (4 paydays), October $5,235.00 → $5,709.60 (5). Re-run = nothing to do; ledger-check exit 0 | `data/backups/pre-2026-09-22-weekly-pay.db` + the script's own `pre-*-set-cash-job-weekly-pay.db` |
+
+| 9 | **The Wells Fargo statement 2026-08-26 → 09-24 imported** (2026-09-28) — the one §0.3 was waiting for | trial-import first, then `--confirm`: parsed 1, **inserted 8**, deduped 0, quarantined 0. Net worth $116,256.88 → **$120,678.16**; WF coverage verified → 2026-09-24; one new reconciled period and statement anchor ($6,817.95). The witness floor RAISED itself: endpoints 221 → 222, windows 211 → 212, periods 255 → 256. Then `scripts/link-car-payments-2026-09.ts --insurance-row=01a0e898-c5ca-7002 --confirm`: the 09-02 −$695.04 "Mbfs Web Pay" → **Car lease**, the 09-03 −$1,000.00 "Prog American Ins Prem" → **Car insurance** (the script REFUSED first, exactly as designed: the statement prints Progressive's ACH descriptor, not the word "Progressive"). September lease owes $0.00 | `data/backups/pre-2026-09-28-wf-0924-import.db` |
+| 10 | **The pay reaches a bank: the series renamed, both deposits attached** (2026-09-28, his two answers) | `scripts/payroll-arrives-2026-09-28.ts --confirm`, 24 guards: series `019f72da-1fbc…` "Cash job (weekly pay)" → **"It America LLC (weekly pay)"**, account → Wells Fargo; 09-23 **+$4,567.68** (4 × $1,141.92) and 09-24 **+$1,141.92** attached, both `Income › Salary` by `user`; the 09-04 **+$468.20** filed `Income › Refunds & Reimbursements` with a note ("his employer paying back the Claude subscription — his word"). Income card "the pay did not reach a bank" → **"Pay is arriving: the last deposit landed on Sep 24"**; banked 8% → **37%**; runway 29 days → **2.7 months**. Re-run = nothing to do; ledger-check exit 0 | the script's own `pre-*-payroll-arrives.db` |
 
 ⚠️ `scripts/attach-sapphire-payment-rows-2026-09-14.ts` and `scripts/mark-attached-sapphire-rows-2026-09-15.ts` now refuse when re-run — on purpose: the $115 reversal grouped a row its after-state expects ungrouped. ⚠️ Un-importing 20260302 still ends in a −$798.48 gap (restored retired duplicate twins the re-import cannot match) — queued, not fixed.
 
@@ -244,7 +247,7 @@ Second round (memory `moneyapp-owner-decisions-2026-09-15`, same file):
    disagrees; full order-independence would mean letting a later, better-dated read RE-DATE a charge an earlier
    file already recorded. That is a behavioural widening with its own double-count risk. (a) widen it, or
    (b) keep today's rule and accept that the first file to print a charge owns its day.
-25. ❓ OPEN, and **the statement carrying it is weeks away** — *what should the app do when ONE deposit pays five
+25. ✅ ANSWERED 09-28 — **settle backwards** (building on `uc/settle-backwards`). It arrived sooner than expected, — *what should the app do when ONE deposit pays five
    weeks?* Measured on copies with a REHEARSAL of Thursday's deposit (nothing was written to your ledger):
    the import gives it **no category, no series, needs_review**; the recurring matcher attaches **zero** paydays
    (its key contains the posting date, and an ATM descriptor carries its own, so no automatic path can ever link a
@@ -283,6 +286,15 @@ Second round (memory `moneyapp-owner-decisions-2026-09-15`, same file):
    the other leg, should it keep the Transfer category until the detector re-pairs it (today's behaviour, matching
    un-import) or lose it? And should a summed total that rests only on a balance you typed print no date at all
    (today) or print the day your count stops standing, the way net worth does?
+29. ❓ OPEN (from the settle-backwards fixer, one residue) — a payday settled by an EARLIER month's deposit, once
+   today has passed that payday: the month it falls in has no figure that names it, so either a fourth figure
+   appears beside "expected / posted / still to come" naming money that arrived in another month, or one sentence
+   on that month stays wrong. He picked neither; the fixer implemented the named-figure half for the FUTURE leg
+   and left the past leg. (a) add the fourth figure, or (b) let the month say nothing about money banked elsewhere.
+⚠️ CORRECTION to what settle-backwards can do: five weeks of money reaches back only so far. On his ledger it
+   settles Sep 24, 17, 10, 3 and Aug 27 (and Aug 20 once the leftover of the two deposits is pooled). **Aug 6 and
+   Aug 13 stay unsettled** — no deposit covers them, and the rule will not say a payday was met with money that
+   does not exist. My question to him said "August stops showing four missed paydays"; that was too strong.
 
 **B. Waiting on an event:**
 - **The Wells Fargo ····5481 statement covering early September:** trial-import → import →
