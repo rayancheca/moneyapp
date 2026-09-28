@@ -23,6 +23,7 @@ import {
   seriesHasLapsed,
 } from "./recurring";
 import { overdueForSeries, unbankedIncomeForSeries, unbankedIncomeTotals, type UnbankedIncomeTotals } from "./arrears";
+import { settledPaydaysForSeries } from "./payday-settlement";
 import { activeSplitsInRange } from "./transaction-splits";
 import { linkIsNotRecurring, seriesIdsNotDrawnAsRecurring } from "./recurring-link";
 
@@ -399,10 +400,27 @@ function fixedComponents(
     if (lapsedSeriesShouldStopForecasting(series.kind) && seriesHasLapsed(series, today)) continue;
     // forecast reads user overrides first (§4.4): amount, cadence, next-expected
     const staleness = seriesStaleness(series, today);
+    // only income has paydays to settle; a bill's absence is `overdueForSeries`'
+    const settled =
+      series.kind === "income" ? settledPaydaysForSeries(db, series.id, today) : new Set<string>();
     const occurrences: SeriesOccurrence[] = projectOccurrences(
       toProjectable(series, staleness),
       from,
       monthEnd,
+    ).filter(
+      /*
+       * ⚖️ A payday a deposit has already paid down is not still to come. ⛔ The
+       * same double count `incomeExpectation` used to publish, arriving by the
+       * forecast's door: a lump that posts BEFORE the payday it covers is in
+       * the bank balance this projection starts from, and projecting the payday
+       * on top of it adds the money twice. Settle backwards is his decision of
+       * 2026-09-28 and `services/payday-settlement` is its one home — this is a
+       * reader of it, never a second spelling.
+       *
+       * ⚠️ The lookup is hoisted per SERIES, not taken per occurrence: pass 31's
+       * measured lesson is that per-row query building was 44% of this app's CPU.
+       */
+      (o) => !settled.has(o.date),
     );
     if (occurrences.length === 0) continue;
     const perOccurrence = occurrences[0]!.amountCents;

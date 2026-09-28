@@ -882,20 +882,46 @@ describe("incomeExpectation — the term /budgets never had", () => {
   });
 
   /*
-   * ⛔ THE TODAY-EXCLUSION IS AN EXACT DATE, AND ONLY A DEPOSIT NEAR TODAY CAN
-   * SHOW IT. Found by mutation: widening `paidToday` to the series' tolerance
-   * changed no test in the file.
+   * ⛔ ONE DEPOSIT'S MONEY IS SPENT ONCE. Which payday a deposit answered is
+   * `paydaySettlement`'s question now (⚖️ settle backwards, his decision of
+   * 2026-09-28), and the danger the old exact-date check guarded against has
+   * not gone away — it has only moved. A deposit whose tolerance window TOUCHES
+   * two of its series' paydays must still retire exactly one of them, or the
+   * one deposit does the work of two and the month reads short by a payday.
    *
-   * The two lookups answer two questions and only one of them is about a range.
-   * "Was this occurrence met?" is judged with the series' `toleranceDays`,
-   * because a bank posts a day or two either side of an anchor — the same
-   * arbiter `overdueForSeries` gives bills. "Is TODAY's pay already inside
-   * `postedCents`?" is not that question: the only fact that answers it is a
-   * deposit dated today. Widen it and an earlier deposit — already counted in
-   * `postedCents` — also deletes today's payday from `expectedCents`, so the
-   * one deposit does the work of two.
+   * Found by mutation, and it still is: drop the `settledDates.has` guard in
+   * `settlePaydaysBackwards`, or let the anchor clause run for every occurrence
+   * in reach instead of only the first, and this test fails while nothing else
+   * in the file moves.
    */
-  test("a deposit near today, but not on it, does not cancel today's payday", () => {
+  test("a deposit whose tolerance touches two paydays settles only the later one", () => {
+    const pay = createSeries({
+      name: "Cash job (weekly pay)",
+      nextExpectedOn: "2026-06-01",
+      nextExpectedAmountCents: 104_600,
+      kind: "income",
+      cadence: "weekly",
+      intervalDaysAvg: 7,
+    });
+    // 06-05 is within the default tolerance of 3 of BOTH 06-08 and 06-01, and
+    // carries one week's money
+    spendLinked("2026-06-05", 104_600, "Income > Salary", pay);
+    const got = incomeExpectation(bundle.db, "2026-06-01", "2026-06-30", "2026-06-08");
+    expect(got.postedCents).toBe(104_600);
+    // 06-08 was answered; 06-15, 06-22 and 06-29 are still to come
+    expect(got.expectedCents).toBe(104_600 * 3);
+    // and 06-01 is still owed — one week of pay did not buy two weeks
+    expect(got.passedUnpaidOccurrences).toBe(1);
+    expect(got.passedUnpaidCents).toBe(104_600);
+  });
+
+  /*
+   * ⚖️ SETTLE BACKWARDS REACHES PAST THE TOLERANCE, and it has to: his Sep 24
+   * deposit retires Aug 27, twenty-eight days behind it. The tolerance decides
+   * which payday a deposit ANSWERS on its own date; how far back its money
+   * reaches is decided by the money.
+   */
+  test("a deposit near today, but not on it, still answers today's payday", () => {
     const pay = createSeries({
       name: "Cash job (weekly pay)",
       nextExpectedOn: "2026-06-08",
@@ -904,13 +930,14 @@ describe("incomeExpectation — the term /budgets never had", () => {
       cadence: "weekly",
       intervalDaysAvg: 7,
     });
-    // three days before today — inside the tolerance a widened check would use
+    // three days before today, and short of a full week — his June deposit was
+    // $1,047.00 against a $1,141.92 week, and it still answered that week
     spendLinked("2026-06-05", 60_000, "Income > Salary", pay);
     const got = incomeExpectation(bundle.db, "2026-06-01", "2026-06-30", "2026-06-08");
     expect(got.postedCents).toBe(60_000);
-    // 06-08 (today), 06-15, 06-22, 06-29 — today's pay has NOT landed, so it is
-    // still expected however close the last deposit was
-    expect(got.expectedCents).toBe(104_600 * 4);
+    // 06-08 is answered; 06-15, 06-22 and 06-29 remain
+    expect(got.expectedCents).toBe(104_600 * 3);
+    expect(got.passedUnpaidOccurrences).toBe(0);
   });
 
   test("today's own unposted payday is EXPECTED, not passed — the walk cuts strictly before today", () => {
@@ -967,7 +994,16 @@ describe("incomeExpectation — the term /budgets never had", () => {
 
   });
 
-  test("a deposit one day PAST toleranceDays leaves the payday unmet", () => {
+  /*
+   * ⚖️ PAST THE TOLERANCE, THE MONEY DECIDES. A deposit outside the tolerance
+   * window is not near enough to be that payday's own, so it retires the payday
+   * behind it only when it carries the whole of it — claiming a payday was paid
+   * with money that was not there is the fabricated plug this ledger refuses.
+   *
+   * 🔴 It used to be unmet either way, and that is what he rejected: a lump can
+   * never catch up if lateness alone disqualifies it.
+   */
+  test("a deposit past toleranceDays retires the payday only when it covers the whole amount", () => {
     const late = createSeries({
       name: "Other pay",
       nextExpectedOn: "2026-07-01",
@@ -975,14 +1011,24 @@ describe("incomeExpectation — the term /budgets never had", () => {
       kind: "income",
       cadence: "monthly",
     });
-    // four days late — past the default tolerance of 3, so 07-01 stands unmet
+    // four days late — past the default tolerance of 3 — but a whole month's pay
     spendLinked("2026-07-05", 50_000, "Income > Salary", late);
     const got = incomeExpectation(bundle.db, "2026-07-01", "2026-07-31", "2026-07-08");
-    expect(got.passedUnpaidOccurrences).toBe(1);
-    expect(got.passedUnpaidCents).toBe(50_000);
-    // ⚠️ the money DID arrive, and `postedCents` holds it — "passed with nothing
-    // banked against it" is a statement about the occurrence, not about the month
+    expect(got.passedUnpaidOccurrences).toBe(0);
     expect(got.postedCents).toBe(50_000);
+
+    const short = createSeries({
+      name: "Third pay",
+      nextExpectedOn: "2026-07-01",
+      nextExpectedAmountCents: 50_000,
+      kind: "income",
+      cadence: "monthly",
+    });
+    // the same four days late, and short: it buys nothing
+    spendLinked("2026-07-05", 30_000, "Income > Salary", short);
+    const partial = incomeExpectation(bundle.db, "2026-07-01", "2026-07-31", "2026-07-08");
+    expect(partial.passedUnpaidOccurrences).toBe(1);
+    expect(partial.passedUnpaidCents).toBe(50_000);
   });
 
   test("nothing has passed on the period's first day, whatever the schedule pays", () => {

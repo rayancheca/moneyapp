@@ -1,4 +1,4 @@
-import { and, eq, gt, gte, inArray, lte } from "drizzle-orm";
+import { and, eq, gte, inArray, lte } from "drizzle-orm";
 import type { AppDatabase } from "@/db/client";
 import { recurringSeries } from "@/db/schema/recurring";
 import { transactions } from "@/db/schema/transactions";
@@ -6,6 +6,7 @@ import { addDays, compareDates, diffDays } from "@/lib/dates";
 import { sharedFrontier, type UnbankedFrontier } from "@/lib/unbanked-income";
 import { earliestVerified, landingAccountsBySeries } from "./cash-earnings";
 import { accountCoverage } from "./coverage";
+import { settledPaydaysBySeries } from "./payday-settlement";
 import { projectOccurrences, seriesHasLapsed, toProjectable } from "./recurring";
 
 /**
@@ -201,34 +202,27 @@ export function unbankedIncomeForSeries(
     .filter((r) => r.kind === "income");
   if (live.length === 0) return { totalCents: 0, series: [] };
 
-  const maxTolerance = live.reduce((m, r) => Math.max(m, r.toleranceDays), 0);
-  const bankedBySeries = new Map<string, string[]>();
-  for (const row of db
-    .select({ seriesId: transactions.recurringSeriesId, postedOn: transactions.postedOn })
-    .from(transactions)
-    .where(
-      and(
-        eq(transactions.status, "active"),
-        inArray(
-          transactions.recurringSeriesId,
-          live.map((r) => r.id),
-        ),
-        gt(transactions.amountCents, 0),
-        gte(transactions.postedOn, addDays(periodStart, -maxTolerance)),
-        lte(transactions.postedOn, addDays(today, maxTolerance)),
-      ),
-    )
-    .all()) {
-    if (row.seriesId === null) continue;
-    bankedBySeries.set(row.seriesId, [...(bankedBySeries.get(row.seriesId) ?? []), row.postedOn]);
-  }
+  /*
+   * ⚖️ SETTLE BACKWARDS, his decision of 2026-09-28. Whether a payday was met is
+   * `paydaySettlement`'s answer, not a date-match of this module's own: a
+   * deposit pays down the paydays behind it up to its amount, so his 2026-09-23
+   * lump of $4,567.68 retires Sep 24, Sep 17, Sep 10 and Sep 3 rather than the
+   * single week it lands on. `lib/payday-settlement` carries the rule and the
+   * decision; the point of reading it here is that /budgets, the recurring
+   * calendar and this figure cannot disagree about the same Thursday.
+   */
+  const settled = settledPaydaysBySeries(
+    db,
+    live.map((r) => r.id),
+    today,
+  );
 
   const unmet = live
     .map((s) => {
-      const banked = bankedBySeries.get(s.id) ?? [];
+      const met = settled.get(s.id) ?? new Set<string>();
       const occ = projectOccurrences(toProjectable(s), periodStart, addDays(today, -1))
         .filter((o) => o.amountCents > 0)
-        .filter((o) => !banked.some((p) => Math.abs(diffDays(p, o.date)) <= s.toleranceDays));
+        .filter((o) => !met.has(o.date));
       return { s, occ };
     })
     .filter(({ occ }) => occ.length > 0);

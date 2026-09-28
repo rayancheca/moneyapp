@@ -16,6 +16,7 @@ import {
 } from "@/lib/occurrence-verdict";
 import { loadCategoryIndex } from "./analytics";
 import { frontierForSeries, observationFrontier, seriesAccountIds } from "./observation-frontier";
+import { settledPaydaysBySeries } from "./payday-settlement";
 import {
   effectiveSeries,
   lapsedSeriesShouldStopForecasting,
@@ -482,6 +483,29 @@ export function recurringCalendar(
   const frontier = needsFrontier ? observationFrontier(db) : null;
   const accountsBySeries = needsFrontier ? seriesAccountIds(db) : null;
 
+  /*
+   * ⚖️ SETTLE BACKWARDS, his decision of 2026-09-28: a deposit attributed to a
+   * pay series pays down the paydays behind it up to its amount, so a payday a
+   * later lump retired draws PAID rather than a red "unsettled (unbanked)".
+   *
+   * 🔴 Without it those marks were permanent. Measured on his ledger the same
+   * day, with $4,567.68 banked on Sep 23 and $1,141.92 on Sep 24, Sep 3, Sep 10,
+   * Sep 17 and all four August paydays were still drawn unsettled — and no
+   * future deposit could ever have cleared them, because one deposit met
+   * exactly one payday.
+   *
+   * `services/payday-settlement` is the only place that answers this, shared
+   * with /budgets and `unbankedIncomeForSeries`. A calendar with a rule of its
+   * own is how this codebase came to say two things about one Thursday.
+   * Income only: settlement speaks about deposits, and a bill's absence is
+   * still graded by `settledVerdict` exactly as before.
+   */
+  const settledPaydays = settledPaydaysBySeries(
+    db,
+    forecastRows.filter((s) => s.kind === "income").map((s) => s.id),
+    today,
+  );
+
   for (const s of forecastRows) {
     if (lapsedSeriesShouldStopForecasting(s.kind) && seriesHasLapsed(s, today)) continue;
     const occurrences = projectOccurrences(toProjectable(s), monthStart, monthEnd);
@@ -497,6 +521,29 @@ export function recurringCalendar(
     for (const o of occurrences) {
       const alreadyPosted = postedDates.some((p) => Math.abs(diffDays(p, o.date)) <= s.toleranceDays);
       if (alreadyPosted) continue;
+
+      /*
+       * A payday a deposit has already paid down. It draws paid and carries no
+       * transaction of its own: the money is on the lump's row, which is drawn
+       * on the day it actually landed.
+       */
+      if (settledPaydays.get(s.id)?.has(o.date)) {
+        pushEntry(o.date, {
+          seriesId: s.id,
+          name: s.name,
+          kind: s.kind,
+          state: "paid",
+          amountCents: o.amountCents,
+          expectedAmountCents: o.amountCents,
+          transactionId: null,
+          unsettledReason: null,
+          confidence: null,
+          isStale: false,
+          neverBilled: false,
+          hue: hues.get(s.id) ?? null,
+        });
+        continue;
+      }
 
       const isFuture = compareDates(o.date, today) >= 0;
       // The state and its reason are one decision, taken once. Splitting them
@@ -545,7 +592,14 @@ export function recurringCalendar(
       else if (e.state === "unsettled") {
         unsettledCount += 1;
         unsettledGrossCents += Math.abs(e.amountCents);
-      } else missedCount += 1;
+      }
+      /*
+       * ⛔ A SETTLED PAYDAY CARRIES NO TRANSACTION OF ITS OWN — the deposit that
+       * paid it is drawn on the day it landed — so it must not fall through to
+       * the missed tally, which would count a payday as missed on the very
+       * reading that says it was paid.
+       */
+      else if (e.state !== "paid" && e.state !== "paid_different") missedCount += 1;
     }
   }
 

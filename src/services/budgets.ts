@@ -1,4 +1,4 @@
-import { and, eq, gt, gte, inArray, isNotNull, isNull, lte, notExists } from "drizzle-orm";
+import { and, eq, gte, inArray, isNotNull, isNull, lte, notExists } from "drizzle-orm";
 import { z } from "zod";
 import type { AppDatabase } from "@/db/client";
 import { budgets, BUDGET_PERIODS, type BudgetPeriodKind } from "@/db/schema/budgets";
@@ -33,6 +33,7 @@ import {
   type BudgetTailSeries,
 } from "./arrears";
 import type { UnbankedFrontier } from "@/lib/unbanked-income";
+import { settledPaydaysBySeries } from "./payday-settlement";
 import { effectiveSeries, projectOccurrences, seriesHasLapsed, toProjectable } from "./recurring";
 import { linkIsRecurring, rowIsRecurring, seriesIdsNotDrawnAsRecurring } from "./recurring-link";
 
@@ -746,38 +747,36 @@ export function incomeExpectation(
    */
   const from = today;
   /*
-   * ⛔ EXACTLY TODAY, not the series' tolerance. `unbankedIncomeForSeries` asks
-   * "was this occurrence met?" and widens by `toleranceDays`, because a bank
-   * posts a day or two either side of an anchor. This asks the narrower "is
-   * TODAY's pay already inside `postedCents`?", and the only fact that answers
-   * it is a deposit dated today. Widened, an earlier deposit — already counted
-   * in `postedCents` — would also delete today's payday from `expectedCents`,
-   * so one deposit does the work of two and the month reads short by a payday.
+   * ⛔ WHICH PAYDAYS ARE ALREADY IN `postedCents` — asked of `paydaySettlement`,
+   * which is the one place that answers it.
+   *
+   * 🔴 This used to be the narrower "is a deposit dated exactly today?", and
+   * that left the mirror-image hole. A lump that posts BEFORE the payday it
+   * covers was counted TWICE: on 2026-09-23 his +$4,567.68 was in `postedCents`
+   * while `expectedCents` still projected Sep 24's $1,141.92 on top of it,
+   * because the deposit was not dated Sep 24. Under settle-backwards that lump
+   * settles Sep 24, so the money is banked once and expected never.
+   *
+   * ⚖️ The old comment warned that widening to the series' tolerance would let
+   * ONE deposit delete a payday it had already been counted against. Settlement
+   * is what makes the widening safe: an occurrence is dropped here only when a
+   * deposit actually paid for it, and each deposit's money is spent once.
    */
-  const paidToday = new Set(
-    db
-      .select({ seriesId: transactions.recurringSeriesId })
-      .from(transactions)
-      .where(
-        and(
-          eq(transactions.postedOn, today),
-          eq(transactions.status, "active"),
-          gt(transactions.amountCents, 0),
-          isNotNull(transactions.recurringSeriesId),
-        ),
-      )
-      .all()
-      .map((r) => r.seriesId as string),
+  const settled = settledPaydaysBySeries(
+    db,
+    live.map((s) => s.id),
+    today,
   );
   const series: IncomeExpectation["series"] = [];
   let expectedCents = 0;
   if (compareDates(from, end) <= 0) {
     for (const s of live) {
+      const met = settled.get(s.id) ?? new Set<string>();
       // money IN only — a refund-shaped income series must not subtract here
       const cents = projectOccurrences(toProjectable(s), from, end)
         .filter((o) => o.amountCents > 0)
-        // today's pay, already posted: it is in postedCents and not also here
-        .filter((o) => !(o.date === today && paidToday.has(s.id)))
+        // pay a deposit has already answered: it is in postedCents, not here
+        .filter((o) => !met.has(o.date))
         .reduce((sum, o) => sum + o.amountCents, 0);
       if (cents === 0) continue;
       expectedCents += cents;
