@@ -1027,8 +1027,13 @@ function statementPeriodProvenance(db: AppDatabase, id: string): Provenance | nu
  * (handoff §6A 28): make them agree, in net worth's words. One day, one
  * sentence, and they travel together — a caller printing `through` without
  * `note` would print his word as a check.
+ *
+ * ⛔ Exported because a THIRD surface re-derived it: the dashboard's "what you
+ * owe" proof (`cards-owed`) took the oldest `verifiedThrough` of the cards
+ * under net worth's own words, so a card resting on his count never dated it.
+ * Every figure bounded by the first account to stop being checked reads this.
  */
-function footingBounds(coverage: readonly AccountCoverage[]): { through: string | null; note: string } {
+export function footingBounds(coverage: readonly AccountCoverage[]): { through: string | null; note: string } {
   const bounds = coverage
     .map((c) => ({ name: c.accountName, bound: footingThrough(c) }))
     .filter((b): b is { name: string; bound: { day: string; byCount: boolean } } => b.bound !== null)

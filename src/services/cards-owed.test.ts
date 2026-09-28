@@ -14,6 +14,7 @@ import { transactionSplits } from "@/db/schema/transaction-splits";
 import { transactions } from "@/db/schema/transactions";
 import { runwayCard } from "./committed";
 import { cardsOwedCard } from "./cards-owed";
+import { provenanceFor } from "./provenance";
 
 /**
  * The failure modes this card exists to prevent, pinned one at a time.
@@ -582,6 +583,68 @@ describe("a card the owner counts himself", () => {
     expect(alpha.asOfLabel).toBeNull();
     expect(alpha.caveat).toBe("you last counted it on Aug 1 — 9 days ago");
     expect(card.owedCents).toBe(20_000);
+  });
+});
+
+/*
+ * ⛔ A SECOND COPY OF NET WORTH'S BOUND. The proof took the oldest
+ * `verifiedThrough` of the cards under "the total cannot be proven past the
+ * FIRST card that stops being checked" — net worth's rule, re-derived without
+ * the count. A card whose days rest on a balance he TYPED has no
+ * `verifiedThrough`, so it never dated the total: alone, the total printed no
+ * date while net worth over the same card printed the day his count stops
+ * standing; beside a checked card, it printed that card's later day, past the
+ * day this one goes unchecked. `footingBounds` is the rule's one home (owner
+ * decision 2026-09-28, handoff §6A 28: net worth's day, net worth's sentence).
+ */
+describe("a card resting on his count", () => {
+  /** His typed balance on Aug 1, carried to Aug 2, and nothing checks Aug 4 on. */
+  function countedCard(): void {
+    addAccount("acct-counted", "Counted Card", "credit", { last4: "4444", order: 2 });
+    addAnchor("acct-counted", "2026-08-01", -9_000);
+    addBalances("acct-counted", [
+      { day: "2026-08-01", cents: -9_000, basis: "anchored" },
+      { day: "2026-08-02", cents: -9_000, basis: "carried" },
+      { day: "2026-08-04", cents: -9_500, basis: "derived_unverified" },
+    ]);
+    addTxn("acct-counted", "2026-08-04", -500);
+  }
+  const COUNT_NOTE =
+    " The date it is checked through, Aug 3, 2026, is the last day Counted Card rests on the balance you counted — your word, not a check.";
+
+  test("alone, dates the total where his count stops standing, in net worth's words", () => {
+    countedCard();
+
+    const card = cardsOwedCard(bundle.db, TODAY)!;
+    const netWorth = provenanceFor(bundle.db, { kind: "netWorth", day: TODAY })!;
+    expect(card.provenance.checkedThrough).toBe("2026-08-03");
+    expect(card.provenance.checkedThrough).toBe(netWorth.checkedThrough);
+    expect(card.provenance.headline.endsWith(COUNT_NOTE)).toBe(true);
+    expect(netWorth.headline.endsWith(COUNT_NOTE)).toBe(true);
+  });
+
+  test("beside a card checked past it, the count still bounds the total — and a check older than it wins", () => {
+    countedCard();
+    // checked through Aug 5, two days past the day the counted card goes unchecked
+    addAccount("acct-alpha", "Alpha", "credit", { last4: "1111" });
+    addBalances("acct-alpha", [
+      { day: "2026-08-01", cents: -20_000, basis: "derived" },
+      { day: "2026-08-05", cents: -20_000, basis: "anchored" },
+    ]);
+    addTxn("acct-alpha", "2026-08-01", -1_000);
+
+    const mixed = cardsOwedCard(bundle.db, TODAY)!;
+    expect(mixed.provenance.checkedThrough).toBe("2026-08-03");
+    expect(mixed.provenance.headline.endsWith(COUNT_NOTE)).toBe(true);
+
+    // a card checked only through Jul 20 bounds it earlier, and that day is a check
+    addAccount("acct-beta", "Beta", "credit", { last4: "2222", order: 1 });
+    addBalances("acct-beta", [{ day: "2026-07-20", cents: -5_000, basis: "anchored" }]);
+    addTxn("acct-beta", "2026-07-20", -1_000);
+
+    const older = cardsOwedCard(bundle.db, TODAY)!;
+    expect(older.provenance.checkedThrough).toBe("2026-07-20");
+    expect(older.provenance.headline).not.toMatch(/your word/);
   });
 });
 

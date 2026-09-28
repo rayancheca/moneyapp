@@ -11,6 +11,7 @@ import { activeTxnsInRange, loadCategoryIndex, type AnalyticsTxn, type CategoryI
 import { accountCoverage, type AccountCoverage, type CoverageGrade } from "./coverage";
 import { observedSeries } from "./derivation";
 import {
+  footingBounds,
   provenanceFor,
   weakestVerdict,
   type Provenance,
@@ -186,7 +187,11 @@ export interface CardsOwedCard {
   cards: CardOwedLine[];
   /** the one day every card closes on, or null when they disagree */
   sharedCheckedThrough: string | null;
-  /** the OLDEST evidence under the total — how old this figure really is */
+  /**
+   * the OLDEST evidence under the total — how old this figure really is.
+   * ⚠️ The oldest CHECK, what "the oldest of them closed" says. The proof's
+   * date is `footingBounds`', which also stops at a card resting on his count.
+   */
   oldestCheckedThrough: string | null;
   daysSinceOldest: number | null;
   /** cards with no recorded balance: while > 0 the total is a floor */
@@ -417,8 +422,8 @@ function shareLabels(pcts: readonly (number | null)[]): (string | null)[] {
 
 function composedProvenance(
   cards: readonly CardOwedLine[],
+  coverage: readonly AccountCoverage[],
   owedCents: number,
-  oldest: string | null,
   today: string,
 ): Provenance {
   const inputs: ProvenanceInput[] = cards.map((c) => ({
@@ -435,6 +440,17 @@ function composedProvenance(
   const counted = cards.length;
   const proven = cards.filter((c) => c.verdict === "derived" || c.verdict === "sourced").length;
 
+  /*
+   * ⛔ The total cannot be proven past the FIRST card that stops being checked —
+   * net worth's rule, so net worth's `footingBounds`, never a second copy. This
+   * took the oldest `verifiedThrough`, which a card resting on a balance he
+   * TYPED does not have: alone it left the total undated beside a net worth that
+   * dates the same card, and beside a checked card it dated the total past the
+   * day this one goes unchecked. The day is his word when it is his count's, so
+   * the sentence saying so travels with it (owner decision 2026-09-28, §6A 28).
+   */
+  const footing = footingBounds(coverage);
+
   return {
     verdict: weakestVerdict(cards.map((c) => c.verdict)),
     // a total is only as proven as its weakest input — but the WORD has to
@@ -442,10 +458,9 @@ function composedProvenance(
     badgeWord: `${proven} of ${counted} add up`,
     headline:
       `${formatCents(owedCents)} across ${counted} ${plural(counted, "card", "cards")}, ` +
-      `each balance as of its own last statement. A total is only as proven as its weakest part.`,
+      `each balance as of its own last statement. A total is only as proven as its weakest part.${footing.note}`,
     sources: [],
-    // the total cannot be proven past the FIRST card that stops being checked
-    checkedThrough: oldest,
+    checkedThrough: footing.through,
     inputs,
   };
 }
@@ -646,7 +661,12 @@ export function cardsOwedCard(db: AppDatabase, today: string = todayIso()): Card
         : interestCents === 0
           ? "No interest has ever been charged to them."
           : `Interest has cost ${formatCents(interestCents)} on top of that.`,
-    provenance: composedProvenance(cards, owedCents, oldestCheckedThrough, today),
+    provenance: composedProvenance(
+      cards,
+      active.map((a) => coverageById.get(a.id)).filter((c): c is AccountCoverage => c !== undefined),
+      owedCents,
+      today,
+    ),
     today,
   };
 }
