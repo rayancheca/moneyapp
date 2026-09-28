@@ -55,6 +55,22 @@ function stripMarginIdentifier(text: string): string {
   return MARGIN_ID_RE.test(tail) ? text.slice(0, Math.max(cut, 0)) : text;
 }
 
+/**
+ * What this parser reads for a line that v1 — before the rule above — stored with the identifier folded in: the stored
+ * words less every whole identifier token, wherever the fold left it — at the end ("… Card 7782 <id>") or mid-way, when
+ * the identifier sat on a line of its own between a description and its wrapped card number ("… NY Card <id> 7782",
+ * the live ledger's 2023-04-11 row). `stripMarginIdentifier` cuts it off a printed line before the fold; a stored row
+ * carries the folded text, so a comparison of the two reads (scripts/probe-chase-redrop.ts) asks this rather than a
+ * second copy of MARGIN_ID_RE. A 20-digit run inside a longer token (an IBAN, an Apple Pay reference) is not the
+ * identifier and stays.
+ */
+export function withoutMarginIdentifier(description: string): string {
+  return description
+    .split(" ")
+    .filter((token) => !MARGIN_ID_RE.test(token))
+    .join(" ");
+}
+
 function toIso(year: number, monthNum: number, day: number): string {
   const iso = `${year}-${String(monthNum).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
   if (!isValidIsoDate(iso)) throw new ParseError(PROFILE_ID, `Invalid date ${iso}`);

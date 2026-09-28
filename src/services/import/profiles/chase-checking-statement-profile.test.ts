@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
 import { ParseError } from "../types";
-import { parseChaseCheckingLines } from "./chase-checking-statement-profile";
+import { parseChaseCheckingLines, withoutMarginIdentifier } from "./chase-checking-statement-profile";
 
 /**
  * Fixtures are small hand-made line arrays mirroring the REAL Chase College
@@ -284,5 +284,45 @@ describe("the 20-digit margin statement identifier", () => {
     expect(parsed.txns.at(-1)!.rawDescription).toBe(
       "Zelle Payment From Oliver Denna Fontaine 23892926660",
     );
+  });
+
+  /**
+   * The rows v1 stored before this rule existed carry the identifier wherever its line folded in. A comparison of
+   * the two reads (scripts/probe-chase-redrop.ts) needs, for each stored row, the words THIS parser reads from the
+   * same printed lines — the stored words below are two of the live ledger's 13, as measured 2026-09-28.
+   */
+  test.each([
+    [
+      "Card Purchase 09/11 U-Haul Tolls And Cita 800-789-3638 AZ Card 7782 10287890202000000062",
+      [
+        "09/12 Card Purchase 09/11 U-Haul Tolls And Cita 800-789-3638 AZ Card - 10.11 331.89",
+        "7782 10287890202000000062",
+        "Ending Balance $331.89",
+      ],
+    ],
+    [
+      "Card Purchase 04/11 Mta*Mnr Etix Ticket 877-690-5116 NY Card 19947370303000000063 7782",
+      [
+        "04/11 Card Purchase 04/11 Mta*Mnr Etix Ticket 877-690-5116 NY Card -5.00 337.00",
+        "19947370303000000063",
+        "7782",
+        "Ending Balance $337.00",
+      ],
+    ],
+  ])("a stored v1 description less the identifier is what the parser reads: %s", (stored, printed) => {
+    const read = parseChaseCheckingLines([...HEAD, ...printed, "*end*transaction detail"]).txns.at(-1)!.rawDescription;
+    expect(withoutMarginIdentifier(stored)).toBe(read);
+  });
+
+  test("a 20-digit run inside a longer token is not the identifier", () => {
+    // the shapes of the live ledger's other 42 rows with a 20-digit run (digits made up): an IBAN, a card
+    // reference glued to the state, a Wells Fargo reference
+    for (const words of [
+      "CONSUMER ONLINE INTERNATIONAL WIRE BEN:/ES0012340000000000000000 FAMILY EXPENSES",
+      "TST*SOME DINER NEW YORK NY00100000000000000000AA",
+      "WFB Opening Deposit From Card Xxxxxxxxxxxx0000 Ref #1000000000000000000000 on 07/27/26",
+    ]) {
+      expect(withoutMarginIdentifier(words)).toBe(words);
+    }
   });
 });

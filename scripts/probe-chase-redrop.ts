@@ -6,8 +6,13 @@
  *   pnpm tsx scripts/probe-chase-redrop.ts --before=<restore point> --after=data/moneyapp.db
  *
  * §6A 23, step 2 (`scripts/pin-fordham-aid-2026-09-28.ts` is step 1): against the restore point `pnpm
- * import-statements` takes, ONLY WORDS may move — 13 lines lose the statement's 20-digit margin id — with no category,
- * source, note, link, status or line gained or lost, and net worth identical on every day. Exit 1 on anything else.
+ * import-statements` takes, ONLY THE MARGIN IDS may move — 13 lines lose the statement's 20-digit margin identifier
+ * and keep every other word — with no category, source, note, link, status or line gained or lost, and net worth
+ * identical on every day. Exit 1 on anything else.
+ *
+ * A line is matched to its successor by the words it prints once the identifier is gone (`withoutMarginIdentifier`,
+ * the rule the v2 read drops it by), and its words may move by that identifier and nothing more. Two lines of one
+ * amount on one day are two charges, and the words are what tell them apart.
  *
  * Both files are opened read-only and never migrated: `createDatabase` would run `migrate()` on the owner's restore
  * point (scripts/trial-import.ts).
@@ -17,7 +22,9 @@ import { drizzle } from "drizzle-orm/better-sqlite3";
 import type { AppDatabase } from "@/db/client";
 import * as schema from "@/db/schema";
 import { formatCents } from "@/lib/money";
+import { normalizeDescription } from "@/lib/normalize";
 import { netWorthSeries } from "@/services/derivation";
+import { withoutMarginIdentifier } from "@/services/import/profiles/chase-checking-statement-profile";
 
 /** What the owner can see of a line, beside its money. Ids, files, periods, hashes and stamps are the read's own. */
 const SEEN = [
@@ -39,18 +46,16 @@ const SEEN = [
   "splits",
 ] as const;
 const WORDS: ReadonlySet<string> = new Set(["raw_description", "normalized_description"]);
-/** the statement's right-margin identifier (chase-checking-statement-profile's MARGIN_ID_RE, anywhere in the line) */
-const MARGIN_DIGITS = /\d{20}/;
 
 type Seen = Record<(typeof SEEN)[number], unknown>;
-interface Ledger {
+export interface Ledger {
   byMoney: Map<string, Seen[]>;
   netWorth: { day: string; cents: number }[];
   marginRows: number;
   live: { count: number; cents: number };
 }
 
-function read(file: string): Ledger {
+export function readLedger(file: string): Ledger {
   const sqlite = new Database(file, { readonly: true, fileMustExist: true });
   try {
     const names = new Map((sqlite.prepare("SELECT id, name FROM accounts").all() as { id: string; name: string }[]).map((a) => [a.id, a.name]));
@@ -69,7 +74,7 @@ function read(file: string): Ledger {
       const key = `${names.get(String(r.account_id)) ?? String(r.account_id)} ${String(r.posted_on)} ${formatCents(Number(r.amount_cents))} ${String(r.account_id)}`;
       const seen = Object.fromEntries(SEEN.map((c) => [c, c === "splits" ? (splits.get(String(r.id)) ?? null) : r[c]])) as Seen;
       byMoney.set(key, [...(byMoney.get(key) ?? []), seen]);
-      if (MARGIN_DIGITS.test(String(r.raw_description))) marginRows += 1;
+      if (carriesMarginIdentifier(String(r.raw_description))) marginRows += 1;
       live.count += 1;
       live.cents += Number(r.amount_cents);
     }
@@ -82,16 +87,29 @@ function read(file: string): Ledger {
 }
 
 const differing = (a: Seen, b: Seen): string[] => SEEN.filter((c) => JSON.stringify(a[c]) !== JSON.stringify(b[c]));
+const carriesMarginIdentifier = (raw: string): boolean => withoutMarginIdentifier(raw) !== raw;
+/** The words a line prints once the margin identifier is gone: what a correct re-read prints for it. */
+const words = (line: Seen): string => withoutMarginIdentifier(String(line.raw_description));
 
-interface Move {
+export interface Move {
   key: string;
   fields: string[];
   before: Seen | null;
   after: Seen | null;
 }
 
-/** Per money key: the lines both ledgers hold alike drop out; what is left pairs up by the fewest differing fields. */
-function moves(before: Ledger, after: Ledger): Move[] {
+/**
+ * Per money key: the lines both ledgers hold alike drop out; what is left pairs up by the words each line prints once
+ * the margin identifier is gone — its own charge — and only then, among what no line's words claim, by the fewest
+ * differing fields.
+ *
+ * 🔴 Paired by the fewest differing fields alone, a CROSSED carry read as a clean one (the review of
+ * uc/chase-redrop-runbook, 2026-09-28): when two lines of one amount on one day both lose their identifier, the line
+ * that took the owner's category and note differs from his old line only in its words, so each old line paired with
+ * its neighbour and the probe printed ONLY WORDS MOVED — the failure `claimCarry` records for this very re-read,
+ * Adam's hand-set category on Lukas's +$20.00 of 2023-10-18.
+ */
+export function moves(before: Ledger, after: Ledger): Move[] {
   const out: Move[] = [];
   for (const key of [...new Set([...before.byMoney.keys(), ...after.byMoney.keys()])].sort()) {
     const b = [...(before.byMoney.get(key) ?? [])];
@@ -103,19 +121,58 @@ function moves(before: Ledger, after: Ledger): Move[] {
         a.splice(j, 1);
       }
     }
-    for (const was of b) {
-      const ranked = a.map((x, j) => ({ j, fields: differing(was, x) })).sort((p, q) => p.fields.length - q.fields.length);
-      const best = ranked[0];
-      if (best === undefined) {
-        out.push({ key, fields: ["(line gone)"], before: was, after: null });
-        continue;
+    // every line that finds its own words first, so no line whose words moved can take another line's successor
+    for (const ownWords of [true, false]) {
+      for (let i = 0; i < b.length; ) {
+        const was = b[i]!;
+        const best = a
+          .map((x, j) => ({ j, fields: differing(was, x) }))
+          .filter(({ j }) => !ownWords || words(a[j]!) === words(was))
+          .sort((p, q) => p.fields.length - q.fields.length)[0];
+        if (best === undefined) {
+          i += 1;
+          continue;
+        }
+        out.push({ key, fields: best.fields, before: was, after: a[best.j]! });
+        b.splice(i, 1);
+        a.splice(best.j, 1);
       }
-      out.push({ key, fields: best.fields, before: was, after: a[best.j]! });
-      a.splice(best.j, 1);
     }
+    for (const was of b) out.push({ key, fields: ["(line gone)"], before: was, after: null });
     for (const now of a) out.push({ key, fields: ["(line new)"], before: null, after: now });
   }
   return out;
+}
+
+/**
+ * The move the re-drop exists for, and no other: the line lost its margin identifier and kept every other word, and
+ * nothing else the owner reads moved with it. The normalized words may follow the raw ones — the import derives them
+ * (`normalizeDescription`) — but never move on their own.
+ */
+export function isMarginCleanup(move: Move): boolean {
+  if (move.before === null || move.after === null || !move.fields.every((f) => WORDS.has(f))) return false;
+  const was = String(move.before.raw_description);
+  const now = String(move.after.raw_description);
+  const derived = move.after.normalized_description;
+  const normalizedFollows = derived === move.before.normalized_description || derived === normalizeDescription(now);
+  return was !== now && withoutMarginIdentifier(was) === now && normalizedFollows;
+}
+
+export interface Verdict {
+  moved: Move[];
+  /** the lines that lost their margin identifier and nothing else */
+  cleaned: Move[];
+  other: Move[];
+  sameWorth: boolean;
+  clean: boolean;
+}
+
+export function judge(before: Ledger, after: Ledger): Verdict {
+  const moved = moves(before, after);
+  const cleaned = moved.filter(isMarginCleanup);
+  const other = moved.filter((m) => !isMarginCleanup(m));
+  const sameWorth = JSON.stringify(before.netWorth) === JSON.stringify(after.netWorth);
+  return { moved, cleaned, other, sameWorth, clean: sameWorth && other.length === 0 };
 }
 
 function main(): void {
@@ -126,31 +183,27 @@ function main(): void {
   };
   const stray = process.argv.slice(2).filter((a) => !a.startsWith("--before=") && !a.startsWith("--after="));
   if (stray.length > 0) throw new Error(`unknown argument(s): ${stray.join(" ")} — this probe takes --before=<db> and --after=<db>`);
-  const before = read(arg("before"));
-  const after = read(arg("after"));
-
-  const moved = moves(before, after);
+  const before = readLedger(arg("before"));
+  const after = readLedger(arg("after"));
+  const { moved, cleaned, other, sameWorth, clean } = judge(before, after);
   const tally = new Map<string, number>();
   for (const m of moved) for (const f of m.fields) tally.set(f, (tally.get(f) ?? 0) + 1);
-  const wordsOnly = moved.filter((m) => m.fields.every((f) => WORDS.has(f)));
-  const other = moved.filter((m) => !m.fields.every((f) => WORDS.has(f)));
 
   const last = (l: Ledger) => (l.netWorth.length === 0 ? "—" : `${l.netWorth.at(-1)!.day} ${formatCents(l.netWorth.at(-1)!.cents)}`);
-  const sameWorth = JSON.stringify(before.netWorth) === JSON.stringify(after.netWorth);
   console.log(`live rows          ${before.live.count} ${formatCents(before.live.cents)} → ${after.live.count} ${formatCents(after.live.cents)}`);
   console.log(`net worth          ${last(before)} → ${last(after)} (every day ${sameWorth ? "identical" : "MOVED"})`);
-  console.log(`20-digit runs      ${before.marginRows} → ${after.marginRows} live rows`);
-  console.log(`lines that moved   ${moved.length}: ${wordsOnly.length} only their words, ${other.length} anything else`);
+  console.log(`margin ids         ${before.marginRows} → ${after.marginRows} live rows`);
+  console.log(`lines that moved   ${moved.length}: ${cleaned.length} only their margin id, ${other.length} anything else`);
   console.log(`  by field         ${JSON.stringify(Object.fromEntries([...tally].sort()))}`);
   for (const m of moved) {
+    // the normalized words are shown only when they moved on their own: beside the raw ones they say nothing new
     const detail = m.fields
-      .filter((f) => f !== "normalized_description")
+      .filter((f) => f !== "normalized_description" || !m.fields.includes("raw_description"))
       .map((f) => (f.startsWith("(") ? f : `${f}: ${JSON.stringify(m.before?.[f as keyof Seen])} → ${JSON.stringify(m.after?.[f as keyof Seen])}`));
     console.log(`  ${m.key.slice(0, m.key.lastIndexOf(" "))}  ${detail.join(" · ")}`);
   }
-  const clean = sameWorth && other.length === 0;
-  console.log(clean ? "\nONLY WORDS MOVED" : "\n✗ more than words moved — read the lines above against the restore point");
+  console.log(clean ? "\nONLY THE MARGIN IDS MOVED" : "\n✗ more than the margin ids moved — read the lines above against the restore point");
   if (!clean) process.exitCode = 1;
 }
 
-main();
+if (process.argv[1]?.endsWith("probe-chase-redrop.ts")) main();

@@ -38,11 +38,12 @@
  * Step 1 pins 3; every guard holds; net worth $119,958.63 (`netWorthSeries`, 2026-09-28) on every day, unchanged.
  * Step 2 (staged): 75 parsed, 0 failed, 1,536 inserted and as many superseded, 1,684 deduped, 1,243 left to the activity
  * CSV that owns their days, 0 quarantined; active rows 10,328 → 10,328; no file added to the archive. Step 3: the probe
- * reads ONLY WORDS MOVED — 13 lines lose the margin id, no category moves, live rows carrying a 20-digit run 55 → 42,
- * net worth identical on every day; `ledger-check` exits 0 with its output byte-identical to before; this script
- * reads ALREADY APPLIED on the three new rows. Re-deriving Chase Checking also carries its last balance to the day it
- * runs: 45 `carried` daily balances, 2026-08-15 → 2026-09-28, the way Wells Fargo's (re-derived 09-28) already run to
- * today; no existing balance moves, and net worth already carried it.
+ * reads ONLY THE MARGIN IDS MOVED — 13 lines lose the margin id and keep every other word, no category moves, live rows
+ * carrying the margin id 13 → 0 (its old 20-digit tally, 55 → 42, also counted 42 rows that never carried one: IBANs
+ * and card references), net worth identical on every day; `ledger-check` exits 0 with its output byte-identical to
+ * before; this script reads ALREADY APPLIED on the three new rows. Re-deriving Chase Checking also carries its last
+ * balance to the day it runs: 45 `carried` daily balances, 2026-08-15 → 2026-09-28, the way Wells Fargo's (re-derived
+ * 09-28) already run to today; no existing balance moves, and net worth already carried it.
  * Control, step 2 WITHOUT step 1: 16 lines move — the 13 and these three, to Education — and step 1 then refuses.
  *
  * The dry run rehearses the write and every guard on a throwaway `.backup` copy (in `--scratch=<dir>`, default the OS
