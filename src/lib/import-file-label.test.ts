@@ -2,10 +2,13 @@ import { describe, expect, test } from "vitest";
 import {
   importRowQualifiers,
   importRowSubject,
+  leftOutNoticesByRead,
+  lineLeftOutNotice,
   recordWithheldSections,
   withheldNoticeOf,
   withheldSectionNotice,
   withheldSectionsOf,
+  type LineLeftOutFacts,
   type WithheldSectionFacts,
 } from "./import-file-label";
 
@@ -183,5 +186,54 @@ describe("importRowSubject", () => {
     expect(importRowSubject("20230810-statements-3522-.pdf", "imported 2026-08-05")).toBe(
       "20230810-statements-3522-.pdf (imported 2026-08-05)",
     );
+  });
+});
+
+/** The owner's rehearsal of 2026-09-28: a re-read of the export that drops the account's opening deposit. */
+const OPENING_LEFT_OUT: LineLeftOutFacts = {
+  accountName: "Wells Fargo Everyday Checking",
+  printedOn: "2026-07-27",
+  amountCents: 2500,
+  description: "WFB Opening Deposit From Card",
+  printedBy: ["wf-export (1).csv"],
+  readBy: "wf-export.csv",
+};
+
+describe("lineLeftOutNotice — one sentence for the upload outcome, /imports and ledger-check", () => {
+  test("names the money, the day, the words, the account, the file that still prints it and the read that does not", () => {
+    expect(lineLeftOutNotice(OPENING_LEFT_OUT)).toBe(
+      "Left out of the ledger: +$25.00 on 2026-07-27, WFB Opening Deposit From Card, on Wells Fargo Everyday Checking. " +
+        "wf-export (1).csv still prints it; the newest read of wf-export.csv does not, and the row an earlier read " +
+        "wrote for it is retired — not written back on a guess.",
+    );
+  });
+
+  test("a charge reads as money out, and two printers are both named", () => {
+    const notice = lineLeftOutNotice({ ...OPENING_LEFT_OUT, amountCents: -1000, printedBy: ["a.csv", "b.csv"] });
+    expect(notice).toContain("Left out of the ledger: -$10.00 on 2026-07-27");
+    expect(notice).toContain("a.csv, b.csv still print it;");
+  });
+
+  test("a line whose read is no longer imported says so, rather than naming a read that is gone", () => {
+    expect(lineLeftOutNotice({ ...OPENING_LEFT_OUT, readBy: null })).toContain(
+      "wf-export (1).csv still prints it; no read of the file it came from is imported now, and",
+    );
+  });
+});
+
+describe("leftOutNoticesByRead", () => {
+  test("each notice sits under the read that left its line out, in order", () => {
+    const second = { ...OPENING_LEFT_OUT, printedOn: "2026-07-28", amountCents: -700 };
+    const byRead = leftOutNoticesByRead([
+      { ...OPENING_LEFT_OUT, readById: "read-1" },
+      { ...OPENING_LEFT_OUT, readById: "read-2" },
+      { ...second, readById: "read-1" },
+    ]);
+    expect([...byRead.keys()]).toEqual(["read-1", "read-2"]);
+    expect(byRead.get("read-1")).toEqual([lineLeftOutNotice(OPENING_LEFT_OUT), lineLeftOutNotice(second)]);
+  });
+
+  test("a line with no imported read has no row to sit under — ledger-check still names it", () => {
+    expect(leftOutNoticesByRead([{ ...OPENING_LEFT_OUT, readBy: null, readById: null }])).toEqual(new Map());
   });
 });

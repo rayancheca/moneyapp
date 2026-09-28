@@ -111,6 +111,8 @@ async function main(): Promise<void> {
   // parsed, but one account's section was left out — the rest of the file is in, that account is not checked for the month
   for (const f of outcomes) {
     for (const w of f.withheld) console.log(`  WITHHELD  ${f.fileName}: ${w.notice}`);
+    // a line another imported file still prints that this re-read no longer writes — out, never added on a guess
+    for (const l of f.leftOut) console.log(`  LEFT OUT  ${f.fileName}: ${l.notice}`);
   }
 
   const after = {

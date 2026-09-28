@@ -40,6 +40,7 @@
  */
 
 import type { ImportStatus } from "@/db/schema/imports";
+import { formatCentsSigned } from "./money";
 import { dayWindowLabel } from "./period";
 
 export interface ImportFileIdentity {
@@ -231,4 +232,51 @@ export function withheldNoticeOf(file: { readonly status: ImportStatus; readonly
   if (file.status !== "parsed" || file.error === null) return null;
   const sections = withheldSectionsOf(file);
   return sections.length === 0 ? file.error : sections.map(withheldSectionNotice).join(" ");
+}
+
+/**
+ * A line a still-imported file prints that no row in the ledger records: a re-read retired the row that recorded it,
+ * and the file's newest read does not write that money again (`linesLeftOut`, services/import/printed-lines.ts).
+ */
+export interface LineLeftOutFacts {
+  readonly accountName: string;
+  /** the day and the money as the first file that prints it prints them */
+  readonly printedOn: string;
+  readonly amountCents: number;
+  /** the words the retired row was read with */
+  readonly description: string;
+  /** every still-imported file that prints it */
+  readonly printedBy: readonly string[];
+  /** the file the retired row was read from, while a read of it is imported — the read that left the line out */
+  readonly readBy: string | null;
+}
+
+/**
+ * The sentence for a line left out — ONE sentence for the upload outcome, the read's row on /imports and
+ * `pnpm ledger-check`, so the three can never describe the same money differently.
+ *
+ * ⚖️ Owner, 2026-09-28: the row stays out — the ledger never adds money on a guess — so the notice says which money,
+ * which file still prints it and which read no longer does, and does not offer to put it back.
+ */
+export function lineLeftOutNotice(facts: LineLeftOutFacts): string {
+  const [printers, print] = [facts.printedBy.join(", "), facts.printedBy.length === 1 ? "prints" : "print"];
+  const newest = facts.readBy === null ? "no read of the file it came from is imported now" : `the newest read of ${facts.readBy} does not`;
+  return (
+    `Left out of the ledger: ${formatCentsSigned(facts.amountCents)} on ${facts.printedOn}, ${facts.description}, ` +
+    `on ${facts.accountName}. ${printers} still ${print} it; ${newest}, and the row an earlier read wrote for it is ` +
+    "retired — not written back on a guess."
+  );
+}
+
+/**
+ * The notices /imports shows under each read that left a line out — the upload's outcome, read from the ledger. A line
+ * whose read is no longer imported has no row to sit under; `pnpm ledger-check` still names it.
+ */
+export function leftOutNoticesByRead(lines: readonly (LineLeftOutFacts & { readonly readById: string | null })[]): Map<string, string[]> {
+  const byRead = new Map<string, string[]>();
+  for (const line of lines) {
+    if (line.readById === null) continue;
+    byRead.set(line.readById, [...(byRead.get(line.readById) ?? []), lineLeftOutNotice(line)]);
+  }
+  return byRead;
 }

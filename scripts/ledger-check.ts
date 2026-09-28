@@ -65,6 +65,8 @@ import { isRealDatabasePath } from "@/db/backup";
 import { type LedgerCheckMode, WitnessFlagRefusal, compareToMarks, ledgerCheckMode, planLowering } from "@/lib/witness-floor";
 import { readWitnessMarks, writeWitnessMarks } from "@/services/witness-marks";
 import { filesWithoutPrintedLines } from "@/services/import/import-records";
+import { linesLeftOut } from "@/services/import/lines-left-out";
+import { lineLeftOutNotice } from "@/lib/import-file-label";
 
 /**
  * The ledger as of 2026-08-17, pass 59, AFTER the crypto-movement migration.
@@ -421,6 +423,19 @@ if (beyondBackfills.length > 0) {
   );
 }
 
+/*
+ * 6. LINES LEFT OUT — a line a still-imported file prints that no row records: a re-read retired the row that did, and
+ * the file's newest read does not write that money again (`linesLeftOut`, the rule the upload outcome and /imports
+ * read). ⚖️ Owner, 2026-09-28: the row stays out — never added on a guess — and this check names it, every run, until
+ * a read writes the line again or no imported file prints it. 🔴 Nothing named it: an export's period is
+ * `not_applicable`, so no gap opened and no verdict went stale, and a day past the last statement is in no chain window.
+ * Measured in a rehearsal on a copy of the real ledger, 2026-09-28: dropping Wells Fargo's +$25.00 opening deposit
+ * moved the account $2,396.67 → $2,371.67, and this check exited 0.
+ */
+const leftOut = linesLeftOut(db);
+console.log(`lines left out by a re-read: ${leftOut.length}`);
+const leftOutFailures = leftOut.map((line) => `[line-left-out] ${lineLeftOutNotice(line)}`);
+
 const observation: LedgerObservation = {
   accounts: accounts.map((a) => a.name),
   // the witness floor keys by id, so a renamed account is the same account
@@ -465,10 +480,11 @@ console.log(floor.summary);
 
 // the floor's findings come last, so every finding the check made before it prints where it always did
 const failures = [...compareToBaseline(observation, BASELINE), ...floor.failures];
-if (failures.length > 0 || recordFailures.length > 0) {
-  console.error(`\nLEDGER CHECK FAILED — ${failures.length + recordFailures.length} finding(s):`);
+const findings = failures.length + recordFailures.length + leftOutFailures.length;
+if (findings > 0) {
+  console.error(`\nLEDGER CHECK FAILED — ${findings} finding(s):`);
   if (failures.length > 0) console.error(formatLedgerFailures(failures));
-  for (const line of recordFailures) console.error(`  ${line}`);
+  for (const line of [...recordFailures, ...leftOutFailures]) console.error(`  ${line}`);
   process.exit(1);
 }
 console.log("\nledger matches the recorded baseline, and no stored verdict has gone stale");

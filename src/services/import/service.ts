@@ -23,7 +23,7 @@ import { normalizeDescription } from "@/lib/normalize";
 import { sumCents } from "@/lib/money";
 import { RECONCILE_STATUSES, periodVerdict } from "@/lib/reconciliation";
 import { postedInsidePeriod } from "@/lib/statement-period";
-import { recordWithheldSections, withheldSectionNotice } from "@/lib/import-file-label";
+import { lineLeftOutNotice, recordWithheldSections, withheldSectionNotice, type LineLeftOutFacts } from "@/lib/import-file-label";
 import { categorizeAll, detectTransfers } from "../categorize";
 import { rebuildAccount } from "../derivation";
 import { flagDuplicateCandidates } from "../duplicate-flags";
@@ -60,6 +60,7 @@ import {
   type LaterBookStatement,
 } from "./brokerage-book";
 import { handOverPrintedAnchors } from "./printed-anchors";
+import { linesLeftOut } from "./lines-left-out";
 import {
   followingOpeningsByFile,
   handOverKeptOpenings,
@@ -226,8 +227,21 @@ export interface FileOutcome {
    * everything on them, filed under that file — as un-importing the retired read keeps them (`settleHeldRows`)
    */
   keptByPrinters: number;
+  /**
+   * lines another still-imported file prints that the retired read's rows recorded, the new read does not write again
+   * and nothing brought back: left out — never written back on a guess — and named, each with the files that print it
+   * (`linesLeftOut`, owner decision 2026-09-28)
+   */
+  leftOut: LeftOutOutcome[];
   quarantined: number;
   periods: PeriodOutcome[];
+}
+
+/** A line a re-read left out of the ledger, as the upload outcome names it — see `LineLeftOut`. */
+export interface LeftOutOutcome extends LineLeftOutFacts {
+  accountId: string;
+  /** the sentence /imports shows under the read, built from these facts — `lineLeftOutNotice` */
+  notice: string;
 }
 
 interface CoveredRange {
@@ -1618,6 +1632,7 @@ const blankOutcome = (fileName: string): FileOutcome => ({
   carriedForward: 0,
   givenBack: 0,
   keptByPrinters: 0,
+  leftOut: [],
   quarantined: 0,
   periods: [],
 });
@@ -2246,6 +2261,13 @@ function writeMember(db: AppDatabase, member: ReadMember, carryPool: CarryPool, 
   keepRetiredAttachedRows(db, unclaimedAttachedRows(carryPool));
 }
 
+/** A line left out, as the upload outcome names it: its facts, and the one sentence every surface prints of them. */
+function leftOutOutcome(line: LineLeftOutFacts & { accountId: string }): LeftOutOutcome {
+  const { accountId, accountName, printedOn, amountCents, description, printedBy, readBy } = line;
+  const facts = { accountName, printedOn, amountCents, description, printedBy, readBy };
+  return { accountId, ...facts, notice: lineLeftOutNotice(facts) };
+}
+
 /**
  * Write a read whose members all parsed. A fresh read of one file keeps the statements it wrote before a failure, for
  * un-import to remove; a read that retires anything, or reads several files, is all or nothing, so a failure leaves in
@@ -2267,6 +2289,12 @@ function writeTurn(db: AppDatabase, batch: BatchState, chain: readonly ReadMembe
       const written = writeRead(db, chain, retiring, (j) => (stage = j), writes, batch.givenBackSeries).retired;
       // each file is `parsed` in the same write as what it read (`markParsed`)
       for (const member of chain) markParsed(db, member);
+      // ⚖️ owner, 2026-09-28: a line another still-imported file prints that the retired reads recorded and nothing
+      // brought back stays out — never added on a guess — and the outcome names it. Read once the new reads are
+      // `parsed`: each is the read that no longer writes the line, and what it writes again is not left out.
+      chain.forEach((member, j) => {
+        (writes[j] as MemberWrite).tally.leftOut = linesLeftOut(db, member.staleIds).map(leftOutOutcome);
+      });
       return written;
     };
     retired = whole ? db.transaction(() => run()) : run();
@@ -2377,6 +2405,7 @@ function failedUnexpectedly(db: AppDatabase, file: { name: string }, fileRowId: 
     carriedForward: 0,
     givenBack: 0,
     keptByPrinters: 0,
+    leftOut: [],
     quarantined: 0,
     periods: [],
   };

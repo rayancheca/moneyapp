@@ -32,3 +32,19 @@ describe("/imports — the coverage rows' holdings claim", () => {
     expect(panel).toMatch(/pricedFromHoldings: pricedFromHoldingsIds\.includes\(c\.accountId\),/);
   });
 });
+
+/**
+ * ⚖️ Owner, 2026-09-28: a line another still-imported file prints that a re-read no longer writes stays out of the
+ * ledger and is named under that read. The wording and the grouping are pinned in lib/import-file-label.test.ts, the
+ * rule in services/import/lines-left-out.test.ts; this pins that the page asks that rule and renders its answer.
+ */
+describe("/imports — a line a re-read left out, under the read", () => {
+  test("read from the ledger by the rule `pnpm ledger-check` reads, grouped by the read that left it out", () => {
+    expect(page).toMatch(/const leftOutByRead = leftOutNoticesByRead\(linesLeftOut\(db\)\);/);
+  });
+
+  test("every notice for the row's file is rendered, whole", () => {
+    expect(page).toMatch(/\{leftOutByRead\.get\(f\.id\)\?\.map\(\(notice, i\) => \(/);
+    expect(page).toMatch(/className="text-\[11px\] text-warning">\s*\{notice\}/);
+  });
+});

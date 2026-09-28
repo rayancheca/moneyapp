@@ -185,6 +185,13 @@ async function main(): Promise<void> {
     for (const w of withheld) console.log(`  ${w}`);
   }
 
+  // lines another imported file still prints that a re-read no longer writes: out of the ledger, never added on a guess
+  const leftOut = outcomes.flatMap((o) => o.leftOut.map((l) => `${o.fileName}: ${l.notice}`));
+  if (leftOut.length > 0) {
+    console.log(`\nLINES LEFT OUT (${leftOut.length})`);
+    for (const l of leftOut) console.log(`  ${l}`);
+  }
+
   const after = snapshot(db, sqlite);
 
   diffTable("TRANSACTIONS BY STATUS", before.txnByStatus, after.txnByStatus);
