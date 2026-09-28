@@ -442,3 +442,161 @@ describe("a payday paid by a deposit outside the window is still named by the wi
     expect(september.unsettledCount).toBe(0);
   });
 });
+
+/** Every figure the /budgets header prints for the month's pay, reconciled to the schedule. */
+const reconciled = (i: ReturnType<typeof incomeExpectation>): number =>
+  i.postedCents - i.paidForAnotherMonthCents + i.expectedCents + i.passedUnpaidCents + i.paidByAnotherMonthCents;
+
+/**
+ * 🔴 THE OTHER HALF OF A CANCELLING PAIR.
+ *
+ * The fourth figure names a payday in this month that ANOTHER month's money
+ * paid. Nothing named the mirror image: money posted THIS month — so inside "in
+ * so far" — that settlement spent on another month's payday. Before the fourth
+ * figure existed the two cancelled, and the header added up by accident.
+ *
+ * His own 09-23/09-24 lump-then-weekly, shifted one week so the lump lands in
+ * September and the weekly deposit in October: Thu Sep 3 $1,141.92, Wed Sep 30
+ * $4,567.68 (four weeks), Thu Oct 1 $1,141.92. The lump reaches forward and
+ * takes Oct 1, then Sep 24, 17 and 10; the Oct 1 deposit, finding its own
+ * payday already paid, goes back to Aug 27. Read Fri Oct 2, October printed
+ *
+ *   $1,141.92 in so far + $4,567.68 still expected + $1,141.92 paid early
+ *   = $6,851.52 against five paydays scheduled at $5,709.60
+ *
+ * — a week too high, because the $1,141.92 in so far is the money that paid
+ * August's Aug 27, and no figure said so.
+ */
+describe("money this month that paid another month's payday is named too", () => {
+  function lumpThenWeeklyAcrossTheMonthLine(): void {
+    readThrough(WELLS, "2026-06-01", "2026-10-02");
+    deposit(PAY, "2026-09-03", WEEK);
+    deposit(PAY, "2026-09-30", WEEK * 4);
+    deposit(PAY, "2026-10-01", WEEK);
+  }
+
+  test("the settlement the header has to describe", () => {
+    lumpThenWeeklyAcrossTheMonthLine();
+    const by = settledPaydaysForSeries(bundle.db, PAY, "2026-10-02");
+    for (const day of ["2026-09-10", "2026-09-17", "2026-09-24", "2026-10-01"]) expect(by.get(day)).toBe("2026-09-30");
+    expect(by.get("2026-08-27")).toBe("2026-10-01");
+  });
+
+  test("October adds up: the money in so far that paid Aug 27 is named", () => {
+    lumpThenWeeklyAcrossTheMonthLine();
+    const october = incomeExpectation(bundle.db, "2026-10-01", "2026-10-31", "2026-10-02");
+    expect(october.scheduledCents).toBe(WEEK * 5);
+    expect(october.postedCents).toBe(WEEK);
+    expect(october.paidByAnotherMonthCents).toBe(WEEK);
+    // the four figures the header printed before: a week over the schedule…
+    expect(october.postedCents + october.expectedCents + october.passedUnpaidCents + october.paidByAnotherMonthCents).toBe(
+      WEEK * 6,
+    );
+    // …because the week in so far paid August
+    expect(october.paidForAnotherMonthCents).toBe(WEEK);
+    expect(october.paidForAnotherMonthDeposits).toEqual(["2026-10-01"]);
+    expect(october.paidForAnotherMonthPaydays).toEqual(["2026-08-27"]);
+    expect(reconciled(october)).toBe(october.scheduledCents);
+    // …and nothing moves overnight: on the payday itself the same money is named the same way
+    const onThePayday = incomeExpectation(bundle.db, "2026-10-01", "2026-10-31", "2026-10-01");
+    expect(onThePayday.paidForAnotherMonthCents).toBe(WEEK);
+    expect(reconciled(onThePayday)).toBe(onThePayday.scheduledCents);
+  });
+
+  /* His two September deposits: the lump of Sep 23 paid Sep 3–24 and the
+     weekly deposit of Sep 24 paid Aug 27, so September's "in so far" holds five
+     weeks against four September paydays. August, read the same day, names the
+     same $1,141.92 from its side. (On his ledger itself two June cash deposits
+     pool into the lump's walk and reach Aug 27 first, so the Sep 24 deposit
+     pays Aug 20 — measured on a copy 2026-09-28, same shape one week back.) */
+  test("his September: the deposit of Sep 24 paid Aug 27, and both months say so", () => {
+    readThrough(WELLS, "2026-06-01", "2026-09-27");
+    hisSeptember();
+    const september = incomeExpectation(bundle.db, "2026-09-01", "2026-09-30", TODAY);
+    expect(september.postedCents).toBe(WEEK * 5);
+    expect(september.scheduledCents).toBe(WEEK * 4);
+    expect(september.paidForAnotherMonthCents).toBe(WEEK);
+    expect(september.paidForAnotherMonthDeposits).toEqual(["2026-09-24"]);
+    expect(september.paidForAnotherMonthPaydays).toEqual(["2026-08-27"]);
+    expect(reconciled(september)).toBe(september.scheduledCents);
+    const august = incomeExpectation(bundle.db, "2026-08-01", "2026-08-31", TODAY);
+    expect(august.paidByAnotherMonthCents).toBe(september.paidForAnotherMonthCents);
+    expect(august.paidByAnotherMonthDeposits).toEqual(["2026-09-24"]);
+  });
+
+  /* Forward too: the tolerance lets September's last-day lump pay Thu Oct 1,
+     so on Sep 30 that week is in September's money and October's schedule. */
+  test("a lump on the month's last day that pays the 1st is named by the month it landed in", () => {
+    readThrough(WELLS, "2026-06-01", "2026-09-30");
+    deposit(PAY, "2026-09-03", WEEK);
+    deposit(PAY, "2026-09-30", WEEK * 4);
+    const september = incomeExpectation(bundle.db, "2026-09-01", "2026-09-30", "2026-09-30");
+    expect(september.paidForAnotherMonthPaydays).toEqual(["2026-10-01"]);
+    expect(september.paidForAnotherMonthCents).toBe(WEEK);
+    expect(reconciled(september)).toBe(september.scheduledCents);
+  });
+
+  /* ⛔ Only money that left the month. A deposit paying a payday of its own
+     month is that month's pay, and naming it here would count it out twice. */
+  test("money that paid this month's own paydays is not named", () => {
+    readThrough(WELLS, "2026-06-01", "2026-10-08");
+    deposit(PAY, "2026-10-01", WEEK);
+    deposit(PAY, "2026-10-08", WEEK);
+    const october = incomeExpectation(bundle.db, "2026-10-01", "2026-10-31", "2026-10-08");
+    expect(october.paidForAnotherMonthCents).toBe(0);
+    expect(october.paidForAnotherMonthDeposits).toEqual([]);
+    expect(october.paidForAnotherMonthPaydays).toEqual([]);
+  });
+});
+
+/**
+ * 🔴 THE FOURTH FIGURE IS MONEY, AND IT HAS TO BE THE MONEY IN THE ROWS IT NAMES.
+ *
+ * It added each payday's SCHEDULED amount wherever the settling deposit's date
+ * fell outside the month — `settledBy` carries a date and no money — so it
+ * misstated another month's money whenever that deposit was short, or when
+ * change pooled from an earlier deposit paid part of the payday. Its sentence
+ * names the deposit so the reader can go and find the row; the row has to hold
+ * what the sentence says.
+ */
+describe("the fourth figure is the money another month's deposits put in", () => {
+  /* Read Oct 2: it said $1,141.92 "paid early, by the deposit of Wed, Sep 30"
+     — a row holding $1,100.00. The only gap left is the $41.92 never paid. */
+  test("SHORT: a $1,100.00 deposit put $1,100.00 into Oct 1", () => {
+    readThrough(WELLS, "2026-06-01", "2026-10-02");
+    deposit(PAY, "2026-09-30", 110_000);
+    const october = incomeExpectation(bundle.db, "2026-10-01", "2026-10-31", "2026-10-02");
+    expect(october.paidByAnotherMonthCents).toBe(110_000);
+    expect(october.paidByAnotherMonthOccurrences).toBe(1);
+    expect(october.paidByAnotherMonthDeposits).toEqual(["2026-09-30"]);
+    expect(reconciled(october)).toBe(october.scheduledCents - (WEEK - 110_000));
+  });
+
+  /* $5,000.00 on Sep 23 pays four weeks and carries $432.32 of change into the
+     $709.60 of Oct 1, which retires Oct 1. It said $0.00 — Oct 1's settling
+     deposit is October's — and $432.32 of September's money was in no figure. */
+  test("POOLED: September's change that paid part of Oct 1 is named", () => {
+    readThrough(WELLS, "2026-06-01", "2026-10-02");
+    deposit(PAY, "2026-09-23", 500_000);
+    deposit(PAY, "2026-10-01", 70_960);
+    const october = incomeExpectation(bundle.db, "2026-10-01", "2026-10-31", "2026-10-02");
+    expect(october.postedCents).toBe(70_960);
+    expect(october.paidByAnotherMonthCents).toBe(43_232);
+    expect(october.paidByAnotherMonthOccurrences).toBe(1);
+    expect(october.paidByAnotherMonthDeposits).toEqual(["2026-09-23"]);
+    expect(reconciled(october)).toBe(october.scheduledCents);
+  });
+
+  /* The other direction: $1,500.00 on Thu Oct 22 pays Oct 22 and carries
+     $358.08, and Sun Nov 1's $783.84 tops it up to retire Oct 29. It said
+     $1,141.92 of November's money — counting October's own $358.08 twice. */
+  test("POOLED: October's own change is not called another month's money", () => {
+    readThrough(WELLS, "2026-06-01", "2026-11-02");
+    deposit(PAY, "2026-10-22", 150_000);
+    deposit(PAY, "2026-11-01", 78_384);
+    const october = incomeExpectation(bundle.db, "2026-10-01", "2026-10-31", "2026-11-02");
+    expect(october.paidByAnotherMonthCents).toBe(78_384);
+    expect(october.paidByAnotherMonthDeposits).toEqual(["2026-11-01"]);
+    expect(reconciled(october)).toBe(october.scheduledCents);
+  });
+});
