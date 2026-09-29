@@ -4,8 +4,84 @@ import path from "node:path";
 import sharp from "sharp";
 import { afterAll, afterEach, beforeAll, describe, expect, test, vi } from "vitest";
 import type { GateFails } from "./gate-comparator";
-import { gateComparator, judgeAll } from "./rebase-run";
+import { gateComparator, judgeAll, runControl, walkFiles, type SpawnSuite } from "./rebase-run";
 import { SNAPSHOT_ROOT_ENV } from "./snapshot-root";
+import { passedInTheEnd } from "./suite-run";
+
+/**
+ * The JSON report Playwright 1.61 writes, cut down to what the command reads: `failed` names the
+ * tests that failed, and everything else passed.
+ */
+function suiteReport(passed: number, failed: readonly string[]) {
+  return {
+    suites: [
+      {
+        title: "zz-account-rename.spec.ts",
+        specs: failed.map((title) => ({
+          title,
+          tests: [
+            {
+              projectName: "chromium",
+              status: "unexpected",
+              results: [{ errors: [{ message: "Error: expect(locator).toBeVisible() failed" }] }],
+            },
+          ],
+        })),
+        suites: [],
+      },
+    ],
+    errors: [],
+    stats: { expected: passed, unexpected: failed.length, flaky: 0, skipped: 0 },
+  };
+}
+
+describe("runControl", () => {
+  let scratch = "";
+  afterEach(() => {
+    if (scratch !== "") fs.rmSync(scratch, { recursive: true, force: true });
+  });
+
+  const RENAME = "account name edits inline — Escape cancels, Enter saves, Undo restores";
+  const GOLDEN = "zz-golden-path.spec.ts-snapshots/accounts-managed-light-chromium-darwin.png";
+
+  /**
+   * A test that fails can leave the one shared database changed under every test after it.
+   * e2e/zz-account-rename.spec.ts renames the first account and, when a busy box misses its Undo,
+   * fails with the rename saved; zz-golden-path runs later, and under --update-snapshots=all its
+   * accounts screenshot is written on that state and passes. A --last-failed re-run redraws the
+   * rename alone, so that twin is kept, and diffVerdict calls it a UI change.
+   */
+  test("a failure is re-run as the whole suite, drawn into an emptied root", async () => {
+    scratch = fs.mkdtempSync(path.join(os.tmpdir(), "run-control-"));
+    const ctx = { scratch, snapshotRoot: path.join(scratch, "snapshots"), only: null };
+    const starts: { args: readonly string[]; rootHeld: string[] }[] = [];
+    const playwright: SpawnSuite = async (_command, args, env) => {
+      const root = env[SNAPSHOT_ROOT_ENV]!;
+      starts.push({ args, rootHeld: walkFiles(root) });
+      const rerunOfWhatFailed = args.includes("--last-failed");
+      const first = starts.length === 1;
+      if (first || !rerunOfWhatFailed) {
+        // the golden path draws the accounts page on whatever the rename left behind
+        fs.mkdirSync(path.join(root, path.dirname(GOLDEN)), { recursive: true });
+        fs.writeFileSync(path.join(root, GOLDEN), first ? "the account renamed" : "the seed");
+      }
+      const report = first
+        ? suiteReport(601, [RENAME])
+        : suiteReport(rerunOfWhatFailed ? 1 : 602, []);
+      fs.writeFileSync(env.PLAYWRIGHT_JSON_OUTPUT_FILE!, JSON.stringify(report));
+      return first ? 1 : 0;
+    };
+
+    const runs = await runControl(ctx, () => undefined, playwright);
+
+    expect(starts).toHaveLength(2);
+    expect(starts[1]!.args).not.toContain("--last-failed");
+    expect(starts[1]!.rootHeld).toEqual([]);
+    expect(fs.readFileSync(path.join(ctx.snapshotRoot, GOLDEN), "utf8")).toBe("the seed");
+    expect(runs.green).toBe(true);
+    expect(passedInTheEnd(runs)).toBe(602);
+  });
+});
 
 describe("gateComparator", () => {
   afterEach(() => {

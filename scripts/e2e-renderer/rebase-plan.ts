@@ -7,7 +7,9 @@
  * unless EVERY committed baseline was drawn again at a green HEAD and each one came back
  * identical or renderer drift. One changed glyph, one missing file, one extra file, and nothing
  * is written. Then only the drift the gate itself fails is re-based (withinGateTolerance): a
- * file whose pixels moved within the gate's tolerance is counted and left as it is.
+ * file whose pixels moved within the gate's tolerance is counted and left as it is. And while
+ * the Geist files the app ships differ from the record, no drift is re-based at all: a font
+ * change is the app's own, and its baselines are redrawn by the change that made it.
  */
 import type { DiffVerdict } from "./diff-verdict";
 import {
@@ -19,6 +21,7 @@ import {
 } from "./fingerprint";
 import type { GateAnswer } from "./gate-comparator";
 import { baselineForTwin, baselineKey, twinKey } from "./snapshot-root";
+import type { RerunScope } from "./suite-run";
 
 /* ── Arguments ─────────────────────────────────────────────────────────────────────────────── */
 
@@ -235,6 +238,11 @@ export function tally(judged: readonly Judged[]): Tally {
 export type Plan =
   | { action: "refuse-unpaired"; missing: string[]; extra: string[] }
   | { action: "refuse-content"; content: Judged[] }
+  /**
+   * The Geist files the app ships are not the recorded ones, so these files may have moved by the
+   * font, which is a UI change: their baselines belong to the commit that changed it
+   */
+  | { action: "refuse-fonts"; files: string[] }
   /** HEAD was never pushed as origin/main's tip, so only --allow-unpushed may copy these twins */
   | { action: "refuse-unpushed"; files: string[] }
   /**
@@ -261,6 +269,12 @@ export interface PushProof {
  * verdict, refuses the lot, whatever the gate would say of it. Only then does the gate's answer
  * pick which renderer-only files are re-based.
  *
+ * When the fonts the app ships changed since the record (`verdict` "fonts-changed", a Geist
+ * upgrade), no twin is copied at all, whatever vouched for HEAD: every baseline with text moved
+ * by the font, which is the app's change, and diffVerdict can take a font's small outline changes
+ * for a renderer's. Those baselines are redrawn by the commit that changed the font. The record
+ * alone may still be written, once the gate's comparator passes every baseline drawn with them.
+ *
  * A HEAD never pushed as origin/main's tip passed no gate (one on origin/main that a push carried
  * past is no exception), so nothing proves its committed baselines are its UI, and the control,
  * which redraws every screenshot, proves none. The renderer alone may still be recorded: when the
@@ -278,6 +292,7 @@ export function planRebase(
   }
   if (counts.content.length > 0) return { action: "refuse-content", content: counts.content };
   const files = counts.toRebase.map((j) => j.baseline);
+  if (verdict === "fonts-changed" && files.length > 0) return { action: "refuse-fonts", files };
   if (!push.pushed && !push.allowUnpushed && files.length > 0) {
     return { action: "refuse-unpushed", files };
   }
@@ -469,9 +484,20 @@ export interface CommitFacts {
   head: { sha: string; subject: string };
   /** HEAD was pushed as origin/main's tip; when not, the commit says what vouched for it instead */
   pushed: boolean;
-  control: { passed: number; rerun: boolean };
-  gate: { passed: number; rerun: boolean };
+  /** `rerun`: what the one re-run ran again, or null when the first run was green */
+  control: SuiteFacts;
+  gate: SuiteFacts;
 }
+
+interface SuiteFacts {
+  passed: number;
+  rerun: RerunScope | null;
+}
+
+const RERAN: Record<RerunScope, string> = {
+  "what-failed": ", after one re-run of what failed first",
+  "whole-suite": ", on one re-run of the whole suite after the first run failed",
+};
 
 function whatMoved(facts: CommitFacts): string {
   const { recorded, current, verdict } = facts;
@@ -491,9 +517,18 @@ function whatMoved(facts: CommitFacts): string {
   const sha = (record: RendererRecord) => record.canary.pixelSha256.slice(0, 12);
   const canary = `${sha(recorded)} -> ${sha(current)}`;
   const on = recorded.recordedOn.slice(0, 10);
+  if (verdict === "fonts-changed") {
+    const fonts = (record: RendererRecord) => record.canary.fontSha256.slice(0, 12);
+    return (
+      `The Geist files the app ships (node_modules/geist) changed since ${on} ` +
+      `(${fonts(recorded)} -> ${fonts(current)}; ${which}), so the canary's recorded pixels ` +
+      `could no longer be compared (canary ${canary}). A font change is the app's own: its ` +
+      "baselines are redrawn by the change that moved the font, and no twin is copied here."
+    );
+  }
   if (verdict === "canary-changed") {
     return (
-      `The renderer canary's own source changed since ${on} ` +
+      `The renderer canary's own page changed since ${on}, its fonts did not ` +
       `(${which}), so its recorded pixels could no longer be compared (canary ${canary}).`
     );
   }
@@ -566,8 +601,7 @@ export function commitMessage(facts: CommitFacts): string {
     n === 0
       ? `chore(e2e): record macOS ${mac} as the baselines' renderer — no baseline changed`
       : `chore(e2e): re-base ${plural(n, "baseline")} on macOS ${mac} — no UI changed`;
-  const reran = (run: { rerun: boolean }) =>
-    run.rerun ? ", after one re-run of what failed first" : "";
+  const reran = (run: SuiteFacts) => (run.rerun === null ? "" : RERAN[run.rerun]);
   const body = [
     whatMoved(facts),
     "",

@@ -7,9 +7,12 @@ import {
   onStopSignal,
   outcomeFromReport,
   passedInTheEnd,
+  rerunOf,
   runWithOneRerun,
   STOP_SIGNALS,
+  summarizeRuns,
   type Attempt,
+  type RerunScope,
   type SuiteOutcome,
 } from "./suite-run";
 
@@ -150,42 +153,79 @@ function scripted(outcomes: SuiteOutcome[]) {
 describe("runWithOneRerun", () => {
   test("green the first time runs once", async () => {
     const s = scripted([green()]);
-    expect(await runWithOneRerun(s.run)).toEqual({ green: true, attempts: [green()] });
-    expect(s.asked).toEqual([{ lastFailed: false }]);
+    expect(await runWithOneRerun(s.run, "what-failed")).toEqual({
+      green: true,
+      attempts: [green()],
+      scope: "what-failed",
+    });
+    expect(s.asked).toEqual([{ rerun: null }]);
   });
 
   test("a failure gets one re-run of what failed, and passing it is green", async () => {
     const s = scripted([red(["a", "b"]), green(2)]);
-    const runs = await runWithOneRerun(s.run);
+    const runs = await runWithOneRerun(s.run, "what-failed");
     expect(runs.green).toBe(true);
-    expect(s.asked).toEqual([{ lastFailed: false }, { lastFailed: true }]);
+    expect(s.asked).toEqual([{ rerun: null }, { rerun: "what-failed" }]);
     expect(passedInTheEnd(runs)).toBe(602);
+    expect(rerunOf(runs)).toBe("what-failed");
+    expect(summarizeRuns(runs)).toBe("602 passed, 2 of them on the re-run");
   });
 
   test("failing the re-run too is red, and there is no third run", async () => {
     const s = scripted([red(["a", "b"]), red(["b"], 1)]);
-    const runs = await runWithOneRerun(s.run);
+    const runs = await runWithOneRerun(s.run, "what-failed");
     expect(runs.green).toBe(false);
     expect(runs.attempts).toHaveLength(2);
     expect(describeRed(runs)[0]).toBe("2 failed; the one re-run of those still failed 1:");
   });
 
+  /**
+   * The control's re-run (see RerunScope): a failed test can leave the shared database changed
+   * under every test after it, and those pass on it under --update-snapshots=all, so the whole
+   * suite runs again and every test is counted once, from the re-run.
+   */
+  test("a re-run of the whole suite counts the re-run alone, and says so", async () => {
+    const s = scripted([red(["zz-account-rename"], 601), green(602)]);
+    const runs = await runWithOneRerun(s.run, "whole-suite");
+    expect(s.asked).toEqual([{ rerun: null }, { rerun: "whole-suite" }]);
+    expect(runs.green).toBe(true);
+    expect(passedInTheEnd(runs)).toBe(602);
+    expect(rerunOf(runs)).toBe("whole-suite");
+    expect(summarizeRuns(runs)).toBe(
+      "602 passed on one re-run of the whole suite, after 1 failed the first time",
+    );
+    const again = await runWithOneRerun(
+      scripted([red(["a", "b"]), red(["c"], 601)]).run,
+      "whole-suite",
+    );
+    expect(describeRed(again)[0]).toBe("2 failed; the one re-run of the whole suite failed 1:");
+  });
+
   /** --last-failed with nothing recorded as failed would run the whole suite a second time. */
   test("a run that failed outside any test is not re-run", async () => {
-    const s = scripted([setupThrew]);
-    const runs = await runWithOneRerun(s.run);
-    expect(runs).toEqual({ green: false, attempts: [setupThrew] });
-    expect(describeRed(runs)).toEqual([`  ✗ ${setupThrew.globalErrors[0]}`]);
+    for (const scope of ["what-failed", "whole-suite"] as const) {
+      const s = scripted([setupThrew]);
+      const runs = await runWithOneRerun(s.run, scope);
+      expect(runs).toEqual({ green: false, attempts: [setupThrew], scope });
+      expect(rerunOf(runs)).toBeNull();
+      expect(describeRed(runs)).toEqual([`  ✗ ${setupThrew.globalErrors[0]}`]);
 
-    const silent = scripted([{ ...green(), exitCode: 1 }]);
-    expect((await runWithOneRerun(silent.run)).attempts).toHaveLength(1);
+      const silent = scripted([{ ...green(), exitCode: 1 }]);
+      expect((await runWithOneRerun(silent.run, scope)).attempts).toHaveLength(1);
+    }
+  });
+
+  test("green the first time is said without a re-run", async () => {
+    const runs = await runWithOneRerun(scripted([green()]).run, "whole-suite");
+    expect(summarizeRuns(runs)).toBe("602 passed");
+    expect(rerunOf(runs)).toBeNull();
   });
 });
 
 describe("describeRed", () => {
   test("names each failure, up to twenty-five", () => {
     const titles = Array.from({ length: 30 }, (_, i) => `visual.spec.ts › page ${i}`);
-    const lines = describeRed({ green: false, attempts: [red(titles)] });
+    const lines = describeRed({ green: false, attempts: [red(titles)], scope: "what-failed" });
     expect(lines[0]).toBe("30 failed:");
     expect(lines).toContain("  ✗ [chromium] visual.spec.ts › page 0");
     expect(lines).toContain(`      ${TIMEOUT}`);
@@ -194,10 +234,20 @@ describe("describeRed", () => {
   });
 
   test("a run with no test and no error still says why it is not green", () => {
-    const nothingRan = describeRed({ green: false, attempts: [green(0)] });
+    const nothingRan = describeRed({
+      green: false,
+      attempts: [green(0)],
+      scope: "what-failed",
+    });
     expect(nothingRan).toEqual(["  ✗ no test ran (exit 0)"]);
   });
 });
+
+/** How the gate's re-run shows in what was done: the flag Playwright would be given. */
+const RERUN_FLAG: Record<RerunScope, string> = {
+  "what-failed": "--last-failed",
+  "whole-suite": "(the whole suite)",
+};
 
 /** Effects that record what was done, with a gate that answers from a script. */
 function effects(
@@ -223,7 +273,7 @@ function effects(
       },
       writeRecord: () => done.push("record"),
       runGate: async (attempt: Attempt) => {
-        done.push(attempt.lastFailed ? "gate --last-failed" : "gate");
+        done.push(attempt.rerun === null ? "gate" : `gate ${RERUN_FLAG[attempt.rerun]}`);
         return s.run(attempt);
       },
       restore: (baselines: readonly string[]) => {

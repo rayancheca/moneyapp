@@ -13,16 +13,20 @@
  *      said, and decided at step 3), port 3111 free, a quiet box, and .next built from HEAD
  *      (built here when it is not);
  *   2. a control run of the whole suite at HEAD, renderer check skipped, every screenshot drawn
- *      into a scratch root rather than e2e/ (E2E_SNAPSHOT_ROOT); a failure gets one re-run of
- *      what failed, and a second failure is a refusal: HEAD is not green here, or the box is busy;
+ *      into a scratch root rather than e2e/ (E2E_SNAPSHOT_ROOT); a failure gets one re-run of the
+ *      whole suite into an emptied root (a failed test can leave the shared database changed
+ *      under every test after it), and a second failure is a refusal: HEAD is not green here, or
+ *      the box is busy;
  *   3. every committed baseline judged against its twin by scripts/e2e-renderer/diff-verdict.ts:
  *      a missing or extra twin, or one "content" verdict, and nothing is written. Of the
  *      renderer drift, only what the gate itself would fail is re-based, asked of Playwright's
  *      own comparator with the gate's options (gate-comparator.ts). The gate is not pixel-exact,
  *      so a file whose pixels moved within its tolerance is left as it is and only counted; one
- *      the comparator cannot judge is re-based as though the gate failed it. On a HEAD never
- *      pushed as origin/main's tip the renderer alone may be recorded, but a twin is copied only
- *      under --allow-unpushed: nothing but diffVerdict would then vouch for it;
+ *      the comparator cannot judge is re-based as though the gate failed it. When the Geist files
+ *      the app ships are not the recorded ones (a Geist upgrade), no twin is copied at all: that
+ *      drift is a UI change, redrawn with the change that made it. On a HEAD never pushed as
+ *      origin/main's tip the renderer alone may be recorded, but a twin is copied only under
+ *      --allow-unpushed: nothing but diffVerdict would then vouch for it;
  *   4. --confirm only: the twins of the files the gate fails copied over their baselines (none:
  *      the record alone), the renderer recorded, and the gate run with the check on. Red after
  *      one re-run, an error, SIGINT, SIGTERM or SIGHUP puts every file back as HEAD has it.
@@ -51,6 +55,7 @@ import {
   measureCurrentRenderer,
   oneLineRenderer,
   readRecord,
+  RENDERER_CHECK_ENV,
   writeRecord,
   type RendererRecord,
   type RendererVerdict,
@@ -99,6 +104,7 @@ import {
   buildBundle,
   gateComparator,
   judgeAll,
+  runControl,
   runSuite,
   walkFiles,
   type SuiteContext,
@@ -110,7 +116,8 @@ import {
   onStopSignal,
   passedInTheEnd,
   putBack,
-  runWithOneRerun,
+  rerunOf,
+  summarizeRuns,
   type Applied,
   type ApplyEffects,
   type Runs,
@@ -153,12 +160,6 @@ function whereE2eStands(): string[] {
   } catch (error) {
     return [`e2e/ could not be read back (${messageOf(error)}): check it with git status`];
   }
-}
-
-function summarizeRuns(runs: Runs): string {
-  const rerun = runs.attempts[1];
-  const rescued = rerun === undefined ? "" : `, ${rerun.passed} of them on the re-run`;
-  return `${passedInTheEnd(runs)} passed${rescued}`;
 }
 
 /* ── The phases ────────────────────────────────────────────────────────────────────────────── */
@@ -277,12 +278,14 @@ async function guardAndPrepare(args: RebaseArgs, push: PushState): Promise<strin
 }
 
 /**
- * ⚠️ A re-run is a new `playwright test`, so global-setup seeds the database afresh: a `zz-` spec
- * re-run alone starts without what the specs before it did (Detect now, the renames). A flake
- * there can therefore come back as a second failure or a content verdict, never as a false pass.
+ * ⚠️ A failure's one re-run is the whole suite again, into an emptied root (runControl), never
+ * --last-failed. The tests share one database and run in order, so a test that fails can leave it
+ * changed under every test after it (zz-account-rename's rename, when its Undo is missed), and
+ * under --update-snapshots=all those later tests pass on that state. Re-running what failed alone
+ * would keep their twins, and the classification would refuse them as a UI change.
  */
 async function control(ctx: SuiteContext): Promise<Runs> {
-  const runs = await runWithOneRerun((attempt) => runSuite("control", attempt, ctx, section));
+  const runs = await runControl(ctx, section);
   if (!runs.green) {
     refuse("HEAD is not green on this machine, or the box is loaded", [
       ...describeRed(runs),
@@ -360,6 +363,17 @@ async function classify(
       "Each committed baseline is in e2e/; the control's twin is at the same path under",
       `${ctx.snapshotRoot}. A UI change is committed with its baselines by the change`,
       "that made it, never by this command.",
+    ]);
+  }
+  if (plan.action === "refuse-fonts") {
+    const n = plan.files.length;
+    refuse(`the Geist files the app ships changed, and ${n} baseline(s) would be re-based`, [
+      `node_modules/geist is not what ${BASELINE_RENDERER_PATH} was recorded with, so these`,
+      "files may have moved by the font rather than by the Mac. A font change is a UI change,",
+      "and diffVerdict can take its small outline changes for a renderer's. Redraw, read and",
+      "commit the baselines with the change that moved the font:",
+      `  pnpm build && ${RENDERER_CHECK_ENV}=skip pnpm e2e:update`,
+      "then run this again: it records the renderer once the gate passes every baseline.",
     ]);
   }
   if (plan.action === "refuse-unpushed") {
@@ -475,8 +489,8 @@ function writeCommitMessage(
       subject: git(["log", "-1", "--format=%s"]).trim(),
     },
     pushed: push.pushed,
-    control: { passed: passedInTheEnd(controlRuns), rerun: controlRuns.attempts.length > 1 },
-    gate: { passed: passedInTheEnd(gateRuns), rerun: gateRuns.attempts.length > 1 },
+    control: { passed: passedInTheEnd(controlRuns), rerun: rerunOf(controlRuns) },
+    gate: { passed: passedInTheEnd(gateRuns), rerun: rerunOf(gateRuns) },
   });
   const messageFile = path.join(ctx.scratch, "commit-message.txt");
   fs.writeFileSync(messageFile, message);

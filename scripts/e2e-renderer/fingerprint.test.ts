@@ -20,10 +20,18 @@ const PIXELS_BEFORE = "a7e111bb233faec6f7e1151efdc15b886b1f78209bcb54827664f3cd8
 const PIXELS_AFTER = "3df6722d28b970ee0123456789abcdef0123456789abcdef0123456789abcdef";
 const SOURCE_BEFORE = "34640c8f9377bb56aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 const SOURCE_AFTER = "84cf666e46613878bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+const FONTS_BEFORE = "5e0f1a2b3c4d5e6fdddddddddddddddddddddddddddddddddddddddddddddddd";
+const FONTS_AFTER = "9a8b7c6d5e4f3a2beeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee";
 
 /** The renderer the baselines were re-based on, 2026-09-28. */
 const RECORDED: RendererRecord = {
-  canary: { pixelSha256: PIXELS_BEFORE, sourceSha256: SOURCE_BEFORE, width: 1280, height: 720 },
+  canary: {
+    pixelSha256: PIXELS_BEFORE,
+    sourceSha256: SOURCE_BEFORE,
+    fontSha256: FONTS_BEFORE,
+    width: 1280,
+    height: 720,
+  },
   recordedOn: "2026-09-28T19:02:11.000Z",
   macos: { productVersion: "27.2", buildVersion: "26B5091g" },
   playwright: "1.61.1",
@@ -90,6 +98,21 @@ describe("compareRecord", () => {
     const both = withCanary(AFTER_OS_UPDATE, { sourceSha256: SOURCE_AFTER });
     expect(compareRecord(RECORDED, both)).toBe("canary-changed");
   });
+
+  /**
+   * The canary embeds the Geist files the app ships, so a Geist upgrade changes its source too.
+   * That is the app's own change, moving every baseline with text, and not a renderer's: it is
+   * told apart from an edit to the canary page, whatever the pixels or the page say.
+   */
+  test("changed Geist files are the app's fonts changing, not the canary", () => {
+    const geist = withCanary(RECORDED, { fontSha256: FONTS_AFTER, sourceSha256: SOURCE_AFTER });
+    expect(compareRecord(RECORDED, geist)).toBe("fonts-changed");
+    const alsoTheMac = withCanary(AFTER_OS_UPDATE, {
+      fontSha256: FONTS_AFTER,
+      sourceSha256: SOURCE_AFTER,
+    });
+    expect(compareRecord(RECORDED, alsoTheMac)).toBe("fonts-changed");
+  });
 });
 
 describe("rendererMismatchMessage", () => {
@@ -125,15 +148,33 @@ describe("rendererMismatchMessage", () => {
     expect(message).toContain("macOS       27.2 (26B5091g)  (unchanged)");
   });
 
-  test("a changed canary names both sources and what can change them", () => {
+  test("a changed canary page names both sources, and that the fonts did not move", () => {
     const current = withCanary(RECORDED, { sourceSha256: SOURCE_AFTER });
     const message = rendererMismatchMessage("canary-changed", RECORDED, current);
     expect(message).toMatch(/THE RENDERER CANARY ITSELF CHANGED/);
     expect(message).toContain("34640c8f9377");
     expect(message).toContain("84cf666e4661");
     expect(message).toContain("scripts/e2e-renderer/canary.ts");
-    expect(message).toContain("node_modules/geist");
+    expect(message).toMatch(/Geist files are the ones recorded/);
     expect(message).toContain(`Fix: ${REBASE_RENDERER_COMMAND}`);
+  });
+
+  /**
+   * `pnpm e2e:rebase-renderer --confirm` is not the fix for a Geist upgrade: it would copy the
+   * font's own drift over the baselines as though the Mac had moved. The baselines belong to the
+   * commit that changed the font, like any UI change; the command only records the renderer after.
+   */
+  test("changed Geist files are named a UI change, whose baselines are redrawn with it", () => {
+    const current = withCanary(RECORDED, { fontSha256: FONTS_AFTER, sourceSha256: SOURCE_AFTER });
+    const message = rendererMismatchMessage("fonts-changed", RECORDED, current);
+    expect(message).toMatch(/THE APP'S FONTS CHANGED/);
+    expect(message).toContain("node_modules/geist");
+    expect(message).toContain("5e0f1a2b3c4d");
+    expect(message).toContain("9a8b7c6d5e4f");
+    expect(message).toMatch(/a UI change/);
+    expect(message).toContain("E2E_RENDERER_CHECK=skip pnpm e2e:update");
+    expect(message).not.toContain(`Fix: ${REBASE_RENDERER_COMMAND}`);
+    expect(message).toMatch(/copies no twin while the fonts differ from the record/);
   });
 
   test("a missing record says what this machine would record", () => {

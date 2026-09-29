@@ -128,41 +128,79 @@ export function isGreen(outcome: SuiteOutcome): boolean {
 
 /* ── One re-run, never two ─────────────────────────────────────────────────────────────────── */
 
+/**
+ * What a failed first run's one re-run runs again. The suite's tests share one database, run in
+ * order, and a test that fails can leave it changed under every test after it: the rename
+ * e2e/zz-account-rename.spec.ts saves, when a busy box misses its Undo.
+ *
+ * - "what-failed", the gate's: it compares, so a later test drawn on that state fails as well
+ *   and is re-run with the rest (Playwright's --last-failed); one that passed matched its baseline.
+ *   A `zz-` spec re-run alone starts from a fresh seed without what the specs before it did, so
+ *   it can fail again for that: a red gate, which puts the re-base back, never a false pass.
+ * - "whole-suite", the control's: it draws with --update-snapshots=all, where every screenshot
+ *   is written and passes, so a later test drawn on that state passes too and --last-failed would
+ *   keep its twin, which diffVerdict then calls a UI change. Its re-run is the whole suite again,
+ *   into an emptied root (runSuite), so every twin comes from one green run in the suite's order.
+ */
+export type RerunScope = "what-failed" | "whole-suite";
+
 export interface Attempt {
-  /** re-run only the tests that failed in the attempt before, with Playwright's --last-failed */
-  lastFailed: boolean;
+  /** null on the first run; on its one re-run, what that runs again */
+  rerun: RerunScope | null;
 }
 
 export interface Runs {
   green: boolean;
   attempts: SuiteOutcome[];
+  /** what the one re-run ran again, or would have */
+  scope: RerunScope;
 }
 
 /**
- * A test that fails, then passes when run again alone, is a machine that was busy for a moment
- * rather than a regression, and the 2026-09-11 load flakes cost hours of re-running to learn it.
- * So a failure gets exactly one re-run of what failed. A run that failed outside any test — a
- * global setup that refused, a web server that never came up — is not re-run: Playwright's
- * --last-failed with nothing recorded as failed would run the whole suite again, and the cause
- * is still there.
+ * A test that fails, then passes when run again, is a machine that was busy for a moment rather
+ * than a regression, and the 2026-09-11 load flakes cost hours of re-running to learn it. So a
+ * failure gets exactly one re-run, of `scope`. A run that failed outside any test — a global
+ * setup that refused, a web server that never came up — is not re-run: the cause is still there,
+ * and Playwright's --last-failed with nothing recorded as failed would run the whole suite again.
  */
 export async function runWithOneRerun(
   run: (attempt: Attempt) => Promise<SuiteOutcome>,
+  scope: RerunScope,
 ): Promise<Runs> {
-  const first = await run({ lastFailed: false });
-  if (isGreen(first)) return { green: true, attempts: [first] };
+  const first = await run({ rerun: null });
+  if (isGreen(first)) return { green: true, attempts: [first], scope };
   if (first.globalErrors.length > 0 || first.failed.length === 0) {
-    return { green: false, attempts: [first] };
+    return { green: false, attempts: [first], scope };
   }
-  const second = await run({ lastFailed: true });
-  return { green: isGreen(second), attempts: [first, second] };
+  const second = await run({ rerun: scope });
+  return { green: isGreen(second), attempts: [first, second], scope };
 }
 
-/** How many passed in the end: the first run's passes plus whatever the re-run rescued. */
+/**
+ * How many passed in the end: a re-run of the whole suite ran every test itself; one of what
+ * failed adds what it rescued to the first run's passes.
+ */
 export function passedInTheEnd(runs: Runs): number {
   const [first, second] = runs.attempts;
   if (first === undefined) return 0;
-  return second === undefined ? first.passed : first.passed + second.passed;
+  if (second === undefined) return first.passed;
+  return runs.scope === "whole-suite" ? second.passed : first.passed + second.passed;
+}
+
+/** What the one re-run ran again, or null when the first run was green or was not re-run. */
+export function rerunOf(runs: Runs): RerunScope | null {
+  return runs.attempts.length > 1 ? runs.scope : null;
+}
+
+/** "602 passed", and how the one re-run got there when there was one. */
+export function summarizeRuns(runs: Runs): string {
+  const [first, second] = runs.attempts;
+  const passed = `${passedInTheEnd(runs)} passed`;
+  if (first === undefined || second === undefined) return passed;
+  return runs.scope === "whole-suite"
+    ? `${passed} on one re-run of the whole suite, after ${first.failed.length} failed the ` +
+        "first time"
+    : `${passed}, ${second.passed} of them on the re-run`;
 }
 
 const LISTED_FAILURES = 25;
@@ -175,7 +213,11 @@ export function describeRed(runs: Runs): string[] {
   if (runs.attempts.length > 1) {
     const first = runs.attempts[0]!;
     lines.push(
-      `${first.failed.length} failed; the one re-run of those still failed ${last.failed.length}:`,
+      runs.scope === "whole-suite"
+        ? `${first.failed.length} failed; the one re-run of the whole suite failed ` +
+            `${last.failed.length}:`
+        : `${first.failed.length} failed; the one re-run of those still failed ` +
+            `${last.failed.length}:`,
     );
   } else if (last.failed.length > 0) lines.push(`${last.failed.length} failed:`);
   for (const t of last.failed.slice(0, LISTED_FAILURES)) {
@@ -261,7 +303,7 @@ export async function applyAndVerify(files: readonly string[], fx: ApplyEffects)
   try {
     for (const file of files) fx.copyTwin(file);
     fx.writeRecord();
-    gate = await runWithOneRerun((attempt) => fx.runGate(attempt));
+    gate = await runWithOneRerun((attempt) => fx.runGate(attempt), "what-failed");
   } catch (error) {
     const notRestored = putBack(files, fx);
     if (notRestored === null) throw error;

@@ -25,6 +25,8 @@ export const RENDERER_CHECK_ENV = "E2E_RENDERER_CHECK";
 export const REBASE_RENDERER_COMMAND = "pnpm e2e:rebase-renderer --confirm";
 
 const CANARY_SOURCE = "scripts/e2e-renderer/canary.ts";
+/** Where the Geist files come from: the package the app's next/font loaders read. */
+const GEIST_FILES = "node_modules/geist";
 /** Enough of a sha256 to tell two apart in a message; the record keeps all 64. */
 const SHORT_SHA = 12;
 
@@ -32,7 +34,10 @@ const sha256Hex = z.string().regex(/^[0-9a-f]{64}$/, "must be a 64-character low
 const RendererRecordSchema = z.object({
   canary: z.object({
     pixelSha256: sha256Hex,
+    /** everything the canary feeds the renderer: its context, its page and the Geist files */
     sourceSha256: sha256Hex,
+    /** the Geist files alone, which the app ships too: a change here moves the app's baselines */
+    fontSha256: sha256Hex,
     width: z.number().int().positive(),
     height: z.number().int().positive(),
   }),
@@ -45,7 +50,20 @@ const RendererRecordSchema = z.object({
 export type RendererRecord = z.infer<typeof RendererRecordSchema>;
 export type CanaryFingerprint = RendererRecord["canary"];
 export type RendererEnvironment = Pick<RendererRecord, "macos" | "playwright" | "chromiumRevision">;
-export type RendererVerdict = "match" | "renderer-changed" | "canary-changed" | "unrecorded";
+/**
+ * - "fonts-changed": the Geist files the app ships are not the recorded ones. That is the app's
+ *   own change, a UI change: it moves every baseline with text, and those belong to the commit
+ *   that changed the font. `pnpm e2e:rebase-renderer` copies no twin while it holds.
+ * - "canary-changed": the canary's page or context was edited, the fonts are as recorded. An
+ *   edit to the canary moves no baseline.
+ * - "renderer-changed": the same canary, drawn differently: the Mac or Chromium moved.
+ */
+export type RendererVerdict =
+  | "match"
+  | "renderer-changed"
+  | "canary-changed"
+  | "fonts-changed"
+  | "unrecorded";
 export type RendererCheck =
   | { verdict: "skipped" }
   | { verdict: "match"; recorded: RendererRecord; current: RendererRecord };
@@ -81,6 +99,7 @@ export function writeRecord(record: RendererRecord, file: string = BASELINE_REND
     canary: {
       pixelSha256: valid.canary.pixelSha256,
       sourceSha256: valid.canary.sourceSha256,
+      fontSha256: valid.canary.fontSha256,
       width: valid.canary.width,
       height: valid.canary.height,
     },
@@ -137,6 +156,8 @@ export function currentEnvironment(): RendererEnvironment {
  * canary identically on 2026-09-28, so refusing a run because a version string moved would cry
  * wolf on exactly the updates that change nothing. A changed source is checked first: the
  * recorded pixels then belong to another page, and comparing them proves nothing either way.
+ * Changed fonts come before any other change to the source, because they are the one change of
+ * the app's own that the canary sees, and a re-base must not take it for the renderer's.
  */
 export function compareRecord(
   recorded: RendererRecord | null,
@@ -145,6 +166,7 @@ export function compareRecord(
   if (recorded === null) return "unrecorded";
   const a = recorded.canary;
   const b = current.canary;
+  if (a.fontSha256 !== b.fontSha256) return "fonts-changed";
   if (a.sourceSha256 !== b.sourceSha256) return "canary-changed";
   const samePixels =
     a.pixelSha256 === b.pixelSha256 && a.width === b.width && a.height === b.height;
@@ -228,6 +250,27 @@ export function rendererMismatchMessage(
 
   const { rows, moved } = versionRows(recorded, current);
   const recordedOn = recorded.recordedOn.slice(0, 10);
+  if (verdict === "fonts-changed") {
+    const before = short(recorded.canary.fontSha256);
+    const after = short(current.canary.fontSha256);
+    return message(
+      `e2e: THE APP'S FONTS CHANGED — ${GEIST_FILES} is not the Geist the baselines were ` +
+        "drawn with.",
+      [
+        `${file} (recorded ${recordedOn}) holds Geist files ${before};`,
+        `this checkout ships ${after}.`,
+        ...rows,
+        "The app draws its text with these files, so this is a UI change and not the renderer's:",
+        "it moves every baseline with text, and those are redrawn, read and committed with the",
+        "change that moved the font, like any other UI change:",
+        `  pnpm build && ${RENDERER_CHECK_ENV}=skip pnpm e2e:update`,
+        `Once they are, record the renderer with ${REBASE_RENDERER_COMMAND}.`,
+        "It copies no twin while the fonts differ from the record, so it cannot re-base the",
+        "font's own drift as though the Mac had moved.",
+        RUN_ANYWAY,
+      ],
+    );
+  }
   if (verdict === "canary-changed") {
     const before = short(recorded.canary.sourceSha256);
     const after = short(current.canary.sourceSha256);
@@ -235,11 +278,10 @@ export function rendererMismatchMessage(
       "e2e: THE RENDERER CANARY ITSELF CHANGED — its pixels cannot be compared with the record.",
       [
         `${file} (recorded ${recordedOn}) holds the canary built from source ${before};`,
-        `this checkout builds it from ${after}. Either ${CANARY_SOURCE} or the Geist`,
-        "font files it embeds (node_modules/geist) are not what was recorded.",
+        `this checkout builds it from ${after}. The Geist files are the ones recorded, so`,
+        `${CANARY_SOURCE} itself was edited, and an edit to the canary moves no baseline.`,
         ...rows,
-        "An edit to the canary moves no baseline; a Geist upgrade moves every baseline with",
-        "text. Until the canary is recorded again the gate cannot tell which one this is.",
+        "Until the canary is recorded again the gate cannot tell whether the renderer moved too.",
         `Fix: ${REBASE_RENDERER_COMMAND}`,
         RUN_ANYWAY,
       ],
@@ -282,6 +324,7 @@ export async function measureCurrentRenderer(now: Date = new Date()): Promise<Re
       canary: {
         pixelSha256: canary.pixelSha256,
         sourceSha256: canary.sourceSha256,
+        fontSha256: canary.fontSha256,
         width: canary.width,
         height: canary.height,
       },

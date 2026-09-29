@@ -1,6 +1,11 @@
 import { describe, expect, test } from "vitest";
 import { diffVerdict, type DiffVerdict, type RawImage } from "./diff-verdict";
-import { oneLineRenderer, type RendererRecord, type RendererVerdict } from "./fingerprint";
+import {
+  compareRecord,
+  oneLineRenderer,
+  type RendererRecord,
+  type RendererVerdict,
+} from "./fingerprint";
 import type { GateAnswer } from "./gate-comparator";
 import { INK_SCALES } from "./ink-shift";
 import {
@@ -419,6 +424,61 @@ describe("planRebase on a HEAD never pushed as origin/main's tip", () => {
   });
 });
 
+/**
+ * The canary embeds the Geist files the app ships, so a Geist upgrade moves the canary's source,
+ * and every baseline with text moves with it. That drift is the app's own, a UI change, however
+ * much it looks like the renderer's to diffVerdict: its baselines belong to the commit that
+ * changed the font. So no twin is copied while the fonts differ from the record, whatever vouched
+ * for HEAD; the record alone may be written once the gate passes every baseline drawn with them.
+ */
+describe("planRebase when the fonts the app ships changed", () => {
+  const record = (fontSha256: string, sourceSha256: string): RendererRecord => ({
+    canary: { pixelSha256: "a".repeat(64), sourceSha256, fontSha256, width: 1280, height: 720 },
+    recordedOn: "2026-09-28T19:02:11.000Z",
+    macos: { productVersion: "27.2", buildVersion: "26B5091g" },
+    playwright: "1.61.1",
+    chromiumRevision: "1228",
+  });
+  const recorded = record("d".repeat(64), "c".repeat(64));
+  // a Geist upgrade: new font bytes, so a new source hash too, on the same Mac
+  const upgraded = record("e".repeat(64), "f".repeat(64));
+
+  test("a Geist upgrade copies no twin, pushed or not, allowed or not", () => {
+    const verdict = compareRecord(recorded, upgraded);
+    const judged = [fails(A), passes(B), unknown(C)];
+    for (const push of [PUSHED, UNPUSHED, { pushed: false, allowUnpushed: true }]) {
+      expect(planRebase(verdict, full([A, B, C]), tally(judged), push)).toEqual({
+        action: "refuse-fonts",
+        files: [A, C],
+      });
+    }
+  });
+
+  test("the record alone goes ahead when the gate passes every baseline drawn with them", () => {
+    const verdict = compareRecord(recorded, upgraded);
+    const plan = planRebase(verdict, full([A, B]), tally([same(A), passes(B)]), UNPUSHED);
+    expect(plan).toEqual({ action: "rebase", files: [], tolerated: [B], bootstrap: false });
+  });
+
+  test("an unpaired twin or a content verdict still refuses first", () => {
+    const verdict = compareRecord(recorded, upgraded);
+    const plan = planRebase(verdict, full([A, B]), tally([fails(A), changed(B)]), PUSHED);
+    expect(plan.action).toBe("refuse-content");
+  });
+
+  /** An edit to the canary page alone moves no baseline: renderer drift is re-based as ever. */
+  test("an edit to the canary page alone still re-bases what the gate fails", () => {
+    const verdict = compareRecord(recorded, record("d".repeat(64), "f".repeat(64)));
+    expect(verdict).toBe("canary-changed");
+    expect(planRebase(verdict, full([A, B]), tally([fails(A), passes(B)]), PUSHED)).toEqual({
+      action: "rebase",
+      files: [A],
+      tolerated: [B],
+      bootstrap: false,
+    });
+  });
+});
+
 describe("the words", () => {
   test("a content refusal names the file, the measure that decided, and where", () => {
     expect(describeContent([changed(B)])).toEqual([
@@ -501,7 +561,13 @@ describe("the words", () => {
   });
 
   const RECORDED: RendererRecord = {
-    canary: { pixelSha256: "a".repeat(64), sourceSha256: "c".repeat(64), width: 1280, height: 720 },
+    canary: {
+      pixelSha256: "a".repeat(64),
+      sourceSha256: "c".repeat(64),
+      fontSha256: "d".repeat(64),
+      width: 1280,
+      height: 720,
+    },
     recordedOn: "2026-09-28T19:02:11.000Z",
     macos: { productVersion: "27.2", buildVersion: "26B5091g" },
     playwright: "1.61.1",
@@ -549,8 +615,8 @@ describe("the words", () => {
       current: CURRENT,
       head: { sha: "c3b9a59163994b2db7145ce4aea77bd806d66425", subject: "fix(pay): a payday" },
       pushed: true,
-      control: { passed: 602, rerun: false },
-      gate: { passed: 602, rerun: false },
+      control: { passed: 602, rerun: null },
+      gate: { passed: 602, rerun: null },
       ...overrides,
     };
   }
@@ -618,6 +684,27 @@ describe("the words", () => {
     expectWrapped(message);
   });
 
+  /** After the font's baselines were redrawn with it: the record alone, and why it moved. */
+  test("a record-only run after a Geist upgrade says the fonts moved, not the Mac", () => {
+    const upgraded: RendererRecord = {
+      ...CURRENT,
+      canary: { ...CURRENT.canary, fontSha256: "e".repeat(64), sourceSha256: "f".repeat(64) },
+    };
+    const message = commitMessage(
+      facts([same(A), passes(B)], { verdict: "fonts-changed", current: upgraded }),
+    );
+    expect(message.split("\n")[0]).toBe(
+      "chore(e2e): record macOS 27.3 (26C12) as the baselines' renderer — no baseline changed",
+    );
+    const text = prose(message);
+    expect(text).toContain(
+      "The Geist files the app ships (node_modules/geist) changed since 2026-09-28",
+    );
+    expect(text).toContain("dddddddddddd -> eeeeeeeeeeee");
+    expect(text).not.toContain("This Mac stopped drawing");
+    expectWrapped(message);
+  });
+
   test("a file the comparator could not judge is re-based, and the commit says why", () => {
     const message = commitMessage(facts([unknown(A), fails(B)]));
     expect(message.split("\n")[0]).toBe(
@@ -664,10 +751,19 @@ describe("the words", () => {
     expect(commitMessage(facts([fails(A)]))).not.toContain("origin/main");
   });
 
-  test("a re-run that rescued a failure is said, not hidden", () => {
+  test("a re-run that rescued a failure is said, not hidden, as what it re-ran", () => {
     const message = commitMessage(
-      facts([fails(A)], { control: { passed: 602, rerun: true } }),
+      facts([fails(A)], {
+        control: { passed: 602, rerun: "whole-suite" },
+        gate: { passed: 602, rerun: "what-failed" },
+      }),
     );
-    expect(prose(message)).toContain("602 passed, after one re-run of what failed first");
+    expect(prose(message)).toContain(
+      "602 passed, on one re-run of the whole suite after the first run failed.",
+    );
+    expect(prose(message)).toContain(
+      "(E2E_GATE=1): 602 passed, after one re-run of what failed first.",
+    );
+    expect(prose(commitMessage(facts([fails(A)])))).not.toContain("re-run");
   });
 });

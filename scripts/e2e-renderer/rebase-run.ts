@@ -6,7 +6,14 @@ import { RENDERER_CHECK_ENV } from "./fingerprint";
 import { askGate, loadGateComparator, type GateFails, type GateOptions } from "./gate-comparator";
 import type { Judged, RebaseArgs } from "./rebase-plan";
 import { SNAPSHOT_ROOT_ENV } from "./snapshot-root";
-import { outcomeFromReport, type Attempt, type SuiteOutcome } from "./suite-run";
+import {
+  outcomeFromReport,
+  runWithOneRerun,
+  type Attempt,
+  type RerunScope,
+  type Runs,
+  type SuiteOutcome,
+} from "./suite-run";
 
 /**
  * The processes `pnpm e2e:rebase-renderer` starts — `next build` and the two kinds of suite run —
@@ -78,25 +85,40 @@ export function suiteArgs(kind: SuiteKind, attempt: Attempt, only: RebaseArgs["o
     ...(only === null ? [] : [only.spec]),
     ...(only?.grep == null ? [] : ["-g", only.grep]),
     kind === "control" ? "--update-snapshots=all" : "--update-snapshots=none",
-    ...(attempt.lastFailed ? ["--last-failed"] : []),
+    ...(attempt.rerun === "what-failed" ? ["--last-failed"] : []),
     "--reporter=list,json",
   ];
 }
 
+/** How a suite run is started: spawnLogged, or a stand-in that writes the JSON report itself. */
+export type SpawnSuite = typeof spawnLogged;
+
+const AGAIN: Record<RerunScope, string> = {
+  "what-failed": ", re-running what failed",
+  "whole-suite": ", re-running the whole suite",
+};
+
+/**
+ * One attempt of either kind. A control attempt starts from an emptied snapshot root, so the
+ * twins the classification pairs are all of the last attempt's drawing: a re-run never leaves
+ * one behind from a run that failed (see RerunScope).
+ */
 export async function runSuite(
   kind: SuiteKind,
   attempt: Attempt,
   ctx: SuiteContext,
   announce: (title: string) => void,
+  spawn: SpawnSuite = spawnLogged,
 ): Promise<SuiteOutcome> {
-  const n = attempt.lastFailed ? 2 : 1;
+  const n = attempt.rerun === null ? 1 : 2;
   const env = suiteEnv(kind, n, ctx);
   const report = env.PLAYWRIGHT_JSON_OUTPUT_FILE!;
   const log = path.join(ctx.scratch, `${kind}.log`);
-  const again = n === 2 ? ", re-running what failed" : "";
+  const again = attempt.rerun === null ? "" : AGAIN[attempt.rerun];
   announce(`${kind === "control" ? "Control" : "Gate"}${again} (log: ${log})`);
   fs.rmSync(report, { force: true });
-  const code = await spawnLogged("pnpm", suiteArgs(kind, attempt, ctx.only), env, log);
+  if (kind === "control") fs.rmSync(ctx.snapshotRoot, { recursive: true, force: true });
+  const code = await spawn("pnpm", suiteArgs(kind, attempt, ctx.only), env, log);
   let json: unknown = null;
   try {
     json = JSON.parse(fs.readFileSync(report, "utf8"));
@@ -104,6 +126,21 @@ export async function runSuite(
     json = null;
   }
   return outcomeFromReport(code, json);
+}
+
+/**
+ * The control: the whole suite drawn into the scratch root, and on a failure one re-run of the
+ * whole suite again, never of what failed alone (RerunScope says why).
+ */
+export function runControl(
+  ctx: SuiteContext,
+  announce: (title: string) => void,
+  spawn: SpawnSuite = spawnLogged,
+): Promise<Runs> {
+  return runWithOneRerun(
+    (attempt) => runSuite("control", attempt, ctx, announce, spawn),
+    "whole-suite",
+  );
 }
 
 /* ── Judging what the control drew ────────────────────────────────────────────────────────── */

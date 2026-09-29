@@ -16,31 +16,43 @@ import type { Browser, BrowserContextOptions, Page, PageScreenshotOptions } from
  * exactly like 107 regressions. Launching a browser and rendering this page takes under a
  * second, so the gate can say it up front, before seeding a database or opening an app page.
  *
- * WHAT IT DRAWS: every text path the baselines use, in both themes. Measured with CDP's
- * CSS.getPlatformFontsForNode on 2026-09-28 (macOS 27.2, Chromium 149 headless shell), the page
- * is drawn by exactly the platform fonts the app's pages are:
+ * WHAT IT DRAWS: every face the baselines' text is drawn with, the way the app draws it, in both
+ * themes. Measured 2026-09-29 (macOS 27.2, Playwright 1.61.1's headless shell) with faces.ts,
+ * which asks CDP's CSS.getPlatformFontsForNode, over every text node of the 24 pages
+ * e2e/visual.spec.ts photographs, light and dark at 1440 and light at 320: 16 faces, each of which
+ * this page draws too. canary.test.ts holds it to that list (APP_FACES), and to every line of text
+ * lying inside its panel, where the screenshot sees it.
  *   - Geist and Geist Mono, from the exact woff2 files the app ships, declared the way
- *     next/font's build output declares them. That includes the size-adjusted local Arial face
- *     it generates; Geist covers every symbol the app prints, so Arial draws nothing today.
- *   - The display serif stack, copied verbatim. Headless Chromium resolves neither `ui-serif`
- *     nor "New York", so the hero figures land on Iowan Old Style, and its missing → comes from
- *     Times New Roman. Both are macOS system fonts: an OS update can change the fonts
- *     themselves, not only how they are rasterised.
- *   - system-ui, the body's own fallback: ⌘ is not in Geist, so SF draws it, as it does in the
- *     app's shortcut hints.
+ *     next/font's build output declares them, at the weights the app uses (Geist 400 to 700, Mono
+ *     400, 500 and 600). That includes the size-adjusted local Arial face next/font generates,
+ *     which draws nothing today.
+ *   - Geist slanted by Chromium: the variable font has no italic, so an uncategorized
+ *     CategoryChip and an <em> are obliqued by the renderer itself, a path of its own.
+ *   - The wordmark on every page (AppShell.tsx): the display serif stack, copied verbatim,
+ *     semibold and uppercase, with an italic <em>. Headless Chromium resolves neither `ui-serif`
+ *     nor "New York", so it lands on Iowan Old Style Bold and Bold Italic. The same stack at 500
+ *     draws Iowan Old Style Roman, and its missing → Times New Roman: no baselined page draws those
+ *     two today; they stay, since a display figure would. All are macOS system fonts: an OS update
+ *     can change the fonts themselves, not only how they are rasterised.
+ *   - The symbols Geist lacks, as the app prints them, which macOS draws from its own fonts:
+ *     ⌘ and the calendar's ✓ from SF, its ✕ from Zapf Dingbats, the holdings table's ⇄ from
+ *     Hiragino Sans.
  *   - The type scale's sizes and weights at the 1280px Desktop Chrome viewport, fractional sizes
- *     included, with tabular digits and the symbols the app prints ($ , . − → ≈ · and friends).
+ *     included, from the smallest 7px label to the 48px figures, with tabular digits and the
+ *     symbols the app prints ($ , . − → ≈ · and friends).
  *   - Ink on paper and paper on ink. Glyph masks are built per text luminance, so light-on-dark
  *     text takes a different path from dark-on-light and one theme alone would miss half of it.
- *   - SVG <text> the way chart ticks draw it, stroked icon and chart paths, a card's rounded
- *     edge and shadow, and the paper grain every page sits on.
+ *   - SVG <text> the way charts draw it (ticks in Geist, flow labels in Geist Medium, deltas in
+ *     Geist Mono), stroked icon and chart paths, a card's rounded edge and shadow, and the paper
+ *     grain every page sits on.
  *
  * FROZEN ON PURPOSE. The tokens, font stacks and sizes are COPIED from src/app/globals.css and
  * next/font's generated CSS, never read from them. A canary that imported the app's styles
  * would move with every design change and report it as a renderer change, which is the one
  * confusion this file exists to remove. The figures are glyph coverage, not ledger data. Any
  * edit here changes sourceSha256, and the gate then says "canary-changed" until the canary is
- * recorded again.
+ * recorded again. A Geist upgrade changes fontSha256 as well, and the gate says "fonts-changed":
+ * the app's own change, whose baselines are redrawn with it (fingerprint.ts).
  */
 
 /**
@@ -95,6 +107,7 @@ export interface CanaryFonts {
 export interface CanarySource {
   html: string;
   sourceSha256: string;
+  fontSha256: string;
 }
 
 export interface CanaryRender {
@@ -102,6 +115,11 @@ export interface CanaryRender {
   pixelSha256: string;
   /** sha256 of everything the canary feeds the renderer: context, page and font bytes */
   sourceSha256: string;
+  /**
+   * sha256 of the Geist files alone. The app ships the same files, so this moving is the app's
+   * change, not the canary's or the renderer's (compareRecord's "fonts-changed").
+   */
+  fontSha256: string;
   width: number;
   height: number;
   png: Buffer;
@@ -145,16 +163,33 @@ export function buildCanarySource(fonts: CanaryFonts): CanarySource {
     fonts.sans,
     fonts.mono,
   ]);
-  return { html, sourceSha256 };
+  return { html, sourceSha256, fontSha256: sha256OfParts([fonts.sans, fonts.mono]) };
 }
 
-export async function renderCanary(browser: Browser): Promise<CanaryRender> {
+export interface OpenCanary {
+  page: Page;
+  source: CanarySource;
+  close(): Promise<void>;
+}
+
+/** The canary page in its own context, every embedded face loaded: what renderCanary shoots. */
+export async function openCanary(browser: Browser): Promise<OpenCanary> {
   const source = buildCanarySource(readShippedFonts());
   const context = await browser.newContext(CANARY_CONTEXT);
   try {
     const page = await context.newPage();
     await page.setContent(source.html, { waitUntil: "load" });
     await waitForCanaryFonts(page);
+    return { page, source, close: () => context.close() };
+  } catch (error) {
+    await context.close();
+    throw error;
+  }
+}
+
+export async function renderCanary(browser: Browser): Promise<CanaryRender> {
+  const { page, source, close } = await openCanary(browser);
+  try {
     const png = await settledScreenshot(page);
     // Raw RGBA, not the PNG bytes: the question is what was drawn, not how it was encoded.
     const { data, info } = await sharp(png)
@@ -164,12 +199,13 @@ export async function renderCanary(browser: Browser): Promise<CanaryRender> {
     return {
       pixelSha256: crypto.createHash("sha256").update(data).digest("hex"),
       sourceSha256: source.sourceSha256,
+      fontSha256: source.fontSha256,
       width: info.width,
       height: info.height,
       png,
     };
   } finally {
-    await context.close();
+    await close();
   }
 }
 
@@ -264,6 +300,8 @@ const LIGHT_TOKENS = `
   --positive: oklch(0.5 0.11 160);
   --negative: oklch(0.53 0.15 30);
   --ink-display: oklch(0.17 0.02 70);
+  --accent-ink: oklch(0.38 0.075 165);
+  --surface-sunken: oklch(0.955 0.006 85);
   --annotation: oklch(0.5 0.013 78);
   --emboss-hi: oklch(100% 0 0 / 0.85);
   --emboss-lo: oklch(0.22 0.015 75 / 0.055);
@@ -284,6 +322,8 @@ const DARK_TOKENS = `
   --positive: oklch(0.73 0.115 160);
   --negative: oklch(0.68 0.14 30);
   --ink-display: oklch(0.965 0.01 85);
+  --accent-ink: oklch(0.8 0.1 165);
+  --surface-sunken: oklch(0.165 0.011 75);
   --annotation: oklch(0.66 0.012 80);
   --emboss-hi: oklch(100% 0 0 / 0.055);
   --emboss-lo: oklch(0% 0 0 / 0.4);
@@ -299,9 +339,10 @@ const GRAIN_TILE =
 
 /**
  * The sizes are the type scale's clamps evaluated at the 1280px viewport: body 15px, lede 18px,
- * h3 19.84px, h2 28.8px, h1 41.12px, display 94.72px, display-2 40px, plus the fixed eyebrow
- * (11px) and micro (12px) steps and Tailwind's 13, 14 and 16px. Fractional sizes are kept
- * because they are what the baselines rasterise.
+ * h3 19.84px (the wordmark's too), h2 28.8px, h1 41.12px, display 94.72px, display-2 40px, plus
+ * the fixed eyebrow (11px) and micro (12px) steps, Tailwind's 13, 14, 16 and 48px, and the 7, 8
+ * and 9px the smallest labels use. Fractional sizes are kept because they are what the baselines
+ * rasterise. The grain sits under the second column, clear of every line of text.
  */
 const PAGE_CSS = `
   @font-face {
@@ -346,6 +387,11 @@ const PAGE_CSS = `
     font-family: var(--face-display); font-weight: 500; letter-spacing: -0.025em;
     color: var(--ink-display);
   }
+  .wordmark {
+    font-family: var(--face-display); font-size: 19.84px; font-weight: 600;
+    letter-spacing: 0.09em; text-transform: uppercase; color: var(--ink-display);
+  }
+  .wordmark em { letter-spacing: 0.02em; color: var(--accent-ink); }
   .hero { font-size: 94.72px; line-height: 0.9; margin-top: 6px; }
   .second { font-size: 40px; line-height: 1.05; margin-top: 10px; }
   .h1 { font-size: 41.12px; font-weight: 600; letter-spacing: -0.02em; margin-top: 8px; }
@@ -358,6 +404,18 @@ const PAGE_CSS = `
   .t13 { font-size: 13px; font-weight: 700; }
   .t12 { font-size: 12px; color: var(--ink-faint); }
   .system { font-family: system-ui; font-size: 15px; }
+  .chip {
+    display: inline-flex; align-items: center; padding: 2px 8px; border: 1px solid var(--line);
+    border-radius: 9999px; background-color: var(--surface-sunken); font-size: 12px;
+    font-style: italic; color: var(--ink-faint);
+  }
+  .legend { font-size: 11px; color: var(--ink-faint); }
+  .mark { font-size: 12px; font-weight: 700; line-height: 1; color: var(--ink-muted); }
+  .mark9 { font-size: 9px; font-weight: 700; line-height: 1; color: var(--positive); }
+  .cycle { font-size: 11px; font-weight: 500; letter-spacing: 0.08em; text-transform: uppercase; }
+  .t9 { font-size: 9px; color: var(--ink-muted); }
+  .t8 { font-size: 8px; color: var(--ink-muted); }
+  .t7 { font-size: 7px; font-weight: 600; }
   .pos { color: var(--positive); }
   .neg { color: var(--negative); }
   .card {
@@ -371,10 +429,17 @@ const PAGE_CSS = `
   .f16 { font-size: 16px; font-weight: 600; }
   .f14 { font-size: 14px; }
   .f12 { font-size: 12px; color: var(--ink-muted); }
+  .f15 { font-size: 15px; font-weight: 500; }
+  .f48 { font-size: 48px; font-weight: 600; line-height: 1; margin-top: 6px; }
   svg { display: block; overflow: visible; }
   .grid-line { stroke: var(--line); stroke-width: 1; }
   .tick { font-size: 11px; fill: var(--ink-muted); }
   .tick-x { font-size: 11px; fill: var(--annotation); }
+  .node { font-size: 10px; font-weight: 500; fill: var(--ink); }
+  .delta {
+    font-family: var(--font-geist-mono), ui-monospace, monospace; font-size: 9px;
+    fill: var(--ink-muted);
+  }
   .trend {
     fill: none; stroke: var(--accent); stroke-width: 2;
     stroke-linejoin: round; stroke-linecap: round;
@@ -386,7 +451,7 @@ const PAGE_CSS = `
     stroke-linecap: round; stroke-linejoin: round;
   }
   .grain {
-    position: absolute; left: 28px; bottom: 14px; width: 200px; height: 44px;
+    position: absolute; left: 552px; bottom: 14px; width: 200px; height: 44px;
     opacity: var(--grain-opacity); mix-blend-mode: var(--grain-blend);
     background-image: url("${GRAIN_TILE}"); background-size: 200px 200px;
   }`;
@@ -414,6 +479,8 @@ const CHART = `
     <text class="tick-x" x="66" y="108" text-anchor="middle">Jul '26</text>
     <text class="tick-x" x="158" y="108" text-anchor="middle">Aug 14</text>
     <text class="tick-x" x="250" y="108" text-anchor="middle">Sep 28</text>
+    <text class="node" x="44" y="12">Chase Total Checking</text>
+    <text class="delta" x="296" y="12" text-anchor="end">+$82.03 · +104%</text>
     <path class="area" d="M40 84.6L66.2 79.3L92.4 81.8L118.7 66.4L144.9 70.2L171.1 52.7
       L197.3 58.9L223.6 41.5L249.8 45.1L276 30.8L276 90.5L40 90.5Z"/>
     <path class="trend" d="M40 84.6L66.2 79.3L92.4 81.8L118.7 66.4L144.9 70.2L171.1 52.7
@@ -426,6 +493,7 @@ function panel(theme: "light" | "dark"): string {
   <section class="panel ${theme}">
     <div>
       <p class="eyebrow">Net worth · ${theme} · 13 accounts</p>
+      <p class="wordmark">Money<em>App</em></p>
       <p class="display hero">$1,234.56</p>
       <p class="display second">−$7,890.12 → ≈ 3.4 mo</p>
       <p class="h1">Cash flow ▲ 12%</p>
@@ -439,6 +507,13 @@ function panel(theme: "light" | "dark"): string {
       <p class="t14">Sep 23, 2026 · 4 weeks ($5,678.90) ▲ 12% ▼ 3%</p>
       <p class="t13">10,987 rows… ← back · ⌘K · × close</p>
       <p class="t12">Every figure traces to a statement line · 0123456789</p>
+      <p class="t12"><span class="chip">Uncategorized</span> the money is <em>checked</em>,
+        not filed</p>
+      <p class="legend"><span class="mark">✓</span> Paid <span class="mark">✕</span> Missed
+        <span class="mark">?</span> Not yet known <span class="mark9">✓ ✕ ! •</span>
+        <span class="cycle">Day % ⇄</span></p>
+      <p><span class="t9">Skip to content · Accounts</span> <span class="figures t8">07 08 · excl.
+        360</span> <span class="t7">CO CH DI</span></p>
       <p class="system">System UI · 0123456789 $ , . − → ≈ ·</p>
     </div>
     <div>
@@ -447,9 +522,11 @@ function panel(theme: "light" | "dark"): string {
         <p class="figures f14">
           <span class="neg">−$695.04</span> <span class="pos">+$8,901.23</span></p>
         <p class="figures f12">0123456789 $,.−→≈· 42.0%</p>
+        <p class="figures f15">$145,269.81 · (+24.6%)</p>
       </div>
       ${CHART}
       <div class="icons">${ICONS}</div>
+      <p class="figures f48">$1,317.38</p>
     </div>
     <div class="grain"></div>
   </section>`;
