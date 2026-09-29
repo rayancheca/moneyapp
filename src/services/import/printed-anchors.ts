@@ -17,10 +17,28 @@ import { copyHandOvers, type CopyHandOver } from "./statement-copies";
  * 2026-09-16: 240 of the 265 statement anchors name a day another file's printed period also prints, and 106 are
  * owned by one of 59 second downloads that own no row and no period.
  *
+ * 🔴 …and kept every anchor another download had taken over, though it printed the file's own period. A second
+ * download whose read FAILED part-way takes over the balances of the period it adopts, and is no heir to it
+ * (`copyHandOvers` hands a period to a live file only): un-importing the first download took the period and left its
+ * balances standing under the failed copy, with no period. Measured 2026-09-28 (agentic-book.test.ts): once June, its
+ * last month, was un-imported too, Robinhood Agentic Brokerage stayed, valued at $26.22 from Aug 31 with no share left
+ * in it, and Robinhood Agentic kept August's $1.64 with none of its rows. A period's balances go with whatever removes
+ * the period (`removerOf`).
+ *
  * ⚠️ Statement anchors only: nothing but the anchor itself records an OFX ledger balance.
  */
 
 type Operand = SQLWrapper | string;
+
+/**
+ * The file whose removal takes a statement anchor: the file holding the period the anchor prints, whichever download
+ * wrote it last — a copy that adopted the period only hands it back (`handOverPrintedAnchors`) — else the file that
+ * wrote it. ONE rule for the hand-over and for the /imports confirmation's count of what an un-import removes.
+ */
+function removerOf(anchor: { statementPeriodId: SQLWrapper; importFileId: SQLWrapper }): SQL<string | null> {
+  const periodHolder = sql`(SELECT held.import_file_id FROM statement_periods AS held WHERE held.id = ${anchor.statementPeriodId})`;
+  return sql<string | null>`coalesce(${periodHolder}, ${anchor.importFileId})`;
+}
 
 /**
  * A printed-balance period of a file other than `anchor.importFileId`, on the anchor's account, that prints the
@@ -42,12 +60,18 @@ function printsBalanceOn(anchor: { accountId: Operand; day: Operand }): SQL {
 }
 
 /**
- * Hands each statement anchor `importFileId` owns to another file's period that prints the same day, instead of
- * letting it go with the file: the period that closes on the day first, then the most recently imported file. The
- * balance, the file and the period move together, as `upsertAnchor` moves them. Call it inside the transaction that
- * removes the file's anchors, before the delete.
+ * Hands each statement anchor `importFileId`'s removal takes (`removerOf`) to another file's period that prints the
+ * same day, instead of letting it go with the file: the period that closes on the day first, then the most recently
+ * imported file. The balance, the file and the period move together, as `upsertAnchor` moves them; the rest are the
+ * file's now, for the delete. Call it inside the transaction that removes the file's anchors, before the delete — and
+ * after its periods went to the copies that inherit them (`handOverToCopies`, `lendToCopies`): their balances stay.
  */
 export function handOverPrintedAnchors(tx: AppDatabase, importFileId: string): void {
+  // what the file's periods print is the file's to hand over or remove, whichever copy wrote it last
+  tx.update(balanceAnchors)
+    .set({ importFileId })
+    .where(and(eq(balanceAnchors.source, "statement"), eq(removerOf(balanceAnchors), importFileId)))
+    .run();
   const owned = tx
     .select({ id: balanceAnchors.id, accountId: balanceAnchors.accountId, day: balanceAnchors.anchoredOn })
     .from(balanceAnchors)
@@ -80,11 +104,11 @@ export function handOverPrintedAnchors(tx: AppDatabase, importFileId: string): v
 }
 
 /**
- * How many recorded balances un-importing each file removes: the anchors it owns, less the ones another statement
- * still prints (`handOverPrintedAnchors`) — less the ones its own period prints when that period goes to another
- * download of the statement (`plans`, `statement-copies`: the un-import hands the period over first, so the anchor
- * follows it) — and less an opening kept for a statement he un-imported that follows its rows to a file that prints
- * them (`printers`, `followingOpeningsByFile`). A file that removes none is absent.
+ * How many recorded balances un-importing each file removes: the anchors its removal takes (`removerOf`), less the
+ * ones another statement still prints (`handOverPrintedAnchors`) — less the ones its own period prints when that
+ * period goes to another download of the statement (`plans`, `statement-copies`: the un-import hands the period over
+ * first, so the anchor follows it) — and less an opening kept for a statement he un-imported that follows its rows to
+ * a file that prints them (`printers`, `followingOpeningsByFile`). A file that removes none is absent.
  */
 export function balancesRemovedByFile(
   db: AppDatabase,
@@ -101,14 +125,16 @@ export function balancesRemovedByFile(
 }
 
 /**
- * `balancesRemovedByFile`, per account: file → account → how many of the recorded balances it owns the un-import takes
- * from the account — an opening that follows its rows (`followingOpeningsByFile`) counted in, for the caller to weigh.
+ * `balancesRemovedByFile`, per account: file → account → how many recorded balances its un-import takes from the
+ * account (`removerOf`) — an opening that follows its rows (`followingOpeningsByFile`) counted in, for the caller to
+ * weigh.
  */
 export function balancesRemovedByFileAndAccount(
   db: AppDatabase,
   plans: ReadonlyMap<string, readonly CopyHandOver[]> = copyHandOvers(db),
 ): Map<string, Map<string, number>> {
   const handedPeriodIds = JSON.stringify([...plans.values()].flatMap((list) => list.map((p) => p.periodId)));
+  const remover = removerOf(balanceAnchors);
   const printedElsewhere = db
     .select({ id: statementPeriods.id })
     .from(statementPeriods)
@@ -117,26 +143,21 @@ export function balancesRemovedByFileAndAccount(
         printsTheDay({
           accountId: balanceAnchors.accountId,
           day: balanceAnchors.anchoredOn,
-          importFileId: balanceAnchors.importFileId,
+          importFileId: remover,
         }),
         and(
           sql`${statementPeriods.id} IN (SELECT value FROM json_each(${handedPeriodIds}))`,
-          eq(statementPeriods.importFileId, balanceAnchors.importFileId),
+          eq(statementPeriods.importFileId, remover),
           printsBalanceOn({ accountId: balanceAnchors.accountId, day: balanceAnchors.anchoredOn }),
         ),
       ),
     );
   const removed = new Map<string, Map<string, number>>();
   for (const r of db
-    .select({ importFileId: balanceAnchors.importFileId, accountId: balanceAnchors.accountId, n: count() })
+    .select({ importFileId: remover, accountId: balanceAnchors.accountId, n: count() })
     .from(balanceAnchors)
-    .where(
-      and(
-        isNotNull(balanceAnchors.importFileId),
-        not(and(eq(balanceAnchors.source, "statement"), exists(printedElsewhere))!),
-      ),
-    )
-    .groupBy(balanceAnchors.importFileId, balanceAnchors.accountId)
+    .where(and(isNotNull(remover), not(and(eq(balanceAnchors.source, "statement"), exists(printedElsewhere))!)))
+    .groupBy(remover, balanceAnchors.accountId)
     .all()) {
     if (r.importFileId === null) continue;
     removed.set(r.importFileId, new Map([...(removed.get(r.importFileId) ?? []), [r.accountId, r.n]]));

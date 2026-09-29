@@ -383,7 +383,7 @@ reconciliation is the backstop.
 | balance_cents | INTEGER | net-worth-signed |
 | source | enum | `statement` \| `ofx_ledger` \| `manual` \| `live` \| `unimported_statement` |
 | statement_period_id | FK nullable | |
-| import_file_id | FK nullable | the file the anchor dies with on un-import |
+| import_file_id | FK nullable | the file that wrote it last; the anchor dies with it on un-import — a `statement` anchor with the file holding its period, whichever download of the statement wrote it, unless another period prints its day (`services/import/printed-anchors`) |
 
 UNIQUE(account_id, anchored_on, source).
 **Precedence on the same date: `statement > ofx_ledger > manual > live`.** Only the winning

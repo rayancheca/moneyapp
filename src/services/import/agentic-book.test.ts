@@ -10,7 +10,7 @@ import { balanceAnchors, dailyBalances } from "@/db/schema/balances";
 import { categories } from "@/db/schema/categories";
 import { holdingEvents } from "@/db/schema/holding-events";
 import { holdings, priceCache } from "@/db/schema/holdings";
-import { importFiles, statementPeriods } from "@/db/schema/imports";
+import { importFiles, printedLines, statementCopies, statementPeriods } from "@/db/schema/imports";
 import { institutions } from "@/db/schema/institutions";
 import { transactions } from "@/db/schema/transactions";
 import { withheldSectionsOf } from "@/lib/import-file-label";
@@ -21,6 +21,7 @@ import { portfolioSeries } from "@/services/portfolio";
 import { addManualAnchor } from "@/services/anchors";
 import { refreshPrices, type PriceProvider } from "@/services/prices";
 import { removeFileEvents, resolveBook, syncBookHoldings, writeStatementPositions } from "./brokerage-book";
+import { balancesRemovedByFile } from "./printed-anchors";
 import { PROFILES } from "./profiles";
 import type { Line } from "./profiles/pdf-profile";
 import { findAccountId, importStatementFiles, parseContextFor, resolveAccount, unimportFile, type ImportInput } from "./service";
@@ -36,10 +37,24 @@ import type { AccountHint } from "./types";
  * extractions with only what the constructed trades change — no statement for this account has printed a position.
  */
 
-const { DOCUMENTS, WRITE_FAULT } = vi.hoisted(() => ({
+const { DOCUMENTS, WRITE_FAULT, SECTION_FAULT } = vi.hoisted(() => ({
   DOCUMENTS: new Map<string, Line[]>(),
   WRITE_FAULT: { message: null as string | null, through: null as string | null },
+  SECTION_FAULT: { message: null as string | null, accountId: null as string | null },
 }));
+
+// a fault in one account's statement write, the first thing its transaction does — for the tests that need a file to
+// fail AFTER its earlier sections committed, as any unexpected error in a later section leaves it
+vi.mock("./printed-lines", async (importOriginal) => {
+  const original = await importOriginal<typeof import("./printed-lines")>();
+  return {
+    ...original,
+    appendPrintedLines: (...args: Parameters<typeof original.appendPrintedLines>) => {
+      if (SECTION_FAULT.message !== null && args[2] === SECTION_FAULT.accountId) throw new Error(SECTION_FAULT.message);
+      original.appendPrintedLines(...args);
+    },
+  };
+});
 
 // a fault in the positions write — every one, or only the one proving a book through `through` — for the tests that
 // need a book statement's transaction to roll back
@@ -863,6 +878,31 @@ describe("⛔ the book leaves with the last statement that proved it — a price
 
     expect(bookOf(bundle.db, agenticId)).toBeUndefined();
     expect(bundle.db.select().from(accounts).all()).toHaveLength(prior);
+  });
+
+  /**
+   * ⛔ `removeEmptyBooks` must know every table that names an account: one left out is either a book kept for nothing
+   * or a delete that fails on its foreign key after the un-import committed. Four were added after it, and two of them
+   * did the second (`printed_lines`, `statement_copies`) — a fifth fails here first.
+   */
+  test("every table that names an account is one a book holds, one that leaves with it, or one that never names a book", () => {
+    const naming = bundle.sqlite
+      .prepare(`SELECT m.name AS tbl, f."from" AS col FROM sqlite_master m, pragma_foreign_key_list(m.name) f WHERE m.type = 'table' AND f."table" = 'accounts'`)
+      .all() as { tbl: string; col: string }[];
+    expect(naming.map((n) => `${n.tbl}.${n.col}`).sort()).toEqual(
+      [
+        // what a book holds: while one of these names it, it stays (a `live` anchor aside)
+        ...["holding_events", "statement_periods", "balance_anchors", "transactions", "duplicate_candidates", "transfer_ambiguities", "recurring_series"],
+        // what leaves with it: its derived cache and holding rows, and what other files say they print on it
+        ...["holdings", "daily_balances", "printed_lines", "statement_copies"],
+        // what never names a book: its statements print no number of their own, and no row ever sits on one
+        ...["account_numbers", "unimported_transfer_legs"],
+      ]
+        .map((table) => `${table}.account_id`)
+        // …and a book pairs with a checking account, never with another book
+        .concat("accounts.cash_account_id")
+        .sort(),
+    );
   });
 });
 
@@ -1808,6 +1848,121 @@ describe("⛔ a book month downloaded twice — un-importing one copy leaves the
     unimportFile(bundle.db, fileId(bundle.db, AGENT_BUYS_FILE));
 
     expect(bookOf(bundle.db, agenticId)).toBeUndefined();
+  });
+
+  /**
+   * 🔴 A copy that FAILED mid-import keeps what its earlier sections wrote — on the book, that it prints the month as a
+   * copy and its (empty) lines there — and is no heir to the month: `copyHandOvers` hands it to a live file only. Once
+   * the live copy and the first download were un-imported, June was the book's last month, and its un-import deleted
+   * the book with those two rows still naming it: the delete failed on its foreign key AFTER the un-import's own
+   * transaction had committed — June gone, the book left behind with nothing in it, and Agentic's 124 balance days
+   * never rebuilt.
+   */
+  test("a copy that failed after writing the agent's section is no heir to the month — and does not stop the book leaving with its last month", async () => {
+    const agenticId = ownersRobinhood(bundle.db);
+    const brokerageId = bundle.db.select().from(accounts).where(eq(accounts.name, "Robinhood Brokerage")).get()!.id;
+    const agenticBefore = stateOf(bundle.db, agenticId);
+    await importStatementFiles(bundle.db, [pdf(JUNE_FILE, [...JUNE_BROKERAGE, ...AGENT_FIRST_BUYS])]);
+    await importStatementFiles(bundle.db, [pdf(AUGUST_FILE, [...AGENT_HOLDS_AUGUST, ...AUGUST_BROKERAGE])]);
+    const bookId = bookOf(bundle.db, agenticId)!.id;
+    // a second download of August fails in the brokerage's section, after the agent's two statements committed
+    const FAILED = "48afc52f-8955-351d-bdad-7248305c5a2b (1).pdf";
+    Object.assign(SECTION_FAULT, { message: "disk I/O error", accountId: brokerageId });
+    try {
+      const [failed] = await importStatementFiles(bundle.db, [pdf(FAILED, [...AGENT_HOLDS_AUGUST, ...AUGUST_BROKERAGE])]);
+      expect([failed!.status, failed!.error]).toEqual(["failed", "disk I/O error"]);
+    } finally {
+      Object.assign(SECTION_FAULT, { message: null, accountId: null });
+    }
+    // …and a third, read whole: the heir un-importing the first download hands the month to
+    const COPY = "48afc52f-8955-351d-bdad-7248305c5a2b (2).pdf";
+    const [copy] = await importStatementFiles(bundle.db, [pdf(COPY, [...AGENT_HOLDS_AUGUST, ...AUGUST_BROKERAGE])]);
+    expect([copy!.status, copy!.withheld]).toEqual(["parsed", []]);
+    const filesOn = (table: typeof printedLines | typeof statementCopies, accountId: string) =>
+      bundle.db
+        .select({ file: importFiles.fileName })
+        .from(table)
+        .innerJoin(importFiles, eq(importFiles.id, table.importFileId))
+        .where(eq(table.accountId, accountId))
+        .all()
+        .map((r) => r.file)
+        .sort();
+    expect([filesOn(statementCopies, bookId), filesOn(printedLines, bookId)]).toEqual([
+      [FAILED, COPY],
+      [JUNE_FILE, AUGUST_FILE, FAILED, COPY].sort(),
+    ]);
+
+    unimportFile(bundle.db, fileId(bundle.db, COPY));
+    unimportFile(bundle.db, fileId(bundle.db, AUGUST_FILE));
+    unimportFile(bundle.db, fileId(bundle.db, JUNE_FILE));
+
+    // the book leaves with its last month, and nothing names it any more
+    expect(bookOf(bundle.db, agenticId)).toBeUndefined();
+    expect([filesOn(statementCopies, bookId), filesOn(printedLines, bookId)]).toEqual([[], []]);
+    // …the un-import ran to its end: Agentic rebuilt to the ledger before June
+    expect(stateOf(bundle.db, agenticId)).toEqual(agenticBefore);
+    // …and the failed copy keeps only what it wrote on Agentic, still for un-import to clean up
+    expect([filesOn(statementCopies, agenticId), filesOn(printedLines, agenticId)]).toEqual([[FAILED], [FAILED]]);
+    unimportFile(bundle.db, fileId(bundle.db, FAILED));
+    expect(bundle.db.select().from(importFiles).all()).toEqual([]);
+  });
+
+  /**
+   * 🔴 …and it took over the balances the month prints (`upsertAnchor` moves an anchor to the file that wrote it last),
+   * though it inherits nothing else. With no live copy to take the month, un-importing the first download left those
+   * balances under the failed copy with no period: they held the book up after June, its last month, was un-imported —
+   * valued at $26.22 from Aug 31 with no share in it — and kept Agentic at August's $1.64 with none of its rows.
+   */
+  test("a copy that failed after writing the agent's section keeps none of the month's balances — the book leaves with its last month, and nothing values it", async () => {
+    const agenticId = ownersRobinhood(bundle.db);
+    const brokerageId = bundle.db.select().from(accounts).where(eq(accounts.name, "Robinhood Brokerage")).get()!.id;
+    const agenticBefore = stateOf(bundle.db, agenticId);
+    await importStatementFiles(bundle.db, [pdf(JUNE_FILE, [...JUNE_BROKERAGE, ...AGENT_FIRST_BUYS])]);
+    await importStatementFiles(bundle.db, [pdf(AUGUST_FILE, [...AGENT_HOLDS_AUGUST, ...AUGUST_BROKERAGE])]);
+    const bookId = bookOf(bundle.db, agenticId)!.id;
+    const FAILED = "48afc52f-8955-351d-bdad-7248305c5a2b (1).pdf";
+    Object.assign(SECTION_FAULT, { message: "disk I/O error", accountId: brokerageId });
+    try {
+      const [failed] = await importStatementFiles(bundle.db, [pdf(FAILED, [...AGENT_HOLDS_AUGUST, ...AUGUST_BROKERAGE])]);
+      expect([failed!.status, failed!.error]).toEqual(["failed", "disk I/O error"]);
+    } finally {
+      Object.assign(SECTION_FAULT, { message: null, accountId: null });
+    }
+    const balancesOn = (accountId: string) =>
+      bundle.db
+        .select({ on: balanceAnchors.anchoredOn, cents: balanceAnchors.balanceCents, file: importFiles.fileName })
+        .from(balanceAnchors)
+        .innerJoin(importFiles, eq(importFiles.id, balanceAnchors.importFileId))
+        .where(and(eq(balanceAnchors.accountId, accountId), eq(balanceAnchors.source, "statement")))
+        .orderBy(asc(balanceAnchors.anchoredOn))
+        .all();
+    // the premise: the failed copy holds the balances August prints, on the book and on Agentic
+    expect([balancesOn(bookId), balancesOn(agenticId)]).toEqual([
+      [
+        { on: "2026-07-31", cents: 2600, file: FAILED },
+        { on: "2026-08-31", cents: 2622, file: FAILED },
+      ],
+      [
+        { on: "2026-07-31", cents: 164, file: FAILED },
+        { on: "2026-08-31", cents: 164, file: FAILED },
+      ],
+    ]);
+    const anchorCount = () => bundle.db.select().from(balanceAnchors).all().length;
+    const [counted, before] = [balancesRemovedByFile(bundle.db).get(fileId(bundle.db, AUGUST_FILE)), anchorCount()];
+
+    unimportFile(bundle.db, fileId(bundle.db, AUGUST_FILE));
+
+    // August's balances leave with August — the ones the failed copy took over too, as the confirmation counted them
+    expect([balancesOn(bookId), balancesOn(agenticId)]).toEqual([[], []]);
+    expect(counted).toBe(before - anchorCount());
+
+    unimportFile(bundle.db, fileId(bundle.db, JUNE_FILE));
+
+    // the book leaves with its last month, and holds no value on the shares that left with it
+    expect(bookOf(bundle.db, agenticId)).toBeUndefined();
+    expect(stateOf(bundle.db, bookId)).toEqual({ periods: [], anchors: [], rows: [], days: [], events: [], holdings: [] });
+    // …and Agentic is the ledger before June
+    expect(stateOf(bundle.db, agenticId)).toEqual(agenticBefore);
   });
 });
 
