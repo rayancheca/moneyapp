@@ -1,7 +1,7 @@
 import { and, eq, isNotNull, sql } from "drizzle-orm";
 import type { AppDatabase } from "@/db/client";
 import { balanceAnchors } from "@/db/schema/balances";
-import { statementPeriods } from "@/db/schema/imports";
+import { statementCopies, statementPeriods } from "@/db/schema/imports";
 import { addDays } from "@/lib/dates";
 
 /**
@@ -17,6 +17,13 @@ import { addDays } from "@/lib/dates";
  * of 33 Robinhood brokerage statements moved 26 month-ends from the statement that closes on them to the next one's
  * opening: same day, same balance, the other statement named — a change ⚖️ his rule for that re-read refuses (§6A 26).
  * A re-read of one month took a day from the next month's statement, which it did not read, the same way.
+ *
+ * A second download of a statement holds no period: it adopted the first download's and is recorded as a copy of it
+ * (`statement_copies`), and a day it wrote last cites it on that period (`upsertAnchor`). 🔴 The citation was kept only
+ * where the cited file HOLDS a period, so a day a second download cited went to whichever read wrote it last: a re-read
+ * of the first download, or of the neighbour that prints the day too — with that neighbour's own figure, when the two
+ * statements print different ones. And each turn keeps what the turn before left (`citationsBefore`), so the second
+ * download's own re-read no longer got the day back (the review of uc/reread-34-runbook, 2026-09-29, probes E1–E8).
  */
 
 /** A statement balance as the ledger records it before a re-read: the file it cites, and the side of its period. */
@@ -50,9 +57,10 @@ export function citationsBefore(tx: AppDatabase): Citation[] {
 
 /**
  * Once a re-read's new reads are written: each balance cites again the statement it cited — `successorOf` maps a retired
- * read to its new read — wherever that read still prints the day on the same side of a period. The balance, the file and
- * the period move together, as `upsertAnchor` moves them. A day that read no longer prints keeps what the re-read gave
- * it (another printer, or nothing): the re-read changed what is printed, and says so elsewhere.
+ * read to its new read — wherever that read still prints the day on the same side of a period, one it holds or one it
+ * prints as a copy (`printingPeriod`). The balance, the file and the period move together, as `upsertAnchor` moves them.
+ * A day that read no longer prints keeps what the re-read gave it (another printer, or nothing): the re-read changed what
+ * is printed, and says so elsewhere.
  */
 export function keepCitations(tx: AppDatabase, before: readonly Citation[], successorOf: ReadonlyMap<string, string>): void {
   for (const citation of before) {
@@ -72,26 +80,43 @@ export function keepCitations(tx: AppDatabase, before: readonly Citation[], succ
   }
 }
 
-/** The file's printed-balance period on the account that prints the day on the citation's side, if it has one. */
+/**
+ * The printed-balance period on the account that prints the day on the citation's side as the file prints it: one the file
+ * holds — or, for a second download, the one it prints as a copy (`statement_copies`), which another download holds.
+ */
 function printingPeriod(tx: AppDatabase, citation: Citation, importFileId: string) {
-  return tx
-    .select({
-      id: statementPeriods.id,
-      beginningBalanceCents: statementPeriods.beginningBalanceCents,
-      endingBalanceCents: statementPeriods.endingBalanceCents,
-    })
+  const printsTheDay = and(
+    eq(statementPeriods.accountId, citation.accountId),
+    isNotNull(statementPeriods.beginningBalanceCents),
+    isNotNull(statementPeriods.endingBalanceCents),
+    citation.side === "closes"
+      ? eq(statementPeriods.periodEnd, citation.day)
+      : sql`date(${statementPeriods.periodStart}, '-1 day') = ${citation.day}`,
+  );
+  const columns = {
+    id: statementPeriods.id,
+    beginningBalanceCents: statementPeriods.beginningBalanceCents,
+    endingBalanceCents: statementPeriods.endingBalanceCents,
+  };
+  const held = tx
+    .select(columns)
     .from(statementPeriods)
-    .where(
+    .where(and(eq(statementPeriods.importFileId, importFileId), printsTheDay))
+    .orderBy(statementPeriods.id)
+    .get();
+  if (held !== undefined) return held;
+  return tx
+    .select(columns)
+    .from(statementPeriods)
+    .innerJoin(
+      statementCopies,
       and(
-        eq(statementPeriods.importFileId, importFileId),
-        eq(statementPeriods.accountId, citation.accountId),
-        isNotNull(statementPeriods.beginningBalanceCents),
-        isNotNull(statementPeriods.endingBalanceCents),
-        citation.side === "closes"
-          ? eq(statementPeriods.periodEnd, citation.day)
-          : sql`date(${statementPeriods.periodStart}, '-1 day') = ${citation.day}`,
+        eq(statementCopies.accountId, statementPeriods.accountId),
+        eq(statementCopies.periodStart, statementPeriods.periodStart),
+        eq(statementCopies.periodEnd, statementPeriods.periodEnd),
       ),
     )
+    .where(and(eq(statementCopies.importFileId, importFileId), printsTheDay))
     .orderBy(statementPeriods.id)
     .get();
 }
