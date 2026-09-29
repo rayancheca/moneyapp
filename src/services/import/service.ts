@@ -1179,15 +1179,22 @@ function categoryIdForPath(db: AppDatabase, pathStr: string): string | null {
 }
 
 /**
+ * The real ledger's own archive: data/statements under the checkout, where every original it names lives. Exported
+ * for the write that must archive the owner's re-reads there and nowhere else (scripts/reread-unrecorded-archive.ts)
+ * — one answer to "where do his originals live".
+ */
+export function defaultStatementsRoot(cwd: string = process.cwd()): string {
+  return path.join(cwd, "data", "statements");
+}
+
+/**
  * Root of the per-account statement archive. MONEYAPP_ORIGINALS_DIR stays the
  * override (keeps the e2e harness + unit tests off the user's real archive); the
  * default relocated from data/originals to data/statements, and every original
  * now lives under a per-account subfolder (data/statements/<account-slug>/).
- * Exported for the write that checks a re-read leaves the archive as it found it
- * (scripts/reread-unrecorded-files.ts) — one answer to "where do originals live".
  */
-export function statementsRoot(): string {
-  return process.env.MONEYAPP_ORIGINALS_DIR ?? path.join(process.cwd(), "data", "statements");
+function statementsRoot(): string {
+  return process.env.MONEYAPP_ORIGINALS_DIR ?? defaultStatementsRoot();
 }
 
 /** Writes an original into <root>/<folder>/, deduping on the content-hashed name. */

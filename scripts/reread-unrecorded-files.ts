@@ -34,17 +34,40 @@
  *    them — both print the same balance on that day; the re-read reads the months oldest first, and the last file to
  *    write a day owns it (`upsertAnchor`). Seen only in that day's provenance sheet.
  *
+ * ⚠️ Re-measured 2026-09-29: the same 34 files, 62 records, 26 month-ends and 3 dedupe keys — and on a plain copy the
+ * rehearsal REFUSES, on one finding: "a /summary year moved". The ledger's caches end 2026-09-28; the import's rebuild
+ * carries Discover and the three Robinhood accounts to today, net worth runs a day further, and the 2026 return moves
+ * with its valuation day, 36.34% through 09-28 → 36.17% through 09-29 — exactly as rebuilding those four accounts on the
+ * untouched ledger moves it, with no re-read at all (the script at 510c5d2 refuses the same). The face wants /summary
+ * byte-identical, so a run passes only on a day the caches already reach: his call whether a return that moves only
+ * with its valuation day may. (On copies whose four accounts were first rebuilt to today, the rehearsal and the write
+ * pass, the archive is left byte-identical, and each new read names the original its older read names.)
+ *
  * ## How it guards
  *
- *  1. Refuse before anything: a target whose profile is gone or not newer, whose original is missing or is not the
- *     imported bytes.
- *  2. Rehearse on a `.backup` copy (`--scratch`), archiving into a scratch folder: import the 34, then compare the
- *     copy's face with the ledger's (`reread-unrecorded-face`). New balance days must be exactly what `rebuildAccount`
- *     writes on a second copy of the untouched ledger.
- *  3. Dry run stops there. `--confirm`: the ledger must still be the one rehearsed; a restore point; the import; the
- *     same comparison on the real ledger, which must make exactly the rehearsal's allowed changes, leave the archive
- *     holding the same originals, and record every file. Any failure RESTORES the restore point and says so.
- *  4. A second run finds nothing to re-read: "Nothing to do."
+ *  1. Refuse before anything: a write left unfinished (6); the real ledger archiving anywhere but its own statements
+ *     root, data/statements (`liveArchiveRoot`); a target whose profile is gone or not newer, whose original is missing
+ *     or is not the imported bytes, or whose bytes a read at today's version already holds — the import would take
+ *     that read up, and move its original, instead of writing a new one.
+ *  2. Rehearse on a `.backup` copy (`--scratch`) whose every row names a file inside scratch, archiving into a scratch
+ *     copy of every original the re-read can reach (`copyArchiveInto`): the rehearsal does to that copy exactly what the
+ *     write will do to the archive, and a dry run moves and removes nothing outside scratch. Then compare the copy's
+ *     face with the ledger's (`reread-unrecorded-face`), and the archive's copy as the write's archive is compared. New
+ *     balance days must be exactly what `rebuildAccount` writes on a second copy of the untouched ledger.
+ *  3. Dry run stops there. `--confirm`: the ledger must still be the one rehearsed; a restore point, and a journal beside
+ *     the ledger naming it; the import; the same comparison on the real ledger, which must make exactly the rehearsal's
+ *     allowed changes, name each new read's original where the run archived it, leave the archive holding the same
+ *     originals, and record every file.
+ *  4. Past the restore point, every way out is that check passing or the restore point put back — a failed check and a
+ *     fault alike, and the output says which. A put-back also takes the write's own originals back out of the archive
+ *     (`sweepLeftovers`), so nothing it left stops the next rehearsal. The journal goes with either.
+ *  5. A second run finds nothing to re-read: "Nothing to do."
+ *  6. A journal still there is a write neither checked nor put back — its process killed, or its put-back failed — and
+ *     the ledger may hold part of it. Every later run says UNFINISHED rather than plan over it (a half-applied re-read
+ *     would pass for done); `--confirm` puts the journal's restore point back, saving what the ledger holds first, takes
+ *     the write's own originals out of the archive, and the run after that starts over. Measured on a copy of the real
+ *     ledger, 2026-09-29: killed 6 s into the write, the Discover CSV's read left `failed` at v2 and its copy in
+ *     discover/; the next dry run said UNFINISHED, `--confirm` put both back, and the run after rehearsed clean.
  *
  *   pnpm tsx scripts/reread-unrecorded-files.ts --db=data/moneyapp.db             # rehearse, write nothing
  *   pnpm tsx scripts/reread-unrecorded-files.ts --db=data/moneyapp.db --confirm   # restore point, write, re-check
@@ -54,7 +77,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { createDatabase, type DbBundle } from "@/db/client";
 import { restoreFromSnapshot, takeRestorePoint } from "@/db/backup";
 import { accounts } from "@/db/schema/accounts";
@@ -63,15 +86,24 @@ import { fileSha256 } from "@/lib/hash";
 import { rebuildAccount } from "@/services/derivation";
 import { filesWithoutPrintedLines } from "@/services/import/import-records";
 import { PROFILES } from "@/services/import/profiles";
-import { importStatementFiles, statementsRoot, type FileOutcome, type ImportInput } from "@/services/import/service";
-import { DbTargetRefusal, dbTargetFrom, originalsDirFor } from "./db-target";
+import { importStatementFiles, type FileOutcome, type ImportInput } from "@/services/import/service";
+import { DbTargetRefusal, dbTargetFrom } from "./db-target";
 import { onRehearsalCopy } from "./guarded-write-harness";
+import {
+  archiveFailures,
+  archiveListing,
+  copyArchiveInto,
+  liveArchiveRoot,
+  sweepLeftovers,
+  type ArchiveBefore,
+} from "./reread-unrecorded-archive";
 import {
   archivedAs,
   balancesOf,
   compareFaces,
   ledgerFace,
   sameFace,
+  withStoragePaths,
   type LedgerFace,
   type RereadTarget,
   type Verdict,
@@ -80,7 +112,8 @@ import {
 const LABEL = "reread-unrecorded-files";
 
 export interface RunResult {
-  outcome: "nothing-to-do" | "refused" | "dry-run" | "written" | "restored";
+  /** `unfinished`: a write neither checked nor put back — found by this run, or left by it */
+  outcome: "nothing-to-do" | "refused" | "dry-run" | "written" | "restored" | "unfinished";
   /** what refused the run, or what the write broke before it was put back */
   failures: string[];
   /** what changed that a re-read may change — the rehearsal's, or the write's */
@@ -88,9 +121,12 @@ export interface RunResult {
   restorePoint: string | null;
 }
 
-/** For the tests: something the rehearsal did not do, done to the real ledger right after the import. */
+/** For the tests. */
 export interface Seams {
-  afterWrite?: (real: DbBundle) => void;
+  /** something the rehearsal did not do, done to the real ledger right after the import — or a fault, or a kill */
+  afterWrite?: (real: DbBundle) => void | Promise<void>;
+  /** the checkout the ledger is judged real against — `process.cwd()` unless a test lays one out */
+  cwd?: string;
 }
 
 interface Args {
@@ -98,13 +134,17 @@ interface Args {
   isReal: boolean;
   confirm: boolean;
   scratch: string;
+  /** where the live run archives the re-reads' originals (`liveArchiveRoot`) */
+  archiveRoot: string;
 }
+
+const messageOf = (error: unknown): string => (error instanceof Error ? error.message : String(error));
 
 /**
  * `--db=<path>` (required), `--confirm` bare, `--scratch=<dir>`. ⛔ Anything else is refused — `--confirm=yes` passing
  * for the switch while the write asked for a bare `--confirm` ran a dry run that read like a write (db-target.ts).
  */
-function readArgs(argv: readonly string[]): Args {
+function readArgs(argv: readonly string[], cwd: string): Args {
   const stray = argv.filter((a) => a !== "--confirm" && !a.startsWith("--db=") && !a.startsWith("--scratch="));
   if (stray.length > 0) {
     throw new DbTargetRefusal(`unknown argument(s): ${stray.join(" ")} — this script takes --db=<path>, --scratch=<dir> and --confirm`);
@@ -112,10 +152,16 @@ function readArgs(argv: readonly string[]): Args {
   for (const flag of ["--confirm", "--db=", "--scratch="]) {
     if (argv.filter((a) => a.startsWith(flag)).length > 1) throw new DbTargetRefusal(`${flag.replace("=", "")} given twice`);
   }
-  const target = dbTargetFrom(argv, { flag: "--db", required: true, cwd: process.cwd(), exists: fs.existsSync });
+  const target = dbTargetFrom(argv, { flag: "--db", required: true, cwd, exists: fs.existsSync });
   const scratch = argv.find((a) => a.startsWith("--scratch="))?.slice("--scratch=".length) ?? os.tmpdir();
   if (!fs.existsSync(scratch)) throw new DbTargetRefusal(`no scratch directory at ${scratch}`);
-  return { db: target.path, isReal: target.isReal, confirm: argv.includes("--confirm"), scratch };
+  return {
+    db: target.path,
+    isReal: target.isReal,
+    confirm: argv.includes("--confirm"),
+    scratch,
+    archiveRoot: liveArchiveRoot(target, cwd, process.env),
+  };
 }
 
 interface Plan {
@@ -137,6 +183,19 @@ function planReread(bundle: DbBundle): Plan {
     }
     if (profile.version <= file.parserVersion) {
       refuse(`read at ${profile.id} v${file.parserVersion} and the profile is at v${profile.version} — not a re-read`);
+      continue;
+    }
+    // ⛔ the import would take such a read up — its row, and the original it names, wherever that lies — instead of
+    // writing a new one (`openMember`, `REIMPORTABLE_STATUSES`): a failed read's original was moved into the rehearsal's
+    // scratch, and deleted with it
+    const taken = bundle.db
+      .select()
+      .from(importFiles)
+      .where(and(eq(importFiles.fileSha256, file.fileSha256), eq(importFiles.parserVersion, profile.version)))
+      .all();
+    if (taken.length > 0) {
+      const reads = taken.map((t) => `${t.status}, ${t.id}, its original at ${t.storagePath}`).join("; ");
+      refuse(`already read at ${profile.id} v${profile.version} (${reads}) — the import would take that read up, not write a new one`);
       continue;
     }
     if (!fs.existsSync(file.storagePath)) {
@@ -180,10 +239,10 @@ async function rebuiltBalances(real: DbBundle, scratch: string): Promise<Map<str
   });
 }
 
-/** Run with MONEYAPP_ORIGINALS_DIR at `dir`, put back after. */
-async function archivingInto<T>(dir: string | undefined, fn: () => Promise<T>): Promise<T> {
+/** Run with MONEYAPP_ORIGINALS_DIR at `dir` — the import's archive root — put back after. */
+async function archivingInto<T>(dir: string, fn: () => Promise<T>): Promise<T> {
   const saved = process.env.MONEYAPP_ORIGINALS_DIR;
-  if (dir !== undefined) process.env.MONEYAPP_ORIGINALS_DIR = dir;
+  process.env.MONEYAPP_ORIGINALS_DIR = dir;
   try {
     return await fn();
   } finally {
@@ -192,60 +251,33 @@ async function archivingInto<T>(dir: string | undefined, fn: () => Promise<T>): 
   }
 }
 
-/** The re-read on a throwaway copy, archiving into a throwaway folder — the real archive and ledger never see it. */
+/**
+ * The re-read on a throwaway copy of the ledger, archiving into a throwaway copy of the archive (`copyArchiveInto`): the
+ * real ledger and archive never see it, and the copy names no file outside scratch. Compared with the ledger as the
+ * copy reads it — its rows' originals pointed into scratch, nothing else — and the archive's copy as the write's is.
+ */
 async function rehearse(
   real: DbBundle,
+  args: Args,
   plan: Plan,
   before: LedgerFace,
   rebuilt: Map<string, string>,
-  scratch: string,
 ): Promise<Verdict & { headline: string }> {
-  const originals = fs.mkdtempSync(path.join(scratch, `${LABEL}-originals-`));
+  const work = fs.mkdtempSync(path.join(args.scratch, `${LABEL}-originals-`));
   try {
-    return await archivingInto(originals, () =>
-      onRehearsalCopy(real, scratch, LABEL, async (copy) => {
-        const outcomes = await importStatementFiles(copy.db, plan.inputs);
-        const after = ledgerFace(copy);
-        const verdict = compareFaces(before, after, { targets: plan.targets, rebuilt });
-        return { ...verdict, failures: [...outcomeFailures(outcomes, plan), ...verdict.failures], headline: after.headline };
-      }),
-    );
+    return await onRehearsalCopy(real, args.scratch, LABEL, async (copy) => {
+      const archive = copyArchiveInto(copy, plan.targets, args.archiveRoot, work);
+      const held = archiveListing(archive.root);
+      const outcomes = await archivingInto(archive.root, () => importStatementFiles(copy.db, plan.inputs));
+      const after = ledgerFace(copy);
+      const expect = { targets: plan.targets, rebuilt, archiveRoot: archive.root };
+      const verdict = compareFaces(withStoragePaths(before, archive.paths), after, expect);
+      const archived = archiveFailures(held, archive.root, copy, plan.targets);
+      return { ...verdict, failures: [...outcomeFailures(outcomes, plan), ...verdict.failures, ...archived], headline: after.headline };
+    });
   } finally {
-    fs.rmSync(originals, { recursive: true, force: true });
+    fs.rmSync(work, { recursive: true, force: true });
   }
-}
-
-/** Every original under the archive root, with its size — a write to the ledger must leave this as it was. */
-function archiveListing(root: string): Map<string, number> {
-  const out = new Map<string, number>();
-  if (!fs.existsSync(root)) return out;
-  const walk = (dir: string): void => {
-    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
-      const full = path.join(dir, entry.name);
-      if (entry.isDirectory()) walk(full);
-      else out.set(path.relative(root, full), fs.statSync(full).size);
-    }
-  };
-  walk(root);
-  return out;
-}
-
-/** The archive after the write: every original it held, as it was; anything new only a new read's own original, whole. */
-function archiveFailures(before: ReadonlyMap<string, number>, root: string, real: DbBundle, plan: Plan): string[] {
-  const after = archiveListing(root);
-  const failures = [...before].filter(([p, size]) => after.get(p) !== size).map(([p]) => `the archive's ${p} is gone or changed`);
-  const fresh = real.db
-    .select()
-    .from(importFiles)
-    .all()
-    .filter((f) => plan.targets.some((t) => t.sha === f.fileSha256 && t.version === f.parserVersion));
-  const owned = new Set(fresh.map((f) => path.relative(root, f.storagePath)));
-  for (const p of after.keys()) if (!before.has(p) && !owned.has(p)) failures.push(`a file the re-read left in the archive: ${p}`);
-  for (const f of fresh) {
-    const whole = fs.existsSync(f.storagePath) && fileSha256(fs.readFileSync(f.storagePath)) === f.fileSha256;
-    if (!whole) failures.push(`${f.fileName}'s original at ${f.storagePath} is not its bytes`);
-  }
-  return failures;
 }
 
 function print(title: string, verdict: Pick<Verdict, "failures" | "allowed">): void {
@@ -264,12 +296,133 @@ const result = (outcome: RunResult["outcome"], failures: string[], allowed: stri
 /** The plan, said: what is re-read, and what refuses it. */
 function planned(bundle: DbBundle, args: Args): Plan {
   console.log(`Database: ${args.db}${args.isReal ? " (the real ledger)" : ""}`);
+  console.log(`Archive:  ${args.archiveRoot}`);
   const plan = planReread(bundle);
   console.log(`${plan.targets.length} file(s) read at a version their profile has moved past; ${plan.refusals.length} refused`);
   for (const t of plan.targets) console.log(`  RE-READ  ${t.fileName} → ${t.profile} v${t.version}`);
   const backfillable = filesWithoutPrintedLines(bundle.db).filter((f) => f.backfillCanRead).length;
   if (backfillable > 0) console.log(`  (${backfillable} unrecorded file(s) at their profile's version are the backfills' — scripts/record-*.ts)`);
   return plan;
+}
+
+/**
+ * A write begun and not yet checked nor put back — kept BESIDE the ledger, so a later run finds it whatever became of
+ * the run that wrote it. Written after the restore point and before the import touches the ledger; removed once the
+ * write passes its check, or the restore point is back.
+ *
+ * 🔴 Past the restore point a fault escaped as "REFUSED:" and left the re-read written and unchecked — as a kill does —
+ * and a second run, finding no file left to re-read, said "Nothing to do" (the review of uc/reread-34-runbook,
+ * 2026-09-29).
+ */
+interface Journal {
+  startedAt: string;
+  restorePoint: string;
+  /** the archive as the write found it — what a put-back takes the write's own originals back out of */
+  archive: ArchiveBefore;
+}
+
+const journalPath = (db: string): string => `${fs.realpathSync(db)}.${LABEL}.unfinished.json`;
+
+function beginJournal(db: string, journal: Journal): void {
+  const at = journalPath(db);
+  const staged = `${at}.${process.pid}.tmp`;
+  const fd = fs.openSync(staged, "w");
+  try {
+    fs.writeSync(fd, `${JSON.stringify(journal, null, 2)}\n`);
+    fs.fsyncSync(fd);
+  } finally {
+    fs.closeSync(fd);
+  }
+  fs.renameSync(staged, at);
+}
+
+function readJournal(db: string): Journal | null {
+  const at = journalPath(db);
+  if (!fs.existsSync(at)) return null;
+  let read: Partial<Journal> | null = null;
+  try {
+    read = JSON.parse(fs.readFileSync(at, "utf8")) as Partial<Journal>;
+  } catch {
+    // named below: a journal that does not read is still a write that may be unfinished
+  }
+  const archive = read?.archive;
+  if (
+    typeof read?.restorePoint !== "string" ||
+    typeof read.startedAt !== "string" ||
+    typeof archive?.root !== "string" ||
+    !Array.isArray(archive.held) ||
+    !Array.isArray(archive.files)
+  ) {
+    throw new DbTargetRefusal(`${at} does not name its restore point and archive — a write may be unfinished: read it before anything else`);
+  }
+  return {
+    startedAt: read.startedAt,
+    restorePoint: read.restorePoint,
+    archive: {
+      root: archive.root,
+      held: archive.held.map(String),
+      files: archive.files.map((f) => ({ name: String(f.name), sha: String(f.sha) })),
+    },
+  };
+}
+
+/** The write is checked or put back: the journal goes — and if it cannot, the next run says so rather than guess. */
+function endJournal(db: string): void {
+  try {
+    fs.rmSync(journalPath(db), { force: true });
+  } catch (error: unknown) {
+    console.log(`  ✗ the journal ${journalPath(db)} could not be removed (${messageOf(error)}): the next run will call this write unfinished`);
+  }
+}
+
+/** Once the restore point is back: the write's own originals out of the archive, each said — or why they are not. */
+function sweep(restored: DbBundle, archive: ArchiveBefore): string | null {
+  try {
+    for (const taken of sweepLeftovers(archive, restored)) console.log(`  · took the write's own copy ${taken} out of the archive — nothing names it now`);
+    return null;
+  } catch (error: unknown) {
+    return `the write's own originals could not all be taken out of the archive (${messageOf(error)})`;
+  }
+}
+
+/**
+ * A write the journal says was never checked nor put back. Nothing is planned over it: a dry run says so and stops;
+ * `--confirm` puts the journal's restore point back — `restoreFromSnapshot` saves what the ledger holds first — and the
+ * write's own originals out of the archive, and the next run starts over.
+ */
+function unfinished(args: Args, journal: Journal): RunResult {
+  const what =
+    `a --confirm begun ${journal.startedAt} took the restore point ${journal.restorePoint} and was never checked nor put ` +
+    `back — it was killed, or its put-back failed — so the ledger may hold part of the re-read of ${journal.archive.files.length} file(s)`;
+  if (!args.confirm) {
+    print("UNFINISHED", { failures: [what], allowed: [] });
+    console.log("\nNothing was done. Re-run with --confirm to put the restore point back (what the ledger holds is saved first), then run again.");
+    return result("unfinished", [what], [], journal.restorePoint);
+  }
+  const bundle = createDatabase(args.db);
+  let reopened: DbBundle | undefined;
+  try {
+    const restored = restoreFromSnapshot(bundle, journal.restorePoint);
+    reopened = restored.reopened;
+    const saved = restored.preRestorePath === null ? "" : ` — what the ledger held is saved as ${restored.preRestorePath}`;
+    console.log(`\nRESTORED from ${journal.restorePoint}${saved}`);
+    const unswept = sweep(reopened, journal.archive);
+    if (unswept !== null) {
+      const stuck = `${unswept} — run again with --confirm to put the restore point back and take them out again`;
+      console.log(`  ✗ ${stuck}`);
+      return result("unfinished", [what, stuck], [], journal.restorePoint);
+    }
+    endJournal(args.db);
+    console.log("Run again to plan the re-read afresh.");
+    return result("restored", [what], [], journal.restorePoint);
+  } catch (error: unknown) {
+    const stuck = `the restore point could not be put back: ${messageOf(error)}`;
+    print("UNFINISHED", { failures: [what, stuck], allowed: [] });
+    return result("unfinished", [what, stuck], [], journal.restorePoint);
+  } finally {
+    if (reopened?.sqlite.open) reopened.sqlite.close();
+    if (bundle.sqlite.open) bundle.sqlite.close();
+  }
 }
 
 interface Rehearsed {
@@ -280,59 +433,141 @@ interface Rehearsed {
 }
 
 /**
- * The write, behind a restore point, checked as the rehearsal was — and put back when it does not read as its
- * rehearsal did. ⛔ A write to a COPY archives beside the copy (`originalsDirFor`): otherwise it writes the owner's real
- * archive and leaves the copy's `storage_path` pointing into it. The real ledger archives where the import always does.
+ * The write, behind a restore point and a journal, checked as the rehearsal was — and put back when it does not read as
+ * its rehearsal did, or faults before it is read. It archives into `args.archiveRoot`: the real ledger's own statements
+ * root, or beside a copy (`liveArchiveRoot`).
  */
-async function write(bundle: DbBundle, args: Args, { plan, before, rebuilt, rehearsal }: Rehearsed, seams: Seams): Promise<RunResult> {
+async function write(bundle: DbBundle, args: Args, rehearsed: Rehearsed, seams: Seams): Promise<RunResult> {
+  const { plan, before, rehearsal } = rehearsed;
   if (!sameFace(ledgerFace(bundle), before)) {
     const moved = ["the ledger changed after the rehearsal read it — run again"];
     print("REFUSED", { failures: moved, allowed: [] });
     return result("refused", moved, rehearsal.allowed);
   }
-  const archive = originalsDirFor({ path: args.db, isReal: args.isReal }, process.env);
-  const root = archive ?? statementsRoot();
-  const archived = archiveListing(root);
+  const archived = archiveListing(args.archiveRoot);
+  const archive: ArchiveBefore = {
+    root: args.archiveRoot,
+    held: [...archived.keys()],
+    files: plan.targets.map((t) => ({ name: path.basename(t.archived), sha: t.sha })),
+  };
   const point = takeRestorePoint(bundle.db, LABEL);
   if (point.path === null) return result("refused", [`no restore point was written (${point.reason ?? "skipped"}), so nothing was`]);
   console.log(`\nRestore point: ${point.path}`);
+  try {
+    beginJournal(args.db, { startedAt: new Date().toISOString(), restorePoint: point.path, archive });
+  } catch (error: unknown) {
+    const why = [`no journal could be written beside the ledger (${messageOf(error)}), so nothing was written`];
+    print("REFUSED", { failures: why, allowed: [] });
+    return result("refused", why, rehearsal.allowed);
+  }
 
-  const outcomes = await archivingInto(archive, () => importStatementFiles(bundle.db, plan.inputs));
-  seams.afterWrite?.(bundle);
+  // ⛔ from here the ledger may be written: every way out is the check passing, or the restore point put back
+  let checked: Pick<Verdict, "failures" | "allowed">;
+  try {
+    checked = await checkedWrite(bundle, args, rehearsed, archived, seams);
+  } catch (error: unknown) {
+    checked = { failures: [`the write faulted before it was checked: ${messageOf(error)}`], allowed: [] };
+    print("WRITE FAULTED", checked);
+  }
+  if (checked.failures.length > 0) return putBack(bundle, args, { restorePoint: point.path, before, archive }, checked);
+  endJournal(args.db);
+  console.log("\nDone. Now run `pnpm ledger-check` — it should name no file read at a version its profile has moved past.");
+  return result("written", [], checked.allowed, point.path);
+}
+
+/** The import on the real ledger, then every check its rehearsal passed. */
+async function checkedWrite(
+  bundle: DbBundle,
+  args: Args,
+  { plan, before, rebuilt, rehearsal }: Rehearsed,
+  archived: ReadonlyMap<string, number>,
+  seams: Seams,
+): Promise<Pick<Verdict, "failures" | "allowed">> {
+  const outcomes = await archivingInto(args.archiveRoot, () => importStatementFiles(bundle.db, plan.inputs));
+  await seams.afterWrite?.(bundle);
   const after = ledgerFace(bundle);
-  const verdict = compareFaces(before, after, { targets: plan.targets, rebuilt });
+  const verdict = compareFaces(before, after, { targets: plan.targets, rebuilt, archiveRoot: args.archiveRoot });
   const failures = [
     ...outcomeFailures(outcomes, plan),
     ...verdict.failures,
     ...(verdict.signature === rehearsal.signature ? [] : ["the write did not make the changes its rehearsal made"]),
-    ...archiveFailures(archived, root, bundle, plan),
+    ...archiveFailures(archived, args.archiveRoot, bundle, plan.targets),
   ];
   print("WRITTEN", { failures, allowed: verdict.allowed });
   console.log(`  = after:  ${after.headline}`);
-  if (failures.length === 0) {
-    console.log("\nDone. Now run `pnpm ledger-check` — it should name no file read at a version its profile has moved past.");
-    return result("written", [], verdict.allowed, point.path);
-  }
-  return putBack(bundle, point.path, before, failures, verdict.allowed);
+  return { failures, allowed: verdict.allowed };
 }
 
-/** Restores the restore point over the ledger — which closes `bundle` — and says whether it reads as it did. */
-function putBack(bundle: DbBundle, restorePoint: string, before: LedgerFace, failures: string[], allowed: string[]): RunResult {
-  const { reopened } = restoreFromSnapshot(bundle, restorePoint);
+/** What a put-back returns the ledger and its archive to. */
+interface PutBackTo {
+  restorePoint: string;
+  before: LedgerFace;
+  archive: ArchiveBefore;
+}
+
+/**
+ * Restores the restore point over the ledger — which closes `bundle` — says whether it reads as it did, and takes the
+ * write's own originals out of the archive. A put-back that cannot be made keeps the journal, so the next run says
+ * UNFINISHED: "unfinished".
+ */
+function putBack(
+  bundle: DbBundle,
+  args: Args,
+  { restorePoint, before, archive }: PutBackTo,
+  { failures, allowed }: Pick<Verdict, "failures" | "allowed">,
+): RunResult {
+  let reopened: DbBundle;
   try {
-    const back = sameFace(ledgerFace(reopened), before);
-    console.log(`\nRESTORED from ${restorePoint}${back ? " — the ledger is as it was" : ""}`);
-    if (back) return result("restored", failures, allowed, restorePoint);
-    const unlike = "the restored ledger does not read as it did before the write — compare it with the restore point by hand";
-    console.log(`  ✗ ${unlike}`);
-    return result("restored", [...failures, unlike], allowed, restorePoint);
+    reopened = restoreOver(bundle, args.db, restorePoint);
+  } catch (error: unknown) {
+    const stuck =
+      `the restore point could not be put back (${messageOf(error)}): the ledger may hold part of the re-read — ` +
+      `the next run says UNFINISHED, and its --confirm puts ${restorePoint} back`;
+    console.log(`\nNOT RESTORED\n  ✗ ${stuck}`);
+    return result("unfinished", [...failures, stuck], allowed, restorePoint);
+  }
+  try {
+    const back = readsAsBefore(reopened, before);
+    console.log(`\nRESTORED from ${restorePoint}${back === true ? " — the ledger is as it was" : ""}`);
+    const unlike = back === true ? [] : [`${back} — compare it with the restore point by hand`];
+    for (const u of unlike) console.log(`  ✗ ${u}`);
+    const unswept = sweep(reopened, archive);
+    if (unswept !== null) {
+      const stuck = `${unswept} — the next run says UNFINISHED, and its --confirm puts the restore point back and takes them out again`;
+      console.log(`  ✗ ${stuck}`);
+      return result("unfinished", [...failures, ...unlike, stuck], allowed, restorePoint);
+    }
+    endJournal(args.db);
+    return result("restored", [...failures, ...unlike], allowed, restorePoint);
   } finally {
     reopened.sqlite.close();
   }
 }
 
+/** Whether the restored ledger reads as `before` — or, when it does not or cannot be read, why. */
+function readsAsBefore(reopened: DbBundle, before: LedgerFace): true | string {
+  try {
+    return sameFace(ledgerFace(reopened), before) || "the restored ledger does not read as it did before the write";
+  } catch (error: unknown) {
+    return `the restored ledger could not be read (${messageOf(error)})`;
+  }
+}
+
+/** `restoreFromSnapshot` through a handle that can take it — idle and open, which a fault may have left it neither. */
+function restoreOver(bundle: DbBundle, db: string, restorePoint: string): DbBundle {
+  if (bundle.sqlite.open && bundle.sqlite.inTransaction) bundle.sqlite.exec("ROLLBACK");
+  const live = bundle.sqlite.open ? bundle : createDatabase(db);
+  try {
+    return restoreFromSnapshot(live, restorePoint).reopened;
+  } finally {
+    if (live !== bundle && live.sqlite.open) live.sqlite.close();
+  }
+}
+
 export async function main(argv: readonly string[] = process.argv.slice(2), seams: Seams = {}): Promise<RunResult> {
-  const args = readArgs(argv);
+  const args = readArgs(argv, seams.cwd ?? process.cwd());
+  const journal = readJournal(args.db);
+  if (journal !== null) return unfinished(args, journal);
   const bundle = createDatabase(args.db);
   try {
     const plan = planned(bundle, args);
@@ -346,7 +581,7 @@ export async function main(argv: readonly string[] = process.argv.slice(2), seam
     }
     const before = ledgerFace(bundle);
     const rebuilt = await rebuiltBalances(bundle, args.scratch);
-    const rehearsal = await rehearse(bundle, plan, before, rebuilt, args.scratch);
+    const rehearsal = await rehearse(bundle, args, plan, before, rebuilt);
     print("REHEARSAL on a copy", rehearsal);
     console.log(`  = before: ${before.headline}`);
     console.log(`  = after:  ${rehearsal.headline}`);
@@ -365,10 +600,10 @@ export async function main(argv: readonly string[] = process.argv.slice(2), seam
 if (process.argv[1]?.endsWith("reread-unrecorded-files.ts")) {
   main().then(
     (r) => {
-      process.exitCode = r.outcome === "refused" || r.outcome === "restored" ? 1 : 0;
+      process.exitCode = r.outcome === "refused" || r.outcome === "restored" || r.outcome === "unfinished" ? 1 : 0;
     },
     (error: unknown) => {
-      console.error(`REFUSED: ${error instanceof Error ? error.message : String(error)}`);
+      console.error(`REFUSED: ${messageOf(error)}`);
       process.exitCode = 2;
     },
   );

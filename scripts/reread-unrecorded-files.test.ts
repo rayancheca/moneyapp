@@ -2,13 +2,14 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { and, eq, gt } from "drizzle-orm";
-import { afterEach, beforeEach, describe, expect, test } from "vitest";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { createDatabase, type DbBundle } from "@/db/client";
 import { seedDatabase } from "@/db/seed";
 import { dailyBalances } from "@/db/schema/balances";
 import { categories } from "@/db/schema/categories";
 import { importFiles, printedLines } from "@/db/schema/imports";
 import { transactions } from "@/db/schema/transactions";
+import { fileSha256 } from "@/lib/hash";
 import { rebuildAccount } from "@/services/derivation";
 import { PROFILES } from "@/services/import/profiles";
 import { importStatementFiles, type ImportInput } from "@/services/import/service";
@@ -125,6 +126,56 @@ const backups = () => (fs.existsSync(path.join(dir, "backups")) ? fs.readdirSync
 function reopen(): void {
   bundle.sqlite.close();
   bundle = createDatabase(ledger);
+}
+
+/** Every file under `root` by its path there, with the hash of its bytes — what a run must leave as it found it. */
+function listing(root: string): Record<string, string> {
+  const out: Record<string, string> = {};
+  const walk = (at: string): void => {
+    for (const entry of fs.existsSync(at) ? fs.readdirSync(at, { withFileTypes: true }) : []) {
+      const full = path.join(at, entry.name);
+      if (entry.isDirectory()) walk(full);
+      else out[path.relative(root, full)] = fileSha256(fs.readFileSync(full));
+    }
+  };
+  walk(root);
+  return out;
+}
+
+/**
+ * A read of the same bytes at the profile's version that failed: its row is kept (`REIMPORTABLE_STATUSES`), and its
+ * original stays where a read archives first — the institution's folder, not the account's.
+ */
+async function failedReadAtTodaysVersion(): Promise<typeof importFiles.$inferSelect> {
+  const v2 = reads[2]!;
+  delete reads[2];
+  const [outcome] = await importStatementFiles(bundle.db, [FILE]);
+  reads[2] = v2;
+  expect(outcome?.status).toBe("failed");
+  return bundle.db.select().from(importFiles).where(and(eq(importFiles.parserVersion, 2), eq(importFiles.status, "failed"))).get()!;
+}
+
+/**
+ * What an import killed or faulted part-way through a file leaves in the archive: its own copy of the original, in the
+ * institution's folder, where it archives a file before reading it (`archiveTo`) and moves it from once it has.
+ */
+function leaveCopyBehind(real: DbBundle): string {
+  const original = real.db.select().from(importFiles).where(eq(importFiles.parserVersion, 1)).get()!.storagePath;
+  const copy = path.join(dir, "originals", "chase", path.basename(original));
+  fs.mkdirSync(path.dirname(copy), { recursive: true });
+  fs.copyFileSync(original, copy);
+  return copy;
+}
+
+/** The ledger laid out as the owner's is: data/moneyapp.db under the checkout the script runs in, originals in data/statements. */
+function asTheRealLedger(): string {
+  bundle.sqlite.close();
+  ledger = path.join(dir, "data", "moneyapp.db");
+  const own = path.join(dir, "data", "statements");
+  process.env.MONEYAPP_ORIGINALS_DIR = own;
+  bundle = createDatabase(ledger);
+  seedDatabase(bundle.db);
+  return own;
 }
 
 describe("reread-unrecorded-files — re-read the files the backfills cannot, and refuse unless only the records change", () => {
@@ -330,5 +381,208 @@ describe("reread-unrecorded-files — re-read the files the backfills cannot, an
     await expect(main(["--confirm"])).rejects.toThrow(/--db=<path> is required/);
     await expect(main(args("--yes"))).rejects.toThrow(/--yes/);
     reopen();
+  });
+});
+
+describe("reread-unrecorded-files — once the restore point is taken, the ledger ends checked or put back", () => {
+  test("a write that faults after its restore point is put back, and says so", async () => {
+    await importedBeforeRecordsThenBumped(statement([COFFEE, GROCER]), statement([COFFEE, GROCER]));
+    const rows = liveRows();
+    const archive = listing(path.join(dir, "originals"));
+    bundle.sqlite.close();
+    let leftover = "";
+
+    const run = await main(args("--confirm"), {
+      afterWrite: (real) => {
+        leftover = leaveCopyBehind(real);
+        throw new Error("the disk filled up");
+      },
+    });
+
+    reopen();
+    expect(run.outcome).toBe("restored");
+    expect(run.failures.join("\n")).toMatch(/the disk filled up/);
+    expect(fileRows()).toEqual([{ version: 1, status: "parsed" }]);
+    expect(liveRows()).toEqual(rows);
+    expect(bundle.db.select().from(printedLines).all()).toEqual([]);
+    // the write's own copy of an original goes with it: nothing names it now, and the next rehearsal would refuse a
+    // write that removes it
+    expect(fs.existsSync(leftover)).toBe(false);
+    expect(listing(path.join(dir, "originals"))).toEqual(archive);
+    bundle.sqlite.close();
+    // nothing is left for a later run to take for done, nor to stop it: it plans the re-read again
+    expect((await main(args())).outcome).toBe("dry-run");
+  });
+
+  test("a write killed before its check: a later run will not call it done, and --confirm puts the restore point back", async () => {
+    await importedBeforeRecordsThenBumped(statement([COFFEE, GROCER]), statement([COFFEE, GROCER]));
+    const rows = liveRows();
+    const archive = listing(path.join(dir, "originals"));
+    bundle.sqlite.close();
+    let dying: DbBundle | undefined;
+    let leftover = "";
+    // killed in the import: nothing after it runs — no check, no put-back — as when the process dies
+    void main(args("--confirm"), {
+      afterWrite: (real) => {
+        dying = real;
+        leftover = leaveCopyBehind(real);
+        return new Promise<never>(() => {});
+      },
+    });
+    await vi.waitFor(() => expect(dying).toBeDefined(), { timeout: 10_000 });
+    dying!.sqlite.close();
+    // …and an original that came after it, which no put-back of this write may take
+    const later = path.join(dir, "originals", "chase", "an-upload-after-the-kill.csv");
+    fs.writeFileSync(later, "april");
+
+    const dry = await main(args());
+
+    expect(dry.outcome).toBe("unfinished");
+    expect(dry.failures.join("\n")).toMatch(/never checked/);
+    reopen();
+    // the dry run touched nothing: the unchecked write is still there
+    expect(fileRows()).toEqual([
+      { version: 1, status: "superseded" },
+      { version: 2, status: "parsed" },
+    ]);
+    bundle.sqlite.close();
+
+    const back = await main(args("--confirm"));
+
+    reopen();
+    expect(back.outcome).toBe("restored");
+    expect(fileRows()).toEqual([{ version: 1, status: "parsed" }]);
+    expect(liveRows()).toEqual(rows);
+    expect(fs.existsSync(leftover)).toBe(false);
+    expect(fs.existsSync(later)).toBe(true);
+    fs.rmSync(later);
+    expect(listing(path.join(dir, "originals"))).toEqual(archive);
+    bundle.sqlite.close();
+    expect((await main(args())).outcome).toBe("dry-run");
+  });
+
+  test("a put-back that cannot be made leaves every later run refusing — never 'Nothing to do'", async () => {
+    await importedBeforeRecordsThenBumped(statement([COFFEE, GROCER]), statement([COFFEE, GROCER]));
+    bundle.sqlite.close();
+
+    const first = await main(args("--confirm"), {
+      afterWrite: () => {
+        // the restore point is lost, then the write faults: nothing can put the ledger back
+        for (const name of backups()) fs.rmSync(path.join(dir, "backups", name));
+        throw new Error("the disk filled up");
+      },
+    }).catch((error: unknown) => ({ outcome: `threw ${String(error)}`, failures: [] as string[] }));
+    const again = await main(args());
+    const retried = await main(args("--confirm"));
+
+    expect(again.outcome).toBe("unfinished");
+    expect(first.outcome).toBe("unfinished");
+    expect(first.failures.join("\n")).toMatch(/could not be put back/);
+    expect(retried.outcome).toBe("unfinished");
+    expect(retried.failures.join("\n")).toMatch(/restore point/);
+  });
+});
+
+describe("reread-unrecorded-files — a dry run moves nothing outside scratch, and the archive is the ledger's own", () => {
+  test("refuses, and moves nothing, when a read of the same bytes at today's version is already on the ledger", async () => {
+    await importedBeforeRecordsThenBumped(statement([COFFEE, GROCER]), statement([COFFEE, GROCER]));
+    const failed = await failedReadAtTodaysVersion();
+    const archive = listing(path.join(dir, "originals"));
+    expect(archive[path.relative(path.join(dir, "originals"), failed.storagePath)]).toBeDefined();
+    bundle.sqlite.close();
+
+    const dry = await main(args());
+
+    reopen();
+    expect(dry.outcome).toBe("refused");
+    // ⛔ the rehearsal took that read up, moved its original into scratch — and deleted scratch
+    expect(fs.existsSync(failed.storagePath)).toBe(true);
+    expect(listing(path.join(dir, "originals"))).toEqual(archive);
+    expect(dry.failures.join("\n")).toMatch(/already read at test-reread-unrecorded v2/);
+    expect(backups()).toEqual([]);
+  });
+
+  test("the rehearsal reads a copy of the archive: a write that would remove an original is refused before it is made", async () => {
+    await importedBeforeRecordsThenBumped(statement([COFFEE, GROCER]), statement([COFFEE, GROCER]));
+    // an original no row names, where a read of these bytes archives first — a failed read's, its row since removed
+    const failed = await failedReadAtTodaysVersion();
+    bundle.db.delete(importFiles).where(eq(importFiles.id, failed.id)).run();
+    const archive = listing(path.join(dir, "originals"));
+    bundle.sqlite.close();
+
+    const run = await main(args("--confirm"));
+
+    reopen();
+    expect(run.outcome).toBe("refused");
+    expect(fs.existsSync(failed.storagePath)).toBe(true);
+    expect(listing(path.join(dir, "originals"))).toEqual(archive);
+    expect(run.failures.join("\n")).toMatch(/gone or changed/);
+    expect(backups()).toEqual([]);
+    expect(fileRows()).toEqual([{ version: 1, status: "parsed" }]);
+  });
+
+  test("the real ledger's re-reads archive into its own statements root — MONEYAPP_ORIGINALS_DIR elsewhere is refused", async () => {
+    const own = asTheRealLedger();
+    await importedBeforeRecordsThenBumped(statement([COFFEE, GROCER]), statement([COFFEE, GROCER]));
+    const archive = listing(own);
+    bundle.sqlite.close();
+    process.env.MONEYAPP_ORIGINALS_DIR = path.join(dir, "elsewhere");
+
+    const run = main(args("--confirm"), { cwd: dir });
+
+    await expect(run).rejects.toThrow(/MONEYAPP_ORIGINALS_DIR/);
+    reopen();
+    expect(fs.existsSync(path.join(dir, "elsewhere"))).toBe(false);
+    expect(listing(own)).toEqual(archive);
+    expect(fileRows()).toEqual([{ version: 1, status: "parsed" }]);
+    expect(backups()).toEqual([]);
+  });
+
+  test("a copy of the ledger never archives into a checkout's data/statements — this one's or another's", async () => {
+    bundle.sqlite.close();
+    process.env.MONEYAPP_ORIGINALS_DIR = path.join(dir, "main-checkout", "data", "statements");
+
+    await expect(main(args())).rejects.toThrow(/a checkout's archive/);
+
+    expect(fs.existsSync(path.join(dir, "main-checkout"))).toBe(false);
+    reopen();
+  });
+
+  test("on the real ledger each new read lands on the original its older read names, and the archive is as it was", async () => {
+    const own = asTheRealLedger();
+    await importedBeforeRecordsThenBumped(statement([COFFEE, GROCER]), statement([COFFEE, GROCER]));
+    const older = bundle.db.select().from(importFiles).get()!;
+    const archive = listing(own);
+    bundle.sqlite.close();
+
+    const run = await main(args("--confirm"), { cwd: dir });
+
+    reopen();
+    expect(run.failures).toEqual([]);
+    expect(run.outcome).toBe("written");
+    const fresh = bundle.db.select().from(importFiles).where(eq(importFiles.parserVersion, 2)).get()!;
+    expect(fresh.storagePath).toBe(older.storagePath);
+    expect(listing(own)).toEqual(archive);
+  });
+
+  test("a new read whose original is named anywhere but where the run archived it is put back", async () => {
+    await importedBeforeRecordsThenBumped(statement([COFFEE, GROCER]), statement([COFFEE, GROCER]));
+    bundle.sqlite.close();
+
+    const run = await main(args("--confirm"), {
+      // the new read names a copy of its original outside the archive the run wrote: same folder, name and bytes
+      afterWrite: (real) => {
+        const fresh = real.db.select().from(importFiles).where(eq(importFiles.parserVersion, 2)).get()!;
+        const elsewhere = path.join(dir, "elsewhere", path.basename(path.dirname(fresh.storagePath)), path.basename(fresh.storagePath));
+        fs.mkdirSync(path.dirname(elsewhere), { recursive: true });
+        fs.copyFileSync(fresh.storagePath, elsewhere);
+        real.db.update(importFiles).set({ storagePath: elsewhere }).where(eq(importFiles.id, fresh.id)).run();
+      },
+    });
+
+    reopen();
+    expect(run.outcome).toBe("restored");
+    expect(run.failures.join("\n")).toMatch(/archived at .*elsewhere/);
+    expect(fileRows()).toEqual([{ version: 1, status: "parsed" }]);
   });
 });

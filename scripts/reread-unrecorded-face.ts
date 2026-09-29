@@ -270,7 +270,7 @@ export interface RereadTarget {
 
 /**
  * An original as the archive lays it out: `<root>/<account folder>/<sha prefix>-<name>` (`resolveArchiveFolder`), read
- * without its root — the rehearsal archives into a scratch folder, and a write to a COPY archives beside the copy.
+ * without its root — the root is the run's (`RereadExpectation.archiveRoot`).
  */
 export function archivedAs(storagePath: string): string {
   return path.join(path.basename(path.dirname(storagePath)), path.basename(storagePath));
@@ -280,6 +280,22 @@ export interface RereadExpectation {
   targets: readonly RereadTarget[];
   /** `account \x1f day` → `balance \x1f basis`, as `rebuildAccount` writes them on a copy of the untouched ledger */
   rebuilt: ReadonlyMap<string, string>;
+  /**
+   * Where the run archived: each new read's original must be `<archiveRoot>/<target.archived>` — on the real ledger its
+   * own statements root, so the very original its older read names. 🔴 Compared as `<folder>/<name>` alone, a real
+   * write that archived outside data/statements read PASS (the review of uc/reread-34-runbook, 2026-09-29).
+   */
+  archiveRoot: string;
+}
+
+/**
+ * `face` with each file's `storage_path` replaced as `paths` says, and nothing else — the real ledger as its rehearsal
+ * copy reads it once every row is pointed into scratch (`copyArchiveInto`). Compared with the copy after the import, so
+ * the rehearsal still reads the copy against the ledger itself.
+ */
+export function withStoragePaths(face: LedgerFace, paths: ReadonlyMap<string, string>): LedgerFace {
+  const files = new Map([...face.files].map(([id, f]) => [id, { ...f, storage_path: paths.get(id) ?? f.storage_path }] as const));
+  return { ...face, files };
 }
 
 export interface Verdict {
@@ -357,13 +373,13 @@ function compareFiles(
     }
     unclaimed.delete(id);
     fresh.set(id, t);
-    const archived = archivedAs(String(row.storage_path));
+    const archived = path.join(expect.archiveRoot, t.archived);
     const wrong = [
       row.status === "parsed" ? null : `status ${String(row.status)}`,
       row.error === null ? null : `error ${String(row.error)}`,
       row.file_name === t.fileName ? null : `named ${String(row.file_name)}`,
       row.parser_profile === t.profile ? null : `profile ${String(row.parser_profile)}`,
-      archived === t.archived ? null : `archived at ${archived}, not ${t.archived}`,
+      row.storage_path === archived ? null : `archived at ${String(row.storage_path)}, not ${archived}`,
     ].filter((w) => w !== null);
     if (wrong.length > 0) failures.push(`the new read of ${t.fileName}: ${wrong.join(", ")}`);
   }
