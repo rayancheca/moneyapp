@@ -1213,12 +1213,14 @@ describe("provenanceFor — a category total", () => {
   });
 
   /**
-   * ⚠️ …and a count still never DATES a total on its own. With nothing checked
-   * underneath it there is no "Checked through" to pull back, and printing his
-   * count's day there is the reading the /accounts work took out ("a balance he
-   * typed checks nothing"). The bound only ever limits a check.
+   * ⛔ …and a total standing on his count ALONE is dated the same way (owner
+   * decision 2026-09-28, handoff §6A 28). It printed no date at all, while net
+   * worth — over the same Cash on Hand — printed the day his count stops
+   * standing, so one account read two ways on one ledger depending on which
+   * figure was asked. He chose to make them agree: the day, and net worth's own
+   * sentence saying that day is his word rather than a check.
    */
-  test("a total standing on his count alone still dates no check", () => {
+  test("a total standing on his count alone is dated where the count stops standing, in net worth's words", () => {
     const cat = addCategory("c-food", "Fixture Food");
     const coh = addAccount("coh", "Cash on Hand", "checking");
     addAnchor(coh, "2026-08-03", "manual");
@@ -1230,8 +1232,13 @@ describe("provenanceFor — a category total", () => {
     categorize(addTxn(coh, "2026-08-11"), cat);
 
     const p = provenanceFor(bundle.db, { kind: "categorySpend", categoryId: cat, from: "2026-08-01", to: "2026-08-31" })!;
-    expect(p.checkedThrough).toBeNull();
-    expect(p.headline).not.toMatch(/checked through/i);
+    const netWorth = provenanceFor(bundle.db, { kind: "netWorth", day: "2026-09-16" })!;
+    expect(p.checkedThrough).toBe("2026-08-10");
+    expect(p.checkedThrough).toBe(netWorth.checkedThrough);
+    const COUNT_NOTE =
+      " The date it is checked through, Aug 10, 2026, is the last day Cash on Hand rests on the balance you counted — your word, not a check.";
+    expect(p.headline.endsWith(COUNT_NOTE)).toBe(true);
+    expect(netWorth.headline.endsWith(COUNT_NOTE)).toBe(true);
   });
 
   /*
@@ -2103,6 +2110,53 @@ describe("provenanceFor — all spending, compared against another window", () =
     expect(backward.verdict).toBe("derived");
     expect(forward.checkedThrough).toBe(backward.checkedThrough);
   });
+
+  /*
+   * ⛔ A comparison writes its OWN headline and borrows only the combined
+   * proof's date, so the sentence saying that date is his count's was dropped:
+   * "Checked through" printed the last day Cash on Hand rests on the balance he
+   * typed as though a document had checked it. Net worth's day and net worth's
+   * sentence, here too (owner decision 2026-09-28, handoff §6A 28) — whether his
+   * count is all there is or sits beside a check that runs past it.
+   */
+  test("a comparison dated by his count says the date is his word", () => {
+    const cat = addKindedCategory("c-food", "Fixture Food", "expense");
+    const coh = addAccount("coh", "Cash on Hand", "checking");
+    addAnchor(coh, "2026-08-03", "manual");
+    addDays(coh, [
+      { day: "2026-08-03", basis: "anchored" },
+      { day: "2026-08-05", basis: "carried" },
+      { day: "2026-08-11", basis: "derived_unverified" },
+    ]);
+    categorize(addTxn(coh, "2026-08-11"), cat);
+    const compared = () =>
+      provenanceFor(bundle.db, {
+        kind: "allSpend",
+        from: "2026-08-01",
+        to: "2026-08-31",
+        label: "Aug 2026",
+        against: { ...JUL, label: "Jul 2026" },
+      })!;
+    const COUNT_NOTE =
+      / The date it is checked through, Aug 10, 2026, is the last day Cash on Hand rests on the balance you counted — your word, not a check\.$/;
+
+    const alone = compared();
+    expect(alone.checkedThrough).toBe("2026-08-10");
+    expect(alone.headline).toMatch(/^This compares two windows/);
+    expect(alone.headline).toMatch(COUNT_NOTE);
+
+    const sofi = addAccount("sofi", "SoFi Checking", "checking");
+    const file = addFile("f1", "sofi.pdf", "chase-checking-statement-pdf");
+    addDays(sofi, [
+      { day: "2026-07-01", basis: "anchored" },
+      { day: "2026-08-21", basis: "derived" },
+    ]);
+    categorize(addTxn(sofi, "2026-07-10", { importFileId: file }), cat);
+
+    const beside = compared();
+    expect(beside.checkedThrough).toBe("2026-08-10");
+    expect(beside.headline).toMatch(COUNT_NOTE);
+  });
 });
 
 /* ── a count of one ───────────────────────────────────────────────────── */
@@ -2366,10 +2420,19 @@ describe("provenanceFor — a balance he typed checks nothing", () => {
     expect(p.checkedThrough).toBeNull();
   });
 
-  test("the count of its rows dates no check", () => {
+  /*
+   * ⛔ The count of its rows is a summed total, so it is dated where his count
+   * stops standing and says the day is his word — net worth's day and sentence
+   * (owner decision 2026-09-28, handoff §6A 28). It is still no check: the
+   * verdict stays his.
+   */
+  test("the count of its rows is dated where his count stops standing, as his word", () => {
     const p = provenanceFor(bundle.db, { kind: "accountRows", accountId: cashOnHand() })!;
     expect(p.verdict).toBe("manual");
-    expect(p.checkedThrough).toBeNull();
+    expect(p.checkedThrough).toBe("2026-08-10");
+    expect(p.headline).toMatch(
+      / The date it is checked through, Aug 10, 2026, is the last day Cash on Hand rests on the balance you counted — your word, not a check\.$/,
+    );
   });
 
   /*
