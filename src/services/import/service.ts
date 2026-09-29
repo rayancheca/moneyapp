@@ -60,6 +60,7 @@ import {
   type LaterBookStatement,
 } from "./brokerage-book";
 import { handOverPrintedAnchors } from "./printed-anchors";
+import { citationsBefore, keepCitations } from "./reread-citations";
 import {
   followingOpeningsByFile,
   handOverKeptOpenings,
@@ -1949,6 +1950,8 @@ function writeRead(
   const copyPlans = retiring.length === 0 ? new Map<string, CopyHandOver[]>() : copyHandOvers(db, retiring);
   const held = heldForPrinters(db, copyPlans, retiring);
   const openings = retiredOpenings(db, retiring, held.plans, new Set([...copyPlans.values()].flat().map((p) => p.periodId)));
+  // which statement each recorded balance cites, read before the retirement hands any of them over (`keepCitations`)
+  const citations = retiring.length === 0 ? [] : citationsBefore(db);
   const retired = new Set<string>();
   const lent: LentPeriod[] = [];
   for (const id of retiring) {
@@ -1991,6 +1994,11 @@ function writeRead(
     heldBack,
     members.map((m) => (m.recorded as RecordedFile).row.id),
   );
+  // …and each recorded balance cites the statement it cited: its new read, or the statement this read did not read.
+  // 🔴 The last new read to write a day took it — 26 Robinhood month-ends moved to the next statement's opening
+  // (`reread-citations`)
+  const successorOf = new Map(members.flatMap((m) => m.staleIds.map((id) => [id, (m.recorded as RecordedFile).row.id] as const)));
+  keepCitations(db, citations, successorOf);
   return { retired, writes };
 }
 

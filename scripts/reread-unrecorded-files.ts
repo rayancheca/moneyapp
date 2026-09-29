@@ -14,34 +14,36 @@
  * the records changes. (An earlier rehearsal had moved Robinhood Agentic's +$26.64 leg to Internal Transfer and
  * /summary's 2026 return 33.87% → 33.81%; `engineCategoryCarry` has carried detection's category with its link since.)
  *
- * ## Measured on a copy of the real ledger, 2026-09-28 (main 604334c)
+ * ## What it may change — his rule, exactly (`reread-unrecorded-face`)
  *
- * All 34 parsed; 737 rows re-written (625 Discover, 112 Robinhood), 0 quarantined, 0 withheld; 62 printed-line
- * records, and `ledger-check` then names 0 files. Every live row keeps its money, day, description, category, source,
- * merchant, note, transfer group and series; periods, the balance on every anchored day, holding events, series,
- * budgets and every other table are unchanged by content; net worth is unchanged on every day, and /summary 2022–2026
- * (his returns among them) is byte-identical. Read on both copies through `next dev`, 33 surfaces: every page but two
- * is identical, text and figures. What moves, each allowed here only in exactly this form and named in the output:
- *  - /imports: 340 → 374 files — each re-read file twice, its new read "Parsed, imported <today>" and the old one
- *    "Superseded" (every un-import confirmation reads as it did);
- *  - 3 Discover dedupe keys (2024-10-29 +$40.00 ×2, 2024-09-18 −$0.79) now derive from the day each row carries: the
- *    v1 keys came from the back-dated Post Date that fix-discover-backdated-adjustments.ts re-dated in place;
- *  - 40 balance days carried to today — the import rebuilds the accounts it read, whose caches were last rebuilt Sep
- *    14/15: Discover 14, Robinhood Agentic 13, Robinhood Cash 13. So the dashboard's and /imports' "Robinhood Cash …
- *    15 days unchecked, of 41" reads the true "28 days … of 54" (it has been 28 days since Sep 1), "68 of 7,752
- *    days … rest on nothing" reads "81 of 7,792", and "882 days … carried forward" reads "909";
- *  - 26 Robinhood month-end balances cite the statement that opens the next day instead of the one that closes on
- *    them — both print the same balance on that day; the re-read reads the months oldest first, and the last file to
- *    write a day owns it (`upsertAnchor`). Seen only in that day's provenance sheet.
+ * The files read again (each older read `superseded`, a new read `parsed` at the profile's version, same name, bytes and
+ * archived original) and the records they write (`printed_lines`, `statement_copies`, `account_numbers`). Nothing else:
+ * every live row keeps its money, day, words, category and its source, merchant, note, link, transfer group, series,
+ * dedupe key and statement; every period its days, balances, verdict and statement; every recorded balance its amount
+ * and the statement it cites; every cached balance day its balance and basis, and no day is added; net worth on every
+ * day, and no day added; every /summary year; every other table.
  *
- * ⚠️ Re-measured 2026-09-29: the same 34 files, 62 records, 26 month-ends and 3 dedupe keys — and on a plain copy the
- * rehearsal REFUSES, on one finding: "a /summary year moved". The ledger's caches end 2026-09-28; the import's rebuild
- * carries Discover and the three Robinhood accounts to today, net worth runs a day further, and the 2026 return moves
- * with its valuation day, 36.34% through 09-28 → 36.17% through 09-29 — exactly as rebuilding those four accounts on the
- * untouched ledger moves it, with no re-read at all (the script at 510c5d2 refuses the same). The face wants /summary
- * byte-identical, so a run passes only on a day the caches already reach: his call whether a return that moves only
- * with its valuation day may. (On copies whose four accounts were first rebuilt to today, the rehearsal and the write
- * pass, the archive is left byte-identical, and each new read names the original its older read names.)
+ * 🔴 Measured on a copy of the real ledger (2026-09-28/29), the import changes three more things on its way, and an
+ * earlier cut of this script let them through, "allowed, and named" — each one the owner sees (the review of
+ * uc/reread-34-runbook, 2026-09-29). The re-read now keeps each as the ledger had it:
+ *  - 26 Robinhood month-ends came to cite the next statement's opening instead of the statement that closes on them
+ *    (same day, same balance, the other statement in the day's provenance sheet): a re-read keeps each balance citing
+ *    the statement it cited (`keepCitations`, services/import/reread-citations.ts);
+ *  - the import rebuilds the accounts it reads to today: Discover 15 days, Robinhood Agentic 14, Robinhood Cash 14 and
+ *    Robinhood Brokerage 1 were added, the dashboard's "Robinhood Cash … 15 days unchecked" read 28, net worth ran a day
+ *    further, and /summary's 2026 return moved with its valuation day (36.34% → 36.17%): the added days are taken back
+ *    out (`keepAsTheLedgerHad`);
+ *  - 3 Discover dedupe keys (2024-10-29 +$40.00 ×2, 2024-09-18 −$0.79) came back derived from the day each row carries
+ *    (their v1 keys come from the back-dated Post Date scripts/fix-discover-backdated-adjustments.ts re-dated in place
+ *    without re-keying): each new row keeps its older read's key. Whether to re-key those three is its own question.
+ * Each is said in the output ("kept"), and the comparison refuses any it did not keep.
+ *
+ * Rehearsed on copies of the real ledger (sha 2bc4573f…), 2026-09-29: dry run PASS — 34 files read again, 62
+ * printed-line records, 0 statement copies, 0 card numbers, nothing else; --confirm WRITTEN PASS, the archive
+ * byte-identical, no journal left; a second run "Nothing to do"; `ledger-check` exit 0 naming 0 files. Diffed in SQL
+ * against the copy it wrote: every cached day, all 314 recorded balances (by the file name and period they cite),
+ * 10,328 live rows (with their key and file name) and every period (with its verdict and file name) identical;
+ * printed_lines 306 → 368, import_files 340 → 374.
  *
  * ## How it guards
  *
@@ -51,13 +53,13 @@
  *     that read up, and move its original, instead of writing a new one.
  *  2. Rehearse on a `.backup` copy (`--scratch`) whose every row names a file inside scratch, archiving into a scratch
  *     copy of every original the re-read can reach (`copyArchiveInto`): the rehearsal does to that copy exactly what the
- *     write will do to the archive, and a dry run moves and removes nothing outside scratch. Then compare the copy's
- *     face with the ledger's (`reread-unrecorded-face`), and the archive's copy as the write's archive is compared. New
- *     balance days must be exactly what `rebuildAccount` writes on a second copy of the untouched ledger.
+ *     write will do to the archive, and a dry run moves and removes nothing outside scratch. The import, then what it
+ *     changed that is not a record put back as the ledger had it (`reread-unrecorded-keep`); then compare the copy's
+ *     face with the ledger's (`reread-unrecorded-face`), and the archive's copy as the write's archive is compared.
  *  3. Dry run stops there. `--confirm`: the ledger must still be the one rehearsed; a restore point, and a journal beside
- *     the ledger naming it; the import; the same comparison on the real ledger, which must make exactly the rehearsal's
- *     allowed changes, name each new read's original where the run archived it, leave the archive holding the same
- *     originals, and record every file.
+ *     the ledger naming it; the import and its keep; the same comparison on the real ledger, which must make exactly the
+ *     rehearsal's allowed changes and keep exactly what it kept, name each new read's original where the run archived
+ *     it, leave the archive holding the same originals, and record every file.
  *  4. Past the restore point, every way out is that check passing or the restore point put back — a failed check and a
  *     fault alike, and the output says which. A put-back also takes the write's own originals back out of the archive
  *     (`sweepLeftovers`), so nothing it left stops the next rehearsal. The journal goes with either.
@@ -80,10 +82,9 @@ import path from "node:path";
 import { and, eq } from "drizzle-orm";
 import { createDatabase, type DbBundle } from "@/db/client";
 import { restoreFromSnapshot, takeRestorePoint } from "@/db/backup";
-import { accounts } from "@/db/schema/accounts";
 import { importFiles } from "@/db/schema/imports";
+import { todayIso } from "@/lib/dates";
 import { fileSha256 } from "@/lib/hash";
-import { rebuildAccount } from "@/services/derivation";
 import { filesWithoutPrintedLines } from "@/services/import/import-records";
 import { PROFILES } from "@/services/import/profiles";
 import { importStatementFiles, type FileOutcome, type ImportInput } from "@/services/import/service";
@@ -99,7 +100,6 @@ import {
 } from "./reread-unrecorded-archive";
 import {
   archivedAs,
-  balancesOf,
   compareFaces,
   ledgerFace,
   sameFace,
@@ -108,6 +108,7 @@ import {
   type RereadTarget,
   type Verdict,
 } from "./reread-unrecorded-face";
+import { keepAsTheLedgerHad, whatTheLedgerHad } from "./reread-unrecorded-keep";
 
 const LABEL = "reread-unrecorded-files";
 
@@ -123,7 +124,10 @@ export interface RunResult {
 
 /** For the tests. */
 export interface Seams {
-  /** something the rehearsal did not do, done to the real ledger right after the import — or a fault, or a kill */
+  /**
+   * something the rehearsal did not do, done to the real ledger right after the write (the import, and what it keeps as
+   * the ledger had it) — or a fault, or a kill
+   */
   afterWrite?: (real: DbBundle) => void | Promise<void>;
   /** the checkout the ledger is judged real against — `process.cwd()` unless a test lays one out */
   cwd?: string;
@@ -231,12 +235,25 @@ function outcomeFailures(outcomes: readonly FileOutcome[], plan: Plan): string[]
   return [...failures, ...plan.targets.filter((t) => !read.has(t.fileName)).map((t) => `${t.fileName}: never read`)];
 }
 
-/** Every account rebuilt on a copy of the untouched ledger — the only balances a new cached day may hold. */
-async function rebuiltBalances(real: DbBundle, scratch: string): Promise<Map<string, string>> {
-  return onRehearsalCopy(real, scratch, `${LABEL}-rebuild`, (copy) => {
-    for (const { id } of copy.db.select({ id: accounts.id }).from(accounts).all()) rebuildAccount(copy.db, id);
-    return balancesOf(copy);
-  });
+/**
+ * The re-read itself, on a ledger: the import, then what it changed that is not a record put back as the ledger had it
+ * (`reread-unrecorded-keep`) — the same steps on the rehearsal copy and on the ledger.
+ */
+async function reread(
+  bundle: DbBundle,
+  plan: Plan,
+  before: LedgerFace,
+  archiveRoot: string,
+): Promise<{ outcomes: FileOutcome[]; kept: string[] }> {
+  const had = whatTheLedgerHad(bundle, plan.targets.map((t) => t.id));
+  const outcomes = await archivingInto(archiveRoot, () => importStatementFiles(bundle.db, plan.inputs));
+  const fresh = bundle.db
+    .select({ id: importFiles.id, sha: importFiles.fileSha256, version: importFiles.parserVersion })
+    .from(importFiles)
+    .all()
+    .filter((f) => !before.files.has(f.id) && plan.targets.some((t) => t.sha === f.sha && t.version === f.version))
+    .map((f) => f.id);
+  return { outcomes, kept: keepAsTheLedgerHad(bundle, had, fresh) };
 }
 
 /** Run with MONEYAPP_ORIGINALS_DIR at `dir` — the import's archive root — put back after. */
@@ -256,34 +273,35 @@ async function archivingInto<T>(dir: string, fn: () => Promise<T>): Promise<T> {
  * real ledger and archive never see it, and the copy names no file outside scratch. Compared with the ledger as the
  * copy reads it — its rows' originals pointed into scratch, nothing else — and the archive's copy as the write's is.
  */
-async function rehearse(
-  real: DbBundle,
-  args: Args,
-  plan: Plan,
-  before: LedgerFace,
-  rebuilt: Map<string, string>,
-): Promise<Verdict & { headline: string }> {
+async function rehearse(real: DbBundle, args: Args, plan: Plan, before: LedgerFace, today: string): Promise<Rehearsal> {
   const work = fs.mkdtempSync(path.join(args.scratch, `${LABEL}-originals-`));
   try {
     return await onRehearsalCopy(real, args.scratch, LABEL, async (copy) => {
       const archive = copyArchiveInto(copy, plan.targets, args.archiveRoot, work);
       const held = archiveListing(archive.root);
-      const outcomes = await archivingInto(archive.root, () => importStatementFiles(copy.db, plan.inputs));
-      const after = ledgerFace(copy);
-      const expect = { targets: plan.targets, rebuilt, archiveRoot: archive.root };
-      const verdict = compareFaces(withStoragePaths(before, archive.paths), after, expect);
+      const asCopied = withStoragePaths(before, archive.paths);
+      const { outcomes, kept } = await reread(copy, plan, asCopied, archive.root);
+      const after = ledgerFace(copy, today);
+      const verdict = compareFaces(asCopied, after, { targets: plan.targets, archiveRoot: archive.root });
       const archived = archiveFailures(held, archive.root, copy, plan.targets);
-      return { ...verdict, failures: [...outcomeFailures(outcomes, plan), ...verdict.failures, ...archived], headline: after.headline };
+      return { ...verdict, failures: [...outcomeFailures(outcomes, plan), ...verdict.failures, ...archived], kept, headline: after.headline };
     });
   } finally {
     fs.rmSync(work, { recursive: true, force: true });
   }
 }
 
-function print(title: string, verdict: Pick<Verdict, "failures" | "allowed">): void {
+/** A rehearsal's verdict, what it kept as the ledger had it, and the figures it left. */
+interface Rehearsal extends Verdict {
+  kept: string[];
+  headline: string;
+}
+
+function print(title: string, verdict: Pick<Verdict, "failures" | "allowed">, kept: readonly string[] = []): void {
   console.log(`\n${title}  ${verdict.failures.length === 0 ? "PASS" : `FAIL — ${verdict.failures.length} finding(s)`}`);
   for (const f of verdict.failures) console.log(`  ✗ ${f}`);
   for (const a of verdict.allowed) console.log(`  · ${a}`);
+  for (const k of kept) console.log(`  = kept: ${k}`);
 }
 
 const result = (outcome: RunResult["outcome"], failures: string[], allowed: string[] = [], restorePoint: string | null = null): RunResult => ({
@@ -428,8 +446,9 @@ function unfinished(args: Args, journal: Journal): RunResult {
 interface Rehearsed {
   plan: Plan;
   before: LedgerFace;
-  rebuilt: Map<string, string>;
-  rehearsal: Verdict;
+  rehearsal: Rehearsal;
+  /** the day every face of this run reads /summary through */
+  today: string;
 }
 
 /**
@@ -438,8 +457,8 @@ interface Rehearsed {
  * root, or beside a copy (`liveArchiveRoot`).
  */
 async function write(bundle: DbBundle, args: Args, rehearsed: Rehearsed, seams: Seams): Promise<RunResult> {
-  const { plan, before, rehearsal } = rehearsed;
-  if (!sameFace(ledgerFace(bundle), before)) {
+  const { plan, before, rehearsal, today } = rehearsed;
+  if (!sameFace(ledgerFace(bundle, today), before)) {
     const moved = ["the ledger changed after the rehearsal read it — run again"];
     print("REFUSED", { failures: moved, allowed: [] });
     return result("refused", moved, rehearsal.allowed);
@@ -469,7 +488,7 @@ async function write(bundle: DbBundle, args: Args, rehearsed: Rehearsed, seams: 
     checked = { failures: [`the write faulted before it was checked: ${messageOf(error)}`], allowed: [] };
     print("WRITE FAULTED", checked);
   }
-  if (checked.failures.length > 0) return putBack(bundle, args, { restorePoint: point.path, before, archive }, checked);
+  if (checked.failures.length > 0) return putBack(bundle, args, { restorePoint: point.path, before, archive, today }, checked);
   endJournal(args.db);
   console.log("\nDone. Now run `pnpm ledger-check` — it should name no file read at a version its profile has moved past.");
   return result("written", [], checked.allowed, point.path);
@@ -479,21 +498,22 @@ async function write(bundle: DbBundle, args: Args, rehearsed: Rehearsed, seams: 
 async function checkedWrite(
   bundle: DbBundle,
   args: Args,
-  { plan, before, rebuilt, rehearsal }: Rehearsed,
+  { plan, before, rehearsal, today }: Rehearsed,
   archived: ReadonlyMap<string, number>,
   seams: Seams,
 ): Promise<Pick<Verdict, "failures" | "allowed">> {
-  const outcomes = await archivingInto(args.archiveRoot, () => importStatementFiles(bundle.db, plan.inputs));
+  const { outcomes, kept } = await reread(bundle, plan, before, args.archiveRoot);
   await seams.afterWrite?.(bundle);
-  const after = ledgerFace(bundle);
-  const verdict = compareFaces(before, after, { targets: plan.targets, rebuilt, archiveRoot: args.archiveRoot });
+  const after = ledgerFace(bundle, today);
+  const verdict = compareFaces(before, after, { targets: plan.targets, archiveRoot: args.archiveRoot });
   const failures = [
     ...outcomeFailures(outcomes, plan),
     ...verdict.failures,
     ...(verdict.signature === rehearsal.signature ? [] : ["the write did not make the changes its rehearsal made"]),
+    ...(JSON.stringify(kept) === JSON.stringify(rehearsal.kept) ? [] : ["the write kept other things as the ledger had them than its rehearsal kept"]),
     ...archiveFailures(archived, args.archiveRoot, bundle, plan.targets),
   ];
-  print("WRITTEN", { failures, allowed: verdict.allowed });
+  print("WRITTEN", { failures, allowed: verdict.allowed }, kept);
   console.log(`  = after:  ${after.headline}`);
   return { failures, allowed: verdict.allowed };
 }
@@ -503,6 +523,7 @@ interface PutBackTo {
   restorePoint: string;
   before: LedgerFace;
   archive: ArchiveBefore;
+  today: string;
 }
 
 /**
@@ -513,7 +534,7 @@ interface PutBackTo {
 function putBack(
   bundle: DbBundle,
   args: Args,
-  { restorePoint, before, archive }: PutBackTo,
+  { restorePoint, before, archive, today }: PutBackTo,
   { failures, allowed }: Pick<Verdict, "failures" | "allowed">,
 ): RunResult {
   let reopened: DbBundle;
@@ -527,7 +548,7 @@ function putBack(
     return result("unfinished", [...failures, stuck], allowed, restorePoint);
   }
   try {
-    const back = readsAsBefore(reopened, before);
+    const back = readsAsBefore(reopened, before, today);
     console.log(`\nRESTORED from ${restorePoint}${back === true ? " — the ledger is as it was" : ""}`);
     const unlike = back === true ? [] : [`${back} — compare it with the restore point by hand`];
     for (const u of unlike) console.log(`  ✗ ${u}`);
@@ -545,9 +566,9 @@ function putBack(
 }
 
 /** Whether the restored ledger reads as `before` — or, when it does not or cannot be read, why. */
-function readsAsBefore(reopened: DbBundle, before: LedgerFace): true | string {
+function readsAsBefore(reopened: DbBundle, before: LedgerFace, today: string): true | string {
   try {
-    return sameFace(ledgerFace(reopened), before) || "the restored ledger does not read as it did before the write";
+    return sameFace(ledgerFace(reopened, today), before) || "the restored ledger does not read as it did before the write";
   } catch (error: unknown) {
     return `the restored ledger could not be read (${messageOf(error)})`;
   }
@@ -579,10 +600,12 @@ export async function main(argv: readonly string[] = process.argv.slice(2), seam
       console.log("\nNothing to do.");
       return result("nothing-to-do", []);
     }
-    const before = ledgerFace(bundle);
-    const rebuilt = await rebuiltBalances(bundle, args.scratch);
-    const rehearsal = await rehearse(bundle, args, plan, before, rebuilt);
-    print("REHEARSAL on a copy", rehearsal);
+    // one day for every face of the run: /summary reads its years through it, and a run that crosses midnight must not
+    // read the clock as a change to the ledger
+    const today = todayIso();
+    const before = ledgerFace(bundle, today);
+    const rehearsal = await rehearse(bundle, args, plan, before, today);
+    print("REHEARSAL on a copy", rehearsal, rehearsal.kept);
     console.log(`  = before: ${before.headline}`);
     console.log(`  = after:  ${rehearsal.headline}`);
     if (rehearsal.failures.length > 0) return result("refused", rehearsal.failures, rehearsal.allowed);
@@ -590,7 +613,7 @@ export async function main(argv: readonly string[] = process.argv.slice(2), seam
       console.log("\nDry run: nothing was written. Re-run with --confirm to write.");
       return result("dry-run", [], rehearsal.allowed);
     }
-    return await write(bundle, args, { plan, before, rebuilt, rehearsal }, seams);
+    return await write(bundle, args, { plan, before, rehearsal, today }, seams);
   } finally {
     // a put-back closed it, and opened the restored file under its own handle
     if (bundle.sqlite.open) bundle.sqlite.close();

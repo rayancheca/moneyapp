@@ -94,10 +94,26 @@ async function twoMonthsReadAprilFirstThenBumped(): Promise<void> {
   bundle.db.delete(printedLines).run();
   profile.version = 2;
 }
+/** The statement a day's recorded balance cites — its file, and which read of it. */
 const citedBy = (day: string) =>
   bundle.sqlite
-    .prepare("SELECT f.file_name AS file FROM balance_anchors a JOIN import_files f ON f.id = a.import_file_id WHERE a.anchored_on = ?")
-    .get(day) as { file: string };
+    .prepare(
+      `SELECT f.file_name AS file, f.parser_version AS version FROM balance_anchors a JOIN import_files f ON f.id = a.import_file_id
+        WHERE a.anchored_on = ? AND a.source = 'statement'`,
+    )
+    .get(day) as { file: string; version: number };
+/**
+ * ⚖️ What a re-read may say it changed — his rule (§6A 26, 2026-09-28): the files read again, and the records they
+ * write. Nothing else.
+ */
+const onlyTheRecords = (files: number) => [
+  `${files} file(s) read again at their profile's version; the older reads retired`,
+  `${files} printed-line record(s) over ${files} file(s)`,
+  "0 statement cop(ies)",
+  "0 card number(s)",
+];
+/** The last day any account's balances are cached through — what the dashboard counts unchecked days to. */
+const lastCachedDay = () => (bundle.sqlite.prepare("SELECT max(day) AS day FROM daily_balances").get() as { day: string }).day;
 
 /** The live rows as the owner sees them. */
 const liveRows = () =>
@@ -205,9 +221,8 @@ describe("reread-unrecorded-files — re-read the files the backfills cannot, an
     expect(fileRows()).toEqual([{ version: 1, status: "parsed" }]);
     expect(bundle.db.select().from(printedLines).all()).toEqual([]);
     expect(backups()).toEqual([]);
-    // the rehearsal names what a re-read may change: the record, and the days a rebuild carries to today
-    expect(dry.allowed.join("\n")).toMatch(/1 printed-line record/);
-    expect(dry.allowed.join("\n")).toMatch(/carried to/);
+    // the rehearsal names what the re-read changes: the file read again, and its record — nothing else
+    expect(dry.allowed).toEqual(onlyTheRecords(1));
     bundle.sqlite.close();
 
     const written = await main(args("--confirm"));
@@ -223,6 +238,10 @@ describe("reread-unrecorded-files — re-read the files the backfills cannot, an
     ]);
     expect(bundle.db.select().from(printedLines).all()).toHaveLength(1);
     expect(liveRows()).toEqual(rows);
+    expect(written.allowed).toEqual(onlyTheRecords(1));
+    // 🔴 the import rebuilds the accounts it reads to today: the cache stops where it stopped, or the dashboard's count
+    // of unchecked days moves ("15 days unchecked" read 28 on a copy of the real ledger, 2026-09-28)
+    expect(lastCachedDay()).toBe("2026-03-20");
     bundle.sqlite.close();
 
     const again = await main(args("--confirm"));
@@ -275,9 +294,10 @@ describe("reread-unrecorded-files — re-read the files the backfills cannot, an
     expect(fileRows()).toEqual([{ version: 1, status: "parsed" }]);
   });
 
-  test("a dedupe key that now agrees with the day its row carries is named, not refused", async () => {
+  test("a row keeps the dedupe key the ledger gave it — even one the new version derives anew from the day the row carries", async () => {
     // Discover back-dates a dispute credit's Post Date; v2 takes the later printed day, and a one-off script had
-    // already re-dated the row in place — so only the key the v1 read derived from the old day moves
+    // already re-dated the row in place without re-keying it — so the v2 read derives another key for the same row (3
+    // Discover rows on the real ledger). ⚖️ His rule admits the records and nothing else: the key stays as it was.
     const backdated = { ...GROCER, postedOn: "2026-03-09" };
     await importedBeforeRecordsThenBumped(statement([COFFEE, backdated]), statement([COFFEE, GROCER]));
     const row = bundle.db.select().from(transactions).where(eq(transactions.rawDescription, GROCER.rawDescription)).get()!;
@@ -291,7 +311,34 @@ describe("reread-unrecorded-files — re-read the files the backfills cannot, an
     reopen();
     expect(run.failures).toEqual([]);
     expect(run.outcome).toBe("written");
-    expect(run.allowed.join("\n")).toMatch(/dedupe key.*CORNER GROCER/);
+    expect(run.allowed).toEqual(onlyTheRecords(1));
+    expect(liveRows()).toEqual(rows);
+    const fresh = bundle.db
+      .select()
+      .from(transactions)
+      .where(and(eq(transactions.rawDescription, GROCER.rawDescription), eq(transactions.status, "active")))
+      .get()!;
+    expect(fresh.id).not.toBe(row.id);
+    expect(fresh.dedupeHash).toBe(row.dedupeHash);
+  });
+
+  test("a dedupe key the write changes is put back", async () => {
+    await importedBeforeRecordsThenBumped(statement([COFFEE, GROCER]), statement([COFFEE, GROCER]));
+    const rows = liveRows();
+    bundle.sqlite.close();
+
+    const run = await main(args("--confirm"), {
+      afterWrite: (real) => {
+        real.sqlite
+          .prepare("UPDATE transactions SET dedupe_hash = 'moved-' || dedupe_hash WHERE status = 'active' AND raw_description = ?")
+          .run(GROCER.rawDescription);
+      },
+    });
+
+    reopen();
+    expect(run.outcome).toBe("restored");
+    expect(run.failures.join("\n")).toMatch(/dedupe key.*CORNER GROCER/);
+    expect(fileRows()).toEqual([{ version: 1, status: "parsed" }]);
     expect(liveRows()).toEqual(rows);
   });
 
@@ -320,27 +367,35 @@ describe("reread-unrecorded-files — re-read the files the backfills cannot, an
     expect(bundle.db.select().from(printedLines).all()).toEqual([]);
   });
 
-  test("a day carried to today must be what a rebuild of the untouched ledger writes — anything else is put back", async () => {
+  test("a balance day the ledger did not have is put back — the dashboard would count its unchecked days anew", async () => {
     await importedBeforeRecordsThenBumped(statement([COFFEE, GROCER]), statement([COFFEE, GROCER]));
+    // last rebuilt on 03-20, as on the real ledger (Discover's cache stops at 09-14)
     bundle.db.delete(dailyBalances).where(gt(dailyBalances.day, "2026-03-20")).run();
     bundle.sqlite.close();
 
     const run = await main(args("--confirm"), {
-      // a carried day off by a cent: no row, no period and no day net worth had before says so — only the rebuild does
+      // one day past where the cache stops, as the import's rebuild to today writes them
       afterWrite: (real) => {
-        real.sqlite.prepare("UPDATE daily_balances SET balance_cents = balance_cents + 1 WHERE day = (SELECT max(day) FROM daily_balances)").run();
+        real.sqlite
+          .prepare(
+            `INSERT INTO daily_balances (account_id, day, balance_cents, basis)
+               SELECT account_id, '2026-03-21', balance_cents, basis FROM daily_balances WHERE day = '2026-03-20'`,
+          )
+          .run();
       },
     });
 
     reopen();
     expect(run.outcome).toBe("restored");
-    expect(run.failures.join("\n")).toMatch(/no rebuild writes/);
+    expect(run.failures.join("\n")).toMatch(/balance day\(s\) the ledger did not have/);
+    expect(run.failures.join("\n")).toMatch(/net worth gained 1 day/);
     expect(fileRows()).toEqual([{ version: 1, status: "parsed" }]);
+    expect(lastCachedDay()).toBe("2026-03-20");
   });
 
-  test("a month-end balance may come to cite the other statement that prints it — and is named", async () => {
+  test("a re-read keeps each month-end balance citing the statement it cited — the one that closes on it", async () => {
     await twoMonthsReadAprilFirstThenBumped();
-    expect(citedBy("2026-03-31").file).toBe(MARCH_FILE.name);
+    expect(citedBy("2026-03-31")).toEqual({ file: MARCH_FILE.name, version: 1 });
     bundle.sqlite.close();
 
     const run = await main(args("--confirm"));
@@ -348,8 +403,32 @@ describe("reread-unrecorded-files — re-read the files the backfills cannot, an
     reopen();
     expect(run.failures).toEqual([]);
     expect(run.outcome).toBe("written");
-    expect(citedBy("2026-03-31").file).toBe(APRIL_FILE.name);
-    expect(run.allowed.join("\n")).toMatch(/1 month-end balance\(s\) now cite the other statement.*2026-03-31/);
+    expect(run.allowed).toEqual(onlyTheRecords(2));
+    expect(citedBy("2026-03-31")).toEqual({ file: MARCH_FILE.name, version: 2 });
+  });
+
+  test("a month-end balance that comes to cite the other statement that prints it — same day, same balance — is put back", async () => {
+    await twoMonthsReadAprilFirstThenBumped();
+    bundle.sqlite.close();
+
+    const run = await main(args("--confirm"), {
+      // what the re-read did before it kept citations: 03-31 to April's new read, which opens the day after it
+      afterWrite: (real) => {
+        real.sqlite
+          .prepare(
+            `UPDATE balance_anchors SET (import_file_id, statement_period_id) =
+               (SELECT p.import_file_id, p.id FROM statement_periods p JOIN import_files f ON f.id = p.import_file_id
+                 WHERE p.period_start = '2026-04-01' AND f.status = 'parsed')
+             WHERE anchored_on = '2026-03-31'`,
+          )
+          .run();
+      },
+    });
+
+    reopen();
+    expect(run.outcome).toBe("restored");
+    expect(run.failures.join("\n")).toMatch(/cite another statement.*2026-03-31/);
+    expect(citedBy("2026-03-31")).toEqual({ file: MARCH_FILE.name, version: 1 });
   });
 
   test("a balance that comes to cite a statement which does not print it is put back", async () => {
@@ -374,6 +453,60 @@ describe("reread-unrecorded-files — re-read the files the backfills cannot, an
     expect(run.outcome).toBe("restored");
     expect(run.failures.join("\n")).toMatch(/cite another statement.*2026-02-28/);
     expect(citedBy("2026-02-28").file).toBe(MARCH_FILE.name);
+  });
+
+  test("a statement period that comes to belong to another statement is put back", async () => {
+    await twoMonthsReadAprilFirstThenBumped();
+    bundle.sqlite.close();
+
+    const run = await main(args("--confirm"), {
+      // the two new reads' periods swapped: same days, same balances, each filed under the other statement (a file
+      // holds one period per account, so April's waits under its retired read while March's moves)
+      afterWrite: (real) => {
+        const read = (input: ImportInput, version: number) =>
+          real.db
+            .select()
+            .from(importFiles)
+            .where(and(eq(importFiles.fileName, input.name), eq(importFiles.parserVersion, version)))
+            .get()!.id;
+        const [march, april, parked] = [read(MARCH_FILE, 2), read(APRIL_FILE, 2), read(APRIL_FILE, 1)];
+        const move = real.sqlite.prepare("UPDATE statement_periods SET import_file_id = ? WHERE import_file_id = ?");
+        move.run(parked, april);
+        move.run(april, march);
+        move.run(march, parked);
+      },
+    });
+
+    reopen();
+    expect(run.outcome).toBe("restored");
+    expect(run.failures.join("\n")).toMatch(/statement period.*2026-03-01/);
+    expect(fileRows()).toEqual([
+      { version: 1, status: "parsed" },
+      { version: 1, status: "parsed" },
+    ]);
+  });
+
+  test("a row that comes to be filed under another statement is put back", async () => {
+    await twoMonthsReadAprilFirstThenBumped();
+    bundle.sqlite.close();
+
+    const run = await main(args("--confirm"), {
+      // the coffee March prints, filed under April's new read: same money, day and words, the other statement named
+      afterWrite: (real) => {
+        const april = real.db
+          .select()
+          .from(importFiles)
+          .where(and(eq(importFiles.fileName, APRIL_FILE.name), eq(importFiles.parserVersion, 2)))
+          .get()!.id;
+        real.sqlite
+          .prepare("UPDATE transactions SET import_file_id = ? WHERE status = 'active' AND raw_description = ?")
+          .run(april, COFFEE.rawDescription);
+      },
+    });
+
+    reopen();
+    expect(run.outcome).toBe("restored");
+    expect(run.failures.join("\n")).toMatch(/BLUE BOTTLE 12/);
   });
 
   test("refuses an argument it does not take, and never guesses the database", async () => {

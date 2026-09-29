@@ -3,26 +3,29 @@
  *
  * A re-read renews identity and nothing else it may keep: the file's rows, periods, anchors and holding events are
  * written again under new ids and a new `import_files` row, and the older read's rows are retired. So a face leaves out
- * exactly that identity (row ids, file ids, period ids, stamps) and keeps every column a figure, a category, a note, a
- * link or a balance is made of — and compares the rest of the database table by table, whole, so a table added later is
- * guarded without anyone listing it here.
+ * exactly that identity (row ids, file ids, period ids, stamps), reads which statement each row, period and recorded
+ * balance is filed under through the re-read (an older read's new read, or the same file), and keeps every column a
+ * figure, a category, a note, a link, a key or a balance is made of — and compares the rest of the database table by
+ * table, whole, so a table added later is guarded without anyone listing it here.
  *
- * What a re-read MAY change, each named in the verdict rather than hidden in it:
- *  - the older reads retire and the new reads stand in their place (same name, bytes and archived original);
- *  - the records the re-read exists to write (`printed_lines`, and any `statement_copies` / `account_numbers`);
- *  - a dedupe key that now agrees with the day its row carries (the Discover v1 keys were derived from a back-dated Post
- *    Date that scripts/fix-discover-backdated-adjustments.ts had re-dated in place — measured 2026-09-28: 3 rows);
- *  - days after an account's last cached balance, when each is exactly what `rebuildAccount` writes on a copy of the
- *    untouched ledger today: the import rebuilds the accounts it read, and a cache last rebuilt on Sep 14 is carried to
- *    today (measured 2026-09-28: Discover 14 days, Robinhood Agentic 13, Robinhood Cash 13 — the dashboard's "15 days
- *    unchecked" for Robinhood Cash becomes the true 28) — and net worth's series runs as far as they do;
- *  - which of the two statements that print a month-end balance the balance cites, between two of the new reads, when
- *    the new one's own period prints that balance on that day (`compareAnchors` — 26 on 2026-09-28).
- * Anything else refuses.
+ * ⚖️ His rule (§6A 26, 2026-09-28): re-read the files so their records exist — refuse if anything but the records
+ * changes. So a re-read may change exactly two things, each named in the verdict:
+ *  - the older reads retire and the new reads stand in their place (same name, bytes and archived original, the
+ *    profile's version, `parsed`) — the `import_files` version and status bookkeeping;
+ *  - the records the re-read exists to write: new `printed_lines`, `statement_copies` and `account_numbers` rows.
+ * Anything else refuses: a row's money, day, words, category and its source, note, link, transfer group, series, dedupe
+ * key or statement; a split; a period, its verdict or its statement; a recorded balance or the statement it cites; a
+ * cached balance day, changed or new; net worth on any day, or a day it did not have; a /summary year; any other table.
+ *
+ * 🔴 An earlier cut also let through, "allowed, and named", four changes a copy of the real ledger made (2026-09-28):
+ * cached balances carried on to today (the dashboard's "15 days unchecked" read 28) with net worth a day further and
+ * the 2026 return moved with its valuation day; 26 month-ends citing the other statement that prints them; and 3
+ * dedupe keys. Each is a change he did not approve (the review of uc/reread-34-runbook, 2026-09-29): the re-read now
+ * keeps each as the ledger had it (`reread-citations`, `reread-unrecorded-keep`), and this refuses any that is not.
  */
 import path from "node:path";
 import type { DbBundle } from "@/db/client";
-import { addDays, todayIso } from "@/lib/dates";
+import { todayIso } from "@/lib/dates";
 import { formatCents, formatCentsSigned } from "@/lib/money";
 import { netWorthSeries } from "@/services/derivation";
 import { summaryYears, yearSummaryView } from "@/services/year-summary";
@@ -72,14 +75,16 @@ interface Period {
 export interface LedgerFace {
   /** every transaction by id, every column but `updated_at` */
   rows: Map<string, Row>;
-  /** rows not superseded, by content: no id, no file, no dedupe key, the period as its span */
+  /** rows not superseded, by `file \x1f content`: no id, no dedupe key, the period as its span */
   live: Multiset;
   /** each live content's dedupe keys, sorted */
   keys: Map<string, string[]>;
+  /** statement periods by `file \x1f content`: no id, the rest as the row holds it */
+  periodsByFile: Multiset;
   splits: Multiset;
   /** `account \x1f day` → `balance \x1f basis` */
   balances: Map<string, string>;
-  /** statement periods, anchors, holding events and every table without a rule of its own, by content */
+  /** the balance on each anchored day, holding events and every table without a rule of its own, by content */
   tables: Map<string, Multiset>;
   /** `account \x1f day \x1f source` → the balance, and the file and period it cites */
   anchors: Map<string, Anchor>;
@@ -110,11 +115,29 @@ function all(bundle: DbBundle, sql: string): Row[] {
   return bundle.sqlite.prepare(sql).all() as Row[];
 }
 
-/** A row's content: what the owner sees of it, and nothing a re-read renews. */
-function contentOf(row: Row, spans: ReadonlyMap<string, string>): string {
+/** A row's content: what the owner sees of it, and nothing a re-read renews. Its file and its key are read beside it. */
+export function contentOf(row: Row, spans: ReadonlyMap<string, string>): string {
   const { statement_period_id: period, ...rest } = without(row, ["id", "import_file_id", "dedupe_hash", ...STAMPS]);
   return JSON.stringify({ ...rest, period: period === null ? null : spans.get(String(period)) ?? "?" });
 }
+
+/** Each statement period's span, `account|start|end` — how a row names its period by content. */
+export function spansOf(bundle: DbBundle): Map<string, string> {
+  return new Map(
+    all(bundle, "SELECT id, account_id, period_start, period_end FROM statement_periods").map((p) => [
+      String(p.id),
+      `${p.account_id}|${p.period_start}|${p.period_end}`,
+    ]),
+  );
+}
+
+/** `file \x1f content` — a row or a period, and the statement it is filed under. */
+const filed = (file: unknown, content: string): string => `${file === null || file === undefined ? "" : String(file)}\x1f${content}`;
+/** …and back. */
+const unfiled = (key: string): { file: string; content: string } => {
+  const at = key.indexOf("\x1f");
+  return { file: key.slice(0, at), content: key.slice(at + 1) };
+};
 
 /** Every transaction by id, and the live ones by content — each row's content kept for what else names it. */
 function rowFaces(bundle: DbBundle, spans: ReadonlyMap<string, string>) {
@@ -128,7 +151,7 @@ function rowFaces(bundle: DbBundle, spans: ReadonlyMap<string, string>) {
     const content = contentOf(row, spans);
     contentById.set(id, content);
     if (row.status === "superseded") continue;
-    bump(live, content);
+    bump(live, filed(row.import_file_id, content));
     keys.set(content, [...(keys.get(content) ?? []), String(row.dedupe_hash)].sort());
   }
   const splits: Multiset = new Map();
@@ -147,7 +170,6 @@ function tableFaces(bundle: DbBundle, contentById: ReadonlyMap<string, string>):
     for (const r of all(bundle, `SELECT * FROM "${table}"`)) bump(m, JSON.stringify(map(without(r, drop))));
     tables.set(table, m);
   };
-  byContent("statement_periods", ["id", "import_file_id", ...STAMPS]);
   // the balance on each day, whoever prints it — which statement it cites is `anchors`, compared by its own rule
   byContent("balance_anchors", ["id", "import_file_id", "statement_period_id", ...STAMPS]);
   byContent("holding_events", ["id", "import_file_id", ...STAMPS]);
@@ -161,6 +183,15 @@ function tableFaces(bundle: DbBundle, contentById: ReadonlyMap<string, string>):
     byContent(table, ["id", ...STAMPS], (r) => ({ ...r, ...Object.fromEntries(refs.map((c) => [c, named(r, c)])) }));
   }
   return tables;
+}
+
+/** Every statement period by content, filed under its statement — its verdict among its columns. */
+function periodFaces(bundle: DbBundle): Multiset {
+  const m: Multiset = new Map();
+  for (const p of all(bundle, "SELECT * FROM statement_periods")) {
+    bump(m, filed(p.import_file_id, JSON.stringify(without(p, ["id", "import_file_id", ...STAMPS]))));
+  }
+  return m;
 }
 
 /** Which file and period each recorded balance cites, and which days each period prints. */
@@ -216,8 +247,8 @@ function nameFaces(bundle: DbBundle): Pick<LedgerFace, "accountNames" | "categor
   };
 }
 
-/** Every cached balance: `account \x1f day` → `balance \x1f basis` — ONE reading, for the face and for the rebuild. */
-export function balancesOf(bundle: DbBundle): Map<string, string> {
+/** Every cached balance: `account \x1f day` → `balance \x1f basis`. */
+function balancesOf(bundle: DbBundle): Map<string, string> {
   return new Map(
     all(bundle, "SELECT account_id, day, balance_cents, basis FROM daily_balances").map((b) => [
       `${b.account_id}\x1f${b.day}`,
@@ -226,13 +257,9 @@ export function balancesOf(bundle: DbBundle): Map<string, string> {
   );
 }
 
+/** The ledger's face; `today` is the day /summary reads its years through — one run reads every face on one day. */
 export function ledgerFace(bundle: DbBundle, today: string = todayIso()): LedgerFace {
-  const spans = new Map(
-    all(bundle, "SELECT id, account_id, period_start, period_end FROM statement_periods").map((p) => [
-      String(p.id),
-      `${p.account_id}|${p.period_start}|${p.period_end}`,
-    ]),
-  );
+  const spans = spansOf(bundle);
   const { rows, contentById, live, keys, splits } = rowFaces(bundle, spans);
   const balances = balancesOf(bundle);
   const records = new Map<string, Row>();
@@ -244,6 +271,7 @@ export function ledgerFace(bundle: DbBundle, today: string = todayIso()): Ledger
     rows,
     live,
     keys,
+    periodsByFile: periodFaces(bundle),
     splits,
     balances,
     tables: tableFaces(bundle, contentById),
@@ -278,8 +306,6 @@ export function archivedAs(storagePath: string): string {
 
 export interface RereadExpectation {
   targets: readonly RereadTarget[];
-  /** `account \x1f day` → `balance \x1f basis`, as `rebuildAccount` writes them on a copy of the untouched ledger */
-  rebuilt: ReadonlyMap<string, string>;
   /**
    * Where the run archived: each new read's original must be `<archiveRoot>/<target.archived>` — on the real ledger its
    * own statements root, so the very original its older read names. 🔴 Compared as `<folder>/<name>` alone, a real
@@ -300,7 +326,7 @@ export function withStoragePaths(face: LedgerFace, paths: ReadonlyMap<string, st
 
 export interface Verdict {
   failures: string[];
-  /** what changed that a re-read may change — said, never silent */
+  /** what changed that a re-read may change — the files read again and their records, said, never silent */
   allowed: string[];
   /** the allowed changes as data: a real write must make exactly its rehearsal's */
   signature: string;
@@ -387,13 +413,38 @@ function compareFiles(
   return { failures, fresh };
 }
 
-/** The rows: every row by id as it was (the retired reads' rows superseded, nothing else), and the live rows by content. */
+/**
+ * `face`'s `file \x1f content` entries as they read after a re-read that keeps them: each filed under its older read's
+ * new read when the re-read retired that read (`successorOf`), else under the same file.
+ */
+function refiled(m: Multiset, successorOf: ReadonlyMap<string, string>): Multiset {
+  const out: Multiset = new Map();
+  for (const [key, n] of m) {
+    const { file, content } = unfiled(key);
+    const at = filed(successorOf.get(file) ?? file, content);
+    out.set(at, (out.get(at) ?? 0) + n);
+  }
+  return out;
+}
+
+/** A retired read's id → its new read's id, as the files comparison found them. */
+const successorsOf = (fresh: ReadonlyMap<string, RereadTarget>): Map<string, string> =>
+  new Map([...fresh].map(([newId, t]) => [t.id, newId] as const));
+
+/** The name a file is known by in `face`, for messages. */
+const fileName = (face: LedgerFace, id: string): string => (id === "" ? "no file" : String(face.files.get(id)?.file_name ?? id));
+
+/**
+ * The rows: every row by id as it was (the retired reads' rows superseded, nothing else); the live rows by content, each
+ * under the statement it was filed under (or that statement's new read); and each live row's dedupe key as it was — a
+ * key the next import matches a line by is not a record.
+ */
 function compareRows(
   before: LedgerFace,
   after: LedgerFace,
   expect: RereadExpectation,
   fresh: ReadonlyMap<string, RereadTarget>,
-): { failures: string[]; keyChanges: string[] } {
+): string[] {
   const failures: string[] = [];
   const retiring = new Set(expect.targets.map((t) => t.id));
   const changed: string[] = [];
@@ -414,12 +465,16 @@ function compareRows(
     .map(([id, r]) => `"${String(r.raw_description)}" (${id})`);
   if (stray.length > 0) failures.push(`${stray.length} new row(s) under no re-read file: ${examples(stray)}`);
 
-  const { gone, came } = multisetDelta(before.live, after.live);
+  const { gone, came } = multisetDelta(refiled(before.live, successorsOf(fresh)), after.live);
   if (gone.length + came.length > 0) {
+    const described = (face: LedgerFace) => (key: string) => {
+      const { file, content } = unfiled(key);
+      return `${describeContent(content, face)} · under ${fileName(face, file)}`;
+    };
     failures.push(
-      `the live rows are not the same money, days, descriptions, categories, notes and links — ` +
-        `only before: ${examples(gone.map((c) => describeContent(c, before)))}` +
-        ` | only after: ${examples(came.map((c) => describeContent(c, after)))}`,
+      `the live rows are not the same money, days, descriptions, categories, notes, links and statements — ` +
+        `only before: ${examples(gone.map(described(after)))}` +
+        ` | only after: ${examples(came.map(described(after)))}`,
     );
   }
   const keyChanges: string[] = [];
@@ -427,50 +482,61 @@ function compareRows(
   for (const [content, keys] of before.keys) {
     const now = after.keys.get(content);
     if (now !== undefined && JSON.stringify(now) !== JSON.stringify(keys)) {
-      keyChanges.push(`dedupe key of ${describeContent(content, before)}: ${short(keys)} → ${short(now)}`);
+      keyChanges.push(`${describeContent(content, before)}: ${short(keys)} → ${short(now)}`);
     }
   }
+  if (keyChanges.length > 0) failures.push(`${keyChanges.length} dedupe key(s) changed: ${examples(keyChanges)}`);
   const splits = multisetDelta(before.splits, after.splits);
   if (splits.gone.length + splits.came.length > 0) failures.push(`${splits.gone.length} split(s) gone, ${splits.came.length} came`);
-  return { failures, keyChanges };
+  return failures;
 }
 
-/** Every cached day as it was; a new day only after the account's last one, and only what a rebuild writes. */
-function compareBalances(
-  before: LedgerFace,
-  after: LedgerFace,
-  expect: RereadExpectation,
-): { failures: string[]; carried: string[] } {
-  const failures: string[] = [];
-  const moved: string[] = [];
-  const last = new Map<string, string>();
+/** The periods: each with its days, balances and verdict, under the statement it was filed under (or its new read). */
+function comparePeriods(before: LedgerFace, after: LedgerFace, fresh: ReadonlyMap<string, RereadTarget>): string[] {
+  const { gone, came } = multisetDelta(refiled(before.periodsByFile, successorsOf(fresh)), after.periodsByFile);
+  if (gone.length + came.length === 0) return [];
+  const described = (key: string) => {
+    const { file, content } = unfiled(key);
+    const p = JSON.parse(content) as Row;
+    const account = after.accountNames.get(String(p.account_id)) ?? before.accountNames.get(String(p.account_id)) ?? String(p.account_id);
+    return `${account} ${String(p.period_start)}..${String(p.period_end)} (${String(p.reconciliation ?? "")}) under ${fileName(after, file)}`;
+  };
+  return [
+    `${gone.length + came.length} statement period(s) moved, or belong to another statement — ` +
+      `only before: ${examples(gone.map(described))} | only after: ${examples(came.map(described))}`,
+  ];
+}
+
+/**
+ * Every cached day as it was, and no day the ledger did not have. 🔴 The import rebuilds the accounts it reads to today:
+ * a cache carried on moves what the dashboard says of them ("15 days unchecked" read 28 on a copy of the real ledger,
+ * 2026-09-28) — so the re-read keeps each cache ending where it ended (`reread-unrecorded-keep`), and this refuses any
+ * day it did not keep.
+ */
+function compareBalances(before: LedgerFace, after: LedgerFace): string[] {
   const cell = (value: string | undefined) => value?.replace("\x1f", " ") ?? "nothing";
-  for (const [key, value] of before.balances) {
+  const where = (key: string) => {
     const [account, day] = key.split("\x1f") as [string, string];
-    if (day > (last.get(account) ?? "")) last.set(account, day);
-    const now = after.balances.get(key);
-    if (now !== value) moved.push(`${before.accountNames.get(account) ?? account} ${day}: ${cell(value)} → ${cell(now)}`);
-  }
-  if (moved.length > 0) failures.push(`${moved.length} balance day(s) moved: ${examples(moved)}`);
-  const tails = new Map<string, { n: number; to: string }>();
-  const wrong: string[] = [];
-  for (const [key, value] of after.balances) {
+    return { name: after.accountNames.get(account) ?? before.accountNames.get(account) ?? account, day };
+  };
+  const moved = [...before.balances]
+    .filter(([key, value]) => after.balances.get(key) !== value)
+    .map(([key, value]) => `${where(key).name} ${where(key).day}: ${cell(value)} → ${cell(after.balances.get(key))}`);
+  const added = new Map<string, { n: number; from: string; to: string }>();
+  for (const key of after.balances.keys()) {
     if (before.balances.has(key)) continue;
-    const [account, day] = key.split("\x1f") as [string, string];
-    const name = after.accountNames.get(account) ?? account;
-    const rebuilt = expect.rebuilt.get(key);
-    if (day <= (last.get(account) ?? "")) wrong.push(`${name} ${day}: a day inside the cache the re-read added`);
-    else if (rebuilt !== value) wrong.push(`${name} ${day}: ${cell(value)}, a rebuild of the untouched ledger writes ${cell(rebuilt)}`);
-    else {
-      const t = tails.get(name) ?? { n: 0, to: day };
-      tails.set(name, { n: t.n + 1, to: day > t.to ? day : t.to });
-    }
+    const { name, day } = where(key);
+    const run = added.get(name) ?? { n: 0, from: day, to: day };
+    added.set(name, { n: run.n + 1, from: day < run.from ? day : run.from, to: day > run.to ? day : run.to });
   }
-  if (wrong.length > 0) failures.push(`${wrong.length} new balance day(s) no rebuild writes: ${examples(wrong)}`);
-  const carried = [...tails]
+  const perAccount = [...added]
     .sort(([a], [b]) => a.localeCompare(b))
-    .map(([name, t]) => `${name}: ${t.n} day(s) carried to ${t.to}`);
-  return { failures, carried };
+    .map(([name, run]) => `${name}: ${run.n} (${run.from} → ${run.to})`);
+  const n = [...added.values()].reduce((sum, run) => sum + run.n, 0);
+  return [
+    ...(moved.length > 0 ? [`${moved.length} balance day(s) moved: ${examples(moved)}`] : []),
+    ...(n > 0 ? [`${n} balance day(s) the ledger did not have: ${examples(perAccount)}`] : []),
+  ];
 }
 
 /** The records: every one kept as it was; new ones only under the new reads, and every new read holds one. */
@@ -505,27 +571,20 @@ function compareRecords(
 }
 
 /**
- * Which statement each recorded balance cites. Two statements print a month-end balance — one closes on it, the next
- * opens the day after — and the anchor belongs to whichever file wrote it last (`upsertAnchor`), so a re-read that reads
- * the months oldest first (`oldestFirstWhereItMatters`) hands each boundary to the month that opens after it. Measured
- * on the real ledger 2026-09-28: 26 Robinhood month-ends, each printed by both of its statements, same balance, same
- * day — the provenance sheet of that day names the other statement. Allowed only in that form: from an older read to a
- * new read whose own period prints that balance on that day. An anchor any other file cites keeps its file and period.
+ * Which statement each recorded balance cites: the new read of the file it cited, over the same span — or the same file,
+ * when the re-read did not read it. Two statements print a month-end balance (one closes on it, the next opens the day
+ * after), and the provenance sheet of the day names the one the anchor cites. 🔴 A re-read that wrote its months oldest
+ * first handed 26 Robinhood month-ends to the next statement's opening — same day, same balance, the other statement
+ * named (2026-09-28); the re-read keeps each citation now (`reread-citations`), and this refuses any it did not keep.
  */
-function compareAnchors(
-  before: LedgerFace,
-  after: LedgerFace,
-  fresh: ReadonlyMap<string, RereadTarget>,
-): { failures: string[]; handed: string[] } {
-  const successorOf = new Map([...fresh].map(([newId, t]) => [t.id, newId] as const));
+function compareAnchors(before: LedgerFace, after: LedgerFace, fresh: ReadonlyMap<string, RereadTarget>): string[] {
+  const successorOf = successorsOf(fresh);
   const span = (face: LedgerFace, id: string | null) => {
     const p = id === null ? undefined : face.periods.get(id);
     return p === undefined ? "" : `${p.start}..${p.end}`;
   };
-  const cites = (face: LedgerFace, a: Anchor) =>
-    `${a.file === null ? "no file" : String(face.files.get(a.file)?.file_name ?? a.file)} ${span(face, a.period)}`;
+  const cites = (face: LedgerFace, a: Anchor) => `${a.file === null ? "no file" : fileName(face, a.file)} ${span(face, a.period)}`;
   const wrong: string[] = [];
-  const handed: string[] = [];
   for (const [key, was] of before.anchors) {
     const [account, day, source] = key.split("\x1f") as [string, string, string];
     const where = `${before.accountNames.get(account) ?? account} ${day} (${source})`;
@@ -536,40 +595,18 @@ function compareAnchors(
     }
     const successor = was.file === null ? null : successorOf.get(was.file) ?? was.file;
     if (now.file === successor && span(after, now.period) === span(before, was.period)) continue;
-    const move = `${where} ${formatCentsSigned(now.cents)}: ${cites(before, was)} → ${cites(after, now)}`;
-    const between = was.file !== null && successorOf.has(was.file) && now.file !== null && fresh.has(now.file);
-    if (between && printsOn(after, now, day)) handed.push(move);
-    else wrong.push(move);
+    wrong.push(`${where} ${formatCentsSigned(now.cents)}: ${cites(before, was)} → ${cites(after, now)}`);
   }
   for (const key of after.anchors.keys()) {
     if (!before.anchors.has(key)) wrong.push(`an anchor appeared: ${key.replaceAll("\x1f", " ")}`);
   }
-  return {
-    failures: wrong.length > 0 ? [`${wrong.length} recorded balance(s) moved or cite another statement: ${examples(wrong)}`] : [],
-    handed:
-      handed.length > 0
-        ? [`${handed.length} month-end balance(s) now cite the other statement that prints them (same day, same balance): ${examples(handed)}`]
-        : [],
-  };
+  return wrong.length > 0 ? [`${wrong.length} recorded balance(s) moved or cite another statement: ${examples(wrong)}`] : [];
 }
 
-/** The anchor's own period prints its balance on its day: it closes on it, or opens the day after (`printed-anchors`). */
-function printsOn(face: LedgerFace, anchor: Anchor, day: string): boolean {
-  const period = anchor.period === null ? undefined : face.periods.get(anchor.period);
-  if (period === undefined || period.file !== anchor.file) return false;
-  return (
-    (period.end === day && period.closes === anchor.cents) ||
-    (addDays(period.start, -1) === day && period.opens === anchor.cents)
-  );
-}
-
-/** Does `after` differ from `before` only as a re-read of `expect.targets` may make it differ? */
+/** Does `after` differ from `before` only as a re-read of `expect.targets` may make it differ — in its records? */
 export function compareFaces(before: LedgerFace, after: LedgerFace, expect: RereadExpectation): Verdict {
   const files = compareFiles(before, after, expect);
-  const rows = compareRows(before, after, expect, files.fresh);
-  const balances = compareBalances(before, after, expect);
   const records = compareRecords(before, after, files.fresh);
-  const anchors = compareAnchors(before, after, files.fresh);
   const tables: string[] = [];
   for (const [table, rowsBefore] of before.tables) {
     const { gone, came } = multisetDelta(rowsBefore, after.tables.get(table) ?? new Map());
@@ -577,54 +614,32 @@ export function compareFaces(before: LedgerFace, after: LedgerFace, expect: Rere
     tables.push(`${table}: ${gone.length} row(s) gone, ${came.length} came — e.g. ${[...gone, ...came][0]?.slice(0, 300)}`);
   }
   for (const table of after.tables.keys()) if (!before.tables.has(table)) tables.push(`a table appeared: ${table}`);
-  const netWorth = compareNetWorth(before, after);
-  const figures = [
-    ...netWorth.failures,
-    ...(before.summaries === after.summaries ? [] : ["a /summary year moved (its return, income or spending)"]),
-  ];
   const failures = [
     ...files.failures,
-    ...rows.failures,
-    ...balances.failures,
-    ...anchors.failures,
+    ...compareRows(before, after, expect, files.fresh),
+    ...comparePeriods(before, after, files.fresh),
+    ...compareBalances(before, after),
+    ...compareAnchors(before, after, files.fresh),
     ...records.failures,
     ...tables,
-    ...figures,
+    ...compareNetWorth(before, after),
+    ...(before.summaries === after.summaries ? [] : ["a /summary year moved (its return, income or spending)"]),
   ];
-  const allowed = [
-    `${files.fresh.size} file(s) read again at their profile's version; the older reads retired`,
-    ...records.written,
-    ...balances.carried,
-    ...netWorth.extended,
-    ...anchors.handed,
-    ...rows.keyChanges,
-  ];
-  return {
-    failures,
-    allowed,
-    signature: JSON.stringify([records.written, balances.carried, netWorth.extended, anchors.handed, rows.keyChanges]),
-  };
+  const allowed = [`${files.fresh.size} file(s) read again at their profile's version; the older reads retired`, ...records.written];
+  return { failures, allowed, signature: JSON.stringify(allowed) };
 }
 
-/**
- * Net worth on every day it had, to the cent. It may only run LONGER — the carried days above reach today, and the
- * series ends where the caches end — never differ on a day it already had, nor gain one inside its span.
- */
-function compareNetWorth(before: LedgerFace, after: LedgerFace): { failures: string[]; extended: string[] } {
-  const last = [...before.netWorth.keys()].reduce((a, b) => (b > a ? b : a), "");
+/** Net worth on every day it had, to the cent, and on no day it did not have — its series ends where the caches end. */
+function compareNetWorth(before: LedgerFace, after: LedgerFace): string[] {
   const shown = (cents: number | undefined) => (cents === undefined ? "gone" : formatCents(cents));
   const moved = [...before.netWorth]
     .filter(([day, cents]) => after.netWorth.get(day) !== cents)
     .map(([day, cents]) => `${day} ${shown(cents)} → ${shown(after.netWorth.get(day))}`);
-  const inside = [...after.netWorth.keys()].filter((day) => !before.netWorth.has(day) && day <= last);
-  const beyond = [...after.netWorth.keys()].filter((day) => day > last).sort();
-  return {
-    failures: [
-      ...(moved.length > 0 ? [`net worth moved on ${moved.length} day(s): ${examples(moved)}`] : []),
-      ...(inside.length > 0 ? [`net worth gained ${inside.length} day(s) inside its span: ${examples(inside)}`] : []),
-    ],
-    extended: beyond.length > 0 ? [`net worth runs ${beyond.length} day(s) further, to ${beyond.at(-1)}`] : [],
-  };
+  const added = [...after.netWorth.keys()].filter((day) => !before.netWorth.has(day)).sort();
+  return [
+    ...(moved.length > 0 ? [`net worth moved on ${moved.length} day(s): ${examples(moved)}`] : []),
+    ...(added.length > 0 ? [`net worth gained ${added.length} day(s) it did not have (${added[0]} → ${added.at(-1)})`] : []),
+  ];
 }
 
 /**
@@ -640,6 +655,7 @@ export function sameFace(a: LedgerFace, b: LedgerFace): boolean {
       sorted(f.tables).map(([t, m]) => [t, sorted(m)]),
       sorted(f.anchors),
       sorted(f.periods),
+      sorted(f.periodsByFile),
       sorted(f.files),
       sorted(f.records),
       sorted(f.splits),
