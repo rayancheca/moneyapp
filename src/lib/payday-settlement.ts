@@ -124,15 +124,88 @@ export interface PaydaySettlement {
    */
   settledBy: ReadonlyMap<string, string>;
   /**
+   * WHERE THE MONEY WENT: every sum the walk spent, as (payday, deposit, cents),
+   * in the order it spent them.
+   *
+   * 🔴 `settledBy` carries a date and no money, and a reader publishing a figure
+   * over a window needs the money. /budgets' fourth figure added each payday's
+   * SCHEDULED amount wherever its settling deposit fell outside the month, so a
+   * short deposit was reported at a week it never carried — "$1,141.92 … paid
+   * early, by the deposit of Wed, Sep 30" of a row holding $1,100.00 — and change
+   * pooled from one month into a payday another month's deposit retired put the
+   * whole payday on one side of the month line when its money sat on both.
+   *
+   * Each deposit's own money is spent first, then change carried over from
+   * earlier deposits, newest first (see `take`). So `settledBy` names the deposit
+   * whose WALK retired a payday and this names whose MONEY paid it; the two part
+   * only when carried-over change is spent.
+   *
+   * ⛔ Every cent of every deposit is in exactly one portion or in
+   * `unallocatedCents`; exactly the settled paydays hold money; none holds more
+   * than it is worth, and a short anchor holds the money its deposit had.
+   */
+  portions: readonly SettlementPortion[];
+  /**
    * Deposit money that retired no payday, after the whole walk.
    *
    * Not "per deposit": leftovers pool forward (see the header), so this is what
-   * is left when every deposit's money has been spent oldest-first.
+   * is left when every deposit's money has been spent.
    */
   unallocatedCents: number;
 }
 
-const empty = (): PaydaySettlement => ({ settledBy: new Map(), unallocatedCents: 0 });
+/** One sum of one deposit's money, spent on one payday. */
+export interface SettlementPortion {
+  /** the payday the money went to */
+  paydayOn: string;
+  /** the `posted_on` of the deposit it came from */
+  depositOn: string;
+  /** positive money-in cents */
+  cents: number;
+}
+
+/** The answer when there is nothing to settle — one spelling, for the service's early exits too. */
+export const noSettlement = (): PaydaySettlement => ({
+  settledBy: new Map(),
+  portions: [],
+  unallocatedCents: 0,
+});
+
+/** Money not yet spent, still carrying the deposit it came from. */
+interface Held {
+  depositOn: string;
+  cents: number;
+}
+
+const heldCents = (held: readonly Held[]): number => held.reduce((sum, h) => sum + h.cents, 0);
+
+/**
+ * Takes `cents` out of what is held, the NEWEST money first, and says whose
+ * money it took and what is left.
+ *
+ * ⚖️ Newest first, so a deposit's own money answers its walk before change
+ * carried over from earlier deposits does. The anchor is that deposit's own
+ * statement about the payday it landed on ("the link's statement … not a
+ * purse", in the header), so its money is what pays that payday; the change
+ * only tops up what the deposit's own money cannot reach, and so goes to the
+ * older paydays behind it. Oldest-first would record Oct 1's own weekly deposit
+ * as change left over and September's leftover as Oct 1's pay — and /budgets
+ * would move that week across the month line.
+ */
+function take(held: readonly Held[], cents: number): { taken: Held[]; left: Held[] } {
+  const taken: Held[] = [];
+  const left = [...held];
+  let owed = cents;
+  while (owed > 0 && left.length > 0) {
+    const newest = left[left.length - 1]!;
+    const part = Math.min(owed, newest.cents);
+    taken.push({ depositOn: newest.depositOn, cents: part });
+    owed -= part;
+    if (part === newest.cents) left.pop();
+    else left[left.length - 1] = { depositOn: newest.depositOn, cents: newest.cents - part };
+  }
+  return { taken, left };
+}
 
 /**
  * Which of a series' paydays its deposits have retired.
@@ -146,25 +219,32 @@ export function settlePaydaysBackwards({
   deposits,
   toleranceDays,
 }: PaydaySettlementInput): PaydaySettlement {
-  if (occurrences.length === 0 || deposits.length === 0) return empty();
+  if (occurrences.length === 0 || deposits.length === 0) return noSettlement();
 
   // newest first: a deposit answers the most recent payday it can reach, and
   // only then the ones behind it
   const byDateDesc = [...occurrences].sort((a, b) => compareDates(b.date, a.date));
   const settledBy = new Map<string, string>();
+  const portions: SettlementPortion[] = [];
   /*
    * What the deposits walked so far have not spent. It rides FORWARD into the
    * next deposit rather than being written off, which is what makes one lump
-   * and two transfers of the same total retire the same weeks.
+   * and two transfers of the same total retire the same weeks — and it keeps
+   * the deposit each sum came from, so a payday it pays is paid by that money.
    */
-  let pool = 0;
+  let carried: readonly Held[] = [];
 
   // oldest first, so the queue drains in the order the money actually arrived
   for (const d of [...deposits].sort((a, b) => compareDates(a.postedOn, b.postedOn))) {
-    let remaining = d.amountCents + pool;
-    pool = 0;
+    let held: readonly Held[] = [...carried, { depositOn: d.postedOn, cents: d.amountCents }];
+    const pay = (paydayOn: string, cents: number): void => {
+      const { taken, left } = take(held, cents);
+      for (const t of taken) portions.push({ paydayOn, depositOn: t.depositOn, cents: t.cents });
+      held = left;
+    };
     let isAnchor = true;
     for (const o of byDateDesc) {
+      const remaining = heldCents(held);
       if (remaining <= 0) break;
       if (settledBy.has(o.date)) continue;
       // out of reach ahead: a deposit cannot pay a payday that had not happened
@@ -173,21 +253,21 @@ export function settlePaydaysBackwards({
 
       const withinTolerance = Math.abs(diffDays(d.postedOn, o.date)) <= toleranceDays;
       if (isAnchor && withinTolerance) {
-        // the link itself says this deposit answers this payday, whatever it paid
+        // the link itself says this deposit answers this payday, whatever it
+        // paid — and what it paid is the money there was (his June week was
+        // $1,047.00 against $1,141.92), so a short payday leaves nothing behind
         settledBy.set(o.date, d.postedOn);
-        remaining -= o.amountCents;
+        pay(o.date, Math.min(remaining, o.amountCents));
         isAnchor = false;
         continue;
       }
       isAnchor = false;
       if (remaining < o.amountCents) break; // the money stops here, and so does the walk
       settledBy.set(o.date, d.postedOn);
-      remaining -= o.amountCents;
+      pay(o.date, o.amountCents);
     }
-    // an anchor may be answered by less than it was worth (his June week was
-    // $1,047.00 against $1,141.92); a short payday leaves no pool behind it
-    pool = Math.max(0, remaining);
+    carried = held;
   }
 
-  return { settledBy, unallocatedCents: pool };
+  return { settledBy, portions, unallocatedCents: heldCents(carried) };
 }

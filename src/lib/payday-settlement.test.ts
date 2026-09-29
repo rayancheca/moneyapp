@@ -171,3 +171,107 @@ describe("settlePaydaysBackwards — the money pools, however it was split", () 
     expect(got.unallocatedCents).toBe(0);
   });
 });
+
+/**
+ * 🔴 SETTLEMENT NAMED THE DEPOSIT, NEVER THE MONEY.
+ *
+ * `settledBy` says which deposit's walk retired a payday. A reader that
+ * publishes a figure over a WINDOW needs more: how much of which deposit's money
+ * went to which payday. /budgets' fourth figure added each payday's SCHEDULED
+ * amount wherever the settling deposit's date fell outside the month, so it
+ * misstated another month's money twice over:
+ *
+ *   SHORT   Wed 2026-09-30 +$1,100.00 settles Thu Oct 1 under the anchor clause;
+ *           read Oct 2, October said "$1,141.92 … paid early, by the deposit of
+ *           Wed, Sep 30" — a row that holds $1,100.00.
+ *   POOLED  change carried over from an earlier deposit pays part of a payday
+ *           another deposit's walk retires, so the whole payday landed on one
+ *           side of the month line when its money sat on both.
+ *
+ * `portions` is the walk's own record of the money: every sum it spent, as
+ * (payday, deposit, cents).
+ */
+describe("settlePaydaysBackwards — where the money went", () => {
+  const walk = (occurrences: PaydayOccurrence[], deposits: AttributedDeposit[], toleranceDays = 3) =>
+    settlePaydaysBackwards({ occurrences, deposits, toleranceDays });
+  /** payday ← deposit: cents, oldest payday first — the order a reader checks them in */
+  const flows = (s: ReturnType<typeof walk>): string[] =>
+    s.portions
+      .map((p) => `${p.paydayOn} ← ${p.depositOn}: ${p.cents}`)
+      .sort();
+
+  /* ⚖️ His two deposits: the lump takes the four weeks it reaches, newest first
+     from Sep 24; the weekly deposit, finding Sep 24 already paid, takes Aug 27. */
+  test("his five: whose money paid which week", () => {
+    const occ = weekly("2026-08-20", "2026-08-27", "2026-09-03", "2026-09-10", "2026-09-17", "2026-09-24");
+    expect(flows(walk(occ, [paid("2026-09-23", WEEK * 4), paid("2026-09-24", WEEK)]))).toEqual([
+      `2026-08-27 ← 2026-09-24: ${WEEK}`,
+      `2026-09-03 ← 2026-09-23: ${WEEK}`,
+      `2026-09-10 ← 2026-09-23: ${WEEK}`,
+      `2026-09-17 ← 2026-09-23: ${WEEK}`,
+      `2026-09-24 ← 2026-09-23: ${WEEK}`,
+    ]);
+  });
+
+  /* The anchor clause settles the payday whatever the deposit carried, and the
+     money it paid is the money it had — not the payday's worth. */
+  test("a short deposit pays the payday it landed on with the money it had", () => {
+    expect(flows(walk(weekly("2026-09-24", "2026-10-01"), [paid("2026-09-30", 110_000)]))).toEqual([
+      "2026-10-01 ← 2026-09-30: 110000",
+    ]);
+  });
+
+  /* $5,000.00 on Sep 23 retires four weeks and carries $432.32 of change; the
+     $709.60 of Oct 1 tops it up to a whole Oct 1. Both deposits' money is in
+     that payday, and each sum is named by the deposit it came from. */
+  test("change carried over is named by the deposit it came from", () => {
+    const occ = weekly("2026-08-27", "2026-09-03", "2026-09-10", "2026-09-17", "2026-09-24", "2026-10-01");
+    const got = walk(occ, [paid("2026-09-23", 500_000), paid("2026-10-01", 70_960)]);
+    expect(got.portions.filter((p) => p.paydayOn === "2026-10-01").map((p) => [p.depositOn, p.cents])).toEqual([
+      ["2026-10-01", 70_960],
+      ["2026-09-23", 43_232],
+    ]);
+    expect(got.settledBy.get("2026-10-01")).toBe("2026-10-01");
+  });
+
+  /*
+   * ⚖️ A DEPOSIT'S OWN MONEY IS SPENT FIRST. The anchor is that deposit's own
+   * statement about the payday it landed on, so its money answers that payday;
+   * change carried over from an earlier deposit only tops up what its own
+   * cannot reach. Spend the oldest money first instead and Oct 1's own deposit
+   * would be recorded as the change, and September's leftover as Oct 1's pay.
+   */
+  test("the deposit that landed on a payday pays it; older change waits for older weeks", () => {
+    const occ = weekly("2026-09-03", "2026-09-10", "2026-09-17", "2026-09-24", "2026-10-01");
+    const got = walk(occ, [paid("2026-09-23", WEEK * 5), paid("2026-10-01", WEEK)]);
+    expect(got.portions.filter((p) => p.paydayOn === "2026-10-01")).toEqual([
+      { paydayOn: "2026-10-01", depositOn: "2026-10-01", cents: WEEK },
+    ]);
+    expect(got.unallocatedCents).toBe(WEEK);
+  });
+
+  /* ⛔ Nothing invented, nothing lost: every cent of every deposit is spent on
+     exactly one payday or left unallocated, no payday takes more than it is
+     worth, and exactly the settled paydays hold money. */
+  test("every cent is spent once or left over", () => {
+    const occ = weekly("2026-08-20", "2026-08-27", "2026-09-03", "2026-09-10", "2026-09-17", "2026-09-24", "2026-10-01");
+    const cases: AttributedDeposit[][] = [
+      [paid("2026-09-23", WEEK * 4), paid("2026-09-24", WEEK)],
+      [paid("2026-09-23", 500_000), paid("2026-10-01", 70_960)],
+      [paid("2026-09-22", 200_000), paid("2026-09-24", 256_768)],
+      [paid("2026-09-30", 110_000), paid("2026-10-01", WEEK * 2)],
+      [paid("2026-09-03", WEEK), paid("2026-09-30", WEEK * 4), paid("2026-10-01", WEEK)],
+    ];
+    for (const deposits of cases) {
+      const got = walk(occ, deposits);
+      const spent = got.portions.reduce((sum, p) => sum + p.cents, 0);
+      expect(spent + got.unallocatedCents).toBe(deposits.reduce((sum, d) => sum + d.amountCents, 0));
+      for (const o of occ) {
+        const into = got.portions.filter((p) => p.paydayOn === o.date).reduce((sum, p) => sum + p.cents, 0);
+        expect(into).toBeLessThanOrEqual(o.amountCents);
+        expect(into > 0).toBe(got.settledBy.has(o.date));
+      }
+      expect(got.portions.every((p) => p.cents > 0)).toBe(true);
+    }
+  });
+});

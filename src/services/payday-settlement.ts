@@ -3,7 +3,7 @@ import type { AppDatabase } from "@/db/client";
 import { recurringSeries } from "@/db/schema/recurring";
 import { transactions } from "@/db/schema/transactions";
 import { addDays, compareDates } from "@/lib/dates";
-import { settlePaydaysBackwards, type PaydaySettlement } from "@/lib/payday-settlement";
+import { noSettlement, settlePaydaysBackwards, type PaydaySettlement } from "@/lib/payday-settlement";
 import { projectOccurrences, toProjectable } from "./recurring";
 
 /**
@@ -36,7 +36,7 @@ import { projectOccurrences, toProjectable } from "./recurring";
  */
 export function paydaySettlement(db: AppDatabase, seriesId: string, today: string): PaydaySettlement {
   const s = db.select().from(recurringSeries).where(eq(recurringSeries.id, seriesId)).get();
-  if (!s || s.kind !== "income") return { settledBy: new Map(), unallocatedCents: 0 };
+  if (!s || s.kind !== "income") return noSettlement();
 
   const deposits = db
     .select({ postedOn: transactions.postedOn, amountCents: transactions.amountCents })
@@ -57,7 +57,7 @@ export function paydaySettlement(db: AppDatabase, seriesId: string, today: strin
       ),
     )
     .all();
-  if (deposits.length === 0) return { settledBy: new Map(), unallocatedCents: 0 };
+  if (deposits.length === 0) return noSettlement();
 
   /*
    * The walk opens on the earliest evidence there is — the first attributed
@@ -101,7 +101,25 @@ export function settledPaydaysBySeries(
   today: string,
 ): Map<string, ReadonlyMap<string, string>> {
   const out = new Map<string, ReadonlyMap<string, string>>();
-  for (const id of seriesIds) out.set(id, settledPaydaysForSeries(db, id, today));
+  for (const [id, settlement] of paydaySettlementsBySeries(db, seriesIds, today)) {
+    out.set(id, settlement.settledBy);
+  }
+  return out;
+}
+
+/**
+ * The WHOLE settlement for several series — which paydays, and whose money paid
+ * them (`portions`) — for a reader whose figures cover a window the money can
+ * cross. The budgets header is one: its "in so far" is the money that landed in
+ * the month, and settlement spends that money on paydays either side of it.
+ */
+export function paydaySettlementsBySeries(
+  db: AppDatabase,
+  seriesIds: readonly string[],
+  today: string,
+): Map<string, PaydaySettlement> {
+  const out = new Map<string, PaydaySettlement>();
+  for (const id of seriesIds) out.set(id, paydaySettlement(db, id, today));
   return out;
 }
 
