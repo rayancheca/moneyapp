@@ -7,7 +7,8 @@
  * every rewritten file was compared with its committed version, and only then were 111 re-based
  * (c3b9a59) and the gate re-run. This is that procedure, with a refusal wherever the proof fails:
  *
- *   0. the renderer canary against e2e/baseline-renderer.json: a match is "Nothing to do";
+ *   0. the renderer canary against e2e/baseline-renderer.json: a match is "Nothing to do" (and
+ *      noted in git's common directory, so a later mismatch says what moved since it);
  *   1. guards: a clean tree, HEAD pushed as origin/main's tip (a push's tip passed the gate; the
  *      commits a push carried past it did not, and neither did an unpushed one: such a HEAD is
  *      said, and decided at step 3), port 3111 free, a quiet box, and .next built from HEAD
@@ -52,10 +53,13 @@ import path from "node:path";
 import {
   BASELINE_RENDERER_PATH,
   compareRecord,
+  lastMatchOrSay,
   measureCurrentRenderer,
   oneLineRenderer,
   readRecord,
+  rememberMatchOrSay,
   RENDERER_CHECK_ENV,
+  versionWindow,
   writeRecord,
   type RendererRecord,
   type RendererVerdict,
@@ -212,6 +216,8 @@ interface Renderer {
   recorded: RendererRecord | null;
   current: RendererRecord;
   verdict: RendererVerdict;
+  /** the last run on this machine whose canary matched the record: it dates what moved */
+  lastMatch: RendererRecord | null;
 }
 
 /**
@@ -233,21 +239,29 @@ async function checkRenderer(): Promise<Renderer | null> {
     refuse("the renderer canary could not be measured", [messageOf(error)]);
   }
   const verdict = compareRecord(recorded, current);
+  const note = (line: string) => console.log(`  ${line}`);
   if (verdict === "match") {
     const waiting = uncommittedUnder(BASELINE_DIR);
-    const note = `${waiting.length} file(s) in e2e/ are uncommitted: a --confirm may be waiting.`;
+    const uncommitted =
+      `${waiting.length} file(s) in e2e/ are uncommitted: a --confirm may be waiting.`;
     say(`\nNothing to do — this Mac draws the renderer canary exactly as the record says.`, [
       `${BASELINE_RENDERER_PATH}: ${oneLineRenderer(current)}`,
-      ...(waiting.length === 0 ? [] : [note]),
+      ...(waiting.length === 0 ? [] : [uncommitted]),
     ]);
+    rememberMatchOrSay(current, note);
     return null;
   }
   section("Renderer");
   const none = `none — ${BASELINE_RENDERER_PATH} does not exist`;
+  const lastMatch = lastMatchOrSay(note);
   console.log(`  record     ${recorded === null ? none : oneLineRenderer(recorded)}`);
+  if (recorded !== null && lastMatch !== null && versionWindow(recorded, lastMatch).lastMatched) {
+    const on = lastMatch.recordedOn.slice(0, 10);
+    console.log(`  last match ${oneLineRenderer(lastMatch)}  (${on}, on this machine)`);
+  }
   console.log(`  this Mac   ${oneLineRenderer(current)}`);
   console.log(`  verdict    ${verdict}`);
-  return { recorded, current, verdict };
+  return { recorded, current, verdict, lastMatch };
 }
 
 /** The guards, then the scratch directory, then the one guard that may act: building .next. */

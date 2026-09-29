@@ -3,8 +3,15 @@ import fs from "node:fs";
 import { createRequire } from "node:module";
 import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
+import { fileURLToPath } from "node:url";
 import sharp from "sharp";
-import type { Browser, BrowserContextOptions, Page, PageScreenshotOptions } from "@playwright/test";
+import type {
+  Browser,
+  BrowserContextOptions,
+  LaunchOptions,
+  Page,
+  PageScreenshotOptions,
+} from "@playwright/test";
 
 /**
  * The renderer canary: one frozen page whose pixels move when this machine's text rendering
@@ -50,9 +57,12 @@ import type { Browser, BrowserContextOptions, Page, PageScreenshotOptions } from
  * next/font's generated CSS, never read from them. A canary that imported the app's styles
  * would move with every design change and report it as a renderer change, which is the one
  * confusion this file exists to remove. The figures are glyph coverage, not ledger data. Any
- * edit here changes sourceSha256, and the gate then says "canary-changed" until the canary is
- * recorded again. A Geist upgrade changes fontSha256 as well, and the gate says "fonts-changed":
- * the app's own change, whose baselines are redrawn with it (fingerprint.ts).
+ * edit here changes sourceSha256, because the hash covers this file's own text: the page, and
+ * the code that launches its browser, loads its faces and captures it, which decide the pixels as
+ * much as the page does. The gate then says "canary-changed" until the canary is recorded again,
+ * rather than "renderer-changed" and a system font blamed for an edit. A Geist upgrade changes
+ * fontSha256 as well, and the gate says "fonts-changed": the app's own change, whose baselines
+ * are redrawn with it (fingerprint.ts).
  */
 
 /**
@@ -78,6 +88,13 @@ export const CANARY_SCREENSHOT = {
   caret: "hide",
   scale: "css",
 } as const satisfies PageScreenshotOptions;
+
+/**
+ * How the canary's browser is launched: the launch the test runner makes for the baselines, with
+ * no channel and no flag, so the headless shell. Declared here, and made here (measureCanary),
+ * so that the hash of this file covers it: a flag added to the launch moves pixels too.
+ */
+export const CANARY_LAUNCH = {} as const satisfies LaunchOptions;
 
 /**
  * The font files next/font loads, resolved through the package's own entry points exactly as
@@ -113,7 +130,10 @@ export interface CanarySource {
 export interface CanaryRender {
   /** sha256 of the decoded RGBA pixels: a PNG encoder or metadata change cannot move it */
   pixelSha256: string;
-  /** sha256 of everything the canary feeds the renderer: context, page and font bytes */
+  /**
+   * sha256 of everything that decides the canary's pixels but the machine: canary.ts's own code
+   * (its launch, font wait and capture), its context, its page and the font bytes
+   */
   sourceSha256: string;
   /**
    * sha256 of the Geist files alone. The app ships the same files, so this moving is the app's
@@ -151,14 +171,26 @@ function sha256OfParts(parts: readonly (string | Buffer)[]): string {
   return hash.digest("hex");
 }
 
-export function buildCanarySource(fonts: CanaryFonts): CanarySource {
+/**
+ * This file's own text: the page and everything that draws it. The launch, the font wait and the
+ * capture decide the pixels as much as the page does, so an edit to any of them must read as
+ * "canary-changed" rather than as the renderer moving; the hash takes the text whole, comments
+ * included, because no narrower rule can be trusted to find every line that reaches a pixel.
+ */
+export function canaryCode(): string {
+  return fs.readFileSync(fileURLToPath(import.meta.url), "utf8");
+}
+
+export function buildCanarySource(fonts: CanaryFonts, code: string = canaryCode()): CanarySource {
   const template = canaryTemplate();
   const html = template
     .replace("{{GEIST_SANS_WOFF2}}", fonts.sans.toString("base64"))
     .replace("{{GEIST_MONO_WOFF2}}", fonts.mono.toString("base64"));
   const sourceSha256 = sha256OfParts([
+    code,
     JSON.stringify(CANARY_CONTEXT),
     JSON.stringify(CANARY_SCREENSHOT),
+    JSON.stringify(CANARY_LAUNCH),
     template,
     fonts.sans,
     fonts.mono,
@@ -206,6 +238,21 @@ export async function renderCanary(browser: Browser): Promise<CanaryRender> {
     };
   } finally {
     await close();
+  }
+}
+
+/**
+ * The canary in a browser of its own, launched as CANARY_LAUNCH says: what the gate and the
+ * re-base command measure. Playwright is loaded here rather than at the top, so that reading the
+ * canary's source or hashes, which is all most tests do, never loads a browser driver.
+ */
+export async function measureCanary(): Promise<CanaryRender> {
+  const { chromium } = await import("@playwright/test");
+  const browser = await chromium.launch(CANARY_LAUNCH);
+  try {
+    return await renderCanary(browser);
+  } finally {
+    await browser.close();
   }
 }
 

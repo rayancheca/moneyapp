@@ -1,19 +1,29 @@
+import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import {
-  assertRendererMatchesBaselines,
   BASELINE_RENDERER_PATH,
+  baselineRefusal,
+  checkRendererForRun,
   compareRecord,
   currentEnvironment,
   describeRendererCheck,
+  LAST_MATCH_NAME,
+  lastMatchPath,
+  readLastMatch,
   readRecord,
   REBASE_RENDERER_COMMAND,
+  rememberMatch,
   RENDERER_CHECK_ENV,
+  RENDERER_REFUSAL_ENV,
   rendererMismatchMessage,
+  rendererRefusal,
+  runKindOf,
   writeRecord,
   type RendererRecord,
+  type RunKind,
 } from "./fingerprint";
 
 const PIXELS_BEFORE = "a7e111bb233faec6f7e1151efdc15b886b1f78209bcb54827664f3cd8320ad1f";
@@ -48,6 +58,21 @@ function withCanary(
 /** The same machine after an OS update that moved text antialiasing. */
 const AFTER_OS_UPDATE: RendererRecord = {
   ...withCanary(RECORDED, { pixelSha256: PIXELS_AFTER }),
+  recordedOn: "2026-10-30T12:00:00.000Z",
+  macos: { productVersion: "27.3", buildVersion: "26C12" },
+};
+
+/** A month on: Playwright 1.62 rolled Chromium and the canary still matched the record. */
+const LAST_MATCH: RendererRecord = {
+  ...RECORDED,
+  recordedOn: "2026-10-20T08:00:00.000Z",
+  playwright: "1.62.0",
+  chromiumRevision: "1240",
+};
+
+/** Then macOS moved, and the canary with it. */
+const AFTER_BOTH: RendererRecord = {
+  ...withCanary(LAST_MATCH, { pixelSha256: PIXELS_AFTER }),
   recordedOn: "2026-10-30T12:00:00.000Z",
   macos: { productVersion: "27.3", buildVersion: "26C12" },
 };
@@ -133,9 +158,8 @@ describe("rendererMismatchMessage", () => {
     );
   });
 
-  test("it says the failures would not be the change under test, and gives the fix", () => {
+  test("a failure could be the Mac and NOT the change under test; it gives the fix", () => {
     const message = rendererMismatchMessage("renderer-changed", RECORDED, AFTER_OS_UPDATE);
-    expect(message).toMatch(/nearly every baseline with text/i);
     expect(message).toMatch(/NOT the change under test/);
     expect(message).toContain(`Fix: ${REBASE_RENDERER_COMMAND}`);
     expect(message).toContain(`${RENDERER_CHECK_ENV}=skip`);
@@ -144,7 +168,7 @@ describe("rendererMismatchMessage", () => {
   test("when no version moved it says the change is beneath them", () => {
     const sameVersions = withCanary(RECORDED, { pixelSha256: PIXELS_AFTER });
     const message = rendererMismatchMessage("renderer-changed", RECORDED, sameVersions);
-    expect(message).toMatch(/none of the versions it records moved/i);
+    expect(message).toMatch(/none of those versions moved/i);
     expect(message).toContain("macOS       27.2 (26B5091g)  (unchanged)");
   });
 
@@ -175,6 +199,77 @@ describe("rendererMismatchMessage", () => {
     expect(message).toContain("E2E_RENDERER_CHECK=skip pnpm e2e:update");
     expect(message).not.toContain(`Fix: ${REBASE_RENDERER_COMMAND}`);
     expect(message).toMatch(/copies no twin while the fonts differ from the record/);
+  });
+
+  /**
+   * The canary compares a hash of raw RGBA; the gate counts a pixel only past Playwright's colour
+   * threshold and never one pixelmatch takes for anti-aliasing. On 2026-09-28 macOS 27.2 failed
+   * 107 of 202 baselines, and 20 dark pages it moved by 931 to 6,394 pixels still passed. So a
+   * moved canary says the pixels under the baselines moved, not how many the gate would fail.
+   */
+  test("it claims no count of failing baselines: the canary is exact, the gate is not", () => {
+    const message = rendererMismatchMessage("renderer-changed", RECORDED, AFTER_OS_UPDATE);
+    expect(message).not.toMatch(/nearly every baseline with text in it would now fail/i);
+    expect(message).toMatch(/not known until they are drawn/);
+    expect(message).toMatch(/107 of the 202/);
+    expect(message).toMatch(/20 dark pages/);
+    expect(message).toMatch(/records the renderer alone when the gate fails none/);
+  });
+
+  /**
+   * The record is written only when the canary moves, so its versions go stale on every update
+   * that draws the canary identically. Read against it, a Chromium roll that matched for weeks
+   * is listed beside the macOS update that actually moved the canary.
+   */
+  test("what moved is read since the canary last matched on this machine", () => {
+    const message = rendererMismatchMessage(
+      "renderer-changed",
+      RECORDED,
+      AFTER_BOTH,
+      BASELINE_RENDERER_PATH,
+      { lastMatch: LAST_MATCH },
+    );
+    expect(message).toContain("since the canary last matched on this machine, 2026-10-20");
+    expect(message).toContain("macOS       27.2 (26B5091g) → 27.3 (26C12)");
+    expect(message).toContain("chromium    r1240  (unchanged)");
+    expect(message).toContain("playwright  1.62.0  (unchanged)");
+    expect(message).toContain("recorded 2026-09-28");
+  });
+
+  test("with no match remembered, it reads since the record and says a move may be old", () => {
+    const message = rendererMismatchMessage("renderer-changed", RECORDED, AFTER_BOTH);
+    expect(message).toContain("since the record was written, 2026-09-28");
+    expect(message).toMatch(/may have moved long before/);
+    expect(message).toContain("chromium    r1228 → r1240");
+  });
+
+  test("a match remembered against another canary is not this record's, and is ignored", () => {
+    const another = withCanary(LAST_MATCH, { pixelSha256: PIXELS_AFTER });
+    const message = rendererMismatchMessage(
+      "renderer-changed",
+      RECORDED,
+      AFTER_BOTH,
+      BASELINE_RENDERER_PATH,
+      { lastMatch: another },
+    );
+    expect(message).not.toContain("last matched");
+    expect(message).toContain("chromium    r1228 → r1240");
+  });
+
+  test("nothing moved since the last match: the change is beneath the versions", () => {
+    const current: RendererRecord = {
+      ...withCanary(LAST_MATCH, { pixelSha256: PIXELS_AFTER }),
+      recordedOn: "2026-10-30T12:00:00.000Z",
+    };
+    const message = rendererMismatchMessage(
+      "renderer-changed",
+      RECORDED,
+      current,
+      BASELINE_RENDERER_PATH,
+      { lastMatch: LAST_MATCH },
+    );
+    expect(message).toMatch(/none of those versions moved, so something beneath them did/i);
+    expect(message).toContain("chromium    r1240  (unchanged)");
   });
 
   test("a missing record says what this machine would record", () => {
@@ -239,7 +334,60 @@ describe("readRecord and writeRecord", () => {
   });
 });
 
-describe("assertRendererMatchesBaselines", () => {
+describe("the last match", () => {
+  let dir: string;
+  beforeEach(() => {
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), "renderer-last-match-"));
+  });
+  afterEach(() => {
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  test("a remembered match reads back, and none reads as null", () => {
+    const file = path.join(dir, LAST_MATCH_NAME);
+    expect(readLastMatch(file)).toBeNull();
+    rememberMatch(LAST_MATCH, file);
+    expect(readLastMatch(file)).toEqual(LAST_MATCH);
+    rememberMatch(RECORDED, file);
+    expect(readLastMatch(file)).toEqual(RECORDED);
+  });
+
+  test("a note that is not a record is refused, naming the file", () => {
+    const file = path.join(dir, LAST_MATCH_NAME);
+    fs.writeFileSync(file, JSON.stringify({ canary: {} }));
+    expect(() => readLastMatch(file)).toThrow(file);
+  });
+
+  /**
+   * The note belongs to this machine and its node_modules, which every worktree shares, and never
+   * to a commit: it lives in git's common directory, where no worktree's status can see it.
+   */
+  test("it lives in git's common directory, beside git's own files", () => {
+    const common = execFileSync("git", ["rev-parse", "--git-common-dir"], { encoding: "utf8" });
+    expect(lastMatchPath()).toBe(path.resolve(common.trim(), LAST_MATCH_NAME));
+    expect(LAST_MATCH_NAME).toBe("e2e-renderer-last-match.json");
+  });
+});
+
+describe("runKindOf", () => {
+  test("E2E_GATE set, to anything, is a gate, whatever it does with snapshots", () => {
+    expect(runKindOf({ E2E_GATE: "1" }, "none")).toBe("gate");
+    expect(runKindOf({ E2E_GATE: "yes" }, "changed")).toBe("gate");
+  });
+
+  test("--update-snapshots, bare (changed) or all, redraws baselines rather than comparing", () => {
+    expect(runKindOf({}, "changed")).toBe("update");
+    expect(runKindOf({ E2E_GATE: "" }, "all")).toBe("update");
+  });
+
+  test("anything else compares", () => {
+    expect(runKindOf({}, "missing")).toBe("compare");
+    expect(runKindOf({}, "none")).toBe("compare");
+    expect(runKindOf({}, undefined)).toBe("compare");
+  });
+});
+
+describe("checkRendererForRun", () => {
   let dir: string;
   let file: string;
   beforeEach(() => {
@@ -250,9 +398,11 @@ describe("assertRendererMatchesBaselines", () => {
     fs.rmSync(dir, { recursive: true, force: true });
   });
 
+  const GATE = { E2E_GATE: "1" };
+
   test("skip bypasses the check without launching a browser", async () => {
     const measure = vi.fn(async () => RECORDED);
-    const check = await assertRendererMatchesBaselines({
+    const check = await checkRendererForRun({
       file,
       env: { [RENDERER_CHECK_ENV]: "skip" },
       measure,
@@ -267,30 +417,181 @@ describe("assertRendererMatchesBaselines", () => {
   /** A typo that silently ran the check anyway would look like the bypass failing. */
   test("any other value of the switch is refused rather than guessed at", async () => {
     const env = { [RENDERER_CHECK_ENV]: "off" };
-    await expect(
-      assertRendererMatchesBaselines({ file, env, measure: measured(RECORDED) }),
-    ).rejects.toThrow(`${RENDERER_CHECK_ENV}=off`);
+    await expect(checkRendererForRun({ file, env, measure: measured(RECORDED) })).rejects.toThrow(
+      `${RENDERER_CHECK_ENV}=off`,
+    );
   });
 
   test("a matching renderer passes and returns both sides", async () => {
     writeRecord(RECORDED, file);
     const measure = measured(RECORDED);
-    const check = await assertRendererMatchesBaselines({ file, env: {}, measure });
+    const check = await checkRendererForRun({ file, env: GATE, measure });
     expect(check).toEqual({ verdict: "match", recorded: RECORDED, current: RECORDED });
   });
 
-  test("a changed renderer throws exactly the one message", async () => {
+  /**
+   * A gate compares every committed baseline, and any failure could be the Mac's: it stops in a
+   * second, before seeding, rather than after a whole run of failures that are not its change.
+   */
+  test("a gate is stopped by a changed renderer, with exactly the one message", async () => {
     writeRecord(RECORDED, file);
-    const expected = rendererMismatchMessage("renderer-changed", RECORDED, AFTER_OS_UPDATE, file);
+    const expected = rendererMismatchMessage("renderer-changed", RECORDED, AFTER_OS_UPDATE, file, {
+      run: "gate",
+    });
     await expect(
-      assertRendererMatchesBaselines({ file, env: {}, measure: measured(AFTER_OS_UPDATE) }),
+      checkRendererForRun({ file, env: GATE, measure: measured(AFTER_OS_UPDATE) }),
     ).rejects.toThrow(expected);
   });
 
-  test("no record throws, pointing at the command that records one", async () => {
+  /**
+   * Only 4 of 60 spec files compare a committed baseline. A run that is not a gate goes on, so a
+   * spec that compares none (zz-budgets, a11y, keyboard, hydration) is not stopped for a Mac it
+   * never asks about; each comparison with a committed baseline refuses instead (expectBaseline).
+   */
+  test("any other run goes on, with the refusal each comparison throws", async () => {
+    writeRecord(RECORDED, file);
+    const check = await checkRendererForRun({ file, env: {}, measure: measured(AFTER_OS_UPDATE) });
+    expect(check).toEqual({
+      verdict: "renderer-changed",
+      run: "compare",
+      message: rendererMismatchMessage("renderer-changed", RECORDED, AFTER_OS_UPDATE, file, {
+        run: "compare",
+      }),
+      refusal: rendererRefusal("renderer-changed", file),
+    });
+  });
+
+  test("an update run goes on too, and is told why it redraws no baseline", async () => {
+    writeRecord(RECORDED, file);
+    const check = await checkRendererForRun({
+      file,
+      env: {},
+      updateSnapshots: "changed",
+      measure: measured(AFTER_OS_UPDATE),
+    });
+    expect(check).toMatchObject({ verdict: "renderer-changed", run: "update" });
+    expect(check.verdict !== "skipped" && "message" in check && prose(check.message)).toMatch(
+      /redraws no baseline/,
+    );
+  });
+
+  test("no record stops a gate, pointing at the command that records one", async () => {
     await expect(
-      assertRendererMatchesBaselines({ file, env: {}, measure: measured(RECORDED) }),
+      checkRendererForRun({ file, env: GATE, measure: measured(RECORDED) }),
     ).rejects.toThrow(/NO RENDERER RECORD/);
+  });
+
+  test("no record lets any other run go on, refusing its comparisons", async () => {
+    const check = await checkRendererForRun({ file, env: {}, measure: measured(RECORDED) });
+    expect(check).toMatchObject({
+      verdict: "unrecorded",
+      run: "compare",
+      refusal: rendererRefusal("unrecorded", file),
+    });
+  });
+
+  test("a mismatch dates what moved by the last match, asked for only then", async () => {
+    writeRecord(RECORDED, file);
+    const lastMatch = vi.fn(() => LAST_MATCH);
+    await checkRendererForRun({ file, env: {}, measure: measured(RECORDED), lastMatch });
+    expect(lastMatch).not.toHaveBeenCalled();
+    const check = await checkRendererForRun({
+      file,
+      env: {},
+      measure: measured(AFTER_BOTH),
+      lastMatch,
+    });
+    expect(check.verdict !== "skipped" && "message" in check && check.message).toContain(
+      "since the canary last matched on this machine, 2026-10-20",
+    );
+  });
+});
+
+/** The message read as prose: its continuation lines joined again. */
+const prose = (text: string) => text.replace(/\n +/g, " ");
+
+describe("what each run is told", () => {
+  const verdicts = [
+    ["unrecorded", null, RECORDED],
+    ["canary-changed", RECORDED, withCanary(RECORDED, { sourceSha256: SOURCE_AFTER })],
+    ["fonts-changed", RECORDED, withCanary(RECORDED, { fontSha256: FONTS_AFTER })],
+    ["renderer-changed", RECORDED, AFTER_OS_UPDATE],
+  ] as const;
+
+  /** Every verdict's message for one kind of run, read as prose. */
+  const toldTo = (run: RunKind) =>
+    verdicts.map(
+      ([verdict, recorded, current]) =>
+        [
+          verdict,
+          prose(
+            rendererMismatchMessage(verdict, recorded, current, BASELINE_RENDERER_PATH, { run }),
+          ),
+        ] as const,
+    );
+
+  test("a gate, that it stopped before seeding", () => {
+    for (const [verdict, text] of toldTo("gate")) {
+      expect(text, verdict).toMatch(/The gate stopped here, before seeding/);
+      expect(text, verdict).not.toMatch(/This run goes on/);
+    }
+  });
+
+  test("any other run, that it goes on, and that only its comparisons with a baseline stop", () => {
+    for (const [verdict, text] of toldTo("compare")) {
+      expect(text, verdict).toMatch(
+        /This run goes on, but compares no screenshot with a committed baseline/,
+      );
+      expect(text, verdict).toMatch(/Specs that compare no baseline run as usual/);
+      expect(text, verdict).not.toMatch(/stopped here/);
+    }
+  });
+
+  /**
+   * Redrawn on a moved renderer, a baseline carries the Mac's drift with the change under test,
+   * and neither its diff nor crop-visual-diff can tell the two apart: that is the premise an
+   * update run is stopped on, not "would now fail".
+   */
+  test("an update run, that it redraws none, and why", () => {
+    for (const [verdict, text] of toldTo("update")) {
+      expect(text, verdict).toMatch(/This run goes on, but redraws no baseline/);
+      expect(text, verdict).toMatch(/no diff could tell the two apart/);
+    }
+  });
+
+  /** An agent mid-change would otherwise meet the command's guards only once it ran it. */
+  test("the re-base fix says it needs a clean tree and runs the suite twice", () => {
+    for (const [verdict, text] of toldTo("gate")) {
+      if (verdict === "fonts-changed") continue;
+      expect(text, verdict).toMatch(/runs the whole suite twice/);
+      expect(text, verdict).toMatch(
+        /needs a clean tree, so commit or stash work in progress first/,
+      );
+    }
+  });
+});
+
+describe("rendererRefusal", () => {
+  test("it names the verdict and the record, points at the top of the run, gives the fix", () => {
+    const refusal = rendererRefusal("renderer-changed", "e2e/elsewhere.json");
+    expect(refusal).toContain("(renderer-changed)");
+    expect(refusal).toContain("e2e/elsewhere.json");
+    expect(refusal).toContain("no screenshot is compared with, or redrawn over, a committed");
+    expect(refusal).toMatch(/at the top of this run/);
+    expect(refusal).toContain(`Fix: ${REBASE_RENDERER_COMMAND}`);
+  });
+
+  test("changed fonts are fixed by the redraw, not by the re-base", () => {
+    const refusal = rendererRefusal("fonts-changed");
+    expect(refusal).toContain(`${RENDERER_CHECK_ENV}=skip pnpm e2e:update`);
+    expect(refusal).not.toContain(`Fix: ${REBASE_RENDERER_COMMAND}`);
+  });
+
+  test("the specs read what global setup hands them, and nothing when it hands none", () => {
+    expect(RENDERER_REFUSAL_ENV).toBe("E2E_RENDERER_REFUSAL");
+    expect(baselineRefusal({})).toBeNull();
+    expect(baselineRefusal({ [RENDERER_REFUSAL_ENV]: "" })).toBeNull();
+    expect(baselineRefusal({ [RENDERER_REFUSAL_ENV]: "e2e: no" })).toBe("e2e: no");
   });
 });
 
@@ -306,6 +607,18 @@ describe("describeRendererCheck", () => {
     expect(line).toContain("a7e111bb233f");
     expect(line).toContain("macOS 27.2 (26B5091g)");
     expect(line).toContain("chromium r1228");
+  });
+
+  test("a mismatch a run goes on through says so on its first line, then the whole message", () => {
+    const text = describeRendererCheck({
+      verdict: "renderer-changed",
+      run: "compare",
+      message: "e2e: THE RENDERER CHANGED — and the rest",
+      refusal: "e2e: no screenshot",
+    });
+    const [first, ...rest] = text.split("\n");
+    expect(first).toMatch(/^\[e2e setup\] renderer canary: renderer-changed, and this run goes on/);
+    expect(rest.join("\n")).toBe("e2e: THE RENDERER CHANGED — and the rest");
   });
 });
 

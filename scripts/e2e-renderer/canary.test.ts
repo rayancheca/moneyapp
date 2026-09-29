@@ -1,6 +1,13 @@
+import fs from "node:fs";
 import { chromium, type Browser } from "@playwright/test";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
-import { buildCanarySource, openCanary, readShippedFonts } from "./canary";
+import {
+  buildCanarySource,
+  CANARY_LAUNCH,
+  canaryCode,
+  openCanary,
+  readShippedFonts,
+} from "./canary";
 import { faceName, facesDrawn } from "./faces";
 
 /**
@@ -53,7 +60,7 @@ const onMacOS = describe.runIf(process.platform === "darwin");
 onMacOS("the faces the canary draws", { timeout: 60_000 }, () => {
   let browser: Browser | undefined;
   beforeAll(async () => {
-    browser = await chromium.launch();
+    browser = await chromium.launch(CANARY_LAUNCH);
   }, 60_000);
   afterAll(async () => {
     await browser?.close();
@@ -151,6 +158,32 @@ describe("buildCanarySource", () => {
     expect(buildCanarySource({ sans: fonts.mono, mono: fonts.sans }).fontSha256).not.toBe(
       base.fontSha256,
     );
+  });
+
+  /**
+   * The code that launches, loads the faces and captures decides the pixels as much as the page
+   * does. Left out of the hash, an edit there moves the pixels under an unchanged source, and the
+   * gate says "renderer-changed" and blames a system font or a driver for it.
+   */
+  test("an edit to the canary's code, not only its page, changes the source hash", () => {
+    const base = buildCanarySource(fonts);
+    const edited = buildCanarySource(fonts, `${canaryCode()}\n// one more line`);
+    expect(edited.sourceSha256).not.toBe(base.sourceSha256);
+    expect(edited.fontSha256).toBe(base.fontSha256);
+    expect(edited.html).toBe(base.html);
+  });
+
+  test("the code hashed is canary.ts itself: the launch, the font wait, the capture", () => {
+    const code = canaryCode();
+    expect(code).toBe(fs.readFileSync("scripts/e2e-renderer/canary.ts", "utf8"));
+    expect(code).toContain("async function waitForCanaryFonts(");
+    expect(code).toContain("async function settledScreenshot(");
+    expect(code).toMatch(/chromium\.launch\(CANARY_LAUNCH\)/);
+  });
+
+  test("fingerprint.ts launches no browser of its own: every canary launch is hashed", () => {
+    const fingerprint = fs.readFileSync("scripts/e2e-renderer/fingerprint.ts", "utf8");
+    expect(fingerprint).not.toMatch(/\.launch\(/);
   });
 
   /** The same two files in each other's faces are a different page, so a different source. */

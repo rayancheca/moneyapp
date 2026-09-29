@@ -23,6 +23,12 @@ import { z } from "zod";
 export const BASELINE_RENDERER_PATH = "e2e/baseline-renderer.json";
 export const RENDERER_CHECK_ENV = "E2E_RENDERER_CHECK";
 export const REBASE_RENDERER_COMMAND = "pnpm e2e:rebase-renderer --confirm";
+/**
+ * What global setup hands the workers when the canary does not match and the run goes on: the
+ * refusal every comparison with a committed baseline throws (e2e/expect-baseline.ts). Set or
+ * cleared by every global setup, whatever the shell had, since the workers inherit its env.
+ */
+export const RENDERER_REFUSAL_ENV = "E2E_RENDERER_REFUSAL";
 
 const CANARY_SOURCE = "scripts/e2e-renderer/canary.ts";
 /** Where the Geist files come from: the package the app's next/font loaders read. */
@@ -34,7 +40,7 @@ const sha256Hex = z.string().regex(/^[0-9a-f]{64}$/, "must be a 64-character low
 const RendererRecordSchema = z.object({
   canary: z.object({
     pixelSha256: sha256Hex,
-    /** everything the canary feeds the renderer: its context, its page and the Geist files */
+    /** everything but the machine that decides its pixels: canary.ts's code, page and fonts */
     sourceSha256: sha256Hex,
     /** the Geist files alone, which the app ships too: a change here moves the app's baselines */
     fontSha256: sha256Hex,
@@ -64,9 +70,32 @@ export type RendererVerdict =
   | "canary-changed"
   | "fonts-changed"
   | "unrecorded";
+export type Mismatch = Exclude<RendererVerdict, "match">;
+
+/**
+ * How a run uses the committed baselines, which decides what a mismatch stops:
+ * - "gate": E2E_GATE set. It compares every baseline, and is stopped outright, before seeding.
+ * - "update": --update-snapshots, bare (changed) or all. It redraws baselines rather than
+ *   comparing them; each redraw is refused, since it would carry the Mac's drift.
+ * - "compare": any other run. Each comparison with a committed baseline is refused; a spec that
+ *   compares none runs as usual.
+ */
+export type RunKind = "gate" | "compare" | "update";
+
 export type RendererCheck =
   | { verdict: "skipped" }
-  | { verdict: "match"; recorded: RendererRecord; current: RendererRecord };
+  | { verdict: "match"; recorded: RendererRecord; current: RendererRecord }
+  /** a run that is not a gate goes on; `refusal` is what each comparison with a baseline throws */
+  | { verdict: Mismatch; run: Exclude<RunKind, "gate">; message: string; refusal: string };
+
+type Env = Readonly<Record<string, string | undefined>>;
+
+/** E2E_GATE as playwright.config.ts reads it (any non-empty value), then the snapshot mode. */
+export function runKindOf(env: Env, updateSnapshots?: string): RunKind {
+  const gate = env.E2E_GATE;
+  if (gate !== undefined && gate !== "") return "gate";
+  return updateSnapshots === "all" || updateSnapshots === "changed" ? "update" : "compare";
+}
 
 function parseRecord(value: unknown, file: string): RendererRecord {
   const parsed = RendererRecordSchema.safeParse(value);
@@ -77,24 +106,26 @@ function parseRecord(value: unknown, file: string): RendererRecord {
   return parsed.data;
 }
 
-/** The recorded renderer, or null when none has been recorded yet. */
-export function readRecord(file: string = BASELINE_RENDERER_PATH): RendererRecord | null {
+function messageOf(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+/** A record read from `file`, null when there is no such file; anything else in it throws. */
+function readRecordFile(file: string): RendererRecord | null {
   const absolute = path.resolve(file);
   if (!fs.existsSync(absolute)) return null;
   let json: unknown;
   try {
     json = JSON.parse(fs.readFileSync(absolute, "utf8"));
   } catch (error) {
-    const reason = error instanceof Error ? error.message : String(error);
-    throw new Error(`${file} is not valid JSON: ${reason}`);
+    throw new Error(`${file} is not valid JSON: ${messageOf(error)}`);
   }
   return parseRecord(json, file);
 }
 
-/** Validates before writing, so a record that could never match does not reach the disk. */
-export function writeRecord(record: RendererRecord, file: string = BASELINE_RENDERER_PATH): void {
+/** Validated, then rebuilt field by field so a file always reads in the same order. */
+function serializeRecord(record: RendererRecord, file: string): string {
   const valid = parseRecord(record, file);
-  // Rebuilt field by field so the file always reads in the same order, whatever the caller built.
   const ordered: RendererRecord = {
     canary: {
       pixelSha256: valid.canary.pixelSha256,
@@ -108,7 +139,78 @@ export function writeRecord(record: RendererRecord, file: string = BASELINE_REND
     playwright: valid.playwright,
     chromiumRevision: valid.chromiumRevision,
   };
-  fs.writeFileSync(path.resolve(file), `${JSON.stringify(ordered, null, 2)}\n`);
+  return `${JSON.stringify(ordered, null, 2)}\n`;
+}
+
+/** The recorded renderer, or null when none has been recorded yet. */
+export function readRecord(file: string = BASELINE_RENDERER_PATH): RendererRecord | null {
+  return readRecordFile(file);
+}
+
+/** Validates before writing, so a record that could never match does not reach the disk. */
+export function writeRecord(record: RendererRecord, file: string = BASELINE_RENDERER_PATH): void {
+  fs.writeFileSync(path.resolve(file), serializeRecord(record, file));
+}
+
+/* ── The last match ────────────────────────────────────────────────────────────────────────── */
+
+/**
+ * The last run on this machine whose canary matched the record. The record is written only when
+ * the canary moves, so its versions go stale on every update that draws the canary identically,
+ * and "what moved" read against it would list a Chromium roll that matched for weeks beside the
+ * update that actually moved the canary. Global setup and the re-base command note every match
+ * here, and a mismatch reads what moved since. It lives in git's common directory: it belongs to
+ * this machine and its node_modules, which every worktree shares, and never to a commit.
+ */
+export const LAST_MATCH_NAME = "e2e-renderer-last-match.json";
+
+export function lastMatchPath(cwd?: string): string {
+  const common = execFileSync("git", ["rev-parse", "--git-common-dir"], {
+    cwd,
+    encoding: "utf8",
+    timeout: 5_000,
+    stdio: ["ignore", "pipe", "pipe"],
+  }).trim();
+  return path.resolve(cwd ?? ".", common, LAST_MATCH_NAME);
+}
+
+/** The last match noted, or null when none was; a note that is not a record throws, naming it. */
+export function readLastMatch(file: string = lastMatchPath()): RendererRecord | null {
+  return readRecordFile(file);
+}
+
+/** Notes a match whole or not at all: written beside the note, then renamed over it. */
+export function rememberMatch(record: RendererRecord, file: string = lastMatchPath()): void {
+  const text = serializeRecord(record, file);
+  const partial = `${file}.${process.pid}.partial`;
+  fs.writeFileSync(partial, text);
+  fs.renameSync(partial, file);
+}
+
+/**
+ * The last match, or null when there is none or it cannot be read, which `say` hears: a note
+ * never stops a run, and without it what moved is read since the record, which the message says.
+ */
+export function lastMatchOrSay(say: (line: string) => void, file?: string): RendererRecord | null {
+  try {
+    return readLastMatch(file);
+  } catch (error) {
+    say(`the renderer's last-match note cannot be read (${messageOf(error)})`);
+    return null;
+  }
+}
+
+/** Notes a match, or says why it could not: a note never stops a run. */
+export function rememberMatchOrSay(
+  record: RendererRecord,
+  say: (line: string) => void,
+  file?: string,
+): void {
+  try {
+    rememberMatch(record, file);
+  } catch (error) {
+    say(`this match could not be noted (${messageOf(error)})`);
+  }
 }
 
 function readMacosVersion(): RendererRecord["macos"] {
@@ -206,21 +308,75 @@ function row(label: string, value: string): string {
   return `  ${label.padEnd(12)}${value}`;
 }
 
+/**
+ * Where "what moved" is read from: the last match on this machine when it matched this record,
+ * else the record itself, whose versions may be long stale (LAST_MATCH_NAME says why).
+ */
+export interface VersionWindow {
+  since: RendererRecord;
+  lastMatched: boolean;
+}
+
+function sameCanary(a: CanaryFingerprint, b: CanaryFingerprint): boolean {
+  return (
+    a.pixelSha256 === b.pixelSha256 &&
+    a.sourceSha256 === b.sourceSha256 &&
+    a.fontSha256 === b.fontSha256 &&
+    a.width === b.width &&
+    a.height === b.height
+  );
+}
+
+/**
+ * A last match counts only when it matched this record, its canary the record's. One noted against
+ * another canary (re-recorded since, or another branch's) says nothing about when this one held.
+ */
+export function versionWindow(
+  recorded: RendererRecord,
+  lastMatch: RendererRecord | null,
+): VersionWindow {
+  return lastMatch !== null && sameCanary(lastMatch.canary, recorded.canary)
+    ? { since: lastMatch, lastMatched: true }
+    : { since: recorded, lastMatched: false };
+}
+
+export interface VersionMove {
+  label: string;
+  before: string;
+  after: string;
+}
+
+/** Each version the record names, from the window's start to this Mac now. */
+export function versionMoves(since: RendererRecord, current: RendererRecord): VersionMove[] {
+  return [
+    { label: "macOS", before: macosLabel(since.macos), after: macosLabel(current.macos) },
+    {
+      label: "chromium",
+      before: `r${since.chromiumRevision}`,
+      after: `r${current.chromiumRevision}`,
+    },
+    { label: "playwright", before: since.playwright, after: current.playwright },
+  ];
+}
+
 interface VersionRows {
   rows: string[];
   moved: boolean;
 }
 
-/** One row per version the record names, and whether any of them moved at all. */
-function versionRows(recorded: RendererRecord, current: RendererRecord): VersionRows {
-  const pairs: [string, string, string][] = [
-    ["macOS", macosLabel(recorded.macos), macosLabel(current.macos)],
-    ["chromium", `r${recorded.chromiumRevision}`, `r${current.chromiumRevision}`],
-    ["playwright", recorded.playwright, current.playwright],
-  ];
+/** The window's label, one row per version, and whether any of them moved in the window. */
+function versionRows(window: VersionWindow, current: RendererRecord): VersionRows {
+  const on = window.since.recordedOn.slice(0, 10);
+  const label = window.lastMatched
+    ? [`Versions since the canary last matched on this machine, ${on}:`]
+    : [
+        `Versions since the record was written, ${on}. It is rewritten only when the canary`,
+        "moves, so a version shown moving may have moved long before the canary did:",
+      ];
+  const moves = versionMoves(window.since, current);
   return {
-    rows: pairs.map(([label, before, after]) => row(label, fromTo(before, after))),
-    moved: pairs.some(([, before, after]) => before !== after),
+    rows: [...label, ...moves.map((m) => row(m.label, fromTo(m.before, m.after)))],
+    moved: moves.some((m) => m.before !== m.after),
   };
 }
 
@@ -232,23 +388,77 @@ function message(headline: string, body: readonly string[]): string {
 const RUN_ANYWAY =
   `To run the suite anyway and see the churn for yourself, set ${RENDERER_CHECK_ENV}=skip.`;
 
+/**
+ * The canary is a tripwire, not a count: it says the pixels under the baselines moved, never how
+ * many the gate would now fail, which the re-base command measures.
+ */
+const TOLERANCE = [
+  "The canary is compared pixel for pixel and the gate is not: maxDiffPixels 0 counts a pixel",
+  "only past a colour threshold, and never one it takes for anti-aliasing. So how many",
+  "baselines this moves past the gate is not known until they are drawn: none, some or nearly",
+  "all. On 2026-09-28 macOS 27.2 failed 107 of the 202, and 20 dark pages it moved by 931 to",
+  "6,394 pixels still passed.",
+];
+
+/**
+ * What the run does about it. Only a gate is stopped outright: it compares every committed
+ * baseline. Any other run may be a spec that compares none, and goes on; each comparison with a
+ * committed baseline stops instead, through e2e/expect-baseline.ts.
+ */
+const CONSEQUENCE: Record<RunKind, readonly string[]> = {
+  gate: [
+    "The gate stopped here, before seeding: it compares every committed baseline, and a",
+    "failure among them could be the Mac's doing, NOT the change under test's.",
+  ],
+  compare: [
+    "This run goes on, but compares no screenshot with a committed baseline: each such",
+    "comparison stops, pointing here, since a failure could be the Mac's doing and NOT the",
+    "change under test's. Specs that compare no baseline run as usual.",
+  ],
+  update: [
+    "This run goes on, but redraws no baseline: redrawn now, one would carry this Mac's drift",
+    "beside the change under test, and no diff could tell the two apart. Each such screenshot",
+    "stops, pointing here; specs that compare no baseline run as usual.",
+  ],
+};
+
+const FIX_BY_REBASE = [
+  `Fix: ${REBASE_RENDERER_COMMAND}. It draws the whole suite at HEAD, re-bases only the`,
+  "baselines the gate itself fails, and records the renderer alone when the gate fails none.",
+  "It runs the whole suite twice, a control and then the gate, and it needs a clean tree,",
+  "so commit or stash work in progress first.",
+];
+
+const FONTS_REDRAW = `pnpm build && ${RENDERER_CHECK_ENV}=skip pnpm e2e:update`;
+
+/** What the message is told beyond the two records. */
+export interface MismatchContext {
+  /** the last match on this machine, which dates what moved */
+  lastMatch?: RendererRecord | null;
+  /** how the run uses the baselines, which decides what it is told happens now; a gate unsaid */
+  run?: RunKind;
+}
+
 export function rendererMismatchMessage(
-  verdict: Exclude<RendererVerdict, "match">,
+  verdict: Mismatch,
   recorded: RendererRecord | null,
   current: RendererRecord,
   file: string = BASELINE_RENDERER_PATH,
+  context: MismatchContext = {},
 ): string {
+  const consequence = CONSEQUENCE[context.run ?? "gate"];
   if (recorded === null || verdict === "unrecorded") {
     return message(`e2e: NO RENDERER RECORD — ${file} does not exist.`, [
       "Nothing says which renderer drew the baselines, so an OS or Chromium update would",
       "surface as a wide spread of unrelated visual failures instead of this one message.",
       `This Mac now: ${oneLineRenderer(current)}`,
-      `Fix: ${REBASE_RENDERER_COMMAND} — it records the renderer after a green control run.`,
+      ...consequence,
+      ...FIX_BY_REBASE,
       RUN_ANYWAY,
     ]);
   }
 
-  const { rows, moved } = versionRows(recorded, current);
+  const { rows, moved } = versionRows(versionWindow(recorded, context.lastMatch ?? null), current);
   const recordedOn = recorded.recordedOn.slice(0, 10);
   if (verdict === "fonts-changed") {
     const before = short(recorded.canary.fontSha256);
@@ -263,10 +473,11 @@ export function rendererMismatchMessage(
         "The app draws its text with these files, so this is a UI change and not the renderer's:",
         "it moves every baseline with text, and those are redrawn, read and committed with the",
         "change that moved the font, like any other UI change:",
-        `  pnpm build && ${RENDERER_CHECK_ENV}=skip pnpm e2e:update`,
+        `  ${FONTS_REDRAW}`,
         `Once they are, record the renderer with ${REBASE_RENDERER_COMMAND}.`,
         "It copies no twin while the fonts differ from the record, so it cannot re-base the",
         "font's own drift as though the Mac had moved.",
+        ...consequence,
         RUN_ANYWAY,
       ],
     );
@@ -282,7 +493,8 @@ export function rendererMismatchMessage(
         `${CANARY_SOURCE} itself was edited, and an edit to the canary moves no baseline.`,
         ...rows,
         "Until the canary is recorded again the gate cannot tell whether the renderer moved too.",
-        `Fix: ${REBASE_RENDERER_COMMAND}`,
+        ...consequence,
+        ...FIX_BY_REBASE,
         RUN_ANYWAY,
       ],
     );
@@ -290,65 +502,90 @@ export function rendererMismatchMessage(
 
   const pixels = `${short(recorded.canary.pixelSha256)} → ${short(current.canary.pixelSha256)}`;
   return message(
-    "e2e: THE RENDERER CHANGED — this Mac no longer draws the pixels the baselines were drawn with.",
+    "e2e: THE RENDERER CHANGED — this Mac no longer draws the renderer canary as the record says.",
     [
       `The renderer canary (${CANARY_SOURCE}: one frozen page, no app code, no`,
-      `server) does not match ${file}, recorded ${recordedOn}:`,
+      `server) does not match ${file}, recorded ${recordedOn}.`,
       ...rows,
       row("canary", `${pixels}  (${canarySize(recorded.canary, current.canary)})`),
       ...(moved
         ? []
         : [
-            "None of the versions it records moved, so something beneath them did: a system font,",
-            "a text-rendering setting or a graphics driver. The canary's pixels are the arbiter.",
+            "None of those versions moved, so something beneath them did: a system font, a",
+            "text-rendering setting or a graphics driver. The canary's pixels are the arbiter.",
           ]),
-      "Nearly every baseline with text in it would now fail at maxDiffPixels 0, and that is",
-      "NOT the change under test. On 2026-09-28 exactly this failed 107 baselines after a",
-      "9-minute run in which no UI had changed; the suite stopped here instead.",
-      `Fix: ${REBASE_RENDERER_COMMAND}`,
+      ...TOLERANCE,
+      ...consequence,
+      ...FIX_BY_REBASE,
       RUN_ANYWAY,
     ],
   );
 }
 
-/** Renders the canary in a fresh headless Chromium, the same launch the test runner makes. */
+/**
+ * What each comparison with a committed baseline throws in a run that went on past a mismatch:
+ * short, since a run can make dozens, and pointing at the message global setup printed once.
+ */
+export function rendererRefusal(verdict: Mismatch, file: string = BASELINE_RENDERER_PATH): string {
+  const fix =
+    verdict === "fonts-changed"
+      ? `redraw the baselines with the font (${FONTS_REDRAW}), then ${REBASE_RENDERER_COMMAND}`
+      : REBASE_RENDERER_COMMAND;
+  return (
+    "e2e: no screenshot is compared with, or redrawn over, a committed baseline while this " +
+    `Mac's renderer canary does not match ${file} (${verdict}). Global setup's message at the ` +
+    `top of this run says what moved and why. Fix: ${fix}.`
+  );
+}
+
+/** The refusal global setup handed the workers, or null when it handed none. */
+export function baselineRefusal(env: Env): string | null {
+  const refusal = env[RENDERER_REFUSAL_ENV];
+  return refusal === undefined || refusal === "" ? null : refusal;
+}
+
+/**
+ * Renders the canary in a fresh headless Chromium, launched by canary.ts (measureCanary) so that
+ * its source hash covers the launch too: this file launches nothing of its own.
+ */
 export async function measureCurrentRenderer(now: Date = new Date()): Promise<RendererRecord> {
   // Loaded here rather than at the top so that reading or comparing a record, which is all the
   // unit tests do, never loads a browser driver.
-  const { chromium } = await import("@playwright/test");
-  const { renderCanary } = await import("./canary");
-  const browser = await chromium.launch();
-  try {
-    const canary = await renderCanary(browser);
-    return {
-      canary: {
-        pixelSha256: canary.pixelSha256,
-        sourceSha256: canary.sourceSha256,
-        fontSha256: canary.fontSha256,
-        width: canary.width,
-        height: canary.height,
-      },
-      recordedOn: now.toISOString(),
-      ...currentEnvironment(),
-    };
-  } finally {
-    await browser.close();
-  }
+  const { measureCanary } = await import("./canary");
+  const canary = await measureCanary();
+  return {
+    canary: {
+      pixelSha256: canary.pixelSha256,
+      sourceSha256: canary.sourceSha256,
+      fontSha256: canary.fontSha256,
+      width: canary.width,
+      height: canary.height,
+    },
+    recordedOn: now.toISOString(),
+    ...currentEnvironment(),
+  };
 }
 
 export interface RendererCheckOptions {
   file?: string;
-  /** A plain record, not `NodeJS.ProcessEnv`, so a test can hand it exactly the one key it reads. */
-  env?: Readonly<Record<string, string | undefined>>;
+  /** A plain record, not `NodeJS.ProcessEnv`, so a test can hand it exactly the keys it reads. */
+  env?: Env;
   measure?: () => Promise<RendererRecord>;
+  /** Playwright's resolved config.updateSnapshots: "all" or "changed" redraws baselines. */
+  updateSnapshots?: string;
+  /** The last match on this machine, asked only on a mismatch, to date what moved. */
+  lastMatch?: () => RendererRecord | null;
 }
 
 /**
- * Throws one message on anything but a match. It runs before the database is seeded: the
- * answer takes about a second, and every minute the suite spends after a renderer change is a
- * minute spent producing failures that are not about the change under test.
+ * The canary against the record, before the database is seeded: about a second. A gate is
+ * stopped here on a mismatch, by a throw of the one message: it compares every committed
+ * baseline, and every minute it spent after a renderer change would produce failures that are
+ * not about the change under test. Any other run is not stopped: it may be a spec that compares
+ * no baseline at all. It gets the message to print and the refusal each of its comparisons with
+ * a committed baseline throws (e2e/expect-baseline.ts).
  */
-export async function assertRendererMatchesBaselines(
+export async function checkRendererForRun(
   options: RendererCheckOptions = {},
 ): Promise<RendererCheck> {
   const env = options.env ?? process.env;
@@ -364,17 +601,32 @@ export async function assertRendererMatchesBaselines(
   const file = options.file ?? BASELINE_RENDERER_PATH;
   const recorded = readRecord(file);
   const current = await (options.measure ?? measureCurrentRenderer)();
-  if (recorded === null) {
-    throw new Error(rendererMismatchMessage("unrecorded", null, current, file));
-  }
+  const found = { recorded, current, file, env, options };
+  if (recorded === null) return stopOrGoOn("unrecorded", found);
   const verdict = compareRecord(recorded, current);
-  if (verdict !== "match") {
-    throw new Error(rendererMismatchMessage(verdict, recorded, current, file));
-  }
-  return { verdict, recorded, current };
+  if (verdict === "match") return { verdict, recorded, current };
+  return stopOrGoOn(verdict, found);
 }
 
-/** The one line global-setup prints, so the log says which renderer a run was judged on. */
+interface Found {
+  recorded: RendererRecord | null;
+  current: RendererRecord;
+  file: string;
+  env: Env;
+  options: RendererCheckOptions;
+}
+
+/** A mismatch: the gate's throw, or what a run that goes on prints and hands its workers. */
+function stopOrGoOn(verdict: Mismatch, found: Found): RendererCheck {
+  const { recorded, current, file, env, options } = found;
+  const run = runKindOf(env, options.updateSnapshots);
+  const lastMatch = (options.lastMatch ?? (() => null))();
+  const text = rendererMismatchMessage(verdict, recorded, current, file, { lastMatch, run });
+  if (run === "gate") throw new Error(text);
+  return { verdict, run, message: text, refusal: rendererRefusal(verdict, file) };
+}
+
+/** What global-setup prints, so the log says which renderer a run was judged on. */
 export function describeRendererCheck(check: RendererCheck): string {
   if (check.verdict === "skipped") {
     return (
@@ -382,5 +634,11 @@ export function describeRendererCheck(check: RendererCheck): string {
       "failures in this run may be the machine, not the change."
     );
   }
-  return `[e2e setup] renderer matches the baselines' — ${oneLineRenderer(check.current)}`;
+  if (check.verdict === "match") {
+    return `[e2e setup] renderer matches the baselines' — ${oneLineRenderer(check.current)}`;
+  }
+  return (
+    `[e2e setup] renderer canary: ${check.verdict}, and this run goes on, since it is not a ` +
+    `gate (E2E_GATE); every comparison with a committed baseline stops instead:\n${check.message}`
+  );
 }

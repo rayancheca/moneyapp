@@ -1,4 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
+import { expectBaseline } from "./expect-baseline";
 import { analyzeSettled } from "./axe-helpers";
 
 /**
@@ -56,7 +57,7 @@ export function defineStateTests(state: InteractionState): void {
 
       for (const width of STATE_WIDTHS) {
         await page.setViewportSize({ width, height: 900 });
-        await expect(page).toHaveScreenshot(`${state.name}-${theme}-${width}.png`, {
+        await expectBaseline(page).toHaveScreenshot(`${state.name}-${theme}-${width}.png`, {
           fullPage: true,
         });
         // axe runs IN the prepared state — the coverage a route scan can't give

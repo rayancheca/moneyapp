@@ -16,6 +16,8 @@ import {
   BASELINE_RENDERER_PATH,
   macosLabel,
   oneLineRenderer,
+  versionMoves,
+  versionWindow,
   type RendererRecord,
   type RendererVerdict,
 } from "./fingerprint";
@@ -481,6 +483,8 @@ export interface CommitFacts {
   verdict: RendererVerdict;
   recorded: RendererRecord | null;
   current: RendererRecord;
+  /** the last run on this machine whose canary matched the record, which dates what moved */
+  lastMatch: RendererRecord | null;
   head: { sha: string; subject: string };
   /** HEAD was pushed as origin/main's tip; when not, the commit says what vouched for it instead */
   pushed: boolean;
@@ -499,6 +503,39 @@ const RERAN: Record<RerunScope, string> = {
   "whole-suite": ", on one re-run of the whole suite after the first run failed",
 };
 
+interface Moved {
+  /** the moves, "macOS 27.2 -> 27.3, chromium r1228 -> r1240", or that none moved */
+  moves: string;
+  /** the day the canary last matched on this machine, when that match was against the record */
+  lastMatchedOn: string | null;
+}
+
+/**
+ * The versions that moved, read since the canary last matched on this machine when that match was
+ * against this record, else since the record, which is rewritten only when the canary moves.
+ */
+function movedSince(recorded: RendererRecord, facts: CommitFacts): Moved {
+  const window = versionWindow(recorded, facts.lastMatch);
+  const versions = versionMoves(window.since, facts.current)
+    .filter((m) => m.before !== m.after)
+    .map((m) => `${m.label} ${m.before} -> ${m.after}`);
+  return {
+    moves: versions.length === 0 ? "no recorded version moved" : versions.join(", "),
+    lastMatchedOn: window.lastMatched ? window.since.recordedOn.slice(0, 10) : null,
+  };
+}
+
+/** The same, as a clause: dated by the last match, or said to be read since the record. */
+function movedClause({ moves, lastMatchedOn }: Moved): string {
+  if (lastMatchedOn !== null) {
+    return `since it last matched on this machine, ${lastMatchedOn}: ${moves}`;
+  }
+  return (
+    `${moves}, since the record was written (it is rewritten only when the canary moves, so a ` +
+    "version may have moved long before the canary did)"
+  );
+}
+
 function whatMoved(facts: CommitFacts): string {
   const { recorded, current, verdict } = facts;
   if (recorded === null) {
@@ -507,13 +544,8 @@ function whatMoved(facts: CommitFacts): string {
       "gate run stopped with NO RENDERER RECORD before seeding."
     );
   }
-  const moved = (label: string, a: string, b: string) => (a === b ? [] : [`${label} ${a} -> ${b}`]);
-  const versions = [
-    ...moved("macOS", macosLabel(recorded.macos), macosLabel(current.macos)),
-    ...moved("chromium", `r${recorded.chromiumRevision}`, `r${current.chromiumRevision}`),
-    ...moved("playwright", recorded.playwright, current.playwright),
-  ];
-  const which = versions.length === 0 ? "no recorded version moved" : versions.join(", ");
+  const moved = movedSince(recorded, facts);
+  const which = movedClause(moved);
   const sha = (record: RendererRecord) => record.canary.pixelSha256.slice(0, 12);
   const canary = `${sha(recorded)} -> ${sha(current)}`;
   const on = recorded.recordedOn.slice(0, 10);
@@ -528,13 +560,16 @@ function whatMoved(facts: CommitFacts): string {
   }
   if (verdict === "canary-changed") {
     return (
-      `The renderer canary's own page changed since ${on}, its fonts did not ` +
-      `(${which}), so its recorded pixels could no longer be compared (canary ${canary}).`
+      `The renderer canary itself (scripts/e2e-renderer/canary.ts) changed since ${on}, its ` +
+      `fonts did not (${which}), so its recorded pixels could no longer be compared ` +
+      `(canary ${canary}).`
     );
   }
+  const stopped = `This Mac stopped drawing the renderer canary recorded on ${on}`;
+  if (moved.lastMatchedOn === null) return `${stopped}: ${which}; canary ${canary}.`;
   return (
-    `This Mac stopped drawing the renderer canary recorded on ${on}: ` +
-    `${which}; canary ${canary}.`
+    `${stopped}. Since it last matched on this machine, ${moved.lastMatchedOn}: ` +
+    `${moved.moves}; canary ${canary}.`
   );
 }
 

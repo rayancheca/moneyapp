@@ -1,5 +1,6 @@
 import path from "node:path";
 import { expect, test } from "@playwright/test";
+import { expectBaseline } from "./expect-baseline";
 
 /**
  * The golden path, driven through the real browser UI: upload statement
@@ -55,16 +56,16 @@ test("upload statements through the UI and watch the trust layer work", async ({
   await expect(capOneCard.getByText("Venture X")).toBeVisible();
   // each account row exposes its edit + reorder affordances
   await expect(capOneCard.getByRole("button", { name: /Edit 360 Checking/ })).toBeVisible();
-  await expect(page).toHaveScreenshot("accounts-managed-light.png", { fullPage: true });
+  await expectBaseline(page).toHaveScreenshot("accounts-managed-light.png", { fullPage: true });
 
   // rows link into the enriched account detail page
   await capOneCard.getByRole("link", { name: /360 Checking/ }).click();
   await expect(page.getByRole("heading", { level: 1, name: /360 Checking/ })).toBeVisible();
   await expect(page.getByText("Balance history")).toBeVisible();
-  await expect(page).toHaveScreenshot("account-detail-light.png", { fullPage: true });
+  await expectBaseline(page).toHaveScreenshot("account-detail-light.png", { fullPage: true });
   await page.getByRole("button", { name: /switch to dark theme/i }).click();
   await expect(page.locator("html")).toHaveClass(/dark/);
-  await expect(page).toHaveScreenshot("account-detail-dark.png", { fullPage: true });
+  await expectBaseline(page).toHaveScreenshot("account-detail-dark.png", { fullPage: true });
   await page.getByRole("button", { name: /switch to light theme/i }).click();
 
   // transactions imported and categorized by the seed merchant map

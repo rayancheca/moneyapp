@@ -15,10 +15,12 @@ import { scratchSnapshotTemplate } from "./scripts/e2e-renderer/snapshot-root";
  * - Verifying a stage gate:
  *     `pnpm e2e:fresh`                  (next build && playwright test)
  *   Never gate against an old `.next`; a gate run must not write snapshots.
- * - After an OS or browser update moves text rendering (the run stops in
- *   global-setup with "THE RENDERER CHANGED"):
+ * - After an OS or browser update moves text rendering (a gate stops in
+ *   global-setup with "THE RENDERER CHANGED"; any other run goes on, and each
+ *   comparison with a committed baseline stops, pointing at that message):
  *     `pnpm e2e:rebase-renderer`             (dry run: proves it, writes nothing)
  *     `pnpm e2e:rebase-renderer --confirm`   (re-bases, records, re-runs the gate)
+ *   It needs a clean tree: commit or stash work in progress first.
  */
 const snapshotPathTemplate = scratchSnapshotTemplate(process.env);
 
@@ -95,12 +97,18 @@ export default defineConfig({
        * thousands of pixels a page. A flat allowance that swallowed that would
        * swallow the 41-pixel changes above with it, and a ratio is how they hid
        * in the first place.
-       * global-setup's renderer canary now stops the run in a second when the
-       * Mac draws differently, and `pnpm e2e:rebase-renderer` does what that
-       * session did by hand: a control run of the whole suite at the last pushed
-       * commit, every committed baseline judged against it by
-       * scripts/e2e-renderer/diff-verdict.ts, a refusal on anything that is not
-       * renderer drift, and the gate re-run with the check on.
+       * global-setup's renderer canary now stops a gate in a second when the
+       * Mac draws differently; any other run goes on, and each comparison with
+       * a committed baseline stops instead (e2e/expect-baseline.ts), so a spec
+       * that compares none is not stopped for a Mac it never asks about. The
+       * canary is exact where this gate is not, so it says the pixels under the
+       * baselines moved, never how many this would fail. `pnpm
+       * e2e:rebase-renderer` does what that session did by hand: a control run
+       * of the whole suite at the last pushed commit, every committed baseline
+       * judged against it by scripts/e2e-renderer/diff-verdict.ts, a refusal on
+       * anything that is not renderer drift, only what this gate fails re-based
+       * (the renderer recorded alone when it fails none), and the gate re-run
+       * with the check on.
        *
        * Any other diff is read before it is regenerated: `node
        * scripts/crop-visual-diff.mjs test-results/<dir> <baseline>` crops the

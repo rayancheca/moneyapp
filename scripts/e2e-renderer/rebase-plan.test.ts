@@ -613,6 +613,7 @@ describe("the words", () => {
       verdict: rendererVerdict,
       recorded: RECORDED,
       current: CURRENT,
+      lastMatch: null,
       head: { sha: "c3b9a59163994b2db7145ce4aea77bd806d66425", subject: "fix(pay): a payday" },
       pushed: true,
       control: { passed: 602, rerun: null },
@@ -650,6 +651,34 @@ describe("the words", () => {
     expect(text).toContain(`worst 0.59% (${C})`);
     expect(text).toContain("ink-fine 0.0982 of 0.18 (1.83x under)");
     expectWrapped(message);
+  });
+
+  /**
+   * The record is written only when the canary moves, so its versions go stale on every update
+   * that draws the canary identically; the commit names what moved since the canary last matched
+   * here, when that match was against this record.
+   */
+  test("what moved is read since the canary last matched on this machine", () => {
+    const rolled = { playwright: "1.62.0", chromiumRevision: "1240" };
+    const lastMatch: RendererRecord = {
+      ...RECORDED,
+      ...rolled,
+      recordedOn: "2026-10-20T08:00:00.000Z",
+    };
+    const current = { ...CURRENT, ...rolled };
+    const text = prose(commitMessage(facts([fails(A)], { current, lastMatch })));
+    expect(text).toContain(
+      "Since it last matched on this machine, 2026-10-20: macOS 27.2 (26B5091g) -> 27.3 (26C12);",
+    );
+    expect(text).not.toContain("r1228");
+  });
+
+  test("with no match remembered, what moved is read since the record, and said to be", () => {
+    const rolled = { playwright: "1.62.0", chromiumRevision: "1240" };
+    const text = prose(commitMessage(facts([fails(A)], { current: { ...CURRENT, ...rolled } })));
+    expect(text).toContain("chromium r1228 -> r1240");
+    expect(text).toMatch(/since the record was written/);
+    expect(text).toMatch(/may have moved long before/);
   });
 
   test("the subject counts only what the gate fails, and the body names what it left", () => {

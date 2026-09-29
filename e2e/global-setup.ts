@@ -1,8 +1,12 @@
 import fs from "node:fs";
 import path from "node:path";
+import type { FullConfig } from "@playwright/test";
 import {
-  assertRendererMatchesBaselines,
+  checkRendererForRun,
   describeRendererCheck,
+  lastMatchOrSay,
+  rememberMatchOrSay,
+  RENDERER_REFUSAL_ENV,
 } from "../scripts/e2e-renderer/fingerprint";
 import { describeSnapshotRoot } from "../scripts/e2e-renderer/snapshot-root";
 import { assertQuietBox } from "../scripts/quiet-box";
@@ -89,7 +93,43 @@ export function bundleStaleness(cwd: string = process.cwd()): BundleStaleness | 
   return { reason: "stale", file: newestFile, seconds: Math.round((newest - builtAt) / 1000) };
 }
 
-export default async function globalSetup(): Promise<void> {
+/** What global setup reads of Playwright's resolved config: how the run treats snapshots. */
+type SetupConfig = Pick<FullConfig, "updateSnapshots">;
+
+/**
+ * The renderer canary, before anything is seeded. If this Mac no longer draws the canary as the
+ * record says, a baseline compared now could fail for the Mac rather than the change under test:
+ * on 2026-09-28 that took a 9-minute run and 107 failures to find out, and the canary says it in
+ * under a second. E2E_RENDERER_CHECK=skip bypasses it (the re-base command's control does).
+ *
+ * A gate (E2E_GATE) is stopped here outright: it compares every committed baseline. Any other run
+ * goes on, because only four spec files compare one, and `pnpm e2e e2e/zz-budgets.spec.ts` must
+ * not be stopped for a Mac it never asks about: the refusal is handed to the workers instead,
+ * which inherit this process's env, and each comparison with a committed baseline throws it
+ * (e2e/expect-baseline.ts). It is set or cleared on every run, whatever the shell had.
+ *
+ * A match is noted on this machine (in git's common directory, never committed), so that a later
+ * mismatch says what moved since the canary last matched rather than since the record, whose
+ * versions go stale on every update that draws the canary identically.
+ */
+export async function checkRenderer(config?: SetupConfig): Promise<void> {
+  const say = (line: string) => console.warn(`[e2e setup] ${line}`);
+  const renderer = await checkRendererForRun({
+    updateSnapshots: config?.updateSnapshots,
+    lastMatch: () => lastMatchOrSay(say),
+  });
+  if ("refusal" in renderer) process.env[RENDERER_REFUSAL_ENV] = renderer.refusal;
+  else delete process.env[RENDERER_REFUSAL_ENV];
+  if (renderer.verdict !== "match") {
+    console.warn(describeRendererCheck(renderer));
+    return;
+  }
+  console.log(describeRendererCheck(renderer));
+  rememberMatchOrSay(renderer.current, say);
+}
+
+/** `config` is Playwright's; a caller without one (a test) runs as a plain comparing run. */
+export default async function globalSetup(config?: SetupConfig): Promise<void> {
   // First, so a run stopped anywhere below has still said it: with E2E_SNAPSHOT_ROOT set, its
   // screenshots are compared with a scratch root, not e2e/ (playwright.config.ts refuses that
   // outright for a gate).
@@ -103,13 +143,7 @@ export default async function globalSetup(): Promise<void> {
     );
   }
   assertBundleIsFresh();
-  // Before anything is seeded: if this Mac no longer draws text the way it did when the
-  // baselines were drawn, nearly every visual spec fails for a reason that is not the change
-  // under test. On 2026-09-28 that took a 9-minute run and 107 failures to find out; the canary
-  // says it in under a second. E2E_RENDERER_CHECK=skip bypasses it (the re-base command does).
-  const renderer = await assertRendererMatchesBaselines();
-  if (renderer.verdict === "skipped") console.warn(describeRendererCheck(renderer));
-  else console.log(describeRendererCheck(renderer));
+  await checkRenderer(config);
   const dbPath = path.join(process.cwd(), "data", "e2e.db");
   // NB: the db file is deliberately NOT unlinked — seedE2eDatabase wipes its
   // data in place so the webServer's open connection keeps the same inode and
