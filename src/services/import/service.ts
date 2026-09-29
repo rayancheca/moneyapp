@@ -61,6 +61,7 @@ import {
 } from "./brokerage-book";
 import { handOverPrintedAnchors } from "./printed-anchors";
 import { linesLeftOut } from "./lines-left-out";
+import { citationsBefore, keepCitations } from "./reread-citations";
 import {
   followingOpeningsByFile,
   handOverKeptOpenings,
@@ -1198,13 +1199,22 @@ function categoryIdForPath(db: AppDatabase, pathStr: string): string | null {
 }
 
 /**
+ * The real ledger's own archive: data/statements under the checkout, where every original it names lives. Exported
+ * for the write that must archive the owner's re-reads there and nowhere else (scripts/reread-unrecorded-archive.ts)
+ * — one answer to "where do his originals live".
+ */
+export function defaultStatementsRoot(cwd: string = process.cwd()): string {
+  return path.join(cwd, "data", "statements");
+}
+
+/**
  * Root of the per-account statement archive. MONEYAPP_ORIGINALS_DIR stays the
  * override (keeps the e2e harness + unit tests off the user's real archive); the
  * default relocated from data/originals to data/statements, and every original
  * now lives under a per-account subfolder (data/statements/<account-slug>/).
  */
 function statementsRoot(): string {
-  return process.env.MONEYAPP_ORIGINALS_DIR ?? path.join(process.cwd(), "data", "statements");
+  return process.env.MONEYAPP_ORIGINALS_DIR ?? defaultStatementsRoot();
 }
 
 /** Writes an original into <root>/<folder>/, deduping on the content-hashed name. */
@@ -1964,6 +1974,8 @@ function writeRead(
   const copyPlans = retiring.length === 0 ? new Map<string, CopyHandOver[]>() : copyHandOvers(db, retiring);
   const held = heldForPrinters(db, copyPlans, retiring);
   const openings = retiredOpenings(db, retiring, held.plans, new Set([...copyPlans.values()].flat().map((p) => p.periodId)));
+  // which statement each recorded balance cites, read before the retirement hands any of them over (`keepCitations`)
+  const citations = retiring.length === 0 ? [] : citationsBefore(db);
   const retired = new Set<string>();
   const lent: LentPeriod[] = [];
   for (const id of retiring) {
@@ -2006,6 +2018,11 @@ function writeRead(
     heldBack,
     members.map((m) => (m.recorded as RecordedFile).row.id),
   );
+  // …and each recorded balance cites the statement it cited: its new read, or the statement this read did not read.
+  // 🔴 The last new read to write a day took it — 26 Robinhood month-ends moved to the next statement's opening
+  // (`reread-citations`)
+  const successorOf = new Map(members.flatMap((m) => m.staleIds.map((id) => [id, (m.recorded as RecordedFile).row.id] as const)));
+  keepCitations(db, citations, successorOf);
   return { retired, writes };
 }
 
@@ -2210,11 +2227,14 @@ function writeMember(db: AppDatabase, member: ReadMember, carryPool: CarryPool, 
           )
           .get();
         let periodId: string | null;
+        // the balances the statement's two days are recorded at: what it prints — or, below, what the period keeps
+        let { beginCents: opens, endCents: closes } = statement.period;
         if (duplicate) {
           periodId = duplicate.id;
           // another download of the same statement owns the period: this file prints it too (`statement-copies`) —
           // unless the owner holds it only as a copy, and gives it back to the file that writes it (`reclaimFromCopy`)
-          if (duplicate.importFileId !== fileRow.id && !reclaimFromCopy(tx, duplicate, fileRow.id)) {
+          const reclaimed = duplicate.importFileId !== fileRow.id && reclaimFromCopy(tx, duplicate, fileRow.id);
+          if (duplicate.importFileId !== fileRow.id && !reclaimed) {
             recordStatementCopy(tx, {
               importFileId: fileRow.id,
               accountId,
@@ -2223,10 +2243,17 @@ function writeMember(db: AppDatabase, member: ReadMember, carryPool: CarryPool, 
               lines: statementCopyLines(lines),
             });
           }
-          const balancesChanged =
+          // ⛔ A re-read taking back the month it lent a copy is not a new download: the balances stand as the ledger
+          // has them, and its days are recorded at them. 🔴 It wrote its own figures over a second download's reissue —
+          // the period, its verdict and the month-end all moved back (probe E2b, 2026-09-29: 10,000/9,100 `gap` →
+          // 10,000/9,000 `reconciled`).
+          if (reclaimed && duplicate.beginningBalanceCents !== null && duplicate.endingBalanceCents !== null) {
+            opens = duplicate.beginningBalanceCents;
+            closes = duplicate.endingBalanceCents;
+          } else if (
             duplicate.beginningBalanceCents !== statement.period.beginCents ||
-            duplicate.endingBalanceCents !== statement.period.endCents;
-          if (balancesChanged) {
+            duplicate.endingBalanceCents !== statement.period.endCents
+          ) {
             tx.update(statementPeriods)
               .set({
                 beginningBalanceCents: statement.period.beginCents,
@@ -2254,8 +2281,8 @@ function writeMember(db: AppDatabase, member: ReadMember, carryPool: CarryPool, 
               .returning({ id: statementPeriods.id })
               .get()?.id ?? null;
         }
-        upsertAnchor(tx, accountId, statement.period.end, statement.period.endCents, "statement", fileRow.id, periodId);
-        upsertAnchorAtDayBefore(tx, accountId, statement.period.start, statement.period.beginCents, fileRow.id, periodId);
+        upsertAnchor(tx, accountId, statement.period.end, closes, "statement", fileRow.id, periodId);
+        upsertAnchorAtDayBefore(tx, accountId, statement.period.start, opens, fileRow.id, periodId);
       }
       // a brokerage book's trades, in the same transaction as its value anchor — ./brokerage-book.ts
       if (statement.positions) {

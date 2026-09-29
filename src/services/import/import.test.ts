@@ -3674,10 +3674,13 @@ describe("a parser-version re-read that no longer writes an account", () => {
     expect(reread!.status).toBe("parsed");
     const march = liveFile(MARCH).id;
     const copy = liveFile(MARCH_COPY).id;
-    // the premise: the re-read owns the periods and the rows again — nothing was handed to the copy
+    // the premise: the re-read owns the periods and the rows again — nothing was handed to the copy…
     expect(contributionOf(march).periods).toHaveLength(3);
     expect(contributionOf(copy)).toMatchObject({ rows: [], periods: [] });
-    expect(contributionOf(march).anchors).toHaveLength(6);
+    // …and the six days the copy wrote last still cite it: a re-read keeps each citation where it was, a second
+    // download's too (`keepCitations`; 🔴 it took them, the review of uc/reread-34-runbook, 2026-09-29)
+    expect(contributionOf(march).anchors).toEqual([]);
+    expect(contributionOf(copy).anchors).toHaveLength(6);
     const { balancesRemovedByFile } = await import("./printed-anchors");
     const { copyHandOvers } = await import("./statement-copies");
     expect(balancesRemovedByFile(bundle.db, copyHandOvers(bundle.db)).get(march) ?? 0).toBe(0);

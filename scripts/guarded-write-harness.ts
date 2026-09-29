@@ -30,18 +30,21 @@ export function parseGuardedArgs(argv: readonly string[]): GuardedArgs {
   return { db, confirm: argv.includes("--confirm"), scratch: value("scratch") ?? os.tmpdir(), value };
 }
 
-/** Runs `fn` on a `.backup` copy of `real`, then deletes the copy and its WAL files. */
+/**
+ * Runs `fn` on a `.backup` copy of `real`, then deletes the copy and its WAL files. `fn` may be async (an import is):
+ * the copy is closed only once it settles — returned un-awaited, the `finally` closed it under a running import.
+ */
 export async function onRehearsalCopy<T>(
   real: DbBundle,
   scratch: string,
   label: string,
-  fn: (copy: DbBundle) => T,
+  fn: (copy: DbBundle) => T | Promise<T>,
 ): Promise<T> {
   const copyPath = path.join(scratch, `${label}-rehearsal-${process.pid}-${Date.now()}.db`);
   await real.sqlite.backup(copyPath);
   const copy = createDatabase(copyPath);
   try {
-    return fn(copy);
+    return await fn(copy);
   } finally {
     copy.sqlite.close();
     for (const suffix of ["", "-wal", "-shm"]) fs.rmSync(`${copyPath}${suffix}`, { force: true });

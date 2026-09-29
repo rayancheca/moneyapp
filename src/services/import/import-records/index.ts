@@ -29,8 +29,8 @@ export interface UnrecordedFile {
    * Whether the three backfills can still read it. They read a file only at the version that imported it
    * (`reread.ts`), and a profile carries ONE implementation — its current one — so a file read at an older version is
    * beyond them: what it prints is recorded by a re-read of the file itself, at the version the profile has now, and
-   * by nothing else. Re-reading it at today's version and calling that a record of what it printed would be a record
-   * of lines the file never printed here.
+   * by nothing else (`scripts/reread-unrecorded-files.ts`). Re-reading it at today's version and calling that a record
+   * of what it printed would be a record of lines the file never printed here.
    */
   backfillCanRead: boolean;
 }

@@ -388,9 +388,9 @@ const backfillable = unrecorded.filter((f) => f.backfillCanRead);
  * the 34 live files at an older version were in neither the number nor the failure: no record of what they print, no
  * backfill that can make one, and nothing said (measured on a copy of the real ledger, 2026-09-22 — the Discover CSV
  * at v1 against a v2 profile, 30 Robinhood brokerage statements at v3 and 3 at v4 against v5; the check printed 0 and
- * exited 0). They are NAMED here, because naming them is all this check can honestly do: only a re-read of the file,
- * at the version the profile has now, records what it prints, and whether to re-read is the owner's call — it
- * re-derives the account's categories (`engineCategoryCarry`).
+ * exited 0). They are NAMED here: only a re-read of the file, at the version the profile has now, records what it
+ * prints — `scripts/reread-unrecorded-files.ts`, the re-read the owner chose on 2026-09-28 (keep every category, refuse
+ * if anything but the records changes).
  */
 const beyondBackfills = unrecorded.filter((f) => !f.backfillCanRead);
 const named = (files: readonly { fileName: string }[]) =>
@@ -411,19 +411,23 @@ const recordFailures = [
 ];
 
 /*
- * The files beyond the backfills are NAMED, not failed. ⛔ Nothing the owner can run today clears them: only a
- * deliberate re-upload records what such a file prints, and a re-read re-derives that account's categories
- * (`engineCategoryCarry` — re-reading the 33 Robinhood statements at v5 moved Agentic's +$26.64 leg to Internal
- * Transfer and took /summary's 2026 money-weighted return 33.87% → 33.81%). Failing on a state with no remedy would
- * mean a red check on every commit until he chooses, which trains the hook to be ignored — the thing pass 74 built
- * it to stop. So it warns, every run, until he answers the either/or in the handoff (§6A 26): re-upload the 34, or
- * keep them as a standing "do not un-import anything on these accounts".
+ * The files beyond the backfills are NAMED, not failed. Only a re-read records what such a file prints, and he chose
+ * it (§6A 26, 2026-09-28): re-read them, KEEPING every category — refuse if anything but the records changes. That
+ * re-read is one guarded command (`scripts/reread-unrecorded-files.ts`: it rehearses on a copy, refuses unless only
+ * the records and what it names change, and puts the ledger back if the write does not match its rehearsal), so this
+ * says the command rather than failing: a red check on every commit until someone runs it would train the hook to be
+ * ignored — the thing pass 74 built it to stop. (The re-read that once moved Agentic's +$26.64 leg to Internal
+ * Transfer, and /summary's 2026 return 33.87% → 33.81%, keeps detection's category with its link since
+ * `engineCategoryCarry`; re-measured 2026-09-28 on a copy: no category moves.)
  */
 if (beyondBackfills.length > 0) {
   console.log(
     `  ⚠️ ${beyondBackfills.length} of them were read at a version their profile has moved past (${named(beyondBackfills)}) — ` +
       "the backfills read a file only at the version that imported it, so they cannot cover these. " +
-      "Un-importing any file whose rows one of them also prints loses those rows. Only a deliberate re-upload records it.",
+      "Un-importing any file whose rows one of them also prints loses those rows. " +
+      "Re-read them at their profile's version (it refuses unless only the records change):\n" +
+      "    pnpm tsx scripts/reread-unrecorded-files.ts --db=<ledger>             # rehearse on a copy, write nothing\n" +
+      "    pnpm tsx scripts/reread-unrecorded-files.ts --db=<ledger> --confirm   # restore point, write, re-check",
   );
 }
 
