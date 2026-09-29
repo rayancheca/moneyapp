@@ -54,27 +54,39 @@
  *  2. Rehearse on a `.backup` copy (`--scratch`) whose every row names a file inside scratch, archiving into a scratch
  *     copy of every original the re-read can reach (`copyArchiveInto`): the rehearsal does to that copy exactly what the
  *     write will do to the archive, and a dry run moves and removes nothing outside scratch. The import, then what it
- *     changed that is not a record put back as the ledger had it (`reread-unrecorded-keep`); then compare the copy's
- *     face with the ledger's (`reread-unrecorded-face`), and the archive's copy as the write's archive is compared.
- *  3. Dry run stops there. `--confirm`: the ledger must still be the one rehearsed; a restore point, and a journal beside
- *     the ledger naming it; the import and its keep; the same comparison on the real ledger, which must make exactly the
+ *     changed that is not a record put back as the ledger had it (`reread-unrecorded-keep`), inside ONE transaction as
+ *     the write runs them (3); then compare the copy's face with the ledger's (`reread-unrecorded-face`), and the
+ *     archive's copy as the write's archive is compared.
+ *  3. Dry run stops there. `--confirm`: a restore point; then ONE write transaction (BEGIN IMMEDIATE) from its first look
+ *     at the ledger to its check — the ledger must still be the one rehearsed; a journal beside the ledger naming the
+ *     restore point; the import and its keep; the same comparison on the real ledger, which must make exactly the
  *     rehearsal's allowed changes and keep exactly what it kept, name each new read's original where the run archived
- *     it, leave the archive holding the same originals, and record every file.
- *  4. Past the restore point, every way out is that check passing or the restore point put back — a failed check and a
- *     fault alike, and the output says which. A put-back also takes the write's own originals back out of the archive
- *     (`sweepLeftovers`), so nothing it left stops the next rehearsal. The journal goes with either.
+ *     it, leave the archive holding the same originals, and record every file. It commits only once that check passes.
+ *  4. Every other way out rolls the transaction back — a failed check and a fault alike, and the output says which —
+ *     and takes the write's own originals back out of the archive (`sweepLeftovers`), so nothing it left stops the next
+ *     rehearsal. The journal goes with either. A transaction that did not hold to the check (SQLite ends one on some
+ *     errors, and what runs after it commits on its own) is put back from the restore point instead.
  *  5. A second run finds nothing to re-read: "Nothing to do."
- *  6. A journal still there is a write neither checked nor put back — its process killed, or its put-back failed — and
- *     the ledger may hold part of it. Every later run says UNFINISHED rather than plan over it (a half-applied re-read
- *     would pass for done); `--confirm` puts the journal's restore point back, saving what the ledger holds first, takes
- *     the write's own originals out of the archive, and the run after that starts over. Measured on a copy of the real
- *     ledger, 2026-09-29: killed 6 s into the write, the Discover CSV's read left `failed` at v2 and its copy in
- *     discover/; the next dry run said UNFINISHED, `--confirm` put both back, and the run after rehearsed clean.
+ *  6. A journal still there is a run that stopped before it ended — killed, or its put-back could not finish. A kill
+ *     leaves the ledger holding the whole write, committed once checked, or none of it: SQLite rolls back what a dead
+ *     process had not committed. Every later run says UNFINISHED rather than plan over it; `--confirm` takes the write's
+ *     own originals out of the archive and closes the journal, and leaves the ledger as it is — with whatever was
+ *     written to it after the kill. Only when the journal says the transaction did not hold, or the ledger holds neither
+ *     all of the write nor none of it, may the ledger hold part of it: `--confirm` then closes the journal only if the
+ *     ledger reads as its restore point, and otherwise refuses and says why, for someone to compare the two.
+ *     🔴 `--confirm` put the restore point back over the ledger without a look, and took out of the live ledger every
+ *     write made after the kill — the app's, an upload's, a backfill's: none of them reads the journal (the review of
+ *     uc/reread-34-runbook, 2026-09-29). Measured on copies of the real ledger, 2026-09-29: killed 6 s into the write,
+ *     before the one transaction the Discover CSV's read was left `failed` at v2 and its copy in discover/; with it the
+ *     ledger held none of the write, and the archive the import's own copy of one Robinhood statement — the next dry run
+ *     said UNFINISHED, `--confirm` took the copy out and kept a note written after the kill, and the run after rehearsed
+ *     clean.
  *
  *   pnpm tsx scripts/reread-unrecorded-files.ts --db=data/moneyapp.db             # rehearse, write nothing
  *   pnpm tsx scripts/reread-unrecorded-files.ts --db=data/moneyapp.db --confirm   # restore point, write, re-check
  *
- * ⛔ Stop the dev server first: the write replaces the database file if its after-check fails.
+ * ⛔ Stop the dev server first: the write holds the ledger's write lock from its first look to its check, and a write
+ * the app tries meanwhile waits on it and fails.
  */
 import fs from "node:fs";
 import os from "node:os";
@@ -113,7 +125,7 @@ import { keepAsTheLedgerHad, whatTheLedgerHad } from "./reread-unrecorded-keep";
 const LABEL = "reread-unrecorded-files";
 
 export interface RunResult {
-  /** `unfinished`: a write neither checked nor put back — found by this run, or left by it */
+  /** `unfinished`: a write that did not end, checked and committed or put back — found by this run, or left by it */
   outcome: "nothing-to-do" | "refused" | "dry-run" | "written" | "restored" | "unfinished";
   /** what refused the run, or what the write broke before it was put back */
   failures: string[];
@@ -126,7 +138,7 @@ export interface RunResult {
 export interface Seams {
   /**
    * something the rehearsal did not do, done to the real ledger right after the write (the import, and what it keeps as
-   * the ledger had it) — or a fault, or a kill
+   * the ledger had it), inside its transaction — or a fault, or a kill
    */
   afterWrite?: (real: DbBundle) => void | Promise<void>;
   /** the checkout the ledger is judged real against — `process.cwd()` unless a test lays one out */
@@ -143,6 +155,13 @@ interface Args {
 }
 
 const messageOf = (error: unknown): string => (error instanceof Error ? error.message : String(error));
+
+/** Whether `bundle` is still inside the one transaction a run opened on it. */
+const inOneTransaction = (bundle: DbBundle): boolean => bundle.sqlite.open && bundle.sqlite.inTransaction;
+
+const LOST_TRANSACTION =
+  "the re-read's transaction did not hold to its check — SQLite ended it part-way (it does on some errors), " +
+  "and what ran after it committed on its own";
 
 /**
  * `--db=<path>` (required), `--confirm` bare, `--scratch=<dir>`. ⛔ Anything else is refused — `--confirm=yes` passing
@@ -280,11 +299,19 @@ async function rehearse(real: DbBundle, args: Args, plan: Plan, before: LedgerFa
       const archive = copyArchiveInto(copy, plan.targets, args.archiveRoot, work);
       const held = archiveListing(archive.root);
       const asCopied = withStoragePaths(before, archive.paths);
-      const { outcomes, kept } = await reread(copy, plan, asCopied, archive.root);
-      const after = ledgerFace(copy, today);
-      const verdict = compareFaces(asCopied, after, { targets: plan.targets, archiveRoot: archive.root });
-      const archived = archiveFailures(held, archive.root, copy, plan.targets);
-      return { ...verdict, failures: [...outcomeFailures(outcomes, plan), ...verdict.failures, ...archived], kept, headline: after.headline };
+      // in one transaction, as the write runs it (`write`): what cannot run inside one refuses here, not on the ledger
+      copy.sqlite.exec("BEGIN IMMEDIATE");
+      try {
+        const { outcomes, kept } = await reread(copy, plan, asCopied, archive.root);
+        const lost = inOneTransaction(copy) ? [] : [LOST_TRANSACTION];
+        const after = ledgerFace(copy, today);
+        const verdict = compareFaces(asCopied, after, { targets: plan.targets, archiveRoot: archive.root });
+        const archived = archiveFailures(held, archive.root, copy, plan.targets);
+        const failures = [...lost, ...outcomeFailures(outcomes, plan), ...verdict.failures, ...archived];
+        return { ...verdict, failures, kept, headline: after.headline };
+      } finally {
+        if (inOneTransaction(copy)) copy.sqlite.exec("ROLLBACK");
+      }
     });
   } finally {
     fs.rmSync(work, { recursive: true, force: true });
@@ -324,9 +351,9 @@ function planned(bundle: DbBundle, args: Args): Plan {
 }
 
 /**
- * A write begun and not yet checked nor put back — kept BESIDE the ledger, so a later run finds it whatever became of
- * the run that wrote it. Written after the restore point and before the import touches the ledger; removed once the
- * write passes its check, or the restore point is back.
+ * A run's write, begun and not yet ended — kept BESIDE the ledger, so a later run finds it whatever became of the run
+ * that wrote it. Written inside the write's transaction, before the import touches the ledger or the archive; removed
+ * once the write is committed after its check, or put back.
  *
  * 🔴 Past the restore point a fault escaped as "REFUSED:" and left the re-read written and unchecked — as a kill does —
  * and a second run, finding no file left to re-read, said "Nothing to do" (the review of uc/reread-34-runbook,
@@ -337,11 +364,27 @@ interface Journal {
   restorePoint: string;
   /** the archive as the write found it — what a put-back takes the write's own originals back out of */
   archive: ArchiveBefore;
+  /** each read the write retires, as the write found it, and the bytes and version of the read it writes in its place */
+  targets: JournalTarget[];
+  /**
+   * `all-or-none`: every write the run made is inside its one transaction, so the ledger holds all of it — committed
+   * once its check passed — or none of it: SQLite rolls back what a dead process had not committed. `may-hold-part`: the
+   * transaction did not hold (SQLite ended it on an error, and what ran after it committed on its own), and the restore
+   * point is not back yet. A journal an earlier cut of this script wrote says neither, and is read as `may-hold-part`.
+   */
+  ledger: "all-or-none" | "may-hold-part";
+}
+
+interface JournalTarget {
+  id: string;
+  status: string;
+  sha: string;
+  version: number;
 }
 
 const journalPath = (db: string): string => `${fs.realpathSync(db)}.${LABEL}.unfinished.json`;
 
-function beginJournal(db: string, journal: Journal): void {
+function writeJournal(db: string, journal: Journal): void {
   const at = journalPath(db);
   const staged = `${at}.${process.pid}.tmp`;
   const fd = fs.openSync(staged, "w");
@@ -352,6 +395,16 @@ function beginJournal(db: string, journal: Journal): void {
     fs.closeSync(fd);
   }
   fs.renameSync(staged, at);
+}
+
+/** The journal says what the ledger now holds of the write — or, when it cannot, the output says so. */
+function tellJournal(db: string, journal: Journal): void {
+  try {
+    writeJournal(db, journal);
+  } catch (error: unknown) {
+    const says = journal.ledger === "all-or-none" ? "holds none of the write" : "may hold part of the write";
+    console.log(`  ✗ the journal could not say the ledger ${says} (${messageOf(error)})`);
+  }
 }
 
 function readJournal(db: string): Journal | null {
@@ -373,6 +426,9 @@ function readJournal(db: string): Journal | null {
   ) {
     throw new DbTargetRefusal(`${at} does not name its restore point and archive — a write may be unfinished: read it before anything else`);
   }
+  const targets = Array.isArray(read.targets)
+    ? read.targets.map((t) => ({ id: String(t.id), status: String(t.status), sha: String(t.sha), version: Number(t.version) }))
+    : [];
   return {
     startedAt: read.startedAt,
     restorePoint: read.restorePoint,
@@ -381,6 +437,8 @@ function readJournal(db: string): Journal | null {
       held: archive.held.map(String),
       files: archive.files.map((f) => ({ name: String(f.name), sha: String(f.sha) })),
     },
+    targets,
+    ledger: read.ledger === "all-or-none" && targets.length > 0 ? "all-or-none" : "may-hold-part",
   };
 }
 
@@ -393,10 +451,10 @@ function endJournal(db: string): void {
   }
 }
 
-/** Once the restore point is back: the write's own originals out of the archive, each said — or why they are not. */
-function sweep(restored: DbBundle, archive: ArchiveBefore): string | null {
+/** The write's own originals out of the archive — the ones no row of the ledger names — each said, or why they are not. */
+function sweep(ledger: DbBundle, archive: ArchiveBefore): string | null {
   try {
-    for (const taken of sweepLeftovers(archive, restored)) console.log(`  · took the write's own copy ${taken} out of the archive — nothing names it now`);
+    for (const taken of sweepLeftovers(archive, ledger)) console.log(`  · took the write's own copy ${taken} out of the archive — nothing names it now`);
     return null;
   } catch (error: unknown) {
     return `the write's own originals could not all be taken out of the archive (${messageOf(error)})`;
@@ -404,43 +462,124 @@ function sweep(restored: DbBundle, archive: ArchiveBefore): string | null {
 }
 
 /**
- * A write the journal says was never checked nor put back. Nothing is planned over it: a dry run says so and stops;
- * `--confirm` puts the journal's restore point back — `restoreFromSnapshot` saves what the ledger holds first — and the
- * write's own originals out of the archive, and the next run starts over.
+ * How much of a write whose transaction held the ledger holds, read from the files: `all` — every read it retires
+ * retired, and one new read of each `parsed` — or `none` — every read as the write found it, and no new read. Anything
+ * else is `part`.
+ */
+function heldOf(bundle: DbBundle, targets: readonly JournalTarget[]): "all" | "none" | "part" {
+  if (targets.length === 0) return "part";
+  const reads = targets.map((t) => ({
+    was: t.status,
+    now: bundle.db.select({ status: importFiles.status }).from(importFiles).where(eq(importFiles.id, t.id)).get()?.status,
+    fresh: bundle.db
+      .select({ status: importFiles.status })
+      .from(importFiles)
+      .where(and(eq(importFiles.fileSha256, t.sha), eq(importFiles.parserVersion, t.version)))
+      .all()
+      .map((f) => f.status),
+  }));
+  if (reads.every((r) => r.now === "superseded" && r.fresh.length === 1 && r.fresh[0] === "parsed")) return "all";
+  if (reads.every((r) => r.now === r.was && r.fresh.length === 0)) return "none";
+  return "part";
+}
+
+/**
+ * Whether the ledger reads as the restore point — nothing of the write on it, and nothing written since — or why not. The
+ * restore point is read through a copy in scratch: opening it would write beside it.
+ */
+function readsAsRestorePoint(bundle: DbBundle, restorePoint: string, scratch: string): true | string {
+  if (!fs.existsSync(restorePoint)) return `its restore point ${restorePoint} is gone, so the ledger cannot be compared with it`;
+  const copyPath = path.join(scratch, `${LABEL}-restore-point-${process.pid}-${Date.now()}.db`);
+  try {
+    fs.copyFileSync(restorePoint, copyPath);
+    const copy = createDatabase(copyPath);
+    try {
+      const today = todayIso();
+      return sameFace(ledgerFace(copy, today), ledgerFace(bundle, today)) || `the ledger does not read as its restore point ${restorePoint}`;
+    } finally {
+      copy.sqlite.close();
+    }
+  } catch (error: unknown) {
+    return `its restore point ${restorePoint} could not be read (${messageOf(error)})`;
+  } finally {
+    for (const suffix of ["", "-wal", "-shm"]) fs.rmSync(`${copyPath}${suffix}`, { force: true });
+  }
+}
+
+/**
+ * A run that stopped before it ended. Nothing is planned over it, and nothing is put back over the ledger: whatever was
+ * written to it after the run stopped stays. A dry run says what the ledger holds of the write and stops; `--confirm` takes
+ * the write's own originals out of the archive and closes the journal — when the ledger holds all of the write or none
+ * of it (`heldOf`); when it may hold part, only once it reads as its restore point (`mayHoldPart`).
+ *
+ * 🔴 `--confirm` put the restore point back over the ledger without a look: every write made after the kill — the app's,
+ * an upload's, a backfill's, none of which reads the journal — was taken out of the live ledger (the review of
+ * uc/reread-34-runbook, 2026-09-29).
  */
 function unfinished(args: Args, journal: Journal): RunResult {
-  const what =
-    `a --confirm begun ${journal.startedAt} took the restore point ${journal.restorePoint} and was never checked nor put ` +
-    `back — it was killed, or its put-back failed — so the ledger may hold part of the re-read of ${journal.archive.files.length} file(s)`;
-  if (!args.confirm) {
-    print("UNFINISHED", { failures: [what], allowed: [] });
-    console.log("\nNothing was done. Re-run with --confirm to put the restore point back (what the ledger holds is saved first), then run again.");
-    return result("unfinished", [what], [], journal.restorePoint);
-  }
   const bundle = createDatabase(args.db);
-  let reopened: DbBundle | undefined;
   try {
-    const restored = restoreFromSnapshot(bundle, journal.restorePoint);
-    reopened = restored.reopened;
-    const saved = restored.preRestorePath === null ? "" : ` — what the ledger held is saved as ${restored.preRestorePath}`;
-    console.log(`\nRESTORED from ${journal.restorePoint}${saved}`);
-    const unswept = sweep(reopened, journal.archive);
-    if (unswept !== null) {
-      const stuck = `${unswept} — run again with --confirm to put the restore point back and take them out again`;
-      console.log(`  ✗ ${stuck}`);
-      return result("unfinished", [what, stuck], [], journal.restorePoint);
+    const began =
+      `a --confirm begun ${journal.startedAt} (restore point ${journal.restorePoint}) stopped before it ended — ` +
+      "killed, or its put-back could not finish";
+    const held = journal.ledger === "all-or-none" ? heldOf(bundle, journal.targets) : "part";
+    if (held === "part") return mayHoldPart(bundle, args, journal, began);
+    const what =
+      held === "all"
+        ? `${began} — after its check passed and it committed: the ledger holds all of it, checked`
+        : `${began}, and was never checked nor put back — but its one transaction held every write it made: the ledger holds none of it`;
+    if (!args.confirm) {
+      print("UNFINISHED", { failures: [what], allowed: [] });
+      console.log(
+        "\nNothing was done. Re-run with --confirm to take the write's own originals out of the archive and close the journal " +
+          "— the ledger stays as it is.",
+      );
+      return result("unfinished", [what], [], journal.restorePoint);
     }
-    endJournal(args.db);
-    console.log("Run again to plan the re-read afresh.");
-    return result("restored", [what], [], journal.restorePoint);
-  } catch (error: unknown) {
-    const stuck = `the restore point could not be put back: ${messageOf(error)}`;
-    print("UNFINISHED", { failures: [what, stuck], allowed: [] });
-    return result("unfinished", [what, stuck], [], journal.restorePoint);
+    console.log(`\n${what}. Nothing to put back.`);
+    const done = held === "all" ? result("written", [], [], journal.restorePoint) : result("restored", [what], [], journal.restorePoint);
+    return closed(bundle, args, journal, done);
   } finally {
-    if (reopened?.sqlite.open) reopened.sqlite.close();
     if (bundle.sqlite.open) bundle.sqlite.close();
   }
+}
+
+/**
+ * A write the ledger may hold part of: its journal says the transaction did not hold, or the ledger holds neither all of
+ * it nor none. It may hold what was written after the run stopped as well, so the journal closes only once the ledger
+ * reads as its restore point; until then every run refuses, and says why.
+ */
+function mayHoldPart(bundle: DbBundle, args: Args, journal: Journal, began: string): RunResult {
+  const what = `${began}, and was never checked nor put back — the ledger may hold part of it`;
+  const asBefore = readsAsRestorePoint(bundle, journal.restorePoint, args.scratch);
+  if (asBefore !== true) {
+    const why =
+      `${asBefore}: it may hold part of the re-read, and anything written to it since the run stopped. Nothing was done — ` +
+      `compare the two, put the restore point back only if nothing on the ledger since is to be kept, then remove ${journalPath(args.db)}`;
+    print("UNFINISHED", { failures: [what, why], allowed: [] });
+    return result("unfinished", [what, why], [], journal.restorePoint);
+  }
+  const clean = "it reads as its restore point: nothing of the write is on it";
+  if (!args.confirm) {
+    print("UNFINISHED", { failures: [what], allowed: [clean] });
+    console.log("\nNothing was done. Re-run with --confirm to take the write's own originals out of the archive and close the journal.");
+    return result("unfinished", [what], [], journal.restorePoint);
+  }
+  console.log(`\n${what} — ${clean}.`);
+  return closed(bundle, args, journal, result("restored", [what], [], journal.restorePoint));
+}
+
+/** The write's own originals out of the archive, and the journal closed — or, while they will not go, UNFINISHED still. */
+function closed(ledger: DbBundle, args: Args, journal: Journal, done: RunResult): RunResult {
+  const unswept = sweep(ledger, journal.archive);
+  if (unswept !== null) {
+    const stuck = `${unswept} — run again with --confirm to take them out`;
+    console.log(`  ✗ ${stuck}`);
+    return result("unfinished", [...done.failures, stuck], [], journal.restorePoint);
+  }
+  endJournal(args.db);
+  console.log(done.outcome === "written" ? "Run again: it has nothing left to do." : "Run again to plan the re-read afresh.");
+  return done;
 }
 
 interface Rehearsed {
@@ -452,35 +591,54 @@ interface Rehearsed {
 }
 
 /**
- * The write, behind a restore point and a journal, checked as the rehearsal was — and put back when it does not read as
- * its rehearsal did, or faults before it is read. It archives into `args.archiveRoot`: the real ledger's own statements
+ * The write, in ONE transaction from its first look at the ledger to its check, behind a restore point and a journal —
+ * committed once it reads as its rehearsal did, and rolled back when it does not or faults before it is read. A kill
+ * leaves it uncommitted, and SQLite rolls it back. It archives into `args.archiveRoot`: the real ledger's own statements
  * root, or beside a copy (`liveArchiveRoot`).
  */
 async function write(bundle: DbBundle, args: Args, rehearsed: Rehearsed, seams: Seams): Promise<RunResult> {
   const { plan, before, rehearsal, today } = rehearsed;
-  if (!sameFace(ledgerFace(bundle, today), before)) {
-    const moved = ["the ledger changed after the rehearsal read it — run again"];
-    print("REFUSED", { failures: moved, allowed: [] });
-    return result("refused", moved, rehearsal.allowed);
-  }
   const archived = archiveListing(args.archiveRoot);
   const archive: ArchiveBefore = {
     root: args.archiveRoot,
     held: [...archived.keys()],
     files: plan.targets.map((t) => ({ name: path.basename(t.archived), sha: t.sha })),
   };
+  // VACUUM INTO cannot run inside a transaction: the restore point comes first, and the look under the lock refuses a
+  // ledger that moved after it
   const point = takeRestorePoint(bundle.db, LABEL);
   if (point.path === null) return result("refused", [`no restore point was written (${point.reason ?? "skipped"}), so nothing was`]);
   console.log(`\nRestore point: ${point.path}`);
+  const refuse = (why: string): RunResult => {
+    if (inOneTransaction(bundle)) bundle.sqlite.exec("ROLLBACK");
+    print("REFUSED", { failures: [why], allowed: [] });
+    return result("refused", [why], rehearsal.allowed);
+  };
+  // ⛔ ONE transaction from here to the check: a failed check, a fault and a kill alike leave none of the write
   try {
-    beginJournal(args.db, { startedAt: new Date().toISOString(), restorePoint: point.path, archive });
+    bundle.sqlite.exec("BEGIN IMMEDIATE");
   } catch (error: unknown) {
-    const why = [`no journal could be written beside the ledger (${messageOf(error)}), so nothing was written`];
-    print("REFUSED", { failures: why, allowed: [] });
-    return result("refused", why, rehearsal.allowed);
+    return refuse(`the ledger's write lock could not be taken (${messageOf(error)}) — is the dev server running? Nothing was written`);
+  }
+  if (!sameFace(ledgerFace(bundle, today), before)) return refuse("the ledger changed after the rehearsal read it — run again");
+  const journal: Journal = {
+    startedAt: new Date().toISOString(),
+    restorePoint: point.path,
+    archive,
+    targets: plan.targets.map((t) => ({
+      id: t.id,
+      status: bundle.db.select({ status: importFiles.status }).from(importFiles).where(eq(importFiles.id, t.id)).get()!.status,
+      sha: t.sha,
+      version: t.version,
+    })),
+    ledger: "all-or-none",
+  };
+  try {
+    writeJournal(args.db, journal);
+  } catch (error: unknown) {
+    return refuse(`no journal could be written beside the ledger (${messageOf(error)}), so nothing was written`);
   }
 
-  // ⛔ from here the ledger may be written: every way out is the check passing, or the restore point put back
   let checked: Pick<Verdict, "failures" | "allowed">;
   try {
     checked = await checkedWrite(bundle, args, rehearsed, archived, seams);
@@ -488,10 +646,20 @@ async function write(bundle: DbBundle, args: Args, rehearsed: Rehearsed, seams: 
     checked = { failures: [`the write faulted before it was checked: ${messageOf(error)}`], allowed: [] };
     print("WRITE FAULTED", checked);
   }
-  if (checked.failures.length > 0) return putBack(bundle, args, { restorePoint: point.path, before, archive, today }, checked);
-  endJournal(args.db);
-  console.log("\nDone. Now run `pnpm ledger-check` — it should name no file read at a version its profile has moved past.");
-  return result("written", [], checked.allowed, point.path);
+  const held = inOneTransaction(bundle);
+  if (!held) checked = { ...checked, failures: [...checked.failures, LOST_TRANSACTION] };
+  if (checked.failures.length === 0) {
+    try {
+      bundle.sqlite.exec("COMMIT");
+      endJournal(args.db);
+      console.log("\nDone. Now run `pnpm ledger-check` — it should name no file read at a version its profile has moved past.");
+      return result("written", [], checked.allowed, point.path);
+    } catch (error: unknown) {
+      // a COMMIT that fails commits nothing: what is left of the transaction is rolled back below
+      checked = { ...checked, failures: [`the write could not be committed: ${messageOf(error)}`] };
+    }
+  }
+  return putBack(bundle, args, { journal, before, today }, checked, held);
 }
 
 /** The import on the real ledger, then every check its rehearsal passed. */
@@ -520,63 +688,85 @@ async function checkedWrite(
 
 /** What a put-back returns the ledger and its archive to. */
 interface PutBackTo {
-  restorePoint: string;
+  journal: Journal;
   before: LedgerFace;
-  archive: ArchiveBefore;
   today: string;
 }
 
 /**
- * Restores the restore point over the ledger — which closes `bundle` — says whether it reads as it did, and takes the
- * write's own originals out of the archive. A put-back that cannot be made keeps the journal, so the next run says
- * UNFINISHED: "unfinished".
+ * Puts the ledger back as the write found it and says whether it reads so, then takes the write's own originals out of
+ * the archive. A transaction that held is rolled back; one that did not (`LOST_TRANSACTION`) — what ran after it may have
+ * committed — has the restore point put back over the ledger, which closes `bundle`. A put-back that cannot be made
+ * keeps the journal, so the next run says UNFINISHED: "unfinished".
  */
 function putBack(
   bundle: DbBundle,
   args: Args,
-  { restorePoint, before, archive, today }: PutBackTo,
-  { failures, allowed }: Pick<Verdict, "failures" | "allowed">,
+  { journal, before, today }: PutBackTo,
+  checked: Pick<Verdict, "failures" | "allowed">,
+  held: boolean,
 ): RunResult {
-  let reopened: DbBundle;
-  try {
-    reopened = restoreOver(bundle, args.db, restorePoint);
-  } catch (error: unknown) {
-    const stuck =
-      `the restore point could not be put back (${messageOf(error)}): the ledger may hold part of the re-read — ` +
-      `the next run says UNFINISHED, and its --confirm puts ${restorePoint} back`;
-    console.log(`\nNOT RESTORED\n  ✗ ${stuck}`);
-    return result("unfinished", [...failures, stuck], allowed, restorePoint);
+  const { failures, allowed } = checked;
+  const { restorePoint, archive } = journal;
+  let ledger: DbBundle;
+  if (held) {
+    ledger = rollBack(bundle, args.db);
+  } else {
+    // said first: a run that dies while the restore point goes back leaves a journal that says the ledger may hold part
+    tellJournal(args.db, { ...journal, ledger: "may-hold-part" });
+    try {
+      ledger = restoreOver(bundle, args.db, restorePoint);
+    } catch (error: unknown) {
+      const stuck =
+        `the restore point could not be put back (${messageOf(error)}): the ledger may hold part of the re-read — ` +
+        `the next run says UNFINISHED`;
+      console.log(`\nNOT RESTORED\n  ✗ ${stuck}`);
+      return result("unfinished", [...failures, stuck], allowed, restorePoint);
+    }
   }
   try {
-    const back = readsAsBefore(reopened, before, today);
-    console.log(`\nRESTORED from ${restorePoint}${back === true ? " — the ledger is as it was" : ""}`);
+    const back = readsAsBefore(ledger, before, today);
+    console.log(`\n${held ? "ROLLED BACK" : `RESTORED from ${restorePoint}`}${back === true ? " — the ledger is as it was" : ""}`);
     const unlike = back === true ? [] : [`${back} — compare it with the restore point by hand`];
     for (const u of unlike) console.log(`  ✗ ${u}`);
-    const unswept = sweep(reopened, archive);
+    // the ledger holds none of the write again
+    if (!held && back === true) tellJournal(args.db, { ...journal, ledger: "all-or-none" });
+    const unswept = sweep(ledger, archive);
     if (unswept !== null) {
-      const stuck = `${unswept} — the next run says UNFINISHED, and its --confirm puts the restore point back and takes them out again`;
+      const stuck = `${unswept} — the next run says UNFINISHED, and its --confirm takes them out`;
       console.log(`  ✗ ${stuck}`);
       return result("unfinished", [...failures, ...unlike, stuck], allowed, restorePoint);
     }
     endJournal(args.db);
     return result("restored", [...failures, ...unlike], allowed, restorePoint);
   } finally {
-    reopened.sqlite.close();
+    if (ledger !== bundle && ledger.sqlite.open) ledger.sqlite.close();
   }
 }
 
-/** Whether the restored ledger reads as `before` — or, when it does not or cannot be read, why. */
-function readsAsBefore(reopened: DbBundle, before: LedgerFace, today: string): true | string {
+/** The write's transaction rolled back — or, when ROLLBACK itself fails, its connection closed: SQLite keeps nothing uncommitted. */
+function rollBack(bundle: DbBundle, db: string): DbBundle {
   try {
-    return sameFace(ledgerFace(reopened, today), before) || "the restored ledger does not read as it did before the write";
+    if (inOneTransaction(bundle)) bundle.sqlite.exec("ROLLBACK");
+    return bundle;
+  } catch {
+    bundle.sqlite.close();
+    return createDatabase(db);
+  }
+}
+
+/** Whether the ledger, put back, reads as `before` — or, when it does not or cannot be read, why. */
+function readsAsBefore(ledger: DbBundle, before: LedgerFace, today: string): true | string {
+  try {
+    return sameFace(ledgerFace(ledger, today), before) || "the ledger put back does not read as it did before the write";
   } catch (error: unknown) {
-    return `the restored ledger could not be read (${messageOf(error)})`;
+    return `the ledger put back could not be read (${messageOf(error)})`;
   }
 }
 
 /** `restoreFromSnapshot` through a handle that can take it — idle and open, which a fault may have left it neither. */
 function restoreOver(bundle: DbBundle, db: string, restorePoint: string): DbBundle {
-  if (bundle.sqlite.open && bundle.sqlite.inTransaction) bundle.sqlite.exec("ROLLBACK");
+  if (inOneTransaction(bundle)) bundle.sqlite.exec("ROLLBACK");
   const live = bundle.sqlite.open ? bundle : createDatabase(db);
   try {
     return restoreFromSnapshot(live, restorePoint).reopened;

@@ -547,7 +547,7 @@ describe("reread-unrecorded-files — once the restore point is taken, the ledge
     expect((await main(args())).outcome).toBe("dry-run");
   });
 
-  test("a write killed before its check: a later run will not call it done, and --confirm puts the restore point back", async () => {
+  test("a write killed before its check leaves none of it: a later run will not call it done, and --confirm closes it", async () => {
     await importedBeforeRecordsThenBumped(statement([COFFEE, GROCER]), statement([COFFEE, GROCER]));
     const rows = liveRows();
     const archive = listing(path.join(dir, "originals"));
@@ -572,12 +572,13 @@ describe("reread-unrecorded-files — once the restore point is taken, the ledge
 
     expect(dry.outcome).toBe("unfinished");
     expect(dry.failures.join("\n")).toMatch(/never checked/);
+    expect(dry.failures.join("\n")).toMatch(/holds none of it/);
     reopen();
-    // the dry run touched nothing: the unchecked write is still there
-    expect(fileRows()).toEqual([
-      { version: 1, status: "superseded" },
-      { version: 2, status: "parsed" },
-    ]);
+    // the write was one transaction the dead run never committed, and SQLite rolled it back: none of it is on the ledger
+    expect(fileRows()).toEqual([{ version: 1, status: "parsed" }]);
+    expect(liveRows()).toEqual(rows);
+    // …and the dry run touched nothing: the write's own copy is still in the archive
+    expect(fs.existsSync(leftover)).toBe(true);
     bundle.sqlite.close();
 
     const back = await main(args("--confirm"));
@@ -590,6 +591,81 @@ describe("reread-unrecorded-files — once the restore point is taken, the ledge
     expect(fs.existsSync(later)).toBe(true);
     fs.rmSync(later);
     expect(listing(path.join(dir, "originals"))).toEqual(archive);
+    // nothing was put back over the ledger: the restore point is the one backup, no copy saved before a restore
+    expect(backups()).toEqual([path.basename(back.restorePoint!)]);
+    bundle.sqlite.close();
+    expect((await main(args())).outcome).toBe("dry-run");
+  });
+
+  /**
+   * 🔴 After a kill, nothing stops the ledger being written — the app, an upload, a backfill: none reads the journal — and
+   * UNFINISHED --confirm put the journal's restore point back over it without a look, taking every later write out of the
+   * live ledger (the review of uc/reread-34-runbook, 2026-09-29).
+   */
+  test("what the ledger is written with after a killed write stays through UNFINISHED --confirm", async () => {
+    await importedBeforeRecordsThenBumped(statement([COFFEE, GROCER]), statement([COFFEE, GROCER]));
+    // a statement he uploads once the run is dead
+    reads[2]!.april = statement([RENT], APRIL);
+    bundle.sqlite.close();
+    let dying: DbBundle | undefined;
+    void main(args("--confirm"), {
+      afterWrite: (real) => {
+        dying = real;
+        return new Promise<never>(() => {});
+      },
+    });
+    await vi.waitFor(() => expect(dying).toBeDefined(), { timeout: 10_000 });
+    dying!.sqlite.close();
+    // …and the app writes on: his note on the grocer, and the upload
+    bundle = createDatabase(ledger);
+    bundle.db
+      .update(transactions)
+      .set({ notes: "his, after the kill" })
+      .where(and(eq(transactions.rawDescription, GROCER.rawDescription), eq(transactions.status, "active")))
+      .run();
+    const [upload] = await importStatementFiles(bundle.db, [{ name: `${PREFIX}april.csv`, buffer: Buffer.from("april") }]);
+    expect(upload!.status).toBe("parsed");
+    const his = liveRows();
+    expect(his.map((r) => [r.description, r.notes])).toEqual([
+      [COFFEE.rawDescription, null],
+      [GROCER.rawDescription, "his, after the kill"],
+      [RENT.rawDescription, null],
+    ]);
+    bundle.sqlite.close();
+
+    const back = await main(args("--confirm"));
+
+    reopen();
+    expect(back.failures.join("\n")).toMatch(/never checked/);
+    expect(liveRows()).toEqual(his);
+    // nothing was put back over the ledger: the restore point is the one backup, no copy saved before a restore
+    expect(backups()).toEqual([path.basename(back.restorePoint!)]);
+    bundle.sqlite.close();
+    // the journal is gone, and the next run plans the re-read afresh
+    expect((await main(args())).outcome).toBe("dry-run");
+  });
+
+  /** SQLite ends a transaction itself on some errors (a full disk), and what runs after it commits on its own. */
+  function loseTheTransaction(real: DbBundle): void {
+    real.sqlite.exec("ROLLBACK");
+    real.sqlite.prepare("UPDATE transactions SET notes = 'committed on its own' WHERE raw_description = ?").run(GROCER.rawDescription);
+  }
+  const notesOnTheGrocer = () => liveRows().find((r) => r.description === GROCER.rawDescription)?.notes;
+
+  test("a write whose transaction did not hold to its check is put back from its restore point", async () => {
+    await importedBeforeRecordsThenBumped(statement([COFFEE, GROCER]), statement([COFFEE, GROCER]));
+    const rows = liveRows();
+    bundle.sqlite.close();
+
+    const run = await main(args("--confirm"), { afterWrite: loseTheTransaction });
+
+    reopen();
+    expect(run.outcome).toBe("restored");
+    expect(run.failures.join("\n")).toMatch(/did not hold to its check/);
+    expect(fileRows()).toEqual([{ version: 1, status: "parsed" }]);
+    expect(liveRows()).toEqual(rows);
+    // what the ledger held is saved before the restore point goes back over it
+    expect(backups()).toHaveLength(2);
     bundle.sqlite.close();
     expect((await main(args())).outcome).toBe("dry-run");
   });
@@ -599,8 +675,9 @@ describe("reread-unrecorded-files — once the restore point is taken, the ledge
     bundle.sqlite.close();
 
     const first = await main(args("--confirm"), {
-      afterWrite: () => {
-        // the restore point is lost, then the write faults: nothing can put the ledger back
+      afterWrite: (real) => {
+        // the transaction ends part-way, the restore point is lost, then the write faults: nothing can put it back
+        loseTheTransaction(real);
         for (const name of backups()) fs.rmSync(path.join(dir, "backups", name));
         throw new Error("the disk filled up");
       },
@@ -613,6 +690,50 @@ describe("reread-unrecorded-files — once the restore point is taken, the ledge
     expect(first.failures.join("\n")).toMatch(/could not be put back/);
     expect(retried.outcome).toBe("unfinished");
     expect(retried.failures.join("\n")).toMatch(/restore point/);
+    // …and nothing was put back over the ledger: what the run left is there, for someone to compare
+    reopen();
+    expect(notesOnTheGrocer()).toBe("committed on its own");
+  });
+
+  test("a ledger that may hold part of a write is never put back over: its journal closes once it reads as its restore point", async () => {
+    await importedBeforeRecordsThenBumped(statement([COFFEE, GROCER]), statement([COFFEE, GROCER]));
+    const rows = liveRows();
+    bundle.sqlite.close();
+    let dying: DbBundle | undefined;
+    // the transaction ends part-way, one statement after it commits on its own — the older read retired — then a kill
+    void main(args("--confirm"), {
+      afterWrite: (real) => {
+        dying = real;
+        real.sqlite.exec("ROLLBACK");
+        real.sqlite.prepare("UPDATE import_files SET status = 'superseded' WHERE parser_version = 1").run();
+        return new Promise<never>(() => {});
+      },
+    });
+    await vi.waitFor(() => expect(dying).toBeDefined(), { timeout: 10_000 });
+    dying!.sqlite.close();
+
+    const dry = await main(args());
+    const refused = await main(args("--confirm"));
+
+    for (const run of [dry, refused]) {
+      expect(run.outcome).toBe("unfinished");
+      expect(run.failures.join("\n")).toMatch(/may hold part of it/);
+      expect(run.failures.join("\n")).toMatch(/does not read as its restore point/);
+    }
+    reopen();
+    expect(fileRows()).toEqual([{ version: 1, status: "superseded" }]);
+    // someone compares the two, and puts back what the run left
+    bundle.sqlite.prepare("UPDATE import_files SET status = 'parsed' WHERE parser_version = 1").run();
+    bundle.sqlite.close();
+
+    const back = await main(args("--confirm"));
+
+    reopen();
+    expect(back.outcome).toBe("restored");
+    expect(fileRows()).toEqual([{ version: 1, status: "parsed" }]);
+    expect(liveRows()).toEqual(rows);
+    bundle.sqlite.close();
+    expect((await main(args())).outcome).toBe("dry-run");
   });
 });
 

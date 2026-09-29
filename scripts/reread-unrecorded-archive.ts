@@ -95,20 +95,21 @@ export interface ArchiveBefore {
 }
 
 /**
- * Once the restore point is back: the originals the write itself left in the archive, taken out — each file under the
- * root that was not there before it, bears a re-read file's archived name, holds that file's bytes, and no row of the
- * restored ledger names. Only the import writes such a file: its own copy, archived before it reads the file and moved
- * or removed after (`archiveTo`, `relocateArchive`), or a new read's original. Returns what it took, by path.
+ * Once the write has ended — rolled back, put back, or committed: the originals the write itself left in the archive,
+ * taken out — each file under the root that was not there before it, bears a re-read file's archived name, holds that
+ * file's bytes, and no row of the ledger names. Only the import writes such a file: its own copy, archived before it
+ * reads the file and moved or removed after (`archiveTo`, `relocateArchive`), or a new read's original. Returns what it
+ * took, by path.
  *
  * 🔴 A write killed part-way through a file left its copy in the institution's folder (measured on a copy of the real
  * ledger, 2026-09-29: `discover/7831e92d0df25ccb-Discover-AllAvailable-20260710.csv`), and after the put-back every
  * rehearsal refused, since the write would remove it. Nothing that was in the archive before the write is touched, nor
  * any file a row names, nor anything that is not a copy of a re-read file.
  */
-export function sweepLeftovers(archive: ArchiveBefore, restored: DbBundle): string[] {
+export function sweepLeftovers(archive: ArchiveBefore, ledger: DbBundle): string[] {
   const held = new Set(archive.held);
   const heldDirs = new Set(archive.held.map((p) => path.dirname(path.join(archive.root, p))));
-  const named = new Set(restored.db.select({ storagePath: importFiles.storagePath }).from(importFiles).all().map((f) => f.storagePath));
+  const named = new Set(ledger.db.select({ storagePath: importFiles.storagePath }).from(importFiles).all().map((f) => f.storagePath));
   const taken: string[] = [];
   for (const relative of archiveListing(archive.root).keys()) {
     const full = path.join(archive.root, relative);
