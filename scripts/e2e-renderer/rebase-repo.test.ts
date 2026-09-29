@@ -6,9 +6,14 @@ import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { BASELINE_RENDERER_PATH } from "./fingerprint";
 import {
   bundleFromHead,
+  clearPendingReBase,
   committedBaselines,
   markBundleBuilt,
+  markPendingReBase,
+  pendingMarkPath,
+  readPendingReBase,
   restoreFromHead,
+  settlePendingReBase,
   uncommittedUnder,
 } from "./rebase-repo";
 
@@ -17,6 +22,9 @@ import {
  * and a half-re-based tree, so it is proved on git itself rather than on a fake of it.
  */
 let repo: string;
+
+/** Root writes through a read-only file and directory, so a write cannot be made to fail. */
+const AS_ROOT = process.getuid?.() === 0;
 
 const A = "e2e/visual.spec.ts-snapshots/a-chromium-darwin.png";
 const B = "e2e/visual.spec.ts-snapshots/b-chromium-darwin.png";
@@ -101,6 +109,148 @@ describe("restoreFromHead", () => {
     write(BASELINE_RENDERER_PATH, "{}\n");
     restoreFromHead([A, B], repo);
     expect(uncommittedUnder("e2e", repo)).toEqual([]);
+  });
+
+  /**
+   * `git restore` takes .git/index.lock, and while another git process holds it (an editor's
+   * status poll, a `git add` in another terminal) it exits 128 having touched nothing. A red
+   * gate's restore cannot wait for that, and must not depend on it.
+   */
+  test("puts everything back while another git process holds .git/index.lock", () => {
+    write(A, "A1");
+    write(BASELINE_RENDERER_PATH, "{}\n");
+    fs.writeFileSync(path.join(repo, ".git", "index.lock"), "");
+    restoreFromHead([A], repo);
+    expect(read(A)).toBe("A0");
+    expect(fs.existsSync(path.join(repo, BASELINE_RENDERER_PATH))).toBe(false);
+  });
+
+  /** "HEAD does not hold it" deletes a file, so a git that cannot answer must never mean that. */
+  test("a git that cannot answer deletes nothing, and names every file", () => {
+    const plain = fs.mkdtempSync(path.join(os.tmpdir(), "rebase-repo-not-a-repo-"));
+    try {
+      for (const file of [A, BASELINE_RENDERER_PATH]) {
+        fs.mkdirSync(path.dirname(path.join(plain, file)), { recursive: true });
+        fs.writeFileSync(path.join(plain, file), "written");
+      }
+      expect(() => restoreFromHead([A], plain)).toThrow(
+        new RegExp(`^2 file\\(s\\) could not be put back.*${BASELINE_RENDERER_PATH}.*${A}`),
+      );
+      expect(fs.existsSync(path.join(plain, A))).toBe(true);
+      expect(fs.existsSync(path.join(plain, BASELINE_RENDERER_PATH))).toBe(true);
+    } finally {
+      fs.rmSync(plain, { recursive: true, force: true });
+    }
+  });
+
+  /**
+   * The record is what lets the next run say "Nothing to do", so it goes first, and a baseline
+   * that cannot be put back stops neither it nor the others. The one left is named.
+   */
+  test.skipIf(AS_ROOT)("a file it cannot put back is named, and the rest still go back", () => {
+    const stuck = "e2e/zz.spec.ts-snapshots/stuck-chromium-darwin.png";
+    write(stuck, "S0");
+    commit("another baseline", stuck);
+    write(A, "A1");
+    write(B, "B1");
+    write(stuck, "S1");
+    write(BASELINE_RENDERER_PATH, "{}\n");
+    const dir = path.join(repo, path.dirname(stuck));
+    fs.chmodSync(path.join(repo, stuck), 0o444);
+    fs.chmodSync(dir, 0o555);
+    try {
+      expect(() => restoreFromHead([A, stuck, B], repo)).toThrow(stuck);
+    } finally {
+      fs.chmodSync(dir, 0o755);
+      fs.chmodSync(path.join(repo, stuck), 0o644);
+    }
+    expect(fs.existsSync(path.join(repo, BASELINE_RENDERER_PATH))).toBe(false);
+    expect(read(A)).toBe("A0");
+    expect(read(B)).toBe("B0");
+    expect(read(stuck)).toBe("S1");
+  });
+});
+
+/**
+ * SIGKILL cannot be caught, and a closed session may not signal at all: a --confirm killed
+ * between writing and its gate's answer leaves twins and a record no gate passed, which the next
+ * run's canary would match and call "Nothing to do". The mark is how the next run knows.
+ */
+describe("a re-base no gate has passed yet", () => {
+  const head = () => execFileSync("git", ["rev-parse", "HEAD"], { cwd: repo, encoding: "utf8" });
+  const status = () =>
+    execFileSync("git", ["status", "--porcelain"], { cwd: repo, encoding: "utf8" });
+
+  /** What a --confirm killed during its gate leaves: the mark, twins, and a record. */
+  function killedDuringTheGate(files: string[]): void {
+    markPendingReBase(files, repo);
+    for (const file of files) write(file, "TWIN");
+    write(BASELINE_RENDERER_PATH, "{}\n");
+  }
+
+  test("the mark is left inside .git: never committed, never in git status", () => {
+    expect(readPendingReBase(repo)).toBeNull();
+    markPendingReBase([A, B], repo, new Date("2026-09-29T16:00:00Z"));
+    expect(readPendingReBase(repo)).toEqual({
+      head: head().trim(),
+      files: [A, B],
+      startedOn: "2026-09-29T16:00:00.000Z",
+    });
+    expect(path.relative(repo, pendingMarkPath(repo)).split(path.sep)[0]).toBe(".git");
+    expect(status()).toBe("");
+    clearPendingReBase(repo);
+    expect(readPendingReBase(repo)).toBeNull();
+  });
+
+  test("with no mark, nothing is pending and nothing is touched", () => {
+    write(A, "A1");
+    expect(settlePendingReBase(repo)).toEqual({ settled: "nothing-pending" });
+    expect(read(A)).toBe("A1");
+  });
+
+  test("the next run puts back what a killed --confirm wrote, and removes the mark", () => {
+    killedDuringTheGate([A]);
+    const settled = settlePendingReBase(repo);
+    expect(settled).toMatchObject({ settled: "put-back", pending: { files: [A] } });
+    expect(read(A)).toBe("A0");
+    expect(fs.existsSync(path.join(repo, BASELINE_RENDERER_PATH))).toBe(false);
+    expect(readPendingReBase(repo)).toBeNull();
+    expect(uncommittedUnder("e2e", repo)).toEqual([]);
+  });
+
+  /** HEAD's copy of each file is still the one that run started from, so it is exact. */
+  test("a commit since that touched none of its files: still put back", () => {
+    killedDuringTheGate([A]);
+    write(PAGE, "export default 2;\n");
+    commit("a UI change of its own", PAGE);
+    expect(settlePendingReBase(repo).settled).toBe("put-back");
+    expect(read(A)).toBe("A0");
+  });
+
+  /** That commit may carry the unverified twins; putting back from it would bless them. */
+  test("a commit since that changed one of its files: nothing touched, the mark kept", () => {
+    killedDuringTheGate([A, B]);
+    commit("the killed run's twin, committed", A);
+    const settled = settlePendingReBase(repo);
+    expect(settled).toMatchObject({ settled: "committed-since", touched: [A] });
+    expect(read(B)).toBe("TWIN");
+    expect(readPendingReBase(repo)).not.toBeNull();
+  });
+
+  test.skipIf(AS_ROOT)("a restore that fails keeps the mark, so the run after tries again", () => {
+    killedDuringTheGate([A]);
+    const dir = path.join(repo, path.dirname(A));
+    fs.chmodSync(path.join(repo, A), 0o444);
+    fs.chmodSync(dir, 0o555);
+    try {
+      expect(() => settlePendingReBase(repo)).toThrow(A);
+    } finally {
+      fs.chmodSync(dir, 0o755);
+      fs.chmodSync(path.join(repo, A), 0o644);
+    }
+    expect(readPendingReBase(repo)).not.toBeNull();
+    expect(settlePendingReBase(repo).settled).toBe("put-back");
+    expect(read(A)).toBe("A0");
   });
 });
 

@@ -198,18 +198,47 @@ export function describeRed(runs: Runs): string[] {
 /* ── Write, verify, or put everything back ─────────────────────────────────────────────────── */
 
 export interface ApplyEffects {
+  /** leaves word, for the next run, that e2e/ is about to hold what no gate has passed */
+  markPending(files: readonly string[]): void;
   /** copies one baseline's twin over it */
   copyTwin(baseline: string): void;
   writeRecord(): void;
   /** the gate with the renderer check on */
   runGate(attempt: Attempt): Promise<SuiteOutcome>;
-  /** returns every given baseline, and the record, to what HEAD holds */
+  /** returns every given baseline, and the record, to what HEAD holds; throws what it could not */
   restore(baselines: readonly string[]): void;
+  /** nothing unverified is left: the gate passed, or every file is back as HEAD has it */
+  clearPending(): void;
 }
 
 export interface Applied {
   verified: boolean;
   gate: Runs;
+  /** why the restore after a red gate did not put everything back; null when it did, or none ran */
+  notRestored: string | null;
+}
+
+function messageOf(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+/**
+ * Puts every file back and, only when that held, takes the mark away; answers why not instead of
+ * throwing, since the caller still has to say what is left (and an error it is handling must stay
+ * the one it reports). A restore that failed keeps the mark, so the next run puts the files back
+ * before it does anything else.
+ */
+export function putBack(
+  files: readonly string[],
+  fx: Pick<ApplyEffects, "restore" | "clearPending">,
+): string | null {
+  try {
+    fx.restore(files);
+    fx.clearPending();
+    return null;
+  } catch (error) {
+    return messageOf(error);
+  }
 }
 
 /**
@@ -218,17 +247,53 @@ export interface Applied {
  * has it, so what is left is either verified or untouched, never half of each. The restore
  * covers the whole list rather than only what was copied: the tree was clean when the run
  * started, so restoring an uncopied file is a no-op.
+ *
+ * A restore can fail too (a file it cannot write). That never replaces the answer: a red gate
+ * still resolves, with `notRestored`, and an error is still the one thrown, with the restore's
+ * failure added, so the caller can say what is left in e2e/ rather than crash past it.
+ *
+ * What no handler can hear (SIGKILL, a session closed without a signal) is covered by the mark,
+ * left before the first file is written and taken away only when nothing unverified is left.
  */
 export async function applyAndVerify(files: readonly string[], fx: ApplyEffects): Promise<Applied> {
+  fx.markPending(files);
   let gate: Runs;
   try {
     for (const file of files) fx.copyTwin(file);
     fx.writeRecord();
     gate = await runWithOneRerun((attempt) => fx.runGate(attempt));
   } catch (error) {
-    fx.restore(files);
-    throw error;
+    const notRestored = putBack(files, fx);
+    if (notRestored === null) throw error;
+    throw new Error(`${messageOf(error)}\nand putting e2e/ back failed: ${notRestored}`, {
+      cause: error,
+    });
   }
-  if (!gate.green) fx.restore(files);
-  return { verified: gate.green, gate };
+  if (!gate.green) return { verified: false, gate, notRestored: putBack(files, fx) };
+  fx.clearPending();
+  return { verified: true, gate, notRestored: null };
+}
+
+/**
+ * The signals that stop a run while e2e/ holds what its gate has not passed. tsx relays SIGINT
+ * and SIGTERM; SIGHUP is a terminal or session that closed, whose default would kill the run with
+ * the twins and the record written and unverified. SIGKILL cannot be heard at all: the mark
+ * covers it (see markPendingReBase in rebase-repo.ts).
+ */
+export const STOP_SIGNALS = ["SIGINT", "SIGTERM", "SIGHUP"] as const satisfies NodeJS.Signals[];
+
+interface SignalTarget {
+  once(event: string, listener: (signal: NodeJS.Signals) => void): unknown;
+  off(event: string, listener: (signal: NodeJS.Signals) => void): unknown;
+}
+
+/** Hears the first of STOP_SIGNALS; returns what stops listening. */
+export function onStopSignal(
+  onStop: (signal: NodeJS.Signals) => void,
+  target: SignalTarget = process,
+): () => void {
+  for (const signal of STOP_SIGNALS) target.once(signal, onStop);
+  return () => {
+    for (const signal of STOP_SIGNALS) target.off(signal, onStop);
+  };
 }

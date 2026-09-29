@@ -42,20 +42,140 @@ export function uncommittedUnder(dir: string, cwd?: string): string[] {
   );
 }
 
+function firstLineOf(error: unknown): string {
+  const text = error instanceof Error ? error.message : String(error);
+  return text.split("\n").find((line) => line.trim() !== "")?.trim() ?? text;
+}
+
 /**
- * Puts the given baselines and the renderer record back as HEAD has them. A record HEAD does not
- * hold is deleted: the guards refused any untracked file under e2e/ before anything was written,
- * so a record that is not committed is one this run wrote.
+ * One file as HEAD has it, read from HEAD's blob (with the checkout filters) and written with
+ * plain file I/O. A file already equal to it is left alone; one HEAD does not hold is deleted.
+ * `ls-tree` says "not held" with an empty answer and throws on anything else, so a git that
+ * cannot answer deletes nothing.
+ */
+function restoreOne(file: string, cwd?: string): void {
+  const absolute = path.join(cwd ?? ".", file);
+  if (!lines(git(["ls-tree", "--name-only", "HEAD", "--", file], cwd)).includes(file)) {
+    fs.rmSync(absolute, { force: true });
+    return;
+  }
+  const bytes = execFileSync("git", ["cat-file", "--filters", `HEAD:${file}`], {
+    cwd,
+    maxBuffer: 64 * 1024 * 1024,
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  if (fs.existsSync(absolute) && fs.readFileSync(absolute).equals(bytes)) return;
+  fs.writeFileSync(absolute, bytes);
+}
+
+/**
+ * Puts the renderer record and the given baselines back as HEAD has them, and throws naming every
+ * file it could not. A file HEAD does not hold is deleted: the guards refused any untracked file
+ * under e2e/ before anything was written, so one that is not committed is one this run wrote.
+ *
+ * The record goes first, because it is what lets the next run say "Nothing to do": no failure
+ * below may leave it behind. A file that cannot be put back does not stop the rest. And none of it
+ * goes through `git restore`, which takes .git/index.lock and, while any other git process holds
+ * it (an editor's status poll), exits 128 having touched nothing.
  */
 export function restoreFromHead(baselines: readonly string[], cwd?: string): void {
-  const fromHead = (paths: readonly string[]) =>
-    git(["restore", "--source=HEAD", "--worktree", "--", ...paths], cwd);
-  if (baselines.length > 0) fromHead(baselines);
-  if (gitSucceeds(["cat-file", "-e", `HEAD:${BASELINE_RENDERER_PATH}`], cwd)) {
-    fromHead([BASELINE_RENDERER_PATH]);
-  } else {
-    fs.rmSync(path.join(cwd ?? ".", BASELINE_RENDERER_PATH), { force: true });
+  const failed: string[] = [];
+  for (const file of [BASELINE_RENDERER_PATH, ...baselines]) {
+    try {
+      restoreOne(file, cwd);
+    } catch (error) {
+      failed.push(`${file} (${firstLineOf(error)})`);
+    }
   }
+  if (failed.length > 0) {
+    throw new Error(
+      `${failed.length} file(s) could not be put back as HEAD has them: ${failed.join("; ")}`,
+    );
+  }
+}
+
+/* ── A re-base no gate has passed yet ─────────────────────────────────────────────────────── */
+
+/**
+ * Left by --confirm before it writes anything, and removed once its gate passes or every file is
+ * back as HEAD has it. A run stopped in between by what no handler hears (SIGKILL, a session
+ * closed without a signal) or by a restore that failed leaves it, and the next run, finding it,
+ * puts back what that run wrote before the canary can match its record and call the unverified
+ * twins "Nothing to do". It lives in the git directory, so it is never committed, never shows in
+ * `git status`, and belongs to this worktree alone.
+ */
+const PENDING_MARK = "e2e-rebase-renderer-pending.json";
+
+const PendingSchema = z.object({
+  head: z.string().regex(/^[0-9a-f]{40}([0-9a-f]{24})?$/, "must be a full commit id"),
+  files: z.array(z.string()),
+  startedOn: z.string().min(1),
+});
+
+export type PendingReBase = z.infer<typeof PendingSchema>;
+
+export function pendingMarkPath(cwd?: string): string {
+  return path.resolve(cwd ?? ".", git(["rev-parse", "--git-path", PENDING_MARK], cwd).trim());
+}
+
+/**
+ * Before the first file is written: the baselines about to be copied, and HEAD they came from.
+ * Written whole or not at all (a rename), so a kill part way through never leaves half a mark.
+ */
+export function markPendingReBase(files: readonly string[], cwd?: string, now = new Date()): void {
+  const mark: PendingReBase = {
+    head: git(["rev-parse", "HEAD"], cwd).trim(),
+    files: [...files],
+    startedOn: now.toISOString(),
+  };
+  const file = pendingMarkPath(cwd);
+  const partial = `${file}.${process.pid}.partial`;
+  fs.writeFileSync(partial, `${JSON.stringify(mark, null, 2)}\n`);
+  fs.renameSync(partial, file);
+}
+
+export function readPendingReBase(cwd?: string): PendingReBase | null {
+  const file = pendingMarkPath(cwd);
+  if (!fs.existsSync(file)) return null;
+  let json: unknown;
+  try {
+    json = JSON.parse(fs.readFileSync(file, "utf8"));
+  } catch (error) {
+    throw new Error(`${file} is not valid JSON: ${firstLineOf(error)}`);
+  }
+  const parsed = PendingSchema.safeParse(json);
+  if (!parsed.success) {
+    const issues = parsed.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; ");
+    throw new Error(`${file} is not a pending re-base: ${issues}`);
+  }
+  return parsed.data;
+}
+
+export function clearPendingReBase(cwd?: string): void {
+  fs.rmSync(pendingMarkPath(cwd), { force: true });
+}
+
+export type Settled =
+  | { settled: "nothing-pending" }
+  | { settled: "put-back"; pending: PendingReBase }
+  | { settled: "committed-since"; pending: PendingReBase; touched: string[] };
+
+/**
+ * What a run does first with a mark it finds: the restore a red gate makes, of what that run
+ * wrote, and the mark removed. HEAD may have moved since; when no commit in between changed one of
+ * those files, HEAD's copy is still the one that run started from. When one did, that commit may
+ * carry the unverified twins, and putting back from it would bless them: then nothing is touched,
+ * the mark stays, and the caller says which. A restore that fails throws, and the mark stays.
+ */
+export function settlePendingReBase(cwd?: string): Settled {
+  const pending = readPendingReBase(cwd);
+  if (pending === null) return { settled: "nothing-pending" };
+  const written = [BASELINE_RENDERER_PATH, ...pending.files];
+  const touched = lines(git(["diff", "--name-only", pending.head, "HEAD", "--", ...written], cwd));
+  if (touched.length > 0) return { settled: "committed-since", pending, touched };
+  restoreFromHead(pending.files, cwd);
+  clearPendingReBase(cwd);
+  return { settled: "put-back", pending };
 }
 
 /* ── Which sources .next was built from ───────────────────────────────────────────────────── */

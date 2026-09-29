@@ -58,31 +58,61 @@ function treeGuards(): GuardLine[] {
   ];
 }
 
-/** Pushed is this project's word for "passed the gate": main is pushed only after a green one. */
-function pushedGuard(allowUnpushed: boolean): GuardLine {
-  const head = git(["rev-parse", "--short", "HEAD"]).trim();
+export interface PushState {
+  /** HEAD, short */
+  head: string;
+  /** null when there is no origin/main to compare with */
+  onOriginMain: boolean | null;
+  /** HEAD's commits that origin/main does not have */
+  unpushed: number;
+}
+
+export function pushState(cwd?: string): PushState {
+  const head = git(["rev-parse", "--short", "HEAD"], cwd).trim();
+  if (!gitSucceeds(["rev-parse", "--verify", "--quiet", "origin/main"], cwd)) {
+    return { head, onOriginMain: null, unpushed: 0 };
+  }
+  const unpushed = Number(git(["rev-list", "--count", "origin/main..HEAD"], cwd).trim());
+  return { head, onOriginMain: unpushed === 0, unpushed };
+}
+
+/**
+ * Pushed is this project's word for "passed the gate": main is pushed only after a green one, so
+ * a pushed HEAD's committed baselines are its UI. An unpushed HEAD is never refused here, because
+ * a missing record, a canary edit or a Geist bump is always an unpushed commit, and until the
+ * renderer is recorded no gate can pass for it to be pushed. What it may do is decided after the
+ * control (planRebase): record the renderer alone, which the control proves when the gate's own
+ * comparator passes every baseline, or copy twins, which only --allow-unpushed permits. The
+ * control proves no baseline itself: it redraws every screenshot rather than comparing one.
+ */
+export function pushedGuard(state: PushState, allowUnpushed: boolean): GuardLine {
+  const { head } = state;
   const what = "HEAD is on origin/main";
-  if (!gitSucceeds(["rev-parse", "--verify", "--quiet", "origin/main"])) {
+  if (state.onOriginMain === null) {
     return { mark: "✗", what, saw: "there is no origin/main to compare with" };
   }
-  if (gitSucceeds(["merge-base", "--is-ancestor", "HEAD", "origin/main"])) {
+  if (state.onOriginMain) {
     return { mark: "✓", what, saw: `${head} was pushed, so it passed the gate` };
   }
+  const commits = `${state.unpushed} commit${state.unpushed === 1 ? "" : "s"} not on origin/main`;
   if (allowUnpushed) {
     return {
       mark: "⚠",
       what: "HEAD is NOT on origin/main",
       saw:
-        `${head} is unpushed; --allow-unpushed accepts it, and the control run is now the only ` +
-        "proof it is green",
+        `${head} has ${commits}; --allow-unpushed accepts it. Nothing proves the committed ` +
+        "baselines are its UI, and the control redraws every screenshot rather than comparing " +
+        "one: diffVerdict's content check is all that stands between a UI change in those " +
+        "commits and a re-base",
     };
   }
   return {
-    mark: "✗",
-    what,
+    mark: "⚠",
+    what: "HEAD is NOT on origin/main",
     saw:
-      `${head} is not: nothing says it ever passed the gate. Push it after a green gate, or pass ` +
-      "--allow-unpushed",
+      `${head} has ${commits}, so nothing proves the committed baselines are its UI. Recording ` +
+      "the renderer alone goes ahead, proved by the control when the gate's own comparator " +
+      "passes every baseline; copying a twin over one is refused unless --allow-unpushed",
   };
 }
 
@@ -121,11 +151,11 @@ function staleBundleGuard(confirm: boolean): GuardLine | null {
   return { mark: "⚠", what: ".next is trusted as current", saw };
 }
 
-export async function checkGuards(args: RebaseArgs): Promise<GuardLine[]> {
+export async function checkGuards(args: RebaseArgs, push: PushState): Promise<GuardLine[]> {
   const stale = staleBundleGuard(args.confirm);
   return [
     ...treeGuards(),
-    pushedGuard(args.allowUnpushed),
+    pushedGuard(push, args.allowUnpushed),
     ...(await machineGuards()),
     ...(stale === null ? [] : [stale]),
   ];

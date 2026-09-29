@@ -33,7 +33,7 @@ export const USAGE = [
   "usage: pnpm e2e:rebase-renderer [--confirm] [--allow-unpushed]",
   "  (no flag)          dry run: prove the drift is the renderer, write nothing",
   "  --confirm          re-base the drift the gate fails, record the renderer, re-run the gate",
-  "  --allow-unpushed   accept a HEAD that is not on origin/main, and say so",
+  "  --allow-unpushed   on a HEAD not on origin/main, copy twins on diffVerdict's word alone",
 ].join("\n");
 
 export class UsageError extends Error {}
@@ -222,6 +222,8 @@ export function tally(judged: readonly Judged[]): Tally {
 export type Plan =
   | { action: "refuse-unpaired"; missing: string[]; extra: string[] }
   | { action: "refuse-content"; content: Judged[] }
+  /** HEAD is not on origin/main, so only --allow-unpushed may copy these twins */
+  | { action: "refuse-unpushed"; files: string[] }
   /**
    * copy the twins of `files` over their baselines (none: write the record only), then verify;
    * `tolerated` moved within the gate's tolerance and are left as they are
@@ -230,17 +232,38 @@ export type Plan =
 
 export type RebasePlan = Extract<Plan, { action: "rebase" }>;
 
+/** What vouches for HEAD's committed baselines being its UI, before any verdict is read. */
+export interface PushProof {
+  /** HEAD is on origin/main, so it passed the gate */
+  pushed: boolean;
+  /** --allow-unpushed: let diffVerdict's verdicts stand alone for an unpushed HEAD */
+  allowUnpushed: boolean;
+}
+
 /**
  * Every verdict counts before any file is chosen: a missing or extra twin, or one content
  * verdict, refuses the lot, whatever the gate would say of it. Only then does the gate's answer
  * pick which renderer-only files are re-based.
+ *
+ * A HEAD not on origin/main passed no gate, so nothing proves its committed baselines are its UI,
+ * and the control, which redraws every screenshot, proves none. The renderer alone may still be
+ * recorded: when the gate's own comparator passes every baseline the control drew, that is HEAD
+ * passing the gate here. Copying a twin rests on diffVerdict alone, so it needs --allow-unpushed.
  */
-export function planRebase(verdict: RendererVerdict, pairing: Pairing, counts: Tally): Plan {
+export function planRebase(
+  verdict: RendererVerdict,
+  pairing: Pairing,
+  counts: Tally,
+  push: PushProof,
+): Plan {
   if (pairing.missing.length > 0 || pairing.extra.length > 0) {
     return { action: "refuse-unpaired", missing: pairing.missing, extra: pairing.extra };
   }
   if (counts.content.length > 0) return { action: "refuse-content", content: counts.content };
   const files = counts.toRebase.map((j) => j.baseline);
+  if (!push.pushed && !push.allowUnpushed && files.length > 0) {
+    return { action: "refuse-unpushed", files };
+  }
   return {
     action: "rebase",
     files,
@@ -340,6 +363,20 @@ export function describePlan(plan: RebasePlan, current: RendererRecord): string[
   ];
 }
 
+/**
+ * Where e2e/ stands after a --confirm that wrote and did not keep it (a red gate, an error, a
+ * signal): `left` is what git still shows changed there, `markKept` whether the pending mark
+ * outlived the restore, in which case the next run puts those files back before anything else.
+ */
+export function describeLeft(left: readonly string[], markKept: boolean): string[] {
+  return [
+    left.length === 0 ? "e2e/ matches HEAD again." : `NOT AS HEAD HAS IT: ${left.join("; ")}`,
+    ...(markKept
+      ? ["The next pnpm e2e:rebase-renderer puts back what this run wrote before anything else."]
+      : []),
+  ];
+}
+
 const LISTED_FILES = 30;
 
 /** The files a re-base would move, most changed first, so a reader sees which pages drifted. */
@@ -413,6 +450,8 @@ export interface CommitFacts {
   recorded: RendererRecord | null;
   current: RendererRecord;
   head: { sha: string; subject: string };
+  /** HEAD was on origin/main; when not, the commit says what vouched for it instead */
+  pushed: boolean;
   control: { passed: number; rerun: boolean };
   gate: { passed: number; rerun: boolean };
 }
@@ -478,6 +517,27 @@ function gateParagraph(counts: Tally): string | null {
   );
 }
 
+/**
+ * What vouched for a HEAD not on origin/main, which no gate had passed; null for a pushed one.
+ * A copy happens there only under --allow-unpushed (planRebase).
+ */
+function unpushedParagraph(facts: CommitFacts): string | null {
+  if (facts.pushed) return null;
+  const at = `${facts.head.sha.slice(0, 7)} was not on origin/main, so no gate had passed it`;
+  const n = facts.plan.files.length;
+  if (n === 0) {
+    return (
+      `${at}; the control did, as far as a record needs: the gate's own comparator passed every ` +
+      "committed baseline it drew, and no baseline was copied."
+    );
+  }
+  return (
+    `${at} (--allow-unpushed). Nothing proved the committed baselines were its UI, so ` +
+    `diffVerdict's content check alone vouches that the ${plural(n, "re-based file")} moved by ` +
+    "the renderer alone."
+  );
+}
+
 /** Ready for `git commit -F`: a subject in the house form, and the numbers that prove it. */
 export function commitMessage(facts: CommitFacts): string {
   const { plan, counts, total, current, head, control, gate } = facts;
@@ -499,6 +559,8 @@ export function commitMessage(facts: CommitFacts): string {
       `scripts/e2e-renderer/diff-verdict.ts: ${counts.rendererOnly.length} renderer-only, ` +
       `${counts.identical.length} identical, none content, none missing or extra.`,
   ];
+  const unpushed = unpushedParagraph(facts);
+  if (unpushed !== null) body.push("", unpushed);
   const split = gateParagraph(counts);
   if (split !== null) body.push("", split);
   if (counts.worst !== null && counts.medianChangedFraction !== null && counts.closest !== null) {

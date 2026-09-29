@@ -6,6 +6,7 @@ import { INK_SCALES } from "./ink-shift";
 import {
   commitMessage,
   describeContent,
+  describeLeft,
   describePlan,
   describeRebased,
   describeTally,
@@ -173,8 +174,17 @@ const unknown = (baseline: string): Judged =>
 const full = (committed: readonly string[]) =>
   pairBaselines(committed, committed.map((b) => b.slice("e2e/".length)), false);
 
+/** HEAD on origin/main: it passed the gate, so the committed baselines are its UI. */
+const PUSHED = { pushed: true, allowUnpushed: false };
+const UNPUSHED = { pushed: false, allowUnpushed: false };
+
 function rebasePlan(rendererVerdict: RendererVerdict, judged: readonly Judged[]): RebasePlan {
-  const plan = planRebase(rendererVerdict, full(judged.map((j) => j.baseline)), tally(judged));
+  const plan = planRebase(
+    rendererVerdict,
+    full(judged.map((j) => j.baseline)),
+    tally(judged),
+    PUSHED,
+  );
   if (plan.action !== "rebase") throw new Error(`expected a re-base, got ${plan.action}`);
   return plan;
 }
@@ -277,7 +287,7 @@ describe("tally", () => {
 describe("planRebase", () => {
   test("a missing or extra twin refuses before any verdict counts", () => {
     const pairing = pairBaselines([A, B], [A.slice("e2e/".length)], false);
-    expect(planRebase("renderer-changed", pairing, tally([same(A)]))).toEqual({
+    expect(planRebase("renderer-changed", pairing, tally([same(A)]), PUSHED)).toEqual({
       action: "refuse-unpaired",
       missing: [B],
       extra: [],
@@ -286,14 +296,14 @@ describe("planRebase", () => {
 
   test("one content verdict among a hundred drift ones refuses the lot", () => {
     const judged = [fails(A), changed(B), fails(C)];
-    const plan = planRebase("renderer-changed", full([A, B, C]), tally(judged));
+    const plan = planRebase("renderer-changed", full([A, B, C]), tally(judged), PUSHED);
     expect(plan).toEqual({ action: "refuse-content", content: [judged[1]] });
   });
 
   /** Every pair is judged by diffVerdict first; the gate's tolerance never excuses content. */
   test("content refuses even when the gate passes every drifted file", () => {
     const judged = [passes(A), changed(B), passes(C)];
-    expect(planRebase("unrecorded", full([A, B, C]), tally(judged))).toEqual({
+    expect(planRebase("unrecorded", full([A, B, C]), tally(judged), PUSHED)).toEqual({
       action: "refuse-content",
       content: [judged[1]],
     });
@@ -356,6 +366,37 @@ describe("planRebase", () => {
   });
 });
 
+/**
+ * A HEAD not on origin/main has passed no gate, so nothing proves its committed baselines are its
+ * UI. Recording the renderer needs no such proof: the gate's own comparator passing every baseline
+ * is the proof, drawn by the control at HEAD. Copying a twin does, and that needs --allow-unpushed.
+ */
+describe("planRebase on a HEAD not on origin/main", () => {
+  test("the record alone goes ahead: after the merge that brings this command, its run", () => {
+    const plan = planRebase("unrecorded", full([A, B]), tally([same(A), passes(B)]), UNPUSHED);
+    expect(plan).toEqual({ action: "rebase", files: [], tolerated: [B], bootstrap: true });
+  });
+
+  test("a twin to copy is refused without --allow-unpushed, and allowed with it", () => {
+    const judged = [fails(A), passes(B), unknown(C)];
+    const pairing = full([A, B, C]);
+    expect(planRebase("canary-changed", pairing, tally(judged), UNPUSHED)).toEqual({
+      action: "refuse-unpushed",
+      files: [A, C],
+    });
+    const allowed = { pushed: false, allowUnpushed: true };
+    expect(planRebase("canary-changed", pairing, tally(judged), allowed)).toMatchObject({
+      action: "rebase",
+      files: [A, C],
+    });
+  });
+
+  test("an unpaired twin or a content verdict still refuses first", () => {
+    const plan = planRebase("unrecorded", full([A, B]), tally([fails(A), changed(B)]), UNPUSHED);
+    expect(plan.action).toBe("refuse-content");
+  });
+});
+
 describe("the words", () => {
   test("a content refusal names the file, the measure that decided, and where", () => {
     expect(describeContent([changed(B)])).toEqual([
@@ -363,6 +404,19 @@ describe("the words", () => {
       "  ink-fine 0.3333 > 0.18 at (1302,303): ink moved, appeared or vanished here",
       "  400 px changed (0.04%), max delta 66 in 101x34 at (1296,297)",
     ]);
+  });
+
+  /**
+   * The line a --confirm that wrote ends on, whatever stopped it: the red gate, an error, a
+   * signal. It used to be skipped whenever the restore itself threw.
+   */
+  test("after --confirm wrote: where e2e/ stands, and who puts back what is left", () => {
+    expect(describeLeft([], false)).toEqual(["e2e/ matches HEAD again."]);
+    expect(describeLeft([A, "e2e/baseline-renderer.json"], true)).toEqual([
+      `NOT AS HEAD HAS IT: ${A}; e2e/baseline-renderer.json`,
+      "The next pnpm e2e:rebase-renderer puts back what this run wrote before anything else.",
+    ]);
+    expect(describeLeft([A], false)).toEqual([`NOT AS HEAD HAS IT: ${A}`]);
   });
 
   test("the tally says what a rehearsal left out", () => {
@@ -472,6 +526,7 @@ describe("the words", () => {
       recorded: RECORDED,
       current: CURRENT,
       head: { sha: "c3b9a59163994b2db7145ce4aea77bd806d66425", subject: "fix(pay): a payday" },
+      pushed: true,
       control: { passed: 602, rerun: false },
       gate: { passed: 602, rerun: false },
       ...overrides,
@@ -565,6 +620,22 @@ describe("the words", () => {
     expect(bootstrap).toContain("NO RENDERER RECORD");
     expect(bootstrap).not.toContain("Changed pixels");
     expect(bootstrap).not.toContain("Only what the gate itself fails");
+  });
+
+  /** The commit is the lasting record of what proved it, so an unpushed HEAD is said there. */
+  test("a HEAD not on origin/main is said in the commit, with what vouched for it instead", () => {
+    const recordOnly = prose(
+      commitMessage(
+        facts([same(A), passes(B)], { recorded: null, verdict: "unrecorded", pushed: false }),
+      ),
+    );
+    expect(recordOnly).toContain("c3b9a59 was not on origin/main");
+    expect(recordOnly).toContain("no baseline was copied");
+    const allowed = prose(commitMessage(facts([fails(A), fails(B)], { pushed: false })));
+    expect(allowed).toContain("--allow-unpushed");
+    expect(allowed).toContain("diffVerdict's content check alone vouches");
+    expect(allowed).toContain("2 re-based files");
+    expect(commitMessage(facts([fails(A)]))).not.toContain("origin/main");
   });
 
   test("a re-run that rescued a failure is said, not hidden", () => {

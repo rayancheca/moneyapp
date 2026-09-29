@@ -1,11 +1,14 @@
+import { EventEmitter } from "node:events";
 import { describe, expect, test } from "vitest";
 import {
   applyAndVerify,
   describeRed,
   isGreen,
+  onStopSignal,
   outcomeFromReport,
   passedInTheEnd,
   runWithOneRerun,
+  STOP_SIGNALS,
   type Attempt,
   type SuiteOutcome,
 } from "./suite-run";
@@ -197,12 +200,23 @@ describe("describeRed", () => {
 });
 
 /** Effects that record what was done, with a gate that answers from a script. */
-function effects(gate: SuiteOutcome[], fail: { copy?: string } = {}) {
+function effects(
+  gate: SuiteOutcome[],
+  fail: { copy?: string; restore?: string; mark?: string; clear?: string } = {},
+) {
   const done: string[] = [];
   const s = scripted(gate);
   return {
     done,
     fx: {
+      markPending: (files: readonly string[]) => {
+        if (fail.mark !== undefined) throw new Error(fail.mark);
+        done.push(files.length === 0 ? "mark" : `mark ${files.join(",")}`);
+      },
+      clearPending: () => {
+        if (fail.clear !== undefined) throw new Error(fail.clear);
+        done.push("clear");
+      },
       copyTwin: (baseline: string) => {
         if (baseline === fail.copy) throw new Error(`EACCES: ${baseline}`);
         done.push(`copy ${baseline}`);
@@ -212,17 +226,29 @@ function effects(gate: SuiteOutcome[], fail: { copy?: string } = {}) {
         done.push(attempt.lastFailed ? "gate --last-failed" : "gate");
         return s.run(attempt);
       },
-      restore: (baselines: readonly string[]) => done.push(`restore ${baselines.join(",")}`),
+      restore: (baselines: readonly string[]) => {
+        if (fail.restore !== undefined) throw new Error(fail.restore);
+        done.push(`restore ${baselines.join(",")}`);
+      },
     },
   };
 }
+
+const LOCKED = "1 file(s) could not be put back as HEAD has them: e2e/a.png (index.lock exists)";
 
 describe("applyAndVerify", () => {
   test("copies, records, and keeps it all when the gate is green", async () => {
     const { done, fx } = effects([green()]);
     const applied = await applyAndVerify(["a.png", "b.png"], fx);
     expect(applied.verified).toBe(true);
-    expect(done).toEqual(["copy a.png", "copy b.png", "record", "gate"]);
+    expect(done).toEqual([
+      "mark a.png,b.png",
+      "copy a.png",
+      "copy b.png",
+      "record",
+      "gate",
+      "clear",
+    ]);
   });
 
   test("a gate red after its one re-run puts every file back", async () => {
@@ -230,30 +256,107 @@ describe("applyAndVerify", () => {
     const applied = await applyAndVerify(["a.png", "b.png"], fx);
     expect(applied.verified).toBe(false);
     expect(done).toEqual([
+      "mark a.png,b.png",
       "copy a.png",
       "copy b.png",
       "record",
       "gate",
       "gate --last-failed",
       "restore a.png,b.png",
+      "clear",
     ]);
   });
 
   test("a failure part way through copying puts back the whole list, then says why", async () => {
     const { done, fx } = effects([green()], { copy: "b.png" });
     await expect(applyAndVerify(["a.png", "b.png", "c.png"], fx)).rejects.toThrow(/EACCES/);
-    expect(done).toEqual(["copy a.png", "restore a.png,b.png,c.png"]);
+    expect(done).toEqual([
+      "mark a.png,b.png,c.png",
+      "copy a.png",
+      "restore a.png,b.png,c.png",
+      "clear",
+    ]);
   });
 
   test("a gate that cannot even start puts every file back too", async () => {
     const { done, fx } = effects([]);
     await expect(applyAndVerify(["a.png"], fx)).rejects.toThrow(/more often than scripted/);
-    expect(done.at(-1)).toBe("restore a.png");
+    expect(done.slice(-2)).toEqual(["restore a.png", "clear"]);
   });
 
   test("the bootstrap copies nothing and still records and verifies", async () => {
     const { done, fx } = effects([green()]);
     expect((await applyAndVerify([], fx)).verified).toBe(true);
-    expect(done).toEqual(["record", "gate"]);
+    expect(done).toEqual(["mark", "record", "gate", "clear"]);
+  });
+
+  /**
+   * A restore that throws must not become the command's crash: the caller has still to say what
+   * is left in e2e/ ("NOT AS HEAD HAS IT"), and a rejection here skipped exactly that.
+   */
+  test("a restore that fails after a red gate is answered with the red gate, and why", async () => {
+    const { fx } = effects([red(["x"]), red(["x"], 0)], { restore: LOCKED });
+    const applied = await applyAndVerify(["a.png"], fx);
+    expect(applied.verified).toBe(false);
+    expect(applied.gate.attempts).toHaveLength(2);
+    expect(applied.notRestored).toBe(LOCKED);
+  });
+
+  test("a green gate or a restore that held leaves nothing unrestored to report", async () => {
+    expect((await applyAndVerify(["a.png"], effects([green()]).fx)).notRestored).toBeNull();
+    const red2 = effects([red(["x"]), red(["x"], 0)]).fx;
+    expect((await applyAndVerify(["a.png"], red2)).notRestored).toBeNull();
+  });
+
+  /** The error that stopped the re-base is the headline; a failed restore after it is added. */
+  test("a restore that fails after an error keeps that error, and adds why", async () => {
+    const { fx } = effects([green()], { copy: "b.png", restore: LOCKED });
+    const stopped = applyAndVerify(["a.png", "b.png"], fx);
+    await expect(stopped).rejects.toThrow(/^EACCES: b\.png/);
+    await expect(stopped).rejects.toThrow(LOCKED);
+  });
+
+  /**
+   * The mark is the next run's only way to know a --confirm never heard its gate pass: it is left
+   * before the first file is written, and taken away only when nothing unverified is left.
+   */
+  test("a restore that fails keeps the mark, so the next run puts the files back", async () => {
+    const { done, fx } = effects([red(["x"]), red(["x"], 0)], { restore: LOCKED });
+    await applyAndVerify(["a.png"], fx);
+    expect(done).toEqual(["mark a.png", "copy a.png", "record", "gate", "gate --last-failed"]);
+  });
+
+  test("a mark that cannot be taken away after a restore never replaces the error", async () => {
+    const { fx } = effects([green()], { copy: "b.png", clear: "EPERM: the pending mark" });
+    const stopped = applyAndVerify(["a.png", "b.png"], fx);
+    await expect(stopped).rejects.toThrow(/^EACCES: b\.png/);
+    await expect(stopped).rejects.toThrow(/EPERM: the pending mark/);
+  });
+
+  test("a mark that cannot be left stops the re-base before anything is written", async () => {
+    const { done, fx } = effects([green()], { mark: "EROFS: .git" });
+    await expect(applyAndVerify(["a.png"], fx)).rejects.toThrow(/EROFS/);
+    expect(done).toEqual([]);
+  });
+});
+
+describe("onStopSignal", () => {
+  /**
+   * tsx relays only SIGINT and SIGTERM. A terminal or session that closes sends SIGHUP, whose
+   * default kills the run with twins and a record written and unverified.
+   */
+  test("a closed terminal's SIGHUP is heard, as SIGINT and SIGTERM are", () => {
+    expect(STOP_SIGNALS).toEqual(["SIGINT", "SIGTERM", "SIGHUP"]);
+    const target = new EventEmitter();
+    const heard: string[] = [];
+    const stop = onStopSignal((signal) => heard.push(signal), target);
+    target.emit("SIGHUP", "SIGHUP");
+    expect(heard).toEqual(["SIGHUP"]);
+    // `once`: the one that fired is gone, the other two wait for stop()
+    for (const signal of STOP_SIGNALS) {
+      expect(target.listenerCount(signal), signal).toBe(signal === "SIGHUP" ? 0 : 1);
+    }
+    stop();
+    for (const signal of STOP_SIGNALS) expect(target.listenerCount(signal), signal).toBe(0);
   });
 });
