@@ -84,6 +84,7 @@ import {
   type LentPeriod,
 } from "./statement-copies";
 import {
+  accountsPrintedBy,
   appendPrintedLines,
   forgetPrintedLines,
   handOverToPrinters,
@@ -2829,57 +2830,80 @@ export interface StorageMigration {
 /**
  * Relocates already-imported originals into the per-account archive
  * (data/statements/<account-slug>/), for files ingested before per-account
- * storage existed. Each file's folder is derived from the account(s) its
- * transactions/periods resolve to — the real account, not the file's guessed
+ * storage existed. Each original's folder is derived from every account a read of
+ * it resolved (`accountsReadBy`) — the real account, not the file's guessed
  * institution. With move: false it only rewrites storage_path (dry validation);
  * with move: true it also relocates the physical file. Idempotent.
+ *
+ * ⛔ One original, every read of it: a re-read archives under the content-hashed
+ * name its older read already holds (`recordFile`) and `relocateArchive` drops the
+ * transient copy, so a retired read and its successor name ONE file. They are
+ * placed together, and move together.
+ *
+ * 🔴 It read the accounts from the file's rows and periods only. A second download
+ * of a statement owns nothing but anchors, so it named no account and was sent to
+ * the bare institution bucket, out of the folder its import had archived it in.
+ * Measured on a copy of the real ledger, 2026-09-28: 59 originals would have moved.
+ *
+ * 🔴 …then from its anchors too, which a copy loses to whichever file writes their
+ * day last, and it placed each read on its own: a retired read, whose retirement
+ * forgot what it printed, took the file it shares with its successor to that
+ * bucket and left the live read naming a path with nothing there. Measured on the
+ * same copy, an empty file standing in for each original, move: true: 14 live
+ * second downloads sent to the bucket and 11 reads (1 live) left naming no file.
+ * Now 0 and 0.
  */
 export function migrateStorageLayout(db: AppDatabase, opts: { move: boolean }): StorageMigration[] {
-  const rows = db.select().from(importFiles).all();
+  const paths = db.select({ storagePath: importFiles.storagePath }).from(importFiles).all();
   const results: StorageMigration[] = [];
-  for (const row of rows) {
-    const fromTxns = db
-      .selectDistinct({ accountId: transactions.accountId })
-      .from(transactions)
-      .where(eq(transactions.importFileId, row.id))
-      .all()
-      .map((r) => r.accountId);
-    const fromPeriods = db
-      .selectDistinct({ accountId: statementPeriods.accountId })
-      .from(statementPeriods)
-      .where(eq(statementPeriods.importFileId, row.id))
-      .all()
-      .map((r) => r.accountId);
-    const accountIds = [...new Set([...fromTxns, ...fromPeriods])];
+  for (const from of new Set(paths.map((r) => r.storagePath))) {
+    // every read naming the original, as the moves before it left them
+    const reads = db.select().from(importFiles).where(eq(importFiles.storagePath, from)).all();
+    const accountIds = [...new Set(reads.flatMap((r) => accountsReadBy(db, r.id)))];
 
     const fallback = db
       .select({ name: institutions.name })
       .from(institutions)
-      .where(eq(institutions.id, row.institutionId))
+      .where(eq(institutions.id, reads[0]!.institutionId))
       .get()!.name;
     const folder = resolveArchiveFolder(db, accountIds, fallback);
-    const dest = path.join(statementsRoot(), folder, path.basename(row.storagePath));
-    if (dest === row.storagePath) continue;
+    const dest = path.join(statementsRoot(), folder, path.basename(from));
+    if (dest === from) continue;
 
     let moved = false;
     if (opts.move) {
       if (fs.existsSync(dest)) {
         // dest already holds this content — drop a stale source dup
-        if (fs.existsSync(row.storagePath) && row.storagePath !== dest) fs.rmSync(row.storagePath);
+        if (fs.existsSync(from)) fs.rmSync(from);
         moved = true;
-      } else if (fs.existsSync(row.storagePath)) {
+      } else if (fs.existsSync(from)) {
         fs.mkdirSync(path.dirname(dest), { recursive: true });
-        moveFile(row.storagePath, dest);
+        moveFile(from, dest);
         moved = true;
       }
       // only repoint the DB when the file actually lives at dest now — never
       // leave storage_path dangling at a path with no file (dry runs preview
-      // the mapping via the returned results without touching disk-of-record)
-      if (moved) db.update(importFiles).set({ storagePath: dest }).where(eq(importFiles.id, row.id)).run();
+      // the mapping via the returned results without touching disk-of-record) —
+      // and repoint every read that named it
+      if (moved) db.update(importFiles).set({ storagePath: dest }).where(eq(importFiles.storagePath, from)).run();
     }
-    results.push({ importFileId: row.id, fileName: row.fileName, from: row.storagePath, to: dest, moved });
+    for (const read of reads) results.push({ importFileId: read.id, fileName: read.fileName, from, to: dest, moved });
   }
   return results;
+}
+
+/**
+ * Every account a file's read resolved — what its import filed the original by
+ * (`settleMember`): the accounts it prints on (`accountsPrintedBy`), and the ones
+ * it wrote to (`accountsWrittenBy`), for a file imported before that record
+ * existed and a retired read whose retirement forgot it.
+ *
+ * ⚠️ `statement_copies` is not read: a copy is recorded in the same write as the
+ * lines it prints, so it names no account `printed_lines` does not (on the real
+ * ledger, 2026-09-28: 0 of its 105 records do).
+ */
+function accountsReadBy(db: AppDatabase, importFileId: string): string[] {
+  return [...new Set([...accountsPrintedBy(db, importFileId), ...accountsWrittenBy(db, importFileId)])];
 }
 
 /** Group ids per query — well under SQLite's bound-parameter limit. */
@@ -2932,7 +2956,8 @@ function legsLeftAloneBy(tx: AppDatabase, importFileId: string): StaleTransferLe
  * Every account an import file wrote to: its rows, its periods, its anchors.
  * Read BEFORE the delete — afterwards nothing names the file. Both paths that
  * take a file's contribution away read it: `unimportFile` and
- * `supersedeFileContribution`.
+ * `supersedeFileContribution`; `migrateStorageLayout` files the original by it and
+ * what the file prints (`accountsReadBy`).
  *
  * 🔴 The rebuild scope was the accounts the file had ROWS on. A statement that
  * gave an account a period and a balance anchor and nothing else lost both and

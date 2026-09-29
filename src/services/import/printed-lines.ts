@@ -81,6 +81,20 @@ export function forgetPrintedLines(tx: AppDatabase, importFileId: string): void 
   tx.delete(printedLines).where(eq(printedLines.importFileId, importFileId)).run();
 }
 
+/**
+ * Every account a file prints on: each account a statement of its read resolved, one that prints no line included —
+ * the accounts its import filed the original by. Nothing it owns can say that of a second download: its anchors go to
+ * whichever file writes their day last.
+ */
+export function accountsPrintedBy(db: AppDatabase, importFileId: string): string[] {
+  return db
+    .select({ accountId: printedLines.accountId })
+    .from(printedLines)
+    .where(eq(printedLines.importFileId, importFileId))
+    .all()
+    .map((r) => r.accountId);
+}
+
 interface Row {
   id: string;
   importFileId: string | null;
