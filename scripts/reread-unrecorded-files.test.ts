@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { and, eq, gt } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
+import { DEFAULT_RETENTION, restoreFromSnapshot, takeRestorePoint } from "@/db/backup";
 import { createDatabase, type DbBundle } from "@/db/client";
 import { seedDatabase } from "@/db/seed";
 import { dailyBalances } from "@/db/schema/balances";
@@ -13,7 +14,14 @@ import { fileSha256 } from "@/lib/hash";
 import { rebuildAccount } from "@/services/derivation";
 import { PROFILES } from "@/services/import/profiles";
 import { importStatementFiles, type ImportInput } from "@/services/import/service";
-import type { AccountHint, ParsedStatement, ParserProfile } from "@/services/import/types";
+import type {
+  AccountHint,
+  ParsedStatement,
+  ParserProfile,
+  PositionTrade,
+  PrintedPosition,
+  StatementPositions,
+} from "@/services/import/types";
 import { main } from "./reread-unrecorded-files";
 
 /**
@@ -94,6 +102,49 @@ async function twoMonthsReadAprilFirstThenBumped(): Promise<void> {
   bundle.db.delete(printedLines).run();
   profile.version = 2;
 }
+/**
+ * March and April again, each with a brokerage book section whose trades the import files under the statement as holding
+ * events (`writeStatementPositions`) — as 33 of the 34 files on the real ledger, Robinhood brokerage statements, carry
+ * Robinhood Agentic's book. Un-importing a statement deletes its events by that file (`removeFileEvents`).
+ */
+const BOOK: AccountHint = { institution: "Chase", type: "investment", subtype: "brokerage", bookOf: CHECKING.last4 };
+const ONE_SHARE = 100_000_000;
+const buy = (symbol: string, on: string): PositionTrade => ({
+  symbol,
+  assetType: "stock",
+  occurredOn: on,
+  tradedOn: on,
+  quantityDeltaE8: ONE_SHARE,
+  costCents: 1_000,
+  printed: `${symbol} Buy 1 ${on}`,
+});
+const holdingOneOf = (...symbols: string[]): PrintedPosition[] =>
+  symbols.map((symbol) => ({ symbol, assetType: "stock", quantityE8: ONE_SHARE, marketValueCents: 1_000 }));
+async function twoMonthsWithTradesThenBumped(): Promise<void> {
+  // each month buys one share at $10.00: the book closes worth $10.00 a position, and opened $10.00 below that
+  const book = (period: typeof MARCH, positions: StatementPositions): ParsedStatement => {
+    const closing = positions.held.length * 1_000;
+    return { accountHint: BOOK, txns: [], period: { start: period.start, end: period.end, beginCents: closing - 1_000, endCents: closing }, positions };
+  };
+  const months = {
+    march: [...statement([COFFEE, GROCER]), book(MARCH, { trades: [buy("AAPL", "2026-03-10")], held: holdingOneOf("AAPL") })],
+    april: [...statement([RENT], APRIL), book(APRIL, { trades: [buy("MSFT", "2026-04-10")], held: holdingOneOf("AAPL", "MSFT") })],
+  };
+  reads = { 1: months, 2: months };
+  await importStatementFiles(bundle.db, [MARCH_FILE]);
+  await importStatementFiles(bundle.db, [APRIL_FILE]);
+  bundle.db.delete(printedLines).run();
+  profile.version = 2;
+}
+/** Each holding event, and the statement read it is filed under — the file un-importing deletes it by. */
+const eventsFiled = () =>
+  bundle.sqlite
+    .prepare(
+      `SELECT e.symbol, f.file_name AS file, f.parser_version AS version FROM holding_events e
+         LEFT JOIN import_files f ON f.id = e.import_file_id ORDER BY e.symbol`,
+    )
+    .all();
+
 /** The statement a day's recorded balance cites — its file, and which read of it. */
 const citedBy = (day: string) =>
   bundle.sqlite
@@ -509,6 +560,66 @@ describe("reread-unrecorded-files — re-read the files the backfills cannot, an
     expect(run.failures.join("\n")).toMatch(/BLUE BOTTLE 12/);
   });
 
+  test("a re-read files each holding event under its own statement's new read", async () => {
+    await twoMonthsWithTradesThenBumped();
+    expect(eventsFiled()).toEqual([
+      { symbol: "AAPL", file: MARCH_FILE.name, version: 1 },
+      { symbol: "MSFT", file: APRIL_FILE.name, version: 1 },
+    ]);
+    bundle.sqlite.close();
+
+    const run = await main(args("--confirm"));
+
+    reopen();
+    expect(run.failures).toEqual([]);
+    expect(run.outcome).toBe("written");
+    // a record for each account each statement prints on: its cash and its book
+    expect(run.allowed).toEqual([
+      "2 file(s) read again at their profile's version; the older reads retired",
+      "4 printed-line record(s) over 2 file(s)",
+      "0 statement cop(ies)",
+      "0 card number(s)",
+    ]);
+    expect(eventsFiled()).toEqual([
+      { symbol: "AAPL", file: MARCH_FILE.name, version: 2 },
+      { symbol: "MSFT", file: APRIL_FILE.name, version: 2 },
+    ]);
+  });
+
+  /**
+   * 🔴 The face compared holding events by content with the file they are filed under left out, so an event filed under
+   * another statement — same shares, day and cost — read as "only the records changed". Un-importing a statement deletes
+   * its events by that file (`removeFileEvents`): March's un-import would then leave its buy standing, and April's take
+   * it (a review finding, 2026-09-29).
+   */
+  test.each([
+    ["another statement", "april"],
+    ["no statement", null],
+  ] as const)("a holding event that comes to be filed under %s is put back", async (_, under) => {
+    await twoMonthsWithTradesThenBumped();
+    bundle.sqlite.close();
+
+    const run = await main(args("--confirm"), {
+      // March's buy, filed under April's new read (or under none): same shares, day and cost
+      afterWrite: (real) => {
+        const april = real.db
+          .select()
+          .from(importFiles)
+          .where(and(eq(importFiles.fileName, APRIL_FILE.name), eq(importFiles.parserVersion, 2)))
+          .get()!.id;
+        real.sqlite.prepare("UPDATE holding_events SET import_file_id = ? WHERE symbol = 'AAPL'").run(under === null ? null : april);
+      },
+    });
+
+    reopen();
+    expect(run.outcome).toBe("restored");
+    expect(run.failures.join("\n")).toMatch(/holding event.*AAPL/);
+    expect(eventsFiled()).toEqual([
+      { symbol: "AAPL", file: MARCH_FILE.name, version: 1 },
+      { symbol: "MSFT", file: APRIL_FILE.name, version: 1 },
+    ]);
+  });
+
   test("refuses an argument it does not take, and never guesses the database", async () => {
     bundle.sqlite.close();
     await expect(main(["--confirm"])).rejects.toThrow(/--db=<path> is required/);
@@ -651,6 +762,8 @@ describe("reread-unrecorded-files — once the restore point is taken, the ledge
     real.sqlite.prepare("UPDATE transactions SET notes = 'committed on its own' WHERE raw_description = ?").run(GROCER.rawDescription);
   }
   const notesOnTheGrocer = () => liveRows().find((r) => r.description === GROCER.rawDescription)?.notes;
+  /** The files a run keeps beside the ledger while its write has not ended: the journal, and its copy of the restore point. */
+  const besideTheLedger = () => fs.readdirSync(dir).filter((name) => name.startsWith(`${path.basename(ledger)}.`));
 
   test("a write whose transaction did not hold to its check is put back from its restore point", async () => {
     await importedBeforeRecordsThenBumped(statement([COFFEE, GROCER]), statement([COFFEE, GROCER]));
@@ -676,9 +789,11 @@ describe("reread-unrecorded-files — once the restore point is taken, the ledge
 
     const first = await main(args("--confirm"), {
       afterWrite: (real) => {
-        // the transaction ends part-way, the restore point is lost, then the write faults: nothing can put it back
+        // the transaction ends part-way, the restore point is lost — the snapshot, and the journal's copy of it — then
+        // the write faults: nothing can put it back
         loseTheTransaction(real);
         for (const name of backups()) fs.rmSync(path.join(dir, "backups", name));
+        for (const name of besideTheLedger().filter((n) => n.endsWith(".restore-point.db"))) fs.rmSync(path.join(dir, name));
         throw new Error("the disk filled up");
       },
     }).catch((error: unknown) => ({ outcome: `threw ${String(error)}`, failures: [] as string[] }));
@@ -732,6 +847,107 @@ describe("reread-unrecorded-files — once the restore point is taken, the ledge
     expect(back.outcome).toBe("restored");
     expect(fileRows()).toEqual([{ version: 1, status: "parsed" }]);
     expect(liveRows()).toEqual(rows);
+    bundle.sqlite.close();
+    expect((await main(args())).outcome).toBe("dry-run");
+  });
+
+  /**
+   * A review finding against an earlier journal (2026-09-29): it kept no word of the check, a failed removal of it was
+   * swallowed while the run exited 0, and the next `--confirm` put the restore point back — a write that passed its check
+   * and committed, undone as one "never checked". The write is one transaction now and UNFINISHED never restores: the
+   * next run reads from the files that the ledger holds all of it, which only a commit after the check leaves.
+   */
+  test("a write that passed its check and committed is never put back when its journal cannot be removed", async () => {
+    await importedBeforeRecordsThenBumped(statement([COFFEE, GROCER]), statement([COFFEE, GROCER]));
+    bundle.sqlite.close();
+    const rmSync = fs.rmSync;
+    const stuck = vi.spyOn(fs, "rmSync").mockImplementation((target, options) => {
+      if (String(target).endsWith(".unfinished.json")) throw new Error("EPERM: operation not permitted");
+      rmSync(target, options);
+    });
+    const written = await main(args("--confirm")).finally(() => stuck.mockRestore());
+
+    expect(written.outcome).toBe("written");
+    expect(written.failures).toEqual([]);
+    expect(besideTheLedger().filter((name) => name.endsWith(".unfinished.json"))).toHaveLength(1);
+    const dry = await main(args());
+    expect(dry.outcome).toBe("unfinished");
+    expect(dry.failures.join("\n")).toMatch(/after its check passed and it committed: the ledger holds all of it, checked/);
+    // …and the app writes on: his note on the grocer
+    reopen();
+    bundle.db
+      .update(transactions)
+      .set({ notes: "his, after the run" })
+      .where(and(eq(transactions.rawDescription, GROCER.rawDescription), eq(transactions.status, "active")))
+      .run();
+    bundle.sqlite.close();
+
+    const closed = await main(args("--confirm"));
+
+    expect(closed.outcome).toBe("written");
+    reopen();
+    expect(fileRows()).toEqual([
+      { version: 1, status: "superseded" },
+      { version: 2, status: "parsed" },
+    ]);
+    expect(bundle.db.select().from(printedLines).all()).toHaveLength(1);
+    expect(notesOnTheGrocer()).toBe("his, after the run");
+    // nothing was put back over the ledger: the one backup is the write's restore point, no copy saved before a restore
+    expect(backups()).toEqual([path.basename(written.restorePoint!)]);
+    expect(besideTheLedger()).toEqual([]);
+    bundle.sqlite.close();
+    expect((await main(args())).outcome).toBe("nothing-to-do");
+  });
+
+  /**
+   * A review finding against an earlier journal (2026-09-29): its restore point is a `pre-` snapshot, and the rotation
+   * keeps the newest twelve (`keepPreMutation`) — every un-import and bulk edit the app makes after the run stopped takes
+   * one. A ledger that may hold part of the write is compared with the restore point before its journal closes, and put
+   * back from it by hand if it must be: rotated away, neither can be done.
+   */
+  test("the restore point of a write that may be on the ledger in part outlives the app's restore points after it", async () => {
+    await importedBeforeRecordsThenBumped(statement([COFFEE, GROCER]), statement([COFFEE, GROCER]));
+    const rows = liveRows();
+    bundle.sqlite.close();
+    let dying: DbBundle | undefined;
+    // the transaction ends part-way, one statement after it commits on its own — the older read retired — then a kill
+    void main(args("--confirm"), {
+      afterWrite: (real) => {
+        dying = real;
+        real.sqlite.exec("ROLLBACK");
+        real.sqlite.prepare("UPDATE import_files SET status = 'superseded' WHERE parser_version = 1").run();
+        return new Promise<never>(() => {});
+      },
+    });
+    await vi.waitFor(() => expect(dying).toBeDefined(), { timeout: 10_000 });
+    dying!.sqlite.close();
+    // the app's irreversible actions after the kill, each behind a restore point of its own
+    reopen();
+    for (let n = 0; n < DEFAULT_RETENTION.keepPreMutation; n++) takeRestorePoint(bundle.db, "unimport");
+    bundle.sqlite.close();
+    // the premise: the rotation took the run's own snapshot
+    expect(backups().filter((name) => name.includes("reread-unrecorded-files"))).toEqual([]);
+
+    const dry = await main(args());
+
+    expect(dry.outcome).toBe("unfinished");
+    expect(dry.failures.join("\n")).toMatch(/may hold part of it/);
+    // the ledger is compared with the restore point the run names…
+    const named = /does not read as its restore point (\S+):/.exec(dry.failures.join("\n"))?.[1];
+    expect(named).toBeDefined();
+    // …and, nothing written since being his, someone puts that restore point back
+    reopen();
+    bundle = restoreFromSnapshot(bundle, named!).reopened;
+    bundle.sqlite.close();
+
+    const back = await main(args("--confirm"));
+
+    expect(back.outcome).toBe("restored");
+    reopen();
+    expect(fileRows()).toEqual([{ version: 1, status: "parsed" }]);
+    expect(liveRows()).toEqual(rows);
+    // the journal and its copy of the restore point go once the write has ended
+    expect(besideTheLedger()).toEqual([]);
     bundle.sqlite.close();
     expect((await main(args())).outcome).toBe("dry-run");
   });

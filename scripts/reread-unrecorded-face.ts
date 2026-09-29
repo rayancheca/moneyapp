@@ -15,7 +15,8 @@
  *  - the records the re-read exists to write: new `printed_lines`, `statement_copies` and `account_numbers` rows.
  * Anything else refuses: a row's money, day, words, category and its source, note, link, transfer group, series, dedupe
  * key or statement; a split; a period, its verdict or its statement; a recorded balance or the statement it cites; a
- * cached balance day, changed or new; net worth on any day, or a day it did not have; a /summary year; any other table.
+ * holding event's shares, day, cost or statement; a cached balance day, changed or new; net worth on any day, or a day it
+ * did not have; a /summary year; any other table.
  *
  * 🔴 An earlier cut also let through, "allowed, and named", four changes a copy of the real ledger made (2026-09-28):
  * cached balances carried on to today (the dashboard's "15 days unchecked" read 28) with net worth a day further and
@@ -27,6 +28,7 @@ import path from "node:path";
 import type { DbBundle } from "@/db/client";
 import { todayIso } from "@/lib/dates";
 import { formatCents, formatCentsSigned } from "@/lib/money";
+import { formatQuantityE8 } from "@/lib/robinhood-holdings";
 import { netWorthSeries } from "@/services/derivation";
 import { summaryYears, yearSummaryView } from "@/services/year-summary";
 
@@ -81,10 +83,12 @@ export interface LedgerFace {
   keys: Map<string, string[]>;
   /** statement periods by `file \x1f content`: no id, the rest as the row holds it */
   periodsByFile: Multiset;
+  /** holding events by `file \x1f content` — no id; the statement that printed each, whose un-import deletes it */
+  eventsByFile: Multiset;
   splits: Multiset;
   /** `account \x1f day` → `balance \x1f basis` */
   balances: Map<string, string>;
-  /** the balance on each anchored day, holding events and every table without a rule of its own, by content */
+  /** the balance on each anchored day, and every table without a rule of its own, by content */
   tables: Map<string, Multiset>;
   /** `account \x1f day \x1f source` → the balance, and the file and period it cites */
   anchors: Map<string, Anchor>;
@@ -162,7 +166,7 @@ function rowFaces(bundle: DbBundle, spans: ReadonlyMap<string, string>) {
   return { rows, contentById, live, keys, splits };
 }
 
-/** Periods, the balance on each anchored day, holding events, and every table without a rule of its own. */
+/** The balance on each anchored day, and every table without a rule of its own. */
 function tableFaces(bundle: DbBundle, contentById: ReadonlyMap<string, string>): Map<string, Multiset> {
   const tables = new Map<string, Multiset>();
   const byContent = (table: string, drop: readonly string[], map: (r: Row) => Row = (r) => r) => {
@@ -172,7 +176,6 @@ function tableFaces(bundle: DbBundle, contentById: ReadonlyMap<string, string>):
   };
   // the balance on each day, whoever prints it — which statement it cites is `anchors`, compared by its own rule
   byContent("balance_anchors", ["id", "import_file_id", "statement_period_id", ...STAMPS]);
-  byContent("holding_events", ["id", "import_file_id", ...STAMPS]);
   const others = all(bundle, "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'")
     .map((t) => String(t.name))
     .filter((t) => !OWN_RULE.has(t));
@@ -190,6 +193,19 @@ function periodFaces(bundle: DbBundle): Multiset {
   const m: Multiset = new Map();
   for (const p of all(bundle, "SELECT * FROM statement_periods")) {
     bump(m, filed(p.import_file_id, JSON.stringify(without(p, ["id", "import_file_id", ...STAMPS]))));
+  }
+  return m;
+}
+
+/**
+ * Every holding event by content, filed under the statement that printed it — or under no file, for one a script or a
+ * hand edit wrote. Un-importing a statement deletes its events by that file (`removeFileEvents`), so which file an event
+ * is filed under is part of what the ledger says.
+ */
+function eventFaces(bundle: DbBundle): Multiset {
+  const m: Multiset = new Map();
+  for (const e of all(bundle, "SELECT * FROM holding_events")) {
+    bump(m, filed(e.import_file_id, JSON.stringify(without(e, ["id", "import_file_id", ...STAMPS]))));
   }
   return m;
 }
@@ -272,6 +288,7 @@ export function ledgerFace(bundle: DbBundle, today: string = todayIso()): Ledger
     live,
     keys,
     periodsByFile: periodFaces(bundle),
+    eventsByFile: eventFaces(bundle),
     splits,
     balances,
     tables: tableFaces(bundle, contentById),
@@ -508,6 +525,30 @@ function comparePeriods(before: LedgerFace, after: LedgerFace, fresh: ReadonlyMa
 }
 
 /**
+ * The holding events: each with its shares, day, cost and kind, under the statement that printed it (or its new read),
+ * or under no file as it was. 🔴 They were compared with the file left out, so an event filed under another statement —
+ * same shares, same day — read as "only the records changed", and un-importing a statement deletes its events by that
+ * file (`removeFileEvents`): its own would stay, and another's would go with it (a review finding, 2026-09-29). 33 of
+ * the 34 files are Robinhood brokerage statements, whose sections of Robinhood Agentic's book write events once they
+ * prove positions.
+ */
+function compareEvents(before: LedgerFace, after: LedgerFace, fresh: ReadonlyMap<string, RereadTarget>): string[] {
+  const { gone, came } = multisetDelta(refiled(before.eventsByFile, successorsOf(fresh)), after.eventsByFile);
+  if (gone.length + came.length === 0) return [];
+  const described = (key: string) => {
+    const { file, content } = unfiled(key);
+    const e = JSON.parse(content) as Row;
+    const account = after.accountNames.get(String(e.account_id)) ?? before.accountNames.get(String(e.account_id)) ?? String(e.account_id);
+    const shares = formatQuantityE8(BigInt(Number(e.quantity_delta_e8)));
+    return `${String(e.symbol)} ${shares} on ${String(e.occurred_on)} (${String(e.event_kind)}) · ${account} · under ${fileName(after, file)}`;
+  };
+  return [
+    `${gone.length + came.length} holding event(s) moved, or belong to another statement — ` +
+      `only before: ${examples(gone.map(described))} | only after: ${examples(came.map(described))}`,
+  ];
+}
+
+/**
  * Every cached day as it was, and no day the ledger did not have. 🔴 The import rebuilds the accounts it reads to today:
  * a cache carried on moves what the dashboard says of them ("15 days unchecked" read 28 on a copy of the real ledger,
  * 2026-09-28) — so the re-read keeps each cache ending where it ended (`reread-unrecorded-keep`), and this refuses any
@@ -618,6 +659,7 @@ export function compareFaces(before: LedgerFace, after: LedgerFace, expect: Rere
     ...files.failures,
     ...compareRows(before, after, expect, files.fresh),
     ...comparePeriods(before, after, files.fresh),
+    ...compareEvents(before, after, files.fresh),
     ...compareBalances(before, after),
     ...compareAnchors(before, after, files.fresh),
     ...records.failures,
@@ -656,6 +698,7 @@ export function sameFace(a: LedgerFace, b: LedgerFace): boolean {
       sorted(f.anchors),
       sorted(f.periods),
       sorted(f.periodsByFile),
+      sorted(f.eventsByFile),
       sorted(f.files),
       sorted(f.records),
       sorted(f.splits),

@@ -20,8 +20,9 @@
  * archived original) and the records they write (`printed_lines`, `statement_copies`, `account_numbers`). Nothing else:
  * every live row keeps its money, day, words, category and its source, merchant, note, link, transfer group, series,
  * dedupe key and statement; every period its days, balances, verdict and statement; every recorded balance its amount
- * and the statement it cites; every cached balance day its balance and basis, and no day is added; net worth on every
- * day, and no day added; every /summary year; every other table.
+ * and the statement it cites; every holding event its shares, day, cost and statement (un-import deletes a statement's
+ * events by it); every cached balance day its balance and basis, and no day is added; net worth on every day, and no day
+ * added; every /summary year; every other table.
  *
  * 🔴 Measured on a copy of the real ledger (2026-09-28/29), the import changes three more things on its way, and an
  * earlier cut of this script let them through, "allowed, and named" — each one the owner sees (the review of
@@ -59,9 +60,10 @@
  *     archive's copy as the write's archive is compared.
  *  3. Dry run stops there. `--confirm`: a restore point; then ONE write transaction (BEGIN IMMEDIATE) from its first look
  *     at the ledger to its check — the ledger must still be the one rehearsed; a journal beside the ledger naming the
- *     restore point; the import and its keep; the same comparison on the real ledger, which must make exactly the
- *     rehearsal's allowed changes and keep exactly what it kept, name each new read's original where the run archived
- *     it, leave the archive holding the same originals, and record every file. It commits only once that check passes.
+ *     restore point, with its own copy of it there, out of the backups' rotation (`keepRestorePoint`); the import and its
+ *     keep; the same comparison on the real ledger, which must make exactly the rehearsal's allowed changes and keep
+ *     exactly what it kept, name each new read's original where the run archived it, leave the archive holding the same
+ *     originals, and record every file. It commits only once that check passes.
  *  4. Every other way out rolls the transaction back — a failed check and a fault alike, and the output says which —
  *     and takes the write's own originals back out of the archive (`sweepLeftovers`), so nothing it left stops the next
  *     rehearsal. The journal goes with either. A transaction that did not hold to the check (SQLite ends one on some
@@ -73,7 +75,10 @@
  *     own originals out of the archive and closes the journal, and leaves the ledger as it is — with whatever was
  *     written to it after the kill. Only when the journal says the transaction did not hold, or the ledger holds neither
  *     all of the write nor none of it, may the ledger hold part of it: `--confirm` then closes the journal only if the
- *     ledger reads as its restore point, and otherwise refuses and says why, for someone to compare the two.
+ *     ledger reads as its restore point, and otherwise refuses and says why, for someone to compare the two — against
+ *     the journal's own copy of the restore point, which the twelve restore points the app keeps cannot rotate away.
+ *     A journal that could not be removed after the write committed reads the same way: the ledger holds all of it,
+ *     checked, and `--confirm` closes it.
  *     🔴 `--confirm` put the restore point back over the ledger without a look, and took out of the live ledger every
  *     write made after the kill — the app's, an upload's, a backfill's: none of them reads the journal (the review of
  *     uc/reread-34-runbook, 2026-09-29). Measured on copies of the real ledger, 2026-09-29: killed 6 s into the write,
@@ -361,7 +366,13 @@ function planned(bundle: DbBundle, args: Args): Plan {
  */
 interface Journal {
   startedAt: string;
+  /** the restore point as the archive of backups lists it: a `pre-` snapshot, which the rotation may take away */
   restorePoint: string;
+  /**
+   * the journal's own copy of it, beside the ledger and outside every rotation (`keepRestorePoint`) — what a comparison
+   * with the ledger and a put-back read. A journal an earlier cut of this script wrote has none.
+   */
+  kept: string | null;
   /** the archive as the write found it — what a put-back takes the write's own originals back out of */
   archive: ArchiveBefore;
   /** each read the write retires, as the write found it, and the bytes and version of the read it writes in its place */
@@ -432,6 +443,7 @@ function readJournal(db: string): Journal | null {
   return {
     startedAt: read.startedAt,
     restorePoint: read.restorePoint,
+    kept: typeof read.kept === "string" ? read.kept : null,
     archive: {
       root: archive.root,
       held: archive.held.map(String),
@@ -442,12 +454,53 @@ function readJournal(db: string): Journal | null {
   };
 }
 
-/** The write is checked or put back: the journal goes — and if it cannot, the next run says so rather than guess. */
+/**
+ * Where a journal keeps its own copy of the restore point: beside the ledger, as the journal is.
+ *
+ * 🔴 The journal named the `pre-` snapshot itself, and the rotation keeps the newest twelve of those (`keepPreMutation`):
+ * every un-import, bulk edit and manual backup the app makes after a run stopped takes one. A ledger that may hold part
+ * of the write is compared with its restore point before the journal closes, and put back from it by hand if it must be
+ * — twelve restore points later neither could be done, and every run refused on "its restore point … is gone" (a
+ * review finding, 2026-09-29).
+ */
+const keptRestorePointPath = (db: string): string => `${fs.realpathSync(db)}.${LABEL}.restore-point.db`;
+
+/**
+ * The restore point, kept for the journal outside the rotation: a hard link to the snapshot — the same file on disk, so
+ * no second copy of the ledger while the snapshot is still listed — or, where no link can be made (the backups on
+ * another volume), a copy. One left by a run killed before it wrote its journal is named by nothing, and replaced.
+ */
+function keepRestorePoint(db: string, snapshot: string): string {
+  const kept = keptRestorePointPath(db);
+  fs.rmSync(kept, { force: true });
+  try {
+    fs.linkSync(snapshot, kept);
+  } catch {
+    fs.copyFileSync(snapshot, kept);
+  }
+  return kept;
+}
+
+/** The restore point a comparison or a put-back reads: the journal's own copy while it is there, else the snapshot. */
+const restorePointOf = (journal: Journal): string =>
+  journal.kept !== null && fs.existsSync(journal.kept) ? journal.kept : journal.restorePoint;
+
+/**
+ * The write is checked or put back: the journal goes, and its copy of the restore point with it — and if the journal
+ * cannot go, the next run says so rather than guess, and the copy stays for it. The snapshot stays listed with the
+ * backups, rotated as every restore point is.
+ */
 function endJournal(db: string): void {
   try {
     fs.rmSync(journalPath(db), { force: true });
   } catch (error: unknown) {
     console.log(`  ✗ the journal ${journalPath(db)} could not be removed (${messageOf(error)}): the next run will call this write unfinished`);
+    return;
+  }
+  try {
+    fs.rmSync(keptRestorePointPath(db), { force: true });
+  } catch (error: unknown) {
+    console.log(`  ✗ the journal's copy of its restore point, ${keptRestorePointPath(db)}, could not be removed (${messageOf(error)}): nothing reads it now`);
   }
 }
 
@@ -520,7 +573,7 @@ function unfinished(args: Args, journal: Journal): RunResult {
   const bundle = createDatabase(args.db);
   try {
     const began =
-      `a --confirm begun ${journal.startedAt} (restore point ${journal.restorePoint}) stopped before it ended — ` +
+      `a --confirm begun ${journal.startedAt} (restore point ${restorePointOf(journal)}) stopped before it ended — ` +
       "killed, or its put-back could not finish";
     const held = journal.ledger === "all-or-none" ? heldOf(bundle, journal.targets) : "part";
     if (held === "part") return mayHoldPart(bundle, args, journal, began);
@@ -551,7 +604,7 @@ function unfinished(args: Args, journal: Journal): RunResult {
  */
 function mayHoldPart(bundle: DbBundle, args: Args, journal: Journal, began: string): RunResult {
   const what = `${began}, and was never checked nor put back — the ledger may hold part of it`;
-  const asBefore = readsAsRestorePoint(bundle, journal.restorePoint, args.scratch);
+  const asBefore = readsAsRestorePoint(bundle, restorePointOf(journal), args.scratch);
   if (asBefore !== true) {
     const why =
       `${asBefore}: it may hold part of the re-read, and anything written to it since the run stopped. Nothing was done — ` +
@@ -621,9 +674,16 @@ async function write(bundle: DbBundle, args: Args, rehearsed: Rehearsed, seams: 
     return refuse(`the ledger's write lock could not be taken (${messageOf(error)}) — is the dev server running? Nothing was written`);
   }
   if (!sameFace(ledgerFace(bundle, today), before)) return refuse("the ledger changed after the rehearsal read it — run again");
+  let kept: string;
+  try {
+    kept = keepRestorePoint(args.db, point.path);
+  } catch (error: unknown) {
+    return refuse(`the restore point could not be kept beside the ledger (${messageOf(error)}), so nothing was written`);
+  }
   const journal: Journal = {
     startedAt: new Date().toISOString(),
     restorePoint: point.path,
+    kept,
     archive,
     targets: plan.targets.map((t) => ({
       id: t.id,
@@ -636,6 +696,11 @@ async function write(bundle: DbBundle, args: Args, rehearsed: Rehearsed, seams: 
   try {
     writeJournal(args.db, journal);
   } catch (error: unknown) {
+    try {
+      fs.rmSync(kept, { force: true });
+    } catch {
+      // named by nothing without its journal: the next write replaces it (`keepRestorePoint`)
+    }
     return refuse(`no journal could be written beside the ledger (${messageOf(error)}), so nothing was written`);
   }
 
@@ -715,7 +780,7 @@ function putBack(
     // said first: a run that dies while the restore point goes back leaves a journal that says the ledger may hold part
     tellJournal(args.db, { ...journal, ledger: "may-hold-part" });
     try {
-      ledger = restoreOver(bundle, args.db, restorePoint);
+      ledger = restoreOver(bundle, args.db, restorePointOf(journal));
     } catch (error: unknown) {
       const stuck =
         `the restore point could not be put back (${messageOf(error)}): the ledger may hold part of the re-read — ` +
@@ -726,7 +791,7 @@ function putBack(
   }
   try {
     const back = readsAsBefore(ledger, before, today);
-    console.log(`\n${held ? "ROLLED BACK" : `RESTORED from ${restorePoint}`}${back === true ? " — the ledger is as it was" : ""}`);
+    console.log(`\n${held ? "ROLLED BACK" : `RESTORED from ${restorePointOf(journal)}`}${back === true ? " — the ledger is as it was" : ""}`);
     const unlike = back === true ? [] : [`${back} — compare it with the restore point by hand`];
     for (const u of unlike) console.log(`  ✗ ${u}`);
     // the ledger holds none of the write again

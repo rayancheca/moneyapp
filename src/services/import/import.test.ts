@@ -3411,6 +3411,11 @@ describe("a parser-version re-read that no longer writes an account", () => {
    * its day last (`upsertAnchor`). With no row, no period and no anchor the copy named no account, and went to the bare
    * institution bucket. What it prints stays recorded for as long as it is imported (`printed_lines`) — the review's
    * probes P1–P3, 2026-09-28.
+   *
+   * A re-read of the first download no longer takes the copy's days — it keeps each day citing the statement it cited, a
+   * second download's too (`keepCitations`, reread-citations.ts, 2026-09-29). But every re-read before that took them
+   * (the last to write a day took it), and his ledger holds the copies those re-reads left with nothing: that case is
+   * written here as they left it.
    */
   test.each([
     ["a third download takes its days", () => importStatementFiles(bundle.db, [downloadOf("2026-03 anchor only", 2)])],
@@ -3422,10 +3427,26 @@ describe("a parser-version re-read that no longer writes an account", () => {
       },
     ],
     [
-      "its first download, read again, takes them back",
-      () => {
+      "its first download's re-read took them back, as a re-read did before it kept each citation",
+      async () => {
         threeSectionProfile.version = 2;
-        return importStatementFiles(bundle.db, [statementFor("2026-03 anchor only")]);
+        await importStatementFiles(bundle.db, [statementFor("2026-03 anchor only")]);
+        const reread = liveFile(statementFor("2026-03 anchor only")).id;
+        const copy = liveFile(downloadOf("2026-03 anchor only", 1)).id;
+        // the importer keeps them now: the copy still cites both days it wrote last…
+        expect(contributionOf(copy).anchors.map((a) => a.anchoredOn).sort()).toEqual(["2026-02-28", "2026-03-31"]);
+        // …so the ledger is set as a re-read before `keepCitations` left it: each day on the new read and its period, at
+        // the balance both downloads print
+        const period = periodOf(reread, accountIdOf(ANCHOR_ONLY))!;
+        expect(Object.fromEntries(contributionOf(copy).anchors.map((a) => [a.anchoredOn, a.balanceCents]))).toEqual({
+          "2026-02-28": period.beginningBalanceCents,
+          "2026-03-31": period.endingBalanceCents,
+        });
+        bundle.db
+          .update(balanceAnchors)
+          .set({ importFileId: reread, statementPeriodId: period.id })
+          .where(eq(balanceAnchors.importFileId, copy))
+          .run();
       },
     ],
   ])("the layout migration leaves a second download that lost every anchor beside the first — %s", async (_, after) => {
