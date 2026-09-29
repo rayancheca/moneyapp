@@ -8,8 +8,9 @@
  * (c3b9a59) and the gate re-run. This is that procedure, with a refusal wherever the proof fails:
  *
  *   0. the renderer canary against e2e/baseline-renderer.json: a match is "Nothing to do";
- *   1. guards: a clean tree, HEAD on origin/main (pushed = the last green gate; an unpushed HEAD
- *      is said, and decided at step 3), port 3111 free, a quiet box, and .next built from HEAD
+ *   1. guards: a clean tree, HEAD pushed as origin/main's tip (a push's tip passed the gate; the
+ *      commits a push carried past it did not, and neither did an unpushed one: such a HEAD is
+ *      said, and decided at step 3), port 3111 free, a quiet box, and .next built from HEAD
  *      (built here when it is not);
  *   2. a control run of the whole suite at HEAD, renderer check skipped, every screenshot drawn
  *      into a scratch root rather than e2e/ (E2E_SNAPSHOT_ROOT); a failure gets one re-run of
@@ -19,9 +20,9 @@
  *      renderer drift, only what the gate itself would fail is re-based, asked of Playwright's
  *      own comparator with the gate's options (gate-comparator.ts). The gate is not pixel-exact,
  *      so a file whose pixels moved within its tolerance is left as it is and only counted; one
- *      the comparator cannot judge is re-based as though the gate failed it. On a HEAD not on
- *      origin/main the renderer alone may be recorded, but a twin is copied only under
- *      --allow-unpushed: nothing but diffVerdict would then vouch for it;
+ *      the comparator cannot judge is re-based as though the gate failed it. On a HEAD never
+ *      pushed as origin/main's tip the renderer alone may be recorded, but a twin is copied only
+ *      under --allow-unpushed: nothing but diffVerdict would then vouch for it;
  *   4. --confirm only: the twins of the files the gate fails copied over their baselines (none:
  *      the record alone), the renderer recorded, and the gate run with the check on. Red after
  *      one re-run, an error, SIGINT, SIGTERM or SIGHUP puts every file back as HEAD has it.
@@ -33,7 +34,7 @@
  *
  *     pnpm e2e:rebase-renderer                  # dry run: proves it, writes nothing
  *     pnpm e2e:rebase-renderer --confirm        # re-bases, records, verifies
- *     pnpm e2e:rebase-renderer --allow-unpushed # copy twins on a HEAD not on origin/main
+ *     pnpm e2e:rebase-renderer --allow-unpushed # copy twins on a HEAD no gate passed
  *
  * A hidden `--only <spec> [-g <pattern>]` rehearses the dry run on part of the suite; --confirm
  * refuses it, because a partial control cannot license re-basing the rest.
@@ -56,6 +57,7 @@ import {
 } from "./e2e-renderer/fingerprint";
 import {
   checkGuards,
+  pushProof,
   pushState,
   type GuardLine,
   type PushState,
@@ -361,11 +363,13 @@ async function classify(
     ]);
   }
   if (plan.action === "refuse-unpushed") {
-    refuse(`HEAD is not on origin/main, and ${plan.files.length} baseline(s) would be re-based`, [
+    const n = plan.files.length;
+    refuse(`HEAD was never pushed as origin/main's tip, and ${n} baseline(s) would be re-based`, [
       "No gate has passed HEAD, so nothing proves its committed baselines are its UI, and the",
       "control redrew every screenshot rather than comparing one: only diffVerdict says these",
-      "files moved by the renderer alone. Re-base at origin/main, which passed the gate, and put",
-      "the unpushed commits on top; or pass --allow-unpushed to let diffVerdict's verdicts stand.",
+      "files moved by the renderer alone. Re-base at origin/main's tip, which passed the gate,",
+      "with any commits of HEAD's own on top; or pass --allow-unpushed to let diffVerdict's",
+      "verdicts stand.",
     ]);
   }
   return { plan, counts, total: committed.length };
@@ -512,10 +516,7 @@ async function main(): Promise<void> {
   const snapshotRoot = path.join(scratch, "snapshots");
   const ctx: SuiteContext = { scratch, snapshotRoot, only: args.only };
   const controlRuns = await control(ctx);
-  const proof: PushProof = {
-    pushed: push.onOriginMain === true,
-    allowUnpushed: args.allowUnpushed,
-  };
+  const proof = pushProof(push, args.allowUnpushed);
   const found = await classify(ctx, renderer, args.only !== null, proof);
   if (args.confirm) await confirm(ctx, found, renderer, controlRuns, proof);
   else dryRunSummary(args, found, renderer, scratch);

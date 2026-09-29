@@ -36,7 +36,9 @@ export default defineConfig({
   // E2E_SNAPSHOT_ROOT is set by `pnpm e2e:rebase-renderer` alone, for its control run: every
   // screenshot is read from and written to a scratch root with the same layout as e2e/, so the
   // run can draw the whole suite without --update-snapshots touching one committed baseline.
-  // Unset, Playwright keeps its default layout under e2e/.
+  // Unset, Playwright keeps its default layout under e2e/. A gate (E2E_GATE) refuses it here,
+  // before one screenshot is compared, and any other run it redirects says so first thing in
+  // global-setup: left set in a shell, it would compare every screenshot with the control's.
   ...(snapshotPathTemplate === undefined ? {} : { snapshotPathTemplate }),
   reporter: [["list"]],
   use: {

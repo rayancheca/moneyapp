@@ -2,9 +2,37 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import sharp from "sharp";
-import { afterAll, beforeAll, describe, expect, test } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, test, vi } from "vitest";
 import type { GateFails } from "./gate-comparator";
-import { judgeAll } from "./rebase-run";
+import { gateComparator, judgeAll } from "./rebase-run";
+import { SNAPSHOT_ROOT_ENV } from "./snapshot-root";
+
+describe("gateComparator", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.resetModules();
+  });
+
+  test("reads the gate's own options from playwright.config.ts", async () => {
+    vi.stubEnv("E2E_GATE", "");
+    vi.stubEnv(SNAPSHOT_ROOT_ENV, "");
+    expect(await gateComparator()).toHaveProperty("fails");
+  });
+
+  /**
+   * The command reads playwright.config.ts in its own process, under whatever its shell holds. A
+   * gate's E2E_GATE with a snapshot root left beside it makes the config refuse to load: that is
+   * the comparator unavailable, said once and re-based as though the gate failed each file, never
+   * a crash after an eight-minute control.
+   */
+  test("a config that refuses to load is the comparator unavailable, not a crash", async () => {
+    vi.stubEnv("E2E_GATE", "1");
+    vi.stubEnv(SNAPSHOT_ROOT_ENV, "/tmp/e2e-rebase-renderer-x/snapshots");
+    expect(await gateComparator()).toEqual({
+      unavailable: expect.stringMatching(/^playwright\.config\.ts did not load: .*would point a gate/),
+    });
+  });
+});
 
 /**
  * An 8x8 grey square with one pixel `delta` levels brighter. diffVerdict calls 5 levels renderer

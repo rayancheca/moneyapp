@@ -3,6 +3,7 @@ import { afterEach, describe, expect, test, vi } from "vitest";
 import {
   baselineForTwin,
   baselineKey,
+  describeSnapshotRoot,
   isBaselinePath,
   scratchSnapshotTemplate,
   SNAPSHOT_ROOT_ENV,
@@ -57,6 +58,27 @@ describe("scratchSnapshotTemplate", () => {
     );
   });
 
+  /**
+   * A gate compares with the committed baselines and nothing else. A root left in a shell (say,
+   * exported to run a spec against the control's twins) would point it at the control's drawings,
+   * and it would pass on them. Any non-empty E2E_GATE is a gate, as playwright.config.ts reads it.
+   */
+  test("a gate refuses a root: it compares with e2e/, whatever the shell left set", () => {
+    for (const gate of ["1", "true", "0"]) {
+      const env = { E2E_GATE: gate, [SNAPSHOT_ROOT_ENV]: ROOT };
+      expect(() => scratchSnapshotTemplate(env, REPO), gate).toThrow(
+        `${SNAPSHOT_ROOT_ENV}=${ROOT} would point a gate (E2E_GATE=${gate}) at a scratch root`,
+      );
+    }
+    expect(scratchSnapshotTemplate({ E2E_GATE: "1" }, REPO)).toBeUndefined();
+    expect(scratchSnapshotTemplate({ E2E_GATE: "1", [SNAPSHOT_ROOT_ENV]: "" }, REPO)).toBe(
+      undefined,
+    );
+    expect(scratchSnapshotTemplate({ E2E_GATE: "", [SNAPSHOT_ROOT_ENV]: ROOT }, REPO)).toMatch(
+      /^\/tmp\/e2e-rebase-renderer-abc\/snapshots\//,
+    );
+  });
+
   test("a twin lands at its baseline's path, relative to the root instead of e2e/", () => {
     const template = scratchSnapshotTemplate({ [SNAPSHOT_ROOT_ENV]: ROOT }, REPO)!;
     for (const spec of ["visual.spec.ts", "sub/dir/deep.spec.ts"]) {
@@ -78,6 +100,7 @@ describe("playwright.config.ts", () => {
   });
 
   test("points snapshotPathTemplate at the root only when the root is set", async () => {
+    vi.stubEnv("E2E_GATE", "");
     vi.stubEnv(SNAPSHOT_ROOT_ENV, ROOT);
     const redirected = (await import("../../playwright.config")).default;
     expect(redirected.snapshotPathTemplate).toBe(
@@ -88,6 +111,64 @@ describe("playwright.config.ts", () => {
     vi.stubEnv(SNAPSHOT_ROOT_ENV, "");
     const normal = (await import("../../playwright.config")).default;
     expect("snapshotPathTemplate" in normal).toBe(false);
+  });
+
+  test("a gate with a root set stops at the config, before a screenshot is compared", async () => {
+    vi.stubEnv("E2E_GATE", "1");
+    vi.stubEnv(SNAPSHOT_ROOT_ENV, ROOT);
+    await expect(import("../../playwright.config")).rejects.toThrow(/would point a gate/);
+  });
+});
+
+describe("describeSnapshotRoot", () => {
+  test("no root, no line", () => {
+    expect(describeSnapshotRoot({})).toBeNull();
+    expect(describeSnapshotRoot({ [SNAPSHOT_ROOT_ENV]: "" })).toBeNull();
+  });
+
+  test("a root is said: where screenshots go, and that no committed baseline is checked", () => {
+    const line = describeSnapshotRoot({ [SNAPSHOT_ROOT_ENV]: ROOT })!;
+    expect(line).toContain(`${SNAPSHOT_ROOT_ENV}=${ROOT}`);
+    expect(line).toMatch(/compared with and written to that root, not e2e\//);
+    expect(line).toMatch(/checks no committed baseline/);
+    expect(line).toMatch(/unset it for any other run/);
+  });
+});
+
+/**
+ * Every run honours the root, so every run that does says so, and first: a run stopped part way
+ * through setup has still said it, and nothing else in its log would.
+ */
+describe("e2e/global-setup.ts", () => {
+  afterEach(() => {
+    vi.doUnmock("../quiet-box");
+    vi.restoreAllMocks();
+    vi.unstubAllEnvs();
+    vi.resetModules();
+  });
+
+  async function setupUntilTheLoadCheck(): Promise<unknown[][]> {
+    vi.doMock("../quiet-box", () => ({
+      assertQuietBox: () => {
+        throw new Error("stopped at the load check");
+      },
+    }));
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const { default: globalSetup } = await import("../../e2e/global-setup");
+    await expect(globalSetup()).rejects.toThrow("stopped at the load check");
+    return warn.mock.calls;
+  }
+
+  test("a redirected run says so before anything that can stop it", async () => {
+    vi.stubEnv(SNAPSHOT_ROOT_ENV, ROOT);
+    expect(await setupUntilTheLoadCheck()).toEqual([
+      [describeSnapshotRoot({ [SNAPSHOT_ROOT_ENV]: ROOT })],
+    ]);
+  });
+
+  test("a run that reads e2e/ says nothing about it", async () => {
+    vi.stubEnv(SNAPSHOT_ROOT_ENV, "");
+    expect(await setupUntilTheLoadCheck()).toEqual([]);
   });
 });
 

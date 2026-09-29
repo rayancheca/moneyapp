@@ -4,6 +4,7 @@ import {
   assertRendererMatchesBaselines,
   describeRendererCheck,
 } from "../scripts/e2e-renderer/fingerprint";
+import { describeSnapshotRoot } from "../scripts/e2e-renderer/snapshot-root";
 import { assertQuietBox } from "../scripts/quiet-box";
 import { E2E_FAKE_TODAY, seedE2eDatabase } from "./seed-helpers";
 
@@ -89,6 +90,11 @@ export function bundleStaleness(cwd: string = process.cwd()): BundleStaleness | 
 }
 
 export default async function globalSetup(): Promise<void> {
+  // First, so a run stopped anywhere below has still said it: with E2E_SNAPSHOT_ROOT set, its
+  // screenshots are compared with a scratch root, not e2e/ (playwright.config.ts refuses that
+  // outright for a gate).
+  const redirected = describeSnapshotRoot(process.env);
+  if (redirected !== null) console.warn(redirected);
   const load = assertQuietBox({ suite: "e2e", escapeHatch: "E2E_ALLOW_LOAD" });
   if (load.verdict !== "quiet") {
     console.warn(

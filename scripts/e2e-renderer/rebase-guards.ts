@@ -1,6 +1,6 @@
 import net from "node:net";
 import { assertQuietBox } from "../quiet-box";
-import type { RebaseArgs } from "./rebase-plan";
+import type { PushProof, RebaseArgs } from "./rebase-plan";
 import { git, gitSucceeds, lines } from "./rebase-repo";
 
 /**
@@ -58,61 +58,96 @@ function treeGuards(): GuardLine[] {
   ];
 }
 
-export interface PushState {
-  /** HEAD, short */
-  head: string;
-  /** null when there is no origin/main to compare with */
-  onOriginMain: boolean | null;
-  /** HEAD's commits that origin/main does not have */
-  unpushed: number;
+const ORIGIN_MAIN = "refs/remotes/origin/main";
+
+/**
+ * Where HEAD stands against origin/main. main is pushed only after a green gate, but one push
+ * carries every commit since the last and only its tip was gated: 4e1c1c4..a119119 carried 16,
+ * and between 6d30ef4's UI change and f8daf91, which re-drew its 16 baselines, sat commits on
+ * origin/main whose committed baselines were not their UI.
+ */
+export type PushState = { head: string } & (
+  | { at: "no-origin-main" }
+  /** a commit origin/main has pointed at: now, or before, in this clone's reflog of it */
+  | { at: "a-pushed-tip" }
+  /** on origin/main, but only inside a push: the reflog never names it as the tip */
+  | { at: "inside-a-push" }
+  /** with commits origin/main does not have */
+  | { at: "unpushed"; unpushed: number }
+);
+
+/**
+ * Every commit origin/main has pointed at, as far as this clone's reflog of it goes back (a push
+ * or a fetch logs each move; a ref with no reflog gives its tip alone), and its tip now.
+ */
+function originMainTips(cwd?: string): Set<string> {
+  const now = git(["rev-parse", "--verify", `${ORIGIN_MAIN}^{commit}`], cwd).trim();
+  const logged = git(["log", "--walk-reflogs", "--format=%H", ORIGIN_MAIN, "--"], cwd);
+  return new Set([now, ...lines(logged)]);
 }
 
 export function pushState(cwd?: string): PushState {
   const head = git(["rev-parse", "--short", "HEAD"], cwd).trim();
-  if (!gitSucceeds(["rev-parse", "--verify", "--quiet", "origin/main"], cwd)) {
-    return { head, onOriginMain: null, unpushed: 0 };
+  if (!gitSucceeds(["rev-parse", "--verify", "--quiet", ORIGIN_MAIN], cwd)) {
+    return { head, at: "no-origin-main" };
   }
-  const unpushed = Number(git(["rev-list", "--count", "origin/main..HEAD"], cwd).trim());
-  return { head, onOriginMain: unpushed === 0, unpushed };
+  if (originMainTips(cwd).has(git(["rev-parse", "HEAD"], cwd).trim())) {
+    return { head, at: "a-pushed-tip" };
+  }
+  const unpushed = Number(git(["rev-list", "--count", `${ORIGIN_MAIN}..HEAD`], cwd).trim());
+  return unpushed === 0 ? { head, at: "inside-a-push" } : { head, at: "unpushed", unpushed };
 }
 
 /**
- * Pushed is this project's word for "passed the gate": main is pushed only after a green one, so
- * a pushed HEAD's committed baselines are its UI. An unpushed HEAD is never refused here, because
- * a missing record, a canary edit or a Geist bump is always an unpushed commit, and until the
- * renderer is recorded no gate can pass for it to be pushed. What it may do is decided after the
- * control (planRebase): record the renderer alone, which the control proves when the gate's own
- * comparator passes every baseline, or copy twins, which only --allow-unpushed permits. The
- * control proves no baseline itself: it redraws every screenshot rather than comparing one.
+ * What planRebase is told, from the same state the guard line reads: only a tip origin/main has
+ * held passed a gate, so only such a HEAD vouches for its committed baselines.
+ */
+export function pushProof(state: PushState, allowUnpushed: boolean): PushProof {
+  return { pushed: state.at === "a-pushed-tip", allowUnpushed };
+}
+
+/**
+ * A tip origin/main has held is this project's "passed the gate": main is pushed only after a
+ * green one, so that commit's committed baselines are its UI. Any other HEAD is never refused
+ * here, because a missing record, a canary edit or a Geist bump is always an unpushed commit, and
+ * until the renderer is recorded no gate can pass for it to be pushed. What it may do is decided
+ * after the control (planRebase): record the renderer alone, which the control proves when the
+ * gate's own comparator passes every baseline, or copy twins, which only --allow-unpushed
+ * permits. The control proves no baseline itself: it redraws every screenshot rather than
+ * comparing one.
  */
 export function pushedGuard(state: PushState, allowUnpushed: boolean): GuardLine {
   const { head } = state;
-  const what = "HEAD is on origin/main";
-  if (state.onOriginMain === null) {
+  const what = "HEAD was pushed as origin/main's tip";
+  if (state.at === "no-origin-main") {
     return { mark: "✗", what, saw: "there is no origin/main to compare with" };
   }
-  if (state.onOriginMain) {
-    return { mark: "✓", what, saw: `${head} was pushed, so it passed the gate` };
+  if (state.at === "a-pushed-tip") {
+    return { mark: "✓", what, saw: `${head} was origin/main's tip, so it passed the gate` };
   }
-  const commits = `${state.unpushed} commit${state.unpushed === 1 ? "" : "s"} not on origin/main`;
+  const where =
+    state.at === "inside-a-push"
+      ? `${head} is on origin/main, but a push carried it past: this clone's reflog of ` +
+        "origin/main never names it as the tip, and a push's tip is all a gate ran at"
+      : `${head} has ${state.unpushed} commit${state.unpushed === 1 ? "" : "s"} not on origin/main`;
+  const not = "HEAD was NOT pushed as origin/main's tip";
   if (allowUnpushed) {
     return {
       mark: "⚠",
-      what: "HEAD is NOT on origin/main",
+      what: not,
       saw:
-        `${head} has ${commits}; --allow-unpushed accepts it. Nothing proves the committed ` +
-        "baselines are its UI, and the control redraws every screenshot rather than comparing " +
-        "one: diffVerdict's content check is all that stands between a UI change in those " +
-        "commits and a re-base",
+        `${where}; --allow-unpushed accepts it. Nothing proves the committed baselines are its ` +
+        "UI, and the control redraws every screenshot rather than comparing one: diffVerdict's " +
+        "content check is all that stands between a UI change no gate saw and a re-base",
     };
   }
   return {
     mark: "⚠",
-    what: "HEAD is NOT on origin/main",
+    what: not,
     saw:
-      `${head} has ${commits}, so nothing proves the committed baselines are its UI. Recording ` +
-      "the renderer alone goes ahead, proved by the control when the gate's own comparator " +
-      "passes every baseline; copying a twin over one is refused unless --allow-unpushed",
+      `${where}, so nothing proves the committed baselines are its UI. Recording the renderer ` +
+      "alone goes ahead, proved by the control when the gate's own comparator passes every " +
+      "baseline; copying a twin over one is refused unless --allow-unpushed",
   };
 }
 

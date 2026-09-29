@@ -33,12 +33,17 @@ export const USAGE = [
   "usage: pnpm e2e:rebase-renderer [--confirm] [--allow-unpushed]",
   "  (no flag)          dry run: prove the drift is the renderer, write nothing",
   "  --confirm          re-base the drift the gate fails, record the renderer, re-run the gate",
-  "  --allow-unpushed   on a HEAD not on origin/main, copy twins on diffVerdict's word alone",
+  "  --allow-unpushed   on a HEAD no gate passed, copy twins on diffVerdict's word alone",
 ].join("\n");
 
 export class UsageError extends Error {}
 
-/** `--only <spec>` / `--only=<spec>` and `-g <pattern>` take a value; the rest are switches. */
+/**
+ * `--only <spec>` / `--only=<spec>` and `-g <pattern>` take a value; the rest are switches, which
+ * refuse one. A switch is on by being there, so `--confirm=false` read as on would write the
+ * baselines of someone who spelled out a dry run, and `--allow-unpushed=false` would waive the
+ * guard for someone who spelled out keeping it.
+ */
 export function parseRebaseArgs(argv: readonly string[]): RebaseArgs {
   let confirm = false;
   let allowUnpushed = false;
@@ -57,8 +62,16 @@ export function parseRebaseArgs(argv: readonly string[]): RebaseArgs {
       }
       return value;
     };
-    if (flag === "--confirm") confirm = true;
-    else if (flag === "--allow-unpushed") allowUnpushed = true;
+    const switchedOn = (): true => {
+      if (eq !== -1) {
+        throw new UsageError(
+          `${flag} is a switch: it takes no value (${arg}); leave it out for off`,
+        );
+      }
+      return true;
+    };
+    if (flag === "--confirm") confirm = switchedOn();
+    else if (flag === "--allow-unpushed") allowUnpushed = switchedOn();
     else if (flag === "--only") {
       if (spec !== null) throw new UsageError("--only was given twice");
       spec = takeValue();
@@ -222,7 +235,7 @@ export function tally(judged: readonly Judged[]): Tally {
 export type Plan =
   | { action: "refuse-unpaired"; missing: string[]; extra: string[] }
   | { action: "refuse-content"; content: Judged[] }
-  /** HEAD is not on origin/main, so only --allow-unpushed may copy these twins */
+  /** HEAD was never pushed as origin/main's tip, so only --allow-unpushed may copy these twins */
   | { action: "refuse-unpushed"; files: string[] }
   /**
    * copy the twins of `files` over their baselines (none: write the record only), then verify;
@@ -234,9 +247,12 @@ export type RebasePlan = Extract<Plan, { action: "rebase" }>;
 
 /** What vouches for HEAD's committed baselines being its UI, before any verdict is read. */
 export interface PushProof {
-  /** HEAD is on origin/main, so it passed the gate */
+  /**
+   * HEAD was origin/main's tip, so it passed the gate. Being on origin/main is not enough: a push
+   * carries every commit since the last, and only its tip was gated (pushProof).
+   */
   pushed: boolean;
-  /** --allow-unpushed: let diffVerdict's verdicts stand alone for an unpushed HEAD */
+  /** --allow-unpushed: let diffVerdict's verdicts stand alone for a HEAD no gate passed */
   allowUnpushed: boolean;
 }
 
@@ -245,10 +261,11 @@ export interface PushProof {
  * verdict, refuses the lot, whatever the gate would say of it. Only then does the gate's answer
  * pick which renderer-only files are re-based.
  *
- * A HEAD not on origin/main passed no gate, so nothing proves its committed baselines are its UI,
- * and the control, which redraws every screenshot, proves none. The renderer alone may still be
- * recorded: when the gate's own comparator passes every baseline the control drew, that is HEAD
- * passing the gate here. Copying a twin rests on diffVerdict alone, so it needs --allow-unpushed.
+ * A HEAD never pushed as origin/main's tip passed no gate (one on origin/main that a push carried
+ * past is no exception), so nothing proves its committed baselines are its UI, and the control,
+ * which redraws every screenshot, proves none. The renderer alone may still be recorded: when the
+ * gate's own comparator passes every baseline the control drew, that is HEAD passing the gate
+ * here. Copying a twin rests on diffVerdict alone, so it needs --allow-unpushed.
  */
 export function planRebase(
   verdict: RendererVerdict,
@@ -450,7 +467,7 @@ export interface CommitFacts {
   recorded: RendererRecord | null;
   current: RendererRecord;
   head: { sha: string; subject: string };
-  /** HEAD was on origin/main; when not, the commit says what vouched for it instead */
+  /** HEAD was pushed as origin/main's tip; when not, the commit says what vouched for it instead */
   pushed: boolean;
   control: { passed: number; rerun: boolean };
   gate: { passed: number; rerun: boolean };
@@ -518,12 +535,14 @@ function gateParagraph(counts: Tally): string | null {
 }
 
 /**
- * What vouched for a HEAD not on origin/main, which no gate had passed; null for a pushed one.
- * A copy happens there only under --allow-unpushed (planRebase).
+ * What vouched for a HEAD never pushed as origin/main's tip, which no gate had passed; null for
+ * one that was. The words hold both for commits origin/main lacks and for one a push carried
+ * past. A copy happens there only under --allow-unpushed (planRebase).
  */
 function unpushedParagraph(facts: CommitFacts): string | null {
   if (facts.pushed) return null;
-  const at = `${facts.head.sha.slice(0, 7)} was not on origin/main, so no gate had passed it`;
+  const sha = facts.head.sha.slice(0, 7);
+  const at = `${sha} was never pushed as origin/main's tip, so no gate had passed it`;
   const n = facts.plan.files.length;
   if (n === 0) {
     return (

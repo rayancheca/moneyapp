@@ -3,7 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { decodePng, diffVerdict, type DiffVerdict } from "./diff-verdict";
 import { RENDERER_CHECK_ENV } from "./fingerprint";
-import { askGate, loadGateComparator, type GateFails } from "./gate-comparator";
+import { askGate, loadGateComparator, type GateFails, type GateOptions } from "./gate-comparator";
 import type { Judged, RebaseArgs } from "./rebase-plan";
 import { SNAPSHOT_ROOT_ENV } from "./snapshot-root";
 import { outcomeFromReport, type Attempt, type SuiteOutcome } from "./suite-run";
@@ -117,18 +117,32 @@ export function walkFiles(root: string, dir: string = root): string[] {
   });
 }
 
-/**
- * The gate's own screenshot options, read from playwright.config.ts so that asking "would the
- * gate fail this?" uses exactly what the gate uses; or why the comparator cannot be reached.
- */
-export async function gateComparator(): Promise<{ fails: GateFails } | { unavailable: string }> {
+async function gateOptions(): Promise<GateOptions> {
   const config = (await import("../../playwright.config")).default;
   const shot = config.expect?.toHaveScreenshot ?? {};
-  return loadGateComparator({
+  return {
     maxDiffPixels: shot.maxDiffPixels,
     maxDiffPixelRatio: shot.maxDiffPixelRatio,
     threshold: shot.threshold,
-  });
+  };
+}
+
+/**
+ * The gate's own screenshot options, read from playwright.config.ts so that asking "would the
+ * gate fail this?" uses exactly what the gate uses; or why the comparator cannot be reached.
+ * The config is read in this process, under whatever the shell left set, and refuses to load for
+ * a gate's E2E_GATE beside a snapshot root (snapshot-root.ts): that is the comparator unavailable
+ * too, never a crash after the control.
+ */
+export async function gateComparator(): Promise<{ fails: GateFails } | { unavailable: string }> {
+  let options: GateOptions;
+  try {
+    options = await gateOptions();
+  } catch (error) {
+    const why = error instanceof Error ? error.message.split("\n")[0] : String(error);
+    return { unavailable: `playwright.config.ts did not load: ${why}` };
+  }
+  return loadGateComparator(options);
 }
 
 const BYTE_IDENTICAL: DiffVerdict = {

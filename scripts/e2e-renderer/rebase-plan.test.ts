@@ -52,6 +52,27 @@ describe("parseRebaseArgs", () => {
     expect(() => parseRebaseArgs(["--only", spec, "--confirm"])).toThrow(/cannot be combined/);
   });
 
+  /**
+   * A switch takes no value. Read as "on" whatever the value said, `--confirm=false` wrote the
+   * baselines of someone who spelled out a dry run, and `--allow-unpushed=false` waived the pushed
+   * guard for someone who spelled out keeping it.
+   */
+  test("a switch given a value is a usage error, never the switch turned on", () => {
+    for (const arg of [
+      "--confirm=false",
+      "--confirm=no",
+      "--confirm=0",
+      "--confirm=",
+      "--confirm=true",
+      "--allow-unpushed=false",
+      "--allow-unpushed=no",
+      "--allow-unpushed=",
+    ]) {
+      expect(() => parseRebaseArgs([arg]), arg).toThrow(UsageError);
+      expect(() => parseRebaseArgs([arg]), arg).toThrow(/is a switch: it takes no value/);
+    }
+  });
+
   test("anything it does not know, or a flag missing its value, is a usage error", () => {
     for (const argv of [
       ["--force"],
@@ -174,7 +195,7 @@ const unknown = (baseline: string): Judged =>
 const full = (committed: readonly string[]) =>
   pairBaselines(committed, committed.map((b) => b.slice("e2e/".length)), false);
 
-/** HEAD on origin/main: it passed the gate, so the committed baselines are its UI. */
+/** HEAD was origin/main's tip: it passed the gate, so the committed baselines are its UI. */
 const PUSHED = { pushed: true, allowUnpushed: false };
 const UNPUSHED = { pushed: false, allowUnpushed: false };
 
@@ -367,11 +388,12 @@ describe("planRebase", () => {
 });
 
 /**
- * A HEAD not on origin/main has passed no gate, so nothing proves its committed baselines are its
- * UI. Recording the renderer needs no such proof: the gate's own comparator passing every baseline
- * is the proof, drawn by the control at HEAD. Copying a twin does, and that needs --allow-unpushed.
+ * A HEAD never pushed as origin/main's tip has passed no gate, so nothing proves its committed
+ * baselines are its UI. Recording the renderer needs no such proof: the gate's own comparator
+ * passing every baseline is the proof, drawn by the control at HEAD. Copying a twin does, and that
+ * needs --allow-unpushed.
  */
-describe("planRebase on a HEAD not on origin/main", () => {
+describe("planRebase on a HEAD never pushed as origin/main's tip", () => {
   test("the record alone goes ahead: after the merge that brings this command, its run", () => {
     const plan = planRebase("unrecorded", full([A, B]), tally([same(A), passes(B)]), UNPUSHED);
     expect(plan).toEqual({ action: "rebase", files: [], tolerated: [B], bootstrap: true });
@@ -622,14 +644,18 @@ describe("the words", () => {
     expect(bootstrap).not.toContain("Only what the gate itself fails");
   });
 
-  /** The commit is the lasting record of what proved it, so an unpushed HEAD is said there. */
-  test("a HEAD not on origin/main is said in the commit, with what vouched for it instead", () => {
+  /**
+   * The commit is the lasting record of what proved it, so a HEAD no gate passed is said there,
+   * in words true both of one with commits origin/main lacks and of one a push carried past.
+   */
+  test("a HEAD never pushed as origin/main's tip is said in the commit, with what vouched", () => {
     const recordOnly = prose(
       commitMessage(
         facts([same(A), passes(B)], { recorded: null, verdict: "unrecorded", pushed: false }),
       ),
     );
-    expect(recordOnly).toContain("c3b9a59 was not on origin/main");
+    expect(recordOnly).toContain("c3b9a59 was never pushed as origin/main's tip");
+    expect(recordOnly).not.toContain("was not on origin/main");
     expect(recordOnly).toContain("no baseline was copied");
     const allowed = prose(commitMessage(facts([fails(A), fails(B)], { pushed: false })));
     expect(allowed).toContain("--allow-unpushed");
