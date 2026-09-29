@@ -562,8 +562,12 @@ function engineCategoryColumns(carry: CarryAttributes): Partial<typeof transacti
  * 🔴 Only a hand category with an id travelled. A round trip of Statement_092026_4208.pdf brought KnockBox AI LLC
  * (−$2.20) back as NULL/NULL, into categorization, transfer detection and Claude's queue, while the confirmation had
  * counted it as given back (the review of uc/final-integrate, 2026-09-16, on a copy of the real ledger).
+ *
+ * The one category a re-read ALWAYS hands to the row that replaces this one (`applyCarry`, `fillFromCarry`). Exported
+ * so a write that pins a category against a re-read asks this rule rather than restating it
+ * (scripts/fordham-aid-pin.ts).
  */
-function isHandCategory(row: Pick<CarryAttributes, "categorizationSource">): boolean {
+export function isHandCategory(row: Pick<CarryAttributes, "categorizationSource">): boolean {
   return row.categorizationSource === "user";
 }
 

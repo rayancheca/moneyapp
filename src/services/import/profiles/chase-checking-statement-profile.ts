@@ -55,6 +55,22 @@ function stripMarginIdentifier(text: string): string {
   return MARGIN_ID_RE.test(tail) ? text.slice(0, Math.max(cut, 0)) : text;
 }
 
+/**
+ * What this parser reads for a line that v1 — before the rule above — stored with the identifier folded in: the stored
+ * words less every whole identifier token, wherever the fold left it — at the end ("… Card 7782 <id>") or mid-way, when
+ * the identifier sat on a line of its own between a description and its wrapped card number ("… NY Card <id> 7782",
+ * the live ledger's 2023-04-11 row). `stripMarginIdentifier` cuts it off a printed line before the fold; a stored row
+ * carries the folded text, so a comparison of the two reads (scripts/probe-chase-redrop.ts) asks this rather than a
+ * second copy of MARGIN_ID_RE. A 20-digit run inside a longer token (an IBAN, an Apple Pay reference) is not the
+ * identifier and stays.
+ */
+export function withoutMarginIdentifier(description: string): string {
+  return description
+    .split(" ")
+    .filter((token) => !MARGIN_ID_RE.test(token))
+    .join(" ");
+}
+
 function toIso(year: number, monthNum: number, day: number): string {
   const iso = `${year}-${String(monthNum).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
   if (!isValidIsoDate(iso)) throw new ParseError(PROFILE_ID, `Invalid date ${iso}`);
@@ -197,14 +213,15 @@ export const chaseCheckingStatementPdf: ParserProfile = {
    * this very statement's archived byte-copy at v2 is 1 parsed, 0 inserted, 58 skippedOwned, $0.00 moved.
    *
    * The 13 live rows that still carry the margin digits are corrected by ONE run and only that one: re-dropping the
-   * archived byte-copies the ledger itself holds, data/statements/chase-checking-3522 (76 files, the 75 the ledger
-   * records at v1). Measured on a python read-only copy of the real ledger, 2026-09-22 — 75 parsed, 1,536 inserted,
-   * 0 quarantined, active rows 10,320 → 10,320, net worth $110,914.77 → $110,914.77, rows carrying a 20-digit run
-   * 55 → 42 — 16 ledger lines move: those 13 descriptions, and three Fordham rows the merchant map re-derives
-   * Financial Aid → Education. Nothing else, and nothing crosses to another charge (`claimCarry`). That run is the
-   * owner's call to make and a step of its own, behind its own restore point — `pnpm import-statements
-   * data/statements/chase-checking-3522 --confirm`, after `pnpm trial-import` on the same folder — never a side
-   * effect of an upload.
+   * byte-copies of the 75 statements the ledger records at v1, which it archived in data/statements/chase-checking-3522.
+   * Measured on a python read-only copy of the real ledger, 2026-09-22 — 75 parsed, 1,536 inserted, 0 quarantined,
+   * active rows 10,320 → 10,320, net worth $110,914.77 → $110,914.77, rows carrying a 20-digit run 55 → 42 — 16 ledger
+   * lines move: those 13 descriptions, and three Fordham rows the merchant map re-derives Financial Aid → Education.
+   * Nothing else, and nothing crosses to another charge (`claimCarry`). That run is the owner's call to make and a step
+   * of its own, behind its own restore point, never a side effect of an upload. Its steps — the three Fordham rows
+   * pinned first, so only the 13 descriptions move, and the PDFs staged under the names the ledger recorded, never
+   * imported from the archive folder itself — are the header of scripts/pin-fordham-aid-2026-09-28.ts, and nowhere
+   * else.
    */
   version: 2,
   matches: (f) => f.format === "pdf",

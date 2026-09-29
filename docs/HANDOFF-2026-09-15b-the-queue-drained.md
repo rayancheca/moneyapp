@@ -236,12 +236,16 @@ Second round (memory `moneyapp-owner-decisions-2026-09-15`, same file):
    or (b) re-propose them against the new income (same rule, bigger pool) — say which and it is one guarded write.
 23. ❓ OPEN — **the 13 Chase rows that still carry the statement's margin digits.** The parser fix (below) cleans
    what it READS, but those rows came from 27 older byte-copies of the same months, imported at v1, whose sha is
-   not the archive copy. The ONLY run that corrects them is re-dropping `data/statements/chase-checking-3522/`
-   (75 files). Measured on a copy with the fix in place: **16 ledger lines move** — the 13 descriptions plus three
-   Fordham rows the merchant map re-derives `Financial Aid → Education` — 0 quarantined, net worth unchanged at
-   $110,914.77, nothing crossed, ledger-check byte-identical. Cosmetic side effect: those files' recorded names
-   gain their sha prefix. (a) run it (trial-import first, then import, behind a restore point), or (b) leave the
-   13 descriptions as they are.
+   not the archive copy. The ONLY run that corrects them re-drops the 75 statement PDFs the ledger archived in
+   `data/statements/chase-checking-3522/`. Measured on a copy with the fix in place: **16 ledger lines move** — the
+   13 descriptions plus three Fordham rows the merchant map re-derives `Financial Aid → Education` — 0 quarantined,
+   net worth unchanged at $110,914.77, nothing crossed, ledger-check byte-identical. (a) run it — **the steps, in
+   order, are the header of `scripts/pin-fordham-aid-2026-09-28.ts`**: pin the three Fordham deposits first (then
+   only the 13 descriptions move), re-drop the PDFs staged under the names the ledger recorded, then `ledger-check`
+   and `scripts/probe-chase-redrop.ts`; or (b) leave the 13 descriptions as they are. ⛔ Never an import of the
+   archive folder itself: measured 2026-09-28 on a copy of the ledger and of the archive, it moves the same money
+   but fails on the folder's activity CSV and writes 76 files into the archive — each PDF again as
+   `<sha>-<sha>-<name>`, the CSV into `data/statements/chase/` — which restoring the ledger does not remove.
 24. ❓ OPEN (from the identity fix's reviewer, MEDIUM) — **13 Chase Sapphire charges and 4 daily balances still
    depend on which file was read first.** The fix stops a re-read absorbing a line whose transaction day
    disagrees; full order-independence would mean letting a later, better-dated read RE-DATE a charge an earlier
