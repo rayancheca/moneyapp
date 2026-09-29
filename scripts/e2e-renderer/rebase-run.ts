@@ -3,7 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { decodePng, diffVerdict, type DiffVerdict } from "./diff-verdict";
 import { RENDERER_CHECK_ENV } from "./fingerprint";
-import { loadGateComparator, type GateFails } from "./gate-comparator";
+import { askGate, loadGateComparator, type GateFails } from "./gate-comparator";
 import type { Judged, RebaseArgs } from "./rebase-plan";
 import { SNAPSHOT_ROOT_ENV } from "./snapshot-root";
 import { outcomeFromReport, type Attempt, type SuiteOutcome } from "./suite-run";
@@ -144,12 +144,18 @@ const BYTE_IDENTICAL: DiffVerdict = {
   },
 };
 
-/** Every pair through diffVerdict; a renderer-only one is also put to the gate's comparator. */
+/**
+ * Every pair through diffVerdict. A renderer-only one is also put to the gate's comparator, whose
+ * answer decides whether it is re-based (withinGateTolerance in rebase-plan.ts). With no
+ * comparator (`gateFails` null, which the caller says once) every such answer is "unknown"; a
+ * comparator that throws on one pair makes that one "unknown", and `unjudged` hears why.
+ */
 export async function judgeAll(
   pairs: readonly { baseline: string; twin: string }[],
   root: string,
   gateFails: GateFails | null,
   progress: (done: number, of: number) => void,
+  unjudged: (baseline: string, why: string) => void,
 ): Promise<Judged[]> {
   const judged: Judged[] = [];
   for (const { baseline, twin } of pairs) {
@@ -158,9 +164,12 @@ export async function judgeAll(
     const verdict = committed.equals(drawn)
       ? BYTE_IDENTICAL
       : diffVerdict(await decodePng(committed), await decodePng(drawn));
-    const asked = verdict.verdict === "renderer-only" && gateFails !== null;
-    const gate = asked ? (gateFails(committed, drawn) ? "fails" : "passes") : undefined;
-    judged.push(gate === undefined ? { baseline, verdict } : { baseline, verdict, gate });
+    if (verdict.verdict !== "renderer-only") judged.push({ baseline, verdict });
+    else {
+      const asked = gateFails === null ? null : askGate(gateFails, committed, drawn);
+      if (asked?.why !== undefined) unjudged(baseline, asked.why);
+      judged.push({ baseline, verdict, gate: asked?.answer ?? "unknown" });
+    }
     if (judged.length % 25 === 0) progress(judged.length, pairs.length);
   }
   return judged;

@@ -3,18 +3,21 @@
  * each can be tested alone: what the flags mean, which baseline pairs with which twin, what the
  * verdicts add up to, and the words the command refuses or commits with.
  *
- * The rule it enforces is the one the 2026-09-28 session followed by hand: a baseline is only
- * re-based when EVERY committed baseline was drawn again at a green HEAD and each one came back
+ * The rule it enforces is the one the 2026-09-28 session followed by hand: nothing is re-based
+ * unless EVERY committed baseline was drawn again at a green HEAD and each one came back
  * identical or renderer drift. One changed glyph, one missing file, one extra file, and nothing
- * is written.
+ * is written. Then only the drift the gate itself fails is re-based (withinGateTolerance): a
+ * file whose pixels moved within the gate's tolerance is counted and left as it is.
  */
 import type { DiffVerdict } from "./diff-verdict";
 import {
+  BASELINE_RENDERER_PATH,
   macosLabel,
   oneLineRenderer,
   type RendererRecord,
   type RendererVerdict,
 } from "./fingerprint";
+import type { GateAnswer } from "./gate-comparator";
 import { baselineForTwin, baselineKey, twinKey } from "./snapshot-root";
 
 /* ── Arguments ─────────────────────────────────────────────────────────────────────────────── */
@@ -29,7 +32,7 @@ export interface RebaseArgs {
 export const USAGE = [
   "usage: pnpm e2e:rebase-renderer [--confirm] [--allow-unpushed]",
   "  (no flag)          dry run: prove the drift is the renderer, write nothing",
-  "  --confirm          re-base the renderer-only baselines, record the renderer, re-run the gate",
+  "  --confirm          re-base the drift the gate fails, record the renderer, re-run the gate",
   "  --allow-unpushed   accept a HEAD that is not on origin/main, and say so",
 ].join("\n");
 
@@ -126,8 +129,24 @@ export function pairBaselines(
 export interface Judged {
   baseline: string;
   verdict: DiffVerdict;
-  /** what the gate's own comparator says of the pair; absent when it could not be asked */
-  gate?: "fails" | "passes";
+  /**
+   * What the gate's own comparator says of a renderer-only pair ("unknown" when it could not be
+   * asked). Absent on the verdicts it is not asked about: identical, and content, which refuses
+   * whatever the gate would say.
+   */
+  gate?: GateAnswer;
+}
+
+/**
+ * THE RE-BASE RULE for renderer drift: a renderer-only file is re-based when the gate itself
+ * would fail it, and left as it is when the gate passes it, its pixels having moved within the
+ * tolerance the gate has always had (see gate-comparator.ts). One the comparator could not judge,
+ * or was never asked about, is re-based as though the gate failed it; never the reverse. Leaving
+ * a file the gate does fail would turn the verifying gate red and undo the whole re-base, while
+ * copying one it passes only redraws renderer drift with the renderer the record names.
+ */
+export function withinGateTolerance(judged: Judged): boolean {
+  return judged.verdict.verdict === "renderer-only" && judged.gate === "passes";
 }
 
 export interface InkMargin {
@@ -141,13 +160,15 @@ export interface Tally {
   identical: Judged[];
   rendererOnly: Judged[];
   content: Judged[];
-  /** over the renderer-only pairs; null when there are none */
+  /** the renderer-only files a re-base copies: the gate fails them, or could not judge them */
+  toRebase: Judged[];
+  /** the renderer-only files the gate passes: moved within its tolerance, left as they are */
+  tolerated: Judged[];
+  /** over all the renderer-only pairs; null when there are none */
   medianChangedFraction: number | null;
   worst: Judged | null;
   /** the renderer-only pair that came nearest an ink limit */
   closest: InkMargin | null;
-  /** how many renderer-only pairs the gate itself fails; null when any went unasked */
-  gateFails: number | null;
 }
 
 /** "ink-fine 0.0982 <= 0.18 at (12,40)" — the line diffVerdict writes for every ink scale. */
@@ -184,15 +205,15 @@ export function tally(judged: readonly Judged[]): Tally {
       (best, m) => (best === null || m.value / m.limit > best.value / best.limit ? m : best),
       null,
     );
-  const asked = rendererOnly.every((j) => j.gate !== undefined);
   return {
     identical: of("identical"),
     rendererOnly,
     content: of("content"),
+    toRebase: rendererOnly.filter((j) => !withinGateTolerance(j)),
+    tolerated: rendererOnly.filter(withinGateTolerance),
     medianChangedFraction: median(rendererOnly.map(fraction)),
     worst,
     closest,
-    gateFails: asked ? rendererOnly.filter((j) => j.gate === "fails").length : null,
   };
 }
 
@@ -201,16 +222,31 @@ export function tally(judged: readonly Judged[]): Tally {
 export type Plan =
   | { action: "refuse-unpaired"; missing: string[]; extra: string[] }
   | { action: "refuse-content"; content: Judged[] }
-  /** copy these twins over their baselines (none: write the record only), then verify */
-  | { action: "rebase"; files: string[]; bootstrap: boolean };
+  /**
+   * copy the twins of `files` over their baselines (none: write the record only), then verify;
+   * `tolerated` moved within the gate's tolerance and are left as they are
+   */
+  | { action: "rebase"; files: string[]; tolerated: string[]; bootstrap: boolean };
 
+export type RebasePlan = Extract<Plan, { action: "rebase" }>;
+
+/**
+ * Every verdict counts before any file is chosen: a missing or extra twin, or one content
+ * verdict, refuses the lot, whatever the gate would say of it. Only then does the gate's answer
+ * pick which renderer-only files are re-based.
+ */
 export function planRebase(verdict: RendererVerdict, pairing: Pairing, counts: Tally): Plan {
   if (pairing.missing.length > 0 || pairing.extra.length > 0) {
     return { action: "refuse-unpaired", missing: pairing.missing, extra: pairing.extra };
   }
   if (counts.content.length > 0) return { action: "refuse-content", content: counts.content };
-  const files = counts.rendererOnly.map((j) => j.baseline);
-  return { action: "rebase", files, bootstrap: verdict === "unrecorded" && files.length === 0 };
+  const files = counts.toRebase.map((j) => j.baseline);
+  return {
+    action: "rebase",
+    files,
+    tolerated: counts.tolerated.map((j) => j.baseline),
+    bootstrap: verdict === "unrecorded" && files.length === 0,
+  };
 }
 
 /* ── Words ─────────────────────────────────────────────────────────────────────────────────── */
@@ -219,19 +255,57 @@ export function percent(fraction: number): string {
   return `${(fraction * 100).toFixed(2)}%`;
 }
 
+/** A count the way the house writes one: 1,234. */
+const num = (n: number) => n.toLocaleString("en-US");
+
 function plural(n: number, one: string, many = `${one}s`): string {
-  return `${n.toLocaleString("en-US")} ${n === 1 ? one : many}`;
+  return `${num(n)} ${n === 1 ? one : many}`;
 }
+
+/** "is" or "are", "it" or "them", "it is" or "they are": the words that agree with a count. */
+const isAre = (n: number) => (n === 1 ? "is" : "are");
+const itThem = (n: number) => (n === 1 ? "it" : "them");
+const asTheyAre = (n: number) => (n === 1 ? "as it is" : "as they are");
 
 function marginLine(m: InkMargin): string {
   const under = (m.limit / m.value).toFixed(2);
   return `${m.scale} ${m.value.toFixed(4)} of ${m.limit} (${under}x under)`;
 }
 
+/** How the gate's own comparator split the renderer-only files. */
+function gateSplit(counts: Tally): { failing: number; unknown: number; tolerated: number } {
+  const failing = counts.toRebase.filter((j) => j.gate === "fails").length;
+  return { failing, unknown: counts.toRebase.length - failing, tolerated: counts.tolerated.length };
+}
+
+/** A file the gate passes is counted in the report, never listed: this is its line. */
+export function toleratedLine(n: number): string {
+  return `${num(n)} moved within the gate's tolerance, left ${asTheyAre(n)}`;
+}
+
+/**
+ * The renderer-only files by the gate's own answer, a line a kind that has any: the ones it
+ * fails and the ones it could not judge are re-based, the ones it passes are left as they are.
+ * The gate is not pixel-exact (see gate-comparator.ts), so on a quiet update that last kind can
+ * be every renderer-only file there is.
+ */
+export function gateLines(counts: Tally): string[] {
+  const { failing, unknown, tolerated } = gateSplit(counts);
+  const couldNot =
+    `${num(unknown)} the gate's comparator could not judge: re-based as though the gate ` +
+    `failed ${itThem(unknown)}`;
+  return [
+    ...(failing === 0 ? [] : [`${plural(failing, "fails", "fail")} the gate itself: re-based`]),
+    ...(unknown === 0 ? [] : [couldNot]),
+    ...(tolerated === 0 ? [] : [toleratedLine(tolerated)]),
+  ];
+}
+
 export function describeTally(counts: Tally, notRun: number): string[] {
   const lines = [
     `identical      ${counts.identical.length}`,
     `renderer-only  ${counts.rendererOnly.length}`,
+    ...gateLines(counts).map((line) => `  ${line}`),
     `content        ${counts.content.length}`,
   ];
   if (counts.worst !== null && counts.medianChangedFraction !== null) {
@@ -243,40 +317,35 @@ export function describeTally(counts: Tally, notRun: number): string[] {
   if (counts.closest !== null) {
     lines.push(`closest to a limit: ${marginLine(counts.closest)} in ${counts.closest.baseline}`);
   }
-  const gate = gateSentence(counts);
-  if (gate !== null) lines.push(gate);
   if (notRun > 0) {
     lines.push(`${plural(notRun, "committed baseline")} outside this rehearsal, not judged`);
   }
   return lines;
 }
 
-/**
- * The gate is not pixel-exact (see gate-comparator.ts), so a renderer-only file may be one it
- * already passes. Said, so that a re-base touching more files than the gate failed is explained.
- */
-export function gateSentence(counts: Tally): string | null {
-  const n = counts.rendererOnly.length;
-  if (n === 0 || counts.gateFails === null) return null;
-  const tolerated = n - counts.gateFails;
-  if (tolerated === 0) {
-    return n === 1
-      ? "the gate itself fails the one renderer-only file"
-      : `the gate itself fails all ${n} renderer-only files`;
-  }
-  return (
-    `the gate itself fails ${counts.gateFails} of the ${n} renderer-only files; it passes the ` +
-    `other ${tolerated} under Playwright's colour threshold, and they are re-based too, so ` +
-    "every baseline is exactly what the recorded renderer draws"
-  );
+/** What --confirm does, for the dry run to say: copies, leaves, records, then verifies. */
+export function describePlan(plan: RebasePlan, current: RendererRecord): string[] {
+  const n = plan.files.length;
+  const left = plan.tolerated.length;
+  const bootstrap = plan.bootstrap ? " (the bootstrap: nothing had been recorded)" : "";
+  const over = n === 1 ? "its baseline" : "their baselines";
+  const leave = `leave the ${num(left)} that moved within the gate's tolerance ${asTheyAre(left)};`;
+  return [
+    n === 0
+      ? `copy no baseline, and write ${BASELINE_RENDERER_PATH}${bootstrap};`
+      : `copy ${plural(n, "twin")} over ${over}, and write ${BASELINE_RENDERER_PATH};`,
+    ...(left === 0 ? [] : [leave]),
+    `record ${oneLineRenderer(current)};`,
+    "then run the gate with the renderer check on, and put every file back if it is red.",
+  ];
 }
 
 const LISTED_FILES = 30;
 
 /** The files a re-base would move, most changed first, so a reader sees which pages drifted. */
-export function describeRebased(rendererOnly: readonly Judged[]): string[] {
+export function describeRebased(toRebase: readonly Judged[]): string[] {
   const fraction = (j: Judged) => j.verdict.metrics.changedFraction;
-  const sorted = [...rendererOnly].sort((a, b) => fraction(b) - fraction(a));
+  const sorted = [...toRebase].sort((a, b) => fraction(b) - fraction(a));
   const lines = sorted
     .slice(0, LISTED_FILES)
     .map((j) => `${percent(fraction(j)).padStart(6)}  ${j.baseline}`);
@@ -287,11 +356,14 @@ export function describeRebased(rendererOnly: readonly Judged[]): string[] {
 /**
  * Every verdict, one tab-separated row a file, for the scratch directory: the full record behind
  * the counts, readable by a person or a spreadsheet without re-running an eight-minute suite.
+ * `gate` is the comparator's answer on a renderer-only row, so the files the report only counts
+ * as within its tolerance ("passes") are named here.
  */
 export function verdictTable(judged: readonly Judged[]): string {
   const header = [
     "baseline",
     "verdict",
+    "gate",
     "deciding",
     "changed_px",
     "changed_fraction",
@@ -302,9 +374,12 @@ export function verdictTable(judged: readonly Judged[]): string {
   const rows = judged.map((j) => {
     const m = j.verdict.metrics;
     const ink = new Map(inkMargins(j).map((margin) => [margin.scale, margin.value]));
+    // an unasked renderer-only row is re-based as unknown (withinGateTolerance), so it says so
+    const gate = j.verdict.verdict === "renderer-only" ? (j.gate ?? "unknown") : "";
     return [
       j.baseline,
       j.verdict.verdict,
+      gate,
       m.decidingMeasure,
       m.changedPixels,
       m.changedFraction.toFixed(6),
@@ -331,7 +406,7 @@ export function describeContent(content: readonly Judged[]): string[] {
 }
 
 export interface CommitFacts {
-  plan: Extract<Plan, { action: "rebase" }>;
+  plan: RebasePlan;
   counts: Tally;
   total: number;
   verdict: RendererVerdict;
@@ -372,6 +447,37 @@ function whatMoved(facts: CommitFacts): string {
   );
 }
 
+/**
+ * The commit's account of the gate's split, or null when nothing drifted. Every file the gate
+ * passed is counted as left, so a re-base smaller than the drift reads as the rule rather than as
+ * files forgotten.
+ */
+function gateParagraph(counts: Tally): string | null {
+  const n = counts.rendererOnly.length;
+  if (n === 0) return null;
+  const { failing, unknown, tolerated } = gateSplit(counts);
+  const couldNot =
+    `${num(unknown)} could not be put to it and ${isAre(unknown)} re-based as though the gate ` +
+    `failed ${itThem(unknown)}`;
+  const left =
+    `${num(tolerated)} moved within the gate's tolerance and ${isAre(tolerated)} left ` +
+    asTheyAre(tolerated);
+  const clauses = [
+    ...(failing + unknown === 0 ? ["none fails it"] : []),
+    ...(failing === 0
+      ? []
+      : [`${plural(failing, "fails", "fail")} it and ${isAre(failing)} re-based`]),
+    ...(unknown === 0 ? [] : [couldNot]),
+    ...(tolerated === 0 ? [] : [left]),
+  ];
+  const files = n === 1 ? "the one renderer-only file" : `the ${num(n)} renderer-only files`;
+  return (
+    "Only what the gate itself fails is re-based, asked of Playwright's own comparator with the " +
+    `gate's options (scripts/e2e-renderer/gate-comparator.ts). Of ${files}, ` +
+    `${clauses.join("; ")}.`
+  );
+}
+
 /** Ready for `git commit -F`: a subject in the house form, and the numbers that prove it. */
 export function commitMessage(facts: CommitFacts): string {
   const { plan, counts, total, current, head, control, gate } = facts;
@@ -393,14 +499,15 @@ export function commitMessage(facts: CommitFacts): string {
       `scripts/e2e-renderer/diff-verdict.ts: ${counts.rendererOnly.length} renderer-only, ` +
       `${counts.identical.length} identical, none content, none missing or extra.`,
   ];
+  const split = gateParagraph(counts);
+  if (split !== null) body.push("", split);
   if (counts.worst !== null && counts.medianChangedFraction !== null && counts.closest !== null) {
-    const gateSaid = gateSentence(counts)?.replace(/^the gate itself/, "the gate");
+    const middle = percent(counts.medianChangedFraction);
     body.push(
       "",
-      `Changed pixels: median ${percent(counts.medianChangedFraction)}, worst ` +
+      `Changed pixels of the renderer-only files: median ${middle}, worst ` +
         `${percent(counts.worst.verdict.metrics.changedFraction)} (${counts.worst.baseline}). ` +
-        `Closest to a limit: ${marginLine(counts.closest)} in ${counts.closest.baseline}.` +
-        (gateSaid === undefined ? "" : ` By its own comparator ${gateSaid}.`),
+        `Closest to a limit: ${marginLine(counts.closest)} in ${counts.closest.baseline}.`,
     );
   }
   body.push(

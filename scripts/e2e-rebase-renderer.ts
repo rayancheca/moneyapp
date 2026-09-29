@@ -14,14 +14,15 @@
  *      into a scratch root rather than e2e/ (E2E_SNAPSHOT_ROOT); a failure gets one re-run of
  *      what failed, and a second failure is a refusal: HEAD is not green here, or the box is busy;
  *   3. every committed baseline judged against its twin by scripts/e2e-renderer/diff-verdict.ts:
- *      a missing or extra twin, or one "content" verdict, and nothing is written. It judges
- *      pixels, which the gate does not quite: Playwright's comparator passes colour changes under
- *      its threshold. So a file the gate tolerates but whose pixels moved is re-based too, and
- *      afterwards every baseline is exactly what the recorded renderer draws; the output says how
- *      many of them the gate itself would have failed (gate-comparator.ts);
- *   4. --confirm only: the renderer-only twins copied over their baselines, the renderer
- *      recorded, and the gate run with the check on. Red after one re-run puts every file back
- *      as HEAD has it. Green writes a ready commit message. It never commits.
+ *      a missing or extra twin, or one "content" verdict, and nothing is written. Of the
+ *      renderer drift, only what the gate itself would fail is re-based, asked of Playwright's
+ *      own comparator with the gate's options (gate-comparator.ts). The gate is not pixel-exact,
+ *      so a file whose pixels moved within its tolerance is left as it is and only counted; one
+ *      the comparator cannot judge is re-based as though the gate failed it;
+ *   4. --confirm only: the twins of the files the gate fails copied over their baselines (none:
+ *      the record alone), the renderer recorded, and the gate run with the check on. Red after
+ *      one re-run puts every file back as HEAD has it. Green writes a ready commit message. It
+ *      never commits.
  *
  *     pnpm e2e:rebase-renderer                  # dry run: proves it, writes nothing
  *     pnpm e2e:rebase-renderer --confirm        # re-bases, records, verifies
@@ -50,6 +51,7 @@ import { checkGuards, type GuardLine } from "./e2e-renderer/rebase-guards";
 import {
   commitMessage,
   describeContent,
+  describePlan,
   describeRebased,
   describeTally,
   pairBaselines,
@@ -59,8 +61,8 @@ import {
   UsageError,
   USAGE,
   verdictTable,
-  type Plan,
   type RebaseArgs,
+  type RebasePlan,
   type Tally,
 } from "./e2e-renderer/rebase-plan";
 import {
@@ -224,7 +226,7 @@ async function control(ctx: SuiteContext): Promise<Runs> {
 }
 
 interface Classified {
-  plan: Extract<Plan, { action: "rebase" }>;
+  plan: RebasePlan;
   counts: Tally;
   total: number;
 }
@@ -246,16 +248,25 @@ async function classify(
     ]);
   }
   const gate = await gateComparator();
-  if ("unavailable" in gate) console.log(`  (the gate's own verdicts: unknown, ${gate.unavailable})`);
+  if ("unavailable" in gate) {
+    console.log(
+      `  the gate's own comparator is unavailable (${gate.unavailable}): every renderer-only ` +
+        "file is re-based as though the gate failed it",
+    );
+  }
   const progress = (done: number, of: number) => console.log(`  judged ${done} of ${of}`);
+  const unjudged = (baseline: string, why: string) =>
+    console.log(
+      `  the gate's comparator could not judge ${baseline} (${why}): re-based as though it failed`,
+    );
   const gateFails = "fails" in gate ? gate.fails : null;
-  const judged = await judgeAll(pairing.pairs, ctx.snapshotRoot, gateFails, progress);
+  const judged = await judgeAll(pairing.pairs, ctx.snapshotRoot, gateFails, progress, unjudged);
   const counts = tally(judged);
   const table = path.join(ctx.scratch, "verdicts.tsv");
   fs.writeFileSync(table, verdictTable(judged));
   for (const line of describeTally(counts, pairing.notRun.length)) console.log(`  ${line}`);
-  if (counts.rendererOnly.length > 0) console.log("  renderer-only, most changed first:");
-  for (const line of describeRebased(counts.rendererOnly)) console.log(`    ${line}`);
+  if (counts.toRebase.length > 0) console.log("  to re-base, most changed first:");
+  for (const line of describeRebased(counts.toRebase)) console.log(`    ${line}`);
   console.log(`  every verdict: ${table}`);
   const plan = planRebase(renderer.verdict, pairing, counts);
   if (plan.action === "refuse-unpaired") {
@@ -278,15 +289,8 @@ function dryRunSummary(
   renderer: Renderer,
   scratch: string,
 ): void {
-  const { plan } = found;
-  const bootstrap = plan.bootstrap ? " (the bootstrap: nothing had been recorded)" : "";
   say(`\nDry run — nothing was written. With --confirm this would:`, [
-    plan.files.length === 0
-      ? `copy no baseline, and write ${BASELINE_RENDERER_PATH}${bootstrap};`
-      : `copy ${plan.files.length} renderer-only twin(s) over their baselines, and write ` +
-        `${BASELINE_RENDERER_PATH};`,
-    `record ${oneLineRenderer(renderer.current)};`,
-    "then run the gate with the renderer check on, and put every file back if it is red.",
+    ...describePlan(found.plan, renderer.current),
     ...(args.only === null
       ? []
       : ["This rehearsal drew part of the suite (--only): it cannot license --confirm."]),
@@ -380,7 +384,7 @@ async function main(): Promise<void> {
   const rehearsal = args.only === null ? "" : " (a rehearsal: --only)";
   console.log(
     args.confirm
-      ? "e2e:rebase-renderer — CONFIRM: re-bases what is renderer drift, records, re-runs the gate"
+      ? "e2e:rebase-renderer — CONFIRM: re-bases the drift the gate fails, records, verifies"
       : `e2e:rebase-renderer — DRY RUN: nothing is written${rehearsal}`,
   );
   const renderer = await checkRenderer();

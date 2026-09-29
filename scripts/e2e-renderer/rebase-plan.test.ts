@@ -1,22 +1,27 @@
 import { describe, expect, test } from "vitest";
 import { diffVerdict, type DiffVerdict, type RawImage } from "./diff-verdict";
-import type { RendererRecord } from "./fingerprint";
+import { oneLineRenderer, type RendererRecord, type RendererVerdict } from "./fingerprint";
+import type { GateAnswer } from "./gate-comparator";
 import { INK_SCALES } from "./ink-shift";
 import {
   commitMessage,
   describeContent,
+  describePlan,
   describeRebased,
   describeTally,
-  gateSentence,
+  gateLines,
   inkMargins,
   pairBaselines,
   parseRebaseArgs,
   planRebase,
   tally,
+  toleratedLine,
   UsageError,
   verdictTable,
+  withinGateTolerance,
   type CommitFacts,
   type Judged,
+  type RebasePlan,
 } from "./rebase-plan";
 
 describe("parseRebaseArgs", () => {
@@ -126,6 +131,7 @@ function verdict(
   };
 }
 
+/** Renderer drift as diffVerdict judges it, not yet put to the gate. */
 const drift = (baseline: string, fraction: number, fine: number, coarse: number): Judged => ({
   baseline,
   verdict: verdict("renderer-only", fraction, [
@@ -150,6 +156,28 @@ const changed = (baseline: string): Judged => ({
     { x: 1296, y: 297, w: 101, h: 34 },
   ),
 });
+
+const D = "e2e/visual.spec.ts-snapshots/cashflow-dark-1440-chromium-darwin.png";
+const E = "e2e/visual.spec.ts-snapshots/dashboard-dark-1440-chromium-darwin.png";
+
+/** A judged pair with the gate's own answer on it, as judgeAll puts every renderer-only one. */
+const gated = (judged: Judged, gate: GateAnswer): Judged => ({ ...judged, gate });
+const fails = (baseline: string, fraction = 0.002): Judged =>
+  gated(drift(baseline, fraction, 0.05, 0.01), "fails");
+const passes = (baseline: string, fraction = 0.002): Judged =>
+  gated(drift(baseline, fraction, 0.05, 0.01), "passes");
+const unknown = (baseline: string): Judged =>
+  gated(drift(baseline, 0.002, 0.05, 0.01), "unknown");
+
+/** A pairing with a twin for every committed baseline: the control drew exactly the set. */
+const full = (committed: readonly string[]) =>
+  pairBaselines(committed, committed.map((b) => b.slice("e2e/".length)), false);
+
+function rebasePlan(rendererVerdict: RendererVerdict, judged: readonly Judged[]): RebasePlan {
+  const plan = planRebase(rendererVerdict, full(judged.map((j) => j.baseline)), tally(judged));
+  if (plan.action !== "rebase") throw new Error(`expected a re-base, got ${plan.action}`);
+  return plan;
+}
 
 describe("inkMargins", () => {
   /** The lines are diffVerdict's own; reading them back must not drift from what it writes. */
@@ -180,16 +208,34 @@ describe("inkMargins", () => {
   });
 });
 
-describe("tally", () => {
-  const asked = (j: Judged, gate: "fails" | "passes"): Judged => ({ ...j, gate });
+describe("withinGateTolerance", () => {
+  test("a renderer-only file the gate passes, and no other answer", () => {
+    expect(withinGateTolerance(passes(A))).toBe(true);
+    expect(withinGateTolerance(fails(A))).toBe(false);
+    // never the reverse: a file the gate could not be asked about is re-based, not left
+    expect(withinGateTolerance(unknown(A))).toBe(false);
+    expect(withinGateTolerance(drift(A, 0.002, 0.05, 0.01))).toBe(false);
+  });
 
-  test("how many renderer-only files the gate itself fails, when it was asked of each", () => {
-    const d1 = drift(A, 0.002, 0.05, 0.01);
-    const d2 = drift(B, 0.003, 0.05, 0.01);
-    expect(tally([asked(d1, "fails"), asked(d2, "passes"), same(C)]).gateFails).toBe(1);
-    // one file it could not be asked about makes the count unknown, never an undercount
-    expect(tally([asked(d1, "fails"), d2]).gateFails).toBeNull();
-    expect(tally([same(A)]).gateFails).toBe(0);
+  /** The gate's colour threshold never excuses content, and identical has nothing to leave. */
+  test("never a content or identical verdict, whatever the gate was said to answer", () => {
+    expect(withinGateTolerance(gated(changed(A), "passes"))).toBe(false);
+    expect(withinGateTolerance(gated(same(A), "passes"))).toBe(false);
+  });
+});
+
+describe("tally", () => {
+  test("the renderer-only files split by the gate's own answer", () => {
+    const failed = fails(A);
+    const passed = passes(B);
+    const couldNot = unknown(C);
+    const unasked = drift(D, 0.002, 0.05, 0.01);
+    const counts = tally([failed, passed, couldNot, unasked, same(E)]);
+    expect(counts.rendererOnly).toHaveLength(4);
+    expect(counts.toRebase).toEqual([failed, couldNot, unasked]);
+    expect(counts.tolerated).toEqual([passed]);
+    expect(counts.identical).toHaveLength(1);
+    expect(counts.content).toHaveLength(0);
   });
 
   test("counts, the median and worst changed fraction, and the closest call", () => {
@@ -208,6 +254,14 @@ describe("tally", () => {
     expect(counts.closest).toEqual({ baseline: C, scale: "ink-fine", value: 0.0982, limit: 0.18 });
   });
 
+  /** They describe every pair diffVerdict judged renderer-only, not only the part re-based. */
+  test("the median, the worst and the closest call count the tolerated files too", () => {
+    const counts = tally([fails(A, 0.001), gated(drift(B, 0.009, 0.1, 0.01), "passes")]);
+    expect(counts.worst?.baseline).toBe(B);
+    expect(counts.closest?.baseline).toBe(B);
+    expect(counts.medianChangedFraction).toBeCloseTo(0.005, 12);
+  });
+
   test("an even count takes the mean of the middle two; none has no median at all", () => {
     const two = tally([drift(A, 0.001, 0.01, 0.01), drift(B, 0.003, 0.01, 0.01)]);
     expect(two.medianChangedFraction).toBeCloseTo(0.002, 12);
@@ -215,13 +269,12 @@ describe("tally", () => {
     expect(nothing.medianChangedFraction).toBeNull();
     expect(nothing.worst).toBeNull();
     expect(nothing.closest).toBeNull();
+    expect(nothing.toRebase).toEqual([]);
+    expect(nothing.tolerated).toEqual([]);
   });
 });
 
 describe("planRebase", () => {
-  const full = (committed: string[]) =>
-    pairBaselines(committed, committed.map((b) => b.slice("e2e/".length)), false);
-
   test("a missing or extra twin refuses before any verdict counts", () => {
     const pairing = pairBaselines([A, B], [A.slice("e2e/".length)], false);
     expect(planRebase("renderer-changed", pairing, tally([same(A)]))).toEqual({
@@ -232,27 +285,72 @@ describe("planRebase", () => {
   });
 
   test("one content verdict among a hundred drift ones refuses the lot", () => {
-    const judged = [drift(A, 0.002, 0.05, 0.01), changed(B), drift(C, 0.002, 0.05, 0.01)];
+    const judged = [fails(A), changed(B), fails(C)];
     const plan = planRebase("renderer-changed", full([A, B, C]), tally(judged));
     expect(plan).toEqual({ action: "refuse-content", content: [judged[1]] });
   });
 
-  test("renderer drift re-bases exactly the files that moved, never the identical ones", () => {
-    const judged = [same(A), drift(B, 0.002, 0.05, 0.01), same(C)];
-    const plan = planRebase("renderer-changed", full([A, B, C]), tally(judged));
-    expect(plan).toEqual({ action: "rebase", files: [B], bootstrap: false });
+  /** Every pair is judged by diffVerdict first; the gate's tolerance never excuses content. */
+  test("content refuses even when the gate passes every drifted file", () => {
+    const judged = [passes(A), changed(B), passes(C)];
+    expect(planRebase("unrecorded", full([A, B, C]), tally(judged))).toEqual({
+      action: "refuse-content",
+      content: [judged[1]],
+    });
+  });
+
+  test("re-bases only the drift the gate fails, never one it passes nor an identical one", () => {
+    expect(rebasePlan("renderer-changed", [same(A), fails(B), passes(C), fails(D)])).toEqual({
+      action: "rebase",
+      files: [B, D],
+      tolerated: [C],
+      bootstrap: false,
+    });
+  });
+
+  /** Never the reverse: leaving a file the gate does fail would turn the verifying gate red. */
+  test("a file the comparator could not judge, or was never asked about, is re-based", () => {
+    const unasked = drift(B, 0.002, 0.05, 0.01);
+    expect(rebasePlan("renderer-changed", [unknown(A), unasked, passes(C)])).toEqual({
+      action: "rebase",
+      files: [A, B],
+      tolerated: [C],
+      bootstrap: false,
+    });
   });
 
   /** The first run on a machine the baselines already match: record the renderer, move nothing. */
   test("no record and nothing changed is the bootstrap: the record alone", () => {
-    expect(planRebase("unrecorded", full([A, B]), tally([same(A), same(B)]))).toEqual({
+    expect(rebasePlan("unrecorded", [same(A), same(B)])).toEqual({
       action: "rebase",
       files: [],
+      tolerated: [],
       bootstrap: true,
     });
-    expect(planRebase("renderer-changed", full([A]), tally([same(A)]))).toEqual({
+    expect(rebasePlan("renderer-changed", [same(A)])).toEqual({
       action: "rebase",
       files: [],
+      tolerated: [],
+      bootstrap: false,
+    });
+  });
+
+  /**
+   * This Mac as of 2026-09-29: no record yet and the gate green, while baselines drawn before
+   * macOS 27.2 differ from its drawing within the gate's tolerance (gate-comparator.ts). The
+   * record alone, then the verifying gate; not one baseline copied.
+   */
+  test("no record, and every moved file within the gate's tolerance: the record alone", () => {
+    expect(rebasePlan("unrecorded", [same(A), passes(B), passes(C)])).toEqual({
+      action: "rebase",
+      files: [],
+      tolerated: [B, C],
+      bootstrap: true,
+    });
+    expect(rebasePlan("renderer-changed", [passes(A)])).toEqual({
+      action: "rebase",
+      files: [],
+      tolerated: [A],
       bootstrap: false,
     });
   });
@@ -268,40 +366,62 @@ describe("the words", () => {
   });
 
   test("the tally says what a rehearsal left out", () => {
-    const lines = describeTally(tally([same(A), drift(B, 0.0023, 0.05, 0.01)]), 150);
+    const lines = describeTally(tally([same(A), fails(B, 0.0023)]), 150);
     expect(lines).toContain("identical      1");
     expect(lines).toContain("renderer-only  1");
     expect(lines.at(-1)).toBe("150 committed baselines outside this rehearsal, not judged");
   });
 
-  /** A re-base that moves files the gate passed must say why, or it reads as churn. */
-  test("the gate's own count explains a re-base larger than what the gate failed", () => {
-    const fails: Judged = { ...drift(A, 0.002, 0.05, 0.01), gate: "fails" };
-    const passes: Judged = { ...drift(B, 0.002, 0.05, 0.01), gate: "passes" };
-    expect(gateSentence(tally([fails, passes]))).toBe(
-      "the gate itself fails 1 of the 2 renderer-only files; it passes the other 1 under " +
-        "Playwright's colour threshold, and they are re-based too, so every baseline is exactly " +
-        "what the recorded renderer draws",
-    );
-    expect(gateSentence(tally([fails]))).toBe("the gate itself fails the one renderer-only file");
-    const both: Judged = { ...fails, baseline: B };
-    const all = "the gate itself fails all 2 renderer-only files";
-    expect(gateSentence(tally([fails, both]))).toBe(all);
-    expect(gateSentence(tally([drift(A, 0.002, 0.05, 0.01)]))).toBeNull();
-    const mixed = tally([fails, passes]);
-    expect(describeTally(mixed, 0)).toContain(gateSentence(mixed));
+  /** A file the gate passes is counted, never listed: the report's only word on it. */
+  test("under the renderer-only count: what the gate fails, could not judge, and passes", () => {
+    const counts = tally([fails(A), passes(B), passes(C), unknown(D), same(E)]);
+    expect(describeTally(counts, 0).slice(0, 6)).toEqual([
+      "identical      1",
+      "renderer-only  4",
+      "  1 fails the gate itself: re-based",
+      "  1 the gate's comparator could not judge: re-based as though the gate failed it",
+      "  2 moved within the gate's tolerance, left as they are",
+      "content        0",
+    ]);
   });
 
-  test("the re-based files are listed most changed first, and every verdict is tabled", () => {
-    const judged = [same(A), drift(B, 0.001, 0.05, 0.01), drift(C, 0.004, 0.0982, 0.0158)];
-    expect(describeRebased(tally(judged).rendererOnly)).toEqual([` 0.40%  ${C}`, ` 0.10%  ${B}`]);
+  test("a kind with no file has no line, and one file is singular", () => {
+    expect(gateLines(tally([fails(A), fails(B)]))).toEqual(["2 fail the gate itself: re-based"]);
+    expect(gateLines(tally([unknown(A), unknown(B)]))).toEqual([
+      "2 the gate's comparator could not judge: re-based as though the gate failed them",
+    ]);
+    expect(gateLines(tally([passes(A)]))).toEqual([toleratedLine(1)]);
+    expect(toleratedLine(1)).toBe("1 moved within the gate's tolerance, left as it is");
+    expect(toleratedLine(1_234)).toBe("1,234 moved within the gate's tolerance, left as they are");
+    expect(gateLines(tally([same(A)]))).toEqual([]);
+  });
+
+  test("only the files to re-base are listed, most changed first; every verdict is tabled", () => {
+    const judged = [
+      same(A),
+      fails(B, 0.001),
+      gated(drift(C, 0.004, 0.0982, 0.0158), "fails"),
+      passes(D, 0.009),
+      drift(E, 0.003, 0.05, 0.01),
+    ];
+    expect(describeRebased(tally(judged).toRebase)).toEqual([
+      ` 0.40%  ${C}`,
+      ` 0.30%  ${E}`,
+      ` 0.10%  ${B}`,
+    ]);
     const table = verdictTable(judged).trimEnd().split("\n");
     expect(table[0]).toBe(
-      "baseline\tverdict\tdeciding\tchanged_px\tchanged_fraction\tmax_delta\tink_fine\tink_coarse",
+      "baseline\tverdict\tgate\tdeciding\tchanged_px\tchanged_fraction\tmax_delta\tink_fine\t" +
+        "ink_coarse",
     );
-    expect(table).toHaveLength(4);
-    expect(table[3]).toBe(`${C}\trenderer-only\tink-fine\t4000\t0.004000\t66\t0.0982\t0.0158`);
-    expect(table[1]).toBe(`${A}\tidentical\tpixels\t0\t0.000000\t0\t\t`);
+    expect(table).toHaveLength(6);
+    expect(table[1]).toBe(`${A}\tidentical\t\tpixels\t0\t0.000000\t0\t\t`);
+    expect(table[3]).toBe(
+      `${C}\trenderer-only\tfails\tink-fine\t4000\t0.004000\t66\t0.0982\t0.0158`,
+    );
+    // the tolerated are named here, and one never asked says what the plan took it for
+    expect(table[4]).toBe(`${D}\trenderer-only\tpasses\tink-fine\t9000\t0.009000\t66\t0.05\t0.01`);
+    expect(table[5]?.split("\t").slice(0, 3)).toEqual([E, "renderer-only", "unknown"]);
   });
 
   const RECORDED: RendererRecord = {
@@ -318,17 +438,37 @@ describe("the words", () => {
     macos: { productVersion: "27.3", buildVersion: "26C12" },
   };
 
+  test("the dry run says what --confirm copies, what it leaves, and what it records", () => {
+    const plan = rebasePlan("renderer-changed", [same(A), fails(B), passes(C), passes(D)]);
+    expect(describePlan(plan, CURRENT)).toEqual([
+      "copy 1 twin over its baseline, and write e2e/baseline-renderer.json;",
+      "leave the 2 that moved within the gate's tolerance as they are;",
+      `record ${oneLineRenderer(CURRENT)};`,
+      "then run the gate with the renderer check on, and put every file back if it is red.",
+    ]);
+    const nothingLeft = rebasePlan("renderer-changed", [fails(A), fails(B)]);
+    expect(describePlan(nothingLeft, CURRENT).slice(0, 2)).toEqual([
+      "copy 2 twins over their baselines, and write e2e/baseline-renderer.json;",
+      `record ${oneLineRenderer(CURRENT)};`,
+    ]);
+  });
+
+  test("the first run on a Mac the gate already passes: the record alone, then the gate", () => {
+    const plan = rebasePlan("unrecorded", [same(A), passes(B)]);
+    expect(describePlan(plan, CURRENT).slice(0, 2)).toEqual([
+      "copy no baseline, and write e2e/baseline-renderer.json (the bootstrap: nothing had been " +
+        "recorded);",
+      "leave the 1 that moved within the gate's tolerance as it is;",
+    ]);
+  });
+
   function facts(judged: Judged[], overrides: Partial<CommitFacts> = {}): CommitFacts {
-    const counts = tally(judged);
-    const committed = judged.map((j) => j.baseline);
-    const pairing = pairBaselines(committed, committed.map((b) => b.slice("e2e/".length)), false);
-    const plan = planRebase("renderer-changed", pairing, counts);
-    if (plan.action !== "rebase") throw new Error("expected a re-base");
+    const rendererVerdict = overrides.verdict ?? "renderer-changed";
     return {
-      plan,
-      counts,
+      plan: rebasePlan(rendererVerdict, judged),
+      counts: tally(judged),
       total: judged.length,
-      verdict: "renderer-changed",
+      verdict: rendererVerdict,
       recorded: RECORDED,
       current: CURRENT,
       head: { sha: "c3b9a59163994b2db7145ce4aea77bd806d66425", subject: "fix(pay): a payday" },
@@ -338,8 +478,20 @@ describe("the words", () => {
     };
   }
 
+  /** The body read as prose: the wrapped lines of each paragraph joined again. */
+  const prose = (message: string) => message.replaceAll("\n", " ");
+
+  function expectWrapped(message: string): void {
+    expect(message.endsWith("\n")).toBe(true);
+    for (const line of message.split("\n")) expect(line.length, line).toBeLessThanOrEqual(92);
+  }
+
   test("the commit message: the house subject, what moved, and the numbers behind it", () => {
-    const judged = [same(A), drift(B, 0.0023, 0.05, 0.01), drift(C, 0.0059, 0.0982, 0.0158)];
+    const judged = [
+      same(A),
+      fails(B, 0.0023),
+      gated(drift(C, 0.0059, 0.0982, 0.0158), "fails"),
+    ];
     const message = commitMessage(facts(judged));
     const [subject, blank, ...body] = message.split("\n");
     expect(subject).toBe("chore(e2e): re-base 2 baselines on macOS 27.3 (26C12) — no UI changed");
@@ -350,36 +502,75 @@ describe("the words", () => {
     expect(text).toContain("at c3b9a59");
     expect(text).toContain("602 passed");
     expect(text).toContain("2 renderer-only, 1 identical, none content, none missing or extra");
-    expect(text).toContain("median 0.41%");
+    expect(text).toContain("Of the 2 renderer-only files, 2 fail it and are re-based.");
+    expect(text).toContain("Changed pixels of the renderer-only files: median 0.41%");
     expect(text).toContain(`worst 0.59% (${C})`);
     expect(text).toContain("ink-fine 0.0982 of 0.18 (1.83x under)");
-    expect(message.endsWith("\n")).toBe(true);
-    for (const line of message.split("\n")) expect(line.length, line).toBeLessThanOrEqual(92);
+    expectWrapped(message);
+  });
+
+  test("the subject counts only what the gate fails, and the body names what it left", () => {
+    const message = commitMessage(facts([fails(A), passes(B), passes(C)]));
+    expect(message.split("\n")[0]).toBe(
+      "chore(e2e): re-base 1 baseline on macOS 27.3 (26C12) — no UI changed",
+    );
+    expect(prose(message)).toContain(
+      "Only what the gate itself fails is re-based, asked of Playwright's own comparator with " +
+        "the gate's options (scripts/e2e-renderer/gate-comparator.ts). Of the 3 renderer-only " +
+        "files, 1 fails it and is re-based; 2 moved within the gate's tolerance and are left as " +
+        "they are.",
+    );
+    expectWrapped(message);
+  });
+
+  /** This Mac's first run: record only, then the verifying gate; no baseline is touched. */
+  test("a bootstrap the gate already passes records the renderer and names every file left", () => {
+    const message = commitMessage(
+      facts([same(A), passes(B), passes(C)], { recorded: null, verdict: "unrecorded" }),
+    );
+    expect(message.split("\n")[0]).toBe(
+      "chore(e2e): record macOS 27.3 (26C12) as the baselines' renderer — no baseline changed",
+    );
+    const text = prose(message);
+    expect(text).toContain("NO RENDERER RECORD");
+    expect(text).toContain(
+      "Of the 2 renderer-only files, none fails it; 2 moved within the gate's tolerance and " +
+        "are left as they are.",
+    );
+    expect(text).toContain("Changed pixels of the renderer-only files");
+    expectWrapped(message);
+  });
+
+  test("a file the comparator could not judge is re-based, and the commit says why", () => {
+    const message = commitMessage(facts([unknown(A), fails(B)]));
+    expect(message.split("\n")[0]).toBe(
+      "chore(e2e): re-base 2 baselines on macOS 27.3 (26C12) — no UI changed",
+    );
+    expect(prose(message)).toContain(
+      "Of the 2 renderer-only files, 1 fails it and is re-based; 1 could not be put to it and " +
+        "is re-based as though the gate failed it.",
+    );
   });
 
   test("one baseline is singular, and a record-only run says no baseline changed", () => {
-    expect(commitMessage(facts([drift(A, 0.002, 0.05, 0.01)])).split("\n")[0]).toBe(
+    const one = commitMessage(facts([fails(A)]));
+    expect(one.split("\n")[0]).toBe(
       "chore(e2e): re-base 1 baseline on macOS 27.3 (26C12) — no UI changed",
     );
+    expect(prose(one)).toContain("Of the one renderer-only file, 1 fails it and is re-based.");
     const bootstrap = commitMessage(facts([same(A)], { recorded: null, verdict: "unrecorded" }));
     expect(bootstrap.split("\n")[0]).toBe(
       "chore(e2e): record macOS 27.3 (26C12) as the baselines' renderer — no baseline changed",
     );
     expect(bootstrap).toContain("NO RENDERER RECORD");
     expect(bootstrap).not.toContain("Changed pixels");
-  });
-
-  test("the commit message says how many of the re-based files the gate itself failed", () => {
-    const fails: Judged = { ...drift(A, 0.002, 0.05, 0.01), gate: "fails" };
-    const passes: Judged = { ...drift(B, 0.002, 0.05, 0.01), gate: "passes" };
-    const message = commitMessage(facts([fails, passes])).replaceAll("\n", " ");
-    expect(message).toContain("By its own comparator the gate fails 1 of the 2 renderer-only");
+    expect(bootstrap).not.toContain("Only what the gate itself fails");
   });
 
   test("a re-run that rescued a failure is said, not hidden", () => {
     const message = commitMessage(
-      facts([drift(A, 0.002, 0.05, 0.01)], { control: { passed: 602, rerun: true } }),
-    ).replaceAll("\n", " ");
-    expect(message).toContain("602 passed, after one re-run of what failed first");
+      facts([fails(A)], { control: { passed: 602, rerun: true } }),
+    );
+    expect(prose(message)).toContain("602 passed, after one re-run of what failed first");
   });
 });
