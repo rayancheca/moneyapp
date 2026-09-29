@@ -23,7 +23,7 @@ import { normalizeDescription } from "@/lib/normalize";
 import { sumCents } from "@/lib/money";
 import { RECONCILE_STATUSES, periodVerdict } from "@/lib/reconciliation";
 import { postedInsidePeriod } from "@/lib/statement-period";
-import { recordWithheldSections, withheldSectionNotice } from "@/lib/import-file-label";
+import { lineLeftOutNotice, recordWithheldSections, withheldSectionNotice, type LineLeftOutFacts } from "@/lib/import-file-label";
 import { categorizeAll, detectTransfers } from "../categorize";
 import { rebuildAccount } from "../derivation";
 import { flagDuplicateCandidates } from "../duplicate-flags";
@@ -60,6 +60,7 @@ import {
   type LaterBookStatement,
 } from "./brokerage-book";
 import { handOverPrintedAnchors } from "./printed-anchors";
+import { linesLeftOut } from "./lines-left-out";
 import {
   followingOpeningsByFile,
   handOverKeptOpenings,
@@ -227,8 +228,21 @@ export interface FileOutcome {
    * everything on them, filed under that file — as un-importing the retired read keeps them (`settleHeldRows`)
    */
   keptByPrinters: number;
+  /**
+   * lines another still-imported file prints that the retired read's rows recorded, the new read does not write again
+   * and nothing brought back: left out — never written back on a guess — and named, each with the files that print it
+   * (`linesLeftOut`, owner decision 2026-09-28), as the ledger stands when the whole upload is written
+   */
+  leftOut: LeftOutOutcome[];
   quarantined: number;
   periods: PeriodOutcome[];
+}
+
+/** A line a re-read left out of the ledger, as the upload outcome names it — see `LineLeftOut`. */
+export interface LeftOutOutcome extends LineLeftOutFacts {
+  accountId: string;
+  /** the sentence /imports shows under the read, built from these facts — `lineLeftOutNotice` */
+  notice: string;
 }
 
 interface CoveredRange {
@@ -1339,7 +1353,8 @@ export async function importStatementFiles(db: AppDatabase, files: ImportInput[]
     // that was still being rearranged.
     flagDuplicateCandidates(db, [...touchedAccounts]);
   }
-  return outcomes;
+  // LAST: a later turn can read again the very file an earlier outcome would say still prints a line left out
+  return outcomes.map((outcome) => withLinesLeftOut(db, outcome, batch.retiredBy.get(outcome)));
 }
 
 /**
@@ -1549,6 +1564,8 @@ interface BatchState {
   readonly shaOfStale: ReadonlyMap<string, string>;
   /** the files whose turn has not come yet, in import order — a read takes the files it needs from here */
   readonly pending: BatchItem[];
+  /** each outcome of a read this call wrote, with the reads its write retired — named as left out once every turn ran */
+  readonly retiredBy: Map<FileOutcome, readonly string[]>;
 }
 
 function batchStateOf(db: AppDatabase, items: readonly BatchItem[]): BatchState {
@@ -1565,6 +1582,7 @@ function batchStateOf(db: AppDatabase, items: readonly BatchItem[]): BatchState 
     staleBySha,
     shaOfStale: new Map([...staleBySha].flatMap(([sha, ids]) => ids.map((id) => [id, sha] as const))),
     pending: [...items],
+    retiredBy: new Map(),
   };
 }
 
@@ -1619,6 +1637,7 @@ const blankOutcome = (fileName: string): FileOutcome => ({
   carriedForward: 0,
   givenBack: 0,
   keptByPrinters: 0,
+  leftOut: [],
   quarantined: 0,
   periods: [],
 });
@@ -2247,6 +2266,28 @@ function writeMember(db: AppDatabase, member: ReadMember, carryPool: CarryPool, 
   keepRetiredAttachedRows(db, unclaimedAttachedRows(carryPool));
 }
 
+/** A line left out, as the upload outcome names it: its facts, and the one sentence every surface prints of them. */
+function leftOutOutcome(line: LineLeftOutFacts & { accountId: string }): LeftOutOutcome {
+  const { accountId, accountName, printedOn, amountCents, description, printedBy, readBy } = line;
+  const facts = { accountName, printedOn, amountCents, description, printedBy, readBy };
+  return { accountId, ...facts, notice: lineLeftOutNotice(facts) };
+}
+
+/**
+ * An outcome with the lines its write's retirement of `retired` left out (`linesLeftOut`), read from the ledger once the
+ * whole upload is written. ⚖️ Owner, 2026-09-28: a line another still-imported file prints that the retired reads
+ * recorded and nothing brought back stays out — never added on a guess — and the outcome names it.
+ *
+ * 🔴 Read at the end of each turn, it went stale before the upload ended: a later turn can read again the very file the
+ * outcome says still prints the line. The review of uc/loud-dropped-line, 2026-09-28: two overlapping Chase exports read
+ * again in one upload, the August outcome naming a +$25.00 the September export "still prints" while the same upload's
+ * read of September dropped it too, and ledger-check and /imports naming nothing — and the command-line imports, the
+ * ones a re-drop of an archive runs, print the outcome (scripts/import-statements.ts, trial-import.ts).
+ */
+function withLinesLeftOut(db: AppDatabase, outcome: FileOutcome, retired: readonly string[] | undefined): FileOutcome {
+  return retired === undefined ? outcome : { ...outcome, leftOut: linesLeftOut(db, retired).map(leftOutOutcome) };
+}
+
 /**
  * Write a read whose members all parsed. A fresh read of one file keeps the statements it wrote before a failure, for
  * un-import to remove; a read that retires anything, or reads several files, is all or nothing, so a failure leaves in
@@ -2291,7 +2332,10 @@ function writeTurn(db: AppDatabase, batch: BatchState, chain: readonly ReadMembe
   // whether or not a new read wrote to them again: the retired reads' rows, periods and anchors — and the shares a
   // retired read held on a brokerage book — left these accounts; and every account a member resolved
   for (const accountId of [...retired, ...writes.flatMap((w) => [...w.accounts])]) touchedAccounts.add(accountId);
-  return chain.map((member, j) => settleMember(db, member, writes[j] as MemberWrite));
+  const settled = chain.map((member, j) => settleMember(db, member, writes[j] as MemberWrite));
+  // what each retirement left out is read when the upload ends (`withLinesLeftOut`)
+  settled.forEach((outcome, j) => batch.retiredBy.set(outcome, (chain[j] as ReadMember).staleIds));
+  return settled;
 }
 
 /**
@@ -2378,6 +2422,7 @@ function failedUnexpectedly(db: AppDatabase, file: { name: string }, fileRowId: 
     carriedForward: 0,
     givenBack: 0,
     keptByPrinters: 0,
+    leftOut: [],
     quarantined: 0,
     periods: [],
   };

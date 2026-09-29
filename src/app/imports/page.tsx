@@ -23,8 +23,9 @@ import {
 } from "@/services/import/unimport-counts";
 import { balancesRemovedByFile } from "@/services/import/printed-anchors";
 import { printerHandOvers } from "@/services/import/printed-lines";
+import { linesLeftOut } from "@/services/import/lines-left-out";
 import { copyHandOvers } from "@/services/import/statement-copies";
-import { importRowQualifiers, importRowSubject, withheldNoticeOf } from "@/lib/import-file-label";
+import { importRowQualifiers, importRowSubject, leftOutNoticesByRead, withheldNoticeOf } from "@/lib/import-file-label";
 import { dayWindowLabel } from "@/lib/period";
 import { ConfirmActionButton } from "@/components/ui/Confirm";
 import { EmptyState } from "@/components/ui/EmptyState";
@@ -95,6 +96,10 @@ export default async function ImportsPage({
   /* A parsed file that left one account's section out (a Robinhood brokerage PDF whose #655929651 section the cash
      reader could not prove). Its row must not read plain "Parsed": that section's activity is not in the ledger. */
   const withheldById = new Map(files.map((f) => [f.id, withheldNoticeOf(f)]));
+  /* ⚖️ Owner, 2026-09-28: a line another still-imported file prints that a re-read no longer writes stays out of the
+     ledger, and is named under that read — the upload's outcome, read from the ledger by the rule `pnpm ledger-check`
+     reads (`linesLeftOut`), so the row says it for as long as it is true and not a day longer. */
+  const leftOutByRead = leftOutNoticesByRead(linesLeftOut(db));
 
   // the rest of what un-importing takes with it — counted per file rather than
   // joined into the query above, where they would fan out against the rows.
@@ -394,6 +399,12 @@ export default async function ImportsPage({
                             {f.error}
                           </div>
                         ) : null}
+                        {leftOutByRead.get(f.id)?.map((notice, i) => (
+                          // whole, like a withheld section: which money and which file still prints it are the point
+                          <div key={`${f.id}-left-out-${i}`} className="text-[11px] text-warning">
+                            {notice}
+                          </div>
+                        ))}
                       </td>
                       <td className="py-1.5 pr-2 text-xs text-ink-muted">{f.parserProfile ?? "—"}</td>
                       <td className="figures py-1.5 pr-2 text-right text-xs">{f.txnCount}</td>

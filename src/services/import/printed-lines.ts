@@ -27,6 +27,8 @@ import type { CanonicalTxn } from "./types";
  * account's rows — its own, and every other row the un-import leaves — and a line only the un-imported file's rows can
  * record takes one of them. So a line another record already holds (the file's own row, a row entered by hand, a third
  * file's) takes nothing, and the un-imported file's copy of it goes.
+ *
+ * The matching is exported for `lines-left-out`, which asks it of the rows a re-read retired — one matching, not a copy.
  */
 
 export interface PrintedLine {
@@ -48,7 +50,7 @@ export interface PrinterHandOver {
   rowIds: string[];
 }
 
-const LIVE_FILE = ["parsed", "parsed_with_claude"] as const;
+export const LIVE_FILE = ["parsed", "parsed_with_claude"] as const;
 const LIVE_ROW = ["active", "quarantined", "excluded"] as const;
 /** row ids per statement — well under SQLite's bound-parameter limit */
 const ROW_CHUNK = 500;
@@ -95,7 +97,7 @@ export function accountsPrintedBy(db: AppDatabase, importFileId: string): string
     .map((r) => r.accountId);
 }
 
-interface Row {
+export interface Row {
   id: string;
   importFileId: string | null;
   parsed: boolean;
@@ -106,7 +108,7 @@ interface Row {
 }
 
 /** Rows keyed by money and day: the posted day under `p`, the transaction day under `t`. */
-function indexRows(rows: readonly Row[]): Map<string, Row[]> {
+export function indexRows(rows: readonly Row[]): Map<string, Row[]> {
   const index = new Map<string, Row[]>();
   const add = (key: string, row: Row) => index.set(key, [...(index.get(key) ?? []), row]);
   for (const row of rows) {
@@ -169,13 +171,13 @@ function candidatesFor(line: PrintedLine, index: ReadonlyMap<string, Row[]>): Ro
 }
 
 /** A matching of one file's lines to rows: which line each row records, and which row each line has. */
-interface Matching {
+export interface Matching {
   lineOf: Map<string, number>;
   rowOf: Map<number, string>;
 }
 
 /** Kuhn's augmenting search from `line`, over rows `usable` allows. */
-function augment(line: number, candidates: readonly Row[][], usable: (row: Row) => boolean, m: Matching, seen: Set<string>): boolean {
+export function augment(line: number, candidates: readonly Row[][], usable: (row: Row) => boolean, m: Matching, seen: Set<string>): boolean {
   for (const row of candidates[line]!) {
     if (seen.has(row.id) || !usable(row)) continue;
     seen.add(row.id);
@@ -194,7 +196,7 @@ function augment(line: number, candidates: readonly Row[][], usable: (row: Row) 
  * lines lose their row when one file's rows go (`rowsOnlyFromFile`): that is the matching's size less the size of the
  * best matching without them.
  */
-function matchHeir(lines: readonly PrintedLine[], index: ReadonlyMap<string, Row[]>): { m: Matching; candidates: Row[][] } {
+export function matchHeir(lines: readonly PrintedLine[], index: ReadonlyMap<string, Row[]>): { m: Matching; candidates: Row[][] } {
   const candidates = lines.map((line) => candidatesFor(line, index));
   const m: Matching = { lineOf: new Map(), rowOf: new Map() };
   for (let i = 0; i < lines.length; i++) augment(i, candidates, () => true, m, new Set());
@@ -226,7 +228,7 @@ function rowsOnlyFromFiles(
   return freed.filter(([, line]) => !augment(line, candidates, usable, copy, new Set())).map(([rowId]) => rowId);
 }
 
-interface Heir {
+export interface Heir {
   fileId: string;
   importedAt: string;
   lines: PrintedLine[];
@@ -291,7 +293,7 @@ function takenOverLines(db: AppDatabase, accountId: string, recordedFileIds: rea
   return [...heirs.values()];
 }
 
-function heirsOn(db: AppDatabase, accountId: string): Heir[] {
+export function heirsOn(db: AppDatabase, accountId: string): Heir[] {
   const periods = db
     .select({ fileId: statementPeriods.importFileId, start: statementPeriods.periodStart, end: statementPeriods.periodEnd })
     .from(statementPeriods)
@@ -315,7 +317,7 @@ function heirsOn(db: AppDatabase, accountId: string): Heir[] {
     .map((h) => ({ ...h, periods: periods.filter((p) => p.fileId === h.fileId) }));
 }
 
-function rowsOn(db: AppDatabase, accountId: string): Row[] {
+export function rowsOn(db: AppDatabase, accountId: string): Row[] {
   return db
     .select({
       id: transactions.id,
@@ -536,10 +538,16 @@ function stillHeld(tx: AppDatabase, plans: readonly PrinterHandOver[]): Row[] {
 }
 
 /**
- * The held rows `heir`'s lines take back: its lines are matched to the account's live rows first, and a line left over
- * takes a held row — one `usable` allows. Each row taken is one more line no live row records (Kuhn).
+ * The held rows `heir`'s lines take back, each with the line it records: its lines are matched to the account's live
+ * rows first, and a line left over takes a held row — one `usable` allows. Each row taken is one more line no live row
+ * records (Kuhn).
  */
-function takenBack(heir: Heir, index: ReadonlyMap<string, Row[]>, isLive: (id: string) => boolean, usable: (id: string) => boolean): string[] {
+export function takenBack(
+  heir: Heir,
+  index: ReadonlyMap<string, Row[]>,
+  isLive: (id: string) => boolean,
+  usable: (id: string) => boolean,
+): [rowId: string, line: number][] {
   const candidates = heir.lines.map((line) => candidatesFor(line, index));
   const m: Matching = { lineOf: new Map(), rowOf: new Map() };
   const live = (row: Row) => isLive(row.id);
@@ -547,7 +555,7 @@ function takenBack(heir: Heir, index: ReadonlyMap<string, Row[]>, isLive: (id: s
   for (let i = 0; i < heir.lines.length; i++) {
     if (!m.rowOf.has(i)) augment(i, candidates, (row) => live(row) || usable(row.id), m, new Set());
   }
-  return [...m.lineOf.keys()].filter((id) => !isLive(id));
+  return [...m.lineOf].filter(([id]) => !isLive(id));
 }
 
 /**
@@ -583,7 +591,7 @@ export function settleHeldRows(tx: AppDatabase, holding: HeldForPrinters, member
         const heir = heirs.get(heirFileId);
         if (heir === undefined) continue;
         const usable = (id: string) => waiting.has(id) && (anyRow || planned.get(id) === heirFileId);
-        for (const id of takenBack(heir, index, isLive, usable)) {
+        for (const [id] of takenBack(heir, index, isLive, usable)) {
           const fromFileId = waiting.get(id)!.importFileId!;
           waiting.delete(id);
           tx.update(transactions)
