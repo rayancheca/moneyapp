@@ -11,30 +11,87 @@
  * THE RULE, in order:
  *   1. a different width or height is content — no renderer resizes a page;
  *   2. when no pixel differs, identical;
- *   3. otherwise the ink shift (see `ink-shift.ts`) at two scales: above either limit is
- *      content, at or below both is renderer drift.
+ *   3. otherwise four ink measures (INK_MEASURES), each seeing a change re-rasterising never
+ *      makes: ink moved a whole pixel (ink-fine) or changed in amount or colour over a
+ *      word-sized area (ink-coarse), both in `ink-shift.ts`; ink drawn on or taken off bare paper
+ *      (`ink-lone.ts`); a word's ink re-toned all together (`ink-tone.ts`). Above any limit is
+ *      content; at or below all four is renderer drift.
  *
  * Calibrated on real history, not guesses; `tsx scripts/e2e-renderer/calibrate-diff-verdict.ts`
- * re-runs it and prints the table. Measured 2026-09-28, with `--all`:
+ * re-runs it and prints the table. Measured 2026-09-29, with `--all`:
  *
- *   renderer   c3b9a59's 111 pairs            111 renderer-only   worst 1.83x under a limit
+ *   renderer   c3b9a59's 111 pairs            111 renderer-only   worst 1.74x under a limit
  *   content    1,023 changed baselines, the   1,023 content       weakest 1.85x over a limit
  *              46 UI commits since 803eeb2    (449 by size)
- *   synthetic  98 edits of real baselines     98 content          weakest 1.82x over a limit
+ *   synthetic  164 edits of real baselines    164 content         weakest 1.72x over a limit
  *
- * The synthetic edits are a 1px shift of text, two digits swapped, faint dark-mode text
- * recoloured, a region erased, a panel tinted and a page one pixel taller — each also judged
- * against the pre-upgrade baseline, the OS drift and the change landing in the same run.
+ * The synthetic edits are a 1px shift of text, two digits swapped, a money amount's "," and "."
+ * swapped (14px and 11px figures), text recoloured, dimmed by a tenth or given the next colour
+ * token (faint and bold, light and dark), a region erased, a panel tinted and a page one pixel
+ * taller — each also judged against the pre-upgrade baseline, the OS drift and the change
+ * landing in the same run.
  */
 import sharp from "sharp";
-import { INK_SCALES, inkShift, type InkScale } from "./ink-shift";
+import { inkLone, LONE_LIMIT } from "./ink-lone";
+import { INK_SCALES, inkShift, type InkShift } from "./ink-shift";
+import { inkTone, TONE_LIMIT } from "./ink-tone";
 
 export type RawImage = { width: number; height: number; data: Uint8Array }; // RGBA
 
+export type InkId = "ink-fine" | "ink-coarse" | "ink-lone" | "ink-tone";
+
+/** One way ink changes that re-rasterising never changes it, and how much of it is content. */
+export interface InkMeasure {
+  id: InkId;
+  /** above this, the difference is content */
+  limit: number;
+  /** what it sums or averages over, for the calibration table */
+  shape: string;
+  /** what a value over the limit says happened, in a content verdict's reasons */
+  meaning: string;
+  measure: (expected: RawImage, actual: RawImage) => InkShift;
+}
+
 /**
- * `decidingMeasure` is "size", "pixels" (identical), or the ink scale furthest past its limit
+ * Every measure the judge asks, each blind to what the others see: ink moved a whole pixel
+ * (ink-fine), ink whose amount or colour changed over a word-sized area (ink-coarse), ink drawn on
+ * or taken off bare paper (ink-lone, see ink-lone.ts), and a word's ink re-toned all together
+ * (ink-tone, see ink-tone.ts).
+ */
+export const INK_MEASURES: readonly InkMeasure[] = [
+  ...INK_SCALES.map((scale): InkMeasure => {
+    const side = `${2 * scale.radius + 1}x${2 * scale.radius + 1}`;
+    return {
+      id: scale.id,
+      limit: scale.limit,
+      shape: scale.passes === 1 ? `${side} box` : `${side} box x${scale.passes}`,
+      meaning:
+        scale.id === "ink-fine"
+          ? "ink moved, appeared or vanished here, further than re-rasterising moves it"
+          : "the amount or colour of ink over a word-sized area changed",
+      measure: (expected, actual) => inkShift(expected, actual, scale),
+    };
+  }),
+  {
+    id: "ink-lone",
+    limit: LONE_LIMIT,
+    shape: "3x3 sum on bare paper",
+    meaning: "ink was drawn on bare paper here, or taken off it, where re-rasterising puts none",
+    measure: inkLone,
+  },
+  {
+    id: "ink-tone",
+    limit: TONE_LIMIT,
+    shape: "share of a word's solid ink",
+    meaning: "a word's ink got lighter, darker or another colour, all of it together",
+    measure: inkTone,
+  },
+];
+
+/**
+ * `decidingMeasure` is "size", "pixels" (identical), or the ink measure furthest past its limit
  * — or, for renderer-only, the one that came closest to it. `reasons` carries one line per
- * ink scale, `<id> <value> <relation> <limit> at (x,y)`.
+ * ink measure, `<id> <value> <relation> <limit> at (x,y)`.
  */
 export type DiffVerdict = {
   verdict: "identical" | "renderer-only" | "content";
@@ -94,39 +151,36 @@ export function diffVerdict(expected: RawImage, actual: RawImage): DiffVerdict {
   }
 
   // The measure nearest its limit, or furthest past it, decides and is reported first. Every
-  // scale gets a line that starts "<id> <value>", which the calibration table reads back.
-  const measured = INK_SCALES.map((scale) => ({ scale, ...inkShift(expected, actual, scale) }))
-    .sort((p, q) => q.value / q.scale.limit - p.value / p.scale.limit);
-  const lines = measured.map(({ scale, value, x, y }) => {
-    const over = value > scale.limit;
-    const line = `${scale.id} ${value.toFixed(4)} ${over ? ">" : "<="} ${scale.limit}`;
-    return over ? `${line} at (${x},${y}): ${MEANING[scale.id]}` : `${line} at (${x},${y})`;
+  // measure gets a line that starts "<id> <value>", which the calibration table reads back.
+  const measured = INK_MEASURES.map((m) => ({ m, ...m.measure(expected, actual) }))
+    .sort((p, q) => q.value / q.m.limit - p.value / p.m.limit);
+  const lines = measured.map(({ m, value, x, y }) => {
+    const over = value > m.limit;
+    const line = `${m.id} ${value.toFixed(4)} ${over ? ">" : "<="} ${m.limit}`;
+    return over ? `${line} at (${x},${y}): ${m.meaning}` : `${line} at (${x},${y})`;
   });
   const decider = measured[0]!;
 
-  if (decider.value > decider.scale.limit) {
+  if (decider.value > decider.m.limit) {
     return {
       verdict: "content",
       reasons: lines,
-      metrics: { ...stats, decidingMeasure: decider.scale.id },
+      metrics: { ...stats, decidingMeasure: decider.m.id },
     };
   }
   return {
     verdict: "renderer-only",
     reasons: [RENDERER_ONLY, ...lines],
-    metrics: { ...stats, decidingMeasure: decider.scale.id },
+    metrics: { ...stats, decidingMeasure: decider.m.id },
   };
 }
 
 /**
- * Re-rasterising moves ink by a fraction of a pixel and keeps its amount and colour; each scale
- * sees a different way of breaking that.
+ * Re-rasterising moves ink by a fraction of a pixel, among pixels that already had ink, and
+ * keeps its colour; each measure sees a different way of breaking that.
  */
-const RENDERER_ONLY = "every change is sub-pixel: no ink moved a whole pixel or changed colour";
-const MEANING: Record<InkScale["id"], string> = {
-  "ink-fine": "ink moved, appeared or vanished here, further than re-rasterising moves it",
-  "ink-coarse": "the amount or colour of ink over a word-sized area changed",
-};
+const RENDERER_ONLY =
+  "every change is re-rasterising: no ink moved a whole pixel, landed on bare paper or changed tone";
 
 /**
  * Counts over the region both images share. A pixel is changed when any RGBA channel differs;

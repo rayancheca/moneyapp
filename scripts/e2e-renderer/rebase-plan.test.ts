@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { diffVerdict, type DiffVerdict, type RawImage } from "./diff-verdict";
+import { diffVerdict, INK_MEASURES, type DiffVerdict, type RawImage } from "./diff-verdict";
 import {
   compareRecord,
   oneLineRenderer,
@@ -7,7 +7,6 @@ import {
   type RendererVerdict,
 } from "./fingerprint";
 import type { GateAnswer } from "./gate-comparator";
-import { INK_SCALES } from "./ink-shift";
 import {
   commitMessage,
   describeContent,
@@ -217,7 +216,7 @@ function rebasePlan(rendererVerdict: RendererVerdict, judged: readonly Judged[])
 
 describe("inkMargins", () => {
   /** The lines are diffVerdict's own; reading them back must not drift from what it writes. */
-  test("reads back every ink scale diffVerdict actually measured", () => {
+  test("reads back every ink measure diffVerdict actually measured", () => {
     const blank = (): RawImage => ({
       width: 24,
       height: 24,
@@ -225,16 +224,18 @@ describe("inkMargins", () => {
     });
     const expected = blank();
     const actual = blank();
-    for (const [img, x] of [
-      [expected, 8],
-      [actual, 9],
-    ] as const) {
-      for (let y = 6; y < 18; y++) img.data.fill(0, (y * 24 + x) * 4, (y * 24 + x) * 4 + 3);
+    const set = (img: RawImage, x: number, y: number, v: number) =>
+      img.data.fill(v, (y * 24 + x) * 4, (y * 24 + x) * 4 + 3);
+    // a black line turned grey, and a dot drawn on bare paper beside it: every measure reads it
+    for (let y = 4; y < 20; y++) {
+      set(expected, 8, y, 0);
+      set(actual, 8, y, 60);
     }
+    set(actual, 16, 12, 0);
     const margins = inkMargins({ baseline: A, verdict: diffVerdict(expected, actual) });
-    expect(margins.map((m) => m.scale).sort()).toEqual(INK_SCALES.map((s) => s.id).sort());
+    expect(margins.map((m) => m.scale).sort()).toEqual(INK_MEASURES.map((m) => m.id).sort());
     for (const m of margins) {
-      expect(m.limit).toBe(INK_SCALES.find((s) => s.id === m.scale)!.limit);
+      expect(m.limit).toBe(INK_MEASURES.find((s) => s.id === m.scale)!.limit);
       expect(m.value).toBeGreaterThan(0);
     }
   });
@@ -548,15 +549,17 @@ describe("the words", () => {
     const table = verdictTable(judged).trimEnd().split("\n");
     expect(table[0]).toBe(
       "baseline\tverdict\tgate\tdeciding\tchanged_px\tchanged_fraction\tmax_delta\tink_fine\t" +
-        "ink_coarse",
+        "ink_coarse\tink_lone\tink_tone",
     );
     expect(table).toHaveLength(6);
-    expect(table[1]).toBe(`${A}\tidentical\t\tpixels\t0\t0.000000\t0\t\t`);
+    expect(table[1]).toBe(`${A}\tidentical\t\tpixels\t0\t0.000000\t0\t\t\t\t`);
     expect(table[3]).toBe(
-      `${C}\trenderer-only\tfails\tink-fine\t4000\t0.004000\t66\t0.0982\t0.0158`,
+      `${C}\trenderer-only\tfails\tink-fine\t4000\t0.004000\t66\t0.0982\t0.0158\t\t`,
     );
     // the tolerated are named here, and one never asked says what the plan took it for
-    expect(table[4]).toBe(`${D}\trenderer-only\tpasses\tink-fine\t9000\t0.009000\t66\t0.05\t0.01`);
+    expect(table[4]).toBe(
+      `${D}\trenderer-only\tpasses\tink-fine\t9000\t0.009000\t66\t0.05\t0.01\t\t`,
+    );
     expect(table[5]?.split("\t").slice(0, 3)).toEqual([E, "renderer-only", "unknown"]);
   });
 

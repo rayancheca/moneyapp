@@ -1,8 +1,8 @@
 /**
  * Re-runs the calibration behind `diffVerdict` and prints the table its limits come from.
  *
- *   tsx scripts/e2e-renderer/calibrate-diff-verdict.ts          # 454 pairs, about 3 minutes
- *   tsx scripts/e2e-renderer/calibrate-diff-verdict.ts --all    # 1,235 pairs, about 5
+ *   tsx scripts/e2e-renderer/calibrate-diff-verdict.ts          # 523 pairs, about 4 minutes
+ *   tsx scripts/e2e-renderer/calibrate-diff-verdict.ts --all    # 1,304 pairs, about 7
  *
  * Every pair comes out of git, so any checkout reproduces the same numbers:
  *
@@ -14,17 +14,26 @@
  *              before it was committed. Only commits since 803eeb2 count: before it the gate
  *              tolerated a pixel ratio, so a regenerated file could carry unexplained noise.
  *              All must be content.
- *   synthetic  real baselines at c3b9a59 edited the way a UI change edits a page. Each edit is
- *              judged twice: against the unedited baseline, and against the pre-upgrade one —
- *              an OS upgrade and a real change landing in the same run, which is the case the
- *              rebase command exists to refuse. All must be content.
+ *   synthetic  real baselines at c3b9a59 edited the way a UI change edits a page: text moved a
+ *              pixel, digits swapped, a money amount's "," and "." swapped, text re-coloured,
+ *              dimmed by a tenth (opacity 0.9) or given the next colour token, a region erased,
+ *              a panel tinted, a page one pixel taller. Each edit is judged twice: against the
+ *              unedited baseline, and against the pre-upgrade one — an OS upgrade and a real
+ *              change landing in the same run, which is the case the rebase command exists to
+ *              refuse. All must be content.
  *
  * Exits 1 when any pair gets the wrong verdict, so a change to the rule can be gated on it.
  * It reads the measured values out of each verdict's reasons rather than measuring twice.
  */
 import { execFileSync } from "node:child_process";
-import { decodePng, diffVerdict, type DiffVerdict, type RawImage } from "./diff-verdict";
-import { CONTRAST_FLOOR, INK_SCALES } from "./ink-shift";
+import {
+  decodePng,
+  diffVerdict,
+  INK_MEASURES,
+  type DiffVerdict,
+  type RawImage,
+} from "./diff-verdict";
+import { CONTRAST_FLOOR } from "./ink-shift";
 
 const RENDERER_COMMIT = "c3b9a59";
 /** The first commit that gated at `maxDiffPixels: 0`; `--all` takes every one from here on. */
@@ -47,7 +56,7 @@ interface Row {
   label: string;
   expect: Expect | null;
   verdict: DiffVerdict;
-  /** each ink scale's value, read from the verdict's reasons; empty when size decided */
+  /** each ink measure's value, read from the verdict's reasons; empty when size decided */
   ink: Map<string, number>;
 }
 
@@ -133,6 +142,17 @@ const DIGIT_SWAPS = [
 ];
 
 /**
+ * The "," and "." cells of two `.figures` amounts, each cell one advance of the monospaced face
+ * wide and holding nothing of its neighbours: the 14px "$1,041.29" on accounts, and on
+ * transactions (light) the 11px day total "-$2,249.09", whose comma's tail is 1.2 px² of ink.
+ */
+const SEPARATORS = {
+  accounts: { comma: rect(1290, 380, 7, 17), periodX: 1323, what: '"$1,041.29"' },
+  transactions: { comma: rect(1346, 1147, 6, 13), periodX: 1372, what: '"-$2,249.09"' },
+};
+const TRANSACTIONS = "e2e/visual.spec.ts-snapshots/transactions-light-1440-chromium-darwin.png";
+
+/**
  * New ink colours for faint dark-mode text: the theme's accent and negative, a blue of the same
  * luminance as the grey, and the grey 30 levels either way. Four of the five move no pixel
  * further than the 76 levels the renderer drift did, so a per-pixel maximum cannot see them.
@@ -145,11 +165,31 @@ const RECOLOURS: [string, number[]][] = [
   ["30 levels dimmer", [115, 110, 103]],
 ];
 /**
- * --ink-faint to --ink-muted, 15 levels: the smallest step between two text tokens. It reads
- * right at the ink-coarse limit, so it is printed as the edge of what the rule sees and not
- * asserted either way.
+ * New ink colours for faint light-mode text: the theme's accent and negative, as
+ * src/app/globals.css's oklch renders them in sRGB.
  */
-const PROBE_RECOLOUR: [string, number[]] = ["15 levels brighter", [160, 156, 149]];
+const LIGHT_RECOLOURS: [string, number[]][] = [
+  ["accent green", [0, 101, 72]],
+  ["negative red", [178, 65, 51]],
+];
+
+/**
+ * --ink-faint to --ink-muted, the smallest step between two text tokens: 11% more contrast in
+ * light, 16% in dark. Rendered in sRGB from src/app/globals.css's oklch.
+ */
+const FAINT_TO_MUTED: Record<"dark" | "light", [from: number[], to: number[]]> = {
+  light: [
+    [109, 104, 97],
+    [93, 87, 80],
+  ],
+  dark: [
+    [144, 140, 133],
+    [162, 158, 151],
+  ],
+};
+
+/** Text the rule must see re-toned however little ink it has: small and faint up to a heading. */
+const TONED = ["asOf", "cardType", "footer", "amount", "heading", "body"] as const;
 
 const copy = (img: RawImage): RawImage => ({ ...img, data: new Uint8Array(img.data) });
 
@@ -198,9 +238,9 @@ function swap(img: RawImage, a: Rect, bx: number): RawImage {
 }
 
 /**
- * Re-inks anti-aliased text the way a colour token change does: each pixel keeps its coverage
- * (its position between the background and the darkest-or-brightest ink pixel) and blends
- * toward the new colour instead.
+ * Re-inks anti-aliased text the way a colour change of another hue does: each pixel keeps its
+ * coverage (its position between the background and the darkest-or-brightest ink pixel) and
+ * blends toward the new colour instead.
  */
 function recolour(img: RawImage, r: Rect, ink: number[]): RawImage {
   const bg = background(img, r);
@@ -220,6 +260,47 @@ function recolour(img: RawImage, r: Rect, ink: number[]): RawImage {
     const coverage = Math.max(0, Math.min(1, along));
     for (let c = 0; c < 3; c++) out[k + c] = Math.round(bg[c]! + coverage * (ink[c]! - bg[c]!));
   });
+}
+
+/**
+ * Moves each pixel's colour toward the background, or away from it, by a factor per channel:
+ * what `opacity` does to text, and a token swap of the same hue. Coverage stays exact, where
+ * recolour's is relative to the darkest pixel of the rectangle.
+ */
+function reink(img: RawImage, r: Rect, factor: readonly number[]): RawImage {
+  const bg = background(img, r);
+  return edit(img, r, (_x, _y, out, k) => {
+    for (let c = 0; c < 3; c++) {
+      const v = bg[c]! + (img.data[k + c]! - bg[c]!) * factor[c]!;
+      out[k + c] = Math.max(0, Math.min(255, Math.round(v)));
+    }
+  });
+}
+
+/** The factor per channel that turns `from` into `to` on the background of `r`. */
+function tokenFactor(img: RawImage, r: Rect, [from, to]: [number[], number[]]): number[] {
+  const bg = background(img, r);
+  return [0, 1, 2].map((c) => (to[c]! - bg[c]!) / (from[c]! - bg[c]!));
+}
+
+/** Copies the cell at `a` over the cell at `bx` on the same rows: one glyph for another. */
+function copyCell(img: RawImage, a: Rect, bx: number): RawImage {
+  const out = copy(img);
+  for (let y = a.y; y < a.y + a.h; y++) {
+    const p = (y * img.width + a.x) * 4;
+    out.data.set(img.data.subarray(p, p + a.w * 4), (y * img.width + bx) * 4);
+  }
+  return out;
+}
+
+/** A separator swapped both ways, then each way alone: "1.041,29", "1.041.29", "1,041,29". */
+function separatorEdits(sep: (typeof SEPARATORS)[keyof typeof SEPARATORS]): Edit[] {
+  const period = { ...sep.comma, x: sep.periodX };
+  return [
+    [`${sep.what}: "," and "." swapped`, (now) => swap(now, sep.comma, sep.periodX)],
+    [`${sep.what}: "," made "."`, (now) => copyCell(now, period, sep.comma.x)],
+    [`${sep.what}: "." made ","`, (now) => copyCell(now, sep.comma, sep.periodX)],
+  ];
 }
 
 function erase(img: RawImage, r: Rect): RawImage {
@@ -246,7 +327,18 @@ function tallerAt(img: RawImage, at: number): RawImage {
 type Edit = [what: string, make: (now: RawImage) => RawImage];
 
 function editsFor(theme: "dark" | "light"): Edit[] {
+  const toned = TONED.map((s): Edit => [
+    `${SITES[s].what} a tenth dimmer (opacity 0.9)`,
+    (now) => reink(now, SITES[s].at, [0.9, 0.9, 0.9]),
+  ]);
+  const muted = (["asOf", "cardType", "footer"] as const).map((s): Edit => [
+    `${SITES[s].what} --ink-faint -> --ink-muted`,
+    (now) => reink(now, SITES[s].at, tokenFactor(now, SITES[s].at, FAINT_TO_MUTED[theme])),
+  ]);
   const edits: Edit[] = [
+    ...separatorEdits(SEPARATORS.accounts),
+    ...toned,
+    ...muted,
     ...(["asOf", "cardType", "footer", "amount", "nav"] as const).map(
       (s): Edit => [`${SITES[s].what} 1px right`, (now) => shift(now, SITES[s].at, 1, 0)],
     ),
@@ -261,8 +353,8 @@ function editsFor(theme: "dark" | "light"): Edit[] {
     [`${SITES.card.what} tinted 6 levels`, (now) => tint(now, SITES.card.at, 6)],
     [`${SITES.card.what} tinted -3 levels`, (now) => tint(now, SITES.card.at, -3)],
   ];
-  if (theme === "light") return edits;
-  for (const [name, ink] of RECOLOURS) {
+  const hues = theme === "light" ? LIGHT_RECOLOURS : RECOLOURS;
+  for (const [name, ink] of hues) {
     for (const s of ["asOf", "cardType", "footer"] as const) {
       edits.push([`${SITES[s].what} recoloured ${name}`, (now) => recolour(now, SITES[s].at, ink)]);
     }
@@ -270,20 +362,29 @@ function editsFor(theme: "dark" | "light"): Edit[] {
   return edits;
 }
 
+/**
+ * A twentieth dimmer (opacity 0.95): half the smallest re-toning the rule exists to catch. It is
+ * printed as the edge of what ink-tone sees and not asserted either way.
+ */
+const PROBE_DIM = [0.95, 0.95, 0.95];
+
 async function syntheticRows(): Promise<Row[]> {
   const rows: Row[] = [];
   const judge = (label: string, expect: Expect | null, from: RawImage, to: RawImage) => {
     rows.push(row(expect === null ? "probe" : "synthetic", label, expect, diffVerdict(from, to)));
   };
+  const judgeEdits = (label: string, now: RawImage, before: RawImage, edits: Edit[]) => {
+    for (const [what, make] of edits) {
+      const edited = make(now);
+      judge(`${label} ${what}`, "content", now, edited);
+      judge(`${label} ${what} + OS drift`, "content", before, edited);
+    }
+  };
   for (const theme of ["dark", "light"] as const) {
     const file = `e2e/visual.spec.ts-snapshots/accounts-${theme}-1440-chromium-darwin.png`;
     const now = await atRevision(RENDERER_COMMIT, file);
     const before = await atRevision(`${RENDERER_COMMIT}~1`, file);
-    for (const [what, make] of editsFor(theme)) {
-      const edited = make(now);
-      judge(`${theme} ${what}`, "content", now, edited);
-      judge(`${theme} ${what} + OS drift`, "content", before, edited);
-    }
+    judgeEdits(theme, now, before, editsFor(theme));
     const taller: [string, number][] = [
       ["a row repeated at y=600", 600],
       ["the last row repeated", now.height - 1],
@@ -291,21 +392,22 @@ async function syntheticRows(): Promise<Row[]> {
     for (const [where, at] of taller) {
       judge(`${theme} 1px taller: ${where}`, "content", now, tallerAt(now, at));
     }
-    if (theme === "dark") {
-      const [name, ink] = PROBE_RECOLOUR;
-      for (const s of ["asOf", "cardType", "footer"] as const) {
-        const edited = recolour(now, SITES[s].at, ink);
-        judge(`${theme} ${SITES[s].what} recoloured ${name}`, null, now, edited);
-      }
+    for (const s of ["asOf", "cardType", "footer"] as const) {
+      const edited = reink(now, SITES[s].at, PROBE_DIM);
+      judge(`${theme} ${SITES[s].what} a twentieth dimmer (opacity 0.95)`, null, now, edited);
     }
     process.stderr.write(`  synthetic ${theme}: ${rows.length} pairs so far\n`);
   }
+  const now = await atRevision(RENDERER_COMMIT, TRANSACTIONS);
+  const before = await atRevision(`${RENDERER_COMMIT}~1`, TRANSACTIONS);
+  judgeEdits("light transactions", now, before, separatorEdits(SEPARATORS.transactions));
+  process.stderr.write(`  synthetic transactions: ${rows.length} pairs so far\n`);
   return rows;
 }
 
 // ---------------------------------------------------------------- the table
 
-const LIMIT = new Map(INK_SCALES.map((s) => [s.id as string, s.limit]));
+const LIMIT = new Map(INK_MEASURES.map((m) => [m.id as string, m.limit]));
 const fmt = (v: number) => v.toFixed(4);
 const pad = (s: string | number, n: number) => String(s).padEnd(n);
 
@@ -316,15 +418,12 @@ function excess(r: Row): number {
 
 const SETS = ["renderer", "content", "synthetic"] as const;
 
-/** One line per set: its verdicts, each scale's worst (renderer) or weakest (content) value. */
+/** One line per set: its verdicts, each measure's worst (renderer) or weakest (content) value. */
 function printSummary(rows: Row[]): void {
-  const scales = INK_SCALES.map((s) => {
-    const box = `${2 * s.radius + 1}x${2 * s.radius + 1}`;
-    return `${s.id} ${s.limit} (${s.passes === 1 ? box : `${box} x${s.passes}`})`;
-  });
+  const scales = INK_MEASURES.map((m) => `${m.id} ${m.limit} (${m.shape})`);
   const floor = `contrast floor ${CONTRAST_FLOOR}`;
   console.log(`\ndiffVerdict calibration — ${scales.join(", ")}, ${floor}\n`);
-  const scaleHeads = INK_SCALES.map((s) => pad(s.id, 22)).join("");
+  const scaleHeads = INK_MEASURES.map((m) => pad(m.id, 22)).join("");
   console.log(`${pad("set", 10)}${pad("pairs", 7)}${pad("verdicts", 36)}${scaleHeads}max px delta`);
   for (const set of SETS) {
     const of = rows.filter((r) => r.set === set);
@@ -339,11 +438,12 @@ function printSummary(rows: Row[]): void {
       console.log(`${pad(set, 10)}${pad(of.length, 7)}${verdictCell}`);
       continue;
     }
-    const cells = INK_SCALES.map((s) => {
+    const cells = INK_MEASURES.map((s) => {
       const values = measured.map((r) => r.ink.get(s.id)!);
       if (set !== "renderer") return pad(`min ${fmt(Math.min(...values))}`, 22);
       const worst = Math.max(...values);
-      return pad(`max ${fmt(worst)} (${(s.limit / worst).toFixed(2)}x)`, 22);
+      const under = worst === 0 ? "none" : `${(s.limit / worst).toFixed(2)}x`;
+      return pad(`max ${fmt(worst)} (${under})`, 22);
     }).join("");
     const deltas = measured.map((r) => r.verdict.metrics.maxDelta);
     const delta = `${Math.min(...deltas)}..${Math.max(...deltas)}`;
@@ -372,7 +472,7 @@ function printMargins(rows: Row[]): void {
 function printProbesAndMistakes(rows: Row[]): Row[] {
   const probes = rows.filter((r) => r.set === "probe");
   if (probes.length > 0) {
-    console.log("\nthe edge, not asserted — the smallest step between two text colour tokens:");
+    console.log("\nthe edge, not asserted — text a twentieth dimmer, half the smallest re-toning:");
     for (const r of probes) {
       console.log(`    ${excess(r).toFixed(2)}  ${r.verdict.verdict.padEnd(13)} ${r.label}`);
     }

@@ -1,5 +1,6 @@
 /**
- * The measure behind `diffVerdict`: how much ink moved, relative to the contrast it has there.
+ * Two of the measures behind `diffVerdict`: how much ink moved, relative to the contrast it has
+ * there. (ink-lone.ts and ink-tone.ts are the other two, and the pixel helpers here are theirs.)
  *
  * A text rasteriser that changes between OS versions re-draws every glyph a fraction of a
  * pixel differently. That moves coverage between NEIGHBOURING pixels: averaged over a small
@@ -7,6 +8,14 @@
  * as small for faint text as for bold, because both scale with the contrast. A real change
  * moves ink a whole pixel or more, adds or removes it, or changes its colour, and the average
  * keeps that.
+ *
+ * An average keeps it in proportion to how much of its window the change covers, though, and
+ * that is where these two go blind. A comma's tail, 1.2 px² of ink and all that a period swapped
+ * for a comma changes in an 11px amount, reads 0.15 in the 3x3 box, about its area over nine,
+ * where re-rasterising read up to 0.098. A recolour reads as much as the window holds ink: a
+ * tenth off the heading reads 0.056 at ink-coarse, off the 11px faint "as of" line 0.027, under
+ * its limit. ink-lone reads the first where it lies, on bare paper, and ink-tone the second per
+ * word, whatever its ink.
  *
  * So at every pixel, per channel: `actual - expected` averaged over a window, divided by that
  * channel's contrast where the window reaches (its max minus its min, in whichever image has
@@ -38,7 +47,7 @@ export interface InkScale {
 
 /**
  * TWO SCALES, because the two kinds of real change that hide from a per-pixel maximum hide at
- * different sizes. `calibrate-diff-verdict.ts` measured every number here.
+ * different sizes. `calibrate-diff-verdict.ts` measured every number here, on 2026-09-28.
  *
  * ink-fine — a 3x3 box — sees ink that MOVED or changed shape: a 1px shift reads 1/3 and the
  * ghost line's re-drawn dots 0.348, while the worst of the 111 drift pairs reads 0.098.
@@ -75,7 +84,7 @@ export interface InkShift {
   y: number;
 }
 
-interface Box {
+export interface Box {
   x: number;
   y: number;
   w: number;
@@ -115,7 +124,7 @@ export function inkShift(expected: RawImage, actual: RawImage, scale: InkScale):
 }
 
 /** The bounding box of every pixel whose RGBA differs, or null when none does. */
-function changedBox(expected: RawImage, actual: RawImage): Box | null {
+export function changedBox(expected: RawImage, actual: RawImage): Box | null {
   const { width: w, height: h } = expected;
   const e = expected.data;
   const a = actual.data;
@@ -138,7 +147,7 @@ function changedBox(expected: RawImage, actual: RawImage): Box | null {
   return x1 < 0 ? null : { x: x0, y: y0, w: x1 - x0 + 1, h: y1 - y0 + 1 };
 }
 
-function grow(box: Box, by: number, width: number, height: number): Box {
+export function grow(box: Box, by: number, width: number, height: number): Box {
   const x = Math.max(0, box.x - by);
   const y = Math.max(0, box.y - by);
   return {
@@ -149,7 +158,7 @@ function grow(box: Box, by: number, width: number, height: number): Box {
   };
 }
 
-function crop(img: RawImage, box: Box): RawImage {
+export function crop(img: RawImage, box: Box): RawImage {
   const data = new Uint8Array(box.w * box.h * 4);
   for (let y = 0; y < box.h; y++) {
     const from = ((box.y + y) * img.width + box.x) * 4;
@@ -162,7 +171,7 @@ function crop(img: RawImage, box: Box): RawImage {
  * RGB always; alpha only when some pixel is not opaque. Playwright screenshots are opaque, and
  * skipping a constant channel saves a quarter of the work.
  */
-function channelsThatVary(e: RawImage, a: RawImage): number[] {
+export function channelsThatVary(e: RawImage, a: RawImage): number[] {
   for (let k = 3; k < e.data.length; k += 4) {
     if (e.data[k] !== 255 || a.data[k] !== 255) return [0, 1, 2, 3];
   }
@@ -183,7 +192,7 @@ function difference(e: RawImage, a: RawImage, channel: number): Float32Array {
  * Each value's mean over the (2r+1)² box around it, the box clipped at the edge. Two
  * running-sum passes, so the cost does not grow with r.
  */
-function boxMean(src: Float32Array, w: number, h: number, r: number): Float32Array {
+export function boxMean(src: Float32Array, w: number, h: number, r: number): Float32Array {
   const rows = new Float32Array(w * h);
   const prefix = new Float64Array(Math.max(w, h) + 1);
   for (let y = 0; y < h; y++) {
@@ -208,6 +217,17 @@ function boxMean(src: Float32Array, w: number, h: number, r: number): Float32Arr
 
 /** Each pixel's max minus min of one channel over the (2r+1)² square around it. */
 function channelRange(img: RawImage, channel: number, r: number): Uint8Array {
+  const { max, min } = channelExtremes(img, channel, r);
+  for (let i = 0; i < max.length; i++) max[i] = max[i]! - min[i]!;
+  return max;
+}
+
+/** Each pixel's max and min of one channel over the (2r+1)² square around it. */
+export function channelExtremes(
+  img: RawImage,
+  channel: number,
+  r: number,
+): { max: Uint8Array; min: Uint8Array } {
   const { width: w, height: h, data } = img;
   const n = w * h;
   const rowMax = new Uint8Array(n);
@@ -220,15 +240,14 @@ function channelRange(img: RawImage, channel: number, r: number): Uint8Array {
     slidingExtreme(line, r, true, row(rowMax), scratch);
     slidingExtreme(line, r, false, row(rowMin), scratch);
   }
-  const range = new Uint8Array(n);
-  const colMin = new Uint8Array(n);
+  const max = new Uint8Array(n);
+  const min = new Uint8Array(n);
   for (let x = 0; x < w; x++) {
     const column = (data: Uint8Array): Lane => ({ data, offset: x, stride: w, length: h });
-    slidingExtreme(column(rowMax), r, true, column(range), scratch);
-    slidingExtreme(column(rowMin), r, false, column(colMin), scratch);
+    slidingExtreme(column(rowMax), r, true, column(max), scratch);
+    slidingExtreme(column(rowMin), r, false, column(min), scratch);
   }
-  for (let i = 0; i < n; i++) range[i] = range[i]! - colMin[i]!;
-  return range;
+  return { max, min };
 }
 
 /** One row or column of a plane: `length` values at `data[offset + i * stride]`. */

@@ -11,7 +11,7 @@
  * the Geist files the app ships differ from the record, no drift is re-based at all: a font
  * change is the app's own, and its baselines are redrawn by the change that made it.
  */
-import type { DiffVerdict } from "./diff-verdict";
+import { INK_MEASURES, type DiffVerdict } from "./diff-verdict";
 import {
   BASELINE_RENDERER_PATH,
   macosLabel,
@@ -189,10 +189,10 @@ export interface Tally {
   closest: InkMargin | null;
 }
 
-/** "ink-fine 0.0982 <= 0.18 at (12,40)" — the line diffVerdict writes for every ink scale. */
+/** "ink-fine 0.0982 <= 0.18 at (12,40)" — the line diffVerdict writes for every ink measure. */
 const INK_LINE = /^(ink-[a-z]+) (\d+(?:\.\d+)?) (?:<=|>) (\d+(?:\.\d+)?) /;
 
-/** Every ink scale a verdict measured, read back from its reasons as the calibration does. */
+/** Every ink measure a verdict took, read back from its reasons as the calibration does. */
 export function inkMargins(judged: Judged): InkMargin[] {
   return judged.verdict.reasons.flatMap((reason) => {
     const hit = INK_LINE.exec(reason);
@@ -439,8 +439,7 @@ export function verdictTable(judged: readonly Judged[]): string {
     "changed_px",
     "changed_fraction",
     "max_delta",
-    "ink_fine",
-    "ink_coarse",
+    ...INK_MEASURES.map((m) => m.id.replace("-", "_")),
   ];
   const rows = judged.map((j) => {
     const m = j.verdict.metrics;
@@ -455,8 +454,7 @@ export function verdictTable(judged: readonly Judged[]): string {
       m.changedPixels,
       m.changedFraction.toFixed(6),
       m.maxDelta,
-      ink.get("ink-fine") ?? "",
-      ink.get("ink-coarse") ?? "",
+      ...INK_MEASURES.map((measure) => ink.get(measure.id) ?? ""),
     ].join("\t");
   });
   return `${[header.join("\t"), ...rows].join("\n")}\n`;
