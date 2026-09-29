@@ -24,15 +24,19 @@
  *      checked" to 42 and exited 0. Each kind the check counts — value anchors,
  *      chain endpoints, chain windows, statement periods, accounts — has a
  *      high-water mark kept in the ledger itself (`ledger_witness_marks`), each
- *      witness keyed by its account's id. Fewer than the mark fails;
- *      more raises the mark on its own, with no commit and no hand edit (the
- *      owner's rule, 2026-09-15). src/lib/witness-floor.ts.
+ *      witness keyed by its account's id. Fewer than the mark fails, and so
+ *      does any witness the mark lists that is gone, whatever the count (a
+ *      swap holds it; a raise would have erased what left); more, with none
+ *      gone, raises the mark on its own, with no commit and no hand edit (the
+ *      owner's rule, 2026-09-15). While one is gone, what arrives joins the
+ *      mark beside it, so an arrival that leaves before the mark is lowered is
+ *      named too. src/lib/witness-floor.ts.
  *
  * The rules live in src/lib/ledger-integrity.ts and src/lib/reconciliation.ts
  * and are unit-tested there; this file is the I/O around them.
  *
  * Exit 0 = the ledger matches BASELINE below, no verdict has gone stale, and no
- * witness count is below its mark.
+ * witness kind is below its mark or missing a witness it lists.
  *
  *   pnpm ledger-check
  *
@@ -459,7 +463,8 @@ if (MODE.mode === "lower") {
 }
 
 const floor = compareToMarks(observation, marks);
-// recorded for the first time, or raised — a drop writes nothing, so the mark stays until lowered
+// recorded for the first time, raised, or — a drop (fewer, or any witness it lists gone) — joined by what
+// arrived, with what left kept in it until lowered. A drop with nothing new arrived writes nothing.
 writeWitnessMarks(db, floor.writes);
 console.log(floor.summary);
 
