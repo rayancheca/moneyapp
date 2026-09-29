@@ -31,6 +31,7 @@ const REAL: AttributionInput = {
   openingCents: 8_289_766,
   closingCents: 10_932_237,
   earnedCents: 5_295,
+  agentIncomeCents: 0,
   refundsCents: 11_311,
   spentCents: -1_609_407,
   movedCents: 1_887_053,
@@ -116,6 +117,7 @@ describe("attribute — the bridge closes, or says by how much it does not", () 
     const got = attribute(REAL);
     expect(got.bands.map((b) => b.key)).toEqual([
       "earned",
+      "agentIncome",
       "refunds",
       "spent",
       "moved",
@@ -150,6 +152,7 @@ describe("attribute — the bridge closes, or says by how much it does not", () 
       openingCents: 0,
       closingCents: 0,
       earnedCents: 11,
+      agentIncomeCents: 13,
       refundsCents: 22,
       spentCents: -33,
       movedCents: 44,
@@ -160,6 +163,7 @@ describe("attribute — the bridge closes, or says by how much it does not", () 
     });
     const at = (k: string) => got.bands.find((b) => b.key === k)!.cents;
     expect(at("earned")).toBe(11);
+    expect(at("agentIncome")).toBe(13);
     expect(at("refunds")).toBe(22);
     expect(at("spent")).toBe(-33);
     expect(at("moved")).toBe(44);
@@ -167,7 +171,7 @@ describe("attribute — the bridge closes, or says by how much it does not", () 
     expect(at("portfolioFlow")).toBe(-66);
     expect(at("inTransit")).toBe(77);
     // delta 0 less the named total is the residual, sign included
-    expect(at("unexplained")).toBe(-(11 + 22 - 33 + 44 + 55 - 66 + 77));
+    expect(at("unexplained")).toBe(-(11 + 13 + 22 - 33 + 44 + 55 - 66 + 77));
   });
 
   test("a band that is exactly zero is still present, and marked", () => {
@@ -193,6 +197,7 @@ describe("attribute — the bridge closes, or says by how much it does not", () 
       openingCents: 0,
       closingCents: 0,
       earnedCents: 0,
+      agentIncomeCents: 0,
       spentCents: 0,
       refundsCents: 0,
       movedCents: 0,
@@ -274,5 +279,19 @@ describe("the income band's words", () => {
     expect(ATTRIBUTION_BAND_LABEL.earned).toBe("Income");
     expect(ATTRIBUTION_BAND_MEANING.earned).not.toMatch(/earn/i);
     expect(ATTRIBUTION_BAND_MEANING.refunds).not.toMatch(/earn/i);
+  });
+
+  /*
+   * ⚖️ Owner decision 2026-09-28 (§6A 27): the agent's income is not his, and /spending's Income leaves it out — but
+   * net worth holds it, so the bridge NAMES it rather than hiding it inside "Income" (one word, two populations: the
+   * S22 defect) or inside "Moved" (which says it is a transfer).
+   */
+  test("the agent's income has a band of its own, and its words say whose money it is", () => {
+    expect(ATTRIBUTION_BAND_LABEL.agentIncome).toBe("Agent's income");
+    expect(ATTRIBUTION_BAND_MEANING.agentIncome).toMatch(/agent/i);
+    expect(ATTRIBUTION_BAND_MEANING.agentIncome).toMatch(/not your income/i);
+    expect(ATTRIBUTION_BAND_MEANING.agentIncome).not.toMatch(/earn/i);
+    // the Income band's meaning no longer claims every income-kind row
+    expect(ATTRIBUTION_BAND_MEANING.earned).toMatch(/agent/i);
   });
 });

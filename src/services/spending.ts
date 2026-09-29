@@ -16,12 +16,13 @@ import { subBuckets, type ResolvedPeriod } from "@/lib/period";
 import { alignByIndex, projectPace } from "@/lib/projection";
 import { allocationsFor } from "@/lib/transaction-splits";
 import { NO_MERCHANT, OTHER_SERIES_KEY, UNCATEGORIZED_SERIES_KEY } from "@/lib/ledger-href";
+import { outsidePortfolioCashAccountIds } from "./accounts";
 import {
   activeTxnsInRange,
+  isIncome,
   ledgerHref,
   loadCategoryIndex,
   spendingBucket,
-  type AnalyticsTxn,
   type CategoryIndex,
   type DateRange,
 } from "./analytics";
@@ -42,7 +43,8 @@ import { activeSplitsInRange } from "./transaction-splits";
  * inflow) is NOT spending and never nets the outflow down — it is surfaced as
  * `refundsCents` so a big cross-period credit can't drag "Spent" nonsensically
  * negative. Net still reconciles: netCents = earned + refunds − spent (a refund
- * is money in). Income is positive amounts in income-kind categories.
+ * is money in). Income is positive amounts in income-kind categories, off the
+ * agent's cash account (`isIncome` — owner decision 2026-09-28).
  * (Per-category breakdown in analytics.ts stays netted — a separate view.)
  */
 
@@ -65,16 +67,9 @@ export interface PeriodTotals {
   savingsRatePct: number | null;
 }
 
-function isIncome(idx: CategoryIndex, txn: AnalyticsTxn): boolean {
-  return (
-    txn.categoryId !== null &&
-    txn.amountCents > 0 &&
-    idx.topLevelOf(txn.categoryId).kind === "income"
-  );
-}
-
 export function periodTotals(db: AppDatabase, range: DateRange): PeriodTotals {
   const idx = loadCategoryIndex(db);
+  const agentsCash = outsidePortfolioCashAccountIds(db);
   let earnedCents = 0;
   let spentCents = 0;
   let refundsCents = 0;
@@ -85,7 +80,7 @@ export function periodTotals(db: AppDatabase, range: DateRange): PeriodTotals {
       else refundsCents += txn.amountCents;
       continue;
     }
-    if (isIncome(idx, txn)) earnedCents += txn.amountCents;
+    if (isIncome(idx, agentsCash, txn)) earnedCents += txn.amountCents;
   }
   const netCents = earnedCents + refundsCents - spentCents;
   return {
@@ -196,6 +191,7 @@ export function ledgerFirstDay(db: AppDatabase): string | null {
 
 export function cashFlowByPeriod(db: AppDatabase, period: ResolvedPeriod, today: string): CashFlow {
   const idx = loadCategoryIndex(db);
+  const agentsCash = outsidePortfolioCashAccountIds(db);
   const colorOf = categoryColors(db);
   const buckets = subBuckets(period);
   const byMonth = (buckets[0]?.key.length ?? 10) === 7;
@@ -251,7 +247,7 @@ export function cashFlowByPeriod(db: AppDatabase, period: ResolvedPeriod, today:
       const total = spendTotals.get(catKey) ?? { name: sb.categoryName, cents: 0 };
       spendTotals.set(catKey, { name: sb.categoryName, cents: total.cents + out });
       classified.push({ bucket, kind: "spend", catKey, name: sb.categoryName, cents: out });
-    } else if (isIncome(idx, txn)) {
+    } else if (isIncome(idx, agentsCash, txn)) {
       const node = idx.byId.get(txn.categoryId!)!;
       earnedCents += txn.amountCents;
       const total = incomeTotals.get(node.id) ?? { name: node.name, cents: 0 };
@@ -536,6 +532,8 @@ export function dailySpendHeatmap(db: AppDatabase, month: string): SpendHeatmap 
   const from = `${month}-01`;
   const to = periodBounds(from, "monthly").end;
   const idx = loadCategoryIndex(db);
+  // the day's earned bar is the Income card's population, read one day at a time
+  const agentsCash = outsidePortfolioCashAccountIds(db);
   interface Cell {
     spentCents: number;
     incomeCents: number;
@@ -585,7 +583,7 @@ export function dailySpendHeatmap(db: AppDatabase, month: string): SpendHeatmap 
       const entry = cell.merchants.get(key) ?? { name, cents: 0 };
       entry.cents += out;
       cell.merchants.set(key, entry);
-    } else if (isIncome(idx, txn)) {
+    } else if (isIncome(idx, agentsCash, txn)) {
       cell.incomeCents += txn.amountCents;
     } else if (bucket) {
       // a credit in an expense category: the return the branch above skips

@@ -66,8 +66,15 @@ export interface AttributionInput {
   openingCents: number;
   /** net worth at the window's closing edge */
   closingCents: number;
-  /** income-kind rows, money in, ≥ 0 */
+  /** income-kind rows, money in, ≥ 0 — HIS: the population /spending calls Income (`isIncome`) */
   earnedCents: number;
+  /**
+   * income-kind rows, money in, ≥ 0, on the agent's cash account (`outsidePortfolioCashAccountIds`).
+   *
+   * ⚖️ Owner decision 2026-09-28: not his income, so it is not in `earnedCents` — and still in net worth, so it is
+   * not dropped either. A bridge that left it out would report the agent's dividend as "Unexplained".
+   */
+  agentIncomeCents: number;
   /** expense-kind debits, net-worth-signed, ≤ 0 */
   spentCents: number;
   /** credits inside expense categories — money back, not money earned, ≥ 0 */
@@ -94,6 +101,7 @@ export interface AttributionInput {
 
 export type AttributionBandKey =
   | "earned"
+  | "agentIncome"
   | "refunds"
   | "spent"
   | "moved"
@@ -115,6 +123,7 @@ export type AttributionBandKey =
  */
 export const ATTRIBUTION_BAND_ORDER = [
   "earned",
+  "agentIncome",
   "refunds",
   "spent",
   "moved",
@@ -133,9 +142,11 @@ export const ATTRIBUTION_BAND_ORDER = [
  * printed once per band per lens, so they live with the data that selects them.
  */
 export const ATTRIBUTION_BAND_LABEL: Record<AttributionBandKey, string> = {
-  // S22: every positive income-kind row, the population /spending calls Income —
-  // /summary's "Earned" is narrower (owner decision 2026-09-14). The key stays.
+  // S22: every positive income-kind row HE received, the population /spending calls
+  // Income — /summary's "Earned" is narrower (owner decision 2026-09-14). The key stays.
   earned: "Income",
+  // 2026-09-28: the agent's income is not his, so it is not "Income" — named, not hidden
+  agentIncome: "Agent's income",
   refunds: "Refunds",
   spent: "Spent",
   moved: "Moved",
@@ -146,7 +157,8 @@ export const ATTRIBUTION_BAND_LABEL: Record<AttributionBandKey, string> = {
 };
 
 export const ATTRIBUTION_BAND_MEANING: Record<AttributionBandKey, string> = {
-  earned: "Money arriving in an income category. Only money in — a credit that claws back earlier pay is not negative income.",
+  earned: "Money arriving in an income category. Only money in — a credit that claws back earlier pay is not negative income. What the agent's account is paid is not yours, and has its own line.",
+  agentIncome: "Money arriving in an income category on the agent's own cash account — its dividends and interest. Net worth holds it, so it is counted here; it is not your income, so the Income line leaves it out.",
   refunds: "Credits inside spending categories. Money coming back, which is not the same as income.",
   spent: "Debits in spending categories, before any refund is netted against them.",
   moved: "Transfers and investment rows on accounts that replay. It nets to nothing when both legs are on the ledger, so whatever is left is money crossing the boundary of what is tracked.",
@@ -205,6 +217,7 @@ export function attribute(input: AttributionInput): Attribution {
 
   const named: Record<Exclude<AttributionBandKey, "unexplained">, number> = {
     earned: input.earnedCents,
+    agentIncome: input.agentIncomeCents,
     refunds: input.refundsCents,
     spent: input.spentCents,
     moved: input.movedCents,

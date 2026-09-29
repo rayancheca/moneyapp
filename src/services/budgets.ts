@@ -16,9 +16,12 @@ import {
   todayIso,
   type PeriodBounds,
 } from "@/lib/dates";
+import { outsidePortfolioCashAccountIds } from "./accounts";
 import {
   activeTxnsInRange,
   categorySpending,
+  isAgentsIncomeSeries,
+  isIncome,
   loadCategoryIndex,
   spendingTransactions,
   recurringSeriesIdsForCategory,
@@ -601,18 +604,21 @@ export function budgetOneOffCents(
 }
 
 /**
- * Posted income in a window, by analytics' own rule (analytics.ts header):
- * POSITIVE amounts in income-kind categories. Split parts are attributed
- * independently because activeTxnsInRange explodes them.
+ * Posted income in a window, by analytics' own rule (`isIncome`): POSITIVE
+ * amounts in income-kind categories, off the agent's cash account. Split parts
+ * are attributed independently because activeTxnsInRange explodes them.
+ *
+ * 🔴 It asked the category's kind with its own copy of the rule, so when the
+ * owner decided (2026-09-28) that the agent's dividends and interest are not his
+ * income, "$X in so far" — and the income basis it floors — would have gone on
+ * counting them. One classifier, and the agent's rule comes with it.
  */
-function incomeTotalCents(db: AppDatabase, from: string, to: string): number {
+function incomeTotalCents(db: AppDatabase, agentsCash: ReadonlySet<string>, from: string, to: string): number {
   if (compareDates(from, to) > 0) return 0;
   const idx = loadCategoryIndex(db);
   let cents = 0;
   for (const txn of activeTxnsInRange(db, from, to)) {
-    if (txn.categoryId === null || txn.amountCents <= 0) continue;
-    if (idx.byId.get(txn.categoryId)?.kind !== "income") continue;
-    cents += txn.amountCents;
+    if (isIncome(idx, agentsCash, txn)) cents += txn.amountCents;
   }
   return cents;
 }
@@ -768,8 +774,17 @@ export function incomeExpectation(
    * is not in this figure, whatever payday it paid.
    */
   const postedThrough = compareDates(today, end) > 0 ? end : today;
-  const postedCents = incomeTotalCents(db, start, postedThrough);
+  // whose money is whose, read once: the posted leg and the series every other leg walks answer it alike
+  const agentsCash = outsidePortfolioCashAccountIds(db);
+  const postedCents = incomeTotalCents(db, agentsCash, start, postedThrough);
 
+  /*
+   * ⚖️ His live income series — not the agent's (`isAgentsIncomeSeries`, owner decision 2026-09-28). 🔴 The posted
+   * leg above had learned whose income is whose and these had not. On a fixture with the agent's month-end interest
+   * detected on its cash account, "$X in so far" left the $0.04 out while "$Y still expected" counted it, the month
+   * note read "6 paydays" for October's five Thursdays, and the basis the runway and the income card read rose by
+   * it. Every leg below — expected, scheduled, passed-unpaid and the levelled basis — walks this one list.
+   */
   const live = db
     .select()
     .from(recurringSeries)
@@ -779,7 +794,8 @@ export function incomeExpectation(
         inArray(recurringSeries.status, ["detected", "confirmed"]),
       ),
     )
-    .all();
+    .all()
+    .filter((s) => !isAgentsIncomeSeries(agentsCash, s));
 
   /*
    * ⛔ THE FORWARD LEG OPENS ON `today`, and today's occurrence leaves it only

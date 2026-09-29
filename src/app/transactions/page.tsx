@@ -5,7 +5,7 @@ import { accounts } from "@/db/schema/accounts";
 import { categories } from "@/db/schema/categories";
 import { recurringSeries } from "@/db/schema/recurring";
 import { transactions } from "@/db/schema/transactions";
-import { listAccountOptions } from "@/services/accounts";
+import { listAccountOptions, outsidePortfolioCashAccountIds } from "@/services/accounts";
 import { coverageStats } from "@/services/categorize";
 import { countMatching, filterConditions, viewCondition } from "@/services/transactions-query";
 import { claudeRunState, pendingMerchantQueue } from "@/services/claude-categorize";
@@ -97,7 +97,7 @@ export default async function TransactionsPage({ searchParams }: TransactionsPag
 
   // the page number cannot change a COUNT, so these run off the parsed filters
   // and the clamp below reads them
-  const common = filterConditions(parsed, allCategories);
+  const common = filterConditions(parsed, allCategories, [...outsidePortfolioCashAccountIds(db)]);
   const counts: Record<TxnView, number> = {
     all: countMatching(db, parsed, "all"),
     review: countMatching(db, parsed, "review"),

@@ -2,9 +2,10 @@ import { cache } from "react";
 import { and, eq, gte, inArray, isNotNull, isNull, lte, or, type SQL } from "drizzle-orm";
 import type { AppDatabase } from "@/db/client";
 import { categories, type CategoryKind } from "@/db/schema/categories";
-import { recurringSeries } from "@/db/schema/recurring";
+import { recurringSeries, type SeriesKind } from "@/db/schema/recurring";
 import { transactions } from "@/db/schema/transactions";
 import { addDays, monthKey, periodBounds, todayIso } from "@/lib/dates";
+import { outsidePortfolioCashAccountIds } from "./accounts";
 import { activeSplitsInRange } from "./transaction-splits";
 
 /**
@@ -27,7 +28,9 @@ import { activeSplitsInRange } from "./transaction-splits";
  * - Income = POSITIVE transactions in income-kind categories, split by the
  *   assigned (sub)category; a negative row in one is left out of the figure,
  *   never subtracted from it. Investment-account dividends/interest appear by
- *   construction — they are income-kind transactions, not market movement.
+ *   construction — they are income-kind transactions, not market movement —
+ *   EXCEPT on the agent's cash account, whose income is not his (owner decision
+ *   2026-09-28; `isIncome`).
  *
  * 🔴 S21, measured 2026-09-15: this header still said system-kind was excluded
  * from spending and that only NULL formed the Uncategorized bucket — three
@@ -326,6 +329,82 @@ export function spendingBucket(idx: CategoryIndex, txn: AnalyticsTxn): SpendingB
   return { categoryId: top.id, categoryName: top.name };
 }
 
+/**
+ * Whether a row is Income — money HE received: a positive amount in an income-kind category, on an account whose
+ * money is his. The one classifier behind every figure that says "Income": /spending's card, its chart, heatmap and
+ * Sankey, /budgets' "$X in so far", the dashboard's period panel, the forecast's pace row.
+ *
+ * ⚖️ Owner decision 2026-09-28 (§6A 27): what the AGENT'S account is paid — a dividend its shares pay, interest on
+ * its uninvested cash — is not his income. `agentsCash` is `outsidePortfolioCashAccountIds` (services/accounts), the
+ * rule /summary already reads, and it is POSITIONAL AND REQUIRED for the reason it is there (`lineFor`): a surface
+ * cannot count income without answering whose it is. 🔴 Until then /summary refused the agent's dividend while
+ * /spending's Income card, /budgets' header and the Sankey's "Dividends → Money in" all counted it as his.
+ *
+ * ⛔ The net-worth bridge does NOT use this. Net worth holds the agent's money, so the bridge names it on a band of
+ * its own (`attribution.ts`) rather than dropping it — an exhaustive bridge cannot leave a row out.
+ */
+export function isIncome(
+  idx: CategoryIndex,
+  agentsCash: ReadonlySet<string>,
+  txn: Pick<AnalyticsTxn, "accountId" | "categoryId" | "amountCents">,
+): boolean {
+  return (
+    txn.categoryId !== null &&
+    txn.amountCents > 0 &&
+    idx.topLevelOf(txn.categoryId).kind === "income" &&
+    !agentsCash.has(txn.accountId)
+  );
+}
+
+/** No account is the agent's: `isIncome` asked of category and sign alone (`isAgentsIncome`). */
+const NO_AGENT: ReadonlySet<string> = new Set();
+
+/**
+ * The rows `isIncome` leaves out for WHOSE they are, and only those: income by category and sign, paid into the
+ * agent's cash. Not his (owner decision 2026-09-28) and still money net worth holds, which is why the forecast
+ * projects it into EOM net worth alone (`MonthForecast.agentsIncome`) — never into a line that says Income.
+ */
+export function isAgentsIncome(
+  idx: CategoryIndex,
+  agentsCash: ReadonlySet<string>,
+  txn: Pick<AnalyticsTxn, "accountId" | "categoryId" | "amountCents">,
+): boolean {
+  return agentsCash.has(txn.accountId) && isIncome(idx, NO_AGENT, txn);
+}
+
+/**
+ * Whether a recurring series schedules the AGENT'S income rather than his: an income series on the agent's cash
+ * account — `isIncome`'s account half, asked of a schedule instead of a row. A series with no account reads as his.
+ *
+ * ⚖️ Owner decision 2026-09-28 (§6A 27). 🔴 Only /budgets' POSTED leg had learned it: "$X in so far" left the
+ * agent's interest out while "$Y still expected" on the same line counted its next payment, and the income basis
+ * behind the runway's "What you earn a month", the forecast's "Projected income" and the dashboard's next paycheck
+ * did the same — each read every live income series.
+ *
+ * ⛔ Not "drop the series". Net worth holds the agent's money, so the forecast still counts what it pays in EOM net
+ * worth (`MonthForecast.agentsIncome`), as the bridge names the agent's rows on a band of their own.
+ */
+export function isAgentsIncomeSeries(
+  agentsCash: ReadonlySet<string>,
+  series: { readonly kind: SeriesKind; readonly accountId: string | null },
+): boolean {
+  return series.kind === "income" && series.accountId !== null && agentsCash.has(series.accountId);
+}
+
+/** Every series `isAgentsIncomeSeries` names, by id — for a surface holding occurrences, which carry no account. */
+export function agentsIncomeSeriesIds(db: AppDatabase): Set<string> {
+  const agentsCash = outsidePortfolioCashAccountIds(db);
+  if (agentsCash.size === 0) return new Set();
+  return new Set(
+    db
+      .select({ id: recurringSeries.id, kind: recurringSeries.kind, accountId: recurringSeries.accountId })
+      .from(recurringSeries)
+      .all()
+      .filter((s) => isAgentsIncomeSeries(agentsCash, s))
+      .map((s) => s.id),
+  );
+}
+
 // ── Monthly spending (stacked-bar source) ────────────────────────────
 
 export interface SpendingCell {
@@ -485,16 +564,16 @@ export interface IncomeCell {
   txnCount: number;
 }
 
-/** Per-month income split by Income subcategory (positive income-kind txns). */
+/** Per-month income split by Income subcategory — `isIncome`'s rows, so never the agent's. */
 export function incomeByMonth(db: AppDatabase, opts: MonthsWindow): IncomeCell[] {
   const { from, to } = windowBounds(opts);
   const idx = loadCategoryIndex(db);
+  const agentsCash = outsidePortfolioCashAccountIds(db);
   const cells = new Map<string, IncomeCell>();
 
   for (const txn of activeTxnsInRange(db, from, to)) {
-    if (txn.categoryId === null || txn.amountCents <= 0) continue;
-    if (idx.topLevelOf(txn.categoryId).kind !== "income") continue;
-    const node = idx.byId.get(txn.categoryId)!;
+    if (!isIncome(idx, agentsCash, txn)) continue;
+    const node = idx.byId.get(txn.categoryId!)!;
     const month = monthKey(txn.postedOn);
     const key = `${month}|${node.id}`;
     const cell =

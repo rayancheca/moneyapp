@@ -3,7 +3,8 @@ import { categories } from "@/db/schema/categories";
 import { categoryHueVar, isCategoryHueName } from "@/lib/category-palette";
 import { ledgerHref } from "@/lib/ledger-href";
 import type { SankeyGraph, SankeyLinkInput, SankeyNodeInput } from "@/lib/sankey-layout";
-import { activeTxnsInRange, loadCategoryIndex, spendingBucket, type DateRange } from "./analytics";
+import { outsidePortfolioCashAccountIds } from "./accounts";
+import { activeTxnsInRange, isIncome, loadCategoryIndex, spendingBucket, type DateRange } from "./analytics";
 
 /**
  * The money-flow Sankey feed for a date range (dashboard hero + /spending view).
@@ -13,9 +14,9 @@ import { activeTxnsInRange, loadCategoryIndex, spendingBucket, type DateRange } 
  * conserve — a plug that names no source, because it cannot know one).
  *
  * Built directly from `activeTxnsInRange` on the SAME classifiers as
- * periodTotals/cashFlowByPeriod (split-aware, GROSS spend, income = positive
- * income-kind amounts), so every ribbon reconciles to the StatCards and the
- * ledger. Balance is exact:
+ * periodTotals/cashFlowByPeriod (split-aware, GROSS spend, income = `isIncome`:
+ * positive income-kind amounts off the agent's cash account), so every ribbon
+ * reconciles to the StatCards and the ledger. Balance is exact:
  *   in  = earned + refunds + max(-net, 0)
  *   out = spent  + max(net, 0)
  * and net = earned + refunds − spent, so in ≡ out for every range.
@@ -56,6 +57,8 @@ function byValueThenName(a: [string, Bucket], b: [string, Bucket]): number {
 
 export function spendingSankey(db: AppDatabase, range: DateRange): SankeyGraph {
   const idx = loadCategoryIndex(db);
+  // 🔴 the agent's dividend flowed "Dividends → Money in" as his until 2026-09-28 (`isIncome`)
+  const agentsCash = outsidePortfolioCashAccountIds(db);
   const colorOf = new Map(
     db.select({ id: categories.id, color: categories.color }).from(categories).all().map((c) => [c.id, c.color]),
   );
@@ -85,8 +88,8 @@ export function spendingSankey(db: AppDatabase, range: DateRange): SankeyGraph {
       spendTop.set(sb.categoryId, cur);
       continue;
     }
-    if (txn.categoryId !== null && txn.amountCents > 0 && idx.topLevelOf(txn.categoryId).kind === "income") {
-      const node = idx.byId.get(txn.categoryId)!;
+    if (isIncome(idx, agentsCash, txn)) {
+      const node = idx.byId.get(txn.categoryId!)!;
       earned += txn.amountCents;
       const cur = income.get(node.id) ?? { name: node.name, hue: colorOf.get(node.id) ?? null, cents: 0 };
       cur.cents += txn.amountCents;

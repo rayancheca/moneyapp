@@ -111,7 +111,9 @@ test("the table lens carries every band, including the ones the chart cannot dra
 
   const table = page.getByRole("table");
   await expect(table).toBeVisible();
-  await expect(table.getByRole("row")).toHaveCount(9); // header + eight bands
+  // header + nine bands — the ninth, "Agent's income", is $0.00 on this fixture (no agent) and present anyway:
+  // a band is kept at zero rather than dropped (lib/attribution), owner decision 2026-09-28
+  await expect(table.getByRole("row")).toHaveCount(10);
   await expect(table.getByText("-$521.42")).toBeVisible();
 
   // ⛔ RESTORE BOTH, in order: the lens first (so the persisted state written by

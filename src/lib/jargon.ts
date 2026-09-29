@@ -17,8 +17,9 @@
  *   below is grounded in the RULE that counts the kind, never in prose about it:
  *   `spendingBucket` (analytics.ts) counts expense-kind rows plus money out that
  *   is uncategorized — NULL, or filed on the system category; `isIncome`
- *   (spending.ts) counts positive rows in income-kind categories and leaves a
- *   repayment out rather than subtracting it; `transferCategoryResolver`
+ *   (analytics.ts) counts positive rows in income-kind categories, off the
+ *   agent's cash account, and leaves a repayment out rather than subtracting
+ *   it; `transferCategoryResolver`
  *   (transfer-links.ts) can stamp only the three own-account Transfers
  *   subcategories, while the owner files money to and from other people under
  *   Transfers too. `jargon-kinds.test.ts` asks those rules on a real database.
@@ -79,9 +80,10 @@ export const CATEGORY_KIND_JARGON: Record<string, string> = {
   // spendingBucket: expense-kind rows AND uncategorized money out; netted per category, gross in Spent
   expense:
     "Counted as spending, together with money out that has no category yet. Purchases and refunds net against each other in a category's total, so returning something reduces it instead of adding to it.",
-  // isIncome keeps positive rows only; categorySpending (the category's own page) nets both signs
+  // isIncome keeps positive rows only, and none on the agent's cash account (owner decision 2026-09-28);
+  // categorySpending (the category's own page) nets both signs
   income:
-    "Money arriving here is income. Money leaving one of these categories is left out of that figure rather than subtracted from it, though the category's own total still nets both.",
+    "Money arriving here is income — except on the agent's own account, where it is the agent's and not yours. Money leaving one of these categories is left out of that figure rather than subtracted from it, though the category's own total still nets both.",
   rewards:
     "Cash back and statement credits. Kept out of spending totals, so a credit never reads as income or as money spent.",
   investment:
