@@ -1,5 +1,14 @@
 import fs from "node:fs";
 import path from "node:path";
+import type { FullConfig } from "@playwright/test";
+import {
+  checkRendererForRun,
+  describeRendererCheck,
+  lastMatchOrSay,
+  rememberMatchOrSay,
+  RENDERER_REFUSAL_ENV,
+} from "../scripts/e2e-renderer/fingerprint";
+import { describeSnapshotRoot } from "../scripts/e2e-renderer/snapshot-root";
 import { assertQuietBox } from "../scripts/quiet-box";
 import { E2E_FAKE_TODAY, seedE2eDatabase } from "./seed-helpers";
 
@@ -28,10 +37,28 @@ import { E2E_FAKE_TODAY, seedE2eDatabase } from "./seed-helpers";
  */
 function assertBundleIsFresh(): void {
   if (process.env.E2E_ALLOW_STALE === "1") return;
-  const buildId = path.join(process.cwd(), ".next", "BUILD_ID");
-  if (!fs.existsSync(buildId)) {
+  const stale = bundleStaleness();
+  if (stale === null) return;
+  if (stale.reason === "no-build") {
     throw new Error("e2e: no .next build found — run `pnpm e2e:fresh` (or `next build`) first.");
   }
+  throw new Error(
+    `e2e: .next is STALE — ${stale.file} was modified ${stale.seconds}s after the last build.\n` +
+      "      `pnpm start` would serve the OLD bundle and the suite would pass against code you did not change.\n" +
+      "      Run `pnpm e2e:fresh`, or set E2E_ALLOW_STALE=1 if you know the bundle is current.",
+  );
+}
+
+export type BundleStaleness = { reason: "no-build" } | { reason: "stale"; file: string; seconds: number };
+
+/**
+ * Why assertBundleIsFresh would refuse `.next`, or null when it would not. Exported for
+ * `pnpm e2e:rebase-renderer`, which builds when this says stale rather than letting its control
+ * run be refused part way in.
+ */
+export function bundleStaleness(cwd: string = process.cwd()): BundleStaleness | null {
+  const buildId = path.join(cwd, ".next", "BUILD_ID");
+  if (!fs.existsSync(buildId)) return { reason: "no-build" };
   const builtAt = fs.statSync(buildId).mtimeMs;
 
   let newest = 0;
@@ -45,7 +72,7 @@ function assertBundleIsFresh(): void {
   // that had nothing wrong with it. A guard that blocks on a file it has already
   // reasoned is irrelevant is a guard people learn to skip with
   // E2E_ALLOW_STALE=1, which is worse than not having it.
-  const roots = [path.join(process.cwd(), "src")];
+  const roots = [path.join(cwd, "src")];
   const walk = (dir: string): void => {
     for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
       const full = path.join(dir, entry.name);
@@ -55,24 +82,59 @@ function assertBundleIsFresh(): void {
         const m = fs.statSync(full).mtimeMs;
         if (m > newest) {
           newest = m;
-          newestFile = path.relative(process.cwd(), full);
+          newestFile = path.relative(cwd, full);
         }
       }
     }
   };
   for (const r of roots) if (fs.existsSync(r)) walk(r);
 
-  if (newest > builtAt) {
-    const drift = Math.round((newest - builtAt) / 1000);
-    throw new Error(
-      `e2e: .next is STALE — ${newestFile} was modified ${drift}s after the last build.\n` +
-        "      `pnpm start` would serve the OLD bundle and the suite would pass against code you did not change.\n" +
-        "      Run `pnpm e2e:fresh`, or set E2E_ALLOW_STALE=1 if you know the bundle is current.",
-    );
-  }
+  if (newest <= builtAt) return null;
+  return { reason: "stale", file: newestFile, seconds: Math.round((newest - builtAt) / 1000) };
 }
 
-export default async function globalSetup(): Promise<void> {
+/** What global setup reads of Playwright's resolved config: how the run treats snapshots. */
+type SetupConfig = Pick<FullConfig, "updateSnapshots">;
+
+/**
+ * The renderer canary, before anything is seeded. If this Mac no longer draws the canary as the
+ * record says, a baseline compared now could fail for the Mac rather than the change under test:
+ * on 2026-09-28 that took a 9-minute run and 107 failures to find out, and the canary says it in
+ * under a second. E2E_RENDERER_CHECK=skip bypasses it (the re-base command's control does).
+ *
+ * A gate (E2E_GATE) is stopped here outright: it compares every committed baseline. Any other run
+ * goes on, because only four spec files compare one, and `pnpm e2e e2e/zz-budgets.spec.ts` must
+ * not be stopped for a Mac it never asks about: the refusal is handed to the workers instead,
+ * which inherit this process's env, and each comparison with a committed baseline throws it
+ * (e2e/expect-baseline.ts). It is set or cleared on every run, whatever the shell had.
+ *
+ * A match is noted on this machine (in git's common directory, never committed), so that a later
+ * mismatch says what moved since the canary last matched rather than since the record, whose
+ * versions go stale on every update that draws the canary identically.
+ */
+export async function checkRenderer(config?: SetupConfig): Promise<void> {
+  const say = (line: string) => console.warn(`[e2e setup] ${line}`);
+  const renderer = await checkRendererForRun({
+    updateSnapshots: config?.updateSnapshots,
+    lastMatch: () => lastMatchOrSay(say),
+  });
+  if ("refusal" in renderer) process.env[RENDERER_REFUSAL_ENV] = renderer.refusal;
+  else delete process.env[RENDERER_REFUSAL_ENV];
+  if (renderer.verdict !== "match") {
+    console.warn(describeRendererCheck(renderer));
+    return;
+  }
+  console.log(describeRendererCheck(renderer));
+  rememberMatchOrSay(renderer.current, say);
+}
+
+/** `config` is Playwright's; a caller without one (a test) runs as a plain comparing run. */
+export default async function globalSetup(config?: SetupConfig): Promise<void> {
+  // First, so a run stopped anywhere below has still said it: with E2E_SNAPSHOT_ROOT set, its
+  // screenshots are compared with a scratch root, not e2e/ (playwright.config.ts refuses that
+  // outright for a gate).
+  const redirected = describeSnapshotRoot(process.env);
+  if (redirected !== null) console.warn(redirected);
   const load = assertQuietBox({ suite: "e2e", escapeHatch: "E2E_ALLOW_LOAD" });
   if (load.verdict !== "quiet") {
     console.warn(
@@ -81,6 +143,7 @@ export default async function globalSetup(): Promise<void> {
     );
   }
   assertBundleIsFresh();
+  await checkRenderer(config);
   const dbPath = path.join(process.cwd(), "data", "e2e.db");
   // NB: the db file is deliberately NOT unlinked — seedE2eDatabase wipes its
   // data in place so the webServer's open connection keeps the same inode and

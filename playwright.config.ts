@@ -1,5 +1,6 @@
 import { defineConfig, devices } from "@playwright/test";
 import { E2E_FAKE_TODAY } from "./e2e/seed-helpers";
+import { scratchSnapshotTemplate } from "./scripts/e2e-renderer/snapshot-root";
 
 /**
  * Baseline lifecycle (stage-gate flow) — the webServer below runs `pnpm
@@ -14,7 +15,15 @@ import { E2E_FAKE_TODAY } from "./e2e/seed-helpers";
  * - Verifying a stage gate:
  *     `pnpm e2e:fresh`                  (next build && playwright test)
  *   Never gate against an old `.next`; a gate run must not write snapshots.
+ * - After an OS or browser update moves text rendering (a gate stops in
+ *   global-setup with "THE RENDERER CHANGED"; any other run goes on, and each
+ *   comparison with a committed baseline stops, pointing at that message):
+ *     `pnpm e2e:rebase-renderer`             (dry run: proves it, writes nothing)
+ *     `pnpm e2e:rebase-renderer --confirm`   (re-bases, records, re-runs the gate)
+ *   It needs a clean tree: commit or stash work in progress first.
  */
+const snapshotPathTemplate = scratchSnapshotTemplate(process.env);
+
 export default defineConfig({
   testDir: "./e2e",
   fullyParallel: false,
@@ -26,6 +35,13 @@ export default defineConfig({
   // churn" can't masquerade as "no regression". Local dev keeps the default
   // 'missing' (write-then-fail) so a brand-new spec self-heals on rerun.
   updateSnapshots: process.env.E2E_GATE ? "none" : "missing",
+  // E2E_SNAPSHOT_ROOT is set by `pnpm e2e:rebase-renderer` alone, for its control run: every
+  // screenshot is read from and written to a scratch root with the same layout as e2e/, so the
+  // run can draw the whole suite without --update-snapshots touching one committed baseline.
+  // Unset, Playwright keeps its default layout under e2e/. A gate (E2E_GATE) refuses it here,
+  // before one screenshot is compared, and any other run it redirects says so first thing in
+  // global-setup: left set in a shell, it would compare every screenshot with the control's.
+  ...(snapshotPathTemplate === undefined ? {} : { snapshotPathTemplate }),
   reporter: [["list"]],
   use: {
     baseURL: "http://localhost:3111",
@@ -62,16 +78,42 @@ export default defineConfig({
        *
        * ZERO is not aspirational, it is measured. Re-running the whole suite at
        * `maxDiffPixelRatio: 0` put 435 of 458 tests green: every one of those
-       * baselines is byte-identical run to run. The 22 that failed were all real
+       * baselines matches itself run to run. The 22 that failed were all real
        * content, not anti-aliasing — the SMALLEST of them was 41 pixels. There is
        * no CI; this gate runs on one Mac with one font stack, so there is no
        * second renderer to be tolerant of.
        *
-       * If an OS or font update ever makes this genuinely noisy, raise it to a
-       * flat number BELOW 41 — never back to a ratio, and never without first
-       * reading the diff: `node scripts/crop-visual-diff.mjs test-results/<dir>
-       * <baseline>` crops the changed region out of a full-page screenshot so you
-       * can see whether it is anti-aliasing or a whole missing nav item.
+       * "Zero" is zero pixels as Playwright's comparator counts them, which is not
+       * byte-exact: a pixel counts only past `threshold` (0.2 in YIQ by default,
+       * about 52 grey levels) and only when pixelmatch does not take it for
+       * anti-aliasing. Measured 2026-09-28: 20 dark pages drawn before macOS 27.2
+       * differ from this Mac's drawing by 931 to 6,394 pixels and pass, and one
+       * light page moved 5 pixels by one level between two runs of the same
+       * commit. scripts/e2e-renderer/gate-comparator.ts asks the same comparator.
+       *
+       * An OS or font update that moves text rendering is NOT a reason to raise
+       * this. macOS 27.2 did exactly that on 2026-09-28: 107 baselines failed
+       * with no UI change, a median 0.23% of a page's pixels and a worst 0.59%,
+       * thousands of pixels a page. A flat allowance that swallowed that would
+       * swallow the 41-pixel changes above with it, and a ratio is how they hid
+       * in the first place.
+       * global-setup's renderer canary now stops a gate in a second when the
+       * Mac draws differently; any other run goes on, and each comparison with
+       * a committed baseline stops instead (e2e/expect-baseline.ts), so a spec
+       * that compares none is not stopped for a Mac it never asks about. The
+       * canary is exact where this gate is not, so it says the pixels under the
+       * baselines moved, never how many this would fail. `pnpm
+       * e2e:rebase-renderer` does what that session did by hand: a control run
+       * of the whole suite at the last pushed commit, every committed baseline
+       * judged against it by scripts/e2e-renderer/diff-verdict.ts, a refusal on
+       * anything that is not renderer drift, only what this gate fails re-based
+       * (the renderer recorded alone when it fails none), and the gate re-run
+       * with the check on.
+       *
+       * Any other diff is read before it is regenerated: `node
+       * scripts/crop-visual-diff.mjs test-results/<dir> <baseline>` crops the
+       * changed region out of a full-page screenshot so you can see whether it is
+       * anti-aliasing or a whole missing nav item.
        */
       maxDiffPixels: 0,
     },

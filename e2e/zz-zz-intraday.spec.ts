@@ -1,4 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
+import { expectBaseline } from "./expect-baseline";
 
 /**
  * The 1D intraday view (owner's ask: "obviously the day view needs time on x axis").
@@ -263,7 +264,7 @@ for (const width of [440, 1280]) {
     await scrollHome(page);
 
     const card = page.locator('[role="slider"]').first().locator("xpath=ancestor::*[contains(@class,'relative')][1]");
-    await expect(card).toHaveScreenshot(`intraday-portfolio-1d-${width}.png`);
+    await expectBaseline(card).toHaveScreenshot(`intraday-portfolio-1d-${width}.png`);
   });
 }
 
@@ -277,5 +278,5 @@ test("the loaded 1D holding chart looks right", async ({ page }) => {
   await scrollHome(page);
 
   const card = page.locator('[role="slider"]').first().locator("xpath=ancestor::*[contains(@class,'relative')][1]");
-  await expect(card).toHaveScreenshot("intraday-holding-1d.png");
+  await expectBaseline(card).toHaveScreenshot("intraday-holding-1d.png");
 });

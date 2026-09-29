@@ -1,0 +1,16 @@
+{
+  "canary": {
+    "pixelSha256": "2ce694d7efb777f5f1414e8bb9da590122555eaf4dbbf220005552e3aebb0981",
+    "sourceSha256": "ab1349cb8afe3522c80ec79e54385de6a550d13dd381e23c08d0b7191e17e36d",
+    "fontSha256": "3ede4145f8e29ae355147c5481068843017555d6f1102599f8f808c5a5ec315e",
+    "width": 1280,
+    "height": 720
+  },
+  "recordedOn": "2026-09-29T19:19:22.036Z",
+  "macos": {
+    "productVersion": "27.2",
+    "buildVersion": "26B5091g"
+  },
+  "playwright": "1.61.1",
+  "chromiumRevision": "1228"
+}

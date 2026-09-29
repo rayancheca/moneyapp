@@ -1,4 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
+import { expectBaseline } from "./expect-baseline";
 import { withParam } from "./url-helpers";
 
 /**
@@ -252,7 +253,7 @@ for (const theme of THEMES) {
           await route.settle(page);
           await settleAnimations(page);
         }
-        await expect(page).toHaveScreenshot(`${route.name}-${theme}-${width}.png`, {
+        await expectBaseline(page).toHaveScreenshot(`${route.name}-${theme}-${width}.png`, {
           fullPage: true,
         });
       });
@@ -266,7 +267,9 @@ for (const theme of THEMES) {
     test(`category ${theme} @${width}`, async ({ page }) => {
       const url = await resolveCategoryUrl(page);
       await openHydrated(page, url, theme, width);
-      await expect(page).toHaveScreenshot(`category-${theme}-${width}.png`, { fullPage: true });
+      await expectBaseline(page).toHaveScreenshot(`category-${theme}-${width}.png`, {
+        fullPage: true,
+      });
     });
   }
 }
@@ -277,7 +280,9 @@ for (const theme of THEMES) {
     test(`holding ${theme} @${width}`, async ({ page }) => {
       const url = await resolveInvestmentUrl(page);
       await openHydrated(page, url, theme, width);
-      await expect(page).toHaveScreenshot(`holding-${theme}-${width}.png`, { fullPage: true });
+      await expectBaseline(page).toHaveScreenshot(`holding-${theme}-${width}.png`, {
+        fullPage: true,
+      });
     });
   }
 }
@@ -288,7 +293,9 @@ for (const theme of THEMES) {
     test(`account-detail ${theme} @${width}`, async ({ page }) => {
       const url = await resolveAccountUrl(page);
       await openHydrated(page, url, theme, width);
-      await expect(page).toHaveScreenshot(`account-detail-${theme}-${width}.png`, { fullPage: true });
+      await expectBaseline(page).toHaveScreenshot(`account-detail-${theme}-${width}.png`, {
+        fullPage: true,
+      });
     });
   }
 }
@@ -299,7 +306,9 @@ for (const theme of THEMES) {
     test(`series-detail ${theme} @${width}`, async ({ page }) => {
       const url = await resolveSeriesUrl(page);
       await openHydrated(page, url, theme, width);
-      await expect(page).toHaveScreenshot(`series-detail-${theme}-${width}.png`, { fullPage: true });
+      await expectBaseline(page).toHaveScreenshot(`series-detail-${theme}-${width}.png`, {
+        fullPage: true,
+      });
     });
   }
 }
@@ -351,7 +360,9 @@ for (const theme of THEMES) {
     test(`merchant-detail ${theme} @${width}`, async ({ page }) => {
       const url = await resolveMerchantUrl(page);
       await openHydrated(page, url, theme, width);
-      await expect(page).toHaveScreenshot(`merchant-detail-${theme}-${width}.png`, { fullPage: true });
+      await expectBaseline(page).toHaveScreenshot(`merchant-detail-${theme}-${width}.png`, {
+        fullPage: true,
+      });
     });
   }
 }
