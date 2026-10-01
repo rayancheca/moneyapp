@@ -3,6 +3,7 @@ import { recurringSeries } from "@/db/schema/recurring";
 import { todayIso } from "@/lib/dates";
 import { rankFact, scalarFact, shareFact, type Fact } from "@/lib/insight-facts";
 import { isPrintableName } from "@/lib/printable-name";
+import { seriesIsIncomeOrSpending } from "@/lib/series-kind";
 import { outsidePortfolioCashAccountIds } from "./accounts";
 import { isAgentsIncomeSeries } from "./analytics";
 import { surfaceInsights, type InsightInput } from "./insight-surface";
@@ -39,7 +40,9 @@ type LapseInput = SeriesOverrides & { lastMatchedOn: string | null };
  * would tell him his income is the largest thing he pays for. They are two
  * questions, so they are two sets, and the sentence names which one it ranked
  * in. Income kind here is the one `lapsedSeriesShouldStopForecasting` already
- * distinguishes; this module does not invent a second test for direction.
+ * distinguishes; this module does not invent a second test for direction. A
+ * transfer series answers neither question and is in neither set
+ * (`seriesIsIncomeOrSpending`).
  *
  * ## ⛔ "Your commitments" is the LIVE set, and most of them are not
  *
@@ -134,11 +137,21 @@ export function recurringInsightInput(
    * ⚖️ The deposit set is "what YOUR scheduled deposits bring in", and what the agent's cash is paid is not his
    * (`isAgentsIncomeSeries`, owner decision 2026-09-28, §6A 27): no member of either set, and its own page ranks it
    * among nothing. 🔴 Counted as a deposit, the agent's month-end interest made his pay "the largest of 2".
+   *
+   * ⚖️ Nor is a transfer series, either leg: it moves his money between his own accounts, so it is neither what he
+   * pays nor what he is paid (`seriesIsIncomeOrSpending`, the rule the forecast card's net applies; `committed.ts`
+   * leaves transfers out of what he owes for the same reason). 🔴 Split on `kind === "income"` alone, every transfer
+   * was a commitment: the synthetic Chase autopay ($993.02 a month) beside a $1,800.00 rent and a $15.49 Netflix
+   * made Rent "64.1% of what your scheduled commitments cost in a year", where the two commitments give 99.1%.
+   *
+   * ⛔ The series is ranked only on a side it is a member of, by the predicate the side is built from — or a page
+   * outside every set would rank itself 0th among the others.
    */
   const agentsCash = outsidePortfolioCashAccountIds(db);
-  if (isAgentsIncomeSeries(agentsCash, self)) return null;
   const isIncome = self.kind === "income";
-  const onSide = (s: SeriesView): boolean => (s.kind === "income") === isIncome && !isAgentsIncomeSeries(agentsCash, s);
+  const onSide = (s: SeriesView): boolean =>
+    seriesIsIncomeOrSpending(s.kind) && (s.kind === "income") === isIncome && !isAgentsIncomeSeries(agentsCash, s);
+  if (!onSide(self)) return null;
   const side = all.filter((s) => isLive(s, rows.get(s.id), today) && onSide(s));
   if (side.length < MIN_SERIES_TO_COMPARE) return null;
 

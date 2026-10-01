@@ -112,6 +112,15 @@ export interface MonthFlow {
    */
   hasMovement: boolean;
   /**
+   * True when any day of the month holds an entry, whatever it adds — the grid draws a mark for each one.
+   *
+   * ⚠️ A second fact, not `hasMovement` restated: a month can hold entries and move nothing. A transfer is drawn and
+   * adds nothing (`flowEntryOf`), so a month whose only marks are transfers has entries and no movement.
+   * 🔴 Read as one fact, that month's strip printed "Nothing recurring lands in August 2026." over a grid drawing the
+   * card autopay on the 24th.
+   */
+  hasEntries: boolean;
+  /**
    * Index of the last point on or before today, or -1 when the whole month is
    * still ahead. The SETTLED line stops here — past today there is nothing to
    * have posted yet, so continuing it would draw a flat run that reads as "and
@@ -163,10 +172,12 @@ export function monthFlow(
   let low = 0;
   let high = 0;
   let moved = false;
+  let held = false;
 
   for (let day = 1; day <= daysInMonth; day += 1) {
     const iso = `${monthKey}-${String(day).padStart(2, "0")}`;
     for (const e of entriesByDay[iso] ?? []) {
+      held = true;
       scheduled += e.amountCents;
       if (e.settled) settled += e.amountCents;
       if (e.amountCents !== 0) moved = true;
@@ -219,6 +230,7 @@ export function monthFlow(
     highCents: high,
     troughIndex,
     hasMovement: moved,
+    hasEntries: held,
     lastSettledIndex,
     dips: low < 0,
   };

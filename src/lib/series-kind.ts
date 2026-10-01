@@ -7,8 +7,9 @@ import type { SeriesKind } from "@/db/schema/recurring";
  * ⚖️ A transfer series moves his money between his own accounts. The analytics law is authoritative (a transfer is
  * never income or spending), and counting both legs would double-book cash that never leaves the household. So no
  * NET counts one: not the forecast's lines (`fixedComponents`, `arrearsComponents`), not what a calendar mark adds to
- * its month (`flowEntryOf` — the strip, each day's figure, the footer), not the Upcoming tab's 30-day net. The grid
- * and the list still DRAW it, because it is a real scheduled movement of his money; they just do not add it up.
+ * its month (`flowEntryOf` — the strip, each day's figure, the footer), not the Upcoming tab's 30-day net, and no
+ * series page ranks one among his commitments or his deposits (`recurringInsightInput`). The grid and the list still
+ * DRAW it, because it is a real scheduled movement of his money; they just do not add it up.
  *
  * 🔴 This was the forecast's private test, `series.kind === "transfer"`, and the /recurring strip printed directly
  * under the forecast card's net summed every mark the grid draws. A one-legged transfer series — the card autopay

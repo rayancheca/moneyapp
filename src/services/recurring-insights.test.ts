@@ -190,6 +190,72 @@ describe("what it refuses to rank together", () => {
   });
 });
 
+/**
+ * ⚖️ A transfer series moves his money between his own accounts, so it is in NEITHER set — no commitment and no
+ * deposit (`seriesIsIncomeOrSpending`, the rule the forecast card's net applies; `committed.ts` and the subscriptions
+ * card leave transfers out of what he owes for the same reason).
+ *
+ * 🔴 The sides were split on `kind === "income"` alone, so every transfer, its inflow leg too, was a commitment: the
+ * synthetic Chase fixture's autopay ($993.02 a month) beside the e2e seed's $1,800.00 rent and $15.49 Netflix made
+ * Rent "64.1% of what your scheduled commitments cost in a year" and Netflix "the 3rd largest of your 3"; with the
+ * card's PAYMENT THANK YOU leg beside them as well, Rent read "the largest of your 4" at 47.3%.
+ */
+describe("a transfer is in neither set", () => {
+  const AUTOPAY = "CHASE CREDIT CRD AUTOPAY";
+  const THANKS = "PAYMENT THANK YOU-MOBILE";
+
+  test("a commitment's rank and share leave the transfer out, its outflow leg and its inflow leg", () => {
+    addSeries({ id: "rent", name: "Rent", amountCents: -180_000 });
+    addSeries({ id: "netflix", name: "Netflix", kind: "subscription", amountCents: -1_549 });
+    addSeries({ name: AUTOPAY, kind: "transfer", amountCents: -99_302 });
+    addSeries({ name: THANKS, kind: "transfer", amountCents: 99_302 });
+
+    // $21,600.00 of $21,785.88 — 12 × $1,800.00 beside 12 × $15.49
+    expect(texts("rent")).toEqual([
+      "Rent is the largest of your 2 scheduled commitments, by what they cost in a year, at $21,600.00.",
+      "Rent is more than half of what your scheduled commitments cost in a year, at 99.1%.",
+    ]);
+    expect(texts("netflix")).toEqual([
+      "Netflix is the 2nd largest of your 2 scheduled commitments, by what they cost in a year, at $185.88.",
+      "Netflix is 0.9% of what your scheduled commitments cost in a year.",
+    ]);
+  });
+
+  test("a deposit's rank leaves the inflow leg out", () => {
+    addSeries({ id: "pay", name: "Pay", kind: "income", amountCents: 114_192 });
+    addSeries({ name: "Side pay", kind: "income", amountCents: 50_000 });
+    addSeries({ name: THANKS, kind: "transfer", amountCents: 99_302 });
+
+    expect(texts("pay")[0]).toBe(
+      "Pay is the largest of your 2 scheduled deposits, by what they bring in over a year, at $13,703.04.",
+    );
+  });
+
+  test("a transfer's own page ranks it among nothing", () => {
+    addSeries({ name: "Rent", amountCents: -180_000 });
+    addSeries({ name: "Netflix", kind: "subscription", amountCents: -1_549 });
+    addSeries({ name: "Pay", kind: "income", amountCents: 114_192 });
+    addSeries({ name: "Side pay", kind: "income", amountCents: 50_000 });
+    const autopay = addSeries({ name: AUTOPAY, kind: "transfer", amountCents: -99_302 });
+    const thanks = addSeries({ name: THANKS, kind: "transfer", amountCents: 99_302 });
+
+    // ⛔ absent, as an ended series is — not "the 2nd largest of your 4 scheduled commitments"
+    expect(recurringInsights(bundle.db, autopay, TODAY)).toBeNull();
+    expect(recurringInsights(bundle.db, thanks, TODAY)).toBeNull();
+  });
+
+  test("a retired transfer is none of the commitments he ended or dismissed", () => {
+    addSeries({ id: "rent", name: "Rent", amountCents: -180_000 });
+    addSeries({ name: "Netflix", kind: "subscription", amountCents: -1_549 });
+    addSeries({ name: "Old gym", status: "ended", amountCents: -8_000 });
+    addSeries({ name: "SOFI BANK TRANSFER", kind: "transfer", status: "dismissed", amountCents: -50_000 });
+
+    expect(recurringInsights(bundle.db, "rent", TODAY)!.windowNote).toBe(
+      "Ranked against the 2 scheduled commitments still running. The 1 you have ended or dismissed are not counted.",
+    );
+  });
+});
+
 describe("what gets no strip at all", () => {
   test("an ended series is not ranked last among the living", () => {
     addSeries({ name: "Rent", amountCents: -100_000 });

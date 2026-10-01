@@ -54,6 +54,19 @@ describe("monthFlow", () => {
     expect(f.hasMovement).toBe(false);
   });
 
+  /*
+   * ⚠️ Entries and movement are two facts. A transfer is drawn and adds nothing (`flowEntryOf`), so a month whose
+   * only marks are transfers holds entries and moves nothing — and the strip over a grid that draws them must not
+   * read that as a month in which nothing lands.
+   */
+  test("a month whose entries all add nothing still holds entries; an empty one holds none", () => {
+    const f = monthFlow(31, M, { [day(24)]: [{ settled: false, amountCents: 0 }] }, day(1));
+    expect({ hasMovement: f.hasMovement, hasEntries: f.hasEntries }).toEqual({ hasMovement: false, hasEntries: true });
+    expect(monthFlow(31, M, {}, day(1)).hasEntries).toBe(false);
+    // only the month's own days are its entries
+    expect(monthFlow(31, M, { "2026-09-01": [{ settled: false, amountCents: -100 }] }, day(1)).hasEntries).toBe(false);
+  });
+
   test("the trough is the deepest point, not the last negative one", () => {
     const f = monthFlow(4, M, {
       [day(1)]: [{ settled: false, amountCents: -5000 }],

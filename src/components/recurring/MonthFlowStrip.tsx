@@ -50,7 +50,8 @@ interface MonthFlowStripProps {
  *
  * ⚠️ A month where nothing moves draws NOTHING. A flat rule across the middle is
  * indistinguishable from a broken renderer, and pass 30 shipped a header reading
- * "$0.00" over a live session for exactly want of that distinction.
+ * "$0.00" over a live session for exactly want of that distinction. It says in
+ * words which month it is: one with no mark, or one whose marks add nothing.
  */
 export function MonthFlowStrip({ flow, monthLabel }: MonthFlowStripProps) {
   const gradientId = useId();
@@ -67,9 +68,14 @@ export function MonthFlowStrip({ flow, monthLabel }: MonthFlowStripProps) {
   const plotRef = useRef<HTMLDivElement>(null);
 
   if (!flow.hasMovement) {
+    /* Two sentences, because a month that moves nothing is one of two months (`MonthFlow.hasEntries`). One whose
+       marks all add nothing — a transfer moves money between his own accounts (`flowEntryOf`) — is not a month in
+       which nothing lands: the grid directly under this line draws every one of them. */
     return (
       <p className="mb-3 text-[11px] text-ink-faint">
-        Nothing recurring lands in {monthLabel}.
+        {flow.hasEntries
+          ? `What lands in ${monthLabel} adds nothing to the month's total.`
+          : `Nothing recurring lands in ${monthLabel}.`}
       </p>
     );
   }

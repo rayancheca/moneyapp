@@ -320,4 +320,24 @@ describe("RecurringCalendar — a transfer is drawn and counted in no total", ()
     expect(sheet.match(/\$0\.00 counted on this day/g)).toHaveLength(1);
     expect(sheet).toMatch(/Day total<\/span><span class="figures text-negative font-semibold">-\$15\.49<\/span>/);
   });
+
+  const render = (over: Partial<RecurringCalendarMonth>): string =>
+    decode(renderToStaticMarkup(createElement(RecurringCalendar, { initialMonth: { ...month, ...over }, today: "2026-07-08" })));
+
+  /*
+   * 🔴 A month whose ONLY mark is a transfer adds nothing at all, and the strip read "adds nothing" as "nothing is
+   * there": it printed "Nothing recurring lands in August 2026." over a grid drawing the autopay on the 24th.
+   */
+  test("a month whose only mark is a transfer says what lands adds nothing, not that nothing lands", () => {
+    const html = render({ entriesByDay: { "2026-08-24": [autopay] }, entryCount: 1, upcomingNetCents: 0 });
+    expect(html).toContain("Aug 24, 2026 — 1 item: CHASE CREDIT CRD AUTOPAY upcoming (expected) -$993.02");
+    expect(html).not.toContain("Nothing recurring lands");
+    expect(html).toContain("What lands in August 2026 adds nothing to the month's total.");
+  });
+
+  test("a month with no mark at all still says nothing lands in it", () => {
+    const html = render({ entriesByDay: {}, entryCount: 0, upcomingNetCents: 0 });
+    expect(html).toContain("Nothing recurring lands in August 2026.");
+    expect(html).not.toContain("What lands in");
+  });
 });
