@@ -22,10 +22,11 @@ import { delayServerActions, pressView } from "./view-helpers";
  * being absent to eight visual baselines of a page nobody had changed.
  *
  * The last test therefore RESTORES what it presses, the way
- * `zz-zz-sankey.spec.ts` already does for the flow lens — and since 2026-10-01
- * it proves each restoring press landed before the next step, then proves both
- * dimensions came back (see the note at the restore). The range pills are still
- * ChartFocus's lifted state and still persist nothing.
+ * `zz-zz-sankey.spec.ts` does for the flow lens. Since 2026-10-01 both prove
+ * each restoring press landed before the next step (pressView) — the Sankey's
+ * restores were bare clicks too, and held back they failed every run — and this
+ * one then proves both dimensions came back (see the note at the restore). The
+ * range pills are still ChartFocus's lifted state and still persist nothing.
  */
 
 const bridgeRange = (page: import("@playwright/test").Page) =>
@@ -120,13 +121,15 @@ test("the table lens carries every band, including the ones the chart cannot dra
   await expect(table.getByText("-$521.42")).toBeVisible();
 
   // ⛔ RESTORE BOTH, in order: the lens first, then the hero mode — and PROVE each
-  // press landed before taking the next step (pressView). A press persists the
-  // whole resolved view, so the mode press must be computed from a view that
-  // already says `bridgeLens: chart` or it writes the table straight back; and `/`
-  // must not be requested until the mode press is written, or the server still
-  // resolves the bridge and there is no net-worth chart on it. Bare clicks did
-  // neither: 1 gate in ~15 failed below, and the post-suite database of a green
-  // gate still held `bridgeLens: "table"`. Every press is held back on its way to
+  // press landed before taking the next step (pressView). `/` must not be requested
+  // until the mode press is written, or the server still resolves the bridge and
+  // there is no net-worth chart on it. Bare clicks did not wait: 1 gate in ~15
+  // failed below, and the post-suite database of a green gate still held
+  // `bridgeLens: "table"` — the mode press, made before the lens press's navigation
+  // committed, was built on the view from before it and wrote the table straight
+  // back. Since 2026-10-01 useViewState builds a press made while another is in
+  // flight on that one (src/hooks/useViewState.test.ts); proving each press here
+  // keeps this restore from leaning on it. Every press is held back on its way to
   // the server, so a restore that does not wait fails here, not once in ~15 gates.
   await delayServerActions(page);
   await pressView(page, "Bridge view", "Bridge");

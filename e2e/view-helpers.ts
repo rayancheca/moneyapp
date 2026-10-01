@@ -17,12 +17,14 @@ import { expect, type Page, type Route } from "@playwright/test";
  *   `networth-bridge.spec.ts`'s restore step, seen once in ~15 gates. Made slow on purpose
  *   (below), the next `/` came back on the bridge's own Table, and "Net worth over time"
  *   was nowhere on it — the gate's exact message.
- * - A second press made before the first one's navigation commits is computed from the
- *   view the server resolved BEFORE the first press, and `setView` persists the whole
- *   view — so it writes the first dimension straight back. The post-suite e2e database of
- *   a 602/602 gate (2026-10-01) still held `dashboard.bridgeLens: "table"` after that
+ * - A second press made before the first one's navigation commits was built on the view
+ *   the server resolved BEFORE the first press, and `setView` persists the whole view —
+ *   so it wrote the first dimension straight back. The post-suite e2e database of a
+ *   602/602 gate (2026-10-01) still held `dashboard.bridgeLens: "table"` after that
  *   restore, so in that run the later visits to `/?chart=bridge` (overflow.spec.ts's 320
- *   sweep among them) drew the table, not the bridge.
+ *   sweep among them) drew the table, not the bridge. That half was an APP defect, and a
+ *   user hit it too; useViewState builds such a press on the one in flight since
+ *   2026-10-01. A restore still proves each press, so it never depends on that.
  */
 
 /**
@@ -38,9 +40,9 @@ import { expect, type Page, type Route } from "@playwright/test";
  *
  * There is no DOM signal for "this boundary is now interactive", so instead of guessing a
  * longer wait we retry the press until its own control reports the new state. That is safe
- * precisely BECAUSE it is idempotent: useViewState's setView early-returns when the
- * requested value is already selected (`if (next === state) return`), and a press repeated
- * while the first is still in flight writes the same value again — never a toggle.
+ * precisely BECAUSE it is idempotent: useViewState does nothing for a value that is already
+ * selected — in the view on screen, or in the press still in flight, which a repeat builds
+ * on — so a retry is never sent twice and never a toggle (src/hooks/useViewState.test.ts).
  *
  * This strengthens the action, not the expectation — every caller's assertions about URL,
  * slider and persistence still have to hold on their own.
