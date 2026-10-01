@@ -66,6 +66,18 @@ export function forgetStatementCopies(tx: AppDatabase, importFileId: string): vo
   tx.delete(statementCopies).where(eq(statementCopies.importFileId, importFileId)).run();
 }
 
+/**
+ * Every account a file prints a statement of that another download put in the ledger: the accounts its copies name.
+ */
+export function accountsCopiedBy(db: AppDatabase, importFileId: string): string[] {
+  return db
+    .select({ accountId: statementCopies.accountId })
+    .from(statementCopies)
+    .where(eq(statementCopies.importFileId, importFileId))
+    .all()
+    .map((r) => r.accountId);
+}
+
 /** What un-importing a file hands to another download of one of its statements, instead of deleting it. */
 export interface CopyHandOver {
   /** the file being un-imported */
