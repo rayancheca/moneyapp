@@ -1,13 +1,15 @@
 "use client";
 
-import { useCallback, useMemo } from "react";
+import { useCallback, useMemo, useTransition } from "react";
+import { useRouter } from "next/navigation";
+import { saveViewPreferenceAction } from "@/app/settings/actions";
 import { ViewSwitcher } from "@/components/ui/ViewSwitcher";
 import { SankeyChart } from "@/components/charts/SankeyChart";
 import { NetWorthBridge } from "@/components/charts/NetWorthBridge";
 import { CATEGORY_HUE_NAMES, categoryHueVar } from "@/lib/category-palette";
 import { DAILY_SERIES_RANGES, rangeLabel, type ChartRange } from "@/lib/chart-range";
 import type { SankeyGraph } from "@/lib/sankey-layout";
-import type { ViewState } from "@/lib/view-state";
+import { viewHrefQuery, type ViewState } from "@/lib/view-state";
 import { DASHBOARD_CHART_DIMENSION, DASHBOARD_SURFACE, DASHBOARD_VIEW_SPEC } from "./dashboard-view-spec";
 import type { NetWorthPoint } from "@/services/derivation";
 import type { DashboardAccountOption, DashboardChartData } from "@/services/dashboard-series";
@@ -79,6 +81,8 @@ export function DashboardChartSection({
   bridgeByRange,
   today,
 }: DashboardChartSectionProps) {
+  const router = useRouter();
+  const [, startTransition] = useTransition();
   // "sankey" is a hero-chart view but not a net-worth series MODE, so keep it a
   // plain string; only the ScrubChart branch narrows to DashboardMode.
   const mode = state.chart ?? "combined";
@@ -91,7 +95,7 @@ export function DashboardChartSection({
     if (acctsParam) params.accts = acctsParam;
     return params;
   }, [acctsParam]);
-  const { setView, updateView } = useViewState({
+  const { setView } = useViewState({
     surface: DASHBOARD_SURFACE,
     spec: DASHBOARD_VIEW_SPEC,
     state,
@@ -112,28 +116,25 @@ export function DashboardChartSection({
     return colors;
   }, [accounts]);
 
-  // 🔴 This used to persist and navigate on its own, from `state` and `selectedAccountIds`:
-  // the view and selection the server resolved BEFORE any press still in flight. A second
-  // toggle, or a mode press, made before the first one's navigation committed wrote a
-  // selection without it — the toggled-off account came straight back. It goes through
-  // `updateView` now, so it builds on the newest press like every pill on this surface, and
-  // its `accts` rides that press's view: persisted with it, and carried in its URL.
   const toggleAccount = useCallback(
-    (id: string) =>
-      updateView((base) => {
-        // a toggle still in flight carries the selection it asked for; otherwise the
-        // server's validated one is the selection on screen
-        const current = new Set(base.accts !== undefined ? base.accts.split(",") : selectedAccountIds);
-        if (current.has(id)) current.delete(id);
-        else current.add(id);
-        if (current.size === 0) return null; // an empty chart is never a valid target
-        const accts = accounts
-          .filter((a) => current.has(a.id))
-          .map((a) => a.id)
-          .join(",");
-        return { ...base, accts };
-      }),
-    [accounts, selectedAccountIds, updateView],
+    (id: string) => {
+      const current = new Set(selectedAccountIds);
+      if (current.has(id)) current.delete(id);
+      else current.add(id);
+      if (current.size === 0) return; // an empty chart is never a valid target
+      const ordered = accounts.filter((a) => current.has(a.id)).map((a) => a.id);
+      const accts = ordered.join(",");
+      const href = `/${viewHrefQuery(DASHBOARD_VIEW_SPEC, state, { accts })}`;
+      startTransition(async () => {
+        try {
+          await saveViewPreferenceAction(DASHBOARD_SURFACE, { ...state, accts });
+        } catch {
+          /* persistence is best-effort — the URL drives the render */
+        }
+        router.push(href, { scroll: false });
+      });
+    },
+    [accounts, selectedAccountIds, state, router],
   );
 
   const series = chartData?.series ?? [];
