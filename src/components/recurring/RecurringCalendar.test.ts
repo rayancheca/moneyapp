@@ -262,3 +262,62 @@ describe("RecurringCalendar — a deposit and a payday on one day, each paid fro
     expect(sheet).not.toContain("Day total");
   });
 });
+
+/**
+ * ⚖️ A transfer moves money between his own accounts, so its mark is DRAWN and counted in no total
+ * (`seriesIsIncomeOrSpending`): the strip's "as scheduled" is the forecast card's net printed above it, and the
+ * card leaves transfer series out. The cell, its caption and the Day Sheet read the same `flowEntryOf`.
+ *
+ * 🔴 Summed, a one-legged transfer — the card autopay out of checking, no PAYMENT THANK YOU imported to cancel it —
+ * moved the strip, the cell and the sheet's "Day total" by its whole amount. The amounts are the synthetic Chase
+ * fixture's autopay and the e2e seed's rent and Netflix.
+ */
+describe("RecurringCalendar — a transfer is drawn and counted in no total", () => {
+  const autopay = entry({
+    seriesId: "autopay",
+    name: "CHASE CREDIT CRD AUTOPAY",
+    kind: "transfer",
+    state: "upcoming",
+    amountCents: -99302,
+    confidence: "expected",
+  });
+  const netflix = entry({
+    seriesId: "netflix",
+    name: "Netflix",
+    kind: "subscription",
+    state: "upcoming",
+    amountCents: -1549,
+    confidence: "expected",
+  });
+  const month: RecurringCalendarMonth = {
+    monthKey: "2026-08",
+    today: "2026-07-08",
+    entriesByDay: {
+      "2026-08-09": [entry({ seriesId: "rent", name: "Rent", state: "upcoming", amountCents: -180000, confidence: "expected" })],
+      "2026-08-24": [autopay, netflix],
+    },
+    entryCount: 3,
+    postedNetCents: 0,
+    upcomingNetCents: -181549,
+    missedCount: 0,
+    unsettledCount: 0,
+    unsettledGrossCents: 0,
+  };
+  const html = decode(renderToStaticMarkup(createElement(RecurringCalendar, { initialMonth: month, today: "2026-07-08" })));
+  const afterLabel = html.slice(html.indexOf('aria-label="Aug 24, 2026 — 2 items'));
+
+  test("the strip's \"as scheduled\" leaves the transfer out, and the cell prints and names what the day adds", () => {
+    expect(html.match(/as scheduled<span[^>]*>([^<]*)</)?.[1]).toBe("-$1,815.49");
+    expect(afterLabel.match(/class="figures whitespace-nowrap[^"]*"[^>]*>([^<]*)</)?.[1]).toBe("-15");
+    expect(afterLabel.match(/class="min-w-0 truncate">([^<]*)</)?.[1]).toBe("Netflix");
+    // still drawn: the day's accessible name reads the transfer at its own amount
+    expect(html).toContain("CHASE CREDIT CRD AUTOPAY upcoming (expected) -$993.02");
+  });
+
+  test("the Day Sheet lists the transfer at its amount, counts none of it, and totals the rest", () => {
+    const sheet = decode(renderToStaticMarkup(createElement(DaySheetBody, { entries: [autopay, netflix] })));
+    expect(sheet).toContain("-$993.02");
+    expect(sheet.match(/\$0\.00 counted on this day/g)).toHaveLength(1);
+    expect(sheet).toMatch(/Day total<\/span><span class="figures text-negative font-semibold">-\$15\.49<\/span>/);
+  });
+});

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { flowArea, flowPolyline, monthFlow } from "./month-flow";
+import { flowArea, flowEntryOf, flowPolyline, monthFlow } from "./month-flow";
 
 const M = "2026-08";
 const day = (d: number) => `${M}-${String(d).padStart(2, "0")}`;
@@ -212,5 +212,34 @@ describe("scheduled vs settled", () => {
     expect(flowPolyline(f.points, 100, 40, "scheduled")).not.toBe(
       flowPolyline(f.points, 100, 40, "settled"),
     );
+  });
+});
+
+/*
+ * ⚖️ What one mark adds to the strip's two lines. A transfer moves money between his own accounts, so it adds
+ * nothing to either (`seriesIsIncomeOrSpending`) — the forecast card's net, printed directly above the strip, has
+ * always left transfer series out, and a strip that summed them printed a different month under it.
+ */
+describe("flowEntryOf", () => {
+  test("a mark that settled adds what it settled; one that has not, what it expects", () => {
+    expect(flowEntryOf({ kind: "income", amountCents: 114192, settledCents: 0 })).toEqual({
+      amountCents: 0,
+      settled: true,
+    });
+    expect(flowEntryOf({ kind: "bill", amountCents: -180000, settledCents: null })).toEqual({
+      amountCents: -180000,
+      settled: false,
+    });
+  });
+
+  test("a transfer adds nothing, posted or expected, and keeps its settled flag", () => {
+    expect(flowEntryOf({ kind: "transfer", amountCents: -99302, settledCents: -99302 })).toEqual({
+      amountCents: 0,
+      settled: true,
+    });
+    expect(flowEntryOf({ kind: "transfer", amountCents: -99302, settledCents: null })).toEqual({
+      amountCents: 0,
+      settled: false,
+    });
   });
 });

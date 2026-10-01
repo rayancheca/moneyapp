@@ -9,6 +9,7 @@ import { projectOngoingIncome } from "@/lib/income-forecast";
 import { trailingPace } from "@/lib/projection";
 import { formatDayShortIn } from "@/lib/format-date";
 import { formatCents } from "@/lib/money";
+import { seriesIsIncomeOrSpending } from "@/lib/series-kind";
 import { allocationsFor } from "@/lib/transaction-splits";
 import { accountLiquidity, cashPosition, listAccountOptions, outsidePortfolioCashAccountIds } from "./accounts";
 import { isAgentsIncome, isAgentsIncomeSeries, isIncome, loadCategoryIndex } from "./analytics";
@@ -36,6 +37,9 @@ import { linkIsNotRecurring, seriesIdsNotDrawnAsRecurring } from "./recurring-li
  * occurrence in the month. Transfer-kind series are excluded — the analytics
  * semantics are authoritative (transfers are never income or spending), and
  * counting both legs would double-book cash that never leaves the household.
+ * `lib/series-kind::seriesIsIncomeOrSpending` is that rule's one home, shared
+ * with the /recurring strip and footer printed under this card's net and the
+ * Upcoming tab's 30-day net.
  * A series whose evidence has gone stale still projects and carries its
  * `staleness` for the UI to show: dropping it would quietly delete real
  * income (the owner's weekly cash job lags on deposits), and including it
@@ -378,7 +382,7 @@ function fixedComponents(
   let agentsCents = 0;
   const outsideAccountIds = new Set<string>();
   for (const series of live) {
-    if (series.kind === "transfer") continue;
+    if (!seriesIsIncomeOrSpending(series.kind)) continue;
     /*
      * ⛔ A series that STOPPED CHARGING is not a forecast, and this was the one
      * surface that had not been told.
@@ -536,7 +540,7 @@ function arrearsComponents(
     .from(recurringSeries)
     .where(inArray(recurringSeries.status, ["detected", "confirmed"]))
     .all()
-    .filter((s) => s.kind !== "transfer");
+    .filter((s) => seriesIsIncomeOrSpending(s.kind));
   const byId = new Map(live.map((s) => [s.id, s]));
   const late = overdueForSeries(db, new Set(byId.keys()), monthStart, addDays(today, -1));
 

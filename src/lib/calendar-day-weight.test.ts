@@ -13,7 +13,7 @@ const e = (
   amountCents: number,
   state: WeighableEntry["state"] = "upcoming",
   name = "Some series",
-): WeighableEntry => ({ amountCents, settledCents: null, state, name });
+): WeighableEntry => ({ kind: "bill", amountCents, settledCents: null, state, name });
 
 describe("heaviestDayCents", () => {
   test("takes the largest absolute NET, not the largest single entry", () => {
@@ -150,6 +150,7 @@ describe("dayWeight", () => {
 describe("a day's figure is what its marks add to the month", () => {
   const PAY = "It America LLC (weekly pay)";
   const mark = (amountCents: number, settledCents: number | null, name = PAY): WeighableEntry => ({
+    kind: name === PAY ? "income" : "bill",
     amountCents,
     settledCents,
     state: settledCents === null ? "upcoming" : "paid",
@@ -175,6 +176,25 @@ describe("a day's figure is what its marks add to the month", () => {
 
   test("a payday paid from another month adds that money, and a mark not yet settled what it expects", () => {
     expect(dayTotalCents([mark(114192, 114192), mark(-499, null, "Amazon Prime")])).toBe(114192 - 499);
+  });
+
+  /*
+   * ⚖️ A transfer moves money between his own accounts, so its mark is drawn and adds nothing
+   * (`seriesIsIncomeOrSpending`) — the day's figure is the strip's step that day, and the strip is the card's net.
+   */
+  test("a transfer adds nothing, posted or expected, and the day is named for the money it does hold", () => {
+    const autopay = (settledCents: number | null): WeighableEntry => ({
+      ...mark(-99302, settledCents, "CHASE CREDIT CRD AUTOPAY"),
+      kind: "transfer",
+    });
+    expect(dayTotalCents([autopay(null)])).toBe(0);
+    expect(dayTotalCents([autopay(-99302)])).toBe(0);
+    const w = dayWeight([autopay(null), mark(-1549, null, "Netflix")], 180000)!;
+    expect(w.netCents).toBe(-1549);
+    expect(w.dominantName).toBe("Netflix");
+    expect(w.count).toBe(2);
+    const august = { "2026-08-09": [mark(-180000, null, "Rent")], "2026-08-24": [autopay(null)] };
+    expect(heaviestDayCents(august)).toBe(180000);
   });
 });
 
@@ -279,7 +299,7 @@ describe("compactDayTotal", () => {
 describe("dayWeight confidence", () => {
   test("a day with no forecast on it carries no confidence", () => {
     expect(
-      dayWeight([{ amountCents: -1549, settledCents: -1549, state: "paid", name: "Netflix" }], 1549)!.confidence,
+      dayWeight([{ kind: "subscription", amountCents: -1549, settledCents: -1549, state: "paid", name: "Netflix" }], 1549)!.confidence,
     ).toBeNull();
   });
 
@@ -289,8 +309,8 @@ describe("dayWeight confidence", () => {
     // overstating is the app vouching for something nobody agreed to.
     const w = dayWeight(
       [
-        { amountCents: -55989, settledCents: null, state: "upcoming", name: "Car lease", confidence: "scheduled" },
-        { amountCents: -1539, settledCents: null, state: "upcoming", name: "YA-FIT", confidence: "predicted" },
+        { kind: "bill", amountCents: -55989, settledCents: null, state: "upcoming", name: "Car lease", confidence: "scheduled" },
+        { kind: "subscription", amountCents: -1539, settledCents: null, state: "upcoming", name: "YA-FIT", confidence: "predicted" },
       ],
       55989,
     )!;
@@ -299,8 +319,8 @@ describe("dayWeight confidence", () => {
 
   test("order does not change the answer", () => {
     const entries = [
-      { amountCents: -1539, settledCents: null, state: "upcoming" as const, name: "YA-FIT", confidence: "expected" as const },
-      { amountCents: -55989, settledCents: null, state: "upcoming" as const, name: "Car lease", confidence: "scheduled" as const },
+      { kind: "subscription" as const, amountCents: -1539, settledCents: null, state: "upcoming" as const, name: "YA-FIT", confidence: "expected" as const },
+      { kind: "bill" as const, amountCents: -55989, settledCents: null, state: "upcoming" as const, name: "Car lease", confidence: "scheduled" as const },
     ];
     expect(dayWeight(entries, 55989)!.confidence).toBe("expected");
     expect(dayWeight([...entries].reverse(), 55989)!.confidence).toBe("expected");
@@ -309,8 +329,8 @@ describe("dayWeight confidence", () => {
   test("a settled entry beside a forecast does not erase the forecast's confidence", () => {
     const w = dayWeight(
       [
-        { amountCents: -1549, settledCents: -1549, state: "paid", name: "Netflix", confidence: null },
-        { amountCents: -600, settledCents: null, state: "upcoming", name: "Rocket Money", confidence: "predicted" },
+        { kind: "subscription", amountCents: -1549, settledCents: -1549, state: "paid", name: "Netflix", confidence: null },
+        { kind: "subscription", amountCents: -600, settledCents: null, state: "upcoming", name: "Rocket Money", confidence: "predicted" },
       ],
       2149,
     )!;
@@ -323,8 +343,8 @@ describe("dayWeight confidence", () => {
     expect(
       dayWeight(
         [
-          { amountCents: -1549, settledCents: -1549, state: "paid", name: "Netflix" },
-          { amountCents: 104700, settledCents: null, state: "unsettled", name: "Cash job" },
+          { kind: "subscription", amountCents: -1549, settledCents: -1549, state: "paid", name: "Netflix" },
+          { kind: "income", amountCents: 104700, settledCents: null, state: "unsettled", name: "Cash job" },
         ],
         103151,
       )!.state,
@@ -332,8 +352,8 @@ describe("dayWeight confidence", () => {
     expect(
       dayWeight(
         [
-          { amountCents: -5000, settledCents: null, state: "missed", name: "Breezeline" },
-          { amountCents: 104700, settledCents: null, state: "unsettled", name: "Cash job" },
+          { kind: "bill", amountCents: -5000, settledCents: null, state: "missed", name: "Breezeline" },
+          { kind: "income", amountCents: 104700, settledCents: null, state: "unsettled", name: "Cash job" },
         ],
         99700,
       )!.state,

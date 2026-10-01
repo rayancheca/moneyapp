@@ -1,5 +1,6 @@
 import { flowEntryOf } from "./month-flow";
 import { mostUrgentState, type ForecastConfidence } from "./occurrence-verdict";
+import type { SeriesKind } from "@/db/schema/recurring";
 import type { DayStateKind } from "@/services/recurring-calendar";
 
 /**
@@ -110,6 +111,11 @@ export interface DayWeight {
 }
 
 export interface WeighableEntry {
+  /**
+   * The series' kind — a transfer is drawn and adds nothing to its day
+   * (`flowEntryOf`). Required for the same reason `settledCents` is.
+   */
+  kind: SeriesKind;
   amountCents: number;
   /**
    * What the mark adds to the month's Settled figure, or null for one that has
@@ -134,7 +140,8 @@ const shareOf = (e: WeighableEntry): number => flowEntryOf(e).amountCents;
  * already sum. A settled mark adds its `settledCents`: a deposit row less the
  * money settlement spent on another month's paydays, a payday chip only money
  * another month's deposits put in — a chip paid by a deposit drawn this month
- * adds nothing, because that deposit's own cell holds the money.
+ * adds nothing, because that deposit's own cell holds the money. A transfer
+ * adds nothing either: it moves money between his own accounts.
  *
  * 🔴 It summed each mark's AMOUNT, and once a payday could be drawn beside a
  * deposit of its own series (settlement asked first, §6A 29 review) that drew a

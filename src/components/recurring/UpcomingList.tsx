@@ -1,5 +1,6 @@
 import { Money } from "@/components/ui/Money";
 import { SurfaceCard } from "@/components/ui/SurfaceCard";
+import { seriesIsIncomeOrSpending } from "@/lib/series-kind";
 import type { SeriesOccurrence } from "@/services/recurring";
 import { KIND_LABEL, shortDate, staleOccurrenceEntries } from "./labels";
 import { StaleFooter, StaleMark } from "./StalenessNote";
@@ -17,9 +18,21 @@ interface UpcomingListProps {
  * what is late and why. The one series left out is not his: an income series
  * on the agent's cash (owner decision 2026-09-28), which no Income of his and
  * no 30-day net counts.
+ *
+ * ⚖️ A transfer series is LISTED and left out of the net: money moving between
+ * his own accounts is never income or spending (`seriesIsIncomeOrSpending`), the
+ * rule the forecast card above this tab and the dashboard's Upcoming apply.
+ * 🔴 Summed, a one-legged one — the card autopay out of checking, its card's
+ * statements never imported — moved this net by its whole amount. When what is
+ * left out does not cancel, a line names it, so the rows still add up to the net.
  */
 export function UpcomingList({ occurrences }: UpcomingListProps) {
-  const totalCents = occurrences.reduce((sum, o) => sum + o.amountCents, 0);
+  const totalCents = occurrences
+    .filter((o) => seriesIsIncomeOrSpending(o.kind))
+    .reduce((sum, o) => sum + o.amountCents, 0);
+  const transfersCents = occurrences
+    .filter((o) => !seriesIsIncomeOrSpending(o.kind))
+    .reduce((sum, o) => sum + o.amountCents, 0);
   const stale = staleOccurrenceEntries(occurrences);
 
   return (
@@ -55,6 +68,12 @@ export function UpcomingList({ occurrences }: UpcomingListProps) {
             </span>
             <Money cents={totalCents} flow className="text-sm font-medium" />
           </div>
+          {transfersCents !== 0 ? (
+            <p className="px-5 pb-3 text-[11px] text-ink-faint">
+              The net leaves out the <Money cents={transfersCents} flow /> of transfers above: money moving
+              between your own accounts is never income or spending.
+            </p>
+          ) : null}
           <StaleFooter window="In the next 30 days" entries={stale} className="m-3" />
         </>
       )}

@@ -1,3 +1,6 @@
+import type { SeriesKind } from "@/db/schema/recurring";
+import { seriesIsIncomeOrSpending } from "./series-kind";
+
 /**
  * The month as a RUNNING TOTAL — what the recurring schedule does to his money
  * between the 1st and the 31st.
@@ -50,8 +53,22 @@ export interface MonthFlowEntry {
  * September 2026 — Sep 3, 10 and 17 chipped "paid by the deposit of Sep 23"
  * beside that $4,567.68 row — put $9,135.36 of pay, eight weeks, into the
  * "as scheduled" figure of a month with four paydays.
+ *
+ * ⚖️ AND A TRANSFER ADDS NOTHING, posted or expected: money moving between his own accounts is never income or
+ * spending (`seriesIsIncomeOrSpending`, the rule the forecast card's net applies). The grid still draws its mark —
+ * a real scheduled movement — and the Day Sheet says "$0.00 counted on this day" under its amount.
+ *
+ * 🔴 Read whole, a one-legged transfer series (the card autopay out of checking, no PAYMENT THANK YOU imported to
+ * cancel it) put its whole amount into "as scheduled" directly under a card whose net left it out: the synthetic
+ * Chase autopay beside a $1,800.00 rent read -$2,793.02 on August's strip under a card reading -$1,800.00.
  */
-export function flowEntryOf(mark: { amountCents: number; settledCents: number | null }): MonthFlowEntry {
+export function flowEntryOf(mark: {
+  kind: SeriesKind;
+  amountCents: number;
+  settledCents: number | null;
+}): MonthFlowEntry {
+  const settled = mark.settledCents !== null;
+  if (!seriesIsIncomeOrSpending(mark.kind)) return { amountCents: 0, settled };
   return mark.settledCents === null
     ? { amountCents: mark.amountCents, settled: false }
     : { amountCents: mark.settledCents, settled: true };
