@@ -90,8 +90,40 @@ describe("the live row statuses have one home", () => {
       "const IS_LIVE: Record<TransactionStatus, boolean> = { active: true, quarantined: true, excluded: true, superseded: false };",
     ],
     ["a key set", "const LIVE = { active: 1, quarantined: 1, excluded: 1 } as const;"],
+    // 🔴 the review, 2026-10-01: a SQL string was read whole, and one that also names `superseded` names every status
+    [
+      "raw SQL that retires the rows it lists",
+      "db.run(sql`UPDATE transactions SET status = 'superseded' " +
+        "WHERE status IN ('active','quarantined','excluded') AND import_file_id = ${id}`);",
+    ],
+    [
+      "a list in raw SQL, in the clause that names superseded",
+      "db.all(sql`SELECT id, status IN ('active','quarantined','excluded') AS live, " +
+        "status = 'superseded' AS retired FROM transactions`);",
+    ],
+    [
+      "a comparison chain in raw SQL, beside the status it sets",
+      "sqlite.prepare(\"UPDATE transactions SET status = 'superseded' " +
+        "WHERE status = 'active' OR status = 'quarantined' OR status = 'excluded'\").run();",
+    ],
+    [
+      "a SQL CASE grouping every status",
+      "db.all(sql`SELECT id, CASE status WHEN 'active' THEN 1 WHEN 'quarantined' THEN 1 WHEN 'excluded' THEN 1 " +
+        "WHEN 'superseded' THEN 0 END AS live FROM transactions`);",
+    ],
   ])("flags %s", (_label, code) => {
     expect(copiesIn(code, "src/planted.ts")).not.toEqual([]);
+  });
+
+  /**
+   * 🔴 A raw SQL string was read whole, so a write that retires rows — the usual shape of a runbook's — named every
+   * status, and the list beside its `SET status = 'superseded'` was not a copy (the review, 2026-10-01).
+   */
+  test("flags a runbook's write that retires the rows it lists", () => {
+    const retire =
+      "sqlite.prepare(\"UPDATE transactions SET status = 'superseded' " +
+      "WHERE status IN ('active', 'quarantined', 'excluded') AND import_file_id = ?\").run(fileId);";
+    expect(copiesIn(retire, "scripts/planted.ts")).toEqual([1]);
   });
 
   test.each([
@@ -138,6 +170,17 @@ describe("the live row statuses have one home", () => {
     ],
     ["a line comment quoting an old list", '// was ["active", "quarantined", "excluded"]\ninArray(transactions.status, [...LIVE_ROW]);'],
     ["prose naming all three", "console.log(`ledgerFirstDay (active+quarantined+excluded): ${day}`);"],
+    // a SQL string is read by its parts, and a part that names every status is still the status type's
+    [
+      "every status in raw SQL",
+      "db.all(sql`SELECT status, COUNT(*) n FROM transactions " +
+        "WHERE status IN ('active','quarantined','excluded','superseded') GROUP BY status`);",
+    ],
+    [
+      "a SQL label per status",
+      "db.all(sql`SELECT CASE status WHEN 'active' THEN 'Active' WHEN 'quarantined' THEN 'Held' " +
+        "WHEN 'excluded' THEN 'Hidden' WHEN 'superseded' THEN 'Retired' END FROM transactions`);",
+    ],
   ])("does not flag %s", (_label, code) => {
     expect(copiesIn(code, "src/planted.ts")).toEqual([]);
   });

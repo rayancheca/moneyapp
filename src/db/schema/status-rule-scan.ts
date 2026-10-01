@@ -43,8 +43,9 @@ export interface StatusRuleScan {
  * What names every status can still group the admitted ones: a switch's cases that share a body, an object's keys that
  * share a value, a list inside a map of lists — each group is read as a list is. In the app, the status the rule is
  * mistaken for, compared alone, is the rule narrowed (`mistakenFor`). The scan reads the parsed file, so a comment
- * quoting an old list is not a copy, and the statuses a raw SQL string quotes are; it reports each statement, so a home
- * holds its one declaration and nothing else. Tests are not scanned: a fixture's status is a value, not the rule.
+ * quoting an old list is not a copy, and the statuses a raw SQL string quotes are — read as code is, by its parts, so
+ * the `superseded` a write sets does not hide the list it retires; it reports each statement, so a home holds its one
+ * declaration and nothing else. Tests are not scanned: a fixture's status is a value, not the rule.
  */
 export function statusRuleScan(rule: StatusRule): StatusRuleScan {
   const copiesIn = (source: string, fileName: string): number[] => copiesOf(rule, source, fileName);
@@ -83,9 +84,10 @@ function copiesInTree(copiesIn: StatusRuleScan["copiesIn"]): { copies: string[];
  *
  * A statement is read whole, and so is each part of it — a list, a call, a condition — so a statement that names every
  * status still shows a list of the admitted ones inside it; a statement inside another is read on its own. A switch is
- * read again by its cases as they share a body, an object or a type keyed by status by its keys as they share a value
- * (`groupsOf`): an exhaustive `switch` or `Record<ImportStatus, boolean>` names every status, and says which are
- * admitted by how it groups them. In the app, a status compared with `mistakenFor` alone is one too (`narrowsTheRule`).
+ * read again by its cases as they share a body, an object or a type keyed by status by its keys as they share a value,
+ * a raw SQL string by its parenthesized groups, its clauses and a `CASE`'s arms (`groupsOf`): an exhaustive `switch` or
+ * `Record<ImportStatus, boolean>` names every status, and says which are admitted by how it groups them. In the app, a
+ * status compared with `mistakenFor` alone is one too (`narrowsTheRule`).
  */
 function copiesOf(rule: StatusRule, source: string, fileName: string): number[] {
   const app = fileName.startsWith("src/");
@@ -133,9 +135,10 @@ function namedIn(rule: StatusRule, node: ts.Node): string[] {
 /**
  * The statuses `node` groups by what it does with them: a switch's cases by the body they run — falling through to it,
  * or repeating it — and the keys of an object or a type by the value they share. `{ parsed: true, … }` keys a set; a
- * label map, its every value different, groups nothing.
+ * label map, its every value different, groups nothing. A raw SQL string groups them by its parts (`sqlGroupsOf`).
  */
 function groupsOf(rule: StatusRule, node: ts.Node, file: ts.SourceFile): Set<string>[] {
+  if (isCodeString(node)) return sqlGroupsOf(rule, node.text);
   const groups = new Map<string, string[]>();
   const join = (key: string, statuses: readonly string[]): void => {
     groups.set(key, [...(groups.get(key) ?? []), ...statuses]);
@@ -193,6 +196,40 @@ function narrowsTheRule(rule: StatusRule, node: ts.Node): boolean {
 function statusesIn(rule: StatusRule, text: string): string[] {
   const words = rule.statuses.includes(text) ? [text] : [...text.matchAll(/(['"])([a-z_]+)\1/g)].map((m) => m[2] ?? "");
   return rule.statuses.filter((s) => words.includes(s));
+}
+
+/** The keywords that open a SQL clause: what a `SET` writes is read apart from what the `WHERE` after it compares. */
+const SQL_CLAUSE = /\b(?:select|from|join|where|set|values|group\s+by|having|order\s+by)\b/i;
+/** A SQL `CASE`'s arm: what its `WHEN` names, and the `THEN` it leads to. */
+const CASE_ARM = /\bwhen\b([\s\S]*?)\bthen\b([\s\S]*?)(?=\bwhen\b|\belse\b|\bend\b|$)/gi;
+
+/**
+ * The statuses a raw SQL string groups, read as code is: each parenthesized group — an `IN (…)` list, a grouped
+ * condition, a sub-select — each clause, and a `CASE`'s arms by the `THEN` they share, as a switch's cases share
+ * a body. 🔴 Read whole only, a write that retires rows named every status: `SET status = 'superseded' WHERE status
+ * IN ('active', 'quarantined', 'excluded')`, the usual shape of a runbook's, hid the list beside it (the review,
+ * 2026-10-01).
+ */
+function sqlGroupsOf(rule: StatusRule, sql: string): Set<string>[] {
+  const arms = new Map<string, string[]>();
+  for (const [, when = "", then = ""] of sql.matchAll(CASE_ARM)) {
+    arms.set(then.trim(), [...(arms.get(then.trim()) ?? []), ...statusesIn(rule, when)]);
+  }
+  const parts = [...parenthesizedIn(sql), ...sql.split(SQL_CLAUSE)].map((part) => statusesIn(rule, part));
+  return [...parts, ...arms.values()].map((statuses) => new Set(statuses));
+}
+
+/** Each parenthesized group in `sql`, the groups inside a group too. */
+function parenthesizedIn(sql: string): string[] {
+  const groups: string[] = [];
+  const open: number[] = [];
+  for (let at = 0; at < sql.length; at += 1) {
+    if (sql.charAt(at) === "(") open.push(at + 1);
+    if (sql.charAt(at) !== ")") continue;
+    const start = open.pop();
+    if (start !== undefined) groups.push(sql.slice(start, at));
+  }
+  return groups;
 }
 
 /** The statuses the rule leaves out. */
