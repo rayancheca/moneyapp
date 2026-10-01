@@ -803,19 +803,24 @@ describe("a figure newer than its evidence", () => {
  * names the days before as what they are.
  */
 describe("a card whose export reaches back before its first statement balance", () => {
-  /** Statements close at $180.00 on Jul 25 and $200.00 on Aug 5; the Jul 20 charge predates both. */
-  function statementCard(): void {
+  /**
+   * Statements close at $180.00 on Jul 25 and $200.00 on Aug 5; the Jul 20 charge predates both.
+   * `between` posts on Aug 1: the $20.00 the statements differ by closes the replay onto Aug 5, and
+   * any other amount misses it.
+   */
+  function statementCard(between = -2_000): void {
     addAccount("acct-alpha", "Alpha", "credit", { last4: "1111" });
     addAnchor("acct-alpha", "2026-07-25", -18_000, "statement");
     addAnchor("acct-alpha", "2026-08-05", -20_000, "statement");
     addTxn("acct-alpha", "2026-07-20", -1_000);
-    addTxn("acct-alpha", "2026-08-01", -2_000);
+    addTxn("acct-alpha", "2026-08-01", between);
   }
   const coverageOf = () => accountCoverage(bundle.db, TODAY).find((c) => c.accountId === "acct-alpha")!;
-  const netWorthLine = () => {
+  const netWorthOf = () => {
     const netWorth = provenanceFor(bundle.db, { kind: "netWorth", day: TODAY })!;
-    return netWorth.inputs.find((i) => i.label === "Alpha")!.detail;
+    return netWorth.inputs.find((i) => i.label === "Alpha")!;
   };
+  const netWorthLine = () => netWorthOf().detail;
 
   test("with nothing open past its last statement, says what net worth says, and no 'since'", () => {
     statementCard();
@@ -833,19 +838,121 @@ describe("a card whose export reaches back before its first statement balance", 
     expect(card.explanation).toBe("Across 1 card, all as of Aug 5 — 5 days ago.");
     expect(netWorthLine()).toBe("checked through Aug 5, 2026, and unchecked days before that");
     expect(alpha.caveat).toBe("checked through Aug 5 — 5 days ago, and unchecked days before that");
-    expect(card.provenance.inputs[0]!.detail).toBe("$200.00 owed, checked through Aug 5 — 5 days ago");
+    // 🔴 the proof's line read "$200.00 owed, checked through Aug 5 — 5 days ago": it took the
+    // row's caveat only for a card nothing checked, so a checked card's never said net worth's words
+    expect(card.provenance.inputs[0]!.detail).toBe(
+      "$200.00 owed, checked through Aug 5 — 5 days ago, and unchecked days before that",
+    );
+    // the balance IS the Aug 5 statement's, carried: the days nothing checks are before it
+    expect(card.provenance.headline).toBe(
+      "$200.00 across 1 card, each balance as of its own last statement. A total is only as proven as its weakest part.",
+    );
   });
 
-  test("with a run open past its last statement, dates 'since' from that run", () => {
+  /*
+   * 🔴 The ask's own probe, one surface over: the row said "nothing checks it since Aug 8 — 2
+   * days ago", net worth "nothing checks it since Aug 8, 2026" — and the proof under the same
+   * figure read "$240.00 across 1 card, each balance as of its own last statement" over the line
+   * "$240.00 owed, checked through Aug 5 — 5 days ago". The $240.00 holds the $40.00 posted Aug 8;
+   * the Aug 5 statement printed $200.00.
+   */
+  test("with a run open past its last statement, dates 'since' from that run — in its proof too", () => {
     statementCard();
     addTxn("acct-alpha", "2026-08-08", -4_000);
     rebuildAccount(bundle.db, "acct-alpha", TODAY);
 
     expect(coverageOf()).toMatchObject({ unverifiedSince: "2026-07-19", uncheckedSince: "2026-08-08" });
-    const alpha = cardsOwedCard(bundle.db, TODAY)!.cards[0]!;
+    const card = cardsOwedCard(bundle.db, TODAY)!;
+    const alpha = card.cards[0]!;
     expect(alpha.checkedThrough).toBe("2026-08-05");
+    expect(alpha.owedCents).toBe(24_000);
     expect(netWorthLine()).toBe("nothing checks it since Aug 8, 2026");
     expect(alpha.caveat).toBe("nothing checks it since Aug 8 — 2 days ago");
+    expect(card.provenance.inputs[0]!.detail).toBe("$240.00 owed, nothing checks it since Aug 8 — 2 days ago");
+    expect(card.provenance.headline).toBe(
+      "$240.00 across 1 card, each balance newer than its own last statement. A total is only as proven as its weakest part.",
+    );
+    // the day the total is checked through is still the statement's: the proof dates its evidence
+    expect(card.provenance.checkedThrough).toBe("2026-08-05");
+  });
+
+  /*
+   * 🔴 The badge asked about `unverifiedSince`, "the first day the chain stopped being checked"
+   * — but it is the first unchecked day the card EVER had, here Jul 19, replayed backwards from
+   * the Jul 25 statement and graded `unverified`. The walk misses Aug 5 a week later (only $10.00
+   * posts where the statements differ by $20.00): the row said "stopped adding up on Jul 26 — 15
+   * days ago" and net worth called the account "broken", while the row's badge and the total's
+   * read "unverified" (§6A 28 follow-up review, probed through `rebuildAccount`).
+   */
+  test("broken after its first statement, wears net worth's verdict, and so does the total", () => {
+    statementCard(-1_000);
+    rebuildAccount(bundle.db, "acct-alpha", TODAY);
+
+    expect(coverageOf()).toMatchObject({
+      grade: "broken",
+      unverifiedSince: "2026-07-19",
+      brokenSince: "2026-07-26",
+    });
+    const card = cardsOwedCard(bundle.db, TODAY)!;
+    const alpha = card.cards[0]!;
+    expect(netWorthOf().verdict).toBe("broken");
+    expect(netWorthLine()).toBe("stopped adding up on Jul 26, 2026");
+    expect(alpha.caveat).toBe("stopped adding up on Jul 26 — 15 days ago");
+    expect(alpha.verdict).toBe("broken");
+    expect(card.provenance.verdict).toBe("broken");
+    expect(card.provenance.inputs[0]!.detail).toBe("$200.00 owed, stopped adding up on Jul 26 — 15 days ago");
+  });
+
+  /*
+   * ⛔ One rule for every shape: the row's badge is net worth's verdict for the account, and the
+   * row's line in the proof is its figure and the row's own sentence. Asking the badge about the
+   * open run instead (`uncheckedSince`, the field the caveat dates from) would have fixed nothing
+   * here and made the prehistory-only card "on a statement" beside net worth's "unverified".
+   */
+  test.each([
+    { shape: "a run open past its last statement", between: -2_000, later: true },
+    { shape: "nothing open past its last statement", between: -2_000, later: false },
+    { shape: "a statement the replay misses", between: -1_000, later: false },
+  ])("$shape: the badge is net worth's, the proof line the row's own sentence", ({ between, later }) => {
+    statementCard(between);
+    if (later) addTxn("acct-alpha", "2026-08-08", -4_000);
+    rebuildAccount(bundle.db, "acct-alpha", TODAY);
+
+    const card = cardsOwedCard(bundle.db, TODAY)!;
+    const alpha = card.cards[0]!;
+    expect(alpha.caveat).not.toBeNull();
+    expect(alpha.verdict).toBe(netWorthOf().verdict);
+    expect(card.provenance.verdict).toBe(netWorthOf().verdict);
+    expect(card.provenance.inputs[0]!.detail).toBe(`${formatCents(alpha.owedCents!)} owed, ${alpha.caveat}`);
+  });
+
+  test("beside cards a statement dates and one nothing checked, only the newer one is named as newer", () => {
+    statementCard();
+    addTxn("acct-alpha", "2026-08-08", -4_000);
+    rebuildAccount(bundle.db, "acct-alpha", TODAY);
+    // checked through Jul 20 by its statement, and nothing past it
+    addAccount("acct-beta", "Beta", "credit", { last4: "2222", order: 1 });
+    addBalances("acct-beta", [{ day: "2026-07-20", cents: -5_000, basis: "anchored" }]);
+    addTxn("acct-beta", "2026-07-20", -1_000);
+
+    const two = cardsOwedCard(bundle.db, TODAY)!;
+    expect(two.explanation).toBe(
+      "Across 2 cards, each as of its own last statement except 1 that is newer — so this is not one moment. The oldest of them closed Jul 20 — 21 days ago.",
+    );
+    expect(two.provenance.headline).toBe(
+      "$290.00 across 2 cards, each balance as of its own last statement except 1 that is newer. A total is only as proven as its weakest part.",
+    );
+
+    // a card he counted, that no statement has checked
+    addAccount("acct-counted", "Counted Card", "credit", { last4: "4444", order: 2 });
+    addAnchor("acct-counted", "2026-08-01", -9_000);
+    addBalances("acct-counted", [{ day: "2026-08-01", cents: -9_000, basis: "anchored" }]);
+    addTxn("acct-counted", "2026-08-01", -500);
+
+    const three = cardsOwedCard(bundle.db, TODAY)!;
+    expect(three.provenance.headline).toMatch(
+      /^\$380\.00 across 3 cards, each balance as of its own last statement except 1 that is newer and 1 that no statement has checked\. /,
+    );
   });
 });
 
