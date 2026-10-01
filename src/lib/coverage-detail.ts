@@ -39,16 +39,25 @@ export interface CoverageDetailInput {
   /** last day whose balance rests on a closed arithmetic chain */
   verifiedThrough: string | null;
   /**
-   * `AccountCoverage.chainOpensOn`: the first day on that chain — its first balance. Unchecked
-   * days before it are replayed backwards from that balance (`beforeFirstBalance`).
+   * `AccountCoverage.firstBalanceOn`: its first recorded balance. Unchecked days before it are
+   * replayed backwards from that balance (`beforeFirstBalance`).
    *
    * ⛔ REQUIRED, like `countedOn`: a forgotten field sends Robinhood Agentic's row back to naming
    * Jun 4, 2026 as the first day it does not close, of an account it closes through Aug 31.
+   *
+   * 🔴 Not `AccountCoverage.chainOpensOn`, the first day that CLOSES: with his count first and
+   * statements after, that is the first statement, and the row named it as the balance the days
+   * before his count were replayed from (review, 2026-10-01).
    */
-  chainOpensOn: string | null;
+  firstBalanceOn: string | null;
+  /**
+   * `AccountCoverage.firstBalanceIsCount`: whether that balance is one he TYPED, which the row
+   * names as his. ⛔ REQUIRED, like `firstBalanceOn`.
+   */
+  firstBalanceIsCount: boolean;
   /**
    * first day that is `derived_unverified` or `gap` — the first unchecked day it EVER had, so
-   * before `chainOpensOn` it is the first of the days before its first balance
+   * before `firstBalanceOn` it is the first of the days before its first balance
    */
   unverifiedSince: string | null;
   /**
@@ -204,21 +213,23 @@ export function countedDetail(c: CountFields, formatDay: (iso: string) => string
 
 /** What `unverifiedDetail` reads — `AccountCoverage` carries every one under the same name. */
 type UnverifiedFields = CountFields &
-  Pick<CoverageDetailInput, "verifiedThrough" | "unverifiedSince" | "chainOpensOn">;
+  Pick<CoverageDetailInput, "verifiedThrough" | "unverifiedSince" | "firstBalanceOn" | "firstBalanceIsCount">;
 
 /** An unverified account's unchecked days, all before its first balance — `beforeFirstBalance`. */
 export interface BeforeFirstBalance {
   /** the last day on the closed chain — the day "checked through" names */
   checkedThrough: string;
-  /** its first balance, the first day on that chain (`AccountCoverage.chainOpensOn`) */
+  /** its first recorded balance, the one those days are replayed backwards from */
   firstBalanceOn: string;
+  /** whether that balance is one he typed — then the days stand on his word, and he is named */
+  firstBalanceIsCount: boolean;
 }
 
 /**
  * Where an `unverified` account's unchecked days are when no count of his stands under its newest
  * days and no run is open: before its first balance, replayed backwards from it — the ONE reading
  * net worth's line ("checked through <day>, and unchecked days before that") and /imports' row are
- * worded from. Null when that is not where they are.
+ * worded from, and /imports' header counts by. Null when that is not where they are.
  *
  * 🔴 TWO RULES, ONE ACCOUNT. /imports chose its unchecked days as it had before the run fields
  * existed — the open run, else `unverifiedSince` — and named that day as where it stops closing.
@@ -227,10 +238,16 @@ export interface BeforeFirstBalance {
  * from its first balance, the Jun 30 statement, and nothing past Aug 31 is unchecked. Net worth
  * already said "checked through Aug 31, 2026, and unchecked days before that" of it.
  *
- * ⛔ What each date is: `verifiedThrough` the last day on the closed chain and `chainOpensOn` the
- * first; `uncheckedSince` the first of the run still open, the only unchecked days past the chain;
- * `unverifiedSince` the first unchecked day the account EVER had — before the chain opens, the
- * first of the days before its first balance, never a day it stopped closing.
+ * ⛔ What each date is: `verifiedThrough` the last day on the closed chain; `firstBalanceOn` the
+ * first balance it records, which the rebuild replays backwards from; `uncheckedSince` the first of
+ * the run still open, the only unchecked days past the chain; `unverifiedSince` the first unchecked
+ * day the account EVER had — before its first balance, the first of the days before it, never a
+ * day it stopped closing.
+ *
+ * 🔴 `firstBalanceOn`, not `AccountCoverage.chainOpensOn`: the first day that CLOSES is a later day
+ * when the first balance is his count, which closes nothing — the next statement, or the day after
+ * his count when a replay from it lands on one. Read off `chainOpensOn`, the row named that day as
+ * the balance the days before his count were replayed from (review, 2026-10-01).
  *
  * ⚠️ Every unchecked day lies before its first balance, not only the first: past it the replay
  * writes one only going forward (`deriveForward`), and that run reaches the newest day, so it would
@@ -238,10 +255,10 @@ export interface BeforeFirstBalance {
  */
 export function beforeFirstBalance(c: UnverifiedFields): BeforeFirstBalance | null {
   if (c.grade !== "unverified" || countFooting(c) !== null || c.uncheckedSince !== null) return null;
-  const { verifiedThrough, unverifiedSince, chainOpensOn } = c;
-  if (verifiedThrough === null || unverifiedSince === null || chainOpensOn === null) return null;
-  if (unverifiedSince >= chainOpensOn) return null;
-  return { checkedThrough: verifiedThrough, firstBalanceOn: chainOpensOn };
+  const { verifiedThrough, unverifiedSince, firstBalanceOn } = c;
+  if (verifiedThrough === null || unverifiedSince === null || firstBalanceOn === null) return null;
+  if (unverifiedSince >= firstBalanceOn) return null;
+  return { checkedThrough: verifiedThrough, firstBalanceOn, firstBalanceIsCount: c.firstBalanceIsCount };
 }
 
 /**
@@ -355,12 +372,16 @@ function countedRow(
  * ⛔ Not `resting`'s reason. An export with no closing balance, or his entries with no document, is
  * what the run past a chain stands on; what the days before a first balance lack is an EARLIER one.
  * Robinhood Agentic's one row there is the Jun 5 transfer its June statement printed — no export.
+ *
+ * ⚠️ A count is named as a count: when the first balance is one he typed, the days before it were
+ * replayed from his word, and "on <day>" alone reads as a balance a document recorded.
  */
 function beforeRow(input: CoverageDetailInput, before: BeforeFirstBalance): string {
   // every unchecked day it has: `beforeFirstBalance` says why none is past its first balance
   const n = input.unverifiedDays;
   const first = dayWithYear(before.firstBalanceOn);
-  const days = `the ${n} ${plural(n, "day", "days")} before its first balance, on ${first}`;
+  const balance = before.firstBalanceIsCount ? `the one you counted on ${first}` : `on ${first}`;
+  const days = `the ${n} ${plural(n, "day", "days")} before its first balance, ${balance}`;
   const why = `replayed backwards from it, with nothing earlier to check ${plural(n, "it", "them")} against`;
   return `${closesClause(input)}; ${days}, ${plural(n, "is", "are")} unchecked — ${why}`;
 }

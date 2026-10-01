@@ -14,7 +14,8 @@ const detail = (over: Partial<CoverageDetailInput> = {}): string =>
   coverageDetail({
     grade: "verified",
     verifiedThrough: "2026-08-12",
-    chainOpensOn: null,
+    firstBalanceOn: null,
+    firstBalanceIsCount: false,
     unverifiedSince: null,
     uncheckedSince: null,
     uncheckedRunDays: 0,
@@ -349,7 +350,8 @@ describe("countedDetail — his count in one line", () => {
   const counted: CoverageDetailInput = {
     grade: "unverified",
     verifiedThrough: null,
-    chainOpensOn: null,
+    firstBalanceOn: null,
+    firstBalanceIsCount: false,
     unverifiedSince: "2026-07-27",
     uncheckedSince: null,
     uncheckedRunDays: 0,
@@ -409,7 +411,8 @@ describe("unverifiedDetail — an unverified account in one line", () => {
   const checked: CoverageDetailInput = {
     grade: "unverified",
     verifiedThrough: "2026-08-05",
-    chainOpensOn: "2026-07-25",
+    firstBalanceOn: "2026-07-25",
+    firstBalanceIsCount: false,
     unverifiedSince: "2026-07-19",
     uncheckedSince: null,
     uncheckedRunDays: 0,
@@ -612,7 +615,8 @@ describe("the days before its first balance are not where it stops closing", () 
   const agentic: CoverageDetailInput = {
     grade: "unverified",
     verifiedThrough: "2026-08-31",
-    chainOpensOn: "2026-06-30",
+    firstBalanceOn: "2026-06-30",
+    firstBalanceIsCount: false,
     unverifiedSince: "2026-06-04",
     uncheckedSince: null,
     uncheckedRunDays: 0,
@@ -646,10 +650,43 @@ describe("the days before its first balance are not where it stops closing", () 
     );
   });
 
+  /*
+   * 🔴 THE FIRST DAY THAT CLOSES IS NOT ALWAYS ITS FIRST BALANCE (review, 2026-10-01). The row
+   * named `chainOpensOn` — the first CLOSED day — as "its first balance". A balance he typed
+   * closes nothing when the days before it are replayed backwards from it, so with his count first
+   * and statements after, the chain opens on the Jun 30 statement and the row said Jun 4–19 were
+   * replayed backwards from Jun 30. They were replayed from his count on Jun 20, and a count is
+   * named as his. services/coverage.test.ts builds this shape through `addManualAnchor`.
+   */
+  test("his count as its first balance is named as his, on the day he counted it", () => {
+    // Jun 4–19 replayed backwards from the balance he typed for Jun 20; statements from Jun 30
+    const counted = {
+      ...agentic,
+      firstBalanceOn: "2026-06-20",
+      firstBalanceIsCount: true,
+      unverifiedDays: 16,
+    };
+    expect(coverageDetail(counted)).toBe(
+      "closes to the cent through Aug 31, 2026 (31 days ago); " +
+        "the 16 days before its first balance, the one you counted on Jun 20, 2026, are unchecked — " +
+        "replayed backwards from it, with nothing earlier to check them against",
+    );
+    expect(beforeFirstBalance(counted)).toEqual({
+      checkedThrough: "2026-08-31",
+      firstBalanceOn: "2026-06-20",
+      firstBalanceIsCount: true,
+    });
+    // net worth's line names neither day, so it reads as it did
+    expect(unverifiedDetail(counted, formatDayFull)).toBe(
+      "checked through Aug 31, 2026, and unchecked days before that",
+    );
+  });
+
   test("the row and net worth's line read the same days", () => {
     expect(beforeFirstBalance(agentic)).toEqual({
       checkedThrough: "2026-08-31",
       firstBalanceOn: "2026-06-30",
+      firstBalanceIsCount: false,
     });
     expect(unverifiedDetail(agentic, formatDayFull)).toBe(
       "checked through Aug 31, 2026, and unchecked days before that",
@@ -660,7 +697,7 @@ describe("the days before its first balance are not where it stops closing", () 
     // Robinhood Cash, the same copy: the run Sep 1–15, and 26 days before its first balance
     const robinhoodCash = {
       ...agentic,
-      chainOpensOn: "2023-12-31",
+      firstBalanceOn: "2023-12-31",
       unverifiedSince: "2023-12-05",
       uncheckedSince: "2026-09-01",
       uncheckedRunDays: 15,
@@ -680,7 +717,7 @@ describe("the days before its first balance are not where it stops closing", () 
     expect(beforeFirstBalance({ ...agentic, grade: "verified" })).toBeNull();
     expect(beforeFirstBalance({ ...agentic, verifiedThrough: null })).toBeNull();
     expect(beforeFirstBalance({ ...agentic, unverifiedSince: null })).toBeNull();
-    expect(beforeFirstBalance({ ...agentic, chainOpensOn: null })).toBeNull();
+    expect(beforeFirstBalance({ ...agentic, firstBalanceOn: null })).toBeNull();
     // the first unchecked day ON its first balance is not before it
     expect(beforeFirstBalance({ ...agentic, unverifiedSince: "2026-06-30" })).toBeNull();
   });
@@ -701,7 +738,8 @@ describe("no row names a day it stops closing on or before the day it closes thr
   const base: CoverageDetailInput = {
     grade: "unverified",
     verifiedThrough: "2026-08-31",
-    chainOpensOn: "2026-06-30",
+    firstBalanceOn: "2026-06-30",
+    firstBalanceIsCount: false,
     unverifiedSince: "2026-06-04",
     uncheckedSince: null,
     uncheckedRunDays: 0,
@@ -720,7 +758,7 @@ describe("no row names a day it stops closing on or before the day it closes thr
     "days before its first balance, nothing open (Robinhood Agentic)": base,
     "days before its first balance, and a run open (Robinhood Cash)": {
       ...base,
-      chainOpensOn: "2023-12-31",
+      firstBalanceOn: "2023-12-31",
       unverifiedSince: "2023-12-05",
       uncheckedSince: "2026-09-01",
       uncheckedRunDays: 15,

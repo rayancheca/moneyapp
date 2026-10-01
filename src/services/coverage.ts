@@ -265,8 +265,9 @@ export interface AccountCoverage {
    */
   keptOpeningOn: string | null;
   /**
-   * The day the checked chain opens on: the account's first trusted day, which
-   * is its first recorded balance. Null when nothing is checked at all.
+   * The day the checked chain opens on: the account's first trusted day — its
+   * first recorded balance, unless that balance is his count, which closes
+   * nothing (see `firstBalanceOn`). Null when nothing is checked at all.
    *
    * 🔴 Days BEFORE it are prehistory, replayed backwards from that balance with
    * nothing earlier to check them against — and `verifiedThrough` below
@@ -282,6 +283,22 @@ export interface AccountCoverage {
    * (2026-09-15), so the stricter reading has nothing to decide yet.
    */
   chainOpensOn: string | null;
+  /**
+   * The account's first recorded balance: its first `anchored` day, the endpoint the rebuild
+   * replays backwards from (`deriveBackward`), so every day before it is replayed from THIS
+   * balance. Null when no day is `anchored` (an opening kept from a statement he un-imported is
+   * not, `keptOpeningOn`), and always for `manual`, `market_value` and `unknown` grades.
+   *
+   * 🔴 Not `chainOpensOn`, the first day that CLOSES. A balance he typed closes nothing when the
+   * day before it is replayed backwards from it (`chainFooting` counts it as his word), so with
+   * his count first and statements after, the chain opens on the next statement — or, when a
+   * replay from his count lands on one, on the day after his count, which records no balance at
+   * all. /imports named that day as the balance the days before his count were replayed from
+   * (review of the first-balance row, 2026-10-01; no such account on his ledger that day).
+   */
+  firstBalanceOn: string | null;
+  /** whether `firstBalanceOn` is a balance he TYPED (`handTypedDays`) — a count is named as his */
+  firstBalanceIsCount: boolean;
   /** first day the chain stopped being checkable */
   unverifiedSince: string | null;
   /**
@@ -422,6 +439,8 @@ const accountCoverageCached = cache(function accountCoverageCached(
         grade: "market_value" as const,
         verifiedThrough: null,
         chainOpensOn: null,
+        firstBalanceOn: null,
+        firstBalanceIsCount: false,
         unverifiedSince: null,
         brokenSince: null,
         uncheckedSince: null,
@@ -436,6 +455,8 @@ const accountCoverageCached = cache(function accountCoverageCached(
         grade: "unknown" as const,
         verifiedThrough: null,
         chainOpensOn: null,
+        firstBalanceOn: null,
+        firstBalanceIsCount: false,
         unverifiedSince: null,
         brokenSince: null,
         uncheckedSince: null,
@@ -511,6 +532,8 @@ const accountCoverageCached = cache(function accountCoverageCached(
         grade: "manual" as const,
         verifiedThrough: null,
         chainOpensOn: null,
+        firstBalanceOn: null,
+        firstBalanceIsCount: false,
         unverifiedSince: null,
         brokenSince: null,
         uncheckedSince: null,
@@ -527,6 +550,8 @@ const accountCoverageCached = cache(function accountCoverageCached(
      */
     const grade: CoverageGrade =
       days.gap > 0 ? "broken" : days.derived_unverified > 0 || closed.size === 0 ? "unverified" : "verified";
+    // the rebuild writes every endpoint `anchored` and replays backwards from the first of them
+    const firstBalanceOn = balances.find((b) => b.basis === "anchored")?.day ?? null;
 
     return {
       ...base,
@@ -534,6 +559,8 @@ const accountCoverageCached = cache(function accountCoverageCached(
       verifiedThrough,
       countedOn,
       chainOpensOn: firstTrusted?.day ?? null,
+      firstBalanceOn,
+      firstBalanceIsCount: firstBalanceOn !== null && handTyped.has(firstBalanceOn),
       unverifiedSince: firstUntrusted?.day ?? null,
       brokenSince: firstGap?.day ?? null,
       uncheckedSince,

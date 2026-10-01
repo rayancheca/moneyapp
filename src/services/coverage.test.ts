@@ -453,7 +453,7 @@ describe("uncheckedSince — the run a 'since' date is actually about", () => {
   });
 });
 
-describe("chainOpensOn — where the days before its first balance end", () => {
+describe("a statement first — where the days before its first balance end", () => {
   /*
    * 🔴 /imports read "closes to the cent through Aug 31, 2026 (31 days ago); the first day it
    * does not is Jun 4, 2026" of Robinhood Agentic (a copy of his ledger, 2026-10-01): Jun 4 is
@@ -475,6 +475,8 @@ describe("chainOpensOn — where the days before its first balance end", () => {
       grade: "unverified",
       verifiedThrough: "2026-08-31",
       chainOpensOn: "2026-06-30",
+      firstBalanceOn: "2026-06-30",
+      firstBalanceIsCount: false,
       unverifiedSince: "2026-06-04",
       uncheckedSince: null,
       uncheckedRunDays: 0,
@@ -487,6 +489,75 @@ describe("chainOpensOn — where the days before its first balance end", () => {
     expect(beforeFirstBalance(c)).toEqual({
       checkedThrough: "2026-08-31",
       firstBalanceOn: "2026-06-30",
+      firstBalanceIsCount: false,
+    });
+  });
+});
+
+describe("firstBalanceOn — the balance the days before it are replayed from", () => {
+  /*
+   * 🔴 (review, 2026-10-01) /imports named `chainOpensOn` as "its first balance", and that is the
+   * first day that CLOSES. His count as the first balance closes nothing: the day before it is
+   * replayed backwards from it, unchecked, so `chainFooting` puts it in `counted`. The chain then
+   * opens on the next statement — or, when a replay from his count lands on one, on the day after
+   * his count, which records no balance at all — and the row said the days before his count were
+   * replayed backwards from that day.
+   */
+  const countedFirst = (txnBetween: boolean): string => {
+    const id = addAccount("a-counted-first", "New Checking", "checking");
+    addTxn(id, "2026-06-05");
+    // $5,012.34 and the -$12.34 row on Jun 25 land on the Jun 30 statement; $5,000.00 carries to it
+    if (txnBetween) addTxn(id, "2026-06-25");
+    const enteredCents = txnBetween ? 501_234 : 500_000;
+    addManualAnchor(bundle.db, { accountId: id, anchoredOn: "2026-06-20", enteredCents });
+    for (const day of ["2026-06-30", "2026-07-31", "2026-08-31"]) addAnchorRow(id, day, "statement");
+    rebuildAccount(bundle.db, id, "2026-09-15");
+    return id;
+  };
+
+  test("his count first, statements after: the days before it are replayed from his count", () => {
+    const id = countedFirst(false);
+    const c = accountCoverage(bundle.db, "2026-10-01").find((a) => a.accountId === id)!;
+    expect(c).toMatchObject({
+      grade: "unverified",
+      verifiedThrough: "2026-08-31",
+      chainOpensOn: "2026-06-30",
+      firstBalanceOn: "2026-06-20",
+      firstBalanceIsCount: true,
+      unverifiedSince: "2026-06-04",
+      uncheckedSince: null,
+      countedOn: null,
+    });
+    expect(c.days).toMatchObject({ anchored: 4, derived_unverified: 16, gap: 0 });
+    expect(beforeFirstBalance(c)).toEqual({
+      checkedThrough: "2026-08-31",
+      firstBalanceOn: "2026-06-20",
+      firstBalanceIsCount: true,
+    });
+  });
+
+  test("a replay from his count that lands on a statement opens the chain on a day with no balance", () => {
+    const id = countedFirst(true);
+    const c = accountCoverage(bundle.db, "2026-10-01").find((a) => a.accountId === id)!;
+    expect(c).toMatchObject({
+      chainOpensOn: "2026-06-21",
+      firstBalanceOn: "2026-06-20",
+      firstBalanceIsCount: true,
+    });
+    expect(beforeFirstBalance(c)?.firstBalanceOn).toBe("2026-06-20");
+  });
+
+  test("an account with no balance has none, and a statement first is not his count", () => {
+    addAccount("a-empty", "Empty", "checking");
+    expect(only("a-empty")).toMatchObject({ firstBalanceOn: null, firstBalanceIsCount: false });
+
+    const id = addAccount("a-statement-first", "Statement First", "checking");
+    addAnchorRow(id, "2026-06-30", "statement");
+    addTxn(id, "2026-06-05");
+    rebuildAccount(bundle.db, id, "2026-07-15");
+    expect(accountCoverage(bundle.db, "2026-07-15").find((a) => a.accountId === id)).toMatchObject({
+      firstBalanceOn: "2026-06-30",
+      firstBalanceIsCount: false,
     });
   });
 });
