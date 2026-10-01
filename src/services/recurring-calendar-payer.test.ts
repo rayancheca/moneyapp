@@ -11,6 +11,7 @@ import { institutions } from "@/db/schema/institutions";
 import { recurringSeries } from "@/db/schema/recurring";
 import { transactions } from "@/db/schema/transactions";
 import { seedDatabase } from "@/db/seed";
+import { dayWeight, heaviestDayCents } from "@/lib/calendar-day-weight";
 import { daysInMonthOf } from "@/lib/calendar-math";
 import { addDays } from "@/lib/dates";
 import { flowEntryOf, monthFlow } from "@/lib/month-flow";
@@ -274,6 +275,124 @@ describe("his ledger — a payday whose own day holds a deposit that paid anothe
     for (const m of ["2026-06", "2026-08", "2026-09"]) {
       expect(recurringCalendar(bundle.db, m, TODAY).postedNetCents).toBe(budgetsSettled(m, TODAY));
     }
+  });
+
+  /*
+   * ⛔ THE GRID READS WHAT THE STRIP AND THE FOOTER READ. A cell's figure, the
+   * heat scale it is weighed on and the Day Sheet's "Day total" are the day's
+   * step on the strip above them — so each week of pay is drawn once, on the
+   * day the footer counts it.
+   *
+   * 🔴 They summed each mark's AMOUNT. On main a payday never shared a day with
+   * a row of its own series, because the tolerance merge ran first; settlement
+   * first, Sep 24 holds both — the deposit dated Sep 24, whose money paid Aug
+   * 20, and the Sep 24 payday, paid by the lump of Sep 23 — and the cell read
+   * "2.3k" for a day that adds nothing to September, under a strip that did not
+   * move. Sep 3, 10 and 17 each drew a week the lump's own cell already held.
+   */
+  test("each day's figure is the strip's step that day — Sep 24 holds no week of pay twice", () => {
+    const september = recurringCalendar(bundle.db, "2026-09", TODAY);
+    const flowEntries: Record<string, ReturnType<typeof flowEntryOf>[]> = {};
+    for (const [iso, entries] of Object.entries(september.entriesByDay)) flowEntries[iso] = entries.map(flowEntryOf);
+    const flow = monthFlow(daysInMonthOf("2026-09"), "2026-09", flowEntries, TODAY);
+    const heaviest = heaviestDayCents(september.entriesByDay);
+    let before = 0;
+    for (const p of flow.points) {
+      expect([p.iso, dayWeight(september.entriesByDay[p.iso], heaviest)?.netCents ?? 0]).toEqual([
+        p.iso,
+        p.scheduledCents - before,
+      ]);
+      before = p.scheduledCents;
+    }
+    expect(dayWeight(september.entriesByDay["2026-09-24"], heaviest)?.netCents).toBe(0);
+    expect(heaviest).toBe(WEEK * 4);
+  });
+});
+
+/*
+ * ⛔ NOTHING AFTER TODAY HAS ARRIVED — on the calendar as in settlement, which
+ * takes only deposits dated on or before today (`services/payday-settlement`).
+ *
+ * 🔴 The calendar drew every row to the month's end. On main a pay row dated
+ * after today merged with the payday beside it; settlement first, the payday is
+ * graded "upcoming" because settlement never saw that row, and the row is drawn
+ * "paid" beside it — one week in the Settled figure and again in Expected, six
+ * weeks for October's five paydays, while /budgets counts five.
+ */
+describe("a pay row dated after today", () => {
+  const TODAY = "2026-10-01";
+
+  beforeEach(() => {
+    addPaySeries("2026-09-03");
+    readThrough("2026-08-01", TODAY);
+    for (const day of ["2026-09-03", "2026-09-10", "2026-09-17", "2026-09-24"]) deposit(day, WEEK);
+    deposit("2026-10-02", WEEK);
+  });
+
+  test("is not drawn or counted as settled, and its payday is counted once, as /budgets counts it", () => {
+    const october = recurringCalendar(bundle.db, "2026-10", TODAY);
+    expect(marksOn(october, "2026-10-02").rows).toHaveLength(0);
+    expect(marksOn(october, "2026-10-01").payday).toMatchObject({ state: "upcoming", settledCents: null });
+    expect(october.postedNetCents + october.upcomingNetCents).toBe(WEEK * 5);
+    const budgets = incomeExpectation(bundle.db, "2026-10-01", "2026-10-31", TODAY);
+    expect(october.postedNetCents).toBe(budgetsSettled("2026-10", TODAY));
+    expect(october.upcomingNetCents).toBe(budgets.expectedCents);
+  });
+
+  /*
+   * The guard is settlement's boundary, and settlement speaks only about pay: a
+   * bill's row dated after today is drawn on the day it is dated, as before.
+   */
+  test("a bill's row dated after today is not this guard's to cut", () => {
+    bundle.db
+      .insert(recurringSeries)
+      .values({
+        id: "series-rent",
+        name: "Rent",
+        kind: "bill",
+        cadence: "monthly",
+        intervalDaysAvg: 30,
+        amountCentsAvg: -200_000,
+        nextExpectedOn: "2026-10-01",
+        nextExpectedAmountCents: -200_000,
+        lastMatchedOn: "2026-09-01",
+        status: "confirmed",
+        createdAt: now(),
+        updatedAt: now(),
+      })
+      .run();
+    bundle.db
+      .insert(transactions)
+      .values({
+        id: "t-rent",
+        accountId: WELLS,
+        postedOn: "2026-10-02",
+        amountCents: -200_000,
+        rawDescription: "Rent",
+        normalizedDescription: "RENT",
+        recurringSeriesId: "series-rent",
+        seriesLinkSource: "user",
+        status: "active",
+        needsReview: false,
+        occurrenceIndex: 0,
+        dedupeHash: "h-rent",
+        createdAt: now(),
+        updatedAt: now(),
+      })
+      .run();
+    const october = recurringCalendar(bundle.db, "2026-10", TODAY);
+    expect(october.entriesByDay["2026-10-02"]?.filter((e) => e.seriesId === "series-rent")).toMatchObject([
+      { transactionId: "t-rent", settledCents: -200_000 },
+    ]);
+  });
+
+  test("the day it arrives, it is the payday's pay — one mark, as settlement then says", () => {
+    const october = recurringCalendar(bundle.db, "2026-10", "2026-10-02");
+    const { rows, payday } = marksOn(october, "2026-10-02");
+    expect(rows).toHaveLength(1);
+    expect(marksOn(october, "2026-10-01").payday).toBeUndefined();
+    expect(payday).toBeUndefined();
+    expect([october.postedNetCents, october.upcomingNetCents]).toEqual([WEEK, WEEK * 4]);
   });
 });
 

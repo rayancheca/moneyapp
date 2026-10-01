@@ -2,6 +2,7 @@ import { describe, expect, test } from "vitest";
 import {
   compactDayAmount,
   compactDayTotal,
+  dayTotalCents,
   dayWeight,
   heaviestDayCents,
   MIN_VISIBLE_WEIGHT,
@@ -12,7 +13,7 @@ const e = (
   amountCents: number,
   state: WeighableEntry["state"] = "upcoming",
   name = "Some series",
-): WeighableEntry => ({ amountCents, state, name });
+): WeighableEntry => ({ amountCents, settledCents: null, state, name });
 
 describe("heaviestDayCents", () => {
   test("takes the largest absolute NET, not the largest single entry", () => {
@@ -137,6 +138,47 @@ describe("dayWeight", () => {
 });
 
 /**
+ * 🔴 A DAY'S FIGURE DREW ONE WEEK OF PAY TWICE (§6A 29 review).
+ *
+ * The figure is what the day's marks add to the month — the step the flow strip
+ * takes that day, the share of the footer it holds (`flowEntryOf`). It summed
+ * each mark's AMOUNT instead, and once a payday could be drawn beside a deposit
+ * of its own series that counted a week twice: his Sep 24, read 2026-10-01 —
+ * the deposit dated Sep 24, whose money paid Aug 20, beside the Sep 24 payday
+ * the lump of Sep 23 paid — read "2.3k" on a day that adds nothing to September.
+ */
+describe("a day's figure is what its marks add to the month", () => {
+  const PAY = "It America LLC (weekly pay)";
+  const mark = (amountCents: number, settledCents: number | null, name = PAY): WeighableEntry => ({
+    amountCents,
+    settledCents,
+    state: settledCents === null ? "upcoming" : "paid",
+    name,
+  });
+  const sep24 = [mark(114192, 0), mark(114192, 0)];
+
+  test("his Sep 24 — a deposit whose money paid August, and a payday paid on Sep 23 — adds nothing", () => {
+    expect(dayWeight(sep24, 456768)!.netCents).toBe(0);
+    expect(dayTotalCents(sep24)).toBe(0);
+  });
+
+  test("the scale is weighed by what each day adds, so a doubled week cannot set it", () => {
+    expect(heaviestDayCents({ "2026-09-02": [mark(-150000, -150000, "Rent")], "2026-09-24": sep24 })).toBe(150000);
+  });
+
+  test("the day is named for the money it holds, not for a payday whose money is counted elsewhere", () => {
+    // his Sep 10: Breezeline's $50.00 left that day; the payday's week is the lump's, on Sep 23
+    const w = dayWeight([mark(114192, 0), mark(-5000, -5000, "Breezeline (internet)")], 456768)!;
+    expect(w.netCents).toBe(-5000);
+    expect(w.dominantName).toBe("Breezeline (internet)");
+  });
+
+  test("a payday paid from another month adds that money, and a mark not yet settled what it expects", () => {
+    expect(dayTotalCents([mark(114192, 114192), mark(-499, null, "Amazon Prime")])).toBe(114192 - 499);
+  });
+});
+
+/**
  * 🔴 S27. The /spending heatmap wrote its cell figure as `$${Math.round(dollars)}`,
  * so a day that earned 1–49¢ printed "+$0" over money that really came in.
  * Measured on the owner's ledger 2026-09-15: 20 cells across 50 months, every one
@@ -237,7 +279,7 @@ describe("compactDayTotal", () => {
 describe("dayWeight confidence", () => {
   test("a day with no forecast on it carries no confidence", () => {
     expect(
-      dayWeight([{ amountCents: -1549, state: "paid", name: "Netflix" }], 1549)!.confidence,
+      dayWeight([{ amountCents: -1549, settledCents: -1549, state: "paid", name: "Netflix" }], 1549)!.confidence,
     ).toBeNull();
   });
 
@@ -247,8 +289,8 @@ describe("dayWeight confidence", () => {
     // overstating is the app vouching for something nobody agreed to.
     const w = dayWeight(
       [
-        { amountCents: -55989, state: "upcoming", name: "Car lease", confidence: "scheduled" },
-        { amountCents: -1539, state: "upcoming", name: "YA-FIT", confidence: "predicted" },
+        { amountCents: -55989, settledCents: null, state: "upcoming", name: "Car lease", confidence: "scheduled" },
+        { amountCents: -1539, settledCents: null, state: "upcoming", name: "YA-FIT", confidence: "predicted" },
       ],
       55989,
     )!;
@@ -257,8 +299,8 @@ describe("dayWeight confidence", () => {
 
   test("order does not change the answer", () => {
     const entries = [
-      { amountCents: -1539, state: "upcoming" as const, name: "YA-FIT", confidence: "expected" as const },
-      { amountCents: -55989, state: "upcoming" as const, name: "Car lease", confidence: "scheduled" as const },
+      { amountCents: -1539, settledCents: null, state: "upcoming" as const, name: "YA-FIT", confidence: "expected" as const },
+      { amountCents: -55989, settledCents: null, state: "upcoming" as const, name: "Car lease", confidence: "scheduled" as const },
     ];
     expect(dayWeight(entries, 55989)!.confidence).toBe("expected");
     expect(dayWeight([...entries].reverse(), 55989)!.confidence).toBe("expected");
@@ -267,8 +309,8 @@ describe("dayWeight confidence", () => {
   test("a settled entry beside a forecast does not erase the forecast's confidence", () => {
     const w = dayWeight(
       [
-        { amountCents: -1549, state: "paid", name: "Netflix", confidence: null },
-        { amountCents: -600, state: "upcoming", name: "Rocket Money", confidence: "predicted" },
+        { amountCents: -1549, settledCents: -1549, state: "paid", name: "Netflix", confidence: null },
+        { amountCents: -600, settledCents: null, state: "upcoming", name: "Rocket Money", confidence: "predicted" },
       ],
       2149,
     )!;
@@ -281,8 +323,8 @@ describe("dayWeight confidence", () => {
     expect(
       dayWeight(
         [
-          { amountCents: -1549, state: "paid", name: "Netflix" },
-          { amountCents: 104700, state: "unsettled", name: "Cash job" },
+          { amountCents: -1549, settledCents: -1549, state: "paid", name: "Netflix" },
+          { amountCents: 104700, settledCents: null, state: "unsettled", name: "Cash job" },
         ],
         103151,
       )!.state,
@@ -290,8 +332,8 @@ describe("dayWeight confidence", () => {
     expect(
       dayWeight(
         [
-          { amountCents: -5000, state: "missed", name: "Breezeline" },
-          { amountCents: 104700, state: "unsettled", name: "Cash job" },
+          { amountCents: -5000, settledCents: null, state: "missed", name: "Breezeline" },
+          { amountCents: 104700, settledCents: null, state: "unsettled", name: "Cash job" },
         ],
         99700,
       )!.state,

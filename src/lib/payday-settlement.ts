@@ -89,6 +89,21 @@ export interface PaydayOccurrence {
   amountCents: number;
 }
 
+/**
+ * Whether a row dated `postedOn` has ARRIVED by `today`. Nothing dated after
+ * today has, whatever the row says — the same refusal `cashEarnings` makes when
+ * it clamps its window to today.
+ *
+ * ⛔ ONE BOUNDARY, for settlement and for every surface that draws a deposit
+ * beside settlement's answer. A row settlement did not read cannot be drawn as
+ * paying a payday that settlement says is still owed: the recurring calendar
+ * drew a deposit dated Oct 2, read on Oct 1, as settled beside the Oct 1 payday
+ * settlement left unpaid — one week counted in Settled and again in Expected.
+ */
+export function hasArrived(postedOn: string, today: string): boolean {
+  return compareDates(postedOn, today) <= 0;
+}
+
 /** One deposit the owner (or detection) attributed to the pay series. */
 export interface AttributedDeposit {
   postedOn: string;

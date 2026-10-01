@@ -6,7 +6,7 @@ import type { CalendarEntry, RecurringCalendarMonth } from "@/services/recurring
 // the server action pulls in next/cache and the database client
 vi.mock("@/app/recurring/actions", () => ({ loadRecurringMonthAction: vi.fn() }));
 
-const { RecurringCalendar } = await import("./RecurringCalendar");
+const { DaySheetBody, RecurringCalendar } = await import("./RecurringCalendar");
 
 function entry(over: Partial<CalendarEntry> & Pick<CalendarEntry, "seriesId" | "name" | "state" | "amountCents">): CalendarEntry {
   return {
@@ -203,5 +203,62 @@ describe("RecurringCalendar — a deposit that paid another month's payday", () 
     expect(out).toContain(
       'aria-label="Aug 27, 2026 — 1 item: It America LLC (weekly pay) paid (paid by the deposits of Jun 4, 2026 and Jun 5, 2026) $1,141.92"',
     );
+  });
+});
+
+/**
+ * 🔴 A DAY DREW ONE WEEK OF PAY TWICE (§6A 29 review).
+ *
+ * His September 2026 as the calendar service draws it, read 2026-10-01
+ * (`recurring-calendar-payer.test`): the lump of Sep 23 paid Sep 3 through Sep
+ * 24, and the deposit dated Sep 24 — its own payday already paid — paid Aug 20.
+ * Sep 24 holds that deposit beside its payday, and the cell, the heat scale and
+ * the Day Sheet's "Day total" summed each mark's amount: "2.3k" on a day that
+ * adds nothing to September, beneath a strip and over a footer that did not
+ * count it. They read what the footer reads now, mark by mark.
+ */
+describe("RecurringCalendar — a deposit and a payday on one day, each paid from another", () => {
+  const week = { seriesId: "pay", name: "It America LLC (weekly pay)", kind: "income" as const, amountCents: 114192 };
+  const sep24: CalendarEntry[] = [
+    entry({ ...week, state: "paid", transactionId: "t-sep24", settlesPaydaysOn: ["2026-08-20"], settledCents: 0 }),
+    entry({ ...week, state: "paid", settledByDepositsOn: ["2026-09-23"], settledCents: 0 }),
+  ];
+  const month: RecurringCalendarMonth = {
+    monthKey: "2026-09",
+    today: "2026-10-01",
+    entriesByDay: {
+      "2026-09-03": [entry({ ...week, state: "paid", settledByDepositsOn: ["2026-09-23"], settledCents: 0 })],
+      "2026-09-23": [entry({ ...week, state: "paid_different", amountCents: 456768, transactionId: "t-lump", settledCents: 456768 })],
+      "2026-09-24": sep24,
+    },
+    entryCount: 4,
+    postedNetCents: 456768,
+    upcomingNetCents: 0,
+    missedCount: 0,
+    unsettledCount: 0,
+    unsettledGrossCents: 0,
+  };
+  const html = decode(renderToStaticMarkup(createElement(RecurringCalendar, { initialMonth: month, today: "2026-10-01" })));
+
+  /** The figure a day's cell prints — the first `figures` span after that day's accessible name. */
+  const cellFigure = (label: string): string | undefined =>
+    html.slice(html.indexOf(`aria-label="${label}`)).match(/class="figures whitespace-nowrap[^"]*"[^>]*>([^<]*)</)?.[1];
+
+  test("the cell prints what the day adds to the month, not a week of pay twice", () => {
+    expect(cellFigure("Sep 24, 2026 — 2 items")).toBe("0");
+    expect(cellFigure("Sep 3, 2026 — 1 item")).toBe("0");
+    expect(cellFigure("Sep 23, 2026 — 1 item")).toBe("4.6k");
+  });
+
+  test("the Day Sheet's total is the cell's figure, and each mark says how much of it is counted that day", () => {
+    const sheet = decode(renderToStaticMarkup(createElement(DaySheetBody, { entries: sep24 })));
+    expect(sheet).toMatch(/Day total<\/span><span class="figures text-ink-muted font-semibold">\$0\.00<\/span>/);
+    expect(sheet.match(/\$0\.00 counted on this day/g)).toHaveLength(2);
+  });
+
+  test("a mark whose money is all counted on its own day says nothing more", () => {
+    const sheet = decode(renderToStaticMarkup(createElement(DaySheetBody, { entries: month.entriesByDay["2026-09-23"]! })));
+    expect(sheet).not.toContain("counted on this day");
+    expect(sheet).not.toContain("Day total");
   });
 });

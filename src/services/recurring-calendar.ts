@@ -5,7 +5,7 @@ import { recurringSeries, type SeriesKind } from "@/db/schema/recurring";
 import { transactions } from "@/db/schema/transactions";
 import { isCategoryHueName, type CategoryHueName } from "@/lib/category-palette";
 import { compareDates, diffDays, monthKey, periodBounds, todayIso } from "@/lib/dates";
-import { portionsAcross, type SettlementPortion } from "@/lib/payday-settlement";
+import { hasArrived, portionsAcross, type SettlementPortion } from "@/lib/payday-settlement";
 import { RECURRING_HISTORY_STATUSES } from "@/lib/series-evidence";
 import {
   forecastConfidence,
@@ -122,7 +122,8 @@ export interface CalendarEntry {
   /**
    * What this mark adds to the month's Settled figure, or null for a mark that
    * has not settled (upcoming, missed, not yet known). The footer's Settled
-   * total and the flow strip's posted line are both the sum of these.
+   * total and the flow strip's posted line are both the sum of these, and each
+   * day's cell, heat and "Day total" read them too (`dayTotalCents`).
    *
    * ⛔ EACH CENT IN ONE MONTH: the month of the payday it paid. A posted row
    * carries its amount less the money settlement spent on another month's
@@ -587,6 +588,19 @@ export function recurringCalendar(
     for (const p of posted) {
       const s = p.seriesId ? seriesById.get(p.seriesId) : undefined;
       if (!s) continue; // tagged to a DISMISSED series — the owner said not recurring
+      /*
+       * ⛔ NOTHING AFTER TODAY HAS ARRIVED, on a pay series settlement speaks
+       * about — settlement's own boundary (`hasArrived`), so a row it did not
+       * read neither stands beside a payday it left owed nor counts as Settled.
+       *
+       * 🔴 Drawn, it did both: a deposit dated Oct 2, read on Oct 1, was drawn
+       * paid beside the Oct 1 payday step 2 grades "upcoming" — the week in
+       * Settled and in Expected, six weeks for October's five paydays where
+       * /budgets counts five. On main the tolerance merge hid that payday
+       * instead; settlement first, nothing did. The day it arrives, settlement
+       * reads it, and it is drawn as the payday's pay.
+       */
+      if (settlements.has(s.id) && !hasArrived(p.postedOn, today)) continue;
       const expected = effectiveSeries(s).nextExpectedAmountCents;
       const stddev = s.amountCentsStddev ?? measured.get(s.id) ?? null;
       const state: DayStateKind =

@@ -18,6 +18,13 @@ import {
   stepPlan,
   stepsToReach,
 } from "@/lib/recurring-step";
+/*
+ * ⚠️ A cycle, on purpose: settlement walks the occurrences `projectOccurrences`
+ * draws, and `upcomingOccurrences` asks settlement which of them are paid. Both
+ * modules call each other only inside functions, never while loading, so the
+ * order they load in cannot matter.
+ */
+import { stillToCome } from "./payday-settlement";
 
 /**
  * A drizzle transaction handle. Detection and the user-link services
@@ -1364,6 +1371,14 @@ export function projectOccurrences(
  * dishonesty the derivation layer avoids when it stamps a `gap` rather than
  * inventing a slope. recurring-calendar.ts may filter; it draws nothing rather
  * than asserting an amount, so omission there costs no information.
+ *
+ * ⛔ A payday a deposit has already paid down is not upcoming (`stillToCome`,
+ * the forecast's own reading of settlement). 🔴 This projected from today and
+ * never asked: read on Sep 30 with Wed Sep 30's deposit paying Thu Oct 1 early,
+ * the Upcoming tab still listed Oct 1's pay while the Calendar tab beside it
+ * drew Oct 1 "paid by the deposit of Sep 30" and the forecast counted four
+ * October paydays — and the dashboard waited on that pay, so "before your next
+ * paycheck" left out the rent due before the pay that will actually come.
  */
 export function upcomingOccurrences(
   db: AppDatabase,
@@ -1387,7 +1402,10 @@ export function upcomingOccurrences(
     // lease and $361.49 insurance the owner registered for 2026-09-11 and that
     // have no postings yet by definition.
     .filter((s) => !(lapsedSeriesShouldStopForecasting(s.kind) && seriesHasLapsed(s, today)))
-    .flatMap((s) => projectOccurrences(toProjectable(s, seriesStaleness(s, today)), today, to))
+    .flatMap((s) => {
+      const projected = projectOccurrences(toProjectable(s, seriesStaleness(s, today)), today, to);
+      return stillToCome(db, s, projected, today);
+    })
     .sort((a, b) => compareDates(a.date, b.date) || a.name.localeCompare(b.name));
 }
 

@@ -10,7 +10,7 @@ import { InfoTip } from "@/components/ui/InfoTip";
 import { Money } from "@/components/ui/Money";
 import { Sheet } from "@/components/ui/Sheet";
 import { toast } from "@/components/ui/Toast";
-import { compactDayTotal, dayWeight, heaviestDayCents } from "@/lib/calendar-day-weight";
+import { compactDayTotal, dayTotalCents, dayWeight, heaviestDayCents } from "@/lib/calendar-day-weight";
 import { heatMixPercent } from "@/lib/calendar-heat";
 import { daysInMonthOf, type CalendarDay } from "@/lib/calendar-math";
 import { RECURRING_JARGON } from "@/lib/jargon";
@@ -516,83 +516,105 @@ export function RecurringCalendar({ initialMonth, today, density = "tall", onMon
       <Legend />
 
       <Sheet open={openDay !== null} onClose={() => setOpenDay(null)} title={openDay ? longDate(openDay) : ""}>
-        {openEntries.length === 0 ? (
-          <p className="text-sm text-ink-muted">No recurring activity on this day.</p>
-        ) : (
-          <ul className="divide-y divide-line">
-            {openEntries.map((e, i) => (
-              <li key={`${e.seriesId}-${i}`} className="py-2.5">
-                <Link
-                  href={`/recurring/${e.seriesId}`}
-                  className="group/row flex items-center gap-3 rounded-md px-1 py-1 transition-colors duration-(--duration-fast) hover:bg-surface-sunken"
-                >
-                  {/* The same tile the grid draws, at reading size. It is what
-                      makes the sheet and the cell recognisably the same object
-                      rather than two views that happen to share a date. */}
-                  <MerchantMark
-                    name={e.name}
-                    hue={e.hue}
-                    size={30}
-                    muted={e.state === "unsettled"}
-                    className="transition-transform duration-(--duration-fast) group-hover/row:scale-105 motion-reduce:group-hover/row:scale-100"
-                  />
-                  <div className="min-w-0 flex-1">
-                    <span className="block truncate text-sm font-medium">{e.name}</span>
-                    <span className="mt-0.5 flex flex-wrap items-center gap-1.5">
-                      <Badge tone={STATE_TONE[e.state]}>
-                        {/* The state and its qualifier are printed from ONE
-                            entry, which carried them out of ONE `settledVerdict`
-                            call. A cell can therefore never show "not yet known"
-                            beside the wrong reason for it. */}
-                        {payerWord(e)
-                          ? `${STATE_WORD[e.state]} — ${payerWord(e)}`
-                          : e.state === "unsettled" && e.unsettledReason
-                            ? `${STATE_WORD[e.state]} — ${unsettledReasonWord(e.unsettledReason)}`
-                            : STATE_WORD[e.state]}
-                      </Badge>
-                      {e.confidence ? (
-                        <Badge tone="neutral">{CONFIDENCE_WORD[e.confidence]}</Badge>
-                      ) : null}
-                      {e.isStale ? <Badge tone="warning">evidence stale</Badge> : null}
-                      {/* not a warning: nothing is late about a bill the bank has
-                          not charged yet — the All tab's "Never billed" */}
-                      {e.neverBilled ? <Badge tone="neutral">{SERIES_EVIDENCE_LABEL["never-billed"]}</Badge> : null}
-                      <span className="text-[11px] text-ink-faint">{KIND_LABEL[e.kind]}</span>
-                    </span>
-                    {e.confidence ? (
-                      <span className="mt-0.5 block text-[11px] text-ink-faint">
-                        {CONFIDENCE_HINT[e.confidence]}
-                        {e.isStale ? " · evidence has gone quiet" : ""}
-                      </span>
-                    ) : null}
-                  </div>
-                  <div className="shrink-0 text-right">
-                    <Money cents={e.amountCents} flow className="text-sm" />
-                    {e.state === "paid_different" && e.expectedAmountCents !== null ? (
-                      <span className="block text-[11px] text-ink-faint">
-                        expected {formatCents(e.expectedAmountCents)}
-                      </span>
-                    ) : null}
-                  </div>
-                </Link>
-              </li>
-            ))}
-          </ul>
-        )}
-        {openEntries.length > 1 ? (
-          <p className="mt-3 flex items-baseline justify-between gap-3 border-t border-line-strong pt-3 text-sm">
-            <span className="text-xs font-medium uppercase tracking-[0.1em] text-ink-faint">
-              Day total
-            </span>
-            <Money
-              cents={openEntries.reduce((n, e) => n + e.amountCents, 0)}
-              flow
-              className="font-semibold"
-            />
-          </p>
-        ) : null}
+        <DaySheetBody entries={openEntries} />
       </Sheet>
     </div>
+  );
+}
+
+/**
+ * The Day Sheet behind a cell: every mark on the day at its own amount and, over
+ * several, the day's total — the figure the cell prints (`dayTotalCents`).
+ * Exported for its test, as a static render draws the sheet closed and empty.
+ *
+ * ⛔ THE SHEET ACCOUNTS FOR THE CELL. A mark can add less to its day than its
+ * own amount — a deposit whose money paid another month's payday, a payday paid
+ * by a deposit drawn on another day — and such a mark says how much of it the
+ * day counts, or a "Day total" of $0.00 would sit under two lines of +$1,141.92
+ * with nothing to reconcile them. Its badge already says where the rest went.
+ */
+export function DaySheetBody({ entries }: { entries: readonly CalendarEntry[] }) {
+  return (
+    <>
+      {entries.length === 0 ? (
+        <p className="text-sm text-ink-muted">No recurring activity on this day.</p>
+      ) : (
+        <ul className="divide-y divide-line">
+          {entries.map((e, i) => (
+            <li key={`${e.seriesId}-${i}`} className="py-2.5">
+              <Link
+                href={`/recurring/${e.seriesId}`}
+                className="group/row flex items-center gap-3 rounded-md px-1 py-1 transition-colors duration-(--duration-fast) hover:bg-surface-sunken"
+              >
+                {/* The same tile the grid draws, at reading size. It is what
+                    makes the sheet and the cell recognisably the same object
+                    rather than two views that happen to share a date. */}
+                <MerchantMark
+                  name={e.name}
+                  hue={e.hue}
+                  size={30}
+                  muted={e.state === "unsettled"}
+                  className="transition-transform duration-(--duration-fast) group-hover/row:scale-105 motion-reduce:group-hover/row:scale-100"
+                />
+                <div className="min-w-0 flex-1">
+                  <span className="block truncate text-sm font-medium">{e.name}</span>
+                  <span className="mt-0.5 flex flex-wrap items-center gap-1.5">
+                    <Badge tone={STATE_TONE[e.state]}>
+                      {/* The state and its qualifier are printed from ONE
+                          entry, which carried them out of ONE `settledVerdict`
+                          call. A cell can therefore never show "not yet known"
+                          beside the wrong reason for it. */}
+                      {payerWord(e)
+                        ? `${STATE_WORD[e.state]} — ${payerWord(e)}`
+                        : e.state === "unsettled" && e.unsettledReason
+                          ? `${STATE_WORD[e.state]} — ${unsettledReasonWord(e.unsettledReason)}`
+                          : STATE_WORD[e.state]}
+                    </Badge>
+                    {e.confidence ? (
+                      <Badge tone="neutral">{CONFIDENCE_WORD[e.confidence]}</Badge>
+                    ) : null}
+                    {e.isStale ? <Badge tone="warning">evidence stale</Badge> : null}
+                    {/* not a warning: nothing is late about a bill the bank has
+                        not charged yet — the All tab's "Never billed" */}
+                    {e.neverBilled ? <Badge tone="neutral">{SERIES_EVIDENCE_LABEL["never-billed"]}</Badge> : null}
+                    <span className="text-[11px] text-ink-faint">{KIND_LABEL[e.kind]}</span>
+                  </span>
+                  {e.confidence ? (
+                    <span className="mt-0.5 block text-[11px] text-ink-faint">
+                      {CONFIDENCE_HINT[e.confidence]}
+                      {e.isStale ? " · evidence has gone quiet" : ""}
+                    </span>
+                  ) : null}
+                </div>
+                <div className="shrink-0 text-right">
+                  <Money cents={e.amountCents} flow className="text-sm" />
+                  {e.state === "paid_different" && e.expectedAmountCents !== null ? (
+                    <span className="block text-[11px] text-ink-faint">
+                      expected {formatCents(e.expectedAmountCents)}
+                    </span>
+                  ) : null}
+                  {/* what this mark adds to the day — `flowEntryOf`, the one
+                      reading the cell, the strip and the footer share */}
+                  {flowEntryOf(e).amountCents !== e.amountCents ? (
+                    <span className="block text-[11px] text-ink-faint">
+                      {formatCents(flowEntryOf(e).amountCents)} counted on this day
+                    </span>
+                  ) : null}
+                </div>
+              </Link>
+            </li>
+          ))}
+        </ul>
+      )}
+      {entries.length > 1 ? (
+        <p className="mt-3 flex items-baseline justify-between gap-3 border-t border-line-strong pt-3 text-sm">
+          <span className="text-xs font-medium uppercase tracking-[0.1em] text-ink-faint">
+            Day total
+          </span>
+          <Money cents={dayTotalCents(entries)} flow className="font-semibold" />
+        </p>
+      ) : null}
+    </>
   );
 }
 

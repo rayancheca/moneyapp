@@ -1,5 +1,6 @@
 import { describe, expect, test } from "vitest";
 import {
+  hasArrived,
   portionsAcross,
   settlePaydaysBackwards,
   type AttributedDeposit,
@@ -307,5 +308,17 @@ describe("portionsAcross — the money that crossed a window, both ways", () => 
       { paydayOn: "2026-09-17", depositOn: "2026-09-23", cents: WEEK },
     ];
     expect(portionsAcross(portions, window)).toEqual({ paidByAnotherWindow: [], paidForAnotherWindow: [] });
+  });
+});
+
+/*
+ * ⛔ The boundary settlement reads deposits by, and the recurring calendar draws
+ * them by: today has arrived, tomorrow has not.
+ */
+describe("hasArrived", () => {
+  test("a row dated today or before has arrived; one dated after today has not, whatever it says", () => {
+    expect(hasArrived("2026-09-30", "2026-10-01")).toBe(true);
+    expect(hasArrived("2026-10-01", "2026-10-01")).toBe(true);
+    expect(hasArrived("2026-10-02", "2026-10-01")).toBe(false);
   });
 });
