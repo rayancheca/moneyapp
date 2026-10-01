@@ -45,10 +45,11 @@ const TRIAL_ORIGINALS = path.join(SCRATCH, "originals");
  *
  * ⛔ So are the folders import-statements would refuse against the same ledger —
  * one inside the statement archive or holding it, or any file in them named as
- * the archive names its copies (./statement-folders.ts) — and one in the trial's
- * own archive, which the trial wipes before it reads: a diff for an import that
- * cannot run is not a trial of anything. They are read here, before the trial
- * copy is made.
+ * the archive names its copies (./statement-folders.ts) — and one anywhere in
+ * .trial/, which the trial wipes, its own archive with the rest, after it reads
+ * the folders: a diff for an import that cannot run is not a trial of anything,
+ * and the statements staged there would be deleted with it. They are read here,
+ * before the trial copy is made.
  */
 function commandLine(): { sourceDb: string; files: ImportInput[] } {
   const argv = process.argv.slice(2);
@@ -56,7 +57,8 @@ function commandLine(): { sourceDb: string; files: ImportInput[] } {
     const stray = strayFlags(argv, ["--from"]);
     if (stray.length > 0) throw new DbTargetRefusal(`unknown flag ${stray.join(", ")} — the trial's source is --from=<db>`);
     const source = dbTargetFrom(argv, { flag: "--from", required: false, cwd: process.cwd(), exists: fs.existsSync });
-    const files = statementFiles(args, [...archiveRootsFor(source, process.cwd(), process.env), TRIAL_ORIGINALS], process.cwd());
+    const offLimits = [...archiveRootsFor(source, process.cwd(), process.env), { wiped: SCRATCH }];
+    const files = statementFiles(args, offLimits, process.cwd());
     return { sourceDb: source.path, files };
   } catch (error: unknown) {
     if (!(error instanceof DbTargetRefusal)) throw error;

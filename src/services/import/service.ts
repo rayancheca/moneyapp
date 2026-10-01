@@ -20,6 +20,7 @@ import { addDays } from "@/lib/dates";
 import { descriptionScore } from "@/lib/description-score";
 import { assignOccurrenceIndexes, dedupeHash, fileSha256, type DuplicatePairSide } from "@/lib/hash";
 import { normalizeDescription } from "@/lib/normalize";
+import { isWithin } from "@/lib/path-within";
 import { sumCents } from "@/lib/money";
 import { RECONCILE_STATUSES, periodVerdict } from "@/lib/reconciliation";
 import { postedInsidePeriod } from "@/lib/statement-period";
@@ -1218,12 +1219,37 @@ function statementsRoot(): string {
 }
 
 /**
- * The name the archive keeps an original under: the first 16 hex of its sha256, a dash, its own name. Exported for the
- * commands that must know such a copy when one is handed back to the import (scripts/statement-folders.ts) — read as
- * an original, it is recorded under this name and archived again as `<sha>-<sha>-<name>`.
+ * ⛔ An original this run may move or remove: one in the archive it writes. A copy of the ledger — a trial, a `--db`
+ * rehearsal — archives into its own, and its rows, inherited from the real ledger, name the REAL archive's originals.
+ */
+function inThisArchive(storagePath: string): boolean {
+  return isWithin(storagePath, statementsRoot());
+}
+
+/**
+ * The name the archive keeps an original under: the first 16 hex of its sha256, a dash, its own name. Read as an
+ * original, a file under this name is recorded under it and archived again as `<sha>-<sha>-<name>` — the copy
+ * `originalOfArchivedCopy` knows when one is handed back to the import.
  */
 export function archivedName(sha: string, safeName: string): string {
   return `${sha.slice(0, 16)}-${safeName}`;
+}
+
+/**
+ * The name of the original `input` is the archive's copy of — the name left once every `archivedName` prefix of its OWN
+ * bytes is taken off — or undefined when it is not one. Another file's sixteen hex is no copy; an original matches only
+ * by a collision of 64 bits. Read as an original, a copy is recorded under the archive's name and archived again.
+ *
+ * ⛔ Refused where files come IN — the commands' folders (scripts/statement-folders.ts) and the /imports upload — and
+ * not by the import: a re-read hands it the name a file was recorded under, and 33 Robinhood statements on the real
+ * ledger were recorded under such a name (2026-08-28); scripts/reread-unrecorded-files.ts reads them again by it.
+ */
+export function originalOfArchivedCopy(input: ImportInput): string | undefined {
+  const prefix = archivedName(fileSha256(input.buffer), "");
+  if (!input.name.startsWith(prefix)) return undefined;
+  // the archive's copy of a file once imported under the archive's name is `<sha>-<sha>-<name>`
+  const strip = (name: string): string => (name.startsWith(prefix) ? strip(name.slice(prefix.length)) : name);
+  return strip(input.name);
 }
 
 /** Writes an original into <root>/<folder>/, deduping on the content-hashed name. */
@@ -1806,8 +1832,14 @@ function recordFile(db: AppDatabase, member: ReadMember): RecordedFile {
   // archive into the institution bucket first — the correct resting place for a
   // parse failure; a successful single-account parse relocates it to the
   // per-account folder once the account is known. A re-parse keeps the physical
-  // file wherever the prior import left it.
-  const currentPath = existing ? existing.storagePath : archiveTo(institutionSlug(institution.name), archiveName, file.buffer);
+  // file wherever the prior import left it — in the archive this run writes.
+  // ⛔ Not one outside it (`inThisArchive`): a failed read a trial or a --db rehearsal took up on its copy named the
+  // REAL archive's original, and settling the read MOVED it into the copy's archive — or deleted it, where that archive
+  // held the bytes already — leaving the real row naming nothing. Such a run archives its own copy of the same bytes.
+  const currentPath =
+    existing && inThisArchive(existing.storagePath)
+      ? existing.storagePath
+      : archiveTo(institutionSlug(institution.name), archiveName, file.buffer);
   const row =
     existing ??
     db

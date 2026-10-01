@@ -1,12 +1,13 @@
 import fs from "node:fs";
 import path from "node:path";
-import { fileSha256 } from "@/lib/hash";
-import { archivedName, defaultStatementsRoot, type ImportInput } from "@/services/import/service";
+import { isWithin } from "@/lib/path-within";
+import { defaultStatementsRoot, originalOfArchivedCopy, type ImportInput } from "@/services/import/service";
 import { DbTargetRefusal, originalsDirFor, type DbTarget } from "./db-target";
 
 /**
  * The statement folders an import's command line names — `pnpm import-statements` and `pnpm trial-import` read every
- * file in them, subfolders included — and the archives of originals those folders must stay out of.
+ * file in them, subfolders included — and the places those folders must stay out of: the archives of originals, and
+ * the folder the trial wipes.
  *
  * ⛔ The archive keeps each original as `<sha>-<name>` (the import's `archivedName`). Handed a folder inside it, the
  * import records every file under that sha-prefixed name, archives each AGAIN as `<sha>-<sha>-<name>`, and reads an
@@ -35,11 +36,11 @@ export function archiveRootsFor(target: DbTarget, cwd: string, env: Env): string
   return written === undefined ? [own] : [own, path.resolve(cwd, written)];
 }
 
-/** `child` is `parent` or below it. Both absolute; compared by path components, so data/statements-x is not inside. */
-function within(child: string, parent: string): boolean {
-  const rel = path.relative(parent, child);
-  return rel === "" || (rel !== ".." && !rel.startsWith(`..${path.sep}`) && !path.isAbsolute(rel));
-}
+/**
+ * A folder the statement folders must stay out of, and must not hold: an archive of originals, by its path — or a
+ * folder the run wipes before the import reads, `{ wiped }`: the trial's own, .trial/.
+ */
+export type OffLimits = string | { readonly wiped: string };
 
 /** `folder` as the file system reads it from `cwd`: joined, never `path.resolve`d, which folds `link/..` away first. */
 function fromCwd(folder: string, cwd: string): string {
@@ -74,8 +75,11 @@ function refusal(where: string, source: string): string {
 
 type Relation = "inside" | "is" | "holds";
 
+/** `p` as the operator reads it: from the working directory when it lies inside it, whole when it does not. */
+const shownFrom = (p: string, cwd: string): string => (isWithin(p, cwd) ? path.relative(cwd, p) || "." : p);
+
 function folderRefusal(folder: string, archive: string, relation: Relation, cwd: string): string {
-  const shown = within(archive, cwd) ? path.relative(cwd, archive) || "." : archive;
+  const shown = shownFrom(archive, cwd);
   if (relation === "inside") return refusal(`${folder} is inside the statement archive, ${shown}`, folder);
   // the loop copies from an account's folder: the archive's own, as the folder named holds no originals of its own
   return refusal(
@@ -85,31 +89,54 @@ function folderRefusal(folder: string, archive: string, relation: Relation, cwd:
 }
 
 /**
- * ⛔ Refuses any of `folders` that is inside one of `archives` or holds one — before a byte of it is read. Compared by
- * REAL path, so a symlink, macOS's /var → /private/var and a letter case the file system ignores all name the same
- * folder. `realpathSync.native`, not `realpathSync` — measured, the JS one gets two of those wrong: it hands
- * `/USERS/…/DEV` back in the case typed, and it folds `link/..` away before following `link`.
+ * Why `folder` is refused when the run wipes `wiped` before the import reads. 🔴 The trial refused only its archive,
+ * .trial/originals, and wipes all of .trial/ AFTER it reads the folders: a folder staged at .trial/staged was trialled
+ * (exit 0, "parsed 1"), deleted with the rest, and the import the trial stood in for found no folder to read.
+ */
+function wipedRefusal(folder: string, wiped: string, relation: Relation, cwd: string): string {
+  const verb = relation === "inside" ? "is inside" : relation;
+  const reads = relation === "holds" ? ", and the import reads every subfolder" : "";
+  return [
+    `${folder} ${verb} the trial's own folder, ${shownFrom(wiped, cwd)}, which every trial wipes before it ` +
+      `imports${reads}: the trial would read the statements in it and then delete them, and the import it stands in ` +
+      "for would find nothing to read.",
+    "Stage the statements outside it, then trial and import them from there:",
+    `  S=$(mktemp -d); cp -R ${relation === "holds" ? "<statements>" : folder}/. "$S"`,
+    '  pnpm trial-import "$S"',
+    '  pnpm import-statements "$S" --confirm',
+  ].join("\n");
+}
+
+/**
+ * ⛔ Refuses any of `folders` that is inside one of `offLimits` or holds one — before a byte of it is read, and in the
+ * order `offLimits` lists them. Compared by REAL path, so a symlink, macOS's /var → /private/var and a letter case the
+ * file system ignores all name the same folder. `realpathSync.native`, not `realpathSync` — measured, the JS one gets
+ * two of those wrong: it hands `/USERS/…/DEV` back in the case typed, and it folds `link/..` away before following
+ * `link`.
  *
  * A folder with nothing behind it is refused too: there is no real path to compare, and the import would only crash
  * on it later. An archive not made yet holds nothing, so it is passed over.
  */
 export function refuseArchiveFolders(
   folders: readonly string[],
-  archives: readonly string[],
+  offLimits: readonly OffLimits[],
   cwd: string,
   realpath: (p: string) => string = fs.realpathSync.native,
 ): void {
-  const roots = archives.flatMap((given) => {
+  const roots = offLimits.flatMap((place) => {
+    const given = typeof place === "string" ? place : place.wiped;
     const real = realOrNothing(given, realpath);
-    return real === undefined ? [] : [{ given, real }];
+    return real === undefined ? [] : [{ given, real, wiped: typeof place !== "string" }];
   });
   for (const folder of folders) {
     const real = realOrNothing(fromCwd(folder, cwd), realpath);
     if (real === undefined) throw new DbTargetRefusal(`no statement folder at ${path.resolve(cwd, folder)}`);
     for (const root of roots) {
       const relation: Relation | null =
-        real === root.real ? "is" : within(real, root.real) ? "inside" : within(root.real, real) ? "holds" : null;
-      if (relation !== null) throw new DbTargetRefusal(folderRefusal(folder, root.given, relation, cwd));
+        real === root.real ? "is" : isWithin(real, root.real) ? "inside" : isWithin(root.real, real) ? "holds" : null;
+      if (relation === null) continue;
+      const why = root.wiped ? wipedRefusal : folderRefusal;
+      throw new DbTargetRefusal(why(folder, root.given, relation, cwd));
     }
   }
 }
@@ -135,20 +162,20 @@ function walk(dir: string, shown: string): Found[] {
  * Every statement file in `folders`, subfolders included — what both commands hand the import — once every folder has
  * passed `refuseArchiveFolders`.
  *
- * ⛔ And a file named as the archive names its own copy (`archivedName`, after its own bytes) is refused wherever it
- * lies: an archive folder copied out with `cp -r`, another checkout's archive read from a worktree (which has none of
- * its own to compare), a symlink under the archive's name. Read as an original, it does what the archive's folder
- * does. An original matches only by a collision of 64 bits.
+ * ⛔ And a file named as the archive names its own copy (`originalOfArchivedCopy`, after its own bytes) is refused
+ * wherever it lies: an archive folder copied out with `cp -r`, another checkout's archive read from a worktree (which
+ * has none of its own to compare), a symlink under the archive's name. Read as an original, it does what the archive's
+ * folder does. The /imports upload refuses the same files by the same rule.
  */
 export function statementFiles(
   folders: readonly string[],
-  archives: readonly string[],
+  offLimits: readonly OffLimits[],
   cwd: string,
   realpath: (p: string) => string = fs.realpathSync.native,
 ): ImportInput[] {
-  refuseArchiveFolders(folders, archives, cwd, realpath);
+  refuseArchiveFolders(folders, offLimits, cwd, realpath);
   const found = folders.flatMap((folder) => walk(fromCwd(folder, cwd), folder));
-  const copy = found.find(({ input }) => input.name.startsWith(archivedName(fileSha256(input.buffer), "")));
+  const copy = found.find(({ input }) => originalOfArchivedCopy(input) !== undefined);
   if (copy !== undefined) {
     throw new DbTargetRefusal(
       refusal(`${copy.shown} is a copy out of the statement archive: named <sha>-<name> after its own bytes`, path.dirname(copy.shown)),

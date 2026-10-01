@@ -9,7 +9,13 @@ import { seedDatabase } from "@/db/seed";
 import { fileSha256 } from "@/lib/hash";
 import { archivedName } from "@/services/import/service";
 import { DbTargetRefusal } from "./db-target";
-import { STAGED_PATH_RUNBOOK, archiveRootsFor, refuseArchiveFolders, statementFiles } from "./statement-folders";
+import {
+  STAGED_PATH_RUNBOOK,
+  archiveRootsFor,
+  refuseArchiveFolders,
+  statementFiles,
+  type OffLimits,
+} from "./statement-folders";
 
 /**
  * 🔴 The review of the §6A 23 runbook: `pnpm import-statements data/statements/chase-checking-3522` — the
@@ -127,7 +133,7 @@ function shelves(): string {
 
 const ownArchive = (root: string): string[] => [path.join(root, "data", "statements")];
 
-function refusalOf(folder: string, root: string, archives: readonly string[] = ownArchive(root)): string {
+function refusalOf(folder: string, root: string, archives: readonly OffLimits[] = ownArchive(root)): string {
   try {
     refuseArchiveFolders([folder], archives, root);
   } catch (error: unknown) {
@@ -193,6 +199,30 @@ describe("refuseArchiveFolders — a statement folder must stay out of the archi
   test("⛔ a folder with nothing behind it is refused — there is no real path to compare", () => {
     const root = shelves();
     expect(refusalOf("statements/nope", root)).toBe(`no statement folder at ${path.join(root, "statements", "nope")}`);
+  });
+
+  test("⛔ the folder the trial wipes: inside it, it, and a folder holding it — each refused as what it is", () => {
+    const root = shelves();
+    fs.mkdirSync(path.join(root, ".trial", "staged"), { recursive: true });
+    const wiped = [{ wiped: path.join(root, ".trial") }];
+    expect(refusalOf(".trial/staged", root, wiped)).toMatch(
+      /^\.trial\/staged is inside the trial's own folder, \.trial, which every trial wipes before it imports: /,
+    );
+    expect(refusalOf(".trial", root, wiped)).toMatch(/^\.trial is the trial's own folder, \.trial, which every trial wipes/);
+    expect(refusalOf(".", root, wiped)).toMatch(
+      /^\. holds the trial's own folder, \.trial, which every trial wipes before it imports, and the import reads every subfolder: /,
+    );
+    // the remedy copies out the folder named — or, for one holding it, the statements themselves
+    expect(refusalOf(".trial/staged", root, wiped)).toContain('  S=$(mktemp -d); cp -R .trial/staged/. "$S"\n  pnpm trial-import "$S"');
+    expect(refusalOf(".", root, wiped)).toContain('cp -R <statements>/. "$S"');
+    // a folder beside it is read
+    expect(refusalOf("statements/discover", root, wiped)).toBe("accepted");
+  });
+
+  test("the places are tried in the order given: a folder holding the archive and the trial's folder is told of the archive", () => {
+    const root = shelves();
+    fs.mkdirSync(path.join(root, ".trial"));
+    expect(refusalOf(".", root, [...ownArchive(root), { wiped: path.join(root, ".trial") }])).toMatch(/^\. holds the statement archive/);
   });
 
   test("an archive not made yet holds nothing, and is passed over", () => {
@@ -428,6 +458,30 @@ describe("⛔ pnpm trial-import refuses the same folders", { timeout: SPAWN_TIME
     expect(r.status).toBe(0);
     expect(r.out).toContain(`Trial-importing 1 files from ${stage}`);
     expect(r.out).toContain("parsed               1");
+  });
+
+  /**
+   * 🔴 The trial refused only .trial/originals, and wipes all of .trial/ — after it reads the folders. A staged folder
+   * anywhere else in it was trialled (exit 0, "parsed 1") and then deleted with the rest, and the import the trial
+   * stood in for found nothing to read: "no statement folder at …/.trial/staged" (the review of
+   * uc/import-refuses-archive, 2026-10-01).
+   */
+  test("⛔ a folder anywhere in .trial/ — which every trial wipes — is refused, and left as it was", () => {
+    const root = checkout();
+    const bytes = fs.readFileSync(FIXTURE);
+    const sub = path.join(root, ".trial", "staged", fileSha256(bytes).slice(0, 16));
+    fs.mkdirSync(sub, { recursive: true });
+    fs.writeFileSync(path.join(sub, path.basename(FIXTURE)), bytes);
+    const before = listing(path.join(root, ".trial"));
+
+    const r = run(root, "trial-import", [".trial/staged"]);
+
+    // the damage first: the operator's folder is still there, every file in it
+    expect(listing(path.join(root, ".trial"))).toEqual(before);
+    expect(r.status).toBe(2);
+    expect(r.err).toContain("REFUSED: .trial/staged is inside the trial's own folder, .trial, which every trial wipes before it imports");
+    expect(r.err).toContain('S=$(mktemp -d); cp -R .trial/staged/. "$S"');
+    expect(r.out).not.toContain("Trial-importing");
   });
 });
 

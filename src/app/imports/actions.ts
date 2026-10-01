@@ -3,13 +3,40 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { getDb } from "@/db/client";
-import { acceptGap, importStatementFiles, unimportFile, type FileOutcome } from "@/services/import/service";
+import {
+  acceptGap,
+  importStatementFiles,
+  originalOfArchivedCopy,
+  unimportFile,
+  type FileOutcome,
+  type ImportInput,
+} from "@/services/import/service";
 import { actionErrorMessage, type ActionResult } from "@/app/transactions/action-types";
 
 const REVALIDATE = ["/", "/imports", "/accounts", "/transactions", "/spending", "/budgets", "/recurring"];
 
 function revalidateAll(): void {
   for (const p of REVALIDATE) revalidatePath(p);
+}
+
+/**
+ * ⛔ A statement picked from the archive — data/statements/<account>/, where each original is kept as `<sha>-<name>` —
+ * is its copy, and the upload hands the import the name the browser gives: read as an original, it was recorded under
+ * the archive's name and archived a second time, and an activity CSV of the archive's matched no profile by it — a
+ * FAILED row on /imports. Refused, with the whole upload, by the rule the commands refuse it by
+ * (`originalOfArchivedCopy`); the message names what to upload instead.
+ */
+function archivedCopyRefusal(inputs: readonly ImportInput[]): string | null {
+  for (const input of inputs) {
+    const original = originalOfArchivedCopy(input);
+    if (original === undefined) continue;
+    return (
+      `${input.name} is the statement archive's copy of ${original} — read as a statement, it would be recorded ` +
+      `under the archive's name and archived a second time. Nothing was imported: upload ${original} as it was ` +
+      "downloaded instead."
+    );
+  }
+  return null;
 }
 
 /**
@@ -28,6 +55,8 @@ export async function uploadStatementsResultAction(
     const inputs = await Promise.all(
       files.map(async (f) => ({ name: f.name, buffer: Buffer.from(await f.arrayBuffer()) })),
     );
+    const refused = archivedCopyRefusal(inputs);
+    if (refused !== null) return { ok: false, error: refused };
     // per-file failures come back as outcomes; only an unexpected fault throws
     const outcomes = await importStatementFiles(getDb(), inputs);
     revalidateAll();
