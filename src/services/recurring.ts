@@ -18,6 +18,8 @@ import {
   stepPlan,
   stepsToReach,
 } from "@/lib/recurring-step";
+import { outsidePortfolioCashAccountIds } from "./accounts";
+import { isAgentsIncomeSeries } from "./analytics";
 
 /**
  * A drizzle transaction handle. Detection and the user-link services
@@ -1364,6 +1366,14 @@ export function projectOccurrences(
  * dishonesty the derivation layer avoids when it stamps a `gap` rather than
  * inventing a slope. recurring-calendar.ts may filter; it draws nothing rather
  * than asserting an amount, so omission there costs no information.
+ *
+ * ⚖️ His occurrences: an income series on the agent's cash schedules money that
+ * is not his (`isAgentsIncomeSeries`, owner decision 2026-09-28, §6A 27).
+ * 🔴 The /recurring Upcoming tab listed the agent's month-end interest as
+ * "Income" and counted it in its 30-day net, and the dashboard's Upcoming list
+ * did the same, while the forecast card above the tab left it out. Every caller
+ * reads it here — the dashboard's "before your next paycheck" too — so none of
+ * them carries a copy of the rule.
  */
 export function upcomingOccurrences(
   db: AppDatabase,
@@ -1375,6 +1385,7 @@ export function upcomingOccurrences(
     .from(recurringSeries)
     .where(inArray(recurringSeries.status, ["detected", "confirmed"]))
     .all();
+  const agentsCash = outsidePortfolioCashAccountIds(db);
 
   // today is day ONE of the window — see the docstring's rent-twice measurement
   const to = addDays(today, windowDays - 1);
@@ -1387,6 +1398,7 @@ export function upcomingOccurrences(
     // lease and $361.49 insurance the owner registered for 2026-09-11 and that
     // have no postings yet by definition.
     .filter((s) => !(lapsedSeriesShouldStopForecasting(s.kind) && seriesHasLapsed(s, today)))
+    .filter((s) => !isAgentsIncomeSeries(agentsCash, s))
     .flatMap((s) => projectOccurrences(toProjectable(s, seriesStaleness(s, today)), today, to))
     .sort((a, b) => compareDates(a.date, b.date) || a.name.localeCompare(b.name));
 }

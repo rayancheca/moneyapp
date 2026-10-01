@@ -3,8 +3,10 @@ import type { AppDatabase } from "@/db/client";
 import { categories } from "@/db/schema/categories";
 import { recurringSeries, type SeriesKind } from "@/db/schema/recurring";
 import { transactions } from "@/db/schema/transactions";
+import { daysInMonthOf } from "@/lib/calendar-math";
 import { isCategoryHueName, type CategoryHueName } from "@/lib/category-palette";
 import { compareDates, diffDays, monthKey, periodBounds, todayIso } from "@/lib/dates";
+import { monthFlow, type MonthFlow, type MonthFlowEntry } from "@/lib/month-flow";
 import { RECURRING_HISTORY_STATUSES } from "@/lib/series-evidence";
 import {
   forecastConfidence,
@@ -14,7 +16,8 @@ import {
   type OccurrenceState,
   type UnsettledReason,
 } from "@/lib/occurrence-verdict";
-import { loadCategoryIndex } from "./analytics";
+import { outsidePortfolioCashAccountIds } from "./accounts";
+import { isAgentsIncomeSeries, loadCategoryIndex } from "./analytics";
 import { frontierForSeries, observationFrontier, seriesAccountIds } from "./observation-frontier";
 import { settledPaydaysBySeries } from "./payday-settlement";
 import {
@@ -61,6 +64,10 @@ import {
  *    owner saying the detector was wrong, and the 45 rows behind it are real
  *    transactions that are not a series. Showing them on a recurring calendar
  *    would re-assert exactly the claim he rejected.
+ *
+ *  - **Nor does the agent's income**: an income series on the agent's cash
+ *    (`isAgentsIncomeSeries`) schedules money that is not his, by his decision
+ *    of 2026-09-28 — see `recurringCalendar`.
  *
  * Because detection advances next_expected_on past every posted charge, an
  * expected occurrence never overlaps a posting it already represents; a user
@@ -169,6 +176,28 @@ export interface CalendarEntry {
  */
 export function paidByAnotherMonth(e: CalendarEntry, monthKey: string): boolean {
   return e.settledByDepositOn !== null && !e.settledByDepositOn.startsWith(`${monthKey}-`);
+}
+
+/**
+ * The month strip's two running totals (`lib/month-flow`), over exactly the entries the grid draws: its "as
+ * scheduled" is `endCents`, the figure printed directly under the forecast card's net. Here rather than inside the
+ * component so a test reads the number the page prints, not a copy of how the page computes it.
+ *
+ * `settled` is the POSTED flag, not "is it in the past". The two are not the same thing and the difference is the
+ * whole point of the second line: August 2026 has three cash paydays behind today that never reached the ledger, so a
+ * line split by date climbed confidently to +$3,141 directly above a footer reading "SETTLED $0.00". A payday whose
+ * deposit landed in ANOTHER month is settled too — the footer's Settled figure counts it here for the same reason
+ * (`paidByAnotherMonth`).
+ */
+export function calendarMonthFlow(month: RecurringCalendarMonth, today: string): MonthFlow {
+  const flowEntries: Record<string, MonthFlowEntry[]> = {};
+  for (const [iso, entries] of Object.entries(month.entriesByDay)) {
+    flowEntries[iso] = entries.map((e) => ({
+      amountCents: e.amountCents,
+      settled: e.transactionId !== null || paidByAnotherMonth(e, month.monthKey),
+    }));
+  }
+  return monthFlow(daysInMonthOf(month.monthKey), month.monthKey, flowEntries, today);
 }
 
 export interface RecurringCalendarMonth {
@@ -424,12 +453,28 @@ export function recurringCalendar(
 
   // Two populations (see the module docstring): everything that may draw
   // HISTORY, and the subset of it whose FUTURE is real.
+  const agentsCash = outsidePortfolioCashAccountIds(db);
   const historyRows = db
     .select()
     .from(recurringSeries)
     // every status `seriesDrawsAsRecurring` draws — dismissed is not one
     .where(inArray(recurringSeries.status, [...RECURRING_HISTORY_STATUSES]))
-    .all();
+    .all()
+    /*
+     * ⚖️ What the agent's cash is paid is not his income (`isAgentsIncomeSeries`,
+     * owner decision 2026-09-28, §6A 27): no mark on his grid, no cent of the
+     * footer, no step of the strip — posted or expected.
+     *
+     * 🔴 The forecast card had learned it and the strip printed directly under
+     * it had not: the card's net leaves the agent's interest out
+     * (`MonthForecast.committed`) while "as scheduled" summed every entry drawn
+     * here, so the two halves of one screen differed by exactly the agent's
+     * amount — on a fixture, November's strip read $0.04 over the card.
+     *
+     * ⛔ Not hidden from net worth: the bridge names that money on a band of its
+     * own, and the forecast's EOM net worth still counts what the series pays.
+     */
+    .filter((s) => !isAgentsIncomeSeries(agentsCash, s));
   const seriesById = new Map(historyRows.map((s) => [s.id, s]));
   const forecastRows = historyRows.filter((s) => s.status === "detected" || s.status === "confirmed");
   const measured = measuredStddevs(
@@ -467,7 +512,8 @@ export function recurringCalendar(
 
     for (const p of posted) {
       const s = p.seriesId ? seriesById.get(p.seriesId) : undefined;
-      if (!s) continue; // tagged to a DISMISSED series — the owner said not recurring
+      // tagged to a DISMISSED series — the owner said not recurring — or to the agent's income, which is not his
+      if (!s) continue;
       const expected = effectiveSeries(s).nextExpectedAmountCents;
       const stddev = s.amountCentsStddev ?? measured.get(s.id) ?? null;
       const state: DayStateKind =

@@ -19,11 +19,16 @@ import { incomeByMonth } from "./analytics";
 import { addManualAnchor } from "./anchors";
 import { netWorthAttribution } from "./attribution";
 import { incomeExpectation } from "./budgets";
+import { cashEarningsReadings } from "./cash-earnings";
 import { runwayCard } from "./committed";
 import { dashboardData } from "./dashboard";
 import { netWorthSeries, rebuildAccount } from "./derivation";
 import { forecastCurrentMonth, forecastForMonth } from "./forecast";
+import { incomeCard } from "./income-card";
 import { periodActivity } from "./period-activity";
+import { upcomingOccurrences } from "./recurring";
+import { calendarMonthFlow, recurringCalendar } from "./recurring-calendar";
+import { recurringInsightInput } from "./recurring-insights";
 import { spendingSankey } from "./sankey";
 import { cashFlowByPeriod, dailySpendHeatmap, periodTotals } from "./spending";
 import { countMatching, matchingTransactionIds } from "./transactions-query";
@@ -276,7 +281,8 @@ function schedule(input: {
 }): string {
   return bundle.db
     .insert(recurringSeries)
-    .values({ kind: "income", toleranceDays: 3, ...input })
+    // detection writes the average it measured beside the amount it expects; the income card reads the average
+    .values({ kind: "income", toleranceDays: 3, amountCentsAvg: input.nextExpectedAmountCents, ...input })
     .returning({ id: recurringSeries.id })
     .get().id;
 }
@@ -447,5 +453,139 @@ describe("the agent's trailing income is not his pace either", () => {
     expect(pairedNov.projectedEomNetWorthCents).toBe(unpairedNov.projectedEomNetWorthCents);
     // the headline is the schedule, and no series is the agent's here
     expect(paired.committed).toEqual(unpaired.committed);
+  });
+});
+
+/** link a posted row to a series, as detection links the row it read the schedule off */
+function link(seriesId: string, accountId: string, postedOn: string): void {
+  bundle.db
+    .update(transactions)
+    .set({ recurringSeriesId: seriesId })
+    .where(and(eq(transactions.accountId, accountId), eq(transactions.postedOn, postedOn)))
+    .run();
+}
+
+const PAY = "It America LLC (weekly pay)";
+
+describe("the agent's income SERIES draws no line of his on /recurring, the dashboard or the income card", () => {
+  /*
+   * 🔴 The forecast card had learned whose money is whose and the month strip printed directly under it had not: the
+   * card's net leaves the agent's interest out (`MonthForecast.committed`) while the strip's "as scheduled" summed
+   * every occurrence the calendar draws — two halves of one screen, apart by exactly the agent's amount.
+   */
+  test("⛔ /recurring: the strip's \"as scheduled\" is the card's net, and the grid draws no day of the agent's", () => {
+    hisPay();
+    agentsInterest();
+    const NOV = "2026-11";
+    const read = () => {
+      const month = recurringCalendar(bundle.db, NOV, TODAY);
+      return {
+        cardNet: forecastForMonth(bundle.db, NOV, TODAY)!.committed.netCents,
+        asScheduled: calendarMonthFlow(month, TODAY).endCents,
+        drawn: Object.entries(month.entriesByDay)
+          .flatMap(([day, entries]) => entries.map((e) => `${day} ${e.name}`))
+          .sort(),
+      };
+    };
+    // his four Thursdays — and not the agent's Nov 30, on the card or under it
+    const thursdays = ["2026-11-05", "2026-11-12", "2026-11-19", "2026-11-26"].map((d) => `${d} ${PAY}`);
+    expect(read()).toEqual({ cardNet: 4 * 114_192, asScheduled: 4 * 114_192, drawn: thursdays });
+
+    // the rule's own edge: unpaired, the account is his and so is its interest — on the card AND under it
+    bundle.db.update(accounts).set({ cashAccountId: null }).where(eq(accounts.id, book)).run();
+    expect(read()).toEqual({
+      cardNet: 4 * 114_192 + 4,
+      asScheduled: 4 * 114_192 + 4,
+      drawn: [...thursdays, "2026-11-30 Interest Payment"],
+    });
+  });
+
+  test("⛔ …nor its posted interest: no mark, no Settled cent, no step of the strip, in September or October", () => {
+    link(hisPay(), wellsFargo, "2026-09-24");
+    const read = () =>
+      ["2026-09", "2026-10"].map((key) => {
+        const month = recurringCalendar(bundle.db, key, TODAY);
+        return { month, strip: calendarMonthFlow(month, TODAY) };
+      });
+    const before = read();
+    expect(before[0]!.month.postedNetCents).toBe(114_192);
+
+    // detection reads the agent's month-end interest off its Sep 30 row, and links that row to it
+    link(agentsInterest(), agentic, "2026-09-30");
+    expect(read()).toEqual(before);
+  });
+
+  test("⛔ the Upcoming tab and the dashboard's Upcoming list carry no Income of the agent's, nor net it", () => {
+    hisPay();
+    const read = () => ({
+      // /recurring's "Upcoming 30 days" — Oct 5 through Nov 3 holds the agent's Oct 31
+      tab: upcomingOccurrences(bundle.db, TODAY, 30),
+      // the dashboard's next 14 days, read on Oct 25 so that they hold it too
+      dashboard: dashboardData(bundle.db, "2026-10-25").upcoming,
+    });
+    const before = read();
+    expect(before.tab.map((o) => `${o.date} ${o.name}`)).toEqual(
+      ["2026-10-08", "2026-10-15", "2026-10-22", "2026-10-29"].map((d) => `${d} ${PAY}`),
+    );
+    expect(before.dashboard.netCents).toBe(2 * 114_192);
+
+    agentsInterest();
+    expect(read()).toEqual(before);
+  });
+
+  test("⛔ the dashboard's income card and /spending's cash note read no pay line of the agent's", () => {
+    link(hisPay(), wellsFargo, "2026-09-24");
+    const read = () => ({
+      card: incomeCard(bundle.db, TODAY),
+      spending: cashEarningsReadings(bundle.db, { from: SEPT.from, to: TODAY, today: TODAY, withChecked: true }),
+    });
+    const before = read();
+    expect(before.card?.pay.map((line) => line.name)).toEqual([PAY]);
+
+    // the owner confirms the agent's month-end interest, and its Sep 30 row is linked to it
+    const interest = agentsInterest();
+    bundle.db.update(recurringSeries).set({ status: "confirmed" }).where(eq(recurringSeries.id, interest)).run();
+    link(interest, agentic, "2026-09-30");
+    expect(read()).toEqual(before);
+  });
+
+  /*
+   * A series page ranks a deposit against "what your scheduled deposits bring in over a year". Counted among them, the
+   * agent's interest made his pay "the largest of 2" on a ledger with one deposit of his — and once he has two, the
+   * agent's own page would rank itself among his deposits, where it is not (`rankFact` throws on a rank of 0).
+   */
+  test("⛔ a series page's ranking: the agent's interest is none of \"your scheduled deposits\"", () => {
+    const pay = hisPay();
+    const ranking = (id: string) => {
+      const input = recurringInsightInput(bundle.db, id, TODAY);
+      return input && { facts: input.facts, claims: input.candidates.map((c) => c.claimId), window: input.window };
+    };
+    // one deposit of his is nothing to rank, with the agent's interest beside it or not
+    expect(ranking(pay)).toBeNull();
+    const interest = agentsInterest();
+    expect(ranking(pay)).toBeNull();
+    expect(ranking(interest)).toBeNull();
+
+    // his own GOOG dividend, quarterly into Robinhood Cash — the 09-09 line's 0.312739 share × $0.22
+    schedule({
+      name: "Cash Div (GOOG)",
+      accountId: robinhoodCash,
+      cadence: "quarterly",
+      intervalDaysAvg: 91,
+      nextExpectedOn: "2026-12-09",
+      nextExpectedAmountCents: 7,
+      lastMatchedOn: "2026-09-09",
+      status: "detected",
+    });
+    const among = (id: string) => ranking(id)?.facts.find((f) => f.kind === "rank");
+    expect(among(pay)).toMatchObject({ value: 1, outOf: 2 });
+    // the agent's own page ranks it among nothing of his
+    expect(ranking(interest)).toBeNull();
+
+    // the rule's own edge: unpaired, the account is his and so is its interest — three deposits of his, and its
+    // twelve $0.04 a year outrank the dividend's four $0.07
+    bundle.db.update(accounts).set({ cashAccountId: null }).where(eq(accounts.id, book)).run();
+    expect(among(pay)).toMatchObject({ value: 1, outOf: 3 });
+    expect(among(interest)).toMatchObject({ value: 2, outOf: 3 });
   });
 });

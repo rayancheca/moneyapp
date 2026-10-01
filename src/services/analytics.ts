@@ -379,7 +379,13 @@ export function isAgentsIncome(
  * ⚖️ Owner decision 2026-09-28 (§6A 27). 🔴 Only /budgets' POSTED leg had learned it: "$X in so far" left the
  * agent's interest out while "$Y still expected" on the same line counted its next payment, and the income basis
  * behind the runway's "What you earn a month", the forecast's "Projected income" and the dashboard's next paycheck
- * did the same — each read every live income series.
+ * did the same — each read every live income series. 🔴 And then the forecast card alone: the month strip printed
+ * under it ("as scheduled"), the calendar grid, both Upcoming lists, the income card's pay lines and a series page's
+ * deposit ranking still counted the agent's series as his.
+ *
+ * Every reader of income series asks this, never a copy of it: `incomeExpectation`, the forecast's legs,
+ * `recurringCalendar`, `upcomingOccurrences` (the dashboard's next paycheck through it), `cashEarningsReadings` and
+ * `recurringInsightInput`.
  *
  * ⛔ Not "drop the series". Net worth holds the agent's money, so the forecast still counts what it pays in EOM net
  * worth (`MonthForecast.agentsIncome`), as the bridge names the agent's rows on a band of their own.
@@ -389,20 +395,6 @@ export function isAgentsIncomeSeries(
   series: { readonly kind: SeriesKind; readonly accountId: string | null },
 ): boolean {
   return series.kind === "income" && series.accountId !== null && agentsCash.has(series.accountId);
-}
-
-/** Every series `isAgentsIncomeSeries` names, by id — for a surface holding occurrences, which carry no account. */
-export function agentsIncomeSeriesIds(db: AppDatabase): Set<string> {
-  const agentsCash = outsidePortfolioCashAccountIds(db);
-  if (agentsCash.size === 0) return new Set();
-  return new Set(
-    db
-      .select({ id: recurringSeries.id, kind: recurringSeries.kind, accountId: recurringSeries.accountId })
-      .from(recurringSeries)
-      .all()
-      .filter((s) => isAgentsIncomeSeries(agentsCash, s))
-      .map((s) => s.id),
-  );
 }
 
 // ── Monthly spending (stacked-bar source) ────────────────────────────
