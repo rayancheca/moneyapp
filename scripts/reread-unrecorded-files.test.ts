@@ -211,7 +211,7 @@ function listing(root: string): Record<string, string> {
 
 /**
  * A read of the same bytes at the profile's version that failed: its row is kept (`REIMPORTABLE_STATUSES`), and its
- * original stays where a read archives first — the institution's folder, not the account's.
+ * original stays where a read archives first — `_unfiled/`, not the account's folder.
  */
 async function failedReadAtTodaysVersion(): Promise<typeof importFiles.$inferSelect> {
   const v2 = reads[2]!;
@@ -223,12 +223,12 @@ async function failedReadAtTodaysVersion(): Promise<typeof importFiles.$inferSel
 }
 
 /**
- * What an import killed or faulted part-way through a file leaves in the archive: its own copy of the original, in the
- * institution's folder, where it archives a file before reading it (`archiveTo`) and moves it from once it has.
+ * What an import killed or faulted part-way through a file leaves in the archive: its own copy of the original, in
+ * `_unfiled/`, where it archives a file before reading it (`archiveTo`) and moves it from once it has.
  */
 function leaveCopyBehind(real: DbBundle): string {
   const original = real.db.select().from(importFiles).where(eq(importFiles.parserVersion, 1)).get()!.storagePath;
-  const copy = path.join(dir, "originals", "chase", path.basename(original));
+  const copy = path.join(dir, "originals", "_unfiled", path.basename(original));
   fs.mkdirSync(path.dirname(copy), { recursive: true });
   fs.copyFileSync(original, copy);
   return copy;
@@ -676,7 +676,7 @@ describe("reread-unrecorded-files — once the restore point is taken, the ledge
     await vi.waitFor(() => expect(dying).toBeDefined(), { timeout: 10_000 });
     dying!.sqlite.close();
     // …and an original that came after it, which no put-back of this write may take
-    const later = path.join(dir, "originals", "chase", "an-upload-after-the-kill.csv");
+    const later = path.join(dir, "originals", "_unfiled", "an-upload-after-the-kill.csv");
     fs.writeFileSync(later, "april");
 
     const dry = await main(args());

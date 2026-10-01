@@ -87,6 +87,7 @@ import {
   type LentPeriod,
 } from "./statement-copies";
 import {
+  LIVE_FILE,
   accountsPrintedBy,
   appendPrintedLines,
   forgetPrintedLines,
@@ -1218,6 +1219,18 @@ function statementsRoot(): string {
   return process.env.MONEYAPP_ORIGINALS_DIR ?? defaultStatementsRoot();
 }
 
+/**
+ * The archive's folder for an original no account files: where the import archives an upload before its read
+ * resolves an account, and where the original stays when the read resolves none — it failed, was refused, or withheld
+ * every section. A slug is only ever [a-z0-9-] (`account-slug`), so no account's folder is ever this one.
+ *
+ * 🔴 It was the folder of the bank `guessInstitution` guessed from the file's name and first lines, which checks for
+ * "chase" first and falls back to Chase — on a copy of the real ledger, 2026-10-01, Chase for 180 of the 241 reads
+ * archived in another bank's folders (111 Robinhood, 34 SoFi, 29 Discover, 3 Capital One, 3 Wells Fargo). A re-read
+ * that could not read a Robinhood statement, or withheld its only section, left a second copy of it in Chase's folder.
+ */
+const UNFILED_FOLDER = "_unfiled";
+
 /** Writes an original into <root>/<folder>/, deduping on the content-hashed name. */
 function archiveTo(folder: string, archiveName: string, buffer: Buffer): string {
   const dir = path.join(statementsRoot(), folder);
@@ -1252,7 +1265,7 @@ function relocateArchive(src: string, folder: string, archiveName: string): stri
   } else if (fs.existsSync(src)) {
     fs.rmSync(src); // dest already holds this content hash — drop the transient dup
   }
-  // sweep the transient institution staging dir if the relocation emptied it
+  // sweep the folder it was archived in before its read (`UNFILED_FOLDER`) if the relocation emptied it
   const srcDir = path.dirname(src);
   if (
     srcDir !== path.dirname(dest) &&
@@ -1282,22 +1295,15 @@ function accountWithInstitution(
  * The archive folder a file's accounts file its original in: the per-account slug
  * for a single-account file (the norm), an <institution>-combined bucket for a
  * multi-account file (SoFi combined, multi-account QFX) — null for no account:
- * nothing then says whose statement it is.
+ * nothing then says whose statement it is, and the original stays where it is.
+ * ONE rule for the import that files a read's original (`settleMember`) and the
+ * layout migration that files it again (`migrateStorageLayout`).
  */
 function accountsFolder(db: AppDatabase, accountIds: readonly string[]): string | null {
   if (accountIds.length === 0) return null;
   const { account, institutionName } = accountWithInstitution(db, accountIds[0]!);
   if (accountIds.length > 1) return `${institutionSlug(institutionName)}-combined`;
   return accountSlug(account, institutionName);
-}
-
-/**
- * The archive folder for a parsed file: its accounts' (`accountsFolder`), or — for
- * a read that resolved none — the bucket of the institution the importer guessed
- * from its name, where its original was archived before the parse (`recordFile`).
- */
-function resolveArchiveFolder(db: AppDatabase, accountIds: string[], fallbackInstitution: string): string {
-  return accountsFolder(db, accountIds) ?? institutionSlug(fallbackInstitution);
 }
 
 export interface ImportInput {
@@ -1615,7 +1621,6 @@ function laterStatementsOf(db: AppDatabase, fileIds: readonly string[]): LaterBo
 /** The row a file's read is recorded under, and where its original was archived. */
 interface RecordedFile {
   readonly row: typeof importFiles.$inferSelect;
-  readonly institutionName: string;
   readonly archiveName: string;
   readonly currentPath: string;
 }
@@ -1800,11 +1805,11 @@ function recordFile(db: AppDatabase, member: ReadMember): RecordedFile {
     .replaceAll(/[\p{Cc}\p{Cf}]/gu, "")
     .slice(0, 80);
   const archiveName = `${sha.slice(0, 16)}-${safeName}`;
-  // archive into the institution bucket first — the correct resting place for a
-  // parse failure; a successful single-account parse relocates it to the
-  // per-account folder once the account is known. A re-parse keeps the physical
-  // file wherever the prior import left it.
-  const currentPath = existing ? existing.storagePath : archiveTo(institutionSlug(institution.name), archiveName, file.buffer);
+  // archive where no account files it yet (`UNFILED_FOLDER`) — where it stays if
+  // its read resolves no account; a read that resolves one moves it into that
+  // account's folder (`settleMember`). A re-parse keeps the physical file
+  // wherever the prior import left it.
+  const currentPath = existing ? existing.storagePath : archiveTo(UNFILED_FOLDER, archiveName, file.buffer);
   const row =
     existing ??
     db
@@ -1822,7 +1827,7 @@ function recordFile(db: AppDatabase, member: ReadMember): RecordedFile {
       })
       .returning()
       .get();
-  const recorded = { row, institutionName: institution.name, archiveName, currentPath };
+  const recorded = { row, archiveName, currentPath };
   member.recorded = recorded;
   return recorded;
 }
@@ -2402,11 +2407,13 @@ function markParsed(db: AppDatabase, member: ReadMember): void {
 
 /** A member written and parsed: its original archived beside its accounts, its outcome settled. */
 function settleMember(db: AppDatabase, member: ReadMember, { tally, accounts: fileAccountIds }: MemberWrite): FileOutcome {
-  const { row, institutionName, archiveName, currentPath } = member.recorded as RecordedFile;
-  // relocate the archived original from the institution bucket into its resolved
-  // per-account folder — the per-account storage the DB now points at
-  const finalFolder = resolveArchiveFolder(db, [...fileAccountIds], institutionName);
-  const finalPath = relocateArchiveOrStay(currentPath, finalFolder, archiveName);
+  const { row, archiveName, currentPath } = member.recorded as RecordedFile;
+  // relocate the archived original into the folder its resolved accounts file it
+  // in — the per-account storage the DB now points at. A read that resolved none
+  // (it withheld every section) leaves it where it was archived: nothing says
+  // whose statement it is, and a bank guessed from its name is not a placement
+  const folder = accountsFolder(db, [...fileAccountIds]);
+  const finalPath = folder === null ? currentPath : relocateArchiveOrStay(currentPath, folder, archiveName);
   if (finalPath !== row.storagePath) {
     db.update(importFiles).set({ storagePath: finalPath }).where(eq(importFiles.id, row.id)).run();
   }
@@ -2804,6 +2811,11 @@ function supersedeFileContribution(db: AppDatabase, oldFileId: string): { accoun
   });
 }
 
+/**
+ * The institution a new read's row records (`import_files.institution_id`), guessed from the file's name and first
+ * lines before anything has read it — and it checks for "chase" first and falls back to Chase. ⛔ Never where its
+ * original is archived (`UNFILED_FOLDER`): a guess is not a placement.
+ */
 function guessInstitution(db: AppDatabase, file: { name: string; text: string }): { id: string; name: string } {
   const haystack = `${file.name} ${file.text.slice(0, 400)}`.toLowerCase();
   const name = haystack.includes("chase")
@@ -2905,8 +2917,9 @@ export interface StorageMigration {
   fileName: string;
   from: string;
   /**
-   * where the accounts its reads resolved file the original — null when they name
-   * none: nothing says whose statement it is, and it stays at `from`
+   * where the accounts its reads in place resolved file the original — null when
+   * they name none, or no read of it is in place: nothing then says whose statement
+   * it is, and it stays at `from`
    */
   to: string | null;
   moved: boolean;
@@ -2916,12 +2929,12 @@ export interface StorageMigration {
  * Relocates already-imported originals into the per-account archive
  * (data/statements/<account-slug>/), for files ingested before per-account
  * storage existed. Each original's folder is derived from every account a read of
- * it resolved (`accountsReadBy`) — the real account, never the file's guessed
- * institution: an original no account places stays where it is, reported with
- * `to: null`. With move: false nothing is written and every move it would make is
- * reported; with move: true each original moves and every read naming it is
- * repointed. Idempotent: a second run moves nothing, and reports the originals it
- * cannot place again.
+ * it IN PLACE resolved (`accountsReadBy`) — the real account, never the file's
+ * guessed institution: an original no read in place places stays where it is,
+ * reported with `to: null`. With move: false nothing is written and every move it
+ * would make is reported; with move: true each original moves and every read
+ * naming it is repointed. Idempotent: a second run moves nothing, and reports the
+ * originals it cannot place again.
  *
  * ⛔ One original, every read of it: a re-read archives under the content-hashed
  * name its older read already holds (`recordFile`) and `relocateArchive` drops the
@@ -2948,6 +2961,17 @@ export interface StorageMigration {
  * bound for chase/, each read again under another name or into
  * robinhood-combined/, its retirement having forgotten its account. Now 0: they
  * stay, reported.
+ *
+ * 🔴 …and one a retired read alone named went by whatever account the retirement
+ * left it: a retirement keeps the read's rows, as superseded, and forgets its
+ * periods, balances, printed lines and copies (`supersedeFileContribution`), so a
+ * statement of two accounts that wrote rows on one names that one. Measured on the
+ * same copy: 2 retired v3 reads of Robinhood statements, archived in
+ * robinhood-combined/, bound for robinhood-cash/ — and 10 originals of retired v1
+ * and v2 reads it took for placed in robinhood-cash/, each a statement whose read
+ * in place is archived in robinhood-combined/. Now only a read in place places an
+ * original — a failed read, too, names only what it wrote before it stopped — and
+ * all 12 stay, reported.
  */
 export function migrateStorageLayout(db: AppDatabase, opts: { move: boolean }): StorageMigration[] {
   const paths = db.select({ storagePath: importFiles.storagePath }).from(importFiles).all();
@@ -2958,9 +2982,10 @@ export function migrateStorageLayout(db: AppDatabase, opts: { move: boolean }): 
     const report = (to: string | null, moved: boolean) => {
       for (const read of reads) results.push({ importFileId: read.id, fileName: read.fileName, from, to, moved });
     };
-    // ⛔ never the bucket of the bank the importer guessed: that is where an import
-    // leaves a file it could not read, not a placement
-    const folder = accountsFolder(db, [...new Set(reads.flatMap((r) => accountsReadBy(db, r.id)))]);
+    // ⛔ placed by its reads in place alone — never by the accounts a retirement
+    // left a read, nor the bank the importer guessed: neither is a placement
+    const inPlace = reads.filter((r) => (LIVE_FILE as readonly ImportStatus[]).includes(r.status));
+    const folder = accountsFolder(db, [...new Set(inPlace.flatMap((r) => accountsReadBy(db, r.id)))]);
     if (folder === null) {
       report(null, false);
       continue;
@@ -2991,11 +3016,12 @@ export function migrateStorageLayout(db: AppDatabase, opts: { move: boolean }): 
 }
 
 /**
- * Every account a file's read resolved — what its import filed the original by
+ * Every account a read in place resolved — what its import filed the original by
  * (`settleMember`): the accounts it prints on (`accountsPrintedBy`), the ones it
  * prints a statement of as a second download (`accountsCopiedBy`), and the ones
  * it wrote to (`accountsWrittenBy`), for a file imported before those records
- * existed and a retired read whose retirement forgot them.
+ * existed. ⚠️ Of a retired read it is only some of them: its retirement kept its
+ * rows and forgot the rest (`supersedeFileContribution`).
  *
  * 🔴 The copy record was left out: the import records a copy and what it prints
  * in one write, so one names no account the other does not. But a copy imported

@@ -1465,19 +1465,19 @@ sliver of that. Changes:
   which IS async too — so ONE async code path serves both. (Embedded replicas are also async;
   same conclusion.) Verify determinism/perf of libsql-local in the e2e harness early.
 
-**A2. Original statement files → Vercel Blob (private).** Serverless has **no writable
-persistent disk** (only per-instance, wiped `/tmp`). The archive today is local-fs only —
+**A2. Original statement files → Vercel Blob (private).** Serverless has **no writable persistent
+disk** (only per-instance, wiped `/tmp`). The archive today is local-fs only —
 `src/services/import/service.ts`: `statementsRoot()` → `archiveTo(folder, name, buf)` (writes
-`data/statements/<slug>/<sha16>-<name>`) → `relocateArchive()` into the per-account folder
-resolved by `resolveArchiveFolder()` (1 acct → `accountSlug`, >1 → `<institution>-combined`,
-parse-fail → institution bucket) → `importFiles.storagePath` persisted. **Good news from the
-audit: `storage_path` is WRITE-ONLY** — no route/page ever reads the bytes back (no download
-route exists), so there is no "serve to browser" path to rewire; only the write/relocate path
-needs abstracting. Plan:
+`data/statements/_unfiled/<sha16>-<name>`) → `relocateArchive()` into the per-account folder
+resolved by `accountsFolder()` (1 acct → `accountSlug`, >1 → `<institution>-combined`, no account
+→ stays in `_unfiled/`, never a guessed bank's folder) → `importFiles.storagePath` persisted.
+**Good news from the audit: `storage_path` is WRITE-ONLY** — no route/page ever reads the bytes
+back (no download route exists), so there is no "serve to browser" path to rewire; only the
+write/relocate path needs abstracting. Plan:
 - New `src/services/storage/archive-storage.ts` — an `ArchiveStorage` interface keyed by the
   SAME backend-agnostic string `<slug>/<sha16>-<name>` (forward-slash joined, NOT `path.join`):
   `put(key, buf)`, `exists(key)`, `move(from, to)`, `remove(key)`, `read(key)` (read unused
-  today — keep for a future download route). `resolveArchiveFolder()` + `archiveName` are
+  today — keep for a future download route). `accountsFolder()` + `archiveName` are
   UNCHANGED; only the fs calls move behind the interface. `migrateStorageLayout()` (currently
   sync, test-only) becomes async.
 - `LocalDiskArchiveStorage(root=statementsRoot())` wraps today's fs logic 1:1 → dev/e2e/tests

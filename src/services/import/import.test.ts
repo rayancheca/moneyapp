@@ -24,7 +24,7 @@ import { parseChaseCardLines } from "./profiles/chase-card-statement-profile";
 import { ParseError, type AccountHint, type CanonicalTxn, type ParsedFile, type ParsedStatement, type ParserProfile } from "./types";
 import { provenanceFor } from "@/services/provenance";
 import { importFiles as importFilesTable } from "@/db/schema/imports";
-import { dedupeHash } from "@/lib/hash";
+import { dedupeHash, fileSha256 } from "@/lib/hash";
 import { normalizeDescription } from "@/lib/normalize";
 import { attachTransactions } from "@/services/recurring-links";
 
@@ -3942,14 +3942,32 @@ describe("a parser-version re-read that no longer writes an account", () => {
   });
 
   /**
+   * An archive that cannot write `input`'s original, and only its: where the import archives it before its read
+   * (`_unfiled/`, under its content-hashed name) leads into a folder that cannot be written. Every upload is archived
+   * in that one folder, so a folder the archive cannot write would fail them all.
+   */
+  function unwritableOriginal(input: ImportInput): () => void {
+    const locked = path.join(dir, "locked");
+    fs.mkdirSync(locked);
+    fs.chmodSync(locked, 0o555);
+    const archived = path.join(dir, "originals", "_unfiled", `${fileSha256(input.buffer).slice(0, 16)}-${input.name}`);
+    fs.mkdirSync(path.dirname(archived), { recursive: true });
+    fs.symlinkSync(path.join(locked, input.name), archived);
+    return () => fs.chmodSync(locked, 0o755);
+  }
+
+  /**
    * A read turn (`importTurn`) archives each file's original before it parses it. 🔴 Outside the steps that report their
-   * own failure, a fault there — an institution folder the archive cannot write — left the upload: the files after it
-   * were never read and the ones before it never settled, as the review measured for a file's archive move.
+   * own failure, a fault there — an original the archive cannot write — left the upload: the files after it were never
+   * read and the ones before it never settled, as the review measured for a file's archive move.
    */
   test("a file whose original cannot be archived fails with its cause, and the rest of the upload is read and settled", async () => {
-    // named to sort before January, and for an institution whose archive folder cannot be written
-    const UNARCHIVABLE: ImportInput = { name: `${PREFIX}0-discover.txt`, buffer: Buffer.from("2026-01 discover") };
-    const unlock = lockedArchive("discover");
+    // named to sort before January
+    const UNARCHIVABLE: ImportInput = {
+      name: `${PREFIX}0-unarchivable.txt`,
+      buffer: Buffer.from("2026-01 unarchivable"),
+    };
+    const unlock = unwritableOriginal(UNARCHIVABLE);
     try {
       const outcomes = await importStatementFiles(bundle.db, [UNARCHIVABLE, JANUARY]);
 
@@ -3976,27 +3994,34 @@ describe("a parser-version re-read that no longer writes an account", () => {
  * Each was read again under another name (its archive's) or into robinhood-combined/, so no live read names it, and its
  * retirement forgot everything that named its account. An original the rule cannot place stays where it is, reported.
  */
-describe("the layout migration never files an original in another bank's folder", () => {
+describe("an original is never filed in another bank's folder — by the import or the layout migration", () => {
   /** a name and first lines that name no bank: the importer guesses Chase */
   const UNNAMED = "4c3487e8-";
   const CASH: AccountHint = { institution: "Robinhood", type: "checking", last4: "7307" };
   const SAVINGS: AccountHint = { institution: "Robinhood", type: "savings", last4: "7308" };
   /** a later version that reads the savings section as well: its read is archived in robinhood-combined/ */
   let readsSavings = false;
-  const marchOf = (accountHint: AccountHint): ParsedStatement => ({
-    accountHint,
-    txns: [],
-    period: { start: "2026-03-01", end: "2026-03-31", beginCents: 5000, endCents: 5000 },
-  });
+  /** the cash section prints a row: a retirement keeps it, as superseded */
+  let cashRow = false;
+  /** a read that is not a read of the sections: a parse that fails, or one that withholds what it would read */
+  let readInstead: (() => ParsedFile) | null = null;
+  const COFFEE: CanonicalTxn = { postedOn: "2026-03-10", amountCents: -1200, rawDescription: "COFFEE" };
+  const marchOf = (accountHint: AccountHint): ParsedStatement => {
+    const txns = cashRow && accountHint === CASH ? [COFFEE] : [];
+    const endCents = 5000 + txns.reduce((sum, t) => sum + t.amountCents, 0);
+    return { accountHint, txns, period: { start: "2026-03-01", end: "2026-03-31", beginCents: 5000, endCents } };
+  };
   const unnamedProfile: ParserProfile = {
     id: "test-unnamed-robinhood-statement",
     version: 1,
     matches: (f) => f.name.includes(UNNAMED),
-    parse: () => (readsSavings ? [marchOf(CASH), marchOf(SAVINGS)] : [marchOf(CASH)]),
+    parse: () => readInstead?.() ?? (readsSavings ? [marchOf(CASH), marchOf(SAVINGS)] : [marchOf(CASH)]),
   };
 
   beforeEach(() => {
     readsSavings = false;
+    cashRow = false;
+    readInstead = null;
     unnamedProfile.version = 1;
     PROFILES.unshift(unnamedProfile);
   });
@@ -4068,6 +4093,119 @@ describe("the layout migration never files an original in another bank's folder"
     expect(fs.existsSync(chaseBucket())).toBe(false);
     // a second run reports it again, and moves nothing
     expect(migrateStorageLayout(bundle.db, { move: true })).toEqual(moves);
+  });
+
+  /**
+   * 🔴 …nor in the folder of the one account a retirement left a statement of two. A retirement keeps a read's rows,
+   * as superseded, and forgets everything else that named an account: its periods and balances, what it prints, the
+   * copies it prints (`supersedeFileContribution`). A read that wrote rows on one of its accounts names that one alone.
+   * Measured on a copy of the real ledger, 2026-10-01, move: false: 2 retired v3 reads of Robinhood statements,
+   * archived in robinhood-combined/ under the name each one's archive gave it, bound for robinhood-cash/ by the rows
+   * they kept there.
+   */
+  test("an original only retired reads name stays where it is, reported — though one kept rows on one of its accounts", async () => {
+    readsSavings = true;
+    cashRow = true;
+    await importStatementFiles(bundle.db, [MARCH]);
+    const [first] = reads(eq(importFilesTable.fileName, MARCH.name));
+    unnamedProfile.version = 2;
+    const [outcome] = await importStatementFiles(bundle.db, [{ ...MARCH, name: path.basename(first!.storagePath) }]);
+    const retired = readById(first!.id);
+    // the premise: a fresh read retired the first, and no other read names the first's original…
+    expect(outcome!.status).toBe("parsed");
+    expect(retired.status).toBe("superseded");
+    expect(reads(eq(importFilesTable.storagePath, retired.storagePath))).toHaveLength(1);
+    // …which the import archived in the folder of both its accounts…
+    expect(folderOf(retired.storagePath)).toBe("robinhood-combined");
+    // …and what names an account now is the row it kept: one account of the two
+    const cash = bundle.db.select().from(accounts).where(eq(accounts.last4, "7307")).get()!.id;
+    expect(namedBy(retired.id)).toEqual({ ...NOTHING, rows: [cash] });
+
+    const moves = migrateStorageLayout(bundle.db, { move: true });
+
+    // it stays beside the read that retired it, reported — not filed by the one account the retirement left it
+    expect(moves).toEqual([
+      { importFileId: retired.id, fileName: retired.fileName, from: retired.storagePath, to: null, moved: false },
+    ]);
+    expect(readById(retired.id).storagePath).toBe(retired.storagePath);
+    expect(fs.readFileSync(retired.storagePath)).toEqual(MARCH.buffer);
+    expect(fs.existsSync(path.join(dir, "originals", "robinhood-checking-7307"))).toBe(false);
+  });
+
+  /**
+   * 🔴 The import archived every upload in the folder of the bank it GUESSED (`guessInstitution`) before reading it —
+   * for a read that resolves an account, a stop on its way to that account's folder; for one that resolves none, where
+   * it stayed (`resolveArchiveFolder`). The guess checks for "chase" first and falls back to Chase: on a copy of the
+   * real ledger, 2026-10-01, it guessed Chase for 180 of the 241 reads archived in another bank's folders. A re-read
+   * that could not read a Robinhood statement, or withheld its only section, left a second copy of it in Chase's
+   * folder, and the layout migration could only report it there. A file nothing files under an account rests in
+   * `_unfiled/`.
+   */
+  test.each<[string, "failed" | "parsed", () => ParsedFile]>([
+    [
+      "cannot read it",
+      "failed",
+      () => {
+        throw new ParseError(unnamedProfile.id, "the statement's layout changed");
+      },
+    ],
+    [
+      "withholds its only section",
+      "parsed",
+      () => ({
+        statements: [],
+        withheld: [
+          {
+            accountHint: CASH,
+            accountNumber: "XXXX7307",
+            period: { start: "2026-03-01", end: "2026-03-31" },
+            reason: "cannot prove it",
+          },
+        ],
+      }),
+    ],
+  ])("a re-read that %s leaves its original in no bank's folder", async (_, status, readAgain) => {
+    await importStatementFiles(bundle.db, [MARCH]);
+    const [first] = reads(eq(importFilesTable.fileName, MARCH.name));
+    expect(folderOf(first!.storagePath)).toBe("robinhood-checking-7307");
+    unnamedProfile.version = 2;
+    readInstead = readAgain;
+    const [outcome] = await importStatementFiles(bundle.db, [MARCH]);
+    const again = reads(eq(importFilesTable.parserVersion, 2))[0]!;
+    // the premise: the re-read resolved no account, and the importer guessed the file was Chase's
+    expect(outcome!.status).toBe(status);
+    expect(again.status).toBe(status);
+    expect(namedBy(again.id)).toEqual(NOTHING);
+    const guessed = bundle.db.select().from(institutions).where(eq(institutions.id, again.institutionId)).get()!;
+    expect(guessed.name).toBe("Chase");
+
+    // its own copy of the original rests where nothing files it under an account — never in a bank's folder
+    expect(folderOf(again.storagePath)).toBe("_unfiled");
+    expect(fs.readFileSync(again.storagePath)).toEqual(MARCH.buffer);
+    expect(fs.existsSync(chaseBucket())).toBe(false);
+    // …and the layout migration leaves it there, reported, and moves nothing
+    const moves = migrateStorageLayout(bundle.db, { move: true });
+    expect(moves).toContainEqual({
+      importFileId: again.id,
+      fileName: again.fileName,
+      from: again.storagePath,
+      to: null,
+      moved: false,
+    });
+    expect(moves.filter((m) => m.to !== null)).toEqual([]);
+    expect(fs.existsSync(chaseBucket())).toBe(false);
+  });
+
+  test("a file no profile can read rests in no bank's folder", async () => {
+    const MYSTERY: ImportInput = { name: "mystery.csv", buffer: Buffer.from("Col A,Col B\n1,2") };
+    const [outcome] = await importStatementFiles(bundle.db, [MYSTERY]);
+    const [row] = reads(eq(importFilesTable.fileName, MYSTERY.name));
+    expect(outcome!.status).toBe("failed");
+    const guessed = bundle.db.select().from(institutions).where(eq(institutions.id, row!.institutionId)).get()!;
+    expect(guessed.name).toBe("Chase");
+    expect(folderOf(row!.storagePath)).toBe("_unfiled");
+    expect(fs.readFileSync(row!.storagePath)).toEqual(MYSTERY.buffer);
+    expect(fs.existsSync(chaseBucket())).toBe(false);
   });
 
   /**
