@@ -9,6 +9,7 @@ import { KEPT_OPENING_SOURCE, balanceAnchors } from "@/db/schema/balances";
 import { LIVE_FILE, importFiles, isLiveFile, statementPeriods, type FileFormat, type ImportStatus } from "@/db/schema/imports";
 import { institutions } from "@/db/schema/institutions";
 import {
+  LIVE_ROW,
   transactions,
   type CategorizationSource,
   type FileLinkSource,
@@ -603,7 +604,7 @@ function captureCarryForward(db: AppDatabase, oldFileIds: readonly string[]): Ca
     .where(
       and(
         inArray(transactions.importFileId, [...oldFileIds]),
-        inArray(transactions.status, ["active", "quarantined", "excluded"]),
+        inArray(transactions.status, [...LIVE_ROW]),
       ),
     )
     .all();
@@ -995,7 +996,7 @@ function coveredRanges(db: AppDatabase, accountId: string): CoveredRange[] {
     .where(
       and(
         eq(transactions.accountId, accountId),
-        inArray(transactions.status, ["active", "quarantined", "excluded"]),
+        inArray(transactions.status, [...LIVE_ROW]),
         inArray(importFiles.status, [...LIVE_FILE]),
       ),
     )
@@ -2832,7 +2833,7 @@ function supersedeFileContribution(db: AppDatabase, oldFileId: string): { accoun
     keepStayingLegsByContent(tx, oldFileId);
     tx.update(transactions)
       .set({ status: "superseded" })
-      .where(and(eq(transactions.importFileId, oldFileId), inArray(transactions.status, ["active", "quarantined", "excluded"])))
+      .where(and(eq(transactions.importFileId, oldFileId), inArray(transactions.status, [...LIVE_ROW])))
       .run();
     // a period another download of the statement prints stays, lent to that download — the period alone: the
     // successor writes the rows again, and takes the period back where it writes it again (`lendToCopies`)

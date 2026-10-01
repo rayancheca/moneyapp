@@ -4,7 +4,7 @@ import { withPreMutationSnapshot } from "../src/db/backup";
 import { accounts } from "../src/db/schema/accounts";
 import { duplicateCandidates } from "../src/db/schema/duplicate-candidates";
 import { importFiles, statementPeriods } from "../src/db/schema/imports";
-import { transactions } from "../src/db/schema/transactions";
+import { LIVE_ROW, transactions } from "../src/db/schema/transactions";
 import { dedupeHash, duplicatePairKey } from "../src/lib/hash";
 import { categorizeAll, detectTransfers } from "../src/services/categorize";
 import { flagDuplicateCandidates } from "../src/services/duplicate-flags";
@@ -166,7 +166,7 @@ function findStraddlers(db: ReturnType<typeof createDatabase>["db"]): Clamp[] {
     const rows = db
       .select()
       .from(transactions)
-      .where(and(eq(transactions.importFileId, fileId), inArray(transactions.status, ["active", "quarantined", "excluded"])))
+      .where(and(eq(transactions.importFileId, fileId), inArray(transactions.status, [...LIVE_ROW])))
       .all();
     for (const r of rows) {
       if (r.postedOn >= period.periodStart && r.postedOn <= period.periodEnd) continue;
