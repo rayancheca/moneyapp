@@ -1284,11 +1284,13 @@ export function seriesHasLapsed(
  * none do.
  *
  * ⛔ The SCHEDULE's next date, and nothing else. A surface that names a series'
- * next date reads `nextStillToCome` (services/payday-settlement), which steps this
- * past the paydays a deposit has already paid — `listSeries` and `seriesDetail`
- * do. `subscriptions-card` reads this directly, and may: it reads bills and
- * subscriptions only, prints no date, and asks only whether the schedule is over,
- * and settlement never speaks about money out.
+ * next date to come reads `nextStillToCome` (services/payday-settlement), which
+ * steps this past the paydays a deposit has already paid — `listSeries` does. Two
+ * read this directly. The series sentence (`seriesDetail.nextExpectedOn`) must: its
+ * date editor saves the date it opens on as the anchor, and a payday paid early is
+ * still on the schedule. `subscriptions-card` may: it reads bills and subscriptions
+ * only, prints no date, and asks only whether the schedule is over, and settlement
+ * never speaks about money out.
  */
 export function rollForwardNextExpected(eff: EffectiveSeries, today: string = todayIso()): string | null {
   if (!eff.nextExpectedOn) return null;

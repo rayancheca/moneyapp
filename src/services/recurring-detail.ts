@@ -14,12 +14,13 @@ import { transactions } from "@/db/schema/transactions";
 import { addDays, isValidIsoDate, periodBounds, todayIso } from "@/lib/dates";
 import { stepFrom, stepPlan } from "@/lib/recurring-step";
 import { overdueForSeries } from "./arrears";
-import { nextStillToCome, stillToCome } from "./payday-settlement";
+import { stillToCome } from "./payday-settlement";
 import {
   annualizedCentsOf,
   effectiveSeries,
   isSeriesActive,
   projectOccurrences,
+  rollForwardNextExpected,
   toProjectable,
   type SeriesOccurrence,
   seriesEvidence,
@@ -74,8 +75,14 @@ export interface SeriesDetail {
   // effective (override-first) values the sentence reads
   cadence: Cadence;
   /**
-   * rolled forward off a stale stored value — never a date in the past, nor a
-   * payday a deposit has already paid (`nextStillToCome`, listSeries' own call)
+   * The SCHEDULE's next date, rolled forward off a stale stored value — never a
+   * date in the past. The sentence's day token reads its weekday or day-of-month,
+   * and its date editor opens on it and saves it back as `userNextExpectedOn`.
+   *
+   * ⛔ Not `nextStillToCome`, though `listSeries` reads that: a payday a deposit
+   * paid early is still ON the schedule, and the anchor this editor writes floors
+   * every projection, settlement's included. What is still to come is
+   * `nextExpected`.
    */
   nextExpectedOn: string | null;
   /** the un-rolled stored value, so the UI can distinguish shown from saved */
@@ -381,13 +388,16 @@ export function seriesDetail(
       modalCategory(linked, catById),
     accountName,
     cadence: eff.cadence,
-    // Same rule as listSeries: the detail page must not show a date in the past
-    // as "next" while the list shows the rolled-forward one. Only the statuses
-    // the forecast actually projects roll — see `projects` above.
-    // ⛔ And the same call: a payday a deposit has paid is not next. 🔴 Read on
-    // Sep 30 the sentence's date editor opened on Oct 1 above a "Next expected"
-    // list starting Oct 8 — the list asked settlement, this did not.
-    nextExpectedOn: projects ? nextStillToCome(db, s, today) : eff.nextExpectedOn,
+    // Rolled forward so the sentence never reads a date in the past. Only the
+    // statuses the forecast actually projects roll — see `projects` above.
+    // ⛔ The schedule's step, not settlement's (`nextStillToCome`, listSeries'
+    // reading): the sentence's editor opens on this date and Save writes it back
+    // as the anchor. 🔴 Read through settlement it opened past a payday a deposit
+    // had paid early. Measured on a copy of his ledger: read on Sep 23 or 24 it
+    // opened on Oct 1, past the Sep 24 payday the Sep 23 lump of $4,567.68 paid,
+    // and Save with nothing changed took Sep 24 out of the projection settlement
+    // walks. The token read "Thursdays" either way.
+    nextExpectedOn: projects ? rollForwardNextExpected(eff, today) : eff.nextExpectedOn,
     storedNextExpectedOn: eff.nextExpectedOn,
     nextExpectedAmountCents: eff.nextExpectedAmountCents,
     userCadence: s.userCadence,

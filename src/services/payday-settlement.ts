@@ -113,7 +113,7 @@ export function settledPaydaysForSeries(db: AppDatabase, seriesId: string, today
  * ⛔ ONE READING for every surface that looks ahead: the forecast, the upcoming
  * list (/recurring's Upcoming tab, the dashboard's strip and its "before your
  * next paycheck") and a series' "Next expected" — and, through `nextStillToCome`,
- * every surface that names a series' single next date. 🔴 Only the forecast
+ * every surface that names a series' single next date to come. 🔴 Only the forecast
  * asked: on Sep 30 the dashboard waited on Oct 1's pay — the pay that had come
  * the day before — and said nothing was due before it, while $2,000.00 of rent
  * due Oct 5 falls before the pay that will actually come, on Oct 8.
@@ -138,12 +138,17 @@ export function stillToCome<T extends { date: string }>(
  * a list to find it.
  *
  * 🔴 The single next date never asked. `/recurring?tab=all`'s "Next" and
- * `/categories/<Income>`'s "· next" (`listSeries`) and the series page's sentence
- * (`seriesDetail.nextExpectedOn` — its day token, and the date its editor opens on)
- * all read the bare schedule, so on Sep 30 they named Oct 1, the payday Wed Sep 30's
- * deposit had paid, one tab over from an Upcoming list starting at Oct 8. Measured on
- * a copy of his ledger: read on Sep 23 and Sep 24 they named Sep 24 — the payday the
- * Sep 23 lump of $4,567.68 had paid — while that series' own list said Oct 1.
+ * `/categories/<Income>`'s "· next" (`listSeries`) read the bare schedule, so on Sep
+ * 30 they named Oct 1, the payday Wed Sep 30's deposit had paid, one tab over from
+ * an Upcoming list starting at Oct 8. Measured on a copy of his ledger: read on Sep
+ * 23 and Sep 24 they named Sep 24 — the payday the Sep 23 lump of $4,567.68 had paid
+ * — while that series' own list said Oct 1.
+ *
+ * ⛔ NOT the series sentence (`seriesDetail.nextExpectedOn`): its date editor saves
+ * the date it opens on as the schedule's anchor, and a payday paid early is still on
+ * the schedule. 🔴 Opened on this, a Save with nothing changed anchored his weekly
+ * pay past the payday a deposit had paid, which then left the projection
+ * `paydaySettlement` walks.
  *
  * ⛔ Not a second copy of the rule: `isStillToCome` is the predicate `stillToCome`
  * filters with, and the steps are `rollForwardNextExpected`'s, so the walk visits
