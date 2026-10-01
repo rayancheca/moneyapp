@@ -1,7 +1,7 @@
 import { and, asc, eq, inArray, isNotNull, isNull, max, min, notInArray, sql } from "drizzle-orm";
 import type { AppDatabase } from "@/db/client";
 import { duplicateCandidates } from "@/db/schema/duplicate-candidates";
-import { importFiles, printedLines, statementCopies, statementPeriods } from "@/db/schema/imports";
+import { LIVE_FILE, importFiles, printedLines, statementCopies, statementPeriods } from "@/db/schema/imports";
 import { transactions, type TransactionStatus } from "@/db/schema/transactions";
 import { descriptionScore } from "@/lib/description-score";
 import { normalizeDescription } from "@/lib/normalize";
@@ -50,7 +50,6 @@ export interface PrinterHandOver {
   rowIds: string[];
 }
 
-export const LIVE_FILE = ["parsed", "parsed_with_claude"] as const;
 const LIVE_ROW = ["active", "quarantined", "excluded"] as const;
 /** row ids per statement — well under SQLite's bound-parameter limit */
 const ROW_CHUNK = 500;

@@ -6,7 +6,7 @@ import type { AppDatabase } from "@/db/client";
 import { accounts } from "@/db/schema/accounts";
 import { categories } from "@/db/schema/categories";
 import { KEPT_OPENING_SOURCE, balanceAnchors } from "@/db/schema/balances";
-import { importFiles, statementPeriods, type FileFormat, type ImportStatus } from "@/db/schema/imports";
+import { LIVE_FILE, importFiles, statementPeriods, type FileFormat, type ImportStatus } from "@/db/schema/imports";
 import { institutions } from "@/db/schema/institutions";
 import {
   transactions,
@@ -994,7 +994,7 @@ function coveredRanges(db: AppDatabase, accountId: string): CoveredRange[] {
       and(
         eq(transactions.accountId, accountId),
         inArray(transactions.status, ["active", "quarantined", "excluded"]),
-        inArray(importFiles.status, ["parsed", "parsed_with_claude"]),
+        inArray(importFiles.status, [...LIVE_FILE]),
       ),
     )
     .groupBy(transactions.importFileId)
@@ -1023,7 +1023,7 @@ function coveredRanges(db: AppDatabase, accountId: string): CoveredRange[] {
     .where(
       and(
         eq(statementPeriods.accountId, accountId),
-        inArray(importFiles.status, ["parsed", "parsed_with_claude"]),
+        inArray(importFiles.status, [...LIVE_FILE]),
       ),
     )
     .all();
@@ -1550,7 +1550,7 @@ function retiredReadsOf(db: AppDatabase, sha: string, version: number): (typeof 
   return db
     .select()
     .from(importFiles)
-    .where(and(eq(importFiles.fileSha256, sha), inArray(importFiles.status, ["parsed", "parsed_with_claude"])))
+    .where(and(eq(importFiles.fileSha256, sha), inArray(importFiles.status, [...LIVE_FILE])))
     .all()
     .filter((f) => f.parserVersion < version);
 }

@@ -37,6 +37,7 @@ import path from "node:path";
 import crypto from "node:crypto";
 import Database from "better-sqlite3";
 import { createDatabase, type AppDatabase } from "@/db/client";
+import { LIVE_FILE } from "@/db/schema/imports";
 import { importStatementFiles, unimportFile } from "@/services/import/service";
 import { chaseSpendingReportPdf } from "@/services/import/profiles/spending-report-profile";
 
@@ -165,7 +166,7 @@ function fileRow(db: AppDatabase, name: string): FileRow {
   const row = all(
     db,
     `SELECT id, storage_path, parser_version FROM import_files
-      WHERE file_name = '${name.replace(/'/g, "''")}' AND status IN ('parsed','parsed_with_claude')`,
+      WHERE file_name = '${name.replace(/'/g, "''")}' AND status IN (${LIVE_FILE.map((s) => `'${s}'`).join(",")})`,
   )[0];
   if (row === undefined) throw new Error(`${name} is not imported in this copy`);
   return { id: String(row.id), storagePath: String(row.storage_path), version: Number(row.parser_version) };

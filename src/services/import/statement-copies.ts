@@ -1,6 +1,6 @@
 import { and, asc, desc, eq, inArray, type SQL } from "drizzle-orm";
 import type { AppDatabase } from "@/db/client";
-import { importFiles, statementCopies, statementPeriods } from "@/db/schema/imports";
+import { LIVE_FILE, importFiles, statementCopies, statementPeriods } from "@/db/schema/imports";
 import { transactions, type TransactionStatus } from "@/db/schema/transactions";
 import { descriptionScore } from "@/lib/description-score";
 import type { DuplicatePairSide } from "@/lib/hash";
@@ -38,7 +38,6 @@ import { attachedRow, parsedRow } from "./attached-rows";
 
 type CopyLine = DuplicatePairSide;
 
-const LIVE_FILE = ["parsed", "parsed_with_claude"] as const;
 const LIVE_ROW = ["active", "quarantined", "excluded"] as const;
 /** row ids per statement — well under SQLite's bound-parameter limit */
 const ROW_CHUNK = 500;

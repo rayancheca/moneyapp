@@ -16,6 +16,17 @@ export const IMPORT_STATUSES = [
 export type ImportStatus = (typeof IMPORT_STATUSES)[number];
 
 /**
+ * A file still imported: its rows, its periods and the lines it prints are in the ledger. Every other status is a
+ * read a newer one retired (`superseded`) or one that wrote nothing.
+ *
+ * ⛔ ONE HOME. This pair was spelled out nine times — its own `LIVE_FILE` in four modules, four inline lists, a raw
+ * SQL `IN (…)` in a probe script — all agreeing, so no behavioural test could tell a copy from the rule. A query asks
+ * `inArray(importFiles.status, [...LIVE_FILE])`; imports.test.ts fails on a list of the pair anywhere else, or of the
+ * statuses that are not live.
+ */
+export const LIVE_FILE = ["parsed", "parsed_with_claude"] as const satisfies readonly ImportStatus[];
+
+/**
  * One row per physical file ever ingested; originals live in data/originals/.
  * Idempotency is per (file_sha256, parser_version) so a fixed parser can
  * always re-parse the same file (schema.md lifecycle rules).

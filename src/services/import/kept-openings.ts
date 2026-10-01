@@ -2,7 +2,7 @@ import { and, asc, count, eq, inArray, isNotNull, isNull } from "drizzle-orm";
 import type { AppDatabase } from "@/db/client";
 import { accounts } from "@/db/schema/accounts";
 import { KEPT_OPENING_SOURCE, balanceAnchors } from "@/db/schema/balances";
-import { importFiles, statementPeriods } from "@/db/schema/imports";
+import { LIVE_FILE, importFiles, statementPeriods } from "@/db/schema/imports";
 import { transactions } from "@/db/schema/transactions";
 import { addDays } from "@/lib/dates";
 import type { PrinterHandOver } from "./printed-lines";
@@ -78,8 +78,6 @@ export function keptOpeningPlans(
   return plans;
 }
 
-/** A file still imported — its rows are in the ledger. */
-const LIVE_FILE = ["parsed", "parsed_with_claude"] as const;
 /** A row still in the ledger. */
 const LIVE_ROW = ["active", "quarantined", "excluded"] as const;
 
