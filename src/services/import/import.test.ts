@@ -3942,6 +3942,43 @@ describe("a parser-version re-read that no longer writes an account", () => {
   });
 
   /**
+   * A fault outside the steps that report their own failure leaves a row already live as it is — its read is in the
+   * ledger, and only the outcome says what faulted (`failedUnexpectedly`). 🔴 Only a `parsed` row was kept: a row read
+   * with Claude's help, live by the same rule (`isLiveFile`), was marked `failed` over a read still in the ledger — the
+   * state `markParsed`'s 🔴 measured (the review, 2026-10-01).
+   */
+  test.each(["parsed", "parsed_with_claude"] as const)("a fault after the file's row is recorded %s leaves the row as it is", async (status) => {
+    const RECORDED: ImportInput = { name: `${PREFIX}0-recorded-${status}.txt`, buffer: Buffer.from(`recorded ${status}`) };
+    const recordedProfile: ParserProfile = {
+      id: "test-recorded-statement",
+      version: 1,
+      matches: (f) => f.name === RECORDED.name,
+      // the file's row recorded live as the read returns, and a statement the importer faults on when it reads it —
+      // after the parse, outside the step that reports a parse's own failure
+      parse: (): ParsedFile => {
+        bundle.db.update(importFilesTable).set({ status }).where(eq(importFilesTable.fileName, RECORDED.name)).run();
+        const faulty = new Proxy({} as ParsedStatement, {
+          get: () => {
+            throw new Error("disk I/O error");
+          },
+        });
+        return { statements: [faulty], withheld: [] };
+      },
+    };
+    PROFILES.unshift(recordedProfile);
+    try {
+      const [outcome] = await importStatementFiles(bundle.db, [RECORDED]);
+
+      // `failedUnexpectedly`'s words: a parse's own failure reads "Unexpected: Error: …" (`readMember`)
+      expect([outcome!.status, outcome!.error]).toEqual(["failed", "Unexpected: disk I/O error"]);
+      const row = bundle.db.select().from(importFilesTable).where(eq(importFilesTable.fileName, RECORDED.name)).get()!;
+      expect([row.status, row.error]).toEqual([status, null]);
+    } finally {
+      PROFILES.splice(PROFILES.indexOf(recordedProfile), 1);
+    }
+  });
+
+  /**
    * A read turn (`importTurn`) archives each file's original before it parses it. 🔴 Outside the steps that report their
    * own failure, a fault there — an institution folder the archive cannot write — left the upload: the files after it
    * were never read and the ones before it never settled, as the review measured for a file's archive move.

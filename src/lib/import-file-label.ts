@@ -39,7 +39,7 @@
  * this rule from having the defect it exists to fix.
  */
 
-import type { ImportStatus } from "@/db/schema/imports";
+import { isLiveFile, type ImportStatus } from "@/db/schema/imports";
 import { formatCentsSigned } from "./money";
 import { dayWindowLabel } from "./period";
 
@@ -206,12 +206,12 @@ function isWithheldSectionFacts(v: unknown): v is WithheldSectionFacts {
 /**
  * The sections an import row withheld — empty for every row that withheld nothing.
  *
- * Only a `parsed` file's: the import writes `error` on a parsed file for nothing else, a failed file's error is why
- * it failed, and a superseded file's contribution has left the ledger. ⛔ A value that is not a whole record reads as
- * NO sections, never as some of them: a reader that acts on a window must not act on half of one.
+ * Only a live file's (`isLiveFile`): the import writes `error` on a live file for nothing else, a failed file's error
+ * is why it failed, and a superseded file's contribution has left the ledger. ⛔ A value that is not a whole record
+ * reads as NO sections, never as some of them: a reader that acts on a window must not act on half of one.
  */
 export function withheldSectionsOf(file: { readonly status: ImportStatus; readonly error: string | null }): WithheldSectionFacts[] {
-  if (file.status !== "parsed" || file.error === null || !file.error.startsWith('{"withheld":')) return [];
+  if (!isLiveFile(file.status) || file.error === null || !file.error.startsWith('{"withheld":')) return [];
   let parsed: unknown;
   try {
     parsed = JSON.parse(file.error);
@@ -225,11 +225,11 @@ export function withheldSectionsOf(file: { readonly status: ImportStatus; readon
 /**
  * The withheld-section notice an import row carries, or null.
  *
- * ⚠️ A parsed file whose `error` is not a record is shown as it is rather than hidden: whatever wrote it, a parsed
- * row with something to say must not read as plain "Parsed".
+ * ⚠️ A live file whose `error` is not a record is shown as it is rather than hidden: whatever wrote it, a live row
+ * with something to say must not read as its status label alone ("Parsed").
  */
 export function withheldNoticeOf(file: { readonly status: ImportStatus; readonly error: string | null }): string | null {
-  if (file.status !== "parsed" || file.error === null) return null;
+  if (!isLiveFile(file.status) || file.error === null) return null;
   const sections = withheldSectionsOf(file);
   return sections.length === 0 ? file.error : sections.map(withheldSectionNotice).join(" ");
 }

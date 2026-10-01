@@ -4,7 +4,7 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { createDatabase, type DbBundle } from "@/db/client";
 import { accounts } from "@/db/schema/accounts";
-import { importFiles, statementPeriods } from "@/db/schema/imports";
+import { importFiles, statementPeriods, type ImportStatus } from "@/db/schema/imports";
 import { institutions } from "@/db/schema/institutions";
 import { seedDatabase } from "@/db/seed";
 import { recordWithheldSections } from "@/lib/import-file-label";
@@ -70,7 +70,7 @@ function addPeriod(accountId: string, start: string, end: string): void {
 }
 
 /** A file that imported WITHOUT this account's section — the record `settleMember` writes on its row. */
-function addWithheldFile(accountId: string, start: string, end: string, status: "parsed" | "superseded" | "failed" = "parsed"): string {
+function addWithheldFile(accountId: string, start: string, end: string, status: ImportStatus = "parsed"): string {
   seq += 1;
   const fileName = `w-${seq}.pdf`;
   bundle.db
@@ -265,6 +265,29 @@ describe("a statement imported WITHOUT this account's section", () => {
     addPeriod("a-1", "2026-06-01", "2026-06-30");
     addPeriod("a-1", "2026-07-01", "2026-07-31");
     const fileName = addWithheldFile("a-1", "2026-08-01", "2026-08-31");
+
+    expect(statementGaps(bundle.db)).toEqual([
+      {
+        accountId: "a-1",
+        accountName: "Robinhood Agentic",
+        holes: [],
+        missingCloses: null,
+        missingDays: 0,
+        withheld: [{ from: "2026-08-01", to: "2026-08-31", days: 31, fileName }],
+      },
+    ]);
+  });
+
+  /**
+   * 🔴 The files asked for were `parsed` ones only, so a file read with Claude's help — in the ledger by the same rule
+   * (`isLiveFile`) — left its withheld month listed as a statement to fetch (the review, 2026-10-01).
+   */
+  test("a file read with Claude's help is imported as a parsed one is: its withheld month is reported, not a hole", () => {
+    addAccount("a-1", "Robinhood Agentic");
+    addPeriod("a-1", "2026-06-01", "2026-06-30");
+    addPeriod("a-1", "2026-07-01", "2026-07-31");
+    addPeriod("a-1", "2026-09-01", "2026-09-30");
+    const fileName = addWithheldFile("a-1", "2026-08-01", "2026-08-31", "parsed_with_claude");
 
     expect(statementGaps(bundle.db)).toEqual([
       {

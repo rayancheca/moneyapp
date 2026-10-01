@@ -5,7 +5,7 @@ import { balanceAnchors, dailyBalances } from "@/db/schema/balances";
 import { duplicateCandidates } from "@/db/schema/duplicate-candidates";
 import { holdingEvents } from "@/db/schema/holding-events";
 import { holdings } from "@/db/schema/holdings";
-import { importFiles, printedLines, statementCopies, statementPeriods } from "@/db/schema/imports";
+import { LIVE_FILE, importFiles, printedLines, statementCopies, statementPeriods } from "@/db/schema/imports";
 import { recurringSeries } from "@/db/schema/recurring";
 import { transactions } from "@/db/schema/transactions";
 import { transferAmbiguities } from "@/db/schema/transfer-ambiguities";
@@ -352,7 +352,7 @@ export function copiesWithheldFor(db: AppDatabase, importFileId: string): Withhe
   const others = db
     .select({ fileName: importFiles.fileName, status: importFiles.status, error: importFiles.error })
     .from(importFiles)
-    .where(and(ne(importFiles.id, importFileId), eq(importFiles.status, "parsed"), isNotNull(importFiles.error)))
+    .where(and(ne(importFiles.id, importFileId), inArray(importFiles.status, [...LIVE_FILE]), isNotNull(importFiles.error)))
     .orderBy(asc(importFiles.fileName))
     .all();
   return others.flatMap((file) =>

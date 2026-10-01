@@ -21,10 +21,16 @@ export type ImportStatus = (typeof IMPORT_STATUSES)[number];
  *
  * ⛔ ONE HOME. This pair was spelled out nine times — its own `LIVE_FILE` in four modules, four inline lists, a raw
  * SQL `IN (…)` in a probe script — all agreeing, so no behavioural test could tell a copy from the rule. A query asks
- * `inArray(importFiles.status, [...LIVE_FILE])`; imports.test.ts fails on a list of the pair anywhere else, or of the
- * statuses that are not live.
+ * `inArray(importFiles.status, [...LIVE_FILE])` and code asks `isLiveFile(row.status)`; imports.test.ts fails on a list
+ * of the pair anywhere else, or of the statuses that are not live, and on the app comparing a status with `parsed`
+ * alone — five places did, and read a file parsed with Claude's help as not imported.
  */
 export const LIVE_FILE = ["parsed", "parsed_with_claude"] as const satisfies readonly ImportStatus[];
+
+/** Whether a file of this status is still imported: `LIVE_FILE`, asked of one row. */
+export function isLiveFile(status: ImportStatus): boolean {
+  return (LIVE_FILE as readonly ImportStatus[]).includes(status);
+}
 
 /**
  * One row per physical file ever ingested; originals live in data/originals/.
