@@ -1,6 +1,6 @@
 import { inArray, sql } from "drizzle-orm";
 import type { AppDatabase, DbBundle } from "@/db/client";
-import { importFiles } from "@/db/schema/imports";
+import { LIVE_FILE, importFiles } from "@/db/schema/imports";
 import { PROFILES } from "../profiles";
 import { scanNumbers, writeNumbers } from "./account-numbers";
 import { scanPrintedLines, writePrintedLines } from "./printed-lines";
@@ -19,8 +19,6 @@ import { scanCopies, writeCopies } from "./statement-copies";
  * un-importing 20230810-statements-3522-.pdf after such a restore took Chase Checking from 2,650 rows to 2,565
  * (−$1,636.84), 48 periods to 47, and 0 gap days to 27; `pnpm ledger-check` exited 0.
  */
-
-const LIVE_FILE = ["parsed", "parsed_with_claude"] as const;
 
 export interface UnrecordedFile {
   id: string;

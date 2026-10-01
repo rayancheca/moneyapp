@@ -1838,6 +1838,26 @@ describe("⛔ a book month downloaded twice — un-importing one copy leaves the
     expect(bookOf(bundle.db, agenticId)).toBeUndefined();
   });
 
+  /**
+   * 🔴 The copies asked for were `parsed` ones only: a copy read with Claude's help — still imported by the same rule
+   * (`isLiveFile`) — did not hold the month, and un-importing the first download left the month read by neither
+   * (the review, 2026-10-01).
+   */
+  test("a copy read with Claude's help holds the month as a parsed one does: un-importing the first download is refused", async () => {
+    ownersRobinhood(bundle.db);
+    await importStatementFiles(bundle.db, [pdf(AGENT_BUYS_FILE, [...AGENT_BUYS, ...AUGUST_BROKERAGE])]);
+    const COPY = "7b2e9d41-0c5a-4f86-b3e1-9a0d2c6f4e85 (1).pdf";
+    await importStatementFiles(bundle.db, [pdf(COPY, [...AGENT_BUYS, ...AUGUST_BROKERAGE])]);
+    // the same read, recorded as one made with Claude's help
+    bundle.db.update(importFiles).set({ status: "parsed_with_claude" }).where(eq(importFiles.fileName, COPY)).run();
+    const before = wholeLedger(bundle.db);
+
+    expect(() => unimportFile(bundle.db, fileId(bundle.db, AGENT_BUYS_FILE))).toThrow(
+      `${COPY} (Aug 1 – 31, 2026) left out Robinhood Agentic's section of the month this statement reads — un-import ${COPY} before it, or neither reads the month`,
+    );
+    expect(wholeLedger(bundle.db)).toEqual(before);
+  });
+
   test("a later month of the account withheld for its own reason does not hold the month — only one of the same window does", async () => {
     const agenticId = ownersRobinhood(bundle.db);
     await importStatementFiles(bundle.db, [pdf(AGENT_BUYS_FILE, [...AGENT_BUYS, ...AUGUST_BROKERAGE])]);

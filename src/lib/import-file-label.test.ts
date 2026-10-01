@@ -66,6 +66,14 @@ describe("recordWithheldSections → withheldSectionsOf: a parsed file keeps FAC
     expect(withheldSectionsOf({ status: "parsed", error: null })).toEqual([]);
   });
 
+  /**
+   * 🔴 `status !== "parsed"` answered "is this read in the ledger?" for half the files whose read is: a file read with
+   * Claude's help is live by the rule (`isLiveFile`), and what it left out read as nothing (the review, 2026-10-01).
+   */
+  test("a file read with Claude's help is in the ledger as a parsed one is: its withheld sections are read the same", () => {
+    expect(withheldSectionsOf({ status: "parsed_with_claude", error: recordWithheldSections([AGENTIC_AUGUST]) })).toEqual([AGENTIC_AUGUST]);
+  });
+
   test.each([
     ["plain text", "Not imported: Robinhood Agentic ····9651's statement for Aug 1 – 31, 2026 — …"],
     ["a record cut short", recordWithheldSections([AGENTIC_AUGUST]).slice(0, -5)],
@@ -95,6 +103,11 @@ describe("withheldNoticeOf", () => {
 
   test("⚠️ a parsed file whose error is not a record is shown as it is — never hidden behind plain \"Parsed\"", () => {
     expect(withheldNoticeOf({ status: "parsed", error: "something the import said" })).toBe("something the import said");
+  });
+
+  test("a file read with Claude's help says what it left out, as a parsed one does", () => {
+    expect(withheldNoticeOf({ status: "parsed_with_claude", error: recordWithheldSections([AGENTIC_AUGUST]) })).toBe(AGENTIC_AUGUST_NOTICE);
+    expect(withheldNoticeOf({ status: "parsed_with_claude", error: "something the import said" })).toBe("something the import said");
   });
 });
 

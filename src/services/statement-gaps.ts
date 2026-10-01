@@ -1,7 +1,7 @@
-import { and, asc, eq, isNotNull } from "drizzle-orm";
+import { and, asc, eq, inArray, isNotNull } from "drizzle-orm";
 import type { AppDatabase } from "@/db/client";
 import { accounts } from "@/db/schema/accounts";
-import { importFiles, statementPeriods } from "@/db/schema/imports";
+import { LIVE_FILE, importFiles, statementPeriods } from "@/db/schema/imports";
 import { institutions } from "@/db/schema/institutions";
 import { diffDays } from "@/lib/dates";
 import { withheldSectionsOf } from "@/lib/import-file-label";
@@ -59,12 +59,12 @@ export interface AccountStatementGaps {
   withheld: WithheldWindow[];
 }
 
-/** Every parsed file's withheld sections, by the account they belong to. */
+/** Every still-imported file's withheld sections, by the account they belong to. */
 function withheldWindowsByAccount(db: AppDatabase): Map<string, WithheldWindow[]> {
   const files = db
     .select({ fileName: importFiles.fileName, status: importFiles.status, error: importFiles.error })
     .from(importFiles)
-    .where(and(eq(importFiles.status, "parsed"), isNotNull(importFiles.error)))
+    .where(and(inArray(importFiles.status, [...LIVE_FILE]), isNotNull(importFiles.error)))
     .all();
   const out = new Map<string, WithheldWindow[]>();
   for (const file of files) {

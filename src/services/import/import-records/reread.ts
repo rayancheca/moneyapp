@@ -7,7 +7,7 @@
 import fs from "node:fs";
 import { asc, inArray } from "drizzle-orm";
 import type { DbBundle } from "@/db/client";
-import { importFiles } from "@/db/schema/imports";
+import { LIVE_FILE, importFiles } from "@/db/schema/imports";
 import { fileSha256 } from "@/lib/hash";
 import { PROFILES } from "../profiles";
 import { asParsedFile, parseContextFor } from "../service";
@@ -30,7 +30,7 @@ export async function rereadImported(bundle: DbBundle, offset: number, limit: nu
   const files = db
     .select()
     .from(importFiles)
-    .where(inArray(importFiles.status, ["parsed", "parsed_with_claude"]))
+    .where(inArray(importFiles.status, [...LIVE_FILE]))
     .orderBy(asc(importFiles.importedAt), asc(importFiles.id))
     .all()
     .slice(offset, offset + limit);

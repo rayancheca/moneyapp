@@ -6,7 +6,7 @@ import type { AppDatabase } from "@/db/client";
 import { accounts } from "@/db/schema/accounts";
 import { categories } from "@/db/schema/categories";
 import { KEPT_OPENING_SOURCE, balanceAnchors } from "@/db/schema/balances";
-import { importFiles, statementPeriods, type FileFormat, type ImportStatus } from "@/db/schema/imports";
+import { LIVE_FILE, importFiles, isLiveFile, statementPeriods, type FileFormat, type ImportStatus } from "@/db/schema/imports";
 import { institutions } from "@/db/schema/institutions";
 import {
   transactions,
@@ -994,7 +994,7 @@ function coveredRanges(db: AppDatabase, accountId: string): CoveredRange[] {
       and(
         eq(transactions.accountId, accountId),
         inArray(transactions.status, ["active", "quarantined", "excluded"]),
-        inArray(importFiles.status, ["parsed", "parsed_with_claude"]),
+        inArray(importFiles.status, [...LIVE_FILE]),
       ),
     )
     .groupBy(transactions.importFileId)
@@ -1023,7 +1023,7 @@ function coveredRanges(db: AppDatabase, accountId: string): CoveredRange[] {
     .where(
       and(
         eq(statementPeriods.accountId, accountId),
-        inArray(importFiles.status, ["parsed", "parsed_with_claude"]),
+        inArray(importFiles.status, [...LIVE_FILE]),
       ),
     )
     .all();
@@ -1550,7 +1550,7 @@ function retiredReadsOf(db: AppDatabase, sha: string, version: number): (typeof 
   return db
     .select()
     .from(importFiles)
-    .where(and(eq(importFiles.fileSha256, sha), inArray(importFiles.status, ["parsed", "parsed_with_claude"])))
+    .where(and(eq(importFiles.fileSha256, sha), inArray(importFiles.status, [...LIVE_FILE])))
     .all()
     .filter((f) => f.parserVersion < version);
 }
@@ -2425,14 +2425,15 @@ function relocateArchiveOrStay(src: string, folder: string, archiveName: string)
 
 /**
  * An import that faulted outside the steps that report their own failure (a parse, a write): the file fails with its
- * cause, and the upload goes on. A row already `parsed` stays parsed — its read is in the ledger — and only the
- * outcome says what faulted. 🔴 The fault left the upload — the files after it were never read, and the ones before
- * it were never categorized, reconciled, linked or rebuilt (the review, 2026-09-16).
+ * cause, and the upload goes on. A row already live stays as it is — its read is in the ledger (`isLiveFile`) — and
+ * only the outcome says what faulted. 🔴 The fault left the upload — the files after it were never read, and the ones
+ * before it were never categorized, reconciled, linked or rebuilt (the review, 2026-09-16). 🔴 Only a `parsed` row was
+ * kept, and one read with Claude's help was marked `failed` over its live read (the review, 2026-10-01).
  */
 function failedUnexpectedly(db: AppDatabase, file: { name: string }, fileRowId: string | undefined, error: unknown): FileOutcome {
   const cause = `Unexpected: ${error instanceof Error ? error.message : String(error)}`;
   const row = fileRowId === undefined ? undefined : db.select().from(importFiles).where(eq(importFiles.id, fileRowId)).get();
-  if (row !== undefined && row.status !== "parsed") {
+  if (row !== undefined && !isLiveFile(row.status)) {
     // nothing was written: a read of these bytes at an older version is still the one in place
     const kept = retiredReadsOf(db, row.fileSha256, row.parserVersion).length > 0;
     db.update(importFiles)

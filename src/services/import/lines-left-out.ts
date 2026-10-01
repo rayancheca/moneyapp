@@ -2,13 +2,12 @@ import { and, asc, eq, inArray, isNotNull, isNull, notInArray, sql } from "drizz
 import type { AppDatabase } from "@/db/client";
 import { accounts } from "@/db/schema/accounts";
 import { duplicateCandidates } from "@/db/schema/duplicate-candidates";
-import { importFiles, type ImportStatus } from "@/db/schema/imports";
+import { LIVE_FILE, importFiles, type ImportStatus } from "@/db/schema/imports";
 import { transactions } from "@/db/schema/transactions";
 import { diffDays } from "@/lib/dates";
 import { descriptionScore } from "@/lib/description-score";
 import type { LineLeftOutFacts } from "@/lib/import-file-label";
 import {
-  LIVE_FILE,
   augment,
   heirsOn,
   indexRows,
