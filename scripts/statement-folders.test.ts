@@ -7,11 +7,12 @@ import { afterEach, describe, expect, test } from "vitest";
 import { createDatabase } from "@/db/client";
 import { seedDatabase } from "@/db/seed";
 import { fileSha256 } from "@/lib/hash";
+import { archivedName } from "@/services/import/service";
 import { DbTargetRefusal } from "./db-target";
-import { STAGED_PATH_RUNBOOK, archiveRootsFor, refuseArchiveFolders } from "./statement-folders";
+import { STAGED_PATH_RUNBOOK, archiveRootsFor, refuseArchiveFolders, statementFiles } from "./statement-folders";
 
 /**
- * 🔴 The review of the §6A 23 runbook, 2026-09-30: `pnpm import-statements data/statements/chase-checking-3522` — the
+ * 🔴 The review of the §6A 23 runbook: `pnpm import-statements data/statements/chase-checking-3522` — the
  * archive's own folder, where every original is kept as `<sha>-<name>` — recorded the 75 statements under the
  * sha-prefixed name, archived each AGAIN as `<sha>-<sha>-<name>`, and read the folder's archived activity CSV, which no
  * profile matches by that name: a FAILED row on /imports. Restoring the ledger leaves the duplicate files behind.
@@ -25,7 +26,7 @@ const REPO = path.resolve(import.meta.dirname, "..");
 const TSX = path.join(REPO, "node_modules", ".bin", "tsx");
 const MIGRATIONS = path.join(REPO, "src", "db", "migrations");
 const FIXTURE = path.join(REPO, "tests", "fixtures", "synthetic", "chase", "Chase1111_Activity_2026-07-01_2026-07-05.CSV");
-const ACCOUNT_FOLDER = path.join("data", "statements", "chase-checking-1111");
+const ACCOUNT_FOLDER = path.join("data", "statements", "chase-1111");
 const SPAWN_TIMEOUT_MS = 120_000;
 
 const made: string[] = [];
@@ -40,23 +41,24 @@ function tempDir(label: string): string {
   return dir;
 }
 
-/** The archived copy's name, as `recordFile` gives it: the first 16 hex of the sha256, a dash, the name. */
-function archivedName(bytes: Buffer, name: string): string {
-  return `${fileSha256(bytes).slice(0, 16)}-${name}`;
+/** A checkout with no ledger and no archive of its own — an agent's worktree. */
+function bareCheckout(label: string): string {
+  const root = tempDir(label);
+  // the scripts migrate the ledger they open from <cwd>/src/db/migrations
+  fs.mkdirSync(path.join(root, "src", "db"), { recursive: true });
+  fs.symlinkSync(MIGRATIONS, path.join(root, "src", "db", "migrations"));
+  return root;
 }
 
 /** A checkout the scripts can run from: data/moneyapp.db (seeded) and one original in its account's archive folder. */
 function checkout(): string {
-  const root = tempDir("checkout");
-  // the scripts migrate the ledger they open from <cwd>/src/db/migrations
-  fs.mkdirSync(path.join(root, "src", "db"), { recursive: true });
-  fs.symlinkSync(MIGRATIONS, path.join(root, "src", "db", "migrations"));
+  const root = bareCheckout("checkout");
   const { db, sqlite } = createDatabase(path.join(root, "data", "moneyapp.db"), MIGRATIONS);
   seedDatabase(db);
   sqlite.close();
   const bytes = fs.readFileSync(FIXTURE);
   fs.mkdirSync(path.join(root, ACCOUNT_FOLDER), { recursive: true });
-  fs.writeFileSync(path.join(root, ACCOUNT_FOLDER, archivedName(bytes, path.basename(FIXTURE))), bytes);
+  fs.writeFileSync(path.join(root, ACCOUNT_FOLDER, archivedName(fileSha256(bytes), path.basename(FIXTURE))), bytes);
   return root;
 }
 
@@ -114,7 +116,7 @@ function expectRefusedWithTheStagedPath(r: Run, folder: string): void {
   expect(r.err).toContain('pnpm import-statements "$S" --confirm');
 }
 
-/** A bare checkout for the guard itself: data/statements/chase-checking-1111, the drop folder, data/backups. */
+/** A bare checkout for the guard itself: data/statements/chase-1111, the drop folder, data/backups. */
 function shelves(): string {
   const root = tempDir("shelves");
   for (const dir of [ACCOUNT_FOLDER, path.join("statements", "discover"), path.join("data", "backups"), path.join("data", "statements-staged")]) {
@@ -148,7 +150,7 @@ describe("refuseArchiveFolders — a statement folder must stay out of the archi
 
   test("⛔ inside the archive, the archive itself, and a folder holding it — the import reads every subfolder", () => {
     const root = shelves();
-    expect(refusalOf(ACCOUNT_FOLDER, root)).toMatch(/^data\/statements\/chase-checking-1111 is inside the statement archive, data\/statements\./);
+    expect(refusalOf(ACCOUNT_FOLDER, root)).toMatch(/^data\/statements\/chase-1111 is inside the statement archive, data\/statements\./);
     expect(refusalOf("data/statements", root)).toMatch(/^data\/statements is the statement archive, data\/statements, and the import reads every subfolder\./);
     expect(refusalOf("data", root)).toMatch(/^data holds the statement archive, data\/statements, and the import reads every subfolder\./);
     expect(refusalOf(".", root)).toMatch(/^\. holds the statement archive/);
@@ -159,12 +161,12 @@ describe("refuseArchiveFolders — a statement folder must stay out of the archi
     // os.tmpdir() is /var/folders/… on macOS; the archive's real path is /private/var/folders/…
     expect(refusalOf(path.join(root, ACCOUNT_FOLDER), root)).toContain("is inside the statement archive");
     fs.symlinkSync(path.join(root, "data", "statements"), path.join(root, "shelf"));
-    expect(refusalOf("shelf/chase-checking-1111", root)).toMatch(/^shelf\/chase-checking-1111 is inside the statement archive/);
+    expect(refusalOf("shelf/chase-1111", root)).toMatch(/^shelf\/chase-1111 is inside the statement archive/);
     expect(refusalOf("shelf", root)).toMatch(/^shelf is the statement archive/);
-    expect(refusalOf("data/backups/../statements/chase-checking-1111", root)).toContain("is inside the statement archive");
+    expect(refusalOf("data/backups/../statements/chase-1111", root)).toContain("is inside the statement archive");
     // the file system follows `hop` and THEN climbs: hop/.. is data/statements, where `path.resolve` would say <root>
     fs.symlinkSync(path.join(root, ACCOUNT_FOLDER), path.join(root, "hop"));
-    expect(refusalOf("hop/../chase-checking-1111", root)).toMatch(/^hop\/\.\.\/chase-checking-1111 is inside the statement archive/);
+    expect(refusalOf("hop/../chase-1111", root)).toMatch(/^hop\/\.\.\/chase-1111 is inside the statement archive/);
   });
 
   test("⛔ the archive reached through a symlink is the archive: its real path is what is compared", () => {
@@ -185,7 +187,7 @@ describe("refuseArchiveFolders — a statement folder must stay out of the archi
 
   test.runIf(caseBlind)("⛔ a letter case the file system ignores names the same folder (realpathSync.native)", () => {
     const root = shelves();
-    expect(refusalOf("DATA/Statements/Chase-Checking-1111", root)).toContain("is inside the statement archive");
+    expect(refusalOf("DATA/Statements/Chase-1111", root)).toContain("is inside the statement archive");
   });
 
   test("⛔ a folder with nothing behind it is refused — there is no real path to compare", () => {
@@ -211,7 +213,7 @@ describe("refuseArchiveFolders — a statement folder must stay out of the archi
     const inside = refusalOf(ACCOUNT_FOLDER, root);
     expect(inside).toContain(`Re-drop the originals from the staged path instead (${STAGED_PATH_RUNBOOK}, step 2)`);
     expect(inside).toContain(
-      '  S=$(mktemp -d); for f in data/statements/chase-checking-1111/*.pdf; do b=$(basename "$f"); h=${b%%-*}; ' +
+      '  S=$(mktemp -d); for f in data/statements/chase-1111/*.pdf; do b=$(basename "$f"); h=${b%%-*}; ' +
         'mkdir -p "$S/$h" && cp "$f" "$S/$h/${b#????????????????-}"; done\n' +
         '  pnpm trial-import "$S"\n' +
         '  pnpm import-statements "$S" --confirm',
@@ -220,6 +222,88 @@ describe("refuseArchiveFolders — a statement folder must stay out of the archi
     // an archive outside the working directory is named whole
     const copy = tempDir("copy-archive");
     expect(refusalOf(copy, root, [copy])).toContain(`${copy} is the statement archive, ${copy},`);
+  });
+
+  test("the loop it prints is the runbook's, measured there on the 75 Chase statements — the file it names holds it", () => {
+    const runbook = fs.readFileSync(path.join(REPO, STAGED_PATH_RUNBOOK), "utf8");
+    expect(runbook).toContain('S=$(mktemp -d); for f in data/statements/chase-checking-3522/*.pdf; do b=$(basename "$f"); h=${b%%-*}');
+    expect(runbook).toContain('mkdir -p "$S/$h" && cp "$f" "$S/$h/${b#????????????????-}"; done');
+    expect(runbook).toContain('pnpm trial-import "$S"');
+    expect(runbook).toContain('pnpm import-statements "$S" --confirm');
+  });
+});
+
+describe("statementFiles — what both commands hand the import", () => {
+  const ORIGINAL = path.basename(FIXTURE);
+  const bytes = (): Buffer => fs.readFileSync(FIXTURE);
+
+  function readOrRefusal(folder: string, root: string): string | string[] {
+    try {
+      return statementFiles([folder], ownArchive(root), root).map((f) => `${f.name}:${fileSha256(f.buffer).slice(0, 8)}`);
+    } catch (error: unknown) {
+      if (error instanceof DbTargetRefusal) return error.message;
+      throw error;
+    }
+  }
+
+  test("every statement file in the folder, subfolders included, under its own name and bytes — nothing else", () => {
+    const root = shelves();
+    const stage = staged();
+    fs.writeFileSync(path.join(stage, "notes.txt"), "not a statement");
+    fs.writeFileSync(path.join(stage, ".DS_Store"), "finder");
+    fs.mkdirSync(path.join(stage, "deeper", "still"), { recursive: true });
+    fs.writeFileSync(path.join(stage, "deeper", "still", "Statement.PDF"), "%PDF-");
+    const pdf = `Statement.PDF:${fileSha256(Buffer.from("%PDF-")).slice(0, 8)}`;
+    const csv = `${ORIGINAL}:${fileSha256(bytes()).slice(0, 8)}`;
+    expect(readOrRefusal(stage, root)).toEqual(expect.arrayContaining([pdf, csv]));
+    expect(readOrRefusal(stage, root)).toHaveLength(2);
+  });
+
+  test("⛔ a file named as the archive names its own copy is refused wherever it lies — a copy, or a symlink", () => {
+    const root = shelves();
+    const copied = tempDir("copied");
+    fs.writeFileSync(path.join(copied, archivedName(fileSha256(bytes()), ORIGINAL)), bytes());
+    const refused = readOrRefusal(copied, root);
+    expect(refused).toContain(`${path.join(copied, archivedName(fileSha256(bytes()), ORIGINAL))} is a copy out of the statement archive`);
+    // the staged path copies from the folder the copy lies in
+    expect(refused).toContain(`for f in ${copied}/*.pdf;`);
+
+    const linked = tempDir("linked");
+    fs.mkdirSync(path.join(linked, "sub"));
+    const archived = path.join(root, ACCOUNT_FOLDER, archivedName(fileSha256(bytes()), ORIGINAL));
+    fs.writeFileSync(archived, bytes());
+    fs.symlinkSync(archived, path.join(linked, "sub", path.basename(archived)));
+    expect(readOrRefusal(linked, root)).toContain(`${path.join(linked, "sub", path.basename(archived))} is a copy out of the statement archive`);
+  });
+
+  test("the name is checked against the file's OWN bytes: another file's prefix, or a symlink under the recorded name, is read", () => {
+    const root = shelves();
+    const stage = tempDir("lookalike");
+    // sixteen hex and a dash — some other file's
+    fs.writeFileSync(path.join(stage, `${"0".repeat(16)}-${ORIGINAL}`), bytes());
+    expect(readOrRefusal(stage, root)).toEqual([`${"0".repeat(16)}-${ORIGINAL}:${fileSha256(bytes()).slice(0, 8)}`]);
+
+    // the runbook's staged path, by symlink instead of copy: the name the ledger records, the archive's bytes
+    const farm = tempDir("farm");
+    const archived = path.join(root, ACCOUNT_FOLDER, archivedName(fileSha256(bytes()), ORIGINAL));
+    fs.writeFileSync(archived, bytes());
+    fs.symlinkSync(archived, path.join(farm, ORIGINAL));
+    expect(readOrRefusal(farm, root)).toEqual([`${ORIGINAL}:${fileSha256(bytes()).slice(0, 8)}`]);
+  });
+
+  test("the files are read where the folder's real path puts them: `jump/..` climbs from where `jump` leads", () => {
+    const root = shelves();
+    fs.mkdirSync(path.join(root, "outer", "inner"), { recursive: true });
+    fs.writeFileSync(path.join(root, "outer", "inner", ORIGINAL), bytes());
+    fs.symlinkSync(path.join(root, "outer", "inner"), path.join(root, "jump"));
+    // jump/.. is outer — so jump/../inner is outer/inner, where `path.join` would read <root>/inner
+    expect(readOrRefusal("jump/../inner", root)).toEqual([`${ORIGINAL}:${fileSha256(bytes()).slice(0, 8)}`]);
+  });
+
+  test("⛔ a folder inside the archive is refused whatever its files are named — before a byte of them is read", () => {
+    const root = shelves();
+    fs.writeFileSync(path.join(root, ACCOUNT_FOLDER, ORIGINAL), bytes());
+    expect(readOrRefusal(ACCOUNT_FOLDER, root)).toMatch(/is inside the statement archive/);
   });
 });
 
@@ -270,7 +354,7 @@ describe("⛔ pnpm import-statements refuses a folder inside the statement archi
     const root = checkout();
     expectRefusedWithTheStagedPath(run(root, "import-statements", [path.join(root, ACCOUNT_FOLDER)]), path.join(root, ACCOUNT_FOLDER));
     fs.symlinkSync(path.join(root, "data", "statements"), path.join(root, "shelf"));
-    expectRefusedWithTheStagedPath(run(root, "import-statements", ["shelf/chase-checking-1111"]), "shelf/chase-checking-1111");
+    expectRefusedWithTheStagedPath(run(root, "import-statements", ["shelf/chase-1111"]), "shelf/chase-1111");
   });
 
   test("a folder that HOLDS the archive is refused too: the import walks every subfolder", () => {
@@ -300,6 +384,24 @@ describe("⛔ pnpm import-statements refuses a folder inside the statement archi
     expect(r.status).toBe(0);
     expect(r.out).toContain(`Would import 1 files from ${stage}`);
   });
+
+  test("…and imported from there, it is recorded under that name and adds nothing to the archive", () => {
+    const root = checkout();
+    const before = listing(path.join(root, "data", "statements"));
+    const r = run(root, "import-statements", [staged(), "--confirm"]);
+    expect(r.status).toBe(0);
+    expect(r.out).toContain("parsed               1");
+    // the original is archived under its hashed name already, and the import finds it there (`archiveTo`)
+    expect(listing(path.join(root, "data", "statements"))).toEqual(before);
+    const sqlite = new Database(path.join(root, "data", "moneyapp.db"), { readonly: true, fileMustExist: true });
+    try {
+      expect(sqlite.prepare("SELECT file_name, status FROM import_files").all()).toEqual([
+        { file_name: path.basename(FIXTURE), status: "parsed" },
+      ]);
+    } finally {
+      sqlite.close();
+    }
+  });
 });
 
 describe("⛔ pnpm trial-import refuses the same folders", { timeout: SPAWN_TIMEOUT_MS }, () => {
@@ -314,7 +416,7 @@ describe("⛔ pnpm trial-import refuses the same folders", { timeout: SPAWN_TIME
   test("through a symlink to the archive, and a folder holding it", () => {
     const root = checkout();
     fs.symlinkSync(path.join(root, "data", "statements"), path.join(root, "shelf"));
-    expectRefusedWithTheStagedPath(run(root, "trial-import", ["shelf/chase-checking-1111"]), "shelf/chase-checking-1111");
+    expectRefusedWithTheStagedPath(run(root, "trial-import", ["shelf/chase-1111"]), "shelf/chase-1111");
     expectRefusedWithTheStagedPath(run(root, "trial-import", ["."]), ".");
     expect(fs.existsSync(path.join(root, ".trial"))).toBe(false);
   });
@@ -326,5 +428,33 @@ describe("⛔ pnpm trial-import refuses the same folders", { timeout: SPAWN_TIME
     expect(r.status).toBe(0);
     expect(r.out).toContain(`Trial-importing 1 files from ${stage}`);
     expect(r.out).toContain("parsed               1");
+  });
+});
+
+/**
+ * The same copies outside any archive the run knows of. Named after their own bytes, `<sha>-<name>`, they do to the
+ * ledger exactly what the archive's folder does — wherever they lie.
+ */
+describe("⛔ the archive's copies are refused wherever they lie", { timeout: SPAWN_TIMEOUT_MS }, () => {
+  test("an archive folder copied out of data/ — `cp -r` keeps the archive's names", () => {
+    const root = checkout();
+    const copied = tempDir("copied");
+    for (const f of fs.readdirSync(path.join(root, ACCOUNT_FOLDER))) {
+      fs.copyFileSync(path.join(root, ACCOUNT_FOLDER, f), path.join(copied, f));
+    }
+    expectRefusedWithTheStagedPath(run(root, "import-statements", [copied]), copied);
+    expectRefusedWithTheStagedPath(run(root, "trial-import", [copied]), copied);
+    expect(fs.existsSync(path.join(root, ".trial"))).toBe(false);
+  });
+
+  test("another checkout's archive, read from a worktree — which has none of its own — into a copy", () => {
+    const main = checkout();
+    const worktree = bareCheckout("worktree");
+    const copyDir = tempDir("copy");
+    const copy = path.join(copyDir, "copy.db");
+    fs.copyFileSync(path.join(main, "data", "moneyapp.db"), copy);
+    const theirs = path.join(main, ACCOUNT_FOLDER);
+    expectRefusedWithTheStagedPath(run(worktree, "import-statements", [theirs, `--db=${copy}`]), theirs);
+    expectRefusedWithTheStagedPath(run(worktree, "trial-import", [theirs, `--from=${copy}`]), theirs);
   });
 });

@@ -1217,6 +1217,15 @@ function statementsRoot(): string {
   return process.env.MONEYAPP_ORIGINALS_DIR ?? defaultStatementsRoot();
 }
 
+/**
+ * The name the archive keeps an original under: the first 16 hex of its sha256, a dash, its own name. Exported for the
+ * commands that must know such a copy when one is handed back to the import (scripts/statement-folders.ts) — read as
+ * an original, it is recorded under this name and archived again as `<sha>-<sha>-<name>`.
+ */
+export function archivedName(sha: string, safeName: string): string {
+  return `${sha.slice(0, 16)}-${safeName}`;
+}
+
 /** Writes an original into <root>/<folder>/, deduping on the content-hashed name. */
 function archiveTo(folder: string, archiveName: string, buffer: Buffer): string {
   const dir = path.join(statementsRoot(), folder);
@@ -1793,7 +1802,7 @@ function recordFile(db: AppDatabase, member: ReadMember): RecordedFile {
     .basename(file.name)
     .replaceAll(/[\p{Cc}\p{Cf}]/gu, "")
     .slice(0, 80);
-  const archiveName = `${sha.slice(0, 16)}-${safeName}`;
+  const archiveName = archivedName(sha, safeName);
   // archive into the institution bucket first — the correct resting place for a
   // parse failure; a successful single-account parse relocates it to the
   // per-account folder once the account is known. A re-parse keeps the physical

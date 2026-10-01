@@ -6,7 +6,7 @@ import { accountCoverage } from "@/services/coverage";
 import { netWorthSeries } from "@/services/derivation";
 import { importStatementFiles, type ImportInput } from "@/services/import/service";
 import { DbTargetRefusal, dbTargetFrom, strayFlags } from "./db-target";
-import { archiveRootsFor, refuseArchiveFolders } from "./statement-folders";
+import { archiveRootsFor, statementFiles } from "./statement-folders";
 
 /**
  * Imports a folder of statements into a THROWAWAY COPY of the real database and
@@ -43,37 +43,28 @@ const TRIAL_ORIGINALS = path.join(SCRATCH, "originals");
  * ignoring it here would trial the REAL ledger while the operator believes the
  * copy was read. See ./db-target.ts.
  *
- * ⛔ So is a folder import-statements would refuse against the same ledger — one
- * inside the statement archive or holding it (./statement-folders.ts) — and one
- * in the trial's own archive, which the trial wipes before it reads: a diff for
- * an import that cannot run is not a trial of anything.
+ * ⛔ So are the folders import-statements would refuse against the same ledger —
+ * one inside the statement archive or holding it, or any file in them named as
+ * the archive names its copies (./statement-folders.ts) — and one in the trial's
+ * own archive, which the trial wipes before it reads: a diff for an import that
+ * cannot run is not a trial of anything. They are read here, before the trial
+ * copy is made.
  */
-function sourceDb(): string {
+function commandLine(): { sourceDb: string; files: ImportInput[] } {
   const argv = process.argv.slice(2);
   try {
     const stray = strayFlags(argv, ["--from"]);
     if (stray.length > 0) throw new DbTargetRefusal(`unknown flag ${stray.join(", ")} — the trial's source is --from=<db>`);
     const source = dbTargetFrom(argv, { flag: "--from", required: false, cwd: process.cwd(), exists: fs.existsSync });
-    refuseArchiveFolders(args, [...archiveRootsFor(source, process.cwd(), process.env), TRIAL_ORIGINALS], process.cwd());
-    return source.path;
+    const files = statementFiles(args, [...archiveRootsFor(source, process.cwd(), process.env), TRIAL_ORIGINALS], process.cwd());
+    return { sourceDb: source.path, files };
   } catch (error: unknown) {
     if (!(error instanceof DbTargetRefusal)) throw error;
     console.error(`REFUSED: ${error.message}`);
     process.exit(2);
   }
 }
-const SOURCE_DB = sourceDb();
-
-function collect(dir: string): ImportInput[] {
-  return fs
-    .readdirSync(dir, { withFileTypes: true })
-    .flatMap((entry) => {
-      const full = path.join(dir, entry.name);
-      if (entry.isDirectory()) return collect(full);
-      if (!/\.(pdf|csv|qfx|ofx)$/i.test(entry.name)) return [];
-      return [{ name: entry.name, buffer: fs.readFileSync(full) }];
-    });
-}
+const { sourceDb: SOURCE_DB, files: FILES } = commandLine();
 
 interface Snapshot {
   netWorthCents: number;
@@ -152,10 +143,9 @@ async function main(): Promise<void> {
   const { db, sqlite } = createDatabase(TRIAL_DB);
   const before = snapshot(db, sqlite);
 
-  const files = args.flatMap((dir) => collect(dir));
-  console.log(`Trial-importing ${files.length} files from ${args.join(", ")}\n`);
+  console.log(`Trial-importing ${FILES.length} files from ${args.join(", ")}\n`);
 
-  const outcomes = await importStatementFiles(db, files);
+  const outcomes = await importStatementFiles(db, FILES);
 
   const byStatus = outcomes.reduce<Record<string, number>>((acc, o) => {
     acc[o.status] = (acc[o.status] ?? 0) + 1;
