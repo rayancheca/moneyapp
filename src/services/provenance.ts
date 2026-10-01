@@ -16,8 +16,8 @@ import { isStaleClose } from "@/lib/holding-price-age";
 import { formatCents } from "@/lib/money";
 import { emptyPeriodReason } from "@/lib/empty-period";
 import { ledgerOpens, ledgerReaches } from "./observation-frontier";
-import { ownPortfolioAccountIds } from "./accounts";
-import { activeTxnsInRange, loadCategoryIndex, spendingBucket, uncategorizedWhere } from "./analytics";
+import { outsidePortfolioCashAccountIds, ownPortfolioAccountIds } from "./accounts";
+import { activeTxnsInRange, loadCategoryIndex, offAgentsCash, spendingBucket, uncategorizedWhere } from "./analytics";
 import { handTypedDays, keptOpeningOf } from "./anchor-winners";
 import { accountCoverage, chainFooting, footingThrough, type AccountCoverage, type CoverageGrade } from "./coverage";
 import {
@@ -1630,6 +1630,13 @@ function categorySpendProvenance(
   const scope = idx.uncategorizedIds.has(categoryId)
     ? uncategorizedWhere(idx)
     : inArray(transactions.categoryId, ids);
+  /*
+   * ⚖️ …and an income category's total is his rows: `spendingTransactions` leaves the agent's cash out of it, either
+   * sign (`isAgentsIncomeCategoryRow`), so the proof does too. 🔴 Counting them, `/categories/<Income>`'s popover
+   * would name the agent's rows — "the sum of 4 rows" — under a headline of 2 transactions.
+   */
+  const his =
+    idx.topLevelOf(categoryId).kind === "income" ? offAgentsCash([...outsidePortfolioCashAccountIds(db)]) : undefined;
 
   const rows = db
     .select(SUM_ROW_COLUMNS)
@@ -1637,6 +1644,7 @@ function categorySpendProvenance(
     .where(
       and(
         scope,
+        his,
         eq(transactions.status, "active"),
         gte(transactions.postedOn, from),
         lte(transactions.postedOn, to),

@@ -5,10 +5,12 @@ import { categories, type CategoryKind } from "@/db/schema/categories";
 import { addDays, periodBounds } from "@/lib/dates";
 import { unreachedKind, type UnreachedKind } from "@/lib/empty-period";
 import { withOwnRow } from "@/lib/subcategory-rows";
+import { outsidePortfolioCashAccountIds } from "./accounts";
 import {
   categorySpending,
   spendingTransactions,
   hrefCategoryId,
+  isAgentsIncomeSeries,
   ledgerHref,
   loadCategoryIndex,
   monthKeysBack,
@@ -311,8 +313,15 @@ export function seriesInCategory(db: AppDatabase, categoryId: string, today: str
     ),
   );
 
+  const agentsCash = outsidePortfolioCashAccountIds(db);
   return listSeries(db, today)
     .filter((s) => ids.has(s.id))
+    /*
+     * ⚖️ What the agent's cash is paid is not his income (`isAgentsIncomeSeries`, owner decision 2026-09-28): its
+     * rows are none of this page's (`spendingTransactions`), so its series is none of this card's. 🔴 The agent's
+     * month-end interest was listed under `/categories/<Income>` beside his pay.
+     */
+    .filter((s) => !isAgentsIncomeSeries(agentsCash, s))
     /*
      * ⛔ DISMISSED IS THE OWNER SAYING "NOT RECURRING", and this card is headed
      * "Recurring series". It is also the detector's re-detection sink, so those
