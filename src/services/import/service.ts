@@ -73,6 +73,7 @@ import {
   settleKeptOpenings,
 } from "./kept-openings";
 import {
+  accountsCopiedBy,
   copyHandOvers,
   forgetStatementCopies,
   handOverToCopies,
@@ -1278,20 +1279,25 @@ function accountWithInstitution(
 }
 
 /**
- * The archive folder for a parsed file: the per-account slug for a single-account
- * file (the norm), an <institution>-combined bucket for a multi-account file
- * (SoFi combined, multi-account QFX), or the institution bucket as a fallback.
+ * The archive folder a file's accounts file its original in: the per-account slug
+ * for a single-account file (the norm), an <institution>-combined bucket for a
+ * multi-account file (SoFi combined, multi-account QFX) — null for no account:
+ * nothing then says whose statement it is.
+ */
+function accountsFolder(db: AppDatabase, accountIds: readonly string[]): string | null {
+  if (accountIds.length === 0) return null;
+  const { account, institutionName } = accountWithInstitution(db, accountIds[0]!);
+  if (accountIds.length > 1) return `${institutionSlug(institutionName)}-combined`;
+  return accountSlug(account, institutionName);
+}
+
+/**
+ * The archive folder for a parsed file: its accounts' (`accountsFolder`), or — for
+ * a read that resolved none — the bucket of the institution the importer guessed
+ * from its name, where its original was archived before the parse (`recordFile`).
  */
 function resolveArchiveFolder(db: AppDatabase, accountIds: string[], fallbackInstitution: string): string {
-  if (accountIds.length === 1) {
-    const { account, institutionName } = accountWithInstitution(db, accountIds[0]!);
-    return accountSlug(account, institutionName);
-  }
-  if (accountIds.length > 1) {
-    const { institutionName } = accountWithInstitution(db, accountIds[0]!);
-    return `${institutionSlug(institutionName)}-combined`;
-  }
-  return institutionSlug(fallbackInstitution);
+  return accountsFolder(db, accountIds) ?? institutionSlug(fallbackInstitution);
 }
 
 export interface ImportInput {
@@ -2898,7 +2904,11 @@ export interface StorageMigration {
   importFileId: string;
   fileName: string;
   from: string;
-  to: string;
+  /**
+   * where the accounts its reads resolved file the original — null when they name
+   * none: nothing says whose statement it is, and it stays at `from`
+   */
+  to: string | null;
   moved: boolean;
 }
 
@@ -2906,9 +2916,12 @@ export interface StorageMigration {
  * Relocates already-imported originals into the per-account archive
  * (data/statements/<account-slug>/), for files ingested before per-account
  * storage existed. Each original's folder is derived from every account a read of
- * it resolved (`accountsReadBy`) — the real account, not the file's guessed
- * institution. With move: false it only rewrites storage_path (dry validation);
- * with move: true it also relocates the physical file. Idempotent.
+ * it resolved (`accountsReadBy`) — the real account, never the file's guessed
+ * institution: an original no account places stays where it is, reported with
+ * `to: null`. With move: false nothing is written and every move it would make is
+ * reported; with move: true each original moves and every read naming it is
+ * repointed. Idempotent: a second run moves nothing, and reports the originals it
+ * cannot place again.
  *
  * ⛔ One original, every read of it: a re-read archives under the content-hashed
  * name its older read already holds (`recordFile`) and `relocateArchive` drops the
@@ -2927,6 +2940,14 @@ export interface StorageMigration {
  * same copy, an empty file standing in for each original, move: true: 14 live
  * second downloads sent to the bucket and 11 reads (1 live) left naming no file.
  * Now 0 and 0.
+ *
+ * 🔴 …and an original no read of it placed went to the bucket of the bank the
+ * importer guessed from its name (`guessInstitution`) — a Robinhood statement
+ * named by a UUID guesses Chase. Measured on a copy of the real ledger,
+ * 2026-10-01, move: false: 44 retired reads (22 originals in robinhood-cash/)
+ * bound for chase/, each read again under another name or into
+ * robinhood-combined/, its retirement having forgotten its account. Now 0: they
+ * stay, reported.
  */
 export function migrateStorageLayout(db: AppDatabase, opts: { move: boolean }): StorageMigration[] {
   const paths = db.select({ storagePath: importFiles.storagePath }).from(importFiles).all();
@@ -2934,14 +2955,16 @@ export function migrateStorageLayout(db: AppDatabase, opts: { move: boolean }): 
   for (const from of new Set(paths.map((r) => r.storagePath))) {
     // every read naming the original, as the moves before it left them
     const reads = db.select().from(importFiles).where(eq(importFiles.storagePath, from)).all();
-    const accountIds = [...new Set(reads.flatMap((r) => accountsReadBy(db, r.id)))];
-
-    const fallback = db
-      .select({ name: institutions.name })
-      .from(institutions)
-      .where(eq(institutions.id, reads[0]!.institutionId))
-      .get()!.name;
-    const folder = resolveArchiveFolder(db, accountIds, fallback);
+    const report = (to: string | null, moved: boolean) => {
+      for (const read of reads) results.push({ importFileId: read.id, fileName: read.fileName, from, to, moved });
+    };
+    // ⛔ never the bucket of the bank the importer guessed: that is where an import
+    // leaves a file it could not read, not a placement
+    const folder = accountsFolder(db, [...new Set(reads.flatMap((r) => accountsReadBy(db, r.id)))]);
+    if (folder === null) {
+      report(null, false);
+      continue;
+    }
     const dest = path.join(statementsRoot(), folder, path.basename(from));
     if (dest === from) continue;
 
@@ -2962,23 +2985,35 @@ export function migrateStorageLayout(db: AppDatabase, opts: { move: boolean }): 
       // and repoint every read that named it
       if (moved) db.update(importFiles).set({ storagePath: dest }).where(eq(importFiles.storagePath, from)).run();
     }
-    for (const read of reads) results.push({ importFileId: read.id, fileName: read.fileName, from, to: dest, moved });
+    report(dest, moved);
   }
   return results;
 }
 
 /**
  * Every account a file's read resolved — what its import filed the original by
- * (`settleMember`): the accounts it prints on (`accountsPrintedBy`), and the ones
- * it wrote to (`accountsWrittenBy`), for a file imported before that record
- * existed and a retired read whose retirement forgot it.
+ * (`settleMember`): the accounts it prints on (`accountsPrintedBy`), the ones it
+ * prints a statement of as a second download (`accountsCopiedBy`), and the ones
+ * it wrote to (`accountsWrittenBy`), for a file imported before those records
+ * existed and a retired read whose retirement forgot them.
  *
- * ⚠️ `statement_copies` is not read: a copy is recorded in the same write as the
- * lines it prints, so it names no account `printed_lines` does not (on the real
- * ledger, 2026-09-28: 0 of its 105 records do).
+ * 🔴 The copy record was left out: the import records a copy and what it prints
+ * in one write, so one names no account the other does not. But a copy imported
+ * before either record existed got each from a backfill of its own, and
+ * scripts/record-printed-lines.ts skips a section none of whose lines a row
+ * records, where scripts/record-statement-copies.ts records the copy. Once its
+ * days cite another download, that record alone names its account — and the
+ * migration took the copy out of its first download's folder. (His ledger,
+ * 2026-10-01: all 105 copy records have their lines recorded.)
  */
 function accountsReadBy(db: AppDatabase, importFileId: string): string[] {
-  return [...new Set([...accountsPrintedBy(db, importFileId), ...accountsWrittenBy(db, importFileId)])];
+  return [
+    ...new Set([
+      ...accountsPrintedBy(db, importFileId),
+      ...accountsCopiedBy(db, importFileId),
+      ...accountsWrittenBy(db, importFileId),
+    ]),
+  ];
 }
 
 /** Group ids per query — well under SQLite's bound-parameter limit. */

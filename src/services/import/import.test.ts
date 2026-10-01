@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { and, eq, inArray, ne } from "drizzle-orm";
+import { and, eq, inArray, ne, type SQL } from "drizzle-orm";
 import { afterEach, beforeAll, beforeEach, describe, expect, test } from "vitest";
 import { createDatabase, type DbBundle } from "@/db/client";
 import { seedDatabase } from "@/db/seed";
@@ -11,7 +11,7 @@ import { categories } from "@/db/schema/categories";
 import { institutions } from "@/db/schema/institutions";
 import { createAccount } from "@/services/accounts";
 import { recurringSeries } from "@/db/schema/recurring";
-import { statementCopies, statementPeriods } from "@/db/schema/imports";
+import { printedLines, statementCopies, statementPeriods } from "@/db/schema/imports";
 import { transactions } from "@/db/schema/transactions";
 import { unimportedRowAttributes } from "@/db/schema/unimported-row-attributes";
 import { unimportedTransferLegs } from "@/db/schema/unimported-transfer-legs";
@@ -3965,6 +3965,142 @@ describe("a parser-version re-read that no longer writes an account", () => {
     } finally {
       unlock();
     }
+  });
+});
+
+/*
+ * 🔴 The layout migration filed an original no account placed in the bucket of the bank the importer GUESSED from its
+ * name and first lines (`guessInstitution`) — and a Robinhood statement named by a UUID guesses Chase. Measured on a copy
+ * of the real ledger, 2026-10-01 (every storage path rebased onto a scratch root, an empty file standing in for each
+ * original, move: false): 44 retired reads of Robinhood statements, 22 originals in robinhood-cash/, bound for chase/.
+ * Each was read again under another name (its archive's) or into robinhood-combined/, so no live read names it, and its
+ * retirement forgot everything that named its account. An original the rule cannot place stays where it is, reported.
+ */
+describe("the layout migration never files an original in another bank's folder", () => {
+  /** a name and first lines that name no bank: the importer guesses Chase */
+  const UNNAMED = "4c3487e8-";
+  const CASH: AccountHint = { institution: "Robinhood", type: "checking", last4: "7307" };
+  const SAVINGS: AccountHint = { institution: "Robinhood", type: "savings", last4: "7308" };
+  /** a later version that reads the savings section as well: its read is archived in robinhood-combined/ */
+  let readsSavings = false;
+  const marchOf = (accountHint: AccountHint): ParsedStatement => ({
+    accountHint,
+    txns: [],
+    period: { start: "2026-03-01", end: "2026-03-31", beginCents: 5000, endCents: 5000 },
+  });
+  const unnamedProfile: ParserProfile = {
+    id: "test-unnamed-robinhood-statement",
+    version: 1,
+    matches: (f) => f.name.includes(UNNAMED),
+    parse: () => (readsSavings ? [marchOf(CASH), marchOf(SAVINGS)] : [marchOf(CASH)]),
+  };
+
+  beforeEach(() => {
+    readsSavings = false;
+    unnamedProfile.version = 1;
+    PROFILES.unshift(unnamedProfile);
+  });
+
+  afterEach(() => {
+    PROFILES.splice(PROFILES.indexOf(unnamedProfile), 1);
+  });
+
+  const MARCH: ImportInput = { name: `${UNNAMED}2026-03.txt`, buffer: Buffer.from("2026-03") };
+  const reads = (where: SQL) => bundle.db.select().from(importFilesTable).where(where).all();
+  const readById = (id: string) => reads(eq(importFilesTable.id, id))[0]!;
+  const folderOf = (storagePath: string) => path.relative(path.join(dir, "originals"), path.dirname(storagePath));
+  const chaseBucket = () => path.join(dir, "originals", "chase");
+  const NOTHING = { rows: [], periods: [], anchors: [], printed: [], copies: [] };
+
+  /** The account each record a read keeps names: its rows, periods and anchors, what it prints, the copies it prints. */
+  function namedBy(fileId: string) {
+    const { db } = bundle;
+    const ids = (rows: { accountId: string }[]) => rows.map((r) => r.accountId);
+    return {
+      rows: ids(db.select().from(transactions).where(eq(transactions.importFileId, fileId)).all()),
+      periods: ids(db.select().from(statementPeriods).where(eq(statementPeriods.importFileId, fileId)).all()),
+      anchors: ids(db.select().from(balanceAnchors).where(eq(balanceAnchors.importFileId, fileId)).all()),
+      printed: ids(db.select().from(printedLines).where(eq(printedLines.importFileId, fileId)).all()),
+      copies: ids(db.select().from(statementCopies).where(eq(statementCopies.importFileId, fileId)).all()),
+    };
+  }
+
+  test.each<[string, (archived: string) => ImportInput]>([
+    // his v3 read of ddb95dd0-….pdf: uploaded as 08288ef6e518a5a9-ddb95dd0-….pdf, its archive's name
+    [
+      "under the name its archive gave it",
+      (archived) => ({ ...MARCH, name: path.basename(archived) }),
+    ],
+    // his v4 read of 747059b1-….pdf: archived in robinhood-combined/, its v1 and v2 left in robinhood-cash/
+    [
+      "with a section more, into the folder of both its accounts",
+      () => {
+        readsSavings = true;
+        return MARCH;
+      },
+    ],
+  ])("an original no read of it places stays where it is, reported — a statement read again %s", async (_, again) => {
+    await importStatementFiles(bundle.db, [MARCH]);
+    const [first] = reads(eq(importFilesTable.fileName, MARCH.name));
+    unnamedProfile.version = 2;
+    const [outcome] = await importStatementFiles(bundle.db, [again(first!.storagePath)]);
+    const retired = readById(first!.id);
+    // the premise: a fresh read retired the first, and no other read names the first's original…
+    expect(outcome!.status).toBe("parsed");
+    expect(retired.status).toBe("superseded");
+    expect(reads(eq(importFilesTable.storagePath, retired.storagePath))).toHaveLength(1);
+    // …nothing the retired read keeps names its account…
+    expect(namedBy(retired.id)).toEqual(NOTHING);
+    // …and the import archived it in that account's folder, while guessing the file was Chase's
+    expect(folderOf(retired.storagePath)).toBe("robinhood-checking-7307");
+    const guessed = bundle.db.select().from(institutions).where(eq(institutions.id, retired.institutionId)).get()!;
+    expect(guessed.name).toBe("Chase");
+    expect(fs.existsSync(chaseBucket())).toBe(false);
+
+    const moves = migrateStorageLayout(bundle.db, { move: true });
+
+    // it stays where the import put it, reported as an original the rule cannot place — and nothing went to Chase
+    expect(moves).toEqual([
+      { importFileId: retired.id, fileName: retired.fileName, from: retired.storagePath, to: null, moved: false },
+    ]);
+    expect(readById(retired.id).storagePath).toBe(retired.storagePath);
+    expect(fs.readFileSync(retired.storagePath)).toEqual(MARCH.buffer);
+    expect(fs.existsSync(chaseBucket())).toBe(false);
+    // a second run reports it again, and moves nothing
+    expect(migrateStorageLayout(bundle.db, { move: true })).toEqual(moves);
+  });
+
+  /**
+   * 🔴 …and a second download is placed by what it prints, where nothing but the record of its copy says it. The import
+   * records a copy and its lines in one write; a copy imported before both records existed got each from a backfill of
+   * its own, and scripts/record-printed-lines.ts skips a section none of whose lines a row records, where
+   * scripts/record-statement-copies.ts records the copy. Once its days cite another download, the copy record is all
+   * that names its account.
+   */
+  test("a second download that holds only the record of its copy stays beside the first", async () => {
+    const SECOND: ImportInput = { name: `${UNNAMED}2026-03 (1).txt`, buffer: Buffer.from("2026-03\n") };
+    await importStatementFiles(bundle.db, [MARCH]);
+    await importStatementFiles(bundle.db, [SECOND]);
+    const [first] = reads(eq(importFilesTable.fileName, MARCH.name));
+    const [copy] = reads(eq(importFilesTable.fileName, SECOND.name));
+    // the ledger those backfills leave: nothing recorded of what the copy prints, and its days citing the first download
+    bundle.db.delete(printedLines).where(eq(printedLines.importFileId, copy!.id)).run();
+    bundle.db
+      .update(balanceAnchors)
+      .set({ importFileId: first!.id })
+      .where(eq(balanceAnchors.importFileId, copy!.id))
+      .run();
+    // the premise: its copy record is all that names its account…
+    const cash = bundle.db.select().from(accounts).where(eq(accounts.last4, "7307")).get()!.id;
+    expect(namedBy(copy!.id)).toEqual({ ...NOTHING, copies: [cash] });
+    // …and the import archived it beside the first download
+    expect(folderOf(copy!.storagePath)).toBe("robinhood-checking-7307");
+    expect(folderOf(first!.storagePath)).toBe("robinhood-checking-7307");
+
+    expect(migrateStorageLayout(bundle.db, { move: true })).toEqual([]);
+    expect(readById(copy!.id).storagePath).toBe(copy!.storagePath);
+    expect(fs.readFileSync(copy!.storagePath)).toEqual(SECOND.buffer);
+    expect(fs.existsSync(chaseBucket())).toBe(false);
   });
 });
 
