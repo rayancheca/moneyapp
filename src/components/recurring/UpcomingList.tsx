@@ -14,7 +14,9 @@ interface UpcomingListProps {
  * Every detected|confirmed series is here, stale evidence included — see
  * services/recurring.ts::upcomingOccurrences for why filtering would be the
  * dishonest option. Each late row is marked, and a collapsed footer names
- * what is late and why.
+ * what is late and why. The one series left out is not his: an income series
+ * on the agent's cash (owner decision 2026-09-28), which no Income of his and
+ * no 30-day net counts.
  */
 export function UpcomingList({ occurrences }: UpcomingListProps) {
   const totalCents = occurrences.reduce((sum, o) => sum + o.amountCents, 0);

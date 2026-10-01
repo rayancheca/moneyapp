@@ -1,5 +1,5 @@
 import { cache } from "react";
-import { and, eq, gte, inArray, isNotNull, isNull, lte, or, type SQL } from "drizzle-orm";
+import { and, eq, gte, inArray, isNotNull, isNull, lte, notInArray, or, type SQL } from "drizzle-orm";
 import type { AppDatabase } from "@/db/client";
 import { categories, type CategoryKind } from "@/db/schema/categories";
 import { recurringSeries, type SeriesKind } from "@/db/schema/recurring";
@@ -352,12 +352,9 @@ export function isIncome(
     txn.categoryId !== null &&
     txn.amountCents > 0 &&
     idx.topLevelOf(txn.categoryId).kind === "income" &&
-    !agentsCash.has(txn.accountId)
+    !isAgentsIncomeCategoryRow(idx, agentsCash, txn)
   );
 }
-
-/** No account is the agent's: `isIncome` asked of category and sign alone (`isAgentsIncome`). */
-const NO_AGENT: ReadonlySet<string> = new Set();
 
 /**
  * The rows `isIncome` leaves out for WHOSE they are, and only those: income by category and sign, paid into the
@@ -369,7 +366,37 @@ export function isAgentsIncome(
   agentsCash: ReadonlySet<string>,
   txn: Pick<AnalyticsTxn, "accountId" | "categoryId" | "amountCents">,
 ): boolean {
-  return agentsCash.has(txn.accountId) && isIncome(idx, NO_AGENT, txn);
+  return txn.amountCents > 0 && isAgentsIncomeCategoryRow(idx, agentsCash, txn);
+}
+
+/**
+ * Whether a row of an INCOME category is the AGENT'S: on its cash account, EITHER SIGN. `isIncome`'s account half,
+ * and the whole rule for a surface that NETS an income category's rows rather than counting its credits — the
+ * category's own page (`spendingTransactions`) and the Fees card's interest. A reversal on the agent's cash is the
+ * agent's as much as the credit it reverses; /summary's `lineFor` reads that account the same way, on every line and
+ * in either direction.
+ *
+ * ⚖️ Owner decision 2026-09-28 (§6A 27). 🔴 /spending's Income card had learned it and the pages one click under it had
+ * not: `/categories/<Income>` read "Received" over the agent's dividend and interest too, an "Interest" subcategory
+ * that was the agent's alone, and the dashboard's Fees card set the agent's interest against his fees as "interest
+ * back".
+ */
+export function isAgentsIncomeCategoryRow(
+  idx: CategoryIndex,
+  agentsCash: ReadonlySet<string>,
+  txn: Pick<AnalyticsTxn, "accountId" | "categoryId">,
+): boolean {
+  return agentsCash.has(txn.accountId) && txn.categoryId !== null && idx.topLevelOf(txn.categoryId).kind === "income";
+}
+
+/**
+ * The SQL form of `isAgentsIncomeCategoryRow`'s account half — off the agent's cash account — for a query already
+ * scoped to income categories, or nothing when there is no agent, so the query is the one it always was. One spelling
+ * for every query that selects his income rows outside `activeTxnsInRange`: the ledger's `income` scope and an income
+ * category's link (`filterConditions`), and the proof under an income category's total (`categorySpend`).
+ */
+export function offAgentsCash(agentsCash: readonly string[]): SQL | undefined {
+  return agentsCash.length > 0 ? notInArray(transactions.accountId, [...agentsCash]) : undefined;
 }
 
 /**
@@ -379,7 +406,15 @@ export function isAgentsIncome(
  * ⚖️ Owner decision 2026-09-28 (§6A 27). 🔴 Only /budgets' POSTED leg had learned it: "$X in so far" left the
  * agent's interest out while "$Y still expected" on the same line counted its next payment, and the income basis
  * behind the runway's "What you earn a month", the forecast's "Projected income" and the dashboard's next paycheck
- * did the same — each read every live income series.
+ * did the same — each read every live income series. 🔴 And then the forecast card alone: the month strip printed
+ * under it ("as scheduled"), the calendar grid, both Upcoming lists, the income card's pay lines and a series page's
+ * deposit ranking still counted the agent's series as his.
+ *
+ * Every reader that projects, sums, ranks or lists an income series as HIS asks this, never a copy of it:
+ * `incomeExpectation`, the forecast's legs, `recurringCalendar`, `upcomingOccurrences` (the dashboard's next paycheck
+ * through it), `cashEarningsReadings`, `recurringInsightInput` and `seriesInCategory` — 🔴 the last listed the agent's
+ * month-end interest under `/categories/<Income>` beside his pay. The readers that must see every series do not:
+ * /recurring's table, where the owner confirms or dismisses one, and a row's series picker.
  *
  * ⛔ Not "drop the series". Net worth holds the agent's money, so the forecast still counts what it pays in EOM net
  * worth (`MonthForecast.agentsIncome`), as the bridge names the agent's rows on a band of their own.
@@ -389,20 +424,6 @@ export function isAgentsIncomeSeries(
   series: { readonly kind: SeriesKind; readonly accountId: string | null },
 ): boolean {
   return series.kind === "income" && series.accountId !== null && agentsCash.has(series.accountId);
-}
-
-/** Every series `isAgentsIncomeSeries` names, by id — for a surface holding occurrences, which carry no account. */
-export function agentsIncomeSeriesIds(db: AppDatabase): Set<string> {
-  const agentsCash = outsidePortfolioCashAccountIds(db);
-  if (agentsCash.size === 0) return new Set();
-  return new Set(
-    db
-      .select({ id: recurringSeries.id, kind: recurringSeries.kind, accountId: recurringSeries.accountId })
-      .from(recurringSeries)
-      .all()
-      .filter((s) => isAgentsIncomeSeries(agentsCash, s))
-      .map((s) => s.id),
-  );
 }
 
 // ── Monthly spending (stacked-bar source) ────────────────────────────
@@ -691,7 +712,16 @@ export function spendingTransactions(db: AppDatabase, filter: TxnFilter): Analyt
     return rows.filter((r) => r.categoryId === null);
   }
   const subtree = new Set(idx.subtreeIds(filter.categoryId));
-  return rows.filter((r) => r.categoryId !== null && subtree.has(r.categoryId));
+  const inSubtree = rows.filter((r) => r.categoryId !== null && subtree.has(r.categoryId));
+  /*
+   * ⚖️ An INCOME category's rows are his: the agent's cash is left out, either sign (`isAgentsIncomeCategoryRow`).
+   * 🔴 `/categories/<Income>` read "Received" over every account one click under a /spending Income card that leaves
+   * the agent's dividend and interest out. A subtree is one kind, so an expense page — every budget included — never
+   * pays for the account read.
+   */
+  if (idx.topLevelOf(filter.categoryId).kind !== "income") return inSubtree;
+  const agentsCash = outsidePortfolioCashAccountIds(db);
+  return inSubtree.filter((r) => !isAgentsIncomeCategoryRow(idx, agentsCash, r));
 }
 
 /**

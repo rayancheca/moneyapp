@@ -1,4 +1,4 @@
-import { and, count, eq, gt, gte, inArray, isNull, lt, lte, notInArray, or, sql, type SQL } from "drizzle-orm";
+import { and, count, eq, gt, gte, inArray, isNull, lt, lte, or, sql, type SQL } from "drizzle-orm";
 import { NO_MERCHANT } from "@/lib/ledger-href";
 import type { AppDatabase } from "@/db/client";
 import { categories, type CategoryKind } from "@/db/schema/categories";
@@ -6,6 +6,7 @@ import { transactions } from "@/db/schema/transactions";
 import { transactionSplits } from "@/db/schema/transaction-splits";
 import type { TxnFilters, TxnView } from "@/components/transactions/query";
 import { outsidePortfolioCashAccountIds } from "./accounts";
+import { offAgentsCash } from "./analytics";
 
 /**
  * The transactions filter/view SQL, extracted as a service (ux-overhaul-plan
@@ -31,15 +32,6 @@ function idsWithTopKind(allCategories: readonly CategoryRef[], kind: CategoryKin
       return node?.kind === kind;
     })
     .map((c) => c.id);
-}
-
-/**
- * `isIncome`'s account half in SQL — off the agent's cash account — or nothing when there is no agent, so the query is
- * the one it always was. One spelling for every filter that selects Income: the `income` scope and a single income
- * category drilled with `flow=in`.
- */
-function offAgentsCash(agentsCash: readonly string[]): SQL | undefined {
-  return agentsCash.length > 0 ? notInArray(transactions.accountId, [...agentsCash]) : undefined;
 }
 
 export function viewCondition(view: TxnView): SQL {
@@ -72,8 +64,8 @@ export function filterConditions(
   allCategories: readonly CategoryRef[],
   /**
    * `outsidePortfolioCashAccountIds` — the agent's cash, whose income is not his (`isIncome`). Required, as it is
-   * there: the `income` and `cashflow` scopes are the Income card's population, and an income category drilled
-   * `flow=in` is one category of it, so none of them can be built without it.
+   * there: the `income` and `cashflow` scopes are the Income card's population, and an income category's link is his
+   * rows of that category, so none of them can be built without it.
    */
   agentsCash: readonly string[],
 ): SQL[] {
@@ -183,13 +175,16 @@ export function filterConditions(
         ) as SQL,
       );
       /*
-       * ⚖️ An income category drilled `flow=in` IS `isIncome` narrowed to that category: the Sankey's income sources
-       * and the cash-flow chart's income segments link here, and both figures leave the agent's cash out (owner
-       * decision 2026-09-28). 🔴 Only the `income` scope had learned that, so "Dividends $0.07" — his GOOG — opened
-       * the agent's WMT $0.06 beside it. The sign half is `flow=in` below; this is the account half. Without `flow`
-       * the link is the category's own rows, both signs and every account, as `categorySpending` counts them.
+       * ⚖️ An income category's rows are HIS rows, drilled with `flow` or without (owner decision 2026-09-28): the
+       * agent's cash is left out either sign, as `isAgentsIncomeCategoryRow` leaves it out of every figure here.
+       *   - `flow=in` IS `isIncome` narrowed to the category — the Sankey's income sources and the cash-flow chart's
+       *     income segments. The sign half is `flow=in` below; this is the account half. 🔴 Only the `income` scope
+       *     had learned it, so "Dividends $0.07" — his GOOG — opened the agent's WMT $0.06 beside it.
+       *   - without `flow` it is the category's own rows, both signs, as `categorySpending` counts them — the
+       *     category page's trend bars, subcategories and panel, and the Fees card's interest. 🔴 That was every
+       *     account, as the figures were: `/categories/<Income>` "Received" the agent's dividend and interest.
        */
-      const his = filters.flow === "in" ? offAgentsCash(agentsCash) : undefined;
+      const his = offAgentsCash(agentsCash);
       if (his && idsWithTopKind(allCategories, "income").includes(filters.category)) conds.push(his);
     }
   }

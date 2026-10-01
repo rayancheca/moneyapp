@@ -4,6 +4,8 @@ import { recurringSeries } from "@/db/schema/recurring";
 import { transactions } from "@/db/schema/transactions";
 import { compareDates, todayIso } from "@/lib/dates";
 import { cashEarnings, type CashEarnings, type PaySeries } from "@/lib/cash-earnings";
+import { outsidePortfolioCashAccountIds } from "./accounts";
+import { isAgentsIncomeSeries } from "./analytics";
 import { accountCoverage } from "./coverage";
 
 /**
@@ -123,15 +125,24 @@ export function earliestVerified(
  * `confirmed` only, deliberately. A `detected` income series is a hypothesis the
  * owner has not agreed to, and implying earnings from an unconfirmed guess is
  * the fabrication this whole module exists to avoid.
+ *
+ * ⚖️ And his pay only: what the agent's cash is paid is not his income
+ * (`isAgentsIncomeSeries`, owner decision 2026-09-28, §6A 27). 🔴 Confirmed and
+ * linked, the agent's month-end interest was a pay line of the dashboard's
+ * income card — "Pay is arriving: the last deposit landed on Sep 30" — and
+ * $0.04 of what the card says reached a bank.
  */
 export function cashEarningsReadings(
   db: AppDatabase,
   { from, to, today = todayIso(), todayIsComplete = false, withChecked = false }: CashEarningsWindow,
 ): CashEarningsReading[] {
+  const agentsCash = outsidePortfolioCashAccountIds(db);
   const series = db
     .select({
       id: recurringSeries.id,
       name: recurringSeries.name,
+      kind: recurringSeries.kind,
+      accountId: recurringSeries.accountId,
       cadence: recurringSeries.cadence,
       userCadence: recurringSeries.userCadence,
       intervalDaysAvg: recurringSeries.intervalDaysAvg,
@@ -143,7 +154,8 @@ export function cashEarningsReadings(
     .from(recurringSeries)
     .where(and(eq(recurringSeries.kind, "income"), eq(recurringSeries.status, "confirmed")))
     .orderBy(asc(recurringSeries.name))
-    .all();
+    .all()
+    .filter((s) => !isAgentsIncomeSeries(agentsCash, s));
 
   if (series.length === 0) return [];
 

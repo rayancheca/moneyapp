@@ -5,7 +5,14 @@ import { formatMonthYear, monthWindowLabel } from "@/lib/format-date";
 import { ledgerHref } from "@/lib/ledger-href";
 import { formatCents } from "@/lib/money";
 import { resolvePeriod, withPeriod } from "@/lib/period";
-import { activeTxnsInRange, loadCategoryIndex, type AnalyticsTxn, type CategoryIndex } from "./analytics";
+import { outsidePortfolioCashAccountIds } from "./accounts";
+import {
+  activeTxnsInRange,
+  isAgentsIncomeCategoryRow,
+  loadCategoryIndex,
+  type AnalyticsTxn,
+  type CategoryIndex,
+} from "./analytics";
 import { baselineWindow, SPEND_BASELINE_MONTHS } from "./committed";
 import { provenanceFor, type Provenance } from "./provenance";
 
@@ -411,6 +418,7 @@ export function feesCard(db: AppDatabase, today: string = todayIso()): FeesCard 
    * would answer it, and slicing in memory keeps the two windows provably built
    * from one row set rather than from two queries that could disagree.
    */
+  const agentsCash = outsidePortfolioCashAccountIds(db);
   const rows = activeTxnsInRange(db, LEDGER_FLOOR, today).filter(
     (t) =>
       t.categoryId !== null &&
@@ -419,7 +427,14 @@ export function feesCard(db: AppDatabase, today: string = todayIso()): FeesCard 
       // card silently unable to disclose it — the rows would never arrive.
       (t.categoryId === cats.feesTopId ||
         cats.feeIds.has(t.categoryId) ||
-        (cats.interestIds?.has(t.categoryId) ?? false)),
+        (cats.interestIds?.has(t.categoryId) ?? false)) &&
+      /*
+       * ⚖️ …and the interest is HIS. What the agent's cash is paid is not interest a bank paid him (owner decision
+       * 2026-09-28), either sign — a clawback of the agent's interest is the agent's too — as /spending's Income card
+       * and `/categories/<Interest>` leave it out (`isAgentsIncomeCategoryRow`). A fee is no income row, so never
+       * one. 🔴 A month whose only interest was the agent's read "against $0.04 of interest back".
+       */
+      !isAgentsIncomeCategoryRow(idx, agentsCash, t),
   );
   // an empty bucket is an answer; an empty LEDGER is not a card
   if (rows.length === 0) return null;

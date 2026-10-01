@@ -12,15 +12,14 @@ import { Sheet } from "@/components/ui/Sheet";
 import { toast } from "@/components/ui/Toast";
 import { compactDayTotal, dayWeight, heaviestDayCents } from "@/lib/calendar-day-weight";
 import { heatMixPercent } from "@/lib/calendar-heat";
-import { daysInMonthOf, type CalendarDay } from "@/lib/calendar-math";
+import type { CalendarDay } from "@/lib/calendar-math";
 import { RECURRING_JARGON } from "@/lib/jargon";
-import { monthFlow } from "@/lib/month-flow";
 import { CALENDAR_DENSITY_CLASS } from "./recurring-view-spec";
 import { formatCents } from "@/lib/money";
 import type { ForecastConfidence } from "@/lib/occurrence-verdict";
 import { SERIES_EVIDENCE_LABEL } from "@/lib/series-evidence";
 import {
-  paidByAnotherMonth,
+  calendarMonthFlow,
   type CalendarEntry,
   type DayStateKind,
   type RecurringCalendarMonth,
@@ -462,23 +461,9 @@ export function RecurringCalendar({ initialMonth, today, density = "tall", onMon
 
   const openEntries = openDay ? month.entriesByDay[openDay] ?? [] : [];
 
-  /*
-   * `settled` is the POSTED flag, not "is it in the past". The two are not the
-   * same thing and the difference is the whole point of the second line: August
-   * 2026 has three cash paydays behind today that have never reached the ledger,
-   * so a line split by date climbed confidently to +$3,141 directly above a
-   * footer reading "SETTLED $0.00".
-   */
-  const flowEntries: Record<string, { amountCents: number; settled: boolean }[]> = {};
-  for (const [iso, entries] of Object.entries(month.entriesByDay)) {
-    flowEntries[iso] = entries.map((e) => ({
-      amountCents: e.amountCents,
-      // …and a payday whose deposit landed in ANOTHER month, which the footer's
-      // Settled figure counts here for the same reason (`paidByAnotherMonth`).
-      settled: e.transactionId !== null || paidByAnotherMonth(e, month.monthKey),
-    }));
-  }
-  const flow = monthFlow(daysInMonthOf(month.monthKey), month.monthKey, flowEntries, today);
+  // the strip's running totals over exactly the entries the grid draws — `settled` is the POSTED flag, not "is it in
+  // the past" (`calendarMonthFlow` says why)
+  const flow = calendarMonthFlow(month, today);
 
   return (
     <div className="rounded-(--radius-card) border border-line bg-surface-raised p-4 sm:p-5">

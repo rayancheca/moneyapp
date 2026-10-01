@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { and, eq, inArray, isNull } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
+import { loadSpendingCategoryTxns } from "@/app/spending/actions";
 import { createDatabase, type DbBundle } from "@/db/client";
 import { seedDatabase } from "@/db/seed";
 import { accounts } from "@/db/schema/accounts";
@@ -14,16 +15,32 @@ import { parseFilters } from "@/components/transactions/query";
 import { dedupeHash } from "@/lib/hash";
 import { cashFlowSegmentHref } from "@/lib/ledger-href";
 import { resolvePeriod } from "@/lib/period";
-import { createAccount } from "./accounts";
-import { incomeByMonth } from "./analytics";
+import { createAccount, outsidePortfolioCashAccountIds } from "./accounts";
+import {
+  categorySpending,
+  incomeByMonth,
+  isAgentsIncome,
+  isAgentsIncomeCategoryRow,
+  isIncome,
+  loadCategoryIndex,
+} from "./analytics";
 import { addManualAnchor } from "./anchors";
 import { netWorthAttribution } from "./attribution";
 import { incomeExpectation } from "./budgets";
+import { cashEarningsReadings } from "./cash-earnings";
+import { categoryFlowSign, categoryMonthlyTrend, categorySubcategorySplit, seriesInCategory } from "./category-detail";
 import { runwayCard } from "./committed";
 import { dashboardData } from "./dashboard";
 import { netWorthSeries, rebuildAccount } from "./derivation";
+import { feesCard } from "./fees-card";
 import { forecastCurrentMonth, forecastForMonth } from "./forecast";
+import { incomeCard } from "./income-card";
+import { ledgerOpens, ledgerReaches } from "./observation-frontier";
 import { periodActivity } from "./period-activity";
+import { provenanceFor } from "./provenance";
+import { upcomingOccurrences } from "./recurring";
+import { calendarMonthFlow, recurringCalendar } from "./recurring-calendar";
+import { recurringInsightInput } from "./recurring-insights";
 import { spendingSankey } from "./sankey";
 import { cashFlowByPeriod, dailySpendHeatmap, periodTotals } from "./spending";
 import { countMatching, matchingTransactionIds } from "./transactions-query";
@@ -130,6 +147,18 @@ function nwOn(day: string): number {
   return cents;
 }
 
+/** The rows a `/transactions` link opens — the ledger's own filter, as the page and its bulk actions select them. */
+function opened(href: string): { accountId: string; amountCents: number }[] {
+  const filters = parseFilters(Object.fromEntries(new URL(href, "http://ledger.test").searchParams));
+  return bundle.db
+    .select({ accountId: transactions.accountId, amountCents: transactions.amountCents })
+    .from(transactions)
+    .where(inArray(transactions.id, matchingTransactionIds(bundle.db, filters, "all")))
+    .all();
+}
+
+const sum = (rows: readonly { amountCents: number }[]) => rows.reduce((s, r) => s + r.amountCents, 0);
+
 describe("the agent's income is not his — on every surface that says Income", () => {
   test("⛔ /spending: the Income card, the cash-flow chart and the heatmap leave it out", () => {
     const period = resolvePeriod({ period: "2026-09" }, TODAY);
@@ -198,16 +227,6 @@ describe("the agent's income is not his — on every surface that says Income", 
    * link had counted the agent's row together; the branch moved one and not the other.
    */
   test("⛔ a per-category income link — the Sankey's sources, the cash-flow chart's segments — opens exactly its rows", () => {
-    const opened = (href: string) => {
-      const filters = parseFilters(Object.fromEntries(new URL(href, "http://ledger.test").searchParams));
-      return bundle.db
-        .select({ accountId: transactions.accountId, amountCents: transactions.amountCents })
-        .from(transactions)
-        .where(inArray(transactions.id, matchingTransactionIds(bundle.db, filters, "all")))
-        .all();
-    };
-    const sum = (rows: readonly { amountCents: number }[]) => rows.reduce((s, r) => s + r.amountCents, 0);
-
     const graph = spendingSankey(bundle.db, SEPT);
     const sources = graph.nodes.filter((n) => n.meta?.kind === "income");
     expect(sources.map((n) => n.label).sort()).toEqual(["Dividends", "Salary"]);
@@ -276,7 +295,8 @@ function schedule(input: {
 }): string {
   return bundle.db
     .insert(recurringSeries)
-    .values({ kind: "income", toleranceDays: 3, ...input })
+    // detection writes the average it measured beside the amount it expects; the income card reads the average
+    .values({ kind: "income", toleranceDays: 3, amountCentsAvg: input.nextExpectedAmountCents, ...input })
     .returning({ id: recurringSeries.id })
     .get().id;
 }
@@ -447,5 +467,321 @@ describe("the agent's trailing income is not his pace either", () => {
     expect(pairedNov.projectedEomNetWorthCents).toBe(unpairedNov.projectedEomNetWorthCents);
     // the headline is the schedule, and no series is the agent's here
     expect(paired.committed).toEqual(unpaired.committed);
+  });
+});
+
+/** link a posted row to a series, as detection links the row it read the schedule off */
+function link(seriesId: string, accountId: string, postedOn: string): void {
+  bundle.db
+    .update(transactions)
+    .set({ recurringSeriesId: seriesId })
+    .where(and(eq(transactions.accountId, accountId), eq(transactions.postedOn, postedOn)))
+    .run();
+}
+
+const PAY = "It America LLC (weekly pay)";
+
+describe("the agent's income SERIES draws no line of his on /recurring, the dashboard or the income card", () => {
+  /*
+   * 🔴 The forecast card had learned whose money is whose and the month strip printed directly under it had not: the
+   * card's net leaves the agent's interest out (`MonthForecast.committed`) while the strip's "as scheduled" summed
+   * every occurrence the calendar draws — two halves of one screen, apart by exactly the agent's amount.
+   */
+  test("⛔ /recurring: the strip's \"as scheduled\" is the card's net, and the grid draws no day of the agent's", () => {
+    hisPay();
+    agentsInterest();
+    const NOV = "2026-11";
+    const read = () => {
+      const month = recurringCalendar(bundle.db, NOV, TODAY);
+      return {
+        cardNet: forecastForMonth(bundle.db, NOV, TODAY)!.committed.netCents,
+        asScheduled: calendarMonthFlow(month, TODAY).endCents,
+        drawn: Object.entries(month.entriesByDay)
+          .flatMap(([day, entries]) => entries.map((e) => `${day} ${e.name}`))
+          .sort(),
+      };
+    };
+    // his four Thursdays — and not the agent's Nov 30, on the card or under it
+    const thursdays = ["2026-11-05", "2026-11-12", "2026-11-19", "2026-11-26"].map((d) => `${d} ${PAY}`);
+    expect(read()).toEqual({ cardNet: 4 * 114_192, asScheduled: 4 * 114_192, drawn: thursdays });
+
+    // the rule's own edge: unpaired, the account is his and so is its interest — on the card AND under it
+    bundle.db.update(accounts).set({ cashAccountId: null }).where(eq(accounts.id, book)).run();
+    expect(read()).toEqual({
+      cardNet: 4 * 114_192 + 4,
+      asScheduled: 4 * 114_192 + 4,
+      drawn: [...thursdays, "2026-11-30 Interest Payment"],
+    });
+  });
+
+  test("⛔ …nor its posted interest: no mark, no Settled cent, no step of the strip, in September or October", () => {
+    link(hisPay(), wellsFargo, "2026-09-24");
+    const read = () =>
+      ["2026-09", "2026-10"].map((key) => {
+        const month = recurringCalendar(bundle.db, key, TODAY);
+        return { month, strip: calendarMonthFlow(month, TODAY) };
+      });
+    const before = read();
+    expect(before[0]!.month.postedNetCents).toBe(114_192);
+
+    // detection reads the agent's month-end interest off its Sep 30 row, and links that row to it
+    link(agentsInterest(), agentic, "2026-09-30");
+    expect(read()).toEqual(before);
+  });
+
+  test("⛔ the Upcoming tab and the dashboard's Upcoming list carry no Income of the agent's, nor net it", () => {
+    hisPay();
+    const read = () => ({
+      // /recurring's "Upcoming 30 days" — Oct 5 through Nov 3 holds the agent's Oct 31
+      tab: upcomingOccurrences(bundle.db, TODAY, 30),
+      // the dashboard's next 14 days, read on Oct 25 so that they hold it too
+      dashboard: dashboardData(bundle.db, "2026-10-25").upcoming,
+    });
+    const before = read();
+    expect(before.tab.map((o) => `${o.date} ${o.name}`)).toEqual(
+      ["2026-10-08", "2026-10-15", "2026-10-22", "2026-10-29"].map((d) => `${d} ${PAY}`),
+    );
+    expect(before.dashboard.netCents).toBe(2 * 114_192);
+
+    agentsInterest();
+    expect(read()).toEqual(before);
+  });
+
+  test("⛔ the dashboard's income card and /spending's cash note read no pay line of the agent's", () => {
+    link(hisPay(), wellsFargo, "2026-09-24");
+    const read = () => ({
+      card: incomeCard(bundle.db, TODAY),
+      spending: cashEarningsReadings(bundle.db, { from: SEPT.from, to: TODAY, today: TODAY, withChecked: true }),
+    });
+    const before = read();
+    expect(before.card?.pay.map((line) => line.name)).toEqual([PAY]);
+
+    // the owner confirms the agent's month-end interest, and its Sep 30 row is linked to it
+    const interest = agentsInterest();
+    bundle.db.update(recurringSeries).set({ status: "confirmed" }).where(eq(recurringSeries.id, interest)).run();
+    link(interest, agentic, "2026-09-30");
+    expect(read()).toEqual(before);
+  });
+
+  /*
+   * A series page ranks a deposit against "what your scheduled deposits bring in over a year". Counted among them, the
+   * agent's interest made his pay "the largest of 2" on a ledger with one deposit of his — and once he has two, the
+   * agent's own page would rank itself among his deposits, where it is not (`rankFact` throws on a rank of 0).
+   */
+  test("⛔ a series page's ranking: the agent's interest is none of \"your scheduled deposits\"", () => {
+    const pay = hisPay();
+    const ranking = (id: string) => {
+      const input = recurringInsightInput(bundle.db, id, TODAY);
+      return input && { facts: input.facts, claims: input.candidates.map((c) => c.claimId), window: input.window };
+    };
+    // one deposit of his is nothing to rank, with the agent's interest beside it or not
+    expect(ranking(pay)).toBeNull();
+    const interest = agentsInterest();
+    expect(ranking(pay)).toBeNull();
+    expect(ranking(interest)).toBeNull();
+
+    // his own GOOG dividend, quarterly into Robinhood Cash — the 09-09 line's 0.312739 share × $0.22
+    schedule({
+      name: "Cash Div (GOOG)",
+      accountId: robinhoodCash,
+      cadence: "quarterly",
+      intervalDaysAvg: 91,
+      nextExpectedOn: "2026-12-09",
+      nextExpectedAmountCents: 7,
+      lastMatchedOn: "2026-09-09",
+      status: "detected",
+    });
+    const among = (id: string) => ranking(id)?.facts.find((f) => f.kind === "rank");
+    expect(among(pay)).toMatchObject({ value: 1, outOf: 2 });
+    // the agent's own page ranks it among nothing of his
+    expect(ranking(interest)).toBeNull();
+
+    // the rule's own edge: unpaired, the account is his and so is its interest — three deposits of his, and its
+    // twelve $0.04 a year outrank the dividend's four $0.07
+    bundle.db.update(accounts).set({ cashAccountId: null }).where(eq(accounts.id, book)).run();
+    expect(among(pay)).toMatchObject({ value: 1, outOf: 3 });
+    expect(among(interest)).toMatchObject({ value: 2, outOf: 3 });
+  });
+});
+
+/**
+ * `/categories/[id]`'s transaction panel: the server action the page awaits, which reads through `getDb()`. Pointed at
+ * this fixture for the one call and handed back, so nothing else can reach it.
+ */
+async function categoryPanel(categoryId: string) {
+  const handle = globalThis as { __moneyappDb?: DbBundle };
+  const prior = handle.__moneyappDb;
+  handle.__moneyappDb = bundle;
+  try {
+    const result = await loadSpendingCategoryTxns({ categoryId, ...SEPT });
+    if (!result.ok) throw new Error(result.error);
+    return result.data;
+  } finally {
+    if (prior === undefined) delete handle.__moneyappDb;
+    else handle.__moneyappDb = prior;
+  }
+}
+
+/** `/categories/<path>?period=2026-09`: every figure read the way the page reads it, in the page's own frame. */
+async function categoryPage(pathStr: string) {
+  const id = catId(pathStr);
+  const sign = categoryFlowSign("income");
+  const { spentCents, txnCount } = categorySpending(bundle.db, { categoryId: id, ...SEPT });
+  const reaches = ledgerReaches(bundle.db);
+  const [bar] = categoryMonthlyTrend(bundle.db, id, 1, SEPT.to, reaches, ledgerOpens(bundle.db), TODAY);
+  const name = pathStr.split(" > ").at(-1)!;
+  // `+ 0` as `formatCents` prints it: the frame flips an empty total to -0, and no page prints "-$0.00"
+  return {
+    received: sign * spentCents + 0,
+    txnCount,
+    bar: { cents: sign * bar!.spentCents + 0, href: bar!.href },
+    subcategories: categorySubcategorySplit(bundle.db, id, SEPT),
+    panel: await categoryPanel(id),
+    proof: provenanceFor(bundle.db, { kind: "categorySpend", categoryId: id, ...SEPT, label: name })?.headline,
+  };
+}
+
+describe("the agent's income is no row of his on an income category's own page", () => {
+  /*
+   * 🔴 /spending's Income card leaves the agent's dividend and interest out (`isIncome`), and the page one click under
+   * it — /categories/<Income>, breadcrumb "Spending ›" — counted every account: "Received · September 2026" over the
+   * agent's $0.10 as well as his $1,141.99, an "Interest" subcategory that is the agent's alone, a panel listing the
+   * agent's rows, a proof counting them and links opening them. The un-flowed category link said so in its own
+   * comment: "both signs and every account, as `categorySpending` counts them".
+   */
+  test("⛔ Received, its trend, subcategories, rows and proof are his alone — and every link opens them", async () => {
+    const income = await categoryPage("Income");
+    expect([income.received, income.txnCount]).toEqual([periodTotals(bundle.db, SEPT).earnedCents, 2]);
+    expect(income.bar.cents).toBe(HIS_CENTS);
+    expect(income.subcategories.map((s) => [s.name, s.flowCents, s.txnCount])).toEqual([
+      ["Salary", 114_192, 1],
+      ["Dividends", 7, 1],
+    ]);
+    expect([income.panel.total, sum(income.panel.rows)]).toEqual([2, HIS_CENTS]);
+    expect(income.proof).toMatch(/^This total is the sum of 2 rows /);
+    // the drill-down contract: each link opens exactly the rows its figure counts, and none of them is the agent's
+    const links: [string, number][] = [
+      [income.bar.href, income.bar.cents],
+      [income.panel.href, income.received],
+      ...income.subcategories.map((s): [string, number] => [s.href!, s.flowCents]),
+    ];
+    for (const [href, cents] of links) {
+      const rows = opened(href);
+      expect(sum(rows), href).toBe(cents);
+      expect(rows.some((r) => r.accountId === agentic), href).toBe(false);
+    }
+
+    // September's only interest is the agent's month-end payment: his Interest page has none to show
+    const interest = await categoryPage("Income > Interest");
+    expect([interest.received, interest.txnCount, interest.bar.cents, interest.panel.total]).toEqual([0, 0, 0, 0]);
+    expect(opened(interest.panel.href)).toEqual([]);
+    expect(opened(interest.bar.href)).toEqual([]);
+    // …and its proof names no row of the agent's: the empty window's own sentence, never "the sum of 1 row"
+    expect(interest.proof).not.toMatch(/the sum of/);
+    expect(interest.proof).toMatch(/this zero/);
+  });
+
+  test("the rule's own edge: unpaired, the account is his, and so is every row of it on the page", async () => {
+    bundle.db.update(accounts).set({ cashAccountId: null }).where(eq(accounts.id, book)).run();
+    const income = await categoryPage("Income");
+    expect([income.received, income.txnCount, income.bar.cents]).toEqual([
+      HIS_CENTS + AGENTS_CENTS,
+      4,
+      HIS_CENTS + AGENTS_CENTS,
+    ]);
+    expect(income.subcategories.map((s) => [s.name, s.flowCents, s.txnCount])).toEqual([
+      ["Salary", 114_192, 1],
+      ["Dividends", 13, 2],
+      ["Interest", 4, 1],
+    ]);
+    expect(sum(opened(income.panel.href))).toBe(HIS_CENTS + AGENTS_CENTS);
+    const interest = await categoryPage("Income > Interest");
+    expect([interest.received, interest.txnCount, sum(opened(interest.panel.href))]).toEqual([4, 1, 4]);
+  });
+
+  /*
+   * A page that NETS a category's rows takes a reversal with the credit it reverses, so whose a row is cannot hang on
+   * its sign: left in, the agent's clawback would be subtracted from HIS income. No such row exists — this is the
+   * rule's other half, pinned on a hypothetical one.
+   */
+  test("⛔ either sign: the agent's reversal is the agent's too — on the page, its links, the Fees card", async () => {
+    post(agentic, "2026-09-30", -4, "Income > Interest", "Interest Payment Reversal");
+    const income = await categoryPage("Income");
+    expect([income.received, income.txnCount, sum(opened(income.panel.href))]).toEqual([HIS_CENTS, 2, HIS_CENTS]);
+    const interest = await categoryPage("Income > Interest");
+    expect([interest.received, interest.txnCount, opened(interest.panel.href)]).toEqual([0, 0, []]);
+
+    post(wellsFargo, "2026-09-01", -1_500, "Fees > ATM Fees", "Non-Wells Fargo ATM Transaction Fee");
+    const card = feesCard(bundle.db, TODAY)!;
+    expect([card.recent.earnedCents, card.allTime.earnedCents, card.recent.netCents]).toEqual([0, 0, -1_500]);
+  });
+
+  /*
+   * The rule's category half, at its home. Every row on this fixture's agent's cash is income, and the one other real
+   * row — the $26.64 he funded it with on Jun 5 — falls outside every trailing window the forecast reads, so no surface
+   * above can tell an income rule from an account rule. This can.
+   */
+  test("the rule's category half: the $26.64 he funded the agent with is the agent's money, and no income", () => {
+    const idx = loadCategoryIndex(bundle.db);
+    const agentsCash = outsidePortfolioCashAccountIds(bundle.db);
+    // filed Investment Contribution on his ledger, both legs (handoff 2026-09-15b)
+    const contribution = catId("Transfers > Investment Contribution");
+    const funding = { accountId: agentic, categoryId: contribution, amountCents: 2_664 };
+    const read = (txn: typeof funding) => [
+      isAgentsIncomeCategoryRow(idx, agentsCash, txn),
+      isAgentsIncome(idx, agentsCash, txn),
+      isIncome(idx, agentsCash, txn),
+    ];
+    expect(read(funding)).toEqual([false, false, false]);
+    // the agent's month-end interest is the agent's either sign, and its income only as a credit
+    const interest = { ...funding, categoryId: catId("Income > Interest"), amountCents: 4 };
+    expect(read(interest)).toEqual([true, true, false]);
+    expect(read({ ...interest, amountCents: -4 })).toEqual([true, false, false]);
+    // …and on his own account the same row is his income
+    expect(read({ ...interest, accountId: robinhoodCash })).toEqual([false, false, true]);
+  });
+
+  /*
+   * The card under the figures: "the recurring series whose linked transactions live in this category". Every other
+   * reader that lists an income series as his asks `isAgentsIncomeSeries`; this one listed the agent's month-end
+   * interest under his Income, beside his pay.
+   */
+  test("⛔ …and its Recurring series card lists no series of the agent's", () => {
+    link(hisPay(), wellsFargo, "2026-09-24");
+    link(agentsInterest(), agentic, "2026-09-30");
+    const listed = (pathStr: string) => seriesInCategory(bundle.db, catId(pathStr), TODAY).map((s) => s.name);
+    expect(listed("Income")).toEqual([PAY]);
+    expect(listed("Income > Interest")).toEqual([]);
+
+    // the rule's own edge: unpaired, the account is his, and so is its interest series
+    bundle.db.update(accounts).set({ cashAccountId: null }).where(eq(accounts.id, book)).run();
+    expect(listed("Income").sort()).toEqual(["Interest Payment", PAY].sort());
+    expect(listed("Income > Interest")).toEqual(["Interest Payment"]);
+  });
+});
+
+describe("the agent's interest is no interest the banks paid him", () => {
+  /*
+   * 🔴 The dashboard's Fees card set the `Income > Interest` bucket against the `Fees` taxonomy across every account,
+   * so a month whose only interest was the agent's read "$15.00 went out in fees over the 1 complete month Sep 2026,
+   * across every account, against $0.04 of interest back … so you are $14.96 down on them": the agent's month-end
+   * interest, credited to him, under a link that opened the agent's row.
+   */
+  test("⛔ the Fees card's interest half is his alone, and its link opens exactly it", () => {
+    // a fee of his to set the interest against — the words his Wells Fargo statements print, the review's $15.00
+    post(wellsFargo, "2026-09-01", -1_500, "Fees > ATM Fees", "Non-Wells Fargo ATM Transaction Fee");
+    const card = feesCard(bundle.db, TODAY)!;
+    expect([card.recent.from, card.recent.to, card.months]).toEqual([SEPT.from, SEPT.to, 1]);
+    expect([card.recent.earnedCents, card.recent.earnedCredits, card.allTime.earnedCents]).toEqual([0, 0, 0]);
+    expect([card.headline, card.recent.netCents]).toEqual(["$15.00", -1_500]);
+    expect(card.summary).toContain("against $0.00 of interest back");
+    expect(opened(card.interestHref!)).toEqual([]);
+
+    // the rule's own edge: unpaired, the account is his and so is its interest — on the card and behind its link
+    bundle.db.update(accounts).set({ cashAccountId: null }).where(eq(accounts.id, book)).run();
+    const his = feesCard(bundle.db, TODAY)!;
+    expect([his.recent.earnedCents, his.allTime.earnedCents, his.recent.netCents]).toEqual([4, 4, -1_496]);
+    expect(his.summary).toContain("against $0.04 of interest back");
+    expect(sum(opened(his.interestHref!))).toBe(his.recent.earnedCents);
   });
 });

@@ -3,6 +3,8 @@ import { recurringSeries } from "@/db/schema/recurring";
 import { todayIso } from "@/lib/dates";
 import { rankFact, scalarFact, shareFact, type Fact } from "@/lib/insight-facts";
 import { isPrintableName } from "@/lib/printable-name";
+import { outsidePortfolioCashAccountIds } from "./accounts";
+import { isAgentsIncomeSeries } from "./analytics";
 import { surfaceInsights, type InsightInput } from "./insight-surface";
 import type { InsightCandidate, SurfaceInsights } from "./insights";
 import { provenanceFor } from "./provenance";
@@ -128,8 +130,16 @@ export function recurringInsightInput(
    */
   if (!isPrintableName(self.name)) return null;
 
+  /*
+   * ⚖️ The deposit set is "what YOUR scheduled deposits bring in", and what the agent's cash is paid is not his
+   * (`isAgentsIncomeSeries`, owner decision 2026-09-28, §6A 27): no member of either set, and its own page ranks it
+   * among nothing. 🔴 Counted as a deposit, the agent's month-end interest made his pay "the largest of 2".
+   */
+  const agentsCash = outsidePortfolioCashAccountIds(db);
+  if (isAgentsIncomeSeries(agentsCash, self)) return null;
   const isIncome = self.kind === "income";
-  const side = all.filter((s) => isLive(s, rows.get(s.id), today) && (s.kind === "income") === isIncome);
+  const onSide = (s: SeriesView): boolean => (s.kind === "income") === isIncome && !isAgentsIncomeSeries(agentsCash, s);
+  const side = all.filter((s) => isLive(s, rows.get(s.id), today) && onSide(s));
   if (side.length < MIN_SERIES_TO_COMPARE) return null;
 
   const annualized = self.annualizedCents!;
@@ -205,9 +215,7 @@ export function recurringInsightInput(
    * ⛔ The same predicate the side is built from, so the two cannot disagree
    * about which series the sentence is about.
    */
-  const retired = all.filter(
-    (s) => (s.status === "ended" || s.status === "dismissed") && (s.kind === "income") === isIncome,
-  ).length;
+  const retired = all.filter((s) => (s.status === "ended" || s.status === "dismissed") && onSide(s)).length;
   /*
    * 🔴 …and the denominator is one SIDE of the live series, not all of them.
    * "Ranked against the 13 still running" read on 2026-09-04 beside a tab badge
