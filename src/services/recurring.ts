@@ -22,11 +22,11 @@ import { outsidePortfolioCashAccountIds } from "./accounts";
 import { isAgentsIncomeSeries } from "./analytics";
 /*
  * ⚠️ A cycle, on purpose: settlement walks the occurrences `projectOccurrences`
- * draws, and `upcomingOccurrences` asks settlement which of them are paid. Both
- * modules call each other only inside functions, never while loading, so the
- * order they load in cannot matter.
+ * draws, and `upcomingOccurrences` and `listSeries` ask settlement which of them
+ * are paid. Both modules call each other only inside functions, never while
+ * loading, so the order they load in cannot matter.
  */
-import { stillToCome } from "./payday-settlement";
+import { nextStillToCome, stillToCome } from "./payday-settlement";
 
 /**
  * A drizzle transaction handle. Detection and the user-link services
@@ -816,7 +816,8 @@ export interface SeriesView {
   toleranceDays: number;
   /**
    * effective next-expected (user override first), rolled forward past a stale
-   * stored value so a live series never lists a "next" date in the past
+   * stored value so a live series never lists a "next" date in the past — nor a
+   * payday a deposit has already paid (`nextStillToCome`)
    */
   nextExpectedOn: string | null;
   /** the stored (un-rolled) effective next-expected — what the detector last wrote */
@@ -956,8 +957,11 @@ export function listSeries(db: AppDatabase, today: string = todayIso()): SeriesV
       // Show the same date the forecast projects: rolled forward off a stale
       // stored value. Only for the statuses the forecast actually projects —
       // rolling a dismissed/ended series forward would invent a future charge.
+      // ⛔ …and past a payday a deposit has already paid (`nextStillToCome`, the
+      // Upcoming tab's own reading). 🔴 Read on Sep 30 the Next column named Oct 1,
+      // the payday Wed Sep 30's deposit paid, beside an Upcoming tab starting Oct 8.
       const isProjected = s.status === "detected" || s.status === "confirmed";
-      const nextExpectedOn = isProjected ? rollForwardNextExpected(eff, today) : eff.nextExpectedOn;
+      const nextExpectedOn = isProjected ? nextStillToCome(db, s, today) : eff.nextExpectedOn;
       return {
         id: s.id,
         name: s.name,
@@ -1278,6 +1282,13 @@ export function seriesHasLapsed(
  * ⚠️ `subscriptions-card` already applied the test at its CALL SITE. Held
  * there, two places had to agree about a date and only one did; held here,
  * none do.
+ *
+ * ⛔ The SCHEDULE's next date, and nothing else. A surface that names a series'
+ * next date reads `nextStillToCome` (services/payday-settlement), which steps this
+ * past the paydays a deposit has already paid — `listSeries` and `seriesDetail`
+ * do. `subscriptions-card` reads this directly, and may: it reads bills and
+ * subscriptions only, prints no date, and asks only whether the schedule is over,
+ * and settlement never speaks about money out.
  */
 export function rollForwardNextExpected(eff: EffectiveSeries, today: string = todayIso()): string | null {
   if (!eff.nextExpectedOn) return null;

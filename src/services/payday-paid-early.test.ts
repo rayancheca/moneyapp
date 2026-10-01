@@ -10,9 +10,10 @@ import { institutions } from "@/db/schema/institutions";
 import { recurringSeries } from "@/db/schema/recurring";
 import { transactions } from "@/db/schema/transactions";
 import { seedDatabase } from "@/db/seed";
+import { seriesInCategory } from "./category-detail";
 import { dashboardData } from "./dashboard";
 import { forecastForMonth } from "./forecast";
-import { upcomingOccurrences } from "./recurring";
+import { listSeries, upcomingOccurrences } from "./recurring";
 import { recurringCalendar } from "./recurring-calendar";
 import { seriesDetail } from "./recurring-detail";
 
@@ -203,5 +204,71 @@ describe("a payday the deposit of Sep 30 paid early", () => {
     expect(upcomingOccurrences(bundle.db, TODAY, 30).filter((o) => o.seriesId === RENT).map((o) => o.date)).toEqual([
       "2026-10-05",
     ]);
+  });
+});
+
+/*
+ * 🔴 THE SERIES' OWN "NEXT" DATE NEVER ASKED EITHER. `/recurring?tab=all`'s Next column and
+ * `/categories/<Income>`'s "· next" read `listSeries`, and the series page's sentence
+ * (its day token, and the date its editor opens on) reads `seriesDetail.nextExpectedOn` — all
+ * `rollForwardNextExpected`, which steps the schedule and asks nothing else. Read on Sep 30 they
+ * named Oct 1, the payday the deposit of Sep 30 had already paid, one tab over from an Upcoming
+ * list that starts at Oct 8.
+ */
+describe("the series' own next date, after a payday paid early", () => {
+  const nextOf = (id: string): string | null | undefined =>
+    listSeries(bundle.db, TODAY).find((s) => s.id === id)?.nextExpectedOn;
+  const setPay = (patch: Partial<typeof recurringSeries.$inferInsert>): void => {
+    bundle.db.update(recurringSeries).set(patch).where(eq(recurringSeries.id, PAY)).run();
+  };
+
+  test("the All tab's Next is the pay that will come, Oct 8", () => {
+    expect(nextOf(PAY)).toBe("2026-10-08");
+  });
+
+  test("so is the series page's — the date its sentence and its editor read", () => {
+    expect(seriesDetail(bundle.db, PAY, TODAY).nextExpectedOn).toBe("2026-10-08");
+  });
+
+  test("so is the category page's", () => {
+    const row = seriesInCategory(bundle.db, salaryCategoryId(), TODAY).find((s) => s.id === PAY);
+    expect(row?.nextExpectedOn).toBe("2026-10-08");
+  });
+
+  test("and every surface names the same next payday", () => {
+    const detail = seriesDetail(bundle.db, PAY, TODAY);
+    const named = [
+      nextOf(PAY),
+      detail.nextExpectedOn,
+      detail.nextExpected[0]?.date,
+      payDays(upcomingOccurrences(bundle.db, TODAY, 30))[0],
+      payDays(dashboardData(bundle.db, TODAY).upcoming.items)[0],
+    ];
+    expect(new Set(named)).toEqual(new Set(["2026-10-08"]));
+  });
+
+  // eight days of tolerance: Sep 30's deposit pays Oct 8 and Sep 24's Oct 1 (see above), so the
+  // next date has to step past two paid paydays, not one
+  test("two paydays paid ahead: the next is the first one nothing has paid, Oct 15", () => {
+    setPay({ toleranceDays: 8 });
+    expect(nextOf(PAY)).toBe("2026-10-15");
+    expect(seriesDetail(bundle.db, PAY, TODAY).nextExpectedOn).toBe("2026-10-15");
+  });
+
+  test("a series whose last payday was paid early has nothing still to come", () => {
+    setPay({ userEndsOn: "2026-10-01" });
+    expect(seriesDetail(bundle.db, PAY, TODAY).nextExpected).toEqual([]);
+    expect(nextOf(PAY)).toBeNull();
+    expect(seriesDetail(bundle.db, PAY, TODAY).nextExpectedOn).toBeNull();
+  });
+
+  test("a bill's next date is its schedule, whatever lands near it", () => {
+    expect(nextOf(RENT)).toBe("2026-10-05");
+    expect(seriesDetail(bundle.db, RENT, TODAY).nextExpectedOn).toBe("2026-10-05");
+  });
+
+  test("a payday nothing has paid yet is still next — read the day before the deposit", () => {
+    const dayBefore = listSeries(bundle.db, "2026-09-29").find((s) => s.id === PAY);
+    expect(dayBefore?.nextExpectedOn).toBe("2026-10-01");
   });
 });

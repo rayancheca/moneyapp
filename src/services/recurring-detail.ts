@@ -14,13 +14,12 @@ import { transactions } from "@/db/schema/transactions";
 import { addDays, isValidIsoDate, periodBounds, todayIso } from "@/lib/dates";
 import { stepFrom, stepPlan } from "@/lib/recurring-step";
 import { overdueForSeries } from "./arrears";
-import { stillToCome } from "./payday-settlement";
+import { nextStillToCome, stillToCome } from "./payday-settlement";
 import {
   annualizedCentsOf,
   effectiveSeries,
   isSeriesActive,
   projectOccurrences,
-  rollForwardNextExpected,
   toProjectable,
   type SeriesOccurrence,
   seriesEvidence,
@@ -74,7 +73,10 @@ export interface SeriesDetail {
   accountName: string | null;
   // effective (override-first) values the sentence reads
   cadence: Cadence;
-  /** rolled forward off a stale stored value — never a date in the past */
+  /**
+   * rolled forward off a stale stored value — never a date in the past, nor a
+   * payday a deposit has already paid (`nextStillToCome`, listSeries' own call)
+   */
   nextExpectedOn: string | null;
   /** the un-rolled stored value, so the UI can distinguish shown from saved */
   storedNextExpectedOn: string | null;
@@ -382,7 +384,10 @@ export function seriesDetail(
     // Same rule as listSeries: the detail page must not show a date in the past
     // as "next" while the list shows the rolled-forward one. Only the statuses
     // the forecast actually projects roll — see `projects` above.
-    nextExpectedOn: projects ? rollForwardNextExpected(eff, today) : eff.nextExpectedOn,
+    // ⛔ And the same call: a payday a deposit has paid is not next. 🔴 Read on
+    // Sep 30 the sentence's date editor opened on Oct 1 above a "Next expected"
+    // list starting Oct 8 — the list asked settlement, this did not.
+    nextExpectedOn: projects ? nextStillToCome(db, s, today) : eff.nextExpectedOn,
     storedNextExpectedOn: eff.nextExpectedOn,
     nextExpectedAmountCents: eff.nextExpectedAmountCents,
     userCadence: s.userCadence,
