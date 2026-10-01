@@ -6,6 +6,7 @@ import { accountCoverage } from "@/services/coverage";
 import { netWorthSeries } from "@/services/derivation";
 import { importStatementFiles, type ImportInput } from "@/services/import/service";
 import { DbTargetRefusal, dbTargetFrom, originalsDirFor, strayFlags, type DbTarget } from "./db-target";
+import { archiveRootsFor, refuseArchiveFolders } from "./statement-folders";
 
 /**
  * Imports statement folders into the REAL database, behind a restore point.
@@ -36,12 +37,19 @@ if (folders.length === 0) {
  * (an account created, then statements imported into it) can be rehearsed end
  * to end before the real database is touched. Defaults to the real database.
  * See ./db-target.ts for what is refused.
+ *
+ * ⛔ The folders are refused here too, dry run or not, before a byte of them is
+ * read: one inside the statement archive (or holding it) hands the import the
+ * archive's `<sha>-<name>` copies. Which archives depends on the target — a copy
+ * archives beside itself. See ./statement-folders.ts.
  */
 function target(): DbTarget {
   try {
     const stray = strayFlags(args, ["--confirm", "--db"]);
     if (stray.length > 0) throw new DbTargetRefusal(`unknown flag ${stray.join(", ")}`);
-    return dbTargetFrom(args, { flag: "--db", required: false, cwd: process.cwd(), exists: fs.existsSync });
+    const chosen = dbTargetFrom(args, { flag: "--db", required: false, cwd: process.cwd(), exists: fs.existsSync });
+    refuseArchiveFolders(folders, archiveRootsFor(chosen, process.cwd(), process.env), process.cwd());
+    return chosen;
   } catch (error: unknown) {
     if (!(error instanceof DbTargetRefusal)) throw error;
     console.error(`REFUSED: ${error.message}`);

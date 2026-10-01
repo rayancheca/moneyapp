@@ -6,6 +6,7 @@ import { accountCoverage } from "@/services/coverage";
 import { netWorthSeries } from "@/services/derivation";
 import { importStatementFiles, type ImportInput } from "@/services/import/service";
 import { DbTargetRefusal, dbTargetFrom, strayFlags } from "./db-target";
+import { archiveRootsFor, refuseArchiveFolders } from "./statement-folders";
 
 /**
  * Imports a folder of statements into a THROWAWAY COPY of the real database and
@@ -29,6 +30,10 @@ if (args.length === 0) {
   process.exit(1);
 }
 
+const SCRATCH = path.join(process.cwd(), ".trial");
+const TRIAL_DB = path.join(SCRATCH, "trial.db");
+const TRIAL_ORIGINALS = path.join(SCRATCH, "originals");
+
 /**
  * `--from=<db>` copies THAT database instead of the real one — for a rehearsal
  * whose earlier step already wrote to a copy (an account the statements need,
@@ -37,13 +42,20 @@ if (args.length === 0) {
  * ⛔ Any other flag is refused: `--db=<copy>` is import-statements' spelling, and
  * ignoring it here would trial the REAL ledger while the operator believes the
  * copy was read. See ./db-target.ts.
+ *
+ * ⛔ So is a folder import-statements would refuse against the same ledger — one
+ * inside the statement archive or holding it (./statement-folders.ts) — and one
+ * in the trial's own archive, which the trial wipes before it reads: a diff for
+ * an import that cannot run is not a trial of anything.
  */
 function sourceDb(): string {
   const argv = process.argv.slice(2);
   try {
     const stray = strayFlags(argv, ["--from"]);
     if (stray.length > 0) throw new DbTargetRefusal(`unknown flag ${stray.join(", ")} — the trial's source is --from=<db>`);
-    return dbTargetFrom(argv, { flag: "--from", required: false, cwd: process.cwd(), exists: fs.existsSync }).path;
+    const source = dbTargetFrom(argv, { flag: "--from", required: false, cwd: process.cwd(), exists: fs.existsSync });
+    refuseArchiveFolders(args, [...archiveRootsFor(source, process.cwd(), process.env), TRIAL_ORIGINALS], process.cwd());
+    return source.path;
   } catch (error: unknown) {
     if (!(error instanceof DbTargetRefusal)) throw error;
     console.error(`REFUSED: ${error.message}`);
@@ -51,10 +63,6 @@ function sourceDb(): string {
   }
 }
 const SOURCE_DB = sourceDb();
-
-const SCRATCH = path.join(process.cwd(), ".trial");
-const TRIAL_DB = path.join(SCRATCH, "trial.db");
-const TRIAL_ORIGINALS = path.join(SCRATCH, "originals");
 
 function collect(dir: string): ImportInput[] {
   return fs
