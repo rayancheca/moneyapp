@@ -1,5 +1,6 @@
 import { and, asc, eq, inArray } from "drizzle-orm";
 import { apportionPercents } from "@/lib/apportion";
+import { unverifiedDetail } from "@/lib/coverage-detail";
 import type { AppDatabase } from "@/db/client";
 import { transactions } from "@/db/schema/transactions";
 import { diffDays, todayIso } from "@/lib/dates";
@@ -286,7 +287,20 @@ function caveatFor(cov: AccountCoverage | undefined, today: string): string | nu
     case "verified":
       return null;
     case "unverified":
-      return cov.unverifiedSince ? `nothing has checked it since ${when(cov.unverifiedSince)}` : "nothing checks this balance";
+      /*
+       * Net worth's line for the account, in this card's dates (`unverifiedDetail`).
+       *
+       * 🔴 The row kept its own copy, dating "since" from `unverifiedSince`, the
+       * first unchecked day the card ever had, and it was false twice. A card
+       * resting on a balance he TYPED read "nothing has checked it since Aug 4
+       * — 6 days ago", claiming a check before Aug 4 that never happened; once
+       * his count took net worth's words, a card two statements checked, the
+       * newer on Aug 5, read "nothing has checked it since Jul 19 — 22 days
+       * ago", because its export reached back before the first of them (§6A 28
+       * review). Net worth names the run still open, or with none, "checked
+       * through Aug 5, 2026, and unchecked days before that".
+       */
+      return unverifiedDetail(cov, when) ?? "nothing checks this balance";
     case "broken":
       return cov.brokenSince ? `stopped adding up on ${when(cov.brokenSince)}` : "this balance does not add up";
     case "manual":
@@ -420,6 +434,24 @@ function shareLabels(pcts: readonly (number | null)[]): (string | null)[] {
   return out;
 }
 
+/**
+ * How the cards under the total are dated, as a clause — one home for the sentence under the
+ * figure and the proof's headline, which said it in the same words.
+ *
+ * 🔴 "Across 1 card, each as of its own last statement — so this is not one moment." of a card
+ * resting on his count: it has no statement, and one card is one moment. The proof said "each
+ * balance as of its own last statement" of it too (§6A 28 review). Any card with no checked day
+ * — his count, a card he counts himself, a card with no balance — sent both down the words
+ * written for statements closing on different days. A card is "as of its own last statement"
+ * only when one checked it, and the rest are counted as what they are.
+ */
+function asOfClause(cards: readonly { checkedThrough: string | null }[], what: "" | "balance "): string {
+  const unchecked = cards.filter((c) => c.checkedThrough === null).length;
+  if (unchecked === 0) return `, each ${what}as of its own last statement`;
+  if (unchecked === cards.length) return " that no statement has checked";
+  return `, each ${what}as of its own last statement except ${unchecked} that no statement has checked`;
+}
+
 function composedProvenance(
   cards: readonly CardOwedLine[],
   coverage: readonly AccountCoverage[],
@@ -429,12 +461,21 @@ function composedProvenance(
   const inputs: ProvenanceInput[] = cards.map((c) => ({
     label: c.last4 ? `${c.name} ····${c.last4}` : c.name,
     verdict: c.verdict,
+    /*
+     * 🔴 "nothing has checked this card yet" of a card resting on his count — this proof's own
+     * copy of net worth's line, left as it was when the row took net worth's sentence (§6A 28
+     * review). It never named his count, and it dropped the $95.00 the card owes, so the lines
+     * under "$295.00 across 2 cards" no longer added up to it. A card no statement checked says
+     * what its row says (`caveatFor`), after its figure like every other line.
+     */
     detail:
       c.owedCents === null
         ? "no recorded balance — not in this total"
-        : c.checkedThrough === null
-          ? "nothing has checked this card yet"
-          : `${formatCents(Math.abs(c.owedCents))} ${c.owedCents < 0 ? "in credit" : "owed"}, checked through ${dated(c.checkedThrough, today)}`,
+        : `${formatCents(Math.abs(c.owedCents))} ${c.owedCents < 0 ? "in credit" : "owed"}, ${
+            c.checkedThrough === null
+              ? (c.caveat ?? "nothing has checked this card yet")
+              : `checked through ${dated(c.checkedThrough, today)}`
+          }`,
   }));
 
   const counted = cards.length;
@@ -457,8 +498,8 @@ function composedProvenance(
     // describe the mixture, the lesson netWorthProvenance records
     badgeWord: `${proven} of ${counted} add up`,
     headline:
-      `${formatCents(owedCents)} across ${counted} ${plural(counted, "card", "cards")}, ` +
-      `each balance as of its own last statement. A total is only as proven as its weakest part.${footing.note}`,
+      `${formatCents(owedCents)} across ${counted} ${plural(counted, "card", "cards")}` +
+      `${asOfClause(cards, "balance ")}. A total is only as proven as its weakest part.${footing.note}`,
     sources: [],
     checkedThrough: footing.through,
     inputs,
@@ -613,6 +654,17 @@ export function cardsOwedCard(db: AppDatabase, today: string = todayIso()): Card
       ? ` A closed card still carries ${formatCents(Math.abs(closedOwedCents))}, which is not counted here.`
       : "";
 
+  /*
+   * ⛔ "Not one moment" is a fact about the cards IN the total: statements closing on different
+   * days, or a checked card beside one nothing checked. One card is one moment, a card with no
+   * balance is not in the total, and cards no statement checked have no day to differ on.
+   */
+  const checkedInTotal = new Set(
+    bare.flatMap((c) => (c.owedCents === null || c.checkedThrough === null ? [] : [c.checkedThrough])),
+  );
+  const uncheckedInTotal = bare.some((c) => c.owedCents !== null && c.checkedThrough === null);
+  const notOneMoment = checkedInTotal.size > 1 || (checkedInTotal.size === 1 && uncheckedInTotal);
+
   const explanation = nothingOwed
     ? `Nothing is outstanding on ${n} ${plural(n, "card", "cards")}.` +
       (oldestCheckedThrough === null
@@ -625,7 +677,8 @@ export function cardsOwedCard(db: AppDatabase, today: string = todayIso()): Card
         credit +
         floor +
         closed
-      : `Across ${n} ${plural(n, "card", "cards")}, each as of its own last statement — so this is not one moment.` +
+      : `Across ${n} ${plural(n, "card", "cards")}${asOfClause(cards, "")}` +
+        `${notOneMoment ? " — so this is not one moment" : ""}.` +
         (oldestCheckedThrough === null
           ? ""
           : ` The oldest of them closed ${dated(oldestCheckedThrough, today)}.`) +

@@ -320,6 +320,16 @@ export interface AccountCoverage {
   uncheckedSince: string | null;
   /** length of that run — what "since" is actually about */
   uncheckedRunDays: number;
+  /**
+   * The newest day the account has a stored balance for — where the derived cache ends. Null
+   * with no balances.
+   *
+   * 🔴 Published because nothing said where the days carried on his count END. With no run
+   * open past the count, they run from it to this day, and /imports' row named a day BEFORE
+   * the count instead — "the first day past that count is Jul 27, 2026" of a card counted on
+   * Aug 1 — and dropped the 9 days the count carried (§6A 28 review). `countFooting` reads it.
+   */
+  balancesThrough: string | null;
   /** newest statement period end, or null if the account has never had one */
   statementsThrough: string | null;
   /** when the owner last typed a balance in by hand (manual accounts) */
@@ -392,6 +402,8 @@ const accountCoverageCached = cache(function accountCoverageCached(
       statementsThrough,
       lastManualUpdate,
       days,
+      // ordered by day above, so the last row is the newest
+      balancesThrough: balances.at(-1)?.day ?? null,
       countedOn: null,
       keptOpeningOn: keptOpeningOf(pickWinners(anchorRows))?.anchoredOn ?? null,
     };

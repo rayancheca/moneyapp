@@ -102,6 +102,130 @@ export interface CoverageDetailInput {
    * ⛔ REQUIRED, like `countedOn`: a forgotten field reads "rests on entries alone" of rows an export printed.
    */
   keptOpeningOn: string | null;
+  /**
+   * `AccountCoverage.balancesThrough`: the newest day with a stored balance. Read by `countFooting`,
+   * for how many days his count carries when no unchecked run is open past it.
+   *
+   * ⛔ REQUIRED, like `countedOn`: a forgotten field drops the days carried on his count.
+   */
+  balancesThrough: string | null;
+}
+
+/** What `countFooting` reads — `AccountCoverage` carries every one under the same name. */
+type CountFields = Pick<
+  CoverageDetailInput,
+  "grade" | "countedOn" | "uncheckedSince" | "uncheckedRunDays" | "balancesThrough"
+>;
+
+/** What the days of an account resting on a balance he TYPED stand on — see `countFooting`. */
+export interface CountFooting {
+  /** the day he counted the balance its newest days stand on */
+  countedOn: string;
+  /** days past the count that hold its balance, nothing posted: up to the open run, else to the newest day */
+  carriedDays: number;
+  /** first day of the unchecked run still open past the count; null when nothing past it is unchecked */
+  uncheckedSince: string | null;
+  /** …and that run's length, 0 with no run */
+  uncheckedDays: number;
+}
+
+/**
+ * What the days of an account resting on a balance he TYPED stand on — the ONE reading every
+ * sentence about his count is worded from — or null when they do not rest on his count.
+ *
+ * 🔴 THREE COPIES, TWO RULES. Net worth's line, the dashboard card's row and /imports' row
+ * each said this, and /imports chose its unchecked days the way an account with no count does:
+ * the open run, else the FIRST unchecked day the account ever had (`unverifiedSince`). On a
+ * card with rows before his count — replayed backwards from it, unchecked — and nothing
+ * unchecked past it, that read "the first day past that count is Jul 27, 2026" of a count made
+ * on Aug 1, dropped the 9 days the count carried, and disagreed with "nothing else checks it"
+ * on the other two surfaces (§6A 28 review, measured through `addManualAnchor` and
+ * `rebuildAccount`). Days before the count are prehistory; a "since" is about the run still
+ * open (`AccountCoverage.uncheckedSince`), and with none, nothing else checks it.
+ *
+ * ⚠️ `carriedDays` is day arithmetic, as the row's other carry is: every day past his count
+ * that is not unchecked is carried on it, because a later count or statement would be the
+ * newer footing (`AccountCoverage.countedOn`).
+ */
+export function countFooting(c: CountFields): CountFooting | null {
+  if (c.grade !== "unverified" || c.countedOn === null) return null;
+  if (c.uncheckedSince !== null) {
+    return {
+      countedOn: c.countedOn,
+      carriedDays: Math.max(0, diffDays(c.countedOn, c.uncheckedSince) - 1),
+      uncheckedSince: c.uncheckedSince,
+      uncheckedDays: c.uncheckedRunDays,
+    };
+  }
+  return {
+    countedOn: c.countedOn,
+    carriedDays: c.balancesThrough === null ? 0 : Math.max(0, diffDays(c.countedOn, c.balancesThrough)),
+    uncheckedSince: null,
+    uncheckedDays: 0,
+  };
+}
+
+/**
+ * What an account whose days rest on a balance he TYPED says about itself in one line — net
+ * worth's line for it, the dashboard card's row and its line in "what you owe", each through
+ * `unverifiedDetail` — or null when they do not rest on his count. /imports says the same
+ * `countFooting` at length.
+ *
+ * 🔴 Net worth said "nothing checks it since Aug 11, 2026" of Cash on Hand, whose days before
+ * Aug 11 stand on nothing but the $5,000.00 he typed for Aug 3 (real ledger copy, 2026-09-16) —
+ * "since" said something checked them. The count is named as his.
+ *
+ * ⛔ Shared because the second surface said it the old way: the dashboard's "what you owe" row
+ * wrote "nothing has checked it since Aug 4 — 6 days ago" of a card resting on his count, and
+ * dated it `unverifiedSince`, so a charge before the count, replayed backwards from it, became
+ * the day checking stopped (§6A 28 review). Here, beside /imports' row, because that row is the
+ * third surface and it had kept its own rule. `formatDay` is only each surface's voice for a
+ * date, so the card can age its dates without re-wording them.
+ */
+export function countedDetail(c: CountFields, formatDay: (iso: string) => string): string | null {
+  const count = countFooting(c);
+  if (count === null) return null;
+  const counted = `you counted it on ${formatDay(count.countedOn)}`;
+  return count.uncheckedSince === null
+    ? `${counted}, and nothing else checks it`
+    : `${counted}, and nothing checks it since ${formatDay(count.uncheckedSince)}`;
+}
+
+/** What `unverifiedDetail` reads — `AccountCoverage` carries every one under the same name. */
+type UnverifiedFields = CountFields &
+  Pick<CoverageDetailInput, "verifiedThrough" | "unverifiedSince">;
+
+/**
+ * What an `unverified` account says about itself in one line — net worth's line for it, which the
+ * trust card prints, and the dashboard card's row and its line in "what you owe" — or null for any
+ * other grade. His count first (`countedDetail`); then the run still open; with none open, the
+ * days before its first balance, which nothing checks and the figure does not rest on.
+ *
+ * 🔴 TWO COPIES, TWO DATES. Net worth dates "since" from the run still open
+ * (`AccountCoverage.uncheckedSince`) since Robinhood Cash read "nothing checks it since Dec 5,
+ * 2023 · 52 days unchecked" of an account whose newest statement had closed 35 days before. The
+ * card kept its own copy of the line and still dated it from `unverifiedSince`, the first
+ * unchecked day the account EVER had: "nothing has checked it since Jul 19 — 22 days ago" of a
+ * card two statements checked, the newer on Aug 5, because its export reached back before the
+ * first of them — where net worth said "checked through Aug 5, 2026, and unchecked days before
+ * that" (§6A 28 review, through `rebuildAccount`). `formatDay` is each surface's voice for a date.
+ *
+ * ⚠️ "Checked through" names a day something checked, so an account with none gets no sentence
+ * here, where net worth printed `unverifiedSince` as that day. No account on his ledger or the
+ * pristine e2e fixture is in that state (2026-10-01): with no run open, its unchecked days are the
+ * ones before its first balance, and something checked a day after them.
+ */
+export function unverifiedDetail(
+  c: UnverifiedFields,
+  formatDay: (iso: string) => string,
+): string | null {
+  if (c.grade !== "unverified") return null;
+  const counted = countedDetail(c, formatDay);
+  if (counted !== null) return counted;
+  if (c.uncheckedSince !== null) return `nothing checks it since ${formatDay(c.uncheckedSince)}`;
+  return c.verifiedThrough !== null && c.unverifiedSince !== null
+    ? `checked through ${formatDay(c.verifiedThrough)}, and unchecked days before that`
+    : null;
 }
 
 const plural = (n: number, one: string, many: string): string => (n === 1 ? one : many);
@@ -151,6 +275,30 @@ function closesClause(input: CoverageDetailInput): string {
   return ago === null ? `closes to the cent through ${dated}` : `closes to the cent through ${dated} (${ago})`;
 }
 
+/**
+ * The row for an account whose days rest on a balance he TYPED — `countFooting` said at length:
+ * what closes before the count, the count, the days it carries, and the run still open past it.
+ *
+ * 🔴 HIS COUNT IS NOT A CLOSED CHAIN. Cash on Hand read "closes to the cent through Aug 3, 2026
+ * (44 days ago), then carries that balance forward for 7 days; the first day it does not is Aug
+ * 11, 2026" of the $5,000.00 he typed for Aug 3 — nothing was ever replayed onto it (real ledger
+ * copy, 2026-09-16). The row says what the days stand on.
+ */
+function countedRow(
+  input: CoverageDetailInput,
+  restsOn: CountFooting,
+  resting: (unchecked: number) => string,
+): string {
+  const opening =
+    input.verifiedThrough === null ? "nothing closes to the cent: it rests on" : `${closesClause(input)}, then rests on`;
+  const carried = restsOn.carriedDays;
+  const held = carried === 0 ? "" : `, carried forward for ${carried} ${plural(carried, "day", "days")}`;
+  const count = `${opening} the balance you counted on ${dayWithYear(restsOn.countedOn)}${held}`;
+  if (restsOn.uncheckedSince === null) return `${count}, and nothing else checks it`;
+  const first = dayWithYear(restsOn.uncheckedSince);
+  return `${count}; the first day past that count is ${first} — ${resting(restsOn.uncheckedDays)}`;
+}
+
 export function coverageDetail(input: CoverageDetailInput): string {
   switch (input.grade) {
     case "broken": {
@@ -184,13 +332,27 @@ export function coverageDetail(input: CoverageDetailInput): string {
         const n = input.unverifiedDays;
         return `nothing closes to the cent: it rests on the opening balance of a statement you un-imported, printed for ${dayWithYear(input.keptOpeningOn)} — ${n} ${plural(n, "day rests", "days rest")} on it, and nothing checks ${plural(n, "it", "them")}`;
       }
+      /*
+       * ⛔ WHY the days are unchecked depends on what the account HAS. Robinhood
+       * Cash has 33 statement anchors and its loose days really do rest on an
+       * export that carried no closing figure. Cash on Hand has no document of
+       * any kind — its days rest on the entries the owner typed, and naming a
+       * document there invents one.
+       */
+      const because = input.hasStatements
+        ? "on an export with no closing balance"
+        : "on entries alone, with no document to check them against";
+      // the unchecked days a row names, and the prehistory they leave out, so this row and the
+      // trust card's "26 days unchecked, of 52 in all" reconcile
+      const resting = (n: number): string =>
+        `${n} ${plural(n, "day rests", "days rest")} ${because}` +
+        (n === input.unverifiedDays ? "" : `, of ${input.unverifiedDays} unchecked in all`);
+      const restsOn = countFooting(input);
+      if (restsOn !== null) return countedRow(input, restsOn, resting);
       const run = input.uncheckedRunDays > 0;
       const n = run ? input.uncheckedRunDays : input.unverifiedDays;
       const since = run ? input.uncheckedSince : input.unverifiedSince;
       const first = since === null ? "a day the record does not name" : dayWithYear(since);
-      // the prehistory the run leaves out, so this row and the trust card's
-      // "26 days unchecked, of 52 in all" reconcile
-      const inAll = run && n !== input.unverifiedDays ? `, of ${input.unverifiedDays} unchecked in all` : "";
       /*
        * 🔴 SEVEN DAYS ONCE FELL BETWEEN THE TWO CLAUSES. On Cash on Hand this
        * read "closes to the cent through Aug 3, 2026 …; the first day it does
@@ -205,41 +367,11 @@ export function coverageDetail(input: CoverageDetailInput): string {
        * held forward, which the trust card already calls "as proven as that
        * balance, and not a gap". Naming it closes the hole without new data.
        */
-      const counted = input.countedOn;
-      // the balance the carried days hold: his count when there is one after the chain, else the chain's last day
-      const heldFrom = counted ?? input.verifiedThrough;
+      const heldFrom = input.verifiedThrough;
       const carried = heldFrom === null || since === null ? 0 : Math.max(0, diffDays(heldFrom, since) - 1);
       const carriedDays = `${carried} ${plural(carried, "day", "days")}`;
-      /*
-       * ⛔ WHY the days are unchecked depends on what the account HAS. Robinhood
-       * Cash has 33 statement anchors and its loose days really do rest on an
-       * export that carried no closing figure. Cash on Hand has no document of
-       * any kind — its days rest on the entries the owner typed, and naming a
-       * document there invents one.
-       */
-      const because = input.hasStatements
-        ? "on an export with no closing balance"
-        : "on entries alone, with no document to check them against";
-      const tail = `${n} ${plural(n, "day rests", "days rest")} ${because}${inAll}`;
-      if (counted === null) {
-        const held = carried === 0 ? "" : `, then carries that balance forward for ${carriedDays}`;
-        return `${closesClause(input)}${held}; the first day it does not is ${first} — ${tail}`;
-      }
-      /*
-       * 🔴 HIS COUNT IS NOT A CLOSED CHAIN. Cash on Hand read "closes to the cent
-       * through Aug 3, 2026 (44 days ago), then carries that balance forward for
-       * 7 days; the first day it does not is Aug 11, 2026" of the $5,000.00 he
-       * typed for Aug 3 — nothing was ever replayed onto it (real ledger copy,
-       * 2026-09-16). The row now says what the days stand on.
-       */
-      const opening =
-        input.verifiedThrough === null
-          ? "nothing closes to the cent: it rests on"
-          : `${closesClause(input)}, then rests on`;
-      const count = `${opening} the balance you counted on ${dayWithYear(counted)}`;
-      if (since === null) return `${count}, and nothing else checks it`;
-      const held = carried === 0 ? "" : `, carried forward for ${carriedDays}`;
-      return `${count}${held}; the first day past that count is ${first} — ${tail}`;
+      const held = carried === 0 ? "" : `, then carries that balance forward for ${carriedDays}`;
+      return `${closesClause(input)}${held}; the first day it does not is ${first} — ${resting(n)}`;
     }
     case "market_value":
       return input.pricedFromHoldings

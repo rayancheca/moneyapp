@@ -97,6 +97,7 @@ export function CoveragePanel({
                   pricedFromHoldings: pricedFromHoldingsIds.includes(c.accountId),
                   countedOn: c.countedOn,
                   keptOpeningOn: c.keptOpeningOn,
+                  balancesThrough: c.balancesThrough,
                 })}
               </p>
             </li>
