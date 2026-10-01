@@ -1,5 +1,10 @@
 import { describe, expect, test } from "vitest";
-import { settlePaydaysBackwards, type AttributedDeposit, type PaydayOccurrence } from "./payday-settlement";
+import {
+  portionsAcross,
+  settlePaydaysBackwards,
+  type AttributedDeposit,
+  type PaydayOccurrence,
+} from "./payday-settlement";
 
 /**
  * The rule at its boundaries, where no fixture built out of the owner's own
@@ -273,5 +278,34 @@ describe("settlePaydaysBackwards — where the money went", () => {
       }
       expect(got.portions.every((p) => p.cents > 0)).toBe(true);
     }
+  });
+});
+
+/*
+ * One sort of the money across a month line, for the two pages that print
+ * figures about it side by side — /budgets' fourth figure and its mirror, and
+ * the recurring calendar's Settled figure.
+ */
+describe("portionsAcross — the money that crossed a window, both ways", () => {
+  const october = (day: string): boolean => day >= "2026-10-01" && day <= "2026-10-31";
+  const window = { paydayInside: october, depositInside: october };
+
+  test("the shifted case: September's lump paid Oct 1, and Oct 1's deposit paid Aug 27", () => {
+    const got = settlePaydaysBackwards({
+      occurrences: weekly("2026-08-27", "2026-09-03", "2026-09-10", "2026-09-17", "2026-09-24", "2026-10-01"),
+      deposits: [paid("2026-09-03", WEEK), paid("2026-09-30", WEEK * 4), paid("2026-10-01", WEEK)],
+      toleranceDays: 3,
+    });
+    const across = portionsAcross(got.portions, window);
+    expect(across.paidByAnotherWindow).toEqual([{ paydayOn: "2026-10-01", depositOn: "2026-09-30", cents: WEEK }]);
+    expect(across.paidForAnotherWindow).toEqual([{ paydayOn: "2026-08-27", depositOn: "2026-10-01", cents: WEEK }]);
+  });
+
+  test("money whose payday and deposit sit on the same side crossed nothing", () => {
+    const portions = [
+      { paydayOn: "2026-10-08", depositOn: "2026-10-08", cents: WEEK },
+      { paydayOn: "2026-09-17", depositOn: "2026-09-23", cents: WEEK },
+    ];
+    expect(portionsAcross(portions, window)).toEqual({ paidByAnotherWindow: [], paidForAnotherWindow: [] });
   });
 });

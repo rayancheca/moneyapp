@@ -405,12 +405,14 @@ describe("a payday paid by a deposit outside the window is still named by the wi
 
   /* ⛔ AND NO DOUBLE COUNT THE OTHER WAY. September's own lump is drawn on
      September's grid as a real row; the three paydays behind it must NOT be
-     added to the month's Settled total on top of the money that paid them. */
+     added to the month's Settled total on top of the money that paid them.
+     Four weeks, not the five that landed: the Sep 24 deposit paid Aug 27, and
+     that week is August's figure (the next test), where its chip stands. */
   test("a payday paid by a deposit inside the month is not counted twice", () => {
     readThrough(WELLS, "2026-06-01", "2026-09-27");
     hisSeptember();
     const september = recurringCalendar(bundle.db, "2026-09", TODAY);
-    expect(september.postedNetCents).toBe(WEEK * 5);
+    expect(september.postedNetCents).toBe(WEEK * 4);
   });
 
   /* August's Aug 27 was retired by the deposit of Sep 24, so the money is on
@@ -421,7 +423,7 @@ describe("a payday paid by a deposit outside the window is still named by the wi
     const august = recurringCalendar(bundle.db, "2026-08", TODAY);
     expect(august.entriesByDay["2026-08-27"]?.[0]).toMatchObject({
       state: "paid",
-      settledByDepositOn: "2026-09-24",
+      settledByDepositsOn: ["2026-09-24"],
       transactionId: null,
     });
     expect(august.postedNetCents).toBe(WEEK);

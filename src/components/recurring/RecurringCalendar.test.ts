@@ -13,7 +13,9 @@ function entry(over: Partial<CalendarEntry> & Pick<CalendarEntry, "seriesId" | "
     kind: "bill",
     expectedAmountCents: over.amountCents,
     transactionId: null,
-    settledByDepositOn: null,
+    settledByDepositsOn: [],
+    settlesPaydaysOn: [],
+    settledCents: null,
     unsettledReason: null,
     confidence: null,
     isStale: false,
@@ -116,7 +118,8 @@ describe("RecurringCalendar — a payday paid by a deposit on another day", () =
           kind: "income",
           state: "paid",
           amountCents: 114192,
-          settledByDepositOn: "2026-09-24",
+          settledByDepositsOn: ["2026-09-24"],
+          settledCents: 114192,
         }),
       ],
     },
@@ -132,6 +135,73 @@ describe("RecurringCalendar — a payday paid by a deposit on another day", () =
   test("the day names the deposit that paid it, rather than claiming a payment turned up", () => {
     expect(html).toContain(
       'aria-label="Aug 27, 2026 — 1 item: It America LLC (weekly pay) paid (paid by the deposit of Sep 24, 2026) $1,141.92"',
+    );
+  });
+});
+
+/**
+ * 🔴 ONE DEPOSIT DREW AS PAYING TWO PAYDAYS (§6A 29 review).
+ *
+ * Wed Sep 30's lump paid Thu Oct 1, and the Oct 1 deposit — its own payday
+ * already paid — paid Aug 27. October drew the Oct 1 row as Oct 1's pay while
+ * August's chip named the same deposit for Aug 27. The month below is what the
+ * calendar service returns for October, read 2026-10-02, on that ledger
+ * (`recurring-calendar-payer.test`): the payday names the lump, and the row
+ * names the payday its money went to.
+ */
+describe("RecurringCalendar — a deposit that paid another month's payday", () => {
+  const pay = { seriesId: "pay", name: "It America LLC (weekly pay)", kind: "income" as const };
+  const week = { ...pay, amountCents: 114192 };
+  const upcoming = (): CalendarEntry[] => [entry({ ...week, state: "upcoming", confidence: "scheduled" })];
+  const month: RecurringCalendarMonth = {
+    monthKey: "2026-10",
+    today: "2026-10-02",
+    entriesByDay: {
+      "2026-10-01": [
+        entry({ ...week, state: "paid", transactionId: "t-oct1", settlesPaydaysOn: ["2026-08-27"], settledCents: 0 }),
+        entry({ ...week, state: "paid", settledByDepositsOn: ["2026-09-30"], settledCents: 114192 }),
+      ],
+      "2026-10-08": upcoming(),
+      "2026-10-15": upcoming(),
+      "2026-10-22": upcoming(),
+      "2026-10-29": upcoming(),
+    },
+    entryCount: 6,
+    postedNetCents: 114192,
+    upcomingNetCents: 456768,
+    missedCount: 0,
+    unsettledCount: 0,
+    unsettledGrossCents: 0,
+  };
+  const html = decode(renderToStaticMarkup(createElement(RecurringCalendar, { initialMonth: month, today: "2026-10-02" })));
+
+  test("the payday names the deposit that paid it, and the deposit names the payday it paid", () => {
+    expect(html).toContain(
+      'aria-label="Oct 1, 2026 — 2 items: It America LLC (weekly pay) paid (toward the payday of Aug 27, 2026) $1,141.92; ' +
+        'It America LLC (weekly pay) paid (paid by the deposit of Sep 30, 2026) $1,141.92"',
+    );
+  });
+
+  /* The strip above the grid sums the same `settledCents` the footer does: one week settled, five scheduled. */
+  test("the flow strip lands on the footer's Settled figure and on the month's five paydays", () => {
+    expect(html).toContain("October 2026: posted $1,141.92, as scheduled $5,709.60");
+  });
+
+  test("money from several days is named by every day it came from", () => {
+    const pooled: RecurringCalendarMonth = {
+      ...month,
+      monthKey: "2026-08",
+      entriesByDay: {
+        "2026-08-27": [
+          entry({ ...week, state: "paid", settledByDepositsOn: ["2026-06-04", "2026-06-05"], settledCents: 114192 }),
+        ],
+      },
+      entryCount: 1,
+      upcomingNetCents: 0,
+    };
+    const out = decode(renderToStaticMarkup(createElement(RecurringCalendar, { initialMonth: pooled, today: "2026-10-02" })));
+    expect(out).toContain(
+      'aria-label="Aug 27, 2026 — 1 item: It America LLC (weekly pay) paid (paid by the deposits of Jun 4, 2026 and Jun 5, 2026) $1,141.92"',
     );
   });
 });

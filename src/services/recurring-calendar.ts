@@ -5,6 +5,7 @@ import { recurringSeries, type SeriesKind } from "@/db/schema/recurring";
 import { transactions } from "@/db/schema/transactions";
 import { isCategoryHueName, type CategoryHueName } from "@/lib/category-palette";
 import { compareDates, diffDays, monthKey, periodBounds, todayIso } from "@/lib/dates";
+import { portionsAcross, type SettlementPortion } from "@/lib/payday-settlement";
 import { RECURRING_HISTORY_STATUSES } from "@/lib/series-evidence";
 import {
   forecastConfidence,
@@ -16,7 +17,7 @@ import {
 } from "@/lib/occurrence-verdict";
 import { loadCategoryIndex } from "./analytics";
 import { frontierForSeries, observationFrontier, seriesAccountIds } from "./observation-frontier";
-import { settledPaydaysBySeries } from "./payday-settlement";
+import { paydaySettlementsBySeries } from "./payday-settlement";
 import {
   effectiveSeries,
   lapsedSeriesShouldStopForecasting,
@@ -66,6 +67,8 @@ import {
  * expected occurrence never overlaps a posting it already represents; a user
  * next-expected override could, so an expected date within ±tolerance of one of
  * the series' own postings this month is treated as that posting (not doubled).
+ * A PAYDAY is the exception: which deposit paid it is settlement's answer
+ * (`services/payday-settlement`), and a row merely lying near it is not.
  */
 /** The calendar's day-state grammar — see `occurrence-verdict` for the split. */
 export type DayStateKind = OccurrenceState;
@@ -82,9 +85,10 @@ export interface CalendarEntry {
   /** present only for posted charges (paid / paid_different) */
   transactionId: string | null;
   /**
-   * The `posted_on` of the deposit that paid this payday down, on an entry that
-   * carries no posting of its own. Non-null exactly when this is a settled
-   * payday (`services/payday-settlement`, his decision of 2026-09-28).
+   * The `posted_on` of each deposit whose MONEY paid this payday down, oldest
+   * first, on an entry that carries no posting of its own. Non-empty exactly
+   * when this is a settled payday drawn as a mark of its own
+   * (`services/payday-settlement`, his decision of 2026-09-28).
    *
    * ⛔ IT HAS TO BE NAMED, because the word beside it is borrowed. `paid` is
    * defined in the legend as "a charge for this bill turned up on the expected
@@ -93,12 +97,46 @@ export interface CalendarEntry {
    * aria-label and the Day Sheet both print it, and the reader can go to that
    * day and find the row.
    *
-   * ⛔ AND IT DECIDES WHICH FOOTER FIGURE OWNS THE MONEY. A payday settled by a
-   * deposit from ANOTHER month is in no posted row this month draws, so the
-   * month's Settled total counts it here; one settled by a deposit inside the
-   * month is already inside that deposit's own row and must not be added again.
+   * ⛔ WHOSE MONEY, not whose walk. Settlement says which deposit's walk retired
+   * a payday (`settledBy`) and whose money paid it (`portions`), and the two
+   * part when change carried over from an earlier deposit is spent. Measured on
+   * his ledger 2026-10-01: the lump of Sep 23 walked to Aug 27 on June's money —
+   * its own $4,567.68 paid Sep 3 through Sep 24 — so a chip naming the lump
+   * claimed five weeks out of a four-week deposit, while /budgets named the June
+   * deposits. A list, because pooled money can come from more than one day.
    */
-  settledByDepositOn: string | null;
+  settledByDepositsOn: readonly string[];
+  /**
+   * The paydays OUTSIDE this month that a posted deposit's money paid down,
+   * oldest first — the mirror of `settledByDepositsOn`, on the row whose money
+   * it was. Empty on every other entry.
+   *
+   * 🔴 Without it a deposit drawn on a payday read as that payday's pay while
+   * another month's chip named it too. Wed Sep 30's lump pays Thu Oct 1, and the
+   * Oct 1 deposit — its own payday already paid — pays Aug 27: October drew
+   * that row green on Oct 1 and August chipped Aug 27 "paid by the deposit of
+   * Oct 1", one deposit for two paydays. /budgets names the same money ("went
+   * toward 1 payday outside this month (Thu, Aug 27, 2026)"); so does the row.
+   */
+  settlesPaydaysOn: readonly string[];
+  /**
+   * What this mark adds to the month's Settled figure, or null for a mark that
+   * has not settled (upcoming, missed, not yet known). The footer's Settled
+   * total and the flow strip's posted line are both the sum of these.
+   *
+   * ⛔ EACH CENT IN ONE MONTH: the month of the payday it paid. A posted row
+   * carries its amount less the money settlement spent on another month's
+   * paydays (`settlesPaydaysOn` — that month's chip counts it); a payday chip
+   * carries the money ANOTHER month's deposits put into it, since no row this
+   * month draws holds it; a chip paid from a deposit inside the month carries
+   * nothing, because that deposit's own row already does.
+   *
+   * 🔴 Measured on his ledger 2026-10-01: the Sep 24 deposit paid Aug 20 and
+   * two June deposits paid Aug 27, and those $2,283.84 were in August's Settled
+   * figure (as chips) AND in September's and June's (as rows) — $9,440.44 of
+   * Settled across the three months for $7,156.60 of pay.
+   */
+  settledCents: number | null;
   /**
    * Why the ledger cannot settle this. Non-null exactly when `state` is
    * "unsettled" — the state and its reason come from ONE `settledVerdict` call
@@ -158,19 +196,6 @@ export interface CalendarEntry {
   hue: CategoryHueName | null;
 }
 
-/**
- * A payday settled by a deposit that landed OUTSIDE the month being drawn.
- *
- * ⛔ ONE SPELLING, because two readers need the answer and they publish figures
- * that sit beside each other: the month footer's Settled total counts this
- * entry (no row this month draws contains its money), and the flow strip above
- * that footer has to climb by the same money or the page repeats pass 58's
- * failure — a line climbing to +$3,141 directly above "SETTLED $0.00".
- */
-export function paidByAnotherMonth(e: CalendarEntry, monthKey: string): boolean {
-  return e.settledByDepositOn !== null && !e.settledByDepositOn.startsWith(`${monthKey}-`);
-}
-
 export interface RecurringCalendarMonth {
   /** "YYYY-MM" */
   monthKey: string;
@@ -179,7 +204,10 @@ export interface RecurringCalendarMonth {
   entriesByDay: Record<string, CalendarEntry[]>;
   /** total entries across the month (drives the tab badge) */
   entryCount: number;
-  /** net-worth-signed sum of posted charges */
+  /**
+   * net-worth-signed sum of what settled — every entry's `settledCents`, so a
+   * deposit's money is counted in the month of the payday it paid, once
+   */
   postedNetCents: number;
   /** net-worth-signed sum of future (upcoming) expected charges */
   upcomingNetCents: number;
@@ -415,6 +443,55 @@ function measuredStddevs(db: AppDatabase, seriesIds: readonly string[]): Map<str
   return out;
 }
 
+/**
+ * Whether a settled payday is drawn as the posted row that paid it — no mark of
+ * its own — rather than as a chip naming its payer.
+ *
+ * ⛔ The merged drawing IS a claim: "the deposit beside this payday paid it".
+ * So it is made only when that is settlement's whole answer — one day's
+ * deposits paid all of it, drawn on this grid within the series' tolerance —
+ * AND no other of the series' rows here sits as near the payday, which a
+ * reader would take for its pay. His ledger, 2026-10-01: the lump of Wed Sep 23
+ * paid Thu Sep 24, and the deposit dated Sep 24 itself paid Aug 20. Merged,
+ * Sep 24 read as paid by its own day's deposit, which August's chip also named.
+ */
+export function payerStandsForPayday(
+  depositDays: readonly string[],
+  payday: string,
+  rowDays: readonly string[],
+  toleranceDays: number,
+): boolean {
+  if (depositDays.length !== 1) return false;
+  const payer = depositDays[0]!;
+  if (!rowDays.includes(payer)) return false;
+  const reach = Math.abs(diffDays(payer, payday));
+  if (reach > toleranceDays) return false;
+  return rowDays.every((day) => day === payer || Math.abs(diffDays(day, payday)) > reach);
+}
+
+/**
+ * Charges one posted row with the money its day's deposits spent on ANOTHER
+ * month's paydays, taking from `owed` until the row's own money runs out — so
+ * two deposits on one day split the charge rather than one going negative.
+ * Consumes `owed`, which is this month's queue for that day and nothing else's.
+ */
+function chargeRow(owed: SettlementPortion[] | undefined, amountCents: number): { cents: number; paydays: string[] } {
+  if (!owed || amountCents <= 0) return { cents: 0, paydays: [] };
+  let room = amountCents;
+  let cents = 0;
+  const paydays = new Set<string>();
+  while (room > 0 && owed.length > 0) {
+    const head = owed[0]!;
+    const part = Math.min(room, head.cents);
+    cents += part;
+    room -= part;
+    paydays.add(head.paydayOn);
+    if (part === head.cents) owed.shift();
+    else owed[0] = { ...head, cents: head.cents - part };
+  }
+  return { cents, paydays: [...paydays].sort(compareDates) };
+}
+
 export function recurringCalendar(
   db: AppDatabase,
   month: string = monthKey(todayIso()),
@@ -444,6 +521,48 @@ export function recurringCalendar(
     (entriesByDay[date] ??= []).push(entry);
   };
 
+  /*
+   * ⚖️ SETTLE BACKWARDS, his decision of 2026-09-28: a deposit attributed to a
+   * pay series pays down the paydays behind it up to its amount, so a payday a
+   * later lump retired draws PAID rather than a red "unsettled (unbanked)".
+   *
+   * 🔴 Without it those marks were permanent. Measured on his ledger the same
+   * day, with $4,567.68 banked on Sep 23 and $1,141.92 on Sep 24, Sep 3, Sep 10,
+   * Sep 17 and all four August paydays were still drawn unsettled — and no
+   * future deposit could ever have cleared them, because one deposit met
+   * exactly one payday.
+   *
+   * `services/payday-settlement` is the only place that answers this, shared
+   * with /budgets and `unbankedIncomeForSeries`. A calendar with a rule of its
+   * own is how this codebase came to say two things about one Thursday — and it
+   * did again (§6A 29 review): a payday with a row of its own within tolerance
+   * was drawn as paid by that row BEFORE settlement was asked, so a deposit
+   * settlement had spent on another payday was drawn paying two. Settlement now
+   * names every payday's payer (step 2) and every deposit's money (step 1).
+   * Income only: settlement speaks about deposits, and a bill's absence is
+   * still graded by `settledVerdict` exactly as before.
+   */
+  const settlements = paydaySettlementsBySeries(
+    db,
+    forecastRows.filter((s) => s.kind === "income").map((s) => s.id),
+    today,
+  );
+  const insideMonth = (day: string): boolean =>
+    compareDates(day, monthStart) >= 0 && compareDates(day, monthEnd) <= 0;
+  /** per series, per deposit day: this month's money that paid ANOTHER month's paydays, still to charge to a row */
+  const owedElsewhere = new Map<string, Map<string, SettlementPortion[]>>();
+  /** per series, per payday in this month: the money ANOTHER month's deposits put into it */
+  const paidFromElsewhere = new Map<string, Map<string, number>>();
+  for (const [seriesId, settlement] of settlements) {
+    const across = portionsAcross(settlement.portions, { paydayInside: insideMonth, depositInside: insideMonth });
+    const owed = new Map<string, SettlementPortion[]>();
+    for (const p of across.paidForAnotherWindow) owed.set(p.depositOn, [...(owed.get(p.depositOn) ?? []), p]);
+    owedElsewhere.set(seriesId, owed);
+    const paid = new Map<string, number>();
+    for (const p of across.paidByAnotherWindow) paid.set(p.paydayOn, (paid.get(p.paydayOn) ?? 0) + p.cents);
+    paidFromElsewhere.set(seriesId, paid);
+  }
+
   // 1) posted charges tagged to a drawable series, inside the month
   const postedDatesBySeries = new Map<string, string[]>();
   if (historyRows.length > 0) {
@@ -472,6 +591,9 @@ export function recurringCalendar(
       const stddev = s.amountCentsStddev ?? measured.get(s.id) ?? null;
       const state: DayStateKind =
         expected === null ? "paid" : classifyPostedAmount(p.amountCents, expected, stddev);
+      // the money this deposit spent on another month's paydays is THAT month's
+      // Settled figure, where the chip naming this day stands
+      const elsewhere = chargeRow(owedElsewhere.get(s.id)?.get(p.postedOn), p.amountCents);
       pushEntry(p.postedOn, {
         seriesId: s.id,
         name: s.name,
@@ -480,7 +602,9 @@ export function recurringCalendar(
         amountCents: p.amountCents,
         expectedAmountCents: expected,
         transactionId: p.id,
-        settledByDepositOn: null,
+        settledByDepositsOn: [],
+        settlesPaydaysOn: elsewhere.paydays,
+        settledCents: p.amountCents - elsewhere.cents,
         unsettledReason: null,
         confidence: null,
         isStale: false,
@@ -515,29 +639,6 @@ export function recurringCalendar(
   const frontier = needsFrontier ? observationFrontier(db) : null;
   const accountsBySeries = needsFrontier ? seriesAccountIds(db) : null;
 
-  /*
-   * ⚖️ SETTLE BACKWARDS, his decision of 2026-09-28: a deposit attributed to a
-   * pay series pays down the paydays behind it up to its amount, so a payday a
-   * later lump retired draws PAID rather than a red "unsettled (unbanked)".
-   *
-   * 🔴 Without it those marks were permanent. Measured on his ledger the same
-   * day, with $4,567.68 banked on Sep 23 and $1,141.92 on Sep 24, Sep 3, Sep 10,
-   * Sep 17 and all four August paydays were still drawn unsettled — and no
-   * future deposit could ever have cleared them, because one deposit met
-   * exactly one payday.
-   *
-   * `services/payday-settlement` is the only place that answers this, shared
-   * with /budgets and `unbankedIncomeForSeries`. A calendar with a rule of its
-   * own is how this codebase came to say two things about one Thursday.
-   * Income only: settlement speaks about deposits, and a bill's absence is
-   * still graded by `settledVerdict` exactly as before.
-   */
-  const settledPaydays = settledPaydaysBySeries(
-    db,
-    forecastRows.filter((s) => s.kind === "income").map((s) => s.id),
-    today,
-  );
-
   for (const s of forecastRows) {
     if (lapsedSeriesShouldStopForecasting(s.kind) && seriesHasLapsed(s, today)) continue;
     const occurrences = projectOccurrences(toProjectable(s), monthStart, monthEnd);
@@ -550,34 +651,61 @@ export function recurringCalendar(
     const evidence = seriesEvidence(s, today);
     const isStale = evidence === "running-late";
     const neverBilled = evidence === "never-billed";
+    const settlement = settlements.get(s.id);
     for (const o of occurrences) {
-      const alreadyPosted = postedDates.some((p) => Math.abs(diffDays(p, o.date)) <= s.toleranceDays);
-      if (alreadyPosted) continue;
-
       /*
-       * A payday a deposit has already paid down. It draws paid and carries no
-       * transaction of its own: the money is on the lump's row, which is drawn
-       * on the day it actually landed — and `settledByDepositOn` says which day
-       * that was, so the chip's claim can be checked and the footer knows
-       * whether this month's Settled total already contains the money.
+       * ⛔ A PAYDAY'S PAYER IS SETTLEMENT'S ANSWER, asked FIRST. Every payday it
+       * speaks about — money in, on a pay series — is paid by the deposits whose
+       * money it spent there, or by none. A row merely lying within tolerance
+       * paid nothing settlement did not spend on it.
+       *
+       * 🔴 This asked "is there a row of its own within tolerance?" first, and
+       * settlement only for what that left. His lump-then-weekly shifted one
+       * week (§6A 29 review) — Wed Sep 30 $4,567.68, Thu Oct 1 $1,141.92 —
+       * settles Oct 1 to the lump and the Oct 1 deposit to Aug 27. October drew
+       * Oct 1 paid by the Oct 1 row, and August chipped Aug 27 "paid by the
+       * deposit of Oct 1": one deposit, two paydays, beside a /budgets that said
+       * Sep 30 paid Oct 1.
        */
-      const settledOn = settledPaydays.get(s.id)?.get(o.date);
-      if (settledOn !== undefined) {
-        pushEntry(o.date, {
-          seriesId: s.id,
-          name: s.name,
-          kind: s.kind,
-          state: "paid",
-          amountCents: o.amountCents,
-          expectedAmountCents: o.amountCents,
-          transactionId: null,
-          settledByDepositOn: settledOn,
-          unsettledReason: null,
-          confidence: null,
-          isStale: false,
-          neverBilled: false,
-          hue: hues.get(s.id) ?? null,
-        });
+      if (settlement && o.amountCents > 0) {
+        const paidBy = settlement.portions.filter((p) => p.paydayOn === o.date);
+        if (paidBy.length > 0) {
+          const depositDays = [...new Set(paidBy.map((p) => p.depositOn))].sort(compareDates);
+          // its own deposit beside it, drawn on this grid: the row is the mark
+          if (payerStandsForPayday(depositDays, o.date, postedDates, s.toleranceDays)) continue;
+          /*
+           * A payday paid by a deposit drawn elsewhere — another day, or another
+           * month. It draws paid and carries no transaction of its own: the
+           * money is on that deposit's row, drawn on the day it landed, and
+           * `settledByDepositsOn` names that day so the chip's claim can be
+           * checked. Its figure is the MONEY those deposits put in, as /budgets
+           * states it — a $1,100.00 deposit that settles a $1,141.92 week under
+           * the anchor clause paid $1,100.00 — and it counts in this month's
+           * Settled figure only for money no row here holds.
+           */
+          pushEntry(o.date, {
+            seriesId: s.id,
+            name: s.name,
+            kind: s.kind,
+            state: "paid",
+            amountCents: paidBy.reduce((sum, p) => sum + p.cents, 0),
+            expectedAmountCents: o.amountCents,
+            transactionId: null,
+            settledByDepositsOn: depositDays,
+            settlesPaydaysOn: [],
+            settledCents: paidFromElsewhere.get(s.id)?.get(o.date) ?? 0,
+            unsettledReason: null,
+            confidence: null,
+            isStale: false,
+            neverBilled: false,
+            hue: hues.get(s.id) ?? null,
+          });
+          continue;
+        }
+        // nothing paid it, whatever lies near it: graded below like any payday
+      } else if (postedDates.some((p) => Math.abs(diffDays(p, o.date)) <= s.toleranceDays)) {
+        // a bill, or money settlement does not speak about: a posting within
+        // the series' tolerance is this occurrence, drawn on the day it landed
         continue;
       }
 
@@ -602,7 +730,9 @@ export function recurringCalendar(
         amountCents: o.amountCents,
         expectedAmountCents: o.amountCents,
         transactionId: null,
-        settledByDepositOn: null,
+        settledByDepositsOn: [],
+        settlesPaydaysOn: [],
+        settledCents: null,
         unsettledReason: verdict?.reason ?? null,
         confidence: isFuture ? confidence : null,
         isStale: isFuture && isStale,
@@ -624,32 +754,33 @@ export function recurringCalendar(
     );
     for (const e of entriesByDay[date]!) {
       entryCount += 1;
-      if (e.transactionId !== null) postedNetCents += e.amountCents;
       /*
-       * ⛔ A SETTLED PAYDAY WHOSE MONEY LANDED IN ANOTHER MONTH BELONGS TO THIS
-       * MONTH'S SETTLED TOTAL, because no row this month draws contains it.
+       * ⛔ WHAT SETTLED IS EVERY MARK'S `settledCents`, which puts each cent of
+       * pay in the month of the payday it paid.
        *
-       * 🔴 Without this the chip stood in no figure at all. August 2026, read
-       * 2026-09-28: Aug 27 drawn green "Paid $1,141.92" directly above a footer
-       * reading SETTLED $0.00, EXPECTED $0.00 — the headline-contradicts-its-own
-       * -footer failure this file's own comments warn about twice. September
-       * drew three more such chips ($3,425.76) that appeared in no total.
+       * 🔴 A payday whose money landed in ANOTHER month once stood in no figure:
+       * August 2026, read 2026-09-28, drew Aug 27 green "Paid $1,141.92" over a
+       * footer reading SETTLED $0.00. Its chip carries that money now.
        *
-       * ⚠️ And only when it landed elsewhere. Sep 3, Sep 10 and Sep 17 were paid
-       * by the lump of Sep 23, which September already draws as a row of its
-       * own: counting them here as well would publish $9,135.36 of pay in a
-       * month that received $5,709.60.
+       * ⚠️ And only money no row here holds. Sep 3, Sep 10 and Sep 17 were paid
+       * by the lump of Sep 23, which September draws as a row of its own:
+       * counting them here as well would publish $9,135.36 of pay in a month
+       * that received $5,709.60.
+       *
+       * 🔴 And the other way: a row whose money paid another month's payday
+       * carries only what is left. Counted whole, the Sep 24 deposit that paid
+       * Aug 20 sat in September's figure AND, through Aug 20's chip, August's.
        */
-      else if (paidByAnotherMonth(e, month)) postedNetCents += e.amountCents;
+      if (e.settledCents !== null) postedNetCents += e.settledCents;
       else if (e.state === "upcoming") upcomingNetCents += e.amountCents;
       else if (e.state === "unsettled") {
         unsettledCount += 1;
         unsettledGrossCents += Math.abs(e.amountCents);
       }
       /*
-       * ⛔ A SETTLED PAYDAY CARRIES NO TRANSACTION OF ITS OWN — the deposit that
-       * paid it is drawn on the day it landed — so it must not fall through to
-       * the missed tally, which would count a payday as missed on the very
+       * ⛔ A SETTLED PAYDAY CARRIES NO TRANSACTION OF ITS OWN, and a chip paid
+       * from inside the month settles $0.00 here — so neither may fall through
+       * to the missed tally, which would count a payday as missed on the very
        * reading that says it was paid.
        */
       else if (e.state !== "paid" && e.state !== "paid_different") missedCount += 1;

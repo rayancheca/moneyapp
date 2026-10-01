@@ -36,6 +36,7 @@ import {
   type BudgetTailSeries,
 } from "./arrears";
 import type { UnbankedFrontier } from "@/lib/unbanked-income";
+import { portionsAcross } from "@/lib/payday-settlement";
 import { paydaySettlementsBySeries } from "./payday-settlement";
 import { effectiveSeries, projectOccurrences, seriesHasLapsed, toProjectable } from "./recurring";
 import { linkIsRecurring, rowIsRecurring, seriesIdsNotDrawnAsRecurring } from "./recurring-link";
@@ -947,7 +948,9 @@ export function incomeExpectation(
    * $4,567.68 still expected + $1,141.92 paid early against five paydays at
    * $5,709.60. Each portion is sorted by the two questions, so every cent a
    * deposit in this window spent either paid this window's paydays or is named
-   * as having paid another's.
+   * as having paid another's. The sort is `portionsAcross`, which the recurring
+   * calendar's Settled figure reads too, so the two pages cannot sort one sum
+   * to different sides of the same month line.
    */
   let paidByAnotherMonthCents = 0;
   let paidByAnotherMonthOccurrences = 0;
@@ -963,18 +966,19 @@ export function incomeExpectation(
     scheduledCents += inPeriod.reduce((sum, o) => sum + o.amountCents, 0);
     const scheduledDays = new Set(inPeriod.map((o) => o.date));
     const paidFromElsewhere = new Set<string>();
-    for (const p of settlements.get(s.id)?.portions ?? []) {
-      const thisWindowsPayday = scheduledDays.has(p.paydayOn);
-      const postedHere = paidInsideWindow(p.depositOn);
-      if (thisWindowsPayday && !postedHere) {
-        paidByAnotherMonthCents += p.cents;
-        paidByAnotherMonthDeposits.add(p.depositOn);
-        paidFromElsewhere.add(p.paydayOn);
-      } else if (!thisWindowsPayday && postedHere) {
-        paidForAnotherMonthCents += p.cents;
-        paidForAnotherMonthDeposits.add(p.depositOn);
-        paidForAnotherMonthPaydays.add(p.paydayOn);
-      }
+    const across = portionsAcross(settlements.get(s.id)?.portions ?? [], {
+      paydayInside: (day) => scheduledDays.has(day),
+      depositInside: paidInsideWindow,
+    });
+    for (const p of across.paidByAnotherWindow) {
+      paidByAnotherMonthCents += p.cents;
+      paidByAnotherMonthDeposits.add(p.depositOn);
+      paidFromElsewhere.add(p.paydayOn);
+    }
+    for (const p of across.paidForAnotherWindow) {
+      paidForAnotherMonthCents += p.cents;
+      paidForAnotherMonthDeposits.add(p.depositOn);
+      paidForAnotherMonthPaydays.add(p.paydayOn);
     }
     paidByAnotherMonthOccurrences += paidFromElsewhere.size;
 

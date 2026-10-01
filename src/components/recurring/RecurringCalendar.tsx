@@ -14,17 +14,12 @@ import { compactDayTotal, dayWeight, heaviestDayCents } from "@/lib/calendar-day
 import { heatMixPercent } from "@/lib/calendar-heat";
 import { daysInMonthOf, type CalendarDay } from "@/lib/calendar-math";
 import { RECURRING_JARGON } from "@/lib/jargon";
-import { monthFlow } from "@/lib/month-flow";
+import { flowEntryOf, monthFlow, type MonthFlowEntry } from "@/lib/month-flow";
 import { CALENDAR_DENSITY_CLASS } from "./recurring-view-spec";
 import { formatCents } from "@/lib/money";
 import type { ForecastConfidence } from "@/lib/occurrence-verdict";
 import { SERIES_EVIDENCE_LABEL } from "@/lib/series-evidence";
-import {
-  paidByAnotherMonth,
-  type CalendarEntry,
-  type DayStateKind,
-  type RecurringCalendarMonth,
-} from "@/services/recurring-calendar";
+import type { CalendarEntry, DayStateKind, RecurringCalendarMonth } from "@/services/recurring-calendar";
 import { KIND_LABEL, longDate, monthLabel, unsettledReasonWord, upcomingEvidenceWord } from "./labels";
 import { MonthFlowStrip } from "./MonthFlowStrip";
 
@@ -189,21 +184,47 @@ const HATCH: React.CSSProperties = {
     "repeating-linear-gradient(135deg, transparent 0 2px, var(--color-surface-raised) 2px 4px)",
 };
 
+/** The platform's own list — "A and B", "A, B, and C" — as `paid-by-another-month` reads it. */
+const DATE_LIST = new Intl.ListFormat("en", { style: "long", type: "conjunction" });
+
 /**
  * ⛔ A SETTLED PAYDAY SAYS WHOSE MONEY PAID IT. The word it borrows is `paid`,
  * defined in the legend as a charge that "turned up on the expected day" — and
  * nothing turned up on Aug 27; the money landed on Sep 24. Read aloud, the cell
  * used to say "It America LLC (weekly pay) paid $1,141.92" for a day with no
  * deposit on it. Named, the claim is checkable: the reader can go to that day
- * and find the row.
+ * and find the row — every day, when pooled money came from more than one.
  */
 function settledByWord(e: CalendarEntry): string | null {
-  return e.settledByDepositOn === null ? null : `paid by the deposit of ${longDate(e.settledByDepositOn)}`;
+  const days = e.settledByDepositsOn;
+  if (days.length === 0) return null;
+  return `paid by the ${days.length === 1 ? "deposit" : "deposits"} of ${DATE_LIST.format(days.map(longDate))}`;
+}
+
+/**
+ * ⛔ AND A DEPOSIT THAT PAID ANOTHER MONTH'S PAYDAY SAYS SO — the mirror of
+ * `settledByWord`, on the row. Wed Sep 30's lump paid Thu Oct 1, and the Oct 1
+ * deposit, its own payday already paid, paid Aug 27: drawn bare beside Oct 1's
+ * chip, the row read as a second week's pay that October's Settled figure did
+ * not count, and August's chip named the same deposit for Aug 27.
+ */
+function settlesWord(e: CalendarEntry): string | null {
+  const days = e.settlesPaydaysOn;
+  if (days.length === 0) return null;
+  return `toward the ${days.length === 1 ? "payday" : "paydays"} of ${DATE_LIST.format(days.map(longDate))}`;
+}
+
+/**
+ * Which deposit paid it, or which payday it paid — never both, as only a chip
+ * carries the one and only a row the other.
+ */
+function payerWord(e: CalendarEntry): string | null {
+  return settledByWord(e) ?? settlesWord(e);
 }
 
 function entrySummary(e: CalendarEntry): string {
   const evidence = upcomingEvidenceWord(e);
-  const settledBy = settledByWord(e);
+  const settledBy = payerWord(e);
   const qualifier = settledBy
     ? ` (${settledBy})`
     : e.unsettledReason
@@ -469,14 +490,10 @@ export function RecurringCalendar({ initialMonth, today, density = "tall", onMon
    * so a line split by date climbed confidently to +$3,141 directly above a
    * footer reading "SETTLED $0.00".
    */
-  const flowEntries: Record<string, { amountCents: number; settled: boolean }[]> = {};
+  const flowEntries: Record<string, MonthFlowEntry[]> = {};
   for (const [iso, entries] of Object.entries(month.entriesByDay)) {
-    flowEntries[iso] = entries.map((e) => ({
-      amountCents: e.amountCents,
-      // …and a payday whose deposit landed in ANOTHER month, which the footer's
-      // Settled figure counts here for the same reason (`paidByAnotherMonth`).
-      settled: e.transactionId !== null || paidByAnotherMonth(e, month.monthKey),
-    }));
+    // each mark's `settledCents` — the figure the footer's Settled total sums
+    flowEntries[iso] = entries.map(flowEntryOf);
   }
   const flow = monthFlow(daysInMonthOf(month.monthKey), month.monthKey, flowEntries, today);
 
@@ -527,8 +544,8 @@ export function RecurringCalendar({ initialMonth, today, density = "tall", onMon
                             entry, which carried them out of ONE `settledVerdict`
                             call. A cell can therefore never show "not yet known"
                             beside the wrong reason for it. */}
-                        {settledByWord(e)
-                          ? `${STATE_WORD[e.state]} — ${settledByWord(e)}`
+                        {payerWord(e)
+                          ? `${STATE_WORD[e.state]} — ${payerWord(e)}`
                           : e.state === "unsettled" && e.unsettledReason
                             ? `${STATE_WORD[e.state]} — ${unsettledReasonWord(e.unsettledReason)}`
                             : STATE_WORD[e.state]}

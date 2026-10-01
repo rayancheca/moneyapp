@@ -164,6 +164,41 @@ export interface SettlementPortion {
   cents: number;
 }
 
+/** Which side of a reader's window a date falls on, asked of a payday and of a deposit. */
+export interface SettlementWindow {
+  paydayInside: (date: string) => boolean;
+  depositInside: (date: string) => boolean;
+}
+
+/** A settlement's money that crossed a reader's window, in both directions. */
+export interface PortionsAcross {
+  /** sums from deposits OUTSIDE the window that paid paydays inside it */
+  paidByAnotherWindow: SettlementPortion[];
+  /** sums from deposits INSIDE the window that paid paydays outside it */
+  paidForAnotherWindow: SettlementPortion[];
+}
+
+/**
+ * Sorts a settlement's money by the window a reader publishes figures over.
+ *
+ * ⛔ ONE SPELLING, because two surfaces print totals beside each other that
+ * have to agree: /budgets' fourth figure and its mirror, and the recurring
+ * calendar's Settled figure. A sum whose payday and deposit are on the same
+ * side of the window crossed nothing — its money is in the window's own
+ * posted rows, or in none of them — and is in neither list.
+ */
+export function portionsAcross(portions: readonly SettlementPortion[], window: SettlementWindow): PortionsAcross {
+  const paidByAnotherWindow: SettlementPortion[] = [];
+  const paidForAnotherWindow: SettlementPortion[] = [];
+  for (const p of portions) {
+    const paydayInside = window.paydayInside(p.paydayOn);
+    const depositInside = window.depositInside(p.depositOn);
+    if (paydayInside && !depositInside) paidByAnotherWindow.push(p);
+    else if (!paydayInside && depositInside) paidForAnotherWindow.push(p);
+  }
+  return { paidByAnotherWindow, paidForAnotherWindow };
+}
+
 /** The answer when there is nothing to settle — one spelling, for the service's early exits too. */
 export const noSettlement = (): PaydaySettlement => ({
   settledBy: new Map(),

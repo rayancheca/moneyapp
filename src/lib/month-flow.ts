@@ -34,6 +34,29 @@ export interface MonthFlowEntry {
   settled: boolean;
 }
 
+/**
+ * What one calendar mark adds to the two running totals: a mark that settled
+ * adds what it settled to both, one that has not adds its expected amount to
+ * the scheduled line only.
+ *
+ * ⛔ ONE READING, shared with the footer under the strip: `settledCents` is the
+ * figure the month's Settled total sums, so the posted line ends on it by
+ * construction rather than by a second rule that happens to agree.
+ *
+ * 🔴 The strip read the mark's AMOUNT on both lines, which counted pay twice
+ * wherever a deposit paid a payday drawn on another day. A payday chip paid by
+ * a lump in the same month added its week to "as scheduled" while the lump's
+ * row added the same money again. Measured on a copy of his ledger 2026-10-01:
+ * September 2026 — Sep 3, 10 and 17 chipped "paid by the deposit of Sep 23"
+ * beside that $4,567.68 row — put $9,135.36 of pay, eight weeks, into the
+ * "as scheduled" figure of a month with four paydays.
+ */
+export function flowEntryOf(mark: { amountCents: number; settledCents: number | null }): MonthFlowEntry {
+  return mark.settledCents === null
+    ? { amountCents: mark.amountCents, settled: false }
+    : { amountCents: mark.settledCents, settled: true };
+}
+
 export interface MonthFlowPoint {
   /** 1-based day of month */
   day: number;
