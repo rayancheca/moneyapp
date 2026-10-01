@@ -1,5 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 import { analyzeSettled } from "./axe-helpers";
+import { delayServerActions, pressView } from "./view-helpers";
 
 /**
  * The cash-flow view switcher (NS#2 Pillar 2): the SAME data as a vivid chart or a
@@ -94,34 +95,6 @@ async function invPillPressed(page: Page, name: "Value" | "Return"): Promise<boo
   return (await btn.getAttribute("aria-pressed")) === "true";
 }
 
-/**
- * Press a segmented-control pill and PROVE the press landed.
- *
- * `gotoHydrated` above proves the SHELL has hydrated (the theme toggle is in
- * AppShell). It does not prove this panel has: React hydrates client boundaries
- * independently, so PortfolioChartPanel can still be inert when AppShell is live,
- * and a click in that window is swallowed with no error. Measured: waiting on the
- * shell alone took the restore step from 3-in-5 failures to roughly 2-in-12 — a
- * real improvement, and still a flake. The failure dump was identical every time,
- * `button "Return" [pressed]`, i.e. the handler never ran.
- *
- * There is no DOM signal for "this boundary is now interactive", so instead of
- * guessing a longer wait we retry the press until its own control reports the new
- * state. That is safe precisely BECAUSE it is idempotent: useViewState's setView
- * early-returns when the requested value is already selected
- * (`if (next === state) return`), so a redundant press is a no-op, never a toggle.
- *
- * This strengthens the action, not the expectation — every caller's assertions
- * about URL, slider and persistence still have to hold on their own.
- */
-async function pressView(page: Page, group: string, name: string): Promise<void> {
-  const pill = page.getByRole("group", { name: group }).getByRole("button", { name });
-  await expect(async () => {
-    await pill.click();
-    await expect(pill).toHaveAttribute("aria-pressed", "true", { timeout: 3_000 });
-  }).toPass({ timeout: 30_000 });
-}
-
 test("portfolio chart switches value↔return, updates the URL, and persists", async ({ page }) => {
   // The portfolio view is PERSISTED, and this suite deliberately shares ONE
   // database across specs (playwright.config.ts: workers: 1). So "the default is
@@ -173,6 +146,65 @@ async function holdingPillPressed(page: Page, name: "Price" | "Return"): Promise
   return (await btn.getAttribute("aria-pressed")) === "true";
 }
 
+/**
+ * A fresh holding visit opened on its PRICE CHART — or the failure says what it opened on.
+ *
+ * ⛔ `a holding's table…` failed here once (gate 2026-09-29, `/var/folders/…/
+ * e2e-rebase-renderer-QtlIob/gate-1.json`) with "price over time" not found, and the record
+ * does not say why. It is NOT the race unitGroupRestore closes: the price↔return test passed
+ * 15 s earlier with its own fresh visit on the price chart, and no test in between writes the
+ * holding view. Both visits had loaded and hydrated within ~0.3 s, so the page was not slow
+ * — it drew something else, or drew it out of reach: a Return or Table view from a writer
+ * nobody has found, the "no price history" fallback, an error surface, or a streamed segment
+ * React had not revealed. The trace that would tell them apart was overwritten by the next
+ * run, and a gate keeps only the message, so the message carries the page's own account.
+ */
+async function expectHoldingOnPriceChart(page: Page): Promise<void> {
+  try {
+    await expect(page.getByRole("slider", { name: /price over time/ })).toBeVisible();
+  } catch (error) {
+    const seen = await page.evaluate(() => {
+      const pressed = (group: string): string => {
+        const g = document.querySelector(`[role="group"][aria-label="${group}"]`);
+        if (!g) return `${group}: absent`;
+        const on = g.querySelector('button[aria-pressed="true"]');
+        return `${group}: ${on?.textContent ?? "none pressed"}`;
+      };
+      const shown = (el: Element): boolean => (el as HTMLElement).offsetParent !== null;
+      const sliders = Array.from(document.querySelectorAll('[role="slider"]')).map(
+        (s) => `"${s.getAttribute("aria-label")}"${shown(s) ? "" : " (hidden)"}`,
+      );
+      const tables = Array.from(document.querySelectorAll("table caption")).map(
+        (c) => `"${c.textContent}"`,
+      );
+      // React parks a streamed segment in `div[hidden]`, its boundary marked `$~` (or `$?`
+      // while still pending) until it is revealed
+      const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_COMMENT);
+      let unrevealed = 0;
+      while (walker.nextNode()) {
+        if (["$~", "$?"].includes((walker.currentNode as Comment).data)) unrevealed++;
+      }
+      const segments = document.querySelectorAll('div[hidden][id^="S:"]').length;
+      const fallback = document.body.textContent?.includes("A price chart appears once");
+      return [
+        `${location.pathname}${location.search}`,
+        `h1 "${document.querySelector("h1")?.textContent ?? ""}"`,
+        pressed("Holding chart view"),
+        pressed("Holding lens"),
+        `sliders [${sliders.join(", ")}]`,
+        `table captions [${tables.join(", ")}]`,
+        fallback ? "the no-price-history fallback" : "",
+        document.querySelector('[role="status"][aria-label="Loading"]') ? "a loading skeleton" : "",
+        `unrevealed streamed boundaries: ${unrevealed}, hidden segments: ${segments}`,
+      ]
+        .filter((part) => part !== "")
+        .join("; ");
+    });
+    const said = error instanceof Error ? error.message : String(error);
+    throw new Error(`${said}\n\nThe holding page showed: ${seen}`);
+  }
+}
+
 test("a holding chart switches price↔return, updates the URL, and persists", async ({ page }) => {
   // resolve the first holding-detail URL from /investments (stable fixture order)
   await gotoHydrated(page, "/investments");
@@ -184,7 +216,7 @@ test("a holding chart switches price↔return, updates the URL, and persists", a
   const returnChart = page.getByRole("slider", { name: /return over time/ });
 
   // default view is the price line, with its avg-cost reference + trade marks
-  await expect(priceChart).toBeVisible();
+  await expectHoldingOnPriceChart(page);
   expect(await holdingPillPressed(page, "Price")).toBe(true);
 
   // switch to return: the URL carries it, the slider relabels, the stats strip appears
@@ -292,12 +324,24 @@ test("the benchmark can be turned off entirely, and stays off", async ({ page })
   await expect(page.getByRole("combobox", { name: "Benchmark" })).toHaveValue("__none");
   expect(await countDashedPaths(page)).toBe(0);
 
-  // restore SPY + the $ unit + Value view for whatever runs after this
-  await page.getByRole("combobox", { name: "Benchmark" }).selectOption("SPY");
+  // restore SPY + the $ unit + Value view for whatever runs after this.
+  // ⛔ Each step is PROVED before the next. `not.toHaveURL(/bench=/)` proves nothing here:
+  // the fresh visit above never carried `?bench`, so it passed before the pick was written,
+  // and the `$` press went out while the pick was still navigating — computed from the
+  // pre-pick view (its href carried `bench=__none`) and lost. Measured 2026-10-01 on a
+  // loaded box (trace: the `$` action sent 50 ms after the pick's returned, its navigation
+  // superseded): the page stayed on %, and a later test opened /investments with no value
+  // line. The S&P legend is drawn only once the pick has landed (re-picking SPY is
+  // idempotent), and each pill flips only once its own press has. Not held back like the
+  // other restores: holding the pick did not make the lost press reproducible.
+  await expect(async () => {
+    await page.getByRole("combobox", { name: "Benchmark" }).selectOption("SPY");
+    await expect(page.getByText(/S&P 500.*% since /).first()).toBeVisible({ timeout: 3_000 });
+  }).toPass({ timeout: 30_000 });
   await expect(page).not.toHaveURL(/bench=/);
-  await page.getByRole("group", { name: "Return unit" }).getByRole("button", { name: "$" }).click();
+  await pressView(page, "Return unit", "$");
   await expect(page).not.toHaveURL(/unit=percent/);
-  await page.getByRole("group", { name: "Portfolio chart view" }).getByRole("button", { name: "Value" }).click();
+  await pressView(page, "Portfolio chart view", "Value");
   await expect(page.getByRole("slider", { name: /Portfolio value over time/ })).toBeVisible();
 });
 
@@ -377,15 +421,27 @@ async function visibleDayCount(page: Page): Promise<number> {
   });
 }
 
-/** Reset the persisted unit to $ (the default) so a later Return visit is clean. */
+/**
+ * Reset the persisted unit to $ (the default) so a later Return visit is clean, and leave the
+ * holding on Price — which `a holding's table…` below opens on, with nothing in between that
+ * would put it back.
+ *
+ * ⛔ Every press is PROVED before the next step (pressView). The fresh visit at the end
+ * resolves the view from app_settings, and one sent before the Price press is written comes
+ * back on the Return line. With the presses held back that failed here every run, left the
+ * holding on Return, and the next holding test's first "price over time" slider was then
+ * "not found" — the message of that test's one recorded failure. It is not that failure's
+ * cause: in that run this test had passed (see expectHoldingOnPriceChart).
+ */
 async function unitGroupRestore(page: Page, href: string): Promise<void> {
+  await delayServerActions(page);
   // flip to Return (unit switcher only renders there), set $, flip back to Price
-  await page.getByRole("group", { name: "Holding chart view" }).getByRole("button", { name: "Return" }).click();
-  await page.getByRole("group", { name: "Return unit" }).getByRole("button", { name: "$" }).click();
+  await pressView(page, "Holding chart view", "Return");
+  await pressView(page, "Return unit", "$");
   await expect(page).not.toHaveURL(/unit=percent/);
-  await page.getByRole("group", { name: "Holding chart view" }).getByRole("button", { name: "Price" }).click();
+  await pressView(page, "Holding chart view", "Price");
   await gotoHydrated(page, href);
-  await expect(page.getByRole("slider", { name: /price over time/ })).toBeVisible();
+  await expectHoldingOnPriceChart(page);
 }
 
 /* ─────────────────────────── the chart⇄table LENS (pass 23) ───────────────────────────
@@ -399,9 +455,18 @@ async function unitGroupRestore(page: Page, href: string): Promise<void> {
  * these pages already carry other tables (holdings, anchors, transactions), so a bare
  * getByRole("table") is a strict-mode violation AND would not prove the lens rendered. */
 
-/** Restore a surface's lens to the default (Chart) — click, then prove persistence. */
+/**
+ * Restore a surface's lens to the default (Chart) — press, prove the press landed, then prove
+ * persistence on a fresh visit.
+ *
+ * ⛔ Proved by the pill (pressView), not by `not.toHaveURL(/lens=table/)`: that wait proves
+ * nothing when the page was reached by a fresh visit with no `?lens` — the balance test's
+ * sticky check does exactly that — so it passed at once and the fresh visit raced the write.
+ * With the press held back, the balance test failed here every run, its table still drawn.
+ */
 async function lensRestore(page: Page, group: string, href: string, table: RegExp): Promise<void> {
-  await page.getByRole("group", { name: group }).getByRole("button", { name: "Chart" }).click();
+  await delayServerActions(page);
+  await pressView(page, group, "Chart");
   await expect(page).not.toHaveURL(/lens=table/);
   await gotoHydrated(page, href);
   await expect(page.getByRole("table", { name: table })).toHaveCount(0);
@@ -475,7 +540,7 @@ test("a holding's table names its trade days, and the recurring amount history t
   const holdingHref = await page.locator('a[href^="/investments/"]').first().getAttribute("href");
   expect(holdingHref).toBeTruthy();
   await gotoHydrated(page, holdingHref!);
-  await expect(page.getByRole("slider", { name: /price over time/ })).toBeVisible();
+  await expectHoldingOnPriceChart(page);
 
   await page.getByRole("group", { name: "Holding lens" }).getByRole("button", { name: "Table" }).click();
   await expect(page).toHaveURL(/[?&]lens=table\b/);
