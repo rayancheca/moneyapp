@@ -11,6 +11,7 @@ import { activeTxnsInRange, loadCategoryIndex, type AnalyticsTxn, type CategoryI
 import { accountCoverage, type AccountCoverage, type CoverageGrade } from "./coverage";
 import { observedSeries } from "./derivation";
 import {
+  countedDetail,
   footingBounds,
   provenanceFor,
   weakestVerdict,
@@ -286,7 +287,21 @@ function caveatFor(cov: AccountCoverage | undefined, today: string): string | nu
     case "verified":
       return null;
     case "unverified":
-      return cov.unverifiedSince ? `nothing has checked it since ${when(cov.unverifiedSince)}` : "nothing checks this balance";
+      /*
+       * 🔴 A card resting on a balance he TYPED read "nothing has checked it
+       * since Aug 4 — 6 days ago" — "since" claimed a check before Aug 4 that
+       * never happened, and the day was `unverifiedSince`, which a charge
+       * replayed backwards from his count moves to before the count. Net worth
+       * says "you counted it on Aug 1, 2026, and nothing checks it since Aug 4,
+       * 2026" of the same account; the row now says that, in this card's dates
+       * (§6A 28 review). A card a statement checked keeps its own sentence.
+       */
+      return (
+        countedDetail(cov, when) ??
+        (cov.unverifiedSince
+          ? `nothing has checked it since ${when(cov.unverifiedSince)}`
+          : "nothing checks this balance")
+      );
     case "broken":
       return cov.brokenSince ? `stopped adding up on ${when(cov.brokenSince)}` : "this balance does not add up";
     case "manual":

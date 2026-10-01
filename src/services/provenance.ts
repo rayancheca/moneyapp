@@ -1049,6 +1049,37 @@ export function footingBounds(coverage: readonly AccountCoverage[]): { through: 
   };
 }
 
+/**
+ * What an account whose days rest on a balance he TYPED says about itself —
+ * net worth's line for it — or null when they do not rest on his count.
+ *
+ * 🔴 Net worth said "nothing checks it since Aug 11, 2026" of Cash on Hand,
+ * whose days before Aug 11 stand on nothing but the $5,000.00 he typed for
+ * Aug 3 (real ledger copy, 2026-09-16) — "since" said something checked them.
+ * The count is named as his.
+ *
+ * ⛔ Exported because the second surface said it the old way: the dashboard's
+ * "what you owe" row wrote "nothing has checked it since Aug 4 — 6 days ago"
+ * of a card resting on his count, and dated it `unverifiedSince` — the FIRST
+ * unchecked day the card ever had, so a charge before the count, replayed
+ * backwards from it, became the day checking stopped (§6A 28 review). The
+ * words and the day they name live here; `formatDay` is only each surface's
+ * voice for a date, so the card can age its dates without re-wording them.
+ *
+ * `uncheckedSince`, not `unverifiedSince`: "since" is about the run still open
+ * (`AccountCoverage.uncheckedSince`).
+ */
+export function countedDetail(
+  c: Pick<AccountCoverage, "grade" | "countedOn" | "uncheckedSince">,
+  formatDay: (iso: string) => string,
+): string | null {
+  if (c.grade !== "unverified" || c.countedOn === null) return null;
+  const counted = `you counted it on ${formatDay(c.countedOn)}`;
+  return c.uncheckedSince === null
+    ? `${counted}, and nothing else checks it`
+    : `${counted}, and nothing checks it since ${formatDay(c.uncheckedSince)}`;
+}
+
 /* ── net worth ────────────────────────────────────────────────────────── */
 
 function netWorthProvenance(db: AppDatabase, day: string | undefined): Provenance {
@@ -1117,15 +1148,12 @@ function netWorthProvenance(db: AppDatabase, day: string | undefined): Provenanc
         ? `adds up through ${readableDay(c.verifiedThrough)}`
         : c.grade === "broken" && c.brokenSince
           ? `stopped adding up on ${readableDay(c.brokenSince)}`
-          : /* 🔴 "nothing checks it since Aug 11, 2026" of Cash on Hand, whose days
-               before Aug 11 stand on nothing but the $5,000.00 he typed for Aug 3
-               (real ledger copy, 2026-09-16) — "since" said something checked
-               them. The count is named as his. */
-            c.grade === "unverified" && c.countedOn
-            ? c.uncheckedSince
-              ? `you counted it on ${readableDay(c.countedOn)}, and nothing checks it since ${readableDay(c.uncheckedSince)}`
-              : `you counted it on ${readableDay(c.countedOn)}, and nothing else checks it`
-            : /* 🔴 `uncheckedSince`, not `unverifiedSince`. The latter is the FIRST
+          : // his count, named as his — `countedDetail` is the sentence's one home, and the
+            // cards-owed row reads it too. ⚠️ The parenthesis is load-bearing: `??` binds
+            // tighter than `?:`, so without it `countedDetail(…) ?? <test>` would become
+            // the condition of the chain below.
+            countedDetail(c, readableDay) ??
+            (/* 🔴 `uncheckedSince`, not `unverifiedSince`. The latter is the FIRST
                unchecked day the account ever had, and pairing it with a count of
                all of them printed "Robinhood Cash — nothing checks it since
                Dec 5, 2023 · 52 days unchecked" of an account anchored 32 times,
@@ -1145,7 +1173,7 @@ function netWorthProvenance(db: AppDatabase, day: string | undefined): Provenanc
                 : (rowSums.get(c.accountId)?.n ?? 0) > 0
                   ? // 🔴 "1 rows" — beside the headline's own "holds 1 row" for the same account
                     `${grouped(rowSums.get(c.accountId)!.n)} ${rowSums.get(c.accountId)!.n === 1 ? "row" : "rows"} but no recorded balance — not in this total`
-                  : "empty — no rows, no balance",
+                  : "empty — no rows, no balance"),
   }));
 
   // an empty account is not a weakness, it is an absence of anything at all

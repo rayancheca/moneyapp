@@ -646,6 +646,48 @@ describe("a card resting on his count", () => {
     expect(older.provenance.checkedThrough).toBe("2026-07-20");
     expect(older.provenance.headline).not.toMatch(/your word/);
   });
+
+  /*
+   * 🔴 "nothing has checked it since Aug 4 — 6 days ago" of this card. "Since"
+   * says something checked it before Aug 4, and nothing ever did: the days
+   * before stand on the balance he typed. And the date was `unverifiedSince`,
+   * the FIRST unchecked day the card ever had, where net worth reads the run
+   * still open — so a charge before his count, replayed backwards from it,
+   * dated the caveat Jul 28. Net worth's line for the same account names the
+   * count; the row says what net worth says, in this card's dates (§6A 28).
+   */
+  test("its caveat is net worth's sentence for the account, in this card's dates", () => {
+    countedCard();
+    // prehistory: a charge before his count, replayed backwards from it — unchecked,
+    // but not the run a "since" is about (`AccountCoverage.uncheckedSince`)
+    addBalances("acct-counted", [{ day: "2026-07-28", cents: -9_000, basis: "derived_unverified" }]);
+    addTxn("acct-counted", "2026-07-28", -200);
+
+    const counted = cardsOwedCard(bundle.db, TODAY)!.cards.find((c) => c.name === "Counted Card")!;
+    const netWorth = provenanceFor(bundle.db, { kind: "netWorth", day: TODAY })!;
+    expect(netWorth.inputs.find((i) => i.label === "Counted Card")!.detail).toBe(
+      "you counted it on Aug 1, 2026, and nothing checks it since Aug 4, 2026",
+    );
+    expect(counted.caveat).toBe(
+      "you counted it on Aug 1 — 9 days ago, and nothing checks it since Aug 4 — 6 days ago",
+    );
+  });
+
+  // 🔴 "nothing checks this balance" of a balance he counted
+  test("a count nothing has run past says nothing ELSE checks it", () => {
+    addAccount("acct-counted", "Counted Card", "credit", { last4: "4444" });
+    addAnchor("acct-counted", "2026-08-01", -9_000);
+    addBalances("acct-counted", [{ day: "2026-08-01", cents: -9_000, basis: "anchored" }]);
+    addTxn("acct-counted", "2026-08-01", -500);
+
+    const counted = cardsOwedCard(bundle.db, TODAY)!.cards[0]!;
+    const netWorth = provenanceFor(bundle.db, { kind: "netWorth", day: TODAY })!;
+    expect(counted.grade).toBe("unverified");
+    expect(netWorth.inputs.find((i) => i.label === "Counted Card")!.detail).toBe(
+      "you counted it on Aug 1, 2026, and nothing else checks it",
+    );
+    expect(counted.caveat).toBe("you counted it on Aug 1 — 9 days ago, and nothing else checks it");
+  });
 });
 
 describe("a figure newer than its evidence", () => {
