@@ -27,11 +27,13 @@
  * ⛔ Step 2 before step 1 refiles the three to Education, and this script then REFUSES ("the re-read ran before the
  * pin"): restore from step 2's restore point and start again.
  *
- * ⚠️ Not `pnpm import-statements data/statements/chase-checking-3522`: the same money, but the archive names its copies
- * `<sha>-<name>`, so that run records all 75 under the sha-prefixed name, archives each AGAIN as `<sha>-<sha>-<name>`
- * (75 duplicate PDFs in data/statements/chase-checking-3522/), and reads the folder's archived activity CSV, which no
- * profile matches by that name: a FAILED import — a red row at the top of /imports — and a copy in data/statements/chase/.
- * The staged folder brings none of that: each original is already archived under its hashed name (`archiveTo`).
+ * ⛔ Not `pnpm import-statements data/statements/chase-checking-3522` — both commands now refuse it, and any file named
+ * as the archive names its copies, and print this staged path (scripts/statement-folders.ts). The same money, but the
+ * archive names its copies `<sha>-<name>`, so that run records all 75 under the sha-prefixed name, archives each AGAIN
+ * as `<sha>-<sha>-<name>` (75 duplicate PDFs in data/statements/chase-checking-3522/), and reads the folder's archived
+ * activity CSV, which no profile matches by that name: a FAILED import — a red row at the top of /imports — and a copy
+ * in data/statements/chase/. The staged folder brings none of that: each original is already archived under its hashed
+ * name (`archiveTo`).
  *
  * ## Rehearsed on a byte copy of the live ledger, 2026-09-28 (sha 2bc4573f…, no WAL)
  *

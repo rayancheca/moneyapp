@@ -1,11 +1,11 @@
 import fs from "node:fs";
-import path from "node:path";
 import { createDatabase } from "@/db/client";
 import { manualSnapshot } from "@/db/backup";
 import { accountCoverage } from "@/services/coverage";
 import { netWorthSeries } from "@/services/derivation";
 import { importStatementFiles, type ImportInput } from "@/services/import/service";
 import { DbTargetRefusal, dbTargetFrom, originalsDirFor, strayFlags, type DbTarget } from "./db-target";
+import { archiveRootsFor, statementFiles } from "./statement-folders";
 
 /**
  * Imports statement folders into the REAL database, behind a restore point.
@@ -36,19 +36,27 @@ if (folders.length === 0) {
  * (an account created, then statements imported into it) can be rehearsed end
  * to end before the real database is touched. Defaults to the real database.
  * See ./db-target.ts for what is refused.
+ *
+ * ⛔ The folders are read here too, dry run or not, before anything is written —
+ * and refused: one inside the statement archive (or holding it), or any file in
+ * them named as the archive names its copies, hands the import the archive's
+ * `<sha>-<name>` copies. Which archives depends on the target — a copy archives
+ * beside itself. See ./statement-folders.ts.
  */
-function target(): DbTarget {
+function commandLine(): { target: DbTarget; files: ImportInput[] } {
   try {
     const stray = strayFlags(args, ["--confirm", "--db"]);
     if (stray.length > 0) throw new DbTargetRefusal(`unknown flag ${stray.join(", ")}`);
-    return dbTargetFrom(args, { flag: "--db", required: false, cwd: process.cwd(), exists: fs.existsSync });
+    const target = dbTargetFrom(args, { flag: "--db", required: false, cwd: process.cwd(), exists: fs.existsSync });
+    const files = statementFiles(folders, archiveRootsFor(target, process.cwd(), process.env), process.cwd());
+    return { target, files };
   } catch (error: unknown) {
     if (!(error instanceof DbTargetRefusal)) throw error;
     console.error(`REFUSED: ${error.message}`);
     process.exit(2);
   }
 }
-const TARGET = target();
+const { target: TARGET, files: FILES } = commandLine();
 /*
  * ⛔ A rehearsal must not write into the REAL statement archive, and the copy's
  * import_files rows must not point there: a copy archives beside itself. And it
@@ -59,24 +67,13 @@ const ORIGINALS = originalsDirFor(TARGET, process.env);
 if (ORIGINALS !== undefined) process.env.MONEYAPP_ORIGINALS_DIR = ORIGINALS;
 if (!TARGET.isReal) process.env.MONEYAPP_DB_PATH = TARGET.path;
 
-function collect(dir: string): ImportInput[] {
-  return fs.readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
-    const full = path.join(dir, entry.name);
-    if (entry.isDirectory()) return collect(full);
-    if (!/\.(pdf|csv|qfx|ofx)$/i.test(entry.name)) return [];
-    return [{ name: entry.name, buffer: fs.readFileSync(full) }];
-  });
-}
-
 function money(cents: number): string {
   return `$${(cents / 100).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
 async function main(): Promise<void> {
-  const files = folders.flatMap((d) => collect(d));
-
   if (!CONFIRMED) {
-    console.log(`Would import ${files.length} files from ${folders.join(", ")} into ${TARGET.path}.`);
+    console.log(`Would import ${FILES.length} files from ${folders.join(", ")} into ${TARGET.path}.`);
     console.log("Nothing was written. Re-run with --confirm once the trial diff looks right.");
     process.exit(0);
   }
@@ -93,7 +90,7 @@ async function main(): Promise<void> {
     coverage: accountCoverage(db),
   };
 
-  const outcomes = await importStatementFiles(db, files);
+  const outcomes = await importStatementFiles(db, FILES);
 
   const byStatus = outcomes.reduce<Record<string, number>>((acc, o) => {
     acc[o.status] = (acc[o.status] ?? 0) + 1;
