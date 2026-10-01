@@ -14,6 +14,7 @@ import { transactions } from "@/db/schema/transactions";
 import { addDays, isValidIsoDate, periodBounds, todayIso } from "@/lib/dates";
 import { stepFrom, stepPlan } from "@/lib/recurring-step";
 import { overdueForSeries } from "./arrears";
+import { stillToCome } from "./payday-settlement";
 import {
   annualizedCentsOf,
   effectiveSeries,
@@ -319,11 +320,25 @@ export function seriesDetail(
   // Stepped by the SAME plan the projection walks, or a calendar-monthly series
   // whose months run long could have its last occurrence fall outside a window
   // sized in 30-day units.
+  //
+  // ⛔ Less the paydays a deposit has already paid down (`stillToCome`, the
+  // forecast's reading of settlement). 🔴 Read on Sep 30, his pay series listed
+  // "Next expected — Oct 1" for the payday Wed Sep 30's deposit paid early.
+  // Settlement reaches `toleranceDays` past today, so the window reaches that
+  // much further and a payday it drops still leaves NEXT_EXPECTED_COUNT behind.
   const nextExpected = projects
-    ? projectOccurrences(
-        toProjectable(s),
+    ? stillToCome(
+        db,
+        s,
+        projectOccurrences(
+          toProjectable(s),
+          today,
+          addDays(
+            stepFrom(today, stepPlan(eff.cadence, eff.intervalDaysAvg), NEXT_EXPECTED_COUNT + 1),
+            s.toleranceDays,
+          ),
+        ),
         today,
-        stepFrom(today, stepPlan(eff.cadence, eff.intervalDaysAvg), NEXT_EXPECTED_COUNT + 1),
       ).slice(0, NEXT_EXPECTED_COUNT)
     : [];
 

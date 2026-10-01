@@ -1,9 +1,14 @@
-import { and, eq, gt, inArray, lte } from "drizzle-orm";
+import { and, eq, gt, inArray } from "drizzle-orm";
 import type { AppDatabase } from "@/db/client";
-import { recurringSeries } from "@/db/schema/recurring";
+import { recurringSeries, type SeriesKind } from "@/db/schema/recurring";
 import { transactions } from "@/db/schema/transactions";
 import { addDays, compareDates } from "@/lib/dates";
-import { noSettlement, settlePaydaysBackwards, type PaydaySettlement } from "@/lib/payday-settlement";
+import {
+  hasArrived,
+  noSettlement,
+  settlePaydaysBackwards,
+  type PaydaySettlement,
+} from "@/lib/payday-settlement";
 import { projectOccurrences, toProjectable } from "./recurring";
 
 /**
@@ -47,16 +52,16 @@ export function paydaySettlement(db: AppDatabase, seriesId: string, today: strin
         eq(transactions.recurringSeriesId, seriesId),
         // money IN only: a clawback or a returned payment is not a payday
         gt(transactions.amountCents, 0),
-        /*
-         * ⛔ Nothing after today has arrived, whatever the row says. A deposit
-         * dated forward would otherwise retire paydays from a reading taken
-         * before it posted — the same refusal `cashEarnings` makes when it
-         * clamps its window to `today`.
-         */
-        lte(transactions.postedOn, today),
       ),
     )
-    .all();
+    .all()
+    /*
+     * ⛔ Nothing after today has arrived, whatever the row says. A deposit
+     * dated forward would otherwise retire paydays from a reading taken before
+     * it posted. `hasArrived` is the boundary, so the recurring calendar, which
+     * draws deposits beside this answer, cuts them on the same day.
+     */
+    .filter((d) => hasArrived(d.postedOn, today));
   if (deposits.length === 0) return noSettlement();
 
   /*
@@ -88,6 +93,36 @@ export function paydaySettlement(db: AppDatabase, seriesId: string, today: strin
  */
 export function settledPaydaysForSeries(db: AppDatabase, seriesId: string, today: string): ReadonlyMap<string, string> {
   return paydaySettlement(db, seriesId, today).settledBy;
+}
+
+/**
+ * A series' projected occurrences less the paydays its deposits have already
+ * paid down — what is STILL TO COME.
+ *
+ * ⚖️ A payday a deposit has already paid down is not still to come: settle
+ * backwards is his decision of 2026-09-28, and a lump that posts BEFORE the
+ * payday it covers (Wed Sep 30's deposit pays Thu Oct 1) is in the bank
+ * already. Listing that payday ahead counts the money twice.
+ *
+ * ⛔ ONE READING for every surface that looks ahead: the forecast, the upcoming
+ * list (/recurring's Upcoming tab, the dashboard's strip and its "before your
+ * next paycheck") and a series' "Next expected". 🔴 Only the forecast asked: on
+ * Sep 30 the dashboard waited on Oct 1's pay — the pay that had come the day
+ * before — and said nothing was due before it, while $2,000.00 of rent due Oct
+ * 5 falls before the pay that will actually come, on Oct 8.
+ *
+ * Income only: settlement speaks about deposits, and a bill's absence is
+ * `overdueForSeries`'.
+ */
+export function stillToCome<T extends { date: string }>(
+  db: AppDatabase,
+  series: { id: string; kind: SeriesKind },
+  occurrences: readonly T[],
+  today: string,
+): T[] {
+  if (series.kind !== "income") return [...occurrences];
+  const settled = settledPaydaysForSeries(db, series.id, today);
+  return occurrences.filter((o) => !settled.has(o.date));
 }
 
 /**

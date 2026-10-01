@@ -1,3 +1,4 @@
+import { flowEntryOf } from "./month-flow";
 import { mostUrgentState, type ForecastConfidence } from "./occurrence-verdict";
 import type { DayStateKind } from "@/services/recurring-calendar";
 
@@ -12,7 +13,8 @@ import type { DayStateKind } from "@/services/recurring-calendar";
  *
  * So each day now carries four things:
  *
- *   `netCents`      the day's signed total — the number, not a symbol for it
+ *   `netCents`      the day's signed total — the number, not a symbol for it —
+ *                   which is what its marks add to the month (`dayTotalCents`)
  *   `weight`        0..1, its magnitude against the heaviest day in the month,
  *                   so the month reads as a RHYTHM: rent day is visibly heavy
  *                   and a subscription is a hairline
@@ -109,9 +111,41 @@ export interface DayWeight {
 
 export interface WeighableEntry {
   amountCents: number;
+  /**
+   * What the mark adds to the month's Settled figure, or null for one that has
+   * not settled — `CalendarEntry.settledCents`, which says why it can differ
+   * from `amountCents`. Required, so no reader can weigh a day without it.
+   */
+  settledCents: number | null;
   state: DayStateKind;
   name: string;
   confidence?: ForecastConfidence | null;
+}
+
+/** What one mark adds to its day: what it adds to the month (`flowEntryOf`). */
+const shareOf = (e: WeighableEntry): number => flowEntryOf(e).amountCents;
+
+/**
+ * A day's figure: what its marks add to the month, summed — the step the flow
+ * strip takes that day, and that day's share of the footer beneath the grid.
+ * The cell prints it, the heat scale weighs it, the Day Sheet totals it.
+ *
+ * ⛔ ONE READING OF A MARK, `flowEntryOf`'s, which the strip and the footer
+ * already sum. A settled mark adds its `settledCents`: a deposit row less the
+ * money settlement spent on another month's paydays, a payday chip only money
+ * another month's deposits put in — a chip paid by a deposit drawn this month
+ * adds nothing, because that deposit's own cell holds the money.
+ *
+ * 🔴 It summed each mark's AMOUNT, and once a payday could be drawn beside a
+ * deposit of its own series (settlement asked first, §6A 29 review) that drew a
+ * week of pay twice. Measured on a copy of his ledger 2026-10-01: September's
+ * Sep 24 — its own deposit, whose money paid Aug 20, beside its payday, paid by
+ * the lump of Sep 23 — read "2.3k" on a day that adds nothing to September,
+ * and Sep 3 read "+142", a $1,000.00 insurance payment netted against a week of
+ * pay that landed twenty days later. They read "0" and "-1.0k".
+ */
+export function dayTotalCents(entries: readonly WeighableEntry[]): number {
+  return entries.reduce((n, e) => n + shareOf(e), 0);
 }
 
 /** Least-confident-first, so `reduce` can pick a day's floor. */
@@ -133,7 +167,7 @@ const CONFIDENCE_RANK: Record<ForecastConfidence, number> = {
 export function heaviestDayCents(entriesByDay: Readonly<Record<string, readonly WeighableEntry[]>>): number {
   let max = 0;
   for (const entries of Object.values(entriesByDay)) {
-    const net = Math.abs(entries.reduce((n, e) => n + e.amountCents, 0));
+    const net = Math.abs(dayTotalCents(entries));
     if (net > max) max = net;
   }
   return max;
@@ -179,6 +213,10 @@ function barWeight(netCents: number, heaviestCents: number): number {
  * useful word is "Rent". Ties keep the FIRST entry, and the caller
  * (`recurringCalendar`) has already sorted each day by state then name — so the
  * choice is deterministic rather than dependent on row order from the database.
+ *
+ * ⚠️ Largest by what it ADDS (`dayTotalCents`), so the name accounts for the
+ * figure printed beside it: his Sep 10 is Breezeline's -$50.00, not a payday
+ * whose week the lump of Sep 23 holds.
  */
 export function dayWeight(
   entries: readonly WeighableEntry[] | undefined,
@@ -186,10 +224,10 @@ export function dayWeight(
 ): DayWeight | null {
   if (!entries || entries.length === 0) return null;
 
-  const netCents = entries.reduce((n, e) => n + e.amountCents, 0);
+  const netCents = dayTotalCents(entries);
   const state = mostUrgentState(entries.map((e) => e.state));
   const dominant = entries.reduce((big, e) =>
-    Math.abs(e.amountCents) > Math.abs(big.amountCents) ? e : big,
+    Math.abs(shareOf(e)) > Math.abs(shareOf(big)) ? e : big,
   );
 
   let confidence: ForecastConfidence | null = null;
