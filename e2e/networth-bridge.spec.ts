@@ -1,4 +1,5 @@
 import { test, expect } from "@playwright/test";
+import { delayServerActions, pressView } from "./view-helpers";
 
 /**
  * The net-worth bridge — the dashboard's eighth hero view.
@@ -21,8 +22,10 @@ import { test, expect } from "@playwright/test";
  * being absent to eight visual baselines of a page nobody had changed.
  *
  * The last test therefore RESTORES what it presses, the way
- * `zz-zz-sankey.spec.ts` already does for the flow lens. The range pills are
- * still ChartFocus's lifted state and still persist nothing.
+ * `zz-zz-sankey.spec.ts` already does for the flow lens — and since 2026-10-01
+ * it proves each restoring press landed before the next step, then proves both
+ * dimensions came back (see the note at the restore). The range pills are still
+ * ChartFocus's lifted state and still persist nothing.
  */
 
 const bridgeRange = (page: import("@playwright/test").Page) =>
@@ -116,15 +119,23 @@ test("the table lens carries every band, including the ones the chart cannot dra
   await expect(table.getByRole("row")).toHaveCount(10);
   await expect(table.getByText("-$521.42")).toBeVisible();
 
-  // ⛔ RESTORE BOTH, in order: the lens first (so the persisted state written by
-  // the second press still carries `bridgeLens: chart`), then the hero mode. A
-  // press persists the whole resolved view, so leaving either behind hands every
-  // later spec a dashboard with no net-worth chart on it.
-  await page.getByRole("group", { name: "Bridge view" }).getByRole("button", { name: "Bridge" }).click();
-  await page
-    .getByRole("group", { name: "Net worth chart view" })
-    .getByRole("button", { name: "Net worth" })
-    .click();
+  // ⛔ RESTORE BOTH, in order: the lens first, then the hero mode — and PROVE each
+  // press landed before taking the next step (pressView). A press persists the
+  // whole resolved view, so the mode press must be computed from a view that
+  // already says `bridgeLens: chart` or it writes the table straight back; and `/`
+  // must not be requested until the mode press is written, or the server still
+  // resolves the bridge and there is no net-worth chart on it. Bare clicks did
+  // neither: 1 gate in ~15 failed below, and the post-suite database of a green
+  // gate still held `bridgeLens: "table"`. Every press is held back on its way to
+  // the server, so a restore that does not wait fails here, not once in ~15 gates.
+  await delayServerActions(page);
+  await pressView(page, "Bridge view", "Bridge");
+  await pressView(page, "Net worth chart view", "Net worth");
   await page.goto("/");
   await expect(page.getByRole("slider", { name: /Net worth over time/ })).toBeVisible();
+  // …and the lens rolled back with it: a fresh bridge visit opens on the chart
+  await page.goto("/?chart=bridge");
+  await expect(
+    page.getByRole("group", { name: "Bridge view" }).getByRole("button", { name: "Bridge" }),
+  ).toHaveAttribute("aria-pressed", "true");
 });
