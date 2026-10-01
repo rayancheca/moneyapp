@@ -405,6 +405,11 @@ describe("what the ledger cannot answer", () => {
     expect(card.owedCents).toBe(20_000);
     expect(card.cards.map((c) => c.name)).toEqual(["Alpha", "Beta"]);
     expect(card.explanation).toContain("floor");
+    // Beta has no statement to be "as of", and the one card in the total is one moment
+    expect(card.explanation).toBe(
+      "Across 2 cards, each as of its own last statement except 1 that no statement has checked. " +
+        "The oldest of them closed Aug 5 — 5 days ago. 1 of them has no balance in the ledger, so this is a floor.",
+    );
   });
 
   test("a closed card still carrying a balance is disclosed, not silently dropped", () => {
@@ -583,6 +588,10 @@ describe("a card the owner counts himself", () => {
     expect(alpha.asOfLabel).toBeNull();
     expect(alpha.caveat).toBe("you last counted it on Aug 1 — 9 days ago");
     expect(card.owedCents).toBe(20_000);
+    // 🔴 "each as of its own last statement — so this is not one moment" of one card he counts,
+    // and "nothing has checked this card yet" in its proof, without the $200.00 (§6A 28 review)
+    expect(card.explanation).toBe("Across 1 card that no statement has checked.");
+    expect(card.provenance.inputs[0]!.detail).toBe("$200.00 owed, you last counted it on Aug 1 — 9 days ago");
   });
 });
 
@@ -687,6 +696,70 @@ describe("a card resting on his count", () => {
       "you counted it on Aug 1, 2026, and nothing else checks it",
     );
     expect(counted.caveat).toBe("you counted it on Aug 1 — 9 days ago, and nothing else checks it");
+  });
+
+  /*
+   * 🔴 "Across 1 card, each as of its own last statement — so this is not one moment." of a
+   * card with no statement, and one card is one moment; its proof said the same ("each balance
+   * as of its own last statement"). A card with no checked day sent the sentence to the branch
+   * written for statements closing on different days (§6A 28 review).
+   */
+  test("alone, the sentences over the total never date his count as a statement", () => {
+    countedCard();
+
+    const card = cardsOwedCard(bundle.db, TODAY)!;
+    expect(card.explanation).toBe("Across 1 card that no statement has checked.");
+    expect(card.provenance.headline).toBe(
+      `$95.00 across 1 card that no statement has checked. A total is only as proven as its weakest part.${COUNT_NOTE}`,
+    );
+  });
+
+  test("beside a checked card, only the checked one is dated by its statement", () => {
+    countedCard();
+    addAccount("acct-alpha", "Alpha", "credit", { last4: "1111" });
+    addBalances("acct-alpha", [
+      { day: "2026-08-01", cents: -20_000, basis: "derived" },
+      { day: "2026-08-05", cents: -20_000, basis: "anchored" },
+    ]);
+    addTxn("acct-alpha", "2026-08-01", -1_000);
+
+    const card = cardsOwedCard(bundle.db, TODAY)!;
+    expect(card.explanation).toBe(
+      "Across 2 cards, each as of its own last statement except 1 that no statement has checked — so this is not one moment. The oldest of them closed Aug 5 — 5 days ago.",
+    );
+    expect(card.provenance.headline).toBe(
+      "$295.00 across 2 cards, each balance as of its own last statement except 1 that no statement has checked. " +
+        `A total is only as proven as its weakest part.${COUNT_NOTE}`,
+    );
+  });
+
+  /*
+   * 🔴 "nothing has checked this card yet" — the proof's own copy of net worth's line, left as
+   * it was: it never named his count, and it dropped the $95.00, so the lines under "$295.00
+   * across 2 cards" no longer added up to it (§6A 28 review).
+   */
+  test("its line in the proof is the row's own sentence, beside what it owes", () => {
+    countedCard();
+    addAccount("acct-alpha", "Alpha", "credit", { last4: "1111" });
+    addBalances("acct-alpha", [
+      { day: "2026-08-01", cents: -20_000, basis: "derived" },
+      { day: "2026-08-05", cents: -20_000, basis: "anchored" },
+    ]);
+    addTxn("acct-alpha", "2026-08-01", -1_000);
+
+    const card = cardsOwedCard(bundle.db, TODAY)!;
+    const counted = card.cards.find((c) => c.name === "Counted Card")!;
+    expect(card.provenance.inputs.find((i) => i.label === "Counted Card ····4444")!.detail).toBe(
+      "$95.00 owed, you counted it on Aug 1 — 9 days ago, and nothing checks it since Aug 4 — 6 days ago",
+    );
+    expect(counted.caveat).toBe("you counted it on Aug 1 — 9 days ago, and nothing checks it since Aug 4 — 6 days ago");
+    // every line carries what its card owes, so the lines add up to the headline
+    for (const c of card.cards) {
+      const line = card.provenance.inputs.find((i) => i.label === `${c.name} ····${c.last4}`)!;
+      expect(line.detail?.startsWith(`${formatCents(c.owedCents!)} owed, `)).toBe(true);
+    }
+    expect(card.cards.reduce((s, c) => s + c.owedCents!, 0)).toBe(29_500);
+    expect(card.headline).toBe("$295.00");
   });
 });
 

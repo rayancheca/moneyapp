@@ -1,5 +1,6 @@
 import { describe, expect, test } from "vitest";
-import { agoPhrase, coverageDetail, type CoverageDetailInput } from "./coverage-detail";
+import { agoPhrase, countedDetail, countFooting, coverageDetail, type CoverageDetailInput } from "./coverage-detail";
+import { formatDayFull } from "./format-date";
 
 const detail = (over: Partial<CoverageDetailInput> = {}): string =>
   coverageDetail({
@@ -17,6 +18,7 @@ const detail = (over: Partial<CoverageDetailInput> = {}): string =>
     pricedFromHoldings: true,
     countedOn: null,
     keptOpeningOn: null,
+    balancesThrough: null,
     ...over,
   });
 
@@ -288,6 +290,102 @@ describe("a balance he counted", () => {
         unverifiedDays: 0,
       }),
     ).toBe("nothing closes to the cent: it rests on the balance you counted on Aug 3, 2026, and nothing else checks it");
+  });
+
+  /*
+   * 🔴 "THE FIRST DAY PAST THAT COUNT IS JUL 27, 2026" — five days BEFORE his count. Measured
+   * through the app's own path (§6A 28 review): a card with rows on Jul 28 and Jul 30, his
+   * $90.00 recorded for Aug 1 through `addManualAnchor`, `rebuildAccount` to Aug 10. The rows
+   * before the count replay backwards from it, unchecked; with no run open past the count the
+   * row fell back to `unverifiedSince`, and the 9 days carried on the count fell out with it —
+   * while net worth and the card's caveat said "nothing else checks it" of the same account.
+   */
+  test("a count whose rows start before it names no day before it, and counts the days it carries", () => {
+    const text = detail({
+      ...cashOnHand,
+      countedOn: "2026-08-01",
+      unverifiedSince: "2026-07-27",
+      unverifiedDays: 5,
+      uncheckedSince: null,
+      uncheckedRunDays: 0,
+      balancesThrough: "2026-08-10",
+    });
+    expect(text).toBe(
+      "nothing closes to the cent: it rests on the balance you counted on Aug 1, 2026, carried forward for 9 days, and nothing else checks it",
+    );
+    expect(text).not.toContain("Jul 27");
+  });
+
+  test("a count with rows before it and a run past it names the run, and reconciles with the total", () => {
+    expect(
+      detail({
+        ...cashOnHand,
+        countedOn: "2026-08-01",
+        unverifiedSince: "2026-07-28",
+        unverifiedDays: 2,
+        uncheckedSince: "2026-08-04",
+        uncheckedRunDays: 1,
+      }),
+    ).toBe(
+      "nothing closes to the cent: it rests on the balance you counted on Aug 1, 2026, carried forward for 2 days; the first day past that count is Aug 4, 2026 — 1 day rests on entries alone, with no document to check them against, of 2 unchecked in all",
+    );
+  });
+});
+
+/**
+ * Net worth's line, the dashboard card's row and its line in "what you owe" say this in one line;
+ * /imports says it at length. Both are worded from `countFooting`, so they name the same days.
+ */
+describe("countedDetail — his count in one line", () => {
+  const counted: CoverageDetailInput = {
+    grade: "unverified",
+    verifiedThrough: null,
+    unverifiedSince: "2026-07-27",
+    uncheckedSince: null,
+    uncheckedRunDays: 0,
+    brokenSince: null,
+    daysSinceVerified: null,
+    lastManualUpdate: "2026-08-01",
+    gapDays: 0,
+    unverifiedDays: 5,
+    hasStatements: false,
+    pricedFromHoldings: false,
+    countedOn: "2026-08-01",
+    keptOpeningOn: null,
+    balancesThrough: "2026-08-10",
+  };
+  const withRun: CoverageDetailInput = {
+    ...counted,
+    uncheckedSince: "2026-08-04",
+    uncheckedRunDays: 7,
+    unverifiedDays: 12,
+  };
+
+  test("names his count, then the run still open past it or that nothing else checks it", () => {
+    expect(countedDetail(counted, formatDayFull)).toBe("you counted it on Aug 1, 2026, and nothing else checks it");
+    expect(countedDetail(withRun, formatDayFull)).toBe(
+      "you counted it on Aug 1, 2026, and nothing checks it since Aug 4, 2026",
+    );
+  });
+
+  test("says nothing of an account whose days do not rest on his count", () => {
+    expect(countedDetail({ ...counted, countedOn: null }, formatDayFull)).toBeNull();
+    expect(countedDetail({ ...counted, grade: "broken" }, formatDayFull)).toBeNull();
+    expect(countFooting({ ...counted, grade: "manual" })).toBeNull();
+  });
+
+  // 🔴 the row said "the first day past that count is Jul 27, 2026" where the line said "nothing else"
+  test("the line and /imports' row name the same days", () => {
+    const lineTail = countedDetail(counted, formatDayFull)!.split(", and ")[1];
+    expect(coverageDetail(counted)).toContain(`, and ${lineTail}`);
+    expect(countFooting(withRun)).toEqual({
+      countedOn: "2026-08-01",
+      carriedDays: 2,
+      uncheckedSince: "2026-08-04",
+      uncheckedDays: 7,
+    });
+    expect(coverageDetail(withRun)).toContain("the first day past that count is Aug 4, 2026 — 7 days rest");
+    expect(countedDetail(withRun, formatDayFull)).toContain("since Aug 4, 2026");
   });
 });
 

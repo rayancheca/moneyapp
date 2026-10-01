@@ -12,6 +12,7 @@ import { institutions } from "@/db/schema/institutions";
 import { transactions } from "@/db/schema/transactions";
 import { BALANCE_BASES } from "@/db/schema/balances";
 import { ACCOUNT_TYPES } from "@/db/schema/accounts";
+import { addManualAnchor } from "./anchors";
 import { accountCoverage, balanceDayIsExact, basisIsChecked } from "./coverage";
 import { rebuildAccount } from "./derivation";
 
@@ -448,6 +449,30 @@ describe("uncheckedSince — the run a 'since' date is actually about", () => {
     ]);
     expect(c.uncheckedSince).toBe("2026-01-01");
     expect(c.uncheckedRunDays).toBe(2);
+  });
+});
+
+describe("balancesThrough — where the stored days end", () => {
+  /*
+   * 🔴 /imports read "…rests on the balance you counted on Aug 1, 2026; the first day past
+   * that count is Jul 27, 2026" of this card — a day before the count — and dropped the 9
+   * days carried on it (§6A 28 review). With no unchecked run open past his count, the days
+   * it carries run to the newest stored day, and nothing published that day.
+   */
+  test("is the newest day with a balance, through the app's own path, and null with none", () => {
+    const id = addAccount("a-new-card", "New Card", "credit");
+    addTxn(id, "2026-07-28");
+    addTxn(id, "2026-07-30");
+    addManualAnchor(bundle.db, { accountId: id, anchoredOn: "2026-08-01", enteredCents: 9_000 });
+    rebuildAccount(bundle.db, id, "2026-08-10");
+
+    const c = accountCoverage(bundle.db, "2026-08-10").find((a) => a.accountId === id)!;
+    // the shape the row misread: his count, prehistory before it, nothing unchecked past it
+    expect(c).toMatchObject({ countedOn: "2026-08-01", unverifiedSince: "2026-07-27", uncheckedSince: null });
+    expect(c.balancesThrough).toBe("2026-08-10");
+
+    addAccount("a-empty", "Empty", "checking");
+    expect(only("a-empty").balancesThrough).toBeNull();
   });
 });
 
