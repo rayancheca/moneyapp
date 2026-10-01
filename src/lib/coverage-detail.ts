@@ -38,7 +38,18 @@ export interface CoverageDetailInput {
   grade: CoverageGradeName;
   /** last day whose balance rests on a closed arithmetic chain */
   verifiedThrough: string | null;
-  /** first day that is `derived_unverified` or `gap` */
+  /**
+   * `AccountCoverage.chainOpensOn`: the first day on that chain — its first balance. Unchecked
+   * days before it are replayed backwards from that balance (`beforeFirstBalance`).
+   *
+   * ⛔ REQUIRED, like `countedOn`: a forgotten field sends Robinhood Agentic's row back to naming
+   * Jun 4, 2026 as the first day it does not close, of an account it closes through Aug 31.
+   */
+  chainOpensOn: string | null;
+  /**
+   * first day that is `derived_unverified` or `gap` — the first unchecked day it EVER had, so
+   * before `chainOpensOn` it is the first of the days before its first balance
+   */
   unverifiedSince: string | null;
   /**
    * First day of the run of unchecked days that is still OPEN, and its length.
@@ -193,7 +204,45 @@ export function countedDetail(c: CountFields, formatDay: (iso: string) => string
 
 /** What `unverifiedDetail` reads — `AccountCoverage` carries every one under the same name. */
 type UnverifiedFields = CountFields &
-  Pick<CoverageDetailInput, "verifiedThrough" | "unverifiedSince">;
+  Pick<CoverageDetailInput, "verifiedThrough" | "unverifiedSince" | "chainOpensOn">;
+
+/** An unverified account's unchecked days, all before its first balance — `beforeFirstBalance`. */
+export interface BeforeFirstBalance {
+  /** the last day on the closed chain — the day "checked through" names */
+  checkedThrough: string;
+  /** its first balance, the first day on that chain (`AccountCoverage.chainOpensOn`) */
+  firstBalanceOn: string;
+}
+
+/**
+ * Where an `unverified` account's unchecked days are when no count of his stands under its newest
+ * days and no run is open: before its first balance, replayed backwards from it — the ONE reading
+ * net worth's line ("checked through <day>, and unchecked days before that") and /imports' row are
+ * worded from. Null when that is not where they are.
+ *
+ * 🔴 TWO RULES, ONE ACCOUNT. /imports chose its unchecked days as it had before the run fields
+ * existed — the open run, else `unverifiedSince` — and named that day as where it stops closing.
+ * Robinhood Agentic read "closes to the cent through Aug 31, 2026 (31 days ago); the first day it
+ * does not is Jun 4, 2026" (a copy of his ledger, 2026-10-01): Jun 4–29 are replayed backwards
+ * from its first balance, the Jun 30 statement, and nothing past Aug 31 is unchecked. Net worth
+ * already said "checked through Aug 31, 2026, and unchecked days before that" of it.
+ *
+ * ⛔ What each date is: `verifiedThrough` the last day on the closed chain and `chainOpensOn` the
+ * first; `uncheckedSince` the first of the run still open, the only unchecked days past the chain;
+ * `unverifiedSince` the first unchecked day the account EVER had — before the chain opens, the
+ * first of the days before its first balance, never a day it stopped closing.
+ *
+ * ⚠️ Every unchecked day lies before its first balance, not only the first: past it the replay
+ * writes one only going forward (`deriveForward`), and that run reaches the newest day, so it would
+ * be the run still open. The first day is checked anyway, so the words cannot name a day after it.
+ */
+export function beforeFirstBalance(c: UnverifiedFields): BeforeFirstBalance | null {
+  if (c.grade !== "unverified" || countFooting(c) !== null || c.uncheckedSince !== null) return null;
+  const { verifiedThrough, unverifiedSince, chainOpensOn } = c;
+  if (verifiedThrough === null || unverifiedSince === null || chainOpensOn === null) return null;
+  if (unverifiedSince >= chainOpensOn) return null;
+  return { checkedThrough: verifiedThrough, firstBalanceOn: chainOpensOn };
+}
 
 /**
  * What an `unverified` account says about itself in one line — net worth's line for it, which the
@@ -213,7 +262,7 @@ type UnverifiedFields = CountFields &
  * ⚠️ "Checked through" names a day something checked, so an account with none gets no sentence
  * here, where net worth printed `unverifiedSince` as that day. No account on his ledger or the
  * pristine e2e fixture is in that state (2026-10-01): with no run open, its unchecked days are the
- * ones before its first balance, and something checked a day after them.
+ * ones before its first balance (`beforeFirstBalance`), and something checked a day after them.
  */
 export function unverifiedDetail(
   c: UnverifiedFields,
@@ -223,9 +272,9 @@ export function unverifiedDetail(
   const counted = countedDetail(c, formatDay);
   if (counted !== null) return counted;
   if (c.uncheckedSince !== null) return `nothing checks it since ${formatDay(c.uncheckedSince)}`;
-  return c.verifiedThrough !== null && c.unverifiedSince !== null
-    ? `checked through ${formatDay(c.verifiedThrough)}, and unchecked days before that`
-    : null;
+  const before = beforeFirstBalance(c);
+  if (before === null) return null;
+  return `checked through ${formatDay(before.checkedThrough)}, and unchecked days before that`;
 }
 
 const plural = (n: number, one: string, many: string): string => (n === 1 ? one : many);
@@ -299,6 +348,23 @@ function countedRow(
   return `${count}; the first day past that count is ${first} — ${resting(restsOn.uncheckedDays)}`;
 }
 
+/**
+ * The row for an account whose unchecked days all lie before its first balance — `beforeFirstBalance`
+ * said at length: what closes, then those days, counted, and what they stand on.
+ *
+ * ⛔ Not `resting`'s reason. An export with no closing balance, or his entries with no document, is
+ * what the run past a chain stands on; what the days before a first balance lack is an EARLIER one.
+ * Robinhood Agentic's one row there is the Jun 5 transfer its June statement printed — no export.
+ */
+function beforeRow(input: CoverageDetailInput, before: BeforeFirstBalance): string {
+  // every unchecked day it has: `beforeFirstBalance` says why none is past its first balance
+  const n = input.unverifiedDays;
+  const first = dayWithYear(before.firstBalanceOn);
+  const days = `the ${n} ${plural(n, "day", "days")} before its first balance, on ${first}`;
+  const why = `replayed backwards from it, with nothing earlier to check ${plural(n, "it", "them")} against`;
+  return `${closesClause(input)}; ${days}, ${plural(n, "is", "are")} unchecked — ${why}`;
+}
+
 export function coverageDetail(input: CoverageDetailInput): string {
   switch (input.grade) {
     case "broken": {
@@ -349,6 +415,9 @@ export function coverageDetail(input: CoverageDetailInput): string {
         (n === input.unverifiedDays ? "" : `, of ${input.unverifiedDays} unchecked in all`);
       const restsOn = countFooting(input);
       if (restsOn !== null) return countedRow(input, restsOn, resting);
+      // with no run open, the days before its first balance: net worth's reading, not a stop
+      const before = beforeFirstBalance(input);
+      if (before !== null) return beforeRow(input, before);
       const run = input.uncheckedRunDays > 0;
       const n = run ? input.uncheckedRunDays : input.unverifiedDays;
       const since = run ? input.uncheckedSince : input.unverifiedSince;

@@ -12,6 +12,7 @@ import { institutions } from "@/db/schema/institutions";
 import { transactions } from "@/db/schema/transactions";
 import { BALANCE_BASES } from "@/db/schema/balances";
 import { ACCOUNT_TYPES } from "@/db/schema/accounts";
+import { beforeFirstBalance } from "@/lib/coverage-detail";
 import { addManualAnchor } from "./anchors";
 import { accountCoverage, balanceDayIsExact, basisIsChecked } from "./coverage";
 import { rebuildAccount } from "./derivation";
@@ -449,6 +450,44 @@ describe("uncheckedSince — the run a 'since' date is actually about", () => {
     ]);
     expect(c.uncheckedSince).toBe("2026-01-01");
     expect(c.uncheckedRunDays).toBe(2);
+  });
+});
+
+describe("chainOpensOn — where the days before its first balance end", () => {
+  /*
+   * 🔴 /imports read "closes to the cent through Aug 31, 2026 (31 days ago); the first day it
+   * does not is Jun 4, 2026" of Robinhood Agentic (a copy of his ledger, 2026-10-01): Jun 4 is
+   * the first of the days replayed backwards from its first balance, not a day it stopped
+   * closing. Built here through the app's own path, so the row's fixture in
+   * lib/coverage-detail.test.ts is a shape the rebuild produces.
+   */
+  test("Robinhood Agentic's shape: unchecked only before its first balance, nothing open", () => {
+    const id = addAccount("a-agentic", "Robinhood Agentic", "checking");
+    // three statement balances that agree, and the one row: the transfer that funded it
+    addAnchorRow(id, "2026-06-30", "statement");
+    addAnchorRow(id, "2026-07-31", "statement");
+    addAnchorRow(id, "2026-08-31", "statement");
+    addTxn(id, "2026-06-05");
+    rebuildAccount(bundle.db, id, "2026-09-15");
+
+    const c = accountCoverage(bundle.db, "2026-10-01").find((a) => a.accountId === id)!;
+    expect(c).toMatchObject({
+      grade: "unverified",
+      verifiedThrough: "2026-08-31",
+      chainOpensOn: "2026-06-30",
+      unverifiedSince: "2026-06-04",
+      uncheckedSince: null,
+      uncheckedRunDays: 0,
+      countedOn: null,
+      balancesThrough: "2026-09-15",
+      daysSinceVerified: 31,
+    });
+    expect(c.days).toMatchObject({ anchored: 3, derived_unverified: 26, carried: 75, gap: 0 });
+    // the reading /imports' row and net worth's line share, off the fields as published
+    expect(beforeFirstBalance(c)).toEqual({
+      checkedThrough: "2026-08-31",
+      firstBalanceOn: "2026-06-30",
+    });
   });
 });
 

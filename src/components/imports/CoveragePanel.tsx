@@ -83,6 +83,7 @@ export function CoveragePanel({
                 {coverageDetail({
                   grade: c.grade,
                   verifiedThrough: c.verifiedThrough,
+                  chainOpensOn: c.chainOpensOn,
                   unverifiedSince: c.unverifiedSince,
                   uncheckedSince: c.uncheckedSince,
                   uncheckedRunDays: c.uncheckedRunDays,
