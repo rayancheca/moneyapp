@@ -167,8 +167,9 @@ export function countFooting(c: CountFields): CountFooting | null {
 
 /**
  * What an account whose days rest on a balance he TYPED says about itself in one line — net
- * worth's line for it, the dashboard card's row and its line in "what you owe" — or null when
- * they do not rest on his count. /imports says the same `countFooting` at length.
+ * worth's line for it, the dashboard card's row and its line in "what you owe", each through
+ * `unverifiedDetail` — or null when they do not rest on his count. /imports says the same
+ * `countFooting` at length.
  *
  * 🔴 Net worth said "nothing checks it since Aug 11, 2026" of Cash on Hand, whose days before
  * Aug 11 stand on nothing but the $5,000.00 he typed for Aug 3 (real ledger copy, 2026-09-16) —
@@ -188,6 +189,43 @@ export function countedDetail(c: CountFields, formatDay: (iso: string) => string
   return count.uncheckedSince === null
     ? `${counted}, and nothing else checks it`
     : `${counted}, and nothing checks it since ${formatDay(count.uncheckedSince)}`;
+}
+
+/** What `unverifiedDetail` reads — `AccountCoverage` carries every one under the same name. */
+type UnverifiedFields = CountFields &
+  Pick<CoverageDetailInput, "verifiedThrough" | "unverifiedSince">;
+
+/**
+ * What an `unverified` account says about itself in one line — net worth's line for it, which the
+ * trust card prints, and the dashboard card's row and its line in "what you owe" — or null for any
+ * other grade. His count first (`countedDetail`); then the run still open; with none open, the
+ * days before its first balance, which nothing checks and the figure does not rest on.
+ *
+ * 🔴 TWO COPIES, TWO DATES. Net worth dates "since" from the run still open
+ * (`AccountCoverage.uncheckedSince`) since Robinhood Cash read "nothing checks it since Dec 5,
+ * 2023 · 52 days unchecked" of an account whose newest statement had closed 35 days before. The
+ * card kept its own copy of the line and still dated it from `unverifiedSince`, the first
+ * unchecked day the account EVER had: "nothing has checked it since Jul 19 — 22 days ago" of a
+ * card two statements checked, the newer on Aug 5, because its export reached back before the
+ * first of them — where net worth said "checked through Aug 5, 2026, and unchecked days before
+ * that" (§6A 28 review, through `rebuildAccount`). `formatDay` is each surface's voice for a date.
+ *
+ * ⚠️ "Checked through" names a day something checked, so an account with none gets no sentence
+ * here, where net worth printed `unverifiedSince` as that day. No account on his ledger or the
+ * pristine e2e fixture is in that state (2026-10-01): with no run open, its unchecked days are the
+ * ones before its first balance, and something checked a day after them.
+ */
+export function unverifiedDetail(
+  c: UnverifiedFields,
+  formatDay: (iso: string) => string,
+): string | null {
+  if (c.grade !== "unverified") return null;
+  const counted = countedDetail(c, formatDay);
+  if (counted !== null) return counted;
+  if (c.uncheckedSince !== null) return `nothing checks it since ${formatDay(c.uncheckedSince)}`;
+  return c.verifiedThrough !== null && c.unverifiedSince !== null
+    ? `checked through ${formatDay(c.verifiedThrough)}, and unchecked days before that`
+    : null;
 }
 
 const plural = (n: number, one: string, many: string): string => (n === 1 ? one : many);

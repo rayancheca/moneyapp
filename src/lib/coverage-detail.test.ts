@@ -1,5 +1,12 @@
 import { describe, expect, test } from "vitest";
-import { agoPhrase, countedDetail, countFooting, coverageDetail, type CoverageDetailInput } from "./coverage-detail";
+import {
+  agoPhrase,
+  countedDetail,
+  countFooting,
+  coverageDetail,
+  unverifiedDetail,
+  type CoverageDetailInput,
+} from "./coverage-detail";
 import { formatDayFull } from "./format-date";
 
 const detail = (over: Partial<CoverageDetailInput> = {}): string =>
@@ -386,6 +393,68 @@ describe("countedDetail — his count in one line", () => {
     });
     expect(coverageDetail(withRun)).toContain("the first day past that count is Aug 4, 2026 — 7 days rest");
     expect(countedDetail(withRun, formatDayFull)).toContain("since Aug 4, 2026");
+  });
+});
+
+/*
+ * 🔴 The dashboard's "what you owe" row kept its own copy of this line and dated "since" from
+ * `unverifiedSince`: "nothing has checked it since Jul 19 — 22 days ago" of a card two statements
+ * checked through Aug 5, whose export reached back before the first of them (§6A 28 review).
+ */
+describe("unverifiedDetail — an unverified account in one line", () => {
+  // checked by statements through Aug 5; Jul 19–24 replayed backwards from the first of them
+  const checked: CoverageDetailInput = {
+    grade: "unverified",
+    verifiedThrough: "2026-08-05",
+    unverifiedSince: "2026-07-19",
+    uncheckedSince: null,
+    uncheckedRunDays: 0,
+    brokenSince: null,
+    daysSinceVerified: 5,
+    lastManualUpdate: "2026-08-05",
+    gapDays: 0,
+    unverifiedDays: 6,
+    hasStatements: true,
+    pricedFromHoldings: false,
+    countedOn: null,
+    keptOpeningOn: null,
+    balancesThrough: "2026-08-10",
+  };
+
+  test("names the run still open, never the first unchecked day the account ever had", () => {
+    const withRun = {
+      ...checked,
+      uncheckedSince: "2026-08-08",
+      uncheckedRunDays: 3,
+      unverifiedDays: 9,
+    };
+    expect(unverifiedDetail(withRun, formatDayFull)).toBe("nothing checks it since Aug 8, 2026");
+  });
+
+  test("with no run open, names the checked day and the days before it, and no 'since'", () => {
+    expect(unverifiedDetail(checked, formatDayFull)).toBe(
+      "checked through Aug 5, 2026, and unchecked days before that",
+    );
+  });
+
+  test("his count comes first, in `countedDetail`'s words", () => {
+    const counted = {
+      ...checked,
+      verifiedThrough: null,
+      countedOn: "2026-08-01",
+      uncheckedSince: "2026-08-04",
+    };
+    expect(unverifiedDetail(counted, formatDayFull)).toBe(countedDetail(counted, formatDayFull));
+    expect(unverifiedDetail(counted, formatDayFull)).toBe(
+      "you counted it on Aug 1, 2026, and nothing checks it since Aug 4, 2026",
+    );
+  });
+
+  test("says nothing of another grade, nor 'checked through' a day nothing checked", () => {
+    expect(unverifiedDetail({ ...checked, grade: "verified" }, formatDayFull)).toBeNull();
+    expect(unverifiedDetail({ ...checked, grade: "broken" }, formatDayFull)).toBeNull();
+    expect(unverifiedDetail({ ...checked, verifiedThrough: null }, formatDayFull)).toBeNull();
+    expect(unverifiedDetail({ ...checked, unverifiedSince: null }, formatDayFull)).toBeNull();
   });
 });
 

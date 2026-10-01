@@ -1,5 +1,5 @@
 import { and, asc, count, desc, eq, inArray, lte, gte, ne, sum } from "drizzle-orm";
-import { countedDetail } from "@/lib/coverage-detail";
+import { unverifiedDetail } from "@/lib/coverage-detail";
 import { formatDayFull } from "@/lib/format-date";
 import type { AppDatabase } from "@/db/client";
 import { accounts, type AccountType } from "@/db/schema/accounts";
@@ -1118,21 +1118,12 @@ function netWorthProvenance(db: AppDatabase, day: string | undefined): Provenanc
         ? `adds up through ${readableDay(c.verifiedThrough)}`
         : c.grade === "broken" && c.brokenSince
           ? `stopped adding up on ${readableDay(c.brokenSince)}`
-          : // his count, named as his — `countedDetail`, which the cards-owed row and its proof
-            // read too, worded from `countFooting`, which /imports' row reads. ⚠️ The parenthesis
-            // is load-bearing: `??` binds tighter than `?:`, so without it `countedDetail(…) ??
-            // <test>` would become the condition of the chain below.
-            countedDetail(c, readableDay) ??
-            (/* 🔴 `uncheckedSince`, not `unverifiedSince`. The latter is the FIRST
-               unchecked day the account ever had, and pairing it with a count of
-               all of them printed "Robinhood Cash — nothing checks it since
-               Dec 5, 2023 · 52 days unchecked" of an account anchored 32 times,
-               the newest closing 35 days before. See `AccountCoverage`. */
-            c.grade === "unverified" && c.uncheckedSince
-            ? `nothing checks it since ${readableDay(c.uncheckedSince)}`
-            : c.grade === "unverified" && c.unverifiedSince
-              ? `checked through ${readableDay(c.verifiedThrough ?? c.unverifiedSince)}, and unchecked days before that`
-            : c.grade === "market_value"
+          : // an unverified account — his count named as his, the run still open, or the days
+            // before its first balance — is `unverifiedDetail`, which the cards-owed row and its
+            // proof read too. ⚠️ The parenthesis is load-bearing: `??` binds tighter than `?:`,
+            // so without it `unverifiedDetail(…) ?? <test>` would become the chain's condition.
+            unverifiedDetail(c, readableDay) ??
+            (c.grade === "market_value"
               ? pricedFromHoldings.has(c.accountId)
                 ? "priced from holdings"
                 : "held at its recorded balance"

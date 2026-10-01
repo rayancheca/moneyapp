@@ -1,6 +1,6 @@
 import { and, asc, eq, inArray } from "drizzle-orm";
 import { apportionPercents } from "@/lib/apportion";
-import { countedDetail } from "@/lib/coverage-detail";
+import { unverifiedDetail } from "@/lib/coverage-detail";
 import type { AppDatabase } from "@/db/client";
 import { transactions } from "@/db/schema/transactions";
 import { diffDays, todayIso } from "@/lib/dates";
@@ -288,20 +288,19 @@ function caveatFor(cov: AccountCoverage | undefined, today: string): string | nu
       return null;
     case "unverified":
       /*
-       * 🔴 A card resting on a balance he TYPED read "nothing has checked it
-       * since Aug 4 — 6 days ago" — "since" claimed a check before Aug 4 that
-       * never happened, and the day was `unverifiedSince`, which a charge
-       * replayed backwards from his count moves to before the count. Net worth
-       * says "you counted it on Aug 1, 2026, and nothing checks it since Aug 4,
-       * 2026" of the same account; the row now says that, in this card's dates
-       * (§6A 28 review). A card a statement checked keeps its own sentence.
+       * Net worth's line for the account, in this card's dates (`unverifiedDetail`).
+       *
+       * 🔴 The row kept its own copy, dating "since" from `unverifiedSince`, the
+       * first unchecked day the card ever had, and it was false twice. A card
+       * resting on a balance he TYPED read "nothing has checked it since Aug 4
+       * — 6 days ago", claiming a check before Aug 4 that never happened; once
+       * his count took net worth's words, a card two statements checked, the
+       * newer on Aug 5, read "nothing has checked it since Jul 19 — 22 days
+       * ago", because its export reached back before the first of them (§6A 28
+       * review). Net worth names the run still open, or with none, "checked
+       * through Aug 5, 2026, and unchecked days before that".
        */
-      return (
-        countedDetail(cov, when) ??
-        (cov.unverifiedSince
-          ? `nothing has checked it since ${when(cov.unverifiedSince)}`
-          : "nothing checks this balance")
-      );
+      return unverifiedDetail(cov, when) ?? "nothing checks this balance";
     case "broken":
       return cov.brokenSince ? `stopped adding up on ${when(cov.brokenSince)}` : "this balance does not add up";
     case "manual":

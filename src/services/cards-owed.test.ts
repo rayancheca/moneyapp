@@ -14,6 +14,8 @@ import { transactionSplits } from "@/db/schema/transaction-splits";
 import { transactions } from "@/db/schema/transactions";
 import { runwayCard } from "./committed";
 import { cardsOwedCard } from "./cards-owed";
+import { accountCoverage } from "./coverage";
+import { rebuildAccount } from "./derivation";
 import { provenanceFor } from "./provenance";
 
 /**
@@ -781,11 +783,69 @@ describe("a figure newer than its evidence", () => {
     // … and the DATE beside it is still the last day anything checked
     expect(alpha.checkedThrough).toBe("2026-08-05");
     expect(alpha.grade).toBe("unverified");
-    expect(alpha.caveat).toBe("nothing has checked it since Aug 8 — 2 days ago");
+    // net worth's sentence, in this card's dates: the row's own copy said "has checked", and
+    // dated it from the first unchecked day the card ever had (see the describe below)
+    expect(alpha.caveat).toBe("nothing checks it since Aug 8 — 2 days ago");
     // the total is only as proven as its weakest part
     expect(alpha.verdict).toBe("unverified");
     expect(card.provenance.verdict).toBe("unverified");
     expect(card.provenance.badgeWord).toBe("1 of 2 add up");
+  });
+});
+
+/*
+ * 🔴 "nothing has checked it since Jul 19 — 22 days ago" of a card two statements checked, the
+ * newer on Aug 5 — under "Across 1 card, all as of Aug 5 — 5 days ago." and beside its proof line
+ * "$200.00 owed, checked through Aug 5 — 5 days ago" (§6A 28 review, probed through
+ * `rebuildAccount`). Its export reached back before its first statement balance, and the caveat
+ * dated "since" from `unverifiedSince`: the FIRST unchecked day the card ever had, here a day
+ * replayed backwards from the Jul 25 statement. Net worth reads the run still open, and with none
+ * names the days before as what they are.
+ */
+describe("a card whose export reaches back before its first statement balance", () => {
+  /** Statements close at $180.00 on Jul 25 and $200.00 on Aug 5; the Jul 20 charge predates both. */
+  function statementCard(): void {
+    addAccount("acct-alpha", "Alpha", "credit", { last4: "1111" });
+    addAnchor("acct-alpha", "2026-07-25", -18_000, "statement");
+    addAnchor("acct-alpha", "2026-08-05", -20_000, "statement");
+    addTxn("acct-alpha", "2026-07-20", -1_000);
+    addTxn("acct-alpha", "2026-08-01", -2_000);
+  }
+  const coverageOf = () => accountCoverage(bundle.db, TODAY).find((c) => c.accountId === "acct-alpha")!;
+  const netWorthLine = () => {
+    const netWorth = provenanceFor(bundle.db, { kind: "netWorth", day: TODAY })!;
+    return netWorth.inputs.find((i) => i.label === "Alpha")!.detail;
+  };
+
+  test("with nothing open past its last statement, says what net worth says, and no 'since'", () => {
+    statementCard();
+    rebuildAccount(bundle.db, "acct-alpha", TODAY);
+
+    // the shape: days before the first statement unchecked, nothing unchecked past the newest
+    expect(coverageOf()).toMatchObject({
+      grade: "unverified",
+      unverifiedSince: "2026-07-19",
+      uncheckedSince: null,
+    });
+    const card = cardsOwedCard(bundle.db, TODAY)!;
+    const alpha = card.cards[0]!;
+    expect(alpha.checkedThrough).toBe("2026-08-05");
+    expect(card.explanation).toBe("Across 1 card, all as of Aug 5 — 5 days ago.");
+    expect(netWorthLine()).toBe("checked through Aug 5, 2026, and unchecked days before that");
+    expect(alpha.caveat).toBe("checked through Aug 5 — 5 days ago, and unchecked days before that");
+    expect(card.provenance.inputs[0]!.detail).toBe("$200.00 owed, checked through Aug 5 — 5 days ago");
+  });
+
+  test("with a run open past its last statement, dates 'since' from that run", () => {
+    statementCard();
+    addTxn("acct-alpha", "2026-08-08", -4_000);
+    rebuildAccount(bundle.db, "acct-alpha", TODAY);
+
+    expect(coverageOf()).toMatchObject({ unverifiedSince: "2026-07-19", uncheckedSince: "2026-08-08" });
+    const alpha = cardsOwedCard(bundle.db, TODAY)!.cards[0]!;
+    expect(alpha.checkedThrough).toBe("2026-08-05");
+    expect(netWorthLine()).toBe("nothing checks it since Aug 8, 2026");
+    expect(alpha.caveat).toBe("nothing checks it since Aug 8 — 2 days ago");
   });
 });
 
