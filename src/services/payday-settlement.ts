@@ -9,7 +9,13 @@ import {
   settlePaydaysBackwards,
   type PaydaySettlement,
 } from "@/lib/payday-settlement";
-import { projectOccurrences, toProjectable } from "./recurring";
+import {
+  effectiveSeries,
+  projectOccurrences,
+  rollForwardNextExpected,
+  toProjectable,
+  type SeriesOverrides,
+} from "./recurring";
 
 /**
  * The settle-backwards rule, read off the database.
@@ -106,10 +112,11 @@ export function settledPaydaysForSeries(db: AppDatabase, seriesId: string, today
  *
  * ⛔ ONE READING for every surface that looks ahead: the forecast, the upcoming
  * list (/recurring's Upcoming tab, the dashboard's strip and its "before your
- * next paycheck") and a series' "Next expected". 🔴 Only the forecast asked: on
- * Sep 30 the dashboard waited on Oct 1's pay — the pay that had come the day
- * before — and said nothing was due before it, while $2,000.00 of rent due Oct
- * 5 falls before the pay that will actually come, on Oct 8.
+ * next paycheck") and a series' "Next expected" — and, through `nextStillToCome`,
+ * every surface that names a series' single next date to come. 🔴 Only the forecast
+ * asked: on Sep 30 the dashboard waited on Oct 1's pay — the pay that had come
+ * the day before — and said nothing was due before it, while $2,000.00 of rent
+ * due Oct 5 falls before the pay that will actually come, on Oct 8.
  *
  * Income only: settlement speaks about deposits, and a bill's absence is
  * `overdueForSeries`'.
@@ -120,9 +127,66 @@ export function stillToCome<T extends { date: string }>(
   occurrences: readonly T[],
   today: string,
 ): T[] {
-  if (series.kind !== "income") return [...occurrences];
+  const toCome = isStillToCome(db, series, today);
+  return occurrences.filter((o) => toCome(o.date));
+}
+
+/**
+ * A series' NEXT date still to come: the schedule's next occurrence
+ * (`rollForwardNextExpected`), stepped past every payday a deposit has already
+ * paid down — the first date of the list `stillToCome` leaves, without projecting
+ * a list to find it.
+ *
+ * 🔴 The single next date never asked. `/recurring?tab=all`'s "Next" and
+ * `/categories/<Income>`'s "· next" (`listSeries`) read the bare schedule, so on Sep
+ * 30 they named Oct 1, the payday Wed Sep 30's deposit had paid, one tab over from
+ * an Upcoming list starting at Oct 8. Measured on a copy of his ledger: read on Sep
+ * 23 and Sep 24 they named Sep 24 — the payday the Sep 23 lump of $4,567.68 had paid
+ * — while that series' own list said Oct 1.
+ *
+ * ⛔ NOT the series sentence (`seriesDetail.nextExpectedOn`): its date editor saves
+ * the date it opens on as the schedule's anchor, and a payday paid early is still on
+ * the schedule. 🔴 Opened on this, a Save with nothing changed anchored his weekly
+ * pay past the payday a deposit had paid, which then left the projection
+ * `paydaySettlement` walks.
+ *
+ * ⛔ Not a second copy of the rule: `isStillToCome` is the predicate `stillToCome`
+ * filters with, and the steps are `rollForwardNextExpected`'s, so the walk visits
+ * exactly the dates settlement graded (both step the effective schedule from its
+ * anchor). It ends because settlement names finitely many paydays and every step
+ * moves strictly forward.
+ *
+ * Null when the schedule has no next date, or none a deposit has not already paid:
+ * a series whose last payday was paid early expects nothing more, which is what its
+ * own page's list says. Money out is never paid down, so a bill's next date is its
+ * schedule's, read without a query.
+ */
+export function nextStillToCome(
+  db: AppDatabase,
+  series: SeriesOverrides & { id: string; kind: SeriesKind },
+  today: string,
+): string | null {
+  const eff = effectiveSeries(series);
+  const toCome = isStillToCome(db, series, today);
+  let next = rollForwardNextExpected(eff, today);
+  while (next !== null && !toCome(next)) next = rollForwardNextExpected(eff, addDays(next, 1));
+  return next;
+}
+
+/**
+ * Whether a series' occurrence on a date is still to come — the predicate behind
+ * both shapes of the question, a list (`stillToCome`) and a single next date
+ * (`nextStillToCome`), so the two can only ever drop the same paydays. Asked once
+ * per series: the settlement is read when this is built, not per date.
+ */
+function isStillToCome(
+  db: AppDatabase,
+  series: { id: string; kind: SeriesKind },
+  today: string,
+): (date: string) => boolean {
+  if (series.kind !== "income") return () => true;
   const settled = settledPaydaysForSeries(db, series.id, today);
-  return occurrences.filter((o) => !settled.has(o.date));
+  return (date) => !settled.has(date);
 }
 
 /**

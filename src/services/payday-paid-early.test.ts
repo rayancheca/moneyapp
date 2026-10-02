@@ -10,11 +10,12 @@ import { institutions } from "@/db/schema/institutions";
 import { recurringSeries } from "@/db/schema/recurring";
 import { transactions } from "@/db/schema/transactions";
 import { seedDatabase } from "@/db/seed";
+import { seriesInCategory } from "./category-detail";
 import { dashboardData } from "./dashboard";
 import { forecastForMonth } from "./forecast";
-import { upcomingOccurrences } from "./recurring";
-import { recurringCalendar } from "./recurring-calendar";
-import { seriesDetail } from "./recurring-detail";
+import { listSeries, upcomingOccurrences } from "./recurring";
+import { recurringCalendar, type CalendarEntry } from "./recurring-calendar";
+import { seriesDetail, setSeriesOverrides } from "./recurring-detail";
 
 /**
  * 🔴 A PAYDAY PAID EARLY WAS STILL LISTED AS COMING (§6A 29 review, second surface).
@@ -145,6 +146,9 @@ afterEach(() => {
 
 const payDays = (occurrences: readonly { seriesId: string; date: string }[]): string[] =>
   occurrences.filter((o) => o.seriesId === PAY).map((o) => o.date);
+const setPay = (patch: Partial<typeof recurringSeries.$inferInsert>): void => {
+  bundle.db.update(recurringSeries).set(patch).where(eq(recurringSeries.id, PAY)).run();
+};
 
 describe("a payday the deposit of Sep 30 paid early", () => {
   test("is not upcoming — the Upcoming tab and every reader of upcomingOccurrences", () => {
@@ -203,5 +207,106 @@ describe("a payday the deposit of Sep 30 paid early", () => {
     expect(upcomingOccurrences(bundle.db, TODAY, 30).filter((o) => o.seriesId === RENT).map((o) => o.date)).toEqual([
       "2026-10-05",
     ]);
+  });
+});
+
+/*
+ * 🔴 THE SERIES' OWN "NEXT" DATE NEVER ASKED EITHER. `/recurring?tab=all`'s Next column and
+ * `/categories/<Income>`'s "· next" read `listSeries`, which read `rollForwardNextExpected` —
+ * the schedule's step, asking nothing else. Read on Sep 30 they named Oct 1, the payday the
+ * deposit of Sep 30 had already paid, one tab over from an Upcoming list that starts at Oct 8.
+ * (The series sentence reads the schedule on purpose — see the block after this one.)
+ */
+describe("the series' own next date, after a payday paid early", () => {
+  const nextOf = (id: string): string | null | undefined =>
+    listSeries(bundle.db, TODAY).find((s) => s.id === id)?.nextExpectedOn;
+
+  test("the All tab's Next is the pay that will come, Oct 8", () => {
+    expect(nextOf(PAY)).toBe("2026-10-08");
+  });
+
+  test("so is the category page's", () => {
+    const row = seriesInCategory(bundle.db, salaryCategoryId(), TODAY).find((s) => s.id === PAY);
+    expect(row?.nextExpectedOn).toBe("2026-10-08");
+  });
+
+  test("and every surface names the same next payday", () => {
+    const named = [
+      nextOf(PAY),
+      seriesDetail(bundle.db, PAY, TODAY).nextExpected[0]?.date,
+      payDays(upcomingOccurrences(bundle.db, TODAY, 30))[0],
+      payDays(dashboardData(bundle.db, TODAY).upcoming.items)[0],
+    ];
+    expect(new Set(named)).toEqual(new Set(["2026-10-08"]));
+  });
+
+  // eight days of tolerance: Sep 30's deposit pays Oct 8 and Sep 24's Oct 1 (see above), so the
+  // next date has to step past two paid paydays, not one
+  test("two paydays paid ahead: the next is the first one nothing has paid, Oct 15", () => {
+    setPay({ toleranceDays: 8 });
+    expect(nextOf(PAY)).toBe("2026-10-15");
+    expect(seriesDetail(bundle.db, PAY, TODAY).nextExpected[0]?.date).toBe("2026-10-15");
+  });
+
+  test("a series whose last payday was paid early has nothing still to come", () => {
+    setPay({ userEndsOn: "2026-10-01" });
+    expect(seriesDetail(bundle.db, PAY, TODAY).nextExpected).toEqual([]);
+    expect(nextOf(PAY)).toBeNull();
+  });
+
+  test("a bill's next date is its schedule, whatever lands near it", () => {
+    expect(nextOf(RENT)).toBe("2026-10-05");
+    expect(seriesDetail(bundle.db, RENT, TODAY).nextExpectedOn).toBe("2026-10-05");
+  });
+
+  test("a payday nothing has paid yet is still next — read the day before the deposit", () => {
+    const dayBefore = listSeries(bundle.db, "2026-09-29").find((s) => s.id === PAY);
+    expect(dayBefore?.nextExpectedOn).toBe("2026-10-01");
+  });
+});
+
+/*
+ * ⛔ THE SERIES SENTENCE IS THE SCHEDULE, AND ITS EDITOR WRITES THE ANCHOR. Its day token reads a
+ * weekday or a day-of-month off `seriesDetail.nextExpectedOn`; its date editor opens on that date,
+ * and Save sends it back as `userNextExpectedOn` — the anchor every projection floors at, the one
+ * settlement walks included. 🔴 Read through `nextStillToCome` it opened past the payday a deposit
+ * had paid early: it no longer showed the date he saved, and Save with nothing changed re-anchored
+ * the schedule past that payday, so the deposit that paid it paid nothing and the calendar stopped
+ * drawing it. "weekly on Thursdays" reads the same off Oct 1 as off Oct 8.
+ */
+describe("the series sentence after a payday paid early — the schedule its editor writes", () => {
+  const octoberPay = (day: string): CalendarEntry | undefined =>
+    recurringCalendar(bundle.db, "2026-10", TODAY).entriesByDay[day]?.find((e) => e.seriesId === PAY);
+  /** The editor's Save with the date left as it opened — what `setSeriesOverridesAction` writes. */
+  const saveUnchanged = (): void => {
+    const opensOn = seriesDetail(bundle.db, PAY, TODAY).nextExpectedOn;
+    setSeriesOverrides(bundle.db, PAY, { userNextExpectedOn: opensOn });
+  };
+
+  test("its date editor opens on the date he saved, though a deposit paid that payday early", () => {
+    setPay({ userNextExpectedOn: "2026-10-01" });
+    const detail = seriesDetail(bundle.db, PAY, TODAY);
+    expect(detail.nextExpectedOn).toBe("2026-10-01");
+    expect(detail.nextExpected[0]?.date).toBe("2026-10-08");
+  });
+
+  test("saved with nothing changed, the payday stays on the schedule, paid by Sep 30's deposit", () => {
+    saveUnchanged();
+    expect(octoberPay("2026-10-01")).toMatchObject({ state: "paid", settledByDepositsOn: ["2026-09-30"] });
+    expect(seriesDetail(bundle.db, PAY, TODAY).nextExpected[0]?.date).toBe("2026-10-08");
+  });
+
+  // eight days of tolerance: Sep 24's deposit pays Oct 1 and Sep 30's pays Oct 8 (see above)
+  test("two paydays paid ahead: saved unchanged, both stay on the schedule, paid", () => {
+    setPay({ toleranceDays: 8 });
+    saveUnchanged();
+    expect(octoberPay("2026-10-01")).toMatchObject({ state: "paid", settledByDepositsOn: ["2026-09-24"] });
+    expect(octoberPay("2026-10-08")).toMatchObject({ state: "paid", settledByDepositsOn: ["2026-09-30"] });
+  });
+
+  // with no date the sentence drops its day clause, and the editor goes with it
+  test("its day token and editor stay when the last payday was paid early", () => {
+    setPay({ userEndsOn: "2026-10-01" });
+    expect(seriesDetail(bundle.db, PAY, TODAY).nextExpectedOn).toBe("2026-10-01");
   });
 });
