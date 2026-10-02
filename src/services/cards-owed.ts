@@ -138,6 +138,11 @@ export interface CardOwedLine {
   owedCents: number | null;
   /** last day this card's balance provably added up */
   checkedThrough: string | null;
+  /**
+   * First day of the unchecked run its newest balance sits in (`AccountCoverage.uncheckedSince`),
+   * so the figure is newer than anything a statement checked; null when the newest day is checked.
+   */
+  uncheckedSince: string | null;
   /** days between `checkedThrough` and today; null when nothing is checked */
   daysSinceChecked: number | null;
   /**
@@ -244,7 +249,9 @@ function dated(day: string, today: string): string {
  *
  *  - the day the displayed figure is stated for — the day its balance was
  *    observed (`observedSeries`), the same day /accounts/[id] asks about;
- *  - `unverifiedSince`, the first day the chain stopped being checked.
+ *  - the day the row's trouble starts: `brokenSince`, the first day the walk
+ *    MISSED a statement, and with no break `unverifiedSince`, the first day
+ *    nothing checks.
  *
  * ⛔ The second is what stops the badge contradicting the row beside it. A card
  * whose replay missed an anchor in March still has a perfectly `anchored`
@@ -265,10 +272,26 @@ function cardVerdict(db: AppDatabase, accountId: string, cov: AccountCoverage | 
    */
   const day = observedSeries(db, accountId).at(-1)?.day;
   const onFigure = provenanceFor(db, { kind: "accountBalance", accountId, day })?.verdict ?? "unknown";
-  if (!cov?.unverifiedSince) return onFigure;
-  const onBreak =
-    provenanceFor(db, { kind: "accountBalance", accountId, day: cov.unverifiedSince })?.verdict ?? "unknown";
-  return weakestVerdict([onFigure, onBreak]);
+  /*
+   * 🔴 This asked about `unverifiedSince` alone, documented as "the first day the chain stopped
+   * being checked". It is the first unchecked day the card EVER had: on a card whose export
+   * reached back before its first statement, a day replayed backwards from it, graded
+   * `unverified`. When the walk then missed the Aug 5 statement, the row said "stopped adding up
+   * on Jul 26", net worth called the account "broken", and this badge and the total's read
+   * "unverified" (§6A 28 follow-up review, through `rebuildAccount`). The break is the day the
+   * row names, so it is asked first.
+   *
+   * ⛔ …and with no break, still the first unchecked day, not the run still open
+   * (`uncheckedSince`, which the row's "since" is dated from). A card whose only unchecked days
+   * come before its first statement is "unverified" in net worth's count, and its row warns of
+   * them ("checked through Aug 5, and unchecked days before that"); asked about the open run
+   * alone, which it does not have, it would wear "on a statement" beside both.
+   */
+  const troubleFrom = cov?.brokenSince ?? cov?.unverifiedSince ?? null;
+  if (troubleFrom === null) return onFigure;
+  const onTrouble =
+    provenanceFor(db, { kind: "accountBalance", accountId, day: troubleFrom })?.verdict ?? "unknown";
+  return weakestVerdict([onFigure, onTrouble]);
 }
 
 /**
@@ -444,12 +467,33 @@ function shareLabels(pcts: readonly (number | null)[]): (string | null)[] {
  * — his count, a card he counts himself, a card with no balance — sent both down the words
  * written for statements closing on different days. A card is "as of its own last statement"
  * only when one checked it, and the rest are counted as what they are.
+ *
+ * 🔴 …and only when its balance is still that statement's. "$240.00 across 1 card, each balance
+ * as of its own last statement" of a card whose Aug 5 statement printed $200.00 and whose $40.00
+ * charge on Aug 8 nothing checks: the figure sits in the run still open (`uncheckedSince`), the
+ * run its row and net worth date "nothing checks it since" from (§6A 28 follow-up review). A card
+ * whose balance has moved past its last statement is named as newer than it — in both sentences:
+ * the e2e fixture's dashboard said "each as of its own last statement" of a Discover whose $86.89
+ * sits in 14 unchecked days (from Jun 25, 2026) past its Jun 14, 2026 statement.
  */
-function asOfClause(cards: readonly { checkedThrough: string | null }[], what: "" | "balance "): string {
+function asOfClause(
+  cards: readonly { checkedThrough: string | null; uncheckedSince: string | null }[],
+  what: "" | "balance ",
+): string {
   const unchecked = cards.filter((c) => c.checkedThrough === null).length;
-  if (unchecked === 0) return `, each ${what}as of its own last statement`;
-  if (unchecked === cards.length) return " that no statement has checked";
-  return `, each ${what}as of its own last statement except ${unchecked} that no statement has checked`;
+  const newer = cards.filter((c) => c.checkedThrough !== null && c.uncheckedSince !== null).length;
+  const dated = cards.length - unchecked - newer;
+  if (unchecked > 0 && unchecked === cards.length) return " that no statement has checked";
+  // the cards a statement dates lead; with none of those, the newer ones lead in their place
+  const lead =
+    dated > 0 || newer === 0
+      ? `, each ${what}as of its own last statement`
+      : `, each ${what}newer than its own last statement`;
+  const others = [
+    dated > 0 && newer > 0 ? `${newer} that ${plural(newer, "is", "are")} newer` : null,
+    unchecked > 0 ? `${unchecked} that no statement has checked` : null,
+  ].filter((part): part is string => part !== null);
+  return others.length === 0 ? lead : `${lead} except ${others.join(" and ")}`;
 }
 
 function composedProvenance(
@@ -467,14 +511,22 @@ function composedProvenance(
      * review). It never named his count, and it dropped the $95.00 the card owes, so the lines
      * under "$295.00 across 2 cards" no longer added up to it. A card no statement checked says
      * what its row says (`caveatFor`), after its figure like every other line.
+     *
+     * 🔴 …and so does a card a statement DID check. The row's sentence was read only when nothing
+     * had checked the card, so a card checked through Aug 5 whose $240.00 holds a charge from Aug 8
+     * read "$240.00 owed, checked through Aug 5 — 5 days ago" under a row and a net worth that both
+     * said "nothing checks it since Aug 8"; a broken one kept its check and dropped "stopped adding
+     * up on Jul 26" (§6A 28 follow-up review). The row's caveat says what net worth says of the
+     * account, in this card's dates (`caveatFor`), so wherever there is one, the line says it.
      */
     detail:
       c.owedCents === null
         ? "no recorded balance — not in this total"
         : `${formatCents(Math.abs(c.owedCents))} ${c.owedCents < 0 ? "in credit" : "owed"}, ${
-            c.checkedThrough === null
-              ? (c.caveat ?? "nothing has checked this card yet")
-              : `checked through ${dated(c.checkedThrough, today)}`
+            c.caveat ??
+            (c.checkedThrough === null
+              ? "nothing has checked this card yet"
+              : `checked through ${dated(c.checkedThrough, today)}`)
           }`,
   }));
 
@@ -541,6 +593,7 @@ export function cardsOwedCard(db: AppDatabase, today: string = todayIso()): Card
       last4: a.last4,
       owedCents: owedOf(a.balance?.balanceCents),
       checkedThrough,
+      uncheckedSince: cov?.uncheckedSince ?? null,
       daysSinceChecked: checkedThrough === null ? null : diffDays(checkedThrough, today),
       grade: cov?.grade ?? ("unknown" as CoverageGrade),
       caveat: caveatFor(cov, today),
