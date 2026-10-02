@@ -1,8 +1,8 @@
 # Handoff — the renderer canary, his ten answers built, and two ledger writes ready to run
 
-> Written 2026-10-01 (session ca78faab, 09-28 → 10-01). Code at **`555a4ef`** (this handoff on top) · **54 commits**
-> since `c3b9a59` · unit **349 files / 7,075 tests** · e2e **602 passed** at `maxDiffPixels: 0` (8.6 min, lid open,
-> fresh build) with the renderer check on · `next build` ✓ · tsc ✓ · `pnpm ledger-check` exit 0 (the pre-commit hook).
+> Written 2026-10-01 → 10-02 (session ca78faab, 09-28 → 10-02). `origin/main` = this handoff's commit · **66 commits**
+> since `c3b9a59` · unit **353 files / 7,162 tests** · e2e **602 passed** at `maxDiffPixels: 0` (8.5 min, lid open)
+> with the renderer check on · `next build` ✓ · tsc ✓ · `pnpm ledger-check` exit 0 (the pre-commit hook).
 >
 > His ledger was **not written** this session: 13 accounts · 10,328 active rows · 24 migrations · net worth
 > **$119,958.63** on the dashboard (2026-10-01, latest balance of each account) · witness marks 43 · 222 · 212 · 256 · 13.
@@ -33,8 +33,10 @@
      directly: it re-archives 75 duplicate PDFs and leaves a FAILED import on /imports. Expected (rehearsed): 13
      descriptions lose the margin id and keep every other word, 0 categories move, net worth identical, the three
      Fordham rows stay `Income › Financial Aid`, 0 statement citations move (25 would have before `2a93c66`).
-2. **The queue** (§6) — the 2026-10-01 round was in flight at writing (§6C).
-3. **Waiting on events:** the next Chase statement past 2026-08-12 (it pairs the two "Zelle From Rayan Karim Checa" rows
+2. **Build his three new answers** (§6A 30, 33, 34 — decided 2026-10-02, not built): acknowledge a left-out line;
+   date a count-only account's balance popover; leave the agent's costs out of his spending.
+3. **The queue** (§6C).
+4. **Waiting on events:** the next Chase statement past 2026-08-12 (it pairs the two "Zelle From Rayan Karim Checa" rows
    on Wells Fargo: $1,529.73 on 08-31, $700.00 on 09-01); the next Wells Fargo statement (weekly payroll $1,141.92 from
    It America LLC — Oct 1 is a Thursday payday; settle-backwards and the new fourth figure will meet it).
 
@@ -87,6 +89,19 @@ view he left) and that the same lost press survives across two hook instances on
 Owner-visible on his ledger: /recurring's calendar on Jun 4, Jun 5, Sep 3, 10, 17 and 24 (Sep 24 shows the payday the
 Sep 23 lump paid and the Sep 24 deposit "toward the payday of Aug 20"; the Day Sheet says "$X counted on this day").
 
+### 1d. Round 2026-10-01b — five leftovers the reviewers named
+
+| item | what changed | branch |
+|---|---|---|
+| /imports' coverage row, LIVE | Robinhood Agentic no longer reads "closes … through Aug 31, 2026; the first day it does not is Jun 4, 2026": it now reads "closes to the cent through Aug 31, 2026 (31 days ago); the 26 days before its first balance, on Jun 30, 2026, are unchecked — replayed backwards from it, with nothing earlier to check them against" (`beforeFirstBalance`, one reader shared with net worth's line). The other 12 rows are unchanged | uc/imports-coverage-first-day |
+| a checked card's caveat | "nothing checks it since …" dates from `uncheckedSince`, in net worth's words (his three cards: byte-identical today) | uc/card-caveat-unchecked-since |
+| the All tab's Next | /recurring?tab=all and the next dates beside it drop a payday a deposit already paid early (`stillToCome`) | uc/all-tab-next-asks-settlement |
+| strip = forecast | the calendar strip's "as scheduled" and the Upcoming net leave transfer-kind series out, as the forecast card's net does (his ledger has none) | uc/strip-transfers-match-forecast |
+| one LIVE_ROW | `LIVE_ROW` has one home with a source-scan guard; the single-status `"parsed"` checks use `isLiveFile` (his ledger: 0 `parsed_with_claude` files) | uc/live-row-one-home |
+
+8 `dashboard-grid` baselines re-based for the owed card's new "…except 1 that is newer" (`ed4850b`): every diff cropped
+first — six are that sentence; at 768 px it wraps a third line and the page grows 9,084 → 9,104 px (one change).
+
 ## 2. ⛔ REAL-LEDGER WRITES — none this session. The two ready ones are §0.1.
 
 ## 3. ❓ HIS ANSWERS, 2026-09-28 (closed — do not re-ask)
@@ -123,21 +138,25 @@ it · 28 keep (1) and (2), (3) print the day · 29 a fourth figure.
 
 ## 6. ❓ THE QUEUE
 
-### 6A. New questions for him (ask as concrete either/ors; defaults ship meanwhile)
+### 6A. Questions for him
 
-30. A re-read that leaves out a line makes `ledger-check` exit 1 on every run — so the pre-commit hook blocks every
-    commit — until a parser fix or a re-upload clears it. (a) keep it blocking, or (b) let a session record an
-    "acknowledged" entry after reading the line on the statement.
-31. Three Discover dedupe keys still carry the back-dated Post Date (`scripts/fix-discover-backdated-adjustments.ts`
-    re-dated the rows without re-keying): 2024-10-29 +$40.00 ×2 and 2024-09-18 −$0.79. (a) re-key them (one guarded
-    write), or (b) leave them (the re-read keeps them as they are).
-32. On a payday itself (Oct 1), a payday paid early by the previous month's deposit already reads "paid early, by the
-    deposit of Wed, Sep 30" (shipped; agrees with /recurring and the forecast) instead of staying "expected" until the
-    next day. Keep, or revert to `c1a046d`'s reading.
-33. On a count-only account's page, the balance popover stays undated while the "1 transaction landed" popover is now
-    dated by his count: date both, or leave.
-34. His §6A 27 answer covers income only: a fee or other expense the AGENT pays would still count as his on /spending's
-    Spent and the Fees card. (a) leave the agent's expenses out the same way, or (b) count them as his (today).
+✅ **30–34 ANSWERED 2026-10-02 (all recommended; memory `moneyapp-owner-decisions-2026-09-28`, second batch):**
+30. a left-out line — ALLOW AN ACKNOWLEDGEMENT: after a session reads the line on the statement it records it
+    acknowledged (like the witness floor's `--lower-marks … --confirm`); ledger-check keeps listing it but stops
+    failing. ⏳ **To build.**
+31. the three Discover dedupe keys — LEAVE them (a future download prints the same back-dated date and matches by key).
+32. a payday paid early by last month's deposit reads "paid early" from the day itself — as shipped.
+33. a count-only account's balance popover — DATE IT too, in net worth's words. ⏳ **To build.**
+34. the agent's COSTS — LEAVE THEM OUT too (not his spending on /spending's Spent or the Fees card; the bridge names
+    them). ⏳ **To build.**
+
+Still open, new from round 10-01b (his calls; nothing ships until asked):
+35. Robinhood Agentic is graded "unverified" only because of its 26 days before its first balance, so /imports'
+    header says "3 accounts nothing is checking" and net worth says "3 have nothing checking them" — although its
+    balance rests on three reconciled statements. (a) prehistory alone does not make an account "nothing is
+    checking", or (b) keep the grade and word the header differently.
+36. The new /imports words for those days — "replayed backwards from it, with nothing earlier to check them against"
+    — first UI text for them; keep, or his own words.
 - Older: §6A 1–14 of the 09-15b handoff still have shipped defaults and were not put to him this session.
 
 ### 6B. Waiting on an event — §0.3.
@@ -147,17 +166,6 @@ it · 28 keep (1) and (2), (3) print the day · 29 a fourth figure.
 - **The in-flight press race (reverted fix, `555a4ef` says why).** One "newest asked view" per PAGE, not per hook
   instance (/spending's CashFlowView + CategoryMassif; /investments' ChartFocus range and BenchmarkPicker), plus a
   guard that drops it when the server state moved under it (Back/Forward). Verify in a real browser, not jsdom.
-- **LIVE (wording/logic) on his ledger:** /imports' coverage row for Robinhood Agentic reads "closes to the cent
-  through Aug 31, 2026 (31 days ago); the first day it does not is Jun 4, 2026" — a "first day it does not" BEFORE the
-  day it closes through. Same shape for any account with unchecked days before its first balance.
-- A statement-checked card's caveat still dates "since" from `unverifiedSince` where net worth reads `uncheckedSince`
-  (the Robinhood Cash trap, `🔴 uncheckedSince, not unverifiedSince`).
-- `LIVE_ROW = ["active", "quarantined", "excluded"]` is still copied beside each old `LIVE_FILE`; five places test
-  `status === "parsed"` alone and disagree with `LIVE_FILE` about `parsed_with_claude`.
-- /recurring?tab=all's "Next" column still names a payday a deposit already paid early (`listSeries` →
-  `rollForwardNextExpected` never asks settlement).
-- Transfer-kind series still count in the /recurring strip's "as scheduled" and the Upcoming tab's 30-day net, while
-  the forecast card's net leaves them out.
 - `import_files.institution_id` still stores the importer's guess (Chase for 180 of 241 reads in another bank's
   folder); nothing reads it outside tests. 34 originals (66 retired Robinhood reads) are now reported unplaced by the
   storage migration — whether to place an original by the live read of the same bytes is open.
