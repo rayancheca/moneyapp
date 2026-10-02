@@ -3,7 +3,7 @@ import type { AppDatabase } from "@/db/client";
 import { accounts as accountsTable } from "@/db/schema/accounts";
 import { balanceAnchors, dailyBalances } from "@/db/schema/balances";
 import { importFiles, statementPeriods } from "@/db/schema/imports";
-import { transactions } from "@/db/schema/transactions";
+import { LIVE_ROW, transactions } from "@/db/schema/transactions";
 import { derivesFromHoldings } from "@/services/derivation";
 import { attachedRow, parsedRow } from "./attached-rows";
 import { followingOpeningsByFile, keptOpeningPlans, type KeptOpeningPlan } from "./kept-openings";
@@ -265,7 +265,7 @@ function accountsLosingEveryBalance(
       const keptRows = db
         .select({ id: transactions.id, importFileId: transactions.importFileId, fileLinkSource: transactions.fileLinkSource })
         .from(transactions)
-        .where(and(eq(transactions.accountId, accountId), inArray(transactions.status, ["active", "quarantined", "excluded"])))
+        .where(and(eq(transactions.accountId, accountId), inArray(transactions.status, [...LIVE_ROW])))
         .all()
         .filter((r) => r.importFileId !== fileId || r.fileLinkSource !== null || handed.has(r.id)).length;
       if (keptRows === 0) continue;

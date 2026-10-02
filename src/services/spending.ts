@@ -3,7 +3,7 @@ import type { AppDatabase } from "@/db/client";
 import { accounts } from "@/db/schema/accounts";
 import { categories } from "@/db/schema/categories";
 import { merchants } from "@/db/schema/merchants";
-import { transactions } from "@/db/schema/transactions";
+import { LIVE_ROW, transactions } from "@/db/schema/transactions";
 import { compareDates, diffDays, monthKey, periodBounds } from "@/lib/dates";
 import { humanizeDescriptionKey, strippedDescriptionKey } from "@/lib/description-key";
 // the stored `normalizedDescription` column IS normalizeDescription(raw)
@@ -184,7 +184,7 @@ export function ledgerFirstDay(db: AppDatabase): string | null {
   const row = db
     .select({ day: sql<string | null>`MIN(${transactions.postedOn})` })
     .from(transactions)
-    .where(inArray(transactions.status, ["active", "quarantined", "excluded"]))
+    .where(inArray(transactions.status, [...LIVE_ROW]))
     .get();
   return row?.day ?? null;
 }

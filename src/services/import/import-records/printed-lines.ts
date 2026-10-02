@@ -2,7 +2,7 @@ import { and, eq, inArray } from "drizzle-orm";
 import type { DbBundle } from "@/db/client";
 import { accounts } from "@/db/schema/accounts";
 import { printedLines } from "@/db/schema/imports";
-import { transactions } from "@/db/schema/transactions";
+import { LIVE_ROW, transactions } from "@/db/schema/transactions";
 import { appendPrintedLines, printedLineOf, type PrintedLine } from "../printed-lines";
 import { findAccountId, storedLines } from "../service";
 import { rereadImported } from "./reread";
@@ -35,7 +35,7 @@ function rowRecords(db: DbBundle["db"], accountId: string): (line: PrintedLine) 
   for (const r of db
     .select({ postedOn: transactions.postedOn, transactedOn: transactions.transactedOn, amountCents: transactions.amountCents })
     .from(transactions)
-    .where(and(eq(transactions.accountId, accountId), inArray(transactions.status, ["active", "quarantined", "excluded"])))
+    .where(and(eq(transactions.accountId, accountId), inArray(transactions.status, [...LIVE_ROW])))
     .all()) {
     keys.add(`${r.amountCents}|${r.postedOn}`);
     if (r.transactedOn !== null) keys.add(`${r.amountCents}|${r.transactedOn}`);

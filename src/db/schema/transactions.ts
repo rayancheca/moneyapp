@@ -22,6 +22,21 @@ export const TRANSACTION_STATUSES = ["active", "quarantined", "excluded", "super
 export type TransactionStatus = (typeof TRANSACTION_STATUSES)[number];
 
 /**
+ * A row still in the ledger: every status but `superseded`, a read a newer one retired. A quarantined row waits on its
+ * statement's gap and an excluded one is out of analytics only; both are still the ledger's.
+ *
+ * ⛔ ONE HOME. This list was spelled out eleven times — its own `LIVE_ROW` in printed-lines, statement-copies and
+ * kept-openings, and eight inline lists — all agreeing, so no behavioural test could tell a copy from the rule. A query
+ * asks `inArray(transactions.status, [...LIVE_ROW])`; transactions.test.ts fails on a list of the three anywhere else
+ * but `RECONCILE_STATUSES`, the rows a statement's arithmetic counts — its own rule, the same three today.
+ *
+ * `!= 'superseded'` is this rule's other spelling: the partial index below reads a live row so, and a lookup by dedupe
+ * hash must say it the same way for SQLite to use that index. The test pins that the two agree, so a status added to
+ * the type and not to this list fails there, not in a ledger.
+ */
+export const LIVE_ROW = ["active", "quarantined", "excluded"] as const satisfies readonly TransactionStatus[];
+
+/**
  * Who owns a row's recurring-series link (ux-overhaul-plan §4.3). null =
  * detection owns it (may re-tag/untag freely). 'user' = the user attached or
  * unlinked this row by hand, and detection must never touch its

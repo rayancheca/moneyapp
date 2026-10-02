@@ -2,7 +2,7 @@ import { and, asc, eq, inArray, isNotNull, isNull, max, min, notInArray, sql } f
 import type { AppDatabase } from "@/db/client";
 import { duplicateCandidates } from "@/db/schema/duplicate-candidates";
 import { LIVE_FILE, importFiles, printedLines, statementCopies, statementPeriods } from "@/db/schema/imports";
-import { transactions, type TransactionStatus } from "@/db/schema/transactions";
+import { LIVE_ROW, transactions, type TransactionStatus } from "@/db/schema/transactions";
 import { descriptionScore } from "@/lib/description-score";
 import { normalizeDescription } from "@/lib/normalize";
 import type { CopyHandOver } from "./statement-copies";
@@ -50,7 +50,6 @@ export interface PrinterHandOver {
   rowIds: string[];
 }
 
-const LIVE_ROW = ["active", "quarantined", "excluded"] as const;
 /** row ids per statement — well under SQLite's bound-parameter limit */
 const ROW_CHUNK = 500;
 
