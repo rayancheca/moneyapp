@@ -1,4 +1,4 @@
-import { coverageDetail } from "@/lib/coverage-detail";
+import { beforeFirstBalance, coverageDetail } from "@/lib/coverage-detail";
 import type { AccountCoverage, CoverageGrade } from "@/services/coverage";
 import { SurfaceCard } from "@/components/ui/SurfaceCard";
 
@@ -43,7 +43,16 @@ export function CoveragePanel({
   const rows = [...coverage].sort(
     (a, b) => GRADE_ORDER[a.grade] - GRADE_ORDER[b.grade] || a.accountName.localeCompare(b.accountName),
   );
-  const needsAction = rows.filter((c) => c.grade === "broken" || c.grade === "unverified").length;
+  /*
+   * 🔴 "1 account nothing is checking" over Robinhood Agentic's row, which says it closes to the
+   * cent through Aug 31, 2026 and that only the days before its first balance are unchecked
+   * (review, 2026-10-01). The row's own reading decides it (`beforeFirstBalance`): a chain
+   * closes, no unchecked run is open past it, and its only unchecked days come before the first
+   * balance it records.
+   */
+  const needsAction = rows.filter(
+    (c) => c.grade === "broken" || (c.grade === "unverified" && beforeFirstBalance(c) === null),
+  ).length;
 
   return (
     <SurfaceCard>
@@ -83,6 +92,8 @@ export function CoveragePanel({
                 {coverageDetail({
                   grade: c.grade,
                   verifiedThrough: c.verifiedThrough,
+                  firstBalanceOn: c.firstBalanceOn,
+                  firstBalanceIsCount: c.firstBalanceIsCount,
                   unverifiedSince: c.unverifiedSince,
                   uncheckedSince: c.uncheckedSince,
                   uncheckedRunDays: c.uncheckedRunDays,

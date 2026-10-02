@@ -1,18 +1,21 @@
 import { describe, expect, test } from "vitest";
 import {
   agoPhrase,
+  beforeFirstBalance,
   countedDetail,
   countFooting,
   coverageDetail,
   unverifiedDetail,
   type CoverageDetailInput,
 } from "./coverage-detail";
-import { formatDayFull } from "./format-date";
+import { formatDayFull, MONTHS_SHORT } from "./format-date";
 
 const detail = (over: Partial<CoverageDetailInput> = {}): string =>
   coverageDetail({
     grade: "verified",
     verifiedThrough: "2026-08-12",
+    firstBalanceOn: null,
+    firstBalanceIsCount: false,
     unverifiedSince: null,
     uncheckedSince: null,
     uncheckedRunDays: 0,
@@ -347,6 +350,8 @@ describe("countedDetail — his count in one line", () => {
   const counted: CoverageDetailInput = {
     grade: "unverified",
     verifiedThrough: null,
+    firstBalanceOn: null,
+    firstBalanceIsCount: false,
     unverifiedSince: "2026-07-27",
     uncheckedSince: null,
     uncheckedRunDays: 0,
@@ -406,6 +411,8 @@ describe("unverifiedDetail — an unverified account in one line", () => {
   const checked: CoverageDetailInput = {
     grade: "unverified",
     verifiedThrough: "2026-08-05",
+    firstBalanceOn: "2026-07-25",
+    firstBalanceIsCount: false,
     unverifiedSince: "2026-07-19",
     uncheckedSince: null,
     uncheckedRunDays: 0,
@@ -588,5 +595,205 @@ describe("the date and the count are about the SAME run", () => {
         uncheckedRunDays: 1,
       }),
     ).not.toContain("in all");
+  });
+});
+
+/*
+ * 🔴 "THE FIRST DAY IT DOES NOT IS JUN 4, 2026" — EIGHT WEEKS BEFORE THE DAY IT CLOSES THROUGH.
+ * Measured 2026-10-01 on a copy of his ledger, /imports' Robinhood Agentic row read "closes to
+ * the cent through Aug 31, 2026 (31 days ago); the first day it does not is Jun 4, 2026 — 26 days
+ * rest on an export with no closing balance". Its first balance is the Jun 30 statement; Jun 4–29
+ * are replayed backwards from it through the Jun 5 transfer that funded the account, which the
+ * June statement printed (no export holds it); Jul 1 – Sep 15 close or carry, and nothing is
+ * unchecked past Aug 31. With no run open the row fell back to `unverifiedSince` — the first
+ * unchecked day the account EVER had — and named the days before its first balance as the day it
+ * stopped closing. Net worth's line for the same account read "checked through Aug 31, 2026, and
+ * unchecked days before that".
+ */
+describe("the days before its first balance are not where it stops closing", () => {
+  // Robinhood Agentic's coverage, as `accountCoverage` gave it on a copy of his ledger, 2026-10-01
+  const agentic: CoverageDetailInput = {
+    grade: "unverified",
+    verifiedThrough: "2026-08-31",
+    firstBalanceOn: "2026-06-30",
+    firstBalanceIsCount: false,
+    unverifiedSince: "2026-06-04",
+    uncheckedSince: null,
+    uncheckedRunDays: 0,
+    brokenSince: null,
+    daysSinceVerified: 31,
+    lastManualUpdate: "2026-08-31",
+    gapDays: 0,
+    unverifiedDays: 26,
+    hasStatements: true,
+    pricedFromHoldings: false,
+    countedOn: null,
+    keptOpeningOn: null,
+    balancesThrough: "2026-09-15",
+  };
+
+  test("names them as the days before its first balance, never as the first day it does not close", () => {
+    const text = coverageDetail(agentic);
+    expect(text).toBe(
+      "closes to the cent through Aug 31, 2026 (31 days ago); " +
+        "the 26 days before its first balance, on Jun 30, 2026, are unchecked — " +
+        "replayed backwards from it, with nothing earlier to check them against",
+    );
+    // what is missing before a first balance is an EARLIER one, not an export's closing figure
+    expect(text).not.toContain("export");
+  });
+
+  test("one day reads in the singular", () => {
+    expect(coverageDetail({ ...agentic, unverifiedSince: "2026-06-29", unverifiedDays: 1 })).toContain(
+      "; the 1 day before its first balance, on Jun 30, 2026, is unchecked — replayed backwards from it, " +
+        "with nothing earlier to check it against",
+    );
+  });
+
+  /*
+   * 🔴 THE FIRST DAY THAT CLOSES IS NOT ALWAYS ITS FIRST BALANCE (review, 2026-10-01). The row
+   * named `chainOpensOn` — the first CLOSED day — as "its first balance". A balance he typed
+   * closes nothing when the days before it are replayed backwards from it, so with his count first
+   * and statements after, the chain opens on the Jun 30 statement and the row said Jun 4–19 were
+   * replayed backwards from Jun 30. They were replayed from his count on Jun 20, and a count is
+   * named as his. services/coverage.test.ts builds this shape through `addManualAnchor`.
+   */
+  test("his count as its first balance is named as his, on the day he counted it", () => {
+    // Jun 4–19 replayed backwards from the balance he typed for Jun 20; statements from Jun 30
+    const counted = {
+      ...agentic,
+      firstBalanceOn: "2026-06-20",
+      firstBalanceIsCount: true,
+      unverifiedDays: 16,
+    };
+    expect(coverageDetail(counted)).toBe(
+      "closes to the cent through Aug 31, 2026 (31 days ago); " +
+        "the 16 days before its first balance, the one you counted on Jun 20, 2026, are unchecked — " +
+        "replayed backwards from it, with nothing earlier to check them against",
+    );
+    expect(beforeFirstBalance(counted)).toEqual({
+      checkedThrough: "2026-08-31",
+      firstBalanceOn: "2026-06-20",
+      firstBalanceIsCount: true,
+    });
+    // net worth's line names neither day, so it reads as it did
+    expect(unverifiedDetail(counted, formatDayFull)).toBe(
+      "checked through Aug 31, 2026, and unchecked days before that",
+    );
+  });
+
+  test("the row and net worth's line read the same days", () => {
+    expect(beforeFirstBalance(agentic)).toEqual({
+      checkedThrough: "2026-08-31",
+      firstBalanceOn: "2026-06-30",
+      firstBalanceIsCount: false,
+    });
+    expect(unverifiedDetail(agentic, formatDayFull)).toBe(
+      "checked through Aug 31, 2026, and unchecked days before that",
+    );
+  });
+
+  test("a run still open is the run, on both surfaces", () => {
+    // Robinhood Cash, the same copy: the run Sep 1–15, and 26 days before its first balance
+    const robinhoodCash = {
+      ...agentic,
+      firstBalanceOn: "2023-12-31",
+      unverifiedSince: "2023-12-05",
+      uncheckedSince: "2026-09-01",
+      uncheckedRunDays: 15,
+      unverifiedDays: 41,
+    };
+    expect(beforeFirstBalance(robinhoodCash)).toBeNull();
+    expect(unverifiedDetail(robinhoodCash, formatDayFull)).toBe("nothing checks it since Sep 1, 2026");
+    expect(coverageDetail(robinhoodCash)).toBe(
+      "closes to the cent through Aug 31, 2026 (31 days ago); the first day it does not is Sep 1, 2026 — " +
+        "15 days rest on an export with no closing balance, of 41 unchecked in all",
+    );
+  });
+
+  test("his count, or no day before its first balance, is not this reading", () => {
+    // none is reachable through `accountCoverage` with no run open, but the type allows each
+    expect(beforeFirstBalance({ ...agentic, countedOn: "2026-09-01" })).toBeNull();
+    expect(beforeFirstBalance({ ...agentic, grade: "verified" })).toBeNull();
+    expect(beforeFirstBalance({ ...agentic, verifiedThrough: null })).toBeNull();
+    expect(beforeFirstBalance({ ...agentic, unverifiedSince: null })).toBeNull();
+    expect(beforeFirstBalance({ ...agentic, firstBalanceOn: null })).toBeNull();
+    // the first unchecked day ON its first balance is not before it
+    expect(beforeFirstBalance({ ...agentic, unverifiedSince: "2026-06-30" })).toBeNull();
+  });
+});
+
+/**
+ * ⛔ The defect as an invariant: a row that says it closes through one day and names another as
+ * the first it does not — or the first past his count — contradicts itself unless the second day
+ * is later. Every unverified shape the row words, as `accountCoverage` gives them.
+ */
+describe("no row names a day it stops closing on or before the day it closes through", () => {
+  const iso = (day: string): string => {
+    const [month, date, year] = day.replace(",", "").split(" ");
+    const m = MONTHS_SHORT.indexOf(month as (typeof MONTHS_SHORT)[number]) + 1;
+    return `${year}-${String(m).padStart(2, "0")}-${date!.padStart(2, "0")}`;
+  };
+  const DAY = String.raw`([A-Z][a-z]{2} \d{1,2}, \d{4})`;
+  const base: CoverageDetailInput = {
+    grade: "unverified",
+    verifiedThrough: "2026-08-31",
+    firstBalanceOn: "2026-06-30",
+    firstBalanceIsCount: false,
+    unverifiedSince: "2026-06-04",
+    uncheckedSince: null,
+    uncheckedRunDays: 0,
+    brokenSince: null,
+    daysSinceVerified: 31,
+    lastManualUpdate: "2026-08-31",
+    gapDays: 0,
+    unverifiedDays: 26,
+    hasStatements: true,
+    pricedFromHoldings: false,
+    countedOn: null,
+    keptOpeningOn: null,
+    balancesThrough: "2026-09-15",
+  };
+  const shapes: Record<string, CoverageDetailInput> = {
+    "days before its first balance, nothing open (Robinhood Agentic)": base,
+    "days before its first balance, and a run open (Robinhood Cash)": {
+      ...base,
+      firstBalanceOn: "2023-12-31",
+      unverifiedSince: "2023-12-05",
+      uncheckedSince: "2026-09-01",
+      uncheckedRunDays: 15,
+      unverifiedDays: 41,
+    },
+    "a run open, carried into": {
+      ...base,
+      unverifiedSince: "2026-09-08",
+      uncheckedSince: "2026-09-08",
+      uncheckedRunDays: 8,
+      unverifiedDays: 8,
+    },
+    "a count after a chain that closed, a run open past it": {
+      ...base,
+      verifiedThrough: "2026-07-31",
+      daysSinceVerified: 62,
+      countedOn: "2026-08-01",
+      uncheckedSince: "2026-08-11",
+      uncheckedRunDays: 1,
+      unverifiedDays: 27,
+    },
+  };
+
+  test("every named stop is after the day it closes through", () => {
+    let compared = 0;
+    for (const [name, input] of Object.entries(shapes)) {
+      const text = coverageDetail(input);
+      const through = text.match(new RegExp(`closes to the cent through ${DAY}`))?.[1];
+      const stop = text.match(new RegExp(`the first day (?:it does not|past that count) is ${DAY}`))?.[1];
+      expect(through, `${name}: "${text}"`).toBeDefined();
+      if (stop === undefined) continue;
+      compared += 1;
+      expect(iso(stop) > iso(through!), `${name}: "${text}"`).toBe(true);
+    }
+    // ⛔ guard the guard: three of the four name a stop — a run, open past the day it closes through
+    expect(compared).toBe(3);
   });
 });
