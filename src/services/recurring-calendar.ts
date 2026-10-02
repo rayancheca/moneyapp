@@ -214,6 +214,9 @@ export interface CalendarEntry {
  * line split by date climbed confidently to +$3,141 directly above a footer reading "SETTLED $0.00". Each mark climbs
  * by its own `settledCents` (`flowEntryOf`) — the figure the footer's Settled total sums, so a payday whose money
  * landed on another day or in another month is counted once, where settlement says it was paid.
+ *
+ * ⚖️ A transfer's mark adds nothing to either line (`flowEntryOf`): the card's net leaves transfer series out
+ * (`seriesIsIncomeOrSpending`), and a strip that summed them printed a different month directly under it.
  */
 export function calendarMonthFlow(month: RecurringCalendarMonth, today: string): MonthFlow {
   const flowEntries: Record<string, MonthFlowEntry[]> = {};
@@ -231,10 +234,11 @@ export interface RecurringCalendarMonth {
   entryCount: number;
   /**
    * net-worth-signed sum of what settled — every entry's `settledCents`, so a
-   * deposit's money is counted in the month of the payday it paid, once
+   * deposit's money is counted in the month of the payday it paid, once; a
+   * transfer's adds nothing (`flowEntryOf`)
    */
   postedNetCents: number;
-  /** net-worth-signed sum of future (upcoming) expected charges */
+  /** net-worth-signed sum of future (upcoming) expected charges, transfers' left out (`flowEntryOf`) */
   upcomingNetCents: number;
   /** count of missed expected occurrences — days the ledger HAS been shown */
   missedCount: number;
@@ -825,9 +829,15 @@ export function recurringCalendar(
        * 🔴 And the other way: a row whose money paid another month's payday
        * carries only what is left. Counted whole, the Sep 24 deposit that paid
        * Aug 20 sat in September's figure AND, through Aug 20's chip, August's.
+       *
+       * ⚖️ Each mark adds what `flowEntryOf` says it adds, the reading the strip
+       * above sums — so a transfer, drawn like any mark, adds nothing to Settled
+       * or Expected (`seriesIsIncomeOrSpending`). "Not yet known" is not a net:
+       * it counts the marks drawn unsettled and their gross, a transfer's too,
+       * or it would print a $0.00 beside a count of one.
        */
-      if (e.settledCents !== null) postedNetCents += e.settledCents;
-      else if (e.state === "upcoming") upcomingNetCents += e.amountCents;
+      if (e.settledCents !== null) postedNetCents += flowEntryOf(e).amountCents;
+      else if (e.state === "upcoming") upcomingNetCents += flowEntryOf(e).amountCents;
       else if (e.state === "unsettled") {
         unsettledCount += 1;
         unsettledGrossCents += Math.abs(e.amountCents);

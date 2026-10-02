@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { flowArea, flowPolyline, monthFlow } from "./month-flow";
+import { flowArea, flowEntryOf, flowPolyline, monthFlow } from "./month-flow";
 
 const M = "2026-08";
 const day = (d: number) => `${M}-${String(d).padStart(2, "0")}`;
@@ -52,6 +52,19 @@ describe("monthFlow", () => {
   test("a day whose entries are all zero is still no movement", () => {
     const f = monthFlow(5, M, { [day(2)]: [{ settled: false, amountCents: 0 }] }, day(1));
     expect(f.hasMovement).toBe(false);
+  });
+
+  /*
+   * ⚠️ Entries and movement are two facts. A transfer is drawn and adds nothing (`flowEntryOf`), so a month whose
+   * only marks are transfers holds entries and moves nothing — and the strip over a grid that draws them must not
+   * read that as a month in which nothing lands.
+   */
+  test("a month whose entries all add nothing still holds entries; an empty one holds none", () => {
+    const f = monthFlow(31, M, { [day(24)]: [{ settled: false, amountCents: 0 }] }, day(1));
+    expect({ hasMovement: f.hasMovement, hasEntries: f.hasEntries }).toEqual({ hasMovement: false, hasEntries: true });
+    expect(monthFlow(31, M, {}, day(1)).hasEntries).toBe(false);
+    // only the month's own days are its entries
+    expect(monthFlow(31, M, { "2026-09-01": [{ settled: false, amountCents: -100 }] }, day(1)).hasEntries).toBe(false);
   });
 
   test("the trough is the deepest point, not the last negative one", () => {
@@ -212,5 +225,34 @@ describe("scheduled vs settled", () => {
     expect(flowPolyline(f.points, 100, 40, "scheduled")).not.toBe(
       flowPolyline(f.points, 100, 40, "settled"),
     );
+  });
+});
+
+/*
+ * ⚖️ What one mark adds to the strip's two lines. A transfer moves money between his own accounts, so it adds
+ * nothing to either (`seriesIsIncomeOrSpending`) — the forecast card's net, printed directly above the strip, has
+ * always left transfer series out, and a strip that summed them printed a different month under it.
+ */
+describe("flowEntryOf", () => {
+  test("a mark that settled adds what it settled; one that has not, what it expects", () => {
+    expect(flowEntryOf({ kind: "income", amountCents: 114192, settledCents: 0 })).toEqual({
+      amountCents: 0,
+      settled: true,
+    });
+    expect(flowEntryOf({ kind: "bill", amountCents: -180000, settledCents: null })).toEqual({
+      amountCents: -180000,
+      settled: false,
+    });
+  });
+
+  test("a transfer adds nothing, posted or expected, and keeps its settled flag", () => {
+    expect(flowEntryOf({ kind: "transfer", amountCents: -99302, settledCents: -99302 })).toEqual({
+      amountCents: 0,
+      settled: true,
+    });
+    expect(flowEntryOf({ kind: "transfer", amountCents: -99302, settledCents: null })).toEqual({
+      amountCents: 0,
+      settled: false,
+    });
   });
 });
