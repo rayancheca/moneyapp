@@ -37,8 +37,9 @@ export function DecisionCards({
 }) {
   // 🔴 It persisted and navigated on its own, beside the hero's switcher on the same page: a
   // press made while a hero press was in flight never saw it. Through the hook it builds on the
-  // page's newest asked URL like every switcher on it (and keeps its clean `/?cards=` link
-  // when nothing is in flight).
+  // page's newest asked URL like every switcher on it, and with nothing in flight on the URL on
+  // screen. 🔴 It is handed no params: built on those alone, Grid on a linked `/?chart=bridge`
+  // went to `/?cards=grid`, and the hero went back to his saved Net worth.
   const { setView } = useViewState({
     surface: DASHBOARD_SURFACE,
     spec: DECISIONS_VIEW_SPEC,

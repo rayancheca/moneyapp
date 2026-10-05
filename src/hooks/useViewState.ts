@@ -19,7 +19,9 @@ import { usePageAsks } from "./usePageAsks";
  * The one thing a press reads besides its props is the page's ASKED view
  * (lib/page-asks.ts): while a press is in flight the server has not drawn it, so the
  * next press on the page — on this switcher, another one, or another URL writer —
- * builds on what it asked for, not on the view from before it.
+ * builds on what it asked for, not on the view from before it. With nothing asked, it
+ * builds on the URL on screen, so another switcher's view only that URL holds (a
+ * shared link's) rides along.
  */
 export interface UseViewStateOptions {
   /** stable surface id, the app_settings key (e.g. "spending") */

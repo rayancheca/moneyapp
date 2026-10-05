@@ -232,6 +232,60 @@ test("a period link followed while a press is being written lands with the press
   await expect(page.getByRole("figure", { name: /Income above the axis/ })).toBeVisible();
 });
 
+/**
+ * 🔴 A shared link holds a view he never saved, and a press on ANOTHER switcher of the page
+ * dropped it: each built its URL from the params the server handed it, and the decision cards
+ * are handed none. Grid on `/?chart=bridge` went to `/?cards=grid`, and the hero, read from his
+ * saved Net worth, left the bridge. A press with nothing in flight now builds on the URL on
+ * screen (src/lib/page-asks.ts). No race: nothing is held.
+ */
+test("a cards press on a linked hero view keeps the hero on it", async ({ page }) => {
+  const hero = page.getByRole("group", { name: "Net worth chart view" });
+  const cards = page.getByRole("group", { name: "How the cards are laid out" });
+  await gotoHydrated(page, "/");
+  // the precondition: the saved hero view is not the bridge, and the cards are a deck
+  await expect(hero.getByRole("button", { name: "Bridge" })).toHaveAttribute("aria-pressed", "false");
+  await expect(cards.getByRole("button", { name: "Deck" })).toHaveAttribute("aria-pressed", "true");
+
+  await gotoHydrated(page, "/?chart=bridge");
+  await expect(hero.getByRole("button", { name: "Bridge" })).toHaveAttribute("aria-pressed", "true");
+  await pressView(page, "How the cards are laid out", "Grid");
+  await expect(page).toHaveURL(/[?&]cards=grid\b/);
+  await expect(page).toHaveURL(/[?&]chart=bridge\b/);
+  await expect(hero.getByRole("button", { name: "Bridge" })).toHaveAttribute("aria-pressed", "true");
+  await expect(page.getByRole("group", { name: "Bridge range" })).toBeVisible();
+
+  // restore the deck for sibling specs, the press proved; the hero's saved view was never touched
+  await gotoHydrated(page, "/");
+  await pressView(page, "How the cards are laid out", "Deck");
+  await gotoHydrated(page, "/");
+  await expect(cards.getByRole("button", { name: "Deck" })).toHaveAttribute("aria-pressed", "true");
+  await expect(hero.getByRole("button", { name: "Bridge" })).toHaveAttribute("aria-pressed", "false");
+});
+
+/** The same the other way: a hero pill pressed on a linked `?cards=grid` kept the deck he saved. */
+test("a hero press on a linked cards layout keeps the cards on it", async ({ page }) => {
+  const hero = page.getByRole("group", { name: "Net worth chart view" });
+  const cards = page.getByRole("group", { name: "How the cards are laid out" });
+  await gotoHydrated(page, "/");
+  await expect(hero.getByRole("button", { name: "Net worth" })).toHaveAttribute("aria-pressed", "true");
+  await expect(cards.getByRole("button", { name: "Deck" })).toHaveAttribute("aria-pressed", "true");
+
+  await gotoHydrated(page, "/?cards=grid");
+  await expect(cards.getByRole("button", { name: "Grid" })).toHaveAttribute("aria-pressed", "true");
+  await pressView(page, "Net worth chart view", "Bridge");
+  await expect(page).toHaveURL(/[?&]chart=bridge\b/);
+  await expect(page).toHaveURL(/[?&]cards=grid\b/);
+  await expect(cards.getByRole("button", { name: "Grid" })).toHaveAttribute("aria-pressed", "true");
+
+  // restore Net worth for sibling specs, the press proved; the cards' saved deck was never touched
+  await gotoHydrated(page, "/");
+  await pressView(page, "Net worth chart view", "Net worth");
+  await gotoHydrated(page, "/");
+  await expect(hero.getByRole("button", { name: "Net worth" })).toHaveAttribute("aria-pressed", "true");
+  await expect(cards.getByRole("button", { name: "Deck" })).toHaveAttribute("aria-pressed", "true");
+});
+
 async function holdingPillPressed(page: Page, name: "Price" | "Return"): Promise<boolean> {
   const btn = page.getByRole("group", { name: "Holding chart view" }).getByRole("button", { name });
   return (await btn.getAttribute("aria-pressed")) === "true";

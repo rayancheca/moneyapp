@@ -322,6 +322,73 @@ describe("a page's other URL writers, while a press is in flight", () => {
   });
 });
 
+describe("a press on a page whose other view came only from its URL", () => {
+  /**
+   * 🔴 A shared link holds a view he has not saved. Each switcher built its URL from the params
+   * the server handed IT, and the cards were handed none: Grid on `/?chart=bridge` went to
+   * `/?cards=grid`, and the hero, read from his saved preference, went back to Net worth.
+   */
+  test("a cards press keeps the hero's view the link opened", async () => {
+    const page = await open(dashboardPage, "/?chart=bridge", { dashboard: { chart: "combined" } });
+    pills.cards!("grid");
+    await page.settle();
+
+    expect(page.url).toBe("/?chart=bridge&cards=grid");
+    expect(page.shown).toMatchObject({ state: { chart: "bridge" }, cards: { cards: "grid" } });
+    expect(page.persisted.dashboard).toEqual({ chart: "combined", cards: "grid" }); // the link saved nothing
+  });
+
+  test("a hero press keeps the cards' view the link opened", async () => {
+    const page = await open(dashboardPage, "/?cards=grid", { dashboard: { cards: "deck" } });
+    pills.chart!("split");
+    await page.settle();
+
+    expect(page.url).toBe("/?cards=grid&chart=split");
+    expect(page.shown).toMatchObject({ state: { chart: "split" }, cards: { cards: "grid" } });
+    expect(page.persisted.dashboard).toMatchObject({ chart: "split", cards: "deck" });
+  });
+
+  test("a second press made while the first is in flight keeps it too", async () => {
+    const page = await open(dashboardPage, "/?chart=bridge", { dashboard: { chart: "combined" } });
+    pills.cards!("grid");
+    pills.cards!("deck");
+    await page.settle();
+
+    expect(page.url).toBe("/?chart=bridge");
+    expect(page.shown).toMatchObject({ state: { chart: "bridge" }, cards: { cards: "deck" } });
+  });
+
+  /**
+   * The server hands each /spending card the other's lens only when it is not the default (a
+   * clean link): a link's explicit List over a saved Relief was dropped, and Relief came back.
+   */
+  test("another card's lens the link holds at its default, over a saved one, is kept", async () => {
+    const page = await open(spendingPage, "/spending?where=list", { spending: { where: "relief" } });
+    ui.cash!.setView("cash", "table");
+    await page.settle();
+
+    expect(page.url).toBe("/spending?where=list&cash=table");
+    expect(page.shown).toMatchObject({ cash: { cash: "table" }, where: { where: "list" } });
+  });
+
+  /** the URL a press builds on is the one on screen: a link's, then Back's */
+  test("after a link and after Back, the view each one's URL holds is kept", async () => {
+    const page = await open(dashboardPage, "/", { dashboard: { chart: "combined" } });
+    page.router.push("/?chart=bridge");
+    await page.settle();
+    page.router.push("/?chart=split");
+    await page.settle();
+    page.back();
+    await idle();
+    expect(page.url).toBe("/?chart=bridge");
+
+    pills.cards!("grid");
+    await page.settle();
+    expect(page.url).toBe("/?chart=bridge&cards=grid");
+    expect(page.shown).toMatchObject({ state: { chart: "bridge" } });
+  });
+});
+
 describe("a press made once the page has moved under the one in flight", () => {
   /**
    * ⛔ The regression that reverted 3c5d3ea. Back commits with a bare setState, outside any

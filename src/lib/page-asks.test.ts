@@ -53,6 +53,26 @@ describe("pressBase", () => {
     expect(base.view).toBe(at.state);
   });
 
+  test("with nothing asked, adds every other param of the URL on screen, the server's first", () => {
+    // another switcher's view only the URL holds; the server's own range wins over the URL's spelling
+    const base = pressBase(null, holding(), "/h?cards=grid&range=1M&view=returns&lens=table");
+    expect(base).toEqual({ view: PRICE_CHART, params: { range: "1Y", cards: "grid" }, asked: false });
+    expect(Object.keys(base.params)).toEqual(["range", "cards"]); // the server's order, then the URL's
+  });
+
+  test("with nothing asked, a key the URL repeats is taken as the server reads it, the first", () => {
+    expect(pressBase(null, holding(), "/h?cards=grid&cards=deck").params).toEqual({ range: "1Y", cards: "grid" });
+  });
+
+  test("with nothing asked, a URL on another page adds nothing", () => {
+    expect(pressBase(null, holding(), "/spending?cards=grid").params).toEqual({ range: "1Y" });
+  });
+
+  test("with an ask, the URL on screen adds nothing: the asked URL already started from it", () => {
+    const ask = withAsk(null, "/h?range=1M&view=returns", { view: "returns" });
+    expect(pressBase(ask, holding(), "/h?cards=grid").params).toEqual({ range: "1M" });
+  });
+
   test("with an ask on another page, is the server's", () => {
     const ask = withAsk(null, "/spending?cash=table", { cash: "table" });
     expect(pressBase(ask, holding()).asked).toBe(false);
@@ -172,6 +192,15 @@ describe("createPageAsks", () => {
     asks.departing("/spending", "push");
     expect(asks.paramsOn("/h")).toBeNull();
     expect(asks.base(holding()).asked).toBe(false);
+  });
+
+  test("with nothing asked, a press builds on the URL the router last committed", () => {
+    const asks = createPageAsks();
+    expect(asks.base(holding()).params).toEqual({ range: "1Y" }); // nothing committed yet
+    asks.committed("/h?cards=grid");
+    expect(asks.base(holding()).params).toEqual({ range: "1Y", cards: "grid" });
+    asks.committed("/h?bench=QQQ"); // a link, or Back
+    expect(asks.base(holding()).params).toEqual({ range: "1Y", bench: "QQQ" });
   });
 
   test("a commit of an asked URL keeps the ask; any other drops it", () => {

@@ -28,6 +28,13 @@ import type { ViewSpec, ViewState } from "./view-state";
  * what the page shows (every press made since has its write before its navigation), and the
  * commit that would prove the LAST press drawn is invisible when that press asked for the URL
  * already on screen (a default view's URL is the clean one).
+ *
+ * With nothing asked, a press starts from the URL the router last committed — the one on
+ * screen. 🔴 It started from the params the server handed its own switcher, and a shared link
+ * holds views he never saved: Grid pressed on `/?chart=bridge` (the decision cards are handed
+ * no params) went to `/?cards=grid`, and the hero, read from his saved preference, went back to
+ * Net worth. The same from the hero's pills over a linked `?cards=grid`, and on /spending over a
+ * linked lens at its default (the server hands each card the other's only when it is not).
  */
 export interface PageAsk {
   /** the page every press in it was made on */
@@ -59,7 +66,10 @@ export interface PressTarget {
 export interface PressBase {
   /** the surface's view: the server's, with every key a press on this page asked for over it */
   view: ViewState;
-  /** the params beside the view: the newest asked URL's, or the server's when nothing is asked */
+  /**
+   * the params beside the view: the newest asked URL's; with nothing asked, the server's and
+   * every other param of the URL on screen (another switcher's view only the URL holds)
+   */
   params: Record<string, string>;
   /** true when built on an ask (a press may be in flight), false when on the server's view */
   asked: boolean;
@@ -93,16 +103,33 @@ export function askedParams(ask: PageAsk | null, pathname: string): Record<strin
 }
 
 /**
- * What a press on `at` builds on. With no ask on its page, the server's view and params —
- * exactly what every press was built on before. With one, the newest asked URL's params (minus
- * this surface's own dimensions, which the press writes itself) and the server's view with
- * every key a press asked for laid over it.
+ * The params a press with nothing asked builds on: the server's (they win: it normalized them —
+ * a validated `accts`, a resolved period), then every other param of `shown`, the URL on
+ * screen, in its order — never this surface's own dimensions, which the press writes itself. A
+ * URL on another page (one not committed yet) adds nothing.
  */
-export function pressBase(ask: PageAsk | null, at: PressTarget): PressBase {
-  if (ask === null || ask.pathname !== pathnameOf(at.basePath)) {
-    return { view: at.state, params: at.baseParams, asked: false };
+function onScreen(at: PressTarget, own: ReadonlySet<string>, shown: string | null): Record<string, string> {
+  if (shown === null || pathnameOf(shown) !== pathnameOf(at.basePath)) return at.baseParams;
+  const params: Record<string, string> = { ...at.baseParams };
+  for (const [key, value] of new URL(shown, ORIGIN).searchParams) {
+    // the first of a repeated key, as the server reads it (`firstParam`)
+    if (!own.has(key) && !Object.hasOwn(params, key)) params[key] = value;
   }
+  return params;
+}
+
+/**
+ * What a press on `at` builds on. With no ask on its page, the server's view, and its params
+ * with every other param of `shown` (the URL on screen) beside them. With one, the newest
+ * asked URL's params (minus this surface's own dimensions, which the press writes itself) and
+ * the server's view with every key a press asked for laid over it — the asked URL already
+ * started from the one on screen.
+ */
+export function pressBase(ask: PageAsk | null, at: PressTarget, shown: string | null = null): PressBase {
   const own = new Set(at.spec.map((dim) => dim.key));
+  if (ask === null || ask.pathname !== pathnameOf(at.basePath)) {
+    return { view: at.state, params: onScreen(at, own, shown), asked: false };
+  }
   const view: ViewState = { ...at.state };
   for (const key of [...own, ...at.carry]) {
     const asked = ask.dims[key];
@@ -189,7 +216,7 @@ export interface PageAsks {
   landing(): Landing | null;
   /** a push or replace to `href` is starting: one nobody asked for drops the ask */
   departing(href: string, kind: HistoryKind): void;
-  /** the router committed `href` (pathname and query) */
+  /** the router committed `href` (pathname and query): the URL on screen a press starts from */
   committed(href: string): void;
   /** Back/Forward: the page moved under the ask, whatever URL it lands on */
   moved(): void;
@@ -199,8 +226,10 @@ export function createPageAsks(): PageAsks {
   let current: PageAsk | null = null;
   // the newest link followed since one dropped the ask: what a press in flight makes again
   let overtaken: { href: string; kind: HistoryKind } | null = null;
+  // the URL the router last committed, which the switchers' props were rendered for
+  let shown: string | null = null;
   return {
-    base: (at) => pressBase(current, at),
+    base: (at) => pressBase(current, at, shown),
     paramsOn: (pathname) => askedParams(current, pathname),
     ask(href, dims) {
       current = withAsk(current, href, dims);
@@ -217,6 +246,7 @@ export function createPageAsks(): PageAsks {
       overtaken = { href, kind };
     },
     committed(href) {
+      shown = href;
       current = afterCommit(current, href);
     },
     moved() {
