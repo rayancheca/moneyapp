@@ -5,7 +5,7 @@ import { categories, type CategoryKind } from "@/db/schema/categories";
 import { recurringSeries, type SeriesKind } from "@/db/schema/recurring";
 import { transactions } from "@/db/schema/transactions";
 import { addDays, monthKey, periodBounds, todayIso } from "@/lib/dates";
-import { seriesIsIncomeOrSpending } from "@/lib/series-kind";
+import { seriesAmountCents, seriesIsIncomeOrSpending } from "@/lib/series-kind";
 import { outsidePortfolioCashAccountIds } from "./accounts";
 import { activeSplitsInRange } from "./transaction-splits";
 
@@ -550,40 +550,51 @@ export function isAgentsIncomeSeries(
 }
 
 /**
- * Whether a recurring series schedules the AGENT'S costs rather than his bills: a spending series — any kind but
- * income and transfer (`seriesIsIncomeOrSpending`) — on the agent's cash account. `spendingBucket`'s account half,
- * asked of a schedule instead of a row; `isAgentsIncomeSeries`' mirror. A series with no account reads as his.
+ * Whether a recurring series schedules the AGENT'S costs rather than his bills: money OUT — its amount, the owner's
+ * first (`seriesAmountCents`), is negative — under a spending series, any kind but income and transfer
+ * (`seriesIsIncomeOrSpending`), on the agent's cash account. `spendingBucket`'s account half, asked of a schedule
+ * instead of a row; `isAgentsIncomeSeries`' mirror. A series with no account reads as his.
  *
  * ⚖️ Owner decision 2026-10-02 (§6A 34). 🔴 Detected on the agent's cash, its monthly Gold fee was a Fees bill of his
  * on the forecast card ("came due Oct 1 and has not posted"), /budgets' overdue and tail, Predict budgets, the runway's
  * committed bills, the subscriptions card, both Upcoming lists, the calendar and a series page's ranking.
  *
+ * 🔴 …and it asked the kind and never the sign, so money IN under a series of the agent's filed "other" or "bill" — a
+ * monthly credit — was a cost: `MonthForecast.agentsCosts` went positive, past the ≤ 0 its type promises. Money in
+ * on the agent's cash is what it is PAID, as his own series are income or spending by their sign; the forecast
+ * routes it with the agent's income.
+ *
  * ⛔ Not "drop the series". Net worth pays the agent's costs, so the forecast still counts what it charges in EOM net
- * worth (`MonthForecast.agentsCosts`), as the bridge names the agent's costs on a band of their own.
+ * worth (`MonthForecast.agentsCosts`), as the bridge names the agent's costs on a band of their own. ⛔ Nor the test of
+ * whose a schedule is: a reader that leaves the agent's series out of his asks `isAgentsSeries`, whatever the sign.
  */
 export function isAgentsCostSeries(
   agentsCash: ReadonlySet<string>,
-  series: { readonly kind: SeriesKind; readonly accountId: string | null },
+  series: {
+    readonly kind: SeriesKind;
+    readonly accountId: string | null;
+    readonly userAmountCents: number | null;
+    readonly nextExpectedAmountCents: number | null;
+  },
 ): boolean {
   return (
-    seriesIsIncomeOrSpending(series.kind) &&
-    series.kind !== "income" &&
-    series.accountId !== null &&
-    agentsCash.has(series.accountId)
+    isAgentsSeries(agentsCash, series) && series.kind !== "income" && (seriesAmountCents(series) ?? 0) < 0
   );
 }
 
 /**
- * Whether a series schedules the agent's money at all — what it is paid (`isAgentsIncomeSeries`) or what it pays
- * (`isAgentsCostSeries`). The rule for every reader that lists, sums or ranks a schedule as HIS and draws neither:
- * the calendar, the Upcoming lists (and the dashboard's through them), a series page's ranking, and a category's
- * series (`recurringSeriesIdsForSubtree`). The forecast routes each half apart, into EOM net worth.
+ * Whether a series schedules the agent's money at all: any series but a transfer (`seriesIsIncomeOrSpending`) on
+ * the agent's cash account — what it pays (`isAgentsCostSeries`) and what it is paid (`isAgentsIncomeSeries`, or
+ * money in under any other kind), together. The rule for every reader that lists, sums or ranks a schedule as HIS
+ * and draws none of them: the calendar, the Upcoming lists (and the dashboard's through them), a series page's
+ * ranking, a category's series (`recurringSeriesIdsForSubtree`), the subscriptions card and the runway's overdue set.
+ * The forecast routes each half apart, into EOM net worth.
  */
 export function isAgentsSeries(
   agentsCash: ReadonlySet<string>,
   series: { readonly kind: SeriesKind; readonly accountId: string | null },
 ): boolean {
-  return isAgentsIncomeSeries(agentsCash, series) || isAgentsCostSeries(agentsCash, series);
+  return seriesIsIncomeOrSpending(series.kind) && series.accountId !== null && agentsCash.has(series.accountId);
 }
 
 // ── Monthly spending (stacked-bar source) ────────────────────────────

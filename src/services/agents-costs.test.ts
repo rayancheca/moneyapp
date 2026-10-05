@@ -848,4 +848,82 @@ describe("the agent's cost SERIES is not his bill either", () => {
     expect(among(lease)).toMatchObject({ value: 1, outOf: 3 });
     expect(among(gold)).toMatchObject({ value: 3, outOf: 3 });
   });
+
+  /*
+   * 🔴 The cost-series rule asked the kind and never the sign, so money IN under a series of the agent's that is no
+   * income series — a monthly credit detection filed "other" or "bill" — was a COST of the agent's: `agentsCosts` read
+   * +$3.00, past the ≤ 0 its own type promises, and the card's note would say the agent's account "is projected to pay
+   * +$3.00". Money in on the agent's cash is what it is PAID, whatever kind the schedule carries — as his own series
+   * are income or spending by their sign (`seriesIsIncomeOrSpending`). Hypothetical: no such series exists.
+   */
+  test("⛔ money IN under a series of the agent's is no cost of its: it is what the agent's cash is paid", () => {
+    hisCar();
+    const read = () => {
+      const f = forecastCurrentMonth(bundle.db, TODAY);
+      const nov = forecastForMonth(bundle.db, "2026-11", TODAY)!;
+      return {
+        his: {
+          components: [f.components, nov.components],
+          committed: [f.committed.incomeCents, f.committed.spendCents, f.committed.eomCashCents],
+          pace: [f.projectedIncomeCents, f.projectedSpendCents, f.projectedEomCashCents],
+          subscriptions: subscriptionsCard(bundle.db, TODAY),
+          upcoming: upcomingOccurrences(bundle.db, TODAY, 30),
+          runway: runwayCard(bundle.db, TODAY),
+        },
+        agents: { costs: [f.agentsCosts, nov.agentsCosts], income: [f.agentsIncome, nov.agentsIncome] },
+        nw: [f.committed.eomNetWorthCents, f.projectedEomNetWorthCents, nov.committed.eomNetWorthCents],
+      };
+    };
+    const before = read();
+    for (const kind of ["other", "bill", "subscription"] as const) {
+      const id = schedule({
+        name: `Monthly credit (${kind})`,
+        kind,
+        accountId: agentic,
+        cadence: "monthly",
+        intervalDaysAvg: 30,
+        nextExpectedOn: "2026-10-20",
+        nextExpectedAmountCents: CREDIT,
+        lastMatchedOn: "2026-09-20",
+        status: "detected",
+      });
+      const after = read();
+      // no figure of his moves, and the agent's costs do not either
+      expect(after.his, kind).toEqual(before.his);
+      expect(after.agents.costs, kind).toEqual(before.agents.costs);
+      // what the agent's cash is paid: October's on the 20th, and November chains it with its own
+      expect(after.agents.income, kind).toEqual([
+        { netCents: CREDIT, committedNetCents: CREDIT },
+        { netCents: 2 * CREDIT, committedNetCents: 2 * CREDIT },
+      ]);
+      expect(after.nw, kind).toEqual([before.nw[0]! + CREDIT, before.nw[1]! + CREDIT, before.nw[2]! + 2 * CREDIT]);
+      bundle.db.delete(recurringSeries).where(eq(recurringSeries.id, id)).run();
+    }
+  });
+
+  test("…and the owner's amount decides it before detection's: overridden to money out, it is the agent's cost", () => {
+    hisCar();
+    // the agent's Sep 1 Gold fee, unlinked, already projects at the pace
+    const before = forecastCurrentMonth(bundle.db, TODAY);
+    schedule({
+      name: "Monthly credit, reversed by him",
+      kind: "other",
+      accountId: agentic,
+      cadence: "monthly",
+      intervalDaysAvg: 30,
+      nextExpectedOn: "2026-10-20",
+      nextExpectedAmountCents: CREDIT,
+      lastMatchedOn: "2026-09-20",
+      status: "confirmed",
+    });
+    bundle.db.update(recurringSeries).set({ userAmountCents: -CREDIT }).where(eq(recurringSeries.accountId, agentic)).run();
+    const f = forecastCurrentMonth(bundle.db, TODAY);
+    expect({
+      costs: [f.agentsCosts.netCents - before.agentsCosts.netCents, f.agentsCosts.committedNetCents - before.agentsCosts.committedNetCents],
+      income: f.agentsIncome,
+    }).toEqual({ costs: [-CREDIT, -CREDIT], income: before.agentsIncome });
+  });
 });
+
+/** a hypothetical monthly credit the agent's cash is paid under a schedule that is no income series */
+const CREDIT = 300;

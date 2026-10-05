@@ -13,6 +13,7 @@ import type { CashFlow } from "@/lib/xirr";
 import { formatDayFull } from "@/lib/format-date";
 import { yearSummary, type YearLineInput, type YearSummary } from "@/lib/year-summary";
 import { investmentSideAccountIds, outsidePortfolioCashAccountIds } from "./accounts";
+import { offAgentsCash } from "./analytics";
 import { portfolioSeries, realizedSalesByDay } from "./portfolio";
 
 /**
@@ -174,7 +175,12 @@ function realizedFor(db: AppDatabase, year: number): RawLine & { exact: boolean 
   return { amountCents: gainCents, rowCount: sales, sourcedRowCount: 0, sources: [], exact };
 }
 
-function gamblingFor(db: AppDatabase, year: number): YearGambling {
+/**
+ * ⚖️ The page's one scope, as on every line (`lineFor`): the agent's cash is none of his gambling. What the agent's
+ * account pays is not his spending (owner decision 2026-10-02, §6A 34), and the block says his losses sit inside the
+ * figure under What you spent. 🔴 Read from every account, a loss on the agent's cash was in Lost and in no Spent.
+ */
+function gamblingFor(db: AppDatabase, year: number, agentsCash: readonly string[]): YearGambling {
   const { from, to } = yearBounds(year);
   const parent = db
     .select({ id: categories.id })
@@ -200,6 +206,7 @@ function gamblingFor(db: AppDatabase, year: number): YearGambling {
         gte(transactions.postedOn, from),
         lte(transactions.postedOn, to),
         inArray(transactions.categoryId, [...parent, ...ids]),
+        offAgentsCash(agentsCash),
       ),
     )
     .all();
@@ -551,7 +558,7 @@ export function yearSummaryView(db: AppDatabase, year: number, today: string): Y
   return {
     year,
     summary: yearSummary({ year, lines }),
-    gambling: gamblingFor(db, year),
+    gambling: gamblingFor(db, year, agentsCash),
     moneyWeightedReturn: moneyWeightedReturnFor(db, year, today),
     disclaimer: SUMMARY_DISCLAIMER,
     availableYears: summaryYears(db),

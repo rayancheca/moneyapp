@@ -2,15 +2,18 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, test } from "vitest";
 import type { MonthForecast } from "@/services/forecast";
-import { AgentsCostsNote } from "./ForecastCard";
+import { AgentsCostsNote, ForecastCard } from "./ForecastCard";
 
-const words = (agents: MonthForecast["agentsCosts"]): string =>
-  renderToStaticMarkup(createElement(AgentsCostsNote, { agents }))
+const text = (html: string): string =>
+  html
     .replace(/<[^>]+>/g, "")
     .replace(/&#x27;/g, "'")
     .replace(/&amp;/g, "&")
     .replace(/\s+/g, " ")
     .trim();
+
+const words = (agents: MonthForecast["agentsCosts"]): string =>
+  text(renderToStaticMarkup(createElement(AgentsCostsNote, { agents })));
 
 /**
  * ⚖️ Owner decision 2026-10-02 (§6A 34): what the agent's own account pays is not his spending, so no line of the
@@ -55,5 +58,64 @@ describe("AgentsCostsNote — the forecast card names what its EOM net worth pay
         expect(note, shape).not.toMatch(/\$0\.00/);
       }
     }
+  });
+});
+
+/** A running October with no line of his and nothing outside cash — every figure on the card but the agent's at rest. */
+const october = (agentsCosts: MonthForecast["agentsCosts"]): MonthForecast => {
+  const reading = (agentsCents: number) => ({
+    incomeCents: 0,
+    spendCents: 0,
+    netCents: 0,
+    eomCashCents: 392_640,
+    // net worth today + the net + what the agent's account pays (`MonthForecast.agentsCosts`)
+    eomNetWorthCents: 494_741 + agentsCents,
+  });
+  const pace = reading(agentsCosts.netCents);
+  return {
+    today: "2026-10-05",
+    monthKey: "2026-10",
+    basis: "current",
+    monthStart: "2026-10-01",
+    monthEnd: "2026-10-31",
+    daysInMonth: 31,
+    remainingDays: 27,
+    projectedIncomeCents: pace.incomeCents,
+    projectedSpendCents: pace.spendCents,
+    projectedNetCents: pace.netCents,
+    projectedEomCashCents: pace.eomCashCents,
+    projectedEomNetWorthCents: pace.eomNetWorthCents,
+    committed: reading(agentsCosts.committedNetCents),
+    components: [],
+    unbankedIncome: { totalCents: 0, occurrenceCount: 0, checkedOccurrenceCount: 0, frontier: { kind: "unchecked" }, names: [] },
+    outsideCash: { netCents: 0, committedNetCents: 0, accountNames: [] },
+    agentsIncome: { netCents: 0, committedNetCents: 0 },
+    agentsCosts,
+  };
+};
+
+const card = (agentsCosts: MonthForecast["agentsCosts"]): string =>
+  text(renderToStaticMarkup(createElement(ForecastCard, { forecast: october(agentsCosts) })));
+
+/**
+ * 🔴 The sentence above is a component, and nothing proved the card prints it: `ForecastCard` without
+ * `<AgentsCostsNote …/>` left every test green while both EOM net worth figures moved by money no row on the card
+ * named. Read off the card itself, as /recurring renders it.
+ */
+describe("ForecastCard — the card prints the agent's costs its EOM net worth counts", () => {
+  test("a month the agent's account is projected to pay in: the note, once, on the card", () => {
+    for (const agents of [
+      { netCents: -500, committedNetCents: -500 },
+      { netCents: -435, committedNetCents: 0 },
+      { netCents: -935, committedNetCents: -500 },
+    ]) {
+      const note = words(agents);
+      expect(note, JSON.stringify(agents)).not.toBe("");
+      expect(card(agents).split(note).length - 1, JSON.stringify(agents)).toBe(1);
+    }
+  });
+
+  test("a month it pays nothing in: no word of it", () => {
+    expect(card({ netCents: 0, committedNetCents: 0 })).not.toMatch(/agent's own account is projected to pay/);
   });
 });

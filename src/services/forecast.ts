@@ -16,6 +16,7 @@ import {
   isAgentsCostSeries,
   isAgentsIncome,
   isAgentsIncomeSeries,
+  isAgentsSeries,
   isIncome,
   loadCategoryIndex,
   spendingBucket,
@@ -60,7 +61,7 @@ import { linkIsNotRecurring, seriesIdsNotDrawnAsRecurring } from "./recurring-li
  * `projection.ts::trailingPace` — shared with /spending and /budgets, so one
  * category cannot be projected two ways. Uncategorized negative amounts form an
  * explicit "Uncategorized" bucket — never hidden. Which rows are spending is
- * `spendingBucket`'s to say, the agent's cash included (owner decisions
+ * `spendingBucket`'s to say, and no row on the agent's cash is (owner decisions
  * 2026-10-02 and 2026-10-05, its unfiled money out too): the agent's costs
  * project apart, for EOM net worth alone.
  */
@@ -317,8 +318,9 @@ export interface MonthForecast {
    */
   outsideCash: OutsideCash;
   /**
-   * What the AGENT'S cash is projected to be paid — by the series and the pace that project his — which each
-   * reading's EOM net worth counts and its Income and Net do not.
+   * What the AGENT'S cash is projected to be paid — by the series and the pace that project his, an income series or
+   * money in under a series of any other kind (`isAgentsCostSeries` is money out) — which each reading's EOM net
+   * worth counts and its Income and Net do not.
    *
    * ⚖️ Owner decision 2026-09-28 (§6A 27): not his income (`isIncome`, `isAgentsIncomeSeries`); and net worth holds
    * the agent's money, which is why the bridge names it on a band of its own. So for the running month
@@ -503,20 +505,21 @@ function fixedComponents(
     const perOccurrence = occurrences[0]!.amountCents;
     const cents = occurrences.length * perOccurrence;
     /*
-     * ⚖️ What the agent's cash is paid is not his income (`isAgentsIncomeSeries`, owner decision 2026-09-28), so it
-     * is no line of his. 🔴 On a fixture, its month-end $0.04 was "Projected income" on the headline — and so pay
-     * still to come in the dashboard's "free to spend". Projected by the same walk, it goes to EOM net worth alone.
-     */
-    if (isAgentsIncomeSeries(agentsCash, series)) {
-      agentsCents += cents;
-      continue;
-    }
-    /*
-     * ⚖️ …nor is what it pays his bill (`isAgentsCostSeries`, owner decision 2026-10-02): the agent's Gold fee is no
-     * line of his — not "Projected spending", not the net — and goes to EOM net worth alone, by the same walk.
+     * ⚖️ What the agent's cash pays is not his bill (`isAgentsCostSeries`, owner decision 2026-10-02): the agent's
+     * Gold fee is no line of his — not "Projected spending", not the net — and goes to EOM net worth alone.
      */
     if (isAgentsCostSeries(agentsCash, series)) {
       agentsCostCents += cents;
+      continue;
+    }
+    /*
+     * ⚖️ …nor is what it is paid his income (`isAgentsIncomeSeries`, owner decision 2026-09-28): its interest, or
+     * money in under a series of any other kind (`isAgentsSeries`, all that is left of the agent's) — EOM net worth
+     * alone, by the same walk. 🔴 On a fixture, its month-end $0.04 was "Projected income" on the headline — and so
+     * pay still to come in the dashboard's "free to spend". 🔴 A monthly credit filed "other" was a cost of +$3.00.
+     */
+    if (isAgentsSeries(agentsCash, series)) {
+      agentsCents += cents;
       continue;
     }
     // still his bill, and still in the net — but one charged to an account

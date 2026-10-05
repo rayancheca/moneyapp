@@ -242,7 +242,9 @@ export default async function YearSummaryPage({
                 {/* 🔴 This said "losses are not treated as spending" on a page whose
                     "What you spent" figure includes them — Gambling is an expense
                     category in your own taxonomy, and every spending surface counts it.
-                    What is true is narrower: winnings are not income HERE. */}
+                    What is true is narrower: winnings are not income HERE. ⚖️ The block is
+                    his (`gamblingFor`): what the agent's account pays is in no Spent of his
+                    (owner decision 2026-10-02), so a loss there is not in Lost either. */}
                 Counted in none of the money-in totals above: winnings are not treated as income
                 here. Losses are spending — your categories file Gambling as an expense — and they
                 sit inside the figure under What you spent.

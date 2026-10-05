@@ -23,6 +23,7 @@ import {
   summaryYears,
   yearSummaryView,
 } from "./year-summary";
+import { yearInsightInput } from "./year-insights";
 
 const TODAY = "2026-08-25";
 const YEAR = 2025;
@@ -411,6 +412,45 @@ describe("yearSummaryView — gambling is kept out of every total", () => {
 
   test("a year with no gambling reports zeroes rather than nothing", () => {
     expect(yearSummaryView(bundle.db, YEAR, TODAY).gambling).toMatchObject({ rowCount: 0, netCents: 0 });
+  });
+});
+
+/**
+ * ⚖️ Owner decision 2026-10-02 (§6A 34): what the agent's own account pays is not his spending — so its Gambling
+ * loss is in no "What you spent" of his. 🔴 The block under it read every account, and says his losses "sit inside
+ * the figure under What you spent": a loss on the agent's cash was in Lost and in no Spent, the sentence false of it.
+ * The block reads the page's one scope (`lineFor`'s): the agent's cash is none of his gambling. Hypothetical — no
+ * such row exists.
+ */
+describe("yearSummaryView — the gambling block is his, as every line on the page is", () => {
+  function agentic(): { agentic: string; book: string } {
+    const rh = bundle.db.select().from(institutions).where(eq(institutions.name, "Robinhood")).get()!;
+    const id = createAccount(bundle.db, { institutionId: rh.id, name: "Robinhood Agentic", type: "checking", last4: "9651" });
+    const book = createAccount(bundle.db, { institutionId: rh.id, name: "Robinhood Agentic Brokerage", type: "investment", subtype: "brokerage" });
+    bundle.db.update(accounts).set({ cashAccountId: id }).where(eq(accounts.id, book)).run();
+    return { agentic: id, book };
+  }
+
+  test("⛔ a loss or a win on the agent's cash is no gambling of his — and every cent he lost is in What you spent", () => {
+    const { agentic: agent } = agentic();
+    insert({ postedOn: "2025-05-01", amountCents: 15804, rawDescription: "DRAFTKINGS", categoryName: "Gambling" });
+    insert({ postedOn: "2025-05-02", amountCents: -44250, rawDescription: "DRAFTKINGS", categoryName: "Gambling" });
+    insert({ postedOn: "2025-06-01", amountCents: 500, rawDescription: "DRAFTKINGS", categoryName: "Gambling", accountId: agent });
+    insert({ postedOn: "2025-06-02", amountCents: -2000, rawDescription: "DRAFTKINGS", categoryName: "Gambling", accountId: agent });
+
+    const v = yearSummaryView(bundle.db, YEAR, TODAY);
+    expect(v.gambling).toEqual({ wonCents: 15804, lostCents: 44250, netCents: -28446, rowCount: 2 });
+    // the sentence's claim: Lost sits inside the figure under What you spent — here all of it
+    const spent = yearInsightInput(bundle.db, YEAR, TODAY)!.facts.find((f) => f.id === "f1")!;
+    expect(spent.kind === "scalar" && spent.value).toBe(v.gambling.lostCents);
+  });
+
+  test("the rule's own edge: unpaired, the account is his, and so is its gambling", () => {
+    const { agentic: agent, book } = agentic();
+    insert({ postedOn: "2025-06-02", amountCents: -2000, rawDescription: "DRAFTKINGS", categoryName: "Gambling", accountId: agent });
+    expect(yearSummaryView(bundle.db, YEAR, TODAY).gambling.rowCount).toBe(0);
+    bundle.db.update(accounts).set({ cashAccountId: null }).where(eq(accounts.id, book)).run();
+    expect(yearSummaryView(bundle.db, YEAR, TODAY).gambling).toEqual({ wonCents: 0, lostCents: 2000, netCents: -2000, rowCount: 1 });
   });
 });
 

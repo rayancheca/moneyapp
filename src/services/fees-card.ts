@@ -88,7 +88,9 @@ import { provenanceFor, type Provenance } from "./provenance";
  * two must not be read as the same number. Its scope is **active credit cards,
  * all time**, and it holds `Interest Charges` OUT of its fee figure so that
  * "fees" and "interest charged" name disjoint money on a card about cards. This
- * one's scope is **every account, over a stated window**, and its `paidCents` is
+ * one's scope is **every account of his, over a stated window** — not the
+ * agent's cash, on either half (owner decisions 2026-09-28 and 2026-10-02) —
+ * and its `paidCents` is
  * the whole `Fees` subtree including `Interest Charges` — because interest a
  * bank charges you is money you paid a bank, which is this card's question.
  *

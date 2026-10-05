@@ -243,7 +243,7 @@ function merchantSpendTotals(db: AppDatabase): MerchantTotal[] {
     .where(eq(transactions.status, "active"))
     .all()) {
     if (row.merchantId === null) continue;
-    // ⚖️ the profile's own filter, the agent's cash included (`isHisExpenseRow`, owner decision 2026-10-02)
+    // ⚖️ the profile's own filter: his expense rows, none on the agent's cash (`isHisExpenseRow`, owner decision 2026-10-02)
     if (!isHisExpenseRow(idx, agentsCash, row)) continue;
     const acc = byMerchant.get(row.merchantId) ?? { cents: 0, gross: 0, visits: 0 };
     /*

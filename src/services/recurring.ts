@@ -18,6 +18,7 @@ import {
   stepPlan,
   stepsToReach,
 } from "@/lib/recurring-step";
+import { seriesAmountCents } from "@/lib/series-kind";
 import { outsidePortfolioCashAccountIds } from "./accounts";
 import { isAgentsSeries } from "./analytics";
 /*
@@ -1108,7 +1109,7 @@ export function effectiveSeries(s: SeriesOverrides): EffectiveSeries {
     // putting 13 charges ($650) in the committed year instead of 12 ($600).
     intervalDaysAvg: s.userCadence || s.userNextExpectedOn ? null : s.intervalDaysAvg,
     nextExpectedOn: s.userNextExpectedOn ?? s.nextExpectedOn,
-    nextExpectedAmountCents: s.userAmountCents ?? s.nextExpectedAmountCents,
+    nextExpectedAmountCents: seriesAmountCents(s),
     // A user-set date IS the day-of-month, so the detected anchor must yield to
     // it — otherwise picking the 15th on a month-end series would be silently
     // re-dayed to the 31st and the override would look ignored. Same shape as

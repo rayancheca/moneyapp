@@ -23,7 +23,7 @@ import {
 import { resolvePeriod, withPeriod } from "@/lib/period";
 import { runway, type Runway } from "@/lib/runway";
 import { cashPosition, outsidePortfolioCashAccountIds } from "./accounts";
-import { isAgentsCostSeries, loadCategoryIndex, monthlySpending, recurringSeriesIdsForCategory } from "./analytics";
+import { isAgentsSeries, loadCategoryIndex, monthlySpending, recurringSeriesIdsForCategory } from "./analytics";
 import { incomeExpectation, overdueForSeries } from "./budgets";
 import { ledgerOpens } from "./observation-frontier";
 import { seriesStaleness, upcomingOccurrences } from "./recurring";
@@ -189,9 +189,9 @@ export function spendBaseline(
 export const COMMITTED_KINDS = ["bill", "subscription"] as const;
 
 /**
- * Every live series that represents a payment HE owes — not one the agent's cash pays (`isAgentsCostSeries`, owner
- * decision 2026-10-02): its forward occurrences already leave through `upcomingOccurrences`, and this is the set its
- * overdue leg reads.
+ * Every live series that represents a payment HE owes — none on the agent's cash, which pays its own (`isAgentsSeries`,
+ * owner decision 2026-10-02): its forward occurrences already leave through `upcomingOccurrences`, and this is the set
+ * its overdue leg reads.
  */
 function moneyOutSeriesIds(db: AppDatabase): Set<string> {
   const rows = db
@@ -201,7 +201,7 @@ function moneyOutSeriesIds(db: AppDatabase): Set<string> {
     .all();
   const kinds = new Set<string>(COMMITTED_KINDS);
   const agentsCash = outsidePortfolioCashAccountIds(db);
-  return new Set(rows.filter((r) => kinds.has(r.kind) && !isAgentsCostSeries(agentsCash, r)).map((r) => r.id));
+  return new Set(rows.filter((r) => kinds.has(r.kind) && !isAgentsSeries(agentsCash, r)).map((r) => r.id));
 }
 
 /** Every live series' own end day, by id — `userEndsOn`, the only one there is. */

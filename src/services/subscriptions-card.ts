@@ -7,7 +7,7 @@ import { formatDayShortIn } from "@/lib/format-date";
 import { levelledMonthlyCents } from "@/lib/income-basis";
 import { wholeToleranceDays } from "@/lib/recurring-step";
 import { outsidePortfolioCashAccountIds } from "./accounts";
-import { activeTxnsInRange, isAgentsCostSeries } from "./analytics";
+import { activeTxnsInRange, isAgentsSeries } from "./analytics";
 import { COMMITTED_KINDS, SPEND_BASELINE_MONTHS, baselineWindow } from "./committed";
 import {
   effectiveSeries,
@@ -234,8 +234,9 @@ export function subscriptionsCard(
     // the catch-all where a misread transfer lands. committed.ts states the
     // rule and measured what the looser filter cost.
     .filter((s) => kinds.has(s.kind))
-    // ⚖️ …and HIS: what the agent's cash pays is not his subscription (`isAgentsCostSeries`, owner decision 2026-10-02)
-    .filter((s) => !isAgentsCostSeries(agentsCash, s));
+    // ⚖️ …and HIS: no series on the agent's cash is his subscription, what it pays or what it is paid (`isAgentsSeries`,
+    // owner decisions 2026-09-28 and 2026-10-02)
+    .filter((s) => !isAgentsSeries(agentsCash, s));
 
   // a ledger with no recurring commitments has nothing to say here, and a card
   // of zeroes is worse than no card (the rule carCard already follows)

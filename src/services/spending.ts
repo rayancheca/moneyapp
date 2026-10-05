@@ -685,8 +685,8 @@ function spendingRowsInRange(
       // a non-spending part (Transfers/Income) reports only the expense
       // allocation, so these widgets reconcile with the split-aware Spent total.
       // For an unsplit / all-expense row this equals the full amount, unchanged.
-      // ⛔ `spendingBucket` itself, both signs — a part is spending by the rule /spending's Spent is, the agent's
-      // cash included (owner decision 2026-10-02); this file kept a copy that never asked whose account.
+      // ⛔ `spendingBucket` itself, both signs — a part is spending by the rule /spending's Spent is, so none on the
+      // agent's cash is (owner decision 2026-10-02); this file kept a copy that never asked whose account.
       const spendCents = allocs
         .filter(
           (a) =>
