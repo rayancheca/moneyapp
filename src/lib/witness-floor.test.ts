@@ -875,6 +875,45 @@ describe("ledgerCheckMode — the command line", () => {
     expect(() => ledgerCheckMode(["statements"])).toThrow(/unknown argument statements/);
     expect(() => ledgerCheckMode(["--confirm=yes"])).toThrow(/unknown argument --confirm=yes/);
   });
+
+  /* ⚖️ Owner, 2026-10-02 (§6A 30): a line left out is acknowledged by the same guarded step — a dry run, then --confirm */
+  it("--acknowledge-left-out=<marks> is a dry run; --confirm makes it write", () => {
+    expect(ledgerCheckMode(["--acknowledge-left-out=3f9a0c12de"])).toEqual({
+      mode: "acknowledge",
+      tokens: ["3f9a0c12de"],
+      confirm: false,
+    });
+    expect(ledgerCheckMode(["--acknowledge-left-out=3f9a0c12de,0b1c2d3e4f,3f9a0c12de", "--confirm"])).toEqual({
+      mode: "acknowledge",
+      tokens: ["3f9a0c12de", "0b1c2d3e4f"],
+      confirm: true,
+    });
+  });
+
+  it("⛔ --acknowledge-left-out with no marks is refused", () => {
+    for (const argv of [["--acknowledge-left-out"], ["--acknowledge-left-out="], ["--acknowledge-left-out=,"]]) {
+      expect(() => ledgerCheckMode(argv)).toThrow(/--acknowledge-left-out needs the marks of the lines to acknowledge/);
+    }
+  });
+
+  it("⛔ a mark that is not one is refused rather than skipped", () => {
+    expect(() => ledgerCheckMode(["--acknowledge-left-out=all"])).toThrow(/"all" is not a line's mark/);
+    expect(() => ledgerCheckMode(["--acknowledge-left-out=3F9A0C12DE"])).toThrow(/"3F9A0C12DE" is not a line's mark/);
+    expect(() => ledgerCheckMode(["--acknowledge-left-out=3f9a0c12d"])).toThrow(/"3f9a0c12d" is not a line's mark/);
+  });
+
+  it("⛔ --acknowledge-left-out given twice, or beside --lower-marks, is refused: one guarded write a run", () => {
+    expect(() => ledgerCheckMode(["--acknowledge-left-out=3f9a0c12de", "--acknowledge-left-out=0b1c2d3e4f"])).toThrow(
+      /--acknowledge-left-out given 2 times/,
+    );
+    expect(() => ledgerCheckMode(["--lower-marks=accounts", "--acknowledge-left-out=3f9a0c12de", "--confirm"])).toThrow(
+      /--lower-marks and --acknowledge-left-out are two guarded writes/,
+    );
+  });
+
+  it("⛔ --confirm alone names both writes it could confirm", () => {
+    expect(() => ledgerCheckMode(["--confirm"])).toThrow(/--acknowledge-left-out=<mark,\.\.\.>/);
+  });
 });
 
 describe("marksFromRows — reading what the ledger stored", () => {

@@ -560,6 +560,17 @@ account's **id**, never its name; `account_names` only names an account a drop r
 lives in the ledger, not beside it, so a restored snapshot brings back its own marks. Lowered
 only by `pnpm ledger-check --lower-marks=<kind> --confirm`.
 
+### left_out_acknowledgements (migration 0024)
+`id PK · account_id · printed_on · amount_cents · printed_words · printer_sha256 · description ·
+acknowledged_on · created_at` — a line a re-read left out (`linesLeftOut`) that a session
+acknowledged after reading it on the statement (`src/lib/left-out-acknowledgement.ts`, owner
+decision 2026-10-02). `pnpm ledger-check` still lists the line, with `acknowledged_on`, and no
+longer fails on it; /imports and the upload outcome say the day too. Keyed by what the line is
+— account, day, money, printed words, the printing file's sha256 — never a row id; one row per
+line, so two lines alike need two; and it covers only a leaving whose row was written before
+`created_at`. Lives in the ledger, like the marks. Written only by
+`pnpm ledger-check --acknowledge-left-out=<mark> --confirm`.
+
 ## Invariants the test suite enforces
 
 1. Every `reconciled` **cash/credit** statement period: `beginning + Σ(active txns in

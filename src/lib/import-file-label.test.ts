@@ -210,6 +210,7 @@ const OPENING_LEFT_OUT: LineLeftOutFacts = {
   description: "WFB Opening Deposit From Card",
   printedBy: ["wf-export (1).csv"],
   readBy: "wf-export.csv",
+  acknowledgedOn: null,
 };
 
 describe("lineLeftOutNotice — one sentence for the upload outcome, /imports and ledger-check", () => {
@@ -232,6 +233,13 @@ describe("lineLeftOutNotice — one sentence for the upload outcome, /imports an
       "wf-export (1).csv still prints it; no read of the file it came from is imported now, and",
     );
   });
+
+  /* ⚖️ Owner, 2026-10-02 (§6A 30): an acknowledged line is still named — and says on what day it was acknowledged */
+  test("an acknowledged line still says it is left out, and on what day it was acknowledged", () => {
+    expect(lineLeftOutNotice({ ...OPENING_LEFT_OUT, acknowledgedOn: "2026-10-05" })).toBe(
+      `${lineLeftOutNotice(OPENING_LEFT_OUT)} Acknowledged on 2026-10-05 — read on the statement; it stays out.`,
+    );
+  });
 });
 
 describe("leftOutNoticesByRead", () => {
@@ -244,6 +252,12 @@ describe("leftOutNoticesByRead", () => {
     ]);
     expect([...byRead.keys()]).toEqual(["read-1", "read-2"]);
     expect(byRead.get("read-1")).toEqual([lineLeftOutNotice(OPENING_LEFT_OUT), lineLeftOutNotice(second)]);
+  });
+
+  test("/imports says an acknowledged line acknowledged, as the upload outcome and ledger-check do", () => {
+    const acknowledged = { ...OPENING_LEFT_OUT, acknowledgedOn: "2026-10-05", readById: "read-1" };
+    expect(leftOutNoticesByRead([acknowledged]).get("read-1")).toEqual([lineLeftOutNotice(acknowledged)]);
+    expect(leftOutNoticesByRead([acknowledged]).get("read-1")![0]).toContain("Acknowledged on 2026-10-05");
   });
 
   test("a line with no imported read has no row to sit under — ledger-check still names it", () => {

@@ -1,4 +1,5 @@
 import { type LedgerFailure, type LedgerObservation, windowsSpanning } from "./ledger-integrity";
+import { LEFT_OUT_TOKEN } from "./left-out-acknowledgement";
 
 /**
  * A FLOOR under every kind of witness `pnpm ledger-check` counts.
@@ -414,42 +415,83 @@ export function planLowering(
 
 export class WitnessFlagRefusal extends Error {}
 
-export type LedgerCheckMode = { mode: "check" } | { mode: "lower"; kinds: WitnessKind[]; confirm: boolean };
+export type LedgerCheckMode =
+  | { mode: "check" }
+  | { mode: "lower"; kinds: WitnessKind[]; confirm: boolean }
+  | { mode: "acknowledge"; tokens: string[]; confirm: boolean };
 
 const LOWER = "--lower-marks";
+/** ⚖️ Owner, 2026-10-02 (§6A 30): a line left out, acknowledged after a session read it on the statement */
+const ACKNOWLEDGE = "--acknowledge-left-out";
+const WRITES = `${LOWER}=<kind,...> or ${ACKNOWLEDGE}=<mark,...>`;
 
 const isKind = (name: string): name is WitnessKind => (WITNESS_KINDS as readonly string[]).includes(name);
+const isFlag = (arg: string, flag: string): boolean => arg === flag || arg.startsWith(`${flag}=`);
+/** a flag's comma-separated values, the empty ones dropped */
+const valuesOf = (arg: string, flag: string): string[] =>
+  arg
+    .slice(flag.length + 1)
+    .split(",")
+    .filter((v) => v !== "");
 
 /**
  * The command line. ⛔ Anything unrecognised is refused, not ignored: the check
  * reads its database from MONEYAPP_DB_PATH, so `--db=<copy>` — the import
  * scripts' spelling — would otherwise be dropped and the REAL ledger checked.
+ * And one guarded write a run: `--confirm` must never confirm one the session
+ * did not dry-run on its own.
  */
 export function ledgerCheckMode(argv: readonly string[]): LedgerCheckMode {
-  const stray = argv.find((a) => a !== "--confirm" && a !== LOWER && !a.startsWith(`${LOWER}=`));
+  const stray = argv.find((a) => a !== "--confirm" && !isFlag(a, LOWER) && !isFlag(a, ACKNOWLEDGE));
   if (stray !== undefined) {
     throw new WitnessFlagRefusal(
       `unknown argument ${stray} — ledger-check reads its database from MONEYAPP_DB_PATH, and takes only ` +
-        `${LOWER}=<kind,...> [--confirm]`,
+        `${WRITES} [--confirm]`,
     );
   }
   const confirm = argv.includes("--confirm");
-  const lowers = argv.filter((a) => a !== "--confirm");
-  if (lowers.length === 0) {
+  const lowers = argv.filter((a) => isFlag(a, LOWER));
+  const acknowledges = argv.filter((a) => isFlag(a, ACKNOWLEDGE));
+  if (lowers.length === 0 && acknowledges.length === 0) {
     if (confirm) {
-      throw new WitnessFlagRefusal(`--confirm confirms ${LOWER}=<kind,...>, and there is nothing else to confirm`);
+      throw new WitnessFlagRefusal(`--confirm confirms ${WRITES}, and there is nothing else to confirm`);
     }
     return { mode: "check" };
   }
+  if (lowers.length > 0 && acknowledges.length > 0) {
+    throw new WitnessFlagRefusal(`${LOWER} and ${ACKNOWLEDGE} are two guarded writes — run each on its own, so --confirm confirms one`);
+  }
+  return acknowledges.length > 0 ? acknowledgeMode(acknowledges, confirm) : lowerMode(lowers, confirm);
+}
+
+/** `--acknowledge-left-out=<marks>`: each mark the ten hex digits ledger-check prints beside a line (`leftOutToken`). */
+function acknowledgeMode(args: readonly string[], confirm: boolean): LedgerCheckMode {
+  if (args.length > 1) {
+    throw new WitnessFlagRefusal(`${ACKNOWLEDGE} given ${args.length} times — name every line's mark in one: ${ACKNOWLEDGE}=<mark,mark>`);
+  }
+  const tokens = valuesOf(args[0]!, ACKNOWLEDGE);
+  if (tokens.length === 0) {
+    throw new WitnessFlagRefusal(
+      `${ACKNOWLEDGE} needs the marks of the lines to acknowledge: ${ACKNOWLEDGE}=<mark,...>, each the ten hex digits ` +
+        "ledger-check prints beside a line left out",
+    );
+  }
+  const unknown = tokens.find((t) => !LEFT_OUT_TOKEN.test(t));
+  if (unknown !== undefined) {
+    throw new WitnessFlagRefusal(
+      `"${unknown}" is not a line's mark — ledger-check prints each line left out with its own: [line-left-out <ten hex digits>]`,
+    );
+  }
+  return { mode: "acknowledge", tokens: [...new Set(tokens)], confirm };
+}
+
+function lowerMode(lowers: readonly string[], confirm: boolean): LedgerCheckMode {
   if (lowers.length > 1) {
     throw new WitnessFlagRefusal(
       `${LOWER} given ${lowers.length} times — name every kind in one: ${LOWER}=value-anchors,chain-windows`,
     );
   }
-  const names = lowers[0]!
-    .slice(LOWER.length + 1)
-    .split(",")
-    .filter((n) => n !== "");
+  const names = valuesOf(lowers[0]!, LOWER);
   if (names.length === 0) {
     throw new WitnessFlagRefusal(
       `${LOWER} needs the kinds to lower: ${LOWER}=<kind,...>, of ${WITNESS_KINDS.join(", ")}`,

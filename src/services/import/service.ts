@@ -2351,8 +2351,9 @@ function writeMember(db: AppDatabase, member: ReadMember, carryPool: CarryPool, 
 
 /** A line left out, as the upload outcome names it: its facts, and the one sentence every surface prints of them. */
 function leftOutOutcome(line: LineLeftOutFacts & { accountId: string }): LeftOutOutcome {
-  const { accountId, accountName, printedOn, amountCents, description, printedBy, readBy } = line;
-  const facts = { accountName, printedOn, amountCents, description, printedBy, readBy };
+  const { accountId, accountName, printedOn, amountCents, description, printedBy, readBy, acknowledgedOn } = line;
+  // ⚖️ owner decision 2026-10-02: a line a session acknowledged says on what day here too — the ledger's own answer
+  const facts = { accountName, printedOn, amountCents, description, printedBy, readBy, acknowledgedOn };
   return { accountId, ...facts, notice: lineLeftOutNotice(facts) };
 }
 

@@ -249,6 +249,11 @@ export interface LineLeftOutFacts {
   readonly printedBy: readonly string[];
   /** the file the retired row was read from, while a read of it is imported — the read that left the line out */
   readonly readBy: string | null;
+  /**
+   * the day a session, having read it on the statement, acknowledged it — null while nobody has
+   * (`lib/left-out-acknowledgement.ts`, owner decision 2026-10-02)
+   */
+  readonly acknowledgedOn: string | null;
 }
 
 /**
@@ -257,14 +262,17 @@ export interface LineLeftOutFacts {
  *
  * ⚖️ Owner, 2026-09-28: the row stays out — the ledger never adds money on a guess — so the notice says which money,
  * which file still prints it and which read no longer does, and does not offer to put it back.
+ * ⚖️ Owner, 2026-10-02 (§6A 30): one a session acknowledged after reading it on the statement is still named — left out
+ * is still true — and says on what day.
  */
 export function lineLeftOutNotice(facts: LineLeftOutFacts): string {
   const [printers, print] = [facts.printedBy.join(", "), facts.printedBy.length === 1 ? "prints" : "print"];
   const newest = facts.readBy === null ? "no read of the file it came from is imported now" : `the newest read of ${facts.readBy} does not`;
+  const acknowledged = facts.acknowledgedOn === null ? "" : ` Acknowledged on ${facts.acknowledgedOn} — read on the statement; it stays out.`;
   return (
     `Left out of the ledger: ${formatCentsSigned(facts.amountCents)} on ${facts.printedOn}, ${facts.description}, ` +
     `on ${facts.accountName}. ${printers} still ${print} it; ${newest}, and the row an earlier read wrote for it is ` +
-    "retired — not written back on a guess."
+    `retired — not written back on a guess.${acknowledged}`
   );
 }
 
