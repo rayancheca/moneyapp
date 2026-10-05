@@ -17,6 +17,9 @@ import { institutions } from "@/db/schema/institutions";
 import { transactions } from "@/db/schema/transactions";
 import { transactionSplits } from "@/db/schema/transaction-splits";
 import { provenanceTriggerName, type PresentedVerdict } from "@/lib/provenance-verdict";
+import { addManualAnchor } from "./anchors";
+import { createCashWallet } from "./cash-wallets";
+import { addManualTransaction } from "./manual-transactions";
 import { provenanceFor, weakestVerdict, type ProvenanceVerdict } from "./provenance";
 
 /**
@@ -2839,57 +2842,80 @@ describe("provenanceFor — a balance he typed checks nothing", () => {
   });
 
   /*
-   * 🔴 A RECOUNT THAT DOES NOT RECONCILE, DATED PAST ITS BREAK. §6A 33's first cut read `footingBounds`, whose count
-   * branch takes a `broken` account too, so every day of a wallet whose recount missed — gap days included — read
-   * "Checked through 2026-09-09" and "…the last day Cash on Hand rests on the balance you counted". Measured
-   * 2026-10-05 on a temp ledger through the real services (`createCashWallet` $5,000.00 for Aug 3, −$5,000.00 on
-   * Aug 11, `addManualAnchor` $40.00 for Sep 1, −$10.00 on Sep 10): grade broken since Aug 4, and Aug 20 read "Money
-   * is provably missing … around Aug 20, 2026" beside a date three weeks past it. Net worth's line for it says
-   * "stopped adding up on Aug 4, 2026", and `countFooting` — the reading every sentence about his count is worded
-   * from — refuses a broken account. Before §6A 33: no date.
+   * 🔴 A RECOUNT THAT DOES NOT RECONCILE, DATED BY TWO RULES. `footingThrough`'s count branch took a `broken` account
+   * and `countFooting` refused it, so one wallet carried two answers. Measured 2026-10-05 on a temp ledger through the
+   * real services (below): grade broken since Aug 4. "2 transactions landed", net worth and the trust card read
+   * "Checked through 2026-09-09" and "…the last day Cash on Hand rests on the balance you counted" — five weeks past
+   * the break net worth's own line names ("stopped adding up on Aug 4, 2026") — while every day of its balance proof
+   * and both rows' sheets printed no date at all.
    *
-   * ⛔ Only an account the app says rests on his count takes his count's day and sentence; a broken one keeps its
-   * own chain's date (nothing closes on this one, so none).
+   * ⚖️ His answer, 2026-10-05: a typed-balance account that BREAKS bounds every "checked through" date the DAY BEFORE
+   * IT BROKE, with a sentence saying it broke after that — as a statement chain's `verifiedThrough` stops before its
+   * break. ⛔ One rule (`footingThrough`), one day and one sentence on every proof that names it.
    */
-  test("a wallet whose recount does not add up is not dated by his count on any day, its broken days included", () => {
-    const id = addAccount("recount", "Cash on Hand", "checking");
-    addAnchor(id, "2026-08-03", "manual");
-    addAnchor(id, "2026-09-01", "manual");
-    addDays(id, [
-      { day: "2026-08-03", basis: "anchored" },
-      { day: "2026-08-04", basis: "gap" },
-      { day: "2026-08-11", basis: "gap" },
-      { day: "2026-08-20", basis: "gap" },
-      { day: "2026-09-01", basis: "anchored" },
-      { day: "2026-09-05", basis: "carried" },
-      { day: "2026-09-10", basis: "derived_unverified" },
-    ]);
-    const downPayment = addTxn(id, "2026-08-11"); // entered by hand
-    const later = addTxn(id, "2026-09-10");
+  const BROKEN_NOTE =
+    " The date it is checked through, Aug 3, 2026, is the last day Cash on Hand rests on the balance you counted — your word, not a check — before it stopped adding up on Aug 4, 2026.";
 
+  // as he did it: $5,000.00 counted for Aug 3, the down payment by hand, a $40.00 recount that does not add up
+  function brokenWallet({ spentAfterRecount }: { spentAfterRecount: boolean }): string {
+    const id = createCashWallet(bundle.db, { name: "Cash on Hand", openingOn: "2026-08-04", openingBalanceCents: 500_000 });
+    addManualTransaction(bundle.db, { accountId: id, postedOn: "2026-08-11", amountCents: -500_000, description: "Car down payment" });
+    addManualAnchor(bundle.db, { accountId: id, anchoredOn: "2026-09-01", enteredCents: 4_000 });
+    if (spentAfterRecount) {
+      addManualTransaction(bundle.db, { accountId: id, postedOn: "2026-09-10", amountCents: -1_000, description: "Lunch" });
+    }
+    return id;
+  }
+
+  test("a wallet whose recount does not add up is checked through the day before it broke, on every proof", () => {
+    const id = brokenWallet({ spentAfterRecount: true });
     expect(balance(id, "2026-08-20").verdict).toBe("broken");
-    for (const day of ["2026-08-03", "2026-08-20", "2026-09-01", "2026-09-05", "2026-09-10"]) {
-      const p = balance(id, day);
-      expect(p.checkedThrough, day).toBeNull();
-      expect(p.headline, day).not.toMatch(/your word, not a check/);
+
+    const proofs: [string, ReturnType<typeof balance>][] = [
+      ...["2026-08-03", "2026-08-20", "2026-09-01", "2026-09-05", "2026-09-10"].map(
+        (day): [string, ReturnType<typeof balance>] => [`balance on ${day}`, balance(id, day)],
+      ),
+      ["balance today", provenanceFor(bundle.db, { kind: "accountBalance", accountId: id })!],
+      ["its rows", provenanceFor(bundle.db, { kind: "accountRows", accountId: id })!],
+      ...rowsOf(id).map((row): [string, ReturnType<typeof balance>] => [
+        `sheet of ${row}`,
+        provenanceFor(bundle.db, { kind: "transaction", id: row })!,
+      ]),
+      ["net worth", provenanceFor(bundle.db, { kind: "netWorth", day: "2026-09-16" })!],
+    ];
+    for (const [label, p] of proofs) {
+      expect(p.checkedThrough, label).toBe("2026-08-03");
+      expect(p.headline.endsWith(BROKEN_NOTE), `${label}: ${p.headline}`).toBe(true);
     }
-    const newest = provenanceFor(bundle.db, { kind: "accountBalance", accountId: id })!;
-    expect(newest.checkedThrough).toBeNull();
-    expect(newest.headline).not.toMatch(/your word, not a check/);
-    // ⚖️ 2026-10-05: a row's sheet takes his count's day by the balance's rule — so not here either
-    for (const row of [downPayment, later]) {
-      const sheet = provenanceFor(bundle.db, { kind: "transaction", id: row })!;
-      expect(sheet.checkedThrough, row).toBeNull();
-      expect(sheet.headline, row).toBe(
-        "You entered this row by hand. No statement carries it, so nothing else can confirm it.",
-      );
-    }
-    // ⚖️ …and the balance its replay missed is named by his verb (his answer, 2026-10-05)
+
+    // each day still says what it is; the sentence after it says where the date stops, and why
     expect(balance(id, "2026-08-20").headline).toBe(
-      "The replay did NOT land on Cash on Hand's next balance, the one you counted on Sep 1, 2026. Money is provably missing or double-counted around Aug 20, 2026.",
+      `The replay did NOT land on Cash on Hand's next balance, the one you counted on Sep 1, 2026. Money is provably missing or double-counted around Aug 20, 2026.${BROKEN_NOTE}`,
     );
-    // the line the same app prints for it names the break, not a count
+    const [downPayment] = rowsOf(id);
+    expect(provenanceFor(bundle.db, { kind: "transaction", id: downPayment! })!.headline).toBe(
+      `You entered this row by hand. No statement carries it, so nothing else can confirm it.${BROKEN_NOTE}`,
+    );
+    // the words net worth's line for it prints, which the sentence borrows
     const line = provenanceFor(bundle.db, { kind: "netWorth", day: "2026-09-16" })!.inputs.find((i) => i.id === id)!;
     expect(line.detail).toBe("stopped adding up on Aug 4, 2026");
+  });
+
+  /*
+   * 🔴 …and with nothing spent past the recount the break dated nothing: resting on his count to its newest day, the
+   * wallet "bounds nothing", so net worth dated the picture by its other accounts — or not at all — beside its own line
+   * "stopped adding up on Aug 4, 2026".
+   */
+  test("a wallet resting on a recount that does not add up still bounds the picture the day before it broke", () => {
+    const id = brokenWallet({ spentAfterRecount: false });
+
+    for (const p of [
+      provenanceFor(bundle.db, { kind: "netWorth", day: "2026-09-16" })!,
+      provenanceFor(bundle.db, { kind: "accountBalance", accountId: id })!,
+      provenanceFor(bundle.db, { kind: "accountRows", accountId: id })!,
+    ]) {
+      expect(p.checkedThrough).toBe("2026-08-03");
+      expect(p.headline.endsWith(BROKEN_NOTE), p.headline).toBe(true);
+    }
   });
 });

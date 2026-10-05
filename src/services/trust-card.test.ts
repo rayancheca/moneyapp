@@ -462,6 +462,40 @@ describe("trustCard — checked through", () => {
     );
   });
 
+  /*
+   * 🔴 …AND A RECOUNT THAT DOES NOT ADD UP DATED IT PAST ITS BREAK. The count's rule took a broken wallet as if his
+   * count still stood: "checked through" the day before the run open past the recount, beside its own line "stopped
+   * adding up on Aug 4, 2026" (temp ledger through the real services, 2026-10-05). ⚖️ His answer, 2026-10-05: it
+   * bounds the picture the day before it broke, and the sentence says it broke after that.
+   */
+  test("a wallet whose recount does not add up bounds the picture the day before it broke, and says so", () => {
+    addAccount("coh", "Cash on Hand", "checking");
+    for (const day of ["2026-08-03", "2026-08-20"]) {
+      bundle.db
+        .insert(balanceAnchors)
+        .values({ accountId: "coh", anchoredOn: day, balanceCents: 500000, source: "manual", createdAt: now(), updatedAt: now() })
+        .run();
+    }
+    addDays("coh", [
+      { day: "2026-08-03", basis: "anchored" },
+      { day: "2026-08-04", basis: "gap" },
+      { day: "2026-08-11", basis: "gap" },
+      { day: "2026-08-20", basis: "anchored" },
+      { day: "2026-08-21", basis: "carried" },
+      { day: "2026-08-24", basis: "derived_unverified" },
+    ]);
+    addTxn("coh", "2026-08-11");
+    addTxn("coh", "2026-08-24");
+
+    const card = trustCard(bundle.db, TODAY)!;
+    expect(card.checkedThrough).toBe("2026-08-03");
+    const line = card.groups.flatMap((g) => g.accounts).find((a) => a.name === "Cash on Hand")!;
+    expect(line.detail).toBe("stopped adding up on Aug 4, 2026");
+    expect(card.summary).toMatch(
+      / The date it is checked through, Aug 3, 2026, is the last day Cash on Hand rests on the balance you counted — your word, not a check — before it stopped adding up on Aug 4, 2026\.$/,
+    );
+  });
+
   test("nothing verified means no date at all, never today", () => {
     addAccount("a", "Robinhood Cash", "checking");
     addDays("a", [{ day: "2026-08-02", basis: "derived_unverified" }]);

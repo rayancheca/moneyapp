@@ -14,8 +14,10 @@ import { BALANCE_BASES } from "@/db/schema/balances";
 import { ACCOUNT_TYPES } from "@/db/schema/accounts";
 import { beforeFirstBalance } from "@/lib/coverage-detail";
 import { addManualAnchor } from "./anchors";
-import { accountCoverage, balanceDayIsExact, basisIsChecked } from "./coverage";
+import { createCashWallet } from "./cash-wallets";
+import { accountCoverage, balanceDayIsExact, basisIsChecked, footingThrough } from "./coverage";
 import { rebuildAccount } from "./derivation";
+import { addManualTransaction } from "./manual-transactions";
 
 /**
  * Coverage grading exists because the two questions "is this account's money
@@ -881,6 +883,56 @@ describe("two counts of his do not check each other, through the rebuild", () =>
     expect(c.chainOpensOn).toBe("2026-08-06");
     // a count with a closed chain after it is not what the newest days stand on
     expect(c.countedOn).toBeNull();
+  });
+});
+
+describe("footingThrough — where a figure on one account stops being checked", () => {
+  /*
+   * ⚖️ His answer, 2026-10-05: a typed-balance account that BREAKS bounds every "checked through" date the day before
+   * it broke, as a statement chain's `verifiedThrough` stops before its break. 🔴 The count branch took a `broken`
+   * wallet as if his count still stood, and dated it the day before the run open past his RECOUNT — 2026-09-09 of a
+   * wallet broken since Aug 4 (temp ledger through the real services, 2026-10-05) — and, with no run open past the
+   * recount, did not bound it at all.
+   */
+  function wallet({ recount, spentAfter }: { recount: boolean; spentAfter: boolean }) {
+    const id = createCashWallet(bundle.db, { name: "Cash on Hand", openingOn: "2026-08-04", openingBalanceCents: 500_000 });
+    addManualTransaction(bundle.db, { accountId: id, postedOn: "2026-08-11", amountCents: -500_000, description: "Car" });
+    if (recount) addManualAnchor(bundle.db, { accountId: id, anchoredOn: "2026-09-01", enteredCents: 4_000 });
+    if (spentAfter) {
+      addManualTransaction(bundle.db, { accountId: id, postedOn: "2026-09-10", amountCents: -1_000, description: "Lunch" });
+    }
+    return only(id);
+  }
+
+  test("a wallet whose recount does not add up stops the day before it broke, his count's day, and says it broke", () => {
+    const c = wallet({ recount: true, spentAfter: true });
+    expect(c.grade).toBe("broken");
+    expect(c.brokenSince).toBe("2026-08-04");
+    expect(footingThrough(c)).toEqual({ day: "2026-08-03", byCount: true, brokeOn: "2026-08-04" });
+  });
+
+  test("…as it does resting on that recount to its newest day", () => {
+    const c = wallet({ recount: true, spentAfter: false });
+    expect(c.grade).toBe("broken");
+    expect(c.uncheckedSince).toBeNull();
+    expect(footingThrough(c)).toEqual({ day: "2026-08-03", byCount: true, brokeOn: "2026-08-04" });
+  });
+
+  test("a wallet that adds up stops the day before nothing stands under his count, and broke nowhere", () => {
+    const c = wallet({ recount: false, spentAfter: false });
+    expect(c.grade).toBe("unverified");
+    expect(footingThrough(c)).toEqual({ day: "2026-08-10", byCount: true, brokeOn: null });
+  });
+
+  test("a statement chain that breaks keeps its own last closed day, a check's", () => {
+    const c = runCoverage([
+      { day: "2026-07-01", basis: "anchored" },
+      { day: "2026-07-10", basis: "derived" },
+      { day: "2026-07-15", basis: "gap" },
+      { day: "2026-08-01", basis: "anchored" },
+    ]);
+    expect(c.grade).toBe("broken");
+    expect(footingThrough(c)).toEqual({ day: "2026-07-10", byCount: false, brokeOn: null });
   });
 });
 

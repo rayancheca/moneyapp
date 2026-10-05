@@ -1,5 +1,5 @@
 import { and, asc, count, desc, eq, inArray, lte, gte, ne, sum } from "drizzle-orm";
-import { countFooting, unverifiedDetail } from "@/lib/coverage-detail";
+import { unverifiedDetail } from "@/lib/coverage-detail";
 import { formatDayFull } from "@/lib/format-date";
 import type { AppDatabase } from "@/db/client";
 import { accounts, type AccountType } from "@/db/schema/accounts";
@@ -20,7 +20,14 @@ import { ledgerOpens, ledgerReaches } from "./observation-frontier";
 import { outsidePortfolioCashAccountIds, ownPortfolioAccountIds } from "./accounts";
 import { activeTxnsInRange, loadCategoryIndex, offAgentsCash, spendingBucket, uncategorizedWhere } from "./analytics";
 import { handTypedDays, keptOpeningOf } from "./anchor-winners";
-import { accountCoverage, chainFooting, footingThrough, type AccountCoverage, type CoverageGrade } from "./coverage";
+import {
+  accountCoverage,
+  chainFooting,
+  footingThrough,
+  type AccountCoverage,
+  type CoverageGrade,
+  type Footing,
+} from "./coverage";
 import {
   derivesFromHoldings,
   heldBalanceAnchor,
@@ -888,12 +895,15 @@ function accountBalanceProvenance(db: AppDatabase, accountId: string, day: strin
    * without the sentence would print his word as a check. Only an account whose footing is his count moves — the
    * sentence is empty for any other, and its date stays the newest day its own chain closes.
    *
-   * 🔴 …and "whose footing is his count" is `countFooting`'s to say, not `footingBounds`' alone: its count branch
-   * takes a `broken` account too, so a wallet whose recount did not reconcile read "Checked through 2026-09-09" and
-   * "…rests on the balance you counted" on every day, a gap day "Money is provably missing … around Aug 20, 2026"
-   * included (temp ledger 2026-10-05: $5,000.00 counted for Aug 3, −$5,000.00 Aug 11, $40.00 counted for Sep 1, −$10.00
-   * Sep 10 — broken since Aug 4). ⛔ The reading every sentence about his count is worded from refuses a broken
-   * account, and net worth's line names its break; it keeps its own chain's date.
+   * 🔴 …and a wallet whose recount did not reconcile read "Checked through 2026-09-09" and "…rests on the balance you
+   * counted" on every day, a gap day "Money is provably missing … around Aug 20, 2026" included (temp ledger
+   * 2026-10-05: $5,000.00 counted for Aug 3, −$5,000.00 Aug 11, $40.00 counted for Sep 1, −$10.00 Sep 10 — broken since
+   * Aug 4), because `footingThrough`'s count branch took a broken account; the first fix gated this proof alone, and
+   * left it undated beside rows and a net worth still dated Sep 9.
+   *
+   * ⚖️ His answer, 2026-10-05: a count that BREAKS dates every figure on it the day before it broke — here Aug 3,
+   * with "…before it stopped adding up on Aug 4, 2026" — and `footingThrough` is that one rule, so this proof, its
+   * rows, a row's sheet and net worth cannot answer apart.
    */
   const dated = chain === null ? null : datedByCount(db, account.id);
 
@@ -917,20 +927,25 @@ function accountBalanceProvenance(db: AppDatabase, accountId: string, day: strin
 
 /**
  * The day and the sentence a proof about ONE account's own figures takes when its days rest on a balance he TYPED
- * — `footingBounds` over that one account, when `countFooting` says they rest on his count — or null when they do
- * not. Its balance proof (`accountBalanceProvenance`) and a row's own sheet (`transactionProvenance`) read this.
+ * — `footingBounds` over that one account, when it says the day is his count's — or null when it is not. Its balance
+ * proof (`accountBalanceProvenance`) and a row's own sheet (`transactionProvenance`) read this.
  *
  * ⛔ One function, because the second proof of the same count was the one left undated (a row's sheet, his answer
- * 2026-10-05 — see `transactionProvenance`), and §6A 33's first cut, reading `footingBounds` without `countFooting`,
- * dated a broken wallet by his count: a second copy of the gate would be the next one to drift.
+ * 2026-10-05 — see `transactionProvenance`).
+ *
+ * 🔴 …and no gate of its own. §6A 33's review gated this on `countFooting` because `footingThrough` took a broken
+ * wallet as if his count still stood; that left the wallet's balance and its rows' sheets undated beside a rows proof
+ * and a net worth dated five weeks past its break. ⚖️ His answer, 2026-10-05: a count that broke stops the day before
+ * it broke — `footingThrough` now says so, and reads `countFooting` itself — so "whose footing is his count" is that
+ * one rule's to say, and a second copy of it here would be the next one to drift.
  *
  * ⛔ The day and the sentence travel together: a caller printing the day without the sentence would print his word
- * as a check. `countFooting` refuses a broken account, whose own line names its break (review of §6A 33); an
- * account resting on his count to its newest day bounds nothing, as in net worth, so `footingBounds` gives no note.
+ * as a check. An account resting on his count to its newest day, unbroken, bounds nothing, as in net worth, so
+ * `footingBounds` gives no note; a check's day gives none either, and keeps the proof's own date.
  */
 function datedByCount(db: AppDatabase, accountId: string): { through: string; note: string } | null {
   const own = accountCoverage(db).find((c) => c.accountId === accountId);
-  if (own === undefined || countFooting(own) === null) return null;
+  if (own === undefined) return null;
   const footing = footingBounds([own]);
   return footing.through === null || footing.note === "" ? null : { through: footing.through, note: footing.note };
 }
@@ -1134,20 +1149,24 @@ function statementPeriodProvenance(db: AppDatabase, id: string): Provenance | nu
  *
  * ⚖️ …and so does ONE account's balance proof when what it stands on is his count (`accountBalanceProvenance`, his
  * call 2026-10-02, handoff §6A 33): it printed no date beside a rows proof and a net worth that dated the same count.
+ *
+ * ⚖️ A count that BROKE stops the day before it broke, and the sentence says it broke after that, in net worth's
+ * words for it ("stopped adding up on <day>") — his answer, 2026-10-05; `footingThrough` has the rule.
  */
 export function footingBounds(coverage: readonly AccountCoverage[]): { through: string | null; note: string } {
   const bounds = coverage
     .map((c) => ({ name: c.accountName, bound: footingThrough(c) }))
-    .filter((b): b is { name: string; bound: { day: string; byCount: boolean } } => b.bound !== null)
+    .filter((b): b is { name: string; bound: Footing } => b.bound !== null)
     .sort((a, b) => (a.bound.day < b.bound.day ? -1 : a.bound.day > b.bound.day ? 1 : 0));
   const through = bounds[0]?.bound.day ?? null;
   // a check stopping the same day does not make the day a check: his count still stops there
   const byCount = through === null ? undefined : bounds.find((b) => b.bound.day === through && b.bound.byCount);
+  if (byCount === undefined) return { through, note: "" };
+  const { name, bound } = byCount;
+  const broke = bound.brokeOn === null ? "" : ` — before it stopped adding up on ${readableDay(bound.brokeOn)}`;
   return {
     through,
-    note: byCount
-      ? ` The date it is checked through, ${readableDay(byCount.bound.day)}, is the last day ${byCount.name} rests on the balance you counted — your word, not a check.`
-      : "",
+    note: ` The date it is checked through, ${readableDay(bound.day)}, is the last day ${name} rests on the balance you counted — your word, not a check${broke}.`,
   };
 }
 
