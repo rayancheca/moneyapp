@@ -1,5 +1,6 @@
 import { describe, expect, test } from "vitest";
 import {
+  acknowledgedSentence,
   importRowQualifiers,
   importRowSubject,
   leftOutNoticesByRead,
@@ -210,7 +211,13 @@ const OPENING_LEFT_OUT: LineLeftOutFacts = {
   description: "WFB Opening Deposit From Card",
   printedBy: ["wf-export (1).csv"],
   readBy: "wf-export.csv",
-  acknowledgedOn: null,
+  acknowledged: null,
+};
+
+/** what a session wrote, having read the line on its statement (`--reason`) */
+const READ_IT = {
+  on: "2026-10-05",
+  reason: "July statement, page 1: the bank's opening deposit, reversed the same day by the card it came from",
 };
 
 describe("lineLeftOutNotice — one sentence for the upload outcome, /imports and ledger-check", () => {
@@ -234,11 +241,28 @@ describe("lineLeftOutNotice — one sentence for the upload outcome, /imports an
     );
   });
 
-  /* ⚖️ Owner, 2026-10-02 (§6A 30): an acknowledged line is still named — and says on what day it was acknowledged */
-  test("an acknowledged line still says it is left out, and on what day it was acknowledged", () => {
-    expect(lineLeftOutNotice({ ...OPENING_LEFT_OUT, acknowledgedOn: "2026-10-05" })).toBe(
-      `${lineLeftOutNotice(OPENING_LEFT_OUT)} Acknowledged on 2026-10-05 — read on the statement; it stays out.`,
+  /*
+   * ⚖️ Owner, 2026-10-02 (§6A 30): an acknowledged line is still named — and says on what day it was acknowledged.
+   * ⛔ And WHY: "an entry without a reason is a check that has been quieted" (ledger-check's BASELINE) — so it says what
+   * the session read on the statement, in its own words.
+   */
+  test("an acknowledged line still says it is left out, on what day it was acknowledged, and what was read", () => {
+    expect(lineLeftOutNotice({ ...OPENING_LEFT_OUT, acknowledged: READ_IT })).toBe(
+      `${lineLeftOutNotice(OPENING_LEFT_OUT)} Acknowledged on 2026-10-05: July statement, page 1: the bank's opening ` +
+        "deposit, reversed the same day by the card it came from.",
     );
+  });
+});
+
+describe("acknowledgedSentence — one phrasing wherever an acknowledgement is printed", () => {
+  test("the day, then the reason, as a sentence", () => {
+    expect(acknowledgedSentence(READ_IT)).toBe(`Acknowledged on 2026-10-05: ${READ_IT.reason}.`);
+  });
+
+  test("a reason that ends its own sentence is not given a second stop", () => {
+    for (const reason of ["Printed on the July statement.", "Is it the reversal? Yes!", "Printed twice?"]) {
+      expect(acknowledgedSentence({ on: "2026-10-05", reason })).toBe(`Acknowledged on 2026-10-05: ${reason}`);
+    }
   });
 });
 
@@ -254,10 +278,10 @@ describe("leftOutNoticesByRead", () => {
     expect(byRead.get("read-1")).toEqual([lineLeftOutNotice(OPENING_LEFT_OUT), lineLeftOutNotice(second)]);
   });
 
-  test("/imports says an acknowledged line acknowledged, as the upload outcome and ledger-check do", () => {
-    const acknowledged = { ...OPENING_LEFT_OUT, acknowledgedOn: "2026-10-05", readById: "read-1" };
+  test("/imports says an acknowledged line acknowledged, and why, as the upload outcome and ledger-check do", () => {
+    const acknowledged = { ...OPENING_LEFT_OUT, acknowledged: READ_IT, readById: "read-1" };
     expect(leftOutNoticesByRead([acknowledged]).get("read-1")).toEqual([lineLeftOutNotice(acknowledged)]);
-    expect(leftOutNoticesByRead([acknowledged]).get("read-1")![0]).toContain("Acknowledged on 2026-10-05");
+    expect(leftOutNoticesByRead([acknowledged]).get("read-1")![0]).toContain(`Acknowledged on 2026-10-05: ${READ_IT.reason}.`);
   });
 
   test("a line with no imported read has no row to sit under — ledger-check still names it", () => {

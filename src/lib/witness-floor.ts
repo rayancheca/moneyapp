@@ -418,12 +418,20 @@ export class WitnessFlagRefusal extends Error {}
 export type LedgerCheckMode =
   | { mode: "check" }
   | { mode: "lower"; kinds: WitnessKind[]; confirm: boolean }
-  | { mode: "acknowledge"; tokens: string[]; confirm: boolean };
+  // ⛔ `--confirm` only WITH a reason — the type says so, so the write is never reached without one
+  | { mode: "acknowledge"; tokens: string[]; confirm: false; reason: string | null }
+  | { mode: "acknowledge"; tokens: string[]; confirm: true; reason: string };
 
 const LOWER = "--lower-marks";
 /** ⚖️ Owner, 2026-10-02 (§6A 30): a line left out, acknowledged after a session read it on the statement */
 const ACKNOWLEDGE = "--acknowledge-left-out";
-const WRITES = `${LOWER}=<kind,...> or ${ACKNOWLEDGE}=<mark,...>`;
+/**
+ * What the session read on the statement, stored with the acknowledgement and printed with the line. ⛔ Required by
+ * `--confirm`: "an entry without a reason is a check that has been quieted rather than passed" (ledger-check's BASELINE).
+ */
+const REASON = "--reason";
+const SAYS = `${REASON}='<what the statement shows>'`;
+const WRITES = `${LOWER}=<kind,...> or ${ACKNOWLEDGE}=<mark> ${SAYS}`;
 
 const isKind = (name: string): name is WitnessKind => (WITNESS_KINDS as readonly string[]).includes(name);
 const isFlag = (arg: string, flag: string): boolean => arg === flag || arg.startsWith(`${flag}=`);
@@ -439,10 +447,11 @@ const valuesOf = (arg: string, flag: string): string[] =>
  * reads its database from MONEYAPP_DB_PATH, so `--db=<copy>` — the import
  * scripts' spelling — would otherwise be dropped and the REAL ledger checked.
  * And one guarded write a run: `--confirm` must never confirm one the session
- * did not dry-run on its own.
+ * did not dry-run on its own. A `--reason` with no acknowledgement to store it
+ * is refused too, never dropped.
  */
 export function ledgerCheckMode(argv: readonly string[]): LedgerCheckMode {
-  const stray = argv.find((a) => a !== "--confirm" && !isFlag(a, LOWER) && !isFlag(a, ACKNOWLEDGE));
+  const stray = argv.find((a) => a !== "--confirm" && !isFlag(a, LOWER) && !isFlag(a, ACKNOWLEDGE) && !isFlag(a, REASON));
   if (stray !== undefined) {
     throw new WitnessFlagRefusal(
       `unknown argument ${stray} — ledger-check reads its database from MONEYAPP_DB_PATH, and takes only ` +
@@ -452,6 +461,10 @@ export function ledgerCheckMode(argv: readonly string[]): LedgerCheckMode {
   const confirm = argv.includes("--confirm");
   const lowers = argv.filter((a) => isFlag(a, LOWER));
   const acknowledges = argv.filter((a) => isFlag(a, ACKNOWLEDGE));
+  const reasons = argv.filter((a) => isFlag(a, REASON));
+  if (reasons.length > 0 && acknowledges.length === 0) {
+    throw new WitnessFlagRefusal(`${REASON} is stored by ${ACKNOWLEDGE} with the line it acknowledges, and there is no ${ACKNOWLEDGE} here`);
+  }
   if (lowers.length === 0 && acknowledges.length === 0) {
     if (confirm) {
       throw new WitnessFlagRefusal(`--confirm confirms ${WRITES}, and there is nothing else to confirm`);
@@ -461,11 +474,32 @@ export function ledgerCheckMode(argv: readonly string[]): LedgerCheckMode {
   if (lowers.length > 0 && acknowledges.length > 0) {
     throw new WitnessFlagRefusal(`${LOWER} and ${ACKNOWLEDGE} are two guarded writes — run each on its own, so --confirm confirms one`);
   }
-  return acknowledges.length > 0 ? acknowledgeMode(acknowledges, confirm) : lowerMode(lowers, confirm);
+  return acknowledges.length > 0 ? acknowledgeMode(acknowledges, reasons, confirm) : lowerMode(lowers, confirm);
 }
 
-/** `--acknowledge-left-out=<marks>`: each mark the ten hex digits ledger-check prints beside a line (`leftOutToken`). */
-function acknowledgeMode(args: readonly string[], confirm: boolean): LedgerCheckMode {
+/**
+ * `--reason='<what the statement shows>'`, kept whole — commas, colons and equals signs are the session's words — on
+ * one line, every run of whitespace one space: it is printed inside a sentence. Null when none is given.
+ */
+function reasonOf(args: readonly string[]): string | null {
+  if (args.length === 0) return null;
+  if (args.length > 1) {
+    throw new WitnessFlagRefusal(`${REASON} given ${args.length} times — one acknowledgement, one reason: ${SAYS}`);
+  }
+  const reason = args[0]!.slice(REASON.length + 1).replace(/\s+/g, " ").trim();
+  if (reason === "") {
+    throw new WitnessFlagRefusal(`${REASON} needs what the session read on the statement: ${SAYS}`);
+  }
+  return reason;
+}
+
+/**
+ * `--acknowledge-left-out=<marks>`: each mark the ten hex digits ledger-check prints beside a line (`leftOutToken`).
+ *
+ * ⛔ `--confirm` needs `--reason`, and a reason names ONE line: given beside two marks it would be stored with a line it
+ * does not describe. Two lines alike share one mark, and so one reason: they read the same on the statement.
+ */
+function acknowledgeMode(args: readonly string[], reasons: readonly string[], confirm: boolean): LedgerCheckMode {
   if (args.length > 1) {
     throw new WitnessFlagRefusal(`${ACKNOWLEDGE} given ${args.length} times — name every line's mark in one: ${ACKNOWLEDGE}=<mark,mark>`);
   }
@@ -482,7 +516,22 @@ function acknowledgeMode(args: readonly string[], confirm: boolean): LedgerCheck
       `"${unknown}" is not a line's mark — ledger-check prints each line left out with its own: [line-left-out <ten hex digits>]`,
     );
   }
-  return { mode: "acknowledge", tokens: [...new Set(tokens)], confirm };
+  const marks = [...new Set(tokens)];
+  const reason = reasonOf(reasons);
+  if (reason !== null && marks.length > 1) {
+    throw new WitnessFlagRefusal(
+      `${REASON} says what ONE line is on its statement — ${marks.length} marks given: acknowledge each in its own run, ` +
+        `with its own ${REASON}`,
+    );
+  }
+  if (!confirm) return { mode: "acknowledge", tokens: marks, confirm, reason };
+  if (reason === null) {
+    throw new WitnessFlagRefusal(
+      `--confirm records an acknowledgement, and one needs ${SAYS} — what the session read on the statement, stored ` +
+        "and printed with the line: an acknowledgement without a reason is a check quieted, not passed. Nothing was written",
+    );
+  }
+  return { mode: "acknowledge", tokens: marks, confirm, reason };
 }
 
 function lowerMode(lowers: readonly string[], confirm: boolean): LedgerCheckMode {

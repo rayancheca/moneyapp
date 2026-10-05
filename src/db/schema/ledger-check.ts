@@ -46,7 +46,12 @@ export const ledgerWitnessMarks = sqliteTable("ledger_witness_marks", {
  * with, and a rehearsal copy acknowledges in the copy, never in the ledger.
  *
  * ⛔ Keyed by what the line IS — its account, day, money, printed words and the printing file's bytes — never by a row
- * id, which a later re-read replaces. Written only by `pnpm ledger-check --acknowledge-left-out=<mark> --confirm`.
+ * id, which a later re-read replaces. Written only by
+ * `pnpm ledger-check --acknowledge-left-out=<mark> --reason='<what the statement shows>' --confirm`.
+ *
+ * ⛔ Never without its `reason`: "an entry without a reason is a check that has been quieted rather than passed"
+ * (ledger-check's BASELINE). An acknowledgement stops a finding failing, so it keeps what the session read on the
+ * statement, and every surface prints it with the line (`acknowledgedSentence`).
  */
 export const leftOutAcknowledgements = sqliteTable("left_out_acknowledgements", {
   id: id(),
@@ -62,6 +67,8 @@ export const leftOutAcknowledgements = sqliteTable("left_out_acknowledgements", 
   description: text("description").notNull(),
   /** the day it was acknowledged, as the ledger's surfaces say it */
   acknowledgedOn: text("acknowledged_on").notNull(),
+  /** what the session read on the statement, in its words (`--reason`) — printed with the line wherever it is printed */
+  reason: text("reason").notNull(),
   /** the moment it was recorded: it covers a leaving whose row was written before it, never a later one */
   createdAt: createdAt(),
 });

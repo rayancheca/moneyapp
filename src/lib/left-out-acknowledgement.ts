@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { augment, type Matching } from "@/services/import/printed-lines";
-import { lineLeftOutNotice, type LineLeftOutFacts } from "./import-file-label";
+import { acknowledgedSentence, lineLeftOutNotice, type Acknowledged, type LineLeftOutFacts } from "./import-file-label";
 import { formatCentsSigned } from "./money";
 
 /**
@@ -12,6 +12,10 @@ import { formatCentsSigned } from "./money";
  * then `--confirm` — kept in the ledger (`left_out_acknowledgements`), never a committed file. The check keeps NAMING an
  * acknowledged line, with the day, and stops failing on it; /imports and the upload outcome say the day too, since they
  * read the same `LineLeftOut`. A line nobody acknowledged still fails.
+ *
+ * ⛔ Never without a reason — "an entry without a reason is a check that has been quieted rather than passed" (ledger-
+ * check's BASELINE). `--confirm` is refused without `--reason='<what the statement shows>'`; the reason is stored with
+ * the acknowledgement and printed with the line wherever it is printed: "Acknowledged on <day>: <reason>."
  *
  * ⛔ An acknowledgement must never hide a line it was not given for:
  *
@@ -56,16 +60,23 @@ export interface LeftOutAcknowledgement {
   readonly printerSha256: string;
   readonly description: string;
   readonly acknowledgedOn: string;
+  /** what the session read on the statement — never empty */
+  readonly reason: string;
   readonly createdAt: string;
 }
 
 export type LeftOutAcknowledgementWrite = Omit<LeftOutAcknowledgement, "id" | "createdAt">;
 
+/** An acknowledgement as its line carries it (`LineLeftOutFacts.acknowledged`): the day, and what the session read. */
+export function acknowledgedOf(ack: LeftOutAcknowledgement): Acknowledged {
+  return { on: ack.acknowledgedOn, reason: ack.reason };
+}
+
 /** The mark ledger-check prints beside a line, and `--acknowledge-left-out=<mark>` takes. */
 export const LEFT_OUT_TOKEN = /^[0-9a-f]{10}$/;
 
 /** What an acknowledgement of `line` is keyed by: its first printer's printing of it. */
-function keyOf(line: KeyedLine): Omit<LeftOutAcknowledgementWrite, "description" | "acknowledgedOn"> {
+function keyOf(line: KeyedLine): Omit<LeftOutAcknowledgementWrite, "description" | "acknowledgedOn" | "reason"> {
   const first = line.printings[0]!;
   return {
     accountId: line.accountId,
@@ -100,7 +111,7 @@ function covers(ack: LeftOutAcknowledgement, line: KeyedLine): boolean {
   );
 }
 
-/** Whether `ack` is keyed as `line`'s own mark keys it — the acknowledgement `planAcknowledging` writes for it. */
+/** Whether `ack` is keyed as `line`'s own mark keys it — the acknowledgement `acknowledgementWrites` writes for it. */
 function isOwn(ack: LeftOutAcknowledgement, line: KeyedLine): boolean {
   const key = keyOf(line);
   return ack.printedOn === key.printedOn && ack.printedWords === key.printedWords && ack.printerSha256 === key.printerSha256;
@@ -143,40 +154,63 @@ export function acknowledgementsOf(
   return { byRow, unmatched: oldestFirst.filter((ack) => !m.lineOf.has(ack.id)) };
 }
 
+/** What `--acknowledge-left-out=<marks>` would do — the dry run's answer, and what `--confirm` writes. */
+export interface AcknowledgingPlan {
+  /** each line nobody acknowledged that carries one of the marks — every line alike, when several do: one write each */
+  readonly open: AcknowledgeableLine[];
+  /** what the run says, mark by mark */
+  readonly lines: string[];
+  /** the marks no line left out carries: the command refuses the whole write for any */
+  readonly unmatched: string[];
+}
+
 /**
  * What `--acknowledge-left-out=<marks>` would write: one acknowledgement for each line nobody acknowledged that carries
- * one of the marks — every line alike, when several do. A line acknowledged already is said and not written again; a
- * mark no line carries is `unmatched`, and the command refuses the whole write for it.
+ * one of the marks — every line alike, when several do. A line acknowledged already is said, with what was read then,
+ * and not written again; a mark no line carries is `unmatched`, and the command refuses the whole write for it.
+ *
+ * ⛔ It says what it would STORE — "Acknowledged on <day>: <reason>.", the sentence printed with the line from then on —
+ * or, with no reason given, that `--confirm` needs one (`ledgerCheckMode` refuses it without).
  */
 export function planAcknowledging(
   lines: readonly AcknowledgeableLine[],
   tokens: readonly string[],
-  today: string,
-): { writes: LeftOutAcknowledgementWrite[]; lines: string[]; unmatched: string[] } {
-  const writes: LeftOutAcknowledgementWrite[] = [];
+  acknowledging: { readonly on: string; readonly reason: string | null },
+): AcknowledgingPlan {
+  const open: AcknowledgeableLine[] = [];
   const said: string[] = [];
   const unmatched: string[] = [];
   for (const token of tokens) {
     const marked = lines.filter((line) => leftOutToken(line) === token);
-    const open = marked.filter((line) => line.acknowledgedOn === null);
+    const unacknowledged = marked.filter((line) => line.acknowledged === null);
     if (marked.length === 0) {
       unmatched.push(token);
       said.push(`${token}: no line left out carries this mark — the ledger moved, or it was mistyped`);
-    } else if (open.length === 0) {
-      said.push(`${token}: acknowledged on ${marked[0]!.acknowledgedOn} already — nothing to write`);
+    } else if (unacknowledged.length === 0) {
+      said.push(`${token}: acknowledged already, nothing to write — ${acknowledgedSentence(marked[0]!.acknowledged!)}`);
     } else {
-      const alike = open.length === 1 ? "" : `${open.length} lines alike — `;
-      said.push(`${token}: acknowledges ${alike}${lineLeftOutNotice(open[0]!)}`);
-      writes.push(...open.map((line) => ({ ...keyOf(line), description: line.description, acknowledgedOn: today })));
+      const alike = unacknowledged.length === 1 ? "" : `${unacknowledged.length} lines alike — `;
+      const { on, reason } = acknowledging;
+      const stores =
+        reason === null
+          ? "stores no reason yet — --confirm needs --reason='<what the statement shows>', printed with the line from then on"
+          : `stores, printed with the line from now on — ${acknowledgedSentence({ on, reason })}`;
+      said.push(`${token}: acknowledges ${alike}${lineLeftOutNotice(unacknowledged[0]!)}`, `${token}: ${stores}`);
+      open.push(...unacknowledged);
     }
   }
-  return { writes, lines: said, unmatched };
+  return { open, lines: said, unmatched };
 }
 
-/** The sentence ledger-check names an acknowledgement matching no line left out by. */
+/** The rows `--confirm` writes for a plan's `open` lines: each keyed by its first printer, with the day and the reason. */
+export function acknowledgementWrites(open: readonly AcknowledgeableLine[], { on, reason }: Acknowledged): LeftOutAcknowledgementWrite[] {
+  return open.map((line) => ({ ...keyOf(line), description: line.description, acknowledgedOn: on, reason }));
+}
+
+/** The sentence ledger-check names an acknowledgement matching no line left out by — with what the session read. */
 export function unmatchedAcknowledgementNotice(ack: LeftOutAcknowledgement, accountName: string): string {
   return (
-    `Acknowledged on ${ack.acknowledgedOn}: ${formatCentsSigned(ack.amountCents)} on ${ack.printedOn}, ${ack.description}, ` +
-    `on ${accountName} — no line left out matches it now, so it hides nothing.`
+    `${formatCentsSigned(ack.amountCents)} on ${ack.printedOn}, ${ack.description}, on ${accountName} — no line left out ` +
+    `matches it now, so it hides nothing. ${acknowledgedSentence(acknowledgedOf(ack))}`
   );
 }

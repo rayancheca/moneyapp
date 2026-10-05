@@ -33,20 +33,46 @@ const OPENING = {
   printerSha256: "1f".repeat(32),
   description: "WFB Opening Deposit From Card",
   acknowledgedOn: "2026-10-05",
+  reason: "July statement, page 1: the bank's opening deposit, reversed the same day by the card it came from",
 };
+
+const changes = () => (bundle.sqlite.prepare("SELECT total_changes() AS n").get() as { n: number }).n;
 
 describe("the acknowledgements a ledger keeps (`left_out_acknowledgements`)", () => {
   test("a migrated ledger holds none", () => {
     expect(readLeftOutAcknowledgements(bundle.db)).toEqual([]);
   });
 
-  test("one written reads back as written, with an id and the moment it was recorded", () => {
+  test("one written reads back as written — its reason too — with an id and the moment it was recorded", () => {
     const before = new Date().toISOString();
     writeLeftOutAcknowledgements(bundle.db, [OPENING]);
     const [stored] = readLeftOutAcknowledgements(bundle.db);
     expect(stored).toMatchObject(OPENING);
+    expect(stored!.reason).toBe(OPENING.reason);
     expect(stored!.id).toMatch(/^[0-9a-f-]{36}$/);
     expect(stored!.createdAt >= before).toBe(true);
+  });
+
+  /* ⛔ "an entry without a reason is a check that has been quieted" (ledger-check's BASELINE): the table holds none */
+  test("⛔ the table refuses a row with no reason", () => {
+    const columns = bundle.sqlite.prepare("PRAGMA table_info(left_out_acknowledgements)").all() as { name: string; notnull: number }[];
+    expect(columns.find((c) => c.name === "reason")).toEqual(expect.objectContaining({ notnull: 1 }));
+    const insert = bundle.sqlite.prepare(
+      "INSERT INTO left_out_acknowledgements (id, account_id, printed_on, amount_cents, printed_words, printer_sha256, " +
+        "description, acknowledged_on, created_at) VALUES ('a', ?, '2026-07-27', 2500, 'W', 'S', 'D', '2026-10-05', 'T')",
+    );
+    expect(() => insert.run(WF)).toThrow(/NOT NULL constraint failed: left_out_acknowledgements\.reason/);
+  });
+
+  test("⛔ a reason that says nothing refuses the whole write — nothing is written", () => {
+    for (const reason of ["", "   ", "\n\t"]) {
+      const before = changes();
+      expect(() => writeLeftOutAcknowledgements(bundle.db, [OPENING, { ...OPENING, reason }])).toThrow(
+        /an acknowledgement says what the session read on the statement/,
+      );
+      expect(changes()).toBe(before);
+    }
+    expect(readLeftOutAcknowledgements(bundle.db)).toEqual([]);
   });
 
   test("two lines alike are two acknowledgements — one each", () => {
@@ -55,7 +81,6 @@ describe("the acknowledgements a ledger keeps (`left_out_acknowledgements`)", ()
   });
 
   test("nothing to write writes nothing — the check touches the ledger only when told to", () => {
-    const changes = () => (bundle.sqlite.prepare("SELECT total_changes() AS n").get() as { n: number }).n;
     const before = changes();
     writeLeftOutAcknowledgements(bundle.db, []);
     expect(changes()).toBe(before);

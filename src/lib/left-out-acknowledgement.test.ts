@@ -1,9 +1,11 @@
 import { describe, expect, test } from "vitest";
 import { lineLeftOutNotice } from "./import-file-label";
 import {
+  acknowledgementWrites,
   acknowledgementsOf,
   leftOutToken,
   planAcknowledging,
+  unmatchedAcknowledgementNotice,
   type AcknowledgeableLine,
   type LeftOutAcknowledgement,
 } from "./left-out-acknowledgement";
@@ -21,6 +23,9 @@ const RE_DOWNLOAD = "1f".repeat(32);
 const THIRD = "2e".repeat(32);
 const STATEMENT = "3d".repeat(32);
 
+/** what the session read on the statement (`--reason`) */
+const READ_IT = "July statement, page 1: the bank's opening deposit, reversed the same day by the card it came from";
+
 /** the rehearsal of 2026-09-28: a re-read of the export drops the account's +$25.00 opening deposit */
 const line = (over: Partial<AcknowledgeableLine> = {}): AcknowledgeableLine => ({
   accountId: WF,
@@ -30,7 +35,7 @@ const line = (over: Partial<AcknowledgeableLine> = {}): AcknowledgeableLine => (
   description: "WFB Opening Deposit From Card",
   printedBy: ["wf-export (1).csv"],
   readBy: "wf-export.csv",
-  acknowledgedOn: null,
+  acknowledged: null,
   rowId: "row-opening",
   rowWrittenAt: "2026-09-20T14:00:00.000Z",
   printings: [{ sha256: RE_DOWNLOAD, printedOn: "2026-07-27", words: "WFB OPENING DEPOSIT FROM CARD" }],
@@ -46,6 +51,7 @@ const ack = (over: Partial<LeftOutAcknowledgement> = {}): LeftOutAcknowledgement
   printerSha256: RE_DOWNLOAD,
   description: "WFB Opening Deposit From Card",
   acknowledgedOn: "2026-10-05",
+  reason: READ_IT,
   createdAt: "2026-10-05T16:00:00.000Z",
   ...over,
 });
@@ -204,9 +210,12 @@ describe("acknowledgementsOf — which acknowledgement covers which line", () =>
 });
 
 describe("planAcknowledging — the guarded write, a dry run first", () => {
-  test("a line's mark acknowledges it: the write keys it by its first printer, and says the line it is", () => {
-    const plan = planAcknowledging([line()], [leftOutToken(line())], "2026-10-05");
-    expect(plan.writes).toEqual([
+  const TODAY = { on: "2026-10-05", reason: READ_IT };
+
+  test("a line's mark acknowledges it: the write keys it by its first printer, and stores what the session read", () => {
+    const plan = planAcknowledging([line()], [leftOutToken(line())], TODAY);
+    expect(plan.open).toEqual([line()]);
+    expect(acknowledgementWrites(plan.open, TODAY)).toEqual([
       {
         accountId: WF,
         printedOn: "2026-07-27",
@@ -215,30 +224,61 @@ describe("planAcknowledging — the guarded write, a dry run first", () => {
         printerSha256: RE_DOWNLOAD,
         description: "WFB Opening Deposit From Card",
         acknowledgedOn: "2026-10-05",
+        reason: READ_IT,
       },
     ]);
     expect(plan.unmatched).toEqual([]);
-    expect(plan.lines).toEqual([`${leftOutToken(line())}: acknowledges ${lineLeftOutNotice(line())}`]);
   });
 
-  test("two lines alike share a mark, and it acknowledges both — one write each", () => {
+  /* ⛔ the dry run shows what would be stored — the very sentence every surface prints with the line from then on */
+  test("says the line it is, and the reason it stores, as the line will read once acknowledged", () => {
+    const plan = planAcknowledging([line()], [leftOutToken(line())], TODAY);
+    const stored = `Acknowledged on 2026-10-05: ${READ_IT}.`;
+    expect(plan.lines).toEqual([
+      `${leftOutToken(line())}: acknowledges ${lineLeftOutNotice(line())}`,
+      `${leftOutToken(line())}: stores, printed with the line from now on — ${stored}`,
+    ]);
+    expect(lineLeftOutNotice({ ...line(), acknowledged: TODAY }).endsWith(` ${stored}`)).toBe(true);
+  });
+
+  test("a dry run with no reason says the line, and that --confirm needs what the session read", () => {
+    const plan = planAcknowledging([line()], [leftOutToken(line())], { on: "2026-10-05", reason: null });
+    expect(plan.open).toEqual([line()]);
+    expect(plan.lines).toEqual([
+      `${leftOutToken(line())}: acknowledges ${lineLeftOutNotice(line())}`,
+      `${leftOutToken(line())}: stores no reason yet — --confirm needs --reason='<what the statement shows>', printed with the line from then on`,
+    ]);
+  });
+
+  test("two lines alike share a mark, and it acknowledges both — one write each, each with the reason", () => {
     const twins = [line(), line({ rowId: "row-twin" })];
-    const plan = planAcknowledging(twins, [leftOutToken(line())], "2026-10-05");
-    expect(plan.writes).toHaveLength(2);
+    const plan = planAcknowledging(twins, [leftOutToken(line())], TODAY);
+    expect(acknowledgementWrites(plan.open, TODAY).map((w) => w.reason)).toEqual([READ_IT, READ_IT]);
     expect(plan.lines[0]).toMatch(/: acknowledges 2 lines alike — /);
   });
 
-  test("a line acknowledged already is said, and written again never", () => {
-    const done = line({ acknowledgedOn: "2026-10-04" });
-    const plan = planAcknowledging([done], [leftOutToken(done)], "2026-10-05");
-    expect(plan.writes).toEqual([]);
+  test("a line acknowledged already is said, with what was read then, and written again never", () => {
+    const done = line({ acknowledged: { on: "2026-10-04", reason: "Printed on the July statement." } });
+    const plan = planAcknowledging([done], [leftOutToken(done)], TODAY);
+    expect(plan.open).toEqual([]);
     expect(plan.unmatched).toEqual([]);
-    expect(plan.lines).toEqual([`${leftOutToken(done)}: acknowledged on 2026-10-04 already — nothing to write`]);
+    expect(plan.lines).toEqual([
+      `${leftOutToken(done)}: acknowledged already, nothing to write — Acknowledged on 2026-10-04: Printed on the July statement.`,
+    ]);
   });
 
   test("⛔ a mark no line left out carries is unmatched — the command refuses the whole write", () => {
-    const plan = planAcknowledging([line()], [leftOutToken(line()), "0123456789"], "2026-10-05");
+    const plan = planAcknowledging([line()], [leftOutToken(line()), "0123456789"], TODAY);
     expect(plan.unmatched).toEqual(["0123456789"]);
     expect(plan.lines).toContain("0123456789: no line left out carries this mark — the ledger moved, or it was mistyped");
+  });
+});
+
+describe("unmatchedAcknowledgementNotice — an acknowledgement no line matches now", () => {
+  test("names the line it was given for, that it hides nothing, and what the session read", () => {
+    expect(unmatchedAcknowledgementNotice(ack(), "Wells Fargo Everyday Checking")).toBe(
+      "+$25.00 on 2026-07-27, WFB Opening Deposit From Card, on Wells Fargo Everyday Checking — no line left out matches " +
+        `it now, so it hides nothing. Acknowledged on 2026-10-05: ${READ_IT}.`,
+    );
   });
 });

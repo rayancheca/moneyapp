@@ -47,10 +47,15 @@
  *
  * A line a re-read left out (6, below) fails until a read writes it again — or until a session, having READ IT ON THE
  * STATEMENT, acknowledges it (⚖️ owner, 2026-10-02, §6A 30). Each failing line is printed with its mark,
- * `[line-left-out 3f9a0c12de]`; an acknowledged one is still named, with the day, and fails nothing:
+ * `[line-left-out 3f9a0c12de]`; an acknowledged one is still named, with the day and what was read, and fails nothing:
  *
- *   pnpm ledger-check --acknowledge-left-out=3f9a0c12de            # dry run: prints the line it would acknowledge
- *   pnpm ledger-check --acknowledge-left-out=3f9a0c12de --confirm  # records it, in the ledger
+ *   pnpm ledger-check --acknowledge-left-out=3f9a0c12de --reason='<what the statement shows>'            # dry run
+ *   pnpm ledger-check --acknowledge-left-out=3f9a0c12de --reason='<what the statement shows>' --confirm  # records it
+ *
+ * ⛔ `--confirm` without `--reason` is refused (exit 2, nothing written): an acknowledgement stops a finding failing, and
+ * an entry without a reason is a check that has been quieted (BASELINE, below). The dry run prints what it would store,
+ * "Acknowledged on <day>: <reason>." — the sentence printed with the line from then on, here, on /imports and in the
+ * upload outcome. One mark a reason: a reason says what ONE line is.
  */
 import { createDatabase } from "@/db/client";
 import type { AnchorSource } from "@/db/schema/balances";
@@ -78,7 +83,12 @@ import { readWitnessMarks, writeWitnessMarks } from "@/services/witness-marks";
 import { filesWithoutPrintedLines } from "@/services/import/import-records";
 import { acknowledgementsMatchingNothing, linesLeftOut } from "@/services/import/lines-left-out";
 import { lineLeftOutNotice } from "@/lib/import-file-label";
-import { leftOutToken, planAcknowledging, unmatchedAcknowledgementNotice } from "@/lib/left-out-acknowledgement";
+import {
+  acknowledgementWrites,
+  leftOutToken,
+  planAcknowledging,
+  unmatchedAcknowledgementNotice,
+} from "@/lib/left-out-acknowledgement";
 import { writeLeftOutAcknowledgements } from "@/services/left-out-acknowledgements";
 import { todayIso } from "@/lib/dates";
 
@@ -452,11 +462,12 @@ if (beyondBackfills.length > 0) {
  *
  * ⚖️ Owner, 2026-10-02 (§6A 30): failing on every one blocked every commit until a parser fix or a re-upload, so a line
  * a session has READ ON THE STATEMENT may be acknowledged (`--acknowledge-left-out`, the guarded step below): it is still
- * listed, with the day, and is no finding. A line nobody acknowledged still fails, with the mark to acknowledge it by.
- * An acknowledgement no line matches now is named too — it hides nothing (`acknowledgementsOf`), and is seen.
+ * listed, with the day and what the session read, and is no finding. A line nobody acknowledged still fails, with the
+ * mark to acknowledge it by. An acknowledgement no line matches now is named too, with its reason — it hides nothing
+ * (`acknowledgementsOf`), and is seen.
  */
 const leftOut = linesLeftOut(db);
-const acknowledged = leftOut.filter((line) => line.acknowledgedOn !== null);
+const acknowledged = leftOut.filter((line) => line.acknowledged !== null);
 console.log(`lines left out by a re-read: ${leftOut.length}${acknowledged.length === 0 ? "" : ` — ${acknowledged.length} acknowledged`}`);
 for (const line of acknowledged) console.log(`  [line-left-out, acknowledged] ${lineLeftOutNotice(line)}`);
 const accountNameOf = new Map(accounts.map((a) => [a.id, a.name] as const));
@@ -464,39 +475,42 @@ for (const ack of acknowledgementsMatchingNothing(db, leftOut)) {
   console.log(`  [acknowledgement matching no line] ${unmatchedAcknowledgementNotice(ack, accountNameOf.get(ack.accountId) ?? ack.accountId)}`);
 }
 const leftOutFailures = leftOut
-  .filter((line) => line.acknowledgedOn === null)
+  .filter((line) => line.acknowledged === null)
   .map((line) => `[line-left-out ${leftOutToken(line)}] ${lineLeftOutNotice(line)}`);
 if (leftOutFailures.length > 0) {
   console.log(
-    "  only after reading each on its statement — acknowledge it by its mark, a dry run first:\n" +
-      "    pnpm ledger-check --acknowledge-left-out=<mark,...>             # prints what it would acknowledge\n" +
-      "    pnpm ledger-check --acknowledge-left-out=<mark,...> --confirm   # records it, in the ledger",
+    "  only after reading each on its statement — acknowledge it by its mark, with what the statement shows, a dry run first:\n" +
+      "    pnpm ledger-check --acknowledge-left-out=<mark> --reason='<what the statement shows>'             # prints what it would store\n" +
+      "    pnpm ledger-check --acknowledge-left-out=<mark> --reason='<what the statement shows>' --confirm   # records it, in the ledger",
   );
 }
 
 /*
- * THE ACKNOWLEDGING — the guarded step, as the lowering below: a dry run prints each line a mark names, and only
- * `--confirm` writes. ⛔ A mark no line left out carries refuses the whole write: the ledger moved since the dry run,
- * or it was mistyped, and either way the session has not read what it would acknowledge.
+ * THE ACKNOWLEDGING — the guarded step, as the lowering below: a dry run prints each line a mark names and what it would
+ * store with it, and only `--confirm` writes. ⛔ A mark no line left out carries refuses the whole write: the ledger moved
+ * since the dry run, or it was mistyped, and either way the session has not read what it would acknowledge. ⛔ And
+ * `--confirm` has a reason by then: `ledgerCheckMode` refused it without one, before the ledger was opened.
  */
 if (MODE.mode === "acknowledge") {
-  const plan = planAcknowledging(leftOut, MODE.tokens, todayIso());
+  const acknowledging = { on: todayIso(), reason: MODE.reason };
+  const plan = planAcknowledging(leftOut, MODE.tokens, acknowledging);
   console.log(`\nACKNOWLEDGE LINES LEFT OUT — ${DB_PATH}${isRealDatabasePath(DB_PATH) ? " (the real ledger)" : ""}`);
   for (const line of plan.lines) console.log(`  ${line}`);
   if (plan.unmatched.length > 0) {
     console.error(`\nREFUSED: ${plan.unmatched.join(", ")} — no line left out carries ${plan.unmatched.length === 1 ? "it" : "them"}; nothing was written`);
     process.exit(2);
   }
-  const n = plan.writes.length;
+  const n = plan.open.length;
   if (n === 0) {
     console.log("\nnothing to acknowledge: every line these marks name is acknowledged already");
     process.exit(0);
   }
   if (!MODE.confirm) {
-    console.log("\ndry run: nothing was written. Only once each line is read on its statement: the same command with --confirm");
+    const then = MODE.reason === null ? "--reason='<what the statement shows>' --confirm" : "--confirm";
+    console.log(`\ndry run: nothing was written. Only once each line is read on its statement: the same command with ${then}`);
     process.exit(0);
   }
-  writeLeftOutAcknowledgements(db, plan.writes);
+  writeLeftOutAcknowledgements(db, acknowledgementWrites(plan.open, { ...acknowledging, reason: MODE.reason }));
   console.log(`\nacknowledged ${n} line${n === 1 ? "" : "s"}; the next plain run names ${n === 1 ? "it" : "them"} and does not fail on ${n === 1 ? "it" : "them"}`);
   process.exit(0);
 }

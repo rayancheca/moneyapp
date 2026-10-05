@@ -7,5 +7,6 @@ CREATE TABLE `left_out_acknowledgements` (
 	`printer_sha256` text NOT NULL,
 	`description` text NOT NULL,
 	`acknowledged_on` text NOT NULL,
+	`reason` text NOT NULL,
 	`created_at` text NOT NULL
 );

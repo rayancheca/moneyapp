@@ -7,7 +7,7 @@ import { transactions } from "@/db/schema/transactions";
 import { diffDays } from "@/lib/dates";
 import { descriptionScore } from "@/lib/description-score";
 import type { LineLeftOutFacts } from "@/lib/import-file-label";
-import { acknowledgementsOf, type LeftOutAcknowledgement, type Printing } from "@/lib/left-out-acknowledgement";
+import { acknowledgedOf, acknowledgementsOf, type LeftOutAcknowledgement, type Printing } from "@/lib/left-out-acknowledgement";
 import { readLeftOutAcknowledgements } from "@/services/left-out-acknowledgements";
 import {
   augment,
@@ -268,24 +268,27 @@ function rawWords(db: AppDatabase, rowIds: readonly string[]): Map<string, { raw
 }
 
 /** A line left out before anyone asked whether it was acknowledged. */
-type Unasked = Omit<LineLeftOut, "acknowledgedOn">;
+type Unasked = Omit<LineLeftOut, "acknowledged">;
 
 /**
  * Every line left out of the ledger (`LineLeftOut`) — by every retired read, or by `fromFileIds`, the reads one re-read
  * retires. Each heir's lines are matched to the account's live rows, and a line left over takes a retired row
  * (`takenBack`) that stands for a charge no read imported now writes again (`chargesOf`): one charge, however many
- * files print it and however many versions recorded it. Each says the day a session acknowledged it, if one did
- * (`acknowledgementsOf`, owner decision 2026-10-02). Read-only — ONE answer for the upload outcome, /imports and
- * `pnpm ledger-check`.
+ * files print it and however many versions recorded it. Each says the day a session acknowledged it, and what it read
+ * on the statement, if one did (`acknowledgementsOf`, owner decision 2026-10-02). Read-only — ONE answer for the upload
+ * outcome, /imports and `pnpm ledger-check`.
  */
 export function linesLeftOut(db: AppDatabase, fromFileIds?: readonly string[]): LineLeftOut[] {
   const lines = unaskedLinesLeftOut(db, fromFileIds);
   const acks = lines.length === 0 ? [] : readLeftOutAcknowledgements(db);
-  if (acks.length === 0) return lines.map((line) => ({ ...line, acknowledgedOn: null }));
+  if (acks.length === 0) return lines.map((line) => ({ ...line, acknowledged: null }));
   // ⛔ matched against EVERY line left out, never a re-read's share of them: two lines alike take one acknowledgement
   // each, and a share holding one of them would hand it the acknowledgement the whole ledger gives the other
   const { byRow } = acknowledgementsOf(fromFileIds === undefined ? lines : unaskedLinesLeftOut(db), acks);
-  return lines.map((line) => ({ ...line, acknowledgedOn: byRow.get(line.rowId)?.acknowledgedOn ?? null }));
+  return lines.map((line) => {
+    const ack = byRow.get(line.rowId);
+    return { ...line, acknowledged: ack === undefined ? null : acknowledgedOf(ack) };
+  });
 }
 
 /**

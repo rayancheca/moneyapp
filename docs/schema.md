@@ -562,14 +562,17 @@ only by `pnpm ledger-check --lower-marks=<kind> --confirm`.
 
 ### left_out_acknowledgements (migration 0024)
 `id PK · account_id · printed_on · amount_cents · printed_words · printer_sha256 · description ·
-acknowledged_on · created_at` — a line a re-read left out (`linesLeftOut`) that a session
+acknowledged_on · reason · created_at` — a line a re-read left out (`linesLeftOut`) that a session
 acknowledged after reading it on the statement (`src/lib/left-out-acknowledgement.ts`, owner
-decision 2026-10-02). `pnpm ledger-check` still lists the line, with `acknowledged_on`, and no
-longer fails on it; /imports and the upload outcome say the day too. Keyed by what the line is
+decision 2026-10-02). `pnpm ledger-check` still lists the line, with "Acknowledged on
+<acknowledged_on>: <reason>.", and no longer fails on it; /imports and the upload outcome print
+the same sentence. `reason` is NOT NULL and never blank — what the session read on the statement,
+in its words: an entry without a reason is a check quieted, not passed. Keyed by what the line is
 — account, day, money, printed words, the printing file's sha256 — never a row id; one row per
 line, so two lines alike need two; and it covers only a leaving whose row was written before
 `created_at`. Lives in the ledger, like the marks. Written only by
-`pnpm ledger-check --acknowledge-left-out=<mark> --confirm`.
+`pnpm ledger-check --acknowledge-left-out=<mark> --reason='<what the statement shows>' --confirm`
+— refused without `--reason`.
 
 ## Invariants the test suite enforces
 

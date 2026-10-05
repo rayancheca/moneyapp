@@ -10,7 +10,7 @@ import { duplicateCandidates } from "@/db/schema/duplicate-candidates";
 import { importFiles, statementPeriods } from "@/db/schema/imports";
 import { transactions } from "@/db/schema/transactions";
 import { lineLeftOutNotice } from "@/lib/import-file-label";
-import { leftOutToken, planAcknowledging } from "@/lib/left-out-acknowledgement";
+import { acknowledgementWrites, leftOutToken, planAcknowledging } from "@/lib/left-out-acknowledgement";
 import { readLeftOutAcknowledgements, writeLeftOutAcknowledgements } from "@/services/left-out-acknowledgements";
 import { acknowledgementsMatchingNothing, linesLeftOut } from "./lines-left-out";
 import { PROFILES } from "./profiles";
@@ -498,19 +498,20 @@ describe("nothing is left out where no money left", () => {
 
 /**
  * ⚖️ Owner, 2026-10-02 (§6A 30): once a session has read a line left out on the statement, it may record it
- * ACKNOWLEDGED — the guarded `pnpm ledger-check --acknowledge-left-out=<mark> [--confirm]`, kept in the ledger like the
- * witness marks. Every reader still names the line, says on what day it was acknowledged, and ledger-check stops
- * failing on it; a line nobody acknowledged still fails.
+ * ACKNOWLEDGED — the guarded `pnpm ledger-check --acknowledge-left-out=<mark> --reason='<what it read>' [--confirm]`,
+ * kept in the ledger like the witness marks. Every reader still names the line, says on what day it was acknowledged
+ * and what the session read, and ledger-check stops failing on it; a line nobody acknowledged still fails.
  */
 describe("a line left out, acknowledged", () => {
   const ON = "2026-10-05";
+  const READ = { on: ON, reason: "Wells Fargo export, 07-27: the opening deposit, reversed by the card the same day" };
 
   /** what a session does once it has read each line on its statement: the dry run's plan, confirmed */
   function acknowledgeAll(): void {
     const lines = linesLeftOut(bundle.db);
-    const plan = planAcknowledging(lines, lines.map(leftOutToken), ON);
+    const plan = planAcknowledging(lines, lines.map(leftOutToken), READ);
     expect(plan.unmatched).toEqual([]);
-    writeLeftOutAcknowledgements(bundle.db, plan.writes);
+    writeLeftOutAcknowledgements(bundle.db, acknowledgementWrites(plan.open, READ));
   }
 
   async function droppedOpening(): Promise<void> {
@@ -520,16 +521,16 @@ describe("a line left out, acknowledged", () => {
     await importStatementFiles(bundle.db, [EXPORT]);
   }
 
-  test("is named still, and says on what day — by the whole ledger's reading and by the re-read's own", async () => {
+  test("is named still, and says on what day and what was read — by the whole ledger's reading and the re-read's own", async () => {
     await droppedOpening();
     const [left] = linesLeftOut(bundle.db);
-    expect(left!.acknowledgedOn).toBeNull();
+    expect(left!.acknowledged).toBeNull();
 
     acknowledgeAll();
 
     const found = linesLeftOut(bundle.db);
-    expect(found).toEqual([expect.objectContaining({ printedOn: OPENING.postedOn, rowId: left!.rowId, acknowledgedOn: ON })]);
-    expect(lineLeftOutNotice(found[0]!)).toContain(`Acknowledged on ${ON}`);
+    expect(found).toEqual([expect.objectContaining({ printedOn: OPENING.postedOn, rowId: left!.rowId, acknowledged: READ })]);
+    expect(lineLeftOutNotice(found[0]!)).toContain(`Acknowledged on ${ON}: ${READ.reason}.`);
     // the question the upload outcome asks of the read its re-read retired: the same line, the same acknowledgement
     const retiredRead = bundle.db.select().from(transactions).where(eq(transactions.id, left!.rowId)).get()!.importFileId!;
     expect(linesLeftOut(bundle.db, [retiredRead])).toEqual(found);
@@ -548,6 +549,7 @@ describe("a line left out, acknowledged", () => {
         printedWords: "WFB OPENING DEPOSIT FROM CARD",
         printerSha256: sha,
         acknowledgedOn: ON,
+        reason: READ.reason,
       }),
     ]);
   });
@@ -559,7 +561,7 @@ describe("a line left out, acknowledged", () => {
     profile.version = 3;
     await importStatementFiles(bundle.db, [EXPORT]);
 
-    expect(linesLeftOut(bundle.db)).toEqual([expect.objectContaining({ printedOn: OPENING.postedOn, acknowledgedOn: ON })]);
+    expect(linesLeftOut(bundle.db)).toEqual([expect.objectContaining({ printedOn: OPENING.postedOn, acknowledged: READ })]);
   });
 
   /**
@@ -581,7 +583,7 @@ describe("a line left out, acknowledged", () => {
     await importStatementFiles(bundle.db, [EXPORT]);
 
     const found = linesLeftOut(bundle.db);
-    expect(found).toEqual([expect.objectContaining({ printedOn: OPENING.postedOn, acknowledgedOn: null })]);
+    expect(found).toEqual([expect.objectContaining({ printedOn: OPENING.postedOn, acknowledged: null })]);
     expect(acknowledgementsMatchingNothing(bundle.db, found)).toHaveLength(1);
   });
 
@@ -603,10 +605,10 @@ describe("a line left out, acknowledged", () => {
       [OPENING.postedOn, OPENING.amountCents],
       [OPENING.postedOn, OPENING.amountCents],
     ]);
-    expect(found.map((l) => l.acknowledgedOn ?? "none").sort()).toEqual([ON, "none"]);
+    expect(found.map((l) => l.acknowledged?.on ?? "none").sort()).toEqual([ON, "none"]);
     // the upload's outcome names only the line its own retirement left out — the one nobody acknowledged — and says so,
     // as the whole ledger does: matched within its share alone, it took the first line's acknowledgement
-    expect(outcome!.leftOut).toEqual([expect.objectContaining({ printedOn: OPENING.postedOn, acknowledgedOn: null })]);
+    expect(outcome!.leftOut).toEqual([expect.objectContaining({ printedOn: OPENING.postedOn, acknowledged: null })]);
     expect(outcome!.leftOut[0]!.notice).not.toContain("Acknowledged");
   });
 
@@ -617,10 +619,11 @@ describe("a line left out, acknowledged", () => {
     await importStatementFiles(bundle.db, [EXPORT]);
     const [opening] = linesLeftOut(bundle.db).filter((l) => l.printedOn === OPENING.postedOn);
 
-    writeLeftOutAcknowledgements(bundle.db, planAcknowledging(linesLeftOut(bundle.db), [leftOutToken(opening!)], ON).writes);
+    const plan = planAcknowledging(linesLeftOut(bundle.db), [leftOutToken(opening!)], READ);
+    writeLeftOutAcknowledgements(bundle.db, acknowledgementWrites(plan.open, READ));
 
-    expect(linesLeftOut(bundle.db).map((l) => [l.printedOn, l.acknowledgedOn])).toEqual([
-      [OPENING.postedOn, ON],
+    expect(linesLeftOut(bundle.db).map((l) => [l.printedOn, l.acknowledged])).toEqual([
+      [OPENING.postedOn, READ],
       [GROCER.postedOn, null],
     ]);
   });

@@ -24,25 +24,36 @@ describe("ledger-check — lines left out by a re-read", () => {
   });
 
   test("each one nobody acknowledged is a finding: it fails the check", () => {
-    expect(script).toMatch(/const leftOutFailures = leftOut\s*\.filter\(\(line\) => line\.acknowledgedOn === null\)/);
+    expect(script).toMatch(/const leftOutFailures = leftOut\s*\.filter\(\(line\) => line\.acknowledged === null\)/);
     expect(script).toContain("const findings = failures.length + recordFailures.length + leftOutFailures.length;");
     expect(script).toContain("for (const line of [...recordFailures, ...leftOutFailures]) console.error(`  ${line}`);");
   });
 
-  test("an acknowledged one is named still, saying so — and an acknowledgement matching no line is named too", () => {
-    expect(script).toMatch(/const acknowledged = leftOut\.filter\(\(line\) => line\.acknowledgedOn !== null\);/);
+  /* the sentence carries the day and what the session read (`acknowledgedSentence`, lib/import-file-label.test.ts) */
+  test("an acknowledged one is named still, saying so and why — and an acknowledgement matching no line is named too", () => {
+    expect(script).toMatch(/const acknowledged = leftOut\.filter\(\(line\) => line\.acknowledged !== null\);/);
     expect(script).toContain("for (const line of acknowledged) console.log(`  [line-left-out, acknowledged] ${lineLeftOutNotice(line)}`);");
     expect(script).toMatch(/for \(const ack of acknowledgementsMatchingNothing\(db, leftOut\)\)/);
   });
 
-  test("acknowledging is the guarded step: a dry run, --confirm writes, and a mark that matches nothing refuses it all", () => {
+  test("the way out it prints for a failing line asks for what the session read on the statement", () => {
+    expect(script).toContain("pnpm ledger-check --acknowledge-left-out=<mark> --reason='<what the statement shows>' --confirm");
+  });
+
+  /*
+   * ⛔ "An entry without a reason is a check that has been quieted rather than passed" (BASELINE, above): the write
+   * stores the reason the command line was given — and the command line refuses --confirm without one
+   * (`ledgerCheckMode`, lib/witness-floor.test.ts), before the ledger is opened.
+   */
+  test("acknowledging is the guarded step: a dry run, --confirm writes with the reason, a mark matching nothing refuses", () => {
     expect(script).toMatch(/if \(MODE\.mode === "acknowledge"\) \{/);
-    expect(script).toContain("const plan = planAcknowledging(leftOut, MODE.tokens, todayIso());");
+    expect(script).toContain("const acknowledging = { on: todayIso(), reason: MODE.reason };");
+    expect(script).toContain("const plan = planAcknowledging(leftOut, MODE.tokens, acknowledging);");
     const step = script.slice(script.indexOf('if (MODE.mode === "acknowledge") {'));
     const [refuse, dryRun, write] = [
       step.indexOf("if (plan.unmatched.length > 0)"),
       step.indexOf("if (!MODE.confirm)"),
-      step.indexOf("writeLeftOutAcknowledgements(db, plan.writes);"),
+      step.indexOf("writeLeftOutAcknowledgements(db, acknowledgementWrites(plan.open, { ...acknowledging, reason: MODE.reason }));"),
     ];
     expect(refuse).toBeGreaterThan(0);
     expect(dryRun).toBeGreaterThan(refuse);
