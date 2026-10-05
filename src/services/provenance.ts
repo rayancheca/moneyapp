@@ -1,5 +1,5 @@
 import { and, asc, count, desc, eq, inArray, lte, gte, ne, sum } from "drizzle-orm";
-import { unverifiedDetail } from "@/lib/coverage-detail";
+import { countFooting, unverifiedDetail } from "@/lib/coverage-detail";
 import { formatDayFull } from "@/lib/format-date";
 import type { AppDatabase } from "@/db/client";
 import { accounts, type AccountType } from "@/db/schema/accounts";
@@ -870,9 +870,16 @@ function accountBalanceProvenance(db: AppDatabase, accountId: string, day: strin
    * `footingBounds`' over this one account, never a copy, and they travel together: a caller printing the day
    * without the sentence would print his word as a check. Only an account whose footing is his count moves — the
    * sentence is empty for any other, and its date stays the newest day its own chain closes.
+   *
+   * 🔴 …and "whose footing is his count" is `countFooting`'s to say, not `footingBounds`' alone: its count branch
+   * takes a `broken` account too, so a wallet whose recount did not reconcile read "Checked through 2026-09-09" and
+   * "…rests on the balance you counted" on every day, a gap day "Money is provably missing … around Aug 20, 2026"
+   * included (temp ledger 2026-10-05: $5,000.00 counted for Aug 3, −$5,000.00 Aug 11, $40.00 counted for Sep 1, −$10.00
+   * Sep 10 — broken since Aug 4). ⛔ The reading every sentence about his count is worded from refuses a broken
+   * account, and net worth's line names its break; it keeps its own chain's date.
    */
-  const footing =
-    chain === null ? null : footingBounds(accountCoverage(db).filter((c) => c.accountId === account.id));
+  const own = chain === null ? undefined : accountCoverage(db).find((c) => c.accountId === account.id);
+  const footing = own !== undefined && countFooting(own) !== null ? footingBounds([own]) : null;
   const datedByCount = footing !== null && footing.note !== "";
 
   return {

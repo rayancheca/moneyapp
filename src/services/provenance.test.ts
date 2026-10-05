@@ -2650,4 +2650,47 @@ describe("provenanceFor — a balance he typed checks nothing", () => {
     expect(p.checkedThrough).toBe("2026-08-01");
     expect(p.headline).not.toMatch(/your word|counted/);
   });
+
+  /*
+   * 🔴 A RECOUNT THAT DOES NOT RECONCILE, DATED PAST ITS BREAK. §6A 33's first cut read `footingBounds`, whose count
+   * branch takes a `broken` account too, so every day of a wallet whose recount missed — gap days included — read
+   * "Checked through 2026-09-09" and "…the last day Cash on Hand rests on the balance you counted". Measured
+   * 2026-10-05 on a temp ledger through the real services (`createCashWallet` $5,000.00 for Aug 3, −$5,000.00 on
+   * Aug 11, `addManualAnchor` $40.00 for Sep 1, −$10.00 on Sep 10): grade broken since Aug 4, and Aug 20 read "Money
+   * is provably missing … around Aug 20, 2026" beside a date three weeks past it. Net worth's line for it says
+   * "stopped adding up on Aug 4, 2026", and `countFooting` — the reading every sentence about his count is worded
+   * from — refuses a broken account. Before §6A 33: no date.
+   *
+   * ⛔ Only an account the app says rests on his count takes his count's day and sentence; a broken one keeps its
+   * own chain's date (nothing closes on this one, so none).
+   */
+  test("a wallet whose recount does not add up is not dated by his count on any day, its broken days included", () => {
+    const id = addAccount("recount", "Cash on Hand", "checking");
+    addAnchor(id, "2026-08-03", "manual");
+    addAnchor(id, "2026-09-01", "manual");
+    addDays(id, [
+      { day: "2026-08-03", basis: "anchored" },
+      { day: "2026-08-04", basis: "gap" },
+      { day: "2026-08-11", basis: "gap" },
+      { day: "2026-08-20", basis: "gap" },
+      { day: "2026-09-01", basis: "anchored" },
+      { day: "2026-09-05", basis: "carried" },
+      { day: "2026-09-10", basis: "derived_unverified" },
+    ]);
+    addTxn(id, "2026-08-11"); // the down payment, entered by hand
+    addTxn(id, "2026-09-10");
+
+    expect(balance(id, "2026-08-20").verdict).toBe("broken");
+    for (const day of ["2026-08-03", "2026-08-20", "2026-09-01", "2026-09-05", "2026-09-10"]) {
+      const p = balance(id, day);
+      expect(p.checkedThrough, day).toBeNull();
+      expect(p.headline, day).not.toMatch(/your word, not a check/);
+    }
+    const newest = provenanceFor(bundle.db, { kind: "accountBalance", accountId: id })!;
+    expect(newest.checkedThrough).toBeNull();
+    expect(newest.headline).not.toMatch(/your word, not a check/);
+    // the line the same app prints for it names the break, not a count
+    const line = provenanceFor(bundle.db, { kind: "netWorth", day: "2026-09-16" })!.inputs.find((i) => i.id === id)!;
+    expect(line.detail).toBe("stopped adding up on Aug 4, 2026");
+  });
 });
