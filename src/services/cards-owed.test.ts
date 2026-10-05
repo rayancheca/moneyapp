@@ -826,9 +826,10 @@ describe("a card whose export reaches back before its first statement balance", 
     statementCard();
     rebuildAccount(bundle.db, "acct-alpha", TODAY);
 
-    // the shape: days before the first statement unchecked, nothing unchecked past the newest
+    // the shape: days before the first statement unchecked, nothing unchecked past the newest —
+    // ⚖️ `verified` since §6A 35, and the row and net worth still name those days, in the same words
     expect(coverageOf()).toMatchObject({
-      grade: "unverified",
+      grade: "verified",
       unverifiedSince: "2026-07-19",
       uncheckedSince: null,
     });
@@ -904,14 +905,40 @@ describe("a card whose export reaches back before its first statement balance", 
   });
 
   /*
+   * ⚖️ His answer, 2026-10-05 (§6A 35): the days before its first statement do not on their own
+   * make it a card nothing is checking. The badge asked about `unverifiedSince` — a day replayed
+   * backwards from the Jul 25 statement — so it read "unverified" of a $200.00 the Aug 5 statement
+   * printed, beside a net worth that now counts the card as adding up. Its badge is the one a twin
+   * with the same statements and no charge before them wears; its row still names those days.
+   */
+  test("with nothing open past its last statement, it wears the badge its statements earn", () => {
+    statementCard();
+    addAccount("acct-twin", "Twin", "credit", { last4: "2222" });
+    addAnchor("acct-twin", "2026-07-25", -18_000, "statement");
+    addAnchor("acct-twin", "2026-08-05", -20_000, "statement");
+    addTxn("acct-twin", "2026-08-01", -2_000);
+    rebuildAccount(bundle.db, "acct-alpha", TODAY);
+    rebuildAccount(bundle.db, "acct-twin", TODAY);
+
+    const card = cardsOwedCard(bundle.db, TODAY)!;
+    const alpha = card.cards.find((c) => c.name === "Alpha")!;
+    const twin = card.cards.find((c) => c.name === "Twin")!;
+    expect(netWorthOf().verdict).toBe("derived");
+    expect(alpha.grade).toBe("verified");
+    expect(alpha.verdict).toBe(twin.verdict);
+    expect(card.provenance.badgeWord).toBe("2 of 2 add up");
+    expect(alpha.caveat).toBe("checked through Aug 5 — 5 days ago, and unchecked days before that");
+    expect(twin.caveat).toBeNull();
+  });
+
+  /*
    * ⛔ One rule for every shape: the row's badge is net worth's verdict for the account, and the
    * row's line in the proof is its figure and the row's own sentence. Asking the badge about the
    * open run instead (`uncheckedSince`, the field the caveat dates from) would have fixed nothing
-   * here and made the prehistory-only card "on a statement" beside net worth's "unverified".
+   * here. A card with nothing open past its last statement is `verified` since §6A 35 (above).
    */
   test.each([
     { shape: "a run open past its last statement", between: -2_000, later: true },
-    { shape: "nothing open past its last statement", between: -2_000, later: false },
     { shape: "a statement the replay misses", between: -1_000, later: false },
   ])("$shape: the badge is net worth's, the proof line the row's own sentence", ({ between, later }) => {
     statementCard(between);

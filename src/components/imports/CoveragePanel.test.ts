@@ -132,8 +132,8 @@ function panel(): { header: string; rows: Map<string, string> } {
  * (review, 2026-10-01). The header counted every `unverified` account, and Robinhood Agentic's
  * row — directly below — said the account closes through Aug 31, 2026 and that only the days
  * before its first balance are unchecked. On a copy of his ledger the header read "3 accounts
- * nothing is checking" of Cash on Hand, Robinhood Cash and Agentic. Which unverified accounts have
- * only those days is `beforeFirstBalance`, the reading the row and net worth's line share.
+ * nothing is checking" of Cash on Hand, Robinhood Cash and Agentic. Since his answer of 2026-10-05
+ * (§6A 35) those days alone grade an account `verified`, so the header counts the grades.
  */
 describe("CoveragePanel — the header counts what the rows say", () => {
   test("an account unchecked only before its first balance is not one nothing is checking", () => {
@@ -146,6 +146,21 @@ describe("CoveragePanel — the header counts what the rows say", () => {
         "the 26 days before its first balance, on Jun 30, 2026, are unchecked",
     );
     expect(rows.get("Open Run")).toContain("the first day it does not is Sep 3, 2026");
+  });
+
+  /*
+   * ⚖️ His answers, 2026-10-05: the days before its first balance alone do not make it an account
+   * nothing is checking (§6A 35), so its badge is the grade its balance earns — and the words for
+   * those days stay as they are (§6A 36). The row, badge and all, word for word.
+   */
+  test("its badge is Verified, and its row still names the days before its first balance", () => {
+    addAgentic();
+    expect(panel().rows.get("Robinhood Agentic")).toBe(
+      "Robinhood Agentic Verified no statements " +
+        "closes to the cent through Aug 31, 2026 (31 days ago); " +
+        "the 26 days before its first balance, on Jun 30, 2026, are unchecked — " +
+        "replayed backwards from it, with nothing earlier to check them against",
+    );
   });
 
   test("with nothing else unchecked, the header says every account is checked", () => {

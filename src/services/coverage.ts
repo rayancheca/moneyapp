@@ -31,7 +31,10 @@ import { handTypedDays, keptOpeningOf, pickWinners } from "./anchor-winners";
  */
 
 export type CoverageGrade =
-  /** the transaction walk closes on every anchor, right up to `verifiedThrough` */
+  /**
+   * the transaction walk closes on every anchor, right up to `verifiedThrough` — days before its
+   * first balance may be unchecked, which the balance does not rest on (⚖️ §6A 35, `beforeFirstBalance`)
+   */
   | "verified"
   /** replayed past the last anchor with nothing left to check against */
   | "unverified"
@@ -542,6 +545,24 @@ const accountCoverageCached = cache(function accountCoverageCached(
       };
     }
 
+    // the rebuild writes every endpoint `anchored` and replays backwards from the first of them
+    const firstBalanceOn = balances.find((b) => b.basis === "anchored")?.day ?? null;
+    /*
+     * ⚖️ His answer, 2026-10-05 (§6A 35): the grade reads the days the balance RESTS on, and the days
+     * before its first balance — replayed backwards from it, with nothing earlier to check them
+     * against — are not among them. Robinhood Agentic graded `unverified` on its 26 alone (Jun 4–29;
+     * first balance the Jun 30 statement, closed through Aug 31, no run open), so net worth read
+     * "3 have nothing checking them" of a balance three reconciled statements stand on, and /imports'
+     * header had to count around the grade to say 2. `unverifiedSince` keeps counting them: it is the
+     * first unchecked day the account EVER had, and `beforeFirstBalance` still names them.
+     *
+     * ⚠️ With no first balance (an opening kept from a statement he un-imported) nothing is before
+     * it, so every unchecked day counts. Past it the replay writes one only going forward, and a
+     * gap only between two balances, so this is the run still open.
+     */
+    const uncheckedRestedOn = balances.filter(
+      (b) => b.basis === "derived_unverified" && (firstBalanceOn === null || b.day > firstBalanceOn),
+    ).length;
     /*
      * ⛔ Nothing closed at all is not "verified" — an account whose only balance
      * is one he typed, with rows only on that day, read "adds up against a
@@ -549,9 +570,7 @@ const accountCoverageCached = cache(function accountCoverageCached(
      * his count and nothing else (`countedOn`).
      */
     const grade: CoverageGrade =
-      days.gap > 0 ? "broken" : days.derived_unverified > 0 || closed.size === 0 ? "unverified" : "verified";
-    // the rebuild writes every endpoint `anchored` and replays backwards from the first of them
-    const firstBalanceOn = balances.find((b) => b.basis === "anchored")?.day ?? null;
+      days.gap > 0 ? "broken" : uncheckedRestedOn > 0 || closed.size === 0 ? "unverified" : "verified";
 
     return {
       ...base,

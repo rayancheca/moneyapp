@@ -10,6 +10,7 @@ import { holdingEvents } from "@/db/schema/holding-events";
 import { institutions } from "@/db/schema/institutions";
 import { transactions } from "@/db/schema/transactions";
 import { VERDICT_PRESENTATION } from "@/lib/provenance-verdict";
+import { rebuildAccount } from "./derivation";
 import { provenanceFor } from "./provenance";
 import { trustCard } from "./trust-card";
 
@@ -541,5 +542,59 @@ describe("trustCard — the unchecked days", () => {
     const card = trustCard(bundle.db, TODAY)!;
     expect(card.days.gap).toBe(0);
     expect(card.days.sentence).toContain("No day provably fails to add up");
+  });
+});
+
+/* ── ⚖️ the days before a first balance ───────────────────────────────── */
+
+/*
+ * ⚖️ His answer, 2026-10-05 (§6A 35): days BEFORE an account's first balance — replayed backwards
+ * from it, with nothing earlier to check them against — do not on their own make it one nothing
+ * is checking. Measured on a copy of his ledger: Robinhood Agentic (26 such days, Jun 4–29, first
+ * balance Jun 30, closed through Aug 31, no run open) graded `unverified` on them alone, so net
+ * worth read "3 have nothing checking them" — Cash on Hand, Robinhood Cash and Agentic — of a
+ * balance three reconciled statements stand on. Under his rule only Agentic moves, and it keeps
+ * naming those days. Built through the rebuild, in those three shapes.
+ */
+describe("trustCard — the days before a first balance do not grade an account", () => {
+  function anchorAt(accountId: string, day: string, source: "statement" | "manual"): void {
+    bundle.db
+      .insert(balanceAnchors)
+      .values({ accountId, anchoredOn: day, balanceCents: 500_000, source, createdAt: now(), updatedAt: now() })
+      .run();
+  }
+  /** three statements that agree, the row that funded it before the first, and maybe a later row */
+  function statementAccount(id: string, name: string, laterRow: string | null): void {
+    addAccount(id, name, "checking");
+    for (const day of ["2026-06-30", "2026-07-31", "2026-08-31"]) anchorAt(id, day, "statement");
+    addTxn(id, "2026-06-05");
+    if (laterRow !== null) addTxn(id, laterRow);
+    rebuildAccount(bundle.db, id, "2026-09-15");
+  }
+
+  test("Robinhood Agentic adds up, still named with its unchecked days; two have nothing checking them", () => {
+    statementAccount("agentic", "Robinhood Agentic", null);
+    // a run open past its newest statement, as Robinhood Cash's is from Sep 1
+    statementAccount("rh-cash", "Robinhood Cash", "2026-09-05");
+    // his count, and a row he entered after it
+    addAccount("coh", "Cash on Hand", "checking");
+    anchorAt("coh", "2026-08-03", "manual");
+    addTxn("coh", "2026-08-11");
+    rebuildAccount(bundle.db, "coh", "2026-09-15");
+
+    const nw = provenanceFor(bundle.db, { kind: "netWorth", day: "2026-10-01" })!;
+    expect(nw.headline).toContain("1 of 3 accounts add up against a document, 2 have nothing checking them.");
+    const card = trustCard(bundle.db, "2026-10-01")!;
+    expect(card.headline).toBe("1 of 3");
+    // most unchecked days first: 37 (26 before its first balance, 11 open) and 36 since Aug 11
+    expect(groupOf(card, "unverified")!.accounts.map((a) => a.name)).toEqual(["Robinhood Cash", "Cash on Hand"]);
+    expect(groupOf(card, "verified")!.accounts).toEqual([
+      expect.objectContaining({
+        name: "Robinhood Agentic",
+        verdict: "derived",
+        detail: "checked through Aug 31, 2026, and unchecked days before that",
+        uncheckedDays: 26,
+      }),
+    ]);
   });
 });
