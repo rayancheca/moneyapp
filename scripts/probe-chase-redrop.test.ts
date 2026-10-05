@@ -11,7 +11,7 @@ import { normalizeDescription } from "@/lib/normalize";
 import { PROFILES } from "@/services/import/profiles";
 import { importStatementFiles } from "@/services/import/service";
 import type { AccountHint, ParsedStatement, ParserProfile } from "@/services/import/types";
-import { judge, readLedger } from "./probe-chase-redrop";
+import { judge, readLedger, worthOnEveryDay } from "./probe-chase-redrop";
 
 /**
  * Two ledgers the way step 3 of the §6A 23 runbook reads them: the restore point `pnpm import-statements` takes, and
@@ -211,5 +211,30 @@ describe("what the probe exists to refuse", () => {
     const v = verdictOn(rederived);
     expect(v.other.map((m) => [m.after?.raw_description, m.fields])).toEqual([[SOFIA, ["normalized_description"]]]);
     expect(v.clean).toBe(false);
+  });
+});
+
+describe("net worth on every day the ledger had", () => {
+  const day = (d: string, cents: number) => ({ day: d, cents });
+  const had = [day("2026-10-01", 100), day("2026-10-02", 120)];
+
+  test("identical series: same, nothing carried", () => {
+    expect(worthOnEveryDay(had, [...had])).toEqual({ same: true, carried: [] });
+  });
+
+  test("days the re-read adds past the last carry its last value: same, and named", () => {
+    // re-deriving Chase Checking carries its last balance to the day the import runs
+    const after = [...had, day("2026-10-03", 120), day("2026-10-04", 120)];
+    expect(worthOnEveryDay(had, after)).toEqual({ same: true, carried: ["2026-10-03", "2026-10-04"] });
+  });
+
+  test("a day the ledger had that moved, or went missing, is not the same", () => {
+    expect(worthOnEveryDay(had, [day("2026-10-01", 100), day("2026-10-02", 121)]).same).toBe(false);
+    expect(worthOnEveryDay(had, [day("2026-10-02", 120)]).same).toBe(false);
+    expect(worthOnEveryDay(had, [day("2026-09-30", 100), ...had]).same).toBe(false);
+  });
+
+  test("an added day that does not carry the last value is not the same", () => {
+    expect(worthOnEveryDay(had, [...had, day("2026-10-03", 119)]).same).toBe(false);
   });
 });

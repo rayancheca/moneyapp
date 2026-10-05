@@ -8,7 +8,8 @@
  * §6A 23, step 2 (`scripts/pin-fordham-aid-2026-09-28.ts` is step 1): against the restore point `pnpm
  * import-statements` takes, ONLY THE MARGIN IDS may move — 13 lines lose the statement's 20-digit margin identifier
  * and keep every other word — with no category, source, note, link, status or line gained or lost, and net worth
- * identical on every day. Exit 1 on anything else.
+ * identical on every day the ledger had (a day added past its last must carry that worth: `worthOnEveryDay`). Exit 1
+ * on anything else.
  *
  * A line is matched to its successor by the words it prints once the identifier is gone (`withoutMarginIdentifier`,
  * the rule the v2 read drops it by), and its words may move by that identifier and nothing more. Two lines of one
@@ -164,15 +165,39 @@ export interface Verdict {
   cleaned: Move[];
   other: Move[];
   sameWorth: boolean;
+  /** days past the ledger's last that the re-read added at its last worth */
+  carriedDays: string[];
   clean: boolean;
+}
+
+/**
+ * Net worth on every day the ledger had, identical — and a day the re-read adds past its last carries that day's
+ * worth. Re-deriving Chase Checking carries its last balance to the day the import runs (the runbook's `carried`
+ * balances), so when the ledger last ran to an earlier day the series grows by those days at the same worth; any
+ * day it had that moved or went missing, or an added day at another worth, is not the same. (Measured 2026-10-05:
+ * the ledger ran to Oct 2, the staged re-drop to Oct 5 — 1,501 days identical, 3 added at $119,999.32.)
+ */
+export function worthOnEveryDay(
+  before: Ledger["netWorth"],
+  after: Ledger["netWorth"],
+): { same: boolean; carried: string[] } {
+  const prefix = after.slice(0, before.length);
+  if (JSON.stringify(prefix) !== JSON.stringify(before)) return { same: false, carried: [] };
+  const last = before.at(-1);
+  const added = after.slice(before.length);
+  if (added.length > 0 && (last === undefined || added.some((p) => p.cents !== last.cents || p.day <= last.day))) {
+    return { same: false, carried: [] };
+  }
+  return { same: true, carried: added.map((p) => p.day) };
 }
 
 export function judge(before: Ledger, after: Ledger): Verdict {
   const moved = moves(before, after);
   const cleaned = moved.filter(isMarginCleanup);
   const other = moved.filter((m) => !isMarginCleanup(m));
-  const sameWorth = JSON.stringify(before.netWorth) === JSON.stringify(after.netWorth);
-  return { moved, cleaned, other, sameWorth, clean: sameWorth && other.length === 0 };
+  const worth = worthOnEveryDay(before.netWorth, after.netWorth);
+  const sameWorth = worth.same;
+  return { moved, cleaned, other, sameWorth, carriedDays: worth.carried, clean: sameWorth && other.length === 0 };
 }
 
 function main(): void {
@@ -185,13 +210,13 @@ function main(): void {
   if (stray.length > 0) throw new Error(`unknown argument(s): ${stray.join(" ")} — this probe takes --before=<db> and --after=<db>`);
   const before = readLedger(arg("before"));
   const after = readLedger(arg("after"));
-  const { moved, cleaned, other, sameWorth, clean } = judge(before, after);
+  const { moved, cleaned, other, sameWorth, carriedDays, clean } = judge(before, after);
   const tally = new Map<string, number>();
   for (const m of moved) for (const f of m.fields) tally.set(f, (tally.get(f) ?? 0) + 1);
 
   const last = (l: Ledger) => (l.netWorth.length === 0 ? "—" : `${l.netWorth.at(-1)!.day} ${formatCents(l.netWorth.at(-1)!.cents)}`);
   console.log(`live rows          ${before.live.count} ${formatCents(before.live.cents)} → ${after.live.count} ${formatCents(after.live.cents)}`);
-  console.log(`net worth          ${last(before)} → ${last(after)} (every day ${sameWorth ? "identical" : "MOVED"})`);
+  console.log(`net worth          ${last(before)} → ${last(after)} (every day ${sameWorth ? "identical" : "MOVED"}${carriedDays.length > 0 ? `; ${carriedDays.length} day(s) added past the last, carrying its worth: ${carriedDays[0]} → ${carriedDays.at(-1)}` : ""})`);
   console.log(`margin ids         ${before.marginRows} → ${after.marginRows} live rows`);
   console.log(`lines that moved   ${moved.length}: ${cleaned.length} only their margin id, ${other.length} anything else`);
   console.log(`  by field         ${JSON.stringify(Object.fromEntries([...tally].sort()))}`);
