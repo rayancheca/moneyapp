@@ -11,13 +11,14 @@ import { formatCents, formatCentsSigned } from "@/lib/money";
 import { activeTxnsInRange, loadCategoryIndex, spendingBucket } from "@/services/analytics";
 import { cardsOwedCard } from "@/services/cards-owed";
 import { SPEND_BASELINE_MONTHS } from "@/services/committed";
-import { listAccounts } from "@/services/accounts";
+import { listAccounts, outsidePortfolioCashAccountIds } from "@/services/accounts";
 import { feesCard } from "@/services/fees-card";
 
 const db = getDb();
 const TODAY = "2026-08-27";
 
 const idx = loadCategoryIndex(db);
+const agentsCash = outsidePortfolioCashAccountIds(db);
 const top = [...idx.byId.values()].find((c) => c.parentId === null && c.name === "Fees")!;
 const incomeTop = [...idx.byId.values()].find((c) => c.parentId === null && c.name === "Income")!;
 const interest = [...idx.byId.values()].find((c) => c.parentId === incomeTop.id && c.name === "Interest")!;
@@ -112,7 +113,7 @@ for (const [id, c] of [...byAcct.entries()].sort((a, b) => b[1] - a[1])) {
 }
 
 console.log("\n── 6. DOES `spendingBucket` ADMIT EVERY FEE ROW? (kind=expense check) ──");
-const admitted = all.filter((t) => t.categoryId !== null && feeIds.has(t.categoryId) && spendingBucket(idx, t) !== null).length;
+const admitted = all.filter((t) => t.categoryId !== null && feeIds.has(t.categoryId) && spendingBucket(idx, agentsCash, t) !== null).length;
 const feeRowCount = all.filter((t) => t.categoryId !== null && feeIds.has(t.categoryId)).length;
 console.log(`  ${admitted} of ${feeRowCount} fee rows are inside the app's spending totals`);
 

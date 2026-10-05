@@ -1,0 +1,596 @@
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { and, eq, inArray, isNull } from "drizzle-orm";
+import { afterEach, beforeEach, describe, expect, test } from "vitest";
+import { loadSpendingCategoryTxns } from "@/app/spending/actions";
+import { parseFilters } from "@/components/transactions/query";
+import { createDatabase, type DbBundle } from "@/db/client";
+import { seedDatabase } from "@/db/seed";
+import { accounts } from "@/db/schema/accounts";
+import { categories } from "@/db/schema/categories";
+import { institutions } from "@/db/schema/institutions";
+import { merchants } from "@/db/schema/merchants";
+import { transactions } from "@/db/schema/transactions";
+import { ATTRIBUTION_BAND_LABEL, ATTRIBUTION_BAND_MEANING, ATTRIBUTION_BAND_ORDER } from "@/lib/attribution";
+import { dedupeHash } from "@/lib/hash";
+import { cashFlowSegmentHref } from "@/lib/ledger-href";
+import { resolvePeriod } from "@/lib/period";
+import { createAccount, outsidePortfolioCashAccountIds } from "./accounts";
+import {
+  categoryBreakdown,
+  categorySpending,
+  isAgentsCostCategoryRow,
+  loadCategoryIndex,
+  monthlySpending,
+  spendingBucket,
+} from "./analytics";
+import { addManualAnchor } from "./anchors";
+import { netWorthAttribution } from "./attribution";
+import { budgetStatuses, createBudget } from "./budgets";
+import { predictCategory } from "./category-forecast";
+import { categoryFlowSign, categoryMonthlyTrend, categorySubcategorySplit } from "./category-detail";
+import { netWorthSeries, rebuildAccount } from "./derivation";
+import { eatingOutCard } from "./eating-out";
+import { feesCard } from "./fees-card";
+import { forecastCurrentMonth, forecastForMonth } from "./forecast";
+import { merchantInsightInput } from "./merchant-insights";
+import { merchantIntelligence } from "./merchants";
+import { noticesCard } from "./notices-card";
+import { ledgerOpens, ledgerReaches } from "./observation-frontier";
+import { periodActivity } from "./period-activity";
+import { provenanceFor } from "./provenance";
+import { spendingSankey } from "./sankey";
+import { cashFlowByPeriod, dailySpendHeatmap, largestTransactions, periodTotals, topMerchants } from "./spending";
+import { matchingTransactionIds } from "./transactions-query";
+import { setSplits } from "./transaction-splits";
+import { spendingCoverageThrough } from "./movers-card";
+
+/**
+ * ⚖️ Owner decision 2026-10-02 (§6A 34): what the AGENT'S account PAYS — a fee, or any other expense charged to its
+ * cash — is not HIS spending, as what it is paid is not his income (§6A 27). Not /spending's Spent (its card, chart,
+ * heatmap and Sankey), not the dashboard's Fees card, and not any surface that says spent or spending: /budgets,
+ * /categories/<expense>, the dashboard's period panel, the forecast's pace, the merchants. The net-worth bridge is the
+ * exception, as it was for the income: net worth holds the agent's money, so the bridge names what it paid on a band
+ * of its own, "Agent's costs", beside "Agent's income".
+ *
+ * His ledger holds none of it yet (Robinhood Agentic carries one transfer row, and no book is paired), so this fixture
+ * is the proof. His rows are the agents-income fixture's real lines; the agent's cost is Robinhood's monthly Gold fee as
+ * its activity report prints it — "Gold Monthly Fee", trans code GOLD, ($5.00) on the 1st
+ * (tests/fixtures/synthetic/robinhood) — filed where the importer files that code (`RH_CODE_CATEGORY`: Fees > Bank
+ * Fees), at the seed's own "Robinhood Gold" merchant.
+ */
+
+const TODAY = "2026-10-05";
+const SEPT = { from: "2026-09-01", to: "2026-09-30" };
+/** his September pay: the It America payroll */
+const HIS_PAY = 114_192;
+/** his September fee: "Non-Wells Fargo ATM Transaction Fee", the review's $15.00 */
+const HIS_FEE = 1_500;
+/** the agent's September cost: Robinhood's Gold fee, charged to the agent's cash */
+const AGENTS_FEE = 500;
+
+let dir: string;
+let bundle: DbBundle;
+let fakeToday: string | undefined;
+let wellsFargo: string;
+let robinhoodCash: string;
+let agentic: string;
+let book: string;
+let gold: string;
+
+function catId(pathStr: string): string {
+  const [parentName, subName] = pathStr.split(" > ");
+  const parent = bundle.db
+    .select()
+    .from(categories)
+    .where(and(eq(categories.name, parentName!), isNull(categories.parentId)))
+    .get()!;
+  if (!subName) return parent.id;
+  return bundle.db
+    .select()
+    .from(categories)
+    .where(and(eq(categories.name, subName), eq(categories.parentId, parent.id)))
+    .get()!.id;
+}
+
+function post(
+  accountId: string,
+  postedOn: string,
+  amountCents: number,
+  category: string | null,
+  raw: string,
+  merchantId: string | null = null,
+): void {
+  bundle.db
+    .insert(transactions)
+    .values({
+      accountId,
+      postedOn,
+      amountCents,
+      rawDescription: raw,
+      normalizedDescription: raw,
+      categoryId: category === null ? null : catId(category),
+      merchantId,
+      status: "active",
+      dedupeHash: dedupeHash({ accountId, postedOn, amountCents, rawDescription: raw, occurrenceIndex: 0 }),
+    })
+    .run();
+}
+
+/** the agent's Gold fee on the 1st of a month, as the activity report prints it */
+function goldFee(postedOn: string): void {
+  post(agentic, postedOn, -AGENTS_FEE, "Fees > Bank Fees", "Gold Monthly Fee", gold);
+}
+
+/** the rule's own edge: with no book paired, Agentic is a cash account like any other, and its money is his */
+function unpair(): void {
+  bundle.db.update(accounts).set({ cashAccountId: null }).where(eq(accounts.id, book)).run();
+}
+
+beforeEach(() => {
+  fakeToday = process.env.MONEYAPP_FAKE_TODAY;
+  process.env.MONEYAPP_FAKE_TODAY = TODAY;
+  dir = fs.mkdtempSync(path.join(os.tmpdir(), "moneyapp-agents-costs-"));
+  bundle = createDatabase(path.join(dir, "t.db"));
+  seedDatabase(bundle.db);
+
+  const wf = bundle.db.insert(institutions).values({ name: "Wells Fargo" }).returning({ id: institutions.id }).get();
+  const rh = bundle.db.select().from(institutions).where(eq(institutions.name, "Robinhood")).get()!;
+  wellsFargo = createAccount(bundle.db, { institutionId: wf.id, name: "Wells Fargo Everyday Checking", type: "checking" });
+  robinhoodCash = createAccount(bundle.db, { institutionId: rh.id, name: "Robinhood Cash", type: "checking" });
+  agentic = createAccount(bundle.db, { institutionId: rh.id, name: "Robinhood Agentic", type: "checking", last4: "9651" });
+  // the agent's brokerage book, paired with its cash account — what makes Agentic's money the agent's
+  book = createAccount(bundle.db, { institutionId: rh.id, name: "Robinhood Agentic Brokerage", type: "investment", subtype: "brokerage" });
+  bundle.db.update(accounts).set({ cashAccountId: agentic }).where(eq(accounts.id, book)).run();
+  gold = bundle.db.select().from(merchants).where(eq(merchants.canonicalName, "Robinhood Gold")).get()!.id;
+
+  // the three balances his ledger reads on 2026-08-31
+  addManualAnchor(bundle.db, { accountId: wellsFargo, anchoredOn: "2026-08-31", enteredCents: 392_640 });
+  addManualAnchor(bundle.db, { accountId: robinhoodCash, anchoredOn: "2026-08-31", enteredCents: 100_101 });
+  addManualAnchor(bundle.db, { accountId: agentic, anchoredOn: "2026-08-31", enteredCents: 2_664 });
+
+  post(wellsFargo, "2026-09-24", HIS_PAY, "Income > Salary", "It America LLC Payroll 260924");
+  post(wellsFargo, "2026-09-01", -HIS_FEE, "Fees > ATM Fees", "Non-Wells Fargo ATM Transaction Fee");
+  goldFee("2026-09-01");
+});
+
+afterEach(() => {
+  bundle.sqlite.close();
+  fs.rmSync(dir, { recursive: true, force: true });
+  if (fakeToday === undefined) delete process.env.MONEYAPP_FAKE_TODAY;
+  else process.env.MONEYAPP_FAKE_TODAY = fakeToday;
+});
+
+/** Net worth from the app's own chain, so the test never invents its own. */
+function nwOn(day: string): number {
+  let cents = 0;
+  for (const p of netWorthSeries(bundle.db)) {
+    if (p.day > day) break;
+    cents = p.totalCents;
+  }
+  return cents;
+}
+
+/** The rows a `/transactions` link opens — the ledger's own filter, as the page and its bulk actions select them. */
+function opened(href: string): { accountId: string; amountCents: number }[] {
+  const filters = parseFilters(Object.fromEntries(new URL(href, "http://ledger.test").searchParams));
+  return bundle.db
+    .select({ accountId: transactions.accountId, amountCents: transactions.amountCents })
+    .from(transactions)
+    .where(inArray(transactions.id, matchingTransactionIds(bundle.db, filters, "all")))
+    .all();
+}
+
+const sum = (rows: readonly { amountCents: number }[]) => rows.reduce((s, r) => s + r.amountCents, 0);
+
+describe("the agent's costs are not his spending — on every surface that says Spent", () => {
+  test("⛔ /spending: the Spent card, the cash-flow chart and the heatmap leave it out", () => {
+    expect(periodTotals(bundle.db, SEPT)).toMatchObject({ spentCents: HIS_FEE, refundsCents: 0, earnedCents: HIS_PAY });
+
+    const flow = cashFlowByPeriod(bundle.db, resolvePeriod({ period: "2026-09" }, TODAY), TODAY);
+    expect(flow.totals.spentCents).toBe(HIS_FEE);
+    expect(flow.spendingSeries.map((s) => s.label)).toEqual(["Fees"]);
+    expect(flow.buckets.find((b) => b.key === "2026-09-01")!.spendingCents).toBe(HIS_FEE);
+
+    // the day both were charged: his fee is the day's spending, and the agent's Gold fee is no part of it
+    const day = dailySpendHeatmap(bundle.db, "2026-09").days.find((d) => d.iso === "2026-09-01")!;
+    expect([day.spentCents, day.txnCount, day.refundedCents]).toEqual([HIS_FEE, 1, 0]);
+    expect(day.topMerchants.map((m) => m.name)).not.toContain("Robinhood Gold");
+
+    // …and the proof under the Spent card names the rows it sums: his one fee, never the agent's
+    expect(provenanceFor(bundle.db, { kind: "allSpend", ...SEPT })?.headline).toMatch(/the sum of 1 row /);
+  });
+
+  test("⛔ the Sankey's spending is his alone, and its hub still balances", () => {
+    const graph = spendingSankey(bundle.db, SEPT);
+    const spend = graph.nodes.filter((n) => n.meta?.kind === "category");
+    expect(spend.map((n) => [n.label, graph.links.find((l) => l.target === n.id)!.valueCents])).toEqual([
+      ["Fees", HIS_FEE],
+    ]);
+    // what he earned less what he spent was saved — the agent's fee came out of the agent's money, not his
+    expect(graph.links.find((l) => l.target === "saved")!.valueCents).toBe(HIS_PAY - HIS_FEE);
+  });
+
+  test("⛔ the dashboard's period panel and every analytics grid leave it out", () => {
+    const panel = periodActivity(bundle.db, SEPT.from, SEPT.to, 10).summary;
+    expect(panel.outCents).toBe(HIS_FEE);
+    expect(panel.topCategories.map((c) => [c.name, c.spentCents])).toEqual([["Fees", HIS_FEE]]);
+
+    // the stacked bars, the movers' grid and the runway's baseline all read this one
+    const cells = monthlySpending(bundle.db, { months: 1, refDate: SEPT.to });
+    expect(cells.map((c) => [c.categoryName, c.spentCents, c.txnCount])).toEqual([["Fees", HIS_FEE, 1]]);
+    // /spending's category table and its insights: Fees is his ATM fee, and Bank Fees no child of it
+    const [fees] = categoryBreakdown(bundle.db, SEPT);
+    expect([fees!.name, fees!.spentCents, fees!.txnCount]).toEqual(["Fees", HIS_FEE, 1]);
+    expect(fees!.children.map((c) => [c.name, c.spentCents])).toEqual([["ATM Fees", HIS_FEE]]);
+  });
+
+  test("⛔ the Spent, Net and segment links open exactly the rows behind them — the agent's are not among them", () => {
+    const spent = opened(`/transactions?category=spending&from=${SEPT.from}&to=${SEPT.to}`);
+    expect(sum(spent)).toBe(-periodTotals(bundle.db, SEPT).spentCents);
+    expect(spent.some((r) => r.accountId === agentic)).toBe(false);
+    // the Net card's population is spending ∪ income, and the agent's cost is in neither
+    expect(sum(opened(`/transactions?category=cashflow&from=${SEPT.from}&to=${SEPT.to}`))).toBe(HIS_PAY - HIS_FEE);
+
+    // the Sankey's spending node and the cash-flow chart's Fees segment
+    const graph = spendingSankey(bundle.db, SEPT);
+    const node = graph.nodes.find((n) => n.meta?.kind === "category")!;
+    expect(sum(opened(node.href!))).toBe(-HIS_FEE);
+    const flow = cashFlowByPeriod(bundle.db, resolvePeriod({ period: "2026-09" }, TODAY), TODAY);
+    const series = flow.spendingSeries[0]!;
+    const bucket = flow.buckets.find((b) => b.key === "2026-09-01")!;
+    expect(sum(opened(cashFlowSegmentHref(series.key, series.categoryId, bucket, "out")))).toBe(-bucket.spending[series.key]!);
+  });
+
+  test("⛔ /spending's merchants and largest purchases are his — Robinhood Gold is no merchant he spends at", () => {
+    const top = topMerchants(bundle.db, SEPT);
+    expect(top.entries.map((e) => e.name)).not.toContain("Robinhood Gold");
+    expect(top.linkedCount).toBe(0);
+    expect(largestTransactions(bundle.db, SEPT).map((t) => t.amountCents)).toEqual([-HIS_FEE]);
+  });
+});
+
+/**
+ * `/categories/[id]`'s transaction panel: the server action the page awaits, which reads through `getDb()`. Pointed at
+ * this fixture for the one call and handed back, so nothing else can reach it.
+ */
+async function categoryPanel(categoryId: string) {
+  const handle = globalThis as { __moneyappDb?: DbBundle };
+  const prior = handle.__moneyappDb;
+  handle.__moneyappDb = bundle;
+  try {
+    const result = await loadSpendingCategoryTxns({ categoryId, ...SEPT });
+    if (!result.ok) throw new Error(result.error);
+    return result.data;
+  } finally {
+    if (prior === undefined) delete handle.__moneyappDb;
+    else handle.__moneyappDb = prior;
+  }
+}
+
+/** `/categories/<path>?period=2026-09`: every figure read the way the page reads it, in the page's own frame. */
+async function categoryPage(pathStr: string) {
+  const id = catId(pathStr);
+  const sign = categoryFlowSign("expense");
+  const { spentCents, txnCount } = categorySpending(bundle.db, { categoryId: id, ...SEPT });
+  const reaches = ledgerReaches(bundle.db);
+  const [bar] = categoryMonthlyTrend(bundle.db, id, 1, SEPT.to, reaches, ledgerOpens(bundle.db), TODAY);
+  const name = pathStr.split(" > ").at(-1)!;
+  return {
+    spent: sign * spentCents + 0,
+    txnCount,
+    bar: { cents: sign * bar!.spentCents + 0, href: bar!.href },
+    subcategories: categorySubcategorySplit(bundle.db, id, SEPT),
+    panel: await categoryPanel(id),
+    merchants: topMerchants(bundle.db, SEPT, 8, { categoryId: id }).entries.map((e) => e.name),
+    proof: provenanceFor(bundle.db, { kind: "categorySpend", categoryId: id, ...SEPT, label: name })?.headline,
+  };
+}
+
+describe("the agent's costs are no row of his on an expense category's own page", () => {
+  test("⛔ Spent, its trend, subcategories, rows, merchants and proof are his alone — and every link opens them", async () => {
+    const fees = await categoryPage("Fees");
+    expect([fees.spent, fees.txnCount, fees.bar.cents]).toEqual([HIS_FEE, 1, HIS_FEE]);
+    expect(fees.subcategories.map((s) => [s.name, s.flowCents, s.txnCount])).toEqual([["ATM Fees", HIS_FEE, 1]]);
+    expect([fees.panel.total, sum(fees.panel.rows)]).toEqual([1, -HIS_FEE]);
+    expect(fees.merchants).not.toContain("Robinhood Gold");
+    expect(fees.proof).toMatch(/^This total is the sum of 1 row /);
+    const links: [string, number][] = [
+      [fees.bar.href, -fees.bar.cents],
+      [fees.panel.href, -fees.spent],
+      ...fees.subcategories.map((s): [string, number] => [s.href!, -s.flowCents]),
+    ];
+    for (const [href, cents] of links) {
+      const rows = opened(href);
+      expect(sum(rows), href).toBe(cents);
+      expect(rows.some((r) => r.accountId === agentic), href).toBe(false);
+    }
+
+    // September's only Bank Fee is the agent's Gold fee: his Bank Fees page has none to show
+    const bank = await categoryPage("Fees > Bank Fees");
+    expect([bank.spent, bank.txnCount, bank.bar.cents, bank.panel.total]).toEqual([0, 0, 0, 0]);
+    expect(opened(bank.panel.href)).toEqual([]);
+    expect(opened(bank.bar.href)).toEqual([]);
+    expect(bank.merchants).toEqual([]);
+    expect(bank.proof).not.toMatch(/the sum of/);
+  });
+
+  test("⛔ /budgets: a Fees budget is graded on his fees alone", () => {
+    createBudget(bundle.db, { categoryId: catId("Fees"), period: "monthly", amountCents: 5_000, startsOn: SEPT.from });
+    createBudget(bundle.db, { categoryId: catId("Fees > Bank Fees"), period: "monthly", amountCents: 1_000, startsOn: SEPT.from });
+    const spent = Object.fromEntries(budgetStatuses(bundle.db, SEPT.to).map((s) => [s.categoryName, s.spentCents]));
+    expect(spent).toEqual({ Fees: HIS_FEE, "Bank Fees": 0 });
+  });
+
+  test("the rule's own edge: unpaired, the account is his, and so is every row of it on the page", async () => {
+    unpair();
+    const fees = await categoryPage("Fees");
+    expect([fees.spent, fees.txnCount]).toEqual([HIS_FEE + AGENTS_FEE, 2]);
+    expect(fees.subcategories.map((s) => [s.name, s.flowCents])).toEqual([
+      ["ATM Fees", HIS_FEE],
+      ["Bank Fees", AGENTS_FEE],
+    ]);
+    expect(sum(opened(fees.panel.href))).toBe(-(HIS_FEE + AGENTS_FEE));
+    expect(fees.merchants).toContain("Robinhood Gold");
+    expect(periodTotals(bundle.db, SEPT).spentCents).toBe(HIS_FEE + AGENTS_FEE);
+    const spent = opened(`/transactions?category=spending&from=${SEPT.from}&to=${SEPT.to}`);
+    expect(sum(spent)).toBe(-(HIS_FEE + AGENTS_FEE));
+  });
+});
+
+describe("the agent's fee is no fee the banks charged him", () => {
+  /*
+   * The Fees card sets the `Fees` taxonomy against the interest the banks paid "across every account" — and §6A 27
+   * already took the agent's interest out of its other half. A month whose only Bank Fee was the agent's Gold fee read
+   * "$20.00 went out in fees": the agent's $5.00, charged to him.
+   */
+  test("⛔ the Fees card's paid half is his alone, and its lines open exactly it", () => {
+    const card = feesCard(bundle.db, TODAY)!;
+    expect([card.recent.from, card.recent.to, card.months]).toEqual([SEPT.from, SEPT.to, 1]);
+    expect([card.recent.paidCents, card.recent.paidCharges, card.allTime.paidCents]).toEqual([HIS_FEE, 1, HIS_FEE]);
+    expect(card.lines.map((l) => [l.name, l.cents])).toEqual([["ATM Fees", HIS_FEE]]);
+    for (const line of card.lines) expect(sum(opened(line.href)), line.name).toBe(-line.cents);
+
+    unpair();
+    const his = feesCard(bundle.db, TODAY)!;
+    expect([his.recent.paidCents, his.allTime.paidCents]).toEqual([HIS_FEE + AGENTS_FEE, HIS_FEE + AGENTS_FEE]);
+  });
+});
+
+describe("Robinhood Gold, charged to the agent, is no merchant of his", () => {
+  /*
+   * `/merchants/<id>` — "what this merchant costs a month", its rank among his regular merchants, the category it
+   * charges most in — reads expense-kind rows by merchant, every account. Two Gold fees make it a regular merchant of
+   * his: "the largest of your 1 regular merchants".
+   */
+  test("⛔ the merchant's page measures nothing of the agent's, and says nothing about it", () => {
+    goldFee("2026-08-01");
+    const profile = merchantIntelligence(bundle.db, gold, TODAY).profile;
+    expect([profile.visitCount, profile.totalCents]).toEqual([0, 0]);
+    expect(merchantInsightInput(bundle.db, gold, TODAY)).toBeNull();
+
+    unpair();
+    const his = merchantIntelligence(bundle.db, gold, TODAY).profile;
+    expect([his.visitCount, his.totalCents]).toEqual([2, 2 * AGENTS_FEE]);
+    expect(merchantInsightInput(bundle.db, gold, TODAY)).not.toBeNull();
+  });
+
+  /*
+   * A merchant both of them pay — hypothetical: he subscribes to Gold too — is ranked, totalled and placed in a
+   * category by HIS charges there. The agent's refund and a charge of the agent's filed elsewhere (Shopping, larger
+   * than his Fees there) are the rule's other halves: left in, the refund comes off his total, the Shopping charge
+   * makes the merchant his largest and moves "where it charges most" to a category he spent nothing in there.
+   */
+  test("⛔ a merchant both pay: its total, rank and category share are his charges alone", () => {
+    const starbucks = bundle.db.select().from(merchants).where(eq(merchants.canonicalName, "Starbucks")).get()!.id;
+    post(robinhoodCash, "2026-08-01", -AGENTS_FEE, "Fees > Bank Fees", "Gold Monthly Fee", gold);
+    post(robinhoodCash, "2026-09-01", -AGENTS_FEE, "Fees > Bank Fees", "Gold Monthly Fee", gold);
+    post(wellsFargo, "2026-08-15", -700, "Food > Coffee", "Starbucks", starbucks);
+    post(wellsFargo, "2026-09-15", -700, "Food > Coffee", "Starbucks", starbucks);
+    post(agentic, "2026-09-02", AGENTS_FEE, "Fees > Bank Fees", "Gold Monthly Fee Refund", gold);
+    post(agentic, "2026-09-03", -3_000, "Shopping > General", "Robinhood Gold", gold);
+    const read = () => {
+      const profile = merchantIntelligence(bundle.db, gold, TODAY).profile;
+      const input = merchantInsightInput(bundle.db, gold, TODAY)!;
+      const share = input.facts.find((f) => f.kind === "share");
+      return {
+        visits: profile.visitCount,
+        total: profile.totalCents,
+        rank: input.candidates.find((c) => c.claimId.endsWith("_in_set"))?.claimId,
+        shareOf: share && "ofLabel" in share ? (/spent on (\w+)/.exec(share.ofLabel)?.[1] ?? null) : null,
+      };
+    };
+    // his two fees: $10.00, second to his $14.00 of coffee, and 40% of his Fees over Aug 1 – Sep 1
+    expect(read()).toEqual({ visits: 2, total: 1_000, rank: "ranked_in_set", shareOf: "Fees" });
+
+    unpair();
+    expect(read()).toEqual({ visits: 4, total: 4_000, rank: "largest_in_set", shareOf: "Shopping" });
+  });
+
+  /*
+   * /spending cuts a comparison at the day every account he spends from habitually has been imported through
+   * (`spendingCoverageThrough`, the movers card's live spenders). An account that charges the agent's Gold fee every
+   * month is no account he spends from, and its lag is not his.
+   */
+  test("⛔ the day /spending's comparisons are cut at is set by his accounts, not the agent's", () => {
+    for (const month of ["2026-06", "2026-07", "2026-08"]) {
+      post(wellsFargo, `${month}-01`, -HIS_FEE, "Fees > ATM Fees", "Non-Wells Fargo ATM Transaction Fee");
+      goldFee(`${month}-01`);
+    }
+    const paired = spendingCoverageThrough(bundle.db, TODAY);
+    unpair();
+    const unpaired = spendingCoverageThrough(bundle.db, TODAY);
+    bundle.db.delete(transactions).where(eq(transactions.accountId, agentic)).run();
+    const without = spendingCoverageThrough(bundle.db, TODAY);
+    expect(paired).toBe(without);
+    expect(unpaired).not.toBe(without);
+  });
+
+  /*
+   * The dashboard's notices read a merchant's charges, expense-kind and every account: a merchant's first charge
+   * above a floor reads "<merchant> appears once in your ledger". The rule's other half, pinned on a hypothetical
+   * charge large enough to clear any floor.
+   */
+  test("⛔ the dashboard's notices name no charge of the agent's", () => {
+    // the merchant's only charge, so unpaired it is a first sighting
+    bundle.db.delete(transactions).where(eq(transactions.accountId, agentic)).run();
+    post(agentic, "2026-09-15", -250_000, "Fees > Bank Fees", "Gold Annual Fee", gold);
+    const named = (card: ReturnType<typeof noticesCard>) => JSON.stringify(card ?? {});
+    expect(named(noticesCard(bundle.db, TODAY))).not.toContain("Robinhood Gold");
+    unpair();
+    expect(named(noticesCard(bundle.db, TODAY))).toContain("Robinhood Gold");
+  });
+
+  /*
+   * The eating-out card averages Food's children over complete months, every account. No agent buys lunch — this is
+   * the rule's other half, pinned on a hypothetical charge.
+   */
+  test("⛔ the eating-out card's dining is his alone", () => {
+    post(wellsFargo, "2026-09-12", -2_000, "Food > Dining", "Dining");
+    post(agentic, "2026-09-13", -3_000, "Food > Dining", "Dining");
+    const dining = (card: ReturnType<typeof eatingOutCard>) => card?.eatingOut.find((l) => l.name === "Dining")?.spentCents;
+    expect(dining(eatingOutCard(bundle.db, TODAY))).toBe(2_000);
+    unpair();
+    expect(dining(eatingOutCard(bundle.db, TODAY))).toBe(5_000);
+  });
+});
+
+describe("the agent's trailing costs are not his pace either", () => {
+  /*
+   * `variableComponents` bucketed spending with its own copy of the rule — the category's root kind, the system
+   * category — which never asked whose account. The agent's Gold fee in each trailing month projects as HIS "Fees".
+   */
+  test("⛔ the forecast's pace Spending leaves the agent's fee out, and its EOM net worth keeps it", () => {
+    goldFee("2026-07-01");
+    goldFee("2026-08-01");
+    const paired = forecastCurrentMonth(bundle.db, TODAY);
+    const pairedNov = forecastForMonth(bundle.db, "2026-11", TODAY)!;
+    unpair();
+    const unpaired = forecastCurrentMonth(bundle.db, TODAY);
+    // the agent's three fees gone altogether: the Fees line his own rows draw
+    bundle.db.delete(transactions).where(eq(transactions.accountId, agentic)).run();
+    const without = forecastCurrentMonth(bundle.db, TODAY);
+
+    const fees = (f: typeof paired) => f.components.find((c) => c.label === "Fees")?.cents;
+    expect(fees(paired)).toBe(fees(without));
+    expect(fees(unpaired)).not.toBe(fees(without));
+    expect(paired.projectedSpendCents).toBe(without.projectedSpendCents);
+
+    // the agent's 3-mo avg $5.00 × 27/31 days, this month; chained through a whole November
+    expect(paired.agentsCosts).toEqual({ netCents: -435, committedNetCents: 0 });
+    expect(pairedNov.agentsCosts).toEqual({ netCents: -435 - 500, committedNetCents: 0 });
+    expect(unpaired.agentsCosts).toEqual({ netCents: 0, committedNetCents: 0 });
+    // …and net worth still pays it: what EOM net worth starts from is the same, paired or not
+    const start = (f: typeof paired) =>
+      f.projectedEomNetWorthCents - f.projectedNetCents - f.agentsIncome.netCents - f.agentsCosts.netCents;
+    expect(start(paired)).toBe(start(unpaired));
+    // …and November's chains October's net and both months of the agent's, from that same start
+    expect(pairedNov.projectedEomNetWorthCents).toBe(
+      start(paired) +
+        paired.projectedNetCents +
+        pairedNov.projectedNetCents +
+        pairedNov.agentsIncome.netCents +
+        pairedNov.agentsCosts.netCents,
+    );
+    expect(paired.committed).toEqual(unpaired.committed);
+  });
+});
+
+describe("the net-worth bridge still counts it — on its own band", () => {
+  test("⚖️ \"Agent's costs\" sits beside \"Agent's income\", holds the agent's fee, and the window still closes", () => {
+    expect(ATTRIBUTION_BAND_ORDER.slice(0, 3)).toEqual(["earned", "agentIncome", "agentCosts"]);
+    expect(ATTRIBUTION_BAND_LABEL.agentCosts).toBe("Agent's costs");
+    expect(ATTRIBUTION_BAND_MEANING.agentCosts).toMatch(/agent's own cash account/);
+
+    for (const a of bundle.db.select({ id: accounts.id }).from(accounts).all()) rebuildAccount(bundle.db, a.id);
+    const got = netWorthAttribution(bundle.db, "2026-08-31", SEPT.to, nwOn("2026-08-31"), nwOn(SEPT.to));
+    const band = Object.fromEntries(got.bands.map((b) => [b.key, b.cents]));
+    expect(band).toMatchObject({
+      earned: HIS_PAY,
+      spent: -HIS_FEE,
+      refunds: 0,
+      agentCosts: -AGENTS_FEE,
+      agentIncome: 0,
+    });
+    expect(got.deltaCents).toBe(HIS_PAY - HIS_FEE - AGENTS_FEE);
+    expect([got.unexplainedCents, got.unattributedCents, got.closes]).toEqual([0, 0, true]);
+
+    unpair();
+    for (const a of bundle.db.select({ id: accounts.id }).from(accounts).all()) rebuildAccount(bundle.db, a.id);
+    const his = netWorthAttribution(bundle.db, "2026-08-31", SEPT.to, nwOn("2026-08-31"), nwOn(SEPT.to));
+    expect(Object.fromEntries(his.bands.map((b) => [b.key, b.cents]))).toMatchObject({
+      spent: -(HIS_FEE + AGENTS_FEE),
+      agentCosts: 0,
+    });
+    expect(his.closes).toBe(true);
+  });
+
+  /*
+   * A refund of the agent's fee is the agent's as much as the fee it reverses: left in, it would be "money back" of
+   * his — a Refund on /spending and the bridge — for a charge he never paid.
+   */
+  test("⛔ either sign: the agent's refund is the agent's too — not a Refund of his", () => {
+    post(agentic, "2026-09-02", AGENTS_FEE, "Fees > Bank Fees", "Gold Monthly Fee Refund", gold);
+    expect(periodTotals(bundle.db, SEPT)).toMatchObject({ spentCents: HIS_FEE, refundsCents: 0 });
+    for (const a of bundle.db.select({ id: accounts.id }).from(accounts).all()) rebuildAccount(bundle.db, a.id);
+    const got = netWorthAttribution(bundle.db, "2026-08-31", SEPT.to, nwOn("2026-08-31"), nwOn(SEPT.to));
+    expect(Object.fromEntries(got.bands.map((b) => [b.key, b.cents]))).toMatchObject({ refunds: 0, agentCosts: 0 });
+    expect(got.closes).toBe(true);
+  });
+});
+
+describe("the rule's halves, at its home", () => {
+  /*
+   * Every row this fixture charges the agent is an expense, so no surface above can tell an expense rule from an
+   * account rule. This can.
+   */
+  test("the account half and the category half: the $26.64 he funded the agent with is no cost of the agent's", () => {
+    const idx = loadCategoryIndex(bundle.db);
+    const agentsCash = outsidePortfolioCashAccountIds(bundle.db);
+    const read = (txn: { accountId: string; categoryId: string | null; amountCents: number }) => [
+      isAgentsCostCategoryRow(idx, agentsCash, txn),
+      spendingBucket(idx, agentsCash, txn)?.categoryName ?? null,
+    ];
+    const fee = { accountId: agentic, categoryId: catId("Fees > Bank Fees"), amountCents: -AGENTS_FEE };
+    // the agent's fee is the agent's either sign, and no bucket of his spending
+    expect(read(fee)).toEqual([true, null]);
+    expect(read({ ...fee, amountCents: AGENTS_FEE })).toEqual([true, null]);
+    // …and on his own account the same row is his
+    expect(read({ ...fee, accountId: robinhoodCash })).toEqual([false, "Fees"]);
+    // the funding, filed Investment Contribution on his ledger: the agent's money, and no cost
+    expect(read({ ...fee, categoryId: catId("Transfers > Investment Contribution"), amountCents: 2_664 })).toEqual([
+      false,
+      null,
+    ]);
+    /*
+     * ⚖️ An UNCATEGORIZED outflow on the agent's cash is not known to be an expense, and stays in his Uncategorized
+     * bucket — the honesty bucket that is never hidden — until it is filed. The decision named "a fee or other
+     * expense"; this half is the shipped default, put to him.
+     */
+    expect(read({ ...fee, categoryId: null })).toEqual([false, "Uncategorized"]);
+  });
+
+  /*
+   * /spending's per-category forecast and Predict budgets read a category's trailing non-recurring spend with their
+   * own query. The agent's three Gold fees made Fees a $5.00-a-month habit of his.
+   */
+  test("⛔ the category forecast's discretionary trend is his alone — a split part of the agent's included", () => {
+    goldFee("2026-07-01");
+    goldFee("2026-08-01");
+    // hypothetical: one charge of the agent's split across two categories — a part posts where its row does
+    post(agentic, "2026-08-15", -1_000, "Fees > Bank Fees", "Gold Monthly Fee and margin");
+    const split = bundle.db.select().from(transactions).where(eq(transactions.postedOn, "2026-08-15")).get()!;
+    setSplits(bundle.db, split.id, [
+      { categoryId: catId("Fees > Bank Fees"), amountCents: -600 },
+      { categoryId: catId("Shopping > General"), amountCents: -400 },
+    ]);
+    const paired = predictCategory(bundle.db, catId("Fees"), "Fees", TODAY);
+    unpair();
+    const unpaired = predictCategory(bundle.db, catId("Fees"), "Fees", TODAY);
+    bundle.db.delete(transactions).where(eq(transactions.accountId, agentic)).run();
+    const without = predictCategory(bundle.db, catId("Fees"), "Fees", TODAY);
+    expect(paired.forecast).toEqual(without.forecast);
+    expect(unpaired.forecast.expectedTotalCents).toBeGreaterThan(without.forecast.expectedTotalCents);
+  });
+});

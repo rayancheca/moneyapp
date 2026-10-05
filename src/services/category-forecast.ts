@@ -12,7 +12,8 @@ import {
   type CategoryForecast,
 } from "@/lib/category-forecast";
 import { projectRecurringDriven, projectTrailingAverage } from "@/lib/projection";
-import { loadCategoryIndex, recurringSeriesIdsForSubtree, type CategoryIndex } from "./analytics";
+import { outsidePortfolioCashAccountIds } from "./accounts";
+import { loadCategoryIndex, offAgentsCash, recurringSeriesIdsForSubtree, type CategoryIndex } from "./analytics";
 import { listBudgetableCategories } from "./budgets";
 import { trailingFullMonths } from "./forecast";
 import { lapsedSeriesShouldStopForecasting, projectOccurrences, seriesHasLapsed, toProjectable } from "./recurring";
@@ -70,6 +71,8 @@ interface PredictContext {
    *  spend is really variable, so it falls BACK into the discretionary trend
    *  (they are never projected as a recurring baseline). */
   notDrawnAsRecurring: ReadonlySet<string>;
+  /** `outsidePortfolioCashAccountIds` — the agent's cash, whose costs are not his spending (`spendingBucket`) */
+  agentsCash: readonly string[];
   /** the day a lapsed series is measured against */
   today: string;
   target: PeriodBounds;
@@ -99,7 +102,12 @@ function earliestActiveTxnDate(db: AppDatabase): string | null {
 
 /** Non-recurring subtree spend over [from,to], clamped at $0 (a net-refund month
  *  is a $0 spend month — matches budget-suggest). Recurring-tagged rows are
- *  excluded so they are never double-counted with the recurring projection. */
+ *  excluded so they are never double-counted with the recurring projection.
+ *
+ *  ⚖️ HIS spend: an expense row on the agent's cash is the agent's cost, either
+ *  sign (`isAgentsCostCategoryRow`, owner decision 2026-10-02) — a split part
+ *  posts where its row does. 🔴 The agent's Gold fee each month made Fees a
+ *  $5.00-a-month habit of his in Predict budgets and /spending's forecast. */
 function nonRecurringSubtreeSpend(
   db: AppDatabase,
   subtreeIds: readonly string[],
@@ -111,6 +119,7 @@ function nonRecurringSubtreeSpend(
    *  (detected/confirmed) or ended series stay excluded (no double-count / no
    *  stopped bill). The one rule `/recurring` and `/budgets` read too. */
   notDrawn: ReadonlySet<string>,
+  agentsCash: readonly string[],
 ): number {
   const notRecurring = linkIsNotRecurring(notDrawn);
   // split-aware: an unsplit row contributes its whole amount when its own
@@ -123,6 +132,7 @@ function nonRecurringSubtreeSpend(
       and(
         eq(transactions.status, "active"),
         notRecurring,
+        offAgentsCash(agentsCash),
         inArray(transactions.categoryId, [...subtreeIds]),
         gte(transactions.postedOn, from),
         lte(transactions.postedOn, to),
@@ -144,6 +154,7 @@ function nonRecurringSubtreeSpend(
         eq(transactions.status, "active"),
         isNull(transactions.transferGroupId), // transfer-linked parts never count
         notRecurring,
+        offAgentsCash(agentsCash),
         inArray(transactionSplits.categoryId, [...subtreeIds]),
         gte(transactions.postedOn, from),
         lte(transactions.postedOn, to),
@@ -176,6 +187,7 @@ function buildContext(db: AppDatabase, today: string): PredictContext {
       .where(inArray(recurringSeries.status, ["detected", "confirmed"]))
       .all(),
     notDrawnAsRecurring: seriesIdsNotDrawnAsRecurring(db),
+    agentsCash: [...outsidePortfolioCashAccountIds(db)],
     today,
     target,
     targetLabel: monthLabel(monthKey(target.start)),
@@ -230,11 +242,12 @@ function predictWith(
   //    ⛔ EVERY dismissed id, not this subtree's membership: a dismissed series
   //    the owner moved elsewhere is no longer a member here, yet its rows still
   //    sit here — and `nonRecurringSubtreeSpend` already scopes rows by subtree.
+  const { notDrawnAsRecurring, agentsCash } = ctx;
   const discretionaryHistory = ctx.months.map((m) =>
-    nonRecurringSubtreeSpend(db, subtree, m.start, m.end, ctx.notDrawnAsRecurring),
+    nonRecurringSubtreeSpend(db, subtree, m.start, m.end, notDrawnAsRecurring, agentsCash),
   );
   const seasonalPrior = ctx.seasonal
-    ? nonRecurringSubtreeSpend(db, subtree, ctx.seasonal.start, ctx.seasonal.end, ctx.notDrawnAsRecurring)
+    ? nonRecurringSubtreeSpend(db, subtree, ctx.seasonal.start, ctx.seasonal.end, notDrawnAsRecurring, agentsCash)
     : null;
   const discretionaryBase = projectTrailingAverage({ trailingTotalsCents: discretionaryHistory });
   const discretionary = seasonallyAdjust(discretionaryBase, seasonalPrior);

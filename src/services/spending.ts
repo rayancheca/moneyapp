@@ -19,6 +19,7 @@ import { NO_MERCHANT, OTHER_SERIES_KEY, UNCATEGORIZED_SERIES_KEY } from "@/lib/l
 import { outsidePortfolioCashAccountIds } from "./accounts";
 import {
   activeTxnsInRange,
+  isAgentsCostCategoryRow,
   isIncome,
   ledgerHref,
   loadCategoryIndex,
@@ -44,7 +45,8 @@ import { activeSplitsInRange } from "./transaction-splits";
  * `refundsCents` so a big cross-period credit can't drag "Spent" nonsensically
  * negative. Net still reconciles: netCents = earned + refunds − spent (a refund
  * is money in). Income is positive amounts in income-kind categories, off the
- * agent's cash account (`isIncome` — owner decision 2026-09-28).
+ * agent's cash account (`isIncome` — owner decision 2026-09-28), and spending is
+ * off it too (`spendingBucket` — owner decision 2026-10-02).
  * (Per-category breakdown in analytics.ts stays netted — a separate view.)
  */
 
@@ -74,7 +76,7 @@ export function periodTotals(db: AppDatabase, range: DateRange): PeriodTotals {
   let spentCents = 0;
   let refundsCents = 0;
   for (const txn of activeTxnsInRange(db, range.from, range.to)) {
-    if (spendingBucket(idx, txn)) {
+    if (spendingBucket(idx, agentsCash, txn)) {
       // gross: only outflows are "spent"; a credit in an expense category is a refund
       if (txn.amountCents < 0) spentCents += -txn.amountCents;
       else refundsCents += txn.amountCents;
@@ -232,7 +234,7 @@ export function cashFlowByPeriod(db: AppDatabase, period: ResolvedPeriod, today:
   for (const txn of rows) {
     const bucket = bucketIndex.get(bucketKeyFor(txn.postedOn, byMonth));
     if (bucket === undefined) continue;
-    const sb = spendingBucket(idx, txn);
+    const sb = spendingBucket(idx, agentsCash, txn);
     if (sb) {
       // gross: only outflows are spending; a credit in an expense category is a refund
       if (txn.amountCents >= 0) {
@@ -532,7 +534,7 @@ export function dailySpendHeatmap(db: AppDatabase, month: string): SpendHeatmap 
   const from = `${month}-01`;
   const to = periodBounds(from, "monthly").end;
   const idx = loadCategoryIndex(db);
-  // the day's earned bar is the Income card's population, read one day at a time
+  // the day's spent and earned bars are the Spent and Income cards' populations, read one day at a time
   const agentsCash = outsidePortfolioCashAccountIds(db);
   interface Cell {
     spentCents: number;
@@ -566,7 +568,7 @@ export function dailySpendHeatmap(db: AppDatabase, month: string): SpendHeatmap 
 
   for (const txn of activeTxnsInRange(db, from, to)) {
     const cell = byDay.get(txn.postedOn) ?? newCell();
-    const bucket = spendingBucket(idx, txn);
+    const bucket = spendingBucket(idx, agentsCash, txn);
     // gross: a refund (positive in an expense category) is not a day's spending
     if (bucket && txn.amountCents < 0) {
       const out = -txn.amountCents;
@@ -621,13 +623,6 @@ interface SpendRow {
   accountName: string;
 }
 
-/** Whether one category allocation counts as spending (mirrors spendingBucket). */
-function allocationIsSpending(idx: CategoryIndex, categoryId: string | null, amountCents: number): boolean {
-  // uncategorized outflow — NULL, or filed on the system category (CategoryIndex.uncategorizedIds)
-  if (categoryId === null || idx.uncategorizedIds.has(categoryId)) return amountCents < 0;
-  return idx.topLevelOf(categoryId).kind === "expense";
-}
-
 /**
  * Active rows classified as spending, joined with account name — split-aware.
  *
@@ -644,6 +639,7 @@ function spendingRowsInRange(
   range: DateRange,
   subtreeIds?: ReadonlySet<string>,
 ): SpendRow[] {
+  const agentsCash = outsidePortfolioCashAccountIds(db);
   const rows = db
     .select({
       id: transactions.id,
@@ -672,8 +668,14 @@ function spendingRowsInRange(
   for (const r of rows) {
     const allocs = allocationsFor(r.categoryId, r.amountCents, splits.get(r.id) ?? []);
     if (subtreeIds) {
+      /*
+       * ⚖️ A category page's merchants are his, as its figure is (`spendingTransactions`): the agent's cash is left out
+       * of an expense subtree, either sign (`isAgentsCostCategoryRow`, owner decision 2026-10-02). 🔴 /categories/<Fees>
+       * listed "Robinhood Gold" — the agent's Gold fee — among the merchants of a total that no longer counted it.
+       */
       const portion = allocs
         .filter((a) => a.categoryId !== null && subtreeIds.has(a.categoryId))
+        .filter((a) => !isAgentsCostCategoryRow(idx, agentsCash, { ...a, accountId: r.accountId }))
         .reduce((sum, a) => sum + a.amountCents, 0);
       if (portion !== 0) out.push({ ...r, amountCents: portion });
     } else {
@@ -682,8 +684,17 @@ function spendingRowsInRange(
       // a non-spending part (Transfers/Income) reports only the expense
       // allocation, so these widgets reconcile with the split-aware Spent total.
       // For an unsplit / all-expense row this equals the full amount, unchanged.
+      // ⛔ `spendingBucket` itself, both signs — a part is spending by the rule /spending's Spent is, the agent's
+      // cash included (owner decision 2026-10-02); this file kept a copy that never asked whose account.
       const spendCents = allocs
-        .filter((a) => allocationIsSpending(idx, a.categoryId, a.amountCents))
+        .filter(
+          (a) =>
+            spendingBucket(idx, agentsCash, {
+              accountId: r.accountId,
+              categoryId: a.categoryId,
+              amountCents: a.amountCents,
+            }) !== null,
+        )
         .reduce((sum, a) => sum + a.amountCents, 0);
       if (spendCents !== 0) out.push({ ...r, amountCents: spendCents });
     }

@@ -8,6 +8,7 @@ import { resolvePeriod, withPeriod } from "@/lib/period";
 import { outsidePortfolioCashAccountIds } from "./accounts";
 import {
   activeTxnsInRange,
+  isAgentsCostCategoryRow,
   isAgentsIncomeCategoryRow,
   loadCategoryIndex,
   type AnalyticsTxn,
@@ -431,10 +432,17 @@ export function feesCard(db: AppDatabase, today: string = todayIso()): FeesCard 
       /*
        * ⚖️ …and the interest is HIS. What the agent's cash is paid is not interest a bank paid him (owner decision
        * 2026-09-28), either sign — a clawback of the agent's interest is the agent's too — as /spending's Income card
-       * and `/categories/<Interest>` leave it out (`isAgentsIncomeCategoryRow`). A fee is no income row, so never
-       * one. 🔴 A month whose only interest was the agent's read "against $0.04 of interest back".
+       * and `/categories/<Interest>` leave it out (`isAgentsIncomeCategoryRow`). 🔴 A month whose only interest was
+       * the agent's read "against $0.04 of interest back".
        */
-      !isAgentsIncomeCategoryRow(idx, agentsCash, t),
+      !isAgentsIncomeCategoryRow(idx, agentsCash, t) &&
+      /*
+       * ⚖️ …and so are the fees. What the agent's cash pays is not a fee a bank charged him (owner decision
+       * 2026-10-02), either sign — a refund of the agent's fee is the agent's too — as /spending's Spent card and
+       * `/categories/<Fees>` leave it out (`isAgentsCostCategoryRow`). 🔴 A month whose only Bank Fee was the agent's
+       * Gold fee read "$20.00 went out in fees": the agent's $5.00, charged to him.
+       */
+      !isAgentsCostCategoryRow(idx, agentsCash, t),
   );
   // an empty bucket is an answer; an empty LEDGER is not a card
   if (rows.length === 0) return null;

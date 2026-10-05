@@ -14,8 +14,8 @@ import { activeTxnsInRange, isIncome, loadCategoryIndex, spendingBucket, type Da
  * conserve — a plug that names no source, because it cannot know one).
  *
  * Built directly from `activeTxnsInRange` on the SAME classifiers as
- * periodTotals/cashFlowByPeriod (split-aware, GROSS spend, income = `isIncome`:
- * positive income-kind amounts off the agent's cash account), so every ribbon
+ * periodTotals/cashFlowByPeriod (split-aware, GROSS spend = `spendingBucket`,
+ * income = `isIncome`: each off the agent's cash account), so every ribbon
  * reconciles to the StatCards and the ledger. Balance is exact:
  *   in  = earned + refunds + max(-net, 0)
  *   out = spent  + max(net, 0)
@@ -57,7 +57,8 @@ function byValueThenName(a: [string, Bucket], b: [string, Bucket]): number {
 
 export function spendingSankey(db: AppDatabase, range: DateRange): SankeyGraph {
   const idx = loadCategoryIndex(db);
-  // 🔴 the agent's dividend flowed "Dividends → Money in" as his until 2026-09-28 (`isIncome`)
+  // 🔴 the agent's dividend flowed "Dividends → Money in" as his until 2026-09-28 (`isIncome`), and its fees out of
+  // his money until 2026-10-02 (`spendingBucket`)
   const agentsCash = outsidePortfolioCashAccountIds(db);
   const colorOf = new Map(
     db.select({ id: categories.id, color: categories.color }).from(categories).all().map((c) => [c.id, c.color]),
@@ -71,7 +72,7 @@ export function spendingSankey(db: AppDatabase, range: DateRange): SankeyGraph {
   let refunds = 0;
 
   for (const txn of activeTxnsInRange(db, range.from, range.to)) {
-    const sb = spendingBucket(idx, txn);
+    const sb = spendingBucket(idx, agentsCash, txn);
     if (sb) {
       if (txn.amountCents >= 0) {
         refunds += txn.amountCents; // a credit in an expense category — money back, not spend

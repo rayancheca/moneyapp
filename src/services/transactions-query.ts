@@ -63,9 +63,10 @@ export function filterConditions(
   filters: TxnFilters,
   allCategories: readonly CategoryRef[],
   /**
-   * `outsidePortfolioCashAccountIds` — the agent's cash, whose income is not his (`isIncome`). Required, as it is
-   * there: the `income` and `cashflow` scopes are the Income card's population, and an income category's link is his
-   * rows of that category, so none of them can be built without it.
+   * `outsidePortfolioCashAccountIds` — the agent's cash, whose income is not his (`isIncome`) and whose costs are not
+   * his spending (`spendingBucket`). Required, as it is there: the `spending`, `income` and `cashflow` scopes are the
+   * Spent and Income cards' populations, and an income or expense category's link is his rows of that category, so
+   * none of them can be built without it.
    */
   agentsCash: readonly string[],
 ): SQL[] {
@@ -131,10 +132,15 @@ export function filterConditions(
     // ⚖️ …and income is `isIncome`: the agent's cash account is not his (owner
     // decision 2026-09-28). The Income card stopped counting the agent's
     // dividends and interest, so the link under it has to stop opening them.
+    // ⚖️ …and spending is `spendingBucket`: an expense row on the agent's cash
+    // is the agent's cost, not his (owner decision 2026-10-02) — the expense
+    // half only, as there; an uncategorized outflow there is still his bucket.
     const expenseIds = idsWithTopKind(allCategories, "expense");
     const incomeIds = idsWithTopKind(allCategories, "income");
     const spendingScope = or(
-      expenseIds.length > 0 ? inArray(transactions.categoryId, expenseIds) : sql`0 = 1`,
+      expenseIds.length > 0
+        ? (and(inArray(transactions.categoryId, expenseIds), offAgentsCash(agentsCash)) as SQL)
+        : sql`0 = 1`,
       and(uncategorized(), lt(transactions.amountCents, 0)),
     ) as SQL;
     const incomeScope =
@@ -183,9 +189,15 @@ export function filterConditions(
        *   - without `flow` it is the category's own rows, both signs, as `categorySpending` counts them — the
        *     category page's trend bars, subcategories and panel, and the Fees card's interest. 🔴 That was every
        *     account, as the figures were: `/categories/<Income>` "Received" the agent's dividend and interest.
+       * ⚖️ …and an EXPENSE category's rows are his the same way (owner decision 2026-10-02, `isAgentsCostCategoryRow`):
+       * `flow=out` is `spendingBucket` narrowed to the category — the Sankey's spending nodes, the cash-flow chart's
+       * segments — and without it the category page, a budget's rows and the Fees card's lines. 🔴 `/categories/<Fees>`
+       * opened the agent's Gold fee under a total that no longer counted it.
        */
       const his = offAgentsCash(agentsCash);
-      if (his && idsWithTopKind(allCategories, "income").includes(filters.category)) conds.push(his);
+      const category = filters.category;
+      const isOfKind = (kind: CategoryKind) => idsWithTopKind(allCategories, kind).includes(category);
+      if (his && (isOfKind("income") || isOfKind("expense"))) conds.push(his);
     }
   }
   if (filters.from) conds.push(gte(transactions.postedOn, filters.from));

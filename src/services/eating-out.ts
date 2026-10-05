@@ -2,7 +2,14 @@ import type { AppDatabase } from "@/db/client";
 import { addCalendarMonths, diffDays, monthKey, periodBounds, todayIso } from "@/lib/dates";
 import { multipleFact, multipleOfMagnitudes, type MultipleFact } from "@/lib/insight-facts";
 import { resolvePeriod, withPeriod } from "@/lib/period";
-import { activeTxnsInRange, loadCategoryIndex, type AnalyticsTxn, type CategoryIndex } from "./analytics";
+import { outsidePortfolioCashAccountIds } from "./accounts";
+import {
+  activeTxnsInRange,
+  isAgentsCostCategoryRow,
+  loadCategoryIndex,
+  type AnalyticsTxn,
+  type CategoryIndex,
+} from "./analytics";
 import { baselineWindow, SPEND_BASELINE_MONTHS } from "./committed";
 
 /**
@@ -203,7 +210,9 @@ export function eatingOutCard(
   // but is not a date, and the day count below has to be able to trust it
   const to = periodBounds(`${toMonth}-01`, "monthly").end;
 
-  const txns = activeTxnsInRange(db, from, to);
+  // ⚖️ his food: what the agent's cash pays is not his spending (`isAgentsCostCategoryRow`, owner decision 2026-10-02)
+  const agentsCash = outsidePortfolioCashAccountIds(db);
+  const txns = activeTxnsInRange(db, from, to).filter((t) => !isAgentsCostCategoryRow(idx, agentsCash, t));
   const inChild = (childId: string | undefined): AnalyticsTxn[] =>
     childId === undefined ? [] : txns.filter((t) => t.categoryId === childId);
 

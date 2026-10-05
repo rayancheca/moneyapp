@@ -10,7 +10,7 @@ import { formatCents } from "@/lib/money";
 import { activeTxnsInRange, loadCategoryIndex, monthlySpending, spendingBucket } from "@/services/analytics";
 import { moversCard } from "@/services/movers-card";
 import { observationFrontier } from "@/services/observation-frontier";
-import { listAccounts } from "@/services/accounts";
+import { listAccounts, outsidePortfolioCashAccountIds } from "@/services/accounts";
 
 const db = getDb();
 const TODAY = "2026-08-26";
@@ -20,11 +20,12 @@ const frontier = observationFrontier(db);
 const accounts = new Map(listAccounts(db).map((a) => [a.id, a.name] as const));
 
 const idx = loadCategoryIndex(db);
+const agentsCash = outsidePortfolioCashAccountIds(db);
 const windowFrom = "2026-01-01";
 const windowTo = "2026-08-31";
 const byAccount = new Map<string, number>();
 for (const t of activeTxnsInRange(db, windowFrom, windowTo)) {
-  if (!spendingBucket(idx, t)) continue;
+  if (!spendingBucket(idx, agentsCash, t)) continue;
   byAccount.set(t.accountId, (byAccount.get(t.accountId) ?? 0) - t.amountCents);
 }
 const totalSpend = [...byAccount.values()].reduce((s, c) => s + c, 0);
@@ -47,7 +48,7 @@ for (const [m, cents] of [...totals.entries()].sort()) console.log(`  ${m}  ${fo
 function spendByCategory(from: string, to: string): Map<string, number> {
   const out = new Map<string, number>();
   for (const t of activeTxnsInRange(db, from, to)) {
-    const b = spendingBucket(idx, t);
+    const b = spendingBucket(idx, agentsCash, t);
     if (!b) continue;
     out.set(b.categoryName, (out.get(b.categoryName) ?? 0) - t.amountCents);
   }

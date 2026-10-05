@@ -1,6 +1,5 @@
 import { and, eq, gte, inArray, lte } from "drizzle-orm";
 import type { AppDatabase } from "@/db/client";
-import { categories } from "@/db/schema/categories";
 import { recurringSeries } from "@/db/schema/recurring";
 import { transactions } from "@/db/schema/transactions";
 import { addCalendarMonths, addDays, compareDates, diffDays, monthKey, periodBounds, todayIso } from "@/lib/dates";
@@ -12,7 +11,14 @@ import { formatCents } from "@/lib/money";
 import { seriesIsIncomeOrSpending } from "@/lib/series-kind";
 import { allocationsFor } from "@/lib/transaction-splits";
 import { accountLiquidity, cashPosition, listAccountOptions, outsidePortfolioCashAccountIds } from "./accounts";
-import { isAgentsIncome, isAgentsIncomeSeries, isIncome, loadCategoryIndex } from "./analytics";
+import {
+  isAgentsCostCategoryRow,
+  isAgentsIncome,
+  isAgentsIncomeSeries,
+  isIncome,
+  loadCategoryIndex,
+  spendingBucket,
+} from "./analytics";
 import { latestBalances } from "./derivation";
 import { latestBridgedNetWorthCents } from "./in-flight";
 import {
@@ -52,7 +58,9 @@ import { linkIsNotRecurring, seriesIdsNotDrawnAsRecurring } from "./recurring-li
  * zero, scaled by remaining days / days in month. The pace itself is
  * `projection.ts::trailingPace` — shared with /spending and /budgets, so one
  * category cannot be projected two ways. Uncategorized negative amounts form an
- * explicit "Uncategorized" bucket — never hidden.
+ * explicit "Uncategorized" bucket — never hidden. Which rows are spending is
+ * `spendingBucket`'s to say, the agent's cash included (owner decision
+ * 2026-10-02): the agent's costs project apart, for EOM net worth alone.
  */
 
 const TRAILING_FULL_MONTHS = 3;
@@ -72,7 +80,10 @@ interface ForecastReads {
   notDrawn: ReadonlySet<string>;
   /** `accountsOutsideCash` */
   outside: ReadonlySet<string>;
-  /** `outsidePortfolioCashAccountIds` — the agent's cash, whose income is not his (`isIncome`) */
+  /**
+   * `outsidePortfolioCashAccountIds` — the agent's cash, whose income is not his (`isIncome`) and whose costs are not
+   * his spending (`spendingBucket`)
+   */
   agentsCash: ReadonlySet<string>;
 }
 
@@ -123,6 +134,15 @@ interface ForecastLeg {
    * as the bridge names the agent's rows on a band of their own.
    */
   agentsCents: number;
+  /**
+   * What this leg projects the AGENT'S cash pays, net-worth-signed (≤ 0), by the rule that projects his spending
+   * (`MonthForecast.agentsCosts`).
+   *
+   * ⚖️ Owner decision 2026-10-02 (§6A 34): not his spending (`spendingBucket`), so it is no line — not in Spending,
+   * not in the net — and never EOM cash. Net worth pays the agent's costs, so EOM net worth subtracts it, as the bridge
+   * names the agent's costs on a band of their own.
+   */
+  agentsCostCents: number;
 }
 
 /**
@@ -307,10 +327,32 @@ export interface MonthForecast {
    * and a future month chains it as it chains the nets. Never in EOM cash: it is not money he can spend.
    */
   agentsIncome: AgentsIncome;
+  /**
+   * What the AGENT'S cash is projected to PAY — by the pace that projects his spending — which each reading's EOM net
+   * worth counts and its Spending and Net do not. Net-worth-signed, so ≤ 0.
+   *
+   * ⚖️ Owner decision 2026-10-02 (§6A 34): not his spending (`spendingBucket`); and net worth pays it, which is why the
+   * bridge names it on a band of its own. So for the running month
+   *
+   *     projectedEomNetWorthCents  === net worth today + projectedNetCents + agentsIncome.netCents + agentsCosts.netCents
+   *     committed.eomNetWorthCents === net worth today + committed.netCents
+   *                                    + agentsIncome.committedNetCents + agentsCosts.committedNetCents
+   *
+   * and a future month chains it as it chains the nets. Never in EOM cash: it is not money he spends.
+   */
+  agentsCosts: AgentsCosts;
 }
 
 export interface AgentsIncome {
   /** net-worth-signed, what the full reading's EOM net worth adds to its net (chained through a future month) */
+  netCents: number;
+  /** the same, for the committed reading */
+  committedNetCents: number;
+}
+
+/** `AgentsIncome`'s mirror: what the agent's cash is projected to pay, net-worth-signed (≤ 0). */
+export interface AgentsCosts {
+  /** what the full reading's EOM net worth adds to its net (chained through a future month) */
   netCents: number;
   /** the same, for the committed reading */
   committedNetCents: number;
@@ -491,6 +533,7 @@ function fixedComponents(
     cashCents,
     outsideAccountIds,
     agentsCents,
+    agentsCostCents: 0,
   };
 }
 
@@ -571,10 +614,8 @@ function arrearsComponents(
     else cashCents -= s.amountCents;
   }
   // money-out only (`overdueForSeries`), so nothing here is anyone's income
-  return { components, cashCents, outsideAccountIds, agentsCents: 0 };
+  return { components, cashCents, outsideAccountIds, agentsCents: 0, agentsCostCents: 0 };
 }
-
-const UNCATEGORIZED_LABEL = "Uncategorized";
 
 /** Trailing rows summed per bucket and month, twice — see `bucketTrailing`. */
 interface BucketedTrailing {
@@ -623,39 +664,30 @@ function variableComponents(
   today: string,
   remainingDays: number,
   daysInMonth: number,
-  { notDrawn, outside }: ForecastReads,
+  { notDrawn, outside, agentsCash }: ForecastReads,
 ): ForecastLeg {
   const windows = trailingFullMonths(today, TRAILING_FULL_MONTHS);
   const rangeStart = windows[0]!.start;
   const rangeEnd = windows.at(-1)!.end;
-
-  const categoryRows = db
-    .select({ id: categories.id, name: categories.name, parentId: categories.parentId, kind: categories.kind })
-    .from(categories)
-    .all();
-  const categoryById = new Map(categoryRows.map((c) => [c.id, c]));
-  const rootOf = (categoryId: string) => {
-    const cat = categoryById.get(categoryId);
-    if (!cat) return null;
-    return cat.parentId ? (categoryById.get(cat.parentId) ?? null) : cat;
-  };
 
   // trailing spend EXCLUDES the rows a series drawn as recurring owns
   // (`linkIsNotRecurring`): a live series' bills project via FIXED, an ended
   // series' stopped, and a dismissed series owns none — its rows are pace here
   const rows = nonRecurringAllocations(db, rangeStart, rangeEnd, notDrawn);
 
-  const buckets = bucketTrailing(
+  /*
+   * ⚖️ WHICH rows are spending is `spendingBucket`'s to say — an expense-kind row off the agent's cash, or an
+   * uncategorized outflow (an explicit bucket, never hidden; a row filed on the system "Uncategorized" category is
+   * uncategorized) — since it is the classifier behind every figure that says "Spent", and this leg is the pace row's
+   * Spending. 🔴 It kept its own copy, keyed on the category's root kind alone, so the agent's monthly Gold fee was
+   * projected as HIS "Fees" (owner decision 2026-10-02, §6A 34). The agent's rows are bucketed apart and projected by
+   * the same pace, for EOM net worth alone (`ForecastLeg.agentsCostCents`).
+   */
+  const idx = loadCategoryIndex(db);
+  const buckets = bucketTrailing(rows, (t) => spendingBucket(idx, agentsCash, t)?.categoryName ?? null, outside);
+  const agents = bucketTrailing(
     rows,
-    (t) => {
-      if (t.categoryId === null || categoryById.get(t.categoryId)?.kind === "system") {
-        // uncategorized negatives are an explicit spending bucket, never hidden —
-        // and a row filed on the system "Uncategorized" category is uncategorized
-        return t.amountCents < 0 ? UNCATEGORIZED_LABEL : null;
-      }
-      const root = rootOf(t.categoryId);
-      return root && root.kind === "expense" ? root.name : null;
-    },
+    (t) => (isAgentsCostCategoryRow(idx, agentsCash, t) ? idx.topLevelOf(t.categoryId!).name : null),
     outside,
   );
 
@@ -728,6 +760,13 @@ function variableComponents(
     });
   }
 
+  // the agent's: the same pace per bucket, as money out of net worth and no line of his
+  let agentsCostCents = 0;
+  for (const perMonth of agents.all.values()) {
+    const { projected } = project(perMonth);
+    if (projected > 0) agentsCostCents -= projected;
+  }
+
   return {
     components: components.sort(
       (a, b) => Math.abs(b.cents) - Math.abs(a.cents) || a.label.localeCompare(b.label),
@@ -736,6 +775,7 @@ function variableComponents(
     outsideAccountIds,
     // spending: nothing here is anyone's income
     agentsCents: 0,
+    agentsCostCents,
   };
 }
 
@@ -839,7 +879,8 @@ function variableIncomeComponents(
     if (cashLine !== (lines.get(label) ?? 0)) for (const id of buckets.outsideAccounts.get(label) ?? []) outsideAccountIds.add(id);
   }
   const agentsCents = project(agents.all).reduce((sum, c) => sum + c.cents, 0);
-  return { components, cashCents, outsideAccountIds, agentsCents };
+  // income: nothing here is anyone's cost
+  return { components, cashCents, outsideAccountIds, agentsCents, agentsCostCents: 0 };
 }
 
 /**
@@ -911,6 +952,10 @@ interface ChainedNets {
   agentsNet: number;
   /** Σ the fixed legs' `agentsCents`: what the committed reading's EOM net worth adds to its net */
   committedAgentsNet: number;
+  /** Σ every leg's `agentsCostCents`: what the full reading's EOM net worth adds to its net (≤ 0) */
+  agentsCostNet: number;
+  /** Σ the fixed legs' `agentsCostCents`: what the committed reading's EOM net worth adds to its net (≤ 0) */
+  committedAgentsCostNet: number;
 }
 
 /** One month's window, its lines, and the nets its readings take from them. */
@@ -939,6 +984,7 @@ function assembleLegs(
   const split = forecastSplit(components);
   const cashOf = (some: readonly ForecastLeg[]) => some.reduce((sum, leg) => sum + leg.cashCents, 0);
   const agentsOf = (some: readonly ForecastLeg[]) => some.reduce((sum, leg) => sum + leg.agentsCents, 0);
+  const agentsCostOf = (some: readonly ForecastLeg[]) => some.reduce((sum, leg) => sum + leg.agentsCostCents, 0);
   return {
     components,
     net: components.reduce((sum, c) => sum + c.cents, 0),
@@ -948,6 +994,8 @@ function assembleLegs(
     outsideAccountIds: new Set(legs.flatMap((leg) => [...leg.outsideAccountIds])),
     agentsNet: agentsOf(legs),
     committedAgentsNet: agentsOf(fixed),
+    agentsCostNet: agentsCostOf(legs),
+    committedAgentsCostNet: agentsCostOf(fixed),
   };
 }
 
@@ -961,6 +1009,8 @@ function chainMonth(sofar: ChainedNets, month: ChainedNets): ChainedNets {
     outsideAccountIds: new Set([...sofar.outsideAccountIds, ...month.outsideAccountIds]),
     agentsNet: sofar.agentsNet + month.agentsNet,
     committedAgentsNet: sofar.committedAgentsNet + month.committedAgentsNet,
+    agentsCostNet: sofar.agentsCostNet + month.agentsCostNet,
+    committedAgentsCostNet: sofar.committedAgentsCostNet + month.committedAgentsCostNet,
   };
 }
 
@@ -1050,15 +1100,16 @@ export function forecastForMonth(
     projectedIncomeCents: income,
     projectedSpendCents: spend,
     projectedNetCents: parts.net,
-    // EOM cash chains what it counts; EOM net worth chains every line, and what the agent's cash is paid
+    // EOM cash chains what it counts; EOM net worth chains every line, and what the agent's cash is paid and pays
     projectedEomCashCents: cashCents + chained.cashNet,
-    projectedEomNetWorthCents: netWorthCents + chained.net + chained.agentsNet,
+    projectedEomNetWorthCents: netWorthCents + chained.net + chained.agentsNet + chained.agentsCostNet,
     committed: {
       incomeCents: split.income.fixedCents,
       spendCents: split.spending.fixedCents,
       netCents: parts.committedNet,
       eomCashCents: cashCents + chained.committedCashNet,
-      eomNetWorthCents: netWorthCents + chained.committedNet + chained.committedAgentsNet,
+      eomNetWorthCents:
+        netWorthCents + chained.committedNet + chained.committedAgentsNet + chained.committedAgentsCostNet,
     },
     components: parts.components,
     /*
@@ -1069,6 +1120,7 @@ export function forecastForMonth(
     unbankedIncome: { totalCents: 0, occurrenceCount: 0, checkedOccurrenceCount: 0, frontier: { kind: "unchecked" }, names: [] },
     outsideCash: outsideCashOf(db, chained),
     agentsIncome: { netCents: chained.agentsNet, committedNetCents: chained.committedAgentsNet },
+    agentsCosts: { netCents: chained.agentsCostNet, committedNetCents: chained.committedAgentsCostNet },
   };
 }
 
@@ -1152,19 +1204,20 @@ function currentMonthForecast(db: AppDatabase, today: string, reads: ForecastRea
     projectedIncomeCents,
     projectedSpendCents,
     projectedNetCents,
-    // EOM cash adds what it counts of the net; EOM net worth adds all of it, and what the agent's cash is paid
+    // EOM cash adds what it counts of the net; EOM net worth adds all of it, and what the agent's cash is paid and pays
     projectedEomCashCents: cashCents + parts.cashNet,
-    projectedEomNetWorthCents: latestNetWorth + projectedNetCents + parts.agentsNet,
+    projectedEomNetWorthCents: latestNetWorth + projectedNetCents + parts.agentsNet + parts.agentsCostNet,
     committed: {
       incomeCents: committedSplit.income.fixedCents,
       spendCents: committedSplit.spending.fixedCents,
       netCents: committedNetCents,
       eomCashCents: cashCents + parts.committedCashNet,
-      eomNetWorthCents: latestNetWorth + committedNetCents + parts.committedAgentsNet,
+      eomNetWorthCents: latestNetWorth + committedNetCents + parts.committedAgentsNet + parts.committedAgentsCostNet,
     },
     components,
     unbankedIncome: unbankedIncomeTotals(unbanked),
     outsideCash: outsideCashOf(db, parts),
     agentsIncome: { netCents: parts.agentsNet, committedNetCents: parts.committedAgentsNet },
+    agentsCosts: { netCents: parts.agentsCostNet, committedNetCents: parts.committedAgentsCostNet },
   };
 }

@@ -1620,12 +1620,14 @@ function categorySpendProvenance(
     ? uncategorizedWhere(idx)
     : inArray(transactions.categoryId, ids);
   /*
-   * ⚖️ …and an income category's total is his rows: `spendingTransactions` leaves the agent's cash out of it, either
-   * sign (`isAgentsIncomeCategoryRow`), so the proof does too. 🔴 Counting them, `/categories/<Income>`'s popover
-   * would name the agent's rows — "the sum of 4 rows" — under a headline of 2 transactions.
+   * ⚖️ …and an income or expense category's total is his rows: `spendingTransactions` leaves the agent's cash out of
+   * it, either sign (`isAgentsIncomeCategoryRow`, `isAgentsCostCategoryRow`), so the proof does too. 🔴 Counting them,
+   * `/categories/<Income>`'s popover would name the agent's rows — "the sum of 4 rows" — under a headline of 2
+   * transactions, and `/categories/<Fees>`'s the agent's Gold fee under a headline of 1.
    */
+  const kind = idx.topLevelOf(categoryId).kind;
   const his =
-    idx.topLevelOf(categoryId).kind === "income" ? offAgentsCash([...outsidePortfolioCashAccountIds(db)]) : undefined;
+    kind === "income" || kind === "expense" ? offAgentsCash([...outsidePortfolioCashAccountIds(db)]) : undefined;
 
   const rows = db
     .select(SUM_ROW_COLUMNS)
@@ -1764,11 +1766,12 @@ function accountRowsProvenance(db: AppDatabase, accountId: string, label: string
  */
 function allSpendRows(db: AppDatabase, from: string, to: string): SummedRow[] {
   const idx = loadCategoryIndex(db);
+  const agentsCash = outsidePortfolioCashAccountIds(db);
   const contributing = new Set<string>();
   for (const txn of activeTxnsInRange(db, from, to)) {
     // gross money out, matching `periodTotals` exactly: a credit in an expense
     // category is a REFUND and never nets this total down
-    if (txn.amountCents < 0 && spendingBucket(idx, txn)) contributing.add(txn.id);
+    if (txn.amountCents < 0 && spendingBucket(idx, agentsCash, txn)) contributing.add(txn.id);
   }
 
   /*

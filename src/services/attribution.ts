@@ -6,7 +6,7 @@ import { transactions } from "@/db/schema/transactions";
 import { attribute, type Attribution, type Restatement } from "@/lib/attribution";
 import { compareDates } from "@/lib/dates";
 import { outsidePortfolioCashAccountIds } from "./accounts";
-import { loadCategoryIndex } from "./analytics";
+import { isAgentsCostCategoryRow, isAgentsIncomeCategoryRow, loadCategoryIndex } from "./analytics";
 import { REPLAY_STATUSES } from "./derivation";
 import { inTransitAt } from "./in-flight";
 import { marketChangeBetween, valuedInvestmentAccounts } from "./portfolio";
@@ -112,6 +112,7 @@ function balanceAsOf(db: AppDatabase, accountId: string, day: string): number {
 interface KindTotals {
   earnedCents: number;
   agentIncomeCents: number;
+  agentCostsCents: number;
   refundsCents: number;
   spentCents: number;
   movedCents: number;
@@ -134,6 +135,12 @@ interface KindTotals {
  * population /spending calls Income, and the agent's dividend is still named
  * rather than dropped. ⛔ Not `isIncome` itself: that answers "is it his income?",
  * and a row answering no must still land in a band here.
+ *
+ * ⚖️ …and spending by whose it is (owner decision 2026-10-02): an expense row on
+ * the agent's cash, either sign (`isAgentsCostCategoryRow`, the rule
+ * `spendingBucket` reads), is `agentCosts`, anywhere else `spent` or `refunds` —
+ * so those two bands are exactly /spending's Spent and Refunds over his expense
+ * categories, and the agent's fee is named rather than dropped.
  */
 function kindTotals(
   db: AppDatabase,
@@ -159,17 +166,25 @@ function kindTotals(
     )
     .all();
 
-  const t: KindTotals = { earnedCents: 0, agentIncomeCents: 0, refundsCents: 0, spentCents: 0, movedCents: 0 };
+  const t: KindTotals = {
+    earnedCents: 0,
+    agentIncomeCents: 0,
+    agentCostsCents: 0,
+    refundsCents: 0,
+    spentCents: 0,
+    movedCents: 0,
+  };
   for (const r of rows) {
     if (!eligible.has(r.accountId)) continue;
     const kind = r.categoryId === null ? null : idx.topLevelOf(r.categoryId).kind;
     if (kind === "income" && r.amountCents > 0) {
-      if (agentsCash.has(r.accountId)) t.agentIncomeCents += r.amountCents;
+      if (isAgentsIncomeCategoryRow(idx, agentsCash, r)) t.agentIncomeCents += r.amountCents;
       else t.earnedCents += r.amountCents;
       continue;
     }
     if (kind === "expense") {
-      if (r.amountCents < 0) t.spentCents += r.amountCents;
+      if (isAgentsCostCategoryRow(idx, agentsCash, r)) t.agentCostsCents += r.amountCents;
+      else if (r.amountCents < 0) t.spentCents += r.amountCents;
       else t.refundsCents += r.amountCents;
       continue;
     }

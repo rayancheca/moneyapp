@@ -9,7 +9,7 @@ import { accounts } from "@/db/schema/accounts";
 import { categories } from "@/db/schema/categories";
 import { institutions } from "@/db/schema/institutions";
 import { transactions } from "@/db/schema/transactions";
-import { createAccount } from "@/services/accounts";
+import { createAccount, outsidePortfolioCashAccountIds } from "@/services/accounts";
 import { activeTxnsInRange, categorySpending, loadCategoryIndex, spendingBucket } from "@/services/analytics";
 import { createCategory } from "@/services/category-edit";
 import { periodTotals } from "@/services/spending";
@@ -105,7 +105,7 @@ function addTxn(categoryId: string | null, cents: number, accountId: string = ch
 function countedAsSpending(txnId: string): boolean {
   const idx = loadCategoryIndex(bundle.db);
   const row = activeTxnsInRange(bundle.db, WINDOW.from, WINDOW.to).find((t) => t.id === txnId)!;
-  return spendingBucket(idx, row) !== null;
+  return spendingBucket(idx, outsidePortfolioCashAccountIds(bundle.db), row) !== null;
 }
 
 beforeEach(() => {
@@ -191,6 +191,25 @@ describe("each kind definition agrees with the rule that counts it", () => {
     expect(periodTotals(bundle.db, WINDOW).earnedCents).toBe(7);
     expect(CATEGORY_KIND_JARGON.income).toMatch(/the agent's own account/);
     expect(CATEGORY_KIND_JARGON.income).toMatch(/not yours/);
+  });
+
+  /*
+   * ⚖️ Owner decision 2026-10-02 (§6A 34): what the agent's account pays is not his spending. The definition said
+   * "Counted as spending" with no exception, over a Spent figure that now leaves the agent's fee out.
+   */
+  test("the spending definition names the agent's account, and the Spent figure leaves it out", () => {
+    const rh = bundle.db.select().from(institutions).where(eq(institutions.name, "Robinhood")).get()!;
+    const agentic = createAccount(bundle.db, { institutionId: rh.id, name: "Robinhood Agentic", type: "checking", last4: "9651" });
+    const book = createAccount(bundle.db, { institutionId: rh.id, name: "Robinhood Agentic Brokerage", type: "investment", subtype: "brokerage" });
+    bundle.db.update(accounts).set({ cashAccountId: agentic }).where(eq(accounts.id, book)).run();
+    const fees = rootId("Fees");
+    const his = addTxn(childId(fees, "ATM Fees"), -1_500); // his Non-Wells Fargo ATM fee
+    const agents = addTxn(childId(fees, "Bank Fees"), -500, agentic); // the agent's Gold Monthly Fee
+
+    expect([his, agents].map(countedAsSpending)).toEqual([true, false]);
+    expect(periodTotals(bundle.db, WINDOW).spentCents).toBe(1_500);
+    expect(CATEGORY_KIND_JARGON.expense).toMatch(/the agent's own account/);
+    expect(CATEGORY_KIND_JARGON.expense).toMatch(/not yours/);
   });
 
   test("the transfer definition covers money to or from other people, not only money between your own accounts", () => {

@@ -316,8 +316,26 @@ export interface SpendingBucket {
   categoryName: string;
 }
 
-/** Which spending bucket a transaction belongs to, or null if excluded. */
-export function spendingBucket(idx: CategoryIndex, txn: AnalyticsTxn): SpendingBucket | null {
+/**
+ * Which spending bucket a row belongs to — money HE spent: an expense-kind row on an account whose money is his, or an
+ * uncategorized outflow — or null when it is none of his spending. The one classifier behind every figure that says
+ * "Spent" or "spending": /spending's card, chart, heatmap and Sankey, /categories, /budgets, the dashboard's period
+ * panel and movers, the forecast's pace, the runway's baseline, the spending proof.
+ *
+ * ⚖️ Owner decision 2026-10-02 (§6A 34): what the AGENT'S account pays — a fee, or any other expense charged to its
+ * cash — is not his spending, as what it is paid is not his income (§6A 27, `isIncome`). `agentsCash` is
+ * `outsidePortfolioCashAccountIds`, POSITIONAL AND REQUIRED for the reason it is on `isIncome`: a surface cannot count
+ * spending without answering whose it is. 🔴 Until then /spending's Income card left the agent's interest out while its
+ * Spent card, the Fees card and every expense category's page charged him the agent's fees.
+ *
+ * ⛔ The net-worth bridge does NOT use this. Net worth pays the agent's costs, so the bridge names them on a band of
+ * their own (`attribution.ts`) rather than dropping them — an exhaustive bridge cannot leave a row out.
+ */
+export function spendingBucket(
+  idx: CategoryIndex,
+  agentsCash: ReadonlySet<string>,
+  txn: Pick<AnalyticsTxn, "accountId" | "categoryId" | "amountCents">,
+): SpendingBucket | null {
   // rows from activeTxnsInRange arrive normalised; a caller handing in its own
   // rows gets the same answer
   if (txn.categoryId === null || idx.uncategorizedIds.has(txn.categoryId)) {
@@ -326,7 +344,28 @@ export function spendingBucket(idx: CategoryIndex, txn: AnalyticsTxn): SpendingB
   }
   const top = idx.topLevelOf(txn.categoryId);
   if (top.kind !== "expense") return null;
+  if (isAgentsCostCategoryRow(idx, agentsCash, txn)) return null;
   return { categoryId: top.id, categoryName: top.name };
+}
+
+/**
+ * Whether a row of an EXPENSE category is the AGENT'S: on its cash account, EITHER SIGN. `spendingBucket`'s account
+ * half, and the whole rule for a surface that nets or reads an expense category's rows without bucketing them — the
+ * category's own page (`spendingTransactions`), the Fees card, a merchant's page, the eating-out card, the notices.
+ * A refund of the agent's fee is the agent's as much as the fee it reverses: left in, it would be "money back" of his
+ * for a charge he never paid.
+ *
+ * ⚖️ Owner decision 2026-10-02 (§6A 34), the mirror of `isAgentsIncomeCategoryRow` (§6A 27). ⛔ The category half is
+ * the expense kind and nothing wider: the $26.64 he funded the agent with is a transfer, and an UNCATEGORIZED outflow on
+ * the agent's cash is not known to be an expense, so it stays in his Uncategorized bucket — the honesty bucket that is
+ * never hidden — until it is filed.
+ */
+export function isAgentsCostCategoryRow(
+  idx: CategoryIndex,
+  agentsCash: ReadonlySet<string>,
+  txn: Pick<AnalyticsTxn, "accountId" | "categoryId">,
+): boolean {
+  return agentsCash.has(txn.accountId) && txn.categoryId !== null && idx.topLevelOf(txn.categoryId).kind === "expense";
 }
 
 /**
@@ -458,11 +497,12 @@ function windowBounds(opts: MonthsWindow): { from: string; to: string; keys: str
 export function monthlySpending(db: AppDatabase, opts: MonthsWindow): SpendingCell[] {
   const { from, to } = windowBounds(opts);
   const idx = loadCategoryIndex(db);
+  const agentsCash = outsidePortfolioCashAccountIds(db);
   const cells = new Map<string, SpendingCell>();
 
   for (const txn of activeTxnsInRange(db, from, to)) {
     if (opts.filter && !opts.filter(txn)) continue;
-    const bucket = spendingBucket(idx, txn);
+    const bucket = spendingBucket(idx, agentsCash, txn);
     if (!bucket) continue;
     const month = monthKey(txn.postedOn);
     const key = `${month}|${bucket.categoryId ?? "∅"}`;
@@ -518,11 +558,12 @@ export function categoryBreakdown(
   range: { from: string; to: string },
 ): BreakdownRow[] {
   const idx = loadCategoryIndex(db);
+  const agentsCash = outsidePortfolioCashAccountIds(db);
   const tops = new Map<string, BreakdownRow>();
   const subs = new Map<string, BreakdownChild>();
 
   for (const txn of activeTxnsInRange(db, range.from, range.to)) {
-    const bucket = spendingBucket(idx, txn);
+    const bucket = spendingBucket(idx, agentsCash, txn);
     if (!bucket) continue;
     const topKey = bucket.categoryId ?? "∅";
     const top =
@@ -714,15 +755,28 @@ export function spendingTransactions(db: AppDatabase, filter: TxnFilter): Analyt
   const subtree = new Set(idx.subtreeIds(filter.categoryId));
   const inSubtree = rows.filter((r) => r.categoryId !== null && subtree.has(r.categoryId));
   /*
-   * ⚖️ An INCOME category's rows are his: the agent's cash is left out, either sign (`isAgentsIncomeCategoryRow`).
-   * 🔴 `/categories/<Income>` read "Received" over every account one click under a /spending Income card that leaves
-   * the agent's dividend and interest out. A subtree is one kind, so an expense page — every budget included — never
-   * pays for the account read.
+   * ⚖️ An INCOME or EXPENSE category's rows are his: the agent's cash is left out, either sign — what it is paid
+   * (`isAgentsIncomeCategoryRow`, §6A 27) and what it pays (`isAgentsCostCategoryRow`, §6A 34). 🔴 `/categories/<Income>`
+   * read "Received" over every account one click under a /spending Income card that leaves the agent's dividend and
+   * interest out; `/categories/<Fees>` and a Fees budget charged him the agent's fees. A subtree is one kind, so a
+   * transfer or investment page — the agent's funding is one — keeps every account and pays for no account read.
    */
-  if (idx.topLevelOf(filter.categoryId).kind !== "income") return inSubtree;
-  const agentsCash = outsidePortfolioCashAccountIds(db);
-  return inSubtree.filter((r) => !isAgentsIncomeCategoryRow(idx, agentsCash, r));
+  const kind = idx.topLevelOf(filter.categoryId).kind;
+  if (kind !== "income" && kind !== "expense") return inSubtree;
+  const agentsCash = agentsCashOfRender(db);
+  if (agentsCash.size === 0) return inSubtree;
+  const isAgents = kind === "income" ? isAgentsIncomeCategoryRow : isAgentsCostCategoryRow;
+  return inSubtree.filter((r) => !isAgents(idx, agentsCash, r));
 }
+
+/**
+ * `outsidePortfolioCashAccountIds`, read once per server render — `react`'s `cache`, `activeTxnsInRange`'s reason. Every
+ * budget grades through `spendingTransactions` (`categorySpending`, once per closed period), so the account read that
+ * an expense page now pays would otherwise be paid per budget per period. Outside a render it reads every call.
+ */
+const agentsCashOfRender = cache(function agentsCashOfRender(db: AppDatabase): ReadonlySet<string> {
+  return outsidePortfolioCashAccountIds(db);
+});
 
 /**
  * The `/transactions` spelling of a category filter. The system "Uncategorized"

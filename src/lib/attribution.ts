@@ -75,9 +75,18 @@ export interface AttributionInput {
    * not dropped either. A bridge that left it out would report the agent's dividend as "Unexplained".
    */
   agentIncomeCents: number;
-  /** expense-kind debits, net-worth-signed, ≤ 0 */
+  /**
+   * expense-kind rows on the agent's cash account, either sign, net-worth-signed — what the agent's account paid, net
+   * of what was refunded to it (`isAgentsCostCategoryRow`).
+   *
+   * ⚖️ Owner decision 2026-10-02 (§6A 34): not his spending, so it is in neither `spentCents` nor `refundsCents` — and
+   * net worth paid it, so it is not dropped either. A bridge that left it out would report the agent's fee as
+   * "Unexplained".
+   */
+  agentCostsCents: number;
+  /** expense-kind debits, HIS — the population /spending calls Spent (`spendingBucket`) — net-worth-signed, ≤ 0 */
   spentCents: number;
-  /** credits inside expense categories — money back, not money earned, ≥ 0 */
+  /** credits inside expense categories, his — money back, not money earned, ≥ 0 */
   refundsCents: number;
   /**
    * transfer-kind and investment-kind rows on replaying accounts, signed.
@@ -102,6 +111,7 @@ export interface AttributionInput {
 export type AttributionBandKey =
   | "earned"
   | "agentIncome"
+  | "agentCosts"
   | "refunds"
   | "spent"
   | "moved"
@@ -124,6 +134,7 @@ export type AttributionBandKey =
 export const ATTRIBUTION_BAND_ORDER = [
   "earned",
   "agentIncome",
+  "agentCosts",
   "refunds",
   "spent",
   "moved",
@@ -147,6 +158,8 @@ export const ATTRIBUTION_BAND_LABEL: Record<AttributionBandKey, string> = {
   earned: "Income",
   // 2026-09-28: the agent's income is not his, so it is not "Income" — named, not hidden
   agentIncome: "Agent's income",
+  // 2026-10-02: nor are its costs his spending — named beside it, not hidden in "Spent"
+  agentCosts: "Agent's costs",
   refunds: "Refunds",
   spent: "Spent",
   moved: "Moved",
@@ -159,8 +172,9 @@ export const ATTRIBUTION_BAND_LABEL: Record<AttributionBandKey, string> = {
 export const ATTRIBUTION_BAND_MEANING: Record<AttributionBandKey, string> = {
   earned: "Money arriving in an income category. Only money in — a credit that claws back earlier pay is not negative income. What the agent's account is paid is not yours, and has its own line.",
   agentIncome: "Money arriving in an income category on the agent's own cash account — its dividends and interest. Net worth holds it, so it is counted here; it is not your income, so the Income line leaves it out.",
-  refunds: "Credits inside spending categories. Money coming back, which is not the same as income.",
-  spent: "Debits in spending categories, before any refund is netted against them.",
+  agentCosts: "Money leaving in a spending category from the agent's own cash account — its fees, less any refunded to it. Net worth pays it, so it is counted here; it is not your spending, so the Spent and Refunds lines leave it out.",
+  refunds: "Credits inside spending categories. Money coming back, which is not the same as income. What is refunded to the agent's account is not yours, and sits on its own line.",
+  spent: "Debits in spending categories, before any refund is netted against them. What the agent's account pays is not yours, and has its own line.",
   moved: "Transfers and investment rows on accounts that replay. It nets to nothing when both legs are on the ledger, so whatever is left is money crossing the boundary of what is tracked.",
   market: "What holdings gained or lost on price alone, with every buy and sell taken out first.",
   portfolioFlow: "Money moving into or out of the holdings themselves. Its other leg is a transfer out of cash, so the two cancel.",
@@ -218,6 +232,7 @@ export function attribute(input: AttributionInput): Attribution {
   const named: Record<Exclude<AttributionBandKey, "unexplained">, number> = {
     earned: input.earnedCents,
     agentIncome: input.agentIncomeCents,
+    agentCosts: input.agentCostsCents,
     refunds: input.refundsCents,
     spent: input.spentCents,
     moved: input.movedCents,

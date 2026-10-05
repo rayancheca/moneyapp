@@ -15,8 +15,9 @@
  *   collide with the single-match locators that read the real ones.
  * - **Say what the code does, not what the word suggests.** Each kind definition
  *   below is grounded in the RULE that counts the kind, never in prose about it:
- *   `spendingBucket` (analytics.ts) counts expense-kind rows plus money out that
- *   is uncategorized — NULL, or filed on the system category; `isIncome`
+ *   `spendingBucket` (analytics.ts) counts expense-kind rows off the agent's cash
+ *   account plus money out that is uncategorized — NULL, or filed on the system
+ *   category; `isIncome`
  *   (analytics.ts) counts positive rows in income-kind categories, off the
  *   agent's cash account, and leaves a repayment out rather than subtracting
  *   it; `transferCategoryResolver`
@@ -77,9 +78,10 @@ export const RESERVED_JARGON_PHRASES = [
  * heading on /categories.
  */
 export const CATEGORY_KIND_JARGON: Record<string, string> = {
-  // spendingBucket: expense-kind rows AND uncategorized money out; netted per category, gross in Spent
+  // spendingBucket: expense-kind rows AND uncategorized money out; netted per category, gross in Spent; none of the
+  // expense-kind rows on the agent's cash account (owner decision 2026-10-02)
   expense:
-    "Counted as spending, together with money out that has no category yet. Purchases and refunds net against each other in a category's total, so returning something reduces it instead of adding to it.",
+    "Counted as spending, together with money out that has no category yet — except on the agent's own account, where what is paid is the agent's and not yours. Purchases and refunds net against each other in a category's total, so returning something reduces it instead of adding to it.",
   // isIncome keeps positive rows only, and none on the agent's cash account (owner decision 2026-09-28);
   // categorySpending (the category's own page) nets both signs
   income:
