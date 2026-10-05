@@ -2396,28 +2396,58 @@ describe("provenanceFor — a balance he typed checks nothing", () => {
   const balance = (accountId: string, day: string) =>
     provenanceFor(bundle.db, { kind: "accountBalance", accountId, day })!;
 
-  test("the newest day names the balance he recorded and dates no check", () => {
+  /*
+   * ⚖️ His call, 2026-10-02 (handoff §6A 33): DATE BOTH, in net worth's words. The proof beside "1 transaction
+   * landed" was dated where his count stops standing (§6A 28) while this one, over the same Cash on Hand on the same
+   * page, printed no date at all — measured 2026-10-05 on a temp ledger with a $5,000.00 count typed for Aug 3 and
+   * the down payment entered by hand on Aug 11: rows "Checked through 2026-08-10" with net worth's sentence, balance
+   * nothing. Every day of its balance carries net worth's day and net worth's sentence; the verdict stays what the
+   * day is.
+   */
+  const COUNT_NOTE =
+    " The date it is checked through, Aug 10, 2026, is the last day Cash on Hand rests on the balance you counted — your word, not a check.";
+
+  test("the newest day names the balance he recorded, dated where his count stops standing, in net worth's words", () => {
     const p = balance(cashOnHand(), "2026-08-11");
     expect(p.verdict).toBe("unverified");
-    expect(p.checkedThrough).toBeNull();
+    expect(p.checkedThrough).toBe("2026-08-10");
     expect(p.headline).toBe(
-      "Replayed past the balance you recorded on Aug 3, 2026, so nothing checks Cash on Hand on Aug 11, 2026. The rows are real; the total is unconfirmed.",
+      `Replayed past the balance you recorded on Aug 3, 2026, so nothing checks Cash on Hand on Aug 11, 2026. The rows are real; the total is unconfirmed.${COUNT_NOTE}`,
     );
   });
 
-  test("a day carried from his count is as proven as the count — his, not 'adds up'", () => {
+  test("a day carried from his count is as proven as the count — his, not 'adds up' — and dated by it", () => {
     const p = balance(cashOnHand(), "2026-08-05");
     expect(p.verdict).toBe("manual");
-    expect(p.checkedThrough).toBeNull();
+    expect(p.checkedThrough).toBe("2026-08-10");
     expect(p.headline).toBe(
-      "Cash on Hand had no activity to replay on Aug 5, 2026, so the balance you recorded on Aug 3, 2026 was carried forward.",
+      `Cash on Hand had no activity to replay on Aug 5, 2026, so the balance you recorded on Aug 3, 2026 was carried forward.${COUNT_NOTE}`,
     );
   });
 
-  test("the day he typed it is his, and dates no check either", () => {
+  test("the day he typed it is his, and its date is his count's, never a check's", () => {
     const p = balance(cashOnHand(), "2026-08-03");
     expect(p.verdict).toBe("manual");
-    expect(p.checkedThrough).toBeNull();
+    expect(p.checkedThrough).toBe("2026-08-10");
+    expect(p.headline.endsWith(COUNT_NOTE)).toBe(true);
+  });
+
+  /*
+   * ⛔ One account, one day, one sentence — on every proof that names its balance or its rows, and in net worth. The
+   * date and the sentence are `footingBounds`', so a caller cannot print the day without saying whose word it is.
+   */
+  test("its balance, its rows and net worth carry one date and one sentence", () => {
+    const id = cashOnHand();
+    const proofs = [
+      balance(id, "2026-08-11"),
+      provenanceFor(bundle.db, { kind: "accountBalance", accountId: id })!,
+      provenanceFor(bundle.db, { kind: "accountRows", accountId: id })!,
+      provenanceFor(bundle.db, { kind: "netWorth", day: "2026-09-16" })!,
+    ];
+    for (const p of proofs) {
+      expect(p.checkedThrough).toBe("2026-08-10");
+      expect(p.headline.endsWith(COUNT_NOTE)).toBe(true);
+    }
   });
 
   /*
@@ -2595,5 +2625,29 @@ describe("provenanceFor — a balance he typed checks nothing", () => {
     expect(carried.verdict).toBe("derived");
     expect(carried.checkedThrough).toBe("2026-08-03");
     expect(balance(id, "2026-08-03").checkedThrough).toBe("2026-08-03");
+  });
+
+  /*
+   * ⛔ Only a balance standing on his count takes net worth's day (§6A 33). An account a statement checks again after
+   * a break keeps the newest day its own chain closes — net worth's bound for it stops before the break, and a day
+   * that adds up dated before itself would contradict its own badge.
+   */
+  test("an account checked again after a break keeps its own chain's date, and no count sentence", () => {
+    const id = addAccount("rebroken", "Chase Checking", "checking");
+    const pdf = addFile("f1", "20260801-statements-3522-.pdf", "chase-checking-statement-pdf");
+    addAnchor(id, "2026-07-01", "statement", pdf);
+    addAnchor(id, "2026-08-01", "statement", pdf);
+    addDays(id, [
+      { day: "2026-07-01", basis: "anchored" },
+      { day: "2026-07-10", basis: "derived" },
+      { day: "2026-07-15", basis: "gap" },
+      { day: "2026-08-01", basis: "anchored" },
+      { day: "2026-08-05", basis: "carried" },
+    ]);
+    addTxn(id, "2026-07-10", { importFileId: pdf });
+
+    const p = balance(id, "2026-08-05");
+    expect(p.checkedThrough).toBe("2026-08-01");
+    expect(p.headline).not.toMatch(/your word|counted/);
   });
 });

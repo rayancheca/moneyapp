@@ -859,6 +859,22 @@ function accountBalanceProvenance(db: AppDatabase, accountId: string, day: strin
     ? heldBalanceAnchor(pickWinners(loadReplayInputs(db, account.id).anchors), row)
     : null;
 
+  /*
+   * 🔴 THE ONE PROOF OF HIS COUNT LEFT UNDATED. Since §6A 28 the proof beside "1 transaction landed" on the same
+   * page dates Cash on Hand where his count stops standing, in net worth's sentence, while this one — nothing closes
+   * on it, so `lastClosed` is null — printed no date at all. Measured 2026-10-05 on a temp ledger (a $5,000.00 count
+   * typed for Aug 3, the down payment entered by hand on Aug 11): rows, net worth and the trust card "Checked through
+   * 2026-08-10" with "…your word, not a check", the balance on every day of it nothing.
+   *
+   * ⚖️ His call, 2026-10-02 (handoff §6A 33): DATE BOTH, in net worth's words. ⛔ The day and the sentence are
+   * `footingBounds`' over this one account, never a copy, and they travel together: a caller printing the day
+   * without the sentence would print his word as a check. Only an account whose footing is his count moves — the
+   * sentence is empty for any other, and its date stays the newest day its own chain closes.
+   */
+  const footing =
+    chain === null ? null : footingBounds(accountCoverage(db).filter((c) => c.accountId === account.id));
+  const datedByCount = footing !== null && footing.note !== "";
+
   return {
     verdict,
     headline: headlineForBalance(account.name, account.type, row.basis, row.day, recordedBy, {
@@ -867,9 +883,9 @@ function accountBalanceProvenance(db: AppDatabase, accountId: string, day: strin
       countedOn: resting?.source === "manual" && resting.anchoredOn !== row.day ? resting.anchoredOn : null,
       countedReplay,
       keptOpeningOn: chain === null ? null : (keptOpeningOf(chain.winners)?.anchoredOn ?? null),
-    }),
+    }) + (datedByCount ? footing.note : ""),
     sources,
-    checkedThrough: chain?.lastClosed ?? null,
+    checkedThrough: datedByCount ? footing.through : (chain?.lastClosed ?? null),
     inputs: [],
     badgeWord: isInvestment(account.type) ? marketValueBadgeWord(pricedFromHoldings) : undefined,
   };
@@ -1033,6 +1049,9 @@ function statementPeriodProvenance(db: AppDatabase, id: string): Provenance | nu
  * owe" proof (`cards-owed`) took the oldest `verifiedThrough` of the cards
  * under net worth's own words, so a card resting on his count never dated it.
  * Every figure bounded by the first account to stop being checked reads this.
+ *
+ * ⚖️ …and so does ONE account's balance proof when what it stands on is his count (`accountBalanceProvenance`, his
+ * call 2026-10-02, handoff §6A 33): it printed no date beside a rows proof and a net worth that dated the same count.
  */
 export function footingBounds(coverage: readonly AccountCoverage[]): { through: string | null; note: string } {
   const bounds = coverage
