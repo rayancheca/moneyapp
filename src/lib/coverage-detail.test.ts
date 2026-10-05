@@ -2,6 +2,7 @@ import { describe, expect, test } from "vitest";
 import {
   agoPhrase,
   beforeFirstBalance,
+  beforeFirstBalanceClause,
   beforeFirstBalanceDetail,
   countedDetail,
   countFooting,
@@ -442,9 +443,10 @@ describe("unverifiedDetail — an unverified account in one line", () => {
   });
 
   test("with no run open, names the checked day and the days before it, and no 'since'", () => {
-    // ⚖️ §6A 35: a verified account's line now, in the same words
+    // ⚖️ §6A 35: a verified account's line now — in its verified neighbours' verb since his answer
+    // of 2026-10-05 ("adds up through Aug 5, 2026"), the days before its first balance after it
     expect(beforeFirstBalanceDetail(checked, formatDayFull)).toBe(
-      "checked through Aug 5, 2026, and unchecked days before that",
+      "adds up through Aug 5, 2026, and unchecked days before that",
     );
     expect(unverifiedDetail(checked, formatDayFull)).toBeNull();
   });
@@ -686,9 +688,9 @@ describe("the days before its first balance are not where it stops closing", () 
       firstBalanceOn: "2026-06-20",
       firstBalanceIsCount: true,
     });
-    // net worth's line names neither day, so it reads as it did
+    // net worth's line names neither day, so it reads as Agentic's does
     expect(beforeFirstBalanceDetail(counted, formatDayFull)).toBe(
-      "checked through Aug 31, 2026, and unchecked days before that",
+      "adds up through Aug 31, 2026, and unchecked days before that",
     );
   });
 
@@ -704,9 +706,26 @@ describe("the days before its first balance are not where it stops closing", () 
       firstBalanceIsCount: false,
     });
     expect(beforeFirstBalanceDetail(agentic, formatDayFull)).toBe(
-      "checked through Aug 31, 2026, and unchecked days before that",
+      "adds up through Aug 31, 2026, and unchecked days before that",
     );
     expect(unverifiedDetail(agentic, formatDayFull)).toBeNull();
+  });
+
+  /*
+   * ⚖️ His answer, 2026-10-05: a verified account's line reads with its verified neighbours' verb.
+   * Net worth said "checked through Aug 31, 2026, and unchecked days before that" of Agentic under
+   * "adds up", where every other verified account reads "adds up through <day>". The clause is what
+   * each surface puts after ITS OWN verified line — net worth's "adds up through", "what you owe"'s
+   * proof "checked through" — so the verb is always the one its neighbours have.
+   */
+  test("the days before its first balance are a clause after the verified line, or nothing", () => {
+    expect(beforeFirstBalanceClause(agentic)).toBe(", and unchecked days before that");
+    expect(beforeFirstBalanceDetail(agentic, formatDayFull)).toBe(
+      `adds up through ${formatDayFull("2026-08-31")}${beforeFirstBalanceClause(agentic)}`,
+    );
+    // none before its first balance, or a run still open: nothing to add
+    expect(beforeFirstBalanceClause({ ...agentic, unverifiedSince: null })).toBe("");
+    expect(beforeFirstBalanceClause({ ...agentic, grade: "unverified", uncheckedSince: "2026-09-01" })).toBe("");
   });
 
   test("a run still open is the run, on both surfaces", () => {

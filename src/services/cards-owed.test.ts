@@ -367,6 +367,7 @@ describe("how fresh the number is", () => {
     twoCards();
     const card = cardsOwedCard(bundle.db, TODAY)!;
     expect(card.cards.every((c) => c.caveat === null)).toBe(true);
+    expect(card.cards.every((c) => c.note === null)).toBe(true);
     expect(card.provenance.verdict).toBe("derived");
     expect(card.provenance.badgeWord).toBe("2 of 2 add up");
     expect(card.provenance.checkedThrough).toBe("2026-07-20");
@@ -837,10 +838,14 @@ describe("a card whose export reaches back before its first statement balance", 
     const alpha = card.cards[0]!;
     expect(alpha.checkedThrough).toBe("2026-08-05");
     expect(card.explanation).toBe("Across 1 card, all as of Aug 5 — 5 days ago.");
-    expect(netWorthLine()).toBe("checked through Aug 5, 2026, and unchecked days before that");
-    expect(alpha.caveat).toBe("checked through Aug 5 — 5 days ago, and unchecked days before that");
+    // ⚖️ his answers of 2026-10-05: net worth's line has its verified neighbours' verb, and the row
+    // says it in that verb as a quiet note — nothing to warn of, so no caveat
+    expect(netWorthLine()).toBe("adds up through Aug 5, 2026, and unchecked days before that");
+    expect(alpha.caveat).toBeNull();
+    expect(alpha.note).toBe("adds up through Aug 5 — 5 days ago, and unchecked days before that");
     // 🔴 the proof's line read "$200.00 owed, checked through Aug 5 — 5 days ago": it took the
-    // row's caveat only for a card nothing checked, so a checked card's never said net worth's words
+    // row's caveat only for a card nothing checked, so a checked card's never said net worth's words.
+    // ⚖️ It names those days after the verb its own verified lines have ("checked through").
     expect(card.provenance.inputs[0]!.detail).toBe(
       "$200.00 owed, checked through Aug 5 — 5 days ago, and unchecked days before that",
     );
@@ -927,8 +932,16 @@ describe("a card whose export reaches back before its first statement balance", 
     expect(alpha.grade).toBe("verified");
     expect(alpha.verdict).toBe(twin.verdict);
     expect(card.provenance.badgeWord).toBe("2 of 2 add up");
-    expect(alpha.caveat).toBe("checked through Aug 5 — 5 days ago, and unchecked days before that");
+    // ⚖️ his answer of 2026-10-05: nothing to warn of on either, and those days a quiet note on its
+    // row, in net worth's verb for a verified account
+    expect(alpha.caveat).toBeNull();
     expect(twin.caveat).toBeNull();
+    expect(alpha.note).toBe("adds up through Aug 5 — 5 days ago, and unchecked days before that");
+    expect(twin.note).toBeNull();
+    // …and in the proof, after the verb its twin's line has
+    const proofLine = (label: string) => card.provenance.inputs.find((i) => i.label.startsWith(label))!.detail;
+    expect(proofLine("Twin")).toBe("$200.00 owed, checked through Aug 5 — 5 days ago");
+    expect(proofLine("Alpha")).toBe(`${proofLine("Twin")}, and unchecked days before that`);
   });
 
   /*

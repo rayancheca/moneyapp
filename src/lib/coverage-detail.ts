@@ -227,9 +227,9 @@ export interface BeforeFirstBalance {
 
 /**
  * Where a `verified` account's unchecked days are: before its first balance, replayed backwards from
- * it — the ONE reading net worth's line ("checked through <day>, and unchecked days before that",
- * `beforeFirstBalanceDetail`), the dashboard card's row and /imports' row are worded from. Null when
- * it has none, and for every other grade.
+ * it — the ONE reading net worth's line ("adds up through <day>, and unchecked days before that",
+ * `beforeFirstBalanceDetail`), the dashboard card's note and proof line and /imports' row are worded
+ * from. Null when it has none, and for every other grade.
  *
  * ⚖️ His answer, 2026-10-05 (§6A 35): those days alone do not make an account one nothing is
  * checking, so `accountCoverage` grades it by the days its balance rests on and this is a `verified`
@@ -271,12 +271,28 @@ export function beforeFirstBalance(c: UnverifiedFields): BeforeFirstBalance | nu
 }
 
 /**
- * `beforeFirstBalance` in one line — net worth's line for a `verified` account with days before its
- * first balance, which the trust card prints, and the dashboard card's row and its line in "what you
- * owe" — or null when it has none. /imports says the same days at length (`beforeRow`).
+ * What a `verified` account's line ends with when it has days before its first balance — ", and
+ * unchecked days before that" — or "" when it has none (`beforeFirstBalance`).
  *
- * ⚖️ The words `unverifiedDetail` gave the same account while it was graded `unverified`, kept as
- * they were (§6A 35–36, 2026-10-05): the grade moved, what the line says of those days did not.
+ * ⚖️ His answer, 2026-10-05: the line reads with its verified neighbours' verb. So the days are a
+ * clause after the line each surface already gives a verified account — net worth's "adds up
+ * through <day>", "what you owe"'s proof "checked through <day>" — never a line with a verb of its
+ * own beside them.
+ */
+export function beforeFirstBalanceClause(c: UnverifiedFields): string {
+  return beforeFirstBalance(c) === null ? "" : ", and unchecked days before that";
+}
+
+/**
+ * `beforeFirstBalance` in one line — net worth's line for a `verified` account with days before its
+ * first balance, which the trust card prints, and the dashboard card's quiet note under its row — or
+ * null when it has none. /imports says the same days at length (`beforeRow`).
+ *
+ * ⚖️ His answer, 2026-10-05: in the verb of the verified accounts beside it, "adds up through Aug 31,
+ * 2026, and unchecked days before that". It kept the words `unverifiedDetail` gave the account while
+ * those days graded it `unverified` (§6A 35–36), so under "adds up" Robinhood Agentic read "checked
+ * through Aug 31, 2026, …" where every other verified account reads "adds up through <day>".
+ * /imports' row keeps its words (§6A 36): it is this reading at length, not this line.
  */
 export function beforeFirstBalanceDetail(
   c: UnverifiedFields,
@@ -284,7 +300,7 @@ export function beforeFirstBalanceDetail(
 ): string | null {
   const before = beforeFirstBalance(c);
   if (before === null) return null;
-  return `checked through ${formatDay(before.checkedThrough)}, and unchecked days before that`;
+  return `adds up through ${formatDay(before.checkedThrough)}${beforeFirstBalanceClause(c)}`;
 }
 
 /**
@@ -303,7 +319,7 @@ export function beforeFirstBalanceDetail(
  *
  * ⚖️ With no run open, the days before its first balance were the third branch here, until his
  * answer of 2026-10-05 (§6A 35) graded such an account `verified`: its line is
- * `beforeFirstBalanceDetail` now, in the same words.
+ * `beforeFirstBalanceDetail` now, in its verified neighbours' verb ("adds up through …").
  *
  * ⚠️ So an `unverified` account with neither his count nor a run open gets no sentence: none is
  * one `accountCoverage` gives, since it grades by the unchecked days past the first balance — the

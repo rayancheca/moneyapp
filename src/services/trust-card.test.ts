@@ -592,9 +592,29 @@ describe("trustCard — the days before a first balance do not grade an account"
       expect.objectContaining({
         name: "Robinhood Agentic",
         verdict: "derived",
-        detail: "checked through Aug 31, 2026, and unchecked days before that",
+        detail: "adds up through Aug 31, 2026, and unchecked days before that",
         uncheckedDays: 26,
       }),
     ]);
+  });
+
+  /*
+   * ⚖️ His answer, 2026-10-05: its line reads with its group's verb. Under "adds up" Agentic read
+   * "checked through Aug 31, 2026, and unchecked days before that" beside "adds up through Aug 31,
+   * 2026" of an account the same statements check — two verbs for one fact in one list.
+   */
+  test("under 'adds up', its line has its neighbours' verb, and only the days before set it apart", () => {
+    statementAccount("agentic", "Robinhood Agentic", null);
+    // the same three statements, and no row before the first of them: a charge and its refund in July
+    addAccount("twin", "Twin", "checking");
+    for (const day of ["2026-06-30", "2026-07-31", "2026-08-31"]) anchorAt("twin", day, "statement");
+    addTxn("twin", "2026-07-10", { cents: -1_234 });
+    addTxn("twin", "2026-07-15", { cents: 1_234 });
+    rebuildAccount(bundle.db, "twin", "2026-09-15");
+
+    const verified = groupOf(trustCard(bundle.db, "2026-10-01")!, "verified")!.accounts;
+    const lineOf = (name: string) => verified.find((a) => a.name === name)!.detail;
+    expect(lineOf("Twin")).toBe("adds up through Aug 31, 2026");
+    expect(lineOf("Robinhood Agentic")).toBe(`${lineOf("Twin")}, and unchecked days before that`);
   });
 });

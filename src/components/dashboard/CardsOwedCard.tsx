@@ -78,6 +78,9 @@ export function CardsOwedCard({ data }: { data: CardsOwedCardData }) {
                   card can add up through a real day and stop adding up after
                   it, and one field would have hidden the second fact. */}
               {c.caveat && <span className="block text-[11px] text-warning">{c.caveat}</span>}
+              {/* ⚖️ …and a verified card's days before its first statement are a quiet note in its
+                  date's tone, not that warning — his answer of 2026-10-05. Never beside a caveat. */}
+              {c.note && <span className="block text-[11px] text-ink-faint">{c.note}</span>}
             </dt>
             <dd className="shrink-0">
               {/* three states, not two. A card with no recorded balance is not a

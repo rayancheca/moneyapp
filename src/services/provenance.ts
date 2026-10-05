@@ -1115,8 +1115,8 @@ function netWorthProvenance(db: AppDatabase, day: string | undefined): Provenanc
     isEmpty: emptyAccountIds.has(c.accountId),
     detail:
       c.grade === "verified" && c.verifiedThrough
-        ? // ⚖️ …with the days before its first balance named when it has any, in the words its line
-          // had while they alone graded it `unverified` (§6A 35–36) — the cards-owed row's too
+        ? // ⚖️ …with the days before its first balance named when it has any (§6A 35) — after the
+          // verb every verified line here has, his answer of 2026-10-05 — the cards-owed note's too
           (beforeFirstBalanceDetail(c, readableDay) ?? `adds up through ${readableDay(c.verifiedThrough)}`)
         : c.grade === "broken" && c.brokenSince
           ? `stopped adding up on ${readableDay(c.brokenSince)}`

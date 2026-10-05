@@ -1,6 +1,6 @@
 import { and, asc, eq, inArray } from "drizzle-orm";
 import { apportionPercents } from "@/lib/apportion";
-import { beforeFirstBalanceDetail, unverifiedDetail } from "@/lib/coverage-detail";
+import { beforeFirstBalanceClause, beforeFirstBalanceDetail, unverifiedDetail } from "@/lib/coverage-detail";
 import type { AppDatabase } from "@/db/client";
 import { transactions } from "@/db/schema/transactions";
 import { diffDays, todayIso } from "@/lib/dates";
@@ -152,14 +152,23 @@ export interface CardOwedLine {
    */
   asOfLabel: string | null;
   /**
-   * A warning about this card's evidence, or null when the chain is clean — on a clean chain, the
-   * days before its first statement when it has any (⚖️ §6A 35, `caveatFor`).
+   * A warning about this card's evidence, or null when the chain is clean.
    *
    * Separate from `asOfLabel` rather than replacing it: a card can have a
    * perfectly good `verifiedThrough` date AND have stopped adding up after it,
    * and folding the two into one field would hide the second behind the first.
    */
   caveat: string | null;
+  /**
+   * A quiet line about a clean chain, in the tone the row's date has, or null: a `verified` card's
+   * days before its first statement, in net worth's words for it (`beforeFirstBalanceDetail`). Never
+   * set beside a `caveat` — a card with something to warn of is not `verified`.
+   *
+   * ⚖️ His answer, 2026-10-05: a quiet note, not the amber warning. It was the `caveat` (§6A 35), so
+   * a card both its statements check, counted as adding up, read in the colour of "nothing checks it
+   * since Aug 8" — a field of its own so the tone leaves the service with the words.
+   */
+  note: string | null;
   grade: CoverageGrade;
   verdict: ProvenanceVerdict;
   /** this card's slice of the debt; null when there is no debt to divide */
@@ -316,11 +325,10 @@ function caveatFor(cov: AccountCoverage | undefined, today: string): string | nu
   switch (cov.grade) {
     case "verified":
       /*
-       * ⚖️ Nothing to warn of — but the days before its first statement, when it has any, are
-       * named as net worth names them (`beforeFirstBalanceDetail`): his answer of 2026-10-05
-       * (§6A 35) graded such a card `verified`, and this row had said them while it was not.
+       * ⚖️ Nothing to warn of. The days before its first statement, when it has any, are the row's
+       * quiet `noteFor` — his answer of 2026-10-05; they were this warning (§6A 35), in amber.
        */
-      return beforeFirstBalanceDetail(cov, when);
+      return null;
     case "unverified":
       /*
        * Net worth's line for the account, in this card's dates (`unverifiedDetail`).
@@ -347,6 +355,18 @@ function caveatFor(cov: AccountCoverage | undefined, today: string): string | nu
     case "unknown":
       return "no statement has checked this card yet";
   }
+}
+
+/**
+ * The row's quiet line, or null: a `verified` card's days before its first statement, named as net
+ * worth names them (`beforeFirstBalanceDetail`) in this card's dates — "adds up through Aug 5 — 5
+ * days ago, and unchecked days before that".
+ *
+ * ⚖️ His answer, 2026-10-05: a quiet note in the tone the verified rows use, not the amber warning,
+ * and in net worth's verb for a verified account. Every other grade says what is wrong in `caveatFor`.
+ */
+function noteFor(cov: AccountCoverage | undefined, today: string): string | null {
+  return cov === undefined ? null : beforeFirstBalanceDetail(cov, (day) => dated(day, today));
 }
 
 interface FeeCategories {
@@ -513,6 +533,12 @@ function composedProvenance(
   owedCents: number,
   today: string,
 ): Provenance {
+  const coverageById = new Map(coverage.map((cov) => [cov.accountId, cov]));
+  /** ", and unchecked days before that" of a verified card with days before its first statement */
+  const daysBefore = (accountId: string): string => {
+    const cov = coverageById.get(accountId);
+    return cov === undefined ? "" : beforeFirstBalanceClause(cov);
+  };
   const inputs: ProvenanceInput[] = cards.map((c) => ({
     label: c.last4 ? `${c.name} ····${c.last4}` : c.name,
     verdict: c.verdict,
@@ -529,6 +555,11 @@ function composedProvenance(
      * said "nothing checks it since Aug 8"; a broken one kept its check and dropped "stopped adding
      * up on Jul 26" (§6A 28 follow-up review). The row's caveat says what net worth says of the
      * account, in this card's dates (`caveatFor`), so wherever there is one, the line says it.
+     *
+     * ⚖️ A verified card's days before its first statement come after the verb every verified line
+     * here has (`beforeFirstBalanceClause`), his answer of 2026-10-05: "checked through Aug 5 — 5
+     * days ago, and unchecked days before that" beside "checked through Aug 5 — 5 days ago". The
+     * row's quiet note is in net worth's verb; this list's neighbours are "checked through".
      */
     detail:
       c.owedCents === null
@@ -537,7 +568,7 @@ function composedProvenance(
             c.caveat ??
             (c.checkedThrough === null
               ? "nothing has checked this card yet"
-              : `checked through ${dated(c.checkedThrough, today)}`)
+              : `checked through ${dated(c.checkedThrough, today)}${daysBefore(c.accountId)}`)
           }`,
   }));
 
@@ -608,6 +639,7 @@ export function cardsOwedCard(db: AppDatabase, today: string = todayIso()): Card
       daysSinceChecked: checkedThrough === null ? null : diffDays(checkedThrough, today),
       grade: cov?.grade ?? ("unknown" as CoverageGrade),
       caveat: caveatFor(cov, today),
+      note: noteFor(cov, today),
       verdict: cardVerdict(db, a.id, cov),
     };
   });
