@@ -212,6 +212,25 @@ describe("each kind definition agrees with the rule that counts it", () => {
     expect(CATEGORY_KIND_JARGON.expense).toMatch(/not yours/);
   });
 
+  /*
+   * 🔴 The exception sat right after the no-category clause — "money out that has no category yet — except on the
+   * agent's own account" — and so read as covering it, while `spendingBucket` still counts an unfiled outflow on the
+   * agent's cash in Spent. The exception is the spending categories' rows; the unfiled money is counted wherever it
+   * leaves.
+   */
+  test("…and money out with no category yet still counts on the agent's account, as the definition says", () => {
+    const rh = bundle.db.select().from(institutions).where(eq(institutions.name, "Robinhood")).get()!;
+    const agentic = createAccount(bundle.db, { institutionId: rh.id, name: "Robinhood Agentic", type: "checking", last4: "9651" });
+    const book = createAccount(bundle.db, { institutionId: rh.id, name: "Robinhood Agentic Brokerage", type: "investment", subtype: "brokerage" });
+    bundle.db.update(accounts).set({ cashAccountId: agentic }).where(eq(accounts.id, book)).run();
+    const unfiled = addTxn(null, -2_000, agentic);
+
+    expect(countedAsSpending(unfiled)).toBe(true);
+    expect(periodTotals(bundle.db, WINDOW).spentCents).toBe(2_000);
+    expect(CATEGORY_KIND_JARGON.expense).toMatch(/no category yet, whichever account it leaves/);
+    expect(CATEGORY_KIND_JARGON.expense).not.toMatch(/no category yet\W+except/);
+  });
+
   test("the transfer definition covers money to or from other people, not only money between your own accounts", () => {
     const transfers = rootId("Transfers");
     const resolve = transferCategoryResolver(bundle.db);

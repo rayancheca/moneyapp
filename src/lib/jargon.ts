@@ -79,9 +79,10 @@ export const RESERVED_JARGON_PHRASES = [
  */
 export const CATEGORY_KIND_JARGON: Record<string, string> = {
   // spendingBucket: expense-kind rows AND uncategorized money out; netted per category, gross in Spent; none of the
-  // expense-kind rows on the agent's cash account (owner decision 2026-10-02)
+  // expense-kind rows on the agent's cash account (owner decision 2026-10-02) — but its unfiled money out still counts.
+  // 🔴 The exception sat right after the no-category clause and read as covering it.
   expense:
-    "Counted as spending, together with money out that has no category yet — except on the agent's own account, where what is paid is the agent's and not yours. Purchases and refunds net against each other in a category's total, so returning something reduces it instead of adding to it.",
+    "Counted as spending, together with money out that has no category yet, whichever account it leaves. What the agent's own account pays in one of these categories is left out: it is the agent's, not yours. Purchases and refunds net against each other in a category's total, so returning something reduces it instead of adding to it.",
   // isIncome keeps positive rows only, and none on the agent's cash account (owner decision 2026-09-28);
   // categorySpending (the category's own page) nets both signs
   income:

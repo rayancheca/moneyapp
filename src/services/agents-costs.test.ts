@@ -416,6 +416,33 @@ describe("Robinhood Gold, charged to the agent, is no merchant of his", () => {
   });
 
   /*
+   * The rank and the share sentences hand the reader one proof — the merchant's rows over its first and last visit.
+   * 🔴 It summed every active row at the merchant, every account and every kind: under "Robinhood Gold … $10.00" (his
+   * two fees) and "40.0% of what you spent on Fees" it read "the sum of 3 rows", the agent's Sep 1 fee the third. A
+   * transfer at a merchant is no visit either, so the proof leaves it out as the figure does.
+   */
+  test("⛔ the proof under the rank and the share counts the rows the figure counts — his, of an expense kind", () => {
+    post(robinhoodCash, "2026-08-01", -AGENTS_FEE, "Fees > Bank Fees", "Gold Monthly Fee", gold);
+    post(robinhoodCash, "2026-09-01", -AGENTS_FEE, "Fees > Bank Fees", "Gold Monthly Fee", gold);
+    post(robinhoodCash, "2026-08-20", -2_000, "Transfers > Internal Transfer", "Robinhood Gold", gold);
+    // a second regular merchant of his, so there is a rank to state
+    const starbucks = bundle.db.select().from(merchants).where(eq(merchants.canonicalName, "Starbucks")).get()!.id;
+    post(wellsFargo, "2026-08-15", -700, "Food > Coffee", "Starbucks", starbucks);
+    post(wellsFargo, "2026-09-15", -700, "Food > Coffee", "Starbucks", starbucks);
+    const proofs = () => {
+      const input = merchantInsightInput(bundle.db, gold, TODAY)!;
+      return input.candidates.map((c) => c.prove()?.headline);
+    };
+    const read = proofs();
+    expect(read.length).toBe(2); // the rank and the share
+    for (const headline of read) expect(headline).toMatch(/^This total is the sum of 2 rows /);
+
+    // the rule's own edge: unpaired, the agent's fee is his, a third visit, and the proof counts it
+    unpair();
+    for (const headline of proofs()) expect(headline).toMatch(/^This total is the sum of 3 rows /);
+  });
+
+  /*
    * /spending cuts a comparison at the day every account he spends from habitually has been imported through
    * (`spendingCoverageThrough`, the movers card's live spenders). An account that charges the agent's Gold fee every
    * month is no account he spends from, and its lag is not his.

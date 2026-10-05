@@ -7,7 +7,7 @@ import { merchantAliases, merchants } from "@/db/schema/merchants";
 import { recurringSeries } from "@/db/schema/recurring";
 import { transactions } from "@/db/schema/transactions";
 import { outsidePortfolioCashAccountIds } from "./accounts";
-import { isAgentsCostCategoryRow, loadCategoryIndex } from "./analytics";
+import { isHisExpenseRow, loadCategoryIndex } from "./analytics";
 import type { BulkResult } from "./bulk-edit";
 import { ledgerOpens, ledgerReaches } from "./observation-frontier";
 import { strippedDescriptionKey } from "@/lib/description-key";
@@ -405,16 +405,15 @@ export function merchantIntelligence(
     .from(transactions)
     .where(and(eq(transactions.merchantId, merchantId), eq(transactions.status, "active")))
     .all();
-  // his spending at this merchant: expense-kind, off the agent's cash
-  const isHisExpense = (r: (typeof rows)[number], top: { kind: string }): boolean =>
-    top.kind === "expense" && !isAgentsCostCategoryRow(idx, agentsCash, r);
+  // his spending at this merchant: expense-kind, off the agent's cash — the rule its proof reads too
+  const isHisExpense = (r: (typeof rows)[number]): boolean => isHisExpenseRow(idx, agentsCash, r);
 
   const visits: MerchantVisit[] = rows
     // money OUT only. A refund is a credit at the same merchant; counting it as
     // a visit would report a day that cost nothing as a day that cost something.
     .filter((r) => r.amountCents < 0 && r.categoryId !== null)
     .map((r) => ({ row: r, top: idx.topLevelOf(r.categoryId!) }))
-    .filter(({ row, top }) => isHisExpense(row, top))
+    .filter(({ row }) => isHisExpense(row))
     .map(({ row, top }) => ({
       day: row.day,
       amountCents: -row.amountCents,
@@ -430,7 +429,7 @@ export function merchantIntelligence(
   const refunds: MerchantVisit[] = rows
     .filter((r) => r.amountCents > 0 && r.categoryId !== null)
     .map((r) => ({ row: r, top: idx.topLevelOf(r.categoryId!) }))
-    .filter(({ row, top }) => isHisExpense(row, top))
+    .filter(({ row }) => isHisExpense(row))
     .map(({ row, top }) => ({
       day: row.day,
       amountCents: row.amountCents,

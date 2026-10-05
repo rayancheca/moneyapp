@@ -6,7 +6,7 @@ import { dayWindowLabel } from "@/lib/period";
 import { isPrintableName } from "@/lib/printable-name";
 import { rankFact, scalarFact, shareFact, type Fact } from "@/lib/insight-facts";
 import { outsidePortfolioCashAccountIds } from "./accounts";
-import { isAgentsCostCategoryRow, loadCategoryIndex, spendingTransactions } from "./analytics";
+import { isHisExpenseRow, loadCategoryIndex, spendingTransactions } from "./analytics";
 import { surfaceInsights, type InsightInput } from "./insight-surface";
 import type { InsightCandidate, SurfaceInsights } from "./insights";
 import { merchantIntelligence, merchantSummary } from "./merchants";
@@ -242,10 +242,9 @@ function merchantSpendTotals(db: AppDatabase): MerchantTotal[] {
     .from(transactions)
     .where(eq(transactions.status, "active"))
     .all()) {
-    if (row.merchantId === null || row.categoryId === null) continue;
-    if (idx.topLevelOf(row.categoryId).kind !== "expense") continue;
-    // ⚖️ the profile's own filter, the agent's cash included (`merchantIntelligence`, owner decision 2026-10-02)
-    if (isAgentsCostCategoryRow(idx, agentsCash, row)) continue;
+    if (row.merchantId === null) continue;
+    // ⚖️ the profile's own filter, the agent's cash included (`isHisExpenseRow`, owner decision 2026-10-02)
+    if (!isHisExpenseRow(idx, agentsCash, row)) continue;
     const acc = byMerchant.get(row.merchantId) ?? { cents: 0, gross: 0, visits: 0 };
     /*
      * ⛔ THE RANK IS BY WHAT IT COST, and the credits are the other half of
@@ -290,11 +289,10 @@ function dominantCategory(
     .from(transactions)
     .where(and(eq(transactions.merchantId, merchantId), eq(transactions.status, "active")))
     .all()) {
-    if (row.categoryId === null || row.amountCents >= 0) continue;
-    const top = idx.topLevelOf(row.categoryId);
-    if (top.kind !== "expense") continue;
+    if (row.amountCents >= 0) continue;
     // where HIS spending at this merchant sits — the agent's cash is none of it (owner decision 2026-10-02)
-    if (isAgentsCostCategoryRow(idx, agentsCash, row)) continue;
+    if (!isHisExpenseRow(idx, agentsCash, row)) continue;
+    const top = idx.topLevelOf(row.categoryId!);
     byTop.set(top.id, (byTop.get(top.id) ?? 0) - row.amountCents);
   }
   const best = [...byTop.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))[0];

@@ -390,6 +390,29 @@ export function isAgentsCostCategoryRow(
 }
 
 /**
+ * Whether a row is one of HIS expense rows, either sign: an expense-kind category, off the agent's cash
+ * (`isAgentsCostCategoryRow`). `spendingBucket` without its Uncategorized leg — the population a MERCHANT is measured
+ * over: its page's total, purchases and returns (`merchantIntelligence`), its rank and the category it charges most in
+ * (`merchant-insights`), and the proof under them (provenance's `merchantSpend`), so a figure and the rows its proof
+ * names cannot answer "which rows" two ways.
+ *
+ * 🔴 Each of them spelled it apart, and the proof not at all: it summed every row at the merchant, every account and
+ * every kind, so under "Robinhood Gold … $10.00" — his two Gold fees — it read "the sum of 3 rows", the agent's the
+ * third (owner decision 2026-10-02, §6A 34).
+ */
+export function isHisExpenseRow(
+  idx: CategoryIndex,
+  agentsCash: ReadonlySet<string>,
+  txn: Pick<AnalyticsTxn, "accountId" | "categoryId">,
+): boolean {
+  return (
+    txn.categoryId !== null &&
+    idx.topLevelOf(txn.categoryId).kind === "expense" &&
+    !isAgentsCostCategoryRow(idx, agentsCash, txn)
+  );
+}
+
+/**
  * Whether a row is Income — money HE received: a positive amount in an income-kind category, on an account whose
  * money is his. The one classifier behind every figure that says "Income": /spending's card, its chart, heatmap and
  * Sankey, /budgets' "$X in so far", the dashboard's period panel, the forecast's pace row.

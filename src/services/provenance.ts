@@ -18,7 +18,14 @@ import { formatCents } from "@/lib/money";
 import { emptyPeriodReason } from "@/lib/empty-period";
 import { ledgerOpens, ledgerReaches } from "./observation-frontier";
 import { outsidePortfolioCashAccountIds, ownPortfolioAccountIds } from "./accounts";
-import { activeTxnsInRange, loadCategoryIndex, offAgentsCash, spendingBucket, uncategorizedWhere } from "./analytics";
+import {
+  activeTxnsInRange,
+  isHisExpenseRow,
+  loadCategoryIndex,
+  offAgentsCash,
+  spendingBucket,
+  uncategorizedWhere,
+} from "./analytics";
 import { handTypedDays, keptOpeningOf } from "./anchor-winners";
 import { accountCoverage, chainFooting, footingThrough, type AccountCoverage, type CoverageGrade } from "./coverage";
 import {
@@ -1666,8 +1673,16 @@ function merchantSpendProvenance(
   const merchant = db.select().from(merchants).where(eq(merchants.id, merchantId)).get();
   if (!merchant) return null;
 
+  /*
+   * ⛔ …and the figure was summed from HIS EXPENSE rows at the merchant (`isHisExpenseRow`, the profile's own rule).
+   * 🔴 This took every active row there, every account and every kind: under "Robinhood Gold … $10.00" (his two Gold
+   * fees) and "40.0% of what you spent on Fees" it read "the sum of 3 rows", the agent's fee the third (owner decision
+   * 2026-10-02) — and a transfer at a merchant, which is no purchase of his, was a row of it too.
+   */
+  const idx = loadCategoryIndex(db);
+  const agentsCash = outsidePortfolioCashAccountIds(db);
   const rows = db
-    .select(SUM_ROW_COLUMNS)
+    .select({ ...SUM_ROW_COLUMNS, categoryId: transactions.categoryId })
     .from(transactions)
     .where(
       and(
@@ -1677,7 +1692,8 @@ function merchantSpendProvenance(
         lte(transactions.postedOn, to),
       ),
     )
-    .all();
+    .all()
+    .filter((r) => isHisExpenseRow(idx, agentsCash, r));
 
   return summedRowsProvenance(db, rows, label ?? merchant.canonicalName, from, to);
 }
