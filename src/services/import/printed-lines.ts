@@ -174,8 +174,14 @@ export interface Matching {
   rowOf: Map<number, string>;
 }
 
-/** Kuhn's augmenting search from `line`, over rows `usable` allows. */
-export function augment(line: number, candidates: readonly Row[][], usable: (row: Row) => boolean, m: Matching, seen: Set<string>): boolean {
+/** Kuhn's augmenting search from `line`, over rows `usable` allows — a row being anything with an id. */
+export function augment<R extends { readonly id: string }>(
+  line: number,
+  candidates: readonly (readonly R[])[],
+  usable: (row: R) => boolean,
+  m: Matching,
+  seen: Set<string>,
+): boolean {
   for (const row of candidates[line]!) {
     if (seen.has(row.id) || !usable(row)) continue;
     seen.add(row.id);

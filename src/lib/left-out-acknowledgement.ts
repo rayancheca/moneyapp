@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { augment, type Matching } from "@/services/import/printed-lines";
 import { lineLeftOutNotice, type LineLeftOutFacts } from "./import-file-label";
 import { formatCentsSigned } from "./money";
 
@@ -99,23 +100,47 @@ function covers(ack: LeftOutAcknowledgement, line: KeyedLine): boolean {
   );
 }
 
+/** Whether `ack` is keyed as `line`'s own mark keys it — the acknowledgement `planAcknowledging` writes for it. */
+function isOwn(ack: LeftOutAcknowledgement, line: KeyedLine): boolean {
+  const key = keyOf(line);
+  return ack.printedOn === key.printedOn && ack.printedWords === key.printedWords && ack.printerSha256 === key.printerSha256;
+}
+
 /**
- * Which acknowledgement covers each line, by its row (`rowId`) — each one line at most, the oldest first — and the
- * acknowledgements no line left out matches now: they hide nothing, and ledger-check names them.
+ * Which acknowledgement covers each line, by its row (`rowId`) — each one line at most — and the acknowledgements no
+ * line left out matches now: they hide nothing, and ledger-check names them.
+ *
+ * 🔴 Each line took the oldest acknowledgement covering it. An acknowledgement covers a line any of its printers prints
+ * alike, so a line printed by two files took the one given for a line only the second prints: that line failed, though
+ * acknowledged, and the first's own was named as matching nothing (probe at ec80c93). Now as many lines as can be are
+ * covered (Kuhn, `augment`), each by its OWN acknowledgement first — the one its mark wrote — and only then by one
+ * keyed under another of its printers: the line a session read and acknowledged is the line that stops failing. A line
+ * takes the oldest free one it can, and moves another line's only when none is free.
  */
 export function acknowledgementsOf(
   lines: readonly KeyedLine[],
   acks: readonly LeftOutAcknowledgement[],
 ): { byRow: Map<string, LeftOutAcknowledgement>; unmatched: LeftOutAcknowledgement[] } {
-  const free = [...acks].sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id));
-  const byRow = new Map<string, LeftOutAcknowledgement>();
-  for (const line of lines) {
-    const i = free.findIndex((ack) => covers(ack, line));
-    if (i === -1) continue;
-    byRow.set(line.rowId, free[i]!);
-    free.splice(i, 1);
-  }
-  return { byRow, unmatched: free };
+  const oldestFirst = [...acks].sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id));
+  const all = lines.map((line) => oldestFirst.filter((ack) => covers(ack, line)));
+  const own = lines.map((line, i) => all[i]!.filter((ack) => isOwn(ack, line)));
+  const m: Matching = { lineOf: new Map(), rowOf: new Map() };
+  const place = (i: number, candidates: readonly LeftOutAcknowledgement[][]): void => {
+    const free = candidates[i]!.find((ack) => !m.lineOf.has(ack.id));
+    if (free === undefined) {
+      augment(i, candidates, () => true, m, new Set());
+      return;
+    }
+    m.lineOf.set(free.id, i);
+    m.rowOf.set(i, free.id);
+  };
+  for (let i = 0; i < lines.length; i++) place(i, own);
+  // a line keeps an acknowledgement once it has one: moving it to another never leaves it uncovered
+  for (let i = 0; i < lines.length; i++) if (!m.rowOf.has(i)) place(i, all);
+  const byId = new Map(acks.map((ack) => [ack.id, ack] as const));
+  const inLineOrder = [...m.rowOf].sort(([a], [b]) => a - b);
+  const byRow = new Map(inLineOrder.map(([i, id]) => [lines[i]!.rowId, byId.get(id)!] as const));
+  return { byRow, unmatched: oldestFirst.filter((ack) => !m.lineOf.has(ack.id)) };
 }
 
 /**

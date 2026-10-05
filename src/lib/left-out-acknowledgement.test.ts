@@ -125,6 +125,73 @@ describe("acknowledgementsOf — which acknowledgement covers which line", () =>
   });
 
   /**
+   * 🔴 Each line took the oldest acknowledgement covering it, and an acknowledgement covers a line any of its printers
+   * prints alike. Probe at ec80c93: P printed by one file on 07-25 and by another on 07-26, Q only by the second, alike
+   * there; Q's acknowledgement recorded first. P took Q's, Q failed, and P's was named "no line left out matches it now".
+   */
+  test("⛔ every line acknowledged is covered, though one of them could take the other's acknowledgement", () => {
+    const words = "WFB OPENING DEPOSIT FROM CARD";
+    const p = line({
+      rowId: "row-p",
+      printedOn: "2026-07-25",
+      printings: [
+        { sha256: STATEMENT, printedOn: "2026-07-25", words },
+        { sha256: RE_DOWNLOAD, printedOn: "2026-07-26", words },
+      ],
+    });
+    const q = line({ rowId: "row-q", printedOn: "2026-07-26", printings: [{ sha256: RE_DOWNLOAD, printedOn: "2026-07-26", words }] });
+    const ackQ = ack({ id: "ack-q", printedOn: "2026-07-26", printerSha256: RE_DOWNLOAD, createdAt: "2026-10-05T16:00:00.000Z" });
+    const ackP = ack({ id: "ack-p", printedOn: "2026-07-25", printerSha256: STATEMENT, createdAt: "2026-10-05T17:00:00.000Z" });
+    for (const lines of [[p, q], [q, p]]) {
+      const { byRow, unmatched } = acknowledgementsOf(lines, [ackP, ackQ]);
+      expect(Object.fromEntries([...byRow].map(([row, a]) => [row, a.id]))).toEqual({ "row-p": "ack-p", "row-q": "ack-q" });
+      expect(unmatched).toEqual([]);
+    }
+  });
+
+  /**
+   * ⛔ A line takes the acknowledgement given for it — the one its own mark wrote — before another line alike under one
+   * of its printers does: else the line a session read and acknowledged still fails, and one nobody read is hidden.
+   */
+  test("⛔ the line a mark acknowledged keeps it: a line alike only under another printer does not take it", () => {
+    const words = "WFB OPENING DEPOSIT FROM CARD";
+    const read = line();
+    const unread = line({
+      rowId: "row-unread",
+      printings: [
+        { sha256: STATEMENT, printedOn: "2026-07-27", words },
+        { sha256: RE_DOWNLOAD, printedOn: "2026-07-27", words },
+      ],
+    });
+    expect(leftOutToken(unread)).not.toBe(leftOutToken(read));
+    for (const lines of [[unread, read], [read, unread]]) {
+      const { byRow, unmatched } = acknowledgementsOf(lines, [ack()]);
+      expect([...byRow].map(([row, a]) => [row, a.id])).toEqual([["row-opening", "ack-1"]]);
+      expect(unmatched).toEqual([]);
+    }
+  });
+
+  /**
+   * The probe's case again where neither line has its own acknowledgement any more — a file uploaded since sorts first
+   * among each one's printers — so each is covered only by one keyed under another printer, and the older of the two
+   * covers both: A must leave it to B and take the one only A is printed by.
+   */
+  test("⛔ every line acknowledged is covered, when none of them is covered by its own mark's acknowledgement", () => {
+    const words = "WFB OPENING DEPOSIT FROM CARD";
+    const later = "4c".repeat(32);
+    const printing = (sha256: string) => ({ sha256, printedOn: "2026-07-27", words });
+    const a = line({ rowId: "row-a", printings: [printing(STATEMENT), printing(RE_DOWNLOAD), printing(THIRD)] });
+    const b = line({ rowId: "row-b", printings: [printing(later), printing(RE_DOWNLOAD)] });
+    const both = ack({ id: "ack-both", printerSha256: RE_DOWNLOAD, createdAt: "2026-10-05T16:00:00.000Z" });
+    const onlyA = ack({ id: "ack-only-a", printerSha256: THIRD, createdAt: "2026-10-05T17:00:00.000Z" });
+    for (const lines of [[a, b], [b, a]]) {
+      const { byRow, unmatched } = acknowledgementsOf(lines, [both, onlyA]);
+      expect(Object.fromEntries([...byRow].map(([row, x]) => [row, x.id]))).toEqual({ "row-a": "ack-only-a", "row-b": "ack-both" });
+      expect(unmatched).toEqual([]);
+    }
+  });
+
+  /**
    * 🔴 The leaving it acknowledged ended — a re-read wrote the line again — and a later one left it out again: the same
    * day, money, words and file, a new row. Keyed by those alone, the old acknowledgement hid a regression nobody read.
    */
