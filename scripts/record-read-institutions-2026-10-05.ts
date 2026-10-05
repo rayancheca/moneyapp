@@ -18,7 +18,10 @@
  * By the round that queued it, on a copy of the real ledger, 2026-10-05: of the reads whose rows land in one bank's
  * accounts, 22 live and 24 retired name another. The rule here also reads a read's periods, recorded balances, printed
  * lines and copy records, so a second download that wrote no row counts too: the dry run prints the count it plans.
- * ⏳ Not yet run on the real ledger, nor on a copy of it, by the branch that wrote it (uc/import-institution-resolved).
+ * By a review of it on a copy, the same day: 137 rows applied, then NOTHING TO DO — and 76 retired Robinhood reads
+ * still naming Chase, their retirement having kept nothing that names an account. A retired read now goes by the read
+ * in place of its bytes, as its original does (`institutionReadBy`): ⏳ the dry run says how many of the 76 it plans.
+ * ⏳ Not yet run on the real ledger by the branches that wrote it (uc/import-institution-resolved, -r2).
  *
  * The dry run rehearses the write and every guard on a throwaway `.backup` copy (in `--scratch=<dir>`, default the OS
  * temp directory; removed afterwards). `--confirm` rehearses again, takes a `pre-*-record-read-institutions.db`
@@ -53,7 +56,9 @@ function printPlan({ sqlite }: Pick<DbBundle, "sqlite">, plan: InstitutionPlan):
   for (const [key, files] of [...groups].sort()) {
     console.log(`  ${key}  ${String(files.length).padStart(4)}  e.g. ${files.slice(0, 3).join(", ")}`);
   }
-  console.log(`  ${plan.agreeing} name their accounts' bank already; ${plan.unresolved} name no account, or accounts at two banks: left as they are`);
+  console.log(
+    `  ${plan.agreeing} name their accounts' bank already; ${plan.unresolved} name no account (nor does a read in place of their bytes), or accounts at two banks: left as they are`,
+  );
 }
 
 export async function main(argv: readonly string[] = process.argv.slice(2)): Promise<void> {

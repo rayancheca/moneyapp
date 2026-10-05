@@ -4348,6 +4348,31 @@ describe("an original is never filed in another bank's folder — by the import 
   });
 
   /**
+   * 🔴 A retired read whose retirement keeps nothing that names an account kept the bank guessed from its name, though
+   * the read in place of its bytes resolves it — the read the layout migration files its original by
+   * (`readsInPlaceOfRetired`). On a copy of the real ledger, 2026-10-05: 76 retired Robinhood reads still named Chase.
+   */
+  test("a read that resolves what the read it retires withheld records its bank on that read too", async () => {
+    readInstead = () => ({
+      statements: [],
+      withheld: [{ accountHint: CASH, accountNumber: "XXXX7307", period: { start: "2026-03-01", end: "2026-03-31" }, reason: "cannot prove it" }],
+    });
+    await importStatementFiles(bundle.db, [MARCH]);
+    const [first] = reads(eq(importFilesTable.fileName, MARCH.name));
+    // the premise: it withheld every section — nothing resolved whose statement it is, and the guess stood
+    expect(bankOf(first!)).toBe("Chase");
+    readInstead = null;
+    unnamedProfile.version = 2;
+    const [outcome] = await importStatementFiles(bundle.db, [MARCH]);
+    const retired = readById(first!.id);
+    expect(outcome!.status).toBe("parsed");
+    expect(retired.status).toBe("superseded");
+    expect(namedBy(retired.id)).toEqual(NOTHING);
+
+    expect(bankOf(retired)).toBe("Robinhood");
+  });
+
+  /**
    * A read that stops mid-file keeps what its earlier statements wrote, for un-import to clean up — and those rows
    * landed in one bank's account.
    */

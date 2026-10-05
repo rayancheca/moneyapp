@@ -16,9 +16,15 @@
  * For each `import_files` row, the bank `institutionReadBy` reads from what the row's records name — the import's own
  * rule, asked rather than restated: its rows of any status, its periods and recorded balances, what it prints, the
  * statements it prints a copy of (a book it wrote trades to, through its period) — where that differs from the bank it
- * names. A row whose records name no account (a read that failed before it wrote, or withheld every section; a retired
- * read whose retirement kept no row) or accounts at two banks keeps the bank it names. `institution_id` alone,
- * `updated_at` too left as it is, in ONE transaction.
+ * names. A retired read whose retirement kept nothing that names an account goes by the read in place of its bytes
+ * (same sha256), the read the layout migration files its original by. A row nothing names an account for (a read that
+ * failed before it wrote, or withheld every section; a retired read no read in place reads the bytes of) or whose
+ * accounts are at two banks keeps the bank it names. `institution_id` alone, `updated_at` too left as it is, in ONE
+ * transaction.
+ *
+ * 🔴 As first written it asked a retired read's own records alone, and a retirement keeps only rows. Measured on a copy
+ * of the real ledger, 2026-10-05: --confirm applied 137 rows and a second run said NOTHING TO DO, yet 76 retired
+ * Robinhood reads (v1 32, v2 22, v3 22) still named Chase, each read again by a read in place resolving Robinhood.
  *
  * ## Guards — refuse before, throw after
  *
@@ -53,7 +59,10 @@ export interface InstitutionChange {
 
 export interface InstitutionPlan {
   readonly changes: readonly InstitutionChange[];
-  /** rows whose records name no account, or accounts at two banks: the bank they name stays */
+  /**
+   * rows nothing names an account for — not even the read in place of a retired read's bytes — or whose accounts are at
+   * two banks: the bank they name stays
+   */
   readonly unresolved: number;
   /** rows that name the bank of their accounts already */
   readonly agreeing: number;

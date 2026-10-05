@@ -2460,8 +2460,10 @@ function settleMember(db: AppDatabase, member: ReadMember, { tally, accounts: fi
   if (finalPath !== row.storagePath) {
     db.update(importFiles).set({ storagePath: finalPath }).where(eq(importFiles.id, row.id)).run();
   }
-  // …and the row names the bank its accounts are at, not the one guessed from its name
+  // …and the row names the bank its accounts are at, not the one guessed from its name — as does each read it retired
+  // of the same bytes that kept nothing of its own to say so
   recordReadInstitution(db, row);
+  recordRetiredReadInstitutions(db, row.fileSha256);
   return { ...tally, withheld: [...(member.parsed?.withheld ?? [])] };
 }
 
@@ -3124,18 +3126,34 @@ function accountsReadBy(db: AppDatabase, importFileId: string): string[] {
  * The bank a read records (`import_files.institution_id`) once it has resolved whose statement it is: the one
  * institution of every account its records name (`accountsReadBy`: its rows of any status, its periods and recorded
  * balances, what it prints, the statements it prints a copy of — a book it wrote trades to, through its period, at the
- * bank of the cash account it is paired with). Null while they name none — a read that failed before it wrote, or
- * withheld every section — and when they name accounts at two banks, which one column cannot say: the importer's guess
- * (`guessInstitution`) then stands.
+ * bank of the cash account it is paired with). A retired read whose records name none goes by the reads in place of its
+ * bytes (`readsInPlaceOfRetired`), as its original does. Null while nothing names an account — a read that failed
+ * before it wrote, or withheld every section; a retired read no read in place reads the bytes of — and when they name
+ * accounts at two banks, which one column cannot say: the importer's guess (`guessInstitution`) then stands.
  *
  * ⛔ One rule, two callers: the import, as it settles a read (`recordReadInstitution`), and the backfill of the rows it
  * recorded before (scripts/read-institutions.ts). A retired read keeps the bank its read resolved: its retirement keeps
- * its rows (`supersedeFileContribution`), and a retirement that kept none leaves the column as the read recorded it.
+ * its rows (`supersedeFileContribution`).
+ *
+ * 🔴 …and a retirement that kept none left the column as the read recorded it — the guess, for a read imported before
+ * the import recorded the bank, or one that withheld what its successor reads — though the layout migration files its
+ * original by the read in place of its bytes (`migrateStorageLayout`): two rules disagreeing about one read. Measured on
+ * a copy of the real ledger, 2026-10-05, after the backfill without it: 76 retired Robinhood reads (v1 32, v2 22, v3 22)
+ * still named Chase, none with a row, period, anchor, printed line or copy, each read again by a read in place that
+ * resolves Robinhood. Its own records come first: a retirement that kept rows says where they landed.
  */
 export function institutionReadBy(db: AppDatabase, importFileId: string): string | null {
   const named = accountsReadBy(db, importFileId);
-  if (named.length === 0) return null;
-  const banks = db.selectDistinct({ institutionId: accounts.institutionId }).from(accounts).where(inArray(accounts.id, named)).all();
+  if (named.length > 0) return institutionOf(db, named);
+  const read = db.select().from(importFiles).where(eq(importFiles.id, importFileId)).get();
+  if (read === undefined) return null;
+  return institutionOf(db, [...new Set(readsInPlaceOfRetired(db, [read]).flatMap((r) => accountsReadBy(db, r.id)))]);
+}
+
+/** The one institution of `accountIds` — null for none, or for accounts at two banks. */
+function institutionOf(db: AppDatabase, accountIds: readonly string[]): string | null {
+  if (accountIds.length === 0) return null;
+  const banks = db.selectDistinct({ institutionId: accounts.institutionId }).from(accounts).where(inArray(accounts.id, [...accountIds])).all();
   return banks.length === 1 ? (banks[0] as { institutionId: string }).institutionId : null;
 }
 
@@ -3150,6 +3168,21 @@ function recordReadInstitution(db: AppDatabase, row: { id: string; institutionId
   const resolved = institutionReadBy(db, row.id);
   if (resolved === null || resolved === row.institutionId) return;
   db.update(importFiles).set({ institutionId: resolved }).where(eq(importFiles.id, row.id)).run();
+}
+
+/**
+ * A read in place of `sha`'s bytes settled: each retired read of them records the bank it says now — by its own
+ * records, or, where its retirement kept none, by the read in place (`institutionReadBy`).
+ *
+ * 🔴 A read that withheld every section kept the guess once its successor read the section: nothing recorded it again.
+ */
+function recordRetiredReadInstitutions(db: AppDatabase, sha: string): void {
+  const retired = db
+    .select({ id: importFiles.id, institutionId: importFiles.institutionId })
+    .from(importFiles)
+    .where(and(eq(importFiles.fileSha256, sha), eq(importFiles.status, "superseded")))
+    .all();
+  for (const read of retired) recordReadInstitution(db, read);
 }
 
 /** Group ids per query — well under SQLite's bound-parameter limit. */
