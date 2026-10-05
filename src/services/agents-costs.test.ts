@@ -598,11 +598,10 @@ describe("the rule's halves, at its home", () => {
       null,
     ]);
     /*
-     * ⚖️ An UNCATEGORIZED outflow on the agent's cash is not known to be an expense, and stays in his Uncategorized
-     * bucket — the honesty bucket that is never hidden — until it is filed. The decision named "a fee or other
-     * expense"; this half is the shipped default, put to him.
+     * ⚖️ An UNCATEGORIZED outflow on the agent's cash is no row of an expense category — and no spending of his either:
+     * whatever it is later filed as, the account it left decides (owner decision 2026-10-05, `agents-unfiled.test.ts`).
      */
-    expect(read({ ...fee, categoryId: null })).toEqual([false, "Uncategorized"]);
+    expect(read({ ...fee, categoryId: null })).toEqual([false, null]);
   });
 
   /*

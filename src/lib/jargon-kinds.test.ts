@@ -213,22 +213,24 @@ describe("each kind definition agrees with the rule that counts it", () => {
   });
 
   /*
-   * 🔴 The exception sat right after the no-category clause — "money out that has no category yet — except on the
-   * agent's own account" — and so read as covering it, while `spendingBucket` still counts an unfiled outflow on the
-   * agent's cash in Spent. The exception is the spending categories' rows; the unfiled money is counted wherever it
-   * leaves.
+   * ⚖️ Owner decision 2026-10-05: money leaving the agent's cash with no category yet — NULL, or filed on the system
+   * row — is not his spending either. 🔴 Both definitions said otherwise: Spending's "money out that has no category
+   * yet, whichever account it leaves", and Uncategorized's "Money out while it sits here still counts as spent".
    */
-  test("…and money out with no category yet still counts on the agent's account, as the definition says", () => {
+  test("…and money out with no category yet does not count on the agent's account, and both definitions say so", () => {
     const rh = bundle.db.select().from(institutions).where(eq(institutions.name, "Robinhood")).get()!;
     const agentic = createAccount(bundle.db, { institutionId: rh.id, name: "Robinhood Agentic", type: "checking", last4: "9651" });
     const book = createAccount(bundle.db, { institutionId: rh.id, name: "Robinhood Agentic Brokerage", type: "investment", subtype: "brokerage" });
     bundle.db.update(accounts).set({ cashAccountId: agentic }).where(eq(accounts.id, book)).run();
-    const unfiled = addTxn(null, -2_000, agentic);
+    const his = addTxn(null, -4_000); // his unfiled ATM withdrawal
+    const unfiled = addTxn(null, -2_000, agentic); // the agent's unfiled ACH withdrawal
+    const systemFiled = addTxn(rootId("Uncategorized"), -500, agentic); // the agent's Gold fee, filed on the system row
 
-    expect(countedAsSpending(unfiled)).toBe(true);
-    expect(periodTotals(bundle.db, WINDOW).spentCents).toBe(2_000);
-    expect(CATEGORY_KIND_JARGON.expense).toMatch(/no category yet, whichever account it leaves/);
-    expect(CATEGORY_KIND_JARGON.expense).not.toMatch(/no category yet\W+except/);
+    expect([his, unfiled, systemFiled].map(countedAsSpending)).toEqual([true, false, false]);
+    expect(periodTotals(bundle.db, WINDOW).spentCents).toBe(4_000);
+    expect(CATEGORY_KIND_JARGON.expense).not.toMatch(/whichever account/);
+    expect(CATEGORY_KIND_JARGON.expense).toMatch(/not filed yet/);
+    expect(CATEGORY_KIND_JARGON.system).toMatch(/still counts as spent, unless it left the agent's own account/);
   });
 
   test("the transfer definition covers money to or from other people, not only money between your own accounts", () => {

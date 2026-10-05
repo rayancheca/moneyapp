@@ -20,6 +20,7 @@ import { outsidePortfolioCashAccountIds } from "./accounts";
 import {
   activeTxnsInRange,
   isAgentsCostCategoryRow,
+  isHisUnfiledSpending,
   isIncome,
   ledgerHref,
   loadCategoryIndex,
@@ -893,10 +894,16 @@ export interface HonestyBuckets {
 
 export function honestyBuckets(db: AppDatabase, range: DateRange): HonestyBuckets {
   const idx = loadCategoryIndex(db);
+  const agentsCash = outsidePortfolioCashAccountIds(db);
   let uncatSpent = 0;
   let uncatCount = 0;
   for (const txn of activeTxnsInRange(db, range.from, range.to)) {
-    if (txn.categoryId === null && txn.amountCents < 0) {
+    /*
+     * ⚖️ HIS unfiled money out — `spendingBucket`'s own leg, as the Uncategorized row of the category table and the
+     * Spent card count it: what leaves the agent's cash unfiled is not his spending (owner decision 2026-10-05). 🔴 This
+     * kept its own copy — NULL and negative — so it would have gone on charging him the agent's rows.
+     */
+    if (isHisUnfiledSpending(idx, agentsCash, txn)) {
       uncatSpent += -txn.amountCents;
       uncatCount += 1;
     }

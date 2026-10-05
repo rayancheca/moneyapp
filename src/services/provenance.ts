@@ -1631,6 +1631,12 @@ function categorySpendProvenance(
    * it, either sign (`isAgentsIncomeCategoryRow`, `isAgentsCostCategoryRow`), so the proof does too. 🔴 Counting them,
    * `/categories/<Income>`'s popover would name the agent's rows — "the sum of 4 rows" — under a headline of 2
    * transactions, and `/categories/<Fees>`'s the agent's Gold fee under a headline of 1.
+   *
+   * ⚖️ The Uncategorized CATEGORY is not his Spent, and keeps every account. Money leaving the agent's cash unfiled is
+   * out of his spending (owner decision 2026-10-05) — the Spent card's proof (`allSpend`) and the honesty card's link
+   * leave it out — but `/categories/<Uncategorized>` is the page a row is filed from: its headline is a Net of every
+   * row still to file, both signs, the agent's among them (`spendingTransactions`), so this proof counts them too.
+   * Whether that page should list only his is put to him; until then the headline and its proof cannot disagree.
    */
   const kind = idx.topLevelOf(categoryId).kind;
   const his =

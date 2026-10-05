@@ -15,9 +15,9 @@
  *   collide with the single-match locators that read the real ones.
  * - **Say what the code does, not what the word suggests.** Each kind definition
  *   below is grounded in the RULE that counts the kind, never in prose about it:
- *   `spendingBucket` (analytics.ts) counts expense-kind rows off the agent's cash
- *   account plus money out that is uncategorized — NULL, or filed on the system
- *   category; `isIncome`
+ *   `spendingBucket` (analytics.ts) counts expense-kind rows plus money out that
+ *   is uncategorized — NULL, or filed on the system category — and nothing on
+ *   the agent's cash account; `isIncome`
  *   (analytics.ts) counts positive rows in income-kind categories, off the
  *   agent's cash account, and leaves a repayment out rather than subtracting
  *   it; `transferCategoryResolver`
@@ -78,11 +78,11 @@ export const RESERVED_JARGON_PHRASES = [
  * heading on /categories.
  */
 export const CATEGORY_KIND_JARGON: Record<string, string> = {
-  // spendingBucket: expense-kind rows AND uncategorized money out; netted per category, gross in Spent; none of the
-  // expense-kind rows on the agent's cash account (owner decision 2026-10-02) — but its unfiled money out still counts.
-  // 🔴 The exception sat right after the no-category clause and read as covering it.
+  // spendingBucket: expense-kind rows AND uncategorized money out; netted per category, gross in Spent; nothing on the
+  // agent's cash account — its expense-kind rows (owner decision 2026-10-02) nor its unfiled money out (2026-10-05).
+  // 🔴 Until 2026-10-05 this said the unfiled money counted "whichever account it leaves".
   expense:
-    "Counted as spending, together with money out that has no category yet, whichever account it leaves. What the agent's own account pays in one of these categories is left out: it is the agent's, not yours. Purchases and refunds net against each other in a category's total, so returning something reduces it instead of adding to it.",
+    "Counted as spending, together with money out that has no category yet. Nothing the agent's own account pays is counted, in one of these categories or not filed yet: it is the agent's, not yours. Purchases and refunds net against each other in a category's total, so returning something reduces it instead of adding to it.",
   // isIncome keeps positive rows only, and none on the agent's cash account (owner decision 2026-09-28);
   // categorySpending (the category's own page) nets both signs
   income:
@@ -95,9 +95,10 @@ export const CATEGORY_KIND_JARGON: Record<string, string> = {
   // Reimbursements, Gifts received, Pass-through and Loans sit here too (owner decision 2026-09-14)
   transfer:
     "Money moving between your own accounts, and money passing to or from other people that is neither spending nor income. Kept out of spending totals, so a payment between two of your accounts is never counted twice.",
-  // spendingBucket puts a system-filed outflow in the Uncategorized bucket, and periodTotals counts it in Spent
+  // spendingBucket puts a system-filed outflow in the Uncategorized bucket, and periodTotals counts it in Spent —
+  // off the agent's cash account (owner decision 2026-10-05); this category's own page still lists every account's rows
   system:
-    "Where a transaction sits until it has a real category. Money out while it sits here still counts as spent, and is shown separately so it is never silently treated as nothing.",
+    "Where a transaction sits until it has a real category. Money out while it sits here still counts as spent, unless it left the agent's own account, and is shown separately so it is never silently treated as nothing.",
 };
 
 /**

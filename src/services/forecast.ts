@@ -12,7 +12,7 @@ import { seriesIsIncomeOrSpending } from "@/lib/series-kind";
 import { allocationsFor } from "@/lib/transaction-splits";
 import { accountLiquidity, cashPosition, listAccountOptions, outsidePortfolioCashAccountIds } from "./accounts";
 import {
-  isAgentsCostCategoryRow,
+  agentsCostBucket,
   isAgentsCostSeries,
   isAgentsIncome,
   isAgentsIncomeSeries,
@@ -60,8 +60,9 @@ import { linkIsNotRecurring, seriesIdsNotDrawnAsRecurring } from "./recurring-li
  * `projection.ts::trailingPace` — shared with /spending and /budgets, so one
  * category cannot be projected two ways. Uncategorized negative amounts form an
  * explicit "Uncategorized" bucket — never hidden. Which rows are spending is
- * `spendingBucket`'s to say, the agent's cash included (owner decision
- * 2026-10-02): the agent's costs project apart, for EOM net worth alone.
+ * `spendingBucket`'s to say, the agent's cash included (owner decisions
+ * 2026-10-02 and 2026-10-05, its unfiled money out too): the agent's costs
+ * project apart, for EOM net worth alone.
  */
 
 const TRAILING_FULL_MONTHS = 3;
@@ -693,20 +694,17 @@ function variableComponents(
   const rows = nonRecurringAllocations(db, rangeStart, rangeEnd, notDrawn);
 
   /*
-   * ⚖️ WHICH rows are spending is `spendingBucket`'s to say — an expense-kind row off the agent's cash, or an
-   * uncategorized outflow (an explicit bucket, never hidden; a row filed on the system "Uncategorized" category is
-   * uncategorized) — since it is the classifier behind every figure that says "Spent", and this leg is the pace row's
+   * ⚖️ WHICH rows are spending is `spendingBucket`'s to say — an expense-kind row or an uncategorized outflow (an
+   * explicit bucket, never hidden; a row filed on the system "Uncategorized" category is uncategorized), off the
+   * agent's cash — since it is the classifier behind every figure that says "Spent", and this leg is the pace row's
    * Spending. 🔴 It kept its own copy, keyed on the category's root kind alone, so the agent's monthly Gold fee was
-   * projected as HIS "Fees" (owner decision 2026-10-02, §6A 34). The agent's rows are bucketed apart and projected by
-   * the same pace, for EOM net worth alone (`ForecastLeg.agentsCostCents`).
+   * projected as HIS "Fees" (owner decision 2026-10-02, §6A 34). ⚖️ …and the agent's UNFILED money out is not his
+   * Uncategorized (owner decision 2026-10-05). The agent's rows are bucketed apart (`agentsCostBucket`) and projected
+   * by the same pace, for EOM net worth alone (`ForecastLeg.agentsCostCents`) — net worth still pays them.
    */
   const idx = loadCategoryIndex(db);
   const buckets = bucketTrailing(rows, (t) => spendingBucket(idx, agentsCash, t)?.categoryName ?? null, outside);
-  const agents = bucketTrailing(
-    rows,
-    (t) => (isAgentsCostCategoryRow(idx, agentsCash, t) ? idx.topLevelOf(t.categoryId!).name : null),
-    outside,
-  );
+  const agents = bucketTrailing(rows, (t) => agentsCostBucket(idx, agentsCash, t)?.categoryName ?? null, outside);
 
   // the pace one bucket's trailing months project over the days remaining
   const project = (perMonth: ReadonlyMap<string, number> | undefined) => {
