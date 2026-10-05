@@ -266,3 +266,56 @@ describe("createPageAsks: a link followed while a press is being written", () =>
     expect(asks.landing()).toBeNull();
   });
 });
+
+describe("createPageAsks: the Back/Forward whose page is on screen", () => {
+  test("lands with its URL, and stays until he next navigates", async () => {
+    const asks = createPageAsks();
+    asks.committed("/h?view=returns");
+    asks.moved();
+    expect(asks.backLanding()).toBeNull(); // started, not landed
+    asks.committed("/h");
+    expect(asks.backLanding()).toBe(1);
+    await Promise.resolve(); // the page of the same route is drawn a commit later
+    expect(asks.backLanding()).toBe(1);
+    asks.departing("/h?unit=percent", "push"); // a press's navigation, or a link
+    expect(asks.backLanding()).toBeNull();
+  });
+
+  test("every Back/Forward is a landing of its own", () => {
+    const asks = createPageAsks();
+    asks.moved();
+    asks.committed("/h");
+    asks.moved();
+    asks.committed("/h?view=returns");
+    expect(asks.backLanding()).toBe(2);
+  });
+
+  test("a later commit with no navigation, a redirect, is the same landing", () => {
+    const asks = createPageAsks();
+    asks.moved();
+    asks.committed("/h");
+    asks.committed("/h?unit=percent");
+    expect(asks.backLanding()).toBe(1);
+  });
+
+  test("a first load, a press landing and a link are none", () => {
+    const asks = createPageAsks();
+    asks.committed("/h"); // the first load
+    expect(asks.backLanding()).toBeNull();
+    asks.ask("/h?view=returns", { view: "returns" });
+    asks.departing("/h?view=returns", "push");
+    asks.committed("/h?view=returns"); // the press landing
+    expect(asks.backLanding()).toBeNull();
+    asks.departing("/spending", "push");
+    asks.committed("/spending"); // a link
+    expect(asks.backLanding()).toBeNull();
+  });
+
+  test("a link started after Back, before it landed, is the next commit: none", () => {
+    const asks = createPageAsks();
+    asks.moved();
+    asks.departing("/spending", "push");
+    asks.committed("/spending");
+    expect(asks.backLanding()).toBeNull();
+  });
+});

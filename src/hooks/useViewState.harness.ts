@@ -4,6 +4,7 @@ import {
   startTransition,
   use,
   useContext,
+  useDeferredValue,
   useMemo,
   useState,
   type ComponentType,
@@ -25,7 +26,15 @@ import type { ViewState } from "@/lib/view-state";
  *   or a restore DISCARDS the pending action and runs at once, anything else queues behind it,
  *   and a restore (Back/Forward) resolves with a bare setState — outside any transition. Every
  *   push, replace and Back/Forward calls the app's own `onRouterTransitionStart` first, as Next
- *   does with src/instrumentation-client.ts.
+ *   does with src/instrumentation-client.ts. `refresh` re-renders the URL on screen, queued,
+ *   and announces nothing.
+ * - The page: layout-router.js's InnerLayoutRouter reads its segment through
+ *   `useDeferredValue(cacheNode.rsc)`, keyed by the segment without its query. So a restore,
+ *   being urgent, commits the URL FIRST with the page from before it still drawn, and draws
+ *   the page Back went to in a second, deferred commit — on the same page; a page of another
+ *   route mounts with its own at once. (🔴 Measured in Chromium 2026-10-05: a save made only
+ *   in the commit the URL landed in never ran; this harness, rendering the page in that commit,
+ *   had passed it.)
  * - The server: every write and every page render WAITS until the test serves it, so a test
  *   says exactly which press is in flight when the next one is made.
  *
@@ -76,7 +85,8 @@ export interface HarnessPage<P> {
 type Action<P> =
   | { type: "server-action"; surface: string; state: ViewState; resolve(value: unknown): void }
   | { type: "navigate"; url: string; history: "push" | "replace" }
-  | { type: "restore"; to: RouterState<P> };
+  | { type: "restore"; to: RouterState<P> }
+  | { type: "refresh" };
 
 interface QueuedAction<P> {
   payload: Action<P>;
@@ -142,10 +152,11 @@ export class World<P> {
   readonly router = {
     push: (href: string, options?: { scroll?: boolean }): void => this.navigate(href, "push", options),
     replace: (href: string, options?: { scroll?: boolean }): void => this.navigate(href, "replace", options),
-    refresh: (): void => {},
+    // app-router-instance.js `refresh`: queued in a transition, and no navigation start
+    refresh: (): void => startTransition(() => this.dispatch({ type: "refresh" })),
     prefetch: (): void => {},
     back: (): void => this.back(),
-    forward: (): void => {},
+    forward: (): void => this.forward(),
   };
 
   constructor(
@@ -210,7 +221,17 @@ export class World<P> {
 
   /** the browser's Back button: popstate, then Next's handler (app-router.js `onPopState`) */
   back(): void {
-    this.at -= 1;
+    this.traverse(-1);
+  }
+
+  /** the browser's Forward button, the same way */
+  forward(): void {
+    this.traverse(+1);
+  }
+
+  private traverse(step: number): void {
+    if (this.history[this.at + step] === undefined) throw new Error(`no history ${step} from ${this.url}`);
+    this.at += step;
     const to = this.history[this.at]!;
     browser.dispatchEvent(new Event("popstate"));
     startTransition(() => {
@@ -242,9 +263,10 @@ export class World<P> {
       action.resolve({ ok: true });
       return state;
     }
-    if (action.type === "navigate") {
-      await this.hold({ kind: "render", label: action.url });
-      const url = new URL(action.url, "http://x");
+    if (action.type === "navigate" || action.type === "refresh") {
+      const href = action.type === "navigate" ? action.url : state.url;
+      await this.hold({ kind: "render", label: href });
+      const url = new URL(href, "http://x");
       return { url: `${url.pathname}${url.search}`, rsc: this.page.server(url, this.persisted) };
     }
     return action.to;
@@ -252,6 +274,7 @@ export class World<P> {
 
   /** the router's committed state moved: keep the history the way Next's HistoryUpdater does */
   private commitHistory(action: Action<P>, next: RouterState<P>): void {
+    if (action.type === "refresh") this.history[this.at] = next;
     if (action.type !== "navigate") return;
     if (action.history === "push" && next.url !== this.url) {
       this.history.splice(this.at + 1, Infinity, next);
@@ -313,7 +336,13 @@ export class World<P> {
     const [state, setState] = useState<RouterState<P> | Promise<RouterState<P>>>(this.queue.state);
     this.setState = setState;
     const shown = state instanceof Promise ? use(state) : state;
-    const page = createElement(this.page.Client, { rsc: shown.rsc });
+    const segment = new URL(shown.url, "http://x").pathname;
+    const page = createElement(Segment<P>, { key: segment, rsc: shown.rsc, Client: this.page.Client });
     return createElement(RouterContext, { value: shown as RouterState<unknown> }, this.layout(page));
   };
+}
+
+/** layout-router.js's InnerLayoutRouter: the segment's page, through `useDeferredValue` */
+function Segment<P>({ rsc, Client }: { rsc: P; Client: ComponentType<{ rsc: P }> }): ReactNode {
+  return createElement(Client, { rsc: useDeferredValue(rsc) });
 }

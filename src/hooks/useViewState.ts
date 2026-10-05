@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useTransition } from "react";
+import { useCallback, useLayoutEffect, useRef, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { setDimension, viewHrefQuery, type ViewSpec, type ViewState } from "@/lib/view-state";
 import type { Landing, PressBase } from "@/lib/page-asks";
@@ -113,13 +113,32 @@ export function useViewState(opts: UseViewStateOptions): UseViewStateResult {
         // To the NEWEST asked URL, which every press made since this one built on — not to
         // this press's own, or a range pill pressed meanwhile would be navigated away from.
         // A link he followed meanwhile is made again, so its page draws this write; after
-        // Back, nowhere — the write stands, and he is not dragged back to the page he left.
+        // Back, nowhere — he is not dragged back to the page he left, and Back's own save of
+        // the view it shows (below), sent after this write, is the one that stays.
         const to: Landing | null = asks === null ? { href, kind: "push", scroll: false } : asks.landing();
         if (to !== null) router[to.kind](to.href, { scroll: to.scroll });
       });
     },
     [asks, pressBase, surface, spec, state, basePath, carry, router],
   );
+
+  // ⚖️ Owner 2026-10-05 (B2): Back/Forward RE-SAVES the view of the page he returns to (see
+  // PageAsks.backLanding). Back draws the page as it was drawn, from before a press he walked
+  // away from, and 🔴 his next press that carried no view in its URL drew that press's saved
+  // view instead. Once per Back, when the view Back drew reaches this switcher — a layout
+  // effect, so it is sent before anything he can press next; never on a first load, a link, a
+  // press or a refresh. The spec's dimensions only, as a view press saves them — never a
+  // carried key: the hero's `accts` is every account in its URL when nothing is curated, and
+  // saving it would curate. Best-effort and silent, like a press's own save.
+  const resavedFor = useRef<number | null>(null);
+  useLayoutEffect(() => {
+    const back = asks?.backLanding() ?? null;
+    if (back === null || back === resavedFor.current) return;
+    resavedFor.current = back;
+    saveViewPreferenceAction(surface, state).catch(() => {
+      /* persistence is best-effort */
+    });
+  }, [asks, surface, state]);
 
   const setView = useCallback(
     (key: string, value: string) => updateView((base) => setDimension(spec, base, key, value)),

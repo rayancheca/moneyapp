@@ -35,7 +35,9 @@ export function PageAsksProvider({ children }: { children: ReactNode }) {
 
   return (
     <PageAsksContext value={asks}>
-      {/* its own boundary: reading the URL must never suspend the page it wraps */}
+      {/* its own boundary: reading the URL must never suspend the page it wraps. BEFORE the
+          page: layout effects run in tree order, so a Back that mounts a page of another route
+          in the commit its URL lands in has landed (backLanding) when those switchers run */}
       <Suspense fallback={null}>
         <CommittedUrl asks={asks} />
       </Suspense>
@@ -46,7 +48,8 @@ export function PageAsksProvider({ children }: { children: ReactNode }) {
 
 /**
  * Tells the asks every URL the router commits: a press landing (which forgets the older URLs
- * asked before it), or a move nothing announced — a redirect.
+ * asked before it), a Back/Forward landing (whose switchers re-save the views it drew), or a
+ * move nothing announced — a redirect.
  */
 function CommittedUrl({ asks }: { asks: PageAsks }): null {
   const pathname = usePathname();

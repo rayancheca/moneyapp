@@ -39,6 +39,19 @@ function usePill(name: string, press: (value: string) => void): void {
   });
 }
 
+/**
+ * A press made the moment the next page is drawn: in the commit that draws it, after its
+ * switchers, before React runs a single passive effect — the soonest anyone could press.
+ */
+let pressOnDraw: (() => void) | null = null;
+function usePressOnDraw(drawn: unknown): void {
+  useLayoutEffect(() => {
+    const press = pressOnDraw;
+    pressOnDraw = null;
+    press?.();
+  }, [drawn]);
+}
+
 /** the root layout's wrapper, as the app mounts it */
 const layout = (children: ReactNode): ReactNode => createElement(PageAsksProvider, null, children);
 
@@ -54,6 +67,7 @@ afterEach(async () => {
   mounted = null;
   for (const key of Object.keys(ui)) delete ui[key];
   for (const key of Object.keys(pills)) delete pills[key];
+  pressOnDraw = null;
 });
 
 // ---------------------------------------------------------------- a holding: one switcher
@@ -73,6 +87,12 @@ const holdingPage: HarnessPage<HoldingRsc> = {
     useRegister("holding", api);
     return null;
   },
+};
+
+/** a holding, or a page with no view pills: the holding's switcher mounts and unmounts with it */
+const holdingOrElsewhere: HarnessPage<HoldingRsc> = {
+  server: holdingPage.server,
+  Client: ({ rsc }) => (rsc.basePath === "/elsewhere" ? null : createElement(holdingPage.Client, { rsc })),
 };
 
 // ---------------------------------------------------------------- /spending: two switchers, one URL
@@ -101,6 +121,7 @@ const spendingPage: HarnessPage<SpendingRsc> = {
     const where = useViewState({ surface: "spending", spec: WHERE_VIEW_SPEC, state: rsc.where, basePath: "/spending", baseParams: rsc.whereBase });
     useRegister("cash", cash);
     useRegister("where", where);
+    usePressOnDraw(rsc);
     return null;
   },
 };
@@ -587,8 +608,9 @@ describe("a link followed while a press is being written", () => {
   });
 
   /**
-   * ⚖️ Owner 2026-10-05: a press he walked away from with Back KEEPS its save, and Back shows
-   * the page he went back to. A link followed first changes nothing: Back is newer.
+   * ⚖️ Owner 2026-10-05: Back shows the page he went back to, and he is not dragged anywhere.
+   * A link followed first changes nothing: Back is newer. The press's write still lands, and
+   * (B2) Back's save of the view it shows lands after it.
    */
   test("then Back: the page Back restored stays, and the link is not redone", async () => {
     const page = await open(holdingPage, "/h");
@@ -601,7 +623,185 @@ describe("a link followed while a press is being written", () => {
 
     expect(page.url).toBe("/h");
     expect(page.shown).toMatchObject({ view: { view: "value" } });
-    expect(page.persisted.holding).toMatchObject({ view: "returns" }); // the write stands
+    expect(page.writes.map((write) => write.state.view)).toEqual(["returns", "value"]);
+    expect(page.persisted.holding).toMatchObject({ view: "value" });
+  });
+});
+
+describe("Back/Forward to a page with view pills", () => {
+  /**
+   * ⚖️ Owner 2026-10-05 (B2): Back/Forward RE-SAVES the view of the page he returns to. Back
+   * draws that history entry as it was drawn — the view from before the press he walked away
+   * from — while his saved preference is still that press's. 🔴 So the next thing he pressed
+   * that carries no view in its URL drew the SAVED one, the view he had left: a range pill
+   * landed on Return after Back showed Price.
+   */
+  test("a range pill pressed after Back keeps the view Back showed", async () => {
+    const page = await open(portfolioPage, "/investments?range=1Y");
+    ui.portfolio!.setView("view", "returns");
+    await page.settle();
+    expect(page.url).toBe("/investments?range=1Y&view=returns");
+
+    page.back();
+    await page.settle();
+    expect(page.shown).toMatchObject({ view: { view: "value" } }); // Price, as he left it
+    pills.range!("1M");
+    await page.settle();
+
+    expect(page.url).toBe("/investments?range=1M");
+    expect(page.shown).toMatchObject({ view: { view: "value" } });
+    expect(page.persisted.investments).toMatchObject({ view: "value" });
+  });
+
+  /** 🔴 The same across /spending's two cards: the lens press drew the cash card he had left. */
+  test("another card's press after Back keeps the view Back showed on this one", async () => {
+    const page = await open(spendingPage, "/spending");
+    ui.cash!.setView("cash", "table");
+    await page.settle();
+
+    page.back();
+    await page.settle();
+    expect(page.shown).toMatchObject({ cash: { cash: "chart" } });
+    ui.where!.setView("where", "relief");
+    await page.settle();
+
+    expect(page.url).toBe("/spending?where=relief");
+    expect(page.shown).toMatchObject({ cash: { cash: "chart" }, where: { where: "relief" } });
+    expect(page.persisted.spending).toMatchObject({ cash: "chart", where: "relief" });
+  });
+
+  test("Forward re-saves the view of the page it returns to, the same", async () => {
+    const page = await open(spendingPage, "/spending");
+    ui.cash!.setView("cash", "table");
+    await page.settle();
+    page.back();
+    await page.settle();
+
+    page.forward();
+    await page.settle();
+    expect(page.url).toBe("/spending?cash=table");
+    page.router.push("/spending?period=2026-06"); // the period picker: no view in its URL
+    await page.settle();
+
+    expect(page.shown).toMatchObject({ cash: { cash: "table" } });
+    expect(page.persisted.spending).toMatchObject({ cash: "table" });
+  });
+
+  /** one best-effort save per switcher per Back, like a press's own, and nothing after it */
+  test("each switcher on the page saves the view it shows, once", async () => {
+    const page = await open(spendingPage, "/spending?period=2026-07");
+    ui.cash!.setView("cash", "table");
+    await page.settle();
+    const before = page.writes.length;
+
+    page.back();
+    await page.settle();
+    expect(page.writes.slice(before)).toEqual([
+      { surface: "spending", state: { cash: "chart" } },
+      { surface: "spending", state: { where: "list", massifView: "quarter" } },
+    ]);
+
+    ui.where!.setView("where", "relief"); // a press after it: its own write, and no other
+    await page.settle();
+    expect(page.writes.slice(before + 2)).toEqual([
+      { surface: "spending", state: { where: "relief", massifView: "quarter" } },
+    ]);
+  });
+
+  /**
+   * Back's save is sent from the commit that draws its page, so it is queued ahead of anything
+   * he presses next: a press's write lands after it, and is the one that stays.
+   */
+  test("a press made the moment Back's page is drawn is saved over Back's save", async () => {
+    const page = await open(spendingPage, "/spending");
+    ui.cash!.setView("cash", "table");
+    await page.settle();
+
+    pressOnDraw = () => ui.where!.setView("where", "relief");
+    page.back();
+    await page.settle();
+
+    expect(page.url).toBe("/spending?where=relief");
+    expect(page.shown).toMatchObject({ cash: { cash: "chart" }, where: { where: "relief" } });
+    expect(page.persisted.spending).toMatchObject({ cash: "chart", where: "relief" });
+  });
+
+  /** a page drawn again with no navigation (`router.refresh`, the prices button) is not a Back */
+  test("a refresh after Back saves nothing more", async () => {
+    const page = await open(spendingPage, "/spending");
+    ui.cash!.setView("cash", "table");
+    await page.settle();
+    page.back();
+    await page.settle();
+    const after = page.writes.length;
+
+    page.router.refresh();
+    await page.settle();
+    expect(page.writes).toHaveLength(after);
+  });
+
+  /**
+   * The spec's dimensions only, as a view press saves them. The hero's `accts` rides its URL as
+   * every account when nothing is curated: saving it would make "every account" a curation.
+   */
+  test("the hero and the cards save their views, and never the account selection", async () => {
+    const page = await open(dashboardPage, "/?chart=accounts", { dashboard: { chart: "accounts" } });
+    pills.cards!("grid");
+    await page.settle();
+    expect(page.url).toBe("/?chart=accounts&cards=grid");
+
+    page.back();
+    await page.settle();
+    expect(page.persisted.dashboard).toMatchObject({ chart: "accounts", cards: "deck" });
+    expect(page.persisted.dashboard).not.toHaveProperty("accts");
+  });
+
+  /** Back to a page from another: its switchers are drawn anew, by Back, and save as above */
+  test("a switcher Back draws anew saves its view; one a link draws anew, nothing", async () => {
+    const page = await open(holdingOrElsewhere, "/h?view=returns", { holding: { view: "value" } });
+    page.router.push("/elsewhere");
+    await page.settle();
+    page.back();
+    await page.settle();
+    expect(page.writes).toEqual([
+      { surface: "holding", state: { view: "returns", unit: "dollar", lens: "chart" } },
+    ]);
+
+    page.router.push("/elsewhere");
+    await page.settle();
+    page.router.push("/h");
+    await page.settle();
+    expect(page.writes).toHaveLength(1);
+  });
+
+  /** ⛔ the URL alone outranks the saved view; a load or a link he followed saves nothing */
+  test("a first load and a link save nothing", async () => {
+    const page = await open(holdingPage, "/h?view=returns", { holding: { view: "value" } });
+    page.router.push("/h/b?unit=percent");
+    await page.settle();
+    page.router.push("/h");
+    await page.settle();
+
+    expect(page.writes).toEqual([]);
+    expect(page.persisted.holding).toEqual({ view: "value" });
+  });
+
+  /**
+   * A press still being written when he goes Back: its write was sent first and lands first,
+   * and Back's save of the view he returned to lands after it.
+   */
+  test("with a press still being written, the view Back showed is the one saved", async () => {
+    const page = await open(spendingPage, "/spending");
+    ui.cash!.setView("cash", "table");
+    await page.settle();
+    ui.where!.setView("where", "relief"); // in flight…
+    page.back(); // …when he goes back to /spending
+    await page.settle();
+    expect(page.url).toBe("/spending");
+
+    page.router.push("/spending?period=2026-06");
+    await page.settle();
+    expect(page.shown).toMatchObject({ cash: { cash: "chart" }, where: { where: "list" } });
   });
 });
 

@@ -210,8 +210,9 @@ export interface PageAsks {
    *   press, as it would have had the write landed first (and when it did, that is one more
    *   render of the same page: a push to the URL on screen replaces it). He stays where the
    *   link took him.
-   * - Back/Forward since: null. ⚖️ Owner 2026-10-05: a press he walked away from with Back
-   *   keeps its save, and Back shows the page he went back to; he is not dragged anywhere.
+   * - Back/Forward since: null. ⚖️ Owner 2026-10-05: Back shows the page he went back to; he
+   *   is not dragged anywhere. The press's write still lands — and Back's own save of the view
+   *   it shows (`backLanding`), sent after it, is the one that stays.
    */
   landing(): Landing | null;
   /** a push or replace to `href` is starting: one nobody asked for drops the ask */
@@ -220,6 +221,24 @@ export interface PageAsks {
   committed(href: string): void;
   /** Back/Forward: the page moved under the ask, whatever URL it lands on */
   moved(): void;
+  /**
+   * The Back/Forward whose page is on screen, numbered from the first: from the commit its URL
+   * landed in (`committed`) until he next navigates — a press, a link (their navigation's
+   * start) or another Back. Null before any, and from then on: a first load, a link and a
+   * press draw no Back's page.
+   *
+   * ⚖️ Owner 2026-10-05 (B2): Back/Forward RE-SAVES the view of the page he returns to. Back
+   * draws that history entry as it was drawn, from before the press he walked away from, while
+   * the saved preference is still that press's. 🔴 So anything he pressed next that carries no
+   * view in its URL drew the saved one, the view he had left: /investments?range=1Y, Return,
+   * Back (Price), 1M → the 1M chart on Return; /spending, cash Table, Back (Chart), Relief → the
+   * cash card on Table. Each switcher saves the view Back drew it with, once per landing.
+   *
+   * Not only the commit the URL landed in: 🔴 the router draws a page of the same route a
+   * commit LATER (its layout router reads the page through `useDeferredValue`, and a restore is
+   * urgent), and a save made only in the URL's commit never ran in Chromium.
+   */
+  backLanding(): number | null;
 }
 
 export function createPageAsks(): PageAsks {
@@ -228,6 +247,10 @@ export function createPageAsks(): PageAsks {
   let overtaken: { href: string; kind: HistoryKind } | null = null;
   // the URL the router last committed, which the switchers' props were rendered for
   let shown: string | null = null;
+  // a Back/Forward started and not yet landed; how many have landed; the one on screen
+  let traversing = false;
+  let landings = 0;
+  let back: number | null = null;
   return {
     base: (at) => pressBase(current, at, shown),
     paramsOn: (pathname) => askedParams(current, pathname),
@@ -240,6 +263,9 @@ export function createPageAsks(): PageAsks {
       return overtaken === null ? null : { ...overtaken, scroll: true };
     },
     departing(href, kind) {
+      // a push or replace — a press's, a link's: whatever it draws is not Back's page
+      traversing = false;
+      back = null;
       // an asked URL leaves the ask be; with nothing asked, only a link since one dropped it counts
       if (current === null ? overtaken === null : !isForeign(current, href)) return;
       current = null;
@@ -248,10 +274,18 @@ export function createPageAsks(): PageAsks {
     committed(href) {
       shown = href;
       current = afterCommit(current, href);
+      if (!traversing) return;
+      // Back/Forward landed. A page of another route is drawn in this same commit, after this
+      // (the provider's URL reader comes before the page); one of the same route, a commit later.
+      traversing = false;
+      landings += 1;
+      back = landings;
     },
     moved() {
       current = null;
       overtaken = null;
+      traversing = true;
     },
+    backLanding: () => back,
   };
 }
