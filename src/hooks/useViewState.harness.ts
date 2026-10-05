@@ -129,6 +129,8 @@ export class World<P> {
   readonly persisted: Record<string, ViewState>;
   /** every write the server applied, in order */
   readonly writes: { surface: string; state: ViewState }[] = [];
+  /** every push and replace made, as it was made (`scroll: false` is Next's NoScroll) */
+  readonly navigations: { url: string; history: "push" | "replace"; scroll: boolean }[] = [];
   /** the browser's history: the committed URLs, and which one is shown */
   readonly history: RouterState<P>[];
   private at = 0;
@@ -138,8 +140,8 @@ export class World<P> {
   private root: Root | null = null;
 
   readonly router = {
-    push: (href: string): void => this.navigate(href, "push"),
-    replace: (href: string): void => this.navigate(href, "replace"),
+    push: (href: string, options?: { scroll?: boolean }): void => this.navigate(href, "push", options),
+    replace: (href: string, options?: { scroll?: boolean }): void => this.navigate(href, "replace", options),
     refresh: (): void => {},
     prefetch: (): void => {},
     back: (): void => this.back(),
@@ -219,7 +221,8 @@ export class World<P> {
   }
 
   /** `router.push` / `router.replace`, and a Link: dispatchNavigateAction, in a transition */
-  private navigate(href: string, history: "push" | "replace"): void {
+  private navigate(href: string, history: "push" | "replace", options?: { scroll?: boolean }): void {
+    this.navigations.push({ url: href, history, scroll: options?.scroll !== false });
     startTransition(() => {
       onRouterTransitionStart(href, history);
       this.dispatch({ type: "navigate", url: href, history });

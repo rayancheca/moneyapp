@@ -148,10 +148,10 @@ describe("isForeign", () => {
 describe("createPageAsks", () => {
   test("a press navigates to the NEWEST asked URL, and builds on it", () => {
     const asks = createPageAsks();
-    expect(asks.newest()).toBeNull();
+    expect(asks.landing()).toBeNull();
     asks.ask("/h?view=returns", { view: "returns" });
     asks.ask("/h?view=returns&range=1M", {});
-    expect(asks.newest()).toBe("/h?view=returns&range=1M");
+    expect(asks.landing()).toEqual({ href: "/h?view=returns&range=1M", kind: "push", scroll: false });
     expect(asks.paramsOn("/h")).toEqual({ view: "returns", range: "1M" });
     expect(asks.base(holding()).view).toEqual({ view: "returns", lens: "chart" });
   });
@@ -160,27 +160,80 @@ describe("createPageAsks", () => {
     const asks = createPageAsks();
     asks.ask("/h?view=returns", {});
     asks.moved();
-    expect(asks.newest()).toBeNull();
+    expect(asks.landing()).toBeNull();
     expect(asks.paramsOn("/h")).toBeNull();
   });
 
   test("a navigation nobody asked for drops the ask; one a press asked for does not", () => {
     const asks = createPageAsks();
     asks.ask("/h?view=returns", {});
-    asks.departing("/h?view=returns");
-    expect(asks.newest()).toBe("/h?view=returns");
-    asks.departing("/spending");
-    expect(asks.newest()).toBeNull();
+    asks.departing("/h?view=returns", "push");
+    expect(asks.landing()?.href).toBe("/h?view=returns");
+    asks.departing("/spending", "push");
+    expect(asks.paramsOn("/h")).toBeNull();
+    expect(asks.base(holding()).asked).toBe(false);
   });
 
   test("a commit of an asked URL keeps the ask; any other drops it", () => {
     const asks = createPageAsks();
     asks.committed("/h"); // nothing asked: nothing to drop
-    expect(asks.newest()).toBeNull();
+    expect(asks.landing()).toBeNull();
     asks.ask("/h?view=returns", {});
     asks.committed("/h?view=returns");
-    expect(asks.newest()).toBe("/h?view=returns");
+    expect(asks.landing()?.href).toBe("/h?view=returns");
     asks.committed("/h");
-    expect(asks.newest()).toBeNull();
+    expect(asks.landing()).toBeNull();
+  });
+});
+
+describe("createPageAsks: a link followed while a press is being written", () => {
+  test("the press makes the link again once its write lands, as the link was made", () => {
+    const asks = createPageAsks();
+    asks.ask("/spending?period=2026-07&cash=table", { cash: "table" });
+    asks.departing("/spending?period=2026-06", "push");
+    expect(asks.landing()).toEqual({ href: "/spending?period=2026-06", kind: "push", scroll: true });
+  });
+
+  test("a replace is made again as a replace", () => {
+    const asks = createPageAsks();
+    asks.ask("/h?view=returns", {});
+    asks.departing("/h/b", "replace");
+    expect(asks.landing()).toEqual({ href: "/h/b", kind: "replace", scroll: true });
+  });
+
+  test("of two links, the newest; and making it again leaves it the newest", () => {
+    const asks = createPageAsks();
+    asks.ask("/h?view=returns", {});
+    asks.departing("/h/b", "push");
+    asks.departing("/h/c", "push");
+    expect(asks.landing()?.href).toBe("/h/c");
+    asks.departing("/h/c", "push"); // the press making it again
+    expect(asks.landing()?.href).toBe("/h/c");
+  });
+
+  test("a press made after the link is newer: its URL, and the link is forgotten", () => {
+    const asks = createPageAsks();
+    asks.ask("/h?view=returns", {});
+    asks.departing("/h/b", "push");
+    asks.ask("/h?unit=percent", {});
+    expect(asks.landing()).toEqual({ href: "/h?unit=percent", kind: "push", scroll: false });
+    asks.committed("/h/redirected"); // the page moved under that ask with nothing announced
+    expect(asks.landing()).toBeNull();
+  });
+
+  test("Back after the link: nothing is made again", () => {
+    const asks = createPageAsks();
+    asks.ask("/h?view=returns", {});
+    asks.departing("/h/b", "push");
+    asks.moved();
+    expect(asks.landing()).toBeNull();
+    asks.departing("/h/c", "push"); // a link after Back, with nothing asked since: nothing to redo
+    expect(asks.landing()).toBeNull();
+  });
+
+  test("a link with nothing ever asked is nothing to redo", () => {
+    const asks = createPageAsks();
+    asks.departing("/spending", "push");
+    expect(asks.landing()).toBeNull();
   });
 });

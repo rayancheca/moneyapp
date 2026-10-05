@@ -3,7 +3,7 @@
 import { useCallback, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { setDimension, viewHrefQuery, type ViewSpec, type ViewState } from "@/lib/view-state";
-import type { PressBase } from "@/lib/page-asks";
+import type { Landing, PressBase } from "@/lib/page-asks";
 import { saveViewPreferenceAction } from "@/app/settings/actions";
 import { usePageAsks } from "./usePageAsks";
 
@@ -110,10 +110,10 @@ export function useViewState(opts: UseViewStateOptions): UseViewStateResult {
         }
         // To the NEWEST asked URL, which every press made since this one built on — not to
         // this press's own, or a range pill pressed meanwhile would be navigated away from.
-        // Null: he went Back, or followed a link, while this was being written — the write
-        // stands, and he is not dragged back to the page he left.
-        const to = asks === null ? href : asks.newest();
-        if (to !== null) router.push(to, { scroll: false });
+        // A link he followed meanwhile is made again, so its page draws this write; after
+        // Back, nowhere — the write stands, and he is not dragged back to the page he left.
+        const to: Landing | null = asks === null ? { href, kind: "push", scroll: false } : asks.landing();
+        if (to !== null) router[to.kind](to.href, { scroll: to.scroll });
       });
     },
     [asks, pressBase, surface, spec, state, basePath, carry, router],

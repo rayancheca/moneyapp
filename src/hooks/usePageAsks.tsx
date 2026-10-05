@@ -27,7 +27,7 @@ export function PageAsksProvider({ children }: { children: ReactNode }) {
     const onStart = (event: Event): void => {
       const { url, kind } = (event as CustomEvent<NavigationStart>).detail;
       if (kind === "traverse") asks.moved();
-      else asks.departing(url);
+      else asks.departing(url, kind);
     };
     window.addEventListener(NAVIGATION_START, onStart);
     return () => window.removeEventListener(NAVIGATION_START, onStart);

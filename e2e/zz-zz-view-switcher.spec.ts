@@ -1,6 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 import { analyzeSettled } from "./axe-helpers";
-import { delayServerActions, pressView } from "./view-helpers";
+import { delayServerActions, holdRequests, isServerAction, pageRequest, pressView } from "./view-helpers";
 
 /**
  * The cash-flow view switcher (NS#2 Pillar 2): the SAME data as a vivid chart or a
@@ -149,6 +149,11 @@ test("portfolio chart switches value↔return, updates the URL, and persists", a
  * made while a range pill was in flight took the range back. Every press on a page now
  * builds on the newest one asked for (src/lib/page-asks.ts). The writes are held
  * (`delayServerActions`) so "faster than the server" is every run, not one in fifteen.
+ *
+ * 🔴 And so is the range pill's page: until 2026-10-05 this test let it land before the view
+ * presses, so they built on a URL that already carried the range, and the range half passed
+ * on main's code too. Held until both presses are made, the range is in the URL only because
+ * the presses built on what the pill ASKED for.
  */
 test("a range pill and two view presses made before any lands all take", async ({ page }) => {
   await gotoHydrated(page, "/investments");
@@ -157,17 +162,21 @@ test("a range pill and two view presses made before any lands all take", async (
   const lens = page.getByRole("group", { name: "Portfolio lens" });
   await expect(view.getByRole("button", { name: "Value" })).toHaveAttribute("aria-pressed", "true");
 
-  // the panel is live: a range pill flips on the client, with no server round trip
+  // the panel is live: a range pill flips on the client, with no server round trip — and the
+  // page the pill navigates to for the panels around the chart is held, in flight
+  const rangePage = await holdRequests(page, pageRequest("/investments", { range: "1M" }));
   await expect(async () => {
     await range.getByRole("button", { name: "1 month" }).click();
     await expect(range.getByRole("button", { name: "1 month" })).toHaveAttribute("aria-pressed", "true", {
       timeout: 1_000,
     });
   }).toPass({ timeout: 30_000 });
+  await expect.poll(() => rangePage.count()).toBeGreaterThan(0);
 
   await delayServerActions(page);
   await view.getByRole("button", { name: "Return" }).click();
-  await lens.getByRole("button", { name: "Table" }).click(); // Return is still being written
+  await lens.getByRole("button", { name: "Table" }).click(); // Return is not yet written
+  await rangePage.release(); // the router runs the writes only once the range's page is in
   await expect(view.getByRole("button", { name: "Return" })).toHaveAttribute("aria-pressed", "true");
   await expect(lens.getByRole("button", { name: "Table" })).toHaveAttribute("aria-pressed", "true");
   await expect(page.getByRole("table", { name: /Portfolio return by day/ })).toBeVisible();
@@ -184,6 +193,43 @@ test("a range pill and two view presses made before any lands all take", async (
   await pressView(page, "Portfolio chart view", "Value");
   await gotoHydrated(page, "/investments");
   await expect(page.getByRole("slider", { name: /Portfolio value over time/ })).toBeVisible();
+});
+
+/**
+ * 🔴 The period picker followed while a press is being written. Its link carries no view, so
+ * June draws the SAVED one — and drawn before the write landed, it drew the Chart, and nothing
+ * drew it again: the Table pill un-pressed over a Table he had saved, a reload showing it.
+ * The press now makes the link again once its write lands (src/lib/page-asks.ts `landing`).
+ * The write is held until June's page is in, so the losing order is every run.
+ */
+test("a period link followed while a press is being written lands with the press", async ({ page }) => {
+  await gotoHydrated(page, "/spending?period=2026-07");
+  const cashView = page.getByRole("group", { name: "Cash flow view" });
+  await expect(cashView.getByRole("button", { name: "Chart" })).toHaveAttribute("aria-pressed", "true");
+
+  const write = await holdRequests(page, isServerAction);
+  await expect(async () => {
+    await cashView.getByRole("button", { name: "Table" }).click();
+    // a click before the panel hydrates is swallowed: press until the write is sent
+    await expect.poll(() => write.count(), { timeout: 1_000 }).toBeGreaterThan(0);
+  }).toPass({ timeout: 30_000 });
+  const june = page.waitForResponse((response) => pageRequest("/spending", { period: "2026-06" })(response.request()));
+  await page.getByRole("link", { name: "Previous period" }).click();
+  await june; // June is drawn while the write is held…
+  await write.release(); // …and only then does Table reach the server
+
+  await expect(cashView.getByRole("button", { name: "Table" })).toHaveAttribute("aria-pressed", "true");
+  await expect(page.getByRole("table")).toBeVisible();
+  await expect(page).toHaveURL(/\/spending\?period=2026-06$/); // the link's URL, as it wrote it
+
+  // saved, not just drawn: a fresh visit with no params opens on the table
+  await gotoHydrated(page, "/spending");
+  await expect(cashView.getByRole("button", { name: "Table" })).toHaveAttribute("aria-pressed", "true");
+
+  // restore the default for sibling specs, the press proved
+  await pressView(page, "Cash flow view", "Chart");
+  await gotoHydrated(page, "/spending");
+  await expect(page.getByRole("figure", { name: /Income above the axis/ })).toBeVisible();
 });
 
 async function holdingPillPressed(page: Page, name: "Price" | "Return"): Promise<boolean> {

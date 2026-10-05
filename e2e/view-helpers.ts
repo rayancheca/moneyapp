@@ -1,4 +1,4 @@
-import { expect, type Page, type Route } from "@playwright/test";
+import { expect, type Page, type Request, type Route } from "@playwright/test";
 
 /**
  * Pressing a PERSISTED view pill, for specs that must leave the view the way they found it.
@@ -87,8 +87,7 @@ export async function delayServerActions(
 ): Promise<void> {
   const everyRequest = (): boolean => true;
   const hold = async (route: Route): Promise<void> => {
-    const request = route.request();
-    if (request.method() !== "POST" || (await request.headerValue("next-action")) === null) {
+    if (!(await isServerAction(route.request()))) {
       await route.fallback();
       return;
     }
@@ -99,4 +98,72 @@ export async function delayServerActions(
   page.once("domcontentloaded", () => {
     page.unroute(everyRequest, hold).catch(() => {});
   });
+}
+
+/** A press's write: a server action, as Next sends it. */
+export async function isServerAction(request: Request): Promise<boolean> {
+  return request.method() === "POST" && (await request.headerValue("next-action")) !== null;
+}
+
+/**
+ * The request a navigation to `pathname` with exactly `params` makes for its page: Next's RSC
+ * fetch (`RSC: 1`; its `_rsc` cache key aside), never a link's prefetch.
+ */
+export function pageRequest(
+  pathname: string,
+  params: Record<string, string>,
+): (request: Request) => Promise<boolean> {
+  return async (request) => {
+    if (request.method() !== "GET" || (await request.headerValue("rsc")) !== "1") return false;
+    if ((await request.headerValue("next-router-prefetch")) !== null) return false;
+    const url = new URL(request.url());
+    url.searchParams.delete("_rsc");
+    return url.pathname === pathname && sortedQuery(url.searchParams) === sortedQuery(Object.entries(params));
+  };
+}
+
+function sortedQuery(entries: Iterable<[string, string]>): string {
+  return [...entries]
+    .map(([key, value]) => `${key}=${value}`)
+    .sort()
+    .join("&");
+}
+
+export interface HeldRequests {
+  /** how many requests are held: from the first, what they were for is in flight and stays there */
+  count(): number;
+  /** sends every held request on, and lets every later one through */
+  release(): Promise<void>;
+}
+
+/**
+ * Hold every request `matches` picks until the spec lets them go — for a race whose ORDER the
+ * spec must decide (a link's page drawn before a press's write lands; a range pill's page
+ * still in flight when the next press is made), which a fixed delay only makes likely.
+ * Wait for `count()` before relying on it: a release can otherwise run before the request it
+ * was for has even been intercepted (the reason delayServerActions ends on its own).
+ */
+export async function holdRequests(
+  page: Page,
+  matches: (request: Request) => Promise<boolean>,
+): Promise<HeldRequests> {
+  const everyRequest = (): boolean => true;
+  const held: Route[] = [];
+  let released = false;
+  const hold = async (route: Route): Promise<void> => {
+    if (released || !(await matches(route.request())) || released) {
+      await route.fallback();
+      return;
+    }
+    held.push(route);
+  };
+  await page.route(everyRequest, hold);
+  return {
+    count: () => held.length,
+    async release() {
+      released = true;
+      await page.unroute(everyRequest, hold);
+      await Promise.all(held.map((route) => route.continue().catch(() => {})));
+    },
+  };
 }

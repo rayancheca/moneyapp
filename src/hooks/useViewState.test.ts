@@ -59,14 +59,17 @@ afterEach(async () => {
 // ---------------------------------------------------------------- a holding: one switcher
 interface HoldingRsc {
   view: ViewState;
+  basePath: string;
 }
 const NO_PARAMS: Record<string, string> = {};
+/** every holding's page (/h, /h/b, …) is one surface, as every /investments/[symbol] is */
 const holdingPage: HarnessPage<HoldingRsc> = {
   server: (url, persisted) => ({
     view: resolveViewState(HOLDING_VIEW_SPEC, Object.fromEntries(url.searchParams), persisted.holding),
+    basePath: url.pathname,
   }),
   Client: ({ rsc }) => {
-    const api = useViewState({ surface: "holding", spec: HOLDING_VIEW_SPEC, state: rsc.view, basePath: "/h", baseParams: NO_PARAMS });
+    const api = useViewState({ surface: "holding", spec: HOLDING_VIEW_SPEC, state: rsc.view, basePath: rsc.basePath, baseParams: NO_PARAMS });
     useRegister("holding", api);
     return null;
   },
@@ -419,12 +422,119 @@ describe("a press made once the page has moved under the one in flight", () => {
     await page.serve("render");
     await page.settle();
     expect(page.url).toBe("/spending?period=2026-06");
+    expect(page.shown).toMatchObject({ cash: { cash: "table" } }); // the cash press's write stood
 
     ui.where!.setView("where", "relief");
     await page.settle();
-    // June, never back to July; and the cash press's write stood, so June draws its table
-    expect(page.url).toBe("/spending?period=2026-06&where=relief");
+    // June, never back to July, built on June as drawn: its table, as when the write lands first
+    expect(page.url).toBe("/spending?period=2026-06&cash=table&where=relief");
     expect(page.shown).toMatchObject({ cash: { cash: "table" }, where: { where: "relief" } });
+  });
+});
+
+describe("a link followed while a press is being written", () => {
+  /**
+   * 🔴 The period picker followed while the cash press was being written. The link carries no
+   * view, so the page it opens draws the SAVED one — and when the server drew it before the
+   * write landed, it drew the view from before the press, and nothing drew it again: the Table
+   * pill un-pressed, Table saved, a reload showing it. Had the write landed first, the same
+   * click drew June with the table; which of two requests the server answers first must not
+   * decide what he sees.
+   */
+  test("on the same page: once the write lands, the page the link opened draws the press", async () => {
+    const page = await open(spendingPage, "/spending?period=2026-07");
+    ui.cash!.setView("cash", "table");
+    page.router.push("/spending?period=2026-06"); // the period picker's ‹
+    expect(await page.serve("render")).toEqual({ kind: "render", label: "/spending?period=2026-06" });
+    expect(page.shown).toMatchObject({ cash: { cash: "chart" } }); // June, drawn before the write
+    await page.settle(); // …then the write lands
+
+    expect(page.persisted.spending).toMatchObject({ cash: "table" }); // saved
+    expect(page.shown).toMatchObject({ cash: { cash: "table" } }); // the pill pressed
+    expect(page.url).toBe("/spending?period=2026-06"); // the link's URL as it wrote it: the saved view
+    expect(page.history.map((entry) => entry.url)).toEqual(["/spending?period=2026-07", "/spending?period=2026-06"]);
+  });
+
+  test("on the same page, when the write lands first: the same page, one history entry", async () => {
+    const page = await open(spendingPage, "/spending?period=2026-07");
+    ui.cash!.setView("cash", "table");
+    page.router.push("/spending?period=2026-06");
+    await page.serve("write");
+    await page.settle();
+
+    expect(page.shown).toMatchObject({ cash: { cash: "table" } });
+    expect(page.url).toBe("/spending?period=2026-06");
+    expect(page.history.map((entry) => entry.url)).toEqual(["/spending?period=2026-07", "/spending?period=2026-06"]);
+  });
+
+  /** a /recurring tab he is already on: a link to the URL on screen, which commits nothing new */
+  test("to the URL on screen, the same", async () => {
+    const page = await open(holdingPage, "/h");
+    ui.holding!.setView("view", "returns");
+    page.router.push("/h");
+    await page.serve("render");
+    await page.settle();
+
+    expect(page.shown).toMatchObject({ view: { view: "returns" } });
+    expect(page.url).toBe("/h");
+  });
+
+  /**
+   * Every holding is one surface: the next one opened draws the press made on the last. The
+   * link is made again as he made it — a Link scrolls to the page it opens, where a press's
+   * own URL keeps a mid-page chart under the cursor.
+   */
+  test("to another page of the same surface, the same, made as the link was", async () => {
+    const page = await open(holdingPage, "/h");
+    ui.holding!.setView("view", "returns");
+    page.router.push("/h/b");
+    await page.serve("render");
+    await page.settle();
+
+    expect(page.shown).toMatchObject({ view: { view: "returns" } });
+    expect(page.url).toBe("/h/b");
+    expect(page.navigations).toEqual([
+      { url: "/h/b", history: "push", scroll: true },
+      { url: "/h/b", history: "push", scroll: true },
+    ]);
+  });
+
+  test("a press with no link meanwhile goes to its own URL, keeping the scroll", async () => {
+    const page = await open(holdingPage, "/h");
+    ui.holding!.setView("view", "returns");
+    await page.settle();
+
+    expect(page.navigations).toEqual([{ url: "/h?view=returns", history: "push", scroll: false }]);
+  });
+
+  test("with two presses in flight, the page it opened draws both", async () => {
+    const page = await open(spendingPage, "/spending?period=2026-07");
+    ui.cash!.setView("cash", "table");
+    ui.where!.setView("where", "relief");
+    page.router.push("/spending?period=2026-06");
+    await page.serve("render");
+    await page.settle();
+
+    expect(page.shown).toMatchObject({ cash: { cash: "table" }, where: { where: "relief" } });
+    expect(page.url).toBe("/spending?period=2026-06");
+  });
+
+  /**
+   * ⚖️ Owner 2026-10-05: a press he walked away from with Back KEEPS its save, and Back shows
+   * the page he went back to. A link followed first changes nothing: Back is newer.
+   */
+  test("then Back: the page Back restored stays, and the link is not redone", async () => {
+    const page = await open(holdingPage, "/h");
+    page.router.push("/h/b");
+    await page.settle();
+    ui.holding!.setView("view", "returns");
+    page.router.push("/h/c");
+    page.back(); // to /h, before the link's page or the write has landed
+    await page.settle();
+
+    expect(page.url).toBe("/h");
+    expect(page.shown).toMatchObject({ view: { view: "value" } });
+    expect(page.persisted.holding).toMatchObject({ view: "returns" }); // the write stands
   });
 });
 

@@ -148,6 +148,20 @@ export function isForeign(ask: PageAsk | null, href: string): boolean {
   return ask !== null && !ask.trail.includes(canonicalHref(href));
 }
 
+/** How a navigation enters the browser's history. */
+export type HistoryKind = "push" | "replace";
+
+/** Where a press navigates once its write has landed, and how (`PageAsks.landing`). */
+export interface Landing {
+  href: string;
+  kind: HistoryKind;
+  /**
+   * false for an asked URL (a mid-page chart stays under the cursor); true for a link made
+   * again — Next's default, which every link in the app keeps (none passes `scroll: false`)
+   */
+  scroll: boolean;
+}
+
 /**
  * The page's ask, as one mutable cell the root layout holds and every switcher reads.
  */
@@ -157,15 +171,24 @@ export interface PageAsks {
   paramsOn(pathname: string): Record<string, string> | null;
   ask(href: string, dims: ViewState): void;
   /**
-   * Where a press navigates once its write has landed: the NEWEST asked URL, which every press
-   * and URL writer since built on — never its own, or a range pill pressed meanwhile would be
-   * navigated away from. Null when the page moved under the ask since: a press he walked away
-   * from does not drag him back. (Any ask made after that move is newer than the press, and
-   * is where the page is going anyway.)
+   * Where a press navigates once its write has landed.
+   *
+   * - Something asked: the NEWEST asked URL, which every press and URL writer since built on —
+   *   never its own, or a range pill pressed meanwhile would be navigated away from. (An ask
+   *   made after any move is newer than the press, and is where the page is going anyway.)
+   * - A link followed since (the period picker, a /recurring tab, the next holding): that link,
+   *   made again as it was made. It carries no view, so its page draws the SAVED one — and the
+   *   server may have drawn it before this write landed. 🔴 Nothing drew it again: the pill
+   *   un-pressed over a saved choice, a reload showing it. Made again now, its page draws the
+   *   press, as it would have had the write landed first (and when it did, that is one more
+   *   render of the same page: a push to the URL on screen replaces it). He stays where the
+   *   link took him.
+   * - Back/Forward since: null. ⚖️ Owner 2026-10-05: a press he walked away from with Back
+   *   keeps its save, and Back shows the page he went back to; he is not dragged anywhere.
    */
-  newest(): string | null;
+  landing(): Landing | null;
   /** a push or replace to `href` is starting: one nobody asked for drops the ask */
-  departing(href: string): void;
+  departing(href: string, kind: HistoryKind): void;
   /** the router committed `href` (pathname and query) */
   committed(href: string): void;
   /** Back/Forward: the page moved under the ask, whatever URL it lands on */
@@ -174,22 +197,31 @@ export interface PageAsks {
 
 export function createPageAsks(): PageAsks {
   let current: PageAsk | null = null;
-  const drop = (): void => {
-    current = null;
-  };
+  // the newest link followed since one dropped the ask: what a press in flight makes again
+  let overtaken: { href: string; kind: HistoryKind } | null = null;
   return {
     base: (at) => pressBase(current, at),
     paramsOn: (pathname) => askedParams(current, pathname),
     ask(href, dims) {
       current = withAsk(current, href, dims);
+      overtaken = null; // the ask is newer than any link before it
     },
-    newest: () => current?.href ?? null,
-    departing(href) {
-      if (isForeign(current, href)) drop();
+    landing() {
+      if (current !== null) return { href: current.href, kind: "push", scroll: false };
+      return overtaken === null ? null : { ...overtaken, scroll: true };
+    },
+    departing(href, kind) {
+      // an asked URL leaves the ask be; with nothing asked, only a link since one dropped it counts
+      if (current === null ? overtaken === null : !isForeign(current, href)) return;
+      current = null;
+      overtaken = { href, kind };
     },
     committed(href) {
       current = afterCommit(current, href);
     },
-    moved: drop,
+    moved() {
+      current = null;
+      overtaken = null;
+    },
   };
 }
