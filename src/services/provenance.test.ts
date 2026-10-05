@@ -2277,10 +2277,10 @@ describe("provenanceFor — a count of one keeps its numeral and a singular noun
  * investment, "Current balance (optional)".
  */
 describe("provenanceFor — market value that no holding prices", () => {
-  /** an investment account with a balance recorded by hand and no holding events */
-  function heldAccount(id: string, name: string): string {
+  /** an investment account with a balance recorded — by his hand unless `source` says whose — and no holding events */
+  function heldAccount(id: string, name: string, source = "manual"): string {
     const acct = addAccount(id, name, "investment");
-    addAnchor(acct, "2026-07-01", "manual");
+    addAnchor(acct, "2026-07-01", source);
     addDays(acct, [
       { day: "2026-07-01", basis: "anchored" },
       { day: "2026-07-10", basis: "carried" },
@@ -2304,13 +2304,15 @@ describe("provenanceFor — market value that no holding prices", () => {
 
   test("net worth names each account by what values it, and counts them apart", () => {
     heldAccount("held", "Brokerage");
-    pricedAccount("priced", "Robinhood Brokerage");
+    // a balance he typed on an account holdings price is no held count (his ledger's are all on such accounts)
+    addAnchor(pricedAccount("priced", "Robinhood Brokerage"), "2026-07-01", "manual");
 
     const p = provenanceFor(bundle.db, { kind: "netWorth", day: TODAY })!;
     const detail = (label: string) => p.inputs.find((i) => i.label === label)!.detail;
     expect(detail("Robinhood Brokerage")).toBe("priced from holdings");
-    expect(detail("Brokerage")).toBe("held at its recorded balance");
-    expect(p.headline).toContain("1 is priced from holdings, 1 is held at its recorded balance");
+    // ⚖️ a value he typed is one he counted (his answer, 2026-10-05) — as its own balance proof says
+    expect(detail("Brokerage")).toBe("held at the balance you counted on Jul 1, 2026");
+    expect(p.headline).toContain("1 is priced from holdings, 1 is held at a balance you counted");
   });
 
   test("net worth with only held accounts never says holdings price one", () => {
@@ -2319,8 +2321,67 @@ describe("provenanceFor — market value that no holding prices", () => {
 
     const p = provenanceFor(bundle.db, { kind: "netWorth", day: TODAY })!;
     expect(p.headline).not.toContain("priced from holdings");
-    expect(p.headline).toContain("2 are held at their recorded balances");
-    expect(p.inputs.map((i) => i.detail)).toEqual(["held at its recorded balance", "held at its recorded balance"]);
+    expect(p.headline).toContain("2 are held at balances you counted");
+    expect(p.inputs.map((i) => i.detail)).toEqual([
+      "held at the balance you counted on Jul 1, 2026",
+      "held at the balance you counted on Jul 1, 2026",
+    ]);
+  });
+
+  /*
+   * 🔴 "COUNTED" IN ITS OWN POPOVER, "RECORDED" EVERYWHERE ELSE. b9de5e6 made a held value he typed read "the balance
+   * you counted on Sep 1, 2026, held forward" on its balance proof, and four more surfaces naming the same value kept
+   * "recorded": net worth's line ("held at its recorded balance") and count ("1 is held at its recorded balance"), a
+   * rows total ("held at a recorded balance rather than checked by arithmetic") and /imports' coverage row (review,
+   * 2026-10-05, through the real services: `createAccount` investment, `addManualAnchor` $1,000.00 for Sep 1).
+   *
+   * ⛔ ONE rule decides the verb on all five: the balance the day holds (`heldBalanceAnchor`) — a statement's keeps
+   * "recorded", and a live reading's too.
+   */
+  test("a value a statement recorded keeps 'recorded', and net worth counts it apart from one he counted", () => {
+    heldAccount("held-a", "Brokerage");
+    heldAccount("held-b", "Old 401k", "statement");
+    heldAccount("held-c", "Old IRA", "statement");
+
+    const p = provenanceFor(bundle.db, { kind: "netWorth", day: TODAY })!;
+    const detail = (label: string) => p.inputs.find((i) => i.label === label)!.detail;
+    expect(detail("Brokerage")).toBe("held at the balance you counted on Jul 1, 2026");
+    expect(detail("Old 401k")).toBe("held at its recorded balance");
+    expect(detail("Old IRA")).toBe("held at its recorded balance");
+    expect(p.headline).toContain("2 are held at their recorded balances, 1 is held at a balance you counted");
+  });
+
+  test("every surface names the balance its own day holds: a statement's, then his count, then a live reading", () => {
+    const acct = addAccount("held", "Brokerage", "investment");
+    addAnchor(acct, "2026-07-01", "statement");
+    addAnchor(acct, "2026-07-05", "manual");
+    addAnchor(acct, "2026-08-05", "live");
+    addDays(acct, [
+      { day: "2026-07-01", basis: "anchored" },
+      { day: "2026-07-03", basis: "carried" },
+      { day: "2026-07-05", basis: "anchored" },
+      { day: "2026-07-08", basis: "carried" },
+      // rebuilt on Aug 5: that day's live reading stands for that day only
+      { day: "2026-08-04", basis: "carried" },
+      { day: "2026-08-05", basis: "anchored" },
+    ]);
+    const balance = (day: string) => provenanceFor(bundle.db, { kind: "accountBalance", accountId: acct, day })!.headline;
+    expect(balance("2026-07-03")).toContain("is the balance recorded on Jul 1, 2026, held forward.");
+    expect(balance("2026-07-08")).toContain("is the balance you counted on Jul 5, 2026, held forward.");
+
+    const cat = addCategory("c-buys", "Fixture Buys");
+    const file = addFile("f1", "b.pdf", "robinhood-brokerage-statement-pdf");
+    for (const day of ["2026-07-03", "2026-07-08", "2026-07-08"]) categorize(addTxn(acct, day, { importFileId: file }), cat);
+    const rows = provenanceFor(bundle.db, { kind: "categorySpend", categoryId: cat, from: "2026-07-01", to: "2026-07-31" })!;
+    expect(rows.headline).toContain(
+      "1 is held at a recorded balance rather than checked by arithmetic, 2 are held at a balance you counted rather than checked by arithmetic",
+    );
+
+    const detail = (day: string) =>
+      provenanceFor(bundle.db, { kind: "netWorth", day })!.inputs.find((i) => i.label === "Brokerage")!.detail;
+    expect(detail("2026-08-04")).toBe("held at the balance you counted on Jul 5, 2026");
+    expect(detail("2026-08-05")).toBe("held at its recorded balance");
+    expect(detail("2026-07-03")).toBe("held at its recorded balance");
   });
 
   test("a total of rows on a held account says so, and its badge's name drops holdings", () => {
@@ -2332,7 +2393,7 @@ describe("provenanceFor — market value that no holding prices", () => {
     const p = provenanceFor(bundle.db, { kind: "categorySpend", categoryId: cat, from: "2026-07-01", to: "2026-07-31" })!;
     expect(p.verdict).toBe("market_value");
     expect(p.headline).not.toContain("priced from holdings");
-    expect(p.headline).toContain("1 is held at a recorded balance rather than checked by arithmetic");
+    expect(p.headline).toContain("1 is held at a balance you counted rather than checked by arithmetic");
     expect(p.badgeWord).toBe("market value");
     expect(name("Fixture Buys", p)).not.toContain("priced from holdings");
   });
@@ -2348,7 +2409,7 @@ describe("provenanceFor — market value that no holding prices", () => {
 
     const p = provenanceFor(bundle.db, { kind: "categorySpend", categoryId: cat, from: "2026-07-01", to: "2026-07-31" })!;
     expect(p.headline).toContain(
-      "2 are priced from holdings rather than checked by arithmetic, 1 is held at a recorded balance rather than checked by arithmetic",
+      "2 are priced from holdings rather than checked by arithmetic, 1 is held at a balance you counted rather than checked by arithmetic",
     );
     expect(p.badgeWord).toBe("market value");
   });

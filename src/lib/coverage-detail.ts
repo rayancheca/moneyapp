@@ -103,6 +103,17 @@ export interface CoverageDetailInput {
    */
   pricedFromHoldings: boolean;
   /**
+   * `heldCountsByAccount`: the day of the balance he TYPED that an account no holding prices is held at today, or
+   * null when it is held at a statement's, a live reading's or nothing. Read by `market_value`.
+   *
+   * 🔴 The row read "held at its recorded balance" of a value he typed, beside its balance proof's "the balance you
+   * counted on Sep 1, 2026, held forward" (review, 2026-10-05). ⚖️ A value he typed is one he counted (his answer,
+   * 2026-10-05).
+   *
+   * ⛔ REQUIRED, like `pricedFromHoldings`: a forgotten field reads "recorded" of his count again.
+   */
+  heldCountedOn: string | null;
+  /**
    * `AccountCoverage.countedOn`: the balance he TYPED that the newest days stand
    * on, when no closed chain reaches it. Read by `unverified`.
    *
@@ -463,10 +474,16 @@ export function coverageDetail(input: CoverageDetailInput): string {
       const held = carried === 0 ? "" : `, then carries that balance forward for ${carriedDays}`;
       return `${closesClause(input)}${held}; the first day it does not is ${first} — ${resting(n)}`;
     }
-    case "market_value":
-      return input.pricedFromHoldings
-        ? "priced from holdings; statements here set a value, they never prove the transactions add up"
-        : "held at its recorded balance; no holdings price it, and no transaction arithmetic checks it";
+    case "market_value": {
+      if (input.pricedFromHoldings) {
+        return "priced from holdings; statements here set a value, they never prove the transactions add up";
+      }
+      const heldAt =
+        input.heldCountedOn === null
+          ? "its recorded balance"
+          : `the balance you counted on ${dayWithYear(input.heldCountedOn)}`;
+      return `held at ${heldAt}; no holdings price it, and no transaction arithmetic checks it`;
+    }
     case "manual":
       return input.lastManualUpdate
         ? `you are the statement — last counted ${dayWithYear(input.lastManualUpdate)}`

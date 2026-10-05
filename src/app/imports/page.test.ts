@@ -28,8 +28,21 @@ describe("/imports — the coverage rows' holdings claim", () => {
   });
 
   test("the panel is handed exactly those ids, and each row reads its own", () => {
-    expect(page).toMatch(/<CoveragePanel coverage=\{coverage\} pricedFromHoldingsIds=\{pricedFromHoldingsIds\} \/>/);
+    expect(page).toMatch(
+      /<CoveragePanel coverage=\{coverage\} pricedFromHoldingsIds=\{pricedFromHoldingsIds\} heldCounts=\{heldCounts\} \/>/,
+    );
     expect(panel).toMatch(/pricedFromHoldings: pricedFromHoldingsIds\.includes\(c\.accountId\),/);
+  });
+
+  /*
+   * 🔴 A value he TYPED read "held at its recorded balance" on its row, beside its balance proof's "the balance you
+   * counted on Sep 1, 2026, held forward" (review, 2026-10-05). ⛔ The day is the rule net worth reads
+   * (`heldCountsByAccount`, on the day `accountCoverage` grades by); the wording is pinned in
+   * lib/coverage-detail.test.ts, the rule in services/provenance.test.ts.
+   */
+  test("an account held at a balance he typed is named by the rule net worth reads, on today", () => {
+    expect(page).toMatch(/const heldCounts = heldCountsByAccount\(db, coverage\);/);
+    expect(panel).toMatch(/heldCountedOn: heldCounts\.get\(c\.accountId\) \?\? null,/);
   });
 });
 

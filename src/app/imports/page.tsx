@@ -10,7 +10,7 @@ import { StatementGapsPanel } from "@/components/imports/StatementGapsPanel";
 import { StatementSchedule } from "@/components/imports/StatementSchedule";
 import { accountCoverage } from "@/services/coverage";
 import type { AccountType } from "@/db/schema/accounts";
-import { derivesFromHoldings } from "@/services/derivation";
+import { derivesFromHoldings, heldCountsByAccount } from "@/services/derivation";
 import { provenanceFor } from "@/services/provenance";
 import { statementPulls } from "@/services/statement-pulls";
 import { unimportAcknowledgement, unimportRadius } from "@/components/imports/unimport-radius";
@@ -141,6 +141,9 @@ export default async function ImportsPage({
   const pricedFromHoldingsIds = coverage
     .filter((c) => derivesFromHoldings(db, { id: c.accountId, type: c.accountType as AccountType }))
     .map((c) => c.accountId);
+  // ⚖️ …and an account no holding prices, held at a balance he typed, names it as his count (his answer,
+  // 2026-10-05): the day it is held at today, by the rule net worth and its balance proof read
+  const heldCounts = heldCountsByAccount(db, coverage);
   // ⚠️ NOT the `gaps` below: that is statements that arrived and did not
   // reconcile. This is statements that never arrived at all.
   const missingStatements = statementGaps(db);
@@ -224,7 +227,7 @@ export default async function ImportsPage({
 
         <StatementSchedule pulls={pulls} />
 
-        <CoveragePanel coverage={coverage} pricedFromHoldingsIds={pricedFromHoldingsIds} />
+        <CoveragePanel coverage={coverage} pricedFromHoldingsIds={pricedFromHoldingsIds} heldCounts={heldCounts} />
 
         {/* PASS 68. Coverage answers "does the money close"; this answers "which
             documents do I not have". They disagree on this ledger — Discover is

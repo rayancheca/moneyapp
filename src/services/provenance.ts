@@ -31,6 +31,8 @@ import {
 import {
   derivesFromHoldings,
   heldBalanceAnchor,
+  heldCountsByAccount,
+  heldCountsOn,
   loadReplayAnchors,
   loadReplayInputs,
   pickWinners,
@@ -980,7 +982,9 @@ function headlineForBalance(
     if (value.pricedFromHoldings) {
       return `${name} is priced from its holdings on ${on}. A brokerage statement sets a value; it never proves the transactions add up.`;
     }
-    // ⚖️ a value he typed is one he counted (his answer, 2026-10-05); a document's or a live reading's is recorded
+    // ⚖️ a value he typed is one he counted (his answer, 2026-10-05); a document's or a live reading's is recorded —
+    // and so says every surface naming the same value: net worth's line and count, a rows total, /imports' row
+    // (`heldCountsOn`, this same `held`)
     const verb = value.held?.source === "manual" ? "you counted" : "recorded";
     const recorded =
       value.held === null
@@ -1227,6 +1231,13 @@ function netWorthProvenance(db: AppDatabase, day: string | undefined): Provenanc
       )
       .map((c) => c.accountId),
   );
+  /*
+   * 🔴 …and "recorded" of a value he TYPED, beside its own balance proof's "the balance you counted on Sep 1, 2026,
+   * held forward" (review, 2026-10-05: `createAccount` investment, `addManualAnchor` $1,000.00 for Sep 1 — "held at its
+   * recorded balance", "1 is held at its recorded balance"). ⚖️ A value he typed is one he counted (his answer,
+   * 2026-10-05): the balance each held account holds on this day, by the rule that proof reads (`heldCountsOn`).
+   */
+  const heldCounts = heldCountsByAccount(db, coverage, asOf);
 
   const inputs: ProvenanceInput[] = coverage.map((c) => ({
     id: c.accountId,
@@ -1246,7 +1257,9 @@ function netWorthProvenance(db: AppDatabase, day: string | undefined): Provenanc
             (c.grade === "market_value"
               ? pricedFromHoldings.has(c.accountId)
                 ? "priced from holdings"
-                : "held at its recorded balance"
+                : heldCounts.has(c.accountId)
+                  ? `held at the balance you counted on ${readableDay(heldCounts.get(c.accountId)!)}`
+                  : "held at its recorded balance"
               : c.grade === "manual"
                 ? c.lastManualUpdate
                   ? `you last counted it on ${readableDay(c.lastManualUpdate)}`
@@ -1264,6 +1277,9 @@ function netWorthProvenance(db: AppDatabase, day: string | undefined): Provenanc
   const proven = inputs.filter((i) => i.verdict === "derived" || i.verdict === "sourced").length;
   const marked = inputs.filter((i) => i.verdict === "market_value").length;
   const heldAccounts = marked - pricedFromHoldings.size;
+  // every account `heldCounts` names is one of them: an investment account no holding prices
+  const heldCounted = heldCounts.size;
+  const heldRecorded = heldAccounts - heldCounted;
   // `manual` is a basis, not an absence — see the note in categorySpendProvenance
   const byHand = inputs.filter((i) => i.verdict === "manual").length;
   /**
@@ -1291,10 +1307,13 @@ function netWorthProvenance(db: AppDatabase, day: string | undefined): Provenanc
   if (pricedFromHoldings.size > 0) {
     parts.push(`${pricedFromHoldings.size} ${pricedFromHoldings.size === 1 ? "is" : "are"} priced from holdings`);
   }
-  if (heldAccounts > 0) {
+  if (heldRecorded > 0) {
     parts.push(
-      `${heldAccounts} ${heldAccounts === 1 ? "is held at its recorded balance" : "are held at their recorded balances"}`,
+      `${heldRecorded} ${heldRecorded === 1 ? "is held at its recorded balance" : "are held at their recorded balances"}`,
     );
+  }
+  if (heldCounted > 0) {
+    parts.push(`${heldCounted} ${heldCounted === 1 ? "is held at a balance you counted" : "are held at balances you counted"}`);
   }
   if (byHand > 0) parts.push(`${byHand} you count yourself`);
   if (weak > 0) parts.push(`${weak} ${weak === 1 ? "has" : "have"} nothing checking ${weak === 1 ? "it" : "them"}`);
@@ -2105,8 +2124,26 @@ function summedRowsProof(
       (id) => !derivesFromHoldings(db, { id, type: coverage.get(id)!.accountType as AccountType }),
     ),
   );
-  const held = rows.filter((r, i) => verdicts[i] === "market_value" && heldAccountIds.has(r.accountId)).length;
+  const heldRows = rows.filter((r, i) => verdicts[i] === "market_value" && heldAccountIds.has(r.accountId));
+  const held = heldRows.length;
   const priced = marked - held;
+  /*
+   * 🔴 …and "held at a recorded balance" of a row whose day holds a value he TYPED, beside that day's balance proof
+   * saying "the balance you counted" of it (review, 2026-10-05). ⚖️ A value he typed is one he counted (his answer,
+   * 2026-10-05): the balance each row's own day holds, by the rule that proof reads (`heldCountsOn`).
+   */
+  const countedDays = new Map(
+    [...heldAccountIds].map((id) => [
+      id,
+      heldCountsOn(
+        db,
+        { id, type: coverage.get(id)!.accountType as AccountType },
+        heldRows.filter((r) => r.accountId === id).map((r) => r.postedOn),
+      ),
+    ]),
+  );
+  const heldCounted = heldRows.filter((r) => countedDays.get(r.accountId)!.has(r.postedOn)).length;
+  const heldRecorded = held - heldCounted;
   /**
    * ⛔ FOUR buckets. `manual` is a basis, not an absence — for cash in a safe
    * the owner IS the best evidence that will ever exist, and calling his own
@@ -2151,7 +2188,12 @@ function summedRowsProof(
     `${grouped(rows.length)} ${rows.length === 1 ? "row" : "rows"} from ${grouped(files.length)} ${files.length === 1 ? "document" : "documents"}`,
   ];
   if (priced > 0) parts.push(`${grouped(priced)} ${priced === 1 ? "is" : "are"} priced from holdings rather than checked by arithmetic`);
-  if (held > 0) parts.push(`${grouped(held)} ${held === 1 ? "is" : "are"} held at a recorded balance rather than checked by arithmetic`);
+  if (heldRecorded > 0) {
+    parts.push(`${grouped(heldRecorded)} ${heldRecorded === 1 ? "is" : "are"} held at a recorded balance rather than checked by arithmetic`);
+  }
+  if (heldCounted > 0) {
+    parts.push(`${grouped(heldCounted)} ${heldCounted === 1 ? "is" : "are"} held at a balance you counted rather than checked by arithmetic`);
+  }
   if (byHand > 0) parts.push(`${grouped(byHand)} you entered yourself`);
   if (weak > 0) parts.push(`${grouped(weak)} ${weak === 1 ? "has" : "have"} nothing checking ${weak === 1 ? "it" : "them"}`);
 
