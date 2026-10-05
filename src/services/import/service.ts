@@ -2410,6 +2410,8 @@ function writeTurn(db: AppDatabase, batch: BatchState, chain: readonly ReadMembe
       .set({ status: "failed", error: `Failed mid-import (un-import to clean up): ${message}` })
       .where(eq(importFiles.id, (failed.recorded as RecordedFile).row.id))
       .run();
+    // what its earlier statements wrote says whose statement it is
+    recordReadInstitution(db, (failed.recorded as RecordedFile).row);
     return [{ ...(writes[0]?.tally ?? blankOutcome(failed.item.file.name)), status: "failed", error: message }];
   }
   // whether or not a new read wrote to them again: the retired reads' rows, periods and anchors — and the shares a
@@ -2458,6 +2460,8 @@ function settleMember(db: AppDatabase, member: ReadMember, { tally, accounts: fi
   if (finalPath !== row.storagePath) {
     db.update(importFiles).set({ storagePath: finalPath }).where(eq(importFiles.id, row.id)).run();
   }
+  // …and the row names the bank its accounts are at, not the one guessed from its name
+  recordReadInstitution(db, row);
   return { ...tally, withheld: [...(member.parsed?.withheld ?? [])] };
 }
 
@@ -2855,8 +2859,9 @@ function supersedeFileContribution(db: AppDatabase, oldFileId: string): { accoun
 
 /**
  * The institution a new read's row records (`import_files.institution_id`), guessed from the file's name and first
- * lines before anything has read it — and it checks for "chase" first and falls back to Chase. ⛔ Never where its
- * original is archived (`UNFILED_FOLDER`): a guess is not a placement.
+ * lines before anything has read it — and it checks for "chase" first and falls back to Chase. It stands only until the
+ * read resolves its accounts, whose bank replaces it (`recordReadInstitution`). ⛔ Never where its original is
+ * archived (`UNFILED_FOLDER`): a guess is not a placement.
  */
 function guessInstitution(db: AppDatabase, file: { name: string; text: string }): { id: string; name: string } {
   const haystack = `${file.name} ${file.text.slice(0, 400)}`.toLowerCase();
@@ -3014,6 +3019,12 @@ export interface StorageMigration {
  * in place is archived in robinhood-combined/. Now only a read in place places an
  * original — a failed read, too, names only what it wrote before it stopped — and
  * all 12 stay, reported.
+ *
+ * 🔴 …though the read that retired it reads the same bytes. Measured on a copy of
+ * the real ledger, 2026-10-05: 34 originals of 66 retired Robinhood reads reported
+ * unplaced, every one read again by a read in place. An original only retired reads
+ * name goes where the read in place of its bytes files its own
+ * (`readsInPlaceOfRetired`); one no read in place reads stays, reported.
  */
 export function migrateStorageLayout(db: AppDatabase, opts: { move: boolean }): StorageMigration[] {
   const paths = db.select({ storagePath: importFiles.storagePath }).from(importFiles).all();
@@ -3024,10 +3035,12 @@ export function migrateStorageLayout(db: AppDatabase, opts: { move: boolean }): 
     const report = (to: string | null, moved: boolean) => {
       for (const read of reads) results.push({ importFileId: read.id, fileName: read.fileName, from, to, moved });
     };
-    // ⛔ placed by its reads in place alone — never by the accounts a retirement
+    // ⛔ placed by its reads in place alone — or, where only retired reads name
+    // it, by the reads in place of its bytes — never by the accounts a retirement
     // left a read, nor the bank the importer guessed: neither is a placement
     const inPlace = reads.filter((r) => (LIVE_FILE as readonly ImportStatus[]).includes(r.status));
-    const folder = accountsFolder(db, [...new Set(inPlace.flatMap((r) => accountsReadBy(db, r.id)))]);
+    const placing = inPlace.length > 0 ? inPlace : readsInPlaceOfRetired(db, reads);
+    const folder = accountsFolder(db, [...new Set(placing.flatMap((r) => accountsReadBy(db, r.id)))]);
     if (folder === null) {
       report(null, false);
       continue;
@@ -3058,6 +3071,29 @@ export function migrateStorageLayout(db: AppDatabase, opts: { move: boolean }): 
 }
 
 /**
+ * The reads in place of the bytes an original only retired reads name: where they file their own original is where the
+ * statement belongs, as a retired read's successor reads the same bytes (`retiredReadsOf`). None when a read naming it
+ * is not retired — a failed read, which names only what it wrote before it stopped, keeps its own copy where it lies —
+ * or when no read in place reads the bytes any more (its successor was un-imported).
+ *
+ * 🔴 Such an original was reported unplaced: a retirement forgets everything that named the read's account but its
+ * rows, and a read that kept rows on one account of a statement of two names that one. Measured on a copy of the real
+ * ledger, 2026-10-05: 34 originals of 66 retired Robinhood reads, every one of them read again by a read in place.
+ */
+function readsInPlaceOfRetired(
+  db: AppDatabase,
+  reads: readonly (typeof importFiles.$inferSelect)[],
+): (typeof importFiles.$inferSelect)[] {
+  if (!reads.every((r) => r.status === "superseded")) return [];
+  const shas = [...new Set(reads.map((r) => r.fileSha256))];
+  return db
+    .select()
+    .from(importFiles)
+    .where(and(inArray(importFiles.fileSha256, shas), inArray(importFiles.status, [...LIVE_FILE])))
+    .all();
+}
+
+/**
  * Every account a read in place resolved — what its import filed the original by
  * (`settleMember`): the accounts it prints on (`accountsPrintedBy`), the ones it
  * prints a statement of as a second download (`accountsCopiedBy`), and the ones
@@ -3082,6 +3118,38 @@ function accountsReadBy(db: AppDatabase, importFileId: string): string[] {
       ...accountsWrittenBy(db, importFileId),
     ]),
   ];
+}
+
+/**
+ * The bank a read records (`import_files.institution_id`) once it has resolved whose statement it is: the one
+ * institution of every account its records name (`accountsReadBy`: its rows of any status, its periods and recorded
+ * balances, what it prints, the statements it prints a copy of — a book it wrote trades to, through its period, at the
+ * bank of the cash account it is paired with). Null while they name none — a read that failed before it wrote, or
+ * withheld every section — and when they name accounts at two banks, which one column cannot say: the importer's guess
+ * (`guessInstitution`) then stands.
+ *
+ * ⛔ One rule, two callers: the import, as it settles a read (`recordReadInstitution`), and the backfill of the rows it
+ * recorded before (scripts/read-institutions.ts). A retired read keeps the bank its read resolved: its retirement keeps
+ * its rows (`supersedeFileContribution`), and a retirement that kept none leaves the column as the read recorded it.
+ */
+export function institutionReadBy(db: AppDatabase, importFileId: string): string | null {
+  const named = accountsReadBy(db, importFileId);
+  if (named.length === 0) return null;
+  const banks = db.selectDistinct({ institutionId: accounts.institutionId }).from(accounts).where(inArray(accounts.id, named)).all();
+  return banks.length === 1 ? (banks[0] as { institutionId: string }).institutionId : null;
+}
+
+/**
+ * A read that resolved its accounts records their bank in place of the importer's guess (`institutionReadBy`).
+ *
+ * 🔴 The guess was recorded when the read was, and never corrected once it resolved. Measured on a copy of the real
+ * ledger, 2026-10-05: of the reads whose rows land in one bank's accounts, 22 live and 24 retired named another bank.
+ * scripts/record-read-institutions-2026-10-05.ts corrects the rows recorded before.
+ */
+function recordReadInstitution(db: AppDatabase, row: { id: string; institutionId: string }): void {
+  const resolved = institutionReadBy(db, row.id);
+  if (resolved === null || resolved === row.institutionId) return;
+  db.update(importFiles).set({ institutionId: resolved }).where(eq(importFiles.id, row.id)).run();
 }
 
 /** Group ids per query — well under SQLite's bound-parameter limit. */
