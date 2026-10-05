@@ -1,15 +1,13 @@
 "use client";
 
-import { useCallback, useMemo, useTransition } from "react";
-import { useRouter } from "next/navigation";
-import { saveViewPreferenceAction } from "@/app/settings/actions";
+import { useCallback, useMemo } from "react";
 import { ViewSwitcher } from "@/components/ui/ViewSwitcher";
 import { SankeyChart } from "@/components/charts/SankeyChart";
 import { NetWorthBridge } from "@/components/charts/NetWorthBridge";
 import { CATEGORY_HUE_NAMES, categoryHueVar } from "@/lib/category-palette";
 import { DAILY_SERIES_RANGES, rangeLabel, type ChartRange } from "@/lib/chart-range";
 import type { SankeyGraph } from "@/lib/sankey-layout";
-import { viewHrefQuery, type ViewState } from "@/lib/view-state";
+import type { ViewState } from "@/lib/view-state";
 import { DASHBOARD_CHART_DIMENSION, DASHBOARD_SURFACE, DASHBOARD_VIEW_SPEC } from "./dashboard-view-spec";
 import type { NetWorthPoint } from "@/services/derivation";
 import type { DashboardAccountOption, DashboardChartData } from "@/services/dashboard-series";
@@ -81,27 +79,10 @@ export function DashboardChartSection({
   bridgeByRange,
   today,
 }: DashboardChartSectionProps) {
-  const router = useRouter();
-  const [, startTransition] = useTransition();
   // "sankey" is a hero-chart view but not a net-worth series MODE, so keep it a
   // plain string; only the ScrubChart branch narrows to DashboardMode.
   const mode = state.chart ?? "combined";
-
-  // the accts selection must SURVIVE a mode switch (it's not a spec dimension,
-  // so setView/persistence don't carry it) — thread the durable resolved value
-  // onto every mode-switch URL so returning to accounts keeps the curated set
-  const baseParams = useMemo<Record<string, string>>(() => {
-    const params: Record<string, string> = {};
-    if (acctsParam) params.accts = acctsParam;
-    return params;
-  }, [acctsParam]);
-  const { setView } = useViewState({
-    surface: DASHBOARD_SURFACE,
-    spec: DASHBOARD_VIEW_SPEC,
-    state,
-    basePath: "/",
-    baseParams,
-  });
+  const { setView, toggleAccount } = useHeroViews({ state, accounts, selectedAccountIds, acctsParam });
 
   // color identity is stable per ACCOUNT (its position in the full account
   // list), not per selection — deselecting one never recolors the rest
@@ -115,27 +96,6 @@ export function DashboardChartSection({
     colors["assets"] = categoryHueVar("teal");
     return colors;
   }, [accounts]);
-
-  const toggleAccount = useCallback(
-    (id: string) => {
-      const current = new Set(selectedAccountIds);
-      if (current.has(id)) current.delete(id);
-      else current.add(id);
-      if (current.size === 0) return; // an empty chart is never a valid target
-      const ordered = accounts.filter((a) => current.has(a.id)).map((a) => a.id);
-      const accts = ordered.join(",");
-      const href = `/${viewHrefQuery(DASHBOARD_VIEW_SPEC, state, { accts })}`;
-      startTransition(async () => {
-        try {
-          await saveViewPreferenceAction(DASHBOARD_SURFACE, { ...state, accts });
-        } catch {
-          /* persistence is best-effort — the URL drives the render */
-        }
-        router.push(href, { scroll: false });
-      });
-    },
-    [accounts, selectedAccountIds, state, router],
-  );
 
   const series = chartData?.series ?? [];
 
@@ -307,4 +267,64 @@ export function DashboardChartSection({
       )}
     />
   );
+}
+
+interface HeroViewsOptions {
+  state: ViewState;
+  accounts: readonly DashboardAccountOption[];
+  /** the validated selection the RSC built the series with */
+  selectedAccountIds: readonly string[];
+  /** the durable account selection (see DashboardChartSectionProps) */
+  acctsParam: string;
+}
+
+/** `accts` is persisted beside the hero's spec and carried in its URL */
+const HERO_CARRY = ["accts"] as const;
+
+/** The hero's presses: a view pill (`setView`) and an account pill (`toggleAccount`). */
+export function useHeroViews({ state, accounts, selectedAccountIds, acctsParam }: HeroViewsOptions): {
+  setView: (key: string, value: string) => void;
+  toggleAccount: (id: string) => void;
+} {
+  // the accts selection must SURVIVE a mode switch (it's not a spec dimension,
+  // so setView/persistence don't carry it) — thread the durable resolved value
+  // onto every mode-switch URL so returning to accounts keeps the curated set
+  const baseParams = useMemo<Record<string, string>>(() => {
+    const params: Record<string, string> = {};
+    if (acctsParam) params.accts = acctsParam;
+    return params;
+  }, [acctsParam]);
+  const { setView, updateView } = useViewState({
+    surface: DASHBOARD_SURFACE,
+    spec: DASHBOARD_VIEW_SPEC,
+    state,
+    basePath: "/",
+    baseParams,
+    carry: HERO_CARRY,
+  });
+
+  // 🔴 This used to persist and navigate on its own, from `state` and `selectedAccountIds`:
+  // the view and selection the server resolved BEFORE any press still in flight. A second
+  // pill, or a view pill, made before the first one's navigation committed wrote a selection
+  // without it — the account he had just turned off came straight back. It goes through
+  // `updateView` now, so it builds on the page's newest press like every pill on it, and its
+  // `accts` rides that press's view: persisted with it, and carried in its URL.
+  const toggleAccount = useCallback(
+    (id: string) =>
+      updateView((base) => {
+        // a pill still in flight carries the selection it asked for; otherwise the server's
+        // validated one is the selection on screen
+        const current = new Set(base.accts !== undefined ? base.accts.split(",") : selectedAccountIds);
+        if (current.has(id)) current.delete(id);
+        else current.add(id);
+        if (current.size === 0) return null; // an empty chart is never a valid target
+        const accts = accounts
+          .filter((a) => current.has(a.id))
+          .map((a) => a.id)
+          .join(",");
+        return { ...base, accts };
+      }),
+    [accounts, selectedAccountIds, updateView],
+  );
+  return { setView, toggleAccount };
 }

@@ -8,6 +8,7 @@ import { commandEntityGroups } from "@/services/command-index";
 import { needsReviewCount } from "@/services/review-count";
 import { openDuplicateCount } from "@/services/duplicate-count";
 import { AppShell } from "@/components/shell/AppShell";
+import { PageAsksProvider } from "@/hooks/usePageAsks";
 import type { CommandPaletteGroup } from "@/components/ui/CommandPalette";
 import "./globals.css";
 
@@ -96,7 +97,8 @@ export default async function RootLayout({ children }: { children: React.ReactNo
             duplicateCount={duplicateCount}
             entityGroups={entityGroups}
           >
-            {children}
+            {/* the page's asked view: what a press builds on while another is in flight */}
+            <PageAsksProvider>{children}</PageAsksProvider>
           </AppShell>
         </ThemeProvider>
       </body>

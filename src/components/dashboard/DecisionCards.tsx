@@ -1,8 +1,6 @@
 "use client";
 
-import { useCallback, useTransition } from "react";
-import { useRouter } from "next/navigation";
-import { saveViewPreferenceAction } from "@/app/settings/actions";
+import { useCallback } from "react";
 import { CardDeck, type DeckCard } from "@/components/dashboard/CardDeck";
 import {
   DASHBOARD_SURFACE,
@@ -10,7 +8,12 @@ import {
   DECISIONS_VIEW_SPEC,
 } from "@/components/dashboard/dashboard-view-spec";
 import { ViewSwitcher } from "@/components/ui/ViewSwitcher";
-import { viewHrefQuery, type ViewState } from "@/lib/view-state";
+import { useViewState } from "@/hooks/useViewState";
+import type { ViewState } from "@/lib/view-state";
+
+const CARDS_DIMENSION = DECISIONS_VIEW_SPEC[0]!;
+/** stable identity so useViewState's setView doesn't churn every render */
+const NO_PARAMS: Record<string, string> = {};
 
 /**
  * The decision cards, as a deck you swipe or a grid you scan.
@@ -32,24 +35,18 @@ export function DecisionCards({
   cards: readonly DeckCard[];
   state: ViewState;
 }) {
-  const router = useRouter();
-  const [, startTransition] = useTransition();
-
-  const select = useCallback(
-    (value: string) => {
-      const next = { ...state, cards: value };
-      const href = `/${viewHrefQuery(DECISIONS_VIEW_SPEC, next)}`;
-      startTransition(async () => {
-        try {
-          await saveViewPreferenceAction(DASHBOARD_SURFACE, next);
-        } catch {
-          /* persistence is best-effort — the URL drives the render */
-        }
-        router.push(href, { scroll: false });
-      });
-    },
-    [state, router],
-  );
+  // 🔴 It persisted and navigated on its own, beside the hero's switcher on the same page: a
+  // press made while a hero press was in flight never saw it. Through the hook it builds on the
+  // page's newest asked URL like every switcher on it (and keeps its clean `/?cards=` link
+  // when nothing is in flight).
+  const { setView } = useViewState({
+    surface: DASHBOARD_SURFACE,
+    spec: DECISIONS_VIEW_SPEC,
+    state,
+    basePath: "/",
+    baseParams: NO_PARAMS,
+  });
+  const select = useCallback((value: string) => setView(CARDS_DIMENSION.key, value), [setView]);
 
   const mode = state.cards === "grid" ? "grid" : "deck";
   // 🔴 "1 readings": the runway card is built unconditionally and every other
@@ -66,7 +63,7 @@ export function DecisionCards({
             : count}
         </p>
         <ViewSwitcher
-          dimension={DECISIONS_VIEW_SPEC[0]!}
+          dimension={CARDS_DIMENSION}
           value={mode}
           onSelect={select}
           labels={DECISIONS_VIEW_LABELS}

@@ -141,6 +141,51 @@ test("portfolio chart switches value↔return, updates the URL, and persists", a
   await expect(page.getByRole("slider", { name: /Portfolio value over time/ })).toBeVisible();
 });
 
+/**
+ * 🔴 Presses made faster than the server answers. A press writes its view and only THEN
+ * navigates, so until it lands everything on the page — each switcher's view, the URL the
+ * range pill reads — is the page from before it. Built on that, Table pressed while Return
+ * was being written saved `view: "value"` over it and landed on the Value table, and a press
+ * made while a range pill was in flight took the range back. Every press on a page now
+ * builds on the newest one asked for (src/lib/page-asks.ts). The writes are held
+ * (`delayServerActions`) so "faster than the server" is every run, not one in fifteen.
+ */
+test("a range pill and two view presses made before any lands all take", async ({ page }) => {
+  await gotoHydrated(page, "/investments");
+  const range = page.getByRole("group", { name: "Chart range" }).first();
+  const view = page.getByRole("group", { name: "Portfolio chart view" });
+  const lens = page.getByRole("group", { name: "Portfolio lens" });
+  await expect(view.getByRole("button", { name: "Value" })).toHaveAttribute("aria-pressed", "true");
+
+  // the panel is live: a range pill flips on the client, with no server round trip
+  await expect(async () => {
+    await range.getByRole("button", { name: "1 month" }).click();
+    await expect(range.getByRole("button", { name: "1 month" })).toHaveAttribute("aria-pressed", "true", {
+      timeout: 1_000,
+    });
+  }).toPass({ timeout: 30_000 });
+
+  await delayServerActions(page);
+  await view.getByRole("button", { name: "Return" }).click();
+  await lens.getByRole("button", { name: "Table" }).click(); // Return is still being written
+  await expect(view.getByRole("button", { name: "Return" })).toHaveAttribute("aria-pressed", "true");
+  await expect(lens.getByRole("button", { name: "Table" })).toHaveAttribute("aria-pressed", "true");
+  await expect(page.getByRole("table", { name: /Portfolio return by day/ })).toBeVisible();
+  await expect(page).toHaveURL(/[?&]view=returns\b/);
+  await expect(page).toHaveURL(/[?&]lens=table\b/);
+  await expect(page).toHaveURL(/[?&]range=1M\b/);
+
+  // both were written, not just drawn: a fresh visit with no params opens on them
+  await gotoHydrated(page, "/investments");
+  await expect(page.getByRole("table", { name: /Portfolio return by day/ })).toBeVisible();
+
+  // restore the defaults for sibling specs, each press proved
+  await pressView(page, "Portfolio lens", "Chart");
+  await pressView(page, "Portfolio chart view", "Value");
+  await gotoHydrated(page, "/investments");
+  await expect(page.getByRole("slider", { name: /Portfolio value over time/ })).toBeVisible();
+});
+
 async function holdingPillPressed(page: Page, name: "Price" | "Return"): Promise<boolean> {
   const btn = page.getByRole("group", { name: "Holding chart view" }).getByRole("button", { name });
   return (await btn.getAttribute("aria-pressed")) === "true";

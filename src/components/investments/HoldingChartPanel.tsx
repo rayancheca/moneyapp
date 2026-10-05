@@ -9,7 +9,7 @@ import { Icon } from "@/components/shell/Icon";
 import { NumberRoll } from "@/components/ui/NumberRoll";
 import { ViewSwitcher } from "@/components/ui/ViewSwitcher";
 import { useViewState } from "@/hooks/useViewState";
-import { viewHrefQuery, type ViewState } from "@/lib/view-state";
+import type { ViewState } from "@/lib/view-state";
 import { DEFAULT_BENCHMARK } from "@/lib/benchmark-symbol";
 import type { ChartRange } from "@/lib/chart-range";
 import { carriedFromDay } from "@/lib/price-series";
@@ -102,7 +102,7 @@ export function HoldingChartPanel({
   benchmarkSymbol,
   session,
 }: HoldingChartPanelProps) {
-  const { state, setView } = useViewState({
+  const { state, setView, setParam } = useViewState({
     surface: HOLDING_SURFACE,
     spec: HOLDING_VIEW_SPEC,
     state: viewState,
@@ -148,14 +148,10 @@ export function HoldingChartPanel({
   // one overlay per framing: % → buy-and-hold TWR, $ → the flow-replay gains
   const compareLine = benchmarkCompare ?? replayCompare;
 
-  // the picker's target href on THIS holding's route (bench dropped at the default)
-  const hrefForBenchmark = useCallback(
-    (symbol: string): string => {
-      const { bench: _bench, ...rest } = baseParams;
-      const params = symbol === DEFAULT_BENCHMARK ? rest : { ...rest, bench: symbol };
-      return `${basePath}${viewHrefQuery(HOLDING_VIEW_SPEC, state, params)}`;
-    },
-    [baseParams, basePath, state],
+  // the picker's navigation on THIS holding's route (bench dropped at the default)
+  const showBenchmark = useCallback(
+    (symbol: string) => setParam("bench", symbol === DEFAULT_BENCHMARK ? null : symbol),
+    [setParam],
   );
 
   // PRICE view: the window's per-share price change (a single security's price
@@ -349,7 +345,7 @@ export function HoldingChartPanel({
               the four-control return view on narrow screens. */}
           <div className="mb-3 flex flex-wrap items-center justify-end gap-2 pr-9">
             {canShowReturns && isReturns && !isTable && (
-              <BenchmarkPicker value={benchmarkSymbol} hrefFor={hrefForBenchmark} hasData={benchmark != null} />
+              <BenchmarkPicker value={benchmarkSymbol} onPicked={showBenchmark} hasData={benchmark != null} />
             )}
             {canShowReturns && isReturns && (
               <ViewSwitcher
