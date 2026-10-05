@@ -6,7 +6,8 @@ import { addCalendarMonths, monthKey, todayIso } from "@/lib/dates";
 import { formatDayShortIn } from "@/lib/format-date";
 import { levelledMonthlyCents } from "@/lib/income-basis";
 import { wholeToleranceDays } from "@/lib/recurring-step";
-import { activeTxnsInRange } from "./analytics";
+import { outsidePortfolioCashAccountIds } from "./accounts";
+import { activeTxnsInRange, isAgentsCostSeries } from "./analytics";
 import { COMMITTED_KINDS, SPEND_BASELINE_MONTHS, baselineWindow } from "./committed";
 import {
   effectiveSeries,
@@ -221,6 +222,7 @@ export function subscriptionsCard(
   months: number = POSTED_WINDOW_MONTHS,
 ): SubscriptionsCard | null {
   const kinds = new Set<string>(COMMITTED_KINDS);
+  const agentsCash = outsidePortfolioCashAccountIds(db);
   const rows = db
     .select()
     .from(recurringSeries)
@@ -231,7 +233,9 @@ export function subscriptionsCard(
     // so committing it here would count money that never leaves, and `other` is
     // the catch-all where a misread transfer lands. committed.ts states the
     // rule and measured what the looser filter cost.
-    .filter((s) => kinds.has(s.kind));
+    .filter((s) => kinds.has(s.kind))
+    // ⚖️ …and HIS: what the agent's cash pays is not his subscription (`isAgentsCostSeries`, owner decision 2026-10-02)
+    .filter((s) => !isAgentsCostSeries(agentsCash, s));
 
   // a ledger with no recurring commitments has nothing to say here, and a card
   // of zeroes is worse than no card (the rule carCard already follows)

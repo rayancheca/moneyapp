@@ -13,6 +13,7 @@ import { allocationsFor } from "@/lib/transaction-splits";
 import { accountLiquidity, cashPosition, listAccountOptions, outsidePortfolioCashAccountIds } from "./accounts";
 import {
   isAgentsCostCategoryRow,
+  isAgentsCostSeries,
   isAgentsIncome,
   isAgentsIncomeSeries,
   isIncome,
@@ -135,8 +136,8 @@ interface ForecastLeg {
    */
   agentsCents: number;
   /**
-   * What this leg projects the AGENT'S cash pays, net-worth-signed (≤ 0), by the rule that projects his spending
-   * (`MonthForecast.agentsCosts`).
+   * What this leg projects the AGENT'S cash pays, net-worth-signed (≤ 0), by the rules that project his spending —
+   * the pace, the schedule and its arrears (`MonthForecast.agentsCosts`).
    *
    * ⚖️ Owner decision 2026-10-02 (§6A 34): not his spending (`spendingBucket`), so it is no line — not in Spending,
    * not in the net — and never EOM cash. Net worth pays the agent's costs, so EOM net worth subtracts it, as the bridge
@@ -328,8 +329,8 @@ export interface MonthForecast {
    */
   agentsIncome: AgentsIncome;
   /**
-   * What the AGENT'S cash is projected to PAY — by the pace that projects his spending — which each reading's EOM net
-   * worth counts and its Spending and Net do not. Net-worth-signed, so ≤ 0.
+   * What the AGENT'S cash is projected to PAY — by the series and the pace that project his spending — which each
+   * reading's EOM net worth counts and its Spending and Net do not. Net-worth-signed, so ≤ 0.
    *
    * ⚖️ Owner decision 2026-10-02 (§6A 34): not his spending (`spendingBucket`); and net worth pays it, which is why the
    * bridge names it on a band of its own. So for the running month
@@ -422,6 +423,7 @@ function fixedComponents(
   const components: { component: ForecastComponent; firstDate: string }[] = [];
   let cashCents = 0;
   let agentsCents = 0;
+  let agentsCostCents = 0;
   const outsideAccountIds = new Set<string>();
   for (const series of live) {
     if (!seriesIsIncomeOrSpending(series.kind)) continue;
@@ -508,6 +510,14 @@ function fixedComponents(
       agentsCents += cents;
       continue;
     }
+    /*
+     * ⚖️ …nor is what it pays his bill (`isAgentsCostSeries`, owner decision 2026-10-02): the agent's Gold fee is no
+     * line of his — not "Projected spending", not the net — and goes to EOM net worth alone, by the same walk.
+     */
+    if (isAgentsCostSeries(agentsCash, series)) {
+      agentsCostCents += cents;
+      continue;
+    }
     // still his bill, and still in the net — but one charged to an account
     // outside cash does not come out of EOM cash (`accountsOutsideCash`)
     if (series.accountId !== null && outside.has(series.accountId)) outsideAccountIds.add(series.accountId);
@@ -533,7 +543,7 @@ function fixedComponents(
     cashCents,
     outsideAccountIds,
     agentsCents,
-    agentsCostCents: 0,
+    agentsCostCents,
   };
 }
 
@@ -574,7 +584,7 @@ function arrearsComponents(
   db: AppDatabase,
   today: string,
   monthStart: string,
-  outside: ReadonlySet<string>,
+  { outside, agentsCash }: ForecastReads,
 ): ForecastLeg {
   // every live series the forecast would project; `overdueForSeries` applies the
   // money-out and lapsed rules itself, and transfers are never spending here
@@ -586,8 +596,15 @@ function arrearsComponents(
     .filter((s) => seriesIsIncomeOrSpending(s.kind));
   const byId = new Map(live.map((s) => [s.id, s]));
   const late = overdueForSeries(db, new Set(byId.keys()), monthStart, addDays(today, -1));
+  /*
+   * ⚖️ A bill of the agent's that came due and has not posted is the agent's to pay (`isAgentsCostSeries`, owner
+   * decision 2026-10-02): no line of his, and still money net worth will pay — EOM net worth alone, as the forward leg.
+   */
+  const isAgents = (s: { id: string }) => isAgentsCostSeries(agentsCash, byId.get(s.id)!);
+  const agentsCostCents = late.series.filter(isAgents).reduce((sum, s) => sum - s.amountCents, 0);
+  const his = late.series.filter((s) => !isAgents(s));
 
-  const components = late.series.map((s) => {
+  const components = his.map((s) => {
     const series = byId.get(s.id)!;
     /*
      * Exact, not an estimate: `projectOccurrences` gives every occurrence of one
@@ -608,13 +625,13 @@ function arrearsComponents(
   // still owed, and still not EOM cash
   let cashCents = 0;
   const outsideAccountIds = new Set<string>();
-  for (const s of late.series) {
+  for (const s of his) {
     const accountId = byId.get(s.id)!.accountId;
     if (accountId !== null && outside.has(accountId)) outsideAccountIds.add(accountId);
     else cashCents -= s.amountCents;
   }
   // money-out only (`overdueForSeries`), so nothing here is anyone's income
-  return { components, cashCents, outsideAccountIds, agentsCents: 0, agentsCostCents: 0 };
+  return { components, cashCents, outsideAccountIds, agentsCents: 0, agentsCostCents };
 }
 
 /** Trailing rows summed per bucket and month, twice — see `bucketTrailing`. */
@@ -1142,7 +1159,7 @@ function currentMonthParts(db: AppDatabase, today: string, reads: ForecastReads)
       [
         // arrears first: they are dated before every forward occurrence, and the
         // math table reads in the order this array is built
-        arrearsComponents(db, today, monthStart, reads.outside),
+        arrearsComponents(db, today, monthStart, reads),
         fixedComponents(db, today, today, monthEnd, reads),
       ],
       [

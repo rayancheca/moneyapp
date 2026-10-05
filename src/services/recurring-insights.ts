@@ -5,7 +5,7 @@ import { rankFact, scalarFact, shareFact, type Fact } from "@/lib/insight-facts"
 import { isPrintableName } from "@/lib/printable-name";
 import { seriesIsIncomeOrSpending } from "@/lib/series-kind";
 import { outsidePortfolioCashAccountIds } from "./accounts";
-import { isAgentsIncomeSeries } from "./analytics";
+import { isAgentsSeries } from "./analytics";
 import { surfaceInsights, type InsightInput } from "./insight-surface";
 import type { InsightCandidate, SurfaceInsights } from "./insights";
 import { provenanceFor } from "./provenance";
@@ -136,7 +136,8 @@ export function recurringInsightInput(
   /*
    * ⚖️ The deposit set is "what YOUR scheduled deposits bring in", and what the agent's cash is paid is not his
    * (`isAgentsIncomeSeries`, owner decision 2026-09-28, §6A 27): no member of either set, and its own page ranks it
-   * among nothing. 🔴 Counted as a deposit, the agent's month-end interest made his pay "the largest of 2".
+   * among nothing. 🔴 Counted as a deposit, the agent's month-end interest made his pay "the largest of 2". Nor is
+   * what the agent's cash pays one of his commitments (`isAgentsSeries`, owner decision 2026-10-02, §6A 34).
    *
    * ⚖️ Nor is a transfer series, either leg: it moves his money between his own accounts, so it is neither what he
    * pays nor what he is paid (`seriesIsIncomeOrSpending`, the rule the forecast card's net applies; `committed.ts`
@@ -150,7 +151,7 @@ export function recurringInsightInput(
   const agentsCash = outsidePortfolioCashAccountIds(db);
   const isIncome = self.kind === "income";
   const onSide = (s: SeriesView): boolean =>
-    seriesIsIncomeOrSpending(s.kind) && (s.kind === "income") === isIncome && !isAgentsIncomeSeries(agentsCash, s);
+    seriesIsIncomeOrSpending(s.kind) && (s.kind === "income") === isIncome && !isAgentsSeries(agentsCash, s);
   if (!onSide(self)) return null;
   const side = all.filter((s) => isLive(s, rows.get(s.id), today) && onSide(s));
   if (side.length < MIN_SERIES_TO_COMPARE) return null;

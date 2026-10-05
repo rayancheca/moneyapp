@@ -15,9 +15,10 @@ interface UpcomingListProps {
  * Every detected|confirmed series is here, stale evidence included — see
  * services/recurring.ts::upcomingOccurrences for why filtering would be the
  * dishonest option. Each late row is marked, and a collapsed footer names
- * what is late and why. The one series left out is not his: an income series
- * on the agent's cash (owner decision 2026-09-28), which no Income of his and
- * no 30-day net counts.
+ * what is late and why. The series left out are not his: any series on the
+ * agent's cash, what it is paid or what it pays (`isAgentsSeries`, owner
+ * decisions 2026-09-28 and 2026-10-02), which no figure of his and no 30-day
+ * net counts.
  *
  * ⚖️ A transfer series is LISTED and left out of the net: money moving between
  * his own accounts is never income or spending (`seriesIsIncomeOrSpending`), the

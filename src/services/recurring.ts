@@ -19,7 +19,7 @@ import {
   stepsToReach,
 } from "@/lib/recurring-step";
 import { outsidePortfolioCashAccountIds } from "./accounts";
-import { isAgentsIncomeSeries } from "./analytics";
+import { isAgentsSeries } from "./analytics";
 /*
  * ⚠️ A cycle, on purpose: settlement walks the occurrences `projectOccurrences`
  * draws, and `upcomingOccurrences` and `listSeries` ask settlement which of them
@@ -1387,8 +1387,9 @@ export function projectOccurrences(
  * inventing a slope. recurring-calendar.ts may filter; it draws nothing rather
  * than asserting an amount, so omission there costs no information.
  *
- * ⚖️ His occurrences: an income series on the agent's cash schedules money that
- * is not his (`isAgentsIncomeSeries`, owner decision 2026-09-28, §6A 27).
+ * ⚖️ His occurrences: a series on the agent's cash schedules money that is not
+ * his — what it is paid or what it pays (`isAgentsSeries`, owner decisions
+ * 2026-09-28 and 2026-10-02, §6A 27 and 34).
  * 🔴 The /recurring Upcoming tab listed the agent's month-end interest as
  * "Income" and counted it in its 30-day net, and the dashboard's Upcoming list
  * did the same, while the forecast card above the tab left it out. Every caller
@@ -1426,7 +1427,7 @@ export function upcomingOccurrences(
     // lease and $361.49 insurance the owner registered for 2026-09-11 and that
     // have no postings yet by definition.
     .filter((s) => !(lapsedSeriesShouldStopForecasting(s.kind) && seriesHasLapsed(s, today)))
-    .filter((s) => !isAgentsIncomeSeries(agentsCash, s))
+    .filter((s) => !isAgentsSeries(agentsCash, s))
     .flatMap((s) => {
       const projected = projectOccurrences(toProjectable(s, seriesStaleness(s, today)), today, to);
       return stillToCome(db, s, projected, today);

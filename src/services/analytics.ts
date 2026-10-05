@@ -5,6 +5,7 @@ import { categories, type CategoryKind } from "@/db/schema/categories";
 import { recurringSeries, type SeriesKind } from "@/db/schema/recurring";
 import { transactions } from "@/db/schema/transactions";
 import { addDays, monthKey, periodBounds, todayIso } from "@/lib/dates";
+import { seriesIsIncomeOrSpending } from "@/lib/series-kind";
 import { outsidePortfolioCashAccountIds } from "./accounts";
 import { activeSplitsInRange } from "./transaction-splits";
 
@@ -145,6 +146,11 @@ export function uncategorizedWhere(idx: CategoryIndex): SQL {
  * budget's forecast without also appearing on its category page (drill-down
  * contract) — which is why the override has to be applied here rather than in
  * budgetTail, or the two surfaces would disagree.
+ *
+ * ⚖️ …and why the AGENT'S series are left out here too (`isAgentsSeries`, owner
+ * decisions 2026-09-28 and 2026-10-02): its rows are none of his category's
+ * (`spendingTransactions`), so its schedule is none of his budget's tail or
+ * overdue, his forecast or his category page's card.
  */
 export function recurringSeriesIdsForCategory(db: AppDatabase, categoryId: string): Set<string> {
   return recurringSeriesIdsForSubtree(db, loadCategoryIndex(db).subtreeIds(categoryId));
@@ -178,6 +184,7 @@ export function recurringSeriesIdsForSubtree(db: AppDatabase, subtree: readonly 
     .where(isNotNull(recurringSeries.userCategoryId))
     .all();
   const overriddenIds = new Set(overridden.map((r) => r.id));
+  const agents = agentsSeriesIds(db);
 
   const rows = db
     .selectDistinct({ seriesId: transactions.recurringSeriesId })
@@ -200,7 +207,21 @@ export function recurringSeriesIdsForSubtree(db: AppDatabase, subtree: readonly 
   for (const row of overridden) {
     if (row.categoryId !== null && subtree.includes(row.categoryId)) ids.add(row.id);
   }
-  return ids;
+  return new Set([...ids].filter((id) => !agents.has(id)));
+}
+
+/** The ids of every series `isAgentsSeries` names — none when no book is paired, at no cost beyond the account read. */
+function agentsSeriesIds(db: AppDatabase): ReadonlySet<string> {
+  const agentsCash = agentsCashOfRender(db);
+  if (agentsCash.size === 0) return new Set();
+  return new Set(
+    db
+      .select({ id: recurringSeries.id, kind: recurringSeries.kind, accountId: recurringSeries.accountId })
+      .from(recurringSeries)
+      .all()
+      .filter((s) => isAgentsSeries(agentsCash, s))
+      .map((s) => s.id),
+  );
 }
 
 // ── Month helpers ────────────────────────────────────────────────────
@@ -450,8 +471,9 @@ export function offAgentsCash(agentsCash: readonly string[]): SQL | undefined {
  * deposit ranking still counted the agent's series as his.
  *
  * Every reader that projects, sums, ranks or lists an income series as HIS asks this, never a copy of it:
- * `incomeExpectation`, the forecast's legs, `recurringCalendar`, `upcomingOccurrences` (the dashboard's next paycheck
- * through it), `cashEarningsReadings`, `recurringInsightInput` and `seriesInCategory` — 🔴 the last listed the agent's
+ * `incomeExpectation`, the forecast's legs and `cashEarningsReadings` directly; `recurringCalendar`,
+ * `upcomingOccurrences` (the dashboard's next paycheck through it), `recurringInsightInput` and a category's series
+ * (`recurringSeriesIdsForSubtree`, so `seriesInCategory`) through `isAgentsSeries` — 🔴 the last listed the agent's
  * month-end interest under `/categories/<Income>` beside his pay. The readers that must see every series do not:
  * /recurring's table, where the owner confirms or dismisses one, and a row's series picker.
  *
@@ -463,6 +485,43 @@ export function isAgentsIncomeSeries(
   series: { readonly kind: SeriesKind; readonly accountId: string | null },
 ): boolean {
   return series.kind === "income" && series.accountId !== null && agentsCash.has(series.accountId);
+}
+
+/**
+ * Whether a recurring series schedules the AGENT'S costs rather than his bills: a spending series — any kind but
+ * income and transfer (`seriesIsIncomeOrSpending`) — on the agent's cash account. `spendingBucket`'s account half,
+ * asked of a schedule instead of a row; `isAgentsIncomeSeries`' mirror. A series with no account reads as his.
+ *
+ * ⚖️ Owner decision 2026-10-02 (§6A 34). 🔴 Detected on the agent's cash, its monthly Gold fee was a Fees bill of his
+ * on the forecast card ("came due Oct 1 and has not posted"), /budgets' overdue and tail, Predict budgets, the runway's
+ * committed bills, the subscriptions card, both Upcoming lists, the calendar and a series page's ranking.
+ *
+ * ⛔ Not "drop the series". Net worth pays the agent's costs, so the forecast still counts what it charges in EOM net
+ * worth (`MonthForecast.agentsCosts`), as the bridge names the agent's costs on a band of their own.
+ */
+export function isAgentsCostSeries(
+  agentsCash: ReadonlySet<string>,
+  series: { readonly kind: SeriesKind; readonly accountId: string | null },
+): boolean {
+  return (
+    seriesIsIncomeOrSpending(series.kind) &&
+    series.kind !== "income" &&
+    series.accountId !== null &&
+    agentsCash.has(series.accountId)
+  );
+}
+
+/**
+ * Whether a series schedules the agent's money at all — what it is paid (`isAgentsIncomeSeries`) or what it pays
+ * (`isAgentsCostSeries`). The rule for every reader that lists, sums or ranks a schedule as HIS and draws neither:
+ * the calendar, the Upcoming lists (and the dashboard's through them), a series page's ranking, and a category's
+ * series (`recurringSeriesIdsForSubtree`). The forecast routes each half apart, into EOM net worth.
+ */
+export function isAgentsSeries(
+  agentsCash: ReadonlySet<string>,
+  series: { readonly kind: SeriesKind; readonly accountId: string | null },
+): boolean {
+  return isAgentsIncomeSeries(agentsCash, series) || isAgentsCostSeries(agentsCash, series);
 }
 
 // ── Monthly spending (stacked-bar source) ────────────────────────────

@@ -11,6 +11,7 @@ import { accounts } from "@/db/schema/accounts";
 import { categories } from "@/db/schema/categories";
 import { institutions } from "@/db/schema/institutions";
 import { merchants } from "@/db/schema/merchants";
+import { recurringSeries, type Cadence, type SeriesKind } from "@/db/schema/recurring";
 import { transactions } from "@/db/schema/transactions";
 import { ATTRIBUTION_BAND_LABEL, ATTRIBUTION_BAND_MEANING, ATTRIBUTION_BAND_ORDER } from "@/lib/attribution";
 import { dedupeHash } from "@/lib/hash";
@@ -27,9 +28,11 @@ import {
 } from "./analytics";
 import { addManualAnchor } from "./anchors";
 import { netWorthAttribution } from "./attribution";
-import { budgetStatuses, createBudget } from "./budgets";
+import { budgetPaceStatuses, budgetStatuses, createBudget } from "./budgets";
 import { predictCategory } from "./category-forecast";
-import { categoryFlowSign, categoryMonthlyTrend, categorySubcategorySplit } from "./category-detail";
+import { categoryFlowSign, categoryMonthlyTrend, categorySubcategorySplit, seriesInCategory } from "./category-detail";
+import { runwayCard } from "./committed";
+import { dashboardData } from "./dashboard";
 import { netWorthSeries, rebuildAccount } from "./derivation";
 import { eatingOutCard } from "./eating-out";
 import { feesCard } from "./fees-card";
@@ -40,7 +43,11 @@ import { noticesCard } from "./notices-card";
 import { ledgerOpens, ledgerReaches } from "./observation-frontier";
 import { periodActivity } from "./period-activity";
 import { provenanceFor } from "./provenance";
+import { upcomingOccurrences } from "./recurring";
+import { calendarMonthFlow, recurringCalendar } from "./recurring-calendar";
+import { recurringInsightInput } from "./recurring-insights";
 import { spendingSankey } from "./sankey";
+import { subscriptionsCard } from "./subscriptions-card";
 import { cashFlowByPeriod, dailySpendHeatmap, largestTransactions, periodTotals, topMerchants } from "./spending";
 import { matchingTransactionIds } from "./transactions-query";
 import { setSplits } from "./transaction-splits";
@@ -592,5 +599,227 @@ describe("the rule's halves, at its home", () => {
     const without = predictCategory(bundle.db, catId("Fees"), "Fees", TODAY);
     expect(paired.forecast).toEqual(without.forecast);
     expect(unpaired.forecast.expectedTotalCents).toBeGreaterThan(without.forecast.expectedTotalCents);
+  });
+});
+
+/** A recurring series as detection or the owner leaves one: the fields every projection reads. */
+function schedule(input: {
+  name: string;
+  kind: SeriesKind;
+  accountId: string;
+  merchantId?: string;
+  cadence: Cadence;
+  intervalDaysAvg: number;
+  nextExpectedOn: string;
+  nextExpectedAmountCents: number;
+  lastMatchedOn: string;
+  status: "detected" | "confirmed";
+}): string {
+  return bundle.db
+    .insert(recurringSeries)
+    // detection writes the average it measured beside the amount it expects
+    .values({ toleranceDays: 3, amountCentsAvg: input.nextExpectedAmountCents, ...input })
+    .returning({ id: recurringSeries.id })
+    .get().id;
+}
+
+/** link a posted row to a series, as detection links the row it read the schedule off */
+function link(seriesId: string, accountId: string, postedOn: string): void {
+  bundle.db
+    .update(transactions)
+    .set({ recurringSeriesId: seriesId })
+    .where(and(eq(transactions.accountId, accountId), eq(transactions.postedOn, postedOn)))
+    .run();
+}
+
+const LEASE = "Car lease";
+const INSURANCE = "Car insurance";
+
+/** his two car bills, as he registered them: the lease $695.04 on the 15th, the insurance $357.58 on the 11th */
+function hisCar(): { lease: string; insurance: string } {
+  const bill = (name: string, day: string, cents: number) =>
+    schedule({
+      name,
+      kind: "bill",
+      accountId: wellsFargo,
+      cadence: "monthly",
+      intervalDaysAvg: 30,
+      nextExpectedOn: `2026-10-${day}`,
+      nextExpectedAmountCents: -cents,
+      lastMatchedOn: `2026-09-${day}`,
+      status: "confirmed",
+    });
+  return { lease: bill(LEASE, "15", 69_504), insurance: bill(INSURANCE, "11", 35_758) };
+}
+
+const GOLD = "Gold Monthly Fee";
+
+/**
+ * The agent's Gold fee as detection reads it off the Sep 1 row — monthly on the 1st, $5.00 — and that row linked.
+ * October's has not posted: read on Oct 5, it came due on the 1st.
+ */
+function agentsGold(): string {
+  const id = schedule({
+    name: GOLD,
+    kind: "subscription",
+    accountId: agentic,
+    merchantId: gold,
+    cadence: "monthly",
+    intervalDaysAvg: 30,
+    nextExpectedOn: "2026-10-01",
+    nextExpectedAmountCents: -AGENTS_FEE,
+    lastMatchedOn: "2026-09-01",
+    status: "detected",
+  });
+  link(id, agentic, "2026-09-01");
+  return id;
+}
+
+describe("the agent's cost SERIES is not his bill either", () => {
+  /*
+   * §6A 27's income series, mirrored: every reader that projects, sums, ranks or lists a spending series as HIS read
+   * every live series. Detected on the agent's cash, its Gold fee was a Fees bill of his on the forecast (October's
+   * came due and "has not posted"), /budgets' overdue and tail, Predict budgets, the runway's committed bills, the
+   * Upcoming lists and the dashboard's "before your next paycheck".
+   */
+  test("⛔ a series detected on the agent's cash moves no figure that projects his bills", () => {
+    hisCar();
+    createBudget(bundle.db, { categoryId: catId("Fees"), period: "monthly", amountCents: 5_000, startsOn: SEPT.from });
+    const read = () => {
+      const f = forecastCurrentMonth(bundle.db, TODAY);
+      const nov = forecastForMonth(bundle.db, "2026-11", TODAY)!;
+      const fees = budgetPaceStatuses(bundle.db, TODAY).find((b) => b.categoryName === "Fees")!;
+      return {
+        forecast: {
+          components: f.components,
+          committed: [f.committed.spendCents, f.committed.netCents, f.committed.eomCashCents],
+          pace: [f.projectedSpendCents, f.projectedNetCents, f.projectedEomCashCents],
+        },
+        nov: { components: nov.components, committed: nov.committed.spendCents },
+        budget: { tail: fees.tail, overdue: fees.overdue, projected: fees.projectedCents },
+        predict: predictCategory(bundle.db, catId("Fees"), "Fees", TODAY).forecast,
+        runway: runwayCard(bundle.db, TODAY),
+        upcoming: upcomingOccurrences(bundle.db, TODAY, 30),
+        // the dashboard's next 14 days, read on Oct 25 so that they hold the agent's Nov 1
+        dashboard: dashboardData(bundle.db, "2026-10-25").upcoming,
+      };
+    };
+    const before = read();
+    // Oct 5 through Nov 3: his two car bills, and — once detected — the agent's Nov 1 Gold fee
+    expect(before.upcoming.map((o) => `${o.date} ${o.name}`)).toEqual([`2026-10-11 ${INSURANCE}`, `2026-10-15 ${LEASE}`]);
+
+    agentsGold();
+    expect(read()).toEqual(before);
+  });
+
+  test("⚖️ …and the forecast's EOM net worth still pays what the agent's series charges, as the bridge does", () => {
+    hisCar();
+    const before = forecastCurrentMonth(bundle.db, TODAY);
+    const beforeNov = forecastForMonth(bundle.db, "2026-11", TODAY)!;
+    agentsGold();
+    const after = forecastCurrentMonth(bundle.db, TODAY);
+    const afterNov = forecastForMonth(bundle.db, "2026-11", TODAY)!;
+
+    // October's Gold fee came due on the 1st and has not posted: the agent's to pay, so net worth's — and no line
+    expect(after.agentsCosts).toEqual({ netCents: -AGENTS_FEE, committedNetCents: -AGENTS_FEE });
+    expect(after.committed.eomNetWorthCents - before.committed.eomNetWorthCents).toBe(-AGENTS_FEE);
+    expect(after.projectedEomNetWorthCents - before.projectedEomNetWorthCents).toBe(
+      after.agentsCosts.netCents - before.agentsCosts.netCents,
+    );
+    expect(after.committed.eomCashCents).toBe(before.committed.eomCashCents);
+    expect(after.components.map((c) => c.label)).not.toContain(GOLD);
+    // November chains October's and its own Nov 1, on both readings, and still no line of his
+    expect(afterNov.agentsCosts).toEqual({ netCents: -2 * AGENTS_FEE, committedNetCents: -2 * AGENTS_FEE });
+    expect(afterNov.committed.eomNetWorthCents - beforeNov.committed.eomNetWorthCents).toBe(-2 * AGENTS_FEE);
+    expect(afterNov.committed.spendCents).toBe(beforeNov.committed.spendCents);
+  });
+
+  test("the rule's own edge: unpaired, the account is his, and so is the series", () => {
+    hisCar();
+    agentsGold();
+    unpair();
+    const f = forecastCurrentMonth(bundle.db, TODAY);
+    expect(f.components.map((c) => c.label)).toContain(GOLD);
+    expect(f.agentsCosts).toEqual({ netCents: 0, committedNetCents: 0 });
+    expect(upcomingOccurrences(bundle.db, TODAY, 30).map((o) => o.name)).toContain(GOLD);
+    expect(predictCategory(bundle.db, catId("Fees"), "Fees", TODAY).forecast.recurringCents).toBe(
+      AGENTS_FEE,
+    );
+  });
+
+  test("⛔ /recurring: the strip's \"as scheduled\" is the card's net, and the grid draws no day of the agent's", () => {
+    hisCar();
+    agentsGold();
+    const NOV = "2026-11";
+    const read = () => {
+      const month = recurringCalendar(bundle.db, NOV, TODAY);
+      return {
+        cardNet: forecastForMonth(bundle.db, NOV, TODAY)!.committed.netCents,
+        asScheduled: calendarMonthFlow(month, TODAY).endCents,
+        drawn: Object.entries(month.entriesByDay)
+          .flatMap(([day, entries]) => entries.map((e) => `${day} ${e.name}`))
+          .sort(),
+      };
+    };
+    const car = [`2026-11-11 ${INSURANCE}`, `2026-11-15 ${LEASE}`];
+    expect(read()).toEqual({ cardNet: -(69_504 + 35_758), asScheduled: -(69_504 + 35_758), drawn: car });
+
+    unpair();
+    expect(read()).toEqual({
+      cardNet: -(69_504 + 35_758 + AGENTS_FEE),
+      asScheduled: -(69_504 + 35_758 + AGENTS_FEE),
+      drawn: [`2026-11-01 ${GOLD}`, ...car],
+    });
+  });
+
+  test("⛔ …nor its posted fee: no mark and no Settled cent in September", () => {
+    hisCar();
+    const read = () => recurringCalendar(bundle.db, "2026-09", TODAY);
+    const before = read();
+    agentsGold();
+    expect(read()).toEqual(before);
+  });
+
+  test("⛔ /categories/<Fees>'s Recurring series card, a budget's recurring spend and the subscriptions card", () => {
+    hisCar();
+    createBudget(bundle.db, { categoryId: catId("Fees"), period: "monthly", amountCents: 5_000, startsOn: SEPT.from });
+    const subscriptions = () => subscriptionsCard(bundle.db, TODAY);
+    const before = subscriptions();
+    const series = agentsGold();
+    // hypothetical: a second charge of the agent's, split across two categories and linked to the same series
+    post(agentic, "2026-09-20", -1_000, "Fees > Bank Fees", "Gold Monthly Fee and margin");
+    const split = bundle.db.select().from(transactions).where(eq(transactions.postedOn, "2026-09-20")).get()!;
+    setSplits(bundle.db, split.id, [
+      { categoryId: catId("Fees > Bank Fees"), amountCents: -600 },
+      { categoryId: catId("Shopping > General"), amountCents: -400 },
+    ]);
+    link(series, agentic, "2026-09-20");
+    expect(seriesInCategory(bundle.db, catId("Fees"), TODAY)).toEqual([]);
+    // September's Fees: his ATM fee is variable spend, and the agent's linked charges are no recurring spend of his
+    const sept = budgetPaceStatuses(bundle.db, SEPT.to).find((b) => b.categoryName === "Fees")!;
+    expect([sept.spentCents, sept.recurringPostedCents]).toEqual([HIS_FEE, 0]);
+    expect(subscriptions()).toEqual(before);
+
+    unpair();
+    expect(seriesInCategory(bundle.db, catId("Fees"), TODAY).map((s) => s.name)).toEqual([GOLD]);
+    const his = budgetPaceStatuses(bundle.db, SEPT.to).find((b) => b.categoryName === "Fees")!;
+    expect([his.spentCents, his.recurringPostedCents]).toEqual([HIS_FEE + AGENTS_FEE + 600, AGENTS_FEE + 600]);
+    expect(subscriptions()?.live.map((l) => l.name)).toContain(GOLD);
+  });
+
+  /*
+   * A series page ranks a commitment against "what your scheduled commitments cost in a year". Counted among them, the
+   * agent's Gold fee is one of his — and its own page ranks itself among his bills.
+   */
+  test("⛔ a series page's ranking: the agent's Gold fee is none of \"your scheduled commitments\"", () => {
+    const { lease } = hisCar();
+    const gold = agentsGold();
+    const among = (id: string) => recurringInsightInput(bundle.db, id, TODAY)?.facts.find((f) => f.kind === "rank");
+    expect(among(lease)).toMatchObject({ value: 1, outOf: 2 });
+    expect(recurringInsightInput(bundle.db, gold, TODAY)).toBeNull();
+
+    unpair();
+    expect(among(lease)).toMatchObject({ value: 1, outOf: 3 });
+    expect(among(gold)).toMatchObject({ value: 3, outOf: 3 });
   });
 });
