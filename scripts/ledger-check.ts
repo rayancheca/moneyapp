@@ -85,6 +85,7 @@ import { acknowledgementsMatchingNothing, linesLeftOut } from "@/services/import
 import { lineLeftOutNotice } from "@/lib/import-file-label";
 import {
   acknowledgementWrites,
+  confirmingStep,
   leftOutToken,
   planAcknowledging,
   unmatchedAcknowledgementNotice,
@@ -506,8 +507,8 @@ if (MODE.mode === "acknowledge") {
     process.exit(0);
   }
   if (!MODE.confirm) {
-    const then = MODE.reason === null ? "--reason='<what the statement shows>' --confirm" : "--confirm";
-    console.log(`\ndry run: nothing was written. Only once each line is read on its statement: the same command with ${then}`);
+    // the run that confirms it — one a mark when given several: a reason says what ONE line is
+    console.log(`\ndry run: nothing was written. ${confirmingStep(MODE.tokens, plan.open, MODE.reason).join("\n")}`);
     process.exit(0);
   }
   writeLeftOutAcknowledgements(db, acknowledgementWrites(plan.open, { ...acknowledging, reason: MODE.reason }));

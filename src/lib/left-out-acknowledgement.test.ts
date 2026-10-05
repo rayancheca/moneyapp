@@ -3,12 +3,14 @@ import { lineLeftOutNotice } from "./import-file-label";
 import {
   acknowledgementWrites,
   acknowledgementsOf,
+  confirmingStep,
   leftOutToken,
   planAcknowledging,
   unmatchedAcknowledgementNotice,
   type AcknowledgeableLine,
   type LeftOutAcknowledgement,
 } from "./left-out-acknowledgement";
+import { ledgerCheckMode } from "./witness-floor";
 
 /**
  * ⚖️ Owner, 2026-10-02 (§6A 30): a line left out may be ACKNOWLEDGED once a session has read it on the statement —
@@ -271,6 +273,87 @@ describe("planAcknowledging — the guarded write, a dry run first", () => {
     const plan = planAcknowledging([line()], [leftOutToken(line()), "0123456789"], TODAY);
     expect(plan.unmatched).toEqual(["0123456789"]);
     expect(plan.lines).toContain("0123456789: no line left out carries this mark — the ledger moved, or it was mistyped");
+  });
+});
+
+/** the arguments a printed run passes, as the shell reads them: `--reason='a b'` is one argument, its quotes gone */
+const shellArgs = (text: string): string[] =>
+  [...text.matchAll(/--[a-z-]+(?:='[^']*'|=\S+)?/g)].map(([arg]) => arg.replace(/^(--[a-z-]+=)'(.*)'$/, "$1$2"));
+
+/**
+ * Every run a dry run's last words name, as the command line it is: "the same command with <args>" adds them to the dry
+ * run's own; one run a mark, each on its own line, takes those in place of the dry run's.
+ */
+const runsNamed = (step: readonly string[], dryRun: readonly string[]): string[][] => {
+  const [said, ...runs] = step;
+  if (runs.length > 0) return runs.map(shellArgs);
+  return [[...dryRun, ...shellArgs(said!.slice(said!.indexOf("the same command with ")))]];
+};
+
+describe("confirmingStep — what a dry run ends with: the run that confirms it", () => {
+  const COFFEE = line({
+    rowId: "row-coffee",
+    amountCents: -1000,
+    description: "Coffee Roasters 12",
+    printings: [{ sha256: RE_DOWNLOAD, printedOn: "2026-07-27", words: "COFFEE ROASTERS 12" }],
+  });
+  const [OPENING_MARK, COFFEE_MARK] = [leftOutToken(line()), leftOutToken(COFFEE)];
+  const ONE_A_RUN =
+    "Only once each line is read on its statement, one run a mark — a reason says what ONE line is: the same command " +
+    "with these arguments in place of its own:";
+  const runOf = (mark: string) => `    --acknowledge-left-out=${mark} --reason='<what the statement shows>' --confirm`;
+
+  test("one mark, no reason yet: the same command with what the statement shows, and --confirm", () => {
+    expect(confirmingStep([OPENING_MARK], [line()], null)).toEqual([
+      "Only once each line is read on its statement: the same command with --reason='<what the statement shows>' --confirm",
+    ]);
+  });
+
+  test("one mark with its reason: the same command with --confirm", () => {
+    expect(confirmingStep([OPENING_MARK], [line()], READ_IT)).toEqual([
+      "Only once each line is read on its statement: the same command with --confirm",
+    ]);
+  });
+
+  /*
+   * 🔴 After two marks it said "the same command with --reason='<what the statement shows>' --confirm", and the command
+   * line refuses a reason beside two marks — a reason says what ONE line is (`ledgerCheckMode`): the step it guided the
+   * session to was a refusal, exit 2. Probe on a scratch ledger at 266be8e.
+   */
+  test("⛔ two marks: one run a mark, each with its own reason — never the same command with one reason for both", () => {
+    expect(confirmingStep([OPENING_MARK, COFFEE_MARK], [line(), COFFEE], null)).toEqual([
+      ONE_A_RUN,
+      runOf(OPENING_MARK),
+      runOf(COFFEE_MARK),
+    ]);
+  });
+
+  test("a mark whose lines are acknowledged already takes no run; two lines alike take one, under their one mark", () => {
+    expect(confirmingStep([OPENING_MARK, COFFEE_MARK], [COFFEE], null)).toEqual([ONE_A_RUN, runOf(COFFEE_MARK)]);
+    const twins = [line(), line({ rowId: "row-twin" }), COFFEE];
+    expect(confirmingStep([OPENING_MARK, COFFEE_MARK], twins, null)).toEqual([ONE_A_RUN, runOf(OPENING_MARK), runOf(COFFEE_MARK)]);
+  });
+
+  test("⛔ every run it names is one the command line takes as a --confirm — and together they confirm every open line", () => {
+    const done = line({ acknowledged: { on: "2026-10-04", reason: "Printed on the July statement." } });
+    const twins = [line(), line({ rowId: "row-twin" })];
+    const ledgers: [AcknowledgeableLine[], string[], string | null][] = [
+      [[line()], [OPENING_MARK], null],
+      [[line()], [OPENING_MARK], READ_IT],
+      [twins, [OPENING_MARK], null],
+      [[line(), COFFEE], [OPENING_MARK, COFFEE_MARK], null],
+      [[done, COFFEE], [OPENING_MARK, COFFEE_MARK], null],
+      [[...twins, COFFEE], [COFFEE_MARK, OPENING_MARK], null],
+    ];
+    for (const [lines, marks, reason] of ledgers) {
+      const dryRun = [`--acknowledge-left-out=${marks.join(",")}`, ...(reason === null ? [] : [`--reason=${reason}`])];
+      expect(ledgerCheckMode(dryRun)).toMatchObject({ mode: "acknowledge", confirm: false });
+      const { open } = planAcknowledging(lines, marks, { on: "2026-10-05", reason });
+      const confirmed = runsNamed(confirmingStep(marks, open, reason), dryRun).map((run) => ledgerCheckMode(run));
+      for (const mode of confirmed) expect(mode).toMatchObject({ mode: "acknowledge", confirm: true });
+      const tokens = confirmed.flatMap((mode) => (mode.mode === "acknowledge" ? mode.tokens : []));
+      expect(new Set(tokens)).toEqual(new Set(open.map(leftOutToken)));
+    }
   });
 });
 

@@ -75,6 +75,9 @@ export function acknowledgedOf(ack: LeftOutAcknowledgement): Acknowledged {
 /** The mark ledger-check prints beside a line, and `--acknowledge-left-out=<mark>` takes. */
 export const LEFT_OUT_TOKEN = /^[0-9a-f]{10}$/;
 
+/** how a printed step asks for what the session read on the statement */
+const SAYS = "--reason='<what the statement shows>'";
+
 /** What an acknowledgement of `line` is keyed by: its first printer's printing of it. */
 function keyOf(line: KeyedLine): Omit<LeftOutAcknowledgementWrite, "description" | "acknowledgedOn" | "reason"> {
   const first = line.printings[0]!;
@@ -193,13 +196,36 @@ export function planAcknowledging(
       const { on, reason } = acknowledging;
       const stores =
         reason === null
-          ? "stores no reason yet — --confirm needs --reason='<what the statement shows>', printed with the line from then on"
+          ? `stores no reason yet — --confirm needs ${SAYS}, printed with the line from then on`
           : `stores, printed with the line from now on — ${acknowledgedSentence({ on, reason })}`;
       said.push(`${token}: acknowledges ${alike}${lineLeftOutNotice(unacknowledged[0]!)}`, `${token}: ${stores}`);
       open.push(...unacknowledged);
     }
   }
   return { open, lines: said, unmatched };
+}
+
+/**
+ * What a dry run ends with: the run that confirms it, once each line is read on its statement — `tokens` the marks the
+ * dry run was given, `open` its plan's open lines, `reason` its `--reason`.
+ *
+ * 🔴 It said "the same command with --reason='<what the statement shows>' --confirm" whenever no reason was given, and
+ * the command line refuses a reason beside two marks — a reason says what ONE line is (`ledgerCheckMode`): after a dry
+ * run of two marks, the step it guided the session to was a refusal, exit 2 (probe on a scratch ledger at 266be8e). Now
+ * several marks take one run each, a mark whose lines are all acknowledged already none, and each run names its own.
+ * ⛔ Each is "the same command" with other arguments, never a whole command: a dry run pointed at a copy by
+ * MONEYAPP_DB_PATH confirms on that copy, never on whatever ledger a pasted `pnpm ledger-check` would open.
+ */
+export function confirmingStep(tokens: readonly string[], open: readonly KeyedLine[], reason: string | null): string[] {
+  if (tokens.length === 1) {
+    return [`Only once each line is read on its statement: the same command with ${reason === null ? `${SAYS} ` : ""}--confirm`];
+  }
+  const marks = [...new Set(open.map(leftOutToken))];
+  return [
+    "Only once each line is read on its statement, one run a mark — a reason says what ONE line is: the same command " +
+      "with these arguments in place of its own:",
+    ...marks.map((mark) => `    --acknowledge-left-out=${mark} ${SAYS} --confirm`),
+  ];
 }
 
 /** The rows `--confirm` writes for a plan's `open` lines: each keyed by its first printer, with the day and the reason. */
