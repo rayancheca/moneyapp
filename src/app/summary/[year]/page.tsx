@@ -12,7 +12,7 @@ import { SurfaceCard } from "@/components/ui/SurfaceCard";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { YearSpendingCard } from "@/components/summary/YearSpendingCard";
 import { yearSpendingView } from "@/services/year-insights";
-import { gamblingNote, summaryYears, yearSummaryView } from "@/services/year-summary";
+import { gamblingLostFigure, gamblingNote, summaryYears, yearSummaryView } from "@/services/year-summary";
 import "./print.css";
 
 export const dynamic = "force-dynamic";
@@ -236,7 +236,10 @@ export default async function YearSummaryPage({
                 </div>
                 <div className="flex items-baseline justify-between gap-3">
                   <dt className="text-ink-muted">Lost</dt>
-                  <dd className="figures text-negative">−{formatCents(gambling.lostCents)}</dd>
+                  {/* no loss is "$0.00", toned as nothing happened — never "−$0.00" */}
+                  <dd className={`figures ${gambling.lostCents === 0 ? "text-ink-muted" : "text-negative"}`}>
+                    {gamblingLostFigure(gambling.lostCents)}
+                  </dd>
                 </div>
                 <div className="flex items-baseline justify-between gap-3 border-t border-line pt-1.5">
                   <dt className="font-medium">Net over {gambling.rowCount} rows</dt>
@@ -253,8 +256,9 @@ export default async function YearSummaryPage({
                     his (`gamblingFor`): what the agent's account pays is in no Spent of his
                     (owner decision 2026-10-02), so a loss there is not in Lost either.
                     ⛔ The sentence is `gamblingNote`'s: on a running year it is true over
-                    What you spent's own days alone, and says which. */}
-                {gamblingNote(gambling)}
+                    What you spent's own days alone, and says which — and it names that
+                    figure only when the card above prints it (`spending`). */}
+                {gamblingNote(gambling, spending !== null)}
               </p>
             </SurfaceCard>
           )}

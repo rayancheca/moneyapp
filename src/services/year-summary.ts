@@ -11,6 +11,7 @@ import {
 } from "@/lib/money-weighted-return";
 import type { CashFlow } from "@/lib/xirr";
 import { formatDayFull, formatDayShort } from "@/lib/format-date";
+import { formatCents } from "@/lib/money";
 import { yearSummary, type YearLineInput, type YearSummary } from "@/lib/year-summary";
 import { investmentSideAccountIds, outsidePortfolioCashAccountIds } from "./accounts";
 import { offAgentsCash } from "./analytics";
@@ -236,17 +237,30 @@ function gamblingFor(db: AppDatabase, window: YearSpendingWindow | null, agentsC
  * ⛔ "They sit inside the figure under What you spent" is true of Lost because Lost reads that figure's own days
  * (`gamblingFor`). On a running year those days stop short of December, and the sentence says so and where — a reader
  * holding Lost against the year's Gambling rows in the ledger must not have to guess why the two differ.
+ *
+ * 🔴 …and only when that figure is ON the page. The block prints whenever it holds a row; What you spent only when
+ * the year measured spending above zero (`yearSpendingView`). A year whose only Gambling row was a win printed the
+ * block alone, pointing at "the figure under What you spent" with none there. `spentShown` is the page's own test.
  */
-export function gamblingNote(gambling: YearGambling): string {
+export function gamblingNote(gambling: YearGambling, spentShown: boolean): string {
   const head =
     "Counted in none of the money-in totals above: winnings are not treated as income here. Losses are spending — " +
-    "your categories file Gambling as an expense — and they sit inside the figure under What you spent";
+    "your categories file Gambling as an expense";
+  const inside = `${head} — and they sit inside the figure under What you spent`;
   const w = gambling.window;
-  if (w === null || !w.truncated) return `${head}.`;
-  return (
-    `${head}, over the same days: ${w.from.slice(0, 4)} is still being imported, so both stop on ` +
-    `${formatDayShort(w.to)}, the last day every account you spend from has been imported through.`
-  );
+  if (w === null || !w.truncated) return spentShown ? `${inside}.` : `${head}.`;
+  const importing = `${w.from.slice(0, 4)} is still being imported`;
+  const lastDay = `${formatDayShort(w.to)}, the last day every account you spend from has been imported through.`;
+  if (!spentShown) return `${head}. ${importing}, so these figures stop on ${lastDay}`;
+  return `${inside}, over the same days: ${importing}, so both stop on ${lastDay}`;
+}
+
+/**
+ * The block's Lost, a magnitude printed as an outflow — "−$442.50" — and no loss as "$0.00": there is no such amount as
+ * negative zero dollars (`formatCents`), and a sign on nothing claims a loss that did not happen.
+ */
+export function gamblingLostFigure(lostCents: number): string {
+  return lostCents === 0 ? formatCents(0) : `−${formatCents(lostCents)}`;
 }
 
 /**

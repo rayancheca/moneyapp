@@ -19,6 +19,7 @@ import { upsertHolding } from "./holdings";
 import {
   cashJobNaming,
   externalInvestmentFlows,
+  gamblingLostFigure,
   gamblingNote,
   SUMMARY_DISCLAIMER,
   summaryYears,
@@ -485,7 +486,7 @@ describe("yearSummaryView — a running year's gambling reads the days What you 
     // the sentence's claim, measured: every cent of Lost is inside the figure under What you spent
     const spent = yearInsightInput(bundle.db, 2026, TODAY)!.facts.find((f) => f.id === "f1")!;
     expect(spent.kind === "scalar" && spent.value).toBe(gambling.lostCents);
-    expect(gamblingNote(gambling)).toBe(
+    expect(gamblingNote(gambling, true)).toBe(
       "Counted in none of the money-in totals above: winnings are not treated as income here. Losses are spending — " +
         "your categories file Gambling as an expense — and they sit inside the figure under What you spent, over the " +
         "same days: 2026 is still being imported, so both stop on Jul 31, the last day every account you spend from " +
@@ -499,7 +500,7 @@ describe("yearSummaryView — a running year's gambling reads the days What you 
     const { gambling } = yearSummaryView(bundle.db, 2025, TODAY);
     expect(gambling).toMatchObject({ lostCents: 1000, rowCount: 1 });
     expect(gambling.window).toEqual({ from: "2025-01-01", to: "2025-12-31", label: "2025", truncated: false });
-    expect(gamblingNote(gambling)).toBe(
+    expect(gamblingNote(gambling, true)).toBe(
       "Counted in none of the money-in totals above: winnings are not treated as income here. Losses are spending — " +
         "your categories file Gambling as an expense — and they sit inside the figure under What you spent.",
     );
@@ -517,6 +518,48 @@ describe("yearSummaryView — a running year's gambling reads the days What you 
       rowCount: 0,
       window: null,
     });
+  });
+});
+
+/**
+ * 🔴 The block prints whenever it holds a row, and "What you spent" only when the year measured spending above zero
+ * (`yearSpendingView`). A year whose only Gambling row is a win printed the block alone, saying its losses "sit inside
+ * the figure under What you spent" — a figure not on the page — over a Lost of "−$0.00".
+ */
+describe("yearSummaryView — a gambling block with no What you spent beside it", () => {
+  test("a year whose only gambling is a win prints no What you spent, and the block does not point at one", () => {
+    insert({ postedOn: "2025-06-02", amountCents: 15804, rawDescription: "DRAFTKINGS", categoryName: "Gambling" });
+    expect(yearSpendingView(bundle.db, YEAR, TODAY)).toBeNull();
+
+    const { gambling } = yearSummaryView(bundle.db, YEAR, TODAY);
+    expect(gambling).toMatchObject({ wonCents: 15804, lostCents: 0, netCents: 15804, rowCount: 1 });
+    // the ledger runs to that win, so 2025 is cut short there: the block still names its days, and no absent figure
+    expect(gamblingNote(gambling, false)).toBe(
+      "Counted in none of the money-in totals above: winnings are not treated as income here. Losses are spending — " +
+        "your categories file Gambling as an expense. 2025 is still being imported, so these figures stop on Jun 2, " +
+        "the last day every account you spend from has been imported through.",
+    );
+    expect(gamblingNote(gambling, false)).not.toContain("What you spent");
+    expect(gamblingLostFigure(gambling.lostCents)).toBe("$0.00");
+  });
+
+  test("a finished year with no What you spent says what losses are, and points at nothing", () => {
+    const gambling = {
+      wonCents: 2000,
+      lostCents: 0,
+      netCents: 2000,
+      rowCount: 1,
+      window: { from: "2025-01-01", to: "2025-12-31", label: "2025", truncated: false },
+    };
+    expect(gamblingNote(gambling, false)).toBe(
+      "Counted in none of the money-in totals above: winnings are not treated as income here. Losses are spending — " +
+        "your categories file Gambling as an expense.",
+    );
+  });
+
+  test("a loss reads as one, and no loss reads $0.00 with no sign", () => {
+    expect(gamblingLostFigure(44250)).toBe("−$442.50");
+    expect(gamblingLostFigure(0)).toBe("$0.00");
   });
 });
 
