@@ -176,17 +176,36 @@ export function isForeign(ask: PageAsk | null, href: string): boolean {
 }
 
 /**
+ * The view keys of `his` (what his presses had asked for on `from`, the URL an ask built on) that
+ * `href`, the URL it asked for, still holds at the same value: his press put them in `from`, and
+ * the ask carried them on. Nothing from a URL of another page, which no ask on `href`'s builds on.
+ */
+function carriedOn(from: string | null, his: Readonly<ViewState>, href: string): ViewState {
+  if (from === null || pathnameOf(from) !== pathnameOf(href)) return {};
+  // the first of a repeated key, as the server reads it (`firstParam`)
+  const url = new URL(href, ORIGIN).searchParams;
+  const out: ViewState = {};
+  for (const [key, value] of Object.entries(his)) if (url.get(key) === value) out[key] = value;
+  return out;
+}
+
+/**
  * What a switcher Back/Forward drew saves again (`PageAsks.backSave`): each dimension of `spec`
  * the page drew from his saved view — one `shown`, the URL Back landed on, does not hold (a value
  * that is no option holds nothing: the server skipped it too) — and, of those it holds, only one
- * a press of his asked for that URL with (`pressed`). Null when that is none.
+ * a press of his put in that URL (`pressed`: asked for it with, or carried on into it from the
+ * URL that ask built on). Null when that is none.
  *
  * ⚖️ 2026-10-06, by 7b36d72's own rule (a linked view is kept in the URL and never saved; a first
  * load saves nothing): Back never saves a view only the URL held. 🔴 It saved every dimension it
  * drew: a shared `/?chart=bridge`, Grid on the cards, Back — and the bridge became his saved hero
- * view. A view in the URL that his own press asked for is his, saved when he pressed it: Table,
+ * view. A view in the URL that his own press put there is his, saved when he pressed it: Table,
  * Graph, Back to the Table saves the Table again (B2). Narrowed to the views his saved one drew
  * alone, the next period drew the Graph under the Table on screen.
+ *
+ * ❓ That press exception is the session's reading of B2 (owner, 2026-10-05) beside 7b36d72's
+ * rule, not words of his: the literal 2026-10-06 rule (only what his saved view drew) flips B2's
+ * Forward. Which of the two he wants is his call, still open; until he answers, B2 is kept whole.
  */
 export function backSave(
   spec: ViewSpec,
@@ -273,8 +292,9 @@ export interface PageAsks {
   backLanding(): number | null;
   /**
    * What a switcher on the page Back landed on saves of the view it drew (`backSave`): the
-   * dimensions its saved view drew, and of those the URL holds, the ones a press of his asked for
-   * that URL with — never a linked view. Null when that is none.
+   * dimensions its saved view drew, and of those the URL holds, the ones a press of his put there —
+   * asked for with that URL, or carried on into it by an ask built on a URL his press put them in —
+   * never a linked view. Null when that is none.
    */
   backSave(spec: ViewSpec, state: ViewState): ViewState | null;
 }
@@ -290,16 +310,24 @@ export function createPageAsks(): PageAsks {
   let landings = 0;
   let back: number | null = null;
   // every URL a press or URL writer asked for, in one spelling: the view keys his presses had
-  // asked for when it was (they are all in it, and every one was saved by its press)
+  // asked for when it was (every one was saved by its press), and the ones it kept from the URL it
+  // built on that his presses had put there
   const pressed = new Map<string, ViewState>();
+  const hisOn = (href: string | null): ViewState =>
+    href === null ? {} : (pressed.get(canonicalHref(href)) ?? {});
   return {
     base: (at) => pressBase(current, at, shown),
     paramsOn: (pathname) => askedParams(current, pathname),
     ask(href, dims) {
+      // what it built on (`pressBase`): the newest asked URL on its page, or else the one on screen.
+      // 🔴 Only the ask's own keys were kept: Return, Value, Back, the 1M pill (on the URL on screen,
+      // nothing asked), Value, Back to `?view=returns&range=1M` — Back took his Return for a link's
+      // and saved nothing, and the nav link drew the Value. The same with a lens press for the pill.
+      const from = current !== null && current.pathname === pathnameOf(href) ? current.href : shown;
       current = withAsk(current, href, dims);
       overtaken = null; // the ask is newer than any link before it
       const at = canonicalHref(href);
-      pressed.set(at, { ...pressed.get(at), ...current.dims });
+      pressed.set(at, { ...pressed.get(at), ...carriedOn(from, hisOn(from), href), ...current.dims });
     },
     landing() {
       if (current !== null) return { href: current.href, kind: "push", scroll: false };
@@ -330,7 +358,6 @@ export function createPageAsks(): PageAsks {
       traversing = true;
     },
     backLanding: () => back,
-    backSave: (spec, state) =>
-      backSave(spec, state, shown, shown === null ? {} : (pressed.get(canonicalHref(shown)) ?? {})),
+    backSave: (spec, state) => backSave(spec, state, shown, hisOn(shown)),
   };
 }

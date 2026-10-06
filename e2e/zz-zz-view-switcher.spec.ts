@@ -312,6 +312,54 @@ test("a lens pressed after Back keeps the cash view Back showed", async ({ page 
 });
 
 /**
+ * A view his own press put in the URL is his, and Back to it saves it again (B2) — also when a
+ * press made after an earlier Back carried it into a new URL. 🔴 Relief, pressed on the Table Back
+ * showed, recorded only its own lens for its URL; Chart, Back to the Table + Relief page — and Back
+ * saved the lens alone, so the period link drew the Chart under the Table he was looking at.
+ */
+test("Back to a lens pressed after Back over his Table saves the Table again", async ({ page }) => {
+  const cashView = page.getByRole("group", { name: "Cash flow view" });
+  const whereView = page.getByRole("group", { name: "Where it went view" });
+  await gotoHydrated(page, "/spending?period=2026-07");
+  // the saved views it starts from: the cash Chart, the List
+  await startOn(page, "Cash flow view", "Chart");
+  await startOn(page, "Where it went view", "List");
+  await pressView(page, "Cash flow view", "Table");
+  await pressView(page, "Cash flow view", "Graph");
+  await page.goBack();
+  await expect(page).toHaveURL(/[?&]cash=table\b/);
+  await expect(cashView.getByRole("button", { name: "Table" })).toHaveAttribute("aria-pressed", "true");
+
+  await pressView(page, "Where it went view", "Relief");
+  await expect(page).toHaveURL(/[?&]cash=table\b/);
+  await expect(page).toHaveURL(/[?&]where=relief\b/);
+  await pressView(page, "Cash flow view", "Chart");
+
+  // Back's own saves, one per switcher it draws: wait for both before the link's page reads them
+  let saves = 0;
+  page.on("response", async (response) => {
+    if (await isServerAction(response.request())) saves += 1;
+  });
+  await page.goBack();
+  await expect(page).toHaveURL(/[?&]cash=table\b/);
+  await expect(page).toHaveURL(/[?&]where=relief\b/);
+  await expect(cashView.getByRole("button", { name: "Table" })).toHaveAttribute("aria-pressed", "true");
+  await expect.poll(() => saves, { timeout: 10_000 }).toBeGreaterThanOrEqual(2);
+
+  await page.getByRole("link", { name: "Previous period" }).click();
+  await expect(page).toHaveURL(/\/spending\?period=2026-06$/);
+  await expect(cashView.getByRole("button", { name: "Table" })).toHaveAttribute("aria-pressed", "true");
+  await expect(whereView.getByRole("button", { name: "Relief" })).toHaveAttribute("aria-pressed", "true");
+
+  // restore the defaults for sibling specs, each press proved
+  await pressView(page, "Cash flow view", "Chart");
+  await pressView(page, "Where it went view", "List");
+  await gotoHydrated(page, "/spending");
+  await expect(cashView.getByRole("button", { name: "Chart" })).toHaveAttribute("aria-pressed", "true");
+  await expect(whereView.getByRole("button", { name: "List" })).toHaveAttribute("aria-pressed", "true");
+});
+
+/**
  * 🔴 A shared link holds a view he never saved, and a press on ANOTHER switcher of the page
  * dropped it: each built its URL from the params the server handed it, and the decision cards
  * are handed none. Grid on `/?chart=bridge` went to `/?cards=grid`, and the hero, read from his

@@ -386,6 +386,65 @@ describe("createPageAsks: what Back's page re-saves", () => {
     expect(asks.backSave(cards, { cards: "grid" })).toEqual({ cards: "grid" });
   });
 
+  /** with nothing asked an ask builds on the URL on screen, and its views his presses put there are his */
+  test("an ask built on the URL on screen keeps his presses' views there that its URL still holds", () => {
+    const asks = createPageAsks();
+    asks.ask("/h?view=returns&lens=table", { view: "returns", lens: "table" });
+    asks.departing("/h?view=returns&lens=table", "push");
+    asks.committed("/h?view=returns&lens=table");
+    asks.moved();
+    asks.committed("/h?lens=table&view=returns"); // Back to his press, nothing asked any more
+    asks.ask("/h?view=returns&lens=table&range=1M", {}); // the range pill, on the URL on screen
+    asks.departing("/h?view=returns&lens=table&range=1M", "replace");
+    asks.committed("/h?view=returns&lens=table&range=1M");
+    asks.ask("/h?view=returns&range=1M", { view: "returns", lens: "chart" }); // Chart, on the ask
+    asks.departing("/h?view=returns&range=1M", "push");
+    asks.committed("/h?view=returns&range=1M");
+
+    asks.moved();
+    asks.committed("/h?view=returns&lens=table&range=1M"); // Back to the pill's page
+    expect(asks.backSave(SPEC, { view: "returns", lens: "table" })).toEqual({ view: "returns", lens: "table" });
+  });
+
+  test("and carries them on through every ask built on it", () => {
+    const asks = createPageAsks();
+    asks.ask("/h?view=returns", { view: "returns" });
+    asks.moved();
+    asks.committed("/h?view=returns");
+    asks.ask("/h?view=returns&range=1M", {}); // on the URL on screen
+    asks.ask("/h?view=returns&range=3M", {}); // on that ask
+    asks.ask("/h?view=returns&range=3M&lens=table", { lens: "table" }); // on that one
+    asks.moved();
+    asks.committed("/h?view=returns&range=3M&lens=table");
+    expect(asks.backSave(SPEC, { view: "returns", lens: "table" })).toEqual({ view: "returns", lens: "table" });
+  });
+
+  test("never a linked one, nor his once an ask changed it, though an ask on that one puts it back", () => {
+    const asks = createPageAsks();
+    asks.ask("/h?view=returns&lens=table", { view: "returns" }); // his Return, on a linked Table
+    asks.moved();
+    asks.committed("/h?view=returns&lens=table");
+    asks.ask("/h?view=value&lens=table&range=1M", {}); // a writer that changed his view…
+    asks.ask("/h?view=returns&lens=table&range=3M", {}); // …and one on it that put it back
+    asks.moved();
+    asks.committed("/h?view=value&lens=table&range=1M");
+    expect(asks.backSave(SPEC, { view: "value", lens: "table" })).toBeNull();
+    asks.moved();
+    asks.committed("/h?view=returns&lens=table&range=3M");
+    expect(asks.backSave(SPEC, { view: "returns", lens: "table" })).toBeNull();
+  });
+
+  test("nor one held by a URL on screen of another page", () => {
+    const asks = createPageAsks();
+    asks.ask("/h/b?view=returns", { view: "returns" });
+    asks.moved();
+    asks.committed("/h/b?view=returns");
+    asks.ask("/h?view=returns&range=1M", {}); // not built on /h/b: nothing of it carries
+    asks.moved();
+    asks.committed("/h?view=returns&range=1M");
+    expect(asks.backSave(SPEC, { view: "returns", lens: "chart" })).toEqual({ lens: "chart" });
+  });
+
   test("two asks of one URL each add the keys they asked for", () => {
     const asks = createPageAsks();
     asks.ask("/h?view=returns&lens=table", { view: "returns" });

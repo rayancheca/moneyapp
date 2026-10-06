@@ -128,8 +128,8 @@ export function useViewState(opts: UseViewStateOptions): UseViewStateResult {
   // view instead. Once per Back on each switcher — a save of its own, which the action merges per
   // key — when the view Back drew reaches it: a layout effect, so it is sent before anything he
   // can press next; never on a first load, a link, a press or a refresh. ⚖️ 2026-10-06: only the
-  // dimensions his saved view drew, and of those the URL held only the ones a press of his asked
-  // for there (`backSave`) — never a linked view. The spec's dimensions only, as a view press
+  // dimensions his saved view drew, and of those the URL held only the ones a press of his put
+  // there (`backSave`) — never a linked view. The spec's dimensions only, as a view press
   // saves them — never a carried key: the hero's `accts` is every account in its URL when
   // nothing is curated, and saving it would curate. Best-effort and silent, like a press's own.
   const resavedFor = useRef<number | null>(null);

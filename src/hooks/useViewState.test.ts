@@ -862,6 +862,69 @@ describe("Back/Forward to a page with view pills", () => {
     expect(page.shown).toMatchObject({ view: { view: "returns" } });
   });
 
+  /**
+   * The same when the pill is pressed after a Back, with nothing asked: it builds on the URL on
+   * screen, which holds the Return his press put there. 🔴 Only the pill's own keys (none) were
+   * recorded for its URL, so Back to it took his Return for a link's, saved nothing, and the nav
+   * link drew the Value he had pressed over it.
+   */
+  test("Back to a range pill pressed after Back, over his press's view, saves that view again", async () => {
+    const page = await open(portfolioPage, "/investments");
+    ui.portfolio!.setView("view", "returns");
+    await page.settle();
+    ui.portfolio!.setView("view", "value");
+    await page.settle();
+    page.back();
+    await page.settle();
+    expect(page.url).toBe("/investments?view=returns"); // Return, saved again (B2)
+
+    pills.range!("1M");
+    await page.settle();
+    ui.portfolio!.setView("view", "value");
+    await page.settle();
+    page.back();
+    await page.settle();
+    expect(page.url).toBe("/investments?view=returns&range=1M");
+    page.router.push("/investments"); // the nav link: no view in its URL
+    await page.settle();
+    expect(page.shown).toMatchObject({ view: { view: "returns" } });
+  });
+
+  /**
+   * And across /spending's cards: Table, Graph, Back to the Table (saved again), Relief — built on
+   * the URL on screen, so it carries his Table — then Chart, and Back to the Table + Relief page.
+   * 🔴 Back saved only the lens (the Relief press's own keys), and the period link drew the Chart
+   * he had pressed after it, not the Table on screen.
+   */
+  test("Back to another card's press made after Back, over his press's view, saves both again", async () => {
+    const page = await open(spendingPage, "/spending?period=2026-07");
+    ui.cash!.setView("cash", "table");
+    await page.settle();
+    ui.cash!.setView("cash", "graph");
+    await page.settle();
+    page.back();
+    await page.settle();
+    expect(page.url).toBe("/spending?period=2026-07&cash=table");
+
+    ui.where!.setView("where", "relief");
+    await page.settle();
+    expect(page.url).toBe("/spending?period=2026-07&cash=table&where=relief");
+    ui.cash!.setView("cash", "chart");
+    await page.settle();
+    const before = page.writes.length;
+    page.back();
+    await page.settle();
+    expect(page.url).toBe("/spending?period=2026-07&cash=table&where=relief");
+    expect(page.writes.slice(before)).toEqual([
+      { surface: "spending", state: { cash: "table" } },
+      { surface: "spending", state: { where: "relief", massifView: "quarter" } },
+    ]);
+
+    page.router.push("/spending?period=2026-06"); // the period link: no view in its URL
+    await page.settle();
+    expect(page.shown).toMatchObject({ cash: { cash: "table" }, where: { where: "relief" } });
+  });
+
   /** a link that holds every view of the switcher leaves it nothing to save */
   test("Back to a link that holds every view saves nothing", async () => {
     const page = await open(holdingOrElsewhere, "/h?view=returns&unit=percent&lens=table");
