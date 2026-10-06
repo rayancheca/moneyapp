@@ -138,7 +138,7 @@ describe("trustCard — division guards", () => {
     const card = trustCard(bundle.db, TODAY)!;
 
     expect(card.days.total).toBe(0);
-    expect(card.days.uncheckedSharePct).toBeNull();
+    expect(card.days.restOnNothingSharePct).toBeNull();
     expect(card.days.sentence).not.toMatch(/NaN|Infinity/);
     expect(card.days.sentence).toContain("No day of balances has been derived yet");
   });
@@ -160,8 +160,8 @@ describe("trustCard — division guards", () => {
     const card = trustCard(bundle.db, TODAY)!;
     expect(card.days.total).toBe(2000);
     expect(card.days.unchecked).toBe(1);
-    expect(card.days.uncheckedSharePct).toBeGreaterThan(0);
-    expect(card.days.uncheckedSharePct).toBeLessThan(0.1);
+    expect(card.days.restOnNothingSharePct).toBeGreaterThan(0);
+    expect(card.days.restOnNothingSharePct).toBeLessThan(0.1);
     expect(card.days.sentence).toContain("under 0.1%");
     expect(card.days.sentence).not.toContain("0.0%");
   });
@@ -616,5 +616,56 @@ describe("trustCard — the days before a first balance do not grade an account"
     const lineOf = (name: string) => verified.find((a) => a.name === name)!.detail;
     expect(lineOf("Twin")).toBe("adds up through Aug 31, 2026");
     expect(lineOf("Robinhood Agentic")).toBe(`${lineOf("Twin")}, and unchecked days before that`);
+  });
+
+  /*
+   * 🔴 The footer was the second reader of the same count, and it still read it the old way (review of
+   * 2deb764): every account's unchecked days went into one sentence — "… rest on nothing — 37 in
+   * Robinhood Cash, 36 in Cash on Hand, 26 in Robinhood Agentic" — painted amber, while Agentic's row
+   * above it carried the same 26 quietly under "adds up". A verified account's days, every one before
+   * its first balance, are a note of their own now; the sentence counts and names the rest.
+   */
+  test("the footer's sentence names what nothing checks; a verified account's days before are a note", () => {
+    statementAccount("agentic", "Robinhood Agentic", null);
+    statementAccount("rh-cash", "Robinhood Cash", "2026-09-05");
+    addAccount("coh", "Cash on Hand", "checking");
+    anchorAt("coh", "2026-08-03", "manual");
+    addTxn("coh", "2026-08-11");
+    rebuildAccount(bundle.db, "coh", "2026-09-15");
+
+    const { days } = trustCard(bundle.db, "2026-10-01")!;
+    // every unchecked day is still counted: the identity `derivedUnverified + gap` holds
+    expect(days.unchecked).toBe(26 + 37 + 36);
+    expect(days.beforeFirstBalance).toBe(26);
+    expect(days.restOnNothing).toBe(37 + 36);
+    expect(days.restOnNothingSharePct).toBeCloseTo((73 / days.total) * 100, 10);
+    expect(days.sentence).toContain(
+      `73 of ${days.total} days of balances (${((73 / days.total) * 100).toFixed(1)}% of them) rest on nothing — ` +
+        "37 in Robinhood Cash, 36 in Cash on Hand.",
+    );
+    expect(days.sentence).not.toContain("Robinhood Agentic");
+    expect(days.beforeFirstBalanceNote).toBe(
+      "Robinhood Agentic's 26 days before its first balance are unchecked — replayed backwards from it, " +
+        "with nothing earlier to check them against, and not days its balance rests on.",
+    );
+  });
+
+  test("with every account adding up, nothing rests on nothing: the days before are the note alone", () => {
+    statementAccount("agentic", "Robinhood Agentic", null);
+    statementAccount("sofi", "SoFi Savings", null);
+
+    const card = trustCard(bundle.db, "2026-10-01")!;
+    expect(card.groups.map((g) => g.grade)).toEqual(["verified"]);
+    const { days } = card;
+    expect(days.unchecked).toBe(52);
+    expect(days.restOnNothing).toBe(0);
+    expect(days.sentence).toBe(
+      `Every one of ${days.total - 52} days of balances from each account's first balance on rests on a chain ` +
+        "that closes.",
+    );
+    expect(days.beforeFirstBalanceNote).toBe(
+      "52 days before an account's first balance are unchecked — 26 in Robinhood Agentic, 26 in SoFi Savings — " +
+        "replayed backwards from it, with nothing earlier to check them against, and not days its balance rests on.",
+    );
   });
 });

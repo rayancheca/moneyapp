@@ -150,3 +150,50 @@ test("a verified account's unchecked count is quiet; one with nothing checking i
     expect(warning).not.toContain("text-ink-faint");
   }
 });
+
+/** Every `<p>` in the markup: its class (null when it has none) and its text, tags and markers gone. */
+function paragraphs(markup: string): { cls: string | null; text: string }[] {
+  return [...markup.matchAll(/<p(?: class="([^"]*)")?>([\s\S]*?)<\/p>/g)].map((m) => ({
+    cls: m[1] ?? null,
+    text: m[2]!.replaceAll("<!-- -->", "").replace(/<[^>]+>/g, "").replaceAll("&#x27;", "'"),
+  }));
+}
+
+/*
+ * 🔴 The footer read the same count the old way (review of 2deb764). Its sentence counted every
+ * account's unchecked days as days that "rest on nothing" and painted it amber whenever there were
+ * any, so with two accounts that both add up — each with 26 days before its first statement — the
+ * rows' "26 days unchecked" were faint and the footer under them warned: "52 of 208 days of balances
+ * (25.0% of them) rest on nothing — 26 in Robinhood Agentic, 26 in SoFi Savings." ⚖️ His answer,
+ * 2026-10-05: those days alone do not mean nothing is checking an account; a verified card's caveat
+ * about them is a quiet note.
+ */
+test("a card where every account adds up does not warn about the days before their first balance", () => {
+  statementAccount("agentic", "Robinhood Agentic", null);
+  statementAccount("sofi", "SoFi Savings", null);
+  const markup = renderToStaticMarkup(createElement(TrustCard, { data: trustCard(bundle.db, TODAY)! }));
+
+  expect(markup).not.toContain("text-warning");
+  expect(markup).not.toContain("rest on nothing");
+  const note = paragraphs(markup).filter((p) => p.text.includes("before an account's first balance"));
+  expect(note).toEqual([{ cls: null, text: expect.stringContaining("26 in Robinhood Agentic, 26 in SoFi Savings") }]);
+});
+
+test("beside accounts nothing checks, the amber sentence names only them; the verified one's days are quiet", () => {
+  statementAccount("agentic", "Robinhood Agentic", null);
+  statementAccount("rh-cash", "Robinhood Cash", "2026-09-05");
+  account("coh", "Cash on Hand");
+  anchor("coh", "2026-08-03", 500_000, "manual");
+  row("coh", "2026-08-11");
+  rebuildAccount(bundle.db, "coh", REBUILT);
+  const markup = renderToStaticMarkup(createElement(TrustCard, { data: trustCard(bundle.db, TODAY)! }));
+
+  const ps = paragraphs(markup);
+  const warning = ps.filter((p) => p.text.includes("rest on nothing"));
+  expect(warning).toEqual([
+    { cls: "text-warning", text: expect.stringContaining("37 in Robinhood Cash, 36 in Cash on Hand.") },
+  ]);
+  expect(warning[0]!.text).not.toContain("Robinhood Agentic");
+  const note = ps.filter((p) => p.text.includes("Robinhood Agentic"));
+  expect(note).toEqual([{ cls: null, text: expect.stringContaining("26 days before its first balance are unchecked") }]);
+});

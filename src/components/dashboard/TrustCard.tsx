@@ -68,7 +68,11 @@ export function TrustCard({ data }: { data: TrustCardData }) {
         {/* the days, and what they are NOT. `carried` looks like a weak basis
             and is not one, so the card says so rather than leaving the reader
             to wonder what the other 785 days were. */}
-        <p className={days.unchecked > 0 ? "text-warning" : undefined}>{days.sentence}</p>
+        {/* ⚖️ His answer, 2026-10-05: a verified account's days before its first balance are a quiet
+            note, in this footer's faint tone, as its row's count is — they warned here, amber, under
+            a card where every account added up (review of 2deb764). Amber is the days nothing checks. */}
+        <p className={days.restOnNothing > 0 ? "text-warning" : undefined}>{days.sentence}</p>
+        {days.beforeFirstBalanceNote && <p>{days.beforeFirstBalanceNote}</p>}
         {days.carriedNote && <p>{days.carriedNote}</p>}
         {data.emptyNote && <p>{data.emptyNote}</p>}
         {data.checkedThrough ? (
