@@ -45,6 +45,24 @@ describe("projectOngoingIncome", () => {
     expect(e!.confidence).toBeLessThan(1);
   });
 
+  /*
+   * The agent's pace nets its clawbacks (owner decision 2026-10-06, §6A 45), so a month can come to below zero. The
+   * gate counts the months that net money IN, and the mean is floored at zero: never a negative projection.
+   */
+  test("a NET bucket: a month below zero is not present, and a mean below zero projects $0, never less", () => {
+    // $4.00 paid, $3.00 clawed back: +$1.00 a month
+    expect(projectOngoingIncome([{ label: "Interest", monthlyTotalsCents: [100, 100, 100] }])[0]).toMatchObject({
+      monthlyCents: 100,
+      monthsPresent: 3,
+    });
+    expect(projectOngoingIncome([{ label: "Interest", monthlyTotalsCents: [-100, -100, 400] }])).toEqual([]);
+    // present twice, and a September clawback larger than both
+    expect(projectOngoingIncome([{ label: "Interest", monthlyTotalsCents: [400, 400, -1000] }])[0]).toMatchObject({
+      monthlyCents: 0,
+      monthsPresent: 2,
+    });
+  });
+
   test("empty input → no components", () => {
     expect(projectOngoingIncome([])).toEqual([]);
   });

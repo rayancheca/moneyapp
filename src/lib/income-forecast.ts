@@ -26,14 +26,17 @@ import { projectTrailingAverage } from "./projection";
 export interface IncomeBucketTrailing {
   /** the income subcategory name (e.g. "Salary", "Tutoring", "Interest") */
   label: string;
-  /** income posted per trailing full month, oldest → newest, positive integer cents */
+  /**
+   * income posted per trailing full month, oldest → newest, integer cents — NET for the agent's bucket, whose
+   * clawbacks net inside it (owner decision 2026-10-06, §6A 45), so a month can be zero or below
+   */
   monthlyTotalsCents: readonly number[];
 }
 
 /** A projected ongoing-income component (full-month estimate; the caller scales to the remaining window). */
 export interface OngoingIncomeEstimate {
   label: string;
-  /** expected FULL-MONTH income, positive integer cents */
+  /** expected FULL-MONTH income, integer cents, never below zero (0 only for a net bucket clawed back to nothing) */
   monthlyCents: number;
   /** how many trailing months carried income for this bucket (the presence signal) */
   monthsPresent: number;
@@ -49,8 +52,9 @@ export const MIN_INCOME_MONTHS_PRESENT = 2;
 /**
  * Which income buckets represent ONGOING earnings, and how much per month. A
  * bucket present in fewer than `minMonthsPresent` trailing months is dropped as
- * a one-off (never projected). The presence gate guarantees ≥1 positive month,
- * so the trailing mean is always > 0 for anything returned.
+ * a one-off (never projected). A month is present when it nets money IN, and
+ * the trailing mean is floored at zero: a net bucket whose clawbacks outweigh
+ * what it is paid is returned at 0, never below — the caller drops it.
  */
 export function projectOngoingIncome(
   buckets: readonly IncomeBucketTrailing[],

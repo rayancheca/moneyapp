@@ -488,18 +488,18 @@ describe("§6A 43 — a clawback filed in an income category lowers the agent's 
 });
 
 /*
- * ❓ PINNED, NOT DECIDED. §6A 43 was asked of a SCHEDULE, and the bridge now nets every income-category row on the
- * agent's cash either sign (`agentsBand`). The forecast's PACE is not a schedule: it counts the agent's CREDITS only
- * (`isAgentsIncome`), as his pace counts his (`isIncome`). So a clawback no live schedule owns — none detected, or one
- * he dismissed, whose rows fall to the pace — lowers the bridge's "Agent's income" and is in no reading on the card, EOM
- * net worth included. 🔴 80f002d's docs said the forecast nets "as the bridge nets the row it becomes"; for these rows
- * it does not. Netting them would move the pace's EOM net worth (and `projectOngoingIncome` drops a bucket that nets to
- * zero or below), so it is his call; changing it flips this test on purpose.
+ * ⚖️ Owner decision 2026-10-06 (§6A 45): the AGENT'S income "at your recent pace" NETS its posted income-category
+ * clawbacks, as the bridge nets them inside "Agent's income" (§6A 43) — one rule for both,
+ * `isAgentsIncomeCategoryRow`: an income-category row on the agent's cash, either sign. 🔴 The pace bucketed the
+ * agent's trailing rows by `isAgentsIncome`, credits only, so a clawback no live schedule owns — none detected, or one
+ * he dismissed, whose rows fall to the pace — lowered the bridge's "Agent's income" and no reading on the card, EOM net
+ * worth included: $4.00 paid and $3.00 clawed back each month was +$1.00 on the bridge and +$3.48 projected. ⛔ HIS
+ * pace is still his money in only (`isIncome`): his clawback lowers no projection of his.
  *
  * Hypothetical rows, as above: $4.00 of interest on the 28th and $3.00 of it clawed back on the 29th, July to September,
  * all filed in Interest.
  */
-describe("❓ the pace of the agent's income counts its credits only — the bridge nets what no live schedule owns", () => {
+describe("§6A 45 — the pace of the agent's income nets its clawbacks, as the bridge does; his stays money in", () => {
   const PAID = 400;
   const CLAWBACK = -300;
   const MONTHS = ["07", "08", "09"] as const;
@@ -521,11 +521,18 @@ describe("❓ the pace of the agent's income counts its credits only — the bri
   /** his lines and nets, every reading — his EOM cash also counts this fixture's agent's balance, so it is left out */
   const hisLines = (c: ReturnType<typeof card>) =>
     c.his.map((h) => ({ components: h.components, committed: h.committed.slice(0, 3), pace: h.pace.slice(0, 3) }));
+  /** EOM net worth, every reading, as the pace's two move — neither committed reading has any pace in it */
+  const onPace = (nw: readonly number[], october: number, november: number): number[] => [
+    nw[0]!,
+    nw[1]! + october,
+    nw[2]!,
+    nw[3]! + november,
+  ];
 
-  test("❓ a clawback with no schedule, or a dismissed one's, lowers the bridge's \"Agent's income\" and no projection", () => {
+  test("⚖️ a clawback with no schedule, or a dismissed one's, nets inside the pace as it does on the bridge", () => {
     for (const month of MONTHS) post(agentic, `2026-${month}-28`, PAID, INTEREST, "Interest Payment");
     const paid = card();
-    // the card's pace: the credits' 3-mo avg $4.00 × 27/31 days in October, and November's whole $4.00 chained on it
+    // the card's pace: the 3-mo avg $4.00 × 27/31 days in October, and November's whole $4.00 chained on it
     expect(paid.income).toEqual([
       { netCents: 348, committedNetCents: 0 },
       { netCents: 748, committedNetCents: 0 },
@@ -549,16 +556,65 @@ describe("❓ the pace of the agent's income counts its credits only — the bri
     for (const [owner, claw] of Object.entries(clawedBy)) {
       const undo = claw();
       // §6A 43 on the bridge: September's $4.00 paid nets to +$1.00, and nothing sits in Moved
-      expect(september(), owner).toMatchObject({ agentIncome: PAID + CLAWBACK, moved: 0 });
+      const bridged = september();
+      expect(bridged, owner).toMatchObject({ agentIncome: PAID + CLAWBACK, moved: 0 });
       const clawed = card();
-      // ❓ …and the card's pace is the credits' alone: the same +$3.48 and +$7.48, and no cost of the agent's either
-      expect(clawed.income, owner).toEqual(paid.income);
+      // ⚖️ …and on the card's pace: the 3-mo avg net $1.00 × 27/31 days in October, and November's whole $1.00
+      expect(clawed.income, owner).toEqual([
+        { netCents: 87, committedNetCents: 0 },
+        { netCents: 187, committedNetCents: 0 },
+      ]);
+      // a whole month at the pace is what the bridge nets for September — one rule, either sign
+      expect(clawed.income[1]!.netCents - clawed.income[0]!.netCents, owner).toBe(bridged.agentIncome);
+      // a clawback filed in Interest is no cost of the agent's
       expect(clawed.costs, owner).toEqual(paid.costs);
-      // EOM net worth moves by September's posted clawback — the net worth today it starts from — and nothing projected
+      // EOM net worth: every reading moves by September's posted clawback — the net worth today it starts from — and
+      // the pace's two by the agent's share alone, what its note came down by
       expect(clawed.today - paid.today, owner).toBe(CLAWBACK);
-      expect(clawed.nw, owner).toEqual(paid.nw.map((cents) => cents + CLAWBACK));
+      expect(clawed.nw, owner).toEqual(onPace(paid.nw.map((cents) => cents + CLAWBACK), 87 - 348, 187 - 748));
+      // ⛔ …and no figure of his moves: not his Income, not his lines, not his net
       expect(hisLines(clawed), owner).toEqual(hisLines(paid));
       undo();
     }
+  });
+
+  /*
+   * ⛔ The decision is the agent's alone. His pace is his money in, only (`isIncome`, docs/income-ground-truth.md): a
+   * clawback of HIS interest is in no projection of his, as it is in no Income band of the bridge (it stays "Moved").
+   */
+  test("⛔ his own pace stays money in only: his clawback, filed in Interest, lowers no projection of his", () => {
+    for (const month of MONTHS) post(wellsFargo, `2026-${month}-28`, PAID, INTEREST, "Interest Payment");
+    const paid = card();
+    // his Interest line: the credits' 3-mo avg $4.00 × 27/31 days in October
+    expect(paid.his[0]!.components).toContainEqual(expect.objectContaining({ label: "Interest", cents: 348 }));
+    for (const month of MONTHS) post(wellsFargo, `2026-${month}-29`, CLAWBACK, INTEREST, "Interest Clawback");
+    const clawed = card();
+    // …still, and his Income, Spending and Net with it, on both readings
+    expect(hisLines(clawed)).toEqual(hisLines(paid));
+    // his clawback is in neither of the agent's notes
+    expect([clawed.income, clawed.costs]).toEqual([paid.income, paid.costs]);
+    // EOM net worth moves by September's posted clawback alone — the net worth today — and by nothing projected
+    expect(clawed.today - paid.today).toBe(CLAWBACK);
+    expect(clawed.nw).toEqual(paid.nw.map((cents) => cents + CLAWBACK));
+    expect(september()).toMatchObject({ agentIncome: 0 });
+  });
+
+  /*
+   * ❓ PINNED, NOT DECIDED. The pace projects an income bucket by `projectOngoingIncome`'s honesty layer: present —
+   * net money in — in ≥2 of the 3 trailing months, at a mean floored at zero. So a bucket the agent is clawed back as
+   * much as it is paid, or more, projects NOTHING at the pace while the bridge's "Agent's income" reads below zero; so
+   * does a clawback filed in an income subcategory the agent is never paid in (each bucket nets on its own). Whether
+   * the agent's pace may project its income below zero is his call; answering it flips this test on purpose.
+   */
+  test("❓ clawed back more than it is paid, the agent's pace projects nothing — the bridge reads below zero", () => {
+    for (const month of MONTHS) {
+      post(agentic, `2026-${month}-28`, PAID, INTEREST, "Interest Payment");
+      post(agentic, `2026-${month}-29`, -PAID - 100, INTEREST, "Interest Clawback");
+    }
+    expect(september()).toMatchObject({ agentIncome: -100, moved: 0 });
+    expect(card().income).toEqual([
+      { netCents: 0, committedNetCents: 0 },
+      { netCents: 0, committedNetCents: 0 },
+    ]);
   });
 });
