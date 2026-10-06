@@ -4029,7 +4029,8 @@ describe("a parser-version re-read that no longer writes an account", () => {
  * of the real ledger, 2026-10-01 (every storage path rebased onto a scratch root, an empty file standing in for each
  * original, move: false): 44 retired reads of Robinhood statements, 22 originals in robinhood-cash/, bound for chase/.
  * Each was read again under another name (its archive's) or into robinhood-combined/, so no live read names it, and its
- * retirement forgot everything that named its account. An original the rule cannot place stays where it is, reported.
+ * retirement forgot everything that named its account. Such an original goes where the read in place of its bytes files
+ * its own (2026-10-05); one the rule cannot place stays where it is, reported.
  */
 describe("an original is never filed in another bank's folder — by the import or the layout migration", () => {
   /** a name and first lines that name no bank: the importer guesses Chase */
@@ -4087,11 +4088,19 @@ describe("an original is never filed in another bank's folder — by the import 
     };
   }
 
-  test.each<[string, (archived: string) => ImportInput]>([
+  /**
+   * 🔴 An original only retired reads named stayed where it was, reported: a retirement forgets everything that named
+   * its account but its rows (`supersedeFileContribution`), and the importer's guess is no placement. On a copy of the
+   * real ledger, 2026-10-05: 34 originals of 66 retired Robinhood reads. Each one's bytes are read by a read in place —
+   * the read that retired it — and where that read files its own original is where the statement belongs.
+   */
+  test.each<[string, (archived: string) => ImportInput, string, boolean]>([
     // his v3 read of ddb95dd0-….pdf: uploaded as 08288ef6e518a5a9-ddb95dd0-….pdf, its archive's name
     [
-      "under the name its archive gave it",
+      "under the name its archive gave it — already where that read files it",
       (archived) => ({ ...MARCH, name: path.basename(archived) }),
+      "robinhood-checking-7307",
+      false,
     ],
     // his v4 read of 747059b1-….pdf: archived in robinhood-combined/, its v1 and v2 left in robinhood-cash/
     [
@@ -4100,36 +4109,38 @@ describe("an original is never filed in another bank's folder — by the import 
         readsSavings = true;
         return MARCH;
       },
+      "robinhood-combined",
+      true,
     ],
-  ])("an original no read of it places stays where it is, reported — a statement read again %s", async (_, again) => {
+  ])("an original only retired reads name goes where the read in place of its bytes files it — a statement read again %s", async (_, again, placed, moved) => {
     await importStatementFiles(bundle.db, [MARCH]);
     const [first] = reads(eq(importFilesTable.fileName, MARCH.name));
     unnamedProfile.version = 2;
     const [outcome] = await importStatementFiles(bundle.db, [again(first!.storagePath)]);
     const retired = readById(first!.id);
-    // the premise: a fresh read retired the first, and no other read names the first's original…
+    const [live] = reads(eq(importFilesTable.parserVersion, 2));
+    // the premise: a fresh read of the same bytes retired the first, and no other read names the first's original…
     expect(outcome!.status).toBe("parsed");
     expect(retired.status).toBe("superseded");
+    expect(live!.fileSha256).toBe(retired.fileSha256);
     expect(reads(eq(importFilesTable.storagePath, retired.storagePath))).toHaveLength(1);
     // …nothing the retired read keeps names its account…
     expect(namedBy(retired.id)).toEqual(NOTHING);
-    // …and the import archived it in that account's folder, while guessing the file was Chase's
+    // …and the import archived it in that account's folder, and the read in place where its own accounts file it
     expect(folderOf(retired.storagePath)).toBe("robinhood-checking-7307");
-    const guessed = bundle.db.select().from(institutions).where(eq(institutions.id, retired.institutionId)).get()!;
-    expect(guessed.name).toBe("Chase");
-    expect(fs.existsSync(chaseBucket())).toBe(false);
+    expect(folderOf(live!.storagePath)).toBe(placed);
 
     const moves = migrateStorageLayout(bundle.db, { move: true });
 
-    // it stays where the import put it, reported as an original the rule cannot place — and nothing went to Chase
-    expect(moves).toEqual([
-      { importFileId: retired.id, fileName: retired.fileName, from: retired.storagePath, to: null, moved: false },
-    ]);
-    expect(readById(retired.id).storagePath).toBe(retired.storagePath);
-    expect(fs.readFileSync(retired.storagePath)).toEqual(MARCH.buffer);
+    // it goes where the read in place is filed — never to Chase
+    const dest = path.join(dir, "originals", placed, path.basename(retired.storagePath));
+    expect(moves).toEqual(moved ? [{ importFileId: retired.id, fileName: retired.fileName, from: retired.storagePath, to: dest, moved: true }] : []);
+    expect(readById(retired.id).storagePath).toBe(dest);
+    expect(fs.readFileSync(dest)).toEqual(MARCH.buffer);
     expect(fs.existsSync(chaseBucket())).toBe(false);
-    // a second run reports it again, and moves nothing
-    expect(migrateStorageLayout(bundle.db, { move: true })).toEqual(moves);
+    // every read of the bytes names a path its original is at, and a second run has nothing to do
+    for (const read of reads(eq(importFilesTable.fileSha256, retired.fileSha256))) expect(fs.existsSync(read.storagePath)).toBe(true);
+    expect(migrateStorageLayout(bundle.db, { move: true })).toEqual([]);
   });
 
   /**
@@ -4140,7 +4151,7 @@ describe("an original is never filed in another bank's folder — by the import 
    * archived in robinhood-combined/ under the name each one's archive gave it, bound for robinhood-cash/ by the rows
    * they kept there.
    */
-  test("an original only retired reads name stays where it is, reported — though one kept rows on one of its accounts", async () => {
+  test("an original only retired reads name goes by the read in place of its bytes — not by the one account a retirement left it rows on", async () => {
     readsSavings = true;
     cashRow = true;
     await importStatementFiles(bundle.db, [MARCH]);
@@ -4158,15 +4169,38 @@ describe("an original is never filed in another bank's folder — by the import 
     const cash = bundle.db.select().from(accounts).where(eq(accounts.last4, "7307")).get()!.id;
     expect(namedBy(retired.id)).toEqual({ ...NOTHING, rows: [cash] });
 
+    // it is where the read in place of its bytes files it, beside that read: nothing to move
+    expect(migrateStorageLayout(bundle.db, { move: true })).toEqual([]);
+    expect(readById(retired.id).storagePath).toBe(retired.storagePath);
+    expect(fs.readFileSync(retired.storagePath)).toEqual(MARCH.buffer);
+    expect(fs.existsSync(path.join(dir, "originals", "robinhood-checking-7307"))).toBe(false);
+  });
+
+  /** …and an original whose bytes no read in place reads has nothing to go by: it stays where it is, reported. */
+  test("an original only retired reads name stays where it is, reported, once no read in place reads its bytes", async () => {
+    await importStatementFiles(bundle.db, [MARCH]);
+    const [first] = reads(eq(importFilesTable.fileName, MARCH.name));
+    unnamedProfile.version = 2;
+    readsSavings = true;
+    await importStatementFiles(bundle.db, [MARCH]);
+    const [live] = reads(eq(importFilesTable.parserVersion, 2));
+    unimportFile(bundle.db, live!.id);
+    const retired = readById(first!.id);
+    // the premise: the read that retired the first is gone, and no read in place reads its bytes
+    expect(retired.status).toBe("superseded");
+    expect(reads(eq(importFilesTable.fileSha256, retired.fileSha256)).map((r) => r.id)).toEqual([retired.id]);
+    expect(namedBy(retired.id)).toEqual(NOTHING);
+
     const moves = migrateStorageLayout(bundle.db, { move: true });
 
-    // it stays beside the read that retired it, reported — not filed by the one account the retirement left it
     expect(moves).toEqual([
       { importFileId: retired.id, fileName: retired.fileName, from: retired.storagePath, to: null, moved: false },
     ]);
     expect(readById(retired.id).storagePath).toBe(retired.storagePath);
     expect(fs.readFileSync(retired.storagePath)).toEqual(MARCH.buffer);
-    expect(fs.existsSync(path.join(dir, "originals", "robinhood-checking-7307"))).toBe(false);
+    expect(fs.existsSync(chaseBucket())).toBe(false);
+    // a second run reports it again, and moves nothing
+    expect(migrateStorageLayout(bundle.db, { move: true })).toEqual(moves);
   });
 
   /**
@@ -4276,6 +4310,97 @@ describe("an original is never filed in another bank's folder — by the import 
     expect(readById(copy!.id).storagePath).toBe(copy!.storagePath);
     expect(fs.readFileSync(copy!.storagePath)).toEqual(SECOND.buffer);
     expect(fs.existsSync(chaseBucket())).toBe(false);
+  });
+
+  const bankOf = (read: { institutionId: string }) =>
+    bundle.db.select().from(institutions).where(eq(institutions.id, read.institutionId)).get()!.name;
+
+  /**
+   * 🔴 `import_files.institution_id` kept the bank the importer GUESSED from the file's name and first lines
+   * (`guessInstitution`) after its read had resolved whose statement it is. Measured on a copy of the real ledger,
+   * 2026-10-05: of the reads whose rows land in one bank's accounts, 22 live and 24 retired named another bank. A read
+   * records the bank of the accounts it wrote to; the guess stands only while nothing resolves (a read that fails, or
+   * withholds every section — the tests above).
+   */
+  test.each([
+    ["one account", false],
+    ["two accounts", true],
+  ])("a read of a statement of %s records the bank of the accounts it wrote to — not the bank guessed from its name", async (_, savings) => {
+    readsSavings = savings;
+    const [outcome] = await importStatementFiles(bundle.db, [MARCH]);
+    const [read] = reads(eq(importFilesTable.fileName, MARCH.name));
+    expect(outcome!.status).toBe("parsed");
+    expect(folderOf(read!.storagePath)).toBe(savings ? "robinhood-combined" : "robinhood-checking-7307");
+
+    expect(bankOf(read!)).toBe("Robinhood");
+  });
+
+  test("a read a re-read retired keeps the bank its read resolved, and its successor records the same", async () => {
+    await importStatementFiles(bundle.db, [MARCH]);
+    unnamedProfile.version = 2;
+    await importStatementFiles(bundle.db, [MARCH]);
+    const all = reads(eq(importFilesTable.fileName, MARCH.name));
+
+    expect(all.map((r) => [r.status, bankOf(r)]).sort()).toEqual([
+      ["parsed", "Robinhood"],
+      ["superseded", "Robinhood"],
+    ]);
+  });
+
+  /**
+   * 🔴 A retired read whose retirement keeps nothing that names an account kept the bank guessed from its name, though
+   * the read in place of its bytes resolves it — the read the layout migration files its original by
+   * (`readsInPlaceOfRetired`). On a copy of the real ledger, 2026-10-05: 76 retired Robinhood reads still named Chase.
+   */
+  test("a read that resolves what the read it retires withheld records its bank on that read too", async () => {
+    readInstead = () => ({
+      statements: [],
+      withheld: [{ accountHint: CASH, accountNumber: "XXXX7307", period: { start: "2026-03-01", end: "2026-03-31" }, reason: "cannot prove it" }],
+    });
+    await importStatementFiles(bundle.db, [MARCH]);
+    const [first] = reads(eq(importFilesTable.fileName, MARCH.name));
+    // the premise: it withheld every section — nothing resolved whose statement it is, and the guess stood
+    expect(bankOf(first!)).toBe("Chase");
+    readInstead = null;
+    unnamedProfile.version = 2;
+    const [outcome] = await importStatementFiles(bundle.db, [MARCH]);
+    const retired = readById(first!.id);
+    expect(outcome!.status).toBe("parsed");
+    expect(retired.status).toBe("superseded");
+    expect(namedBy(retired.id)).toEqual(NOTHING);
+
+    expect(bankOf(retired)).toBe("Robinhood");
+  });
+
+  /**
+   * A read that stops mid-file keeps what its earlier statements wrote, for un-import to clean up — and those rows
+   * landed in one bank's account.
+   */
+  test("a read that fails after an earlier statement wrote rows records the bank those rows landed in", async () => {
+    cashRow = true;
+    // a bank the ledger does not know: `resolveAccount` throws on the second statement, after the first committed
+    const NOWHERE = { institution: "Nowhere Savings & Loan", type: "checking", last4: "0001" } as unknown as AccountHint;
+    readInstead = () => ({ statements: [marchOf(CASH), { ...marchOf(CASH), accountHint: NOWHERE }], withheld: [] });
+    const [outcome] = await importStatementFiles(bundle.db, [MARCH]);
+    const [read] = reads(eq(importFilesTable.fileName, MARCH.name));
+    // the premise: the read failed, and kept the row its first statement wrote
+    expect([outcome!.status, read!.status]).toEqual(["failed", "failed"]);
+    expect(read!.error).toMatch(/^Failed mid-import \(un-import to clean up\)/);
+    const cash = bundle.db.select().from(accounts).where(eq(accounts.last4, "7307")).get()!.id;
+    expect(namedBy(read!.id).rows).toEqual([cash]);
+
+    expect(bankOf(read!)).toBe("Robinhood");
+  });
+
+  /** The column names one bank. A read of statements at two names neither, and nothing resolves which. */
+  test("a read whose statements are at two banks keeps the bank guessed from its name", async () => {
+    const SOFI: AccountHint = { institution: "SoFi", type: "checking", last4: "9067" };
+    readInstead = () => ({ statements: [marchOf(CASH), { ...marchOf(CASH), accountHint: SOFI }], withheld: [] });
+    const [outcome] = await importStatementFiles(bundle.db, [MARCH]);
+    const [read] = reads(eq(importFilesTable.fileName, MARCH.name));
+    expect(outcome!.status).toBe("parsed");
+
+    expect(bankOf(read!)).toBe("Chase");
   });
 });
 
