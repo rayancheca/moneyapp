@@ -486,3 +486,79 @@ describe("§6A 43 — a clawback filed in an income category lowers the agent's 
     expect(bands()).toEqual({ ...clawed, moved: clawed.moved! + CLAWBACK });
   });
 });
+
+/*
+ * ❓ PINNED, NOT DECIDED. §6A 43 was asked of a SCHEDULE, and the bridge now nets every income-category row on the
+ * agent's cash either sign (`agentsBand`). The forecast's PACE is not a schedule: it counts the agent's CREDITS only
+ * (`isAgentsIncome`), as his pace counts his (`isIncome`). So a clawback no live schedule owns — none detected, or one
+ * he dismissed, whose rows fall to the pace — lowers the bridge's "Agent's income" and is in no reading on the card, EOM
+ * net worth included. 🔴 80f002d's docs said the forecast nets "as the bridge nets the row it becomes"; for these rows
+ * it does not. Netting them would move the pace's EOM net worth (and `projectOngoingIncome` drops a bucket that nets to
+ * zero or below), so it is his call; changing it flips this test on purpose.
+ *
+ * Hypothetical rows, as above: $4.00 of interest on the 28th and $3.00 of it clawed back on the 29th, July to September,
+ * all filed in Interest.
+ */
+describe("❓ the pace of the agent's income counts its credits only — the bridge nets what no live schedule owns", () => {
+  const PAID = 400;
+  const CLAWBACK = -300;
+  const MONTHS = ["07", "08", "09"] as const;
+
+  const rebuilt = () => {
+    for (const a of bundle.db.select({ id: accounts.id }).from(accounts).all()) rebuildAccount(bundle.db, a.id);
+  };
+  const september = () => {
+    rebuilt();
+    const bridge = netWorthAttribution(bundle.db, "2026-08-31", SEPT.to, nwOn("2026-08-31"), nwOn(SEPT.to));
+    expect(bridge.closes).toBe(true);
+    return Object.fromEntries(bridge.bands.map((b) => [b.key, b.cents]));
+  };
+  /** what the card reads off the ledger as it stands, with the net worth today it starts from */
+  const card = () => {
+    rebuilt();
+    return { ...read(), today: nwOn(TODAY) };
+  };
+  /** his lines and nets, every reading — his EOM cash also counts this fixture's agent's balance, so it is left out */
+  const hisLines = (c: ReturnType<typeof card>) =>
+    c.his.map((h) => ({ components: h.components, committed: h.committed.slice(0, 3), pace: h.pace.slice(0, 3) }));
+
+  test("❓ a clawback with no schedule, or a dismissed one's, lowers the bridge's \"Agent's income\" and no projection", () => {
+    for (const month of MONTHS) post(agentic, `2026-${month}-28`, PAID, INTEREST, "Interest Payment");
+    const paid = card();
+    // the card's pace: the credits' 3-mo avg $4.00 × 27/31 days in October, and November's whole $4.00 chained on it
+    expect(paid.income).toEqual([
+      { netCents: 348, committedNetCents: 0 },
+      { netCents: 748, committedNetCents: 0 },
+    ]);
+    expect(september()).toMatchObject({ agentIncome: PAID, moved: 0 });
+
+    const clawedBy = {
+      "no schedule": () => {
+        const ids = MONTHS.map((month) => post(agentic, `2026-${month}-29`, CLAWBACK, INTEREST, "Interest Clawback"));
+        return () => {
+          for (const id of ids) bundle.db.delete(transactions).where(eq(transactions.id, id)).run();
+        };
+      },
+      "a dismissed schedule": () => {
+        const rows = MONTHS.map((month) => [`2026-${month}-29`, INTEREST] as const);
+        const id = agentsSchedule({ kind: "other", amountCents: CLAWBACK, rows, name: "Interest Clawback" });
+        bundle.db.update(recurringSeries).set({ status: "dismissed" }).where(eq(recurringSeries.id, id)).run();
+        return () => drop(id);
+      },
+    };
+    for (const [owner, claw] of Object.entries(clawedBy)) {
+      const undo = claw();
+      // §6A 43 on the bridge: September's $4.00 paid nets to +$1.00, and nothing sits in Moved
+      expect(september(), owner).toMatchObject({ agentIncome: PAID + CLAWBACK, moved: 0 });
+      const clawed = card();
+      // ❓ …and the card's pace is the credits' alone: the same +$3.48 and +$7.48, and no cost of the agent's either
+      expect(clawed.income, owner).toEqual(paid.income);
+      expect(clawed.costs, owner).toEqual(paid.costs);
+      // EOM net worth moves by September's posted clawback — the net worth today it starts from — and nothing projected
+      expect(clawed.today - paid.today, owner).toBe(CLAWBACK);
+      expect(clawed.nw, owner).toEqual(paid.nw.map((cents) => cents + CLAWBACK));
+      expect(hisLines(clawed), owner).toEqual(hisLines(paid));
+      undo();
+    }
+  });
+});

@@ -152,7 +152,10 @@ interface KindTotals {
  * "Agent's income", here and in the forecast's note of it, and can take it
  * below zero. 🔴 It sat in Moved here while the forecast netted its schedule
  * inside the agent's costs. ⛔ His own clawback is still Moved: "Income" is his
- * money in, only.
+ * money in, only. ❓ The forecast's note nets it only when a live schedule
+ * projects it: its pace counts the agent's credits alone, so a clawback with
+ * no schedule, or a dismissed one's, is here and in no reading of the card —
+ * pinned, not decided (`MonthForecast.agentsIncome`).
  */
 function kindTotals(
   db: AppDatabase,

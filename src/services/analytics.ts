@@ -484,6 +484,9 @@ export function isIncome(
  * The rows `isIncome` leaves out for WHOSE they are, and only those: income by category and sign, paid into the
  * agent's cash. Not his (owner decision 2026-09-28) and still money net worth holds, which is why the forecast
  * projects it into EOM net worth alone (`MonthForecast.agentsIncome`) — never into a line that says Income.
+ *
+ * ❓ The forecast's pace asks this, credits only; the bridge nets either sign (`isAgentsIncomeCategoryRow`, §6A 43).
+ * So a clawback no live schedule owns is the bridge's alone — pinned, not decided (`MonthForecast.agentsIncome`).
  */
 export function isAgentsIncome(
   idx: CategoryIndex,
@@ -497,9 +500,9 @@ export function isAgentsIncome(
  * Whether a row of an INCOME category is the AGENT'S: on its cash account, EITHER SIGN. `isIncome`'s account half,
  * and the whole rule for a surface that NETS an income category's rows rather than counting its credits — the
  * category's own page (`spendingTransactions`), the Fees card's interest, and the bridge's "Agent's income" with the
- * forecast's note of it (`agentsBand`, owner decision 2026-10-06, §6A 43). A reversal on the agent's cash is the
- * agent's as much as the credit it reverses; /summary's `lineFor` reads that account the same way, on every line and
- * in either direction.
+ * forecast's schedules of it (`agentsBand`, owner decision 2026-10-06, §6A 43) — not its pace (`isAgentsIncome`). A
+ * reversal on the agent's cash is the agent's as much as the credit it reverses; /summary's `lineFor` reads that
+ * account the same way, on every line and in either direction.
  *
  * ⚖️ Owner decision 2026-09-28 (§6A 27). 🔴 /spending's Income card had learned it and the pages one click under it had
  * not: `/categories/<Income>` read "Received" over the agent's dividend and interest too, an "Interest" subcategory
