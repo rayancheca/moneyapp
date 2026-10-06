@@ -49,15 +49,57 @@ describe("AgentsCostsNote — the forecast card names what its EOM net worth pay
   });
 
   test("no shape of the two halves prints a zero amount, and only two zeros print no note", () => {
-    const halves = [0, -0, -435, -500];
+    const halves = [0, -0, -435, -500, 65, 500];
     for (const netCents of halves) {
       for (const committedNetCents of halves) {
         const note = words({ netCents, committedNetCents });
         const shape = JSON.stringify({ netCents: Object.is(netCents, -0) ? "-0" : netCents, committedNetCents: Object.is(committedNetCents, -0) ? "-0" : committedNetCents });
         expect(note === "", shape).toBe(netCents === 0 && committedNetCents === 0);
         expect(note, shape).not.toMatch(/\$0\.00/);
+        // a reading that nets to a credit is said so, plainly — and only then
+        expect(/net to a credit/.test(note), shape).toBe(netCents > 0 || committedNetCents > 0);
+        expect(/your net worth pays it/.test(note), shape).toBe(note !== "" && netCents <= 0 && committedNetCents <= 0);
       }
     }
+  });
+});
+
+/**
+ * ⚖️ Owner decision 2026-10-06 (§6A 39): a scheduled credit to the agent's cash is named by its category, so a monthly
+ * refund of its Gold fee, filed in Fees, nets inside the agent's costs (`agentsSeriesBand`) — and a month whose refunds
+ * come to more than its fees nets to a CREDIT. "Projected to pay +$5.00" would say the opposite of what happens: the
+ * note says it plainly instead.
+ */
+describe("AgentsCostsNote — a month the agent's costs net to a credit", () => {
+  test("one amount: what the agent's account gets back, and that its costs net to a credit", () => {
+    expect(words({ netCents: 500, committedNetCents: 500 })).toBe(
+      "EOM net worth counts the +$5.00 the agent's own account is projected to get back by month end, net of what it " +
+        "pays: its costs net to a credit. " +
+        "That is the agent's money, not your spending: your net worth holds it, and Spending and Net leave it out.",
+    );
+    expect(words({ netCents: 65, committedNetCents: 0 })).toBe(
+      "EOM net worth at your recent pace counts the +$0.65 the agent's own account is projected to get back by month " +
+        "end, net of what it pays: its costs net to a credit. " +
+        "That is the agent's money, not your spending: your net worth holds it, and Spending and Net leave it out.",
+    );
+  });
+
+  test("two amounts: each under its reading, and which of them nets to a credit", () => {
+    expect(words({ netCents: -100, committedNetCents: 500 })).toBe(
+      "EOM net worth counts what the agent's own account is projected to pay by month end, net of what it gets back: " +
+        "+$5.00 in the headline and -$1.00 at your recent pace. " +
+        "In the headline its costs net to a credit: it gets back more than it pays. " +
+        "That is the agent's money, not your spending: your net worth pays or holds it, and Spending and Net leave it out.",
+    );
+    expect(words({ netCents: 65, committedNetCents: -500 })).toMatch(
+      /At your recent pace its costs net to a credit: it gets back more than it pays\. .*pays or holds it/,
+    );
+    expect(words({ netCents: 65, committedNetCents: 500 })).toBe(
+      "EOM net worth counts what the agent's own account is projected to pay by month end, net of what it gets back: " +
+        "+$5.00 in the headline and +$0.65 at your recent pace. " +
+        "On both readings its costs net to a credit: it gets back more than it pays. " +
+        "That is the agent's money, not your spending: your net worth holds it, and Spending and Net leave it out.",
+    );
   });
 });
 
@@ -108,6 +150,8 @@ describe("ForecastCard — the card prints the agent's costs its EOM net worth c
       { netCents: -500, committedNetCents: -500 },
       { netCents: -435, committedNetCents: 0 },
       { netCents: -935, committedNetCents: -500 },
+      // §6A 39: refunds of the agent's fee, filed in Fees, netting its costs to a credit
+      { netCents: 65, committedNetCents: 500 },
     ]) {
       const note = words(agents);
       expect(note, JSON.stringify(agents)).not.toBe("");

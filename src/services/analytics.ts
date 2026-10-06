@@ -1,9 +1,10 @@
 import { cache } from "react";
-import { and, eq, gte, inArray, isNotNull, isNull, lte, notInArray, or, type SQL } from "drizzle-orm";
+import { and, eq, gte, inArray, isNotNull, isNull, lte, notInArray, or, sql, type SQL } from "drizzle-orm";
 import type { AppDatabase } from "@/db/client";
 import { categories, type CategoryKind } from "@/db/schema/categories";
 import { recurringSeries, type SeriesKind } from "@/db/schema/recurring";
 import { transactions } from "@/db/schema/transactions";
+import type { AttributionBandKey } from "@/lib/attribution";
 import { addDays, monthKey, periodBounds, todayIso } from "@/lib/dates";
 import { seriesAmountCents, seriesIsIncomeOrSpending } from "@/lib/series-kind";
 import { outsidePortfolioCashAccountIds } from "./accounts";
@@ -533,14 +534,16 @@ export function offAgentsCash(agentsCash: readonly string[]): SQL | undefined {
  * deposit ranking still counted the agent's series as his.
  *
  * Every reader that projects, sums, ranks or lists an income series as HIS asks this, never a copy of it:
- * `incomeExpectation`, the forecast's legs and `cashEarningsReadings` directly; `recurringCalendar`,
+ * `incomeExpectation`, the forecast's passed-unpaid paydays and `cashEarningsReadings` directly; `recurringCalendar`,
  * `upcomingOccurrences` (the dashboard's next paycheck through it), `recurringInsightInput` and a category's series
  * (`recurringSeriesIdsForSubtree`, so `seriesInCategory`) through `isAgentsSeries` — 🔴 the last listed the agent's
  * month-end interest under `/categories/<Income>` beside his pay. The readers that must see every series do not:
  * /recurring's table, where the owner confirms or dismisses one, and a row's series picker.
  *
  * ⛔ Not "drop the series". Net worth holds the agent's money, so the forecast still counts what it pays in EOM net
- * worth (`MonthForecast.agentsIncome`), as the bridge names the agent's rows on a band of their own.
+ * worth, as the bridge names the agent's rows on a band of their own — under the band its category names
+ * (`agentsSeriesBand`, owner decision 2026-10-06): its interest is `MonthForecast.agentsIncome`, and a refund of its
+ * fee, filed in Fees, nets inside `agentsCosts` whatever kind detection gave the schedule.
  */
 export function isAgentsIncomeSeries(
   agentsCash: ReadonlySet<string>,
@@ -549,26 +552,52 @@ export function isAgentsIncomeSeries(
   return series.kind === "income" && series.accountId !== null && agentsCash.has(series.accountId);
 }
 
+/** The net-worth bridge's two bands for the agent's money: "Agent's income" and "Agent's costs" (`lib/attribution`). */
+export type AgentsBand = Extract<AttributionBandKey, "agentIncome" | "agentCosts">;
+
 /**
- * Whether a recurring series schedules the AGENT'S costs rather than his bills: money OUT — its amount, the owner's
- * first (`seriesAmountCents`), is negative — under a spending series, any kind but income and transfer
- * (`seriesIsIncomeOrSpending`), on the agent's cash account. `spendingBucket`'s account half, asked of a schedule
- * instead of a row; `isAgentsIncomeSeries`' mirror. A series with no account reads as his.
+ * Which of the agent's two bands a row is named by: income-kind money in is "Agent's income" (`isAgentsIncome`), and
+ * an expense-kind row, EITHER SIGN, is "Agent's costs" (`isAgentsCostCategoryRow`) — a refund of the agent's fee nets
+ * inside the costs it reverses. Null for a row of his, and for one of the agent's that neither band names — unfiled, a
+ * transfer, an income-kind clawback — which the bridge keeps in Moved, as it keeps every such row.
  *
- * ⚖️ Owner decision 2026-10-02 (§6A 34). 🔴 Detected on the agent's cash, its monthly Gold fee was a Fees bill of his
- * on the forecast card ("came due Oct 1 and has not posted"), /budgets' overdue and tail, Predict budgets, the runway's
- * committed bills, the subscriptions card, both Upcoming lists, the calendar and a series page's ranking.
- *
- * 🔴 …and it asked the kind and never the sign, so money IN under a series of the agent's filed "other" or "bill" — a
- * monthly credit — was a cost: `MonthForecast.agentsCosts` went positive, past the ≤ 0 its type promises. Money in
- * on the agent's cash is what it is PAID, as his own series are income or spending by their sign; the forecast
- * routes it with the agent's income.
- *
- * ⛔ Not "drop the series". Net worth pays the agent's costs, so the forecast still counts what it charges in EOM net
- * worth (`MonthForecast.agentsCosts`), as the bridge names the agent's costs on a band of their own. ⛔ Nor the test of
- * whose a schedule is: a reader that leaves the agent's series out of his asks `isAgentsSeries`, whatever the sign.
+ * ⚖️ Owner decision 2026-10-06 (§6A 39): a scheduled credit to the agent's cash is named by its CATEGORY, as the bridge
+ * names the row it becomes. So this is the one rule both ask: the bridge of each row (`kindTotals`), the forecast of
+ * each schedule (`agentsSeriesBand`). 🔴 Each decided apart: a monthly refund of the agent's Gold fee, filed in Fees,
+ * netted inside "Agent's costs" on the bridge and was "Agent's income" on the forecast card, which asked its sign.
  */
-export function isAgentsCostSeries(
+export function agentsBand(
+  idx: CategoryIndex,
+  agentsCash: ReadonlySet<string>,
+  txn: Pick<AnalyticsTxn, "accountId" | "categoryId" | "amountCents">,
+): AgentsBand | null {
+  if (isAgentsIncome(idx, agentsCash, txn)) return "agentIncome";
+  return isAgentsCostCategoryRow(idx, agentsCash, txn) ? "agentCosts" : null;
+}
+
+/**
+ * Which of the agent's two bands a SCHEDULE on its cash is named by (`isAgentsSeries`), or null for one of his. Asked
+ * of the series as the row it becomes — its category (`agentsSeriesBands`) and its amount, the owner's first
+ * (`seriesAmountCents`) — so `agentsBand` names it as the bridge will name that row: filed in Fees, a monthly credit
+ * nets inside the agent's costs whatever kind detection gave the schedule; filed in Interest, it is the agent's income.
+ *
+ * What the bridge would keep in Moved — an unfiled schedule, one filed on a transfer — the forecast has no note for,
+ * and EOM net worth must still count it, so it goes by its sign, as the forecast's rows do: the agent's unfiled money
+ * out is its cost (`agentsCostBucket`, owner decision 2026-10-05), and money in is what its cash is paid. Every
+ * schedule of the agent's lands in one band, so EOM net worth, which adds both, holds every one.
+ *
+ * ⚖️ Owner decisions 2026-10-02 (§6A 34) and 2026-10-06 (§6A 39). 🔴 Detected on the agent's cash, its monthly Gold fee
+ * was a Fees bill of his on the forecast card, /budgets, Predict budgets, the runway, the subscriptions card, both
+ * Upcoming lists, the calendar and a series page's ranking. 🔴 Then the cost rule asked the kind and never the sign,
+ * and an unfiled monthly credit under "other" was a cost of +$3.00; asked the sign, it then never asked the category,
+ * and the agent's Gold-fee refund, filed in Fees, was its income on the card while the bridge netted the posted refund
+ * inside its costs. 🔴 …and the arrears leg still asked the kind: a schedule detection called "income" that came due
+ * money out was a bill of HIS on the card ("came due … and has not posted").
+ *
+ * ⛔ Not the test of whose a schedule is: a reader that leaves the agent's series out of his asks `isAgentsSeries`.
+ */
+export function agentsSeriesBand(
+  idx: CategoryIndex,
   agentsCash: ReadonlySet<string>,
   series: {
     readonly kind: SeriesKind;
@@ -576,19 +605,79 @@ export function isAgentsCostSeries(
     readonly userAmountCents: number | null;
     readonly nextExpectedAmountCents: number | null;
   },
-): boolean {
+  categoryId: string | null,
+): AgentsBand | null {
+  const { accountId } = series;
+  if (accountId === null || !isAgentsSeries(agentsCash, series)) return null;
+  const amountCents = seriesAmountCents(series) ?? 0;
   return (
-    isAgentsSeries(agentsCash, series) && series.kind !== "income" && (seriesAmountCents(series) ?? 0) < 0
+    agentsBand(idx, agentsCash, { accountId, categoryId, amountCents }) ??
+    (amountCents < 0 ? "agentCosts" : "agentIncome")
   );
 }
 
 /**
+ * Every series on the agent's cash and the band `agentsSeriesBand` names it by — none when no book is paired, at no
+ * cost beyond the account read. Read once for a whole forecast chain (`ForecastReads`).
+ *
+ * A schedule's category is the owner's first (`user_category_id`), then the one most of its active rows are filed in
+ * — the precedence a series page names its category by (`seriesDetail`). ⛔ A row not filed yet, NULL or on the system
+ * "Uncategorized" category (`CategoryIndex.isUncategorized`), says nothing about the stream: the filed rows name it.
+ */
+export function agentsSeriesBands(db: AppDatabase, agentsCash: ReadonlySet<string>): ReadonlyMap<string, AgentsBand> {
+  if (agentsCash.size === 0) return new Map();
+  const agents = db
+    .select({
+      id: recurringSeries.id,
+      kind: recurringSeries.kind,
+      accountId: recurringSeries.accountId,
+      userAmountCents: recurringSeries.userAmountCents,
+      nextExpectedAmountCents: recurringSeries.nextExpectedAmountCents,
+      userCategoryId: recurringSeries.userCategoryId,
+    })
+    .from(recurringSeries)
+    .all()
+    .filter((s) => isAgentsSeries(agentsCash, s));
+  if (agents.length === 0) return new Map();
+
+  const idx = loadCategoryIndex(db);
+  // series → its most-filed category: the count, then the id, so a tie reads one way every time
+  const filed = new Map<string, { categoryId: string; n: number }>();
+  for (const r of db
+    .select({ seriesId: transactions.recurringSeriesId, categoryId: transactions.categoryId, n: sql<number>`count(*)` })
+    .from(transactions)
+    .where(
+      and(
+        eq(transactions.status, "active"),
+        inArray(transactions.recurringSeriesId, agents.map((s) => s.id)),
+        isNotNull(transactions.categoryId),
+      ),
+    )
+    .groupBy(transactions.recurringSeriesId, transactions.categoryId)
+    .all()) {
+    if (r.seriesId === null || r.categoryId === null || idx.isUncategorized(r.categoryId)) continue;
+    const best = filed.get(r.seriesId);
+    const n = Number(r.n);
+    if (!best || n > best.n || (n === best.n && r.categoryId < best.categoryId)) {
+      filed.set(r.seriesId, { categoryId: r.categoryId, n });
+    }
+  }
+
+  const out = new Map<string, AgentsBand>();
+  for (const s of agents) {
+    const categoryId = s.userCategoryId ?? filed.get(s.id)?.categoryId ?? null;
+    const band = agentsSeriesBand(idx, agentsCash, s, categoryId);
+    if (band !== null) out.set(s.id, band);
+  }
+  return out;
+}
+
+/**
  * Whether a series schedules the agent's money at all: any series but a transfer (`seriesIsIncomeOrSpending`) on
- * the agent's cash account — what it pays (`isAgentsCostSeries`) and what it is paid (`isAgentsIncomeSeries`, or
- * money in under any other kind), together. The rule for every reader that lists, sums or ranks a schedule as HIS
- * and draws none of them: the calendar, the Upcoming lists (and the dashboard's through them), a series page's
- * ranking, a category's series (`recurringSeriesIdsForSubtree`), the subscriptions card and the runway's overdue set.
- * The forecast routes each half apart, into EOM net worth.
+ * the agent's cash account — what it pays and what it is paid, together. The rule for every reader that lists, sums
+ * or ranks a schedule as HIS and draws none of them: the calendar, the Upcoming lists (and the dashboard's through
+ * them), a series page's ranking, a category's series (`recurringSeriesIdsForSubtree`), the subscriptions card and the
+ * runway's overdue set. The forecast names each by its band (`agentsSeriesBand`), into EOM net worth.
  */
 export function isAgentsSeries(
   agentsCash: ReadonlySet<string>,

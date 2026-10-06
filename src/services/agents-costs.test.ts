@@ -852,11 +852,12 @@ describe("the agent's cost SERIES is not his bill either", () => {
   /*
    * 🔴 The cost-series rule asked the kind and never the sign, so money IN under a series of the agent's that is no
    * income series — a monthly credit detection filed "other" or "bill" — was a COST of the agent's: `agentsCosts` read
-   * +$3.00, past the ≤ 0 its own type promises, and the card's note would say the agent's account "is projected to pay
-   * +$3.00". Money in on the agent's cash is what it is PAID, whatever kind the schedule carries — as his own series
-   * are income or spending by their sign (`seriesIsIncomeOrSpending`). Hypothetical: no such series exists.
+   * +$3.00, and the card's note would say the agent's account "is projected to pay +$3.00". These schedules are
+   * UNFILED — no row, no category of the owner's — so they go by their sign, as the agent's unfiled rows do: money in on
+   * the agent's cash is what it is PAID, whatever kind the schedule carries. ⚖️ A FILED one is named by its category
+   * (owner decision 2026-10-06, §6A 39, `agents-credit-by-category.test.ts`). Hypothetical: no such series exists.
    */
-  test("⛔ money IN under a series of the agent's is no cost of its: it is what the agent's cash is paid", () => {
+  test("⛔ money IN under an unfiled series of the agent's is no cost of its: it is what the agent's cash is paid", () => {
     hisCar();
     const read = () => {
       const f = forecastCurrentMonth(bundle.db, TODAY);

@@ -6,7 +6,7 @@ import { transactions } from "@/db/schema/transactions";
 import { attribute, type Attribution, type Restatement } from "@/lib/attribution";
 import { compareDates } from "@/lib/dates";
 import { outsidePortfolioCashAccountIds } from "./accounts";
-import { isAgentsCostCategoryRow, isAgentsIncomeCategoryRow, loadCategoryIndex } from "./analytics";
+import { agentsBand, loadCategoryIndex } from "./analytics";
 import { REPLAY_STATUSES } from "./derivation";
 import { inTransitAt } from "./in-flight";
 import { marketChangeBetween, valuedInvestmentAccounts } from "./portfolio";
@@ -141,6 +141,11 @@ interface KindTotals {
  * `spendingBucket` reads), is `agentCosts`, anywhere else `spent` or `refunds` —
  * so those two bands are exactly /spending's Spent and Refunds over his expense
  * categories, and the agent's fee is named rather than dropped.
+ *
+ * ⚖️ Both halves are ONE rule, `agentsBand`, and the forecast asks it of each
+ * schedule on the agent's cash (`agentsSeriesBand`, owner decision 2026-10-06,
+ * §6A 39): a refund of the agent's fee, filed in Fees, nets inside "Agent's
+ * costs" here and inside the forecast's agent's costs, never its income there.
  */
 function kindTotals(
   db: AppDatabase,
@@ -176,15 +181,23 @@ function kindTotals(
   };
   for (const r of rows) {
     if (!eligible.has(r.accountId)) continue;
+    // the agent's first, by the one rule the forecast names a schedule of the agent's by (`agentsBand`)
+    const agents = agentsBand(idx, agentsCash, r);
+    if (agents === "agentIncome") {
+      t.agentIncomeCents += r.amountCents;
+      continue;
+    }
+    if (agents === "agentCosts") {
+      t.agentCostsCents += r.amountCents;
+      continue;
+    }
     const kind = r.categoryId === null ? null : idx.topLevelOf(r.categoryId).kind;
     if (kind === "income" && r.amountCents > 0) {
-      if (isAgentsIncomeCategoryRow(idx, agentsCash, r)) t.agentIncomeCents += r.amountCents;
-      else t.earnedCents += r.amountCents;
+      t.earnedCents += r.amountCents;
       continue;
     }
     if (kind === "expense") {
-      if (isAgentsCostCategoryRow(idx, agentsCash, r)) t.agentCostsCents += r.amountCents;
-      else if (r.amountCents < 0) t.spentCents += r.amountCents;
+      if (r.amountCents < 0) t.spentCents += r.amountCents;
       else t.refundsCents += r.amountCents;
       continue;
     }
