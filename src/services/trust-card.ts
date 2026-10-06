@@ -136,7 +136,8 @@ export interface TrustDays {
   restOnNothing: number;
   /**
    * Days whose balance stands on a count of his and nothing else (`countedDays`) — neither unchecked nor a chain that
-   * closes: his word, not a check. Disjoint from `unchecked`; `carried` days carried from his count are in it.
+   * closes: his word, not a check. Disjoint from `unchecked`; `carried` days carried from his count are in it. Said in
+   * `countedNote`, not in `sentence`.
    */
   counted: number;
   /**
@@ -163,6 +164,17 @@ export interface TrustDays {
    * were named among them.
    */
   beforeFirstBalanceNote: string | null;
+  /**
+   * The days on his count alone, said quietly on a line of their own — null when there are none.
+   *
+   * ⚖️ His answer, 2026-10-06 (§6A 38): amber only for what rests on nothing. 🔴 These were the amber sentence's last
+   * clause, so on his ledger one amber paragraph read "16 of 7,812 days of balances (0.2% of them) rest on nothing —
+   * 15 in Robinhood Cash, 1 in Cash on Hand. No day provably fails to add up — … 8 rest on a balance you counted — 8 in
+   * Cash on Hand — your word, not a check." — what was said of his count wore another account's open run's colour, and
+   * with nothing resting on nothing its count and share were of the other accounts' days too. Its words name his days
+   * and nothing else, so they read the same whatever any other account holds.
+   */
+  countedNote: string | null;
   /**
    * What the carried days are, said out loud — null when there are none.
    *
@@ -292,16 +304,12 @@ function plural(n: number, noun: string): string {
  * named here — and with nothing else unchecked, the days this says close are
  * the ones from each account's first balance on (§6A 35).
  *
- * 🔴 The days on his count were said only with nothing else unchecked
- * (`closedOrCountedSentence`). On his ledger (2026-10-06) this read "16 of 7,812
- * days … rest on nothing — 15 in Robinhood Cash, 1 in Cash on Hand." and nothing
- * of Cash on Hand's days on his count; a temp ledger in his shape (his count on
- * Aug 3, a row on Aug 11, a statement account with a run open) read "90 of 191
- * days … rest on nothing — 58 in Cash on Hand, 32 in Robinhood Cash. No day
- * provably fails to add up — …" of 8 days on that count. ⚖️ ONE verb for a
- * balance he typed, "counted" (his answer, 2026-10-05), in `onHisCount`'s words
- * whichever way this opens — last, so "of them" and "these" stay the unchecked
- * days'.
+ * ⚖️ The days on his count are not said here, in either branch: they are
+ * `countedNote`'s, a quiet line of their own (his answer, 2026-10-06, §6A 38).
+ * 🔴 Said here as this sentence's last clause, they were amber whenever another
+ * account had a day resting on nothing — on his ledger, "… 8 rest on a balance
+ * you counted — 8 in Cash on Hand — your word, not a check." closing the amber
+ * paragraph about Robinhood Cash's open run.
  */
 function daySentence(
   total: number,
@@ -310,18 +318,16 @@ function daySentence(
   sharePct: number | null,
   byAccount: readonly DaysIn[],
   missed: readonly MissedBalance[],
-  countedBy: readonly DaysIn[],
+  counted: number,
   beforeFirst: number,
 ): string {
   if (total === 0) return "No day of balances has been derived yet, so there is nothing here to check.";
-  if (unchecked === 0) return closedOrCountedSentence(total, beforeFirst, countedBy);
+  if (unchecked === 0) return closedOrCountedSentence(total, beforeFirst, counted);
   const gapClause =
     gap === 0
       ? " No day provably fails to add up — these are days nobody has checked, not days that broke."
       : ` ${gap.toLocaleString("en-US")} of them provably ${gap === 1 ? "does" : "do"} not add up: the replay missed ${missedWords(missed)}.`;
-  const counted = countedBy.reduce((n, a) => n + a.days, 0);
-  const countedClause = counted === 0 ? "" : ` ${onHisCount(counted.toLocaleString("en-US"), counted === 1, countedBy)}`;
-  return `${unchecked.toLocaleString("en-US")} of ${plural(total, "day")} of balances${shareWords(sharePct)} rest on nothing — ${namedDays(byAccount)}.${gapClause}${countedClause}`;
+  return `${unchecked.toLocaleString("en-US")} of ${plural(total, "day")} of balances${shareWords(sharePct)} rest on nothing — ${namedDays(byAccount)}.${gapClause}`;
 }
 
 /** Days counted in one account — `uncheckedByAccount`'s shape, most first. */
@@ -349,29 +355,30 @@ function shareWords(sharePct: number | null): string {
  * typed on an investment account read the same beside "1 is held at a balance you counted" (temp ledger through the
  * real services, review 2026-10-06 — not on his ledger, where Cash on Hand still has an open unchecked run).
  *
- * ⚖️ ONE verb for a balance he typed, "counted" (his answer, 2026-10-05). The days on his count are each day's own
- * proof's (`countedDays`); the sentence says nothing of the others, so it calls none of them a chain that closes.
+ * ⚖️ The days on his count are `countedNote`'s (his answer, 2026-10-06, §6A 38), so with any of them this says only
+ * that none rests on nothing — and calls none of the others a chain that closes, as it never has beside his count.
  */
-function closedOrCountedSentence(total: number, beforeFirst: number, countedBy: readonly DaysIn[]): string {
+function closedOrCountedSentence(total: number, beforeFirst: number, counted: number): string {
   // ⚖️ §6A 35: a verified account's days before its first balance are `beforeFirstBalanceNote`'s, so the days this
   // speaks of are the ones from each account's first balance on — counted or closing, never those
   const closing = total - beforeFirst;
   const span = beforeFirst > 0 ? " from each account's first balance on" : "";
-  const counted = countedBy.reduce((n, a) => n + a.days, 0);
   if (counted === 0) return `Every one of ${plural(closing, "day")} of balances${span} rests on a chain that closes.`;
-  const opening =
-    counted === closing
-      ? `Every one of ${plural(closing, "day")} of balances${span}`
-      : `${counted.toLocaleString("en-US")} of ${plural(closing, "day")} of balances${span}${shareWords((counted / closing) * 100)}`;
-  return `${onHisCount(opening, counted === closing || counted === 1, countedBy)} No day rests on nothing, and none fails to add up.`;
+  return `None of ${plural(closing, "day")} of balances${span} rests on nothing, and none fails to add up.`;
 }
 
 /**
- * "<subject> rest on a balance you counted — 8 in Cash on Hand — your word, not a check." — the days on his count
- * alone, in ONE set of words for both of `daySentence`'s ways of opening; the subject's number sets the verb.
+ * "8 days of balances rest on a balance you counted — 8 in Cash on Hand — your word, not a check." — the days on his
+ * count alone, on a quiet line of their own (⚖️ §6A 38, 2026-10-06). Null with none.
+ *
+ * ⛔ No total and no share: a count of every day, or a percentage of them, is a figure about the other accounts' days,
+ * and what is said of his count must not change when another account's do. ⚖️ ONE verb for a balance he typed,
+ * "counted" (his answer, 2026-10-05).
  */
-function onHisCount(subject: string, singular: boolean, countedBy: readonly DaysIn[]): string {
-  return `${subject} ${singular ? "rests" : "rest"} on a balance you counted — ${namedDays(countedBy)} — your word, not a check.`;
+function countedNote(countedBy: readonly DaysIn[]): string | null {
+  if (countedBy.length === 0) return null;
+  const n = countedBy.reduce((sum, a) => sum + a.days, 0);
+  return `${plural(n, "day")} of balances ${n === 1 ? "rests" : "rest"} on a balance you counted — ${namedDays(countedBy)} — your word, not a check.`;
 }
 
 /** A balance a replay missed — `missedBalances`, one account's. */
@@ -580,12 +587,14 @@ export function trustCard(db: AppDatabase, today: string = todayIso()): TrustCar
     .filter((a) => a.days > 0)
     .sort((a, b) => b.days - a.days || a.name.localeCompare(b.name));
 
+  const counted = countedByAccount.reduce((n, a) => n + a.days, 0);
+
   const days: TrustDays = {
     ...tally,
     unchecked,
     beforeFirstBalance,
     restOnNothing,
-    counted: countedByAccount.reduce((n, a) => n + a.days, 0),
+    counted,
     restOnNothingSharePct,
     sentence: daySentence(
       tally.total,
@@ -594,10 +603,11 @@ export function trustCard(db: AppDatabase, today: string = todayIso()): TrustCar
       restOnNothingSharePct,
       restingOnNothing,
       missed,
-      countedByAccount,
+      counted,
       beforeFirstBalance,
     ),
     beforeFirstBalanceNote: beforeFirstBalanceNote(beforeFirstByAccount),
+    countedNote: countedNote(countedByAccount),
     carriedNote:
       tally.carried === 0
         ? null

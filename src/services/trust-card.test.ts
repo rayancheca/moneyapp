@@ -341,8 +341,9 @@ describe("trustCard — days that rest on his count", () => {
     const total = card.days.total.toLocaleString("en-US");
     expect(card.days.unchecked).toBe(0);
     expect(card.days.counted).toBe(card.days.total);
-    expect(card.days.sentence).toBe(
-      `Every one of ${total} days of balances rests on a balance you counted — ${total} in Cash on Hand — your word, not a check. No day rests on nothing, and none fails to add up.`,
+    expect(card.days.sentence).toBe(`None of ${total} days of balances rests on nothing, and none fails to add up.`);
+    expect(card.days.countedNote).toBe(
+      `${total} days of balances rest on a balance you counted — ${total} in Cash on Hand — your word, not a check.`,
     );
     expect(provenanceFor(bundle.db, { kind: "accountBalance", accountId: id, day: "2026-08-15" })!.headline).toMatch(
       /Both are your own counts, so nothing else confirms Cash on Hand on Aug 15, 2026\.$/,
@@ -371,8 +372,9 @@ describe("trustCard — days that rest on his count", () => {
 
     const card = trustCard(bundle.db, TODAY)!;
     expect(card.days.counted).toBe(2);
-    expect(card.days.sentence).toBe(
-      "2 of 6 days of balances (33.3% of them) rest on a balance you counted — 2 in Brokerage — your word, not a check. No day rests on nothing, and none fails to add up.",
+    expect(card.days.sentence).toBe("None of 6 days of balances rests on nothing, and none fails to add up.");
+    expect(card.days.countedNote).toBe(
+      "2 days of balances rest on a balance you counted — 2 in Brokerage — your word, not a check.",
     );
   });
 
@@ -395,6 +397,7 @@ describe("trustCard — days that rest on his count", () => {
     const card = trustCard(bundle.db, TODAY)!;
     expect(card.days.counted).toBe(0);
     expect(card.days.sentence).toBe("Every one of 4 days of balances rests on a chain that closes.");
+    expect(card.days.countedNote).toBeNull();
   });
 
   /** Robinhood Cash's shape: three statements that agree, a row before the first, and a run open from Sep 5. */
@@ -413,8 +416,11 @@ describe("trustCard — days that rest on his count", () => {
    * shape (his count on Aug 3, a row on Aug 11, a statement account with a run open) read "90 of 191 days of balances
    * (47.1% of them) rest on nothing — 58 in Cash on Hand, 32 in Robinhood Cash. No day provably fails to add up — …"
    * with `counted` 8. ⚖️ ONE verb for a balance he typed, "counted" (his answer, 2026-10-05).
+   *
+   * ⚖️ His answer, 2026-10-06 (§6A 38): said, then, as the amber sentence's last clause, they took its colour — so they
+   * are a quiet line of their own (`countedNote`), and the sentence is the days that rest on nothing alone.
    */
-  test("beside days that rest on nothing, the days on his count are still said, as counted", () => {
+  test("beside days that rest on nothing, the days on his count are still said, as counted, on their own line", () => {
     openRunAccount();
     addAccount("coh", "Cash on Hand", "checking");
     addAnchor("coh", "2026-08-03", "manual");
@@ -426,14 +432,17 @@ describe("trustCard — days that rest on his count", () => {
     expect(days.counted).toBe(8);
     expect(days.sentence).toBe(
       "47 of 148 days of balances (31.8% of them) rest on nothing — 36 in Cash on Hand, 11 in Robinhood Cash. " +
-        "No day provably fails to add up — these are days nobody has checked, not days that broke. " +
-        "8 rest on a balance you counted — 8 in Cash on Hand — your word, not a check.",
+        "No day provably fails to add up — these are days nobody has checked, not days that broke.",
+    );
+    expect(days.countedNote).toBe(
+      "8 days of balances rest on a balance you counted — 8 in Cash on Hand — your word, not a check.",
     );
   });
 
   /*
-   * ⚖️ What the sentence says of his count does not depend on whether another account has days nothing checks: one
-   * wallet resting on nothing but his counts, said the same words before and after a run opens elsewhere.
+   * ⚖️ What the card says of his count does not depend on whether another account has days nothing checks: one
+   * wallet resting on nothing but his counts, said the same words before and after a run opens elsewhere — on its own
+   * line, with no other account's days in its count or its share (§6A 38, his answer, 2026-10-06).
    */
   test("his count reads the same whether or not another account has days that rest on nothing", () => {
     const id = createCashWallet(bundle.db, { name: "Cash on Hand", openingOn: "2026-08-04", openingBalanceCents: 500_000 });
@@ -445,13 +454,14 @@ describe("trustCard — days that rest on his count", () => {
     openRunAccount();
     const beside = trustCard(bundle.db, "2026-10-01")!.days;
 
-    const said = "on a balance you counted — 44 in Cash on Hand — your word, not a check.";
+    const said = "44 days of balances rest on a balance you counted — 44 in Cash on Hand — your word, not a check.";
     expect([alone.counted, beside.counted]).toEqual([44, 44]);
-    expect(alone.sentence).toBe(`Every one of 44 days of balances rests ${said} No day rests on nothing, and none fails to add up.`);
+    expect([alone.countedNote, beside.countedNote]).toEqual([said, said]);
+    expect(alone.sentence).toBe("None of 44 days of balances rests on nothing, and none fails to add up.");
     expect(beside.restOnNothing).toBe(11);
     expect(beside.sentence).toBe(
       "11 of 148 days of balances (7.4% of them) rest on nothing — 11 in Robinhood Cash. " +
-        `No day provably fails to add up — these are days nobody has checked, not days that broke. 44 rest ${said}`,
+        "No day provably fails to add up — these are days nobody has checked, not days that broke.",
     );
   });
 
@@ -466,9 +476,11 @@ describe("trustCard — days that rest on his count", () => {
     ]);
     addTxn("rh", "2026-08-02");
 
-    expect(trustCard(bundle.db, TODAY)!.days.sentence).toMatch(
-      / 1 rests on a balance you counted — 1 in Brokerage — your word, not a check\.$/,
+    const { days } = trustCard(bundle.db, TODAY)!;
+    expect(days.countedNote).toBe(
+      "1 day of balances rests on a balance you counted — 1 in Brokerage — your word, not a check.",
     );
+    expect(days.sentence).not.toContain("your word, not a check");
   });
 });
 
@@ -743,9 +755,12 @@ describe("trustCard — the unchecked days", () => {
 
     const card = trustCard(bundle.db, "2026-09-16")!;
     expect(card.days.gap).toBe(28);
-    // and the days on his counts, Aug 3's and Sep 1's to the row on Sep 10, said after the days that break
     expect(card.days.sentence).toMatch(
-      / 28 of them provably do not add up: the replay missed the next balance, the one you counted on Sep 1, 2026\. 10 rest on a balance you counted — 10 in Cash on Hand — your word, not a check\.$/,
+      / 28 of them provably do not add up: the replay missed the next balance, the one you counted on Sep 1, 2026\.$/,
+    );
+    // and the days on his counts, Aug 3's and Sep 1's to the row on Sep 10, on their own line
+    expect(card.days.countedNote).toBe(
+      "10 days of balances rest on a balance you counted — 10 in Cash on Hand — your word, not a check.",
     );
     expect(provenanceFor(bundle.db, { kind: "accountBalance", accountId: id, day: "2026-08-20" })!.headline).toMatch(
       /^The replay did NOT land on Cash on Hand's next balance, the one you counted on Sep 1, 2026\./,
@@ -781,8 +796,10 @@ describe("trustCard — the unchecked days", () => {
     addTxn("coh", "2026-08-02");
     addTxn("coh", "2026-08-04");
 
-    expect(trustCard(bundle.db, TODAY)!.days.sentence).toMatch(
-      / 2 of them provably do not add up: the replay missed the next balance you counted\. 3 rest on a balance you counted — 3 in Cash on Hand — your word, not a check\.$/,
+    const { days } = trustCard(bundle.db, TODAY)!;
+    expect(days.sentence).toMatch(/ 2 of them provably do not add up: the replay missed the next balance you counted\.$/);
+    expect(days.countedNote).toBe(
+      "3 days of balances rest on a balance you counted — 3 in Cash on Hand — your word, not a check.",
     );
   });
 
@@ -806,8 +823,12 @@ describe("trustCard — the unchecked days", () => {
     ]);
     addTxn("coh", "2026-08-02");
 
-    expect(trustCard(bundle.db, TODAY)!.days.sentence).toMatch(
-      / 2 of them provably do not add up: the replay missed the next recorded balance, or the one you counted on Aug 5, 2026\. 2 rest on a balance you counted — 2 in Cash on Hand — your word, not a check\.$/,
+    const { days } = trustCard(bundle.db, TODAY)!;
+    expect(days.sentence).toMatch(
+      / 2 of them provably do not add up: the replay missed the next recorded balance, or the one you counted on Aug 5, 2026\.$/,
+    );
+    expect(days.countedNote).toBe(
+      "2 days of balances rest on a balance you counted — 2 in Cash on Hand — your word, not a check.",
     );
   });
 
@@ -972,6 +993,7 @@ describe("trustCard — the days before a first balance do not grade an account"
     expect(days.beforeFirstBalance).toBe(26);
     expect(days.restOnNothing).toBe(11);
     expect(days.sentence).toContain("rest on nothing — 11 in Robinhood Cash.");
+    expect(days.countedNote).toBeNull();
     expect(days.beforeFirstBalanceNote).toBe(
       "Robinhood Cash's 26 days before its first balance are unchecked — replayed backwards from it, " +
         "with nothing earlier to check them against, and not days its balance rests on.",
@@ -987,6 +1009,7 @@ describe("trustCard — the days before a first balance do not grade an account"
     const { days } = card;
     expect(days.unchecked).toBe(52);
     expect(days.restOnNothing).toBe(0);
+    expect(days.countedNote).toBeNull();
     expect(days.sentence).toBe(
       `Every one of ${days.total - 52} days of balances from each account's first balance on rests on a chain ` +
         "that closes.",
@@ -1000,7 +1023,8 @@ describe("trustCard — the days before a first balance do not grade an account"
   /*
    * ⚖️ Both answers at once (§6A 33 and 35, his, 2026-10-05): with nothing resting on nothing, the days on his count
    * are said as counted — never "a chain that closes" — and a verified account's days before its first balance stay
-   * the note's, out of the sentence's count.
+   * the note's, out of the sentence's count. ⚖️ §6A 38 (2026-10-06): his count is its own line; the sentence says
+   * plainly that nothing rests on nothing.
    */
   test("his count and a verified account's days before its first balance: counted, and said apart", () => {
     statementAccount("agentic", "Robinhood Agentic", null);
@@ -1012,15 +1036,16 @@ describe("trustCard — the days before a first balance do not grade an account"
     expect(days.restOnNothing).toBe(0);
     expect(days.beforeFirstBalance).toBe(26);
     expect(days.counted).toBeGreaterThan(0);
-    const closing = days.total - 26;
-    const share = ((days.counted / closing) * 100).toFixed(1);
+    const closing = (days.total - 26).toLocaleString("en-US");
     const counted = days.counted.toLocaleString("en-US");
     expect(days.sentence).toBe(
-      `${counted} of ${closing.toLocaleString("en-US")} days of balances from each account's first balance on ` +
-        `(${share}% of them) rest on a balance you counted — ${counted} in Cash on Hand — your word, not a check. ` +
-        "No day rests on nothing, and none fails to add up.",
+      `None of ${closing} days of balances from each account's first balance on rests on nothing, and none fails to ` +
+        "add up.",
     );
     expect(days.sentence).not.toContain("a chain that closes");
+    expect(days.countedNote).toBe(
+      `${counted} days of balances rest on a balance you counted — ${counted} in Cash on Hand — your word, not a check.`,
+    );
     expect(days.beforeFirstBalanceNote).toMatch(/^Robinhood Agentic's 26 days before its first balance are unchecked/);
   });
 });

@@ -72,6 +72,10 @@ export function TrustCard({ data }: { data: TrustCardData }) {
             note, in this footer's faint tone, as its row's count is — they warned here, amber, under
             a card where every account added up (review of 2deb764). Amber is the days nothing checks. */}
         <p className={days.restOnNothing > 0 ? "text-warning" : undefined}>{days.sentence}</p>
+        {/* ⚖️ His answer, 2026-10-06 (§6A 38): the days on his count are a quiet line of their own, never
+            the amber sentence's — they closed it, so "your word, not a check" wore the colour of Robinhood
+            Cash's open run. */}
+        {days.countedNote && <p>{days.countedNote}</p>}
         {days.beforeFirstBalanceNote && <p>{days.beforeFirstBalanceNote}</p>}
         {days.carriedNote && <p>{days.carriedNote}</p>}
         {data.emptyNote && <p>{data.emptyNote}</p>}
