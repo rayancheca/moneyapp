@@ -1,9 +1,9 @@
-# Handoff — the two ledger writes ran, his answers 30–36 built, the press race fixed
+# Handoff — the two ledger writes ran, his answers 30–40 built, the press race fixed
 
 > Written 2026-10-06 (session 2a7bb5b7, 10-05 → 10-06). `origin/main` = this handoff's commit. Since `e578461`:
-> four fix → skeptical-review → follow-up rounds over seven branches, then integration. Unit **364 files / 7,482
-> tests** · e2e **610 passed** at `maxDiffPixels: 0` (lid open, `caffeinate -i`, renderer check on; no baseline
-> moved) · `next build` ✓ · tsc ✓ · `pnpm ledger-check` exit 0 (pre-commit hook).
+> five fix → skeptical-review → follow-up rounds over ten branches, then integration. Unit **368 files / 7,515
+> tests** · e2e **610 passed** at `maxDiffPixels: 0` before answers 38–40, then **612 + 1 load flake** (§4) after them (lid
+> open, `caffeinate -i`, renderer check on; no baseline moved) · `next build` ✓ · tsc ✓ · `pnpm ledger-check` exit 0 (pre-commit hook).
 >
 > His ledger was written **four times**, each guarded, each with its own restore point (§2): 13 accounts · 10,328
 > active rows · **25 migrations** (0024 `left_out_acknowledgements`) · net worth **$119,999.32** (2026-10-02, the
@@ -34,6 +34,10 @@
 | **§6A 34** the agent's costs are not his | /spending's Spent, the Fees card, /budgets, category and merchant pages, forecast pace and the Sankey leave out any fee or expense the agent's cash pays — and its UNFILED money out; the bridge names it on its own band **"Agent's costs"** beside "Agent's income" | one classifier `isHisExpenseRow` / `isHisUnfiledSpending` (analytics.ts); /categories/<Uncategorized> and the dashboard's "N uncategorized" KEEP the agent's unfiled rows (session decision: a filing queue, not Spent). Latent: the agent holds one $26.64 transfer |
 | **§6A 35** days before a first balance don't grade an account | Robinhood Agentic graded **verified**: /imports "2 accounts nothing is checking", net worth "2 have nothing checking them"; its line reads "adds up through Aug 31, 2026, and unchecked days before that"; its "26 days unchecked" is quiet (faint), not amber — checked in the running app | the trust card's footer leaves EVERY account's days before its first balance to the note (`66703b2`: it had counted Robinhood Cash's Dec 2023 days as "rest on nothing": "42 … 41 in Robinhood Cash" → "16 … 15 in Robinhood Cash"); a verified card's note in "what you owe" is quiet and never repeats its row's date |
 | **§6A 36** | /imports keeps "replayed backwards from it, with nothing earlier to check them against" | — |
+| **§6A 37** | a verified card's "what you owe" note reads "unchecked days before its first balance" | kept as built (latent) |
+| **§6A 38** | the trust card's footer: the amber sentence says only what rests on nothing; "8 days of balances rest on a balance you counted — 8 in Cash on Hand — your word, not a check." is its own faint line | `TrustDays.countedNote`; never depends on another account's days |
+| **§6A 39** | a scheduled credit to the agent's cash is named by its category, as the bridge names its row (a Fees refund nets inside "Agent's costs"; an income-category credit stays "Agent's income") | one resolver for a series' category, shared by the forecast, the series page and the calendar hue (a filed row outranks unfiled ones). Latent |
+| **§6A 40** | the period arrows ‹ › (and /recurring's tabs) keep a view only the URL held, building on the page's newest asked URL so a press in flight is never undone | browser test fails on the old src |
 
 ### 1b. §6C defects fixed
 
@@ -72,6 +76,10 @@ a single row's sheet is dated · a broken count bounds the day before it broke.
 - **The session was cut off mid-question** (2026-10-05); the answer was lost. Re-ask; never assume the recommended one.
 - **Every fix → review round found another layer** (four rounds). Converge by sending only HIGH/MEDIUM to follow-up
   fixers and listing LOWs here (§6C), not by a fifth round.
+- **The last gate (answers 38–40) read 612 passed, 1 failed** — `zz-zz-intraday.spec.ts:54`, the 5 s wait for "Today's
+  session loaded" after the server action; the load average was 12.5 (two Unreal Editor processes at ~180% each and
+  `mediaanalysisd` at 104% — his, not ours). That spec file passed 8/8 alone on the same tree; nothing in the round
+  touched it (SessionNote, refreshIntraday). The two earlier gates of this session passed 610/610.
 - A reviewer's `pnpm install` in a worktree re-ran `prepare` (`core.hooksPath`); it stayed correct. Tell agents not to
   run `pnpm install`.
 
@@ -81,23 +89,25 @@ a single row's sheet is dated · a broken count bounds the day before it broke.
 "Robinhood Agentic — adds up through Aug 31, 2026, and unchecked days before that", "26 days unchecked" in
 `text-ink-faint`; Robinhood Cash "nothing checks it since Sep 1, 2026 · 15 days unchecked, of 41 in all"; the footer
 "16 of 7,812 days of balances (0.2% of them) rest on nothing — 15 in Robinhood Cash, 1 in Cash on Hand. No day
-provably fails to add up … 8 rest on a balance you counted — 8 in Cash on Hand — your word, not a check." and the
+provably fails to add up …" (since §6A 38 the counted days are their own faint line, read on a copy of his ledger by
+the reviewer: "8 days of balances rest on a balance you counted — 8 in Cash on Hand — your word, not a check.") and the
 note "52 days before an account's first balance are unchecked — 26 in Robinhood Agentic, 26 in Robinhood Cash —
 replayed backwards from it, …"; net worth $119,999.32; Cash on Hand's three popovers dated as in §1a.
 
 ## 6. ❓ THE QUEUE
 
-### 6A. Questions for him (all latent or wording; nothing ships until asked)
+### 6A. Questions for him (all latent; nothing ships until asked)
 
-37. "What you owe": a verified card's note now reads "unchecked days before its first balance" (no verb, no date —
-    the row carries the date). Keep, or his words?
-38. The trust card's days sentence now also names days on his count ("N rest on a balance you counted — … your word,
-    not a check") — but when another account has unchecked days the whole paragraph is amber, so the clause about his
-    count turns amber too. Split it into its own quiet line, or keep one paragraph?
-39. A scheduled CREDIT on the agent's cash (e.g. a monthly Gold-fee refund) is named "Agent's income" in the forecast,
-    while the same refund as a row nets inside "Agent's costs" on the bridge. EOM net worth is the same. One name?
-40. The period picker (‹ ›) drops a view that only a shared link held (`/spending?…&where=relief` with List saved →
-    June opens on List). Should links keep URL-only views, like presses now do?
+✅ 30–40 answered and built (memory `moneyapp-owner-decisions-2026-09-28`, four batches).
+41. The trust card, when nothing rests on nothing but some days rest on his count, reads "None of N days of balances
+    rests on nothing, and none fails to add up." (new words; it was "No day rests on nothing, and none fails to add
+    up."). Keep, or the old clause?
+42. An UNFILED scheduled credit to the agent's cash shows as "Agent's income" in the forecast by its sign, while its
+    posted row would sit in the bridge's "Moved". Keep, or net it inside Agent's costs?
+43. An agent's schedule filed in an INCOME category that takes money out (a clawback) nets inside Agent's costs by its
+    sign; its row is "Moved" on the bridge. Should it instead net Agent's income lower?
+44. A view press on `/recurring?error=…` keeps the `?error=` banner (a press builds on every param on screen); the tabs
+    drop it. Should a press drop it too?
 - Older: §6A 1–14 of the 09-15b handoff still have shipped defaults.
 
 ### 6C. Defects / leftovers queued (each LOW, latent on his ledger unless said)
@@ -110,7 +120,8 @@ replayed backwards from it, …"; net worth $119,999.32; Cash on Hand's three po
   by a later statement keeps the statement's date (session decision, by §35's logic).
 - §6A 34: /spending's partly-imported empty state and /categories/[id]'s measured-zero sentence don't mention the
   agent's money; /merchants/<id> still names the agent's series as a billing cadence.
-- Press race: Back's re-save is judged per URL, not per history entry; a range pill pressed within milliseconds of
+- Press race: ‹ › can still undo a press when a non-press link dropped the ask first; the page-asks header comment
+  still says any link drops the ask; Back's re-save is judged per URL, not per history entry; a range pill pressed within milliseconds of
   Back's save may draw the old view; Back does not save `accts`.
 - A read whose statements are at two banks keeps the guessed bank (none exists).
 - Four old worktrees hold uncommitted edits from agents that died on 09-15 (`wf_713fcba7-8e4-11`
