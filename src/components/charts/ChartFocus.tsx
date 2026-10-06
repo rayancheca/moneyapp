@@ -1,10 +1,11 @@
 "use client";
 
-import { useEffect, useLayoutEffect, useRef, useState, useTransition, type ReactNode } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, useTransition, type ReactNode } from "react";
 import { flushSync } from "react-dom";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { Icon } from "@/components/shell/Icon";
 import { SurfaceCard } from "@/components/ui/SurfaceCard";
+import { usePageAsks } from "@/hooks/usePageAsks";
 import { usePrefersReducedMotion } from "@/hooks/usePrefersReducedMotion";
 import type { ChartRange } from "@/lib/chart-range";
 
@@ -82,10 +83,7 @@ export function ChartFocus({
   // one range for both instances ("the same chart, bigger") — seeded from the
   // panel's default so the closed state renders exactly as before
   const [range, setRange] = useState<ChartRange>(defaultRange);
-  const router = useRouter();
-  const pathname = usePathname();
-  const searchParams = useSearchParams();
-  const [, startUrlSync] = useTransition();
+  const syncRangeParam = useRangeParam(rangeParam);
 
   /**
    * Adopt a range arriving from the URL — Back/Forward, or a link into a range.
@@ -100,13 +98,7 @@ export function ChartFocus({
   function selectRange(next: ChartRange): void {
     // local first: the chart re-slices synchronously, before any navigation
     setRange(next);
-    if (rangeParam === undefined) return;
-    const params = new URLSearchParams(searchParams?.toString() ?? "");
-    params.set(rangeParam, next);
-    // `replace`, not `push`: a range pill is a lens on one page, not a place in
-    // history — pushing would make Back walk every pill the user tried.
-    // `scroll: false` keeps a mid-page chart under the cursor.
-    startUrlSync(() => router.replace(`${pathname}?${params.toString()}`, { scroll: false }));
+    syncRangeParam(next);
   }
   // reset the shared range when the caller's series identity changes (see
   // resetRangeKey). A ref-guarded effect so it NEVER fires on mount or for the
@@ -214,5 +206,37 @@ export function ChartFocus({
         ) : null}
       </dialog>
     </>
+  );
+}
+
+/**
+ * The URL half of a range pill: mirrors the chosen range into `rangeParam` (see ChartFocus's
+ * prop of that name), or does nothing without one.
+ *
+ * 🔴 It built the URL from the one the router last committed. A pill pressed while a view
+ * press was in flight navigated without the view, and the view press, landing after, went to
+ * a URL without the range. Both now build on the page's newest asked URL (lib/page-asks.ts),
+ * and the pill's URL is asked for like a press's, so a press made after it keeps the range.
+ */
+export function useRangeParam(rangeParam: string | undefined): (range: ChartRange) => void {
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+  const asks = usePageAsks();
+  const [, startUrlSync] = useTransition();
+  return useCallback(
+    (next: ChartRange) => {
+      if (rangeParam === undefined) return;
+      const asked = asks?.paramsOn(pathname) ?? null;
+      const params = new URLSearchParams(asked ?? searchParams?.toString() ?? "");
+      params.set(rangeParam, next);
+      const href = `${pathname}?${params.toString()}`;
+      asks?.ask(href, {});
+      // `replace`, not `push`: a range pill is a lens on one page, not a place in
+      // history — pushing would make Back walk every pill the user tried.
+      // `scroll: false` keeps a mid-page chart under the cursor.
+      startUrlSync(() => router.replace(href, { scroll: false }));
+    },
+    [rangeParam, router, pathname, searchParams, asks],
   );
 }

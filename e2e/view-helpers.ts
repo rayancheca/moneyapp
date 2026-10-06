@@ -1,4 +1,4 @@
-import { expect, type Page, type Route } from "@playwright/test";
+import { expect, type Page, type Request, type Route } from "@playwright/test";
 
 /**
  * Pressing a PERSISTED view pill, for specs that must leave the view the way they found it.
@@ -17,12 +17,14 @@ import { expect, type Page, type Route } from "@playwright/test";
  *   `networth-bridge.spec.ts`'s restore step, seen once in ~15 gates. Made slow on purpose
  *   (below), the next `/` came back on the bridge's own Table, and "Net worth over time"
  *   was nowhere on it — the gate's exact message.
- * - A second press made before the first one's navigation commits is computed from the
+ * - A second press made before the first one's navigation commits was computed from the
  *   view the server resolved BEFORE the first press, and `setView` persists the whole
- *   view — so it writes the first dimension straight back. The post-suite e2e database of
+ *   view — so it wrote the first dimension straight back. The post-suite e2e database of
  *   a 602/602 gate (2026-10-01) still held `dashboard.bridgeLens: "table"` after that
  *   restore, so in that run the later visits to `/?chart=bridge` (overflow.spec.ts's 320
- *   sweep among them) drew the table, not the bridge.
+ *   sweep among them) drew the table, not the bridge. That half was an APP defect, and he
+ *   could hit it too: since 2026-10-05 a press builds on the page's newest asked view
+ *   (src/lib/page-asks.ts). A restore still proves each press, so it never depends on that.
  */
 
 /**
@@ -38,9 +40,9 @@ import { expect, type Page, type Route } from "@playwright/test";
  *
  * There is no DOM signal for "this boundary is now interactive", so instead of guessing a
  * longer wait we retry the press until its own control reports the new state. That is safe
- * precisely BECAUSE it is idempotent: useViewState's setView early-returns when the
- * requested value is already selected (`if (next === state) return`), and a press repeated
- * while the first is still in flight writes the same value again — never a toggle.
+ * precisely BECAUSE it is idempotent: useViewState does nothing for a value already on
+ * screen, and a press repeated while the first is still in flight is sent again the same —
+ * the same write, the same URL — never a toggle (src/hooks/useViewState.test.ts).
  *
  * This strengthens the action, not the expectation — every caller's assertions about URL,
  * slider and persistence still have to hold on their own.
@@ -85,8 +87,7 @@ export async function delayServerActions(
 ): Promise<void> {
   const everyRequest = (): boolean => true;
   const hold = async (route: Route): Promise<void> => {
-    const request = route.request();
-    if (request.method() !== "POST" || (await request.headerValue("next-action")) === null) {
+    if (!(await isServerAction(route.request()))) {
       await route.fallback();
       return;
     }
@@ -97,4 +98,72 @@ export async function delayServerActions(
   page.once("domcontentloaded", () => {
     page.unroute(everyRequest, hold).catch(() => {});
   });
+}
+
+/** A press's write: a server action, as Next sends it. */
+export async function isServerAction(request: Request): Promise<boolean> {
+  return request.method() === "POST" && (await request.headerValue("next-action")) !== null;
+}
+
+/**
+ * The request a navigation to `pathname` with exactly `params` makes for its page: Next's RSC
+ * fetch (`RSC: 1`; its `_rsc` cache key aside), never a link's prefetch.
+ */
+export function pageRequest(
+  pathname: string,
+  params: Record<string, string>,
+): (request: Request) => Promise<boolean> {
+  return async (request) => {
+    if (request.method() !== "GET" || (await request.headerValue("rsc")) !== "1") return false;
+    if ((await request.headerValue("next-router-prefetch")) !== null) return false;
+    const url = new URL(request.url());
+    url.searchParams.delete("_rsc");
+    return url.pathname === pathname && sortedQuery(url.searchParams) === sortedQuery(Object.entries(params));
+  };
+}
+
+function sortedQuery(entries: Iterable<[string, string]>): string {
+  return [...entries]
+    .map(([key, value]) => `${key}=${value}`)
+    .sort()
+    .join("&");
+}
+
+export interface HeldRequests {
+  /** how many requests are held: from the first, what they were for is in flight and stays there */
+  count(): number;
+  /** sends every held request on, and lets every later one through */
+  release(): Promise<void>;
+}
+
+/**
+ * Hold every request `matches` picks until the spec lets them go — for a race whose ORDER the
+ * spec must decide (a link's page drawn before a press's write lands; a range pill's page
+ * still in flight when the next press is made), which a fixed delay only makes likely.
+ * Wait for `count()` before relying on it: a release can otherwise run before the request it
+ * was for has even been intercepted (the reason delayServerActions ends on its own).
+ */
+export async function holdRequests(
+  page: Page,
+  matches: (request: Request) => Promise<boolean>,
+): Promise<HeldRequests> {
+  const everyRequest = (): boolean => true;
+  const held: Route[] = [];
+  let released = false;
+  const hold = async (route: Route): Promise<void> => {
+    if (released || !(await matches(route.request())) || released) {
+      await route.fallback();
+      return;
+    }
+    held.push(route);
+  };
+  await page.route(everyRequest, hold);
+  return {
+    count: () => held.length,
+    async release() {
+      released = true;
+      await page.unroute(everyRequest, hold);
+      await Promise.all(held.map((route) => route.continue().catch(() => {})));
+    },
+  };
 }

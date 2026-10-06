@@ -1,6 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 import { analyzeSettled } from "./axe-helpers";
-import { delayServerActions, pressView } from "./view-helpers";
+import { delayServerActions, holdRequests, isServerAction, pageRequest, pressView } from "./view-helpers";
 
 /**
  * The cash-flow view switcher (NS#2 Pillar 2): the SAME data as a vivid chart or a
@@ -95,6 +95,17 @@ async function invPillPressed(page: Page, name: "Value" | "Return"): Promise<boo
   return (await btn.getAttribute("aria-pressed")) === "true";
 }
 
+/**
+ * Set the SAVED view a test starts from, as the portfolio test below does: the suite shares one
+ * database across specs, so a view an earlier spec left saved is never assumed — only a press
+ * writes the preference (a URL param wins for that render alone). Opened with no param for this
+ * group, its pill shows the saved view; it is pressed, the press proved, only when it is not.
+ */
+async function startOn(page: Page, group: string, name: string): Promise<void> {
+  const pill = page.getByRole("group", { name: group }).getByRole("button", { name });
+  if ((await pill.getAttribute("aria-pressed")) !== "true") await pressView(page, group, name);
+}
+
 test("portfolio chart switches value↔return, updates the URL, and persists", async ({ page }) => {
   // The portfolio view is PERSISTED, and this suite deliberately shares ONE
   // database across specs (playwright.config.ts: workers: 1). So "the default is
@@ -139,6 +150,307 @@ test("portfolio chart switches value↔return, updates the URL, and persists", a
   await expect(page.getByRole("slider", { name: /Portfolio value over time/ })).toBeVisible();
   await gotoHydrated(page, "/investments");
   await expect(page.getByRole("slider", { name: /Portfolio value over time/ })).toBeVisible();
+});
+
+/**
+ * 🔴 Presses made faster than the server answers. A press writes its view and only THEN
+ * navigates, so until it lands everything on the page — each switcher's view, the URL the
+ * range pill reads — is the page from before it. Built on that, Table pressed while Return
+ * was being written saved `view: "value"` over it and landed on the Value table, and a press
+ * made while a range pill was in flight took the range back. Every press on a page now
+ * builds on the newest one asked for (src/lib/page-asks.ts). The writes are held
+ * (`delayServerActions`) so "faster than the server" is every run, not one in fifteen.
+ *
+ * 🔴 And so is the range pill's page: until 2026-10-05 this test let it land before the view
+ * presses, so they built on a URL that already carried the range, and the range half passed
+ * on main's code too. Held until both presses are made, the range is in the URL only because
+ * the presses built on what the pill ASKED for.
+ */
+test("a range pill and two view presses made before any lands all take", async ({ page }) => {
+  await gotoHydrated(page, "/investments");
+  const range = page.getByRole("group", { name: "Chart range" }).first();
+  const view = page.getByRole("group", { name: "Portfolio chart view" });
+  const lens = page.getByRole("group", { name: "Portfolio lens" });
+  // the saved view it starts from: the Value chart
+  await startOn(page, "Portfolio chart view", "Value");
+  await startOn(page, "Portfolio lens", "Chart");
+  await expect(view.getByRole("button", { name: "Value" })).toHaveAttribute("aria-pressed", "true");
+
+  // the panel is live: a range pill flips on the client, with no server round trip — and the
+  // page the pill navigates to for the panels around the chart is held, in flight
+  const rangePage = await holdRequests(page, pageRequest("/investments", { range: "1M" }));
+  await expect(async () => {
+    await range.getByRole("button", { name: "1 month" }).click();
+    await expect(range.getByRole("button", { name: "1 month" })).toHaveAttribute("aria-pressed", "true", {
+      timeout: 1_000,
+    });
+  }).toPass({ timeout: 30_000 });
+  await expect.poll(() => rangePage.count()).toBeGreaterThan(0);
+
+  await delayServerActions(page);
+  await view.getByRole("button", { name: "Return" }).click();
+  await lens.getByRole("button", { name: "Table" }).click(); // Return is not yet written
+  await rangePage.release(); // the router runs the writes only once the range's page is in
+  await expect(view.getByRole("button", { name: "Return" })).toHaveAttribute("aria-pressed", "true");
+  await expect(lens.getByRole("button", { name: "Table" })).toHaveAttribute("aria-pressed", "true");
+  await expect(page.getByRole("table", { name: /Portfolio return by day/ })).toBeVisible();
+  await expect(page).toHaveURL(/[?&]view=returns\b/);
+  await expect(page).toHaveURL(/[?&]lens=table\b/);
+  await expect(page).toHaveURL(/[?&]range=1M\b/);
+
+  // both were written, not just drawn: a fresh visit with no params opens on them
+  await gotoHydrated(page, "/investments");
+  await expect(page.getByRole("table", { name: /Portfolio return by day/ })).toBeVisible();
+
+  // restore the defaults for sibling specs, each press proved
+  await pressView(page, "Portfolio lens", "Chart");
+  await pressView(page, "Portfolio chart view", "Value");
+  await gotoHydrated(page, "/investments");
+  await expect(page.getByRole("slider", { name: /Portfolio value over time/ })).toBeVisible();
+});
+
+/**
+ * 🔴 The period picker followed while a press is being written. Its link carries no view, so
+ * June draws the SAVED one — and drawn before the write landed, it drew the Chart, and nothing
+ * drew it again: the Table pill un-pressed over a Table he had saved, a reload showing it.
+ * The press now makes the link again once its write lands (src/lib/page-asks.ts `landing`).
+ * The write is held until June's page is in, so the losing order is every run.
+ */
+test("a period link followed while a press is being written lands with the press", async ({ page }) => {
+  await gotoHydrated(page, "/spending?period=2026-07");
+  const cashView = page.getByRole("group", { name: "Cash flow view" });
+  await startOn(page, "Cash flow view", "Chart"); // the saved view it starts from
+  await expect(cashView.getByRole("button", { name: "Chart" })).toHaveAttribute("aria-pressed", "true");
+
+  const write = await holdRequests(page, isServerAction);
+  await expect(async () => {
+    await cashView.getByRole("button", { name: "Table" }).click();
+    // a click before the panel hydrates is swallowed: press until the write is sent
+    await expect.poll(() => write.count(), { timeout: 1_000 }).toBeGreaterThan(0);
+  }).toPass({ timeout: 30_000 });
+  const june = page.waitForResponse((response) => pageRequest("/spending", { period: "2026-06" })(response.request()));
+  await page.getByRole("link", { name: "Previous period" }).click();
+  await june; // June is drawn while the write is held…
+  await write.release(); // …and only then does Table reach the server
+
+  await expect(cashView.getByRole("button", { name: "Table" })).toHaveAttribute("aria-pressed", "true");
+  await expect(page.getByRole("table")).toBeVisible();
+  await expect(page).toHaveURL(/\/spending\?period=2026-06$/); // the link's URL, as it wrote it
+
+  // saved, not just drawn: a fresh visit with no params opens on the table
+  await gotoHydrated(page, "/spending");
+  await expect(cashView.getByRole("button", { name: "Table" })).toHaveAttribute("aria-pressed", "true");
+
+  // restore the default for sibling specs, the press proved
+  await pressView(page, "Cash flow view", "Chart");
+  await gotoHydrated(page, "/spending");
+  await expect(page.getByRole("figure", { name: /Income above the axis/ })).toBeVisible();
+});
+
+/**
+ * ⚖️ Owner 2026-10-05 (B2): Back/Forward RE-SAVES the view of the page he returns to. Back draws
+ * the page as it was drawn, from before the press he walked away from, and 🔴 the next thing he
+ * pressed that carries no view in its URL drew that press's saved view: Return, Back to Value,
+ * the 1 month pill → the 1 month chart on Return. Each switcher Back draws now sends a save of
+ * its own of the view it shows (src/lib/page-asks.ts `backLanding`), which the action merges per
+ * key — never a view only the URL held (`backSave`, ⚖️ 2026-10-06).
+ */
+test("a range pill pressed after Back keeps the view Back showed", async ({ page }) => {
+  const view = page.getByRole("group", { name: "Portfolio chart view" });
+  const range = page.getByRole("group", { name: "Chart range" }).first();
+  await gotoHydrated(page, "/investments?range=1Y");
+  // the saved view it starts from: the Value chart
+  await startOn(page, "Portfolio chart view", "Value");
+  await startOn(page, "Portfolio lens", "Chart");
+  await pressView(page, "Portfolio chart view", "Return");
+  await expect(page).toHaveURL(/[?&]view=returns\b/);
+
+  // Back's own save of the Value it draws; main sends none, and the flip below is what it cost
+  const resaved = page
+    .waitForResponse((response) => isServerAction(response.request()), { timeout: 10_000 })
+    .catch(() => null);
+  await page.goBack();
+  await expect(page).toHaveURL(/\/investments\?range=1Y$/);
+  await expect(view.getByRole("button", { name: "Value" })).toHaveAttribute("aria-pressed", "true");
+  await resaved;
+
+  await range.getByRole("button", { name: "1 month" }).click();
+  await expect(page).toHaveURL(/\/investments\?range=1M$/);
+  await expect(page.getByRole("slider", { name: /Portfolio value over time/ })).toBeVisible();
+  await expect(view.getByRole("button", { name: "Value" })).toHaveAttribute("aria-pressed", "true");
+
+  // saved, not just drawn: a fresh visit opens on Value — the default sibling specs expect
+  await gotoHydrated(page, "/investments");
+  await expect(page.getByRole("slider", { name: /Portfolio value over time/ })).toBeVisible();
+});
+
+/** 🔴 The same across /spending's cards: Relief, pressed after Back to the Chart, drew the Table. */
+test("a lens pressed after Back keeps the cash view Back showed", async ({ page }) => {
+  const cashView = page.getByRole("group", { name: "Cash flow view" });
+  const whereView = page.getByRole("group", { name: "Where it went view" });
+  await gotoHydrated(page, "/spending?period=2026-07");
+  // the saved views it starts from: the cash Chart, the List
+  await startOn(page, "Cash flow view", "Chart");
+  await startOn(page, "Where it went view", "List");
+  await expect(cashView.getByRole("button", { name: "Chart" })).toHaveAttribute("aria-pressed", "true");
+  await pressView(page, "Cash flow view", "Table");
+
+  await page.goBack();
+  await expect(page).toHaveURL(/\/spending\?period=2026-07$/);
+  await expect(cashView.getByRole("button", { name: "Chart" })).toHaveAttribute("aria-pressed", "true");
+  // Back's save is ahead of this press in the router's queue: no wait is needed for it
+  await pressView(page, "Where it went view", "Relief");
+  await expect(page).toHaveURL(/[?&]where=relief\b/);
+  await expect(cashView.getByRole("button", { name: "Chart" })).toHaveAttribute("aria-pressed", "true");
+  await expect(page.getByRole("figure", { name: /Income above the axis/ })).toBeVisible();
+
+  // restore the default lens for sibling specs, the press proved; the cash Chart is saved already
+  await pressView(page, "Where it went view", "List");
+  await gotoHydrated(page, "/spending");
+  await expect(cashView.getByRole("button", { name: "Chart" })).toHaveAttribute("aria-pressed", "true");
+  await expect(whereView.getByRole("button", { name: "List" })).toHaveAttribute("aria-pressed", "true");
+});
+
+/**
+ * A view his own press put in the URL is his, and Back to it saves it again (B2) — also when a
+ * press made after an earlier Back carried it into a new URL. 🔴 Relief, pressed on the Table Back
+ * showed, recorded only its own lens for its URL; Chart, Back to the Table + Relief page — and Back
+ * saved the lens alone, so the period link drew the Chart under the Table he was looking at.
+ */
+test("Back to a lens pressed after Back over his Table saves the Table again", async ({ page }) => {
+  const cashView = page.getByRole("group", { name: "Cash flow view" });
+  const whereView = page.getByRole("group", { name: "Where it went view" });
+  await gotoHydrated(page, "/spending?period=2026-07");
+  // the saved views it starts from: the cash Chart, the List
+  await startOn(page, "Cash flow view", "Chart");
+  await startOn(page, "Where it went view", "List");
+  await pressView(page, "Cash flow view", "Table");
+  await pressView(page, "Cash flow view", "Graph");
+  await page.goBack();
+  await expect(page).toHaveURL(/[?&]cash=table\b/);
+  await expect(cashView.getByRole("button", { name: "Table" })).toHaveAttribute("aria-pressed", "true");
+
+  await pressView(page, "Where it went view", "Relief");
+  await expect(page).toHaveURL(/[?&]cash=table\b/);
+  await expect(page).toHaveURL(/[?&]where=relief\b/);
+  await pressView(page, "Cash flow view", "Chart");
+
+  // Back's own saves, one per switcher it draws: wait for both before the link's page reads them
+  let saves = 0;
+  page.on("response", async (response) => {
+    if (await isServerAction(response.request())) saves += 1;
+  });
+  await page.goBack();
+  await expect(page).toHaveURL(/[?&]cash=table\b/);
+  await expect(page).toHaveURL(/[?&]where=relief\b/);
+  await expect(cashView.getByRole("button", { name: "Table" })).toHaveAttribute("aria-pressed", "true");
+  await expect.poll(() => saves, { timeout: 10_000 }).toBeGreaterThanOrEqual(2);
+
+  await page.getByRole("link", { name: "Previous period" }).click();
+  await expect(page).toHaveURL(/\/spending\?period=2026-06$/);
+  await expect(cashView.getByRole("button", { name: "Table" })).toHaveAttribute("aria-pressed", "true");
+  await expect(whereView.getByRole("button", { name: "Relief" })).toHaveAttribute("aria-pressed", "true");
+
+  // restore the defaults for sibling specs, each press proved
+  await pressView(page, "Cash flow view", "Chart");
+  await pressView(page, "Where it went view", "List");
+  await gotoHydrated(page, "/spending");
+  await expect(cashView.getByRole("button", { name: "Chart" })).toHaveAttribute("aria-pressed", "true");
+  await expect(whereView.getByRole("button", { name: "List" })).toHaveAttribute("aria-pressed", "true");
+});
+
+/**
+ * 🔴 A shared link holds a view he never saved, and a press on ANOTHER switcher of the page
+ * dropped it: each built its URL from the params the server handed it, and the decision cards
+ * are handed none. Grid on `/?chart=bridge` went to `/?cards=grid`, and the hero, read from his
+ * saved Net worth, left the bridge. A press with nothing in flight now builds on the URL on
+ * screen (src/lib/page-asks.ts). No race: nothing is held.
+ */
+test("a cards press on a linked hero view keeps the hero on it", async ({ page }) => {
+  const hero = page.getByRole("group", { name: "Net worth chart view" });
+  const cards = page.getByRole("group", { name: "How the cards are laid out" });
+  await gotoHydrated(page, "/");
+  // the precondition, set: the saved hero view is not the bridge, and the cards are a deck
+  await startOn(page, "Net worth chart view", "Net worth");
+  await startOn(page, "How the cards are laid out", "Deck");
+  await expect(hero.getByRole("button", { name: "Bridge" })).toHaveAttribute("aria-pressed", "false");
+  await expect(cards.getByRole("button", { name: "Deck" })).toHaveAttribute("aria-pressed", "true");
+
+  await gotoHydrated(page, "/?chart=bridge");
+  await expect(hero.getByRole("button", { name: "Bridge" })).toHaveAttribute("aria-pressed", "true");
+  await pressView(page, "How the cards are laid out", "Grid");
+  await expect(page).toHaveURL(/[?&]cards=grid\b/);
+  await expect(page).toHaveURL(/[?&]chart=bridge\b/);
+  await expect(hero.getByRole("button", { name: "Bridge" })).toHaveAttribute("aria-pressed", "true");
+  await expect(page.getByRole("group", { name: "Bridge range" })).toBeVisible();
+
+  // restore the deck for sibling specs, the press proved; the hero's saved view was never touched
+  await gotoHydrated(page, "/");
+  await pressView(page, "How the cards are laid out", "Deck");
+  await gotoHydrated(page, "/");
+  await expect(cards.getByRole("button", { name: "Deck" })).toHaveAttribute("aria-pressed", "true");
+  await expect(hero.getByRole("button", { name: "Bridge" })).toHaveAttribute("aria-pressed", "false");
+});
+
+/** The same the other way: a hero pill pressed on a linked `?cards=grid` kept the deck he saved. */
+test("a hero press on a linked cards layout keeps the cards on it", async ({ page }) => {
+  const hero = page.getByRole("group", { name: "Net worth chart view" });
+  const cards = page.getByRole("group", { name: "How the cards are laid out" });
+  await gotoHydrated(page, "/");
+  // the saved views it starts from: Net worth, a deck
+  await startOn(page, "Net worth chart view", "Net worth");
+  await startOn(page, "How the cards are laid out", "Deck");
+  await expect(hero.getByRole("button", { name: "Net worth" })).toHaveAttribute("aria-pressed", "true");
+  await expect(cards.getByRole("button", { name: "Deck" })).toHaveAttribute("aria-pressed", "true");
+
+  await gotoHydrated(page, "/?cards=grid");
+  await expect(cards.getByRole("button", { name: "Grid" })).toHaveAttribute("aria-pressed", "true");
+  await pressView(page, "Net worth chart view", "Bridge");
+  await expect(page).toHaveURL(/[?&]chart=bridge\b/);
+  await expect(page).toHaveURL(/[?&]cards=grid\b/);
+  await expect(cards.getByRole("button", { name: "Grid" })).toHaveAttribute("aria-pressed", "true");
+
+  // restore Net worth for sibling specs, the press proved; the cards' saved deck was never touched
+  await gotoHydrated(page, "/");
+  await pressView(page, "Net worth chart view", "Net worth");
+  await gotoHydrated(page, "/");
+  await expect(hero.getByRole("button", { name: "Net worth" })).toHaveAttribute("aria-pressed", "true");
+  await expect(cards.getByRole("button", { name: "Deck" })).toHaveAttribute("aria-pressed", "true");
+});
+
+/**
+ * ⚖️ 2026-10-06, by the rule above (a linked view is kept in the URL and never saved): Back saves
+ * only the views the page drew from his saved one (src/lib/page-asks.ts `backSave`). 🔴 It saved
+ * every view it drew: the shared `/?chart=bridge`, Grid on the cards, Back — and his next fresh
+ * visit to the dashboard opened on the bridge, a view he never chose.
+ */
+test("Back to a linked hero view never saves it", async ({ page }) => {
+  const hero = page.getByRole("group", { name: "Net worth chart view" });
+  const cards = page.getByRole("group", { name: "How the cards are laid out" });
+  await gotoHydrated(page, "/");
+  // the saved views it starts from: Net worth, a deck
+  await startOn(page, "Net worth chart view", "Net worth");
+  await startOn(page, "How the cards are laid out", "Deck");
+
+  await gotoHydrated(page, "/?chart=bridge");
+  await pressView(page, "How the cards are laid out", "Grid");
+  await expect(page).toHaveURL(/[?&]chart=bridge\b/);
+
+  // Back's own saves, one per switcher it draws: wait for both before the fresh visit reads them
+  let saves = 0;
+  page.on("response", async (response) => {
+    if (await isServerAction(response.request())) saves += 1;
+  });
+  await page.goBack();
+  await expect(page).toHaveURL(/\/\?chart=bridge$/);
+  await expect(cards.getByRole("button", { name: "Deck" })).toHaveAttribute("aria-pressed", "true");
+  await expect.poll(() => saves, { timeout: 10_000 }).toBeGreaterThanOrEqual(2);
+
+  // a fresh visit opens on his own hero view, and on the deck Back saved again — the defaults
+  // sibling specs expect, so nothing is left to restore
+  await gotoHydrated(page, "/");
+  await expect(hero.getByRole("button", { name: "Net worth" })).toHaveAttribute("aria-pressed", "true");
+  await expect(cards.getByRole("button", { name: "Deck" })).toHaveAttribute("aria-pressed", "true");
 });
 
 async function holdingPillPressed(page: Page, name: "Price" | "Return"): Promise<boolean> {

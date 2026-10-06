@@ -1,7 +1,6 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import { useRouter } from "next/navigation";
 import { BENCHMARK_PRESETS, NO_BENCHMARK, isBenchmarkOff, normalizeBenchmarkSymbol } from "@/lib/benchmark-symbol";
 import { setBenchmarkAction } from "@/app/investments/actions";
 
@@ -18,14 +17,18 @@ const CUSTOM = "__custom";
 interface BenchmarkPickerProps {
   /** the active benchmark symbol (resolved URL > persisted > SPY) */
   value: string;
-  /** the target href for a chosen symbol (keeps view dims + range in the URL) */
-  hrefFor: (symbol: string) => string;
+  /**
+   * Navigate to the chart with the persisted symbol (keeping view dims + range in the URL).
+   * 🔴 It was an href built from the view the server resolved, so a pick made while a view
+   * press was in flight landed without that view: the panel's switcher builds it now, on the
+   * page's newest asked URL.
+   */
+  onPicked: (symbol: string) => void;
   /** false when the active symbol has no cached closes — offers a fetch */
   hasData: boolean;
 }
 
-export function BenchmarkPicker({ value, hrefFor, hasData }: BenchmarkPickerProps) {
-  const router = useRouter();
+export function BenchmarkPicker({ value, onPicked, hasData }: BenchmarkPickerProps) {
   const [isPending, startTransition] = useTransition();
   const [customOpen, setCustomOpen] = useState(false);
   const [customText, setCustomText] = useState("");
@@ -43,7 +46,7 @@ export function BenchmarkPicker({ value, hrefFor, hasData }: BenchmarkPickerProp
       }
       setCustomOpen(false);
       setCustomText("");
-      router.push(hrefFor(result.data.symbol), { scroll: false });
+      onPicked(result.data.symbol);
     });
   }
 

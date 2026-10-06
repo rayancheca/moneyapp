@@ -8,7 +8,7 @@ import { Icon } from "@/components/shell/Icon";
 import { NumberRoll } from "@/components/ui/NumberRoll";
 import { ViewSwitcher } from "@/components/ui/ViewSwitcher";
 import { useViewState } from "@/hooks/useViewState";
-import { viewHrefQuery, type ViewState } from "@/lib/view-state";
+import type { ViewState } from "@/lib/view-state";
 import { DEFAULT_BENCHMARK } from "@/lib/benchmark-symbol";
 import { carriedFromDay } from "@/lib/price-series";
 import { formatDayLong } from "@/lib/format-date";
@@ -106,7 +106,7 @@ export function PortfolioChartPanel({
   closeOn = null,
   totalSymbols = 0,
 }: PortfolioChartPanelProps) {
-  const { state, setView } = useViewState({
+  const { state, setView, setParam } = useViewState({
     surface: INVESTMENTS_SURFACE,
     spec: PORTFOLIO_VIEW_SPEC,
     state: viewState,
@@ -143,15 +143,11 @@ export function PortfolioChartPanel({
   // one overlay per framing: % → buy-and-hold TWR, $ → the flow-replay gains
   const compareLine = benchmarkCompare ?? replayCompare;
 
-  // the picker's target href: keep the view dims + preserved params, swap the
+  // the picker's navigation: keep the view dims + preserved params, swap the
   // bench param (dropped at the SPY default so shared links stay clean)
-  const hrefForBenchmark = useCallback(
-    (symbol: string): string => {
-      const { bench: _bench, ...rest } = baseParams;
-      const params = symbol === DEFAULT_BENCHMARK ? rest : { ...rest, bench: symbol };
-      return `/investments${viewHrefQuery(PORTFOLIO_VIEW_SPEC, state, params)}`;
-    },
-    [baseParams, state],
+  const showBenchmark = useCallback(
+    (symbol: string) => setParam("bench", symbol === DEFAULT_BENCHMARK ? null : symbol),
+    [setParam],
   );
 
   // the hero number as a string: value ($), return-dollar (±$), or return-percent (±%)
@@ -307,7 +303,7 @@ export function PortfolioChartPanel({
               flex-wrap protects the four-control return view on narrow screens. */}
           <div className="mb-3 flex flex-wrap items-center justify-end gap-2 pr-9">
             {canShowReturns && isReturns && !isTable && (
-              <BenchmarkPicker value={benchmarkSymbol} hrefFor={hrefForBenchmark} hasData={benchmark != null} />
+              <BenchmarkPicker value={benchmarkSymbol} onPicked={showBenchmark} hasData={benchmark != null} />
             )}
             {canShowReturns && isReturns && (
               <ViewSwitcher
