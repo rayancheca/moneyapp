@@ -95,6 +95,17 @@ async function invPillPressed(page: Page, name: "Value" | "Return"): Promise<boo
   return (await btn.getAttribute("aria-pressed")) === "true";
 }
 
+/**
+ * Set the SAVED view a test starts from, as the portfolio test below does: the suite shares one
+ * database across specs, so a view an earlier spec left saved is never assumed — only a press
+ * writes the preference (a URL param wins for that render alone). Opened with no param for this
+ * group, its pill shows the saved view; it is pressed, the press proved, only when it is not.
+ */
+async function startOn(page: Page, group: string, name: string): Promise<void> {
+  const pill = page.getByRole("group", { name: group }).getByRole("button", { name });
+  if ((await pill.getAttribute("aria-pressed")) !== "true") await pressView(page, group, name);
+}
+
 test("portfolio chart switches value↔return, updates the URL, and persists", async ({ page }) => {
   // The portfolio view is PERSISTED, and this suite deliberately shares ONE
   // database across specs (playwright.config.ts: workers: 1). So "the default is
@@ -160,6 +171,9 @@ test("a range pill and two view presses made before any lands all take", async (
   const range = page.getByRole("group", { name: "Chart range" }).first();
   const view = page.getByRole("group", { name: "Portfolio chart view" });
   const lens = page.getByRole("group", { name: "Portfolio lens" });
+  // the saved view it starts from: the Value chart
+  await startOn(page, "Portfolio chart view", "Value");
+  await startOn(page, "Portfolio lens", "Chart");
   await expect(view.getByRole("button", { name: "Value" })).toHaveAttribute("aria-pressed", "true");
 
   // the panel is live: a range pill flips on the client, with no server round trip — and the
@@ -205,6 +219,7 @@ test("a range pill and two view presses made before any lands all take", async (
 test("a period link followed while a press is being written lands with the press", async ({ page }) => {
   await gotoHydrated(page, "/spending?period=2026-07");
   const cashView = page.getByRole("group", { name: "Cash flow view" });
+  await startOn(page, "Cash flow view", "Chart"); // the saved view it starts from
   await expect(cashView.getByRole("button", { name: "Chart" })).toHaveAttribute("aria-pressed", "true");
 
   const write = await holdRequests(page, isServerAction);
@@ -235,15 +250,18 @@ test("a period link followed while a press is being written lands with the press
 /**
  * ⚖️ Owner 2026-10-05 (B2): Back/Forward RE-SAVES the view of the page he returns to. Back draws
  * the page as it was drawn, from before the press he walked away from, and 🔴 the next thing he
- * pressed that carries no view in its URL drew that press's saved view: Return, Back to Price,
- * the 1 month pill → the 1 month chart on Return. Each switcher Back draws now saves the view it
- * shows (src/lib/page-asks.ts `backLanding`).
+ * pressed that carries no view in its URL drew that press's saved view: Return, Back to Value,
+ * the 1 month pill → the 1 month chart on Return. Each switcher Back draws now sends a save of
+ * its own of the view it shows (src/lib/page-asks.ts `backLanding`), which the action merges per
+ * key — never a view only the URL held (`backSave`, ⚖️ 2026-10-06).
  */
 test("a range pill pressed after Back keeps the view Back showed", async ({ page }) => {
   const view = page.getByRole("group", { name: "Portfolio chart view" });
   const range = page.getByRole("group", { name: "Chart range" }).first();
   await gotoHydrated(page, "/investments?range=1Y");
-  if (!(await invPillPressed(page, "Value"))) await pressView(page, "Portfolio chart view", "Value");
+  // the saved view it starts from: the Value chart
+  await startOn(page, "Portfolio chart view", "Value");
+  await startOn(page, "Portfolio lens", "Chart");
   await pressView(page, "Portfolio chart view", "Return");
   await expect(page).toHaveURL(/[?&]view=returns\b/);
 
@@ -271,6 +289,9 @@ test("a lens pressed after Back keeps the cash view Back showed", async ({ page 
   const cashView = page.getByRole("group", { name: "Cash flow view" });
   const whereView = page.getByRole("group", { name: "Where it went view" });
   await gotoHydrated(page, "/spending?period=2026-07");
+  // the saved views it starts from: the cash Chart, the List
+  await startOn(page, "Cash flow view", "Chart");
+  await startOn(page, "Where it went view", "List");
   await expect(cashView.getByRole("button", { name: "Chart" })).toHaveAttribute("aria-pressed", "true");
   await pressView(page, "Cash flow view", "Table");
 
@@ -301,7 +322,9 @@ test("a cards press on a linked hero view keeps the hero on it", async ({ page }
   const hero = page.getByRole("group", { name: "Net worth chart view" });
   const cards = page.getByRole("group", { name: "How the cards are laid out" });
   await gotoHydrated(page, "/");
-  // the precondition: the saved hero view is not the bridge, and the cards are a deck
+  // the precondition, set: the saved hero view is not the bridge, and the cards are a deck
+  await startOn(page, "Net worth chart view", "Net worth");
+  await startOn(page, "How the cards are laid out", "Deck");
   await expect(hero.getByRole("button", { name: "Bridge" })).toHaveAttribute("aria-pressed", "false");
   await expect(cards.getByRole("button", { name: "Deck" })).toHaveAttribute("aria-pressed", "true");
 
@@ -326,6 +349,9 @@ test("a hero press on a linked cards layout keeps the cards on it", async ({ pag
   const hero = page.getByRole("group", { name: "Net worth chart view" });
   const cards = page.getByRole("group", { name: "How the cards are laid out" });
   await gotoHydrated(page, "/");
+  // the saved views it starts from: Net worth, a deck
+  await startOn(page, "Net worth chart view", "Net worth");
+  await startOn(page, "How the cards are laid out", "Deck");
   await expect(hero.getByRole("button", { name: "Net worth" })).toHaveAttribute("aria-pressed", "true");
   await expect(cards.getByRole("button", { name: "Deck" })).toHaveAttribute("aria-pressed", "true");
 
@@ -339,6 +365,41 @@ test("a hero press on a linked cards layout keeps the cards on it", async ({ pag
   // restore Net worth for sibling specs, the press proved; the cards' saved deck was never touched
   await gotoHydrated(page, "/");
   await pressView(page, "Net worth chart view", "Net worth");
+  await gotoHydrated(page, "/");
+  await expect(hero.getByRole("button", { name: "Net worth" })).toHaveAttribute("aria-pressed", "true");
+  await expect(cards.getByRole("button", { name: "Deck" })).toHaveAttribute("aria-pressed", "true");
+});
+
+/**
+ * ⚖️ 2026-10-06, by the rule above (a linked view is kept in the URL and never saved): Back saves
+ * only the views the page drew from his saved one (src/lib/page-asks.ts `backSave`). 🔴 It saved
+ * every view it drew: the shared `/?chart=bridge`, Grid on the cards, Back — and his next fresh
+ * visit to the dashboard opened on the bridge, a view he never chose.
+ */
+test("Back to a linked hero view never saves it", async ({ page }) => {
+  const hero = page.getByRole("group", { name: "Net worth chart view" });
+  const cards = page.getByRole("group", { name: "How the cards are laid out" });
+  await gotoHydrated(page, "/");
+  // the saved views it starts from: Net worth, a deck
+  await startOn(page, "Net worth chart view", "Net worth");
+  await startOn(page, "How the cards are laid out", "Deck");
+
+  await gotoHydrated(page, "/?chart=bridge");
+  await pressView(page, "How the cards are laid out", "Grid");
+  await expect(page).toHaveURL(/[?&]chart=bridge\b/);
+
+  // Back's own saves, one per switcher it draws: wait for both before the fresh visit reads them
+  let saves = 0;
+  page.on("response", async (response) => {
+    if (await isServerAction(response.request())) saves += 1;
+  });
+  await page.goBack();
+  await expect(page).toHaveURL(/\/\?chart=bridge$/);
+  await expect(cards.getByRole("button", { name: "Deck" })).toHaveAttribute("aria-pressed", "true");
+  await expect.poll(() => saves, { timeout: 10_000 }).toBeGreaterThanOrEqual(2);
+
+  // a fresh visit opens on his own hero view, and on the deck Back saved again — the defaults
+  // sibling specs expect, so nothing is left to restore
   await gotoHydrated(page, "/");
   await expect(hero.getByRole("button", { name: "Net worth" })).toHaveAttribute("aria-pressed", "true");
   await expect(cards.getByRole("button", { name: "Deck" })).toHaveAttribute("aria-pressed", "true");
