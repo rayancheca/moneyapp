@@ -1,0 +1,126 @@
+# Handoff — the two ledger writes ran, his answers 30–36 built, the press race fixed
+
+> Written 2026-10-06 (session 2a7bb5b7, 10-05 → 10-06). `origin/main` = this handoff's commit. Since `e578461`:
+> four fix → skeptical-review → follow-up rounds over seven branches, then integration. Unit **364 files / 7,482
+> tests** · e2e **610 passed** at `maxDiffPixels: 0` (lid open, `caffeinate -i`, renderer check on; no baseline
+> moved) · `next build` ✓ · tsc ✓ · `pnpm ledger-check` exit 0 (pre-commit hook).
+>
+> His ledger was written **four times**, each guarded, each with its own restore point (§2): 13 accounts · 10,328
+> active rows · **25 migrations** (0024 `left_out_acknowledgements`) · net worth **$119,999.32** (2026-10-02, the
+> ledger's latest valuation day) · witness marks 43 · 222 · 212 · 256 · 13, unchanged.
+
+---
+
+## 0. THE JOB — what is next
+
+1. **The queue** (§6C). Nothing is waiting on him except §6A's open wording questions, all latent.
+2. **Waiting on events** (unchanged): the next Chase statement past 2026-08-12 (it pairs the two "Zelle From Rayan
+   Karim Checa" rows on Wells Fargo: $1,529.73 on 08-31, $700.00 on 09-01); the next Wells Fargo statement (weekly
+   payroll $1,141.92 from It America LLC — settle-backwards and the fourth figure will meet it); the next Robinhood
+   statements (Cash's open run since Sep 1; Agentic, Brokerage, Crypto closed 6 days ago, not imported).
+3. **Optional tidy-up, measured, not run:** `migrateStorageLayout(db, { move: true })` would now place the 34 originals
+   that only retired reads name (§6C institution branch): on a copy it moves 24 originals (48 retired reads)
+   `robinhood-cash/` → `robinhood-combined/`, beside their live reads, plus 7 moves main already planned; 0 left
+   unplaced. It moves files in `data/statements/`, nothing in the ledger's money. ⛔ Dry run on a fresh copy first.
+
+## 1. WHAT LANDED (all pushed)
+
+### 1a. His answers (each RED first, reviewed, every HIGH/MEDIUM fixed)
+
+| answer | what he sees | notes |
+|---|---|---|
+| **§6A 30** a left-out line can be acknowledged | `pnpm ledger-check --acknowledge-left-out=<mark> --reason='<what was read on the statement>'` (dry run) then `--confirm`; ledger-check keeps listing the line ("Acknowledged on <day>: <reason>") and stops failing; /imports and the upload outcome say the same | table `left_out_acknowledgements` (migration 0024, CHECK reason not ASCII-blank; the writer also refuses Unicode/zero-width blanks); keyed by account, day, amount, printed words and the printing file's sha256 — never a row id; one acknowledgement per line (Kuhn matching, own mark first); a different `--reason` for an acknowledged line is refused. Latent: 0 left-out lines today |
+| **§6A 33** a count-only account's popovers are dated | Cash on Hand: the balance popover, "1 transaction landed" AND a single row's sheet all read "The date it is checked through, Aug 10, 2026, is the last day Cash on Hand rests on the balance you counted on Aug 3, 2026 — your word, not a check." — checked in the running app 2026-10-06 | one verb, **"counted"**, for a balance he typed (statement balances keep "recorded"); a day before a count reads "replayed backwards"; a typed-balance account that BREAKS bounds every date the day before it broke: "…is the last day before X stopped adding up on <day>; until then it rests on the balance you counted on <day>" (latent) |
+| **§6A 34** the agent's costs are not his | /spending's Spent, the Fees card, /budgets, category and merchant pages, forecast pace and the Sankey leave out any fee or expense the agent's cash pays — and its UNFILED money out; the bridge names it on its own band **"Agent's costs"** beside "Agent's income" | one classifier `isHisExpenseRow` / `isHisUnfiledSpending` (analytics.ts); /categories/<Uncategorized> and the dashboard's "N uncategorized" KEEP the agent's unfiled rows (session decision: a filing queue, not Spent). Latent: the agent holds one $26.64 transfer |
+| **§6A 35** days before a first balance don't grade an account | Robinhood Agentic graded **verified**: /imports "2 accounts nothing is checking", net worth "2 have nothing checking them"; its line reads "adds up through Aug 31, 2026, and unchecked days before that"; its "26 days unchecked" is quiet (faint), not amber — checked in the running app | the trust card's footer leaves EVERY account's days before its first balance to the note (`66703b2`: it had counted Robinhood Cash's Dec 2023 days as "rest on nothing": "42 … 41 in Robinhood Cash" → "16 … 15 in Robinhood Cash"); a verified card's note in "what you owe" is quiet and never repeats its row's date |
+| **§6A 36** | /imports keeps "replayed backwards from it, with nothing earlier to check them against" | — |
+
+### 1b. §6C defects fixed
+
+| defect | what changed |
+|---|---|
+| **the in-flight press race** (reverted `555a4ef`) | ONE newest-asked view per PAGE (`src/lib/page-asks.ts`, provider in the root layout; Next's `onRouterTransitionStart` via `src/instrumentation-client.ts`): two pills pressed before either lands both take; a same-page link followed while a press saves lands with the press; a press keeps every other switcher's URL-held view (a shared `/?chart=bridge` survives a cards press) and never saves it; **Back/Forward re-saves the view the page he returns to drew from his preference** (his B2) and the views his own presses put in that URL — never a shared link's. Harness: real React 19.2.7 + a port of Next 16.2.10's action queue (`src/hooks/useViewState.harness.ts`); new browser tests in `e2e/zz-zz-view-switcher.spec.ts` (each fails on the old src) |
+| **`import_files.institution_id` was a guess** | the importer records the bank of the accounts a read resolved (`institutionReadBy`); a retired read with no records goes by the live read of its bytes; backfill run on his ledger (§2) |
+| storage layout | an original only retired reads name is placed by the live read of the same sha256 (`readsInPlaceOfRetired`) — code only, see §0.3 |
+| /summary's gambling block | names "What you spent" only when that figure is on the page; reads Lost over the same window on a running year; no loss prints "$0.00", never "−$0.00" |
+| the Chase re-drop probe | `worthOnEveryDay` (`bba44d3`): compares net worth on every day the ledger had; days a re-read carries past its last must hold that worth |
+
+## 2. ⛔ REAL-LEDGER WRITES — four, all guarded (dev server stopped, lid open)
+
+| write | restore point (data/backups/) | result |
+|---|---|---|
+| §6A 26 re-read the 34 unrecorded files | `pre-2026-10-05T124024-reread-unrecorded-files.db` | WRITTEN PASS: 34 read again, 62 printed-line records, nothing else; "Nothing to do"; ledger-check 0 unrecorded |
+| §6A 23 pin the 3 Fordham aid deposits | `pre-2026-10-05T124045-pin-fordham-aid.db` | APPLIED: `Income › Financial Aid`, source `user` |
+| §6A 23 staged Chase re-drop (75 PDFs from a scratch folder) | `pre-2026-10-05T124332-manual-backup.db` | 75 parsed, 1,536 superseded/inserted, active 10,328 → 10,328, archive still 76, 0 failed; probe "ONLY THE MARGIN IDS MOVED" (13 → 0); the pin travelled; ledger-check byte-identical |
+| migration 0024 (applied on the next open) | `pre-2026-10-06-migration-0024.db` | 25 migrations |
+| §6C institution backfill | `pre-2026-10-06T112308-record-read-institutions.db` | 213 reads Chase → their bank (Capital One 3, Discover 29, Robinhood 44 + 100 retired, SoFi 34, Wells Fargo 3); "NOTHING TO DO"; ledger-check exit 0 |
+
+## 3. ❓ HIS ANSWERS (closed — do not re-ask)
+
+Memory `moneyapp-owner-decisions-2026-09-28` (second and third batches). 2026-10-05/06: 35 days before a first
+balance don't grade an account (header 2) · 36 keep the words · Agentic's line "adds up through …" · a verified card's
+caveat is a quiet note · the trust card's count beside a verified account is quiet · the agent's UNFILED outflows are
+out of his Spent · a press he walked away from with Back keeps its save, and Back re-saves (B2) · one verb "counted" ·
+a single row's sheet is dated · a broken count bounds the day before it broke.
+
+## 4. ⛔ WHAT COST TIME, AND WOULD AGAIN
+
+- **Turbopack refuses a `node_modules` symlink that points outside the project** ("points out of the filesystem
+  root"): an integration worktree under the scratchpad cannot `next build`. Build and gate from the main checkout
+  (ff local main to the integration branch, gate, then push) — workflow worktrees inside `.claude/worktrees/` build.
+- **`git checkout -- <file>` to undo a mutation erases the whole uncommitted change.** `cp` a backup first.
+- **The session was cut off mid-question** (2026-10-05); the answer was lost. Re-ask; never assume the recommended one.
+- **Every fix → review round found another layer** (four rounds). Converge by sending only HIGH/MEDIUM to follow-up
+  fixers and listing LOWs here (§6C), not by a fifth round.
+- A reviewer's `pnpm install` in a worktree re-ran `prepare` (`core.hooksPath`); it stayed correct. Tell agents not to
+  run `pnpm install`.
+
+## 5. ✅ CHECKED AND FOUND RIGHT (in the running app on his ledger, 2026-10-06)
+
+/imports header "2 accounts nothing is checking"; dashboard "2 have nothing checking them, 1 is empty"; trust card:
+"Robinhood Agentic — adds up through Aug 31, 2026, and unchecked days before that", "26 days unchecked" in
+`text-ink-faint`; Robinhood Cash "nothing checks it since Sep 1, 2026 · 15 days unchecked, of 41 in all"; the footer
+"16 of 7,812 days of balances (0.2% of them) rest on nothing — 15 in Robinhood Cash, 1 in Cash on Hand. No day
+provably fails to add up … 8 rest on a balance you counted — 8 in Cash on Hand — your word, not a check." and the
+note "52 days before an account's first balance are unchecked — 26 in Robinhood Agentic, 26 in Robinhood Cash —
+replayed backwards from it, …"; net worth $119,999.32; Cash on Hand's three popovers dated as in §1a.
+
+## 6. ❓ THE QUEUE
+
+### 6A. Questions for him (all latent or wording; nothing ships until asked)
+
+37. "What you owe": a verified card's note now reads "unchecked days before its first balance" (no verb, no date —
+    the row carries the date). Keep, or his words?
+38. The trust card's days sentence now also names days on his count ("N rest on a balance you counted — … your word,
+    not a check") — but when another account has unchecked days the whole paragraph is amber, so the clause about his
+    count turns amber too. Split it into its own quiet line, or keep one paragraph?
+39. A scheduled CREDIT on the agent's cash (e.g. a monthly Gold-fee refund) is named "Agent's income" in the forecast,
+    while the same refund as a row nets inside "Agent's costs" on the bridge. EOM net worth is the same. One name?
+40. The period picker (‹ ›) drops a view that only a shared link held (`/spending?…&where=relief` with List saved →
+    June opens on List). Should links keep URL-only views, like presses now do?
+- Older: §6A 1–14 of the 09-15b handoff still have shipped defaults.
+
+### 6C. Defects / leftovers queued (each LOW, latent on his ledger unless said)
+
+- §6A 30: a mark whose acknowledged lines carry two reasons accepts either (dry run names the first); `reasonSaysNothing`
+  lets C0/C1 controls and U+2800 through; the de-dup key's day is untested; the partial-mark output says "with
+  another reason" beside the stored one.
+- §6A 33: the "Record a balance" form, "No balances recorded yet", the remove-balance dialog and the "you entered it"
+  badge still say record/entered (session decision: control labels, not sentences); a count-first account re-checked
+  by a later statement keeps the statement's date (session decision, by §35's logic).
+- §6A 34: /spending's partly-imported empty state and /categories/[id]'s measured-zero sentence don't mention the
+  agent's money; /merchants/<id> still names the agent's series as a billing cadence.
+- Press race: Back's re-save is judged per URL, not per history entry; a range pill pressed within milliseconds of
+  Back's save may draw the old view; Back does not save `accts`.
+- A read whose statements are at two banks keeps the guessed bank (none exists).
+- Four old worktrees hold uncommitted edits from agents that died on 09-15 (`wf_713fcba7-8e4-11`
+  uc/investments-today-labels, `wf_31beb6c9-c14-1` uc/budgets-wallets-out, `wf_31beb6c9-c14-2`, `-3`, and
+  `wf_39db326f-919-3`); every commit of theirs is on main. Read before deleting.
+- Hosting phase: `next build` warns that `migrateStorageLayout`'s `path.join(statementsRoot(), …)` traces 12,942 files.
+
+## 7. ENVIRONMENT
+
+- macOS 27.2 Beta 2 (26B5091g); the renderer canary matched on both gates.
+- Keep the lid open for a gate; run it with `caffeinate -i`.
+- Workflow agents: one defect per prompt, ≤900 chars of evidence, "start with a tool call within a minute", own branch,
+  no `pnpm install`; a reviewer per branch; follow-ups only for HIGH/MEDIUM.
