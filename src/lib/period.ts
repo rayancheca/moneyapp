@@ -48,6 +48,9 @@ export interface PeriodParams {
   to?: string | null;
 }
 
+/** Every URL param a period is written in: a period link replaces all three, and keeps the rest. */
+export const PERIOD_PARAM_KEYS: readonly (keyof PeriodParams)[] = ["period", "from", "to"];
+
 export interface PeriodBucket {
   /** stable key for React + the chart axis */
   key: string;

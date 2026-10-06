@@ -25,7 +25,12 @@ vi.mock("react", async (importOriginal) => {
 // hook needs an app router that a static render does not mount
 vi.mock("@/app/recurring/actions", () => ({ loadMonthForecastAction: vi.fn(), loadRecurringMonthAction: vi.fn() }));
 vi.mock("@/app/settings/actions", () => ({ saveViewPreferenceAction: vi.fn() }));
-vi.mock("next/navigation", () => ({ useRouter: () => ({ push: vi.fn(), replace: vi.fn(), refresh: vi.fn() }) }));
+vi.mock("next/navigation", () => ({
+  useRouter: () => ({ push: vi.fn(), replace: vi.fn(), refresh: vi.fn() }),
+  // the tab strip's links build on the URL on screen
+  usePathname: () => "/recurring",
+  useSearchParams: () => new URLSearchParams("tab=calendar"),
+}));
 // the density switcher's URL state is not what is under test, and its hook calls
 // React hooks the stepping harness below does not provide
 vi.mock("@/hooks/useViewState", () => ({ useViewState: () => ({ state: {}, setView: vi.fn(), isPending: false }) }));
