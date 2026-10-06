@@ -1,5 +1,5 @@
 import { cache } from "react";
-import { and, eq, gte, inArray, isNotNull, isNull, lte, notInArray, or, sql, type SQL } from "drizzle-orm";
+import { and, eq, gte, inArray, isNotNull, isNull, lte, notInArray, or, type SQL } from "drizzle-orm";
 import type { AppDatabase } from "@/db/client";
 import { categories, type CategoryKind } from "@/db/schema/categories";
 import { recurringSeries, type SeriesKind } from "@/db/schema/recurring";
@@ -8,6 +8,7 @@ import type { AttributionBandKey } from "@/lib/attribution";
 import { addDays, monthKey, periodBounds, todayIso } from "@/lib/dates";
 import { seriesAmountCents, seriesIsIncomeOrSpending } from "@/lib/series-kind";
 import { outsidePortfolioCashAccountIds } from "./accounts";
+import { seriesCategoryIds } from "./series-category";
 import { activeSplitsInRange } from "./transaction-splits";
 
 /**
@@ -620,9 +621,9 @@ export function agentsSeriesBand(
  * Every series on the agent's cash and the band `agentsSeriesBand` names it by — none when no book is paired, at no
  * cost beyond the account read. Read once for a whole forecast chain (`ForecastReads`).
  *
- * A schedule's category is the owner's first (`user_category_id`), then the one most of its active rows are filed in
- * — the precedence a series page names its category by (`seriesDetail`). ⛔ A row not filed yet, NULL or on the system
- * "Uncategorized" category (`CategoryIndex.isUncategorized`), says nothing about the stream: the filed rows name it.
+ * A schedule's category is the one its page names it by (`seriesCategoryIds`): the owner's first, then the one most
+ * of its active rows are filed in, a row not filed yet saying nothing. 🔴 This read kept a third rule of its own, and
+ * a schedule its page named "Uncategorized" — by its sign, the agent's income — netted inside the agent's costs.
  */
 export function agentsSeriesBands(db: AppDatabase, agentsCash: ReadonlySet<string>): ReadonlyMap<string, AgentsBand> {
   if (agentsCash.size === 0) return new Map();
@@ -633,7 +634,6 @@ export function agentsSeriesBands(db: AppDatabase, agentsCash: ReadonlySet<strin
       accountId: recurringSeries.accountId,
       userAmountCents: recurringSeries.userAmountCents,
       nextExpectedAmountCents: recurringSeries.nextExpectedAmountCents,
-      userCategoryId: recurringSeries.userCategoryId,
     })
     .from(recurringSeries)
     .all()
@@ -641,32 +641,10 @@ export function agentsSeriesBands(db: AppDatabase, agentsCash: ReadonlySet<strin
   if (agents.length === 0) return new Map();
 
   const idx = loadCategoryIndex(db);
-  // series → its most-filed category: the count, then the id, so a tie reads one way every time
-  const filed = new Map<string, { categoryId: string; n: number }>();
-  for (const r of db
-    .select({ seriesId: transactions.recurringSeriesId, categoryId: transactions.categoryId, n: sql<number>`count(*)` })
-    .from(transactions)
-    .where(
-      and(
-        eq(transactions.status, "active"),
-        inArray(transactions.recurringSeriesId, agents.map((s) => s.id)),
-        isNotNull(transactions.categoryId),
-      ),
-    )
-    .groupBy(transactions.recurringSeriesId, transactions.categoryId)
-    .all()) {
-    if (r.seriesId === null || r.categoryId === null || idx.isUncategorized(r.categoryId)) continue;
-    const best = filed.get(r.seriesId);
-    const n = Number(r.n);
-    if (!best || n > best.n || (n === best.n && r.categoryId < best.categoryId)) {
-      filed.set(r.seriesId, { categoryId: r.categoryId, n });
-    }
-  }
-
+  const named = seriesCategoryIds(db, idx, agents.map((s) => s.id));
   const out = new Map<string, AgentsBand>();
   for (const s of agents) {
-    const categoryId = s.userCategoryId ?? filed.get(s.id)?.categoryId ?? null;
-    const band = agentsSeriesBand(idx, agentsCash, s, categoryId);
+    const band = agentsSeriesBand(idx, agentsCash, s, named.get(s.id) ?? null);
     if (band !== null) out.set(s.id, band);
   }
   return out;

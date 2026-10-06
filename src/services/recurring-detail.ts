@@ -13,6 +13,7 @@ import {
 import { transactions } from "@/db/schema/transactions";
 import { addDays, isValidIsoDate, periodBounds, todayIso } from "@/lib/dates";
 import { stepFrom, stepPlan } from "@/lib/recurring-step";
+import { loadCategoryIndex } from "./analytics";
 import { overdueForSeries } from "./arrears";
 import { stillToCome } from "./payday-settlement";
 import {
@@ -25,6 +26,7 @@ import {
   type SeriesOccurrence,
   seriesEvidence,
 } from "./recurring";
+import { seriesCategoryIds } from "./series-category";
 
 /**
  * Series-detail read + write services (ux-overhaul-plan §4.2). The detail page
@@ -184,22 +186,6 @@ interface CatRow {
   icon: string | null;
 }
 
-/** Modal category id of the linked rows — the one the chain points back to. */
-function modalCategory(
-  linked: readonly { categoryId: string | null }[],
-  catById: ReadonlyMap<string, CatRow>,
-): SeriesCategoryRef | null {
-  const counts = new Map<string, number>();
-  for (const t of linked) {
-    if (t.categoryId === null) continue;
-    counts.set(t.categoryId, (counts.get(t.categoryId) ?? 0) + 1);
-  }
-  const modalId = [...counts.entries()].sort(
-    (a, b) => b[1] - a[1] || a[0].localeCompare(b[0]),
-  )[0]?.[0];
-  return modalId ? categoryRef(modalId, catById) : null;
-}
-
 /** A category as the series page names it — hue and icon inherited from its parent. */
 function categoryRef(id: string, catById: ReadonlyMap<string, CatRow>): SeriesCategoryRef | null {
   const cat = catById.get(id);
@@ -251,7 +237,6 @@ export function seriesDetail(
       postedOn: transactions.postedOn,
       amountCents: transactions.amountCents,
       description: sql<string>`coalesce(nullif(${transactions.normalizedDescription}, ''), ${transactions.rawDescription})`,
-      categoryId: transactions.categoryId,
       linkSource: transactions.seriesLinkSource,
       accountName: accounts.name,
     })
@@ -359,6 +344,8 @@ export function seriesDetail(
     ? { date: late.nextDate, amountCents: -late.amountCents, occurrenceCount: late.occurrenceCount }
     : null;
 
+  const namedCategoryId = seriesCategoryIds(db, loadCategoryIndex(db), [s.id]).get(s.id);
+
   const mergeCandidates: SeriesMergeCandidate[] = db
     .select({ id: recurringSeries.id, name: recurringSeries.name, kind: recurringSeries.kind })
     .from(recurringSeries)
@@ -379,13 +366,15 @@ export function seriesDetail(
     status: s.status,
     merchant,
     mergedInto,
-    // ⛔ the owner's category first, then the rows' — the precedence
-    // recurring-calendar's `seriesHues` states. A commitment that has never
-    // charged has no rows, so its chip back to the category page was missing
-    // while that page listed it (Car lease, Gym, Parking, Rent utilities & fees).
-    category:
-      (s.userCategoryId !== null ? categoryRef(s.userCategoryId, catById) : null) ??
-      modalCategory(linked, catById),
+    // ⛔ the owner's category first, then the rows' — one rule with the
+    // calendar's hue and the forecast's band (`seriesCategoryIds`). A
+    // commitment that has never charged has no rows, so its chip back to the
+    // category page was missing while that page listed it (Car lease, Gym,
+    // Parking, Rent utilities & fees). 🔴 Its own modal counted a row on the
+    // system "Uncategorized" category and skipped a NULL one: rows filed
+    // [Uncategorized, Uncategorized, Fees] read "Uncategorized" here while the
+    // forecast named the stream Fees.
+    category: namedCategoryId === undefined ? null : categoryRef(namedCategoryId, catById),
     accountName,
     cadence: eff.cadence,
     // Rolled forward so the sentence never reads a date in the past. Only the

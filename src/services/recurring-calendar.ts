@@ -31,6 +31,7 @@ import {
   seriesHasLapsed,
   toProjectable,
 } from "./recurring";
+import { seriesCategoryIds } from "./series-category";
 
 /**
  * Recurring calendar month (ux-overhaul-plan §4.1.3). One month of the
@@ -361,13 +362,14 @@ export function scheduleIsProven(postingCount: number): boolean {
 }
 
 /**
- * Each series' category hue — its `user_category_id` where the owner set one,
- * otherwise the top-level category most of its postings landed in.
+ * Each series' category hue — the top-level colour of the category it is named by (`seriesCategoryIds`: the owner's
+ * first, then the one most of its rows are filed in), the same category its page's chip names and the forecast's band
+ * reads.
  *
- * Modal rather than first or newest: a series' rows can disagree (a rent payment
- * once filed under Transfers), and the majority is the honest read of where the
- * ledger thinks this money goes. Ties keep whichever the scan met first, which
- * is deterministic because the rows are ordered by the query.
+ * Modal rather than first or newest: a series' rows can disagree (a rent payment once filed under Transfers), and the
+ * majority is the honest read of where the ledger thinks this money goes. 🔴 A private modal here counted a row on the
+ * system "Uncategorized" category as a vote, so rows filed [Uncategorized, Uncategorized, Fees] drew no hue while the
+ * page named Fees, and it broke a tie by the order its scan met the rows rather than by id.
  *
  * ⚠️ `loadCategoryIndex` rather than a self-join. `aliasedTable` breaks drizzle's
  * row inference — the rows type as `never` while working perfectly at runtime,
@@ -380,54 +382,12 @@ function seriesHues(db: AppDatabase): Map<string, CategoryHueName> {
       .map((c) => [c.id, c.color] as const),
   );
 
-  const hueOf = (categoryId: string | null): CategoryHueName | null => {
-    if (!categoryId || !index.byId.has(categoryId)) return null;
-    const color = colorById.get(index.topLevelOf(categoryId).id);
-    return isCategoryHueName(color) ? color : null;
-  };
-
   const out = new Map<string, CategoryHueName>();
-  const tally = new Map<string, Map<string, number>>();
-  for (const r of db
-    .select({
-      seriesId: transactions.recurringSeriesId,
-      categoryId: transactions.categoryId,
-      n: sql<number>`count(*)`,
-    })
-    .from(transactions)
-    .where(and(eq(transactions.status, "active"), isNotNull(transactions.recurringSeriesId)))
-    .groupBy(transactions.recurringSeriesId, transactions.categoryId)
-    .all()) {
-    if (!r.seriesId || !r.categoryId) continue;
-    const forSeries = tally.get(r.seriesId) ?? new Map<string, number>();
-    forSeries.set(r.categoryId, Number(r.n));
-    tally.set(r.seriesId, forSeries);
+  for (const [seriesId, categoryId] of seriesCategoryIds(db, index)) {
+    if (!index.byId.has(categoryId)) continue;
+    const color = colorById.get(index.topLevelOf(categoryId).id);
+    if (isCategoryHueName(color)) out.set(seriesId, color);
   }
-  for (const [seriesId, counts] of tally) {
-    let best: string | null = null;
-    let bestN = 0;
-    for (const [categoryId, n] of counts) {
-      if (n > bestN) {
-        best = categoryId;
-        bestN = n;
-      }
-    }
-    const hue = hueOf(best);
-    if (hue) out.set(seriesId, hue);
-  }
-
-  // The owner's own answer wins over anything derived from postings — the same
-  // OVERRIDE-not-union rule `budgetTail` follows for this column.
-  for (const s of db
-    .select({ id: recurringSeries.id, userCategoryId: recurringSeries.userCategoryId })
-    .from(recurringSeries)
-    .where(isNotNull(recurringSeries.userCategoryId))
-    .all()) {
-    const hue = hueOf(s.userCategoryId);
-    if (hue) out.set(s.id, hue);
-    else out.delete(s.id);
-  }
-
   return out;
 }
 
