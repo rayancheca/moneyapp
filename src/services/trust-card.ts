@@ -291,6 +291,17 @@ function plural(n: number, noun: string): string {
  * first balance are `beforeFirstBalanceNote`'s, so they are neither counted nor
  * named here — and with nothing else unchecked, the days this says close are
  * the ones from each account's first balance on (§6A 35).
+ *
+ * 🔴 The days on his count were said only with nothing else unchecked
+ * (`closedOrCountedSentence`). On his ledger (2026-10-06) this read "16 of 7,812
+ * days … rest on nothing — 15 in Robinhood Cash, 1 in Cash on Hand." and nothing
+ * of Cash on Hand's days on his count; a temp ledger in his shape (his count on
+ * Aug 3, a row on Aug 11, a statement account with a run open) read "90 of 191
+ * days … rest on nothing — 58 in Cash on Hand, 32 in Robinhood Cash. No day
+ * provably fails to add up — …" of 8 days on that count. ⚖️ ONE verb for a
+ * balance he typed, "counted" (his answer, 2026-10-05), in `onHisCount`'s words
+ * whichever way this opens — last, so "of them" and "these" stay the unchecked
+ * days'.
  */
 function daySentence(
   total: number,
@@ -308,7 +319,9 @@ function daySentence(
     gap === 0
       ? " No day provably fails to add up — these are days nobody has checked, not days that broke."
       : ` ${gap.toLocaleString("en-US")} of them provably ${gap === 1 ? "does" : "do"} not add up: the replay missed ${missedWords(missed)}.`;
-  return `${unchecked.toLocaleString("en-US")} of ${plural(total, "day")} of balances${shareWords(sharePct)} rest on nothing — ${namedDays(byAccount)}.${gapClause}`;
+  const counted = countedBy.reduce((n, a) => n + a.days, 0);
+  const countedClause = counted === 0 ? "" : ` ${onHisCount(counted.toLocaleString("en-US"), counted === 1, countedBy)}`;
+  return `${unchecked.toLocaleString("en-US")} of ${plural(total, "day")} of balances${shareWords(sharePct)} rest on nothing — ${namedDays(byAccount)}.${gapClause}${countedClause}`;
 }
 
 /** Days counted in one account — `uncheckedByAccount`'s shape, most first. */
@@ -348,9 +361,17 @@ function closedOrCountedSentence(total: number, beforeFirst: number, countedBy: 
   if (counted === 0) return `Every one of ${plural(closing, "day")} of balances${span} rests on a chain that closes.`;
   const opening =
     counted === closing
-      ? `Every one of ${plural(closing, "day")} of balances${span} rests`
-      : `${counted.toLocaleString("en-US")} of ${plural(closing, "day")} of balances${span}${shareWords((counted / closing) * 100)} ${counted === 1 ? "rests" : "rest"}`;
-  return `${opening} on a balance you counted — ${namedDays(countedBy)} — your word, not a check. No day rests on nothing, and none fails to add up.`;
+      ? `Every one of ${plural(closing, "day")} of balances${span}`
+      : `${counted.toLocaleString("en-US")} of ${plural(closing, "day")} of balances${span}${shareWords((counted / closing) * 100)}`;
+  return `${onHisCount(opening, counted === closing || counted === 1, countedBy)} No day rests on nothing, and none fails to add up.`;
+}
+
+/**
+ * "<subject> rest on a balance you counted — 8 in Cash on Hand — your word, not a check." — the days on his count
+ * alone, in ONE set of words for both of `daySentence`'s ways of opening; the subject's number sets the verb.
+ */
+function onHisCount(subject: string, singular: boolean, countedBy: readonly DaysIn[]): string {
+  return `${subject} ${singular ? "rests" : "rest"} on a balance you counted — ${namedDays(countedBy)} — your word, not a check.`;
 }
 
 /** A balance a replay missed — `missedBalances`, one account's. */
