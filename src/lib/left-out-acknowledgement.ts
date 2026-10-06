@@ -16,7 +16,9 @@ import { formatCentsSigned } from "./money";
  * ⛔ Never without a reason — "an entry without a reason is a check that has been quieted rather than passed" (ledger-
  * check's BASELINE). `--confirm` is refused without `--reason='<what the statement shows>'`; the reason is stored with
  * the acknowledgement and printed with the line wherever it is printed: "Acknowledged on <day>: <reason>", the reason
- * exactly as given. A later run never changes it: another `--reason` for a line acknowledged already is refused.
+ * exactly as given. A later run never changes it: another `--reason` for a line acknowledged already is refused, and
+ * so is one for a line alike one — lines alike share a mark, and one reason. A reason of only whitespace and invisible
+ * characters says nothing, and is refused (`reasonSaysNothing`).
  *
  * ⛔ An acknowledgement must never hide a line it was not given for:
  *
@@ -78,6 +80,22 @@ export const LEFT_OUT_TOKEN = /^[0-9a-f]{10}$/;
 
 /** how a printed step asks for what the session read on the statement */
 const SAYS = "--reason='<what the statement shows>'";
+
+/** every character that prints as nothing: Unicode whitespace, and the zero-width and other invisible ones */
+const INVISIBLE = /[\p{White_Space}\p{Default_Ignorable_Code_Point}]/gu;
+
+/**
+ * Whether a reason says nothing: nothing is left once every Unicode whitespace character and every invisible one —
+ * zero-width spaces and joiners, the byte-order mark, bidi marks, the soft hyphen (`Default_Ignorable_Code_Point`) — is
+ * taken out. The command line (`ledgerCheckMode`) and the table's one writer (`writeLeftOutAcknowledgements`) refuse it.
+ *
+ * 🔴 Both trimmed as `\s` and `trim()` do — Unicode whitespace, no zero-width character — and the table's CHECK
+ * (migration 0024, applied to the real ledger: never edited) trims ASCII whitespace only: a reason of one U+200B was
+ * stored, and every surface printed "Acknowledged on <day>: " followed by nothing a reader can see.
+ */
+export function reasonSaysNothing(reason: string): boolean {
+  return reason.replace(INVISIBLE, "") === "";
+}
 
 /** What an acknowledgement of `line` is keyed by: its first printer's printing of it. */
 function keyOf(line: KeyedLine): Omit<LeftOutAcknowledgementWrite, "description" | "acknowledgedOn" | "reason"> {
@@ -166,11 +184,17 @@ export interface AcknowledgingPlan {
   readonly lines: string[];
   /** the marks no line left out carries: the command refuses the whole write for any */
   readonly unmatched: string[];
-  /** the marks whose lines are all acknowledged already, one with a reason not the one given: refused, as `unmatched` */
+  /**
+   * the marks with lines acknowledged already — all of them, or some — one with a reason not the one given: refused, as
+   * `unmatched`, and none of their lines is in `open`
+   */
   readonly reasonsKept: ReasonKept[];
 }
 
-/** A mark whose lines are all acknowledged already, given a `--reason` one of them was not stored with. */
+/**
+ * A mark with lines acknowledged already — every one, or some with the rest open — given a `--reason` one of them was
+ * not stored with.
+ */
 export interface ReasonKept {
   readonly mark: string;
   /** each acknowledgement its lines carry, once each, in the lines' order — what is stored, and stays */
@@ -188,6 +212,11 @@ export interface ReasonKept {
  * ⛔ This step never changes a stored reason. 🔴 Another `--reason` for a line acknowledged already was dropped: "nothing
  * to acknowledge", exit 0, and the session's words stored nowhere while it believed them stored. Such a mark is
  * `reasonsKept` now, and the command refuses the whole write for it, saying the reason stored (`reasonChangeRefusal`).
+ *
+ * ⛔ Nor gives lines alike two: they share a mark because they read the same on the statement. 🔴 A mark only PARTLY
+ * acknowledged — a line alike acknowledged in an earlier run, another left out since — took another `--reason` for its
+ * open line without a word of the one stored, and `--confirm` stored it: one mark, two reasons. Its reasons stored are
+ * said now, and another one makes it `reasonsKept` too — refused, exit 2, as for a mark whose every line is acknowledged.
  */
 export function planAcknowledging(
   lines: readonly AcknowledgeableLine[],
@@ -198,51 +227,73 @@ export function planAcknowledging(
   const said: string[] = [];
   const unmatched: string[] = [];
   const reasonsKept: ReasonKept[] = [];
+  const given = acknowledging.reason;
   for (const token of tokens) {
     const marked = lines.filter((line) => leftOutToken(line) === token);
     const unacknowledged = marked.filter((line) => line.acknowledged === null);
+    const carried = marked.flatMap((line) => (line.acknowledged === null ? [] : [line.acknowledged]));
+    const stored = storedOnce(carried);
+    const another = given !== null && stored.some((ack) => ack.reason !== given);
     if (marked.length === 0) {
       unmatched.push(token);
       said.push(`${token}: no line left out carries this mark — the ledger moved, or it was mistyped`);
+    } else if (unacknowledged.length === 0 && !another) {
+      said.push(`${token}: acknowledged already, nothing to write — ${acknowledgedSentence(stored[0]!)}`);
     } else if (unacknowledged.length === 0) {
-      const stored = storedOnce(marked.map((line) => line.acknowledged!));
-      const given = acknowledging.reason;
-      if (given === null || stored.every((ack) => ack.reason === given)) {
-        said.push(`${token}: acknowledged already, nothing to write — ${acknowledgedSentence(stored[0]!)}`);
-        continue;
-      }
       reasonsKept.push({ mark: token, stored });
       for (const ack of stored) {
         const kept = acknowledgedSentence(ack);
         said.push(`${token}: acknowledged already, with another reason, which this step never changes — ${kept}`);
       }
     } else {
-      const alike = unacknowledged.length === 1 ? "" : `${unacknowledged.length} lines alike — `;
-      const { on, reason } = acknowledging;
-      const stores =
-        reason === null
-          ? `stores no reason yet — --confirm needs ${SAYS}, printed with the line from then on`
-          : `stores, printed with the line from now on — ${acknowledgedSentence({ on, reason })}`;
-      said.push(`${token}: acknowledges ${alike}${lineLeftOutNotice(unacknowledged[0]!)}`, `${token}: ${stores}`);
+      // some acknowledged, the rest open: what is stored is said first, with how many lines carry it
+      const withAnother = another ? ", with another reason" : "";
+      for (const ack of stored) {
+        const n = carried.filter((a) => sameAcknowledgement(a, ack)).length;
+        const of = `${n} of its ${marked.length} lines alike acknowledged already${withAnother}`;
+        said.push(`${token}: ${of}, and lines alike take one reason — ${acknowledgedSentence(ack)}`);
+      }
+      if (another) {
+        reasonsKept.push({ mark: token, stored });
+        continue;
+      }
+      said.push(...acknowledgesSaid(token, unacknowledged, acknowledging));
       open.push(...unacknowledged);
     }
   }
   return { open, lines: said, unmatched, reasonsKept };
 }
 
+/** What a mark's open lines would be acknowledged as: the line, and the reason it would store — or that it needs one. */
+function acknowledgesSaid(
+  token: string,
+  unacknowledged: readonly AcknowledgeableLine[],
+  { on, reason }: { readonly on: string; readonly reason: string | null },
+): string[] {
+  const alike = unacknowledged.length === 1 ? "" : `${unacknowledged.length} lines alike — `;
+  const stores =
+    reason === null
+      ? `stores no reason yet — --confirm needs ${SAYS}, printed with the line from then on`
+      : `stores, printed with the line from now on — ${acknowledgedSentence({ on, reason })}`;
+  return [`${token}: acknowledges ${alike}${lineLeftOutNotice(unacknowledged[0]!)}`, `${token}: ${stores}`];
+}
+
+const sameAcknowledgement = (a: Acknowledged, b: Acknowledged): boolean => a.on === b.on && a.reason === b.reason;
+
 /** each acknowledgement once — two lines alike acknowledged in one run carry the same — in the order first carried */
 function storedOnce(acks: readonly Acknowledged[]): Acknowledged[] {
-  return acks.filter((ack, i) => acks.findIndex((a) => a.on === ack.on && a.reason === ack.reason) === i);
+  return acks.filter((ack, i) => acks.findIndex((a) => sameAcknowledgement(a, ack)) === i);
 }
 
 /**
- * What ledger-check refuses a run with when it gives another `--reason` for a line acknowledged already
- * (`AcknowledgingPlan.reasonsKept`): that this step never changes a stored reason, and each reason stored, by its mark —
- * last on its line, exactly as stored.
+ * What ledger-check refuses a run with when it gives another `--reason` for a mark with a line acknowledged already
+ * (`AcknowledgingPlan.reasonsKept`): that this step never changes a stored reason nor gives lines alike two, and each
+ * reason stored, by its mark — last on its line, exactly as stored.
  */
 export function reasonChangeRefusal(kept: readonly ReasonKept[]): string[] {
   return [
-    "REFUSED: --reason is not the reason stored, and this step never changes a stored one — nothing was written. Stored:",
+    "REFUSED: --reason is not the reason stored, and this step never changes a stored one nor gives lines alike two — " +
+      "nothing was written. Stored:",
     ...kept.flatMap(({ mark, stored }) => stored.map((ack) => `  ${mark}: ${acknowledgedSentence(ack)}`)),
   ];
 }

@@ -56,7 +56,8 @@
  * an entry without a reason is a check that has been quieted (BASELINE, below). The dry run prints what it would store,
  * "Acknowledged on <day>: <reason>" — the sentence printed with the line from then on, here, on /imports and in the
  * upload outcome, the reason exactly as given. One mark a reason: a reason says what ONE line is. ⛔ And a stored reason
- * is never changed: another `--reason` for a line acknowledged already is refused (exit 2), saying the one stored.
+ * is never changed, nor lines alike given two: another `--reason` for a line acknowledged already — or for a line alike
+ * one, its mark partly acknowledged — is refused (exit 2), saying the one stored.
  */
 import { createDatabase } from "@/db/client";
 import type { AnchorSource } from "@/db/schema/balances";
@@ -494,7 +495,9 @@ if (leftOutFailures.length > 0) {
  * since the dry run, or it was mistyped, and either way the session has not read what it would acknowledge. ⛔ And
  * `--confirm` has a reason by then: `ledgerCheckMode` refused it without one, before the ledger was opened.
  * ⛔ This step never changes a stored reason: 🔴 another `--reason` for a line acknowledged already was dropped — "nothing
- * to acknowledge", exit 0 — so it refuses the whole write too, saying the reason stored (`reasonChangeRefusal`).
+ * to acknowledge", exit 0 — so it refuses the whole write too, saying the reason stored (`reasonChangeRefusal`). Nor
+ * does it give lines alike two: 🔴 a mark PARTLY acknowledged stored another `--reason` for its open line without a word
+ * of the one stored; it is `reasonsKept` too now, and refused here the same way.
  */
 if (MODE.mode === "acknowledge") {
   const acknowledging = { on: todayIso(), reason: MODE.reason };

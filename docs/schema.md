@@ -566,12 +566,21 @@ acknowledged_on · reason · created_at` — a line a re-read left out (`linesLe
 acknowledged after reading it on the statement (`src/lib/left-out-acknowledgement.ts`, owner
 decision 2026-10-02). `pnpm ledger-check` still lists the line, with "Acknowledged on
 <acknowledged_on>: <reason>" — the reason exactly as given, no stop added — and no longer fails on
-it; /imports and the upload outcome print the same sentence. `reason` is NOT NULL and never blank,
-and the table enforces both: CHECK `left_out_acknowledgements_reason_says_something` refuses a
-reason of only whitespace (tabs and newlines too — SQLite's one-argument `trim()` strips spaces
-only), whoever writes. It is what the session read on the statement, in its words: an entry
-without a reason is a check quieted, not passed — and a later run never changes it: another
-`--reason` for a line acknowledged already is refused (exit 2). Keyed by what the line is
+it; /imports and the upload outcome print the same sentence. `reason` is NOT NULL and never blank.
+What the table enforces, whoever writes (a raw INSERT too): NOT NULL, and CHECK
+`left_out_acknowledgements_reason_says_something`, `trim(reason, char(9, 10, 11, 12, 13, 32)) <> ''`
+— it refuses a reason of only ASCII whitespace: tab, newline, vertical tab, form feed, carriage
+return, space (SQLite's one-argument `trim()` strips spaces only). Nothing more: a no-break space
+(U+00A0), an ideographic space (U+3000) or a zero-width space (U+200B) passes it. What the app's
+writer adds: `writeLeftOutAcknowledgements`, and `--reason` on the command line before it
+(`ledgerCheckMode`), refuse a reason with nothing left once every Unicode whitespace character and
+every invisible one — zero-width spaces and joiners, the BOM, bidi marks, the soft hyphen
+(`Default_Ignorable_Code_Point`) — is taken out (`reasonSaysNothing`). Migration 0024 is applied to
+the real ledger and never edited: a wider CHECK would take a new migration rebuilding the table.
+It is what the session read on the statement, in its words: an entry without a reason is a check
+quieted, not passed — and a later run never changes it, nor gives lines alike two: another
+`--reason` for a line acknowledged already, or for a line alike one (a mark partly acknowledged),
+is refused (exit 2), saying the reason stored. Keyed by what the line is
 — account, day, money, printed words, the printing file's sha256 — never a row id; one row per
 line, so two lines alike need two; and it covers only a leaving whose row was written before
 `created_at`. Lives in the ledger, like the marks. Written only by

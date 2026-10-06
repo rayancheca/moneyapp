@@ -214,6 +214,9 @@ describe("acknowledgementsOf — which acknowledgement covers which line", () =>
 
 describe("planAcknowledging — the guarded write, a dry run first", () => {
   const TODAY = { on: "2026-10-05", reason: READ_IT };
+  const REFUSED =
+    "REFUSED: --reason is not the reason stored, and this step never changes a stored one nor gives lines alike two — " +
+    "nothing was written. Stored:";
 
   test("a line's mark acknowledges it: the write keys it by its first printer, and stores what the session read", () => {
     const plan = planAcknowledging([line()], [leftOutToken(line())], TODAY);
@@ -292,9 +295,73 @@ describe("planAcknowledging — the guarded write, a dry run first", () => {
         "Printed on the July statement.",
     ]);
     expect(reasonChangeRefusal(plan.reasonsKept)).toEqual([
-      "REFUSED: --reason is not the reason stored, and this step never changes a stored one — nothing was written. Stored:",
+      REFUSED,
       `  ${mark}: Acknowledged on 2026-10-04: Printed on the July statement.`,
     ]);
+  });
+
+  /* two lines alike acknowledged in one run carry one acknowledgement, the same day and words: said once, never twice */
+  test("⛔ two lines alike acknowledged in one run: a run giving another reason says the one stored, once", () => {
+    const stored = { on: "2026-10-04", reason: "Printed on the July statement." };
+    const twins = [line({ acknowledged: stored }), line({ rowId: "row-twin", acknowledged: { ...stored } })];
+    const mark = leftOutToken(line());
+    const plan = planAcknowledging(twins, [mark], TODAY);
+    expect(plan.reasonsKept).toEqual([{ mark, stored: [stored] }]);
+    expect(plan.lines).toEqual([
+      `${mark}: acknowledged already, with another reason, which this step never changes — Acknowledged on 2026-10-04: ` +
+        "Printed on the July statement.",
+    ]);
+    expect(reasonChangeRefusal(plan.reasonsKept)).toEqual([
+      REFUSED,
+      `  ${mark}: Acknowledged on 2026-10-04: Printed on the July statement.`,
+    ]);
+  });
+
+  /*
+   * 🔴 A mark PARTLY acknowledged — a line alike acknowledged in an earlier run, another left out since — took another
+   * --reason for its open line without a word of the one stored: --confirm stored it, and lines alike, which read the same
+   * on the statement, carried two reasons. Its reasons stored are said now, and another one is refused, exit 2, as for a
+   * mark whose every line is acknowledged.
+   */
+  test("⛔ a mark partly acknowledged: another reason for its open line is refused, saying the reason stored", () => {
+    const stored = { on: "2026-10-04", reason: "Printed on the July statement." };
+    const twins = [line({ acknowledged: stored }), line({ rowId: "row-twin" })];
+    const mark = leftOutToken(line());
+    const plan = planAcknowledging(twins, [mark], TODAY);
+    expect(plan.open).toEqual([]);
+    expect(plan.unmatched).toEqual([]);
+    expect(plan.reasonsKept).toEqual([{ mark, stored: [stored] }]);
+    expect(plan.lines).toEqual([
+      `${mark}: 1 of its 2 lines alike acknowledged already, with another reason, and lines alike take one reason — ` +
+        "Acknowledged on 2026-10-04: Printed on the July statement.",
+    ]);
+    expect(reasonChangeRefusal(plan.reasonsKept)).toEqual([
+      REFUSED,
+      `  ${mark}: Acknowledged on 2026-10-04: Printed on the July statement.`,
+    ]);
+  });
+
+  test("a mark partly acknowledged, given the reason stored or none: its open lines are planned, the reason stored said", () => {
+    const stored = { on: "2026-10-04", reason: READ_IT };
+    // two acknowledged in one run, one left out since: the reason they carry is said once, with how many carry it
+    const lines = [
+      line({ acknowledged: stored }),
+      line({ rowId: "row-twin", acknowledged: { ...stored } }),
+      line({ rowId: "row-third" }),
+    ];
+    const mark = leftOutToken(line());
+    for (const reason of [READ_IT, null]) {
+      const plan = planAcknowledging(lines, [mark], { on: "2026-10-05", reason });
+      expect(plan.open).toEqual([lines[2]]);
+      expect(plan.reasonsKept).toEqual([]);
+      expect(plan.lines[0]).toBe(
+        `${mark}: 2 of its 3 lines alike acknowledged already, and lines alike take one reason — ` +
+          `Acknowledged on 2026-10-04: ${READ_IT}`,
+      );
+      expect(plan.lines.slice(1)).toEqual(planAcknowledging([lines[2]!], [mark], { on: "2026-10-05", reason }).lines);
+    }
+    const writes = acknowledgementWrites(planAcknowledging(lines, [mark], TODAY).open, TODAY);
+    expect(writes.map((w) => w.reason)).toEqual([READ_IT]);
   });
 
   test("⛔ two lines alike acknowledged with two reasons: a run giving one of them is refused, and says both", () => {
