@@ -14,7 +14,7 @@ import { addManualAnchor } from "./anchors";
 import { createCashWallet } from "./cash-wallets";
 import { rebuildAccount } from "./derivation";
 import { addManualTransaction } from "./manual-transactions";
-import { provenanceFor } from "./provenance";
+import { missedBalances, provenanceFor } from "./provenance";
 import { trustCard } from "./trust-card";
 
 /**
@@ -396,6 +396,80 @@ describe("trustCard — days that rest on his count", () => {
     expect(card.days.counted).toBe(0);
     expect(card.days.sentence).toBe("Every one of 4 days of balances rests on a chain that closes.");
   });
+
+  /** Robinhood Cash's shape: three statements that agree, a row before the first, and a run open from Sep 5. */
+  function openRunAccount(): void {
+    addAccount("rh-cash", "Robinhood Cash", "checking");
+    for (const day of ["2026-06-30", "2026-07-31", "2026-08-31"]) addAnchor("rh-cash", day, "statement");
+    addTxn("rh-cash", "2026-06-05");
+    addTxn("rh-cash", "2026-09-05");
+    rebuildAccount(bundle.db, "rh-cash", "2026-09-15");
+  }
+
+  /*
+   * 🔴 HIS COUNT, UNSAID BESIDE ANYTHING UNCHECKED. The sentence named the days on his count only when nothing else was
+   * unchecked (`closedOrCountedSentence`), so on his ledger (2026-10-06) it read "16 of 7,812 days … rest on nothing —
+   * 15 in Robinhood Cash, 1 in Cash on Hand." and nothing of Cash on Hand's days on his count. A temp ledger in his
+   * shape (his count on Aug 3, a row on Aug 11, a statement account with a run open) read "90 of 191 days of balances
+   * (47.1% of them) rest on nothing — 58 in Cash on Hand, 32 in Robinhood Cash. No day provably fails to add up — …"
+   * with `counted` 8. ⚖️ ONE verb for a balance he typed, "counted" (his answer, 2026-10-05).
+   */
+  test("beside days that rest on nothing, the days on his count are still said, as counted", () => {
+    openRunAccount();
+    addAccount("coh", "Cash on Hand", "checking");
+    addAnchor("coh", "2026-08-03", "manual");
+    addTxn("coh", "2026-08-11");
+    rebuildAccount(bundle.db, "coh", "2026-09-15");
+
+    const { days } = trustCard(bundle.db, "2026-10-01")!;
+    // his count on Aug 3 and the seven days carried from it, to the row on Aug 11
+    expect(days.counted).toBe(8);
+    expect(days.sentence).toBe(
+      "47 of 148 days of balances (31.8% of them) rest on nothing — 36 in Cash on Hand, 11 in Robinhood Cash. " +
+        "No day provably fails to add up — these are days nobody has checked, not days that broke. " +
+        "8 rest on a balance you counted — 8 in Cash on Hand — your word, not a check.",
+    );
+  });
+
+  /*
+   * ⚖️ What the sentence says of his count does not depend on whether another account has days nothing checks: one
+   * wallet resting on nothing but his counts, said the same words before and after a run opens elsewhere.
+   */
+  test("his count reads the same whether or not another account has days that rest on nothing", () => {
+    const id = createCashWallet(bundle.db, { name: "Cash on Hand", openingOn: "2026-08-04", openingBalanceCents: 500_000 });
+    addManualTransaction(bundle.db, { accountId: id, postedOn: "2026-08-11", amountCents: -500_000, description: "Car" });
+    addManualAnchor(bundle.db, { accountId: id, anchoredOn: "2026-08-20", enteredCents: 0 });
+    rebuildAccount(bundle.db, id, "2026-09-15");
+    const alone = trustCard(bundle.db, "2026-10-01")!.days;
+
+    openRunAccount();
+    const beside = trustCard(bundle.db, "2026-10-01")!.days;
+
+    const said = "on a balance you counted — 44 in Cash on Hand — your word, not a check.";
+    expect([alone.counted, beside.counted]).toEqual([44, 44]);
+    expect(alone.sentence).toBe(`Every one of 44 days of balances rests ${said} No day rests on nothing, and none fails to add up.`);
+    expect(beside.restOnNothing).toBe(11);
+    expect(beside.sentence).toBe(
+      "11 of 148 days of balances (7.4% of them) rest on nothing — 11 in Robinhood Cash. " +
+        `No day provably fails to add up — these are days nobody has checked, not days that broke. 44 rest ${said}`,
+    );
+  });
+
+  test("one day on his count beside days that rest on nothing takes the singular", () => {
+    addAccount("brk", "Brokerage", "investment");
+    addAnchor("brk", "2026-08-01", "manual");
+    addDays("brk", [{ day: "2026-08-01", basis: "anchored" }]);
+    addAccount("rh", "Robinhood Cash", "checking");
+    addDays("rh", [
+      { day: "2026-08-01", basis: "anchored" },
+      { day: "2026-08-02", basis: "derived_unverified" },
+    ]);
+    addTxn("rh", "2026-08-02");
+
+    expect(trustCard(bundle.db, TODAY)!.days.sentence).toMatch(
+      / 1 rests on a balance you counted — 1 in Brokerage — your word, not a check\.$/,
+    );
+  });
 });
 
 /* ── ⛔ an empty account is not a hole ────────────────────────────────── */
@@ -669,8 +743,9 @@ describe("trustCard — the unchecked days", () => {
 
     const card = trustCard(bundle.db, "2026-09-16")!;
     expect(card.days.gap).toBe(28);
+    // and the days on his counts, Aug 3's and Sep 1's to the row on Sep 10, said after the days that break
     expect(card.days.sentence).toMatch(
-      / 28 of them provably do not add up: the replay missed the next balance, the one you counted on Sep 1, 2026\.$/,
+      / 28 of them provably do not add up: the replay missed the next balance, the one you counted on Sep 1, 2026\. 10 rest on a balance you counted — 10 in Cash on Hand — your word, not a check\.$/,
     );
     expect(provenanceFor(bundle.db, { kind: "accountBalance", accountId: id, day: "2026-08-20" })!.headline).toMatch(
       /^The replay did NOT land on Cash on Hand's next balance, the one you counted on Sep 1, 2026\./,
@@ -707,7 +782,7 @@ describe("trustCard — the unchecked days", () => {
     addTxn("coh", "2026-08-04");
 
     expect(trustCard(bundle.db, TODAY)!.days.sentence).toMatch(
-      / 2 of them provably do not add up: the replay missed the next balance you counted\.$/,
+      / 2 of them provably do not add up: the replay missed the next balance you counted\. 3 rest on a balance you counted — 3 in Cash on Hand — your word, not a check\.$/,
     );
   });
 
@@ -732,7 +807,34 @@ describe("trustCard — the unchecked days", () => {
     addTxn("coh", "2026-08-02");
 
     expect(trustCard(bundle.db, TODAY)!.days.sentence).toMatch(
-      / 2 of them provably do not add up: the replay missed the next recorded balance, or the one you counted on Aug 5, 2026\.$/,
+      / 2 of them provably do not add up: the replay missed the next recorded balance, or the one you counted on Aug 5, 2026\. 2 rest on a balance you counted — 2 in Cash on Hand — your word, not a check\.$/,
+    );
+  });
+
+  /*
+   * ⛔ The balance a replay missed is the one after a day that does NOT add up (`missedBalances`), never the one after
+   * a day that does. Here a replay from Aug 1's statement lands on Aug 3's and the next misses his count on Aug 5:
+   * read for every day, the statement the first landed on would be named missed too ("the next recorded balance, or
+   * the one you counted on Aug 5, 2026"), and read for the balance a gap day rests on, his count would not be.
+   */
+  test("a replay that missed his count does not name the statement an earlier replay landed on", () => {
+    addAccount("chase", "Chase Checking", "checking");
+    addAnchor("chase", "2026-08-01", "statement");
+    addAnchor("chase", "2026-08-03", "statement");
+    addAnchor("chase", "2026-08-05", "manual");
+    addDays("chase", [
+      { day: "2026-08-01", basis: "anchored" },
+      { day: "2026-08-02", basis: "derived" },
+      { day: "2026-08-03", basis: "anchored" },
+      { day: "2026-08-04", basis: "gap" },
+      { day: "2026-08-05", basis: "anchored" },
+    ]);
+    addTxn("chase", "2026-08-02");
+    addTxn("chase", "2026-08-04");
+
+    expect(missedBalances(bundle.db, "chase").map((m) => [m.anchoredOn, m.source])).toEqual([["2026-08-05", "manual"]]);
+    expect(trustCard(bundle.db, TODAY)!.days.sentence).toContain(
+      " 1 of them provably does not add up: the replay missed the next balance, the one you counted on Aug 5, 2026.",
     );
   });
 
