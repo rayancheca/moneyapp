@@ -197,3 +197,50 @@ test("beside accounts nothing checks, the amber sentence names only them; the ve
   const note = ps.filter((p) => p.text.includes("Robinhood Agentic"));
   expect(note).toEqual([{ cls: null, text: expect.stringContaining("52 days before an account's first balance are unchecked — 26 in Robinhood Agentic, 26 in Robinhood Cash") }]);
 });
+
+/*
+ * ⚖️ His answer, 2026-10-06 (§6A 38): the days on his count get a quiet line of their own, as the days before a first
+ * balance do — amber is only for what rests on nothing. 🔴 They were the last clause of the amber sentence, so on his
+ * ledger one amber paragraph read "16 of 7,812 days of balances (0.2% of them) rest on nothing — 15 in Robinhood Cash,
+ * 1 in Cash on Hand. No day provably fails to add up — … 8 rest on a balance you counted — 8 in Cash on Hand — your
+ * word, not a check.": what was said of his count took the colour of another account's open run.
+ */
+test("the days on his count are a quiet line of their own, never folded into the amber sentence", () => {
+  statementAccount("rh-cash", "Robinhood Cash", "2026-09-05");
+  account("coh", "Cash on Hand");
+  anchor("coh", "2026-08-03", 500_000, "manual");
+  row("coh", "2026-08-11");
+  rebuildAccount(bundle.db, "coh", REBUILT);
+  const ps = paragraphs(renderToStaticMarkup(createElement(TrustCard, { data: trustCard(bundle.db, TODAY)! })));
+
+  const warning = ps.filter((p) => p.cls === "text-warning");
+  expect(warning).toEqual([
+    { cls: "text-warning", text: expect.stringContaining("rest on nothing — 36 in Cash on Hand, 11 in Robinhood Cash.") },
+  ]);
+  expect(warning[0]!.text).not.toContain("you counted");
+  expect(warning[0]!.text).not.toContain("your word");
+  const counted = ps.filter((p) => p.text.includes("on a balance you counted"));
+  expect(counted).toEqual([
+    { cls: null, text: "8 days of balances rest on a balance you counted — 8 in Cash on Hand — your word, not a check." },
+  ]);
+});
+
+test("with nothing resting on nothing, his count is the same quiet line and the sentence says only that", () => {
+  statementAccount("agentic", "Robinhood Agentic", null);
+  account("coh", "Cash on Hand");
+  anchor("coh", "2026-08-03", 500_000, "manual");
+  rebuildAccount(bundle.db, "coh", REBUILT);
+  const card = trustCard(bundle.db, TODAY)!;
+  expect(card.days.restOnNothing).toBe(0);
+  const ps = paragraphs(renderToStaticMarkup(createElement(TrustCard, { data: card })));
+
+  // Agentic's 26 days before its Jun 30 statement are the other note's; his count on Aug 3, carried to Sep 15, is 44
+  const said = ps.filter((p) => p.text.includes("rests on nothing") || p.text.includes("on a balance you counted"));
+  expect(said).toEqual([
+    {
+      cls: null,
+      text: "None of 122 days of balances from each account's first balance on rests on nothing, and none fails to add up.",
+    },
+    { cls: null, text: "44 days of balances rest on a balance you counted — 44 in Cash on Hand — your word, not a check." },
+  ]);
+});
