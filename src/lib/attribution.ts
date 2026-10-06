@@ -69,10 +69,14 @@ export interface AttributionInput {
   /** income-kind rows, money in, ≥ 0 — HIS: the population /spending calls Income (`isIncome`) */
   earnedCents: number;
   /**
-   * income-kind rows, money in, ≥ 0, on the agent's cash account (`outsidePortfolioCashAccountIds`).
+   * income-kind rows on the agent's cash account (`outsidePortfolioCashAccountIds`), either sign, net-worth-signed —
+   * what the agent's account was paid, net of what was clawed back from it (`isAgentsIncomeCategoryRow`). Below zero
+   * in a window whose clawbacks come to more.
    *
    * ⚖️ Owner decision 2026-09-28: not his income, so it is not in `earnedCents` — and still in net worth, so it is
-   * not dropped either. A bridge that left it out would report the agent's dividend as "Unexplained".
+   * not dropped either. A bridge that left it out would report the agent's dividend as "Unexplained". ⚖️ Owner
+   * decision 2026-10-06 (§6A 43): the category decides, so a clawback filed in an income category lowers it rather
+   * than sitting in `movedCents` — where his own clawback still sits.
    */
   agentIncomeCents: number;
   /**
@@ -171,7 +175,7 @@ export const ATTRIBUTION_BAND_LABEL: Record<AttributionBandKey, string> = {
 
 export const ATTRIBUTION_BAND_MEANING: Record<AttributionBandKey, string> = {
   earned: "Money arriving in an income category. Only money in — a credit that claws back earlier pay is not negative income. What the agent's account is paid is not yours, and has its own line.",
-  agentIncome: "Money arriving in an income category on the agent's own cash account — its dividends and interest. Net worth holds it, so it is counted here; it is not your income, so the Income line leaves it out.",
+  agentIncome: "Money arriving in an income category on the agent's own cash account — its dividends and interest, less any clawed back from it. Net worth holds it, so it is counted here; it is not your income, so the Income line leaves it out.",
   agentCosts: "Money leaving in a spending category from the agent's own cash account — its fees, less any refunded to it. Net worth pays it, so it is counted here; it is not your spending, so the Spent and Refunds lines leave it out.",
   refunds: "Credits inside spending categories. Money coming back, which is not the same as income. What is refunded to the agent's account is not yours, and sits on its own line.",
   spent: "Debits in spending categories, before any refund is netted against them. What the agent's account pays is not yours, and has its own line.",

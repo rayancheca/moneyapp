@@ -146,6 +146,13 @@ interface KindTotals {
  * schedule on the agent's cash (`agentsSeriesBand`, owner decision 2026-10-06,
  * §6A 39): a refund of the agent's fee, filed in Fees, nets inside "Agent's
  * costs" here and inside the forecast's agent's costs, never its income there.
+ *
+ * ⚖️ …and the income half is either sign too (owner decision 2026-10-06, §6A
+ * 43): a clawback filed in an income category on the agent's cash LOWERS
+ * "Agent's income", here and in the forecast's note of it, and can take it
+ * below zero. 🔴 It sat in Moved here while the forecast netted its schedule
+ * inside the agent's costs. ⛔ His own clawback is still Moved: "Income" is his
+ * money in, only.
  */
 function kindTotals(
   db: AppDatabase,
@@ -203,10 +210,11 @@ function kindTotals(
     }
     /*
      * Everything else: transfers, investment contributions, rewards, system,
-     * uncategorised, and an income-kind CLAWBACK (a credit that returns money
+     * uncategorised, and HIS income-kind CLAWBACK (a credit that returns money
      * previously recorded as income — see docs/income-ground-truth.md, it is not
-     * negative earnings). These move net worth or move money between accounts,
-     * and the bridge's job is to show the net rather than to decide which.
+     * negative earnings; the agent's lowers "Agent's income" above, §6A 43).
+     * These move net worth or move money between accounts, and the bridge's job
+     * is to show the net rather than to decide which.
      */
     t.movedCents += r.amountCents;
   }

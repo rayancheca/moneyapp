@@ -90,11 +90,12 @@ function agentsSchedule(input: {
   amountCents: number;
   rows: readonly (readonly [string, string | null])[];
   userCategory?: string;
+  name?: string;
 }): string {
   const id = bundle.db
     .insert(recurringSeries)
     .values({
-      name: `Gold fee refund (${input.kind})`,
+      name: input.name ?? `Gold fee refund (${input.kind})`,
       kind: input.kind,
       accountId: agentic,
       merchantId: gold,
@@ -111,7 +112,7 @@ function agentsSchedule(input: {
     .returning({ id: recurringSeries.id })
     .get().id;
   for (const [postedOn, category] of input.rows) {
-    const row = post(agentic, postedOn, input.amountCents, category, "Gold Monthly Fee Refund");
+    const row = post(agentic, postedOn, input.amountCents, category, input.name ?? "Gold Monthly Fee Refund");
     bundle.db.update(transactions).set({ recurringSeriesId: id }).where(eq(transactions.id, row)).run();
   }
   return id;
@@ -330,8 +331,9 @@ describe("one rule with the bridge: the note a schedule lands in is the band its
 
   /*
    * Every category kind a row of the agent's can carry, either sign. Where the bridge names a band, the schedule's note
-   * is that band; where it names none — the bridge's Moved: an unfiled row, a transfer, an income-kind clawback — the
-   * forecast has no Moved note, and EOM net worth must still count the money, so it goes by its sign.
+   * is that band; where it names none — the bridge's Moved: an unfiled row, a transfer — the forecast has no Moved note,
+   * and EOM net worth must still count the money, so it goes by its sign. ⚖️ An income-kind clawback is no longer one of
+   * them: it lowers the agent's income (owner decision 2026-10-06, §6A 43).
    */
   test("the table, at its home: `agentsSeriesBand` asks `agentsBand`, and its sign only where the bridge says Moved", () => {
     const idx = loadCategoryIndex(bundle.db);
@@ -340,7 +342,7 @@ describe("one rule with the bridge: the note a schedule lands in is the band its
       [FEES, CREDIT, "agentCosts", "agentCosts"],
       [FEES, -CREDIT, "agentCosts", "agentCosts"],
       [INTEREST, CREDIT, "agentIncome", "agentIncome"],
-      [INTEREST, -CREDIT, null, "agentCosts"],
+      [INTEREST, -CREDIT, "agentIncome", "agentIncome"],
       ["Transfers > Investment Contribution", CREDIT, null, "agentIncome"],
       ["Transfers > Investment Contribution", -CREDIT, null, "agentCosts"],
       ["Uncategorized", CREDIT, null, "agentIncome"],
@@ -351,11 +353,13 @@ describe("one rule with the bridge: the note a schedule lands in is the band its
     for (const [category, amountCents, row, schedule] of cases) {
       const categoryId = category === null ? null : catId(category);
       const shape = JSON.stringify({ category, amountCents });
-      expect(agentsBand(idx, agentsCash, { accountId: agentic, categoryId, amountCents }), shape).toBe(row);
+      // a row of either sign: the band never asks it (`agentsBand` takes no amount), so the table says so
+      const posted = { accountId: agentic, categoryId, amountCents };
+      expect(agentsBand(idx, agentsCash, posted), shape).toBe(row);
       const series = { kind: "other" as const, accountId: agentic, userAmountCents: null, nextExpectedAmountCents: amountCents };
       expect(agentsSeriesBand(idx, agentsCash, series, categoryId), shape).toBe(schedule);
       // ⛔ his: no band of the agent's, on his account or with no account at all
-      expect(agentsBand(idx, agentsCash, { accountId: wellsFargo, categoryId, amountCents }), shape).toBeNull();
+      expect(agentsBand(idx, agentsCash, { ...posted, accountId: wellsFargo }), shape).toBeNull();
       expect(agentsSeriesBand(idx, agentsCash, { ...series, accountId: wellsFargo }, categoryId), shape).toBeNull();
       expect(agentsSeriesBand(idx, agentsCash, { ...series, accountId: null }, categoryId), shape).toBeNull();
       // …and a transfer schedule is nobody's income or spending (`seriesIsIncomeOrSpending`)
@@ -371,8 +375,114 @@ describe("one rule with the bridge: the note a schedule lands in is the band its
     const idx = loadCategoryIndex(bundle.db);
     const agentsCash = outsidePortfolioCashAccountIds(bundle.db);
     const categoryId = catId(FEES);
-    expect(agentsBand(idx, agentsCash, { accountId: agentic, categoryId, amountCents: CREDIT })).toBeNull();
+    expect(agentsBand(idx, agentsCash, { accountId: agentic, categoryId })).toBeNull();
     const series = { kind: "other" as const, accountId: agentic, userAmountCents: null, nextExpectedAmountCents: CREDIT };
     expect(agentsSeriesBand(idx, agentsCash, series, categoryId)).toBeNull();
+  });
+});
+
+/**
+ * ⚖️ Owner decision 2026-10-06 (§6A 43): a schedule of the agent's filed in an INCOME category that takes money OUT — a
+ * clawback of interest it was paid — LOWERS the agent's income. The category decides, as it does for a refund of the
+ * agent's fee (§6A 39). 🔴 The forecast netted it inside "Agent's costs" by its sign, and the bridge kept the posted row
+ * in "Moved": one clawback, a cost on the card and a transfer on the bridge. EOM net worth adds both notes, so it moves
+ * by the clawback exactly as it did — only the note that names the money moves.
+ *
+ * His ledger holds none of it (the agent's cash carries no income row yet), so the rows are hypothetical: $5.00 of
+ * interest taken back on the 20th, filed where interest is filed (Income > Interest).
+ *
+ * ⛔ HIS clawback is not this: a debit that claws back earlier pay of his stays in "Moved" on the bridge, and the Income
+ * band is his money in, only (docs/income-ground-truth.md).
+ */
+describe("§6A 43 — a clawback filed in an income category lowers the agent's income", () => {
+  const CLAWBACK = -CREDIT;
+
+  test("⚖️ the forecast nets it inside the agent's income, whatever kind detection gave the schedule", () => {
+    const before = read();
+    for (const kind of ["other", "bill", "subscription", "income"] as const) {
+      const id = agentsSchedule({ kind, amountCents: CLAWBACK, rows: [["2026-09-20", INTEREST]], name: "Interest Clawback" });
+      const after = read();
+      expect(after.income, kind).toEqual(plus(before.income, CLAWBACK));
+      expect(after.costs, kind).toEqual(before.costs);
+      // ⛔ EOM net worth adds both notes, so it moves by the clawback exactly as it did when it was a "cost"
+      expect(after.nw, kind).toEqual(nwPlus(before.nw, CLAWBACK));
+      // …and no figure of his moves
+      expect(after.his, kind).toEqual(before.his);
+      drop(id);
+    }
+  });
+
+  test("a month whose clawbacks come to more than the agent is paid nets its income below zero, on both readings", () => {
+    const before = read();
+    expect(before.income).toEqual([
+      { netCents: 0, committedNetCents: 0 },
+      { netCents: 0, committedNetCents: 0 },
+    ]);
+    // the agent's $0.04 of monthly interest, and $5.00 of it clawed back — both filed in Interest
+    agentsSchedule({ kind: "income", amountCents: 4, rows: [["2026-09-20", INTEREST]], name: "Interest Payment" });
+    agentsSchedule({ kind: "other", amountCents: CLAWBACK, rows: [["2026-09-20", INTEREST]], name: "Interest Clawback" });
+    const after = read();
+    expect(after.income).toEqual(plus(before.income, 4 + CLAWBACK));
+    for (const month of after.income) {
+      expect(month.netCents).toBeLessThan(0);
+      expect(month.committedNetCents).toBeLessThan(0);
+    }
+    expect(after.costs).toEqual(before.costs);
+    expect(after.nw).toEqual(nwPlus(before.nw, 4 + CLAWBACK));
+  });
+
+  /*
+   * 🔴 The arrears leg is the forward leg's other half: it names the agent's late schedules by the same rule, and the
+   * rule said "cost" for any money out it had no band for. Filed in Income, a clawback that came due on the 1st and has
+   * not posted is the agent's income, lowered.
+   */
+  test("⛔ a clawback that came due unposted lowers the agent's income too — the arrears leg asks the same rule", () => {
+    const before = read();
+    const id = bundle.db
+      .insert(recurringSeries)
+      .values({
+        name: "Interest Clawback",
+        kind: "income",
+        accountId: agentic,
+        cadence: "monthly",
+        intervalDaysAvg: 30,
+        toleranceDays: 3,
+        nextExpectedOn: "2026-10-01",
+        nextExpectedAmountCents: CLAWBACK,
+        amountCentsAvg: CLAWBACK,
+        lastMatchedOn: "2026-09-01",
+        status: "detected",
+        userCategoryId: catId(INTEREST),
+      })
+      .returning({ id: recurringSeries.id })
+      .get().id;
+    const after = read();
+    expect(after.his).toEqual(before.his);
+    // October's came due on the 1st; November chains it with its own Nov 1
+    expect(after.income).toEqual(plus(before.income, CLAWBACK));
+    expect(after.costs).toEqual(before.costs);
+    expect(after.nw).toEqual(nwPlus(before.nw, CLAWBACK));
+    drop(id);
+  });
+
+  test("⚖️ the bridge: the posted clawback lowers \"Agent's income\" and leaves \"Moved\" as it was — his stays in Moved", () => {
+    const bands = () => {
+      for (const a of bundle.db.select({ id: accounts.id }).from(accounts).all()) rebuildAccount(bundle.db, a.id);
+      const bridge = netWorthAttribution(bundle.db, "2026-08-31", SEPT.to, nwOn("2026-08-31"), nwOn(SEPT.to));
+      expect(bridge.closes).toBe(true);
+      return Object.fromEntries(bridge.bands.map((b) => [b.key, b.cents]));
+    };
+    post(agentic, "2026-09-30", 4, INTEREST, "Interest Payment");
+    const paid = bands();
+    expect(paid).toMatchObject({ earned: HIS_PAY, agentIncome: 4, agentCosts: 0 });
+
+    post(agentic, "2026-09-20", CLAWBACK, INTEREST, "Interest Clawback");
+    const clawed = bands();
+    // the agent's income nets to -$4.96 — below zero, said so by its sign — and no other band moves
+    expect(clawed).toEqual({ ...paid, agentIncome: 4 + CLAWBACK });
+
+    // ⛔ his own clawback is no part of it: money out of an income category of HIS is still "Moved"
+    post(wellsFargo, "2026-09-25", CLAWBACK, "Income > Salary", "It America LLC Payroll Reversal");
+    expect(bands()).toEqual({ ...clawed, moved: clawed.moved! + CLAWBACK });
   });
 });
