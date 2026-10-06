@@ -2,6 +2,7 @@ import { describe, expect, test } from "vitest";
 import {
   afterCommit,
   askedParams,
+  backSave,
   canonicalHref,
   createPageAsks,
   isForeign,
@@ -317,5 +318,81 @@ describe("createPageAsks: the Back/Forward whose page is on screen", () => {
     asks.departing("/spending", "push");
     asks.committed("/spending");
     expect(asks.backLanding()).toBeNull();
+  });
+});
+
+describe("backSave", () => {
+  test("saves every dimension the URL on screen does not hold: the page drew it from the saved one", () => {
+    expect(backSave(SPEC, PRICE_CHART, "/h?range=1Y", {})).toEqual({ view: "value", lens: "chart" });
+  });
+
+  test("never one the URL holds that no press of his asked for there: a link's", () => {
+    expect(backSave(SPEC, { view: "returns", lens: "chart" }, "/h?view=returns", {})).toEqual({ lens: "chart" });
+  });
+
+  test("one the URL holds is his when a press asked for that URL with that value", () => {
+    const state = { view: "returns", lens: "table" };
+    expect(backSave(SPEC, state, "/h?view=returns&lens=table", { lens: "table" })).toEqual({ lens: "table" });
+    expect(backSave(SPEC, state, "/h?view=returns&lens=table", { view: "value", lens: "table" })).toEqual({
+      lens: "table",
+    });
+  });
+
+  test("a value the URL holds that is no option is not held: the page drew the saved one", () => {
+    expect(backSave(SPEC, PRICE_CHART, "/h?view=garbage&lens=chart", {})).toEqual({ view: "value" });
+  });
+
+  test("reads the first of a repeated key, as the server does", () => {
+    expect(backSave(SPEC, { view: "returns", lens: "chart" }, "/h?view=returns&view=garbage", {})).toEqual({
+      lens: "chart",
+    });
+    expect(backSave(SPEC, PRICE_CHART, "/h?view=garbage&view=returns", {})).toEqual(PRICE_CHART);
+  });
+
+  test("is null when the URL holds every dimension and he asked for none of them", () => {
+    expect(backSave(SPEC, { view: "returns", lens: "table" }, "/h?view=returns&lens=table", {})).toBeNull();
+  });
+});
+
+describe("createPageAsks: what Back's page re-saves", () => {
+  test("a dimension the URL Back landed on holds, only when a press of his asked for that URL", () => {
+    const asks = createPageAsks();
+    asks.committed("/h?view=returns"); // opened by a link: Return is the link's
+    asks.ask("/h?view=returns&lens=table", { view: "returns", lens: "table" }); // he presses Table
+    asks.departing("/h?view=returns&lens=table", "push");
+    asks.committed("/h?view=returns&lens=table");
+    asks.moved();
+    asks.committed("/h?view=returns"); // Back to the link
+    expect(asks.backSave(SPEC, { view: "returns", lens: "chart" })).toEqual({ lens: "chart" });
+
+    asks.moved();
+    asks.committed("/h?lens=table&view=returns"); // Forward to his press, in another spelling
+    expect(asks.backSave(SPEC, { view: "returns", lens: "table" })).toEqual({ view: "returns", lens: "table" });
+  });
+
+  test("a press asked on a linked view holds his own keys only: another switcher's stays the link's", () => {
+    const asks = createPageAsks();
+    asks.committed("/?chart=bridge");
+    asks.ask("/?chart=bridge&cards=grid", { cards: "grid" });
+    asks.departing("/?chart=bridge&cards=grid", "push");
+    asks.committed("/?chart=bridge&cards=grid");
+    asks.departing("/elsewhere", "push");
+    asks.committed("/elsewhere");
+    asks.moved();
+    asks.committed("/?chart=bridge&cards=grid");
+    const hero: ViewSpec = [{ key: "chart", options: ["combined", "bridge"] }];
+    const cards: ViewSpec = [{ key: "cards", options: ["deck", "grid"] }];
+    expect(asks.backSave(hero, { chart: "bridge" })).toBeNull();
+    expect(asks.backSave(cards, { cards: "grid" })).toEqual({ cards: "grid" });
+  });
+
+  test("two asks of one URL each add the keys they asked for", () => {
+    const asks = createPageAsks();
+    asks.ask("/h?view=returns&lens=table", { view: "returns" });
+    asks.departing("/elsewhere", "push"); // a link drops that ask
+    asks.ask("/h?view=returns&lens=table", { lens: "table" });
+    asks.moved();
+    asks.committed("/h?view=returns&lens=table");
+    expect(asks.backSave(SPEC, { view: "returns", lens: "table" })).toEqual({ view: "returns", lens: "table" });
   });
 });

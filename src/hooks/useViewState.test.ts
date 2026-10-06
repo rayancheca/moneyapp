@@ -634,7 +634,7 @@ describe("Back/Forward to a page with view pills", () => {
    * draws that history entry as it was drawn — the view from before the press he walked away
    * from — while his saved preference is still that press's. 🔴 So the next thing he pressed
    * that carries no view in its URL drew the SAVED one, the view he had left: a range pill
-   * landed on Return after Back showed Price.
+   * landed on Return after Back showed Value.
    */
   test("a range pill pressed after Back keeps the view Back showed", async () => {
     const page = await open(portfolioPage, "/investments?range=1Y");
@@ -644,7 +644,7 @@ describe("Back/Forward to a page with view pills", () => {
 
     page.back();
     await page.settle();
-    expect(page.shown).toMatchObject({ view: { view: "value" } }); // Price, as he left it
+    expect(page.shown).toMatchObject({ view: { view: "value" } }); // Value, as he left it
     pills.range!("1M");
     await page.settle();
 
@@ -687,7 +687,10 @@ describe("Back/Forward to a page with view pills", () => {
     expect(page.persisted.spending).toMatchObject({ cash: "table" });
   });
 
-  /** one best-effort save per switcher per Back, like a press's own, and nothing after it */
+  /**
+   * One best-effort save per switcher per Back, like a press's own, and nothing after it: two
+   * switchers, two saves, which the action merges per key into the surface's one record.
+   */
   test("each switcher on the page saves the view it shows, once", async () => {
     const page = await open(spendingPage, "/spending?period=2026-07");
     ui.cash!.setView("cash", "table");
@@ -700,6 +703,7 @@ describe("Back/Forward to a page with view pills", () => {
       { surface: "spending", state: { cash: "chart" } },
       { surface: "spending", state: { where: "list", massifView: "quarter" } },
     ]);
+    expect(page.persisted.spending).toEqual({ cash: "chart", where: "list", massifView: "quarter" });
 
     ui.where!.setView("where", "relief"); // a press after it: its own write, and no other
     await page.settle();
@@ -756,22 +760,118 @@ describe("Back/Forward to a page with view pills", () => {
     expect(page.persisted.dashboard).not.toHaveProperty("accts");
   });
 
-  /** Back to a page from another: its switchers are drawn anew, by Back, and save as above */
-  test("a switcher Back draws anew saves its view; one a link draws anew, nothing", async () => {
+  /**
+   * Back to a page from another: its switchers are drawn anew, by Back, and save as above — only
+   * what they drew from his saved view. ⚖️ 2026-10-06: never a view its URL held and no press of
+   * his asked for there: `/h?view=returns` was opened, so Return is the link's, never saved.
+   * 🔴 It was: Back wrote `view: "returns"`, and his next fresh holding opened on Return.
+   */
+  test("a switcher Back draws anew saves what it drew from his saved view; a link, nothing", async () => {
     const page = await open(holdingOrElsewhere, "/h?view=returns", { holding: { view: "value" } });
     page.router.push("/elsewhere");
     await page.settle();
     page.back();
     await page.settle();
-    expect(page.writes).toEqual([
-      { surface: "holding", state: { view: "returns", unit: "dollar", lens: "chart" } },
-    ]);
+    expect(page.writes).toEqual([{ surface: "holding", state: { unit: "dollar", lens: "chart" } }]);
+    expect(page.persisted.holding).toMatchObject({ view: "value" });
 
     page.router.push("/elsewhere");
     await page.settle();
     page.router.push("/h");
     await page.settle();
     expect(page.writes).toHaveLength(1);
+    expect(page.shown).toMatchObject({ view: { view: "value" } });
+  });
+
+  /**
+   * ⚖️ 2026-10-06, by 7b36d72's own rule (a linked view is kept in the URL and never saved):
+   * Back re-saves only the views the page drew from his saved one, never one only its URL held.
+   * 🔴 A shared `/?chart=bridge`, Grid on the cards, Back: Back saved the bridge as his hero
+   * view, and the next fresh visit to the dashboard opened on a view he never chose.
+   */
+  test("a linked view Back shows is never saved: a fresh visit opens on his own", async () => {
+    const page = await open(dashboardPage, "/?chart=bridge", { dashboard: { chart: "assets" } });
+    pills.cards!("grid");
+    await page.settle();
+    expect(page.url).toBe("/?chart=bridge&cards=grid");
+
+    page.back();
+    await page.settle();
+    expect(page.url).toBe("/?chart=bridge");
+    expect(page.persisted.dashboard).toMatchObject({ chart: "assets", cards: "deck" });
+
+    page.router.push("/");
+    await page.settle();
+    expect(page.shown).toMatchObject({ state: { chart: "assets" }, cards: { cards: "deck" } });
+  });
+
+  /**
+   * Forward to the page the press made on that link: the cards' Grid is his (he pressed it there)
+   * and is saved again; the hero's bridge is still the link's, and is not.
+   */
+  test("Forward to a press made on a linked view saves the press's view, not the link's", async () => {
+    const page = await open(dashboardPage, "/?chart=bridge", { dashboard: { chart: "assets" } });
+    pills.cards!("grid");
+    await page.settle();
+    page.back();
+    await page.settle();
+
+    page.forward();
+    await page.settle();
+    expect(page.url).toBe("/?chart=bridge&cards=grid");
+    expect(page.persisted.dashboard).toMatchObject({ chart: "assets", cards: "grid" });
+  });
+
+  /**
+   * A view in the URL is his own when a press of his asked for that URL with it: Back to the
+   * Table he pressed, after a Graph pressed over it, saves the Table again (B2). 🔴 Narrowed to
+   * the views his saved one drew alone, the next period drew the Graph under a Table on screen.
+   */
+  test("Back to a view his own press put in the URL saves it again", async () => {
+    const page = await open(spendingPage, "/spending");
+    ui.cash!.setView("cash", "table");
+    await page.settle();
+    ui.cash!.setView("cash", "graph");
+    await page.settle();
+
+    page.back();
+    await page.settle();
+    expect(page.url).toBe("/spending?cash=table");
+    page.router.push("/spending?period=2026-06"); // the period picker: no view in its URL
+    await page.settle();
+
+    expect(page.shown).toMatchObject({ cash: { cash: "table" } });
+    expect(page.persisted.spending).toMatchObject({ cash: "table" });
+  });
+
+  /** the same for a URL another writer asked for on top of his press: the range pill's */
+  test("Back to a range pill that kept his press's view saves that view again", async () => {
+    const page = await open(portfolioPage, "/investments?range=1Y");
+    ui.portfolio!.setView("view", "returns");
+    await page.settle();
+    pills.range!("1M");
+    await page.settle();
+    ui.portfolio!.setView("view", "value");
+    await page.settle();
+
+    page.back();
+    await page.settle();
+    expect(page.url).toBe("/investments?range=1M&view=returns");
+    page.router.push("/investments"); // the nav link: no view in its URL
+    await page.settle();
+    expect(page.shown).toMatchObject({ view: { view: "returns" } });
+  });
+
+  /** a link that holds every view of the switcher leaves it nothing to save */
+  test("Back to a link that holds every view saves nothing", async () => {
+    const page = await open(holdingOrElsewhere, "/h?view=returns&unit=percent&lens=table");
+    page.router.push("/elsewhere");
+    await page.settle();
+    page.back();
+    await page.settle();
+
+    expect(page.url).toBe("/h?view=returns&unit=percent&lens=table");
+    expect(page.writes).toEqual([]);
   });
 
   /** ⛔ the URL alone outranks the saved view; a load or a link he followed saves nothing */

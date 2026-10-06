@@ -175,6 +175,37 @@ export function isForeign(ask: PageAsk | null, href: string): boolean {
   return ask !== null && !ask.trail.includes(canonicalHref(href));
 }
 
+/**
+ * What a switcher Back/Forward drew saves again (`PageAsks.backSave`): each dimension of `spec`
+ * the page drew from his saved view — one `shown`, the URL Back landed on, does not hold (a value
+ * that is no option holds nothing: the server skipped it too) — and, of those it holds, only one
+ * a press of his asked for that URL with (`pressed`). Null when that is none.
+ *
+ * ⚖️ 2026-10-06, by 7b36d72's own rule (a linked view is kept in the URL and never saved; a first
+ * load saves nothing): Back never saves a view only the URL held. 🔴 It saved every dimension it
+ * drew: a shared `/?chart=bridge`, Grid on the cards, Back — and the bridge became his saved hero
+ * view. A view in the URL that his own press asked for is his, saved when he pressed it: Table,
+ * Graph, Back to the Table saves the Table again (B2). Narrowed to the views his saved one drew
+ * alone, the next period drew the Graph under the Table on screen.
+ */
+export function backSave(
+  spec: ViewSpec,
+  state: ViewState,
+  shown: string | null,
+  pressed: Readonly<ViewState>,
+): ViewState | null {
+  // the first of a repeated key, as the server reads it (`firstParam`)
+  const url = shown === null ? new URLSearchParams() : new URL(shown, ORIGIN).searchParams;
+  const out: ViewState = {};
+  for (const dim of spec) {
+    const value = state[dim.key];
+    const held = url.get(dim.key);
+    if (value === undefined) continue;
+    if (held === null || !dim.options.includes(held) || pressed[dim.key] === held) out[dim.key] = value;
+  }
+  return Object.keys(out).length === 0 ? null : out;
+}
+
 /** How a navigation enters the browser's history. */
 export type HistoryKind = "push" | "replace";
 
@@ -231,14 +262,21 @@ export interface PageAsks {
    * draws that history entry as it was drawn, from before the press he walked away from, while
    * the saved preference is still that press's. 🔴 So anything he pressed next that carries no
    * view in its URL drew the saved one, the view he had left: /investments?range=1Y, Return,
-   * Back (Price), 1M → the 1M chart on Return; /spending, cash Table, Back (Chart), Relief → the
-   * cash card on Table. Each switcher saves the view Back drew it with, once per landing.
+   * Back (Value), 1M → the 1M chart on Return; /spending, cash Table, Back (Chart), Relief → the
+   * cash card on Table. Each switcher sends a save of its own, once per landing — what
+   * `backSave` keeps of the view Back drew it with — and the action merges each per key.
    *
    * Not only the commit the URL landed in: 🔴 the router draws a page of the same route a
    * commit LATER (its layout router reads the page through `useDeferredValue`, and a restore is
    * urgent), and a save made only in the URL's commit never ran in Chromium.
    */
   backLanding(): number | null;
+  /**
+   * What a switcher on the page Back landed on saves of the view it drew (`backSave`): the
+   * dimensions its saved view drew, and of those the URL holds, the ones a press of his asked for
+   * that URL with — never a linked view. Null when that is none.
+   */
+  backSave(spec: ViewSpec, state: ViewState): ViewState | null;
 }
 
 export function createPageAsks(): PageAsks {
@@ -251,12 +289,17 @@ export function createPageAsks(): PageAsks {
   let traversing = false;
   let landings = 0;
   let back: number | null = null;
+  // every URL a press or URL writer asked for, in one spelling: the view keys his presses had
+  // asked for when it was (they are all in it, and every one was saved by its press)
+  const pressed = new Map<string, ViewState>();
   return {
     base: (at) => pressBase(current, at, shown),
     paramsOn: (pathname) => askedParams(current, pathname),
     ask(href, dims) {
       current = withAsk(current, href, dims);
       overtaken = null; // the ask is newer than any link before it
+      const at = canonicalHref(href);
+      pressed.set(at, { ...pressed.get(at), ...current.dims });
     },
     landing() {
       if (current !== null) return { href: current.href, kind: "push", scroll: false };
@@ -287,5 +330,7 @@ export function createPageAsks(): PageAsks {
       traversing = true;
     },
     backLanding: () => back,
+    backSave: (spec, state) =>
+      backSave(spec, state, shown, shown === null ? {} : (pressed.get(canonicalHref(shown)) ?? {})),
   };
 }
