@@ -387,6 +387,26 @@ export function missedBalances(db: AppDatabase, accountId: string): Pick<ReplayA
 }
 
 /**
+ * The days an account's balance stands on a count of his and nothing else — the days its balance proof says so of:
+ * a cash account's `chainFooting` `counted` days, and an investment account's days held at a value he typed
+ * (`heldCountsOn`). Empty for an account priced from holdings, and for one no count of his stands under.
+ *
+ * ⛔ Exported for the trust card's day sentence, which counted a day as resting on "a chain that closes" whenever it
+ * was not `derived_unverified` or `gap` — his count included (see `trustCard`). Read here, so the card's days on his
+ * count are the ones each day's proof names as his, never a second reading of the anchors.
+ */
+export function countedDays(db: AppDatabase, account: { id: string; type: AccountType }): ReadonlySet<string> {
+  if (account.type !== "investment") return chainFacts(db, account.id).counted;
+  const days = db
+    .select({ day: dailyBalances.day })
+    .from(dailyBalances)
+    .where(eq(dailyBalances.accountId, account.id))
+    .all()
+    .map((r) => r.day);
+  return new Set(heldCountsOn(db, account, days).keys());
+}
+
+/**
  * A cash day's balance in this service's vocabulary — ONE rule for an
  * account's balance proof and the day line on a row's sheet.
  *

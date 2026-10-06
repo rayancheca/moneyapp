@@ -100,6 +100,14 @@ function addTxn(accountId: string, day: string, opts: { cents?: number; status?:
   return id;
 }
 
+/** A balance recorded for an account on a day — a statement's, or one he typed (`manual`). */
+function addAnchor(accountId: string, day: string, source: "statement" | "manual"): void {
+  bundle.db
+    .insert(balanceAnchors)
+    .values({ accountId, anchoredOn: day, balanceCents: 1000, source, createdAt: now(), updatedAt: now() })
+    .run();
+}
+
 /** An account whose chain closes: anchored, derived, and a row to replay. */
 function addVerifiedAccount(id: string, name: string): string {
   addAccount(id, name, "checking");
@@ -308,6 +316,84 @@ describe("trustCard — carried days", () => {
     expect(groupOf(card, "verified")!.accounts[0]!.uncheckedDays).toBe(0);
     expect(card.days.sentence).toContain("rests on a chain that closes");
     expect(card.days.carriedNote).toContain("not a gap");
+  });
+});
+
+/* ── ⛔ a day on his count is not a chain that closes ─────────────────── */
+
+describe("trustCard — days that rest on his count", () => {
+  /*
+   * 🔴 HIS COUNT, CALLED A CHAIN THAT CLOSES. The card counted a day unchecked only when it was `derived_unverified`
+   * or `gap`, so a wallet resting on nothing but his counts read "Every one of 66 days of balances rests on a chain
+   * that closes." beside its own line "you counted it on Aug 20, 2026, and nothing else checks it" and its Aug 15
+   * balance proof "Both are your own counts, so nothing else confirms Cash on Hand" (temp ledger through the real
+   * services at ef8b764 and 2295ab8, review 2026-10-06). ⚖️ ONE verb for a balance he typed, "counted" (his answer,
+   * 2026-10-05).
+   */
+  test("a wallet that rests on nothing but his counts says so, never 'a chain that closes'", () => {
+    const id = createCashWallet(bundle.db, { name: "Cash on Hand", openingOn: "2026-08-04", openingBalanceCents: 500_000 });
+    addManualTransaction(bundle.db, { accountId: id, postedOn: "2026-08-11", amountCents: -500_000, description: "Car" });
+    addManualAnchor(bundle.db, { accountId: id, anchoredOn: "2026-08-20", enteredCents: 0 });
+
+    const card = trustCard(bundle.db, "2026-09-16")!;
+    // the rebuild carries his count to the real clock's today, so the total is read rather than pinned
+    const total = card.days.total.toLocaleString("en-US");
+    expect(card.days.unchecked).toBe(0);
+    expect(card.days.counted).toBe(card.days.total);
+    expect(card.days.sentence).toBe(
+      `Every one of ${total} days of balances rests on a balance you counted — ${total} in Cash on Hand — your word, not a check. No day rests on nothing, and none fails to add up.`,
+    );
+    expect(provenanceFor(bundle.db, { kind: "accountBalance", accountId: id, day: "2026-08-15" })!.headline).toMatch(
+      /Both are your own counts, so nothing else confirms Cash on Hand on Aug 15, 2026\.$/,
+    );
+  });
+
+  /*
+   * 🔴 …and of a value he typed on an investment account no holding prices: "Every one of 33 days of balances rests
+   * on a chain that closes." beside the summary's "1 is held at a balance you counted" (same review). A statement's
+   * value held flat is not his count.
+   */
+  test("a value he typed on an investment account is his count too; a statement's is not", () => {
+    addVerifiedAccount("chk", "Chase Checking");
+    addAccount("brk", "Brokerage", "investment");
+    addAnchor("brk", "2026-08-01", "manual");
+    addDays("brk", [
+      { day: "2026-08-01", basis: "anchored" },
+      { day: "2026-08-02", basis: "carried" },
+    ]);
+    addAccount("ira", "Old IRA", "investment");
+    addAnchor("ira", "2026-08-01", "statement");
+    addDays("ira", [
+      { day: "2026-08-01", basis: "anchored" },
+      { day: "2026-08-02", basis: "carried" },
+    ]);
+
+    const card = trustCard(bundle.db, TODAY)!;
+    expect(card.days.counted).toBe(2);
+    expect(card.days.sentence).toBe(
+      "2 of 6 days of balances (33.3% of them) rest on a balance you counted — 2 in Brokerage — your word, not a check. No day rests on nothing, and none fails to add up.",
+    );
+  });
+
+  /*
+   * ⛔ A count of his that a replay from a statement lands on IS checked (`chainFooting`), and so is a day carried
+   * from it — those days do rest on a chain that closes.
+   */
+  test("a count of his that a closed replay lands on is a check, not his word alone", () => {
+    addAccount("chk", "Chase Checking", "checking");
+    addAnchor("chk", "2026-08-01", "statement");
+    addAnchor("chk", "2026-08-03", "manual");
+    addDays("chk", [
+      { day: "2026-08-01", basis: "anchored" },
+      { day: "2026-08-02", basis: "derived" },
+      { day: "2026-08-03", basis: "anchored" },
+      { day: "2026-08-04", basis: "carried" },
+    ]);
+    addTxn("chk", "2026-08-02");
+
+    const card = trustCard(bundle.db, TODAY)!;
+    expect(card.days.counted).toBe(0);
+    expect(card.days.sentence).toBe("Every one of 4 days of balances rests on a chain that closes.");
   });
 });
 
@@ -566,14 +652,6 @@ describe("trustCard — the unchecked days", () => {
     // a break must not hide inside a backlog of unimported statements
     expect(card.days.sentence).toContain("1 of them provably does not add up");
   });
-
-  /** A balance recorded for an account on a day — a statement's, or one he typed (`manual`). */
-  function addAnchor(accountId: string, day: string, source: "statement" | "manual"): void {
-    bundle.db
-      .insert(balanceAnchors)
-      .values({ accountId, anchoredOn: day, balanceCents: 1000, source, createdAt: now(), updatedAt: now() })
-      .run();
-  }
 
   /*
    * 🔴 HIS COUNT, CALLED A RECORDED BALANCE. A wallet whose $40.00 recount for Sep 1 does not add up read "28 of them
