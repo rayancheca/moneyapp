@@ -13,13 +13,13 @@ import { allocationsFor } from "@/lib/transaction-splits";
 import { accountLiquidity, cashPosition, listAccountOptions, outsidePortfolioCashAccountIds } from "./accounts";
 import {
   agentsCostBucket,
-  isAgentsCostSeries,
+  agentsSeriesBands,
   isAgentsIncome,
   isAgentsIncomeSeries,
-  isAgentsSeries,
   isIncome,
   loadCategoryIndex,
   spendingBucket,
+  type AgentsBand,
 } from "./analytics";
 import { latestBalances } from "./derivation";
 import { latestBridgedNetWorthCents } from "./in-flight";
@@ -88,6 +88,8 @@ interface ForecastReads {
    * his spending (`spendingBucket`)
    */
   agentsCash: ReadonlySet<string>;
+  /** `agentsSeriesBands` — every schedule on the agent's cash, and the band its money is named by */
+  agentsSeries: ReadonlyMap<string, AgentsBand>;
 }
 
 /**
@@ -138,8 +140,9 @@ interface ForecastLeg {
    */
   agentsCents: number;
   /**
-   * What this leg projects the AGENT'S cash pays, net-worth-signed (≤ 0), by the rules that project his spending —
-   * the pace, the schedule and its arrears (`MonthForecast.agentsCosts`).
+   * What this leg projects the AGENT'S cash pays, net-worth-signed, by the rules that project his spending — the pace,
+   * the schedule and its arrears (`MonthForecast.agentsCosts`) — net of a scheduled refund its category files with them
+   * (`agentsSeriesBand`, owner decision 2026-10-06), so a schedule can take it above zero.
    *
    * ⚖️ Owner decision 2026-10-02 (§6A 34): not his spending (`spendingBucket`), so it is no line — not in Spending,
    * not in the net — and never EOM cash. Net worth pays the agent's costs, so EOM net worth subtracts it, as the bridge
@@ -318,9 +321,9 @@ export interface MonthForecast {
    */
   outsideCash: OutsideCash;
   /**
-   * What the AGENT'S cash is projected to be paid — by the series and the pace that project his, an income series or
-   * money in under a series of any other kind (`isAgentsCostSeries` is money out) — which each reading's EOM net
-   * worth counts and its Income and Net do not.
+   * What the AGENT'S cash is projected to be paid — by the series and the pace that project his: a schedule its
+   * category names the agent's income, or an unfiled one bringing money in (`agentsSeriesBand`) — which each reading's
+   * EOM net worth counts and its Income and Net do not.
    *
    * ⚖️ Owner decision 2026-09-28 (§6A 27): not his income (`isIncome`, `isAgentsIncomeSeries`); and net worth holds
    * the agent's money, which is why the bridge names it on a band of its own. So for the running month
@@ -333,7 +336,10 @@ export interface MonthForecast {
   agentsIncome: AgentsIncome;
   /**
    * What the AGENT'S cash is projected to PAY — by the series and the pace that project his spending — which each
-   * reading's EOM net worth counts and its Spending and Net do not. Net-worth-signed, so ≤ 0.
+   * reading's EOM net worth counts and its Spending and Net do not. Net-worth-signed, and NET: a scheduled credit filed
+   * in an expense category — a refund of the agent's fee — nets inside it, as the bridge nets the row it becomes
+   * inside "Agent's costs" (`agentsSeriesBand`, owner decision 2026-10-06, §6A 39). So it can be above zero: a reading
+   * whose refunds come to more than its fees nets to a credit, and the card's note says so (`AgentsCostsNote`).
    *
    * ⚖️ Owner decision 2026-10-02 (§6A 34): not his spending (`spendingBucket`); and net worth pays it, which is why the
    * bridge names it on a band of its own. So for the running month
@@ -354,7 +360,7 @@ export interface AgentsIncome {
   committedNetCents: number;
 }
 
-/** `AgentsIncome`'s mirror: what the agent's cash is projected to pay, net-worth-signed (≤ 0). */
+/** `AgentsIncome`'s mirror: what the agent's cash is projected to pay, net-worth-signed and net of its refunds. */
 export interface AgentsCosts {
   /** what the full reading's EOM net worth adds to its net (chained through a future month) */
   netCents: number;
@@ -414,7 +420,7 @@ function fixedComponents(
   today: string,
   from: string,
   monthEnd: string,
-  { outside, agentsCash }: ForecastReads,
+  { outside, agentsSeries }: ForecastReads,
 ): ForecastLeg {
   // status only — staleness is disclosed per component, never used to exclude
   const live = db
@@ -505,20 +511,23 @@ function fixedComponents(
     const perOccurrence = occurrences[0]!.amountCents;
     const cents = occurrences.length * perOccurrence;
     /*
-     * ⚖️ What the agent's cash pays is not his bill (`isAgentsCostSeries`, owner decision 2026-10-02): the agent's
-     * Gold fee is no line of his — not "Projected spending", not the net — and goes to EOM net worth alone.
+     * ⚖️ What the agent's cash pays is not his bill (owner decision 2026-10-02), nor what it is paid his income (owner
+     * decision 2026-09-28): the agent's Gold fee and its interest are no line of his — not "Projected spending" or
+     * "Projected income", not the net — and go to EOM net worth alone, by the same walk. 🔴 On a fixture, its month-end
+     * $0.04 was "Projected income" on the headline — and so pay still to come in the dashboard's "free to spend".
+     *
+     * ⚖️ Each under the band its CATEGORY names, as the bridge names the row it becomes (`agentsSeriesBand`, owner
+     * decision 2026-10-06, §6A 39): a monthly refund of the Gold fee, filed in Fees, nets inside the agent's costs —
+     * which can then net to a credit — and its interest is its income. EOM net worth adds both, so it does not move.
+     * 🔴 Asked by kind alone, an unfiled monthly credit filed "other" was a cost of +$3.00; asked by sign alone, a
+     * refund filed in Fees was "Agent's income" here while the bridge netted the posted one inside "Agent's costs".
      */
-    if (isAgentsCostSeries(agentsCash, series)) {
+    const band = agentsSeries.get(series.id);
+    if (band === "agentCosts") {
       agentsCostCents += cents;
       continue;
     }
-    /*
-     * ⚖️ …nor is what it is paid his income (`isAgentsIncomeSeries`, owner decision 2026-09-28): its interest, or
-     * money in under a series of any other kind (`isAgentsSeries`, all that is left of the agent's) — EOM net worth
-     * alone, by the same walk. 🔴 On a fixture, its month-end $0.04 was "Projected income" on the headline — and so
-     * pay still to come in the dashboard's "free to spend". 🔴 A monthly credit filed "other" was a cost of +$3.00.
-     */
-    if (isAgentsSeries(agentsCash, series)) {
+    if (band === "agentIncome") {
       agentsCents += cents;
       continue;
     }
@@ -588,7 +597,7 @@ function arrearsComponents(
   db: AppDatabase,
   today: string,
   monthStart: string,
-  { outside, agentsCash }: ForecastReads,
+  { outside, agentsSeries }: ForecastReads,
 ): ForecastLeg {
   // every live series the forecast would project; `overdueForSeries` applies the
   // money-out and lapsed rules itself, and transfers are never spending here
@@ -601,12 +610,14 @@ function arrearsComponents(
   const byId = new Map(live.map((s) => [s.id, s]));
   const late = overdueForSeries(db, new Set(byId.keys()), monthStart, addDays(today, -1));
   /*
-   * ⚖️ A bill of the agent's that came due and has not posted is the agent's to pay (`isAgentsCostSeries`, owner
-   * decision 2026-10-02): no line of his, and still money net worth will pay — EOM net worth alone, as the forward leg.
+   * ⚖️ A schedule of the agent's that came due and has not posted is the agent's to pay (owner decision 2026-10-02):
+   * no line of his, and still money net worth will pay — EOM net worth alone, under the band the forward leg names it
+   * by (`agentsSeriesBand`). 🔴 Asked by kind, one detection called "income" that came due money out was a bill of
+   * HIS here: "came due Oct 1 and has not posted", in his Spending and Net.
    */
-  const isAgents = (s: { id: string }) => isAgentsCostSeries(agentsCash, byId.get(s.id)!);
-  const agentsCostCents = late.series.filter(isAgents).reduce((sum, s) => sum - s.amountCents, 0);
-  const his = late.series.filter((s) => !isAgents(s));
+  const agentsNet = (band: AgentsBand) =>
+    late.series.filter((s) => agentsSeries.get(s.id) === band).reduce((sum, s) => sum - s.amountCents, 0);
+  const his = late.series.filter((s) => !agentsSeries.has(s.id));
 
   const components = his.map((s) => {
     const series = byId.get(s.id)!;
@@ -634,8 +645,14 @@ function arrearsComponents(
     if (accountId !== null && outside.has(accountId)) outsideAccountIds.add(accountId);
     else cashCents -= s.amountCents;
   }
-  // money-out only (`overdueForSeries`), so nothing here is anyone's income
-  return { components, cashCents, outsideAccountIds, agentsCents: 0, agentsCostCents };
+  // money-out only (`overdueForSeries`), so the rule names each of the agent's a cost — and both sums still ask it
+  return {
+    components,
+    cashCents,
+    outsideAccountIds,
+    agentsCents: agentsNet("agentIncome"),
+    agentsCostCents: agentsNet("agentCosts"),
+  };
 }
 
 /** Trailing rows summed per bucket and month, twice — see `bucketTrailing`. */
@@ -970,9 +987,9 @@ interface ChainedNets {
   agentsNet: number;
   /** Σ the fixed legs' `agentsCents`: what the committed reading's EOM net worth adds to its net */
   committedAgentsNet: number;
-  /** Σ every leg's `agentsCostCents`: what the full reading's EOM net worth adds to its net (≤ 0) */
+  /** Σ every leg's `agentsCostCents`: what the full reading's EOM net worth adds to its net */
   agentsCostNet: number;
-  /** Σ the fixed legs' `agentsCostCents`: what the committed reading's EOM net worth adds to its net (≤ 0) */
+  /** Σ the fixed legs' `agentsCostCents`: what the committed reading's EOM net worth adds to its net */
   committedAgentsCostNet: number;
 }
 
@@ -1044,10 +1061,12 @@ function outsideCashOf(db: AppDatabase, nets: ChainedNets): OutsideCash {
 
 /** What a forecast reads once for its whole chain (`ForecastReads`). */
 function forecastReads(db: AppDatabase): ForecastReads {
+  const agentsCash = outsidePortfolioCashAccountIds(db);
   return {
     notDrawn: seriesIdsNotDrawnAsRecurring(db),
     outside: accountsOutsideCash(db),
-    agentsCash: outsidePortfolioCashAccountIds(db),
+    agentsCash,
+    agentsSeries: agentsSeriesBands(db, agentsCash),
   };
 }
 

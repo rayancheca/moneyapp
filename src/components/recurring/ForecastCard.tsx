@@ -143,20 +143,37 @@ export function AgentsIncomeNote({ agents }: { agents: MonthForecast["agentsInco
  * ⚖️ Owner decision 2026-10-02 (§6A 34): the agent's fees are not his spending, so no line here carries them — and
  * net worth pays them, so EOM net worth still does, as the net-worth bridge names them on a band of their own.
  * `AgentsIncomeNote`'s mirror, by the same `namedReadings`.
+ *
+ * ⚖️ Owner decision 2026-10-06 (§6A 39): a scheduled credit to the agent's cash is named by its category, so a refund
+ * of its fee, filed in Fees, nets inside these costs (`agentsSeriesBand`) — and a reading whose refunds come to more
+ * than its fees nets to a CREDIT. "Projected to pay +$5.00" would say the opposite of what happens, so the note says it
+ * plainly: what the account gets back, which reading nets to a credit, and that net worth holds it.
  */
 export function AgentsCostsNote({ agents }: { agents: MonthForecast["agentsCosts"] }) {
   const named = namedReadings(agents.committedNetCents, agents.netCents);
   if (named === null) return null;
-  const pays = "the agent's own account is projected to pay by month end";
-  const whose = "That is the agent's money, not your spending: your net worth pays it, and Spending and Net leave it out.";
+  const amounts = named.kind === "both" ? [named.headlineCents, named.paceCents] : [named.cents];
+  const credits = amounts.filter((cents) => cents > 0).length;
+  const verb = credits === 0 ? "pays" : credits === amounts.length ? "holds" : "pays or holds";
+  const whose =
+    `That is the agent's money, not your spending: your net worth ${verb} it, and Spending and Net leave it out.`;
   if (named.kind === "both") {
+    const net = credits === 0 ? "" : ", net of what it gets back";
+    const pays = `the agent's own account is projected to pay by month end${net}`;
+    const where =
+      credits === 2 ? "On both readings" : named.headlineCents > 0 ? "In the headline" : "At your recent pace";
+    const credit = credits === 0 ? "" : ` ${where} its costs net to a credit: it gets back more than it pays.`;
     return (
       <p className="mt-1 text-xs text-ink-faint">
         EOM net worth counts what {pays}: <Money cents={named.headlineCents} flow /> {READING.headline} and{" "}
-        <Money cents={named.paceCents} flow /> {READING.pace}. {whose}
+        <Money cents={named.paceCents} flow /> {READING.pace}.{credit} {whose}
       </p>
     );
   }
+  const pays =
+    named.cents > 0
+      ? "the agent's own account is projected to get back by month end, net of what it pays: its costs net to a credit"
+      : "the agent's own account is projected to pay by month end";
   return (
     <p className="mt-1 text-xs text-ink-faint">
       EOM net worth{named.reading} counts the <Money cents={named.cents} flow /> {pays}. {whose}
