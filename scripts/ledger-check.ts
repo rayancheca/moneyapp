@@ -519,7 +519,7 @@ if (MODE.mode === "acknowledge") {
   }
   if (!MODE.confirm) {
     // the run that confirms it — one a mark when given several: a reason says what ONE line is
-    console.log(`\ndry run: nothing was written. ${confirmingStep(MODE.tokens, plan.open, MODE.reason).join("\n")}`);
+    console.log(`\ndry run: nothing was written. ${confirmingStep(MODE.tokens, plan, MODE.reason).join("\n")}`);
     process.exit(0);
   }
   writeLeftOutAcknowledgements(db, acknowledgementWrites(plan.open, { ...acknowledging, reason: MODE.reason }));

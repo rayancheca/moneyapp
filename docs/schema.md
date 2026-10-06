@@ -580,7 +580,9 @@ the real ledger and never edited: a wider CHECK would take a new migration rebui
 It is what the session read on the statement, in its words: an entry without a reason is a check
 quieted, not passed — and a later run never changes it, nor gives lines alike two: another
 `--reason` for a line acknowledged already, or for a line alike one (a mark partly acknowledged),
-is refused (exit 2), saying the reason stored. Keyed by what the line is
+is refused (exit 2), saying the reason stored — another meaning one NO line alike carries: the open
+line of a mark partly acknowledged takes the one its lines alike carry (either, if they carry two),
+and the dry run names it, exactly, in the run that confirms it. Keyed by what the line is
 — account, day, money, printed words, the printing file's sha256 — never a row id; one row per
 line, so two lines alike need two; and it covers only a leaving whose row was written before
 `created_at`. Lives in the ledger, like the marks. Written only by
