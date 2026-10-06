@@ -127,3 +127,17 @@ describe("the spending page's tracks can shrink", () => {
     expect(source).toContain("lg:col-span-2");
   });
 });
+
+/*
+ * ⛔ ONE EMPTY STATE, ASKED OF THE SERVICE THAT KNOWS WHOSE MONEY IS IN THE WINDOW. `spendingEmptyCopy` names his own
+ * Uncategorized bucket and says the agent's money is left out when the window holds some (owner decisions 2026-09-28,
+ * 2026-10-02, 2026-10-05). 🔴 Composed here, the page promised "Uncategorized outflows would show up above" over a
+ * period whose only outflow was the agent's unfiled money. Source, not render: the page reads the database.
+ */
+describe("the empty state is the service's", () => {
+  test("the page hands its window to spendingEmptyCopy and composes no copy of its own", () => {
+    expect(source).toMatch(/spendingEmptyCopy\(db, range, \{/);
+    expect(source).not.toMatch(/\bemptyPeriodCopy\(/);
+    expect(source).not.toMatch(/\bemptyPeriodReason\(/);
+  });
+});

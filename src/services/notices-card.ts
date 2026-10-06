@@ -7,7 +7,8 @@ import { ledgerHref } from "@/lib/ledger-href";
 import { formatDayShort } from "@/lib/format-date";
 import { isPrintableName } from "@/lib/printable-name";
 import { countFact, deltaFact, multipleFact, scalarFact, type Fact } from "@/lib/insight-facts";
-import { loadCategoryIndex } from "./analytics";
+import { outsidePortfolioCashAccountIds } from "./accounts";
+import { isAgentsCostCategoryRow, loadCategoryIndex } from "./analytics";
 import { insightsEnabled } from "./insight-surface";
 import { runInsights, type InsightCandidate } from "./insights";
 import { provenanceFor, type Provenance } from "./provenance";
@@ -114,6 +115,7 @@ export function noticesCard(db: AppDatabase, today: string = todayIso()): Notice
   if (!insightsEnabled(db, "notices")) return null;
   const from = addDays(today, -NOTICE_WINDOW_DAYS);
   const idx = loadCategoryIndex(db);
+  const agentsCash = outsidePortfolioCashAccountIds(db);
   const merchantNames = new Map(db.select().from(merchants).all().map((m) => [m.id, m.canonicalName]));
 
   /* one pass over the active rows: every notice class reads the same history */
@@ -152,6 +154,8 @@ export function noticesCard(db: AppDatabase, today: string = todayIso()): Notice
     }
     if (t.merchantId === null || t.categoryId === null) continue;
     if (idx.topLevelOf(t.categoryId).kind !== "expense") continue;
+    // ⚖️ a merchant's history is HIS charges there: the agent's cash pays its own (owner decision 2026-10-02)
+    if (isAgentsCostCategoryRow(idx, agentsCash, t)) continue;
     const list = byMerchant.get(t.merchantId) ?? [];
     list.push({ id: t.id, day: t.postedOn, cents: -t.amountCents, seriesId: t.recurringSeriesId });
     byMerchant.set(t.merchantId, list);

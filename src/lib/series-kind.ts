@@ -22,3 +22,15 @@ import type { SeriesKind } from "@/db/schema/recurring";
 export function seriesIsIncomeOrSpending(kind: SeriesKind): boolean {
   return kind !== "transfer";
 }
+
+/**
+ * What a series schedules per occurrence, net-worth-signed — the owner's amount first, then detection's: the amount
+ * every projection of it walks (`effectiveSeries`), and the sign that says whether its money comes in or goes out.
+ * Null when neither is known; such a series projects nothing.
+ */
+export function seriesAmountCents(series: {
+  readonly userAmountCents: number | null;
+  readonly nextExpectedAmountCents: number | null;
+}): number | null {
+  return series.userAmountCents ?? series.nextExpectedAmountCents;
+}

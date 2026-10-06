@@ -23,6 +23,7 @@ import {
   isAgentsIncomeSeries,
   isIncome,
   loadCategoryIndex,
+  offAgentsCash,
   spendingTransactions,
   recurringSeriesIdsForCategory,
   type AnalyticsTxn,
@@ -1150,6 +1151,10 @@ export function budgetTail(
  * already paid: subtracted from the variable spend `projectSpend` extrapolates,
  * with no tail to stand in for it (`budgetTail` projects live series only). An
  * ENDED series' charge stays here: it was a bill.
+ *
+ * ⚖️ A SUBSET of `spentCents`, so it reads his rows only: the agent's cash is left
+ * out, as `spendingTransactions` leaves it out (owner decision 2026-10-02). 🔴 Its
+ * linked Gold fee came off his variable spend as a bill of his already paid.
  */
 function recurringPostedCents(
   db: AppDatabase,
@@ -1159,6 +1164,7 @@ function recurringPostedCents(
   notDrawn: ReadonlySet<string>,
 ): number {
   const subtree = loadCategoryIndex(db).subtreeIds(categoryId);
+  const his = offAgentsCash([...outsidePortfolioCashAccountIds(db)]);
   const unsplit = db
     .select({ amountCents: transactions.amountCents })
     .from(transactions)
@@ -1166,6 +1172,7 @@ function recurringPostedCents(
       and(
         eq(transactions.status, "active"),
         linkIsRecurring(notDrawn),
+        his,
         inArray(transactions.categoryId, subtree),
         gte(transactions.postedOn, from),
         lte(transactions.postedOn, to),
@@ -1187,6 +1194,7 @@ function recurringPostedCents(
         eq(transactions.status, "active"),
         isNull(transactions.transferGroupId), // transfer-linked parts never count
         linkIsRecurring(notDrawn),
+        his,
         inArray(transactionSplits.categoryId, subtree),
         gte(transactions.postedOn, from),
         lte(transactions.postedOn, to),

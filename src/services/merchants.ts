@@ -6,7 +6,8 @@ import { categories } from "@/db/schema/categories";
 import { merchantAliases, merchants } from "@/db/schema/merchants";
 import { recurringSeries } from "@/db/schema/recurring";
 import { transactions } from "@/db/schema/transactions";
-import { loadCategoryIndex } from "./analytics";
+import { outsidePortfolioCashAccountIds } from "./accounts";
+import { isHisExpenseRow, loadCategoryIndex } from "./analytics";
 import type { BulkResult } from "./bulk-edit";
 import { ledgerOpens, ledgerReaches } from "./observation-frontier";
 import { strippedDescriptionKey } from "@/lib/description-key";
@@ -369,6 +370,10 @@ export function renameMerchant(
  * a transfer or an investment row at a merchant is not spending at all — letting
  * either in would make "you spend $X a month here" a different question from the
  * one /spending answers about the same merchant.
+ *
+ * ⚖️ …and only HIS: an expense row on the agent's cash is the agent's cost, either
+ * sign (`isAgentsCostCategoryRow`, owner decision 2026-10-02). 🔴 The agent's Gold
+ * fee made "Robinhood Gold" a merchant of his — two purchases, $10.00, ranked.
  */
 export interface MerchantIntelligence {
   profile: MerchantProfile;
@@ -389,8 +394,10 @@ export function merchantIntelligence(
    * aliased-table join that drizzle cannot infer a row type for.
    */
   const idx = loadCategoryIndex(db);
+  const agentsCash = outsidePortfolioCashAccountIds(db);
   const rows = db
     .select({
+      accountId: transactions.accountId,
       day: transactions.postedOn,
       amountCents: transactions.amountCents,
       categoryId: transactions.categoryId,
@@ -398,13 +405,15 @@ export function merchantIntelligence(
     .from(transactions)
     .where(and(eq(transactions.merchantId, merchantId), eq(transactions.status, "active")))
     .all();
+  // his spending at this merchant: expense-kind, off the agent's cash — the rule its proof reads too
+  const isHisExpense = (r: (typeof rows)[number]): boolean => isHisExpenseRow(idx, agentsCash, r);
 
   const visits: MerchantVisit[] = rows
     // money OUT only. A refund is a credit at the same merchant; counting it as
     // a visit would report a day that cost nothing as a day that cost something.
     .filter((r) => r.amountCents < 0 && r.categoryId !== null)
     .map((r) => ({ row: r, top: idx.topLevelOf(r.categoryId!) }))
-    .filter(({ top }) => top.kind === "expense")
+    .filter(({ row }) => isHisExpense(row))
     .map(({ row, top }) => ({
       day: row.day,
       amountCents: -row.amountCents,
@@ -420,7 +429,7 @@ export function merchantIntelligence(
   const refunds: MerchantVisit[] = rows
     .filter((r) => r.amountCents > 0 && r.categoryId !== null)
     .map((r) => ({ row: r, top: idx.topLevelOf(r.categoryId!) }))
-    .filter(({ top }) => top.kind === "expense")
+    .filter(({ row }) => isHisExpense(row))
     .map(({ row, top }) => ({
       day: row.day,
       amountCents: row.amountCents,

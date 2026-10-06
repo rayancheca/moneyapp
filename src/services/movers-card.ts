@@ -4,7 +4,7 @@ import { addCalendarMonths, monthKey, periodBounds, todayIso } from "@/lib/dates
 import { formatDayShort, formatMonthYear, monthWindowLabel } from "@/lib/format-date";
 import { resolvePeriod, withPeriod } from "@/lib/period";
 import { formatCents } from "@/lib/money";
-import { listAccounts } from "./accounts";
+import { listAccounts, outsidePortfolioCashAccountIds } from "./accounts";
 import { activeTxnsInRange, loadCategoryIndex, monthlySpending, spendingBucket, transactionsHref } from "./analytics";
 import { SPEND_BASELINE_MONTHS } from "./committed";
 import { frontierForSeries, ledgerOpens, observationFrontier, type ObservationFrontier } from "./observation-frontier";
@@ -310,9 +310,10 @@ function grid(db: AppDatabase, from: string, to: string, months: number, today: 
 /** accountId → month key → cents out over [from, to] — the account half of `grid`, and its reason. */
 function accountGrid(db: AppDatabase, from: string, to: string): Map<string, Map<string, number>> {
   const idx = loadCategoryIndex(db);
+  const agentsCash = outsidePortfolioCashAccountIds(db);
   const byAccount = new Map<string, Map<string, number>>();
   for (const txn of activeTxnsInRange(db, from, to)) {
-    if (!spendingBucket(idx, txn)) continue;
+    if (!spendingBucket(idx, agentsCash, txn)) continue;
     const perMonth = byAccount.get(txn.accountId) ?? new Map<string, number>();
     const m = monthKey(txn.postedOn);
     perMonth.set(m, (perMonth.get(m) ?? 0) - txn.amountCents);

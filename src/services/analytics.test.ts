@@ -456,9 +456,9 @@ describe("the system Uncategorized category is the NULL bucket", () => {
       recurringSeriesId: null,
       splitId: null,
     };
-    expect(spendingBucket(idx, { ...row, amountCents: -100 })).toEqual({ categoryId: null, categoryName: "Uncategorized" });
+    expect(spendingBucket(idx, new Set(), { ...row, amountCents: -100 })).toEqual({ categoryId: null, categoryName: "Uncategorized" });
     // an uncategorized credit belongs to the review queue, not to spending
-    expect(spendingBucket(idx, { ...row, amountCents: 100 })).toBeNull();
+    expect(spendingBucket(idx, new Set(), { ...row, amountCents: 100 })).toBeNull();
   });
 });
 

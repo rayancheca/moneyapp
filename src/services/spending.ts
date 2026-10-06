@@ -11,7 +11,13 @@ import { humanizeDescriptionKey, strippedDescriptionKey } from "@/lib/descriptio
 // topMerchants groups on — activeTxnsInRange doesn't select that column
 import { normalizeDescription } from "@/lib/normalize";
 import { comparePeriods, type PeriodComparison } from "@/lib/compared-windows";
-import { daysNotImportedYet, unreachedKind, type UnreachedKind } from "@/lib/empty-period";
+import {
+  daysNotImportedYet,
+  emptyPeriodCopy,
+  emptyPeriodReason,
+  unreachedKind,
+  type UnreachedKind,
+} from "@/lib/empty-period";
 import { subBuckets, type ResolvedPeriod } from "@/lib/period";
 import { alignByIndex, projectPace } from "@/lib/projection";
 import { allocationsFor } from "@/lib/transaction-splits";
@@ -19,6 +25,10 @@ import { NO_MERCHANT, OTHER_SERIES_KEY, UNCATEGORIZED_SERIES_KEY } from "@/lib/l
 import { outsidePortfolioCashAccountIds } from "./accounts";
 import {
   activeTxnsInRange,
+  agentsCostBucket,
+  isAgentsCostCategoryRow,
+  isAgentsIncome,
+  isHisUnfiledSpending,
   isIncome,
   ledgerHref,
   loadCategoryIndex,
@@ -44,7 +54,8 @@ import { activeSplitsInRange } from "./transaction-splits";
  * `refundsCents` so a big cross-period credit can't drag "Spent" nonsensically
  * negative. Net still reconciles: netCents = earned + refunds − spent (a refund
  * is money in). Income is positive amounts in income-kind categories, off the
- * agent's cash account (`isIncome` — owner decision 2026-09-28).
+ * agent's cash account (`isIncome` — owner decision 2026-09-28), and spending is
+ * off it too (`spendingBucket` — owner decision 2026-10-02).
  * (Per-category breakdown in analytics.ts stays netted — a separate view.)
  */
 
@@ -74,7 +85,7 @@ export function periodTotals(db: AppDatabase, range: DateRange): PeriodTotals {
   let spentCents = 0;
   let refundsCents = 0;
   for (const txn of activeTxnsInRange(db, range.from, range.to)) {
-    if (spendingBucket(idx, txn)) {
+    if (spendingBucket(idx, agentsCash, txn)) {
       // gross: only outflows are "spent"; a credit in an expense category is a refund
       if (txn.amountCents < 0) spentCents += -txn.amountCents;
       else refundsCents += txn.amountCents;
@@ -232,7 +243,7 @@ export function cashFlowByPeriod(db: AppDatabase, period: ResolvedPeriod, today:
   for (const txn of rows) {
     const bucket = bucketIndex.get(bucketKeyFor(txn.postedOn, byMonth));
     if (bucket === undefined) continue;
-    const sb = spendingBucket(idx, txn);
+    const sb = spendingBucket(idx, agentsCash, txn);
     if (sb) {
       // gross: only outflows are spending; a credit in an expense category is a refund
       if (txn.amountCents >= 0) {
@@ -532,7 +543,7 @@ export function dailySpendHeatmap(db: AppDatabase, month: string): SpendHeatmap 
   const from = `${month}-01`;
   const to = periodBounds(from, "monthly").end;
   const idx = loadCategoryIndex(db);
-  // the day's earned bar is the Income card's population, read one day at a time
+  // the day's spent and earned bars are the Spent and Income cards' populations, read one day at a time
   const agentsCash = outsidePortfolioCashAccountIds(db);
   interface Cell {
     spentCents: number;
@@ -566,7 +577,7 @@ export function dailySpendHeatmap(db: AppDatabase, month: string): SpendHeatmap 
 
   for (const txn of activeTxnsInRange(db, from, to)) {
     const cell = byDay.get(txn.postedOn) ?? newCell();
-    const bucket = spendingBucket(idx, txn);
+    const bucket = spendingBucket(idx, agentsCash, txn);
     // gross: a refund (positive in an expense category) is not a day's spending
     if (bucket && txn.amountCents < 0) {
       const out = -txn.amountCents;
@@ -621,13 +632,6 @@ interface SpendRow {
   accountName: string;
 }
 
-/** Whether one category allocation counts as spending (mirrors spendingBucket). */
-function allocationIsSpending(idx: CategoryIndex, categoryId: string | null, amountCents: number): boolean {
-  // uncategorized outflow — NULL, or filed on the system category (CategoryIndex.uncategorizedIds)
-  if (categoryId === null || idx.uncategorizedIds.has(categoryId)) return amountCents < 0;
-  return idx.topLevelOf(categoryId).kind === "expense";
-}
-
 /**
  * Active rows classified as spending, joined with account name — split-aware.
  *
@@ -644,6 +648,7 @@ function spendingRowsInRange(
   range: DateRange,
   subtreeIds?: ReadonlySet<string>,
 ): SpendRow[] {
+  const agentsCash = outsidePortfolioCashAccountIds(db);
   const rows = db
     .select({
       id: transactions.id,
@@ -672,8 +677,14 @@ function spendingRowsInRange(
   for (const r of rows) {
     const allocs = allocationsFor(r.categoryId, r.amountCents, splits.get(r.id) ?? []);
     if (subtreeIds) {
+      /*
+       * ⚖️ A category page's merchants are his, as its figure is (`spendingTransactions`): the agent's cash is left out
+       * of an expense subtree, either sign (`isAgentsCostCategoryRow`, owner decision 2026-10-02). 🔴 /categories/<Fees>
+       * listed "Robinhood Gold" — the agent's Gold fee — among the merchants of a total that no longer counted it.
+       */
       const portion = allocs
         .filter((a) => a.categoryId !== null && subtreeIds.has(a.categoryId))
+        .filter((a) => !isAgentsCostCategoryRow(idx, agentsCash, { ...a, accountId: r.accountId }))
         .reduce((sum, a) => sum + a.amountCents, 0);
       if (portion !== 0) out.push({ ...r, amountCents: portion });
     } else {
@@ -682,8 +693,17 @@ function spendingRowsInRange(
       // a non-spending part (Transfers/Income) reports only the expense
       // allocation, so these widgets reconcile with the split-aware Spent total.
       // For an unsplit / all-expense row this equals the full amount, unchanged.
+      // ⛔ `spendingBucket` itself, both signs — a part is spending by the rule /spending's Spent is, so none on the
+      // agent's cash is (owner decision 2026-10-02); this file kept a copy that never asked whose account.
       const spendCents = allocs
-        .filter((a) => allocationIsSpending(idx, a.categoryId, a.amountCents))
+        .filter(
+          (a) =>
+            spendingBucket(idx, agentsCash, {
+              accountId: r.accountId,
+              categoryId: a.categoryId,
+              amountCents: a.amountCents,
+            }) !== null,
+        )
         .reduce((sum, a) => sum + a.amountCents, 0);
       if (spendCents !== 0) out.push({ ...r, amountCents: spendCents });
     }
@@ -882,10 +902,16 @@ export interface HonestyBuckets {
 
 export function honestyBuckets(db: AppDatabase, range: DateRange): HonestyBuckets {
   const idx = loadCategoryIndex(db);
+  const agentsCash = outsidePortfolioCashAccountIds(db);
   let uncatSpent = 0;
   let uncatCount = 0;
   for (const txn of activeTxnsInRange(db, range.from, range.to)) {
-    if (txn.categoryId === null && txn.amountCents < 0) {
+    /*
+     * ⚖️ HIS unfiled money out — `spendingBucket`'s own leg, as the Uncategorized row of the category table and the
+     * Spent card count it: what leaves the agent's cash unfiled is not his spending (owner decision 2026-10-05). 🔴 This
+     * kept its own copy — NULL and negative — so it would have gone on charging him the agent's rows.
+     */
+    if (isHisUnfiledSpending(idx, agentsCash, txn)) {
       uncatSpent += -txn.amountCents;
       uncatCount += 1;
     }
@@ -914,4 +940,59 @@ export function honestyBuckets(db: AppDatabase, range: DateRange): HonestyBucket
       href: ledgerHref({ view: "excluded", from: range.from, to: range.to }),
     },
   };
+}
+
+// ── The empty state ──────────────────────────────────────────────────
+
+/**
+ * How many transactions in a window are the AGENT'S spending or income — the rows `spendingBucket` and `isIncome`
+ * leave out for whose they are (`agentsCostBucket`, `isAgentsIncome`), and only those: what its account paid in an
+ * expense category or unfiled, and what it was paid in an income category. Its transfers are not among them — the
+ * $26.64 he funded it with is a transfer, which /spending's empty state already says it does not count.
+ */
+export function agentsMoneyRowCount(db: AppDatabase, range: DateRange): number {
+  const agentsCash = outsidePortfolioCashAccountIds(db);
+  if (agentsCash.size === 0) return 0;
+  const idx = loadCategoryIndex(db);
+  const ids = activeTxnsInRange(db, range.from, range.to)
+    .filter((t) => agentsCostBucket(idx, agentsCash, t) !== null || isAgentsIncome(idx, agentsCash, t))
+    // distinct transactions — a split row arrives as one part-row per part
+    .map((t) => t.id);
+  return new Set(ids).size;
+}
+
+/**
+ * /spending's empty state: which world its window is in (`emptyPeriodReason`) and the words for it, with the two
+ * clauses this page alone can offer — his own Uncategorized bucket, which the page prints when there is one, and the
+ * agent's money, said to be left out when the window holds some.
+ *
+ * ⚖️ What the agent's own account pays or is paid is none of his spending or income (owner decisions 2026-09-28,
+ * 2026-10-02, 2026-10-05), so a window holding only the agent's money comes here. 🔴 Composed on the page, it read
+ * "Uncategorized outflows would show up above, as their own explicit bucket" over a day whose only outflow was the
+ * agent's unfiled ACH withdrawal — which shows up nowhere — and said nothing of it.
+ */
+export function spendingEmptyCopy(
+  db: AppDatabase,
+  range: DateRange,
+  opts: {
+    today: string;
+    /** the period's own name — "September 2026" */
+    label: string;
+    ledgerOpens: string | null;
+    ledgerReaches: string | null;
+    formatDay: (iso: string) => string;
+  },
+): { title: string; description: string } {
+  const reason = emptyPeriodReason({
+    from: range.from,
+    to: range.to,
+    today: opts.today,
+    ledgerOpens: opts.ledgerOpens,
+    ledgerReaches: opts.ledgerReaches,
+  });
+  return emptyPeriodCopy(reason, opts.label, opts.ledgerReaches, opts.formatDay, {
+    uncategorizedBucket: true,
+    ledgerOpens: opts.ledgerOpens,
+    agentsMoney: agentsMoneyRowCount(db, range) > 0,
+  });
 }

@@ -107,10 +107,22 @@ function windowLabel(from: string, to: string, year: number, truncated: boolean)
   return truncated ? `${formatDayShort(from)} – ${formatDayShort(to)}, ${year}` : String(year);
 }
 
-function comparedWindows(db: AppDatabase, year: number, today: string): ComparedWindows | null {
-  const ledgerStart = ledgerFirstDay(db);
-  if (ledgerStart === null) return null;
+/** The days a year's spending is measured over — "What you spent" on /summary, and the block under it that says so. */
+export interface YearSpendingWindow {
+  from: string;
+  to: string;
+  /** "2025", or "Jan 1 – Jul 31, 2026" for a year cut at the frontier */
+  label: string;
+  /** the year stops before its December */
+  truncated: boolean;
+}
 
+/**
+ * Jan 1 → the last day every account you spend from has been imported through, or Dec 31 when that is later — or
+ * null when the ledger has not reached the year at all. What you spent's window, and the ONE answer to it: the gambling
+ * block under it (`gamblingFor`) says its losses sit inside that figure, which is true over these days alone.
+ */
+export function yearSpendingWindow(db: AppDatabase, year: number, today: string): YearSpendingWindow | null {
   /*
    * The EARLIEST frontier across the accounts you spend from — the last day
    * every one of them has been shown. Taking the latest instead would let the
@@ -127,18 +139,29 @@ function comparedWindows(db: AppDatabase, year: number, today: string): Compared
   /*
    * A year the ledger has not reached at all has no window, not an empty one.
    *
-   * ⚠️ Redundant TODAY and kept anyway, measured rather than assumed: an
-   * inverted window makes `periodTotals` return zero, and the zero guard in
-   * `yearInsights` then refuses it — so deleting this line changes no output and
-   * breaks no test. It stays because the reason it is safe lives in a different
-   * function, and because without it two full-window walks run for a year this
-   * ledger provably cannot speak about.
+   * ⚠️ Redundant TODAY for the comparison and kept anyway, measured rather than
+   * assumed: an inverted window makes `periodTotals` return zero, and the zero
+   * guard in `yearInsights` then refuses it — so deleting this line changes no
+   * sentence. It stays because the reason it is safe lives in a different
+   * function, because without it two full-window walks run for a year this
+   * ledger provably cannot speak about — and because the gambling block has no
+   * zero guard: an inverted window must be no window there too.
    */
   if (to < from) return null;
+  const truncated = to !== yearEnd;
+  return { from, to, label: windowLabel(from, to, year, truncated), truncated };
+}
+
+function comparedWindows(db: AppDatabase, year: number, today: string): ComparedWindows | null {
+  const ledgerStart = ledgerFirstDay(db);
+  if (ledgerStart === null) return null;
+
+  const window = yearSpendingWindow(db, year, today);
+  if (window === null) return null;
+  const { from, to, label, truncated } = window;
 
   const priorFrom = `${year - 1}-01-01`;
   const priorTo = sameDayIn(year - 1, to);
-  const truncated = to !== yearEnd;
   /*
    * gate 3, and it now bounds the COMPARISON alone: an earlier window the
    * ledger only partly covers measures the import history rather than the
@@ -149,7 +172,7 @@ function comparedWindows(db: AppDatabase, year: number, today: string): Compared
   return {
     from,
     to,
-    label: windowLabel(from, to, year, truncated),
+    label,
     prior:
       priorIsCovered && priorTo !== null
         ? { from: priorFrom, to: priorTo, label: windowLabel(priorFrom, priorTo, year - 1, truncated) }

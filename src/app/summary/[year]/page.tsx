@@ -12,7 +12,7 @@ import { SurfaceCard } from "@/components/ui/SurfaceCard";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { YearSpendingCard } from "@/components/summary/YearSpendingCard";
 import { yearSpendingView } from "@/services/year-insights";
-import { summaryYears, yearSummaryView } from "@/services/year-summary";
+import { gamblingNote, summaryYears, yearSummaryView } from "@/services/year-summary";
 import "./print.css";
 
 export const dynamic = "force-dynamic";
@@ -217,9 +217,16 @@ export default async function YearSummaryPage({
               that winnings are not income, and it is net-negative anyway. */}
           {gambling.rowCount > 0 && (
             <SurfaceCard>
-              <h2 className="text-xs font-medium uppercase tracking-[0.12em] text-ink-faint">
-                Gambling, kept separate
-              </h2>
+              {/* ⛔ The block reads What you spent's days (`gamblingFor`), and on a running year
+                  those stop short of December — so it names them, as that card does. */}
+              <div className="flex flex-wrap items-baseline gap-x-2">
+                <h2 className="text-xs font-medium uppercase tracking-[0.12em] text-ink-faint">
+                  Gambling, kept separate
+                </h2>
+                {gambling.window?.truncated && (
+                  <span className="text-xs text-ink-faint">{gambling.window.label}</span>
+                )}
+              </div>
               <dl className="mt-3 space-y-1.5 border-t border-line pt-3 text-sm">
                 <div className="flex items-baseline justify-between gap-3">
                   <dt className="text-ink-muted">Won</dt>
@@ -242,10 +249,12 @@ export default async function YearSummaryPage({
                 {/* 🔴 This said "losses are not treated as spending" on a page whose
                     "What you spent" figure includes them — Gambling is an expense
                     category in your own taxonomy, and every spending surface counts it.
-                    What is true is narrower: winnings are not income HERE. */}
-                Counted in none of the money-in totals above: winnings are not treated as income
-                here. Losses are spending — your categories file Gambling as an expense — and they
-                sit inside the figure under What you spent.
+                    What is true is narrower: winnings are not income HERE. ⚖️ The block is
+                    his (`gamblingFor`): what the agent's account pays is in no Spent of his
+                    (owner decision 2026-10-02), so a loss there is not in Lost either.
+                    ⛔ The sentence is `gamblingNote`'s: on a running year it is true over
+                    What you spent's own days alone, and says which. */}
+                {gamblingNote(gambling)}
               </p>
             </SurfaceCard>
           )}

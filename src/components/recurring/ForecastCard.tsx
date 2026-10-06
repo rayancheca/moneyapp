@@ -49,8 +49,8 @@ type NamedReadings =
 
 /**
  * Which amounts a note on this card names, and under which reading — `OutsideCashNote`'s rule, stated there, and
- * the one every note naming an amount per reading reads (`AgentsIncomeNote` too), so the two cannot name them two
- * ways. Null when both halves are zero (`-0` included).
+ * the one every note naming an amount per reading reads (`AgentsIncomeNote` and `AgentsCostsNote` too), so no two
+ * can name them two ways. Null when both halves are zero (`-0` included).
  */
 function namedReadings(headlineCents: number, paceCents: number): NamedReadings | null {
   if (headlineCents === 0 && paceCents === 0) return null;
@@ -132,6 +132,34 @@ export function AgentsIncomeNote({ agents }: { agents: MonthForecast["agentsInco
   return (
     <p className="mt-1 text-xs text-ink-faint">
       EOM net worth{named.reading} counts the <Money cents={named.cents} flow /> {paid}. {whose}
+    </p>
+  );
+}
+
+/**
+ * What both EOM net worth figures count and no Spending or Net on the card does: what the agent's own account is
+ * projected to pay (`MonthForecast.agentsCosts`), net-worth-signed.
+ *
+ * ⚖️ Owner decision 2026-10-02 (§6A 34): the agent's fees are not his spending, so no line here carries them — and
+ * net worth pays them, so EOM net worth still does, as the net-worth bridge names them on a band of their own.
+ * `AgentsIncomeNote`'s mirror, by the same `namedReadings`.
+ */
+export function AgentsCostsNote({ agents }: { agents: MonthForecast["agentsCosts"] }) {
+  const named = namedReadings(agents.committedNetCents, agents.netCents);
+  if (named === null) return null;
+  const pays = "the agent's own account is projected to pay by month end";
+  const whose = "That is the agent's money, not your spending: your net worth pays it, and Spending and Net leave it out.";
+  if (named.kind === "both") {
+    return (
+      <p className="mt-1 text-xs text-ink-faint">
+        EOM net worth counts what {pays}: <Money cents={named.headlineCents} flow /> {READING.headline} and{" "}
+        <Money cents={named.paceCents} flow /> {READING.pace}. {whose}
+      </p>
+    );
+  }
+  return (
+    <p className="mt-1 text-xs text-ink-faint">
+      EOM net worth{named.reading} counts the <Money cents={named.cents} flow /> {pays}. {whose}
     </p>
   );
 }
@@ -290,6 +318,8 @@ export function ForecastCard({ forecast: f }: ForecastCardProps) {
       <OutsideCashNote outside={f.outsideCash} />
 
       <AgentsIncomeNote agents={f.agentsIncome} />
+
+      <AgentsCostsNote agents={f.agentsCosts} />
 
       <ForecastComposition split={split} />
 

@@ -18,7 +18,7 @@ import {
   type UnsettledReason,
 } from "@/lib/occurrence-verdict";
 import { outsidePortfolioCashAccountIds } from "./accounts";
-import { isAgentsIncomeSeries, loadCategoryIndex } from "./analytics";
+import { isAgentsSeries, loadCategoryIndex } from "./analytics";
 import { frontierForSeries, observationFrontier, seriesAccountIds } from "./observation-frontier";
 import { paydaySettlementsBySeries } from "./payday-settlement";
 import {
@@ -66,9 +66,9 @@ import {
  *    transactions that are not a series. Showing them on a recurring calendar
  *    would re-assert exactly the claim he rejected.
  *
- *  - **Nor does the agent's income**: an income series on the agent's cash
- *    (`isAgentsIncomeSeries`) schedules money that is not his, by his decision
- *    of 2026-09-28 — see `recurringCalendar`.
+ *  - **Nor does the agent's money**: a series on the agent's cash
+ *    (`isAgentsSeries`) schedules income or costs that are not his, by his
+ *    decisions of 2026-09-28 and 2026-10-02 — see `recurringCalendar`.
  *
  * Because detection advances next_expected_on past every posted charge, an
  * expected occurrence never overlaps a posting it already represents; a user
@@ -550,8 +550,11 @@ export function recurringCalendar(
      *
      * ⛔ Not hidden from net worth: the bridge names that money on a band of its
      * own, and the forecast's EOM net worth still counts what the series pays.
+     *
+     * ⚖️ …nor what it pays (`isAgentsSeries`, owner decision 2026-10-02, §6A 34):
+     * the agent's Gold fee is no bill on his grid, his strip or his footer.
      */
-    .filter((s) => !isAgentsIncomeSeries(agentsCash, s));
+    .filter((s) => !isAgentsSeries(agentsCash, s));
   const seriesById = new Map(historyRows.map((s) => [s.id, s]));
   const forecastRows = historyRows.filter((s) => s.status === "detected" || s.status === "confirmed");
   const measured = measuredStddevs(

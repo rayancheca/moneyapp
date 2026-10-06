@@ -8,6 +8,7 @@ import { resolvePeriod, withPeriod } from "@/lib/period";
 import { outsidePortfolioCashAccountIds } from "./accounts";
 import {
   activeTxnsInRange,
+  isAgentsCostCategoryRow,
   isAgentsIncomeCategoryRow,
   loadCategoryIndex,
   type AnalyticsTxn,
@@ -87,7 +88,9 @@ import { provenanceFor, type Provenance } from "./provenance";
  * two must not be read as the same number. Its scope is **active credit cards,
  * all time**, and it holds `Interest Charges` OUT of its fee figure so that
  * "fees" and "interest charged" name disjoint money on a card about cards. This
- * one's scope is **every account, over a stated window**, and its `paidCents` is
+ * one's scope is **every account of his, over a stated window** — not the
+ * agent's cash, on either half (owner decisions 2026-09-28 and 2026-10-02) —
+ * and its `paidCents` is
  * the whole `Fees` subtree including `Interest Charges` — because interest a
  * bank charges you is money you paid a bank, which is this card's question.
  *
@@ -431,10 +434,17 @@ export function feesCard(db: AppDatabase, today: string = todayIso()): FeesCard 
       /*
        * ⚖️ …and the interest is HIS. What the agent's cash is paid is not interest a bank paid him (owner decision
        * 2026-09-28), either sign — a clawback of the agent's interest is the agent's too — as /spending's Income card
-       * and `/categories/<Interest>` leave it out (`isAgentsIncomeCategoryRow`). A fee is no income row, so never
-       * one. 🔴 A month whose only interest was the agent's read "against $0.04 of interest back".
+       * and `/categories/<Interest>` leave it out (`isAgentsIncomeCategoryRow`). 🔴 A month whose only interest was
+       * the agent's read "against $0.04 of interest back".
        */
-      !isAgentsIncomeCategoryRow(idx, agentsCash, t),
+      !isAgentsIncomeCategoryRow(idx, agentsCash, t) &&
+      /*
+       * ⚖️ …and so are the fees. What the agent's cash pays is not a fee a bank charged him (owner decision
+       * 2026-10-02), either sign — a refund of the agent's fee is the agent's too — as /spending's Spent card and
+       * `/categories/<Fees>` leave it out (`isAgentsCostCategoryRow`). 🔴 A month whose only Bank Fee was the agent's
+       * Gold fee read "$20.00 went out in fees": the agent's $5.00, charged to him.
+       */
+      !isAgentsCostCategoryRow(idx, agentsCash, t),
   );
   // an empty bucket is an answer; an empty LEDGER is not a card
   if (rows.length === 0) return null;

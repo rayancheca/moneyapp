@@ -18,7 +18,14 @@ import { formatCents } from "@/lib/money";
 import { emptyPeriodReason } from "@/lib/empty-period";
 import { ledgerOpens, ledgerReaches } from "./observation-frontier";
 import { outsidePortfolioCashAccountIds, ownPortfolioAccountIds } from "./accounts";
-import { activeTxnsInRange, loadCategoryIndex, offAgentsCash, spendingBucket, uncategorizedWhere } from "./analytics";
+import {
+  activeTxnsInRange,
+  isHisExpenseRow,
+  loadCategoryIndex,
+  offAgentsCash,
+  spendingBucket,
+  uncategorizedWhere,
+} from "./analytics";
 import { handTypedDays, keptOpeningOf } from "./anchor-winners";
 import {
   accountCoverage,
@@ -1812,12 +1819,22 @@ function categorySpendProvenance(
     ? uncategorizedWhere(idx)
     : inArray(transactions.categoryId, ids);
   /*
-   * ⚖️ …and an income category's total is his rows: `spendingTransactions` leaves the agent's cash out of it, either
-   * sign (`isAgentsIncomeCategoryRow`), so the proof does too. 🔴 Counting them, `/categories/<Income>`'s popover
-   * would name the agent's rows — "the sum of 4 rows" — under a headline of 2 transactions.
+   * ⚖️ …and an income or expense category's total is his rows: `spendingTransactions` leaves the agent's cash out of
+   * it, either sign (`isAgentsIncomeCategoryRow`, `isAgentsCostCategoryRow`), so the proof does too. 🔴 Counting them,
+   * `/categories/<Income>`'s popover would name the agent's rows — "the sum of 4 rows" — under a headline of 2
+   * transactions, and `/categories/<Fees>`'s the agent's Gold fee under a headline of 1.
+   *
+   * ⚖️ The Uncategorized CATEGORY is not his Spent, and keeps every account. Money leaving the agent's cash unfiled is
+   * out of his spending (owner decision 2026-10-05) — the Spent card's proof (`allSpend`) and the honesty card's link
+   * leave it out — but `/categories/<Uncategorized>` is the page a row is filed from: its headline is a Net of every
+   * row still to file, both signs, the agent's among them (`spendingTransactions`), so this proof counts them too.
+   * ⚖️ Session decision 2026-10-06 (the session's, not the owner's): that page is the FILING QUEUE and keeps the
+   * agent's unfiled rows — a Net of rows to file, never a Spent figure (`categoryFlowLabel`) — as do the dashboard's
+   * "N uncategorized" and the ledger queue it links to. Pinned in `agents-unfiled.test.ts`, "what is left as it was".
    */
+  const kind = idx.topLevelOf(categoryId).kind;
   const his =
-    idx.topLevelOf(categoryId).kind === "income" ? offAgentsCash([...outsidePortfolioCashAccountIds(db)]) : undefined;
+    kind === "income" || kind === "expense" ? offAgentsCash([...outsidePortfolioCashAccountIds(db)]) : undefined;
 
   const rows = db
     .select(SUM_ROW_COLUMNS)
@@ -1856,8 +1873,16 @@ function merchantSpendProvenance(
   const merchant = db.select().from(merchants).where(eq(merchants.id, merchantId)).get();
   if (!merchant) return null;
 
+  /*
+   * ⛔ …and the figure was summed from HIS EXPENSE rows at the merchant (`isHisExpenseRow`, the profile's own rule).
+   * 🔴 This took every active row there, every account and every kind: under "Robinhood Gold … $10.00" (his two Gold
+   * fees) and "40.0% of what you spent on Fees" it read "the sum of 3 rows", the agent's fee the third (owner decision
+   * 2026-10-02) — and a transfer at a merchant, which is no purchase of his, was a row of it too.
+   */
+  const idx = loadCategoryIndex(db);
+  const agentsCash = outsidePortfolioCashAccountIds(db);
   const rows = db
-    .select(SUM_ROW_COLUMNS)
+    .select({ ...SUM_ROW_COLUMNS, categoryId: transactions.categoryId })
     .from(transactions)
     .where(
       and(
@@ -1867,7 +1892,8 @@ function merchantSpendProvenance(
         lte(transactions.postedOn, to),
       ),
     )
-    .all();
+    .all()
+    .filter((r) => isHisExpenseRow(idx, agentsCash, r));
 
   return summedRowsProvenance(db, rows, label ?? merchant.canonicalName, from, to);
 }
@@ -1956,11 +1982,12 @@ function accountRowsProvenance(db: AppDatabase, accountId: string, label: string
  */
 function allSpendRows(db: AppDatabase, from: string, to: string): SummedRow[] {
   const idx = loadCategoryIndex(db);
+  const agentsCash = outsidePortfolioCashAccountIds(db);
   const contributing = new Set<string>();
   for (const txn of activeTxnsInRange(db, from, to)) {
     // gross money out, matching `periodTotals` exactly: a credit in an expense
     // category is a REFUND and never nets this total down
-    if (txn.amountCents < 0 && spendingBucket(idx, txn)) contributing.add(txn.id);
+    if (txn.amountCents < 0 && spendingBucket(idx, agentsCash, txn)) contributing.add(txn.id);
   }
 
   /*

@@ -72,7 +72,7 @@ export function periodActivity(
   let outCents = 0;
   const grossByCategory = new Map<string | null, number>();
   for (const txn of inRange) {
-    const bucket = spendingBucket(idx, txn);
+    const bucket = spendingBucket(idx, agentsCash, txn);
     if (bucket) {
       // debits are money out; a credit in an expense category (a refund) is not
       // "spending" and must not net the outflow down
@@ -84,7 +84,8 @@ export function periodActivity(
       continue;
     }
     // /spending's Income: the panel prints the same word, so it asks the same classifier — which
-    // leaves the agent's cash account out (`isIncome`, owner decision 2026-09-28)
+    // leaves the agent's cash account out (`isIncome`, owner decision 2026-09-28), as the Spent above
+    // does (`spendingBucket`, 2026-10-02)
     if (isIncome(idx, agentsCash, txn)) inCents += txn.amountCents;
   }
 

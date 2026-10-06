@@ -19,10 +19,12 @@ import { upsertHolding } from "./holdings";
 import {
   cashJobNaming,
   externalInvestmentFlows,
+  gamblingNote,
   SUMMARY_DISCLAIMER,
   summaryYears,
   yearSummaryView,
 } from "./year-summary";
+import { yearInsightInput, yearSpendingView } from "./year-insights";
 
 const TODAY = "2026-08-25";
 const YEAR = 2025;
@@ -411,6 +413,110 @@ describe("yearSummaryView — gambling is kept out of every total", () => {
 
   test("a year with no gambling reports zeroes rather than nothing", () => {
     expect(yearSummaryView(bundle.db, YEAR, TODAY).gambling).toMatchObject({ rowCount: 0, netCents: 0 });
+  });
+});
+
+/**
+ * ⚖️ Owner decision 2026-10-02 (§6A 34): what the agent's own account pays is not his spending — so its Gambling
+ * loss is in no "What you spent" of his. 🔴 The block under it read every account, and says his losses "sit inside
+ * the figure under What you spent": a loss on the agent's cash was in Lost and in no Spent, the sentence false of it.
+ * The block reads the page's one scope (`lineFor`'s): the agent's cash is none of his gambling. Hypothetical — no
+ * such row exists.
+ */
+describe("yearSummaryView — the gambling block is his, as every line on the page is", () => {
+  function agentic(): { agentic: string; book: string } {
+    const rh = bundle.db.select().from(institutions).where(eq(institutions.name, "Robinhood")).get()!;
+    const id = createAccount(bundle.db, { institutionId: rh.id, name: "Robinhood Agentic", type: "checking", last4: "9651" });
+    const book = createAccount(bundle.db, { institutionId: rh.id, name: "Robinhood Agentic Brokerage", type: "investment", subtype: "brokerage" });
+    bundle.db.update(accounts).set({ cashAccountId: id }).where(eq(accounts.id, book)).run();
+    return { agentic: id, book };
+  }
+
+  test("⛔ a loss or a win on the agent's cash is no gambling of his — and every cent he lost is in What you spent", () => {
+    const { agentic: agent } = agentic();
+    insert({ postedOn: "2025-05-01", amountCents: 15804, rawDescription: "DRAFTKINGS", categoryName: "Gambling" });
+    insert({ postedOn: "2025-05-02", amountCents: -44250, rawDescription: "DRAFTKINGS", categoryName: "Gambling" });
+    insert({ postedOn: "2025-06-01", amountCents: 500, rawDescription: "DRAFTKINGS", categoryName: "Gambling", accountId: agent });
+    insert({ postedOn: "2025-06-02", amountCents: -2000, rawDescription: "DRAFTKINGS", categoryName: "Gambling", accountId: agent });
+
+    const v = yearSummaryView(bundle.db, YEAR, TODAY);
+    expect(v.gambling).toMatchObject({ wonCents: 15804, lostCents: 44250, netCents: -28446, rowCount: 2 });
+    // the sentence's claim: Lost sits inside the figure under What you spent — here all of it
+    const spent = yearInsightInput(bundle.db, YEAR, TODAY)!.facts.find((f) => f.id === "f1")!;
+    expect(spent.kind === "scalar" && spent.value).toBe(v.gambling.lostCents);
+  });
+
+  test("the rule's own edge: unpaired, the account is his, and so is its gambling", () => {
+    const { agentic: agent, book } = agentic();
+    insert({ postedOn: "2025-06-02", amountCents: -2000, rawDescription: "DRAFTKINGS", categoryName: "Gambling", accountId: agent });
+    expect(yearSummaryView(bundle.db, YEAR, TODAY).gambling.rowCount).toBe(0);
+    bundle.db.update(accounts).set({ cashAccountId: null }).where(eq(accounts.id, book)).run();
+    expect(yearSummaryView(bundle.db, YEAR, TODAY).gambling).toMatchObject({ wonCents: 0, lostCents: 2000, netCents: -2000, rowCount: 1 });
+  });
+});
+
+/**
+ * 🔴 On a RUNNING year the block said its losses "sit inside the figure under What you spent" while it read Jan 1 –
+ * Dec 31, and What you spent stops on the last day every account you spend from has been imported through
+ * (`yearSpendingWindow`, /spending's cut of the same year): a loss posted past that day was in Lost and in no Spent.
+ * The block reads What you spent's own window now, and names it where the year is cut short.
+ */
+describe("yearSummaryView — a running year's gambling reads the days What you spent reads", () => {
+  /** 2026 on checking runs to Aug 21; savings has been imported through Jul 31 and no further */
+  function running(): void {
+    insert({ postedOn: "2026-07-31", amountCents: 12, rawDescription: "INTEREST EARNED", categoryName: "Interest", accountId: savingsId });
+    insert({ postedOn: "2026-03-01", amountCents: -44250, rawDescription: "DRAFTKINGS", categoryName: "Gambling" });
+    insert({ postedOn: "2026-08-20", amountCents: -5000, rawDescription: "DRAFTKINGS", categoryName: "Gambling" });
+    insert({ postedOn: "2026-08-21", amountCents: 2000, rawDescription: "DRAFTKINGS", categoryName: "Gambling" });
+  }
+
+  test("⛔ a loss past the day every account you spend from is imported through is in no Lost, and the block names the window", () => {
+    running();
+    expect(yearSpendingView(bundle.db, 2026, TODAY)!.windowLabel).toBe("Jan 1 – Jul 31, 2026");
+
+    const { gambling } = yearSummaryView(bundle.db, 2026, TODAY);
+    expect(gambling).toEqual({
+      wonCents: 0,
+      lostCents: 44250,
+      netCents: -44250,
+      rowCount: 1,
+      window: { from: "2026-01-01", to: "2026-07-31", label: "Jan 1 – Jul 31, 2026", truncated: true },
+    });
+    // the sentence's claim, measured: every cent of Lost is inside the figure under What you spent
+    const spent = yearInsightInput(bundle.db, 2026, TODAY)!.facts.find((f) => f.id === "f1")!;
+    expect(spent.kind === "scalar" && spent.value).toBe(gambling.lostCents);
+    expect(gamblingNote(gambling)).toBe(
+      "Counted in none of the money-in totals above: winnings are not treated as income here. Losses are spending — " +
+        "your categories file Gambling as an expense — and they sit inside the figure under What you spent, over the " +
+        "same days: 2026 is still being imported, so both stop on Jul 31, the last day every account you spend from " +
+        "has been imported through.",
+    );
+  });
+
+  test("a finished year reads Jan 1 – Dec 31, and its sentence says nothing of importing", () => {
+    running();
+    insert({ postedOn: "2025-12-31", amountCents: -1000, rawDescription: "DRAFTKINGS", categoryName: "Gambling" });
+    const { gambling } = yearSummaryView(bundle.db, 2025, TODAY);
+    expect(gambling).toMatchObject({ lostCents: 1000, rowCount: 1 });
+    expect(gambling.window).toEqual({ from: "2025-01-01", to: "2025-12-31", label: "2025", truncated: false });
+    expect(gamblingNote(gambling)).toBe(
+      "Counted in none of the money-in totals above: winnings are not treated as income here. Losses are spending — " +
+        "your categories file Gambling as an expense — and they sit inside the figure under What you spent.",
+    );
+  });
+
+  test("a year What you spent has not reached prints no gambling at all, rather than a loss it is not inside", () => {
+    // Jan 2027 has posted on checking; savings is imported through Dec 31, 2026
+    insert({ postedOn: "2026-12-31", amountCents: 12, rawDescription: "INTEREST EARNED", categoryName: "Interest", accountId: savingsId });
+    insert({ postedOn: "2027-01-05", amountCents: -5000, rawDescription: "DRAFTKINGS", categoryName: "Gambling" });
+    expect(yearSpendingView(bundle.db, 2027, "2027-01-20")).toBeNull();
+    expect(yearSummaryView(bundle.db, 2027, "2027-01-20").gambling).toEqual({
+      wonCents: 0,
+      lostCents: 0,
+      netCents: 0,
+      rowCount: 0,
+      window: null,
+    });
   });
 });
 

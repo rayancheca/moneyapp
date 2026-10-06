@@ -214,10 +214,23 @@ describe("emptyPeriodCopy", () => {
       "2026-08-20",
       fmt,
     );
-    expect(partly.title).toBe("Nothing posted in the part of August 2026 that has been imported");
+    // the measured branch's words: transfers, card payments and investment flows can have posted in the imported part
+    expect(partly.title).toBe("No spending or income in the part of August 2026 that has been imported");
     expect(partly.description).toContain("11 days of it have not been imported");
     expect(partly.description).toContain("2026-08-20");
     expect(partly.description).toContain("lower bound");
+  });
+
+  /* ⚖️ The agent's money is none of his (owner decisions 2026-09-28, 2026-10-02, 2026-10-05) wherever the window's
+     imported part holds it — 🔴 the partly-covered branch dropped the flag the measured one reads. */
+  test("⛔ the agent's money is named as left out in a partly-imported window too", () => {
+    const reason = { kind: "partly-covered", uncoveredDays: 6 } as const;
+    const withAgent = emptyPeriodCopy(reason, "the week", "2026-09-28", fmt, { agentsMoney: true });
+    expect(withAgent.description).toContain(
+      "The agent's own account paid or was paid money in this period, and none of it is counted here",
+    );
+    expect(withAgent.description).toContain("lower bound");
+    expect(emptyPeriodCopy(reason, "the week", "2026-09-28", fmt).description).not.toContain("agent");
   });
 
   /* ⚠️ Every branch that names a date must survive not having one — a window
@@ -293,16 +306,46 @@ describe("the uncategorized-bucket clause", () => {
    * naming it there is what makes a measured zero honest. A category page has
    * no such bucket — the clause would point at a control the reader cannot see.
    */
-  test("is offered only to the surface that has the bucket", () => {
+  /*
+   * ⚖️ …and the bucket is HIS: money leaving the agent's own account unfiled is in no bucket of his (owner decision
+   * 2026-10-05). 🔴 "Uncategorized outflows would show up above" was false of exactly that money, on the period it
+   * left the agent's cash.
+   */
+  test("is offered only to the surface that has the bucket, and names his own", () => {
     expect(
       emptyPeriodCopy(measured, "August 2026", "2026-08-31", day, { uncategorizedBucket: true }).description,
-    ).toContain("their own explicit bucket");
+    ).toContain(" Your own uncategorized outflows would show up above, as their own explicit bucket.");
   });
 
   test("and is absent by default", () => {
     const copy = emptyPeriodCopy(measured, "August 2026", "2026-08-31", day);
     expect(copy.description).not.toContain("bucket");
     expect(copy.description).toContain("a measured zero rather than an unread window");
+  });
+});
+
+/*
+ * ⚖️ What the agent's own account pays or is paid is none of his spending or income (owner decisions 2026-09-28,
+ * 2026-10-02, 2026-10-05), so a period holding only the agent's money reaches the measured zero. 🔴 It read "no
+ * spending and no income" over the agent's unfiled ACH withdrawal and said nothing of it: the reader is told plainly,
+ * and only where there is some to tell.
+ */
+describe("the agent's-money clause", () => {
+  const measured = { kind: "measured", uncoveredDays: 0 } as const;
+  const day = (iso: string) => iso;
+  const AGENTS =
+    "The agent's own account paid or was paid money in this period, and none of it is counted here: it is the agent's, not yours.";
+
+  test("is said when the period holds the agent's money, after his own bucket", () => {
+    const copy = emptyPeriodCopy(measured, "Sep 18, 2026", "2026-09-24", day, { uncategorizedBucket: true, agentsMoney: true });
+    expect(copy.title).toBe("No spending or income in this period");
+    expect(copy.description.endsWith(`as their own explicit bucket. ${AGENTS}`)).toBe(true);
+  });
+
+  test("and never when it holds none", () => {
+    for (const opts of [{}, { uncategorizedBucket: true }, { uncategorizedBucket: true, agentsMoney: false }]) {
+      expect(emptyPeriodCopy(measured, "Sep 5, 2026", "2026-09-24", day, opts).description).not.toContain("agent");
+    }
   });
 });
 
