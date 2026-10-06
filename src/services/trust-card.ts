@@ -79,6 +79,11 @@ export interface TrustAccountLine {
   /** `derived_unverified + gap` — days whose balance nothing checks */
   uncheckedDays: number;
   /**
+   * The part of `uncheckedDays` before its first balance (`AccountCoverage.uncheckedBeforeFirstBalance`):
+   * the footer's note's, never its sentence's, whatever the grade (⚖️ §6A 35).
+   */
+  uncheckedBeforeFirstBalance: number;
+  /**
    * How many of those are in the run `detail`'s "since" date opens.
    *
    * ⛔ The count beside a date has to be the count that date is about. Robinhood
@@ -118,8 +123,9 @@ export interface TrustDays {
   /** `derivedUnverified + gap` */
   unchecked: number;
   /**
-   * The part of `unchecked` a VERIFIED account carries — every one of those days before its first
-   * balance, replayed backwards from it (`beforeFirstBalance` in coverage-detail says why no other).
+   * The part of `unchecked` before each account's first balance, replayed backwards from it, whatever
+   * its grade (`AccountCoverage.uncheckedBeforeFirstBalance`) — all of a verified account's, and none
+   * of an open run's.
    *
    * ⚖️ His answer, 2026-10-05 (§6A 35): those days alone do not mean nothing is checking an account,
    * and a verified account's caveat about them is a quiet note. Said in `beforeFirstBalanceNote`, not
@@ -444,6 +450,7 @@ export function trustCard(db: AppDatabase, today: string = todayIso()): TrustCar
       verdict: input?.verdict ?? "unknown",
       detail: input?.detail ?? null,
       uncheckedDays: c.days.derived_unverified + c.days.gap,
+      uncheckedBeforeFirstBalance: c.uncheckedBeforeFirstBalance,
       uncheckedRunDays: c.uncheckedRunDays,
       strandedRows: stranded,
       isHole: stranded > 0,
@@ -516,20 +523,26 @@ export function trustCard(db: AppDatabase, today: string = todayIso()): TrustCar
   );
   const unchecked = tally.derivedUnverified + tally.gap;
 
-  const byMostDays = (of: readonly TrustAccountLine[]) =>
-    of
-      .filter((l) => l.uncheckedDays > 0)
-      .map((l) => ({ name: l.name, days: l.uncheckedDays }))
-      .sort((a, b) => b.days - a.days || a.name.localeCompare(b.name));
-  const uncheckedByAccount = byMostDays(lines);
+  const byMostDays = (of: readonly { name: string; days: number }[]) =>
+    of.filter((l) => l.days > 0).sort((a, b) => b.days - a.days || a.name.localeCompare(b.name));
+  const uncheckedByAccount = byMostDays(lines.map((l) => ({ name: l.name, days: l.uncheckedDays })));
   /*
-   * ⚖️ Split by the grade, as the row's tone is (`TrustCard`'s `AccountRow`), so the footer and the
-   * rows read one count one way: a verified account's unchecked days all lie before its first balance.
+   * ⚖️ Split by WHERE the days lie, not by the grade (§6A 35): the days before an account's first
+   * balance are the note's whatever its grade, the rest the sentence's. A verified account's unchecked
+   * days all lie before its first balance, so its row and the footer still read one count one way.
+   *
+   * 🔴 Split by the grade, the footer counted an unverified account's days before its first balance as
+   * resting on nothing: on his ledger (2026-10-06) "42 of 7,812 days … rest on nothing — 41 in Robinhood
+   * Cash, 1 in Cash on Hand" over the note saying such days are "not days its balance rests on", while
+   * Robinhood Cash's own row read "15 days unchecked, of 41 in all" — 26 of the 41 are Dec 2023's,
+   * before its first statement.
    */
-  const verifiedLines = lines.filter((l) => l.grade === "verified");
-  const beforeFirstBalance = verifiedLines.reduce((sum, l) => sum + l.uncheckedDays, 0);
+  const beforeFirstByAccount = byMostDays(lines.map((l) => ({ name: l.name, days: l.uncheckedBeforeFirstBalance })));
+  const beforeFirstBalance = beforeFirstByAccount.reduce((sum, a) => sum + a.days, 0);
   const restOnNothing = unchecked - beforeFirstBalance;
-  const restingOnNothing = byMostDays(lines.filter((l) => l.grade !== "verified"));
+  const restingOnNothing = byMostDays(
+    lines.map((l) => ({ name: l.name, days: l.uncheckedDays - l.uncheckedBeforeFirstBalance })),
+  );
   // ⛔ the guard, not a formality: an account list with no derived days at all
   // makes this 0 / 0, which is NaN rather than zero
   const restOnNothingSharePct = tally.total === 0 ? null : (restOnNothing / tally.total) * 100;
@@ -563,7 +576,7 @@ export function trustCard(db: AppDatabase, today: string = todayIso()): TrustCar
       countedByAccount,
       beforeFirstBalance,
     ),
-    beforeFirstBalanceNote: beforeFirstBalanceNote(byMostDays(verifiedLines)),
+    beforeFirstBalanceNote: beforeFirstBalanceNote(beforeFirstByAccount),
     carriedNote:
       tally.carried === 0
         ? null

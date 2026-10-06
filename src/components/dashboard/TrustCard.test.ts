@@ -191,9 +191,9 @@ test("beside accounts nothing checks, the amber sentence names only them; the ve
   const ps = paragraphs(markup);
   const warning = ps.filter((p) => p.text.includes("rest on nothing"));
   expect(warning).toEqual([
-    { cls: "text-warning", text: expect.stringContaining("37 in Robinhood Cash, 36 in Cash on Hand.") },
+    { cls: "text-warning", text: expect.stringContaining("36 in Cash on Hand, 11 in Robinhood Cash.") },
   ]);
   expect(warning[0]!.text).not.toContain("Robinhood Agentic");
   const note = ps.filter((p) => p.text.includes("Robinhood Agentic"));
-  expect(note).toEqual([{ cls: null, text: expect.stringContaining("26 days before its first balance are unchecked") }]);
+  expect(note).toEqual([{ cls: null, text: expect.stringContaining("52 days before an account's first balance are unchecked — 26 in Robinhood Agentic, 26 in Robinhood Cash") }]);
 });

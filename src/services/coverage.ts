@@ -348,6 +348,13 @@ export interface AccountCoverage {
   firstBalanceOn: string | null;
   /** whether `firstBalanceOn` is a balance he TYPED (`handTypedDays`) — a count is named as his */
   firstBalanceIsCount: boolean;
+  /**
+   * The unchecked days before `firstBalanceOn` — replayed backwards from it, with nothing earlier to
+   * check them against, and not days the balance rests on (⚖️ §6A 35). Every grade can carry them: a
+   * verified account's unchecked days are all of this kind, and an unverified one's run still open is
+   * not. 0 with no first balance, or for an account graded without the walk.
+   */
+  uncheckedBeforeFirstBalance: number;
   /** first day the chain stopped being checkable */
   unverifiedSince: string | null;
   /**
@@ -494,6 +501,7 @@ const accountCoverageCached = cache(function accountCoverageCached(
         brokenSince: null,
         uncheckedSince: null,
         uncheckedRunDays: 0,
+        uncheckedBeforeFirstBalance: 0,
         daysSinceVerified: null,
       };
     }
@@ -510,6 +518,7 @@ const accountCoverageCached = cache(function accountCoverageCached(
         brokenSince: null,
         uncheckedSince: null,
         uncheckedRunDays: 0,
+        uncheckedBeforeFirstBalance: 0,
         daysSinceVerified: null,
       };
     }
@@ -587,6 +596,7 @@ const accountCoverageCached = cache(function accountCoverageCached(
         brokenSince: null,
         uncheckedSince: null,
         uncheckedRunDays: 0,
+        uncheckedBeforeFirstBalance: 0,
         daysSinceVerified: null,
       };
     }
@@ -609,6 +619,7 @@ const accountCoverageCached = cache(function accountCoverageCached(
     const uncheckedRestedOn = balances.filter(
       (b) => b.basis === "derived_unverified" && (firstBalanceOn === null || b.day > firstBalanceOn),
     ).length;
+    const uncheckedBeforeFirstBalance = days.derived_unverified - uncheckedRestedOn;
     /*
      * ⛔ Nothing closed at all is not "verified" — an account whose only balance
      * is one he typed, with rows only on that day, read "adds up against a
@@ -630,6 +641,7 @@ const accountCoverageCached = cache(function accountCoverageCached(
       brokenSince: firstGap?.day ?? null,
       uncheckedSince,
       uncheckedRunDays,
+      uncheckedBeforeFirstBalance,
       daysSinceVerified: verifiedThrough ? diffDays(verifiedThrough, today) : null,
     };
   });

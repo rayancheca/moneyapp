@@ -841,16 +841,37 @@ describe("trustCard — the days before a first balance do not grade an account"
     const { days } = trustCard(bundle.db, "2026-10-01")!;
     // every unchecked day is still counted: the identity `derivedUnverified + gap` holds
     expect(days.unchecked).toBe(26 + 37 + 36);
-    expect(days.beforeFirstBalance).toBe(26);
-    expect(days.restOnNothing).toBe(37 + 36);
-    expect(days.restOnNothingSharePct).toBeCloseTo((73 / days.total) * 100, 10);
+    // Robinhood Cash's 37 are 26 before its first balance and the 11 of its open run
+    expect(days.beforeFirstBalance).toBe(26 + 26);
+    expect(days.restOnNothing).toBe(11 + 36);
+    expect(days.restOnNothingSharePct).toBeCloseTo((47 / days.total) * 100, 10);
     expect(days.sentence).toContain(
-      `73 of ${days.total} days of balances (${((73 / days.total) * 100).toFixed(1)}% of them) rest on nothing — ` +
-        "37 in Robinhood Cash, 36 in Cash on Hand.",
+      `47 of ${days.total} days of balances (${((47 / days.total) * 100).toFixed(1)}% of them) rest on nothing — ` +
+        "36 in Cash on Hand, 11 in Robinhood Cash.",
     );
     expect(days.sentence).not.toContain("Robinhood Agentic");
     expect(days.beforeFirstBalanceNote).toBe(
-      "Robinhood Agentic's 26 days before its first balance are unchecked — replayed backwards from it, " +
+      "52 days before an account's first balance are unchecked — 26 in Robinhood Agentic, 26 in Robinhood Cash — " +
+        "replayed backwards from it, with nothing earlier to check them against, and not days its balance rests on.",
+    );
+  });
+
+  /*
+   * 🔴 The rule split the footer by GRADE, and the days before a first balance are not a grade's. On his
+   * ledger (2026-10-06) the amber sentence read "42 of 7,812 days … rest on nothing — 41 in Robinhood
+   * Cash, 1 in Cash on Hand" while Robinhood Cash's own row said "15 days unchecked, of 41 in all" and
+   * the note under the sentence said such days are "not days its balance rests on": 26 of its 41 are
+   * Dec 2023's, before its first statement. An account still unverified for its open run keeps its days
+   * before as the note's, as a verified one does.
+   */
+  test("an account nothing checks since its last statement still has its days before its first balance in the note", () => {
+    statementAccount("rh-cash", "Robinhood Cash", "2026-09-05");
+    const { days } = trustCard(bundle.db, "2026-10-01")!;
+    expect(days.beforeFirstBalance).toBe(26);
+    expect(days.restOnNothing).toBe(11);
+    expect(days.sentence).toContain("rest on nothing — 11 in Robinhood Cash.");
+    expect(days.beforeFirstBalanceNote).toBe(
+      "Robinhood Cash's 26 days before its first balance are unchecked — replayed backwards from it, " +
         "with nothing earlier to check them against, and not days its balance rests on.",
     );
   });
