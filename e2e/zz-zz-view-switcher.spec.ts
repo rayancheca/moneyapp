@@ -106,6 +106,11 @@ async function startOn(page: Page, group: string, name: string): Promise<void> {
   if ((await pill.getAttribute("aria-pressed")) !== "true") await pressView(page, group, name);
 }
 
+/** the period picker's label, between its arrows (the heatmap's month label reads alike) */
+function periodLabel(page: Page) {
+  return page.getByRole("link", { name: "Previous period" }).locator("xpath=following-sibling::span[1]");
+}
+
 test("portfolio chart switches value↔return, updates the URL, and persists", async ({ page }) => {
   // The portfolio view is PERSISTED, and this suite deliberately shares ONE
   // database across specs (playwright.config.ts: workers: 1). So "the default is
@@ -210,41 +215,118 @@ test("a range pill and two view presses made before any lands all take", async (
 });
 
 /**
- * 🔴 The period picker followed while a press is being written. Its link carries no view, so
- * June draws the SAVED one — and drawn before the write landed, it drew the Chart, and nothing
- * drew it again: the Table pill un-pressed over a Table he had saved, a reload showing it.
- * The press now makes the link again once its write lands (src/lib/page-asks.ts `landing`).
- * The write is held until June's page is in, so the losing order is every run.
+ * 🔴 The period picker followed while a press is being written. A press to the default view
+ * asks for a URL with no view in it, so June draws the SAVED one — and drawn before the write
+ * landed, it drew the view from before the press, and nothing drew it again: the pill
+ * un-pressed over a choice he had saved, a reload showing it. The press now draws June again
+ * once its write lands (src/lib/page-asks.ts `landing`). The write is held until June's page
+ * is in, so the losing order is every run. (Until 2026-10-06 every period link carried no view;
+ * now it carries the press's, so the press to the Chart is the one whose URL holds none.)
  */
 test("a period link followed while a press is being written lands with the press", async ({ page }) => {
   await gotoHydrated(page, "/spending?period=2026-07");
   const cashView = page.getByRole("group", { name: "Cash flow view" });
-  await startOn(page, "Cash flow view", "Chart"); // the saved view it starts from
-  await expect(cashView.getByRole("button", { name: "Chart" })).toHaveAttribute("aria-pressed", "true");
+  await startOn(page, "Cash flow view", "Table"); // the saved view it starts from
+  await expect(cashView.getByRole("button", { name: "Table" })).toHaveAttribute("aria-pressed", "true");
 
   const write = await holdRequests(page, isServerAction);
   await expect(async () => {
-    await cashView.getByRole("button", { name: "Table" }).click();
+    await cashView.getByRole("button", { name: "Chart" }).click();
     // a click before the panel hydrates is swallowed: press until the write is sent
     await expect.poll(() => write.count(), { timeout: 1_000 }).toBeGreaterThan(0);
   }).toPass({ timeout: 30_000 });
   const june = page.waitForResponse((response) => pageRequest("/spending", { period: "2026-06" })(response.request()));
   await page.getByRole("link", { name: "Previous period" }).click();
   await june; // June is drawn while the write is held…
-  await write.release(); // …and only then does Table reach the server
+  await write.release(); // …and only then does Chart reach the server
 
-  await expect(cashView.getByRole("button", { name: "Table" })).toHaveAttribute("aria-pressed", "true");
-  await expect(page.getByRole("table")).toBeVisible();
-  await expect(page).toHaveURL(/\/spending\?period=2026-06$/); // the link's URL, as it wrote it
-
-  // saved, not just drawn: a fresh visit with no params opens on the table
-  await gotoHydrated(page, "/spending");
-  await expect(cashView.getByRole("button", { name: "Table" })).toHaveAttribute("aria-pressed", "true");
-
-  // restore the default for sibling specs, the press proved
-  await pressView(page, "Cash flow view", "Chart");
-  await gotoHydrated(page, "/spending");
+  await expect(cashView.getByRole("button", { name: "Chart" })).toHaveAttribute("aria-pressed", "true");
   await expect(page.getByRole("figure", { name: /Income above the axis/ })).toBeVisible();
+  await expect(page).toHaveURL(/\/spending\?period=2026-06$/); // the URL the press asked for, a month back
+
+  // saved, not just drawn: a fresh visit with no params opens on the chart — the default
+  // sibling specs expect
+  await gotoHydrated(page, "/spending");
+  await expect(cashView.getByRole("button", { name: "Chart" })).toHaveAttribute("aria-pressed", "true");
+  await expect(page.getByRole("figure", { name: /Income above the axis/ })).toBeVisible();
+});
+
+/**
+ * ⚖️ Owner 2026-10-06 (§6A 40): the period arrows ‹ › KEEP a view only the URL held, the way a
+ * press does. 🔴 They wrote the period alone: `/spending?period=2026-07&where=relief` with List
+ * saved, ‹ — and June opened on List. His saved choice is untouched. No race: nothing is held.
+ */
+test("‹ on a linked lens opens the month before on it, and leaves his saved List alone", async ({ page }) => {
+  const whereView = page.getByRole("group", { name: "Where it went view" });
+  await gotoHydrated(page, "/spending?period=2026-07");
+  await startOn(page, "Where it went view", "List"); // the saved view it starts from
+  await gotoHydrated(page, "/spending?period=2026-07&where=relief");
+  await expect(whereView.getByRole("button", { name: "Relief" })).toHaveAttribute("aria-pressed", "true");
+
+  await page.getByRole("link", { name: "Previous period" }).click();
+  await expect(page).toHaveURL(/\/spending\?period=2026-06&where=relief$/);
+  await expect(periodLabel(page)).toHaveText("June 2026");
+  await expect(whereView.getByRole("button", { name: "Relief" })).toHaveAttribute("aria-pressed", "true");
+
+  // the link saved nothing: a fresh visit opens on his List
+  await gotoHydrated(page, "/spending");
+  await expect(whereView.getByRole("button", { name: "List" })).toHaveAttribute("aria-pressed", "true");
+});
+
+/**
+ * ⛔ A press in flight is never undone by the link. ‹ builds on the URL the press ASKED for (a
+ * List over the linked Relief: no lens in it), not on the one on screen, which still holds the
+ * Relief the press replaced — built on that, June opened on Relief once the press drew it again.
+ * The write is held until ‹ is clicked, so the press is in flight every run.
+ */
+test("‹ followed while a press is being written carries the press, not the view it replaced", async ({ page }) => {
+  const whereView = page.getByRole("group", { name: "Where it went view" });
+  await gotoHydrated(page, "/spending?period=2026-07");
+  await startOn(page, "Where it went view", "List"); // the saved view it starts from
+  await gotoHydrated(page, "/spending?period=2026-07&where=relief");
+  await expect(whereView.getByRole("button", { name: "Relief" })).toHaveAttribute("aria-pressed", "true");
+
+  const write = await holdRequests(page, isServerAction);
+  await expect(async () => {
+    await whereView.getByRole("button", { name: "List" }).click();
+    // a click before the panel hydrates is swallowed: press until the write is sent
+    await expect.poll(() => write.count(), { timeout: 1_000 }).toBeGreaterThan(0);
+  }).toPass({ timeout: 30_000 });
+  await page.getByRole("link", { name: "Previous period" }).click();
+  await write.release();
+
+  await expect(page).toHaveURL(/\/spending\?period=2026-06$/);
+  await expect(periodLabel(page)).toHaveText("June 2026");
+  await expect(whereView.getByRole("button", { name: "List" })).toHaveAttribute("aria-pressed", "true");
+});
+
+/**
+ * The same rule on the /recurring tabs, the other same-page links that change only a param beside
+ * a view: a linked row height survives a trip through another tab, and is never saved.
+ */
+test("a /recurring tab keeps the calendar's linked row height, and saves nothing", async ({ page }) => {
+  const rowHeight = page.getByRole("group", { name: "Calendar row height" });
+  const tabs = page.getByRole("navigation", { name: "Recurring views" });
+  await gotoHydrated(page, "/recurring?tab=calendar");
+  // the tabs and the calendar need series: a whole run detected them (zz-recurring-tabs); alone,
+  // this spec detects them itself
+  if (!(await tabs.isVisible())) {
+    await page.getByRole("button", { name: "Detect now" }).click();
+    await expect(tabs).toBeVisible({ timeout: 30_000 });
+  }
+  await startOn(page, "Calendar row height", "Regular"); // the saved view it starts from
+  await gotoHydrated(page, "/recurring?tab=calendar&cal=compact");
+  await expect(rowHeight.getByRole("button", { name: "Compact" })).toHaveAttribute("aria-pressed", "true");
+
+  await tabs.getByRole("link", { name: /^All/ }).click();
+  await expect(page).toHaveURL(/\/recurring\?tab=all&cal=compact$/);
+  await tabs.getByRole("link", { name: /^Calendar/ }).click();
+  await expect(page).toHaveURL(/\/recurring\?tab=calendar&cal=compact$/);
+  await expect(rowHeight.getByRole("button", { name: "Compact" })).toHaveAttribute("aria-pressed", "true");
+
+  // the tabs saved nothing: a fresh visit opens on his Regular
+  await gotoHydrated(page, "/recurring?tab=calendar");
+  await expect(rowHeight.getByRole("button", { name: "Regular" })).toHaveAttribute("aria-pressed", "true");
 });
 
 /**
@@ -346,8 +428,9 @@ test("Back to a lens pressed after Back over his Table saves the Table again", a
   await expect(cashView.getByRole("button", { name: "Table" })).toHaveAttribute("aria-pressed", "true");
   await expect.poll(() => saves, { timeout: 10_000 }).toBeGreaterThanOrEqual(2);
 
-  await page.getByRole("link", { name: "Previous period" }).click();
-  await expect(page).toHaveURL(/\/spending\?period=2026-06$/);
+  // a page with no view in its URL draws the saved ones (the period arrows carry the URL's own
+  // views since 2026-10-06, so they no longer read what Back saved)
+  await gotoHydrated(page, "/spending?period=2026-06");
   await expect(cashView.getByRole("button", { name: "Table" })).toHaveAttribute("aria-pressed", "true");
   await expect(whereView.getByRole("button", { name: "Relief" })).toHaveAttribute("aria-pressed", "true");
 

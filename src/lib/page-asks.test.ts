@@ -6,6 +6,7 @@ import {
   canonicalHref,
   createPageAsks,
   isForeign,
+  pageLinkHref,
   pressBase,
   withAsk,
   type PageAsk,
@@ -109,6 +110,38 @@ describe("askedParams", () => {
     expect(askedParams(ask, "/h")).toEqual({ view: "returns" });
     expect(askedParams(ask, "/spending")).toBeNull();
     expect(askedParams(null, "/h")).toBeNull();
+  });
+});
+
+describe("pageLinkHref", () => {
+  const PERIOD = ["period", "from", "to"];
+  const query = (search: string) => new URLSearchParams(search);
+
+  test("writes its own params first, and keeps every other param of the URL in its order", () => {
+    expect(pageLinkHref("/spending", query("period=2026-07&where=relief&cash=table"), PERIOD, { period: "2026-06" })).toBe(
+      "/spending?period=2026-06&where=relief&cash=table",
+    );
+  });
+
+  test("drops every key it owns, the ones it writes no value for included", () => {
+    // a custom range's from/to are gone once a period is written, and a period once a range is
+    const range = query("from=2026-05-01&to=2026-05-20&where=relief");
+    expect(pageLinkHref("/spending", range, PERIOD, { period: "2026-05", from: null, to: undefined })).toBe(
+      "/spending?period=2026-05&where=relief",
+    );
+    expect(pageLinkHref("/recurring", query("error=Refused&tab=calendar&cal=compact"), ["tab", "error"], { tab: "all" })).toBe(
+      "/recurring?tab=all&cal=compact",
+    );
+  });
+
+  test("keeps the first of a repeated key, as the server reads it", () => {
+    expect(pageLinkHref("/spending", query("where=relief&where=table"), PERIOD, { period: "2026-06" })).toBe(
+      "/spending?period=2026-06&where=relief",
+    );
+  });
+
+  test("with nothing to write or keep, is the bare path", () => {
+    expect(pageLinkHref("/spending", query("period=2026-07"), PERIOD, {})).toBe("/spending");
   });
 });
 

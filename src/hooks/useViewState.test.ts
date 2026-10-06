@@ -4,7 +4,9 @@ import { DASHBOARD_VIEW_SPEC, DECISIONS_VIEW_SPEC } from "@/components/dashboard
 import { HOLDING_VIEW_SPEC, PORTFOLIO_VIEW_SPEC } from "@/components/investments/investments-view-spec";
 import type { DashboardAccountOption } from "@/services/dashboard-series";
 import { CASH_VIEW_SPEC } from "@/components/spending/spending-view-spec";
+import { CALENDAR_VIEW_SPEC, RECURRING_CALENDAR_SURFACE } from "@/components/recurring/recurring-view-spec";
 import { WHERE_VIEW_SPEC } from "@/lib/massif-layout";
+import { PERIOD_PARAM_KEYS } from "@/lib/period";
 import { resolveViewState, viewStateToParams, type ViewState } from "@/lib/view-state";
 import { idle, World, type HarnessPage } from "./useViewState.harness";
 
@@ -15,6 +17,8 @@ const { useViewState } = await import("./useViewState");
 const { PageAsksProvider } = await import("./usePageAsks");
 const { useRangeParam } = await import("@/components/charts/ChartFocus");
 const { useHeroViews } = await import("@/components/dashboard/DashboardChartSection");
+const { usePageLinks } = await import("./usePageLinks");
+const { RECURRING_TAB_LINK_KEYS } = await import("@/components/recurring/RecurringTabs");
 
 /*
  * The switchers of one page, pressed faster than the server answers. Each scenario is a real
@@ -63,6 +67,9 @@ async function open<P>(page: HarnessPage<P>, url: string, persisted: Record<stri
   return world;
 }
 afterEach(async () => {
+  // a test that failed with a write still held would leave its press pending forever, and React
+  // entangles every later transition with it — in every later test's root too
+  await mounted?.settle().catch(() => {});
   await mounted?.unmount();
   mounted = null;
   for (const key of Object.keys(ui)) delete ui[key];
@@ -122,9 +129,40 @@ const spendingPage: HarnessPage<SpendingRsc> = {
     useRegister("cash", cash);
     useRegister("where", where);
     usePressOnDraw(rsc);
+    // the period picker's links (‹ ›, a granularity, the reset) and its custom range's Apply
+    const periodLinks = usePageLinks("/spending", PERIOD_PARAM_KEYS);
+    usePill("period", (period) => periodLinks.follow({ period }));
+    usePill("custom", (range) => {
+      const [from, to] = range.split("..");
+      periodLinks.follow({ from, to });
+    });
     return null;
   },
 };
+
+// ---------------------------------------------------------------- /recurring: its tabs and the calendar's switcher
+interface RecurringRsc {
+  tab: string;
+  cal: ViewState;
+}
+/** recurring/page.tsx: the tab strip on every tab, the row-height switcher on the calendar's */
+const recurringPage: HarnessPage<RecurringRsc> = {
+  server: (url, persisted) => ({
+    tab: url.searchParams.get("tab") ?? "upcoming",
+    cal: resolveViewState(CALENDAR_VIEW_SPEC, Object.fromEntries(url.searchParams), persisted[RECURRING_CALENDAR_SURFACE]),
+  }),
+  Client: ({ rsc }) => {
+    const tabs = usePageLinks("/recurring", RECURRING_TAB_LINK_KEYS);
+    usePill("tab", (tab) => tabs.follow({ tab }));
+    return rsc.tab === "calendar" ? createElement(CalendarSwitcher, { view: rsc.cal }) : null;
+  },
+};
+/** ForecastAndCalendar's switcher, wired as it wires it */
+function CalendarSwitcher({ view }: { view: ViewState }): null {
+  const api = useViewState({ surface: RECURRING_CALENDAR_SURFACE, spec: CALENDAR_VIEW_SPEC, state: view, basePath: "/recurring", baseParams: { tab: "calendar" } });
+  useRegister("cal", api);
+  return null;
+}
 
 // ---------------------------------------------------------------- /investments: a switcher and a range pill
 interface PortfolioRsc {
@@ -506,7 +544,7 @@ describe("a press made once the page has moved under the one in flight", () => {
   test("after a link on the same page, builds on the page the link opened", async () => {
     const page = await open(spendingPage, "/spending?period=2026-07");
     ui.cash!.setView("cash", "table");
-    page.router.push("/spending?period=2026-06"); // the period picker
+    page.router.push("/spending?period=2026-06"); // a link with no view in its URL (a crumb's)
     await page.serve("render");
     await page.settle();
     expect(page.url).toBe("/spending?period=2026-06");
@@ -522,8 +560,9 @@ describe("a press made once the page has moved under the one in flight", () => {
 
 describe("a link followed while a press is being written", () => {
   /**
-   * 🔴 The period picker followed while the cash press was being written. The link carries no
-   * view, so the page it opens draws the SAVED one — and when the server drew it before the
+   * 🔴 The period picker followed while the cash press was being written (until 2026-10-06 its
+   * links wrote the period alone; a crumb's or the sidebar's still carry no view). The link carries
+   * no view, so the page it opens draws the SAVED one — and when the server drew it before the
    * write landed, it drew the view from before the press, and nothing drew it again: the Table
    * pill un-pressed, Table saved, a reload showing it. Had the write landed first, the same
    * click drew June with the table; which of two requests the server answers first must not
@@ -532,7 +571,7 @@ describe("a link followed while a press is being written", () => {
   test("on the same page: once the write lands, the page the link opened draws the press", async () => {
     const page = await open(spendingPage, "/spending?period=2026-07");
     ui.cash!.setView("cash", "table");
-    page.router.push("/spending?period=2026-06"); // the period picker's ‹
+    page.router.push("/spending?period=2026-06"); // a link with no view in its URL
     expect(await page.serve("render")).toEqual({ kind: "render", label: "/spending?period=2026-06" });
     expect(page.shown).toMatchObject({ cash: { cash: "chart" } }); // June, drawn before the write
     await page.settle(); // …then the write lands
@@ -555,7 +594,7 @@ describe("a link followed while a press is being written", () => {
     expect(page.history.map((entry) => entry.url)).toEqual(["/spending?period=2026-07", "/spending?period=2026-06"]);
   });
 
-  /** a /recurring tab he is already on: a link to the URL on screen, which commits nothing new */
+  /** the sidebar's link to the page he is on: a link to the URL on screen, which commits nothing new */
   test("to the URL on screen, the same", async () => {
     const page = await open(holdingPage, "/h");
     ui.holding!.setView("view", "returns");
@@ -628,6 +667,154 @@ describe("a link followed while a press is being written", () => {
   });
 });
 
+describe("a period link keeps every view the page's URL holds", () => {
+  /**
+   * ⚖️ Owner 2026-10-06 (§6A 40): the period arrows KEEP a view only the URL held, the way a
+   * press does. 🔴 They wrote the period alone: `?period=2026-07&where=relief` with List saved,
+   * ‹ — and June opened on List. His saved choice is untouched: a link saves nothing.
+   */
+  test("‹ on a linked lens opens June on it, and saves nothing", async () => {
+    const page = await open(spendingPage, "/spending?period=2026-07&where=relief", { spending: { where: "list" } });
+    pills.period!("2026-06");
+    await page.settle();
+
+    expect(page.url).toBe("/spending?period=2026-06&where=relief");
+    expect(page.shown).toMatchObject({ where: { where: "relief" } });
+    expect(page.writes).toEqual([]);
+    expect(page.persisted.spending).toEqual({ where: "list" });
+  });
+
+  /** a custom range's Apply, and a granularity from it: each replaces every period param there is */
+  test("a custom range, and a period from it, keep it the same", async () => {
+    const page = await open(spendingPage, "/spending?period=2026-07&cash=table");
+    pills.custom!("2026-05-01..2026-05-20");
+    await page.settle();
+    expect(page.url).toBe("/spending?from=2026-05-01&to=2026-05-20&cash=table");
+
+    pills.period!("2026-05");
+    await page.settle();
+    expect(page.url).toBe("/spending?period=2026-05&cash=table");
+    expect(page.shown).toMatchObject({ cash: { cash: "table" } });
+  });
+
+  /** a press still being written: the link carries what it asked for, as the next press would */
+  test("followed while a press is being written, carries the press", async () => {
+    const page = await open(spendingPage, "/spending?period=2026-07");
+    ui.cash!.setView("cash", "table");
+    pills.period!("2026-06");
+    await page.settle();
+
+    expect(page.url).toBe("/spending?period=2026-06&cash=table");
+    expect(page.shown).toMatchObject({ cash: { cash: "table" } });
+    expect(page.history.map((entry) => entry.url)).toEqual(["/spending?period=2026-07", "/spending?period=2026-06&cash=table"]);
+  });
+
+  /**
+   * ⛔ Never the view the press replaced. Built on the URL on screen, the link carried the linked
+   * Relief that List had just been pressed over, and the press, making the link again once its
+   * write landed (`PageAsks.landing`), drew June on the Relief it had replaced.
+   */
+  test("followed while a press to the default is being written, lands the press", async () => {
+    const page = await open(spendingPage, "/spending?period=2026-07&where=relief", { spending: { where: "table" } });
+    ui.where!.setView("where", "list"); // asks /spending?period=2026-07, its write held…
+    pills.period!("2026-06"); // …when he follows ‹
+    expect(await page.serve("render")).toEqual({ kind: "render", label: "/spending?period=2026-06" });
+    expect(page.shown).toMatchObject({ where: { where: "table" } }); // June, drawn before the write
+    await page.settle(); // …then the write lands, and June is drawn again
+
+    expect(page.url).toBe("/spending?period=2026-06");
+    expect(page.shown).toMatchObject({ where: { where: "list" } });
+    expect(page.persisted.spending).toMatchObject({ where: "list" });
+    expect(page.history.map((entry) => entry.url)).toEqual(["/spending?period=2026-07&where=relief", "/spending?period=2026-06"]);
+  });
+
+  /** a press made while the link's page is in flight builds on June, never back to July */
+  test("a press made while its page is in flight keeps the period and the linked view", async () => {
+    const page = await open(spendingPage, "/spending?period=2026-07&where=relief");
+    pills.period!("2026-06");
+    ui.cash!.setView("cash", "table");
+    await page.settle();
+
+    expect(page.url).toBe("/spending?period=2026-06&where=relief&cash=table");
+    expect(page.shown).toMatchObject({ cash: { cash: "table" }, where: { where: "relief" } });
+  });
+
+  /**
+   * Back to a period his press's view rode into: the view is his, and Back saves it again (B2),
+   * as for a range pill. Taken for the link's, it stayed unsaved, and a page with no view in its
+   * URL drew the List he pressed after it.
+   */
+  test("Back to a period his press's view rode into saves that view again", async () => {
+    const page = await open(spendingPage, "/spending?period=2026-07");
+    ui.where!.setView("where", "relief");
+    await page.settle();
+    pills.period!("2026-06");
+    await page.settle();
+    expect(page.url).toBe("/spending?period=2026-06&where=relief");
+    ui.where!.setView("where", "list");
+    await page.settle();
+
+    page.back();
+    await page.settle();
+    expect(page.url).toBe("/spending?period=2026-06&where=relief");
+    page.router.push("/spending?period=2026-05"); // a link with no view in its URL
+    await page.settle();
+    expect(page.shown).toMatchObject({ where: { where: "relief" } });
+  });
+
+  /** ⚖️ 2026-10-06 (632818c): a linked view rides the period on, and is still never saved */
+  test("Back and Forward over a period a linked view rode into never save it", async () => {
+    const page = await open(spendingPage, "/spending?period=2026-07&where=relief", { spending: { where: "list" } });
+    pills.period!("2026-06");
+    await page.settle();
+    page.back();
+    await page.settle();
+    page.forward();
+    await page.settle();
+
+    expect(page.url).toBe("/spending?period=2026-06&where=relief");
+    expect(page.persisted.spending).toMatchObject({ where: "list" });
+  });
+});
+
+describe("a /recurring tab keeps the calendar's view the page's URL holds", () => {
+  test("All and back to Calendar comes back to the linked row height, saving nothing", async () => {
+    const page = await open(recurringPage, "/recurring?tab=calendar&cal=compact");
+    pills.tab!("all");
+    await page.settle();
+    expect(page.url).toBe("/recurring?tab=all&cal=compact");
+
+    pills.tab!("calendar");
+    await page.settle();
+    expect(page.url).toBe("/recurring?tab=calendar&cal=compact");
+    expect(page.shown).toMatchObject({ cal: { cal: "compact" } });
+    expect(page.writes).toEqual([]);
+  });
+
+  test("followed while a press is being written, never carries the view it replaced", async () => {
+    const page = await open(recurringPage, "/recurring?tab=calendar&cal=compact", {
+      [RECURRING_CALENDAR_SURFACE]: { cal: "tall" },
+    });
+    ui.cal!.setView("cal", "regular"); // the default: asks /recurring?tab=calendar
+    pills.tab!("all");
+    await page.settle();
+    expect(page.url).toBe("/recurring?tab=all");
+
+    pills.tab!("calendar");
+    await page.settle();
+    expect(page.shown).toMatchObject({ cal: { cal: "regular" } });
+  });
+
+  /** a refused action's `?error=` banner is behind him once he moves to a tab, as it always was */
+  test("drops a refused action's banner", async () => {
+    const page = await open(recurringPage, "/recurring?error=Detection%20failed&tab=calendar&cal=tall");
+    pills.tab!("upcoming");
+    await page.settle();
+
+    expect(page.url).toBe("/recurring?tab=upcoming&cal=tall");
+  });
+});
+
 describe("Back/Forward to a page with view pills", () => {
   /**
    * ⚖️ Owner 2026-10-05 (B2): Back/Forward RE-SAVES the view of the page he returns to. Back
@@ -680,7 +867,7 @@ describe("Back/Forward to a page with view pills", () => {
     page.forward();
     await page.settle();
     expect(page.url).toBe("/spending?cash=table");
-    page.router.push("/spending?period=2026-06"); // the period picker: no view in its URL
+    page.router.push("/spending?period=2026-06"); // a link with no view in its URL
     await page.settle();
 
     expect(page.shown).toMatchObject({ cash: { cash: "table" } });
@@ -837,7 +1024,7 @@ describe("Back/Forward to a page with view pills", () => {
     page.back();
     await page.settle();
     expect(page.url).toBe("/spending?cash=table");
-    page.router.push("/spending?period=2026-06"); // the period picker: no view in its URL
+    page.router.push("/spending?period=2026-06"); // a link with no view in its URL
     await page.settle();
 
     expect(page.shown).toMatchObject({ cash: { cash: "table" } });
@@ -920,7 +1107,7 @@ describe("Back/Forward to a page with view pills", () => {
       { surface: "spending", state: { where: "relief", massifView: "quarter" } },
     ]);
 
-    page.router.push("/spending?period=2026-06"); // the period link: no view in its URL
+    page.router.push("/spending?period=2026-06"); // a link with no view in its URL
     await page.settle();
     expect(page.shown).toMatchObject({ cash: { cash: "table" }, where: { where: "relief" } });
   });

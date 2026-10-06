@@ -142,6 +142,38 @@ export function pressBase(ask: PageAsk | null, at: PressTarget, shown: string | 
   return { view, params, asked: true };
 }
 
+/** What a same-page link writes: a value for some of the keys it owns (a missing one is left out). */
+export type LinkParams = Readonly<Record<string, string | null | undefined>>;
+
+/**
+ * Where a same-page link that changes only params beside the page's views goes — the period
+ * picker, a /recurring tab: `pathname`, `set` first, then every param of `base` (the page's
+ * current URL) whose key the link does not own, in its order.
+ *
+ * ⚖️ Owner 2026-10-06 (§6A 40): a period arrow KEEPS a view only the URL held, the way a press
+ * does. 🔴 It wrote the period alone: `/spending?period=2026-07&where=relief` with List saved,
+ * ‹ — and June opened on List, the link's Relief gone. Followed, its `base` is the newest asked
+ * URL while a press may be in flight (`PageAsks.paramsOn`), not the one on screen: built on that,
+ * a link carries the OLD value of the press's dimension, and the press drawing its page again
+ * (`landing`) would land the view it replaced.
+ */
+export function pageLinkHref(
+  pathname: string,
+  base: Iterable<readonly [string, string]>,
+  owns: readonly string[],
+  set: LinkParams,
+): string {
+  const query = new URLSearchParams();
+  for (const [key, value] of Object.entries(set)) if (value) query.set(key, value);
+  const skip = new Set(owns);
+  for (const [key, value] of base) {
+    // the first of a repeated key, as the server reads it (`firstParam`)
+    if (!skip.has(key) && !query.has(key)) query.set(key, value);
+  }
+  const out = query.toString();
+  return out === "" ? pathname : `${pathname}?${out}`;
+}
+
 /** The ask after a press (or a URL writer) asked for `href`, recording the view keys it chose. */
 export function withAsk(ask: PageAsk | null, href: string, dims: ViewState): PageAsk {
   const pathname = pathnameOf(href);
@@ -167,9 +199,10 @@ export function afterCommit(ask: PageAsk | null, href: string): PageAsk | null {
 }
 
 /**
- * True when a navigation starting for `href` is not one a press asked for — a link, the period
- * picker, any `router.push` that did not build on the ask — so the page is about to move under
- * it. Every press, range pill and benchmark pick asks for its URL before it navigates.
+ * True when a navigation starting for `href` is not one a press asked for — a link, any
+ * `router.push` that did not build on the ask — so the page is about to move under it. Every
+ * press, range pill, benchmark pick, period link and /recurring tab asks for its URL before it
+ * navigates.
  */
 export function isForeign(ask: PageAsk | null, href: string): boolean {
   return ask !== null && !ask.trail.includes(canonicalHref(href));
@@ -252,9 +285,11 @@ export interface PageAsks {
    *
    * - Something asked: the NEWEST asked URL, which every press and URL writer since built on —
    *   never its own, or a range pill pressed meanwhile would be navigated away from. (An ask
-   *   made after any move is newer than the press, and is where the page is going anyway.)
-   * - A link followed since (the period picker, a /recurring tab, the next holding): that link,
-   *   made again as it was made. It carries no view, so its page draws the SAVED one — and the
+   *   made after any move is newer than the press, and is where the page is going anyway.) A
+   *   period link or a /recurring tab is such a writer since 2026-10-06 (`pageLinkHref`): built
+   *   on what this press asked for, its page draws the press once drawn again.
+   * - A link followed since (the next holding, the sidebar's, a crumb's): that link, made
+   *   again as it was made. It carries no view, so its page draws the SAVED one — and the
    *   server may have drawn it before this write landed. 🔴 Nothing drew it again: the pill
    *   un-pressed over a saved choice, a reload showing it. Made again now, its page draws the
    *   press, as it would have had the write landed first (and when it did, that is one more

@@ -2,11 +2,12 @@
 
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import { Icon } from "@/components/shell/Icon";
+import { usePageLinks } from "@/hooks/usePageLinks";
 import {
   currentPeriodLabel,
   currentPeriodParams,
+  PERIOD_PARAM_KEYS,
   stepPeriodParams,
   switchGranularityParams,
   type PeriodGranularity,
@@ -21,6 +22,12 @@ import {
  * every view is shareable and the back button works. Pure `@/lib/period`
  * helpers build the hrefs client-side. The bar spans its container: switch
  * left, pager center, reset + custom right.
+ *
+ * ⚖️ Owner 2026-10-06 (§6A 40): every one of its links KEEPS a view only the
+ * URL held, the way a press does — it replaces the period params and nothing
+ * else (`usePageLinks`). 🔴 It wrote the period alone:
+ * `/spending?period=2026-07&where=relief` with List saved, ‹, and June opened
+ * on List.
  */
 
 const GRANULARITIES: { key: Exclude<PeriodGranularity, "custom">; label: string }[] = [
@@ -39,14 +46,6 @@ function isAnchoredRange(g: PeriodGranularity): boolean {
   return g === "ytd" || g === "all";
 }
 
-function periodHref(basePath: string, params: PeriodParams): string {
-  const sp = new URLSearchParams();
-  if (params.period) sp.set("period", params.period);
-  if (params.from) sp.set("from", params.from);
-  if (params.to) sp.set("to", params.to);
-  return `${basePath}?${sp.toString()}`;
-}
-
 interface PeriodSelectorProps {
   period: ResolvedPeriod;
   /** today's full ISO date — the contextual reset anchors on it */
@@ -56,7 +55,7 @@ interface PeriodSelectorProps {
 }
 
 export function PeriodSelector({ period, today, basePath = "/spending" }: PeriodSelectorProps) {
-  const router = useRouter();
+  const links = usePageLinks(basePath, PERIOD_PARAM_KEYS);
   const [customOpen, setCustomOpen] = useState(false);
   const [from, setFrom] = useState(period.from);
   const [to, setTo] = useState(period.to);
@@ -64,7 +63,8 @@ export function PeriodSelector({ period, today, basePath = "/spending" }: Period
   const [rangeError, setRangeError] = useState<string | null>(null);
   const panelRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
-  const href = (params: PeriodParams) => periodHref(basePath, params);
+  // a period link's href and click: these params over the page's current URL
+  const periodLink = (params: PeriodParams) => links.link({ ...params });
 
   // the reset targets TODAY's period at the ACTIVE granularity (custom → month);
   // hidden while already looking at it
@@ -110,7 +110,7 @@ export function PeriodSelector({ period, today, basePath = "/spending" }: Period
     }
     setRangeError(null);
     setCustomOpen(false);
-    router.push(href({ from, to }));
+    links.follow({ from, to });
   }
 
   return (
@@ -127,7 +127,7 @@ export function PeriodSelector({ period, today, basePath = "/spending" }: Period
           return (
             <Link
               key={g.key}
-              href={href(switchGranularityParams(period, g.key))}
+              {...periodLink(switchGranularityParams(period, g.key))}
               aria-current={active ? "true" : undefined}
               className={`rounded-full px-3.5 py-1.5 text-xs transition-colors duration-(--duration-fast) ${
                 active ? "bg-surface-raised font-medium shadow-sm" : "text-ink-muted hover:text-ink"
@@ -145,7 +145,7 @@ export function PeriodSelector({ period, today, basePath = "/spending" }: Period
       <div className="order-last flex w-full items-center justify-center gap-1 sm:order-none sm:w-auto sm:flex-1">
         {!isAnchoredRange(period.granularity) && (
           <Link
-            href={href(stepPeriodParams(period, -1))}
+            {...periodLink(stepPeriodParams(period, -1))}
             aria-label="Previous period"
             className="grid size-8 place-items-center rounded-full text-ink-muted transition-colors duration-(--duration-fast) hover:bg-surface-sunken hover:text-ink"
           >
@@ -157,7 +157,7 @@ export function PeriodSelector({ period, today, basePath = "/spending" }: Period
         </span>
         {!isAnchoredRange(period.granularity) && (
           <Link
-            href={href(stepPeriodParams(period, 1))}
+            {...periodLink(stepPeriodParams(period, 1))}
             aria-label="Next period"
             className="grid size-8 place-items-center rounded-full text-ink-muted transition-colors duration-(--duration-fast) hover:bg-surface-sunken hover:text-ink"
           >
@@ -169,7 +169,7 @@ export function PeriodSelector({ period, today, basePath = "/spending" }: Period
       <div className="flex items-center gap-2">
         {!isOnCurrent && (
           <Link
-            href={href(currentPeriodParams(resetGranularity, today))}
+            {...periodLink(currentPeriodParams(resetGranularity, today))}
             className="rounded-full px-2.5 py-1 text-xs text-accent transition-colors duration-(--duration-fast) hover:bg-accent-soft"
           >
             {currentPeriodLabel(resetGranularity)}
