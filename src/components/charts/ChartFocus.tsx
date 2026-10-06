@@ -8,6 +8,7 @@ import { SurfaceCard } from "@/components/ui/SurfaceCard";
 import { usePageAsks } from "@/hooks/usePageAsks";
 import { usePrefersReducedMotion } from "@/hooks/usePrefersReducedMotion";
 import type { ChartRange } from "@/lib/chart-range";
+import { ONE_SHOT_PARAMS } from "@/lib/page-asks";
 
 /**
  * Chart focus mode (S8, Track 2 → generalized in the pass-22 chart-parity pass):
@@ -217,6 +218,7 @@ export function ChartFocus({
  * press was in flight navigated without the view, and the view press, landing after, went to
  * a URL without the range. Both now build on the page's newest asked URL (lib/page-asks.ts),
  * and the pill's URL is asked for like a press's, so a press made after it keeps the range.
+ * Like a press, it never carries a one-shot message (`ONE_SHOT_PARAMS`, owner 2026-10-06 §6A 44).
  */
 export function useRangeParam(rangeParam: string | undefined): (range: ChartRange) => void {
   const router = useRouter();
@@ -229,6 +231,7 @@ export function useRangeParam(rangeParam: string | undefined): (range: ChartRang
       if (rangeParam === undefined) return;
       const asked = asks?.paramsOn(pathname) ?? null;
       const params = new URLSearchParams(asked ?? searchParams?.toString() ?? "");
+      for (const key of ONE_SHOT_PARAMS) params.delete(key);
       params.set(rangeParam, next);
       const href = `${pathname}?${params.toString()}`;
       asks?.ask(href, {});

@@ -9,11 +9,12 @@ export type RecurringTab = (typeof RECURRING_TABS)[number];
 const LABELS: Record<RecurringTab, string> = { upcoming: "Upcoming", all: "All", calendar: "Calendar" };
 
 /**
- * The params a tab link replaces: its `tab`, and the `?error=` a refused "Detect now" or confirm
- * redirected back with — the banner reports an action that already happened, and a tab moves on
- * from it, as it always has. Every other param of the URL rides along (the calendar's `cal`).
+ * The params a tab link replaces: its `tab`. Every other param of the URL rides along (the
+ * calendar's `cal`) — never the `?error=` a refused "Detect now" or confirm redirected back with:
+ * the banner reports an action that already happened, and a tab moves on from it, as it always has
+ * and as a press does since 2026-10-06 (`ONE_SHOT_PARAMS`, lib/page-asks.ts).
  */
-export const RECURRING_TAB_LINK_KEYS: readonly string[] = ["tab", "error"];
+export const RECURRING_TAB_LINK_KEYS: readonly string[] = ["tab"];
 
 interface RecurringTabsProps {
   tab: RecurringTab;

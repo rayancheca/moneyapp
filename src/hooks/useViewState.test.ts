@@ -815,6 +815,50 @@ describe("a /recurring tab keeps the calendar's view the page's URL holds", () =
   });
 });
 
+/**
+ * ⚖️ Owner 2026-10-06 (§6A 44): a press CLEARS a refused action's `?error=` banner, as the tabs do — a
+ * press is a new action. 🔴 Built on every param on screen, it carried the banner: Compact pressed on
+ * `/recurring?error=…&tab=calendar` kept telling him Detect now had failed. Views and filters still ride.
+ */
+describe("a press on a page showing a refused action's banner", () => {
+  test("a calendar pill on /recurring drops it, and keeps the tab", async () => {
+    const page = await open(recurringPage, "/recurring?error=Detection%20failed&tab=calendar");
+    ui.cal!.setView("cal", "compact");
+    await page.settle();
+
+    expect(page.url).toBe("/recurring?tab=calendar&cal=compact");
+    expect(page.persisted[RECURRING_CALENDAR_SURFACE]).toEqual({ cal: "compact" });
+  });
+
+  test("a view press, a range pill and a benchmark pick on /investments each drop it, and keep the rest", async () => {
+    const page = await open(portfolioPage, "/investments?error=Refused&range=1M&bench=QQQ");
+    ui.portfolio!.setView("view", "returns");
+    await page.settle();
+    expect(page.url).toBe("/investments?range=1M&bench=QQQ&view=returns");
+
+    page.router.push("/investments?error=Refused&view=returns"); // refused again, by the redirect
+    await page.settle();
+    pills.range!("1Y");
+    await page.settle();
+    expect(page.url).toBe("/investments?view=returns&range=1Y");
+
+    page.router.push("/investments?error=Refused&range=1Y");
+    await page.settle();
+    pills.bench!("QQQ");
+    await page.settle();
+    expect(page.url).toBe("/investments?range=1Y&bench=QQQ&view=returns"); // his saved Return, as ever
+  });
+
+  test("a press made while one is in flight never brings it back", async () => {
+    const page = await open(recurringPage, "/recurring?error=Detection%20failed&tab=calendar&cal=tall");
+    ui.cal!.setView("cal", "compact");
+    pills.tab!("all");
+    await page.settle();
+
+    expect(page.url).toBe("/recurring?tab=all&cal=compact");
+  });
+});
+
 describe("Back/Forward to a page with view pills", () => {
   /**
    * ⚖️ Owner 2026-10-05 (B2): Back/Forward RE-SAVES the view of the page he returns to. Back

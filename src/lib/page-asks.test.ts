@@ -94,6 +94,17 @@ describe("pressBase", () => {
     expect(pressBase(ask, holding()).view).toEqual(PRICE_CHART);
   });
 
+  /** ⚖️ Owner 2026-10-06 (§6A 44): a press is a new action, and a refused action's message is behind it */
+  test("with nothing asked, never carries a one-shot message of the URL on screen; its views and filters ride", () => {
+    const base = pressBase(null, holding(), "/h?error=Refused&cards=grid&notice=no-api-key&bench=QQQ");
+    expect(base.params).toEqual({ range: "1Y", cards: "grid", bench: "QQQ" });
+  });
+
+  test("with an ask, never carries one the asked URL holds", () => {
+    const ask = withAsk(null, "/h?range=1M&error=Refused&notice=direction-guard&cards=grid", {});
+    expect(pressBase(ask, holding()).params).toEqual({ range: "1M", cards: "grid" });
+  });
+
   test("lays a carried key over the view only once a press asked for it", () => {
     const at = holding({ carry: ["accts"] });
     expect(pressBase(withAsk(null, "/h?range=1M", {}), at).view).not.toHaveProperty("accts");
@@ -131,6 +142,16 @@ describe("pageLinkHref", () => {
     );
     expect(pageLinkHref("/recurring", query("error=Refused&tab=calendar&cal=compact"), ["tab", "error"], { tab: "all" })).toBe(
       "/recurring?tab=all&cal=compact",
+    );
+  });
+
+  /** ⚖️ Owner 2026-10-06 (§6A 44): a link is a new action, as a press is — whatever keys it owns */
+  test("never keeps a one-shot message: a refused action's error, a notice", () => {
+    expect(pageLinkHref("/recurring", query("error=Refused&tab=calendar&cal=compact"), ["tab"], { tab: "all" })).toBe(
+      "/recurring?tab=all&cal=compact",
+    );
+    expect(pageLinkHref("/spending", query("notice=no-api-key&where=relief"), PERIOD, { period: "2026-06" })).toBe(
+      "/spending?period=2026-06&where=relief",
     );
   });
 
