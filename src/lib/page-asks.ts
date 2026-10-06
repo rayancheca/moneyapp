@@ -68,7 +68,8 @@ export interface PressBase {
   view: ViewState;
   /**
    * the params beside the view: the newest asked URL's; with nothing asked, the server's and
-   * every other param of the URL on screen (another switcher's view only the URL holds)
+   * every other param of the URL on screen (another switcher's view only the URL holds) — never a
+   * one-shot message (`ONE_SHOT_PARAMS`)
    */
   params: Record<string, string>;
   /** true when built on an ask (a press may be in flight), false when on the server's view */
@@ -77,6 +78,24 @@ export interface PressBase {
 
 /** Any origin: hrefs here are same-origin paths, and URL needs one to parse them. */
 const ORIGIN = "http://page-asks.invalid";
+
+/**
+ * The params a page reads once, for a message about an action that already happened: the `?error=`
+ * a refused form action redirects back with (`errorParam`, ErrorBanner.tsx), and /transactions'
+ * `?notice=` (`parseNotice`; no press sits on that page today, and none ever carries it).
+ *
+ * ⚖️ Owner 2026-10-06 (§6A 44): a press CLEARS a stale banner, as the /recurring tabs always did — a
+ * press is a new action. 🔴 Built on every param on screen (`onScreen`), it carried one: Compact
+ * pressed on `/recurring?error=…&tab=calendar` kept telling him Detect now had failed. So no press,
+ * range pill or same-page link (`pressBase`, `pageLinkHref`, ChartFocus's `useRangeParam`) keeps
+ * one; every view and filter of the URL still rides.
+ */
+export const ONE_SHOT_PARAMS: readonly string[] = ["error", "notice"];
+
+/** True for a param no press or same-page link carries on (`ONE_SHOT_PARAMS`). */
+function isOneShot(key: string): boolean {
+  return ONE_SHOT_PARAMS.includes(key);
+}
 
 /**
  * A URL in one spelling: pathname as the router encodes it, query keys sorted. The router's
@@ -105,15 +124,15 @@ export function askedParams(ask: PageAsk | null, pathname: string): Record<strin
 /**
  * The params a press with nothing asked builds on: the server's (they win: it normalized them —
  * a validated `accts`, a resolved period), then every other param of `shown`, the URL on
- * screen, in its order — never this surface's own dimensions, which the press writes itself. A
- * URL on another page (one not committed yet) adds nothing.
+ * screen, in its order — never this surface's own dimensions, which the press writes itself, nor a
+ * one-shot message (`ONE_SHOT_PARAMS`). A URL on another page (one not committed yet) adds nothing.
  */
 function onScreen(at: PressTarget, own: ReadonlySet<string>, shown: string | null): Record<string, string> {
   if (shown === null || pathnameOf(shown) !== pathnameOf(at.basePath)) return at.baseParams;
   const params: Record<string, string> = { ...at.baseParams };
   for (const [key, value] of new URL(shown, ORIGIN).searchParams) {
     // the first of a repeated key, as the server reads it (`firstParam`)
-    if (!own.has(key) && !Object.hasOwn(params, key)) params[key] = value;
+    if (!own.has(key) && !isOneShot(key) && !Object.hasOwn(params, key)) params[key] = value;
   }
   return params;
 }
@@ -123,7 +142,8 @@ function onScreen(at: PressTarget, own: ReadonlySet<string>, shown: string | nul
  * with every other param of `shown` (the URL on screen) beside them. With one, the newest
  * asked URL's params (minus this surface's own dimensions, which the press writes itself) and
  * the server's view with every key a press asked for laid over it — the asked URL already
- * started from the one on screen.
+ * started from the one on screen. Never a one-shot message (`ONE_SHOT_PARAMS`): a press is a new
+ * action.
  */
 export function pressBase(ask: PageAsk | null, at: PressTarget, shown: string | null = null): PressBase {
   const own = new Set(at.spec.map((dim) => dim.key));
@@ -137,7 +157,7 @@ export function pressBase(ask: PageAsk | null, at: PressTarget, shown: string | 
   }
   const params: Record<string, string> = {};
   for (const [key, value] of Object.entries(ask.params)) {
-    if (!own.has(key)) params[key] = value;
+    if (!own.has(key) && !isOneShot(key)) params[key] = value;
   }
   return { view, params, asked: true };
 }
@@ -148,7 +168,8 @@ export type LinkParams = Readonly<Record<string, string | null | undefined>>;
 /**
  * Where a same-page link that changes only params beside the page's views goes — the period
  * picker, a /recurring tab: `pathname`, `set` first, then every param of `base` (the page's
- * current URL) whose key the link does not own, in its order.
+ * current URL) whose key the link does not own, in its order — never a one-shot message
+ * (`ONE_SHOT_PARAMS`), whatever keys the link owns.
  *
  * ⚖️ Owner 2026-10-06 (§6A 40): a period arrow KEEPS a view only the URL held, the way a press
  * does. 🔴 It wrote the period alone: `/spending?period=2026-07&where=relief` with List saved,
@@ -168,7 +189,7 @@ export function pageLinkHref(
   const skip = new Set(owns);
   for (const [key, value] of base) {
     // the first of a repeated key, as the server reads it (`firstParam`)
-    if (!skip.has(key) && !query.has(key)) query.set(key, value);
+    if (!skip.has(key) && !isOneShot(key) && !query.has(key)) query.set(key, value);
   }
   const out = query.toString();
   return out === "" ? pathname : `${pathname}?${out}`;

@@ -330,6 +330,30 @@ test("a /recurring tab keeps the calendar's linked row height, and saves nothing
 });
 
 /**
+ * ⚖️ Owner 2026-10-06 (§6A 44): a press CLEARS a refused action's `?error=` banner, as the tabs do — a
+ * press is a new action. 🔴 Built on every param on screen, Compact kept the banner telling him Detect
+ * now had failed (src/lib/page-asks.ts `ONE_SHOT_PARAMS`).
+ */
+test("a calendar pill pressed under a refused action's banner clears it, and keeps the tab", async ({ page }) => {
+  const tabs = page.getByRole("navigation", { name: "Recurring views" });
+  await gotoHydrated(page, "/recurring?tab=calendar");
+  if (!(await tabs.isVisible())) {
+    await page.getByRole("button", { name: "Detect now" }).click();
+    await expect(tabs).toBeVisible({ timeout: 30_000 });
+  }
+  await startOn(page, "Calendar row height", "Regular"); // the saved view it starts from
+  await gotoHydrated(page, "/recurring?error=Detection%20failed&tab=calendar");
+  const banner = page.getByRole("alert").filter({ hasText: "Detection failed" });
+  await expect(banner).toBeVisible();
+
+  await pressView(page, "Calendar row height", "Compact");
+  await expect(page).toHaveURL(/\/recurring\?tab=calendar&cal=compact$/);
+  await expect(banner).toBeHidden();
+
+  await pressView(page, "Calendar row height", "Regular"); // his Regular back, for the specs after
+});
+
+/**
  * ⚖️ Owner 2026-10-05 (B2): Back/Forward RE-SAVES the view of the page he returns to. Back draws
  * the page as it was drawn, from before the press he walked away from, and 🔴 the next thing he
  * pressed that carries no view in its URL drew that press's saved view: Return, Back to Value,

@@ -25,7 +25,8 @@ const NONE: readonly (readonly [string, string])[] = [];
 /**
  * Links to the page they sit on that change only params beside its views — the period picker,
  * the /recurring tabs (lib/page-asks.ts `pageLinkHref`). Each keeps every other param of the
- * page's current URL, a view only the URL held among them, the way a press does.
+ * page's current URL, a view only the URL held among them, the way a press does — and, like a
+ * press, never a one-shot message (`ONE_SHOT_PARAMS`: a refused action's `?error=`).
  *
  * Followed, a link is a URL writer like a range pill: it builds on the NEWEST asked URL while a
  * press may be in flight, and asks for its own, so a press made before its page is drawn builds
