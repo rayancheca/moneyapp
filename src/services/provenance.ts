@@ -20,10 +20,19 @@ import { ledgerOpens, ledgerReaches } from "./observation-frontier";
 import { outsidePortfolioCashAccountIds, ownPortfolioAccountIds } from "./accounts";
 import { activeTxnsInRange, loadCategoryIndex, offAgentsCash, spendingBucket, uncategorizedWhere } from "./analytics";
 import { handTypedDays, keptOpeningOf } from "./anchor-winners";
-import { accountCoverage, chainFooting, footingThrough, type AccountCoverage, type CoverageGrade } from "./coverage";
+import {
+  accountCoverage,
+  chainFooting,
+  footingThrough,
+  type AccountCoverage,
+  type CoverageGrade,
+  type Footing,
+} from "./coverage";
 import {
   derivesFromHoldings,
   heldBalanceAnchor,
+  heldCountsByAccount,
+  heldCountsOn,
   loadReplayAnchors,
   loadReplayInputs,
   pickWinners,
@@ -355,6 +364,49 @@ function nextEndpoint(chain: ChainFacts, day: string): Pick<ReplayAnchor, "ancho
 }
 
 /**
+ * The balances an account's replay MISSED: the endpoint after each of its `gap` days (`nextEndpoint`) — the one that
+ * day's own balance proof names ("The replay did NOT land on …") — one per balance, oldest first. Empty with no gap.
+ *
+ * ⛔ Exported for the trust card's count of the days that do not add up, which named every one "the next recorded
+ * balance" — his count included (see `trustCard`). Read here, so the card's words for the balance a replay missed are
+ * that proof's, never a second reading of the anchors.
+ */
+export function missedBalances(db: AppDatabase, accountId: string): Pick<ReplayAnchor, "anchoredOn" | "source">[] {
+  const gapDays = db
+    .select({ day: dailyBalances.day })
+    .from(dailyBalances)
+    .where(and(eq(dailyBalances.accountId, accountId), eq(dailyBalances.basis, "gap")))
+    .orderBy(asc(dailyBalances.day))
+    .all();
+  if (gapDays.length === 0) return [];
+  const chain = chainFacts(db, accountId);
+  const missed = gapDays
+    .map((d) => nextEndpoint(chain, d.day))
+    .filter((e): e is Pick<ReplayAnchor, "anchoredOn" | "source"> => e !== null);
+  return [...new Map(missed.map((e) => [e.anchoredOn, e] as const)).values()];
+}
+
+/**
+ * The days an account's balance stands on a count of his and nothing else — the days its balance proof says so of:
+ * a cash account's `chainFooting` `counted` days, and an investment account's days held at a value he typed
+ * (`heldCountsOn`). Empty for an account priced from holdings, and for one no count of his stands under.
+ *
+ * ⛔ Exported for the trust card's day sentence, which counted a day as resting on "a chain that closes" whenever it
+ * was not `derived_unverified` or `gap` — his count included (see `trustCard`). Read here, so the card's days on his
+ * count are the ones each day's proof names as his, never a second reading of the anchors.
+ */
+export function countedDays(db: AppDatabase, account: { id: string; type: AccountType }): ReadonlySet<string> {
+  if (account.type !== "investment") return chainFacts(db, account.id).counted;
+  const days = db
+    .select({ day: dailyBalances.day })
+    .from(dailyBalances)
+    .where(eq(dailyBalances.accountId, account.id))
+    .all()
+    .map((r) => r.day);
+  return new Set(heldCountsOn(db, account, days).keys());
+}
+
+/**
  * A cash day's balance in this service's vocabulary — ONE rule for an
  * account's balance proof and the day line on a row's sheet.
  *
@@ -415,12 +467,22 @@ function transactionProvenance(db: AppDatabase, id: string): Provenance | null {
     .where(and(eq(dailyBalances.accountId, txn.accountId), eq(dailyBalances.day, txn.postedOn)))
     .get();
 
+  /*
+   * 🔴 THE ONE PROOF OF HIS COUNT STILL UNDATED. With §6A 33, /accounts/<Cash on Hand>'s balance and its "1
+   * transaction landed" both read "Checked through 2026-08-10" with net worth's sentence, while the sheet of the one
+   * row they sum — the $5,000.00 down payment he entered by hand on Aug 11 — printed no date at all.
+   *
+   * ⚖️ His answer, 2026-10-05: a row's sheet on an account resting on his count is DATED too — the day and the
+   * sentence its balance proof takes (`datedByCount`), never a copy. The verdict stays the row's own.
+   */
+  const dated = account ? datedByCount(db, account.id) : null;
+
   if (txn.importFileId === null) {
     return {
       verdict: "manual",
-      headline: "You entered this row by hand. No statement carries it, so nothing else can confirm it.",
+      headline: `You entered this row by hand. No statement carries it, so nothing else can confirm it.${dated?.note ?? ""}`,
       sources: [{ kind: "hand-entered", label: "entered by hand", on: txn.postedOn }],
-      checkedThrough: null,
+      checkedThrough: dated?.through ?? null,
       inputs: [],
     };
   }
@@ -581,10 +643,13 @@ function transactionProvenance(db: AppDatabase, id: string): Provenance | null {
     verdict,
     // 🔴 a row on an investment account no holding prices was named "priced from holdings"
     badgeWord: verdict === "market_value" && account ? marketValueBadgeWord(derivesFromHoldings(db, account)) : undefined,
-    headline,
+    // ⚖️ his count's day goes with its sentence (his answer, 2026-10-05, `datedByCount` above)
+    headline: headline + (dated?.note ?? ""),
     sources,
-    // a checked-through date only where the grade says the row is checked
-    checkedThrough: reconciled ? period.periodEnd : verdict === "derived" ? (checkingPeriod?.periodEnd ?? null) : null,
+    // a checked-through date only where the grade says the row is checked — or his count's, named as his word
+    checkedThrough:
+      dated?.through ??
+      (reconciled ? period.periodEnd : verdict === "derived" ? (checkingPeriod?.periodEnd ?? null) : null),
     inputs:
       day && account
         ? [
@@ -642,8 +707,11 @@ function rowHeadline(f: RowHeadlineFacts): string {
         return `${from}, which recorded ${f.accountName}'s balance on this very day, so the total it sits in is checked.`;
       }
       const own = ownBalance ? `${ownBalance} — and` : ", which carries no balances of its own — but";
+      // ⚖️ his count is "counted" (his answer, 2026-10-05); a document's balance is "recorded"
       const by = f.anchorOfDay
-        ? `was recorded by ${f.anchorOfDay.anchor.source === "manual" ? "you" : f.anchorOfDay.source.label}`
+        ? f.anchorOfDay.anchor.source === "manual"
+          ? "was counted by you"
+          : `was recorded by ${f.anchorOfDay.source.label}`
         : "is anchored";
       return `${from}${own} ${f.accountName}'s balance on this day ${by}, so the total it sits in is checked.`;
     }
@@ -660,7 +728,7 @@ function rowHeadline(f: RowHeadlineFacts): string {
    * count. It is his word, and the sentence says so (see `closedChainDays`).
    */
   if (f.anchorOfDay?.anchor.source === "manual") {
-    return `${from}${ownBalance ?? ", which carries no balances of its own"} — ${f.accountName}'s balance on this day was recorded by you, and nothing else confirms it, so nothing checks the total it sits in.`;
+    return `${from}${ownBalance ?? ", which carries no balances of its own"} — ${f.accountName}'s balance on this day was counted by you, and nothing else confirms it, so nothing checks the total it sits in.`;
   }
   if (f.periodBalance) {
     return `${from}, which records a value for ${f.accountName} rather than proving the rows add up.`;
@@ -731,17 +799,18 @@ function anchorOnOrBefore(db: AppDatabase, accountId: string, day: string): DayA
   const file = anchor.importFileId
     ? db.select().from(importFiles).where(eq(importFiles.id, anchor.importFileId)).get()
     : undefined;
+  // ⚖️ ONE verb for a balance he typed — "counted", net worth's (his answer, 2026-10-05); a document's keeps its words
+  const counted = anchor.source === "manual";
   return {
     anchor,
     source: {
       kind: "anchor",
-      label:
-        anchor.source === "manual"
-          ? "a balance you entered"
-          : anchor.source === "live"
-            ? "a live price reading"
-            : file?.fileName ?? `a ${anchor.source.replace(/_/g, " ")} observation`,
-      detail: `balance recorded on ${readableDay(anchor.anchoredOn)}`,
+      label: counted
+        ? "a balance you counted"
+        : anchor.source === "live"
+          ? "a live price reading"
+          : file?.fileName ?? `a ${anchor.source.replace(/_/g, " ")} observation`,
+      detail: `balance ${counted ? "counted" : "recorded"} on ${readableDay(anchor.anchoredOn)}`,
       on: anchor.anchoredOn,
     },
   };
@@ -859,20 +928,71 @@ function accountBalanceProvenance(db: AppDatabase, accountId: string, day: strin
     ? heldBalanceAnchor(pickWinners(loadReplayInputs(db, account.id).anchors), row)
     : null;
 
+  /*
+   * 🔴 THE ONE PROOF OF HIS COUNT LEFT UNDATED. Since §6A 28 the proof beside "1 transaction landed" on the same
+   * page dates Cash on Hand where his count stops standing, in net worth's sentence, while this one — nothing closes
+   * on it, so `lastClosed` is null — printed no date at all. Measured 2026-10-05 on a temp ledger (a $5,000.00 count
+   * typed for Aug 3, the down payment entered by hand on Aug 11): rows, net worth and the trust card "Checked through
+   * 2026-08-10" with "…your word, not a check", the balance on every day of it nothing.
+   *
+   * ⚖️ His call, 2026-10-02 (handoff §6A 33): DATE BOTH, in net worth's words. ⛔ The day and the sentence are
+   * `footingBounds`' over this one account, never a copy, and they travel together: a caller printing the day
+   * without the sentence would print his word as a check. Only an account whose footing is his count moves — the
+   * sentence is empty for any other, and its date stays the newest day its own chain closes.
+   *
+   * 🔴 …and a wallet whose recount did not reconcile read "Checked through 2026-09-09" and "…rests on the balance you
+   * counted" on every day, a gap day "Money is provably missing … around Aug 20, 2026" included (temp ledger
+   * 2026-10-05: $5,000.00 counted for Aug 3, −$5,000.00 Aug 11, $40.00 counted for Sep 1, −$10.00 Sep 10 — broken since
+   * Aug 4), because `footingThrough`'s count branch took a broken account; the first fix gated this proof alone, and
+   * left it undated beside rows and a net worth still dated Sep 9.
+   *
+   * ⚖️ His answer, 2026-10-05: a count that BREAKS dates every figure on it the day before it broke — here Aug 3,
+   * with "…before it stopped adding up on Aug 4, 2026" — and `footingThrough` is that one rule, so this proof, its
+   * rows, a row's sheet and net worth cannot answer apart.
+   */
+  const dated = chain === null ? null : datedByCount(db, account.id);
+
   return {
     verdict,
-    headline: headlineForBalance(account.name, account.type, row.basis, row.day, recordedBy, {
-      pricedFromHoldings,
-      recordedOn: held?.anchoredOn ?? null,
-      countedOn: resting?.source === "manual" && resting.anchoredOn !== row.day ? resting.anchoredOn : null,
-      countedReplay,
-      keptOpeningOn: chain === null ? null : (keptOpeningOf(chain.winners)?.anchoredOn ?? null),
-    }),
+    headline:
+      headlineForBalance(account.name, account.type, row.basis, row.day, recordedBy, {
+        pricedFromHoldings,
+        held,
+        countedOn: resting?.source === "manual" && resting.anchoredOn !== row.day ? resting.anchoredOn : null,
+        countedReplay,
+        keptOpeningOn: chain === null ? null : (keptOpeningOf(chain.winners)?.anchoredOn ?? null),
+        next: chain === null ? null : nextEndpoint(chain, row.day),
+      }) + (dated?.note ?? ""),
     sources,
-    checkedThrough: chain?.lastClosed ?? null,
+    checkedThrough: dated?.through ?? chain?.lastClosed ?? null,
     inputs: [],
     badgeWord: isInvestment(account.type) ? marketValueBadgeWord(pricedFromHoldings) : undefined,
   };
+}
+
+/**
+ * The day and the sentence a proof about ONE account's own figures takes when its days rest on a balance he TYPED
+ * — `footingBounds` over that one account, when it says the day is his count's — or null when it is not. Its balance
+ * proof (`accountBalanceProvenance`) and a row's own sheet (`transactionProvenance`) read this.
+ *
+ * ⛔ One function, because the second proof of the same count was the one left undated (a row's sheet, his answer
+ * 2026-10-05 — see `transactionProvenance`).
+ *
+ * 🔴 …and no gate of its own. §6A 33's review gated this on `countFooting` because `footingThrough` took a broken
+ * wallet as if his count still stood; that left the wallet's balance and its rows' sheets undated beside a rows proof
+ * and a net worth dated five weeks past its break. ⚖️ His answer, 2026-10-05: a count that broke stops the day before
+ * it broke — `footingThrough` now says so, and reads `countFooting` itself — so "whose footing is his count" is that
+ * one rule's to say, and a second copy of it here would be the next one to drift.
+ *
+ * ⛔ The day and the sentence travel together: a caller printing the day without the sentence would print his word
+ * as a check. An account resting on his count to its newest day, unbroken, bounds nothing, as in net worth, so
+ * `footingBounds` gives no note; a check's day gives none either, and keeps the proof's own date.
+ */
+function datedByCount(db: AppDatabase, accountId: string): { through: string; note: string } | null {
+  const own = accountCoverage(db).find((c) => c.accountId === accountId);
+  if (own === undefined) return null;
+  const footing = footingBounds([own]);
+  return footing.through === null || footing.note === "" ? null : { through: footing.through, note: footing.note };
 }
 
 /**
@@ -889,12 +1009,15 @@ function headlineForBalance(
   recordedBy: string | null,
   value: {
     pricedFromHoldings: boolean;
-    recordedOn: string | null;
+    /** the recorded balance an investment day holds (`heldBalanceAnchor`), and whose it is */
+    held: Pick<ReplayAnchor, "anchoredOn" | "source"> | null;
     countedOn: string | null;
     /** a replay from one count of his onto the next: the two days he counted */
     countedReplay: { from: string; to: string | null } | null;
     /** the opening kept from a statement he un-imported that every day replays from (`keptOpeningOf`) */
     keptOpeningOn: string | null;
+    /** the replay endpoint after the day: what a replay across it lands on — or, on a gap day, missed */
+    next: Pick<ReplayAnchor, "anchoredOn" | "source"> | null;
   },
 ): string {
   const on = readableDay(day);
@@ -902,20 +1025,31 @@ function headlineForBalance(
     if (value.pricedFromHoldings) {
       return `${name} is priced from its holdings on ${on}. A brokerage statement sets a value; it never proves the transactions add up.`;
     }
+    // ⚖️ a value he typed is one he counted (his answer, 2026-10-05); a document's or a live reading's is recorded —
+    // and so says every surface naming the same value: net worth's line and count, a rows total, /imports' row
+    // (`heldCountsOn`, this same `held`)
+    const verb = value.held?.source === "manual" ? "you counted" : "recorded";
     const recorded =
-      value.recordedOn === null
+      value.held === null
         ? "a recorded balance held forward"
-        : value.recordedOn === day
-          ? "the balance recorded that day"
-          : `the balance recorded on ${readableDay(value.recordedOn)}, held forward`;
+        : value.held.anchoredOn === day
+          ? `the balance ${verb} that day`
+          : `the balance ${verb} on ${readableDay(value.held.anchoredOn)}, held forward`;
     return `${name}'s value on ${on} is ${recorded}. No holdings price it, and no transaction arithmetic checks it.`;
   }
-  // a count of his is named as his, never as a "recorded balance" the reader could take for a statement
-  const counted = value.countedOn === null ? null : `the balance you recorded on ${readableDay(value.countedOn)}`;
+  /*
+   * A count of his is named as his, never as a "recorded balance" the reader could take for a statement.
+   *
+   * ⚖️ …and by ONE verb: "counted", net worth's ("you counted it on …") — his answer, 2026-10-05. These sentences
+   * said "the balance you recorded" of the $5,000.00 he typed for Cash on Hand's Aug 3, beside a net worth line and
+   * a dated sentence ("…rests on the balance you counted") saying "counted" of the same count. ⛔ Only his: a
+   * document's balance keeps "recorded".
+   */
+  const counted = value.countedOn === null ? null : `the balance you counted on ${readableDay(value.countedOn)}`;
   switch (basis) {
     case "anchored":
       if (recordedBy === "manual") {
-        return `You recorded ${name}'s balance on ${on} yourself. No statement carries it, so nothing else can confirm it.`;
+        return `You counted ${name}'s balance on ${on} yourself. No statement carries it, so nothing else can confirm it.`;
       }
       if (recordedBy === "ofx_ledger") {
         return `A bank export records ${name}'s balance on ${on} directly. This is the number the bank printed.`;
@@ -926,20 +1060,46 @@ function headlineForBalance(
       if (value.countedReplay !== null) {
         const onto =
           value.countedReplay.to === null
-            ? "the next balance you recorded"
-            : `the one you recorded on ${readableDay(value.countedReplay.to)}`;
-        return `Every transaction was replayed forward from the balance you recorded on ${readableDay(value.countedReplay.from)} and landed exactly on ${onto}. Both are your own counts, so nothing else confirms ${name} on ${on}.`;
+            ? "the next balance you counted"
+            : `the one you counted on ${readableDay(value.countedReplay.to)}`;
+        return `Every transaction was replayed forward from the balance you counted on ${readableDay(value.countedReplay.from)} and landed exactly on ${onto}. Both are your own counts, so nothing else confirms ${name} on ${on}.`;
       }
-      return `Every transaction was replayed forward from a recorded balance and landed exactly on the next one, through ${on}.`;
+      // a replay from his count that a document's balance checked still starts from his count
+      return `Every transaction was replayed forward from ${counted ?? "a recorded balance"} and landed exactly on the next one, through ${on}.`;
     case "derived_unverified":
       if (value.keptOpeningOn !== null) {
         return `Replayed from the opening balance of a statement you un-imported, printed for ${readableDay(value.keptOpeningOn)}, so nothing checks ${name} on ${on}. The rows are real; the total is unconfirmed.`;
       }
+      /*
+       * 🔴 A DAY BEFORE EVERY BALANCE WAS "REPLAYED PAST" ONE. The rebuild replays the days before an account's first
+       * balance BACKWARDS from it (`deriveBackward`); nothing stands on or before them, so this read "Replayed past the
+       * last recorded balance" — the direction of a day after a balance, naming none. Measured 2026-10-05 on a temp
+       * ledger through the real services (`createCashWallet` $5,000.00 for Aug 3, `addManualTransaction` −$20.00 on
+       * Aug 1): Cash on Hand's Aug 1 read exactly that. /imports and net worth word such days "replayed backwards
+       * from it" (`beforeFirstBalance`). ⛔ The direction is the replay's, whoever's balance it starts from — a
+       * statement's prehistory day read it too; the balance is named by its owner's verb.
+       *
+       * ⚠️ An unchecked day with a balance after it lies before every balance: between two the rebuild writes
+       * `derived` or `gap`, and past the last only forward (`deriveForward`) — the reasoning `beforeFirstBalance`
+       * gives. A kept opening, the one other source of these days, is answered above.
+       */
+      if (value.next !== null) {
+        const from = readableDay(value.next.anchoredOn);
+        const balance =
+          value.next.source === "manual" ? `the balance you counted on ${from}` : `the balance recorded on ${from}`;
+        return `Replayed backwards from ${balance}, so nothing checks ${name} on ${on}. The rows are real; the total is unconfirmed.`;
+      }
       return `Replayed past ${counted ?? "the last recorded balance"}, so nothing checks ${name} on ${on}. The rows are real; the total is unconfirmed.`;
     case "carried":
       return `${name} had no activity to replay on ${on}, so ${counted ?? "the last known balance"} was carried forward.`;
-    case "gap":
-      return `The replay did NOT land on ${name}'s next recorded balance. Money is provably missing or double-counted around ${on}.`;
+    case "gap": {
+      // ⚖️ the balance a replay missed, when it is his count, is the one he counted (his answer, 2026-10-05)
+      const missed =
+        value.next?.source === "manual"
+          ? `${name}'s next balance, the one you counted on ${readableDay(value.next.anchoredOn)}`
+          : `${name}'s next recorded balance`;
+      return `The replay did NOT land on ${missed}. Money is provably missing or double-counted around ${on}.`;
+    }
   }
 }
 
@@ -1033,20 +1193,35 @@ function statementPeriodProvenance(db: AppDatabase, id: string): Provenance | nu
  * owe" proof (`cards-owed`) took the oldest `verifiedThrough` of the cards
  * under net worth's own words, so a card resting on his count never dated it.
  * Every figure bounded by the first account to stop being checked reads this.
+ *
+ * ⚖️ …and so does ONE account's balance proof when what it stands on is his count (`accountBalanceProvenance`, his
+ * call 2026-10-02, handoff §6A 33): it printed no date beside a rows proof and a net worth that dated the same count.
+ *
+ * ⚖️ A count that BROKE stops the day before it broke, and the sentence says it broke after that, in net worth's
+ * words for it ("stopped adding up on <day>") — his answer, 2026-10-05; `footingThrough` has the rule.
+ *
+ * 🔴 "The balance you counted" named no day, and he counts more than once. Beside a proof of his recount it read as
+ * that recount: Cash on Hand's Sep 10 read "Replayed past the balance you counted on Sep 1, 2026, …" then "…is the
+ * last day Cash on Hand rests on the balance you counted — your word, not a check — before it stopped adding up on
+ * Aug 4, 2026", which only his Aug 3 count can be (temp ledger 2026-10-06; and a recount that adds up named Aug 3
+ * last, before a date standing on Sep 1). ⛔ The count is named by its day (`Footing.countedOn`), as /imports does.
  */
 export function footingBounds(coverage: readonly AccountCoverage[]): { through: string | null; note: string } {
   const bounds = coverage
     .map((c) => ({ name: c.accountName, bound: footingThrough(c) }))
-    .filter((b): b is { name: string; bound: { day: string; byCount: boolean } } => b.bound !== null)
+    .filter((b): b is { name: string; bound: Footing } => b.bound !== null)
     .sort((a, b) => (a.bound.day < b.bound.day ? -1 : a.bound.day > b.bound.day ? 1 : 0));
   const through = bounds[0]?.bound.day ?? null;
   // a check stopping the same day does not make the day a check: his count still stops there
-  const byCount = through === null ? undefined : bounds.find((b) => b.bound.day === through && b.bound.byCount);
+  const byCount =
+    through === null ? undefined : bounds.find((b) => b.bound.day === through && b.bound.countedOn !== null);
+  if (byCount === undefined) return { through, note: "" };
+  const { name, bound } = byCount;
+  const counted = `the balance you counted on ${readableDay(bound.countedOn!)}`;
+  const broke = bound.brokeOn === null ? "" : ` — before it stopped adding up on ${readableDay(bound.brokeOn)}`;
   return {
     through,
-    note: byCount
-      ? ` The date it is checked through, ${readableDay(byCount.bound.day)}, is the last day ${byCount.name} rests on the balance you counted — your word, not a check.`
-      : "",
+    note: ` The date it is checked through, ${readableDay(bound.day)}, is the last day ${name} rests on ${counted} — your word, not a check${broke}.`,
   };
 }
 
@@ -1107,6 +1282,13 @@ function netWorthProvenance(db: AppDatabase, day: string | undefined): Provenanc
       )
       .map((c) => c.accountId),
   );
+  /*
+   * 🔴 …and "recorded" of a value he TYPED, beside its own balance proof's "the balance you counted on Sep 1, 2026,
+   * held forward" (review, 2026-10-05: `createAccount` investment, `addManualAnchor` $1,000.00 for Sep 1 — "held at its
+   * recorded balance", "1 is held at its recorded balance"). ⚖️ A value he typed is one he counted (his answer,
+   * 2026-10-05): the balance each held account holds on this day, by the rule that proof reads (`heldCountsOn`).
+   */
+  const heldCounts = heldCountsByAccount(db, coverage, asOf);
 
   const inputs: ProvenanceInput[] = coverage.map((c) => ({
     id: c.accountId,
@@ -1128,7 +1310,9 @@ function netWorthProvenance(db: AppDatabase, day: string | undefined): Provenanc
             (c.grade === "market_value"
               ? pricedFromHoldings.has(c.accountId)
                 ? "priced from holdings"
-                : "held at its recorded balance"
+                : heldCounts.has(c.accountId)
+                  ? `held at the balance you counted on ${readableDay(heldCounts.get(c.accountId)!)}`
+                  : "held at its recorded balance"
               : c.grade === "manual"
                 ? c.lastManualUpdate
                   ? `you last counted it on ${readableDay(c.lastManualUpdate)}`
@@ -1146,6 +1330,9 @@ function netWorthProvenance(db: AppDatabase, day: string | undefined): Provenanc
   const proven = inputs.filter((i) => i.verdict === "derived" || i.verdict === "sourced").length;
   const marked = inputs.filter((i) => i.verdict === "market_value").length;
   const heldAccounts = marked - pricedFromHoldings.size;
+  // every account `heldCounts` names is one of them: an investment account no holding prices
+  const heldCounted = heldCounts.size;
+  const heldRecorded = heldAccounts - heldCounted;
   // `manual` is a basis, not an absence — see the note in categorySpendProvenance
   const byHand = inputs.filter((i) => i.verdict === "manual").length;
   /**
@@ -1173,10 +1360,13 @@ function netWorthProvenance(db: AppDatabase, day: string | undefined): Provenanc
   if (pricedFromHoldings.size > 0) {
     parts.push(`${pricedFromHoldings.size} ${pricedFromHoldings.size === 1 ? "is" : "are"} priced from holdings`);
   }
-  if (heldAccounts > 0) {
+  if (heldRecorded > 0) {
     parts.push(
-      `${heldAccounts} ${heldAccounts === 1 ? "is held at its recorded balance" : "are held at their recorded balances"}`,
+      `${heldRecorded} ${heldRecorded === 1 ? "is held at its recorded balance" : "are held at their recorded balances"}`,
     );
+  }
+  if (heldCounted > 0) {
+    parts.push(`${heldCounted} ${heldCounted === 1 ? "is held at a balance you counted" : "are held at balances you counted"}`);
   }
   if (byHand > 0) parts.push(`${byHand} you count yourself`);
   if (weak > 0) parts.push(`${weak} ${weak === 1 ? "has" : "have"} nothing checking ${weak === 1 ? "it" : "them"}`);
@@ -1987,8 +2177,26 @@ function summedRowsProof(
       (id) => !derivesFromHoldings(db, { id, type: coverage.get(id)!.accountType as AccountType }),
     ),
   );
-  const held = rows.filter((r, i) => verdicts[i] === "market_value" && heldAccountIds.has(r.accountId)).length;
+  const heldRows = rows.filter((r, i) => verdicts[i] === "market_value" && heldAccountIds.has(r.accountId));
+  const held = heldRows.length;
   const priced = marked - held;
+  /*
+   * 🔴 …and "held at a recorded balance" of a row whose day holds a value he TYPED, beside that day's balance proof
+   * saying "the balance you counted" of it (review, 2026-10-05). ⚖️ A value he typed is one he counted (his answer,
+   * 2026-10-05): the balance each row's own day holds, by the rule that proof reads (`heldCountsOn`).
+   */
+  const countedDays = new Map(
+    [...heldAccountIds].map((id) => [
+      id,
+      heldCountsOn(
+        db,
+        { id, type: coverage.get(id)!.accountType as AccountType },
+        heldRows.filter((r) => r.accountId === id).map((r) => r.postedOn),
+      ),
+    ]),
+  );
+  const heldCounted = heldRows.filter((r) => countedDays.get(r.accountId)!.has(r.postedOn)).length;
+  const heldRecorded = held - heldCounted;
   /**
    * ⛔ FOUR buckets. `manual` is a basis, not an absence — for cash in a safe
    * the owner IS the best evidence that will ever exist, and calling his own
@@ -2033,7 +2241,12 @@ function summedRowsProof(
     `${grouped(rows.length)} ${rows.length === 1 ? "row" : "rows"} from ${grouped(files.length)} ${files.length === 1 ? "document" : "documents"}`,
   ];
   if (priced > 0) parts.push(`${grouped(priced)} ${priced === 1 ? "is" : "are"} priced from holdings rather than checked by arithmetic`);
-  if (held > 0) parts.push(`${grouped(held)} ${held === 1 ? "is" : "are"} held at a recorded balance rather than checked by arithmetic`);
+  if (heldRecorded > 0) {
+    parts.push(`${grouped(heldRecorded)} ${heldRecorded === 1 ? "is" : "are"} held at a recorded balance rather than checked by arithmetic`);
+  }
+  if (heldCounted > 0) {
+    parts.push(`${grouped(heldCounted)} ${heldCounted === 1 ? "is" : "are"} held at a balance you counted rather than checked by arithmetic`);
+  }
   if (byHand > 0) parts.push(`${grouped(byHand)} you entered yourself`);
   if (weak > 0) parts.push(`${grouped(weak)} ${weak === 1 ? "has" : "have"} nothing checking ${weak === 1 ? "it" : "them"}`);
 

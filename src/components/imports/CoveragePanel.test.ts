@@ -6,13 +6,13 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { createDatabase, type DbBundle } from "@/db/client";
 import { seedDatabase } from "@/db/seed";
-import { accounts } from "@/db/schema/accounts";
+import { accounts, type AccountType } from "@/db/schema/accounts";
 import { balanceAnchors } from "@/db/schema/balances";
 import { institutions } from "@/db/schema/institutions";
 import { transactions } from "@/db/schema/transactions";
 import { addManualAnchor } from "@/services/anchors";
 import { accountCoverage } from "@/services/coverage";
-import { rebuildAccount } from "@/services/derivation";
+import { derivesFromHoldings, heldCountsByAccount, rebuildAccount } from "@/services/derivation";
 import { CoveragePanel } from "./CoveragePanel";
 
 /**
@@ -38,7 +38,7 @@ afterEach(() => {
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
-function addAccount(name: string): string {
+function addAccount(name: string, type: AccountType = "checking"): string {
   const now = new Date().toISOString();
   const id = `a-${(seq += 1)}`;
   bundle.db
@@ -47,7 +47,7 @@ function addAccount(name: string): string {
       id,
       institutionId,
       name,
-      type: "checking",
+      type,
       currency: "USD",
       isActive: true,
       displayOrder: 0,
@@ -118,7 +118,12 @@ const HEADER = /\d+ accounts? nothing is checking|every account is checked by ar
 /** The panel as /imports renders it on Oct 1, 2026: its header line, and each row's text by account. */
 function panel(): { header: string; rows: Map<string, string> } {
   const coverage = accountCoverage(bundle.db, "2026-10-01");
-  const html = renderToStaticMarkup(createElement(CoveragePanel, { coverage, pricedFromHoldingsIds: [] }));
+  // as the page decides them: the accounts holdings price, and the count each one no holding prices is held at
+  const pricedFromHoldingsIds = coverage
+    .filter((c) => derivesFromHoldings(bundle.db, { id: c.accountId, type: c.accountType as AccountType }))
+    .map((c) => c.accountId);
+  const heldCounts = heldCountsByAccount(bundle.db, coverage, "2026-10-01");
+  const html = renderToStaticMarkup(createElement(CoveragePanel, { coverage, pricedFromHoldingsIds, heldCounts }));
   const [head, ...items] = html.split("<li").map((part, i) => (i === 0 ? part : `<li${part}`));
   const rowOf = (name: string): string => text(items.find((item) => item.includes(`>${name}<`)) ?? "");
   return {
@@ -190,5 +195,30 @@ describe("CoveragePanel — the header counts what the rows say", () => {
         "replayed backwards from it, with nothing earlier to check them against",
     );
     expect(header).toBe("every account is checked by arithmetic");
+  });
+});
+
+/*
+ * 🔴 "HELD AT ITS RECORDED BALANCE" OF A VALUE HE TYPED. An investment account no holding prices, its value typed
+ * through the app's own path (`addManualAnchor` $1,000.00 for Sep 1), read "the balance you counted on Sep 1, 2026,
+ * held forward" on its balance proof and "held at its recorded balance" on this row (review, 2026-10-05). ⚖️ A value
+ * he typed is one he counted (his answer, 2026-10-05); a statement's keeps "recorded".
+ */
+describe("CoveragePanel — an account no holding prices names whose balance it is held at", () => {
+  test("a balance he typed as his count, a statement's as recorded", () => {
+    const typed = addAccount("Brokerage", "investment");
+    addManualAnchor(bundle.db, { accountId: typed, anchoredOn: "2026-09-01", enteredCents: 100_000 });
+    rebuildAccount(bundle.db, typed, "2026-10-01");
+    const printed = addAccount("Old 401k", "investment");
+    addStatement(printed, "2026-09-01");
+    rebuildAccount(bundle.db, printed, "2026-10-01");
+
+    const { rows } = panel();
+    expect(rows.get("Brokerage")).toContain(
+      "held at the balance you counted on Sep 1, 2026; no holdings price it, and no transaction arithmetic checks it",
+    );
+    expect(rows.get("Old 401k")).toContain(
+      "held at its recorded balance; no holdings price it, and no transaction arithmetic checks it",
+    );
   });
 });

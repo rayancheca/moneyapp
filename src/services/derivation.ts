@@ -139,6 +139,53 @@ export function heldBalanceAnchor(
 }
 
 /**
+ * The day of the balance he TYPED that an account no holding prices holds on each of `days` — `heldBalanceAnchor`
+ * over the day's stored row, the rule its balance proof names the value by. A day that holds a statement's balance,
+ * a live reading or nothing is left out, as is every day of an account that is not step-held.
+ *
+ * ⚖️ A value he typed is one he counted (his answer, 2026-10-05). 🔴 The balance proof said "the balance you
+ * counted on Sep 1, 2026, held forward" of one, while net worth's line and count, a rows total and /imports'
+ * coverage row said "recorded" of the same value (review, 2026-10-05). ⛔ Every one of them reads this.
+ */
+export function heldCountsOn(
+  db: AppDatabase,
+  account: { id: string; type: AccountType },
+  days: readonly string[],
+): Map<string, string> {
+  if (account.type !== "investment" || days.length === 0 || derivesFromHoldings(db, account)) return new Map();
+  const winners = pickWinners(loadReplayAnchors(db, account.id));
+  const basisOn = new Map(
+    db
+      .select({ day: dailyBalances.day, basis: dailyBalances.basis })
+      .from(dailyBalances)
+      .where(and(eq(dailyBalances.accountId, account.id), inArray(dailyBalances.day, [...new Set(days)])))
+      .all()
+      .map((r) => [r.day, r.basis]),
+  );
+  const counted = new Map<string, string>();
+  for (const day of days) {
+    // a day with no stored row is no `anchored` day: it holds the last endpoint on or before it
+    const held = heldBalanceAnchor(winners, { day, basis: basisOn.get(day) ?? "carried" });
+    if (held?.source === "manual") counted.set(day, held.anchoredOn);
+  }
+  return counted;
+}
+
+/** `heldCountsOn` for each account on ONE day (net worth's, /imports' today): account id → the day he counted. */
+export function heldCountsByAccount(
+  db: AppDatabase,
+  coverage: readonly { accountId: string; accountType: string }[],
+  day: string = todayIso(),
+): Map<string, string> {
+  const counted = new Map<string, string>();
+  for (const c of coverage) {
+    const on = heldCountsOn(db, { id: c.accountId, type: c.accountType as AccountType }, [day]).get(day);
+    if (on !== undefined) counted.set(c.accountId, on);
+  }
+  return counted;
+}
+
+/**
  * Pure derivation: winners + per-day transaction sums → daily rows.
  * Exported for exhaustive unit testing; rebuildAccount wires it to the DB.
  *

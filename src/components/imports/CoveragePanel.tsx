@@ -33,10 +33,13 @@ const GRADE_META: Record<CoverageGrade, { label: string; dot: string; text: stri
 export function CoveragePanel({
   coverage,
   pricedFromHoldingsIds,
+  heldCounts,
 }: {
   coverage: AccountCoverage[];
   /** the accounts `derivesFromHoldings` prices from holding events */
   pricedFromHoldingsIds: readonly string[];
+  /** account id → the day of the balance he typed that it is held at today (`heldCountsByAccount`) */
+  heldCounts: ReadonlyMap<string, string>;
 }) {
   if (coverage.length === 0) return null;
 
@@ -105,6 +108,7 @@ export function CoveragePanel({
                   // cannot say "no statements" and then blame an export
                   hasStatements: c.statementsThrough !== null,
                   pricedFromHoldings: pricedFromHoldingsIds.includes(c.accountId),
+                  heldCountedOn: heldCounts.get(c.accountId) ?? null,
                   countedOn: c.countedOn,
                   keptOpeningOn: c.keptOpeningOn,
                   balancesThrough: c.balancesThrough,

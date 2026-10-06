@@ -28,6 +28,7 @@ const detail = (over: Partial<CoverageDetailInput> = {}): string =>
     unverifiedDays: 0,
     hasStatements: true,
     pricedFromHoldings: true,
+    heldCountedOn: null,
     countedOn: null,
     keptOpeningOn: null,
     balancesThrough: null,
@@ -364,6 +365,7 @@ describe("countedDetail — his count in one line", () => {
     unverifiedDays: 5,
     hasStatements: false,
     pricedFromHoldings: false,
+    heldCountedOn: null,
     countedOn: "2026-08-01",
     keptOpeningOn: null,
     balancesThrough: "2026-08-10",
@@ -426,6 +428,7 @@ describe("unverifiedDetail — an unverified account in one line", () => {
     unverifiedDays: 6,
     hasStatements: true,
     pricedFromHoldings: false,
+    heldCountedOn: null,
     countedOn: null,
     keptOpeningOn: null,
     balancesThrough: "2026-08-10",
@@ -490,6 +493,22 @@ describe("the states that are not about arithmetic", () => {
     const text = detail({ grade: "market_value", pricedFromHoldings: false });
     expect(text).toBe("held at its recorded balance; no holdings price it, and no transaction arithmetic checks it");
     expect(text).not.toContain("priced from holdings");
+  });
+
+  /**
+   * 🔴 …and of a value he TYPED, "recorded" beside its balance proof's "the balance you counted on Sep 1, 2026,
+   * held forward" (review, 2026-10-05). ⚖️ A value he typed is one he counted (his answer, 2026-10-05), named by
+   * its day as that proof and net worth name it.
+   */
+  test("an investment account held at a balance he typed names it as his count", () => {
+    const text = detail({ grade: "market_value", pricedFromHoldings: false, heldCountedOn: "2026-09-01" });
+    expect(text).toBe(
+      "held at the balance you counted on Sep 1, 2026; no holdings price it, and no transaction arithmetic checks it",
+    );
+    // a holding prices it, whatever balance was typed
+    expect(detail({ grade: "market_value", pricedFromHoldings: true, heldCountedOn: "2026-09-01" })).toContain(
+      "priced from holdings",
+    );
   });
 
   test("a manual account names the day he counted it", () => {
@@ -639,6 +658,7 @@ describe("the days before its first balance are not where it stops closing", () 
     unverifiedDays: 26,
     hasStatements: true,
     pricedFromHoldings: false,
+    heldCountedOn: null,
     countedOn: null,
     keptOpeningOn: null,
     balancesThrough: "2026-09-15",
@@ -790,6 +810,7 @@ describe("no row names a day it stops closing on or before the day it closes thr
     unverifiedDays: 26,
     hasStatements: true,
     pricedFromHoldings: false,
+    heldCountedOn: null,
     countedOn: null,
     keptOpeningOn: null,
     balancesThrough: "2026-09-15",

@@ -6,6 +6,7 @@ import { KEPT_OPENING_SOURCE, balanceAnchors, dailyBalances, type BalanceBasis }
 import { statementPeriods } from "@/db/schema/imports";
 import { institutions } from "@/db/schema/institutions";
 import { transactions } from "@/db/schema/transactions";
+import { countFooting } from "@/lib/coverage-detail";
 import { addDays, diffDays, todayIso } from "@/lib/dates";
 import { ACCOUNT_ORDER } from "./account-order";
 import { handTypedDays, keptOpeningOf, pickWinners } from "./anchor-winners";
@@ -212,12 +213,34 @@ export function chainFooting(
   return { closed, counted };
 }
 
+/** Where a figure resting on one account stops being checked — `footingThrough`. */
+export interface Footing {
+  /** the last day the account's balances still stand on something */
+  day: string;
+  /**
+   * The day of the balance he TYPED that `day` stands on, when nothing closes on it — his word, not a check; null
+   * when `day` is a check's.
+   *
+   * 🔴 A boolean once, and the sentence said "the balance you counted" of whichever count the reader had in mind: a
+   * wallet he recounted read it beside a proof naming his OTHER count (temp ledger 2026-10-06 — Aug 20's proof "…from
+   * the balance you counted on Aug 3, 2026 and landed exactly on the one you counted on Sep 1, 2026", then "…is the
+   * last day Cash on Hand rests on the balance you counted"; Sep 9 stands on Sep 1's). Named by its day, as /imports'
+   * row names it ("it rests on the balance you counted on Aug 3, 2026").
+   */
+  countedOn: string | null;
+  /**
+   * The day the account stopped adding up, when that is why the figure stops at `day`, the day before; null
+   * otherwise. A count's only: a chain that closed stops at its own `verifiedThrough`, a check.
+   */
+  brokeOn: string | null;
+}
+
 /**
  * The last day an account's balances still stand on something, for a figure
  * that "stops being proven at the first account that stops being checked" —
- * and whether that day is his count's rather than a check's. Null for an
- * account with no chain to stop (`market_value`, `manual`, `unknown`), and for
- * one nothing ever stood under.
+ * whether that day is his count's rather than a check's, and the day his count
+ * broke when that is why it stops there. Null for an account with no chain to
+ * stop (`market_value`, `manual`, `unknown`), and for one nothing ever stood under.
  *
  * 🔴 A COUNT LEFT THE COMPARISON ALTOGETHER. Once his count stopped being a
  * `verifiedThrough`, net worth filtered Cash on Hand out of "the oldest
@@ -229,20 +252,43 @@ export function chainFooting(
  * ⛔ A count bounds the picture at the day before nothing stands under it, and
  * the sentence that prints the date says that day is his word (`netWorth`). An
  * account resting on his count to its newest day bounds nothing, exactly as an
- * account he counts outright (`manual`) does not.
+ * account he counts outright (`manual`) does not — unless it broke (below).
  *
  * ❓ The owner's call, still open: the other answer keeps the count out of the
  * date and has the sentence say an account nothing ever checked is left out.
  * This one is taken because it never dates the picture past a day the same
  * popover calls unchecked.
+ *
+ * 🔴 TWO RULES FOR ONE WALLET. The count branch took a `broken` account as if his
+ * count still stood, while `countFooting` — the reading every sentence about his
+ * count is worded from — refuses one. Measured 2026-10-05 on a temp ledger
+ * through the real services ($5,000.00 counted for Aug 3, −$5,000.00 on Aug 11, a
+ * $40.00 recount for Sep 1, −$10.00 on Sep 10): "2 transactions landed", net
+ * worth and the trust card read "Checked through 2026-09-09 … rests on the balance
+ * you counted" beside net worth's own line "stopped adding up on Aug 4, 2026",
+ * and its balance proof printed no date. With nothing spent past the recount, the
+ * wallet bounded nothing at all.
+ *
+ * ⚖️ His answer, 2026-10-05: a typed-balance account that BREAKS bounds every
+ * "checked through" date the day before it broke, and the sentence says it broke
+ * after that — as a statement chain's `verifiedThrough` stops before its break.
+ * ⛔ Only where nothing ever closed (a closed chain has its own `verifiedThrough`):
+ * then every balance is a count of his, and a `gap` span lies strictly between two
+ * of them, so the day before `brokenSince` is his count's own day.
  */
-export function footingThrough(c: AccountCoverage): { day: string; byCount: boolean } | null {
+export function footingThrough(c: AccountCoverage): Footing | null {
   if (c.grade !== "verified" && c.grade !== "unverified" && c.grade !== "broken") return null;
-  if (c.verifiedThrough !== null) return { day: c.verifiedThrough, byCount: false };
-  if (c.countedOn !== null && c.uncheckedSince !== null) {
-    return { day: addDays(c.uncheckedSince, -1), byCount: true };
+  if (c.verifiedThrough !== null) return { day: c.verifiedThrough, countedOn: null, brokeOn: null };
+  if (c.grade === "broken") {
+    if (c.countedOn === null || c.brokenSince === null) return null;
+    // the day before the break is his count's own (above) — NOT `countedOn`, his newest, the recount it missed
+    const day = addDays(c.brokenSince, -1);
+    return { day, countedOn: day, brokeOn: c.brokenSince };
   }
-  return null;
+  // his count, as every sentence about it reads it: it stands until the run still open past it
+  const count = countFooting(c);
+  if (count === null || count.uncheckedSince === null) return null;
+  return { day: addDays(count.uncheckedSince, -1), countedOn: count.countedOn, brokeOn: null };
 }
 
 export interface AccountCoverage {
