@@ -26,16 +26,22 @@ import { projectTrailingAverage } from "./projection";
 export interface IncomeBucketTrailing {
   /** the income subcategory name (e.g. "Salary", "Tutoring", "Interest") */
   label: string;
-  /** income posted per trailing full month, oldest → newest, positive integer cents */
+  /**
+   * income posted per trailing full month, oldest → newest, integer cents — NET for the agent's bucket, whose
+   * clawbacks net inside it (owner decision 2026-10-06, §6A 45), so a month can be zero or below
+   */
   monthlyTotalsCents: readonly number[];
 }
 
 /** A projected ongoing-income component (full-month estimate; the caller scales to the remaining window). */
 export interface OngoingIncomeEstimate {
   label: string;
-  /** expected FULL-MONTH income, positive integer cents */
+  /**
+   * expected FULL-MONTH income, integer cents — never below zero from `projectOngoingIncome` (0 only for a net bucket
+   * clawed back to nothing), below zero from `projectOngoingNetIncome` for a bucket netting money out
+   */
   monthlyCents: number;
-  /** how many trailing months carried income for this bucket (the presence signal) */
+  /** how many trailing months carried income for this bucket — money out, for one netting out (the presence signal) */
   monthsPresent: number;
   /** 0..1 — lumpier histories read fainter (from projectTrailingAverage) */
   confidence: number;
@@ -49,8 +55,11 @@ export const MIN_INCOME_MONTHS_PRESENT = 2;
 /**
  * Which income buckets represent ONGOING earnings, and how much per month. A
  * bucket present in fewer than `minMonthsPresent` trailing months is dropped as
- * a one-off (never projected). The presence gate guarantees ≥1 positive month,
- * so the trailing mean is always > 0 for anything returned.
+ * a one-off (never projected). A month is present when it nets money IN, and
+ * the trailing mean is floored at zero: a net bucket whose clawbacks outweigh
+ * what it is paid is returned at 0, never below — the caller drops it. The
+ * agent's pace reads `projectOngoingNetIncome`, which mirrors this for a bucket
+ * netting money out.
  */
 export function projectOngoingIncome(
   buckets: readonly IncomeBucketTrailing[],
@@ -73,4 +82,32 @@ export function projectOngoingIncome(
     });
   }
   return out.sort((a, b) => b.monthlyCents - a.monthlyCents || a.label.localeCompare(b.label));
+}
+
+/**
+ * `projectOngoingIncome` for a NET bucket that can come to money OUT — the agent's, whose clawbacks net inside its
+ * pace (owner decision 2026-10-06, §6A 45). A bucket netting money in, or to nothing, over the trailing months is
+ * `projectOngoingIncome`'s, unchanged. One netting OUT is the same gate and mean, MIRRORED — present in
+ * ≥ `minMonthsPresent` months as money out, at its trailing mean — and returned BELOW zero: a one-off clawback never
+ * extrapolates, as a one-off credit never does.
+ *
+ * 🔴 Why it exists: a clawback reaches the pace without the credit it reverses whenever that credit is a live
+ * schedule's (projected by FIXED, so not in the pace's rows). `projectOngoingIncome` dropped the bucket — no month
+ * nets money in — and the clawback netted nowhere. How far below zero a projection may take a reading is the
+ * caller's to say.
+ */
+export function projectOngoingNetIncome(
+  buckets: readonly IncomeBucketTrailing[],
+  minMonthsPresent: number = MIN_INCOME_MONTHS_PRESENT,
+): OngoingIncomeEstimate[] {
+  return buckets.flatMap((bucket) => {
+    const sum = bucket.monthlyTotalsCents.reduce((a, b) => a + b, 0);
+    if (sum >= 0) return projectOngoingIncome([bucket], minMonthsPresent);
+    const mirrored = { label: bucket.label, monthlyTotalsCents: bucket.monthlyTotalsCents.map((c) => 0 - c) };
+    return projectOngoingIncome([mirrored], minMonthsPresent).map((e) => ({
+      ...e,
+      monthlyCents: 0 - e.monthlyCents,
+      basis: `${e.basis}, money out`,
+    }));
+  });
 }
