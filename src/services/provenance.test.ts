@@ -2915,7 +2915,7 @@ describe("provenanceFor — a balance he typed checks nothing", () => {
    * break. ⛔ One rule (`footingThrough`), one day and one sentence on every proof that names it.
    */
   const BROKEN_NOTE =
-    " The date it is checked through, Aug 3, 2026, is the last day Cash on Hand rests on the balance you counted on Aug 3, 2026 — your word, not a check — before it stopped adding up on Aug 4, 2026.";
+    " The date it is checked through, Aug 3, 2026, is the last day before Cash on Hand stopped adding up on Aug 4, 2026; until then it rests on the balance you counted on Aug 3, 2026 — your word, not a check.";
 
   // as he did it: $5,000.00 counted for Aug 3, the down payment by hand, a $40.00 recount that does not add up
   function brokenWallet({

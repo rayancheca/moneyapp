@@ -582,7 +582,7 @@ describe("trustCard — checked through", () => {
     const line = card.groups.flatMap((g) => g.accounts).find((a) => a.name === "Cash on Hand")!;
     expect(line.detail).toBe("stopped adding up on Aug 4, 2026");
     expect(card.summary).toMatch(
-      / The date it is checked through, Aug 3, 2026, is the last day Cash on Hand rests on the balance you counted on Aug 3, 2026 — your word, not a check — before it stopped adding up on Aug 4, 2026\.$/,
+      / The date it is checked through, Aug 3, 2026, is the last day before Cash on Hand stopped adding up on Aug 4, 2026; until then it rests on the balance you counted on Aug 3, 2026 — your word, not a check\.$/,
     );
   });
 

@@ -954,8 +954,8 @@ function accountBalanceProvenance(db: AppDatabase, accountId: string, day: strin
    * left it undated beside rows and a net worth still dated Sep 9.
    *
    * ⚖️ His answer, 2026-10-05: a count that BREAKS dates every figure on it the day before it broke — here Aug 3,
-   * with "…before it stopped adding up on Aug 4, 2026" — and `footingThrough` is that one rule, so this proof, its
-   * rows, a row's sheet and net worth cannot answer apart.
+   * with "…the last day before Cash on Hand stopped adding up on Aug 4, 2026" — and `footingThrough` is that one
+   * rule, so this proof, its rows, a row's sheet and net worth cannot answer apart.
    */
   const dated = chain === null ? null : datedByCount(db, account.id);
 
@@ -1207,6 +1207,11 @@ function statementPeriodProvenance(db: AppDatabase, id: string): Provenance | nu
  * ⚖️ A count that BROKE stops the day before it broke, and the sentence says it broke after that, in net worth's
  * words for it ("stopped adding up on <day>") — his answer, 2026-10-05; `footingThrough` has the rule.
  *
+ * 🔴 …and the broken sentence named one day twice as two things: "…Aug 3, 2026, is the last day Cash on Hand
+ * rests on the balance you counted on Aug 3, 2026 — your word, not a check — before it stopped adding up on Aug 4,
+ * 2026." The date is the last day before the break; the count is what the days until then rest on — two clauses,
+ * so the sentence still holds when the break comes days after the count.
+ *
  * 🔴 "The balance you counted" named no day, and he counts more than once. Beside a proof of his recount it read as
  * that recount: Cash on Hand's Sep 10 read "Replayed past the balance you counted on Sep 1, 2026, …" then "…is the
  * last day Cash on Hand rests on the balance you counted — your word, not a check — before it stopped adding up on
@@ -1224,11 +1229,12 @@ export function footingBounds(coverage: readonly AccountCoverage[]): { through: 
     through === null ? undefined : bounds.find((b) => b.bound.day === through && b.bound.countedOn !== null);
   if (byCount === undefined) return { through, note: "" };
   const { name, bound } = byCount;
-  const counted = `the balance you counted on ${readableDay(bound.countedOn!)}`;
-  const broke = bound.brokeOn === null ? "" : ` — before it stopped adding up on ${readableDay(bound.brokeOn)}`;
+  const opening = ` The date it is checked through, ${readableDay(bound.day)}, is the last day`;
+  const counted = `the balance you counted on ${readableDay(bound.countedOn!)} — your word, not a check.`;
+  if (bound.brokeOn === null) return { through, note: `${opening} ${name} rests on ${counted}` };
   return {
     through,
-    note: ` The date it is checked through, ${readableDay(bound.day)}, is the last day ${name} rests on ${counted} — your word, not a check${broke}.`,
+    note: `${opening} before ${name} stopped adding up on ${readableDay(bound.brokeOn)}; until then it rests on ${counted}`,
   };
 }
 
