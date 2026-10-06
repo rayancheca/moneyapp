@@ -13,6 +13,7 @@ import { categorySpending } from "@/services/analytics";
 import {
   categoryBudgetRef,
   categoryDetailHeader,
+  categoryFlowLabel,
   categoryFlowSign,
   categoryMonthlyTrend,
   categorySubcategorySplit,
@@ -79,7 +80,6 @@ export default async function CategoryPage({
     ledgerFirstDay(db) ?? undefined,
   );
   const range = { from: period.from, to: period.to };
-  const isIncome = header.kind === "income";
   const isExpense = header.kind === "expense";
   /*
    * Only an EXPENSE category is printed in `categorySpending`'s money-out
@@ -99,7 +99,7 @@ export default async function CategoryPage({
    * in positive — and the headline over it must be the sum of what it prints.
    */
   const sign = categoryFlowSign(header.kind);
-  const flowLabel = isIncome ? "Received" : isExpense ? "Spent" : "Net";
+  const flowLabel = categoryFlowLabel(header.kind);
 
   const { spentCents, txnCount } = categorySpending(db, { categoryId: id, from: range.from, to: range.to });
   const flowCents = sign * spentCents;

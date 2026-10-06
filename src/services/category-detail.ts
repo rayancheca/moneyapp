@@ -176,6 +176,19 @@ export function categoryFlowSign(kind: CategoryKind): 1 | -1 {
   return kind === "expense" ? 1 : -1;
 }
 
+/**
+ * The word over a category page's headline, asked of the kind beside its sign: "Spent" over an expense category,
+ * "Received" over an income one, and "Net" over every other — a transfer, an investment, rewards, and the system
+ * Uncategorized row.
+ *
+ * ⚖️ Session decision 2026-10-06 (not the owner's): /categories/<Uncategorized> is the FILING QUEUE. It keeps every
+ * account's unfiled rows, both signs, the agent's among them, until they are filed — a Net of the rows to file, never
+ * a Spent figure, which is why the agent's unfiled money (out of his Spent since 2026-10-05) may stay on it.
+ */
+export function categoryFlowLabel(kind: CategoryKind): "Spent" | "Received" | "Net" {
+  return kind === "expense" ? "Spent" : kind === "income" ? "Received" : "Net";
+}
+
 // ── Subcategory split ────────────────────────────────────────────────
 
 export interface CategorySubRow {

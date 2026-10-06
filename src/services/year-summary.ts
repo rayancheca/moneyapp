@@ -10,11 +10,12 @@ import {
   type ReturnBoundary,
 } from "@/lib/money-weighted-return";
 import type { CashFlow } from "@/lib/xirr";
-import { formatDayFull } from "@/lib/format-date";
+import { formatDayFull, formatDayShort } from "@/lib/format-date";
 import { yearSummary, type YearLineInput, type YearSummary } from "@/lib/year-summary";
 import { investmentSideAccountIds, outsidePortfolioCashAccountIds } from "./accounts";
 import { offAgentsCash } from "./analytics";
 import { portfolioSeries, realizedSalesByDay } from "./portfolio";
+import { yearSpendingWindow, type YearSpendingWindow } from "./year-insights";
 
 /**
  * A calendar year, assembled from the ledger for `/summary/[year]`.
@@ -57,6 +58,11 @@ export interface YearGambling {
   lostCents: number;
   netCents: number;
   rowCount: number;
+  /**
+   * the days read — What you spent's own (`yearSpendingWindow`), or null when the ledger has not reached the year and
+   * the page measures no spending in it, so there is no gambling to print either
+   */
+  window: YearSpendingWindow | null;
 }
 
 /** Re-exported so callers need not know which module decides this. */
@@ -179,16 +185,23 @@ function realizedFor(db: AppDatabase, year: number): RawLine & { exact: boolean 
  * ⚖️ The page's one scope, as on every line (`lineFor`): the agent's cash is none of his gambling. What the agent's
  * account pays is not his spending (owner decision 2026-10-02, §6A 34), and the block says his losses sit inside the
  * figure under What you spent. 🔴 Read from every account, a loss on the agent's cash was in Lost and in no Spent.
+ *
+ * ⛔ …and What you spent's DAYS, not the calendar year's. On a running year that figure stops on the last day every
+ * account you spend from has been imported through (`yearSpendingWindow`, /spending's cut of the same year). 🔴 Read
+ * Jan 1 – Dec 31, a loss posted past that day — on an account imported further than the one holding the year back —
+ * was in Lost and in no Spent, under the same sentence. The block reads the window and names it (`gamblingNote`).
  */
-function gamblingFor(db: AppDatabase, year: number, agentsCash: readonly string[]): YearGambling {
-  const { from, to } = yearBounds(year);
+function gamblingFor(db: AppDatabase, window: YearSpendingWindow | null, agentsCash: readonly string[]): YearGambling {
+  const none = { wonCents: 0, lostCents: 0, netCents: 0, rowCount: 0, window };
+  if (window === null) return none;
+  const { from, to } = window;
   const parent = db
     .select({ id: categories.id })
     .from(categories)
     .where(eq(categories.name, "Gambling"))
     .all()
     .map((c) => c.id);
-  if (parent.length === 0) return { wonCents: 0, lostCents: 0, netCents: 0, rowCount: 0 };
+  if (parent.length === 0) return none;
 
   const ids = db
     .select({ id: categories.id })
@@ -213,7 +226,27 @@ function gamblingFor(db: AppDatabase, year: number, agentsCash: readonly string[
 
   const wonCents = rows.filter((r) => r.amountCents > 0).reduce((t, r) => t + r.amountCents, 0);
   const lostCents = rows.filter((r) => r.amountCents < 0).reduce((t, r) => t - r.amountCents, 0);
-  return { wonCents, lostCents, netCents: wonCents - lostCents, rowCount: rows.length };
+  return { wonCents, lostCents, netCents: wonCents - lostCents, rowCount: rows.length, window };
+}
+
+/**
+ * The gambling block's sentence — what its figures are counted in, and where. Written here rather than on the page,
+ * beside the window it names, so the claim and the days it is true over are one decision.
+ *
+ * ⛔ "They sit inside the figure under What you spent" is true of Lost because Lost reads that figure's own days
+ * (`gamblingFor`). On a running year those days stop short of December, and the sentence says so and where — a reader
+ * holding Lost against the year's Gambling rows in the ledger must not have to guess why the two differ.
+ */
+export function gamblingNote(gambling: YearGambling): string {
+  const head =
+    "Counted in none of the money-in totals above: winnings are not treated as income here. Losses are spending — " +
+    "your categories file Gambling as an expense — and they sit inside the figure under What you spent";
+  const w = gambling.window;
+  if (w === null || !w.truncated) return `${head}.`;
+  return (
+    `${head}, over the same days: ${w.from.slice(0, 4)} is still being imported, so both stop on ` +
+    `${formatDayShort(w.to)}, the last day every account you spend from has been imported through.`
+  );
 }
 
 /**
@@ -558,7 +591,7 @@ export function yearSummaryView(db: AppDatabase, year: number, today: string): Y
   return {
     year,
     summary: yearSummary({ year, lines }),
-    gambling: gamblingFor(db, year, agentsCash),
+    gambling: gamblingFor(db, yearSpendingWindow(db, year, today), agentsCash),
     moneyWeightedReturn: moneyWeightedReturnFor(db, year, today),
     disclaimer: SUMMARY_DISCLAIMER,
     availableYears: summaryYears(db),

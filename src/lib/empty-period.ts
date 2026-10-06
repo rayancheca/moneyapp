@@ -218,6 +218,11 @@ export function emptyPeriodCopy(
     uncategorizedBucket?: boolean;
     /** the oldest day the ledger holds — named when a window runs before it */
     ledgerOpens?: string | null;
+    /**
+     * the window holds money the agent's own account paid or was paid — none of his spending or income (owner
+     * decisions 2026-09-28, 2026-10-02, 2026-10-05) — so a measured zero says it was left out (`agentsMoneyRowCount`)
+     */
+    agentsMoney?: boolean;
   } = {},
 ): { title: string; description: string } {
   const through = ledgerReaches === null ? null : formatDay(ledgerReaches);
@@ -306,13 +311,25 @@ export function emptyPeriodCopy(
        * 🔴 S22: both now say "spending or income", because "earned" named every
        * positive income-kind row — financial aid included — while /summary's
        * "Earned" does not. The two readers moved together, on purpose.
+       *
+       * ⚖️ …AND THE BUCKET IS HIS. Money leaving the agent's own account unfiled
+       * is in no bucket of his (owner decision 2026-10-05), and what the agent's
+       * account pays or is paid in any category is none of his spending or income
+       * (2026-10-02, 2026-09-28) — so a period holding only the agent's money
+       * lands here. 🔴 It said "Uncategorized outflows would show up above" over
+       * the agent's unfiled ACH withdrawal, which shows up nowhere on the page.
+       * The bucket is named as his own, and the agent's money is said to be left
+       * out where the window holds some.
        */
       return {
         title: "No spending or income in this period",
         description:
           "This window sits inside what has been imported, so it holds no spending and no income — a measured zero rather than an unread window. Transfers, card payments and investment flows are not counted here and can still have posted; the ledger lists them. Accounts imported less far than the ledger as a whole could also be holding rows here; /imports says which." +
           (opts.uncategorizedBucket
-            ? " Uncategorized outflows would show up above, as their own explicit bucket."
+            ? " Your own uncategorized outflows would show up above, as their own explicit bucket."
+            : "") +
+          (opts.agentsMoney
+            ? " The agent's own account paid or was paid money in this period, and none of it is counted here: it is the agent's, not yours."
             : ""),
       };
   }

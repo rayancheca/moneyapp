@@ -26,13 +26,16 @@ import {
 } from "./analytics";
 import { addManualAnchor } from "./anchors";
 import { netWorthAttribution } from "./attribution";
+import { categoryFlowLabel, categoryFlowSign } from "./category-detail";
+import { dashboardData } from "./dashboard";
 import { netWorthSeries, rebuildAccount } from "./derivation";
 import { forecastCurrentMonth } from "./forecast";
+import { ledgerOpens, ledgerReaches } from "./observation-frontier";
 import { periodActivity } from "./period-activity";
 import { provenanceFor } from "./provenance";
 import { uncategorizedCount } from "./review-count";
 import { spendingSankey } from "./sankey";
-import { cashFlowByPeriod, honestyBuckets, periodTotals } from "./spending";
+import { agentsMoneyRowCount, cashFlowByPeriod, honestyBuckets, periodTotals, spendingEmptyCopy } from "./spending";
 import { matchingTransactionIds } from "./transactions-query";
 
 /**
@@ -60,6 +63,8 @@ const HIS_UNFILED = 4_000;
 const AGENTS_ACH = 2_000;
 /** the agent's Gold fee, filed on the system "Uncategorized" row */
 const AGENTS_GOLD = 500;
+/** money into the agent's cash that nothing has filed — a deposit, in the filing queue and in no Spent */
+const AGENTS_CREDIT = 300;
 
 let dir: string;
 let bundle: DbBundle;
@@ -151,6 +156,17 @@ function opened(href: string): { accountId: string; amountCents: number }[] {
     .all();
 }
 
+/** /spending's empty state over a window, as the page asks for it */
+function emptyState(range: { from: string; to: string }) {
+  return spendingEmptyCopy(bundle.db, range, {
+    today: TODAY,
+    label: "the day",
+    ledgerOpens: ledgerOpens(bundle.db),
+    ledgerReaches: ledgerReaches(bundle.db),
+    formatDay: (iso) => iso,
+  });
+}
+
 const sum = (rows: readonly { amountCents: number }[]) => rows.reduce((s, r) => s + r.amountCents, 0);
 const agents = (rows: readonly { accountId: string }[]) => rows.filter((r) => r.accountId === agentic).length;
 
@@ -223,28 +239,76 @@ describe("the agent's unfiled money out is not his spending", () => {
     expect([panel.total, sum(panel.rows)]).toEqual([1, -HIS_UNFILED]);
     expect(sum(opened(panel.href))).toBe(-HIS_UNFILED);
   });
+
+  /*
+   * 🔴 A day whose only outflow is the agent's unfiled money holds nothing of his, so /spending reads its empty state —
+   * which promised "Uncategorized outflows would show up above, as their own explicit bucket" of the agent's ACH
+   * withdrawal, which shows up nowhere. The bucket it names is his own now, and the agent's money is said to be left out.
+   */
+  test("⛔ a day holding only the agent's unfiled money reads empty, names his own bucket, and says the agent's is left out", () => {
+    const day = { from: "2026-09-18", to: "2026-09-18" };
+    expect(periodTotals(bundle.db, day)).toMatchObject({ spentCents: 0, earnedCents: 0, refundsCents: 0 });
+    expect(honestyBuckets(bundle.db, day).uncategorized.txnCount).toBe(0);
+    expect(agentsMoneyRowCount(bundle.db, day)).toBe(1);
+
+    const copy = emptyState(day);
+    expect(copy.title).toBe("No spending or income in this period");
+    expect(copy.description).toContain("Your own uncategorized outflows would show up above");
+    expect(copy.description).toMatch(/The agent's own account paid or was paid money in this period, and none of it is counted here/);
+  });
+
+  test("the clause counts what the agent's account paid or was paid — and not its transfers, which the copy names already", () => {
+    const day = { from: "2026-09-05", to: "2026-09-05" };
+    // his funding of the agent: a transfer, "not counted here" in the copy's own words
+    post(agentic, day.from, 2_664, "Transfers > Internal Transfer", "Transfer from Wells Fargo");
+    expect(agentsMoneyRowCount(bundle.db, day)).toBe(0);
+    expect(emptyState(day).description).not.toContain("agent");
+    // the agent's dividend is the agent's income, and its Gold fee filed under Fees the agent's cost
+    post(agentic, day.from, 6, "Income > Dividends", "Dividend from SGOV");
+    post(agentic, day.from, -500, "Fees > Bank Fees", "Gold Monthly Fee");
+    expect(agentsMoneyRowCount(bundle.db, day)).toBe(2);
+    expect(emptyState(day).description).toContain("none of it is counted here");
+  });
+
+  test("the rule's own edge: unpaired, the agent's day is his — his own Uncategorized, and no empty state at all", () => {
+    unpair();
+    const day = { from: "2026-09-18", to: "2026-09-18" };
+    expect(agentsMoneyRowCount(bundle.db, day)).toBe(0);
+    expect(honestyBuckets(bundle.db, day).uncategorized.txnCount).toBe(1);
+  });
 });
 
 describe("what is left as it was", () => {
   /*
-   * ⚖️ The decision is about his SPENT. The ledger's Uncategorized filter is the queue the dashboard's "N uncategorized"
-   * opens, and /categories/<Uncategorized> is where a row is filed from — both every account, both signs, until it is
-   * filed. The agent's unfiled rows still need filing, and nothing there says spent.
+   * ⚖️ Session decision 2026-10-06 (the session's, not the owner's): the owner's 2026-10-05 decision is about his SPENT,
+   * and the filing queue is not a Spent figure. The ledger's Uncategorized filter — the queue the dashboard's "N
+   * uncategorized" counts and links to — and /categories/<Uncategorized>, the page a row is filed from, keep every
+   * account's unfiled rows, both signs, until they are filed: that page's headline is a Net of the rows to file. The
+   * agent's unfiled rows still need filing, and nothing there says spent.
    */
-  test("the Uncategorized queue and the Uncategorized category's page still hold the agent's rows, to be filed", async () => {
-    const queue = opened("/transactions?category=uncategorized");
-    expect([queue.length, agents(queue)]).toEqual([3, 2]);
+  test("⚖️ the filing queue keeps the agent's rows, both signs: the dashboard's count and its link, the category's page and its proof", async () => {
+    // the agent's unfiled money IN — a deposit nothing has filed — is a row to file as much as its money out
+    post(agentic, "2026-09-20", AGENTS_CREDIT, null, "ACH Deposit");
+
+    const dashboard = dashboardData(bundle.db, TODAY);
+    const queue = opened(dashboard.uncategorizedHref);
+    expect([dashboard.uncategorizedCount, queue.length, agents(queue)]).toEqual([4, 4, 3]);
     expect(uncategorizedCount(bundle.db)).toBe(queue.length);
 
     const system = catId("Uncategorized");
+    const kind = loadCategoryIndex(bundle.db).topLevelOf(system).kind;
+    // a Net, never a Spent figure
+    expect(categoryFlowLabel(kind)).toBe("Net");
     const page = categorySpending(bundle.db, { categoryId: system, ...SEPT });
-    expect(page).toEqual({ spentCents: HIS_UNFILED + AGENTS_ACH + AGENTS_GOLD, txnCount: 3 });
+    expect(page).toEqual({ spentCents: HIS_UNFILED + AGENTS_ACH + AGENTS_GOLD - AGENTS_CREDIT, txnCount: 4 });
     // its proof measures the rows its headline measured, and its panel and links open them
     const proof = provenanceFor(bundle.db, { kind: "categorySpend", categoryId: system, ...SEPT, label: "Uncategorized" });
-    expect(proof?.headline).toMatch(/^This total is the sum of 3 rows /);
+    expect(proof?.headline).toMatch(/^This total is the sum of 4 rows /);
     const panel = await bucketPanel(system);
-    expect([panel.total, panel.rows.filter((r) => r.accountName === "Robinhood Agentic").length]).toEqual([3, 2]);
-    expect(opened(panel.href).length).toBe(3);
+    expect([panel.total, panel.rows.filter((r) => r.accountName === "Robinhood Agentic").length]).toEqual([4, 3]);
+    // the headline, in the page's own frame, is the sum of the rows it lists — both signs
+    expect(categoryFlowSign(kind) * page.spentCents).toBe(sum(panel.rows));
+    expect(opened(panel.href).length).toBe(4);
   });
 
   test("the net-worth bridge: the agent's unfiled rows sit in Moved, as every unfiled row does, and the window closes", () => {

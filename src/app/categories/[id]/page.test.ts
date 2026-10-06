@@ -53,3 +53,17 @@ describe("every page resolves 'All time' from the ledger's first day", () => {
     for (const { file, call } of fromUrl) expect(call, file).toContain("ledgerFirstDay(db)");
   });
 });
+
+/*
+ * ⚖️ The headline's word is the kind's (`categoryFlowLabel`): "Spent" over an expense category, "Received" over an
+ * income one, "Net" over every other — /categories/<Uncategorized> among them, the filing queue, which keeps the
+ * agent's unfiled rows both signs and is no Spent figure (session decision 2026-10-06, `agents-unfiled.test.ts`).
+ */
+describe("the headline's word is asked of the kind, in one place", () => {
+  const page = fs.readFileSync(path.join(process.cwd(), "src/app/categories/[id]/page.tsx"), "utf8");
+
+  test("the page reads categoryFlowLabel and spells no label of its own", () => {
+    expect(page).toMatch(/const flowLabel = categoryFlowLabel\(header\.kind\);/);
+    expect(page).not.toMatch(/\?\s*"Spent"\s*:/);
+  });
+});

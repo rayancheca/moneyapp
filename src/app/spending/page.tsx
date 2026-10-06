@@ -2,7 +2,6 @@ import type { Metadata } from "next";
 import { getDb } from "@/db/client";
 import { categories } from "@/db/schema/categories";
 import { todayIso } from "@/lib/dates";
-import { emptyPeriodCopy, emptyPeriodReason } from "@/lib/empty-period";
 import { formatDayLong } from "@/lib/format-date";
 import { cashEarningsSectionNotes } from "@/lib/section-notes";
 import { comparedCategories } from "@/lib/compared-categories";
@@ -33,6 +32,7 @@ import {
   honestyBuckets,
   largestTransactions,
   periodComparison,
+  spendingEmptyCopy,
   spendingProjection,
   topMerchants,
   ledgerFirstDay,
@@ -320,27 +320,22 @@ export default async function SpendingPage({
    * nobody has read. The dashboard's pace tile already refuses that ("an em
    * dash, not a $0.00") and links here; `/budgets` refuses to grade the same
    * days. `lib/empty-period` is that refusal, and it still says "measured zero"
-   * where the window really is covered.
+   * where the window really is covered — asked through `spendingEmptyCopy`,
+   * which knows whose money the window holds: his own Uncategorized bucket, and
+   * the agent's money left out (owner decisions 2026-09-28 → 2026-10-05).
    */
   // both ends of the ledger, read once: the empty state and the heatmap ask them
   const opens = ledgerOpens(db);
   const reaches = ledgerReaches(db);
-  const emptyReason = !hasActivity
-    ? emptyPeriodReason({
-        from: range.from,
-        to: range.to,
+  const emptyCopy = hasActivity
+    ? null
+    : spendingEmptyCopy(db, range, {
         today,
+        label: period.label,
         ledgerOpens: opens,
         ledgerReaches: reaches,
-      })
-    : null;
-  const emptyCopy =
-    emptyReason === null
-      ? null
-      : emptyPeriodCopy(emptyReason, period.label, reaches, formatDayLong, {
-          uncategorizedBucket: true,
-          ledgerOpens: opens,
-        });
+        formatDay: formatDayLong,
+      });
 
   return (
     <>

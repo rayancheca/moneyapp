@@ -11,7 +11,13 @@ import { humanizeDescriptionKey, strippedDescriptionKey } from "@/lib/descriptio
 // topMerchants groups on — activeTxnsInRange doesn't select that column
 import { normalizeDescription } from "@/lib/normalize";
 import { comparePeriods, type PeriodComparison } from "@/lib/compared-windows";
-import { daysNotImportedYet, unreachedKind, type UnreachedKind } from "@/lib/empty-period";
+import {
+  daysNotImportedYet,
+  emptyPeriodCopy,
+  emptyPeriodReason,
+  unreachedKind,
+  type UnreachedKind,
+} from "@/lib/empty-period";
 import { subBuckets, type ResolvedPeriod } from "@/lib/period";
 import { alignByIndex, projectPace } from "@/lib/projection";
 import { allocationsFor } from "@/lib/transaction-splits";
@@ -19,7 +25,9 @@ import { NO_MERCHANT, OTHER_SERIES_KEY, UNCATEGORIZED_SERIES_KEY } from "@/lib/l
 import { outsidePortfolioCashAccountIds } from "./accounts";
 import {
   activeTxnsInRange,
+  agentsCostBucket,
   isAgentsCostCategoryRow,
+  isAgentsIncome,
   isHisUnfiledSpending,
   isIncome,
   ledgerHref,
@@ -932,4 +940,59 @@ export function honestyBuckets(db: AppDatabase, range: DateRange): HonestyBucket
       href: ledgerHref({ view: "excluded", from: range.from, to: range.to }),
     },
   };
+}
+
+// ── The empty state ──────────────────────────────────────────────────
+
+/**
+ * How many transactions in a window are the AGENT'S spending or income — the rows `spendingBucket` and `isIncome`
+ * leave out for whose they are (`agentsCostBucket`, `isAgentsIncome`), and only those: what its account paid in an
+ * expense category or unfiled, and what it was paid in an income category. Its transfers are not among them — the
+ * $26.64 he funded it with is a transfer, which /spending's empty state already says it does not count.
+ */
+export function agentsMoneyRowCount(db: AppDatabase, range: DateRange): number {
+  const agentsCash = outsidePortfolioCashAccountIds(db);
+  if (agentsCash.size === 0) return 0;
+  const idx = loadCategoryIndex(db);
+  const ids = activeTxnsInRange(db, range.from, range.to)
+    .filter((t) => agentsCostBucket(idx, agentsCash, t) !== null || isAgentsIncome(idx, agentsCash, t))
+    // distinct transactions — a split row arrives as one part-row per part
+    .map((t) => t.id);
+  return new Set(ids).size;
+}
+
+/**
+ * /spending's empty state: which world its window is in (`emptyPeriodReason`) and the words for it, with the two
+ * clauses this page alone can offer — his own Uncategorized bucket, which the page prints when there is one, and the
+ * agent's money, said to be left out when the window holds some.
+ *
+ * ⚖️ What the agent's own account pays or is paid is none of his spending or income (owner decisions 2026-09-28,
+ * 2026-10-02, 2026-10-05), so a window holding only the agent's money comes here. 🔴 Composed on the page, it read
+ * "Uncategorized outflows would show up above, as their own explicit bucket" over a day whose only outflow was the
+ * agent's unfiled ACH withdrawal — which shows up nowhere — and said nothing of it.
+ */
+export function spendingEmptyCopy(
+  db: AppDatabase,
+  range: DateRange,
+  opts: {
+    today: string;
+    /** the period's own name — "September 2026" */
+    label: string;
+    ledgerOpens: string | null;
+    ledgerReaches: string | null;
+    formatDay: (iso: string) => string;
+  },
+): { title: string; description: string } {
+  const reason = emptyPeriodReason({
+    from: range.from,
+    to: range.to,
+    today: opts.today,
+    ledgerOpens: opts.ledgerOpens,
+    ledgerReaches: opts.ledgerReaches,
+  });
+  return emptyPeriodCopy(reason, opts.label, opts.ledgerReaches, opts.formatDay, {
+    uncategorizedBucket: true,
+    ledgerOpens: opts.ledgerOpens,
+    agentsMoney: agentsMoneyRowCount(db, range) > 0,
+  });
 }

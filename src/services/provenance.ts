@@ -1636,7 +1636,9 @@ function categorySpendProvenance(
    * out of his spending (owner decision 2026-10-05) — the Spent card's proof (`allSpend`) and the honesty card's link
    * leave it out — but `/categories/<Uncategorized>` is the page a row is filed from: its headline is a Net of every
    * row still to file, both signs, the agent's among them (`spendingTransactions`), so this proof counts them too.
-   * Whether that page should list only his is put to him; until then the headline and its proof cannot disagree.
+   * ⚖️ Session decision 2026-10-06 (the session's, not the owner's): that page is the FILING QUEUE and keeps the
+   * agent's unfiled rows — a Net of rows to file, never a Spent figure (`categoryFlowLabel`) — as do the dashboard's
+   * "N uncategorized" and the ledger queue it links to. Pinned in `agents-unfiled.test.ts`, "what is left as it was".
    */
   const kind = idx.topLevelOf(categoryId).kind;
   const his =
