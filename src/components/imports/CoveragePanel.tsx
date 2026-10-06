@@ -1,4 +1,4 @@
-import { beforeFirstBalance, coverageDetail } from "@/lib/coverage-detail";
+import { coverageDetail } from "@/lib/coverage-detail";
 import type { AccountCoverage, CoverageGrade } from "@/services/coverage";
 import { SurfaceCard } from "@/components/ui/SurfaceCard";
 
@@ -46,13 +46,12 @@ export function CoveragePanel({
   /*
    * 🔴 "1 account nothing is checking" over Robinhood Agentic's row, which says it closes to the
    * cent through Aug 31, 2026 and that only the days before its first balance are unchecked
-   * (review, 2026-10-01). The row's own reading decides it (`beforeFirstBalance`): a chain
-   * closes, no unchecked run is open past it, and its only unchecked days come before the first
-   * balance it records.
+   * (review, 2026-10-01). This counted around the grade with the row's own reading.
+   *
+   * ⚖️ His answer, 2026-10-05 (§6A 35): the grade is that reading — those days alone grade an
+   * account `verified` (`accountCoverage`) — so the header counts the grades, as net worth does.
    */
-  const needsAction = rows.filter(
-    (c) => c.grade === "broken" || (c.grade === "unverified" && beforeFirstBalance(c) === null),
-  ).length;
+  const needsAction = rows.filter((c) => c.grade === "broken" || c.grade === "unverified").length;
 
   return (
     <SurfaceCard>

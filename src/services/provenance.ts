@@ -1,5 +1,5 @@
 import { and, asc, count, desc, eq, inArray, lte, gte, ne, sum } from "drizzle-orm";
-import { unverifiedDetail } from "@/lib/coverage-detail";
+import { beforeFirstBalanceDetail, unverifiedDetail } from "@/lib/coverage-detail";
 import { formatDayFull } from "@/lib/format-date";
 import type { AppDatabase } from "@/db/client";
 import { accounts, type AccountType } from "@/db/schema/accounts";
@@ -1115,13 +1115,15 @@ function netWorthProvenance(db: AppDatabase, day: string | undefined): Provenanc
     isEmpty: emptyAccountIds.has(c.accountId),
     detail:
       c.grade === "verified" && c.verifiedThrough
-        ? `adds up through ${readableDay(c.verifiedThrough)}`
+        ? // ⚖️ …with the days before its first balance named when it has any (§6A 35) — after the
+          // verb every verified line here has, his answer of 2026-10-05 — the cards-owed note's too
+          (beforeFirstBalanceDetail(c, readableDay) ?? `adds up through ${readableDay(c.verifiedThrough)}`)
         : c.grade === "broken" && c.brokenSince
           ? `stopped adding up on ${readableDay(c.brokenSince)}`
-          : // an unverified account — his count named as his, the run still open, or the days
-            // before its first balance — is `unverifiedDetail`, which the cards-owed row and its
-            // proof read too. ⚠️ The parenthesis is load-bearing: `??` binds tighter than `?:`,
-            // so without it `unverifiedDetail(…) ?? <test>` would become the chain's condition.
+          : // an unverified account — his count named as his, or the run still open — is
+            // `unverifiedDetail`, which the cards-owed row and its proof read too. ⚠️ The
+            // parenthesis is load-bearing: `??` binds tighter than `?:`, so without it
+            // `unverifiedDetail(…) ?? <test>` would become the chain's condition.
             unverifiedDetail(c, readableDay) ??
             (c.grade === "market_value"
               ? pricedFromHoldings.has(c.accountId)

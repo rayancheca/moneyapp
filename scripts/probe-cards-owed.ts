@@ -27,7 +27,7 @@ for (const r of c.cards) {
     ` ${r.name}${r.last4 ? ` ····${r.last4}` : ""} | owed: ${r.owedCents} | checkedThrough: ${r.checkedThrough}` +
       ` | daysSinceChecked: ${r.daysSinceChecked} | grade: ${r.grade} | verdict: ${r.verdict}` +
       ` | share: ${r.sharePct === null ? "null" : r.sharePct.toFixed(1) + "%"} | shareLabel: ${r.shareLabel}` +
-      ` | caveat: ${r.caveat}` + ` | asOfLabel: ${r.asOfLabel}`,
+      ` | caveat: ${r.caveat}` + ` | note: ${r.note}` + ` | asOfLabel: ${r.asOfLabel}`,
   );
   console.log(`   fees: ${JSON.stringify(r.fees)}`);
 }

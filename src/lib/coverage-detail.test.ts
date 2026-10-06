@@ -2,6 +2,8 @@ import { describe, expect, test } from "vitest";
 import {
   agoPhrase,
   beforeFirstBalance,
+  beforeFirstBalanceClause,
+  beforeFirstBalanceDetail,
   countedDetail,
   countFooting,
   coverageDetail,
@@ -407,9 +409,10 @@ describe("countedDetail — his count in one line", () => {
  * checked through Aug 5, whose export reached back before the first of them (§6A 28 review).
  */
 describe("unverifiedDetail — an unverified account in one line", () => {
-  // checked by statements through Aug 5; Jul 19–24 replayed backwards from the first of them
+  // checked by statements through Aug 5; Jul 19–24 replayed backwards from the first of them —
+  // ⚖️ `verified` since §6A 35: the days before its first balance do not grade it
   const checked: CoverageDetailInput = {
-    grade: "unverified",
+    grade: "verified",
     verifiedThrough: "2026-08-05",
     firstBalanceOn: "2026-07-25",
     firstBalanceIsCount: false,
@@ -431,6 +434,7 @@ describe("unverifiedDetail — an unverified account in one line", () => {
   test("names the run still open, never the first unchecked day the account ever had", () => {
     const withRun = {
       ...checked,
+      grade: "unverified" as const,
       uncheckedSince: "2026-08-08",
       uncheckedRunDays: 3,
       unverifiedDays: 9,
@@ -439,14 +443,18 @@ describe("unverifiedDetail — an unverified account in one line", () => {
   });
 
   test("with no run open, names the checked day and the days before it, and no 'since'", () => {
-    expect(unverifiedDetail(checked, formatDayFull)).toBe(
-      "checked through Aug 5, 2026, and unchecked days before that",
+    // ⚖️ §6A 35: a verified account's line now — in its verified neighbours' verb since his answer
+    // of 2026-10-05 ("adds up through Aug 5, 2026"), the days before its first balance after it
+    expect(beforeFirstBalanceDetail(checked, formatDayFull)).toBe(
+      "adds up through Aug 5, 2026, and unchecked days before that",
     );
+    expect(unverifiedDetail(checked, formatDayFull)).toBeNull();
   });
 
   test("his count comes first, in `countedDetail`'s words", () => {
     const counted = {
       ...checked,
+      grade: "unverified" as const,
       verifiedThrough: null,
       countedOn: "2026-08-01",
       uncheckedSince: "2026-08-04",
@@ -458,10 +466,13 @@ describe("unverifiedDetail — an unverified account in one line", () => {
   });
 
   test("says nothing of another grade, nor 'checked through' a day nothing checked", () => {
-    expect(unverifiedDetail({ ...checked, grade: "verified" }, formatDayFull)).toBeNull();
+    expect(unverifiedDetail(checked, formatDayFull)).toBeNull();
     expect(unverifiedDetail({ ...checked, grade: "broken" }, formatDayFull)).toBeNull();
-    expect(unverifiedDetail({ ...checked, verifiedThrough: null }, formatDayFull)).toBeNull();
-    expect(unverifiedDetail({ ...checked, unverifiedSince: null }, formatDayFull)).toBeNull();
+    // with neither his count nor a run open there is nothing unchecked it rests on: no shape
+    // `accountCoverage` grades `unverified` since §6A 35, and no day to name
+    expect(unverifiedDetail({ ...checked, grade: "unverified" }, formatDayFull)).toBeNull();
+    expect(beforeFirstBalanceDetail({ ...checked, verifiedThrough: null }, formatDayFull)).toBeNull();
+    expect(beforeFirstBalanceDetail({ ...checked, unverifiedSince: null }, formatDayFull)).toBeNull();
   });
 });
 
@@ -611,9 +622,10 @@ describe("the date and the count are about the SAME run", () => {
  * unchecked days before that".
  */
 describe("the days before its first balance are not where it stops closing", () => {
-  // Robinhood Agentic's coverage, as `accountCoverage` gave it on a copy of his ledger, 2026-10-01
+  // Robinhood Agentic's coverage, as `accountCoverage` gave it on a copy of his ledger, 2026-10-01 —
+  // ⚖️ graded `verified` since his answer of 2026-10-05 (§6A 35): those days alone do not grade it
   const agentic: CoverageDetailInput = {
-    grade: "unverified",
+    grade: "verified",
     verifiedThrough: "2026-08-31",
     firstBalanceOn: "2026-06-30",
     firstBalanceIsCount: false,
@@ -676,27 +688,51 @@ describe("the days before its first balance are not where it stops closing", () 
       firstBalanceOn: "2026-06-20",
       firstBalanceIsCount: true,
     });
-    // net worth's line names neither day, so it reads as it did
-    expect(unverifiedDetail(counted, formatDayFull)).toBe(
-      "checked through Aug 31, 2026, and unchecked days before that",
+    // net worth's line names neither day, so it reads as Agentic's does
+    expect(beforeFirstBalanceDetail(counted, formatDayFull)).toBe(
+      "adds up through Aug 31, 2026, and unchecked days before that",
     );
   });
 
-  test("the row and net worth's line read the same days", () => {
+  /*
+   * ⚖️ §6A 35 and 36, 2026-10-05: the grade moved, the words did not. /imports' row says, word for
+   * word, what it said of Agentic as `unverified`, and net worth's line — the trust card's — still
+   * names the days before its first balance, under the grade its balance earns.
+   */
+  test("the row and net worth's line read the same days, and neither calls it unverified", () => {
     expect(beforeFirstBalance(agentic)).toEqual({
       checkedThrough: "2026-08-31",
       firstBalanceOn: "2026-06-30",
       firstBalanceIsCount: false,
     });
-    expect(unverifiedDetail(agentic, formatDayFull)).toBe(
-      "checked through Aug 31, 2026, and unchecked days before that",
+    expect(beforeFirstBalanceDetail(agentic, formatDayFull)).toBe(
+      "adds up through Aug 31, 2026, and unchecked days before that",
     );
+    expect(unverifiedDetail(agentic, formatDayFull)).toBeNull();
+  });
+
+  /*
+   * ⚖️ His answer, 2026-10-05: a verified account's line reads with its verified neighbours' verb.
+   * Net worth said "checked through Aug 31, 2026, and unchecked days before that" of Agentic under
+   * "adds up", where every other verified account reads "adds up through <day>". The clause is what
+   * each surface puts after ITS OWN verified line — net worth's "adds up through", "what you owe"'s
+   * proof "checked through" — so the verb is always the one its neighbours have.
+   */
+  test("the days before its first balance are a clause after the verified line, or nothing", () => {
+    expect(beforeFirstBalanceClause(agentic)).toBe(", and unchecked days before that");
+    expect(beforeFirstBalanceDetail(agentic, formatDayFull)).toBe(
+      `adds up through ${formatDayFull("2026-08-31")}${beforeFirstBalanceClause(agentic)}`,
+    );
+    // none before its first balance, or a run still open: nothing to add
+    expect(beforeFirstBalanceClause({ ...agentic, unverifiedSince: null })).toBe("");
+    expect(beforeFirstBalanceClause({ ...agentic, grade: "unverified", uncheckedSince: "2026-09-01" })).toBe("");
   });
 
   test("a run still open is the run, on both surfaces", () => {
     // Robinhood Cash, the same copy: the run Sep 1–15, and 26 days before its first balance
     const robinhoodCash = {
       ...agentic,
+      grade: "unverified" as const,
       firstBalanceOn: "2023-12-31",
       unverifiedSince: "2023-12-05",
       uncheckedSince: "2026-09-01",
@@ -704,6 +740,7 @@ describe("the days before its first balance are not where it stops closing", () 
       unverifiedDays: 41,
     };
     expect(beforeFirstBalance(robinhoodCash)).toBeNull();
+    expect(beforeFirstBalanceDetail(robinhoodCash, formatDayFull)).toBeNull();
     expect(unverifiedDetail(robinhoodCash, formatDayFull)).toBe("nothing checks it since Sep 1, 2026");
     expect(coverageDetail(robinhoodCash)).toBe(
       "closes to the cent through Aug 31, 2026 (31 days ago); the first day it does not is Sep 1, 2026 — " +
@@ -711,10 +748,13 @@ describe("the days before its first balance are not where it stops closing", () 
     );
   });
 
-  test("his count, or no day before its first balance, is not this reading", () => {
-    // none is reachable through `accountCoverage` with no run open, but the type allows each
-    expect(beforeFirstBalance({ ...agentic, countedOn: "2026-09-01" })).toBeNull();
-    expect(beforeFirstBalance({ ...agentic, grade: "verified" })).toBeNull();
+  test("another grade, or no day before its first balance, is not this reading", () => {
+    // none is reachable through `accountCoverage` with no run open, but the type allows each:
+    // an `unverified` account rests on unchecked days of its own (§6A 35), so it is never this
+    expect(beforeFirstBalance({ ...agentic, grade: "unverified" })).toBeNull();
+    expect(beforeFirstBalance({ ...agentic, grade: "unverified", countedOn: "2026-09-01" })).toBeNull();
+    expect(beforeFirstBalance({ ...agentic, grade: "broken" })).toBeNull();
+    expect(beforeFirstBalance({ ...agentic, uncheckedSince: "2026-09-01", uncheckedRunDays: 15 })).toBeNull();
     expect(beforeFirstBalance({ ...agentic, verifiedThrough: null })).toBeNull();
     expect(beforeFirstBalance({ ...agentic, unverifiedSince: null })).toBeNull();
     expect(beforeFirstBalance({ ...agentic, firstBalanceOn: null })).toBeNull();
@@ -726,7 +766,7 @@ describe("the days before its first balance are not where it stops closing", () 
 /**
  * ⛔ The defect as an invariant: a row that says it closes through one day and names another as
  * the first it does not — or the first past his count — contradicts itself unless the second day
- * is later. Every unverified shape the row words, as `accountCoverage` gives them.
+ * is later. Every shape with unchecked days the row words, as `accountCoverage` gives them.
  */
 describe("no row names a day it stops closing on or before the day it closes through", () => {
   const iso = (day: string): string => {
@@ -755,7 +795,8 @@ describe("no row names a day it stops closing on or before the day it closes thr
     balancesThrough: "2026-09-15",
   };
   const shapes: Record<string, CoverageDetailInput> = {
-    "days before its first balance, nothing open (Robinhood Agentic)": base,
+    // ⚖️ `verified` since §6A 35, and still worded here: its row names the days before its first balance
+    "days before its first balance, nothing open (Robinhood Agentic)": { ...base, grade: "verified" },
     "days before its first balance, and a run open (Robinhood Cash)": {
       ...base,
       firstBalanceOn: "2023-12-31",

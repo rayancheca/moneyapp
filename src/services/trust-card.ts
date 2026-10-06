@@ -116,18 +116,40 @@ export interface TrustDays {
   /** `derivedUnverified + gap` */
   unchecked: number;
   /**
-   * Unchecked days as a percentage of all of them.
+   * The part of `unchecked` a VERIFIED account carries — every one of those days before its first
+   * balance, replayed backwards from it (`beforeFirstBalance` in coverage-detail says why no other).
+   *
+   * ⚖️ His answer, 2026-10-05 (§6A 35): those days alone do not mean nothing is checking an account,
+   * and a verified account's caveat about them is a quiet note. Said in `beforeFirstBalanceNote`, not
+   * in `sentence`.
+   */
+  beforeFirstBalance: number;
+  /** `unchecked - beforeFirstBalance`: the days `sentence` says rest on nothing, and the only ones that warn */
+  restOnNothing: number;
+  /**
+   * `restOnNothing` as a percentage of every day — the share `sentence` prints.
    *
    * ⛔ Null when the ledger has no derived days at all. `0 / 0` is `NaN` and
    * renders as "NaN% of days", which is worse than saying nothing; a ledger
    * with nothing derived has no share to publish.
    */
-  uncheckedSharePct: number | null;
+  restOnNothingSharePct: number | null;
   /**
    * The whole day story in one sentence, written here rather than in the card
    * so the count, the share and the accounts named cannot drift apart.
    */
   sentence: string;
+  /**
+   * The verified accounts' days before their first balance, said quietly — null when there are none.
+   *
+   * 🔴 The footer was the second reader of the count the rows carry, and it still read it the old
+   * way (review of 2deb764): with two accounts that both add up, each with 26 days before its first
+   * statement, the rows' "26 days unchecked" were faint and the sentence under them was amber —
+   * "52 of 208 days of balances (25.0% of them) rest on nothing — 26 in Robinhood Agentic, 26 in
+   * SoFi Savings". On his ledger the amber is Robinhood Cash's and Cash on Hand's, and Agentic's 26
+   * were named among them.
+   */
+  beforeFirstBalanceNote: string | null;
   /**
    * What the carried days are, said out loud — null when there are none.
    *
@@ -251,6 +273,11 @@ function plural(n: number, noun: string): string {
  * balance. The first means nobody has checked; the second means the check
  * FAILED. Folding them into one number would let a real break hide inside a
  * backlog of unimported statements.
+ *
+ * ⚖️ `unchecked` here is `restOnNothing`: a verified account's days before its
+ * first balance are `beforeFirstBalanceNote`'s, so they are neither counted nor
+ * named here — and with nothing else unchecked, the days this says close are
+ * the ones from each account's first balance on (§6A 35).
  */
 function daySentence(
   total: number,
@@ -258,8 +285,13 @@ function daySentence(
   gap: number,
   sharePct: number | null,
   byAccount: readonly { name: string; days: number }[],
+  beforeFirst: number,
 ): string {
   if (total === 0) return "No day of balances has been derived yet, so there is nothing here to check.";
+  if (unchecked === 0 && beforeFirst > 0) {
+    const closing = plural(total - beforeFirst, "day");
+    return `Every one of ${closing} of balances from each account's first balance on rests on a chain that closes.`;
+  }
   if (unchecked === 0) {
     return `Every one of ${plural(total, "day")} of balances rests on a chain that closes.`;
   }
@@ -272,6 +304,25 @@ function daySentence(
       ? " No day provably fails to add up — these are days nobody has checked, not days that broke."
       : ` ${gap.toLocaleString("en-US")} of them provably ${gap === 1 ? "does" : "do"} not add up: the replay missed the next recorded balance.`;
   return `${unchecked.toLocaleString("en-US")} of ${plural(total, "day")} of balances${share} rest on nothing — ${named}.${gapClause}`;
+}
+
+/**
+ * The verified accounts' days before their first balance, in /imports' words for them (§6A 36:
+ * "replayed backwards from it, with nothing earlier to check them against") — and that the balance
+ * does not rest on them, which is why they are said here and not in the sentence above. Null with none.
+ */
+function beforeFirstBalanceNote(byAccount: readonly { name: string; days: number }[]): string | null {
+  if (byAccount.length === 0) return null;
+  const n = byAccount.reduce((sum, a) => sum + a.days, 0);
+  const why =
+    `replayed backwards from it, with nothing earlier to check ${n === 1 ? "it" : "them"} against, ` +
+    `and not ${n === 1 ? "a day" : "days"} its balance rests on.`;
+  if (byAccount.length === 1) {
+    const [only] = byAccount;
+    return `${only!.name}'s ${plural(n, "day")} before its first balance ${n === 1 ? "is" : "are"} unchecked — ${why}`;
+  }
+  const named = byAccount.map((a) => `${a.days.toLocaleString("en-US")} in ${a.name}`).join(", ");
+  return `${plural(n, "day")} before an account's first balance are unchecked — ${named} — ${why}`;
 }
 
 export function trustCard(db: AppDatabase, today: string = todayIso()): TrustCard | null {
@@ -403,20 +454,40 @@ export function trustCard(db: AppDatabase, today: string = todayIso()): TrustCar
     { total: 0, derivedUnverified: 0, gap: 0, carried: 0 },
   );
   const unchecked = tally.derivedUnverified + tally.gap;
+
+  const byMostDays = (of: readonly TrustAccountLine[]) =>
+    of
+      .filter((l) => l.uncheckedDays > 0)
+      .map((l) => ({ name: l.name, days: l.uncheckedDays }))
+      .sort((a, b) => b.days - a.days || a.name.localeCompare(b.name));
+  const uncheckedByAccount = byMostDays(lines);
+  /*
+   * ⚖️ Split by the grade, as the row's tone is (`TrustCard`'s `AccountRow`), so the footer and the
+   * rows read one count one way: a verified account's unchecked days all lie before its first balance.
+   */
+  const verifiedLines = lines.filter((l) => l.grade === "verified");
+  const beforeFirstBalance = verifiedLines.reduce((sum, l) => sum + l.uncheckedDays, 0);
+  const restOnNothing = unchecked - beforeFirstBalance;
+  const restingOnNothing = byMostDays(lines.filter((l) => l.grade !== "verified"));
   // ⛔ the guard, not a formality: an account list with no derived days at all
   // makes this 0 / 0, which is NaN rather than zero
-  const uncheckedSharePct = tally.total === 0 ? null : (unchecked / tally.total) * 100;
-
-  const uncheckedByAccount = lines
-    .filter((l) => l.uncheckedDays > 0)
-    .map((l) => ({ name: l.name, days: l.uncheckedDays }))
-    .sort((a, b) => b.days - a.days || a.name.localeCompare(b.name));
+  const restOnNothingSharePct = tally.total === 0 ? null : (restOnNothing / tally.total) * 100;
 
   const days: TrustDays = {
     ...tally,
     unchecked,
-    uncheckedSharePct,
-    sentence: daySentence(tally.total, unchecked, tally.gap, uncheckedSharePct, uncheckedByAccount),
+    beforeFirstBalance,
+    restOnNothing,
+    restOnNothingSharePct,
+    sentence: daySentence(
+      tally.total,
+      restOnNothing,
+      tally.gap,
+      restOnNothingSharePct,
+      restingOnNothing,
+      beforeFirstBalance,
+    ),
+    beforeFirstBalanceNote: beforeFirstBalanceNote(byMostDays(verifiedLines)),
     carriedNote:
       tally.carried === 0
         ? null

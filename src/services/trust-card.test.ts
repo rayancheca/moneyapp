@@ -10,6 +10,7 @@ import { holdingEvents } from "@/db/schema/holding-events";
 import { institutions } from "@/db/schema/institutions";
 import { transactions } from "@/db/schema/transactions";
 import { VERDICT_PRESENTATION } from "@/lib/provenance-verdict";
+import { rebuildAccount } from "./derivation";
 import { provenanceFor } from "./provenance";
 import { trustCard } from "./trust-card";
 
@@ -137,7 +138,7 @@ describe("trustCard — division guards", () => {
     const card = trustCard(bundle.db, TODAY)!;
 
     expect(card.days.total).toBe(0);
-    expect(card.days.uncheckedSharePct).toBeNull();
+    expect(card.days.restOnNothingSharePct).toBeNull();
     expect(card.days.sentence).not.toMatch(/NaN|Infinity/);
     expect(card.days.sentence).toContain("No day of balances has been derived yet");
   });
@@ -159,8 +160,8 @@ describe("trustCard — division guards", () => {
     const card = trustCard(bundle.db, TODAY)!;
     expect(card.days.total).toBe(2000);
     expect(card.days.unchecked).toBe(1);
-    expect(card.days.uncheckedSharePct).toBeGreaterThan(0);
-    expect(card.days.uncheckedSharePct).toBeLessThan(0.1);
+    expect(card.days.restOnNothingSharePct).toBeGreaterThan(0);
+    expect(card.days.restOnNothingSharePct).toBeLessThan(0.1);
     expect(card.days.sentence).toContain("under 0.1%");
     expect(card.days.sentence).not.toContain("0.0%");
   });
@@ -541,5 +542,130 @@ describe("trustCard — the unchecked days", () => {
     const card = trustCard(bundle.db, TODAY)!;
     expect(card.days.gap).toBe(0);
     expect(card.days.sentence).toContain("No day provably fails to add up");
+  });
+});
+
+/* ── ⚖️ the days before a first balance ───────────────────────────────── */
+
+/*
+ * ⚖️ His answer, 2026-10-05 (§6A 35): days BEFORE an account's first balance — replayed backwards
+ * from it, with nothing earlier to check them against — do not on their own make it one nothing
+ * is checking. Measured on a copy of his ledger: Robinhood Agentic (26 such days, Jun 4–29, first
+ * balance Jun 30, closed through Aug 31, no run open) graded `unverified` on them alone, so net
+ * worth read "3 have nothing checking them" — Cash on Hand, Robinhood Cash and Agentic — of a
+ * balance three reconciled statements stand on. Under his rule only Agentic moves, and it keeps
+ * naming those days. Built through the rebuild, in those three shapes.
+ */
+describe("trustCard — the days before a first balance do not grade an account", () => {
+  function anchorAt(accountId: string, day: string, source: "statement" | "manual"): void {
+    bundle.db
+      .insert(balanceAnchors)
+      .values({ accountId, anchoredOn: day, balanceCents: 500_000, source, createdAt: now(), updatedAt: now() })
+      .run();
+  }
+  /** three statements that agree, the row that funded it before the first, and maybe a later row */
+  function statementAccount(id: string, name: string, laterRow: string | null): void {
+    addAccount(id, name, "checking");
+    for (const day of ["2026-06-30", "2026-07-31", "2026-08-31"]) anchorAt(id, day, "statement");
+    addTxn(id, "2026-06-05");
+    if (laterRow !== null) addTxn(id, laterRow);
+    rebuildAccount(bundle.db, id, "2026-09-15");
+  }
+
+  test("Robinhood Agentic adds up, still named with its unchecked days; two have nothing checking them", () => {
+    statementAccount("agentic", "Robinhood Agentic", null);
+    // a run open past its newest statement, as Robinhood Cash's is from Sep 1
+    statementAccount("rh-cash", "Robinhood Cash", "2026-09-05");
+    // his count, and a row he entered after it
+    addAccount("coh", "Cash on Hand", "checking");
+    anchorAt("coh", "2026-08-03", "manual");
+    addTxn("coh", "2026-08-11");
+    rebuildAccount(bundle.db, "coh", "2026-09-15");
+
+    const nw = provenanceFor(bundle.db, { kind: "netWorth", day: "2026-10-01" })!;
+    expect(nw.headline).toContain("1 of 3 accounts add up against a document, 2 have nothing checking them.");
+    const card = trustCard(bundle.db, "2026-10-01")!;
+    expect(card.headline).toBe("1 of 3");
+    // most unchecked days first: 37 (26 before its first balance, 11 open) and 36 since Aug 11
+    expect(groupOf(card, "unverified")!.accounts.map((a) => a.name)).toEqual(["Robinhood Cash", "Cash on Hand"]);
+    expect(groupOf(card, "verified")!.accounts).toEqual([
+      expect.objectContaining({
+        name: "Robinhood Agentic",
+        verdict: "derived",
+        detail: "adds up through Aug 31, 2026, and unchecked days before that",
+        uncheckedDays: 26,
+      }),
+    ]);
+  });
+
+  /*
+   * ⚖️ His answer, 2026-10-05: its line reads with its group's verb. Under "adds up" Agentic read
+   * "checked through Aug 31, 2026, and unchecked days before that" beside "adds up through Aug 31,
+   * 2026" of an account the same statements check — two verbs for one fact in one list.
+   */
+  test("under 'adds up', its line has its neighbours' verb, and only the days before set it apart", () => {
+    statementAccount("agentic", "Robinhood Agentic", null);
+    // the same three statements, and no row before the first of them: a charge and its refund in July
+    addAccount("twin", "Twin", "checking");
+    for (const day of ["2026-06-30", "2026-07-31", "2026-08-31"]) anchorAt("twin", day, "statement");
+    addTxn("twin", "2026-07-10", { cents: -1_234 });
+    addTxn("twin", "2026-07-15", { cents: 1_234 });
+    rebuildAccount(bundle.db, "twin", "2026-09-15");
+
+    const verified = groupOf(trustCard(bundle.db, "2026-10-01")!, "verified")!.accounts;
+    const lineOf = (name: string) => verified.find((a) => a.name === name)!.detail;
+    expect(lineOf("Twin")).toBe("adds up through Aug 31, 2026");
+    expect(lineOf("Robinhood Agentic")).toBe(`${lineOf("Twin")}, and unchecked days before that`);
+  });
+
+  /*
+   * 🔴 The footer was the second reader of the same count, and it still read it the old way (review of
+   * 2deb764): every account's unchecked days went into one sentence — "… rest on nothing — 37 in
+   * Robinhood Cash, 36 in Cash on Hand, 26 in Robinhood Agentic" — painted amber, while Agentic's row
+   * above it carried the same 26 quietly under "adds up". A verified account's days, every one before
+   * its first balance, are a note of their own now; the sentence counts and names the rest.
+   */
+  test("the footer's sentence names what nothing checks; a verified account's days before are a note", () => {
+    statementAccount("agentic", "Robinhood Agentic", null);
+    statementAccount("rh-cash", "Robinhood Cash", "2026-09-05");
+    addAccount("coh", "Cash on Hand", "checking");
+    anchorAt("coh", "2026-08-03", "manual");
+    addTxn("coh", "2026-08-11");
+    rebuildAccount(bundle.db, "coh", "2026-09-15");
+
+    const { days } = trustCard(bundle.db, "2026-10-01")!;
+    // every unchecked day is still counted: the identity `derivedUnverified + gap` holds
+    expect(days.unchecked).toBe(26 + 37 + 36);
+    expect(days.beforeFirstBalance).toBe(26);
+    expect(days.restOnNothing).toBe(37 + 36);
+    expect(days.restOnNothingSharePct).toBeCloseTo((73 / days.total) * 100, 10);
+    expect(days.sentence).toContain(
+      `73 of ${days.total} days of balances (${((73 / days.total) * 100).toFixed(1)}% of them) rest on nothing — ` +
+        "37 in Robinhood Cash, 36 in Cash on Hand.",
+    );
+    expect(days.sentence).not.toContain("Robinhood Agentic");
+    expect(days.beforeFirstBalanceNote).toBe(
+      "Robinhood Agentic's 26 days before its first balance are unchecked — replayed backwards from it, " +
+        "with nothing earlier to check them against, and not days its balance rests on.",
+    );
+  });
+
+  test("with every account adding up, nothing rests on nothing: the days before are the note alone", () => {
+    statementAccount("agentic", "Robinhood Agentic", null);
+    statementAccount("sofi", "SoFi Savings", null);
+
+    const card = trustCard(bundle.db, "2026-10-01")!;
+    expect(card.groups.map((g) => g.grade)).toEqual(["verified"]);
+    const { days } = card;
+    expect(days.unchecked).toBe(52);
+    expect(days.restOnNothing).toBe(0);
+    expect(days.sentence).toBe(
+      `Every one of ${days.total - 52} days of balances from each account's first balance on rests on a chain ` +
+        "that closes.",
+    );
+    expect(days.beforeFirstBalanceNote).toBe(
+      "52 days before an account's first balance are unchecked — 26 in Robinhood Agentic, 26 in SoFi Savings — " +
+        "replayed backwards from it, with nothing earlier to check them against, and not days its balance rests on.",
+    );
   });
 });

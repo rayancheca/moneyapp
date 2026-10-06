@@ -367,6 +367,7 @@ describe("how fresh the number is", () => {
     twoCards();
     const card = cardsOwedCard(bundle.db, TODAY)!;
     expect(card.cards.every((c) => c.caveat === null)).toBe(true);
+    expect(card.cards.every((c) => c.note === null)).toBe(true);
     expect(card.provenance.verdict).toBe("derived");
     expect(card.provenance.badgeWord).toBe("2 of 2 add up");
     expect(card.provenance.checkedThrough).toBe("2026-07-20");
@@ -826,9 +827,10 @@ describe("a card whose export reaches back before its first statement balance", 
     statementCard();
     rebuildAccount(bundle.db, "acct-alpha", TODAY);
 
-    // the shape: days before the first statement unchecked, nothing unchecked past the newest
+    // the shape: days before the first statement unchecked, nothing unchecked past the newest —
+    // ⚖️ `verified` since §6A 35, and the row and net worth still name those days, in the same words
     expect(coverageOf()).toMatchObject({
-      grade: "unverified",
+      grade: "verified",
       unverifiedSince: "2026-07-19",
       uncheckedSince: null,
     });
@@ -836,10 +838,15 @@ describe("a card whose export reaches back before its first statement balance", 
     const alpha = card.cards[0]!;
     expect(alpha.checkedThrough).toBe("2026-08-05");
     expect(card.explanation).toBe("Across 1 card, all as of Aug 5 — 5 days ago.");
-    expect(netWorthLine()).toBe("checked through Aug 5, 2026, and unchecked days before that");
-    expect(alpha.caveat).toBe("checked through Aug 5 — 5 days ago, and unchecked days before that");
+    // ⚖️ his answers of 2026-10-05: net worth's line has its verified neighbours' verb, and the row
+    // names those days as a quiet note — nothing to warn of, so no caveat. One card is one date, the
+    // sentence's, so the note leaves it there (the card's rule; see "when every card shares one date")
+    expect(netWorthLine()).toBe("adds up through Aug 5, 2026, and unchecked days before that");
+    expect(alpha.caveat).toBeNull();
+    expect(alpha.note).toBe("unchecked days before its first balance");
     // 🔴 the proof's line read "$200.00 owed, checked through Aug 5 — 5 days ago": it took the
-    // row's caveat only for a card nothing checked, so a checked card's never said net worth's words
+    // row's caveat only for a card nothing checked, so a checked card's never said net worth's words.
+    // ⚖️ It names those days after the verb its own verified lines have ("checked through").
     expect(card.provenance.inputs[0]!.detail).toBe(
       "$200.00 owed, checked through Aug 5 — 5 days ago, and unchecked days before that",
     );
@@ -904,14 +911,87 @@ describe("a card whose export reaches back before its first statement balance", 
   });
 
   /*
+   * ⚖️ His answer, 2026-10-05 (§6A 35): the days before its first statement do not on their own
+   * make it a card nothing is checking. The badge asked about `unverifiedSince` — a day replayed
+   * backwards from the Jul 25 statement — so it read "unverified" of a $200.00 the Aug 5 statement
+   * printed, beside a net worth that now counts the card as adding up. Its badge is the one a twin
+   * with the same statements and no charge before them wears; its row still names those days.
+   */
+  test("with nothing open past its last statement, it wears the badge its statements earn", () => {
+    statementCard();
+    addAccount("acct-twin", "Twin", "credit", { last4: "2222" });
+    addAnchor("acct-twin", "2026-07-25", -18_000, "statement");
+    addAnchor("acct-twin", "2026-08-05", -20_000, "statement");
+    addTxn("acct-twin", "2026-08-01", -2_000);
+    rebuildAccount(bundle.db, "acct-alpha", TODAY);
+    rebuildAccount(bundle.db, "acct-twin", TODAY);
+
+    const card = cardsOwedCard(bundle.db, TODAY)!;
+    const alpha = card.cards.find((c) => c.name === "Alpha")!;
+    const twin = card.cards.find((c) => c.name === "Twin")!;
+    expect(netWorthOf().verdict).toBe("derived");
+    expect(alpha.grade).toBe("verified");
+    expect(alpha.verdict).toBe(twin.verdict);
+    expect(card.provenance.badgeWord).toBe("2 of 2 add up");
+    // ⚖️ his answer of 2026-10-05: nothing to warn of on either, and those days a quiet note on its
+    // row — without the Aug 5 both share, which the sentence under the headline says once
+    expect(alpha.caveat).toBeNull();
+    expect(twin.caveat).toBeNull();
+    expect(alpha.note).toBe("unchecked days before its first balance");
+    expect(twin.note).toBeNull();
+    // …and in the proof, after the verb its twin's line has
+    const proofLine = (label: string) => card.provenance.inputs.find((i) => i.label.startsWith(label))!.detail;
+    expect(proofLine("Twin")).toBe("$200.00 owed, checked through Aug 5 — 5 days ago");
+    expect(proofLine("Alpha")).toBe(`${proofLine("Twin")}, and unchecked days before that`);
+  });
+
+  /*
+   * 🔴 The card's own rule (`CardsOwedCard`): when every row shares one date, "the sentence under
+   * the headline says it once and the rows stay quiet" — so `asOfLabel` is cleared, and the note
+   * kept it. Under "Across 2 cards, all as of Aug 5 — 5 days ago." Alpha's row, the one row not
+   * quiet, read "adds up through Aug 5 — 5 days ago, and unchecked days before that": the column's
+   * date a second time. With the date the column's, the note says only the days, in /imports' words
+   * for them; with dates that differ it keeps his words of 2026-10-05, date and all.
+   */
+  test("when every card shares one date the note leaves it to the sentence; when they differ, keeps it", () => {
+    statementCard();
+    addAccount("acct-twin", "Twin", "credit", { last4: "2222" });
+    addAnchor("acct-twin", "2026-07-25", -18_000, "statement");
+    addAnchor("acct-twin", "2026-08-05", -20_000, "statement");
+    addTxn("acct-twin", "2026-08-01", -2_000);
+    rebuildAccount(bundle.db, "acct-alpha", TODAY);
+    rebuildAccount(bundle.db, "acct-twin", TODAY);
+    const alphaOf = (card: NonNullable<ReturnType<typeof cardsOwedCard>>) =>
+      card.cards.find((c) => c.name === "Alpha")!;
+
+    const shared = cardsOwedCard(bundle.db, TODAY)!;
+    expect(shared.sharedCheckedThrough).toBe("2026-08-05");
+    expect(shared.explanation).toBe("Across 2 cards, all as of Aug 5 — 5 days ago.");
+    expect(alphaOf(shared).asOfLabel).toBeNull();
+    expect(alphaOf(shared).note).toBe("unchecked days before its first balance");
+    expect(alphaOf(shared).note).not.toContain("Aug 5");
+
+    // a third card whose last statement closed Jul 31: the dates differ, so each row carries its own
+    addAccount("acct-gamma", "Gamma", "credit", { last4: "3333" });
+    addAnchor("acct-gamma", "2026-07-01", -10_000, "statement");
+    addAnchor("acct-gamma", "2026-07-31", -12_000, "statement");
+    addTxn("acct-gamma", "2026-07-15", -2_000);
+    rebuildAccount(bundle.db, "acct-gamma", TODAY);
+
+    const differ = cardsOwedCard(bundle.db, TODAY)!;
+    expect(differ.sharedCheckedThrough).toBeNull();
+    expect(alphaOf(differ).asOfLabel).toBe("Aug 5 — 5 days ago");
+    expect(alphaOf(differ).note).toBe("adds up through Aug 5 — 5 days ago, and unchecked days before that");
+  });
+
+  /*
    * ⛔ One rule for every shape: the row's badge is net worth's verdict for the account, and the
    * row's line in the proof is its figure and the row's own sentence. Asking the badge about the
    * open run instead (`uncheckedSince`, the field the caveat dates from) would have fixed nothing
-   * here and made the prehistory-only card "on a statement" beside net worth's "unverified".
+   * here. A card with nothing open past its last statement is `verified` since §6A 35 (above).
    */
   test.each([
     { shape: "a run open past its last statement", between: -2_000, later: true },
-    { shape: "nothing open past its last statement", between: -2_000, later: false },
     { shape: "a statement the replay misses", between: -1_000, later: false },
   ])("$shape: the badge is net worth's, the proof line the row's own sentence", ({ between, later }) => {
     statementCard(between);

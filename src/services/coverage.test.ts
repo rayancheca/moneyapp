@@ -453,6 +453,87 @@ describe("uncheckedSince — the run a 'since' date is actually about", () => {
   });
 });
 
+/** Robinhood Agentic's shape on his ledger: three statements that agree, and the Jun 5 row that funded it. */
+function addAgentic(): string {
+  const id = addAccount("a-agentic", "Robinhood Agentic", "checking");
+  addAnchorRow(id, "2026-06-30", "statement");
+  addAnchorRow(id, "2026-07-31", "statement");
+  addAnchorRow(id, "2026-08-31", "statement");
+  addTxn(id, "2026-06-05");
+  rebuildAccount(bundle.db, id, "2026-09-15");
+  return id;
+}
+
+/*
+ * ⚖️ His answer, 2026-10-05 (§6A 35): days BEFORE an account's first balance — replayed backwards
+ * from it, with nothing earlier to check them against — do not on their own make it an account
+ * "nothing is checking". Robinhood Agentic (26 such days, Jun 4–29; first balance the Jun 30
+ * statement; closes through Aug 31; no run open) graded `unverified` on them alone, so /imports'
+ * header read "3 accounts nothing is checking" and net worth "3 have nothing checking them" of a
+ * balance three reconciled statements stand on. The grade reads the days the balance RESTS on.
+ *
+ * ⛔ What must not move with it: a run open past the first balance, a first balance of his that
+ * nothing closes, and an account with no first balance at all are still unchecked, and
+ * `unverifiedSince` is still the first unchecked day it ever had.
+ */
+describe("⚖️ the days before its first balance do not grade it (§6A 35)", () => {
+  test("a run open past its first balance still leaves it unverified", () => {
+    const id = addAgentic();
+    addTxn(id, "2026-09-05");
+    rebuildAccount(bundle.db, id, "2026-09-15");
+
+    const c = accountCoverage(bundle.db, "2026-10-01").find((a) => a.accountId === id)!;
+    expect(c).toMatchObject({
+      grade: "unverified",
+      verifiedThrough: "2026-08-31",
+      firstBalanceOn: "2026-06-30",
+      unverifiedSince: "2026-06-04",
+      uncheckedSince: "2026-09-05",
+      uncheckedRunDays: 11,
+    });
+    expect(c.days.derived_unverified).toBe(37);
+  });
+
+  test("his count first, with nothing closing after it, is still his word and nothing else", () => {
+    const id = addAccount("a-count-only", "Wallet", "checking");
+    addTxn(id, "2026-06-05");
+    addManualAnchor(bundle.db, { accountId: id, anchoredOn: "2026-06-20", enteredCents: 500_000 });
+    rebuildAccount(bundle.db, id, "2026-07-15");
+
+    const c = accountCoverage(bundle.db, "2026-07-15").find((a) => a.accountId === id)!;
+    expect(c).toMatchObject({
+      grade: "unverified",
+      verifiedThrough: null,
+      firstBalanceOn: "2026-06-20",
+      firstBalanceIsCount: true,
+      countedOn: "2026-06-20",
+      unverifiedSince: "2026-06-04",
+      uncheckedSince: null,
+    });
+  });
+
+  // ⚠️ an opening kept from a statement he un-imported records no first balance; nothing closes
+  // either, so `closed.size === 0` grades it too (a mutation of one rule alone does not fail this)
+  test("with no first balance, every unchecked day is one the balance rests on", () => {
+    const c = runCoverage([
+      { day: "2026-01-01", basis: "derived_unverified" },
+      { day: "2026-01-02", basis: "derived_unverified" },
+    ]);
+    expect(c.firstBalanceOn).toBeNull();
+    expect(c.grade).toBe("unverified");
+  });
+
+  test("a gap still breaks it, whatever came before its first balance", () => {
+    const c = runCoverage([
+      { day: "2026-01-01", basis: "derived_unverified" },
+      { day: "2026-01-02", basis: "anchored" },
+      { day: "2026-01-03", basis: "gap" },
+      { day: "2026-01-04", basis: "anchored" },
+    ]);
+    expect(c.grade).toBe("broken");
+  });
+});
+
 describe("a statement first — where the days before its first balance end", () => {
   /*
    * 🔴 /imports read "closes to the cent through Aug 31, 2026 (31 days ago); the first day it
@@ -462,17 +543,12 @@ describe("a statement first — where the days before its first balance end", ()
    * lib/coverage-detail.test.ts is a shape the rebuild produces.
    */
   test("Robinhood Agentic's shape: unchecked only before its first balance, nothing open", () => {
-    const id = addAccount("a-agentic", "Robinhood Agentic", "checking");
-    // three statement balances that agree, and the one row: the transfer that funded it
-    addAnchorRow(id, "2026-06-30", "statement");
-    addAnchorRow(id, "2026-07-31", "statement");
-    addAnchorRow(id, "2026-08-31", "statement");
-    addTxn(id, "2026-06-05");
-    rebuildAccount(bundle.db, id, "2026-09-15");
+    const id = addAgentic();
 
     const c = accountCoverage(bundle.db, "2026-10-01").find((a) => a.accountId === id)!;
     expect(c).toMatchObject({
-      grade: "unverified",
+      // ⚖️ §6A 35: its balance rests on three statements that close; the days before them do not grade it
+      grade: "verified",
       verifiedThrough: "2026-08-31",
       chainOpensOn: "2026-06-30",
       firstBalanceOn: "2026-06-30",
@@ -519,7 +595,8 @@ describe("firstBalanceOn — the balance the days before it are replayed from", 
     const id = countedFirst(false);
     const c = accountCoverage(bundle.db, "2026-10-01").find((a) => a.accountId === id)!;
     expect(c).toMatchObject({
-      grade: "unverified",
+      // ⚖️ §6A 35: statements close from Jun 30; the days before his count do not grade it
+      grade: "verified",
       verifiedThrough: "2026-08-31",
       chainOpensOn: "2026-06-30",
       firstBalanceOn: "2026-06-20",
