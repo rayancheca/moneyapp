@@ -1,11 +1,6 @@
 import { and, asc, eq, inArray } from "drizzle-orm";
 import { apportionPercents } from "@/lib/apportion";
-import {
-  beforeFirstBalance,
-  beforeFirstBalanceClause,
-  beforeFirstBalanceDetail,
-  unverifiedDetail,
-} from "@/lib/coverage-detail";
+import { beforeFirstBalance, beforeFirstBalanceClause, unverifiedDetail } from "@/lib/coverage-detail";
 import type { AppDatabase } from "@/db/client";
 import { transactions } from "@/db/schema/transactions";
 import { diffDays, todayIso } from "@/lib/dates";
@@ -166,9 +161,9 @@ export interface CardOwedLine {
   caveat: string | null;
   /**
    * A quiet line about a clean chain, in the tone the row's date has, or null: a `verified` card's
-   * days before its first statement, in net worth's words for it (`beforeFirstBalanceDetail`) — or,
-   * when every card shares one date and the sentence says it, those days alone (`noteFor`). Never
-   * set beside a `caveat` — a card with something to warn of is not `verified`.
+   * days before its first statement, those days alone — the date is the sentence's or `asOfLabel`'s,
+   * said once (`noteFor`). Never set beside a `caveat` — a card with something to warn of is not
+   * `verified`.
    *
    * ⚖️ His answer, 2026-10-05: a quiet note, not the amber warning. It was the `caveat` (§6A 35), so
    * a card both its statements check, counted as adding up, read in the colour of "nothing checks it
@@ -364,24 +359,24 @@ function caveatFor(cov: AccountCoverage | undefined, today: string): string | nu
 }
 
 /**
- * The row's quiet line, or null: a `verified` card's days before its first statement, named as net
- * worth names them (`beforeFirstBalanceDetail`) in this card's dates — "adds up through Aug 5 — 5
- * days ago, and unchecked days before that".
+ * The row's quiet line, or null: a `verified` card's days before its first statement, in /imports'
+ * words for them ("the 26 days before its first balance") — "unchecked days before its first balance".
  *
- * ⚖️ His answer, 2026-10-05: a quiet note in the tone the verified rows use, not the amber warning,
- * and in net worth's verb for a verified account. Every other grade says what is wrong in `caveatFor`.
+ * ⚖️ His answer, 2026-10-05: a quiet note in the tone the verified rows use, not the amber warning.
+ * Every other grade says what is wrong in `caveatFor`.
  *
- * 🔴 …and the date is the card's to place, by its own rule (`priceColumnAge`'s): when every card
- * shares one, "the sentence under the headline says it once and the rows stay quiet". `asOfLabel`
- * followed it and this did not, so under "Across 2 cards, all as of Aug 5 — 5 days ago." the one row
- * not quiet said "adds up through Aug 5 — 5 days ago" again. With the date the column's (`columnDated`)
- * the note names only the days, in /imports' words for them ("the 26 days before its first balance").
- * The reading is still `beforeFirstBalance`, so the two forms cannot disagree about which card.
+ * 🔴 The date is the card's to place, by its own rule (`priceColumnAge`'s): said once — by the
+ * sentence under the headline when every card shares it, else by the row's own line (`asOfLabel`).
+ * The note took net worth's line, date and all ("adds up through Aug 5 — 5 days ago, and unchecked
+ * days before that"), and said the date a second time either way: under "Across 2 cards, all as of
+ * Aug 5 — 5 days ago." in the one row not quiet, and under the row's own "Aug 5 — 5 days ago" when
+ * the dates differ. These days need a day the card is checked through (`beforeFirstBalance` reads
+ * `verifiedThrough`, the row's `checkedThrough`), so the sentence or the row's line always says it,
+ * and the note never does. The proof keeps its line (`composedProvenance`): there the date is its own.
  */
-function noteFor(cov: AccountCoverage | undefined, today: string, columnDated: boolean): string | null {
-  if (cov === undefined) return null;
-  if (!columnDated) return beforeFirstBalanceDetail(cov, (day) => dated(day, today));
-  return beforeFirstBalance(cov) === null ? null : "unchecked days before its first balance";
+function noteFor(cov: AccountCoverage | undefined): string | null {
+  if (cov === undefined || beforeFirstBalance(cov) === null) return null;
+  return "unchecked days before its first balance";
 }
 
 interface FeeCategories {
@@ -741,8 +736,8 @@ export function cardsOwedCard(db: AppDatabase, today: string = todayIso()): Card
           ? null
           : dated(c.checkedThrough, today),
       caveat: c.caveat,
-      // the same rule for the note's date: the column's when every card shares it (`noteFor`)
-      note: noteFor(coverageById.get(c.accountId), today, sharedCheckedThrough !== null),
+      // the same rule for the note: its date is the sentence's or the line above's, never its own (`noteFor`)
+      note: noteFor(coverageById.get(c.accountId)),
       fees: feeLine(feesByAccount.get(c.accountId) ?? [], cats?.annualIds ?? new Set(), today),
     }))
     .sort((a, b) => (b.owedCents ?? -Infinity) - (a.owedCents ?? -Infinity) || a.name.localeCompare(b.name));

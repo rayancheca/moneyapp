@@ -297,9 +297,9 @@ export function beforeFirstBalanceClause(c: UnverifiedFields): string {
 
 /**
  * `beforeFirstBalance` in one line — net worth's line for a `verified` account with days before its
- * first balance, which the trust card prints, and the dashboard card's quiet note under its row when
- * the row carries its own date — or null when it has none. /imports says the same days at length
- * (`beforeRow`).
+ * first balance, which the trust card prints — or null when it has none. /imports says the same days
+ * at length (`beforeRow`); "what you owe"'s note says them without the date, which its card says once
+ * (`cards-owed.ts` `noteFor`).
  *
  * ⚖️ His answer, 2026-10-05: in the verb of the verified accounts beside it, "adds up through Aug 31,
  * 2026, and unchecked days before that". It kept the words `unverifiedDetail` gave the account while
