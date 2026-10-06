@@ -951,9 +951,14 @@ describe("a card whose export reaches back before its first statement balance", 
    * kept it. Under "Across 2 cards, all as of Aug 5 — 5 days ago." Alpha's row, the one row not
    * quiet, read "adds up through Aug 5 — 5 days ago, and unchecked days before that": the column's
    * date a second time. With the date the column's, the note says only the days, in /imports' words
-   * for them; with dates that differ it keeps his words of 2026-10-05, date and all.
+   * for them.
+   *
+   * 🔴 …and with dates that differ, the row's own line says it. Alpha's row read "Aug 5 — 5 days
+   * ago" and under it "adds up through Aug 5 — 5 days ago, and unchecked days before that": the
+   * date twice in one row. A verified card's date is always on the card — the sentence's or its own
+   * line — so the note never carries it. The proof keeps its line: there the date is the line's own.
    */
-  test("when every card shares one date the note leaves it to the sentence; when they differ, keeps it", () => {
+  test("the note never repeats the date: the sentence says a shared one, the row's line its own", () => {
     statementCard();
     addAccount("acct-twin", "Twin", "credit", { last4: "2222" });
     addAnchor("acct-twin", "2026-07-25", -18_000, "statement");
@@ -981,7 +986,12 @@ describe("a card whose export reaches back before its first statement balance", 
     const differ = cardsOwedCard(bundle.db, TODAY)!;
     expect(differ.sharedCheckedThrough).toBeNull();
     expect(alphaOf(differ).asOfLabel).toBe("Aug 5 — 5 days ago");
-    expect(alphaOf(differ).note).toBe("adds up through Aug 5 — 5 days ago, and unchecked days before that");
+    expect(alphaOf(differ).note).toBe("unchecked days before its first balance");
+    expect(alphaOf(differ).note).not.toContain("Aug 5");
+    // the proof's line stands beside its neighbours' "checked through …": its date stays in it
+    expect(differ.provenance.inputs.find((i) => i.label.startsWith("Alpha"))!.detail).toBe(
+      "$200.00 owed, checked through Aug 5 — 5 days ago, and unchecked days before that",
+    );
   });
 
   /*

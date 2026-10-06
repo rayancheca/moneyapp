@@ -40,8 +40,17 @@ afterEach(() => {
 
 const now = () => new Date().toISOString();
 
-/** Statements close at $180.00 on Jul 25 and $200.00 on Aug 5; the Aug 1 charge closes the gap. */
-function statementCard(id: string, name: string, last4: string, rows: { day: string; cents: number }[]): void {
+/**
+ * Statements close at $180.00 on Jul 25 and $200.00 on Aug 5 — or on `lastClose`, no earlier than
+ * Aug 1 — and the Aug 1 charge closes the gap.
+ */
+function statementCard(
+  id: string,
+  name: string,
+  last4: string,
+  rows: { day: string; cents: number }[],
+  lastClose = "2026-08-05",
+): void {
   bundle.db
     .insert(accounts)
     .values({
@@ -59,7 +68,7 @@ function statementCard(id: string, name: string, last4: string, rows: { day: str
     .run();
   const statements = [
     { day: "2026-07-25", cents: -18_000 },
-    { day: "2026-08-05", cents: -20_000 },
+    { day: lastClose, cents: -20_000 },
   ];
   for (const s of statements) {
     bundle.db
@@ -126,4 +135,25 @@ test("a verified card's days before its first statement are quiet; a card nothin
 
   const warning = classOfSpan(markup, "nothing checks it since Aug 8 — 2 days ago");
   expect(warning).toContain("text-warning");
+});
+
+/*
+ * 🔴 The card's rule, its other half: when the dates differ, each row carries its own — and the note
+ * carried it again. Alpha's row read "Aug 5 — 5 days ago" and under it "adds up through Aug 5 — 5
+ * days ago, and unchecked days before that": one date, twice, in one row. A verified card's date is
+ * always on the card, the sentence's or its row's, so the note names only the days.
+ */
+test("a row with a date line of its own says that date once", () => {
+  statementCard("acct-alpha", "Alpha", "1111", [{ day: "2026-07-20", cents: -1_000 }]);
+  // Gamma's last statement closed Aug 1: the dates differ, so each row carries its own
+  statementCard("acct-gamma", "Gamma", "3333", [], "2026-08-01");
+
+  const card = cardsOwedCard(bundle.db, TODAY)!;
+  expect(card.sharedCheckedThrough).toBeNull();
+  const markup = renderToStaticMarkup(createElement(CardsOwedCard, { data: card }));
+
+  const alphaRow = /<dt[^>]*>((?:(?!<\/dt>).)*Alpha(?:(?!<\/dt>).)*)<\/dt>/s.exec(markup)?.[1] ?? "";
+  expect(classOfSpan(alphaRow, "Aug 5 — 5 days ago")).toContain("text-ink-faint");
+  expect(alphaRow.split("Aug 5").length - 1).toBe(1);
+  expect(classOfSpan(alphaRow, "unchecked days before its first balance")).toContain("text-ink-faint");
 });
