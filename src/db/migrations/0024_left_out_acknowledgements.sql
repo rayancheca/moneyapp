@@ -8,5 +8,6 @@ CREATE TABLE `left_out_acknowledgements` (
 	`description` text NOT NULL,
 	`acknowledged_on` text NOT NULL,
 	`reason` text NOT NULL,
-	`created_at` text NOT NULL
+	`created_at` text NOT NULL,
+	CONSTRAINT "left_out_acknowledgements_reason_says_something" CHECK(trim("left_out_acknowledgements"."reason", char(9, 10, 11, 12, 13, 32)) <> '')
 );

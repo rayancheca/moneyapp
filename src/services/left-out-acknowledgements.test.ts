@@ -64,6 +64,25 @@ describe("the acknowledgements a ledger keeps (`left_out_acknowledgements`)", ()
     expect(() => insert.run(WF)).toThrow(/NOT NULL constraint failed: left_out_acknowledgements\.reason/);
   });
 
+  /*
+   * 🔴 "Never blank" was the writer's alone: a raw INSERT with reason '   ' was stored, and ledger-check printed
+   * "Acknowledged on 2026-10-05:    " — a check quieted. The table refuses it now, whoever writes.
+   */
+  test("⛔ the table refuses a reason that says nothing, from a raw INSERT too", () => {
+    const insert = bundle.sqlite.prepare(
+      "INSERT INTO left_out_acknowledgements (id, account_id, printed_on, amount_cents, printed_words, printer_sha256, " +
+        "description, acknowledged_on, reason, created_at) VALUES (?, ?, '2026-07-27', 2500, 'W', 'S', 'D', '2026-10-05', ?, 'T')",
+    );
+    const refused = /CHECK constraint failed: left_out_acknowledgements_reason_says_something/;
+    for (const [i, reason] of ["", "   ", "\n\t", " \r\n ", "\v\f "].entries()) {
+      expect(() => insert.run(`blank-${i}`, WF, reason)).toThrow(refused);
+    }
+    expect(readLeftOutAcknowledgements(bundle.db)).toEqual([]);
+    // what the session read, padded or not, is a reason
+    insert.run("read", WF, " Printed on the July statement. ");
+    expect(readLeftOutAcknowledgements(bundle.db).map((a) => a.reason)).toEqual([" Printed on the July statement. "]);
+  });
+
   test("⛔ a reason that says nothing refuses the whole write — nothing is written", () => {
     for (const reason of ["", "   ", "\n\t"]) {
       const before = changes();

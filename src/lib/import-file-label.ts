@@ -265,15 +265,15 @@ export interface Acknowledged {
 }
 
 /**
- * "Acknowledged on <day>: <what the session read>." — ONE phrasing wherever an acknowledgement is printed: with its
- * line by `lineLeftOutNotice`, and by ledger-check's dry run and its acknowledgement matching no line.
+ * "Acknowledged on <day>: <what the session read>" — ONE phrasing wherever an acknowledgement is printed: with its
+ * line by `lineLeftOutNotice`, and by ledger-check's dry run, its refusals and its acknowledgement matching no line.
  *
  * ⛔ The reason is printed, never only the day: "an entry without a reason is a check that has been quieted rather than
- * passed" (ledger-check's BASELINE). A stop is added only when the reason does not end its own sentence.
+ * passed" (ledger-check's BASELINE). ⛔ And printed exactly as given, nothing added: 🔴 a stop was added unless it ended
+ * in . ! or ?, so "(page 1.)" printed "(page 1.)." and a reason ending in a colon ":." — the words were not the session's.
  */
 export function acknowledgedSentence(acknowledged: Acknowledged): string {
-  const stop = /[.!?]$/.test(acknowledged.reason) ? "" : ".";
-  return `Acknowledged on ${acknowledged.on}: ${acknowledged.reason}${stop}`;
+  return `Acknowledged on ${acknowledged.on}: ${acknowledged.reason}`;
 }
 
 /**

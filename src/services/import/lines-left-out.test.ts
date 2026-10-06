@@ -530,7 +530,7 @@ describe("a line left out, acknowledged", () => {
 
     const found = linesLeftOut(bundle.db);
     expect(found).toEqual([expect.objectContaining({ printedOn: OPENING.postedOn, rowId: left!.rowId, acknowledged: READ })]);
-    expect(lineLeftOutNotice(found[0]!)).toContain(`Acknowledged on ${ON}: ${READ.reason}.`);
+    expect(lineLeftOutNotice(found[0]!).endsWith(` Acknowledged on ${ON}: ${READ.reason}`)).toBe(true);
     // the question the upload outcome asks of the read its re-read retired: the same line, the same acknowledgement
     const retiredRead = bundle.db.select().from(transactions).where(eq(transactions.id, left!.rowId)).get()!.importFileId!;
     expect(linesLeftOut(bundle.db, [retiredRead])).toEqual(found);

@@ -17,7 +17,8 @@ export function readLeftOutAcknowledgements(db: AppDatabase): LeftOutAcknowledge
  *
  * ⛔ One whose reason says nothing refuses them ALL, before anything is written: "an entry without a reason is a check
  * that has been quieted rather than passed" (ledger-check's BASELINE). The command line refuses it first
- * (`ledgerCheckMode`); this is the table's one writer, so it is refused here too, whoever calls.
+ * (`ledgerCheckMode`); this is the table's one writer, so it is refused here too, whoever calls — by name, before the
+ * table's own CHECK (`left_out_acknowledgements_reason_says_something`) would refuse it with no line named.
  */
 export function writeLeftOutAcknowledgements(db: AppDatabase, writes: readonly LeftOutAcknowledgementWrite[]): void {
   if (writes.length === 0) return;

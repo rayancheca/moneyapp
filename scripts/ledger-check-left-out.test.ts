@@ -62,6 +62,29 @@ describe("ledger-check — lines left out by a re-read", () => {
   });
 
   /*
+   * 🔴 Another --reason for a line acknowledged already was dropped, exit 0: "nothing to acknowledge", and the session's
+   * words stored nowhere. The rule finds it (`planAcknowledging`'s `reasonsKept`) and words the refusal with the reason
+   * stored (`reasonChangeRefusal`, lib/left-out-acknowledgement.test.ts); the script refuses, exit 2, before it says
+   * "nothing to acknowledge" and before any dry run or write.
+   */
+  test("⛔ another reason for a line acknowledged already is refused, exit 2, saying the reason stored", () => {
+    const step = script.slice(script.indexOf('if (MODE.mode === "acknowledge") {'));
+    const [refuse, nothing, dryRun, write] = [
+      step.indexOf("if (plan.reasonsKept.length > 0) {"),
+      step.indexOf("nothing to acknowledge"),
+      step.indexOf("if (!MODE.confirm)"),
+      step.indexOf("writeLeftOutAcknowledgements("),
+    ];
+    expect(refuse).toBeGreaterThan(0);
+    expect(nothing).toBeGreaterThan(refuse);
+    expect(dryRun).toBeGreaterThan(refuse);
+    expect(write).toBeGreaterThan(refuse);
+    const refusal = step.slice(refuse, nothing);
+    expect(refusal).toContain('console.error(`\\n${reasonChangeRefusal(plan.reasonsKept).join("\\n")}`);');
+    expect(refusal).toContain("process.exit(2);");
+  });
+
+  /*
    * 🔴 It picked its last words by whether a reason was given only: after two marks it said "the same command with
    * --reason='…' --confirm", which the command line refuses (a reason says what ONE line is). The rule words the run that
    * confirms (`confirmingStep`, lib/left-out-acknowledgement.test.ts): one a mark, when the dry run named several.

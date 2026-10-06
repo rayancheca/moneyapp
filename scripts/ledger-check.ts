@@ -54,8 +54,9 @@
  *
  * ⛔ `--confirm` without `--reason` is refused (exit 2, nothing written): an acknowledgement stops a finding failing, and
  * an entry without a reason is a check that has been quieted (BASELINE, below). The dry run prints what it would store,
- * "Acknowledged on <day>: <reason>." — the sentence printed with the line from then on, here, on /imports and in the
- * upload outcome. One mark a reason: a reason says what ONE line is.
+ * "Acknowledged on <day>: <reason>" — the sentence printed with the line from then on, here, on /imports and in the
+ * upload outcome, the reason exactly as given. One mark a reason: a reason says what ONE line is. ⛔ And a stored reason
+ * is never changed: another `--reason` for a line acknowledged already is refused (exit 2), saying the one stored.
  */
 import { createDatabase } from "@/db/client";
 import type { AnchorSource } from "@/db/schema/balances";
@@ -88,6 +89,7 @@ import {
   confirmingStep,
   leftOutToken,
   planAcknowledging,
+  reasonChangeRefusal,
   unmatchedAcknowledgementNotice,
 } from "@/lib/left-out-acknowledgement";
 import { writeLeftOutAcknowledgements } from "@/services/left-out-acknowledgements";
@@ -491,6 +493,8 @@ if (leftOutFailures.length > 0) {
  * store with it, and only `--confirm` writes. ⛔ A mark no line left out carries refuses the whole write: the ledger moved
  * since the dry run, or it was mistyped, and either way the session has not read what it would acknowledge. ⛔ And
  * `--confirm` has a reason by then: `ledgerCheckMode` refused it without one, before the ledger was opened.
+ * ⛔ This step never changes a stored reason: 🔴 another `--reason` for a line acknowledged already was dropped — "nothing
+ * to acknowledge", exit 0 — so it refuses the whole write too, saying the reason stored (`reasonChangeRefusal`).
  */
 if (MODE.mode === "acknowledge") {
   const acknowledging = { on: todayIso(), reason: MODE.reason };
@@ -499,6 +503,10 @@ if (MODE.mode === "acknowledge") {
   for (const line of plan.lines) console.log(`  ${line}`);
   if (plan.unmatched.length > 0) {
     console.error(`\nREFUSED: ${plan.unmatched.join(", ")} — no line left out carries ${plan.unmatched.length === 1 ? "it" : "them"}; nothing was written`);
+    process.exit(2);
+  }
+  if (plan.reasonsKept.length > 0) {
+    console.error(`\n${reasonChangeRefusal(plan.reasonsKept).join("\n")}`);
     process.exit(2);
   }
   const n = plan.open.length;

@@ -1,4 +1,5 @@
-import { integer, sqliteTable, text } from "drizzle-orm/sqlite-core";
+import { sql } from "drizzle-orm";
+import { check, integer, sqliteTable, text } from "drizzle-orm/sqlite-core";
 import { createdAt, id, updatedAt } from "./common";
 
 /**
@@ -52,23 +53,35 @@ export const ledgerWitnessMarks = sqliteTable("ledger_witness_marks", {
  * ⛔ Never without its `reason`: "an entry without a reason is a check that has been quieted rather than passed"
  * (ledger-check's BASELINE). An acknowledgement stops a finding failing, so it keeps what the session read on the
  * statement, and every surface prints it with the line (`acknowledgedSentence`).
+ *
+ * ⛔ Never BLANK either, and the table says so itself (`left_out_acknowledgements_reason_says_something`): 🔴 "never
+ * blank" was the writer's alone, so a raw INSERT with reason '   ' was stored and ledger-check printed "Acknowledged on
+ * 2026-10-05:    ". The CHECK trims tabs, newlines and the rest of ASCII whitespace as well as spaces — SQLite's
+ * one-argument trim() strips spaces only, and would have let "\n\t" through.
  */
-export const leftOutAcknowledgements = sqliteTable("left_out_acknowledgements", {
-  id: id(),
-  accountId: text("account_id").notNull(),
-  /** the day the printing file prints */
-  printedOn: text("printed_on").notNull(),
-  amountCents: integer("amount_cents").notNull(),
-  /** the words the printing file prints, as `printed_lines` keeps them (normalized) */
-  printedWords: text("printed_words").notNull(),
-  /** the sha256 of the file the session read it on — a re-read of that file gives it a new id, never new bytes */
-  printerSha256: text("printer_sha256").notNull(),
-  /** the words the line was named with when acknowledged — how an acknowledgement matching no line is named */
-  description: text("description").notNull(),
-  /** the day it was acknowledged, as the ledger's surfaces say it */
-  acknowledgedOn: text("acknowledged_on").notNull(),
-  /** what the session read on the statement, in its words (`--reason`) — printed with the line wherever it is printed */
-  reason: text("reason").notNull(),
-  /** the moment it was recorded: it covers a leaving whose row was written before it, never a later one */
-  createdAt: createdAt(),
-});
+export const leftOutAcknowledgements = sqliteTable(
+  "left_out_acknowledgements",
+  {
+    id: id(),
+    accountId: text("account_id").notNull(),
+    /** the day the printing file prints */
+    printedOn: text("printed_on").notNull(),
+    amountCents: integer("amount_cents").notNull(),
+    /** the words the printing file prints, as `printed_lines` keeps them (normalized) */
+    printedWords: text("printed_words").notNull(),
+    /** the sha256 of the file the session read it on — a re-read of that file gives it a new id, never new bytes */
+    printerSha256: text("printer_sha256").notNull(),
+    /** the words the line was named with when acknowledged — how an acknowledgement matching no line is named */
+    description: text("description").notNull(),
+    /** the day it was acknowledged, as the ledger's surfaces say it */
+    acknowledgedOn: text("acknowledged_on").notNull(),
+    /** what the session read on the statement, in its words (`--reason`) — printed with the line wherever it is printed */
+    reason: text("reason").notNull(),
+    /** the moment it was recorded: it covers a leaving whose row was written before it, never a later one */
+    createdAt: createdAt(),
+  },
+  (table) => [
+    // tab, newline, vertical tab, form feed, carriage return and space
+    check("left_out_acknowledgements_reason_says_something", sql`trim(${table.reason}, char(9, 10, 11, 12, 13, 32)) <> ''`),
+  ],
+);

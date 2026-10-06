@@ -6,6 +6,7 @@ import {
   confirmingStep,
   leftOutToken,
   planAcknowledging,
+  reasonChangeRefusal,
   unmatchedAcknowledgementNotice,
   type AcknowledgeableLine,
   type LeftOutAcknowledgement,
@@ -235,7 +236,7 @@ describe("planAcknowledging — the guarded write, a dry run first", () => {
   /* ⛔ the dry run shows what would be stored — the very sentence every surface prints with the line from then on */
   test("says the line it is, and the reason it stores, as the line will read once acknowledged", () => {
     const plan = planAcknowledging([line()], [leftOutToken(line())], TODAY);
-    const stored = `Acknowledged on 2026-10-05: ${READ_IT}.`;
+    const stored = `Acknowledged on 2026-10-05: ${READ_IT}`;
     expect(plan.lines).toEqual([
       `${leftOutToken(line())}: acknowledges ${lineLeftOutNotice(line())}`,
       `${leftOutToken(line())}: stores, printed with the line from now on — ${stored}`,
@@ -261,11 +262,53 @@ describe("planAcknowledging — the guarded write, a dry run first", () => {
 
   test("a line acknowledged already is said, with what was read then, and written again never", () => {
     const done = line({ acknowledged: { on: "2026-10-04", reason: "Printed on the July statement." } });
-    const plan = planAcknowledging([done], [leftOutToken(done)], TODAY);
+    // a dry run with no reason, and a run giving the very reason stored
+    for (const reason of [null, "Printed on the July statement."]) {
+      const plan = planAcknowledging([done], [leftOutToken(done)], { on: "2026-10-05", reason });
+      expect(plan.open).toEqual([]);
+      expect(plan.unmatched).toEqual([]);
+      expect(plan.reasonsKept).toEqual([]);
+      expect(plan.lines).toEqual([
+        `${leftOutToken(done)}: acknowledged already, nothing to write — Acknowledged on 2026-10-04: Printed on the July statement.`,
+      ]);
+    }
+  });
+
+  /*
+   * 🔴 Another --reason for a line acknowledged already was dropped: the run said "nothing to acknowledge" and exited 0,
+   * and the session's words were stored nowhere — while it believed them stored. This step never changes a stored
+   * reason, so the run is refused, and says the reason that is stored.
+   */
+  test("⛔ another reason for a line acknowledged already is refused — this step never changes a stored one", () => {
+    const stored = { on: "2026-10-04", reason: "Printed on the July statement." };
+    const done = line({ acknowledged: stored });
+    const mark = leftOutToken(done);
+    const plan = planAcknowledging([done], [mark], TODAY);
     expect(plan.open).toEqual([]);
     expect(plan.unmatched).toEqual([]);
+    expect(plan.reasonsKept).toEqual([{ mark, stored: [stored] }]);
     expect(plan.lines).toEqual([
-      `${leftOutToken(done)}: acknowledged already, nothing to write — Acknowledged on 2026-10-04: Printed on the July statement.`,
+      `${mark}: acknowledged already, with another reason, which this step never changes — Acknowledged on 2026-10-04: ` +
+        "Printed on the July statement.",
+    ]);
+    expect(reasonChangeRefusal(plan.reasonsKept)).toEqual([
+      "REFUSED: --reason is not the reason stored, and this step never changes a stored one — nothing was written. Stored:",
+      `  ${mark}: Acknowledged on 2026-10-04: Printed on the July statement.`,
+    ]);
+  });
+
+  test("⛔ two lines alike acknowledged with two reasons: a run giving one of them is refused, and says both", () => {
+    const [first, second] = [
+      { on: "2026-10-04", reason: "Printed on the July statement." },
+      { on: "2026-10-05", reason: READ_IT },
+    ];
+    const twins = [line({ acknowledged: first }), line({ rowId: "row-twin", acknowledged: second })];
+    const mark = leftOutToken(line());
+    const plan = planAcknowledging(twins, [mark], TODAY);
+    expect(plan.reasonsKept).toEqual([{ mark, stored: [first, second] }]);
+    expect(reasonChangeRefusal(plan.reasonsKept).slice(1)).toEqual([
+      `  ${mark}: Acknowledged on 2026-10-04: Printed on the July statement.`,
+      `  ${mark}: Acknowledged on 2026-10-05: ${READ_IT}`,
     ]);
   });
 
@@ -361,7 +404,7 @@ describe("unmatchedAcknowledgementNotice — an acknowledgement no line matches 
   test("names the line it was given for, that it hides nothing, and what the session read", () => {
     expect(unmatchedAcknowledgementNotice(ack(), "Wells Fargo Everyday Checking")).toBe(
       "+$25.00 on 2026-07-27, WFB Opening Deposit From Card, on Wells Fargo Everyday Checking — no line left out matches " +
-        `it now, so it hides nothing. Acknowledged on 2026-10-05: ${READ_IT}.`,
+        `it now, so it hides nothing. Acknowledged on 2026-10-05: ${READ_IT}`,
     );
   });
 });

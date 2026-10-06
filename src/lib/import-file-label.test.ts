@@ -249,18 +249,29 @@ describe("lineLeftOutNotice — one sentence for the upload outcome, /imports an
   test("an acknowledged line still says it is left out, on what day it was acknowledged, and what was read", () => {
     expect(lineLeftOutNotice({ ...OPENING_LEFT_OUT, acknowledged: READ_IT })).toBe(
       `${lineLeftOutNotice(OPENING_LEFT_OUT)} Acknowledged on 2026-10-05: July statement, page 1: the bank's opening ` +
-        "deposit, reversed the same day by the card it came from.",
+        "deposit, reversed the same day by the card it came from",
     );
   });
 });
 
 describe("acknowledgedSentence — one phrasing wherever an acknowledgement is printed", () => {
-  test("the day, then the reason, as a sentence", () => {
-    expect(acknowledgedSentence(READ_IT)).toBe(`Acknowledged on 2026-10-05: ${READ_IT.reason}.`);
+  test("the day, then the reason, exactly as the session gave it", () => {
+    expect(acknowledgedSentence(READ_IT)).toBe(`Acknowledged on 2026-10-05: ${READ_IT.reason}`);
   });
 
-  test("a reason that ends its own sentence is not given a second stop", () => {
-    for (const reason of ["Printed on the July statement.", "Is it the reversal? Yes!", "Printed twice?"]) {
+  /*
+   * 🔴 A stop was added unless the reason ended in . ! or ? — so "(page 1.)" printed "(page 1.).", and a reason ending in
+   * a colon printed ":.". The reason is the session's words: printed as given, nothing added, nothing taken.
+   */
+  test("the reason is printed as given — no stop added, none taken", () => {
+    const reasons = [
+      "July statement (page 1.)",
+      "July statement, page 1:",
+      "Printed on the July statement.",
+      "Is it the reversal? Yes!",
+      "printed once, no stop",
+    ];
+    for (const reason of reasons) {
       expect(acknowledgedSentence({ on: "2026-10-05", reason })).toBe(`Acknowledged on 2026-10-05: ${reason}`);
     }
   });
@@ -281,7 +292,7 @@ describe("leftOutNoticesByRead", () => {
   test("/imports says an acknowledged line acknowledged, and why, as the upload outcome and ledger-check do", () => {
     const acknowledged = { ...OPENING_LEFT_OUT, acknowledged: READ_IT, readById: "read-1" };
     expect(leftOutNoticesByRead([acknowledged]).get("read-1")).toEqual([lineLeftOutNotice(acknowledged)]);
-    expect(leftOutNoticesByRead([acknowledged]).get("read-1")![0]).toContain(`Acknowledged on 2026-10-05: ${READ_IT.reason}.`);
+    expect(leftOutNoticesByRead([acknowledged]).get("read-1")![0]).toContain(`Acknowledged on 2026-10-05: ${READ_IT.reason}`);
   });
 
   test("a line with no imported read has no row to sit under — ledger-check still names it", () => {
