@@ -364,6 +364,29 @@ function nextEndpoint(chain: ChainFacts, day: string): Pick<ReplayAnchor, "ancho
 }
 
 /**
+ * The balances an account's replay MISSED: the endpoint after each of its `gap` days (`nextEndpoint`) — the one that
+ * day's own balance proof names ("The replay did NOT land on …") — one per balance, oldest first. Empty with no gap.
+ *
+ * ⛔ Exported for the trust card's count of the days that do not add up, which named every one "the next recorded
+ * balance" — his count included (see `trustCard`). Read here, so the card's words for the balance a replay missed are
+ * that proof's, never a second reading of the anchors.
+ */
+export function missedBalances(db: AppDatabase, accountId: string): Pick<ReplayAnchor, "anchoredOn" | "source">[] {
+  const gapDays = db
+    .select({ day: dailyBalances.day })
+    .from(dailyBalances)
+    .where(and(eq(dailyBalances.accountId, accountId), eq(dailyBalances.basis, "gap")))
+    .orderBy(asc(dailyBalances.day))
+    .all();
+  if (gapDays.length === 0) return [];
+  const chain = chainFacts(db, accountId);
+  const missed = gapDays
+    .map((d) => nextEndpoint(chain, d.day))
+    .filter((e): e is Pick<ReplayAnchor, "anchoredOn" | "source"> => e !== null);
+  return [...new Map(missed.map((e) => [e.anchoredOn, e] as const)).values()];
+}
+
+/**
  * A cash day's balance in this service's vocabulary — ONE rule for an
  * account's balance proof and the day line on a row's sheet.
  *
@@ -1156,6 +1179,12 @@ function statementPeriodProvenance(db: AppDatabase, id: string): Provenance | nu
  *
  * ⚖️ A count that BROKE stops the day before it broke, and the sentence says it broke after that, in net worth's
  * words for it ("stopped adding up on <day>") — his answer, 2026-10-05; `footingThrough` has the rule.
+ *
+ * 🔴 "The balance you counted" named no day, and he counts more than once. Beside a proof of his recount it read as
+ * that recount: Cash on Hand's Sep 10 read "Replayed past the balance you counted on Sep 1, 2026, …" then "…is the
+ * last day Cash on Hand rests on the balance you counted — your word, not a check — before it stopped adding up on
+ * Aug 4, 2026", which only his Aug 3 count can be (temp ledger 2026-10-06; and a recount that adds up named Aug 3
+ * last, before a date standing on Sep 1). ⛔ The count is named by its day (`Footing.countedOn`), as /imports does.
  */
 export function footingBounds(coverage: readonly AccountCoverage[]): { through: string | null; note: string } {
   const bounds = coverage
@@ -1164,13 +1193,15 @@ export function footingBounds(coverage: readonly AccountCoverage[]): { through: 
     .sort((a, b) => (a.bound.day < b.bound.day ? -1 : a.bound.day > b.bound.day ? 1 : 0));
   const through = bounds[0]?.bound.day ?? null;
   // a check stopping the same day does not make the day a check: his count still stops there
-  const byCount = through === null ? undefined : bounds.find((b) => b.bound.day === through && b.bound.byCount);
+  const byCount =
+    through === null ? undefined : bounds.find((b) => b.bound.day === through && b.bound.countedOn !== null);
   if (byCount === undefined) return { through, note: "" };
   const { name, bound } = byCount;
+  const counted = `the balance you counted on ${readableDay(bound.countedOn!)}`;
   const broke = bound.brokeOn === null ? "" : ` — before it stopped adding up on ${readableDay(bound.brokeOn)}`;
   return {
     through,
-    note: ` The date it is checked through, ${readableDay(bound.day)}, is the last day ${name} rests on the balance you counted — your word, not a check${broke}.`,
+    note: ` The date it is checked through, ${readableDay(bound.day)}, is the last day ${name} rests on ${counted} — your word, not a check${broke}.`,
   };
 }
 

@@ -214,8 +214,17 @@ export function chainFooting(
 export interface Footing {
   /** the last day the account's balances still stand on something */
   day: string;
-  /** whether that day stands on a balance he TYPED that nothing closes on — his word, not a check */
-  byCount: boolean;
+  /**
+   * The day of the balance he TYPED that `day` stands on, when nothing closes on it — his word, not a check; null
+   * when `day` is a check's.
+   *
+   * 🔴 A boolean once, and the sentence said "the balance you counted" of whichever count the reader had in mind: a
+   * wallet he recounted read it beside a proof naming his OTHER count (temp ledger 2026-10-06 — Aug 20's proof "…from
+   * the balance you counted on Aug 3, 2026 and landed exactly on the one you counted on Sep 1, 2026", then "…is the
+   * last day Cash on Hand rests on the balance you counted"; Sep 9 stands on Sep 1's). Named by its day, as /imports'
+   * row names it ("it rests on the balance you counted on Aug 3, 2026").
+   */
+  countedOn: string | null;
   /**
    * The day the account stopped adding up, when that is why the figure stops at `day`, the day before; null
    * otherwise. A count's only: a chain that closed stops at its own `verifiedThrough`, a check.
@@ -266,14 +275,17 @@ export interface Footing {
  */
 export function footingThrough(c: AccountCoverage): Footing | null {
   if (c.grade !== "verified" && c.grade !== "unverified" && c.grade !== "broken") return null;
-  if (c.verifiedThrough !== null) return { day: c.verifiedThrough, byCount: false, brokeOn: null };
+  if (c.verifiedThrough !== null) return { day: c.verifiedThrough, countedOn: null, brokeOn: null };
   if (c.grade === "broken") {
     if (c.countedOn === null || c.brokenSince === null) return null;
-    return { day: addDays(c.brokenSince, -1), byCount: true, brokeOn: c.brokenSince };
+    // the day before the break is his count's own (above) — NOT `countedOn`, his newest, the recount it missed
+    const day = addDays(c.brokenSince, -1);
+    return { day, countedOn: day, brokeOn: c.brokenSince };
   }
   // his count, as every sentence about it reads it: it stands until the run still open past it
-  const uncheckedSince = countFooting(c)?.uncheckedSince ?? null;
-  return uncheckedSince === null ? null : { day: addDays(uncheckedSince, -1), byCount: true, brokeOn: null };
+  const count = countFooting(c);
+  if (count === null || count.uncheckedSince === null) return null;
+  return { day: addDays(count.uncheckedSince, -1), countedOn: count.countedOn, brokeOn: null };
 }
 
 export interface AccountCoverage {

@@ -4,9 +4,10 @@ import { transactions } from "@/db/schema/transactions";
 import type { IconName } from "@/components/shell/Icon";
 import { agoPhrase } from "@/lib/coverage-detail";
 import { diffDays, todayIso } from "@/lib/dates";
+import { formatDayFull } from "@/lib/format-date";
 import { VERDICT_PRESENTATION, type ProvenanceTone } from "@/lib/provenance-verdict";
 import { accountCoverage, type CoverageGrade } from "./coverage";
-import { provenanceFor, weakestVerdict, type ProvenanceVerdict } from "./provenance";
+import { missedBalances, provenanceFor, weakestVerdict, type ProvenanceVerdict } from "./provenance";
 
 /**
  * "Can you trust this?" — how much of what the app says is standing on a
@@ -258,6 +259,7 @@ function daySentence(
   gap: number,
   sharePct: number | null,
   byAccount: readonly { name: string; days: number }[],
+  missed: readonly MissedBalance[],
 ): string {
   if (total === 0) return "No day of balances has been derived yet, so there is nothing here to check.";
   if (unchecked === 0) {
@@ -270,8 +272,29 @@ function daySentence(
   const gapClause =
     gap === 0
       ? " No day provably fails to add up — these are days nobody has checked, not days that broke."
-      : ` ${gap.toLocaleString("en-US")} of them provably ${gap === 1 ? "does" : "do"} not add up: the replay missed the next recorded balance.`;
+      : ` ${gap.toLocaleString("en-US")} of them provably ${gap === 1 ? "does" : "do"} not add up: the replay missed ${missedWords(missed)}.`;
   return `${unchecked.toLocaleString("en-US")} of ${plural(total, "day")} of balances${share} rest on nothing — ${named}.${gapClause}`;
+}
+
+/** A balance a replay missed — `missedBalances`, one account's. */
+type MissedBalance = { anchoredOn: string; source: string };
+
+/**
+ * The balance the replay missed on the days that do not add up, in each day's own proof's words for it.
+ *
+ * 🔴 Every one was "the next recorded balance", his count included. A wallet whose $40.00 recount for Sep 1 does not
+ * add up read "28 of them provably do not add up: the replay missed the next recorded balance." beside its own
+ * balance proof, "…the one you counted on Sep 1, 2026" (temp ledger through the real services, 2026-10-06).
+ *
+ * ⚖️ ONE verb for a balance he typed, "counted" (his answer, 2026-10-05); a document's keeps "recorded". One count
+ * is named by its day, as its proof names it; several are not listed, and a statement's and his are both said.
+ */
+function missedWords(missed: readonly MissedBalance[]): string {
+  const counts = missed.filter((m) => m.source === "manual");
+  if (counts.length === 0) return "the next recorded balance";
+  const count = counts.length === 1 ? `the one you counted on ${formatDayFull(counts[0]!.anchoredOn)}` : null;
+  if (counts.length < missed.length) return `the next recorded balance, or ${count ?? "the next one you counted"}`;
+  return count === null ? "the next balance you counted" : `the next balance, ${count}`;
 }
 
 export function trustCard(db: AppDatabase, today: string = todayIso()): TrustCard | null {
@@ -412,11 +435,14 @@ export function trustCard(db: AppDatabase, today: string = todayIso()): TrustCar
     .map((l) => ({ name: l.name, days: l.uncheckedDays }))
     .sort((a, b) => b.days - a.days || a.name.localeCompare(b.name));
 
+  // the balances the replay missed, read from each broken account's own proofs (`missedBalances`)
+  const missed = coverage.filter((c) => c.days.gap > 0).flatMap((c) => missedBalances(db, c.accountId));
+
   const days: TrustDays = {
     ...tally,
     unchecked,
     uncheckedSharePct,
-    sentence: daySentence(tally.total, unchecked, tally.gap, uncheckedSharePct, uncheckedByAccount),
+    sentence: daySentence(tally.total, unchecked, tally.gap, uncheckedSharePct, uncheckedByAccount, missed),
     carriedNote:
       tally.carried === 0
         ? null

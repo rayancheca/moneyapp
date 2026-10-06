@@ -621,7 +621,7 @@ describe("a card resting on his count", () => {
     addTxn("acct-counted", "2026-08-04", -500);
   }
   const COUNT_NOTE =
-    " The date it is checked through, Aug 3, 2026, is the last day Counted Card rests on the balance you counted — your word, not a check.";
+    " The date it is checked through, Aug 3, 2026, is the last day Counted Card rests on the balance you counted on Aug 1, 2026 — your word, not a check.";
 
   test("alone, dates the total where his count stops standing, in net worth's words", () => {
     countedCard();

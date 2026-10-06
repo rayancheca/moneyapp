@@ -10,6 +10,9 @@ import { holdingEvents } from "@/db/schema/holding-events";
 import { institutions } from "@/db/schema/institutions";
 import { transactions } from "@/db/schema/transactions";
 import { VERDICT_PRESENTATION } from "@/lib/provenance-verdict";
+import { addManualAnchor } from "./anchors";
+import { createCashWallet } from "./cash-wallets";
+import { addManualTransaction } from "./manual-transactions";
 import { provenanceFor } from "./provenance";
 import { trustCard } from "./trust-card";
 
@@ -458,7 +461,7 @@ describe("trustCard — checked through", () => {
     const line = card.groups.flatMap((g) => g.accounts).find((a) => a.name === "Cash on Hand")!;
     expect(line.detail).toBe("you counted it on Aug 3, 2026, and nothing checks it since Aug 11, 2026");
     expect(card.summary).toMatch(
-      /The date it is checked through, Aug 10, 2026, is the last day Cash on Hand rests on the balance you counted — your word, not a check\.$/,
+      /The date it is checked through, Aug 10, 2026, is the last day Cash on Hand rests on the balance you counted on Aug 3, 2026 — your word, not a check\.$/,
     );
   });
 
@@ -492,7 +495,7 @@ describe("trustCard — checked through", () => {
     const line = card.groups.flatMap((g) => g.accounts).find((a) => a.name === "Cash on Hand")!;
     expect(line.detail).toBe("stopped adding up on Aug 4, 2026");
     expect(card.summary).toMatch(
-      / The date it is checked through, Aug 3, 2026, is the last day Cash on Hand rests on the balance you counted — your word, not a check — before it stopped adding up on Aug 4, 2026\.$/,
+      / The date it is checked through, Aug 3, 2026, is the last day Cash on Hand rests on the balance you counted on Aug 3, 2026 — your word, not a check — before it stopped adding up on Aug 4, 2026\.$/,
     );
   });
 
@@ -562,6 +565,96 @@ describe("trustCard — the unchecked days", () => {
     ]);
     // a break must not hide inside a backlog of unimported statements
     expect(card.days.sentence).toContain("1 of them provably does not add up");
+  });
+
+  /** A balance recorded for an account on a day — a statement's, or one he typed (`manual`). */
+  function addAnchor(accountId: string, day: string, source: "statement" | "manual"): void {
+    bundle.db
+      .insert(balanceAnchors)
+      .values({ accountId, anchoredOn: day, balanceCents: 1000, source, createdAt: now(), updatedAt: now() })
+      .run();
+  }
+
+  /*
+   * 🔴 HIS COUNT, CALLED A RECORDED BALANCE. A wallet whose $40.00 recount for Sep 1 does not add up read "28 of them
+   * provably do not add up: the replay missed the next recorded balance." (temp ledger through the real services,
+   * 2026-10-06), while every one of those 28 days' own balance proof reads "The replay did NOT land on Cash on Hand's
+   * next balance, the one you counted on Sep 1, 2026." ⚖️ ONE verb for a balance he typed, "counted" (his answer,
+   * 2026-10-05); a statement's balance keeps its words.
+   */
+  test("a replay that missed his count says the balance it missed is one he counted, as that day's proof does", () => {
+    const id = createCashWallet(bundle.db, { name: "Cash on Hand", openingOn: "2026-08-04", openingBalanceCents: 500_000 });
+    addManualTransaction(bundle.db, { accountId: id, postedOn: "2026-08-11", amountCents: -500_000, description: "Car" });
+    addManualAnchor(bundle.db, { accountId: id, anchoredOn: "2026-09-01", enteredCents: 4_000 });
+    addManualTransaction(bundle.db, { accountId: id, postedOn: "2026-09-10", amountCents: -1_000, description: "Lunch" });
+
+    const card = trustCard(bundle.db, "2026-09-16")!;
+    expect(card.days.gap).toBe(28);
+    expect(card.days.sentence).toMatch(
+      / 28 of them provably do not add up: the replay missed the next balance, the one you counted on Sep 1, 2026\.$/,
+    );
+    expect(provenanceFor(bundle.db, { kind: "accountBalance", accountId: id, day: "2026-08-20" })!.headline).toMatch(
+      /^The replay did NOT land on Cash on Hand's next balance, the one you counted on Sep 1, 2026\./,
+    );
+  });
+
+  test("a replay that missed a statement's balance keeps its words", () => {
+    addAccount("chase", "Chase Checking", "checking");
+    addAnchor("chase", "2026-08-01", "statement");
+    addAnchor("chase", "2026-08-03", "statement");
+    addDays("chase", [
+      { day: "2026-08-01", basis: "anchored" },
+      { day: "2026-08-02", basis: "gap" },
+      { day: "2026-08-03", basis: "anchored" },
+    ]);
+    addTxn("chase", "2026-08-02");
+
+    expect(trustCard(bundle.db, TODAY)!.days.sentence).toMatch(
+      / 1 of them provably does not add up: the replay missed the next recorded balance\.$/,
+    );
+  });
+
+  test("replays that missed several of his counts say so without naming one of them", () => {
+    addAccount("coh", "Cash on Hand", "checking");
+    for (const day of ["2026-08-01", "2026-08-03", "2026-08-05"]) addAnchor("coh", day, "manual");
+    addDays("coh", [
+      { day: "2026-08-01", basis: "anchored" },
+      { day: "2026-08-02", basis: "gap" },
+      { day: "2026-08-03", basis: "anchored" },
+      { day: "2026-08-04", basis: "gap" },
+      { day: "2026-08-05", basis: "anchored" },
+    ]);
+    addTxn("coh", "2026-08-02");
+    addTxn("coh", "2026-08-04");
+
+    expect(trustCard(bundle.db, TODAY)!.days.sentence).toMatch(
+      / 2 of them provably do not add up: the replay missed the next balance you counted\.$/,
+    );
+  });
+
+  test("a statement's balance and his count, both missed, are each named in their own words", () => {
+    addAccount("chase", "Chase Checking", "checking");
+    addAnchor("chase", "2026-08-01", "statement");
+    addAnchor("chase", "2026-08-03", "statement");
+    addDays("chase", [
+      { day: "2026-08-01", basis: "anchored" },
+      { day: "2026-08-02", basis: "gap" },
+      { day: "2026-08-03", basis: "anchored" },
+    ]);
+    addTxn("chase", "2026-08-02");
+    addAccount("coh", "Cash on Hand", "checking");
+    addAnchor("coh", "2026-08-01", "manual");
+    addAnchor("coh", "2026-08-05", "manual");
+    addDays("coh", [
+      { day: "2026-08-01", basis: "anchored" },
+      { day: "2026-08-02", basis: "gap" },
+      { day: "2026-08-05", basis: "anchored" },
+    ]);
+    addTxn("coh", "2026-08-02");
+
+    expect(trustCard(bundle.db, TODAY)!.days.sentence).toMatch(
+      / 2 of them provably do not add up: the replay missed the next recorded balance, or the one you counted on Aug 5, 2026\.$/,
+    );
   });
 
   test("with nothing broken the card says so rather than leaving it ambiguous", () => {

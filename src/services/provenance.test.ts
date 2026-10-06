@@ -1241,7 +1241,7 @@ describe("provenanceFor — a category total", () => {
     expect(p.checkedThrough).toBe("2026-08-10");
     // and the date says whose word it is, in net worth's own words
     expect(p.headline).toMatch(
-      / The date it is checked through, Aug 10, 2026, is the last day Cash on Hand rests on the balance you counted — your word, not a check\.$/,
+      / The date it is checked through, Aug 10, 2026, is the last day Cash on Hand rests on the balance you counted on Aug 3, 2026 — your word, not a check\.$/,
     );
     // one ledger, one day, one rule — net worth already answers it this way
     expect(provenanceFor(bundle.db, { kind: "netWorth", day: "2026-09-16" })!.checkedThrough).toBe("2026-08-10");
@@ -1271,7 +1271,7 @@ describe("provenanceFor — a category total", () => {
     expect(p.checkedThrough).toBe("2026-08-10");
     expect(p.checkedThrough).toBe(netWorth.checkedThrough);
     const COUNT_NOTE =
-      " The date it is checked through, Aug 10, 2026, is the last day Cash on Hand rests on the balance you counted — your word, not a check.";
+      " The date it is checked through, Aug 10, 2026, is the last day Cash on Hand rests on the balance you counted on Aug 3, 2026 — your word, not a check.";
     expect(p.headline.endsWith(COUNT_NOTE)).toBe(true);
     expect(netWorth.headline.endsWith(COUNT_NOTE)).toBe(true);
   });
@@ -2173,7 +2173,7 @@ describe("provenanceFor — all spending, compared against another window", () =
         against: { ...JUL, label: "Jul 2026" },
       })!;
     const COUNT_NOTE =
-      / The date it is checked through, Aug 10, 2026, is the last day Cash on Hand rests on the balance you counted — your word, not a check\.$/;
+      / The date it is checked through, Aug 10, 2026, is the last day Cash on Hand rests on the balance you counted on Aug 3, 2026 — your word, not a check\.$/;
 
     const alone = compared();
     expect(alone.checkedThrough).toBe("2026-08-10");
@@ -2511,7 +2511,7 @@ describe("provenanceFor — a balance he typed checks nothing", () => {
    * day is.
    */
   const COUNT_NOTE =
-    " The date it is checked through, Aug 10, 2026, is the last day Cash on Hand rests on the balance you counted — your word, not a check.";
+    " The date it is checked through, Aug 10, 2026, is the last day Cash on Hand rests on the balance you counted on Aug 3, 2026 — your word, not a check.";
 
   test("the newest day names the balance he counted, dated where his count stops standing, in net worth's words", () => {
     const p = balance(cashOnHand(), "2026-08-11");
@@ -2709,7 +2709,7 @@ describe("provenanceFor — a balance he typed checks nothing", () => {
     expect(p.verdict).toBe("manual");
     expect(p.checkedThrough).toBe("2026-08-10");
     expect(p.headline).toMatch(
-      / The date it is checked through, Aug 10, 2026, is the last day Cash on Hand rests on the balance you counted — your word, not a check\.$/,
+      / The date it is checked through, Aug 10, 2026, is the last day Cash on Hand rests on the balance you counted on Aug 3, 2026 — your word, not a check\.$/,
     );
   });
 
@@ -2738,7 +2738,7 @@ describe("provenanceFor — a balance he typed checks nothing", () => {
       "you counted it on Aug 3, 2026, and nothing checks it since Aug 11, 2026",
     );
     expect(p.headline).toMatch(
-      / The date it is checked through, Aug 10, 2026, is the last day Cash on Hand rests on the balance you counted — your word, not a check\.$/,
+      / The date it is checked through, Aug 10, 2026, is the last day Cash on Hand rests on the balance you counted on Aug 3, 2026 — your word, not a check\.$/,
     );
   });
 
@@ -2915,13 +2915,19 @@ describe("provenanceFor — a balance he typed checks nothing", () => {
    * break. ⛔ One rule (`footingThrough`), one day and one sentence on every proof that names it.
    */
   const BROKEN_NOTE =
-    " The date it is checked through, Aug 3, 2026, is the last day Cash on Hand rests on the balance you counted — your word, not a check — before it stopped adding up on Aug 4, 2026.";
+    " The date it is checked through, Aug 3, 2026, is the last day Cash on Hand rests on the balance you counted on Aug 3, 2026 — your word, not a check — before it stopped adding up on Aug 4, 2026.";
 
   // as he did it: $5,000.00 counted for Aug 3, the down payment by hand, a $40.00 recount that does not add up
-  function brokenWallet({ spentAfterRecount }: { spentAfterRecount: boolean }): string {
+  function brokenWallet({
+    spentAfterRecount,
+    recountCents = 4_000,
+  }: {
+    spentAfterRecount: boolean;
+    recountCents?: number;
+  }): string {
     const id = createCashWallet(bundle.db, { name: "Cash on Hand", openingOn: "2026-08-04", openingBalanceCents: 500_000 });
     addManualTransaction(bundle.db, { accountId: id, postedOn: "2026-08-11", amountCents: -500_000, description: "Car down payment" });
-    addManualAnchor(bundle.db, { accountId: id, anchoredOn: "2026-09-01", enteredCents: 4_000 });
+    addManualAnchor(bundle.db, { accountId: id, anchoredOn: "2026-09-01", enteredCents: recountCents });
     if (spentAfterRecount) {
       addManualTransaction(bundle.db, { accountId: id, postedOn: "2026-09-10", amountCents: -1_000, description: "Lunch" });
     }
@@ -2960,6 +2966,39 @@ describe("provenanceFor — a balance he typed checks nothing", () => {
     // the words net worth's line for it prints, which the sentence borrows
     const line = provenanceFor(bundle.db, { kind: "netWorth", day: "2026-09-16" })!.inputs.find((i) => i.id === id)!;
     expect(line.detail).toBe("stopped adding up on Aug 4, 2026");
+    /*
+     * 🔴 …and "the balance you counted" read as the recount its own day names. Sep 10's proof named "the balance you
+     * counted on Sep 1, 2026", then "…rests on the balance you counted — your word, not a check — before it stopped
+     * adding up on Aug 4, 2026" (temp ledger 2026-10-06), which only his Aug 3 count can be. The sentence names it.
+     */
+    expect(balance(id, "2026-09-10").headline).toBe(
+      `Replayed past the balance you counted on Sep 1, 2026, so nothing checks Cash on Hand on Sep 10, 2026. The rows are real; the total is unconfirmed.${BROKEN_NOTE}`,
+    );
+  });
+
+  /*
+   * 🔴 …AND A RECOUNT THAT ADDS UP LEFT THE SAME WORDS NAMING EITHER COUNT. Same wallet, recounted at $0.00 for Sep 1
+   * (temp ledger through the real services, 2026-10-06): Aug 20's proof read "Every transaction was replayed forward
+   * from the balance you counted on Aug 3, 2026 and landed exactly on the one you counted on Sep 1, 2026. …" and then
+   * "The date it is checked through, Sep 9, 2026, is the last day Cash on Hand rests on the balance you counted — your
+   * word, not a check." Sep 9 stands on Sep 1's count, not the Aug 3 one the sentence before it named last.
+   */
+  test("the date's sentence names the count it stands on, beside a proof naming his other count", () => {
+    const id = brokenWallet({ spentAfterRecount: true, recountCents: 0 });
+    const note =
+      " The date it is checked through, Sep 9, 2026, is the last day Cash on Hand rests on the balance you counted on Sep 1, 2026 — your word, not a check.";
+
+    expect(balance(id, "2026-08-20").headline).toBe(
+      `Every transaction was replayed forward from the balance you counted on Aug 3, 2026 and landed exactly on the one you counted on Sep 1, 2026. Both are your own counts, so nothing else confirms Cash on Hand on Aug 20, 2026.${note}`,
+    );
+    for (const p of [
+      balance(id, "2026-08-03"),
+      provenanceFor(bundle.db, { kind: "accountRows", accountId: id })!,
+      provenanceFor(bundle.db, { kind: "netWorth", day: "2026-09-16" })!,
+    ]) {
+      expect(p.checkedThrough).toBe("2026-09-09");
+      expect(p.headline.endsWith(note), p.headline).toBe(true);
+    }
   });
 
   /*
