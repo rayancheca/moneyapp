@@ -1,5 +1,6 @@
 import { describe, expect, test } from "vitest";
 import {
+  acknowledgedSentence,
   importRowQualifiers,
   importRowSubject,
   leftOutNoticesByRead,
@@ -210,6 +211,13 @@ const OPENING_LEFT_OUT: LineLeftOutFacts = {
   description: "WFB Opening Deposit From Card",
   printedBy: ["wf-export (1).csv"],
   readBy: "wf-export.csv",
+  acknowledged: null,
+};
+
+/** what a session wrote, having read the line on its statement (`--reason`) */
+const READ_IT = {
+  on: "2026-10-05",
+  reason: "July statement, page 1: the bank's opening deposit, reversed the same day by the card it came from",
 };
 
 describe("lineLeftOutNotice — one sentence for the upload outcome, /imports and ledger-check", () => {
@@ -232,6 +240,41 @@ describe("lineLeftOutNotice — one sentence for the upload outcome, /imports an
       "wf-export (1).csv still prints it; no read of the file it came from is imported now, and",
     );
   });
+
+  /*
+   * ⚖️ Owner, 2026-10-02 (§6A 30): an acknowledged line is still named — and says on what day it was acknowledged.
+   * ⛔ And WHY: "an entry without a reason is a check that has been quieted" (ledger-check's BASELINE) — so it says what
+   * the session read on the statement, in its own words.
+   */
+  test("an acknowledged line still says it is left out, on what day it was acknowledged, and what was read", () => {
+    expect(lineLeftOutNotice({ ...OPENING_LEFT_OUT, acknowledged: READ_IT })).toBe(
+      `${lineLeftOutNotice(OPENING_LEFT_OUT)} Acknowledged on 2026-10-05: July statement, page 1: the bank's opening ` +
+        "deposit, reversed the same day by the card it came from",
+    );
+  });
+});
+
+describe("acknowledgedSentence — one phrasing wherever an acknowledgement is printed", () => {
+  test("the day, then the reason, exactly as the session gave it", () => {
+    expect(acknowledgedSentence(READ_IT)).toBe(`Acknowledged on 2026-10-05: ${READ_IT.reason}`);
+  });
+
+  /*
+   * 🔴 A stop was added unless the reason ended in . ! or ? — so "(page 1.)" printed "(page 1.).", and a reason ending in
+   * a colon printed ":.". The reason is the session's words: printed as given, nothing added, nothing taken.
+   */
+  test("the reason is printed as given — no stop added, none taken", () => {
+    const reasons = [
+      "July statement (page 1.)",
+      "July statement, page 1:",
+      "Printed on the July statement.",
+      "Is it the reversal? Yes!",
+      "printed once, no stop",
+    ];
+    for (const reason of reasons) {
+      expect(acknowledgedSentence({ on: "2026-10-05", reason })).toBe(`Acknowledged on 2026-10-05: ${reason}`);
+    }
+  });
 });
 
 describe("leftOutNoticesByRead", () => {
@@ -244,6 +287,12 @@ describe("leftOutNoticesByRead", () => {
     ]);
     expect([...byRead.keys()]).toEqual(["read-1", "read-2"]);
     expect(byRead.get("read-1")).toEqual([lineLeftOutNotice(OPENING_LEFT_OUT), lineLeftOutNotice(second)]);
+  });
+
+  test("/imports says an acknowledged line acknowledged, and why, as the upload outcome and ledger-check do", () => {
+    const acknowledged = { ...OPENING_LEFT_OUT, acknowledged: READ_IT, readById: "read-1" };
+    expect(leftOutNoticesByRead([acknowledged]).get("read-1")).toEqual([lineLeftOutNotice(acknowledged)]);
+    expect(leftOutNoticesByRead([acknowledged]).get("read-1")![0]).toContain(`Acknowledged on 2026-10-05: ${READ_IT.reason}`);
   });
 
   test("a line with no imported read has no row to sit under — ledger-check still names it", () => {

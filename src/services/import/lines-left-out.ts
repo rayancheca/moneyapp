@@ -7,6 +7,8 @@ import { transactions } from "@/db/schema/transactions";
 import { diffDays } from "@/lib/dates";
 import { descriptionScore } from "@/lib/description-score";
 import type { LineLeftOutFacts } from "@/lib/import-file-label";
+import { acknowledgedOf, acknowledgementsOf, type LeftOutAcknowledgement, type Printing } from "@/lib/left-out-acknowledgement";
+import { readLeftOutAcknowledgements } from "@/services/left-out-acknowledgements";
 import {
   augment,
   heirsOn,
@@ -36,8 +38,12 @@ export interface LineLeftOut extends LineLeftOutFacts {
   accountId: string;
   /** the retired row that recorded it — of the last version to record it, when several did (`chargesOf`) */
   rowId: string;
+  /** the moment that row was written — an acknowledgement covers a leaving whose row was written before it */
+  rowWrittenAt: string;
   /** the ids of `printedBy`, in its order */
   printerFileIds: string[];
+  /** how each of `printedBy` prints it — its bytes' sha256, its day, its words — in its order: what an acknowledgement is keyed by */
+  printings: Printing[];
   /** the id of `readBy` */
   readById: string | null;
 }
@@ -236,35 +242,70 @@ function accountsWithRetiredRows(db: AppDatabase, fromFileIds: readonly string[]
     .map((r) => r.accountId);
 }
 
-/** The names of files, by id. */
-function fileNames(db: AppDatabase, fileIds: readonly string[]): Map<string, string> {
+/** The names of files and the sha256 of their bytes, by id. */
+function filesOf(db: AppDatabase, fileIds: readonly string[]): Map<string, { fileName: string; sha256: string }> {
   if (fileIds.length === 0) return new Map();
-  const rows = db.select({ id: importFiles.id, fileName: importFiles.fileName }).from(importFiles).where(inArray(importFiles.id, [...fileIds])).all();
-  return new Map(rows.map((f) => [f.id, f.fileName] as const));
+  const rows = db
+    .select({ id: importFiles.id, fileName: importFiles.fileName, sha256: importFiles.fileSha256 })
+    .from(importFiles)
+    .where(inArray(importFiles.id, [...fileIds]))
+    .all();
+  return new Map(rows.map(({ id, ...file }) => [id, file] as const));
 }
 
 /**
- * The words each retired row was read with. ⛔ Not the printed line's normalized words: normalizing strips every run of
- * five digits or more, so a Robinhood dividend of "0.312739 shares" is named "0. SHARES" — a line nobody can find.
+ * The words each retired row was read with, and when it was written. ⛔ Not the printed line's normalized words:
+ * normalizing strips every run of five digits or more, so a Robinhood dividend of "0.312739 shares" is named
+ * "0. SHARES" — a line nobody can find.
  */
-function rawWords(db: AppDatabase, rowIds: readonly string[]): Map<string, string> {
-  const rows = db.select({ id: transactions.id, raw: transactions.rawDescription }).from(transactions).where(inArray(transactions.id, [...rowIds])).all();
-  return new Map(rows.map((r) => [r.id, r.raw] as const));
+function rawWords(db: AppDatabase, rowIds: readonly string[]): Map<string, { raw: string; writtenAt: string }> {
+  const rows = db
+    .select({ id: transactions.id, raw: transactions.rawDescription, writtenAt: transactions.createdAt })
+    .from(transactions)
+    .where(inArray(transactions.id, [...rowIds]))
+    .all();
+  return new Map(rows.map(({ id, ...row }) => [id, row] as const));
 }
+
+/** A line left out before anyone asked whether it was acknowledged. */
+type Unasked = Omit<LineLeftOut, "acknowledged">;
 
 /**
  * Every line left out of the ledger (`LineLeftOut`) — by every retired read, or by `fromFileIds`, the reads one re-read
  * retires. Each heir's lines are matched to the account's live rows, and a line left over takes a retired row
  * (`takenBack`) that stands for a charge no read imported now writes again (`chargesOf`): one charge, however many
- * files print it and however many versions recorded it. Read-only — ONE answer for the upload outcome, /imports and
- * `pnpm ledger-check`.
+ * files print it and however many versions recorded it. Each says the day a session acknowledged it, and what it read
+ * on the statement, if one did (`acknowledgementsOf`, owner decision 2026-10-02). Read-only — ONE answer for the upload
+ * outcome, /imports and `pnpm ledger-check`.
  */
 export function linesLeftOut(db: AppDatabase, fromFileIds?: readonly string[]): LineLeftOut[] {
+  const lines = unaskedLinesLeftOut(db, fromFileIds);
+  const acks = lines.length === 0 ? [] : readLeftOutAcknowledgements(db);
+  if (acks.length === 0) return lines.map((line) => ({ ...line, acknowledged: null }));
+  // ⛔ matched against EVERY line left out, never a re-read's share of them: two lines alike take one acknowledgement
+  // each, and a share holding one of them would hand it the acknowledgement the whole ledger gives the other
+  const { byRow } = acknowledgementsOf(fromFileIds === undefined ? lines : unaskedLinesLeftOut(db), acks);
+  return lines.map((line) => {
+    const ack = byRow.get(line.rowId);
+    return { ...line, acknowledged: ack === undefined ? null : acknowledgedOf(ack) };
+  });
+}
+
+/**
+ * The acknowledgements no line left out matches now — `lines` is every one, `linesLeftOut(db)`. They hide nothing
+ * (`acknowledgementsOf`); ledger-check names them, so one whose line came back into the ledger is seen.
+ */
+export function acknowledgementsMatchingNothing(db: AppDatabase, lines: readonly LineLeftOut[]): LeftOutAcknowledgement[] {
+  return acknowledgementsOf(lines, readLeftOutAcknowledgements(db)).unmatched;
+}
+
+/** `linesLeftOut`'s lines, before any acknowledgement is asked of them. */
+function unaskedLinesLeftOut(db: AppDatabase, fromFileIds?: readonly string[]): Unasked[] {
   if (fromFileIds !== undefined && fromFileIds.length === 0) return [];
   // …with every earlier read of the same files: its row is how a file printing that version's line finds the charge
   const scope =
     fromFileIds === undefined ? undefined : readsOfTheSameBytes(db, fromFileIds).flatMap((r) => (r.status === "superseded" ? [r.id] : []));
-  const out: LineLeftOut[] = [];
+  const out: Unasked[] = [];
   for (const accountId of accountsWithRetiredRows(db, fromFileIds)) {
     const heirs = heirsOn(db, accountId);
     if (heirs.length === 0) continue;
@@ -272,33 +313,36 @@ export function linesLeftOut(db: AppDatabase, fromFileIds?: readonly string[]): 
     const charges = chargesOf(db, accountId, rows);
     const retired = new Map(rows.filter((r) => charges.has(r.id)).map((r) => [r.id, r] as const));
     const index = indexRows([...rowsOn(db, accountId), ...retired.values()]);
-    const taken = new Map<string, { line: PrintedLine; printers: string[] }>();
+    // each printer's line, in heir order: the first is the one the line is named by
+    const taken = new Map<string, { lines: PrintedLine[]; printers: string[] }>();
     for (const heir of heirs) {
       for (const [rowId, i] of takenBack(heir, index, (id) => !retired.has(id), () => true)) {
         const charge = charges.get(rowId)!;
         const held = taken.get(charge);
-        taken.set(charge, { line: held?.line ?? heir.lines[i]!, printers: [...(held?.printers ?? []), heir.fileId] });
+        taken.set(charge, { lines: [...(held?.lines ?? []), heir.lines[i]!], printers: [...(held?.printers ?? []), heir.fileId] });
       }
     }
     // a re-read's outcome names what its own retirement left out: the charges the reads it retired wrote last
     const left = [...taken].filter(([charge]) => fromFileIds?.includes(retired.get(charge)!.importFileId!) ?? true);
     if (left.length === 0) continue;
     const accountName = db.select({ name: accounts.name }).from(accounts).where(eq(accounts.id, accountId)).get()!.name;
-    const names = fileNames(db, [...new Set(left.flatMap(([, { printers }]) => printers))]);
+    const files = filesOf(db, [...new Set(left.flatMap(([, { printers }]) => printers))]);
     const words = rawWords(db, left.map(([rowId]) => rowId));
-    for (const [rowId, { line, printers }] of left) {
-      const newest = newestReadOf(db, retired.get(rowId)!.importFileId!);
+    for (const [rowId, { lines, printers }] of left) {
+      const [line, newest] = [lines[0]!, newestReadOf(db, retired.get(rowId)!.importFileId!)];
       out.push({
         accountId,
         accountName,
         printedOn: line.printedOn,
         amountCents: line.amountCents,
-        description: words.get(rowId) ?? line.normalizedDescription,
-        printedBy: printers.map((id) => names.get(id)!),
+        description: words.get(rowId)?.raw ?? line.normalizedDescription,
+        printedBy: printers.map((id) => files.get(id)!.fileName),
         printerFileIds: printers,
+        printings: printers.map((id, k) => ({ sha256: files.get(id)!.sha256, printedOn: lines[k]!.printedOn, words: lines[k]!.normalizedDescription })),
         readBy: newest?.fileName ?? null,
         readById: newest?.id ?? null,
         rowId,
+        rowWrittenAt: words.get(rowId)!.writtenAt,
       });
     }
   }

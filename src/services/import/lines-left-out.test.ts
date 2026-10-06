@@ -10,7 +10,9 @@ import { duplicateCandidates } from "@/db/schema/duplicate-candidates";
 import { importFiles, statementPeriods } from "@/db/schema/imports";
 import { transactions } from "@/db/schema/transactions";
 import { lineLeftOutNotice } from "@/lib/import-file-label";
-import { linesLeftOut } from "./lines-left-out";
+import { acknowledgementWrites, leftOutToken, planAcknowledging } from "@/lib/left-out-acknowledgement";
+import { readLeftOutAcknowledgements, writeLeftOutAcknowledgements } from "@/services/left-out-acknowledgements";
+import { acknowledgementsMatchingNothing, linesLeftOut } from "./lines-left-out";
 import { PROFILES } from "./profiles";
 import { importStatementFiles, type ImportInput } from "./service";
 import type { AccountHint, ParsedStatement, ParserProfile } from "./types";
@@ -50,6 +52,8 @@ const SECTIONS: Record<string, ParsedStatement[]> = {
   other: [{ accountHint: CHECKING, txns: [{ postedOn: "2026-07-02", amountCents: -700, rawDescription: "LATE NIGHT TACOS" }] }],
   // an export of the account ending sooner than `export`, which prints its lines again
   earlier: [{ accountHint: CHECKING, txns: [OPENING, COFFEE] }],
+  // an export printing one deposit twice: two lines alike
+  twins: [{ accountHint: CHECKING, txns: [OPENING, OPENING, COFFEE] }],
   // three weeks of pay
   payroll: [{ accountHint: CHECKING, txns: [pay("2026-06-05"), pay("2026-06-12"), pay("2026-06-19")] }],
 };
@@ -82,6 +86,8 @@ const OTHER = file("export-july", "other");
 /** two exports of the account that overlap, named as Chase names them: the older one sorts first */
 const EXPORT_AUGUST = file("Chase4501_Activity_20260812", "earlier");
 const EXPORT_SEPTEMBER = file("Chase4501_Activity_20260901", "export");
+const TWINS = file("twins", "twins");
+const TWINS_AGAIN = file("twins (1)", "twins\n");
 const PAYROLL = file("payroll", "payroll");
 const PAYROLL_AGAIN = file("payroll (1)", "payroll\n");
 
@@ -487,5 +493,138 @@ describe("nothing is left out where no money left", () => {
     expect(live()).toHaveLength(2);
     expect(outcome!.leftOut).toEqual([]);
     expect(linesLeftOut(bundle.db)).toEqual([]);
+  });
+});
+
+/**
+ * ⚖️ Owner, 2026-10-02 (§6A 30): once a session has read a line left out on the statement, it may record it
+ * ACKNOWLEDGED — the guarded `pnpm ledger-check --acknowledge-left-out=<mark> --reason='<what it read>' [--confirm]`,
+ * kept in the ledger like the witness marks. Every reader still names the line, says on what day it was acknowledged
+ * and what the session read, and ledger-check stops failing on it; a line nobody acknowledged still fails.
+ */
+describe("a line left out, acknowledged", () => {
+  const ON = "2026-10-05";
+  const READ = { on: ON, reason: "Wells Fargo export, 07-27: the opening deposit, reversed by the card the same day" };
+
+  /** what a session does once it has read each line on its statement: the dry run's plan, confirmed */
+  function acknowledgeAll(): void {
+    const lines = linesLeftOut(bundle.db);
+    const plan = planAcknowledging(lines, lines.map(leftOutToken), READ);
+    expect(plan.unmatched).toEqual([]);
+    writeLeftOutAcknowledgements(bundle.db, acknowledgementWrites(plan.open, READ));
+  }
+
+  async function droppedOpening(): Promise<void> {
+    await exportAndRedownload();
+    profile.version = 2;
+    atVersion2 = DROPS_OPENING;
+    await importStatementFiles(bundle.db, [EXPORT]);
+  }
+
+  test("is named still, and says on what day and what was read — by the whole ledger's reading and the re-read's own", async () => {
+    await droppedOpening();
+    const [left] = linesLeftOut(bundle.db);
+    expect(left!.acknowledged).toBeNull();
+
+    acknowledgeAll();
+
+    const found = linesLeftOut(bundle.db);
+    expect(found).toEqual([expect.objectContaining({ printedOn: OPENING.postedOn, rowId: left!.rowId, acknowledged: READ })]);
+    expect(lineLeftOutNotice(found[0]!).endsWith(` Acknowledged on ${ON}: ${READ.reason}`)).toBe(true);
+    // the question the upload outcome asks of the read its re-read retired: the same line, the same acknowledgement
+    const retiredRead = bundle.db.select().from(transactions).where(eq(transactions.id, left!.rowId)).get()!.importFileId!;
+    expect(linesLeftOut(bundle.db, [retiredRead])).toEqual(found);
+    expect(acknowledgementsMatchingNothing(bundle.db, found)).toEqual([]);
+  });
+
+  test("kept in the ledger, keyed by what the line is — its account, day, money, words and the printing file's bytes", async () => {
+    await droppedOpening();
+    acknowledgeAll();
+    const sha = bundle.db.select().from(importFiles).where(eq(importFiles.id, fileId(EXPORT_AGAIN))).get()!.fileSha256;
+    expect(readLeftOutAcknowledgements(bundle.db)).toEqual([
+      expect.objectContaining({
+        accountId: account().id,
+        printedOn: OPENING.postedOn,
+        amountCents: OPENING.amountCents,
+        printedWords: "WFB OPENING DEPOSIT FROM CARD",
+        printerSha256: sha,
+        acknowledgedOn: ON,
+        reason: READ.reason,
+      }),
+    ]);
+  });
+
+  test("the file read again at a version that still leaves it out: still acknowledged", async () => {
+    await droppedOpening();
+    acknowledgeAll();
+
+    profile.version = 3;
+    await importStatementFiles(bundle.db, [EXPORT]);
+
+    expect(linesLeftOut(bundle.db)).toEqual([expect.objectContaining({ printedOn: OPENING.postedOn, acknowledged: READ })]);
+  });
+
+  /**
+   * 🔴 The leaving it acknowledged ended — a version wrote the deposit again — and a later version dropped it again:
+   * the same day, money, words and printing file. Keyed by those alone, the old acknowledgement would hide a regression
+   * nobody read on the statement.
+   */
+  test("⛔ written again and then left out again: a new leaving, unacknowledged — the old acknowledgement hides nothing", async () => {
+    await droppedOpening();
+    acknowledgeAll();
+
+    profile.version = 3;
+    atVersion3 = { export: SECTIONS.export! };
+    await importStatementFiles(bundle.db, [EXPORT]);
+    expect(linesLeftOut(bundle.db)).toEqual([]);
+    expect(acknowledgementsMatchingNothing(bundle.db, [])).toEqual([expect.objectContaining({ printedOn: OPENING.postedOn })]);
+
+    profile.version = 4;
+    await importStatementFiles(bundle.db, [EXPORT]);
+
+    const found = linesLeftOut(bundle.db);
+    expect(found).toEqual([expect.objectContaining({ printedOn: OPENING.postedOn, acknowledged: null })]);
+    expect(acknowledgementsMatchingNothing(bundle.db, found)).toHaveLength(1);
+  });
+
+  test("⛔ a second line alike left out later is not hidden by the first one's acknowledgement", async () => {
+    await importStatementFiles(bundle.db, [TWINS]);
+    await importStatementFiles(bundle.db, [TWINS_AGAIN]);
+    profile.version = 2;
+    atVersion2 = { twins: [{ accountHint: CHECKING, txns: [OPENING, COFFEE] }] };
+    await importStatementFiles(bundle.db, [TWINS]);
+    expect(linesLeftOut(bundle.db)).toHaveLength(1);
+    acknowledgeAll();
+
+    profile.version = 3;
+    atVersion3 = { twins: [{ accountHint: CHECKING, txns: [COFFEE] }] };
+    const [outcome] = await importStatementFiles(bundle.db, [TWINS]);
+
+    const found = linesLeftOut(bundle.db);
+    expect(found.map((l) => [l.printedOn, l.amountCents])).toEqual([
+      [OPENING.postedOn, OPENING.amountCents],
+      [OPENING.postedOn, OPENING.amountCents],
+    ]);
+    expect(found.map((l) => l.acknowledged?.on ?? "none").sort()).toEqual([ON, "none"]);
+    // the upload's outcome names only the line its own retirement left out — the one nobody acknowledged — and says so,
+    // as the whole ledger does: matched within its share alone, it took the first line's acknowledgement
+    expect(outcome!.leftOut).toEqual([expect.objectContaining({ printedOn: OPENING.postedOn, acknowledged: null })]);
+    expect(outcome!.leftOut[0]!.notice).not.toContain("Acknowledged");
+  });
+
+  test("a line acknowledged and a line not: only the one acknowledged says so", async () => {
+    await exportAndRedownload();
+    profile.version = 2;
+    atVersion2 = { export: [{ accountHint: CHECKING, txns: [COFFEE] }] };
+    await importStatementFiles(bundle.db, [EXPORT]);
+    const [opening] = linesLeftOut(bundle.db).filter((l) => l.printedOn === OPENING.postedOn);
+
+    const plan = planAcknowledging(linesLeftOut(bundle.db), [leftOutToken(opening!)], READ);
+    writeLeftOutAcknowledgements(bundle.db, acknowledgementWrites(plan.open, READ));
+
+    expect(linesLeftOut(bundle.db).map((l) => [l.printedOn, l.acknowledged])).toEqual([
+      [OPENING.postedOn, READ],
+      [GROCER.postedOn, null],
+    ]);
   });
 });

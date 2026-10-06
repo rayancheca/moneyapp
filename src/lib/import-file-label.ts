@@ -249,6 +249,31 @@ export interface LineLeftOutFacts {
   readonly printedBy: readonly string[];
   /** the file the retired row was read from, while a read of it is imported — the read that left the line out */
   readonly readBy: string | null;
+  /**
+   * when a session, having read it on the statement, acknowledged it, and what it read — null while nobody has
+   * (`lib/left-out-acknowledgement.ts`, owner decision 2026-10-02)
+   */
+  readonly acknowledged: Acknowledged | null;
+}
+
+/** A session's acknowledgement of a line left out, as every surface prints it (`acknowledgedSentence`). */
+export interface Acknowledged {
+  /** the day it was acknowledged */
+  readonly on: string;
+  /** what the session read on the statement, in its words — never empty (`--reason`, `ledgerCheckMode`) */
+  readonly reason: string;
+}
+
+/**
+ * "Acknowledged on <day>: <what the session read>" — ONE phrasing wherever an acknowledgement is printed: with its
+ * line by `lineLeftOutNotice`, and by ledger-check's dry run, its refusals and its acknowledgement matching no line.
+ *
+ * ⛔ The reason is printed, never only the day: "an entry without a reason is a check that has been quieted rather than
+ * passed" (ledger-check's BASELINE). ⛔ And printed exactly as given, nothing added: 🔴 a stop was added unless it ended
+ * in . ! or ?, so "(page 1.)" printed "(page 1.)." and a reason ending in a colon ":." — the words were not the session's.
+ */
+export function acknowledgedSentence(acknowledged: Acknowledged): string {
+  return `Acknowledged on ${acknowledged.on}: ${acknowledged.reason}`;
 }
 
 /**
@@ -257,14 +282,17 @@ export interface LineLeftOutFacts {
  *
  * ⚖️ Owner, 2026-09-28: the row stays out — the ledger never adds money on a guess — so the notice says which money,
  * which file still prints it and which read no longer does, and does not offer to put it back.
+ * ⚖️ Owner, 2026-10-02 (§6A 30): one a session acknowledged after reading it on the statement is still named — left out
+ * is still true — and says on what day, and what the session read (`acknowledgedSentence`).
  */
 export function lineLeftOutNotice(facts: LineLeftOutFacts): string {
   const [printers, print] = [facts.printedBy.join(", "), facts.printedBy.length === 1 ? "prints" : "print"];
   const newest = facts.readBy === null ? "no read of the file it came from is imported now" : `the newest read of ${facts.readBy} does not`;
+  const acknowledged = facts.acknowledged === null ? "" : ` ${acknowledgedSentence(facts.acknowledged)}`;
   return (
     `Left out of the ledger: ${formatCentsSigned(facts.amountCents)} on ${facts.printedOn}, ${facts.description}, ` +
     `on ${facts.accountName}. ${printers} still ${print} it; ${newest}, and the row an earlier read wrote for it is ` +
-    "retired — not written back on a guess."
+    `retired — not written back on a guess.${acknowledged}`
   );
 }
 

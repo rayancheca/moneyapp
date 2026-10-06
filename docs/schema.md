@@ -560,6 +560,24 @@ account's **id**, never its name; `account_names` only names an account a drop r
 lives in the ledger, not beside it, so a restored snapshot brings back its own marks. Lowered
 only by `pnpm ledger-check --lower-marks=<kind> --confirm`.
 
+### left_out_acknowledgements (migration 0024)
+`id PK · account_id · printed_on · amount_cents · printed_words · printer_sha256 · description ·
+acknowledged_on · reason · created_at` — a line a re-read left out (`linesLeftOut`) that a session
+acknowledged after reading it on the statement (`src/lib/left-out-acknowledgement.ts`, owner
+decision 2026-10-02). `pnpm ledger-check` still lists the line, with "Acknowledged on
+<acknowledged_on>: <reason>" — the reason exactly as given, no stop added — and no longer fails on
+it; /imports and the upload outcome print the same sentence. `reason` is NOT NULL and never blank,
+and the table enforces both: CHECK `left_out_acknowledgements_reason_says_something` refuses a
+reason of only whitespace (tabs and newlines too — SQLite's one-argument `trim()` strips spaces
+only), whoever writes. It is what the session read on the statement, in its words: an entry
+without a reason is a check quieted, not passed — and a later run never changes it: another
+`--reason` for a line acknowledged already is refused (exit 2). Keyed by what the line is
+— account, day, money, printed words, the printing file's sha256 — never a row id; one row per
+line, so two lines alike need two; and it covers only a leaving whose row was written before
+`created_at`. Lives in the ledger, like the marks. Written only by
+`pnpm ledger-check --acknowledge-left-out=<mark> --reason='<what the statement shows>' --confirm`
+— refused without `--reason`.
+
 ## Invariants the test suite enforces
 
 1. Every `reconciled` **cash/credit** statement period: `beginning + Σ(active txns in

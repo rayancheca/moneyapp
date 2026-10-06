@@ -169,6 +169,13 @@
       "when": 1789586978610,
       "tag": "0023_unimported_row_attributes",
       "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "6",
+      "when": 1791219404383,
+      "tag": "0024_left_out_acknowledgements",
+      "breakpoints": true
     }
   ]
 }

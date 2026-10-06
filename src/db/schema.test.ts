@@ -46,6 +46,7 @@ describe("migrations from zero", () => {
         "import_files",
         "insight_selections",
         "ledger_witness_marks",
+        "left_out_acknowledgements",
         "institutions",
         "merchant_aliases",
         "merchants",

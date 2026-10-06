@@ -830,6 +830,9 @@ describe("planLowering — the guarded way down, after a removal the owner appro
 });
 
 describe("ledgerCheckMode — the command line", () => {
+  /** what a session read on the statement, as `--reason` gives it */
+  const READ_IT = "July statement, page 1: the bank's opening deposit, reversed the same day by the card it came from";
+
   it("no arguments is the plain check the hook runs", () => {
     expect(ledgerCheckMode([])).toEqual({ mode: "check" });
   });
@@ -874,6 +877,99 @@ describe("ledgerCheckMode — the command line", () => {
     expect(() => ledgerCheckMode(["--db=/scratch/copy.db"])).toThrow(/unknown argument --db=\/scratch\/copy\.db — .*MONEYAPP_DB_PATH/);
     expect(() => ledgerCheckMode(["statements"])).toThrow(/unknown argument statements/);
     expect(() => ledgerCheckMode(["--confirm=yes"])).toThrow(/unknown argument --confirm=yes/);
+  });
+
+  /* ⚖️ Owner, 2026-10-02 (§6A 30): a line left out is acknowledged by the same guarded step — a dry run, then --confirm */
+  it("--acknowledge-left-out=<marks> is a dry run; --confirm with --reason makes it write", () => {
+    expect(ledgerCheckMode(["--acknowledge-left-out=3f9a0c12de"])).toEqual({
+      mode: "acknowledge",
+      tokens: ["3f9a0c12de"],
+      confirm: false,
+      reason: null,
+    });
+    expect(ledgerCheckMode(["--acknowledge-left-out=3f9a0c12de,0b1c2d3e4f,3f9a0c12de"])).toEqual({
+      mode: "acknowledge",
+      tokens: ["3f9a0c12de", "0b1c2d3e4f"],
+      confirm: false,
+      reason: null,
+    });
+    expect(ledgerCheckMode(["--acknowledge-left-out=3f9a0c12de", `--reason=${READ_IT}`, "--confirm"])).toEqual({
+      mode: "acknowledge",
+      tokens: ["3f9a0c12de"],
+      confirm: true,
+      reason: READ_IT,
+    });
+  });
+
+  /*
+   * ⛔ "An entry without a reason is a check that has been quieted rather than passed" (ledger-check's BASELINE). An
+   * acknowledgement stops a finding failing, so it is stored with what the session read on the statement, and printed
+   * with the line wherever the line is printed. Refused before the ledger is opened: nothing is written.
+   */
+  it("⛔ --confirm without --reason is refused — an acknowledgement says what the session read on the statement", () => {
+    expect(() => ledgerCheckMode(["--acknowledge-left-out=3f9a0c12de", "--confirm"])).toThrow(WitnessFlagRefusal);
+    expect(() => ledgerCheckMode(["--acknowledge-left-out=3f9a0c12de", "--confirm"])).toThrow(
+      /--confirm records an acknowledgement, and one needs --reason='<what the statement shows>'/,
+    );
+  });
+
+  it("⛔ a reason that says nothing is refused, dry run or not", () => {
+    for (const reason of ["--reason", "--reason=", "--reason=   ", "--reason=\n\t"]) {
+      for (const confirm of [[], ["--confirm"]]) {
+        expect(() => ledgerCheckMode(["--acknowledge-left-out=3f9a0c12de", reason, ...confirm])).toThrow(
+          /--reason needs what the session read on the statement/,
+        );
+      }
+    }
+  });
+
+  it("the reason is kept whole — its commas, colons and equals signs — on one line, its spaces collapsed", () => {
+    const mode = ledgerCheckMode(["--acknowledge-left-out=3f9a0c12de", "--reason=  July, p. 1:\n  fee =  $25.00 , reversed  "]);
+    expect(mode).toEqual({ mode: "acknowledge", tokens: ["3f9a0c12de"], confirm: false, reason: "July, p. 1: fee = $25.00 , reversed" });
+  });
+
+  it("⛔ one reason names one line: --reason beside two marks is refused — each its own run, its own reason", () => {
+    expect(() => ledgerCheckMode(["--acknowledge-left-out=3f9a0c12de,0b1c2d3e4f", `--reason=${READ_IT}`])).toThrow(
+      /--reason says what ONE line is on its statement — 2 marks given/,
+    );
+    expect(() => ledgerCheckMode(["--acknowledge-left-out=3f9a0c12de,0b1c2d3e4f", `--reason=${READ_IT}`, "--confirm"])).toThrow(
+      WitnessFlagRefusal,
+    );
+  });
+
+  it("⛔ --reason given twice, or with nothing to acknowledge, is refused rather than dropped", () => {
+    expect(() => ledgerCheckMode(["--acknowledge-left-out=3f9a0c12de", "--reason=a", "--reason=b", "--confirm"])).toThrow(
+      /--reason given 2 times/,
+    );
+    expect(() => ledgerCheckMode([`--reason=${READ_IT}`])).toThrow(/--reason is stored by --acknowledge-left-out/);
+    expect(() => ledgerCheckMode(["--lower-marks=accounts", `--reason=${READ_IT}`, "--confirm"])).toThrow(
+      /--reason is stored by --acknowledge-left-out/,
+    );
+  });
+
+  it("⛔ --acknowledge-left-out with no marks is refused", () => {
+    for (const argv of [["--acknowledge-left-out"], ["--acknowledge-left-out="], ["--acknowledge-left-out=,"]]) {
+      expect(() => ledgerCheckMode(argv)).toThrow(/--acknowledge-left-out needs the marks of the lines to acknowledge/);
+    }
+  });
+
+  it("⛔ a mark that is not one is refused rather than skipped", () => {
+    expect(() => ledgerCheckMode(["--acknowledge-left-out=all"])).toThrow(/"all" is not a line's mark/);
+    expect(() => ledgerCheckMode(["--acknowledge-left-out=3F9A0C12DE"])).toThrow(/"3F9A0C12DE" is not a line's mark/);
+    expect(() => ledgerCheckMode(["--acknowledge-left-out=3f9a0c12d"])).toThrow(/"3f9a0c12d" is not a line's mark/);
+  });
+
+  it("⛔ --acknowledge-left-out given twice, or beside --lower-marks, is refused: one guarded write a run", () => {
+    expect(() => ledgerCheckMode(["--acknowledge-left-out=3f9a0c12de", "--acknowledge-left-out=0b1c2d3e4f"])).toThrow(
+      /--acknowledge-left-out given 2 times/,
+    );
+    expect(() => ledgerCheckMode(["--lower-marks=accounts", "--acknowledge-left-out=3f9a0c12de", "--confirm"])).toThrow(
+      /--lower-marks and --acknowledge-left-out are two guarded writes/,
+    );
+  });
+
+  it("⛔ --confirm alone names both writes it could confirm", () => {
+    expect(() => ledgerCheckMode(["--confirm"])).toThrow(/--acknowledge-left-out=<mark> --reason='<what the statement shows>'/);
   });
 });
 
