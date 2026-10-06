@@ -88,12 +88,14 @@ describe("ledger-check — lines left out by a re-read", () => {
    * 🔴 It picked its last words by whether a reason was given only: after two marks it said "the same command with
    * --reason='…' --confirm", which the command line refuses (a reason says what ONE line is). The rule words the run that
    * confirms (`confirmingStep`, lib/left-out-acknowledgement.test.ts): one a mark, when the dry run named several.
+   * 🔴 And it was given only the plan's open lines, so for a mark partly acknowledged it named the session's own words,
+   * which the plan refuses (lines alike take the reason stored): it is given the whole plan now, and names that reason.
    */
-  test("a dry run ends with the run that confirms it, as the rule words it — never one the command line refuses", () => {
+  test("a dry run ends with the run that confirms it, as the rule words it from the whole plan — never one refused", () => {
     const step = script.slice(script.indexOf('if (MODE.mode === "acknowledge") {'));
     const dryRun = step.slice(step.indexOf("if (!MODE.confirm)"), step.indexOf("writeLeftOutAcknowledgements("));
     expect(dryRun).toContain(
-      'console.log(`\\ndry run: nothing was written. ${confirmingStep(MODE.tokens, plan.open, MODE.reason).join("\\n")}`);',
+      'console.log(`\\ndry run: nothing was written. ${confirmingStep(MODE.tokens, plan, MODE.reason).join("\\n")}`);',
     );
     expect(script).not.toMatch(/MODE\.reason === null \?/);
   });

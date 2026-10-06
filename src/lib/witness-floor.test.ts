@@ -913,8 +913,11 @@ describe("ledgerCheckMode — the command line", () => {
     );
   });
 
-  it("⛔ a reason that says nothing is refused, dry run or not", () => {
-    for (const reason of ["--reason", "--reason=", "--reason=   ", "--reason=\n\t"]) {
+  /* 🔴 `\s` and `trim()` know no zero-width character: `--reason=` and one U+200B was a reason, and its dry run said so */
+  it("⛔ a reason that says nothing is refused, dry run or not — Unicode whitespace and zero-width characters too", () => {
+    const unicode = [" ", "　 ", "​", "‌‍⁠﻿", "  ​　 "];
+    const blanks = ["--reason", "--reason=", "--reason=   ", "--reason=\n\t", ...unicode.map((r) => `--reason=${r}`)];
+    for (const reason of blanks) {
       for (const confirm of [[], ["--confirm"]]) {
         expect(() => ledgerCheckMode(["--acknowledge-left-out=3f9a0c12de", reason, ...confirm])).toThrow(
           /--reason needs what the session read on the statement/,

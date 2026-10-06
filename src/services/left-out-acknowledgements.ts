@@ -1,7 +1,11 @@
 import { asc } from "drizzle-orm";
 import type { AppDatabase } from "@/db/client";
 import { leftOutAcknowledgements } from "@/db/schema/ledger-check";
-import type { LeftOutAcknowledgement, LeftOutAcknowledgementWrite } from "@/lib/left-out-acknowledgement";
+import {
+  reasonSaysNothing,
+  type LeftOutAcknowledgement,
+  type LeftOutAcknowledgementWrite,
+} from "@/lib/left-out-acknowledgement";
 
 /** The acknowledgements this ledger holds, the oldest first. */
 export function readLeftOutAcknowledgements(db: AppDatabase): LeftOutAcknowledgement[] {
@@ -19,10 +23,14 @@ export function readLeftOutAcknowledgements(db: AppDatabase): LeftOutAcknowledge
  * that has been quieted rather than passed" (ledger-check's BASELINE). The command line refuses it first
  * (`ledgerCheckMode`); this is the table's one writer, so it is refused here too, whoever calls — by name, before the
  * table's own CHECK (`left_out_acknowledgements_reason_says_something`) would refuse it with no line named.
+ *
+ * ⛔ And by more than that CHECK covers: it trims ASCII whitespace only (char 9–13 and 32), and migration 0024 is
+ * applied to the real ledger, never edited. Here a reason says nothing when only Unicode whitespace and invisible
+ * characters are in it — a no-break, ideographic or zero-width space, a joiner, a BOM (`reasonSaysNothing`).
  */
 export function writeLeftOutAcknowledgements(db: AppDatabase, writes: readonly LeftOutAcknowledgementWrite[]): void {
   if (writes.length === 0) return;
-  const blank = writes.find((write) => write.reason.trim() === "");
+  const blank = writes.find((write) => reasonSaysNothing(write.reason));
   if (blank !== undefined) {
     throw new Error(
       `refused: an acknowledgement says what the session read on the statement, and the one for ${blank.description} on ` +

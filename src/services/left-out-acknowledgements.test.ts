@@ -83,6 +83,19 @@ describe("the acknowledgements a ledger keeps (`left_out_acknowledgements`)", ()
     expect(readLeftOutAcknowledgements(bundle.db).map((a) => a.reason)).toEqual([" Printed on the July statement. "]);
   });
 
+  /*
+   * What the CHECK covers, exactly — migration 0024 is applied to the real ledger and never edited: tab, newline, vertical
+   * tab, form feed, carriage return and space (char 9–13, 32). Any other blank passes it, so the writer refuses those.
+   */
+  test("the table's CHECK trims ASCII whitespace only: a no-break, ideographic or zero-width space passes it", () => {
+    const insert = bundle.sqlite.prepare(
+      "INSERT INTO left_out_acknowledgements (id, account_id, printed_on, amount_cents, printed_words, printer_sha256, " +
+        "description, acknowledged_on, reason, created_at) VALUES (?, ?, '2026-07-27', 2500, 'W', 'S', 'D', '2026-10-05', ?, 'T')",
+    );
+    for (const [i, reason] of [" ", "　", "​"].entries()) insert.run(`raw-${i}`, WF, reason);
+    expect(readLeftOutAcknowledgements(bundle.db)).toHaveLength(3);
+  });
+
   test("⛔ a reason that says nothing refuses the whole write — nothing is written", () => {
     for (const reason of ["", "   ", "\n\t"]) {
       const before = changes();
@@ -92,6 +105,35 @@ describe("the acknowledgements a ledger keeps (`left_out_acknowledgements`)", ()
       expect(changes()).toBe(before);
     }
     expect(readLeftOutAcknowledgements(bundle.db)).toEqual([]);
+  });
+
+  /*
+   * 🔴 The writer refused only what `String.prototype.trim()` strips — Unicode whitespace, no zero-width character — and
+   * the CHECK only ASCII whitespace: a reason of one U+200B was stored, and every surface printed "Acknowledged on
+   * 2026-10-05: " and nothing a reader can see. Blank is now what is left once every Unicode whitespace character and
+   * every invisible one (`Default_Ignorable_Code_Point`: zero-width spaces and joiners, the BOM, bidi marks) is taken out.
+   */
+  test("⛔ a reason of only Unicode whitespace or zero-width characters says nothing — refused, nothing written", () => {
+    const blanks = [
+      " ", // no-break space
+      "　", // ideographic space
+      "​", // zero-width space
+      "‌‍⁠﻿", // zero-width non-joiner and joiner, word joiner, byte-order mark
+      "\u0085    ", // next line, line and paragraph separators, narrow and math spaces
+      "᠎­‎‏", // Mongolian vowel separator, soft hyphen, left-to-right and right-to-left marks
+      "  ​　\n\t",
+    ];
+    for (const reason of blanks) {
+      const before = changes();
+      expect(() => writeLeftOutAcknowledgements(bundle.db, [OPENING, { ...OPENING, reason }])).toThrow(
+        /an acknowledgement says what the session read on the statement/,
+      );
+      expect(changes()).toBe(before);
+    }
+    expect(readLeftOutAcknowledgements(bundle.db)).toEqual([]);
+    // what the session read, an invisible character in it or not, is a reason — stored as given
+    writeLeftOutAcknowledgements(bundle.db, [{ ...OPENING, reason: `​${OPENING.reason} ` }]);
+    expect(readLeftOutAcknowledgements(bundle.db).map((a) => a.reason)).toEqual([`​${OPENING.reason} `]);
   });
 
   test("two lines alike are two acknowledgements — one each", () => {
