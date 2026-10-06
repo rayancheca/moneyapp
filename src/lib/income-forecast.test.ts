@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { MIN_INCOME_MONTHS_PRESENT, projectOngoingIncome } from "./income-forecast";
+import { MIN_INCOME_MONTHS_PRESENT, projectOngoingIncome, projectOngoingNetIncome } from "./income-forecast";
 
 describe("projectOngoingIncome", () => {
   test("projects a bucket present in ≥2 trailing months at its trailing mean", () => {
@@ -74,5 +74,32 @@ describe("projectOngoingIncome", () => {
     );
     expect(out.map((e) => e.label)).toEqual(["Refunds & Reimbursements"]);
     expect(MIN_INCOME_MONTHS_PRESENT).toBe(2);
+  });
+});
+
+/*
+ * The agent's pace nets its clawbacks (owner decision 2026-10-06, §6A 45), and a clawback can reach the pace without
+ * the credit it reverses — that credit a live schedule's, projected by FIXED. 🔴 `projectOngoingIncome` dropped such a
+ * bucket (no month nets money in), so the clawback netted nowhere.
+ */
+describe("projectOngoingNetIncome — a net bucket that can come to money out", () => {
+  const net = (monthlyTotalsCents: number[]) => projectOngoingNetIncome([{ label: "Interest", monthlyTotalsCents }]);
+
+  test("a bucket netting OUT is projected by the same gate and mean, mirrored: below zero", () => {
+    // the clawbacks alone: -$3.00 a month, present 3 of 3 as money out
+    expect(net([-300, -300, -300])).toEqual([expect.objectContaining({ monthlyCents: -300, monthsPresent: 3 })]);
+    expect(net([-300, 0, -300])).toEqual([expect.objectContaining({ monthlyCents: -200, monthsPresent: 2 })]);
+  });
+
+  test("a one-off clawback never extrapolates, as a one-off credit never does", () => {
+    expect(net([0, 0, -300])).toEqual([]);
+    // present twice as money in, and a September clawback larger than both: money out once
+    expect(net([400, 400, -1000])).toEqual([]);
+  });
+
+  test("a bucket netting money in, or to nothing, is `projectOngoingIncome`'s, unchanged", () => {
+    for (const totals of [[100, 100, 100], [0, 200000, 400000], [-100, -100, 400], [400, 400, -800], [0, 0, 0]]) {
+      expect(net(totals), totals.join()).toEqual(projectOngoingIncome([{ label: "Interest", monthlyTotalsCents: totals }]));
+    }
   });
 });

@@ -4,7 +4,7 @@ import { recurringSeries } from "@/db/schema/recurring";
 import { transactions } from "@/db/schema/transactions";
 import { addCalendarMonths, addDays, compareDates, diffDays, monthKey, periodBounds, todayIso } from "@/lib/dates";
 import { forecastSplit } from "@/lib/forecast-split";
-import { projectOngoingIncome } from "@/lib/income-forecast";
+import { projectOngoingIncome, projectOngoingNetIncome } from "@/lib/income-forecast";
 import { trailingPace } from "@/lib/projection";
 import { formatDayShortIn } from "@/lib/format-date";
 import { formatCents } from "@/lib/money";
@@ -135,7 +135,8 @@ interface ForecastLeg {
    * What this leg projects the AGENT'S cash is paid, by the rule that projects his (`MonthForecast.agentsIncome`) —
    * net of a scheduled clawback its category files with it (`agentsSeriesBand`, owner decision 2026-10-06, §6A 43), so
    * a schedule can take it below zero. The pace leg's nets its posted clawbacks too (`isAgentsIncomeCategoryRow`, owner
-   * decision 2026-10-06, §6A 45), where his pace's is his money in only (`isIncome`).
+   * decision 2026-10-06, §6A 45), where his pace's is his money in only (`isIncome`) — so it can be below zero too, a
+   * clawback whose credit a schedule projects, and `agentsIncomeAtPace` says how far it may take the month.
    *
    * ⚖️ Owner decision 2026-09-28: not his income (`isIncome`), so it is no line — not in Income, not in the net —
    * and not cash he can spend, so never EOM cash either. Net worth holds the agent's money, so EOM net worth adds it,
@@ -334,9 +335,15 @@ export interface MonthForecast {
    * ⚖️ Owner decision 2026-10-06 (§6A 45): …and so does the pace, a posted clawback no live schedule owns — none
    * detected, or one he dismissed, whose rows fall to the pace — by the bridge's rule (`isAgentsIncomeCategoryRow`).
    * 🔴 The pace's half was the agent's CREDITS only: $4.00 paid and $3.00 clawed back each month was +$1.00 on the
-   * bridge and +$4.00 a month at "your recent pace", in EOM net worth too. ⛔ His pace is still his money in only
-   * (`isIncome`). ❓ A pace bucket netting to zero or below projects nothing rather than below zero
-   * (`projectOngoingIncome`) — pinned, not decided (`agents-credit-by-category.test.ts`).
+   * bridge and +$4.00 a month at "your recent pace", in EOM net worth too. 🔴 …and still was, once the pace netted
+   * inside its buckets, wherever the credit a clawback reverses is a live schedule's: the pace's bucket held the
+   * clawbacks alone and was dropped, so the card read the schedule's +$4.00 a month where the bridge read +$1.00. Now a
+   * bucket netting out projects below zero (`projectOngoingNetIncome`), against what the month projects the agent is
+   * paid, schedules included. ⛔ His pace is still his money in only (`isIncome`).
+   *
+   * ❓ PINNED, NOT DECIDED: the pace takes a month's agent's income down to ZERO, never below, nor lower than its
+   * schedules already do (`agentsIncomeAtPace`). So a month the agent is clawed back as much as it is paid, or more,
+   * reads $0 at the pace while the bridge reads below zero (`agents-credit-by-category.test.ts`).
    *
    * ⚖️ Owner decision 2026-09-28 (§6A 27): not his income (`isIncome`, `isAgentsIncomeSeries`); and net worth holds
    * the agent's money, which is why the bridge names it on a band of its own. So for the running month
@@ -893,8 +900,13 @@ function variableIncomeComponents(
    * income" by (`isAgentsIncomeCategoryRow`, §6A 43), so a posted clawback no live schedule owns — none detected, or
    * one he dismissed — nets inside its bucket. 🔴 They were the agent's credits only (`isAgentsIncome`): $4.00 paid and
    * $3.00 clawed back each month was +$1.00 on the bridge and +$3.48 here. ⛔ His are still his money in only
-   * (`isIncome`). ❓ A bucket netting to zero or below fails the gate and projects nothing (`projectOngoingIncome`),
-   * where the bridge reads below zero — pinned, not decided (`agents-credit-by-category.test.ts`).
+   * (`isIncome`).
+   *
+   * ⚖️ …SIGNED (`projectOngoingNetIncome`): a bucket netting money out is the same gate and mean, mirrored. 🔴 A clawback
+   * reaches these rows without the credit it reverses whenever that credit is a live schedule's (FIXED projects it, and
+   * `nonRecurringAllocations` leaves its rows out): the agent's interest a detected schedule, its unscheduled clawbacks
+   * came to -$3.00 a month here, `projectOngoingIncome` dropped the bucket, and the card read +$4.00 a month where the
+   * bridge nets +$1.00. How far the pace may take the month is `agentsIncomeAtPace`'s to say — to zero, not below (❓).
    */
   const buckets = bucketTrailing(
     rows,
@@ -907,18 +919,21 @@ function variableIncomeComponents(
     outside,
   );
 
+  // one set of bucket sums, as the trailing months' totals the honesty layer reads
+  const trailing = (sums: ReadonlyMap<string, ReadonlyMap<string, number>>) =>
+    [...sums].map(([label, perMonth]) => ({
+      label,
+      monthlyTotalsCents: windows.map((w) => perMonth.get(w.key) ?? 0),
+    }));
+  // the share of a full month the days remaining hold
+  const remaining = (monthlyCents: number): number => Math.round((monthlyCents * remainingDays) / daysInMonth);
   // the ongoing-income lines one set of bucket sums projects over the days remaining
   const project = (sums: ReadonlyMap<string, ReadonlyMap<string, number>>): ForecastComponent[] =>
-    projectOngoingIncome(
-      [...sums].map(([label, perMonth]) => ({
-        label,
-        monthlyTotalsCents: windows.map((w) => perMonth.get(w.key) ?? 0),
-      })),
-    )
+    projectOngoingIncome(trailing(sums))
       .map((e) => ({
         label: e.label,
         kind: "variable" as const,
-        cents: Math.round((e.monthlyCents * remainingDays) / daysInMonth),
+        cents: remaining(e.monthlyCents),
         detail: `${e.basis}, × ${remainingDays}/${daysInMonth} days`,
       }))
       .filter((c) => c.cents > 0);
@@ -935,7 +950,11 @@ function variableIncomeComponents(
     cashCents += cashLine;
     if (cashLine !== (lines.get(label) ?? 0)) for (const id of buckets.outsideAccounts.get(label) ?? []) outsideAccountIds.add(id);
   }
-  const agentsCents = project(agents.all).reduce((sum, c) => sum + c.cents, 0);
+  // signed: a bucket of the agent's clawbacks alone projects below zero (`agentsIncomeAtPace` floors the month)
+  const agentsCents = projectOngoingNetIncome(trailing(agents.all)).reduce(
+    (sum, e) => sum + remaining(e.monthlyCents),
+    0,
+  );
   // income: nothing here is anyone's cost
   return { components, cashCents, outsideAccountIds, agentsCents, agentsCostCents: 0 };
 }
@@ -1049,11 +1068,26 @@ function assembleLegs(
     cashNet: cashOf(legs),
     committedCashNet: cashOf(fixed),
     outsideAccountIds: new Set(legs.flatMap((leg) => [...leg.outsideAccountIds])),
-    agentsNet: agentsOf(legs),
+    agentsNet: agentsIncomeAtPace(agentsOf(fixed), agentsOf(variable)),
     committedAgentsNet: agentsOf(fixed),
     agentsCostNet: agentsCostOf(legs),
     committedAgentsCostNet: agentsCostOf(fixed),
   };
+}
+
+/**
+ * What a month projects the AGENT'S cash is paid at the pace (`MonthForecast.agentsIncome.netCents`): its schedules'
+ * `committed`, and the pace's `pace` on top — which nets the agent's posted clawbacks no live schedule owns (owner
+ * decision 2026-10-06, §6A 45), so it can be below zero, a clawback whose credit `committed` projects.
+ *
+ * ❓ PINNED, NOT DECIDED: the pace takes the month down to ZERO, never below — nor lower than its schedules already
+ * do, which may (§6A 43). So a month the agent is clawed back as much as it is paid, or more, reads $0 at the pace while
+ * the bridge's "Agent's income" reads below zero. Whether the pace may take it below zero is his call
+ * (`agents-credit-by-category.test.ts`).
+ */
+function agentsIncomeAtPace(committed: number, pace: number): number {
+  if (pace >= 0) return committed + pace;
+  return Math.max(committed + pace, Math.min(committed, 0));
 }
 
 /** A chain one month longer. Each pair is chained on its own — see `forecastForMonth`. */

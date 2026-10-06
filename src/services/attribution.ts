@@ -153,8 +153,10 @@ interface KindTotals {
  * below zero. 🔴 It sat in Moved here while the forecast netted its schedule
  * inside the agent's costs. ⛔ His own clawback is still Moved: "Income" is his
  * money in, only. ⚖️ …and the forecast's pace nets it by this same rule — a
- * clawback with no schedule, or a dismissed one's (owner decision 2026-10-06,
- * §6A 45, `MonthForecast.agentsIncome`).
+ * clawback with no schedule, or a dismissed one's, against what the agent is
+ * projected to be paid, its schedules included (owner decision 2026-10-06,
+ * §6A 45). ❓ Down to zero there, not below: a month this band reads below
+ * zero is $0 at the pace — pinned, not decided (`MonthForecast.agentsIncome`).
  */
 function kindTotals(
   db: AppDatabase,
