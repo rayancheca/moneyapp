@@ -1,7 +1,7 @@
-# Handoff — the two ledger writes ran, his answers 30–44 built, the press race fixed
+# Handoff — the two ledger writes ran, his answers 30–45 built, the press race fixed
 
 > Written 2026-10-06 (session 2a7bb5b7, 10-05 → 10-06). `origin/main` = this handoff's commit. Since `e578461`:
-> six fix → skeptical-review → follow-up rounds over twelve branches, then integration. Unit **368 files / 7,529
+> seven fix → skeptical-review → follow-up rounds over thirteen branches, then integration. Unit **368 files / 7,539
 > tests** · e2e **614 passed** at `maxDiffPixels: 0` on the final tree (lid open, `caffeinate -i`, renderer check
 > on; no baseline moved; one earlier gate's single failure was load, §4) · `next build` ✓ · tsc ✓ · `pnpm ledger-check` exit 0 (pre-commit hook).
 >
@@ -40,6 +40,7 @@
 | **§6A 41–42** | kept as built: the trust card's "None of N days of balances rests on nothing, and none fails to add up."; an unfiled scheduled credit to the agent stays "Agent's income" | — |
 | **§6A 43** | a clawback filed in an INCOME category on the agent's cash LOWERS "Agent's income" — on the bridge (it used to sit in "Moved") and in the forecast (it used to net in costs); the card says so when a month nets negative | one rule, `agentsBand` → `isAgentsIncomeCategoryRow`; EOM net worth unchanged. Latent |
 | **§6A 44** | a view press clears a stale `?error=` banner (as /recurring's tabs did) on /recurring, /investments, /accounts, /accounts/[id] | one list of one-shot params beside `pressBase` |
+| **§6A 45** | the agent's "at your recent pace" income nets its posted income-category clawbacks, like the bridge, including a clawback against a scheduled payment ($4.00 paid, $3.00 clawed back monthly: a whole month at the pace nets +$1.00, as the bridge reads); HIS pace stays money-in only | `variableIncomeComponents` buckets the agent's rows with `isAgentsIncomeCategoryRow`; `projectOngoingNetIncome` (a net bucket's presence gate mirrored for money out). Latent |
 | **§6A 40** | the period arrows ‹ › (and /recurring's tabs) keep a view only the URL held, building on the page's newest asked URL so a press in flight is never undone | browser test fails on the old src |
 
 ### 1b. §6C defects fixed
@@ -101,12 +102,11 @@ replayed backwards from it, …"; net worth $119,999.32; Cash on Hand's three po
 
 ### 6A. Questions for him (latent; nothing ships until asked)
 
-✅ 30–44 answered and built (memory `moneyapp-owner-decisions-2026-09-28`, five batches).
-45. The forecast's "at your recent pace" figure for the agent's income counts only money IN, so a clawback that
-    already posted (in an income category, no schedule) lowers the bridge's "Agent's income" (§6A 43) but not the
-    pace projection: $4.00 paid and $3.00 clawed back monthly reads +$1.00 on the bridge and +$3.48 projected. His own
-    income pace also counts money in only. Net the agent's pace too, or leave the pace as money in? (Moves the pace EOM
-    net worth.)
+✅ 30–45 answered and built (memory `moneyapp-owner-decisions-2026-09-28`, five batches).
+46. May the agent's "at your recent pace" income go BELOW ZERO when its posted clawbacks exceed what it is paid? Today
+    it floors at $0 (and never below what its schedules already take it, §6A 43), while the bridge reads below zero:
+    $4.00 paid and $5.00 clawed back monthly reads −$1.00 on the bridge, $0 on the pace. Pinned ❓ in
+    `src/services/agents-credit-by-category.test.ts`; answering flips that test on purpose.
 - Older: §6A 1–14 of the 09-15b handoff still have shipped defaults.
 
 ### 6C. Defects / leftovers queued (each LOW, latent on his ledger unless said)
