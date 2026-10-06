@@ -126,8 +126,12 @@ function AccountRow({ account }: { account: TrustAccountLine }) {
             ⚠️ Only that row. A `broken` account's clause is "stopped adding up
             on <the first gap>", which is a different date about a different
             question, and the total is what belongs beside it. */}
+        {/* ⚖️ His answer, 2026-10-06: beside a VERIFIED account the count is quiet, in the faint
+            tone "what you owe"'s note has. Its days all lie before its first balance — Robinhood
+            Agentic's 26, under "adds up" — and were amber, the colour of Robinhood Cash's run still
+            open. Amber stays for every other grade: a run open, his count, a chain that broke. */}
         {account.uncheckedDays > 0 && (
-          <span className="figures text-warning">
+          <span className={`figures ${account.grade === "verified" ? "text-ink-faint" : "text-warning"}`}>
             {(runPaired ? account.uncheckedRunDays : account.uncheckedDays).toLocaleString("en-US")} day
             {(runPaired ? account.uncheckedRunDays : account.uncheckedDays) === 1 ? "" : "s"} unchecked
             {runPaired ? `, of ${account.uncheckedDays.toLocaleString("en-US")} in all` : ""}

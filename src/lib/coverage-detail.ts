@@ -244,7 +244,8 @@ export interface BeforeFirstBalance {
  * Robinhood Agentic read "closes to the cent through Aug 31, 2026 (31 days ago); the first day it
  * does not is Jun 4, 2026" (a copy of his ledger, 2026-10-01): Jun 4–29 are replayed backwards
  * from its first balance, the Jun 30 statement, and nothing past Aug 31 is unchecked. Net worth
- * already said "checked through Aug 31, 2026, and unchecked days before that" of it.
+ * already said "checked through Aug 31, 2026, and unchecked days before that" of it — its words that
+ * day; "adds up through Aug 31, 2026, and unchecked days before that" since his answer of 2026-10-05.
  *
  * ⛔ What each date is: `verifiedThrough` the last day on the closed chain; `firstBalanceOn` the
  * first balance it records, which the rebuild replays backwards from; `uncheckedSince` the first of
@@ -285,8 +286,9 @@ export function beforeFirstBalanceClause(c: UnverifiedFields): string {
 
 /**
  * `beforeFirstBalance` in one line — net worth's line for a `verified` account with days before its
- * first balance, which the trust card prints, and the dashboard card's quiet note under its row — or
- * null when it has none. /imports says the same days at length (`beforeRow`).
+ * first balance, which the trust card prints, and the dashboard card's quiet note under its row when
+ * the row carries its own date — or null when it has none. /imports says the same days at length
+ * (`beforeRow`).
  *
  * ⚖️ His answer, 2026-10-05: in the verb of the verified accounts beside it, "adds up through Aug 31,
  * 2026, and unchecked days before that". It kept the words `unverifiedDetail` gave the account while
@@ -315,7 +317,9 @@ export function beforeFirstBalanceDetail(
  * unchecked day the account EVER had: "nothing has checked it since Jul 19 — 22 days ago" of a
  * card two statements checked, the newer on Aug 5, because its export reached back before the
  * first of them — where net worth said "checked through Aug 5, 2026, and unchecked days before
- * that" (§6A 28 review, through `rebuildAccount`). `formatDay` is each surface's voice for a date.
+ * that" (§6A 28 review, through `rebuildAccount`; its words then — "adds up through Aug 5, 2026, …"
+ * since his answer of 2026-10-05, `beforeFirstBalanceDetail`). `formatDay` is each surface's voice
+ * for a date.
  *
  * ⚖️ With no run open, the days before its first balance were the third branch here, until his
  * answer of 2026-10-05 (§6A 35) graded such an account `verified`: its line is

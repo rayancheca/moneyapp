@@ -117,7 +117,8 @@ test("a verified card's days before its first statement are quiet; a card nothin
   const card = cardsOwedCard(bundle.db, TODAY)!;
   const markup = renderToStaticMarkup(createElement(CardsOwedCard, { data: card }));
 
-  const note = "adds up through Aug 5 — 5 days ago, and unchecked days before that";
+  // both close Aug 5, which "all as of Aug 5 — 5 days ago" says once: the note names only the days
+  const note = "unchecked days before its first balance";
   expect(card.cards.find((c) => c.name === "Alpha")!.note).toBe(note);
   const quiet = classOfSpan(markup, note);
   expect(quiet).toContain("text-ink-faint");
