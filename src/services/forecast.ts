@@ -132,7 +132,9 @@ interface ForecastLeg {
   /** the outside accounts whose rows or series made `cashCents` differ from the lines' sum */
   outsideAccountIds: ReadonlySet<string>;
   /**
-   * What this leg projects the AGENT'S cash is paid, by the rule that projects his (`MonthForecast.agentsIncome`).
+   * What this leg projects the AGENT'S cash is paid, by the rule that projects his (`MonthForecast.agentsIncome`) —
+   * net of a scheduled clawback its category files with it (`agentsSeriesBand`, owner decision 2026-10-06, §6A 43), so
+   * a schedule can take it below zero. The pace leg's is its credits alone (`isAgentsIncome`), as his pace's is his.
    *
    * ⚖️ Owner decision 2026-09-28: not his income (`isIncome`), so it is no line — not in Income, not in the net —
    * and not cash he can spend, so never EOM cash either. Net worth holds the agent's money, so EOM net worth adds it,
@@ -323,7 +325,16 @@ export interface MonthForecast {
   /**
    * What the AGENT'S cash is projected to be paid — by the series and the pace that project his: a schedule its
    * category names the agent's income, or an unfiled one bringing money in (`agentsSeriesBand`) — which each reading's
-   * EOM net worth counts and its Income and Net do not.
+   * EOM net worth counts and its Income and Net do not. Net-worth-signed, and NET OF ITS SCHEDULES: a scheduled debit
+   * filed in an income category — a clawback — lowers it, as the bridge nets the row it becomes inside "Agent's income"
+   * (owner decision 2026-10-06, §6A 43). So it can be below zero: a reading whose clawbacks come to more than the agent
+   * is paid nets negative, and the card's note says so (`AgentsIncomeNote`).
+   *
+   * ❓ PINNED, NOT DECIDED: the pace's half is the agent's CREDITS only (`isAgentsIncome`), as his pace is his money
+   * in only (`isIncome`). So a clawback no live schedule owns — none detected, or one he dismissed, whose rows fall to
+   * the pace — lowers the bridge's "Agent's income" and is in no reading here, EOM net worth included: $4.00 paid and
+   * $3.00 clawed back each month is +$1.00 on the bridge and still +$4.00 a month at "your recent pace". Netting it
+   * would move the pace's EOM net worth, so it is his call (`agents-credit-by-category.test.ts`).
    *
    * ⚖️ Owner decision 2026-09-28 (§6A 27): not his income (`isIncome`, `isAgentsIncomeSeries`); and net worth holds
    * the agent's money, which is why the bridge names it on a band of its own. So for the running month
@@ -518,7 +529,8 @@ function fixedComponents(
      *
      * ⚖️ Each under the band its CATEGORY names, as the bridge names the row it becomes (`agentsSeriesBand`, owner
      * decision 2026-10-06, §6A 39): a monthly refund of the Gold fee, filed in Fees, nets inside the agent's costs —
-     * which can then net to a credit — and its interest is its income. EOM net worth adds both, so it does not move.
+     * which can then net to a credit — and its interest is its income, net of a clawback filed in Interest, which can
+     * then net below zero (§6A 43). EOM net worth adds both, so it does not move.
      * 🔴 Asked by kind alone, an unfiled monthly credit filed "other" was a cost of +$3.00; asked by sign alone, a
      * refund filed in Fees was "Agent's income" here while the bridge netted the posted one inside "Agent's costs".
      */
@@ -645,7 +657,8 @@ function arrearsComponents(
     if (accountId !== null && outside.has(accountId)) outsideAccountIds.add(accountId);
     else cashCents -= s.amountCents;
   }
-  // money-out only (`overdueForSeries`), so the rule names each of the agent's a cost — and both sums still ask it
+  // money-out only (`overdueForSeries`), and still both notes: filed in an income category, a late clawback lowers the
+  // agent's income (§6A 43) — the rule names each, never the sign
   return {
     components,
     cashCents,
@@ -873,6 +886,9 @@ function variableIncomeComponents(
    * as HIS on a fixture (3-mo avg $0.04 × 27/31 days, a $0.03 "Interest" line) after every other Income figure had
    * left it out (owner decision 2026-09-28). The agent's rows are bucketed apart and projected by the same gate and
    * average, for EOM net worth alone (`ForecastLeg.agentsCents`).
+   *
+   * ❓ …its credits only (`isAgentsIncome`), as his are. The bridge nets the agent's income rows either sign (§6A 43),
+   * so a clawback no live schedule owns lowers "Agent's income" there and nothing here (`MonthForecast.agentsIncome`).
    */
   const buckets = bucketTrailing(
     rows,

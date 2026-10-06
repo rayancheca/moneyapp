@@ -484,6 +484,9 @@ export function isIncome(
  * The rows `isIncome` leaves out for WHOSE they are, and only those: income by category and sign, paid into the
  * agent's cash. Not his (owner decision 2026-09-28) and still money net worth holds, which is why the forecast
  * projects it into EOM net worth alone (`MonthForecast.agentsIncome`) — never into a line that says Income.
+ *
+ * ❓ The forecast's pace asks this, credits only; the bridge nets either sign (`isAgentsIncomeCategoryRow`, §6A 43).
+ * So a clawback no live schedule owns is the bridge's alone — pinned, not decided (`MonthForecast.agentsIncome`).
  */
 export function isAgentsIncome(
   idx: CategoryIndex,
@@ -496,9 +499,10 @@ export function isAgentsIncome(
 /**
  * Whether a row of an INCOME category is the AGENT'S: on its cash account, EITHER SIGN. `isIncome`'s account half,
  * and the whole rule for a surface that NETS an income category's rows rather than counting its credits — the
- * category's own page (`spendingTransactions`) and the Fees card's interest. A reversal on the agent's cash is the
- * agent's as much as the credit it reverses; /summary's `lineFor` reads that account the same way, on every line and
- * in either direction.
+ * category's own page (`spendingTransactions`), the Fees card's interest, and the bridge's "Agent's income" with the
+ * forecast's schedules of it (`agentsBand`, owner decision 2026-10-06, §6A 43) — not its pace (`isAgentsIncome`). A
+ * reversal on the agent's cash is the agent's as much as the credit it reverses; /summary's `lineFor` reads that
+ * account the same way, on every line and in either direction.
  *
  * ⚖️ Owner decision 2026-09-28 (§6A 27). 🔴 /spending's Income card had learned it and the pages one click under it had
  * not: `/categories/<Income>` read "Received" over the agent's dividend and interest too, an "Interest" subcategory
@@ -557,22 +561,29 @@ export function isAgentsIncomeSeries(
 export type AgentsBand = Extract<AttributionBandKey, "agentIncome" | "agentCosts">;
 
 /**
- * Which of the agent's two bands a row is named by: income-kind money in is "Agent's income" (`isAgentsIncome`), and
- * an expense-kind row, EITHER SIGN, is "Agent's costs" (`isAgentsCostCategoryRow`) — a refund of the agent's fee nets
+ * Which of the agent's two bands a row is named by: an income-kind row, EITHER SIGN, is "Agent's income"
+ * (`isAgentsIncomeCategoryRow`) — a clawback of what the agent was paid nets inside the income it takes back — and an
+ * expense-kind row, EITHER SIGN, is "Agent's costs" (`isAgentsCostCategoryRow`) — a refund of the agent's fee nets
  * inside the costs it reverses. Null for a row of his, and for one of the agent's that neither band names — unfiled, a
- * transfer, an income-kind clawback — which the bridge keeps in Moved, as it keeps every such row.
+ * transfer — which the bridge keeps in Moved, as it keeps every such row.
  *
  * ⚖️ Owner decision 2026-10-06 (§6A 39): a scheduled credit to the agent's cash is named by its CATEGORY, as the bridge
  * names the row it becomes. So this is the one rule both ask: the bridge of each row (`kindTotals`), the forecast of
  * each schedule (`agentsSeriesBand`). 🔴 Each decided apart: a monthly refund of the agent's Gold fee, filed in Fees,
  * netted inside "Agent's costs" on the bridge and was "Agent's income" on the forecast card, which asked its sign.
+ *
+ * ⚖️ Owner decision 2026-10-06 (§6A 43): …and so is a scheduled DEBIT. Filed in an income category, money out of the
+ * agent's cash — a clawback — LOWERS the agent's income, which can then net below zero. 🔴 This asked the income half's
+ * sign (`isAgentsIncome`): the posted clawback sat in the bridge's Moved, and the forecast, finding no band, netted its
+ * schedule inside "Agent's costs" by its sign — one clawback, a transfer on the bridge and a cost on the card.
+ * ⛔ The agent's alone: HIS clawback stays in Moved, and the Income band is his money in only (`isIncome`).
  */
 export function agentsBand(
   idx: CategoryIndex,
   agentsCash: ReadonlySet<string>,
-  txn: Pick<AnalyticsTxn, "accountId" | "categoryId" | "amountCents">,
+  txn: Pick<AnalyticsTxn, "accountId" | "categoryId">,
 ): AgentsBand | null {
-  if (isAgentsIncome(idx, agentsCash, txn)) return "agentIncome";
+  if (isAgentsIncomeCategoryRow(idx, agentsCash, txn)) return "agentIncome";
   return isAgentsCostCategoryRow(idx, agentsCash, txn) ? "agentCosts" : null;
 }
 
@@ -580,7 +591,8 @@ export function agentsBand(
  * Which of the agent's two bands a SCHEDULE on its cash is named by (`isAgentsSeries`), or null for one of his. Asked
  * of the series as the row it becomes — its category (`agentsSeriesBands`) and its amount, the owner's first
  * (`seriesAmountCents`) — so `agentsBand` names it as the bridge will name that row: filed in Fees, a monthly credit
- * nets inside the agent's costs whatever kind detection gave the schedule; filed in Interest, it is the agent's income.
+ * nets inside the agent's costs whatever kind detection gave the schedule; filed in Interest, it is the agent's income
+ * either sign — a clawback lowers it (§6A 43).
  *
  * What the bridge would keep in Moved — an unfiled schedule, one filed on a transfer — the forecast has no note for,
  * and EOM net worth must still count it, so it goes by its sign, as the forecast's rows do: the agent's unfiled money
@@ -593,7 +605,8 @@ export function agentsBand(
  * and an unfiled monthly credit under "other" was a cost of +$3.00; asked the sign, it then never asked the category,
  * and the agent's Gold-fee refund, filed in Fees, was its income on the card while the bridge netted the posted refund
  * inside its costs. 🔴 …and the arrears leg still asked the kind: a schedule detection called "income" that came due
- * money out was a bill of HIS on the card ("came due … and has not posted").
+ * money out was a bill of HIS on the card ("came due … and has not posted"). 🔴 …and a clawback filed in Interest had
+ * no band of `agentsBand`'s, so its sign made it a cost here while the bridge kept the posted one in Moved (§6A 43).
  *
  * ⛔ Not the test of whose a schedule is: a reader that leaves the agent's series out of his asks `isAgentsSeries`.
  */
@@ -611,10 +624,7 @@ export function agentsSeriesBand(
   const { accountId } = series;
   if (accountId === null || !isAgentsSeries(agentsCash, series)) return null;
   const amountCents = seriesAmountCents(series) ?? 0;
-  return (
-    agentsBand(idx, agentsCash, { accountId, categoryId, amountCents }) ??
-    (amountCents < 0 ? "agentCosts" : "agentIncome")
-  );
+  return agentsBand(idx, agentsCash, { accountId, categoryId }) ?? (amountCents < 0 ? "agentCosts" : "agentIncome");
 }
 
 /**

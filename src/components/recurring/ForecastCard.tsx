@@ -62,6 +62,27 @@ function namedReadings(headlineCents: number, paceCents: number): NamedReadings 
   return { kind: "one", cents: headlineCents === 0 ? paceCents : headlineCents, reading };
 }
 
+/** Which of a note's amounts `farSide` finds across zero: none, every one, and the words for where on the card. */
+interface FarSide {
+  none: boolean;
+  all: boolean;
+  /** "On both readings", or the one reading the amount is under — read only when the note names both */
+  where: string;
+}
+
+/**
+ * Which of a note's amounts sit on the far side of zero from what its words say — a credit among the agent's costs
+ * (`AgentsCostsNote`), below zero in its income (`AgentsIncomeNote`) — so the note can say so plainly. One rule for
+ * both notes, so the two cannot name a reading two ways.
+ */
+function farSide(named: NamedReadings, isFar: (cents: number) => boolean): FarSide {
+  const amounts = named.kind === "both" ? [named.headlineCents, named.paceCents] : [named.cents];
+  const far = amounts.filter(isFar).length;
+  const headline = named.kind === "both" && isFar(named.headlineCents);
+  const where = far === 2 ? "On both readings" : headline ? "In the headline" : "At your recent pace";
+  return { none: far === 0, all: far === amounts.length, where };
+}
+
 /**
  * What both EOM cash figures leave out, and where it posts.
  *
@@ -115,20 +136,35 @@ export function OutsideCashNote({ outside }: { outside: MonthForecast["outsideCa
  * carries them — and net worth holds the agent's money, so EOM net worth still does, as the net-worth bridge names
  * it on a band of its own. Without this sentence the two EOM net worth figures move by money no row on the card
  * names. Amounts are named per reading by `namedReadings`, `OutsideCashNote`'s rule.
+ *
+ * ⚖️ Owner decision 2026-10-06 (§6A 43): a schedule of the agent's filed in an income category that takes money out —
+ * a clawback — lowers this income (`agentsSeriesBand`), and a reading whose clawbacks come to more than the agent is
+ * paid nets BELOW ZERO. "Projected to be paid -$4.96" would say the opposite of what happens, so the note says it
+ * plainly: what the account gives back, which reading nets negative, and that net worth pays it. `AgentsCostsNote`'s
+ * credit, mirrored (`farSide`).
  */
 export function AgentsIncomeNote({ agents }: { agents: MonthForecast["agentsIncome"] }) {
   const named = namedReadings(agents.committedNetCents, agents.netCents);
   if (named === null) return null;
-  const paid = "the agent's own account is projected to be paid by month end";
-  const whose = "That is the agent's money, not your income: your net worth holds it, and Income and Net leave it out.";
+  const negative = farSide(named, (cents) => cents < 0);
+  const verb = negative.none ? "holds" : negative.all ? "pays" : "holds or pays";
+  const whose =
+    `That is the agent's money, not your income: your net worth ${verb} it, and Income and Net leave it out.`;
   if (named.kind === "both") {
+    const net = negative.none ? "" : ", net of what it gives back";
+    const paid = `the agent's own account is projected to be paid by month end${net}`;
+    const nets = negative.none ? "" : ` ${negative.where} its income nets negative: it gives back more than it is paid.`;
     return (
       <p className="mt-1 text-xs text-ink-faint">
         EOM net worth counts what {paid}: <Money cents={named.headlineCents} flow /> {READING.headline} and{" "}
-        <Money cents={named.paceCents} flow /> {READING.pace}. {whose}
+        <Money cents={named.paceCents} flow /> {READING.pace}.{nets} {whose}
       </p>
     );
   }
+  const paid =
+    named.cents < 0
+      ? "the agent's own account is projected to give back by month end, net of what it is paid: its income nets negative"
+      : "the agent's own account is projected to be paid by month end";
   return (
     <p className="mt-1 text-xs text-ink-faint">
       EOM net worth{named.reading} counts the <Money cents={named.cents} flow /> {paid}. {whose}
@@ -152,17 +188,14 @@ export function AgentsIncomeNote({ agents }: { agents: MonthForecast["agentsInco
 export function AgentsCostsNote({ agents }: { agents: MonthForecast["agentsCosts"] }) {
   const named = namedReadings(agents.committedNetCents, agents.netCents);
   if (named === null) return null;
-  const amounts = named.kind === "both" ? [named.headlineCents, named.paceCents] : [named.cents];
-  const credits = amounts.filter((cents) => cents > 0).length;
-  const verb = credits === 0 ? "pays" : credits === amounts.length ? "holds" : "pays or holds";
+  const credits = farSide(named, (cents) => cents > 0);
+  const verb = credits.none ? "pays" : credits.all ? "holds" : "pays or holds";
   const whose =
     `That is the agent's money, not your spending: your net worth ${verb} it, and Spending and Net leave it out.`;
   if (named.kind === "both") {
-    const net = credits === 0 ? "" : ", net of what it gets back";
+    const net = credits.none ? "" : ", net of what it gets back";
     const pays = `the agent's own account is projected to pay by month end${net}`;
-    const where =
-      credits === 2 ? "On both readings" : named.headlineCents > 0 ? "In the headline" : "At your recent pace";
-    const credit = credits === 0 ? "" : ` ${where} its costs net to a credit: it gets back more than it pays.`;
+    const credit = credits.none ? "" : ` ${credits.where} its costs net to a credit: it gets back more than it pays.`;
     return (
       <p className="mt-1 text-xs text-ink-faint">
         EOM net worth counts what {pays}: <Money cents={named.headlineCents} flow /> {READING.headline} and{" "}
