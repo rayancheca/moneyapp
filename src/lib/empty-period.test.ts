@@ -214,10 +214,23 @@ describe("emptyPeriodCopy", () => {
       "2026-08-20",
       fmt,
     );
-    expect(partly.title).toBe("Nothing posted in the part of August 2026 that has been imported");
+    // the measured branch's words: transfers, card payments and investment flows can have posted in the imported part
+    expect(partly.title).toBe("No spending or income in the part of August 2026 that has been imported");
     expect(partly.description).toContain("11 days of it have not been imported");
     expect(partly.description).toContain("2026-08-20");
     expect(partly.description).toContain("lower bound");
+  });
+
+  /* ⚖️ The agent's money is none of his (owner decisions 2026-09-28, 2026-10-02, 2026-10-05) wherever the window's
+     imported part holds it — 🔴 the partly-covered branch dropped the flag the measured one reads. */
+  test("⛔ the agent's money is named as left out in a partly-imported window too", () => {
+    const reason = { kind: "partly-covered", uncoveredDays: 6 } as const;
+    const withAgent = emptyPeriodCopy(reason, "the week", "2026-09-28", fmt, { agentsMoney: true });
+    expect(withAgent.description).toContain(
+      "The agent's own account paid or was paid money in this period, and none of it is counted here",
+    );
+    expect(withAgent.description).toContain("lower bound");
+    expect(emptyPeriodCopy(reason, "the week", "2026-09-28", fmt).description).not.toContain("agent");
   });
 
   /* ⚠️ Every branch that names a date must survive not having one — a window

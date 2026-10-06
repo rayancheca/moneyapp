@@ -157,10 +157,10 @@ function opened(href: string): { accountId: string; amountCents: number }[] {
 }
 
 /** /spending's empty state over a window, as the page asks for it */
-function emptyState(range: { from: string; to: string }) {
+function emptyState(range: { from: string; to: string }, label = "the day") {
   return spendingEmptyCopy(bundle.db, range, {
     today: TODAY,
-    label: "the day",
+    label,
     ledgerOpens: ledgerOpens(bundle.db),
     ledgerReaches: ledgerReaches(bundle.db),
     formatDay: (iso) => iso,
@@ -254,6 +254,27 @@ describe("the agent's unfiled money out is not his spending", () => {
     const copy = emptyState(day);
     expect(copy.title).toBe("No spending or income in this period");
     expect(copy.description).toContain("Your own uncategorized outflows would show up above");
+    expect(copy.description).toMatch(/The agent's own account paid or was paid money in this period, and none of it is counted here/);
+  });
+
+  /*
+   * 🔴 The partly-imported window is the one most often read — the week or month still running — and its branch of the
+   * copy dropped the agent's-money flag and said "Nothing posted in the part of … that has been imported" over the
+   * agent's unfiled ACH withdrawal, which posted inside that very part. Before §6A 34 the row made the window active.
+   */
+  test("⛔ a partly-imported week holding only the agent's money says no spending or income, and that the agent's is left out", () => {
+    post(agentic, "2026-09-28", -AGENTS_ACH, null, "ACH Withdrawal");
+    const week = { from: "2026-09-28", to: "2026-10-04" };
+    expect(ledgerReaches(bundle.db)).toBe("2026-09-28");
+    expect(periodTotals(bundle.db, week)).toMatchObject({ spentCents: 0, earnedCents: 0, refundsCents: 0 });
+    expect(honestyBuckets(bundle.db, week).uncategorized.txnCount).toBe(0);
+    expect(agentsMoneyRowCount(bundle.db, week)).toBe(1);
+
+    const copy = emptyState(week, "the week of Sep 28");
+    expect(copy.title).not.toContain("Nothing posted");
+    expect(copy.title).toBe("No spending or income in the part of the week of Sep 28 that has been imported");
+    expect(copy.description).toContain("6 days of it have not been imported");
+    expect(copy.description).toContain("lower bound");
     expect(copy.description).toMatch(/The agent's own account paid or was paid money in this period, and none of it is counted here/);
   });
 

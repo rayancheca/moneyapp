@@ -201,6 +201,13 @@ export function daysNotImportedYet(input: EmptyPeriodInput): number {
 const days = (n: number): string => `${n} ${n === 1 ? "day" : "days"}`;
 
 /**
+ * ⚖️ What the agent's own account paid or was paid is none of his spending or income (owner decisions 2026-09-28,
+ * 2026-10-02, 2026-10-05) — one sentence for every branch whose window has an imported part to hold it.
+ */
+const AGENTS_MONEY_LEFT_OUT =
+  " The agent's own account paid or was paid money in this period, and none of it is counted here: it is the agent's, not yours.";
+
+/**
  * The empty state's heading and body, so the two cannot describe different
  * worlds. `label` is the period's own name ("September 2026").
  */
@@ -220,7 +227,8 @@ export function emptyPeriodCopy(
     ledgerOpens?: string | null;
     /**
      * the window holds money the agent's own account paid or was paid — none of his spending or income (owner
-     * decisions 2026-09-28, 2026-10-02, 2026-10-05) — so a measured zero says it was left out (`agentsMoneyRowCount`)
+     * decisions 2026-09-28, 2026-10-02, 2026-10-05) — so a measured or partly-imported zero says it was left out
+     * (`agentsMoneyRowCount`)
      */
     agentsMoney?: boolean;
   } = {},
@@ -276,12 +284,21 @@ export function emptyPeriodCopy(
         // the frontier's own word — see `after-records` above
         ...(reason.uncoveredDays - beforeDays > 0 && through ? [`the ledger is imported through ${through}`] : []),
       ];
+      /*
+       * 🔴 "NOTHING POSTED" WAS THE MEASURED BRANCH'S OLD OVER-REACH, LEFT HERE. The imported part can hold
+       * transfers, card payments and investment flows — none of them spending or income — and, since §6A 34, the
+       * agent's money (owner decisions 2026-10-02, 2026-10-05). Probed 2026-10-06: a week whose imported day held
+       * only the agent's unfiled ACH withdrawal read "Nothing posted in the part of … that has been imported" and
+       * said nothing of it, because this branch dropped the `agentsMoney` flag the measured one reads. The title
+       * says what the measured one says, and the agent's money is named where the window holds some.
+       */
       return {
-        title: `Nothing posted in the part of ${label} that has been imported`,
+        title: `No spending or income in the part of ${label} that has been imported`,
         description:
           `${days(reason.uncoveredDays)} of it ${reason.uncoveredDays === 1 ? "has" : "have"} not been imported` +
           // ", and": each cause ends on a date with its year ("Aug 25, 2022, and …")
-          `${causes.length > 0 ? ` — ${causes.join(", and ")}` : ""}, so this is a lower bound rather than a measurement.`,
+          `${causes.length > 0 ? ` — ${causes.join(", and ")}` : ""}, so this is a lower bound rather than a measurement.` +
+          (opts.agentsMoney ? AGENTS_MONEY_LEFT_OUT : ""),
       };
     }
     case "measured":
@@ -328,9 +345,7 @@ export function emptyPeriodCopy(
           (opts.uncategorizedBucket
             ? " Your own uncategorized outflows would show up above, as their own explicit bucket."
             : "") +
-          (opts.agentsMoney
-            ? " The agent's own account paid or was paid money in this period, and none of it is counted here: it is the agent's, not yours."
-            : ""),
+          (opts.agentsMoney ? AGENTS_MONEY_LEFT_OUT : ""),
       };
   }
 }
