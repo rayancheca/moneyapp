@@ -368,7 +368,8 @@ function computePace(
     actualToDateCents,
     upfrontToDateCents,
     projectedCents: elapsedFraction > 0 ? upfrontToDateCents + Math.round(pacedCents / elapsedFraction) : 0,
-    avgPerBucketCents: Math.round(actualToDateCents / elapsedBuckets),
+    // the chart's "typical pace" line is the same rate: the up-front money is no part of it
+    avgPerBucketCents: Math.round(pacedCents / elapsedBuckets),
   };
 }
 

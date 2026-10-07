@@ -448,6 +448,7 @@ describe("every spending rate leaves the up-front money out (owner decision 2026
       return {
         tile: flow.pace!.projectedCents,
         spending: spendingProjection(bundle.db, period, day, flow.pace, flow.totals.spentCents).projectedSpendCents!,
+        typical: flow.pace!.avgPerBucketCents,
       };
     };
     const without = read();
@@ -456,6 +457,9 @@ describe("every spending rate leaves the up-front money out (owner decision 2026
 
     expect(withIt.tile).toBe(without.tile + 610_000);
     expect(withIt.spending).toBe(without.spending + 610_000);
+    // 🔴 …and the chart's "typical pace" line is a rate too: it drew $543.26 a day at Aug 20 on his ledger, the very
+    // $16,841 the projection no longer reads ($238.26 without the up-front money)
+    expect(withIt.typical).toBe(without.typical);
     // $857.58 of ordinary spend in 20 of 31 days, + the $6,100 once
     expect(withIt.tile).toBe(610_000 + Math.round((85_758 * 31) / 20));
   });
