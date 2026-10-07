@@ -12,7 +12,8 @@ import { Menu } from "@/components/ui/Menu";
 import { Popover, usePopover } from "@/components/ui/Popover";
 import { toast } from "@/components/ui/Toast";
 import { Icon } from "@/components/shell/Icon";
-import { settleAction, useAction } from "@/hooks/useAction";
+import { useAction } from "@/hooks/useAction";
+import { offerUndoToast } from "@/components/transactions/undo-toast";
 import { transactionSubjects } from "@/lib/row-subject";
 import type {
   AttachCandidate,
@@ -37,25 +38,12 @@ export function LinkedTransactions({
 
   function detach(id: string): void {
     void run(() => detachFromSeriesAction({ transactionId: id }), {
-      onSuccess: () => {
+      onSuccess: ({ undo }) => {
         onChanged();
-        // lossless: re-attaching restores the exact link (user-owned either way)
-        toast({
-          title: "Removed from series",
-          action: {
-            label: "Undo",
-            // settle and RETURN: a failed re-attach keeps the card (and this
-            // transaction id) alive instead of vanishing as if it had worked
-            onAction: async () => {
-              const result = await settleAction(
-                () => attachToSeriesAction({ seriesId, transactionIds: [id] }),
-                "Couldn’t put it back in the series — try again",
-              );
-              if (result.ok) onChanged();
-              return result;
-            },
-          },
-        });
+        // the detach's own patch, not a re-attach: re-attaching would stamp a
+        // detection-owned link as his AND file an unfiled row under the series'
+        // category (§6A 47) — neither of which the detach undid
+        offerUndoToast("Removed from series", undo, onChanged);
       },
     });
   }
@@ -164,29 +152,14 @@ export function AttachPanel({
     const ids = [...selected];
     if (ids.length === 0) return;
     void run(() => attachToSeriesAction({ seriesId, transactionIds: ids }), {
-      onSuccess: ({ attached }) => {
+      onSuccess: ({ attached, undo }) => {
         onChanged();
         setSelected(new Set());
         setQuery("");
-        toast({
-          title: `${attached} attached`,
-          action: {
-            label: "Undo",
-            // Every detach is settled individually and the shortfall reported:
-            // a partial undo used to look identical to a complete one. Detach is
-            // idempotent, so the retry this leaves available is safe.
-            onAction: async () => {
-              const results = await Promise.all(
-                ids.map((id) => settleAction(() => detachFromSeriesAction({ transactionId: id }))),
-              );
-              onChanged(); // some may have detached — resync either way
-              const failed = results.filter((r) => !r.ok).length;
-              return failed === 0
-                ? { ok: true }
-                : { ok: false, error: `${failed} of ${ids.length} couldn’t be removed — try again` };
-            },
-          },
-        });
+        // the attach's own lossless patch, in ONE transaction: each row's prior
+        // link AND the category attaching filed (§6A 47). Detaching row by row
+        // left the category behind and stamped a detach marker on every row.
+        offerUndoToast(`${attached} attached`, undo, onChanged);
       },
     });
   }
