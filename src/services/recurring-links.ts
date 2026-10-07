@@ -2,16 +2,19 @@ import { and, eq, inArray, isNull, lte } from "drizzle-orm";
 import { withPreMutationSnapshot } from "@/db/backup";
 import type { AppDatabase } from "@/db/client";
 import { recurringSeries, type Cadence } from "@/db/schema/recurring";
-import { transactions } from "@/db/schema/transactions";
+import { transactions, type CategorizationSource } from "@/db/schema/transactions";
 import { todayIso } from "@/lib/dates";
 import { deriveAnchorDay, stepFrom, stepPlan } from "@/lib/recurring-step";
-import { applyUndoPatch, type UndoPatch } from "./bulk-edit";
+import { loadCategoryIndex } from "./analytics";
+import { applyUndoPatch, type UndoFields, type UndoPatch } from "./bulk-edit";
 import {
   analyzeGroup,
   loadRecomputeCtx,
   recomputeSeriesStats,
   resolveMergeTarget,
 } from "./recurring";
+import { seriesCategoryIds } from "./series-category";
+import { splitTxnIdsIn } from "./transaction-splits";
 
 /**
  * User-owned recurring-series link actions (ux-overhaul-plan §4.2/§4.3). Each
@@ -23,11 +26,71 @@ import {
 
 export interface AttachResult {
   attached: number;
-  /** lossless inverse — restores each row's prior series AND link ownership */
+  /** lossless inverse — restores each row's prior series AND link ownership, and the category of a row it filed */
   undo: UndoPatch;
 }
 
-/** Attaches transactions to a series by hand (a user-owned link). */
+/** A row's filing columns as they stood before a hand link — what its undo restores. */
+interface FilingBefore {
+  readonly id: string;
+  readonly categoryId: string | null;
+  readonly categorizationSource: CategorizationSource | null;
+  readonly categorizationConfidence: number | null;
+}
+
+/**
+ * Owner decision 2026-10-07 (§6A 47): linking a row to a series BY HAND files a row not filed yet under that series'
+ * category; a row already filed keeps its own. Writes the filing and returns each filed row's prior columns, keyed by
+ * id, for the caller's undo. Call it BEFORE the link is written: the series' category is the one it has when he acts.
+ *
+ * - The series' category is `seriesCategoryIds` — the ONE answer every surface names a series by (§6A 39): his
+ *   `user_category_id` first, else the category its filed rows sit in. A series named by none, or only by the system
+ *   "Uncategorized", files nothing: the row stays unfiled rather than being filed as unfiled.
+ * - "Not filed" is `CategoryIndex.isUncategorized`: NULL or the system "Uncategorized" — one set (2026-09-03).
+ * - Stamped `categorization_source = 'user'` with confidence 1, as every hand categorization is: attaching is his
+ *   act, and filing follows the category he set. `needs_review` is NOT touched: duplicate review shares that flag,
+ *   and linking a row to a series answers no duplicate question.
+ * - A split row is skipped: its category is driven by its parts (as `bulkApply` skips it).
+ *
+ * 🔴 Why: his first lease payment and the $1,000.00 insurance prepayment were attached by hand to "Car lease" and
+ * "Car insurance" (Car › Lease, Car › Car Insurance) and stayed Uncategorized — September's /spending read $1,695.04
+ * Uncategorized and no Car, and the Car budget missed both.
+ *
+ * ⛔ Only a link that is his: detection's links (absorption, first posting, a created series' members) file nothing.
+ */
+function fileUnfiledUnderSeries(
+  tx: AppDatabase,
+  seriesId: string,
+  rows: readonly FilingBefore[],
+): Map<string, UndoFields> {
+  const filedBefore = new Map<string, UndoFields>();
+  const idx = loadCategoryIndex(tx);
+  const unfiled = rows.filter((r) => idx.isUncategorized(r.categoryId));
+  if (unfiled.length === 0) return filedBefore;
+  const named = seriesCategoryIds(tx, idx, [seriesId]).get(seriesId);
+  if (named === undefined || idx.isUncategorized(named)) return filedBefore;
+  const split = splitTxnIdsIn(tx, unfiled.map((r) => r.id));
+  const toFile = unfiled.filter((r) => !split.has(r.id));
+  if (toFile.length === 0) return filedBefore;
+
+  tx.update(transactions)
+    .set({ categoryId: named, categorizationSource: "user", categorizationConfidence: 1 })
+    .where(inArray(transactions.id, toFile.map((r) => r.id)))
+    .run();
+  for (const r of toFile) {
+    filedBefore.set(r.id, {
+      categoryId: r.categoryId,
+      categorizationSource: r.categorizationSource,
+      categorizationConfidence: r.categorizationConfidence,
+    });
+  }
+  return filedBefore;
+}
+
+/**
+ * Attaches transactions to a series by hand (a user-owned link). A row not filed yet is filed under the series'
+ * category (`fileUnfiledUnderSeries`, §6A 47); the undo puts that back too.
+ */
 export function attachTransactions(
   db: AppDatabase,
   seriesId: string,
@@ -58,13 +121,22 @@ export function attachTransactions(
         id: transactions.id,
         recurringSeriesId: transactions.recurringSeriesId,
         seriesLinkSource: transactions.seriesLinkSource,
+        categoryId: transactions.categoryId,
+        categorizationSource: transactions.categorizationSource,
+        categorizationConfidence: transactions.categorizationConfidence,
       })
       .from(transactions)
       .where(and(inArray(transactions.id, [...transactionIds]), eq(transactions.status, "active")))
       .all();
+    // filed against the TARGET's category, before the link moves any row onto it
+    const filedBefore = fileUnfiledUnderSeries(tx, target, rows);
     undo.rows = rows.map((r) => ({
       id: r.id,
-      prev: { recurringSeriesId: r.recurringSeriesId, seriesLinkSource: r.seriesLinkSource },
+      prev: {
+        recurringSeriesId: r.recurringSeriesId,
+        seriesLinkSource: r.seriesLinkSource,
+        ...filedBefore.get(r.id),
+      },
     }));
     const formerSeriesIds = new Set(
       rows
@@ -270,6 +342,8 @@ export function createSeriesFromTransaction(
         amountCents: transactions.amountCents,
         merchantId: transactions.merchantId,
         categoryId: transactions.categoryId,
+        categorizationSource: transactions.categorizationSource,
+        categorizationConfidence: transactions.categorizationConfidence,
         normalizedDescription: transactions.normalizedDescription,
         recurringSeriesId: transactions.recurringSeriesId,
         seriesLinkSource: transactions.seriesLinkSource,
@@ -306,11 +380,13 @@ export function createSeriesFromTransaction(
           `A series for this pattern ("${target.name}") was dismissed or ended — revive it from the Recurring page instead`,
         );
       }
+      // joining his row to a live series is his link — filed as an attach files it (§6A 47)
+      const filedBefore = fileUnfiledUnderSeries(tx, targetId, [seed]);
       const undo: UndoPatch = {
         rows: [
           {
             id: seed.id,
-            prev: { recurringSeriesId: null, seriesLinkSource: seed.seriesLinkSource },
+            prev: { recurringSeriesId: null, seriesLinkSource: seed.seriesLinkSource, ...filedBefore.get(seed.id) },
           },
         ],
       };
