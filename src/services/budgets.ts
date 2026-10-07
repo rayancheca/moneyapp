@@ -28,6 +28,13 @@ import {
   recurringSeriesIdsForCategory,
   type AnalyticsTxn,
 } from "./analytics";
+import {
+  isUpfrontCarRow,
+  readUpfrontCarRule,
+  upfrontCarRule,
+  type UpfrontCarCandidate,
+  type UpfrontCarRule,
+} from "./car-upfront";
 import { trailingFullMonths } from "./forecast";
 import {
   overdueForSeries,
@@ -600,15 +607,22 @@ export function projectSpend(input: PaceProjectionInput): number {
  * `recurringPostedCents` asks of a part.
  *
  * `planCents` is strict: a charge exactly the size of the plan is still a rate.
+ *
+ * ⚖️ …AND THE CAR'S UP-FRONT MONEY, whatever its size (`isUpfrontCarRow`, owner decision 2026-10-07, §6A 51): spent
+ * once, so graded as spent and never extrapolated. 🔴 Only a charge bigger than the plan was held out, so on a Car
+ * budget larger than the $1,100 deposit the deposit was paced over the rest of August as a habit. ⛔ ONE set, not two
+ * terms: a down payment both up front and over the plan is held out once — subtracted twice, it would hide its own
+ * size of ordinary spend (a repair) from the run-rate. Either sign, as the card nets a refund of the deposit.
  */
 export function budgetOneOffCents(
-  rows: readonly Pick<AnalyticsTxn, "amountCents" | "recurringSeriesId">[],
+  rows: readonly UpfrontCarCandidate[],
   planCents: number,
   notDrawn: ReadonlySet<string>,
+  upfront: UpfrontCarRule | null,
 ): number {
   return rows
     .filter((t) => !rowIsRecurring(t.recurringSeriesId, notDrawn))
-    .filter((t) => -t.amountCents > planCents)
+    .filter((t) => isUpfrontCarRow(upfront, t) || -t.amountCents > planCents)
     .reduce((sum, t) => sum - t.amountCents, 0);
 }
 
@@ -1417,6 +1431,8 @@ export interface BudgetPaceStatus extends BudgetStatus, CategoryCoverage {
 export function budgetPaceStatuses(db: AppDatabase, refDate: string = todayIso()): BudgetPaceStatus[] {
   // one read for every row: the series whose charges are not recurring money
   const notDrawn = seriesIdsNotDrawnAsRecurring(db);
+  // …and the car's up-front money, spent once and never a rate (§6A 51, `budgetOneOffCents`)
+  const upfront = upfrontCarRule(loadCategoryIndex(db), outsidePortfolioCashAccountIds(db), notDrawn);
   // …and where the import stands, per account and at the ledger's opening end
   const frontier = observationFrontier(db);
   const opens = ledgerOpens(db);
@@ -1465,6 +1481,7 @@ export function budgetPaceStatuses(db: AppDatabase, refDate: string = todayIso()
       spendingTransactions(db, { categoryId: s.budget.categoryId, from: start, to: refDate }),
       s.budget.amountCents,
       notDrawn,
+      upfront,
     );
     // the tail lives inside the budget's window too: for a budget that starts
     // LATER in this period, anchor a day before startsOn so budgetTail's
@@ -1539,10 +1556,18 @@ export function budgetGuidanceCents(
   // trailingFullMonths always returns GUIDANCE_MONTHS non-empty windows, so the
   // day total is a fixed, strictly-positive divisor (≈181) — no zero guard.
   const windows = trailingFullMonths(refDate, GUIDANCE_MONTHS);
+  /*
+   * ⚖️ The car's up-front money is no guide to a month (owner decision 2026-10-07, §6A 51). 🔴 On his ledger the Car
+   * guide read $1,093.91 a month, most of it the $6,100 down payment and deposit ÷ 6 — a budget set from it would
+   * plan for a down payment every month. The rows `categorySpending` sums, less the card's own up-front set.
+   */
+  const upfront = readUpfrontCarRule(db);
   let totalSpent = 0;
   let totalDays = 0;
   for (const w of windows) {
-    totalSpent += categorySpending(db, { categoryId, from: w.start, to: w.end }).spentCents;
+    totalSpent += spendingTransactions(db, { categoryId, from: w.start, to: w.end })
+      .filter((t) => !isUpfrontCarRow(upfront, t))
+      .reduce((sum, t) => sum - t.amountCents, 0);
     totalDays += diffDays(w.start, w.end) + 1;
   }
   const bounds = periodBounds(refDate, period);

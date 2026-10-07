@@ -15,6 +15,7 @@ import { projectRecurringDriven, projectTrailingAverage } from "@/lib/projection
 import { outsidePortfolioCashAccountIds } from "./accounts";
 import { loadCategoryIndex, offAgentsCash, recurringSeriesIdsForSubtree, type CategoryIndex } from "./analytics";
 import { listBudgetableCategories } from "./budgets";
+import { isUpfrontCarRow, upfrontCarRule, type UpfrontCarRule } from "./car-upfront";
 import { trailingFullMonths } from "./forecast";
 import { lapsedSeriesShouldStopForecasting, projectOccurrences, seriesHasLapsed, toProjectable } from "./recurring";
 import { linkIsNotRecurring, seriesIdsNotDrawnAsRecurring } from "./recurring-link";
@@ -69,10 +70,16 @@ interface PredictContext {
   /** series whose still-tagged rows are not recurring money
    *  (`seriesIdsNotDrawnAsRecurring` — the dismissed ones): false positives whose
    *  spend is really variable, so it falls BACK into the discretionary trend
-   *  (they are never projected as a recurring baseline). */
+   *  (they are never projected as a recurring baseline) — all but a Car row dated
+   *  before the lease starts, which is the car's up-front money (`upfrontCar`). */
   notDrawnAsRecurring: ReadonlySet<string>;
   /** `outsidePortfolioCashAccountIds` — the agent's cash, whose costs are not his spending (`spendingBucket`) */
   agentsCash: readonly string[];
+  /**
+   * `upfrontCarRule` — the rows the car card spreads over the lease, which no trend projects (§6A 48): Car rows dated
+   * before the lease starts and no bill (§6A 52). A repair after it is discretionary like any spend. Null with no car.
+   */
+  upfrontCar: UpfrontCarRule | null;
   /** the day a lapsed series is measured against */
   today: string;
   target: PeriodBounds;
@@ -120,13 +127,21 @@ function nonRecurringSubtreeSpend(
    *  stopped bill). The one rule `/recurring` and `/budgets` read too. */
   notDrawn: ReadonlySet<string>,
   agentsCash: readonly string[],
+  /** `upfrontCarRule` — the car's up-front money is no habit (owner decision 2026-10-07, §6A 48) */
+  upfrontCar: UpfrontCarRule | null,
 ): number {
   const notRecurring = linkIsNotRecurring(notDrawn);
   // split-aware: an unsplit row contributes its whole amount when its own
   // category is in the subtree; a split row contributes only the parts whose
   // category is in the subtree (its stale parent category is ignored).
   const unsplit = db
-    .select({ amountCents: transactions.amountCents })
+    .select({
+      amountCents: transactions.amountCents,
+      postedOn: transactions.postedOn,
+      categoryId: transactions.categoryId,
+      accountId: transactions.accountId,
+      recurringSeriesId: transactions.recurringSeriesId,
+    })
     .from(transactions)
     .where(
       and(
@@ -146,7 +161,13 @@ function nonRecurringSubtreeSpend(
     )
     .all();
   const splitParts = db
-    .select({ amountCents: transactionSplits.amountCents })
+    .select({
+      amountCents: transactionSplits.amountCents,
+      postedOn: transactions.postedOn,
+      categoryId: transactionSplits.categoryId,
+      accountId: transactions.accountId,
+      recurringSeriesId: transactions.recurringSeriesId,
+    })
     .from(transactionSplits)
     .innerJoin(transactions, eq(transactions.id, transactionSplits.transactionId))
     .where(
@@ -161,7 +182,17 @@ function nonRecurringSubtreeSpend(
       ),
     )
     .all();
-  return Math.max(0, [...unsplit, ...splitParts].reduce((sum, r) => sum - r.amountCents, 0));
+  /*
+   * ⚖️ The car's up-front money leaves the trend — the car card's own predicate, asked of each row and each part, so
+   * /spending and "Predict budgets" agree with /recurring's pace. 🔴 On his ledger 2026-10-07 Car predicted $2,033.33
+   * of November discretionary spending on top of the lease and the premium: the $6,100 down payment and deposit ÷ 3.
+   */
+  return Math.max(
+    0,
+    [...unsplit, ...splitParts]
+      .filter((r) => !isUpfrontCarRow(upfrontCar, r))
+      .reduce((sum, r) => sum - r.amountCents, 0),
+  );
 }
 
 function buildContext(db: AppDatabase, today: string): PredictContext {
@@ -178,16 +209,20 @@ function buildContext(db: AppDatabase, today: string): PredictContext {
       ? { start: seasonalBounds.start, end: seasonalBounds.end }
       : null;
 
+  const index = loadCategoryIndex(db);
+  const notDrawnAsRecurring = seriesIdsNotDrawnAsRecurring(db);
+  const agentsCash = outsidePortfolioCashAccountIds(db);
   return {
-    index: loadCategoryIndex(db),
+    index,
     earliestDate,
     activeSeries: db
       .select()
       .from(recurringSeries)
       .where(inArray(recurringSeries.status, ["detected", "confirmed"]))
       .all(),
-    notDrawnAsRecurring: seriesIdsNotDrawnAsRecurring(db),
-    agentsCash: [...outsidePortfolioCashAccountIds(db)],
+    notDrawnAsRecurring,
+    agentsCash: [...agentsCash],
+    upfrontCar: upfrontCarRule(index, agentsCash, notDrawnAsRecurring),
     today,
     target,
     targetLabel: monthLabel(monthKey(target.start)),
@@ -242,12 +277,12 @@ function predictWith(
   //    ⛔ EVERY dismissed id, not this subtree's membership: a dismissed series
   //    the owner moved elsewhere is no longer a member here, yet its rows still
   //    sit here — and `nonRecurringSubtreeSpend` already scopes rows by subtree.
-  const { notDrawnAsRecurring, agentsCash } = ctx;
+  const { notDrawnAsRecurring, agentsCash, upfrontCar } = ctx;
   const discretionaryHistory = ctx.months.map((m) =>
-    nonRecurringSubtreeSpend(db, subtree, m.start, m.end, notDrawnAsRecurring, agentsCash),
+    nonRecurringSubtreeSpend(db, subtree, m.start, m.end, notDrawnAsRecurring, agentsCash, upfrontCar),
   );
   const seasonalPrior = ctx.seasonal
-    ? nonRecurringSubtreeSpend(db, subtree, ctx.seasonal.start, ctx.seasonal.end, notDrawnAsRecurring, agentsCash)
+    ? nonRecurringSubtreeSpend(db, subtree, ctx.seasonal.start, ctx.seasonal.end, notDrawnAsRecurring, agentsCash, upfrontCar)
     : null;
   const discretionaryBase = projectTrailingAverage({ trailingTotalsCents: discretionaryHistory });
   const discretionary = seasonallyAdjust(discretionaryBase, seasonalPrior);

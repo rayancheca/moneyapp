@@ -1044,7 +1044,7 @@ describe("carCard", () => {
    */
   test("subtracts car spending over the window's own months, not the constant six", () => {
     const carId = createCarCategory();
-    addSeries({
+    const lease = addSeries({
       name: "Car lease",
       kind: "bill",
       nextExpectedOn: "2026-05-11",
@@ -1053,11 +1053,15 @@ describe("carCard", () => {
     });
     // $600 of car spending inside a window the ledger has shortened to THREE
     // months (2026-02 … 2026-04): $200 a month, not $100.
+    // ⚠️ A BILL, the lease's own payment: an unlinked Car row before the lease
+    // starts is up-front money, which the baseline leaves out altogether
+    // (§6A 51) — there would be nothing in it for the card to subtract.
     insertTxn({
       postedOn: "2026-03-10",
       amountCents: -60000,
       rawDescription: "CAR PAYMENT",
       categoryId: carId,
+      recurringSeriesId: lease,
     });
 
     const asked = spendBaseline(bundle.db, "2026-05-15");

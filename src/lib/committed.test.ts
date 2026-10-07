@@ -354,6 +354,17 @@ describe("baselineCaption", () => {
     );
   });
 
+  /** ⚖️ §6A 51: an average that leaves the car's up-front money out says so; one with none says nothing new. */
+  test("names the car's up-front money it left out, and only when there is some", () => {
+    expect(baselineCaption({ months: 6, fromMonth: "2026-04", toMonth: "2026-09", upfrontCarCents: 610_000 })).toBe(
+      "Spending averaged over 6 complete months, Apr 2026 to Sep 2026, leaving out the $6,100.00 paid up front for the " +
+        "car, which the car card spreads over the lease. This month is still running and is not counted.",
+    );
+    expect(baselineCaption({ months: 6, fromMonth: "2026-04", toMonth: "2026-09", upfrontCarCents: 0 })).toBe(
+      "Spending averaged over 6 complete months, Apr 2026 to Sep 2026. This month is still running and is not counted.",
+    );
+  });
+
   test("a one-month window is singular, and is not a range", () => {
     const c = baselineCaption({ months: 1, fromMonth: "2022-09", toMonth: "2022-09" });
     expect(c).toContain("1 complete month,");

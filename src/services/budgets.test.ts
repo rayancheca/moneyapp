@@ -1496,18 +1496,24 @@ describe("budgetTail — expected-but-unposted recurring", () => {
 
 describe("budgetOneOffCents — too big to be a rate, unless a bill already accounts for it", () => {
   const notDrawn: ReadonlySet<string> = new Set(["dismissed-series"]);
-  const row = (amountCents: number, recurringSeriesId: string | null = null) => ({ amountCents, recurringSeriesId });
+  const row = (amountCents: number, recurringSeriesId: string | null = null) => ({
+    amountCents,
+    recurringSeriesId,
+    postedOn: "2026-08-12",
+    accountId: "checking",
+    categoryId: "food",
+  });
 
   test("both ends of the threshold: the plan itself is a rate, one cent over is an event", () => {
-    expect(budgetOneOffCents([row(-10_000)], 10_000, notDrawn)).toBe(0);
-    expect(budgetOneOffCents([row(-10_001)], 10_000, notDrawn)).toBe(10_001);
+    expect(budgetOneOffCents([row(-10_000)], 10_000, notDrawn, null)).toBe(0);
+    expect(budgetOneOffCents([row(-10_001)], 10_000, notDrawn, null)).toBe(10_001);
   });
 
   test("a row a series drawn as recurring owns is never a one-off; a dismissed series' row is", () => {
-    expect(budgetOneOffCents([row(-50_000, "live-series")], 10_000, notDrawn)).toBe(0);
-    expect(budgetOneOffCents([row(-50_000, "dismissed-series")], 10_000, notDrawn)).toBe(50_000);
+    expect(budgetOneOffCents([row(-50_000, "live-series")], 10_000, notDrawn, null)).toBe(0);
+    expect(budgetOneOffCents([row(-50_000, "dismissed-series")], 10_000, notDrawn, null)).toBe(50_000);
     expect(
-      budgetOneOffCents([row(-50_000, "live-series"), row(-20_000), row(-3_000), row(25_000)], 10_000, notDrawn),
+      budgetOneOffCents([row(-50_000, "live-series"), row(-20_000), row(-3_000), row(25_000)], 10_000, notDrawn, null),
     ).toBe(20_000); // a refund is not a charge, and small spend is the rate
   });
 });

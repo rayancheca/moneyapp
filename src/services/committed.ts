@@ -23,11 +23,18 @@ import {
 import { resolvePeriod, withPeriod } from "@/lib/period";
 import { runway, type Runway } from "@/lib/runway";
 import { cashPosition, outsidePortfolioCashAccountIds } from "./accounts";
-import { isAgentsSeries, loadCategoryIndex, monthlySpending, recurringSeriesIdsForCategory } from "./analytics";
+import {
+  isAgentsSeries,
+  loadCategoryIndex,
+  monthlySpending,
+  recurringSeriesIdsForCategory,
+  type AnalyticsTxn,
+} from "./analytics";
 import { incomeExpectation, overdueForSeries, type BudgetTail } from "./budgets";
+import { CAR_LEASE_TERM_MONTHS, isUpfrontCarRow, readUpfrontCarRule, upfrontCarRule } from "./car-upfront";
 import { frontierForSeries, ledgerOpens, observationFrontier, seriesAccountIds } from "./observation-frontier";
 import { seriesStaleness, upcomingOccurrences } from "./recurring";
-import { rowIsRecurring, seriesIdsNotDrawnAsRecurring } from "./recurring-link";
+import { seriesIdsNotDrawnAsRecurring } from "./recurring-link";
 
 /**
  * The two decision cards of pass 63 — how long the money lasts, and what the
@@ -53,12 +60,16 @@ export const COMMITTED_HORIZON_MONTHS = 12;
  */
 export const SPEND_BASELINE_MONTHS = 6;
 
-/** The term the car's upfront money buys: the lease, 2026-09-11 → 2028-08-11. */
-const CAR_LEASE_TERM_MONTHS = 24;
 
 export interface SpendBaseline {
-  /** mean monthly spend across the complete months in the window */
+  /** mean monthly spend across the complete months in the window, the car's up-front money left out */
   monthlyCents: number;
+  /**
+   * The car's up-front money inside the window (`isUpfrontCarRow`), left OUT of `monthlyCents` — owner decision
+   * 2026-10-07 (§6A 51): the car card spreads it over the lease, so averaged in it is counted twice, as a month's
+   * spending. A caption that calls `monthlyCents` an average names it (`baselineCaption`); 0 when there is none.
+   */
+  upfrontCarCents: number;
   /** how many complete months the mean divides by */
   months: number;
   /** first and last month key averaged, inclusive */
@@ -155,16 +166,32 @@ export function spendBaseline(
   today: string = todayIso(),
   months: number = SPEND_BASELINE_MONTHS,
 ): SpendBaseline {
-  const cells = monthlySpending(db, { months: months + 1, refDate: today });
-  const byMonth = new Map<string, number>();
-  for (const c of cells) byMonth.set(c.month, (byMonth.get(c.month) ?? 0) + c.spentCents);
+  /*
+   * ⚖️ Owner decision 2026-10-07 (§6A 51): the car's up-front money is not a month's spending. 🔴 Averaged in, his
+   * $6,100 down payment and deposit (August) read as $1,016.67 a month of "What you spend a month" over Apr–Sep —
+   * $9,259.32 where the rest comes to $8,242.65 — and shortened the runway, beside a car card that already spreads the
+   * same money over the lease. One predicate, the card's own: `isUpfrontCarRow`.
+   */
+  const upfront = readUpfrontCarRule(db);
+  const sumByMonth = (keep: (t: AnalyticsTxn) => boolean): Map<string, number> => {
+    const byMonth = new Map<string, number>();
+    for (const c of monthlySpending(db, { months: months + 1, refDate: today, filter: keep })) {
+      byMonth.set(c.month, (byMonth.get(c.month) ?? 0) + c.spentCents);
+    }
+    return byMonth;
+  };
+  const spent = sumByMonth((t) => !isUpfrontCarRow(upfront, t));
+  const handedOver = upfront === null ? new Map<string, number>() : sumByMonth((t) => isUpfrontCarRow(upfront, t));
 
   const w = baselineWindow(db, today, months);
-  const totalCents = w.keys.reduce((sum, k) => sum + (byMonth.get(k) ?? 0), 0);
+  const inWindow = (byMonth: ReadonlyMap<string, number>): number =>
+    w.keys.reduce((sum, k) => sum + (byMonth.get(k) ?? 0), 0);
+  const totalCents = inWindow(spent);
   return {
     // no complete month inside the ledger means no measured rate; the total is
     // necessarily zero there, so this divides by one rather than by nothing
     monthlyCents: Math.round(totalCents / Math.max(1, w.months)),
+    upfrontCarCents: inWindow(handedOver),
     months: w.months,
     fromMonth: w.fromMonth,
     toMonth: w.toMonth,
@@ -558,10 +585,11 @@ export interface CarCard {
  */
 export function carCard(db: AppDatabase, today: string = todayIso()): CarCard | null {
   const idx = loadCategoryIndex(db);
-  const car = [...idx.byId.values()].find((c) => c.parentId === null && c.name === "Car");
-  if (!car) return null;
+  // the car, and which of its rows are money handed over up front — `car-upfront.ts`, the rule the pace reads too
+  const upfront = upfrontCarRule(idx, outsidePortfolioCashAccountIds(db), seriesIdsNotDrawnAsRecurring(db));
+  if (!upfront) return null;
 
-  const carSeries = recurringSeriesIdsForCategory(db, car.id);
+  const carSeries = recurringSeriesIdsForCategory(db, upfront.carId);
   const months = COMMITTED_HORIZON_MONTHS;
   const to = addCalendarMonths(today, months);
   /*
@@ -611,8 +639,8 @@ export function carCard(db: AppDatabase, today: string = todayIso()): CarCard | 
   const heaviest = heaviestMonth(occurrences);
   const committedMonthlyCents = heaviest.cents;
 
-  // money already handed over: every posted row in the Car subtree that no
-  // commitment accounts for
+  // money already handed over: every posted row in the Car subtree, dated
+  // before the lease starts, that no commitment accounts for
   /*
    * ⛔ NOT every posted Car row. A row attributed to a recurring series is a
    * payment the "Lease and insurance" line above already prices — and this
@@ -628,16 +656,18 @@ export function carCard(db: AppDatabase, today: string = todayIso()): CarCard | 
    * series the owner DISMISSED is not a bill he pays — he said so — and no
    * commitment line prices it, so it is money handed over like any unlinked
    * Car row (`seriesDrawsAsRecurring`). An ENDED series' payment was a bill.
+   *
+   * ⚖️ ONE PREDICATE (`isUpfrontCarRow`), and every spending rate asks it too: the owner's decisions of 2026-10-07
+   * leave this money out of every pace and baseline (§6A 48, §6A 51), so it is not projected again as monthly
+   * spending — and bound it to the days BEFORE the lease starts (§6A 52): a repair after it is ordinary spending,
+   * never spread over the lease.
    */
-  const subtree = new Set(idx.subtreeIds(car.id));
-  const notDrawn = seriesIdsNotDrawnAsRecurring(db);
+  const subtree = upfront.subtree;
   const upfrontCents = monthlySpending(db, {
     months: 24,
     refDate: today,
-    filter: (t) => !rowIsRecurring(t.recurringSeriesId, notDrawn),
-  })
-    .filter((c) => c.categoryId !== null && subtree.has(c.categoryId))
-    .reduce((s, c) => s + c.spentCents, 0);
+    filter: (t) => isUpfrontCarRow(upfront, t),
+  }).reduce((s, c) => s + c.spentCents, 0);
 
   /*
    * The share's denominator must not already contain the car, or the car would
@@ -647,7 +677,16 @@ export function carCard(db: AppDatabase, today: string = todayIso()): CarCard | 
    * wrong later is the kind this codebase keeps finding.
    */
   const baseline = spendBaseline(db, today);
-  const baselineCarCents = monthlySpending(db, { months: SPEND_BASELINE_MONTHS + 1, refDate: today })
+  /*
+   * ⛔ …and the car spending it removes is the car spending the baseline HOLDS. The up-front money is already out of
+   * it (§6A 51, `spendBaseline`), so taking it out here as well would subtract it twice and leave "before the car"
+   * short of what he spends by the very amount the card spreads over the lease.
+   */
+  const baselineCarCents = monthlySpending(db, {
+    months: SPEND_BASELINE_MONTHS + 1,
+    refDate: today,
+    filter: (t) => !isUpfrontCarRow(upfront, t),
+  })
     .filter((c) => c.month !== monthKey(today))
     .filter((c) => c.month >= baseline.fromMonth)
     .filter((c) => c.categoryId !== null && subtree.has(c.categoryId))

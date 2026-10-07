@@ -67,6 +67,19 @@ describe("projectPace basis grammar", () => {
 });
 
 describe("projectPace", () => {
+  /** ⚖️ §6A 51: money spent once (the car's up-front money) is in the total and never extrapolated. */
+  test("one-off posted spend counts once and is not extrapolated", () => {
+    const p = projectPace({
+      from: "2026-08-01",
+      to: "2026-08-31",
+      today: "2026-08-20",
+      actualToDateCents: 695_758,
+      oneOffPostedCents: 610_000,
+    });
+    // $6,100 once + $857.58 over 20 days, × 11 more: 695_758 + round(85_758 × 11/20)
+    expect(p.expectedTotalCents).toBe(695_758 + 47_167);
+  });
+
   test("no recurring inputs reduces to actual ÷ elapsed-fraction (Engine C)", () => {
     const p = projectPace({
       from: "2026-07-01",
