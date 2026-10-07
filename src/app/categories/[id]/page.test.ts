@@ -67,3 +67,26 @@ describe("the headline's word is asked of the kind, in one place", () => {
     expect(page).not.toMatch(/\?\s*"Spent"\s*:/);
   });
 });
+
+/*
+ * ⚖️ OWNER DECISION 2026-10-07 (§6A 49): the page names the CATEGORY'S OWN imported-through day — the rule its
+ * /budgets row uses — not the ledger-wide one. 🔴 It fed `emptyPeriodReason` the ledger's `ledgerReaches(db)`, and on
+ * his ledger read "the ledger is imported through Thu, Sep 24, 2026" one click from a Car row reading "spending
+ * imported through Aug 12". The sentence and the trend's empty months ask through one context; the words are
+ * `categoryEmptyWindowCopy`'s (pinned in `services/category-detail.test.ts`).
+ */
+describe("the empty window and the trend ask the category's own day", () => {
+  const page = fs.readFileSync(path.join(process.cwd(), "src/app/categories/[id]/page.tsx"), "utf8");
+
+  test("the sentence is the category's, not a ledger-wide emptyPeriodReason", () => {
+    expect(page).toMatch(/categoryEmptyWindowCopy\(/);
+    expect(page).not.toMatch(/emptyPeriodReason\(/);
+    expect(page).not.toMatch(/emptyPeriodCopy\(/);
+  });
+
+  test("the trend is handed the same reach context", () => {
+    expect(page).toMatch(/const reachCtx = categoryReachContext\(db\);/);
+    expect(page).toMatch(/categoryMonthlyTrend\([^;]*reachCtx,?\s*\)/);
+    expect(page).toMatch(/categoryEmptyWindowCopy\([^;]*reachCtx,?\s*\)/);
+  });
+});

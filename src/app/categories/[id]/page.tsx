@@ -4,15 +4,16 @@ import { notFound } from "next/navigation";
 import { getDb } from "@/db/client";
 import { categories } from "@/db/schema/categories";
 import { compareDates, todayIso } from "@/lib/dates";
-import { formatDayLong, formatDayShort } from "@/lib/format-date";
+import { formatDayShort } from "@/lib/format-date";
 import { formatCents } from "@/lib/money";
 import { parsePeriodParams, resolvePeriod, withPeriod } from "@/lib/period";
-import { emptyPeriodCopy, emptyPeriodReason } from "@/lib/empty-period";
-import { ledgerOpens, ledgerReaches } from "@/services/observation-frontier";
+import { ledgerOpens } from "@/services/observation-frontier";
 import { categorySpending } from "@/services/analytics";
+import { categoryReachContext } from "@/services/budgets";
 import {
   categoryBudgetRef,
   categoryDetailHeader,
+  categoryEmptyWindowCopy,
   categoryFlowLabel,
   categoryFlowSign,
   categoryMonthlyTrend,
@@ -122,7 +123,13 @@ export default async function CategoryPage({
    * not draw months nobody could have imported.
    */
   const trendAnchor = compareDates(period.to, today) < 0 ? period.to : today;
-  const trend = categoryMonthlyTrend(db, id, TREND_MONTHS, trendAnchor, ledgerReaches(db), ledgerOpens(db), today).map((p) => ({ ...p, spentCents: sign * p.spentCents }));
+  /*
+   * ⚖️ THE CATEGORY'S OWN IMPORTED-THROUGH DAY — owner decision 2026-10-07 (§6A 49): the rule its /budgets row uses
+   * (`categoryReachFor`), not the ledger's. One set of reads for the empty sentence below and for the trend's empty
+   * months, so a bar cannot call a month "$0.00" that the month's own page calls not imported.
+   */
+  const reachCtx = categoryReachContext(db);
+  const trend = categoryMonthlyTrend(db, id, TREND_MONTHS, trendAnchor, reachCtx.ledgerReaches, ledgerOpens(db), today, reachCtx).map((p) => ({ ...p, spentCents: sign * p.spentCents }));
 
   /*
    * PHASE III-B. Where this category sits, through the SAME builder /spending
@@ -143,20 +150,20 @@ export default async function CategoryPage({
    * on 2026-09-04 and shipped with exactly one caller; this is the second, and
    * the two pages a reader moves between now describe the same month the same
    * way.
+   *
+   * ⚖️ …ASKED OF THIS CATEGORY'S OWN DAY (owner decision 2026-10-07, §6A 49). 🔴 Fed the ledger's `ledgerReaches`, Car's
+   * October read "Nothing has been imported for 7 days of it; the ledger is imported through Thu, Sep 24, 2026" one
+   * click from its budget row's "spending imported through Aug 12". It reads "spending in Car is imported through Wed,
+   * Aug 12, 2026" now, and a category spent only from cash wallets says so in that row's own words.
    */
-  const emptyReason =
+  const emptyCopy =
     txnCount === 0
-      ? emptyPeriodReason({
-          from: range.from,
-          to: range.to,
-          today,
-          ledgerOpens: ledgerOpens(db),
-          ledgerReaches: ledgerReaches(db),
-        })
+      ? categoryEmptyWindowCopy(
+          db,
+          { categoryId: id, name: header.name, kind: header.kind, from: range.from, to: range.to, label: period.label, today },
+          reachCtx,
+        )
       : null;
-  const emptyCopy = emptyReason
-    ? emptyPeriodCopy(emptyReason, period.label, ledgerReaches(db), formatDayLong, { ledgerOpens: ledgerOpens(db) })
-    : null;
   // the title carries the antecedent — "4 days of IT" has none without it
   const emptyText = emptyCopy ? `${emptyCopy.title}. ${emptyCopy.description}` : undefined;
 

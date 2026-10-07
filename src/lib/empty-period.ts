@@ -222,6 +222,11 @@ export function emptyPeriodCopy(
    * no such bucket, so the clause would assert a control the reader cannot see.
    */
   opts: {
+    /**
+     * whose day `ledgerReaches` is, as the sentence names it — "spending in Car" where a category page hands in its
+     * own day (⚖️ owner decision 2026-10-07, `lib/category-reach`); the ledger's by default
+     */
+    importedThroughSubject?: string;
     uncategorizedBucket?: boolean;
     /** the oldest day the ledger holds — named when a window runs before it */
     ledgerOpens?: string | null;
@@ -234,6 +239,7 @@ export function emptyPeriodCopy(
   } = {},
 ): { title: string; description: string } {
   const through = ledgerReaches === null ? null : formatDay(ledgerReaches);
+  const whose = opts.importedThroughSubject ?? "the ledger";
   switch (reason.kind) {
     case "no-ledger":
       return {
@@ -259,7 +265,7 @@ export function emptyPeriodCopy(
       return {
         title: `${label} has not been imported yet`,
         description:
-          `Nothing has been imported for ${days(reason.uncoveredDays)} of it${through ? `; the ledger is imported through ${through}` : ""}. ` +
+          `Nothing has been imported for ${days(reason.uncoveredDays)} of it${through ? `; ${whose} is imported through ${through}` : ""}. ` +
           "That is a window nobody has looked at, not one in which nothing happened — import the statements that cover it.",
       };
     case "before-records":
@@ -282,7 +288,7 @@ export function emptyPeriodCopy(
       const causes = [
         ...(beforeDays > 0 && opens ? [`your records begin on ${opens}`] : []),
         // the frontier's own word — see `after-records` above
-        ...(reason.uncoveredDays - beforeDays > 0 && through ? [`the ledger is imported through ${through}`] : []),
+        ...(reason.uncoveredDays - beforeDays > 0 && through ? [`${whose} is imported through ${through}`] : []),
       ];
       /*
        * 🔴 "NOTHING POSTED" WAS THE MEASURED BRANCH'S OLD OVER-REACH, LEFT HERE. The imported part can hold
