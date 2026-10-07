@@ -1,10 +1,11 @@
 import { countPhrase, type BlastRadius, type BlastRadiusLine } from "@/components/ui/blast-radius";
+import type { AnchorSource } from "@/db/schema/balances";
 import { dayWindowLabel } from "@/lib/period";
 import type { AnchorRemovalEffect } from "@/services/anchors";
 import type { LostDayFates, RemovalEffect } from "@/services/derivation";
 
 /**
- * The /accounts/[id] "Remove this balance" confirmation, read off what removal
+ * The /accounts/[id] remove-a-balance confirmation, read off what removal
  * actually changes (`anchorRemovalEffects`, which derives the account with and
  * without the balance) — never a date range worked out on the page. The count's
  * measured history lives on `removalEffect` in services/derivation.
@@ -41,10 +42,82 @@ import type { LostDayFates, RemovalEffect } from "@/services/derivation";
 export interface RemoveBalanceInput {
   accountName: string;
   effect: AnchorRemovalEffect;
+  /** who recorded the balance being removed — his count (`manual`) or a live reading — which names it (`namingFor`) */
+  source: AnchorSource;
   /** the balance as recorded, already in the owner's frame (`balanceHeading` → formatted) */
   recorded: { label: string; value: string };
   /** recorded balances the account keeps once this one goes */
   balancesLeft: number;
+}
+
+/**
+ * How the dialog and its controls name the balance they remove, by who recorded it.
+ *
+ * ⚖️ His answer, 2026-10-07 (§6A 50, extending §6A 33): "counted" is the ONE verb for a balance he typed, and the
+ * controls say it too — the title, the button, the trigger's name, the irreversible line, and the sentence that tells
+ * him how to put it back, which names the form by its own title ("Add a balance you counted"). It read "Remove this
+ * recorded balance" and "Record a balance again" over the balance its own popover calls "the balance you counted".
+ *
+ * ⛔ A live reading is not his count and keeps "recorded". Only `manual` and `live` reach this dialog
+ * (`isRemovableAnchorSource`); "Recorded balances left on this account" counts statements' balances too, and keeps it.
+ */
+interface BalanceNaming {
+  /** completes "<label>, …" on the irreversible line */
+  as: string;
+  /** the balance as a sentence's subject */
+  thisOne: string;
+  /** how a balance is put back — any balance, when none is left; "again" only where it was his to begin with */
+  addOne: string;
+  /** how this one is put back */
+  addItBack: string;
+  title: string;
+  confirmLabel: string;
+  /** completes "remove the balance … on <day>" */
+  byWhom: string;
+}
+
+const COUNTED_NAMING: BalanceNaming = {
+  as: "as you counted it",
+  thisOne: "this balance you counted",
+  addOne: "Add a balance you counted again",
+  addItBack: "Add the balance you counted again",
+  title: "Remove this balance you counted",
+  confirmLabel: "Remove the balance you counted",
+  byWhom: "you counted",
+};
+
+/*
+ * 🔴 A live reading's dialog said "Record a balance again" — a form that no longer exists by that name — and promised
+ * "again" of a reading he never took and cannot re-take for a past day (review, 2026-10-07). It names the form there is.
+ */
+const RECORDED_NAMING: BalanceNaming = {
+  as: "as recorded",
+  thisOne: "this recorded balance",
+  addOne: "Add a balance you counted",
+  addItBack: "Add a balance you counted on its day",
+  title: "Remove this recorded balance",
+  confirmLabel: "Remove this balance",
+  byWhom: "recorded",
+};
+
+function namingFor(source: AnchorSource): BalanceNaming {
+  return source === "manual" ? COUNTED_NAMING : RECORDED_NAMING;
+}
+
+export interface RemoveBalanceControls {
+  title: string;
+  confirmLabel: string;
+  triggerAriaLabel: string;
+}
+
+/** The remove control's own words — the page's title, button and trigger name, from the rule the dialog's sentences read. */
+export function removeBalanceControls(source: AnchorSource, anchoredOn: string): RemoveBalanceControls {
+  const naming = namingFor(source);
+  return {
+    title: naming.title,
+    confirmLabel: naming.confirmLabel,
+    triggerAriaLabel: `remove the balance ${naming.byWhom} on ${dayWindowLabel(anchoredOn, anchoredOn)}`,
+  };
 }
 
 /**
@@ -61,8 +134,8 @@ export interface RemoveBalanceInput {
  * 🔴 Cash on Hand's only balance, the $5,000.00 he typed for Aug 3, 2026, read
  * "This balance is what verifies Cash on Hand on Aug 3 – 10, 2026 · Days that
  * stop being verified: 8 days" while the balance popover on the same page called
- * Aug 3 and Aug 5 "you entered it" with no checked-through date (real ledger
- * copy, 2026-09-16).
+ * Aug 3 and Aug 5 "you entered it" (now "you counted it", §6A 50) with no
+ * checked-through date (real ledger copy, 2026-09-16).
  *
  * 🔴 The investment dialog read "This balance is what verifies Bare holding on
  * Jul 1 – 4, 2026" and "Days that stop being verified: 4 days", while
@@ -78,8 +151,10 @@ interface RemovalWords {
   rebasedDay: string;
   noneLost: (name: string) => string;
   keeps: string;
-  recordAgain: string;
-  restores: string;
+  /** how the curve comes back once no balance is left — named by who recorded the one removed */
+  recordAgain: (naming: BalanceNaming) => string;
+  /** how the lost days come back */
+  restores: (naming: BalanceNaming) => string;
 }
 
 const CHECKED_WORDS: RemovalWords = {
@@ -88,8 +163,8 @@ const CHECKED_WORDS: RemovalWords = {
   rebasedDay: "verified day",
   noneLost: (name) => `No day of ${name} stops being verified without this balance`,
   keeps: "the same balance and the same verification",
-  recordAgain: "Record a balance again and the curve is derived from it and the transactions.",
-  restores: "Record the balance again to re-verify these days.",
+  recordAgain: (n) => `${n.addOne} and the curve is derived from it and the transactions.`,
+  restores: (n) => `${n.addItBack} to re-verify these days.`,
 };
 
 const HELD_WORDS: RemovalWords = {
@@ -99,8 +174,8 @@ const HELD_WORDS: RemovalWords = {
   noneLost: (name) => `No day of ${name} loses its balance without this one`,
   keeps: "the same balance",
   // step-hold never replays a transaction
-  recordAgain: "Record a balance again and the curve is derived from it.",
-  restores: "Record the balance again to restore these days.",
+  recordAgain: (n) => `${n.addOne} and the curve is derived from it.`,
+  restores: (n) => `${n.addItBack} to restore these days.`,
 };
 
 const COUNTED_WORDS: RemovalWords = {
@@ -111,7 +186,7 @@ const COUNTED_WORDS: RemovalWords = {
   noneLost: CHECKED_WORDS.noneLost,
   keeps: CHECKED_WORDS.keeps,
   recordAgain: CHECKED_WORDS.recordAgain,
-  restores: "Record the balance again to restore these days.",
+  restores: HELD_WORDS.restores,
 };
 
 function wordsFor(effect: AnchorRemovalEffect): RemovalWords {
@@ -142,21 +217,22 @@ function lostLines(effect: AnchorRemovalEffect): BlastRadiusLine[] {
 
 export function removeBalanceRadius(input: RemoveBalanceInput): BlastRadius {
   const { effect } = input;
+  const naming = namingFor(input.source);
   return {
-    headline: removeBalanceHeadline(input.accountName, effect),
+    headline: removeBalanceHeadline(input.accountName, effect, naming),
     lines: [
-      { label: `${input.recorded.label}, as recorded`, value: input.recorded.value, irreversible: true },
+      { label: `${input.recorded.label}, ${naming.as}`, value: input.recorded.value, irreversible: true },
       ...lostLines(effect),
       ...catchUpLines(effect),
       { label: "Recorded balances left on this account", value: countPhrase(input.balancesLeft, "balance") },
     ],
-    reassurance: removeBalanceReassurance(effect),
+    reassurance: removeBalanceReassurance(effect, naming),
   };
 }
 
-function removeBalanceHeadline(name: string, effect: AnchorRemovalEffect): string {
+function removeBalanceHeadline(name: string, effect: AnchorRemovalEffect, naming: BalanceNaming): string {
   if (effect.pricedFromHoldings) {
-    return `${name} is priced from its holdings, so this recorded balance verifies nothing and plays no part in its curve.`;
+    return `${name} is priced from its holdings, so ${naming.thisOne} verifies nothing and plays no part in its curve.`;
   }
   const words = wordsFor(effect);
   const alone = effect.lostDays > 0 ? `${aloneSentence(name, effect, words)} ` : "";
@@ -236,14 +312,14 @@ function catchUpLines(effect: AnchorRemovalEffect): BlastRadiusLine[] {
   ];
 }
 
-function removeBalanceReassurance(effect: AnchorRemovalEffect): string {
+function removeBalanceReassurance(effect: AnchorRemovalEffect, naming: BalanceNaming): string {
   if (effect.pricedFromHoldings) {
     return "No transaction and no holding is touched — this account's value history is rebuilt from its holdings and their stored closes, which this balance is not part of.";
   }
   const words = wordsFor(effect);
   if (effect.daysLeft === 0) {
-    return `No transaction is touched. ${words.recordAgain}`;
+    return `No transaction is touched. ${words.recordAgain(naming)}`;
   }
   const rebuilds = "No transaction is touched — the balance curve is derived, so it rebuilds from what is left.";
-  return effect.lostDays > 0 ? `${rebuilds} ${words.restores}` : rebuilds;
+  return effect.lostDays > 0 ? `${rebuilds} ${words.restores(naming)}` : rebuilds;
 }

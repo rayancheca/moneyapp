@@ -1,5 +1,6 @@
 import { describe, expect, test } from "vitest";
 import {
+  PART_ENTERED,
   VERDICT_PRESENTATION,
   embeddedLabel,
   provenancePanelName,
@@ -19,7 +20,7 @@ describe("VERDICT_PRESENTATION", () => {
    */
   test("covers every verdict the service can return", () => {
     expect([...ALL].sort()).toEqual(
-      ["broken", "derived", "manual", "market_value", "sourced", "unknown", "unverified"].sort(),
+      ["broken", "counted", "derived", "manual", "market_value", "sourced", "unknown", "unverified"].sort(),
     );
   });
 
@@ -33,13 +34,47 @@ describe("VERDICT_PRESENTATION", () => {
   });
 
   /**
-   * ⛔ market_value and manual are neither good nor bad. Toning them "weak"
-   * would cry wolf on two thirds of a portfolio; toning them "proven" would
-   * claim an arithmetic check that does not exist for either.
+   * ⛔ market_value, manual and counted are neither good nor bad. Toning them
+   * "weak" would cry wolf on two thirds of a portfolio; toning them "proven"
+   * would claim an arithmetic check that does not exist for any of them.
    */
-  test("the two neutral verdicts are toned neither proven nor weak", () => {
+  test("the three neutral verdicts are toned neither proven nor weak", () => {
     expect(VERDICT_PRESENTATION.market_value.tone).toBe("neutral");
     expect(VERDICT_PRESENTATION.manual.tone).toBe("neutral");
+    expect(VERDICT_PRESENTATION.counted.tone).toBe("neutral");
+  });
+
+  /*
+   * ⚖️ His answer, 2026-10-07 (§6A 50, extending §6A 33): "counted" is the ONE verb for a balance he typed, and the
+   * badge says it too — but only of a BALANCE. A row he entered by hand (the Cash on Hand wallet's rows), a holding or
+   * an amount he set keeps "you entered it": he typed those, he did not count them.
+   */
+  test('⚖️ a balance he typed reads "you counted it"; a row he typed keeps "you entered it"', () => {
+    expect(VERDICT_PRESENTATION.counted.word).toBe("you counted it");
+    expect(VERDICT_PRESENTATION.manual.word).toBe("you entered it");
+    // told apart by the word and the name alone — the same glyph and the same tone
+    expect(VERDICT_PRESENTATION.counted.icon).toBe(VERDICT_PRESENTATION.manual.icon);
+    expect(provenanceTriggerName("Cash on Hand's balance", "counted")).toBe(
+      "How Cash on Hand's balance is known — it rests on a balance you counted",
+    );
+    expect(provenanceTriggerName("Cash on Hand's balance", "manual")).toBe(
+      "How Cash on Hand's balance is known — it was entered by hand",
+    );
+  });
+
+  /*
+   * 🔴 "…came to $66,477.60 is known — it was entered by hand" of a year's spending in which ONE $5,000.00 row was
+   * typed (/summary/2026, review 2026-10-07). A total only part of which he typed says PART, in the badge and the name.
+   */
+  test("a total part of which he typed has its own word and its own name", () => {
+    expect(PART_ENTERED.word).toBe("part you entered");
+    expect(PART_ENTERED.word).toBe(PART_ENTERED.word.toLowerCase());
+    expect(PART_ENTERED.word.length).toBeLessThanOrEqual(18);
+    expect(
+      provenanceTriggerName("Spending in Jan 1 – Aug 12, 2026 came to $66,477.60.", "manual", PART_ENTERED.word, PART_ENTERED.name),
+    ).toBe("How Spending in Jan 1 – Aug 12, 2026 came to $66,477.60 is known — part of it was entered by hand");
+    // with no name of its own, a badge word still completes the name as before
+    expect(provenanceTriggerName("net worth", "unknown", "6 of 12 add up")).toBe("How net worth is known — 6 of 12 add up");
   });
 
   test("only the two proven verdicts read as proven", () => {

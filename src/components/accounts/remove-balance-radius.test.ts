@@ -2,7 +2,7 @@ import { describe, expect, test } from "vitest";
 import { blastRadiusSentence, type BlastRadius } from "@/components/ui/blast-radius";
 import type { AnchorSource } from "@/db/schema/balances";
 import { removalEffect, type ReplayAnchor } from "@/services/derivation";
-import { removeBalanceRadius } from "./remove-balance-radius";
+import { removeBalanceControls, removeBalanceRadius } from "./remove-balance-radius";
 
 /**
  * ⛔ Not reachable from the e2e suite: the dialog lives inside a closed
@@ -36,6 +36,8 @@ function dialog(
   return removeBalanceRadius({
     accountName,
     effect: { pricedFromHoldings: false, isInvestment, catchUpDays, ...effect },
+    // who recorded the balance being removed is the fixture's, never the test's to restate
+    source: anchors.find((a) => a.id === removedId)!.source,
     recorded: { label: "Balance", value: "$1.00" },
     balancesLeft: anchors.length - 1,
   });
@@ -81,8 +83,9 @@ describe("removeBalanceRadius — the lost days, by what becomes of them", () =>
     // a curve that goes away is not "brought up to today"
     expect(valueOf(radius, CATCH_UP)).toBeUndefined();
     expect(valueOf(radius, "Recorded balances left on this account")).toBe("no balances");
+    // ⚖️ the control that puts it back, in its own words (§6A 50)
     expect(radius.reassurance).toBe(
-      "No transaction is touched. Record a balance again and the curve is derived from it and the transactions.",
+      "No transaction is touched. Add a balance you counted again and the curve is derived from it and the transactions.",
     );
     expect(blastRadiusSentence(radius)).not.toMatch(/derived from transactions alone|rebuilds from what is left/);
   });
@@ -99,7 +102,7 @@ describe("removeBalanceRadius — the lost days, by what becomes of them", () =>
     expect(radius.headline).toBe(
       "This balance is what verifies Checking on Jul 5 – 12, 2026. Removing it leaves those days to be derived from transactions alone.",
     );
-    expect(radius.reassurance).toMatch(/Record the balance again to re-verify these days\.$/);
+    expect(radius.reassurance).toMatch(/Add the balance you counted again to re-verify these days\.$/);
   });
 
   test("ONE lost day is that day, on its date", () => {
@@ -138,7 +141,7 @@ describe("removeBalanceRadius — the lost days, by what becomes of them", () =>
     );
     expect(valueOf(radius, DAYS_LOST)).toBe("8 days");
     expect(valueOf(radius, DAYS_COUNTED)).toBe("1 day");
-    expect(radius.reassurance).toMatch(/Record the balance again to re-verify these days\.$/);
+    expect(radius.reassurance).toMatch(/Add the balance you counted again to re-verify these days\.$/);
   });
 
   test("a second count he typed, joined to the first by his own row: every lost day was his count's", () => {
@@ -156,7 +159,7 @@ describe("removeBalanceRadius — the lost days, by what becomes of them", () =>
     expect(valueOf(radius, DAYS_COUNTED)).toBe("37 days");
     expect(valueOf(radius, DAYS_LOST)).toBeUndefined();
     expect(radius.reassurance).toBe(
-      "No transaction is touched — the balance curve is derived, so it rebuilds from what is left. Record the balance again to restore these days.",
+      "No transaction is touched — the balance curve is derived, so it rebuilds from what is left. Add the balance you counted again to restore these days.",
     );
   });
 
@@ -199,7 +202,7 @@ describe("removeBalanceRadius — the lost days, by what becomes of them", () =>
     expect(valueOf(radius, VALUE_LOST)).toBe("4 days");
     expect(valueOf(radius, DAYS_LOST)).toBeUndefined();
     expect(radius.reassurance).toBe(
-      "No transaction is touched — the balance curve is derived, so it rebuilds from what is left. Record the balance again to restore these days.",
+      "No transaction is touched — the balance curve is derived, so it rebuilds from what is left. Add the balance you counted again to restore these days.",
     );
     expect(blastRadiusSentence(radius)).not.toMatch(/verif|derived from transactions/i);
   });
@@ -353,7 +356,7 @@ describe("removeBalanceRadius — an investment account's balances are values, n
       "This balance alone sets Bare holding's value on Jul 1 – 4, 2026. It is the only balance Bare holding has, so removing it leaves nothing to derive a curve from, and every day comes off it.",
     );
     expect(valueOf(radius, VALUE_LOST)).toBe("4 days");
-    expect(radius.reassurance).toBe("No transaction is touched. Record a balance again and the curve is derived from it.");
+    expect(radius.reassurance).toBe("No transaction is touched. Add a balance you counted again and the curve is derived from it.");
     expect(blastRadiusSentence(radius)).not.toMatch(/verif|and the transactions/i);
   });
 });
@@ -446,12 +449,15 @@ describe("removeBalanceRadius — a balance that un-verifies nothing", () => {
   });
 
   test("an account priced from holdings: no claim about its curve, and no catch-up it cannot measure", () => {
-    const radius = removeBalanceRadius({
-      accountName: "Robinhood Brokerage",
-      effect: { pricedFromHoldings: true },
-      recorded: { label: "Balance", value: "$1.00" },
-      balancesLeft: 3,
-    });
+    const priced = (source: AnchorSource) =>
+      removeBalanceRadius({
+        accountName: "Robinhood Brokerage",
+        effect: { pricedFromHoldings: true },
+        source,
+        recorded: { label: "Balance", value: "$1.00" },
+        balancesLeft: 3,
+      });
+    const radius = priced("live");
 
     expect(radius.headline).toBe(
       "Robinhood Brokerage is priced from its holdings, so this recorded balance verifies nothing and plays no part in its curve.",
@@ -459,6 +465,10 @@ describe("removeBalanceRadius — a balance that un-verifies nothing", () => {
     expect(valueOf(radius, DAYS_LOST)).toBe("none — the curve comes from holdings");
     expect(valueOf(radius, CATCH_UP)).toBeUndefined();
     expect(blastRadiusSentence(radius)).not.toMatch(/exactly as it is/);
+    // ⚖️ …and one he typed there is the balance he counted (§6A 50)
+    expect(priced("manual").headline).toBe(
+      "Robinhood Brokerage is priced from its holdings, so this balance you counted verifies nothing and plays no part in its curve.",
+    );
   });
 
   test("the recorded balance is the one irreversible line, first", () => {
@@ -470,5 +480,76 @@ describe("removeBalanceRadius — a balance that un-verifies nothing", () => {
       [CATCH_UP, false],
       ["Recorded balances left on this account", false],
     ]);
+  });
+});
+
+/*
+ * ⚖️ His answer, 2026-10-07 (§6A 50, extending §6A 33): "counted" is the ONE verb for a balance he typed, and the
+ * controls say it too — the remove dialog's title, its button, the trigger's name and every sentence that tells him
+ * how to put the balance back ("Add a balance you counted" is the form). A live reading is not his count, so it keeps
+ * "recorded"; "Recorded balances left on this account" counts statements' balances too, and keeps it as well.
+ */
+describe("removeBalanceRadius — a balance he counted is named as his count", () => {
+  const RECORD_WORDS = /\bRecord (a|the) balance\b|this recorded balance|, as recorded/;
+
+  test("no sentence of a dialog removing his count says he recorded it", () => {
+    const radii = [
+      dialog("Cash on Hand", [anchor("opening", "2026-08-03", 500_000, "manual")], "opening", [["2026-08-11", -500_000]], "2026-09-14"),
+      dialog(
+        "Checking",
+        [anchor("s-jul", "2026-07-01", 10_000, "statement"), anchor("manual", "2026-07-10", 8_000, "manual")],
+        "manual",
+        [["2026-07-05", -2_000]],
+        "2026-07-12",
+      ),
+      dialog("Bare holding", [anchor("opening", "2026-07-01", 10_000, "manual")], "opening", [], "2026-07-04", {
+        isInvestment: true,
+      }),
+    ];
+    for (const radius of radii) {
+      expect(blastRadiusSentence(radius)).not.toMatch(RECORD_WORDS);
+      expect(radius.lines?.[0]).toEqual({ label: "Balance, as you counted it", value: "$1.00", irreversible: true });
+      expect(valueOf(radius, "Recorded balances left on this account")).toBeDefined();
+    }
+  });
+
+  test("the dialog's title, its button and its trigger's name say counted — of his count only", () => {
+    expect(removeBalanceControls("manual", "2026-08-03")).toEqual({
+      title: "Remove this balance you counted",
+      confirmLabel: "Remove the balance you counted",
+      triggerAriaLabel: "remove the balance you counted on Aug 3, 2026",
+    });
+    expect(removeBalanceControls("live", "2026-07-06")).toEqual({
+      title: "Remove this recorded balance",
+      confirmLabel: "Remove this balance",
+      triggerAriaLabel: "remove the balance recorded on Jul 6, 2026",
+    });
+  });
+
+  /*
+   * 🔴 A live reading's dialog said "Record a balance again" and "Record the balance again …" — a form that no longer
+   * exists by that name (review, 2026-10-07). He cannot re-take a live reading for a past day; what he CAN do is the
+   * form on the page, so the sentence names it, without an "again" that was never his.
+   */
+  test("a live reading's dialog points at the form that exists, and claims no 'again'", () => {
+    const today = "2026-07-06";
+    const oneDay = dialog(
+      "Checking",
+      [anchor("s-jul", "2026-07-01", 10_000, "statement"), anchor("live", today, 9_000, "live")],
+      "live",
+      [["2026-07-03", -1_000]],
+      today,
+    );
+    expect(oneDay.reassurance).toBe(
+      "No transaction is touched — the balance curve is derived, so it rebuilds from what is left. Add a balance you counted on its day to re-verify these days.",
+    );
+    const only = dialog("Checking", [anchor("live", today, 9_000, "live")], "live", [], today);
+    expect(only.reassurance).toBe(
+      "No transaction is touched. Add a balance you counted and the curve is derived from it and the transactions.",
+    );
+    for (const radius of [oneDay, only]) {
+      expect(blastRadiusSentence(radius)).not.toMatch(/\bRecord (a|the) balance\b/);
+      expect(radius.lines?.[0]!.label).toBe("Balance, as recorded");
+    }
   });
 });

@@ -11,10 +11,18 @@ import type { IconName } from "@/components/shell/Icon";
  * with no proof can be mistaken for one with proof, so the weak verdicts get
  * the loud glyph and the strong ones stay quiet.
  *
- * ⚠️ `market_value` and `manual` are neither good nor bad and must not be
- * toned as either. An investment priced from holdings is not a failure — there
- * is simply no arithmetic gate to pass — and a balance the owner typed is the
- * best evidence that will ever exist for cash in a safe.
+ * ⚠️ `market_value`, `manual` and `counted` are neither good nor bad and must
+ * not be toned as either. An investment priced from holdings is not a failure —
+ * there is simply no arithmetic gate to pass — and a balance the owner typed is
+ * the best evidence that will ever exist for cash in a safe.
+ *
+ * ⚖️ `counted` and `manual` are two verdicts, not one with two words (his
+ * answer, 2026-10-07, §6A 50, extending §6A 33): "counted" is the ONE verb for a
+ * BALANCE he typed, so a balance on his count — and an account resting on one —
+ * reads "you counted it"; a ROW he entered by hand (the Cash on Hand wallet's
+ * rows), a holding or an amount he set keeps "you entered it". The service says
+ * which (`cashDayVerdict`, `GRADE_VERDICT`), so a badge, a trigger's name and the
+ * trust card's group all read the word from here and none of them can pick it.
  */
 export type ProvenanceTone = "proven" | "neutral" | "weak" | "broken";
 
@@ -51,6 +59,12 @@ export const VERDICT_PRESENTATION = {
     icon: "info",
     tone: "neutral",
     ariaSuffix: "was entered by hand",
+  },
+  counted: {
+    word: "you counted it",
+    icon: "info",
+    tone: "neutral",
+    ariaSuffix: "rests on a balance you counted",
   },
   unverified: {
     word: "nothing checks it",
@@ -120,10 +134,36 @@ export function embeddedLabel(label: string): string {
  * ⛔ The name says how the figure is KNOWN, and the phrase after the dash says
  * what that is — so no verdict's name can claim a proof it does not have. The
  * badge WORDS are untouched (owner decision S33, 2026-09-14).
+ *
+ * ⚠️ `badgeName` is the phrase after the dash when a badge word is too terse to
+ * read there ("part you entered" → "part of it was entered by hand"); without
+ * one, the badge word is the phrase, as before.
  */
-export function provenanceTriggerName(label: string, verdict: PresentedVerdict, badgeWord?: string): string {
-  return `How ${embeddedLabel(label)} is known — ${badgeWord ? badgeWord : `it ${VERDICT_PRESENTATION[verdict].ariaSuffix}`}`;
+export function provenanceTriggerName(
+  label: string,
+  verdict: PresentedVerdict,
+  badgeWord?: string,
+  badgeName?: string,
+): string {
+  const known = badgeName ?? (badgeWord ? badgeWord : `it ${VERDICT_PRESENTATION[verdict].ariaSuffix}`);
+  return `How ${embeddedLabel(label)} is known — ${known}`;
 }
+
+/**
+ * A summed total part of which he typed — some rows by hand, every other row
+ * checked — wears this instead of `manual`'s "you entered it", which is true of
+ * a total only when he typed all of it.
+ *
+ * 🔴 /summary/2026's "Spending in Jan 1 – Aug 12, 2026 came to $66,477.60." took
+ * the weakest row's verdict, `manual`, from ONE $5,000.00 row he typed (the Cash
+ * on Hand down payment), and read "you entered it" — named "…is known — it was
+ * entered by hand" — over a year of rows statements check (review, 2026-10-07).
+ * The verdict and its tone stay the weakest row's; only the words say "part".
+ */
+export const PART_ENTERED = {
+  word: "part you entered",
+  name: "part of it was entered by hand",
+} as const;
 
 /** The panel's accessible name — through the same rule, so the button and its dialog name one claim. */
 export function provenancePanelName(label: string): string {

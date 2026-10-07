@@ -86,7 +86,12 @@ export function ProvenancePopover({ label, provenance, placement = "bottom-start
         {...triggerProps}
         aria-haspopup="dialog"
         aria-expanded={open}
-        aria-label={provenanceTriggerName(label, provenance.verdict as PresentedVerdict, provenance.badgeWord)}
+        aria-label={provenanceTriggerName(
+          label,
+          provenance.verdict as PresentedVerdict,
+          provenance.badgeWord,
+          provenance.badgeName,
+        )}
         /**
          * ⛔ `-my-0.5 py-0.5` — the negative margin cancels the padding's
          * contribution to the LINE BOX while keeping the hover target's

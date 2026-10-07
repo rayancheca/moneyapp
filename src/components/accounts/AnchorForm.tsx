@@ -31,11 +31,12 @@ export function AnchorForm({ accountId, isCredit, defaultDate }: AnchorFormProps
       <Field label={isCredit ? "Balance owed" : "Balance"} className="w-36">
         <Input name="balance" required placeholder="1,234.56" className="figures" />
       </Field>
+      {/* ⚖️ the form is "Add a balance you counted" — its button says the same verb, never "Record" (§6A 50) */}
       <button
         type="submit"
         className="rounded-md bg-accent px-4 py-2 text-sm font-medium text-surface-raised transition-opacity duration-(--duration-fast) hover:opacity-90 active:opacity-80"
       >
-        Record balance
+        Add balance
       </button>
     </form>
   );
