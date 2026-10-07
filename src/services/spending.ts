@@ -36,6 +36,8 @@ import {
   type CategoryIndex,
   type DateRange,
 } from "./analytics";
+import { categoryEmptyPeriodCopy } from "@/lib/category-reach";
+import { categoryReachFor, type CategoryReachContext } from "./budgets";
 import { spendingCoverageThrough } from "./movers-card";
 import { ledgerOpens, ledgerReaches } from "./observation-frontier";
 import { activeSplitsInRange } from "./transaction-splits";
@@ -1021,15 +1023,35 @@ export function spendingEmptyCopy(
  *
  * 🔴 The page composed the copy itself, without the flag: a Bank Fees day holding only the agent's Gold fee read "a
  * measured zero" and said nothing of it (owner decisions 2026-10-02, 2026-10-06; §6A 34, §6A 43).
+ *
+ * ⚖️ …ASKED OF THE CATEGORY'S OWN IMPORTED-THROUGH DAY, not the ledger's — owner decision 2026-10-07 (§6A 49):
+ * `categoryReachFor`, the rule its `/budgets` row grades by, named as whose day it is ("spending in Car is imported
+ * through Wed, Aug 12, 2026"), and a category spent only from cash wallets says so in that row's own words
+ * (`lib/category-reach`). The agent's money is said on every one of those branches. ⛔ One builder: the page had a
+ * second (`categoryEmptyWindowCopy`) for one day, and taking it would have dropped the agent's clause unseen.
  */
 export function categoryEmptyCopy(
   db: AppDatabase,
   categoryId: string,
   range: DateRange,
-  opts: EmptyCopyOpts,
+  opts: CategoryEmptyCopyOpts,
 ): { title: string; description: string } {
-  return emptyPeriodCopy(emptyReasonFor(range, opts), opts.label, opts.ledgerReaches, opts.formatDay, {
+  const reach = categoryReachFor(db, categoryId, range.from, opts.today, opts.reachCtx);
+  const reason = emptyPeriodReason({
+    from: range.from,
+    to: range.to,
+    today: opts.today,
+    ledgerOpens: opts.ledgerOpens,
+    ledgerReaches: reach.through,
+  });
+  return categoryEmptyPeriodCopy(reason, { label: opts.label, from: range.from }, reach, opts.formatDay, {
     ledgerOpens: opts.ledgerOpens,
     agentsMoney: agentsMoneyRowCount(db, range, { categoryId }) > 0,
   });
+}
+
+/** `/categories/<id>`'s: the day is the category's own, so it hands in the reads that ask it — never a ledger day */
+interface CategoryEmptyCopyOpts extends Omit<EmptyCopyOpts, "ledgerReaches"> {
+  /** the page's `categoryReachContext`, shared with its trend's empty months; read here when omitted */
+  reachCtx?: CategoryReachContext;
 }

@@ -67,3 +67,39 @@ describe("the headline's word is asked of the kind, in one place", () => {
     expect(page).not.toMatch(/\?\s*"Spent"\s*:/);
   });
 });
+
+/*
+ * ⚖️ OWNER DECISION 2026-10-07 (§6A 49): the page names the CATEGORY'S OWN imported-through day — the rule its
+ * /budgets row uses — not the ledger-wide one. 🔴 It fed `emptyPeriodReason` the ledger's `ledgerReaches(db)`, and on
+ * his ledger read "the ledger is imported through Thu, Sep 24, 2026" one click from a Car row reading "spending
+ * imported through Aug 12". The sentence and the trend's empty months ask through one context; the words are
+ * `categoryEmptyCopy`'s (pinned in `services/category-detail.test.ts` and `agents-unfiled.test.ts`).
+ *
+ * ⛔ ONE BUILDER, AND IT IS THE ONE THAT KNOWS WHOSE MONEY THE WINDOW HOLDS. 🔴 The merge of this decision with the
+ * agent's-money empty states (owner decisions 2026-09-28 → 2026-10-06) left two: `categoryEmptyCopy`, which says the
+ * agent's money is left out, and a day-only builder that did not — and nothing on the page pinned which one it read.
+ */
+describe("the empty window and the trend ask the category's own day, through the one builder", () => {
+  const page = fs.readFileSync(path.join(process.cwd(), "src/app/categories/[id]/page.tsx"), "utf8");
+
+  test("the sentence is categoryEmptyCopy's — the builder that passes agentsMoney — and the page composes none", () => {
+    expect(page).toMatch(/categoryEmptyCopy\(db, id, range, \{/);
+    for (const composer of ["emptyPeriodReason(", "emptyPeriodCopy(", "categoryEmptyPeriodCopy(", "categoryEmptyWindowCopy("]) {
+      expect(page).not.toContain(composer);
+    }
+    const service = fs.readFileSync(path.join(process.cwd(), "src/services/spending.ts"), "utf8");
+    const builder = service.slice(service.indexOf("export function categoryEmptyCopy("));
+    expect(builder.slice(0, builder.indexOf("\n}\n"))).toMatch(/agentsMoney: agentsMoneyRowCount\(db, range, \{ categoryId \}\) > 0/);
+  });
+
+  test("both empty cards print that one sentence", () => {
+    expect(page).toMatch(/const emptyText = emptyCopy \? `\$\{emptyCopy\.title\}\. \$\{emptyCopy\.description\}` : undefined;/);
+    expect(page.match(/emptyText=\{emptyText\}/g)).toHaveLength(2);
+  });
+
+  test("the trend is handed the same reach context", () => {
+    expect(page).toMatch(/const reachCtx = categoryReachContext\(db\);/);
+    expect(page).toMatch(/categoryMonthlyTrend\([^;]*reachCtx,?\s*\)/);
+    expect(page).toMatch(/categoryEmptyCopy\([^;]*reachCtx,?\s*\}\)/);
+  });
+});

@@ -15,7 +15,7 @@ import {
   recurringSeriesIdsForCategory,
   type DateRange,
 } from "./analytics";
-import { budgetStatuses } from "./budgets";
+import { budgetStatuses, categoryReachFor, type CategoryReachContext } from "./budgets";
 import { overdueForSeries } from "./arrears";
 import { listSeries } from "./recurring";
 
@@ -129,6 +129,18 @@ export function categoryMonthlyTrend(
    * check was a third inline copy of the rule those two already share.
    */
   today: string,
+  /**
+   * ⚖️ The category page's reads (`categoryReachContext`), so a month with NOTHING in it is asked the category's own
+   * imported-through day — the question that month's own page asks (owner decision 2026-10-07, §6A 49). 🔴 Asked the
+   * ledger's, `/categories/<Fees>` would draw "Sep 2026: $0.00, 0 transactions" while `?period=2026-09` says
+   * "September 2026 has not been imported yet … spending in Fees is imported through Wed, Aug 12, 2026".
+   *
+   * ⛔ A month WITH rows keeps the ledger's answer, which is a figure: its rows are imported, and a dash over them
+   * would hide money the bar's own link lists — the page for that month prints them as its headline, too.
+   *
+   * Omitted (`spending-insights`, which reads only the figures), every month is asked the ledger's day.
+   */
+  ownReach?: CategoryReachContext,
 ): CategoryMonthPoint[] {
   // the system "Uncategorized" row is the bucket, and a link carrying its raw
   // id would filter by that id alone — see `hrefCategoryId`
@@ -137,6 +149,10 @@ export function categoryMonthlyTrend(
     const from = `${month}-01`;
     const to = periodBounds(from, "monthly").end;
     const { spentCents, txnCount } = categorySpending(db, { categoryId, from, to });
+    const reaches =
+      ownReach !== undefined && txnCount === 0
+        ? categoryReachFor(db, categoryId, from, today, ownReach).through
+        : reachesThrough;
     return {
       month,
       spentCents,
@@ -145,7 +161,7 @@ export function categoryMonthlyTrend(
       // a month the ledger stops or opens INSIDE has been looked at, and its
       // figure is a real (if partial) measurement the page's coverage notes
       // already qualify — `unreachedKind` calls it partly covered, not unreached
-      unreached: unreachedKind({ from, to, today, ledgerOpens: opensFrom, ledgerReaches: reachesThrough }),
+      unreached: unreachedKind({ from, to, today, ledgerOpens: opensFrom, ledgerReaches: reaches }),
     };
   });
 }

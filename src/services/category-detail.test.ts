@@ -5,13 +5,20 @@ import { and, eq, isNull } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { createDatabase, type DbBundle } from "@/db/client";
 import { seedDatabase } from "@/db/seed";
+import { accounts } from "@/db/schema/accounts";
 import { budgets } from "@/db/schema/budgets";
 import { categories } from "@/db/schema/categories";
 import { institutions } from "@/db/schema/institutions";
 import { recurringSeries } from "@/db/schema/recurring";
 import { transactions, type TransactionStatus } from "@/db/schema/transactions";
+import { formatDayLong } from "@/lib/format-date";
 import { dedupeHash } from "@/lib/hash";
 import { createAccount } from "./accounts";
+import { budgetPaceStatuses, categoryReachContext, categoryReachFor, createBudget } from "./budgets";
+import { createCashWallet } from "./cash-wallets";
+import { addManualTransaction } from "./manual-transactions";
+import { ledgerOpens } from "./observation-frontier";
+import { provenanceFor } from "./provenance";
 import {
   categoryBudgetRef,
   categoryDetailHeader,
@@ -20,7 +27,7 @@ import {
   categorySubcategorySplit,
   seriesInCategory,
 } from "./category-detail";
-import { topMerchants } from "./spending";
+import { categoryEmptyCopy, topMerchants } from "./spending";
 import { categorySpending } from "./analytics";
 
 const TODAY = "2026-07-08";
@@ -450,5 +457,188 @@ describe("categoryMerchants (via topMerchants subtree scope)", () => {
     insertTxn({ postedOn: "2026-07-03", amountCents: -9_000, category: "Housing > Rent" }); // outside Food
     const scoped = topMerchants(bundle.db, JULY, 8, { categoryId: catId("Food") });
     expect(scoped.entries.reduce((s, e) => s + e.spentCents, 0)).toBe(5_000);
+  });
+});
+
+/**
+ * ⚖️ OWNER DECISION 2026-10-07 (§6A 49): `/categories/[id]` names the CATEGORY'S OWN imported-through day — the rule
+ * its `/budgets` row uses (`categoryCoverage`) — not the ledger-wide one. Measured on his ledger that day: the Car row
+ * read "spending imported through Aug 12 · 7 days of this period unaccounted" (Chase Checking stops Aug 12) while
+ * `/categories/<Car>` one click away read "…the ledger is imported through Thu, Sep 24, 2026."
+ *
+ * The fixture is that ledger's shape: Transport (his Car) is spent from a checking account that stops Aug 12, a card
+ * imported through Sep 24, and a cash wallet; Fees only from the checking account.
+ */
+describe("⚖️ §6A 49 — a category page asks its own imported-through day", () => {
+  const OCT_7 = "2026-10-07";
+
+  function carLedger(): { walletId: string } {
+    insertTxn({ postedOn: "2026-07-15", amountCents: -69_504, category: "Transport", accountId: checkingId });
+    insertTxn({ postedOn: "2026-07-03", amountCents: -1_200, category: "Fees", accountId: checkingId });
+    insertTxn({ postedOn: "2026-08-05", amountCents: -1_200, category: "Fees", accountId: checkingId });
+    insertTxn({ postedOn: "2026-08-12", amountCents: -4_000, category: "Shopping", accountId: checkingId });
+    insertTxn({ postedOn: "2026-09-11", amountCents: -35_758, category: "Transport", accountId: cardId });
+    insertTxn({ postedOn: "2026-09-24", amountCents: -2_000, category: "Shopping", accountId: cardId });
+    const walletId = createCashWallet(bundle.db, { name: "Cash on Hand", openingOn: "2026-08-01", openingBalanceCents: 600_000 });
+    addManualTransaction(bundle.db, {
+      accountId: walletId,
+      postedOn: "2026-08-11",
+      amountCents: -500_000,
+      description: "CAR DOWN PAYMENT",
+      categoryId: catId("Transport"),
+    });
+    return { walletId };
+  }
+
+  /** the page's one builder, asked as the page asks it */
+  function emptyCopy(categoryPath: string, from: string, to: string, label: string) {
+    return categoryEmptyCopy(bundle.db, catId(categoryPath), { from, to }, {
+      today: OCT_7,
+      label,
+      ledgerOpens: ledgerOpens(bundle.db),
+      formatDay: formatDayLong,
+    });
+  }
+
+  /** the agent's own cash account, paired with its brokerage book — what makes its money the agent's */
+  function agentsAccount(): string {
+    const rh = bundle.db.select().from(institutions).where(eq(institutions.name, "Robinhood")).get()!;
+    const agentic = createAccount(bundle.db, { institutionId: rh.id, name: "Robinhood Agentic", type: "checking" });
+    const book = createAccount(bundle.db, { institutionId: rh.id, name: "Robinhood Agentic Brokerage", type: "investment", subtype: "brokerage" });
+    bundle.db.update(accounts).set({ cashAccountId: agentic }).where(eq(accounts.id, book)).run();
+    return agentic;
+  }
+
+  const AGENTS_LEFT_OUT = /The agent's own account paid or was paid money in this period, and none of it is counted here/;
+
+  test("a dormant subcategory asks its nearest ancestor before the ledger, and names the day as the ancestor's", () => {
+    carLedger();
+    // Interest Charges has no rows at all; its parent Fees is spent from the checking account, imported through Aug 12
+    const reach = categoryReachFor(bundle.db, catId("Fees > Interest Charges"), "2026-10-01", OCT_7);
+    expect(reach).toMatchObject({ whose: "category", through: "2026-08-12", owner: { name: "Fees" } });
+    expect(emptyCopy("Fees > Interest Charges", "2026-10-01", "2026-10-31", "October 2026").description).toMatch(
+      /^Nothing has been imported for 7 days of it; spending in Fees is imported through Wed, Aug 12, 2026\. /,
+    );
+    // a top-level category with no account of its own and no ancestor keeps the ledger's day, in the ledger's words
+    expect(categoryReachFor(bundle.db, catId("Travel"), "2026-10-01", OCT_7)).toMatchObject({ whose: "ledger", through: "2026-09-24" });
+    expect(emptyCopy("Travel", "2026-10-01", "2026-10-31", "October 2026").description).toMatch(
+      /; the ledger is imported through Thu, Sep 24, 2026\. /,
+    );
+    // …and a subcategory whose parent has no day either
+    expect(categoryReachFor(bundle.db, catId("Travel > Hotels"), "2026-10-01", OCT_7)).toMatchObject({ whose: "ledger", through: "2026-09-24" });
+  });
+
+  test("⚖️ the agent's money is said where the category's own day leaves the window unread, and on cash only", () => {
+    const { walletId } = carLedger();
+    const agentic = agentsAccount();
+    // the agent's fee, Sep 10 — past Fees' own Aug 12, inside the window
+    insertTxn({ postedOn: "2026-09-10", amountCents: -500, category: "Fees", accountId: agentic });
+    const fees = emptyCopy("Fees", "2026-09-01", "2026-09-20", "Sep 1 – 20, 2026");
+    expect(fees.title).toBe("Sep 1 – 20, 2026 has not been imported yet");
+    expect(fees.description).toMatch(AGENTS_LEFT_OUT);
+
+    addManualTransaction(bundle.db, {
+      accountId: walletId,
+      postedOn: "2026-08-20",
+      amountCents: -2_500,
+      description: "FLOWERS",
+      categoryId: catId("Gifts & Donations"),
+    });
+    insertTxn({ postedOn: "2026-10-02", amountCents: -1_000, category: "Gifts & Donations", accountId: agentic });
+    const gifts = emptyCopy("Gifts & Donations", "2026-10-01", "2026-10-31", "October 2026");
+    expect(gifts.title).toBe("Nothing recorded for October 2026");
+    expect(gifts.description).toMatch(AGENTS_LEFT_OUT);
+  });
+
+  test("the day is the budget row's own: one function, the same day for the same category and period", () => {
+    carLedger();
+    createBudget(bundle.db, { categoryId: catId("Transport"), period: "monthly", amountCents: 150_000, startsOn: "2026-10-01" });
+    const row = budgetPaceStatuses(bundle.db, OCT_7).find((s) => s.categoryName === "Transport")!;
+    const reach = categoryReachFor(bundle.db, catId("Transport"), "2026-10-01", OCT_7);
+    expect(row.importedThroughOn).toBe("2026-08-12");
+    expect(reach).toMatchObject({ whose: "category", through: row.importedThroughOn });
+    expect(reach.coverage).toEqual({
+      importedThroughOn: row.importedThroughOn,
+      spentFromSince: row.spentFromSince,
+      spentFromAccounts: row.spentFromAccounts,
+      spentFromWallets: row.spentFromWallets,
+    });
+  });
+
+  test("Car in October: the page names Aug 12, its own day, as the ledger's Sep 24 would not", () => {
+    carLedger();
+    const copy = emptyCopy("Transport", "2026-10-01", "2026-10-31", "October 2026");
+    expect(copy.title).toBe("October 2026 has not been imported yet");
+    expect(copy.description).toMatch(
+      /^Nothing has been imported for 7 days of it; spending in Transport is imported through Wed, Aug 12, 2026\. /,
+    );
+  });
+
+  test("a window inside the ledger but past the category's day is not a measured zero", () => {
+    carLedger();
+    // Fees is spent only from the checking account: Sep 1 – 20 is imported for the ledger, not for Fees
+    const copy = emptyCopy("Fees", "2026-09-01", "2026-09-20", "Sep 1 – 20, 2026");
+    expect(copy.title).toBe("Sep 1 – 20, 2026 has not been imported yet");
+    expect(copy.description).toMatch(
+      /^Nothing has been imported for 20 days of it; spending in Fees is imported through Wed, Aug 12, 2026\./,
+    );
+  });
+
+  test("the trend's empty month says what that month's own page says; a month holding rows keeps its figure", () => {
+    carLedger();
+    const ctx = categoryReachContext(bundle.db);
+    const opens = ledgerOpens(bundle.db);
+    const fees = categoryMonthlyTrend(bundle.db, catId("Fees"), 4, OCT_7, ctx.ledgerReaches, opens, OCT_7, ctx);
+    expect(fees.map((t) => [t.month, t.unreached])).toEqual([
+      ["2026-07", null],
+      ["2026-08", null],
+      // the ledger reaches Sep 24, Fees' one account Aug 12 — "Sep 2026: $0.00, 0 transactions" would be a zero nobody measured
+      ["2026-09", "after-records"],
+      ["2026-10", "after-records"],
+    ]);
+    const car = categoryMonthlyTrend(bundle.db, catId("Transport"), 4, OCT_7, ctx.ledgerReaches, opens, OCT_7, ctx);
+    // September is past Car's Aug 12 too, but it holds the card's Sep 11 row: a figure, never a dash over real rows
+    expect(car.map((t) => [t.month, t.unreached, t.txnCount])).toEqual([
+      ["2026-07", null, 1],
+      ["2026-08", null, 1],
+      ["2026-09", null, 1],
+      ["2026-10", "after-records", 0],
+    ]);
+  });
+
+  test("the headline's proof grades an empty total against the same day as the sentence under it", () => {
+    carLedger();
+    const was = process.env.MONEYAPP_FAKE_TODAY;
+    process.env.MONEYAPP_FAKE_TODAY = OCT_7;
+    try {
+      const fees = provenanceFor(bundle.db, { kind: "categorySpend", categoryId: catId("Fees"), from: "2026-09-01", to: "2026-09-20" })!;
+      // the ledger's Sep 24 would call this "zero rather than unproven" two lines above "has not been imported yet"
+      expect(fees.headline).toMatch(/^Nothing has been imported for 20 days between /);
+      expect(fees.headline).toMatch(/a window nobody has looked at rather than a measurement/);
+      // a window inside the category's own day is still a measured zero
+      const july = provenanceFor(bundle.db, { kind: "categorySpend", categoryId: catId("Fees"), from: "2026-07-10", to: "2026-07-31" })!;
+      expect(july.headline).toMatch(/^No rows in Fees between /);
+    } finally {
+      if (was === undefined) delete process.env.MONEYAPP_FAKE_TODAY;
+      else process.env.MONEYAPP_FAKE_TODAY = was;
+    }
+  });
+
+  test("⚖️ a cash-only category's page says so in its budget row's words", () => {
+    const { walletId } = carLedger();
+    addManualTransaction(bundle.db, {
+      accountId: walletId,
+      postedOn: "2026-08-20",
+      amountCents: -2_500,
+      description: "FLOWERS",
+      categoryId: catId("Gifts & Donations"),
+    });
+    const reach = categoryReachFor(bundle.db, catId("Gifts & Donations"), "2026-10-01", OCT_7);
+    expect(reach).toMatchObject({ whose: "cash-only", through: OCT_7 });
+    const copy = emptyCopy("Gifts & Donations", "2026-10-01", "2026-10-31", "October 2026");
+    expect(`${copy.title}. ${copy.description}`).toBe(
+      "Nothing recorded for October 2026. Gifts & Donations is spent only from a cash wallet since Apr 1 — no statement will ever cover it. " +
+        "Nothing was typed in for this period, so there is no import to wait for.",
+    );
   });
 });

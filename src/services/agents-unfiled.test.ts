@@ -180,7 +180,6 @@ function categoryEmptyState(pathStr: string, range: { from: string; to: string }
     today: TODAY,
     label: "the day",
     ledgerOpens: ledgerOpens(bundle.db),
-    ledgerReaches: ledgerReaches(bundle.db),
     formatDay: (iso) => iso,
   });
 }

@@ -48,7 +48,14 @@ export { overdueForSeries };
 export type { BudgetTail, BudgetTailSeries };
 import { incomeBasis, levelledMonthlyCents, type IncomeBasis } from "@/lib/income-basis";
 import { daysNotImportedYet } from "@/lib/empty-period";
-import { frontierForSeries, ledgerOpens, observationFrontier, type ObservationFrontier } from "./observation-frontier";
+import { categoryReach, type CategoryReach } from "@/lib/category-reach";
+import {
+  frontierForSeries,
+  ledgerOpens,
+  ledgerReaches,
+  observationFrontier,
+  type ObservationFrontier,
+} from "./observation-frontier";
 import { cashWalletIds } from "./cash-wallet-rule";
 
 /**
@@ -1281,14 +1288,16 @@ export interface CategoryCoverage {
  *    is what the row's headline, its sentence and the page note read to say
  *    "Cash only" instead of waiting for a statement that never comes.
  *
- * ❓ A SECOND SURFACE ASKS THIS QUESTION OF THE SAME CATEGORY AND MONTH, WITH
- * THE WHOLE LEDGER'S DAY. `/categories/[id]`, the page each row links to, feeds
- * `emptyPeriodReason` the ledger-wide `ledgerReaches`. Measured 2026-09-15:
- * the Fees row reads "spending imported through Aug 12 · 15 days of this period
- * unaccounted", and its September page "2 days of it have not been imported —
- * the ledger is imported through Sun, Sep 13, 2026"; Car, Cash & ATM and Travel
- * read the same sentence there. The ⛔ above rules out only the ledger's day on
- * THIS page; whether that page should read this rule is not decided.
+ * ⚖️ THE CATEGORY PAGE ASKS THIS RULE TOO — owner decision 2026-10-07 (§6A 49).
+ * `/categories/[id]`, the page each row links to, fed `emptyPeriodReason` the
+ * ledger-wide `ledgerReaches`. Measured on his ledger that day: the Car row read
+ * "spending imported through Aug 12 · 7 days of this period unaccounted" (Chase
+ * Checking stops Aug 12), and `/categories/<Car>` one click away "October 2026
+ * has not been imported yet. Nothing has been imported for 7 days of it; the
+ * ledger is imported through Thu, Sep 24, 2026" (Fees, Cash & ATM and Travel
+ * read the same there on 2026-09-15). The page names the category's own day
+ * now, through `categoryReachFor` below — this function, never a copy — and so
+ * do its trend's empty months and its headline's proof (`categorySpend`).
  *
  * Deliberately NOT account coverage/verifiedThrough, which answers "which
  * periods reconcile", a stronger and more optimistic question (SoFi Checking
@@ -1296,7 +1305,7 @@ export interface CategoryCoverage {
  * cash wallets report nothing at all). The accounts come from
  * `spendingTransactions`, the rows the budget is graded from.
  */
-function categoryCoverage(
+export function categoryCoverage(
   db: AppDatabase,
   categoryId: string,
   periodStart: string,
@@ -1318,6 +1327,58 @@ function categoryCoverage(
     spentFromAccounts: imported.size,
     spentFromWallets: spentFrom.size - imported.size,
   };
+}
+
+/** The reads `categoryReachFor` shares across every window it asks of one render — a page's period and its trend's months. */
+export interface CategoryReachContext {
+  frontier: ObservationFrontier;
+  wallets: ReadonlySet<string>;
+  /** `ledgerReaches(db)` — the day left standing where the category has no account of its own to ask */
+  ledgerReaches: string | null;
+}
+
+export function categoryReachContext(db: AppDatabase): CategoryReachContext {
+  return { frontier: observationFrontier(db), wallets: cashWalletIds(db), ledgerReaches: ledgerReaches(db) };
+}
+
+/**
+ * ⚖️ The day `/categories/[id]` asks a window starting `periodStart` against — the category's own (owner decision
+ * 2026-10-07, §6A 49): `categoryCoverage` over the same window its budget row would grade, at `today`, and
+ * `lib/category-reach::categoryReach` for the worlds in which that names no day (cash only; no account of its own).
+ *
+ * ⚠️ A category with no account of its own in the window asks its NEAREST ANCESTOR before the ledger. 🔴 Measured on a
+ * copy of his ledger 2026-10-07: 9 of 80 category pages — Fees › Interest Charges, Utilities › Mobile, Travel ›
+ * Hotels among them — fell back to the ledger's Sep 24 while the parent one click up named its own Aug 12. The
+ * ancestor's day is named as the ancestor's ("spending in Fees is imported through …"); a top-level category with
+ * nothing to ask keeps the ledger's, in the ledger's words.
+ */
+export function categoryReachFor(
+  db: AppDatabase,
+  categoryId: string,
+  periodStart: string,
+  today: string,
+  ctx: CategoryReachContext = categoryReachContext(db),
+): CategoryReach {
+  const reachOf = (id: string) => {
+    const row = db
+      .select({ name: categories.name, kind: categories.kind, parentId: categories.parentId })
+      .from(categories)
+      .where(eq(categories.id, id))
+      .get();
+    if (!row) return null;
+    const coverage = categoryCoverage(db, id, periodStart, today, ctx.frontier, ctx.wallets);
+    return { reach: categoryReach(coverage, ctx.ledgerReaches, today, { name: row.name, kind: row.kind }), parentId: row.parentId };
+  };
+  const own = reachOf(categoryId);
+  if (own === null) throw new Error(`category ${categoryId} not found`);
+  let next = own;
+  // categories nest, so the walk is as long as the tree is deep — two levels on every ledger the app seeds
+  while (next.reach.whose === "ledger" && next.parentId !== null) {
+    const parent = reachOf(next.parentId);
+    if (parent === null) break;
+    next = parent;
+  }
+  return next.reach.whose === "ledger" ? own.reach : next.reach;
 }
 
 export interface BudgetPaceStatus extends BudgetStatus, CategoryCoverage {

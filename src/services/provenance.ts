@@ -18,6 +18,7 @@ import { formatCents } from "@/lib/money";
 import { emptyPeriodReason } from "@/lib/empty-period";
 import { ledgerOpens, ledgerReaches } from "./observation-frontier";
 import { outsidePortfolioCashAccountIds, ownPortfolioAccountIds } from "./accounts";
+import { categoryReachFor } from "./budgets";
 import {
   activeTxnsInRange,
   isHisExpenseRow,
@@ -1856,7 +1857,14 @@ function categorySpendProvenance(
     )
     .all();
 
-  return summedRowsProvenance(db, rows, label ?? category.name, from, to);
+  /*
+   * ⚖️ An empty total is graded against the CATEGORY'S OWN imported-through day (owner decision 2026-10-07, §6A 49) —
+   * `categoryReachFor`, the day the page under this headline names and its `/budgets` row grades by. 🔴 Graded against
+   * the ledger's, `/categories/<Fees>?from=2026-09-01&to=2026-09-20` would call its $0.00 "zero rather than unproven"
+   * above "…has not been imported yet … spending in Fees is imported through Wed, Aug 12, 2026".
+   */
+  const reaches = rows.length === 0 ? categoryReachFor(db, categoryId, from, todayIso()).through : undefined;
+  return summedRowsProvenance(db, rows, label ?? category.name, from, to, reaches);
 }
 
 /**
@@ -2130,8 +2138,10 @@ function summedRowsProvenance(
   subject: string,
   from: string,
   to: string,
+  /** the day an EMPTY window is asked against — `summedRowsProof`'s */
+  reaches?: string | null,
 ): Provenance {
-  return summedRowsProof(db, rows, subject, from, to).provenance;
+  return summedRowsProof(db, rows, subject, from, to, reaches).provenance;
 }
 
 /**
@@ -2146,6 +2156,11 @@ function summedRowsProof(
   subject: string,
   from: string,
   to: string,
+  /**
+   * the day an EMPTY window is asked against: the ledger's (`ledgerReaches`) unless the caller's rows have a narrower
+   * population of their own — a category total's is the category's (`categorySpendProvenance`)
+   */
+  reaches?: string | null,
 ): { provenance: Provenance; dateNote: string } {
   if (rows.length === 0) {
     /*
@@ -2170,7 +2185,7 @@ function summedRowsProof(
       to,
       today: todayIso(),
       ledgerOpens: ledgerOpens(db),
-      ledgerReaches: ledgerReaches(db),
+      ledgerReaches: reaches === undefined ? ledgerReaches(db) : reaches,
     });
     const window = `${readableDay(from)} and ${readableDay(to)}`;
     const provenance: Provenance = {
