@@ -10,7 +10,7 @@ import { categories } from "@/db/schema/categories";
 import { priceCache } from "@/db/schema/holdings";
 import { importFiles } from "@/db/schema/imports";
 import { institutions } from "@/db/schema/institutions";
-import { recurringSeries, type SeriesKind } from "@/db/schema/recurring";
+import { recurringSeries, type SeriesKind, type SeriesStatus } from "@/db/schema/recurring";
 import { transactions } from "@/db/schema/transactions";
 import { dedupeHash } from "@/lib/hash";
 import { normalizeDescription } from "@/lib/normalize";
@@ -98,10 +98,10 @@ function insert(opts: {
 }
 
 /** A recurring series rows can be attached to — weekly, as his pay is. */
-function paySeries(name: string, kind: SeriesKind = "income"): string {
+function paySeries(name: string, kind: SeriesKind = "income", status: SeriesStatus = "confirmed"): string {
   return bundle.db
     .insert(recurringSeries)
-    .values({ name, kind, cadence: "weekly", status: "confirmed" })
+    .values({ name, kind, cadence: "weekly", status })
     .returning({ id: recurringSeries.id })
     .get().id;
 }
@@ -442,6 +442,36 @@ describe("yearSummaryView — the pay line names the job its rows are attached t
     insert({ postedOn: "2026-09-24", amountCents: 114192, rawDescription: "Deposit", categoryName: "Salary" });
 
     expect(payLine(2026).label).toBe("Salary, not Fordham payroll");
+  });
+
+  /*
+   * ⛔ Only a series he STANDS BEHIND names his pay. Dismissing flips the
+   * status and leaves every row attached (the re-detection sink), and the repo
+   * reads dismissed as "not recurring" (`seriesDrawsAsRecurring`); a detected
+   * series is the detector's suggestion, labelled "suggested" (`seriesRowLabel`).
+   * Neither is his word, so neither heads the line — or lets the basis name the
+   * job that replaced work-study.
+   */
+  test("a dismissed pay series does not name the line", () => {
+    hisTwentyTwentySix(paySeries("It America LLC (weekly pay)", "income", "dismissed"));
+    const line = payLine(2026);
+    expect(line.label).toBe("Salary, not Fordham payroll");
+    expect(line.basis).not.toContain("the job that replaced it");
+    expect(line.amountCents).toBe(715660);
+  });
+
+  test("a detected — suggested, not confirmed — pay series does not name the line", () => {
+    hisTwentyTwentySix(paySeries("It America LLC (weekly pay)", "income", "detected"));
+    const line = payLine(2026);
+    expect(line.label).toBe("Salary, not Fordham payroll");
+    expect(line.basis).not.toContain("the job that replaced it");
+  });
+
+  test("an ended pay series still names the line — a job that stopped was still that job", () => {
+    hisTwentyTwentySix(paySeries("It America LLC (weekly pay)", "income", "ended"));
+    const line = payLine(2026);
+    expect(line.label).toBe("It America LLC (weekly pay)");
+    expect(line.basis).toContain("the job that replaced it");
   });
 
   test("a series that is not income does not name pay", () => {

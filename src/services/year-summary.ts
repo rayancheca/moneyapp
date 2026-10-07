@@ -3,7 +3,7 @@ import type { AppDatabase } from "@/db/client";
 import { accounts } from "@/db/schema/accounts";
 import { categories } from "@/db/schema/categories";
 import { importFiles } from "@/db/schema/imports";
-import { recurringSeries } from "@/db/schema/recurring";
+import { recurringSeries, type SeriesStatus } from "@/db/schema/recurring";
 import { transactions } from "@/db/schema/transactions";
 import {
   moneyWeightedReturn,
@@ -14,6 +14,7 @@ import type { CashFlow } from "@/lib/xirr";
 import { diffDays } from "@/lib/dates";
 import { formatDayFull, formatDayShort } from "@/lib/format-date";
 import { formatCents } from "@/lib/money";
+import { seriesDrawsAsRecurring } from "@/lib/series-evidence";
 import { yearSummary, type YearLineInput, type YearSummary } from "@/lib/year-summary";
 import { investmentSideAccountIds, outsidePortfolioCashAccountIds } from "./accounts";
 import { offAgentsCash } from "./analytics";
@@ -495,8 +496,9 @@ export function cashJobNaming(year: number, facts: PayLineFacts): { label: strin
 }
 
 /**
- * How far apart two gaps between deposits may sit and still be one rhythm — a payday a bank holiday moves by a day
- * or two is still a payday. Three days, the recurring detector's own default tolerance (`tolerance_days`).
+ * The most the gaps between deposit days may SPREAD (longest gap minus shortest) and still be one rhythm — a payday a
+ * bank holiday moves by a day turns 7, 7 into 8, 6, a spread of 2. A spread, not a per-payday window: no cadence is
+ * assumed, so it holds for rows in no series. Three days, chosen to clear a one-day holiday shift on either side.
  */
 const PAYDAY_SLACK_DAYS = 3;
 
@@ -511,18 +513,29 @@ function depositsAreIrregular(postedOn: readonly string[]): boolean {
   return Math.max(...gaps) - Math.min(...gaps) > PAYDAY_SLACK_DAYS;
 }
 
-/** One income series behind EVERY row names the line; anything else — several, none, a loose row — does not. */
+/**
+ * A series he STANDS BEHIND, and so one whose name may head his pay: confirmed, or ended (a job that stopped was
+ * still that job). ⛔ Dismissed is out by the repo's one rule (`seriesDrawsAsRecurring`) — dismissing flips the
+ * status and leaves every row attached, so the link alone would keep naming a series he rejected. Detected is out
+ * too: it is the detector's suggestion, which every other surface labels "suggested" (`seriesRowLabel`), not his word.
+ */
+function seriesNamesPay(status: SeriesStatus): boolean {
+  return seriesDrawsAsRecurring(status) && status !== "detected";
+}
+
+/** One income series he stands behind, behind EVERY row, names the line; anything else — several, none, a loose row — does not. */
 function payLineFacts(db: AppDatabase, rows: readonly LineRow[]): PayLineFacts {
   const postedOn = rows.map((r) => r.postedOn);
   const ids = new Set(rows.map((r) => r.recurringSeriesId));
   const [only] = [...ids];
   if (ids.size !== 1 || only === null || only === undefined) return { seriesName: null, postedOn };
   const series = db
-    .select({ name: recurringSeries.name, kind: recurringSeries.kind })
+    .select({ name: recurringSeries.name, kind: recurringSeries.kind, status: recurringSeries.status })
     .from(recurringSeries)
     .where(eq(recurringSeries.id, only))
     .get();
-  return { seriesName: series?.kind === "income" ? series.name : null, postedOn };
+  const named = series !== undefined && series.kind === "income" && seriesNamesPay(series.status);
+  return { seriesName: named ? series.name : null, postedOn };
 }
 
 export function yearSummaryView(db: AppDatabase, year: number, today: string): YearSummaryView {
