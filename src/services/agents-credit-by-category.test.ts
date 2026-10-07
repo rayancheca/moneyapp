@@ -7,6 +7,7 @@ import { createDatabase, type DbBundle } from "@/db/client";
 import { seedDatabase } from "@/db/seed";
 import { accounts } from "@/db/schema/accounts";
 import { categories } from "@/db/schema/categories";
+import { importFiles, statementPeriods } from "@/db/schema/imports";
 import { institutions } from "@/db/schema/institutions";
 import { merchants } from "@/db/schema/merchants";
 import { recurringSeries, type SeriesKind } from "@/db/schema/recurring";
@@ -29,6 +30,10 @@ import { forecastCurrentMonth, forecastForMonth } from "./forecast";
  * His ledger holds none of it (Robinhood Agentic carries one transfer row, and no book is paired), so the rows are
  * hypothetical: Robinhood's Gold fee is $5.00 on the 1st (`agents-costs.test.ts`), and its refund is that $5.00 back on
  * the 20th, filed where the fee is filed (Fees > Bank Fees) at the seed's "Robinhood Gold" merchant.
+ *
+ * The accounts are as his ledger holds them: Robinhood Agentic is `checking` for balance replay, and INVESTABLE — the
+ * brokerage statement that prints it prints an investment account too (`accountLiquidity`) — so its balance is no part
+ * of his EOM cash, and a test can hold every figure of his still while the agent's money moves.
  */
 
 const TODAY = "2026-10-05";
@@ -118,6 +123,45 @@ function agentsSchedule(input: {
   return id;
 }
 
+/**
+ * One imported Robinhood statement printing every account in `accountIds`, as his August statement prints Robinhood
+ * Agentic beside an investment account — the fact `accountLiquidity` reads to call a deposit account investable.
+ */
+function printOnOneStatement(institutionId: string, accountIds: readonly string[]): void {
+  const fileId = "robinhood-2026-08";
+  const now = new Date().toISOString();
+  bundle.db
+    .insert(importFiles)
+    .values({
+      id: fileId,
+      fileName: `${fileId}.pdf`,
+      fileSha256: `sha-${fileId}`,
+      format: "pdf",
+      institutionId,
+      status: "parsed",
+      storagePath: `/tmp/${fileId}.pdf`,
+      importedAt: now,
+      createdAt: now,
+      updatedAt: now,
+    })
+    .run();
+  accountIds.forEach((accountId, i) => {
+    bundle.db
+      .insert(statementPeriods)
+      .values({
+        id: `${fileId}-${i}`,
+        importFileId: fileId,
+        accountId,
+        periodStart: "2026-08-01",
+        periodEnd: "2026-08-31",
+        reconciliation: "reconciled",
+        createdAt: now,
+        updatedAt: now,
+      })
+      .run();
+  });
+}
+
 /** take a schedule and its rows back off the ledger, so the next case reads from the same start */
 function drop(id: string): void {
   bundle.db.delete(transactions).where(eq(transactions.recurringSeriesId, id)).run();
@@ -138,6 +182,8 @@ beforeEach(() => {
   // the agent's brokerage book, paired with its cash account — what makes Agentic's money the agent's
   book = createAccount(bundle.db, { institutionId: rh.id, name: "Robinhood Agentic Brokerage", type: "investment", subtype: "brokerage" });
   bundle.db.update(accounts).set({ cashAccountId: agentic }).where(eq(accounts.id, book)).run();
+  // …and printed beside it, as on his ledger: the agent's cash is investable, no part of his EOM cash
+  printOnOneStatement(rh.id, [agentic, book]);
   gold = bundle.db.select().from(merchants).where(eq(merchants.canonicalName, "Robinhood Gold")).get()!.id;
 
   addManualAnchor(bundle.db, { accountId: wellsFargo, anchoredOn: "2026-08-31", enteredCents: 392_640 });
@@ -518,9 +564,11 @@ describe("§6A 45 — the pace of the agent's income nets its clawbacks, as the 
     rebuilt();
     return { ...read(), today: nwOn(TODAY) };
   };
-  /** his lines and nets, every reading — his EOM cash also counts this fixture's agent's balance, so it is left out */
+  /** his lines and nets, every reading — his EOM cash starts from his cash today, which a posted row of his moves */
   const hisLines = (c: ReturnType<typeof card>) =>
     c.his.map((h) => ({ components: h.components, committed: h.committed.slice(0, 3), pace: h.pace.slice(0, 3) }));
+  /** his EOM cash, every reading: committed and at the pace, October's and November's */
+  const hisEomCash = (c: ReturnType<typeof card>) => c.his.flatMap((h) => [h.committed[3]!, h.pace[3]!]);
   /** EOM net worth, every reading, as the pace's two move — neither committed reading has any pace in it */
   const onPace = (nw: readonly number[], october: number, november: number): number[] => [
     nw[0]!,
@@ -572,8 +620,9 @@ describe("§6A 45 — the pace of the agent's income nets its clawbacks, as the 
       // the pace's two by the agent's share alone, what its note came down by
       expect(clawed.today - paid.today, owner).toBe(CLAWBACK);
       expect(clawed.nw, owner).toEqual(onPace(paid.nw.map((cents) => cents + CLAWBACK), 87 - 348, 187 - 748));
-      // ⛔ …and no figure of his moves: not his Income, not his lines, not his net
-      expect(hisLines(clawed), owner).toEqual(hisLines(paid));
+      // ⛔ …and no figure of his moves: not his Income, not his lines, not his net — nor his EOM cash, which the
+      // agent's investable cash is no part of
+      expect(clawed.his, owner).toEqual(paid.his);
       undo();
     }
   });
@@ -611,7 +660,7 @@ describe("§6A 45 — the pace of the agent's income nets its clawbacks, as the 
     expect(clawed.costs).toEqual(paid.costs);
     expect(clawed.today - paid.today).toBe(CLAWBACK);
     expect(clawed.nw).toEqual(onPace(paid.nw.map((cents) => cents + CLAWBACK), -261, -261 - 300));
-    expect(hisLines(clawed)).toEqual(hisLines(paid));
+    expect(clawed.his).toEqual(paid.his);
   });
 
   /*
@@ -648,6 +697,8 @@ describe("§6A 45 — the pace of the agent's income nets its clawbacks, as the 
     const clawed = card();
     // …still, and his Income, Spending and Net with it, on both readings
     expect(hisLines(clawed)).toEqual(hisLines(paid));
+    // his EOM cash moves by September's posted clawback alone — his cash today, on his own account
+    expect(hisEomCash(clawed)).toEqual(hisEomCash(paid).map((cents) => cents + CLAWBACK));
     // his clawback is in neither of the agent's notes
     expect([clawed.income, clawed.costs]).toEqual([paid.income, paid.costs]);
     // EOM net worth moves by September's posted clawback alone — the net worth today — and by nothing projected
