@@ -760,6 +760,28 @@ describe("cashEarningsSectionNotes", () => {
     expect(note!.body).toContain("earlier");
   });
 
+  /*
+   * 🔴 Measured on the owner's ledger 2026-10-07, /spending?period=2026-09: "It
+   * America LLC (weekly pay) banked $1,141.92 more than its paydays over Sep 3 –
+   * 24, 2026 came to. Cash is deposited in lumps, …" — of weekly ACH payroll into
+   * Wells Fargo. The surplus is one deposit banking several paydays, which is
+   * true of cash and of payroll alike; "Cash" was true of neither that month.
+   */
+  test("a catch-up names a lump of pay, never cash, so it stays true of payroll", () => {
+    const [note] = notes({
+      seriesName: "It America LLC (weekly pay)",
+      basis: "series-live",
+      bankedCents: 570_960,
+      unbankedCents: -114_192,
+    });
+    expect(note!.id).toMatch(/^cash-earnings-catchup-/);
+    expect(note!.body).not.toMatch(/\bcash\b/i);
+    expect(note!.body).toContain(
+      "One deposit can bank several paydays at once, so the surplus is earlier pay arriving late",
+    );
+    expect(note!.body).toContain("read it as a backlog clearing rather than as a period that earned more.");
+  });
+
   test("one note per series, and a quiet series contributes none", () => {
     const out = cashEarningsSectionNotes({
       rows: [
