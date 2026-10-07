@@ -19,10 +19,15 @@ import type { ViewSpec, ViewState } from "./view-state";
  * outside any transition, so a press built on the asked view brought back a view he had left.
  *
  * Hence ONE asked URL per page, shared by every switcher and URL writer on it (the store below,
- * mounted once in the root layout — never a module-level cache, which would outlive the page),
- * and dropped the moment the server state moves under it by anything that is not a press:
- * Back/Forward, a link, another page. A commit of a URL a press asked for is a press landing,
- * not a move.
+ * mounted once in the root layout — never a module-level cache, which would outlive the page).
+ * Every press and every URL writer — a range pill, the benchmark, a period link ‹ ›, a /recurring
+ * tab — asks for its URL before it navigates, so following one builds the ask on; it never drops
+ * it. What drops it is the page moving under it by anything nobody asked for: Back/Forward as it
+ * starts; a push or replace to a URL no press or writer asked for as it starts (a crumb's link,
+ * the sidebar's, a link to another page — `isForeign`); a commit of any other URL (a redirect). A
+ * commit of a URL a press asked for is a press landing, not a move. Until anything is drawn after
+ * such a link to another URL dropped it, the page's writers still build on the ask it dropped
+ * (`PageAsks.departing`): the page on screen is still the one that ask was built on.
  *
  * Once the newest asked URL has committed the ask is kept, not dropped: it then says exactly
  * what the page shows (every press made since has its write before its navigation), and the
@@ -220,10 +225,10 @@ export function afterCommit(ask: PageAsk | null, href: string): PageAsk | null {
 }
 
 /**
- * True when a navigation starting for `href` is not one a press asked for — a link, any
- * `router.push` that did not build on the ask — so the page is about to move under it. Every
- * press, range pill, benchmark pick, period link and /recurring tab asks for its URL before it
- * navigates.
+ * True when a navigation starting for `href` is not one a press asked for — a link nobody asked
+ * for (a crumb's, the sidebar's), any `router.push` that did not build on the ask — so the page is
+ * about to move under it. Every press, range pill, benchmark pick, period link and /recurring tab
+ * asks for its URL before it navigates, and is never foreign.
  */
 export function isForeign(ask: PageAsk | null, href: string): boolean {
   return ask !== null && !ask.trail.includes(canonicalHref(href));
@@ -248,7 +253,8 @@ function carriedOn(from: string | null, his: Readonly<ViewState>, href: string):
  * the page drew from his saved view — one `shown`, the URL Back landed on, does not hold (a value
  * that is no option holds nothing: the server skipped it too) — and, of those it holds, only one
  * a press of his put in that URL (`pressed`: asked for it with, or carried on into it from the
- * URL that ask built on). Null when that is none.
+ * URL that ask built on); of its `carry` keys, only one his press put in that URL. Null when that
+ * is none.
  *
  * ⚖️ 2026-10-06, by 7b36d72's own rule (a linked view is kept in the URL and never saved; a first
  * load saves nothing): Back never saves a view only the URL held. 🔴 It saved every dimension it
@@ -266,6 +272,7 @@ export function backSave(
   state: ViewState,
   shown: string | null,
   pressed: Readonly<ViewState>,
+  carry: readonly string[] = [],
 ): ViewState | null {
   // the first of a repeated key, as the server reads it (`firstParam`)
   const url = shown === null ? new URLSearchParams() : new URL(shown, ORIGIN).searchParams;
@@ -275,6 +282,13 @@ export function backSave(
     const held = url.get(dim.key);
     if (value === undefined) continue;
     if (held === null || !dim.options.includes(held) || pressed[dim.key] === held) out[dim.key] = value;
+  }
+  // a carried key (the hero's `accts`) only as the URL holds it, and only when a press of his put it
+  // there: the page draws every account when neither the URL nor his saved view holds one, and saving
+  // that would curate a selection he never made
+  for (const key of carry) {
+    const held = url.get(key);
+    if (held !== null && pressed[key] === held) out[key] = held;
   }
   return Object.keys(out).length === 0 ? null : out;
 }
@@ -297,10 +311,19 @@ export interface Landing {
  * The page's ask, as one mutable cell the root layout holds and every switcher reads.
  */
 export interface PageAsks {
+  /**
+   * What a press on `at` builds on (`pressBase`): the ask, or — after a link nobody asked for
+   * dropped it, until anything is drawn — the ask it dropped (see `departing`).
+   */
   base(at: PressTarget): PressBase;
-  /** the newest asked URL's params on `pathname`, or null when nothing is asked there */
+  /**
+   * the newest asked URL's params on `pathname` — or the dropped ask's, as `base` — or null when
+   * nothing is asked there
+   */
   paramsOn(pathname: string): Record<string, string> | null;
   ask(href: string, dims: ViewState): void;
+  /** true while `href` is the newest asked URL: nothing asked, followed or gone Back to since */
+  isNewest(href: string): boolean;
   /**
    * Where a press navigates once its write has landed.
    *
@@ -321,7 +344,14 @@ export interface PageAsks {
    *   it shows (`backLanding`), sent after it, is the one that stays.
    */
   landing(): Landing | null;
-  /** a push or replace to `href` is starting: one nobody asked for drops the ask */
+  /**
+   * A push or replace to `href` is starting: one nobody asked for drops the ask. Until anything
+   * is drawn, `base`, `paramsOn` and the next `ask` still build on the ask it dropped: the page
+   * on screen is still the one that ask was built on, and a press it holds may still be being
+   * written. 🔴 Built on the URL on screen, ‹ followed after a crumb's link carried the view a press
+   * in flight had replaced, and the press, landing on ‹'s URL, drew that view back. Never after a
+   * link to the URL on screen: it commits nothing that would end it, and draws the page on screen.
+   */
   departing(href: string, kind: HistoryKind): void;
   /** the router committed `href` (pathname and query): the URL on screen a press starts from */
   committed(href: string): void;
@@ -350,15 +380,30 @@ export interface PageAsks {
    * What a switcher on the page Back landed on saves of the view it drew (`backSave`): the
    * dimensions its saved view drew, and of those the URL holds, the ones a press of his put there —
    * asked for with that URL, or carried on into it by an ask built on a URL his press put them in —
-   * never a linked view. Null when that is none.
+   * never a linked view; and each `carry` key (the hero's `accts`) the URL holds only when a press
+   * of his put it there. Null when that is none. 🔴 Without the carried key, Back to an account
+   * selection his pill made left the one he had walked away from saved, and the nav link drew it.
    */
-  backSave(spec: ViewSpec, state: ViewState): ViewState | null;
+  backSave(spec: ViewSpec, state: ViewState, carry?: readonly string[]): ViewState | null;
+  /** a switcher's save of the view Back drew (`backSave`) is being written */
+  backSaveSent(save: Promise<unknown>): void;
+  /**
+   * Settles once every save of Back's view sent so far has landed; null when none is being
+   * written. ⚖️ B2: a URL writer that writes nothing (a range pill) navigates after it — a
+   * navigation overtakes a server action in Next's queue, and 🔴 the pill's page, drawn before
+   * Back's save landed, drew the saved view he had walked away from.
+   */
+  backSavesLanding(): Promise<void> | null;
 }
 
 export function createPageAsks(): PageAsks {
   let current: PageAsk | null = null;
   // the newest link followed since one dropped the ask: what a press in flight makes again
   let overtaken: { href: string; kind: HistoryKind } | null = null;
+  // the ask that link dropped, until anything is drawn: what the page's writers still build on
+  let dropped: PageAsk | null = null;
+  // the saves of Back's view still being written
+  let backSaves: readonly Promise<void>[] = [];
   // the URL the router last committed, which the switchers' props were rendered for
   let shown: string | null = null;
   // a Back/Forward started and not yet landed; how many have landed; the one on screen
@@ -371,20 +416,27 @@ export function createPageAsks(): PageAsks {
   const pressed = new Map<string, ViewState>();
   const hisOn = (href: string | null): ViewState =>
     href === null ? {} : (pressed.get(canonicalHref(href)) ?? {});
+  // what the page's writers build on: the ask, or the one a link dropped while nothing is drawn
+  const building = (): PageAsk | null => current ?? dropped;
   return {
-    base: (at) => pressBase(current, at, shown),
-    paramsOn: (pathname) => askedParams(current, pathname),
+    base: (at) => pressBase(building(), at, shown),
+    paramsOn: (pathname) => askedParams(building(), pathname),
     ask(href, dims) {
       // what it built on (`pressBase`): the newest asked URL on its page, or else the one on screen.
       // 🔴 Only the ask's own keys were kept: Return, Value, Back, the 1M pill (on the URL on screen,
       // nothing asked), Value, Back to `?view=returns&range=1M` — Back took his Return for a link's
       // and saved nothing, and the nav link drew the Value. The same with a lens press for the pill.
-      const from = current !== null && current.pathname === pathnameOf(href) ? current.href : shown;
-      current = withAsk(current, href, dims);
+      const prior = building();
+      const same = prior !== null && prior.pathname === pathnameOf(href);
+      const from = same ? prior.href : shown;
+      // a dropped ask's presses are still asked for (their writes are in flight); its URLs are not
+      current = current === null && same ? withAsk(null, href, { ...prior.dims, ...dims }) : withAsk(current, href, dims);
       overtaken = null; // the ask is newer than any link before it
+      dropped = null;
       const at = canonicalHref(href);
       pressed.set(at, { ...pressed.get(at), ...carriedOn(from, hisOn(from), href), ...current.dims });
     },
+    isNewest: (href) => current !== null && current.trail.at(-1) === canonicalHref(href),
     landing() {
       if (current !== null) return { href: current.href, kind: "push", scroll: false };
       return overtaken === null ? null : { ...overtaken, scroll: true };
@@ -395,11 +447,16 @@ export function createPageAsks(): PageAsks {
       back = null;
       // an asked URL leaves the ask be; with nothing asked, only a link since one dropped it counts
       if (current === null ? overtaken === null : !isForeign(current, href)) return;
+      // kept only while a commit will end it: ⛔ a link to the URL on screen (the sidebar's, to the
+      // page he is on) commits no new URL, and a press long after it built on a ‹ it had discarded
+      const onScreen = shown !== null && canonicalHref(href) === canonicalHref(shown);
+      dropped = onScreen ? null : (current ?? dropped);
       current = null;
       overtaken = { href, kind };
     },
     committed(href) {
       shown = href;
+      dropped = null; // a page is drawn: from now on, a writer builds on it
       current = afterCommit(current, href);
       if (!traversing) return;
       // Back/Forward landed. A page of another route is drawn in this same commit, after this
@@ -411,9 +468,21 @@ export function createPageAsks(): PageAsks {
     moved() {
       current = null;
       overtaken = null;
+      dropped = null;
       traversing = true;
     },
     backLanding: () => back,
-    backSave: (spec, state) => backSave(spec, state, shown, hisOn(shown)),
+    backSave: (spec, state, carry = []) => backSave(spec, state, shown, hisOn(shown), carry),
+    backSaveSent(save) {
+      const landed = save.then(
+        () => undefined,
+        () => undefined,
+      );
+      backSaves = [...backSaves, landed];
+      void landed.then(() => {
+        backSaves = backSaves.filter((pending) => pending !== landed);
+      });
+    },
+    backSavesLanding: () => (backSaves.length === 0 ? null : Promise.all(backSaves).then(() => undefined)),
   };
 }
