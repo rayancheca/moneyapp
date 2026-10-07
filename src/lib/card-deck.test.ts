@@ -11,6 +11,7 @@ import {
   dragOutcome,
   dragTilt,
   stepIndex,
+  deckHeight,
 } from "./card-deck";
 
 describe("where each card sits in the stack", () => {
@@ -147,5 +148,22 @@ describe("the tilt", () => {
 
   test("an unmeasured deck does not tilt", () => {
     expect(dragTilt(100, 0)).toBe(0);
+  });
+});
+
+/**
+ * 🔴 The deck's height came out 3,380px or 3,381px at random on the dashboard's 768px dark baseline (2 of 5 repeats,
+ * 2026-10-07): Chromium lays out in 1/64-px units, the front card measured an integer or one unit above it, and the
+ * ceiling turned that unit into a whole pixel of page height.
+ */
+describe("deckHeight — the front card's measured height, deterministic and never clipped", () => {
+  test("an integer and one layout unit above it give the same height", () => {
+    expect(deckHeight(300)).toBe(300);
+    expect(deckHeight(300 + 1 / 64)).toBe(300);
+  });
+  test("anything more than a layout unit of overflow still rounds up, so a card is never clipped", () => {
+    expect(deckHeight(300 + 2 / 64)).toBe(301);
+    expect(deckHeight(300.5)).toBe(301);
+    expect(deckHeight(300.99)).toBe(301);
   });
 });

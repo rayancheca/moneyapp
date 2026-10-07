@@ -7,6 +7,7 @@ import {
   LAYER_OFFSET_PX,
   VISIBLE_DEPTH,
   clampIndex,
+  deckHeight,
   deckSlot,
   dragOutcome,
   dragTilt,
@@ -99,9 +100,11 @@ export function CardDeck({ cards, ariaLabel }: { cards: readonly DeckCard[]; ari
      * dashboard's 768px dark baseline came out 3,269px in a full run and
      * 3,270px on its own, a 5,638-pixel diff from ONE pixel of height. Ceiling
      * it makes the height deterministic, and rounding up rather than down means
-     * a card is never clipped by half a pixel.
+     * a card is never clipped by half a pixel. 🔴 …but not quite deterministic:
+     * a card measuring an integer OR one 1/64-px layout unit above it still
+     * flipped a pixel (`deckHeight`).
      */
-    const measure = () => setHeight(Math.ceil(el.getBoundingClientRect().height));
+    const measure = () => setHeight(deckHeight(el.getBoundingClientRect().height));
     measure();
     const observer = new ResizeObserver(measure);
     observer.observe(el);

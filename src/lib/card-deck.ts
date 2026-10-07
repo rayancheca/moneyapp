@@ -162,3 +162,16 @@ export function dragTilt(dx: number, deckWidth: number): number {
   const fraction = Math.max(-1, Math.min(1, dx / deckWidth));
   return fraction * MAX_TILT_DEGREES;
 }
+
+/** One Chromium layout unit: boxes are laid out in 1/64ths of a pixel. */
+const LAYOUT_UNIT_PX = 1 / 64;
+
+/**
+ * The deck's height from its front card's measured `getBoundingClientRect().height`: the ceiling, so a card is never
+ * clipped — less one layout unit first. 🔴 A plain ceiling read the same card as 3,380 or 3,381px of page at random
+ * (the dashboard's 768px dark baseline, 2 of 5 repeats, 2026-10-07): the card measured an integer or one unit above it,
+ * and the ceiling made that 1/64 px a whole pixel. One unit of overflow is never visible; two still round up.
+ */
+export function deckHeight(measuredPx: number): number {
+  return Math.ceil(measuredPx - LAYOUT_UNIT_PX);
+}
