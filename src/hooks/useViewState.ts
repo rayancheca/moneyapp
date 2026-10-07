@@ -129,20 +129,23 @@ export function useViewState(opts: UseViewStateOptions): UseViewStateResult {
   // key — when the view Back drew reaches it: a layout effect, so it is sent before anything he
   // can press next; never on a first load, a link, a press or a refresh. ⚖️ 2026-10-06: only the
   // dimensions his saved view drew, and of those the URL held only the ones a press of his put
-  // there (`backSave`) — never a linked view. The spec's dimensions only, as a view press
-  // saves them — never a carried key: the hero's `accts` is every account in its URL when
-  // nothing is curated, and saving it would curate. Best-effort and silent, like a press's own.
+  // there (`backSave`) — never a linked view. A carried key only as the URL holds it, and only
+  // when his press put it there: the hero's `accts` is every account in its URL when nothing is
+  // curated, and saving that would curate. Best-effort and silent, like a press's own; a range
+  // pill pressed while it is being written navigates once it lands (`backSavesLanding`).
   const resavedFor = useRef<number | null>(null);
   useLayoutEffect(() => {
     const back = asks?.backLanding() ?? null;
     if (asks === null || back === null || back === resavedFor.current) return;
     resavedFor.current = back;
-    const resave = asks.backSave(spec, state);
+    const resave = asks.backSave(spec, state, carry);
     if (resave === null) return;
-    saveViewPreferenceAction(surface, resave).catch(() => {
-      /* persistence is best-effort */
-    });
-  }, [asks, surface, spec, state]);
+    asks.backSaveSent(
+      saveViewPreferenceAction(surface, resave).catch(() => {
+        /* persistence is best-effort */
+      }),
+    );
+  }, [asks, surface, spec, state, carry]);
 
   const setView = useCallback(
     (key: string, value: string) => updateView((base) => setDimension(spec, base, key, value)),
