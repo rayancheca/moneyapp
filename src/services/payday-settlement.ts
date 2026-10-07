@@ -1,6 +1,6 @@
 import { and, eq, gt, inArray } from "drizzle-orm";
 import type { AppDatabase } from "@/db/client";
-import { recurringSeries, type SeriesKind } from "@/db/schema/recurring";
+import { recurringSeries, type SeriesKind, type SeriesStatus } from "@/db/schema/recurring";
 import { transactions } from "@/db/schema/transactions";
 import { addDays, compareDates } from "@/lib/dates";
 import {
@@ -9,6 +9,7 @@ import {
   settlePaydaysBackwards,
   type PaydaySettlement,
 } from "@/lib/payday-settlement";
+import { paydayReadings, type PaydayReading } from "@/lib/per-payday";
 import {
   effectiveSeries,
   projectOccurrences,
@@ -219,6 +220,49 @@ export function paydaySettlementsBySeries(
 ): Map<string, PaydaySettlement> {
   const out = new Map<string, PaydaySettlement>();
   for (const id of seriesIds) out.set(id, paydaySettlement(db, id, today));
+  return out;
+}
+
+/**
+ * Whether a series' rows are read per payday (`lib/per-payday`): money in that
+ * the forecast still projects — the pay series whose paydays the recurring
+ * calendar grades by settlement. ONE gate, so the calendar and the series page
+ * read the same rows the same way; an ended job's history is read as it posted.
+ */
+export function readsPerPayday(s: { kind: SeriesKind; status: SeriesStatus }): boolean {
+  return s.kind === "income" && (s.status === "detected" || s.status === "confirmed");
+}
+
+/**
+ * Per series, each active row's per-payday reading, from that series'
+ * settlement — every row, not a window's, because the spread a row is measured
+ * against is the series' whole history.
+ */
+export function paydayReadingsBySeries(
+  db: AppDatabase,
+  settlements: ReadonlyMap<string, PaydaySettlement>,
+): Map<string, ReadonlyMap<string, PaydayReading>> {
+  const out = new Map<string, ReadonlyMap<string, PaydayReading>>();
+  if (settlements.size === 0) return out;
+  const rowsBySeries = new Map<string, { id: string; postedOn: string; amountCents: number }[]>();
+  for (const r of db
+    .select({
+      id: transactions.id,
+      seriesId: transactions.recurringSeriesId,
+      postedOn: transactions.postedOn,
+      amountCents: transactions.amountCents,
+    })
+    .from(transactions)
+    .where(and(eq(transactions.status, "active"), inArray(transactions.recurringSeriesId, [...settlements.keys()])))
+    .all()) {
+    if (!r.seriesId) continue;
+    const list = rowsBySeries.get(r.seriesId);
+    if (list) list.push(r);
+    else rowsBySeries.set(r.seriesId, [r]);
+  }
+  for (const [seriesId, settlement] of settlements) {
+    out.set(seriesId, paydayReadings(rowsBySeries.get(seriesId) ?? [], settlement.portions));
+  }
   return out;
 }
 

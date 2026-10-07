@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { createDatabase, type DbBundle } from "@/db/client";
 import { seedDatabase } from "@/db/seed";
 import { categories } from "@/db/schema/categories";
+import { duplicateCandidates } from "@/db/schema/duplicate-candidates";
 import { institutions } from "@/db/schema/institutions";
 import { merchants } from "@/db/schema/merchants";
 import { recurringSeries } from "@/db/schema/recurring";
@@ -793,5 +794,331 @@ describe("createSeriesFromTransaction — the 'Make recurring' button", () => {
     const spotify = seriesFor(spotifyId);
     mergeSeries(bundle.db, spotify.id, netflix.id, TODAY);
     expect(() => undoSeriesCreation(bundle.db, netflix.id, { rows: [] })).toThrow(/merge/i);
+  });
+});
+
+/*
+ * Owner decision 2026-10-07 (§6A 47): attaching an UNFILED row to a recurring series files it under the series'
+ * category; a row already filed keeps its own. His first lease payment and the $1,000.00 insurance prepayment were
+ * attached by hand to "Car lease" / "Car insurance" (each named Car › … by `user_category_id`) and stayed
+ * Uncategorized: September's /spending read $1,695.04 Uncategorized and no Car, and the Car budget missed both.
+ */
+describe("attaching files an unfiled row under the series' category (§6A 47)", () => {
+  function txnRow(id: string) {
+    return bundle.db.select().from(transactions).where(eq(transactions.id, id)).get()!;
+  }
+  /** the columns attaching may write — link and filing */
+  function filing(id: string) {
+    const r = txnRow(id);
+    return {
+      recurringSeriesId: r.recurringSeriesId,
+      seriesLinkSource: r.seriesLinkSource,
+      categoryId: r.categoryId,
+      categorizationSource: r.categorizationSource,
+      categorizationConfidence: r.categorizationConfidence,
+      needsReview: r.needsReview,
+    };
+  }
+  function categoryId(parent: string, child?: string): string {
+    const top = bundle.db.select().from(categories).where(eq(categories.name, parent)).get()!;
+    if (child === undefined) return top.id;
+    return bundle.db
+      .select()
+      .from(categories)
+      .all()
+      .find((c) => c.parentId === top.id && c.name === child)!.id;
+  }
+  function nameSeries(seriesId: string, userCategoryId: string): void {
+    bundle.db.update(recurringSeries).set({ userCategoryId }).where(eq(recurringSeries.id, seriesId)).run();
+  }
+  function file(txnId: string, to: string | null, source: "rule" | "user" | null, confidence: number | null): void {
+    bundle.db
+      .update(transactions)
+      .set({ categoryId: to, categorizationSource: source, categorizationConfidence: confidence })
+      .where(eq(transactions.id, txnId))
+      .run();
+  }
+
+  test("an unfiled row is filed under the series' own category, stamped as his", () => {
+    const netflix = seriesFor(netflixId);
+    const streaming = categoryId("Subscriptions", "Streaming");
+    nameSeries(netflix.id, streaming);
+    const loose = insertTxn({ postedOn: "2026-06-29", amountCents: -1549, rawDescription: "NFLX PREPAY" });
+    expect(txnRow(loose).categoryId).toBeNull();
+
+    attachTransactions(bundle.db, netflix.id, [loose], TODAY);
+
+    const row = txnRow(loose);
+    expect(row.recurringSeriesId).toBe(netflix.id);
+    expect(row.categoryId).toBe(streaming);
+    expect(row.categorizationSource).toBe("user");
+    expect(row.categorizationConfidence).toBe(1);
+  });
+
+  test("a row already filed keeps its own category, source and confidence", () => {
+    const netflix = seriesFor(netflixId);
+    nameSeries(netflix.id, categoryId("Subscriptions", "Streaming"));
+    const coffee = categoryId("Food", "Coffee");
+    const filed = insertTxn({ postedOn: "2026-06-29", amountCents: -742, rawDescription: "CORNER COFFEE" });
+    file(filed, coffee, "rule", 0.8);
+
+    attachTransactions(bundle.db, netflix.id, [filed], TODAY);
+
+    const row = txnRow(filed);
+    expect(row.recurringSeriesId).toBe(netflix.id);
+    expect(row.categoryId).toBe(coffee);
+    expect(row.categorizationSource).toBe("rule");
+    expect(row.categorizationConfidence).toBe(0.8);
+  });
+
+  test("a row on the system Uncategorized category is unfiled too (one set, 2026-09-03)", () => {
+    const netflix = seriesFor(netflixId);
+    const streaming = categoryId("Subscriptions", "Streaming");
+    nameSeries(netflix.id, streaming);
+    const parked = insertTxn({ postedOn: "2026-06-29", amountCents: -1549, rawDescription: "NFLX PREPAY" });
+    file(parked, categoryId("Uncategorized"), "rule", 0.5);
+
+    attachTransactions(bundle.db, netflix.id, [parked], TODAY);
+
+    expect(txnRow(parked).categoryId).toBe(streaming);
+    expect(txnRow(parked).categorizationSource).toBe("user");
+  });
+
+  test("undo restores the prior category AND categorization source, as well as the link", () => {
+    const netflix = seriesFor(netflixId);
+    nameSeries(netflix.id, categoryId("Subscriptions", "Streaming"));
+    const unsourced = insertTxn({ postedOn: "2026-06-28", amountCents: -1549, rawDescription: "NFLX PREPAY" });
+    const parked = insertTxn({ postedOn: "2026-06-29", amountCents: -1549, rawDescription: "NFLX PREPAY 2" });
+    file(parked, categoryId("Uncategorized"), "rule", 0.5);
+    const filed = insertTxn({ postedOn: "2026-06-30", amountCents: -742, rawDescription: "CORNER COFFEE" });
+    file(filed, categoryId("Food", "Coffee"), "rule", 0.8);
+    const ids = [unsourced, parked, filed];
+    const before = ids.map(filing);
+
+    const result = attachTransactions(bundle.db, netflix.id, ids, TODAY);
+    expect(result.attached).toBe(3);
+    expect(filing(unsourced).categorizationSource).toBe("user");
+    applyUndoPatch(bundle.db, result.undo);
+
+    expect(ids.map(filing)).toEqual(before);
+    // the filed row's undo carries no category columns — attaching never changed them
+    expect(result.undo.rows.find((r) => r.id === filed)!.prev).not.toHaveProperty("categoryId");
+  });
+
+  test("a series named by no category leaves the row unfiled", () => {
+    const netflix = seriesFor(netflixId);
+    const loose = insertTxn({ postedOn: "2026-06-29", amountCents: -1549, rawDescription: "NFLX PREPAY" });
+
+    attachTransactions(bundle.db, netflix.id, [loose], TODAY);
+
+    const row = txnRow(loose);
+    expect(row.recurringSeriesId).toBe(netflix.id);
+    expect(row.categoryId).toBeNull();
+    expect(row.categorizationSource).toBeNull();
+  });
+
+  test("a series whose rows all sit on Uncategorized is no category to file under", () => {
+    const netflix = seriesFor(netflixId);
+    const uncategorized = categoryId("Uncategorized");
+    for (const id of taggedIds(netflix.id)) file(id, uncategorized, "rule", 0.5);
+    const loose = insertTxn({ postedOn: "2026-06-29", amountCents: -1549, rawDescription: "NFLX PREPAY" });
+
+    attachTransactions(bundle.db, netflix.id, [loose], TODAY);
+
+    expect(txnRow(loose).categoryId).toBeNull();
+    expect(txnRow(loose).categorizationSource).toBeNull();
+  });
+
+  test("with no category of his own, the series is named as every surface names it — by its filed rows", () => {
+    const netflix = seriesFor(netflixId);
+    const streaming = categoryId("Subscriptions", "Streaming");
+    for (const id of taggedIds(netflix.id)) file(id, streaming, "rule", 0.9);
+    const loose = insertTxn({ postedOn: "2026-06-29", amountCents: -1549, rawDescription: "NFLX PREPAY" });
+
+    attachTransactions(bundle.db, netflix.id, [loose], TODAY);
+
+    expect(txnRow(loose).categoryId).toBe(streaming);
+    expect(txnRow(loose).categorizationSource).toBe("user");
+  });
+
+  test("attaching to a merged-away id files under the LIVE target's category", () => {
+    const netflix = seriesFor(netflixId);
+    const spotify = seriesFor(spotifyId);
+    nameSeries(spotify.id, categoryId("Subscriptions", "Software"));
+    const streaming = categoryId("Subscriptions", "Streaming");
+    nameSeries(netflix.id, streaming);
+    mergeSeries(bundle.db, spotify.id, netflix.id, TODAY);
+    const loose = insertTxn({ postedOn: "2026-06-29", amountCents: -999, rawDescription: "SPOTIFY PREPAY" });
+
+    attachTransactions(bundle.db, spotify.id, [loose], TODAY);
+
+    expect(txnRow(loose).recurringSeriesId).toBe(netflix.id);
+    expect(txnRow(loose).categoryId).toBe(streaming);
+  });
+
+  test("'Make recurring' that joins an existing series files the unfiled seed too — and its undo restores it", () => {
+    const netflix = seriesFor(netflixId);
+    const streaming = categoryId("Subscriptions", "Streaming");
+    nameSeries(netflix.id, streaming);
+    const fresh = insertTxn({ postedOn: "2026-07-01", amountCents: -1549, rawDescription: "NETFLIX.COM", merchantId: netflixId });
+    const before = filing(fresh);
+
+    const result = createSeriesFromTransaction(bundle.db, fresh, TODAY);
+    expect(result.mode).toBe("attached");
+    expect(txnRow(fresh).categoryId).toBe(streaming);
+    expect(txnRow(fresh).categorizationSource).toBe("user");
+
+    applyUndoPatch(bundle.db, result.undo);
+    expect(filing(fresh)).toEqual(before);
+  });
+
+  test("'Make recurring' that CREATES a series files nothing — its links are detection's", () => {
+    const ids = ["2026-03-10", "2026-04-10", "2026-05-10", "2026-06-10"].map((d) =>
+      insertTxn({ postedOn: d, amountCents: -5000, rawDescription: "BREEZELINE 866-290-5400" }),
+    );
+    file(ids[0]!, categoryId("Food", "Coffee"), "rule", 0.9);
+    const result = createSeriesFromTransaction(bundle.db, ids.at(-1)!, TODAY);
+    expect(result.mode).toBe("created");
+    for (const id of ids.slice(1)) expect(txnRow(id).categoryId).toBeNull();
+  });
+
+  describe("money that the series' kind or category cannot hold stays unfiled", () => {
+    function setKind(seriesId: string, kind: "income" | "bill" | "subscription" | "transfer" | "other"): void {
+      bundle.db.update(recurringSeries).set({ kind }).where(eq(recurringSeries.id, seriesId)).run();
+    }
+
+    test("a transfer-kind series files nothing — a lone Transfers row has no partner and leaves spending", () => {
+      const netflix = seriesFor(netflixId);
+      setKind(netflix.id, "transfer");
+      nameSeries(netflix.id, categoryId("Transfers", "Internal Transfer"));
+      const out = insertTxn({ postedOn: "2026-06-29", amountCents: -50_000, rawDescription: "ONLINE TRANSFER" });
+
+      attachTransactions(bundle.db, netflix.id, [out], TODAY);
+
+      expect(txnRow(out).recurringSeriesId).toBe(netflix.id);
+      expect(txnRow(out).categoryId).toBeNull();
+      expect(txnRow(out).categorizationSource).toBeNull();
+    });
+
+    test("a bill named by a transfer-kind category files nothing either", () => {
+      const netflix = seriesFor(netflixId);
+      nameSeries(netflix.id, categoryId("Transfers", "Internal Transfer"));
+      const out = insertTxn({ postedOn: "2026-06-29", amountCents: -50_000, rawDescription: "ONLINE TRANSFER" });
+
+      attachTransactions(bundle.db, netflix.id, [out], TODAY);
+
+      expect(txnRow(out).categoryId).toBeNull();
+    });
+
+    test("money OUT attached to the pay series stays unfiled — a negative Income row is in no figure", () => {
+      const netflix = seriesFor(netflixId);
+      setKind(netflix.id, "income");
+      nameSeries(netflix.id, categoryId("Income", "Salary"));
+      const out = insertTxn({ postedOn: "2026-06-29", amountCents: -114_192, rawDescription: "PAYROLL REVERSAL" });
+
+      attachTransactions(bundle.db, netflix.id, [out], TODAY);
+
+      expect(txnRow(out).recurringSeriesId).toBe(netflix.id);
+      expect(txnRow(out).categoryId).toBeNull();
+    });
+
+    test("money IN attached to the pay series IS filed under it (his decision)", () => {
+      const netflix = seriesFor(netflixId);
+      setKind(netflix.id, "income");
+      const salary = categoryId("Income", "Salary");
+      nameSeries(netflix.id, salary);
+      const pay = insertTxn({ postedOn: "2026-06-29", amountCents: 114_192, rawDescription: "IT AMERICA PAYROLL" });
+
+      attachTransactions(bundle.db, netflix.id, [pay], TODAY);
+
+      expect(txnRow(pay).categoryId).toBe(salary);
+      expect(txnRow(pay).categorizationSource).toBe("user");
+    });
+
+    test("money IN attached to a bill or subscription stays unfiled", () => {
+      const netflix = seriesFor(netflixId);
+      nameSeries(netflix.id, categoryId("Subscriptions", "Streaming"));
+      for (const kind of ["bill", "subscription"] as const) {
+        setKind(netflix.id, kind);
+        const credit = insertTxn({ postedOn: "2026-06-29", amountCents: 1549, rawDescription: `NFLX CREDIT ${kind}` });
+
+        attachTransactions(bundle.db, netflix.id, [credit], TODAY);
+
+        expect(txnRow(credit).recurringSeriesId).toBe(netflix.id);
+        expect(txnRow(credit).categoryId).toBeNull();
+      }
+    });
+
+    test("money OUT on an 'other' series named by an Income category stays unfiled", () => {
+      const netflix = seriesFor(netflixId);
+      setKind(netflix.id, "other");
+      nameSeries(netflix.id, categoryId("Income", "Other Income"));
+      const out = insertTxn({ postedOn: "2026-06-29", amountCents: -2_500, rawDescription: "CLAWBACK" });
+
+      attachTransactions(bundle.db, netflix.id, [out], TODAY);
+
+      expect(txnRow(out).categoryId).toBeNull();
+    });
+  });
+
+  describe("needs_review follows the hand categorizations — but a duplicate question stays open", () => {
+    function flagForReview(txnId: string): void {
+      bundle.db.update(transactions).set({ needsReview: true }).where(eq(transactions.id, txnId)).run();
+    }
+
+    test("a row flagged for review is cleared when attaching files it — and undo flags it again", () => {
+      const netflix = seriesFor(netflixId);
+      nameSeries(netflix.id, categoryId("Subscriptions", "Streaming"));
+      const loose = insertTxn({ postedOn: "2026-06-29", amountCents: -1549, rawDescription: "NFLX PREPAY" });
+      flagForReview(loose);
+      const before = filing(loose);
+
+      const result = attachTransactions(bundle.db, netflix.id, [loose], TODAY);
+      expect(txnRow(loose).needsReview).toBe(false);
+
+      applyUndoPatch(bundle.db, result.undo);
+      expect(filing(loose)).toEqual(before);
+    });
+
+    test("a row in an open duplicate pair is filed but keeps its review flag", () => {
+      const netflix = seriesFor(netflixId);
+      const streaming = categoryId("Subscriptions", "Streaming");
+      nameSeries(netflix.id, streaming);
+      const loose = insertTxn({ postedOn: "2026-06-29", amountCents: -1549, rawDescription: "NFLX PREPAY" });
+      const twin = insertTxn({ postedOn: "2026-06-29", amountCents: -1549, rawDescription: "NETFLIX PREPAY" });
+      flagForReview(loose);
+      flagForReview(twin);
+      const [a, b] = [loose, twin].sort() as [string, string];
+      bundle.db
+        .insert(duplicateCandidates)
+        .values({
+          accountId: cardId,
+          transactionIdA: a,
+          transactionIdB: b,
+          pairKey: "synthetic-open-pair",
+          reason: "cross_source_same_day",
+          reasonDetail: "synthetic",
+        })
+        .run();
+
+      const result = attachTransactions(bundle.db, netflix.id, [loose], TODAY);
+      expect(txnRow(loose).categoryId).toBe(streaming);
+      expect(txnRow(loose).needsReview).toBe(true);
+
+      applyUndoPatch(bundle.db, result.undo);
+      expect(txnRow(loose).needsReview).toBe(true);
+      expect(txnRow(loose).categoryId).toBeNull();
+    });
+
+    test("a row attaching does not file keeps its review flag", () => {
+      const netflix = seriesFor(netflixId);
+      const loose = insertTxn({ postedOn: "2026-06-29", amountCents: -1549, rawDescription: "NFLX PREPAY" });
+      flagForReview(loose);
+
+      attachTransactions(bundle.db, netflix.id, [loose], TODAY);
+
+      expect(txnRow(loose).categoryId).toBeNull();
+      expect(txnRow(loose).needsReview).toBe(true);
+    });
   });
 });

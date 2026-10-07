@@ -10,6 +10,7 @@ import { categories } from "@/db/schema/categories";
 import { priceCache } from "@/db/schema/holdings";
 import { importFiles } from "@/db/schema/imports";
 import { institutions } from "@/db/schema/institutions";
+import { recurringSeries, type SeriesKind, type SeriesStatus } from "@/db/schema/recurring";
 import { transactions } from "@/db/schema/transactions";
 import { dedupeHash } from "@/lib/hash";
 import { normalizeDescription } from "@/lib/normalize";
@@ -69,6 +70,8 @@ function insert(opts: {
   categoryName: string;
   accountId?: string;
   sourced?: boolean;
+  /** the recurring series the row is attached to (`recurring_series_id`) */
+  seriesId?: string;
 }): void {
   seq += 1;
   const accountId = opts.accountId ?? checkingId;
@@ -82,6 +85,7 @@ function insert(opts: {
       rawDescription: opts.rawDescription,
       normalizedDescription: normalizeDescription(opts.rawDescription),
       categoryId: catId(opts.categoryName),
+      recurringSeriesId: opts.seriesId ?? null,
       dedupeHash: dedupeHash({
         accountId,
         postedOn: opts.postedOn,
@@ -91,6 +95,15 @@ function insert(opts: {
       }),
     })
     .run();
+}
+
+/** A recurring series rows can be attached to — weekly, as his pay is. */
+function paySeries(name: string, kind: SeriesKind = "income", status: SeriesStatus = "confirmed"): string {
+  return bundle.db
+    .insert(recurringSeries)
+    .values({ name, kind, cadence: "weekly", status })
+    .returning({ id: recurringSeries.id })
+    .get().id;
 }
 
 beforeEach(() => {
@@ -253,7 +266,8 @@ describe("yearSummaryView — the cash job's story is only told where it happene
   });
 
   test("the year work-study ended, and after it, keeps the history", () => {
-    insert({ postedOn: "2026-06-05", amountCents: 104700, rawDescription: "Deposit 999", categoryName: "Salary" });
+    const pay = paySeries("It America LLC (weekly pay)");
+    insert({ postedOn: "2026-06-05", amountCents: 104700, rawDescription: "Deposit 999", categoryName: "Salary", seriesId: pay });
 
     const v = yearSummaryView(bundle.db, 2026, TODAY);
     const cashJob = v.summary.sections
@@ -261,7 +275,7 @@ describe("yearSummaryView — the cash job's story is only told where it happene
       .find((l) => l.id === "cash-job")!;
     expect(cashJob.basis).toContain("the job that replaced it");
     expect(cashJob.basis).toContain("Work-study ended May 13, 2026, and");
-    expect(cashJob.label).toBe("Cash job");
+    expect(cashJob.label).toBe("It America LLC (weekly pay)");
   });
 
   /*
@@ -309,14 +323,176 @@ describe("yearSummaryView — the cash job's story is only told where it happene
      is the app's rule. */
   test("the label and the basis are chosen from the same fact", () => {
     for (const year of [2021, 2025, 2026, 2027]) {
-      const naming = cashJobNaming(year);
-      const early = year < 2026;
-      expect(naming.label === "Cash job", `label for ${year}`).toBe(!early);
-      expect(naming.basis.includes("the job that replaced it"), `basis for ${year}`).toBe(!early);
-      expect((naming.caveat ?? "").includes("Deposited irregularly"), `caveat for ${year}`).toBe(!early);
-      expect(naming.basis, `basis for ${year}`).not.toMatch(/\b\d{4}-\d{2}-\d{2}\b/);
-      expect(naming.basis, `basis for ${year}`).toContain("May 13, 2026");
+      // his 2026 shape, moved to each year: two cash lumps in June, a payroll lump in September
+      const postedOn = [`${year}-06-04`, `${year}-06-05`, `${year}-09-23`, `${year}-09-24`];
+      for (const seriesName of ["It America LLC (weekly pay)", null]) {
+        const naming = cashJobNaming(year, { seriesName, postedOn });
+        const early = year < 2026;
+        const named = seriesName !== null;
+        const at = `${year}, ${named ? "named" : "unattached"}`;
+        expect(naming.label, `label for ${at}`).toBe(seriesName ?? "Salary, not Fordham payroll");
+        expect(naming.basis.includes("the job that replaced it"), `basis for ${at}`).toBe(!early && named);
+        expect(naming.basis.includes("this ledger does not say"), `basis for ${at}`).toBe(!named);
+        expect((naming.caveat ?? "").includes("Deposited irregularly"), `caveat for ${at}`).toBe(!early);
+        expect(naming.basis, `basis for ${at}`).not.toMatch(/\b\d{4}-\d{2}-\d{2}\b/);
+        expect(naming.basis, `basis for ${at}`).toContain("May 13, 2026");
+      }
     }
+  });
+});
+
+/**
+ * 🔴 THE LABEL NAMED A JOB THAT HAD BEEN RENAMED.
+ *
+ * Measured on his `/summary/2026`, 2026-10-07: "Cash job $7,156.60 — Salary rows
+ * that are not Fordham payroll. Work-study ended May 13, 2026, and these
+ * deposits are the job that replaced it." Every one of the 4 rows is attached
+ * to the series he renamed on 2026-09-28 to name the payer — "It America LLC
+ * (weekly pay)" — and two of them are ACH payroll into Wells Fargo, not cash.
+ * Every other surface printed the series' name; this one printed a literal.
+ */
+describe("yearSummaryView — the pay line names the job its rows are attached to", () => {
+  const payLine = (year: number) =>
+    yearSummaryView(bundle.db, year, "2026-10-07")
+      .summary.sections.flatMap((sec) => sec.lines)
+      .find((l) => l.id === "cash-job")!;
+
+  /** his four 2026 rows, as the ledger holds them */
+  function hisTwentyTwentySix(seriesId: string | undefined): void {
+    insert({ postedOn: "2026-06-04", amountCents: 40000, rawDescription: "ATM CASH DEPOSIT", categoryName: "Salary", seriesId });
+    insert({ postedOn: "2026-06-05", amountCents: 104700, rawDescription: "ATM CASH DEPOSIT", categoryName: "Salary", seriesId });
+    insert({ postedOn: "2026-09-23", amountCents: 456768, rawDescription: "It America LLC Payroll 260923", categoryName: "Salary", seriesId });
+    insert({ postedOn: "2026-09-24", amountCents: 114192, rawDescription: "It America LLC Payroll 260924", categoryName: "Salary", seriesId });
+  }
+
+  test("his 2026: the four rows of one pay series are headed by that series' name", () => {
+    hisTwentyTwentySix(paySeries("It America LLC (weekly pay)"));
+
+    const line = payLine(2026);
+    expect(line.label).toBe("It America LLC (weekly pay)");
+    expect(line.label).not.toBe("Cash job");
+    // the money rule is untouched
+    expect(line.amountCents).toBe(715660);
+    expect(line.rowCount).toBe(4);
+    expect(line.basis).toContain("Salary rows that are not Fordham payroll");
+    expect(line.basis).toContain("attached to this pay series");
+    expect(line.basis).toContain("Work-study ended May 13, 2026, and these deposits are the job that replaced it.");
+    // two June cash lumps, then a four-week payroll lump: the rows DO show irregular deposits
+    expect(line.caveat).toBe(
+      "Deposited irregularly, so a calendar year captures what reached the bank rather than what was worked.",
+    );
+  });
+
+  test("a renamed series renames the line — the label is read, not written", () => {
+    const pay = paySeries("Cash job (weekly pay)");
+    hisTwentyTwentySix(pay);
+    expect(payLine(2026).label).toBe("Cash job (weekly pay)");
+
+    bundle.db.update(recurringSeries).set({ name: "It America LLC (weekly pay)" }).where(eq(recurringSeries.id, pay)).run();
+    expect(payLine(2026).label).toBe("It America LLC (weekly pay)");
+  });
+
+  /*
+   * ⛔ "Deposited irregularly" is a claim about the rows. A weekly payroll that
+   * lands every Thursday is not irregular, and the caveat would be false on it.
+   */
+  test("a payroll deposited every week carries no irregular-deposits caveat", () => {
+    const pay = paySeries("It America LLC (weekly pay)");
+    for (const day of ["2027-01-07", "2027-01-14", "2027-01-21", "2027-01-28", "2027-02-04"]) {
+      insert({ postedOn: day, amountCents: 114192, rawDescription: "It America LLC Payroll", categoryName: "Salary", seriesId: pay });
+    }
+
+    const line = payLine(2027);
+    expect(line.label).toBe("It America LLC (weekly pay)");
+    expect(line.caveat).toBeUndefined();
+  });
+
+  test("a payday a bank holiday moved by a day is still regular", () => {
+    const pay = paySeries("It America LLC (weekly pay)");
+    for (const day of ["2027-01-07", "2027-01-14", "2027-01-22", "2027-01-28", "2027-02-04"]) {
+      insert({ postedOn: day, amountCents: 114192, rawDescription: "It America LLC Payroll", categoryName: "Salary", seriesId: pay });
+    }
+    expect(payLine(2027).caveat).toBeUndefined();
+  });
+
+  test("rows in no series name the rule, and claim no job", () => {
+    hisTwentyTwentySix(undefined);
+
+    const line = payLine(2026);
+    expect(line.label).toBe("Salary, not Fordham payroll");
+    expect(line.basis).not.toContain("the job that replaced it");
+    expect(line.basis).toContain("this ledger does not say");
+    expect(line.amountCents).toBe(715660);
+  });
+
+  test("rows split across two series name the rule, and claim no job", () => {
+    const a = paySeries("It America LLC (weekly pay)");
+    const b = paySeries("Somebody else (weekly pay)");
+    insert({ postedOn: "2026-09-23", amountCents: 456768, rawDescription: "It America LLC Payroll", categoryName: "Salary", seriesId: a });
+    insert({ postedOn: "2026-09-24", amountCents: 114192, rawDescription: "Other Payroll", categoryName: "Salary", seriesId: b });
+
+    const line = payLine(2026);
+    expect(line.label).toBe("Salary, not Fordham payroll");
+    expect(line.basis).not.toContain("the job that replaced it");
+  });
+
+  test("one attached row and one loose row is not one series", () => {
+    const pay = paySeries("It America LLC (weekly pay)");
+    insert({ postedOn: "2026-09-23", amountCents: 456768, rawDescription: "It America LLC Payroll", categoryName: "Salary", seriesId: pay });
+    insert({ postedOn: "2026-09-24", amountCents: 114192, rawDescription: "Deposit", categoryName: "Salary" });
+
+    expect(payLine(2026).label).toBe("Salary, not Fordham payroll");
+  });
+
+  /*
+   * ⛔ Only a series he STANDS BEHIND names his pay. Dismissing flips the
+   * status and leaves every row attached (the re-detection sink), and the repo
+   * reads dismissed as "not recurring" (`seriesDrawsAsRecurring`); a detected
+   * series is the detector's suggestion, labelled "suggested" (`seriesRowLabel`).
+   * Neither is his word, so neither heads the line — or lets the basis name the
+   * job that replaced work-study.
+   */
+  test("a dismissed pay series does not name the line", () => {
+    hisTwentyTwentySix(paySeries("It America LLC (weekly pay)", "income", "dismissed"));
+    const line = payLine(2026);
+    expect(line.label).toBe("Salary, not Fordham payroll");
+    expect(line.basis).not.toContain("the job that replaced it");
+    expect(line.amountCents).toBe(715660);
+  });
+
+  test("a detected — suggested, not confirmed — pay series does not name the line", () => {
+    hisTwentyTwentySix(paySeries("It America LLC (weekly pay)", "income", "detected"));
+    const line = payLine(2026);
+    expect(line.label).toBe("Salary, not Fordham payroll");
+    expect(line.basis).not.toContain("the job that replaced it");
+  });
+
+  test("an ended pay series still names the line — a job that stopped was still that job", () => {
+    hisTwentyTwentySix(paySeries("It America LLC (weekly pay)", "income", "ended"));
+    const line = payLine(2026);
+    expect(line.label).toBe("It America LLC (weekly pay)");
+    expect(line.basis).toContain("the job that replaced it");
+  });
+
+  test("a series that is not income does not name pay", () => {
+    hisTwentyTwentySix(paySeries("Mystery transfer", "transfer"));
+    expect(payLine(2026).label).toBe("Salary, not Fordham payroll");
+  });
+
+  /*
+   * ⛔ The label names the rows the line MEASURED — not the year's, not the
+   * category's. A Fordham row and last year's row in other series sit outside
+   * the line, so they cannot unname it.
+   */
+  test("rows outside the line do not decide its name", () => {
+    const pay = paySeries("It America LLC (weekly pay)");
+    const fordham = paySeries("Fordham payroll");
+    const old = paySeries("An old job");
+    hisTwentyTwentySix(pay);
+    insert({ postedOn: "2026-05-01", amountCents: 50000, rawDescription: "FORDHAM UNIVERSI PAYROLL", categoryName: "Salary", seriesId: fordham });
+    insert({ postedOn: "2025-12-31", amountCents: 50000, rawDescription: "Deposit", categoryName: "Salary", seriesId: old });
+
+    expect(payLine(2026).label).toBe("It America LLC (weekly pay)");
   });
 });
 

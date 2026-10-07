@@ -245,6 +245,8 @@ describe("createPageAsks", () => {
     asks.departing("/h?view=returns", "push");
     expect(asks.landing()?.href).toBe("/h?view=returns");
     asks.departing("/spending", "push");
+    expect(asks.landing()).toEqual({ href: "/spending", kind: "push", scroll: true });
+    asks.committed("/spending"); // its page drawn
     expect(asks.paramsOn("/h")).toBeNull();
     expect(asks.base(holding()).asked).toBe(false);
   });
@@ -319,6 +321,103 @@ describe("createPageAsks: a link followed while a press is being written", () =>
     const asks = createPageAsks();
     asks.departing("/spending", "push");
     expect(asks.landing()).toBeNull();
+  });
+});
+
+describe("createPageAsks: the ask a link dropped, until anything is drawn", () => {
+  const WHERE: ViewSpec = [{ key: "where", options: ["list", "relief"] }];
+  const where = (over: Partial<PressTarget> = {}): PressTarget => ({
+    basePath: "/spending",
+    spec: WHERE,
+    state: { where: "relief" },
+    baseParams: { period: "2026-07" },
+    carry: [],
+    ...over,
+  });
+
+  /** the page on screen is still the one it was built on, and its press is still being written */
+  test("is what a same-page link, a range pill and a press build on", () => {
+    const asks = createPageAsks();
+    asks.committed("/spending?period=2026-07&where=relief");
+    asks.ask("/spending?period=2026-07", { where: "list" });
+    asks.departing("/spending", "push"); // a crumb's link
+    expect(asks.paramsOn("/spending")).toEqual({ period: "2026-07" });
+    expect(asks.base(where())).toEqual({ view: { where: "list" }, params: { period: "2026-07" }, asked: true });
+    expect(asks.paramsOn("/h")).toBeNull();
+  });
+
+  test("the next ask keeps its presses, not its URLs, and lands on its own", () => {
+    const asks = createPageAsks();
+    asks.committed("/spending?period=2026-07&where=relief");
+    asks.ask("/spending?period=2026-07", { where: "list" });
+    asks.departing("/spending", "push");
+    asks.ask("/spending?period=2026-06", {}); // ‹
+    expect(asks.base(where()).view).toEqual({ where: "list" });
+    expect(asks.landing()).toEqual({ href: "/spending?period=2026-06", kind: "push", scroll: false });
+    asks.departing("/spending?period=2026-07", "push"); // the dropped ask's URL: now a link's
+    expect(asks.landing()).toEqual({ href: "/spending?period=2026-07", kind: "push", scroll: true });
+  });
+
+  /** ⛔ it commits no new URL, so nothing would ever end it: none is kept, as the page it draws is the one on screen */
+  test("a link to the URL on screen keeps none, and ends one an earlier link kept", () => {
+    const asks = createPageAsks();
+    asks.committed("/spending");
+    asks.ask("/spending?period=2026-05", {});
+    asks.departing("/spending", "push"); // the sidebar's link
+    expect(asks.paramsOn("/spending")).toBeNull();
+
+    asks.ask("/spending?period=2026-05", {});
+    asks.departing("/spending?period=2026-06", "push"); // a crumb's: a commit follows
+    expect(asks.paramsOn("/spending")).toEqual({ period: "2026-05" });
+    asks.departing("/spending", "push"); // the sidebar's, which discards it
+    expect(asks.paramsOn("/spending")).toBeNull();
+  });
+
+  test("a commit or Back ends it", () => {
+    const asks = createPageAsks();
+    asks.committed("/spending?period=2026-07");
+    asks.ask("/spending?period=2026-07&where=relief", { where: "relief" });
+    asks.departing("/spending", "push");
+    expect(asks.paramsOn("/spending")).toEqual({ period: "2026-07", where: "relief" });
+    asks.committed("/spending");
+    expect(asks.paramsOn("/spending")).toBeNull();
+
+    asks.ask("/spending?where=list", { where: "list" });
+    asks.departing("/spending?period=2026-06", "push");
+    asks.moved();
+    expect(asks.paramsOn("/spending")).toBeNull();
+  });
+});
+
+describe("createPageAsks: Back's saves still being written", () => {
+  test("settle once every one sent has landed, a refused one too; none is null", async () => {
+    const asks = createPageAsks();
+    expect(asks.backSavesLanding()).toBeNull();
+    let land!: () => void;
+    let refuse!: (error: Error) => void;
+    asks.backSaveSent(new Promise<void>((resolve) => (land = resolve)));
+    asks.backSaveSent(new Promise<void>((_, reject) => (refuse = reject)));
+    let landed = false;
+    void asks.backSavesLanding()!.then(() => (landed = true));
+    land();
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(landed).toBe(false);
+    refuse(new Error("offline"));
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(landed).toBe(true);
+    expect(asks.backSavesLanding()).toBeNull();
+  });
+
+  test("isNewest: while the URL is the newest asked, and nothing moved since", () => {
+    const asks = createPageAsks();
+    expect(asks.isNewest("/h?range=1M")).toBe(false);
+    asks.ask("/h?range=1M", {});
+    expect(asks.isNewest("/h?range=1M")).toBe(true);
+    asks.ask("/h?range=1M&view=returns", { view: "returns" });
+    expect(asks.isNewest("/h?range=1M")).toBe(false);
+    expect(asks.isNewest("/h?view=returns&range=1M")).toBe(true);
+    asks.moved();
+    expect(asks.isNewest("/h?view=returns&range=1M")).toBe(false);
   });
 });
 
@@ -405,6 +504,17 @@ describe("backSave", () => {
 
   test("is null when the URL holds every dimension and he asked for none of them", () => {
     expect(backSave(SPEC, { view: "returns", lens: "table" }, "/h?view=returns&lens=table", {})).toBeNull();
+  });
+
+  /** the hero's `accts`: drawn as every account when nothing holds one, and saving that would curate */
+  test("a carried key only as the URL holds it, and only when his press put it there", () => {
+    const state = { view: "returns", lens: "table" };
+    const url = "/?view=returns&lens=table&accts=b%2Cc";
+    expect(backSave(SPEC, state, url, { accts: "b,c" }, ["accts"])).toEqual({ accts: "b,c" });
+    expect(backSave(SPEC, state, url, {}, ["accts"])).toBeNull(); // a link's
+    expect(backSave(SPEC, state, url, { accts: "c" }, ["accts"])).toBeNull(); // his, then changed
+    expect(backSave(SPEC, state, "/?view=returns&lens=table", { accts: "b,c" }, ["accts"])).toBeNull();
+    expect(backSave(SPEC, state, url, { accts: "b,c" })).toBeNull(); // not carried by this switcher
   });
 });
 

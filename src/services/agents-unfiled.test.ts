@@ -35,7 +35,14 @@ import { periodActivity } from "./period-activity";
 import { provenanceFor } from "./provenance";
 import { uncategorizedCount } from "./review-count";
 import { spendingSankey } from "./sankey";
-import { agentsMoneyRowCount, cashFlowByPeriod, honestyBuckets, periodTotals, spendingEmptyCopy } from "./spending";
+import {
+  agentsMoneyRowCount,
+  cashFlowByPeriod,
+  categoryEmptyCopy,
+  honestyBuckets,
+  periodTotals,
+  spendingEmptyCopy,
+} from "./spending";
 import { matchingTransactionIds } from "./transactions-query";
 
 /**
@@ -167,6 +174,20 @@ function emptyState(range: { from: string; to: string }, label = "the day") {
   });
 }
 
+/** /categories/<id>'s empty state over a window, as the page asks for it */
+function categoryEmptyState(pathStr: string, range: { from: string; to: string }) {
+  return categoryEmptyCopy(bundle.db, catId(pathStr), range, {
+    today: TODAY,
+    label: "the day",
+    ledgerOpens: ledgerOpens(bundle.db),
+    ledgerReaches: ledgerReaches(bundle.db),
+    formatDay: (iso) => iso,
+  });
+}
+
+/** the clause every empty state that left the agent's money out ends on */
+const AGENTS_LEFT_OUT = /The agent's own account paid or was paid money in this period, and none of it is counted here/;
+
 const sum = (rows: readonly { amountCents: number }[]) => rows.reduce((s, r) => s + r.amountCents, 0);
 const agents = (rows: readonly { accountId: string }[]) => rows.filter((r) => r.accountId === agentic).length;
 
@@ -291,11 +312,83 @@ describe("the agent's unfiled money out is not his spending", () => {
     expect(emptyState(day).description).toContain("none of it is counted here");
   });
 
+  /*
+   * 🔴 §6A 43: money OUT of the agent's cash filed in an income category — a clawback of what it was paid — is the
+   * agent's: it lowers "Agent's income" on the bridge and at the pace (`isAgentsIncomeCategoryRow`, either sign), and is
+   * none of his spending or income. The count asked the credits alone (`isAgentsIncome`), so a day holding only the
+   * agent's clawback read a measured zero and said nothing of the money left out.
+   */
+  test("⛔ the clause counts the agent's income-category clawback — its money out, as the bridge nets it — and not his", () => {
+    const day = { from: "2026-09-05", to: "2026-09-05" };
+    post(agentic, day.from, -300, "Income > Interest", "Interest Clawback");
+    expect(periodTotals(bundle.db, day)).toMatchObject({ spentCents: 0, earnedCents: 0 });
+    expect(agentsMoneyRowCount(bundle.db, day)).toBe(1);
+    expect(emptyState(day).description).toMatch(AGENTS_LEFT_OUT);
+
+    // ⛔ his own clawback, filed in Interest, is his — no money of the agent's to name
+    const his = { from: "2026-09-06", to: "2026-09-06" };
+    post(wellsFargo, his.from, -300, "Income > Interest", "Interest Clawback");
+    expect(agentsMoneyRowCount(bundle.db, his)).toBe(0);
+    expect(emptyState(his).description).not.toContain("agent");
+  });
+
   test("the rule's own edge: unpaired, the agent's day is his — his own Uncategorized, and no empty state at all", () => {
     unpair();
     const day = { from: "2026-09-18", to: "2026-09-18" };
     expect(agentsMoneyRowCount(bundle.db, day)).toBe(0);
     expect(honestyBuckets(bundle.db, day).uncategorized.txnCount).toBe(1);
+  });
+});
+
+describe("a category's own page names the agent's money its window left out", () => {
+  /*
+   * 🔴 §6A 34: `/categories/<id>` leaves the agent's rows out of an income or expense category, either sign
+   * (`spendingTransactions`), so a window holding only the agent's money there reads its empty state — and the page
+   * composed that copy apart from /spending's, without the flag: "a measured zero" over a Bank Fees day holding the
+   * agent's Gold fee, and nothing said of it. One rule (`agentsMoneyRowCount`), asked of the category's own rows.
+   */
+  test("⛔ a day holding only the agent's fee, dividend or clawback in a category says the agent's money is left out", () => {
+    const day = { from: "2026-09-05", to: "2026-09-05" };
+    post(agentic, day.from, -500, "Fees > Bank Fees", "Gold Monthly Fee");
+    post(agentic, day.from, 6, "Income > Dividends", "Dividend from SGOV");
+    post(agentic, day.from, -300, "Income > Interest", "Interest Clawback");
+    const pages = [
+      ["Fees", 1],
+      ["Fees > Bank Fees", 1],
+      ["Income", 2],
+      ["Income > Dividends", 1],
+      ["Income > Interest", 1],
+    ] as const;
+    for (const [pathStr, rows] of pages) {
+      // the page's own gate: none of its rows is his
+      expect(categorySpending(bundle.db, { categoryId: catId(pathStr), ...day }).txnCount, pathStr).toBe(0);
+      expect(agentsMoneyRowCount(bundle.db, day, { categoryId: catId(pathStr) }), pathStr).toBe(rows);
+      const copy = categoryEmptyState(pathStr, day);
+      expect(copy.title, pathStr).toBe("No spending or income in this period");
+      expect(copy.description, pathStr).toMatch(AGENTS_LEFT_OUT);
+      // ⛔ the page prints no Uncategorized bucket, so its copy names none
+      expect(copy.description, pathStr).not.toContain("uncategorized outflows");
+    }
+    // ⛔ the clause is the category's, not the day's: a category the agent's money is not in says nothing of it
+    expect(agentsMoneyRowCount(bundle.db, day, { categoryId: catId("Food") })).toBe(0);
+    expect(categoryEmptyState("Food", day).description).not.toContain("agent");
+  });
+
+  test("⛔ a page that lists the agent's rows leaves none out — a transfer, and the unfiled", () => {
+    const day = { from: "2026-09-18", to: "2026-09-18" };
+    post(agentic, day.from, 2_664, "Transfers > Internal Transfer", "Transfer from Wells Fargo");
+    for (const pathStr of ["Transfers", "Uncategorized"]) {
+      expect(categorySpending(bundle.db, { categoryId: catId(pathStr), ...day }).txnCount, pathStr).toBeGreaterThan(0);
+      expect(agentsMoneyRowCount(bundle.db, day, { categoryId: catId(pathStr) }), pathStr).toBe(0);
+    }
+  });
+
+  test("the rule's own edge: unpaired, the agent's fee is his, and his page lists it", () => {
+    const day = { from: "2026-09-05", to: "2026-09-05" };
+    post(agentic, day.from, -500, "Fees > Bank Fees", "Gold Monthly Fee");
+    unpair();
+    expect(categorySpending(bundle.db, { categoryId: catId("Fees > Bank Fees"), ...day }).txnCount).toBe(1);
+    expect(agentsMoneyRowCount(bundle.db, day, { categoryId: catId("Fees > Bank Fees") })).toBe(0);
   });
 });
 
