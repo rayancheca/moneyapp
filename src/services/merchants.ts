@@ -7,7 +7,7 @@ import { merchantAliases, merchants } from "@/db/schema/merchants";
 import { recurringSeries } from "@/db/schema/recurring";
 import { transactions } from "@/db/schema/transactions";
 import { outsidePortfolioCashAccountIds } from "./accounts";
-import { isHisExpenseRow, loadCategoryIndex } from "./analytics";
+import { isAgentsSeries, isHisExpenseRow, loadCategoryIndex } from "./analytics";
 import type { BulkResult } from "./bulk-edit";
 import { ledgerOpens, ledgerReaches } from "./observation-frontier";
 import { strippedDescriptionKey } from "@/lib/description-key";
@@ -377,7 +377,7 @@ export function renameMerchant(
  */
 export interface MerchantIntelligence {
   profile: MerchantProfile;
-  /** the recurring series this merchant bills through, when it has one */
+  /** the recurring series this merchant bills HIM through, when it has one — never one on the agent's cash */
   cadence: { seriesId: string; name: string; cadence: string; status: string } | null;
 }
 
@@ -436,10 +436,18 @@ export function merchantIntelligence(
       categoryName: top.name,
     }));
 
+  /*
+   * ⚖️ …and HIS: "Billed monthly as …" names a schedule as how the merchant bills him, so no series on the agent's cash
+   * is one (`isAgentsSeries`, owner decisions 2026-09-28 and 2026-10-02), as the subscriptions card and the calendar
+   * leave it out. 🔴 Under a profile that measured nothing of the agent's, the card named its Gold-fee schedule; at a
+   * merchant both pay, whichever schedule the database handed back first.
+   */
   const series = db
     .select({
       id: recurringSeries.id,
       name: recurringSeries.name,
+      kind: recurringSeries.kind,
+      accountId: recurringSeries.accountId,
       cadence: recurringSeries.cadence,
       userCadence: recurringSeries.userCadence,
       status: recurringSeries.status,
@@ -451,7 +459,8 @@ export function merchantIntelligence(
         inArray(recurringSeries.status, ["detected", "confirmed"]),
       ),
     )
-    .get();
+    .all()
+    .find((s) => !isAgentsSeries(agentsCash, s));
 
   return {
     // `rows.length` is what the page's heading counts; `visits` is what this

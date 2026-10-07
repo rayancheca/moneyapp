@@ -7,7 +7,6 @@ import { compareDates, todayIso } from "@/lib/dates";
 import { formatDayLong, formatDayShort } from "@/lib/format-date";
 import { formatCents } from "@/lib/money";
 import { parsePeriodParams, resolvePeriod, withPeriod } from "@/lib/period";
-import { emptyPeriodCopy, emptyPeriodReason } from "@/lib/empty-period";
 import { ledgerOpens, ledgerReaches } from "@/services/observation-frontier";
 import { categorySpending } from "@/services/analytics";
 import {
@@ -22,7 +21,7 @@ import {
 } from "@/services/category-detail";
 import { provenanceFor } from "@/services/provenance";
 import { categoryInsights } from "@/services/spending-insights";
-import { ledgerFirstDay, topMerchants } from "@/services/spending";
+import { categoryEmptyCopy, ledgerFirstDay, topMerchants } from "@/services/spending";
 import { loadSpendingCategoryTxns } from "@/app/spending/actions";
 import { CategoryChip } from "@/components/ui/CategoryChip";
 import { CategoryMoveMenu } from "@/components/categories/CategoryMoveMenu";
@@ -144,19 +143,21 @@ export default async function CategoryPage({
    * the two pages a reader moves between now describe the same month the same
    * way.
    */
-  const emptyReason =
+  /*
+   * ⚖️ …asked through `categoryEmptyCopy`, which knows whose money the window holds: this page leaves the agent's
+   * rows out of an income or expense category (owner decisions 2026-09-28 → 2026-10-06), so a window holding only the
+   * agent's money in it lands here, and says so.
+   */
+  const emptyCopy =
     txnCount === 0
-      ? emptyPeriodReason({
-          from: range.from,
-          to: range.to,
+      ? categoryEmptyCopy(db, id, range, {
           today,
+          label: period.label,
           ledgerOpens: ledgerOpens(db),
           ledgerReaches: ledgerReaches(db),
+          formatDay: formatDayLong,
         })
       : null;
-  const emptyCopy = emptyReason
-    ? emptyPeriodCopy(emptyReason, period.label, ledgerReaches(db), formatDayLong, { ledgerOpens: ledgerOpens(db) })
-    : null;
   // the title carries the antecedent — "4 days of IT" has none without it
   const emptyText = emptyCopy ? `${emptyCopy.title}. ${emptyCopy.description}` : undefined;
 
