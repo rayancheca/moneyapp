@@ -182,6 +182,67 @@ describe("incomeCard", () => {
    * having reached a bank — the same as-of-the-frontier reading the verdict and
    * /spending's `checkedPeriodsCovered` already take.
    */
+  /**
+   * 🔴 Measured on a copy of the owner's ledger 2026-10-07. It America LLC's
+   * series names Wells Fargo (checked through Sep 24), but two Jun 4–5 ATM
+   * deposits sit in Chase Checking (checked through Aug 12), and the card took
+   * the earlier day: "$4,262.60 of it never reached a bank; the other $9,135.36
+   * is for paydays after Aug 12" — false of seven paydays in a read account —
+   * and, its as-of-Aug-12 silence (9) outrunning the real one (1), the verdict
+   * fell through to "a schedule is called stale only after 3 quiet periods" of a
+   * payday nobody had looked for. Mirrored here: Jun 4 in Chase, a ten-week lump
+   * on Aug 13 in SoFi, the series naming SoFi.
+   */
+  describe("pay is looked for where it lands now", () => {
+    function movedToSofi(): void {
+      addAccount(SOFI, "SoFi Checking");
+      addSeries({ accountId: SOFI });
+      addTxn(PAY_START, 100_000, { accountId: CHASE });
+      addTxn("2026-08-13", 1_000_000, { accountId: SOFI });
+      coverThrough(CHASE, "2026-06-01", "2026-07-09");
+      coverThrough(SOFI, "2026-06-01", "2026-08-13");
+    }
+
+    test("the series' own account sets the frontier, not an account old pay landed in", () => {
+      movedToSofi();
+      const line = incomeCard(bundle.db, TODAY)!.pay[0]!;
+      expect(line.checkedThrough).toBe("2026-08-13");
+      expect(line.silentPeriods).toBe(1);
+      expect(line.checkedSilentPeriods).toBe(0);
+      expect(line.verdict).toBe(
+        "1 payday has passed since the last deposit on Aug 13. It falls after Aug 13, the last day every account that pay lands in has been checked through — so the ledger has not looked for its deposit.",
+      );
+    });
+
+    test("the difference names only the payday after that account's checked day as unread", () => {
+      movedToSofi();
+      const card = incomeCard(bundle.db, TODAY)!;
+      // Jun 4 … Aug 20: twelve paydays implied, eleven banked
+      expect(card.totals.gapMagnitudeCents).toBe(100_000);
+      expect(card.totals.unreadGapCents).toBe(100_000);
+      expect(card.totals.gapLabel).toContain("after Aug 13");
+    });
+
+    /**
+     * Of the silent paydays, the read ones can never outnumber them. A frontier
+     * BEFORE the last deposit has every silent payday after it, so none is read.
+     */
+    test("a frontier before the last deposit reads none of the silence, never more than there is", () => {
+      addAccount(SOFI, "SoFi Checking");
+      addSeries({ accountId: SOFI });
+      addTxn(PAY_START, 100_000, { accountId: SOFI });
+      addTxn("2026-08-13", 1_000_000, { accountId: CHASE });
+      coverThrough(SOFI, "2026-06-01", "2026-07-09");
+      coverThrough(CHASE, "2026-06-01", "2026-08-26");
+
+      const line = incomeCard(bundle.db, TODAY)!.pay[0]!;
+      expect(line.checkedThrough).toBe("2026-07-09");
+      expect(line.silentPeriods).toBe(1);
+      expect(line.checkedSilentPeriods).toBe(0);
+      expect(line.verdict).toContain("so the ledger has not looked for its deposit");
+    });
+  });
+
   describe("the difference says never reached a bank only of paydays the ledger has read", () => {
     test("a difference wholly on read paydays keeps the plain label", () => {
       addSeries();

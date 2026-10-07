@@ -13,6 +13,7 @@ import {
 import { incomeExpectation } from "./budgets";
 import {
   cashEarningsReadings,
+  checkedSilence,
   earliestVerified,
   landingAccountsBySeries,
   type CashEarningsReading,
@@ -399,7 +400,13 @@ export function incomeCard(db: AppDatabase, today: string = todayIso()): IncomeC
       basis: r.basis,
       lastBankedOn: r.lastBankedOn,
       silentPeriods: r.periodsSinceBanked,
-      checkedSilentPeriods: asChecked?.periodsSinceBanked ?? 0,
+      // never more than the silence itself — `checkedSilence`
+      checkedSilentPeriods: checkedSilence(
+        asChecked?.periodsSinceBanked ?? 0,
+        r.periodsSinceBanked,
+        r.lastBankedOn,
+        checkedThrough,
+      ),
       checkedThrough,
       unreadDays: checkedThrough === null ? null : diffDays(checkedThrough, today),
       ...gapOf(

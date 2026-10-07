@@ -130,6 +130,44 @@ describe("cashEarningsReadings — how much of a window the landing account has 
     expect([sep.periodsSinceBanked, sep.checkedPeriodsSinceBanked]).toEqual([14, 9]);
   });
 
+  /**
+   * 🔴 /spending's note reads the same frontier as the dashboard and /recurring.
+   * On a copy of the owner's ledger 2026-10-07, a series naming Wells Fargo
+   * (checked through Sep 24) took Chase Checking's Aug 12 from two June
+   * deposits, and its as-of-Aug-12 silence (9) outran the real one (1).
+   */
+  test("a series naming its account is read there, and its read silence never outruns the silence", () => {
+    const WF = "acct-wf";
+    addAccount(WF);
+    bundle.db.update(recurringSeries).set({ accountId: WF }).where(eq(recurringSeries.id, SERIES)).run();
+    bundle.db
+      .insert(transactions)
+      .values({
+        id: "t-wf",
+        accountId: WF,
+        postedOn: "2026-09-03",
+        amountCents: 1_400_000,
+        rawDescription: "PAYROLL",
+        normalizedDescription: "PAYROLL",
+        categoryId: salaryId(),
+        recurringSeriesId: SERIES,
+        status: "active",
+        needsReview: false,
+        occurrenceIndex: 0,
+        dedupeHash: "h-wf",
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      })
+      .run();
+    coverThrough(CHASE, "2026-06-01", "2026-08-12");
+    coverThrough(WF, "2026-06-01", "2026-09-10");
+
+    const sep = read("2026-09-01", "2026-09-30");
+    expect(sep.checkedThrough).toBe("2026-09-10");
+    expect(sep.periodsSinceBanked).toBe(1); // Sep 10
+    expect(sep.checkedPeriodsSinceBanked).toBe(1);
+  });
+
   test("a landing account with no checked record has no frontier, and nothing is counted as read", () => {
     const r = read("2026-07-01", "2026-07-31");
     expect(r.checkedThrough).toBeNull();

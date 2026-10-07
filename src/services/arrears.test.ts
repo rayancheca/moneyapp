@@ -178,6 +178,39 @@ describe("unbankedIncomeForSeries — a passed payday is measured against the da
     });
   });
 
+  /**
+   * 🔴 Measured on a copy of the owner's ledger 2026-10-07: /recurring and
+   * /budgets said Oct 1 "falls after Wed, Aug 12, 2026" for It America LLC's
+   * weekly payroll, whose series names Wells Fargo (checked through Sep 24; he
+   * moved it there 2026-09-28). Two Jun 4–5 ATM deposits in Chase Checking,
+   * checked through Aug 12, dragged the frontier back. A payday's deposit is
+   * looked for where the pay lands NOW — the series' own account when it names
+   * one.
+   */
+  test("a series that names its account is looked for there, not where old pay landed", () => {
+    const WF = "acct-wf";
+    addAccount(WF);
+    bundle.db.update(recurringSeries).set({ accountId: WF }).where(eq(recurringSeries.id, SERIES)).run();
+    deposit(WF, SERIES, "2026-08-27");
+    readThrough(CHASE, "2026-06-01", "2026-08-12");
+    readThrough(WF, "2026-06-01", "2026-09-10");
+    // walk [Sep 1, Sep 14]: Sep 3 and Sep 10 on read Wells Fargo days
+    expect(unbanked("2026-09-01").series[0]).toMatchObject({
+      occurrenceCount: 2,
+      checkedThrough: "2026-09-10",
+      checkedOccurrenceCount: 2,
+    });
+  });
+
+  test("a series that names no account is still looked for everywhere its pay has landed", () => {
+    const WF = "acct-wf";
+    addAccount(WF);
+    deposit(WF, SERIES, "2026-08-27");
+    readThrough(CHASE, "2026-06-01", "2026-08-12");
+    readThrough(WF, "2026-06-01", "2026-09-10");
+    expect(unbanked("2026-09-01").series[0]).toMatchObject({ checkedThrough: "2026-08-12", checkedOccurrenceCount: 0 });
+  });
+
   test("a landing account nobody has read has no frontier, and nothing counts as checked", () => {
     expect(unbanked("2026-09-01").series[0]).toMatchObject({ occurrenceCount: 2, checkedThrough: null, checkedOccurrenceCount: 0, checkedCents: 0 });
   });
