@@ -3,7 +3,13 @@ import { STALE_PERIODS, type CashEarningsBasis } from "@/lib/cash-earnings";
 import { addCalendarMonths, diffDays, monthKey, periodBounds, todayIso } from "@/lib/dates";
 import { formatDayShort, formatMonthYear } from "@/lib/format-date";
 import { formatCents } from "@/lib/money";
-import { LAST_CHECKED_DAY, unbankedIncomeFrontierClause } from "@/lib/unbanked-income";
+import {
+  LAST_CHECKED_DAY,
+  NOT_CHECKED,
+  sharedFrontier,
+  unbankedIncomeFrontierClause,
+  type UnbankedFrontier,
+} from "@/lib/unbanked-income";
 import { incomeExpectation } from "./budgets";
 import {
   cashEarningsReadings,
@@ -116,22 +122,62 @@ interface Gap {
    * at the page caught it, because every sum stayed correct (`-0 + 0 === 0`).
    */
   gapMagnitudeCents: number;
+  /**
+   * Of a POSITIVE difference, the part that is pay for paydays after the day
+   * every account it lands in is checked through — money the ledger has not
+   * looked for, so it cannot be said to have "never reached a bank". Zero when
+   * the difference is not positive. Part of `gapMagnitudeCents`, never added
+   * to it.
+   */
+  unreadGapCents: number;
   /** the clause that follows the magnitude, e.g. "never reached a bank" */
   gapLabel: string;
 }
 
-function gapOf(impliedCents: number, bankedCents: number): Gap {
+/**
+ * 🔴 "The difference — never reached a bank — $13,397.96", measured on the
+ * owner's ledger 2026-10-07, of which $1,141.92 was the Oct 1 payday: after Sep
+ * 24, the day Wells Fargo (where the payroll lands) is checked through. The
+ * figure was right and the label was not. The unread part is the pay the
+ * schedule implies past the frontier — the same as-of-the-frontier reading the
+ * verdict's `checkedSilentPeriods` and /spending's `checkedPeriodsCovered`
+ * take — capped at the difference, and named in the forecast's words
+ * (`LAST_CHECKED_DAY`, `NOT_CHECKED`, `sharedFrontier`).
+ */
+function gapOf(
+  impliedCents: number,
+  bankedCents: number,
+  unreadImpliedCents: number,
+  frontier: UnbankedFrontier,
+): Gap {
   const gapCents = impliedCents - bankedCents;
+  const unreadGapCents = gapCents > 0 ? Math.min(gapCents, Math.max(0, unreadImpliedCents)) : 0;
   return {
     gapCents,
     gapMagnitudeCents: gapCents === 0 ? 0 : Math.abs(gapCents),
-    gapLabel:
-      gapCents > 0
-        ? "never reached a bank"
-        : gapCents < 0
-          ? "more than this window implies you earned"
-          : "exactly what this window implies you earned",
+    unreadGapCents,
+    gapLabel: gapLabelFor(gapCents, unreadGapCents, frontier),
   };
+}
+
+function gapLabelFor(gapCents: number, unreadGapCents: number, frontier: UnbankedFrontier): string {
+  if (gapCents < 0) return "more than this window implies you earned";
+  if (gapCents === 0) return "exactly what this window implies you earned";
+  if (unreadGapCents === 0) return "never reached a bank";
+
+  const readCents = gapCents - unreadGapCents;
+  if (frontier.kind === "unchecked") {
+    return readCents === 0
+      ? `${NOT_CHECKED}, so it cannot say whether any of it reached a bank.`
+      : `${formatCents(readCents)} of it never reached a bank; for the other ${formatCents(unreadGapCents)}, ${NOT_CHECKED}.`;
+  }
+  const after =
+    frontier.kind === "day"
+      ? `after ${formatDayShort(frontier.through)}, ${LAST_CHECKED_DAY}`
+      : "after the last day the accounts their pay lands in have been checked through, which differs by schedule";
+  return readCents === 0
+    ? `all of it is for paydays ${after} — so the ledger has not looked for it.`
+    : `${formatCents(readCents)} of it never reached a bank; the other ${formatCents(unreadGapCents)} is for paydays ${after} — so the ledger has not looked for it.`;
 }
 
 export interface IncomePayLine extends Gap {
@@ -314,7 +360,7 @@ export function incomeCard(db: AppDatabase, today: string = todayIso()): IncomeC
    * lands in and not about the ledger as a whole.
    */
   const asOfCache = new Map<string, CashEarningsReading[]>();
-  const silenceAsOf = (day: string, seriesId: string): number => {
+  const readingAsOf = (day: string, seriesId: string): CashEarningsReading | undefined => {
     let rows = asOfCache.get(day);
     if (rows === undefined) {
       // `day` is the verified frontier: every deposit on it is in the records,
@@ -322,7 +368,7 @@ export function incomeCard(db: AppDatabase, today: string = todayIso()): IncomeC
       rows = cashEarningsReadings(db, { from: windowFrom, to: day, today: day, todayIsComplete: true });
       asOfCache.set(day, rows);
     }
-    return rows.find((r) => r.seriesId === seriesId)?.periodsSinceBanked ?? 0;
+    return rows.find((r) => r.seriesId === seriesId);
   };
 
   const pay: IncomePayLine[] = readings.map((r) => {
@@ -339,6 +385,10 @@ export function incomeCard(db: AppDatabase, today: string = todayIso()): IncomeC
       today,
     );
 
+    const asChecked = checkedThrough === null ? undefined : readingAsOf(checkedThrough, r.seriesId);
+    // what the schedule implies past the frontier: every payday when nothing is checked
+    const unreadImpliedCents = r.impliedCents - (asChecked?.impliedCents ?? 0);
+
     const base = {
       seriesId: r.seriesId,
       name: r.seriesName,
@@ -349,17 +399,33 @@ export function incomeCard(db: AppDatabase, today: string = todayIso()): IncomeC
       basis: r.basis,
       lastBankedOn: r.lastBankedOn,
       silentPeriods: r.periodsSinceBanked,
-      checkedSilentPeriods: checkedThrough === null ? 0 : silenceAsOf(checkedThrough, r.seriesId),
+      checkedSilentPeriods: asChecked?.periodsSinceBanked ?? 0,
       checkedThrough,
       unreadDays: checkedThrough === null ? null : diffDays(checkedThrough, today),
-      ...gapOf(r.impliedCents, r.bankedCents),
+      ...gapOf(
+        r.impliedCents,
+        r.bankedCents,
+        unreadImpliedCents,
+        checkedThrough === null ? { kind: "unchecked" } : { kind: "day", through: checkedThrough },
+      ),
     };
     return { ...base, verdict: verdictFor(base) };
   });
 
   const impliedCents = pay.reduce((s, l) => s + l.impliedCents, 0);
   const bankedCents = pay.reduce((s, l) => s + l.bankedCents, 0);
-  const totals = { impliedCents, bankedCents, ...gapOf(impliedCents, bankedCents) };
+  // the lines' own unread parts, against the one day they share when they share one
+  const unread = pay.filter((l) => l.unreadGapCents > 0);
+  const totals = {
+    impliedCents,
+    bankedCents,
+    ...gapOf(
+      impliedCents,
+      bankedCents,
+      unread.reduce((s, l) => s + l.unreadGapCents, 0),
+      sharedFrontier(unread.map((l) => l.checkedThrough)),
+    ),
+  };
   const bankedSharePct = impliedCents <= 0 ? null : Math.round((bankedCents / impliedCents) * 100);
 
   const month = periodBounds(today, "monthly");

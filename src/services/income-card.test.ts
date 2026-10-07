@@ -164,10 +164,76 @@ describe("incomeCard", () => {
     expect(line.bankedCents).toBe(140_000);
     expect(line.gapCents).toBe(1_060_000);
     expect(line.gapMagnitudeCents).toBe(1_060_000);
-    expect(line.gapLabel).toBe("never reached a bank");
+    // Aug 13 and Aug 20 fall after Aug 12, the day the records are checked through
+    expect(line.unreadGapCents).toBe(200_000);
+    expect(line.gapLabel).toBe(
+      "$8,600.00 of it never reached a bank; the other $2,000.00 is for paydays after Aug 12, the last day every account that pay lands in has been checked through — so the ledger has not looked for it.",
+    );
     expect(card.totals.bankedCents).toBe(140_000);
     expect(card.bankedSharePct).toBe(12);
     expect(card.summary).toContain("12% of it");
+  });
+
+  /**
+   * 🔴 Measured on the owner's ledger 2026-10-07: "The difference — never reached
+   * a bank — $13,397.96", and $1,141.92 of it is the Oct 1 payday, after Sep 24,
+   * the day Wells Fargo (where the payroll lands) is checked through. Nobody had
+   * looked for it. The figure stays; the label names only read paydays as never
+   * having reached a bank — the same as-of-the-frontier reading the verdict and
+   * /spending's `checkedPeriodsCovered` already take.
+   */
+  describe("the difference says never reached a bank only of paydays the ledger has read", () => {
+    test("a difference wholly on read paydays keeps the plain label", () => {
+      addSeries();
+      addTxn(PAY_START, 100_000);
+      coverThrough(CHASE, "2026-06-01", "2026-08-26");
+
+      const card = incomeCard(bundle.db, TODAY)!;
+      expect(card.totals.gapMagnitudeCents).toBe(1_100_000);
+      expect(card.totals.unreadGapCents).toBe(0);
+      expect(card.totals.gapLabel).toBe("never reached a bank");
+    });
+
+    test("the money figures are unchanged; only the label splits", () => {
+      addSeries();
+      addTxn(PAY_START, 100_000);
+      addTxn("2026-06-11", 40_000);
+      coverThrough(CHASE, "2026-06-01", "2026-08-12");
+
+      const card = incomeCard(bundle.db, TODAY)!;
+      expect(card.totals.gapCents).toBe(1_060_000);
+      expect(card.totals.gapMagnitudeCents).toBe(1_060_000);
+      expect(card.totals.unreadGapCents).toBe(200_000);
+      expect(card.totals.gapLabel).toContain("$8,600.00 of it never reached a bank");
+      expect(card.totals.gapLabel).toContain("the other $2,000.00 is for paydays after Aug 12");
+    });
+
+    test("a difference wholly after the checked day is not called unbanked at all", () => {
+      addSeries();
+      // paid on time through Aug 6, checked only through Aug 6: Aug 13 and 20 unread
+      for (let day = PAY_START; day <= "2026-08-06"; day = addDays(day, 7)) addTxn(day, 100_000);
+      coverThrough(CHASE, "2026-06-01", "2026-08-06");
+
+      const card = incomeCard(bundle.db, TODAY)!;
+      expect(card.totals.gapMagnitudeCents).toBe(200_000);
+      expect(card.totals.unreadGapCents).toBe(200_000);
+      expect(card.totals.gapLabel).toBe(
+        "all of it is for paydays after Aug 6, the last day every account that pay lands in has been checked through — so the ledger has not looked for it.",
+      );
+      expect(card.totals.gapLabel).not.toContain("never reached");
+    });
+
+    test("an unchecked landing account cannot say any of it never reached a bank", () => {
+      addSeries();
+      addTxn(PAY_START, 100_000);
+      // no daily_balances at all for CHASE
+
+      const card = incomeCard(bundle.db, TODAY)!;
+      expect(card.totals.unreadGapCents).toBe(card.totals.gapMagnitudeCents);
+      expect(card.totals.gapLabel).toBe(
+        "the ledger has not checked every account that pay could land in, so it cannot say whether any of it reached a bank.",
+      );
+    });
   });
 
   /**
