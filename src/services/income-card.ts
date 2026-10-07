@@ -3,7 +3,7 @@ import { STALE_PERIODS, type CashEarningsBasis } from "@/lib/cash-earnings";
 import { addCalendarMonths, diffDays, monthKey, periodBounds, todayIso } from "@/lib/dates";
 import { formatDayShort, formatMonthYear } from "@/lib/format-date";
 import { formatCents } from "@/lib/money";
-import { LAST_CHECKED_DAY } from "@/lib/unbanked-income";
+import { LAST_CHECKED_DAY, unbankedIncomeFrontierClause } from "@/lib/unbanked-income";
 import { incomeExpectation } from "./budgets";
 import {
   cashEarningsReadings,
@@ -237,9 +237,19 @@ function paydaysLabelFor(paydays: number, firstOn: string | null, lastOn: string
  * not looked yet?
  *
  * `STALE_PERIODS` is imported rather than re-chosen. It is already the bar
- * `cashEarnings` uses to call a series stale — three periods, because he banks
- * in lumps and one quiet week is his ordinary rhythm — and a second threshold
- * for the same idea is a defect whichever number it holds.
+ * `cashEarnings` uses to call a series stale — three periods — and a second
+ * threshold for the same idea is a defect whichever number it holds.
+ *
+ * 🔴 A LIVE SCHEDULE'S SILENCE WAS NEVER ASKED WHETHER ANYONE LOOKED. Measured
+ * on the owner's ledger 2026-10-07: "1 payday has passed since Sep 24 with no
+ * deposit — you bank in lumps, so fewer than 3 quiet periods is the ordinary
+ * rhythm…", of the Oct 1 payday, after Sep 24, the day Wells Fargo (where the
+ * payroll lands) is checked through. /recurring said of the same payday "so the
+ * ledger has not looked for its deposit", and "you bank in lumps" was a fact of
+ * the cash job, not of weekly ACH payroll. Unread paydays are now named by
+ * `unbankedIncomeFrontierClause`, the forecast's own sentence; a silence the
+ * ledger HAS read is measured against the stale bar, and nothing more is said
+ * about how he banks.
  */
 function verdictFor(line: Omit<IncomePayLine, "verdict">): string {
   const { lastBankedOn, silentPeriods, checkedSilentPeriods, checkedThrough, unreadDays } = line;
@@ -248,13 +258,26 @@ function verdictFor(line: Omit<IncomePayLine, "verdict">): string {
     return "No deposit has been attributed to this schedule on or before today, so there is nothing to date the silence from.";
   }
 
-  const since = `${silentPeriods} ${paydayWord(silentPeriods)} ${silentPeriods === 1 ? "has" : "have"} passed since ${formatDayShort(lastBankedOn)} with no deposit`;
+  const passed = `${silentPeriods} ${paydayWord(silentPeriods)} ${silentPeriods === 1 ? "has" : "have"} passed`;
+  const since = `${passed} since ${formatDayShort(lastBankedOn)} with no deposit`;
 
   if (line.basis === "series-live") {
     if (silentPeriods === 0) {
       return `Pay is arriving: the last deposit landed on ${formatDayShort(lastBankedOn)}.`;
     }
-    return `${since} — you bank in lumps, so fewer than ${STALE_PERIODS} quiet periods is the ordinary rhythm here rather than a warning.`;
+    const unread = unbankedIncomeFrontierClause(
+      {
+        occurrenceCount: silentPeriods,
+        checkedOccurrenceCount: checkedSilentPeriods,
+        frontier: checkedThrough === null ? { kind: "unchecked" } : { kind: "day", through: checkedThrough },
+      },
+      formatDayShort,
+    );
+    if (unread !== null) {
+      // "with no deposit" is the clause's to say, and only of the days it checked
+      return `${passed} since the last deposit on ${formatDayShort(lastBankedOn)}. ${unread}`;
+    }
+    return `${since} — a schedule is called stale only after ${STALE_PERIODS} quiet periods, so this is not a warning yet.`;
   }
 
   if (checkedThrough === null) {

@@ -485,4 +485,75 @@ describe("incomeCard", () => {
     expect(line.basis).toBe("series-live");
     expect(line.verdict).toContain("Pay is arriving");
   });
+
+  /**
+   * 🔴 Measured on the owner's ledger 2026-10-07: "1 payday has passed since Sep
+   * 24 with no deposit — you bank in lumps, so fewer than 3 quiet periods is the
+   * ordinary rhythm…" — of the Oct 1 payday, which falls after Sep 24, the day
+   * Wells Fargo (where the payroll lands) is checked through. /recurring said of
+   * the same payday "so the ledger has not looked for its deposit". A live
+   * schedule's silence is named in the forecast's words when nobody has looked.
+   */
+  describe("a live schedule's silence says whether the ledger has looked", () => {
+    /** weekly deposits Jun 4 … `through`, every one on time */
+    function paidThrough(through: string): void {
+      for (let day = PAY_START; day <= through; day = addDays(day, 7)) addTxn(day, 100_000);
+    }
+
+    test("a payday after the checked day is one the ledger has not looked for", () => {
+      addSeries();
+      paidThrough("2026-08-13");
+      coverThrough(CHASE, "2026-06-01", "2026-08-13");
+
+      const line = incomeCard(bundle.db, TODAY)!.pay[0]!;
+      expect(line.basis).toBe("series-live");
+      expect(line.silentPeriods).toBe(1);
+      expect(line.checkedSilentPeriods).toBe(0);
+      expect(line.verdict).toBe(
+        "1 payday has passed since the last deposit on Aug 13. It falls after Aug 13, the last day every account that pay lands in has been checked through — so the ledger has not looked for its deposit.",
+      );
+      expect(line.verdict).not.toContain("with no deposit");
+      expect(line.verdict).not.toContain("lumps");
+    });
+
+    test("a silence straddling the checked day names both halves", () => {
+      addSeries();
+      paidThrough("2026-08-06");
+      coverThrough(CHASE, "2026-06-01", "2026-08-13");
+
+      const line = incomeCard(bundle.db, TODAY)!.pay[0]!;
+      expect(line.basis).toBe("series-live");
+      expect(line.silentPeriods).toBe(2);
+      expect(line.checkedSilentPeriods).toBe(1);
+      expect(line.verdict).toBe(
+        "2 paydays have passed since the last deposit on Aug 6. 1 falls on a day already checked, with no deposit; the other one falls after Aug 13, the last day every account that pay lands in has been checked through.",
+      );
+    });
+
+    test("an unchecked landing account says the ledger cannot tell", () => {
+      addSeries();
+      paidThrough("2026-08-13");
+      // no daily_balances at all for CHASE
+
+      const line = incomeCard(bundle.db, TODAY)!.pay[0]!;
+      expect(line.basis).toBe("series-live");
+      expect(line.verdict).toContain("The ledger has not checked every account that pay could land in");
+      expect(line.verdict).not.toContain("lumps");
+    });
+
+    test("a silence the ledger has read is short of stale, and says so without calling it cash", () => {
+      addSeries();
+      paidThrough("2026-08-13");
+      coverThrough(CHASE, "2026-06-01", "2026-08-26");
+
+      const line = incomeCard(bundle.db, TODAY)!.pay[0]!;
+      expect(line.basis).toBe("series-live");
+      expect(line.checkedSilentPeriods).toBe(1);
+      expect(line.verdict).toBe(
+        "1 payday has passed since Aug 13 with no deposit — a schedule is called stale only after 3 quiet periods, so this is not a warning yet.",
+      );
+      expect(line.verdict).not.toContain("lumps");
+      expect(line.verdict).not.toContain("has not looked");
+    });
+  });
 });
