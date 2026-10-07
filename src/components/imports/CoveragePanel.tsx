@@ -26,7 +26,8 @@ const GRADE_META: Record<CoverageGrade, { label: string; dot: string; text: stri
   unverified: { label: "Unverified", dot: "bg-warning", text: "text-warning" },
   market_value: { label: "Market value", dot: "bg-ink-faint", text: "text-ink-muted" },
   unknown: { label: "No data yet", dot: "bg-ink-faint", text: "text-ink-faint" },
-  manual: { label: "Manual", dot: "bg-ink-faint", text: "text-ink-muted" },
+  // ⚖️ "counted" is the one verb for a balance he typed — its row and the trust card say it too (§6A 50)
+  manual: { label: "Counted", dot: "bg-ink-faint", text: "text-ink-muted" },
   verified: { label: "Verified", dot: "bg-positive", text: "text-positive" },
 };
 

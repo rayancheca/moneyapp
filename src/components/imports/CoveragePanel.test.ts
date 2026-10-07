@@ -222,3 +222,16 @@ describe("CoveragePanel — an account no holding prices names whose balance it 
     );
   });
 });
+
+/*
+ * ⚖️ His answer, 2026-10-07 (§6A 50): "counted" is the one verb for a balance he typed. The badge read "Manual" beside
+ * its own "you are the statement — last counted …" and the trust card's "you counted it" — one account, two words.
+ */
+describe("CoveragePanel — an account he counts himself", () => {
+  test("its badge says Counted, in the words of its row and the trust card", () => {
+    const id = addAccount("Safe");
+    addManualAnchor(bundle.db, { accountId: id, anchoredOn: "2026-09-01", enteredCents: 100_000 });
+    rebuildAccount(bundle.db, id, "2026-09-15");
+    expect(panel().rows.get("Safe")).toBe("Safe Counted no statements you are the statement — last counted Sep 1, 2026");
+  });
+});

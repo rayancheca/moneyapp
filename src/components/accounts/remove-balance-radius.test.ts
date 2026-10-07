@@ -525,4 +525,31 @@ describe("removeBalanceRadius — a balance he counted is named as his count", (
       triggerAriaLabel: "remove the balance recorded on Jul 6, 2026",
     });
   });
+
+  /*
+   * 🔴 A live reading's dialog said "Record a balance again" and "Record the balance again …" — a form that no longer
+   * exists by that name (review, 2026-10-07). He cannot re-take a live reading for a past day; what he CAN do is the
+   * form on the page, so the sentence names it, without an "again" that was never his.
+   */
+  test("a live reading's dialog points at the form that exists, and claims no 'again'", () => {
+    const today = "2026-07-06";
+    const oneDay = dialog(
+      "Checking",
+      [anchor("s-jul", "2026-07-01", 10_000, "statement"), anchor("live", today, 9_000, "live")],
+      "live",
+      [["2026-07-03", -1_000]],
+      today,
+    );
+    expect(oneDay.reassurance).toBe(
+      "No transaction is touched — the balance curve is derived, so it rebuilds from what is left. Add a balance you counted on its day to re-verify these days.",
+    );
+    const only = dialog("Checking", [anchor("live", today, 9_000, "live")], "live", [], today);
+    expect(only.reassurance).toBe(
+      "No transaction is touched. Add a balance you counted and the curve is derived from it and the transactions.",
+    );
+    for (const radius of [oneDay, only]) {
+      expect(blastRadiusSentence(radius)).not.toMatch(/\bRecord (a|the) balance\b/);
+      expect(radius.lines?.[0]!.label).toBe("Balance, as recorded");
+    }
+  });
 });

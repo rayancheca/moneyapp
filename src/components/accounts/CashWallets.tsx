@@ -160,7 +160,7 @@ function OpeningBalance({ wallet, onSaved }: { wallet: CashWalletView; onSaved: 
       <span className="text-xs text-ink-faint">
         Opened with <Money cents={wallet.openingCents} className="figures" /> ·{" "}
         <Link href={`/accounts/${wallet.id}`} className="underline hover:text-ink">
-          later balances recorded
+          later balances counted
         </Link>
       </span>
     );

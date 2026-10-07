@@ -308,7 +308,7 @@ export default async function AccountDetailPage({
             </>
           ) : (
             <p className="mt-1 text-sm text-ink-muted">
-              No balance yet — record one below or import a statement.
+              No balance yet — add one you counted below, or import a statement.
             </p>
           )}
         </header>

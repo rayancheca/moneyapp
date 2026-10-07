@@ -66,7 +66,7 @@ interface BalanceNaming {
   as: string;
   /** the balance as a sentence's subject */
   thisOne: string;
-  /** how a balance is put back — any balance, when none is left */
+  /** how a balance is put back — any balance, when none is left; "again" only where it was his to begin with */
   addOne: string;
   /** how this one is put back */
   addItBack: string;
@@ -79,18 +79,22 @@ interface BalanceNaming {
 const COUNTED_NAMING: BalanceNaming = {
   as: "as you counted it",
   thisOne: "this balance you counted",
-  addOne: "Add a balance you counted",
-  addItBack: "Add the balance you counted",
+  addOne: "Add a balance you counted again",
+  addItBack: "Add the balance you counted again",
   title: "Remove this balance you counted",
   confirmLabel: "Remove the balance you counted",
   byWhom: "you counted",
 };
 
+/*
+ * 🔴 A live reading's dialog said "Record a balance again" — a form that no longer exists by that name — and promised
+ * "again" of a reading he never took and cannot re-take for a past day (review, 2026-10-07). It names the form there is.
+ */
 const RECORDED_NAMING: BalanceNaming = {
   as: "as recorded",
   thisOne: "this recorded balance",
-  addOne: "Record a balance",
-  addItBack: "Record the balance",
+  addOne: "Add a balance you counted",
+  addItBack: "Add a balance you counted on its day",
   title: "Remove this recorded balance",
   confirmLabel: "Remove this balance",
   byWhom: "recorded",
@@ -159,8 +163,8 @@ const CHECKED_WORDS: RemovalWords = {
   rebasedDay: "verified day",
   noneLost: (name) => `No day of ${name} stops being verified without this balance`,
   keeps: "the same balance and the same verification",
-  recordAgain: (n) => `${n.addOne} again and the curve is derived from it and the transactions.`,
-  restores: (n) => `${n.addItBack} again to re-verify these days.`,
+  recordAgain: (n) => `${n.addOne} and the curve is derived from it and the transactions.`,
+  restores: (n) => `${n.addItBack} to re-verify these days.`,
 };
 
 const HELD_WORDS: RemovalWords = {
@@ -170,8 +174,8 @@ const HELD_WORDS: RemovalWords = {
   noneLost: (name) => `No day of ${name} loses its balance without this one`,
   keeps: "the same balance",
   // step-hold never replays a transaction
-  recordAgain: (n) => `${n.addOne} again and the curve is derived from it.`,
-  restores: (n) => `${n.addItBack} again to restore these days.`,
+  recordAgain: (n) => `${n.addOne} and the curve is derived from it.`,
+  restores: (n) => `${n.addItBack} to restore these days.`,
 };
 
 const COUNTED_WORDS: RemovalWords = {
