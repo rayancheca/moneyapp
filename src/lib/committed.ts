@@ -63,6 +63,14 @@ export interface CommittedOccurrence {
   cadence: Cadence;
   /** the day the series stops, or null when it runs on past this horizon */
   endsOn: string | null;
+  /**
+   * ARREARS ONLY: of this payment's magnitude, the part that fell due on days no
+   * import has reached for the accounts the series bills on — money that may
+   * well have posted where nobody has looked. Absent means all of it: the
+   * cautious reading, because the sentence it feeds says "never posted" only of
+   * the rest (`arrearsSentence`).
+   */
+  unreadCents?: number;
 }
 
 export interface CommittedInput {
@@ -157,6 +165,12 @@ export interface CommittedOutflows {
    * separately, which is what the runway card does.
    */
   overdueCents: number;
+  /**
+   * Of `overdueCents`, the part on days no import has reached for the accounts
+   * those bills post from — summed from each arrears payment's `unreadCents`.
+   * What `arrearsSentence` refuses to call "never posted".
+   */
+  overdueUnreadCents: number;
   /** how many arrears payments `overdueCents` is made of */
   overdueCount: number;
   /**
@@ -230,6 +244,7 @@ export function committedOutflows(input: CommittedInput): CommittedOutflows {
   let inflowCents = 0;
   let inflowCount = 0;
   let overdueCount = 0;
+  let overdueUnreadCents = 0;
 
   const take = (o: CommittedOccurrence, origin: CommittedOrigin): void => {
     if (o.amountCents > 0) {
@@ -244,7 +259,11 @@ export function committedOutflows(input: CommittedInput): CommittedOutflows {
 
     const magnitude = -o.amountCents;
     const isArrears = origin === "overdue";
-    if (isArrears) overdueCount += 1;
+    if (isArrears) {
+      overdueCount += 1;
+      // clamped to the payment: never more unread than there is to read
+      overdueUnreadCents += Math.min(magnitude, Math.max(0, o.unreadCents ?? magnitude));
+    }
     const acc = bySeries.get(o.seriesId) ?? {
       seriesId: o.seriesId,
       name: o.name,
@@ -318,6 +337,7 @@ export function committedOutflows(input: CommittedInput): CommittedOutflows {
     totalCents,
     perMonthCents: Math.round(totalCents / months),
     overdueCents: lines.reduce((s, l) => s + l.overdueCents, 0),
+    overdueUnreadCents,
     overdueCount,
     unevidencedCents: lines.reduce((s, l) => s + (l.neverPosted ? l.totalCents : 0), 0),
     shortfallPerMonthCents: lines.reduce((s, l) => s + l.shortfallPerMonthCents, 0),
@@ -325,6 +345,30 @@ export function committedOutflows(input: CommittedInput): CommittedOutflows {
     inflowCents,
     inflowCount,
   };
+}
+
+/**
+ * The runway card's arrears sentence: what came due before today and has not
+ * posted, said only as far as the ledger has looked.
+ *
+ * 🔴 It read "A further $2,296.20 came due earlier this month and never
+ * posted." on the owner's ledger 2026-10-07, while October was imported for
+ * none of the accounts those bills post from — and /budgets said the same money
+ * is "due by today and no import has covered them yet". "Never posted" is kept
+ * for the part on days the ledger has read (`overdueUnreadCents` is the rest);
+ * the unread part takes /budgets' words. "Came due" stays: this leg closes the
+ * day BEFORE today (see `committedBook`), so every payment in it is past due.
+ *
+ * Null when nothing is late — silence, never "nothing came due".
+ */
+export function arrearsSentence(book: { overdueCents: number; overdueUnreadCents: number }): string | null {
+  if (book.overdueCents <= 0) return null;
+  const unread = Math.min(book.overdueCents, Math.max(0, book.overdueUnreadCents));
+  const read = book.overdueCents - unread;
+  const lead = `A further ${formatCents(book.overdueCents)} came due earlier this month`;
+  if (unread === 0) return `${lead} and never posted.`;
+  if (read === 0) return `${lead} and no import has covered it yet.`;
+  return `${lead}: ${formatCents(read)} never posted, and no import has covered the other ${formatCents(unread)} yet.`;
 }
 
 /**

@@ -164,10 +164,137 @@ describe("incomeCard", () => {
     expect(line.bankedCents).toBe(140_000);
     expect(line.gapCents).toBe(1_060_000);
     expect(line.gapMagnitudeCents).toBe(1_060_000);
-    expect(line.gapLabel).toBe("never reached a bank");
+    // Aug 13 and Aug 20 fall after Aug 12, the day the records are checked through
+    expect(line.unreadGapCents).toBe(200_000);
+    expect(line.gapLabel).toBe(
+      "$8,600.00 of it never reached a bank; the other $2,000.00 is for paydays after Aug 12, the last day every account that pay lands in has been checked through — so the ledger has not looked for it.",
+    );
     expect(card.totals.bankedCents).toBe(140_000);
     expect(card.bankedSharePct).toBe(12);
     expect(card.summary).toContain("12% of it");
+  });
+
+  /**
+   * 🔴 Measured on the owner's ledger 2026-10-07: "The difference — never reached
+   * a bank — $13,397.96", and $1,141.92 of it is the Oct 1 payday, after Sep 24,
+   * the day Wells Fargo (where the payroll lands) is checked through. Nobody had
+   * looked for it. The figure stays; the label names only read paydays as never
+   * having reached a bank — the same as-of-the-frontier reading the verdict and
+   * /spending's `checkedPeriodsCovered` already take.
+   */
+  /**
+   * 🔴 Measured on a copy of the owner's ledger 2026-10-07. It America LLC's
+   * series names Wells Fargo (checked through Sep 24), but two Jun 4–5 ATM
+   * deposits sit in Chase Checking (checked through Aug 12), and the card took
+   * the earlier day: "$4,262.60 of it never reached a bank; the other $9,135.36
+   * is for paydays after Aug 12" — false of seven paydays in a read account —
+   * and, its as-of-Aug-12 silence (9) outrunning the real one (1), the verdict
+   * fell through to "a schedule is called stale only after 3 quiet periods" of a
+   * payday nobody had looked for. Mirrored here: Jun 4 in Chase, a ten-week lump
+   * on Aug 13 in SoFi, the series naming SoFi.
+   */
+  describe("pay is looked for where it lands now", () => {
+    function movedToSofi(): void {
+      addAccount(SOFI, "SoFi Checking");
+      addSeries({ accountId: SOFI });
+      addTxn(PAY_START, 100_000, { accountId: CHASE });
+      addTxn("2026-08-13", 1_000_000, { accountId: SOFI });
+      coverThrough(CHASE, "2026-06-01", "2026-07-09");
+      coverThrough(SOFI, "2026-06-01", "2026-08-13");
+    }
+
+    test("the series' own account sets the frontier, not an account old pay landed in", () => {
+      movedToSofi();
+      const line = incomeCard(bundle.db, TODAY)!.pay[0]!;
+      expect(line.checkedThrough).toBe("2026-08-13");
+      expect(line.silentPeriods).toBe(1);
+      expect(line.checkedSilentPeriods).toBe(0);
+      expect(line.verdict).toBe(
+        "1 payday has passed since the last deposit on Aug 13. It falls after Aug 13, the last day every account that pay lands in has been checked through — so the ledger has not looked for its deposit.",
+      );
+    });
+
+    test("the difference names only the payday after that account's checked day as unread", () => {
+      movedToSofi();
+      const card = incomeCard(bundle.db, TODAY)!;
+      // Jun 4 … Aug 20: twelve paydays implied, eleven banked
+      expect(card.totals.gapMagnitudeCents).toBe(100_000);
+      expect(card.totals.unreadGapCents).toBe(100_000);
+      expect(card.totals.gapLabel).toContain("after Aug 13");
+    });
+
+    /**
+     * Of the silent paydays, the read ones can never outnumber them. A frontier
+     * BEFORE the last deposit has every silent payday after it, so none is read.
+     */
+    test("a frontier before the last deposit reads none of the silence, never more than there is", () => {
+      addAccount(SOFI, "SoFi Checking");
+      addSeries({ accountId: SOFI });
+      addTxn(PAY_START, 100_000, { accountId: SOFI });
+      addTxn("2026-08-13", 1_000_000, { accountId: CHASE });
+      coverThrough(SOFI, "2026-06-01", "2026-07-09");
+      coverThrough(CHASE, "2026-06-01", "2026-08-26");
+
+      const line = incomeCard(bundle.db, TODAY)!.pay[0]!;
+      expect(line.checkedThrough).toBe("2026-07-09");
+      expect(line.silentPeriods).toBe(1);
+      expect(line.checkedSilentPeriods).toBe(0);
+      expect(line.verdict).toContain("so the ledger has not looked for its deposit");
+    });
+  });
+
+  describe("the difference says never reached a bank only of paydays the ledger has read", () => {
+    test("a difference wholly on read paydays keeps the plain label", () => {
+      addSeries();
+      addTxn(PAY_START, 100_000);
+      coverThrough(CHASE, "2026-06-01", "2026-08-26");
+
+      const card = incomeCard(bundle.db, TODAY)!;
+      expect(card.totals.gapMagnitudeCents).toBe(1_100_000);
+      expect(card.totals.unreadGapCents).toBe(0);
+      expect(card.totals.gapLabel).toBe("never reached a bank");
+    });
+
+    test("the money figures are unchanged; only the label splits", () => {
+      addSeries();
+      addTxn(PAY_START, 100_000);
+      addTxn("2026-06-11", 40_000);
+      coverThrough(CHASE, "2026-06-01", "2026-08-12");
+
+      const card = incomeCard(bundle.db, TODAY)!;
+      expect(card.totals.gapCents).toBe(1_060_000);
+      expect(card.totals.gapMagnitudeCents).toBe(1_060_000);
+      expect(card.totals.unreadGapCents).toBe(200_000);
+      expect(card.totals.gapLabel).toContain("$8,600.00 of it never reached a bank");
+      expect(card.totals.gapLabel).toContain("the other $2,000.00 is for paydays after Aug 12");
+    });
+
+    test("a difference wholly after the checked day is not called unbanked at all", () => {
+      addSeries();
+      // paid on time through Aug 6, checked only through Aug 6: Aug 13 and 20 unread
+      for (let day = PAY_START; day <= "2026-08-06"; day = addDays(day, 7)) addTxn(day, 100_000);
+      coverThrough(CHASE, "2026-06-01", "2026-08-06");
+
+      const card = incomeCard(bundle.db, TODAY)!;
+      expect(card.totals.gapMagnitudeCents).toBe(200_000);
+      expect(card.totals.unreadGapCents).toBe(200_000);
+      expect(card.totals.gapLabel).toBe(
+        "all of it is for paydays after Aug 6, the last day every account that pay lands in has been checked through — so the ledger has not looked for it.",
+      );
+      expect(card.totals.gapLabel).not.toContain("never reached");
+    });
+
+    test("an unchecked landing account cannot say any of it never reached a bank", () => {
+      addSeries();
+      addTxn(PAY_START, 100_000);
+      // no daily_balances at all for CHASE
+
+      const card = incomeCard(bundle.db, TODAY)!;
+      expect(card.totals.unreadGapCents).toBe(card.totals.gapMagnitudeCents);
+      expect(card.totals.gapLabel).toBe(
+        "the ledger has not checked every account that pay could land in, so it cannot say whether any of it reached a bank.",
+      );
+    });
   });
 
   /**
@@ -484,5 +611,76 @@ describe("incomeCard", () => {
     const line = incomeCard(bundle.db, TODAY)!.pay[0]!;
     expect(line.basis).toBe("series-live");
     expect(line.verdict).toContain("Pay is arriving");
+  });
+
+  /**
+   * 🔴 Measured on the owner's ledger 2026-10-07: "1 payday has passed since Sep
+   * 24 with no deposit — you bank in lumps, so fewer than 3 quiet periods is the
+   * ordinary rhythm…" — of the Oct 1 payday, which falls after Sep 24, the day
+   * Wells Fargo (where the payroll lands) is checked through. /recurring said of
+   * the same payday "so the ledger has not looked for its deposit". A live
+   * schedule's silence is named in the forecast's words when nobody has looked.
+   */
+  describe("a live schedule's silence says whether the ledger has looked", () => {
+    /** weekly deposits Jun 4 … `through`, every one on time */
+    function paidThrough(through: string): void {
+      for (let day = PAY_START; day <= through; day = addDays(day, 7)) addTxn(day, 100_000);
+    }
+
+    test("a payday after the checked day is one the ledger has not looked for", () => {
+      addSeries();
+      paidThrough("2026-08-13");
+      coverThrough(CHASE, "2026-06-01", "2026-08-13");
+
+      const line = incomeCard(bundle.db, TODAY)!.pay[0]!;
+      expect(line.basis).toBe("series-live");
+      expect(line.silentPeriods).toBe(1);
+      expect(line.checkedSilentPeriods).toBe(0);
+      expect(line.verdict).toBe(
+        "1 payday has passed since the last deposit on Aug 13. It falls after Aug 13, the last day every account that pay lands in has been checked through — so the ledger has not looked for its deposit.",
+      );
+      expect(line.verdict).not.toContain("with no deposit");
+      expect(line.verdict).not.toContain("lumps");
+    });
+
+    test("a silence straddling the checked day names both halves", () => {
+      addSeries();
+      paidThrough("2026-08-06");
+      coverThrough(CHASE, "2026-06-01", "2026-08-13");
+
+      const line = incomeCard(bundle.db, TODAY)!.pay[0]!;
+      expect(line.basis).toBe("series-live");
+      expect(line.silentPeriods).toBe(2);
+      expect(line.checkedSilentPeriods).toBe(1);
+      expect(line.verdict).toBe(
+        "2 paydays have passed since the last deposit on Aug 6. 1 falls on a day already checked, with no deposit; the other one falls after Aug 13, the last day every account that pay lands in has been checked through.",
+      );
+    });
+
+    test("an unchecked landing account says the ledger cannot tell", () => {
+      addSeries();
+      paidThrough("2026-08-13");
+      // no daily_balances at all for CHASE
+
+      const line = incomeCard(bundle.db, TODAY)!.pay[0]!;
+      expect(line.basis).toBe("series-live");
+      expect(line.verdict).toContain("The ledger has not checked every account that pay could land in");
+      expect(line.verdict).not.toContain("lumps");
+    });
+
+    test("a silence the ledger has read is short of stale, and says so without calling it cash", () => {
+      addSeries();
+      paidThrough("2026-08-13");
+      coverThrough(CHASE, "2026-06-01", "2026-08-26");
+
+      const line = incomeCard(bundle.db, TODAY)!.pay[0]!;
+      expect(line.basis).toBe("series-live");
+      expect(line.checkedSilentPeriods).toBe(1);
+      expect(line.verdict).toBe(
+        "1 payday has passed since Aug 13 with no deposit — a schedule is called stale only after 3 quiet periods, so this is not a warning yet.",
+      );
+      expect(line.verdict).not.toContain("lumps");
+      expect(line.verdict).not.toContain("has not looked");
+    });
   });
 });

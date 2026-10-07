@@ -71,7 +71,23 @@ export interface CashEarningsWindow {
   withChecked?: boolean;
 }
 
-/** The accounts each income series' attributed pay has actually landed in. */
+/**
+ * Where each series' next deposit is looked for: where its pay lands NOW — the
+ * series' own `account_id` when it names one, otherwise every account its
+ * attributed pay has landed in.
+ *
+ * 🔴 Every account pay had EVER landed in, measured on a copy of the owner's
+ * ledger 2026-10-07: It America LLC's weekly payroll names Wells Fargo, checked
+ * through Sep 24 (he moved the series there 2026-09-28), but two Jun 4–5 ATM
+ * deposits sit in Chase Checking, checked through Aug 12 — and `earliestVerified`
+ * took Aug 12. The dashboard called seven paydays in a read account unread, and
+ * /recurring and /budgets said Oct 1 "falls after Wed, Aug 12, 2026". A pay
+ * series that names its account has told the app where to look.
+ *
+ * ⛔ ONE rule for every caller — the dashboard's income card, /spending's note
+ * (`cashEarningsReadings`) and the passed-payday sentence on /budgets and
+ * /recurring (`unbankedIncomeForSeries`) — so no two can name a different day.
+ */
 export function landingAccountsBySeries(db: AppDatabase): Map<string, Set<string>> {
   const rows = db
     .select({ seriesId: transactions.recurringSeriesId, accountId: transactions.accountId })
@@ -86,7 +102,36 @@ export function landingAccountsBySeries(db: AppDatabase): Map<string, Set<string
     set.add(r.accountId);
     out.set(r.seriesId, set);
   }
+  // a named account replaces the history: that is where the pay lands now
+  for (const s of db
+    .select({ id: recurringSeries.id, accountId: recurringSeries.accountId })
+    .from(recurringSeries)
+    .where(isNotNull(recurringSeries.accountId))
+    .all()) {
+    if (s.accountId !== null) out.set(s.id, new Set([s.accountId]));
+  }
   return out;
+}
+
+/**
+ * Of a schedule's silent paydays — those since its last deposit — how many fall
+ * on or before `checkedThrough`, given the silence read AS OF that day.
+ *
+ * ⛔ Never more than the silence itself. The as-of reading counts from the last
+ * deposit BEFORE the frontier, so a frontier earlier than the last deposit gave
+ * a larger silence than the real one (9 against 1 on the owner's ledger copy,
+ * 2026-10-07) and every sentence comparing the two broke. Every silent payday
+ * falls after the last deposit, so with the frontier before it none is read.
+ */
+export function checkedSilence(
+  asOfSilence: number,
+  silentPeriods: number,
+  lastBankedOn: string | null,
+  checkedThrough: string | null,
+): number {
+  if (checkedThrough === null) return 0;
+  if (lastBankedOn !== null && compareDates(checkedThrough, lastBankedOn) < 0) return 0;
+  return Math.min(Math.max(0, asOfSilence), silentPeriods);
 }
 
 /**
@@ -235,7 +280,12 @@ export function cashEarningsReadings(
       ...reading,
       checkedThrough,
       checkedPeriodsCovered: asChecked.periodsCovered,
-      checkedPeriodsSinceBanked: asChecked.periodsSinceBanked,
+      checkedPeriodsSinceBanked: checkedSilence(
+        asChecked.periodsSinceBanked,
+        reading.periodsSinceBanked,
+        reading.lastBankedOn,
+        checkedThrough,
+      ),
     });
   }
 

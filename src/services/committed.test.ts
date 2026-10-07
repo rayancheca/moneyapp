@@ -562,6 +562,50 @@ describe("committedBook", () => {
     expect(line?.overdueCents).toBe(5000);
   });
 
+  /**
+   * 🔴 The runway card called arrears "never posted" while no import reached the
+   * day they fell due (measured 2026-10-07: $2,296.20, October imported for none
+   * of the accounts). Whether a bill's day is read is the recurring calendar's
+   * rule — `frontierForSeries` over the accounts the series bills on — so the
+   * card and the calendar's "not imported yet" cannot disagree about one bill.
+   */
+  describe("arrears the ledger has not read", () => {
+    /** Internet, due Aug 10, its July charge on Checking — so it bills on Checking */
+    function internetOnChecking(): string {
+      const id = addSeries({
+        name: "Internet",
+        kind: "bill",
+        nextExpectedOn: "2026-08-10",
+        amountCents: -5000,
+        lastMatchedOn: "2026-07-10",
+      });
+      insertTxn({ postedOn: "2026-07-10", amountCents: -5000, rawDescription: "ISP", recurringSeriesId: id });
+      return id;
+    }
+
+    test("a bill due after the day its account is imported through is unread", () => {
+      internetOnChecking();
+      // Checking's newest row is the Aug 5 supermarket charge
+      const book = committedBook(bundle.db, TODAY, 12);
+      expect(book.overdueCents).toBe(5000);
+      expect(book.overdueUnreadCents).toBe(5000);
+    });
+
+    test("a bill due on a day its account has been imported past is read", () => {
+      internetOnChecking();
+      insertTxn({ postedOn: "2026-08-20", amountCents: -1000, rawDescription: "CAFE" });
+      const book = committedBook(bundle.db, TODAY, 12);
+      expect(book.overdueCents).toBe(5000);
+      expect(book.overdueUnreadCents).toBe(0);
+    });
+
+    test("a bill no account is known to pay is unread", () => {
+      addSeries({ name: "Internet", kind: "bill", nextExpectedOn: "2026-08-10", amountCents: -5000 });
+      const book = committedBook(bundle.db, TODAY, 12);
+      expect(book.overdueUnreadCents).toBe(5000);
+    });
+  });
+
   test("a commitment with no postings is counted and flagged unevidenced", () => {
     addSeries({ name: "Car lease", kind: "bill", nextExpectedOn: "2026-09-11", amountCents: -55989 });
     const book = committedBook(bundle.db, TODAY, 12);

@@ -1,6 +1,7 @@
 import { describe, expect, test } from "vitest";
 import type { Cadence } from "@/db/schema/recurring";
 import {
+  arrearsSentence,
   baselineCaption,
   baselineSpan,
   monthCount,
@@ -272,6 +273,65 @@ describe("committedOutflows — overdue bills", () => {
     });
     expect(result.totalCents).toBe(1926625);
     expect(result.inflowCents).toBe(5000);
+  });
+});
+
+/*
+ * 🔴 Measured on the owner's ledger 2026-10-07: the runway card read "A further
+ * $2,296.20 came due earlier this month and never posted." while October is
+ * imported for none of the accounts those bills post from, and /budgets said
+ * the same money is "due by today and no import has covered them yet". "Never
+ * posted" is a claim the ledger can make only of days it has read.
+ */
+describe("arrears — never posted only of days the ledger has read", () => {
+  const RENT_LATE: CommittedOccurrence = {
+    seriesId: seriesIdOf("Rent"),
+    name: "Rent",
+    date: "2026-10-01",
+    amountCents: -210900,
+    lastMatchedOn: "2026-09-01",
+    cadence: "monthly",
+    endsOn: null,
+    isStale: false,
+  };
+
+  test("the unread part of each arrears payment is summed beside the arrears", () => {
+    const book = committedOutflows({
+      ...REAL,
+      overdue: [
+        { ...RENT_LATE, unreadCents: 210900 },
+        { ...RENT_LATE, seriesId: "fpl", name: "FPL", amountCents: -8720, unreadCents: 0 },
+      ],
+    });
+    expect(book.overdueCents).toBe(219620);
+    expect(book.overdueUnreadCents).toBe(210900);
+  });
+
+  test("an arrears payment that says nothing of coverage is counted unread, the cautious way", () => {
+    const book = committedOutflows({ ...REAL, overdue: [RENT_LATE] });
+    expect(book.overdueUnreadCents).toBe(210900);
+  });
+
+  test("nothing late, nothing said", () => {
+    expect(arrearsSentence({ overdueCents: 0, overdueUnreadCents: 0 })).toBeNull();
+  });
+
+  test("days the ledger has read may say never posted", () => {
+    expect(arrearsSentence({ overdueCents: 229620, overdueUnreadCents: 0 })).toBe(
+      "A further $2,296.20 came due earlier this month and never posted.",
+    );
+  });
+
+  test("days no import covers say so in /budgets' words, never 'never posted'", () => {
+    const s = arrearsSentence({ overdueCents: 229620, overdueUnreadCents: 229620 })!;
+    expect(s).toBe("A further $2,296.20 came due earlier this month and no import has covered it yet.");
+    expect(s).not.toContain("never posted");
+  });
+
+  test("a mix names each part by what the ledger can say of it", () => {
+    expect(arrearsSentence({ overdueCents: 229620, overdueUnreadCents: 210900 })).toBe(
+      "A further $2,296.20 came due earlier this month: $187.20 never posted, and no import has covered the other $2,109.00 yet.",
+    );
   });
 });
 

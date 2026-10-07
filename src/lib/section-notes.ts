@@ -600,12 +600,19 @@ export function cashEarningsSectionNotes(input: CashEarningsNoteInput): SectionN
     }
 
     if (r.unbankedCents < 0) {
+      /*
+       * 🔴 "Cash is deposited in lumps" was said of weekly ACH payroll into Wells
+       * Fargo (measured 2026-10-07, September: one $4,567.68 deposit on Sep 23
+       * banked four weeks — settle backwards). What makes a surplus is a deposit
+       * banking several paydays, which holds for cash and payroll alike, so the
+       * sentence names that and not how the money travelled.
+       */
       notes.push({
         id: `cash-earnings-catchup-${r.seriesName}`,
         body:
           `${r.seriesName} banked ${formatCents(-r.unbankedCents)} more than its paydays` +
           `${impliedSpanPhrase(r.firstPeriodOn, r.lastPeriodOn)} came to. ` +
-          `Cash is deposited in lumps, so the surplus is earlier pay arriving late — read it as a ` +
+          `One deposit can bank several paydays at once, so the surplus is earlier pay arriving late — read it as a ` +
           `backlog clearing rather than as a period that earned more.`,
       });
     }

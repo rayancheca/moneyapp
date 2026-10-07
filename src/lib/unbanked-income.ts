@@ -40,7 +40,8 @@ export interface UnbankedIncomeReading {
  */
 export const LAST_CHECKED_DAY = "the last day every account that pay lands in has been checked through";
 
-const NOT_CHECKED = "the ledger has not checked every account that pay could land in";
+/** What a sentence says of pay whose landing accounts are not all checked — `LAST_CHECKED_DAY`'s counterpart. */
+export const NOT_CHECKED = "the ledger has not checked every account that pay could land in";
 
 /**
  * The one day several schedules' landing accounts were checked through — each
