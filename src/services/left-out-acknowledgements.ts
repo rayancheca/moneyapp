@@ -26,7 +26,8 @@ export function readLeftOutAcknowledgements(db: AppDatabase): LeftOutAcknowledge
  *
  * ⛔ And by more than that CHECK covers: it trims ASCII whitespace only (char 9–13 and 32), and migration 0024 is
  * applied to the real ledger, never edited. Here a reason says nothing when only Unicode whitespace and invisible
- * characters are in it — a no-break, ideographic or zero-width space, a joiner, a BOM (`reasonSaysNothing`).
+ * characters are in it — a no-break, ideographic or zero-width space, a joiner, a BOM, a control character, the braille
+ * blank (`reasonSaysNothing`).
  */
 export function writeLeftOutAcknowledgements(db: AppDatabase, writes: readonly LeftOutAcknowledgementWrite[]): void {
   if (writes.length === 0) return;
