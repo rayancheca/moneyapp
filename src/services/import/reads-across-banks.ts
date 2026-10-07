@@ -2,12 +2,13 @@ import { asc, inArray } from "drizzle-orm";
 import type { AppDatabase } from "@/db/client";
 import { importFiles, type ImportStatus } from "@/db/schema/imports";
 import { institutions } from "@/db/schema/institutions";
-import { banksReadBy } from "./service";
+import { banksReadByEvery } from "./service";
 
 /**
- * A read whose accounts are at two banks (`banksReadBy`). `import_files.institution_id` holds one bank, so the import
- * cannot record the bank it resolved (`institutionReadBy` is null) and the importer's guess from the file's name
- * (`guessInstitution`) stands — Chase, for a name that names none.
+ * A read whose accounts are at two banks (`banksReadBy`, asked of every read at once: `banksReadByEvery`).
+ * `import_files.institution_id` holds one bank, so the import cannot record the bank it resolved (`institutionReadBy` is
+ * null) and the importer's guess from the file's name and first lines (`guessInstitution`) stands — Chase, for a file
+ * that names none.
  *
  * 🔴 It stood silently: nothing compared it with the accounts, and the column states it as the read's bank. No such read
  * is on his ledger (2026-10-07); `pnpm ledger-check` names one if it arrives, and never picks a bank for it.
@@ -29,7 +30,8 @@ export function readsAcrossBanks(db: AppDatabase): ReadAcrossBanks[] {
     .from(importFiles)
     .orderBy(asc(importFiles.importedAt), asc(importFiles.id))
     .all();
-  const found = reads.map((read) => ({ read, banks: banksReadBy(db, read.id) })).filter(({ banks }) => banks.length > 1);
+  const banksOf = banksReadByEvery(db);
+  const found = reads.map((read) => ({ read, banks: banksOf.get(read.id) ?? [] })).filter(({ banks }) => banks.length > 1);
   if (found.length === 0) return [];
   const ids = [...new Set(found.flatMap(({ read, banks }) => [read.institutionId, ...banks]))];
   const nameOf = new Map(
@@ -58,6 +60,6 @@ export function readAcrossBanksNotice(read: Pick<ReadAcrossBanks, "fileName" | "
   const retired = read.status === "superseded" ? " (retired)" : "";
   return (
     `${read.fileName}${retired} reads accounts at ${listed(read.banks)} — ` +
-    `one column names one bank, so the ${read.recorded} it records is the importer's guess from its name`
+    `one column names one bank, so the ${read.recorded} it records is the importer's guess`
   );
 }

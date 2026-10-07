@@ -6,7 +6,7 @@ import type { AppDatabase } from "@/db/client";
 import { accounts } from "@/db/schema/accounts";
 import { categories } from "@/db/schema/categories";
 import { KEPT_OPENING_SOURCE, balanceAnchors } from "@/db/schema/balances";
-import { LIVE_FILE, importFiles, isLiveFile, statementPeriods, type FileFormat, type ImportStatus } from "@/db/schema/imports";
+import { LIVE_FILE, importFiles, isLiveFile, printedLines, statementCopies, statementPeriods, type FileFormat, type ImportStatus } from "@/db/schema/imports";
 import { institutions } from "@/db/schema/institutions";
 import {
   LIVE_ROW,
@@ -3160,6 +3160,48 @@ export function banksReadBy(db: AppDatabase, importFileId: string): string[] {
   const read = db.select().from(importFiles).where(eq(importFiles.id, importFileId)).get();
   if (read === undefined) return [];
   return banksOf(db, [...new Set(readsInPlaceOfRetired(db, [read]).flatMap((r) => accountsReadBy(db, r.id)))]);
+}
+
+/**
+ * `banksReadBy` of every read at once, by read id: the same five records (`accountsReadBy`: printed lines, copies, rows,
+ * periods, recorded balances), each read with ONE query, and a retired read whose records name none by the reads in
+ * place of its bytes (`readsInPlaceOfRetired`) — so `pnpm ledger-check` asks it of every read without a query a read.
+ *
+ * ⛔ The same resolution, asked of every read: reads-across-banks.test.ts holds the two to agreeing on every read of a
+ * ledger with live, retired and failed reads at one bank and at two. A record added to `accountsReadBy` is added here.
+ *
+ * 🔴 Asked a read at a time it cost ~6–12 queries a read, and `import_file_id` has no index on the rows or recorded
+ * balances, so each scanned them: the review measured ledger-check 0.8s → 1.5s on an inflated copy of the e2e ledger, 2026-10-07.
+ */
+export function banksReadByEvery(db: AppDatabase): ReadonlyMap<string, readonly string[]> {
+  const named = new Map<string, Set<string>>();
+  const record = (rows: readonly { importFileId: string | null; accountId: string }[]) => {
+    for (const { importFileId, accountId } of rows) {
+      if (importFileId === null) continue;
+      const accountIds = named.get(importFileId) ?? new Set<string>();
+      named.set(importFileId, accountIds.add(accountId));
+    }
+  };
+  record(db.selectDistinct({ importFileId: printedLines.importFileId, accountId: printedLines.accountId }).from(printedLines).all());
+  record(db.selectDistinct({ importFileId: statementCopies.importFileId, accountId: statementCopies.accountId }).from(statementCopies).all());
+  record(db.selectDistinct({ importFileId: transactions.importFileId, accountId: transactions.accountId }).from(transactions).all());
+  record(db.selectDistinct({ importFileId: statementPeriods.importFileId, accountId: statementPeriods.accountId }).from(statementPeriods).all());
+  record(db.selectDistinct({ importFileId: balanceAnchors.importFileId, accountId: balanceAnchors.accountId }).from(balanceAnchors).all());
+
+  const bankOf = new Map(db.select({ id: accounts.id, institutionId: accounts.institutionId }).from(accounts).all().map((a) => [a.id, a.institutionId]));
+  const reads = db.select({ id: importFiles.id, status: importFiles.status, sha: importFiles.fileSha256 }).from(importFiles).all();
+  const inPlaceOf = new Map<string, string[]>();
+  for (const read of reads.filter((r) => isLiveFile(r.status))) inPlaceOf.set(read.sha, [...(inPlaceOf.get(read.sha) ?? []), read.id]);
+
+  const accountsOf = (read: (typeof reads)[number]): string[] => {
+    const own = named.get(read.id);
+    if (own !== undefined && own.size > 0) return [...own];
+    if (read.status !== "superseded") return [];
+    return (inPlaceOf.get(read.sha) ?? []).flatMap((id) => [...(named.get(id) ?? [])]);
+  };
+  return new Map(
+    reads.map((read) => [read.id, [...new Set(accountsOf(read).flatMap((id) => (bankOf.has(id) ? [bankOf.get(id) as string] : [])))]] as const),
+  );
 }
 
 /** The banks of `accountIds`, each once. */
