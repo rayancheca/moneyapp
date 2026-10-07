@@ -213,6 +213,8 @@ export async function attachToSeriesAction(
     const { seriesId, transactionIds } = attachSchema.parse(input);
     const result = attachTransactions(getDb(), seriesId, transactionIds);
     revalidateRecurring(seriesId);
+    // attaching may file an unfiled row under the series' category (§6A 47)
+    revalidatePath("/transactions");
     return { ok: true, data: { attached: result.attached, undo: result.undo } };
   } catch (error: unknown) {
     return failure(error, "Failed to attach");
