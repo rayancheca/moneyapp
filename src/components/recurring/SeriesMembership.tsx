@@ -24,11 +24,9 @@ import { KIND_LABEL } from "./labels";
 
 /** Full linked history with a per-row "not part of this series" detach (§4.2). */
 export function LinkedTransactions({
-  seriesId,
   txns,
   onChanged,
 }: {
-  seriesId: string;
   txns: readonly SeriesLinkedTxn[];
   onChanged: () => void;
 }) {

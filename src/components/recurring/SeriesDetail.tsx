@@ -418,7 +418,7 @@ export function SeriesDetail({
               </div>
             ) : null}
           </div>
-          <LinkedTransactions seriesId={data.id} txns={data.linkedTxns} onChanged={onChanged} />
+          <LinkedTransactions txns={data.linkedTxns} onChanged={onChanged} />
         </SurfaceCard>
 
         <Link href="/recurring" className="inline-block text-sm text-ink-muted hover:text-ink">
