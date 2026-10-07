@@ -2,7 +2,7 @@ import Link from "next/link";
 import { InfoTip } from "@/components/ui/InfoTip";
 import { Money } from "@/components/ui/Money";
 import { SurfaceCard } from "@/components/ui/SurfaceCard";
-import { baselineCaption, shrinkCaption } from "@/lib/committed";
+import { arrearsSentence, baselineCaption, shrinkCaption } from "@/lib/committed";
 import { RUNWAY_JARGON } from "@/lib/jargon";
 import { formatCents } from "@/lib/money";
 import type { RunwayAssumption, RunwayAssumptionId } from "@/lib/runway";
@@ -79,6 +79,7 @@ function AssumptionRow({ a, href, tip }: { a: RunwayAssumption; href: string; ti
 export function RunwayCard({ data }: { data: RunwayCardData }) {
   const { runway, committed, spend, incomeBasisExplanation } = data;
   const shrink = shrinkCaption(committed);
+  const arrears = arrearsSentence(committed);
   const burning = runway.kind === "burning";
   // three states, not two: `unknown` is a WITHHELD verdict and must not borrow
   // the positive tone `covered` earns by actually measuring something
@@ -217,13 +218,11 @@ export function RunwayCard({ data }: { data: RunwayCardData }) {
           {/* ⛔ "of it" would be false. Arrears sit BESIDE the rate above, not
               inside it: the rate covers [today, today + 12 months) and this
               money came due before today. Folding it in is what published
-              $2,284.75 a month for a $2,109.00 bill. */}
-          {committed.overdueCents > 0 && (
-            <p className="mt-1 text-negative">
-              A further {formatCents(committed.overdueCents)} came due earlier this month and never
-              posted.
-            </p>
-          )}
+              $2,284.75 a month for a $2,109.00 bill.
+              ⛔ "Never posted" only of days the ledger has read — the sentence
+              is `lib/committed`'s `arrearsSentence`, where a test reaches each
+              branch. */}
+          {arrears !== null && <p className="mt-1 text-negative">{arrears}</p>}
         </div>
       )}
 

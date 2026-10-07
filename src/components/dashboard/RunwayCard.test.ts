@@ -9,6 +9,7 @@ import { createDatabase, type DbBundle } from "@/db/client";
 import { dailyBalances } from "@/db/schema/balances";
 import { importFiles, statementPeriods } from "@/db/schema/imports";
 import { institutions } from "@/db/schema/institutions";
+import { recurringSeries } from "@/db/schema/recurring";
 import { seedDatabase } from "@/db/seed";
 import { createAccount } from "@/services/accounts";
 import { runwayCard } from "@/services/committed";
@@ -102,4 +103,32 @@ test("the investments row links to the accounts it sums, brokerage cash included
   const markup = renderToStaticMarkup(createElement(RunwayCard, { data: card }));
   expect(hrefOfLink(markup, "What selling investments would add")).toBe("/accounts");
   expect(hrefOfLink(markup, "Cash you can spend today")).toBe("/accounts");
+});
+
+/**
+ * 🔴 Measured on the owner's ledger 2026-10-07: "A further $2,296.20 came due
+ * earlier this month and never posted." while October is imported for none of
+ * the accounts those bills post from. A bill no import has reached reads in
+ * /budgets' words; "never posted" is kept for days the ledger has read.
+ */
+test("arrears no import has reached are not called never posted", () => {
+  bundle.db
+    .insert(recurringSeries)
+    .values({
+      name: "Rent",
+      kind: "bill",
+      cadence: "monthly",
+      status: "confirmed",
+      intervalDaysAvg: 30,
+      toleranceDays: 4,
+      nextExpectedOn: "2026-09-01",
+      nextExpectedAmountCents: -210900,
+    })
+    .run();
+
+  const card = runwayCard(bundle.db, TODAY);
+  expect(card.committed.overdueCents).toBe(210900);
+  const markup = renderToStaticMarkup(createElement(RunwayCard, { data: card }));
+  expect(markup).toContain("A further $2,109.00 came due earlier this month and no import has covered it yet.");
+  expect(markup).not.toContain("never posted");
 });

@@ -24,8 +24,8 @@ import { resolvePeriod, withPeriod } from "@/lib/period";
 import { runway, type Runway } from "@/lib/runway";
 import { cashPosition, outsidePortfolioCashAccountIds } from "./accounts";
 import { isAgentsSeries, loadCategoryIndex, monthlySpending, recurringSeriesIdsForCategory } from "./analytics";
-import { incomeExpectation, overdueForSeries } from "./budgets";
-import { ledgerOpens } from "./observation-frontier";
+import { incomeExpectation, overdueForSeries, type BudgetTail } from "./budgets";
+import { frontierForSeries, ledgerOpens, observationFrontier, seriesAccountIds } from "./observation-frontier";
 import { seriesStaleness, upcomingOccurrences } from "./recurring";
 import { rowIsRecurring, seriesIdsNotDrawnAsRecurring } from "./recurring-link";
 
@@ -388,7 +388,9 @@ export function committedBook(
    * contradiction of a card that reports no arrears on the same day.
    */
   const monthStart = periodBounds(today, "monthly").start;
-  const late = overdueForSeries(db, moneyOut, monthStart, addDays(today, -1));
+  const yesterday = addDays(today, -1);
+  const late = overdueForSeries(db, moneyOut, monthStart, yesterday);
+  const readById = arrearsReadCents(db, late, monthStart, yesterday);
   const lateRows = db
     .select()
     .from(recurringSeries)
@@ -409,9 +411,55 @@ export function committedBook(
     // projection walk the forward leg reads
     cadence: s.cadence as Cadence,
     endsOn: endsById.get(s.id) ?? null,
+    unreadCents: s.amountCents - (readById.get(s.id) ?? 0),
   }));
 
   return committedOutflows({ from: today, to, months, occurrences, overdue });
+}
+
+/**
+ * Of each late series' arrears, the money that fell due on days the ledger has
+ * read for the accounts the series bills on — the part the runway card may
+ * call "never posted" (`arrearsSentence`).
+ *
+ * 🔴 It said "never posted" of all $2,296.20 on 2026-10-07 while October was
+ * imported for none of those accounts. ⛔ NO NEW RULE: "has the ledger read this
+ * bill's day" is the recurring calendar's — `frontierForSeries` over
+ * `observationFrontier` and `seriesAccountIds`, the input `settledVerdict`
+ * grades `missed` against `not_imported` with — and "is this payment late" is
+ * still `overdueForSeries`, asked again only up to that day. A series with no
+ * account the ledger knows reads nothing: the calendar's `null`, and the
+ * cautious answer.
+ */
+function arrearsReadCents(
+  db: AppDatabase,
+  late: BudgetTail,
+  monthStart: string,
+  yesterday: string,
+): ReadonlyMap<string, number> {
+  const read = new Map<string, number>();
+  if (late.series.length === 0) return read;
+
+  const frontier = observationFrontier(db);
+  const accountsBySeries = seriesAccountIds(db);
+  // series read only part-way through the arrears window, grouped by the day they are read to
+  const partly = new Map<string, Set<string>>();
+  for (const s of late.series) {
+    const through = frontierForSeries(frontier, accountsBySeries.get(s.id));
+    if (through === null || compareDates(through, s.nextDate) < 0) continue;
+    if (compareDates(through, yesterday) >= 0) {
+      read.set(s.id, s.amountCents);
+      continue;
+    }
+    partly.set(through, new Set([...(partly.get(through) ?? []), s.id]));
+  }
+  const lateById = new Map(late.series.map((s) => [s.id, s.amountCents] as const));
+  for (const [through, ids] of partly) {
+    for (const s of overdueForSeries(db, ids, monthStart, through).series) {
+      read.set(s.id, Math.min(s.amountCents, lateById.get(s.id) ?? 0));
+    }
+  }
+  return read;
 }
 
 export interface RunwayCard {
