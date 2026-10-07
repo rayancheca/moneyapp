@@ -657,46 +657,67 @@ describe("§6A 45 — the pace of the agent's income nets its clawbacks, as the 
   });
 
   /*
-   * ❓ PINNED, NOT DECIDED. The pace nets the agent's posted clawbacks against what the month projects the agent is
-   * paid — its schedules' and its pace's — down to ZERO, never below (`agentsIncomeAtPace`). So a month the agent is
-   * clawed back as much as it is paid, or more, reads $0 at the pace while the bridge's "Agent's income" reads below
-   * zero: with its interest at the pace, or a schedule's (whose headline still reads the schedule's +$4.00). 🔴
-   * 2d27e22 pinned this per bucket and "where the bridge reads below zero" — narrower than it was: a clawback whose
-   * credit is a schedule's netted nowhere with the bridge ABOVE zero. Whether the agent's pace may take its income below
-   * zero is his call; answering it flips this test on purpose.
+   * ⚖️ Owner decision 2026-10-07 (§6A 46): the agent's pace FOLLOWS THE BRIDGE BELOW ZERO. 🔴 It netted the agent's
+   * posted clawbacks against what the month projects the agent is paid down to ZERO, never below
+   * (`agentsIncomeAtPace`): $4.00 paid and $5.00 clawed back each month was -$1.00 on the bridge's "Agent's income" and
+   * $0 at "your recent pace" — EOM net worth with it. Now a whole month at the pace is what the bridge nets, either sign.
+   * ⛔ His pace is still his money in only (`isIncome`).
    */
-  test("❓ clawed back more than it is paid, the agent's income reads $0 at the pace — the bridge reads below zero", () => {
+  test("⚖️ clawed back more than it is paid, the agent's income goes below zero at the pace, as on the bridge", () => {
+    const before = card();
     for (const month of MONTHS) {
       post(agentic, `2026-${month}-28`, PAID, INTEREST, "Interest Payment");
       post(agentic, `2026-${month}-29`, -PAID - 100, INTEREST, "Interest Clawback");
     }
-    expect(september()).toMatchObject({ agentIncome: -100, moved: 0 });
-    expect(card().income).toEqual([
-      { netCents: 0, committedNetCents: 0 },
-      { netCents: 0, committedNetCents: 0 },
+    const bridged = september();
+    expect(bridged).toMatchObject({ agentIncome: -100, moved: 0 });
+    const clawed = card();
+    // the 3-mo avg net -$1.00 × 27/31 days in October, and November's whole -$1.00 chained on it
+    expect(clawed.income).toEqual([
+      { netCents: -87, committedNetCents: 0 },
+      { netCents: -187, committedNetCents: 0 },
     ]);
+    // a whole month at the pace is what the bridge nets for September
+    expect(clawed.income[1]!.netCents - clawed.income[0]!.netCents).toBe(bridged.agentIncome);
+    // EOM net worth: September's posted -$1.00 in the net worth today (July's and August's sit under the agent's
+    // Aug 31 balance), and the pace's two below it
+    expect(clawed.today - before.today).toBe(-100);
+    expect(clawed.nw).toEqual(onPace(before.nw.map((cents) => cents - 100), -87, -187));
+    // ⛔ …and no figure of his moves
+    expect(hisLines(clawed)).toEqual(hisLines(before));
   });
 
-  test("❓ …and with its interest a schedule's: the headline reads the schedule, the pace $0", () => {
+  test("⚖️ …and with its interest a schedule's: the headline reads the schedule, the pace nets below zero", () => {
     const rows = MONTHS.map((month) => [`2026-${month}-20`, INTEREST] as const);
     agentsSchedule({ kind: "income", amountCents: PAID, rows, name: "Interest Payment" });
     for (const month of MONTHS) post(agentic, `2026-${month}-21`, -PAID - 100, INTEREST, "Interest Clawback");
-    expect(september()).toMatchObject({ agentIncome: -100, moved: 0 });
-    expect(card().income).toEqual([
-      { netCents: 0, committedNetCents: PAID },
-      { netCents: 0, committedNetCents: 2 * PAID },
+    const bridged = september();
+    expect(bridged).toMatchObject({ agentIncome: -100, moved: 0 });
+    // the schedule's $4.00 a month against the clawbacks' 3-mo avg -$5.00 × 27/31 days in October (-$4.35), and
+    // November's whole -$5.00
+    const clawed = card().income;
+    expect(clawed).toEqual([
+      { netCents: PAID - 435, committedNetCents: PAID },
+      { netCents: 2 * PAID - 435 - 500, committedNetCents: 2 * PAID },
     ]);
+    expect(clawed[1]!.netCents - clawed[0]!.netCents).toBe(bridged.agentIncome);
   });
 
-  test("❓ …and a month its schedules already take below zero (§6A 43): the pace takes it no lower, and lifts it not", () => {
+  test("⚖️ …and a month its schedules already take below zero (§6A 43): the pace's clawbacks take it lower", () => {
     agentsSchedule({ kind: "other", amountCents: -500, rows: [["2026-09-20", INTEREST]], name: "Interest Clawback" });
-    const scheduled = card().income;
-    expect(scheduled).toEqual([
+    expect(card().income).toEqual([
       { netCents: -500, committedNetCents: -500 },
       { netCents: -1000, committedNetCents: -1000 },
     ]);
     for (const month of MONTHS) post(agentic, `2026-${month}-21`, CLAWBACK, INTEREST, "Interest Adjustment");
-    expect(september()).toMatchObject({ agentIncome: -500 + CLAWBACK, moved: 0 });
-    expect(card().income).toEqual(scheduled);
+    const bridged = september();
+    expect(bridged).toMatchObject({ agentIncome: -500 + CLAWBACK, moved: 0 });
+    // the schedule's -$5.00 a month, and the adjustments' 3-mo avg -$3.00 × 27/31 days in October, November's whole
+    const clawed = card().income;
+    expect(clawed).toEqual([
+      { netCents: -500 - 261, committedNetCents: -500 },
+      { netCents: -1000 - 261 - 300, committedNetCents: -1000 },
+    ]);
+    expect(clawed[1]!.netCents - clawed[0]!.netCents).toBe(bridged.agentIncome);
   });
 });
