@@ -3145,18 +3145,37 @@ function accountsReadBy(db: AppDatabase, importFileId: string): string[] {
  * resolves Robinhood. Its own records come first: a retirement that kept rows says where they landed.
  */
 export function institutionReadBy(db: AppDatabase, importFileId: string): string | null {
-  const named = accountsReadBy(db, importFileId);
-  if (named.length > 0) return institutionOf(db, named);
-  const read = db.select().from(importFiles).where(eq(importFiles.id, importFileId)).get();
-  if (read === undefined) return null;
-  return institutionOf(db, [...new Set(readsInPlaceOfRetired(db, [read]).flatMap((r) => accountsReadBy(db, r.id)))]);
+  return institutionOf(banksReadBy(db, importFileId));
 }
 
-/** The one institution of `accountIds` — null for none, or for accounts at two banks. */
-function institutionOf(db: AppDatabase, accountIds: readonly string[]): string | null {
-  if (accountIds.length === 0) return null;
-  const banks = db.selectDistinct({ institutionId: accounts.institutionId }).from(accounts).where(inArray(accounts.id, [...accountIds])).all();
-  return banks.length === 1 ? (banks[0] as { institutionId: string }).institutionId : null;
+/**
+ * Every bank of the accounts a read's records name, each once — resolved as `institutionReadBy` resolves its one: its
+ * own records first, a retired read whose records name none by the reads in place of its bytes. None while nothing
+ * names an account. ⛔ The one resolution: two banks here are why `institutionReadBy` is null, and what
+ * `pnpm ledger-check` names (`readsAcrossBanks`) — never a bank picked from them.
+ */
+export function banksReadBy(db: AppDatabase, importFileId: string): string[] {
+  const named = accountsReadBy(db, importFileId);
+  if (named.length > 0) return banksOf(db, named);
+  const read = db.select().from(importFiles).where(eq(importFiles.id, importFileId)).get();
+  if (read === undefined) return [];
+  return banksOf(db, [...new Set(readsInPlaceOfRetired(db, [read]).flatMap((r) => accountsReadBy(db, r.id)))]);
+}
+
+/** The banks of `accountIds`, each once. */
+function banksOf(db: AppDatabase, accountIds: readonly string[]): string[] {
+  if (accountIds.length === 0) return [];
+  return db
+    .selectDistinct({ institutionId: accounts.institutionId })
+    .from(accounts)
+    .where(inArray(accounts.id, [...accountIds]))
+    .all()
+    .map((b) => b.institutionId);
+}
+
+/** The one bank of `banks` — null for none, or for two: one column cannot name both. */
+function institutionOf(banks: readonly string[]): string | null {
+  return banks.length === 1 ? (banks[0] as string) : null;
 }
 
 /**
