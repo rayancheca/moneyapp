@@ -246,7 +246,7 @@ export function committedOutflows(input: CommittedInput): CommittedOutflows {
   let overdueCount = 0;
   let overdueUnreadCents = 0;
 
-  const take =(o: CommittedOccurrence, origin: CommittedOrigin): void => {
+  const take = (o: CommittedOccurrence, origin: CommittedOrigin): void => {
     if (o.amountCents > 0) {
       inflowCents += o.amountCents;
       inflowCount += 1;
