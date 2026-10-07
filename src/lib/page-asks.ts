@@ -26,7 +26,7 @@ import type { ViewSpec, ViewState } from "./view-state";
  * starts; a push or replace to a URL no press or writer asked for as it starts (a crumb's link,
  * the sidebar's, a link to another page — `isForeign`); a commit of any other URL (a redirect). A
  * commit of a URL a press asked for is a press landing, not a move. Until anything is drawn after
- * such a link dropped it, the page's writers still build on the ask it dropped
+ * such a link to another URL dropped it, the page's writers still build on the ask it dropped
  * (`PageAsks.departing`): the page on screen is still the one that ask was built on.
  *
  * Once the newest asked URL has committed the ask is kept, not dropped: it then says exactly
@@ -349,7 +349,8 @@ export interface PageAsks {
    * is drawn, `base`, `paramsOn` and the next `ask` still build on the ask it dropped: the page
    * on screen is still the one that ask was built on, and a press it holds may still be being
    * written. 🔴 Built on the URL on screen, ‹ followed after a crumb's link carried the view a press
-   * in flight had replaced, and the press, landing on ‹'s URL, drew that view back.
+   * in flight had replaced, and the press, landing on ‹'s URL, drew that view back. Never after a
+   * link to the URL on screen: it commits nothing that would end it, and draws the page on screen.
    */
   departing(href: string, kind: HistoryKind): void;
   /** the router committed `href` (pathname and query): the URL on screen a press starts from */
@@ -438,10 +439,7 @@ export function createPageAsks(): PageAsks {
     isNewest: (href) => current !== null && current.trail.at(-1) === canonicalHref(href),
     landing() {
       if (current !== null) return { href: current.href, kind: "push", scroll: false };
-      if (overtaken === null) return null;
-      // made again to the URL on screen, the link draws no new one: from then, that is the page
-      if (shown !== null && canonicalHref(overtaken.href) === canonicalHref(shown)) dropped = null;
-      return { ...overtaken, scroll: true };
+      return overtaken === null ? null : { ...overtaken, scroll: true };
     },
     departing(href, kind) {
       // a push or replace — a press's, a link's: whatever it draws is not Back's page
@@ -449,7 +447,10 @@ export function createPageAsks(): PageAsks {
       back = null;
       // an asked URL leaves the ask be; with nothing asked, only a link since one dropped it counts
       if (current === null ? overtaken === null : !isForeign(current, href)) return;
-      if (current !== null) dropped = current;
+      // kept only while a commit will end it: ⛔ a link to the URL on screen (the sidebar's, to the
+      // page he is on) commits no new URL, and a press long after it built on a ‹ it had discarded
+      const onScreen = shown !== null && canonicalHref(href) === canonicalHref(shown);
+      dropped = onScreen ? null : (current ?? dropped);
       current = null;
       overtaken = { href, kind };
     },

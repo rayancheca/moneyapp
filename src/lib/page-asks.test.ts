@@ -358,24 +358,33 @@ describe("createPageAsks: the ask a link dropped, until anything is drawn", () =
     expect(asks.landing()).toEqual({ href: "/spending?period=2026-07", kind: "push", scroll: true });
   });
 
-  test("a commit, Back, or the link made again to the URL on screen ends it", () => {
+  /** ⛔ it commits no new URL, so nothing would ever end it: none is kept, as the page it draws is the one on screen */
+  test("a link to the URL on screen keeps none, and ends one an earlier link kept", () => {
+    const asks = createPageAsks();
+    asks.committed("/spending");
+    asks.ask("/spending?period=2026-05", {});
+    asks.departing("/spending", "push"); // the sidebar's link
+    expect(asks.paramsOn("/spending")).toBeNull();
+
+    asks.ask("/spending?period=2026-05", {});
+    asks.departing("/spending?period=2026-06", "push"); // a crumb's: a commit follows
+    expect(asks.paramsOn("/spending")).toEqual({ period: "2026-05" });
+    asks.departing("/spending", "push"); // the sidebar's, which discards it
+    expect(asks.paramsOn("/spending")).toBeNull();
+  });
+
+  test("a commit or Back ends it", () => {
     const asks = createPageAsks();
     asks.committed("/spending?period=2026-07");
     asks.ask("/spending?period=2026-07&where=relief", { where: "relief" });
     asks.departing("/spending", "push");
+    expect(asks.paramsOn("/spending")).toEqual({ period: "2026-07", where: "relief" });
     asks.committed("/spending");
     expect(asks.paramsOn("/spending")).toBeNull();
 
     asks.ask("/spending?where=list", { where: "list" });
     asks.departing("/spending?period=2026-06", "push");
     asks.moved();
-    expect(asks.paramsOn("/spending")).toBeNull();
-
-    asks.committed("/spending");
-    asks.ask("/spending?where=relief", { where: "relief" });
-    asks.departing("/spending", "push"); // the sidebar's link to the URL on screen
-    expect(asks.paramsOn("/spending")).toEqual({ where: "relief" });
-    expect(asks.landing()?.href).toBe("/spending"); // made again: it commits no new URL
     expect(asks.paramsOn("/spending")).toBeNull();
   });
 });

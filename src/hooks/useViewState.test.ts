@@ -745,6 +745,23 @@ describe("a period link keeps every view the page's URL holds", () => {
     expect(page.persisted.spending).toMatchObject({ where: "list" });
   });
 
+  /**
+   * ⛔ A link to the URL on screen (the sidebar's "Spending" on clean /spending) commits no new URL,
+   * so nothing would ever end a dropped ask: ‹ in flight, the sidebar link, then a lens press built
+   * on the ‹ it had dropped and took him to May, a page he had left.
+   */
+  test("followed, then a link to the URL on screen, never brings it back to a later press", async () => {
+    const page = await open(spendingPage, "/spending");
+    pills.period!("2026-05"); // ‹, its page in flight…
+    page.router.push("/spending"); // …the sidebar's link to the page on screen
+    await page.settle();
+    expect(page.url).toBe("/spending");
+
+    ui.where!.setView("where", "relief");
+    await page.settle();
+    expect(page.url).toBe("/spending?where=relief");
+  });
+
   /** a press made while the link's page is in flight builds on June, never back to July */
   test("a press made while its page is in flight keeps the period and the linked view", async () => {
     const page = await open(spendingPage, "/spending?period=2026-07&where=relief");
