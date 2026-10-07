@@ -25,7 +25,14 @@ import {
   type DayStateKind,
   type RecurringCalendarMonth,
 } from "@/services/recurring-calendar";
-import { KIND_LABEL, longDate, monthLabel, unsettledReasonWord, upcomingEvidenceWord } from "./labels";
+import {
+  KIND_LABEL,
+  longDate,
+  monthLabel,
+  perPaydayWord,
+  unsettledReasonWord,
+  upcomingEvidenceWord,
+} from "./labels";
 import { MonthFlowStrip } from "./MonthFlowStrip";
 
 interface RecurringCalendarProps {
@@ -221,10 +228,15 @@ function settlesWord(e: CalendarEntry): string | null {
 
 /**
  * Which deposit paid it, or which payday it paid — never both, as only a chip
- * carries the one and only a row the other.
+ * carries the one and only a row the other — led, on a lump of pay, by the
+ * paydays it paid and what each (`perPaydayWord`): the figure its state was
+ * graded on, so "paid $4,567.68" does not stand beside a $1,141.92 week.
  */
 function payerWord(e: CalendarEntry): string | null {
-  return settledByWord(e) ?? settlesWord(e);
+  const words = [e.perPayday ? perPaydayWord(e.perPayday) : null, settledByWord(e) ?? settlesWord(e)].filter(
+    (w): w is string => w !== null,
+  );
+  return words.length === 0 ? null : words.join(", ");
 }
 
 function entrySummary(e: CalendarEntry): string {

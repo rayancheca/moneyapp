@@ -10,13 +10,10 @@ import { institutions } from "@/db/schema/institutions";
 import { recurringSeries } from "@/db/schema/recurring";
 import { transactions } from "@/db/schema/transactions";
 import { seedDatabase } from "@/db/seed";
+import { addDays } from "@/lib/dates";
 import { noticesCard } from "./notices-card";
-import {
-  amountPerPayday,
-  paydaysPaidAloneByDeposit,
-  recurringCalendar,
-  type CalendarEntry,
-} from "./recurring-calendar";
+import { recurringCalendar, type CalendarEntry } from "./recurring-calendar";
+import { seriesDetail } from "./recurring-detail";
 
 /**
  * 🔴 A LUMP OF FOUR WEEKS' PAY WAS DRAWN AS A PRICE CHANGE.
@@ -63,7 +60,7 @@ function categoryId(top: string, child?: string): string {
  * spread, because a series with none makes no amount claim at all
  * (`classifyPostedAmount`), and a fixture without one tests silence.
  */
-function addPaySeries(): void {
+function addPaySeries(amountCentsStddev: number | null = 1_000): void {
   bundle.db
     .insert(recurringSeries)
     .values({
@@ -74,7 +71,7 @@ function addPaySeries(): void {
       userCadence: "weekly",
       intervalDaysAvg: 7,
       amountCentsAvg: WEEK,
-      amountCentsStddev: 1_000,
+      amountCentsStddev,
       userAmountCents: WEEK,
       nextExpectedOn: "2026-07-23",
       nextExpectedAmountCents: WEEK,
@@ -252,31 +249,76 @@ test("two weekly deposits on one day are each measured as the week they are", ()
   expect(rowOn("2026-09", "2026-09-24", b)?.state).toBe("paid");
 });
 
-describe("paydaysPaidAloneByDeposit", () => {
-  test("counts, per deposit day, the paydays only that day's money went into", () => {
-    const counts = paydaysPaidAloneByDeposit([
-      { paydayOn: "2026-09-24", depositOn: "2026-09-23", cents: WEEK },
-      { paydayOn: "2026-09-17", depositOn: "2026-09-23", cents: WEEK },
-      { paydayOn: "2026-09-03", depositOn: "2026-09-03", cents: WEEK },
-      // a payday two deposits' money met is neither's on its own
-      { paydayOn: "2026-08-27", depositOn: "2026-09-23", cents: 113_424 },
-      { paydayOn: "2026-08-27", depositOn: "2026-09-03", cents: 768 },
+/**
+ * 🔴 HIS SERIES HAS NO CACHED SPREAD, so the calendar measures one from the
+ * rows — and measured on RAW amounts, the lump itself was in it. On a copy of
+ * his ledger that read σ $1,629.39, a band of ±$3,258.78, inside which a
+ * $1,200.00 raise, a $4,000.00 partial lump and a $4,800.00 four-week lump all
+ * read `paid`. The spread is measured the way each row is held to it — per
+ * payday — so the lump is one week's pay four times over, not one wild sample.
+ */
+describe("a series with no cached spread — the spread is measured per payday too", () => {
+  /** Six weeks of ordinary Thursday pay, Jul 23 → Aug 27, each paying its own payday. */
+  function weeklyHistory(): void {
+    for (let day = "2026-07-23"; day <= "2026-08-27"; day = addDays(day, 7)) deposit(day, WEEK);
+  }
+
+  beforeEach(() => {
+    bundle.db.delete(recurringSeries).where(eq(recurringSeries.id, PAY)).run();
+    addPaySeries(null);
+    weeklyHistory();
+  });
+
+  test("the lump of four weeks is drawn paid, and the card says nothing", () => {
+    const lump = deposit("2026-09-23", WEEK * 4);
+    deposit("2026-09-24", WEEK);
+    expect(rowOn("2026-09", "2026-09-23", lump)?.state).toBe("paid");
+    expect(payNotices()).toEqual([]);
+  });
+
+  test("a $1,200.00 week is a raise — drawn paid_different and noticed", () => {
+    deposit("2026-09-23", WEEK * 4);
+    deposit("2026-09-24", WEEK);
+    const raise = deposit("2026-10-01", 120_000);
+    expect(rowOn("2026-10", "2026-10-01", raise)?.state).toBe("paid_different");
+    expect(payNotices()).toEqual([expect.stringContaining(`${PAY_NAME} rose by $58.08`)]);
+  });
+
+  test("a $4,000.00 lump — not a whole number of weeks — is drawn paid_different", () => {
+    const partial = deposit("2026-09-23", 400_000);
+    deposit("2026-09-24", WEEK);
+    expect(rowOn("2026-09", "2026-09-23", partial)?.state).toBe("paid_different");
+  });
+
+  /*
+   * And the sentence says what changed PER WEEK. Four weeks at $1,200.00 is a
+   * raise of $58.08 a week; "rose by $3,658.08" would compare four weeks with one.
+   */
+  test("four weeks at $1,200.00 is drawn paid_different, and noticed as the $58.08 a week it rose", () => {
+    const raisedLump = deposit("2026-09-23", 480_000);
+    expect(rowOn("2026-09", "2026-09-23", raisedLump)).toMatchObject({
+      state: "paid_different",
+      perPayday: { paydays: 4, cents: 120_000 },
+    });
+    expect(payNotices()).toEqual([
+      expect.stringContaining(`${PAY_NAME} rose by $58.08 between its usual amount and Sep 23`),
     ]);
-    expect([...counts.entries()].sort()).toEqual([
-      ["2026-09-03", 1],
-      ["2026-09-23", 2],
-    ]);
+  });
+
+  /* The series page's history draws the same reading the calendar grades. */
+  test("the series page draws the lump as four paydays at $1,141.92, as the calendar reads it", () => {
+    deposit("2026-09-23", WEEK * 4);
+    deposit("2026-09-24", WEEK);
+    const history = seriesDetail(bundle.db, PAY, TODAY).amountHistory;
+    expect(history.find((p) => p.date === "2026-09-23")).toMatchObject({
+      amountCents: WEEK * 4,
+      perPayday: { paydays: 4, cents: WEEK },
+    });
+    expect(history.filter((p) => p.date !== "2026-09-23").every((p) => p.perPayday === null)).toBe(true);
   });
 });
 
-describe("amountPerPayday", () => {
-  test("a deposit spread over paydays is measured per payday, to the cent", () => {
-    expect(amountPerPayday(WEEK * 4, 4)).toBe(WEEK);
-    expect(amountPerPayday(400_000, 3)).toBe(133_333);
-  });
-
-  test("one payday, or none settlement spent it on, leaves the amount as it is", () => {
-    expect(amountPerPayday(120_000, 1)).toBe(120_000);
-    expect(amountPerPayday(120_000, 0)).toBe(120_000);
-  });
+test("the calendar's lump row says how many paydays it paid, and what each", () => {
+  const lump = deposit("2026-09-23", WEEK * 4);
+  expect(rowOn("2026-09", "2026-09-23", lump)?.perPayday).toEqual({ paydays: 4, cents: WEEK });
 });

@@ -330,7 +330,10 @@ function driftedOccurrences(db: AppDatabase, from: string, today: string): Drift
         out.push({
           name: entry.name,
           day,
-          amountCents: entry.amountCents,
+          // a lump is graded per payday (`lib/per-payday`), so the change it
+          // states is per payday too: four weeks at $1,200.00 rose $58.08 a week,
+          // not $3,658.08 against one
+          amountCents: entry.perPayday?.cents ?? entry.amountCents,
           expectedCents: entry.expectedAmountCents,
           transactionId: entry.transactionId,
         });
