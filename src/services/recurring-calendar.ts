@@ -37,7 +37,8 @@ import { seriesCategoryIds } from "./series-category";
  * Recurring calendar month (ux-overhaul-plan §4.1.3). One month of the
  * day-state grammar [MM]:
  *   - paid            green ✓ — a tagged charge posted, amount matches expected
- *   - paid_different  amber ! — a tagged charge posted, amount drifted
+ *   - paid_different  amber ! — a tagged charge posted, amount drifted (a pay
+ *                               deposit: what it paid per payday, `amountPerPayday`)
  *   - upcoming        blue •  — an expected occurrence on/after today, unposted
  *   - missed          red ✕   — expected before today, unposted, day IS imported
  *   - unsettled       grey ?  — expected before today, unposted, and the ledger
@@ -322,6 +323,62 @@ export function classifyPostedAmount(
 }
 
 /**
+ * What a deposit paid PER PAYDAY — the amount a pay row is held to the
+ * expectation as, given how many paydays its money paid on its own
+ * (`paydaysPaidAloneByDeposit`).
+ *
+ * ⚖️ A pay row is a price change only when what it paid per payday differs
+ * from the week he expects. Settle backwards (his decision of 2026-09-28) spends
+ * one deposit on as many paydays as its money covers, and the calendar chips
+ * each of them to it — so the row is one deposit for N weeks, and N weeks is
+ * what it is measured against.
+ *
+ * 🔴 Measured against ONE payday, his 2026-09-23 lump of $4,567.68 — exactly
+ * four weeks at $1,141.92, spent by settlement on Sep 24, 17, 10 and 3 — was
+ * drawn amber `paid_different`, and the dashboard's "Worth a look" card read it
+ * back as "It America LLC (weekly pay) rose by $3,425.76 between its usual
+ * amount and Sep 23." beside an Earned-vs-banked card counting four paydays.
+ *
+ * The WHOLE amount is divided, so money that paid no week of its own — left
+ * over (`lib/payday-settlement` never pre-pays with it), or spent topping up a
+ * payday another deposit paid — counts against the deposit. What still reads as
+ * a change, by the same band `classifyPostedAmount` applies to any one charge: a
+ * raise (one $1,200.00 week is one payday at $1,200.00); a lump that is not a
+ * whole number of weeks ($4,000.00 pays three on its own, $1,333.33 a payday);
+ * four weeks at a raised rate; a short week (the anchor clause spends a short
+ * deposit on its one payday). With one payday or none, this is the amount itself
+ * — the comparison every charge already had, unchanged.
+ */
+export function amountPerPayday(amountCents: number, paydaysPaid: number): number {
+  return paydaysPaid > 1 ? Math.round(amountCents / paydaysPaid) : amountCents;
+}
+
+/**
+ * Per deposit day: how many paydays that day's money paid ON ITS OWN — every
+ * cent settlement put into them came from it.
+ *
+ * ⛔ ON ITS OWN, not "touched". Settlement pools change across deposits, so a
+ * deposit's money can also top up a payday another deposit mostly paid: a
+ * $1,150.00 week whose $8.08 of change later finished an older payday touched
+ * two paydays, and divided by two it would read as half a week. It paid one.
+ * Counted only where it paid alone, a deposit that paid one payday or none is
+ * measured exactly as before, and only a deposit that paid two or more weeks by
+ * itself — a lump — is measured per week.
+ */
+export function paydaysPaidAloneByDeposit(portions: readonly SettlementPortion[]): ReadonlyMap<string, number> {
+  const payersByPayday = new Map<string, ReadonlySet<string>>();
+  for (const p of portions) {
+    payersByPayday.set(p.paydayOn, new Set([...(payersByPayday.get(p.paydayOn) ?? []), p.depositOn]));
+  }
+  const out = new Map<string, number>();
+  for (const payers of payersByPayday.values()) {
+    if (payers.size !== 1) continue;
+    for (const depositOn of payers) out.set(depositOn, (out.get(depositOn) ?? 0) + 1);
+  }
+  return out;
+}
+
+/**
  * Each series' amount spread, measured from its own tagged postings, for the
  * series whose cached `amount_cents_stddev` is null.
  *
@@ -561,7 +618,10 @@ export function recurringCalendar(
   const owedElsewhere = new Map<string, Map<string, SettlementPortion[]>>();
   /** per series, per payday in this month: the money ANOTHER month's deposits put into it */
   const paidFromElsewhere = new Map<string, Map<string, number>>();
+  /** per series, per deposit day: how many paydays, in any month, that day's money paid on its own — what its row is measured over */
+  const paydaysPaidAlone = new Map<string, ReadonlyMap<string, number>>();
   for (const [seriesId, settlement] of settlements) {
+    paydaysPaidAlone.set(seriesId, paydaysPaidAloneByDeposit(settlement.portions));
     const across = portionsAcross(settlement.portions, { paydayInside: insideMonth, depositInside: insideMonth });
     const owed = new Map<string, SettlementPortion[]>();
     for (const p of across.paidForAnotherWindow) owed.set(p.depositOn, [...(owed.get(p.depositOn) ?? []), p]);
@@ -592,6 +652,20 @@ export function recurringCalendar(
       )
       .all();
 
+    /*
+     * How many of a series' deposits landed on each day. Settlement names money
+     * by its deposit's DAY, so a row's own spending is known only when it is the
+     * series' one deposit that day; two on one day are each measured as a single
+     * charge, as before.
+     */
+    const depositsOnDay = new Map<string, number>();
+    for (const p of posted) {
+      if (p.seriesId && p.amountCents > 0) {
+        const key = `${p.seriesId}|${p.postedOn}`;
+        depositsOnDay.set(key, (depositsOnDay.get(key) ?? 0) + 1);
+      }
+    }
+
     for (const p of posted) {
       const s = p.seriesId ? seriesById.get(p.seriesId) : undefined;
       // tagged to a DISMISSED series — the owner said not recurring — or to the agent's income, which is not his
@@ -611,8 +685,20 @@ export function recurringCalendar(
       if (settlements.has(s.id) && !hasArrived(p.postedOn, today)) continue;
       const expected = effectiveSeries(s).nextExpectedAmountCents;
       const stddev = s.amountCentsStddev ?? measured.get(s.id) ?? null;
+      /*
+       * ⚖️ A PAY ROW IS MEASURED PER PAYDAY: its money alone paid
+       * `paydaysPaid` paydays, which the chips this grid draws name it as paying
+       * (`amountPerPayday`). A bill — or money settlement does not speak about —
+       * paid no payday, and is measured as the one charge it is.
+       */
+      const paydaysPaid =
+        p.amountCents > 0 && depositsOnDay.get(`${s.id}|${p.postedOn}`) === 1
+          ? (paydaysPaidAlone.get(s.id)?.get(p.postedOn) ?? 0)
+          : 0;
       const state: DayStateKind =
-        expected === null ? "paid" : classifyPostedAmount(p.amountCents, expected, stddev);
+        expected === null
+          ? "paid"
+          : classifyPostedAmount(amountPerPayday(p.amountCents, paydaysPaid), expected, stddev);
       // the money this deposit spent on another month's paydays is THAT month's
       // Settled figure, where the chip naming this day stands
       const elsewhere = chargeRow(owedElsewhere.get(s.id)?.get(p.postedOn), p.amountCents);
