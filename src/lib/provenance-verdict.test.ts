@@ -1,5 +1,6 @@
 import { describe, expect, test } from "vitest";
 import {
+  PART_ENTERED,
   VERDICT_PRESENTATION,
   embeddedLabel,
   provenancePanelName,
@@ -59,6 +60,21 @@ describe("VERDICT_PRESENTATION", () => {
     expect(provenanceTriggerName("Cash on Hand's balance", "manual")).toBe(
       "How Cash on Hand's balance is known — it was entered by hand",
     );
+  });
+
+  /*
+   * 🔴 "…came to $66,477.60 is known — it was entered by hand" of a year's spending in which ONE $5,000.00 row was
+   * typed (/summary/2026, review 2026-10-07). A total only part of which he typed says PART, in the badge and the name.
+   */
+  test("a total part of which he typed has its own word and its own name", () => {
+    expect(PART_ENTERED.word).toBe("part you entered");
+    expect(PART_ENTERED.word).toBe(PART_ENTERED.word.toLowerCase());
+    expect(PART_ENTERED.word.length).toBeLessThanOrEqual(18);
+    expect(
+      provenanceTriggerName("Spending in Jan 1 – Aug 12, 2026 came to $66,477.60.", "manual", PART_ENTERED.word, PART_ENTERED.name),
+    ).toBe("How Spending in Jan 1 – Aug 12, 2026 came to $66,477.60 is known — part of it was entered by hand");
+    // with no name of its own, a badge word still completes the name as before
+    expect(provenanceTriggerName("net worth", "unknown", "6 of 12 add up")).toBe("How net worth is known — 6 of 12 add up");
   });
 
   test("only the two proven verdicts read as proven", () => {

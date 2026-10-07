@@ -1172,6 +1172,40 @@ describe("provenanceFor — a category total", () => {
     expect(p.headline).not.toMatch(/nothing checking/);
   });
 
+  /*
+   * 🔴 A $66,477.60 TOTAL "YOU ENTERED". /summary/2026's "Spending in Jan 1 – Aug 12, 2026 came to $66,477.60." took
+   * the weakest row's verdict, `manual`, from ONE $5,000.00 row he typed (the Cash on Hand down payment), and was badged
+   * "you entered it" and named "…is known — it was entered by hand" over hundreds of rows statements check (review,
+   * 2026-10-07). The verdict stays the weakest row's; the word and the name say it is PART of the total.
+   */
+  test("a total only part of which he typed says so — in the badge and the name — and an all-typed one does not", () => {
+    const chase = addAccount("a", "Chase Checking", "checking");
+    const coh = addAccount("b", "Cash on Hand", "cash");
+    const cat = addCategory("c-car", "Fixture Car");
+    const file = addFile("f1", "s.pdf", "chase-checking-statement-pdf");
+    addDays(chase, [{ day: "2026-07-01", basis: "anchored" }, { day: "2026-07-15", basis: "derived" }]);
+    addDays(coh, [{ day: "2026-07-10", basis: "anchored" }]);
+    categorize(addTxn(coh, "2026-07-11"), cat);
+    const total = () =>
+      provenanceFor(bundle.db, { kind: "categorySpend", categoryId: cat, from: "2026-07-01", to: "2026-07-31" })!;
+
+    // every row his: the stock word, and the stock name
+    expect(total().verdict).toBe("manual");
+    expect(total().badgeWord).toBeUndefined();
+    expect(total().badgeName).toBeUndefined();
+
+    for (const day of ["2026-07-10", "2026-07-15"]) categorize(addTxn(chase, day, { importFileId: file }), cat);
+    const p = total();
+    expect(p.verdict).toBe("manual");
+    expect(p.badgeWord).toBe("part you entered");
+    expect(p.badgeName).toBe("part of it was entered by hand");
+    expect(provenanceTriggerName("Spending came to $3.00.", p.verdict, p.badgeWord, p.badgeName)).toBe(
+      "How Spending came to $3.00 is known — part of it was entered by hand",
+    );
+    // the panel says the same: how many of its rows he typed
+    expect(p.headline).toMatch(/^This total is the sum of 3 rows from 1 document, 1 you entered yourself\./);
+  });
+
   /** One row is "it", not "them" — the copy is the product here. */
   test("the hand-entered source reads singular for one row", () => {
     const acct = addAccount("a", "Cash on Hand", "cash");
@@ -2060,6 +2094,21 @@ describe("provenanceFor — all spending, compared against another window", () =
     expect(p.inputs[0]!.detail).toMatch(/^2 rows, Jul 1, 2026 to Jul 31, 2026$/);
     expect(p.inputs[1]!.detail).toMatch(/^1 row, Jun 1, 2026 to Jun 30, 2026$/);
     expect(p.inputs.every((i) => i.verdict === "derived")).toBe(true);
+  });
+
+  // 🔴 the year-against-year sentence on /summary takes the combined proof's word — so it takes its name too
+  test("a comparison only part of which he typed wears the same word and name", () => {
+    const { acct, cat, file } = twoMonths();
+    const coh = addAccount("b", "Cash on Hand", "cash");
+    addDays(coh, [{ day: "2026-07-10", basis: "anchored" }]);
+    categorize(addTxn(coh, "2026-07-11"), cat);
+    categorize(addTxn(acct, "2026-07-10", { importFileId: file }), cat);
+    categorize(addTxn(acct, "2026-06-10", { importFileId: file }), cat);
+
+    const p = provenanceFor(bundle.db, { kind: "allSpend", ...JUL, against: { ...JUN } })!;
+    expect(p.verdict).toBe("manual");
+    expect(p.badgeWord).toBe("part you entered");
+    expect(p.badgeName).toBe("part of it was entered by hand");
   });
 
   /**

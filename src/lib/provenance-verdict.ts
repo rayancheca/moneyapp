@@ -134,10 +134,36 @@ export function embeddedLabel(label: string): string {
  * ⛔ The name says how the figure is KNOWN, and the phrase after the dash says
  * what that is — so no verdict's name can claim a proof it does not have. The
  * badge WORDS are untouched (owner decision S33, 2026-09-14).
+ *
+ * ⚠️ `badgeName` is the phrase after the dash when a badge word is too terse to
+ * read there ("part you entered" → "part of it was entered by hand"); without
+ * one, the badge word is the phrase, as before.
  */
-export function provenanceTriggerName(label: string, verdict: PresentedVerdict, badgeWord?: string): string {
-  return `How ${embeddedLabel(label)} is known — ${badgeWord ? badgeWord : `it ${VERDICT_PRESENTATION[verdict].ariaSuffix}`}`;
+export function provenanceTriggerName(
+  label: string,
+  verdict: PresentedVerdict,
+  badgeWord?: string,
+  badgeName?: string,
+): string {
+  const known = badgeName ?? (badgeWord ? badgeWord : `it ${VERDICT_PRESENTATION[verdict].ariaSuffix}`);
+  return `How ${embeddedLabel(label)} is known — ${known}`;
 }
+
+/**
+ * A summed total part of which he typed — some rows by hand, every other row
+ * checked — wears this instead of `manual`'s "you entered it", which is true of
+ * a total only when he typed all of it.
+ *
+ * 🔴 /summary/2026's "Spending in Jan 1 – Aug 12, 2026 came to $66,477.60." took
+ * the weakest row's verdict, `manual`, from ONE $5,000.00 row he typed (the Cash
+ * on Hand down payment), and read "you entered it" — named "…is known — it was
+ * entered by hand" — over a year of rows statements check (review, 2026-10-07).
+ * The verdict and its tone stay the weakest row's; only the words say "part".
+ */
+export const PART_ENTERED = {
+  word: "part you entered",
+  name: "part of it was entered by hand",
+} as const;
 
 /** The panel's accessible name — through the same rule, so the button and its dialog name one claim. */
 export function provenancePanelName(label: string): string {

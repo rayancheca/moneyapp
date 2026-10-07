@@ -46,7 +46,7 @@ import {
   selectEndpoints,
   type ReplayAnchor,
 } from "./derivation";
-import { VERDICT_PRESENTATION } from "@/lib/provenance-verdict";
+import { PART_ENTERED, VERDICT_PRESENTATION } from "@/lib/provenance-verdict";
 import { MIN_OCCURRENCES } from "./recurring";
 
 /**
@@ -199,6 +199,11 @@ export interface Provenance {
    * only the word changes, to one that describes the mixture.
    */
   badgeWord?: string;
+  /**
+   * The trigger's accessible name after its dash, when the badge word is too terse to read there
+   * (`provenanceTriggerName`) — `PART_ENTERED`'s "part of it was entered by hand". Travels with `badgeWord`.
+   */
+  badgeName?: string;
 }
 
 export type FigureRef =
@@ -2077,6 +2082,7 @@ function allSpendProvenance(
   return {
     verdict: combined.verdict,
     badgeWord: combined.badgeWord,
+    badgeName: combined.badgeName,
     /*
      * 🔴 The date was borrowed and the sentence saying whose word it is was not.
      * Measured 2026-09-28 on a copy of the real ledger: this proof of August 2026
@@ -2321,6 +2327,8 @@ function summedRowsProof(
     .filter((c): c is AccountCoverage => c !== undefined);
   const footing = footingBounds(contributing);
 
+  // `manual` taken from SOME rows he typed, every other row checked: the words say part (`PART_ENTERED`)
+  const partEntered = weak === 0 && verdict === "manual" && byHand < rows.length;
   const provenance: Provenance = {
     verdict,
     // the badge only overrides when rows are genuinely UNCHECKED — a category
@@ -2330,8 +2338,11 @@ function summedRowsProof(
       weak === 0
         ? verdict === "market_value"
           ? marketValueBadgeWord(held === 0)
-          : undefined
+          : partEntered
+            ? PART_ENTERED.word
+            : undefined
         : `${grouped(rows.length - weak)} of ${grouped(rows.length)} checked`,
+    badgeName: partEntered ? PART_ENTERED.name : undefined,
     headline: `This total is the sum of ${parts.join(", ")}. A total is only as proven as its weakest row.${footing.note}`,
     sources,
     checkedThrough: footing.through,
