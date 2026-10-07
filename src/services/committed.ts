@@ -25,9 +25,10 @@ import { runway, type Runway } from "@/lib/runway";
 import { cashPosition, outsidePortfolioCashAccountIds } from "./accounts";
 import { isAgentsSeries, loadCategoryIndex, monthlySpending, recurringSeriesIdsForCategory } from "./analytics";
 import { incomeExpectation, overdueForSeries } from "./budgets";
+import { isUpfrontCarRow, upfrontCarRule } from "./car-upfront";
 import { ledgerOpens } from "./observation-frontier";
 import { seriesStaleness, upcomingOccurrences } from "./recurring";
-import { rowIsRecurring, seriesIdsNotDrawnAsRecurring } from "./recurring-link";
+import { seriesIdsNotDrawnAsRecurring } from "./recurring-link";
 
 /**
  * The two decision cards of pass 63 — how long the money lasts, and what the
@@ -510,10 +511,11 @@ export interface CarCard {
  */
 export function carCard(db: AppDatabase, today: string = todayIso()): CarCard | null {
   const idx = loadCategoryIndex(db);
-  const car = [...idx.byId.values()].find((c) => c.parentId === null && c.name === "Car");
-  if (!car) return null;
+  // the car, and which of its rows are money handed over up front — `car-upfront.ts`, the rule the pace reads too
+  const upfront = upfrontCarRule(idx, outsidePortfolioCashAccountIds(db), seriesIdsNotDrawnAsRecurring(db));
+  if (!upfront) return null;
 
-  const carSeries = recurringSeriesIdsForCategory(db, car.id);
+  const carSeries = recurringSeriesIdsForCategory(db, upfront.carId);
   const months = COMMITTED_HORIZON_MONTHS;
   const to = addCalendarMonths(today, months);
   /*
@@ -580,16 +582,16 @@ export function carCard(db: AppDatabase, today: string = todayIso()): CarCard | 
    * series the owner DISMISSED is not a bill he pays — he said so — and no
    * commitment line prices it, so it is money handed over like any unlinked
    * Car row (`seriesDrawsAsRecurring`). An ENDED series' payment was a bill.
+   *
+   * ⚖️ ONE PREDICATE (`isUpfrontCarRow`), and the spending pace asks it too: the owner's decision of 2026-10-07
+   * (§6A 48) leaves this money out of every pace, so it is not projected again as monthly spending.
    */
-  const subtree = new Set(idx.subtreeIds(car.id));
-  const notDrawn = seriesIdsNotDrawnAsRecurring(db);
+  const subtree = upfront.subtree;
   const upfrontCents = monthlySpending(db, {
     months: 24,
     refDate: today,
-    filter: (t) => !rowIsRecurring(t.recurringSeriesId, notDrawn),
-  })
-    .filter((c) => c.categoryId !== null && subtree.has(c.categoryId))
-    .reduce((s, c) => s + c.spentCents, 0);
+    filter: (t) => isUpfrontCarRow(upfront, t),
+  }).reduce((s, c) => s + c.spentCents, 0);
 
   /*
    * The share's denominator must not already contain the car, or the car would
