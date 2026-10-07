@@ -735,7 +735,7 @@ describe("§6A 45 — the pace of the agent's income nets its clawbacks, as the 
     expect(clawed.today - before.today).toBe(-100);
     expect(clawed.nw).toEqual(onPace(before.nw.map((cents) => cents - 100), -87, -187));
     // ⛔ …and no figure of his moves
-    expect(hisLines(clawed)).toEqual(hisLines(before));
+    expect(clawed.his).toEqual(before.his);
   });
 
   test("⚖️ …and with its interest a schedule's: the headline reads the schedule, the pace nets below zero", () => {
