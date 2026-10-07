@@ -167,7 +167,7 @@ const anchorFormSchema = z.object({
 });
 
 /**
- * Validating core of "Record a balance". This is the action the owner crashed
+ * Validating core of "Add a balance you counted". This is the action the owner crashed
  * twice: `balance` went straight into parseAmountToCents, so "not a number"
  * escaped as an unhandled server error and blanked the page.
  */

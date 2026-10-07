@@ -140,8 +140,8 @@ export function CashWallets({ wallets, categories, today }: CashWalletsProps) {
  * The DATE is deliberately not editable here. Re-anchoring the wallet's own
  * opening day is an upsert; a different day would insert a second anchor, and
  * two unequal anchors with no transactions between them turn the whole span to
- * basis='gap' and drop it from the chart. The account page's "Record a balance"
- * form is the place to record a LATER balance.
+ * basis='gap' and drop it from the chart. The account page's "Add a balance you
+ * counted" form is the place to add a LATER count.
  */
 function OpeningBalance({ wallet, onSaved }: { wallet: CashWalletView; onSaved: () => void }) {
   if (wallet.openingCents === null) return null;

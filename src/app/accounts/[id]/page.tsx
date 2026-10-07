@@ -26,7 +26,7 @@ import { AccountHoldingsTable } from "@/components/accounts/AccountHoldingsTable
 import { InsightList } from "@/components/insights/InsightList";
 import { AccountNameHeading } from "@/components/accounts/AccountNameHeading";
 import { AnchorForm } from "@/components/accounts/AnchorForm";
-import { removeBalanceRadius } from "@/components/accounts/remove-balance-radius";
+import { removeBalanceControls, removeBalanceRadius } from "@/components/accounts/remove-balance-radius";
 import { BalanceFigure } from "@/components/accounts/BalanceFigure";
 import { ErrorBanner, errorParam } from "@/components/ui/ErrorBanner";
 import { BalanceChartPanel } from "@/components/accounts/BalanceChartPanel";
@@ -51,7 +51,8 @@ const RECENT_TXN_LIMIT = 10;
 const SOURCE_LABEL: Record<AnchorSource, string> = {
   statement: "statement",
   ofx_ledger: "bank export",
-  manual: "manual",
+  // ⚖️ "counted" is the one verb for a balance he typed — the badge's own word (§6A 33, 50)
+  manual: "you counted it",
   live: "live",
   // ⚖️ owner decision 20: the opening of a statement he un-imported, kept — never read as a statement that checks
   unimported_statement: "opening of a statement you un-imported · not checked",
@@ -93,7 +94,7 @@ export default async function AccountDetailPage({
   const { id } = await params;
   const raw = await searchParams;
   // `addAnchorAction` (accounts/actions.ts:174) redirects HERE with the reason a
-  // balance was refused — "Record a balance" is the form most likely to be
+  // balance was refused — "Add a balance you counted" is the form most likely to be
   // rejected on this page, and until this was read the refusal was invisible.
   const error = errorParam(raw);
   const db = getDb();
@@ -209,7 +210,12 @@ export default async function AccountDetailPage({
    * and the rebuild skips balances only for one with holding events.
    */
   const removalEffects = anchorRemovalEffects(db, id, today);
-  const anchorRows = anchors.map((a) => ({ a, removal: removalEffects.get(a.id) }));
+  // the remove control's words are the dialog's rule's: a balance he typed is one he counted (§6A 50)
+  const anchorRows = anchors.map((a) => ({
+    a,
+    removal: removalEffects.get(a.id),
+    controls: removeBalanceControls(a.source, a.anchoredOn),
+  }));
 
   return (
     <>
@@ -366,9 +372,10 @@ export default async function AccountDetailPage({
         )}
 
         {/* ⛔ a brokerage book is valued by what its statements prove — a typed balance is refused (`takesTypedBalance`) */}
+        {/* ⚖️ "counted" is the one verb for a balance he typed, and the controls say it too (§6A 50) */}
         {takesTypedBalance(account) && (
           <SurfaceCard>
-            <h2 className="mb-1 text-sm font-medium">Record a balance</h2>
+            <h2 className="mb-1 text-sm font-medium">Add a balance you counted</h2>
             <p className="mb-4 text-xs text-ink-muted">
               {liability
                 ? "Enter the amount you owe — it counts against your net worth."
@@ -381,7 +388,7 @@ export default async function AccountDetailPage({
         <SurfaceCard>
           <h2 className="mb-3 text-sm font-medium">Recorded balances</h2>
           {anchors.length === 0 ? (
-            <p className="text-sm text-ink-muted">No balances recorded yet.</p>
+            <p className="text-sm text-ink-muted">No balances counted yet.</p>
           ) : (
             <table className="w-full text-sm">
               <thead>
@@ -393,7 +400,7 @@ export default async function AccountDetailPage({
                 </tr>
               </thead>
               <tbody>
-                {anchorRows.map(({ a, removal }) => (
+                {anchorRows.map(({ a, removal, controls }) => (
                   <tr key={a.id} className="border-b border-line/60 last:border-0">
                     <td className="figures py-2">{a.anchoredOn}</td>
                     <td className="py-2 text-xs text-ink-muted">{SOURCE_LABEL[a.source]}</td>
@@ -420,10 +427,10 @@ export default async function AccountDetailPage({
                           fields={{ anchorId: a.id, accountId: id }}
                           formClassName="inline"
                           triggerLabel="remove"
-                          triggerAriaLabel={`remove the balance recorded on ${dayWindowLabel(a.anchoredOn, a.anchoredOn)}`}
+                          triggerAriaLabel={controls.triggerAriaLabel}
                           triggerClassName="text-xs text-ink-faint transition-colors duration-(--duration-fast) hover:text-negative"
-                          title="Remove this recorded balance"
-                          confirmLabel="Remove this balance"
+                          title={controls.title}
+                          confirmLabel={controls.confirmLabel}
                           /* 🔴 An account PRICED FROM HOLDINGS does not verify
                              anything with a recorded balance, and removing one
                              changes nothing at all. `rebuildAccount` short-
@@ -458,6 +465,7 @@ export default async function AccountDetailPage({
                           radius={removeBalanceRadius({
                             accountName: account.name,
                             effect: removal,
+                            source: a.source,
                             /* the same rule, and the same hand-rolled copy: an
                                anchor is stored in the net-worth frame, so a card
                                in credit is a POSITIVE `balanceCents` and

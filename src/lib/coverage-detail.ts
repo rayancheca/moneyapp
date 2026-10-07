@@ -532,7 +532,7 @@ export function coverageDetail(input: CoverageDetailInput): string {
     case "manual":
       return input.lastManualUpdate
         ? `you are the statement — last counted ${dayWithYear(input.lastManualUpdate)}`
-        : "you are the statement — no balance recorded yet";
+        : "you are the statement — no balance counted yet";
     case "unknown":
       return "no balances derived yet — import a statement to start the chain";
     case "verified": {

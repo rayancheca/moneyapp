@@ -515,8 +515,9 @@ describe("the states that are not about arithmetic", () => {
     expect(detail({ grade: "manual", lastManualUpdate: "2026-08-11" })).toBe(
       "you are the statement — last counted Aug 11, 2026",
     );
+    // ⚖️ "counted" is the one verb for a balance he typed (§6A 33, 50)
     expect(detail({ grade: "manual", lastManualUpdate: null })).toBe(
-      "you are the statement — no balance recorded yet",
+      "you are the statement — no balance counted yet",
     );
   });
 
