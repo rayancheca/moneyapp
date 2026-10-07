@@ -12,10 +12,11 @@ import {
 } from "@/db/schema/recurring";
 import { transactions } from "@/db/schema/transactions";
 import { addDays, isValidIsoDate, periodBounds, todayIso } from "@/lib/dates";
+import { paydayReadings, type PaydayReading, type PerPayday } from "@/lib/per-payday";
 import { stepFrom, stepPlan } from "@/lib/recurring-step";
 import { loadCategoryIndex } from "./analytics";
 import { overdueForSeries } from "./arrears";
-import { stillToCome } from "./payday-settlement";
+import { paydaySettlement, readsPerPayday, stillToCome } from "./payday-settlement";
 import {
   annualizedCentsOf,
   effectiveSeries,
@@ -48,6 +49,14 @@ export interface SeriesLinkedTxn {
 export interface AmountHistoryPoint {
   date: string;
   amountCents: number;
+  /**
+   * A lump of pay — a deposit whose money paid two or more paydays on its own —
+   * read as the calendar grades it (`lib/per-payday`): those paydays and what it
+   * paid each. Null for every other posting. 🔴 Without it the history drew his
+   * Sep 23 deposit as a bar four weeks tall and read it "vs expected +$3,425.76"
+   * beside a calendar drawing the same row `paid`.
+   */
+  perPayday: PerPayday | null;
 }
 
 export interface SeriesCategoryRef {
@@ -268,9 +277,13 @@ export function seriesDetail(
     accountName: t.accountName,
     linkSource: t.linkSource,
   }));
+  // the calendar's reading of a pay series' rows, behind the calendar's own gate
+  const readings = readsPerPayday(s)
+    ? paydayReadings(linked, paydaySettlement(db, s.id, today).portions)
+    : new Map<string, PaydayReading>();
   const amountHistory: AmountHistoryPoint[] = [...linked]
     .reverse()
-    .map((t) => ({ date: t.postedOn, amountCents: t.amountCents }));
+    .map((t) => ({ date: t.postedOn, amountCents: t.amountCents, perPayday: readings.get(t.id)?.perPayday ?? null }));
 
   /*
    * Sample standard deviation of what actually posted. Two rows is the floor:

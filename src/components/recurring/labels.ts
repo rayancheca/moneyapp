@@ -4,6 +4,7 @@ import { dayWindowLabel } from "@/lib/period";
 import { wholeToleranceDays } from "@/lib/recurring-step";
 import { formatCents } from "@/lib/money";
 import type { UnsettledReason } from "@/lib/occurrence-verdict";
+import type { PerPayday } from "@/lib/per-payday";
 import { SERIES_EVIDENCE_LABEL } from "@/lib/series-evidence";
 import type { Cadence, SeriesKind, SeriesStatus } from "@/db/schema/recurring";
 import type { ForecastComponent } from "@/services/forecast";
@@ -543,4 +544,13 @@ export function annualizedEndNote(endsOn: string | null, today: string): string 
   const end = annualizedEnd(endsOn, today);
   if (end === null) return null;
   return `${end.stopped ? "ended" : "ends"} ${longDate(end.endsOn)}`;
+}
+
+/**
+ * A lump of pay, as the calendar's cell, its Day Sheet and the series page's
+ * history all name it — "4 paydays at $1,141.92 each" — so the deposit's own
+ * amount never stands unexplained beside a one-week expectation.
+ */
+export function perPaydayWord(p: PerPayday): string {
+  return `${p.paydays} paydays at ${formatCents(p.cents)} each`;
 }

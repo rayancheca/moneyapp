@@ -15,6 +15,7 @@ function entry(over: Partial<CalendarEntry> & Pick<CalendarEntry, "seriesId" | "
     transactionId: null,
     settledByDepositsOn: [],
     settlesPaydaysOn: [],
+    perPayday: null,
     settledCents: null,
     unsettledReason: null,
     confidence: null,
@@ -339,5 +340,44 @@ describe("RecurringCalendar — a transfer is drawn and counted in no total", ()
     const html = render({ entriesByDay: {}, entryCount: 0, upcomingNetCents: 0 });
     expect(html).toContain("Nothing recurring lands in August 2026.");
     expect(html).not.toContain("What lands in");
+  });
+});
+
+/**
+ * A lump says how many paydays it paid. His Sep 23 deposit of $4,567.68 is drawn
+ * `paid` because it is four weeks at $1,141.92 — and read aloud without that, the
+ * cell said "paid $4,567.68" on a series whose week is $1,141.92.
+ */
+describe("RecurringCalendar — a lump names the paydays it paid", () => {
+  const lump = entry({
+    seriesId: "pay",
+    name: "It America LLC (weekly pay)",
+    kind: "income",
+    state: "paid",
+    amountCents: 456768,
+    expectedAmountCents: 114192,
+    transactionId: "t-lump",
+    perPayday: { paydays: 4, cents: 114192 },
+    settledCents: 456768,
+  });
+  const month: RecurringCalendarMonth = {
+    monthKey: "2026-09",
+    today: "2026-10-07",
+    entriesByDay: { "2026-09-23": [lump] },
+    entryCount: 1,
+    postedNetCents: 456768,
+    upcomingNetCents: 0,
+    missedCount: 0,
+    unsettledCount: 0,
+    unsettledGrossCents: 0,
+  };
+
+  test("the cell's accessible name and the Day Sheet both say four paydays at a week each", () => {
+    const html = decode(renderToStaticMarkup(createElement(RecurringCalendar, { initialMonth: month, today: "2026-10-07" })));
+    expect(html).toContain(
+      'aria-label="Sep 23, 2026 — 1 item: It America LLC (weekly pay) paid (4 paydays at $1,141.92 each) $4,567.68"',
+    );
+    const sheet = decode(renderToStaticMarkup(createElement(DaySheetBody, { entries: [lump] })));
+    expect(sheet).toContain("paid — 4 paydays at $1,141.92 each");
   });
 });

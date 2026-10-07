@@ -13,13 +13,18 @@ import {
 } from "recharts";
 import { DataTable, type Column } from "@/components/ui/DataTable";
 import { formatCents, formatCentsSigned } from "@/lib/money";
+import type { PerPayday } from "@/lib/per-payday";
 import type { AmountHistoryPoint } from "@/services/recurring-detail";
-import { longDate, shortDate } from "./labels";
+import { longDate, perPaydayWord, shortDate } from "./labels";
 
 interface AmountRow {
   key: string;
   date: string;
   amountCents: number;
+  /** a lump of pay, read per payday as the calendar grades it — see `AmountHistoryPoint` */
+  perPayday: PerPayday | null;
+  /** what the row is compared with the expectation as: per payday for a lump, else its amount */
+  comparableCents: number;
 }
 
 /** The table lens's columns: the tooltip's own facts, as a column each. */
@@ -30,7 +35,12 @@ function AMOUNT_COLUMNS(expectedCents: number | null): Column<AmountRow>[] {
       key: "amount",
       header: "Amount",
       align: "right",
-      render: (r) => <span className="figures">{formatCentsSigned(r.amountCents)}</span>,
+      render: (r) => (
+        <>
+          <span className="figures">{formatCentsSigned(r.amountCents)}</span>
+          {r.perPayday ? <span className="block text-[11px] text-ink-faint">{perPaydayWord(r.perPayday)}</span> : null}
+        </>
+      ),
     },
     // only offered when there IS an expectation to compare against — a
     // "vs expected" column full of dashes would imply a missing number
@@ -42,11 +52,11 @@ function AMOUNT_COLUMNS(expectedCents: number | null): Column<AmountRow>[] {
             header: "vs expected",
             align: "right" as const,
             render: (r: AmountRow) =>
-              r.amountCents === expectedCents ? (
+              r.comparableCents === expectedCents ? (
                 <span className="text-ink-faint">on plan</span>
               ) : (
                 <span className="figures text-ink-faint">
-                  {formatCentsSigned(Math.abs(r.amountCents) - Math.abs(expectedCents))}
+                  {formatCentsSigned(Math.abs(r.comparableCents) - Math.abs(expectedCents))}
                 </span>
               ),
           },
@@ -72,10 +82,26 @@ interface AmountHistoryChartProps {
  * The table lens (pass 23) lists the same occurrences newest-first with the
  * signed amount and the variance the bars only imply — the tooltip's numbers,
  * all visible at once.
+ *
+ * ⚖️ A lump of pay is drawn and compared PER PAYDAY, as the calendar grades it
+ * (`lib/per-payday`): his Sep 23 deposit of $4,567.68 is a bar one week tall,
+ * labelled "4 paydays at $1,141.92 each", on plan. 🔴 Drawn whole, it was a bar
+ * four weeks tall reading "vs expected +$3,425.76" beside a calendar drawing the
+ * same row `paid`.
  */
 export function AmountHistoryChart({ points, expectedCents, asTable = false }: AmountHistoryChartProps) {
   const data = useMemo(
-    () => points.map((p) => ({ date: p.date, magnitude: Math.abs(p.amountCents) / 100, amountCents: p.amountCents })),
+    () =>
+      points.map((p) => {
+        const comparableCents = p.perPayday?.cents ?? p.amountCents;
+        return {
+          date: p.date,
+          magnitude: Math.abs(comparableCents) / 100,
+          amountCents: p.amountCents,
+          perPayday: p.perPayday,
+          comparableCents,
+        };
+      }),
     [points],
   );
 
@@ -140,7 +166,8 @@ export function AmountHistoryChart({ points, expectedCents, asTable = false }: A
                 <div className="rounded-md border border-line bg-surface-raised px-3 py-2 text-xs shadow-sm">
                   <div className="text-ink-faint">{p.date}</div>
                   <div className="figures mt-0.5 text-sm font-medium">{formatCentsSigned(p.amountCents)}</div>
-                  {expectedCents !== null && p.amountCents !== expectedCents ? (
+                  {p.perPayday ? <div className="mt-0.5 text-ink-faint">{perPaydayWord(p.perPayday)}</div> : null}
+                  {expectedCents !== null && p.comparableCents !== expectedCents ? (
                     <div className="mt-0.5 text-ink-faint">expected {formatCents(expectedCents)}</div>
                   ) : null}
                 </div>
