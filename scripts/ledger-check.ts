@@ -84,6 +84,7 @@ import { type LedgerCheckMode, WitnessFlagRefusal, compareToMarks, ledgerCheckMo
 import { readWitnessMarks, writeWitnessMarks } from "@/services/witness-marks";
 import { filesWithoutPrintedLines } from "@/services/import/import-records";
 import { acknowledgementsMatchingNothing, linesLeftOut } from "@/services/import/lines-left-out";
+import { readAcrossBanksNotice, readsAcrossBanks } from "@/services/import/reads-across-banks";
 import { lineLeftOutNotice } from "@/lib/import-file-label";
 import {
   acknowledgementWrites,
@@ -488,6 +489,18 @@ if (leftOutFailures.length > 0) {
       "    pnpm ledger-check --acknowledge-left-out=<mark> --reason='<what the statement shows>' --confirm   # records it, in the ledger",
   );
 }
+
+/*
+ * 7. READS OF ACCOUNTS AT TWO BANKS — `import_files.institution_id` holds one bank, so a read whose accounts are at two
+ * cannot record the bank it resolved (`institutionReadBy` is null) and the importer's guess from its name stands
+ * (`readsAcrossBanks`, the one rule). 🔴 It stood silently. NAMED, not failed, as the files beyond the backfills (5):
+ * it moves no money — every row is in its own account — and nothing short of a schema change could make it pass, so
+ * a red check on every commit would train the hook to be ignored. ⛔ Never a bank picked for it: a guess is not a bank.
+ * None on his ledger, 2026-10-07.
+ */
+const acrossBanks = readsAcrossBanks(db);
+console.log(`reads of accounts at two banks: ${acrossBanks.length}`);
+for (const read of acrossBanks) console.log(`  ⚠️ [read at two banks] ${readAcrossBanksNotice(read)}`);
 
 /*
  * THE ACKNOWLEDGING — the guarded step, as the lowering below: a dry run prints each line a mark names and what it would
