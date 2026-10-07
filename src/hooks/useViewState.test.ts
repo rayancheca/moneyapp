@@ -728,6 +728,40 @@ describe("a period link keeps every view the page's URL holds", () => {
     expect(page.history.map((entry) => entry.url)).toEqual(["/spending?period=2026-07&where=relief", "/spending?period=2026-06"]);
   });
 
+  /**
+   * 🔴 A link nobody asked for (a crumb's, the sidebar's) drops the ask as it starts. ‹ followed
+   * before anything drew then built on the URL on screen, which still held the linked Relief that
+   * List had just been pressed over, and the press, landing on ‹'s URL, drew Relief back.
+   */
+  test("followed after a link dropped a press's ask, before anything drew, lands the press", async () => {
+    const page = await open(spendingPage, "/spending?period=2026-07&where=relief", { spending: { where: "table" } });
+    ui.where!.setView("where", "list"); // asks /spending?period=2026-07, its write held…
+    page.router.push("/spending"); // …a crumb's link, no view in it…
+    pills.period!("2026-06"); // …and ‹, on July as drawn
+    await page.settle();
+
+    expect(page.url).toBe("/spending?period=2026-06");
+    expect(page.shown).toMatchObject({ where: { where: "list" } });
+    expect(page.persisted.spending).toMatchObject({ where: "list" });
+  });
+
+  /**
+   * ⛔ A link to the URL on screen (the sidebar's "Spending" on clean /spending) commits no new URL,
+   * so nothing would ever end a dropped ask: ‹ in flight, the sidebar link, then a lens press built
+   * on the ‹ it had dropped and took him to May, a page he had left.
+   */
+  test("followed, then a link to the URL on screen, never brings it back to a later press", async () => {
+    const page = await open(spendingPage, "/spending");
+    pills.period!("2026-05"); // ‹, its page in flight…
+    page.router.push("/spending"); // …the sidebar's link to the page on screen
+    await page.settle();
+    expect(page.url).toBe("/spending");
+
+    ui.where!.setView("where", "relief");
+    await page.settle();
+    expect(page.url).toBe("/spending?where=relief");
+  });
+
   /** a press made while the link's page is in flight builds on June, never back to July */
   test("a press made while its page is in flight keeps the period and the linked view", async () => {
     const page = await open(spendingPage, "/spending?period=2026-07&where=relief");
@@ -849,13 +883,27 @@ describe("a press on a page showing a refused action's banner", () => {
     expect(page.url).toBe("/investments?range=1Y&bench=QQQ&view=returns"); // his saved Return, as ever
   });
 
-  test("a press made while one is in flight never brings it back", async () => {
+  test("a tab followed while a press is in flight never brings it back", async () => {
     const page = await open(recurringPage, "/recurring?error=Detection%20failed&tab=calendar&cal=tall");
     ui.cal!.setView("cal", "compact");
     pills.tab!("all");
     await page.settle();
 
     expect(page.url).toBe("/recurring?tab=all&cal=compact");
+  });
+
+  /** built on the asked URL (`pressBase` with an ask), never on the URL on screen that holds it */
+  test("a press made while one is in flight never brings it back", async () => {
+    const page = await open(portfolioPage, "/investments?error=Refused&range=1M");
+    ui.portfolio!.setView("view", "returns"); // asks /investments?range=1M&view=returns…
+    await page.serve("write"); // …its page rendering, the banner still on screen
+    expect(page.url).toBe("/investments?error=Refused&range=1M");
+    pills.bench!("QQQ");
+    ui.portfolio!.setView("view", "value");
+    await page.settle();
+
+    expect(page.url).toBe("/investments?range=1M&bench=QQQ");
+    expect(page.persisted.investments).toMatchObject({ view: "value" });
   });
 });
 
@@ -882,6 +930,31 @@ describe("Back/Forward to a page with view pills", () => {
     expect(page.url).toBe("/investments?range=1M");
     expect(page.shown).toMatchObject({ view: { view: "value" } });
     expect(page.persisted.investments).toMatchObject({ view: "value" });
+  });
+
+  /**
+   * 🔴 The same pill pressed while Back's save is still being written: a navigation overtakes a
+   * server action in Next's queue, so the pill's page could be drawn before the save landed — from
+   * the saved Return he had walked away from — and nothing drew it again.
+   */
+  test("a range pill pressed while Back's save is being written keeps the view Back showed", async () => {
+    const page = await open(portfolioPage, "/investments?range=1Y");
+    ui.portfolio!.setView("view", "returns");
+    await page.settle();
+
+    page.back();
+    await idle();
+    expect(page.pending).toEqual([{ kind: "write", label: 'investments {"view":"value","unit":"dollar","lens":"chart"}' }]); // Back's save, held
+    pills.range!("1M");
+    await idle();
+    // the pill's page first, whenever it is asked for before Back's save has landed
+    if (page.pending.some((work) => work.kind === "render")) await page.serve("render");
+    await page.settle();
+
+    expect(page.url).toBe("/investments?range=1M");
+    expect(page.shown).toMatchObject({ view: { view: "value" } });
+    expect(page.persisted.investments).toMatchObject({ view: "value" });
+    expect(page.history.map((entry) => entry.url)).toEqual(["/investments?range=1M", "/investments?range=1Y&view=returns"]);
   });
 
   /** 🔴 The same across /spending's two cards: the lens press drew the cash card he had left. */
@@ -989,6 +1062,64 @@ describe("Back/Forward to a page with view pills", () => {
     await page.settle();
     expect(page.persisted.dashboard).toMatchObject({ chart: "accounts", cards: "deck" });
     expect(page.persisted.dashboard).not.toHaveProperty("accts");
+  });
+
+  /**
+   * (B2) the account selection his own pill put in the URL is his, as a view is: Back to it saves it
+   * again. 🔴 Back saved the spec's dimensions alone, and the nav link drew the selection he had left.
+   */
+  test("Back to an account selection his pill put in the URL saves it again", async () => {
+    const page = await open(dashboardPage, "/?chart=accounts", { dashboard: { chart: "accounts" } });
+    pills.account!("a");
+    await page.settle();
+    expect(page.url).toBe("/?accts=b%2Cc&chart=accounts");
+    pills.account!("b");
+    await page.settle();
+    expect(page.persisted.dashboard).toMatchObject({ accts: "c" });
+
+    page.back();
+    await page.settle();
+    expect(page.url).toBe("/?accts=b%2Cc&chart=accounts");
+    page.router.push("/"); // the nav link: no selection in its URL
+    await page.settle();
+    expect(page.shown).toMatchObject({ selectedAccountIds: ["b", "c"] });
+    expect(page.persisted.dashboard).toMatchObject({ accts: "b,c" });
+  });
+
+  /** a selection only a link put in the URL stays the link's, as a linked view does */
+  test("Back to an account selection a link opened saves none", async () => {
+    const page = await open(dashboardPage, "/?chart=accounts&accts=a", { dashboard: { chart: "accounts", accts: "b" } });
+    pills.cards!("grid");
+    await page.settle();
+    page.back();
+    await page.settle();
+
+    expect(page.url).toBe("/?chart=accounts&accts=a");
+    expect(page.persisted.dashboard).toMatchObject({ accts: "b" });
+  });
+
+  /**
+   * ⏸️ LEFT (§6C, LOW): Back's re-save is judged per URL, not per history entry — the URL a link
+   * opened is taken for his when a press of his asked for the same URL in another entry. Telling
+   * entries apart needs a history-entry key Next does not hand the app (and the harness has none).
+   */
+  test.skip("Back to a link's entry of a URL his press also asked for saves nothing of it", async () => {
+    const page = await open(dashboardPage, "/?chart=bridge", { dashboard: { chart: "assets" } });
+    page.router.push("/"); // the nav link: his saved Assets
+    await page.settle();
+    pills.chart!("bridge"); // his press, to the very URL the link opened
+    await page.settle();
+    pills.chart!("split");
+    await page.settle();
+
+    page.back(); // his Bridge: saved again (B2)
+    await page.settle();
+    page.back(); // "/", drawn from Assets: saved again
+    await page.settle();
+    page.back(); // the link's Bridge: never saved
+    await page.settle();
+    expect(page.url).toBe("/?chart=bridge");
+    expect(page.persisted.dashboard).toMatchObject({ chart: "assets" });
   });
 
   /**

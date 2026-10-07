@@ -8,6 +8,7 @@ import { isCategoryHueName, type CategoryHueName } from "@/lib/category-palette"
 import { compareDates, diffDays, monthKey, periodBounds, todayIso } from "@/lib/dates";
 import { flowEntryOf, monthFlow, type MonthFlow, type MonthFlowEntry } from "@/lib/month-flow";
 import { hasArrived, portionsAcross, type SettlementPortion } from "@/lib/payday-settlement";
+import { comparableCents, spreadSampleCents, type PaydayReading, type PerPayday } from "@/lib/per-payday";
 import { RECURRING_HISTORY_STATUSES } from "@/lib/series-evidence";
 import {
   forecastConfidence,
@@ -20,7 +21,7 @@ import {
 import { outsidePortfolioCashAccountIds } from "./accounts";
 import { isAgentsSeries, loadCategoryIndex } from "./analytics";
 import { frontierForSeries, observationFrontier, seriesAccountIds } from "./observation-frontier";
-import { paydaySettlementsBySeries } from "./payday-settlement";
+import { paydayReadingsBySeries, paydaySettlementsBySeries, readsPerPayday } from "./payday-settlement";
 import {
   effectiveSeries,
   lapsedSeriesShouldStopForecasting,
@@ -37,7 +38,8 @@ import { seriesCategoryIds } from "./series-category";
  * Recurring calendar month (ux-overhaul-plan §4.1.3). One month of the
  * day-state grammar [MM]:
  *   - paid            green ✓ — a tagged charge posted, amount matches expected
- *   - paid_different  amber ! — a tagged charge posted, amount drifted
+ *   - paid_different  amber ! — a tagged charge posted, amount drifted (a pay
+ *                               deposit: what it paid per payday, `lib/per-payday`)
  *   - upcoming        blue •  — an expected occurrence on/after today, unposted
  *   - missed          red ✕   — expected before today, unposted, day IS imported
  *   - unsettled       grey ?  — expected before today, unposted, and the ledger
@@ -127,6 +129,15 @@ export interface CalendarEntry {
    * toward 1 payday outside this month (Thu, Aug 27, 2026)"); so does the row.
    */
   settlesPaydaysOn: readonly string[];
+  /**
+   * On a posted pay row whose money paid two or more paydays on its own — a
+   * lump — those paydays and what it paid each (`lib/per-payday`); null on
+   * every other entry. `state` grades `cents` against the expectation, so a
+   * lump of four weeks at $1,141.92 is `paid`, and its cell and Day Sheet say
+   * "4 paydays at $1,141.92 each" rather than leave $4,567.68 standing beside a
+   * $1,141.92 week.
+   */
+  perPayday: PerPayday | null;
   /**
    * What this mark adds to the month's Settled figure, or null for a mark that
    * has not settled (upcoming, missed, not yet known). The footer's Settled
@@ -404,13 +415,24 @@ function postingCountBySeries(db: AppDatabase): Map<string, number> {
   return out;
 }
 
-function measuredStddevs(db: AppDatabase, seriesIds: readonly string[]): Map<string, number> {
+/*
+ * ⚖️ A PAY SERIES' SPREAD IS MEASURED PER PAYDAY, as its rows are held to it
+ * (`readings`, `lib/per-payday`): a lump is a sample of one week's pay, and money
+ * that was only part of a payday's pay is no sample of one. 🔴 On raw amounts
+ * his lump of four weeks was a sample of its own — σ $1,629.39 on his ledger —
+ * and inside that ±$3,258.78 band a $1,200.00 raise read `paid`.
+ */
+function measuredStddevs(
+  db: AppDatabase,
+  seriesIds: readonly string[],
+  readings: ReadonlyMap<string, ReadonlyMap<string, PaydayReading>>,
+): Map<string, number> {
   const out = new Map<string, number>();
   if (seriesIds.length === 0) return out;
 
   const byId = new Map<string, number[]>();
   for (const r of db
-    .select({ seriesId: transactions.recurringSeriesId, amountCents: transactions.amountCents })
+    .select({ id: transactions.id, seriesId: transactions.recurringSeriesId, amountCents: transactions.amountCents })
     .from(transactions)
     .where(
       and(
@@ -420,9 +442,11 @@ function measuredStddevs(db: AppDatabase, seriesIds: readonly string[]): Map<str
     )
     .all()) {
     if (!r.seriesId) continue;
+    const sample = spreadSampleCents(r.amountCents, readings.get(r.seriesId)?.get(r.id));
+    if (sample === null) continue;
     const list = byId.get(r.seriesId);
-    if (list) list.push(r.amountCents);
-    else byId.set(r.seriesId, [r.amountCents]);
+    if (list) list.push(sample);
+    else byId.set(r.seriesId, [sample]);
   }
 
   for (const [id, amounts] of byId) {
@@ -517,10 +541,6 @@ export function recurringCalendar(
     .filter((s) => !isAgentsSeries(agentsCash, s));
   const seriesById = new Map(historyRows.map((s) => [s.id, s]));
   const forecastRows = historyRows.filter((s) => s.status === "detected" || s.status === "confirmed");
-  const measured = measuredStddevs(
-    db,
-    historyRows.filter((s) => s.amountCentsStddev === null).map((s) => s.id),
-  );
   const postingCounts = postingCountBySeries(db);
   const hues = seriesHues(db);
 
@@ -550,10 +570,13 @@ export function recurringCalendar(
    * Income only: settlement speaks about deposits, and a bill's absence is
    * still graded by `settledVerdict` exactly as before.
    */
-  const settlements = paydaySettlementsBySeries(
+  const settlements = paydaySettlementsBySeries(db, historyRows.filter(readsPerPayday).map((s) => s.id), today);
+  /** per series, per row: how a pay series' row reads per payday — what it is graded as, and measured against */
+  const readings = paydayReadingsBySeries(db, settlements);
+  const measured = measuredStddevs(
     db,
-    forecastRows.filter((s) => s.kind === "income").map((s) => s.id),
-    today,
+    historyRows.filter((s) => s.amountCentsStddev === null).map((s) => s.id),
+    readings,
   );
   const insideMonth = (day: string): boolean =>
     compareDates(day, monthStart) >= 0 && compareDates(day, monthEnd) <= 0;
@@ -611,8 +634,15 @@ export function recurringCalendar(
       if (settlements.has(s.id) && !hasArrived(p.postedOn, today)) continue;
       const expected = effectiveSeries(s).nextExpectedAmountCents;
       const stddev = s.amountCentsStddev ?? measured.get(s.id) ?? null;
+      /*
+       * ⚖️ A PAY ROW IS GRADED PER PAYDAY (`lib/per-payday`): a lump whose money
+       * paid N paydays on its own is held to the week at what it paid each. A
+       * bill — or money settlement does not speak about — has no reading, and is
+       * graded as the one charge it is.
+       */
+      const reading = readings.get(s.id)?.get(p.id);
       const state: DayStateKind =
-        expected === null ? "paid" : classifyPostedAmount(p.amountCents, expected, stddev);
+        expected === null ? "paid" : classifyPostedAmount(comparableCents(p.amountCents, reading), expected, stddev);
       // the money this deposit spent on another month's paydays is THAT month's
       // Settled figure, where the chip naming this day stands
       const elsewhere = chargeRow(owedElsewhere.get(s.id)?.get(p.postedOn), p.amountCents);
@@ -626,6 +656,7 @@ export function recurringCalendar(
         transactionId: p.id,
         settledByDepositsOn: [],
         settlesPaydaysOn: elsewhere.paydays,
+        perPayday: reading?.perPayday ?? null,
         settledCents: p.amountCents - elsewhere.cents,
         unsettledReason: null,
         confidence: null,
@@ -715,6 +746,7 @@ export function recurringCalendar(
             transactionId: null,
             settledByDepositsOn: depositDays,
             settlesPaydaysOn: [],
+            perPayday: null,
             settledCents: paidFromElsewhere.get(s.id)?.get(o.date) ?? 0,
             unsettledReason: null,
             confidence: null,
@@ -754,6 +786,7 @@ export function recurringCalendar(
         transactionId: null,
         settledByDepositsOn: [],
         settlesPaydaysOn: [],
+        perPayday: null,
         settledCents: null,
         unsettledReason: verdict?.reason ?? null,
         confidence: isFuture ? confidence : null,

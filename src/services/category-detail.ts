@@ -3,9 +3,7 @@ import { seriesDrawsAsRecurring, seriesRowLabel, type SeriesEvidence } from "@/l
 import type { AppDatabase } from "@/db/client";
 import { categories, type CategoryKind } from "@/db/schema/categories";
 import { addDays, periodBounds } from "@/lib/dates";
-import { emptyPeriodReason, unreachedKind, type UnreachedKind } from "@/lib/empty-period";
-import { categoryEmptyPeriodCopy } from "@/lib/category-reach";
-import { formatDayLong } from "@/lib/format-date";
+import { unreachedKind, type UnreachedKind } from "@/lib/empty-period";
 import { withOwnRow } from "@/lib/subcategory-rows";
 import {
   categorySpending,
@@ -17,8 +15,7 @@ import {
   recurringSeriesIdsForCategory,
   type DateRange,
 } from "./analytics";
-import { budgetStatuses, categoryReachContext, categoryReachFor, type CategoryReachContext } from "./budgets";
-import { ledgerOpens } from "./observation-frontier";
+import { budgetStatuses, categoryReachFor, type CategoryReachContext } from "./budgets";
 import { overdueForSeries } from "./arrears";
 import { listSeries } from "./recurring";
 
@@ -167,25 +164,6 @@ export function categoryMonthlyTrend(
       unreached: unreachedKind({ from, to, today, ledgerOpens: opensFrom, ledgerReaches: reaches }),
     };
   });
-}
-
-/**
- * What `/categories/[id]` says over a window holding none of the category's rows — the heading and body the Top
- * merchants and Transactions cards both print, so the two cannot describe different worlds.
- *
- * ⚖️ Asked of the category's OWN imported-through day (owner decision 2026-10-07, §6A 49): `categoryReachFor`, the
- * rule its `/budgets` row grades by, and named as whose it is — "spending in Car is imported through Wed, Aug 12,
- * 2026", not "the ledger is imported through Thu, Sep 24, 2026" (`lib/category-reach`).
- */
-export function categoryEmptyWindowCopy(
-  db: AppDatabase,
-  w: { categoryId: string; name: string; kind: CategoryKind; from: string; to: string; label: string; today: string },
-  ctx: CategoryReachContext = categoryReachContext(db),
-): { title: string; description: string } {
-  const reach = categoryReachFor(db, w.categoryId, w.from, w.today, ctx);
-  const opens = ledgerOpens(db);
-  const reason = emptyPeriodReason({ from: w.from, to: w.to, today: w.today, ledgerOpens: opens, ledgerReaches: reach.through });
-  return categoryEmptyPeriodCopy(reason, { label: w.label, from: w.from }, reach, w, formatDayLong, { ledgerOpens: opens });
 }
 
 /**

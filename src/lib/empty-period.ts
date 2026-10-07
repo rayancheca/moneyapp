@@ -204,7 +204,7 @@ const days = (n: number): string => `${n} ${n === 1 ? "day" : "days"}`;
  * ⚖️ What the agent's own account paid or was paid is none of his spending or income (owner decisions 2026-09-28,
  * 2026-10-02, 2026-10-05) — one sentence for every branch whose window has an imported part to hold it.
  */
-const AGENTS_MONEY_LEFT_OUT =
+export const AGENTS_MONEY_LEFT_OUT =
   " The agent's own account paid or was paid money in this period, and none of it is counted here: it is the agent's, not yours.";
 
 /**
@@ -266,7 +266,9 @@ export function emptyPeriodCopy(
         title: `${label} has not been imported yet`,
         description:
           `Nothing has been imported for ${days(reason.uncoveredDays)} of it${through ? `; ${whose} is imported through ${through}` : ""}. ` +
-          "That is a window nobody has looked at, not one in which nothing happened — import the statements that cover it.",
+          "That is a window nobody has looked at, not one in which nothing happened — import the statements that cover it." +
+          // ⚖️ past the ledger's day no row exists; past a CATEGORY'S own day (§6A 49) the agent's account can hold some
+          (opts.agentsMoney ? AGENTS_MONEY_LEFT_OUT : ""),
       };
     case "before-records":
       return {

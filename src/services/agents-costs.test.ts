@@ -798,6 +798,41 @@ describe("the agent's cost SERIES is not his bill either", () => {
     });
   });
 
+  /*
+   * 🔴 …and the merchant's page: under a profile that measures nothing of the agent's (`isHisExpenseRow`), its card
+   * read "Billed monthly as Gold Monthly Fee — detected, not yet confirmed." of the agent's schedule — a bill of his, by
+   * the merchant's own words. A merchant both pay could name either schedule, whichever the database handed back first.
+   */
+  test("⛔ the merchant's page names no schedule of the agent's as how the merchant bills him", () => {
+    const agents = agentsGold();
+    expect(merchantIntelligence(bundle.db, gold, TODAY).cadence).toBeNull();
+
+    // hypothetical: he subscribes to Gold too — his schedule is the one the page names
+    const his = schedule({
+      name: "Robinhood Gold",
+      kind: "subscription",
+      accountId: wellsFargo,
+      merchantId: gold,
+      cadence: "monthly",
+      intervalDaysAvg: 30,
+      nextExpectedOn: "2026-10-03",
+      nextExpectedAmountCents: -AGENTS_FEE,
+      lastMatchedOn: "2026-09-03",
+      status: "confirmed",
+    });
+    expect(merchantIntelligence(bundle.db, gold, TODAY).cadence).toEqual({
+      seriesId: his,
+      name: "Robinhood Gold",
+      cadence: "monthly",
+      status: "confirmed",
+    });
+
+    // the rule's own edge: unpaired, the agent's schedule is his as well, and the page may name it
+    bundle.db.delete(recurringSeries).where(eq(recurringSeries.id, his)).run();
+    unpair();
+    expect(merchantIntelligence(bundle.db, gold, TODAY).cadence?.seriesId).toBe(agents);
+  });
+
   test("⛔ …nor its posted fee: no mark and no Settled cent in September", () => {
     hisCar();
     const read = () => recurringCalendar(bundle.db, "2026-09", TODAY);

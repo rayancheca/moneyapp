@@ -4,7 +4,7 @@ import { notFound } from "next/navigation";
 import { getDb } from "@/db/client";
 import { categories } from "@/db/schema/categories";
 import { compareDates, todayIso } from "@/lib/dates";
-import { formatDayShort } from "@/lib/format-date";
+import { formatDayLong, formatDayShort } from "@/lib/format-date";
 import { formatCents } from "@/lib/money";
 import { parsePeriodParams, resolvePeriod, withPeriod } from "@/lib/period";
 import { ledgerOpens } from "@/services/observation-frontier";
@@ -13,7 +13,6 @@ import { categoryReachContext } from "@/services/budgets";
 import {
   categoryBudgetRef,
   categoryDetailHeader,
-  categoryEmptyWindowCopy,
   categoryFlowLabel,
   categoryFlowSign,
   categoryMonthlyTrend,
@@ -23,7 +22,7 @@ import {
 } from "@/services/category-detail";
 import { provenanceFor } from "@/services/provenance";
 import { categoryInsights } from "@/services/spending-insights";
-import { ledgerFirstDay, topMerchants } from "@/services/spending";
+import { categoryEmptyCopy, ledgerFirstDay, topMerchants } from "@/services/spending";
 import { loadSpendingCategoryTxns } from "@/app/spending/actions";
 import { CategoryChip } from "@/components/ui/CategoryChip";
 import { CategoryMoveMenu } from "@/components/categories/CategoryMoveMenu";
@@ -156,13 +155,20 @@ export default async function CategoryPage({
    * click from its budget row's "spending imported through Aug 12". It reads "spending in Car is imported through Wed,
    * Aug 12, 2026" now, and a category spent only from cash wallets says so in that row's own words.
    */
+  /*
+   * ⚖️ …asked through `categoryEmptyCopy`, which knows whose money the window holds: this page leaves the agent's
+   * rows out of an income or expense category (owner decisions 2026-09-28 → 2026-10-06), so a window holding only the
+   * agent's money in it lands here, and says so — and whose DAY it is, the trend's own reads (`reachCtx`).
+   */
   const emptyCopy =
     txnCount === 0
-      ? categoryEmptyWindowCopy(
-          db,
-          { categoryId: id, name: header.name, kind: header.kind, from: range.from, to: range.to, label: period.label, today },
+      ? categoryEmptyCopy(db, id, range, {
+          today,
+          label: period.label,
+          ledgerOpens: ledgerOpens(db),
+          formatDay: formatDayLong,
           reachCtx,
-        )
+        })
       : null;
   // the title carries the antecedent — "4 days of IT" has none without it
   const emptyText = emptyCopy ? `${emptyCopy.title}. ${emptyCopy.description}` : undefined;

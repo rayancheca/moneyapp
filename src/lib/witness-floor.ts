@@ -480,7 +480,8 @@ export function ledgerCheckMode(argv: readonly string[]): LedgerCheckMode {
 /**
  * `--reason='<what the statement shows>'`, kept whole — commas, colons and equals signs are the session's words — on
  * one line, every run of whitespace one space: it is printed inside a sentence. Null when none is given. ⛔ One of
- * only whitespace and zero-width characters says nothing, and is refused (`reasonSaysNothing`).
+ * only whitespace, zero-width and control characters, or the braille blank, says nothing, and is refused
+ * (`reasonSaysNothing`).
  */
 function reasonOf(args: readonly string[]): string | null {
   if (args.length === 0) return null;

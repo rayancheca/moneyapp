@@ -1345,6 +1345,12 @@ export function categoryReachContext(db: AppDatabase): CategoryReachContext {
  * ⚖️ The day `/categories/[id]` asks a window starting `periodStart` against — the category's own (owner decision
  * 2026-10-07, §6A 49): `categoryCoverage` over the same window its budget row would grade, at `today`, and
  * `lib/category-reach::categoryReach` for the worlds in which that names no day (cash only; no account of its own).
+ *
+ * ⚠️ A category with no account of its own in the window asks its NEAREST ANCESTOR before the ledger. 🔴 Measured on a
+ * copy of his ledger 2026-10-07: 9 of 80 category pages — Fees › Interest Charges, Utilities › Mobile, Travel ›
+ * Hotels among them — fell back to the ledger's Sep 24 while the parent one click up named its own Aug 12. The
+ * ancestor's day is named as the ancestor's ("spending in Fees is imported through …"); a top-level category with
+ * nothing to ask keeps the ledger's, in the ledger's words.
  */
 export function categoryReachFor(
   db: AppDatabase,
@@ -1353,11 +1359,26 @@ export function categoryReachFor(
   today: string,
   ctx: CategoryReachContext = categoryReachContext(db),
 ): CategoryReach {
-  return categoryReach(
-    categoryCoverage(db, categoryId, periodStart, today, ctx.frontier, ctx.wallets),
-    ctx.ledgerReaches,
-    today,
-  );
+  const reachOf = (id: string) => {
+    const row = db
+      .select({ name: categories.name, kind: categories.kind, parentId: categories.parentId })
+      .from(categories)
+      .where(eq(categories.id, id))
+      .get();
+    if (!row) return null;
+    const coverage = categoryCoverage(db, id, periodStart, today, ctx.frontier, ctx.wallets);
+    return { reach: categoryReach(coverage, ctx.ledgerReaches, today, { name: row.name, kind: row.kind }), parentId: row.parentId };
+  };
+  const own = reachOf(categoryId);
+  if (own === null) throw new Error(`category ${categoryId} not found`);
+  let next = own;
+  // categories nest, so the walk is as long as the tree is deep — two levels on every ledger the app seeds
+  while (next.reach.whose === "ledger" && next.parentId !== null) {
+    const parent = reachOf(next.parentId);
+    if (parent === null) break;
+    next = parent;
+  }
+  return next.reach.whose === "ledger" ? own.reach : next.reach;
 }
 
 export interface BudgetPaceStatus extends BudgetStatus, CategoryCoverage {

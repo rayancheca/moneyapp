@@ -131,7 +131,30 @@ describe("the acknowledgements a ledger keeps (`left_out_acknowledgements`)", ()
       expect(changes()).toBe(before);
     }
     expect(readLeftOutAcknowledgements(bundle.db)).toEqual([]);
-    // what the session read, an invisible character in it or not, is a reason — stored as given
+  });
+
+  /*
+   * 🔴 C0 and C1 control characters and U+2800 BRAILLE PATTERN BLANK are neither whitespace nor default-ignorable, so
+   * a reason of only them was stored — and printed as nothing a reader can see, or as a bell.
+   */
+  test("⛔ a reason of only control characters or the braille blank says nothing — refused, nothing written", () => {
+    const blanks = [
+      "\u0001\u0007\u001B\u007F", // start of heading, bell, escape, delete
+      "\u0080\u009B\u009F", // C1 controls: padding, control sequence introducer, application program command
+      "\u2800", // braille pattern blank
+      "\u2800 \u0007\u200B",
+    ];
+    for (const reason of blanks) {
+      const before = changes();
+      expect(() => writeLeftOutAcknowledgements(bundle.db, [OPENING, { ...OPENING, reason }])).toThrow(
+        /an acknowledgement says what the session read on the statement/,
+      );
+      expect(changes()).toBe(before);
+    }
+    expect(readLeftOutAcknowledgements(bundle.db)).toEqual([]);
+  });
+
+  test("what the session read, an invisible character in it or not, is a reason — stored as given", () => {
     writeLeftOutAcknowledgements(bundle.db, [{ ...OPENING, reason: `​${OPENING.reason} ` }]);
     expect(readLeftOutAcknowledgements(bundle.db).map((a) => a.reason)).toEqual([`​${OPENING.reason} `]);
   });

@@ -15,6 +15,7 @@ const LEDGER_OPENS = "2022-08-25";
 const LEDGER_REACHES = "2026-09-24";
 const TODAY = "2026-10-07";
 const OCTOBER = { from: "2026-10-01", to: "2026-10-31" };
+const CAR = { name: "Car", kind: "expense" } as const;
 
 function facts(over: Partial<CategoryCoverageFacts> = {}): CategoryCoverageFacts {
   return {
@@ -28,35 +29,58 @@ function facts(over: Partial<CategoryCoverageFacts> = {}): CategoryCoverageFacts
 
 describe("categoryReach — whose day an empty window on a category page is asked against", () => {
   test("the category's own day when its accounts have one — wallets left out, as on its budget row", () => {
-    expect(categoryReach(facts(), LEDGER_REACHES, TODAY)).toMatchObject({ whose: "category", through: "2026-08-12" });
+    expect(categoryReach(facts(), LEDGER_REACHES, TODAY, CAR)).toMatchObject({ whose: "category", through: "2026-08-12" });
   });
 
   test("⚖️ cash only: no import day and none coming, so every elapsed day holds what was typed", () => {
     const cash = facts({ importedThroughOn: null, spentFromAccounts: 0, spentFromWallets: 1 });
-    expect(categoryReach(cash, LEDGER_REACHES, TODAY)).toMatchObject({ whose: "cash-only", through: TODAY });
+    expect(categoryReach(cash, LEDGER_REACHES, TODAY, CAR)).toMatchObject({ whose: "cash-only", through: TODAY });
   });
 
   test("no account of its own to ask — spent from nothing, or only from accounts with no import date — is the ledger's", () => {
     const none = facts({ importedThroughOn: null, spentFromAccounts: 0, spentFromWallets: 0 });
     const priced = facts({ importedThroughOn: null, spentFromAccounts: 1, spentFromWallets: 0 });
-    expect(categoryReach(none, LEDGER_REACHES, TODAY)).toMatchObject({ whose: "ledger", through: LEDGER_REACHES });
-    expect(categoryReach(priced, LEDGER_REACHES, TODAY)).toMatchObject({ whose: "ledger", through: LEDGER_REACHES });
+    expect(categoryReach(none, LEDGER_REACHES, TODAY, CAR)).toMatchObject({ whose: "ledger", through: LEDGER_REACHES });
+    expect(categoryReach(priced, LEDGER_REACHES, TODAY, CAR)).toMatchObject({ whose: "ledger", through: LEDGER_REACHES });
   });
 
   test("the facts ride along, so the sentence cannot be built from a second read", () => {
     const f = facts();
-    expect(categoryReach(f, LEDGER_REACHES, TODAY).coverage).toEqual(f);
+    expect(categoryReach(f, LEDGER_REACHES, TODAY, CAR).coverage).toEqual(f);
   });
 });
 
 describe("categoryEmptyPeriodCopy — the page's sentence names whose day it is", () => {
-  function copyFor(f: CategoryCoverageFacts, window = OCTOBER, label = "October 2026", kind: "expense" | "income" | "transfer" = "expense", name = "Car") {
-    const reach = categoryReach(f, LEDGER_REACHES, TODAY);
+  function copyFor(
+    f: CategoryCoverageFacts,
+    window = OCTOBER,
+    label = "October 2026",
+    kind: "expense" | "income" | "transfer" = "expense",
+    name = "Car",
+    agentsMoney = false,
+  ) {
+    const reach = categoryReach(f, LEDGER_REACHES, TODAY, { name, kind });
     const reason = emptyPeriodReason({ ...window, today: TODAY, ledgerOpens: LEDGER_OPENS, ledgerReaches: reach.through });
-    return categoryEmptyPeriodCopy(reason, { label, from: window.from }, reach, { name, kind }, formatDayLong, {
+    return categoryEmptyPeriodCopy(reason, { label, from: window.from }, reach, formatDayLong, {
       ledgerOpens: LEDGER_OPENS,
+      agentsMoney,
     });
   }
+
+  /**
+   * ⚖️ The agent's money (owner decisions 2026-09-28 → 2026-10-06) is said on every branch that can hold it. Past the
+   * LEDGER'S day no row exists, so `emptyPeriodCopy`'s after-records branch never needed it; past a CATEGORY'S own day
+   * the agent's account can hold rows, and a cash wallet says nothing about them either.
+   */
+  test("⚖️ the agent's money is said past the category's own day, and on the cash-only branch", () => {
+    const leftOut = /The agent's own account paid or was paid money in this period, and none of it is counted here/;
+    const cash = facts({ importedThroughOn: null, spentFromAccounts: 0, spentFromWallets: 1 });
+    expect(copyFor(facts(), OCTOBER, "October 2026", "expense", "Car", true).description).toMatch(leftOut);
+    expect(copyFor(cash, OCTOBER, "October 2026", "expense", "Car", true).description).toMatch(leftOut);
+    expect(copyFor(facts(), { from: "2026-08-01", to: "2026-09-20" }, "Aug 1 – Sep 20, 2026", "expense", "Car", true).description).toMatch(leftOut);
+    expect(copyFor(facts(), OCTOBER, "October 2026", "expense", "Car", false).description).not.toMatch(leftOut);
+    expect(copyFor(cash, OCTOBER, "October 2026", "expense", "Car", false).description).not.toMatch(leftOut);
+  });
 
   test("Car in October names Car's day, Aug 12, and never 'the ledger is imported through'", () => {
     const copy = copyFor(facts());

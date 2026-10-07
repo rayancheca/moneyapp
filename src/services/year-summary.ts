@@ -3,6 +3,7 @@ import type { AppDatabase } from "@/db/client";
 import { accounts } from "@/db/schema/accounts";
 import { categories } from "@/db/schema/categories";
 import { importFiles } from "@/db/schema/imports";
+import { recurringSeries, type SeriesStatus } from "@/db/schema/recurring";
 import { transactions } from "@/db/schema/transactions";
 import {
   moneyWeightedReturn,
@@ -10,8 +11,10 @@ import {
   type ReturnBoundary,
 } from "@/lib/money-weighted-return";
 import type { CashFlow } from "@/lib/xirr";
+import { diffDays } from "@/lib/dates";
 import { formatDayFull, formatDayShort } from "@/lib/format-date";
 import { formatCents } from "@/lib/money";
+import { seriesDrawsAsRecurring } from "@/lib/series-evidence";
 import { yearSummary, type YearLineInput, type YearSummary } from "@/lib/year-summary";
 import { investmentSideAccountIds, outsidePortfolioCashAccountIds } from "./accounts";
 import { offAgentsCash } from "./analytics";
@@ -102,23 +105,41 @@ function lineFor(
   year: number,
   /** `outsidePortfolioCashAccountIds` — never his, on any line (`ownPortfolioAccountIds`) */
   agentsCash: readonly string[],
-  opts: {
-    categoryName: string;
-    /** restrict to one account name */
-    accountName?: string;
-    /**
-     * …or to every account EXCEPT these. The mirror of `accountName`, and the
-     * reason it exists: two lines split `Interest` by account name, so interest
-     * credited anywhere else belonged to neither and was counted in no total.
-     */
-    accountNameNotIn?: readonly string[];
-    /** SQL LIKE against the raw descriptor, or its negation */
-    descriptorLike?: string;
-    descriptorNotLike?: string;
-    /** money IN by default; "out" measures the returning leg as a magnitude */
-    direction?: "in" | "out";
-  },
+  opts: LineOptions,
 ): RawLine {
+  return rawLineOf(lineRows(db, year, agentsCash, opts), opts.direction);
+}
+
+interface LineOptions {
+  categoryName: string;
+  /** restrict to one account name */
+  accountName?: string;
+  /**
+   * …or to every account EXCEPT these. The mirror of `accountName`, and the
+   * reason it exists: two lines split `Interest` by account name, so interest
+   * credited anywhere else belonged to neither and was counted in no total.
+   */
+  accountNameNotIn?: readonly string[];
+  /** SQL LIKE against the raw descriptor, or its negation */
+  descriptorLike?: string;
+  descriptorNotLike?: string;
+  /** money IN by default; "out" measures the returning leg as a magnitude */
+  direction?: "in" | "out";
+}
+
+interface LineRow {
+  amountCents: number;
+  postedOn: string;
+  recurringSeriesId: string | null;
+  importFileId: string | null;
+  fileName: string | null;
+}
+
+/**
+ * The rows behind one line. Kept apart from the sum so a line that says something ABOUT its rows — the pay line's
+ * name and caveat — reads the very rows its figure adds up, not a second query that could drift from them.
+ */
+function lineRows(db: AppDatabase, year: number, agentsCash: readonly string[], opts: LineOptions): LineRow[] {
   const { from, to } = yearBounds(year);
   const where = [
     eq(transactions.status, "active"),
@@ -141,9 +162,11 @@ function lineFor(
     where.push(sql`upper(${transactions.rawDescription}) NOT LIKE ${opts.descriptorNotLike}`);
   }
 
-  const rows = db
+  return db
     .select({
       amountCents: transactions.amountCents,
+      postedOn: transactions.postedOn,
+      recurringSeriesId: transactions.recurringSeriesId,
       importFileId: transactions.importFileId,
       fileName: importFiles.fileName,
     })
@@ -153,11 +176,13 @@ function lineFor(
     .leftJoin(importFiles, eq(importFiles.id, transactions.importFileId))
     .where(and(...where))
     .all();
+}
 
+function rawLineOf(rows: readonly LineRow[], direction: LineOptions["direction"]): RawLine {
   const signed = rows.reduce((t, r) => t + r.amountCents, 0);
   return {
     // always a positive magnitude — the section headings say the direction
-    amountCents: opts.direction === "out" ? -signed : signed,
+    amountCents: direction === "out" ? -signed : signed,
     rowCount: rows.length,
     sourcedRowCount: rows.filter((r) => r.importFileId !== null).length,
     sources: [...new Set(rows.map((r) => r.fileName).filter((n): n is string => n !== null))].sort(),
@@ -415,25 +440,102 @@ const WORK_STUDY_ENDED = "2026-05-13";
  * job's ATM lumps; 2022 holds one branch deposit, which shows no pattern and no
  * work. So the caveat comes out of this decision too, and an early year has
  * none.
+ *
+ * ⛔ AND THE LATE LABEL WAS A LITERAL — it named a job the owner had renamed.
+ *
+ * 🔴 Measured on `/summary/2026`, 2026-10-07: "Cash job $7,156.60". All 4 rows are attached to the pay series he
+ * renamed on 2026-09-28 to name the payer, "It America LLC (weekly pay)", and two of them are ACH payroll into Wells
+ * Fargo — not cash at all. Every other surface printed the series' name; this one printed a string. So the label is
+ * READ off the rows now: one income series behind every row names the line; rows in several series, or in none, get
+ * the rule's name, which claims no job — and then neither does the basis.
+ *
+ * And the caveat is a claim about the rows, so it is measured on them (`depositsAreIrregular`): his 2026 is two June
+ * ATM lumps and a four-week payroll lump in September; a payroll that lands every week is not irregular.
  */
-export function cashJobNaming(year: number): { label: string; basis: string; caveat?: string } {
-  const rule = "Salary rows that are not Fordham payroll.";
+const PAY_RULE_LABEL = "Salary, not Fordham payroll";
+
+/** What the pay line's own rows say about themselves — read from the rows its figure sums. */
+export interface PayLineFacts {
+  /** the one income series every row is attached to, or null when they sit in several or in none */
+  seriesName: string | null;
+  /** each row's posted day */
+  postedOn: readonly string[];
+}
+
+export function cashJobNaming(year: number, facts: PayLineFacts): { label: string; basis: string; caveat?: string } {
+  const named = facts.seriesName !== null;
+  const rule = named
+    ? "Salary rows that are not Fordham payroll, every one attached to this pay series."
+    : "Salary rows that are not Fordham payroll.";
   // 🔴 PROSE, so the date is spelled: both sentences printed the raw constant
   // ("Work-study ended 2026-05-13 and…") on /summary/2026 and /summary/2022.
   // ⛔ Only the sentence is formatted — the year gate below must keep reading
   // the ISO constant, whose first four characters are the year.
   const ended = formatDayFull(WORK_STUDY_ENDED);
+  const label = facts.seriesName ?? PAY_RULE_LABEL;
   if (year >= Number(WORK_STUDY_ENDED.slice(0, 4))) {
     return {
-      label: "Cash job",
-      basis: `${rule} Work-study ended ${ended}, and these deposits are the job that replaced it.`,
-      caveat: "Deposited irregularly, so a calendar year captures what reached the bank rather than what was worked.",
+      label,
+      basis: named
+        ? `${rule} Work-study ended ${ended}, and these deposits are the job that replaced it.`
+        : `${rule} Work-study ended ${ended}; these rows are not all attached to one pay series, so which job they are, this ledger does not say.`,
+      ...(depositsAreIrregular(facts.postedOn)
+        ? {
+            caveat:
+              "Deposited irregularly, so a calendar year captures what reached the bank rather than what was worked.",
+          }
+        : {}),
     };
   }
   return {
-    label: "Salary, not Fordham payroll",
-    basis: `${rule} Work-study ran until ${ended}, so in ${year} these are an earlier job — which one, this ledger does not say.`,
+    label,
+    basis: named
+      ? `${rule} Work-study ran until ${ended}, so in ${year} these are an earlier job.`
+      : `${rule} Work-study ran until ${ended}, so in ${year} these are an earlier job — which one, this ledger does not say.`,
   };
+}
+
+/**
+ * The most the gaps between deposit days may SPREAD (longest gap minus shortest) and still be one rhythm — a payday a
+ * bank holiday moves by a day turns 7, 7 into 8, 6, a spread of 2. A spread, not a per-payday window: no cadence is
+ * assumed, so it holds for rows in no series. Three days, chosen to clear a one-day holiday shift on either side.
+ */
+const PAYDAY_SLACK_DAYS = 3;
+
+/**
+ * Do the rows SHOW irregular deposits? Only a rhythm can be broken, so it takes three deposit days — two gaps — to
+ * show one; fewer says nothing, and the caveat stays off rather than guessing.
+ */
+function depositsAreIrregular(postedOn: readonly string[]): boolean {
+  const days = [...new Set(postedOn)].sort();
+  if (days.length < 3) return false;
+  const gaps = days.slice(1).map((day, i) => diffDays(days[i]!, day));
+  return Math.max(...gaps) - Math.min(...gaps) > PAYDAY_SLACK_DAYS;
+}
+
+/**
+ * A series he STANDS BEHIND, and so one whose name may head his pay: confirmed, or ended (a job that stopped was
+ * still that job). ⛔ Dismissed is out by the repo's one rule (`seriesDrawsAsRecurring`) — dismissing flips the
+ * status and leaves every row attached, so the link alone would keep naming a series he rejected. Detected is out
+ * too: it is the detector's suggestion, which every other surface labels "suggested" (`seriesRowLabel`), not his word.
+ */
+function seriesNamesPay(status: SeriesStatus): boolean {
+  return seriesDrawsAsRecurring(status) && status !== "detected";
+}
+
+/** One income series he stands behind, behind EVERY row, names the line; anything else — several, none, a loose row — does not. */
+function payLineFacts(db: AppDatabase, rows: readonly LineRow[]): PayLineFacts {
+  const postedOn = rows.map((r) => r.postedOn);
+  const ids = new Set(rows.map((r) => r.recurringSeriesId));
+  const [only] = [...ids];
+  if (ids.size !== 1 || only === null || only === undefined) return { seriesName: null, postedOn };
+  const series = db
+    .select({ name: recurringSeries.name, kind: recurringSeries.kind, status: recurringSeries.status })
+    .from(recurringSeries)
+    .where(eq(recurringSeries.id, only))
+    .get();
+  const named = series !== undefined && series.kind === "income" && seriesNamesPay(series.status);
+  return { seriesName: named ? series.name : null, postedOn };
 }
 
 export function yearSummaryView(db: AppDatabase, year: number, today: string): YearSummaryView {
@@ -463,8 +565,9 @@ export function yearSummaryView(db: AppDatabase, year: number, today: string): Y
    * line can forget, and every line on the page reads the one scope.
    */
   const agentsCash = [...outsidePortfolioCashAccountIds(db)];
-  // ONE decision for all three claims the cash-job line makes (see `cashJobNaming`)
-  const cashJob = cashJobNaming(year);
+  // ONE decision for all three claims the cash-job line makes (see `cashJobNaming`), read off the very rows it sums
+  const payRows = lineRows(db, year, agentsCash, { categoryName: "Salary", descriptorNotLike: FORDHAM_DESCRIPTOR });
+  const cashJob = cashJobNaming(year, payLineFacts(db, payRows));
 
   const lines = [
     line(
@@ -479,7 +582,7 @@ export function yearSummaryView(db: AppDatabase, year: number, today: string): Y
       cashJob.label,
       "earned",
       cashJob.basis,
-      lineFor(db, year, agentsCash, { categoryName: "Salary", descriptorNotLike: FORDHAM_DESCRIPTOR }),
+      rawLineOf(payRows, "in"),
       cashJob.caveat,
     ),
     line(

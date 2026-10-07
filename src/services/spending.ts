@@ -27,7 +27,7 @@ import {
   activeTxnsInRange,
   agentsCostBucket,
   isAgentsCostCategoryRow,
-  isAgentsIncome,
+  isAgentsIncomeCategoryRow,
   isHisUnfiledSpending,
   isIncome,
   ledgerHref,
@@ -36,6 +36,8 @@ import {
   type CategoryIndex,
   type DateRange,
 } from "./analytics";
+import { categoryEmptyPeriodCopy } from "@/lib/category-reach";
+import { categoryReachFor, type CategoryReachContext } from "./budgets";
 import { spendingCoverageThrough } from "./movers-card";
 import { ledgerOpens, ledgerReaches } from "./observation-frontier";
 import { activeSplitsInRange } from "./transaction-splits";
@@ -946,19 +948,50 @@ export function honestyBuckets(db: AppDatabase, range: DateRange): HonestyBucket
 
 /**
  * How many transactions in a window are the AGENT'S spending or income — the rows `spendingBucket` and `isIncome`
- * leave out for whose they are (`agentsCostBucket`, `isAgentsIncome`), and only those: what its account paid in an
- * expense category or unfiled, and what it was paid in an income category. Its transfers are not among them — the
- * $26.64 he funded it with is a transfer, which /spending's empty state already says it does not count.
+ * leave out for whose they are, and only those: what its account paid in an expense category or unfiled
+ * (`agentsCostBucket`), and any row of an income category on its cash, either sign (`isAgentsIncomeCategoryRow`) —
+ * what it was paid, and a clawback of it, which lowers "Agent's income" on the bridge and at the pace (owner decision
+ * 2026-10-06, §6A 43). Its transfers are not among them — the $26.64 he funded it with is a transfer, which /spending's
+ * empty state already says it does not count.
+ *
+ * 🔴 It asked the credits alone (`isAgentsIncome`), so a day holding only the agent's clawback read a measured zero and
+ * never said the agent's money was left out.
+ *
+ * `categoryId` narrows it to one category's subtree — the rows `/categories/<id>` leaves out of its own
+ * (`spendingTransactions`): the agent's in an income or expense category, and none in a page that lists every account
+ * (a transfer, the system "Uncategorized", whose rows arrive unfiled).
  */
-export function agentsMoneyRowCount(db: AppDatabase, range: DateRange): number {
+export function agentsMoneyRowCount(db: AppDatabase, range: DateRange, scope: { categoryId?: string } = {}): number {
   const agentsCash = outsidePortfolioCashAccountIds(db);
   if (agentsCash.size === 0) return 0;
   const idx = loadCategoryIndex(db);
+  const subtree = scope.categoryId === undefined ? null : new Set(idx.subtreeIds(scope.categoryId));
   const ids = activeTxnsInRange(db, range.from, range.to)
-    .filter((t) => agentsCostBucket(idx, agentsCash, t) !== null || isAgentsIncome(idx, agentsCash, t))
+    .filter((t) => subtree === null || (t.categoryId !== null && subtree.has(t.categoryId)))
+    .filter((t) => agentsCostBucket(idx, agentsCash, t) !== null || isAgentsIncomeCategoryRow(idx, agentsCash, t))
     // distinct transactions — a split row arrives as one part-row per part
     .map((t) => t.id);
   return new Set(ids).size;
+}
+
+/** What `/spending` and `/categories/<id>` hand their empty state: the window's world and how to name its days. */
+interface EmptyCopyOpts {
+  today: string;
+  /** the period's own name — "September 2026" */
+  label: string;
+  ledgerOpens: string | null;
+  ledgerReaches: string | null;
+  formatDay: (iso: string) => string;
+}
+
+function emptyReasonFor(range: DateRange, opts: EmptyCopyOpts) {
+  return emptyPeriodReason({
+    from: range.from,
+    to: range.to,
+    today: opts.today,
+    ledgerOpens: opts.ledgerOpens,
+    ledgerReaches: opts.ledgerReaches,
+  });
 }
 
 /**
@@ -974,25 +1007,51 @@ export function agentsMoneyRowCount(db: AppDatabase, range: DateRange): number {
 export function spendingEmptyCopy(
   db: AppDatabase,
   range: DateRange,
-  opts: {
-    today: string;
-    /** the period's own name — "September 2026" */
-    label: string;
-    ledgerOpens: string | null;
-    ledgerReaches: string | null;
-    formatDay: (iso: string) => string;
-  },
+  opts: EmptyCopyOpts,
 ): { title: string; description: string } {
+  return emptyPeriodCopy(emptyReasonFor(range, opts), opts.label, opts.ledgerReaches, opts.formatDay, {
+    uncategorizedBucket: true,
+    ledgerOpens: opts.ledgerOpens,
+    agentsMoney: agentsMoneyRowCount(db, range) > 0,
+  });
+}
+
+/**
+ * `/categories/<id>`'s empty state: `spendingEmptyCopy`'s, asked of one category — no Uncategorized bucket, which the
+ * page does not print, and the agent's money said to be left out where the window holds some IN THIS CATEGORY
+ * (`agentsMoneyRowCount`'s `categoryId`), the rows the page's own list leaves out for whose they are.
+ *
+ * 🔴 The page composed the copy itself, without the flag: a Bank Fees day holding only the agent's Gold fee read "a
+ * measured zero" and said nothing of it (owner decisions 2026-10-02, 2026-10-06; §6A 34, §6A 43).
+ *
+ * ⚖️ …ASKED OF THE CATEGORY'S OWN IMPORTED-THROUGH DAY, not the ledger's — owner decision 2026-10-07 (§6A 49):
+ * `categoryReachFor`, the rule its `/budgets` row grades by, named as whose day it is ("spending in Car is imported
+ * through Wed, Aug 12, 2026"), and a category spent only from cash wallets says so in that row's own words
+ * (`lib/category-reach`). The agent's money is said on every one of those branches. ⛔ One builder: the page had a
+ * second (`categoryEmptyWindowCopy`) for one day, and taking it would have dropped the agent's clause unseen.
+ */
+export function categoryEmptyCopy(
+  db: AppDatabase,
+  categoryId: string,
+  range: DateRange,
+  opts: CategoryEmptyCopyOpts,
+): { title: string; description: string } {
+  const reach = categoryReachFor(db, categoryId, range.from, opts.today, opts.reachCtx);
   const reason = emptyPeriodReason({
     from: range.from,
     to: range.to,
     today: opts.today,
     ledgerOpens: opts.ledgerOpens,
-    ledgerReaches: opts.ledgerReaches,
+    ledgerReaches: reach.through,
   });
-  return emptyPeriodCopy(reason, opts.label, opts.ledgerReaches, opts.formatDay, {
-    uncategorizedBucket: true,
+  return categoryEmptyPeriodCopy(reason, { label: opts.label, from: range.from }, reach, opts.formatDay, {
     ledgerOpens: opts.ledgerOpens,
-    agentsMoney: agentsMoneyRowCount(db, range) > 0,
+    agentsMoney: agentsMoneyRowCount(db, range, { categoryId }) > 0,
   });
+}
+
+/** `/categories/<id>`'s: the day is the category's own, so it hands in the reads that ask it — never a ledger day */
+interface CategoryEmptyCopyOpts extends Omit<EmptyCopyOpts, "ledgerReaches"> {
+  /** the page's `categoryReachContext`, shared with its trend's empty months; read here when omitted */
+  reachCtx?: CategoryReachContext;
 }

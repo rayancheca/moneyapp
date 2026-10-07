@@ -82,17 +82,27 @@ export const LEFT_OUT_TOKEN = /^[0-9a-f]{10}$/;
 /** how a printed step asks for what the session read on the statement */
 const SAYS = "--reason='<what the statement shows>'";
 
-/** every character that prints as nothing: Unicode whitespace, and the zero-width and other invisible ones */
-const INVISIBLE = /[\p{White_Space}\p{Default_Ignorable_Code_Point}]/gu;
+/** the words a run giving another `--reason` is told in — by its dry run, and by the refusal (`reasonChangeRefusal`) */
+const NOT_STORED = "--reason is not the reason stored";
+const NEVER_CHANGED = "this step never changes a stored one";
+const NOR_TWO = "nor gives lines alike two";
+
+/**
+ * every character that prints as nothing: Unicode whitespace, the zero-width and other invisible ones, the C0 and C1
+ * control characters, and U+2800 BRAILLE PATTERN BLANK
+ */
+const INVISIBLE = /[\p{White_Space}\p{Default_Ignorable_Code_Point}\p{Cc}\u2800]/gu;
 
 /**
  * Whether a reason says nothing: nothing is left once every Unicode whitespace character and every invisible one —
- * zero-width spaces and joiners, the byte-order mark, bidi marks, the soft hyphen (`Default_Ignorable_Code_Point`) — is
- * taken out. The command line (`ledgerCheckMode`) and the table's one writer (`writeLeftOutAcknowledgements`) refuse it.
+ * zero-width spaces and joiners, the byte-order mark, bidi marks, the soft hyphen (`Default_Ignorable_Code_Point`), the
+ * control characters (`Cc`), the braille blank — is taken out. The command line (`ledgerCheckMode`) and the table's one
+ * writer (`writeLeftOutAcknowledgements`) refuse it.
  *
  * 🔴 Both trimmed as `\s` and `trim()` do — Unicode whitespace, no zero-width character — and the table's CHECK
  * (migration 0024, applied to the real ledger: never edited) trims ASCII whitespace only: a reason of one U+200B was
- * stored, and every surface printed "Acknowledged on <day>: " followed by nothing a reader can see.
+ * stored, and every surface printed "Acknowledged on <day>: " followed by nothing a reader can see. 🔴 Then a control
+ * character (a bell, an escape, a C1 one) or U+2800 — neither whitespace nor default-ignorable — still passed.
  */
 export function reasonSaysNothing(reason: string): boolean {
   return reason.replace(INVISIBLE, "") === "";
@@ -192,7 +202,7 @@ export interface AcknowledgingPlan {
   readonly reasonsKept: ReasonKept[];
   /**
    * each mark with lines in `open` AND lines alike acknowledged already, by the reasons those carry — once each, in the
-   * lines' order: its open lines take one of them, exactly (`confirmingStep` names the first)
+   * lines' order: its open lines take one of them, exactly (`confirmingStep` names each)
    */
   readonly reasonsStored: ReadonlyMap<string, readonly string[]>;
 }
@@ -223,6 +233,8 @@ export interface ReasonKept {
  * acknowledged — a line alike acknowledged in an earlier run, another left out since — took another `--reason` for its
  * open line without a word of the one stored, and `--confirm` stored it: one mark, two reasons. Its reasons stored are
  * said now, and another one makes it `reasonsKept` too — refused, exit 2, as for a mark whose every line is acknowledged.
+ * 🔴 Its dry run said "acknowledged already, with another reason" beside the reason stored, as if that one were the
+ * other: both say now, in the refusal's words, that `--reason` is not the one stored, which stays.
  *
  * ⛔ Another reason is one NONE of its lines carries. 🔴 It was one ANY of them did not: lines alike carrying two —
  * which the matching can give them (`acknowledgementsOf`: a line takes one keyed under another of its printers) —
@@ -256,16 +268,14 @@ export function planAcknowledging(
     } else if (unacknowledged.length === 0) {
       reasonsKept.push({ mark: token, stored });
       for (const ack of stored) {
-        const kept = acknowledgedSentence(ack);
-        said.push(`${token}: acknowledged already, with another reason, which this step never changes — ${kept}`);
+        said.push(`${token}: acknowledged already, and ${NOT_STORED}, which stays: ${NEVER_CHANGED} — ${acknowledgedSentence(ack)}`);
       }
     } else {
       // some acknowledged, the rest open: what is stored is said first, with how many lines carry it
-      const withAnother = another ? ", with another reason" : "";
+      const and = another ? `and ${NOT_STORED}, which stays: ${NEVER_CHANGED} ${NOR_TWO}` : "and lines alike take one reason";
       for (const ack of stored) {
         const n = carried.filter((a) => sameAcknowledgement(a, ack)).length;
-        const of = `${n} of its ${marked.length} lines alike acknowledged already${withAnother}`;
-        said.push(`${token}: ${of}, and lines alike take one reason — ${acknowledgedSentence(ack)}`);
+        said.push(`${token}: ${n} of its ${marked.length} lines alike acknowledged already, ${and} — ${acknowledgedSentence(ack)}`);
       }
       if (another) {
         reasonsKept.push({ mark: token, stored });
@@ -319,8 +329,7 @@ function storedOnce(acks: readonly Acknowledged[]): Acknowledged[] {
  */
 export function reasonChangeRefusal(kept: readonly ReasonKept[]): string[] {
   return [
-    "REFUSED: --reason is not the reason stored, and this step never changes a stored one nor gives lines alike two — " +
-      "nothing was written. Stored:",
+    `REFUSED: ${NOT_STORED}, and ${NEVER_CHANGED} ${NOR_TWO} — nothing was written. Stored:`,
     ...kept.flatMap(({ mark, stored }) => stored.map((ack) => `  ${mark}: ${acknowledgedSentence(ack)}`)),
   ];
 }
@@ -338,26 +347,41 @@ export function reasonChangeRefusal(kept: readonly ReasonKept[]): string[] {
  *
  * 🔴 Given only the open lines, it named that placeholder for a mark PARTLY acknowledged too — whose open lines take the
  * reason its lines alike carry, and the plan refuses another: the session's own words, as it invited, were refused, exit
- * 2 (review of 9084a9c). Such a mark's run names the reason stored, exactly (`reasonsStored`; the first, of two).
+ * 2 (review of 9084a9c). Such a mark's run names the reason stored, exactly (`reasonsStored`).
+ *
+ * 🔴 Lines alike carrying two reasons take either for a line left open beside them, and the run named only the first:
+ * a session whose statement read as the second was never told it is taken. It names each now, exactly — the first on
+ * its line, each other on a line "or …" below it, in its place — never a third.
  */
 export function confirmingStep(
   tokens: readonly string[],
   plan: Pick<AcknowledgingPlan, "open" | "reasonsStored">,
   reason: string | null,
 ): string[] {
-  const says = (mark: string): string => {
-    const stored = plan.reasonsStored.get(mark);
-    return stored === undefined ? SAYS : reasonArgument(stored[0]!);
+  /** each reason a mark's lines alike carry, as a run gives it — none when nothing alike is acknowledged */
+  const says = (mark: string): string[] => (plan.reasonsStored.get(mark) ?? []).map(reasonArgument);
+  /** a mark's runs, `run` building one from its reason — the placeholder when none is stored; each other in its place */
+  const runsOf = (mark: string, run: (says: string) => string): string[] => {
+    const [first = SAYS, ...others] = says(mark);
+    return [`    ${run(first)}`, ...others.map((other) => `    or ${run(other)}`)];
   };
   if (tokens.length === 1) {
-    const adds = reason === null ? `${says(tokens[0]!)} ` : "";
-    return [`Only once each line is read on its statement: the same command with ${adds}--confirm`];
+    const stored = says(tokens[0]!);
+    if (reason !== null || stored.length < 2) {
+      const adds = reason === null ? `${stored[0] ?? SAYS} ` : "";
+      return [`Only once each line is read on its statement: the same command with ${adds}--confirm`];
+    }
+    return [
+      `Only once each line is read on its statement: the same command with one of these — its lines alike carry ` +
+        `${stored.length} reasons, and its open lines take one of them, exactly, never another:`,
+      ...runsOf(tokens[0]!, (said) => `${said} --confirm`),
+    ];
   }
   const marks = [...new Set(plan.open.map(leftOutToken))];
   return [
     "Only once each line is read on its statement, one run a mark — a reason says what ONE line is: the same command " +
       "with these arguments in place of its own:",
-    ...marks.map((mark) => `    --acknowledge-left-out=${mark} ${says(mark)} --confirm`),
+    ...marks.flatMap((mark) => runsOf(mark, (said) => `--acknowledge-left-out=${mark} ${said} --confirm`)),
   ];
 }
 

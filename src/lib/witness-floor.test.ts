@@ -913,6 +913,18 @@ describe("ledgerCheckMode — the command line", () => {
     );
   });
 
+  /* 🔴 nor is a control character or U+2800 BRAILLE PATTERN BLANK whitespace or invisible to them: a reason of only those printed nothing */
+  it("⛔ a reason of only control characters or the braille blank is refused, dry run or not", () => {
+    const blanks = ["\u0001\u0007\u001B\u007F", "\u0080\u009B\u009F", "\u2800", "\u2800 \u0007"];
+    for (const reason of blanks) {
+      for (const confirm of [[], ["--confirm"]]) {
+        expect(() => ledgerCheckMode(["--acknowledge-left-out=3f9a0c12de", `--reason=${reason}`, ...confirm])).toThrow(
+          /--reason needs what the session read on the statement/,
+        );
+      }
+    }
+  });
+
   /* 🔴 `\s` and `trim()` know no zero-width character: `--reason=` and one U+200B was a reason, and its dry run said so */
   it("⛔ a reason that says nothing is refused, dry run or not — Unicode whitespace and zero-width characters too", () => {
     const unicode = [" ", "　 ", "​", "‌‍⁠﻿", "  ​　 "];

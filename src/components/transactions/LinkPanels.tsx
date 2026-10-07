@@ -4,7 +4,7 @@ import { useId, useState } from "react";
 import { Button } from "@/components/ui/Button";
 import { Money } from "@/components/ui/Money";
 import { toast } from "@/components/ui/Toast";
-import { linkTransferAction, unlinkTransferAction } from "@/app/transactions/actions";
+import { linkTransferAction, undoAction, unlinkTransferAction } from "@/app/transactions/actions";
 import {
   attachToSeriesAction,
   createSeriesFromTxnAction,
@@ -241,7 +241,8 @@ export function SeriesLinkPanel({
 
   /** The "Make recurring" quick action: promote THIS row into a confirmed series
    *  (or join the identity's existing live series). Undo is mode-aware: a created
-   *  series is deleted outright; an attach simply detaches. */
+   *  series is deleted outright; a join applies its lossless patch — the link AND
+   *  the category joining may have filed (§6A 47), which a detach would leave. */
   function makeRecurring(): void {
     if (busy) return;
     setBusy(true);
@@ -262,7 +263,7 @@ export function SeriesLinkPanel({
             onAction: () =>
               void (mode === "created"
                 ? undoCreateSeriesAction({ seriesId, undo })
-                : detachFromSeriesAction({ transactionId: txnId })
+                : undoAction(undo)
               ).then((res) => {
                 if (!res.ok) {
                   toast({ title: res.error, tone: "negative" });
