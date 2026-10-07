@@ -33,6 +33,7 @@ import {
   seriesHasLapsed,
 } from "./recurring";
 import { overdueForSeries, unbankedIncomeForSeries, unbankedIncomeTotals, type UnbankedIncomeTotals } from "./arrears";
+import { isUpfrontCarRow, upfrontCarRule } from "./car-upfront";
 import { stillToCome } from "./payday-settlement";
 import { activeSplitsInRange } from "./transaction-splits";
 import { linkIsNotRecurring, seriesIdsNotDrawnAsRecurring } from "./recurring-link";
@@ -55,7 +56,8 @@ import { linkIsNotRecurring, seriesIdsNotDrawnAsRecurring } from "./recurring-li
  *
  * VARIABLE: per top-level expense bucket, trailing average of the last 3
  * FULL months of active expense spending excluding the rows a recurring series
- * owns (`linkIsNotRecurring` — a DISMISSED series owns none), plus a trend
+ * owns (`linkIsNotRecurring` — a DISMISSED series owns none) and the car's
+ * up-front money (`isUpfrontCarRow`, owner decision 2026-10-07), plus a trend
  * adjustment capped at one typical (median) month and floored at
  * zero, scaled by remaining days / days in month. The pace itself is
  * `projection.ts::trailingPace` — shared with /spending and /budgets, so one
@@ -75,6 +77,8 @@ interface TrailingAllocation {
   categoryId: string | null;
   /** the row's account — a split part posts where its row does */
   accountId: string;
+  /** the row's series link — a split part carries its row's (`isUpfrontCarRow` reads it) */
+  recurringSeriesId: string | null;
 }
 
 /** What one forecast reads ONCE, and every month of its chain shares. */
@@ -193,6 +197,7 @@ function nonRecurringAllocations(
       amountCents: transactions.amountCents,
       categoryId: transactions.categoryId,
       accountId: transactions.accountId,
+      recurringSeriesId: transactions.recurringSeriesId,
     })
     .from(transactions)
     .where(
@@ -208,7 +213,13 @@ function nonRecurringAllocations(
   const out: TrailingAllocation[] = [];
   for (const r of rows) {
     for (const a of allocationsFor(r.categoryId, r.amountCents, splits.get(r.id) ?? [])) {
-      out.push({ postedOn: r.postedOn, amountCents: a.amountCents, categoryId: a.categoryId, accountId: r.accountId });
+      out.push({
+        postedOn: r.postedOn,
+        amountCents: a.amountCents,
+        categoryId: a.categoryId,
+        accountId: r.accountId,
+        recurringSeriesId: r.recurringSeriesId,
+      });
     }
   }
   return out;
@@ -733,7 +744,17 @@ function variableComponents(
   // trailing spend EXCLUDES the rows a series drawn as recurring owns
   // (`linkIsNotRecurring`): a live series' bills project via FIXED, an ended
   // series' stopped, and a dismissed series owns none — its rows are pace here
-  const rows = nonRecurringAllocations(db, rangeStart, rangeEnd, notDrawn);
+  const idx = loadCategoryIndex(db);
+  /*
+   * ⚖️ …AND THE CAR'S UP-FRONT MONEY (owner decision 2026-10-07, §6A 48): what the car card spreads over the lease as
+   * "Paid up front" is not a habit, and projecting it again as monthly spending counted it twice. 🔴 Measured on his
+   * ledger that day: "Car  3-mo avg $2,033.33 + trend $0.00, × 25/31 days" = −$1,639.78 of October, which was the $5,000
+   * down payment and the $1,100 deposit ÷ 3. `isUpfrontCarRow` is the card's own predicate, asked of each allocation —
+   * a split part on its own category — so the two cannot draw different boundaries; it is his money only, and the
+   * agent's rows stay in the agent's pace below. The lease and the insurance stay in as FIXED, as they always were.
+   */
+  const upfrontCar = upfrontCarRule(idx, agentsCash, notDrawn);
+  const rows = nonRecurringAllocations(db, rangeStart, rangeEnd, notDrawn).filter((t) => !isUpfrontCarRow(upfrontCar, t));
 
   /*
    * ⚖️ WHICH rows are spending is `spendingBucket`'s to say — an expense-kind row or an uncategorized outflow (an
@@ -744,7 +765,6 @@ function variableComponents(
    * Uncategorized (owner decision 2026-10-05). The agent's rows are bucketed apart (`agentsCostBucket`) and projected
    * by the same pace, for EOM net worth alone (`ForecastLeg.agentsCostCents`) — net worth still pays them.
    */
-  const idx = loadCategoryIndex(db);
   const buckets = bucketTrailing(rows, (t) => spendingBucket(idx, agentsCash, t)?.categoryName ?? null, outside);
   const agents = bucketTrailing(rows, (t) => agentsCostBucket(idx, agentsCash, t)?.categoryName ?? null, outside);
 
