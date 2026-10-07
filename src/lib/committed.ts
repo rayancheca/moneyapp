@@ -550,12 +550,27 @@ export function heaviestMonthEnding(
  * clock can never render is exactly the one worth a test — the same reason
  * `pace-geometry` lives in `lib`.
  */
-export function baselineCaption(window: { months: number; fromMonth: string; toMonth: string }): string {
+export function baselineCaption(window: {
+  months: number;
+  fromMonth: string;
+  toMonth: string;
+  /**
+   * The car's up-front money the average left out (`SpendBaseline.upfrontCarCents`, owner decision 2026-10-07,
+   * §6A 51). ⛔ Named whenever it is not zero: "Spending averaged over …" over a figure that is not the plain average
+   * of those months would be a caption that lies by omission.
+   */
+  upfrontCarCents?: number;
+}): string {
   const span = baselineSpan(window);
   if (span === null) {
     return "No complete month has been imported yet, so there is no spending average to stand on.";
   }
-  return `Spending averaged over ${span}. This month is still running and is not counted.`;
+  const upfront = window.upfrontCarCents ?? 0;
+  const leftOut =
+    upfront === 0
+      ? ""
+      : `, leaving out the ${formatCents(upfront)} paid up front for the car, which the car card spreads over the lease`;
+  return `Spending averaged over ${span}${leftOut}. This month is still running and is not counted.`;
 }
 
 /**

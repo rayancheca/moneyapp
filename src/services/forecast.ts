@@ -743,7 +743,8 @@ function variableComponents(
 
   // trailing spend EXCLUDES the rows a series drawn as recurring owns
   // (`linkIsNotRecurring`): a live series' bills project via FIXED, an ended
-  // series' stopped, and a dismissed series owns none — its rows are pace here
+  // series' stopped, and a dismissed series owns none — its rows are pace here,
+  // unless they are the car's up-front money (below)
   const idx = loadCategoryIndex(db);
   /*
    * ⚖️ …AND THE CAR'S UP-FRONT MONEY (owner decision 2026-10-07, §6A 48): what the car card spreads over the lease as
@@ -752,6 +753,8 @@ function variableComponents(
    * down payment and the $1,100 deposit ÷ 3. `isUpfrontCarRow` is the card's own predicate, asked of each allocation —
    * a split part on its own category — so the two cannot draw different boundaries; it is his money only, and the
    * agent's rows stay in the agent's pace below. The lease and the insurance stay in as FIXED, as they always were.
+   * ⚖️ Up front means dated BEFORE the lease starts (§6A 52): a repair or a dismissed "wash club" charged after it is
+   * ordinary spending, and paced here like any other.
    */
   const upfrontCar = upfrontCarRule(idx, agentsCash, notDrawn);
   const rows = nonRecurringAllocations(db, rangeStart, rangeEnd, notDrawn).filter((t) => !isUpfrontCarRow(upfrontCar, t));

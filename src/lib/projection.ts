@@ -142,6 +142,12 @@ export interface PaceInput {
    * everyday spending and belong in the pace.
    */
   recurringPostedCents?: number;
+  /**
+   * portion of actual-to-date spent ONCE and no rate — the car's up-front money (services/car-upfront
+   * `isUpfrontCarRow`, owner decision 2026-10-07): counted in the total, never extrapolated. Disjoint from
+   * `recurringPostedCents`: both are subtracted before the extrapolation.
+   */
+  oneOffPostedCents?: number;
   /** future recurring occurrences already expected in (today, to], integer cents */
   expectedTailCents?: number;
   /**
@@ -162,10 +168,11 @@ export interface PaceInput {
 export function projectPace(input: PaceInput): Projection {
   const { from, to, today, actualToDateCents } = input;
   const recurringPosted = input.recurringPostedCents ?? 0;
+  const oneOffPosted = input.oneOffPostedCents ?? 0;
   const expectedTail = input.expectedTailCents ?? 0;
   const prog = periodProgress(from, to, today);
 
-  const variablePosted = actualToDateCents - recurringPosted;
+  const variablePosted = actualToDateCents - recurringPosted - oneOffPosted;
   const variableRemainder =
     prog.elapsedDays > 0 && variablePosted > 0
       ? Math.round((variablePosted * prog.remainingDays) / prog.elapsedDays)

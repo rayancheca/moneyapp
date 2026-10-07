@@ -19,7 +19,13 @@ const SEPTEMBER: CashFlow = {
   incomeSeries: [],
   spendingSeries: [{ key: HEALTH, label: "Health", categoryId: HEALTH, hue: "red" }],
   totals: { earnedCents: 0, spentCents: 143_105, refundsCents: 0, netCents: -143_105, savingsRatePct: null },
-  pace: { elapsedFraction: 14 / 30, actualToDateCents: 143_105, projectedCents: 306_654, avgPerBucketCents: 10_222 },
+  pace: {
+    elapsedFraction: 14 / 30,
+    actualToDateCents: 143_105,
+    upfrontToDateCents: 0,
+    projectedCents: 306_654,
+    avgPerBucketCents: 10_222,
+  },
 };
 const PROJECTION: SpendingProjection = {
   projectedSpendCents: 306_654,

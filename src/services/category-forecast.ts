@@ -70,11 +70,15 @@ interface PredictContext {
   /** series whose still-tagged rows are not recurring money
    *  (`seriesIdsNotDrawnAsRecurring` — the dismissed ones): false positives whose
    *  spend is really variable, so it falls BACK into the discretionary trend
-   *  (they are never projected as a recurring baseline). */
+   *  (they are never projected as a recurring baseline) — all but a Car row dated
+   *  before the lease starts, which is the car's up-front money (`upfrontCar`). */
   notDrawnAsRecurring: ReadonlySet<string>;
   /** `outsidePortfolioCashAccountIds` — the agent's cash, whose costs are not his spending (`spendingBucket`) */
   agentsCash: readonly string[];
-  /** `upfrontCarRule` — the rows the car card spreads over the lease, which no trend projects; null with no car */
+  /**
+   * `upfrontCarRule` — the rows the car card spreads over the lease, which no trend projects (§6A 48): Car rows dated
+   * before the lease starts and no bill (§6A 52). A repair after it is discretionary like any spend. Null with no car.
+   */
   upfrontCar: UpfrontCarRule | null;
   /** the day a lapsed series is measured against */
   today: string;
@@ -133,6 +137,7 @@ function nonRecurringSubtreeSpend(
   const unsplit = db
     .select({
       amountCents: transactions.amountCents,
+      postedOn: transactions.postedOn,
       categoryId: transactions.categoryId,
       accountId: transactions.accountId,
       recurringSeriesId: transactions.recurringSeriesId,
@@ -158,6 +163,7 @@ function nonRecurringSubtreeSpend(
   const splitParts = db
     .select({
       amountCents: transactionSplits.amountCents,
+      postedOn: transactions.postedOn,
       categoryId: transactionSplits.categoryId,
       accountId: transactions.accountId,
       recurringSeriesId: transactions.recurringSeriesId,

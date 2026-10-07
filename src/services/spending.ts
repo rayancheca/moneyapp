@@ -36,8 +36,10 @@ import {
   type CategoryIndex,
   type DateRange,
 } from "./analytics";
+import { isUpfrontCarRow, upfrontCarRule } from "./car-upfront";
 import { spendingCoverageThrough } from "./movers-card";
 import { ledgerOpens, ledgerReaches } from "./observation-frontier";
+import { seriesIdsNotDrawnAsRecurring } from "./recurring-link";
 import { activeSplitsInRange } from "./transaction-splits";
 
 /**
@@ -156,7 +158,12 @@ export interface PaceInfo {
   elapsedFraction: number;
   /** spending from the period start through today */
   actualToDateCents: number;
-  /** linear projection of the full-period spend */
+  /**
+   * The car's up-front money inside `actualToDateCents` (`isUpfrontCarRow`, owner decision 2026-10-07, §6A 51): spent
+   * once, so the projection counts it and never extrapolates it.
+   */
+  upfrontToDateCents: number;
+  /** linear projection of the full-period spend — the up-front money once, the rest at its pace */
   projectedCents: number;
   /** typical spend per elapsed bucket — the dotted "ideal pace" reference */
   avgPerBucketCents: number;
@@ -239,6 +246,10 @@ export function cashFlowByPeriod(db: AppDatabase, period: ResolvedPeriod, today:
   let spentCents = 0;
   let refundsCents = 0;
   let actualToDateCents = 0;
+  let upfrontToDateCents = 0;
+  // ⚖️ the car's up-front money is spent, not a pace (§6A 51) — the rule the car card counts it by; only a period
+  // still running has a pace to keep it out of
+  const upfront = period.isCurrent ? upfrontCarRule(idx, agentsCash, seriesIdsNotDrawnAsRecurring(db)) : null;
 
   for (const txn of rows) {
     const bucket = bucketIndex.get(bucketKeyFor(txn.postedOn, byMonth));
@@ -253,7 +264,10 @@ export function cashFlowByPeriod(db: AppDatabase, period: ResolvedPeriod, today:
       }
       const out = -txn.amountCents;
       spentCents += out;
-      if (compareDates(txn.postedOn, today) <= 0) actualToDateCents += out;
+      if (compareDates(txn.postedOn, today) <= 0) {
+        actualToDateCents += out;
+        if (isUpfrontCarRow(upfront, txn)) upfrontToDateCents += out;
+      }
       const catKey = sb.categoryId ?? "∅";
       const total = spendTotals.get(catKey) ?? { name: sb.categoryName, cents: 0 };
       spendTotals.set(catKey, { name: sb.categoryName, cents: total.cents + out });
@@ -308,7 +322,7 @@ export function cashFlowByPeriod(db: AppDatabase, period: ResolvedPeriod, today:
     netCents,
     savingsRatePct: earnedCents > 0 ? Math.round((netCents / earnedCents) * 1000) / 10 : null,
   };
-  const pace = period.isCurrent ? computePace(period, buckets, actualToDateCents, today) : null;
+  const pace = period.isCurrent ? computePace(period, buckets, actualToDateCents, upfrontToDateCents, today) : null;
 
   /*
    * Whether each bucket's zero is a measurement — both ends of the ledger, future
@@ -333,6 +347,7 @@ function computePace(
   period: ResolvedPeriod,
   buckets: readonly { from: string }[],
   actualToDateCents: number,
+  upfrontToDateCents: number,
   today: string,
 ): PaceInfo {
   const totalDays = diffDays(period.from, period.to) + 1;
@@ -340,10 +355,17 @@ function computePace(
   const elapsedDays = Math.min(totalDays, Math.max(1, diffDays(period.from, cappedToday) + 1));
   const elapsedFraction = elapsedDays / totalDays;
   const elapsedBuckets = buckets.filter((b) => compareDates(b.from, today) <= 0).length || 1;
+  /*
+   * ⚖️ The car's up-front money counts ONCE, as spent, and is not extrapolated (owner decision 2026-10-07, §6A 51).
+   * 🔴 Replayed at 2026-08-20 on his ledger, the dashboard tile and /spending read August at $16,841.12 projected:
+   * the $6,100 down payment and deposit, paid in its first twenty days, scaled up by 31/20 as though it were a rate.
+   */
+  const pacedCents = actualToDateCents - upfrontToDateCents;
   return {
     elapsedFraction,
     actualToDateCents,
-    projectedCents: elapsedFraction > 0 ? Math.round(actualToDateCents / elapsedFraction) : 0,
+    upfrontToDateCents,
+    projectedCents: elapsedFraction > 0 ? upfrontToDateCents + Math.round(pacedCents / elapsedFraction) : 0,
     avgPerBucketCents: Math.round(actualToDateCents / elapsedBuckets),
   };
 }
@@ -427,6 +449,8 @@ export function spendingProjection(
       to: period.to,
       today,
       actualToDateCents: currentPace.actualToDateCents,
+      // the car's up-front money is spent once, never a rate (§6A 51) — the tile's rule, `computePace`
+      oneOffPostedCents: currentPace.upfrontToDateCents,
       // never project below the full-period spend already booked + displayed
       // (mirrors budgets.ts's Math.max(spent, forecast)).
       floorCents: fullPeriodSpentCents,
