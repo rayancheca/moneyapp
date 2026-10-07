@@ -1,12 +1,14 @@
 import { and, eq, inArray, isNull, lte } from "drizzle-orm";
 import { withPreMutationSnapshot } from "@/db/backup";
 import type { AppDatabase } from "@/db/client";
-import { recurringSeries, type Cadence } from "@/db/schema/recurring";
+import type { CategoryKind } from "@/db/schema/categories";
+import { recurringSeries, type Cadence, type SeriesKind } from "@/db/schema/recurring";
 import { transactions, type CategorizationSource } from "@/db/schema/transactions";
 import { todayIso } from "@/lib/dates";
 import { deriveAnchorDay, stepFrom, stepPlan } from "@/lib/recurring-step";
 import { loadCategoryIndex } from "./analytics";
 import { applyUndoPatch, type UndoFields, type UndoPatch } from "./bulk-edit";
+import { clearReviewIfSettled } from "./duplicate-lifecycle";
 import {
   analyzeGroup,
   loadRecomputeCtx,
@@ -30,12 +32,28 @@ export interface AttachResult {
   undo: UndoPatch;
 }
 
-/** A row's filing columns as they stood before a hand link — what its undo restores. */
+/** A row's filing columns as they stood before a hand link — what its undo restores — and the money it moves. */
 interface FilingBefore {
   readonly id: string;
+  readonly amountCents: number;
   readonly categoryId: string | null;
   readonly categorizationSource: CategorizationSource | null;
   readonly categorizationConfidence: number | null;
+  readonly needsReview: boolean;
+}
+
+/**
+ * Whether a row moving `amountCents` may be filed under a series of `seriesKind` named by a category of (top-level)
+ * `categoryKind`. ⛔ Filing must never take money out of every figure:
+ * - transfer-kind (series or category): a Transfers row with no partner leaves spending as an unpaired departure;
+ * - money out onto income (series or category): analytics counts only money in on an Income row, so it vanishes;
+ * - money in onto a bill or subscription: not a charge of that bill.
+ */
+function holdsMoney(seriesKind: SeriesKind, categoryKind: CategoryKind, amountCents: number): boolean {
+  if (seriesKind === "transfer" || categoryKind === "transfer") return false;
+  if ((seriesKind === "income" || categoryKind === "income") && amountCents <= 0) return false;
+  if ((seriesKind === "bill" || seriesKind === "subscription") && amountCents >= 0) return false;
+  return true;
 }
 
 /**
@@ -47,9 +65,12 @@ interface FilingBefore {
  *   `user_category_id` first, else the category its filed rows sit in. A series named by none, or only by the system
  *   "Uncategorized", files nothing: the row stays unfiled rather than being filed as unfiled.
  * - "Not filed" is `CategoryIndex.isUncategorized`: NULL or the system "Uncategorized" — one set (2026-09-03).
- * - Stamped `categorization_source = 'user'` with confidence 1, as every hand categorization is: attaching is his
- *   act, and filing follows the category he set. `needs_review` is NOT touched: duplicate review shares that flag,
- *   and linking a row to a series answers no duplicate question.
+ * - Only money the series can hold (`holdsMoney`): never a transfer, never money out onto income, never money in
+ *   onto a bill. Such a row is linked but stays unfiled.
+ * - Written as every hand categorization writes it (`bulkApply`, `setTransactionCategory`): source 'user',
+ *   confidence 1, `needs_review` cleared — attaching is his act, and filing follows the category he set. But the
+ *   flag is cleared through `clearReviewIfSettled`, so a row still in an open duplicate pair keeps it: filing a row
+ *   answers no duplicate question. The undo restores the flag with the rest.
  * - A split row is skipped: its category is driven by its parts (as `bulkApply` skips it).
  *
  * 🔴 Why: his first lease payment and the $1,000.00 insurance prepayment were attached by hand to "Car lease" and
@@ -69,19 +90,28 @@ function fileUnfiledUnderSeries(
   if (unfiled.length === 0) return filedBefore;
   const named = seriesCategoryIds(tx, idx, [seriesId]).get(seriesId);
   if (named === undefined || idx.isUncategorized(named)) return filedBefore;
+  const series = tx
+    .select({ kind: recurringSeries.kind })
+    .from(recurringSeries)
+    .where(eq(recurringSeries.id, seriesId))
+    .get();
+  if (series === undefined) return filedBefore;
+  const categoryKind = idx.topLevelOf(named).kind;
   const split = splitTxnIdsIn(tx, unfiled.map((r) => r.id));
-  const toFile = unfiled.filter((r) => !split.has(r.id));
+  const toFile = unfiled.filter((r) => !split.has(r.id) && holdsMoney(series.kind, categoryKind, r.amountCents));
   if (toFile.length === 0) return filedBefore;
 
   tx.update(transactions)
     .set({ categoryId: named, categorizationSource: "user", categorizationConfidence: 1 })
     .where(inArray(transactions.id, toFile.map((r) => r.id)))
     .run();
+  clearReviewIfSettled(tx, toFile.filter((r) => r.needsReview).map((r) => r.id));
   for (const r of toFile) {
     filedBefore.set(r.id, {
       categoryId: r.categoryId,
       categorizationSource: r.categorizationSource,
       categorizationConfidence: r.categorizationConfidence,
+      needsReview: r.needsReview,
     });
   }
   return filedBefore;
@@ -121,9 +151,11 @@ export function attachTransactions(
         id: transactions.id,
         recurringSeriesId: transactions.recurringSeriesId,
         seriesLinkSource: transactions.seriesLinkSource,
+        amountCents: transactions.amountCents,
         categoryId: transactions.categoryId,
         categorizationSource: transactions.categorizationSource,
         categorizationConfidence: transactions.categorizationConfidence,
+        needsReview: transactions.needsReview,
       })
       .from(transactions)
       .where(and(inArray(transactions.id, [...transactionIds]), eq(transactions.status, "active")))
@@ -344,6 +376,7 @@ export function createSeriesFromTransaction(
         categoryId: transactions.categoryId,
         categorizationSource: transactions.categorizationSource,
         categorizationConfidence: transactions.categorizationConfidence,
+        needsReview: transactions.needsReview,
         normalizedDescription: transactions.normalizedDescription,
         recurringSeriesId: transactions.recurringSeriesId,
         seriesLinkSource: transactions.seriesLinkSource,
