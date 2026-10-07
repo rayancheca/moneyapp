@@ -59,8 +59,9 @@ export const ledgerWitnessMarks = sqliteTable("ledger_witness_marks", {
  * 2026-10-05:    ". The CHECK trims tabs, newlines and the rest of ASCII whitespace as well as spaces — SQLite's
  * one-argument trim() strips spaces only, and would have let "\n\t" through.
  *
- * ⛔ That is ALL it trims: a no-break, ideographic or zero-width space passes it. The app's writer refuses those too
- * (`reasonSaysNothing`: every Unicode whitespace and invisible character). Migration 0024 is applied to the real
+ * ⛔ That is ALL it trims: a no-break, ideographic or zero-width space, a control character or the braille blank
+ * passes it. The app's writer refuses those too (`reasonSaysNothing`: every Unicode whitespace, invisible and control
+ * character, and U+2800). Migration 0024 is applied to the real
  * ledger, so it is never edited: a wider CHECK would take a new migration, rebuilding the table.
  */
 export const leftOutAcknowledgements = sqliteTable(

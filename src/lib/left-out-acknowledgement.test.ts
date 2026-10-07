@@ -292,8 +292,8 @@ describe("planAcknowledging — the guarded write, a dry run first", () => {
     expect(plan.unmatched).toEqual([]);
     expect(plan.reasonsKept).toEqual([{ mark, stored: [stored] }]);
     expect(plan.lines).toEqual([
-      `${mark}: acknowledged already, with another reason, which this step never changes — Acknowledged on 2026-10-04: ` +
-        "Printed on the July statement.",
+      `${mark}: acknowledged already, and --reason is not the reason stored, which stays: this step never changes a ` +
+        "stored one — Acknowledged on 2026-10-04: Printed on the July statement.",
     ]);
     expect(reasonChangeRefusal(plan.reasonsKept)).toEqual([
       REFUSED,
@@ -309,8 +309,8 @@ describe("planAcknowledging — the guarded write, a dry run first", () => {
     const plan = planAcknowledging(twins, [mark], TODAY);
     expect(plan.reasonsKept).toEqual([{ mark, stored: [stored] }]);
     expect(plan.lines).toEqual([
-      `${mark}: acknowledged already, with another reason, which this step never changes — Acknowledged on 2026-10-04: ` +
-        "Printed on the July statement.",
+      `${mark}: acknowledged already, and --reason is not the reason stored, which stays: this step never changes a ` +
+        "stored one — Acknowledged on 2026-10-04: Printed on the July statement.",
     ]);
     expect(reasonChangeRefusal(plan.reasonsKept)).toEqual([
       REFUSED,
@@ -322,7 +322,9 @@ describe("planAcknowledging — the guarded write, a dry run first", () => {
    * 🔴 A mark PARTLY acknowledged — a line alike acknowledged in an earlier run, another left out since — took another
    * --reason for its open line without a word of the one stored: --confirm stored it, and lines alike, which read the same
    * on the statement, carried two reasons. Its reasons stored are said now, and another one is refused, exit 2, as for a
-   * mark whose every line is acknowledged.
+   * mark whose every line is acknowledged. 🔴 It said "acknowledged already, with another reason" beside the reason
+   * stored, as if that one were the other: it says now, in the refusal's words, that --reason is not the one stored,
+   * and the one stored stays.
    */
   test("⛔ a mark partly acknowledged: another reason for its open line is refused, saying the reason stored", () => {
     const stored = { on: "2026-10-04", reason: "Printed on the July statement." };
@@ -333,8 +335,8 @@ describe("planAcknowledging — the guarded write, a dry run first", () => {
     expect(plan.unmatched).toEqual([]);
     expect(plan.reasonsKept).toEqual([{ mark, stored: [stored] }]);
     expect(plan.lines).toEqual([
-      `${mark}: 1 of its 2 lines alike acknowledged already, with another reason, and lines alike take one reason — ` +
-        "Acknowledged on 2026-10-04: Printed on the July statement.",
+      `${mark}: 1 of its 2 lines alike acknowledged already, and --reason is not the reason stored, which stays: this ` +
+        "step never changes a stored one nor gives lines alike two — Acknowledged on 2026-10-04: Printed on the July statement.",
     ]);
     expect(reasonChangeRefusal(plan.reasonsKept)).toEqual([
       REFUSED,
@@ -446,6 +448,25 @@ describe("planAcknowledging — the guarded write, a dry run first", () => {
     );
   });
 
+  /*
+   * The day is in the key: two lines alike but for the day the file prints are two lines — two marks, and an
+   * acknowledgement of one never covers the other, beside it or alone.
+   */
+  test("⛔ two lines alike but for the day: two marks, and acknowledging one leaves the other failing", () => {
+    const first = line().printings[0]!;
+    const nextDay = line({ rowId: "row-next-day", printedOn: "2026-07-28", printings: [{ ...first, printedOn: "2026-07-28" }] });
+    expect(leftOutToken(nextDay)).not.toBe(leftOutToken(line()));
+    const plan = planAcknowledging([line(), nextDay], [leftOutToken(line())], TODAY);
+    expect(plan.open).toEqual([line()]);
+    const written = acknowledgementWrites(plan.open, TODAY).map((w) => ({ ...w, id: "ack-1", createdAt: "2026-10-05T16:00:00.000Z" }));
+    for (const lines of [[line(), nextDay], [nextDay, line()]]) {
+      const { byRow, unmatched } = acknowledgementsOf(lines, written);
+      expect([...byRow.keys()]).toEqual(["row-opening"]);
+      expect(unmatched).toEqual([]);
+    }
+    expect(acknowledgementsOf([nextDay], written).byRow.size).toBe(0);
+  });
+
   test("⛔ a mark no line left out carries is unmatched — the command refuses the whole write", () => {
     const plan = planAcknowledging([line()], [leftOutToken(line()), "0123456789"], TODAY);
     expect(plan.unmatched).toEqual(["0123456789"]);
@@ -483,13 +504,21 @@ const shellWords = (text: string): string[] => {
 const shellArgs = (text: string): string[] => shellWords(text).filter((word) => word.startsWith("--"));
 
 /**
- * Every run a dry run's last words name, as the command line it is: "the same command with <args>" adds them to the dry
- * run's own; one run a mark, each on its own line, takes those in place of the dry run's.
+ * Every run a dry run's last words name, as the command line it is, each with the runs it may be swapped for — a line
+ * "or …" names one in place of the run above it. "The same command with <args>" adds them to the dry run's own, on its
+ * line or on the lines below it; one run a mark, each on its own line, takes those in place of the dry run's.
  */
-const runsNamed = (step: readonly string[], dryRun: readonly string[]): string[][] => {
-  const [said, ...runs] = step;
-  if (runs.length > 0) return runs.map(shellArgs);
-  return [[...dryRun, ...shellArgs(said!.slice(said!.indexOf("the same command with ")))]];
+const runsNamed = (step: readonly string[], dryRun: readonly string[]): string[][][] => {
+  const [said, ...below] = step;
+  if (below.length === 0) return [[[...dryRun, ...shellArgs(said!.slice(said!.indexOf("the same command with ")))]]];
+  const inPlace = said!.endsWith("in place of its own:");
+  const runs: string[][][] = [];
+  for (const text of below) {
+    const run = inPlace ? shellArgs(text) : [...dryRun, ...shellArgs(text)];
+    if (/^\s*or /.test(text)) runs.at(-1)!.push(run);
+    else runs.push([run]);
+  }
+  return runs;
 };
 
 describe("confirmingStep — what a dry run ends with: the run that confirms it", () => {
@@ -566,6 +595,36 @@ describe("confirmingStep — what a dry run ends with: the run that confirms it"
   });
 
   /*
+   * 🔴 Lines alike carrying two reasons take either for a line left open beside them (`planAcknowledging`), and the
+   * step named only the first (`stored[0]`): a session whose statement read as the second was never told it is taken.
+   * It names each now, exactly, as a shell reads it — one run, or the other in its place; never a third.
+   */
+  test("⛔ lines alike carrying two reasons: the run names each, exactly — one or the other, never a third", () => {
+    const first = { on: "2026-10-04", reason: "Printed on the July statement." };
+    const second = { on: "2026-10-05", reason: READ_IT };
+    const lines = [
+      line({ acknowledged: first }),
+      line({ rowId: "row-twin", acknowledged: second }),
+      line({ rowId: "row-third" }),
+      COFFEE,
+    ];
+    const one = planAcknowledging(lines, [OPENING_MARK], { on: "2026-10-06", reason: null });
+    expect(confirmingStep([OPENING_MARK], one, null)).toEqual([
+      "Only once each line is read on its statement: the same command with one of these — its lines alike carry 2 " +
+        "reasons, and its open lines take one of them, exactly, never another:",
+      "    --reason='Printed on the July statement.' --confirm",
+      `    or --reason=${READ_IT_QUOTED} --confirm`,
+    ]);
+    const both = planAcknowledging(lines, [OPENING_MARK, COFFEE_MARK], { on: "2026-10-06", reason: null });
+    expect(confirmingStep([OPENING_MARK, COFFEE_MARK], both, null)).toEqual([
+      ONE_A_RUN,
+      `    --acknowledge-left-out=${OPENING_MARK} --reason='Printed on the July statement.' --confirm`,
+      `    or --acknowledge-left-out=${OPENING_MARK} --reason=${READ_IT_QUOTED} --confirm`,
+      runOf(COFFEE_MARK),
+    ]);
+  });
+
+  /*
    * ⛔ The runs it names are runs the PLAN takes, not only the command line: each, planned again against the same lines,
    * refuses nothing — no mark unmatched, no reason another — and together they acknowledge every line the dry run would.
    */
@@ -598,13 +657,17 @@ describe("confirmingStep — what a dry run ends with: the run that confirms it"
       expect(ledgerCheckMode(dryRun)).toMatchObject({ mode: "acknowledge", confirm: false });
       const plan = planAcknowledging(lines, marks, { on: "2026-10-05", reason });
       expect([plan.unmatched, plan.reasonsKept]).toEqual([[], []]);
-      const planned = runsNamed(confirmingStep(marks, plan, reason), dryRun).map((args) => {
-        const mode = ledgerCheckMode(args);
-        if (mode.mode !== "acknowledge" || !mode.confirm) throw new Error(`not a --confirm: ${args.join(" ")}`);
-        return planAcknowledging(lines, mode.tokens, { on: "2026-10-06", reason: mode.reason });
-      });
-      for (const run of planned) expect([run.unmatched, run.reasonsKept]).toEqual([[], []]);
-      expect(rows(planned.flatMap((run) => run.open))).toEqual(rows(plan.open));
+      const planned = runsNamed(confirmingStep(marks, plan, reason), dryRun).map((alternatives) =>
+        alternatives.map((args) => {
+          const mode = ledgerCheckMode(args);
+          if (mode.mode !== "acknowledge" || !mode.confirm) throw new Error(`not a --confirm: ${args.join(" ")}`);
+          return planAcknowledging(lines, mode.tokens, { on: "2026-10-06", reason: mode.reason });
+        }),
+      );
+      for (const run of planned.flat()) expect([run.unmatched, run.reasonsKept]).toEqual([[], []]);
+      // a run named in another's place acknowledges the very lines that one does
+      for (const [run, ...others] of planned) for (const other of others) expect(rows(other.open)).toEqual(rows(run!.open));
+      expect(rows(planned.flatMap(([run]) => run!.open))).toEqual(rows(plan.open));
     }
   });
 
@@ -641,13 +704,19 @@ describe("confirmingStep — what a dry run ends with: the run that confirms it"
 
     const mark = leftOutToken(lines[0]!);
     const plan = planAcknowledging(read, [mark], { on: "2026-10-06", reason: null });
-    const [args] = runsNamed(confirmingStep([mark], plan, null), [`--acknowledge-left-out=${mark}`]);
-    const run = ledgerCheckMode(args!);
-    if (run.mode !== "acknowledge" || !run.confirm) throw new Error(`not a --confirm: ${args!.join(" ")}`);
-    expect(run.reason).toBe("Printed on the July statement.");
-    const confirmed = planAcknowledging(read, run.tokens, { on: "2026-10-06", reason: run.reason });
-    expect(confirmed.reasonsKept).toEqual([]);
-    expect(confirmed.open.map((l) => l.rowId)).toEqual(["row-c"]);
+    const [alternatives] = runsNamed(confirmingStep([mark], plan, null), [`--acknowledge-left-out=${mark}`]);
+    const runs = alternatives!.map((args) => {
+      const run = ledgerCheckMode(args);
+      if (run.mode !== "acknowledge" || !run.confirm) throw new Error(`not a --confirm: ${args.join(" ")}`);
+      return run;
+    });
+    // each reason they carry, either taking the line left open
+    expect(runs.map((run) => run.reason)).toEqual(["Printed on the July statement.", READ_IT]);
+    for (const run of runs) {
+      const confirmed = planAcknowledging(read, run.tokens, { on: "2026-10-06", reason: run.reason });
+      expect(confirmed.reasonsKept).toEqual([]);
+      expect(confirmed.open.map((l) => l.rowId)).toEqual(["row-c"]);
+    }
   });
 });
 
