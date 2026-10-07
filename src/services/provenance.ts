@@ -100,8 +100,13 @@ export type ProvenanceVerdict =
   | "market_value"
   /** computed, and nothing checks it */
   | "unverified"
-  /** the owner entered this by hand; he is the source */
+  /** the owner entered this by hand — a row, a holding, an amount; he is the source */
   | "manual"
+  /**
+   * a BALANCE the owner counted and typed, or a day (an account) resting on one; he is the source. ⚖️ Not `manual`:
+   * "counted" is the one verb for a balance he typed (§6A 33, 50), "you entered it" a row's — see `VERDICT_PRESENTATION`
+   */
+  | "counted"
   /** computed, and the arithmetic provably does NOT close */
   | "broken"
   /** nothing to stand on yet */
@@ -114,8 +119,11 @@ const VERDICT_RANK: Record<ProvenanceVerdict, number> = {
   unverified: 2,
   market_value: 3,
   manual: 4,
-  derived: 5,
-  sourced: 6,
+  // his count of a whole balance beside his entry of one row: both his word, never a check — distinct only so a
+  // worst-first order has no ties (trust-card's `worstFirst`)
+  counted: 5,
+  derived: 6,
+  sourced: 7,
 };
 
 export function weakestVerdict(verdicts: readonly ProvenanceVerdict[]): ProvenanceVerdict {
@@ -296,7 +304,8 @@ const GRADE_VERDICT: Record<CoverageGrade, ProvenanceVerdict> = {
   unverified: "unverified",
   broken: "broken",
   market_value: "market_value",
-  manual: "manual",
+  // ⚖️ the grade of an account standing on balances he typed and nothing else: a balance he COUNTED (§6A 50)
+  manual: "counted",
   unknown: "unknown",
 };
 
@@ -417,7 +426,7 @@ export function countedDays(db: AppDatabase, account: { id: string; type: Accoun
  * A cash day's balance in this service's vocabulary — ONE rule for an
  * account's balance proof and the day line on a row's sheet.
  *
- * ⛔ A balance he typed is `manual`, and so is a day carried from it that no
+ * ⛔ A balance he typed is `counted`, and so is a day carried from it that no
  * closed chain reaches: carried is "as proven as the balance it came from", and
  * that balance is his count. Carried from a statement, or from a count the
  * replay landed on, it still adds up.
@@ -426,13 +435,17 @@ export function countedDays(db: AppDatabase, account: { id: string; type: Accoun
  * under "Every transaction was replayed forward from a recorded balance and
  * landed exactly on the next one" when both balances were his (real ledger
  * copy with a second Cash on Hand count, 2026-09-16).
+ *
+ * ⚖️ `counted`, never `manual` (his answer, 2026-10-07, §6A 50): the badge read
+ * "you entered it" over a balance every sentence beside it called "the balance
+ * you counted". `manual` stays a row's — the down payment he entered by hand.
  */
 function cashDayVerdict(chain: ChainFacts, day: string, basis: BalanceBasis): ProvenanceVerdict {
-  if (basis === "anchored" && recordedOn(chain, day) === "manual") return "manual";
-  if (chain.counted.has(day)) return "manual";
+  if (basis === "anchored" && recordedOn(chain, day) === "manual") return "counted";
+  if (chain.counted.has(day)) return "counted";
   if (basis === "carried") {
     const from = restingOn(chain, day);
-    if (from?.source === "manual" && !chain.closed.has(from.anchoredOn)) return "manual";
+    if (from?.source === "manual" && !chain.closed.has(from.anchoredOn)) return "counted";
   }
   return BASIS_VERDICT[basis];
 }
@@ -891,8 +904,8 @@ function accountBalanceProvenance(db: AppDatabase, accountId: string, day: strin
    *
    * ⛔ The winning anchor ON the day decides — `pickWinners`, so a statement and a
    * hand-typed balance on one day read as the statement the replay uses. The
-   * badge and the sentence move together: "you entered it" is the app's word for
-   * the owner's own evidence (owner decision S33).
+   * badge and the sentence move together: "you counted it" is the app's word for
+   * a balance that is the owner's own evidence (owner decisions S33, §6A 33 and 50).
    */
   const recordedBy = row.basis === "anchored" && anchor?.anchor.anchoredOn === row.day ? anchor.anchor.source : null;
   /*
@@ -1346,8 +1359,9 @@ function netWorthProvenance(db: AppDatabase, day: string | undefined): Provenanc
   // every account `heldCounts` names is one of them: an investment account no holding prices
   const heldCounted = heldCounts.size;
   const heldRecorded = heldAccounts - heldCounted;
-  // `manual` is a basis, not an absence — see the note in categorySpendProvenance
-  const byHand = inputs.filter((i) => i.verdict === "manual").length;
+  // his count is a basis, not an absence — see the note in categorySpendProvenance. An account's grade reaches
+  // `counted`, never `manual` (`GRADE_VERDICT`): what he typed for an account is its balance
+  const byHand = inputs.filter((i) => i.verdict === "counted").length;
   /**
    * ⛔ FIVE buckets, and the fifth is EMPTY. An account with no rows and no
    * balance was already excluded from the verdict two lines above — "an empty
@@ -2343,6 +2357,7 @@ function summedRowsProof(
  */
 function rowGrade(c: AccountCoverage | undefined, postedOn: string): ProvenanceVerdict {
   if (!c) return "unknown";
+  // ⚠️ `manual` (→ `counted`) is the grade of an account with NO transaction (`accountCoverage`), so no row reaches it
   if (c.grade === "market_value" || c.grade === "manual") return GRADE_VERDICT[c.grade];
   if (c.brokenSince !== null && postedOn >= c.brokenSince) return "broken";
   if (c.verifiedThrough !== null && c.chainOpensOn !== null && postedOn >= c.chainOpensOn && postedOn <= c.verifiedThrough) {

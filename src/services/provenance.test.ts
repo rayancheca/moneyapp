@@ -187,7 +187,7 @@ describe("weakestVerdict", () => {
   });
 
   test("broken outranks every other weakness", () => {
-    const all: ProvenanceVerdict[] = ["sourced", "derived", "market_value", "manual", "unverified", "unknown", "broken"];
+    const all: ProvenanceVerdict[] = ["sourced", "derived", "market_value", "manual", "counted", "unverified", "unknown", "broken"];
     expect(weakestVerdict(all)).toBe("broken");
   });
 });
@@ -352,6 +352,9 @@ describe("provenanceFor — an account balance", () => {
    *
    * ⛔ Both halves together: fixing the sentence alone would put "You recorded
    * it" under a badge still reading "on a statement".
+   *
+   * ⚖️ …and the badge's verb is the sentence's (his answer 2026-10-07, §6A 50): a balance he typed is `counted` —
+   * "you counted it" — never `manual`, whose "you entered it" is a row's.
    */
   test("a hand-entered anchor says the owner is the source — in the badge and the sentence", () => {
     const id = addAccount("a", "Cash on Hand", "cash");
@@ -361,7 +364,7 @@ describe("provenanceFor — an account balance", () => {
     expect(p.sources).toContainEqual(
       expect.objectContaining({ label: "a balance you counted", detail: "balance counted on Aug 1, 2026" }),
     );
-    expect(p.verdict).toBe("manual");
+    expect(p.verdict).toBe("counted");
     expect(p.headline).not.toMatch(/A statement records|bank printed/);
     expect(p.headline).toContain("You counted Cash on Hand's balance on Aug 1, 2026");
   });
@@ -641,8 +644,8 @@ describe("provenanceFor — a transaction", () => {
       "This row came from Chase3522_Activity.CSV, which carries no balances of its own — Chase Checking's balance on this day was counted by you, and nothing else confirms it, so nothing checks the total it sits in.",
     );
     expect(sheet.checkedThrough).toBeNull();
-    // the day's balance is his, never "on a statement"
-    expect(sheet.inputs[0]!.verdict).toBe("manual");
+    // the day's balance is his count, never "on a statement" — and never a row's "you entered it" (§6A 50)
+    expect(sheet.inputs[0]!.verdict).toBe("counted");
   });
 
   /*
@@ -926,6 +929,29 @@ describe("provenanceFor — net worth", () => {
     expect(p.verdict).toBe("unverified");
     expect(p.headline).toMatch(/1 of 2 accounts add up/);
     expect(p.headline).toMatch(/1 has nothing checking it/);
+  });
+
+  /*
+   * ⚖️ His answer, 2026-10-07 (§6A 50): an account standing on nothing but a balance he typed is `counted` — "you
+   * counted it" — in net worth's list, the trust card's group and every badge that reads the grade, and the sentence
+   * still counts it among the accounts he counts himself.
+   */
+  test("an account resting on his count alone is one he counted, and the sentence still counts it as his", () => {
+    const good = addAccount("a", "Chase Checking", "checking");
+    addDays(good, [
+      { day: "2026-08-01", basis: "anchored" },
+      { day: "2026-08-04", basis: "derived" },
+    ]);
+    addTxn(good, "2026-08-04");
+    const safe = addAccount("b", "Safe", "checking");
+    addDays(safe, [{ day: "2026-08-01", basis: "anchored" }]);
+    addAnchor(safe, "2026-08-01", "manual");
+
+    const p = provenanceFor(bundle.db, { kind: "netWorth", day: TODAY })!;
+    expect(p.inputs.find((i) => i.label === "Safe")!.verdict).toBe("counted");
+    expect(p.verdict).toBe("counted");
+    expect(p.headline).toMatch(/1 of 2 accounts add up against a document, 1 you count yourself\./);
+    expect(p.headline).not.toMatch(/nothing checking/);
   });
 
   /**
@@ -2524,7 +2550,7 @@ describe("provenanceFor — a balance he typed checks nothing", () => {
 
   test("a day carried from his count is as proven as the count — his, not 'adds up' — and dated by it", () => {
     const p = balance(cashOnHand(), "2026-08-05");
-    expect(p.verdict).toBe("manual");
+    expect(p.verdict).toBe("counted");
     expect(p.checkedThrough).toBe("2026-08-10");
     expect(p.headline).toBe(
       `Cash on Hand had no activity to replay on Aug 5, 2026, so the balance you counted on Aug 3, 2026 was carried forward.${COUNT_NOTE}`,
@@ -2533,7 +2559,7 @@ describe("provenanceFor — a balance he typed checks nothing", () => {
 
   test("the day he typed it is his, and its date is his count's, never a check's", () => {
     const p = balance(cashOnHand(), "2026-08-03");
-    expect(p.verdict).toBe("manual");
+    expect(p.verdict).toBe("counted");
     expect(p.checkedThrough).toBe("2026-08-10");
     expect(p.headline.endsWith(COUNT_NOTE)).toBe(true);
   });
@@ -2573,6 +2599,19 @@ describe("provenanceFor — a balance he typed checks nothing", () => {
     expect(sheet.headline).toBe(
       `You entered this row by hand. No statement carries it, so nothing else can confirm it.${COUNT_NOTE}`,
     );
+  });
+
+  /*
+   * ⚖️ His answer, 2026-10-07 (§6A 50): one account, two things he typed, two words. The balance he counted reads
+   * "you counted it"; the down payment he entered by hand — its sheet and the count of its rows — keeps "you entered
+   * it". The verdict says which, so every badge, name and group reads it from `VERDICT_PRESENTATION` alone.
+   */
+  test("⚖️ on one wallet, the balance is counted and the row he typed is entered", () => {
+    const id = cashOnHand();
+    expect(balance(id, "2026-08-03").verdict).toBe("counted");
+    expect(balance(id, "2026-08-05").verdict).toBe("counted");
+    expect(provenanceFor(bundle.db, { kind: "transaction", id: rowsOf(id)[0]! })!.verdict).toBe("manual");
+    expect(provenanceFor(bundle.db, { kind: "accountRows", accountId: id })!.verdict).toBe("manual");
   });
 
   test("an imported row on it is dated by the same rule", () => {
@@ -2808,7 +2847,7 @@ describe("provenanceFor — a balance he typed checks nothing", () => {
     const imported = addTxn(id, "2026-08-05", { importFileId: csv, cents: 0 });
 
     const replayed = balance(id, "2026-08-05");
-    expect(replayed.verdict).toBe("manual");
+    expect(replayed.verdict).toBe("counted");
     expect(replayed.checkedThrough).toBeNull();
     expect(replayed.headline).toBe(
       "Every transaction was replayed forward from the balance you counted on Aug 3, 2026 and landed exactly on the one you counted on Aug 12, 2026. Both are your own counts, so nothing else confirms Cash on Hand on Aug 5, 2026.",
@@ -2816,7 +2855,7 @@ describe("provenanceFor — a balance he typed checks nothing", () => {
     expect(balance(id, "2026-08-12").checkedThrough).toBeNull();
 
     const carried = balance(id, "2026-08-20");
-    expect(carried.verdict).toBe("manual");
+    expect(carried.verdict).toBe("counted");
     expect(carried.checkedThrough).toBeNull();
     expect(carried.headline).toBe(
       "Cash on Hand had no activity to replay on Aug 20, 2026, so the balance you counted on Aug 12, 2026 was carried forward.",
@@ -2824,7 +2863,7 @@ describe("provenanceFor — a balance he typed checks nothing", () => {
 
     expect(provenanceFor(bundle.db, { kind: "accountRows", accountId: id })!.checkedThrough).toBeNull();
     const sheet = provenanceFor(bundle.db, { kind: "transaction", id: imported })!;
-    expect(sheet.inputs[0]!.verdict).toBe("manual");
+    expect(sheet.inputs[0]!.verdict).toBe("counted");
     expect(sheet.verdict).not.toBe("derived");
     // resting on his count to its newest day, it bounds nothing — as net worth: no date, no count sentence
     expect(sheet.checkedThrough).toBeNull();

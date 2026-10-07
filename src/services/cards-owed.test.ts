@@ -587,6 +587,8 @@ describe("a card the owner counts himself", () => {
     const card = cardsOwedCard(bundle.db, TODAY)!;
     const alpha = card.cards[0]!;
     expect(alpha.grade).toBe("manual");
+    // ⚖️ a balance he typed: "you counted it", never a row's "you entered it" (§6A 50)
+    expect(alpha.verdict).toBe("counted");
     expect(alpha.checkedThrough).toBeNull();
     expect(alpha.asOfLabel).toBeNull();
     expect(alpha.caveat).toBe("you last counted it on Aug 1 — 9 days ago");

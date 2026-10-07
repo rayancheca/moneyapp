@@ -11,10 +11,18 @@ import type { IconName } from "@/components/shell/Icon";
  * with no proof can be mistaken for one with proof, so the weak verdicts get
  * the loud glyph and the strong ones stay quiet.
  *
- * ⚠️ `market_value` and `manual` are neither good nor bad and must not be
- * toned as either. An investment priced from holdings is not a failure — there
- * is simply no arithmetic gate to pass — and a balance the owner typed is the
- * best evidence that will ever exist for cash in a safe.
+ * ⚠️ `market_value`, `manual` and `counted` are neither good nor bad and must
+ * not be toned as either. An investment priced from holdings is not a failure —
+ * there is simply no arithmetic gate to pass — and a balance the owner typed is
+ * the best evidence that will ever exist for cash in a safe.
+ *
+ * ⚖️ `counted` and `manual` are two verdicts, not one with two words (his
+ * answer, 2026-10-07, §6A 50, extending §6A 33): "counted" is the ONE verb for a
+ * BALANCE he typed, so a balance on his count — and an account resting on one —
+ * reads "you counted it"; a ROW he entered by hand (the Cash on Hand wallet's
+ * rows), a holding or an amount he set keeps "you entered it". The service says
+ * which (`cashDayVerdict`, `GRADE_VERDICT`), so a badge, a trigger's name and the
+ * trust card's group all read the word from here and none of them can pick it.
  */
 export type ProvenanceTone = "proven" | "neutral" | "weak" | "broken";
 
@@ -51,6 +59,12 @@ export const VERDICT_PRESENTATION = {
     icon: "info",
     tone: "neutral",
     ariaSuffix: "was entered by hand",
+  },
+  counted: {
+    word: "you counted it",
+    icon: "info",
+    tone: "neutral",
+    ariaSuffix: "rests on a balance you counted",
   },
   unverified: {
     word: "nothing checks it",

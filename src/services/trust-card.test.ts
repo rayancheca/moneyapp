@@ -202,6 +202,19 @@ describe("trustCard — groups speak the badges' language", () => {
     expect(market.tone).toBe(VERDICT_PRESENTATION.market_value.tone);
   });
 
+  // ⚖️ his answer 2026-10-07 (§6A 50): an account standing on a balance he typed is one he COUNTED
+  test("an account resting on his count alone is grouped under \"you counted it\"", () => {
+    addVerifiedAccount("a", "Chase Checking");
+    addAccount("s", "Safe", "checking");
+    addDays("s", [{ day: "2026-08-01", basis: "anchored" }]);
+    addAnchor("s", "2026-08-01", "manual");
+
+    const counted = groupOf(trustCard(bundle.db, TODAY)!, "manual")!;
+    expect(counted.verdict).toBe("counted");
+    expect(counted.word).toBe("you counted it");
+    expect(counted.accounts.map((a) => a.name)).toEqual(["Safe"]);
+  });
+
   test("the weakest footing is listed first", () => {
     addVerifiedAccount("a", "Chase Checking");
     addAccount("b", "Robinhood Cash", "checking");

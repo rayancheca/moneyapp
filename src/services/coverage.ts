@@ -116,7 +116,7 @@ export function balanceDayIsExact(accountType: AccountType, basis: BalanceBasis)
  * ever replayed onto it — yet it was `verifiedThrough` 2026-08-03, so /imports
  * read "closes to the cent through Aug 3, 2026 (44 days ago)" and the account's
  * balance popover "Checked through 2026-08-03". A count is his evidence
- * (`manual`, "you entered it"); it is not a check.
+ * (`counted`, "you counted it"); it is not a check.
  *
  * ⛔ A typed balance IS checked when a closed span reaches it: the replay from
  * the previous balance landed exactly on his number (`derived` the day before),
