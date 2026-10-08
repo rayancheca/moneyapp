@@ -574,7 +574,7 @@ function transactionProvenance(db: AppDatabase, id: string): Provenance | null {
    * balances" off the period alone told 1,078 rows from
    * `Chase3522_Activity_20260710.CSV` "That file carries no balances of its
    * own" — of the file whose 2026-07-08 balance of $1,120.90
-   * `/accounts/<Chase Checking>` lists under Recorded balances as "bank
+   * `/accounts/<Chase Checking>` lists under Balances as "bank
    * export". Measured 2026-09-14. The other derived-day files (the Spending
    * Report PDFs, the Discover and Robinhood CSVs) own no anchor, and keep their
    * sentence.

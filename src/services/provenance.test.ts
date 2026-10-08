@@ -562,7 +562,7 @@ describe("provenanceFor — a transaction", () => {
    * alone, and a CSV creates no period — it records its running balance as an
    * `ofx_ledger` ANCHOR instead. Measured 2026-09-14:
    * `Chase3522_Activity_20260710.CSV` owns a balance_anchors row (2026-07-08,
-   * $1,120.90) that `/accounts/<Chase Checking>` lists under Recorded balances as
+   * $1,120.90) that `/accounts/<Chase Checking>` lists under Balances as
    * "bank export", while 1,078 of its rows said "That file carries no balances
    * of its own".
    *
