@@ -1,0 +1,1 @@
+ALTER TABLE `recurring_series` ADD `user_amount_history` text;

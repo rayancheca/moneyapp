@@ -25,8 +25,12 @@ describe("ledger-check — lines left out by a re-read", () => {
 
   test("each one nobody acknowledged is a finding: it fails the check", () => {
     expect(script).toMatch(/const leftOutFailures = leftOut\s*\.filter\(\(line\) => line\.acknowledged === null\)/);
-    expect(script).toContain("const findings = failures.length + recordFailures.length + leftOutFailures.length;");
-    expect(script).toContain("for (const line of [...recordFailures, ...leftOutFailures]) console.error(`  ${line}`);");
+    expect(script).toContain(
+      "const findings = failures.length + recordFailures.length + leftOutFailures.length + rateHistoryFailures.length;",
+    );
+    expect(script).toContain(
+      "for (const line of [...recordFailures, ...leftOutFailures, ...rateHistoryFailures]) console.error(`  ${line}`);",
+    );
   });
 
   /* the sentence carries the day and what the session read (`acknowledgedSentence`, lib/import-file-label.test.ts) */

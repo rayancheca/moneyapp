@@ -4,6 +4,7 @@ import { recurringSeries } from "@/db/schema/recurring";
 import { transactions } from "@/db/schema/transactions";
 import { compareDates, todayIso } from "@/lib/dates";
 import { cashEarnings, type CashEarnings, type PaySeries } from "@/lib/cash-earnings";
+import { parseAmountHistory, seriesAmountCents } from "@/lib/series-kind";
 import { outsidePortfolioCashAccountIds } from "./accounts";
 import { isAgentsIncomeSeries } from "./analytics";
 import { accountCoverage } from "./coverage";
@@ -191,8 +192,9 @@ export function cashEarningsReadings(
       cadence: recurringSeries.cadence,
       userCadence: recurringSeries.userCadence,
       intervalDaysAvg: recurringSeries.intervalDaysAvg,
-      amountCentsAvg: recurringSeries.amountCentsAvg,
+      nextExpectedAmountCents: recurringSeries.nextExpectedAmountCents,
       userAmountCents: recurringSeries.userAmountCents,
+      userAmountHistory: recurringSeries.userAmountHistory,
       userEndsOn: recurringSeries.userEndsOn,
       anchorDay: recurringSeries.anchorDay,
     })
@@ -235,7 +237,14 @@ export function cashEarningsReadings(
     const firstBanked = banked[0];
     if (firstBanked === undefined) continue;
 
-    const amountCents = s.userAmountCents ?? s.amountCentsAvg;
+    /*
+     * THE amount — the owner's, else detection's next amount — that every projection of this series reads
+     * (`seriesAmountCents`). 🔴 It was the owner's, else the POSTED AVERAGE: a second spelling of "the amount", so a
+     * series with none of his own was implied at one rate here and projected at another by the calendar, the forecast
+     * and the payday settlement. And its past, dated (§6A 55), read strictly: a history it cannot read refuses the
+     * reading rather than implying his cash weeks at today's rate.
+     */
+    const amountCents = seriesAmountCents(s);
     if (amountCents === null || amountCents <= 0) continue;
 
     const pay: PaySeries = {
@@ -245,6 +254,7 @@ export function cashEarningsReadings(
       intervalDaysAvg: s.userCadence ? null : s.intervalDaysAvg,
       anchorDay: s.anchorDay ?? null,
       amountCents,
+      amountHistory: parseAmountHistory(s.userAmountHistory, amountCents),
       startedOn: firstBanked.postedOn,
       endedOn: s.userEndsOn ?? null,
     };

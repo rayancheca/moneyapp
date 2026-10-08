@@ -1,6 +1,7 @@
-import type { Cadence } from "@/db/schema/recurring";
+import type { Cadence, RatePeriod } from "@/db/schema/recurring";
 import { addDays, compareDates } from "./dates";
 import { stepFrom, stepPlan, stepsToReach } from "./recurring-step";
+import { rateOn } from "./series-kind";
 
 /**
  * Earned versus banked, for pay that arrives as physical cash.
@@ -71,8 +72,14 @@ export interface PaySeries {
   intervalDaysAvg: number | null;
   /** true day-of-month when the postings prove one; see `deriveAnchorDay` */
   anchorDay: number | null;
-  /** what one pay period is worth, in cents; positive for income */
+  /** what one pay period is worth NOW, in cents (`seriesAmountCents`); positive for income */
   amountCents: number;
+  /**
+   * ⚖️ What a pay period was worth before now — dated past periods (owner decision 2026-10-08, §6A 55); each payday
+   * is implied at its own day's rate (`rateOn`). Null = the rate has never changed. Required, so a caller that forgot
+   * it cannot price his cash weeks at the payroll rate in silence.
+   */
+  amountHistory: readonly RatePeriod[] | null;
   /** first day the schedule was in force — also the walk's anchor */
   startedOn: string;
   /** last day it was in force, or null while it is still running */
@@ -172,6 +179,8 @@ const earlierOf = (a: string, b: string): string => (compareDates(a, b) <= 0 ? a
  */
 interface CoveredPeriods {
   count: number;
+  /** what the covered occurrences are worth together, each at its own day's rate */
+  cents: number;
   /** the first covered occurrence's own date, or null when none is covered */
   firstOn: string | null;
   /** the last covered occurrence's own date, or null when none is covered */
@@ -184,7 +193,7 @@ function occurrencesBetween(series: PaySeries, from: string, to: string): Covere
   // boundary and so `first` can never come out below `last` when `from > to`.
   // This states the precondition at the boundary rather than leaving a caller
   // error to be absorbed silently three lines further down.
-  if (compareDates(from, to) > 0) return { count: 0, firstOn: null, lastOn: null };
+  if (compareDates(from, to) > 0) return { count: 0, cents: 0, firstOn: null, lastOn: null };
   const plan = stepPlan(series.cadence, series.intervalDaysAvg, series.anchorDay);
   const first = stepsToReach(series.startedOn, plan, from);
   // `stepsToReach` lands on or AFTER `to`; when it overshoots, the last
@@ -200,9 +209,19 @@ function occurrencesBetween(series: PaySeries, from: string, to: string): Covere
    * until the line can name Jun 4 – Aug 27. Same walk, same plan — the span is
    * read off the very steps that were counted rather than re-derived.
    */
-  if (count === 0) return { count: 0, firstOn: null, lastOn: null };
+  if (count === 0) return { count: 0, cents: 0, firstOn: null, lastOn: null };
+  /*
+   * ⚖️ Each covered payday at its OWN day's rate (§6A 55), read off the same steps that were counted — the recurring
+   * projection's rule (`rateOn`), never a second copy. 🔴 `count × amount` priced his twelve cash weeks at the
+   * $1,141.92 set on Sep 22: Earned vs banked implied $20,554.56, $1,139.04 more than he was ever owed.
+   */
+  const schedule = { nextExpectedAmountCents: series.amountCents, amountHistory: series.amountHistory };
+  let cents = 0;
+  // never null: the rate now is a number, so every day has one
+  for (let i = first; i <= last; i++) cents += rateOn(schedule, stepFrom(series.startedOn, plan, i))!;
   return {
     count,
+    cents,
     firstOn: stepFrom(series.startedOn, plan, first),
     lastOn: stepFrom(series.startedOn, plan, last),
   };
@@ -290,7 +309,7 @@ export function cashEarnings({
   const liveTo = series.endedOn === null ? scheduleEnd : earlierOf(scheduleEnd, series.endedOn);
   const covered = occurrencesBetween(series, from, liveTo);
   const periodsCovered = covered.count;
-  const impliedCents = periodsCovered * series.amountCents;
+  const impliedCents = covered.cents;
 
   /*
    * Silence is measured in pay periods, not days: "three missed paydays" is a

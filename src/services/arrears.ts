@@ -32,6 +32,12 @@ export interface BudgetTailSeries {
   /** total expected inside the window, as positive money-out cents */
   amountCents: number;
   occurrenceCount: number;
+  /**
+   * Each in-window occurrence's own amount, in date order, signed as `amountCents` is — they sum to it. ⚖️ Not one
+   * amount times the count: each occurrence is worth its own day's rate (§6A 55), so a window across a rate change
+   * holds two, and a line naming "n × one amount" divided into one the series never had.
+   */
+  occurrenceCents: readonly number[];
   href: string;
 }
 
@@ -141,6 +147,7 @@ export function overdueForSeries(
       nextDate: occ[0]!.date,
       amountCents,
       occurrenceCount: occ.length,
+      occurrenceCents: occ.map((o) => -o.amountCents),
       href: `/recurring/${s.id}`,
     });
   }
@@ -279,6 +286,7 @@ export function unbankedIncomeForSeries(
       nextDate: occ[0]!.date,
       amountCents: occ.reduce((sum, o) => sum + o.amountCents, 0),
       occurrenceCount: occ.length,
+      occurrenceCents: occ.map((o) => o.amountCents),
       href: `/recurring/${s.id}`,
       checkedThrough,
       checkedOccurrenceCount: checked.length,

@@ -12,6 +12,7 @@ import { recurringSeries } from "@/db/schema/recurring";
 import { transactions } from "@/db/schema/transactions";
 import { seedDatabase } from "@/db/seed";
 import { addDays } from "@/lib/dates";
+import { AmountHistoryError } from "@/lib/series-kind";
 import { cashEarningsReadings } from "./cash-earnings";
 
 /**
@@ -207,5 +208,44 @@ describe("cashEarningsReadings — how much of a window the landing account has 
     coverThrough(CHASE, "2026-06-01", "2026-08-12");
     const r = cashEarningsReadings(bundle.db, { from: "2026-07-01", to: "2026-07-31", today: TODAY })[0]!;
     expect(r.checkedThrough).toBeUndefined();
+  });
+});
+
+/**
+ * ⚖️ What the schedule implies reads THE amount every projection reads — the owner's, else detection's next amount
+ * (`seriesAmountCents`) — and each payday at its own day's rate (owner decision 2026-10-08, §6A 55).
+ */
+describe("cashEarningsReadings — the rate it implies", () => {
+  const setSeries = (values: Partial<typeof recurringSeries.$inferInsert>) =>
+    bundle.db.update(recurringSeries).set(values).where(eq(recurringSeries.id, SERIES)).run();
+  const implied = (from: string, to: string, today: string) =>
+    cashEarningsReadings(bundle.db, { from, to, today })[0]!.impliedCents;
+
+  test("his pay: twelve cash weeks at $1,047.00 and six payroll weeks at $1,141.92 — $19,415.52", () => {
+    setSeries({
+      amountCentsAvg: 104_600,
+      nextExpectedAmountCents: 104_600,
+      userAmountCents: 114_192,
+      userAmountHistory: [{ throughOn: "2026-08-26", amountCents: 104_700 }],
+    });
+    expect(implied("2026-06-01", "2026-10-08", "2026-10-08")).toBe(1_941_552);
+    // 🔴 one amount for all time: $20,554.56
+    setSeries({ userAmountHistory: null });
+    expect(implied("2026-06-01", "2026-10-08", "2026-10-08")).toBe(18 * 114_192);
+  });
+
+  /**
+   * 🔴 The second spelling of "the amount": this read the owner's amount, else the POSTED AVERAGE, while every
+   * projection of the same series — the calendar, the forecast, the payday settlement — reads the owner's amount, else
+   * detection's next amount. With no amount of his own, one series was two rates a payday.
+   */
+  test("with no amount of his own it implies detection's next amount, as every projection does — not the average", () => {
+    setSeries({ userAmountCents: null, amountCentsAvg: 100_000, nextExpectedAmountCents: 104_600 });
+    expect(implied("2026-06-01", "2026-06-30", "2026-06-30")).toBe(4 * 104_600);
+  });
+
+  test("a history it cannot read refuses the reading out loud — never implied at today's rate", () => {
+    bundle.sqlite.prepare("UPDATE recurring_series SET user_amount_history = ? WHERE id = ?").run("[]", SERIES);
+    expect(() => implied("2026-06-01", "2026-06-30", "2026-06-30")).toThrow(AmountHistoryError);
   });
 });

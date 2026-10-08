@@ -15,7 +15,7 @@ import {
   projectOccurrences,
   rollForwardNextExpected,
   toProjectable,
-  type SeriesOverrides,
+  type ProjectionOverrides,
 } from "./recurring";
 
 /**
@@ -164,7 +164,7 @@ export function stillToCome<T extends { date: string }>(
  */
 export function nextStillToCome(
   db: AppDatabase,
-  series: SeriesOverrides & { id: string; kind: SeriesKind },
+  series: ProjectionOverrides & { id: string; kind: SeriesKind },
   today: string,
 ): string | null {
   const eff = effectiveSeries(series);

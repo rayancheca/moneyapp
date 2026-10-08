@@ -11,6 +11,7 @@ const WEEKLY: PaySeries = {
   intervalDaysAvg: 7,
   anchorDay: null,
   amountCents: 104_600,
+  amountHistory: null,
   startedOn: "2026-06-04",
   endedOn: null,
 };
@@ -137,6 +138,34 @@ describe("cashEarnings — the basis", () => {
 });
 
 describe("cashEarnings — what the schedule implies", () => {
+  /**
+   * ⚖️ Each payday is priced at its OWN time's rate (owner decision 2026-10-08, §6A 55): his twelve cash weeks, Jun 4 –
+   * Aug 20, at $1,047.00; Aug 27 on, payroll, at $1,141.92. 🔴 Priced all at $1,141.92, Earned vs banked implied
+   * $20,554.56 — $1,139.04 (12 × $94.92) he was never owed.
+   */
+  test("implies each payday at its own day's rate — his $19,415.52, not $20,554.56", () => {
+    const his: PaySeries = {
+      ...WEEKLY,
+      amountCents: 114_192,
+      amountHistory: [{ throughOn: "2026-08-26", amountCents: 104_700 }],
+    };
+    const r = read({ series: his, from: "2026-06-01", to: "2026-10-08", today: "2026-10-08" });
+    // Jun 4 to Oct 1: eighteen Thursdays — Oct 8 is still running
+    expect(r.periodsCovered).toBe(18);
+    expect(r.impliedCents).toBe(12 * 104_700 + 6 * 114_192);
+    expect(r.impliedCents).toBe(1_941_552);
+    // a window inside one era prices it at that era's rate alone
+    expect(read({ series: his, from: "2026-06-01", to: "2026-06-30", today: "2026-06-30" }).impliedCents).toBe(
+      4 * 104_700,
+    );
+    expect(read({ series: his, from: "2026-09-01", to: "2026-09-30", today: "2026-09-30" }).impliedCents).toBe(
+      4 * 114_192,
+    );
+    // with no history, the amount on every payday, as before
+    const flat = read({ series: { ...his, amountHistory: null }, from: "2026-06-01", to: "2026-10-08", today: "2026-10-08" });
+    expect(flat.impliedCents).toBe(18 * 114_192);
+  });
+
   test("counts the series' own occurrences inside the window", () => {
     // June 2026 holds occurrences on the 4th, 11th, 18th and 25th.
     expect(read().periodsCovered).toBe(4);
@@ -192,6 +221,7 @@ describe("cashEarnings — what the schedule implies", () => {
         intervalDaysAvg: 30.4,
         anchorDay: null,
         amountCents: 400_000,
+        amountHistory: null,
         startedOn: "2026-06-15",
         endedOn: null,
       },
@@ -219,6 +249,7 @@ describe("cashEarnings — what the schedule implies", () => {
         intervalDaysAvg: 30.4,
         anchorDay: null,
         amountCents: 400_000,
+        amountHistory: null,
         startedOn: "2026-01-15",
         endedOn: null,
       },

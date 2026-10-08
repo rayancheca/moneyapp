@@ -1165,6 +1165,7 @@ export function budgetTail(
       nextDate: occ[0]!.date,
       amountCents,
       occurrenceCount: occ.length,
+      occurrenceCents: occ.map((o) => -o.amountCents),
       href: `/recurring/${s.id}`,
     });
   }

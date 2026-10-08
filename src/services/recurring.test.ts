@@ -247,6 +247,7 @@ describe("analyzeGroup", () => {
       intervalDaysAvg: stats!.intervalDaysAvg,
       nextExpectedOn: stats!.nextExpectedOn,
       nextExpectedAmountCents: stats!.nextExpectedAmountCents,
+      amountHistory: null,
     };
     const dates = (s: typeof base & { anchorDay?: number | null }) =>
       projectOccurrences(s, "2027-02-01", "2027-05-31").map((o) => o.date);
@@ -308,6 +309,7 @@ describe("projectOccurrences", () => {
     intervalDaysAvg: 7,
     nextExpectedOn: "2026-07-09",
     nextExpectedAmountCents: 80000,
+    amountHistory: null,
   };
 
   const lease = {
@@ -319,6 +321,7 @@ describe("projectOccurrences", () => {
     nextExpectedOn: "2026-09-11",
     nextExpectedAmountCents: -55989,
     userEndsOn: "2028-08-11",
+    amountHistory: null,
   };
 
   test("userEndsOn stops the projection — a 24-payment lease is not monthly forever", () => {
@@ -400,6 +403,30 @@ describe("projectOccurrences", () => {
     const occ = projectOccurrences(series, "2026-07-08", "2026-07-31");
     expect(occ.map((o) => o.date)).toEqual(["2026-07-09", "2026-07-16", "2026-07-23", "2026-07-30"]);
     expect(occ.every((o) => o.amountCents === 80000)).toBe(true);
+  });
+
+  /**
+   * ⚖️ Each occurrence is worth its OWN day's rate (owner decision 2026-10-08, §6A 55): his weekly pay was $1,047.00
+   * in cash through Wed Aug 26 and $1,141.92 by payroll from Thu Aug 27. Every reader of a past payday — settlement,
+   * the calendar, /budgets' passed-unpaid, arrears — reads its amount here, so none carries a copy of the rule.
+   */
+  test("each occurrence is priced at its own day's rate — the cash weeks at $1,047.00, payroll at $1,141.92", () => {
+    const pay = {
+      ...series,
+      nextExpectedOn: "2026-07-23",
+      nextExpectedAmountCents: 114_192,
+      amountHistory: [{ throughOn: "2026-08-26", amountCents: 104_700 }],
+    };
+    const occ = projectOccurrences(pay, "2026-08-13", "2026-09-10");
+    expect(occ.map((o) => [o.date, o.amountCents])).toEqual([
+      ["2026-08-13", 104_700],
+      ["2026-08-20", 104_700],
+      ["2026-08-27", 114_192],
+      ["2026-09-03", 114_192],
+      ["2026-09-10", 114_192],
+    ]);
+    // with no history, the series' own amount on every day, as before
+    expect(projectOccurrences(series, "2026-07-08", "2026-07-31").every((o) => o.amountCents === 80000)).toBe(true);
   });
 
   test("overdue expected dates roll forward instead of projecting the past", () => {
@@ -1403,7 +1430,15 @@ describe("seriesHasLapsed", () => {
 });
 
 describe("rollForwardNextExpected", () => {
-  const eff = { cadence: "monthly" as const, intervalDaysAvg: 30, nextExpectedOn: "2026-07-16", nextExpectedAmountCents: -1549, anchorDay: null, userEndsOn: null };
+  const eff = {
+    cadence: "monthly" as const,
+    intervalDaysAvg: 30,
+    nextExpectedOn: "2026-07-16",
+    nextExpectedAmountCents: -1549,
+    anchorDay: null,
+    userEndsOn: null,
+    amountHistory: null,
+  };
 
   test("a future stored date is returned untouched", () => {
     expect(rollForwardNextExpected(eff, "2026-07-08")).toBe("2026-07-16");

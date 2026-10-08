@@ -7,6 +7,7 @@ import {
   CADENCES,
   recurringSeries,
   type Cadence,
+  type RatePeriod,
   type SeriesKind,
   type SeriesStatus,
 } from "@/db/schema/recurring";
@@ -20,7 +21,7 @@ import {
   stepSpanDays,
   stepsToReach,
 } from "@/lib/recurring-step";
-import { seriesAmountCents } from "@/lib/series-kind";
+import { parseAmountHistory, rateOn, seriesAmountCents } from "@/lib/series-kind";
 import { outsidePortfolioCashAccountIds } from "./accounts";
 import { isAgentsSeries } from "./analytics";
 /*
@@ -925,7 +926,7 @@ const ANNUALIZED_MONTHS = 12;
  * been printing all along.
  */
 export function annualizedCentsOf(
-  s: ForecastableRow & { id: string; name: string },
+  s: ForecastableRow & ProjectionOverrides & { id: string; name: string },
   today: string,
 ): number | null {
   /*
@@ -1101,6 +1102,8 @@ interface ProjectableSeries {
   anchorDay?: number | null;
   /** last day this series can occur; null = open-ended */
   userEndsOn?: string | null;
+  /** past rates (`EffectiveSeries.amountHistory`); each occurrence is priced at its own day's (`rateOn`) */
+  amountHistory: readonly RatePeriod[] | null;
   /** copied onto every occurrence this series projects */
   staleness?: SeriesStaleness;
 }
@@ -1118,6 +1121,18 @@ export interface SeriesOverrides {
   userEndsOn?: string | null;
   /** detected billed day-of-month, 29..31; optional so older callers still typecheck */
   anchorDay?: number | null;
+  /** the series' past rates, as stored — optional here, REQUIRED where a projection is built (`ProjectionOverrides`) */
+  userAmountHistory?: unknown;
+}
+
+/**
+ * The overrides a PROJECTION is built from (`effectiveSeries`, `toProjectable`): every one, and the stored rate history
+ * too, which `effectiveSeries` reads strictly (`parseAmountHistory`). ⛔ Required here, where `SeriesOverrides`' date
+ * readers (staleness, evidence, lapse) never price an occurrence: a projection built without it would price every
+ * past payday at today's rate, silently, for whoever forgot — `EffectiveSeries.userEndsOn`'s reason.
+ */
+export interface ProjectionOverrides extends SeriesOverrides {
+  userAmountHistory: unknown;
 }
 
 /** Effective values the UI and forecast read: user override first, else detected. */
@@ -1140,9 +1155,16 @@ export interface EffectiveSeries {
    * "open-ended", and it has to be said.
    */
   userEndsOn: string | null;
+  /**
+   * ⚖️ The PAST rates, dated (owner decision 2026-10-08, §6A 55); `nextExpectedAmountCents` above stays the rate now.
+   * A projection prices each occurrence at its own day's rate (`rateOn`). ⛔ REQUIRED, for `userEndsOn`'s reason: a
+   * series built without it would price every past payday at today's rate, silently, for whoever forgot. `null`
+   * says the rate has never changed.
+   */
+  amountHistory: readonly RatePeriod[] | null;
 }
 
-export function effectiveSeries(s: SeriesOverrides): EffectiveSeries {
+export function effectiveSeries(s: ProjectionOverrides): EffectiveSeries {
   return {
     cadence: s.userCadence ?? s.cadence,
     // a user cadence override abandons the detected interval — step by the
@@ -1161,6 +1183,8 @@ export function effectiveSeries(s: SeriesOverrides): EffectiveSeries {
     // the cadence override abandoning the detected interval, just above.
     anchorDay: s.userNextExpectedOn ? null : (s.anchorDay ?? null),
     userEndsOn: s.userEndsOn ?? null,
+    // ⛔ strict: a history it cannot read refuses the series out loud, never reads as "the rate never changed"
+    amountHistory: parseAmountHistory(s.userAmountHistory, seriesAmountCents(s)),
   };
 }
 
@@ -1170,7 +1194,7 @@ export function effectiveSeries(s: SeriesOverrides): EffectiveSeries {
  * evidence passes it, and it rides along onto every projected occurrence.
  */
 export function toProjectable(
-  s: SeriesOverrides & { id: string; name: string; kind: SeriesKind },
+  s: ProjectionOverrides & { id: string; name: string; kind: SeriesKind },
   staleness?: SeriesStaleness,
 ): ProjectableSeries {
   const eff = effectiveSeries(s);
@@ -1436,7 +1460,9 @@ export function projectOccurrences(
       kind: series.kind,
       cadence: series.cadence,
       date,
-      amountCents: series.nextExpectedAmountCents,
+      // ⚖️ its own day's rate (§6A 55) — a cash week at $1,047.00, a payroll week at $1,141.92. Never null: a series
+      // with no rate now projected nothing above.
+      amountCents: rateOn(series, date)!,
       anchorDayOfMonth,
       staleness: series.staleness,
     });
