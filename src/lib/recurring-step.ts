@@ -89,6 +89,30 @@ export const CALENDAR_GAP_BAND: Partial<Record<Cadence, readonly [number, number
   annual: [350, 380],
 };
 
+/** The calendar repeats its month lengths every four years, leap day included. */
+const LEAP_CYCLE_MONTHS = 48;
+
+/**
+ * The shortest and longest ONE STEP of a cadence runs, in days. A day-shaped cadence steps its nominal days; a
+ * calendar-stepped one (`CALENDAR_STEP_MONTHS`) steps calendar months, and those are no fixed count of days — a month
+ * runs 28 to 31, a quarter 89 to 92, a year 365 or 366. Read off the calendar, from the 1st of every month of a leap
+ * cycle, so no length here is typed. A four-weekly series is bucketed monthly and steps 28 days: inside the month.
+ *
+ * 🔴 `CADENCE_NOMINAL_DAYS` is one number per cadence, and 30 is not a month. /summary held a payroll's gaps to it
+ * (2026-10-08), and a four-weekly payday banked a day late and then a day early — 26 days — was "deposited
+ * irregularly", as was a payday on the 1st every February (Feb 2 to Feb 28).
+ */
+export function stepSpanDays(cadence: Cadence): readonly [number, number] {
+  const stepMonths = CALENDAR_STEP_MONTHS[cadence];
+  if (stepMonths === undefined) return [CADENCE_NOMINAL_DAYS[cadence], CADENCE_NOMINAL_DAYS[cadence]];
+  const spans = Array.from({ length: LEAP_CYCLE_MONTHS }, (_, i) => {
+    // any four years hold one February 29th; these hold 2024's
+    const first = addCalendarMonths("2024-01-01", i);
+    return diffDays(first, addCalendarMonths(first, stepMonths));
+  });
+  return [Math.min(...spans), Math.max(...spans)];
+}
+
 /**
  * The lowest day-of-month the calendar can ever clamp. February is the only
  * short month that matters and its shortest length is 28, so a series anchored

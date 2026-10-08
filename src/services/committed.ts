@@ -457,6 +457,14 @@ export function committedBook(
  * still `overdueForSeries`, asked again only up to that day. A series with no
  * account the ledger knows reads nothing: the calendar's `null`, and the
  * cautious answer.
+ *
+ * ⛔ NOT pay's "where it lands now" (`landingAccountsBySeries`, 2026-10-07). "Never posted" is a NEGATIVE claim, so
+ * every account a bill has paid from must be read past its day — the calendar's rule, which grades `missed` against
+ * `not_imported` with the same accounts (`seriesAccountIds`: the named account AND the history; Netflix names Sapphire
+ * and has billed Discover). Fewer accounts here would let the card say "never posted" of a day /recurring calls not
+ * imported. Measured on a copy of his ledger 2026-10-08: rent names no account, so pay's rule reads the same three
+ * (Venture X, Chase Checking, Wells Fargo) to the same Aug 12; it posts from Wells Fargo now, read only through
+ * Sep 24, so its Oct 1 payment is unread under either rule and "no import has covered it yet" is true.
  */
 function arrearsReadCents(
   db: AppDatabase,

@@ -4,6 +4,7 @@ import type { AppDatabase } from "@/db/client";
 import { categories } from "@/db/schema/categories";
 import { merchants } from "@/db/schema/merchants";
 import {
+  CADENCES,
   recurringSeries,
   type Cadence,
   type SeriesKind,
@@ -16,6 +17,7 @@ import {
   deriveAnchorDay,
   stepFrom,
   stepPlan,
+  stepSpanDays,
   stepsToReach,
 } from "@/lib/recurring-step";
 import { seriesAmountCents } from "@/lib/series-kind";
@@ -177,6 +179,32 @@ export function amountsAreStable(amounts: readonly number[]): boolean {
   const mean = amounts.reduce((a, b) => a + b, 0) / amounts.length;
   if (mean === 0) return false;
   return populationStddev(amounts) / Math.abs(mean) <= AMOUNT_STABILITY_CV_MAX;
+}
+
+/** One step of each cadence, shortest to longest (`stepSpanDays`): pure calendar arithmetic, read once. */
+const STEP_SPAN_DAYS = Object.fromEntries(CADENCES.map((cadence) => [cadence, stepSpanDays(cadence)])) as Record<
+  Cadence,
+  readonly [number, number]
+>;
+
+/**
+ * Does this gap keep its cadence's STEP — within detection's tolerance (`CADENCE_TOLERANCE_DAYS`) of one step's
+ * length (`stepSpanDays`)? A weekly gap of 5 to 9 days does: every payday within a day of its weekday. A monthly gap
+ * of 25 to 34 does: a month runs 28 to 31 days, and a four-weekly step's 28 is one of them. /summary's "Deposited
+ * irregularly" caveat (`depositsAreIrregular`) asks this instead of keeping a slack of its own.
+ *
+ * 🔴 Not detection's `gapConsistency` test, which holds a gap to the MEDIAN gap: that is a confidence score over many
+ * rows, and over a few the median is pulled off the step — gaps 8, 8, 5 (each payday within a day of its Thursday)
+ * have a median of 8, and 5 misses it by 3. Held to the week, none does.
+ *
+ * 🔴 …and it held a gap to the cadence's NOMINAL days, 30 for a month (review, 2026-10-08): a four-weekly payday a day
+ * late then a day early is 26 days apart, 4 short of 30, and 1,978 of the 3,267 ways 3 to 7 four-weekly deposits can
+ * each land within a day were called irregular. A payday on the 1st did it every February.
+ */
+export function gapKeepsStep(gap: number, cadence: Cadence): boolean {
+  const [shortest, longest] = STEP_SPAN_DAYS[cadence];
+  const tolerance = CADENCE_TOLERANCE_DAYS[cadence];
+  return gap >= shortest - tolerance && gap <= longest + tolerance;
 }
 
 export function analyzeGroup(txns: readonly AnalyzableTxn[]): GroupStats | null {

@@ -20,6 +20,7 @@ import {
   detectRecurringSeries,
   loadRecomputeCtx,
   fitCadence,
+  gapKeepsStep,
   isDayOfMonthBimodal,
   isSeriesActive,
   seriesEvidence,
@@ -123,6 +124,27 @@ describe("fitCadence buckets", () => {
     expect(fitCadence(20, [1, 21, 11])).toBeNull();
     expect(fitCadence(50, [1, 21, 11])).toBeNull();
     expect(fitCadence(200, [1, 21, 11])).toBeNull();
+  });
+});
+
+/*
+ * ⛔ A gap keeps its cadence's step within detection's tolerance, and a calendar step is no fixed count of days: a
+ * month runs 28 to 31, held to 3 days either side. Both ends of every cadence are pinned one day outside (review,
+ * 2026-10-08: tolerance + 1, + 2 and a missing lower bound all survived the suite).
+ */
+describe("gapKeepsStep — both ends of every cadence's step", () => {
+  test.each([
+    ["weekly", 5, 9],
+    ["biweekly", 11, 17],
+    ["semimonthly", 12, 18],
+    ["monthly", 25, 34],
+    ["quarterly", 82, 99],
+    ["annual", 351, 380],
+  ] as const)("%s keeps a gap of %i to %i days, and not a day past either end", (cadence, shortest, longest) => {
+    expect(gapKeepsStep(shortest, cadence)).toBe(true);
+    expect(gapKeepsStep(longest, cadence)).toBe(true);
+    expect(gapKeepsStep(shortest - 1, cadence)).toBe(false);
+    expect(gapKeepsStep(longest + 1, cadence)).toBe(false);
   });
 });
 
