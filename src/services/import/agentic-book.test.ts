@@ -2016,7 +2016,11 @@ describe("⛔ the agent's book holds only what its statements prove", () => {
    * no effect while statements valued the book, then kept the book alive after the last one was un-imported, with the
    * typed figure in net worth (measured 2026-09-16 on a real-ledger copy: +$500.00).
    */
-  test("a hand-typed balance on the book is refused — his own investment account still takes one", async () => {
+  /*
+   * ⚖️ §6A 58 (owner, 2026-10-08): his own Robinhood Brokerage is priced from its holdings, and takes no count either —
+   * its curve never reads one. An investment account of his with no holding events still does: there it is the value.
+   */
+  test("a hand-typed balance on the book is refused — his own account takes one only where it is the value", async () => {
     const agenticId = ownersRobinhood(bundle.db);
     await importStatementFiles(bundle.db, [pdf(AGENT_BUYS_FILE, [...AGENT_BUYS, ...AUGUST_BROKERAGE])]);
     const book = bookOf(bundle.db, agenticId)!;
@@ -2025,13 +2029,22 @@ describe("⛔ the agent's book holds only what its statements prove", () => {
     expect(() => addManualAnchor(bundle.db, { accountId: book.id, anchoredOn: "2026-09-14", enteredCents: 50_000 })).toThrow(
       "Robinhood Agentic Brokerage holds only what its statements prove — a balance typed here would outlive them",
     );
+    const brokerage = bundle.db.select().from(accounts).where(eq(accounts.name, "Robinhood Brokerage")).get()!;
+    const counted = (accountId: string) => () =>
+      addManualAnchor(bundle.db, { accountId, anchoredOn: "2026-09-14", enteredCents: 50_000 });
+    expect(counted(brokerage.id)).toThrow(
+      "Robinhood Brokerage is priced from its holdings — a balance you count there plays no part in its curve",
+    );
     expect(wholeLedger(bundle.db)).toEqual(before);
 
-    const brokerage = bundle.db.select().from(accounts).where(eq(accounts.name, "Robinhood Brokerage")).get()!;
-    addManualAnchor(bundle.db, { accountId: brokerage.id, anchoredOn: "2026-09-14", enteredCents: 50_000 });
-    expect(
-      bundle.db.select().from(balanceAnchors).where(and(eq(balanceAnchors.accountId, brokerage.id), eq(balanceAnchors.source, "manual"))).all(),
-    ).toHaveLength(1);
+    const bare = createAccount(bundle.db, {
+      institutionId: brokerage.institutionId,
+      name: "Bare holding",
+      type: "investment",
+    });
+    counted(bare)();
+    const manual = and(eq(balanceAnchors.accountId, bare), eq(balanceAnchors.source, "manual"));
+    expect(bundle.db.select().from(balanceAnchors).where(manual).all()).toHaveLength(1);
   });
 
   /**

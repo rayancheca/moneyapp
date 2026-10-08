@@ -2,7 +2,7 @@ import { and, asc, eq } from "drizzle-orm";
 import { z } from "zod";
 import { withPreMutationSnapshot } from "@/db/backup";
 import type { AppDatabase } from "@/db/client";
-import { isLiability } from "@/db/schema/accounts";
+import { isLiability, type AccountType } from "@/db/schema/accounts";
 import { balanceAnchors, type AnchorSource } from "@/db/schema/balances";
 import { financialWindowMessage, isWithinFinancialWindow } from "@/lib/date-window";
 import { isValidIsoDate, todayIso } from "@/lib/dates";
@@ -38,27 +38,61 @@ export const manualAnchorInputSchema = z.object({
 });
 export type ManualAnchorInput = z.infer<typeof manualAnchorInputSchema>;
 
+/** Why an account takes no balance the owner counts — `countRefusal`'s answer. */
+export interface CountRefusal {
+  /** what the account is — the account page says it where "Add a balance you counted" would be */
+  why: string;
+  /** `addManualAnchor`'s refusal: the why, and what a count there would do */
+  message: string;
+}
+
 /**
- * Whether the owner may type a balance for this account. ⛔ Not for a brokerage book (`cash_account_id`): the import
- * creates it, values it from the positions its statements prove, and removes it once no statement stands on it
- * (services/import/brokerage-book.ts). The account page and `addManualAnchor` ask this one rule.
+ * Why the owner may NOT count a balance for this account, or null where he may. The account page (through
+ * `balanceListWords`) and `addManualAnchor` ask this one rule, so the form is offered exactly where a count is taken.
+ *
+ *  - ⛔ A brokerage book (`cash_account_id`): the import creates it, values it from the positions its statements
+ *    prove, and removes it once no statement stands on it (services/import/brokerage-book.ts).
+ *  - ⛔ An account priced from its holdings — `derivesFromHoldings`, the branch `rebuildAccount` takes, where the curve
+ *    is holding events × closes and `balance_anchors` is never read. An investment account with NO holding events
+ *    still takes a count: the rebuild holds its balances as its value, so there a count IS its value.
  *
  * 🔴 The Add-holding form refused the agent's book and "Record a balance" did not. The typed figure changed nothing
  * while statements valued the book, and then kept the book alive after its last statement was un-imported, in net
  * worth — measured 2026-09-16 on a copy of the real ledger: $500.00 typed on 2026-09-14, net worth +$500.00 and
  * investable cash +$500.00 once both constructed months were un-imported.
+ *
+ * ⚖️ His answer, 2026-10-08 (§6A 58): hide it on an account valued from its holdings too. 🔴 Measured on a copy of
+ * his ledger: a $17,000.00 count on Oct 2 left Robinhood Brokerage at $73,194.17 and Robinhood Crypto at $38,233.79,
+ * was listed "you counted it", and its remove dialog said it "verifies nothing and plays no part in its curve".
  */
-export function takesTypedBalance(account: { readonly cashAccountId: string | null }): boolean {
-  return account.cashAccountId === null;
+export function countRefusal(
+  db: AppDatabase,
+  account: {
+    readonly id: string;
+    readonly name: string;
+    readonly type: AccountType;
+    readonly cashAccountId: string | null;
+  },
+): CountRefusal | null {
+  // the book first: its statements write holding events too, and its own words say why
+  if (account.cashAccountId !== null) {
+    const why = `${account.name} holds only what its statements prove`;
+    return { why, message: `${why} — a balance typed here would outlive them` };
+  }
+  if (derivesFromHoldings(db, account)) {
+    // the remove dialog's words for a balance already there (`removeBalanceRadius`)
+    const why = `${account.name} is priced from its holdings`;
+    return { why, message: `${why} — a balance you count there plays no part in its curve` };
+  }
+  return null;
 }
 
 export function addManualAnchor(db: AppDatabase, input: ManualAnchorInput): string {
   const parsed = manualAnchorInputSchema.parse(input);
   const account = getAccount(db, parsed.accountId);
   if (!account) throw new Error(`Unknown account ${parsed.accountId}`);
-  if (!takesTypedBalance(account)) {
-    throw new Error(`${account.name} holds only what its statements prove — a balance typed here would outlive them`);
-  }
+  const refusal = countRefusal(db, account);
+  if (refusal) throw new Error(refusal.message);
   if (isLiability(account.type) && parsed.enteredCents < 0) {
     throw new Error("Enter credit-card balances as the positive amount owed");
   }

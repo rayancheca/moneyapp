@@ -39,6 +39,7 @@ const { seedDatabase } = await import("@/db/seed");
 const { institutions } = await import("@/db/schema/institutions");
 const { accounts } = await import("@/db/schema/accounts");
 const { balanceAnchors } = await import("@/db/schema/balances");
+const { holdingEvents } = await import("@/db/schema/holding-events");
 const { createAccount } = await import("@/services/accounts");
 const { CASH_INSTITUTION_NAME } = await import("@/services/manual-transactions");
 const {
@@ -106,6 +107,45 @@ describe("addAnchorResultAction", () => {
   test("a missing account reports rather than writing", async () => {
     const result = await addAnchorResultAction(form({ anchoredOn: "2026-01-16", balance: "10" }));
     expect(result.ok).toBe(false);
+  });
+
+  /*
+   * ⚖️ §6A 58 (owner, 2026-10-08): an account priced from its holdings takes no balance he counts. The page hides the
+   * form there; a post that reaches the action anyway (a stale tab) is told why, and nothing is written.
+   */
+  test("a count on an account priced from its holdings is refused with the reason, writing nothing", async () => {
+    const { db } = getDbBundle();
+    const brokerage = createAccount(db, { institutionId, name: "Robinhood Brokerage", type: "investment" });
+    db.insert(holdingEvents)
+      .values({
+        accountId: brokerage,
+        symbol: "AAPL",
+        assetType: "stock",
+        occurredOn: "2026-01-02",
+        quantityDeltaE8: 100_000_000,
+      })
+      .run();
+
+    const result = await addAnchorResultAction(
+      form({ accountId: brokerage, anchoredOn: "2026-01-15", balance: "17,000.00" }),
+    );
+
+    expect(result).toEqual({
+      ok: false,
+      error: "Robinhood Brokerage is priced from its holdings — a balance you count there plays no part in its curve",
+    });
+    expect(db.select().from(balanceAnchors).where(eq(balanceAnchors.accountId, brokerage)).all()).toEqual([]);
+  });
+
+  test("an investment account with no holding events still takes a count — there it is its value", async () => {
+    const { db } = getDbBundle();
+    const bare = createAccount(db, { institutionId, name: "Bare holding", type: "investment" });
+
+    const result = await addAnchorResultAction(
+      form({ accountId: bare, anchoredOn: "2026-01-15", balance: "12,000.00" }),
+    );
+
+    expect(result).toEqual({ ok: true, data: { accountId: bare, enteredCents: 1_200_000 } });
   });
 });
 

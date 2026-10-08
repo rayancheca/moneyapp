@@ -5,16 +5,18 @@ import { asc, eq } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { createDatabase, type DbBundle } from "@/db/client";
 import { seedDatabase } from "@/db/seed";
+import { accounts } from "@/db/schema/accounts";
 import { balanceAnchors, dailyBalances, type AnchorSource, type BalanceBasis } from "@/db/schema/balances";
 import { holdingEvents } from "@/db/schema/holding-events";
 import { institutions } from "@/db/schema/institutions";
 import { transactions } from "@/db/schema/transactions";
 import { MAX_FINANCIAL_DATE, MIN_FINANCIAL_DATE } from "@/lib/date-window";
 import { dedupeHash } from "@/lib/hash";
-import { createAccount } from "./accounts";
+import { createAccount, getAccount } from "./accounts";
 import {
   addManualAnchor,
   anchorRemovalEffects,
+  countRefusal,
   deleteAnchor,
   listAnchors,
   manualAnchorInputSchema,
@@ -402,5 +404,110 @@ describe("anchorRemovalEffects — the dialog's prediction equals what deleteAnc
       changedDays: 4,
       curveUnchanged: false,
     });
+  });
+});
+
+/**
+ * ⚖️ His answer, 2026-10-08 (§6A 58): no "Add a balance you counted" on an account priced from its holdings — as on a
+ * brokerage book — and `addManualAnchor` refuses one there too. An investment account with no holding events still
+ * takes a count: there a count IS its value.
+ *
+ * 🔴 Measured on a copy of his ledger: a $17,000.00 count on Oct 2 left Robinhood Brokerage at $73,194.17 and Robinhood
+ * Crypto at $38,233.79, was listed "you counted it", and the remove dialog then said it "verifies nothing and plays no
+ * part in its curve" — `rebuildAccount` prices both from holding events × closes and never reads a recorded balance.
+ */
+describe("countRefusal — a count is refused where the rebuild never reads one (§6A 58)", () => {
+  const TODAY = "2026-08-02";
+  let dir: string;
+  let bundle: DbBundle;
+  let robinhoodId: string;
+
+  beforeEach(() => {
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), "moneyapp-count-refusal-"));
+    bundle = createDatabase(path.join(dir, "t.db"));
+    seedDatabase(bundle.db);
+    robinhoodId = bundle.db.select().from(institutions).where(eq(institutions.name, "Robinhood")).get()!.id;
+  });
+
+  afterEach(() => {
+    bundle.sqlite.close();
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  const account = (name: string, type: "checking" | "investment") =>
+    createAccount(bundle.db, { institutionId: robinhoodId, name, type });
+  const row = (id: string) => getAccount(bundle.db, id)!;
+  const bought = (accountId: string, occurredOn: string) =>
+    bundle.db
+      .insert(holdingEvents)
+      .values({ accountId, symbol: "AAPL", assetType: "stock", occurredOn, quantityDeltaE8: 100_000_000 })
+      .run();
+  const ledgerOf = (accountId: string) => ({
+    anchors: listAnchors(bundle.db, accountId),
+    stored: bundle.db.select().from(dailyBalances).where(eq(dailyBalances.accountId, accountId)).all(),
+  });
+
+  test("an account priced from its holdings is refused, in the remove dialog's words, and nothing is written", () => {
+    const brokerage = account("Robinhood Brokerage", "investment");
+    bought(brokerage, "2026-07-01");
+    rebuildAccount(bundle.db, brokerage, TODAY);
+    const before = ledgerOf(brokerage);
+
+    const refusal =
+      "Robinhood Brokerage is priced from its holdings — a balance you count there plays no part in its curve";
+    expect(countRefusal(bundle.db, row(brokerage))).toEqual({
+      why: "Robinhood Brokerage is priced from its holdings",
+      message: refusal,
+    });
+    expect(() =>
+      addManualAnchor(bundle.db, { accountId: brokerage, anchoredOn: "2026-07-10", enteredCents: 1_700_000 }),
+    ).toThrow(refusal);
+    expect(ledgerOf(brokerage)).toEqual(before);
+  });
+
+  test("an investment account with NO holding events takes a count — there a count is its value", () => {
+    const bare = account("Bare holding", "investment");
+
+    expect(countRefusal(bundle.db, row(bare))).toBeNull();
+    addManualAnchor(bundle.db, { accountId: bare, anchoredOn: "2026-07-10", enteredCents: 1_200_000 });
+    expect(listAnchors(bundle.db, bare).map((a) => [a.anchoredOn, a.source, a.balanceCents])).toEqual([
+      ["2026-07-10", "manual", 1_200_000],
+    ]);
+  });
+
+  test("a checking account takes a count; a brokerage book is refused in its own words, first", () => {
+    const cash = account("Robinhood Agentic", "checking");
+    const book = account("Robinhood Agentic Brokerage", "investment");
+    bundle.db.update(accounts).set({ cashAccountId: cash }).where(eq(accounts.id, book)).run();
+    // a book's statements write holding events too — the book's own words still say why
+    bought(book, "2026-07-01");
+
+    expect(countRefusal(bundle.db, row(cash))).toBeNull();
+    expect(countRefusal(bundle.db, row(book))).toEqual({
+      why: "Robinhood Agentic Brokerage holds only what its statements prove",
+      message:
+        "Robinhood Agentic Brokerage holds only what its statements prove — a balance typed here would outlive them",
+    });
+  });
+
+  /**
+   * None on his ledger (measured 2026-10-08 on a copy: Brokerage and Crypto hold 23 live readings each, no count) — but
+   * a count made before an account's first holding event stays, and its row still has to come off.
+   */
+  test("a balance counted BEFORE the first holding event keeps its remove dialog, and removing it works", () => {
+    const brokerage = account("Robinhood Brokerage", "investment");
+    const counted = addManualAnchor(bundle.db, {
+      accountId: brokerage,
+      anchoredOn: "2026-07-10",
+      enteredCents: 1_700_000,
+    });
+    bought(brokerage, "2026-07-01");
+
+    expect(countRefusal(bundle.db, row(brokerage))).not.toBeNull();
+    expect(anchorRemovalEffects(bundle.db, brokerage, TODAY)).toEqual(
+      new Map([[counted, { pricedFromHoldings: true }]]),
+    );
+    deleteAnchor(bundle.db, counted);
+    expect(listAnchors(bundle.db, brokerage)).toEqual([]);
   });
 });
