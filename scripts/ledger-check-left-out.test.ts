@@ -32,7 +32,7 @@ describe("ledger-check — lines left out by a re-read", () => {
   /* the sentence carries the day and what the session read (`acknowledgedSentence`, lib/import-file-label.test.ts) */
   test("an acknowledged one is named still, saying so and why — and an acknowledgement matching no line is named too", () => {
     expect(script).toMatch(/const acknowledged = leftOut\.filter\(\(line\) => line\.acknowledged !== null\);/);
-    expect(script).toContain("for (const line of acknowledged) console.log(`  [line-left-out, acknowledged] ${lineLeftOutNotice(line)}`);");
+    expect(script).toContain('for (const line of acknowledged) console.log(listed("line-left-out, acknowledged", lineLeftOutNotice(line)));');
     expect(script).toMatch(/for \(const ack of acknowledgementsMatchingNothing\(db, leftOut\)\)/);
   });
 

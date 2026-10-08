@@ -14,7 +14,7 @@ describe("ledger-check — reads of accounts at two banks", () => {
   test("asks the rule, counts what it finds and prints each one's sentence", () => {
     expect(script).toMatch(/const acrossBanks = readsAcrossBanks\(db\);/);
     expect(script).toContain("console.log(`reads of accounts at two banks: ${acrossBanks.length}`);");
-    expect(script).toContain("for (const read of acrossBanks) console.log(`  ⚠️ [read at two banks] ${readAcrossBanksNotice(read)}`);");
+    expect(script).toContain('for (const read of acrossBanks) console.log(listed("read at two banks", readAcrossBanksNotice(read), { warns: true }));');
   });
 
   test("names them and fails nothing: they are no finding", () => {

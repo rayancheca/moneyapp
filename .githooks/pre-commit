@@ -52,3 +52,26 @@ OUT=$(pnpm --silent ledger-check 2>&1) || {
   echo "Understand what the money is before committing; 'git commit --no-verify' if you must." >&2
   exit 1
 }
+
+# …all but what the check NAMES and fails nothing on — a read at two banks, a line
+# left out that a session acknowledged, … — printed in one shape, under its count
+# line (`listed`, src/lib/ledger-check-listing.ts): those lines, each under its
+# count line, and nothing else of a passing run. 🔴 This hook threw a passing run's
+# output away whole, so a listing showed only on a manual run (the handoff of
+# 2026-10-07, §6C). scripts/pre-commit-hook.test.ts runs this hook.
+LISTED=$(printf '%s\n' "$OUT" | awk '
+  # a count line, at the margin: what any listing below it is counted by
+  $0 != "" && substr($0, 1, 1) != " " { count = $0; shown = 0; more = 0; next }
+  # a listing: two spaces, ⚠️ where it warns, its tag in brackets
+  index($0, "  [") == 1 || index($0, "  ⚠️ [") == 1 {
+    if (!shown && count != "") print count
+    shown = 1; more = 1; print; next
+  }
+  # the indented lines a listing carries on to (a command to run)
+  more && index($0, "    ") == 1 { print; next }
+  { more = 0 }
+')
+if [ -n "$LISTED" ]; then
+  echo "pnpm ledger-check passed, and names what it does not fail on:" >&2
+  printf '%s\n' "$LISTED" >&2
+fi
