@@ -14,12 +14,10 @@ import { incomeExpectation } from "./budgets";
 import {
   cashEarningsReadings,
   checkedSilence,
-  earliestVerified,
-  landingAccountsBySeries,
+  checkedThroughBySeries,
   type CashEarningsReading,
 } from "./cash-earnings";
 import { SPEND_BASELINE_MONTHS } from "./committed";
-import { accountCoverage } from "./coverage";
 
 /**
  * Am I actually being paid, and how much of it ever reaches a bank?
@@ -349,10 +347,7 @@ export function incomeCard(db: AppDatabase, today: string = todayIso()): IncomeC
   // reconcile against, and a card of zeroes is worse than no card.
   if (readings.length === 0) return null;
 
-  const verifiedThroughByAccount = new Map(
-    accountCoverage(db, today).map((c) => [c.accountId, c.verifiedThrough] as const),
-  );
-  const landings = landingAccountsBySeries(db);
+  const checkedOf = checkedThroughBySeries(db, today);
 
   /*
    * One reading per distinct cut-off, memoised. Two series banking into the
@@ -380,11 +375,7 @@ export function incomeCard(db: AppDatabase, today: string = todayIso()): IncomeC
      * single unverified account collapses the whole thing to null, which is the
      * honest answer rather than a convenient one.
      */
-    const checkedThrough = earliestVerified(
-      landings.get(r.seriesId) ?? new Set<string>(),
-      verifiedThroughByAccount,
-      today,
-    );
+    const checkedThrough = checkedOf(r.seriesId);
 
     const asChecked = checkedThrough === null ? undefined : readingAsOf(checkedThrough, r.seriesId);
     // what the schedule implies past the frontier: every payday when nothing is checked

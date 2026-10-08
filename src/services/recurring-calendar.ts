@@ -20,7 +20,8 @@ import {
 } from "@/lib/occurrence-verdict";
 import { outsidePortfolioCashAccountIds } from "./accounts";
 import { isAgentsSeries, loadCategoryIndex } from "./analytics";
-import { frontierForSeries, observationFrontier, seriesAccountIds } from "./observation-frontier";
+import { silenceMeasuredThroughBySeries } from "./cash-earnings";
+import { frontierForSeries, seriesAccountIds, silenceObservedThrough } from "./observation-frontier";
 import { paydayReadingsBySeries, paydaySettlementsBySeries, readsPerPayday } from "./payday-settlement";
 import {
   effectiveSeries,
@@ -687,20 +688,25 @@ export function recurringCalendar(
   // The frontier lookups are hoisted out of the loop and skipped entirely for a
   // month that ends on or after today: a wholly-future month has no past
   // occurrence to grade, so it needs no coverage query at all.
+  // late and lapsed only on days the ledger has checked (`seriesEvidence`, §6A 57) — the gate and a future entry's words
+  const checkedThrough = silenceMeasuredThroughBySeries(db, today);
   const needsFrontier = compareDates(monthStart, today) < 0;
-  const frontier = needsFrontier ? observationFrontier(db) : null;
+  // …and a past bill missed only on days read, an account no statement is coming for read through today — the
+  // chip's rule (`silenceObservedThrough`), so a bill filed late there is never "not imported yet" here
+  const frontier = needsFrontier ? silenceObservedThrough(db, today) : null;
   const accountsBySeries = needsFrontier ? seriesAccountIds(db) : null;
 
   for (const s of forecastRows) {
-    if (hasStoppedForecasting(s, today)) continue;
+    if (hasStoppedForecasting(s, today, checkedThrough(s.id))) continue;
     const occurrences = projectOccurrences(toProjectable(s), monthStart, monthEnd);
     const postedDates = postedDatesBySeries.get(s.id) ?? [];
     const confidence = forecastConfidence(s);
     // ONE evidence word, the one the All tab files the series under: a series
     // that never charged is "never billed", not stale (see `CalendarEntry.isStale`).
     // A lapsed money-out series was skipped above and money in never lapses, so
-    // "running-late" is exactly "stale, having charged before".
-    const evidence = seriesEvidence(s, today);
+    // "running-late" is exactly "stale on checked days, having charged before" —
+    // past tolerance only after its accounts' checked day is awaiting statements, and says nothing.
+    const evidence = seriesEvidence(s, today, checkedThrough(s.id));
     const isStale = evidence === "running-late";
     const neverBilled = evidence === "never-billed";
     const settlement = settlements.get(s.id);

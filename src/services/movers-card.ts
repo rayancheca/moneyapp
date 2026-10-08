@@ -6,8 +6,15 @@ import { resolvePeriod, withPeriod } from "@/lib/period";
 import { formatCents } from "@/lib/money";
 import { listAccounts, outsidePortfolioCashAccountIds } from "./accounts";
 import { activeTxnsInRange, loadCategoryIndex, monthlySpending, spendingBucket, transactionsHref } from "./analytics";
+import { accountsAwaitingStatements } from "./cash-wallet-rule";
 import { SPEND_BASELINE_MONTHS } from "./committed";
-import { frontierForSeries, ledgerOpens, observationFrontier, type ObservationFrontier } from "./observation-frontier";
+import {
+  accountsThatDate,
+  frontierForSeries,
+  ledgerOpens,
+  observationFrontier,
+  type ObservationFrontier,
+} from "./observation-frontier";
 import { MIN_OCCURRENCES } from "./recurring";
 
 /**
@@ -367,7 +374,12 @@ interface CandidateMonth {
   offset: number;
   baselineKeys: string[];
   liveSpenders: string[];
-  /** there are live spenders, and every one has been imported through the month's last day */
+  /**
+   * Of `liveSpenders`, the ones that date the month: those a statement is still coming for, while one of them has a
+   * day (`accountsThatDate`) — an archived account is never imported again, and must not hold the month back for good
+   */
+  datingSpenders: string[];
+  /** there are live spenders, and every one that dates the month has been imported through its last day */
   imported: boolean;
 }
 
@@ -376,6 +388,8 @@ function candidateMonths(
   byAccount: ReadonlyMap<string, ReadonlyMap<string, number>>,
   frontier: ObservationFrontier,
   currentMonth: string,
+  // `accountsAwaitingStatements`
+  awaiting: ReadonlySet<string>,
 ): CandidateMonth[] {
   const out: CandidateMonth[] = [];
   for (let offset = 1; offset <= MAX_MONTHS_BEHIND; offset += 1) {
@@ -385,9 +399,11 @@ function candidateMonths(
       baselineKeys.push(monthKey(addCalendarMonths(`${month}-01`, -i)));
     }
     const live = liveSpendersOver(byAccount, baselineKeys, frontier);
+    const dating = [...accountsThatDate(frontier, live, awaiting)];
     const closes = lastDayOf(month);
-    const imported = live.length > 0 && live.every((accountId) => (frontier.byAccount.get(accountId) ?? "") >= closes);
-    out.push({ month, offset, baselineKeys, liveSpenders: live, imported });
+    const imported =
+      dating.length > 0 && dating.every((accountId) => (frontier.byAccount.get(accountId) ?? "") >= closes);
+    out.push({ month, offset, baselineKeys, liveSpenders: live, datingSpenders: dating, imported });
   }
   return out;
 }
@@ -417,18 +433,27 @@ function candidateMonths(
  *
  * `frontierForSeries` is the earliest frontier among a set of accounts, which is
  * exactly this question asked of a series' accounts; it is reused, not copied.
+ *
+ * ⚖️ Only the live spenders a statement is still coming for date it, while one of
+ * them has a day — /budgets' rule (`accountsThatDate`, 2026-10-08). 🔴 Every live
+ * spender dated it (review of e00e6b8): with Chase Checking archived, on a copy of
+ * his ledger at 2026-11-20, every /budgets row had moved off Chase's Aug 12 while
+ * this — and /spending, the year insights and "What changed" through it — still
+ * named Aug 12, for an account no statement will ever come for.
  */
 export function spendingCoverageThrough(db: AppDatabase, today: string = todayIso()): string | null {
   const currentMonth = monthKey(today);
   const frontier = observationFrontier(db);
+  const awaiting = accountsAwaitingStatements(db);
   const span = loadedSpan(currentMonth);
-  const candidates = candidateMonths(accountGrid(db, span.from, span.to), frontier, currentMonth);
+  const candidates = candidateMonths(accountGrid(db, span.from, span.to), frontier, currentMonth, awaiting);
   const governing = candidates.find((c) => c.imported) ?? candidates[0];
-  const accountIds =
+  return frontierForSeries(
+    frontier,
     governing !== undefined && governing.liveSpenders.length > 0
-      ? governing.liveSpenders
-      : [...frontier.byAccount.keys()];
-  return frontierForSeries(frontier, new Set(accountIds));
+      ? new Set(governing.datingSpenders)
+      : accountsThatDate(frontier, frontier.byAccount.keys(), awaiting),
+  );
 }
 
 /**
@@ -459,9 +484,11 @@ export function moversCard(db: AppDatabase, today: string = todayIso()): MoversC
    * Pick the month. Newest first, and the first one that clears wins — walking
    * FORWARD would report an older month while a newer one was available.
    */
-  const chosen = candidateMonths(data.byAccount, frontier, currentMonth).find((c) => c.imported);
+  const chosen = candidateMonths(data.byAccount, frontier, currentMonth, accountsAwaitingStatements(db)).find(
+    (c) => c.imported,
+  );
   if (chosen === undefined) return null;
-  const { month, baselineKeys, liveSpenders, offset: chosenOffset } = chosen;
+  const { month, baselineKeys, liveSpenders, datingSpenders, offset: chosenOffset } = chosen;
 
   /*
    * The baseline must lie inside the ledger's own history, or its early months
@@ -561,7 +588,8 @@ export function moversCard(db: AppDatabase, today: string = todayIso()): MoversC
     return (spent / baselineTotal) * 100;
   };
 
-  const laggingBase = liveSpenders
+  // the accounts that dated the month, so the day it names is /spending's cut (`spendingCoverageThrough`)
+  const laggingBase = datingSpenders
     .filter((accountId) => (frontier.byAccount.get(accountId) ?? "") < today)
     .map((accountId) => ({
       accountId,

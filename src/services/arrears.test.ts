@@ -202,7 +202,8 @@ describe("unbankedIncomeForSeries — a passed payday is measured against the da
     });
   });
 
-  test("a series that names no account is still looked for everywhere its pay has landed", () => {
+  // one deposit elsewhere is not a move (`POSTING_DAYS_THAT_SAY_WHERE`): Chase stays a place the pay could land
+  test("a series that names no account is still looked for everywhere its last two deposits landed", () => {
     const WF = "acct-wf";
     addAccount(WF);
     deposit(WF, SERIES, "2026-08-27");

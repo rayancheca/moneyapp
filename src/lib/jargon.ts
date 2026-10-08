@@ -259,8 +259,13 @@ export const RECURRING_JARGON = {
     "A charge for this bill turned up on the expected day, for about the amount expected — or, for pay, a deposit that landed on a different day has paid this payday down, and the mark names the day it landed.",
   paidDifferent:
     "The charge turned up, but for enough more or less than usual to be worth a look — measured against how much this bill normally varies, not against a fixed percentage.",
+  /*
+   * 🔴 Since an account no statement will come for is read through today (`silenceObservedThrough`, review of
+   * e00e6b8), a bill on an archived card is graded missed with no statement imported: "HAVE been imported" alone was
+   * false of it. The clause names the other way a day counts as read, in the words /imports' rule is made of.
+   */
   missed:
-    "Nothing turned up, and the statements covering that day HAVE been imported — so the silence is an answer rather than a gap in the records.",
+    "Nothing turned up, and the statements covering that day HAVE been imported — or none ever will be, because its account is archived or a cash wallet — so the silence is an answer rather than a gap in the records.",
   notYetKnown:
     "Nothing turned up, but the ledger cannot say whether it should have — the day may not be imported yet, the money may be cash you were handed and have not deposited, or this bill may not have charged enough times yet for the app to grade it. None of those is evidence that a payment failed.",
   upcoming: "Expected on or after today, so nothing has had the chance to happen yet.",

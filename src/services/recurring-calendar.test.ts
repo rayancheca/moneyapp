@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { createDatabase, type DbBundle } from "@/db/client";
 import { seedDatabase } from "@/db/seed";
 import { addDays } from "@/lib/dates";
+import { dailyBalances } from "@/db/schema/balances";
 import { institutions } from "@/db/schema/institutions";
 import { merchants } from "@/db/schema/merchants";
 import { recurringSeries } from "@/db/schema/recurring";
@@ -52,6 +53,16 @@ function insertTxn(opts: {
     })
     .returning({ id: transactions.id })
     .get().id;
+}
+
+/**
+ * The card checked through `to` by the balance walk. ⚖️ A series is late only on days the ledger has checked
+ * (2026-10-08) — a fixture that means "quiet past tolerance" has to have looked at the quiet days.
+ */
+function cardCheckedThrough(from: string, to: string): void {
+  for (let day = from; day <= to; day = addDays(day, 1)) {
+    bundle.db.insert(dailyBalances).values({ accountId: cardId, day, balanceCents: 0, basis: "derived" }).run();
+  }
 }
 
 /** A monthly Netflix series charging on the 15th; the June charge can drift. */
@@ -271,6 +282,8 @@ describe("recurringCalendar", () => {
     // feature: a dead subscription is cancelled; irregular cash pay is not.
     buildMonthlyNetflix();
     detectRecurringSeries(bundle.db, TODAY);
+    // ⚖️ the card read through yesterday: a series lapses only on days the ledger has checked (§6A 57)
+    cardCheckedThrough("2025-05-01", addDays(TODAY, -1));
     const lapse = (kind: "bill" | "income") =>
       bundle.db
         .update(recurringSeries)
@@ -597,6 +610,7 @@ describe("recurringCalendar", () => {
       .set({ kind: "income", status: "confirmed", userAmountCents: 104700 })
       .where(eq(recurringSeries.name, "CASH JOB WEEKLY PAY"))
       .run();
+    cardCheckedThrough("2026-01-01", "2026-07-07");
 
     const future = recurringCalendar(bundle.db, "2026-07", TODAY);
     const ahead = Object.values(future.entriesByDay)
@@ -654,6 +668,7 @@ describe("recurringCalendar", () => {
         status: "confirmed",
       })
       .run();
+    cardCheckedThrough("2026-01-01", "2026-07-07");
 
     const july = recurringCalendar(bundle.db, "2026-07", TODAY);
     const ahead = Object.values(july.entriesByDay).flat().filter((e) => e.state === "upcoming");
@@ -677,6 +692,8 @@ describe("recurringCalendar", () => {
     // view July from a 'today' far past the last charge (2026-06-15): the series
     // is inactive, so no upcoming/missed clutter — but March still shows posted
     const farFuture = "2027-01-10";
+    // ⚖️ …and every day to it read: a series lapses only on days the ledger has checked (§6A 57)
+    cardCheckedThrough("2026-01-01", addDays(farFuture, -1));
     const july = recurringCalendar(bundle.db, "2026-07", farFuture);
     expect(july.entryCount).toBe(0);
     expect(july.missedCount).toBe(0);

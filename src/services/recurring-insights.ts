@@ -6,6 +6,7 @@ import { isPrintableName } from "@/lib/printable-name";
 import { seriesIsIncomeOrSpending } from "@/lib/series-kind";
 import { outsidePortfolioCashAccountIds } from "./accounts";
 import { isAgentsSeries } from "./analytics";
+import { silenceMeasuredThroughBySeries } from "./cash-earnings";
 import { surfaceInsights, type InsightInput } from "./insight-surface";
 import type { InsightCandidate, SurfaceInsights } from "./insights";
 import { provenanceFor } from "./provenance";
@@ -84,11 +85,11 @@ const MIN_SERIES_TO_COMPARE = 2;
  * series' liveness on the calendar — two functions computing one date, which is
  * the pass-54 mistake. The row is the input every other caller passes.
  */
-function isLive(view: SeriesView, row: LapseInput | undefined, today: string): boolean {
+function isLive(view: SeriesView, row: LapseInput | undefined, today: string, checkedThrough: string | null): boolean {
   if (view.annualizedCents === null) return false;
   if (!row) return false;
   // the rule every forward leg asks — this module wrote its own copy first, and was the only one to ask the lapse
-  return seriesIsForecast({ ...row, kind: view.kind, status: view.status }, today);
+  return seriesIsForecast({ ...row, kind: view.kind, status: view.status }, today, checkedThrough);
 }
 
 export function recurringInsights(
@@ -115,8 +116,10 @@ export function recurringInsightInput(
    * no test at all.
    */
   const rows = new Map(db.select().from(recurringSeries).all().map((r) => [r.id, r as LapseInput]));
+  // the lapse is measured to each series' checked day, as `listSeries` measured it (§6A 57)
+  const checkedOf = silenceMeasuredThroughBySeries(db, today);
   const self = all.find((s) => s.id === seriesId);
-  if (!self || !isLive(self, rows.get(seriesId), today)) return null;
+  if (!self || !isLive(self, rows.get(seriesId), today, checkedOf(seriesId))) return null;
   /*
    * A subject this app cannot NAME is one it cannot write a sentence about, and
    * `insight-facts` refuses `< > { } \` in a label by THROWING — so without this
@@ -147,7 +150,7 @@ export function recurringInsightInput(
   const onSide = (s: SeriesView): boolean =>
     seriesIsIncomeOrSpending(s.kind) && (s.kind === "income") === isIncome && !isAgentsSeries(agentsCash, s);
   if (!onSide(self)) return null;
-  const side = all.filter((s) => isLive(s, rows.get(s.id), today) && onSide(s));
+  const side = all.filter((s) => isLive(s, rows.get(s.id), today, checkedOf(s.id)) && onSide(s));
   if (side.length < MIN_SERIES_TO_COMPARE) return null;
 
   const annualized = self.annualizedCents!;

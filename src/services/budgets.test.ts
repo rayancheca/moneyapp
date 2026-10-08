@@ -5,6 +5,7 @@ import { and, eq, isNull } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { createDatabase, type DbBundle } from "@/db/client";
 import { seedDatabase } from "@/db/seed";
+import { dailyBalances } from "@/db/schema/balances";
 import { categories } from "@/db/schema/categories";
 import { institutions } from "@/db/schema/institutions";
 import { transactions } from "@/db/schema/transactions";
@@ -1414,6 +1415,14 @@ describe("budgetOverdue — the bill that came due and never arrived", () => {
       lastMatchedOn: "2025-03-01", // 466 days before the 2026-06-10 window
     });
     bindSeries(dead, "Housing");
+    // ⚖️ its last charge on the card, and every day since read: a series lapses only on days the ledger has checked
+    // (§6A 57) — this one's quiet is quiet the balance walk has looked at
+    spendLinked("2025-03-01", -499, "Housing", dead);
+    const read: (typeof dailyBalances.$inferInsert)[] = [];
+    for (let t = Date.UTC(2025, 2, 1); t <= Date.UTC(2026, 5, 19); t += 86_400_000) {
+      read.push({ accountId: cardId, day: new Date(t).toISOString().slice(0, 10), balanceCents: 0, basis: "derived" });
+    }
+    bundle.db.insert(dailyBalances).values(read).run();
     expect(budgetOverdue(bundle.db, catId("Housing"), "2026-06-01", "2026-06-20").totalCents).toBe(0);
     expect(budgetTail(bundle.db, catId("Housing"), "2026-06-30", "2026-06-05").totalCents).toBe(0);
   });

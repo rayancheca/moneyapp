@@ -35,6 +35,7 @@ import {
 } from "./recurring";
 import { arrearsThisMonth, unbankedIncomeForSeries, unbankedIncomeTotals, type UnbankedIncomeTotals } from "./arrears";
 import { isUpfrontCarRow, upfrontCarRule } from "./car-upfront";
+import { silenceMeasuredThroughBySeries } from "./cash-earnings";
 import { stillToCome } from "./payday-settlement";
 import { activeSplitsInRange } from "./transaction-splits";
 import { linkIsNotRecurring, seriesIdsNotDrawnAsRecurring } from "./recurring-link";
@@ -95,6 +96,11 @@ interface ForecastReads {
   agentsCash: ReadonlySet<string>;
   /** `agentsSeriesBands` — every schedule on the agent's cash, and the band its money is named by */
   agentsSeries: ReadonlyMap<string, AgentsBand>;
+  /**
+   * `silenceMeasuredThroughBySeries` — a series is late, or lapsed, only on days the ledger has checked
+   * (`seriesStaleness`), and to today where no statement is coming
+   */
+  checkedThrough: (seriesId: string) => string | null;
 }
 
 /**
@@ -463,7 +469,7 @@ function fixedComponents(
   today: string,
   from: string,
   monthEnd: string,
-  { outside, agentsSeries }: ForecastReads,
+  { outside, agentsSeries, checkedThrough }: ForecastReads,
 ): ForecastLeg {
   // status only — staleness is disclosed per component, never used to exclude
   const live = db
@@ -530,9 +536,11 @@ function fixedComponents(
      * test and kept by the kind test, and that is the $4,233.69 → $45.69
      * collapse arriving by a different door.
      */
-    if (hasStoppedForecasting(series, today)) continue;
+    // ⚖️ …measured to the series' checked day, like running late, never across unread days (§6A 57)
+    if (hasStoppedForecasting(series, today, checkedThrough(series.id))) continue;
     // forecast reads user overrides first (§4.4): amount, cadence, next-expected
-    const staleness = seriesStaleness(series, today);
+    // late only on days the ledger has checked — the chip, the MONEY IN/OUT band and the footer's count
+    const staleness = seriesStaleness(series, today, checkedThrough(series.id));
     /*
      * ⚖️ A payday a deposit has already paid down is not still to come. ⛔ The
      * same double count `incomeExpectation` used to publish, arriving by the
@@ -638,7 +646,11 @@ function fixedComponents(
  * as still-to-come would inflate EOM cash on a ledger whose owner is paid in
  * cash.
  */
-function arrearsComponents(db: AppDatabase, today: string, { outside, agentsSeries }: ForecastReads): ForecastLeg {
+function arrearsComponents(
+  db: AppDatabase,
+  today: string,
+  { outside, agentsSeries, checkedThrough }: ForecastReads,
+): ForecastLeg {
   // every live series the forecast would project; `overdueForSeries` applies the
   // money-out and lapsed rules itself, and transfers are never spending here
   const live = db
@@ -674,7 +686,7 @@ function arrearsComponents(db: AppDatabase, today: string, { outside, agentsSeri
       kind: "fixed" as const,
       cents: -s.amountCents,
       detail: `${s.occurrenceCount} × ${formatCents(perOccurrenceCents)} (${cadenceWordOf(series, oneCharge)}), came due ${formatDayShortIn(s.nextDate, today)} and has not posted`,
-      staleness: seriesStaleness(series, today),
+      staleness: seriesStaleness(series, today, checkedThrough(series.id)),
     };
   });
   // the same rule as the forward leg: a late bill on an account outside cash is
@@ -1146,13 +1158,14 @@ function outsideCashOf(db: AppDatabase, nets: ChainedNets): OutsideCash {
 }
 
 /** What a forecast reads once for its whole chain (`ForecastReads`). */
-function forecastReads(db: AppDatabase): ForecastReads {
+function forecastReads(db: AppDatabase, today: string): ForecastReads {
   const agentsCash = outsidePortfolioCashAccountIds(db);
   return {
     notDrawn: seriesIdsNotDrawnAsRecurring(db),
     outside: accountsOutsideCash(db),
     agentsCash,
     agentsSeries: agentsSeriesBands(db, agentsCash),
+    checkedThrough: silenceMeasuredThroughBySeries(db, today),
   };
 }
 
@@ -1180,7 +1193,7 @@ export function forecastForMonth(
   if (ahead > FORECAST_HORIZON_MONTHS) return null;
   // ONE read of each for the whole chain: neither can change inside this call,
   // and every month below reaches the trailing pace twice (spend and income)
-  const reads = forecastReads(db);
+  const reads = forecastReads(db, today);
   if (ahead === 0) return currentMonthForecast(db, today, reads);
 
   const parts = futureMonthParts(db, today, key, reads);
@@ -1248,7 +1261,7 @@ export function forecastForMonth(
 }
 
 export function forecastCurrentMonth(db: AppDatabase, today: string = todayIso()): MonthForecast {
-  return currentMonthForecast(db, today, forecastReads(db));
+  return currentMonthForecast(db, today, forecastReads(db, today));
 }
 
 /** The running month's window, lines and nets (see `MonthParts`). */

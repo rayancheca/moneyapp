@@ -7,6 +7,7 @@ import { statementPeriods } from "@/db/schema/imports";
 import { recurringSeries } from "@/db/schema/recurring";
 import { transactions } from "@/db/schema/transactions";
 import { compareDates } from "@/lib/dates";
+import { accountsAwaitingStatements, silenceReadThrough } from "./cash-wallet-rule";
 
 /**
  * "Through which day has the ledger actually been SHOWN this account?"
@@ -366,3 +367,56 @@ export function frontierForSeries(
   }
   return bound;
 }
+
+/**
+ * Of the accounts a figure could have been spent from, the ones that DATE it: those a statement is still coming for
+ * (`accountsAwaitingStatements`) while one of them has an import frontier — only when none has, every one of them,
+ * so an archived account's own last day still says something true where nothing else could.
+ *
+ * ⛔ ONE rule for every surface that names the day spending is imported through: a /budgets row and the category page
+ * (`categoryCoverage`), /spending's comparison cut, the year insights and the dashboard's "What changed"
+ * (`spendingCoverageThrough`, `moversCard`). An archived account is never imported again, so its last day held each
+ * of them back for as long as it stayed in the window. 🔴 Only /budgets asked it (review of e00e6b8): on a copy of
+ * his ledger with Chase Checking archived, at 2026-11-20, every /budgets row moved off Chase's Aug 12 while
+ * `spendingCoverageThrough` still returned it, and /spending kept cutting at "Aug 12 at the earliest".
+ */
+export function accountsThatDate(
+  frontier: ObservationFrontier,
+  accountIds: Iterable<string>,
+  awaiting: ReadonlySet<string>,
+): ReadonlySet<string> {
+  const all = new Set(accountIds);
+  const awaited = new Set([...all].filter((id) => awaiting.has(id) && frontier.byAccount.has(id)));
+  return awaited.size > 0 ? awaited : all;
+}
+
+/**
+ * `observationFrontier` as a SILENCE is graded against: every account a statement is still coming for at its newest
+ * import, and every one no statement will come for — archived, or a cash wallet — through TODAY
+ * (`silenceReadThrough`, the rule a series' running late and lapse are measured by). What the calendar grades a past
+ * bill `missed` against `not_imported` with, and what the runway's arrears call "never posted" against "no import has
+ * covered it yet" with.
+ *
+ * ⚖️ 2026-10-08 (review of 98acbeb): an archived account is never imported again, so its quiet counts as read. 🔴 Read
+ * to its frozen day (review of e00e6b8): with Venture X archived, at 2026-11-20, Breezeline's chip said "running late"
+ * while the calendar filed its Nov 8 $50 "not yet known" and the runway said "no import has covered it yet" — waiting
+ * for a statement /imports never asks for, until the series lapsed on Dec 7.
+ *
+ * ⚠️ Investment accounts stay out, as above. An account never imported holds no day while a statement is still coming
+ * for it — `frontierForSeries`' `null` — and today once none is.
+ *
+ * ⚡ Memoised for the render, as `observationFrontier` is.
+ */
+export const silenceObservedThrough = cache(function silenceObservedThrough(
+  db: AppDatabase,
+  today: string,
+): ObservationFrontier {
+  const { byAccount } = observationFrontier(db);
+  const awaiting = accountsAwaitingStatements(db);
+  const out = new Map<string, string>();
+  for (const { id } of db.select({ id: accounts.id }).from(accounts).where(ne(accounts.type, "investment")).all()) {
+    const through = silenceReadThrough(awaiting, id, byAccount.get(id) ?? null, today);
+    if (through !== null) out.set(id, through);
+  }
+  return { byAccount: out };
+});

@@ -5,6 +5,7 @@ import { institutions } from "@/db/schema/institutions";
 import { todayIso } from "@/lib/dates";
 import { statementPull, type StatementPull } from "@/lib/statement-cadence";
 import { ACCOUNT_ORDER } from "./account-order";
+import { accountsAwaitingStatements } from "./cash-wallet-rule";
 import { statementsByAccount } from "./statements-by-account";
 
 /**
@@ -30,14 +31,16 @@ export function statementPulls(
   db: AppDatabase,
   today: string = todayIso(),
 ): AccountStatementPull[] {
+  // only the accounts a statement is still coming for — the rule the lapse is held back by, too
+  const awaiting = accountsAwaitingStatements(db);
   const rows = db
     .select({ id: accounts.id, name: accounts.name })
     .from(accounts)
     .innerJoin(institutions, eq(accounts.institutionId, institutions.id))
-    .where(eq(accounts.isActive, true))
     // THE order: the dashboard Statements teaser prints these as they come
     .orderBy(...ACCOUNT_ORDER)
-    .all();
+    .all()
+    .filter((a) => awaiting.has(a.id));
 
   const statements = statementsByAccount(db);
 

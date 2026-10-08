@@ -46,6 +46,7 @@ import {
 import type { UnbankedFrontier } from "@/lib/unbanked-income";
 import { portionsAcross } from "@/lib/payday-settlement";
 import { paydaySettlementsBySeries } from "./payday-settlement";
+import { silenceMeasuredThroughBySeries } from "./cash-earnings";
 import { effectiveSeries, hasStoppedForecasting, oneChargeDays, projectOccurrences, toProjectable } from "./recurring";
 import { linkIsRecurring, rowIsRecurring, seriesIdsNotDrawnAsRecurring } from "./recurring-link";
 
@@ -57,13 +58,14 @@ import { incomeBasis, levelledMonthlyCents, type IncomeBasis } from "@/lib/incom
 import { daysNotImportedYet } from "@/lib/empty-period";
 import { categoryReach, type CategoryReach } from "@/lib/category-reach";
 import {
+  accountsThatDate,
   frontierForSeries,
   ledgerOpens,
   ledgerReaches,
   observationFrontier,
   type ObservationFrontier,
 } from "./observation-frontier";
-import { cashWalletIds } from "./cash-wallet-rule";
+import { accountsAwaitingStatements, cashWalletIds } from "./cash-wallet-rule";
 
 /**
  * Budgets (master-plan Phase 5). One active budget per (category, period),
@@ -1163,12 +1165,14 @@ export function budgetTail(
 
   const series: BudgetTailLine[] = [];
   let totalCents = 0;
+  // the lapse is measured to each series' checked day (§6A 57)
+  const checkedThrough = silenceMeasuredThroughBySeries(db, today);
   for (const s of rows) {
     // a series that stopped charging is not a forecast — see seriesHasLapsed for
     // why this is not `isSeriesActive` (a registered commitment has no postings
     // yet and must still be projected). `hasStoppedForecasting`, the predicate
     // `budgetOverdue` asks too: money in never lapses, in either leg.
-    if (hasStoppedForecasting(s, today)) continue;
+    if (hasStoppedForecasting(s, today, checkedThrough(s.id))) continue;
     const occ = projectOccurrences(toProjectable(s), from, periodEnd).filter((o) => o.amountCents < 0);
     if (occ.length === 0) continue;
     const amountCents = occ.reduce((sum, o) => sum - o.amountCents, 0); // money-out → positive
@@ -1254,7 +1258,10 @@ function recurringPostedCents(
 }
 
 export interface CategoryCoverage {
-  /** the earliest import frontier among the accounts below; null when none of them has one */
+  /**
+   * the earliest import frontier among the accounts below a statement is still coming for — among all of them when
+   * none of those has one; null when none has one at all
+   */
   importedThroughOn: string | null;
   /** where the window of accounts opens: six full months back, or the period's start if earlier */
   spentFromSince: string;
@@ -1341,6 +1348,22 @@ export interface CategoryCoverage {
  * now, through `categoryReachFor` below — this function, never a copy — and so
  * do its trend's empty months and its headline's proof (`categorySpend`).
  *
+ * ⚖️ …AND SO ARE ARCHIVED ACCOUNTS, while an account a statement is still coming
+ * for was spent from — the one rule (`accountsAwaitingStatements`) /imports asks
+ * for its statements by and a series' lapse is held back by (2026-10-08), asked
+ * as /spending's cut and the dashboard ask it (`accountsThatDate`). An
+ * archived card is never imported again, so its last statement held the row for
+ * as long as its rows stayed in the window: "Awaiting statements", which
+ * `lib/budget-verdict` forbids for a statement that never arrives. 🔴 On a copy
+ * of his ledger with Chase Sapphire archived, Travel on 2027-01-20 read "spending
+ * imported through Sep 2, 2026" — Sapphire's last statement — with Venture X, the
+ * other account it was spent from, read through Sep 13 (review of 82d75d7).
+ *  - ❓ Spent ONLY from accounts no statement is coming for, archived among them,
+ *    the row keeps the archived account's own day — a true fact, where leaving it
+ *    out would read "spent only from accounts with no import date" — and so still
+ *    "Awaiting statements" until those rows leave the window (Health, with Venture
+ *    X archived, on 2027-01-20). A "Cash only"-like row for it is his call.
+ *
  * Deliberately NOT account coverage/verifiedThrough, which answers "which
  * periods reconcile", a stronger and more optimistic question (SoFi Checking
  * reports a verified 2026-07-31 against a last transaction of 2026-05-31, and
@@ -1354,6 +1377,8 @@ export function categoryCoverage(
   refDate: string,
   frontier: ObservationFrontier,
   wallets: ReadonlySet<string>,
+  // `accountsAwaitingStatements`: only these date the row while one of them was spent from
+  awaiting: ReadonlySet<string>,
 ): CategoryCoverage {
   // always GUIDANCE_MONTHS windows, oldest first
   const windowStart = trailingFullMonths(refDate, GUIDANCE_MONTHS)[0]!.start;
@@ -1364,7 +1389,8 @@ export function categoryCoverage(
   // ⚖️ a wallet is counted on its own and never dates the row
   const imported = new Set([...spentFrom].filter((id) => !wallets.has(id)));
   return {
-    importedThroughOn: frontierForSeries(frontier, imported),
+    // ⚖️ …nor does an archived account, while one a statement is still coming for has a day (`accountsThatDate`)
+    importedThroughOn: frontierForSeries(frontier, accountsThatDate(frontier, imported, awaiting)),
     spentFromSince,
     spentFromAccounts: imported.size,
     spentFromWallets: spentFrom.size - imported.size,
@@ -1375,12 +1401,19 @@ export function categoryCoverage(
 export interface CategoryReachContext {
   frontier: ObservationFrontier;
   wallets: ReadonlySet<string>;
+  /** `accountsAwaitingStatements` — the accounts that date a row (`categoryCoverage`) */
+  awaiting: ReadonlySet<string>;
   /** `ledgerReaches(db)` — the day left standing where the category has no account of its own to ask */
   ledgerReaches: string | null;
 }
 
 export function categoryReachContext(db: AppDatabase): CategoryReachContext {
-  return { frontier: observationFrontier(db), wallets: cashWalletIds(db), ledgerReaches: ledgerReaches(db) };
+  return {
+    frontier: observationFrontier(db),
+    wallets: cashWalletIds(db),
+    awaiting: accountsAwaitingStatements(db),
+    ledgerReaches: ledgerReaches(db),
+  };
 }
 
 /**
@@ -1408,7 +1441,7 @@ export function categoryReachFor(
       .where(eq(categories.id, id))
       .get();
     if (!row) return null;
-    const coverage = categoryCoverage(db, id, periodStart, today, ctx.frontier, ctx.wallets);
+    const coverage = categoryCoverage(db, id, periodStart, today, ctx.frontier, ctx.wallets, ctx.awaiting);
     return { reach: categoryReach(coverage, ctx.ledgerReaches, today, { name: row.name, kind: row.kind }), parentId: row.parentId };
   };
   const own = reachOf(categoryId);
@@ -1464,8 +1497,10 @@ export function budgetPaceStatuses(db: AppDatabase, refDate: string = todayIso()
   // …and where the import stands, per account and at the ledger's opening end
   const frontier = observationFrontier(db);
   const opens = ledgerOpens(db);
-  // …and which accounts are cash wallets, which no import ever reaches (⚖️ `categoryCoverage`)
+  // …and which accounts are cash wallets, which no import ever reaches, and which a statement is still coming for
+  // (⚖️ `categoryCoverage`)
   const wallets = cashWalletIds(db);
+  const awaiting = accountsAwaitingStatements(db);
   return budgetStatuses(db, refDate).map((s) => {
     const { start, end } = s.bounds;
     // budgetStatuses evaluates the period CONTAINING refDate, start-clamped to
@@ -1538,7 +1573,7 @@ export function budgetPaceStatuses(db: AppDatabase, refDate: string = todayIso()
     // uncovered, and one on or past today leaves none. ⛔ The count is
     // `daysNotImportedYet`, the dashboard tile's and /spending's, not a third
     // copy of the clamp — only the frontier it is given is this category's.
-    const coverage = categoryCoverage(db, s.budget.categoryId, start, refDate, frontier, wallets);
+    const coverage = categoryCoverage(db, s.budget.categoryId, start, refDate, frontier, wallets, awaiting);
     const uncoveredDays = daysNotImportedYet({
       from: start,
       to: end,

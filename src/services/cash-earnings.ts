@@ -1,4 +1,5 @@
 import { and, asc, eq, isNotNull } from "drizzle-orm";
+import { cache } from "react";
 import type { AppDatabase } from "@/db/client";
 import { recurringSeries } from "@/db/schema/recurring";
 import { transactions } from "@/db/schema/transactions";
@@ -6,7 +7,8 @@ import { compareDates, todayIso } from "@/lib/dates";
 import { cashEarnings, type CashEarnings, type PaySeries } from "@/lib/cash-earnings";
 import { outsidePortfolioCashAccountIds } from "./accounts";
 import { isAgentsIncomeSeries } from "./analytics";
-import { accountCoverage } from "./coverage";
+import { accountsAwaitingStatements, silenceReadThrough } from "./cash-wallet-rule";
+import { accountCoverage, archivedAccountCoverage } from "./coverage";
 
 /**
  * Earned versus banked, read off the real ledger.
@@ -41,9 +43,9 @@ export interface CashEarningsReading extends CashEarnings {
   seriesId: string;
   seriesName: string;
   /**
-   * The last day every account this pay has landed in has been read through —
-   * `earliestVerified` — or null when one of them has no checked record. Present
-   * only when the caller asked (`withChecked`).
+   * The last day every account this pay lands in now (`landingAccountsBySeries`) has been read through —
+   * `checkedThroughBySeries` — or null when one of them has no checked record. Present only when the caller asked
+   * (`withChecked`).
    *
    * 🔴 The /spending note said "none of it reached an account" of September's
    * paydays while Chase Checking, the only account that pay has ever landed in,
@@ -72,9 +74,15 @@ export interface CashEarningsWindow {
 }
 
 /**
- * Where each series' next deposit is looked for: where its pay lands NOW — the
- * series' own `account_id` when it names one, otherwise every account its
- * attributed pay has landed in.
+ * How many of its newest posting DAYS say where a series that names no account posts now. One charge elsewhere
+ * can be a one-off — his $1,000 early insurance payment left Wells Fargo on Sep 3, while the bill charges Venture
+ * X — but two in a row is a move: the rent, on Wells Fargo Aug 4 and Sep 2 after Venture X and Chase Checking.
+ */
+const POSTING_DAYS_THAT_SAY_WHERE = 2;
+
+/**
+ * Where each series' next deposit — or charge — is looked for: where it lands NOW — the series' own `account_id`
+ * when it names one, otherwise every account its newest `POSTING_DAYS_THAT_SAY_WHERE` posting days posted to.
  *
  * 🔴 Every account pay had EVER landed in, measured on a copy of the owner's
  * ledger 2026-10-07: It America LLC's weekly payroll names Wells Fargo, checked
@@ -84,24 +92,51 @@ export interface CashEarningsWindow {
  * /recurring and /budgets said Oct 1 "falls after Wed, Aug 12, 2026". A pay
  * series that names its account has told the app where to look.
  *
+ * 🔴 AND A SERIES THAT NAMES NONE has told it by where it has posted lately. Measured on a copy of his ledger
+ * 2026-10-08: Flamingo South Beach (rent) posted on Venture X (Jun 16), Chase Checking (Jul 8), then Wells Fargo
+ * (Aug 4, Sep 2), and every account it ever touched gave Chase's Aug 12 — before its own last charge, on an account
+ * it left. At today = Oct 21 /recurring said "nothing has matched since Sep 2, 2026 (49 days), but its account has
+ * been checked only through Aug 12, 2026", and a rent that truly missed on Wells Fargo's checked days could not read
+ * late until Chase, 43 days behind, caught up.
+ *
+ * ⚠️ Not only the newest day: one charge elsewhere does not move a series (`POSTING_DAYS_THAT_SAY_WHERE`), and
+ * while it might still land in either account, both are looked at — the earlier frontier stands, as for any account
+ * it could land in (`earliestVerified`).
+ *
  * ⛔ ONE rule for every caller — the dashboard's income card, /spending's note
- * (`cashEarningsReadings`) and the passed-payday sentence on /budgets and
- * /recurring (`unbankedIncomeForSeries`) — so no two can name a different day.
+ * (`cashEarningsReadings`), the passed-payday sentence on /budgets and
+ * /recurring (`unbankedIncomeForSeries`) and whether a series is running late
+ * (`silenceMeasuredThroughBySeries`) — so no two can name a different day.
+ *
+ * ⛔ Chosen over EVERY account it posted to, archived ones too — whether a statement is still coming for one is the
+ * frontier's question (`silenceMeasuredThroughBySeries`), never this one's. 🔴 Chosen among the accounts still
+ * awaited (review of 82d75d7), a series whose newest charges sit on an archived account fell back to the accounts it
+ * had LEFT: on a copy of his ledger with Wells Fargo archived the rent was measured to Chase's Aug 12 again — before
+ * its own last charge — and read "Awaiting statements" on 2026-12-07 beside the car lease, the same Wells Fargo and
+ * the same Sep 2, lapsed.
  */
 export function landingAccountsBySeries(db: AppDatabase): Map<string, Set<string>> {
   const rows = db
-    .select({ seriesId: transactions.recurringSeriesId, accountId: transactions.accountId })
+    .select({
+      seriesId: transactions.recurringSeriesId,
+      accountId: transactions.accountId,
+      postedOn: transactions.postedOn,
+    })
     .from(transactions)
     .where(and(isNotNull(transactions.recurringSeriesId), eq(transactions.status, "active")))
     .all();
 
-  const out = new Map<string, Set<string>>();
+  const postings = new Map<string, Posting[]>();
   for (const r of rows) {
     if (r.seriesId === null) continue;
-    const set = out.get(r.seriesId) ?? new Set<string>();
-    set.add(r.accountId);
-    out.set(r.seriesId, set);
+    const posting = { day: r.postedOn, accountId: r.accountId };
+    const list = postings.get(r.seriesId);
+    if (list === undefined) postings.set(r.seriesId, [posting]);
+    else list.push(posting);
   }
+  const out = new Map<string, Set<string>>(
+    [...postings].map(([id, list]) => [id, accountsItPostsToNow(list)] as const),
+  );
   // a named account replaces the history: that is where the pay lands now
   for (const s of db
     .select({ id: recurringSeries.id, accountId: recurringSeries.accountId })
@@ -111,6 +146,19 @@ export function landingAccountsBySeries(db: AppDatabase): Map<string, Set<string
     if (s.accountId !== null) out.set(s.id, new Set([s.accountId]));
   }
   return out;
+}
+
+interface Posting {
+  day: string;
+  accountId: string;
+}
+
+/** Every account a series' newest `POSTING_DAYS_THAT_SAY_WHERE` posting days posted to — all of a day's rows. */
+function accountsItPostsToNow(postings: readonly Posting[]): Set<string> {
+  const days = [...new Set(postings.map((p) => p.day))]
+    .sort((a, b) => compareDates(b, a))
+    .slice(0, POSTING_DAYS_THAT_SAY_WHERE);
+  return new Set(postings.filter((p) => days.includes(p.day)).map((p) => p.accountId));
 }
 
 /**
@@ -142,6 +190,9 @@ export function checkedSilence(
  * which is the honest answer rather than the convenient one: if one possible
  * landing place is unchecked, a deposit could be sitting in it unseen and no
  * surface may claim the ledger looked.
+ *
+ * ⚠️ The day a series' SILENCE is measured to reads an account no statement is coming for as checked through today
+ * (`silenceMeasuredThroughBySeries`): there it never collapses, and never holds a series back.
  */
 export function earliestVerified(
   accountIds: ReadonlySet<string>,
@@ -159,6 +210,92 @@ export function earliestVerified(
   if (earliest !== null && compareDates(earliest, today) > 0) return today;
   return earliest;
 }
+
+/** Where each series posts now, and how far each account's statements reach — the one reading both frontiers take. */
+interface FrontierReading {
+  landings: Map<string, Set<string>>;
+  verifiedThroughByAccount: ReadonlyMap<string, string | null>;
+}
+
+/** ⚡ Memoised for the render, as `accountCoverage` is: both frontiers below, and every caller of each, share it. */
+const frontierReading = cache(function frontierReading(db: AppDatabase, today: string): FrontierReading {
+  return {
+    landings: landingAccountsBySeries(db),
+    // archived accounts too: the days a statement covered stay covered when he archives the account
+    verifiedThroughByAccount: new Map(
+      [...accountCoverage(db, today), ...archivedAccountCoverage(db, today)].map(
+        (c) => [c.accountId, c.verifiedThrough] as const,
+      ),
+    ),
+  };
+});
+
+/**
+ * Per series, the last day the ledger has checked every account it posts to NOW — `earliestVerified` over
+ * `landingAccountsBySeries` and every account's checked record, archived ones included — or null when one of them has
+ * no checked record, or when the series names no account and nothing linked to it says where it lands.
+ *
+ * ⛔ ONE frontier for every sentence about whether the ledger has LOOKED: the passed paydays (/budgets, /recurring),
+ * the dashboard's income card and /spending's note. 🔴 The pay sentence said "the ledger has not looked for its
+ * deposit" of Oct 1 while the forecast beside it, measuring to today, said "all of it running late" (his ledger,
+ * 2026-10-08) — so on every account a statement is still coming for, a series' silence is measured to this same day
+ * (`silenceMeasuredThroughBySeries`).
+ *
+ * ⚠️ Never today for a day no statement has read. An archived account's record stops where its statements did, and a
+ * deposit could sit in it unseen after that — no surface may claim the ledger looked. 🔴 Measured to today (review of
+ * 82d75d7), the income card said of four paydays after Wells Fargo's last statement (archived, on a copy of his
+ * ledger) "4 of them fall on days the records already cover, through Oct 29 — so the pay did not reach a bank", and
+ * /recurring warned "Cash pay that never reaches a bank". The decision that measures his bills to today moved the
+ * LAPSE (2026-10-08), not what the ledger has read.
+ *
+ * ⚡ The coverage read is memoised for the render (`frontierReading`); the closure only takes an earliest.
+ */
+export const checkedThroughBySeries = cache(function checkedThroughBySeries(
+  db: AppDatabase,
+  today: string,
+): (seriesId: string) => string | null {
+  const { landings, verifiedThroughByAccount } = frontierReading(db, today);
+  return (seriesId) => earliestVerified(landings.get(seriesId) ?? new Set<string>(), verifiedThroughByAccount, today);
+});
+
+/**
+ * Per series, the day its silence is measured to — whether it is running late, "Awaiting statements" or lapsed
+ * (`seriesStaleness`, `seriesHasLapsed`, §6A 57): `checkedThroughBySeries`' day, except that an account no statement
+ * is coming for counts as read through TODAY — `silenceReadThrough`, the rule the calendar and the runway's arrears
+ * grade a past bill by too (`silenceObservedThrough`).
+ *
+ * ⚖️ An account a statement is still COMING for (`accountsAwaitingStatements` — not archived, not a cash wallet)
+ * holds a series back to the day its statements have covered; one no statement will ever cover does not (2026-10-08,
+ * review of 98acbeb). His rule is that an upload arriving late can never make a bill vanish, and for these none is
+ * coming. A series that posts now only where nothing is coming is measured to today, as every series was before
+ * §6A 57; one that also posts to an account still awaited, to that account's day. 🔴 Read to an archived card's
+ * frozen day, every series on it still inside its line was forecast for good as "Awaiting statements" — the car
+ * insurance a committed bill and $357.58 of the runway's arrears every month, a year on.
+ *
+ * ⛔ The SAME landing accounts as `checkedThroughBySeries`: where it posts now is chosen over every account, and only
+ * then is an archived one read through today. 🔴 Chosen among the accounts still awaited, the rent fell back to the
+ * accounts it had left (`landingAccountsBySeries`).
+ *
+ * ⚠️ An awaited account with NO checked record still holds its series where nothing has been read (null), as the
+ * income card, the passed paydays and /spending's reading all require: a statement can still come for it.
+ *
+ * ⚡ Memoised for the reason `accountCoverage` gives (`react`'s `cache`, one request, never a module-level Map): every
+ * budget's tail and arrears walk asks it, and measured on a copy of his ledger 2026-10-08 one call is 2.65ms past the
+ * cached coverage — 24 of them per /budgets.
+ */
+export const silenceMeasuredThroughBySeries = cache(function silenceMeasuredThroughBySeries(
+  db: AppDatabase,
+  today: string,
+): (seriesId: string) => string | null {
+  const { landings, verifiedThroughByAccount } = frontierReading(db, today);
+  const awaiting = accountsAwaitingStatements(db);
+  const readThrough = new Map(
+    [...landings.values()]
+      .flatMap((ids) => [...ids])
+      .map((id) => [id, silenceReadThrough(awaiting, id, verifiedThroughByAccount.get(id) ?? null, today)] as const),
+  );
+  return (seriesId) => earliestVerified(landings.get(seriesId) ?? new Set<string>(), readThrough, today);
+});
 
 /**
  * One reading per confirmed income series — never a single aggregate.
@@ -216,10 +353,7 @@ export function cashEarningsReadings(
     .all();
 
   const readings: CashEarningsReading[] = [];
-  const verifiedThroughByAccount = withChecked
-    ? new Map(accountCoverage(db, today).map((c) => [c.accountId, c.verifiedThrough] as const))
-    : null;
-  const landings = withChecked ? landingAccountsBySeries(db) : null;
+  const checkedOf = withChecked ? checkedThroughBySeries(db, today) : null;
 
   for (const s of series) {
     const banked = linked
@@ -254,11 +388,11 @@ export function cashEarningsReadings(
       seriesName: s.name,
       ...cashEarnings({ series: pay, banked, from, to, today, todayIsComplete }),
     };
-    if (verifiedThroughByAccount === null || landings === null) {
+    if (checkedOf === null) {
       readings.push(reading);
       continue;
     }
-    const checkedThrough = earliestVerified(landings.get(s.id) ?? new Set<string>(), verifiedThroughByAccount, today);
+    const checkedThrough = checkedOf(s.id);
     if (checkedThrough === null) {
       readings.push({ ...reading, checkedThrough, checkedPeriodsCovered: 0, checkedPeriodsSinceBanked: 0 });
       continue;

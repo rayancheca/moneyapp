@@ -142,7 +142,8 @@ function targets(db: AppDatabase) {
     throw new Error(`expected ${DEAD.length} live dead series, found ${rows.length}`);
   }
   for (const r of rows) {
-    if (!seriesHasLapsed(r, TODAY)) throw new Error(`${r.name} has NOT lapsed — refusing`);
+    // every day to TODAY counted read — the rule this ran under, before §6A 57 measured the lapse to the checked day
+    if (!seriesHasLapsed(r, TODAY, TODAY)) throw new Error(`${r.name} has NOT lapsed — refusing`);
     if (r.lastMatchedOn === null) throw new Error(`${r.name} never posted — that is not "dead"`);
     if (r.kind === "income") throw new Error(`${r.name} is INCOME — the lapse rule is money-out`);
   }

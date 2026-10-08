@@ -319,6 +319,8 @@ export function ForecastCard({ forecast: f }: ForecastCardProps) {
     f.components.map((c) => ({
       kind: c.kind,
       cents: c.cents,
+      // late on checked days only: awaiting statements carries `isStale: false` and the band never names it
+      // (`seriesStaleness`) — guarded by rendering this card, services/late-over-unread-days.test.ts
       isStale: c.staleness?.isStale,
       // never CHARGED, not never seen: `daysSinceLastMatch` is null exactly
       // when no charge has ever matched the series

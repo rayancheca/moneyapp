@@ -5,6 +5,7 @@ import { eq } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { createDatabase, type DbBundle } from "@/db/client";
 import { seedDatabase } from "@/db/seed";
+import { dailyBalances } from "@/db/schema/balances";
 import { categories } from "@/db/schema/categories";
 import { institutions } from "@/db/schema/institutions";
 import { recurringSeries, type Cadence, type SeriesKind, type SeriesStatus } from "@/db/schema/recurring";
@@ -77,6 +78,18 @@ describe("predictCategory / predictBudgetableCategories", () => {
         dedupeHash: dedupeHash({ accountId: cardId, postedOn, amountCents, rawDescription, occurrenceIndex: seq }),
       })
       .run();
+  }
+
+  /**
+   * The card read by the balance walk from Dec 2025 through yesterday. ⚖️ A series lapses only on days the ledger has
+   * checked (§6A 57): "stopped posting" below is quiet the ledger has looked at.
+   */
+  function cardReadThroughYesterday(): void {
+    const read: (typeof dailyBalances.$inferInsert)[] = [];
+    for (let day = "2025-12-01"; day < TODAY; day = addDays(day, 1)) {
+      read.push({ accountId: cardId, day, balanceCents: 0, basis: "derived" });
+    }
+    bundle.db.insert(dailyBalances).values(read).run();
   }
 
   function insertSeries(input: {
@@ -291,6 +304,7 @@ describe("predictCategory / predictBudgetableCategories", () => {
       lastMatchedOn: "2025-12-01",
     });
     insertTxn("2025-12-01", -4999, { categoryName: "Pharmacy", recurringSeriesId: lapsed });
+    cardReadThroughYesterday();
 
     expect(predictCategory(bundle.db, categoryId("Health"), "Health", TODAY).forecast.recurringCents).toBe(0);
   });
@@ -303,6 +317,7 @@ describe("predictCategory / predictBudgetableCategories", () => {
     insertTxn("2025-12-01", -4999, { categoryName: "Pharmacy", recurringSeriesId: lapsed });
     const posted = insertSeries({ name: "Grocery box", kind: "subscription", cadence: "monthly", intervalDaysAvg: 30, nextExpectedOn: "2026-08-10", nextExpectedAmountCents: -1500, status: "confirmed", lastMatchedOn: "2026-06-10" });
     insertTxn("2026-06-10", -1500, { categoryName: "Groceries", recurringSeriesId: posted });
+    cardReadThroughYesterday();
 
     const predictions = predictBudgetableCategories(bundle.db, TODAY);
     expect(predictions.length).toBeGreaterThan(0);
