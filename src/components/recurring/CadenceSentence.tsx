@@ -7,7 +7,7 @@ import { Popover, usePopover } from "@/components/ui/Popover";
 import { toast } from "@/components/ui/Toast";
 import { formatCents, parseAmountToCents } from "@/lib/money";
 import { CADENCE_LABEL, schedulePhrase, seriesVerb } from "./labels";
-import { seriesIsOver, type SeriesStatusForCopy } from "@/lib/series-evidence";
+import { seriesIsProjected, type SeriesEvidence, type SeriesStatusForCopy } from "@/lib/series-evidence";
 
 interface CadenceSentenceProps {
   seriesId: string;
@@ -24,6 +24,8 @@ interface CadenceSentenceProps {
   accountName: string | null;
   /** ended and dismissed put the whole sentence in the past — see `seriesVerb` */
   status: SeriesStatusForCopy;
+  /** …and so does a live series the forecast has let go (`lapsed`) — see `seriesIsProjected` */
+  evidence: SeriesEvidence;
   onChanged: () => void;
 }
 
@@ -42,8 +44,12 @@ function tokenClass(overridden: boolean): string {
  * hand a field back to detection.
  */
 export function CadenceSentence(props: CadenceSentenceProps) {
-  const { seriesId, kind, cadence, nextExpectedOn, amountCents, accountName, status, onChanged } = props;
-  const over = seriesIsOver(status);
+  const { seriesId, kind, cadence, nextExpectedOn, amountCents, accountName, status, evidence, onChanged } = props;
+  /* ⛔ The predicate the "Nothing expected" card asks (`noScheduleReason`), not a second one. 🔴 This read
+     `seriesIsOver(status)` alone after the card learned the lapse, so on a copy of the owner's ledger 2026-10-08
+     `/recurring/<Amazon Prime>` read "charges monthly around the 5th, about $4.99" above "nothing more is expected
+     from it" — the 5th off a stored 2026-08-05, its editor saving a date the lapse never reads. */
+  const over = !seriesIsProjected(status, evidence);
 
   async function save(
     patch: Omit<Parameters<typeof setSeriesOverridesAction>[0], "seriesId">,

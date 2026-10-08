@@ -9,6 +9,7 @@ import { institutions } from "@/db/schema/institutions";
 import { recurringSeries } from "@/db/schema/recurring";
 import { transactions } from "@/db/schema/transactions";
 import { dedupeHash } from "@/lib/hash";
+import { seriesIsProjected } from "@/lib/series-evidence";
 import { addDays } from "@/lib/dates";
 import { normalizeDescription } from "@/lib/normalize";
 import { createAccount } from "./accounts";
@@ -30,6 +31,7 @@ import {
   projectOccurrences,
   rollForwardNextExpected,
   seriesHasLapsed,
+  seriesIsForecast,
   seriesStaleness,
   setSeriesStatus,
   upcomingOccurrences,
@@ -541,6 +543,42 @@ describe("seriesStaleness", () => {
     // the same gate the forecast reads, not a second copy of it
     expect(seriesHasLapsed({ ...base, lastMatchedOn: "2026-02-01" }, today)).toBe(true);
     expect(lapsedSeriesShouldStopForecasting("income")).toBe(false);
+  });
+
+  /*
+   * ⛔ A series' own page decides "is this projected?" from the status and evidence it carries (`seriesIsProjected`,
+   * client-safe), and every server figure decides it with `seriesIsForecast`. They are one rule only while this
+   * holds — for every status, every kind, and evidence at every age. 🔴 When the page's sentence and its "Nothing
+   * expected" card asked two different predicates, Amazon Prime read "charges monthly around the 5th" above "nothing
+   * more is expected from it" (his ledger copy, 2026-10-08).
+   */
+  test("the page's predicate and the forecast's agree for every status, kind and age of evidence", () => {
+    const base = {
+      cadence: "monthly" as const,
+      userCadence: null,
+      intervalDaysAvg: 30,
+      nextExpectedOn: "2026-08-01",
+      userNextExpectedOn: null,
+      nextExpectedAmountCents: -5000,
+      userAmountCents: null,
+    };
+    const today = "2026-07-08";
+    const ages = [null, "2026-07-05", "2026-04-25", "2026-02-01"]; // never, fresh, late, lapsed
+    let lapsedSeen = 0;
+    for (const status of ["detected", "confirmed", "dismissed", "ended"] as const) {
+      for (const kind of ["bill", "subscription", "income", "transfer", "other"] as const) {
+        for (const lastMatchedOn of ages) {
+          const row = { ...base, status, kind, lastMatchedOn };
+          const evidence = seriesEvidence(row, today);
+          if (evidence === "lapsed") lapsedSeen += 1;
+          expect(seriesIsProjected(status, evidence), `${status} · ${kind} · ${lastMatchedOn}`).toBe(
+            seriesIsForecast(row, today),
+          );
+        }
+      }
+    }
+    // the grid reaches the case that matters: a lapsed series, of every money-out kind, at every status
+    expect(lapsedSeen).toBe(4 * 4);
   });
 });
 

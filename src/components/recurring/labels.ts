@@ -129,8 +129,9 @@ export function schedulePhrase(cadence: Cadence, nextExpectedOn: string): { conn
  * 🔴 It was present tense for every status. Measured 2026-09-10: all 27 ended
  * or dismissed series read "charges monthly around the 8th, about $1,786.46
  * from Chase Checking" above their own "nothing more is expected from it".
- * `seriesIsOver` is the one place that decides, so the two sentences cannot
- * disagree about whether the series is over.
+ * `seriesIsProjected` is the one place that decides, so the two sentences
+ * cannot disagree about whether the series is over — and a lapsed series, which
+ * the forecast has let go, reads "charged" too (2026-10-08, Amazon Prime).
  *
  * ⛔ Past tense fixes the whole clause, not just the verb: "charged monthly
  * around the 8th" is true of a series that did, and stops the day-of-month —

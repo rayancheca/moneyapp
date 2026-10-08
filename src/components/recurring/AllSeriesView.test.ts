@@ -116,3 +116,40 @@ describe("AllSeriesView — an annualized figure says when the series stops insi
     expect(rowOf("Gym")).not.toContain("ends ");
   });
 });
+
+/**
+ * 🔴 "Suggestions — detected, not yet confirmed — and already in the forecast above" stood over Amazon Prime on a copy
+ * of the owner's ledger 2026-10-08: "· lapsed" on its own card, in no figure above it (Committed $3,569.98 over 8
+ * lines, no Amazon). True of the other suggestion, Rocket Money, running late and forecast; false of this one.
+ */
+describe("AllSeriesView — the suggestions note claims the forecast only for the suggestions it carries", () => {
+  const noteOf = (fixture: SeriesView[]): string => {
+    const html = decode(
+      renderToStaticMarkup(createElement(AllSeriesView, { series: fixture, overdueBySeries: new Map(), today: "2026-10-08" })),
+    );
+    const at = html.indexOf('id="rec-suggestions"');
+    return html.slice(at, html.indexOf("</h2>", at)).replace(/<[^>]+>/g, "");
+  };
+  const rocket = series({ id: "r", name: "Rocket Money", status: "detected", evidence: "running-late" });
+  const amazon = series({
+    id: "a",
+    name: "Amazon Prime",
+    status: "detected",
+    evidence: "lapsed",
+    nextExpectedOn: null,
+    annualizedCents: null,
+    lastMatchedOn: "2026-07-05",
+  });
+
+  test("over a lapsed suggestion the note names the exception, in the word the card marks it with", () => {
+    const note = noteOf([rocket, amazon]);
+    expect(note).toContain("not yet confirmed");
+    expect(note).toContain("unless marked lapsed");
+    expect(note).not.toContain("and already in the forecast above");
+  });
+
+  test("over suggestions the forecast all carries, the note is the one it always was", () => {
+    expect(noteOf([rocket])).toContain("detected, not yet confirmed — and already in the forecast above");
+    expect(noteOf([rocket])).not.toContain("unless");
+  });
+});

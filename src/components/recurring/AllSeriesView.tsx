@@ -2,7 +2,7 @@ import Link from "next/link";
 import { confirmSeriesAction, dismissSeriesAction } from "@/app/recurring/actions";
 import { Money } from "@/components/ui/Money";
 import { EmptyState } from "@/components/ui/EmptyState";
-import { SERIES_EVIDENCE_LABEL, SERIES_EVIDENCE_NOTE, SUGGESTION_NOTE } from "@/lib/series-evidence";
+import { SERIES_EVIDENCE_LABEL, SERIES_EVIDENCE_NOTE, suggestionNote } from "@/lib/series-evidence";
 import type { SeriesView } from "@/services/recurring";
 import { CADENCE_LABEL, KIND_LABEL, annualizedEndNote, futureDateLabel, overdueNote } from "./labels";
 
@@ -66,9 +66,10 @@ export function AllSeriesView({
               {/* Every other section on this tab says whether it is forecast;
                   this one looked least forecast and was the only one silent.
                   The words live in `lib/series-evidence` beside the rest of the
-                  vocabulary. */}
+                  vocabulary — and say which suggestions are NOT forecast when
+                  one has lapsed (`suggestionNote`; Amazon Prime, 2026-10-08). */}
               <span className="ml-1 font-normal normal-case tracking-normal text-ink-faint">
-                — {SUGGESTION_NOTE}
+                — {suggestionNote(suggestions.map((s) => s.evidence))}
               </span>
             </h2>
             <span className="text-[11px] text-ink-faint">{suggestions.length} to review</span>
