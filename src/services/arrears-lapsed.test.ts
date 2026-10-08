@@ -15,7 +15,7 @@ import { budgetPaceStatuses, createBudget } from "./budgets";
 import { seriesInCategory } from "./category-detail";
 import { committedBook, runwayCard } from "./committed";
 import { forecastCurrentMonth } from "./forecast";
-import { upcomingOccurrences } from "./recurring";
+import { listSeries, upcomingOccurrences } from "./recurring";
 import { seriesDetail } from "./recurring-detail";
 import { subscriptionsCard } from "./subscriptions-card";
 
@@ -172,6 +172,86 @@ describe("a series the forecast has stopped forecasting is not owed this month e
   });
 });
 
+/**
+ * 🔴 …AND ITS FUTURE WAS STILL PROJECTED ON ITS OWN PAGE. Read on a copy of the owner's ledger 2026-10-08,
+ * `seriesDetail(<Amazon Prime>)`: `{evidence: 'lapsed', nextExpectedOn: '2026-11-05', nextExpected: [Nov 5, Dec 5,
+ * Jan 5], annualizedCents: 5988}` — so `/recurring/<Amazon Prime>` carried the badge "Lapsed" over "Next expected
+ * Nov 5 · Dec 5 · Jan 5" and "~$59.88/yr", and its End dialog said "Leaving the forecast ~$59.88 / yr" and "every
+ * charge from Nov 5 on" of a series the forecast had already let go — beside a subscriptions card saying "STOPPED
+ * BEING FORECAST", an Upcoming list without it, and a category card that hides the same Nov 5 ("one the app is not
+ * projecting does not [have a next date]"). `/recurring?tab=all` rolls the Next date the same way: the moment a
+ * CONFIRMED subscription lapses it is filed under "Lapsed — no longer forecast" with a future Next and an Annualized.
+ */
+describe("a series the forecast has let go has no future on its own page or in the All tab", () => {
+  /** Every forward figure a reader is shown about one series on one day. */
+  function forwardOf(seriesId: string, categoryName: string, today: string) {
+    const page = seriesDetail(bundle.db, seriesId, today);
+    const listed = listSeries(bundle.db, today).find((s) => s.id === seriesId)!;
+    return {
+      pageNext: page.nextExpected.map((o) => o.date),
+      pageAnnualized: page.annualizedCents,
+      listNext: listed.nextExpectedOn,
+      listAnnualized: listed.annualizedCents,
+      categoryNext: seriesInCategory(bundle.db, categoryId(categoryName), today).find((r) => r.id === seriesId)!
+        .nextExpectedOn,
+    };
+  }
+
+  test("his Amazon Prime on 2026-10-08: Lapsed, and nothing expected, nothing annualized, no Next", () => {
+    const page = seriesDetail(bundle.db, prime, TODAY);
+    expect(page.evidence).toBe("lapsed");
+    expect(forwardOf(prime, "Streaming", TODAY)).toEqual({
+      pageNext: [],
+      pageAnnualized: null,
+      listNext: null,
+      listAnnualized: null,
+      categoryNext: null,
+    });
+    // the date the sentence's editor opens on is the schedule the detector stored, not one rolled past the lapse
+    expect(page.nextExpectedOn).toBe("2026-08-05");
+    // the confirmed series is the All tab's "Lapsed" row; the detected one (his) is a suggestion — neither has a Next
+    bundle.db.update(recurringSeries).set({ status: "detected" }).where(eq(recurringSeries.id, prime)).run();
+    expect(forwardOf(prime, "Streaming", TODAY)).toMatchObject({ pageNext: [], listNext: null, pageAnnualized: null });
+  });
+
+  test("swept across the lapse: a future while it is forecast, none from the day it is not", () => {
+    for (let day = "2026-10-06"; day <= "2026-10-12"; day = addDays(day, 1)) {
+      const stopped = subscriptionsCard(bundle.db, day)!.lapsed.some((l) => l.name === "Prime");
+      const f = forwardOf(prime, "Streaming", day);
+      if (stopped) {
+        expect({ day, ...f }).toEqual({
+          day,
+          pageNext: [],
+          pageAnnualized: null,
+          listNext: null,
+          listAnnualized: null,
+          categoryNext: null,
+        });
+      } else {
+        // still forecast: the page, the All tab and the category card name the same next date, and a year of it
+        expect({ day, ...f }).toEqual({
+          day,
+          pageNext: ["2026-11-05", "2026-12-05", "2027-01-05"],
+          pageAnnualized: 12 * 499,
+          listNext: "2026-11-05",
+          listAnnualized: 12 * 499,
+          categoryNext: "2026-11-05",
+        });
+      }
+    }
+  });
+
+  test("the late rent beside it keeps its whole future — this is the lapse, not lateness", () => {
+    expect(forwardOf(rent, "Rent", TODAY)).toEqual({
+      pageNext: ["2026-11-01", "2026-12-01", "2027-01-01"],
+      pageAnnualized: 12 * 210900,
+      listNext: "2026-11-01",
+      listAnnualized: 12 * 210900,
+      categoryNext: "2026-11-01",
+    });
+  });
+});
+
 describe("money in never lapses, in arrears as in the forecast", () => {
   /*
    * ⛔ `lapsedSeriesShouldStopForecasting`: an income series going quiet is evidence about the IMPORTS, so the forward
@@ -211,5 +291,10 @@ describe("money in never lapses, in arrears as in the forecast", () => {
     const row = budgetPaceStatuses(bundle.db, TODAY).find((s) => s.categoryName === "Rent")!;
     expect(row.overdue.find((o) => o.id === clawback)).toMatchObject({ nextDate: "2026-10-07", amountCents: 2500 });
     expect(row.tail.find((o) => o.id === clawback)).toMatchObject({ nextDate: "2026-10-14", occurrenceCount: 3 });
+    // …and its own page and the All tab keep its future, as the forecast does
+    const page = seriesDetail(bundle.db, clawback, TODAY);
+    expect(page.nextExpected.map((o) => o.date)).toEqual(["2026-10-14", "2026-10-21", "2026-10-28"]);
+    expect(page.annualizedCents).not.toBeNull();
+    expect(listSeries(bundle.db, TODAY).find((s) => s.id === clawback)!.nextExpectedOn).toBe("2026-10-14");
   });
 });

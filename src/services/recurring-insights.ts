@@ -9,7 +9,7 @@ import { isAgentsSeries } from "./analytics";
 import { surfaceInsights, type InsightInput } from "./insight-surface";
 import type { InsightCandidate, SurfaceInsights } from "./insights";
 import { provenanceFor } from "./provenance";
-import { hasStoppedForecasting, listSeries, type SeriesOverrides, type SeriesView } from "./recurring";
+import { listSeries, seriesIsForecast, type SeriesOverrides, type SeriesView } from "./recurring";
 
 /** Exactly what `seriesHasLapsed` reads — the stored row, overrides intact. */
 type LapseInput = SeriesOverrides & { lastMatchedOn: string | null };
@@ -85,10 +85,10 @@ const MIN_SERIES_TO_COMPARE = 2;
  * the pass-54 mistake. The row is the input every other caller passes.
  */
 function isLive(view: SeriesView, row: LapseInput | undefined, today: string): boolean {
-  if (view.status !== "confirmed" && view.status !== "detected") return false;
   if (view.annualizedCents === null) return false;
   if (!row) return false;
-  return !hasStoppedForecasting({ ...row, kind: view.kind }, today);
+  // the rule every forward leg asks — this module wrote its own copy first, and was the only one to ask the lapse
+  return seriesIsForecast({ ...row, kind: view.kind, status: view.status }, today);
 }
 
 export function recurringInsights(

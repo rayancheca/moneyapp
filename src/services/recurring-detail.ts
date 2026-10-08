@@ -26,6 +26,7 @@ import {
   toProjectable,
   type SeriesOccurrence,
   seriesEvidence,
+  seriesIsForecast,
 } from "./recurring";
 import { seriesCategoryIds } from "./series-category";
 
@@ -318,8 +319,14 @@ export function seriesDetail(
    * also the detector's re-detection sink — a dated future charge under that
    * badge is the app arguing with him. `ended` really did bill and stopped; its
    * history stays, its future does not.
+   *
+   * ⛔ …AND ONLY WHILE THE FORECAST STILL CARRIES IT (`seriesIsForecast`, the rule every forward leg asks). 🔴 This
+   * read the status alone, so on a copy of the owner's ledger 2026-10-08 `/recurring/<Amazon Prime>` showed its
+   * "Lapsed" badge ("no longer forecast") over "Next expected Nov 5 · Dec 5 · Jan 5", and its End dialog said "every
+   * charge from Nov 5 on" — while the subscriptions card said "STOPPED BEING FORECAST", the Upcoming tab left it out
+   * and its category card hid the very same Nov 5.
    */
-  const projects = s.status === "detected" || s.status === "confirmed";
+  const projects = seriesIsForecast(s, today);
 
   // Size the projection window off the series' own step so even a long-interval
   // annual series reaches NEXT_EXPECTED_COUNT occurrences: the first can land up
@@ -388,7 +395,7 @@ export function seriesDetail(
     accountName,
     cadence: eff.cadence,
     // Rolled forward so the sentence never reads a date in the past. Only the
-    // statuses the forecast actually projects roll — see `projects` above.
+    // series the forecast still projects roll — see `projects` above.
     // ⛔ The schedule's step, not settlement's (`nextStillToCome`, listSeries'
     // reading): the sentence's editor opens on this date and Save writes it back
     // as the anchor. 🔴 Read through settlement it opened past a payday a deposit
@@ -415,7 +422,7 @@ export function seriesDetail(
     isActive: isSeriesActive(s, today),
     evidence: seriesEvidence(s, today),
     endsOn: s.userEndsOn ?? null,
-    annualizedCents: annualizedCentsOf(toProjectable(s), s.status, today),
+    annualizedCents: annualizedCentsOf(s, today),
     nextExpected,
     overdue,
     linkedTxns,

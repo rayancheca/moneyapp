@@ -84,18 +84,35 @@ describe("seriesRowLabel — evidence for a live series, status for one that is 
 
 describe("noScheduleReason", () => {
   test("an ended series says its future is over and its past is not", () => {
-    expect(noScheduleReason("ended")).toContain("has ended");
-    expect(noScheduleReason("ended")).toContain("stay in the ledger");
+    expect(noScheduleReason("ended", "lapsed")).toContain("has ended");
+    expect(noScheduleReason("ended", "lapsed")).toContain("stay in the ledger");
   });
 
   /* ⛔ Dismissed is HIS decision, not the app's — the sentence says so. */
   test("a dismissed series is described as the owner's decision", () => {
-    expect(noScheduleReason("dismissed")).toContain("You said");
+    expect(noScheduleReason("dismissed", "active")).toContain("You said");
   });
 
-  test("a live series has no reason to give — it still has a schedule", () => {
-    expect(noScheduleReason("confirmed")).toBeNull();
-    expect(noScheduleReason("detected")).toBeNull();
+  test("a live series that is still forecast has no reason to give — it still has a schedule", () => {
+    for (const e of ["active", "never-billed", "running-late"] as const) {
+      expect(noScheduleReason("confirmed", e)).toBeNull();
+      expect(noScheduleReason("detected", e)).toBeNull();
+    }
+  });
+
+  /*
+   * 🔴 A LAPSED series lost its "Next expected" card (the forecast let it go, so its page stopped projecting it) and
+   * nothing took the card's place: `/recurring/<Amazon Prime>` would read "Lapsed" over no schedule and no word why.
+   * The sentence is the evidence's — the app's reading, not his decision — and says what brings it back.
+   */
+  test("a live series the forecast has let go says why nothing is expected, and that a charge brings it back", () => {
+    for (const status of ["confirmed", "detected"] as const) {
+      const reason = noScheduleReason(status, "lapsed");
+      expect(reason).toContain("no longer forecast");
+      expect(reason).toContain("a new charge brings it back");
+      expect(reason).toContain("stay in the ledger");
+      expect(reason).not.toContain("You said");
+    }
   });
 });
 
@@ -114,10 +131,12 @@ describe("seriesIsOver — the one predicate two sentences on the page turn on",
     expect(seriesIsOver("detected")).toBe(false);
   });
 
-  test("noScheduleReason speaks for exactly the statuses this names", () => {
+  test("noScheduleReason speaks for exactly the statuses this names — and, while live, only for a lapse", () => {
     // the linkage, not two lists that happen to agree today
     for (const s of ["detected", "confirmed", "dismissed", "ended"] as const) {
-      expect(noScheduleReason(s) !== null).toBe(seriesIsOver(s));
+      for (const e of EVERY) {
+        expect(noScheduleReason(s, e) !== null).toBe(seriesIsOver(s) || e === "lapsed");
+      }
     }
   });
 });

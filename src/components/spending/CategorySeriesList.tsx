@@ -31,10 +31,11 @@ export function CategorySeriesList({ rows, today }: { rows: CategorySeriesRow[];
                 {s.cadence}
                 {/* a late or never-billed series is still forecast, so it still
                     has a next date — one the app is not projecting does not.
-                    `listSeries` only rolls the date forward for detected and
-                    confirmed, so an ended series' stored date is the past. */}
+                    `listSeries` decides (`seriesIsForecast`): a lapsed series
+                    has none, and an ended series keeps its stored date, which is
+                    the past — so the status test stays and the lapse test, a
+                    second copy of the rule, went to the service. */}
                 {s.nextExpectedOn &&
-                  s.evidence !== "lapsed" &&
                   (s.status === "detected" || s.status === "confirmed") &&
                   ` · next ${futureDateLabel(s.nextExpectedOn, today)}`}
                 {/* 🔴 "next Oct 1", of a bill that came due Sep 1 and never

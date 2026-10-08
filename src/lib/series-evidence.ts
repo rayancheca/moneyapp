@@ -150,8 +150,18 @@ export function seriesDrawsAsRecurring(status: SeriesStatusForCopy): boolean {
   return status !== "dismissed";
 }
 
-export function noScheduleReason(status: SeriesStatusForCopy): string | null {
-  if (!seriesIsOver(status)) return null;
+/**
+ * ⛔ …and for a LIVE series the forecast has let go — the evidence's `lapsed`, which is the app's reading, not his
+ * decision, so the sentence says what brings it back. 🔴 Its page stopped projecting it (`seriesIsForecast`) and the
+ * "Next expected" card went with nothing in its place: `/recurring/<Amazon Prime>` would have read "Lapsed" over no
+ * schedule and no word why. A card removed is not a claim withdrawn, and a claim withdrawn needs its reason.
+ */
+export function noScheduleReason(status: SeriesStatusForCopy, evidence: SeriesEvidence): string | null {
+  if (!seriesIsOver(status)) {
+    return evidence === "lapsed"
+      ? "This series has gone quiet past the point a bill stops, so it is no longer forecast and nothing more is expected from it — a new charge brings it back. Its charges below stay in the ledger."
+      : null;
+  }
   if (status === "ended")
     return "This series has ended, so nothing more is expected from it. Its charges below stay in the ledger.";
   if (status === "dismissed")

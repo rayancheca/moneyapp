@@ -1187,10 +1187,21 @@ describe("detection on the synthetic corpus", () => {
       expect(s.nextExpectedOn >= later).toBe(true);
     }
 
+    // money in never lapses: stored 2026-07-02, a Thursday, rolled to the first Thursday not in the past
+    const salary = listed.find((s) => s.name === "Employer (cash)")!;
+    expect(salary.storedNextExpectedOn).toBe("2026-07-02");
+    expect(salary.nextExpectedOn).toBe("2027-08-12");
+
+    /*
+     * ⛔ …and a subscription quiet for thirteen months is not rolled forward at all: the forecast let it go
+     * (`seriesIsForecast`), so nothing is next. This asserted "2027-08-15" — a Next date for exactly the case this
+     * test names, the UBER *ONE the owner called "clearly not recurring anymore". Measured on a copy of his ledger
+     * 2026-10-08 the same rule put "Nov 5" on Amazon Prime beside its "Lapsed" badge.
+     */
     const netflix = listed.find((s) => s.name === "Netflix")!;
-    // stored 2026-07-15, 13 calendar months on is the first 15th not in the past
+    expect(netflix.evidence).toBe("lapsed");
     expect(netflix.storedNextExpectedOn).toBe("2026-07-15");
-    expect(netflix.nextExpectedOn).toBe("2027-08-15");
+    expect(netflix.nextExpectedOn).toBeNull();
   });
 
   /*
