@@ -180,12 +180,17 @@ export function amountsAreStable(amounts: readonly number[]): boolean {
 }
 
 /**
- * Does this gap keep its cadence — within the cadence's tolerance of the median gap? The test `analyzeGroup`'s
- * `gapConsistency` counts, extracted for the same reason as `amountsAreStable`: /summary's "Deposited irregularly"
- * caveat (`depositsAreIrregular`) asks detection's question instead of keeping a slack of its own.
+ * Does this gap keep its cadence's STEP — within detection's tolerance (`CADENCE_TOLERANCE_DAYS`) of the cadence's
+ * nominal days (`CADENCE_NOMINAL_DAYS`)? A weekly gap of 5 to 9 days does: every payday within a day of its
+ * weekday. /summary's "Deposited irregularly" caveat (`depositsAreIrregular`) asks this instead of keeping a slack
+ * of its own.
+ *
+ * 🔴 Not detection's `gapConsistency` test, which holds a gap to the MEDIAN gap: that is a confidence score over many
+ * rows, and over a few the median is pulled off the step — gaps 8, 8, 5 (each payday within a day of its Thursday)
+ * have a median of 8, and 5 misses it by 3. Held to the week, none does.
  */
-export function gapKeepsCadence(gap: number, medianGap: number, cadence: Cadence): boolean {
-  return Math.abs(gap - medianGap) <= CADENCE_TOLERANCE_DAYS[cadence];
+export function gapKeepsStep(gap: number, cadence: Cadence): boolean {
+  return Math.abs(gap - CADENCE_NOMINAL_DAYS[cadence]) <= CADENCE_TOLERANCE_DAYS[cadence];
 }
 
 export function analyzeGroup(txns: readonly AnalyzableTxn[]): GroupStats | null {
@@ -212,7 +217,8 @@ export function analyzeGroup(txns: readonly AnalyzableTxn[]): GroupStats | null 
   const cv = allIdentical ? 0 : stddev / Math.abs(mean);
 
   const toleranceDays = CADENCE_TOLERANCE_DAYS[cadence];
-  const gapConsistency = gaps.filter((g) => gapKeepsCadence(g, medianGap, cadence)).length / gaps.length;
+  const gapConsistency =
+    gaps.filter((g) => Math.abs(g - medianGap) <= toleranceDays).length / gaps.length;
   const amountScore = 1 - cv / AMOUNT_STABILITY_CV_MAX;
   const confidence = Math.round((0.5 * gapConsistency + 0.5 * amountScore) * 100) / 100;
 

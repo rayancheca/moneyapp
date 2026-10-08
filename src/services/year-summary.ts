@@ -19,7 +19,7 @@ import { yearSummary, type YearLineInput, type YearSummary } from "@/lib/year-su
 import { investmentSideAccountIds, outsidePortfolioCashAccountIds } from "./accounts";
 import { offAgentsCash } from "./analytics";
 import { portfolioSeries, realizedSalesByDay } from "./portfolio";
-import { fitCadence, gapKeepsCadence, median } from "./recurring";
+import { fitCadence, gapKeepsStep, median } from "./recurring";
 import { yearSpendingWindow, type YearSpendingWindow } from "./year-insights";
 
 /**
@@ -502,21 +502,27 @@ export function cashJobNaming(year: number, facts: PayLineFacts): { label: strin
  *
  * ⛔ DETECTION'S RHYTHM, NOT A SLACK OF ITS OWN. The cadence is fitted to the rows' own median gap as recurring
  * detection fits one (`fitCadence`), so no series is assumed and it holds for rows in none; each gap must then keep
- * that cadence by detection's tolerance (`gapKeepsCadence`). Rows whose median gap fits no cadence keep no rhythm a
- * payroll keeps — his 2026, two June ATM lumps and a September payroll lump (gaps 1, 110, 1), is that.
+ * that cadence's step by detection's tolerance (`gapKeepsStep`: a weekly gap of 5 to 9 days). Rows whose median gap
+ * fits no cadence keep no rhythm a payroll keeps — his 2026, two June ATM lumps and a September payroll lump (gaps
+ * 1, 110, 1), is that.
  *
  * 🔴 It allowed the gaps a SPREAD of 3 days (longest minus shortest), a number of its own. A weekly payday moved a day
  * early one week and a day late the next — Wed, Fri, Wed — has gaps 9 and 5, a spread of 4, so the caveat called a
- * payroll irregular that detection, holding a weekly gap to 2 days either side of the median, calls on time. Latent
- * on his ledger (2026-10-08): his 2026 holds its June lumps either way; his payroll has landed on a Wed and a Thu.
+ * payroll irregular that detection calls on time. Latent on his ledger (2026-10-08): his 2026 holds its June lumps
+ * either way; his payroll has landed on a Wed and a Thu.
+ *
+ * 🔴 …and the first fix held each gap to the MEDIAN gap, which a few deposits pull off the week (review,
+ * 2026-10-08): Wed, Thu, Fri, Wed — gaps 8, 8, 5, each payday within a day of its Thursday — has a median of 8 that
+ * 5 misses by 3, and 12 of the 81 four-deposit ±1-day weeks were called irregular, 6 of them ones the spread had
+ * passed. The running year's first weeks, or a new job's first month. Held to the step, none is; nor a
+ * last-business-day monthly payroll (gaps 28, 33, 30, 28), which both earlier rules flagged.
  */
 function depositsAreIrregular(postedOn: readonly string[]): boolean {
   const days = [...new Set(postedOn)].sort();
   if (days.length < 3) return false;
   const gaps = days.slice(1).map((day, i) => diffDays(days[i]!, day));
-  const medianGap = median(gaps);
-  const cadence = fitCadence(medianGap, days.map((day) => Number(day.slice(8, 10))));
-  return cadence === null || !gaps.every((gap) => gapKeepsCadence(gap, medianGap, cadence));
+  const cadence = fitCadence(median(gaps), days.map((day) => Number(day.slice(8, 10))));
+  return cadence === null || !gaps.every((gap) => gapKeepsStep(gap, cadence));
 }
 
 /**

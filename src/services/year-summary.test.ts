@@ -12,6 +12,7 @@ import { importFiles } from "@/db/schema/imports";
 import { institutions } from "@/db/schema/institutions";
 import { recurringSeries, type SeriesKind, type SeriesStatus } from "@/db/schema/recurring";
 import { transactions } from "@/db/schema/transactions";
+import { addDays } from "@/lib/dates";
 import { dedupeHash } from "@/lib/hash";
 import { normalizeDescription } from "@/lib/normalize";
 import { createAccount } from "./accounts";
@@ -417,15 +418,68 @@ describe("yearSummaryView — the pay line names the job its rows are attached t
 
   /*
    * 🔴 …but one moved a day EACH WAY in consecutive weeks was called irregular. His Wells Fargo payroll has landed
-   * on a Wednesday (Sep 23) and a Thursday (Sep 24); here it lands Wed Jan 13 (a day early), Fri Jan 22 (MLK Day, an
-   * ACH holiday, held it a day) and Wed Jan 27 — every deposit within a day of its Thursday, gaps 6, 9, 5, 8. Their
-   * SPREAD is 4, past the old 3-day slack. Recurring detection holds a weekly gap to 2 days either side of the
-   * median gap (`CADENCE_TOLERANCE_DAYS`), and every one of these is inside it.
+   * on a Wednesday (Sep 23) and a Thursday (Sep 24); here it lands Wed Jan 13 (a day early), Fri Jan 22 (a day late)
+   * and Wed Jan 27 — every deposit within a day of its Thursday, gaps 6, 9, 5, 8. Their SPREAD is 4, past the old
+   * 3-day slack. Recurring detection holds a weekly gap to 2 days (`CADENCE_TOLERANCE_DAYS`), and every one of these
+   * is inside it.
    */
   test("a weekly payroll a day early one week and a day late the next is still regular", () => {
     const pay = paySeries("It America LLC (weekly pay)");
     for (const day of ["2027-01-07", "2027-01-13", "2027-01-22", "2027-01-27", "2027-02-04"]) {
       insert({ postedOn: day, amountCents: 114192, rawDescription: "It America LLC Payroll", categoryName: "Salary", seriesId: pay });
+    }
+    expect(payLine(2027).caveat).toBeUndefined();
+  });
+
+  /*
+   * 🔴 …and that fix held each gap to the rows' MEDIAN gap, which a few deposits pull off the week (review,
+   * 2026-10-08). Wed Jan 6, Thu Jan 14, Fri Jan 22 and Wed Jan 27 are each within a day of their Thursday; their gaps
+   * 8, 8, 5 have a median of 8, and 5 is 3 from it, past detection's 2 — so a payroll the 3-day spread had passed
+   * was called irregular. Fri, Thu, Wed, Fri (6, 6, 9) the same, and two more on-time weeks did not cure it. This is
+   * the running year's /summary in its first weeks, or a new job's first month: a gap is held to the WEEK.
+   */
+  test.each([
+    ["8, 8, 5", ["2027-01-06", "2027-01-14", "2027-01-22", "2027-01-27"]],
+    ["6, 6, 9", ["2027-01-08", "2027-01-14", "2027-01-20", "2027-01-29"]],
+    ["8, 8, 5, 8, 7", ["2027-01-06", "2027-01-14", "2027-01-22", "2027-01-27", "2027-02-04", "2027-02-11"]],
+  ])("a weekly payroll's first few deposits, gaps %s, are regular", (_gaps, days) => {
+    const pay = paySeries("It America LLC (weekly pay)");
+    for (const day of days) {
+      insert({ postedOn: day, amountCents: 114192, rawDescription: "It America LLC Payroll", categoryName: "Salary", seriesId: pay });
+    }
+    expect(payLine(2027).caveat).toBeUndefined();
+  });
+
+  /*
+   * ⛔ The invariant the caveat owes, every case of it: deposits each within a day of their payday are not
+   * "deposited irregularly", however few there are. Every ±1-day offset of 3 to 7 weekly, and biweekly, paydays.
+   */
+  test("every deposit within a day of its payday is regular — all of them, weekly and biweekly", () => {
+    const flagged: string[] = [];
+    for (const step of [7, 14]) {
+      for (let n = 3; n <= 7; n++) {
+        for (let code = 0; code < 3 ** n; code++) {
+          const postedOn = Array.from({ length: n }, (_, i) =>
+            addDays("2027-01-07", i * step + (Math.floor(code / 3 ** i) % 3) - 1),
+          );
+          const naming = cashJobNaming(2027, { seriesName: "It America LLC (weekly pay)", postedOn });
+          if (naming.caveat !== undefined) flagged.push(`every ${step} days: ${postedOn.join(", ")}`);
+        }
+      }
+    }
+    expect(flagged).toEqual([]);
+  });
+
+  /*
+   * 🔴 A monthly payroll on the last business day was irregular under both earlier rules. 2027: Fri Jan 29 (the 31st
+   * a Sunday), Fri Feb 26 (the 28th a Sunday), Wed Mar 31, Fri Apr 30, Fri May 28 (the 31st Memorial Day) — gaps 28,
+   * 33, 30, 28, a spread of 5 and a median of 29 that 33 misses by 4. Each is within detection's 3 days of the
+   * monthly step's 30.
+   */
+  test("a monthly payroll on the last business day is regular", () => {
+    const pay = paySeries("Monthly payroll");
+    for (const day of ["2027-01-29", "2027-02-26", "2027-03-31", "2027-04-30", "2027-05-28"]) {
+      insert({ postedOn: day, amountCents: 114192, rawDescription: "Payroll", categoryName: "Salary", seriesId: pay });
     }
     expect(payLine(2027).caveat).toBeUndefined();
   });
