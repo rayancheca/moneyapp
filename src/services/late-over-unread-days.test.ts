@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { eq } from "drizzle-orm";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
@@ -332,6 +333,47 @@ describe("a series with no account of its own is looked for where its newest cha
     expect(seriesDetail(bundle.db, RENT, "2026-10-25").evidence).toBe("running-late");
   });
 
+  /*
+   * 🔴 A checked day is read, not in progress (review of 8e1b4c6). On a copy of his ledger the rent — last Sep 2,
+   * tolerance 48, Wells Fargo checked through Oct 20 — read "Oct 20, 2026 is the last day every account it posts to
+   * has been checked through — 48 of the 48 days its tolerance allows — so it cannot be called late yet": every
+   * on-time day read, nothing on any of them, and one more checked day flipped it to "53 days, past the 48-day
+   * tolerance". Oct 20 read empty settles it.
+   */
+  test("its last on-time day read with nothing on it is late; a day short, it counts 47 of the 48", () => {
+    rentThatMoved();
+    // Sep 2 + 48 = Oct 20, the last on-time day
+    checkedThrough(WF, "2026-09-25", "2026-10-19");
+    const rentOn = () => upcomingOccurrences(bundle.db, "2026-10-25", 30).find((o) => o.seriesId === RENT)!.staleness!;
+    const short = rentOn();
+    expect(short).toMatchObject({ checkedThrough: "2026-10-19", isStale: false, awaitingStatements: true });
+    expect(stalenessSentence(short)).toContain("47 of the 48 days its tolerance allows");
+    checkedThrough(WF, "2026-10-20", "2026-10-20");
+    const read = rentOn();
+    expect(read).toMatchObject({ checkedThrough: "2026-10-20", isStale: true, awaitingStatements: false });
+    expect(stalenessSentence(read)).toContain("past the 48-day tolerance");
+    expect(stalenessSentence(read)).not.toContain("48 of the 48");
+    expect(seriesDetail(bundle.db, RENT, "2026-10-25").evidence).toBe("running-late");
+  });
+
+  /*
+   * One charge on a lagging account keeps that account in the set, so the frontier can fall BEFORE the last charge —
+   * it covers none of the tolerance, and the sentence says 0, never a negative count (review of 8e1b4c6: without
+   * the clamp, his rent's cadence at last match Oct 1, frontier Aug 12, read "-50 of the 48 days").
+   */
+  test("a frontier before its own last charge covers none of the tolerance — never a negative count", () => {
+    rentThatMoved();
+    posted(CHASE, RENT, "2026-10-01", -229_121);
+    bundle.db.update(recurringSeries).set({ lastMatchedOn: "2026-10-01" }).where(eq(recurringSeries.id, RENT)).run();
+    const rent = upcomingOccurrences(bundle.db, "2026-11-25", 30).find((o) => o.seriesId === RENT)!.staleness!;
+    expect(rent).toMatchObject({ checkedThrough: "2026-08-12", isStale: false, awaitingStatements: true });
+    const sentence = stalenessSentence(rent);
+    expect(sentence).toContain(
+      "Aug 12, 2026 is the last day every account it posts to has been checked through — 0 of the 48 days its tolerance allows",
+    );
+    expect(sentence).not.toMatch(/-\d+ of the/);
+  });
+
   test("the landing accounts: the account it names, else every account its last two posting days posted to", () => {
     rentThatMoved();
     // two charges in a row on Wells Fargo: it moved there — Venture X and Chase are left behind
@@ -391,5 +433,23 @@ describe("a due day the ledger has checked is never called unread — the series
     expect(pay).toMatchObject({ isStale: false, awaitingStatements: true, checkedThrough: "2026-10-02" });
     expect(stalenessSentence(pay)).not.toContain("not looked for");
     expect(stalenessSentence(pay)).toContain("8 of the 12 days its tolerance allows");
+  });
+
+  /*
+   * 🔴 The other side of the same day (review of 8e1b4c6): with Wells Fargo read through Oct 6 — Sep 24 + 12, the
+   * last day inside 12.5 — the card's amber note said the Oct 1 payday passed with no deposit imported, while the
+   * pay's chip said "12 of the 12 days its tolerance allows — so it cannot be called late yet" and the footer counted
+   * it awaiting statements. Every on-time day was read empty: it is late, on both.
+   */
+  test("his pay with Wells Fargo read through Oct 6: every on-time day read empty — late, beside the passed payday", () => {
+    checkedThrough(WF, "2026-09-25", "2026-10-06");
+    const unbanked = unbankedIncomeForSeries(bundle.db, new Set([PAY]), "2026-10-01", TODAY);
+    expect(unbanked.series[0]).toMatchObject({ checkedThrough: "2026-10-06", checkedOccurrenceCount: 1 });
+    const pay = upcomingOccurrences(bundle.db, TODAY, 30).find((o) => o.seriesId === PAY)!.staleness!;
+    expect(pay).toMatchObject({ isStale: true, awaitingStatements: false, checkedThrough: "2026-10-06" });
+    expect(stalenessSentence(pay)).not.toContain("cannot be called late yet");
+    const html = renderToStaticMarkup(createElement(ForecastCard, { forecast: forecastCurrentMonth(bundle.db, TODAY) }));
+    expect(bandLabels(html).get("Money in")).toMatch(/running late$/);
+    expect(html).not.toContain("12 of the 12 days");
   });
 });

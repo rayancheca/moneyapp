@@ -602,11 +602,31 @@ describe("a series is late only on days the ledger has checked", () => {
     expect(seriesEvidence(monthly, today, "2026-08-12")).toBe("awaiting-statements");
   });
 
-  test("the boundary is the tolerance itself, measured to the checked day", () => {
-    // Jul 15 + 48 = Sep 1: checked through it, the charge could still be on time
-    expect(seriesStaleness(monthly, today, "2026-09-01")).toMatchObject({ isStale: false, awaitingStatements: true });
-    // one more checked day and the bill is late on days the ledger has read
-    expect(seriesStaleness(monthly, today, "2026-09-02")).toMatchObject({ isStale: true, awaitingStatements: false });
+  /*
+   * 🔴 A CHECKED DAY IS READ, NOT IN PROGRESS. Measured to the checked day itself, it treated that day like today —
+   * still able to receive a charge — and so called a series "awaiting statements" with every on-time day read and
+   * nothing on any of them: his rent's sentence said "48 of the 48 days its tolerance allows — so it cannot be called
+   * late yet" (copy of his ledger, WF checked through Oct 20, last Sep 2; review of 8e1b4c6). The frontier is
+   * inclusive (`accountCoverage`'s `verifiedThrough`; "a payday ON the frontier day was read", arrears.ts): once the
+   * last on-time day is read empty, anything that posts later is past tolerance — the miss is settled.
+   */
+  test("the boundary is the last on-time day: read with nothing on it, the miss is settled", () => {
+    // Jul 15 + 48 = Sep 1, the last on-time day. Checked through Aug 31, a charge could still post on time on Sep 1
+    expect(seriesStaleness(monthly, today, "2026-08-31")).toMatchObject({ isStale: false, awaitingStatements: true });
+    // checked through Sep 1 with nothing on it: whatever posts next is day 49 or later — late on days the ledger has read
+    expect(seriesStaleness(monthly, today, "2026-09-01")).toMatchObject({ isStale: true, awaitingStatements: false });
+    expect(seriesEvidence(monthly, today, "2026-09-01")).toBe("running-late");
+    // his pay: Sep 24 + 12 = Oct 6, the last day inside 12.5. Read through Oct 5 it can still be on time; Oct 6, not
+    expect(seriesStaleness(weekly, today, "2026-10-05")).toMatchObject({ isStale: false, awaitingStatements: true });
+    expect(seriesStaleness(weekly, today, "2026-10-06")).toMatchObject({ isStale: true, awaitingStatements: false });
+  });
+
+  test("today is still in progress, even when a statement covers it", () => {
+    // Aug 21 + 48 = today: a charge can still post today on time, checked through today or past it
+    const dueToday = { ...monthly, lastMatchedOn: "2026-08-21" };
+    for (const checked of ["2026-10-07", "2026-10-08", "2026-10-09"]) {
+      expect(seriesStaleness(dueToday, today, checked)).toMatchObject({ isStale: false, awaitingStatements: false });
+    }
   });
 
   test("an account with no checked record cannot make a series late", () => {

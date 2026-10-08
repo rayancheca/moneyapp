@@ -1047,8 +1047,8 @@ export interface SeriesStaleness {
   /** step × INACTIVE_MISS_LIMIT + cadence grace — past this the evidence is late */
   toleranceDays: number;
   /**
-   * True once the evidence is older than toleranceDays ON DAYS THE LEDGER HAS CHECKED, or absent entirely.
-   * Measured to today only when the caller passed no `checkedThrough` (see `seriesStaleness`).
+   * True once the evidence is older than toleranceDays ON DAYS THE LEDGER HAS CHECKED — its last on-time day read
+   * empty — or absent entirely. Measured to today only when the caller passed no `checkedThrough` (`seriesStaleness`).
    */
   isStale: boolean;
   /**
@@ -1203,8 +1203,8 @@ function lapsedToleranceDays(staleness: SeriesStaleness): number {
  *
  * ⛔ LATE IS A CLAIM ABOUT DAYS THE LEDGER HAS CHECKED. `checkedThrough` is the last day every account the series
  * posts to NOW has been checked through (`checkedThroughBySeries` — the frontier the passed-payday sentences name),
- * and the evidence is late only if it had run past tolerance by then. Past tolerance only over days after it, the
- * tolerance runs out on days nobody has checked: `awaitingStatements`, never `isStale`.
+ * and the evidence is late only if its last on-time day is on or before it — read, with nothing on it. Past tolerance
+ * only over days after it, the tolerance runs out on days nobody has checked: `awaitingStatements`, never `isStale`.
  *
  * 🔴 Measured to today, it published a warning about imports that had not happened. His ledger 2026-10-08:
  * /recurring said of his pay "It falls after Thu, Sep 24, 2026, the last day every account that pay lands in has been
@@ -1231,12 +1231,22 @@ export function seriesStaleness(
   const toleranceDays = stepDays * INACTIVE_MISS_LIMIT + CADENCE_TOLERANCE_DAYS[cadence];
   const daysSinceLastMatch = s.lastMatchedOn ? diffDays(s.lastMatchedOn, today) : null;
   const pastTolerance = daysSinceLastMatch === null || daysSinceLastMatch > toleranceDays;
+  /*
+   * Measured to the day AFTER the checked day, never past today. The checked day is read (inclusive, like
+   * `verifiedThrough`); today is not — it can still receive a charge, so measuring to it asks "has the last on-time
+   * day passed?". The day after the checked day asks the same of the read days: once the last on-time day is read
+   * empty, whatever posts next is past tolerance. 🔴 Measured to the checked day itself, his rent read "48 of the 48
+   * days its tolerance allows — so it cannot be called late yet" with every on-time day read (review of 8e1b4c6).
+   */
+  const measuredTo =
+    checkedThrough === undefined || checkedThrough === null || compareDates(addDays(checkedThrough, 1), today) >= 0
+      ? today
+      : addDays(checkedThrough, 1);
   // never billed has nothing to be late FROM, checked or not; unmeasured is measured to today
   const lateOnCheckedDays =
     s.lastMatchedOn === null || checkedThrough === undefined
       ? pastTolerance
-      : checkedThrough !== null &&
-        diffDays(s.lastMatchedOn, compareDates(checkedThrough, today) < 0 ? checkedThrough : today) > toleranceDays;
+      : checkedThrough !== null && diffDays(s.lastMatchedOn, measuredTo) > toleranceDays;
   return {
     lastMatchedOn: s.lastMatchedOn,
     daysSinceLastMatch,
