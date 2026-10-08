@@ -449,9 +449,13 @@ export function overdueNote(date: string, occurrenceCount: number): string {
  * ⚠️ When the two agree there is only one number, so the ± stays attached to
  * the headline and no sub-line is drawn — a row repeating a figure it has just
  * printed is noise, and every fixture series is in this state.
+ *
+ * ⛔ The average and its spread are ONE reading (`lib/posted-average`), the one the All tab and the popover name: a pay
+ * series' is what a payday paid at the rate in force now. 🔴 Read raw, his pay page printed "posted avg +$1,789.15 ±
+ * 1881.46" under "+$1,141.92" (a copy of his ledger, 2026-10-08) — the band a bare number beside money.
  */
 export interface PostedSpreadReading {
-  /** the ± figure, already formatted to two places; null when there is none */
+  /** the band as it is printed, "± $583.58" — money, like the figures beside it; null when there is none */
   text: string | null;
   /** true when the ± hangs off the headline because it IS the postings' mean */
   attachedToHeadline: boolean;
@@ -464,10 +468,8 @@ export function postedSpreadReading(
   postedAvgCents: number | null,
   postedStddevCents: number | null,
 ): PostedSpreadReading {
-  const text =
-    postedStddevCents !== null && postedStddevCents > 0
-      ? (postedStddevCents / 100).toFixed(2)
-      : null;
+  // 🔴 `toFixed(2)` printed "± 583.58" beside "-$1,849.76", and "± 1881.46" with no separator: the band is money too
+  const text = postedStddevCents !== null && postedStddevCents > 0 ? `± ${formatCents(postedStddevCents)}` : null;
   // nothing linked, or a headline that IS the measured centre: one number
   if (postedAvgCents === null || postedAvgCents === headlineCents) {
     return { text, attachedToHeadline: text !== null, avgLine: null };

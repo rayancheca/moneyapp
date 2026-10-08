@@ -50,7 +50,7 @@ export default async function RecurringSeriesPage({
 
   // a forecast is graded by its EVIDENCE — how many postings, and whether they
   // agreed — which is a different question from every other figure on the page
-  const provenance = provenanceFor(getDb(), { kind: "recurringSeries", id });
+  const provenance = provenanceFor(getDb(), { kind: "recurringSeries", id, today: todayIso() });
 
   // PHASE III-B: this series' place among the ones still running. Null — and so
   // absent — for anything ended, dismissed or lapsed, which is not a member of

@@ -1,6 +1,6 @@
 import { compareDates } from "./dates";
 import type { SettlementPortion } from "./payday-settlement";
-import { rateOn, type RateSchedule } from "./series-kind";
+import { ratePeriodOf, rateOn, type RateSchedule } from "./series-kind";
 
 /**
  * A PAY DEPOSIT, READ PER PAYDAY — the one reading every surface that says
@@ -75,6 +75,12 @@ export interface PaydayReading {
    * Null when the series has no rate at all.
    */
   expectedCents: number | null;
+  /**
+   * The rate era (`ratePeriodOf`) of the day `expectedCents` is read on — the first payday the day's money paid, else
+   * its own day. The posted average reads only the era in force now (`lib/posted-average`): a dated rate change is
+   * not a change in what posted (§6A 55).
+   */
+  ratePeriod: number;
   /**
    * The row's day's money paid NO payday at all — left over after the paydays it could reach (§6A 55b: it reaches
    * its own date plus the tolerance and no further), or landed before the first payday the ledger draws. The
@@ -181,24 +187,35 @@ export function paydayReadings(
       .filter((r) => r.amountCents <= 0)
       .map((r) => [
         r.id,
-        { perPayday: null, isPaydaySample: true, expectedCents: rateOn(schedule, r.postedOn), towardNoPayday: false },
+        {
+          perPayday: null,
+          isPaydaySample: true,
+          expectedCents: rateOn(schedule, r.postedOn),
+          ratePeriod: ratePeriodOf(schedule, r.postedOn),
+          towardNoPayday: false,
+        },
       ]),
   );
   for (const [day, deposits] of depositsByDay) {
     const paydays = alone.get(day) ?? 0;
     const paid = firstPayday.get(day);
     const expectedCents = rateOn(schedule, paid ?? day);
+    const ratePeriod = ratePeriodOf(schedule, paid ?? day);
     const towardNoPayday = paid === undefined;
     const perPayday = dayPerPayday(deposits, paydays);
     if (perPayday === null) {
       // a sample only of a payday it paid on its own — never of a part of one, nor of no payday at all
       const isPaydaySample = paydays === 1;
-      for (const d of deposits) out.set(d.id, { perPayday: null, isPaydaySample, expectedCents, towardNoPayday });
+      for (const d of deposits) {
+        out.set(d.id, { perPayday: null, isPaydaySample, expectedCents, ratePeriod, towardNoPayday });
+      }
       continue;
     }
     // the day is ONE sample of a payday's pay, as one lump is — counted on each
     // of its deposits, one day would weigh in the spread as several
-    deposits.forEach((d, i) => out.set(d.id, { perPayday, isPaydaySample: i === 0, expectedCents, towardNoPayday }));
+    deposits.forEach((d, i) =>
+      out.set(d.id, { perPayday, isPaydaySample: i === 0, expectedCents, ratePeriod, towardNoPayday }),
+    );
   }
   return out;
 }

@@ -63,6 +63,11 @@ export function ratePeriodOf(series: Pick<RateSchedule, "amountHistory">, day: s
   return era === -1 ? history.length : era;
 }
 
+/** The rate era in force NOW — the one `ratePeriodOf` gives every day past the last dated period. */
+export function currentRatePeriod(series: Pick<RateSchedule, "amountHistory">): number {
+  return (series.amountHistory ?? []).length;
+}
+
 /**
  * What one occurrence of a series is worth on `day`, net-worth-signed: the first past period that runs through it,
  * else the rate in force now. ⚖️ Each payday is measured against its OWN time's rate (owner decision 2026-10-08,

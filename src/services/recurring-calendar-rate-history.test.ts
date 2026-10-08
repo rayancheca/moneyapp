@@ -11,12 +11,14 @@ import { institutions } from "@/db/schema/institutions";
 import { recurringSeries } from "@/db/schema/recurring";
 import { transactions } from "@/db/schema/transactions";
 import { seedDatabase } from "@/db/seed";
+import { postedSpreadReading } from "@/components/recurring/labels";
 import { addDays } from "@/lib/dates";
 import { spreadResidualCents } from "@/lib/per-payday";
 import { incomeExpectation } from "./budgets";
 import { noticesCard } from "./notices-card";
 import { paydaySettlement } from "./payday-settlement";
-import { populationStddev } from "./recurring";
+import { provenanceFor } from "./provenance";
+import { listSeries, populationStddev } from "./recurring";
 import { recurringCalendar, type CalendarEntry } from "./recurring-calendar";
 import { seriesDetail } from "./recurring-detail";
 
@@ -314,6 +316,81 @@ describe("his ledger drawn from his first deposit — Jun 4 is a cash week paid 
       ["2026-09-23", WEEK],
       ["2026-09-24", WEEK],
     ]);
+  });
+});
+
+/**
+ * ⚖️ THE POSTED AVERAGE, ONE READING (§6A 55, §2): the series page's Per charge, the All tab's "posted avg" and the
+ * amount popover name the same figure — for a pay series, what a PAYDAY paid, in the rate era in force now.
+ *
+ * 🔴 Measured on a copy of his ledger 2026-10-08: under "+$1,141.92" the page printed "posted avg +$1,789.15 ±
+ * 1881.46", the All tab "posted avg +$1,789.15", and the popover "⚠️ The ledger's own average of what actually posted
+ * is $1,789.15, which is not what you set." — the raw mean of a cash week, $400.00, a four-week lump and a week, an
+ * amount no payday ever paid.
+ */
+describe("the posted average — his series page, the All tab and the popover read one figure", () => {
+  const TODAY = "2026-10-08";
+  const surfaces = () => {
+    const d = seriesDetail(bundle.db, PAY, TODAY);
+    return {
+      pageAvg: d.postedAvgCents,
+      page: postedSpreadReading(d.nextExpectedAmountCents, d.postedAvgCents, d.postedStddevCents),
+      allTab: listSeries(bundle.db, TODAY).find((s) => s.id === PAY)!.postedAvgCents,
+      popover: provenanceFor(bundle.db, { kind: "recurringSeries", id: PAY, today: TODAY })!.headline,
+    };
+  };
+  const NOTHING_TO_ADD = { text: null, attachedToHeadline: false, avgLine: null };
+
+  test("with his history set: $1,141.92 on all three — no average line, no ±, no disagreement", () => {
+    addPaySeries("2026-07-23");
+    hisFour();
+    const s = surfaces();
+    expect([s.pageAvg, s.allTab]).toEqual([WEEK, WEEK]);
+    expect(s.page).toEqual(NOTHING_TO_ADD);
+    expect(s.popover).not.toContain("$1,789.15");
+    expect(s.popover).not.toContain("which is not what you set");
+  });
+
+  test("his ledger as it stands, before the history is written — the same", () => {
+    addPaySeries("2026-07-23");
+    bundle.db.update(recurringSeries).set({ userAmountHistory: null }).where(eq(recurringSeries.id, PAY)).run();
+    hisFour();
+    const s = surfaces();
+    expect([s.pageAvg, s.allTab]).toEqual([WEEK, WEEK]);
+    expect(s.page).toEqual(NOTHING_TO_ADD);
+    expect(s.popover).not.toContain("which is not what you set");
+  });
+
+  /* ⛔ Drawn from his first deposit, Jun 4 pays its cash week in full — a payday of the cash era, not of today's. */
+  test("Jun 4's cash week, paid in full, is not averaged with the payroll weeks", () => {
+    addPaySeries("2026-06-04");
+    hisFour();
+    const s = surfaces();
+    expect([s.pageAvg, s.allTab]).toEqual([WEEK, WEEK]);
+    expect(s.page).toEqual(NOTHING_TO_ADD);
+  });
+
+  /* A third weekly deposit, then a $1,200.00 week: the lump, Sep 24, Oct 1 and Oct 8 average $1,156.44 ± $29.04. */
+  test("a $1,200.00 week: all three name $1,156.44, the page with its ± as money", () => {
+    addPaySeries("2026-07-23");
+    hisFour();
+    deposit("2026-10-01", WEEK);
+    deposit("2026-10-08", 120_000);
+    const s = surfaces();
+    expect(s.page).toEqual({ text: "± $29.04", attachedToHeadline: false, avgLine: 115_644 });
+    expect(s.allTab).toBe(115_644);
+    expect(s.popover).toContain("average of what actually posted is $1,156.44, which is not what you set.");
+  });
+
+  /* The popover reads the evidence on the day the page asks, as the page does: on Oct 7 the $1,200.00 is not in. */
+  test("the popover reads what had arrived by the day it is asked", () => {
+    addPaySeries("2026-07-23");
+    hisFour();
+    deposit("2026-10-01", WEEK);
+    deposit("2026-10-08", 120_000);
+    const asked = (today: string) => provenanceFor(bundle.db, { kind: "recurringSeries", id: PAY, today })!.headline;
+    expect(asked("2026-10-07")).not.toContain("which is not what you set");
+    expect(asked("2026-10-08")).toContain("$1,156.44, which is not what you set");
   });
 });
 

@@ -17,6 +17,7 @@ import { stepFrom, stepPlan } from "@/lib/recurring-step";
 import { loadCategoryIndex } from "./analytics";
 import { arrearsThisMonth } from "./arrears";
 import { paydaySettlement, readsPerPayday, stillToCome } from "./payday-settlement";
+import { postedAveragesBySeries } from "./posted-average";
 import {
   annualizedCentsOf,
   effectiveSeries,
@@ -149,6 +150,9 @@ export interface SeriesDetail {
    * the same rows ("-$50.00 · posted avg -$46.77") from `listSeries`'
    * `postedAvgCents`; the page that OWNS the series had the spread and not the
    * centre. Owner's call, 2026-09-08: name the average, and hang the ± on it.
+   *
+   * ⚖️ A pay series' is what a PAYDAY paid at the rate in force now (`lib/posted-average`, §6A 55) — one reading with
+   * the All tab and the popover. 🔴 The raw mean, his page read "posted avg +$1,789.15 ± 1881.46" under "+$1,141.92".
    */
   postedAvgCents: number | null;
   intervalDaysAvg: number | null;
@@ -309,23 +313,12 @@ export function seriesDetail(
   });
 
   /*
-   * Sample standard deviation of what actually posted. Two rows is the floor:
-   * with one there is nothing to vary, and the seed that used to be printed
-   * here claimed a spread for series with none at all.
+   * What posted, averaged, and its sample standard deviation — the reading `listSeries` publishes to the All tab and
+   * the popover names (`postedAveragesBySeries`): a pay series' is what a payday paid at the rate in force now. Two
+   * samples is the floor of a spread: with one there is nothing to vary, and the seed that used to be printed here
+   * claimed a spread for series with none at all.
    */
-  // the centre the spread below is measured around — the same figure
-  // `listSeries` publishes to the All tab, computed from the same linked rows
-  const postedAvgCents =
-    linked.length === 0
-      ? null
-      : Math.round(linked.reduce((a, t) => a + t.amountCents, 0) / linked.length);
-  const postedStddevCents = (() => {
-    if (linked.length < 2) return null;
-    const mean = linked.reduce((a, t) => a + t.amountCents, 0) / linked.length;
-    const variance =
-      linked.reduce((a, t) => a + (t.amountCents - mean) ** 2, 0) / (linked.length - 1);
-    return Math.round(Math.sqrt(variance));
-  })();
+  const posted = postedAveragesBySeries(db, [s], today).get(s.id)!;
 
   /*
    * 🔴 ONLY THE STATUSES THE FORECAST PROJECTS, and the rule was already
@@ -437,8 +430,8 @@ export function seriesDetail(
     detectedNextExpectedOn: s.nextExpectedOn,
     amountCentsAvg: s.amountCentsAvg,
     amountCentsStddev: s.amountCentsStddev,
-    postedStddevCents,
-    postedAvgCents,
+    postedStddevCents: posted.stddevCents,
+    postedAvgCents: posted.avgCents,
     intervalDaysAvg: s.intervalDaysAvg,
     toleranceDays: s.toleranceDays,
     confidence: s.confidence,

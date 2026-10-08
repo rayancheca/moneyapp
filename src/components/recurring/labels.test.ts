@@ -419,7 +419,7 @@ describe("postedSpreadReading", () => {
     const r = postedSpreadReading(-210_900, -173_940, 61_065);
     expect(r.attachedToHeadline).toBe(false);
     expect(r.avgLine).toBe(-173_940);
-    expect(r.text).toBe("610.65");
+    expect(r.text).toBe("± $610.65");
   });
 
   /** ⛔ one number, one place for the band — and no row repeating the headline */
@@ -427,7 +427,7 @@ describe("postedSpreadReading", () => {
     const r = postedSpreadReading(-1_775, -1_775, 134);
     expect(r.attachedToHeadline).toBe(true);
     expect(r.avgLine).toBeNull();
-    expect(r.text).toBe("1.34");
+    expect(r.text).toBe("± $1.34");
   });
 
   /** a series with nothing linked has no centre and no spread to publish */
@@ -454,6 +454,16 @@ describe("postedSpreadReading", () => {
   /** a spread of exactly zero is not a spread — every charge was identical */
   test("draws no band when every posting was the same amount", () => {
     expect(postedSpreadReading(-499, -499, 0).text).toBeNull();
+  });
+
+  /**
+   * 🔴 A BARE NUMBER BESIDE MONEY. The band printed `toFixed(2)` beside figures printed as money: on a copy of his
+   * ledger 2026-10-08 `/recurring/<Flamingo South Beach (rent)>` read "posted avg -$1,849.76 ± 583.58", and his pay
+   * "posted avg +$1,789.15 ± 1881.46" — no "$", no thousands separator. The band is money, printed as money.
+   */
+  test("prints the band as money — the sign, the dollar and the separator", () => {
+    expect(postedSpreadReading(-210_900, -184_976, 58_358).text).toBe("± $583.58");
+    expect(postedSpreadReading(114_192, 178_915, 188_146).text).toBe("± $1,881.46");
   });
 });
 

@@ -311,14 +311,12 @@ export function SeriesDetail({
                       already uses for the same pair. When they agree there is
                       one number and the ± stays on it. */}
                   {postedSpread.attachedToHeadline ? (
-                    <span className="ml-1 text-[11px] font-normal text-ink-faint">
-                      ±{postedSpread.text}
-                    </span>
+                    <span className="ml-1 text-[11px] font-normal text-ink-faint">{postedSpread.text}</span>
                   ) : null}
                   {postedSpread.avgLine !== null ? (
                     <span className="figures block text-[11px] font-normal text-ink-faint">
                       posted avg <Money cents={postedSpread.avgLine} flow />
-                      {postedSpread.text !== null ? ` ± ${postedSpread.text}` : ""}
+                      {postedSpread.text !== null ? ` ${postedSpread.text}` : ""}
                     </span>
                   ) : null}
                 </>

@@ -16,11 +16,17 @@ const HIS: RateSchedule = {
   nextExpectedAmountCents: WEEK,
   amountHistory: [{ throughOn: "2026-08-26", amountCents: 104_700 }],
 };
-/** what a reading says, field by field */
-const reads = (isPaydaySample: boolean, expectedCents: number | null, towardNoPayday: boolean) => ({
+/** what a reading says, field by field — `ratePeriod` is the era of HIS: 0 the cash weeks, 1 the payroll weeks */
+const reads = (
+  isPaydaySample: boolean,
+  expectedCents: number | null,
+  towardNoPayday: boolean,
+  ratePeriod: number,
+) => ({
   perPayday: null,
   isPaydaySample,
   expectedCents,
+  ratePeriod,
   towardNoPayday,
 });
 
@@ -81,6 +87,7 @@ describe("paydayReadings — his ledger", () => {
       perPayday: { paydays: 4, cents: WEEK },
       isPaydaySample: true,
       expectedCents: WEEK,
+      ratePeriod: 1,
       towardNoPayday: false,
     });
     expect(comparableCents(row("lump").amountCents, readings.get("lump"))).toBe(WEEK);
@@ -92,6 +99,7 @@ describe("paydayReadings — his ledger", () => {
       perPayday: null,
       isPaydaySample: true,
       expectedCents: WEEK,
+      ratePeriod: 1,
       towardNoPayday: false,
     });
     expect(comparableCents(WEEK, readings.get("sep24"))).toBe(WEEK);
@@ -104,7 +112,7 @@ describe("paydayReadings — his ledger", () => {
    */
   test("money that paid no payday reads toward no payday, held to its own day's rate, and is no sample", () => {
     for (const [id, cents] of [["jun4", 104_700], ["jun5", 40_000]] as const) {
-      expect(readings.get(id)).toEqual(reads(false, 104_700, true));
+      expect(readings.get(id)).toEqual(reads(false, 104_700, true, 0));
       expect(spreadSampleCents(cents, readings.get(id))).toBeNull();
     }
   });
@@ -127,7 +135,7 @@ describe("paydayReadings — his ledger, from his first deposit's payday", () =>
   );
 
   test("Jun 4's cash week is a sample held to the cash rate — on plan, not $94.92 short", () => {
-    expect(readings.get("jun4")).toEqual(reads(true, 104_700, false));
+    expect(readings.get("jun4")).toEqual(reads(true, 104_700, false, 0));
   });
 
   test("Jun 5's $400.00 still paid no payday", () => {
@@ -154,7 +162,7 @@ describe("paydayReadings — money that only went into a payday another deposit 
   );
 
   test("is no sample of a payday's pay, and is not 'toward no payday'", () => {
-    expect(readings.get("fri")).toEqual(reads(false, WEEK, false));
+    expect(readings.get("fri")).toEqual(reads(false, WEEK, false, 0));
     expect(spreadSampleCents(50_000, readings.get("fri"))).toBeNull();
     expect(comparableCents(50_000, readings.get("fri"))).toBe(50_000);
   });
@@ -170,6 +178,8 @@ describe("paydayReadings — the expectation is the rate of the payday the money
       HIS,
     );
     expect(readings.get("wed")?.expectedCents).toBe(WEEK);
+    // …and read in the payroll era, which the posted average reads (`lib/posted-average`)
+    expect(readings.get("wed")?.ratePeriod).toBe(1);
   });
 
   test("a series with no rate at all holds its rows to nothing", () => {
@@ -281,7 +291,7 @@ describe("paydayReadings — what is read as the one amount it is", () => {
       FLAT,
     );
     for (const id of ["a", "b"]) {
-      expect(readings.get(id)).toEqual(reads(false, WEEK, true));
+      expect(readings.get(id)).toEqual(reads(false, WEEK, true, 0));
     }
   });
 
@@ -294,8 +304,8 @@ describe("paydayReadings — what is read as the one amount it is", () => {
       [{ paydayOn: "2026-09-24", depositOn: "2026-09-23", cents: WEEK }],
       HIS,
     );
-    expect(readings.get("unspent")).toEqual(reads(false, 104_700, true));
-    expect(readings.get("clawback")).toEqual(reads(true, WEEK, false));
+    expect(readings.get("unspent")).toEqual(reads(false, 104_700, true, 0));
+    expect(readings.get("clawback")).toEqual(reads(true, WEEK, false, 1));
   });
 
   test("a row with no reading at all — a bill — is the amount it is", () => {

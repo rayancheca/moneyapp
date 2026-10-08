@@ -2,6 +2,7 @@ import { describe, expect, test } from "vitest";
 import { type RatePeriod, SERIES_KINDS } from "@/db/schema/recurring";
 import {
   AmountHistoryError,
+  currentRatePeriod,
   parseAmountHistory,
   parseAmountHistoryText,
   ratePeriodOf,
@@ -93,6 +94,13 @@ describe("ratePeriodOf", () => {
       expect(rateOn(series, day)).toBe(era < history.length ? history[era]!.amountCents : 114_192);
     }
     expect(["2026-03-31", "2026-04-01", "2026-08-27"].map((d) => ratePeriodOf(series, d))).toEqual([0, 1, 2]);
+  });
+
+  /* the era the posted average reads (`lib/posted-average`): the rate in force now */
+  test("the era in force now is the one every day past the last period is in", () => {
+    expect(currentRatePeriod({ amountHistory: null })).toBe(0);
+    expect(currentRatePeriod(HIS_PAY)).toBe(ratePeriodOf(HIS_PAY, "2099-12-31"));
+    expect(currentRatePeriod(HIS_PAY)).toBe(1);
   });
 });
 

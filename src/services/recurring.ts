@@ -28,9 +28,11 @@ import { isAgentsSeries } from "./analytics";
  * ⚠️ A cycle, on purpose: settlement walks the occurrences `projectOccurrences`
  * draws, and `upcomingOccurrences` and `listSeries` ask settlement which of them
  * are paid. Both modules call each other only inside functions, never while
- * loading, so the order they load in cannot matter.
+ * loading, so the order they load in cannot matter. `posted-average` closes the
+ * same cycle the same way: it reads `effectiveSeries`, and `listSeries` it.
  */
 import { nextStillToCome, stillToCome } from "./payday-settlement";
+import { postedAveragesBySeries } from "./posted-average";
 
 /**
  * A drizzle transaction handle. Detection and the user-link services
@@ -888,6 +890,9 @@ export interface SeriesView {
    *
    * The seed stays on `amountCentsAvg` — the detector's own record of what it
    * saw — and anything claiming to be the average of the postings reads this.
+   *
+   * ⚖️ A pay series' is what a PAYDAY paid at the rate in force now (`postedAveragesBySeries`, §6A 55) — the series
+   * page's and the popover's own figure. 🔴 The raw mean, his row read "posted avg +$1,789.15" beside "+$1,141.92".
    */
   postedAvgCents: number | null;
 }
@@ -979,17 +984,17 @@ export function listSeries(db: AppDatabase, today: string = todayIso()): SeriesV
     .all();
 
   const tagged = db
-    .select({ recurringSeriesId: transactions.recurringSeriesId, amountCents: transactions.amountCents })
+    .select({ recurringSeriesId: transactions.recurringSeriesId })
     .from(transactions)
     .where(eq(transactions.status, "active"))
     .all();
   const countBySeries = new Map<string, number>();
-  const sumBySeries = new Map<string, number>();
   for (const t of tagged) {
     if (!t.recurringSeriesId) continue;
     countBySeries.set(t.recurringSeriesId, (countBySeries.get(t.recurringSeriesId) ?? 0) + 1);
-    sumBySeries.set(t.recurringSeriesId, (sumBySeries.get(t.recurringSeriesId) ?? 0) + t.amountCents);
   }
+  // the series page's and the popover's own reading of what posted — see `postedAvgCents`
+  const posted = postedAveragesBySeries(db, rows.map((r) => r.series), today);
 
   return rows
     .map(({ series: s, merchantName }) => {
@@ -1027,9 +1032,7 @@ export function listSeries(db: AppDatabase, today: string = todayIso()): SeriesV
         confidence: s.confidence,
         lastMatchedOn: s.lastMatchedOn,
         matchedCount: countBySeries.get(s.id) ?? 0,
-        postedAvgCents: countBySeries.get(s.id)
-          ? Math.round(sumBySeries.get(s.id)! / countBySeries.get(s.id)!)
-          : null,
+        postedAvgCents: posted.get(s.id)?.avgCents ?? null,
         isActive: isSeriesActive(s, today),
         evidence: seriesEvidence(s, today),
         annualizedCents: annualizedCentsOf(s, today),

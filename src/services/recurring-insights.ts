@@ -180,7 +180,7 @@ export function recurringInsightInput(
 
   const facts: Fact[] = [];
   const candidates: InsightCandidate[] = [];
-  const prove = () => provenanceFor(db, { kind: "recurringSeries", id: seriesId });
+  const prove = () => provenanceFor(db, { kind: "recurringSeries", id: seriesId, today });
 
   facts.push(rankFact("f1", self.name, rank, ranked.length, amongLabel));
   facts.push(scalarFact("f2", self.name, annualized, "money"));
