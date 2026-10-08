@@ -757,7 +757,7 @@ export function recurringCalendar(
      * step B), the one Earned vs banked counts from. 🔴 Projected from the stored anchor, his June drew no payday at
      * all: Jun 4's $1,047.00 read "toward no payday" beside an income card that had earned four cash weeks that month.
      */
-    const occurrences = projectOccurrences(paydayProjectable(s, settlements.get(s.id)), monthStart, monthEnd);
+    const occurrences = projectOccurrences(paydayProjectable(s, settlements.get(s.id), today), monthStart, monthEnd);
     const postedDates = postedDatesBySeries.get(s.id) ?? [];
     const confidence = forecastConfidence(s);
     // ONE evidence word, the one the All tab files the series under: a series

@@ -1136,6 +1136,16 @@ interface ProjectableSeries {
    * reader (the forecast, Upcoming) need not: no payday on the rhythm falls between today and the first payday.
    */
   firstOn?: string | null;
+  /**
+   * ⛔ …and the walk back draws the PAST only: dates before this day — the reader's today — and none on or after it.
+   * From today on a schedule is its anchor's, as every forward reader projects it (the forecast, Upcoming, /budgets'
+   * expected leg), so a payday between today and an anchor he dated ahead is on no reader's schedule rather than on
+   * some. 🔴 Walked back unbounded, his next payday dated Oct 22 on Oct 8 left Oct 8 and Oct 15 in /budgets'
+   * scheduled figure and drawn "upcoming" on the calendar, while the forecast and Upcoming opened on Oct 22 —
+   * $2,283.84 in no leg (a copy of his ledger, 2026-10-08). An anchor on or before today holds nothing back: every
+   * date the walk back adds lies before it. Absent, nothing is held back.
+   */
+  walkBackBefore?: string | null;
 }
 
 /** The user-override columns that shadow detection's values (§4.4). */
@@ -1497,6 +1507,8 @@ export function projectOccurrences(
   for (let i = firstStep; ; i++) {
     const date = stepFrom(anchor, plan, i);
     if (compareDates(date, last) > 0) break;
+    // a step back from the anchor is drawn only in the past (`walkBackBefore`); from today the anchor's walk opens
+    if (i < 0 && series.walkBackBefore && compareDates(date, series.walkBackBefore) >= 0) continue;
     occurrences.push({
       seriesId: series.id,
       name: series.name,

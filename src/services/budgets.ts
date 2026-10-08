@@ -997,7 +997,7 @@ export function incomeExpectation(
      * Earned vs banked counts. 🔴 From the stored anchor, his June scheduled no payday while the income card earned
      * four cash weeks in it.
      */
-    const inPeriod = projectOccurrences(paydayProjectable(s, settlements.get(s.id)), start, end).filter(
+    const inPeriod = projectOccurrences(paydayProjectable(s, settlements.get(s.id), today), start, end).filter(
       (o) => o.amountCents > 0,
     );
     scheduledOccurrences += inPeriod.length;

@@ -16,6 +16,7 @@ import { incomeExpectation } from "./budgets";
 import { cashEarningsReadings } from "./cash-earnings";
 import { incomeCard } from "./income-card";
 import { paydaySettlement } from "./payday-settlement";
+import { upcomingOccurrences } from "./recurring";
 import { recurringCalendar } from "./recurring-calendar";
 
 /**
@@ -198,6 +199,53 @@ describe("his ledger — the income card and settlement name the same paydays, f
     expect(drawnPaydays("2026-05", TODAY)).toEqual([]);
     expect(drawnPaydays("2026-06", TODAY)).toEqual(["2026-06-11", "2026-06-18", "2026-06-25"]);
     expect(drawnPaydays("2026-07", TODAY)).toEqual(["2026-07-02", "2026-07-09", "2026-07-16", "2026-07-23", "2026-07-30"]);
+  });
+
+  /*
+   * ⛔ THE WALK BACK IS FOR THE PAST. He dates his next payday ahead — Oct 22, set on Oct 8 (he sets the rent's next
+   * date by hand already) — and the paydays between today and it are on no reader's schedule: the forward leg, Upcoming
+   * and the forecast open on his date, and the walk back from it draws only the paydays before today.
+   *
+   * 🔴 Measured on a copy of his ledger (history and link set): /budgets scheduled five October paydays at $5,709.60
+   * against posted $0.00 + expected $2,283.84 + passed-unpaid $1,141.92, and the calendar drew Oct 8 and Oct 15
+   * "upcoming", while the forecast projected +$2,283.84 and Upcoming opened on Oct 22 — $2,283.84 in no leg.
+   */
+  describe("a next payday he dates ahead — Oct 22, set on Oct 8", () => {
+    beforeEach(() => {
+      bundle.db
+        .update(recurringSeries)
+        .set({ userNextExpectedOn: "2026-10-22" })
+        .where(eq(recurringSeries.id, PAY))
+        .run();
+    });
+
+    test("October on /budgets: each scheduled payday in one leg — Oct 1 passed, Oct 22 and 29 expected", () => {
+      const oct = incomeExpectation(bundle.db, "2026-10-01", "2026-10-31", TODAY);
+      expect([oct.scheduledOccurrences, oct.scheduledCents]).toEqual([3, WEEK * 3]);
+      expect([oct.passedUnpaidOccurrences, oct.passedUnpaidCents]).toEqual([1, WEEK]);
+      expect(oct.expectedCents).toBe(WEEK * 2);
+      expect(
+        oct.postedCents - oct.paidForAnotherMonthCents + oct.expectedCents + oct.passedUnpaidCents +
+          oct.paidByAnotherMonthCents,
+      ).toBe(oct.scheduledCents);
+    });
+
+    test("the calendar draws no payday between today and his date; its upcoming paydays are Upcoming's", () => {
+      expect(drawnPaydays("2026-10", TODAY)).toEqual(["2026-10-01", "2026-10-22", "2026-10-29"]);
+      const upcoming = upcomingOccurrences(bundle.db, TODAY, 30).filter((o) => o.seriesId === PAY);
+      expect(upcoming.map((o) => o.date)).toEqual(["2026-10-22", "2026-10-29", "2026-11-05"]);
+    });
+
+    /* a week that lands Tue Oct 6 pays the last payday before it, Oct 1 — not an Oct 8 that is on no schedule */
+    test("the settlement walks the same paydays — none between today and his date", () => {
+      deposit("2026-10-06", WEEK);
+      const s = paydaySettlement(bundle.db, PAY, TODAY);
+      expect(s.firstPaydayOn).toBe("2026-06-04");
+      expect([...s.settledBy.entries()].filter(([payday]) => payday >= "2026-10-01")).toEqual([
+        ["2026-10-01", "2026-10-06"],
+      ]);
+      expect(incomeCard(bundle.db, TODAY)!.pay[0]!.paydaysLabel).toBe("18 paydays, Jun 4 – Oct 1");
+    });
   });
 });
 

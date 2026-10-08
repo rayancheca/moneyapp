@@ -82,7 +82,7 @@ export function paydaySettlement(db: AppDatabase, seriesId: string, today: strin
    * reaches `today + toleranceDays`. Money has arrived, so there is a first payday.
    */
   const firstOn = firstPaydayOn(effectiveSeries(s), s.toleranceDays, deposits, today);
-  const projectable = paydayProjectable(s, { firstPaydayOn: firstOn });
+  const projectable = paydayProjectable(s, { firstPaydayOn: firstOn }, today);
   const occurrences = projectOccurrences(projectable, firstOn ?? today, addDays(today, s.toleranceDays)).filter(
     (o) => o.amountCents > 0,
   );
@@ -114,12 +114,17 @@ const unsettled = (): SeriesPaydaySettlement => ({ ...noSettlement(), firstPayda
  * A series' projection over its whole payday universe: `toProjectable`, opened on the first payday its settlement
  * walked from (`firstPaydayOn`). ⛔ One rule for every reader of past paydays — a reader projecting from the anchor
  * alone names fewer paydays than the settlement it reads, and than Earned vs banked counts.
+ *
+ * ⛔ The walk back is for the PAST (`walkBackBefore`, today): from today on the schedule is its anchor's, the one the
+ * forecast, Upcoming and /budgets' expected leg project. 🔴 Unbounded, a next payday he dated ahead — Oct 22, set on
+ * Oct 8 — left Oct 8 and Oct 15 scheduled on /budgets and drawn upcoming on the calendar, in no other figure.
  */
 export function paydayProjectable(
   s: Parameters<typeof toProjectable>[0],
   settlement: Pick<SeriesPaydaySettlement, "firstPaydayOn"> | undefined,
+  today: string,
 ): ReturnType<typeof toProjectable> {
-  return { ...toProjectable(s), firstOn: settlement?.firstPaydayOn ?? null };
+  return { ...toProjectable(s), firstOn: settlement?.firstPaydayOn ?? null, walkBackBefore: today };
 }
 
 /**

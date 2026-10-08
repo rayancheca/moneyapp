@@ -260,7 +260,7 @@ export function unbankedIncomeForSeries(
     .map((s) => {
       const settlement = settlements.get(s.id);
       const met = settlement?.settledBy ?? new Map<string, string>();
-      const occ = projectOccurrences(paydayProjectable(s, settlement), periodStart, addDays(today, -1))
+      const occ = projectOccurrences(paydayProjectable(s, settlement, today), periodStart, addDays(today, -1))
         .filter((o) => o.amountCents > 0)
         .filter((o) => !met.has(o.date));
       return { s, occ };
