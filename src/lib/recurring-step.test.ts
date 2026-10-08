@@ -6,6 +6,7 @@ import {
   deriveAnchorDay,
   FIRST_CLAMPABLE_DAY,
   stepFrom,
+  stepSpanDays,
   stepPlan,
   stepsToReach,
 } from "./recurring-step";
@@ -57,6 +58,29 @@ describe("stepPlan", () => {
     // a zero step would make a projection walk forever
     expect(stepPlan("weekly", 0).stepDays).toBe(1);
     expect(stepPlan("weekly", -4).stepDays).toBe(1);
+  });
+});
+
+/*
+ * ⛔ One step's shortest and longest run in days, read off the calendar: a day-shaped cadence is its nominal days, a
+ * calendar-stepped one is whatever its months hold — 30 days is not a month, 91 not a quarter, 365 not every year.
+ */
+describe("stepSpanDays", () => {
+  test.each([
+    ["weekly", 7, 7],
+    ["biweekly", 14, 14],
+    ["semimonthly", 15, 15],
+    ["monthly", 28, 31],
+    ["quarterly", 89, 92],
+    ["annual", 365, 366],
+  ] as const)("one %s step runs %i to %i days", (cadence, shortest, longest) => {
+    expect(stepSpanDays(cadence)).toEqual([shortest, longest]);
+  });
+
+  test("a four-weekly series, bucketed monthly and stepping 28 days, is inside the month's span", () => {
+    const [shortest, longest] = stepSpanDays("monthly");
+    expect(stepPlan("monthly", 28).stepDays).toBeGreaterThanOrEqual(shortest);
+    expect(stepPlan("monthly", 28).stepDays).toBeLessThanOrEqual(longest);
   });
 });
 
