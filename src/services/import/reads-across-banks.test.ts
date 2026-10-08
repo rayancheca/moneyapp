@@ -7,7 +7,14 @@ import { createDatabase, type DbBundle } from "@/db/client";
 import { seedDatabase } from "@/db/seed";
 import { importFiles } from "@/db/schema/imports";
 import { PROFILES } from "@/services/import/profiles";
-import { banksReadBy, banksReadByEvery, importStatementFiles, institutionReadBy, type ImportInput } from "@/services/import/service";
+import {
+  banksReadBy,
+  banksReadByEvery,
+  importStatementFiles,
+  institutionReadBy,
+  migrateStorageLayout,
+  type ImportInput,
+} from "@/services/import/service";
 import type { AccountHint, ParsedFile, ParsedStatement, ParserProfile } from "@/services/import/types";
 import { readAcrossBanksNotice, readsAcrossBanks } from "./reads-across-banks";
 
@@ -33,6 +40,11 @@ const statementOf = (accountHint: AccountHint): ParsedStatement => ({
 /** what each file prints, by the words its name ends in */
 const READS: Record<string, () => ParsedFile> = {
   "two banks": () => ({ statements: [statementOf(ROBINHOOD), statementOf(SOFI)], withheld: [] }),
+  /** the same two banks, SoFi's account first */
+  "two banks sofi first": () => ({
+    statements: [statementOf({ ...SOFI, last4: "9069" }), statementOf({ ...ROBINHOOD, last4: "7310" })],
+    withheld: [],
+  }),
   "one bank": () => ({ statements: [statementOf({ ...ROBINHOOD, last4: "7308" })], withheld: [] }),
   /** two statements that print no row: a retirement keeps nothing that names their accounts (`supersedeFileContribution`) */
   "two banks quiet": () => ({ statements: [quietOf({ ...ROBINHOOD, last4: "7309" }), quietOf({ ...SOFI, last4: "9068" })], withheld: [] }),
@@ -151,5 +163,32 @@ describe("retired reads, and every read at once", () => {
     );
     expect([...every.keys()].sort()).toEqual(reads.map((r) => r.id).sort());
     for (const r of reads) expect([...every.get(r.id)!].sort()).toEqual([...banksReadBy(bundle.db, r.id)].sort());
+  });
+});
+
+/**
+ * Where a read at two banks files its original. A read of two accounts or more files it in a bucket of their bank
+ * (`accountsFolder`: sofi-combined/, robinhood-combined/) — and of two banks it named the bucket after the bank of the
+ * account it happened to name first: the folder said the statement was one bank's.
+ */
+describe("the folder a read at two banks files its original in", () => {
+  const SOFI_FIRST = file("two banks sofi first");
+  const folderOf = (name: string) => path.relative(process.env.MONEYAPP_ORIGINALS_DIR!, path.dirname(read(name).storagePath));
+
+  test("names both banks, never the bank of the account it names first", async () => {
+    const [outcome] = await importStatementFiles(bundle.db, [SOFI_FIRST]);
+    expect(outcome!.status).toBe("parsed");
+    expect(folderOf(TWO_BANKS.name)).toBe("robinhood-and-sofi-combined");
+    expect(folderOf(SOFI_FIRST.name)).toBe("robinhood-and-sofi-combined");
+    for (const name of [TWO_BANKS.name, SOFI_FIRST.name]) expect(fs.existsSync(read(name).storagePath)).toBe(true);
+  });
+
+  test("a read at one bank keeps its own folder", () => {
+    expect(folderOf(ONE_BANK.name)).toBe("robinhood-checking-7308");
+  });
+
+  test("the layout migration files it where the import did: nothing to move", async () => {
+    await importStatementFiles(bundle.db, [SOFI_FIRST]);
+    expect(migrateStorageLayout(bundle.db, { move: false })).toEqual([]);
   });
 });

@@ -86,6 +86,7 @@ import { filesWithoutPrintedLines } from "@/services/import/import-records";
 import { acknowledgementsMatchingNothing, linesLeftOut } from "@/services/import/lines-left-out";
 import { readAcrossBanksNotice, readsAcrossBanks } from "@/services/import/reads-across-banks";
 import { lineLeftOutNotice } from "@/lib/import-file-label";
+import { listed } from "@/lib/ledger-check-listing";
 import {
   acknowledgementWrites,
   confirmingStep,
@@ -354,8 +355,12 @@ for (const [name, found] of Object.entries(breaks)) {
 for (const [name, cents] of Object.entries(syntheticNetCents)) {
   console.log(`${name}: ${formatCents(cents)} in the balance chain has no source document`);
 }
-for (const [name, day] of Object.entries(keptOpenings)) {
-  console.log(`${name}: stands only on the opening of a statement you un-imported (${day}) — unchecked, and no witness`);
+// counted on a line of its own, every run, as the other kinds it names: the pre-commit hook prints a listing under its count
+const onKeptOpenings = Object.entries(keptOpenings);
+console.log(`accounts standing only on the opening of a statement you un-imported: ${onKeptOpenings.length}`);
+for (const [name, day] of onKeptOpenings) {
+  const sentence = `${name}: stands only on the opening of a statement you un-imported (${day}) — unchecked, and no witness`;
+  console.log(listed("kept opening", sentence));
 }
 console.log(`stale verdicts: ${staleVerdicts.length}`);
 
@@ -447,12 +452,16 @@ const recordFailures = [
  */
 if (beyondBackfills.length > 0) {
   console.log(
-    `  ⚠️ ${beyondBackfills.length} of them were read at a version their profile has moved past (${named(beyondBackfills)}) — ` +
-      "the backfills read a file only at the version that imported it, so they cannot cover these. " +
-      "Un-importing any file whose rows one of them also prints loses those rows. " +
-      "Re-read them at their profile's version (it refuses unless only the records change):\n" +
-      "    pnpm tsx scripts/reread-unrecorded-files.ts --db=<ledger>             # rehearse on a copy, write nothing\n" +
-      "    pnpm tsx scripts/reread-unrecorded-files.ts --db=<ledger> --confirm   # restore point, write, re-check",
+    listed(
+      "beyond the backfills",
+      `${beyondBackfills.length} of them were read at a version their profile has moved past (${named(beyondBackfills)}) — ` +
+        "the backfills read a file only at the version that imported it, so they cannot cover these. " +
+        "Un-importing any file whose rows one of them also prints loses those rows. " +
+        "Re-read them at their profile's version (it refuses unless only the records change):\n" +
+        "    pnpm tsx scripts/reread-unrecorded-files.ts --db=<ledger>             # rehearse on a copy, write nothing\n" +
+        "    pnpm tsx scripts/reread-unrecorded-files.ts --db=<ledger> --confirm   # restore point, write, re-check",
+      { warns: true },
+    ),
   );
 }
 
@@ -474,10 +483,11 @@ if (beyondBackfills.length > 0) {
 const leftOut = linesLeftOut(db);
 const acknowledged = leftOut.filter((line) => line.acknowledged !== null);
 console.log(`lines left out by a re-read: ${leftOut.length}${acknowledged.length === 0 ? "" : ` — ${acknowledged.length} acknowledged`}`);
-for (const line of acknowledged) console.log(`  [line-left-out, acknowledged] ${lineLeftOutNotice(line)}`);
+for (const line of acknowledged) console.log(listed("line-left-out, acknowledged", lineLeftOutNotice(line)));
 const accountNameOf = new Map(accounts.map((a) => [a.id, a.name] as const));
 for (const ack of acknowledgementsMatchingNothing(db, leftOut)) {
-  console.log(`  [acknowledgement matching no line] ${unmatchedAcknowledgementNotice(ack, accountNameOf.get(ack.accountId) ?? ack.accountId)}`);
+  const accountName = accountNameOf.get(ack.accountId) ?? ack.accountId;
+  console.log(listed("acknowledgement matching no line", unmatchedAcknowledgementNotice(ack, accountName)));
 }
 const leftOutFailures = leftOut
   .filter((line) => line.acknowledged === null)
@@ -496,11 +506,12 @@ if (leftOutFailures.length > 0) {
  * (`readsAcrossBanks`, the one rule). 🔴 It stood silently. NAMED, not failed, as the files beyond the backfills (5):
  * it moves no money — every row is in its own account — and nothing short of a schema change could make it pass, so
  * a red check on every commit would train the hook to be ignored. ⛔ Never a bank picked for it: a guess is not a bank.
- * None on his ledger, 2026-10-07.
+ * None on his ledger, 2026-10-07. 🔴 …and the hook threw a passing run's output away, so it was named only on a manual
+ * run: the hook prints every listing (`listed`) of a passing run now, under its count line.
  */
 const acrossBanks = readsAcrossBanks(db);
 console.log(`reads of accounts at two banks: ${acrossBanks.length}`);
-for (const read of acrossBanks) console.log(`  ⚠️ [read at two banks] ${readAcrossBanksNotice(read)}`);
+for (const read of acrossBanks) console.log(listed("read at two banks", readAcrossBanksNotice(read), { warns: true }));
 
 /*
  * THE ACKNOWLEDGING — the guarded step, as the lowering below: a dry run prints each line a mark names and what it would

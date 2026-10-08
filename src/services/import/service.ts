@@ -1333,12 +1333,25 @@ function accountWithInstitution(
  * nothing then says whose statement it is, and the original stays where it is.
  * ONE rule for the import that files a read's original (`settleMember`) and the
  * layout migration that files it again (`migrateStorageLayout`).
+ *
+ * Accounts at two banks or more (`readsAcrossBanks`) file it in a bucket naming
+ * every one, alphabetical — robinhood-and-sofi-combined/. 🔴 The bucket was named
+ * after the bank of whichever account the read named first: a statement of a
+ * Robinhood and a SoFi account went to robinhood-combined/, and one printing the
+ * SoFi account first to sofi-combined/ — a folder saying the statement was one
+ * bank's. ⛔ Only such a read moves: a folder of one bank is named as before, so
+ * nothing the 2026-10-07 layout placed moves (none of his 449 reads is at two
+ * banks; a dry run of the migration on a copy of his ledger, 2026-10-08, moves
+ * nothing before the change and nothing after).
  */
 function accountsFolder(db: AppDatabase, accountIds: readonly string[]): string | null {
   if (accountIds.length === 0) return null;
-  const { account, institutionName } = accountWithInstitution(db, accountIds[0]!);
-  if (accountIds.length > 1) return `${institutionSlug(institutionName)}-combined`;
-  return accountSlug(account, institutionName);
+  if (accountIds.length === 1) {
+    const { account, institutionName } = accountWithInstitution(db, accountIds[0]!);
+    return accountSlug(account, institutionName);
+  }
+  const banks = new Set(accountIds.map((id) => institutionSlug(accountWithInstitution(db, id).institutionName)));
+  return `${[...banks].sort().join("-and-")}-combined`;
 }
 
 export interface ImportInput {
