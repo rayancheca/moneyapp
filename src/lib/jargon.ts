@@ -44,7 +44,8 @@ export const RESERVED_JARGON_PHRASES = [
   "Off pace",
   "Over budget",
   "rolled over",
-  "expected by now, not imported",
+  // the row's arrears line, whichever way the ledger has read it (`BudgetRow`)
+  "expected by now",
   "expected before",
   "Awaiting statements",
   "expected income",
@@ -232,9 +233,13 @@ export const RUNWAY_JARGON = {
    * contradicted the sentence three lines below it on the same card, which says
    * "A further $X came due earlier this month and never posted". A definition
    * that outlives the figure it defines is worse than none.
+   *
+   * 🔴 …and "never arrived" outlived the sentence too: since 2026-10-07 it says "no import has covered it yet" of
+   * arrears on days no import has reached (`arrearsTail`), and on a copy of his ledger 2026-10-08 the whole $2,291.21
+   * was such a day. ⚖️ Over unread days never a negative claim, so the definition makes none.
    */
   committed:
-    "Money already agreed to, as a monthly rate: what a recurring schedule says is coming over the next twelve months, divided by twelve. Bills that fell due and never arrived are not in it — they are named separately, because a debt already owed is not part of a rate.",
+    "Money already agreed to, as a monthly rate: what a recurring schedule says is coming over the next twelve months, divided by twelve. Bills that already fell due are not in it: the ones nothing has covered yet are named separately, because a debt already owed is not part of a rate.",
   unevidenced:
     "A commitment entered by hand which the bank has never billed, so the ledger has agreed to it without ever seeing one.",
   allIn:

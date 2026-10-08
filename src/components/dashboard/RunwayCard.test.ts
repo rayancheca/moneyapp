@@ -6,6 +6,7 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, expect, test } from "vitest";
 import { createDatabase, type DbBundle } from "@/db/client";
+import { accounts } from "@/db/schema/accounts";
 import { dailyBalances } from "@/db/schema/balances";
 import { importFiles, statementPeriods } from "@/db/schema/imports";
 import { institutions } from "@/db/schema/institutions";
@@ -131,4 +132,60 @@ test("arrears no import has reached are not called never posted", () => {
   const markup = renderToStaticMarkup(createElement(RunwayCard, { data: card }));
   expect(markup).toContain("A further $2,109.00 came due earlier this month and no import has covered it yet.");
   expect(markup).not.toContain("never posted");
+  /*
+   * 🔴 …and it said so in red. On a copy of his ledger 2026-10-08 the runway was the one surface still treating
+   * staleness as an alarm: "A further $2,291.21 came due earlier this month and no import has covered it yet." in
+   * `text-negative`, while the rent's page, the Next column and /categories said the same money quietly. ⚖️ Staleness
+   * between uploads is normal, never a warning (his words 2026-08-05) — `arrearsAlarms`.
+   */
+  expect(arrearsLine(markup)).toEqual({
+    text: "A further $2,109.00 came due earlier this month and no import has covered it yet.",
+    alarm: false,
+  });
 });
+
+test("arrears on days the ledger has read keep the negative tone", () => {
+  const checking = bundle.db.select().from(accounts).where(eq(accounts.name, "Checking")).get()!.id;
+  const now = new Date().toISOString();
+  // Checking is read through yesterday, so the Sep 1 rent and every day a payment could have posted are read
+  bundle.db
+    .insert(statementPeriods)
+    .values({
+      id: "chk-period",
+      importFileId: "rh-statement",
+      accountId: checking,
+      periodStart: "2026-08-15",
+      periodEnd: "2026-09-14",
+      reconciliation: "reconciled",
+      createdAt: now,
+      updatedAt: now,
+    })
+    .run();
+  bundle.db
+    .insert(recurringSeries)
+    .values({
+      name: "Rent",
+      kind: "bill",
+      cadence: "monthly",
+      status: "confirmed",
+      intervalDaysAvg: 30,
+      toleranceDays: 4,
+      nextExpectedOn: "2026-09-01",
+      nextExpectedAmountCents: -210900,
+      accountId: checking,
+    })
+    .run();
+
+  const card = runwayCard(bundle.db, TODAY);
+  expect(card.committed.overdueUnreadCents).toBe(0);
+  expect(arrearsLine(renderToStaticMarkup(createElement(RunwayCard, { data: card })))).toEqual({
+    text: "A further $2,109.00 came due earlier this month and never posted.",
+    alarm: true,
+  });
+});
+
+/** The runway's arrears paragraph: its words, and whether it carries the negative tone. */
+function arrearsLine(markup: string): { text: string; alarm: boolean } | null {
+  const m = /<p class="([^"]*)">(A further [^<]*)<\/p>/.exec(markup);
+  return m ? { text: m[2]!, alarm: m[1]!.split(/\s+/).includes("text-negative") } : null;
+}

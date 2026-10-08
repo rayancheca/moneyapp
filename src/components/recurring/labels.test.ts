@@ -2,6 +2,7 @@ import { describe, expect, test } from "vitest";
 import type { ForecastComponent } from "@/services/forecast";
 import type { SeriesOccurrence, SeriesStaleness } from "@/services/recurring";
 import {
+  alreadyDueWords,
   annualizedCaveat,
   annualizedEndNote,
   cadenceLabel,
@@ -419,11 +420,86 @@ describe("overdueNote", () => {
    *                                      within their cadence, and forecast"
    */
   test("names the day the charge was due and never came", () => {
-    expect(overdueNote("2026-09-01", 1)).toBe("Sep 1 — not posted");
+    expect(overdueNote("2026-09-01", 1, { owedCents: 210900, unreadCents: 0 })).toEqual({
+      text: "Sep 1 — not posted",
+      warning: true,
+    });
   });
 
   test("a weekly bill in arrears counts the ones behind it", () => {
-    expect(overdueNote("2026-09-01", 3)).toBe("Sep 1 and 2 more — not posted");
+    expect(overdueNote("2026-09-01", 3, { owedCents: 3000, unreadCents: 0 }).text).toBe("Sep 1 and 2 more — not posted");
+  });
+
+  /*
+   * 🔴 "Oct 1 — not posted" in warning colour under rent and its utilities on `/recurring?tab=all`, and the same under
+   * `/categories/<Housing>` (a copy of his ledger, 2026-10-08) — of a day no import had reached: rent posts from Wells
+   * Fargo, read through Sep 24. ⚖️ Over unread days never "not posted"; staleness between uploads is normal, never a
+   * warning (his words 2026-08-05; the class approved 2026-10-07).
+   */
+  test("a day no import has reached is quiet, and says no import has covered it yet", () => {
+    const note = overdueNote("2026-10-01", 1, { owedCents: 210900, unreadCents: 210900 });
+    expect(note).toEqual({ text: "Oct 1 — no import has covered it yet", warning: false });
+    expect(note.text).not.toMatch(/not posted/);
+  });
+
+  test("part read and part unread says both, by amount, and keeps the warning for the part that is late", () => {
+    expect(overdueNote("2026-07-01", 3, { owedCents: 3000, unreadCents: 1000 })).toEqual({
+      text: "Jul 1 and 2 more — $20.00 not posted, and no import has covered the other $10.00 yet",
+      warning: true,
+    });
+  });
+});
+
+/**
+ * The rent's own page, `/recurring/<Flamingo South Beach (rent)>`, on a copy of his ledger 2026-10-08:
+ *
+ *     Already due, and not posted          (warning colour)
+ *     Inside this calendar month, with no posting within 3 days of it. …
+ *     Oct 1, 2026   -$2,109.00
+ *
+ * 🔴 Oct 1 is a day no import has covered — the runway on the same ledger: "A further $2,291.21 came due earlier this
+ * month and no import has covered it yet." The heading follows the runway's split (`arrearsSplit`).
+ */
+describe("alreadyDueWords", () => {
+  test("read and unposted keeps 'Already due, and not posted', in warning", () => {
+    const w = alreadyDueWords({ owedCents: 210900, unreadCents: 0 }, 3);
+    expect(w.heading).toBe("Already due, and not posted");
+    expect(w.warning).toBe(true);
+  });
+
+  /*
+   * 🔴 IT VOUCHED FOR DAYS NO IMPORT HAD REACHED. A due day counts as read once the imports reach the day ITSELF
+   * (`arrearsThisMonth`, the calendar's rule), while a posting up to `toleranceDays` AFTER it still pays it — so with
+   * Netflix due Jul 1 and its card imported only through Jul 1 or Jul 2, the body read "with no posting within 3 days
+   * of it", a claim about Jul 2–4 (review of 2e6c74b, 2026-10-08). The e2e fixture is that case: Meal Kit is due Jul 5,
+   * its card imported through Jul 5, and the page said it of Jul 6–8. ⛔ The body claims what the rule checked: the
+   * imports reach its day and hold no posting within the tolerance — never that the days after it were read.
+   */
+  test("the read body claims only what was read: the imports reach its day, not the days after it", () => {
+    expect(alreadyDueWords({ owedCents: 210900, unreadCents: 0 }, 3).body).toBe(
+      "Inside this calendar month, and the imports, which reach its day, hold no posting within 3 days of it. " +
+        "The forecast counts it, and so does this month's budget.",
+    );
+  });
+
+  test("unread is quiet and says it in the runway's words", () => {
+    const w = alreadyDueWords({ owedCents: 210900, unreadCents: 210900 }, 3);
+    expect(w.heading).toBe("Already due — no import has covered it yet");
+    expect(w.warning).toBe(false);
+    expect(`${w.heading} ${w.body}`).not.toMatch(/not posted|no posting/);
+    // still counted — the card says so whichever way the day reads
+    expect(w.body).toContain("The forecast counts it, and so does this month's budget.");
+  });
+
+  test("a mix names both halves by amount", () => {
+    const w = alreadyDueWords({ owedCents: 3000, unreadCents: 1000 }, 1);
+    expect(w.heading).toBe("Already due: $20.00 not posted, and no import has covered the other $10.00 yet");
+    expect(w.warning).toBe(true);
+    // the read half, like the read body, only as far as the imports reach
+    expect(w.body).toBe(
+      "Inside this calendar month. Where the imports reach, they hold no posting within 1 day of it; the rest falls " +
+        "on days no import has reached yet. The forecast counts all of it, and so does this month's budget.",
+    );
   });
 });
 

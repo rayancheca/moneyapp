@@ -69,7 +69,12 @@ export default async function RecurringPage({
   );
   const overdueBySeries = new Map(
     arrearsThisMonth(db, liveIds, today).series.map(
-      (o) => [o.id, { date: o.nextDate, occurrenceCount: o.occurrenceCount }] as const,
+      (o) =>
+        [
+          o.id,
+          // with how far the ledger has read it, so the note says "not posted" only of read days (`overdueNote`)
+          { date: o.nextDate, occurrenceCount: o.occurrenceCount, owedCents: o.amountCents, unreadCents: o.unreadCents },
+        ] as const,
     ),
   );
 

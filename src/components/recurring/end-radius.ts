@@ -1,4 +1,6 @@
 import type { BlastRadiusLine } from "@/components/ui/blast-radius";
+import { arrearsClause } from "@/lib/arrears-reading";
+import type { SeriesDetail } from "@/services/recurring-detail";
 import { longDate } from "./labels";
 
 /**
@@ -28,12 +30,23 @@ import { longDate } from "./labels";
  * which for `Flamingo South Beach (rent)` is every rent charge there will ever
  * be. A blast radius that under-reports is the one thing it must not do. The
  * line names the span instead of counting a preview.
+ *
+ * 🔴 …AND IT SAID "not imported" WHATEVER THE LEDGER HAD READ. The page handed
+ * this the arrears' amount, date and count and dropped how far the ledger had
+ * read them, so where an import HAD covered the due day the card three cards
+ * below said "Already due, and not posted" in warning colour while this said
+ * "Already due this month, not imported" — false of a day that was imported
+ * (review of 2e6c74b, 2026-10-08; Netflix due Jul 1, its card read through
+ * Jul 5). ⛔ The card's split, the runway's (`arrearsClause`), built from the
+ * page's data in one place (`seriesEndInput`).
  */
 export interface SeriesEndInput {
   /** a year at today's amounts, or null when the series cannot carry one */
   annualizedCents: number | null;
   /** arrears magnitude — 0 when nothing is late; disjoint from the tail below */
   overdueCents: number;
+  /** of `overdueCents`, the part on days no import has reached (`ArrearsReading.unreadCents`) */
+  overdueUnreadCents: number;
   overdueOn: string | null;
   /** how many occurrences the arrears covers (the page's own "and N more") */
   overdueCount: number;
@@ -42,6 +55,22 @@ export interface SeriesEndInput {
   /** last day the series can occur; null = open-ended */
   endsOn: string | null;
   linkedCount: number;
+}
+
+/** The page's own data as the dialog's input — every field from the figure the page itself prints. */
+export function seriesEndInput(
+  data: Pick<SeriesDetail, "annualizedCents" | "overdue" | "nextExpected" | "endsOn" | "linkedTxns">,
+): SeriesEndInput {
+  return {
+    annualizedCents: data.annualizedCents,
+    overdueCents: Math.abs(data.overdue?.amountCents ?? 0),
+    overdueUnreadCents: data.overdue?.unreadCents ?? 0,
+    overdueOn: data.overdue?.date ?? null,
+    overdueCount: data.overdue?.occurrenceCount ?? 0,
+    nextChargeOn: data.nextExpected[0]?.date ?? null,
+    endsOn: data.endsOn,
+    linkedCount: data.linkedTxns.length,
+  };
 }
 
 /** The upcoming clause — a span, never a count off a capped preview. */
@@ -61,6 +90,7 @@ export function seriesEndLines(
     input.overdueCount > 1
       ? `${formatCents(input.overdueCents)} across ${input.overdueCount} charges`
       : formatCents(input.overdueCents);
+  const reading = { owedCents: input.overdueCents, unreadCents: input.overdueUnreadCents };
   return [
     ...(input.annualizedCents !== null
       ? [
@@ -71,9 +101,9 @@ export function seriesEndLines(
           },
         ]
       : []),
-    // past first, then future — the order `budgetDeactivateLines` reads in
+    // past first, then future — the order `budgetDeactivateLines` reads in; "not posted" only of read days
     ...(input.overdueCents > 0
-      ? [{ label: "Already due this month, not imported", value: overdueValue }]
+      ? [{ label: `Already due this month, ${arrearsClause(reading, "not posted")}`, value: overdueValue }]
       : []),
     { label: "Upcoming charges off the calendar", value: upcomingValue(input) },
     {

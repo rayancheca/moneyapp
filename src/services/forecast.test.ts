@@ -187,10 +187,11 @@ describe("forecastCurrentMonth", () => {
       userAmountHistory: [{ throughOn: "2026-07-10", amountCents: -7000 }],
     });
     const f = forecastCurrentMonth(bundle.db, "2026-07-20");
-    // Jul 2 and 9 at $70.00, Jul 16 at $80.01 — all came due before today and none posted
-    const late = f.components.find((c) => c.label === "Gym" && c.detail.includes("has not posted"));
+    // Jul 2 and 9 at $70.00, Jul 16 at $80.01 — all came due before today and none posted; no import reaches those
+    // days on this fixture, so the tail is the runway's unread words (`arrearsTail`)
+    const late = f.components.find((c) => c.label === "Gym" && c.detail.includes("came due"));
     expect(late).toMatchObject({ kind: "fixed", cents: -(7000 + 7000 + 8001) });
-    expect(late!.detail).toBe("2 × -$70.00 + 1 × -$80.01 (weekly), came due Jul 2 and has not posted");
+    expect(late!.detail).toBe("2 × -$70.00 + 1 × -$80.01 (weekly), came due Jul 2 and no import has covered it yet");
     // Jul 23 and 30 still to come, at the rate now
     expect(f.components.find((c) => c.label === "Gym" && c.detail.includes("next"))?.detail).toContain("2 × -$80.01");
   });
@@ -374,7 +375,9 @@ describe("forecastCurrentMonth", () => {
      * 2026-09-11. `formatDayShortIn` keeps the year off a same-year date and
      * puts it back across a boundary.
      */
-    expect(rentLine!.detail).toContain("came due Jul 1 and has not posted");
+    // no account and no postings: nothing the ledger has read could hold it — the runway's unread words, never
+    // "has not posted" (see the next test)
+    expect(rentLine!.detail).toContain("came due Jul 1 and no import has covered it yet");
     expect(rentLine!.detail).not.toMatch(/\d{4}-\d{2}-\d{2}/);
     expect(f.projectedSpendCents).toBe(-210900);
     // it is a COMMITMENT, not a pace: the schedule-only reading owns it too
@@ -387,6 +390,28 @@ describe("forecastCurrentMonth", () => {
      * sentence that reads "1 payday worth -$2,109.00 already passed".
      */
     expect(f.unbankedIncome).toEqual({ totalCents: 0, occurrenceCount: 0, checkedOccurrenceCount: 0, frontier: { kind: "unchecked" }, names: [] });
+  });
+
+  /*
+   * 🔴 "1 × -$2,109.00 (monthly), came due Oct 1 and has not posted" in /recurring's math table on a copy of his
+   * ledger 2026-10-08, of a day no import had reached — the runway beside it said "no import has covered it yet". The
+   * runway's split, carried by `arrearsThisMonth`: "has not posted" only of what the ledger has read.
+   */
+  test("a late bill says 'has not posted' only of a day its account has been imported past", () => {
+    insertSeries({
+      name: "Rent",
+      kind: "bill",
+      cadence: "monthly",
+      intervalDaysAvg: 30,
+      nextExpectedOn: "2026-07-01",
+      nextExpectedAmountCents: -210900,
+      status: "confirmed",
+      accountId: checkingId,
+    });
+    insertTxn(checkingId, "2026-07-03", -1200, { categoryName: "Groceries" });
+    const rentLine = forecastCurrentMonth(bundle.db, TODAY).components.find((c) => c.label === "Rent");
+    expect(rentLine).toMatchObject({ kind: "fixed", cents: -210900 });
+    expect(rentLine!.detail).toBe("1 × -$2,109.00 (monthly), came due Jul 1 and has not posted");
   });
 
   /* ⛔ The kind filter is not enough on its own, and `fixedComponents` says why

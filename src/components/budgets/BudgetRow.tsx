@@ -11,6 +11,7 @@ import { ProvenancePopover } from "@/components/ui/ProvenancePopover";
 import { NumberRoll } from "@/components/ui/NumberRoll";
 import { InfoTip } from "@/components/ui/InfoTip";
 import { Popover, usePopover } from "@/components/ui/Popover";
+import { arrearsAlarms, arrearsTail } from "@/lib/arrears-reading";
 import { formatDayShort } from "@/lib/format-date";
 import { budgetCoverageSentence } from "@/lib/budget-coverage";
 import { budgetVerdict } from "@/lib/budget-verdict";
@@ -106,6 +107,17 @@ export function BudgetRow({ status, guidanceCents, spentProvenance, planProvenan
   const tailPopover = usePopover<HTMLButtonElement>();
   const details = useDisclosure();
 
+  /*
+   * 🔴 THE ARREARS SAID "not imported", IN WARNING COLOUR, WHATEVER THE LEDGER HAD READ. On a copy of his ledger
+   * 2026-10-08 Housing read "$2,291.21 expected by now, not imported" in `text-warning` — rent and its utilities, both
+   * Oct 1, on days no import had reached — while the runway said the same money quietly; and of a day an import HAD
+   * reached (the e2e fixture's Meal Kit) "not imported" was false. ⚖️ Staleness between uploads is normal, never a
+   * warning (his words 2026-08-05). ⛔ The runway's split and tone (`lib/arrears-reading`): "not posted" and the
+   * warning only for what the ledger has read; the line, the spoken sentence and the dialog all read this one.
+   */
+  const arrears = { owedCents: status.overdueCents, unreadCents: status.overdueUnreadCents };
+  const arrearsLine = `${formatCents(status.overdueCents)} expected by now${arrearsTail(arrears, "not posted")}`;
+
   // The elapsed fraction is what the today mark encodes, and the mark is
   // `aria-hidden` — so without this clause the spoken row is strictly poorer
   // than the drawn one, and on a full bar (where the mark is not drawn at all)
@@ -124,7 +136,7 @@ export function BudgetRow({ status, guidanceCents, spentProvenance, planProvenan
       : ""
   }${
     status.overdueCents > 0
-      ? ` ${formatCents(status.overdueCents)} was expected by now and has not been imported.`
+      ? ` ${formatCents(status.overdueCents)} was expected by now${arrearsTail(arrears, "has not posted")}.`
       : ""
   }`;
 
@@ -209,10 +221,12 @@ export function BudgetRow({ status, guidanceCents, spentProvenance, planProvenan
       {/* Due already and still not posted. Distinct from the forward tail on
           purpose: the tail is money the month has not reached yet, this is money
           the month has passed and cannot account for. Reading "on track" over a
-          missing rent payment is the failure this exists to prevent. */}
+          missing rent payment is the failure this exists to prevent.
+          ⚖️ In warning only when some of it fell on days the ledger has read
+          (`arrearsAlarms`) — over unread days it is the runway's quiet sentence. */}
       {status.overdueCents > 0 && (
-        <p className="mt-2 text-xs text-warning">
-          {formatCents(status.overdueCents)} expected by now, not imported
+        <p className={arrearsAlarms(arrears) ? "mt-2 text-xs text-warning" : "mt-2 text-xs text-ink-muted"}>
+          {arrearsLine}
           {status.overdue.length > 0 && (
             <span className="text-ink-faint">
               {" · "}
@@ -360,6 +374,7 @@ export function BudgetRow({ status, guidanceCents, spentProvenance, planProvenan
                   budgetPhrase: `${formatCents(budget.amountCents)} / ${PERIOD_WORD[budget.period]}`,
                   spentCents: status.spentCents,
                   overdueCents: status.overdueCents,
+                  overdueUnreadCents: status.overdueUnreadCents,
                   expectedTailCents: status.expectedTailCents,
                 },
                 formatCents,

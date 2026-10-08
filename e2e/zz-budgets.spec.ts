@@ -223,12 +223,15 @@ test("a bill that came due and never posted is disclosed on its budget row", asy
   // Meal Kit was expected 2026-07-05 and never arrived. Food is `under` and
   // undermeasured, so its headline is "Awaiting statements" — the overdue line
   // is the ONLY thing telling him $125.00 of this month is already committed.
-  await expect(food.getByText("$125.00 expected by now, not imported")).toBeVisible();
+  // ⛔ "not posted", not "not imported": Meal Kit's card is imported through
+  // Jul 5, its due day, so the day has been read and nothing on it posted — the
+  // read half of the runway's split (`lib/arrears-reading`), in warning.
+  await expect(food.getByText("$125.00 expected by now and not posted")).toBeVisible();
   await expect(food.getByText(/Meal Kit Jul 5/)).toBeVisible();
 
   // exactly one row is overdue — Housing and Subscriptions must stay silent,
   // or the state would be decorative rather than measured
-  await expect(page.getByText(/expected by now, not imported/)).toHaveCount(1);
+  await expect(page.getByText(/expected by now/)).toHaveCount(1);
 
   // overdue is NOT the forward tail: budgetTail opens strictly AFTER today, so
   // Food gains no "expected before" trigger while the two budgets that have one
@@ -240,7 +243,7 @@ test("a bill that came due and never posted is disclosed on its budget row", asy
   // the screen reader is told the same thing the sighted reader is
   await expect(food.getByRole("progressbar")).toHaveAttribute(
     "aria-valuetext",
-    /\$125\.00 was expected by now and has not been imported\.$/,
+    /\$125\.00 was expected by now and has not posted\.$/,
   );
 
   // …and it is committed money, so it lands in the projection exactly once:

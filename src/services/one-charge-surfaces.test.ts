@@ -239,6 +239,7 @@ describe("every cadence printer reads it", () => {
   test("the forecast's math table, came due and not posted", () => {
     const late = forecastCurrentMonth(bundle.db, "2026-11-20");
     const line = late.components.find((c) => c.label.startsWith("Car insurance — Nov 11"))!;
-    expect(line.detail).toBe("1 × -$72.74 (once), came due Nov 11 and has not posted");
+    // "once" in the cadence slot; no import reaches Nov 11 on this fixture, so the runway's unread words follow
+    expect(line.detail).toBe("1 × -$72.74 (once), came due Nov 11 and no import has covered it yet");
   });
 });

@@ -22,6 +22,7 @@
  */
 
 import type { Cadence } from "@/db/schema/recurring";
+import { arrearsTail, type ArrearsReading } from "@/lib/arrears-reading";
 import { addCalendarMonths, compareDates, daysInMonthOf, monthKey, withDayOfMonth } from "@/lib/dates";
 import { monthWindowLabel } from "@/lib/format-date";
 import { dayWindowLabel } from "@/lib/period";
@@ -359,16 +360,26 @@ export function committedOutflows(input: CommittedInput): CommittedOutflows {
  * the unread part takes /budgets' words. "Came due" stays: this leg closes the
  * day BEFORE today (see `committedBook`), so every payment in it is past due.
  *
+ * ⛔ The split is `arrearsTail`'s, the one the bill's own page, `/recurring`'s Next column and the math table say it
+ * through (`lib/arrears-reading`).
+ *
  * Null when nothing is late — silence, never "nothing came due".
  */
-export function arrearsSentence(book: { overdueCents: number; overdueUnreadCents: number }): string | null {
+export function arrearsSentence(book: ArrearsBook): string | null {
   if (book.overdueCents <= 0) return null;
-  const unread = Math.min(book.overdueCents, Math.max(0, book.overdueUnreadCents));
-  const read = book.overdueCents - unread;
-  const lead = `A further ${formatCents(book.overdueCents)} came due earlier this month`;
-  if (unread === 0) return `${lead} and never posted.`;
-  if (read === 0) return `${lead} and no import has covered it yet.`;
-  return `${lead}: ${formatCents(read)} never posted, and no import has covered the other ${formatCents(unread)} yet.`;
+  const tail = arrearsTail(arrearsReadingOf(book), "never posted");
+  return `A further ${formatCents(book.overdueCents)} came due earlier this month${tail}.`;
+}
+
+/** The two book figures `arrearsSentence` and its tone read. */
+type ArrearsBook = Pick<CommittedOutflows, "overdueCents" | "overdueUnreadCents">;
+
+/**
+ * The book's arrears as the read/unread split every arrears surface says them through — the runway card takes its
+ * sentence (`arrearsSentence`) and its tone (`arrearsAlarms`) from the same reading.
+ */
+export function arrearsReadingOf(book: ArrearsBook): ArrearsReading {
+  return { owedCents: book.overdueCents, unreadCents: book.overdueUnreadCents };
 }
 
 /**

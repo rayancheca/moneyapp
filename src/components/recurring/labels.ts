@@ -1,3 +1,4 @@
+import { arrearsAlarms, arrearsClause, arrearsSplit, NO_IMPORT_YET, type ArrearsReading } from "@/lib/arrears-reading";
 import { addCalendarMonths, compareDates, diffDays, isoWeekday } from "@/lib/dates";
 import { endsInsideHorizon } from "@/lib/committed";
 import { dayWindowLabel } from "@/lib/period";
@@ -508,10 +509,71 @@ export function staleComponentEntries(components: readonly ForecastComponent[]):
  *
  * ⚠️ The Next date stays. October's charge is still coming; what was missing is
  * that September's never arrived.
+ *
+ * ⛔ "Not posted" only of what the ledger has READ — the runway's split (`arrearsSplit`). 🔴 On a copy of his ledger
+ * 2026-10-08 this read "Oct 1 — not posted" in warning colour under rent and its utilities, here and under
+ * `/categories/<Housing>`, of a day no import had reached; the runway beside it said "no import has covered it yet".
+ * ⚖️ Staleness between uploads is never a warning (his words 2026-08-05), so the unread note is quiet: `warning` is
+ * false only when none of it has been read (`arrearsAlarms`).
  */
-export function overdueNote(date: string, occurrenceCount: number): string {
+export function overdueNote(
+  date: string,
+  occurrenceCount: number,
+  reading: ArrearsReading,
+): { text: string; warning: boolean } {
   const more = occurrenceCount > 1 ? ` and ${occurrenceCount - 1} more` : "";
-  return `${shortDate(date)}${more} — not posted`;
+  const text = `${shortDate(date)}${more} — ${arrearsClause(reading, "not posted")}`;
+  return { text, warning: arrearsAlarms(reading) };
+}
+
+/**
+ * The bill's own page, under "Already due": its heading, the sentence under it, and whether it is a warning.
+ *
+ * 🔴 `/recurring/<Flamingo South Beach (rent)>` on a copy of his ledger 2026-10-08 read "Already due, and not posted"
+ * in warning colour, "Inside this calendar month, with no posting within 3 days of it", over Oct 1 — rent posts from
+ * Wells Fargo, read through Sep 24, so no import had covered the day. The runway on the same ledger: "A further
+ * $2,291.21 came due earlier this month and no import has covered it yet." ⛔ The runway's split (`arrearsSplit`), not
+ * a second one: "not posted" and the warning only for what the ledger has read; ⚖️ the rest is quiet — staleness
+ * between uploads is normal, never a warning (his words 2026-08-05).
+ *
+ * 🔴 …AND THE READ BODY VOUCHED FOR DAYS NO IMPORT HAD REACHED. A due day counts as read once the imports reach the day
+ * ITSELF (`arrearsThisMonth`, the calendar's rule), while a posting up to `toleranceDays` after it still pays it — so
+ * with the account imported through the due day, "with no posting within 3 days of it" was a claim about the three
+ * days after, unread (review of 2e6c74b, 2026-10-08; the e2e fixture's Meal Kit, due Jul 5 on a card imported through
+ * Jul 5, said it of Jul 6–8). ⛔ The body claims what the rule checked: the imports reach its day, and hold no posting
+ * within the tolerance. Whether "read" should wait for the tolerance is his call (asked 2026-10-08).
+ *
+ * The forecast and this month's budget count all of it whichever way it reads — both say so.
+ */
+export function alreadyDueWords(
+  reading: ArrearsReading,
+  toleranceDays: number,
+): { heading: string; body: string; warning: boolean } {
+  const split = arrearsSplit(reading);
+  const within = `within ${toleranceDays} ${toleranceDays === 1 ? "day" : "days"} of it`;
+  const counted = "The forecast counts it, and so does this month's budget.";
+  const warning = arrearsAlarms(reading);
+  if (split.kind === "read") {
+    return {
+      heading: "Already due, and not posted",
+      body: `Inside this calendar month, and the imports, which reach its day, hold no posting ${within}. ${counted}`,
+      warning,
+    };
+  }
+  if (split.kind === "unread") {
+    return {
+      heading: `Already due — ${NO_IMPORT_YET}`,
+      body: `Inside this calendar month, on a day no import has reached yet — it may well have posted. ${counted}`,
+      warning,
+    };
+  }
+  return {
+    heading: `Already due: ${arrearsClause(reading, "not posted")}`,
+    body:
+      `Inside this calendar month. Where the imports reach, they hold no posting ${within}; the rest falls on ` +
+      "days no import has reached yet. The forecast counts all of it, and so does this month's budget.",
+    warning,
+  };
 }
 
 /**

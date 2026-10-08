@@ -218,8 +218,12 @@ export interface SeriesDetail {
    * month, closing the day before today, so a bill due TODAY is due rather than
    * late. Arrears are scoped to the calendar month by the owner's decision of
    * 2026-09-02; a wider leg here would disagree with every other surface.
+   *
+   * `unreadCents` — of `amountCents`' magnitude, the part on days no import has reached, the runway's split
+   * (`ArrearsSeries.unreadCents`). 🔴 Without it the card read "Already due, and not posted" in warning colour over
+   * rent's Oct 1 on a copy of his ledger 2026-10-08, a day no import had covered (Wells Fargo read through Sep 24).
    */
-  overdue: { date: string; amountCents: number; occurrenceCount: number } | null;
+  overdue: { date: string; amountCents: number; occurrenceCount: number; unreadCents: number } | null;
   /** full linked history, newest first */
   linkedTxns: SeriesLinkedTxn[];
   /** linked charge amounts oldest → newest, for the drift chart */
@@ -400,7 +404,12 @@ export function seriesDetail(
 
   const late = projects ? (arrearsThisMonth(db, new Set([seriesId]), today).series[0] ?? null) : null;
   const overdue = late
-    ? { date: late.nextDate, amountCents: -late.amountCents, occurrenceCount: late.occurrenceCount }
+    ? {
+        date: late.nextDate,
+        amountCents: -late.amountCents,
+        occurrenceCount: late.occurrenceCount,
+        unreadCents: late.unreadCents,
+      }
     : null;
 
   const namedCategoryId = seriesCategoryIds(db, loadCategoryIndex(db), [s.id]).get(s.id);

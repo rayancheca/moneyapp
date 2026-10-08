@@ -106,6 +106,8 @@ export default async function BudgetsPage({
       // occurrences, not series — the same rows `overdueCents` was summed from,
       // so the count and the money it describes cannot drift apart
       overdueBills: s.overdue.reduce((n, o) => n + o.occurrenceCount, 0),
+      // …and how far the ledger has read it, so the note says "not posted" only where the row does
+      overdueUnreadCents: s.overdueUnreadCents,
       uncoveredDays: s.uncoveredDays,
       pace: s.pace,
       // so a row spent only from cash wallets is left out on the row's own rule
