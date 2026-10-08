@@ -22,6 +22,7 @@ import { hasStoppedForecasting, listSeries, seriesEvidence, upcomingOccurrences 
 import { recurringCalendar } from "./recurring-calendar";
 import { seriesDetail } from "./recurring-detail";
 import { recurringInsightInput } from "./recurring-insights";
+import { mergeSeries } from "./recurring-links";
 import { subscriptionsCard } from "./subscriptions-card";
 
 /**
@@ -329,6 +330,114 @@ describe("the evidence is the carrier's — whatever the carrier's is", () => {
     expect(seriesEvidence(row("2026-12-05"), "2026-12-05")).toBe("lapsed");
     expect(hasStoppedForecasting(row("2026-12-05"), "2026-12-05")).toBe(true);
     expect(hasStoppedForecasting(row("2026-12-04"), "2026-12-04")).toBe(false);
+  });
+});
+
+/*
+ * 🔴 A merge of the carrier froze what is billed inside it (review of §6A 59, 2026-10-08). `mergeSeries` ends the
+ * source and recomputes only the target, and the link still named the ended source — whose `last_matched_on` stays
+ * at its last posting while every newer rent posts under the target. Detection makes a series of the Wells Fargo
+ * rows, he merges the rent into it, the rent keeps posting — and 93 days after Sep 2 the utilities read "lapsed" and
+ * left the forecast, the committed book, the arrears and the card's live figure, with nothing for him to see or do.
+ */
+describe("a merge of the carrier — the link follows the rent to the series it was merged into", () => {
+  const WF = "wf-rent";
+  const TODAY_DEC = "2026-12-05";
+
+  /** detection's series of the Wells Fargo rows, Oct 2 → Dec 2, and his merge of the rent into it */
+  function mergeRentIntoDetectedSeries(): void {
+    bundle.db
+      .insert(recurringSeries)
+      .values({
+        id: WF,
+        name: "Flamingo South Beach",
+        kind: "bill",
+        cadence: "monthly",
+        intervalDaysAvg: 30,
+        amountCentsAvg: -229121,
+        toleranceDays: 3,
+        nextExpectedOn: "2027-01-02",
+        nextExpectedAmountCents: -229121,
+        anchorDay: 2,
+        status: "detected",
+        lastMatchedOn: "2026-12-02",
+        accountId: "acct",
+        userCategoryId: categoryId,
+        createdAt: now(),
+        updatedAt: now(),
+      })
+      .run();
+    const posted = (id: string, postedOn: string) => ({
+      id,
+      accountId: "acct",
+      postedOn,
+      amountCents: -229121,
+      rawDescription: "FLAMINGO SOUTH BEACH",
+      normalizedDescription: "FLAMINGO SOUTH BEACH",
+      categoryId,
+      recurringSeriesId: WF,
+      status: "active" as const,
+      needsReview: false,
+      occurrenceIndex: 0,
+      dedupeHash: `h-${id}`,
+      createdAt: now(),
+      updatedAt: now(),
+    });
+    bundle.db
+      .insert(transactions)
+      .values([posted("t-oct", "2026-10-02"), posted("t-nov", "2026-11-02"), posted("t-dec", "2026-12-02")])
+      .run();
+    mergeSeries(bundle.db, RENT, WF, TODAY_DEC);
+  }
+
+  test("its carrier is the series the rent was merged into — last seen Dec 2, not the ended rent's Sep 2", () => {
+    link();
+    mergeRentIntoDetectedSeries();
+    expect(billingCarriers(bundle.db).get(UTIL)).toEqual({
+      id: WF,
+      name: "Flamingo South Beach",
+      lastMatchedOn: "2026-12-02",
+    });
+    const line = subscriptionsCard(bundle.db, TODAY_DEC)!.live.find((l) => l.seriesId === UTIL)!;
+    expect(line.billedWithLabel).toBe("billed with Flamingo South Beach, last seen Dec 2");
+    // ⛔ the link column itself is his write, untouched — the reading follows the merge
+    expect(bundle.db.select().from(recurringSeries).where(eq(recurringSeries.id, UTIL)).get()!.userBilledWithSeriesId).toBe(RENT);
+  });
+
+  test("Dec 5, 93 days after the ended rent's Sep 2: still forecast on every surface, because the rent still posts", () => {
+    link();
+    mergeRentIntoDetectedSeries();
+    const where = () => ({
+      upcoming: upcomingOccurrences(bundle.db, TODAY_DEC, 60).some((o) => o.seriesId === UTIL),
+      arrears: arrearsThisMonth(bundle.db, new Set([UTIL]), TODAY_DEC).series.length > 0,
+      card: subscriptionsCard(bundle.db, TODAY_DEC)!.live.some((l) => l.seriesId === UTIL),
+      evidence: listSeries(bundle.db, TODAY_DEC).find((s) => s.id === UTIL)!.evidence,
+      january: forecastForMonth(bundle.db, "2027-01", TODAY_DEC)!.components.some((c) => c.label === "Rent utilities & fees"),
+      tail: budgetTail(bundle.db, categoryId, "2027-01-31", TODAY_DEC).series.some((s) => s.id === UTIL),
+      calendar: Object.values(recurringCalendar(bundle.db, "2027-01", TODAY_DEC).entriesByDay)
+        .flat()
+        .some((e) => e.seriesId === UTIL),
+    });
+    expect(where()).toEqual({
+      upcoming: true,
+      arrears: true,
+      card: true,
+      evidence: "active",
+      january: true,
+      tail: true,
+      calendar: true,
+    });
+    // its page links to the live series, not the ended one
+    expect(seriesDetail(bundle.db, UTIL, TODAY_DEC).billedWith?.id).toBe(WF);
+  });
+
+  test("a rent merged INTO the utilities leaves nothing to borrow from: its own postings are its evidence", () => {
+    link();
+    mergeSeries(bundle.db, RENT, UTIL, TODAY);
+    expect(billingCarriers(bundle.db).has(UTIL)).toBe(false);
+    const util = listSeries(bundle.db, TODAY).find((s) => s.id === UTIL)!;
+    expect(util.billedWith).toBeNull();
+    expect(util.lastMatchedOn).toBe("2026-09-02");
   });
 });
 

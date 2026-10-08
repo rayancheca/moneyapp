@@ -109,8 +109,9 @@ export const recurringSeries = sqliteTable("recurring_series", {
    * `billingCarriers`): "billed with the rent, last seen Sep 2", never "never billed". Its amount, its schedule and
    * its arrears stay its own. NULL = billed on its own.
    *
-   * ⚠️ One hop: the carrier's own `last_matched_on`, whatever it is billed with. A merge of the carrier leaves this
-   * on the ended source, whose evidence stops there — point it at the merged series.
+   * ⚠️ One hop: the carrier's own `last_matched_on`, whatever IT is billed with. A merge of the carrier leaves this
+   * naming the ended source, and the reading follows the merge to the live series (`billingCarriers`) — nothing for
+   * him to repoint by hand.
    */
   userBilledWithSeriesId: text("user_billed_with_series_id").references((): AnySQLiteColumn => recurringSeries.id),
   // Set when this series is merged INTO another: it becomes `ended` and its

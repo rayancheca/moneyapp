@@ -17,7 +17,7 @@ import { formatDayShortIn } from "./format-date";
  * gate — asks `lastSeenOn`. Client-safe, so a component can word it without importing the database.
  */
 
-/** The series a commitment is billed inside, as its evidence needs it. */
+/** The series a commitment is billed inside, as its evidence needs it — the LIVE one, followed through any merge. */
 export interface BillingCarrier {
   readonly id: string;
   readonly name: string;
