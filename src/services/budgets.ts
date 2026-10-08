@@ -46,7 +46,7 @@ import {
 import type { UnbankedFrontier } from "@/lib/unbanked-income";
 import { portionsAcross } from "@/lib/payday-settlement";
 import { paydaySettlementsBySeries } from "./payday-settlement";
-import { effectiveSeries, hasStoppedForecasting, projectOccurrences, toProjectable } from "./recurring";
+import { effectiveSeries, hasStoppedForecasting, oneChargeDays, projectOccurrences, toProjectable } from "./recurring";
 import { linkIsRecurring, rowIsRecurring, seriesIdsNotDrawnAsRecurring } from "./recurring-link";
 
 // the overdue rule now lives in ./arrears (the forecast needs it too, and
@@ -1102,12 +1102,25 @@ export function budgetOverdue(
   return overdueForSeries(db, seriesIds, periodStart, today, today);
 }
 
+/**
+ * A line of the FORWARD tail — the one budget list that prints a cadence ("Nov 11 · monthly"), so the one that
+ * carries the one-charge reading (`oneChargeDays`). ⚖️ Owner decision 2026-10-08 (§6A 56): a series whose whole
+ * schedule holds one charge reads "Nov 11 · once". The overdue list names a day and no cadence, and needs none.
+ */
+export interface BudgetTailLine extends BudgetTailSeries {
+  oneCharge: boolean;
+}
+
+export interface ForwardBudgetTail extends BudgetTail {
+  series: BudgetTailLine[];
+}
+
 export function budgetTail(
   db: AppDatabase,
   categoryId: string,
   periodEnd: string,
   today: string,
-): BudgetTail {
+): ForwardBudgetTail {
   const seriesIds = recurringSeriesIdsForCategory(db, categoryId);
   if (seriesIds.size === 0) return { totalCents: 0, series: [] };
 
@@ -1145,8 +1158,10 @@ export function budgetTail(
       ),
     )
     .all();
+  // ⚖️ §6A 56 — the cadence word this list prints, from the one reading every cadence printer asks
+  const oneCharge = oneChargeDays(db, rows);
 
-  const series: BudgetTailSeries[] = [];
+  const series: BudgetTailLine[] = [];
   let totalCents = 0;
   for (const s of rows) {
     // a series that stopped charging is not a forecast — see seriesHasLapsed for
@@ -1166,6 +1181,7 @@ export function budgetTail(
       amountCents,
       occurrenceCount: occ.length,
       href: `/recurring/${s.id}`,
+      oneCharge: oneCharge.has(s.id),
     });
   }
   series.sort((a, b) => compareDates(a.nextDate, b.nextDate) || a.name.localeCompare(b.name));
@@ -1418,7 +1434,7 @@ export interface BudgetPaceStatus extends BudgetStatus, CategoryCoverage {
   expectedTailCents: number;
   projectedCents: number;
   pace: BudgetPace;
-  tail: BudgetTailSeries[];
+  tail: BudgetTailLine[];
   /** bills expected on/before today that never posted — money committed but missing */
   overdueCents: number;
   overdue: BudgetTailSeries[];

@@ -21,6 +21,7 @@ import {
   annualizedCentsOf,
   effectiveSeries,
   isSeriesActive,
+  oneChargeDays,
   projectOccurrences,
   rollForwardNextExpected,
   toProjectable,
@@ -164,6 +165,12 @@ export interface SeriesDetail {
    * annualised figure it headlines is exactly the number that end invalidates.
    */
   endsOn: string | null;
+  /**
+   * The day of its ONE charge when its whole schedule holds one (`oneChargeDays`), else null. ⚖️ Owner decision
+   * 2026-10-08 (§6A 56): then the CADENCE stat reads "Once" and the sentence "charges once on Nov 11". 🔴 The Nov 11
+   * car-insurance balance's page read "Cadence Monthly" under "charges monthly around the 11th".
+   */
+  oneChargeOn: string | null;
   annualizedCents: number | null;
   /** the next few projected occurrences (override-aware) */
   nextExpected: SeriesOccurrence[];
@@ -431,6 +438,7 @@ export function seriesDetail(
     isActive: isSeriesActive(s, today),
     evidence: seriesEvidence(s, today),
     endsOn: s.userEndsOn ?? null,
+    oneChargeOn: oneChargeDays(db, [s]).get(s.id) ?? null,
     annualizedCents: annualizedCentsOf(s, today),
     nextExpected,
     overdue,
@@ -521,7 +529,15 @@ export interface SeriesOverridesInput {
   userNextExpectedOn?: string | null;
 }
 
-/** Writes user overrides (§4.4). Detection keeps its own columns; the UI reads user-first. */
+/**
+ * Writes user overrides (§4.4). Detection keeps its own columns; the UI reads user-first.
+ *
+ * ⚖️ §6A 56 (2026-10-08): a ONE-CHARGE series' day is its whole schedule, so moving that day moves its end with it —
+ * here, so the date token, a reset to detected and any later caller all keep the one charge on its own schedule.
+ * 🔴 The token wrote the next day alone (review of 8a4ac47). On a copy of his ledger, the Nov 11 balance moved to
+ * Nov 14 passed its Nov 11 end: the walk held nothing, the $72.74 left the forecast, and the card said "1 has already
+ * ended" about a balance still owed. Every other series' end is its own and stays where it is.
+ */
 export function setSeriesOverrides(
   db: AppDatabase,
   seriesId: string,
@@ -537,6 +553,10 @@ export function setSeriesOverrides(
       throw new Error(`Invalid next-expected date: ${input.userNextExpectedOn}`);
     }
     patch.userNextExpectedOn = input.userNextExpectedOn ?? null;
+    const s = db.select().from(recurringSeries).where(eq(recurringSeries.id, seriesId)).get();
+    // the day the one charge lands on after this write: the override, or the detected day a reset hands it back to
+    const movedTo = patch.userNextExpectedOn ?? s?.nextExpectedOn ?? null;
+    if (s !== undefined && movedTo !== null && oneChargeDays(db, [s]).has(s.id)) patch.userEndsOn = movedTo;
   }
   if (Object.keys(patch).length === 0) return;
   const res = db.update(recurringSeries).set(patch).where(eq(recurringSeries.id, seriesId)).run();

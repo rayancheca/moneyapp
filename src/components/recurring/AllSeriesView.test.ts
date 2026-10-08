@@ -1,7 +1,15 @@
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { eq } from "drizzle-orm";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, test, vi } from "vitest";
-import type { SeriesView } from "@/services/recurring";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
+import { createDatabase, type DbBundle } from "@/db/client";
+import { seedDatabase } from "@/db/seed";
+import { recurringSeries } from "@/db/schema/recurring";
+import { seedHisCarSeries, type OneChargeLedger } from "@/services/one-charge-fixture";
+import { listSeries, type SeriesView } from "@/services/recurring";
 
 // the server actions pull in next/cache and the database client
 vi.mock("@/app/recurring/actions", () => ({ confirmSeriesAction: vi.fn(), dismissSeriesAction: vi.fn() }));
@@ -29,6 +37,8 @@ function series(over: Partial<SeriesView> & Pick<SeriesView, "id" | "name" | "st
     annualizedCents: 18588,
     postedAvgCents: -1549,
     endsOn: null,
+    // 🔴 left out, every fixture here read "Once": `cadenceLabel` asks `=== null`, and undefined is not
+    oneChargeOn: null,
     ...over,
   } as SeriesView;
 }
@@ -151,5 +161,63 @@ describe("AllSeriesView — the suggestions note claims the forecast only for th
   test("over suggestions the forecast all carries, the note is the one it always was", () => {
     expect(noteOf([rocket])).toContain("detected, not yet confirmed — and already in the forecast above");
     expect(noteOf([rocket])).not.toContain("unless");
+  });
+});
+
+/*
+ * ⚖️ Owner decision 2026-10-08 (§6A 56): the one-time Nov 11 car-insurance balance reads "Once" in the cadence slot —
+ * its day is the Next cell beside it — and Car insurance, a monthly bill in its last months, reads "Monthly". 🔴 It read
+ * "Monthly" in this tab on a copy of his ledger that morning; and review of 3044ea6 put both slots back on the stored
+ * cadence with every component test still green. From his two series as stored (`seedHisCarSeries`), through the
+ * reading the page itself asks (`listSeries`).
+ */
+describe("AllSeriesView — a schedule of one charge reads Once in the cadence slot", () => {
+  const TODAY = "2026-10-08";
+  const BALANCE = "Car insurance — Nov 11 balance after the $1,000 early payment";
+  let dir: string;
+  let bundle: DbBundle;
+  let his: OneChargeLedger;
+
+  beforeEach(() => {
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), "moneyapp-all-series-"));
+    bundle = createDatabase(path.join(dir, "t.db"));
+    seedDatabase(bundle.db);
+    his = seedHisCarSeries(bundle.db);
+  });
+
+  afterEach(() => {
+    bundle.sqlite.close();
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  const page = (): string =>
+    decode(
+      renderToStaticMarkup(
+        createElement(AllSeriesView, { series: listSeries(bundle.db, TODAY), overdueBySeries: new Map(), today: TODAY }),
+      ),
+    );
+
+  /** the cell after the row's name — the table's Cadence column */
+  const cadenceCellOf = (html: string, name: string): string | undefined => {
+    const at = html.indexOf(`>${name}</a>`);
+    if (at < 0) return undefined;
+    const row = html.slice(at, html.indexOf("</tr>", at));
+    return /<\/th><td[^>]*>([^<]*)<\/td>/.exec(row)?.[1];
+  };
+
+  test("the balance's row reads Once, and Car insurance's reads Monthly", () => {
+    const html = page();
+    expect(cadenceCellOf(html, BALANCE)).toBe("Once");
+    expect(cadenceCellOf(html, "Car insurance")).toBe("Monthly");
+  });
+
+  test("detected, not yet confirmed, its suggestion card reads 'Detected: Bill · Once'", () => {
+    bundle.db.update(recurringSeries).set({ status: "detected" }).where(eq(recurringSeries.id, his.balanceId)).run();
+    const html = page();
+    const at = html.indexOf(`>${BALANCE}</a>`);
+    expect(at).toBeGreaterThan(-1);
+    const card = html.slice(at, html.indexOf("</li>", at)).replace(/<[^>]+>/g, "");
+    expect(card).toContain("Detected: Bill · Once");
+    expect(card).not.toContain("Monthly");
   });
 });

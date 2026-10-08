@@ -12,6 +12,8 @@ import type { BulkResult } from "./bulk-edit";
 import { ledgerOpens, ledgerReaches } from "./observation-frontier";
 import { strippedDescriptionKey } from "@/lib/description-key";
 import { todayIso } from "@/lib/dates";
+import { formatDayShortIn } from "@/lib/format-date";
+import { oneChargeDays } from "./recurring";
 import {
   merchantProfile,
   type MerchantProfile,
@@ -377,8 +379,12 @@ export function renameMerchant(
  */
 export interface MerchantIntelligence {
   profile: MerchantProfile;
-  /** the recurring series this merchant bills HIM through, when it has one — never one on the agent's cash */
-  cadence: { seriesId: string; name: string; cadence: string; status: string } | null;
+  /**
+   * the recurring series this merchant bills HIM through, when it has one — never one on the agent's cash.
+   * `oneChargeLabel` is the day of its ONE charge, spelled for a sentence ("Nov 11"), when its whole schedule holds
+   * one (`oneChargeDays`, ⚖️ §6A 56) — then it is billed once, not at its cadence.
+   */
+  cadence: { seriesId: string; name: string; cadence: string; status: string; oneChargeLabel: string | null } | null;
 }
 
 export function merchantIntelligence(
@@ -443,15 +449,7 @@ export function merchantIntelligence(
    * merchant both pay, whichever schedule the database handed back first.
    */
   const series = db
-    .select({
-      id: recurringSeries.id,
-      name: recurringSeries.name,
-      kind: recurringSeries.kind,
-      accountId: recurringSeries.accountId,
-      cadence: recurringSeries.cadence,
-      userCadence: recurringSeries.userCadence,
-      status: recurringSeries.status,
-    })
+    .select()
     .from(recurringSeries)
     .where(
       and(
@@ -461,6 +459,8 @@ export function merchantIntelligence(
     )
     .all()
     .find((s) => !isAgentsSeries(agentsCash, s));
+  // ⚖️ §6A 56 — "Billed once, on Nov 11, as …" for a schedule of one charge, by the one reading every printer asks
+  const oneChargeOn = series === undefined ? undefined : oneChargeDays(db, [series]).get(series.id);
 
   return {
     // `rows.length` is what the page's heading counts; `visits` is what this
@@ -480,6 +480,7 @@ export function merchantIntelligence(
           name: series.name,
           cadence: series.userCadence ?? series.cadence,
           status: series.status,
+          oneChargeLabel: oneChargeOn === undefined ? null : formatDayShortIn(oneChargeOn, today),
         }
       : null,
   };

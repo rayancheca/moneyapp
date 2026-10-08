@@ -101,6 +101,7 @@ function addSeries(opts: {
   lastMatchedOn?: string | null;
   nextExpectedOn?: string | null;
   userEndsOn?: string | null;
+  userNextExpectedOn?: string | null;
   intervalDaysAvg?: number | null;
 }): string {
   seriesSeq += 1;
@@ -122,6 +123,7 @@ function addSeries(opts: {
       lastMatchedOn: opts.lastMatchedOn === undefined ? FRESH : opts.lastMatchedOn,
       userAmountCents: opts.userAmountCents ?? null,
       userEndsOn: opts.userEndsOn ?? null,
+      userNextExpectedOn: opts.userNextExpectedOn ?? null,
       createdAt: now(),
       updatedAt: now(),
     })
@@ -384,6 +386,98 @@ describe("subscriptionsCard — what it refuses to answer", () => {
     const c = card()!;
     expect(c.unforecastableCount).toBe(1);
     expect(c.endedCount).toBe(0);
+  });
+});
+
+/*
+ * ⚖️ Owner decision 2026-10-08 (§6A 56): the one-time Nov 11 car-insurance balance — stored monthly, next and last
+ * day both 2026-11-11, never billed — is ONE CHARGE. It comes OUT of the monthly total ($3,816.92 → $3,744.18 on his
+ * ledger), out of the never-billed figure ($477.90 → $405.16) and the share that figure is of, and is listed beneath
+ * the live list as a one-off with its day and amount. Car insurance itself is a monthly bill in its last months.
+ */
+describe("subscriptionsCard — a one-charge series is a one-off, not a monthly cost", () => {
+  const nov11Balance = () =>
+    addSeries({
+      name: "Car insurance — Nov 11 balance",
+      kind: "bill",
+      amountCents: -7274,
+      lastMatchedOn: null,
+      nextExpectedOn: "2026-11-11",
+      userNextExpectedOn: "2026-11-11",
+      userEndsOn: "2026-11-11",
+    });
+
+  test("it leaves the monthly figure, the never-billed figure and both shares, and is listed with its day", () => {
+    addSeries({ name: "Breezeline", kind: "bill", amountCents: -5000, lastMatchedOn: FRESH });
+    addSeries({ name: "Car lease", kind: "bill", amountCents: -69504, lastMatchedOn: null });
+    addSeries({ name: "Dead sub", amountCents: -799, lastMatchedOn: LAPSED });
+    const balance = nov11Balance();
+
+    const c = card()!;
+
+    expect(c.live.map((l) => l.name)).toEqual(["Car lease", "Breezeline"]);
+    expect(c.liveMonthlyCents).toBe(69504 + 5000);
+    expect(c.neverBilledMonthlyCents).toBe(69504);
+    expect(c.neverBilledSharePct).toBeCloseTo((69504 / (69504 + 5000)) * 100, 6);
+    // "everything on the books" is a monthly figure too, so the one-off is not in it
+    expect(c.lapsedSharePct).toBeCloseTo((799 / (69504 + 5000 + 799)) * 100, 6);
+    expect(c.oneOffs).toEqual([
+      {
+        seriesId: balance,
+        name: "Car insurance — Nov 11 balance",
+        on: "2026-11-11",
+        cadenceLabel: "once · Nov 11",
+        cents: 7274,
+        neverBilled: true,
+        lastMatchedLabel: null,
+      },
+    ]);
+  });
+
+  test("a monthly bill in its last months stays a live monthly line, however it is anchored", () => {
+    // as on his ledger 2026-10-08: next Dec 11, ends Jan 11, charging since August
+    const insurance = addSeries({
+      name: "Car insurance",
+      kind: "bill",
+      amountCents: -35758,
+      lastMatchedOn: FRESH,
+      userNextExpectedOn: "2026-12-11",
+      userEndsOn: "2027-01-11",
+    });
+    addTxn({ seriesId: insurance, day: "2026-08-12", cents: -35758 });
+    // …and re-anchored onto its very last day, which a guarded write could do after December posts
+    const reanchored = addSeries({
+      name: "Car insurance (re-anchored)",
+      kind: "bill",
+      amountCents: -35758,
+      lastMatchedOn: FRESH,
+      userNextExpectedOn: "2027-01-11",
+      userEndsOn: "2027-01-11",
+    });
+    addTxn({ seriesId: reanchored, day: "2026-08-12", cents: -35758 });
+
+    const c = card()!;
+
+    expect(c.oneOffs).toEqual([]);
+    expect(c.live.map((l) => l.name).sort()).toEqual(["Car insurance", "Car insurance (re-anchored)"]);
+  });
+
+  test("a one-off whose day has passed is over — counted ended, never listed as still to come", () => {
+    addSeries({ name: "Breezeline", kind: "bill", amountCents: -5000, lastMatchedOn: FRESH });
+    addSeries({
+      name: "Aug 20 balance",
+      kind: "bill",
+      amountCents: -7274,
+      lastMatchedOn: null,
+      userNextExpectedOn: "2026-08-20",
+      userEndsOn: "2026-08-20",
+    });
+
+    const c = card()!;
+
+    expect(c.oneOffs).toEqual([]);
+    expect(c.endedCount).toBe(1);
+    expect(c.liveMonthlyCents).toBe(5000);
   });
 });
 

@@ -3,6 +3,7 @@ import { Icon } from "@/components/shell/Icon";
 import { Money } from "@/components/ui/Money";
 import { futureDateLabel } from "@/components/recurring/labels";
 import { overdueNote } from "@/components/recurring/labels";
+import { oneChargePhrase } from "@/lib/one-charge";
 import type { CategorySeriesRow } from "@/services/category-detail";
 
 /**
@@ -28,14 +29,17 @@ export function CategorySeriesList({ rows, today }: { rows: CategorySeriesRow[];
             <span className="min-w-0 flex-1">
               <span className="block truncate text-sm">{s.name}</span>
               <span className="block text-xs text-ink-faint">
-                {s.cadence}
+                {/* ⚖️ §6A 56 (2026-10-08): a schedule of ONE charge reads "once · Nov 11" — its day, not a
+                    next one. 🔴 The Nov 11 balance read "monthly · next Nov 11 · never billed". */}
+                {s.oneChargeOn !== null ? oneChargePhrase(s.oneChargeOn, today) : s.cadence}
                 {/* a late or never-billed series is still forecast, so it still
                     has a next date — one the app is not projecting does not.
                     `listSeries` decides (`seriesIsForecast`): a lapsed series
                     has none, and an ended series keeps its stored date, which is
                     the past — so the status test stays and the lapse test, a
                     second copy of the rule, went to the service. */}
-                {s.nextExpectedOn &&
+                {s.oneChargeOn === null &&
+                  s.nextExpectedOn &&
                   (s.status === "detected" || s.status === "confirmed") &&
                   ` · next ${futureDateLabel(s.nextExpectedOn, today)}`}
                 {/* 🔴 "next Oct 1", of a bill that came due Sep 1 and never

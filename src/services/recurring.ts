@@ -1,4 +1,4 @@
-import { and, asc, eq, inArray, lte, ne } from "drizzle-orm";
+import { and, asc, eq, inArray, lte, min, ne } from "drizzle-orm";
 import { seriesIsOver, type SeriesEvidence } from "@/lib/series-evidence";
 import type { AppDatabase } from "@/db/client";
 import { categories } from "@/db/schema/categories";
@@ -20,6 +20,7 @@ import {
   stepSpanDays,
   stepsToReach,
 } from "@/lib/recurring-step";
+import { isOneCharge } from "@/lib/one-charge";
 import { seriesAmountCents } from "@/lib/series-kind";
 import { outsidePortfolioCashAccountIds } from "./accounts";
 import { isAgentsSeries } from "./analytics";
@@ -874,6 +875,11 @@ export interface SeriesView {
    */
   endsOn: string | null;
   /**
+   * The day of its ONE charge when its whole schedule holds one (`oneChargeDays`), else null — what makes its
+   * cadence slot read "Once" (`cadenceLabel`) or "once · Nov 11". ⚖️ Owner decision 2026-10-08 (§6A 56).
+   */
+  oneChargeOn: string | null;
+  /**
    * The MEAN of the linked active rows — null when nothing is linked.
    *
    * 🔴 `amountCentsAvg` above is the detector's SEED: written when the series
@@ -989,6 +995,8 @@ export function listSeries(db: AppDatabase, today: string = todayIso()): SeriesV
     countBySeries.set(t.recurringSeriesId, (countBySeries.get(t.recurringSeriesId) ?? 0) + 1);
     sumBySeries.set(t.recurringSeriesId, (sumBySeries.get(t.recurringSeriesId) ?? 0) + t.amountCents);
   }
+  // ⚖️ §6A 56 — the one reading of "one charge" every cadence printer asks
+  const oneCharge = oneChargeDays(db, rows.map((r) => r.series));
 
   return rows
     .map(({ series: s, merchantName }) => {
@@ -1033,6 +1041,7 @@ export function listSeries(db: AppDatabase, today: string = todayIso()): SeriesV
         evidence: seriesEvidence(s, today),
         annualizedCents: annualizedCentsOf(s, today),
         endsOn: s.userEndsOn ?? null,
+        oneChargeOn: oneCharge.get(s.id) ?? null,
       } satisfies SeriesView;
     })
     .sort(
@@ -1385,6 +1394,61 @@ export function rollForwardNextExpected(eff: EffectiveSeries, today: string = to
   // inclusive: a series ends ON its end date, so that day's charge still happens
   if (eff.userEndsOn && compareDates(next, eff.userEndsOn) > 0) return null;
   return next;
+}
+
+/**
+ * The series among `rows` whose whole schedule holds ONE charge, each to the day of that charge — `isOneCharge`
+ * (lib/one-charge) asked of the ledger. ⚖️ Owner decision 2026-10-08 (§6A 56): such a series reads "once · Nov 11"
+ * wherever a cadence is printed, and is no monthly cost. Every surface that prints a cadence, and the subscriptions
+ * card that leaves it out of its monthly figure, asks here — so none can call it monthly while another says once.
+ *
+ * The day is the NEXT day, where the walk's one occurrence falls — the end is only where it stops. They are one day
+ * on his ledger and whenever the date token moved it (`setSeriesOverrides` moves both), not after a write that moved
+ * the next day alone.
+ *
+ * ⚠️ The linked charges are read only for a series whose schedule holds one occurrence (`isOneCharge` with no
+ * evidence), which on the owner's ledger 2026-10-08 is one series of 42 (and one of 35 in the e2e db, Storage unit,
+ * which its last-matched day keeps monthly) — so a caller on a hot path usually pays for no query.
+ */
+export function oneChargeDays(
+  db: AppDatabase,
+  rows: readonly (SeriesOverrides & { id: string; lastMatchedOn: string | null; toleranceDays: number })[],
+): Map<string, string> {
+  const candidates = rows
+    .map((s) => ({
+      id: s.id,
+      // the series' own settle tolerance — how late an earlier cycle's charge may post and still be that cycle's
+      eff: { ...effectiveSeries(s), toleranceDays: s.toleranceDays },
+      lastMatchedOn: s.lastMatchedOn,
+    }))
+    .filter((c) => isOneCharge(c.eff, null));
+  const days = new Map<string, string>();
+  if (candidates.length === 0) return days;
+  const firstMatched = new Map(
+    db
+      .select({ seriesId: transactions.recurringSeriesId, first: min(transactions.postedOn) })
+      .from(transactions)
+      .where(
+        and(
+          eq(transactions.status, "active"),
+          inArray(transactions.recurringSeriesId, candidates.map((c) => c.id)),
+        ),
+      )
+      .groupBy(transactions.recurringSeriesId)
+      .all()
+      .map((r) => [r.seriesId as string, r.first]),
+  );
+  for (const { id, eff, lastMatchedOn } of candidates) {
+    /* the EARLIEST charge the ledger knows of: the first linked row, or the series' own last-matched day when that is
+       earlier. 🔴 Widening the rule (review of 8a4ac47) named the e2e db's "Storage unit" — monthly, last matched
+       Jun 6, next Jul 6, ends Jul 10, no row linked — "once · Jul 6": its earlier charge lives only in the column. */
+    const linked = firstMatched.get(id) ?? null;
+    const earliest =
+      linked === null || (lastMatchedOn !== null && compareDates(lastMatchedOn, linked) < 0) ? lastMatchedOn : linked;
+    // `isOneCharge(_, null)` passed, so the next day is set
+    if (isOneCharge(eff, earliest)) days.set(id, eff.nextExpectedOn!);
+  }
+  return days;
 }
 
 /**

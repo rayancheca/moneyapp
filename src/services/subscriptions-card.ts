@@ -5,6 +5,7 @@ import { transactions } from "@/db/schema/transactions";
 import { addCalendarMonths, monthKey, todayIso } from "@/lib/dates";
 import { formatDayShortIn } from "@/lib/format-date";
 import { levelledMonthlyCents } from "@/lib/income-basis";
+import { oneChargePhrase } from "@/lib/one-charge";
 import { wholeToleranceDays } from "@/lib/recurring-step";
 import { outsidePortfolioCashAccountIds } from "./accounts";
 import { activeTxnsInRange, isAgentsSeries } from "./analytics";
@@ -12,6 +13,7 @@ import { COMMITTED_KINDS, SPEND_BASELINE_MONTHS, baselineWindow } from "./commit
 import {
   effectiveSeries,
   hasStoppedForecasting,
+  oneChargeDays,
   rollForwardNextExpected,
   seriesStaleness,
 } from "./recurring";
@@ -116,6 +118,29 @@ export interface SubscriptionLine {
   neverBilled: boolean;
 }
 
+/**
+ * A series whose whole schedule holds ONE charge, still to come — listed beneath the live lines, never levelled into
+ * the monthly figure.
+ *
+ * ⚖️ Owner decision 2026-10-08 (§6A 56). 🔴 The one-time Nov 11 car-insurance balance (-$72.74, stored monthly, next
+ * and last day both 2026-11-11) was a live line at "$72.74" a month: in "$3,816.92 a month, still forecast", and in
+ * the "$477.90 … has never been billed by a bank" beneath it. Out of both it reads $3,744.18 and $405.16.
+ */
+export interface OneOffLine {
+  seriesId: string;
+  name: string;
+  /** the day of its one charge (`oneChargeDays`) */
+  on: string;
+  /** "once · Nov 11" — `oneChargePhrase`, the words every cadence slot prints for it */
+  cadenceLabel: string;
+  /** the charge, magnitude, user override first — the whole of it, since it is not a monthly figure */
+  cents: number;
+  /** the bank has never billed it — the evidence word the live lines carry too */
+  neverBilled: boolean;
+  /** its newest matched charge, spelled for a sentence; null exactly when `neverBilled` */
+  lastMatchedLabel: string | null;
+}
+
 export interface SubscriptionsCard {
   /** levelled monthly total of the series the app is still forecasting */
   liveMonthlyCents: number;
@@ -125,6 +150,8 @@ export interface SubscriptionsCard {
   live: SubscriptionLine[];
   /** no longer forecast, LONGEST quiet first — the dead ones lead */
   lapsed: SubscriptionLine[];
+  /** still to come, ONCE — in neither monthly figure nor either share; soonest first */
+  oneOffs: OneOffLine[];
   /**
    * The lapsed share of everything registered.
    *
@@ -146,7 +173,7 @@ export interface SubscriptionsCard {
   neverBilledSharePct: number | null;
   /** the loudest lapsed line, for the caveat sentence; null when none lapsed */
   largestLapsed: SubscriptionLine | null;
-  /** net money out across every line above, inside the window, refunds netted */
+  /** net money out across every live and lapsed line, inside the window, refunds netted — not the one-offs, still to come */
   postedCents: number;
   postedCount: number;
   /**
@@ -253,8 +280,12 @@ export function subscriptionsCard(
   const { fromMonth, toMonth } = window;
   const posted = postedBySeries(db, `${fromMonth}-01`, `${toMonth}-31`);
 
+  // ⚖️ §6A 56: a schedule of one charge is a one-off, never a monthly line — the rule every cadence printer asks
+  const oneCharge = oneChargeDays(db, rows);
+
   const live: SubscriptionLine[] = [];
   const lapsed: SubscriptionLine[] = [];
+  const oneOffs: OneOffLine[] = [];
   let unforecastableCount = 0;
   let endedCount = 0;
 
@@ -292,6 +323,28 @@ export function subscriptionsCard(
     }
 
     const staleness = seriesStaleness(s, today);
+    const lastMatchedLabel =
+      staleness.lastMatchedOn === null ? null : formatDayShortIn(staleness.lastMatchedOn, today);
+
+    /*
+     * ⚖️ ONE CHARGE STILL TO COME (owner decision 2026-10-08, §6A 56): listed as a one-off, out of every monthly
+     * figure. After the `nextOn` gate on purpose — a one-off whose day has passed is OVER and goes to `endedCount`
+     * with every other finished commitment, rather than lingering here as though it were still owed.
+     */
+    const oneChargeOn = oneCharge.get(s.id);
+    if (oneChargeOn !== undefined) {
+      oneOffs.push({
+        seriesId: s.id,
+        name: s.name,
+        on: oneChargeOn,
+        cadenceLabel: oneChargePhrase(oneChargeOn, today),
+        cents: Math.abs(eff.nextExpectedAmountCents),
+        neverBilled: staleness.lastMatchedOn === null,
+        lastMatchedLabel,
+      });
+      continue;
+    }
+
     const totals = posted.get(s.id) ?? { cents: 0, count: 0 };
     const line: SubscriptionLine = {
       seriesId: s.id,
@@ -304,8 +357,7 @@ export function subscriptionsCard(
       // figures on this dashboard speak the same units.
       monthlyCents: levelledMonthlyCents(Math.abs(eff.nextExpectedAmountCents), eff.cadence),
       lastMatchedOn: staleness.lastMatchedOn,
-      lastMatchedLabel:
-        staleness.lastMatchedOn === null ? null : formatDayShortIn(staleness.lastMatchedOn, today),
+      lastMatchedLabel,
       daysSinceLastMatch: staleness.daysSinceLastMatch,
       daysPastTolerance: null,
       postedCents: totals.cents,
@@ -335,6 +387,7 @@ export function subscriptionsCard(
   }
 
   live.sort((a, b) => b.monthlyCents - a.monthlyCents || a.name.localeCompare(b.name));
+  oneOffs.sort((a, b) => a.on.localeCompare(b.on) || a.name.localeCompare(b.name));
   // the lapsed list leads with the LONGEST quiet, not the largest: how dead a
   // thing is is the question this half of the card answers
   lapsed.sort(
@@ -346,7 +399,9 @@ export function subscriptionsCard(
   const registeredCents = liveMonthlyCents + lapsedMonthlyCents;
 
   // every series is over, unforecastable, or worth nothing a month — there is no
-  // figure to headline, and a card of zeroes is worse than no card
+  // figure to headline, and a card of zeroes is worse than no card. ⚠️ A ledger
+  // whose only commitments are one-offs lands here too: a one-off is no monthly
+  // figure, and the Upcoming lists still name it on its day.
   if (registeredCents === 0) return null;
 
   const neverBilledMonthlyCents = live
@@ -366,6 +421,7 @@ export function subscriptionsCard(
     lapsedMonthlyCents,
     live,
     lapsed,
+    oneOffs,
     // safe by the early return above, never by a ternary here
     lapsedSharePct: (lapsedMonthlyCents / registeredCents) * 100,
     neverBilledMonthlyCents,

@@ -257,8 +257,11 @@ export async function loadSeriesLinkPanel(
 
     const { listSeries } = await import("@/services/recurring");
     const { formatCents } = await import("@/lib/money");
+    const { oneChargePhrase } = await import("@/lib/one-charge");
+    const { todayIso } = await import("@/lib/dates");
     const merchantName = row.merchantId ? merchantSummary(db, row.merchantId).name : null;
-    const candidates = listSeries(db)
+    const today = todayIso();
+    const candidates = listSeries(db, today)
       .filter((s) => s.status === "detected" || s.status === "confirmed")
       .sort((a, b) => {
         // same-merchant series first — the likeliest attach target
@@ -270,8 +273,9 @@ export async function loadSeriesLinkPanel(
       .map((s) => ({
         id: s.id,
         name: s.name,
-        // the effective amount, never the stored seed of a hand-registered series
-        detail: `${s.cadence}${s.nextExpectedAmountCents !== null ? ` · ~${formatCents(Math.abs(s.nextExpectedAmountCents))}` : ""}`,
+        // the effective amount, never the stored seed of a hand-registered series — and ⚖️ "once · Nov 11" for a
+        // schedule of one charge (§6A 56, 2026-10-08), the words every cadence slot prints for it
+        detail: `${s.oneChargeOn !== null ? oneChargePhrase(s.oneChargeOn, today) : s.cadence}${s.nextExpectedAmountCents !== null ? ` · ~${formatCents(Math.abs(s.nextExpectedAmountCents))}` : ""}`,
       }));
     return { ok: true, data: { linked: null, candidates } };
   } catch (error: unknown) {

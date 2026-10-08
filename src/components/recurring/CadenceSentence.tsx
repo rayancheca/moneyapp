@@ -6,6 +6,7 @@ import { CADENCES, type Cadence, type SeriesKind } from "@/db/schema/recurring";
 import { Popover, usePopover } from "@/components/ui/Popover";
 import { toast } from "@/components/ui/Toast";
 import { formatCents, parseAmountToCents } from "@/lib/money";
+import { ONE_CHARGE_WORD } from "@/lib/one-charge";
 import { CADENCE_LABEL, schedulePhrase, seriesVerb } from "./labels";
 import { seriesIsProjected, type SeriesEvidence, type SeriesStatusForCopy } from "@/lib/series-evidence";
 
@@ -26,6 +27,11 @@ interface CadenceSentenceProps {
   status: SeriesStatusForCopy;
   /** …and so does a live series the forecast has let go (`lapsed`) — see `seriesIsProjected` */
   evidence: SeriesEvidence;
+  /**
+   * The day of its ONE charge, and that day spelled — set when the whole schedule holds one charge (`oneChargeOn`).
+   * ⚖️ Owner decision 2026-10-08 (§6A 56): the sentence reads "charges once on Nov 11", with no cadence menu.
+   */
+  oneCharge: { day: string; label: string } | null;
   onChanged: () => void;
 }
 
@@ -44,7 +50,8 @@ function tokenClass(overridden: boolean): string {
  * hand a field back to detection.
  */
 export function CadenceSentence(props: CadenceSentenceProps) {
-  const { seriesId, kind, cadence, nextExpectedOn, amountCents, accountName, status, evidence, onChanged } = props;
+  const { seriesId, kind, cadence, nextExpectedOn, amountCents, accountName, status, evidence, oneCharge, onChanged } =
+    props;
   /* ⛔ The predicate the "Nothing expected" card asks (`noScheduleReason`), not a second one. 🔴 This read
      `seriesIsOver(status)` alone after the card learned the lapse, so on a copy of the owner's ledger 2026-10-08
      `/recurring/<Amazon Prime>` read "charges monthly around the 5th, about $4.99" above "nothing more is expected
@@ -64,6 +71,10 @@ export function CadenceSentence(props: CadenceSentenceProps) {
     toast({ title: label });
   }
 
+  function saveDate(d: string | null): void {
+    void save({ userNextExpectedOn: d }, d === null ? "Next date reset to detected" : `Next expected ${d}`);
+  }
+
   return (
     /**
      * ⛔ A `<div>`, not the `<p>` this was: the tokens below open `Popover`s,
@@ -78,12 +89,33 @@ export function CadenceSentence(props: CadenceSentenceProps) {
      */
     <div className="text-[15px] leading-relaxed text-ink-muted">
       {seriesVerb(kind, over)}{" "}
-      <CadenceToken
-        cadence={cadence}
-        overridden={props.userCadence !== null}
-        detected={props.detectedCadence}
-        onPick={(c) => save({ userCadence: c }, c === null ? "Cadence reset to detected" : `Cadence set to ${CADENCE_LABEL[c].toLowerCase()}`)}
-      />
+      {/* ⚖️ §6A 56 (2026-10-08): a schedule of ONE charge says once, and on which day. No cadence menu — a cadence
+          is the step the walk takes, and one charge takes none. The day stays when the series is over: it is the
+          schedule itself, not a rhythm read off a stale date (the rule the clause below follows). 🔴 The Nov 11
+          balance read "charges monthly around the 11th". Saving its day moves the end with it (`setSeriesOverrides`),
+          so the one charge never walks off its own schedule. */}
+      {oneCharge !== null ? (
+        <>
+          {`${ONE_CHARGE_WORD} on `}
+          {over ? (
+            <span className="font-medium text-ink">{oneCharge.label}</span>
+          ) : (
+            <DateToken
+              value={oneCharge.day}
+              label={oneCharge.label}
+              overridden={props.userNextExpectedOn !== null}
+              onSave={saveDate}
+            />
+          )}
+        </>
+      ) : (
+        <CadenceToken
+          cadence={cadence}
+          overridden={props.userCadence !== null}
+          detected={props.detectedCadence}
+          onPick={(c) => save({ userCadence: c }, c === null ? "Cadence reset to detected" : `Cadence set to ${CADENCE_LABEL[c].toLowerCase()}`)}
+        />
+      )}
       {/* ⛔ THE DAY CLAUSE GOES WITH THE TENSE. `schedulePhrase` reads the
           weekday or day-of-month off `nextExpectedOn`, which for a live series
           IS the projection and for a dead one is whatever the detector last
@@ -94,14 +126,14 @@ export function CadenceSentence(props: CadenceSentenceProps) {
           asserting a rhythm read off an abandoned date, so the clause goes and
           the cadence and amount — which detection measured from the charges —
           stay. */}
-      {nextExpectedOn && !over ? (
+      {oneCharge === null && nextExpectedOn && !over ? (
         <>
           {` ${schedulePhrase(cadence, nextExpectedOn).connective} `}
           <DateToken
             value={nextExpectedOn}
             label={schedulePhrase(cadence, nextExpectedOn).token}
             overridden={props.userNextExpectedOn !== null}
-            onSave={(d) => save({ userNextExpectedOn: d }, d === null ? "Next date reset to detected" : `Next expected ${d}`)}
+            onSave={saveDate}
           />
         </>
       ) : null}

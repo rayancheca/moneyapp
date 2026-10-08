@@ -9,6 +9,7 @@ import { renameSeriesAction, setSeriesStatusAction } from "@/app/recurring/actio
 import { isTableLens, LENS_DIMENSION, LENS_LABELS } from "@/components/charts/chart-lens";
 import { ViewSwitcher } from "@/components/ui/ViewSwitcher";
 import { useViewState } from "@/hooks/useViewState";
+import { formatDayShortIn } from "@/lib/format-date";
 import { formatCents } from "@/lib/money";
 import type { Provenance } from "@/services/provenance";
 import type { ViewState } from "@/lib/view-state";
@@ -29,7 +30,7 @@ import type { SeriesDetail as SeriesDetailData } from "@/services/recurring-deta
 import { AmountHistoryChart } from "./AmountHistoryChart";
 import { CadenceSentence } from "./CadenceSentence";
 import { AttachPanel, LinkedTransactions, MergeControl } from "./SeriesMembership";
-import { annualizedCaveat, CADENCE_LABEL, KIND_LABEL, longDate, postedSpreadReading, STATUS_LABEL } from "./labels";
+import { annualizedCaveat, cadenceLabel, KIND_LABEL, longDate, postedSpreadReading, STATUS_LABEL } from "./labels";
 
 const KIND_ICON: Record<SeriesKind, IconName> = {
   income: "banknote",
@@ -272,6 +273,11 @@ export function SeriesDetail({
             accountName={data.accountName}
             status={data.status}
             evidence={data.evidence}
+            oneCharge={
+              data.oneChargeOn === null
+                ? null
+                : { day: data.oneChargeOn, label: formatDayShortIn(data.oneChargeOn, today) }
+            }
             onChanged={onChanged}
           />
           <dl className="mt-4 grid grid-cols-2 gap-4 border-t border-line pt-4 sm:grid-cols-4">
@@ -326,7 +332,8 @@ export function SeriesDetail({
                 "—"
               )}
             </Stat>
-            <Stat label="Cadence">{CADENCE_LABEL[data.cadence]}</Stat>
+            {/* ⚖️ §6A 56 (2026-10-08): a schedule of one charge reads "Once" — 🔴 the Nov 11 balance read "Monthly" */}
+            <Stat label="Cadence">{cadenceLabel(data.cadence, data.oneChargeOn)}</Stat>
             <Stat label="Confidence">{data.confidence !== null ? `${Math.round(data.confidence * 100)}%` : "—"}</Stat>
           </dl>
         </SurfaceCard>

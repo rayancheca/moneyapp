@@ -4,6 +4,7 @@ import { dayWindowLabel } from "@/lib/period";
 import { wholeToleranceDays } from "@/lib/recurring-step";
 import { formatCents } from "@/lib/money";
 import type { UnsettledReason } from "@/lib/occurrence-verdict";
+import { ONE_CHARGE_WORD } from "@/lib/one-charge";
 import type { PerPayday } from "@/lib/per-payday";
 import { SERIES_EVIDENCE_LABEL } from "@/lib/series-evidence";
 import type { Cadence, SeriesKind, SeriesStatus } from "@/db/schema/recurring";
@@ -19,6 +20,22 @@ export const CADENCE_LABEL: Record<Cadence, string> = {
   quarterly: "Quarterly",
   annual: "Annual",
 };
+
+/**
+ * The cadence slot's word — "Once" for a series whose whole schedule holds one charge (`oneChargeOn`, the day of it,
+ * from `oneChargeDays`), and `CADENCE_LABEL` for every other.
+ *
+ * ⚖️ Owner decision 2026-10-08 (§6A 56). 🔴 The Nov 11 car-insurance balance — next and last day both Nov 11 — read
+ * "Cadence Monthly" on its own page and "Monthly" in the All tab, because it is STORED monthly: a cadence is the step
+ * the walk takes, and a schedule of one charge never takes one.
+ */
+export function cadenceLabel(cadence: Cadence, oneChargeOn: string | null): string {
+  return oneChargeOn === null ? CADENCE_LABEL[cadence] : capitalize(ONE_CHARGE_WORD);
+}
+
+function capitalize(word: string): string {
+  return `${word.charAt(0).toUpperCase()}${word.slice(1)}`;
+}
 
 export const KIND_LABEL: Record<SeriesKind, string> = {
   income: "Income",

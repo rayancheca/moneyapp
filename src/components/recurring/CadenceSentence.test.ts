@@ -14,8 +14,14 @@ const EVERY_STATUS: readonly SeriesStatusForCopy[] = ["detected", "confirmed", "
 const decode = (s: string): string =>
   s.replace(/&quot;/g, '"').replace(/&#x27;/g, "'").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&");
 
+type SentenceProps = Parameters<typeof CadenceSentence>[0];
+
 /** Amazon Prime as his ledger stores it on 2026-10-08: last charge Jul 5, stored next 2026-08-05. */
-function render(status: SeriesStatusForCopy, evidence: SeriesEvidence): { text: string; dialogTriggers: number } {
+function render(
+  status: SeriesStatusForCopy,
+  evidence: SeriesEvidence,
+  overrides: Partial<SentenceProps> = {},
+): { text: string; dialogTriggers: number; menuTriggers: number } {
   const html = renderToStaticMarkup(
     createElement(CadenceSentence, {
       seriesId: "s1",
@@ -30,15 +36,47 @@ function render(status: SeriesStatusForCopy, evidence: SeriesEvidence): { text: 
       accountName: "Chase Sapphire",
       status,
       evidence,
+      oneCharge: null,
       onChanged: () => undefined,
+      ...overrides,
     }),
   );
   return {
     text: decode(html.replace(/<[^>]+>/g, "")).replace(/\s+/g, " ").trim(),
     // the date token and the amount token each open a dialog; the cadence token opens a menu
     dialogTriggers: [...html.matchAll(/aria-haspopup="dialog"/g)].length,
+    menuTriggers: [...html.matchAll(/aria-haspopup="menu"/g)].length,
   };
 }
+
+/*
+ * ⚖️ Owner decision 2026-10-08 (§6A 56): the one-time Nov 11 car-insurance balance reads as ONE CHARGE. 🔴 Its page
+ * read "charges monthly around the 11th, about $72.74" — a rhythm it does not have — over a CADENCE stat of "Monthly".
+ */
+describe("CadenceSentence — a schedule of one charge says once, and on which day", () => {
+  const nov11 = {
+    kind: "bill",
+    nextExpectedOn: "2026-11-11",
+    amountCents: -7274,
+    userNextExpectedOn: "2026-11-11",
+    userAmountCents: -7274,
+    oneCharge: { day: "2026-11-11", label: "Nov 11" },
+  } as const satisfies Partial<SentenceProps>;
+
+  test("the Nov 11 balance: once, its day, its amount — and no cadence menu, since one charge takes no step", () => {
+    const { text, dialogTriggers, menuTriggers } = render("confirmed", "never-billed", nov11);
+    expect(text).toBe("charges once on Nov 11, about $72.74 from Chase Sapphire.");
+    expect(menuTriggers).toBe(0);
+    // its day and its amount are still his to correct
+    expect(dialogTriggers).toBe(2);
+  });
+
+  test("once it is over the day stays — a one-off's day is its schedule, not a rhythm read off a stale date", () => {
+    const { text, dialogTriggers } = render("ended", "never-billed", nov11);
+    expect(text).toBe("charged once on Nov 11, about $72.74 from Chase Sapphire.");
+    expect(dialogTriggers).toBe(1);
+  });
+});
 
 /**
  * 🔴 THE 2026-09-10 DEFECT, BACK FOR A LAPSED SERIES. On a copy of the owner's ledger 2026-10-08,
