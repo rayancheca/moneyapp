@@ -95,10 +95,9 @@ export interface StatementCadence {
    * Present only when the newest closes moved off the cycle the older ones
    * describe (`movedCycle`): `rhythm` and `closes` then describe the closes since
    * the move alone, and this is what the older closes said — their day and how
-   * many of them — so the phrase can state both. `since` is the first close on
-   * the new cycle; before it the old day was in force (`rhythmOn`).
+   * many of them — so the phrase can state both.
    */
-  readonly movedFrom?: { readonly day: number; readonly closes: number; readonly since: string };
+  readonly movedFrom?: { readonly day: number; readonly closes: number };
 }
 
 export type PullStatus =
@@ -304,24 +303,9 @@ function movedCycle(ends: readonly string[]): StatementCadence | null {
     const days = run.map(dayOfMonth);
     if (Math.max(...days) - Math.min(...days) > CYCLE_AGREEMENT_DAYS) continue;
     if (days.some((d) => Math.abs(d - oldDay) <= before.toleranceDays)) continue;
-    return { ...dayOfMonthCadence(run), movedFrom: { day: oldDay, closes: before.closes, since: run[0]! } };
+    return { ...dayOfMonthCadence(run), movedFrom: { day: oldDay, closes: before.closes } };
   }
   return null;
-}
-
-/**
- * The rhythm that was in force on `date`: the older closes' day before a move's
- * first close, the measured rhythm otherwise.
- *
- * 🔴 Why it exists: the Missing-statements panel walks the rhythm through OLD
- * holes. Measured on a copy of the owner's ledger on 2026-10-08, Discover's 2025
- * hole (its Aug 2 and Sep 2 statements, when it closed on the 2nd) walked on the
- * Capital One 9th counted Aug 9 alone, and the panel said 4 missing for 5.
- */
-export function rhythmOn(cadence: StatementCadence, date: string): StatementRhythm {
-  const moved = cadence.movedFrom;
-  if (moved && compareDates(date, moved.since) < 0) return { kind: "day-of-month", day: moved.day };
-  return cadence.rhythm;
 }
 
 function firstOfMonth(iso: string): string {
