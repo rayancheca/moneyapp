@@ -444,6 +444,8 @@ describe("subscriptionsCard — a one-charge series is a one-off, not a monthly 
         cents: 7274,
         neverBilled: true,
         lastMatchedLabel: null,
+        // billed on its own — not inside another series' payment (§6A 59)
+        billedWithLabel: null,
       },
     ]);
   });

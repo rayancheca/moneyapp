@@ -749,11 +749,15 @@ describe("incomeExpectation — the term /budgets never had", () => {
     // 06-08, 06-15, 06-22, 06-29 — strictly after today, none of them the posted one
     expect(got.expectedCents).toBe(104_600 * 4);
     expect(got.series.map((s) => s.name)).toEqual(["Cash job (weekly pay)"]);
-    // and the schedule's own reading of the same four days, which is what the
-    // month note quotes — deliberately NOT the posted one, which the walk does
-    // not know about
-    expect(got.scheduledOccurrences).toBe(4);
-    expect(got.scheduledCents).toBe(104_600 * 4);
+    // and the schedule's own reading of the month, which is what the month note
+    // quotes: the four still to come AND Mon Jun 1, the payday the posted deposit
+    // answered two days late — his paydays open on the first one the deposit can
+    // have been for (`firstPaydayOn`, §6A 55 step B). 🔴 Walked from the Jun 8
+    // anchor it was four, and posted + expected ($5,230.00) sat a payday above
+    // the schedule's own month ($4,184.00).
+    expect(got.scheduledOccurrences).toBe(5);
+    expect(got.scheduledCents).toBe(104_600 * 5);
+    expect(got.postedCents + got.expectedCents).toBe(got.scheduledCents);
   });
 
   /*

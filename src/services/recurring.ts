@@ -1,5 +1,6 @@
 import { and, asc, eq, inArray, lte, min, ne } from "drizzle-orm";
 import { seriesIsOver, type SeriesEvidence } from "@/lib/series-evidence";
+import { lastSeenOn, type BillingCarrier, type EvidenceSource } from "@/lib/billed-with";
 import type { AppDatabase } from "@/db/client";
 import { categories } from "@/db/schema/categories";
 import { merchants } from "@/db/schema/merchants";
@@ -7,6 +8,7 @@ import {
   CADENCES,
   recurringSeries,
   type Cadence,
+  type RatePeriod,
   type SeriesKind,
   type SeriesStatus,
 } from "@/db/schema/recurring";
@@ -15,23 +17,28 @@ import { addCalendarMonths, addDays, compareDates, diffDays, todayIso } from "@/
 import {
   CADENCE_NOMINAL_DAYS,
   deriveAnchorDay,
+  signedStepsToReach,
   stepFrom,
   stepPlan,
   stepSpanDays,
   stepsToReach,
+  walkDayOfMonth,
 } from "@/lib/recurring-step";
 import { isOneCharge } from "@/lib/one-charge";
-import { seriesAmountCents } from "@/lib/series-kind";
+import { parseAmountHistory, rateOn, seriesAmountCents } from "@/lib/series-kind";
 import { outsidePortfolioCashAccountIds } from "./accounts";
 import { isAgentsSeries } from "./analytics";
+import { billingCarriers, withBillingCarriers } from "./billing-carriers";
 import { silenceMeasuredThroughBySeries } from "./cash-earnings";
 /*
  * ⚠️ A cycle, on purpose: settlement walks the occurrences `projectOccurrences`
  * draws, and `upcomingOccurrences` and `listSeries` ask settlement which of them
  * are paid. Both modules call each other only inside functions, never while
- * loading, so the order they load in cannot matter.
+ * loading, so the order they load in cannot matter. `posted-average` closes the
+ * same cycle the same way: it reads `effectiveSeries`, and `listSeries` it.
  */
 import { nextStillToCome, stillToCome } from "./payday-settlement";
+import { postedAveragesBySeries } from "./posted-average";
 
 /**
  * A drizzle transaction handle. Detection and the user-link services
@@ -858,12 +865,18 @@ export interface SeriesView {
   nextExpectedAmountCents: number | null;
   status: SeriesStatus;
   confidence: number | null;
+  /** its OWN newest matched charge — the stored column; what it was last SEEN by is `lastSeenOn` */
   lastMatchedOn: string | null;
   matchedCount: number;
   /** derived: within cadence+grace of its last charge (§4.1 Active/Inactive) */
   isActive: boolean;
   /** what the evidence says, in the word every surface uses — `isActive` is its first case */
   evidence: SeriesEvidence;
+  /**
+   * ⚖️ The series it is billed inside (§6A 59), or null — its row says "billed with the rent". 🔴 Without it,
+   * `Rent utilities & fees` sat under "Never billed" with "0 matched", paid inside every rent payment.
+   */
+  billedWith: BillingCarrier | null;
   /** effective per-occurrence amount × occurrences/year (magnitude) */
   annualizedCents: number | null;
   /**
@@ -894,6 +907,9 @@ export interface SeriesView {
    *
    * The seed stays on `amountCentsAvg` — the detector's own record of what it
    * saw — and anything claiming to be the average of the postings reads this.
+   *
+   * ⚖️ A pay series' is what a PAYDAY paid at the rate in force now (`postedAveragesBySeries`, §6A 55) — the series
+   * page's and the popover's own figure. 🔴 The raw mean, his row read "posted avg +$1,789.15" beside "+$1,141.92".
    */
   postedAvgCents: number | null;
 }
@@ -932,7 +948,7 @@ const ANNUALIZED_MONTHS = 12;
  * been printing all along.
  */
 export function annualizedCentsOf(
-  s: ForecastableRow & { id: string; name: string },
+  s: ForecastableRow & ProjectionOverrides & { id: string; name: string },
   today: string,
   // the series' checked day — `seriesIsForecast` measures the lapse there (§6A 57)
   checkedThrough: string | null,
@@ -987,23 +1003,26 @@ export function listSeries(db: AppDatabase, today: string = todayIso()): SeriesV
     .all();
 
   const tagged = db
-    .select({ recurringSeriesId: transactions.recurringSeriesId, amountCents: transactions.amountCents })
+    .select({ recurringSeriesId: transactions.recurringSeriesId })
     .from(transactions)
     .where(eq(transactions.status, "active"))
     .all();
   const countBySeries = new Map<string, number>();
-  const sumBySeries = new Map<string, number>();
   const checkedThrough = silenceMeasuredThroughBySeries(db, today);
   for (const t of tagged) {
     if (!t.recurringSeriesId) continue;
     countBySeries.set(t.recurringSeriesId, (countBySeries.get(t.recurringSeriesId) ?? 0) + 1);
-    sumBySeries.set(t.recurringSeriesId, (sumBySeries.get(t.recurringSeriesId) ?? 0) + t.amountCents);
   }
   // ⚖️ §6A 56 — the one reading of "one charge" every cadence printer asks
   const oneCharge = oneChargeDays(db, rows.map((r) => r.series));
+  // the series page's and the popover's own reading of what posted — see `postedAvgCents`
+  const posted = postedAveragesBySeries(db, rows.map((r) => r.series), today);
+  // ⚖️ the carrier each series is billed with — its evidence (`lastSeenOn`, §6A 59)
+  const carriers = billingCarriers(db);
 
   return rows
-    .map(({ series: s, merchantName }) => {
+    .map(({ series: row, merchantName }) => {
+      const s = { ...row, billedWith: carriers.get(row.id) ?? null };
       const eff = effectiveSeries(s);
       // Show the same date the forecast projects: rolled forward off a stale
       // stored value. Only for the statuses the forecast actually projects —
@@ -1038,14 +1057,13 @@ export function listSeries(db: AppDatabase, today: string = todayIso()): SeriesV
         confidence: s.confidence,
         lastMatchedOn: s.lastMatchedOn,
         matchedCount: countBySeries.get(s.id) ?? 0,
-        postedAvgCents: countBySeries.get(s.id)
-          ? Math.round(sumBySeries.get(s.id)! / countBySeries.get(s.id)!)
-          : null,
+        postedAvgCents: posted.get(s.id)?.avgCents ?? null,
         isActive: isSeriesActive(s, today),
         evidence: seriesEvidence(s, today, checkedThrough(s.id)),
         annualizedCents: annualizedCentsOf(s, today, checkedThrough(s.id)),
         endsOn: s.userEndsOn ?? null,
         oneChargeOn: oneCharge.get(s.id) ?? null,
+        billedWith: s.billedWith,
       } satisfies SeriesView;
     })
     .sort(
@@ -1094,7 +1112,10 @@ export interface SeriesOccurrence {
  * answers "is there recent evidence?" to today, and calls it not active.
  */
 export interface SeriesStaleness {
-  /** newest matched charge, or null when nothing has ever matched the series */
+  /**
+   * When the series was last SEEN (`lastSeenOn`): its newest matched charge, or its carrier's when it is billed inside
+   * another series' payment (§6A 59) — null when nothing has ever matched either
+   */
   lastMatchedOn: string | null;
   /** days from lastMatchedOn to today; null when there is nothing to measure */
   daysSinceLastMatch: number | null;
@@ -1140,8 +1161,32 @@ interface ProjectableSeries {
   anchorDay?: number | null;
   /** last day this series can occur; null = open-ended */
   userEndsOn?: string | null;
+  /** past rates (`EffectiveSeries.amountHistory`); each occurrence is priced at its own day's (`rateOn`) */
+  amountHistory: readonly RatePeriod[] | null;
   /** copied onto every occurrence this series projects */
   staleness?: SeriesStaleness;
+  /**
+   * ⚖️ Where the schedule OPENS, when that is before its anchor: a pay series' first payday — its anchor's rhythm
+   * walked back to its first deposit (`firstPaydayOn`, §6A 55 step B). The walk starts here and never earlier. Absent,
+   * it starts at the anchor, as every projection did before.
+   *
+   * ⛔ Every reader that grades a pay series' PAST paydays passes it — the settlement, the recurring calendar, /budgets
+   * and its passed-unpaid leg (`paydayProjectable`) — so each names the paydays Earned vs banked counts. A forward
+   * reader (the forecast, Upcoming) need not: no payday on the rhythm falls between today and the first payday.
+   */
+  firstOn?: string | null;
+  /**
+   * ⛔ …and the walk back draws the PAST and the paydays money has REACHED only: dates before this day
+   * (`walkBackBound` — the later of the reader's today and the day after the last deposit's date plus the tolerance)
+   * and none on or after it. Beyond it a schedule is its anchor's, as every forward reader projects it (the forecast,
+   * Upcoming, /budgets' expected leg), so a payday between today and an anchor he dated ahead, that no money reached,
+   * is on no reader's schedule rather than on some. 🔴 Walked back unbounded, his next payday dated Oct 22 on Oct 8
+   * left Oct 8 and Oct 15 in /budgets' scheduled figure and drawn "upcoming" on the calendar, while the forecast and
+   * Upcoming opened on Oct 22 — $2,283.84 in no leg (a copy of his ledger, 2026-10-08). 🔴 Bounded at today alone,
+   * a payday paid on the day — the anchor detection dates a step after it — was on no reader's schedule either. An
+   * anchor on or before today holds nothing back: every date the walk back adds lies before it. Absent, nothing is.
+   */
+  walkBackBefore?: string | null;
 }
 
 /** The user-override columns that shadow detection's values (§4.4). */
@@ -1157,6 +1202,18 @@ export interface SeriesOverrides {
   userEndsOn?: string | null;
   /** detected billed day-of-month, 29..31; optional so older callers still typecheck */
   anchorDay?: number | null;
+  /** the series' past rates, as stored — optional here, REQUIRED where a projection is built (`ProjectionOverrides`) */
+  userAmountHistory?: unknown;
+}
+
+/**
+ * The overrides a PROJECTION is built from (`effectiveSeries`, `toProjectable`): every one, and the stored rate history
+ * too, which `effectiveSeries` reads strictly (`parseAmountHistory`). ⛔ Required here, where `SeriesOverrides`' date
+ * readers (staleness, evidence, lapse) never price an occurrence: a projection built without it would price every
+ * past payday at today's rate, silently, for whoever forgot — `EffectiveSeries.userEndsOn`'s reason.
+ */
+export interface ProjectionOverrides extends SeriesOverrides {
+  userAmountHistory: unknown;
 }
 
 /** Effective values the UI and forecast read: user override first, else detected. */
@@ -1179,9 +1236,16 @@ export interface EffectiveSeries {
    * "open-ended", and it has to be said.
    */
   userEndsOn: string | null;
+  /**
+   * ⚖️ The PAST rates, dated (owner decision 2026-10-08, §6A 55); `nextExpectedAmountCents` above stays the rate now.
+   * A projection prices each occurrence at its own day's rate (`rateOn`). ⛔ REQUIRED, for `userEndsOn`'s reason: a
+   * series built without it would price every past payday at today's rate, silently, for whoever forgot. `null`
+   * says the rate has never changed.
+   */
+  amountHistory: readonly RatePeriod[] | null;
 }
 
-export function effectiveSeries(s: SeriesOverrides): EffectiveSeries {
+export function effectiveSeries(s: ProjectionOverrides): EffectiveSeries {
   return {
     cadence: s.userCadence ?? s.cadence,
     // a user cadence override abandons the detected interval — step by the
@@ -1200,6 +1264,8 @@ export function effectiveSeries(s: SeriesOverrides): EffectiveSeries {
     // the cadence override abandoning the detected interval, just above.
     anchorDay: s.userNextExpectedOn ? null : (s.anchorDay ?? null),
     userEndsOn: s.userEndsOn ?? null,
+    // ⛔ strict: a history it cannot read refuses the series out loud, never reads as "the rate never changed"
+    amountHistory: parseAmountHistory(s.userAmountHistory, seriesAmountCents(s)),
   };
 }
 
@@ -1209,7 +1275,7 @@ export function effectiveSeries(s: SeriesOverrides): EffectiveSeries {
  * evidence passes it, and it rides along onto every projected occurrence.
  */
 export function toProjectable(
-  s: SeriesOverrides & { id: string; name: string; kind: SeriesKind },
+  s: ProjectionOverrides & { id: string; name: string; kind: SeriesKind },
   staleness?: SeriesStaleness,
 ): ProjectableSeries {
   const eff = effectiveSeries(s);
@@ -1285,9 +1351,14 @@ function lapsedToleranceDays(staleness: SeriesStaleness): number {
  * than claiming it is late — `daysSinceLastMatch`, the age "last seen" prints, is to today whatever is passed. A
  * surface that says "running late", counts it, or tones a badge by it passes the frontier — and so does the
  * forecast's lapse (`seriesHasLapsed`, §6A 57).
+ *
+ * ⚖️ The evidence is `lastSeenOn` — the carrier's postings too, for a series billed inside another's payment (owner
+ * decision 2026-10-08, §6A 59). Every evidence reader below (`isSeriesActive`, `seriesHasLapsed`, `seriesEvidence`,
+ * the forecast's gate) reads it through here or through `lastSeenOn`, so `Rent utilities & fees` is as fresh, as
+ * late or as lapsed as the rent it is paid inside — never "never billed" beside it.
  */
 export function seriesStaleness(
-  s: SeriesOverrides & { lastMatchedOn: string | null },
+  s: SeriesOverrides & EvidenceSource,
   today: string = todayIso(),
   checkedThrough?: string | null,
 ): SeriesStaleness {
@@ -1298,7 +1369,8 @@ export function seriesStaleness(
   const cadence = s.userCadence ?? s.cadence;
   const stepDays = s.userCadence ? CADENCE_NOMINAL_DAYS[cadence] : s.intervalDaysAvg ?? CADENCE_NOMINAL_DAYS[cadence];
   const toleranceDays = stepDays * INACTIVE_MISS_LIMIT + CADENCE_TOLERANCE_DAYS[cadence];
-  const daysSinceLastMatch = s.lastMatchedOn ? diffDays(s.lastMatchedOn, today) : null;
+  const seen = lastSeenOn(s);
+  const daysSinceLastMatch = seen ? diffDays(seen, today) : null;
   const pastTolerance = daysSinceLastMatch === null || daysSinceLastMatch > toleranceDays;
   /*
    * Measured to the day AFTER the checked day, never past today. The checked day is read (inclusive, like
@@ -1313,18 +1385,18 @@ export function seriesStaleness(
       : addDays(checkedThrough, 1);
   // the quiet on read days; unmeasured is measured to today, and with nothing checked nothing has been read
   const checkedDaysSinceLastMatch =
-    s.lastMatchedOn === null || checkedThrough === null
+    seen === null || checkedThrough === null
       ? null
       : checkedThrough === undefined
         ? daysSinceLastMatch
-        : diffDays(s.lastMatchedOn, measuredTo);
+        : diffDays(seen, measuredTo);
   // never billed has nothing to be late FROM, checked or not
   const lateOnCheckedDays =
-    s.lastMatchedOn === null
+    seen === null
       ? pastTolerance
       : checkedDaysSinceLastMatch !== null && checkedDaysSinceLastMatch > toleranceDays;
   return {
-    lastMatchedOn: s.lastMatchedOn,
+    lastMatchedOn: seen,
     daysSinceLastMatch,
     checkedDaysSinceLastMatch,
     stepDays,
@@ -1342,7 +1414,7 @@ export function seriesStaleness(
  * it. dismissed/ended series are never active.
  */
 export function isSeriesActive(
-  s: SeriesOverrides & { status: SeriesStatus; lastMatchedOn: string | null },
+  s: SeriesOverrides & EvidenceSource & { status: SeriesStatus },
   today: string = todayIso(),
 ): boolean {
   if (s.status === "dismissed" || s.status === "ended") return false;
@@ -1403,7 +1475,7 @@ export function lapsedSeriesShouldStopForecasting(kind: SeriesKind): boolean {
  * ⛔ No default for either day: the day of the question and the day it was read through are both the caller's to say.
  */
 export function seriesHasLapsed(
-  s: SeriesOverrides & { lastMatchedOn: string | null },
+  s: SeriesOverrides & EvidenceSource,
   today: string,
   checkedThrough: string | null,
 ): boolean {
@@ -1423,7 +1495,7 @@ export function seriesHasLapsed(
  * today, and it judged the lapse on that day instead.
  */
 export function hasStoppedForecasting(
-  s: SeriesOverrides & { kind: SeriesKind; lastMatchedOn: string | null },
+  s: SeriesOverrides & EvidenceSource & { kind: SeriesKind },
   // no default: every caller says which day it is asking on
   today: string,
   // …and how far the accounts it posts to are read (`silenceMeasuredThroughBySeries`) — the lapse is measured there
@@ -1434,7 +1506,7 @@ export function hasStoppedForecasting(
 }
 
 /** What `seriesIsForecast` reads — the stored row, overrides intact, as `hasStoppedForecasting` takes it. */
-type ForecastableRow = SeriesOverrides & { status: SeriesStatus; kind: SeriesKind; lastMatchedOn: string | null };
+type ForecastableRow = SeriesOverrides & EvidenceSource & { status: SeriesStatus; kind: SeriesKind };
 
 /**
  * Does the forecast PROJECT this series today? A status it projects (detected, confirmed — `seriesIsOver` is the
@@ -1510,7 +1582,7 @@ export function rollForwardNextExpected(eff: EffectiveSeries, today: string = to
  */
 export function oneChargeDays(
   db: AppDatabase,
-  rows: readonly (SeriesOverrides & { id: string; lastMatchedOn: string | null; toleranceDays: number })[],
+  rows: readonly (ProjectionOverrides & { id: string; lastMatchedOn: string | null; toleranceDays: number })[],
 ): Map<string, string> {
   const candidates = rows
     .map((s) => ({
@@ -1584,21 +1656,33 @@ export function projectOccurrences(
    * clamped reports the clamped day. That is the same answer the walk already
    * gives, so this adds no new error — it exposes the one already there.
    */
-  const anchorDayOfMonth = plan.calendarMonths
-    ? (plan.anchorDay ?? Number(anchor.slice(8, 10)))
-    : null;
+  const anchorDayOfMonth = walkDayOfMonth(anchor, plan);
+
+  /*
+   * ⚖️ Opened on the series' first payday when it has one (`firstOn`): the anchor's own rhythm, stepped BACK by index
+   * from the anchor — never re-anchored on that earlier date, whose day a short month may have clamped. Otherwise the
+   * walk is floored at the anchor (`stepsToReach`).
+   */
+  const firstStep = series.firstOn
+    ? Math.max(signedStepsToReach(anchor, plan, from), signedStepsToReach(anchor, plan, series.firstOn))
+    : stepsToReach(anchor, plan, from);
 
   const occurrences: SeriesOccurrence[] = [];
-  for (let i = stepsToReach(anchor, plan, from); ; i++) {
+  for (let i = firstStep; ; i++) {
     const date = stepFrom(anchor, plan, i);
     if (compareDates(date, last) > 0) break;
+    // a step back from the anchor is drawn only in the past or where money reached (`walkBackBefore`); beyond, the
+    // anchor's walk opens
+    if (i < 0 && series.walkBackBefore && compareDates(date, series.walkBackBefore) >= 0) continue;
     occurrences.push({
       seriesId: series.id,
       name: series.name,
       kind: series.kind,
       cadence: series.cadence,
       date,
-      amountCents: series.nextExpectedAmountCents,
+      // ⚖️ its own day's rate (§6A 55) — a cash week at $1,047.00, a payroll week at $1,141.92. Never null: a series
+      // with no rate now projected nothing above.
+      amountCents: rateOn(series, date)!,
       anchorDayOfMonth,
       staleness: series.staleness,
     });
@@ -1657,11 +1741,10 @@ export function upcomingOccurrences(
   today: string = todayIso(),
   windowDays = 30,
 ): SeriesOccurrence[] {
-  const live = db
-    .select()
-    .from(recurringSeries)
-    .where(inArray(recurringSeries.status, ["detected", "confirmed"]))
-    .all();
+  const live = withBillingCarriers(
+    db,
+    db.select().from(recurringSeries).where(inArray(recurringSeries.status, ["detected", "confirmed"])).all(),
+  );
   const agentsCash = outsidePortfolioCashAccountIds(db);
   // late and lapsed only on days the ledger has checked (`seriesStaleness`) — the chip, the footer's count, the filter
   const checkedThrough = silenceMeasuredThroughBySeries(db, today);
@@ -1706,13 +1789,16 @@ export function upcomingOccurrences(
  * `silenceMeasuredThroughBySeries`, and past tolerance only after it is "awaiting-statements". Lapsed is asked FIRST,
  * because it is the forecast's rule — a series the forecast has dropped must not be filed as one it still projects —
  * and on the same read days (§6A 57), so a lapsed series is always late there too, never one awaiting statements.
+ *
+ * ⚖️ Never billed is NEITHER it nor its carrier ever seen (`lastSeenOn`, §6A 59). 🔴 It read the series' own column,
+ * and `Rent utilities & fees` — paid inside every rent payment — sat under "Never billed" on the All tab.
  */
 export function seriesEvidence(
-  s: SeriesOverrides & { status: SeriesStatus; kind: SeriesKind; lastMatchedOn: string | null },
+  s: SeriesOverrides & EvidenceSource & { status: SeriesStatus; kind: SeriesKind },
   today: string,
   checkedThrough: string | null,
 ): SeriesEvidence {
-  if (s.lastMatchedOn === null) return "never-billed";
+  if (lastSeenOn(s) === null) return "never-billed";
   if (isSeriesActive(s, today)) return "active";
   if (hasStoppedForecasting(s, today, checkedThrough)) return "lapsed";
   return seriesStaleness(s, today, checkedThrough).awaitingStatements ? "awaiting-statements" : "running-late";

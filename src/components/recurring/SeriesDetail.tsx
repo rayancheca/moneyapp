@@ -2,6 +2,7 @@
 
 import { useState, useTransition } from "react";
 import { SERIES_EVIDENCE_LABEL, noScheduleReason, seriesEvidenceTone } from "@/lib/series-evidence";
+import { billedWithLabel } from "@/lib/billed-with";
 import { seriesEndLines } from "./end-radius";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -159,6 +160,17 @@ export function SeriesDetail({
             {(data.status === "detected" || data.status === "confirmed") && data.evidence !== "active" ? (
               // ⛔ awaiting statements is no warning — `seriesEvidenceTone`
               <Badge tone={seriesEvidenceTone(data.evidence)}>{SERIES_EVIDENCE_LABEL[data.evidence]}</Badge>
+            ) : null}
+            {/* ⚖️ Paid inside another series' payment (owner decision 2026-10-08, §6A 59): whose postings its
+                evidence is, and when they last said so — "billed with the rent, last seen Sep 2", linked to the
+                rent. 🔴 This page wore "Never billed" over money paid inside every rent payment. */}
+            {data.billedWith !== null ? (
+              <Link
+                href={`/recurring/${data.billedWith.id}`}
+                className="inline-flex items-center gap-1 rounded-full border border-line px-2 py-0.5 text-xs text-ink-muted transition-colors duration-(--duration-fast) hover:border-line-strong hover:text-ink"
+              >
+                {billedWithLabel(data, today)}
+              </Link>
             ) : null}
             {/* 🔴 The one place a reader would go to check when a series stops,
                 and the only surface that did not say. The runway card and the
@@ -318,14 +330,12 @@ export function SeriesDetail({
                       already uses for the same pair. When they agree there is
                       one number and the ± stays on it. */}
                   {postedSpread.attachedToHeadline ? (
-                    <span className="ml-1 text-[11px] font-normal text-ink-faint">
-                      ±{postedSpread.text}
-                    </span>
+                    <span className="ml-1 text-[11px] font-normal text-ink-faint">{postedSpread.text}</span>
                   ) : null}
                   {postedSpread.avgLine !== null ? (
                     <span className="figures block text-[11px] font-normal text-ink-faint">
                       posted avg <Money cents={postedSpread.avgLine} flow />
-                      {postedSpread.text !== null ? ` ± ${postedSpread.text}` : ""}
+                      {postedSpread.text !== null ? ` ${postedSpread.text}` : ""}
                     </span>
                   ) : null}
                 </>

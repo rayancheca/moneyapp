@@ -8,7 +8,9 @@ import {
   stepFrom,
   stepSpanDays,
   stepPlan,
+  signedStepsToReach,
   stepsToReach,
+  walkDayOfMonth,
 } from "./recurring-step";
 import { addDays } from "./dates";
 
@@ -175,6 +177,90 @@ describe("stepsToReach", () => {
     // reach 2026-07-25 and fourteen reach 2026-08-25 — the charge is NOT due yet
     expect(stepsToReach("2025-06-25", calendar, "2026-08-14")).toBe(14);
     expect(stepFrom("2025-06-25", calendar, 14)).toBe("2026-08-25");
+  });
+});
+
+/*
+ * ⚖️ ONE PAYDAY UNIVERSE (§6A 55, step B): a pay series' first payday is its anchor's rhythm walked BACK to its first
+ * deposit, so a reader needs a step count that can go below zero. `stepsToReach` keeps its floor — it is the same
+ * answer, clamped at the anchor.
+ */
+describe("signedStepsToReach", () => {
+  const calendar = stepPlan("monthly", 30);
+  const days = stepPlan("weekly", 7);
+  const monthEnd = stepPlan("monthly", 30, 31);
+
+  test("a boundary before the anchor is a negative step: his Jul 23 anchor walks back to Jun 4", () => {
+    expect(signedStepsToReach("2026-07-23", days, "2026-06-01")).toBe(-7);
+    expect(stepFrom("2026-07-23", days, -7)).toBe("2026-06-04");
+    // ON the rhythm is reached exactly; a day past it is the next step
+    expect(signedStepsToReach("2026-07-23", days, "2026-06-04")).toBe(-7);
+    expect(signedStepsToReach("2026-07-23", days, "2026-06-05")).toBe(-6);
+  });
+
+  test("never a negative zero — a boundary inside the step before the anchor is step 0", () => {
+    expect(Object.is(signedStepsToReach("2026-07-23", days, "2026-07-20"), 0)).toBe(true);
+    expect(Object.is(signedStepsToReach("2026-09-11", calendar, "2026-08-14"), 0)).toBe(true);
+    // a quarter's first month back: ⌈−1 ÷ 3⌉ is −0
+    expect(Object.is(signedStepsToReach("2026-09-11", stepPlan("quarterly", 91), "2026-08-14"), 0)).toBe(true);
+  });
+
+  test("the calendar model walks back by months and keeps the day", () => {
+    expect(signedStepsToReach("2026-09-11", calendar, "2026-03-01")).toBe(-6);
+    expect(stepFrom("2026-09-11", calendar, -6)).toBe("2026-03-11");
+    expect(signedStepsToReach("2026-09-11", calendar, "2026-03-12")).toBe(-5);
+  });
+
+  test("walking back across February, a month-end series lands on each month's own last day", () => {
+    const n = signedStepsToReach("2027-05-31", monthEnd, "2027-02-01");
+    expect(n).toBe(-3);
+    expect(stepFrom("2027-05-31", monthEnd, n)).toBe("2027-02-28");
+    expect(stepFrom("2027-05-31", monthEnd, n + 1)).toBe("2027-03-31");
+  });
+
+  test("every answer is the smallest step on or after its boundary, either side of the anchor", () => {
+    for (const plan of [calendar, days, monthEnd, stepPlan("biweekly", 14), stepPlan("quarterly", 91)]) {
+      for (const boundary of ["2024-07-02", "2025-02-28", "2026-06-01", "2026-07-23", "2027-02-01", "2028-03-01"]) {
+        const n = signedStepsToReach("2026-07-23", plan, boundary);
+        expect(stepFrom("2026-07-23", plan, n) >= boundary).toBe(true);
+        expect(stepFrom("2026-07-23", plan, n - 1) < boundary).toBe(true);
+      }
+    }
+  });
+
+  test("stepsToReach is the same answer floored at the anchor", () => {
+    for (const plan of [calendar, days, monthEnd]) {
+      for (const boundary of ["2025-01-15", "2026-07-22", "2026-07-23", "2026-07-24", "2027-12-31"]) {
+        expect(stepsToReach("2026-07-23", plan, boundary)).toBe(
+          Math.max(0, signedStepsToReach("2026-07-23", plan, boundary)),
+        );
+      }
+    }
+  });
+});
+
+/*
+ * The day every step of a calendar walk lands on. A walk that opens on a CLAMPED date — an anchor on the 30th walked
+ * back to February 28th — must still land on the 30th afterwards, so a reader that walks from its first payday reads
+ * the day off the anchor, never off the date it opened on.
+ */
+describe("walkDayOfMonth", () => {
+  test("a calendar walk keeps the anchor's own day, or the day its postings proved", () => {
+    expect(walkDayOfMonth("2026-07-30", stepPlan("monthly", 30))).toBe(30);
+    expect(walkDayOfMonth("2027-02-28", stepPlan("monthly", 30, 31))).toBe(31);
+  });
+
+  test("day stepping has no day of the month", () => {
+    expect(walkDayOfMonth("2026-07-23", stepPlan("weekly", 7))).toBeNull();
+  });
+
+  test("a walk opened on the clamped first step lands where the anchor's own walk does", () => {
+    const anchor = "2026-07-30";
+    const plain = stepPlan("monthly", 30);
+    const first = stepFrom(anchor, plain, -5);
+    expect(first).toBe("2026-02-28");
+    const pinned = stepPlan("monthly", 30, walkDayOfMonth(anchor, plain));
+    for (let i = 0; i <= 8; i++) expect(stepFrom(first, pinned, i)).toBe(stepFrom(anchor, plain, i - 5));
   });
 });
 

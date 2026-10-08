@@ -131,6 +131,8 @@ describe("the window captions beside the runway card", () => {
           cents: 7274,
           neverBilled: true,
           lastMatchedLabel: null,
+          // billed on its own (§6A 59) — a carried one-off reads "billed with …" (SubscriptionsCard.test.ts)
+          billedWithLabel: null,
         },
       ],
     } as SubscriptionsCardData;

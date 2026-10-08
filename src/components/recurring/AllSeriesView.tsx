@@ -3,6 +3,7 @@ import { confirmSeriesAction, dismissSeriesAction } from "@/app/recurring/action
 import { Money } from "@/components/ui/Money";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { SERIES_EVIDENCE_LABEL, SERIES_EVIDENCE_NOTE, suggestionNote } from "@/lib/series-evidence";
+import { billedWithPhrase } from "@/lib/billed-with";
 import type { SeriesView } from "@/services/recurring";
 import { cadenceLabel, KIND_LABEL, annualizedEndNote, futureDateLabel, overdueNote } from "./labels";
 
@@ -252,6 +253,9 @@ function SeriesRow({
         </Link>
         <span className="mt-0.5 block text-[11px] font-normal text-ink-faint">
           {KIND_LABEL[s.kind]} · {s.matchedCount} matched
+          {/* ⚖️ paid inside another series' payment (§6A 59): why "0 matched" sits under Active — "billed with the
+              rent". 🔴 It sat under "Never billed", paid inside every rent payment. */}
+          {s.billedWith !== null ? ` · ${billedWithPhrase(s.billedWith)}` : ""}
         </span>
       </th>
       {/* ⚖️ §6A 56 (2026-10-08): "Once" for a schedule of one charge — its day is the Next cell beside it */}

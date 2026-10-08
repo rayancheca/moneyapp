@@ -48,6 +48,9 @@ import {
   type ReplayAnchor,
 } from "./derivation";
 import { PART_ENTERED, VERDICT_PRESENTATION } from "@/lib/provenance-verdict";
+import { billedWithEvidence } from "@/lib/billed-with";
+import { billingCarriers } from "./billing-carriers";
+import { postedAveragesBySeries } from "./posted-average";
 import { MIN_OCCURRENCES } from "./recurring";
 
 /**
@@ -238,8 +241,12 @@ export type FigureRef =
    * proven — or not — in completely different ways.
    */
   | { kind: "holding"; symbol: string; assetType: AssetType; day?: string }
-  /** A recurring series' expected amount — a forecast, graded by its evidence. */
-  | { kind: "recurringSeries"; id: string }
+  /**
+   * A recurring series' expected amount — a forecast, graded by its evidence. `today`: the day its evidence is read
+   * on — a pay series' deposits are read per payday by settlement, which counts the money arrived by then; omitted,
+   * today.
+   */
+  | { kind: "recurringSeries"; id: string; today?: string }
   /**
    * ALL spending in a window — no category and no merchant filter. The figure
    * `/spending` puts on its "Spent" card and states under its relief.
@@ -1658,7 +1665,7 @@ function holdingProvenance(db: AppDatabase, symbol: string, assetType: AssetType
  * car insurance have ZERO and are pure owner assertions. Those three cases must
  * not read alike, and before this they all read as a plain number.
  */
-function recurringSeriesProvenance(db: AppDatabase, id: string): Provenance | null {
+function recurringSeriesProvenance(db: AppDatabase, id: string, today: string): Provenance | null {
   const series = db.select().from(recurringSeries).where(eq(recurringSeries.id, id)).get();
   if (!series) return null;
 
@@ -1735,8 +1742,21 @@ function recurringSeriesProvenance(db: AppDatabase, id: string): Provenance | nu
           ? `${distinct.size} different amounts`
           : undefined;
 
+  /*
+   * ⚖️ BILLED INSIDE ANOTHER SERIES' PAYMENT (owner decision 2026-10-08, §6A 59): no row will ever post under its own
+   * name, and its evidence is its carrier's postings — the words the chip on its page prints (`billedWithLabel`).
+   * 🔴 Read off its own postings alone, his `Rent utilities & fees` page — chip "billed with the rent, last seen Sep
+   * 2" — opened this popover, and both insight popovers citing it ("3rd largest of your 13 scheduled commitments",
+   * "5.3% of what your scheduled commitments cost"), on "Nothing tagged to it has ever posted, so there is no
+   * evidence behind it at all": never billed, in other words, of money the bank takes inside the rent every month.
+   */
+  const billedWith = billingCarriers(db).get(id) ?? null;
   const observed = (): string => {
-    if (n === 0) return "Nothing tagged to it has ever posted, so there is no evidence behind it at all.";
+    if (n === 0)
+      return (
+        billedWithEvidence({ lastMatchedOn: series.lastMatchedOn, billedWith }, today) ??
+        "Nothing tagged to it has ever posted, so there is no evidence behind it at all."
+      );
     if (n < MIN_OCCURRENCES)
       return `Only ${n} tagged ${n === 1 ? "posting has" : "postings have"} ever landed — below the ${MIN_OCCURRENCES} this app requires before calling a repeat a pattern, so it is an anecdote rather than a statistic.`;
     if (distinct.size === 1)
@@ -1763,11 +1783,14 @@ function recurringSeriesProvenance(db: AppDatabase, id: string): Provenance | nu
    *   returns 0. -$559.89 is the superseded amount the owner once said; the
    *   statement figure is $695.04, which this same headline prints correctly.
    *
-   * The postings are already in hand here, so the clause is computed from them
-   * and says nothing when there are none.
+   * The clause says nothing when nothing posted.
+   *
+   * ⛔ …AND READS WHAT POSTED AS THE SERIES PAGE AND THE ALL TAB DO (`postedAveragesBySeries`): a pay series' average
+   * is what a payday paid at the rate in force now (§6A 55). 🔴 Averaged here on its own, raw, his pay read "⚠️ The
+   * ledger's own average of what actually posted is $1,789.15, which is not what you set." of his $1,141.92 — a cash
+   * week, $400.00, a four-week lump and a week (a copy of his ledger, 2026-10-08).
    */
-  const postedAvgCents =
-    n > 0 ? Math.round(postings.reduce((sum, p) => sum + p.amountCents, 0) / n) : null;
+  const postedAvgCents = postedAveragesBySeries(db, [series], today).get(id)!.avgCents;
   const disagreement =
     userSet && postedAvgCents !== null && postedAvgCents !== series.userAmountCents
       ? ` ⚠️ The ledger's own average of what actually posted is ${formatCents(postedAvgCents)}, which is not what you set.`
@@ -2512,7 +2535,7 @@ export function provenanceFor(db: AppDatabase, ref: FigureRef): Provenance | nul
     case "holding":
       return holdingProvenance(db, ref.symbol, ref.assetType, ref.day);
     case "recurringSeries":
-      return recurringSeriesProvenance(db, ref.id);
+      return recurringSeriesProvenance(db, ref.id, ref.today ?? todayIso());
     case "allSpend":
       return allSpendProvenance(db, ref.from, ref.to, ref.label, ref.against);
     case "budgetPlan":

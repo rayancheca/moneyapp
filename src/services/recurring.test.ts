@@ -11,6 +11,7 @@ import { recurringSeries } from "@/db/schema/recurring";
 import { transactions } from "@/db/schema/transactions";
 import { dedupeHash } from "@/lib/hash";
 import { seriesIsProjected } from "@/lib/series-evidence";
+import type { EvidenceSource } from "@/lib/billed-with";
 import { addDays } from "@/lib/dates";
 import { normalizeDescription } from "@/lib/normalize";
 import { createAccount } from "./accounts";
@@ -249,6 +250,7 @@ describe("analyzeGroup", () => {
       intervalDaysAvg: stats!.intervalDaysAvg,
       nextExpectedOn: stats!.nextExpectedOn,
       nextExpectedAmountCents: stats!.nextExpectedAmountCents,
+      amountHistory: null,
     };
     const dates = (s: typeof base & { anchorDay?: number | null }) =>
       projectOccurrences(s, "2027-02-01", "2027-05-31").map((o) => o.date);
@@ -310,6 +312,7 @@ describe("projectOccurrences", () => {
     intervalDaysAvg: 7,
     nextExpectedOn: "2026-07-09",
     nextExpectedAmountCents: 80000,
+    amountHistory: null,
   };
 
   const lease = {
@@ -321,6 +324,7 @@ describe("projectOccurrences", () => {
     nextExpectedOn: "2026-09-11",
     nextExpectedAmountCents: -55989,
     userEndsOn: "2028-08-11",
+    amountHistory: null,
   };
 
   test("userEndsOn stops the projection — a 24-payment lease is not monthly forever", () => {
@@ -404,6 +408,30 @@ describe("projectOccurrences", () => {
     expect(occ.every((o) => o.amountCents === 80000)).toBe(true);
   });
 
+  /**
+   * ⚖️ Each occurrence is worth its OWN day's rate (owner decision 2026-10-08, §6A 55): his weekly pay was $1,047.00
+   * in cash through Wed Aug 26 and $1,141.92 by payroll from Thu Aug 27. Every reader of a past payday — settlement,
+   * the calendar, /budgets' passed-unpaid, arrears — reads its amount here, so none carries a copy of the rule.
+   */
+  test("each occurrence is priced at its own day's rate — the cash weeks at $1,047.00, payroll at $1,141.92", () => {
+    const pay = {
+      ...series,
+      nextExpectedOn: "2026-07-23",
+      nextExpectedAmountCents: 114_192,
+      amountHistory: [{ throughOn: "2026-08-26", amountCents: 104_700 }],
+    };
+    const occ = projectOccurrences(pay, "2026-08-13", "2026-09-10");
+    expect(occ.map((o) => [o.date, o.amountCents])).toEqual([
+      ["2026-08-13", 104_700],
+      ["2026-08-20", 104_700],
+      ["2026-08-27", 114_192],
+      ["2026-09-03", 114_192],
+      ["2026-09-10", 114_192],
+    ]);
+    // with no history, the series' own amount on every day, as before
+    expect(projectOccurrences(series, "2026-07-08", "2026-07-31").every((o) => o.amountCents === 80000)).toBe(true);
+  });
+
   test("overdue expected dates roll forward instead of projecting the past", () => {
     const occ = projectOccurrences({ ...series, nextExpectedOn: "2026-07-01" }, "2026-07-08", "2026-07-31");
     expect(occ.map((o) => o.date)).toEqual(["2026-07-08", "2026-07-15", "2026-07-22", "2026-07-29"]);
@@ -414,7 +442,7 @@ describe("projectOccurrences", () => {
   });
 
   test("staleness supplied by the caller rides onto every occurrence", () => {
-    const staleness = seriesStaleness({ ...series, userCadence: null, userNextExpectedOn: null, userAmountCents: null, lastMatchedOn: "2026-06-16" }, "2026-07-08");
+    const staleness = seriesStaleness({ ...series, userCadence: null, userNextExpectedOn: null, userAmountCents: null, lastMatchedOn: "2026-06-16", billedWith: null }, "2026-07-08");
     const occ = projectOccurrences({ ...series, staleness }, "2026-07-08", "2026-07-31");
     expect(occ).toHaveLength(4);
     expect(occ.every((o) => o.staleness === staleness)).toBe(true);
@@ -461,8 +489,8 @@ describe("lapsedSeriesShouldStopForecasting", () => {
 
 describe("seriesStaleness", () => {
   const overrides = (
-    over: Partial<SeriesOverrides & { lastMatchedOn: string | null }> = {},
-  ): SeriesOverrides & { lastMatchedOn: string | null } => ({
+    over: Partial<SeriesOverrides & EvidenceSource> = {},
+  ): SeriesOverrides & EvidenceSource => ({
     cadence: "weekly",
     userCadence: null,
     intervalDaysAvg: 7,
@@ -471,6 +499,7 @@ describe("seriesStaleness", () => {
     nextExpectedAmountCents: null,
     userAmountCents: null,
     lastMatchedOn: "2026-07-01",
+    billedWith: null,
     ...over,
   });
 
@@ -557,6 +586,7 @@ describe("seriesStaleness", () => {
       nextExpectedAmountCents: -5000,
       userAmountCents: null,
       status: "confirmed" as const,
+      billedWith: null,
     };
     const today = "2026-07-08";
     // every day to today checked: these are the gates themselves (unchecked days — the describe below)
@@ -596,26 +626,32 @@ describe("seriesStaleness", () => {
     // ⛔ …and every checked day: awaiting statements is a live, projected word too (every day read, nothing checked,
     // a checked day before the late charge's tolerance ran out, yesterday)
     const checkedDays = [today, null, "2026-04-01", "2026-07-07"];
+    // ⚖️ …and billed inside a carrier's payment at every age of ITS evidence (§6A 59)
+    const carriers = [null, ...ages.map((a) => ({ id: "rent", name: "Flamingo South Beach (rent)", lastMatchedOn: a }))];
     let lapsedSeen = 0;
     let awaitingSeen = 0;
     for (const status of ["detected", "confirmed", "dismissed", "ended"] as const) {
       for (const kind of ["bill", "subscription", "income", "transfer", "other"] as const) {
         for (const lastMatchedOn of ages) {
           for (const checked of checkedDays) {
-            const row = { ...base, status, kind, lastMatchedOn };
-            const evidence = seriesEvidence(row, today, checked);
-            if (evidence === "lapsed") lapsedSeen += 1;
-            if (evidence === "awaiting-statements") awaitingSeen += 1;
-            expect(seriesIsProjected(status, evidence), `${status} · ${kind} · ${lastMatchedOn} · ${checked}`).toBe(
-              seriesIsForecast(row, today, checked),
-            );
+            for (const billedWith of carriers) {
+              const row = { ...base, status, kind, lastMatchedOn, billedWith };
+              const evidence = seriesEvidence(row, today, checked);
+              if (evidence === "lapsed") lapsedSeen += 1;
+              if (evidence === "awaiting-statements") awaitingSeen += 1;
+              expect(
+                seriesIsProjected(status, evidence),
+                `${status} · ${kind} · ${lastMatchedOn} · ${checked} · carrier ${billedWith?.lastMatchedOn}`,
+              ).toBe(seriesIsForecast(row, today, checked));
+            }
           }
         }
       }
     }
     // the grid reaches the cases that matter: a lapsed series, of every money-out kind, at every status, on the two
-    // checked days that read past its lapse line — the lapse is judged on read days (§6A 57) — and one awaiting
-    expect(lapsedSeen).toBe(4 * 4 * 2);
+    // checked days that read past its lapse line — the lapse is judged on read days (§6A 57) — seen last on the lapsed
+    // day by its own posting, its carrier's, or both (4 pairs, §6A 59); and one awaiting
+    expect(lapsedSeen).toBe(4 * 4 * 2 * 4);
     expect(awaitingSeen).toBeGreaterThan(0);
   });
 });
@@ -640,6 +676,8 @@ describe("a series is late only on days the ledger has checked", () => {
     status: "confirmed" as const,
     kind: "income" as const,
     lastMatchedOn: "2026-09-24",
+    // billed on its own (§6A 59) — the carrier's rule has its own describe
+    billedWith: null,
   };
   // monthly 30 → 30 × 1.5 + 3 = 48 days of tolerance
   const monthly = {
@@ -774,6 +812,8 @@ describe("a series lapses only on days the ledger has checked (§6A 57)", () => 
     status: "confirmed" as const,
     kind: "bill" as const,
     lastMatchedOn: "2026-09-02",
+    // billed on its own (§6A 59)
+    billedWith: null,
   };
 
   test("his rent on 2026-12-07: 96 days to today, 23 on Wells Fargo's read days — still forecast", () => {
@@ -1622,6 +1662,7 @@ describe("seriesHasLapsed", () => {
     userNextExpectedOn: null,
     nextExpectedAmountCents: -499,
     userAmountCents: null,
+    billedWith: null,
   };
 
   test("a series that posted and then went quiet past its tolerance has lapsed", () => {
@@ -1684,7 +1725,15 @@ describe("seriesHasLapsed", () => {
 });
 
 describe("rollForwardNextExpected", () => {
-  const eff = { cadence: "monthly" as const, intervalDaysAvg: 30, nextExpectedOn: "2026-07-16", nextExpectedAmountCents: -1549, anchorDay: null, userEndsOn: null };
+  const eff = {
+    cadence: "monthly" as const,
+    intervalDaysAvg: 30,
+    nextExpectedOn: "2026-07-16",
+    nextExpectedAmountCents: -1549,
+    anchorDay: null,
+    userEndsOn: null,
+    amountHistory: null,
+  };
 
   test("a future stored date is returned untouched", () => {
     expect(rollForwardNextExpected(eff, "2026-07-08")).toBe("2026-07-16");

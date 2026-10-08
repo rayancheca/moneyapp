@@ -39,6 +39,7 @@ function series(over: Partial<SeriesView> & Pick<SeriesView, "id" | "name" | "st
     endsOn: null,
     // 🔴 left out, every fixture here read "Once": `cadenceLabel` asks `=== null`, and undefined is not
     oneChargeOn: null,
+    billedWith: null,
     ...over,
   } as SeriesView;
 }
@@ -251,5 +252,31 @@ describe("AllSeriesView — awaiting statements is its own section, never Runnin
     expect(decode(html.replace(/<[^>]+>/g, ""))).toContain(
       "Detected: Subscription · Monthly · about -$15.49 · awaiting statements",
     );
+  });
+});
+
+/*
+ * ⚖️ His decision 59 (2026-10-08): `Rent utilities & fees` is paid inside the rent. 🔴 It sat under "Never billed"
+ * with "0 matched"; it is filed by the rent's evidence, and its row says why it has matched nothing of its own.
+ */
+describe("AllSeriesView — a series billed inside another's payment says so on its row", () => {
+  const rent = { id: "rent", name: "Flamingo South Beach (rent)", lastMatchedOn: "2026-09-02" };
+  const text = decode(
+    renderToStaticMarkup(
+      createElement(AllSeriesView, {
+        series: [
+          series({ id: "u", name: "Rent utilities & fees", status: "confirmed", kind: "bill", matchedCount: 0, billedWith: rent }),
+          series({ id: "g", name: "Gym", status: "confirmed", kind: "bill", matchedCount: 0, evidence: "never-billed" }),
+        ],
+        overdueBySeries: new Map(),
+        today: "2026-10-08",
+      }),
+    ).replace(/<[^>]+>/g, "|"),
+  );
+
+  test("its row reads billed with the rent; the gym's does not", () => {
+    expect(text).toContain("Rent utilities & fees||Bill · 0 matched · billed with the rent|");
+    expect(text).toContain("Gym||Bill · 0 matched|");
+    expect(text.match(/billed with/g)).toHaveLength(1);
   });
 });

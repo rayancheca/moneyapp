@@ -2,20 +2,23 @@ import { and, eq, gt, inArray } from "drizzle-orm";
 import type { AppDatabase } from "@/db/client";
 import { recurringSeries, type SeriesKind, type SeriesStatus } from "@/db/schema/recurring";
 import { transactions } from "@/db/schema/transactions";
-import { addDays, compareDates } from "@/lib/dates";
+import { addDays } from "@/lib/dates";
 import {
+  firstPaydayOn,
   hasArrived,
   noSettlement,
   settlePaydaysBackwards,
+  walkBackBound,
   type PaydaySettlement,
 } from "@/lib/payday-settlement";
 import { paydayReadings, type PaydayReading } from "@/lib/per-payday";
+import { ratePeriodOf } from "@/lib/series-kind";
 import {
   effectiveSeries,
   projectOccurrences,
   rollForwardNextExpected,
   toProjectable,
-  type SeriesOverrides,
+  type ProjectionOverrides,
 } from "./recurring";
 
 /**
@@ -31,14 +34,18 @@ import {
  * the exact disagreement this module exists to end. Every caller gets the same
  * answer for the same series because every caller asks over the same span.
  *
- * ⛔ WHERE THE WALK STOPS, backwards. `projectOccurrences` cannot produce a date
- * before the series' own anchor (`stepsToReach` never returns a negative step),
- * so the earliest payday that can be settled is the earliest one the ledger
- * itself draws. That is the guard the decision asked for in its own terms — a
- * payday the ledger has no reason to think was ever owed is not projected, so
- * it cannot be retro-settled. His pay series is anchored 2026-07-23 and first
- * matched in June 2026; nothing before that is reachable however large a lump
- * lands.
+ * ⚖️ WHERE THE WALK STOPS, backwards: the series' FIRST PAYDAY (`firstPaydayOn`,
+ * §6A 55 step B) — its anchor's rhythm walked back to its first deposit. A payday
+ * before any money arrived is one the ledger has no reason to think was ever
+ * owed, so it is not projected and cannot be retro-settled, however large a lump
+ * lands. His series is anchored 2026-07-23 and first paid on 2026-06-04: the
+ * walk opens on Thursday Jun 4.
+ *
+ * 🔴 It opened on the stored ANCHOR (`projectOccurrences` floors its walk there),
+ * while Earned vs banked counted from the first deposit: on his ledger June's
+ * cash weeks were earned on the income card and drawn on no calendar, and Jun 4's
+ * $1,047.00 read "toward no payday". ⛔ The calendar and /budgets open on the
+ * same day (`firstPaydayOn` rides on the answer; `paydayProjectable`).
  *
  * ⛔ AND FORWARDS: `today + toleranceDays`. A lump that posts the day before a
  * payday answers that payday (his 2026-09-23 +$4,567.68 covers Sep 24), and
@@ -46,9 +53,9 @@ import {
  * tolerance window nothing is settled, so a deposit never pre-pays a week it
  * could not reach.
  */
-export function paydaySettlement(db: AppDatabase, seriesId: string, today: string): PaydaySettlement {
+export function paydaySettlement(db: AppDatabase, seriesId: string, today: string): SeriesPaydaySettlement {
   const s = db.select().from(recurringSeries).where(eq(recurringSeries.id, seriesId)).get();
-  if (!s || s.kind !== "income") return noSettlement();
+  if (!s || s.kind !== "income") return unsettled();
 
   const deposits = db
     .select({ postedOn: transactions.postedOn, amountCents: transactions.amountCents })
@@ -69,24 +76,71 @@ export function paydaySettlement(db: AppDatabase, seriesId: string, today: strin
      * draws deposits beside this answer, cuts them on the same day.
      */
     .filter((d) => hasArrived(d.postedOn, today));
-  if (deposits.length === 0) return noSettlement();
+  if (deposits.length === 0) return unsettled();
 
   /*
-   * The walk opens on the earliest evidence there is — the first attributed
-   * deposit, or the series' own next-expected anchor when detection wrote one
-   * earlier. `projectOccurrences` floors itself at that anchor either way, so
-   * passing the earlier of the two asks for "everything the ledger draws"
-   * rather than imposing a second, quieter floor of this module's own.
+   * The walk opens on the series' first payday — its effective anchor's rhythm walked back to the first deposit — and
+   * reaches `today + toleranceDays`. Money has arrived, so there is a first payday. Walking back it draws the past and
+   * the paydays that money has reached (`walkBackBound`), the ones every past reader draws beside it.
    */
-  const firstDeposit = deposits.reduce((first, d) => (compareDates(d.postedOn, first) < 0 ? d.postedOn : first), deposits[0]!.postedOn);
-  const anchor = s.userNextExpectedOn ?? s.nextExpectedOn;
-  const from = anchor !== null && compareDates(anchor, firstDeposit) < 0 ? anchor : firstDeposit;
-
-  const occurrences = projectOccurrences(toProjectable(s), from, addDays(today, s.toleranceDays)).filter(
+  const firstOn = firstPaydayOn(effectiveSeries(s), s.toleranceDays, deposits, today);
+  const walkBackBefore = walkBackBound(deposits, s.toleranceDays, today);
+  const projectable = paydayProjectable(s, { firstPaydayOn: firstOn, walkBackBefore }, today);
+  const occurrences = projectOccurrences(projectable, firstOn ?? today, addDays(today, s.toleranceDays)).filter(
     (o) => o.amountCents > 0,
   );
 
-  return settlePaydaysBackwards({ occurrences, deposits, toleranceDays: s.toleranceDays });
+  // ⚖️ the eras of his rate history (§6A 55a): money pays only the paydays priced in its own era
+  const settlement = settlePaydaysBackwards({
+    occurrences,
+    deposits,
+    toleranceDays: s.toleranceDays,
+    periodOf: (day) => ratePeriodOf(projectable, day),
+  });
+  return { ...settlement, firstPaydayOn: firstOn, walkBackBefore };
+}
+
+/**
+ * A series' settlement, and the first payday it opened on.
+ *
+ * ⛔ `firstPaydayOn` rides on the answer because every reader that draws a pay series' paydays beside it — the
+ * recurring calendar, /budgets and its passed-unpaid leg — must draw the paydays it walked (`paydayProjectable`), not
+ * the ones a projection floored at the anchor would. Null when no money has arrived: nothing opens before the anchor.
+ */
+export interface SeriesPaydaySettlement extends PaydaySettlement {
+  firstPaydayOn: string | null;
+  /**
+   * …and where its walk back ENDED (`walkBackBound`): the first day after the past and the paydays money has reached.
+   * Rides on the answer for `firstPaydayOn`'s reason — a reader bounding its walk back at today alone drops a payday
+   * the settlement paid. Null when no money has arrived: there is no walk back.
+   */
+  walkBackBefore: string | null;
+}
+
+const unsettled = (): SeriesPaydaySettlement => ({ ...noSettlement(), firstPaydayOn: null, walkBackBefore: null });
+
+/**
+ * A series' projection over its whole payday universe: `toProjectable`, opened on the first payday its settlement
+ * walked from (`firstPaydayOn`). ⛔ One rule for every reader of past paydays — a reader projecting from the anchor
+ * alone names fewer paydays than the settlement it reads, and than Earned vs banked counts.
+ *
+ * ⛔ The walk back is for the PAST and for the paydays money has REACHED (`walkBackBefore`, the settlement's
+ * `walkBackBound`; today when there is no settlement): beyond them the schedule is its anchor's, the one the forecast,
+ * Upcoming and /budgets' expected leg project. 🔴 Unbounded, a next payday he dated ahead — Oct 22, set on Oct 8 —
+ * left Oct 8 and Oct 15 scheduled on /budgets and drawn upcoming on the calendar, in no other figure. 🔴 Bounded at
+ * today alone, his payday imported on payday — detection then dates the next one a week ahead — fell off every past
+ * reader: /budgets scheduled three of September's four Thursdays on Sep 24 (§6A 55 step B review, 2026-10-08).
+ */
+export function paydayProjectable(
+  s: Parameters<typeof toProjectable>[0],
+  settlement: Pick<SeriesPaydaySettlement, "firstPaydayOn" | "walkBackBefore"> | undefined,
+  today: string,
+): ReturnType<typeof toProjectable> {
+  return {
+    ...toProjectable(s),
+    firstOn: settlement?.firstPaydayOn ?? null,
+    walkBackBefore: settlement?.walkBackBefore ?? today,
+  };
 }
 
 /**
@@ -164,7 +218,7 @@ export function stillToCome<T extends { date: string }>(
  */
 export function nextStillToCome(
   db: AppDatabase,
-  series: SeriesOverrides & { id: string; kind: SeriesKind },
+  series: ProjectionOverrides & { id: string; kind: SeriesKind },
   today: string,
 ): string | null {
   const eff = effectiveSeries(series);
@@ -191,34 +245,23 @@ function isStillToCome(
 }
 
 /**
- * The same answer for several series at once, which is how every caller needs
- * it — `unbankedIncomeForSeries`, the budgets header and the recurring calendar
- * all grade a set of schedules in one pass.
- */
-export function settledPaydaysBySeries(
-  db: AppDatabase,
-  seriesIds: readonly string[],
-  today: string,
-): Map<string, ReadonlyMap<string, string>> {
-  const out = new Map<string, ReadonlyMap<string, string>>();
-  for (const [id, settlement] of paydaySettlementsBySeries(db, seriesIds, today)) {
-    out.set(id, settlement.settledBy);
-  }
-  return out;
-}
-
-/**
  * The WHOLE settlement for several series — which paydays, and whose money paid
  * them (`portions`) — for a reader whose figures cover a window the money can
  * cross. The budgets header is one: its "in so far" is the money that landed in
  * the month, and settlement spends that money on paydays either side of it.
+ *
+ * ⛔ The one way a set of schedules is graded — `unbankedIncomeForSeries`, the
+ * budgets header and the recurring calendar — because each must also DRAW the
+ * paydays settlement walked, from its first payday (`paydayProjectable`). A
+ * settled-dates-only map (`settledPaydaysBySeries`, gone with §6A 55 step B)
+ * let a reader grade the paydays a projection floored at the anchor drew.
  */
 export function paydaySettlementsBySeries(
   db: AppDatabase,
   seriesIds: readonly string[],
   today: string,
-): Map<string, PaydaySettlement> {
-  const out = new Map<string, PaydaySettlement>();
+): Map<string, SeriesPaydaySettlement> {
+  const out = new Map<string, SeriesPaydaySettlement>();
   for (const id of seriesIds) out.set(id, paydaySettlement(db, id, today));
   return out;
 }
@@ -236,7 +279,8 @@ export function readsPerPayday(s: { kind: SeriesKind; status: SeriesStatus }): b
 /**
  * Per series, each active row's per-payday reading, from that series'
  * settlement — every row, not a window's, because the spread a row is measured
- * against is the series' whole history.
+ * against is the series' whole history — held to the series' rate at the payday
+ * it paid (`effectiveSeries`: the rate now and its dated history, §6A 55).
  */
 export function paydayReadingsBySeries(
   db: AppDatabase,
@@ -244,6 +288,14 @@ export function paydayReadingsBySeries(
 ): Map<string, ReadonlyMap<string, PaydayReading>> {
   const out = new Map<string, ReadonlyMap<string, PaydayReading>>();
   if (settlements.size === 0) return out;
+  const schedules = new Map(
+    db
+      .select()
+      .from(recurringSeries)
+      .where(inArray(recurringSeries.id, [...settlements.keys()]))
+      .all()
+      .map((s) => [s.id, effectiveSeries(s)] as const),
+  );
   const rowsBySeries = new Map<string, { id: string; postedOn: string; amountCents: number }[]>();
   for (const r of db
     .select({
@@ -261,7 +313,9 @@ export function paydayReadingsBySeries(
     else rowsBySeries.set(r.seriesId, [r]);
   }
   for (const [seriesId, settlement] of settlements) {
-    out.set(seriesId, paydayReadings(rowsBySeries.get(seriesId) ?? [], settlement.portions));
+    const schedule = schedules.get(seriesId);
+    if (!schedule) continue; // a series settlement spoke about is a row in this table — no schedule, no reading
+    out.set(seriesId, paydayReadings(rowsBySeries.get(seriesId) ?? [], settlement.portions, schedule));
   }
   return out;
 }

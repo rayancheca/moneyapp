@@ -1,19 +1,21 @@
 import type { AppDatabase } from "@/db/client";
 import { recurringSeries } from "@/db/schema/recurring";
+import type { EvidenceSource } from "@/lib/billed-with";
 import { todayIso } from "@/lib/dates";
 import { rankFact, scalarFact, shareFact, type Fact } from "@/lib/insight-facts";
 import { isPrintableName } from "@/lib/printable-name";
 import { seriesIsIncomeOrSpending } from "@/lib/series-kind";
 import { outsidePortfolioCashAccountIds } from "./accounts";
 import { isAgentsSeries } from "./analytics";
+import { withBillingCarriers } from "./billing-carriers";
 import { silenceMeasuredThroughBySeries } from "./cash-earnings";
 import { surfaceInsights, type InsightInput } from "./insight-surface";
 import type { InsightCandidate, SurfaceInsights } from "./insights";
 import { provenanceFor } from "./provenance";
 import { listSeries, seriesIsForecast, type SeriesOverrides, type SeriesView } from "./recurring";
 
-/** Exactly what `seriesHasLapsed` reads — the stored row, overrides intact. */
-type LapseInput = SeriesOverrides & { lastMatchedOn: string | null };
+/** Exactly what `seriesHasLapsed` reads — the stored row, overrides intact, and the carrier it is billed with. */
+type LapseInput = SeriesOverrides & EvidenceSource;
 
 /**
  * What `/recurring/[id]` can say that the series' own figures do not.
@@ -115,7 +117,10 @@ export function recurringInsightInput(
    * other. Measured — with the query filtered, deleting the status test broke
    * no test at all.
    */
-  const rows = new Map(db.select().from(recurringSeries).all().map((r) => [r.id, r as LapseInput]));
+  // each with the carrier it is billed with, whose postings are its evidence (`lastSeenOn`, §6A 59)
+  const rows = new Map(
+    withBillingCarriers(db, db.select().from(recurringSeries).all()).map((r) => [r.id, r as LapseInput]),
+  );
   // the lapse is measured to each series' checked day, as `listSeries` measured it (§6A 57)
   const checkedOf = silenceMeasuredThroughBySeries(db, today);
   const self = all.find((s) => s.id === seriesId);
@@ -183,7 +188,7 @@ export function recurringInsightInput(
 
   const facts: Fact[] = [];
   const candidates: InsightCandidate[] = [];
-  const prove = () => provenanceFor(db, { kind: "recurringSeries", id: seriesId });
+  const prove = () => provenanceFor(db, { kind: "recurringSeries", id: seriesId, today });
 
   facts.push(rankFact("f1", self.name, rank, ranked.length, amongLabel));
   facts.push(scalarFact("f2", self.name, annualized, "money"));

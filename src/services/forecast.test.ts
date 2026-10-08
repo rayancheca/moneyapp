@@ -108,6 +108,8 @@ describe("forecastCurrentMonth", () => {
     lastMatchedOn?: string;
     /** omitted → no account, which the forecast reads as cash */
     accountId?: string;
+    /** omitted → the rate has never changed */
+    userAmountHistory?: { throughOn: string; amountCents: number }[];
   }): string {
     return bundle.db
       .insert(recurringSeries)
@@ -143,6 +145,54 @@ describe("forecastCurrentMonth", () => {
     expect(payroll!.detail).toContain("next Jul 9");
     expect(payroll!.detail).not.toMatch(/\d{4}-\d{2}-\d{2}/);
     expect(f.projectedIncomeCents).toBe(320000);
+  });
+
+  /**
+   * ⚖️ Each occurrence is worth its own day's rate (owner decision 2026-10-08, §6A 55). 🔴 The line multiplied the
+   * FIRST occurrence's amount by the count — right only while every occurrence was alike: across a rate change it
+   * priced the whole month at the old rate and printed "4 × $700.00".
+   */
+  test("a month that crosses a rate change sums each occurrence at its own rate, and says both rates", () => {
+    insertSeries({
+      name: "Payroll",
+      kind: "income",
+      cadence: "weekly",
+      intervalDaysAvg: 7,
+      nextExpectedOn: "2026-07-09",
+      nextExpectedAmountCents: 80000,
+      status: "confirmed",
+      userAmountHistory: [{ throughOn: "2026-07-20", amountCents: 70000 }],
+    });
+    const f = forecastCurrentMonth(bundle.db, TODAY);
+    const payroll = f.components.find((c) => c.label === "Payroll");
+    // Jul 9 and 16 at $700.00, Jul 23 and 30 at $800.00
+    expect(payroll).toMatchObject({ kind: "fixed", cents: 2 * 70000 + 2 * 80000 });
+    expect(payroll!.detail).toContain("2 × $700.00 + 2 × $800.00 (weekly), next Jul 9");
+    expect(f.projectedIncomeCents).toBe(300000);
+  });
+
+  /**
+   * 🔴 The arrears line DIVIDED its total by its count to name one amount — exact only while every occurrence was
+   * alike. Across a rate change the average was no amount the bill ever had, and a fraction of a cent threw.
+   */
+  test("arrears across a rate change name each rate, and never divide into a fraction of a cent", () => {
+    insertSeries({
+      name: "Gym",
+      kind: "bill",
+      cadence: "weekly",
+      intervalDaysAvg: 7,
+      nextExpectedOn: "2026-07-02",
+      nextExpectedAmountCents: -8001,
+      status: "confirmed",
+      userAmountHistory: [{ throughOn: "2026-07-10", amountCents: -7000 }],
+    });
+    const f = forecastCurrentMonth(bundle.db, "2026-07-20");
+    // Jul 2 and 9 at $70.00, Jul 16 at $80.01 — all came due before today and none posted
+    const late = f.components.find((c) => c.label === "Gym" && c.detail.includes("has not posted"));
+    expect(late).toMatchObject({ kind: "fixed", cents: -(7000 + 7000 + 8001) });
+    expect(late!.detail).toBe("2 × -$70.00 + 1 × -$80.01 (weekly), came due Jul 2 and has not posted");
+    // Jul 23 and 30 still to come, at the rate now
+    expect(f.components.find((c) => c.label === "Gym" && c.detail.includes("next"))?.detail).toContain("2 × -$80.01");
   });
 
   /* ── staleness disclosure (item 13a) ───────────────────────────────────

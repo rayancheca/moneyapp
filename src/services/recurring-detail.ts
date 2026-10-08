@@ -1,5 +1,6 @@
 import { and, desc, eq, isNull, lte, ne, or, sql } from "drizzle-orm";
 import type { SeriesEvidence } from "@/lib/series-evidence";
+import type { BillingCarrier } from "@/lib/billed-with";
 import type { AppDatabase } from "@/db/client";
 import { accounts } from "@/db/schema/accounts";
 import { categories } from "@/db/schema/categories";
@@ -12,12 +13,14 @@ import {
 } from "@/db/schema/recurring";
 import { transactions } from "@/db/schema/transactions";
 import { addDays, isValidIsoDate, todayIso } from "@/lib/dates";
-import { paydayReadings, type PaydayReading, type PerPayday } from "@/lib/per-payday";
+import { expectedCentsOf, paydayReadings, type PaydayReading, type PerPayday } from "@/lib/per-payday";
 import { stepFrom, stepPlan } from "@/lib/recurring-step";
 import { loadCategoryIndex } from "./analytics";
 import { arrearsThisMonth } from "./arrears";
+import { billingCarriers } from "./billing-carriers";
 import { silenceMeasuredThroughBySeries } from "./cash-earnings";
 import { paydaySettlement, readsPerPayday, stillToCome } from "./payday-settlement";
+import { postedAveragesBySeries } from "./posted-average";
 import {
   annualizedCentsOf,
   effectiveSeries,
@@ -61,6 +64,20 @@ export interface AmountHistoryPoint {
    * beside a calendar drawing the same row `paid`.
    */
   perPayday: PerPayday | null;
+  /**
+   * What this row is held to (`rateOn`): the rate of the payday a pay row's money paid (`PaydayReading`), else the
+   * series' rate on the row's own day. ⚖️ Each against its own time's rate (owner decision 2026-10-08, §6A 55): his
+   * cash weeks at $1,047.00, his payroll weeks at $1,141.92. 🔴 One expectation for all time read his Jun 4 cash
+   * week "vs expected -$94.92". Null when the series has no rate — and for money that paid no payday, held to none.
+   */
+  expectedCents: number | null;
+  /**
+   * The row's money paid NO payday (`PaydayReading.towardNoPayday`, §6A 55b) — the calendar's "toward no payday",
+   * said here too, and graded against nothing. 🔴 Held to its own day's rate, his Jun 5 $400.00 read "-$647.00" in
+   * the table lens and "expected $1,047.00" in the bar's tooltip, beside a calendar drawing it ungraded (a copy of his
+   * ledger, 2026-10-08).
+   */
+  towardNoPayday: boolean;
 }
 
 export interface SeriesCategoryRef {
@@ -144,6 +161,9 @@ export interface SeriesDetail {
    * the same rows ("-$50.00 · posted avg -$46.77") from `listSeries`'
    * `postedAvgCents`; the page that OWNS the series had the spread and not the
    * centre. Owner's call, 2026-09-08: name the average, and hang the ± on it.
+   *
+   * ⚖️ A pay series' is what a PAYDAY paid at the rate in force now (`lib/posted-average`, §6A 55) — one reading with
+   * the All tab and the popover. 🔴 The raw mean, his page read "posted avg +$1,789.15 ± 1881.46" under "+$1,141.92".
    */
   postedAvgCents: number | null;
   intervalDaysAvg: number | null;
@@ -153,6 +173,12 @@ export interface SeriesDetail {
   isActive: boolean;
   /** the word every surface uses for its evidence — see `lib/series-evidence` */
   evidence: SeriesEvidence;
+  /**
+   * ⚖️ The series it is billed inside (owner decision 2026-10-08, §6A 59), or null — the page says "billed with the
+   * rent, last seen Sep 2" and links it. 🔴 `/recurring/<Rent utilities & fees>` wore a "Never billed" badge, of money
+   * paid inside every rent payment.
+   */
+  billedWith: BillingCarrier | null;
   /**
    * The day this series stops, or null when it runs on — `userEndsOn`, the only
    * end day the ledger holds and the one `projectOccurrences` clamps its walk
@@ -230,8 +256,10 @@ export function seriesDetail(
   seriesId: string,
   today: string = todayIso(),
 ): SeriesDetail {
-  const s = db.select().from(recurringSeries).where(eq(recurringSeries.id, seriesId)).get();
-  if (!s) throw new Error(`Unknown recurring series ${seriesId}`);
+  const row = db.select().from(recurringSeries).where(eq(recurringSeries.id, seriesId)).get();
+  if (!row) throw new Error(`Unknown recurring series ${seriesId}`);
+  // ⚖️ with the carrier it is billed with — its evidence (`lastSeenOn`, §6A 59)
+  const s = { ...row, billedWith: billingCarriers(db).get(row.id) ?? null };
 
   const merchant = s.merchantId
     ? db
@@ -292,34 +320,32 @@ export function seriesDetail(
     accountName: t.accountName,
     linkSource: t.linkSource,
   }));
+  const eff = effectiveSeries(s);
   // the calendar's reading of a pay series' rows, behind the calendar's own gate
   const readings = readsPerPayday(s)
-    ? paydayReadings(linked, paydaySettlement(db, s.id, today).portions)
+    ? paydayReadings(linked, paydaySettlement(db, s.id, today).portions, eff)
     : new Map<string, PaydayReading>();
-  const amountHistory: AmountHistoryPoint[] = [...linked]
-    .reverse()
-    .map((t) => ({ date: t.postedOn, amountCents: t.amountCents, perPayday: readings.get(t.id)?.perPayday ?? null }));
+  const amountHistory: AmountHistoryPoint[] = [...linked].reverse().map((t) => {
+    const reading = readings.get(t.id);
+    return {
+      date: t.postedOn,
+      amountCents: t.amountCents,
+      perPayday: reading?.perPayday ?? null,
+      // ⚖️ each row against its own time's rate (§6A 55), by the calendar's own rule — a pay row, the rate of the
+      // payday it paid, and nothing when it paid none; any other row, its own day's
+      expectedCents: expectedCentsOf(reading, eff, t.postedOn),
+      towardNoPayday: reading?.towardNoPayday ?? false,
+    };
+  });
 
   /*
-   * Sample standard deviation of what actually posted. Two rows is the floor:
-   * with one there is nothing to vary, and the seed that used to be printed
-   * here claimed a spread for series with none at all.
+   * What posted, averaged, and its sample standard deviation — the reading `listSeries` publishes to the All tab and
+   * the popover names (`postedAveragesBySeries`): a pay series' is what a payday paid at the rate in force now. Two
+   * samples is the floor of a spread: with one there is nothing to vary, and the seed that used to be printed here
+   * claimed a spread for series with none at all.
    */
-  // the centre the spread below is measured around — the same figure
-  // `listSeries` publishes to the All tab, computed from the same linked rows
-  const postedAvgCents =
-    linked.length === 0
-      ? null
-      : Math.round(linked.reduce((a, t) => a + t.amountCents, 0) / linked.length);
-  const postedStddevCents = (() => {
-    if (linked.length < 2) return null;
-    const mean = linked.reduce((a, t) => a + t.amountCents, 0) / linked.length;
-    const variance =
-      linked.reduce((a, t) => a + (t.amountCents - mean) ** 2, 0) / (linked.length - 1);
-    return Math.round(Math.sqrt(variance));
-  })();
+  const posted = postedAveragesBySeries(db, [s], today).get(s.id)!;
 
-  const eff = effectiveSeries(s);
   /*
    * 🔴 ONLY THE STATUSES THE FORECAST PROJECTS, and the rule was already
    * written four lines below for `nextExpectedOn`: "rolling a dismissed/ended
@@ -432,8 +458,8 @@ export function seriesDetail(
     detectedNextExpectedOn: s.nextExpectedOn,
     amountCentsAvg: s.amountCentsAvg,
     amountCentsStddev: s.amountCentsStddev,
-    postedStddevCents,
-    postedAvgCents,
+    postedStddevCents: posted.stddevCents,
+    postedAvgCents: posted.avgCents,
     intervalDaysAvg: s.intervalDaysAvg,
     toleranceDays: s.toleranceDays,
     confidence: s.confidence,
@@ -441,6 +467,7 @@ export function seriesDetail(
     isActive: isSeriesActive(s, today),
     // late only on days the ledger has checked — the badge's word and its tone (`seriesEvidenceTone`)
     evidence: seriesEvidence(s, today, checkedThrough),
+    billedWith: s.billedWith,
     endsOn: s.userEndsOn ?? null,
     oneChargeOn: oneChargeDays(db, [s]).get(s.id) ?? null,
     annualizedCents: annualizedCentsOf(s, today, checkedThrough),

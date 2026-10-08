@@ -35,7 +35,9 @@ function days(n: number): string {
 }
 
 /** What `Evidence` reads — a one-off has no tolerance to be past, so that one is optional. */
-type EvidenceFacts = Pick<SubscriptionLine, "neverBilled" | "lastMatchedLabel"> & { daysPastTolerance?: number | null };
+type EvidenceFacts = Pick<SubscriptionLine, "neverBilled" | "lastMatchedLabel" | "billedWithLabel"> & {
+  daysPastTolerance?: number | null;
+};
 
 /**
  * A row's evidence, in its own voice: when it last charged, or that it never has. `lead` goes first when the row
@@ -43,12 +45,23 @@ type EvidenceFacts = Pick<SubscriptionLine, "neverBilled" | "lastMatchedLabel"> 
  */
 function Evidence({ line, lead }: { line: EvidenceFacts; lead?: string }) {
   const prefix = lead === undefined ? "" : `${lead} · `;
-  if (line.neverBilled) return <span className="block text-[11px] text-ink-faint">{prefix}never billed</span>;
   const pastTolerance = line.daysPastTolerance ?? null;
+  const late = pastTolerance === null ? "" : ` · ${days(pastTolerance)} past tolerance`;
+  /* ⚖️ Paid inside another series' payment (§6A 59): "billed with the rent, last seen Sep 2". 🔴 His `Rent utilities
+     & fees` read "never billed" here, paid inside every rent payment. */
+  if (line.billedWithLabel !== null)
+    return (
+      <span className="block text-[11px] text-ink-faint">
+        {prefix}
+        {line.billedWithLabel}
+        {late}
+      </span>
+    );
+  if (line.neverBilled) return <span className="block text-[11px] text-ink-faint">{prefix}never billed</span>;
   return (
     <span className="block text-[11px] text-ink-faint">
       {prefix}last seen {line.lastMatchedLabel}
-      {pastTolerance === null ? "" : ` · ${days(pastTolerance)} past tolerance`}
+      {late}
     </span>
   );
 }

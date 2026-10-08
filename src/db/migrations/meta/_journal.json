@@ -176,6 +176,20 @@
       "when": 1791219404383,
       "tag": "0024_left_out_acknowledgements",
       "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "6",
+      "when": 1791474645120,
+      "tag": "0025_series_amount_history",
+      "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "6",
+      "when": 1791483407052,
+      "tag": "0026_series_billed_with",
+      "breakpoints": true
     }
   ]
 }

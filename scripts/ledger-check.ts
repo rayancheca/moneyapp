@@ -96,6 +96,7 @@ import {
   unmatchedAcknowledgementNotice,
 } from "@/lib/left-out-acknowledgement";
 import { writeLeftOutAcknowledgements } from "@/services/left-out-acknowledgements";
+import { rateHistoryRefusals, storedRateHistoryCount } from "@/services/rate-history-check";
 import { todayIso } from "@/lib/dates";
 
 /**
@@ -514,6 +515,15 @@ console.log(`reads of accounts at two banks: ${acrossBanks.length}`);
 for (const read of acrossBanks) console.log(listed("read at two banks", readAcrossBanksNotice(read), { warns: true }));
 
 /*
+ * 8. RATE HISTORIES — a series' past rates, `recurring_series.user_amount_history` (⚖️ owner, 2026-10-08, §6A 55), is
+ * JSON with no constraint, and the app reads it strictly: a history its reader refuses refuses every page that projects
+ * the series. FAILED, each one, through that same reader (`rateHistoryRefusals`) — so a write that got one wrong fails
+ * the next commit rather than his dashboard.
+ */
+const rateHistoryFailures = rateHistoryRefusals(db).map((r) => `[rate-history ${r.seriesId}] ${r.sentence}`);
+console.log(`rate histories: ${storedRateHistoryCount(db)} stored · ${rateHistoryFailures.length} the app cannot read`);
+
+/*
  * THE ACKNOWLEDGING — the guarded step, as the lowering below: a dry run prints each line a mark names and what it would
  * store with it, and only `--confirm` writes. ⛔ A mark no line left out carries refuses the whole write: the ledger moved
  * since the dry run, or it was mistyped, and either way the session has not read what it would acknowledge. ⛔ And
@@ -596,11 +606,11 @@ console.log(floor.summary);
 
 // the floor's findings come last, so every finding the check made before it prints where it always did
 const failures = [...compareToBaseline(observation, BASELINE), ...floor.failures];
-const findings = failures.length + recordFailures.length + leftOutFailures.length;
+const findings = failures.length + recordFailures.length + leftOutFailures.length + rateHistoryFailures.length;
 if (findings > 0) {
   console.error(`\nLEDGER CHECK FAILED — ${findings} finding(s):`);
   if (failures.length > 0) console.error(formatLedgerFailures(failures));
-  for (const line of [...recordFailures, ...leftOutFailures]) console.error(`  ${line}`);
+  for (const line of [...recordFailures, ...leftOutFailures, ...rateHistoryFailures]) console.error(`  ${line}`);
   process.exit(1);
 }
 console.log("\nledger matches the recorded baseline, and no stored verdict has gone stale");

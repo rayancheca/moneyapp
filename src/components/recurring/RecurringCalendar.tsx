@@ -30,6 +30,7 @@ import {
   longDate,
   monthLabel,
   perPaydayWord,
+  TOWARD_NO_PAYDAY,
   unsettledReasonWord,
   upcomingEvidenceWord,
 } from "./labels";
@@ -218,9 +219,11 @@ function settledByWord(e: CalendarEntry): string | null {
  * `settledByWord`, on the row. Wed Sep 30's lump paid Thu Oct 1, and the Oct 1
  * deposit, its own payday already paid, paid Aug 27: drawn bare beside Oct 1's
  * chip, the row read as a second week's pay that October's Settled figure did
- * not count, and August's chip named the same deposit for Aug 27.
+ * not count, and August's chip named the same deposit for Aug 27. And a deposit
+ * whose money paid none says that (`TOWARD_NO_PAYDAY`, the series page's word).
  */
 function settlesWord(e: CalendarEntry): string | null {
+  if (e.towardNoPayday) return TOWARD_NO_PAYDAY;
   const days = e.settlesPaydaysOn;
   if (days.length === 0) return null;
   return `toward the ${days.length === 1 ? "payday" : "paydays"} of ${DATE_LIST.format(days.map(longDate))}`;
@@ -584,6 +587,8 @@ export function DaySheetBody({ entries }: { entries: readonly CalendarEntry[] })
                     {/* not a warning: nothing is late about a bill the bank has
                         not charged yet — the All tab's "Never billed" */}
                     {e.neverBilled ? <Badge tone="neutral">{SERIES_EVIDENCE_LABEL["never-billed"]}</Badge> : null}
+                    {/* ⚖️ paid inside another series' payment (§6A 59) — where "Never billed" stood */}
+                    {e.billedWith !== null ? <Badge tone="neutral">{e.billedWith}</Badge> : null}
                     <span className="text-[11px] text-ink-faint">{KIND_LABEL[e.kind]}</span>
                   </span>
                   {e.confidence ? (

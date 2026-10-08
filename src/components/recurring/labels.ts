@@ -410,7 +410,19 @@ export function staleSummaryLabel(entries: readonly StaleEntry[], window: string
  * and filed the lease under "Never billed". The owner chose the All tab's word
  * (2026-09-14) — `SERIES_EVIDENCE_LABEL`, not a third spelling of it.
  */
-export function upcomingEvidenceWord(e: { isStale: boolean; neverBilled: boolean }): string | null {
+export function upcomingEvidenceWord(e: {
+  isStale: boolean;
+  neverBilled: boolean;
+  billedWith: string | null;
+}): string | null {
+  /*
+   * ⚖️ Paid inside another series' payment (§6A 59): whose postings its evidence is, first — "Rent utilities & fees
+   * upcoming (scheduled, billed with the rent)". 🔴 It read "(scheduled, never billed)", paid inside every rent.
+   */
+  if (e.billedWith !== null) {
+    if (e.neverBilled) return `${e.billedWith}, which has never been billed`;
+    return e.isStale ? `${e.billedWith}, evidence stale` : e.billedWith;
+  }
   if (e.neverBilled) return SERIES_EVIDENCE_LABEL["never-billed"].toLowerCase();
   return e.isStale ? "evidence stale" : null;
 }
@@ -522,9 +534,13 @@ export function overdueNote(date: string, occurrenceCount: number): string {
  * ⚠️ When the two agree there is only one number, so the ± stays attached to
  * the headline and no sub-line is drawn — a row repeating a figure it has just
  * printed is noise, and every fixture series is in this state.
+ *
+ * ⛔ The average and its spread are ONE reading (`lib/posted-average`), the one the All tab and the popover name: a pay
+ * series' is what a payday paid at the rate in force now. 🔴 Read raw, his pay page printed "posted avg +$1,789.15 ±
+ * 1881.46" under "+$1,141.92" (a copy of his ledger, 2026-10-08) — the band a bare number beside money.
  */
 export interface PostedSpreadReading {
-  /** the ± figure, already formatted to two places; null when there is none */
+  /** the band as it is printed, "± $583.58" — money, like the figures beside it; null when there is none */
   text: string | null;
   /** true when the ± hangs off the headline because it IS the postings' mean */
   attachedToHeadline: boolean;
@@ -537,10 +553,8 @@ export function postedSpreadReading(
   postedAvgCents: number | null,
   postedStddevCents: number | null,
 ): PostedSpreadReading {
-  const text =
-    postedStddevCents !== null && postedStddevCents > 0
-      ? (postedStddevCents / 100).toFixed(2)
-      : null;
+  // 🔴 `toFixed(2)` printed "± 583.58" beside "-$1,849.76", and "± 1881.46" with no separator: the band is money too
+  const text = postedStddevCents !== null && postedStddevCents > 0 ? `± ${formatCents(postedStddevCents)}` : null;
   // nothing linked, or a headline that IS the measured centre: one number
   if (postedAvgCents === null || postedAvgCents === headlineCents) {
     return { text, attachedToHeadline: text !== null, avgLine: null };
@@ -637,6 +651,15 @@ export function perPaydayWord(p: PerPayday): string {
   if (others < 1) return each;
   return `${each}, with the day's ${others === 1 ? "other deposit" : `${others} other deposits`}`;
 }
+
+/**
+ * ⚖️ A DEPOSIT WHOSE MONEY PAID NO PAYDAY SAYS SO (`PaydayReading.towardNoPayday`, §6A 55b): its money pays nothing
+ * past its own date plus the tolerance, so what is left of it after the paydays it reached answers no week — and is
+ * graded against none. One phrase for the calendar's cell and Day Sheet and the series page's history, so the two
+ * cannot word the same row two ways. 🔴 Before the reach bound June's $400.00 read "paid (toward the payday of Aug
+ * 27, 2026)"; after it, the series page still graded the row "-$647.00" beside the calendar's "toward no payday".
+ */
+export const TOWARD_NO_PAYDAY = "toward no payday";
 
 /**
  * ⚖️ Owner decision 2026-10-08 (§6A 54): the merge confirmation's last sentence — how many of the source's rows are not

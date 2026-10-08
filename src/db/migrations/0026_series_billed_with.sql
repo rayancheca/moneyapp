@@ -1,0 +1,1 @@
+ALTER TABLE `recurring_series` ADD `user_billed_with_series_id` text REFERENCES `recurring_series`(`id`);

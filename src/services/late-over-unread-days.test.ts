@@ -410,6 +410,7 @@ describe("a due day the ledger has checked is never called unread — the series
       nextExpectedAmountCents: -5_000,
       userAmountCents: null,
       lastMatchedOn: "2026-09-10",
+      billedWith: null,
     };
     const s = seriesStaleness(breezeline, "2026-10-25", "2026-10-13");
     expect(s).toMatchObject({ isStale: false, awaitingStatements: true });

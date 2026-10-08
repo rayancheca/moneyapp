@@ -406,10 +406,10 @@ describe("incomeCard", () => {
    * payday has no share to publish.
    */
   test("a window with no payday yields a null share rather than Infinity", () => {
-    // the schedule's only evidence is a deposit AFTER today, so the series has
-    // no life inside the window and implies nothing
-    addSeries();
-    addTxn("2026-09-03", 100_000);
+    // the schedule's first payday is tomorrow, Thu Aug 27 — its one deposit landed today, a day early — so the
+    // series has no payday inside the window and implies nothing (`firstPaydayOn`)
+    addSeries({ nextExpectedOn: "2026-08-27" });
+    addTxn(TODAY, 100_000);
     coverThrough(CHASE, "2026-06-01", "2026-08-12");
 
     const card = incomeCard(bundle.db, TODAY)!;
@@ -418,6 +418,16 @@ describe("incomeCard", () => {
     expect(Number.isFinite(card.bankedSharePct ?? 0)).toBe(true);
     expect(card.summary).not.toContain("Infinity");
     expect(card.summary).toContain("nothing to reconcile yet");
+  });
+
+  /* ⚖️ A deposit dated after today has not arrived (`hasArrived`): no evidence, so no first payday and no card —
+     the settlement's own refusal (§6A 55 step B), where the card used to open the schedule on that future day. */
+  test("a schedule whose only deposit is dated after today has no card", () => {
+    addSeries();
+    addTxn("2026-09-03", 100_000);
+    coverThrough(CHASE, "2026-06-01", "2026-08-12");
+
+    expect(incomeCard(bundle.db, TODAY)).toBeNull();
   });
 
   /*

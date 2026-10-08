@@ -1,4 +1,6 @@
-import { compareDates, diffDays } from "./dates";
+import type { Cadence } from "@/db/schema/recurring";
+import { addDays, compareDates, diffDays } from "./dates";
+import { signedStepsToReach, stepFrom, stepPlan } from "./recurring-step";
 
 /**
  * SETTLE BACKWARDS — which paydays a deposit has paid down.
@@ -37,10 +39,12 @@ import { compareDates, diffDays } from "./dates";
  *
  *   · the first one is settled outright when it lies within the series'
  *     tolerance of the deposit's date. That is today's date-match rule kept
- *     exactly as it was, and it is what makes a SHORT pay still count: his June
- *     deposit was $1,047.00 against a $1,141.92 week, and whether a payday was
- *     answered is a different question from whether it was answered in full
- *     (`classifyPostedAmount` already draws that distinction as `paid_different`);
+ *     exactly as it was, and it is what makes a SHORT pay still count: a
+ *     $1,100.00 deposit against a $1,141.92 week answered that week, and whether a
+ *     payday was answered is a different question from whether it was answered in
+ *     full (`classifyPostedAmount` already draws that distinction as
+ *     `paid_different`). (His June deposit of $1,047.00 was once the example; it
+ *     was a cash week priced at $1,047.00 all along — §6A 55);
  *   · every further one — and any one outside that tolerance window — is settled
  *     only while the money left over covers its FULL amount. Claiming a payday
  *     was paid with money that was not there is the fabricated plug this ledger
@@ -65,6 +69,21 @@ import { compareDates, diffDays } from "./dates";
  *
  * ⚖️ Only the MONEY pools. The anchor clause stays per-deposit: it is the link's
  * statement about the one payday that deposit landed on, not a purse.
+ *
+ * ⚖️ AND IT POOLS ONLY AS FAR AS ITS OWN DEPOSIT REACHED (owner decision 2026-10-08, §6A 55b). Every sum of carried
+ * money keeps the reach of the deposit it came from — that deposit's date plus the tolerance — and pays no payday
+ * after it, whichever later deposit's walk finds the payday. The rule above, "it never pre-pays a payday the deposit
+ * could not reach", held for a deposit's own walk and not for its change. 🔴 On his ledger June's $1,047.00 and
+ * $400.00 rode forward through the summer and paid Aug 27 when the Sep 23 lump walked back to it: the calendar read
+ * "Jun 4 … paid (toward the payday of Aug 27, 2026)", eleven weeks before that payday happened.
+ *
+ * ⚖️ AND ONLY INSIDE ITS RATE ERA (owner decision 2026-10-08, §6A 55a). A series whose rate has a dated history
+ * (`periodOf`, `ratePeriodOf`) prices each payday at its own time's rate, and money pays only the paydays of its
+ * own era: payroll money pays payroll weeks. A deposit belongs to the era of the payday it ANCHORS to — the nearest
+ * within the tolerance — else of its own date, because his payroll lands the Wednesday before the Thursday it pays
+ * and must not change eras at a raise. Its walk stops at the first payday of an earlier era, and carried money keeps
+ * its era. 🔴 With his history set, the payroll week of Sep 24 walked back past Aug 27 and paid the CASH week of
+ * Aug 20 at $1,047.00, leaving $94.92 of a payroll week to read as change against a week it never answered.
  *
  * ⚠️ ONE CONSEQUENCE WORTH STATING. Where a series' tolerance is wide enough to
  * reach two of its own occurrences, one deposit used to meet both. It no longer
@@ -111,6 +130,80 @@ export interface AttributedDeposit {
   amountCents: number;
 }
 
+/** The schedule a pay series walks: its effective cadence, measured gap, proven day and anchor (`EffectiveSeries`). */
+export interface PaydayRhythm {
+  cadence: Cadence;
+  intervalDaysAvg: number | null;
+  anchorDay: number | null;
+  /** the schedule's anchor — the date its rhythm is stepped from; null when it has none */
+  nextExpectedOn: string | null;
+}
+
+/**
+ * ⚖️ THE FIRST PAYDAY — where every reader of a pay series' paydays opens (§6A 55, step B): the anchor's rhythm walked
+ * BACK to the first date on or after the first deposit less the tolerance. The settlement walks from it, the recurring
+ * calendar and /budgets draw from it, and Earned vs banked counts from it (`startedOn`).
+ *
+ * 🔴 TWO PAYDAY UNIVERSES. Earned vs banked counted from the first DEPOSIT; the settlement, the calendar and /budgets
+ * from the stored ANCHOR — `stepsToReach` never walks back. On his ledger (2026-10-08) the card earned June's cash
+ * weeks from Jun 4, while the calendar drew no payday before detection's Jul 23 and Jun 4's $1,047.00 read "toward no
+ * payday"; on the e2e fixture, whose Paycheck deposits fall on the other Fridays of its biweekly anchor, the card
+ * counted one Friday and the calendar the next.
+ *
+ * Why the first deposit less the TOLERANCE: a deposit answers a payday within the tolerance before it (settlement's
+ * anchor clause), so the first payday it can have been for is the first one in that reach. And only BACK — an anchor
+ * already before the first deposit is itself the first payday, as the settlement has always drawn it.
+ *
+ * The evidence is settlement's: money IN that has ARRIVED (`hasArrived`). Null when there is none — a series nobody
+ * has been paid by has no paydays to grade. With no anchor there is no rhythm to walk, and the first deposit's own day
+ * opens it (no projection draws a payday without an anchor).
+ */
+export function firstPaydayOn(
+  schedule: PaydayRhythm,
+  toleranceDays: number,
+  deposits: readonly AttributedDeposit[],
+  today: string,
+): string | null {
+  const firstDepositOn = deposits
+    .filter((d) => d.amountCents > 0 && hasArrived(d.postedOn, today))
+    .reduce<string | null>(
+      (first, d) => (first === null || compareDates(d.postedOn, first) < 0 ? d.postedOn : first),
+      null,
+    );
+  if (firstDepositOn === null) return null;
+  const anchor = schedule.nextExpectedOn;
+  if (anchor === null) return firstDepositOn;
+  const plan = stepPlan(schedule.cadence, schedule.intervalDaysAvg, schedule.anchorDay);
+  const steps = signedStepsToReach(anchor, plan, addDays(firstDepositOn, -toleranceDays));
+  return stepFrom(anchor, plan, Math.min(0, steps));
+}
+
+/**
+ * ⚖️ WHERE THE WALK BACK ENDS — the first day it does not draw (`ProjectableSeries.walkBackBefore`): the later of today
+ * and the day after the last arrived deposit's REACH, its date plus the tolerance — settlement's own bound on the
+ * paydays a deposit can pay (§6A 55b). The walk back from the anchor draws the past, and the paydays money has
+ * already reached; from there on the schedule is its anchor's, as every forward reader projects it.
+ *
+ * 🔴 Bounded at today alone, the day his pay was imported on payday lost that payday. Detection dates the next payday
+ * one step after the last deposit, so on Thu Sep 24 with that day's deposit in, the anchor was Oct 1 and Sep 24 lay on
+ * the walk back: no past reader drew it and no forward reader does (they open on the anchor). /budgets scheduled three
+ * of September's four Thursdays, the Sep 23 lump paid Aug 27 instead, and Sep 24's own deposit read "toward no
+ * payday" — and the next day, Sep 24 in the past, it all came back: one deposit's payday changed overnight with
+ * nothing imported. ⛔ Not `>` today either: an anchor he dates ahead (Oct 22, set on Oct 8) with no money near it
+ * must still leave Oct 8 off every past reader, since no forward reader draws it.
+ *
+ * A payday drawn this way is one a deposit settles — the newest it reaches, inside its tolerance (the anchor clause) —
+ * so it leaves /budgets' schedule through the posted leg, never into no leg. The evidence is settlement's: money IN
+ * that has ARRIVED (`hasArrived`).
+ */
+export function walkBackBound(deposits: readonly AttributedDeposit[], toleranceDays: number, today: string): string {
+  const reachedThrough = deposits
+    .filter((d) => d.amountCents > 0 && hasArrived(d.postedOn, today))
+    .map((d) => addDays(d.postedOn, toleranceDays))
+    .reduce((latest, day) => (compareDates(day, latest) > 0 ? day : latest), addDays(today, -1));
+  return addDays(reachedThrough, 1);
+}
+
 export interface PaydaySettlementInput {
   /** every occurrence the ledger draws for the series, in any order */
   occurrences: readonly PaydayOccurrence[];
@@ -118,6 +211,12 @@ export interface PaydaySettlementInput {
   deposits: readonly AttributedDeposit[];
   /** the series' own arbiter for "did it land near enough?" */
   toleranceDays: number;
+  /**
+   * Which rate era a day belongs to — `ratePeriodOf` over the series' dated history; money pays only the paydays of
+   * its own era (§6A 55a). It never decreases as the day moves forward. Omitted: one era, as for every series whose
+   * rate has never changed.
+   */
+  periodOf?: (day: string) => number;
 }
 
 export interface PaydaySettlement {
@@ -151,7 +250,8 @@ export interface PaydaySettlement {
    * whole payday on one side of the month line when its money sat on both.
    *
    * Each deposit's own money is spent first, then change carried over from
-   * earlier deposits, newest first (see `take`). So `settledBy` names the deposit
+   * earlier deposits that can still pay that payday — its era, its reach — newest
+   * first (see `take`). So `settledBy` names the deposit
    * whose WALK retired a payday and this names whose MONEY paid it; the two part
    * only when carried-over change is spent.
    *
@@ -221,41 +321,88 @@ export const noSettlement = (): PaydaySettlement => ({
   unallocatedCents: 0,
 });
 
-/** Money not yet spent, still carrying the deposit it came from. */
+/** Money not yet spent, still carrying the deposit it came from — and what that deposit could pay. */
 interface Held {
   depositOn: string;
   cents: number;
+  /** the rate era of the payday its deposit anchored to (§6A 55a) */
+  era: number;
+  /** the last payday it can pay: its deposit's date plus the tolerance (§6A 55b) */
+  reachesThrough: string;
 }
 
 const heldCents = (held: readonly Held[]): number => held.reduce((sum, h) => sum + h.cents, 0);
 
+/** Whether a sum of held money can pay the payday `paydayOn` of era `paydayEra`: its own era, and inside its reach. */
+const canPay =
+  (paydayOn: string, paydayEra: number) =>
+  (h: Held): boolean =>
+    h.era === paydayEra && compareDates(paydayOn, h.reachesThrough) <= 0;
+
 /**
- * Takes `cents` out of what is held, the NEWEST money first, and says whose
- * money it took and what is left.
+ * Takes `cents` out of the held money `eligible` says may pay, the NEWEST money
+ * first, and says whose money it took and what is left.
  *
  * ⚖️ Newest first, so a deposit's own money answers its walk before change
  * carried over from earlier deposits does. The anchor is that deposit's own
  * statement about the payday it landed on ("the link's statement … not a
  * purse", in the header), so its money is what pays that payday; the change
- * only tops up what the deposit's own money cannot reach, and so goes to the
- * older paydays behind it. Oldest-first would record Oct 1's own weekly deposit
- * as change left over and September's leftover as Oct 1's pay — and /budgets
- * would move that week across the month line.
+ * only tops up what the deposit's own money cannot pay, and so goes to the
+ * older paydays behind it. Oldest-first would record a week's own deposit as
+ * change left over and an earlier deposit's leftover as that week's pay — and
+ * /budgets would move money across the month line.
+ *
+ * ⛔ ELIGIBLE money only (`canPay`): a sum outside its era or past its reach is
+ * passed over and stays held, whatever the walk asking for it (§6A 55a, 55b).
+ * The walk already asks for no more than the eligible money, and with eras that
+ * never run backwards the newer money is always the eligible kind — so this is
+ * the same rule held where the money is taken, not a second one.
  */
-function take(held: readonly Held[], cents: number): { taken: Held[]; left: Held[] } {
+function take(
+  held: readonly Held[],
+  cents: number,
+  eligible: (h: Held) => boolean,
+): { taken: Held[]; left: Held[] } {
   const taken: Held[] = [];
   const left = [...held];
   let owed = cents;
-  while (owed > 0 && left.length > 0) {
-    const newest = left[left.length - 1]!;
-    const part = Math.min(owed, newest.cents);
-    taken.push({ depositOn: newest.depositOn, cents: part });
+  for (let i = left.length - 1; i >= 0 && owed > 0; i -= 1) {
+    const h = left[i]!;
+    if (!eligible(h)) continue;
+    const part = Math.min(owed, h.cents);
+    taken.push({ ...h, cents: part });
     owed -= part;
-    if (part === newest.cents) left.pop();
-    else left[left.length - 1] = { depositOn: newest.depositOn, cents: newest.cents - part };
+    if (part === h.cents) left.splice(i, 1);
+    else left[i] = { ...h, cents: h.cents - part };
   }
   return { taken, left };
 }
+
+/**
+ * The era a deposit's money belongs to: that of the payday it ANCHORS to — the nearest within the tolerance, the
+ * newer on a tie — else of its own date. ⚖️ His payroll lands the Wednesday before the Thursday it pays, so a
+ * deposit dated in one era can be the pay of the first payday of the next; read by its own date, Wed Aug 26's pay
+ * would be a cash week's (§6A 55a).
+ */
+function depositEra(
+  postedOn: string,
+  byDateDesc: readonly PaydayOccurrence[],
+  toleranceDays: number,
+  periodOf: (day: string) => number,
+): number {
+  let anchor: string | null = null;
+  let gap = Infinity;
+  for (const o of byDateDesc) {
+    const g = Math.abs(diffDays(postedOn, o.date));
+    if (g <= toleranceDays && g < gap) {
+      anchor = o.date;
+      gap = g;
+    }
+  }
+  return periodOf(anchor ?? postedOn);
+}
+
+const ONE_ERA = (): number => 0;
 
 /**
  * Which of a series' paydays its deposits have retired.
@@ -268,6 +415,7 @@ export function settlePaydaysBackwards({
   occurrences,
   deposits,
   toleranceDays,
+  periodOf = ONE_ERA,
 }: PaydaySettlementInput): PaydaySettlement {
   if (occurrences.length === 0 || deposits.length === 0) return noSettlement();
 
@@ -280,41 +428,53 @@ export function settlePaydaysBackwards({
    * What the deposits walked so far have not spent. It rides FORWARD into the
    * next deposit rather than being written off, which is what makes one lump
    * and two transfers of the same total retire the same weeks — and it keeps
-   * the deposit each sum came from, so a payday it pays is paid by that money.
+   * the deposit each sum came from, so a payday it pays is paid by that money,
+   * and only a payday that money could pay (its era, its reach).
    */
   let carried: readonly Held[] = [];
 
   // oldest first, so the queue drains in the order the money actually arrived
   for (const d of [...deposits].sort((a, b) => compareDates(a.postedOn, b.postedOn))) {
-    let held: readonly Held[] = [...carried, { depositOn: d.postedOn, cents: d.amountCents }];
-    const pay = (paydayOn: string, cents: number): void => {
-      const { taken, left } = take(held, cents);
+    const era = depositEra(d.postedOn, byDateDesc, toleranceDays, periodOf);
+    let held: readonly Held[] = [
+      ...carried,
+      { depositOn: d.postedOn, cents: d.amountCents, era, reachesThrough: addDays(d.postedOn, toleranceDays) },
+    ];
+    const pay = (paydayOn: string, cents: number, eligible: (h: Held) => boolean): void => {
+      const { taken, left } = take(held, cents, eligible);
       for (const t of taken) portions.push({ paydayOn, depositOn: t.depositOn, cents: t.cents });
       held = left;
     };
     let isAnchor = true;
     for (const o of byDateDesc) {
-      const remaining = heldCents(held);
-      if (remaining <= 0) break;
+      if (heldCents(held) <= 0) break;
       if (settledBy.has(o.date)) continue;
       // out of reach ahead: a deposit cannot pay a payday that had not happened
       // yet — `diffDays(a, b)` is b − a, so this is (occurrence − deposit)
       if (diffDays(d.postedOn, o.date) > toleranceDays) continue;
+      // ⚖️ §6A 55a: a later era's payday is not this money's to pay, and the
+      // first payday of an earlier era ends the walk (eras never run backwards)
+      const paydayEra = periodOf(o.date);
+      if (paydayEra > era) continue;
+      if (paydayEra < era) break;
+      const eligible = canPay(o.date, paydayEra);
+      const remaining = heldCents(held.filter(eligible));
 
       const withinTolerance = Math.abs(diffDays(d.postedOn, o.date)) <= toleranceDays;
       if (isAnchor && withinTolerance) {
         // the link itself says this deposit answers this payday, whatever it
-        // paid — and what it paid is the money there was (his June week was
-        // $1,047.00 against $1,141.92), so a short payday leaves nothing behind
+        // paid — and what it paid is the money there was (a $1,100.00 deposit
+        // against a $1,141.92 week), so a short payday leaves nothing behind.
+        // Never nothing: the deposit's own money is untouched and can pay it.
         settledBy.set(o.date, d.postedOn);
-        pay(o.date, Math.min(remaining, o.amountCents));
+        pay(o.date, Math.min(remaining, o.amountCents), eligible);
         isAnchor = false;
         continue;
       }
       isAnchor = false;
       if (remaining < o.amountCents) break; // the money stops here, and so does the walk
       settledBy.set(o.date, d.postedOn);
-      pay(o.date, o.amountCents);
+      pay(o.date, o.amountCents, eligible);
     }
     carried = held;
   }

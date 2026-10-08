@@ -4,8 +4,9 @@ import { recurringSeries } from "@/db/schema/recurring";
 import { transactions } from "@/db/schema/transactions";
 import { addDays, compareDates, diffDays, periodBounds } from "@/lib/dates";
 import { sharedFrontier, type UnbankedFrontier } from "@/lib/unbanked-income";
+import { withBillingCarriers } from "./billing-carriers";
 import { checkedThroughBySeries, silenceMeasuredThroughBySeries } from "./cash-earnings";
-import { settledPaydaysBySeries } from "./payday-settlement";
+import { paydayProjectable, paydaySettlementsBySeries } from "./payday-settlement";
 import { hasStoppedForecasting, projectOccurrences, toProjectable } from "./recurring";
 
 /**
@@ -31,6 +32,12 @@ export interface BudgetTailSeries {
   /** total expected inside the window, as positive money-out cents */
   amountCents: number;
   occurrenceCount: number;
+  /**
+   * Each in-window occurrence's own amount, in date order, signed as `amountCents` is — they sum to it. ⚖️ Not one
+   * amount times the count: each occurrence is worth its own day's rate (§6A 55), so a window across a rate change
+   * holds two, and a line naming "n × one amount" divided into one the series never had.
+   */
+  occurrenceCents: readonly number[];
   href: string;
 }
 
@@ -92,16 +99,21 @@ export function overdueForSeries(
   if (seriesIds.size === 0) return { totalCents: 0, series: [] };
   if (compareDates(periodStart, through) > 0) return { totalCents: 0, series: [] };
 
-  const rows = db
-    .select()
-    .from(recurringSeries)
-    .where(
-      and(
-        inArray(recurringSeries.id, [...seriesIds]),
-        inArray(recurringSeries.status, ["detected", "confirmed"]),
-      ),
-    )
-    .all();
+  // each with the carrier it is billed with: a series paid inside another's payment lapses when its carrier does
+  // (`lastSeenOn`, §6A 59) — and owes what it owes as before, its own occurrences against its own postings
+  const rows = withBillingCarriers(
+    db,
+    db
+      .select()
+      .from(recurringSeries)
+      .where(
+        and(
+          inArray(recurringSeries.id, [...seriesIds]),
+          inArray(recurringSeries.status, ["detected", "confirmed"]),
+        ),
+      )
+      .all(),
+  );
   // measured to each series' checked day, as every forward leg measures it (§6A 57) — today where none is coming
   const checkedThrough = silenceMeasuredThroughBySeries(db, today);
   const live = rows.filter((r) => !hasStoppedForecasting(r, today, checkedThrough(r.id)));
@@ -144,6 +156,7 @@ export function overdueForSeries(
       nextDate: occ[0]!.date,
       amountCents,
       occurrenceCount: occ.length,
+      occurrenceCents: occ.map((o) => -o.amountCents),
       href: `/recurring/${s.id}`,
     });
   }
@@ -235,8 +248,12 @@ export function unbankedIncomeForSeries(
    * single week it lands on. `lib/payday-settlement` carries the rule and the
    * decision; the point of reading it here is that /budgets, the recurring
    * calendar and this figure cannot disagree about the same Thursday.
+   *
+   * ⚖️ …nor about which Thursdays there were: the walk opens on the series' first payday, the one its settlement
+   * walked from (`paydayProjectable`, §6A 55 step B), so a window before the stored anchor names the paydays Earned vs
+   * banked counts in it.
    */
-  const settled = settledPaydaysBySeries(
+  const settlements = paydaySettlementsBySeries(
     db,
     live.map((r) => r.id),
     today,
@@ -244,8 +261,9 @@ export function unbankedIncomeForSeries(
 
   const unmet = live
     .map((s) => {
-      const met = settled.get(s.id) ?? new Map<string, string>();
-      const occ = projectOccurrences(toProjectable(s), periodStart, addDays(today, -1))
+      const settlement = settlements.get(s.id);
+      const met = settlement?.settledBy ?? new Map<string, string>();
+      const occ = projectOccurrences(paydayProjectable(s, settlement, today), periodStart, addDays(today, -1))
         .filter((o) => o.amountCents > 0)
         .filter((o) => !met.has(o.date));
       return { s, occ };
@@ -280,6 +298,7 @@ export function unbankedIncomeForSeries(
       nextDate: occ[0]!.date,
       amountCents: occ.reduce((sum, o) => sum + o.amountCents, 0),
       occurrenceCount: occ.length,
+      occurrenceCents: occ.map((o) => o.amountCents),
       href: `/recurring/${s.id}`,
       checkedThrough,
       checkedOccurrenceCount: checked.length,

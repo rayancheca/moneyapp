@@ -18,7 +18,9 @@ describe("ledger-check — reads of accounts at two banks", () => {
   });
 
   test("names them and fails nothing: they are no finding", () => {
-    expect(script).toContain("const findings = failures.length + recordFailures.length + leftOutFailures.length;");
+    expect(script).toContain(
+      "const findings = failures.length + recordFailures.length + leftOutFailures.length + rateHistoryFailures.length;",
+    );
     expect(script).not.toMatch(/acrossBanks[^\n]*findings|findings[^\n]*acrossBanks/);
     expect(script).not.toMatch(/console\.error\([^\n]*acrossBanks/);
   });

@@ -14,6 +14,7 @@ import { transactionSplits } from "@/db/schema/transaction-splits";
 import { transactions } from "@/db/schema/transactions";
 import { dedupeHash } from "@/lib/hash";
 import { normalizeDescription } from "@/lib/normalize";
+import { AmountHistoryError } from "@/lib/series-kind";
 import { createAccount } from "./accounts";
 import {
   detectRecurringSeries,
@@ -22,6 +23,7 @@ import {
   projectOccurrences,
   setSeriesStatus,
   toProjectable,
+  type ProjectionOverrides,
   type SeriesOverrides,
 } from "./recurring";
 import { loadCategoryIndex } from "./analytics";
@@ -382,7 +384,7 @@ describe("merge mechanics + error guards", () => {
 });
 
 describe("user overrides shadow detection (§4.4)", () => {
-  const base: SeriesOverrides & { id: string; name: string; kind: "subscription" } = {
+  const base: ProjectionOverrides & { id: string; name: string; kind: "subscription" } = {
     id: "s1",
     name: "Netflix",
     kind: "subscription",
@@ -393,6 +395,7 @@ describe("user overrides shadow detection (§4.4)", () => {
     userNextExpectedOn: null,
     nextExpectedAmountCents: -1549,
     userAmountCents: null,
+    userAmountHistory: null,
   };
 
   test("effectiveSeries returns detected values when no override is set", () => {
@@ -405,7 +408,29 @@ describe("user overrides shadow detection (§4.4)", () => {
       // carried alongside the anchor so a projection has everything it needs in
       // one value — see rollForwardNextExpected
       userEndsOn: null,
+      // the rate has never changed: every occurrence is worth the amount above
+      amountHistory: null,
     });
+  });
+
+  /**
+   * ⚖️ A dated rate history (owner decision 2026-10-08, §6A 55) rides on the effective series, parsed ONCE and
+   * strictly, so every projection prices a past occurrence at its own day's rate — and the rate now is still the
+   * owner's amount first.
+   */
+  test("effectiveSeries carries the row's rate history, read strictly", () => {
+    const pay = { ...base, kind: "income" as const, nextExpectedAmountCents: 104_600, userAmountCents: 114_192 };
+    const history = [{ throughOn: "2026-08-26", amountCents: 104_700 }];
+    const eff = effectiveSeries({ ...pay, userAmountHistory: history });
+    expect(eff.amountHistory).toEqual(history);
+    expect(eff.nextExpectedAmountCents).toBe(114_192);
+    expect(toProjectable({ ...pay, userAmountHistory: history }).amountHistory).toEqual(history);
+    expect(effectiveSeries({ ...pay, userAmountHistory: null }).amountHistory).toBeNull();
+    // ⛔ never read as "no history": a history the reader cannot read refuses the series, out loud
+    expect(() => effectiveSeries({ ...pay, userAmountHistory: [] })).toThrow(AmountHistoryError);
+    expect(() =>
+      effectiveSeries({ ...pay, userAmountHistory: [{ throughOn: "2026-08-26", amountCents: -104_700 }] }),
+    ).toThrow(AmountHistoryError);
   });
 
   test("overrides win, and a cadence override abandons the detected interval", () => {
@@ -417,6 +442,7 @@ describe("user overrides shadow detection (§4.4)", () => {
       nextExpectedAmountCents: -2000,
       anchorDay: null,
       userEndsOn: null,
+      amountHistory: null,
     });
     // projection honors the override end-to-end
     const occ = projectOccurrences(toProjectable(overridden), "2026-07-08", "2026-07-31");
@@ -468,8 +494,9 @@ describe("isSeriesActive (Active/Inactive split, §4.1)", () => {
       nextExpectedAmountCents: null,
       userAmountCents: null,
       lastMatchedOn: "2026-06-15",
+      billedWith: null,
       ...over,
-    }) as SeriesOverrides & { status: "confirmed"; lastMatchedOn: string | null };
+    }) as SeriesOverrides & { status: "confirmed"; lastMatchedOn: string | null; billedWith: null };
 
   test("a recent charge is active; a long-stale one is inactive", () => {
     expect(isSeriesActive(s({ lastMatchedOn: "2026-06-15" }), "2026-07-08")).toBe(true);

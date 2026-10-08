@@ -1,4 +1,6 @@
+import { compareDates } from "./dates";
 import type { SettlementPortion } from "./payday-settlement";
+import { ratePeriodOf, rateOn, type RateSchedule } from "./series-kind";
 
 /**
  * A PAY DEPOSIT, READ PER PAYDAY — the one reading every surface that says
@@ -54,15 +56,44 @@ export interface PaydayReading {
   perPayday: PerPayday | null;
   /**
    * False for a row whose money only went into paydays other deposits' money
-   * also paid: a PART of a payday's pay. June's $1,047.00 and $400.00 paid his
-   * Aug 27 together, and as samples of what a payday pays they measure how his
-   * payer split a transfer, not his pay. Such a row is still held to the
-   * expectation as the amount it is; it is only left out of the spread.
+   * also paid: a PART of a payday's pay. One week sent as two transfers a day
+   * apart — $500.00 on Fri Sep 25 and $641.92 on Sat Sep 26, paying Sep 17
+   * together — and as samples of what a payday pays they measure how his payer
+   * split a transfer, not his pay. Such a row is still held to the expectation as
+   * the amount it is; it is only left out of the spread.
    *
    * False, too, for every deposit of a day read per payday but its first: the
-   * day is one sample, and one row carries it.
+   * day is one sample, and one row carries it — and for a row whose day's money
+   * paid no payday at all (`towardNoPayday`).
    */
   isPaydaySample: boolean;
+  /**
+   * What the row is held to: the rate (`rateOn`) of the first payday its day's money paid — money out, its own day's.
+   * ⚖️ Each payday is measured against its OWN time's rate (owner decision 2026-10-08, §6A 55), and settlement keeps
+   * a deposit's money inside one rate era (55a), so every payday a day's money paid has this one rate. 🔴 Held to the
+   * rate NOW, his cash week of Jun 4 — $1,047.00, exactly what a cash week paid — read $94.92 short of $1,141.92.
+   *
+   * ⛔ Null for money that paid NO payday (`towardNoPayday`): it answers no week, so no week's rate is what it is held
+   * to, and every surface that grades a row reads this one field (`expectedCentsOf`). 🔴 Held to its own day's rate,
+   * his Jun 5 $400.00 read "-$647.00" and "expected $1,047.00" on the series page, one tab over from a calendar that
+   * drew it ungraded, "paid (toward no payday)" — one rule, two callers, two answers (a copy of his ledger,
+   * 2026-10-08). Null, too, when the series has no rate at all.
+   */
+  expectedCents: number | null;
+  /**
+   * The rate era (`ratePeriodOf`) of the first payday the day's money paid, else of its own day. The posted average
+   * reads only the era in force now (`lib/posted-average`): a dated rate change is not a change in what posted
+   * (§6A 55).
+   */
+  ratePeriod: number;
+  /**
+   * The row's day's money paid NO payday at all — left over after the paydays it could reach (§6A 55b: it reaches
+   * its own date plus the tolerance and no further), or landed before the first payday the ledger draws. The
+   * calendar says so, "toward no payday", and does not grade it: it answers no week, so it is no price of one.
+   * 🔴 Before the reach bound June's $400.00 rode forward to pay Aug 27; read without this, the row it stays on would
+   * stand graded against a week it never paid.
+   */
+  towardNoPayday: boolean;
 }
 
 /** The rows a reading is taken of: a series' postings. */
@@ -71,8 +102,6 @@ export interface ReadableRow {
   postedOn: string;
   amountCents: number;
 }
-
-const AS_ITSELF: PaydayReading = { perPayday: null, isPaydaySample: true };
 
 /**
  * What a deposit paid PER PAYDAY, given how many paydays its money paid on its
@@ -129,8 +158,19 @@ function dayPerPayday(deposits: readonly ReadableRow[], paydays: number): PerPay
   return paydays > 0 ? { paydays, cents: amountPerPayday(dayCents, paydays), deposits: deposits.length } : null;
 }
 
+/** Per deposit day, the first (oldest) payday its money went into. */
+function firstPaydayByDeposit(portions: readonly SettlementPortion[]): ReadonlyMap<string, string> {
+  const out = new Map<string, string>();
+  for (const p of portions) {
+    const first = out.get(p.depositOn);
+    if (first === undefined || compareDates(p.paydayOn, first) < 0) out.set(p.depositOn, p.paydayOn);
+  }
+  return out;
+}
+
 /**
- * Each row's reading, from the series' settlement (`portions`).
+ * Each row's reading, from the series' settlement (`portions`), held to the
+ * series' rate at the payday it paid (`schedule`, `rateOn`).
  *
  * Read as the one amount it is: money out (settlement reads deposits only), and
  * a day's deposits whose money paid no payday on its own (`dayPerPayday`).
@@ -138,26 +178,50 @@ function dayPerPayday(deposits: readonly ReadableRow[], paydays: number): PerPay
 export function paydayReadings(
   rows: readonly ReadableRow[],
   portions: readonly SettlementPortion[],
+  schedule: RateSchedule,
 ): ReadonlyMap<string, PaydayReading> {
   const alone = paydaysPaidAloneByDeposit(portions);
-  const spentFrom = new Set(portions.map((p) => p.depositOn));
+  const firstPayday = firstPaydayByDeposit(portions);
   const depositsByDay = new Map<string, readonly ReadableRow[]>();
   for (const r of rows) {
     if (r.amountCents > 0) depositsByDay.set(r.postedOn, [...(depositsByDay.get(r.postedOn) ?? []), r]);
   }
 
-  const out = new Map<string, PaydayReading>(rows.filter((r) => r.amountCents <= 0).map((r) => [r.id, AS_ITSELF]));
+  const out = new Map<string, PaydayReading>(
+    rows
+      .filter((r) => r.amountCents <= 0)
+      .map((r) => [
+        r.id,
+        {
+          perPayday: null,
+          isPaydaySample: true,
+          expectedCents: rateOn(schedule, r.postedOn),
+          ratePeriod: ratePeriodOf(schedule, r.postedOn),
+          towardNoPayday: false,
+        },
+      ]),
+  );
   for (const [day, deposits] of depositsByDay) {
     const paydays = alone.get(day) ?? 0;
+    const paid = firstPayday.get(day);
+    const towardNoPayday = paid === undefined;
+    // money that paid no payday is held to no week's rate — it answers none
+    const expectedCents = towardNoPayday ? null : rateOn(schedule, paid);
+    const ratePeriod = ratePeriodOf(schedule, paid ?? day);
     const perPayday = dayPerPayday(deposits, paydays);
     if (perPayday === null) {
-      const isPaydaySample = paydays === 1 || !spentFrom.has(day);
-      for (const d of deposits) out.set(d.id, { perPayday: null, isPaydaySample });
+      // a sample only of a payday it paid on its own — never of a part of one, nor of no payday at all
+      const isPaydaySample = paydays === 1;
+      for (const d of deposits) {
+        out.set(d.id, { perPayday: null, isPaydaySample, expectedCents, ratePeriod, towardNoPayday });
+      }
       continue;
     }
     // the day is ONE sample of a payday's pay, as one lump is — counted on each
     // of its deposits, one day would weigh in the spread as several
-    deposits.forEach((d, i) => out.set(d.id, { perPayday, isPaydaySample: i === 0 }));
+    deposits.forEach((d, i) =>
+      out.set(d.id, { perPayday, isPaydaySample: i === 0, expectedCents, ratePeriod, towardNoPayday }),
+    );
   }
   return out;
 }
@@ -170,4 +234,36 @@ export function comparableCents(amountCents: number, reading: PaydayReading | un
 /** A row's sample for the series' spread, read as it is held to the expectation — or null for part of a payday's pay. */
 export function spreadSampleCents(amountCents: number, reading: PaydayReading | undefined): number | null {
   return reading?.isPaydaySample === false ? null : comparableCents(amountCents, reading);
+}
+
+/**
+ * What a row is held to — ONE rule for every surface that grades or draws a row against the series' amount: a pay
+ * row's reading (`PaydayReading.expectedCents`, the rate of the payday its money paid, and nothing for money that paid
+ * none), else the series' rate on the row's own day (`rateOn`). ⚖️ Each row against its own time's rate (owner
+ * decision 2026-10-08, §6A 55). Null means ungraded — the calendar draws it `paid`, the series page grades nothing.
+ */
+export function expectedCentsOf(
+  reading: PaydayReading | undefined,
+  schedule: RateSchedule,
+  postedOn: string,
+): number | null {
+  return reading ? reading.expectedCents : rateOn(schedule, postedOn);
+}
+
+/**
+ * A row's RESIDUAL for the series' spread: its sample (`spreadSampleCents`) less what it is held to — null when it
+ * is no sample. With no rate known the residual is the sample itself.
+ *
+ * ⚖️ The spread is measured on residuals, so a dated rate change (§6A 55) is not variance: at a constant rate the
+ * residuals' spread IS the samples' spread, and across a change it is the spread around each era's own rate. 🔴 On
+ * raw samples his $1,047.00 cash week and his $1,141.92 payroll weeks would read as $94.92 of wobble — a band wide
+ * enough that a $1,200.00 week read `paid`.
+ */
+export function spreadResidualCents(
+  amountCents: number,
+  reading: PaydayReading | undefined,
+  expectedCents: number | null,
+): number | null {
+  const sample = spreadSampleCents(amountCents, reading);
+  return sample === null ? null : sample - (expectedCents ?? 0);
 }

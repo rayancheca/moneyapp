@@ -34,6 +34,7 @@ import {
   hasStoppedForecasting,
 } from "./recurring";
 import { arrearsThisMonth, unbankedIncomeForSeries, unbankedIncomeTotals, type UnbankedIncomeTotals } from "./arrears";
+import { withBillingCarriers } from "./billing-carriers";
 import { isUpfrontCarRow, upfrontCarRule } from "./car-upfront";
 import { silenceMeasuredThroughBySeries } from "./cash-earnings";
 import { stillToCome } from "./payday-settlement";
@@ -455,6 +456,20 @@ function cadenceWordOf(series: { id: string; cadence: string }, oneCharge: Reado
 }
 
 /**
+ * A line's occurrences as "count × amount", one run per rate, in date order: "4 × $800.00", or across a rate change
+ * "2 × $700.00 + 2 × $800.00" — the forward leg and the arrears leg both, so the two name a month alike.
+ */
+function ratesTimesCounts(amounts: readonly number[]): string {
+  const runs: { cents: number; count: number }[] = [];
+  for (const cents of amounts) {
+    const last = runs.at(-1);
+    if (last !== undefined && last.cents === cents) runs[runs.length - 1] = { cents, count: last.count + 1 };
+    else runs.push({ cents, count: 1 });
+  }
+  return runs.map((run) => `${run.count} × ${formatCents(run.cents)}`).join(" + ");
+}
+
+/**
  * ⚠️ `today` and `from` are different things and both are needed.
  *
  * `from` bounds the OCCURRENCE window — for the running month that is today,
@@ -471,12 +486,12 @@ function fixedComponents(
   monthEnd: string,
   { outside, agentsSeries, checkedThrough }: ForecastReads,
 ): ForecastLeg {
-  // status only — staleness is disclosed per component, never used to exclude
-  const live = db
-    .select()
-    .from(recurringSeries)
-    .where(inArray(recurringSeries.status, ["detected", "confirmed"]))
-    .all();
+  // status only — staleness is disclosed per component, never used to exclude; each row with the carrier it is billed
+  // with, whose postings are its evidence (`lastSeenOn`, §6A 59)
+  const live = withBillingCarriers(
+    db,
+    db.select().from(recurringSeries).where(inArray(recurringSeries.status, ["detected", "confirmed"])).all(),
+  );
   const oneCharge = oneChargeDays(db, live);
 
   const components: { component: ForecastComponent; firstDate: string }[] = [];
@@ -560,8 +575,11 @@ function fixedComponents(
       today,
     );
     if (occurrences.length === 0) continue;
-    const perOccurrence = occurrences[0]!.amountCents;
-    const cents = occurrences.length * perOccurrence;
+    /*
+     * ⚖️ SUMMED, each at its own day's rate (§6A 55). 🔴 It was the first occurrence's amount times the count — right
+     * only while every occurrence was alike, and a month across a rate change was priced at its first rate throughout.
+     */
+    const cents = occurrences.reduce((sum, o) => sum + o.amountCents, 0);
     /*
      * ⚖️ What the agent's cash pays is not his bill (owner decision 2026-10-02), nor what it is paid his income (owner
      * decision 2026-09-28): the agent's Gold fee and its interest are no line of his — not "Projected spending" or
@@ -597,7 +615,7 @@ function fixedComponents(
         /* ⛔ a raw ISO date mid-sentence. The tooltip on this same row says
            "since Jul 5, 2026" and the list below it "Sep 11"; this cell said
            "2026-09-11". 10 of 24 rows carried one. */
-        detail: `${occurrences.length} × ${formatCents(perOccurrence)} (${cadenceWordOf(series, oneCharge)}), next ${formatDayShortIn(occurrences[0]!.date, today)}`,
+        detail: `${ratesTimesCounts(occurrences.map((o) => o.amountCents))} (${cadenceWordOf(series, oneCharge)}), next ${formatDayShortIn(occurrences[0]!.date, today)}`,
         staleness,
       },
     });
@@ -652,13 +670,12 @@ function arrearsComponents(
   { outside, agentsSeries, checkedThrough }: ForecastReads,
 ): ForecastLeg {
   // every live series the forecast would project; `overdueForSeries` applies the
-  // money-out and lapsed rules itself, and transfers are never spending here
-  const live = db
-    .select()
-    .from(recurringSeries)
-    .where(inArray(recurringSeries.status, ["detected", "confirmed"]))
-    .all()
-    .filter((s) => seriesIsIncomeOrSpending(s.kind));
+  // money-out and lapsed rules itself, and transfers are never spending here; each row with the carrier it is billed
+  // with, so a line's staleness note reads its carrier's postings too (`lastSeenOn`, §6A 59)
+  const live = withBillingCarriers(
+    db,
+    db.select().from(recurringSeries).where(inArray(recurringSeries.status, ["detected", "confirmed"])).all(),
+  ).filter((s) => seriesIsIncomeOrSpending(s.kind));
   const byId = new Map(live.map((s) => [s.id, s]));
   const late = arrearsThisMonth(db, new Set(byId.keys()), today);
   const oneCharge = oneChargeDays(db, live);
@@ -675,17 +692,15 @@ function arrearsComponents(
   const components = his.map((s) => {
     const series = byId.get(s.id)!;
     /*
-     * Exact, not an estimate: `projectOccurrences` gives every occurrence of one
-     * series the same amount, so a window's total divides by its count with no
-     * remainder. Stated because a division inside a money figure is exactly the
-     * kind of line that earns a second look.
+     * Each occurrence's own amount, never the total divided by the count. 🔴 That division was exact only while
+     * `projectOccurrences` gave every occurrence of a series one amount; each is now worth its own day's rate (§6A 55),
+     * so across a rate change the average was an amount the bill never had — and a fraction of a cent, which threw.
      */
-    const perOccurrenceCents = -s.amountCents / s.occurrenceCount;
     return {
       label: s.name,
       kind: "fixed" as const,
       cents: -s.amountCents,
-      detail: `${s.occurrenceCount} × ${formatCents(perOccurrenceCents)} (${cadenceWordOf(series, oneCharge)}), came due ${formatDayShortIn(s.nextDate, today)} and has not posted`,
+      detail: `${ratesTimesCounts(s.occurrenceCents.map((c) => -c))} (${cadenceWordOf(series, oneCharge)}), came due ${formatDayShortIn(s.nextDate, today)} and has not posted`,
       staleness: seriesStaleness(series, today, checkedThrough(series.id)),
     };
   });

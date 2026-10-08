@@ -2,7 +2,6 @@ import type { Cadence } from "@/db/schema/recurring";
 import {
   addCalendarMonths,
   addDays,
-  calendarMonthsBetween,
   compareDates,
   diffDays,
   isMonthEnd,
@@ -225,18 +224,46 @@ export function stepFrom(anchor: string, plan: StepPlan, steps: number): string 
  * charge at a period boundary. Same function, one source of truth.
  */
 export function stepsToReach(anchor: string, plan: StepPlan, boundary: string): number {
-  if (!plan.calendarMonths) {
-    const behindDays = diffDays(anchor, boundary);
-    if (behindDays <= 0) return 0;
-    return Math.ceil(behindDays / plan.stepDays);
-  }
-  // whole STEPS, not whole months: n steps put the anchor in or after
-  // boundary's month, n−1 steps put it in a month strictly before it, so only
-  // the day WITHIN the target month is in question and the true answer is n or
-  // n+1 — never a walk. The check goes through `stepFrom` rather than
-  // re-deriving the date, so the two can never disagree about a step's size.
-  const n = Math.ceil(calendarMonthsBetween(anchor, boundary) / plan.stepMonths);
+  // ⛔ the floor stays: cash earnings walks from a series' first payday and relies on a boundary before it reaching
+  // nothing (lib/cash-earnings, on the missing clamp). The walk BACK is `signedStepsToReach`'s, and only its.
+  return Math.max(0, signedStepsToReach(anchor, plan, boundary));
+}
+
+/**
+ * `stepsToReach` without its floor: the smallest step count whose occurrence lands on or after `boundary`, NEGATIVE
+ * when the boundary lies before the anchor. One hop, never a walk, either way.
+ *
+ * ⚖️ ONE PAYDAY UNIVERSE (§6A 55, step B): a pay series' first payday is its anchor's rhythm walked BACK to its first
+ * deposit (`firstPaydayOn`), and the projection opens there. 🔴 With only the floored count, every projection of his
+ * pay began at detection's anchor, Jul 23, while Earned vs banked counted from his first deposit, Jun 4 — June's cash
+ * week earned on one page and on no other.
+ *
+ * The calendar branch is `stepsToReach`'s argument unfloored: n = ⌈months ÷ step⌉ steps land in or after boundary's
+ * month and n − 1 strictly before it, so the answer is n or n + 1, checked through `stepFrom`.
+ */
+export function signedStepsToReach(anchor: string, plan: StepPlan, boundary: string): number {
+  // `+ 0`: Math.ceil(−0.4) is −0, and a step count of −0 is a value no caller should have to know about
+  if (!plan.calendarMonths) return Math.ceil(diffDays(anchor, boundary) / plan.stepDays) + 0;
+  const n = Math.ceil(signedCalendarMonths(anchor, boundary) / plan.stepMonths) + 0;
   return compareDates(stepFrom(anchor, plan, n), boundary) >= 0 ? n : n + 1;
+}
+
+/** Calendar months from `anchor`'s month to `boundary`'s — negative when the boundary's month is earlier. */
+function signedCalendarMonths(anchor: string, boundary: string): number {
+  const months = (day: string): number => Number(day.slice(0, 4)) * 12 + Number(day.slice(5, 7));
+  return months(boundary) - months(anchor);
+}
+
+/**
+ * The day of the month every step of a calendar walk from `anchor` lands on: the day its postings proved
+ * (`plan.anchorDay`), else the anchor's own. Null for day stepping, which has none.
+ *
+ * ⛔ A walk that OPENS somewhere other than its anchor reads its day from here, not from the date it opened on. His
+ * first payday is the anchor's rhythm walked back (`firstPaydayOn`), and a monthly anchor on the 30th walked back to
+ * February opens on the 28th — a walk stepping from that date alone would land every later payday on the 28th.
+ */
+export function walkDayOfMonth(anchor: string, plan: StepPlan): number | null {
+  return plan.calendarMonths ? (plan.anchorDay ?? Number(anchor.slice(8, 10))) : null;
 }
 
 /**

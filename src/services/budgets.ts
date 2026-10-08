@@ -17,6 +17,7 @@ import {
   type PeriodBounds,
 } from "@/lib/dates";
 import { outsidePortfolioCashAccountIds } from "./accounts";
+import { withBillingCarriers } from "./billing-carriers";
 import {
   activeTxnsInRange,
   categorySpending,
@@ -45,7 +46,7 @@ import {
 } from "./arrears";
 import type { UnbankedFrontier } from "@/lib/unbanked-income";
 import { portionsAcross } from "@/lib/payday-settlement";
-import { paydaySettlementsBySeries } from "./payday-settlement";
+import { paydayProjectable, paydaySettlementsBySeries } from "./payday-settlement";
 import { silenceMeasuredThroughBySeries } from "./cash-earnings";
 import { effectiveSeries, hasStoppedForecasting, oneChargeDays, projectOccurrences, toProjectable } from "./recurring";
 import { linkIsRecurring, rowIsRecurring, seriesIdsNotDrawnAsRecurring } from "./recurring-link";
@@ -993,7 +994,12 @@ export function incomeExpectation(
   const paidForAnotherMonthDeposits = new Set<string>();
   const paidForAnotherMonthPaydays = new Set<string>();
   for (const s of live) {
-    const inPeriod = projectOccurrences(toProjectable(s), start, end).filter(
+    /*
+     * ⚖️ From the series' first payday (`paydayProjectable`, §6A 55 step B) — the paydays its settlement walked and
+     * Earned vs banked counts. 🔴 From the stored anchor, his June scheduled no payday while the income card earned
+     * four cash weeks in it.
+     */
+    const inPeriod = projectOccurrences(paydayProjectable(s, settlements.get(s.id), today), start, end).filter(
       (o) => o.amountCents > 0,
     );
     scheduledOccurrences += inPeriod.length;
@@ -1149,17 +1155,21 @@ export function budgetTail(
 
   // Only live series forecast a tail — a dismissed/ended series whose past rows
   // are still tagged must not resurrect as an "expected" charge (matches
-  // upcomingOccurrences' detected|confirmed horizon).
-  const rows = db
-    .select()
-    .from(recurringSeries)
-    .where(
-      and(
-        inArray(recurringSeries.id, [...seriesIds]),
-        inArray(recurringSeries.status, ["detected", "confirmed"]),
-      ),
-    )
-    .all();
+  // upcomingOccurrences' detected|confirmed horizon). Each with the carrier it is billed with, whose postings are
+  // its evidence (`lastSeenOn`, §6A 59) — the lapse gate below reads them.
+  const rows = withBillingCarriers(
+    db,
+    db
+      .select()
+      .from(recurringSeries)
+      .where(
+        and(
+          inArray(recurringSeries.id, [...seriesIds]),
+          inArray(recurringSeries.status, ["detected", "confirmed"]),
+        ),
+      )
+      .all(),
+  );
   // ⚖️ §6A 56 — the cadence word this list prints, from the one reading every cadence printer asks
   const oneCharge = oneChargeDays(db, rows);
 
@@ -1184,6 +1194,7 @@ export function budgetTail(
       nextDate: occ[0]!.date,
       amountCents,
       occurrenceCount: occ.length,
+      occurrenceCents: occ.map((o) => -o.amountCents),
       href: `/recurring/${s.id}`,
       oneCharge: oneCharge.has(s.id),
     });

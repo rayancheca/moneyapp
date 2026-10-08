@@ -57,6 +57,7 @@ import { withPreMutationSnapshot } from "../src/db/backup";
 import { recurringSeries } from "@/db/schema/recurring";
 import { formatCents } from "@/lib/money";
 import { forecastForMonth } from "@/services/forecast";
+import { withBillingCarriers } from "@/services/billing-carriers";
 import { seriesHasLapsed, setSeriesStatus } from "@/services/recurring";
 
 const APPLY = process.argv.includes("--apply");
@@ -141,7 +142,7 @@ function targets(db: AppDatabase) {
   if (rows.length !== DEAD.length) {
     throw new Error(`expected ${DEAD.length} live dead series, found ${rows.length}`);
   }
-  for (const r of rows) {
+  for (const r of withBillingCarriers(db, rows)) {
     // every day to TODAY counted read — the rule this ran under, before §6A 57 measured the lapse to the checked day
     if (!seriesHasLapsed(r, TODAY, TODAY)) throw new Error(`${r.name} has NOT lapsed — refusing`);
     if (r.lastMatchedOn === null) throw new Error(`${r.name} never posted — that is not "dead"`);

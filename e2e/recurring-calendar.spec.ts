@@ -247,10 +247,18 @@ test("paging back to a posted charge renders it as paid", async ({ page }) => {
    * as it settles the Netflix row this test was written for. Enumerated rather
    * than loosened: "and nothing else" is half of what this assertion is worth.
    */
+  /*
+   * ⚖️ …and two paydays of its own (§6A 55 step B): Paycheck's paydays are its anchor's Fridays walked back to its
+   * first deposit — Jul 12 and Jul 26, the week after each ACME deposit's. Jul 19's deposit paid Jul 12 (its money
+   * drawn on the 19th, so the 12th's figure is 0), Aug 2's paid Jul 26, and Jul 5's, a week before the first payday,
+   * paid none.
+   */
   expect(await cellTexts(page)).toEqual([
     "3 ✓ -15 Netflix",
     "5 P ✓ 2.9k Paycheck",
+    "12 P ✓ 0 Paycheck",
     "19 P ✓ 2.9k Paycheck",
+    "26 P ✓ 2.9k Paycheck",
   ]);
 
   /*
@@ -261,6 +269,7 @@ test("paging back to a posted charge renders it as paid", async ({ page }) => {
    */
   const grid = page.getByRole("grid", { name: "July 2024" }).locator("..");
   const footer = (await grid.innerText()).replace(/\s+/g, " ");
-  expect(footer).toContain("SETTLED +$5,870.89");
+  // Jul 5 and Jul 19's deposits, Jul 26's payday paid by Aug 2's, less Netflix
+  expect(footer).toContain("SETTLED +$8,814.08");
   expect(footer).toContain("EXPECTED $0.00");
 });
