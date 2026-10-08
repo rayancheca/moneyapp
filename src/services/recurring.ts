@@ -1402,14 +1402,21 @@ export function rollForwardNextExpected(eff: EffectiveSeries, today: string = to
  * wherever a cadence is printed, and is no monthly cost. Every surface that prints a cadence, and the subscriptions
  * card that leaves it out of its monthly figure, asks here — so none can call it monthly while another says once.
  *
- * ⚠️ The linked charges are read only for a series whose next day is its end day (`isOneCharge` with no evidence),
- * which on the owner's ledger 2026-10-08 is one series of 42 — so a caller on a hot path usually pays for no query.
+ * The day is the NEXT day, where the walk's one occurrence falls — the end is only where it stops. They are one day
+ * on his ledger and whenever the date token moved it (`setSeriesOverrides` moves both), not after a write that moved
+ * the next day alone.
+ *
+ * ⚠️ The linked charges are read only for a series whose schedule holds one occurrence (`isOneCharge` with no
+ * evidence), which on the owner's ledger 2026-10-08 is one series of 42 (and one of 35 in the e2e db, Storage unit,
+ * which its last-matched day keeps monthly) — so a caller on a hot path usually pays for no query.
  */
 export function oneChargeDays(
   db: AppDatabase,
-  rows: readonly (SeriesOverrides & { id: string })[],
+  rows: readonly (SeriesOverrides & { id: string; lastMatchedOn: string | null })[],
 ): Map<string, string> {
-  const candidates = rows.map((s) => ({ id: s.id, eff: effectiveSeries(s) })).filter((c) => isOneCharge(c.eff, null));
+  const candidates = rows
+    .map((s) => ({ id: s.id, eff: effectiveSeries(s), lastMatchedOn: s.lastMatchedOn }))
+    .filter((c) => isOneCharge(c.eff, null));
   const days = new Map<string, string>();
   if (candidates.length === 0) return days;
   const firstMatched = new Map(
@@ -1426,9 +1433,15 @@ export function oneChargeDays(
       .all()
       .map((r) => [r.seriesId as string, r.first]),
   );
-  for (const { id, eff } of candidates) {
-    // `isOneCharge(_, null)` passed, so the end day is set and equals the next day
-    if (isOneCharge(eff, firstMatched.get(id) ?? null)) days.set(id, eff.userEndsOn!);
+  for (const { id, eff, lastMatchedOn } of candidates) {
+    /* the EARLIEST charge the ledger knows of: the first linked row, or the series' own last-matched day when that is
+       earlier. 🔴 Widening the rule (review of 8a4ac47) named the e2e db's "Storage unit" — monthly, last matched
+       Jun 6, next Jul 6, ends Jul 10, no row linked — "once · Jul 6": its earlier charge lives only in the column. */
+    const linked = firstMatched.get(id) ?? null;
+    const earliest =
+      linked === null || (lastMatchedOn !== null && compareDates(lastMatchedOn, linked) < 0) ? lastMatchedOn : linked;
+    // `isOneCharge(_, null)` passed, so the next day is set
+    if (isOneCharge(eff, earliest)) days.set(id, eff.nextExpectedOn!);
   }
   return days;
 }

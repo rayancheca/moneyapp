@@ -1,5 +1,5 @@
 import type { Cadence } from "@/db/schema/recurring";
-import { compareDates } from "@/lib/dates";
+import { compareDates, diffDays } from "@/lib/dates";
 import { formatDayShortIn } from "@/lib/format-date";
 import { stepFrom, stepPlan } from "@/lib/recurring-step";
 
@@ -26,27 +26,38 @@ export interface OneChargeSchedule {
 }
 
 /**
- * Does this schedule hold exactly one occurrence? Its next expected day IS its end day — the projection walk
- * (`projectOccurrences`, inclusive at the end) stops after one step — and no charge linked to it falls in a cycle
+ * Does this schedule hold exactly one occurrence? The projection walk (`projectOccurrences`, inclusive at the end)
+ * finds one: the next expected day is on or before the end, and the step after it is past the end. The one charge
+ * falls on the NEXT day — the end is only where the walk stops — and no charge linked to the series falls in a cycle
  * before that day's.
+ *
+ * 🔴 It read "next day = end day" (review of 8a4ac47). Not the same thing: the one charge's date token writes the next
+ * day, and moved to Nov 8 the walk still found exactly one occurrence while this said monthly — so the card put the
+ * $72.74 back into the monthly figure. `setSeriesOverrides` now moves the end with the day; this holds without it.
  *
  * ⛔ THE SECOND HALF IS WHAT KEEPS A MONTHLY BILL MONTHLY. The stored anchor moves: on the owner's ledger 2026-10-08
  * Car insurance's own next day already reads 2026-12-11, re-anchored past the months the $1,000 paid early, one step
- * short of its 2027-01-11 end. "Next day equals end day" alone would call a six-payment policy "once" the day its
- * anchor reached January. It has charged since August, so its schedule began long before that cycle.
+ * short of its 2027-01-11 end. "One occurrence left" alone would call a six-payment policy "once" the day its anchor
+ * reached January. It has charged since August, so its schedule began long before that cycle.
  *
- * `firstMatchedOn` is the EARLIEST active charge linked to the series, null when nothing ever has. One on or before
- * the step before the day belongs to an earlier occurrence; one after it — on the day, or a few days early — IS the
- * one charge. ⚖️ So a posted one-off stays one charge (decided 2026-10-08): its schedule still held one, and it is
- * over — the walk stops at its end day, the subscriptions card counts it ended.
+ * `firstMatchedOn` is the EARLIEST charge the ledger knows of — the first active row linked to the series, or its own
+ * `lastMatchedOn` when that is earlier (`oneChargeDays` reads both) — null when nothing ever charged. It belongs to the
+ * occurrence it lands NEARER: nearer the step before (a tie included) it is that cycle's charge, so the schedule held
+ * more than one; nearer the day — on it, a few days early, or late — it IS the one charge. 🔴 The cut-off was the
+ * step before's nominal day, and `posted_on` is the SETTLE date: his Car insurance is due on the 11th and its first
+ * charge posted Aug 12, so as a two-payment policy (Aug + Sep 11) it read "once · Sep 11". ⚖️ A posted one-off stays
+ * one charge (decided 2026-10-08): its schedule still held one, and it is over — the walk stops at its end day, the
+ * subscriptions card counts it ended.
  */
 export function isOneCharge(s: OneChargeSchedule, firstMatchedOn: string | null): boolean {
   if (s.userEndsOn === null || s.nextExpectedOn === null) return false;
-  if (compareDates(s.nextExpectedOn, s.userEndsOn) !== 0) return false;
+  // the same step the walk takes — so a weekly one-off looks a week either side, not a month
+  const plan = stepPlan(s.cadence, s.intervalDaysAvg, s.anchorDay);
+  if (compareDates(s.nextExpectedOn, s.userEndsOn) > 0) return false;
+  if (compareDates(stepFrom(s.nextExpectedOn, plan, 1), s.userEndsOn) <= 0) return false;
   if (firstMatchedOn === null) return true;
-  // the same step the walk takes, taken once backwards — so a weekly one-off looks back a week, not a month
-  const stepBefore = stepFrom(s.nextExpectedOn, stepPlan(s.cadence, s.intervalDaysAvg, s.anchorDay), -1);
-  return compareDates(firstMatchedOn, stepBefore) > 0;
+  const stepBefore = stepFrom(s.nextExpectedOn, plan, -1);
+  return diffDays(stepBefore, firstMatchedOn) > diffDays(firstMatchedOn, s.nextExpectedOn);
 }
 
 /** The cadence word for a one-charge series — in the slot `CADENCE_LABEL` fills for every other series. */

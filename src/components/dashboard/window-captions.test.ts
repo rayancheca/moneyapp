@@ -50,6 +50,8 @@ describe("the window captions beside the runway card", () => {
       lapsedMonthlyCents: 0,
       live: [],
       lapsed: [],
+      // 🔴 missing after §6A 56 added the one-off list: the card read `oneOffs.length` off undefined and threw
+      oneOffs: [],
       lapsedSharePct: 0,
       neverBilledMonthlyCents: 0,
       neverBilledSharePct: null,
@@ -110,6 +112,34 @@ describe("the window captions beside the runway card", () => {
 
     const three = text(renderToStaticMarkup(createElement(SubscriptionsCard, { data: subscriptions(6) })));
     expect(three).toContain("out across 3 charges over 6 complete months");
+  });
+
+  /*
+   * ⚖️ §6A 56 (2026-10-08): a charge due ONCE is listed beneath the live lines with its day and whole amount, in the
+   * card's own voice ("never billed"), and is in neither monthly figure. The service pins the figures
+   * (`subscriptions-card.test.ts`); this pins that the card prints the list, and prints nothing when it is empty.
+   */
+  test("a one-off is listed beneath the live lines, whole — and an empty list prints no heading", () => {
+    const withOneOff = {
+      ...subscriptions(6),
+      oneOffs: [
+        {
+          seriesId: "s-nov11",
+          name: "Car insurance — Nov 11 balance",
+          on: "2026-11-11",
+          cadenceLabel: "once · Nov 11",
+          cents: 7274,
+          neverBilled: true,
+          lastMatchedLabel: null,
+        },
+      ],
+    } as SubscriptionsCardData;
+    const card = text(renderToStaticMarkup(createElement(SubscriptionsCard, { data: withOneOff })));
+    expect(card).toContain("$100.00a month, still forecast");
+    expect(card).toContain("Car insurance — Nov 11 balanceonce · Nov 11 · never billed$72.74");
+
+    const none = text(renderToStaticMarkup(createElement(SubscriptionsCard, { data: subscriptions(6) })));
+    expect(none).not.toContain("One-off");
   });
 
   test("a full window reads exactly as it did", () => {

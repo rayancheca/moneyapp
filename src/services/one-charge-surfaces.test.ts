@@ -16,8 +16,16 @@ import { budgetTail } from "./budgets";
 import { seriesInCategory } from "./category-detail";
 import { forecastCurrentMonth, forecastForMonth } from "./forecast";
 import { merchantIntelligence } from "./merchants";
-import { listSeries, oneChargeDays } from "./recurring";
-import { seriesDetail } from "./recurring-detail";
+import {
+  effectiveSeries,
+  listSeries,
+  oneChargeDays,
+  projectOccurrences,
+  rollForwardNextExpected,
+  toProjectable,
+} from "./recurring";
+import { seriesDetail, setSeriesOverrides } from "./recurring-detail";
+import { subscriptionsCard } from "./subscriptions-card";
 
 /**
  * ⚖️ Owner decision 2026-10-08 (§6A 56): the one-time Nov 11 car-insurance balance reads as ONE CHARGE wherever a
@@ -126,6 +134,107 @@ describe("oneChargeDays — the one reading every surface asks", () => {
       .run();
     const rows = bundle.db.select().from(recurringSeries).all();
     expect(oneChargeDays(bundle.db, rows).has(insuranceId)).toBe(false);
+  });
+
+  /*
+   * 🔴 Review of 8a4ac47, on a copy of his ledger: Car insurance set to end and be next on 2026-09-11 (a two-payment
+   * policy, Aug + Sep) read "Car insurance once · Sep 11" on the card and "Once" on its page — its Aug 12 charge,
+   * posted a day after Aug 11, was taken for the September charge.
+   */
+  test("Car insurance as a two-payment policy, its August charge posted a day late, is not one charge", () => {
+    bundle.db
+      .update(recurringSeries)
+      .set({ userNextExpectedOn: "2026-09-11", userEndsOn: "2026-09-11" })
+      .where(eq(recurringSeries.id, insuranceId))
+      .run();
+    const rows = bundle.db.select().from(recurringSeries).all();
+    expect(oneChargeDays(bundle.db, rows).has(insuranceId)).toBe(false);
+  });
+
+  /*
+   * 🔴 Caught widening the rule, on a copy of the e2e db: its "Storage unit" — monthly, last matched Jun 6, next Jul 6,
+   * ends Jul 10, NO row linked — read "once · Jul 6". Its earlier charge lives only in the series' own `lastMatchedOn`,
+   * and a monthly bill in its last month must never read once.
+   */
+  test("a charge the series' own last-matched day records counts, with no row linked", () => {
+    const storageId = bundle.db
+      .insert(recurringSeries)
+      .values({
+        name: "Storage unit",
+        kind: "bill",
+        cadence: "monthly",
+        intervalDaysAvg: 30,
+        nextExpectedOn: "2026-07-06",
+        nextExpectedAmountCents: -4500,
+        userEndsOn: "2026-07-10",
+        lastMatchedOn: "2026-06-06",
+        status: "confirmed",
+      })
+      .returning({ id: recurringSeries.id })
+      .get().id;
+    const rows = () => bundle.db.select().from(recurringSeries).all();
+    expect(oneChargeDays(bundle.db, rows()).has(storageId)).toBe(false);
+    // …and with its next day on its end, as the first reading would have taken it
+    bundle.db.update(recurringSeries).set({ userEndsOn: "2026-07-06" }).where(eq(recurringSeries.id, storageId)).run();
+    expect(oneChargeDays(bundle.db, rows()).has(storageId)).toBe(false);
+  });
+
+  test("a write that moves only the due day earlier, inside the end, keeps one charge — on that day", () => {
+    bundle.db
+      .update(recurringSeries)
+      .set({ userNextExpectedOn: "2026-11-08" })
+      .where(eq(recurringSeries.id, balanceId))
+      .run();
+    const rows = bundle.db.select().from(recurringSeries).all();
+    expect([...oneChargeDays(bundle.db, rows)]).toEqual([[balanceId, "2026-11-08"]]);
+  });
+});
+
+/*
+ * 🔴 Review of 8a4ac47: the one charge's date token ("charges once on [Nov 11]") wrote the next day and left the end
+ * where it was. On a copy of his ledger, moved to 2026-11-14 the next day passed the end, the schedule held nothing,
+ * the $72.74 left the forecast and the card said "1 has already ended" about a balance still owed. A one charge's day
+ * IS its schedule, so moving it moves the end with it — in the service, so every writer gets it.
+ */
+describe("setSeriesOverrides — moving a one charge's day moves its end with it", () => {
+  const row = () => bundle.db.select().from(recurringSeries).where(eq(recurringSeries.id, balanceId)).get()!;
+
+  test("moved later than its end, it stays one charge on the new day, still owed", () => {
+    setSeriesOverrides(bundle.db, balanceId, { userNextExpectedOn: "2026-11-14" });
+    expect(row().userEndsOn).toBe("2026-11-14");
+    expect([...oneChargeDays(bundle.db, [row()])]).toEqual([[balanceId, "2026-11-14"]]);
+    expect(projectOccurrences(toProjectable(row()), TODAY, "2027-03-31").map((o) => o.date)).toEqual(["2026-11-14"]);
+    expect(rollForwardNextExpected(effectiveSeries(row()), TODAY)).toBe("2026-11-14");
+    const card = subscriptionsCard(bundle.db, TODAY)!;
+    expect(card.oneOffs.map((o) => [o.seriesId, o.cadenceLabel])).toEqual([[balanceId, "once · Nov 14"]]);
+    expect(card.endedCount).toBe(0);
+  });
+
+  test("moved earlier, the end comes back to it too", () => {
+    setSeriesOverrides(bundle.db, balanceId, { userNextExpectedOn: "2026-11-08" });
+    expect(row().userEndsOn).toBe("2026-11-08");
+    expect([...oneChargeDays(bundle.db, [row()])]).toEqual([[balanceId, "2026-11-08"]]);
+  });
+
+  test("'Use detected' puts the end on the detected day the charge goes back to", () => {
+    setSeriesOverrides(bundle.db, balanceId, { userNextExpectedOn: "2026-11-14" });
+    setSeriesOverrides(bundle.db, balanceId, { userNextExpectedOn: null });
+    expect(row().userNextExpectedOn).toBeNull();
+    expect(row().userEndsOn).toBe("2026-11-11");
+    expect([...oneChargeDays(bundle.db, [row()])]).toEqual([[balanceId, "2026-11-11"]]);
+  });
+
+  test("a monthly bill's next day moves alone — its end is its own", () => {
+    setSeriesOverrides(bundle.db, insuranceId, { userNextExpectedOn: "2026-12-14" });
+    const insurance = bundle.db.select().from(recurringSeries).where(eq(recurringSeries.id, insuranceId)).get()!;
+    expect(insurance.userNextExpectedOn).toBe("2026-12-14");
+    expect(insurance.userEndsOn).toBe("2027-01-11");
+  });
+
+  test("an amount change leaves both days alone", () => {
+    setSeriesOverrides(bundle.db, balanceId, { userAmountCents: -7000 });
+    expect(row().userNextExpectedOn).toBe("2026-11-11");
+    expect(row().userEndsOn).toBe("2026-11-11");
   });
 });
 

@@ -529,7 +529,15 @@ export interface SeriesOverridesInput {
   userNextExpectedOn?: string | null;
 }
 
-/** Writes user overrides (§4.4). Detection keeps its own columns; the UI reads user-first. */
+/**
+ * Writes user overrides (§4.4). Detection keeps its own columns; the UI reads user-first.
+ *
+ * ⚖️ §6A 56 (2026-10-08): a ONE-CHARGE series' day is its whole schedule, so moving that day moves its end with it —
+ * here, so the date token, a reset to detected and any later caller all keep the one charge on its own schedule.
+ * 🔴 The token wrote the next day alone (review of 8a4ac47). On a copy of his ledger, the Nov 11 balance moved to
+ * Nov 14 passed its Nov 11 end: the walk held nothing, the $72.74 left the forecast, and the card said "1 has already
+ * ended" about a balance still owed. Every other series' end is its own and stays where it is.
+ */
 export function setSeriesOverrides(
   db: AppDatabase,
   seriesId: string,
@@ -545,6 +553,10 @@ export function setSeriesOverrides(
       throw new Error(`Invalid next-expected date: ${input.userNextExpectedOn}`);
     }
     patch.userNextExpectedOn = input.userNextExpectedOn ?? null;
+    const s = db.select().from(recurringSeries).where(eq(recurringSeries.id, seriesId)).get();
+    // the day the one charge lands on after this write: the override, or the detected day a reset hands it back to
+    const movedTo = patch.userNextExpectedOn ?? s?.nextExpectedOn ?? null;
+    if (s !== undefined && movedTo !== null && oneChargeDays(db, [s]).has(s.id)) patch.userEndsOn = movedTo;
   }
   if (Object.keys(patch).length === 0) return;
   const res = db.update(recurringSeries).set(patch).where(eq(recurringSeries.id, seriesId)).run();

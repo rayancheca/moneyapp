@@ -92,7 +92,8 @@ export function CadenceSentence(props: CadenceSentenceProps) {
       {/* ⚖️ §6A 56 (2026-10-08): a schedule of ONE charge says once, and on which day. No cadence menu — a cadence
           is the step the walk takes, and one charge takes none. The day stays when the series is over: it is the
           schedule itself, not a rhythm read off a stale date (the rule the clause below follows). 🔴 The Nov 11
-          balance read "charges monthly around the 11th". */}
+          balance read "charges monthly around the 11th". Saving its day moves the end with it (`setSeriesOverrides`),
+          so the one charge never walks off its own schedule. */}
       {oneCharge !== null ? (
         <>
           {`${ONE_CHARGE_WORD} on `}
