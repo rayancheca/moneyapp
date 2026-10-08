@@ -30,6 +30,7 @@ import {
   longDate,
   monthLabel,
   perPaydayWord,
+  TOWARD_NO_PAYDAY,
   unsettledReasonWord,
   upcomingEvidenceWord,
 } from "./labels";
@@ -214,18 +215,12 @@ function settledByWord(e: CalendarEntry): string | null {
 }
 
 /**
- * ⚖️ A DEPOSIT WHOSE MONEY PAID NO PAYDAY SAYS THAT TOO (`CalendarEntry.towardNoPayday`, §6A 55b): its money pays
- * nothing past its own date plus the tolerance, so what is left of it after the paydays it reached answers no week.
- * 🔴 Before the reach bound June's $400.00 read "paid (toward the payday of Aug 27, 2026)".
- */
-const TOWARD_NO_PAYDAY = "toward no payday";
-
-/**
  * ⛔ AND A DEPOSIT THAT PAID ANOTHER MONTH'S PAYDAY SAYS SO — the mirror of
  * `settledByWord`, on the row. Wed Sep 30's lump paid Thu Oct 1, and the Oct 1
  * deposit, its own payday already paid, paid Aug 27: drawn bare beside Oct 1's
  * chip, the row read as a second week's pay that October's Settled figure did
- * not count, and August's chip named the same deposit for Aug 27.
+ * not count, and August's chip named the same deposit for Aug 27. And a deposit
+ * whose money paid none says that (`TOWARD_NO_PAYDAY`, the series page's word).
  */
 function settlesWord(e: CalendarEntry): string | null {
   if (e.towardNoPayday) return TOWARD_NO_PAYDAY;

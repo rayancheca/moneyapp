@@ -66,9 +66,16 @@ export interface AmountHistoryPoint {
    * What this row is held to (`rateOn`): the rate of the payday a pay row's money paid (`PaydayReading`), else the
    * series' rate on the row's own day. ⚖️ Each against its own time's rate (owner decision 2026-10-08, §6A 55): his
    * cash weeks at $1,047.00, his payroll weeks at $1,141.92. 🔴 One expectation for all time read his Jun 4 cash
-   * week "vs expected -$94.92". Null when the series has no rate.
+   * week "vs expected -$94.92". Null when the series has no rate — and for money that paid no payday, held to none.
    */
   expectedCents: number | null;
+  /**
+   * The row's money paid NO payday (`PaydayReading.towardNoPayday`, §6A 55b) — the calendar's "toward no payday",
+   * said here too, and graded against nothing. 🔴 Held to its own day's rate, his Jun 5 $400.00 read "-$647.00" in
+   * the table lens and "expected $1,047.00" in the bar's tooltip, beside a calendar drawing it ungraded (a copy of his
+   * ledger, 2026-10-08).
+   */
+  towardNoPayday: boolean;
 }
 
 export interface SeriesCategoryRef {
@@ -317,8 +324,9 @@ export function seriesDetail(
       amountCents: t.amountCents,
       perPayday: reading?.perPayday ?? null,
       // ⚖️ each row against its own time's rate (§6A 55), by the calendar's own rule — a pay row, the rate of the
-      // payday it paid; any other row, its own day's
+      // payday it paid, and nothing when it paid none; any other row, its own day's
       expectedCents: expectedCentsOf(reading, eff, t.postedOn),
+      towardNoPayday: reading?.towardNoPayday ?? false,
     };
   });
 

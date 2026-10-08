@@ -17,7 +17,7 @@ import { DataTable, type Column } from "@/components/ui/DataTable";
 import { formatCents, formatCentsSigned } from "@/lib/money";
 import type { PerPayday } from "@/lib/per-payday";
 import type { AmountHistoryPoint } from "@/services/recurring-detail";
-import { longDate, perPaydayWord, shortDate } from "./labels";
+import { longDate, perPaydayWord, shortDate, TOWARD_NO_PAYDAY } from "./labels";
 
 interface AmountRow {
   key: string;
@@ -29,6 +29,8 @@ interface AmountRow {
   comparableCents: number;
   /** what this row is held to — its own time's rate (`AmountHistoryPoint.expectedCents`, §6A 55) */
   expectedCents: number | null;
+  /** its money paid no payday — said, and graded against nothing (`AmountHistoryPoint.towardNoPayday`) */
+  towardNoPayday: boolean;
 }
 
 /** The table lens's columns: the tooltip's own facts, as a column each. */
@@ -55,9 +57,12 @@ function AMOUNT_COLUMNS(expectedCents: number | null): Column<AmountRow>[] {
             key: "variance",
             header: "vs expected",
             align: "right" as const,
-            // each row against ITS expectation (§6A 55), not the rate now
+            // each row against ITS expectation (§6A 55), not the rate now — and money that paid no payday against
+            // none, in the calendar's words for it (§6A 55b)
             render: (r: AmountRow) =>
-              r.expectedCents === null ? (
+              r.towardNoPayday ? (
+                <span className="text-ink-faint">{TOWARD_NO_PAYDAY}</span>
+              ) : r.expectedCents === null ? (
                 <span className="text-ink-faint">—</span>
               ) : r.comparableCents === r.expectedCents ? (
                 <span className="text-ink-faint">on plan</span>
@@ -116,12 +121,14 @@ export function AmountHistoryChart({ points, expectedCents, asTable = false }: A
           comparableCents,
           expectedCents: p.expectedCents,
           expectedMagnitude: p.expectedCents === null ? null : Math.abs(p.expectedCents) / 100,
+          towardNoPayday: p.towardNoPayday,
         };
       }),
     [points],
   );
-  // every point held to the rate now: one dashed line, as before any rate had a history
-  const oneExpectation = data.every((d) => d.expectedCents === expectedCents);
+  // every point held to the rate now: one dashed line, as before any rate had a history — a point held to nothing
+  // (money that paid no payday) is no second expectation
+  const oneExpectation = data.every((d) => d.towardNoPayday || d.expectedCents === expectedCents);
 
   // newest first — the "show me the numbers" reading order (the caption says so)
   const rows = useMemo(() => data.map((d, i) => ({ ...d, key: `${d.date}#${i}` })).reverse(), [data]);
@@ -191,6 +198,7 @@ export function AmountHistoryChart({ points, expectedCents, asTable = false }: A
                   <div className="text-ink-faint">{p.date}</div>
                   <div className="figures mt-0.5 text-sm font-medium">{formatCentsSigned(p.amountCents)}</div>
                   {p.perPayday ? <div className="mt-0.5 text-ink-faint">{perPaydayWord(p.perPayday)}</div> : null}
+                  {p.towardNoPayday ? <div className="mt-0.5 text-ink-faint">{TOWARD_NO_PAYDAY}</div> : null}
                   {p.expectedCents !== null && p.comparableCents !== p.expectedCents ? (
                     <div className="mt-0.5 text-ink-faint">expected {formatCents(p.expectedCents)}</div>
                   ) : null}
@@ -208,6 +216,8 @@ export function AmountHistoryChart({ points, expectedCents, asTable = false }: A
               dot={false}
               activeDot={false}
               isAnimationActive={false}
+              // a point held to nothing (toward no payday) does not break the rate's line
+              connectNulls
             />
           )}
         </Chart>

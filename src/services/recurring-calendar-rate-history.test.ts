@@ -195,13 +195,28 @@ describe("his ledger as it stands — anchored Jul 23, his paydays open on Jun 4
       towardNoPayday: false,
       expectedAmountCents: CASH,
     });
+    // held to no week's rate: it answers none (`PaydayReading.expectedCents`)
     expect(rowOf("2026-06", "2026-06-05", ids.jun5, TODAY)).toMatchObject({
       state: "paid",
       amountCents: 40_000,
       settlesPaydaysOn: [],
       towardNoPayday: true,
-      expectedAmountCents: CASH,
+      expectedAmountCents: null,
     });
+  });
+
+  /*
+   * ⛔ ONE READING OF THE ROW, on both surfaces that draw it. 🔴 Measured on a copy of his ledger with the history
+   * set (2026-10-08): the series page's table lens read "Jun 5, 2026 +$400.00 -$647.00" and its bar's tooltip
+   * "expected $1,047.00", while the calendar drew the same row "paid (toward no payday) $400.00", ungraded.
+   */
+  test("the series page reads Jun 5's $400.00 toward no payday, held to nothing — as the calendar draws it", () => {
+    const point = seriesDetail(bundle.db, PAY, TODAY).amountHistory.find((p) => p.date === "2026-06-05")!;
+    expect(point).toMatchObject({ amountCents: 40_000, expectedCents: null, towardNoPayday: true });
+    expect(rowOf("2026-06", "2026-06-05", ids.jun5, TODAY)?.towardNoPayday).toBe(true);
+    // a payday paid is still held to its own era's rate, and reads toward a payday
+    const jun4 = seriesDetail(bundle.db, PAY, TODAY).amountHistory.find((p) => p.date === "2026-06-04")!;
+    expect(jun4).toMatchObject({ expectedCents: CASH, towardNoPayday: false });
   });
 
   /* 55a: the cash week of Aug 20 is not paid by payroll money — it stands unpaid, at its own rate. */
@@ -312,14 +327,14 @@ describe("his ledger anchored on his first payday — Jun 4 is a cash week paid 
     expect(payNotices(TODAY)).toEqual([expect.stringContaining(`${PAY_NAME} rose by $58.08`)]);
   });
 
-  /* The series page draws each row against its own time's rate, as the calendar grades it. */
-  test("the series page holds Jun 4 to $1,047.00 and the payroll rows to $1,141.92", () => {
+  /* The series page draws each row against its own time's rate, as the calendar grades it — Jun 5 against none. */
+  test("the series page holds Jun 4 to $1,047.00, the payroll rows to $1,141.92, and Jun 5 to nothing", () => {
     const history = seriesDetail(bundle.db, PAY, TODAY).amountHistory;
-    expect(history.map((p) => [p.date, p.expectedCents])).toEqual([
-      ["2026-06-04", CASH],
-      ["2026-06-05", CASH],
-      ["2026-09-23", WEEK],
-      ["2026-09-24", WEEK],
+    expect(history.map((p) => [p.date, p.expectedCents, p.towardNoPayday])).toEqual([
+      ["2026-06-04", CASH, false],
+      ["2026-06-05", null, true],
+      ["2026-09-23", WEEK, false],
+      ["2026-09-24", WEEK, false],
     ]);
   });
 });

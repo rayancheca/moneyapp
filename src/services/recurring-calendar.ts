@@ -692,14 +692,13 @@ export function recurringCalendar(
        * against the rate of the payday its money paid, any other row against the
        * rate on its own day — so `paid_different`, and the notice that reads it
        * ("rose by …"), compare a week with its own era. And money that paid no
-       * payday at all is not graded: it answers no week (`towardNoPayday`).
+       * payday at all is not graded: it answers no week (`towardNoPayday`), so
+       * the reading holds it to nothing — the series page reads the same null.
        */
       const reading = readings.get(s.id)?.get(p.id);
       const expected = expectedCentsOf(reading, effectiveSeries(s), p.postedOn);
       const state: DayStateKind =
-        expected === null || reading?.towardNoPayday
-          ? "paid"
-          : classifyPostedAmount(comparableCents(p.amountCents, reading), expected, stddev);
+        expected === null ? "paid" : classifyPostedAmount(comparableCents(p.amountCents, reading), expected, stddev);
       // the money this deposit spent on another month's paydays is THAT month's
       // Settled figure, where the chip naming this day stands
       const elsewhere = chargeRow(owedElsewhere.get(s.id)?.get(p.postedOn), p.amountCents);

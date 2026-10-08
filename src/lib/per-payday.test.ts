@@ -2,6 +2,7 @@ import { describe, expect, test } from "vitest";
 import {
   amountPerPayday,
   comparableCents,
+  expectedCentsOf,
   paydayReadings,
   paydaysPaidAloneByDeposit,
   spreadSampleCents,
@@ -106,14 +107,17 @@ describe("paydayReadings — his ledger", () => {
   });
 
   /*
-   * ⛔ June's money paid NO payday (55b: it reaches Jun 8 and no further, and the ledger draws no payday before Jul
-   * 23). The calendar says so — "toward no payday" — and does not grade it; as a sample of what a payday pays it is
-   * none at all. It is held to its own day's rate, a cash week's $1,047.00.
+   * ⛔ June's money paid NO payday (55b: it reaches Jun 8 and no further, and these portions draw no payday before
+   * Jul 23). The calendar says so — "toward no payday" — and does not grade it; as a sample of what a payday pays it
+   * is none at all. And it is held to NOTHING: it answers no week, so no week's rate is its expectation. 🔴 Held to
+   * its own day's rate, the series page graded Jun 5's $400.00 "-$647.00" against $1,047.00, one tab over from a
+   * calendar that drew the same row paid toward no payday.
    */
-  test("money that paid no payday reads toward no payday, held to its own day's rate, and is no sample", () => {
+  test("money that paid no payday reads toward no payday, held to no rate, and is no sample", () => {
     for (const [id, cents] of [["jun4", 104_700], ["jun5", 40_000]] as const) {
-      expect(readings.get(id)).toEqual(reads(false, 104_700, true, 0));
+      expect(readings.get(id)).toEqual(reads(false, null, true, 0));
       expect(spreadSampleCents(cents, readings.get(id))).toBeNull();
+      expect(expectedCentsOf(readings.get(id), HIS, row(id).postedOn)).toBeNull();
     }
   });
 
@@ -138,8 +142,8 @@ describe("paydayReadings — his ledger, from his first deposit's payday", () =>
     expect(readings.get("jun4")).toEqual(reads(true, 104_700, false, 0));
   });
 
-  test("Jun 5's $400.00 still paid no payday", () => {
-    expect(readings.get("jun5")?.towardNoPayday).toBe(true);
+  test("Jun 5's $400.00 still paid no payday, and is held to no rate", () => {
+    expect(readings.get("jun5")).toEqual(reads(false, null, true, 0));
   });
 });
 
@@ -291,7 +295,7 @@ describe("paydayReadings — what is read as the one amount it is", () => {
       FLAT,
     );
     for (const id of ["a", "b"]) {
-      expect(readings.get(id)).toEqual(reads(false, WEEK, true, 0));
+      expect(readings.get(id)).toEqual(reads(false, null, true, 0));
     }
   });
 
@@ -304,7 +308,8 @@ describe("paydayReadings — what is read as the one amount it is", () => {
       [{ paydayOn: "2026-09-24", depositOn: "2026-09-23", cents: WEEK }],
       HIS,
     );
-    expect(readings.get("unspent")).toEqual(reads(false, 104_700, true, 0));
+    // held to nothing — it answers no week — though its era is still its own day's, a cash week's
+    expect(readings.get("unspent")).toEqual(reads(false, null, true, 0));
     expect(readings.get("clawback")).toEqual(reads(true, WEEK, false, 1));
   });
 
