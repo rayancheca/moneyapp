@@ -424,12 +424,14 @@ function emptyDays(): Record<BalanceBasis, number> {
 const accountCoverageCached = cache(function accountCoverageCached(
   db: AppDatabase,
   today: string,
+  // the archived accounts instead of the live ones — `archivedAccountCoverage` says who asks, and why
+  archived: boolean,
 ): AccountCoverage[] {
   const rows = db
     .select({ id: accounts.id, name: accounts.name, type: accounts.type })
     .from(accounts)
     .innerJoin(institutions, eq(accounts.institutionId, institutions.id))
-    .where(eq(accounts.isActive, true))
+    .where(eq(accounts.isActive, !archived))
     // THE order: the net-worth popover and ConcentrationCard print these as they come
     .orderBy(...ACCOUNT_ORDER)
     .all();
@@ -649,5 +651,18 @@ const accountCoverageCached = cache(function accountCoverageCached(
 
 /** ⛔ A COPY, so one caller sorting the shared array cannot rewrite another's. */
 export function accountCoverage(db: AppDatabase, today: string = todayIso()): AccountCoverage[] {
-  return accountCoverageCached(db, today).slice();
+  return accountCoverageCached(db, today, false).slice();
+}
+
+/**
+ * The same reading of every ARCHIVED account — out of net worth, the totals and every analytic, so `accountCoverage`
+ * leaves them out; asked only by the frontier (`checkedThroughBySeries`), because the days a statement covered stay
+ * covered when he archives the account.
+ *
+ * 🔴 Without it an archived card had no checked record, its series' frontier went null, and with the lapse measured
+ * to the frontier (§6A 57) a subscription its statements had shown quiet for 142 days came back into every forecast
+ * as "Awaiting statements" — Next 2026-12-25 — and stayed there for good (review, 2026-10-08).
+ */
+export function archivedAccountCoverage(db: AppDatabase, today: string): AccountCoverage[] {
+  return accountCoverageCached(db, today, true).slice();
 }

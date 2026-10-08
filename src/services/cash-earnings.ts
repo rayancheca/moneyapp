@@ -7,7 +7,7 @@ import { compareDates, todayIso } from "@/lib/dates";
 import { cashEarnings, type CashEarnings, type PaySeries } from "@/lib/cash-earnings";
 import { outsidePortfolioCashAccountIds } from "./accounts";
 import { isAgentsIncomeSeries } from "./analytics";
-import { accountCoverage } from "./coverage";
+import { accountCoverage, archivedAccountCoverage } from "./coverage";
 
 /**
  * Earned versus banked, read off the real ledger.
@@ -219,8 +219,11 @@ export const checkedThroughBySeries = cache(function checkedThroughBySeries(
   db: AppDatabase,
   today: string,
 ): (seriesId: string) => string | null {
+  // archived accounts too: a series' last charges can sit on a card he has since archived (`archivedAccountCoverage`)
   const verifiedThroughByAccount = new Map(
-    accountCoverage(db, today).map((c) => [c.accountId, c.verifiedThrough] as const),
+    [...accountCoverage(db, today), ...archivedAccountCoverage(db, today)].map(
+      (c) => [c.accountId, c.verifiedThrough] as const,
+    ),
   );
   const landings = landingAccountsBySeries(db);
   return (seriesId) => earliestVerified(landings.get(seriesId) ?? new Set<string>(), verifiedThroughByAccount, today);

@@ -12,7 +12,9 @@ import { recurringSeries } from "@/db/schema/recurring";
 import { transactions } from "@/db/schema/transactions";
 import { seedDatabase } from "@/db/seed";
 import { addDays, compareDates } from "@/lib/dates";
+import { updateAccount } from "./accounts";
 import { budgetPaceStatuses, createBudget } from "./budgets";
+import { checkedThroughBySeries } from "./cash-earnings";
 import { predictCategory } from "./category-forecast";
 import { committedBook, runwayCard } from "./committed";
 import { forecastCurrentMonth } from "./forecast";
@@ -287,5 +289,26 @@ describe("a series lapses only on days the ledger has checked — every surface 
     const ids = new Set(upcomingOccurrences(bundle.db, DEC, 70).map((o) => o.seriesId));
     expect(ids.has(RENT)).toBe(false);
     expect(ids.has(LEASE)).toBe(false);
+  });
+
+  test("an archived card keeps the days its statements covered: what they show stopped stays lapsed", () => {
+    // 🔴 Archived, Venture X left `accountCoverage`, DEAD's frontier went null and it came back into every forecast as
+    // "Awaiting statements", Next 2026-12-25 — of 142 quiet days a statement had read (review, 2026-10-08)
+    updateAccount(bundle.db, VX, { isActive: false });
+    expect(checkedThroughBySeries(bundle.db, DEC)(DEAD)).toBe("2026-09-13");
+    for (const today of [OCT, DEC]) {
+      const card = subscriptionsCard(bundle.db, today)!;
+      expect(card.lapsed.map((l) => l.seriesId), today).toEqual([DEAD]);
+      expect(card.lapsed[0]!.daysPastTolerance, today).toBe(142 - 48);
+      expect(upcomingOccurrences(bundle.db, today, 70).some((o) => o.seriesId === DEAD), today).toBe(false);
+      expect(committedBook(bundle.db, today).lines.some((l) => l.seriesId === DEAD), today).toBe(false);
+      const dead = listSeries(bundle.db, today).find((s) => s.id === DEAD)!;
+      expect(dead.evidence, today).toBe("lapsed");
+      expect(dead.nextExpectedOn, today).toBeNull();
+    }
+    // …and the bills it had NOT shown missing are still forecast, measured to the same Sep 13
+    const ids = new Set(upcomingOccurrences(bundle.db, DEC, 70).map((o) => o.seriesId));
+    expect(ids.has(INSURANCE)).toBe(true);
+    expect(ids.has(BREEZELINE)).toBe(true);
   });
 });
