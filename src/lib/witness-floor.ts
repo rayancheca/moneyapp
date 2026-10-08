@@ -1,5 +1,5 @@
 import { type LedgerFailure, type LedgerObservation, windowsSpanning } from "./ledger-integrity";
-import { LEFT_OUT_TOKEN, reasonSaysNothing } from "./left-out-acknowledgement";
+import { LEFT_OUT_TOKEN, reasonCarriesControl, reasonSaysNothing } from "./left-out-acknowledgement";
 
 /**
  * A FLOOR under every kind of witness `pnpm ledger-check` counts.
@@ -480,8 +480,9 @@ export function ledgerCheckMode(argv: readonly string[]): LedgerCheckMode {
 /**
  * `--reason='<what the statement shows>'`, kept whole — commas, colons and equals signs are the session's words — on
  * one line, every run of whitespace one space: it is printed inside a sentence. Null when none is given. ⛔ One of
- * only whitespace, zero-width and control characters, or the braille blank, says nothing, and is refused
- * (`reasonSaysNothing`).
+ * only whitespace, zero-width, format and control characters, or the braille blank, says nothing, and is refused
+ * (`reasonSaysNothing`). ⛔ So is one carrying a control character among its words, dry run or not: stored, it would
+ * be printed raw wherever the line is (`reasonCarriesControl`).
  */
 function reasonOf(args: readonly string[]): string | null {
   if (args.length === 0) return null;
@@ -491,6 +492,10 @@ function reasonOf(args: readonly string[]): string | null {
   const reason = args[0]!.slice(REASON.length + 1).replace(/\s+/g, " ").trim();
   if (reasonSaysNothing(reason)) {
     throw new WitnessFlagRefusal(`${REASON} needs what the session read on the statement: ${SAYS}`);
+  }
+  const carries = reasonCarriesControl(reason);
+  if (carries !== null) {
+    throw new WitnessFlagRefusal(`${REASON} ${carries} — nothing was written: ${SAYS}, in characters a reader sees`);
   }
   return reason;
 }
