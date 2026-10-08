@@ -116,4 +116,14 @@ describe("/accounts/[id] — the balance form and the list's words answer one ru
     expect(source).toMatch(/\) : \(\s*<p className="[^"]*">\{listWords\.noBalanceYet\}<\/p>/);
     expect(source).not.toMatch(/Recorded balances|counted yet|add one you counted|No balances? yet/);
   });
+
+  /**
+   * 🔴 The archive dialog counts the list's balances, and no screenshot opens it: setting its reassurance back to
+   * "transactions, recorded balances and history" passed every test here (the gate above is case-sensitive).
+   */
+  test("the archive dialog names the balances it keeps as the list's heading does — never \"recorded\"", () => {
+    expect(source).toMatch(/label: "Balances kept",\s*value: countPhrase\(anchors\.length, "balance"\)/);
+    expect(source).toMatch(/— transactions, balances and history are untouched\."/);
+    expect(source).not.toMatch(/recorded balances/i);
+  });
 });
