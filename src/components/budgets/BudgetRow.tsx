@@ -15,6 +15,7 @@ import { formatDayShort } from "@/lib/format-date";
 import { budgetCoverageSentence } from "@/lib/budget-coverage";
 import { budgetVerdict } from "@/lib/budget-verdict";
 import { formatCents } from "@/lib/money";
+import { ONE_CHARGE_WORD } from "@/lib/one-charge";
 import type { BudgetPace, BudgetPaceStatus } from "@/services/budgets";
 import { DisclosureChevron, DisclosureRegion, useDisclosure } from "@/components/ui/Disclosure";
 import { BudgetAmountEditor, PERIOD_WORD } from "./BudgetAmountEditor";
@@ -257,7 +258,9 @@ export function BudgetRow({ status, guidanceCents, spentProvenance, planProvenan
                         <span className="block truncate font-medium">{s.name}</span>
                         <span className="text-xs text-ink-faint">
                           {formatDayShort(s.nextDate)}
-                          {s.occurrenceCount > 1 ? ` · ${s.occurrenceCount}×` : ""} · {s.cadence}
+                          {s.occurrenceCount > 1 ? ` · ${s.occurrenceCount}×` : ""} ·{" "}
+                          {/* ⚖️ §6A 56: "once" for a schedule of one charge (`BudgetTailLine.oneCharge`) */}
+                          {s.oneCharge ? ONE_CHARGE_WORD : s.cadence}
                         </span>
                       </span>
                       <Money cents={s.amountCents} className="shrink-0 text-ink-muted" />

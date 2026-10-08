@@ -4,6 +4,7 @@ import type { SeriesOccurrence, SeriesStaleness } from "@/services/recurring";
 import {
   annualizedCaveat,
   annualizedEndNote,
+  cadenceLabel,
   shortAgo,
   staleComponentEntries,
   staleFooterHint,
@@ -624,5 +625,21 @@ describe("perPaydayWord — a lump, and a day of several deposits", () => {
     expect(perPaydayWord({ paydays: 1, cents: 114192, deposits: 2 })).toBe(
       "1 payday at $1,141.92, with the day's other deposit",
     );
+  });
+});
+
+/*
+ * ⚖️ Owner decision 2026-10-08 (§6A 56): a series whose whole schedule holds one charge reads "Once" in the slot
+ * every other series fills with its cadence. 🔴 The Nov 11 car-insurance balance's own page said "Cadence Monthly".
+ */
+describe("cadenceLabel — a schedule of one charge is not monthly", () => {
+  test("a one-charge series reads Once, whatever cadence it is stored with", () => {
+    expect(cadenceLabel("monthly", "2026-11-11")).toBe("Once");
+    expect(cadenceLabel("weekly", "2026-11-11")).toBe("Once");
+  });
+
+  test("every other series reads its cadence", () => {
+    expect(cadenceLabel("monthly", null)).toBe("Monthly");
+    expect(cadenceLabel("annual", null)).toBe("Annual");
   });
 });

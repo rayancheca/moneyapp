@@ -309,6 +309,12 @@ export interface CategorySeriesRow {
    * 2026-09-02.
    */
   overdue: { date: string; occurrenceCount: number } | null;
+  /**
+   * The day of its ONE charge when its whole schedule holds one (`listSeries`' `oneChargeOn`), else null — the row
+   * then reads "once · Nov 11" where every other reads its cadence and next date. ⚖️ Owner decision 2026-10-08 (§6A
+   * 56). 🔴 `/categories/<Car>` read "monthly · next Nov 11 · never billed" of the one-time Nov 11 balance.
+   */
+  oneChargeOn: string | null;
   status: string;
   isActive: boolean;
   /** the word every surface uses for its evidence — see `lib/series-evidence` */
@@ -370,6 +376,7 @@ export function seriesInCategory(db: AppDatabase, categoryId: string, today: str
       amountCents: s.nextExpectedAmountCents ?? s.amountCentsAvg ?? 0,
       nextExpectedOn: s.nextExpectedOn,
       overdue: overdueById.get(s.id) ?? null,
+      oneChargeOn: s.oneChargeOn,
       status: s.status,
       isActive: s.isActive,
       evidence: s.evidence,

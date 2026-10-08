@@ -828,6 +828,8 @@ describe("the agent's cost SERIES is not his bill either", () => {
       name: "Robinhood Gold",
       cadence: "monthly",
       status: "confirmed",
+      // a monthly schedule, not one charge (§6A 56)
+      oneChargeLabel: null,
     });
 
     // the rule's own edge: unpaired, the agent's schedule is his as well, and the page may name it

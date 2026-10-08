@@ -34,13 +34,21 @@ function days(n: number): string {
   return `${n} ${n === 1 ? "day" : "days"}`;
 }
 
-/** A row's evidence, in its own voice: when it last charged, or that it never has. */
-function Evidence({ line }: { line: SubscriptionLine }) {
-  if (line.neverBilled) return <span className="block text-[11px] text-ink-faint">never billed</span>;
+/** What `Evidence` reads — a one-off has no tolerance to be past, so that one is optional. */
+type EvidenceFacts = Pick<SubscriptionLine, "neverBilled" | "lastMatchedLabel"> & { daysPastTolerance?: number | null };
+
+/**
+ * A row's evidence, in its own voice: when it last charged, or that it never has. `lead` goes first when the row
+ * has more to say about itself — a one-off's "once · Nov 11".
+ */
+function Evidence({ line, lead }: { line: EvidenceFacts; lead?: string }) {
+  const prefix = lead === undefined ? "" : `${lead} · `;
+  if (line.neverBilled) return <span className="block text-[11px] text-ink-faint">{prefix}never billed</span>;
+  const pastTolerance = line.daysPastTolerance ?? null;
   return (
     <span className="block text-[11px] text-ink-faint">
-      last seen {line.lastMatchedLabel}
-      {line.daysPastTolerance === null ? "" : ` · ${days(line.daysPastTolerance)} past tolerance`}
+      {prefix}last seen {line.lastMatchedLabel}
+      {pastTolerance === null ? "" : ` · ${days(pastTolerance)} past tolerance`}
     </span>
   );
 }
@@ -51,6 +59,7 @@ export function SubscriptionsCard({ data }: { data: SubscriptionsCardData }) {
     lapsedMonthlyCents,
     live,
     lapsed,
+    oneOffs,
     lapsedSharePct,
     neverBilledMonthlyCents,
     neverBilledSharePct,
@@ -141,6 +150,37 @@ export function SubscriptionsCard({ data }: { data: SubscriptionsCardData }) {
           </div>
         ))}
       </dl>
+
+      {/* ⚖️ Owner decision 2026-10-08 (§6A 56): a charge due ONCE is not a monthly cost. It is listed here, under
+          the live lines, with its day and its whole amount — and is in neither monthly figure nor either share.
+          🔴 The Nov 11 car-insurance balance sat in the live list as "$72.74" a month, inside the headline and
+          inside the never-billed sentence below. */}
+      {oneOffs.length > 0 && (
+        <dl className="mt-3 space-y-1.5 border-t border-line pt-3 text-sm">
+          <div className="flex items-baseline justify-between gap-3">
+            <dt className="flex items-center gap-1.5 text-xs font-medium uppercase tracking-[0.12em] text-ink-faint">
+              One-off
+              <InfoTip term="one-off">
+                A payment due one time, on the day shown, rather than every month — so it is left out of the monthly
+                figure above. The forecast still counts it in the month it falls in.
+              </InfoTip>
+            </dt>
+            <dd className="shrink-0 text-xs text-ink-faint">{oneOffs.length}</dd>
+          </div>
+          {oneOffs.map((o) => (
+            <div key={o.seriesId} className="flex items-baseline justify-between gap-3">
+              <dt className="min-w-0 text-ink-muted">
+                <span className="block truncate">{o.name}</span>
+                <Evidence line={o} lead={o.cadenceLabel} />
+              </dt>
+              {/* the whole charge, not a month's share of it — a one-off has no month to level over */}
+              <dd className="shrink-0 text-right">
+                <Money cents={o.cents} />
+              </dd>
+            </div>
+          ))}
+        </dl>
+      )}
 
       {lapsed.length > 0 && (
         <dl className="mt-3 space-y-1.5 border-t border-line pt-3 text-sm">

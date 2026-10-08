@@ -21,6 +21,7 @@ import {
   annualizedCentsOf,
   effectiveSeries,
   isSeriesActive,
+  oneChargeDays,
   projectOccurrences,
   rollForwardNextExpected,
   toProjectable,
@@ -164,6 +165,12 @@ export interface SeriesDetail {
    * annualised figure it headlines is exactly the number that end invalidates.
    */
   endsOn: string | null;
+  /**
+   * The day of its ONE charge when its whole schedule holds one (`oneChargeDays`), else null. ⚖️ Owner decision
+   * 2026-10-08 (§6A 56): then the CADENCE stat reads "Once" and the sentence "charges once on Nov 11". 🔴 The Nov 11
+   * car-insurance balance's page read "Cadence Monthly" under "charges monthly around the 11th".
+   */
+  oneChargeOn: string | null;
   annualizedCents: number | null;
   /** the next few projected occurrences (override-aware) */
   nextExpected: SeriesOccurrence[];
@@ -431,6 +438,7 @@ export function seriesDetail(
     isActive: isSeriesActive(s, today),
     evidence: seriesEvidence(s, today),
     endsOn: s.userEndsOn ?? null,
+    oneChargeOn: oneChargeDays(db, [s]).get(s.id) ?? null,
     annualizedCents: annualizedCentsOf(s, today),
     nextExpected,
     overdue,

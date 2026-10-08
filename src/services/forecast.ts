@@ -8,6 +8,7 @@ import { projectOngoingIncome, projectOngoingNetIncome } from "@/lib/income-fore
 import { trailingPace } from "@/lib/projection";
 import { formatDayShortIn } from "@/lib/format-date";
 import { formatCents } from "@/lib/money";
+import { ONE_CHARGE_WORD } from "@/lib/one-charge";
 import { seriesIsIncomeOrSpending } from "@/lib/series-kind";
 import { allocationsFor } from "@/lib/transaction-splits";
 import { accountLiquidity, cashPosition, listAccountOptions, outsidePortfolioCashAccountIds } from "./accounts";
@@ -24,6 +25,7 @@ import {
 import { latestBalances } from "./derivation";
 import { latestBridgedNetWorthCents } from "./in-flight";
 import {
+  oneChargeDays,
   projectOccurrences,
   seriesStaleness,
   toProjectable,
@@ -436,6 +438,17 @@ const CADENCE_LABEL: Record<string, string> = {
 };
 
 /**
+ * The word in a fixed line's "(monthly)" — "once" for a series whose whole schedule holds one charge.
+ *
+ * ⚖️ Owner decision 2026-10-08 (§6A 56), the reading every cadence printer asks (`oneChargeDays`). 🔴 November's math
+ * table would have read "1 × -$72.74 (monthly), next Nov 11" of the one-time Nov 11 car-insurance balance. The line
+ * itself is unchanged: its single occurrence is still counted, in the month it falls in.
+ */
+function cadenceWordOf(series: { id: string; cadence: string }, oneCharge: ReadonlyMap<string, string>): string {
+  return oneCharge.has(series.id) ? ONE_CHARGE_WORD : (CADENCE_LABEL[series.cadence] ?? series.cadence);
+}
+
+/**
  * ⚠️ `today` and `from` are different things and both are needed.
  *
  * `from` bounds the OCCURRENCE window — for the running month that is today,
@@ -458,6 +471,7 @@ function fixedComponents(
     .from(recurringSeries)
     .where(inArray(recurringSeries.status, ["detected", "confirmed"]))
     .all();
+  const oneCharge = oneChargeDays(db, live);
 
   const components: { component: ForecastComponent; firstDate: string }[] = [];
   let cashCents = 0;
@@ -575,7 +589,7 @@ function fixedComponents(
         /* ⛔ a raw ISO date mid-sentence. The tooltip on this same row says
            "since Jul 5, 2026" and the list below it "Sep 11"; this cell said
            "2026-09-11". 10 of 24 rows carried one. */
-        detail: `${occurrences.length} × ${formatCents(perOccurrence)} (${CADENCE_LABEL[series.cadence] ?? series.cadence}), next ${formatDayShortIn(occurrences[0]!.date, today)}`,
+        detail: `${occurrences.length} × ${formatCents(perOccurrence)} (${cadenceWordOf(series, oneCharge)}), next ${formatDayShortIn(occurrences[0]!.date, today)}`,
         staleness,
       },
     });
@@ -635,6 +649,7 @@ function arrearsComponents(db: AppDatabase, today: string, { outside, agentsSeri
     .filter((s) => seriesIsIncomeOrSpending(s.kind));
   const byId = new Map(live.map((s) => [s.id, s]));
   const late = arrearsThisMonth(db, new Set(byId.keys()), today);
+  const oneCharge = oneChargeDays(db, live);
   /*
    * ⚖️ A schedule of the agent's that came due and has not posted is the agent's to pay (owner decision 2026-10-02):
    * no line of his, and still money net worth will pay — EOM net worth alone, under the band the forward leg names it
@@ -658,7 +673,7 @@ function arrearsComponents(db: AppDatabase, today: string, { outside, agentsSeri
       label: s.name,
       kind: "fixed" as const,
       cents: -s.amountCents,
-      detail: `${s.occurrenceCount} × ${formatCents(perOccurrenceCents)} (${CADENCE_LABEL[series.cadence] ?? series.cadence}), came due ${formatDayShortIn(s.nextDate, today)} and has not posted`,
+      detail: `${s.occurrenceCount} × ${formatCents(perOccurrenceCents)} (${cadenceWordOf(series, oneCharge)}), came due ${formatDayShortIn(s.nextDate, today)} and has not posted`,
       staleness: seriesStaleness(series, today),
     };
   });

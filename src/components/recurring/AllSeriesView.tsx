@@ -4,7 +4,7 @@ import { Money } from "@/components/ui/Money";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { SERIES_EVIDENCE_LABEL, SERIES_EVIDENCE_NOTE, suggestionNote } from "@/lib/series-evidence";
 import type { SeriesView } from "@/services/recurring";
-import { CADENCE_LABEL, KIND_LABEL, annualizedEndNote, futureDateLabel, overdueNote } from "./labels";
+import { cadenceLabel, KIND_LABEL, annualizedEndNote, futureDateLabel, overdueNote } from "./labels";
 
 /**
  * What each series already owes this month and nothing has covered — keyed by
@@ -105,7 +105,7 @@ function SuggestionCard({ series: s }: { series: SeriesView }) {
             {s.name}
           </Link>
           <p className="mt-0.5 text-[11px] text-ink-muted">
-            Detected: {KIND_LABEL[s.kind]} · {CADENCE_LABEL[s.cadence]}
+            Detected: {KIND_LABEL[s.kind]} · {cadenceLabel(s.cadence, s.oneChargeOn)}
             {s.nextExpectedAmountCents !== null ? (
               <>
                 {" · about "}
@@ -247,7 +247,8 @@ function SeriesRow({
           {KIND_LABEL[s.kind]} · {s.matchedCount} matched
         </span>
       </th>
-      <td className="px-3 py-3 text-ink-muted">{CADENCE_LABEL[s.cadence]}</td>
+      {/* ⚖️ §6A 56 (2026-10-08): "Once" for a schedule of one charge — its day is the Next cell beside it */}
+      <td className="px-3 py-3 text-ink-muted">{cadenceLabel(s.cadence, s.oneChargeOn)}</td>
       <td className="px-3 py-3 text-right">
         {s.nextExpectedAmountCents !== null ? (
           <>

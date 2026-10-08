@@ -2,6 +2,7 @@ import Link from "next/link";
 import { Money } from "@/components/ui/Money";
 import { SurfaceCard } from "@/components/ui/SurfaceCard";
 import { formatCents } from "@/lib/money";
+import { ONE_CHARGE_WORD } from "@/lib/one-charge";
 import type { MerchantProfile } from "@/lib/merchant-profile";
 import type { MerchantIntelligence } from "@/services/merchants";
 
@@ -117,7 +118,10 @@ export function MerchantProfileCards({ intelligence }: { intelligence: MerchantI
 
         {cadence && (
           <p className="mt-3 border-t border-line pt-3 text-xs leading-relaxed text-ink-muted">
-            Billed {cadence.cadence} as{" "}
+            {/* ⚖️ §6A 56 (2026-10-08): a schedule of one charge is billed once, on its day — not at its cadence */}
+            Billed{" "}
+            {cadence.oneChargeLabel === null ? cadence.cadence : `${ONE_CHARGE_WORD}, on ${cadence.oneChargeLabel},`}{" "}
+            as{" "}
             <Link
               href={`/recurring/${cadence.seriesId}`}
               className="text-ink underline decoration-line underline-offset-2 transition-colors duration-(--duration-fast) hover:decoration-ink"
