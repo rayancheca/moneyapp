@@ -27,6 +27,7 @@ import {
   type SeriesOccurrence,
   seriesEvidence,
 } from "./recurring";
+import { mergeFilings, type MergeFiling } from "./recurring-links";
 import { seriesCategoryIds } from "./series-category";
 
 /**
@@ -70,6 +71,11 @@ export interface SeriesMergeCandidate {
   id: string;
   name: string;
   kind: SeriesKind;
+  /**
+   * ⚖️ §6A 54 (2026-10-08): what merging it in would file under this series' category — the count and path the
+   * confirmation names before he presses; null when it files nothing. The reading `mergeSeries` writes by.
+   */
+  filing: MergeFiling | null;
 }
 
 export interface SeriesDetail {
@@ -359,7 +365,7 @@ export function seriesDetail(
 
   const namedCategoryId = seriesCategoryIds(db, loadCategoryIndex(db), [s.id]).get(s.id);
 
-  const mergeCandidates: SeriesMergeCandidate[] = db
+  const liveOthers = db
     .select({ id: recurringSeries.id, name: recurringSeries.name, kind: recurringSeries.kind })
     .from(recurringSeries)
     .where(
@@ -371,6 +377,9 @@ export function seriesDetail(
     )
     .orderBy(recurringSeries.name)
     .all();
+  // one reading with the merge's own write (`mergeFilings`), so the confirmation names exactly what it files
+  const filings = mergeFilings(db, seriesId, liveOthers.map((c) => c.id));
+  const mergeCandidates: SeriesMergeCandidate[] = liveOthers.map((c) => ({ ...c, filing: filings.get(c.id) ?? null }));
 
   return {
     id: s.id,

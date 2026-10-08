@@ -20,7 +20,7 @@ import type {
   SeriesLinkedTxn,
   SeriesMergeCandidate,
 } from "@/services/recurring-detail";
-import { KIND_LABEL } from "./labels";
+import { KIND_LABEL, mergedToastTitle, mergeFilingClause } from "./labels";
 
 /** Full linked history with a per-row "not part of this series" detach (§4.2). */
 export function LinkedTransactions({
@@ -272,10 +272,10 @@ export function MergeControl({
 
   function merge(source: SeriesMergeCandidate): void {
     void run(() => mergeIntoSeriesAction({ sourceId: source.id, targetId: seriesId }), {
-      onSuccess: ({ relinked }) => {
+      onSuccess: ({ relinked, filed }) => {
         close();
         onChanged();
-        toast({ title: `${source.name} merged in · ${relinked} moved` });
+        toast({ title: mergedToastTitle(source.name, relinked, filed) });
       },
     });
   }
@@ -306,6 +306,8 @@ export function MergeControl({
             <p className="text-sm text-ink">
               Merge <span className="font-medium">{pending.name}</span> into this series? Its charges move
               here and it ends.
+              {/* ⚖️ §6A 54: what the merge files, said before the press — the count the merge itself writes by */}
+              {pending.filing ? ` ${mergeFilingClause(pending.filing)}` : null}
             </p>
             <div className="mt-3 flex justify-end gap-2">
               <button

@@ -10,6 +10,7 @@ import { duplicateCandidates } from "@/db/schema/duplicate-candidates";
 import { institutions } from "@/db/schema/institutions";
 import { merchants } from "@/db/schema/merchants";
 import { recurringSeries } from "@/db/schema/recurring";
+import { transactionSplits } from "@/db/schema/transaction-splits";
 import { transactions } from "@/db/schema/transactions";
 import { dedupeHash } from "@/lib/hash";
 import { normalizeDescription } from "@/lib/normalize";
@@ -23,11 +24,14 @@ import {
   toProjectable,
   type SeriesOverrides,
 } from "./recurring";
+import { loadCategoryIndex } from "./analytics";
 import { applyUndoPatch } from "./bulk-edit";
+import { seriesCategoryIds } from "./series-category";
 import {
   attachTransactions,
   createSeriesFromTransaction,
   detachTransaction,
+  mergeFilings,
   mergeSeries,
   undoSeriesCreation,
 } from "./recurring-links";
@@ -183,7 +187,8 @@ describe("detection respects user decisions (§4.3): a re-run changes nothing", 
     const spotify = seriesFor(spotifyId);
 
     const result = mergeSeries(bundle.db, spotify.id, netflix.id, TODAY);
-    expect(result).toEqual({ relinked: 6, targetId: netflix.id });
+    // Netflix is named by no category here, so the merge files nothing (§6A 54)
+    expect(result).toEqual({ relinked: 6, targetId: netflix.id, filed: null });
 
     const endedSpotify = bundle.db.select().from(recurringSeries).where(eq(recurringSeries.id, spotify.id)).get()!;
     expect(endedSpotify.status).toBe("ended");
@@ -1119,6 +1124,269 @@ describe("attaching files an unfiled row under the series' category (§6A 47)", 
 
       expect(txnRow(loose).categoryId).toBeNull();
       expect(txnRow(loose).needsReview).toBe(true);
+    });
+  });
+
+  /*
+   * ⚖️ Owner decision 2026-10-08 (§6A 54): MERGING a series files its merged rows that are not filed yet under the
+   * TARGET's category — the same rule as attaching (§6A 47) — and the confirmation says so before he presses. A merge
+   * has no undo; its restore point covers the filing. Every case below also holds the confirmation's preview
+   * (`mergeFilings`) to what the merge then files.
+   */
+  describe("merging files the source's unfiled rows under the target's category (§6A 54)", () => {
+    function setKind(seriesId: string, kind: "income" | "bill" | "subscription" | "transfer" | "other"): void {
+      bundle.db.update(recurringSeries).set({ kind }).where(eq(recurringSeries.id, seriesId)).run();
+    }
+    /** Merges, and holds the preview the confirmation reads to the rows the merge actually filed. */
+    function mergeMeasured(sourceId: string, targetId: string) {
+      const preview = mergeFilings(bundle.db, targetId, [sourceId]).get(sourceId) ?? null;
+      const ids = taggedIds(sourceId);
+      const before = new Map(ids.map((id) => [id, txnRow(id).categoryId]));
+      const result = mergeSeries(bundle.db, sourceId, targetId, TODAY);
+      const filedIds = ids.filter((id) => txnRow(id).categoryId !== before.get(id));
+      expect(result.filed).toEqual(preview);
+      expect(preview?.count ?? 0).toBe(filedIds.length);
+      return { result, filedIds };
+    }
+
+    test("an unfiled row of the source is filed under the target's category, stamped as his", () => {
+      const netflix = seriesFor(netflixId);
+      const spotify = seriesFor(spotifyId);
+      const streaming = categoryId("Subscriptions", "Streaming");
+      nameSeries(netflix.id, streaming);
+      const spotifyRows = taggedIds(spotify.id);
+      expect(spotifyRows.map((id) => txnRow(id).categoryId)).toEqual(spotifyRows.map(() => null));
+
+      const { result, filedIds } = mergeMeasured(spotify.id, netflix.id);
+
+      expect(result.relinked).toBe(6);
+      expect(result.filed).toEqual({ categoryId: streaming, categoryPath: "Subscriptions > Streaming", count: 6 });
+      expect(filedIds.sort()).toEqual(spotifyRows);
+      for (const id of spotifyRows) {
+        expect(txnRow(id).recurringSeriesId).toBe(netflix.id);
+        expect(txnRow(id).categoryId).toBe(streaming);
+        expect(txnRow(id).categorizationSource).toBe("user");
+        expect(txnRow(id).categorizationConfidence).toBe(1);
+      }
+    });
+
+    test("a row of the source already filed keeps its own category, source and confidence", () => {
+      const netflix = seriesFor(netflixId);
+      const spotify = seriesFor(spotifyId);
+      nameSeries(netflix.id, categoryId("Subscriptions", "Streaming"));
+      const coffee = categoryId("Food", "Coffee");
+      const [filed] = taggedIds(spotify.id) as [string];
+      file(filed, coffee, "rule", 0.8);
+
+      const { result } = mergeMeasured(spotify.id, netflix.id);
+
+      expect(result.filed?.count).toBe(5);
+      expect(txnRow(filed).categoryId).toBe(coffee);
+      expect(txnRow(filed).categorizationSource).toBe("rule");
+      expect(txnRow(filed).categorizationConfidence).toBe(0.8);
+    });
+
+    test("a row of the source on the system Uncategorized category is unfiled too", () => {
+      const netflix = seriesFor(netflixId);
+      const spotify = seriesFor(spotifyId);
+      const streaming = categoryId("Subscriptions", "Streaming");
+      nameSeries(netflix.id, streaming);
+      const [parked] = taggedIds(spotify.id) as [string];
+      file(parked, categoryId("Uncategorized"), "rule", 0.5);
+
+      const { result } = mergeMeasured(spotify.id, netflix.id);
+
+      expect(result.filed?.count).toBe(6);
+      expect(txnRow(parked).categoryId).toBe(streaming);
+    });
+
+    test("a transfer-kind target files nothing — and the merge says nothing about filing", () => {
+      const netflix = seriesFor(netflixId);
+      const spotify = seriesFor(spotifyId);
+      setKind(netflix.id, "transfer");
+      nameSeries(netflix.id, categoryId("Transfers", "Internal Transfer"));
+
+      const { result } = mergeMeasured(spotify.id, netflix.id);
+
+      expect(result.relinked).toBe(6);
+      expect(result.filed).toBeNull();
+      for (const id of taggedIds(netflix.id).filter((x) => txnRow(x).amountCents === -999)) {
+        expect(txnRow(id).categoryId).toBeNull();
+      }
+    });
+
+    test("a row against the target's sign stays unfiled; the rest are filed", () => {
+      const netflix = seriesFor(netflixId);
+      const spotify = seriesFor(spotifyId);
+      setKind(netflix.id, "subscription");
+      nameSeries(netflix.id, categoryId("Subscriptions", "Streaming"));
+      const credit = insertTxn({ postedOn: "2026-06-20", amountCents: 999, rawDescription: "SPOTIFY REFUND" });
+      bundle.db.update(transactions).set({ recurringSeriesId: spotify.id }).where(eq(transactions.id, credit)).run();
+
+      const { result } = mergeMeasured(spotify.id, netflix.id);
+
+      expect(result.relinked).toBe(7);
+      expect(result.filed?.count).toBe(6);
+      expect(txnRow(credit).recurringSeriesId).toBe(netflix.id);
+      expect(txnRow(credit).categoryId).toBeNull();
+    });
+
+    test("a split row of the source is skipped — its parts drive its category", () => {
+      const netflix = seriesFor(netflixId);
+      const spotify = seriesFor(spotifyId);
+      const streaming = categoryId("Subscriptions", "Streaming");
+      nameSeries(netflix.id, streaming);
+      const [split] = taggedIds(spotify.id) as [string];
+      const coffee = categoryId("Food", "Coffee");
+      bundle.db
+        .insert(transactionSplits)
+        .values([
+          { transactionId: split, categoryId: coffee, amountCents: -500, sortOrder: 0 },
+          { transactionId: split, categoryId: streaming, amountCents: -499, sortOrder: 1 },
+        ])
+        .run();
+
+      const { result } = mergeMeasured(spotify.id, netflix.id);
+
+      expect(result.filed?.count).toBe(5);
+      expect(txnRow(split).categoryId).toBeNull();
+    });
+
+    test("needs_review is cleared on a row the merge files — but a row in an open duplicate pair keeps it", () => {
+      const netflix = seriesFor(netflixId);
+      const spotify = seriesFor(spotifyId);
+      const streaming = categoryId("Subscriptions", "Streaming");
+      nameSeries(netflix.id, streaming);
+      const [settled, paired] = taggedIds(spotify.id) as [string, string];
+      const twin = insertTxn({ postedOn: "2026-06-05", amountCents: -999, rawDescription: "SPOTIFY P0" });
+      for (const id of [settled, paired, twin]) {
+        bundle.db.update(transactions).set({ needsReview: true }).where(eq(transactions.id, id)).run();
+      }
+      const [a, b] = [paired, twin].sort() as [string, string];
+      bundle.db
+        .insert(duplicateCandidates)
+        .values({
+          accountId: cardId,
+          transactionIdA: a,
+          transactionIdB: b,
+          pairKey: "synthetic-open-pair",
+          reason: "cross_source_same_day",
+          reasonDetail: "synthetic",
+        })
+        .run();
+
+      mergeMeasured(spotify.id, netflix.id);
+
+      expect(txnRow(settled).categoryId).toBe(streaming);
+      expect(txnRow(settled).needsReview).toBe(false);
+      expect(txnRow(paired).categoryId).toBe(streaming);
+      expect(txnRow(paired).needsReview).toBe(true);
+    });
+
+    test("the target's category is the one it has BEFORE the merge moves the source's filed rows onto it", () => {
+      const netflix = seriesFor(netflixId);
+      const spotify = seriesFor(spotifyId);
+      // no category of his own on either: each is named by its filed rows — and the source's outnumber the target's
+      const streaming = categoryId("Subscriptions", "Streaming");
+      const software = categoryId("Subscriptions", "Software");
+      for (const id of taggedIds(netflix.id)) file(id, streaming, "rule", 0.9);
+      for (const id of taggedIds(spotify.id)) file(id, software, "rule", 0.9);
+      for (const d of ["2026-06-25", "2026-06-26"]) {
+        const extra = insertTxn({ postedOn: d, amountCents: -999, rawDescription: "SPOTIFY EXTRA" });
+        file(extra, software, "rule", 0.9);
+        bundle.db.update(transactions).set({ recurringSeriesId: spotify.id }).where(eq(transactions.id, extra)).run();
+      }
+      const loose = insertTxn({ postedOn: "2026-06-27", amountCents: -999, rawDescription: "SPOTIFY LOOSE" });
+      bundle.db.update(transactions).set({ recurringSeriesId: spotify.id }).where(eq(transactions.id, loose)).run();
+
+      const { result } = mergeMeasured(spotify.id, netflix.id);
+
+      expect(result.filed).toEqual({ categoryId: streaming, categoryPath: "Subscriptions > Streaming", count: 1 });
+      expect(txnRow(loose).categoryId).toBe(streaming);
+      // the premise: read AFTER the relink, the source's rows would have named the target Software
+      expect(seriesCategoryIds(bundle.db, loadCategoryIndex(bundle.db), [netflix.id]).get(netflix.id)).toBe(software);
+    });
+
+    test("a row of the source that is not active is neither moved nor filed nor counted", () => {
+      const netflix = seriesFor(netflixId);
+      const spotify = seriesFor(spotifyId);
+      nameSeries(netflix.id, categoryId("Subscriptions", "Streaming"));
+      const excluded = insertTxn({ postedOn: "2026-06-21", amountCents: -999, rawDescription: "SPOTIFY EXCLUDED" });
+      bundle.db
+        .update(transactions)
+        .set({ recurringSeriesId: spotify.id, status: "excluded" })
+        .where(eq(transactions.id, excluded))
+        .run();
+
+      const { result } = mergeMeasured(spotify.id, netflix.id);
+
+      expect(result.relinked).toBe(6);
+      expect(result.filed?.count).toBe(6);
+      expect(txnRow(excluded).recurringSeriesId).toBe(spotify.id);
+      expect(txnRow(excluded).categoryId).toBeNull();
+    });
+
+    test("merging into a target merged onward files under the LIVE target's category", () => {
+      const netflix = seriesFor(netflixId);
+      const spotify = seriesFor(spotifyId);
+      nameSeries(spotify.id, categoryId("Subscriptions", "Software"));
+      const streaming = categoryId("Subscriptions", "Streaming");
+      nameSeries(netflix.id, streaming);
+      mergeSeries(bundle.db, spotify.id, netflix.id, TODAY);
+      const hulu = bundle.db
+        .insert(recurringSeries)
+        .values({ name: "HULU", kind: "subscription", cadence: "monthly", status: "detected" })
+        .returning({ id: recurringSeries.id })
+        .get().id;
+      const charge = insertTxn({ postedOn: "2026-06-25", amountCents: -500, rawDescription: "HULU" });
+      bundle.db.update(transactions).set({ recurringSeriesId: hulu }).where(eq(transactions.id, charge)).run();
+
+      const { result } = mergeMeasured(hulu, spotify.id);
+
+      expect(result.targetId).toBe(netflix.id);
+      expect(result.filed?.categoryId).toBe(streaming);
+      expect(txnRow(charge).categoryId).toBe(streaming);
+    });
+
+    test("a target named by no category files nothing", () => {
+      const netflix = seriesFor(netflixId);
+      const spotify = seriesFor(spotifyId);
+
+      const { result } = mergeMeasured(spotify.id, netflix.id);
+
+      expect(result.filed).toBeNull();
+      for (const id of taggedIds(netflix.id)) expect(txnRow(id).categoryId).toBeNull();
+    });
+
+    test("the merge's restore point holds the source's rows as they were — unfiled", () => {
+      const netflix = seriesFor(netflixId);
+      const spotify = seriesFor(spotifyId);
+      nameSeries(netflix.id, categoryId("Subscriptions", "Streaming"));
+      const spotifyRows = taggedIds(spotify.id);
+
+      mergeSeries(bundle.db, spotify.id, netflix.id, TODAY);
+
+      const name = fs.readdirSync(path.join(dir, "backups")).find((f) => f.endsWith("-merge-series.db"))!;
+      const before = createDatabase(path.join(dir, "backups", name));
+      const rows = before.db.select().from(transactions).all().filter((r) => spotifyRows.includes(r.id));
+      before.sqlite.close();
+      expect(rows.map((r) => [r.recurringSeriesId, r.categoryId])).toEqual(spotifyRows.map(() => [spotify.id, null]));
+    });
+
+    test("the preview counts every candidate the confirmation lists, each as its merge would file it", () => {
+      const netflix = seriesFor(netflixId);
+      const spotify = seriesFor(spotifyId);
+      nameSeries(netflix.id, categoryId("Subscriptions", "Streaming"));
+      const empty = bundle.db
+        .insert(recurringSeries)
+        .values({ name: "Gym", kind: "bill", cadence: "monthly", status: "confirmed" })
+        .returning({ id: recurringSeries.id })
+        .get().id;
+
+      const previews = mergeFilings(bundle.db, netflix.id, [spotify.id, empty]);
+
+      expect(previews.get(spotify.id)?.count).toBe(6);
+      expect(previews.has(empty)).toBe(false);
     });
   });
 });

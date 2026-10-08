@@ -29,6 +29,7 @@ import {
   mergeSeries,
   undoSeriesCreation,
   type CreateSeriesResult,
+  type MergeResult,
 } from "@/services/recurring-links";
 import type { UndoPatch } from "@/services/bulk-edit";
 import {
@@ -275,7 +276,7 @@ const mergeSchema = z.object({ sourceId: z.string().min(1), targetId: z.string()
 
 export async function mergeIntoSeriesAction(
   input: z.input<typeof mergeSchema>,
-): Promise<ActionResult<{ relinked: number; targetId: string }>> {
+): Promise<ActionResult<MergeResult>> {
   try {
     const { sourceId, targetId } = mergeSchema.parse(input);
     const result = mergeSeries(getDb(), sourceId, targetId);

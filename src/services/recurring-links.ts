@@ -1,4 +1,4 @@
-import { and, eq, inArray, isNull, lte } from "drizzle-orm";
+import { and, eq, inArray, isNull, lte, type SQL } from "drizzle-orm";
 import { withPreMutationSnapshot } from "@/db/backup";
 import type { AppDatabase } from "@/db/client";
 import type { CategoryKind } from "@/db/schema/categories";
@@ -6,7 +6,8 @@ import { recurringSeries, type Cadence, type SeriesKind } from "@/db/schema/recu
 import { transactions, type CategorizationSource } from "@/db/schema/transactions";
 import { todayIso } from "@/lib/dates";
 import { deriveAnchorDay, stepFrom, stepPlan } from "@/lib/recurring-step";
-import { loadCategoryIndex } from "./analytics";
+import { PATH_SEPARATOR } from "@/lib/section-notes";
+import { loadCategoryIndex, uncategorizedWhere, type CategoryIndex } from "./analytics";
 import { applyUndoPatch, type UndoFields, type UndoPatch } from "./bulk-edit";
 import { clearReviewIfSettled } from "./duplicate-lifecycle";
 import {
@@ -56,10 +57,51 @@ function holdsMoney(seriesKind: SeriesKind, categoryKind: CategoryKind, amountCe
   return true;
 }
 
+/** What a hand link files: the series' category and the rows not filed yet it may hold (`planFiling`). */
+interface FilingPlan {
+  readonly categoryId: string;
+  readonly rows: readonly FilingBefore[];
+}
+
+/** The series' half of the filing rule: the category it files under and the money it can hold. */
+interface FilingTarget {
+  readonly categoryId: string;
+  readonly seriesKind: SeriesKind;
+  readonly categoryKind: CategoryKind;
+}
+
+/** The series' half: null for a series named by no category, or only by the system "Uncategorized". */
+function filingTargetOf(db: AppDatabase, idx: CategoryIndex, seriesId: string): FilingTarget | null {
+  const named = seriesCategoryIds(db, idx, [seriesId]).get(seriesId);
+  if (named === undefined || idx.isUncategorized(named)) return null;
+  const series = db
+    .select({ kind: recurringSeries.kind })
+    .from(recurringSeries)
+    .where(eq(recurringSeries.id, seriesId))
+    .get();
+  if (series === undefined) return null;
+  return { categoryId: named, seriesKind: series.kind, categoryKind: idx.topLevelOf(named).kind };
+}
+
+/** The rows' half: of `rows`, those not filed yet that `target` can hold — never a split row. */
+function rowsToFile(
+  db: AppDatabase,
+  idx: CategoryIndex,
+  target: FilingTarget,
+  rows: readonly FilingBefore[],
+): FilingBefore[] {
+  const unfiled = rows.filter((r) => idx.isUncategorized(r.categoryId));
+  if (unfiled.length === 0) return [];
+  const split = splitTxnIdsIn(db, unfiled.map((r) => r.id));
+  return unfiled.filter((r) => !split.has(r.id) && holdsMoney(target.seriesKind, target.categoryKind, r.amountCents));
+}
+
 /**
  * Owner decision 2026-10-07 (§6A 47): linking a row to a series BY HAND files a row not filed yet under that series'
- * category; a row already filed keeps its own. Writes the filing and returns each filed row's prior columns, keyed by
- * id, for the caller's undo. Call it BEFORE the link is written: the series' category is the one it has when he acts.
+ * category; a row already filed keeps its own. ⚖️ 2026-10-08 (§6A 54): merging a series in is the same act for every
+ * row it moves (`mergeFilings`). Returns what linking `rows` to `seriesId` would file, or null for nothing; it writes
+ * nothing (`writeFiling` does). Read it BEFORE the link is written: the series' category is the one it has when he
+ * acts.
  *
  * - The series' category is `seriesCategoryIds` — the ONE answer every surface names a series by (§6A 39): his
  *   `user_category_id` first, else the category its filed rows sit in. A series named by none, or only by the system
@@ -67,10 +109,6 @@ function holdsMoney(seriesKind: SeriesKind, categoryKind: CategoryKind, amountCe
  * - "Not filed" is `CategoryIndex.isUncategorized`: NULL or the system "Uncategorized" — one set (2026-09-03).
  * - Only money the series can hold (`holdsMoney`): never a transfer, never money out onto income, never money in
  *   onto a bill. Such a row is linked but stays unfiled.
- * - Written as every hand categorization writes it (`bulkApply`, `setTransactionCategory`): source 'user',
- *   confidence 1, `needs_review` cleared — attaching is his act, and filing follows the category he set. But the
- *   flag is cleared through `clearReviewIfSettled`, so a row still in an open duplicate pair keeps it: filing a row
- *   answers no duplicate question. The undo restores the flag with the rest.
  * - A split row is skipped: its category is driven by its parts (as `bulkApply` skips it).
  *
  * 🔴 Why: his first lease payment and the $1,000.00 insurance prepayment were attached by hand to "Car lease" and
@@ -79,34 +117,31 @@ function holdsMoney(seriesKind: SeriesKind, categoryKind: CategoryKind, amountCe
  *
  * ⛔ Only a link that is his: detection's links (absorption, first posting, a created series' members) file nothing.
  */
-function fileUnfiledUnderSeries(
-  tx: AppDatabase,
-  seriesId: string,
-  rows: readonly FilingBefore[],
-): Map<string, UndoFields> {
-  const filedBefore = new Map<string, UndoFields>();
-  const idx = loadCategoryIndex(tx);
-  const unfiled = rows.filter((r) => idx.isUncategorized(r.categoryId));
-  if (unfiled.length === 0) return filedBefore;
-  const named = seriesCategoryIds(tx, idx, [seriesId]).get(seriesId);
-  if (named === undefined || idx.isUncategorized(named)) return filedBefore;
-  const series = tx
-    .select({ kind: recurringSeries.kind })
-    .from(recurringSeries)
-    .where(eq(recurringSeries.id, seriesId))
-    .get();
-  if (series === undefined) return filedBefore;
-  const categoryKind = idx.topLevelOf(named).kind;
-  const split = splitTxnIdsIn(tx, unfiled.map((r) => r.id));
-  const toFile = unfiled.filter((r) => !split.has(r.id) && holdsMoney(series.kind, categoryKind, r.amountCents));
-  if (toFile.length === 0) return filedBefore;
+function planFiling(db: AppDatabase, seriesId: string, rows: readonly FilingBefore[]): FilingPlan | null {
+  const idx = loadCategoryIndex(db);
+  if (!rows.some((r) => idx.isUncategorized(r.categoryId))) return null;
+  const target = filingTargetOf(db, idx, seriesId);
+  if (target === null) return null;
+  const toFile = rowsToFile(db, idx, target, rows);
+  return toFile.length === 0 ? null : { categoryId: target.categoryId, rows: toFile };
+}
 
+/**
+ * Writes a filing plan as every hand categorization writes it (`bulkApply`, `setTransactionCategory`): source 'user',
+ * confidence 1, `needs_review` cleared — linking is his act, and filing follows the category he set. But the flag is
+ * cleared through `clearReviewIfSettled`, so a row still in an open duplicate pair keeps it: filing a row answers no
+ * duplicate question. Returns each filed row's prior columns, keyed by id, for an attach's undo (which restores the
+ * flag with the rest); a merge has no undo — its restore point holds them.
+ */
+function writeFiling(tx: AppDatabase, plan: FilingPlan | null): Map<string, UndoFields> {
+  const filedBefore = new Map<string, UndoFields>();
+  if (plan === null) return filedBefore;
   tx.update(transactions)
-    .set({ categoryId: named, categorizationSource: "user", categorizationConfidence: 1 })
-    .where(inArray(transactions.id, toFile.map((r) => r.id)))
+    .set({ categoryId: plan.categoryId, categorizationSource: "user", categorizationConfidence: 1 })
+    .where(inArray(transactions.id, plan.rows.map((r) => r.id)))
     .run();
-  clearReviewIfSettled(tx, toFile.filter((r) => r.needsReview).map((r) => r.id));
-  for (const r of toFile) {
+  clearReviewIfSettled(tx, plan.rows.filter((r) => r.needsReview).map((r) => r.id));
+  for (const r of plan.rows) {
     filedBefore.set(r.id, {
       categoryId: r.categoryId,
       categorizationSource: r.categorizationSource,
@@ -115,6 +150,15 @@ function fileUnfiledUnderSeries(
     });
   }
   return filedBefore;
+}
+
+/** Files `rows` as linking them to `seriesId` by hand files them (`planFiling`); returns their prior columns. */
+function fileUnfiledUnderSeries(
+  tx: AppDatabase,
+  seriesId: string,
+  rows: readonly FilingBefore[],
+): Map<string, UndoFields> {
+  return writeFiling(tx, planFiling(tx, seriesId, rows));
 }
 
 /**
@@ -228,9 +272,94 @@ export function detachTransaction(
   return { formerSeriesId, undo };
 }
 
+/**
+ * What merging a series in files (§6A 54): the target's category — printed as every surface prints a category path —
+ * and how many of the source's rows go under it.
+ */
+export interface MergeFiling {
+  readonly categoryId: string;
+  readonly categoryPath: string;
+  readonly count: number;
+}
+
 export interface MergeResult {
   relinked: number;
   targetId: string;
+  /** the rows the merge filed under the target's category; null when it filed none */
+  filed: MergeFiling | null;
+}
+
+/** A category as every surface prints its path: "Parent > Child", a top-level bare. */
+function categoryPathOf(idx: CategoryIndex, id: string): string {
+  const node = idx.byId.get(id);
+  if (node === undefined) throw new Error(`Unknown category ${id}`);
+  const parent = node.parentId === null ? undefined : idx.byId.get(node.parentId);
+  return parent === undefined ? node.name : `${parent.name}${PATH_SEPARATOR}${node.name}`;
+}
+
+/** The rows merging `sourceIds` moves: their ACTIVE rows — the one set the merge relinks and files. */
+function movedByMerge(sourceIds: readonly string[]): SQL {
+  return and(inArray(transactions.recurringSeriesId, [...sourceIds]), eq(transactions.status, "active"))!;
+}
+
+/**
+ * Per source, what merging it into `targetId` files — absent for a source that files nothing. The target is followed
+ * to its LIVE series, as the merge links there; its category is read before any row moves (`filingTargetOf`), and each
+ * source's rows go through the attach rule's own row half (`rowsToFile`).
+ */
+function mergePlans(
+  db: AppDatabase,
+  targetId: string,
+  sourceIds: readonly string[],
+): Map<string, { plan: FilingPlan; filing: MergeFiling }> {
+  const out = new Map<string, { plan: FilingPlan; filing: MergeFiling }>();
+  if (sourceIds.length === 0) return out;
+  const mergedById = new Map(
+    db
+      .select({ id: recurringSeries.id, mergedIntoId: recurringSeries.mergedIntoId })
+      .from(recurringSeries)
+      .all()
+      .map((s) => [s.id, s.mergedIntoId]),
+  );
+  const idx = loadCategoryIndex(db);
+  const target = filingTargetOf(db, idx, resolveMergeTarget(targetId, mergedById));
+  if (target === null) return out;
+  const unfiled = db
+    .select({
+      seriesId: transactions.recurringSeriesId,
+      id: transactions.id,
+      amountCents: transactions.amountCents,
+      categoryId: transactions.categoryId,
+      categorizationSource: transactions.categorizationSource,
+      categorizationConfidence: transactions.categorizationConfidence,
+      needsReview: transactions.needsReview,
+    })
+    .from(transactions)
+    .where(and(movedByMerge(sourceIds), uncategorizedWhere(idx)))
+    .all();
+  const categoryPath = categoryPathOf(idx, target.categoryId);
+  for (const sourceId of sourceIds) {
+    const rows = rowsToFile(db, idx, target, unfiled.filter((r) => r.seriesId === sourceId));
+    if (rows.length === 0) continue;
+    out.set(sourceId, {
+      plan: { categoryId: target.categoryId, rows },
+      filing: { categoryId: target.categoryId, categoryPath, count: rows.length },
+    });
+  }
+  return out;
+}
+
+/**
+ * ⚖️ Owner decision 2026-10-08 (§6A 54): what merging each of `sourceIds` into `targetId` would file — the reading the
+ * merge confirmation names BEFORE he presses ("N not filed yet will be filed under …"), and the one `mergeSeries`
+ * writes by, so the sentence cannot promise a count the merge does not file. Absent for a source that files nothing.
+ */
+export function mergeFilings(
+  db: AppDatabase,
+  targetId: string,
+  sourceIds: readonly string[],
+): Map<string, MergeFiling> {
+  return new Map([...mergePlans(db, targetId, sourceIds)].map(([id, p]) => [id, p.filing]));
 }
 
 /**
@@ -238,6 +367,10 @@ export interface MergeResult {
  * the (live) target as user-owned links, the source becomes `ended` with
  * mergedIntoId=target, and the target's stats re-derive over the union. Detection
  * later forward-maps the source's identity to the target and never resurrects it.
+ *
+ * ⚖️ 2026-10-08 (§6A 54): a merge is his link for every row it moves, so a row not filed yet is filed under the
+ * TARGET's category as attaching files it (`mergeFilings`, read before the relink). There is no undo button for a
+ * merge; the restore point below holds every row as it was, filing included.
  */
 export function mergeSeries(
   db: AppDatabase,
@@ -249,6 +382,7 @@ export function mergeSeries(
   const ctx = loadRecomputeCtx(db);
   let relinked = 0;
   let finalTarget = targetId;
+  let filed: MergeFiling | null = null;
   // A merge has no inverse: the source ends, its mergedIntoId is permanent, and
   // detection forward-maps its identity so it can never be resurrected. Rows
   // rejected inside the transaction leave a harmless spare restore point.
@@ -283,10 +417,15 @@ export function mergeSeries(
         throw new Error("Cannot merge into an inactive series");
       }
 
+      // filed against the target's category BEFORE the relink moves the source's filed rows onto it
+      const filing = mergePlans(tx, finalTarget, [sourceId]).get(sourceId);
+      writeFiling(tx, filing?.plan ?? null);
+      filed = filing?.filing ?? null;
+
       const res = tx
         .update(transactions)
         .set({ recurringSeriesId: finalTarget, seriesLinkSource: "user" })
-        .where(and(eq(transactions.recurringSeriesId, sourceId), eq(transactions.status, "active")))
+        .where(movedByMerge([sourceId]))
         .run();
       relinked = res.changes;
 
@@ -297,7 +436,7 @@ export function mergeSeries(
       recomputeSeriesStats(tx, finalTarget, today, ctx);
     });
   });
-  return { relinked, targetId: finalTarget };
+  return { relinked, targetId: finalTarget, filed };
 }
 
 export interface CreateSeriesResult {

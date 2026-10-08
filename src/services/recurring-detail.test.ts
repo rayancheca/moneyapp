@@ -22,7 +22,7 @@ import {
   seriesDetail,
   setSeriesOverrides,
 } from "./recurring-detail";
-import { attachTransactions } from "./recurring-links";
+import { attachTransactions, mergeFilings, mergeSeries } from "./recurring-links";
 
 const TODAY = "2026-07-08";
 const MONTHS = ["2026-01", "2026-02", "2026-03", "2026-04", "2026-05", "2026-06"] as const;
@@ -266,6 +266,41 @@ describe("seriesDetail", () => {
     expect(d.userCadence).toBe("weekly");
     expect(d.detectedCadence).toBe("monthly"); // detection column untouched
     expect(d.mergeCandidates.every((c) => c.id !== id)).toBe(true);
+  });
+
+  /*
+   * ⚖️ Owner decision 2026-10-08 (§6A 54): the merge confirmation names how many of the candidate's rows are not filed
+   * yet and the category they will be filed under — BEFORE he presses, from the same reading the merge writes by.
+   */
+  test("each merge candidate carries what merging it would file — and the merge files exactly that", () => {
+    const id = netflix().id;
+    const series = (name: string) =>
+      bundle.db
+        .insert(recurringSeries)
+        .values({ name, kind: "subscription", cadence: "monthly", status: "detected" })
+        .returning({ id: recurringSeries.id })
+        .get().id;
+    const hulu = series("HULU");
+    for (const m of ["2026-04", "2026-05", "2026-06"]) {
+      insertTxn({ postedOn: `${m}-20`, amountCents: -799, rawDescription: "HULU", recurringSeriesId: hulu });
+    }
+    const filedAlready = series("DISNEY");
+    insertTxn({
+      postedOn: "2026-06-21",
+      amountCents: -1399,
+      rawDescription: "DISNEY PLUS",
+      categoryId: subsCatId,
+      recurringSeriesId: filedAlready,
+    });
+
+    const candidates = seriesDetail(bundle.db, id, TODAY).mergeCandidates;
+    const huluFiling = candidates.find((c) => c.id === hulu)!.filing;
+    expect(huluFiling).toEqual({ categoryId: subsCatId, categoryPath: "Subscriptions", count: 3 });
+    expect(huluFiling).toEqual(mergeFilings(bundle.db, id, [hulu]).get(hulu));
+    // nothing to file → no filing, and the confirmation reads as it always has
+    expect(candidates.find((c) => c.id === filedAlready)!.filing).toBeNull();
+
+    expect(mergeSeries(bundle.db, hulu, id, TODAY).filed).toEqual(huluFiling);
   });
 
   /*

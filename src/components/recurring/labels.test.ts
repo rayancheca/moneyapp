@@ -19,6 +19,8 @@ import {
   postedSpreadReading,
   seriesVerb,
   futureDateLabel,
+  mergedToastTitle,
+  mergeFilingClause,
   unsettledReasonWord,
   upcomingEvidenceWord,
 } from "./labels";
@@ -564,5 +566,32 @@ describe("annualizedCaveat — a year is qualified only when the series stops in
       "the twelve months from today — this one stops on Sep 11, 2026, inside them",
     );
     expect(annualizedCaveat("2026-09-10", TODAY)).toContain("no longer bills");
+  });
+});
+
+/*
+ * ⚖️ Owner decision 2026-10-08 (§6A 54): a merge files the source's rows not filed yet under the target's category, and
+ * the confirmation says so before he presses — a merge has no undo button. Nothing to file → the sentence he has
+ * always read, unchanged.
+ */
+describe("merge sentences (§6A 54)", () => {
+  const filing = { categoryId: "c1", categoryPath: "Car > Lease", count: 2 };
+
+  test("the confirmation names the exact count and the category path", () => {
+    expect(mergeFilingClause(filing)).toBe("2 not filed yet will be filed under Car > Lease.");
+    expect(mergeFilingClause({ ...filing, count: 1, categoryPath: "Rent" })).toBe(
+      "1 not filed yet will be filed under Rent.",
+    );
+  });
+
+  test("with nothing to file the confirmation adds nothing", () => {
+    expect(mergeFilingClause(null)).toBeNull();
+  });
+
+  test("the toast adds the filing in the same voice — and reads as before when nothing was filed", () => {
+    expect(mergedToastTitle("Car lease 2", 3, filing)).toBe(
+      "Car lease 2 merged in · 3 moved · 2 filed under Car > Lease",
+    );
+    expect(mergedToastTitle("Car lease 2", 3, null)).toBe("Car lease 2 merged in · 3 moved");
   });
 });

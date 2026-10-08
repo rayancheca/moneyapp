@@ -9,6 +9,7 @@ import { SERIES_EVIDENCE_LABEL } from "@/lib/series-evidence";
 import type { Cadence, SeriesKind, SeriesStatus } from "@/db/schema/recurring";
 import type { ForecastComponent } from "@/services/forecast";
 import type { SeriesOccurrence, SeriesStaleness } from "@/services/recurring";
+import type { MergeFiling } from "@/services/recurring-links";
 
 export const CADENCE_LABEL: Record<Cadence, string> = {
   weekly: "Weekly",
@@ -553,4 +554,19 @@ export function annualizedEndNote(endsOn: string | null, today: string): string 
  */
 export function perPaydayWord(p: PerPayday): string {
   return `${p.paydays} paydays at ${formatCents(p.cents)} each`;
+}
+
+/**
+ * ⚖️ Owner decision 2026-10-08 (§6A 54): the merge confirmation's last sentence — how many of the source's rows are not
+ * filed yet and the category the merge files them under, said BEFORE he presses (a merge has no undo button). Null
+ * when the merge files nothing: the confirmation then reads as it always has.
+ */
+export function mergeFilingClause(filing: MergeFiling | null): string | null {
+  return filing === null ? null : `${filing.count} not filed yet will be filed under ${filing.categoryPath}.`;
+}
+
+/** The merge's toast — what moved, and what the merge filed (§6A 54) in the same voice. */
+export function mergedToastTitle(name: string, relinked: number, filing: MergeFiling | null): string {
+  const moved = `${name} merged in · ${relinked} moved`;
+  return filing === null ? moved : `${moved} · ${filing.count} filed under ${filing.categoryPath}`;
 }
