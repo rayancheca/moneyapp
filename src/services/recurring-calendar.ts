@@ -29,7 +29,7 @@ import { outsidePortfolioCashAccountIds } from "./accounts";
 import { isAgentsSeries, loadCategoryIndex } from "./analytics";
 import { carrierPaymentsBySeries, paymentFor, withBillingCarriers } from "./billing-carriers";
 import { silenceMeasuredThroughBySeries } from "./cash-earnings";
-import { frontierForSeries, seriesAccountIds, silenceObservedThrough } from "./observation-frontier";
+import { dueDayReadings } from "./observation-frontier";
 import {
   paydayProjectable,
   paydayReadingsBySeries,
@@ -53,7 +53,8 @@ import { seriesCategoryIds } from "./series-category";
  *   - paid_different  amber ! — a tagged charge posted, amount drifted (a pay
  *                               deposit: what it paid per payday, `lib/per-payday`)
  *   - upcoming        blue •  — an expected occurrence on/after today, unposted
- *   - missed          red ✕   — expected before today, unposted, day IS imported
+ *   - missed          red ✕   — expected before today, unposted, day AND its grace
+ *                               imported (`dueDayIsRead`, ⚖️ §6A 60)
  *   - unsettled       grey ?  — expected before today, unposted, and the ledger
  *                               cannot yet say (see `occurrence-verdict`)
  *
@@ -295,7 +296,7 @@ export interface RecurringCalendarMonth {
   postedNetCents: number;
   /** net-worth-signed sum of future (upcoming) expected charges, transfers' left out (`flowEntryOf`) */
   upcomingNetCents: number;
-  /** count of missed expected occurrences — days the ledger HAS been shown */
+  /** count of missed expected occurrences — days the ledger HAS been shown, with their grace (`dueDayIsRead`) */
   missedCount: number;
   /** count of past occurrences the ledger cannot yet speak to */
   unsettledCount: number;
@@ -765,10 +766,10 @@ export function recurringCalendar(
   // late and lapsed only on days the ledger has checked (`seriesEvidence`, §6A 57) — the gate and a future entry's words
   const checkedThrough = silenceMeasuredThroughBySeries(db, today);
   const needsFrontier = compareDates(monthStart, today) < 0;
-  // …and a past bill missed only on days read, an account no statement is coming for read through today — the
-  // chip's rule (`silenceObservedThrough`), so a bill filed late there is never "not imported yet" here
-  const frontier = needsFrontier ? silenceObservedThrough(db, today) : null;
-  const accountsBySeries = needsFrontier ? seriesAccountIds(db) : null;
+  // …and a past bill missed only once its day AND its grace are read (`dueDayIsRead`, ⚖️ his decision 60, 2026-10-08),
+  // an account no statement is coming for read through today — the chip's rule (`silenceObservedThrough`), so a bill
+  // filed late there is never "not imported yet" here
+  const readingOf = needsFrontier ? dueDayReadings(db, today) : null;
   // what pays each series billed inside another: its carrier's payments (§6A 59) — nothing is asked without a link
   const carried = carrierPaymentsBySeries(db, forecastRows, monthStart, monthEnd);
 
@@ -895,7 +896,8 @@ export function recurringCalendar(
         : settledVerdict(
             s.kind,
             o.date,
-            frontier ? frontierForSeries(frontier, accountsBySeries?.get(s.id)) : null,
+            // ⚖️ the arrears' reading of the same day (`dueDayReadings`): a ✕ exactly where they say "not posted"
+            readingOf ? readingOf(s.id) : { observedThrough: null, graceDays: s.toleranceDays },
             // ⚖️ a day billed inside another's payment is the carrier's day, measured by the carrier's charges — never
             // "missed" alone beside a rent whose own date is too thinly charged to grade (§6A 59)
             scheduleIsProven(postingCounts.get(s.billedWith?.id ?? s.id) ?? 0),

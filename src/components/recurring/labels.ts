@@ -445,9 +445,14 @@ export function upcomingEvidenceWord(e: {
  * from one posting (FPL, wrong by thirteen days) and a series that cannot absorb
  * its own next charge (Breezeline, two). Neither says the date is unknown. The
  * owner's decision, 2026-09-14: keep the check, fix the word.
+ *
+ * 🔴 `not_imported` read "not imported yet" — false, since a due day is read only with its grace (`dueDayIsRead`), of
+ * a day an import HAS reached short of it: the e2e fixture's Meal Kit, due Jul 5 on a card imported through Jul 5.
+ * ⚖️ His decision 60 (2026-10-08): until then "no import has covered it yet" — the runway's unread words
+ * (`NO_IMPORT_YET`), shared, so the calendar's "?" and every arrears surface say one thing of one due day.
  */
 const UNSETTLED_REASON_WORD: Record<UnsettledReason, string> = {
-  not_imported: "not imported yet",
+  not_imported: NO_IMPORT_YET,
   unbanked: "not banked yet",
   schedule_unproven: "too few charges to grade yet",
 };
@@ -536,42 +541,50 @@ export function overdueNote(
  * a second one: "not posted" and the warning only for what the ledger has read; ⚖️ the rest is quiet — staleness
  * between uploads is normal, never a warning (his words 2026-08-05).
  *
- * 🔴 …AND THE READ BODY VOUCHED FOR DAYS NO IMPORT HAD REACHED. A due day counts as read once the imports reach the day
- * ITSELF (`arrearsThisMonth`, the calendar's rule), while a posting up to `toleranceDays` after it still pays it — so
- * with the account imported through the due day, "with no posting within 3 days of it" was a claim about the three
- * days after, unread (review of 2e6c74b, 2026-10-08; the e2e fixture's Meal Kit, due Jul 5 on a card imported through
- * Jul 5, said it of Jul 6–8). ⛔ The body claims what the rule checked: the imports reach its day, and hold no posting
- * within the tolerance. Whether "read" should wait for the tolerance is his call (asked 2026-10-08).
+ * 🔴 …AND THE READ BODY VOUCHED FOR DAYS NO IMPORT HAD REACHED. A due day counted as read once the imports reached the
+ * day ITSELF, while a posting up to `toleranceDays` after it still pays it — so with the account imported through the
+ * due day, "with no posting within 3 days of it" was a claim about the three days after, unread (review of 2e6c74b,
+ * 2026-10-08; the e2e fixture's Meal Kit, due Jul 5 on a card imported through Jul 5, said it of Jul 6–8).
+ *
+ * ⚖️ His decision 60 (2026-10-08): a due day is read once the imports reach it PLUS its grace (`dueDayIsRead`), so the
+ * read body says what the rule checked — the imports reach `graceDays` past it and hold no posting within them — and
+ * the unread body, which now includes a day the imports reached short of its grace, says how far they must reach.
+ * `graceDays` is the grace the read half waited for (`ArrearsSeries.graceDays`).
  *
  * The forecast and this month's budget count all of it whichever way it reads — both say so.
  */
 export function alreadyDueWords(
   reading: ArrearsReading,
-  toleranceDays: number,
+  graceDays: number,
 ): { heading: string; body: string; warning: boolean } {
   const split = arrearsSplit(reading);
-  const within = `within ${toleranceDays} ${toleranceDays === 1 ? "day" : "days"} of it`;
+  const days = (n: number) => `${n} ${n === 1 ? "day" : "days"}`;
+  const within = graceDays === 0 ? "on it" : `within ${days(graceDays)} of it`;
+  const past = graceDays === 0 ? "its day" : `${days(graceDays)} past it`;
   const counted = "The forecast counts it, and so does this month's budget.";
   const warning = arrearsAlarms(reading);
   if (split.kind === "read") {
     return {
       heading: "Already due, and not posted",
-      body: `Inside this calendar month, and the imports, which reach its day, hold no posting ${within}. ${counted}`,
+      body: `Inside this calendar month, and the imports, which reach ${past}, hold no posting ${within}. ${counted}`,
       warning,
     };
   }
   if (split.kind === "unread") {
     return {
       heading: `Already due — ${NO_IMPORT_YET}`,
-      body: `Inside this calendar month, on a day no import has reached yet — it may well have posted. ${counted}`,
+      body:
+        `Inside this calendar month, and no import reaches ${past} yet — the days a payment has to post — so it may ` +
+        `well have posted. ${counted}`,
       warning,
     };
   }
+  const pastADueDay = graceDays === 0 ? "a due day" : `${days(graceDays)} past a due day`;
   return {
     heading: `Already due: ${arrearsClause(reading, "not posted")}`,
     body:
-      `Inside this calendar month. Where the imports reach, they hold no posting ${within}; the rest falls on ` +
-      "days no import has reached yet. The forecast counts all of it, and so does this month's budget.",
+      `Inside this calendar month. Where the imports reach ${pastADueDay}, they hold no posting ${within}; for the ` +
+      "rest, no import reaches that far yet. The forecast counts all of it, and so does this month's budget.",
     warning,
   };
 }

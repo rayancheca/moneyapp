@@ -14,15 +14,14 @@ import { alreadyDueWords, longDate } from "./labels";
  * 🔴 …AND THEN IT SAID "not posted" OF A DAY NO IMPORT HAD REACHED. On a copy of his ledger 2026-10-08 this card read
  * "Already due, and not posted" in warning colour over rent's Oct 1 (Wells Fargo read through Sep 24) while the runway
  * said "no import has covered it yet" of the same money. The heading follows the runway's split — `alreadyDueWords`.
+ *
+ * ⚖️ The grace it names is the one the read half waited for (`overdue.graceDays`, his decision 60, 2026-10-08) — for a
+ * bill paid inside the rent's payment, the rent's when it is wider — never the series' own beside a rule that waited
+ * for another.
  */
-export function AlreadyDueCard({
-  overdue,
-  toleranceDays,
-}: {
-  overdue: NonNullable<SeriesDetail["overdue"]>;
-  toleranceDays: number;
-}) {
-  const words = alreadyDueWords({ owedCents: -overdue.amountCents, unreadCents: overdue.unreadCents }, toleranceDays);
+export function AlreadyDueCard({ overdue }: { overdue: NonNullable<SeriesDetail["overdue"]> }) {
+  const reading = { owedCents: -overdue.amountCents, unreadCents: overdue.unreadCents };
+  const words = alreadyDueWords(reading, overdue.graceDays);
   return (
     <SurfaceCard>
       <h2 className={words.warning ? "mb-1 text-sm font-medium text-warning" : "mb-1 text-sm font-medium"}>

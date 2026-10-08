@@ -3,10 +3,11 @@ import type { AppDatabase } from "@/db/client";
 import { recurringSeries } from "@/db/schema/recurring";
 import { transactions } from "@/db/schema/transactions";
 import { addDays, compareDates, periodBounds } from "@/lib/dates";
+import { lastDueDayRead, type DueDayReading } from "@/lib/occurrence-verdict";
 import { sharedFrontier, type UnbankedFrontier } from "@/lib/unbanked-income";
 import { carrierPaymentsBySeries, paymentFor, withBillingCarriers, type Payment } from "./billing-carriers";
 import { checkedThroughBySeries, silenceMeasuredThroughBySeries } from "./cash-earnings";
-import { frontierForSeries, seriesAccountIds, silenceObservedThrough } from "./observation-frontier";
+import { dueDayReadings } from "./observation-frontier";
 import { paydayProjectable, paydaySettlementsBySeries } from "./payday-settlement";
 import { hasStoppedForecasting, projectOccurrences, toProjectable } from "./recurring";
 
@@ -184,6 +185,12 @@ export interface ArrearsSeries extends BudgetTailSeries {
    * no surface may call "not posted" (`lib/arrears-reading`).
    */
   unreadCents: number;
+  /**
+   * The days after a due day a payment may still post on that its read half waited for — the series' `toleranceDays`,
+   * widened to its carrier's for one billed inside another's payment (`dueDayReadings`, ⚖️ §6A 60). What the bill's
+   * page says the imports reach past it (`alreadyDueWords`).
+   */
+  graceDays: number;
 }
 
 export interface Arrears {
@@ -232,10 +239,17 @@ export function arrearsInWindow(
   today: string,
 ): Arrears {
   const late = overdueForSeries(db, seriesIds, periodStart, through, today);
-  const readById = arrearsReadCents(db, late, periodStart, through, today);
+  if (late.series.length === 0) return { totalCents: late.totalCents, series: [] };
+  // ⛔ one reading of every late series' due days: the split below, and the grace each card says it waited for
+  const readingOf = dueDayReadings(db, today);
+  const readById = arrearsReadCents(db, late, readingOf, periodStart, through, today);
   return {
     totalCents: late.totalCents,
-    series: late.series.map((s) => ({ ...s, unreadCents: s.amountCents - (readById.get(s.id) ?? 0) })),
+    series: late.series.map((s) => ({
+      ...s,
+      unreadCents: s.amountCents - (readById.get(s.id) ?? 0),
+      graceDays: readingOf(s.id).graceDays,
+    })),
   };
 }
 
@@ -246,11 +260,12 @@ export function arrearsInWindow(
  *
  * 🔴 The runway said "never posted" of all $2,296.20 on 2026-10-07 while October was
  * imported for none of those accounts. ⛔ NO NEW RULE: "has the ledger read this
- * bill's day" is the recurring calendar's — `frontierForSeries` over
- * `silenceObservedThrough` and `seriesAccountIds`, the input `settledVerdict`
- * grades `missed` against `not_imported` with — and "is this payment late" is
- * still `overdueForSeries`, asked again only up to that day. A series with no
- * account the ledger knows reads nothing: the calendar's `null`, and the
+ * bill's day" is the recurring calendar's — `dueDayIsRead` over `dueDayReadings`
+ * (`frontierForSeries` over `silenceObservedThrough` and `seriesAccountIds`, and
+ * the series' grace), the predicate `settledVerdict` grades `missed` against
+ * `not_imported` with — and "is this payment late" is still `overdueForSeries`,
+ * asked again only up to the last due day read (`lastDueDayRead`). A series with
+ * no account the ledger knows reads nothing: the calendar's `null`, and the
  * cautious answer.
  *
  * ⛔ NOT pay's "where it lands now" (`landingAccountsBySeries`, 2026-10-07). "Never posted" is a NEGATIVE claim, so
@@ -264,12 +279,12 @@ export function arrearsInWindow(
  * ⚖️ A series billed inside another's payment is read on its carrier's accounts too (`seriesAccountIds`, §6A 59), so
  * its Oct 1 is "not posted" exactly when the rent's is and quiet exactly when the rent's is — never one of each.
  *
- * ⚠️ A due day is read once its accounts are imported through the day ITSELF — the calendar's boundary
- * (`settledVerdict`'s `occurrenceDate <= observedThrough`) — not through the day plus the `toleranceDays` a covering
- * posting may still land within (`overdueForSeries`). So "read" vouches for the due day and before, never the days
- * after it, and no surface may claim more (`alreadyDueWords`, review of 2e6c74b 2026-10-08). Whether it should wait
- * for the tolerance — here and in the calendar's ✕ together — is his call, asked 2026-10-08. Pinned by
- * recurring-detail.test.ts ("imported through, and no further").
+ * ⚖️ A due day is read once its accounts are imported through the day PLUS its grace — the `toleranceDays` a covering
+ * posting may still land within (`overdueForSeries`, `paymentFor`) — his decision 60 (2026-10-08), here and in the
+ * calendar's ✕ together (`dueDayIsRead`). 🔴 It was read on the day ITSELF, so "not posted" vouched for days after it no
+ * import had reached: the e2e fixture's Meal Kit (due Jul 5, its card imported through Jul 5) was "never posted" on the
+ * runway while a payment on Jul 6–8 would still have paid it. Pinned at the boundary by not-posted-after-grace.test.ts
+ * (imported through due + grace − 1: quiet; through due + grace: not posted) on every surface.
  *
  * ⚖️ …and an account no statement will come for — archived, or a cash wallet — is read through today, the calendar's
  * frontier for the same reason (`silenceObservedThrough`): its bills' silence is measured there (2026-10-08). 🔴 Read
@@ -284,19 +299,16 @@ export function arrearsInWindow(
 function arrearsReadCents(
   db: AppDatabase,
   late: BudgetTail,
+  readingOf: (seriesId: string) => DueDayReading,
   periodStart: string,
   through: string,
   today: string,
 ): ReadonlyMap<string, number> {
   const read = new Map<string, number>();
-  if (late.series.length === 0) return read;
-
-  const frontier = silenceObservedThrough(db, today);
-  const accountsBySeries = seriesAccountIds(db);
-  // series read only part-way through the arrears window, grouped by the day they are read to
+  // series read only part-way through the arrears window, grouped by the last due day they are read to
   const partly = new Map<string, Set<string>>();
   for (const s of late.series) {
-    const readTo = frontierForSeries(frontier, accountsBySeries.get(s.id));
+    const readTo = lastDueDayRead(readingOf(s.id));
     if (readTo === null || compareDates(readTo, s.nextDate) < 0) continue;
     if (compareDates(readTo, through) >= 0) {
       read.set(s.id, s.amountCents);

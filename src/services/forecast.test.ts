@@ -396,8 +396,11 @@ describe("forecastCurrentMonth", () => {
    * 🔴 "1 × -$2,109.00 (monthly), came due Oct 1 and has not posted" in /recurring's math table on a copy of his
    * ledger 2026-10-08, of a day no import had reached — the runway beside it said "no import has covered it yet". The
    * runway's split, carried by `arrearsThisMonth`: "has not posted" only of what the ledger has read.
+   *
+   * ⚖️ …read through the due day AND its grace (his decision 60, 2026-10-08, `dueDayIsRead`): a payment up to 3 days
+   * after Jul 1 still pays it, so an import that reaches Jul 3 vouches for nothing.
    */
-  test("a late bill says 'has not posted' only of a day its account has been imported past", () => {
+  test("a late bill says 'has not posted' only once its account is imported past its day and its grace", () => {
     insertSeries({
       name: "Rent",
       kind: "bill",
@@ -408,10 +411,12 @@ describe("forecastCurrentMonth", () => {
       status: "confirmed",
       accountId: checkingId,
     });
+    const rentLine = () => forecastCurrentMonth(bundle.db, TODAY).components.find((c) => c.label === "Rent")!;
     insertTxn(checkingId, "2026-07-03", -1200, { categoryName: "Groceries" });
-    const rentLine = forecastCurrentMonth(bundle.db, TODAY).components.find((c) => c.label === "Rent");
-    expect(rentLine).toMatchObject({ kind: "fixed", cents: -210900 });
-    expect(rentLine!.detail).toBe("1 × -$2,109.00 (monthly), came due Jul 1 and has not posted");
+    expect(rentLine()).toMatchObject({ kind: "fixed", cents: -210900 });
+    expect(rentLine().detail).toBe("1 × -$2,109.00 (monthly), came due Jul 1 and no import has covered it yet");
+    insertTxn(checkingId, "2026-07-04", -1200, { categoryName: "Groceries" });
+    expect(rentLine().detail).toBe("1 × -$2,109.00 (monthly), came due Jul 1 and has not posted");
   });
 
   /* ⛔ The kind filter is not enough on its own, and `fixedComponents` says why

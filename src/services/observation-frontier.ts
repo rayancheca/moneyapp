@@ -7,6 +7,7 @@ import { statementPeriods } from "@/db/schema/imports";
 import { recurringSeries } from "@/db/schema/recurring";
 import { transactions } from "@/db/schema/transactions";
 import { compareDates } from "@/lib/dates";
+import type { DueDayReading } from "@/lib/occurrence-verdict";
 import { billingCarriers } from "./billing-carriers";
 import { accountsAwaitingStatements, silenceReadThrough } from "./cash-wallet-rule";
 
@@ -432,3 +433,35 @@ export const silenceObservedThrough = cache(function silenceObservedThrough(
   }
   return { byAccount: out };
 });
+
+/**
+ * ⚖️ How far the ledger has read the days each series' bill can be paid on (`DueDayReading`) — what `dueDayIsRead`
+ * grades, his decision 60 (2026-10-08): the silence frontier of every account the series bills on, the earliest of them
+ * (`frontierForSeries` over `silenceObservedThrough` and `seriesAccountIds`, its carrier's accounts included), and its
+ * grace — the widest window a payment that pays it may post in: its own `toleranceDays`, and for a series billed inside
+ * another's payment its carrier's too, whose payments pay it by the carrier's own test (`carrierPaymentsBySeries`).
+ *
+ * ⛔ ONE READING for the calendar's ✕ (`settledVerdict`) and the arrears' read half (`arrearsReadCents`), so the
+ * accounts and the grace a due day is read by are chosen once. 🔴 Graded on its own 3 days, a utilities bill carried by
+ * a rent with 5 would say "not posted" on Oct 4 beside a rent still quiet until Oct 6 — one payment, two answers.
+ */
+export function dueDayReadings(db: AppDatabase, today: string): (seriesId: string) => DueDayReading {
+  const frontier = silenceObservedThrough(db, today);
+  const accountsBySeries = seriesAccountIds(db);
+  const carriers = billingCarriers(db);
+  const tolerance = new Map(
+    db
+      .select({ id: recurringSeries.id, toleranceDays: recurringSeries.toleranceDays })
+      .from(recurringSeries)
+      .all()
+      .map((s) => [s.id, s.toleranceDays] as const),
+  );
+  return (seriesId) => {
+    const own = tolerance.get(seriesId) ?? 0;
+    const carrierId = carriers.get(seriesId)?.id;
+    return {
+      observedThrough: frontierForSeries(frontier, accountsBySeries.get(seriesId)),
+      graceDays: carrierId === undefined ? own : Math.max(own, tolerance.get(carrierId) ?? 0),
+    };
+  };
+}

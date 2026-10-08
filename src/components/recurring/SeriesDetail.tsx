@@ -363,7 +363,7 @@ export function SeriesDetail({
         ) : null}
 
         {/* 🔴 THE BACKWARD HALF — and said only as far as the ledger has read it (`AlreadyDueCard`) */}
-        {data.overdue ? <AlreadyDueCard overdue={data.overdue} toleranceDays={data.toleranceDays} /> : null}
+        {data.overdue ? <AlreadyDueCard overdue={data.overdue} /> : null}
 
         {/* 🔴 An ENDED or DISMISSED series projected three dated future
             charges here — see `noScheduleReason`. Dropping the card silently

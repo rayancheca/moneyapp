@@ -5,7 +5,8 @@ import { formatCents } from "@/lib/money";
  * said through.
  *
  * ⛔ ONE SPLIT, EVERY SURFACE. "Not posted" is a negative claim, so it may be made only of the part of the arrears on
- * days an import has reached for the accounts the bill pays from (`arrearsReadCents`, carried by `arrearsThisMonth`).
+ * days an import has reached for the accounts the bill pays from — ⚖️ the due day AND its grace, the days a payment may
+ * still post on (his decision 60, 2026-10-08, `dueDayIsRead`) — (`arrearsReadCents`, carried by `arrearsThisMonth`).
  * The rest is "no import has covered it yet" — ⚖️ staleness between uploads is normal, never a warning (his words
  * 2026-08-05; the class approved 2026-10-07).
  *

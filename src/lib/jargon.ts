@@ -268,11 +268,14 @@ export const RECURRING_JARGON = {
    * 🔴 Since an account no statement will come for is read through today (`silenceObservedThrough`, review of
    * e00e6b8), a bill on an archived card is graded missed with no statement imported: "HAVE been imported" alone was
    * false of it. The clause names the other way a day counts as read, in the words /imports' rule is made of.
+   *
+   * ⚖️ …and "that day" is the day AND its grace, his decision 60 (2026-10-08, `dueDayIsRead`): a payment may post a few
+   * days late and still pay it, so a day imported without those is not yet known.
    */
   missed:
-    "Nothing turned up, and the statements covering that day HAVE been imported — or none ever will be, because its account is archived or a cash wallet — so the silence is an answer rather than a gap in the records.",
+    "Nothing turned up, and the statements covering that day and the few days after it a late payment could still post on HAVE been imported (or none ever will be, because its account is archived or a cash wallet), so the silence is an answer rather than a gap in the records.",
   notYetKnown:
-    "Nothing turned up, but the ledger cannot say whether it should have — the day may not be imported yet, the money may be cash you were handed and have not deposited, or this bill may not have charged enough times yet for the app to grade it. None of those is evidence that a payment failed.",
+    "Nothing turned up, but the ledger cannot say whether it should have — the day, or the few days after it a payment may still post on, may not be imported yet, the money may be cash you were handed and have not deposited, or this bill may not have charged enough times yet for the app to grade it. None of those is evidence that a payment failed.",
   upcoming: "Expected on or after today, so nothing has had the chance to happen yet.",
   scheduled:
     "You told the app this amount or this date, which makes it the firmest kind of claim here — firmer than a bill with years of history behind it.",

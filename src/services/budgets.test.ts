@@ -1502,15 +1502,22 @@ describe("budgetPaceStatuses — /budgets' arrears carry the read/unread split",
     expect(s.overdue).toEqual([expect.objectContaining({ name: "Rent", unreadCents: 228_570 })]);
   });
 
-  test("a due day the Card is imported through is read", () => {
+  /*
+   * ⚖️ Read once the Card is imported through the due day PLUS its 3 days' grace — his decision 60 (2026-10-08),
+   * `dueDayIsRead`: a payment on Jun 9, 10 or 11 still pays Jun 8's rent, so an import reaching Jun 10 vouches for
+   * none of it.
+   */
+  test("a due day is read once the Card is imported through it and its grace — not a day sooner", () => {
     housingBill({ name: "Rent", dueOn: "2026-06-08", cents: 228_570 });
-    spend("2026-06-08", -800, "Food");
+    spend("2026-06-10", -800, "Food");
+    expect(housing()).toMatchObject({ overdueCents: 228_570, overdueUnreadCents: 228_570 });
+    spend("2026-06-11", -800, "Food");
     expect(housing()).toMatchObject({ overdueCents: 228_570, overdueUnreadCents: 0 });
   });
 
   test("a weekly bill read part of the way is split by amount", () => {
     housingBill({ name: "Cleaner", dueOn: "2026-06-03", cents: 5_000, cadence: "weekly" });
-    spend("2026-06-12", -800, "Food"); // Jun 3 and Jun 10 read; Jun 17 is not
+    spend("2026-06-13", -800, "Food"); // Jun 3 and Jun 10 read, each with its 3 days' grace; Jun 17 is not
     const s = housing();
     expect(s.overdueCents).toBe(15_000);
     expect(s.overdueUnreadCents).toBe(5_000);
@@ -1535,7 +1542,7 @@ describe("budgetPaceStatuses — /budgets' arrears carry the read/unread split",
   test("a budget that opens mid-month measures the read half over its own window", () => {
     housingBill({ name: "Cleaner", dueOn: "2026-06-03", cents: 5_000, cadence: "weekly" });
     createBudget(bundle.db, { categoryId: catId("Housing"), period: "monthly", amountCents: 300_000, startsOn: "2026-06-10" });
-    spend("2026-06-12", -800, "Food"); // Jun 10 read; Jun 17 is not
+    spend("2026-06-13", -800, "Food"); // Jun 10 read, with its grace; Jun 17 is not
     expect(housing()).toMatchObject({ overdueCents: 10_000, overdueUnreadCents: 5_000 });
   });
 });

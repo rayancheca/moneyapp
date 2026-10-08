@@ -598,7 +598,14 @@ async function seedBudgets(db: AppDatabase): Promise<void> {
    *
    * Chase Freedom Unlimited is imported through 2026-07-05 (newest charge
    * 2026-07-04, statement closing 2026-07-05), so the 2026-07-05 occurrence
-   * lands exactly on the frontier and is genuinely, checkably absent.
+   * lands exactly on the frontier.
+   *
+   * ⚖️ …which since his decision 60 (2026-10-08) is NOT enough to call it
+   * missed: a due day is read only once its accounts are imported through the
+   * day PLUS its grace (`toleranceDays`, 3 here — through Jul 8), the days a
+   * payment may still post on. So at E2E_FAKE_TODAY it reads "not yet known" on
+   * the calendar and "no import has covered it yet", quietly, on /budgets, the
+   * runway and its page — and no seeded bill draws the red ✕.
    */
   const mealKitAccount = db
     .select({ id: accountsTable.id })

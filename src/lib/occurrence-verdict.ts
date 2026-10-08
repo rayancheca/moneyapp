@@ -1,5 +1,5 @@
 import type { SeriesKind } from "@/db/schema/recurring";
-import { compareDates } from "./dates";
+import { addDays, compareDates } from "./dates";
 
 /**
  * What the calendar is allowed to SAY about one expected occurrence.
@@ -180,15 +180,58 @@ export interface SettledVerdict {
 export type ScheduleProven = boolean;
 
 /**
+ * How far the ledger has read the days a series' bill can be PAID on: the last day it has been shown for every account
+ * the series bills on, and the grace a payment has to post after its due day.
+ */
+export interface DueDayReading {
+  /**
+   * The last day the ledger has been shown for the account(s) this series bills on — `null` when nothing is known at
+   * all, the most cautious input. ⚖️ An account no statement will ever come for (archived, or a cash wallet) counts as
+   * shown through today (`silenceObservedThrough`, 2026-10-08): nothing more is coming.
+   */
+  observedThrough: string | null;
+  /**
+   * The days after its due day a covering payment may still post on — the bill's `toleranceDays`, the window
+   * `paymentFor` pays an occurrence within; for a bill paid inside another's payment, the widest of its own and its
+   * carrier's (`dueDayReadings`).
+   */
+  graceDays: number;
+}
+
+/**
+ * The last DUE day the ledger has read for a series: the day its accounts are shown through, less its grace — null when
+ * nothing is read. A due day on or before it is read (`dueDayIsRead`); one after it may still be paid by a posting no
+ * import has reached.
+ */
+export function lastDueDayRead(reading: DueDayReading): string | null {
+  return reading.observedThrough === null ? null : addDays(reading.observedThrough, -reading.graceDays);
+}
+
+/**
+ * ⚖️ WHETHER A DUE DAY HAS BEEN READ — his decision 60 (2026-10-08): once every account the series bills on (its
+ * carrier's too, for one billed inside another's payment) is imported through the due day PLUS its grace, the days a
+ * payment may still post on. Until then a payment may be sitting where no import has reached, so nothing may say "not
+ * posted" of it — "no import has covered it yet", quiet.
+ *
+ * ⛔ THE ONE PREDICATE for every claim that a bill did not post: the calendar's red ✕ (`settledVerdict`), and the read
+ * half of the arrears (`arrearsReadCents`) that the bill's page, the runway, /budgets, the End dialog, the forecast's
+ * arrears line, /recurring's Next column and the category page all say their arrears through.
+ *
+ * 🔴 "Read" meant the due day ITSELF (`occurrenceDate <= observedThrough`), so it vouched for days after it no import
+ * had reached: the e2e fixture's Meal Kit, due Jul 5 on a card imported through Jul 5, drew a red ✕ "missed", "Already
+ * due, and not posted" and "$125.00 never posted" — while a payment on Jul 6, 7 or 8 would still have paid it.
+ */
+export function dueDayIsRead(dueOn: string, reading: DueDayReading): boolean {
+  const last = lastDueDayRead(reading);
+  return last !== null && compareDates(dueOn, last) <= 0;
+}
+
+/**
  * The verdict on a PAST expected occurrence that did not post.
  *
- * `observedThrough` is the last day the ledger has actually been shown for the
- * account(s) this series bills on — `null` when nothing is known at all, which
- * is the most cautious input and yields the most cautious answer. ⚖️ An account
- * no statement will ever come for (archived, or a cash wallet) counts as shown
- * through today (`silenceObservedThrough`, 2026-10-08): nothing more is coming.
- * `scheduleIsProven` says whether the expected DATE is worth holding a biller
- * to; see `ScheduleProven`.
+ * `reading` is how far the ledger has read the days this bill can be paid on — its accounts' frontier and its grace
+ * (`DueDayReading`): ⚖️ the day is graded only once both have been imported (`dueDayIsRead`, his decision 60,
+ * 2026-10-08). `scheduleIsProven` says whether the expected DATE is worth holding a biller to; see `ScheduleProven`.
  *
  * The state and its reason are returned from ONE call on purpose. `budgetVerdict`
  * established the rule after a headline and its own definition drifted apart on
@@ -199,17 +242,13 @@ export type ScheduleProven = boolean;
 export function settledVerdict(
   kind: SeriesKind,
   occurrenceDate: string,
-  observedThrough: string | null,
+  reading: DueDayReading,
   scheduleIsProven: ScheduleProven,
 ): SettledVerdict {
   if (!absenceIsEvidence(kind)) return { state: "unsettled", reason: "unbanked" };
-  // Coverage first: where the day has not been imported, nothing at all can be
-  // said, which is a stronger and more actionable answer than "we are unsure
-  // when this is due".
-  if (observedThrough === null) return { state: "unsettled", reason: "not_imported" };
-  if (compareDates(occurrenceDate, observedThrough) > 0) {
-    return { state: "unsettled", reason: "not_imported" };
-  }
+  // Coverage first: where the day — and the grace after it — has not been imported, nothing at all can be said, which
+  // is a stronger and more actionable answer than "we are unsure when this is due".
+  if (!dueDayIsRead(occurrenceDate, reading)) return { state: "unsettled", reason: "not_imported" };
   if (!scheduleIsProven) return { state: "unsettled", reason: "schedule_unproven" };
   return { state: "missed", reason: null };
 }

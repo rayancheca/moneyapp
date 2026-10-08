@@ -328,7 +328,13 @@ describe("seriesDetail", () => {
 
     const d = seriesDetail(bundle.db, id, TODAY);
     // the Card's newest row is Jun 15, so no import has reached Jul 1 — all of it unread
-    expect(d.overdue).toEqual({ date: "2026-07-01", amountCents: -1549, occurrenceCount: 1, unreadCents: 1549 });
+    expect(d.overdue).toEqual({
+      date: "2026-07-01",
+      amountCents: -1549,
+      occurrenceCount: 1,
+      unreadCents: 1549,
+      graceDays: netflix().toleranceDays,
+    });
     // and the forward list still opens after today, never restating it
     expect(d.nextExpected.every((o) => o.date >= TODAY)).toBe(true);
   });
@@ -376,21 +382,25 @@ describe("seriesDetail", () => {
         amountCents: -3000,
         occurrenceCount: 3,
         unreadCents: 1000,
+        graceDays: 1,
       });
     });
 
     /*
-     * ⚠️ THE BOUNDARY, PINNED. A due day counts as read once every account the series bills on is imported through the
-     * day ITSELF — the calendar's rule (`settledVerdict` grades `missed` on the same frontier) — not through the day
-     * plus the `toleranceDays` a covering posting may still land within. 🔴 No test held it: `<= 0` for `< 0` in
-     * `arrearsReadCents` passed 958 tests (review of 2e6c74b, 2026-10-08). Whether it should wait for the tolerance
-     * is his call (asked 2026-10-08); until then the card claims only this (`alreadyDueWords`).
+     * ⚖️ THE BOUNDARY, PINNED — his decision 60 (2026-10-08). A due day counts as read once every account the series
+     * bills on is imported through the day PLUS the `toleranceDays` a covering posting may still land within
+     * (`dueDayIsRead`) — the calendar's rule too (`settledVerdict` grades `missed` on the same reading). 🔴 It was the
+     * day ITSELF, and the card said "not posted" of a Jul 1 a payment on Jul 2–4 would still have paid. 🔴 No test held
+     * the old boundary either: `<= 0` for `< 0` in `arrearsReadCents` passed 958 tests (review of 2e6c74b).
      */
-    test("a due day the Card is imported through, and no further, is read; the day before it is not", () => {
+    test("a due day the Card is imported through, with its 3 days' grace, is read; a day short of that is not", () => {
       const id = dueJulyFirst();
-      insertTxn({ postedOn: "2026-06-30", amountCents: -800, rawDescription: "CAFE" });
-      expect(seriesDetail(bundle.db, id, TODAY).overdue).toMatchObject({ unreadCents: 1549 });
+      bundle.db.update(recurringSeries).set({ toleranceDays: 3 }).where(eq(recurringSeries.id, id)).run();
       insertTxn({ postedOn: "2026-07-01", amountCents: -800, rawDescription: "CAFE" });
+      expect(seriesDetail(bundle.db, id, TODAY).overdue).toMatchObject({ unreadCents: 1549, graceDays: 3 });
+      insertTxn({ postedOn: "2026-07-03", amountCents: -800, rawDescription: "CAFE" });
+      expect(seriesDetail(bundle.db, id, TODAY).overdue).toMatchObject({ unreadCents: 1549 });
+      insertTxn({ postedOn: "2026-07-04", amountCents: -800, rawDescription: "CAFE" });
       expect(seriesDetail(bundle.db, id, TODAY).overdue).toMatchObject({ unreadCents: 0 });
     });
 

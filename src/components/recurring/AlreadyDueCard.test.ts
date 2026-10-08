@@ -6,12 +6,15 @@ import { AlreadyDueCard } from "./AlreadyDueCard";
 const decode = (s: string): string =>
   s.replace(/&quot;/g, '"').replace(/&#x27;/g, "'").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&");
 
-function render(overdue: { date: string; amountCents: number; occurrenceCount: number; unreadCents: number }): {
+function render(
+  overdue: { date: string; amountCents: number; occurrenceCount: number; unreadCents: number },
+  graceDays = 3,
+): {
   heading: string;
   headingClass: string;
   text: string;
 } {
-  const html = decode(renderToStaticMarkup(createElement(AlreadyDueCard, { overdue, toleranceDays: 3 })));
+  const html = decode(renderToStaticMarkup(createElement(AlreadyDueCard, { overdue: { ...overdue, graceDays } })));
   const h2 = /<h2 class="([^"]*)">([\s\S]*?)<\/h2>/.exec(html);
   return {
     headingClass: h2?.[1] ?? "",
@@ -39,6 +42,15 @@ describe("AlreadyDueCard — the bill's own page follows the runway's read/unrea
     const r = render({ date: "2026-10-01", amountCents: -210900, occurrenceCount: 1, unreadCents: 0 });
     expect(r.heading).toBe("Already due, and not posted");
     expect(r.headingClass).toContain("text-warning");
+  });
+
+  /*
+   * ⚖️ §6A 60: the read half waited for the grace the arrears carry (`graceDays`) — for a bill paid inside the rent's
+   * payment, the rent's when it is wider — so the card names that grace, not the series' own `toleranceDays`.
+   */
+  test("the body names the grace the read waited for", () => {
+    const r = render({ date: "2026-10-01", amountCents: -18221, occurrenceCount: 1, unreadCents: 0 }, 5);
+    expect(r.text).toContain("which reach 5 days past it, hold no posting within 5 days of it");
   });
 
   test("a mix says both, and counts the ones behind the first", () => {

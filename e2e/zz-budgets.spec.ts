@@ -10,10 +10,14 @@ import { expect, test, type Locator, type Page } from "@playwright/test";
  * the category page — without dead-ending. The inline-edit test mutates a
  * budget amount and restores it, so sibling zz-specs see the seed unchanged.
  *
- * Food additionally carries a bill that came due and never posted (Meal Kit,
+ * Food additionally carries a bill that came due and has not posted (Meal Kit,
  * 2026-07-05), so the overdue disclosure — the past-facing sibling of the tail
- * — has a rendered path under test. Utilities is the one budget with rollover
- * ON, banking $133.00 from two closed months against $250.00/month.
+ * — has a rendered path under test. ⚖️ Its card is imported through Jul 5 but
+ * not through its 3 days' grace, so it is disclosed quietly — "no import has
+ * covered it yet" — not as "not posted" (§6A 60, 2026-10-08).
+ *
+ * Utilities is the one budget with rollover ON, banking $133.00 from two closed
+ * months against $250.00/month.
  */
 
 /** The budget row `<li>` carrying a given top-level category link. */
@@ -215,18 +219,20 @@ test("the hollow tail opens a popover of contributing series → its recurring p
   await expect(page.getByRole("navigation", { name: "Breadcrumb" })).toBeVisible();
 });
 
-test("a bill that came due and never posted is disclosed on its budget row", async ({ page }) => {
+test("a bill that came due and has not posted is disclosed on its budget row", async ({ page }) => {
   await page.goto("/budgets");
   const food = budgetRow(page, "Food");
   await expect(food).toBeVisible();
 
-  // Meal Kit was expected 2026-07-05 and never arrived. Food is `under` and
+  // Meal Kit was expected 2026-07-05 and has not arrived. Food is `under` and
   // undermeasured, so its headline is "Awaiting statements" — the overdue line
   // is the ONLY thing telling him $125.00 of this month is already committed.
-  // ⛔ "not posted", not "not imported": Meal Kit's card is imported through
-  // Jul 5, its due day, so the day has been read and nothing on it posted — the
-  // read half of the runway's split (`lib/arrears-reading`), in warning.
-  await expect(food.getByText("$125.00 expected by now and not posted")).toBeVisible();
+  // ⚖️ "no import has covered it yet", not "not posted": Meal Kit's card is
+  // imported through Jul 5, its due day, but a payment may still post through
+  // Jul 8 — its 3 days' grace — so the day is not read yet (§6A 60,
+  // 2026-10-08): the unread half of the runway's split (`lib/arrears-reading`),
+  // quiet.
+  await expect(food.getByText("$125.00 expected by now and no import has covered it yet")).toBeVisible();
   await expect(food.getByText(/Meal Kit Jul 5/)).toBeVisible();
 
   // exactly one row is overdue — Housing and Subscriptions must stay silent,
@@ -243,7 +249,7 @@ test("a bill that came due and never posted is disclosed on its budget row", asy
   // the screen reader is told the same thing the sighted reader is
   await expect(food.getByRole("progressbar")).toHaveAttribute(
     "aria-valuetext",
-    /\$125\.00 was expected by now and has not posted\.$/,
+    /\$125\.00 was expected by now and no import has covered it yet\.$/,
   );
 
   // …and it is committed money, so it lands in the projection exactly once:
