@@ -550,7 +550,15 @@ export function annualizedEndNote(endsOn: string | null, today: string): string 
  * A lump of pay, as the calendar's cell, its Day Sheet and the series page's
  * history all name it — "4 paydays at $1,141.92 each" — so the deposit's own
  * amount never stands unexplained beside a one-week expectation.
+ *
+ * ⛔ A day of several deposits is read per payday as ONE (`lib/per-payday`), and
+ * the words say whose money the figure is — "5 paydays at $1,141.92 each, with
+ * the day's other deposit" — or a $4,567.68 lump would read as five weeks' pay.
  */
 export function perPaydayWord(p: PerPayday): string {
-  return `${p.paydays} paydays at ${formatCents(p.cents)} each`;
+  const each =
+    p.paydays === 1 ? `1 payday at ${formatCents(p.cents)}` : `${p.paydays} paydays at ${formatCents(p.cents)} each`;
+  const others = (p.deposits ?? 1) - 1;
+  if (others < 1) return each;
+  return `${each}, with the day's ${others === 1 ? "other deposit" : `${others} other deposits`}`;
 }

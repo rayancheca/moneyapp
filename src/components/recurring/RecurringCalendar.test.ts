@@ -217,6 +217,9 @@ describe("RecurringCalendar — a deposit that paid another month's payday", () 
  * the Day Sheet's "Day total" summed each mark's amount: "2.3k" on a day that
  * adds nothing to September, beneath a strip and over a footer that did not
  * count it. They read what the footer reads now, mark by mark.
+ *
+ * The lump is drawn as the service has drawn it since 2026-10-07 (`lib/per-payday`): `paid`, four paydays at
+ * $1,141.92 each. Written on 10-01 it was fixtured `paid_different` — the amber "rose by $3,425.76" that fix removed.
  */
 describe("RecurringCalendar — a deposit and a payday on one day, each paid from another", () => {
   const week = { seriesId: "pay", name: "It America LLC (weekly pay)", kind: "income" as const, amountCents: 114192 };
@@ -229,7 +232,16 @@ describe("RecurringCalendar — a deposit and a payday on one day, each paid fro
     today: "2026-10-01",
     entriesByDay: {
       "2026-09-03": [entry({ ...week, state: "paid", settledByDepositsOn: ["2026-09-23"], settledCents: 0 })],
-      "2026-09-23": [entry({ ...week, state: "paid_different", amountCents: 456768, transactionId: "t-lump", settledCents: 456768 })],
+      "2026-09-23": [
+        entry({
+          ...week,
+          state: "paid",
+          amountCents: 456768,
+          transactionId: "t-lump",
+          perPayday: { paydays: 4, cents: 114192 },
+          settledCents: 456768,
+        }),
+      ],
       "2026-09-24": sep24,
     },
     entryCount: 4,

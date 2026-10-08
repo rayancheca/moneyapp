@@ -16,6 +16,7 @@ import {
   staleSummaryLabel,
   type StaleEntry,
   overdueNote,
+  perPaydayWord,
   postedSpreadReading,
   seriesVerb,
   futureDateLabel,
@@ -564,5 +565,31 @@ describe("annualizedCaveat — a year is qualified only when the series stops in
       "the twelve months from today — this one stops on Sep 11, 2026, inside them",
     );
     expect(annualizedCaveat("2026-09-10", TODAY)).toContain("no longer bills");
+  });
+});
+
+/*
+ * A day read per payday says so: settlement names money by its day, so the
+ * figure under a $4,567.68 deposit dated beside a week of pay is the DAY's five
+ * paydays, and a row reading "5 paydays" alone would claim the lump paid five.
+ */
+describe("perPaydayWord — a lump, and a day of several deposits", () => {
+  test("a lump alone on its day names its paydays", () => {
+    expect(perPaydayWord({ paydays: 4, cents: 114192 })).toBe("4 paydays at $1,141.92 each");
+  });
+
+  test("a day of two deposits names the other one", () => {
+    expect(perPaydayWord({ paydays: 5, cents: 114192, deposits: 2 })).toBe(
+      "5 paydays at $1,141.92 each, with the day's other deposit",
+    );
+  });
+
+  test("a day of three, and a day that paid one payday", () => {
+    expect(perPaydayWord({ paydays: 3, cents: 114192, deposits: 3 })).toBe(
+      "3 paydays at $1,141.92 each, with the day's 2 other deposits",
+    );
+    expect(perPaydayWord({ paydays: 1, cents: 114192, deposits: 2 })).toBe(
+      "1 payday at $1,141.92, with the day's other deposit",
+    );
   });
 });

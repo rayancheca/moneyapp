@@ -241,8 +241,8 @@ test("a week whose change later finished another payday is still the one week it
 });
 
 test("two weekly deposits on one day are each measured as the week they are", () => {
-  // settlement names money by its deposit's DAY, so neither row's own spending
-  // can be told apart from the other's — each is measured on its own amount
+  // settlement names money by its deposit's DAY, so the day is read as the one
+  // deposit it sees: two weeks' money that paid two paydays, a week each
   const a = deposit("2026-09-24", WEEK);
   const b = deposit("2026-09-24", WEEK);
   expect(rowOn("2026-09", "2026-09-24", a)?.state).toBe("paid");
@@ -321,4 +321,78 @@ describe("a series with no cached spread — the spread is measured per payday t
 test("the calendar's lump row says how many paydays it paid, and what each", () => {
   const lump = deposit("2026-09-23", WEEK * 4);
   expect(rowOn("2026-09", "2026-09-23", lump)?.perPayday).toEqual({ paydays: 4, cents: WEEK });
+});
+
+/**
+ * 🔴 TWO DEPOSITS ON ONE DAY WERE NOT READ PER PAYDAY (§6C, 2026-10-07 handoff).
+ *
+ * Settlement names money by its deposit's DAY, so the reading could not tell a
+ * day's two deposits apart — and read each as the one amount it is. A lump of
+ * four weeks landing beside the week's own deposit put back every sentence the
+ * 2026-10-07 fix took away: the lump drawn amber, the dashboard's "rose by
+ * $3,425.76", the series page's "+$3,425.76". The day is read as the one deposit
+ * settlement sees: $5,709.60 that paid five paydays on its own, $1,141.92 each.
+ */
+describe("a lump and the week's deposit on ONE day — the day is read per payday", () => {
+  let lump: string;
+  let week: string;
+  beforeEach(() => {
+    lump = deposit("2026-09-24", WEEK * 4);
+    week = deposit("2026-09-24", WEEK);
+  });
+
+  test("the calendar draws both deposits paid: the day paid five paydays at the week he expects", () => {
+    for (const id of [lump, week]) {
+      expect(rowOn("2026-09", "2026-09-24", id)).toMatchObject({
+        state: "paid",
+        perPayday: { paydays: 5, cents: WEEK, deposits: 2 },
+      });
+    }
+  });
+
+  test("the dashboard's Worth a look card says nothing about his pay rising", () => {
+    expect(payNotices()).toEqual([]);
+  });
+
+  test("the series page draws both rows as the day's five paydays at $1,141.92, as the calendar reads them", () => {
+    const sep24 = seriesDetail(bundle.db, PAY, TODAY).amountHistory.filter((p) => p.date === "2026-09-24");
+    expect(sep24.map((p) => [p.amountCents, p.perPayday]).sort()).toEqual([
+      [WEEK, { paydays: 5, cents: WEEK, deposits: 2 }],
+      [WEEK * 4, { paydays: 5, cents: WEEK, deposits: 2 }],
+    ]);
+  });
+
+  test("a $1,200.00 week after it is still a raise of $58.08", () => {
+    const raise = deposit("2026-10-01", 120_000);
+    expect(rowOn("2026-10", "2026-10-01", raise)?.state).toBe("paid_different");
+    expect(payNotices()).toEqual([expect.stringContaining(`${PAY_NAME} rose by $58.08`)]);
+  });
+});
+
+/*
+ * And with no cached spread the day is ONE sample of one week's pay, as a lump
+ * is: measured on raw amounts the $4,567.68 widened the band until a raise read
+ * `paid`; counted twice, one day would weigh as two deposits.
+ */
+describe("a lump and the week's deposit on ONE day, on a series with no cached spread", () => {
+  beforeEach(() => {
+    bundle.db.delete(recurringSeries).where(eq(recurringSeries.id, PAY)).run();
+    addPaySeries(null);
+    for (let day = "2026-07-23"; day <= "2026-08-20"; day = addDays(day, 7)) deposit(day, WEEK);
+  });
+
+  test("both deposits are drawn paid and the card says nothing", () => {
+    const lump = deposit("2026-09-24", WEEK * 4);
+    deposit("2026-09-24", WEEK);
+    expect(rowOn("2026-09", "2026-09-24", lump)?.state).toBe("paid");
+    expect(payNotices()).toEqual([]);
+  });
+
+  test("a $1,200.00 week after it is a raise — drawn paid_different and noticed", () => {
+    deposit("2026-09-24", WEEK * 4);
+    deposit("2026-09-24", WEEK);
+    const raise = deposit("2026-10-01", 120_000);
+    expect(rowOn("2026-10", "2026-10-01", raise)?.state).toBe("paid_different");
+    expect(payNotices()).toEqual([expect.stringContaining(`${PAY_NAME} rose by $58.08`)]);
+  });
 });

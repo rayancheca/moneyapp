@@ -24,19 +24,32 @@ import type { SettlementPortion } from "./payday-settlement";
  * was a sample of its own, σ $1,629.39, and inside that ±$3,258.78 band a
  * $1,200.00 raise, a $4,000.00 partial lump and four weeks at $1,200.00 all
  * read `paid`.
+ *
+ * ⛔ THE UNIT IS THE DAY. Settlement names money by its deposit's day, so two
+ * deposits on one day are the one deposit it sees, and are read as that.
+ * 🔴 Read row by row, a lump landing beside the week's own deposit put every
+ * sentence above back: $4,567.68 held to one week beside a day settlement says
+ * paid five.
  */
 
 /** A lump's reading: the paydays its money paid on its own, and what it paid each. */
 export interface PerPayday {
   paydays: number;
   cents: number;
+  /**
+   * Set when the row's DAY held more than one deposit: the figure is that day's
+   * money read per payday, and this many deposits made it up. Absent for a
+   * deposit alone on its day.
+   */
+  deposits?: number;
 }
 
 export interface PaydayReading {
   /**
    * Set when the row's money paid TWO OR MORE paydays on its own — a lump, held
-   * to the expectation at `cents` a payday. Null for a row read as the one
-   * amount it is.
+   * to the expectation at `cents` a payday — or when its day held other deposits
+   * and the day's money paid any payday on its own. Null for a row read as the
+   * one amount it is.
    */
   perPayday: PerPayday | null;
   /**
@@ -45,6 +58,9 @@ export interface PaydayReading {
    * Aug 27 together, and as samples of what a payday pays they measure how his
    * payer split a transfer, not his pay. Such a row is still held to the
    * expectation as the amount it is; it is only left out of the spread.
+   *
+   * False, too, for every deposit of a day read per payday but its first: the
+   * day is one sample, and one row carries it.
    */
   isPaydaySample: boolean;
 }
@@ -93,11 +109,31 @@ export function paydaysPaidAloneByDeposit(portions: readonly SettlementPortion[]
 }
 
 /**
+ * What one deposit DAY paid per payday — null when its deposits are each read as
+ * the amount they are.
+ *
+ * ⛔ A DAY, not a row: settlement names money by its deposit's day, so a day's
+ * deposits are the ONE deposit it walked, and their own spending cannot be told
+ * apart. Their money is read together — $4,567.68 and $1,141.92 on Sep 24 that
+ * paid five paydays on their own are five at $1,141.92, not a raise and a week —
+ * and, as for a lump, the WHOLE of it is divided (`amountPerPayday`).
+ *
+ * Alone on its day a deposit is unchanged: per payday from two paydays up, the
+ * amount it is below that. With others, the day's money is the figure from ONE
+ * payday up — one week sent as two transfers is that payday's pay, not two short
+ * weeks — and with none of its own, each deposit is the amount it is.
+ */
+function dayPerPayday(deposits: readonly ReadableRow[], paydays: number): PerPayday | null {
+  const dayCents = deposits.reduce((sum, d) => sum + d.amountCents, 0);
+  if (deposits.length === 1) return paydays > 1 ? { paydays, cents: amountPerPayday(dayCents, paydays) } : null;
+  return paydays > 0 ? { paydays, cents: amountPerPayday(dayCents, paydays), deposits: deposits.length } : null;
+}
+
+/**
  * Each row's reading, from the series' settlement (`portions`).
  *
- * Read as the one amount it is: money out (settlement reads deposits only), a
- * deposit settlement spent on nothing, and two deposits on one day — settlement
- * names money by its deposit's DAY, so neither's own spending can be told apart.
+ * Read as the one amount it is: money out (settlement reads deposits only), and
+ * a day's deposits whose money paid no payday on its own (`dayPerPayday`).
  */
 export function paydayReadings(
   rows: readonly ReadableRow[],
@@ -105,23 +141,23 @@ export function paydayReadings(
 ): ReadonlyMap<string, PaydayReading> {
   const alone = paydaysPaidAloneByDeposit(portions);
   const spentFrom = new Set(portions.map((p) => p.depositOn));
-  const depositsOnDay = new Map<string, number>();
+  const depositsByDay = new Map<string, readonly ReadableRow[]>();
   for (const r of rows) {
-    if (r.amountCents > 0) depositsOnDay.set(r.postedOn, (depositsOnDay.get(r.postedOn) ?? 0) + 1);
+    if (r.amountCents > 0) depositsByDay.set(r.postedOn, [...(depositsByDay.get(r.postedOn) ?? []), r]);
   }
 
-  const out = new Map<string, PaydayReading>();
-  for (const r of rows) {
-    if (r.amountCents <= 0 || depositsOnDay.get(r.postedOn) !== 1) {
-      out.set(r.id, AS_ITSELF);
+  const out = new Map<string, PaydayReading>(rows.filter((r) => r.amountCents <= 0).map((r) => [r.id, AS_ITSELF]));
+  for (const [day, deposits] of depositsByDay) {
+    const paydays = alone.get(day) ?? 0;
+    const perPayday = dayPerPayday(deposits, paydays);
+    if (perPayday === null) {
+      const isPaydaySample = paydays === 1 || !spentFrom.has(day);
+      for (const d of deposits) out.set(d.id, { perPayday: null, isPaydaySample });
       continue;
     }
-    const paydays = alone.get(r.postedOn) ?? 0;
-    if (paydays > 1) {
-      out.set(r.id, { perPayday: { paydays, cents: amountPerPayday(r.amountCents, paydays) }, isPaydaySample: true });
-    } else {
-      out.set(r.id, { perPayday: null, isPaydaySample: paydays === 1 || !spentFrom.has(r.postedOn) });
-    }
+    // the day is ONE sample of a payday's pay, as one lump is — counted on each
+    // of its deposits, one day would weigh in the spread as several
+    deposits.forEach((d, i) => out.set(d.id, { perPayday, isPaydaySample: i === 0 }));
   }
   return out;
 }
