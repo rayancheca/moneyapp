@@ -41,6 +41,9 @@ export function arrearsSplit({ owedCents, unreadCents }: ArrearsReading): Arrear
 /** The words for the unread half — /budgets' and the runway's. */
 export const NO_IMPORT_YET = "no import has covered it yet";
 
+/** What the unread words say it of: one bill ("it"), or several (/budgets' page note, "them"). */
+export type ArrearsPronoun = "it" | "them";
+
 /** A mixed split in the runway's voice: "$R <notPosted>, and no import has covered the other $U yet". */
 export function splitClause(split: ArrearsSplit, notPosted: string): string {
   const read = formatCents(split.readCents);
@@ -50,22 +53,24 @@ export function splitClause(split: ArrearsSplit, notPosted: string): string {
 /**
  * The split said as one clause: `notPosted` when all of it has been read, "no import has covered it yet" when none of
  * it has, and both halves by amount for a mix — the words after "Oct 1 —" in the Next column and after "Already due
- * this month," in the End dialog (`seriesEndLines`).
+ * this month," in the End dialog (`seriesEndLines`) and after "Due this period by today," in /budgets'
+ * (`budgetDeactivateLines`).
  */
-export function arrearsClause(reading: ArrearsReading, notPosted: string): string {
+export function arrearsClause(reading: ArrearsReading, notPosted: string, pronoun: ArrearsPronoun = "it"): string {
   const split = arrearsSplit(reading);
   if (split.kind === "read") return notPosted;
-  if (split.kind === "unread") return NO_IMPORT_YET;
+  if (split.kind === "unread") return pronoun === "it" ? NO_IMPORT_YET : `no import has covered ${pronoun} yet`;
   return splitClause(split, notPosted);
 }
 
 /**
  * What follows a lead such as "came due Oct 1": " and <notPosted>", " and no import has covered it yet", or
  * ": $R <notPosted>, and no import has covered the other $U yet". `notPosted` is the surface's own word for the read
- * half ("never posted" on the runway, "has not posted" in the math table).
+ * half ("never posted" on the runway, "has not posted" in the math table and /budgets' spoken row, "not posted" on
+ * the row itself and its page note).
  */
-export function arrearsTail(reading: ArrearsReading, notPosted: string): string {
-  const clause = arrearsClause(reading, notPosted);
+export function arrearsTail(reading: ArrearsReading, notPosted: string, pronoun: ArrearsPronoun = "it"): string {
+  const clause = arrearsClause(reading, notPosted, pronoun);
   return arrearsSplit(reading).kind === "mixed" ? `: ${clause}` : ` and ${clause}`;
 }
 
@@ -76,7 +81,11 @@ export function arrearsTail(reading: ArrearsReading, notPosted: string): string 
  * 🔴 The runway printed "A further $2,291.21 came due earlier this month and no import has covered it yet." in
  * `text-negative` on a copy of his ledger 2026-10-08, while the rent's page, `/recurring`'s Next column and
  * `/categories/<Housing>` said the same money quietly — each had decided its own tone. One rule: the bill's page
- * (`alreadyDueWords`), the Next column and the category list (`overdueNote`), and the runway card.
+ * (`alreadyDueWords`), the Next column and the category list (`overdueNote`), the runway card, and /budgets' row.
+ *
+ * 🔴 …AND /BUDGETS WAS LEFT OUT OF THE ONE RULE. Its row printed "$2,291.21 expected by now, not imported" in
+ * `text-warning` over the same unread rent the runway now said quietly — `budgetOverdue` never carried the split
+ * (review of a132c57, 2026-10-08). It does now (`arrearsInWindow`), and the row's tone is this.
  */
 export function arrearsAlarms(reading: ArrearsReading): boolean {
   return arrearsSplit(reading).readCents > 0;

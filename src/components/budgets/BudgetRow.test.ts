@@ -164,3 +164,91 @@ describe("BudgetRow — what it draws beside the verdict", () => {
     expect(html).toMatch(/Projected ≈ <\/span><span class="[^"]*text-warning/);
   });
 });
+
+/*
+ * 🔴 THE ROW SAID "not imported", IN WARNING COLOUR, WHATEVER THE LEDGER HAD READ. On a copy of his ledger 2026-10-08
+ * Housing read "$2,291.21 expected by now, not imported" in `text-warning` — rent and its utilities, both Oct 1, on
+ * days no import had reached — while the runway said the same $2,291.21 quietly; and where an import HAD reached the
+ * day (the e2e fixture's Meal Kit) "not imported" was false. ⚖️ Staleness between uploads is normal, never a warning
+ * (his words 2026-08-05). ⛔ The runway's split and tone (`lib/arrears-reading`), for the line and the spoken sentence.
+ */
+describe("BudgetRow — the arrears line says the runway's split, in its tone", () => {
+  const AUG_1 = "2026-08-01";
+
+  /** a Housing bill on its own Card, the Card read through `readThrough`, under an August Housing budget */
+  function housingWithBill(opts: { cents: number; readThrough: string; weekly?: boolean }): BudgetPaceStatus {
+    const chase = bundle.db.select().from(institutions).where(eq(institutions.name, "Chase")).get()!;
+    const card = createAccount(bundle.db, { institutionId: chase.id, name: "Rent card", type: "credit" });
+    bundle.db
+      .insert(recurringSeries)
+      .values({
+        name: "Rent",
+        kind: "bill",
+        cadence: opts.weekly ? "weekly" : "monthly",
+        intervalDaysAvg: opts.weekly ? 7 : 30,
+        amountCentsAvg: -opts.cents,
+        nextExpectedOn: AUG_1,
+        nextExpectedAmountCents: -opts.cents,
+        status: "confirmed",
+        lastMatchedOn: AUG_1,
+        userCategoryId: catId("Housing"),
+        accountId: card,
+      })
+      .run();
+    const rawDescription = `CAFE ${opts.readThrough}`;
+    bundle.db
+      .insert(transactions)
+      .values({
+        accountId: card,
+        postedOn: opts.readThrough,
+        amountCents: -800,
+        rawDescription,
+        normalizedDescription: rawDescription,
+        categoryId: catId("Food"),
+        dedupeHash: dedupeHash({ accountId: card, postedOn: opts.readThrough, amountCents: -800, rawDescription, occurrenceIndex: 0 }),
+      })
+      .run();
+    createBudget(bundle.db, { categoryId: catId("Housing"), period: "monthly", amountCents: 300_000, startsOn: AUG_1 });
+    return statusFor("Housing");
+  }
+
+  /** the arrears paragraph: its class list and its text, tags and React's text-node markers stripped */
+  function arrearsLine(html: string): { className: string; text: string } {
+    const p = /<p class="([^"]*)">((?:(?!<\/p>).)*expected by now(?:(?!<\/p>).)*)<\/p>/.exec(html);
+    if (!p) throw new Error("no arrears line");
+    return { className: p[1]!, text: p[2]!.replace(/<!-- -->/g, "").replace(/<[^>]+>/g, "") };
+  }
+
+  const spoken = (html: string): string => /aria-valuetext="([^"]*)"/.exec(html)![1]!;
+
+  test("a due day no import has reached: the runway's words, quietly", () => {
+    const html = render(housingWithBill({ cents: 228_570, readThrough: "2026-07-31" }));
+    const line = arrearsLine(html);
+    expect(line.text).toBe("$2,285.70 expected by now and no import has covered it yet · Rent Aug 1");
+    expect(line.className).not.toMatch(/text-(warning|negative)\b/);
+    expect(spoken(html)).toMatch(/ \$2,285\.70 was expected by now and no import has covered it yet\.$/);
+    expect(html).not.toMatch(/not imported|has not been imported/);
+  });
+
+  test("a due day an import has reached, with nothing posted: \"not posted\", in warning", () => {
+    const html = render(housingWithBill({ cents: 228_570, readThrough: "2026-08-05" }));
+    const line = arrearsLine(html);
+    expect(line.text).toBe("$2,285.70 expected by now and not posted · Rent Aug 1");
+    expect(line.className).toMatch(/\btext-warning\b/);
+    expect(spoken(html)).toMatch(/ \$2,285\.70 was expected by now and has not posted\.$/);
+    expect(html).not.toMatch(/not imported|has not been imported/);
+  });
+
+  test("read part of the way: both halves by amount, and the warning for the read half", () => {
+    // weekly from Aug 1: Aug 1 is read (the Card reaches Aug 5), Aug 8 is not
+    const html = render(housingWithBill({ cents: 5_000, readThrough: "2026-08-05", weekly: true }));
+    const line = arrearsLine(html);
+    expect(line.text).toMatch(
+      /^\$100\.00 expected by now: \$50\.00 not posted, and no import has covered the other \$50\.00 yet · /,
+    );
+    expect(line.className).toMatch(/\btext-warning\b/);
+    expect(spoken(html)).toMatch(
+      / \$100\.00 was expected by now: \$50\.00 has not posted, and no import has covered the other \$50\.00 yet\.$/,
+    );
+  });
+});

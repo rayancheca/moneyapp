@@ -1,4 +1,5 @@
 import type { BlastRadiusLine } from "@/components/ui/blast-radius";
+import { arrearsClause } from "@/lib/arrears-reading";
 
 /**
  * What the owner is switching off when he deactivates a budget, in his units.
@@ -34,6 +35,14 @@ import type { BlastRadiusLine } from "@/components/ui/blast-radius";
  * part is dated today, so the label says what is true of both: due by today.
  * ⛔ Do NOT move the edge to make "already" true — `budgetTail` opens the day
  * AFTER today, so a bill dated today would then be in neither leg.
+ *
+ * 🔴 …AND "not imported" OF A DAY THAT WAS. The label said it whatever the
+ * ledger had read, so where an import had reached the due day it contradicted
+ * the row behind it — the falsehood "End this series" told on the bill's own
+ * page until a132c57 (review of a132c57, 2026-10-08). ⛔ The row's split
+ * (`arrearsClause`): "not posted" only of read days, "no import has covered it
+ * yet" of the rest, both by amount for a mix. His Housing on 2026-10-08: "Due
+ * this period by today, no import has covered it yet: $2,291.21".
  */
 export interface BudgetDeactivateInput {
   /** the plan itself, already formatted with its period word */
@@ -41,6 +50,8 @@ export interface BudgetDeactivateInput {
   spentCents: number;
   /** bills due on or before today — late, or due today and not yet posted */
   overdueCents: number;
+  /** of `overdueCents`, the part on days no import has reached (`BudgetPaceStatus.overdueUnreadCents`) */
+  overdueUnreadCents: number;
   /** recurring still to come before the period closes */
   expectedTailCents: number;
 }
@@ -57,7 +68,13 @@ export function budgetDeactivateLines(
           // ⛔ both ends: the figure is `budgetOverdue` from the period start to
           // today — a bill due last period is not in it (arrears end with the
           // month, his decision 2026-09-02), and the sibling lines name the period
-          { label: "Due this period by today, not imported", value: formatCents(input.overdueCents) },
+          {
+            label: `Due this period by today, ${arrearsClause(
+              { owedCents: input.overdueCents, unreadCents: input.overdueUnreadCents },
+              "not posted",
+            )}`,
+            value: formatCents(input.overdueCents),
+          },
         ]
       : []),
     ...(input.expectedTailCents > 0

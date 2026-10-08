@@ -169,7 +169,8 @@ export interface Arrears {
  *
  * ⚖️ Arrears are scoped to the calendar month — owner decision 2026-09-02; this does not widen the leg. It closes the
  * day BEFORE today because the forward legs own today: a bill due today and unposted is due, not late (see
- * `committedBook`). `/budgets` alone closes on today, inclusive, and calls `overdueForSeries` itself (`budgetOverdue`).
+ * `committedBook`). `/budgets` alone closes on today, inclusive, over the budget's own period (`budgetOverdue`) —
+ * through `arrearsInWindow` too, so it carries the same split.
  *
  * ⛔ ONE CALL, every surface that says a bill "came due": the runway card, the month forecast, /recurring's Next
  * column, the bill's own page and the category page. Each spelled the window out by hand, and each passed its last
@@ -181,8 +182,29 @@ export interface Arrears {
  * has not posted". Carried here, a surface that says a bill came due has the split in hand.
  */
 export function arrearsThisMonth(db: AppDatabase, seriesIds: ReadonlySet<string>, today: string): Arrears {
-  const late = overdueForSeries(db, seriesIds, periodBounds(today, "monthly").start, addDays(today, -1), today);
-  const readById = arrearsReadCents(db, late, today);
+  return arrearsInWindow(db, seriesIds, periodBounds(today, "monthly").start, addDays(today, -1), today);
+}
+
+/**
+ * `overdueForSeries` over `[periodStart, through]`, asked `today`, with each late series carrying how much of it the
+ * ledger has not read (`unreadCents`) — the ONE place the arrears and their read split are computed together, so the
+ * split is walked over exactly the window the arrears were.
+ *
+ * 🔴 /BUDGETS SKIPPED THE SPLIT. `budgetOverdue` called `overdueForSeries` itself, so on a copy of his ledger
+ * 2026-10-08 the Housing row read "$2,291.21 expected by now, not imported" in warning colour — rent and its
+ * utilities, both Oct 1, on days no import had reached — while the runway said the same money quietly; and where an
+ * import HAD reached the day, "not imported" was false (review of a132c57). Its window is its own — the budget's
+ * period through today, inclusive — so it cannot borrow `arrearsThisMonth`; it borrows this.
+ */
+export function arrearsInWindow(
+  db: AppDatabase,
+  seriesIds: ReadonlySet<string>,
+  periodStart: string,
+  through: string,
+  today: string,
+): Arrears {
+  const late = overdueForSeries(db, seriesIds, periodStart, through, today);
+  const readById = arrearsReadCents(db, late, periodStart, through, today);
   return {
     totalCents: late.totalCents,
     series: late.series.map((s) => ({ ...s, unreadCents: s.amountCents - (readById.get(s.id) ?? 0) })),
@@ -218,31 +240,38 @@ export function arrearsThisMonth(db: AppDatabase, seriesIds: ReadonlySet<string>
  * for the tolerance — here and in the calendar's ✕ together — is his call, asked 2026-10-08. Pinned by
  * recurring-detail.test.ts ("imported through, and no further").
  *
- * Moved here from `committedBook` (2026-10-08) so every caller of `arrearsThisMonth` reads the same amount.
+ * Moved here from `committedBook` (2026-10-08) so every caller of `arrearsThisMonth` reads the same amount; given the
+ * window by `arrearsInWindow` (2026-10-08) so /budgets' leg, which closes ON today, reads it too. ⛔ "Read to the end"
+ * means read through the window's own last day: asked with the month's yesterday, a bill /budgets owes today would be
+ * called read of a day nobody has seen.
  */
-function arrearsReadCents(db: AppDatabase, late: BudgetTail, today: string): ReadonlyMap<string, number> {
+function arrearsReadCents(
+  db: AppDatabase,
+  late: BudgetTail,
+  periodStart: string,
+  through: string,
+  today: string,
+): ReadonlyMap<string, number> {
   const read = new Map<string, number>();
   if (late.series.length === 0) return read;
-  // `arrearsThisMonth`'s window, walked again below only as far as each series has been read
-  const monthStart = periodBounds(today, "monthly").start;
-  const yesterday = addDays(today, -1);
 
   const frontier = observationFrontier(db);
   const accountsBySeries = seriesAccountIds(db);
   // series read only part-way through the arrears window, grouped by the day they are read to
   const partly = new Map<string, Set<string>>();
   for (const s of late.series) {
-    const through = frontierForSeries(frontier, accountsBySeries.get(s.id));
-    if (through === null || compareDates(through, s.nextDate) < 0) continue;
-    if (compareDates(through, yesterday) >= 0) {
+    const readTo = frontierForSeries(frontier, accountsBySeries.get(s.id));
+    if (readTo === null || compareDates(readTo, s.nextDate) < 0) continue;
+    if (compareDates(readTo, through) >= 0) {
       read.set(s.id, s.amountCents);
       continue;
     }
-    partly.set(through, new Set([...(partly.get(through) ?? []), s.id]));
+    partly.set(readTo, new Set([...(partly.get(readTo) ?? []), s.id]));
   }
   const lateById = new Map(late.series.map((s) => [s.id, s.amountCents] as const));
-  for (const [through, ids] of partly) {
-    for (const s of overdueForSeries(db, ids, monthStart, through, today).series) {
+  // the same window, walked again only as far as each series has been read
+  for (const [readTo, ids] of partly) {
+    for (const s of overdueForSeries(db, ids, periodStart, readTo, today).series) {
       read.set(s.id, Math.min(s.amountCents, lateById.get(s.id) ?? 0));
     }
   }

@@ -40,6 +40,7 @@ import {
   projectSpend,
   totalBudgetedCents,
   updateBudget,
+  type BudgetPaceStatus,
 } from "./budgets";
 
 let dir: string;
@@ -1443,6 +1444,86 @@ describe("budgetOverdue — the bill that came due and never arrived", () => {
       "Housing",
     );
     expect(budgetOverdue(bundle.db, catId("Housing"), "2026-06-01", "2026-06-20").totalCents).toBe(0);
+  });
+});
+
+/*
+ * 🔴 /BUDGETS WAS THE ONE ARREARS SURFACE WITHOUT THE SPLIT. On a copy of his ledger 2026-10-08 the Housing row read
+ * "$2,291.21 expected by now, not imported" in warning colour — rent and its utilities, both Oct 1, both on days no
+ * import had reached — while the runway said the same $2,291.21 quietly. `budgetOverdue` called `overdueForSeries`
+ * itself, so the page never learned how far the ledger had read; and where an import HAD reached the day, "not
+ * imported" was false. ⛔ The runway's read amount (`arrearsReadCents`), walked over /budgets' own window — the
+ * budget's period start through TODAY, inclusive, the one leg that closes on today.
+ */
+describe("budgetPaceStatuses — /budgets' arrears carry the read/unread split", () => {
+  const TODAY = "2026-06-20";
+
+  /** a bill on the Card, bound to Housing, under a June Housing budget */
+  function housingBill(opts: { name: string; dueOn: string; cents: number; cadence?: Cadence }): string {
+    const weekly = opts.cadence === "weekly";
+    const id = createSeries({
+      name: opts.name,
+      nextExpectedOn: opts.dueOn,
+      nextExpectedAmountCents: -opts.cents,
+      cadence: opts.cadence,
+      intervalDaysAvg: weekly ? 7 : 30,
+    });
+    bindSeries(id, "Housing");
+    bundle.db.update(recurringSeries).set({ accountId: cardId }).where(eq(recurringSeries.id, id)).run();
+    return id;
+  }
+
+  function housing(): BudgetPaceStatus {
+    if (budgetStatuses(bundle.db, TODAY).every((s) => s.categoryName !== "Housing")) {
+      createBudget(bundle.db, { categoryId: catId("Housing"), period: "monthly", amountCents: 300_000, startsOn: "2026-06-01" });
+    }
+    return budgetPaceStatuses(bundle.db, TODAY).find((s) => s.categoryName === "Housing")!;
+  }
+
+  test("a due day no import has reached is unread, all of it", () => {
+    housingBill({ name: "Rent", dueOn: "2026-06-08", cents: 228_570 });
+    spend("2026-06-07", -800, "Food"); // the Card is read through Jun 7, the day before rent
+    const s = housing();
+    expect(s.overdueCents).toBe(228_570);
+    expect(s.overdueUnreadCents).toBe(228_570);
+    expect(s.overdue).toEqual([expect.objectContaining({ name: "Rent", unreadCents: 228_570 })]);
+  });
+
+  test("a due day the Card is imported through is read", () => {
+    housingBill({ name: "Rent", dueOn: "2026-06-08", cents: 228_570 });
+    spend("2026-06-08", -800, "Food");
+    expect(housing()).toMatchObject({ overdueCents: 228_570, overdueUnreadCents: 0 });
+  });
+
+  test("a weekly bill read part of the way is split by amount", () => {
+    housingBill({ name: "Cleaner", dueOn: "2026-06-03", cents: 5_000, cadence: "weekly" });
+    spend("2026-06-12", -800, "Food"); // Jun 3 and Jun 10 read; Jun 17 is not
+    const s = housing();
+    expect(s.overdueCents).toBe(15_000);
+    expect(s.overdueUnreadCents).toBe(5_000);
+  });
+
+  /*
+   * ⛔ THE WINDOW IS /BUDGETS' OWN. Every other arrears surface closes the day before today (`arrearsThisMonth`);
+   * this one closes ON today, so "read to the end of the window" means read through today. Asked with the month's
+   * window, a Card read through yesterday would call a bill due today read — "not posted" of a day nobody has seen.
+   * (Weekly, so the series' first late day is read and only the window's end can decide today's.)
+   */
+  test("a bill due today, with the Card read through yesterday, is unread — the leg closes on today", () => {
+    housingBill({ name: "Cleaner", dueOn: "2026-06-06", cents: 5_000, cadence: "weekly" });
+    spend("2026-06-19", -800, "Food"); // Jun 6 and Jun 13 read; Jun 20, today, is not
+    expect(housing()).toMatchObject({ overdueCents: 15_000, overdueUnreadCents: 5_000 });
+  });
+
+  /*
+   * ⛔ …AT BOTH ENDS. A budget that opens mid-month owes only from its own first day, so the walk that measures the
+   * read half starts there too: from the 1st it would count Jun 3 — owed by no row — as read, and Jun 17 with it.
+   */
+  test("a budget that opens mid-month measures the read half over its own window", () => {
+    housingBill({ name: "Cleaner", dueOn: "2026-06-03", cents: 5_000, cadence: "weekly" });
+    createBudget(bundle.db, { categoryId: catId("Housing"), period: "monthly", amountCents: 300_000, startsOn: "2026-06-10" });
+    spend("2026-06-12", -800, "Food"); // Jun 10 read; Jun 17 is not
+    expect(housing()).toMatchObject({ overdueCents: 10_000, overdueUnreadCents: 5_000 });
   });
 });
 

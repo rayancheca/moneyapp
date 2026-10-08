@@ -44,7 +44,8 @@ export const RESERVED_JARGON_PHRASES = [
   "Off pace",
   "Over budget",
   "rolled over",
-  "expected by now, not imported",
+  // the row's arrears line, whichever way the ledger has read it (`BudgetRow`)
+  "expected by now",
   "expected before",
   "Awaiting statements",
   "expected income",

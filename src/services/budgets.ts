@@ -37,9 +37,12 @@ import {
 } from "./car-upfront";
 import { trailingFullMonths } from "./forecast";
 import {
+  arrearsInWindow,
   overdueForSeries,
   unbankedIncomeForSeries,
   unbankedIncomeTotals,
+  type Arrears,
+  type ArrearsSeries,
   type BudgetTail,
   type BudgetTailSeries,
 } from "./arrears";
@@ -1089,17 +1092,21 @@ export function incomeExpectation(
  * overdue only when NO linked posting sits within the series' own
  * `toleranceDays`. That is also what keeps this disjoint from `spentCents` —
  * anything that posted is spend, never overdue.
+ *
+ * ⛔ Each late series carries how much of it the ledger has not read (`unreadCents`), through `arrearsInWindow` — the
+ * split the runway, the bill's page and /recurring say their arrears through. 🔴 This leg alone skipped it, so the
+ * row said "not imported" in warning colour whatever had been read (review of a132c57, 2026-10-08).
  */
 export function budgetOverdue(
   db: AppDatabase,
   categoryId: string,
   periodStart: string,
   today: string,
-): BudgetTail {
+): Arrears {
   const seriesIds = recurringSeriesIdsForCategory(db, categoryId);
   if (seriesIds.size === 0) return { totalCents: 0, series: [] };
   // the only arrears leg that closes ON today (see `budgetTail`), so the day it walks to is the day it is asked on
-  return overdueForSeries(db, seriesIds, periodStart, today, today);
+  return arrearsInWindow(db, seriesIds, periodStart, today, today);
 }
 
 export function budgetTail(
@@ -1421,7 +1428,12 @@ export interface BudgetPaceStatus extends BudgetStatus, CategoryCoverage {
   tail: BudgetTailSeries[];
   /** bills expected on/before today that never posted — money committed but missing */
   overdueCents: number;
-  overdue: BudgetTailSeries[];
+  /**
+   * Of `overdueCents`, the part on days no import has reached (`ArrearsReading.unreadCents`) — what the row, its
+   * dialog and the page note may not call "not posted", nor warn about.
+   */
+  overdueUnreadCents: number;
+  overdue: ArrearsSeries[];
   /**
    * Days of THIS window the ledger cannot speak for: the elapsed days past
    * `importedThroughOn`, all of them when it is null (`daysNotImportedYet`) —
@@ -1533,6 +1545,7 @@ export function budgetPaceStatuses(db: AppDatabase, refDate: string = todayIso()
     return {
       ...s,
       overdueCents: overdue.totalCents,
+      overdueUnreadCents: overdue.series.reduce((sum, o) => sum + o.unreadCents, 0),
       overdue: overdue.series,
       ...coverage,
       uncoveredDays,

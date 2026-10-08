@@ -1,3 +1,4 @@
+import { arrearsTail } from "./arrears-reading";
 import { spentOnlyFromCashWallets, type BudgetCoverageInput } from "./budget-coverage";
 import { isStaleClose, newestQuotedOn } from "./holding-price-age";
 import { formatCents } from "./money";
@@ -45,7 +46,8 @@ export const RESERVED_NOTE_PHRASES = [
   "Off pace",
   "Over budget",
   "rolled over",
-  "expected by now, not imported",
+  // the row's arrears line, whichever way the ledger has read it (`BudgetRow`)
+  "expected by now",
   "expected before",
   "Awaiting statements",
   // /categories row copy — owned by CategoryRow, and now sharing a page with a
@@ -84,6 +86,8 @@ export interface BudgetNoteInput {
      * it could catch it.
      */
     overdueBills: number;
+    /** of `overdueCents`, the part on days no import has reached (`BudgetPaceStatus.overdueUnreadCents`) */
+    overdueUnreadCents: number;
     uncoveredDays: number;
     pace: "under" | "at-risk" | "over";
     /** the row's accounts, so a cash-only row is told apart by the rule the row itself uses */
@@ -118,6 +122,14 @@ export function budgetSectionNotes(input: BudgetNoteInput): SectionNote[] {
      * count four, which is the mis-read this module's header already names.
      */
     const where = bills === overdue.length ? names : `${overdue.length} budget${overdue.length === 1 ? "" : "s"}: ${names}`;
+    /*
+     * 🔴 "no import has covered them yet" OF DAYS AN IMPORT HAD COVERED. The note said it of every overdue bill, read
+     * or not — the reverse of the rows beside it, which said "not imported" of both (review of a132c57, 2026-10-08).
+     * ⛔ The rows' split, summed the way `total` is, said in the runway's voice (`arrearsTail`): "not posted" only of
+     * what the ledger has read.
+     */
+    const unread = overdue.reduce((sum, r) => sum + r.overdueUnreadCents, 0);
+    const said = arrearsTail({ owedCents: total, unreadCents: unread }, "not posted", bills === 1 ? "it" : "them");
     notes.push({
       id: "budgets-overdue",
       body:
@@ -132,8 +144,7 @@ export function budgetSectionNotes(input: BudgetNoteInput): SectionNote[] {
          * arrears at all. Both boundaries are right; only this sentence was
          * wrong. See `services/budgets.ts::budgetTail`.
          */
-        `${formatCents(total)} due by today and no import has covered ` +
-        `${bills === 1 ? "it" : "them"} yet — ${where}. That money is committed, so ` +
+        `${formatCents(total)} due by today${said} — ${where}. That money is committed, so ` +
         `the room left is smaller than it looks.`,
     });
   }
