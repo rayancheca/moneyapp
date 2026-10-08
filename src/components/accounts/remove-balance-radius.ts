@@ -46,7 +46,7 @@ export interface RemoveBalanceInput {
   source: AnchorSource;
   /** the balance as recorded, already in the owner's frame (`balanceHeading` → formatted) */
   recorded: { label: string; value: string };
-  /** recorded balances the account keeps once this one goes */
+  /** the balances the account keeps once this one goes — statements', bank exports', live readings and his counts */
   balancesLeft: number;
 }
 
@@ -58,8 +58,10 @@ export interface RemoveBalanceInput {
  * him how to put it back, which names the form by its own title ("Add a balance you counted"). It read "Remove this
  * recorded balance" and "Record a balance again" over the balance its own popover calls "the balance you counted".
  *
- * ⛔ A live reading is not his count and keeps "recorded". Only `manual` and `live` reach this dialog
- * (`isRemovableAnchorSource`); "Recorded balances left on this account" counts statements' balances too, and keeps it.
+ * ⛔ A live reading is not his count and keeps "recorded", as a statement's balance does. Only `manual` and `live`
+ * reach this dialog (`isRemovableAnchorSource`), but the page asks `removeBalanceControls` of every row it lists.
+ * "Balances left on this account" counts every kind the account keeps, so it names none — it read "Recorded balances
+ * left", the word his decision keeps for a statement's, over a count of his own balances too (§6A 50 leftover).
  */
 interface BalanceNaming {
   /** completes "<label>, …" on the irreversible line */
@@ -224,7 +226,7 @@ export function removeBalanceRadius(input: RemoveBalanceInput): BlastRadius {
       { label: `${input.recorded.label}, ${naming.as}`, value: input.recorded.value, irreversible: true },
       ...lostLines(effect),
       ...catchUpLines(effect),
-      { label: "Recorded balances left on this account", value: countPhrase(input.balancesLeft, "balance") },
+      { label: "Balances left on this account", value: countPhrase(input.balancesLeft, "balance") },
     ],
     reassurance: removeBalanceReassurance(effect, naming),
   };

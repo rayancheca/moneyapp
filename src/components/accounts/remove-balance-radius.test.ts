@@ -48,6 +48,8 @@ const DAYS_LOST = "Days that stop being verified";
 const DAYS_COUNTED = "Days that lose the balance you counted";
 const VALUE_LOST = "Days that lose their balance";
 const CATCH_UP = "Days rebuilt up to today, with or without this balance";
+// every balance the account keeps — statements', bank exports', live readings and his counts alike
+const BALANCES_LEFT = "Balances left on this account";
 
 describe("removeBalanceRadius — the lost days, by what becomes of them", () => {
   /**
@@ -82,7 +84,7 @@ describe("removeBalanceRadius — the lost days, by what becomes of them", () =>
     expect(blastRadiusSentence(radius)).not.toMatch(/verif/);
     // a curve that goes away is not "brought up to today"
     expect(valueOf(radius, CATCH_UP)).toBeUndefined();
-    expect(valueOf(radius, "Recorded balances left on this account")).toBe("no balances");
+    expect(valueOf(radius, BALANCES_LEFT)).toBe("no balances");
     // ⚖️ the control that puts it back, in its own words (§6A 50)
     expect(radius.reassurance).toBe(
       "No transaction is touched. Add a balance you counted again and the curve is derived from it and the transactions.",
@@ -478,7 +480,7 @@ describe("removeBalanceRadius — a balance that un-verifies nothing", () => {
       ["Balance, as recorded", true],
       [DAYS_LOST, false],
       [CATCH_UP, false],
-      ["Recorded balances left on this account", false],
+      [BALANCES_LEFT, false],
     ]);
   });
 });
@@ -487,7 +489,7 @@ describe("removeBalanceRadius — a balance that un-verifies nothing", () => {
  * ⚖️ His answer, 2026-10-07 (§6A 50, extending §6A 33): "counted" is the ONE verb for a balance he typed, and the
  * controls say it too — the remove dialog's title, its button, the trigger's name and every sentence that tells him
  * how to put the balance back ("Add a balance you counted" is the form). A live reading is not his count, so it keeps
- * "recorded"; "Recorded balances left on this account" counts statements' balances too, and keeps it as well.
+ * "recorded"; "Balances left on this account" counts every kind the account keeps, so it names none of them.
  */
 describe("removeBalanceRadius — a balance he counted is named as his count", () => {
   const RECORD_WORDS = /\bRecord (a|the) balance\b|this recorded balance|, as recorded/;
@@ -509,7 +511,7 @@ describe("removeBalanceRadius — a balance he counted is named as his count", (
     for (const radius of radii) {
       expect(blastRadiusSentence(radius)).not.toMatch(RECORD_WORDS);
       expect(radius.lines?.[0]).toEqual({ label: "Balance, as you counted it", value: "$1.00", irreversible: true });
-      expect(valueOf(radius, "Recorded balances left on this account")).toBeDefined();
+      expect(valueOf(radius, BALANCES_LEFT)).toBeDefined();
     }
   });
 
@@ -551,5 +553,37 @@ describe("removeBalanceRadius — a balance he counted is named as his count", (
       expect(blastRadiusSentence(radius)).not.toMatch(/\bRecord (a|the) balance\b/);
       expect(radius.lines?.[0]!.label).toBe("Balance, as recorded");
     }
+  });
+
+  /*
+   * ⚖️ …and a statement's balance keeps "recorded" (§6A 50, 2026-10-07) — a bank export's and an un-imported
+   * statement's kept opening with it. None of them opens this dialog: it leaves only with its file
+   * (`isRemovableAnchorSource`, held by anchors.test.ts' "answers for every removable balance and for no other"). But
+   * the page asks `removeBalanceControls` for EVERY row of its list, and a rule that said "counted" of everything but a
+   * live reading passed every test above.
+   */
+  test("a statement's balance is never named his count, and the balances left count it", () => {
+    for (const source of ["statement", "ofx_ledger", "unimported_statement"] as const) {
+      expect(removeBalanceControls(source, "2026-07-01")).toEqual({
+        title: "Remove this recorded balance",
+        confirmLabel: "Remove this balance",
+        triggerAriaLabel: "remove the balance recorded on Jul 1, 2026",
+      });
+    }
+
+    // removing his count from an account that keeps a statement's balance and a bank export's
+    const radius = dialog(
+      "Checking",
+      [
+        anchor("s-jul", "2026-07-01", 10_000, "statement"),
+        anchor("csv", "2026-07-03", 10_000, "ofx_ledger"),
+        anchor("manual", "2026-07-10", 8_000, "manual"),
+      ],
+      "manual",
+      [["2026-07-05", -2_000]],
+      "2026-07-12",
+    );
+    expect(valueOf(radius, BALANCES_LEFT)).toBe("2 balances");
+    expect(radius.lines?.map((l) => l.label).filter((label) => /recorded/i.test(label))).toEqual([]);
   });
 });

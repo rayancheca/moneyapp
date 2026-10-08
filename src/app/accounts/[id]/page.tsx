@@ -14,7 +14,7 @@ import { balanceDeltaAccent, balanceHeading, type BalanceDeltaAccent } from "@/l
 import { accountDayChange } from "@/services/account-day-change";
 import { accountInsights } from "@/services/account-insights";
 import { getAccount, listAccounts, listInstitutions, ownPortfolioAccountIds } from "@/services/accounts";
-import { anchorRemovalEffects, listAnchors, takesTypedBalance } from "@/services/anchors";
+import { anchorRemovalEffects, listAnchors } from "@/services/anchors";
 import { observedSeries } from "@/services/derivation";
 import { listAccountHoldings } from "@/services/holdings";
 import { CASH_INSTITUTION_NAME } from "@/services/manual-transactions";
@@ -26,6 +26,7 @@ import { AccountHoldingsTable } from "@/components/accounts/AccountHoldingsTable
 import { InsightList } from "@/components/insights/InsightList";
 import { AccountNameHeading } from "@/components/accounts/AccountNameHeading";
 import { AnchorForm } from "@/components/accounts/AnchorForm";
+import { balanceListWords } from "@/components/accounts/balance-list-words";
 import { removeBalanceControls, removeBalanceRadius } from "@/components/accounts/remove-balance-radius";
 import { BalanceFigure } from "@/components/accounts/BalanceFigure";
 import { ErrorBanner, errorParam } from "@/components/ui/ErrorBanner";
@@ -216,6 +217,8 @@ export default async function AccountDetailPage({
     removal: removalEffects.get(a.id),
     controls: removeBalanceControls(a.source, a.anchoredOn),
   }));
+  // the form, the list's heading and both empty lines from one rule — whether he can count a balance here
+  const listWords = balanceListWords(account);
 
   return (
     <>
@@ -307,9 +310,7 @@ export default async function AccountDetailPage({
               </p>
             </>
           ) : (
-            <p className="mt-1 text-sm text-ink-muted">
-              No balance yet — add one you counted below, or import a statement.
-            </p>
+            <p className="mt-1 text-sm text-ink-muted">{listWords.noBalanceYet}</p>
           )}
         </header>
 
@@ -373,7 +374,7 @@ export default async function AccountDetailPage({
 
         {/* ⛔ a brokerage book is valued by what its statements prove — a typed balance is refused (`takesTypedBalance`) */}
         {/* ⚖️ "counted" is the one verb for a balance he typed, and the controls say it too (§6A 50) */}
-        {takesTypedBalance(account) && (
+        {listWords.takesCount && (
           <SurfaceCard>
             <h2 className="mb-1 text-sm font-medium">Add a balance you counted</h2>
             <p className="mb-4 text-xs text-ink-muted">
@@ -386,9 +387,10 @@ export default async function AccountDetailPage({
         )}
 
         <SurfaceCard>
-          <h2 className="mb-3 text-sm font-medium">Recorded balances</h2>
+          {/* every kind the list holds — the Source column names which (`balanceListWords`) */}
+          <h2 className="mb-3 text-sm font-medium">{listWords.heading}</h2>
           {anchors.length === 0 ? (
-            <p className="text-sm text-ink-muted">No balances counted yet.</p>
+            <p className="text-sm text-ink-muted">{listWords.empty}</p>
           ) : (
             <table className="w-full text-sm">
               <thead>
@@ -532,12 +534,13 @@ export default async function AccountDetailPage({
                       ]
                     : []),
                   {
-                    label: "Recorded balances kept",
+                    // every kind of balance the list above holds, so it names none ("recorded" is a statement's)
+                    label: "Balances kept",
                     value: countPhrase(anchors.length, "balance"),
                   },
                 ],
                 reassurance:
-                  "Restore account puts it back exactly as it is now — transactions, recorded balances and history are untouched.",
+                  "Restore account puts it back exactly as it is now — transactions, balances and history are untouched.",
               }}
             />
           ) : (
