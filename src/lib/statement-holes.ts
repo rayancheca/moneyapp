@@ -66,6 +66,12 @@ export const MAX_CLOSES_PER_HOLE = 60;
  * importers actually write them — Discover runs 2024-06-19→07-18 then
  * 07-19→08-18. Treating `next.start > prev.end` as the test would report a hole
  * between every consecutive pair.
+ *
+ * ⛔ `periods` are STATEMENTS — `statementsByAccount`'s rows, never a document that
+ * printed no balances. A Chase Spending Report spans many cycles: the frontier
+ * jumped to its end, so every statement missing under it read as covered, and a
+ * hole after it opened on a day no statement closed (`closesWithin` walks from
+ * that day). The review, 2026-10-08, on a copy of the owner's ledger.
  */
 export function statementHoles(
   periods: readonly StatementPeriodRef[],

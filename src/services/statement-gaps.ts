@@ -1,13 +1,14 @@
-import { and, asc, eq, inArray, isNotNull } from "drizzle-orm";
+import { and, eq, inArray, isNotNull } from "drizzle-orm";
 import type { AppDatabase } from "@/db/client";
 import { accounts } from "@/db/schema/accounts";
-import { LIVE_FILE, importFiles, statementPeriods } from "@/db/schema/imports";
+import { LIVE_FILE, importFiles } from "@/db/schema/imports";
 import { institutions } from "@/db/schema/institutions";
 import { diffDays } from "@/lib/dates";
 import { withheldSectionsOf } from "@/lib/import-file-label";
 import { statementCadence } from "@/lib/statement-cadence";
 import { statementHoles, type StatementHole } from "@/lib/statement-holes";
 import { ACCOUNT_ORDER } from "./account-order";
+import { statementsByAccount } from "./statements-by-account";
 
 /**
  * Which statements are NOT in the ledger, per account.
@@ -93,14 +94,12 @@ export function statementGaps(db: AppDatabase): AccountStatementGaps[] {
     .all();
 
   const withheldByAccount = withheldWindowsByAccount(db);
+  // ⛔ statements only, by the schedule's rule (`statementsByAccount`): a Spending Report spans many cycles, and read
+  // as coverage it hid every statement missing under it
+  const statements = statementsByAccount(db);
   const out: AccountStatementGaps[] = [];
   for (const account of rows) {
-    const periods = db
-      .select({ start: statementPeriods.periodStart, end: statementPeriods.periodEnd })
-      .from(statementPeriods)
-      .where(eq(statementPeriods.accountId, account.id))
-      .orderBy(asc(statementPeriods.periodStart))
-      .all();
+    const periods = statements.get(account.id) ?? [];
     /*
      * An account with no statements at all has no HOLES — it has no coverage to
      * be missing from. Reporting "everything since 2022 is missing" for Cash on

@@ -202,7 +202,8 @@ function trimmedMaxDeviation(deviations: readonly number[]): number {
  * `closeDates` are the period-end dates of real statements, any order.
  * Duplicates and non-statement documents (a spending report covering
  * 2026-01-01 → 2026-07-10) must be filtered out by the caller — they are not
- * closes and would wreck the rhythm.
+ * closes and would wreck the rhythm. Both callers read `statementsByAccount`;
+ * until 2026-10-08 Missing statements did not, and read Sapphire at tolerance 9.
  */
 export function statementCadence(closeDates: readonly string[]): StatementCadence {
   const ends = [...new Set(closeDates)].sort().slice(-RECENT_CLOSES);

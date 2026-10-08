@@ -615,8 +615,11 @@ describe("a cycle that moved", () => {
 
   /*
    * The accounts the rule must leave alone, as the real ledger has them. Chase
-   * Sapphire is read the way the Missing-statements panel reads it — two Chase
-   * spending reports included — which is where its 9-day tolerance comes from.
+   * Sapphire is read the way the Missing-statements panel read it until
+   * 2026-10-08 — two Chase spending reports included, which is where its 9-day
+   * tolerance comes from. Both panels now read statements only
+   * (`statementsByAccount`, tolerance 1); the noisier reading stays as the
+   * harder case: two strays off the 2nd are not a moved cycle.
    */
   test("the real ledger's settled cycles are untouched", () => {
     const sapphire = statementCadence([
