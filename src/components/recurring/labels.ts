@@ -9,7 +9,7 @@ import { SERIES_EVIDENCE_LABEL } from "@/lib/series-evidence";
 import type { Cadence, SeriesKind, SeriesStatus } from "@/db/schema/recurring";
 import type { ForecastComponent } from "@/services/forecast";
 import type { SeriesOccurrence, SeriesStaleness } from "@/services/recurring";
-import type { MergeFiling } from "@/services/recurring-links";
+import type { MergeFiling, MergeResult } from "@/services/recurring-links";
 
 export const CADENCE_LABEL: Record<Cadence, string> = {
   weekly: "Weekly",
@@ -565,8 +565,11 @@ export function mergeFilingClause(filing: MergeFiling | null): string | null {
   return filing === null ? null : `${filing.count} not filed yet will be filed under ${filing.categoryPath}.`;
 }
 
-/** The merge's toast — what moved, and what the merge filed (§6A 54) in the same voice. */
-export function mergedToastTitle(name: string, relinked: number, filing: MergeFiling | null): string {
+/**
+ * The merge's toast — what moved, and what the merge filed (§6A 54) in the same voice. It reads the merge's own result
+ * whole, so the page cannot report the move and leave the filing out.
+ */
+export function mergedToastTitle(name: string, { relinked, filed }: Pick<MergeResult, "relinked" | "filed">): string {
   const moved = `${name} merged in · ${relinked} moved`;
-  return filing === null ? moved : `${moved} · ${filing.count} filed under ${filing.categoryPath}`;
+  return filed === null ? moved : `${moved} · ${filed.count} filed under ${filed.categoryPath}`;
 }

@@ -588,10 +588,14 @@ describe("merge sentences (§6A 54)", () => {
     expect(mergeFilingClause(null)).toBeNull();
   });
 
+  /*
+   * 🔴 Review 2026-10-08: the toast took `relinked` and `filed` as two loose arguments, so the page could drop the
+   * filing (`null`) and every test stayed green. It now reads the merge's own result, whole.
+   */
   test("the toast adds the filing in the same voice — and reads as before when nothing was filed", () => {
-    expect(mergedToastTitle("Car lease 2", 3, filing)).toBe(
+    expect(mergedToastTitle("Car lease 2", { relinked: 3, filed: filing })).toBe(
       "Car lease 2 merged in · 3 moved · 2 filed under Car > Lease",
     );
-    expect(mergedToastTitle("Car lease 2", 3, null)).toBe("Car lease 2 merged in · 3 moved");
+    expect(mergedToastTitle("Car lease 2", { relinked: 3, filed: null })).toBe("Car lease 2 merged in · 3 moved");
   });
 });

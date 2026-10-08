@@ -56,6 +56,39 @@ test("detach then attach round-trips the linked count", async ({ page }) => {
   await expect(page.getByRole("heading", { name: `Linked transactions · ${before}` })).toBeVisible();
 });
 
+/*
+ * ⚖️ Owner decision 2026-10-08 (§6A 54): merging a series in files its rows not filed yet under this series' category,
+ * and the confirmation SAYS so before he presses — that sentence was his condition for merge filing at all.
+ *
+ * 🔴 The merge test below never shows it: its first candidate is income, which the rule refuses onto a subscription,
+ * so the sentence could be deleted from the page with every test green. Read where it fires instead: on Apple
+ * (Subscriptions > Software), CAPITAL ONE 360 TRANSFER is a bill whose 24 rows at −$400.00 have no category — measured
+ * 2026-10-08 on a copy of the post-suite data/e2e.db through `seriesDetail`. Cancel, so nothing is merged or filed.
+ */
+test("the merge confirmation names what it will file before the press", async ({ page }) => {
+  await page.goto("/recurring");
+  await page.getByRole("button", { name: "Detect now" }).click();
+  await page.goto("/recurring?tab=all");
+  await page.getByRole("link", { name: "Apple", exact: true }).first().click();
+  await expect(page.getByRole("heading", { name: /^Linked transactions/ })).toBeVisible();
+
+  await page.getByRole("button", { name: /Merge another series in/ }).click();
+  await page.getByPlaceholder("Search series…").fill("CAPITAL ONE");
+  await page.getByRole("button", { name: "Choose CAPITAL ONE 360 TRANSFER to merge in", exact: true }).click();
+  const prompt = page.locator("[popover]").filter({ hasText: "into this series?" });
+  await expect(prompt.locator("p")).toHaveText(
+    "Merge CAPITAL ONE 360 TRANSFER into this series? Its charges move here and it ends. " +
+      "24 not filed yet will be filed under Subscriptions > Software.",
+  );
+  await prompt.getByRole("button", { name: "Cancel" }).click();
+
+  // nothing to file (Rent's rows are filed) → the sentence he has always read, unchanged
+  await page.getByPlaceholder("Search series…").fill("Rent");
+  await page.getByRole("button", { name: "Choose Rent to merge in", exact: true }).click();
+  await expect(prompt.locator("p")).toHaveText("Merge Rent into this series? Its charges move here and it ends.");
+  await prompt.getByRole("button", { name: "Cancel" }).click();
+});
+
 test("merging another series in relinks its charges and ends it", async ({ page }) => {
   await detectAndOpenFirstSeries(page);
 

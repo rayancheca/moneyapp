@@ -272,10 +272,10 @@ export function MergeControl({
 
   function merge(source: SeriesMergeCandidate): void {
     void run(() => mergeIntoSeriesAction({ sourceId: source.id, targetId: seriesId }), {
-      onSuccess: ({ relinked, filed }) => {
+      onSuccess: (result) => {
         close();
         onChanged();
-        toast({ title: mergedToastTitle(source.name, relinked, filed) });
+        toast({ title: mergedToastTitle(source.name, result) });
       },
     });
   }
@@ -302,33 +302,12 @@ export function MergeControl({
         className="w-72 rounded-(--radius-overlay) border border-line bg-surface-overlay p-2 shadow-(--shadow-overlay)"
       >
         {pending ? (
-          <div className="p-1">
-            <p className="text-sm text-ink">
-              Merge <span className="font-medium">{pending.name}</span> into this series? Its charges move
-              here and it ends.
-              {/* ⚖️ §6A 54: what the merge files, said before the press — the count the merge itself writes by */}
-              {pending.filing ? ` ${mergeFilingClause(pending.filing)}` : null}
-            </p>
-            <div className="mt-3 flex justify-end gap-2">
-              <button
-                type="button"
-                onClick={() => setPending(null)}
-                className="rounded-md border border-line px-2.5 py-1 text-xs text-ink-muted transition-colors duration-(--duration-fast) hover:border-line-strong hover:text-ink"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                onClick={() => merge(pending)}
-                aria-busy={merging}
-                className={`rounded-md bg-accent px-2.5 py-1 text-xs font-medium text-surface-raised transition-opacity duration-(--duration-fast) hover:opacity-90 ${
-                  merging ? "opacity-60" : ""
-                }`}
-              >
-                Merge in
-              </button>
-            </div>
-          </div>
+          <MergeConfirmation
+            candidate={pending}
+            merging={merging}
+            onCancel={() => setPending(null)}
+            onConfirm={() => merge(pending)}
+          />
         ) : (
           <>
             <div className="mb-1.5 flex items-center gap-1.5 rounded-md border border-line px-2 py-1">
@@ -365,5 +344,55 @@ export function MergeControl({
         )}
       </Popover>
     </>
+  );
+}
+
+/**
+ * The merge's confirmation — the last thing he reads before a press with no undo button.
+ *
+ * ⚖️ Owner decision 2026-10-08 (§6A 54): it names how many of the candidate's rows are not filed yet and the category
+ * the merge files them under — the count `mergeSeries` itself writes by (`SeriesMergeCandidate.filing`). With nothing
+ * to file it reads as it always has. 🔴 Its own component so the sentence is tested as rendered: inline in
+ * `MergeControl`, behind a popover and a pick, no test reached it and deleting it left every test green.
+ */
+export function MergeConfirmation({
+  candidate,
+  merging,
+  onCancel,
+  onConfirm,
+}: {
+  candidate: SeriesMergeCandidate;
+  merging: boolean;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  const filing = mergeFilingClause(candidate.filing);
+  return (
+    <div className="p-1">
+      <p className="text-sm text-ink">
+        Merge <span className="font-medium">{candidate.name}</span> into this series? Its charges move here and it
+        ends.
+        {filing === null ? null : ` ${filing}`}
+      </p>
+      <div className="mt-3 flex justify-end gap-2">
+        <button
+          type="button"
+          onClick={onCancel}
+          className="rounded-md border border-line px-2.5 py-1 text-xs text-ink-muted transition-colors duration-(--duration-fast) hover:border-line-strong hover:text-ink"
+        >
+          Cancel
+        </button>
+        <button
+          type="button"
+          onClick={onConfirm}
+          aria-busy={merging}
+          className={`rounded-md bg-accent px-2.5 py-1 text-xs font-medium text-surface-raised transition-opacity duration-(--duration-fast) hover:opacity-90 ${
+            merging ? "opacity-60" : ""
+          }`}
+        >
+          Merge in
+        </button>
+      </div>
+    </div>
   );
 }
