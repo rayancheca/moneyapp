@@ -3,6 +3,7 @@ import {
   SERIES_EVIDENCE_LABEL,
   SERIES_EVIDENCE_NOTE,
   SUGGESTION_NOTE,
+  seriesEvidenceTone,
   seriesRowLabel,
   type SeriesEvidence,
   noScheduleReason,
@@ -11,7 +12,7 @@ import {
   RECURRING_HISTORY_STATUSES,
 } from "./series-evidence";
 
-const EVERY: readonly SeriesEvidence[] = ["active", "never-billed", "running-late", "lapsed"];
+const EVERY: readonly SeriesEvidence[] = ["active", "never-billed", "not-looked-for", "running-late", "lapsed"];
 
 describe("the evidence vocabulary", () => {
   test("every state has a label and a note, and none of them is the word 'inactive'", () => {
@@ -23,7 +24,22 @@ describe("the evidence vocabulary", () => {
     }
   });
 
+  /*
+   * 🔴 His pay's page wore an amber "Running late" for a payday on a day no import covered, under the sentence
+   * "so the ledger has not looked for its deposit" (2026-10-08). Not looked for is quiet, and says why.
+   */
+  test("not looked for yet is never called late, and is the one quiet tone", () => {
+    expect(SERIES_EVIDENCE_LABEL["not-looked-for"]).toBe("Not looked for yet");
+    expect(SERIES_EVIDENCE_LABEL["not-looked-for"].toLowerCase()).not.toContain("late");
+    expect(SERIES_EVIDENCE_NOTE["not-looked-for"]).toContain("checked through");
+    expect(seriesEvidenceTone("not-looked-for")).toBe("neutral");
+    for (const e of EVERY.filter((x) => x !== "not-looked-for")) expect(seriesEvidenceTone(e)).toBe("warning");
+    expect(seriesRowLabel("confirmed", "not-looked-for")).toBe("not looked for yet");
+    expect(seriesRowLabel("detected", "not-looked-for")).toBe("suggested · not looked for yet");
+  });
+
   test("a state that is still forecast says so, and the one that is not says that", () => {
+    expect(SERIES_EVIDENCE_NOTE["not-looked-for"]).toContain("still forecast");
     expect(SERIES_EVIDENCE_NOTE["running-late"]).toContain("still forecast");
     expect(SERIES_EVIDENCE_NOTE["never-billed"]).toContain("forecast");
     expect(SERIES_EVIDENCE_NOTE.lapsed).toContain("no longer forecast");

@@ -32,7 +32,8 @@ export function StaleMark({
   staleness?: SeriesStaleness;
   className?: string;
 }) {
-  if (!staleness?.isStale) return null;
+  // ⛔ not looked for keeps its age as a fact, in a neutral badge — `staleMarkTone`
+  if (!staleness?.isStale && !staleness?.notLookedFor) return null;
   return (
     <span title={stalenessSentence(staleness)}>
       {/* ⛔ Neutral for a series the bank has never billed — see `staleMarkTone` */}

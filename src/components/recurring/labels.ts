@@ -175,12 +175,21 @@ export function staleLabel(s: SeriesStaleness): string {
  * warning amber on the morning of its first payment.
  */
 export function staleMarkTone(s: SeriesStaleness): "warning" | "neutral" {
-  return s.daysSinceLastMatch === null ? "neutral" : "warning";
+  return staleIsLate(s) ? "warning" : "neutral";
+}
+
+/**
+ * Late in the only sense that warns: it has charged, and its evidence ran past tolerance on days the ledger has
+ * checked. ⛔ Never billed is not late (above), and neither is not looked for (`seriesStaleness`): 🔴 his pay read
+ * "last seen 14d ago" in amber for a payday on a day Wells Fargo had not been checked through (2026-10-08).
+ */
+function staleIsLate(s: SeriesStaleness): boolean {
+  return s.isStale && s.daysSinceLastMatch !== null;
 }
 
 /** The footer is a warning only when at least one of its series is actually late. */
 export function staleFooterIsWarning(entries: readonly StaleEntry[]): boolean {
-  return entries.some((e) => e.staleness.daysSinceLastMatch !== null);
+  return entries.some((e) => staleIsLate(e.staleness));
 }
 
 /**
@@ -195,7 +204,10 @@ export function staleFooterHint(entries: readonly StaleEntry[]): string {
   const late = staleFooterIsWarning(entries);
   const never = entries.some((e) => e.staleness.daysSinceLastMatch === null);
   if (late && never) return "why these numbers rest on old evidence or on the schedule alone";
-  return late ? "why these numbers rest on old evidence" : "why these numbers rest on the schedule alone";
+  if (late) return "why these numbers rest on old evidence";
+  if (never) return "why these numbers rest on the schedule alone";
+  // ⛔ only not looked for: nothing here is old — the ledger has not read the days since (`stalenessSentence`)
+  return "why the ledger has not looked for these yet";
 }
 
 /**
@@ -207,6 +219,17 @@ export function stalenessSentence(s: SeriesStaleness): string {
   const expects = `expected about every ${Math.round(s.stepDays)} days`;
   if (s.lastMatchedOn === null || s.daysSinceLastMatch === null) {
     return `${expects}, but no charge has ever matched it — still projected, on the schedule alone`;
+  }
+  /*
+   * ⛔ Not looked for: the age is a fact, "past the tolerance" is not a finding — the days it ran past tolerance are
+   * days nobody has checked. The checked day is named so the claim can be checked: it falls inside the tolerance.
+   */
+  if (s.notLookedFor) {
+    const looked =
+      s.checkedThrough === null || s.checkedThrough === undefined
+        ? "the ledger has not checked every account it could post to"
+        : `its account has been checked only through ${longDate(s.checkedThrough)}, inside the ${wholeToleranceDays(s.toleranceDays)}-day tolerance`;
+    return `${expects}, and nothing has matched since ${longDate(s.lastMatchedOn)} (${s.daysSinceLastMatch} days), but ${looked} — so the ledger has not looked for the next one yet. Still projected.`;
   }
   return `${expects}, but nothing has matched since ${longDate(s.lastMatchedOn)} — ${s.daysSinceLastMatch} days, past the ${wholeToleranceDays(s.toleranceDays)}-day tolerance. Still projected: a late import looks exactly like a cancelled series, so this says which numbers rest on old evidence rather than dropping them.`;
 }
@@ -310,18 +333,26 @@ export interface StaleEntry {
  * fact two ways. "Never billed" is an adjective and this clause needs a verb,
  * so it is the same participle with the auxiliary it needs, not a third word.
  */
+/**
+ * 🔴 AND NOT LOOKED FOR IS NOT LATE. "In October 2026, 4 series are running late" counted his pay, whose payday falls
+ * after the last day Wells Fargo has been checked through, and Rocket Money, whose charge falls after Chase's (his
+ * ledger, 2026-10-08). They are counted apart, in the passed-payday sentence's words, and never warn.
+ */
 export function staleSummaryLabel(entries: readonly StaleEntry[], window: string): string {
   const never = entries.filter((e) => e.staleness.daysSinceLastMatch === null).length;
-  const late = entries.length - never;
-  const lateClause = `${late} ${late === 1 ? "series is" : "series are"} running late`;
-  const neverClause = `${never} ${never === 1 ? "has" : "have"} never been billed`;
-  const body =
-    never === 0
-      ? `${lateClause} — still projected`
-      : late === 0
-        ? `${never} ${never === 1 ? "series has" : "series have"} never been billed — still projected`
-        : `${lateClause} and ${neverClause} — all still projected`;
-  return `${window}, ${body}`;
+  const unread = entries.filter((e) => e.staleness.daysSinceLastMatch !== null && e.staleness.notLookedFor).length;
+  const late = entries.length - never - unread;
+  // the first clause carries the noun: "1 series is running late and 2 have never been billed"
+  const clauses = [
+    { n: late, verb: (n: number) => (n === 1 ? "is running late" : "are running late") },
+    { n: never, verb: (n: number) => (n === 1 ? "has never been billed" : "have never been billed") },
+    { n: unread, verb: (n: number) => (n === 1 ? "has not been looked for yet" : "have not been looked for yet") },
+  ]
+    .filter((c) => c.n > 0)
+    .map((c, i) => `${c.n} ${i === 0 ? "series " : ""}${c.verb(c.n)}`);
+  const listed =
+    clauses.length <= 1 ? (clauses[0] ?? "") : `${clauses.slice(0, -1).join(", ")} and ${clauses[clauses.length - 1]}`;
+  return `${window}, ${listed} — ${clauses.length <= 1 ? "still projected" : "all still projected"}`;
 }
 
 /**
@@ -377,7 +408,8 @@ export function unsettledReasonWord(reason: UnsettledReason): string {
 export function staleOccurrenceEntries(occurrences: readonly SeriesOccurrence[]): StaleEntry[] {
   const bySeries = new Map<string, StaleEntry>();
   for (const o of occurrences) {
-    if (!o.staleness?.isStale || bySeries.has(o.seriesId)) continue;
+    // ⛔ not looked for reaches the footer too — counted apart (`staleSummaryLabel`), so the chip's why is reachable
+    if (!(o.staleness?.isStale || o.staleness?.notLookedFor) || bySeries.has(o.seriesId)) continue;
     bySeries.set(o.seriesId, { key: o.seriesId, name: o.name, staleness: o.staleness });
   }
   return [...bySeries.values()];
@@ -395,7 +427,7 @@ export function staleComponentEntries(components: readonly ForecastComponent[]):
   const entries: StaleEntry[] = [];
   const seen = new Set<string>();
   for (const c of components) {
-    if (!c.staleness?.isStale || seen.has(c.label)) continue;
+    if (!(c.staleness?.isStale || c.staleness?.notLookedFor) || seen.has(c.label)) continue;
     seen.add(c.label);
     entries.push({ key: c.label, name: c.label, staleness: c.staleness });
   }

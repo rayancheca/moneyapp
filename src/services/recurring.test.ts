@@ -456,6 +456,7 @@ describe("seriesStaleness", () => {
       stepDays: 7,
       toleranceDays: 12.5,
       isStale: false,
+      notLookedFor: false,
     });
   });
 
@@ -530,17 +531,127 @@ describe("seriesStaleness", () => {
       status: "confirmed" as const,
     };
     const today = "2026-07-08";
-    expect(seriesEvidence({ ...base, kind: "bill", lastMatchedOn: null }, today)).toBe("never-billed");
-    expect(seriesEvidence({ ...base, kind: "bill", lastMatchedOn: "2026-07-05" }, today)).toBe("active");
+    // every day to today checked: these are the gates themselves (unchecked days — the describe below)
+    const checked = today;
+    expect(seriesEvidence({ ...base, kind: "bill", lastMatchedOn: null }, today, checked)).toBe("never-billed");
+    expect(seriesEvidence({ ...base, kind: "bill", lastMatchedOn: "2026-07-05" }, today, checked)).toBe("active");
     // 74 days quiet: past the 1.5-cycle staleness bar, short of the 3-cycle lapse bar
-    expect(seriesEvidence({ ...base, kind: "bill", lastMatchedOn: "2026-04-25" }, today)).toBe("running-late");
+    expect(seriesEvidence({ ...base, kind: "bill", lastMatchedOn: "2026-04-25" }, today, checked)).toBe("running-late");
     // 157 days quiet: a bill this quiet is no longer forecast …
-    expect(seriesEvidence({ ...base, kind: "bill", lastMatchedOn: "2026-02-01" }, today)).toBe("lapsed");
+    expect(seriesEvidence({ ...base, kind: "bill", lastMatchedOn: "2026-02-01" }, today, checked)).toBe("lapsed");
     // … and a paycheque this quiet is late, never lapsed — money in does not stop
-    expect(seriesEvidence({ ...base, kind: "income", lastMatchedOn: "2026-02-01" }, today)).toBe("running-late");
+    expect(seriesEvidence({ ...base, kind: "income", lastMatchedOn: "2026-02-01" }, today, checked)).toBe("running-late");
     // the same gate the forecast reads, not a second copy of it
     expect(seriesHasLapsed({ ...base, lastMatchedOn: "2026-02-01" }, today)).toBe(true);
     expect(lapsedSeriesShouldStopForecasting("income")).toBe(false);
+  });
+});
+
+/*
+ * 🔴 VISIBLE on his ledger 2026-10-08: /recurring said "It falls after Thu, Sep 24, 2026, the last day every account
+ * that pay lands in has been checked through — so the ledger has not looked for its deposit." and, two lines on,
+ * "MONEY IN — all of it running late"; the pay series' page wore a "Running late" badge. Rocket Money posts to Chase
+ * Checking, checked through Aug 12; its Jul 15 charge is the newest, and the Aug 15 one falls on a day nobody has read
+ * — yet it read "running late" too. Late is a claim about days the ledger has CHECKED; staleness between statements is
+ * the normal state (owner, 2026-08-05).
+ */
+describe("a series is late only on days the ledger has checked", () => {
+  const weekly = {
+    cadence: "weekly" as const,
+    userCadence: "weekly" as const,
+    intervalDaysAvg: 7,
+    nextExpectedOn: "2026-10-01",
+    userNextExpectedOn: null,
+    nextExpectedAmountCents: 114_192,
+    userAmountCents: null,
+    status: "confirmed" as const,
+    kind: "income" as const,
+    lastMatchedOn: "2026-09-24",
+  };
+  // monthly 30 → 30 × 1.5 + 3 = 48 days of tolerance
+  const monthly = {
+    ...weekly,
+    cadence: "monthly" as const,
+    userCadence: null,
+    intervalDaysAvg: 30,
+    nextExpectedAmountCents: -600,
+    kind: "subscription" as const,
+    lastMatchedOn: "2026-07-15",
+  };
+  const today = "2026-10-08";
+
+  test("his pay: 14 days quiet against 12.5, but its account is checked only through its last deposit", () => {
+    const s = seriesStaleness(weekly, today, "2026-09-24");
+    expect(s.daysSinceLastMatch).toBe(14); // the fact stays
+    expect(s.isStale).toBe(false);
+    expect(s.notLookedFor).toBe(true);
+    expect(s.checkedThrough).toBe("2026-09-24");
+    expect(seriesEvidence(weekly, today, "2026-09-24")).toBe("not-looked-for");
+  });
+
+  test("checked past the payday it missed, the same pay IS late", () => {
+    // Oct 1 was read with nothing in it: Sep 24 → Oct 7 is 13 days, past 12.5
+    const s = seriesStaleness(weekly, today, "2026-10-07");
+    expect(s.isStale).toBe(true);
+    expect(s.notLookedFor).toBe(false);
+    expect(seriesEvidence(weekly, today, "2026-10-07")).toBe("running-late");
+  });
+
+  test("Rocket Money: Jul 15, Chase checked through Aug 12 — not looked for, never late", () => {
+    expect(seriesStaleness(monthly, today, "2026-08-12")).toMatchObject({ isStale: false, notLookedFor: true });
+    expect(seriesEvidence(monthly, today, "2026-08-12")).toBe("not-looked-for");
+  });
+
+  test("the boundary is the tolerance itself, measured to the checked day", () => {
+    // Jul 15 + 48 = Sep 1: checked through it, the charge could still be on time
+    expect(seriesStaleness(monthly, today, "2026-09-01")).toMatchObject({ isStale: false, notLookedFor: true });
+    // one more checked day and the bill is late on days the ledger has read
+    expect(seriesStaleness(monthly, today, "2026-09-02")).toMatchObject({ isStale: true, notLookedFor: false });
+  });
+
+  test("an account with no checked record cannot make a series late", () => {
+    expect(seriesStaleness(monthly, today, null)).toMatchObject({ isStale: false, notLookedFor: true, checkedThrough: null });
+    expect(seriesEvidence(monthly, today, null)).toBe("not-looked-for");
+  });
+
+  test("a last charge past the checked day is newer than anything checked, so nothing is late", () => {
+    expect(seriesStaleness(monthly, today, "2026-07-01")).toMatchObject({ isStale: false, notLookedFor: true });
+  });
+
+  test("a frontier past today is today", () => {
+    // fresh to today: neither late nor waiting, whatever the checked day says
+    expect(seriesStaleness({ ...monthly, lastMatchedOn: "2026-09-20" }, today, "2026-12-31")).toMatchObject({
+      isStale: false,
+      notLookedFor: false,
+    });
+    expect(seriesStaleness(monthly, today, "2026-12-31")).toMatchObject({ isStale: true, notLookedFor: false });
+  });
+
+  test("never billed is never billed: stale, not waiting on a check", () => {
+    for (const checked of ["2026-08-12", null]) {
+      expect(seriesStaleness({ ...monthly, lastMatchedOn: null }, today, checked)).toMatchObject({
+        isStale: true,
+        notLookedFor: false,
+      });
+      expect(seriesEvidence({ ...monthly, lastMatchedOn: null }, today, checked)).toBe("never-billed");
+    }
+  });
+
+  test("fresh to today is active, whatever the checked day", () => {
+    expect(seriesStaleness({ ...monthly, lastMatchedOn: "2026-09-20" }, today, "2026-08-12")).toMatchObject({
+      isStale: false,
+      notLookedFor: false,
+    });
+    expect(seriesEvidence({ ...monthly, lastMatchedOn: "2026-09-20" }, today, "2026-08-12")).toBe("active");
+  });
+
+  test("⛔ the forecast's lapse rule is not this rule: a money-out series past the lapse bar stays lapsed", () => {
+    // 157 days to today, past 3 cycles — the forecast drops it, and the All tab must say so whatever was checked
+    const quiet = { ...monthly, lastMatchedOn: "2026-05-04" };
+    expect(seriesHasLapsed(quiet, today)).toBe(true);
+    expect(seriesEvidence(quiet, today, "2026-06-01")).toBe("lapsed");
+    // money in never lapses: the same quiet over unchecked days is only not looked for
+    expect(seriesEvidence({ ...quiet, kind: "income" }, today, "2026-06-01")).toBe("not-looked-for");
   });
 });
 
@@ -1161,13 +1272,17 @@ describe("detection on the synthetic corpus", () => {
 
     expect(salary.length).toBeGreaterThan(0);
     expect(salary.every((o) => o.amountCents > 0)).toBe(true);
+    // ⚖️ Nothing here has been checked (no balance walk, no statement), so the ledger has not looked for a deposit
+    // since: not looked for — never "late" over days nobody has read (2026-10-08). Still projected, still its age.
     expect(salary[0]!.staleness).toMatchObject({
       lastMatchedOn: "2026-06-25",
       daysSinceLastMatch: 37,
-      isStale: true,
+      isStale: false,
+      notLookedFor: true,
+      checkedThrough: null,
     });
     // every occurrence of the series is marked, not just the first
-    expect(salary.every((o) => o.staleness?.isStale === true)).toBe(true);
+    expect(salary.every((o) => o.staleness?.notLookedFor === true)).toBe(true);
   });
 
   test("setSeriesStatus rejects unknown ids", () => {

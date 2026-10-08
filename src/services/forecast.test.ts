@@ -162,7 +162,15 @@ describe("forecastCurrentMonth", () => {
       nextExpectedAmountCents: 104600,
       status: "confirmed",
       lastMatchedOn: "2026-06-16", // 22 days before TODAY — past 12.5 of tolerance
+      accountId: checkingId,
     });
+    // ⚖️ late only on days the ledger has checked (2026-10-08): the account it lands in is checked to yesterday —
+    // a balance walk over a row of its own (an account with no row is the owner's word alone, never "checked")
+    insertTxn(checkingId, "2026-06-02", -500);
+    for (let d = 1; d <= 37; d += 1) {
+      const day = new Date(Date.UTC(2026, 5, d)).toISOString().slice(0, 10); // Jun 1 … Jul 7
+      bundle.db.insert(dailyBalances).values({ accountId: checkingId, day, balanceCents: 100_000, basis: "derived" }).run();
+    }
     const f = forecastCurrentMonth(bundle.db, TODAY);
     const cashJob = f.components.find((c) => c.label === "Cash job")!;
 

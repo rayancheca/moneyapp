@@ -161,6 +161,26 @@ export function earliestVerified(
 }
 
 /**
+ * Per series, the last day the ledger has checked every account it posts to NOW — `earliestVerified` over
+ * `landingAccountsBySeries` and `accountCoverage` — or null when one of them has no checked record, or when the series
+ * names no account and nothing linked to it says where it lands.
+ *
+ * ⛔ ONE frontier for every sentence about whether the ledger has looked: the passed paydays (/budgets, /recurring),
+ * the dashboard's income card, /spending's note, and whether a series is running late (`seriesStaleness`). 🔴 The
+ * pay sentence said "the ledger has not looked for its deposit" of Oct 1 while the forecast beside it, measuring to
+ * today, said "all of it running late" (his ledger, 2026-10-08).
+ *
+ * ⚡ The coverage read is memoised for the render (`accountCoverage`); the closure only takes an earliest.
+ */
+export function checkedThroughBySeries(db: AppDatabase, today: string): (seriesId: string) => string | null {
+  const verifiedThroughByAccount = new Map(
+    accountCoverage(db, today).map((c) => [c.accountId, c.verifiedThrough] as const),
+  );
+  const landings = landingAccountsBySeries(db);
+  return (seriesId) => earliestVerified(landings.get(seriesId) ?? new Set<string>(), verifiedThroughByAccount, today);
+}
+
+/**
  * One reading per confirmed income series — never a single aggregate.
  *
  * Summing them would produce a total whose `basis` is meaningless: one live
@@ -216,10 +236,7 @@ export function cashEarningsReadings(
     .all();
 
   const readings: CashEarningsReading[] = [];
-  const verifiedThroughByAccount = withChecked
-    ? new Map(accountCoverage(db, today).map((c) => [c.accountId, c.verifiedThrough] as const))
-    : null;
-  const landings = withChecked ? landingAccountsBySeries(db) : null;
+  const checkedOf = withChecked ? checkedThroughBySeries(db, today) : null;
 
   for (const s of series) {
     const banked = linked
@@ -254,11 +271,11 @@ export function cashEarningsReadings(
       seriesName: s.name,
       ...cashEarnings({ series: pay, banked, from, to, today, todayIsComplete }),
     };
-    if (verifiedThroughByAccount === null || landings === null) {
+    if (checkedOf === null) {
       readings.push(reading);
       continue;
     }
-    const checkedThrough = earliestVerified(landings.get(s.id) ?? new Set<string>(), verifiedThroughByAccount, today);
+    const checkedThrough = checkedOf(s.id);
     if (checkedThrough === null) {
       readings.push({ ...reading, checkedThrough, checkedPeriodsCovered: 0, checkedPeriodsSinceBanked: 0 });
       continue;

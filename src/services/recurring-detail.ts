@@ -16,6 +16,7 @@ import { paydayReadings, type PaydayReading, type PerPayday } from "@/lib/per-pa
 import { stepFrom, stepPlan } from "@/lib/recurring-step";
 import { loadCategoryIndex } from "./analytics";
 import { overdueForSeries } from "./arrears";
+import { checkedThroughBySeries } from "./cash-earnings";
 import { paydaySettlement, readsPerPayday, stillToCome } from "./payday-settlement";
 import {
   annualizedCentsOf,
@@ -416,7 +417,8 @@ export function seriesDetail(
     confidence: s.confidence,
     lastMatchedOn: s.lastMatchedOn,
     isActive: isSeriesActive(s, today),
-    evidence: seriesEvidence(s, today),
+    // late only on days the ledger has checked — the badge's word and its tone (`seriesEvidenceTone`)
+    evidence: seriesEvidence(s, today, checkedThroughBySeries(db, today)(s.id)),
     endsOn: s.userEndsOn ?? null,
     annualizedCents: annualizedCentsOf(toProjectable(s), s.status, today),
     nextExpected,

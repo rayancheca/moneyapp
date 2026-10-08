@@ -15,14 +15,28 @@
  * vocabulary, kept client-safe so components can label without importing the
  * database.
  */
-export type SeriesEvidence = "active" | "never-billed" | "running-late" | "lapsed";
+export type SeriesEvidence = "active" | "never-billed" | "not-looked-for" | "running-late" | "lapsed";
 
+/**
+ * ⚖️ "Not looked for yet": quiet past its tolerance only over days after the last day its account has been checked
+ * through — the voice of "the ledger has not looked for its deposit" (2026-10-07), never "late". Statements arrive
+ * monthly, each on its own day, and the gap between them is the normal state (owner, 2026-08-05).
+ */
 export const SERIES_EVIDENCE_LABEL: Record<SeriesEvidence, string> = {
   active: "Active",
   "never-billed": "Never billed",
+  "not-looked-for": "Not looked for yet",
   "running-late": "Running late",
   lapsed: "Lapsed",
 };
+
+/**
+ * The badge tone for a live series' evidence. ⛔ Not looked for is not a warning: nothing is known to be wrong, only
+ * not yet read. 🔴 His pay's page wore an amber "Running late" for a payday on a day no import covered (2026-10-08).
+ */
+export function seriesEvidenceTone(evidence: SeriesEvidence): "neutral" | "warning" {
+  return evidence === "not-looked-for" ? "neutral" : "warning";
+}
 
 /**
  * The note over the SUGGESTIONS section — the one bucket on the All tab that is
@@ -80,6 +94,8 @@ export function seriesRowLabel(
 export const SERIES_EVIDENCE_NOTE: Record<SeriesEvidence, string> = {
   active: "charged within their cadence, and forecast",
   "never-billed": "registered by hand and forecast — the bank has not charged them yet",
+  "not-looked-for":
+    "still forecast — the charge each is waiting on falls after the last day its account has been checked through, so the ledger has not looked for it yet",
   "running-late": "still forecast — the last charge is older than the cadence allows",
   lapsed: "no longer forecast — quiet past the point a bill stops",
 };

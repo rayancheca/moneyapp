@@ -64,6 +64,7 @@ const staleness = (over: Partial<SeriesStaleness> = {}): SeriesStaleness => ({
   stepDays: 7,
   toleranceDays: 12.5,
   isStale: true,
+  notLookedFor: false,
   ...over,
 });
 
@@ -275,12 +276,12 @@ describe("staleSummaryLabel", () => {
   const late = (days: number): StaleEntry => ({
     key: `late-${days}`,
     name: `Late ${days}`,
-    staleness: { lastMatchedOn: "2026-06-05", daysSinceLastMatch: days, stepDays: 7, toleranceDays: 14, isStale: true },
+    staleness: { lastMatchedOn: "2026-06-05", daysSinceLastMatch: days, stepDays: 7, toleranceDays: 14, isStale: true, notLookedFor: false },
   });
   const never = (n: number): StaleEntry => ({
     key: `never-${n}`,
     name: `Never ${n}`,
-    staleness: { lastMatchedOn: null, daysSinceLastMatch: null, stepDays: 30, toleranceDays: 48, isStale: true },
+    staleness: { lastMatchedOn: null, daysSinceLastMatch: null, stepDays: 30, toleranceDays: 48, isStale: true, notLookedFor: false },
   });
 
   test("the real ledger's mix names both, and neither count is the other's", () => {
@@ -564,5 +565,99 @@ describe("annualizedCaveat — a year is qualified only when the series stops in
       "the twelve months from today — this one stops on Sep 11, 2026, inside them",
     );
     expect(annualizedCaveat("2026-09-10", TODAY)).toContain("no longer bills");
+  });
+});
+
+/*
+ * 🔴 VISIBLE on his ledger 2026-10-08: the Upcoming list badged "It America LLC (weekly pay) … last seen 14d ago" in
+ * amber under "In October 2026, 4 series are running late — still projected", while /recurring said two lines up
+ * that its payday "falls after Thu, Sep 24, 2026, the last day every account that pay lands in has been checked
+ * through — so the ledger has not looked for its deposit". The age stays a fact; it is not counted or toned as late.
+ */
+describe("not looked for: the age stays, the lateness goes", () => {
+  // his pay: last Sep 24, 14 days to Oct 8 against 12.5, Wells Fargo checked through Sep 24
+  const unread = staleness({
+    lastMatchedOn: "2026-09-24",
+    daysSinceLastMatch: 14,
+    isStale: false,
+    checkedThrough: "2026-09-24",
+    notLookedFor: true,
+  });
+  const entry = (key: string, s: SeriesStaleness): StaleEntry => ({ key, name: key, staleness: s });
+  const late = entry("Late", staleness());
+  const never = entry("Never", staleness({ lastMatchedOn: null, daysSinceLastMatch: null }));
+  const pay = entry("Pay", unread);
+
+  test("the chip keeps its age and is not a warning", () => {
+    expect(staleLabel(unread)).toBe("last seen 14d ago");
+    expect(staleMarkTone(unread)).toBe("neutral");
+  });
+
+  test("its sentence names the checked day and says the ledger has not looked — never 'past the tolerance'", () => {
+    const sentence = stalenessSentence(unread);
+    expect(sentence).toContain("Sep 24, 2026");
+    expect(sentence).toContain("checked only through Sep 24, 2026");
+    expect(sentence).toContain("has not looked for");
+    expect(sentence).toContain("Still projected");
+    expect(sentence).not.toContain("past the");
+    const nothingChecked = stalenessSentence({ ...unread, checkedThrough: null });
+    expect(nothingChecked).toContain("has not checked every account");
+    expect(nothingChecked).not.toContain("null");
+  });
+
+  test("it reaches the footer, so the chip's why is keyboard-reachable", () => {
+    const occurrence: SeriesOccurrence = {
+      seriesId: "pay",
+      name: "Pay",
+      kind: "income",
+      cadence: "weekly",
+      date: "2026-10-08",
+      amountCents: 114_192,
+      anchorDayOfMonth: null,
+      staleness: unread,
+    };
+    expect(staleOccurrenceEntries([occurrence]).map((e) => e.key)).toEqual(["pay"]);
+    const component: ForecastComponent = { label: "Pay", kind: "fixed", cents: 456_768, detail: "4 × …", staleness: unread };
+    expect(staleComponentEntries([component]).map((e) => e.key)).toEqual(["Pay"]);
+  });
+
+  test("the count names it apart from the late ones, and never calls it late", () => {
+    expect(staleSummaryLabel([pay], "In October 2026")).toBe(
+      "In October 2026, 1 series has not been looked for yet — still projected",
+    );
+    expect(staleSummaryLabel([pay, entry("Rocket", unread)], "In October 2026")).toBe(
+      "In October 2026, 2 series have not been looked for yet — still projected",
+    );
+    expect(staleSummaryLabel([late, pay], "In October 2026")).toBe(
+      "In October 2026, 1 series is running late and 1 has not been looked for yet — all still projected",
+    );
+    expect(staleSummaryLabel([late, never, pay], "In October 2026")).toBe(
+      "In October 2026, 1 series is running late, 1 has never been billed and 1 has not been looked for yet — all still projected",
+    );
+    // the two existing phrasings are untouched
+    expect(staleSummaryLabel([late, never], "In October 2026")).toBe(
+      "In October 2026, 1 series is running late and 1 has never been billed — all still projected",
+    );
+  });
+
+  test("the footer is no warning when nothing is late, and its hint does not call the evidence old", () => {
+    expect(staleFooterIsWarning([pay])).toBe(false);
+    expect(staleFooterIsWarning([pay, never])).toBe(false);
+    expect(staleFooterIsWarning([pay, late])).toBe(true);
+    expect(staleFooterHint([pay])).toBe("why the ledger has not looked for these yet");
+    expect(staleFooterHint([pay])).not.toContain("old");
+  });
+
+  test("the MONEY IN/OUT band counts only what is late or never billed", () => {
+    // `forecastSplit` reads `isStale`; a not-looked-for component carries false, so the band says nothing of it
+    expect(
+      stalePartLabel({
+        fixedCents: 456_768,
+        fixedStaleCents: 0,
+        fixedStaleCount: 0,
+        fixedNeverChargedCents: 0,
+        fixedNeverChargedCount: 0,
+      }),
+    ).toBeNull();
   });
 });
