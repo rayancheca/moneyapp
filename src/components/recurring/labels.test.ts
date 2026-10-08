@@ -692,16 +692,10 @@ describe("awaiting statements: the age stays, the lateness goes", () => {
     expect(staleFooterHint([late, never])).toBe("why these numbers rest on old evidence or on the schedule alone");
   });
 
-  test("the MONEY IN/OUT band counts only what is late or never billed", () => {
-    // `forecastSplit` reads `isStale`; an awaiting-statements component carries false, so the band says nothing of it
-    expect(
-      stalePartLabel({
-        fixedCents: 456_768,
-        fixedStaleCents: 0,
-        fixedStaleCount: 0,
-        fixedNeverChargedCents: 0,
-        fixedNeverChargedCount: 0,
-      }),
-    ).toBeNull();
-  });
+  /*
+   * ⛔ The MONEY IN/OUT band is not tested here. 🔴 A test here fed `stalePartLabel` zero stale cents, which returned
+   * null before the band learned the state too, and stayed green with `isStale || awaitingStatements` back in
+   * `ForecastCard` (review of 2ed1e79). The card maps the components into the band, so the guard renders the card:
+   * services/late-over-unread-days.test.ts, "the forecast card's MONEY IN/OUT band, as the card renders it".
+   */
 });

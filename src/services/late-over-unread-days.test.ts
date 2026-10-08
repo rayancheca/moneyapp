@@ -1,7 +1,10 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
+import { ForecastCard } from "@/components/recurring/ForecastCard";
 import { createDatabase, type DbBundle } from "@/db/client";
 import { accounts } from "@/db/schema/accounts";
 import { dailyBalances } from "@/db/schema/balances";
@@ -10,6 +13,7 @@ import { recurringSeries } from "@/db/schema/recurring";
 import { transactions } from "@/db/schema/transactions";
 import { seedDatabase } from "@/db/seed";
 import { addDays, compareDates } from "@/lib/dates";
+import { formatCents } from "@/lib/money";
 import { stalenessSentence } from "@/components/recurring/labels";
 import { unbankedIncomeForSeries } from "./arrears";
 import { landingAccountsBySeries } from "./cash-earnings";
@@ -119,6 +123,18 @@ function posted(accountId: string, seriesId: string, postedOn: string, amountCen
       updatedAt: now(),
     })
     .run();
+}
+
+/**
+ * The composition band's heading for each side, and the late-money label beside it (`ForecastComposition`'s `Side`),
+ * or null when the side prints none.
+ */
+function bandLabels(html: string): Map<string, string | null> {
+  const band = new Map<string, string | null>();
+  for (const m of html.matchAll(/<h3[^>]*>([^<]+)<\/h3>(?:<span[^>]*title="see[^"]*"[^>]*>([^<]*)<\/span>)?/g)) {
+    band.set(m[1]!, m[2] ?? null);
+  }
+  return band;
 }
 
 /** Days the balance walk has read — what `accountCoverage` grades checked. */
@@ -236,6 +252,22 @@ describe("running late is said only of days the ledger has checked — every sur
     for (const c of utility) expect(c.staleness).toMatchObject({ isStale: false, awaitingStatements: true });
     for (const s of byLabel("Streaming")) expect(s).toMatchObject({ isStale: true, awaitingStatements: false });
     expect(byLabel("Streaming")).not.toHaveLength(0);
+  });
+
+  /*
+   * 🔴 Read off the card itself: the test above proved the components' flags, and nothing proved the card maps them
+   * into the band — `ForecastCard` reads `staleness.isStale` into `forecastSplit` inline, so `isStale ||
+   * awaitingStatements` there brought back "MONEY IN — all of it running late", the sentence that started this
+   * ticket, with every test green (review of 2ed1e79, 2026-10-08).
+   */
+  test("the forecast card's MONEY IN/OUT band, as the card renders it", () => {
+    const html = renderToStaticMarkup(createElement(ForecastCard, { forecast: forecastCurrentMonth(bundle.db, TODAY) }));
+    const band = bandLabels(html);
+    expect([...band.keys()]).toEqual(["Money in", "Money out"]);
+    // the pay is awaiting statements: nothing on the MONEY IN side is late
+    expect(band.get("Money in")).toBeNull();
+    // Streaming truly missed on Venture X's checked days; Rocket Money and the Utility's arrears are awaiting
+    expect(band.get("Money out")).toBe(`${formatCents(1_599)} of it running late`);
   });
 
   test("the calendar's words on a future entry: isStale", () => {
