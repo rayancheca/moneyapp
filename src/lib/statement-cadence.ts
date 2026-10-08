@@ -8,9 +8,10 @@ import { formatDayShort } from "./format-date";
  * Every close date this reads is a fact printed on a statement, so the rhythm
  * is measured, not configured: four of the real ledger's accounts close on the
  * LAST DAY of the month (SoFi ×2, Robinhood Cash, Robinhood Crypto), three
- * close on a fixed day-of-month (Discover the 2nd, Chase Sapphire the 2nd,
- * Venture X the 14th), and Chase Checking wanders across the 10th–13th because
- * its cycle lands on a business day.
+ * close on a fixed day-of-month (Chase Sapphire the 2nd, Venture X the 14th,
+ * Discover the 2nd until Capital One moved it to about the 9th in Aug 2026), and
+ * Chase Checking wanders across the 10th–13th because its cycle lands on a
+ * business day.
  *
  * ⛔ This is a PULL REMINDER, not a defect report. An account going quiet
  * between monthly downloads is the normal state of this ledger — the app has
@@ -35,9 +36,29 @@ export const MONTHLY_GAP_MAX = 35;
  * the 9th. The median across all of them is **the 14th**, a day the account has
  * never once closed on, carrying a 13-day tolerance to span the two clusters.
  * Twelve closes is one year: long enough to be a rhythm, short enough that a
- * changed cycle takes over within a year instead of never.
+ * changed cycle takes over within a year instead of never. Within that year a
+ * move is caught sooner, from its second close — see `movedCycle`.
  */
 export const RECENT_CLOSES = 12;
+
+/**
+ * Two closes in a row off the old cycle, agreeing with each other, are a new
+ * cycle; one is a late close. The docstring on `trimmedMaxDeviation` holds the
+ * one-off case: a single close in the wrong place looks exactly like a move in
+ * the month it happens, so one alone never moves the rhythm.
+ */
+export const MIN_MOVED_CLOSES = 2;
+
+/**
+ * How far apart the closes since a move may sit and still be ONE cycle.
+ *
+ * Measured, not chosen: Chase Checking's settled cycle lands anywhere from the
+ * 10th to the 13th because it rolls to a business day, and consecutive closes
+ * sit three days apart on it (2025-11-13 → 12-10 → 2026-01-13). Two closes of a
+ * single cycle can differ that much; wider than that, they are two late closes,
+ * not a cycle. Discover's Capital One closes (Aug 9, Sep 8) sit one day apart.
+ */
+export const CYCLE_AGREEMENT_DAYS = 3;
 
 /**
  * One day for the bank to publish. A close date is when the cycle ENDS; the PDF
@@ -70,6 +91,13 @@ export interface StatementCadence {
   readonly toleranceDays: number;
   /** how many closes the rhythm was measured from */
   readonly closes: number;
+  /**
+   * Present only when the newest closes moved off the cycle the older ones
+   * describe (`movedCycle`): `rhythm` and `closes` then describe the closes since
+   * the move alone, and this is what the older closes said — their day and how
+   * many of them — so the phrase can state both.
+   */
+  readonly movedFrom?: { readonly day: number; readonly closes: number };
 }
 
 export type PullStatus =
@@ -153,19 +181,20 @@ function median(values: readonly number[]): number {
  * change. A historical outlier is still trimmed, so the case this function was
  * written for is unaffected: Chase Sapphire keeps `toleranceDays = 9`.
  *
- * Never called with an empty list: every caller is past the MIN_CLOSES = 3 bar,
- * which leaves at least two gaps and three days-of-month, so trimming one still
- * leaves something to take a maximum of.
+ * Never called with fewer than two observations: a rhythm is past the
+ * MIN_CLOSES = 3 bar, which leaves at least two gaps and three days-of-month,
+ * and a moved cycle is measured from at least its MIN_MOVED_CLOSES = 2 newest
+ * closes. Below five nothing is trimmed, so the older list is never emptied.
  */
 function trimmedMaxDeviation(deviations: readonly number[]): number {
   const newest = deviations.at(-1)!;
   const older = [...deviations.slice(0, -1)].sort((a, b) => a - b);
   const kept = deviations.length >= 5 ? older.slice(0, -1) : older;
-  // ⛔ NOT `?? 0`. The docstring above states the invariant — three closes leave
-  // at least two gaps and three days-of-month — and a fallback the invariant
-  // makes unreachable is a branch no test can ever run, which in a 100%-covered
-  // module is a lie about how much of this has been exercised. If the bar ever
-  // drops below three closes, this throws where it used to publish a silent 0.
+  // ⛔ NOT `?? 0`. The docstring above states the invariant — at least two
+  // observations — and a fallback the invariant makes unreachable is a branch no
+  // test can ever run, which in a 100%-covered module is a lie about how much of
+  // this has been exercised. If a caller ever passes one, this throws where it
+  // used to publish a silent 0.
   return Math.max(newest, kept.at(-1)!);
 }
 
@@ -173,14 +202,27 @@ function trimmedMaxDeviation(deviations: readonly number[]): number {
  * `closeDates` are the period-end dates of real statements, any order.
  * Duplicates and non-statement documents (a spending report covering
  * 2026-01-01 → 2026-07-10) must be filtered out by the caller — they are not
- * closes and would wreck the rhythm.
+ * closes and would wreck the rhythm. Both callers read `statementsByAccount`;
+ * until 2026-10-08 Missing statements did not, and read Sapphire at tolerance 9.
  */
 export function statementCadence(closeDates: readonly string[]): StatementCadence {
   const ends = [...new Set(closeDates)].sort().slice(-RECENT_CLOSES);
   if (ends.length < MIN_CLOSES) {
     return { rhythm: { kind: "unknown" }, toleranceDays: PUBLISH_SLACK_DAYS, closes: ends.length };
   }
+  const measured = measuredCadence(ends);
+  // month-end and every-n-days rhythms are never re-measured from their newest
+  // closes: neither has been seen to move on this ledger, and a day-of-month is
+  // the only rhythm whose "day" a move can make false
+  if (measured.rhythm.kind !== "day-of-month") return measured;
+  return movedCycle(ends) ?? measured;
+}
 
+/**
+ * The rhythm a run of closes describes as a whole. `ends` is deduped, ascending
+ * and at least MIN_CLOSES long.
+ */
+function measuredCadence(ends: readonly string[]): StatementCadence {
   const gaps: number[] = [];
   for (let i = 1; i < ends.length; i++) gaps.push(diffDays(ends[i - 1]!, ends[i]!));
   const medianGap = median(gaps);
@@ -205,6 +247,11 @@ export function statementCadence(closeDates: readonly string[]): StatementCadenc
     return { rhythm: { kind: "month-end" }, toleranceDays: PUBLISH_SLACK_DAYS, closes: ends.length };
   }
 
+  return dayOfMonthCadence(ends);
+}
+
+/** The median day of `ends` (at least two closes) and the wander around it. */
+function dayOfMonthCadence(ends: readonly string[]): StatementCadence {
   const days = ends.map(dayOfMonth);
   const day = Math.round(median(days));
   const spread = trimmedMaxDeviation(days.map((d) => Math.abs(d - day)));
@@ -213,6 +260,53 @@ export function statementCadence(closeDates: readonly string[]): StatementCadenc
     toleranceDays: spread + PUBLISH_SLACK_DAYS,
     closes: ends.length,
   };
+}
+
+/**
+ * The cycle the newest closes describe, when they have MOVED off the one the
+ * older closes describe — or null when they have not.
+ *
+ * 🔴 Measured on the owner's /imports on 2026-10-08: `Discover` is issued by
+ * Capital One now, and its last two statements closed Aug 9 and Sep 8 after ten
+ * closes on the 2nd inside the window. The median of the twelve is still the
+ * 2nd and needs six or seven more closes to move, so the panel read "closes
+ * around the 2nd, from 12 statements" and "closes around Oct 2 on this rhythm"
+ * — a day the account no longer closes on — for half a year after the change.
+ *
+ * The rule: the newest closes are a new cycle when there are at least
+ * MIN_MOVED_CLOSES of them, they sit within CYCLE_AGREEMENT_DAYS of each other,
+ * and EVERY one of them sits off the older closes' day by more than the older
+ * closes' own tolerance. The rhythm then follows them alone — their median day,
+ * their spread plus PUBLISH_SLACK_DAYS — and `movedFrom` keeps what the older
+ * closes said, so the phrase can state that two closes is thin evidence.
+ *
+ * ⛔ "The newest closes" is every close since the move, not just the two newest.
+ * A two-newest rule holds for one month: when the third close on the new cycle
+ * lands, the first one becomes the newest of the OLDER closes, where it is never
+ * trimmed, widens their tolerance past the move, and the rhythm snaps back to
+ * the old day. So the longest run that qualifies wins, which also folds a
+ * transitional first close into the new cycle's wander instead of dropping it.
+ *
+ * ⚠️ What this cannot catch, stated: a single late close (one is never a move),
+ * and a run that the older closes' tolerance already spans — closes that land
+ * inside the old wander are wander. Once the move fills the window — ten closes
+ * on the new cycle leave two before it, below MIN_CLOSES — the median has moved
+ * too and the plain measurement takes over; for that one cycle the trim drops
+ * only one of the two old closes, so the other is held as wander and the
+ * tolerance is wide (a later reminder, never an early one).
+ */
+function movedCycle(ends: readonly string[]): StatementCadence | null {
+  for (let moved = ends.length - MIN_CLOSES; moved >= MIN_MOVED_CLOSES; moved--) {
+    const before = measuredCadence(ends.slice(0, -moved));
+    if (before.rhythm.kind !== "day-of-month") continue;
+    const oldDay = before.rhythm.day;
+    const run = ends.slice(-moved);
+    const days = run.map(dayOfMonth);
+    if (Math.max(...days) - Math.min(...days) > CYCLE_AGREEMENT_DAYS) continue;
+    if (days.some((d) => Math.abs(d - oldDay) <= before.toleranceDays)) continue;
+    return { ...dayOfMonthCadence(run), movedFrom: { day: oldDay, closes: before.closes } };
+  }
+  return null;
 }
 
 function firstOfMonth(iso: string): string {
@@ -317,14 +411,29 @@ function plural(n: number, word: string): string {
   return `${n} ${word}${n === 1 ? "" : "s"}`;
 }
 
-/** "closes around the 2nd, from 12 statements" — the evidence, stated. */
+/**
+ * "closes around the 2nd, from 12 statements" — the evidence, stated.
+ *
+ * A moved cycle names both halves of its evidence: how few closes the new day
+ * rests on ("only" below the MIN_CLOSES bar, the word the unknown arm uses for
+ * the same thinness) and what the closes before them said, so a reader who
+ * remembers the old day sees why the panel changed its mind.
+ */
 export function rhythmPhrase(cadence: StatementCadence): string {
   const from = `from ${plural(cadence.closes, "statement")}`;
   switch (cadence.rhythm.kind) {
     case "month-end":
       return `closes on the last day of the month, ${from}`;
-    case "day-of-month":
-      return `closes around the ${ordinalDay(cadence.rhythm.day)}, ${from}`;
+    case "day-of-month": {
+      const around = `closes around the ${ordinalDay(cadence.rhythm.day)}`;
+      const moved = cadence.movedFrom;
+      if (!moved) return `${around}, ${from}`;
+      const only = cadence.closes < MIN_CLOSES ? "only " : "";
+      return (
+        `${around}, from ${only}its last ${plural(cadence.closes, "statement")} — ` +
+        `the ${moved.closes} before closed around the ${ordinalDay(moved.day)}`
+      );
+    }
     case "every-n-days":
       return `closes about every ${plural(cadence.rhythm.days, "day")}, ${from}`;
     case "unknown":

@@ -1,7 +1,9 @@
 import { describe, expect, test } from "vitest";
-import { addDays } from "./dates";
+import { addCalendarMonths, addDays } from "./dates";
 import {
+  CYCLE_AGREEMENT_DAYS,
   MAX_TRACKED_CLOSES,
+  MIN_CLOSES,
   MONTHLY_GAP_MAX,
   MONTHLY_GAP_MIN,
   nextCloseAfter,
@@ -63,11 +65,19 @@ describe("statementCadence", () => {
     const now = Array.from({ length: 12 }, (_, i) => `2025-${String(i + 1).padStart(2, "0")}-02`);
     expect(statementCadence([...old, ...now]).rhythm).toEqual({ kind: "day-of-month", day: 2 });
     expect(statementCadence([...old, ...now]).closes).toBe(RECENT_CLOSES);
-    // and the un-windowed answer is the bad one this guards against
-    expect(statementCadence([...old, ...now].slice(6, 18)).rhythm).toEqual({
-      kind: "day-of-month",
-      day: 10,
-    });
+    // the window, not the moved-cycle rule, is what forgot the 18th: a year on
+    // the 2nd reads as a settled cycle with nothing before it
+    expect(statementCadence([...old, ...now]).movedFrom).toBeUndefined();
+    /*
+     * ⚠️ A window still holding BOTH cycles used to average them into the 10th —
+     * a day the card never closed on — and this line pinned that as the picture
+     * of the bad answer. Since 2026-10-08 it is the case "a cycle that moved"
+     * (below) exists for: six closes on the 2nd after six on the 18th is a move,
+     * and the rhythm follows it instead of splitting the difference.
+     */
+    const mixed = statementCadence([...old, ...now].slice(6, 18));
+    expect(mixed.rhythm).toEqual({ kind: "day-of-month", day: 2 });
+    expect(mixed.movedFrom).toEqual({ day: 18, closes: 6 });
   });
 
   test("fewer than three closes is not a rhythm", () => {
@@ -431,5 +441,209 @@ describe("the monthly band, at its edges", () => {
       const settled = statementCadence([...ELEVEN_ON_THE_SECOND, "2026-08-02"]);
       expect(settled.toleranceDays).toBeLessThan(3);
     });
+  });
+});
+
+/*
+ * ⛔ A CYCLE THAT MOVED. The window takes a year to forget an old cycle and the
+ * median needs six or seven new closes before it moves, so for half a year a
+ * reissued card was described by a cycle it no longer has.
+ *
+ * 🔴 Measured on the owner's /imports on 2026-10-08: `Discover` (Capital One since
+ * Aug 2026) read "closes around the 2nd, from 12 statements" and "closes around
+ * Oct 2 on this rhythm — counted as late from Oct 9" — while its last two
+ * statements closed Aug 9 and Sep 8, and its next is due about Oct 9.
+ */
+describe("a cycle that moved", () => {
+  /** Every Discover period end on the real ledger (statement_periods, 2026-10-08 copy), oldest first. */
+  const DISCOVER_REAL = [
+    "2023-11-18", "2023-12-18", "2024-01-18", "2024-02-18", "2024-03-18", "2024-04-18", "2024-05-18",
+    "2024-06-18", "2024-07-18", "2024-08-18", "2024-10-18", "2024-12-18", "2025-01-18", "2025-02-18",
+    "2025-05-02", "2025-06-02", "2025-07-02", "2025-10-02", "2025-11-02", "2025-12-02", "2026-01-02",
+    "2026-02-02", "2026-03-02", "2026-04-02", "2026-05-02", "2026-06-02", "2026-07-02",
+    "2026-08-09", "2026-09-08",
+  ];
+  /** The ten closes on the 2nd inside Discover's window, before Capital One moved it. */
+  const TEN_ON_THE_SECOND = DISCOVER_REAL.slice(17, 27);
+
+  test("Discover's real closes: the rhythm follows the Capital One cycle from its second close", () => {
+    expect(TEN_ON_THE_SECOND).toEqual(Array.from({ length: 10 }, (_, i) => addCalendarMonths("2025-10-02", i)));
+    const c = statementCadence(DISCOVER_REAL);
+    // Aug 9 and Sep 8 → the median day 8.5 rounds to the 9th; one day of spread plus the slack
+    expect(c.rhythm).toEqual({ kind: "day-of-month", day: 9 });
+    expect(c.toleranceDays).toBe(2);
+    expect(c.closes).toBe(2);
+    expect(c.movedFrom).toEqual({ day: 2, closes: 10 });
+    // two closes is below the MIN_CLOSES bar, and the phrase says so
+    expect(MIN_CLOSES).toBe(3);
+    expect(rhythmPhrase(c)).toBe(
+      "closes around the 9th, from only its last 2 statements — the 10 before closed around the 2nd",
+    );
+  });
+
+  test("Discover's row on 2026-10-08 names the close that is coming, and late follows it", () => {
+    const p = statementPull(DISCOVER_REAL, "2026-10-08");
+    expect(p.status).toBe("waiting");
+    expect(p.expectedOn).toBe("2026-10-09");
+    expect(p.readyOn).toBe("2026-10-11");
+    expect(pullSentence(p)).toBe("last one closed Sep 8, 30 days ago · next closes Oct 9");
+    // on the day itself the close is behind us, and the late day is the one the status flips on
+    expect(pullSentence(statementPull(DISCOVER_REAL, "2026-10-09"))).toBe(
+      "last one closed Sep 8, 31 days ago · closes around Oct 9 on this rhythm — counted as late from Oct 11",
+    );
+    expect(statementPull(DISCOVER_REAL, "2026-10-10").status).toBe("waiting");
+    expect(statementPull(DISCOVER_REAL, "2026-10-11").status).toBe("due");
+  });
+
+  /*
+   * 🔴 A rule that looked only at the TWO newest closes would hold for one month:
+   * when the third close on the new cycle lands, Aug 9 becomes the newest of the
+   * OLDER closes, is never trimmed there, widens their tolerance to eight days,
+   * and the 8th and 9th sit inside it — the panel would go back to "the 2nd".
+   */
+  test("the third close on the new cycle keeps it — every close since the move counts", () => {
+    const c = statementCadence([...DISCOVER_REAL, "2026-10-09"]);
+    expect(c.rhythm).toEqual({ kind: "day-of-month", day: 9 });
+    expect(c.closes).toBe(3);
+    expect(c.toleranceDays).toBe(2);
+    expect(c.movedFrom).toEqual({ day: 2, closes: 9 });
+    expect(rhythmPhrase(c)).toBe(
+      "closes around the 9th, from its last 3 statements — the 9 before closed around the 2nd",
+    );
+  });
+
+  /*
+   * ⛔ THE END OF THE MOVE: the older closes must still be a rhythm on their own — MIN_CLOSES of them — or
+   * there is nothing to have moved FROM. Pinned at the two months it decides, with the months to come
+   * closing on the 9th as Capital One's do so far. A second reader found both bounds unpinned on
+   * 2026-10-08: starting the run one shorter, or measuring the old cycle from two closes, passed every test.
+   */
+  test("the move holds while three closes before it remain; the plain measurement takes the window after", () => {
+    /** Discover's real closes, then `months` more on the 9th from Oct 2026. */
+    const capitalOneThrough = (months: number) =>
+      statementCadence([
+        ...DISCOVER_REAL,
+        ...Array.from({ length: months }, (_, i) => addCalendarMonths("2026-10-09", i)),
+      ]);
+    // Apr 2027: nine closes on the new cycle, three on the 2nd before them — still a move
+    const april = capitalOneThrough(7);
+    expect(april.rhythm).toEqual({ kind: "day-of-month", day: 9 });
+    expect(april.closes).toBe(9);
+    expect(april.toleranceDays).toBe(1);
+    expect(april.movedFrom).toEqual({ day: 2, closes: MIN_CLOSES });
+    expect(rhythmPhrase(april)).toBe(
+      "closes around the 9th, from its last 9 statements — the 3 before closed around the 2nd",
+    );
+    // May 2027: two closes on the 2nd are below the bar, so the window is measured whole. Its median has
+    // moved to the 9th; for this one cycle the trim keeps one of the two old closes as wander (seven days)
+    const may = capitalOneThrough(8);
+    expect(may.rhythm).toEqual({ kind: "day-of-month", day: 9 });
+    expect(may.closes).toBe(RECENT_CLOSES);
+    expect(may.toleranceDays).toBe(8);
+    expect(may.movedFrom).toBeUndefined();
+    expect(rhythmPhrase(may)).toBe("closes around the 9th, from 12 statements");
+  });
+
+  test("a single late close is not a move — the one-off case keeps the old day", () => {
+    const c = statementCadence([...TEN_ON_THE_SECOND, "2026-08-09"]);
+    expect(c.rhythm).toEqual({ kind: "day-of-month", day: 2 });
+    expect(c.movedFrom).toBeUndefined();
+    expect(rhythmPhrase(c)).toBe("closes around the 2nd, from 11 statements");
+  });
+
+  test("the newest closes must agree with each other — at most CYCLE_AGREEMENT_DAYS apart", () => {
+    expect(CYCLE_AGREEMENT_DAYS).toBe(3);
+    // the 9th and the 12th: three apart, one cycle → the median 10.5 rounds to the 11th
+    const agree = statementCadence([...TEN_ON_THE_SECOND, "2026-08-09", "2026-09-12"]);
+    expect(agree.rhythm).toEqual({ kind: "day-of-month", day: 11 });
+    expect(agree.movedFrom).toEqual({ day: 2, closes: 10 });
+    // the 9th and the 13th: four apart, two late closes rather than a cycle
+    const apart = statementCadence([...TEN_ON_THE_SECOND, "2026-08-09", "2026-09-13"]);
+    expect(apart.rhythm).toEqual({ kind: "day-of-month", day: 2 });
+    expect(apart.movedFrom).toBeUndefined();
+  });
+
+  test("closes inside the old cycle's own tolerance are wander, not a move", () => {
+    // ten on the 2nd → tolerance 1: two closes on the 3rd sit inside it…
+    const wander = statementCadence([...TEN_ON_THE_SECOND, "2026-08-03", "2026-09-03"]);
+    expect(wander.rhythm).toEqual({ kind: "day-of-month", day: 2 });
+    expect(wander.movedFrom).toBeUndefined();
+    // …two on the 4th do not
+    const moved = statementCadence([...TEN_ON_THE_SECOND, "2026-08-04", "2026-09-04"]);
+    expect(moved.rhythm).toEqual({ kind: "day-of-month", day: 4 });
+    expect(moved.movedFrom).toEqual({ day: 2, closes: 10 });
+  });
+
+  test("EVERY close since the move must be off the old cycle, not just the newest", () => {
+    // the 3rd is inside the old tolerance, the 5th is not: one late close, not a cycle
+    const c = statementCadence([...TEN_ON_THE_SECOND, "2026-08-03", "2026-09-05"]);
+    expect(c.rhythm).toEqual({ kind: "day-of-month", day: 2 });
+    expect(c.movedFrom).toBeUndefined();
+  });
+
+  test("a transitional first close counts with the new cycle — the run is as long as it agrees", () => {
+    // eight on the 2nd, then the 6th, 8th, 8th, 9th: all four within three days of
+    // each other and off the 2nd, so the new cycle is measured from all four
+    const c = statementCadence([
+      ...TEN_ON_THE_SECOND.slice(0, 8), "2026-06-06", "2026-07-08", "2026-08-08", "2026-09-09",
+    ]);
+    expect(c.rhythm).toEqual({ kind: "day-of-month", day: 8 });
+    expect(c.closes).toBe(4);
+    expect(c.movedFrom).toEqual({ day: 2, closes: 8 });
+    // the 6th is two off the 8th: wander of the new cycle, held rather than trimmed
+    expect(c.toleranceDays).toBe(3);
+  });
+
+  test("a month-end account is never re-measured from its newest closes", () => {
+    const c = statementCadence([
+      "2025-10-31", "2025-11-30", "2025-12-31", "2026-01-31", "2026-02-28", "2026-03-31", "2026-04-30",
+      "2026-05-31", "2026-06-30", "2026-07-31", "2026-08-09", "2026-09-08",
+    ]);
+    expect(c.movedFrom).toBeUndefined();
+  });
+
+  test("a window that is not monthly as a whole stays in days, whatever its newest closes do", () => {
+    // three closes on the 2nd, then four a day apart on the 20th–23rd: the last
+    // four agree and sit off the 2nd, but the median gap is 9.5 days, and an
+    // every-n-days rhythm is never re-read as a day of the month
+    const c = statementCadence([
+      "2026-01-02", "2026-02-02", "2026-03-02", "2026-03-20", "2026-03-21", "2026-03-22", "2026-03-23",
+    ]);
+    expect(c.rhythm).toEqual({ kind: "every-n-days", days: 10 });
+    expect(c.movedFrom).toBeUndefined();
+  });
+
+  /*
+   * The accounts the rule must leave alone, as the real ledger has them. Chase
+   * Sapphire is read the way the Missing-statements panel read it until
+   * 2026-10-08 — two Chase spending reports included, which is where its 9-day
+   * tolerance comes from. Both panels now read statements only
+   * (`statementsByAccount`, tolerance 1); the noisier reading stays as the
+   * harder case: two strays off the 2nd are not a moved cycle.
+   */
+  test("the real ledger's settled cycles are untouched", () => {
+    const sapphire = statementCadence([
+      "2025-12-02", "2025-12-31", "2026-01-02", "2026-02-02", "2026-03-02", "2026-04-02", "2026-05-02",
+      "2026-06-02", "2026-07-02", "2026-07-10", "2026-08-02", "2026-09-02",
+    ]);
+    expect(sapphire.rhythm).toEqual({ kind: "day-of-month", day: 2 });
+    expect(sapphire.toleranceDays).toBe(9);
+    expect(sapphire.movedFrom).toBeUndefined();
+
+    const chaseChecking = statementCadence([
+      "2025-09-11", "2025-10-10", "2025-11-13", "2025-12-10", "2026-01-13", "2026-02-11", "2026-03-11",
+      "2026-04-10", "2026-05-12", "2026-06-10", "2026-07-10", "2026-08-12",
+    ]);
+    expect(chaseChecking.rhythm).toEqual({ kind: "day-of-month", day: 11 });
+    expect(chaseChecking.toleranceDays).toBe(3);
+    expect(chaseChecking.movedFrom).toBeUndefined();
+
+    const ventureX = statementCadence([
+      "2026-02-11", "2026-03-14", "2026-04-13", "2026-05-14", "2026-06-13", "2026-07-14", "2026-08-14",
+      "2026-09-13",
+    ]);
+    expect(ventureX.rhythm).toEqual({ kind: "day-of-month", day: 14 });
+    expect(ventureX.toleranceDays).toBe(2);
+    expect(ventureX.movedFrom).toBeUndefined();
   });
 });

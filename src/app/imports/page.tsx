@@ -13,6 +13,7 @@ import type { AccountType } from "@/db/schema/accounts";
 import { derivesFromHoldings, heldCountsByAccount } from "@/services/derivation";
 import { provenanceFor } from "@/services/provenance";
 import { statementPulls } from "@/services/statement-pulls";
+import { countsAsStatement } from "@/services/statements-by-account";
 import { unimportAcknowledgement, unimportRadius } from "@/components/imports/unimport-radius";
 import {
   NO_UNIMPORT_ROWS,
@@ -168,9 +169,10 @@ export default async function ImportsPage({
    * missing from the tiles are `not_applicable` — a Chase spending report, a
    * balance-less export — documents that carried nothing to check, and two of
    * them sat in a list headed "What the statements proved". They are counted
-   * out loud below instead, and the list is what the tiles are.
+   * out loud below instead, and the list is what the tiles are — by the rule
+   * both statement panels read (`countsAsStatement`).
    */
-  const evidence = periods.filter((p) => p.reconciliation !== "not_applicable");
+  const evidence = periods.filter((p) => countsAsStatement(p.reconciliation));
   const notApplicable = periods.length - evidence.length;
   const recentPeriods = evidence.slice(0, RECENT_PERIODS).map((p) => ({
     ...p,

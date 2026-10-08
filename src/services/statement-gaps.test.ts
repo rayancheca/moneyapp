@@ -4,9 +4,10 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { createDatabase, type DbBundle } from "@/db/client";
 import { accounts } from "@/db/schema/accounts";
-import { importFiles, statementPeriods, type ImportStatus } from "@/db/schema/imports";
+import { importFiles, statementPeriods, type ImportStatus, type ReconciliationState } from "@/db/schema/imports";
 import { institutions } from "@/db/schema/institutions";
 import { seedDatabase } from "@/db/seed";
+import { addCalendarMonths, addDays } from "@/lib/dates";
 import { recordWithheldSections } from "@/lib/import-file-label";
 import { statementGaps } from "./statement-gaps";
 
@@ -37,7 +38,12 @@ function addAccount(id: string, name: string): void {
 }
 
 let seq = 0;
-function addPeriod(accountId: string, start: string, end: string): void {
+function addPeriod(
+  accountId: string,
+  start: string,
+  end: string,
+  reconciliation: ReconciliationState = "reconciled",
+): void {
   seq += 1;
   const fileId = `f-${seq}`;
   bundle.db
@@ -63,7 +69,7 @@ function addPeriod(accountId: string, start: string, end: string): void {
       importFileId: fileId,
       periodStart: start,
       periodEnd: end,
-      reconciliation: "reconciled",
+      reconciliation,
       createdAt: new Date().toISOString(),
     })
     .run();
@@ -323,5 +329,69 @@ describe("a statement imported WITHOUT this account's section", () => {
     addPeriod("a-1", "2026-08-01", "2026-08-31");
 
     expect(statementGaps(bundle.db)).toEqual([]);
+  });
+});
+
+describe("a document with no printed balances is not a statement", () => {
+  /**
+   * 🔴 Missing statements read every `statement_periods` row as a statement, while the statement schedule left
+   * the `not_applicable` ones out ("the exclusion is load-bearing"). A Chase Spending Report is one: his Chase
+   * Sapphire holds two, 2025-01-01 → 2025-12-31 and 2026-01-01 → 2026-07-10. The hole walk's frontier jumped to a
+   * report's end, so a statement missing under one vanished from the panel — measured by the review on a copy of
+   * his ledger, 2026-10-08: drop any of Sapphire's statements from Mar 2025 to Jun 2026 and it listed nothing.
+   */
+
+  /** Chase Sapphire's real statements: one a month, closing on the 2nd, from the `first` close to the `last`. */
+  function addSapphireStatements(first: string, last: string, skip: readonly string[] = []): void {
+    for (let close = first; close <= last; close = addCalendarMonths(close, 1)) {
+      if (!skip.includes(close)) addPeriod("a-1", addDays(addCalendarMonths(close, -1), 1), close);
+    }
+  }
+
+  test("⛔ a Spending Report over a missing statement does not fill it", () => {
+    addAccount("a-1", "Chase Sapphire");
+    addSapphireStatements("2025-03-02", "2026-09-02", ["2025-07-02"]);
+    const june2025 = { from: "2025-06-03", to: "2025-07-02", days: 30, closes: 1 };
+    // the control: without the reports, the statement closing Jul 2, 2025 is a hole like any other
+    expect(statementGaps(bundle.db).map((g) => g.holes)).toEqual([[june2025]]);
+
+    addPeriod("a-1", "2025-01-01", "2025-12-31", "not_applicable");
+    addPeriod("a-1", "2026-01-01", "2026-07-10", "not_applicable");
+
+    expect(statementGaps(bundle.db).map((g) => g.holes)).toEqual([[june2025]]);
+  });
+
+  test("the review's case: three statements skipped, then a year-to-date report over them", () => {
+    addAccount("a-1", "Chase Sapphire");
+    addSapphireStatements("2025-03-02", "2027-01-02", ["2026-10-02", "2026-11-02", "2026-12-02"]);
+    addPeriod("a-1", "2025-01-01", "2025-12-31", "not_applicable");
+    addPeriod("a-1", "2026-01-01", "2026-07-10", "not_applicable");
+    const missing = { from: "2026-09-03", to: "2026-12-02", days: 91, closes: 3 };
+    expect(statementGaps(bundle.db).map((g) => g.holes)).toEqual([[missing]]);
+
+    addPeriod("a-1", "2026-01-01", "2026-12-10", "not_applicable");
+
+    expect(statementGaps(bundle.db)).toEqual([
+      {
+        accountId: "a-1",
+        accountName: "Chase Sapphire",
+        holes: [missing],
+        missingCloses: 3,
+        missingDays: 91,
+        withheld: [],
+      },
+    ]);
+  });
+
+  test("a report's last day is not a close: the hole after it opens the day after a statement", () => {
+    // the statement closing Aug 2, 2026 is missing, and the Jul 10 report sits over its first week
+    addAccount("a-1", "Chase Sapphire");
+    addSapphireStatements("2026-02-02", "2026-09-02", ["2026-08-02"]);
+    addPeriod("a-1", "2026-01-01", "2026-07-10", "not_applicable");
+
+    // NOT Jul 11 → Aug 2, 23 days: the statement missing covers Jul 3 → Aug 2, and the report replaces none of it
+    expect(statementGaps(bundle.db).map((g) => g.holes)).toEqual([
+      [{ from: "2026-07-03", to: "2026-08-02", days: 31, closes: 1 }],
+    ]);
   });
 });
