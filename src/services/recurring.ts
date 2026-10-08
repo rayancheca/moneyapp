@@ -1385,6 +1385,10 @@ export function lapsedSeriesShouldStopForecasting(kind: SeriesKind): boolean {
  * $3,452.25 to $467.69 a month and /recurring's December forecast spent $282.21 — every one of them waiting on an
  * upload, none of them missed on a statement. Read through the day of the question, it lapses exactly as before.
  *
+ * ⚖️ …and where no upload is coming — an archived account, a cash wallet — the frontier IS the day of the question
+ * (`checkedThroughBySeries`, review of 98acbeb): read to an archived card's frozen day, its bills were forecast as
+ * "Awaiting statements" for good, and owed in the runway's arrears every month a year on.
+ *
  * ⛔ No default for either day: the day of the question and the day it was read through are both the caller's to say.
  */
 export function seriesHasLapsed(

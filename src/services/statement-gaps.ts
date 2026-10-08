@@ -8,6 +8,7 @@ import { withheldSectionsOf } from "@/lib/import-file-label";
 import { statementCadence } from "@/lib/statement-cadence";
 import { statementHoles, type StatementHole } from "@/lib/statement-holes";
 import { ACCOUNT_ORDER } from "./account-order";
+import { accountsAwaitingStatements } from "./cash-wallet-rule";
 import { statementsByAccount } from "./statements-by-account";
 
 /**
@@ -84,14 +85,16 @@ function withheldWindowsByAccount(db: AppDatabase): Map<string, WithheldWindow[]
 }
 
 export function statementGaps(db: AppDatabase): AccountStatementGaps[] {
+  // only the accounts a statement is still coming for (`accountsAwaitingStatements`) — the schedule's rule
+  const awaiting = accountsAwaitingStatements(db);
   const rows = db
     .select({ id: accounts.id, name: accounts.name })
     .from(accounts)
     .innerJoin(institutions, eq(accounts.institutionId, institutions.id))
-    .where(eq(accounts.isActive, true))
     // THE order: StatementGapsPanel prints these as they come
     .orderBy(...ACCOUNT_ORDER)
-    .all();
+    .all()
+    .filter((a) => awaiting.has(a.id));
 
   const withheldByAccount = withheldWindowsByAccount(db);
   // ⛔ statements only, by the schedule's rule (`statementsByAccount`): a Spending Report spans many cycles, and read

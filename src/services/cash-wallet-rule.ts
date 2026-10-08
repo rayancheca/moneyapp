@@ -76,6 +76,29 @@ export function cashWalletIds(db: AppDatabase): ReadonlySet<string> {
   return new Set(underCash.map((a) => a.id).filter((id) => !hasImportGroundTruth(db, id)));
 }
 
+/**
+ * Every account a statement is still COMING for: not archived (`isActive`) and not a cash wallet (`cashWalletIds`).
+ * An archived account is never imported again, and a wallet holds what he typed into it — for neither will a
+ * statement ever cover another day.
+ *
+ * ⛔ ONE rule, made of the two that already exist — never a third spelling of either. /imports asks these accounts
+ * for their statements (`statementPulls`, `statementGaps`), and only these hold a series' lapse back to the day their
+ * statements have covered (`checkedThroughBySeries`, §6A 57); /budgets' "Cash only" stands on the wallet half
+ * (`lib/budget-verdict`), which forbids an "Awaiting statements" that never arrives.
+ */
+export function accountsAwaitingStatements(db: AppDatabase): ReadonlySet<string> {
+  const wallets = cashWalletIds(db);
+  return new Set(
+    db
+      .select({ id: accounts.id })
+      .from(accounts)
+      .where(eq(accounts.isActive, true))
+      .all()
+      .map((a) => a.id)
+      .filter((id) => !wallets.has(id)),
+  );
+}
+
 /** A statement period, an import anchor (statement/ofx_ledger/live) or an imported row on the account. */
 function hasImportGroundTruth(db: AppDatabase, accountId: string): boolean {
   const period = db

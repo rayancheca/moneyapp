@@ -43,7 +43,8 @@ export interface UnbankedIncomeSeries extends BudgetTailSeries {
   /**
    * `earliestVerified` over the accounts this pay has landed in — the last day
    * the ledger has read every place its deposit could arrive — or null when one
-   * of them has no checked record, or the pay has never landed anywhere.
+   * of them has no checked record, or the pay has never landed anywhere; today
+   * when it lands only where no statement is coming (`checkedThroughBySeries`).
    */
   checkedThrough: string | null;
   /** of `occurrenceCount`, the paydays dated on or before `checkedThrough` */
