@@ -16,6 +16,7 @@ function entry(over: Partial<CalendarEntry> & Pick<CalendarEntry, "seriesId" | "
     settledByDepositsOn: [],
     settlesPaydaysOn: [],
     perPayday: null,
+    towardNoPayday: false,
     settledCents: null,
     unsettledReason: null,
     confidence: null,
@@ -188,13 +189,16 @@ describe("RecurringCalendar — a deposit that paid another month's payday", () 
     expect(html).toContain("October 2026: posted $1,141.92, as scheduled $5,709.60");
   });
 
+  /* Money pooled from two deposits, each inside its own reach (§6A 55b): Tue Sep 22's change and Thu Sep 24's week
+     finish Sep 3 together. (June's two deposits were this example until the reach bound: they pay nothing past
+     Jun 8.) */
   test("money from several days is named by every day it came from", () => {
     const pooled: RecurringCalendarMonth = {
       ...month,
-      monthKey: "2026-08",
+      monthKey: "2026-09",
       entriesByDay: {
-        "2026-08-27": [
-          entry({ ...week, state: "paid", settledByDepositsOn: ["2026-06-04", "2026-06-05"], settledCents: 114192 }),
+        "2026-09-03": [
+          entry({ ...week, state: "paid", settledByDepositsOn: ["2026-09-22", "2026-09-24"], settledCents: 0 }),
         ],
       },
       entryCount: 1,
@@ -202,8 +206,42 @@ describe("RecurringCalendar — a deposit that paid another month's payday", () 
     };
     const out = decode(renderToStaticMarkup(createElement(RecurringCalendar, { initialMonth: pooled, today: "2026-10-02" })));
     expect(out).toContain(
-      'aria-label="Aug 27, 2026 — 1 item: It America LLC (weekly pay) paid (paid by the deposits of Jun 4, 2026 and Jun 5, 2026) $1,141.92"',
+      'aria-label="Sep 3, 2026 — 1 item: It America LLC (weekly pay) paid ' +
+        '(paid by the deposits of Sep 22, 2026 and Sep 24, 2026) $1,141.92"',
     );
+  });
+
+  /*
+   * ⚖️ §6A 55b: a deposit's money pays nothing past its own date plus the tolerance, so June's $400.00 — the day
+   * after Jun 4's week was paid — answers no payday, and says so in the cell's name and the Day Sheet. 🔴 It read
+   * "paid (toward the payday of Aug 27, 2026)".
+   */
+  test("a deposit whose money paid no payday says 'toward no payday'", () => {
+    const june: RecurringCalendarMonth = {
+      ...month,
+      monthKey: "2026-06",
+      entriesByDay: {
+        "2026-06-05": [
+          entry({
+            ...pay,
+            amountCents: 40000,
+            state: "paid",
+            transactionId: "t-jun5",
+            towardNoPayday: true,
+            settledCents: 40000,
+          }),
+        ],
+      },
+      entryCount: 1,
+      upcomingNetCents: 0,
+    };
+    const render = (el: Parameters<typeof renderToStaticMarkup>[0]): string => decode(renderToStaticMarkup(el));
+    const out = render(createElement(RecurringCalendar, { initialMonth: june, today: "2026-10-08" }));
+    expect(out).toContain(
+      'aria-label="Jun 5, 2026 — 1 item: It America LLC (weekly pay) paid (toward no payday) $400.00"',
+    );
+    const sheet = render(createElement(DaySheetBody, { entries: june.entriesByDay["2026-06-05"]! }));
+    expect(sheet).toContain("paid — toward no payday");
   });
 });
 

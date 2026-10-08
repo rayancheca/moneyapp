@@ -10,6 +10,7 @@ import {
   type PaydaySettlement,
 } from "@/lib/payday-settlement";
 import { paydayReadings, type PaydayReading } from "@/lib/per-payday";
+import { ratePeriodOf } from "@/lib/series-kind";
 import {
   effectiveSeries,
   projectOccurrences,
@@ -82,11 +83,18 @@ export function paydaySettlement(db: AppDatabase, seriesId: string, today: strin
   const anchor = s.userNextExpectedOn ?? s.nextExpectedOn;
   const from = anchor !== null && compareDates(anchor, firstDeposit) < 0 ? anchor : firstDeposit;
 
-  const occurrences = projectOccurrences(toProjectable(s), from, addDays(today, s.toleranceDays)).filter(
+  const projectable = toProjectable(s);
+  const occurrences = projectOccurrences(projectable, from, addDays(today, s.toleranceDays)).filter(
     (o) => o.amountCents > 0,
   );
 
-  return settlePaydaysBackwards({ occurrences, deposits, toleranceDays: s.toleranceDays });
+  // ⚖️ the eras of his rate history (§6A 55a): money pays only the paydays priced in its own era
+  return settlePaydaysBackwards({
+    occurrences,
+    deposits,
+    toleranceDays: s.toleranceDays,
+    periodOf: (day) => ratePeriodOf(projectable, day),
+  });
 }
 
 /**
@@ -236,7 +244,8 @@ export function readsPerPayday(s: { kind: SeriesKind; status: SeriesStatus }): b
 /**
  * Per series, each active row's per-payday reading, from that series'
  * settlement — every row, not a window's, because the spread a row is measured
- * against is the series' whole history.
+ * against is the series' whole history — held to the series' rate at the payday
+ * it paid (`effectiveSeries`: the rate now and its dated history, §6A 55).
  */
 export function paydayReadingsBySeries(
   db: AppDatabase,
@@ -244,6 +253,14 @@ export function paydayReadingsBySeries(
 ): Map<string, ReadonlyMap<string, PaydayReading>> {
   const out = new Map<string, ReadonlyMap<string, PaydayReading>>();
   if (settlements.size === 0) return out;
+  const schedules = new Map(
+    db
+      .select()
+      .from(recurringSeries)
+      .where(inArray(recurringSeries.id, [...settlements.keys()]))
+      .all()
+      .map((s) => [s.id, effectiveSeries(s)] as const),
+  );
   const rowsBySeries = new Map<string, { id: string; postedOn: string; amountCents: number }[]>();
   for (const r of db
     .select({
@@ -261,7 +278,9 @@ export function paydayReadingsBySeries(
     else rowsBySeries.set(r.seriesId, [r]);
   }
   for (const [seriesId, settlement] of settlements) {
-    out.set(seriesId, paydayReadings(rowsBySeries.get(seriesId) ?? [], settlement.portions));
+    const schedule = schedules.get(seriesId);
+    if (!schedule) continue; // a series settlement spoke about is a row in this table — no schedule, no reading
+    out.set(seriesId, paydayReadings(rowsBySeries.get(seriesId) ?? [], settlement.portions, schedule));
   }
   return out;
 }

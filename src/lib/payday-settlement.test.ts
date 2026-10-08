@@ -1,4 +1,5 @@
 import { describe, expect, test } from "vitest";
+import { addDays } from "./dates";
 import {
   hasArrived,
   portionsAcross,
@@ -227,33 +228,53 @@ describe("settlePaydaysBackwards — where the money went", () => {
     ]);
   });
 
-  /* $5,000.00 on Sep 23 retires four weeks and carries $432.32 of change; the
-     $709.60 of Oct 1 tops it up to a whole Oct 1. Both deposits' money is in
-     that payday, and each sum is named by the deposit it came from. */
-  test("change carried over is named by the deposit it came from", () => {
+  /*
+   * ⚖️ THE REACH BOUND (owner decision 2026-10-08, §6A 55b): left-over money never pays a payday after its own
+   * deposit's date plus the tolerance. $5,000.00 on Sep 23 retires four weeks and carries $432.32 of change, which
+   * reaches Sep 26 and no further — so Oct 1 is the short payday its own $709.60 landed on, and the change stays
+   * change. 🔴 It used to top Oct 1 up to a whole week: September's money paying a week that had not happened when
+   * it landed, the pooling the module's header already refused ("it never pre-pays a payday the deposit could not
+   * reach") and `take` did not.
+   */
+  test("change carried over never pays a payday past its own deposit's reach", () => {
     const occ = weekly("2026-08-27", "2026-09-03", "2026-09-10", "2026-09-17", "2026-09-24", "2026-10-01");
     const got = walk(occ, [paid("2026-09-23", 500_000), paid("2026-10-01", 70_960)]);
     expect(got.portions.filter((p) => p.paydayOn === "2026-10-01").map((p) => [p.depositOn, p.cents])).toEqual([
       ["2026-10-01", 70_960],
-      ["2026-09-23", 43_232],
     ]);
     expect(got.settledBy.get("2026-10-01")).toBe("2026-10-01");
+    expect(got.unallocatedCents).toBe(43_232);
+  });
+
+  /* Inside its reach the change still pools, named by the deposit it came from: $2,000.00 on Tue Sep 22 pays Sep 24
+     and carries $858.08, which reaches Sep 25 — back far enough to finish Sep 3 with Sep 24's own money. */
+  test("change carried over pays a payday inside its reach, named by the deposit it came from", () => {
+    const got = walk(weekly("2026-09-03", "2026-09-10", "2026-09-17", "2026-09-24"), [
+      paid("2026-09-22", 200_000),
+      paid("2026-09-24", 256_768),
+    ]);
+    expect(got.portions.filter((p) => p.paydayOn === "2026-09-03").map((p) => [p.depositOn, p.cents])).toEqual([
+      ["2026-09-24", 28_384],
+      ["2026-09-22", 85_808],
+    ]);
   });
 
   /*
-   * ⚖️ A DEPOSIT'S OWN MONEY IS SPENT FIRST. The anchor is that deposit's own
-   * statement about the payday it landed on, so its money answers that payday;
-   * change carried over from an earlier deposit only tops up what its own
-   * cannot reach. Spend the oldest money first instead and Oct 1's own deposit
-   * would be recorded as the change, and September's leftover as Oct 1's pay.
+   * ⚖️ A DEPOSIT'S OWN MONEY IS SPENT FIRST. The anchor is that deposit's own statement about the payday it landed
+   * on, so its money answers its walk; change carried over from an earlier deposit only tops up what its own cannot
+   * pay. Tue Sep 22's $2,000.00 pays Sep 24 and carries $858.08; Thu Sep 24's week, its own payday already paid,
+   * pays Sep 17 — with its own money. Spend the oldest money first instead and Sep 22's change would be recorded as
+   * Sep 17's pay and Sep 24's week as the change.
    */
-  test("the deposit that landed on a payday pays it; older change waits for older weeks", () => {
-    const occ = weekly("2026-09-03", "2026-09-10", "2026-09-17", "2026-09-24", "2026-10-01");
-    const got = walk(occ, [paid("2026-09-23", WEEK * 5), paid("2026-10-01", WEEK)]);
-    expect(got.portions.filter((p) => p.paydayOn === "2026-10-01")).toEqual([
-      { paydayOn: "2026-10-01", depositOn: "2026-10-01", cents: WEEK },
+  test("a deposit's own money answers its walk; older change waits", () => {
+    const got = walk(weekly("2026-09-10", "2026-09-17", "2026-09-24"), [
+      paid("2026-09-22", 200_000),
+      paid("2026-09-24", WEEK),
     ]);
-    expect(got.unallocatedCents).toBe(WEEK);
+    expect(got.portions.filter((p) => p.paydayOn === "2026-09-17")).toEqual([
+      { paydayOn: "2026-09-17", depositOn: "2026-09-24", cents: WEEK },
+    ]);
+    expect(got.unallocatedCents).toBe(200_000 - WEEK);
   });
 
   /* ⛔ Nothing invented, nothing lost: every cent of every deposit is spent on
@@ -279,6 +300,151 @@ describe("settlePaydaysBackwards — where the money went", () => {
       }
       expect(got.portions.every((p) => p.cents > 0)).toBe(true);
     }
+  });
+});
+
+/**
+ * ⚖️ HIS RATE HISTORY, SETTLED (owner decisions 2026-10-08, §6A 55, 55a, 55b): the cash weeks through Aug 26 at
+ * $1,047.00, Aug 27 on at $1,141.92 — and money pays only paydays of its own era (55a), and never a payday past its
+ * own deposit's date plus the tolerance (55b).
+ *
+ * 🔴 Measured on a copy of his ledger with the history set, 2026-10-08: June's $1,047.00 and $400.00 rode forward
+ * through the summer and paid Aug 27 — the calendar read "Jun 4 … paid (toward the payday of Aug 27, 2026)" — and
+ * the payroll week of Sep 24 paid the CASH week of Aug 20 at $1,047.00, leaving $94.92 of it to read as change.
+ */
+describe("settlePaydaysBackwards — his rate history: eras and reach", () => {
+  const RATE_CHANGE = "2026-08-27";
+  const CASH = 104_700;
+  /** his eras: the cash weeks through Aug 26 are 0, the payroll weeks from Aug 27 are 1 (`ratePeriodOf`) */
+  const periodOf = (day: string): number => (day < RATE_CHANGE ? 0 : 1);
+  /** his Thursdays in [from, to], each at its own time's rate (`rateOn`) */
+  const thursdays = (from: string, to: string): PaydayOccurrence[] => {
+    const out: PaydayOccurrence[] = [];
+    for (let day = from; day <= to; day = addDays(day, 7)) {
+      out.push({ date: day, amountCents: day < RATE_CHANGE ? CASH : WEEK });
+    }
+    return out;
+  };
+  const HIS_FOUR = [
+    paid("2026-06-04", CASH),
+    paid("2026-06-05", 40_000),
+    paid("2026-09-23", WEEK * 4),
+    paid("2026-09-24", WEEK),
+  ];
+  const walk = (occurrences: PaydayOccurrence[], deposits: AttributedDeposit[], toleranceDays = 3) =>
+    settlePaydaysBackwards({ occurrences, deposits, toleranceDays, periodOf });
+  const flows = (s: ReturnType<typeof walk>): string[] =>
+    s.portions.map((p) => `${p.paydayOn} ← ${p.depositOn}: ${p.cents}`).sort();
+
+  /* The paydays the ledger draws for his series today: from its anchor, Jul 23, through Oct 8 + the tolerance. */
+  test("his four deposits, on the paydays the ledger draws today: no June money pays anything", () => {
+    const got = walk(thursdays("2026-07-23", "2026-10-08"), HIS_FOUR);
+    expect(flows(got)).toEqual([
+      `2026-08-27 ← 2026-09-24: ${WEEK}`,
+      `2026-09-03 ← 2026-09-23: ${WEEK}`,
+      `2026-09-10 ← 2026-09-23: ${WEEK}`,
+      `2026-09-17 ← 2026-09-23: ${WEEK}`,
+      `2026-09-24 ← 2026-09-23: ${WEEK}`,
+    ]);
+    expect(got.unallocatedCents).toBe(CASH + 40_000);
+  });
+
+  /* The design's table, on the paydays from his first deposit on: Jun 4 → Jun 4 in full at $1,047.00 | Jun 5's
+     $400.00 → nothing | Sep 23 → Sep 24, 17, 10, 3 | Sep 24 → Aug 27, and the walk stops at the era boundary. */
+  test("his four deposits, on the paydays from his first deposit: each settles as the design's table says", () => {
+    const got = walk(thursdays("2026-06-04", "2026-10-08"), HIS_FOUR);
+    expect(flows(got)).toEqual([
+      `2026-06-04 ← 2026-06-04: ${CASH}`,
+      `2026-08-27 ← 2026-09-24: ${WEEK}`,
+      `2026-09-03 ← 2026-09-23: ${WEEK}`,
+      `2026-09-10 ← 2026-09-23: ${WEEK}`,
+      `2026-09-17 ← 2026-09-23: ${WEEK}`,
+      `2026-09-24 ← 2026-09-23: ${WEEK}`,
+    ]);
+    expect(got.unallocatedCents).toBe(40_000);
+  });
+
+  /* ⛔ 55b, over every payday a June deposit could be handed — with his history, and before it is written (one era,
+     every week at $1,141.92): nothing of June's pays a payday after Jun 8. */
+  test("no June money pays a payday after Jun 8, however the summer's paydays are drawn", () => {
+    for (const from of ["2026-06-04", "2026-06-11", "2026-07-23", "2026-08-27"]) {
+      const oneEra = weekly(...thursdays(from, "2026-10-08").map((o) => o.date));
+      for (const got of [
+        walk(thursdays(from, "2026-10-08"), HIS_FOUR),
+        settlePaydaysBackwards({ occurrences: oneEra, deposits: HIS_FOUR, toleranceDays: 3 }),
+      ]) {
+        expect(got.portions.filter((p) => p.depositOn.startsWith("2026-06") && p.paydayOn > "2026-06-08")).toEqual([]);
+      }
+    }
+  });
+
+  /* His ledger today, before the history is written: one era, every week at $1,141.92. The reach bound alone keeps
+     June's money in June — Aug 27 is Sep 24's, and Aug 20 stands unpaid. 🔴 It read paid by June's money. */
+  test("before his history is written, Sep 24 pays Aug 27 and June's money pays nothing", () => {
+    const got = settlePaydaysBackwards({
+      occurrences: weekly(...thursdays("2026-07-23", "2026-10-08").map((o) => o.date)),
+      deposits: HIS_FOUR,
+      toleranceDays: 3,
+    });
+    expect(flows(got)).toEqual([
+      `2026-08-27 ← 2026-09-24: ${WEEK}`,
+      `2026-09-03 ← 2026-09-23: ${WEEK}`,
+      `2026-09-10 ← 2026-09-23: ${WEEK}`,
+      `2026-09-17 ← 2026-09-23: ${WEEK}`,
+      `2026-09-24 ← 2026-09-23: ${WEEK}`,
+    ]);
+    expect(got.unallocatedCents).toBe(CASH + 40_000);
+  });
+
+  /* ⛔ 55a: payroll money pays only payroll weeks. Six weeks' worth on Sep 23 retire the five payroll weeks back to
+     Aug 27; the sixth week's $1,141.92 is change — never a $1,047.00 cash week and $94.92 over. */
+  test("leftover payroll money never pays a cash week", () => {
+    const got = walk(thursdays("2026-08-06", "2026-09-24"), [paid("2026-09-23", WEEK * 6)]);
+    expect([...got.settledBy.keys()].sort()).toEqual([
+      "2026-08-27",
+      "2026-09-03",
+      "2026-09-10",
+      "2026-09-17",
+      "2026-09-24",
+    ]);
+    expect(got.unallocatedCents).toBe(WEEK);
+  });
+
+  /* A deposit belongs to the era of the payday it lands on, not of its own date: his payroll lands the Wednesday
+     before the Thursday, so a Wed Aug 26 deposit is Aug 27's pay — a payroll week — and its change never reaches
+     back into the cash weeks behind it. */
+  test("a deposit takes the era of the payday it lands on, not its own date's", () => {
+    const got = walk(thursdays("2026-08-06", "2026-09-03"), [paid("2026-08-26", WEEK * 2)]);
+    expect(flows(got)).toEqual([`2026-08-27 ← 2026-08-26: ${WEEK}`]);
+    expect(got.unallocatedCents).toBe(WEEK);
+  });
+
+  /* Equally near two paydays, a deposit is the NEWER one's pay — pay lands before the payday it answers, as his
+     Wednesday payroll does. Biweekly at seven days' tolerance, Thu Aug 20 sits a week from Aug 13 and from Aug 27. */
+  test("a deposit equally near two paydays takes the newer one's era", () => {
+    const occ = [
+      { date: "2026-08-13", amountCents: CASH },
+      { date: "2026-08-27", amountCents: WEEK },
+    ];
+    const got = walk(occ, [paid("2026-08-20", WEEK)], 7);
+    expect(flows(got)).toEqual([`2026-08-27 ← 2026-08-20: ${WEEK}`]);
+  });
+
+  /* Carried money keeps its era. At a five-day tolerance Sat Aug 22's change reaches Aug 27 by date — but it is cash
+     money (Aug 22 lands on Aug 20), so it never tops up the short payroll week of Aug 27. */
+  test("change carried over keeps its era, even inside its reach", () => {
+    const deposits = [paid("2026-08-22", CASH + 50_000), paid("2026-08-27", 70_000)];
+    const got = walk(thursdays("2026-08-13", "2026-08-27"), deposits, 5);
+    expect(flows(got)).toEqual([`2026-08-20 ← 2026-08-22: ${CASH}`, "2026-08-27 ← 2026-08-27: 70000"]);
+    expect(got.unallocatedCents).toBe(50_000);
+  });
+
+  test("a series whose rate never changed is one era: no periodOf, the same walk", () => {
+    const occ = thursdays("2026-08-27", "2026-09-24");
+    const deposits = [paid("2026-09-22", 200_000), paid("2026-09-24", 256_768)];
+    expect(settlePaydaysBackwards({ occurrences: occ, deposits, toleranceDays: 3 })).toEqual(
+      settlePaydaysBackwards({ occurrences: occ, deposits, toleranceDays: 3, periodOf: () => 0 }),
+    );
   });
 });
 

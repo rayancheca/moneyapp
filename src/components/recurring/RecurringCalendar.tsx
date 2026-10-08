@@ -214,6 +214,13 @@ function settledByWord(e: CalendarEntry): string | null {
 }
 
 /**
+ * ⚖️ A DEPOSIT WHOSE MONEY PAID NO PAYDAY SAYS THAT TOO (`CalendarEntry.towardNoPayday`, §6A 55b): its money pays
+ * nothing past its own date plus the tolerance, so what is left of it after the paydays it reached answers no week.
+ * 🔴 Before the reach bound June's $400.00 read "paid (toward the payday of Aug 27, 2026)".
+ */
+const TOWARD_NO_PAYDAY = "toward no payday";
+
+/**
  * ⛔ AND A DEPOSIT THAT PAID ANOTHER MONTH'S PAYDAY SAYS SO — the mirror of
  * `settledByWord`, on the row. Wed Sep 30's lump paid Thu Oct 1, and the Oct 1
  * deposit, its own payday already paid, paid Aug 27: drawn bare beside Oct 1's
@@ -221,6 +228,7 @@ function settledByWord(e: CalendarEntry): string | null {
  * not count, and August's chip named the same deposit for Aug 27.
  */
 function settlesWord(e: CalendarEntry): string | null {
+  if (e.towardNoPayday) return TOWARD_NO_PAYDAY;
   const days = e.settlesPaydaysOn;
   if (days.length === 0) return null;
   return `toward the ${days.length === 1 ? "payday" : "paydays"} of ${DATE_LIST.format(days.map(longDate))}`;

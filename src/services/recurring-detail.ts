@@ -12,7 +12,7 @@ import {
 } from "@/db/schema/recurring";
 import { transactions } from "@/db/schema/transactions";
 import { addDays, isValidIsoDate, todayIso } from "@/lib/dates";
-import { paydayReadings, type PaydayReading, type PerPayday } from "@/lib/per-payday";
+import { expectedCentsOf, paydayReadings, type PaydayReading, type PerPayday } from "@/lib/per-payday";
 import { stepFrom, stepPlan } from "@/lib/recurring-step";
 import { loadCategoryIndex } from "./analytics";
 import { arrearsThisMonth } from "./arrears";
@@ -59,6 +59,13 @@ export interface AmountHistoryPoint {
    * beside a calendar drawing the same row `paid`.
    */
   perPayday: PerPayday | null;
+  /**
+   * What this row is held to (`rateOn`): the rate of the payday a pay row's money paid (`PaydayReading`), else the
+   * series' rate on the row's own day. ⚖️ Each against its own time's rate (owner decision 2026-10-08, §6A 55): his
+   * cash weeks at $1,047.00, his payroll weeks at $1,141.92. 🔴 One expectation for all time read his Jun 4 cash
+   * week "vs expected -$94.92". Null when the series has no rate.
+   */
+  expectedCents: number | null;
 }
 
 export interface SeriesCategoryRef {
@@ -284,13 +291,22 @@ export function seriesDetail(
     accountName: t.accountName,
     linkSource: t.linkSource,
   }));
+  const eff = effectiveSeries(s);
   // the calendar's reading of a pay series' rows, behind the calendar's own gate
   const readings = readsPerPayday(s)
-    ? paydayReadings(linked, paydaySettlement(db, s.id, today).portions)
+    ? paydayReadings(linked, paydaySettlement(db, s.id, today).portions, eff)
     : new Map<string, PaydayReading>();
-  const amountHistory: AmountHistoryPoint[] = [...linked]
-    .reverse()
-    .map((t) => ({ date: t.postedOn, amountCents: t.amountCents, perPayday: readings.get(t.id)?.perPayday ?? null }));
+  const amountHistory: AmountHistoryPoint[] = [...linked].reverse().map((t) => {
+    const reading = readings.get(t.id);
+    return {
+      date: t.postedOn,
+      amountCents: t.amountCents,
+      perPayday: reading?.perPayday ?? null,
+      // ⚖️ each row against its own time's rate (§6A 55), by the calendar's own rule — a pay row, the rate of the
+      // payday it paid; any other row, its own day's
+      expectedCents: expectedCentsOf(reading, eff, t.postedOn),
+    };
+  });
 
   /*
    * Sample standard deviation of what actually posted. Two rows is the floor:
@@ -311,7 +327,6 @@ export function seriesDetail(
     return Math.round(Math.sqrt(variance));
   })();
 
-  const eff = effectiveSeries(s);
   /*
    * 🔴 ONLY THE STATUSES THE FORECAST PROJECTS, and the rule was already
    * written four lines below for `nextExpectedOn`: "rolling a dismissed/ended

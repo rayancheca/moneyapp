@@ -8,7 +8,13 @@ import { isCategoryHueName, type CategoryHueName } from "@/lib/category-palette"
 import { compareDates, diffDays, monthKey, periodBounds, todayIso } from "@/lib/dates";
 import { flowEntryOf, monthFlow, type MonthFlow, type MonthFlowEntry } from "@/lib/month-flow";
 import { hasArrived, portionsAcross, type SettlementPortion } from "@/lib/payday-settlement";
-import { comparableCents, spreadSampleCents, type PaydayReading, type PerPayday } from "@/lib/per-payday";
+import {
+  comparableCents,
+  expectedCentsOf,
+  spreadResidualCents,
+  type PaydayReading,
+  type PerPayday,
+} from "@/lib/per-payday";
 import { RECURRING_HISTORY_STATUSES } from "@/lib/series-evidence";
 import {
   forecastConfidence,
@@ -137,6 +143,17 @@ export interface CalendarEntry {
    * $1,141.92 week.
    */
   perPayday: PerPayday | null;
+  /**
+   * On a posted pay row whose day's money paid NO payday at all (`PaydayReading.towardNoPayday`): left over past the
+   * paydays it could reach (owner decision 2026-10-08, §6A 55b — a deposit's money pays nothing after its own date
+   * plus the tolerance), or landed before the first payday the ledger draws. Its words say "toward no payday", and it
+   * is not graded — `state` is `paid`, never `paid_different`, because it answers no week whose amount it could
+   * have changed. False on every other entry.
+   *
+   * 🔴 Before the reach bound June's $1,047.00 and $400.00 rode forward through the summer and read "paid (toward
+   * the payday of Aug 27, 2026)" — June's money named as the pay of a week eleven weeks later.
+   */
+  towardNoPayday: boolean;
   /**
    * What this mark adds to the month's Settled figure, or null for a mark that
    * has not settled (upcoming, missed, not yet known). The footer's Settled
@@ -417,35 +434,52 @@ function postingCountBySeries(db: AppDatabase): Map<string, number> {
 /*
  * ⚖️ A PAY SERIES' SPREAD IS MEASURED PER PAYDAY, as its rows are held to it
  * (`readings`, `lib/per-payday`): a lump is a sample of one week's pay, and money
- * that was only part of a payday's pay is no sample of one. 🔴 On raw amounts
- * his lump of four weeks was a sample of its own — σ $1,629.39 on his ledger —
- * and inside that ±$3,258.78 band a $1,200.00 raise read `paid`.
+ * that was only part of a payday's pay — or paid no payday at all — is no sample
+ * of one. 🔴 On raw amounts his lump of four weeks was a sample of its own — σ
+ * $1,629.39 on his ledger — and inside that ±$3,258.78 band a $1,200.00 raise
+ * read `paid`.
+ *
+ * ⚖️ AND ON RESIDUALS — each sample less what its row is held to
+ * (`spreadResidualCents`, `expectedCentsOf`) — so a dated rate change is not
+ * variance (§6A 55). At a constant rate that is the samples' own spread, to the
+ * cent. 🔴 On raw samples — his Jun 4 cash week of $1,047.00 beside four payroll
+ * weeks at $1,141.92 and a $1,200.00 week, on paydays drawn from his first
+ * deposit — the band was ±$98.43 and the $1,200.00 week read `paid`; on
+ * residuals it is ±$46.46 and the week reads a raise of $58.08.
  */
 function measuredStddevs(
   db: AppDatabase,
-  seriesIds: readonly string[],
+  series: readonly (typeof recurringSeries.$inferSelect)[],
   readings: ReadonlyMap<string, ReadonlyMap<string, PaydayReading>>,
 ): Map<string, number> {
   const out = new Map<string, number>();
-  if (seriesIds.length === 0) return out;
+  if (series.length === 0) return out;
+  const schedules = new Map(series.map((s) => [s.id, effectiveSeries(s)] as const));
 
   const byId = new Map<string, number[]>();
   for (const r of db
-    .select({ id: transactions.id, seriesId: transactions.recurringSeriesId, amountCents: transactions.amountCents })
+    .select({
+      id: transactions.id,
+      seriesId: transactions.recurringSeriesId,
+      postedOn: transactions.postedOn,
+      amountCents: transactions.amountCents,
+    })
     .from(transactions)
     .where(
       and(
         eq(transactions.status, "active"),
-        inArray(transactions.recurringSeriesId, [...seriesIds]),
+        inArray(transactions.recurringSeriesId, [...schedules.keys()]),
       ),
     )
     .all()) {
-    if (!r.seriesId) continue;
-    const sample = spreadSampleCents(r.amountCents, readings.get(r.seriesId)?.get(r.id));
-    if (sample === null) continue;
+    const schedule = r.seriesId ? schedules.get(r.seriesId) : undefined;
+    if (!r.seriesId || !schedule) continue;
+    const reading = readings.get(r.seriesId)?.get(r.id);
+    const residual = spreadResidualCents(r.amountCents, reading, expectedCentsOf(reading, schedule, r.postedOn));
+    if (residual === null) continue;
     const list = byId.get(r.seriesId);
-    if (list) list.push(sample);
-    else byId.set(r.seriesId, [sample]);
+    if (list) list.push(residual);
+    else byId.set(r.seriesId, [residual]);
   }
 
   for (const [id, amounts] of byId) {
@@ -574,7 +608,7 @@ export function recurringCalendar(
   const readings = paydayReadingsBySeries(db, settlements);
   const measured = measuredStddevs(
     db,
-    historyRows.filter((s) => s.amountCentsStddev === null).map((s) => s.id),
+    historyRows.filter((s) => s.amountCentsStddev === null),
     readings,
   );
   const insideMonth = (day: string): boolean =>
@@ -631,17 +665,25 @@ export function recurringCalendar(
        * reads it, and it is drawn as the payday's pay.
        */
       if (settlements.has(s.id) && !hasArrived(p.postedOn, today)) continue;
-      const expected = effectiveSeries(s).nextExpectedAmountCents;
       const stddev = s.amountCentsStddev ?? measured.get(s.id) ?? null;
       /*
        * ⚖️ A PAY ROW IS GRADED PER PAYDAY (`lib/per-payday`): a lump whose money
        * paid N paydays on its own is held to the week at what it paid each. A
        * bill — or money settlement does not speak about — has no reading, and is
        * graded as the one charge it is.
+       *
+       * ⚖️ …against its OWN time's rate (§6A 55, `expectedCentsOf`): a pay row
+       * against the rate of the payday its money paid, any other row against the
+       * rate on its own day — so `paid_different`, and the notice that reads it
+       * ("rose by …"), compare a week with its own era. And money that paid no
+       * payday at all is not graded: it answers no week (`towardNoPayday`).
        */
       const reading = readings.get(s.id)?.get(p.id);
+      const expected = expectedCentsOf(reading, effectiveSeries(s), p.postedOn);
       const state: DayStateKind =
-        expected === null ? "paid" : classifyPostedAmount(comparableCents(p.amountCents, reading), expected, stddev);
+        expected === null || reading?.towardNoPayday
+          ? "paid"
+          : classifyPostedAmount(comparableCents(p.amountCents, reading), expected, stddev);
       // the money this deposit spent on another month's paydays is THAT month's
       // Settled figure, where the chip naming this day stands
       const elsewhere = chargeRow(owedElsewhere.get(s.id)?.get(p.postedOn), p.amountCents);
@@ -656,6 +698,7 @@ export function recurringCalendar(
         settledByDepositsOn: [],
         settlesPaydaysOn: elsewhere.paydays,
         perPayday: reading?.perPayday ?? null,
+        towardNoPayday: reading?.towardNoPayday ?? false,
         settledCents: p.amountCents - elsewhere.cents,
         unsettledReason: null,
         confidence: null,
@@ -746,6 +789,7 @@ export function recurringCalendar(
             settledByDepositsOn: depositDays,
             settlesPaydaysOn: [],
             perPayday: null,
+            towardNoPayday: false,
             settledCents: paidFromElsewhere.get(s.id)?.get(o.date) ?? 0,
             unsettledReason: null,
             confidence: null,
@@ -786,6 +830,7 @@ export function recurringCalendar(
         settledByDepositsOn: [],
         settlesPaydaysOn: [],
         perPayday: null,
+        towardNoPayday: false,
         settledCents: null,
         unsettledReason: verdict?.reason ?? null,
         confidence: isFuture ? confidence : null,

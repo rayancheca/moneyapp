@@ -574,19 +574,21 @@ describe("the fourth figure is the money another month's deposits put in", () =>
     expect(reconciled(october)).toBe(october.scheduledCents - (WEEK - 110_000));
   });
 
-  /* $5,000.00 on Sep 23 pays four weeks and carries $432.32 of change into the
-     $709.60 of Oct 1, which retires Oct 1. It said $0.00 — Oct 1's settling
-     deposit is October's — and $432.32 of September's money was in no figure. */
-  test("POOLED: September's change that paid part of Oct 1 is named", () => {
+  /* ⚖️ §6A 55b (owner decision 2026-10-08): left-over money never pays a payday past its own deposit's date plus the
+     tolerance. $5,000.00 on Sep 23 pays four weeks and carries $432.32 of change that reaches Sep 26, so the $709.60
+     of Oct 1 is Oct 1's short pay on its own and no September money is in October's figures — the only gap is the
+     $432.32 that week never had. 🔴 The change topped Oct 1 up to a whole week, and October named "the deposit of Sep
+     23" for a payday that had not happened when it landed. */
+  test("POOLED: September's change never pays Oct 1 — out of its reach", () => {
     readThrough(WELLS, "2026-06-01", "2026-10-02");
     deposit(PAY, "2026-09-23", 500_000);
     deposit(PAY, "2026-10-01", 70_960);
     const october = incomeExpectation(bundle.db, "2026-10-01", "2026-10-31", "2026-10-02");
     expect(october.postedCents).toBe(70_960);
-    expect(october.paidByAnotherMonthCents).toBe(43_232);
-    expect(october.paidByAnotherMonthOccurrences).toBe(1);
-    expect(october.paidByAnotherMonthDeposits).toEqual(["2026-09-23"]);
-    expect(reconciled(october)).toBe(october.scheduledCents);
+    expect(october.paidByAnotherMonthCents).toBe(0);
+    expect(october.paidByAnotherMonthOccurrences).toBe(0);
+    expect(october.paidByAnotherMonthDeposits).toEqual([]);
+    expect(reconciled(october)).toBe(october.scheduledCents - (WEEK - 70_960));
   });
 
   /* The other direction: $1,500.00 on Thu Oct 22 pays Oct 22 and carries

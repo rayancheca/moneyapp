@@ -224,8 +224,13 @@ describe("the shifted case — a lump on Sep 30 pays Oct 1, and Oct 1's deposit 
 /**
  * His ledger as it stands on 2026-10-01, to the cent: two June cash deposits
  * attributed to the series, the Sep 23 lump of exactly four weeks, and the Sep
- * 24 weekly deposit. The June money pools into the lump's walk and pays Aug 27;
- * the Sep 24 deposit, its own payday already paid by the lump, pays Aug 20.
+ * 24 weekly deposit. The Sep 24 deposit, its own payday already paid by the
+ * lump, pays Aug 27.
+ *
+ * ⚖️ §6A 55b (owner decision 2026-10-08): left-over money never pays a payday
+ * past its own deposit's date plus the tolerance, so June's money — which used
+ * to pool into the lump's walk and pay Aug 27 — pays nothing, and Aug 20 stands
+ * unpaid.
  */
 describe("his ledger — a payday whose own day holds a deposit that paid another one", () => {
   const TODAY = "2026-10-01";
@@ -239,38 +244,41 @@ describe("his ledger — a payday whose own day holds a deposit that paid anothe
     deposit("2026-09-24", WEEK);
   });
 
-  test("Sep 24 is drawn paid by the lump of Sep 23, and the deposit on Sep 24 says it paid Aug 20", () => {
+  test("Sep 24 is drawn paid by the lump of Sep 23, and the deposit on Sep 24 says it paid Aug 27", () => {
     const september = recurringCalendar(bundle.db, "2026-09", TODAY);
     const { rows, payday } = marksOn(september, "2026-09-24");
     expect(payday).toMatchObject({ state: "paid", settledByDepositsOn: ["2026-09-23"] });
-    expect(rows.map((r) => r.settlesPaydaysOn)).toEqual([["2026-08-20"]]);
+    expect(rows.map((r) => r.settlesPaydaysOn)).toEqual([["2026-08-27"]]);
     const august = recurringCalendar(bundle.db, "2026-08", TODAY);
-    expect(marksOn(august, "2026-08-20").payday?.settledByDepositsOn).toEqual(["2026-09-24"]);
+    expect(marksOn(august, "2026-08-27").payday?.settledByDepositsOn).toEqual(["2026-09-24"]);
   });
 
   /*
-   * Whose MONEY paid it, which is what /budgets names. The lump's walk retired
-   * Aug 27, but the lump's own $4,567.68 went to Sep 3–24 and the money that
-   * reached Aug 27 was June's — so naming the lump would claim five weeks out
-   * of a four-week deposit.
+   * Whose MONEY paid it, which is what /budgets names: the deposit of Sep 24 —
+   * the lump's own $4,567.68 went to Sep 3–24. ⚖️ §6A 55b: June's money reaches
+   * Jun 8 and no further, so it paid no payday and its rows say so. 🔴 It used to
+   * pool into the lump's walk and pay Aug 27: "Jun 4 … paid (toward the payday
+   * of Aug 27, 2026)".
    */
-  test("Aug 27 is drawn paid by the June deposits whose money paid it, as /budgets names them", () => {
+  test("Aug 27 is drawn paid by the deposit of Sep 24, as /budgets names it; June's money paid no payday", () => {
     const august = recurringCalendar(bundle.db, "2026-08", TODAY);
     const aug27 = marksOn(august, "2026-08-27").payday;
-    expect(aug27?.settledByDepositsOn).toEqual(["2026-06-04", "2026-06-05"]);
+    expect(aug27?.settledByDepositsOn).toEqual(["2026-09-24"]);
     const budgets = incomeExpectation(bundle.db, "2026-08-01", "2026-08-31", TODAY);
     const named = new Set(budgets.paidByAnotherMonthDeposits);
     for (const d of aug27?.settledByDepositsOn ?? []) expect(named.has(d)).toBe(true);
+    expect(marksOn(august, "2026-08-20").payday?.settledByDepositsOn).toEqual([]);
     const june = recurringCalendar(bundle.db, "2026-06", TODAY);
-    expect(marksOn(june, "2026-06-04").rows.map((r) => r.settlesPaydaysOn)).toEqual([["2026-08-27"]]);
-    expect(marksOn(june, "2026-06-05").rows.map((r) => r.settlesPaydaysOn)).toEqual([["2026-08-27"]]);
+    for (const day of ["2026-06-04", "2026-06-05"]) {
+      expect(marksOn(june, day).rows.map((r) => [r.settlesPaydaysOn, r.towardNoPayday])).toEqual([[[], true]]);
+    }
   });
 
   test("the months' Settled figures add up to the money he was paid, each cent once", () => {
     const months = ["2026-06", "2026-07", "2026-08", "2026-09", "2026-10"];
     const settled = months.map((m) => recurringCalendar(bundle.db, m, TODAY).postedNetCents);
-    // June keeps only the $305.08 no payday reached; August holds Aug 20 and Aug 27; September its four weeks
-    expect(settled).toEqual([30_508, 0, WEEK * 2, WEEK * 4, 0]);
+    // June keeps the $1,447.00 no payday reached; August holds Aug 27; September its four weeks
+    expect(settled).toEqual([104_700 + 40_000, 0, WEEK, WEEK * 4, 0]);
     expect(settled.reduce((a, b) => a + b, 0)).toBe(104_700 + 40_000 + WEEK * 4 + WEEK);
     for (const m of ["2026-06", "2026-08", "2026-09"]) {
       expect(recurringCalendar(bundle.db, m, TODAY).postedNetCents).toBe(budgetsSettled(m, TODAY));
