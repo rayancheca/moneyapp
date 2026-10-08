@@ -35,7 +35,7 @@ function addPeriod(
 }
 
 /** statement_periods is unique on (import_file_id, account_id) — one file each. */
-function newFile(name: string): string {
+function newFile(name: string, parserProfile: string | null = null): string {
   const chase = bundle.db.select().from(institutions).where(eq(institutions.name, "Chase")).get()!;
   return bundle.db
     .insert(importFiles)
@@ -44,6 +44,7 @@ function newFile(name: string): string {
       fileSha256: name,
       format: "pdf",
       institutionId: chase.id,
+      parserProfile,
       status: "parsed",
       storagePath: `/tmp/${name}`,
       importedAt: "2026-08-14",
@@ -110,6 +111,41 @@ describe("statementPulls", () => {
     expect(pull!.daysSinceLastClose).toBe(12);
     expect(pull!.status).toBe("waiting");
     expect(pull!.expectedOn).toBe("2026-09-02");
+  });
+
+  /**
+   * ⛔ Robinhood prints `N/A` for an account's opening balance on its first statement, so that statement is a
+   * `not_applicable` period like a Spending Report — but Robinhood issued it on the account's cycle, and its close is
+   * a close. 🔴 Left out by the balances rule, Robinhood Agentic (opening statement Jun 2026, then Jul and Aug) read
+   * "unknown", two closes under the bar, on a copy of his ledger, 2026-10-08.
+   */
+  test("an opening statement that printed no opening balance is a close — the file's kind says so", () => {
+    const id = makeAccount("Robinhood Agentic");
+    fileId = newFile("opening.pdf", "robinhood-brokerage-statement-pdf");
+    addPeriod(id, "2026-05-31", "not_applicable");
+    for (const end of ["2026-06-30", "2026-07-31"]) {
+      fileId = newFile(`${end}.pdf`, "robinhood-brokerage-statement-pdf");
+      addPeriod(id, end);
+    }
+
+    const [pull] = statementPulls(bundle.db, TODAY);
+    expect(pull!.cadence.closes).toBe(3);
+    expect(pull!.status).toBe("waiting");
+    expect(pull!.expectedOn).toBe("2026-08-31");
+  });
+
+  test("…while the same balance-less period from a Spending Report is still no close", () => {
+    const id = makeAccount("Chase Sapphire");
+    fileId = newFile("Spending Report.pdf", "chase-spending-report-pdf");
+    addPeriod(id, "2026-05-31", "not_applicable");
+    for (const end of ["2026-06-30", "2026-07-31"]) {
+      fileId = newFile(`${end}.pdf`, "chase-card-statement-pdf");
+      addPeriod(id, end);
+    }
+
+    const [pull] = statementPulls(bundle.db, TODAY);
+    expect(pull!.cadence.closes).toBe(2);
+    expect(pull!.status).toBe("unknown");
   });
 
   test("a gap or value-anchor period still counts — it arrived on the cycle", () => {

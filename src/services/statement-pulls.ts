@@ -23,7 +23,8 @@ export interface AccountStatementPull extends StatementPull {
 
 /**
  * ⛔ A Chase *Spending Report* is not a close: `statementsByAccount` leaves out every period that printed no
- * balances, and says why that is load-bearing — the rule Missing statements reads by, too.
+ * balances, and says why that is load-bearing — the rule Missing statements reads by, too. Its one exception is an
+ * account's opening statement (Robinhood's first prints `N/A` for the opening), which closed on the cycle.
  */
 export function statementPulls(
   db: AppDatabase,

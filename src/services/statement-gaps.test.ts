@@ -43,6 +43,8 @@ function addPeriod(
   start: string,
   end: string,
   reconciliation: ReconciliationState = "reconciled",
+  /** the parser that read the file — what tells an opening statement from a report when neither printed balances */
+  parserProfile: string | null = null,
 ): void {
   seq += 1;
   const fileId = `f-${seq}`;
@@ -54,6 +56,7 @@ function addPeriod(
       fileSha256: `sha-${seq}`,
       format: "pdf",
       institutionId: bundle.db.select().from(institutions).all()[0]!.id,
+      parserProfile,
       status: "parsed",
       storagePath: `/tmp/s-${seq}.pdf`,
       importedAt: new Date().toISOString(),
@@ -393,5 +396,63 @@ describe("a document with no printed balances is not a statement", () => {
     expect(statementGaps(bundle.db).map((g) => g.holes)).toEqual([
       [{ from: "2026-07-03", to: "2026-08-02", days: 31, closes: 1 }],
     ]);
+  });
+});
+
+describe("⛔ an OPENING statement is a statement, though it printed no opening balance", () => {
+  /**
+   * 🔴 Robinhood prints `N/A` for an account's opening balance on its FIRST statement, so that statement parses
+   * into a `not_applicable` period — the state a Chase Spending Report has — and 8512476's rule ("no printed
+   * balances is not a statement") left it out. With it went the frontier the hole walk starts from: Robinhood
+   * Agentic's June opening statement, July never imported, August imported without its section, September
+   * imported — and July, a file to fetch, vanished from Missing statements (robinhood-parse-context.test.ts,
+   * bisected to 8512476). On a copy of his ledger, 2026-10-08, dropping Agentic's July or Robinhood Cash's January
+   * 2024 read nothing for the same reason. What tells the two apart is the file's kind: the parser that read it.
+   */
+  const ROBINHOOD_STATEMENT = "robinhood-brokerage-statement-pdf";
+
+  test("the month between an opening statement and the next one is a file to fetch", () => {
+    addAccount("a-1", "Robinhood Agentic");
+    addPeriod("a-1", "2026-06-01", "2026-06-30", "not_applicable", ROBINHOOD_STATEMENT);
+    addPeriod("a-1", "2026-08-01", "2026-08-31", "reconciled", ROBINHOOD_STATEMENT);
+    addPeriod("a-1", "2026-09-01", "2026-09-30", "reconciled", ROBINHOOD_STATEMENT);
+    // a fourth close, so the rhythm reads month-end and the hole's statements can be counted (three read 46 days)
+    addPeriod("a-1", "2026-10-01", "2026-10-31", "reconciled", ROBINHOOD_STATEMENT);
+
+    expect(statementGaps(bundle.db)).toEqual([
+      {
+        accountId: "a-1",
+        accountName: "Robinhood Agentic",
+        holes: [{ from: "2026-07-01", to: "2026-07-31", days: 31, closes: 1 }],
+        missingCloses: 1,
+        missingDays: 31,
+        withheld: [],
+      },
+    ]);
+  });
+
+  test("Robinhood Cash's shape: an opening statement in Dec 2023, January 2024 missing, the months after it there", () => {
+    addAccount("a-1", "Robinhood Cash");
+    addPeriod("a-1", "2023-12-01", "2023-12-31", "not_applicable", ROBINHOOD_STATEMENT);
+    for (let start = "2024-02-01"; start <= "2024-06-01"; start = addCalendarMonths(start, 1)) {
+      addPeriod("a-1", start, addDays(addCalendarMonths(start, 1), -1), "reconciled", ROBINHOOD_STATEMENT);
+    }
+
+    expect(statementGaps(bundle.db).map((g) => g.holes)).toEqual([
+      [{ from: "2024-01-01", to: "2024-01-31", days: 31, closes: 1 }],
+    ]);
+  });
+
+  test("…and the same balance-less period read by a report or an export still fills nothing", () => {
+    // the 8512476 rule, held: a Spending Report, a Rocket Money CSV, an OFX download, or a file of no known kind
+    for (const [i, profile] of ["chase-spending-report-pdf", "rocket-money-csv", "ofx-generic", null].entries()) {
+      const id = `a-${i + 1}`;
+      addAccount(id, `Account ${i + 1}`);
+      addPeriod(id, "2026-06-01", "2026-06-30", "not_applicable", profile);
+      addPeriod(id, "2026-08-01", "2026-08-31", "reconciled", ROBINHOOD_STATEMENT);
+      addPeriod(id, "2026-09-01", "2026-09-30", "reconciled", ROBINHOOD_STATEMENT);
+    }
+
+    expect(statementGaps(bundle.db)).toEqual([]);
   });
 });

@@ -71,7 +71,10 @@ export const MAX_CLOSES_PER_HOLE = 60;
  * printed no balances. A Chase Spending Report spans many cycles: the frontier
  * jumped to its end, so every statement missing under it read as covered, and a
  * hole after it opened on a day no statement closed (`closesWithin` walks from
- * that day). The review, 2026-10-08, on a copy of the owner's ledger.
+ * that day). The review, 2026-10-08, on a copy of the owner's ledger. The one
+ * exception is an opening statement that printed no OPENING (Robinhood's first):
+ * a statement, so the walk starts from it and a month missing right after it is a
+ * hole — Robinhood Agentic's July, lost when it was left out (the same day).
  */
 export function statementHoles(
   periods: readonly StatementPeriodRef[],
