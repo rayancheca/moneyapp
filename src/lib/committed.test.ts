@@ -12,6 +12,7 @@ import {
   COMMITTED_ORIGIN_LABEL,
   monthHorizon,
   shrinkCaption,
+  upfrontCarLeftOut,
   withinMonthHorizon,
   committedOutflows,
   type CommittedInput,
@@ -363,6 +364,35 @@ describe("baselineCaption", () => {
     expect(baselineCaption({ months: 6, fromMonth: "2026-04", toMonth: "2026-09", upfrontCarCents: 0 })).toBe(
       "Spending averaged over 6 complete months, Apr 2026 to Sep 2026. This month is still running and is not counted.",
     );
+  });
+
+  /**
+   * 🔴 A refund of the deposit inside the window, the deposit itself before it, leaves the window's up-front sum
+   * NEGATIVE, and the caption read "leaving out the -$1,100.00 paid up front for the car". A net refund is not money
+   * paid up front — and leaving the clause out would make the caption lie by omission: the average is higher than the
+   * plain one by the refund ÷ the months, exactly as it is lower by a payment.
+   */
+  test("a net refund of the up-front money is named as a refund, never as a negative amount paid", () => {
+    const c = baselineCaption({ months: 6, fromMonth: "2026-04", toMonth: "2026-09", upfrontCarCents: -110_000 });
+    expect(c).toBe(
+      "Spending averaged over 6 complete months, Apr 2026 to Sep 2026, leaving out the $1,100.00 refunded of the money " +
+        "paid up front for the car, which the car card takes off what it spreads over the lease. This month is still " +
+        "running and is not counted.",
+    );
+    expect(c).not.toContain("-$");
+  });
+});
+
+describe("upfrontCarLeftOut — one phrase for the up-front money an average left out", () => {
+  test("a payment, a refund, and nothing", () => {
+    expect(upfrontCarLeftOut(610_000)).toBe(
+      "the $6,100.00 paid up front for the car, which the car card spreads over the lease",
+    );
+    expect(upfrontCarLeftOut(-10_000)).toBe(
+      "the $100.00 refunded of the money paid up front for the car, which the car card takes off what it spreads over " +
+        "the lease",
+    );
+    expect(upfrontCarLeftOut(0)).toBeNull();
   });
 
   test("a one-month window is singular, and is not a range", () => {

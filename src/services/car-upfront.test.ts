@@ -373,6 +373,21 @@ describe("paid up front means BEFORE the lease starts (owner decision 2026-10-07
     expect(predictCategory(bundle.db, carId, "Car", TODAY).forecast.discretionaryCents).toBe(10_000);
   });
 
+  /**
+   * The runway's "What you spend a month" is a rate like the pace, so the same answer holds there: an unlinked Car row
+   * after the lease starts — a registration — is ordinary spending, averaged in, and not named as up front.
+   */
+  test("a registration after the lease starts is in the runway's spend baseline", () => {
+    postTheUpfrontMoney();
+    const before = spendBaseline(bundle.db, TODAY);
+    insertTxn({ postedOn: "2026-09-20", amountCents: -30_000, categoryId: carId });
+    const after = spendBaseline(bundle.db, TODAY);
+
+    expect(after.upfrontCarCents).toBe(610_000);
+    expect(after.monthlyCents).toBe(before.monthlyCents + 30_000 / 2);
+    expect(runwayCard(bundle.db, TODAY).runway.assumptions.find((a) => a.id === "spend")?.cents).toBe(after.monthlyCents);
+  });
+
   test("the boundary: the day before the lease starts is up front, the day it starts is not", () => {
     insertTxn({ postedOn: "2026-09-10", amountCents: -1_000, categoryId: carId });
     insertTxn({ postedOn: "2026-09-11", amountCents: -2_000, categoryId: carId });
@@ -410,6 +425,49 @@ describe("every spending rate leaves the up-front money out (owner decision 2026
     expect(baselineCaption(r.spend)).toBe(
       "Spending averaged over 2 complete months, Aug 2026 to Sep 2026, leaving out the $6,100.00 paid up front for " +
         "the car, which the car card spreads over the lease. This month is still running and is not counted.",
+    );
+  });
+
+  /**
+   * 🔴 A ledger whose complete months hold nothing but the up-front money — a cash down payment typed before the first
+   * statement lands. The spend term is $0.00, so the verdict is withheld, and its sentence read "Nothing has been spent
+   * in the months counted below" over a caption naming the $6,100.00 left out of those very months.
+   */
+  test("when the up-front money is the only spending in the months counted, the withheld verdict names it", () => {
+    bundle.db.delete(transactions).run();
+    // one July row opens the ledger, so August and September are the complete months counted
+    insertTxn({ postedOn: "2026-07-05", amountCents: -40_000, categoryId: groceriesId });
+    postTheUpfrontMoney();
+
+    const r = runwayCard(bundle.db, TODAY);
+    expect(r.spend).toMatchObject({ months: 2, monthlyCents: 0, upfrontCarCents: 610_000 });
+    expect(r.runway.kind).toBe("unknown");
+    expect(r.runway.explanation).toBe(
+      "Apart from the $6,100.00 paid up front for the car, which the car card spreads over the lease, nothing has " +
+        "been spent in the months counted below, so there is no rate to measure a runway against. This fills in once " +
+        "a month of other spending is imported.",
+    );
+  });
+
+  /**
+   * 🔴 The deposit paid in July, before the months counted, and $100.00 of it refunded in August: the window's up-front
+   * sum is −$100.00, and the caption read "leaving out the -$100.00 paid up front for the car". It is a refund, and the
+   * average is the plain one plus it ÷ 2 — so the caption still names it, as what it is.
+   */
+  test("a refund of the up-front money inside the months counted is named as a refund", () => {
+    insertTxn({ postedOn: "2026-07-20", amountCents: DEPOSIT, categoryId: carId, accountId: cardId });
+    insertTxn({ postedOn: "2026-08-20", amountCents: 10_000, categoryId: carId, accountId: cardId });
+
+    const spend = spendBaseline(bundle.db, TODAY);
+    expect(spend.upfrontCarCents).toBe(-10_000);
+    // Aug + Sep without the refund: $500 + $450 groceries, two premiums, the lease
+    expect(spend.monthlyCents).toBe((95_000 - INSURANCE * 2 - LEASE) / 2);
+    // the card nets it: $1,100.00 − $100.00
+    expect(carCard(bundle.db, TODAY)!.cost.upfrontCents).toBe(100_000);
+    expect(baselineCaption(runwayCard(bundle.db, TODAY).spend)).toBe(
+      "Spending averaged over 2 complete months, Aug 2026 to Sep 2026, leaving out the $100.00 refunded of the money " +
+        "paid up front for the car, which the car card takes off what it spreads over the lease. This month is still " +
+        "running and is not counted.",
     );
   });
 
