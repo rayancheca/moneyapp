@@ -92,3 +92,28 @@ describe("/accounts/[id] — the holdings table links to a holding page only for
     expect(table).toMatch(/opensHoldingPages=\{ownPortfolioAccountIds\(db\)\.has\(id\)\}/);
   });
 });
+
+/**
+ * 🔴 THE PAGE IS WHAT OFFERS THE FORM, and only the rule was tested. `balanceListWords` is pinned branch by branch in
+ * components/accounts/balance-list-words.test.ts; setting the page back to the literal "No balances counted yet." and
+ * "add one you counted below", and the form's gate to `{true && (`, passed all 95 tests under src/app/accounts and
+ * src/components/accounts — while it offered "Add a balance you counted" to a brokerage book, which `addManualAnchor`
+ * refuses. No e2e fixture holds a book, so nothing else would see it.
+ */
+describe("/accounts/[id] — the balance form and the list's words answer one rule", () => {
+  test("the form is gated on balanceListWords' takesCount, asked once, and on nothing local", () => {
+    expect(source.match(/balanceListWords\(/g) ?? []).toHaveLength(1);
+    const gate = source.match(/\{\s*([^{}]+?)\s*&&\s*\(\s*<SurfaceCard>\s*<h2[^>]*>Add a balance you counted</)?.[1];
+    expect(gate).toBe("listWords.takesCount");
+    // the rule itself is asked through `balanceListWords`, never beside it
+    expect(source).not.toMatch(/takesTypedBalance\(/);
+  });
+
+  test("the list's heading and both empty lines are balanceListWords', and the page keeps no copy", () => {
+    expect(source).toMatch(/<h2 className="mb-3 text-sm font-medium">\{listWords\.heading\}<\/h2>/);
+    // the list's line when it holds nothing, and the header's when the account has no balance at all
+    expect(source).toMatch(/anchors\.length === 0 \? \(\s*<p className="[^"]*">\{listWords\.empty\}<\/p>/);
+    expect(source).toMatch(/\) : \(\s*<p className="[^"]*">\{listWords\.noBalanceYet\}<\/p>/);
+    expect(source).not.toMatch(/Recorded balances|counted yet|add one you counted|No balances? yet/);
+  });
+});
