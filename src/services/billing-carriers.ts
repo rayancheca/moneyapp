@@ -1,7 +1,9 @@
-import { isNotNull } from "drizzle-orm";
+import { and, eq, gte, inArray, isNotNull, lte } from "drizzle-orm";
 import type { AppDatabase } from "@/db/client";
 import { recurringSeries } from "@/db/schema/recurring";
+import { transactions } from "@/db/schema/transactions";
 import type { BillingCarrier } from "@/lib/billed-with";
+import { addDays, compareDates, diffDays } from "@/lib/dates";
 import { resolveMergeTarget } from "./recurring";
 
 /**
@@ -58,4 +60,85 @@ export function withBillingCarriers<T extends { id: string }>(
 ): (T & { billedWith: BillingCarrier | null })[] {
   const carriers = billingCarriers(db);
   return rows.map((r) => ({ ...r, billedWith: carriers.get(r.id) ?? null }));
+}
+
+/** A posting that may pay a due day: the day it posted, and how many days either side of a due day it may land. */
+export interface Payment {
+  readonly postedOn: string;
+  readonly toleranceDays: number;
+}
+
+/**
+ * The payment that pays a due day — the nearest within its own tolerance of it, the earlier of two as near — or
+ * undefined. ⛔ The one test of "did a posting cover this occurrence" for every grader of a bill: the arrears
+ * (`overdueForSeries`) and the calendar (a posting of its own, or its carrier's), so the two cannot grade one Oct 1
+ * apart.
+ */
+export function paymentFor<P extends Payment>(payments: readonly P[], dueOn: string): P | undefined {
+  let best: P | undefined;
+  for (const p of payments) {
+    const gap = Math.abs(diffDays(p.postedOn, dueOn));
+    if (gap > p.toleranceDays) continue;
+    const bestGap = best === undefined ? Infinity : Math.abs(diffDays(best.postedOn, dueOn));
+    if (gap < bestGap || (gap === bestGap && compareDates(p.postedOn, best!.postedOn) < 0)) best = p;
+  }
+  return best;
+}
+
+/**
+ * ⚖️ What PAYS each series billed inside another: its carrier's payments, each judged by the CARRIER's tolerance —
+ * keyed by the carried series' id. Implied by his decision 59 (2026-10-08, recorded by the orchestrator): the
+ * utilities' money is inside the rent's payment, so an occurrence of theirs is paid once the rent's payment for that
+ * period has posted — the posting that pays the rent's own occurrence, by the rent's own test (`paymentFor`).
+ *
+ * 🔴 Without it the evidence followed the carrier (`lastSeenOn`) and the settlement did not: on a copy of his ledger
+ * with the link set (2026-10-08) September drew Sep 1 "not yet known" beside the rent's Sep 2 $2,291.21 ($2,109.00 +
+ * $182.21), and once the rent's account is read past a 1st the rent paid, the runway, the month forecast, /budgets,
+ * the bill's page and the calendar's ✕ would all have said its $182.21 "came due and has not posted" — every month.
+ *
+ * ⚠️ "The same period" is the carried occurrence's own day: a series billed inside another falls due with it (his
+ * utilities and his rent are both due on the 1st), so the carrier's occurrence of that period is the one on that day.
+ *
+ * ⛔ Amounts are not asked: the carrier's payment pays what is billed inside it whatever it adds up to — as a covering
+ * posting pays the bill it covers (`overdueForSeries`). Its money is on the carrier's row, counted there, once.
+ *
+ * `[from, to]` is the window of due days asked about; postings are read the carrier's tolerance either side of it.
+ * Nothing is asked of a ledger with no link.
+ */
+export function carrierPaymentsBySeries(
+  db: AppDatabase,
+  rows: readonly { id: string; billedWith: BillingCarrier | null }[],
+  from: string,
+  to: string,
+): ReadonlyMap<string, readonly Payment[]> {
+  const carried = rows.filter((r): r is typeof r & { billedWith: BillingCarrier } => r.billedWith !== null);
+  if (carried.length === 0) return new Map();
+  const carrierIds = [...new Set(carried.map((r) => r.billedWith.id))];
+  const tolerance = new Map(
+    db
+      .select({ id: recurringSeries.id, toleranceDays: recurringSeries.toleranceDays })
+      .from(recurringSeries)
+      .where(inArray(recurringSeries.id, carrierIds))
+      .all()
+      .map((s) => [s.id, s.toleranceDays] as const),
+  );
+  const widest = Math.max(0, ...tolerance.values());
+  const byCarrier = new Map<string, Payment[]>();
+  for (const row of db
+    .select({ seriesId: transactions.recurringSeriesId, postedOn: transactions.postedOn })
+    .from(transactions)
+    .where(
+      and(
+        eq(transactions.status, "active"),
+        inArray(transactions.recurringSeriesId, carrierIds),
+        gte(transactions.postedOn, addDays(from, -widest)),
+        lte(transactions.postedOn, addDays(to, widest)),
+      ),
+    )
+    .all()) {
+    if (row.seriesId === null) continue;
+    const payment = { postedOn: row.postedOn, toleranceDays: tolerance.get(row.seriesId) ?? 0 };
+    byCarrier.set(row.seriesId, [...(byCarrier.get(row.seriesId) ?? []), payment]);
+  }
+  return new Map(carried.map((r) => [r.id, byCarrier.get(r.billedWith.id) ?? []] as const));
 }

@@ -13,16 +13,17 @@ import { transactions } from "@/db/schema/transactions";
 import { seedDatabase } from "@/db/seed";
 import { addDays, compareDates } from "@/lib/dates";
 import { forecastSplit } from "@/lib/forecast-split";
+import { arrearsSentence } from "@/lib/committed";
 import { stalePartLabel, staleSummaryLabel, upcomingEvidenceWord } from "@/components/recurring/labels";
 import { arrearsThisMonth } from "./arrears";
 import { billingCarriers } from "./billing-carriers";
-import { budgetTail } from "./budgets";
+import { budgetOverdue, budgetTail } from "./budgets";
 import { silenceMeasuredThroughBySeries } from "./cash-earnings";
 import { committedBook } from "./committed";
 import { forecastCurrentMonth, forecastForMonth } from "./forecast";
 import { provenanceFor } from "./provenance";
 import { hasStoppedForecasting, listSeries, seriesEvidence, upcomingOccurrences } from "./recurring";
-import { recurringCalendar } from "./recurring-calendar";
+import { recurringCalendar, type CalendarEntry } from "./recurring-calendar";
 import { seriesDetail } from "./recurring-detail";
 import { recurringInsightInput } from "./recurring-insights";
 import { mergeSeries } from "./recurring-links";
@@ -233,15 +234,29 @@ describe("/recurring — the All tab, the bands and footers, the calendar", () =
     expect({ forecast: shape(), upcoming: upcoming() }).toEqual(before);
   });
 
-  test("⛔ the arrears are unchanged — its Oct 1 still came due and has not posted", () => {
+  /*
+   * ⚖️ The arrears' AMOUNTS are unchanged by the link; whether an occurrence is settled follows the carrier (§6A 59 as
+   * implied 2026-10-08 — see "settlement follows the carrier" below). The rent has not posted Oct 1, so its Oct 1 is
+   * still owed — at its own $182.21 — and on the same reading as the rent's: nothing has read the rent's account past
+   * Sep 2, so both are unread. Where the rent HAS paid, the utilities leave the arrears with it (below).
+   */
+  test("⛔ the arrears' money is unchanged — the rent has not posted Oct 1, so neither has what is billed inside it", () => {
     const ids = new Set([RENT, UTIL, GYM]);
     const before = arrearsThisMonth(bundle.db, ids, TODAY);
     expect(before.series.map((s) => s.id)).toContain(UTIL);
     link();
-    expect(arrearsThisMonth(bundle.db, ids, TODAY)).toEqual(before);
+    const after = arrearsThisMonth(bundle.db, ids, TODAY);
+    expect(after.totalCents).toBe(before.totalCents);
+    expect(after.series.map((s) => [s.id, s.nextDate, s.amountCents, s.occurrenceCents])).toEqual(
+      before.series.map((s) => [s.id, s.nextDate, s.amountCents, s.occurrenceCents]),
+    );
+    // read exactly as far as the rent is: the rent's account, never "no account at all"
+    const unread = (id: string) => after.series.find((s) => s.id === id)!.unreadCents;
+    expect(unread(UTIL)).toBe(18221);
+    expect(unread(RENT)).toBe(210900);
   });
 
-  test("the calendar's upcoming entry says billed with the rent, not never billed; its past entry is graded as before", () => {
+  test("the calendar's upcoming entry says billed with the rent, not never billed; its past entry follows the rent's", () => {
     const entries = (month: string) =>
       Object.values(recurringCalendar(bundle.db, month, TODAY).entriesByDay)
         .flat()
@@ -255,9 +270,9 @@ describe("/recurring — the All tab, the bands and footers, the calendar", () =
     expect(nov.billedWith).toBe("billed with the rent");
     expect(upcomingEvidenceWord(nov)).toBe("billed with the rent");
     expect(nov.amountCents).toBe(-18221);
-    // the past is the arrears' question, and the arrears stay as they are
-    expect(entries("2026-10").map((e) => [e.state, e.amountCents, e.unsettledReason, e.billedWith])).toEqual(
-      octBefore.map((e) => [e.state, e.amountCents, e.unsettledReason, null]),
+    // the past follows the rent: no payment of its has posted for Oct 1 and nothing has read past Sep 2 — not yet known
+    expect(entries("2026-10").map((e) => [e.state, e.amountCents, e.unsettledReason, e.billedWith, e.paidWith])).toEqual(
+      octBefore.map((e) => [e.state, e.amountCents, e.unsettledReason, null, null]),
     );
   });
 });
@@ -432,6 +447,9 @@ describe("a merge of the carrier — the link follows the rent to the series it 
     const where = () => ({
       upcoming: upcomingOccurrences(bundle.db, TODAY_DEC, 60).some((o) => o.seriesId === UTIL),
       arrears: arrearsThisMonth(bundle.db, new Set([UTIL]), TODAY_DEC).series.length > 0,
+      december:
+        recurringCalendar(bundle.db, "2026-12", TODAY_DEC).entriesByDay["2026-12-01"]?.find((e) => e.seriesId === UTIL)
+          ?.paidWith ?? null,
       card: subscriptionsCard(bundle.db, TODAY_DEC)!.live.some((l) => l.seriesId === UTIL),
       evidence: listSeries(bundle.db, TODAY_DEC).find((s) => s.id === UTIL)!.evidence,
       january: forecastForMonth(bundle.db, "2027-01", TODAY_DEC)!.components.some((c) => c.label === "Rent utilities & fees"),
@@ -442,7 +460,13 @@ describe("a merge of the carrier — the link follows the rent to the series it 
     });
     expect(where()).toEqual({
       upcoming: true,
-      arrears: true,
+      /*
+       * ⚖️ Owed nothing, and still graded: the rent's Dec 2 payment — under the series it was merged into — paid its
+       * Dec 1 (settlement follows the carrier). Its owed Dec 1 stood here as the proof it was still live; the December
+       * mark naming that payment is the proof now, and a lapsed series would draw none.
+       */
+      arrears: false,
+      december: { carrier: "Flamingo South Beach", postedOn: "2026-12-02" },
       card: true,
       evidence: "active",
       january: true,
@@ -521,5 +545,197 @@ describe("one evidence, every surface — the forward legs read the carrier's po
       tail: false,
       calendar: false,
     });
+  });
+});
+
+/*
+ * ⚖️ SETTLEMENT FOLLOWS THE CARRIER — implied by his decision 59 (recorded by the orchestrator, 2026-10-08): the
+ * utilities' money is INSIDE the rent's payment, so an occurrence of theirs is paid once the rent's payment for that
+ * period has posted. 🔴 Without it, once each rent statement is imported, every surface that grades a past bill would
+ * say "Rent utilities & fees came due Oct 1 and has not posted" every month — beside the rent's own payment that
+ * paid it — which his answer contradicts. On a copy of his ledger with the link set, September drew Sep 1 "not yet
+ * known" beside the rent's Sep 2 $2,291.21 ($2,109.00 + $182.21).
+ *
+ * …and it is READ where the rent is read: its Oct 1 is "not posted" exactly when the rent's is, and quiet exactly when
+ * the rent's is — the rent's accounts, the ones its late and lapse are already measured on. Read here past Oct 1 AND
+ * the rent's 3 days' grace, so the claim holds whether "read" means the due day or the due day with its grace (§6A 60).
+ */
+describe("settlement follows the carrier — paid once the rent's payment for that period has posted", () => {
+  /** a payment of the rent, linked to it */
+  function rentPaid(id: string, postedOn: string, cents = -229121): void {
+    bundle.db
+      .insert(transactions)
+      .values({
+        id,
+        accountId: "acct",
+        postedOn,
+        amountCents: cents,
+        rawDescription: "FLAMINGO SOUTH BEACH",
+        normalizedDescription: "FLAMINGO SOUTH BEACH",
+        categoryId,
+        recurringSeriesId: RENT,
+        status: "active",
+        needsReview: false,
+        occurrenceIndex: 0,
+        dedupeHash: `h-${id}`,
+        createdAt: now(),
+        updatedAt: now(),
+      })
+      .run();
+  }
+
+  /** an import of the rent's account has reached `day`: a row of no series on it (`observationFrontier`) */
+  function rentAccountImportedThrough(day: string): void {
+    bundle.db
+      .insert(transactions)
+      .values({
+        id: `t-coffee-${day}`,
+        accountId: "acct",
+        postedOn: day,
+        amountCents: -450,
+        rawDescription: "COFFEE",
+        normalizedDescription: "COFFEE",
+        categoryId,
+        status: "active",
+        needsReview: false,
+        occurrenceIndex: 0,
+        dedupeHash: `h-coffee-${day}`,
+        createdAt: now(),
+        updatedAt: now(),
+      })
+      .run();
+  }
+
+  const onDay = (month: string, day: string, id: string, today = TODAY) =>
+    recurringCalendar(bundle.db, month, today).entriesByDay[day]?.find((e) => e.seriesId === id);
+  const verdicts = (...entries: (CalendarEntry | undefined)[]) => entries.map((e) => [e!.state, e!.unsettledReason]);
+
+  test("September: its Sep 1 reads paid with the rent's Sep 2 payment — and adds nothing the rent's row holds", () => {
+    expect(onDay("2026-09", "2026-09-01", UTIL)).toMatchObject({ state: "unsettled", paidWith: null });
+    const before = recurringCalendar(bundle.db, "2026-09", TODAY);
+    link();
+    expect(onDay("2026-09", "2026-09-01", UTIL)).toMatchObject({
+      state: "paid",
+      amountCents: -18221,
+      expectedAmountCents: -18221,
+      transactionId: null,
+      unsettledReason: null,
+      paidWith: { carrier: "the rent", postedOn: "2026-09-02" },
+      // ⛔ its money is on the rent's Sep 2 row ($2,291.21 = $2,109.00 + $182.21): counted there, once
+      settledCents: 0,
+    });
+    const after = recurringCalendar(bundle.db, "2026-09", TODAY);
+    expect(after.postedNetCents).toBe(before.postedNetCents);
+    expect(after.unsettledCount).toBe(before.unsettledCount - 1);
+    expect(after.unsettledGrossCents).toBe(before.unsettledGrossCents - 18221);
+    // the rent's own row is untouched
+    expect(onDay("2026-09", "2026-09-02", RENT)).toMatchObject({ amountCents: -229121, settledCents: -229121 });
+  });
+
+  test("October, the rent paid Oct 2: its Oct 1 is paid too — owed on no surface", () => {
+    rentPaid("t-oct", "2026-10-02");
+    const owed = () => ({
+      arrears: arrearsThisMonth(bundle.db, new Set([RENT, UTIL, GYM]), TODAY).series.map((s) => [s.id, s.amountCents]),
+      budgets: budgetOverdue(bundle.db, categoryId, "2026-10-01", TODAY).series.map((s) => s.id),
+      runway: arrearsSentence(committedBook(bundle.db, TODAY)),
+      page: seriesDetail(bundle.db, UTIL, TODAY).overdue?.amountCents ?? null,
+      forecast: forecastCurrentMonth(bundle.db, TODAY).components.some((c) => /came due/.test(c.detail ?? "")),
+      calendar: onDay("2026-10", "2026-10-01", UTIL)?.state ?? null,
+    });
+    // unlinked, the rent's payment pays the rent alone: the utilities' Oct 1 is still owed
+    expect(owed()).toMatchObject({ arrears: [[UTIL, 18221]], budgets: [UTIL], page: -18221, forecast: true });
+    link();
+    expect(owed()).toEqual({ arrears: [], budgets: [], runway: null, page: null, forecast: false, calendar: "paid" });
+    expect(onDay("2026-10", "2026-10-01", UTIL)!.paidWith).toEqual({ carrier: "the rent", postedOn: "2026-10-02" });
+  });
+
+  test("its day is paid by the rent's own test — the rent's grace, never a shorter one of its own", () => {
+    // a rent given 5 days' grace, paid Oct 5: the rent's Oct 1 is paid by it, and so is what the payment carries
+    bundle.db.update(recurringSeries).set({ toleranceDays: 5 }).where(eq(recurringSeries.id, RENT)).run();
+    rentPaid("t-oct", "2026-10-05");
+    link();
+    const late = arrearsThisMonth(bundle.db, new Set([RENT, UTIL]), TODAY);
+    expect(late.series).toEqual([]);
+    expect(onDay("2026-10", "2026-10-01", UTIL)!.paidWith).toEqual({ carrier: "the rent", postedOn: "2026-10-05" });
+  });
+
+  test("⛔ the money is unchanged: November still projects $2,109.00 + $182.21; October counts the rent's payment once", () => {
+    rentPaid("t-oct", "2026-10-02");
+    const november = () =>
+      forecastForMonth(bundle.db, "2026-11", TODAY)!
+        .components.filter((c) => c.label === "Rent utilities & fees" || c.label === "Flamingo South Beach (rent)")
+        .map((c) => [c.label, c.cents]);
+    const upcoming = () => upcomingOccurrences(bundle.db, TODAY, 60).map((o) => [o.seriesId, o.date, o.amountCents]);
+    const spend = () => forecastCurrentMonth(bundle.db, TODAY).projectedSpendCents;
+    const before = { november: november(), upcoming: upcoming(), spend: spend() };
+    expect(before.november).toEqual([
+      ["Flamingo South Beach (rent)", -210900],
+      ["Rent utilities & fees", -18221],
+    ]);
+    link();
+    expect({ november: november(), upcoming: upcoming() }).toEqual({ november: before.november, upcoming: before.upcoming });
+    // the $182.21 is inside the rent's posted $2,291.21: owed again on top of it, it was counted twice (spend is signed
+    // as net worth sees it, so the projection rises by it)
+    expect(spend()).toBe(before.spend + 18221);
+  });
+
+  test("its Oct 1 is read on the rent's accounts: quiet while they are unread, not posted once read and the rent unpaid", () => {
+    rentPaid("t-jul", "2026-07-08", -228570); // his third payment: the rent's schedule is measured (`scheduleIsProven`)
+    link();
+    const reading = () => {
+      const late = arrearsThisMonth(bundle.db, new Set([RENT, UTIL]), TODAY).series;
+      const unread = (id: string) => late.find((s) => s.id === id)!.unreadCents;
+      const pageUnread = (id: string) => seriesDetail(bundle.db, id, TODAY).overdue!.unreadCents;
+      return {
+        unread: [unread(RENT), unread(UTIL)],
+        page: [pageUnread(RENT), pageUnread(UTIL)],
+        runway: arrearsSentence(committedBook(bundle.db, TODAY)),
+        calendar: verdicts(onDay("2026-10", "2026-10-01", RENT), onDay("2026-10", "2026-10-01", UTIL)),
+      };
+    };
+    // the rent's account read only through its Sep 2 payment: both only await an import
+    expect(reading()).toEqual({
+      unread: [210900, 18221],
+      page: [210900, 18221],
+      runway: "A further $2,291.21 came due earlier this month and no import has covered it yet.",
+      calendar: [
+        ["unsettled", "not_imported"],
+        ["unsettled", "not_imported"],
+      ],
+    });
+    // read past Oct 1 and its 3 days' grace, and the rent did not post: both are not posted
+    rentAccountImportedThrough("2026-10-07");
+    expect(reading()).toEqual({
+      unread: [0, 0],
+      page: [0, 0],
+      runway: "A further $2,291.21 came due earlier this month and never posted.",
+      calendar: [
+        ["missed", null],
+        ["missed", null],
+      ],
+    });
+  });
+
+  test("a rent with too few charges to grade: what is billed inside it waits with it, never missed alone", () => {
+    link();
+    rentAccountImportedThrough("2026-10-07");
+    // two charges of the rent's: its date is not yet measured (`ScheduleProven`) — nor is the day it carries
+    expect(verdicts(onDay("2026-10", "2026-10-01", RENT), onDay("2026-10", "2026-10-01", UTIL))).toEqual([
+      ["unsettled", "schedule_unproven"],
+      ["unsettled", "schedule_unproven"],
+    ]);
+  });
+
+  test("the control: the gym, billed on its own and never charged, is graded exactly as before", () => {
+    rentPaid("t-oct", "2026-10-02");
+    rentAccountImportedThrough("2026-10-24");
+    const gym = () => [
+      onDay("2026-10", "2026-10-22", GYM, "2026-10-25"),
+      arrearsThisMonth(bundle.db, new Set([GYM]), "2026-10-25"),
+    ];
+    const before = gym();
+    expect(before[0]).toMatchObject({ state: "unsettled", unsettledReason: "not_imported", paidWith: null });
+    link();
+    expect(gym()).toEqual(before);
   });
 });

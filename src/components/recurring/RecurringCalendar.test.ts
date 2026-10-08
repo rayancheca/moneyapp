@@ -23,6 +23,7 @@ function entry(over: Partial<CalendarEntry> & Pick<CalendarEntry, "seriesId" | "
     isStale: false,
     neverBilled: false,
     billedWith: null,
+    paidWith: null,
     hue: null,
     ...over,
   };
@@ -430,5 +431,53 @@ describe("RecurringCalendar — a lump names the paydays it paid", () => {
     );
     const sheet = decode(renderToStaticMarkup(createElement(DaySheetBody, { entries: [lump] })));
     expect(sheet).toContain("paid — 4 paydays at $1,141.92 each");
+  });
+});
+
+/**
+ * ⚖️ A day billed inside another's payment, paid by it (implied by his decision 59, 2026-10-08): nothing posted under
+ * its own name on Sep 1, so the word `paid` beside it names the payment that did — the rent's Sep 2 $2,291.21, which
+ * carries its $182.21. The month below is what the calendar service returns for September on a copy of his ledger
+ * with the link set (billed-with.test pins the service), read 2026-10-08.
+ */
+describe("RecurringCalendar — a day paid inside another's payment", () => {
+  const util = entry({
+    seriesId: "util",
+    name: "Rent utilities & fees",
+    state: "paid",
+    amountCents: -18221,
+    settledCents: 0,
+    paidWith: { carrier: "the rent", postedOn: "2026-09-02" },
+  });
+  const rent = entry({
+    seriesId: "rent",
+    name: "Flamingo South Beach (rent)",
+    state: "paid",
+    amountCents: -229121,
+    expectedAmountCents: -210900,
+    transactionId: "t-sep",
+    settledCents: -229121,
+  });
+  const month: RecurringCalendarMonth = {
+    monthKey: "2026-09",
+    today: "2026-10-08",
+    entriesByDay: { "2026-09-01": [util], "2026-09-02": [rent] },
+    entryCount: 2,
+    postedNetCents: -229121,
+    upcomingNetCents: 0,
+    missedCount: 0,
+    unsettledCount: 0,
+    unsettledGrossCents: 0,
+  };
+
+  test("the cell and the Day Sheet name the carrier's payment that paid it", () => {
+    const html = decode(renderToStaticMarkup(createElement(RecurringCalendar, { initialMonth: month, today: "2026-10-08" })));
+    expect(html).toContain(
+      `aria-label="Sep 1, 2026 — 1 item: Rent utilities & fees paid (paid with the rent's payment of Sep 2, 2026) -$182.21"`,
+    );
+    const sheet = decode(renderToStaticMarkup(createElement(DaySheetBody, { entries: [util] })));
+    expect(sheet).toContain("paid — paid with the rent's payment of Sep 2, 2026");
+    // its money is the rent's row's: nothing of it is counted on Sep 1
+    expect(sheet).toContain("$0.00 counted on this day");
   });
 });

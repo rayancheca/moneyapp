@@ -7,6 +7,7 @@ import { statementPeriods } from "@/db/schema/imports";
 import { recurringSeries } from "@/db/schema/recurring";
 import { transactions } from "@/db/schema/transactions";
 import { compareDates } from "@/lib/dates";
+import { billingCarriers } from "./billing-carriers";
 import { accountsAwaitingStatements, silenceReadThrough } from "./cash-wallet-rule";
 
 /**
@@ -291,6 +292,13 @@ export function ledgerReaches(db: AppDatabase): string | null {
  * the column alone answers nothing for exactly the series that matter most.
  * And the column alone is wrong even where it is set: Netflix names Chase
  * Sapphire while its history posted to Chase Sapphire AND Discover.
+ *
+ * ⚖️ …and a series BILLED INSIDE another's payment (§6A 59) is paid where its carrier is: its carrier's accounts are
+ * added to its own, as its late and lapse already borrow them (`landingAccountsBySeries`). 🔴 With none of its own,
+ * `Rent utilities & fees` was read on no account at all: once the rent's account is read past a 1st the rent did not
+ * pay, the rent's Oct 1 read "not posted" in warning colour while its utilities' — the same payment — still read "no
+ * import has covered it yet", on the runway, its page and the calendar alike (billed-with.test, 2026-10-08). The
+ * carrier is the live series, followed through any merge (`billingCarriers`).
  */
 export function seriesAccountIds(db: AppDatabase): Map<string, Set<string>> {
   const bySeries = new Map<string, Set<string>>();
@@ -314,6 +322,10 @@ export function seriesAccountIds(db: AppDatabase): Map<string, Set<string>> {
     .where(and(eq(transactions.status, "active"), isNotNull(transactions.recurringSeriesId)))
     .all()) {
     if (r.seriesId) add(r.seriesId, r.accountId);
+  }
+
+  for (const [id, carrier] of billingCarriers(db)) {
+    for (const accountId of bySeries.get(carrier.id) ?? []) add(id, accountId);
   }
 
   return bySeries;

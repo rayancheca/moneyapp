@@ -2,9 +2,9 @@ import { and, eq, gte, inArray, lte } from "drizzle-orm";
 import type { AppDatabase } from "@/db/client";
 import { recurringSeries } from "@/db/schema/recurring";
 import { transactions } from "@/db/schema/transactions";
-import { addDays, compareDates, diffDays, periodBounds } from "@/lib/dates";
+import { addDays, compareDates, periodBounds } from "@/lib/dates";
 import { sharedFrontier, type UnbankedFrontier } from "@/lib/unbanked-income";
-import { withBillingCarriers } from "./billing-carriers";
+import { carrierPaymentsBySeries, paymentFor, withBillingCarriers, type Payment } from "./billing-carriers";
 import { checkedThroughBySeries, silenceMeasuredThroughBySeries } from "./cash-earnings";
 import { frontierForSeries, seriesAccountIds, silenceObservedThrough } from "./observation-frontier";
 import { paydayProjectable, paydaySettlementsBySeries } from "./payday-settlement";
@@ -101,7 +101,7 @@ export function overdueForSeries(
   if (compareDates(periodStart, through) > 0) return { totalCents: 0, series: [] };
 
   // each with the carrier it is billed with: a series paid inside another's payment lapses when its carrier does
-  // (`lastSeenOn`, §6A 59) — and owes what it owes as before, its own occurrences against its own postings
+  // (`lastSeenOn`, §6A 59) — and owes its own occurrences at its own amounts, paid by its carrier's payments too (below)
   const rows = withBillingCarriers(
     db,
     db
@@ -123,7 +123,8 @@ export function overdueForSeries(
   // postings linked to these series, widened by the largest tolerance so a bill
   // that landed a few days either side of its due date still counts as paid
   const maxTolerance = live.reduce((m, r) => Math.max(m, r.toleranceDays), 0);
-  const postedBySeries = new Map<string, string[]>();
+  const tolerance = new Map(live.map((r) => [r.id, r.toleranceDays] as const));
+  const paymentsBySeries = new Map<string, Payment[]>();
   for (const row of db
     .select({ seriesId: transactions.recurringSeriesId, postedOn: transactions.postedOn })
     .from(transactions)
@@ -137,16 +138,27 @@ export function overdueForSeries(
     )
     .all()) {
     if (row.seriesId === null) continue;
-    postedBySeries.set(row.seriesId, [...(postedBySeries.get(row.seriesId) ?? []), row.postedOn]);
+    // a series the forecast has let go owes nothing for a posting to pay
+    const toleranceDays = tolerance.get(row.seriesId);
+    if (toleranceDays === undefined) continue;
+    const payment = { postedOn: row.postedOn, toleranceDays };
+    paymentsBySeries.set(row.seriesId, [...(paymentsBySeries.get(row.seriesId) ?? []), payment]);
   }
+  /*
+   * ⚖️ A series billed inside another's payment is paid by its carrier's payments too, each by the carrier's own test
+   * (`carrierPaymentsBySeries`, implied by §6A 59, 2026-10-08). 🔴 Graded on its own postings — it has none, ever — its
+   * $182.21 came due every 1st and "has not posted" beside the rent's payment that paid it. Its amount is untouched:
+   * still owed at its own $182.21 when the rent has not paid, and owed nowhere when it has.
+   */
+  const carried = carrierPaymentsBySeries(db, live, periodStart, through);
 
   const series: BudgetTailSeries[] = [];
   let totalCents = 0;
   for (const s of live) {
-    const posted = postedBySeries.get(s.id) ?? [];
+    const payments = [...(paymentsBySeries.get(s.id) ?? []), ...(carried.get(s.id) ?? [])];
     const occ = projectOccurrences(toProjectable(s), periodStart, through)
       .filter((o) => o.amountCents < 0)
-      .filter((o) => !posted.some((p) => Math.abs(diffDays(p, o.date)) <= s.toleranceDays));
+      .filter((o) => paymentFor(payments, o.date) === undefined);
     if (occ.length === 0) continue;
     const amountCents = occ.reduce((sum, o) => sum - o.amountCents, 0);
     totalCents += amountCents;
@@ -248,6 +260,9 @@ export function arrearsInWindow(
  * imported. Measured on a copy of his ledger 2026-10-08: rent names no account, so pay's rule reads the same three
  * (Venture X, Chase Checking, Wells Fargo) to the same Aug 12; it posts from Wells Fargo now, read only through
  * Sep 24, so its Oct 1 payment is unread under either rule and "no import has covered it yet" is true.
+ *
+ * ⚖️ A series billed inside another's payment is read on its carrier's accounts too (`seriesAccountIds`, §6A 59), so
+ * its Oct 1 is "not posted" exactly when the rent's is and quiet exactly when the rent's is — never one of each.
  *
  * ⚠️ A due day is read once its accounts are imported through the day ITSELF — the calendar's boundary
  * (`settledVerdict`'s `occurrenceDate <= observedThrough`) — not through the day plus the `toleranceDays` a covering

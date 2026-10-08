@@ -230,15 +230,25 @@ function settlesWord(e: CalendarEntry): string | null {
 }
 
 /**
+ * ⚖️ A DAY PAID INSIDE ANOTHER'S PAYMENT SAYS WHOSE (implied by §6A 59, 2026-10-08) — `settledByWord`'s reason:
+ * nothing posted under its own name on Sep 1, and the word beside it is `paid`. Named, the reader can go to Sep 2 and
+ * find the rent's $2,291.21 that carries its $182.21.
+ */
+function paidWithWord(e: CalendarEntry): string | null {
+  if (e.paidWith === null) return null;
+  return `paid with ${e.paidWith.carrier}'s payment of ${longDate(e.paidWith.postedOn)}`;
+}
+
+/**
  * Which deposit paid it, or which payday it paid — never both, as only a chip
  * carries the one and only a row the other — led, on a lump of pay, by the
  * paydays it paid and what each (`perPaydayWord`): the figure its state was
- * graded on, so "paid $4,567.68" does not stand beside a $1,141.92 week.
+ * graded on, so "paid $4,567.68" does not stand beside a $1,141.92 week. A day paid inside its carrier's payment
+ * names that payment (`paidWithWord`).
  */
 function payerWord(e: CalendarEntry): string | null {
-  const words = [e.perPayday ? perPaydayWord(e.perPayday) : null, settledByWord(e) ?? settlesWord(e)].filter(
-    (w): w is string => w !== null,
-  );
+  const payer = settledByWord(e) ?? settlesWord(e) ?? paidWithWord(e);
+  const words = [e.perPayday ? perPaydayWord(e.perPayday) : null, payer].filter((w): w is string => w !== null);
   return words.length === 0 ? null : words.join(", ");
 }
 

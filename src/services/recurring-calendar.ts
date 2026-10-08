@@ -16,7 +16,7 @@ import {
   type PerPayday,
 } from "@/lib/per-payday";
 import { RECURRING_HISTORY_STATUSES } from "@/lib/series-evidence";
-import { billedWithPhrase } from "@/lib/billed-with";
+import { billedWithPhrase, carrierWord } from "@/lib/billed-with";
 import {
   forecastConfidence,
   settledVerdict,
@@ -27,7 +27,7 @@ import {
 } from "@/lib/occurrence-verdict";
 import { outsidePortfolioCashAccountIds } from "./accounts";
 import { isAgentsSeries, loadCategoryIndex } from "./analytics";
-import { withBillingCarriers } from "./billing-carriers";
+import { carrierPaymentsBySeries, paymentFor, withBillingCarriers } from "./billing-carriers";
 import { silenceMeasuredThroughBySeries } from "./cash-earnings";
 import { frontierForSeries, seriesAccountIds, silenceObservedThrough } from "./observation-frontier";
 import {
@@ -234,6 +234,20 @@ export interface CalendarEntry {
    * Printed where "never billed" stood: "Rent utilities & fees upcoming (scheduled, billed with the rent)".
    */
   billedWith: string | null;
+  /**
+   * ⚖️ On a past or future occurrence of a series billed inside another, the CARRIER's payment that paid it — "paid
+   * with the rent's payment of Sep 2, 2026" — whose word for itself (`carrierWord`) and day it is; null on every other
+   * entry. Implied by his decision 59 (2026-10-08): the utilities' money is inside the rent's payment, so the occurrence
+   * is paid once the rent's payment for that period has posted (`carrierPaymentsBySeries`, the arrears' own test).
+   *
+   * ⛔ IT HAS TO BE NAMED, `settledByDepositsOn`'s reason: nothing posted under its own name on Sep 1, and the word
+   * beside it is `paid`. It carries no transaction and settles $0.00 here — its money is on the rent's row, counted
+   * there, once.
+   *
+   * 🔴 Without it, on a copy of his ledger with the link set (2026-10-08), September drew Sep 1 "not yet known" beside
+   * the rent's Sep 2 $2,291.21 that paid it ($2,109.00 + $182.21).
+   */
+  paidWith: { readonly carrier: string; readonly postedOn: string } | null;
   /**
    * The series' category hue, for the mark drawn beside it.
    *
@@ -721,6 +735,7 @@ export function recurringCalendar(
         isStale: false,
         neverBilled: false,
         billedWith: null,
+        paidWith: null,
         hue: hues.get(s.id) ?? null,
       });
       const dates = postedDatesBySeries.get(s.id) ?? [];
@@ -754,6 +769,8 @@ export function recurringCalendar(
   // chip's rule (`silenceObservedThrough`), so a bill filed late there is never "not imported yet" here
   const frontier = needsFrontier ? silenceObservedThrough(db, today) : null;
   const accountsBySeries = needsFrontier ? seriesAccountIds(db) : null;
+  // what pays each series billed inside another: its carrier's payments (§6A 59) — nothing is asked without a link
+  const carried = carrierPaymentsBySeries(db, forecastRows, monthStart, monthEnd);
 
   for (const s of forecastRows) {
     if (hasStoppedForecasting(s, today, checkedThrough(s.id))) continue;
@@ -764,6 +781,8 @@ export function recurringCalendar(
      */
     const occurrences = projectOccurrences(paydayProjectable(s, settlements.get(s.id), today), monthStart, monthEnd);
     const postedDates = postedDatesBySeries.get(s.id) ?? [];
+    // the arrears' test of a covering posting (`paymentFor`), over the postings this grid draws
+    const ownPayments = postedDates.map((postedOn) => ({ postedOn, toleranceDays: s.toleranceDays }));
     const confidence = forecastConfidence(s);
     // ONE evidence word, the one the All tab files the series under: a series
     // that never charged is "never billed", not stale (see `CalendarEntry.isStale`).
@@ -825,15 +844,46 @@ export function recurringCalendar(
             isStale: false,
             neverBilled: false,
             billedWith: null,
+            paidWith: null,
             hue: hues.get(s.id) ?? null,
           });
           continue;
         }
         // nothing paid it, whatever lies near it: graded below like any payday
-      } else if (postedDates.some((p) => Math.abs(diffDays(p, o.date)) <= s.toleranceDays)) {
+      } else {
         // a bill, or money settlement does not speak about: a posting within
         // the series' tolerance is this occurrence, drawn on the day it landed
-        continue;
+        if (paymentFor(ownPayments, o.date) !== undefined) continue;
+        /*
+         * ⚖️ …and one billed inside another's payment is paid by its carrier's payment for that period — the arrears'
+         * own test (`carrierPaymentsBySeries`, implied by §6A 59, 2026-10-08). Drawn paid on its own day, naming the
+         * payment (`paidWith`), and settling $0.00 here: its money is on the carrier's row, counted there, once.
+         */
+        const carrierPaid = paymentFor(carried.get(s.id) ?? [], o.date);
+        if (carrierPaid !== undefined && s.billedWith !== null) {
+          pushEntry(o.date, {
+            seriesId: s.id,
+            name: s.name,
+            kind: s.kind,
+            state: "paid",
+            amountCents: o.amountCents,
+            expectedAmountCents: o.amountCents,
+            transactionId: null,
+            settledByDepositsOn: [],
+            settlesPaydaysOn: [],
+            perPayday: null,
+            towardNoPayday: false,
+            settledCents: 0,
+            unsettledReason: null,
+            confidence: null,
+            isStale: false,
+            neverBilled: false,
+            billedWith: null,
+            paidWith: { carrier: carrierWord(s.billedWith.name), postedOn: carrierPaid.postedOn },
+            hue: hues.get(s.id) ?? null,
+          });
+          continue;
+        }
       }
 
       const isFuture = compareDates(o.date, today) >= 0;
@@ -846,7 +896,9 @@ export function recurringCalendar(
             s.kind,
             o.date,
             frontier ? frontierForSeries(frontier, accountsBySeries?.get(s.id)) : null,
-            scheduleIsProven(postingCounts.get(s.id) ?? 0),
+            // ⚖️ a day billed inside another's payment is the carrier's day, measured by the carrier's charges — never
+            // "missed" alone beside a rent whose own date is too thinly charged to grade (§6A 59)
+            scheduleIsProven(postingCounts.get(s.billedWith?.id ?? s.id) ?? 0),
           );
 
       pushEntry(o.date, {
@@ -867,6 +919,7 @@ export function recurringCalendar(
         isStale: isFuture && isStale,
         neverBilled: isFuture && neverBilled,
         billedWith: isFuture ? billedWith : null,
+        paidWith: null,
         hue: hues.get(s.id) ?? null,
       });
     }
