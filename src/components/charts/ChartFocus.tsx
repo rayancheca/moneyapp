@@ -1,12 +1,13 @@
 "use client";
 
-import { useCallback, useEffect, useLayoutEffect, useRef, useState, useTransition, type ReactNode } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { flushSync } from "react-dom";
-import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { usePathname, useSearchParams } from "next/navigation";
 import { Icon } from "@/components/shell/Icon";
 import { SurfaceCard } from "@/components/ui/SurfaceCard";
 import { usePageAsks } from "@/hooks/usePageAsks";
 import { usePrefersReducedMotion } from "@/hooks/usePrefersReducedMotion";
+import { useUrlWriter } from "@/hooks/useUrlWriter";
 import type { ChartRange } from "@/lib/chart-range";
 import { ONE_SHOT_PARAMS } from "@/lib/page-asks";
 
@@ -219,13 +220,14 @@ export function ChartFocus({
  * a URL without the range. Both now build on the page's newest asked URL (lib/page-asks.ts),
  * and the pill's URL is asked for like a press's, so a press made after it keeps the range.
  * Like a press, it never carries a one-shot message (`ONE_SHOT_PARAMS`, owner 2026-10-06 §6A 44).
+ * ⚖️ B2: while Back's save of the view on screen is being written it goes once that lands, or after
+ * BACK_SAVE_WAIT_MS, like every URL writer that writes nothing (`useUrlWriter`).
  */
 export function useRangeParam(rangeParam: string | undefined): (range: ChartRange) => void {
-  const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const asks = usePageAsks();
-  const [, startUrlSync] = useTransition();
+  const write = useUrlWriter();
   return useCallback(
     (next: ChartRange) => {
       if (rangeParam === undefined) return;
@@ -233,25 +235,11 @@ export function useRangeParam(rangeParam: string | undefined): (range: ChartRang
       const params = new URLSearchParams(asked ?? searchParams?.toString() ?? "");
       for (const key of ONE_SHOT_PARAMS) params.delete(key);
       params.set(rangeParam, next);
-      const href = `${pathname}?${params.toString()}`;
-      asks?.ask(href, {});
       // `replace`, not `push`: a range pill is a lens on one page, not a place in
       // history — pushing would make Back walk every pill the user tried.
       // `scroll: false` keeps a mid-page chart under the cursor.
-      const backSaves = asks?.backSavesLanding() ?? null;
-      if (asks === null || backSaves === null) {
-        startUrlSync(() => router.replace(href, { scroll: false }));
-        return;
-      }
-      // ⚖️ B2: Back's save of the view on screen is still being written, and a navigation
-      // overtakes it in Next's queue — the pill's page, drawn first, would draw the saved view
-      // he walked away from. After it lands, and only while nothing newer was asked, followed
-      // or gone Back to (a press made meanwhile navigates to its own URL, built on this one).
-      startUrlSync(async () => {
-        await backSaves;
-        if (asks.isNewest(href)) router.replace(href, { scroll: false });
-      });
+      write({ href: `${pathname}?${params.toString()}`, kind: "replace", scroll: false });
     },
-    [rangeParam, router, pathname, searchParams, asks],
+    [rangeParam, pathname, searchParams, asks, write],
   );
 }
