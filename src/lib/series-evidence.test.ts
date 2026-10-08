@@ -3,6 +3,7 @@ import {
   SERIES_EVIDENCE_LABEL,
   SERIES_EVIDENCE_NOTE,
   SUGGESTION_NOTE,
+  seriesEvidenceTone,
   suggestionNote,
   seriesRowLabel,
   type SeriesEvidence,
@@ -13,7 +14,7 @@ import {
   RECURRING_HISTORY_STATUSES,
 } from "./series-evidence";
 
-const EVERY: readonly SeriesEvidence[] = ["active", "never-billed", "running-late", "lapsed"];
+const EVERY: readonly SeriesEvidence[] = ["active", "never-billed", "awaiting-statements", "running-late", "lapsed"];
 
 describe("the evidence vocabulary", () => {
   test("every state has a label and a note, and none of them is the word 'inactive'", () => {
@@ -25,7 +26,32 @@ describe("the evidence vocabulary", () => {
     }
   });
 
+  /*
+   * 🔴 His pay's page wore an amber "Running late" for a payday on a day no import covered, under the sentence
+   * "so the ledger has not looked for its deposit" (2026-10-08). Awaiting statements is quiet, and says why.
+   *
+   * 🔴 …and its first words, "Not looked for yet" over "the charge each is waiting on falls after the last day its
+   * account has been checked through", were false once a statement covered the due day but not the end of the
+   * grace — the real Breezeline row, due Oct 11, checked through Oct 13 (2026-10-08 copy). The state is decided by
+   * when the tolerance runs out, so that is what it says; the label is /budgets' word for a verdict withheld until
+   * the days are covered.
+   */
+  test("awaiting statements is never called late, never unread, and is the one quiet tone", () => {
+    expect(SERIES_EVIDENCE_LABEL["awaiting-statements"]).toBe("Awaiting statements");
+    expect(SERIES_EVIDENCE_LABEL["awaiting-statements"].toLowerCase()).not.toContain("late");
+    expect(SERIES_EVIDENCE_NOTE["awaiting-statements"]).toContain(
+      "each one's tolerance runs out after the last day its accounts have been checked through",
+    );
+    expect(SERIES_EVIDENCE_NOTE["awaiting-statements"]).toContain("none can be called late yet");
+    expect(SERIES_EVIDENCE_NOTE["awaiting-statements"]).not.toContain("looked for");
+    expect(seriesEvidenceTone("awaiting-statements")).toBe("neutral");
+    for (const e of EVERY.filter((x) => x !== "awaiting-statements")) expect(seriesEvidenceTone(e)).toBe("warning");
+    expect(seriesRowLabel("confirmed", "awaiting-statements")).toBe("awaiting statements");
+    expect(seriesRowLabel("detected", "awaiting-statements")).toBe("suggested · awaiting statements");
+  });
+
   test("a state that is still forecast says so, and the one that is not says that", () => {
+    expect(SERIES_EVIDENCE_NOTE["awaiting-statements"]).toContain("still forecast");
     expect(SERIES_EVIDENCE_NOTE["running-late"]).toContain("still forecast");
     expect(SERIES_EVIDENCE_NOTE["never-billed"]).toContain("forecast");
     expect(SERIES_EVIDENCE_NOTE.lapsed).toContain("no longer forecast");
@@ -118,7 +144,7 @@ describe("noScheduleReason", () => {
   });
 
   test("a live series that is still forecast has no reason to give — it still has a schedule", () => {
-    for (const e of ["active", "never-billed", "running-late"] as const) {
+    for (const e of ["active", "never-billed", "awaiting-statements", "running-late"] as const) {
       expect(noScheduleReason("confirmed", e)).toBeNull();
       expect(noScheduleReason("detected", e)).toBeNull();
     }

@@ -20,6 +20,7 @@ import {
 } from "@/lib/occurrence-verdict";
 import { outsidePortfolioCashAccountIds } from "./accounts";
 import { isAgentsSeries, loadCategoryIndex } from "./analytics";
+import { checkedThroughBySeries } from "./cash-earnings";
 import { frontierForSeries, observationFrontier, seriesAccountIds } from "./observation-frontier";
 import { paydayReadingsBySeries, paydaySettlementsBySeries, readsPerPayday } from "./payday-settlement";
 import {
@@ -687,6 +688,8 @@ export function recurringCalendar(
   // The frontier lookups are hoisted out of the loop and skipped entirely for a
   // month that ends on or after today: a wholly-future month has no past
   // occurrence to grade, so it needs no coverage query at all.
+  // late only on days the ledger has checked (`seriesEvidence`) — the words a future entry carries
+  const checkedThrough = checkedThroughBySeries(db, today);
   const needsFrontier = compareDates(monthStart, today) < 0;
   const frontier = needsFrontier ? observationFrontier(db) : null;
   const accountsBySeries = needsFrontier ? seriesAccountIds(db) : null;
@@ -699,8 +702,9 @@ export function recurringCalendar(
     // ONE evidence word, the one the All tab files the series under: a series
     // that never charged is "never billed", not stale (see `CalendarEntry.isStale`).
     // A lapsed money-out series was skipped above and money in never lapses, so
-    // "running-late" is exactly "stale, having charged before".
-    const evidence = seriesEvidence(s, today);
+    // "running-late" is exactly "stale on checked days, having charged before" —
+    // past tolerance only after its accounts' checked day is awaiting statements, and says nothing.
+    const evidence = seriesEvidence(s, today, checkedThrough(s.id));
     const isStale = evidence === "running-late";
     const neverBilled = evidence === "never-billed";
     const settlement = settlements.get(s.id);

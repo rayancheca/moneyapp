@@ -15,14 +15,34 @@
  * vocabulary, kept client-safe so components can label without importing the
  * database.
  */
-export type SeriesEvidence = "active" | "never-billed" | "running-late" | "lapsed";
+export type SeriesEvidence = "active" | "never-billed" | "awaiting-statements" | "running-late" | "lapsed";
 
+/**
+ * ⚖️ "Awaiting statements": past its tolerance today, but not by the last day every account it posts to has been
+ * checked through — so it cannot be called late until a statement covers more. Never "late": statements arrive
+ * monthly, each on its own day, and the gap between them is the normal state (owner, 2026-08-05). /budgets' word for a
+ * verdict withheld until the days are covered, for the same reason.
+ *
+ * 🔴 It was "Not looked for yet", which is false once a statement covers the charge's due day but not the end of its
+ * grace: the real Breezeline row (2026-10-08 copy), due Oct 11, checked through Oct 13, tolerance out on Oct 24. The
+ * state is decided by when the TOLERANCE runs out, so its words say that, true on both sides of the due day.
+ */
 export const SERIES_EVIDENCE_LABEL: Record<SeriesEvidence, string> = {
   active: "Active",
   "never-billed": "Never billed",
+  "awaiting-statements": "Awaiting statements",
   "running-late": "Running late",
   lapsed: "Lapsed",
 };
+
+/**
+ * The badge tone for a live series' evidence. ⛔ Awaiting statements is not a warning: nothing is known to be wrong,
+ * only not yet checked far enough. 🔴 His pay's page wore an amber "Running late" for a payday on a day no import
+ * covered (2026-10-08).
+ */
+export function seriesEvidenceTone(evidence: SeriesEvidence): "neutral" | "warning" {
+  return evidence === "awaiting-statements" ? "neutral" : "warning";
+}
 
 /**
  * The note over the SUGGESTIONS section — the one bucket on the All tab that is
@@ -96,6 +116,8 @@ export function seriesRowLabel(
 export const SERIES_EVIDENCE_NOTE: Record<SeriesEvidence, string> = {
   active: "charged within their cadence, and forecast",
   "never-billed": "registered by hand and forecast — the bank has not charged them yet",
+  "awaiting-statements":
+    "still forecast — each one's tolerance runs out after the last day its accounts have been checked through, so none can be called late yet",
   "running-late": "still forecast — the last charge is older than the cadence allows",
   lapsed: "no longer forecast — quiet past the point a bill stops",
 };

@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import { SERIES_EVIDENCE_LABEL, noScheduleReason } from "@/lib/series-evidence";
+import { SERIES_EVIDENCE_LABEL, noScheduleReason, seriesEvidenceTone } from "@/lib/series-evidence";
 import { seriesEndLines } from "./end-radius";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -156,7 +156,8 @@ export function SeriesDetail({
             {/* 🔴 "Inactive" sat beside "Next expected Sep 11" on a series the
                 forecast projects. The badge is the word the evidence chooses. */}
             {(data.status === "detected" || data.status === "confirmed") && data.evidence !== "active" ? (
-              <Badge tone="warning">{SERIES_EVIDENCE_LABEL[data.evidence]}</Badge>
+              // ⛔ awaiting statements is no warning — `seriesEvidenceTone`
+              <Badge tone={seriesEvidenceTone(data.evidence)}>{SERIES_EVIDENCE_LABEL[data.evidence]}</Badge>
             ) : null}
             {/* 🔴 The one place a reader would go to check when a series stops,
                 and the only surface that did not say. The runway card and the

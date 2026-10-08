@@ -67,6 +67,7 @@ const staleness = (over: Partial<SeriesStaleness> = {}): SeriesStaleness => ({
   stepDays: 7,
   toleranceDays: 12.5,
   isStale: true,
+  awaitingStatements: false,
   ...over,
 });
 
@@ -278,12 +279,12 @@ describe("staleSummaryLabel", () => {
   const late = (days: number): StaleEntry => ({
     key: `late-${days}`,
     name: `Late ${days}`,
-    staleness: { lastMatchedOn: "2026-06-05", daysSinceLastMatch: days, stepDays: 7, toleranceDays: 14, isStale: true },
+    staleness: { lastMatchedOn: "2026-06-05", daysSinceLastMatch: days, stepDays: 7, toleranceDays: 14, isStale: true, awaitingStatements: false },
   });
   const never = (n: number): StaleEntry => ({
     key: `never-${n}`,
     name: `Never ${n}`,
-    staleness: { lastMatchedOn: null, daysSinceLastMatch: null, stepDays: 30, toleranceDays: 48, isStale: true },
+    staleness: { lastMatchedOn: null, daysSinceLastMatch: null, stepDays: 30, toleranceDays: 48, isStale: true, awaitingStatements: false },
   });
 
   test("the real ledger's mix names both, and neither count is the other's", () => {
@@ -625,4 +626,136 @@ describe("perPaydayWord — a lump, and a day of several deposits", () => {
       "1 payday at $1,141.92, with the day's other deposit",
     );
   });
+});
+
+/*
+ * 🔴 VISIBLE on his ledger 2026-10-08: the Upcoming list badged "It America LLC (weekly pay) … last seen 14d ago" in
+ * amber under "In October 2026, 4 series are running late — still projected", while /recurring said two lines up
+ * that its payday "falls after Thu, Sep 24, 2026, the last day every account that pay lands in has been checked
+ * through — so the ledger has not looked for its deposit". The age stays a fact; it is not counted or toned as late.
+ */
+describe("awaiting statements: the age stays, the lateness goes", () => {
+  // his pay: last Sep 24, 14 days to Oct 8 against 12.5, Wells Fargo checked through Sep 24
+  const unread = staleness({
+    lastMatchedOn: "2026-09-24",
+    daysSinceLastMatch: 14,
+    isStale: false,
+    checkedThrough: "2026-09-24",
+    awaitingStatements: true,
+  });
+  const entry = (key: string, s: SeriesStaleness): StaleEntry => ({ key, name: key, staleness: s });
+  const late = entry("Late", staleness());
+  const never = entry("Never", staleness({ lastMatchedOn: null, daysSinceLastMatch: null }));
+  const pay = entry("Pay", unread);
+
+  test("the chip keeps its age and is not a warning", () => {
+    expect(staleLabel(unread)).toBe("last seen 14d ago");
+    expect(staleMarkTone(unread)).toBe("neutral");
+  });
+
+  /*
+   * 🔴 It said "its account has been checked only through …, inside the 43-day tolerance — so the ledger has not
+   * looked for the next one yet" — false once a statement covers the due day but not the end of the grace (the
+   * real Breezeline row, 2026-10-08 copy: due Oct 11, checked through Oct 13), and "its account" of a series with
+   * several. The claim the state can make on both sides of the due day: the tolerance has not run out on checked
+   * days, so it cannot be called late yet — in the passed-payday sentence's own words for the checked day.
+   */
+  test("its sentence names the checked day and says it cannot be called late yet — never that nobody looked", () => {
+    const sentence = stalenessSentence(unread);
+    expect(sentence).toContain("nothing has matched since Sep 24, 2026 (14 days)");
+    expect(sentence).toContain("Sep 24, 2026 is the last day every account it posts to has been checked through");
+    expect(sentence).toContain("0 of the 12 days its tolerance allows");
+    expect(sentence).toContain("so it cannot be called late yet");
+    expect(sentence).toContain("Still projected");
+    expect(sentence).not.toContain("past the");
+    expect(sentence).not.toContain("not looked for");
+    expect(sentence).not.toContain("its account");
+    // the due day checked, the grace not yet: the real Breezeline row at today = Oct 25
+    const dueDayChecked = staleness({
+      lastMatchedOn: "2026-09-10",
+      daysSinceLastMatch: 45,
+      stepDays: 27.33,
+      toleranceDays: 43.995,
+      isStale: false,
+      checkedThrough: "2026-10-13",
+      awaitingStatements: true,
+    });
+    expect(stalenessSentence(dueDayChecked)).toContain("33 of the 43 days its tolerance allows");
+    expect(stalenessSentence(dueDayChecked)).not.toContain("not looked for");
+    const nothingChecked = stalenessSentence({ ...unread, checkedThrough: null });
+    expect(nothingChecked).toContain("the ledger has not checked every account it posts to");
+    expect(nothingChecked).toContain("so it cannot be called late yet");
+    expect(nothingChecked).not.toContain("null");
+  });
+
+  test("it reaches the footer, so the chip's why is keyboard-reachable", () => {
+    const occurrence: SeriesOccurrence = {
+      seriesId: "pay",
+      name: "Pay",
+      kind: "income",
+      cadence: "weekly",
+      date: "2026-10-08",
+      amountCents: 114_192,
+      anchorDayOfMonth: null,
+      staleness: unread,
+    };
+    expect(staleOccurrenceEntries([occurrence]).map((e) => e.key)).toEqual(["pay"]);
+    const component: ForecastComponent = { label: "Pay", kind: "fixed", cents: 456_768, detail: "4 × …", staleness: unread };
+    expect(staleComponentEntries([component]).map((e) => e.key)).toEqual(["Pay"]);
+  });
+
+  test("the count names it apart from the late ones, and never calls it late", () => {
+    expect(staleSummaryLabel([pay], "In October 2026")).toBe(
+      "In October 2026, 1 series is awaiting statements — still projected",
+    );
+    expect(staleSummaryLabel([pay, entry("Rocket", unread)], "In October 2026")).toBe(
+      "In October 2026, 2 series are awaiting statements — still projected",
+    );
+    expect(staleSummaryLabel([late, pay], "In October 2026")).toBe(
+      "In October 2026, 1 series is running late and 1 is awaiting statements — all still projected",
+    );
+    expect(staleSummaryLabel([late, never, pay], "In October 2026")).toBe(
+      "In October 2026, 1 series is running late, 1 has never been billed and 1 is awaiting statements — all still projected",
+    );
+    // the two existing phrasings are untouched
+    expect(staleSummaryLabel([late, never], "In October 2026")).toBe(
+      "In October 2026, 1 series is running late and 1 has never been billed — all still projected",
+    );
+  });
+
+  test("the footer is no warning when nothing is late, and its hint does not call the evidence old", () => {
+    expect(staleFooterIsWarning([pay])).toBe(false);
+    expect(staleFooterIsWarning([pay, never])).toBe(false);
+    expect(staleFooterIsWarning([pay, late])).toBe(true);
+    expect(staleFooterHint([pay])).toBe("why these cannot be called late yet");
+    expect(staleFooterHint([pay])).not.toContain("old");
+  });
+
+  /*
+   * 🔴 The hint reached its awaiting words only when nothing else was in the list. On his ledger copy (2026-10-08)
+   * the Upcoming footer read "In the next 30 days, 3 series have never been billed and 3 have not been looked for
+   * yet — all still projected" over the hint "why these numbers rest on the schedule alone" — false of the pay, FPL
+   * and Rocket Money, which rest on Sep 24, Jul 28 and Jul 15 evidence — and October's forecast footer named old
+   * evidence and the schedule but not them. The half-true hint fixed on 2026-09-15, one kind over.
+   */
+  test("the hint names every kind its list holds", () => {
+    const why = "why some cannot be called late yet";
+    expect(staleFooterHint([pay, never])).toBe(`why these numbers rest on the schedule alone, and ${why}`);
+    expect(staleFooterHint([never, pay])).toBe(`why these numbers rest on the schedule alone, and ${why}`);
+    expect(staleFooterHint([pay, late])).toBe(`why these numbers rest on old evidence, and ${why}`);
+    expect(staleFooterHint([late, never, pay])).toBe(
+      `why these numbers rest on old evidence or on the schedule alone, and ${why}`,
+    );
+    // the three without it are untouched
+    expect(staleFooterHint([late])).toBe("why these numbers rest on old evidence");
+    expect(staleFooterHint([never])).toBe("why these numbers rest on the schedule alone");
+    expect(staleFooterHint([late, never])).toBe("why these numbers rest on old evidence or on the schedule alone");
+  });
+
+  /*
+   * ⛔ The MONEY IN/OUT band is not tested here. 🔴 A test here fed `stalePartLabel` zero stale cents, which returned
+   * null before the band learned the state too, and stayed green with `isStale || awaitingStatements` back in
+   * `ForecastCard` (review of 2ed1e79). The card maps the components into the band, so the guard renders the card:
+   * services/late-over-unread-days.test.ts, "the forecast card's MONEY IN/OUT band, as the card renders it".
+   */
 });

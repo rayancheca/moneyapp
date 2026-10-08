@@ -8,7 +8,7 @@ vi.mock("@/app/recurring/actions", () => ({ setSeriesOverridesAction: vi.fn() })
 
 const { CadenceSentence } = await import("./CadenceSentence");
 
-const EVERY_EVIDENCE: readonly SeriesEvidence[] = ["active", "never-billed", "running-late", "lapsed"];
+const EVERY_EVIDENCE: readonly SeriesEvidence[] = ["active", "never-billed", "awaiting-statements", "running-late", "lapsed"];
 const EVERY_STATUS: readonly SeriesStatusForCopy[] = ["detected", "confirmed", "dismissed", "ended"];
 
 const decode = (s: string): string =>

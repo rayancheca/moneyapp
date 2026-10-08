@@ -41,7 +41,7 @@ export interface CashEarningsReading extends CashEarnings {
   seriesId: string;
   seriesName: string;
   /**
-   * The last day every account this pay has landed in has been read through —
+   * The last day every account this pay lands in now (`landingAccountsBySeries`) has been read through —
    * `earliestVerified` — or null when one of them has no checked record. Present
    * only when the caller asked (`withChecked`).
    *
@@ -72,9 +72,15 @@ export interface CashEarningsWindow {
 }
 
 /**
- * Where each series' next deposit is looked for: where its pay lands NOW — the
- * series' own `account_id` when it names one, otherwise every account its
- * attributed pay has landed in.
+ * How many of its newest posting DAYS say where a series that names no account posts now. One charge elsewhere
+ * can be a one-off — his $1,000 early insurance payment left Wells Fargo on Sep 3, while the bill charges Venture
+ * X — but two in a row is a move: the rent, on Wells Fargo Aug 4 and Sep 2 after Venture X and Chase Checking.
+ */
+const POSTING_DAYS_THAT_SAY_WHERE = 2;
+
+/**
+ * Where each series' next deposit — or charge — is looked for: where it lands NOW — the series' own `account_id`
+ * when it names one, otherwise every account its newest `POSTING_DAYS_THAT_SAY_WHERE` posting days posted to.
  *
  * 🔴 Every account pay had EVER landed in, measured on a copy of the owner's
  * ledger 2026-10-07: It America LLC's weekly payroll names Wells Fargo, checked
@@ -84,24 +90,44 @@ export interface CashEarningsWindow {
  * /recurring and /budgets said Oct 1 "falls after Wed, Aug 12, 2026". A pay
  * series that names its account has told the app where to look.
  *
+ * 🔴 AND A SERIES THAT NAMES NONE has told it by where it has posted lately. Measured on a copy of his ledger
+ * 2026-10-08: Flamingo South Beach (rent) posted on Venture X (Jun 16), Chase Checking (Jul 8), then Wells Fargo
+ * (Aug 4, Sep 2), and every account it ever touched gave Chase's Aug 12 — before its own last charge, on an account
+ * it left. At today = Oct 21 /recurring said "nothing has matched since Sep 2, 2026 (49 days), but its account has
+ * been checked only through Aug 12, 2026", and a rent that truly missed on Wells Fargo's checked days could not read
+ * late until Chase, 43 days behind, caught up.
+ *
+ * ⚠️ Not only the newest day: one charge elsewhere does not move a series (`POSTING_DAYS_THAT_SAY_WHERE`), and
+ * while it might still land in either account, both are looked at — the earlier frontier stands, as for any account
+ * it could land in (`earliestVerified`).
+ *
  * ⛔ ONE rule for every caller — the dashboard's income card, /spending's note
- * (`cashEarningsReadings`) and the passed-payday sentence on /budgets and
- * /recurring (`unbankedIncomeForSeries`) — so no two can name a different day.
+ * (`cashEarningsReadings`), the passed-payday sentence on /budgets and
+ * /recurring (`unbankedIncomeForSeries`) and whether a series is running late
+ * (`checkedThroughBySeries`) — so no two can name a different day.
  */
 export function landingAccountsBySeries(db: AppDatabase): Map<string, Set<string>> {
   const rows = db
-    .select({ seriesId: transactions.recurringSeriesId, accountId: transactions.accountId })
+    .select({
+      seriesId: transactions.recurringSeriesId,
+      accountId: transactions.accountId,
+      postedOn: transactions.postedOn,
+    })
     .from(transactions)
     .where(and(isNotNull(transactions.recurringSeriesId), eq(transactions.status, "active")))
     .all();
 
-  const out = new Map<string, Set<string>>();
+  const postings = new Map<string, Posting[]>();
   for (const r of rows) {
     if (r.seriesId === null) continue;
-    const set = out.get(r.seriesId) ?? new Set<string>();
-    set.add(r.accountId);
-    out.set(r.seriesId, set);
+    const posting = { day: r.postedOn, accountId: r.accountId };
+    const list = postings.get(r.seriesId);
+    if (list === undefined) postings.set(r.seriesId, [posting]);
+    else list.push(posting);
   }
+  const out = new Map<string, Set<string>>(
+    [...postings].map(([id, list]) => [id, accountsItPostsToNow(list)] as const),
+  );
   // a named account replaces the history: that is where the pay lands now
   for (const s of db
     .select({ id: recurringSeries.id, accountId: recurringSeries.accountId })
@@ -111,6 +137,19 @@ export function landingAccountsBySeries(db: AppDatabase): Map<string, Set<string
     if (s.accountId !== null) out.set(s.id, new Set([s.accountId]));
   }
   return out;
+}
+
+interface Posting {
+  day: string;
+  accountId: string;
+}
+
+/** Every account a series' newest `POSTING_DAYS_THAT_SAY_WHERE` posting days posted to — all of a day's rows. */
+function accountsItPostsToNow(postings: readonly Posting[]): Set<string> {
+  const days = [...new Set(postings.map((p) => p.day))]
+    .sort((a, b) => compareDates(b, a))
+    .slice(0, POSTING_DAYS_THAT_SAY_WHERE);
+  return new Set(postings.filter((p) => days.includes(p.day)).map((p) => p.accountId));
 }
 
 /**
@@ -158,6 +197,26 @@ export function earliestVerified(
   // a record reaching past today still cannot have been read against today
   if (earliest !== null && compareDates(earliest, today) > 0) return today;
   return earliest;
+}
+
+/**
+ * Per series, the last day the ledger has checked every account it posts to NOW — `earliestVerified` over
+ * `landingAccountsBySeries` and `accountCoverage` — or null when one of them has no checked record, or when the series
+ * names no account and nothing linked to it says where it lands.
+ *
+ * ⛔ ONE frontier for every sentence about whether the ledger has looked: the passed paydays (/budgets, /recurring),
+ * the dashboard's income card, /spending's note, and whether a series is running late (`seriesStaleness`). 🔴 The
+ * pay sentence said "the ledger has not looked for its deposit" of Oct 1 while the forecast beside it, measuring to
+ * today, said "all of it running late" (his ledger, 2026-10-08).
+ *
+ * ⚡ The coverage read is memoised for the render (`accountCoverage`); the closure only takes an earliest.
+ */
+export function checkedThroughBySeries(db: AppDatabase, today: string): (seriesId: string) => string | null {
+  const verifiedThroughByAccount = new Map(
+    accountCoverage(db, today).map((c) => [c.accountId, c.verifiedThrough] as const),
+  );
+  const landings = landingAccountsBySeries(db);
+  return (seriesId) => earliestVerified(landings.get(seriesId) ?? new Set<string>(), verifiedThroughByAccount, today);
 }
 
 /**
@@ -216,10 +275,7 @@ export function cashEarningsReadings(
     .all();
 
   const readings: CashEarningsReading[] = [];
-  const verifiedThroughByAccount = withChecked
-    ? new Map(accountCoverage(db, today).map((c) => [c.accountId, c.verifiedThrough] as const))
-    : null;
-  const landings = withChecked ? landingAccountsBySeries(db) : null;
+  const checkedOf = withChecked ? checkedThroughBySeries(db, today) : null;
 
   for (const s of series) {
     const banked = linked
@@ -254,11 +310,11 @@ export function cashEarningsReadings(
       seriesName: s.name,
       ...cashEarnings({ series: pay, banked, from, to, today, todayIsComplete }),
     };
-    if (verifiedThroughByAccount === null || landings === null) {
+    if (checkedOf === null) {
       readings.push(reading);
       continue;
     }
-    const checkedThrough = earliestVerified(landings.get(s.id) ?? new Set<string>(), verifiedThroughByAccount, today);
+    const checkedThrough = checkedOf(s.id);
     if (checkedThrough === null) {
       readings.push({ ...reading, checkedThrough, checkedPeriodsCovered: 0, checkedPeriodsSinceBanked: 0 });
       continue;

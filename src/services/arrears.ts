@@ -4,8 +4,7 @@ import { recurringSeries } from "@/db/schema/recurring";
 import { transactions } from "@/db/schema/transactions";
 import { addDays, compareDates, diffDays, periodBounds } from "@/lib/dates";
 import { sharedFrontier, type UnbankedFrontier } from "@/lib/unbanked-income";
-import { earliestVerified, landingAccountsBySeries } from "./cash-earnings";
-import { accountCoverage } from "./coverage";
+import { checkedThroughBySeries } from "./cash-earnings";
 import { settledPaydaysBySeries } from "./payday-settlement";
 import { hasStoppedForecasting, projectOccurrences, toProjectable } from "./recurring";
 
@@ -259,18 +258,15 @@ export function unbankedIncomeForSeries(
    * account that pay has landed in — was read through Aug 12.
    *
    * ⛔ The frontier is `cashEarningsReadings`' rule, not a second one: the same
-   * `landingAccountsBySeries` and `earliestVerified` over `accountCoverage`, so
+   * `checkedThroughBySeries` (`landingAccountsBySeries` and `earliestVerified` over `accountCoverage`), so
    * /spending and these two surfaces cannot disagree about which paydays were
    * read. A payday ON the frontier day was read. Coverage is only read when a
    * payday is actually unmet, so the common month costs nothing extra.
    */
-  const verifiedThroughByAccount = new Map(
-    accountCoverage(db, today).map((c) => [c.accountId, c.verifiedThrough] as const),
-  );
-  const landings = landingAccountsBySeries(db);
+  const checkedOf = checkedThroughBySeries(db, today);
 
   const series = unmet.map(({ s, occ }): UnbankedIncomeSeries => {
-    const checkedThrough = earliestVerified(landings.get(s.id) ?? new Set<string>(), verifiedThroughByAccount, today);
+    const checkedThrough = checkedOf(s.id);
     const checked = checkedThrough === null ? [] : occ.filter((o) => compareDates(o.date, checkedThrough) <= 0);
     return {
       id: s.id,

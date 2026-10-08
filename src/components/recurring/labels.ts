@@ -1,4 +1,4 @@
-import { addCalendarMonths, compareDates, isoWeekday } from "@/lib/dates";
+import { addCalendarMonths, compareDates, diffDays, isoWeekday } from "@/lib/dates";
 import { endsInsideHorizon } from "@/lib/committed";
 import { dayWindowLabel } from "@/lib/period";
 import { wholeToleranceDays } from "@/lib/recurring-step";
@@ -177,12 +177,26 @@ export function staleLabel(s: SeriesStaleness): string {
  * warning amber on the morning of its first payment.
  */
 export function staleMarkTone(s: SeriesStaleness): "warning" | "neutral" {
-  return s.daysSinceLastMatch === null ? "neutral" : "warning";
+  return staleIsLate(s) ? "warning" : "neutral";
+}
+
+/**
+ * Late in the only sense that warns: it has charged, and its evidence ran past tolerance on days the ledger has
+ * checked. ⛔ Never billed is not late (above), and neither is awaiting statements (`seriesStaleness`): 🔴 his pay
+ * read "last seen 14d ago" in amber for a payday on a day Wells Fargo had not been checked through (2026-10-08).
+ */
+function staleIsLate(s: SeriesStaleness): boolean {
+  return s.isStale && s.daysSinceLastMatch !== null;
+}
+
+/** Past tolerance today, not by its accounts' checked day: it cannot be called late yet (`seriesStaleness`). */
+function staleIsAwaiting(s: SeriesStaleness): boolean {
+  return s.awaitingStatements && s.daysSinceLastMatch !== null;
 }
 
 /** The footer is a warning only when at least one of its series is actually late. */
 export function staleFooterIsWarning(entries: readonly StaleEntry[]): boolean {
-  return entries.some((e) => e.staleness.daysSinceLastMatch !== null);
+  return entries.some((e) => staleIsLate(e.staleness));
 }
 
 /**
@@ -193,11 +207,23 @@ export function staleFooterIsWarning(entries: readonly StaleEntry[]): boolean {
  * nothing has ever matched has no evidence to be OLD; `stalenessSentence` says
  * it is "still projected, on the schedule alone", and so does this.
  */
+/**
+ * 🔴 AND IT NAMES EVERY KIND THE LIST HOLDS. Awaiting statements reached its own words only when nothing else was in
+ * the list: on his ledger copy (2026-10-08) the Upcoming footer read "3 series have never been billed and 3 have not
+ * been looked for yet" over "why these numbers rest on the schedule alone" — false of the pay, FPL and Rocket Money,
+ * which rest on Sep 24, Jul 28 and Jul 15 evidence.
+ */
 export function staleFooterHint(entries: readonly StaleEntry[]): string {
   const late = staleFooterIsWarning(entries);
   const never = entries.some((e) => e.staleness.daysSinceLastMatch === null);
-  if (late && never) return "why these numbers rest on old evidence or on the schedule alone";
-  return late ? "why these numbers rest on old evidence" : "why these numbers rest on the schedule alone";
+  const awaiting = entries.some((e) => staleIsAwaiting(e.staleness));
+  let rests: string | null = null;
+  if (late && never) rests = "rest on old evidence or on the schedule alone";
+  else if (late) rests = "rest on old evidence";
+  else if (never) rests = "rest on the schedule alone";
+  // ⛔ awaiting statements rests on nothing old — its tolerance runs out on unchecked days (`stalenessSentence`)
+  if (rests === null) return "why these cannot be called late yet";
+  return awaiting ? `why these numbers ${rests}, and why some cannot be called late yet` : `why these numbers ${rests}`;
 }
 
 /**
@@ -209,6 +235,27 @@ export function stalenessSentence(s: SeriesStaleness): string {
   const expects = `expected about every ${Math.round(s.stepDays)} days`;
   if (s.lastMatchedOn === null || s.daysSinceLastMatch === null) {
     return `${expects}, but no charge has ever matched it — still projected, on the schedule alone`;
+  }
+  /*
+   * ⛔ Awaiting statements: the age is a fact, "past the tolerance" is not a finding — the tolerance runs out on days
+   * nobody has checked. The checked day is named, in the passed-payday sentence's words, with how much of the
+   * tolerance it covers, so the claim can be checked.
+   *
+   * 🔴 It said "so the ledger has not looked for the next one yet", which is false once a statement covers the due day
+   * but not the end of the grace: the real Breezeline row (2026-10-08 copy), due Oct 11, checked through Oct 13 — and
+   * of his pay checked through Oct 2, beside a passed-payday sentence counting Oct 1 as read. And "its account" of a
+   * series that posts to several. What is true on both sides of the due day: it cannot be called late yet.
+   */
+  if (s.awaitingStatements) {
+    const tolerance = wholeToleranceDays(s.toleranceDays);
+    const through = s.checkedThrough;
+    // never below zero: a checked day before the last match covers none of the tolerance
+    const checked =
+      through === null || through === undefined
+        ? "the ledger has not checked every account it posts to"
+        : `${longDate(through)} is the last day every account it posts to has been checked through — ` +
+          `${Math.max(0, diffDays(s.lastMatchedOn, through))} of the ${tolerance} days its tolerance allows`;
+    return `${expects}, and nothing has matched since ${longDate(s.lastMatchedOn)} (${s.daysSinceLastMatch} days), but ${checked} — so it cannot be called late yet. Still projected.`;
   }
   return `${expects}, but nothing has matched since ${longDate(s.lastMatchedOn)} — ${s.daysSinceLastMatch} days, past the ${wholeToleranceDays(s.toleranceDays)}-day tolerance. Still projected: a late import looks exactly like a cancelled series, so this says which numbers rest on old evidence rather than dropping them.`;
 }
@@ -312,18 +359,26 @@ export interface StaleEntry {
  * fact two ways. "Never billed" is an adjective and this clause needs a verb,
  * so it is the same participle with the auxiliary it needs, not a third word.
  */
+/**
+ * 🔴 AND AWAITING STATEMENTS IS NOT LATE. "In October 2026, 4 series are running late" counted his pay, whose payday
+ * falls after the last day Wells Fargo has been checked through, and Rocket Money, whose charge falls after Chase's
+ * (his ledger, 2026-10-08). They are counted apart, in the badges' word (`SERIES_EVIDENCE_LABEL`), and never warn.
+ */
 export function staleSummaryLabel(entries: readonly StaleEntry[], window: string): string {
   const never = entries.filter((e) => e.staleness.daysSinceLastMatch === null).length;
-  const late = entries.length - never;
-  const lateClause = `${late} ${late === 1 ? "series is" : "series are"} running late`;
-  const neverClause = `${never} ${never === 1 ? "has" : "have"} never been billed`;
-  const body =
-    never === 0
-      ? `${lateClause} — still projected`
-      : late === 0
-        ? `${never} ${never === 1 ? "series has" : "series have"} never been billed — still projected`
-        : `${lateClause} and ${neverClause} — all still projected`;
-  return `${window}, ${body}`;
+  const awaiting = entries.filter((e) => staleIsAwaiting(e.staleness)).length;
+  const late = entries.length - never - awaiting;
+  // the first clause carries the noun: "1 series is running late and 2 have never been billed"
+  const clauses = [
+    { n: late, verb: (n: number) => (n === 1 ? "is running late" : "are running late") },
+    { n: never, verb: (n: number) => (n === 1 ? "has never been billed" : "have never been billed") },
+    { n: awaiting, verb: (n: number) => (n === 1 ? "is awaiting statements" : "are awaiting statements") },
+  ]
+    .filter((c) => c.n > 0)
+    .map((c, i) => `${c.n} ${i === 0 ? "series " : ""}${c.verb(c.n)}`);
+  const listed =
+    clauses.length <= 1 ? (clauses[0] ?? "") : `${clauses.slice(0, -1).join(", ")} and ${clauses[clauses.length - 1]}`;
+  return `${window}, ${listed} — ${clauses.length <= 1 ? "still projected" : "all still projected"}`;
 }
 
 /**
@@ -379,7 +434,8 @@ export function unsettledReasonWord(reason: UnsettledReason): string {
 export function staleOccurrenceEntries(occurrences: readonly SeriesOccurrence[]): StaleEntry[] {
   const bySeries = new Map<string, StaleEntry>();
   for (const o of occurrences) {
-    if (!o.staleness?.isStale || bySeries.has(o.seriesId)) continue;
+    // ⛔ awaiting statements reaches the footer too, counted apart (`staleSummaryLabel`): the chip's why is reachable
+    if (!(o.staleness?.isStale || o.staleness?.awaitingStatements) || bySeries.has(o.seriesId)) continue;
     bySeries.set(o.seriesId, { key: o.seriesId, name: o.name, staleness: o.staleness });
   }
   return [...bySeries.values()];
@@ -397,7 +453,7 @@ export function staleComponentEntries(components: readonly ForecastComponent[]):
   const entries: StaleEntry[] = [];
   const seen = new Set<string>();
   for (const c of components) {
-    if (!c.staleness?.isStale || seen.has(c.label)) continue;
+    if (!(c.staleness?.isStale || c.staleness?.awaitingStatements) || seen.has(c.label)) continue;
     seen.add(c.label);
     entries.push({ key: c.label, name: c.label, staleness: c.staleness });
   }

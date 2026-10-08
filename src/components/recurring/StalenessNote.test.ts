@@ -10,6 +10,7 @@ const late: SeriesStaleness = {
   stepDays: 30,
   toleranceDays: 48,
   isStale: true,
+  awaitingStatements: false,
 };
 const never: SeriesStaleness = {
   lastMatchedOn: null,
@@ -17,6 +18,7 @@ const never: SeriesStaleness = {
   stepDays: 30,
   toleranceDays: 48,
   isStale: true,
+  awaitingStatements: false,
 };
 
 /**
@@ -87,5 +89,41 @@ describe("StaleFooter", () => {
     );
     expect(html).toContain("In the next 30 days, 1 series is running late and 2 have never been billed — all still projected");
     expect(html).not.toContain("never charged");
+  });
+});
+
+/**
+ * 🔴 His ledger 2026-10-08: "It America LLC (weekly pay) … last seen 14d ago" in an amber badge, counted in "4 series
+ * are running late", for a payday on a day Wells Fargo had not been checked through. The age stays; the warning goes.
+ */
+describe("awaiting statements", () => {
+  const unread: SeriesStaleness = {
+    lastMatchedOn: "2026-09-24",
+    daysSinceLastMatch: 14,
+    stepDays: 7,
+    toleranceDays: 12.5,
+    isStale: false,
+    checkedThrough: "2026-09-24",
+    awaitingStatements: true,
+  };
+
+  test("the chip keeps the fact, never the warning", () => {
+    const html = renderToStaticMarkup(createElement(StaleMark, { staleness: unread }));
+    expect(html).toContain(">last seen 14d ago<");
+    expect(html).not.toContain("text-warning");
+  });
+
+  test("the footer names it without calling it late", () => {
+    const html = renderToStaticMarkup(
+      createElement(StaleFooter, {
+        window: "In October 2026",
+        entries: [{ key: "p", name: "It America LLC (weekly pay)", staleness: unread }],
+      }),
+    );
+    expect(html).toContain("In October 2026, 1 series is awaiting statements — still projected");
+    expect(html).toContain("Sep 24, 2026 is the last day every account it posts to has been checked through");
+    expect(html).toContain("why these cannot be called late yet");
+    expect(html).not.toContain("running late");
+    expect(html).not.toContain("text-warning");
   });
 });
