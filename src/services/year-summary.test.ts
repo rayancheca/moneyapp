@@ -415,6 +415,32 @@ describe("yearSummaryView — the pay line names the job its rows are attached t
     expect(payLine(2027).caveat).toBeUndefined();
   });
 
+  /*
+   * 🔴 …but one moved a day EACH WAY in consecutive weeks was called irregular. His Wells Fargo payroll has landed
+   * on a Wednesday (Sep 23) and a Thursday (Sep 24); here it lands Wed Jan 13 (a day early), Fri Jan 22 (MLK Day, an
+   * ACH holiday, held it a day) and Wed Jan 27 — every deposit within a day of its Thursday, gaps 6, 9, 5, 8. Their
+   * SPREAD is 4, past the old 3-day slack. Recurring detection holds a weekly gap to 2 days either side of the
+   * median gap (`CADENCE_TOLERANCE_DAYS`), and every one of these is inside it.
+   */
+  test("a weekly payroll a day early one week and a day late the next is still regular", () => {
+    const pay = paySeries("It America LLC (weekly pay)");
+    for (const day of ["2027-01-07", "2027-01-13", "2027-01-22", "2027-01-27", "2027-02-04"]) {
+      insert({ postedOn: day, amountCents: 114192, rawDescription: "It America LLC Payroll", categoryName: "Salary", seriesId: pay });
+    }
+    expect(payLine(2027).caveat).toBeUndefined();
+  });
+
+  test("a week with no deposit breaks the rhythm, and the caveat says so", () => {
+    const pay = paySeries("It America LLC (weekly pay)");
+    // Jan 21 never banked: a 14-day gap is 7 past the weekly median, outside detection's 2
+    for (const day of ["2027-01-07", "2027-01-14", "2027-01-28", "2027-02-04"]) {
+      insert({ postedOn: day, amountCents: 114192, rawDescription: "It America LLC Payroll", categoryName: "Salary", seriesId: pay });
+    }
+    expect(payLine(2027).caveat).toBe(
+      "Deposited irregularly, so a calendar year captures what reached the bank rather than what was worked.",
+    );
+  });
+
   test("rows in no series name the rule, and claim no job", () => {
     hisTwentyTwentySix(undefined);
 

@@ -179,6 +179,15 @@ export function amountsAreStable(amounts: readonly number[]): boolean {
   return populationStddev(amounts) / Math.abs(mean) <= AMOUNT_STABILITY_CV_MAX;
 }
 
+/**
+ * Does this gap keep its cadence — within the cadence's tolerance of the median gap? The test `analyzeGroup`'s
+ * `gapConsistency` counts, extracted for the same reason as `amountsAreStable`: /summary's "Deposited irregularly"
+ * caveat (`depositsAreIrregular`) asks detection's question instead of keeping a slack of its own.
+ */
+export function gapKeepsCadence(gap: number, medianGap: number, cadence: Cadence): boolean {
+  return Math.abs(gap - medianGap) <= CADENCE_TOLERANCE_DAYS[cadence];
+}
+
 export function analyzeGroup(txns: readonly AnalyzableTxn[]): GroupStats | null {
   if (txns.length < MIN_OCCURRENCES) return null;
   const sorted = [...txns].sort(
@@ -203,8 +212,7 @@ export function analyzeGroup(txns: readonly AnalyzableTxn[]): GroupStats | null 
   const cv = allIdentical ? 0 : stddev / Math.abs(mean);
 
   const toleranceDays = CADENCE_TOLERANCE_DAYS[cadence];
-  const gapConsistency =
-    gaps.filter((g) => Math.abs(g - medianGap) <= toleranceDays).length / gaps.length;
+  const gapConsistency = gaps.filter((g) => gapKeepsCadence(g, medianGap, cadence)).length / gaps.length;
   const amountScore = 1 - cv / AMOUNT_STABILITY_CV_MAX;
   const confidence = Math.round((0.5 * gapConsistency + 0.5 * amountScore) * 100) / 100;
 

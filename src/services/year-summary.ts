@@ -19,6 +19,7 @@ import { yearSummary, type YearLineInput, type YearSummary } from "@/lib/year-su
 import { investmentSideAccountIds, outsidePortfolioCashAccountIds } from "./accounts";
 import { offAgentsCash } from "./analytics";
 import { portfolioSeries, realizedSalesByDay } from "./portfolio";
+import { fitCadence, gapKeepsCadence, median } from "./recurring";
 import { yearSpendingWindow, type YearSpendingWindow } from "./year-insights";
 
 /**
@@ -496,21 +497,26 @@ export function cashJobNaming(year: number, facts: PayLineFacts): { label: strin
 }
 
 /**
- * The most the gaps between deposit days may SPREAD (longest gap minus shortest) and still be one rhythm — a payday a
- * bank holiday moves by a day turns 7, 7 into 8, 6, a spread of 2. A spread, not a per-payday window: no cadence is
- * assumed, so it holds for rows in no series. Three days, chosen to clear a one-day holiday shift on either side.
- */
-const PAYDAY_SLACK_DAYS = 3;
-
-/**
  * Do the rows SHOW irregular deposits? Only a rhythm can be broken, so it takes three deposit days — two gaps — to
  * show one; fewer says nothing, and the caveat stays off rather than guessing.
+ *
+ * ⛔ DETECTION'S RHYTHM, NOT A SLACK OF ITS OWN. The cadence is fitted to the rows' own median gap as recurring
+ * detection fits one (`fitCadence`), so no series is assumed and it holds for rows in none; each gap must then keep
+ * that cadence by detection's tolerance (`gapKeepsCadence`). Rows whose median gap fits no cadence keep no rhythm a
+ * payroll keeps — his 2026, two June ATM lumps and a September payroll lump (gaps 1, 110, 1), is that.
+ *
+ * 🔴 It allowed the gaps a SPREAD of 3 days (longest minus shortest), a number of its own. A weekly payday moved a day
+ * early one week and a day late the next — Wed, Fri, Wed — has gaps 9 and 5, a spread of 4, so the caveat called a
+ * payroll irregular that detection, holding a weekly gap to 2 days either side of the median, calls on time. Latent
+ * on his ledger (2026-10-08): his 2026 holds its June lumps either way; his payroll has landed on a Wed and a Thu.
  */
 function depositsAreIrregular(postedOn: readonly string[]): boolean {
   const days = [...new Set(postedOn)].sort();
   if (days.length < 3) return false;
   const gaps = days.slice(1).map((day, i) => diffDays(days[i]!, day));
-  return Math.max(...gaps) - Math.min(...gaps) > PAYDAY_SLACK_DAYS;
+  const medianGap = median(gaps);
+  const cadence = fitCadence(medianGap, days.map((day) => Number(day.slice(8, 10))));
+  return cadence === null || !gaps.every((gap) => gapKeepsCadence(gap, medianGap, cadence));
 }
 
 /**
