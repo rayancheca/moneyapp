@@ -14,7 +14,7 @@ import { balanceDeltaAccent, balanceHeading, type BalanceDeltaAccent } from "@/l
 import { accountDayChange } from "@/services/account-day-change";
 import { accountInsights } from "@/services/account-insights";
 import { getAccount, listAccounts, listInstitutions, ownPortfolioAccountIds } from "@/services/accounts";
-import { anchorRemovalEffects, listAnchors } from "@/services/anchors";
+import { anchorRemovalEffects, countRefusal, listAnchors } from "@/services/anchors";
 import { observedSeries } from "@/services/derivation";
 import { listAccountHoldings } from "@/services/holdings";
 import { CASH_INSTITUTION_NAME } from "@/services/manual-transactions";
@@ -217,8 +217,8 @@ export default async function AccountDetailPage({
     removal: removalEffects.get(a.id),
     controls: removeBalanceControls(a.source, a.anchoredOn),
   }));
-  // the form, the list's heading and both empty lines from one rule — whether he can count a balance here
-  const listWords = balanceListWords(account);
+  // the form, the list's heading and both empty lines from one rule — whether he can count a balance here (§6A 58)
+  const listWords = balanceListWords(countRefusal(db, account));
 
   return (
     <>
@@ -372,7 +372,7 @@ export default async function AccountDetailPage({
           </section>
         )}
 
-        {/* ⛔ a brokerage book is valued by what its statements prove — a typed balance is refused (`takesTypedBalance`) */}
+        {/* ⛔ a brokerage book, and an account priced from its holdings (§6A 58), take no count (`countRefusal`) */}
         {/* ⚖️ "counted" is the one verb for a balance he typed, and the controls say it too (§6A 50) */}
         {listWords.takesCount && (
           <SurfaceCard>

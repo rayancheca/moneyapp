@@ -105,8 +105,15 @@ describe("/accounts/[id] — the balance form and the list's words answer one ru
     expect(source.match(/balanceListWords\(/g) ?? []).toHaveLength(1);
     const gate = source.match(/\{\s*([^{}]+?)\s*&&\s*\(\s*<SurfaceCard>\s*<h2[^>]*>Add a balance you counted</)?.[1];
     expect(gate).toBe("listWords.takesCount");
-    // the rule itself is asked through `balanceListWords`, never beside it
-    expect(source).not.toMatch(/takesTypedBalance\(/);
+    /*
+     * the rule itself is `countRefusal` — the one `addManualAnchor` refuses by — asked once, straight into
+     * `balanceListWords`. ⚖️ §6A 58: it refuses an account priced from its holdings too, so the page never asks the
+     * rebuild's `derivesFromHoldings` beside it, and a page-local `account.cashAccountId` test would miss Brokerage
+     * and Crypto.
+     */
+    expect(source).toMatch(/const listWords = balanceListWords\(countRefusal\(db, account\)\);/);
+    expect(source.match(/countRefusal\(/g) ?? []).toHaveLength(1);
+    expect(source).not.toMatch(/derivesFromHoldings\(|cashAccountId/);
   });
 
   test("the list's heading and both empty lines are balanceListWords', and the page keeps no copy", () => {
