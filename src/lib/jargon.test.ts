@@ -156,4 +156,14 @@ describe("jargon copy", () => {
       expect(body.trim().endsWith("."), `${name} should end in a period`).toBe(true);
     }
   });
+
+  /*
+   * 🔴 "Bills that fell due and never arrived are not in it", on the runway's Committed tip, over a sentence saying
+   * "no import has covered it yet" of the same $2,291.21 (a copy of his ledger, 2026-10-08). ⚖️ Over unread days never
+   * a negative claim (2026-10-07): the definition covers both readings, so it makes none.
+   */
+  test("the Committed tip makes no claim that late bills never posted", () => {
+    expect(RUNWAY_JARGON.committed).not.toMatch(/never (arrived|posted)|not posted/);
+    expect(RUNWAY_JARGON.committed).toContain("named separately");
+  });
 });

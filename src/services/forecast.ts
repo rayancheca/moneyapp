@@ -2,6 +2,7 @@ import { and, eq, gte, inArray, lte } from "drizzle-orm";
 import type { AppDatabase } from "@/db/client";
 import { recurringSeries } from "@/db/schema/recurring";
 import { transactions } from "@/db/schema/transactions";
+import { arrearsTail } from "@/lib/arrears-reading";
 import { addCalendarMonths, addDays, compareDates, diffDays, monthKey, periodBounds, todayIso } from "@/lib/dates";
 import { forecastSplit } from "@/lib/forecast-split";
 import { projectOngoingIncome, projectOngoingNetIncome } from "@/lib/income-forecast";
@@ -654,11 +655,17 @@ function arrearsComponents(db: AppDatabase, today: string, { outside, agentsSeri
      * kind of line that earns a second look.
      */
     const perOccurrenceCents = -s.amountCents / s.occurrenceCount;
+    /*
+     * ⛔ "Has not posted" only of what the ledger has read — the runway's split (`arrearsTail`). 🔴 It read "came due
+     * Oct 1 and has not posted" of rent on a copy of his ledger 2026-10-08, a day no import had reached, beside a
+     * runway saying "no import has covered it yet" of the same money.
+     */
+    const tail = arrearsTail({ owedCents: s.amountCents, unreadCents: s.unreadCents }, "has not posted");
     return {
       label: s.name,
       kind: "fixed" as const,
       cents: -s.amountCents,
-      detail: `${s.occurrenceCount} × ${formatCents(perOccurrenceCents)} (${CADENCE_LABEL[series.cadence] ?? series.cadence}), came due ${formatDayShortIn(s.nextDate, today)} and has not posted`,
+      detail: `${s.occurrenceCount} × ${formatCents(perOccurrenceCents)} (${CADENCE_LABEL[series.cadence] ?? series.cadence}), came due ${formatDayShortIn(s.nextDate, today)}${tail}`,
       staleness: seriesStaleness(series, today),
     };
   });

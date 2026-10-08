@@ -153,3 +153,36 @@ describe("AllSeriesView — the suggestions note claims the forecast only for th
     expect(noteOf([rocket])).not.toContain("unless");
   });
 });
+
+/**
+ * 🔴 "Oct 1 — not posted", in warning colour, under rent and its utilities in the Next column on a copy of his ledger
+ * 2026-10-08 — a day no import had reached (rent posts from Wells Fargo, read through Sep 24), while the runway said
+ * "no import has covered it yet" of the same $2,291.21. ⚖️ Staleness between uploads is never a warning.
+ */
+describe("AllSeriesView — the Next column's late note follows the runway's read/unread split", () => {
+  const noteOf = (unreadCents: number): string => {
+    const html = decode(
+      renderToStaticMarkup(
+        createElement(AllSeriesView, {
+          series: [series({ id: "rent", name: "Rent", status: "confirmed", nextExpectedOn: "2026-11-01" })],
+          overdueBySeries: new Map([["rent", { date: "2026-10-01", occurrenceCount: 1, owedCents: 210900, unreadCents }]]),
+          today: "2026-10-08",
+        }),
+      ),
+    );
+    const at = html.lastIndexOf("<span", html.indexOf("Oct 1 —"));
+    return html.slice(at, html.indexOf("</span>", at));
+  };
+
+  test("unread: quiet, and in the runway's words", () => {
+    const note = noteOf(210900);
+    expect(note).toContain("Oct 1 — no import has covered it yet");
+    expect(note).not.toContain("text-warning");
+  });
+
+  test("read and unposted: still the warning", () => {
+    const note = noteOf(0);
+    expect(note).toContain("Oct 1 — not posted");
+    expect(note).toContain("text-warning");
+  });
+});

@@ -325,9 +325,57 @@ describe("seriesDetail", () => {
       .run();
 
     const d = seriesDetail(bundle.db, id, TODAY);
-    expect(d.overdue).toEqual({ date: "2026-07-01", amountCents: -1549, occurrenceCount: 1 });
+    // the Card's newest row is Jun 15, so no import has reached Jul 1 — all of it unread
+    expect(d.overdue).toEqual({ date: "2026-07-01", amountCents: -1549, occurrenceCount: 1, unreadCents: 1549 });
     // and the forward list still opens after today, never restating it
     expect(d.nextExpected.every((o) => o.date >= TODAY)).toBe(true);
+  });
+
+  /*
+   * 🔴 THE PAGE SAID "not posted" OF A DAY NO IMPORT HAD REACHED. `/recurring/<Flamingo South Beach (rent)>` on a copy
+   * of his ledger 2026-10-08 read "Already due, and not posted" over Oct 1 — rent posts from Wells Fargo, read through
+   * Sep 24 — while the runway said "no import has covered it yet" of the same $2,109.00. ⛔ The runway's read amount,
+   * not a second rule: `arrearsThisMonth` carries it for every caller (`arrearsReadCents`).
+   */
+  describe("the arrears carry the runway's read/unread split", () => {
+    function dueJulyFirst(): string {
+      const id = netflix().id;
+      bundle.db.update(recurringSeries).set({ userNextExpectedOn: "2026-07-01" }).where(eq(recurringSeries.id, id)).run();
+      return id;
+    }
+
+    test("a due day the Card has been imported past is read", () => {
+      const id = dueJulyFirst();
+      insertTxn({ postedOn: "2026-07-05", amountCents: -800, rawDescription: "CAFE" });
+      expect(seriesDetail(bundle.db, id, TODAY).overdue).toMatchObject({ amountCents: -1549, unreadCents: 0 });
+    });
+
+    test("a weekly bill read part of the way is split by amount", () => {
+      const weekly = bundle.db
+        .insert(recurringSeries)
+        .values({
+          name: "Laundry",
+          kind: "bill",
+          cadence: "weekly",
+          intervalDaysAvg: 7,
+          amountCentsAvg: -1000,
+          nextExpectedAmountCents: -1000,
+          nextExpectedOn: "2026-07-01",
+          toleranceDays: 1,
+          status: "confirmed",
+          accountId: cardId,
+        })
+        .returning({ id: recurringSeries.id })
+        .get().id;
+      // the Card is read through Jul 10: Jul 1 and Jul 8 are read, Jul 15 is not
+      insertTxn({ postedOn: "2026-07-10", amountCents: -800, rawDescription: "CAFE" });
+      expect(seriesDetail(bundle.db, weekly, "2026-07-20").overdue).toEqual({
+        date: "2026-07-01",
+        amountCents: -3000,
+        occurrenceCount: 3,
+        unreadCents: 1000,
+      });
+    });
   });
 
   /*

@@ -6,6 +6,7 @@ import { addDays, compareDates, diffDays, periodBounds } from "@/lib/dates";
 import { sharedFrontier, type UnbankedFrontier } from "@/lib/unbanked-income";
 import { earliestVerified, landingAccountsBySeries } from "./cash-earnings";
 import { accountCoverage } from "./coverage";
+import { frontierForSeries, observationFrontier, seriesAccountIds } from "./observation-frontier";
 import { settledPaydaysBySeries } from "./payday-settlement";
 import { hasStoppedForecasting, projectOccurrences, toProjectable } from "./recurring";
 
@@ -148,8 +149,23 @@ export function overdueForSeries(
   return { totalCents, series };
 }
 
+export interface ArrearsSeries extends BudgetTailSeries {
+  /**
+   * Of `amountCents` (a positive magnitude, as is this), the part that fell due on days no import has reached for the
+   * accounts the series bills on — money that may well have posted where nobody has looked (`arrearsReadCents`). What
+   * no surface may call "not posted" (`lib/arrears-reading`).
+   */
+  unreadCents: number;
+}
+
+export interface Arrears {
+  totalCents: number;
+  series: ArrearsSeries[];
+}
+
 /**
- * What these series owe THIS CALENDAR MONTH: `overdueForSeries` over `[the 1st, the day before today]`, asked today.
+ * What these series owe THIS CALENDAR MONTH: `overdueForSeries` over `[the 1st, the day before today]`, asked today —
+ * each late series carrying how much of it the ledger has not read (`unreadCents`).
  *
  * ⚖️ Arrears are scoped to the calendar month — owner decision 2026-09-02; this does not widen the leg. It closes the
  * day BEFORE today because the forward legs own today: a bill due today and unposted is due, not late (see
@@ -158,9 +174,72 @@ export function overdueForSeries(
  * ⛔ ONE CALL, every surface that says a bill "came due": the runway card, the month forecast, /recurring's Next
  * column, the bill's own page and the category page. Each spelled the window out by hand, and each passed its last
  * day as the day to judge a lapse on — see `overdueForSeries`.
+ *
+ * ⛔ …AND ONE READ SPLIT WITH IT. 🔴 Only the runway asked how far the ledger had read (2026-10-07), so on a copy of his
+ * ledger 2026-10-08 the runway said "no import has covered it yet" of rent's Oct 1 while its own page said "Already
+ * due, and not posted" in warning colour, the Next column "Oct 1 — not posted" and the math table "came due Oct 1 and
+ * has not posted". Carried here, a surface that says a bill came due has the split in hand.
  */
-export function arrearsThisMonth(db: AppDatabase, seriesIds: ReadonlySet<string>, today: string): BudgetTail {
-  return overdueForSeries(db, seriesIds, periodBounds(today, "monthly").start, addDays(today, -1), today);
+export function arrearsThisMonth(db: AppDatabase, seriesIds: ReadonlySet<string>, today: string): Arrears {
+  const late = overdueForSeries(db, seriesIds, periodBounds(today, "monthly").start, addDays(today, -1), today);
+  const readById = arrearsReadCents(db, late, today);
+  return {
+    totalCents: late.totalCents,
+    series: late.series.map((s) => ({ ...s, unreadCents: s.amountCents - (readById.get(s.id) ?? 0) })),
+  };
+}
+
+/**
+ * Of each late series' arrears, the money that fell due on days the ledger has
+ * read for the accounts the series bills on — the part a surface may call
+ * "not posted" (`lib/arrears-reading`).
+ *
+ * 🔴 The runway said "never posted" of all $2,296.20 on 2026-10-07 while October was
+ * imported for none of those accounts. ⛔ NO NEW RULE: "has the ledger read this
+ * bill's day" is the recurring calendar's — `frontierForSeries` over
+ * `observationFrontier` and `seriesAccountIds`, the input `settledVerdict`
+ * grades `missed` against `not_imported` with — and "is this payment late" is
+ * still `overdueForSeries`, asked again only up to that day. A series with no
+ * account the ledger knows reads nothing: the calendar's `null`, and the
+ * cautious answer.
+ *
+ * ⛔ NOT pay's "where it lands now" (`landingAccountsBySeries`, 2026-10-07). "Never posted" is a NEGATIVE claim, so
+ * every account a bill has paid from must be read past its day — the calendar's rule, which grades `missed` against
+ * `not_imported` with the same accounts (`seriesAccountIds`: the named account AND the history; Netflix names Sapphire
+ * and has billed Discover). Fewer accounts here would let the card say "never posted" of a day /recurring calls not
+ * imported. Measured on a copy of his ledger 2026-10-08: rent names no account, so pay's rule reads the same three
+ * (Venture X, Chase Checking, Wells Fargo) to the same Aug 12; it posts from Wells Fargo now, read only through
+ * Sep 24, so its Oct 1 payment is unread under either rule and "no import has covered it yet" is true.
+ *
+ * Moved here from `committedBook` (2026-10-08) so every caller of `arrearsThisMonth` reads the same amount.
+ */
+function arrearsReadCents(db: AppDatabase, late: BudgetTail, today: string): ReadonlyMap<string, number> {
+  const read = new Map<string, number>();
+  if (late.series.length === 0) return read;
+  // `arrearsThisMonth`'s window, walked again below only as far as each series has been read
+  const monthStart = periodBounds(today, "monthly").start;
+  const yesterday = addDays(today, -1);
+
+  const frontier = observationFrontier(db);
+  const accountsBySeries = seriesAccountIds(db);
+  // series read only part-way through the arrears window, grouped by the day they are read to
+  const partly = new Map<string, Set<string>>();
+  for (const s of late.series) {
+    const through = frontierForSeries(frontier, accountsBySeries.get(s.id));
+    if (through === null || compareDates(through, s.nextDate) < 0) continue;
+    if (compareDates(through, yesterday) >= 0) {
+      read.set(s.id, s.amountCents);
+      continue;
+    }
+    partly.set(through, new Set([...(partly.get(through) ?? []), s.id]));
+  }
+  const lateById = new Map(late.series.map((s) => [s.id, s.amountCents] as const));
+  for (const [through, ids] of partly) {
+    for (const s of overdueForSeries(db, ids, monthStart, through, today).series) {
+      read.set(s.id, Math.min(s.amountCents, lateById.get(s.id) ?? 0));
+    }
+  }
+  return read;
 }
 
 /**

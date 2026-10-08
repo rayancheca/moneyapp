@@ -26,6 +26,7 @@ import { toast } from "@/components/ui/Toast";
 import { Icon, type IconName } from "@/components/shell/Icon";
 import type { SeriesKind, SeriesStatus } from "@/db/schema/recurring";
 import type { SeriesDetail as SeriesDetailData } from "@/services/recurring-detail";
+import { AlreadyDueCard } from "./AlreadyDueCard";
 import { AmountHistoryChart } from "./AmountHistoryChart";
 import { CadenceSentence } from "./CadenceSentence";
 import { AttachPanel, LinkedTransactions, MergeControl } from "./SeriesMembership";
@@ -353,34 +354,8 @@ export function SeriesDetail({
           </SurfaceCard>
         ) : null}
 
-        {/* 🔴 THE BACKWARD HALF. This card jumped straight to "Next expected —
-            Oct 1, 2026" for a rent charge that came due on 2026-09-01 and never
-            posted — while the forecast counted it as a component, /budgets said
-            "2 bills totalling $2,291.21 due by today and no import has covered
-            them yet", the runway said "came due earlier this month and never
-            posted", and the calendar marked Sep 1 with a "?". Every surface but
-            the bill's own page. */}
-        {data.overdue ? (
-          <SurfaceCard>
-            <h2 className="mb-1 text-sm font-medium text-warning">Already due, and not posted</h2>
-            <p className="mb-3 text-xs text-ink-muted">
-              Inside this calendar month, with no posting within {data.toleranceDays}{" "}
-              {data.toleranceDays === 1 ? "day" : "days"}{" "}
-              of it. The forecast counts it, and so does this month&apos;s budget.
-            </p>
-            <ul className="divide-y divide-line">
-              <li className="flex items-baseline justify-between gap-3 py-2 text-sm">
-                <span className="figures text-ink-muted">
-                  {longDate(data.overdue.date)}
-                  {data.overdue.occurrenceCount > 1
-                    ? ` and ${data.overdue.occurrenceCount - 1} more`
-                    : ""}
-                </span>
-                <Money cents={data.overdue.amountCents} flow />
-              </li>
-            </ul>
-          </SurfaceCard>
-        ) : null}
+        {/* 🔴 THE BACKWARD HALF — and said only as far as the ledger has read it (`AlreadyDueCard`) */}
+        {data.overdue ? <AlreadyDueCard overdue={data.overdue} toleranceDays={data.toleranceDays} /> : null}
 
         {/* 🔴 An ENDED or DISMISSED series projected three dated future
             charges here — see `noScheduleReason`. Dropping the card silently

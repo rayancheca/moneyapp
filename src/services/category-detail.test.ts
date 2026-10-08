@@ -366,9 +366,23 @@ describe("seriesInCategory", () => {
 
     const rows = seriesInCategory(bundle.db, catId("Housing"), TODAY);
     expect(rows).toHaveLength(1);
-    expect(rows[0]!.overdue).toEqual({ date: "2026-07-01", occurrenceCount: 1 });
+    // the June charge is the Card's newest row, so no import has reached Jul 1 — the note's quiet reading
+    expect(rows[0]!.overdue).toEqual({ date: "2026-07-01", occurrenceCount: 1, owedCents: 180_000, unreadCents: 180_000 });
     // the next date STAYS — August's charge is still coming
     expect(rows[0]!.nextExpectedOn).toBe("2026-08-01");
+  });
+
+  // 🔴 "Oct 1 — not posted" under `/categories/<Housing>` of a day no import had reached (his ledger, 2026-10-08)
+  test("a bill due on a day its account has been imported past is read", () => {
+    const rent = bundle.db
+      .insert(recurringSeries)
+      .values({ name: "Rent", kind: "bill", cadence: "monthly", amountCentsAvg: -180_000, nextExpectedAmountCents: -180_000, status: "confirmed", nextExpectedOn: "2026-07-01", anchorDay: 1, lastMatchedOn: "2026-06-01" })
+      .returning({ id: recurringSeries.id })
+      .get().id;
+    insertTxn({ postedOn: "2026-06-01", amountCents: -180_000, category: "Housing > Rent", seriesId: rent });
+    insertTxn({ postedOn: "2026-07-06", amountCents: -900, category: "Food" });
+
+    expect(seriesInCategory(bundle.db, catId("Housing"), TODAY)[0]!.overdue).toMatchObject({ owedCents: 180_000, unreadCents: 0 });
   });
 
   test("a bill whose charge arrived is not overdue", () => {

@@ -43,13 +43,9 @@ export function CategorySeriesList({ rows, today }: { rows: CategorySeriesRow[];
                     Sep 1 – Sep 30 with the whole amount still "left".
                     `overdueNote` is the wording /recurring's Next column has
                     used since the same defect was fixed there, and this was its
-                    second caller. See `CategorySeriesRow.overdue`. */}
-                {s.overdue && (
-                  <span className="text-warning">
-                    {" · "}
-                    {overdueNote(s.overdue.date, s.overdue.occurrenceCount)}
-                  </span>
-                )}
+                    second caller. See `CategorySeriesRow.overdue`. Quiet when no
+                    import has reached the day — the runway's split. */}
+                {s.overdue && <OverdueNote overdue={s.overdue} />}
                 {/* ⛔ The word is chosen WITH the row, in `lib/series-evidence`.
                     Chosen here from `evidence` alone, it read "lapsed" over five
                     series the owner had DISMISSED — a page headed "Recurring
@@ -63,5 +59,16 @@ export function CategorySeriesList({ rows, today }: { rows: CategorySeriesRow[];
         </li>
       ))}
     </ul>
+  );
+}
+
+/** `overdueNote` in its own tone: warning when any of it has been read, the row's own when none of it has. */
+function OverdueNote({ overdue }: { overdue: NonNullable<CategorySeriesRow["overdue"]> }) {
+  const note = overdueNote(overdue.date, overdue.occurrenceCount, overdue);
+  return (
+    <span className={note.warning ? "text-warning" : undefined}>
+      {" · "}
+      {note.text}
+    </span>
   );
 }

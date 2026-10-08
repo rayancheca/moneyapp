@@ -2,6 +2,7 @@ import { eq } from "drizzle-orm";
 import { seriesDrawsAsRecurring, seriesRowLabel, type SeriesEvidence } from "@/lib/series-evidence";
 import type { AppDatabase } from "@/db/client";
 import { categories, type CategoryKind } from "@/db/schema/categories";
+import type { ArrearsReading } from "@/lib/arrears-reading";
 import { periodBounds } from "@/lib/dates";
 import { unreachedKind, type UnreachedKind } from "@/lib/empty-period";
 import { withOwnRow } from "@/lib/subcategory-rows";
@@ -307,8 +308,11 @@ export interface CategorySeriesRow {
    * month, closing the day BEFORE today, so a bill due today is due rather than
    * late. Arrears are scoped to the calendar month by the owner's decision of
    * 2026-09-02.
+   *
+   * `owedCents` and `unreadCents` are the runway's read/unread split (`ArrearsReading`): 🔴 the note read "Oct 1 — not
+   * posted" under rent here on a copy of his ledger 2026-10-08, of a day no import had reached.
    */
-  overdue: { date: string; occurrenceCount: number } | null;
+  overdue: ({ date: string; occurrenceCount: number } & ArrearsReading) | null;
   status: string;
   isActive: boolean;
   /** the word every surface uses for its evidence — see `lib/series-evidence` */
@@ -336,7 +340,11 @@ export function seriesInCategory(db: AppDatabase, categoryId: string, today: str
   // one call for the whole card, keyed by series — see `CategorySeriesRow.overdue`
   const overdueById = new Map(
     arrearsThisMonth(db, ids, today).series.map(
-      (o) => [o.id, { date: o.nextDate, occurrenceCount: o.occurrenceCount }] as const,
+      (o) =>
+        [
+          o.id,
+          { date: o.nextDate, occurrenceCount: o.occurrenceCount, owedCents: o.amountCents, unreadCents: o.unreadCents },
+        ] as const,
     ),
   );
 

@@ -3,6 +3,7 @@ import { confirmSeriesAction, dismissSeriesAction } from "@/app/recurring/action
 import { Money } from "@/components/ui/Money";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { SERIES_EVIDENCE_LABEL, SERIES_EVIDENCE_NOTE, suggestionNote } from "@/lib/series-evidence";
+import type { ArrearsReading } from "@/lib/arrears-reading";
 import type { SeriesView } from "@/services/recurring";
 import { CADENCE_LABEL, KIND_LABEL, annualizedEndNote, futureDateLabel, overdueNote } from "./labels";
 
@@ -12,7 +13,10 @@ import { CADENCE_LABEL, KIND_LABEL, annualizedEndNote, futureDateLabel, overdueN
  * `overdueNote` for the day the Next column and the math table above it gave
  * two answers to the same question.
  */
-export type OverdueBySeries = ReadonlyMap<string, { date: string; occurrenceCount: number }>;
+export type OverdueBySeries = ReadonlyMap<string, OverdueEntry>;
+
+/** One late series: its first late day, how many, and how far the ledger has read it (`ArrearsReading`). */
+type OverdueEntry = { date: string; occurrenceCount: number } & ArrearsReading;
 
 /**
  * The "All" sub-view (ux-overhaul-plan §4.1): a suggestion queue up top —
@@ -234,7 +238,7 @@ function SeriesRow({
   today,
 }: {
   series: SeriesView;
-  overdue: { date: string; occurrenceCount: number } | null;
+  overdue: OverdueEntry | null;
   today: string;
 }) {
   return (
@@ -284,12 +288,9 @@ function SeriesRow({
             the 1st and never posted was invisible here — while the math table
             at the top of this same page named it: "came due 2026-09-01 and has
             not posted". Same call as the forecast, the runway, /budgets and the
-            bill's own page. */}
-        {overdue && (
-          <span className="figures mt-0.5 block text-[10px] text-warning">
-            {overdueNote(overdue.date, overdue.occurrenceCount)}
-          </span>
-        )}
+            bill's own page. Quiet when no import has reached the day — the
+            runway's split (`overdueNote`). */}
+        {overdue && <OverdueNote overdue={overdue} />}
       </td>
       <td className="px-3 py-3 text-right text-ink-muted">
         {s.annualizedCents !== null ? (
@@ -325,5 +326,15 @@ function SeriesRow({
         </form>
       </td>
     </tr>
+  );
+}
+
+/** The Next column's late note, in its own tone: warning when any of it has been read, faint when none of it has. */
+function OverdueNote({ overdue }: { overdue: OverdueEntry }) {
+  const note = overdueNote(overdue.date, overdue.occurrenceCount, overdue);
+  return (
+    <span className={`figures mt-0.5 block text-[10px] ${note.warning ? "text-warning" : "text-ink-faint"}`}>
+      {note.text}
+    </span>
   );
 }
