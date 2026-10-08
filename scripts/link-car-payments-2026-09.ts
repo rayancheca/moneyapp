@@ -281,7 +281,7 @@ function captureState(bundle: DbBundle): State {
     links.set(String(t.id), `${String(seriesId ?? "-")}|${String(source ?? "-")}`);
   }
   const allSeries = bundle.sqlite.prepare("SELECT * FROM recurring_series ORDER BY id").all() as Record<string, unknown>[];
-  const owed = (id: string, from: string, to: string) => overdueForSeries(bundle.db, new Set([id]), from, to).totalCents;
+  const owed = (id: string, from: string, to: string) => overdueForSeries(bundle.db, new Set([id]), from, to, to).totalCents;
   return {
     balances: balancesHash(bundle),
     statusCounts: statusCounts(bundle),

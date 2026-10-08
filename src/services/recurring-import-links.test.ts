@@ -150,14 +150,14 @@ describe("linking at import — the rows an operation made active, and only thos
     const imported = post({ postedOn: "2026-09-10", amountCents: -5000, raw: "BREEZELINE 866-290-5400 MA" });
 
     // the fixture expresses the defect: unlinked, the bill reads as owed
-    expect(overdueForSeries(bundle.db, new Set([breezeline]), "2026-09-01", TODAY).totalCents).toBe(5000);
+    expect(overdueForSeries(bundle.db, new Set([breezeline]), "2026-09-01", TODAY, TODAY).totalCents).toBe(5000);
 
     expect(linkRowsMadeActive(bundle.db, [imported], TODAY)).toEqual({ absorbed: 1, firstPostings: 0 });
 
     expect(seriesOf(imported).recurringSeriesId).toBe(breezeline);
     expect(seriesOf(imported).seriesLinkSource).toBe("detected");
     expect(seriesRow(breezeline).lastMatchedOn).toBe("2026-09-10");
-    expect(overdueForSeries(bundle.db, new Set([breezeline]), "2026-09-01", TODAY).totalCents).toBe(0);
+    expect(overdueForSeries(bundle.db, new Set([breezeline]), "2026-09-01", TODAY, TODAY).totalCents).toBe(0);
     // …and the recompute the 4th posting triggers does not re-step the owner's
     // schedule: still the 8th, twelve charges a year
     const walk = projectOccurrences(toProjectable(seriesRow(breezeline)), "2026-09-15", "2027-09-14").map((o) => o.date);
@@ -245,13 +245,13 @@ describe("a charge a never-posted commitment expects to the cent is its first po
     const row = post({ postedOn: "2026-11-11", amountCents: -7274, raw: PROGRESSIVE_WF_CARD, accountId: checking });
     // the fixture expresses the conflict: one descriptor, owned elsewhere
     expect(normalizeDescription(PROGRESSIVE_WF_CARD)).toBe(normalizeDescription(PROGRESSIVE_VENTURE_X));
-    expect(overdueForSeries(bundle.db, new Set([balance]), "2026-11-01", TODAY_NOV).totalCents).toBe(7274);
+    expect(overdueForSeries(bundle.db, new Set([balance]), "2026-11-01", TODAY_NOV, TODAY_NOV).totalCents).toBe(7274);
 
     expect(linkRowsMadeActive(bundle.db, [row], TODAY_NOV)).toEqual({ absorbed: 0, firstPostings: 1 });
 
     expect(seriesOf(row).recurringSeriesId).toBe(balance);
     expect(seriesRow(insurance).lastMatchedOn).toBe("2026-08-12");
-    expect(overdueForSeries(bundle.db, new Set([balance]), "2026-11-01", TODAY_NOV).totalCents).toBe(0);
+    expect(overdueForSeries(bundle.db, new Set([balance]), "2026-11-01", TODAY_NOV, TODAY_NOV).totalCents).toBe(0);
   });
 
   test("the control: a Progressive charge at Car insurance's own amount is still absorbed by it", () => {
@@ -303,7 +303,7 @@ describe("a series past its last date owns no later charge by description", () =
     expect(linkRowsMadeActive(bundle.db, [december], TODAY_DEC)).toEqual({ absorbed: 1, firstPostings: 0 });
 
     expect(seriesOf(december).recurringSeriesId).toBe(insurance);
-    expect(overdueForSeries(bundle.db, new Set([insurance]), "2026-12-01", TODAY_DEC).totalCents).toBe(0);
+    expect(overdueForSeries(bundle.db, new Set([insurance]), "2026-12-01", TODAY_DEC, TODAY_DEC).totalCents).toBe(0);
   });
 
   test("while both are live, the same descriptor still has two owners and links nothing", () => {

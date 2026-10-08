@@ -1265,6 +1265,24 @@ export function seriesHasLapsed(
 }
 
 /**
+ * Has the forecast LET THIS SERIES GO? Its evidence ran out (`seriesHasLapsed`) and it is money that stops when it
+ * does (`lapsedSeriesShouldStopForecasting` — money in never lapses). The one predicate every surface asks: the
+ * forward legs, the subscriptions card's "stopped being forecast", the calendar, and the arrears walk.
+ *
+ * ⛔ `today` is the day of the QUESTION, never the last day of whatever window the caller walks. 🔴 On the owner's
+ * ledger 2026-10-08 Amazon Prime lapsed that morning, and the runway card still said its Oct 5 $4.99 "came due
+ * earlier this month" two cards above "STOPPED BEING FORECAST — Amazon Prime": the arrears leg closes the day before
+ * today, and it judged the lapse on that day instead.
+ */
+export function hasStoppedForecasting(
+  s: SeriesOverrides & { kind: SeriesKind; lastMatchedOn: string | null },
+  // no default: every caller says which day it is asking on
+  today: string,
+): boolean {
+  return lapsedSeriesShouldStopForecasting(s.kind) && seriesHasLapsed(s, today);
+}
+
+/**
  * The first non-past occurrence of a series, stepping from its effective
  * next_expected_on the same way projectOccurrences does. The stored column is
  * the detector's output as of its last run and goes stale between runs — the
@@ -1427,7 +1445,7 @@ export function upcomingOccurrences(
     // calls a NEVER-posted series inactive, which would delete the $559.89 car
     // lease and $361.49 insurance the owner registered for 2026-09-11 and that
     // have no postings yet by definition.
-    .filter((s) => !(lapsedSeriesShouldStopForecasting(s.kind) && seriesHasLapsed(s, today)))
+    .filter((s) => !hasStoppedForecasting(s, today))
     .filter((s) => !isAgentsSeries(agentsCash, s))
     .flatMap((s) => {
       const projected = projectOccurrences(toProjectable(s, seriesStaleness(s, today)), today, to);
@@ -1458,5 +1476,5 @@ export function seriesEvidence(
 ): SeriesEvidence {
   if (s.lastMatchedOn === null) return "never-billed";
   if (isSeriesActive(s, today)) return "active";
-  return lapsedSeriesShouldStopForecasting(s.kind) && seriesHasLapsed(s, today) ? "lapsed" : "running-late";
+  return hasStoppedForecasting(s, today) ? "lapsed" : "running-late";
 }

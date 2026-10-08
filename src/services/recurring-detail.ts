@@ -11,11 +11,11 @@ import {
   type SeriesStatus,
 } from "@/db/schema/recurring";
 import { transactions } from "@/db/schema/transactions";
-import { addDays, isValidIsoDate, periodBounds, todayIso } from "@/lib/dates";
+import { addDays, isValidIsoDate, todayIso } from "@/lib/dates";
 import { paydayReadings, type PaydayReading, type PerPayday } from "@/lib/per-payday";
 import { stepFrom, stepPlan } from "@/lib/recurring-step";
 import { loadCategoryIndex } from "./analytics";
-import { overdueForSeries } from "./arrears";
+import { arrearsThisMonth } from "./arrears";
 import { paydaySettlement, readsPerPayday, stillToCome } from "./payday-settlement";
 import {
   annualizedCentsOf,
@@ -173,7 +173,7 @@ export interface SeriesDetail {
    * calendar marks Sep 1 with a "?". The page that is ABOUT that bill was the
    * only one that skipped to October.
    *
-   * ⛔ Same call the forecast makes — `overdueForSeries` over the calendar
+   * ⛔ Same call the forecast makes — `arrearsThisMonth`, over the calendar
    * month, closing the day before today, so a bill due TODAY is due rather than
    * late. Arrears are scoped to the calendar month by the owner's decision of
    * 2026-09-02; a wider leg here would disagree with every other surface.
@@ -349,10 +349,7 @@ export function seriesDetail(
       ).slice(0, NEXT_EXPECTED_COUNT)
     : [];
 
-  const monthStart = periodBounds(today, "monthly").start;
-  const late = projects
-    ? (overdueForSeries(db, new Set([seriesId]), monthStart, addDays(today, -1)).series[0] ?? null)
-    : null;
+  const late = projects ? (arrearsThisMonth(db, new Set([seriesId]), today).series[0] ?? null) : null;
   const overdue = late
     ? { date: late.nextDate, amountCents: -late.amountCents, occurrenceCount: late.occurrenceCount }
     : null;

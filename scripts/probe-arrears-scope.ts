@@ -22,7 +22,7 @@ const scopes: [string, string][] = [
   ["365 days back", addDays(TODAY, -365)],
 ];
 for (const [label, start] of scopes) {
-  const late = overdueForSeries(db, moneyOut, start, addDays(TODAY, -1));
+  const late = overdueForSeries(db, moneyOut, start, addDays(TODAY, -1), TODAY);
   console.log(`\n--- ${label}  [${start} .. ${addDays(TODAY, -1)}]  total=$${(late.totalCents / 100).toFixed(2)} over ${late.series.length} series`);
   for (const s of late.series) {
     console.log(`    ${s.name.padEnd(38)} $${(s.amountCents / 100).toFixed(2).padStart(10)}  x${s.occurrenceCount}  first ${s.nextDate}`);

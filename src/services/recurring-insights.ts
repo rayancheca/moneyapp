@@ -9,13 +9,7 @@ import { isAgentsSeries } from "./analytics";
 import { surfaceInsights, type InsightInput } from "./insight-surface";
 import type { InsightCandidate, SurfaceInsights } from "./insights";
 import { provenanceFor } from "./provenance";
-import {
-  lapsedSeriesShouldStopForecasting,
-  listSeries,
-  seriesHasLapsed,
-  type SeriesOverrides,
-  type SeriesView,
-} from "./recurring";
+import { hasStoppedForecasting, listSeries, type SeriesOverrides, type SeriesView } from "./recurring";
 
 /** Exactly what `seriesHasLapsed` reads — the stored row, overrides intact. */
 type LapseInput = SeriesOverrides & { lastMatchedOn: string | null };
@@ -94,7 +88,7 @@ function isLive(view: SeriesView, row: LapseInput | undefined, today: string): b
   if (view.status !== "confirmed" && view.status !== "detected") return false;
   if (view.annualizedCents === null) return false;
   if (!row) return false;
-  return !(lapsedSeriesShouldStopForecasting(view.kind) && seriesHasLapsed(row, today));
+  return !hasStoppedForecasting({ ...row, kind: view.kind }, today);
 }
 
 export function recurringInsights(

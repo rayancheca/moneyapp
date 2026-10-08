@@ -11,9 +11,8 @@ import { activeTxnsInRange, isAgentsSeries } from "./analytics";
 import { COMMITTED_KINDS, SPEND_BASELINE_MONTHS, baselineWindow } from "./committed";
 import {
   effectiveSeries,
-  lapsedSeriesShouldStopForecasting,
+  hasStoppedForecasting,
   rollForwardNextExpected,
-  seriesHasLapsed,
   seriesStaleness,
 } from "./recurring";
 
@@ -44,7 +43,7 @@ import {
  *
  * ## ⛔ Not a second staleness rule
  *
- * `seriesHasLapsed` + `lapsedSeriesShouldStopForecasting` is EXACTLY the pair
+ * `hasStoppedForecasting` — `seriesHasLapsed` + `lapsedSeriesShouldStopForecasting` — is EXACTLY the predicate
  * `upcomingOccurrences` filters on, called here rather than re-derived, so the
  * two cannot disagree about which series are being forecast — this card's whole
  * claim is a claim about what the forecast is doing. `seriesStaleness` supplies
@@ -318,7 +317,7 @@ export function subscriptionsCard(
 
     // exactly the pair `upcomingOccurrences` filters on, so this card's split
     // and the forecast's cannot disagree about which series are being projected
-    const stopsForecasting = lapsedSeriesShouldStopForecasting(s.kind) && seriesHasLapsed(s, today);
+    const stopsForecasting = hasStoppedForecasting(s, today);
     if (stopsForecasting) {
       lapsed.push({
         ...line,
