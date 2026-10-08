@@ -1,4 +1,5 @@
 import { and, asc, eq, isNotNull } from "drizzle-orm";
+import { cache } from "react";
 import type { AppDatabase } from "@/db/client";
 import { recurringSeries } from "@/db/schema/recurring";
 import { transactions } from "@/db/schema/transactions";
@@ -210,14 +211,20 @@ export function earliestVerified(
  * today, said "all of it running late" (his ledger, 2026-10-08).
  *
  * ⚡ The coverage read is memoised for the render (`accountCoverage`); the closure only takes an earliest.
+ * ⚡ …and so is the whole frontier, for the reason `accountCoverage` gives (`react`'s `cache`, one request, never a
+ * module-level Map): since the lapse is measured to it (§6A 57) every budget's tail and arrears walk asks it, and
+ * measured on a copy of his ledger 2026-10-08 one call is 2.65ms past the cached coverage — 24 of them per /budgets.
  */
-export function checkedThroughBySeries(db: AppDatabase, today: string): (seriesId: string) => string | null {
+export const checkedThroughBySeries = cache(function checkedThroughBySeries(
+  db: AppDatabase,
+  today: string,
+): (seriesId: string) => string | null {
   const verifiedThroughByAccount = new Map(
     accountCoverage(db, today).map((c) => [c.accountId, c.verifiedThrough] as const),
   );
   const landings = landingAccountsBySeries(db);
   return (seriesId) => earliestVerified(landings.get(seriesId) ?? new Set<string>(), verifiedThroughByAccount, today);
-}
+});
 
 /**
  * One reading per confirmed income series — never a single aggregate.

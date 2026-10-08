@@ -94,7 +94,7 @@ interface ForecastReads {
   agentsCash: ReadonlySet<string>;
   /** `agentsSeriesBands` — every schedule on the agent's cash, and the band its money is named by */
   agentsSeries: ReadonlyMap<string, AgentsBand>;
-  /** `checkedThroughBySeries` — a series is late only on days the ledger has checked (`seriesStaleness`) */
+  /** `checkedThroughBySeries` — a series is late, or lapsed, only on days the ledger has checked (`seriesStaleness`) */
   checkedThrough: (seriesId: string) => string | null;
 }
 
@@ -519,7 +519,8 @@ function fixedComponents(
      * test and kept by the kind test, and that is the $4,233.69 → $45.69
      * collapse arriving by a different door.
      */
-    if (hasStoppedForecasting(series, today)) continue;
+    // ⚖️ …measured to the series' checked day, like running late, never across unread days (§6A 57)
+    if (hasStoppedForecasting(series, today, checkedThrough(series.id))) continue;
     // forecast reads user overrides first (§4.4): amount, cadence, next-expected
     // late only on days the ledger has checked — the chip, the MONEY IN/OUT band and the footer's count
     const staleness = seriesStaleness(series, today, checkedThrough(series.id));

@@ -3,8 +3,13 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { createDatabase, type DbBundle } from "@/db/client";
+import { dailyBalances } from "@/db/schema/balances";
+import { institutions } from "@/db/schema/institutions";
 import { recurringSeries, type Cadence, type SeriesKind, type SeriesStatus } from "@/db/schema/recurring";
+import { transactions } from "@/db/schema/transactions";
 import { seedDatabase } from "@/db/seed";
+import { addDays } from "@/lib/dates";
+import { createAccount } from "./accounts";
 import { recurringInsights } from "./recurring-insights";
 
 /**
@@ -271,6 +276,27 @@ describe("what gets no strip at all", () => {
     addSeries({ name: "Internet", amountCents: -5_000 });
     // last charged 449 days ago against a monthly cadence — the UBER *ONE case
     const dead = addSeries({ name: "Uber One", amountCents: -499, lastMatchedOn: "2025-06-04" });
+    // ⚖️ on a card read every day since: a series lapses only on days the ledger has checked (§6A 57)
+    const institutionId = bundle.db.select().from(institutions).all()[0]!.id;
+    const card = createAccount(bundle.db, { institutionId, name: "Card", type: "credit" });
+    bundle.db
+      .insert(transactions)
+      .values({
+        accountId: card,
+        postedOn: "2025-06-04",
+        amountCents: -499,
+        rawDescription: "UBER *ONE",
+        normalizedDescription: "UBER *ONE",
+        recurringSeriesId: dead,
+        status: "active",
+        dedupeHash: "uber-one-2025-06-04",
+      })
+      .run();
+    const read: (typeof dailyBalances.$inferInsert)[] = [];
+    for (let day = "2025-06-01"; day < TODAY; day = addDays(day, 1)) {
+      read.push({ accountId: card, day, balanceCents: 0, basis: "derived" });
+    }
+    bundle.db.insert(dailyBalances).values(read).run();
 
     expect(recurringInsights(bundle.db, dead, TODAY)).toBeNull();
   });

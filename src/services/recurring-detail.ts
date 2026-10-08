@@ -333,7 +333,9 @@ export function seriesDetail(
    * charge from Nov 5 on" — while the subscriptions card said "STOPPED BEING FORECAST", the Upcoming tab left it out
    * and its category card hid the very same Nov 5.
    */
-  const projects = seriesIsForecast(s, today);
+  // the day its accounts are read through: late and lapsed are both measured there (§6A 57) — the badge reads it too
+  const checkedThrough = checkedThroughBySeries(db, today)(s.id);
+  const projects = seriesIsForecast(s, today, checkedThrough);
 
   // Size the projection window off the series' own step so even a long-interval
   // annual series reaches NEXT_EXPECTED_COUNT occurrences: the first can land up
@@ -431,9 +433,9 @@ export function seriesDetail(
     lastMatchedOn: s.lastMatchedOn,
     isActive: isSeriesActive(s, today),
     // late only on days the ledger has checked — the badge's word and its tone (`seriesEvidenceTone`)
-    evidence: seriesEvidence(s, today, checkedThroughBySeries(db, today)(s.id)),
+    evidence: seriesEvidence(s, today, checkedThrough),
     endsOn: s.userEndsOn ?? null,
-    annualizedCents: annualizedCentsOf(s, today),
+    annualizedCents: annualizedCentsOf(s, today, checkedThrough),
     nextExpected,
     overdue,
     linkedTxns,

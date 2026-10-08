@@ -46,6 +46,7 @@ import {
 import type { UnbankedFrontier } from "@/lib/unbanked-income";
 import { portionsAcross } from "@/lib/payday-settlement";
 import { paydaySettlementsBySeries } from "./payday-settlement";
+import { checkedThroughBySeries } from "./cash-earnings";
 import { effectiveSeries, hasStoppedForecasting, projectOccurrences, toProjectable } from "./recurring";
 import { linkIsRecurring, rowIsRecurring, seriesIdsNotDrawnAsRecurring } from "./recurring-link";
 
@@ -1148,12 +1149,14 @@ export function budgetTail(
 
   const series: BudgetTailSeries[] = [];
   let totalCents = 0;
+  // the lapse is measured to each series' checked day (§6A 57)
+  const checkedThrough = checkedThroughBySeries(db, today);
   for (const s of rows) {
     // a series that stopped charging is not a forecast — see seriesHasLapsed for
     // why this is not `isSeriesActive` (a registered commitment has no postings
     // yet and must still be projected). `hasStoppedForecasting`, the predicate
     // `budgetOverdue` asks too: money in never lapses, in either leg.
-    if (hasStoppedForecasting(s, today)) continue;
+    if (hasStoppedForecasting(s, today, checkedThrough(s.id))) continue;
     const occ = projectOccurrences(toProjectable(s), from, periodEnd).filter((o) => o.amountCents < 0);
     if (occ.length === 0) continue;
     const amountCents = occ.reduce((sum, o) => sum - o.amountCents, 0); // money-out → positive

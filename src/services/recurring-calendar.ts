@@ -688,14 +688,14 @@ export function recurringCalendar(
   // The frontier lookups are hoisted out of the loop and skipped entirely for a
   // month that ends on or after today: a wholly-future month has no past
   // occurrence to grade, so it needs no coverage query at all.
-  // late only on days the ledger has checked (`seriesEvidence`) — the words a future entry carries
+  // late and lapsed only on days the ledger has checked (`seriesEvidence`, §6A 57) — the gate and a future entry's words
   const checkedThrough = checkedThroughBySeries(db, today);
   const needsFrontier = compareDates(monthStart, today) < 0;
   const frontier = needsFrontier ? observationFrontier(db) : null;
   const accountsBySeries = needsFrontier ? seriesAccountIds(db) : null;
 
   for (const s of forecastRows) {
-    if (hasStoppedForecasting(s, today)) continue;
+    if (hasStoppedForecasting(s, today, checkedThrough(s.id))) continue;
     const occurrences = projectOccurrences(toProjectable(s), monthStart, monthEnd);
     const postedDates = postedDatesBySeries.get(s.id) ?? [];
     const confidence = forecastConfidence(s);

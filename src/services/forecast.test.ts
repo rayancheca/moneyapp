@@ -1097,6 +1097,31 @@ describe("forecastForMonth", () => {
     fs.rmSync(dir, { recursive: true, force: true });
   });
 
+  /**
+   * The checking account read by the balance walk through yesterday, over a row of its own (an account with no row is
+   * the owner's word alone). ⚖️ A series lapses only on days the ledger has checked (§6A 57): the lapsed series below
+   * post here, and their quiet is quiet the ledger has read.
+   */
+  function checkingReadThroughYesterday(): void {
+    bundle.db
+      .insert(transactions)
+      .values({
+        accountId: checkingId,
+        postedOn: "2025-01-02",
+        amountCents: -500,
+        rawDescription: "READ",
+        normalizedDescription: "READ",
+        status: "active",
+        dedupeHash: dedupeHash({ accountId: checkingId, postedOn: "2025-01-02", amountCents: -500, rawDescription: "READ", occurrenceIndex: 0 }),
+      })
+      .run();
+    const read: (typeof dailyBalances.$inferInsert)[] = [];
+    for (let t = Date.UTC(2025, 0, 1); new Date(t).toISOString().slice(0, 10) < TODAY; t += 86_400_000) {
+      read.push({ accountId: checkingId, day: new Date(t).toISOString().slice(0, 10), balanceCents: 100_000, basis: "derived" });
+    }
+    bundle.db.insert(dailyBalances).values(read).run();
+  }
+
   const rent = (): string =>
     bundle.db
       .insert(recurringSeries)
@@ -1247,6 +1272,7 @@ describe("forecastForMonth", () => {
    */
   test("a lapsed OUTFLOW stops projecting; a lapsed INCOME series does not", () => {
     const lapsedLongAgo = "2025-01-01";
+    checkingReadThroughYesterday();
     bundle.db
       .insert(recurringSeries)
       .values([
@@ -1260,6 +1286,7 @@ describe("forecastForMonth", () => {
           status: "detected",
           toleranceDays: 3,
           lastMatchedOn: lapsedLongAgo,
+          accountId: checkingId,
         },
         {
           name: "Cash job",
@@ -1271,6 +1298,7 @@ describe("forecastForMonth", () => {
           status: "confirmed",
           toleranceDays: 3,
           lastMatchedOn: lapsedLongAgo,
+          accountId: checkingId,
         },
       ])
       .run();
@@ -1294,6 +1322,7 @@ describe("forecastForMonth", () => {
    */
   test("lapse is decided by kind, even when the amount's sign disagrees", () => {
     const lapsedLongAgo = "2025-01-01";
+    checkingReadThroughYesterday();
     bundle.db
       .insert(recurringSeries)
       .values([
@@ -1308,6 +1337,7 @@ describe("forecastForMonth", () => {
           status: "detected",
           toleranceDays: 3,
           lastMatchedOn: lapsedLongAgo,
+          accountId: checkingId,
         },
         {
           // income stored negative — quiet imports must not delete it
@@ -1320,6 +1350,7 @@ describe("forecastForMonth", () => {
           status: "confirmed",
           toleranceDays: 3,
           lastMatchedOn: lapsedLongAgo,
+          accountId: checkingId,
         },
       ])
       .run();

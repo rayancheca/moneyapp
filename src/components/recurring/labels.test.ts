@@ -64,6 +64,7 @@ describe("upcomingEvidenceWord", () => {
 const staleness = (over: Partial<SeriesStaleness> = {}): SeriesStaleness => ({
   lastMatchedOn: "2026-06-16",
   daysSinceLastMatch: 22,
+  checkedDaysSinceLastMatch: 22,
   stepDays: 7,
   toleranceDays: 12.5,
   isStale: true,
@@ -279,12 +280,12 @@ describe("staleSummaryLabel", () => {
   const late = (days: number): StaleEntry => ({
     key: `late-${days}`,
     name: `Late ${days}`,
-    staleness: { lastMatchedOn: "2026-06-05", daysSinceLastMatch: days, stepDays: 7, toleranceDays: 14, isStale: true, awaitingStatements: false },
+    staleness: { lastMatchedOn: "2026-06-05", daysSinceLastMatch: days, checkedDaysSinceLastMatch: days, stepDays: 7, toleranceDays: 14, isStale: true, awaitingStatements: false },
   });
   const never = (n: number): StaleEntry => ({
     key: `never-${n}`,
     name: `Never ${n}`,
-    staleness: { lastMatchedOn: null, daysSinceLastMatch: null, stepDays: 30, toleranceDays: 48, isStale: true, awaitingStatements: false },
+    staleness: { lastMatchedOn: null, daysSinceLastMatch: null, checkedDaysSinceLastMatch: null, stepDays: 30, toleranceDays: 48, isStale: true, awaitingStatements: false },
   });
 
   test("the real ledger's mix names both, and neither count is the other's", () => {

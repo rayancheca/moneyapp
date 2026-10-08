@@ -5,6 +5,7 @@ import { eq } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { createDatabase, type DbBundle } from "@/db/client";
 import { seedDatabase } from "@/db/seed";
+import { dailyBalances } from "@/db/schema/balances";
 import { institutions } from "@/db/schema/institutions";
 import { recurringSeries } from "@/db/schema/recurring";
 import { transactions } from "@/db/schema/transactions";
@@ -22,6 +23,7 @@ import {
   loadRecomputeCtx,
   fitCadence,
   gapKeepsStep,
+  hasStoppedForecasting,
   isDayOfMonthBimodal,
   isSeriesActive,
   seriesEvidence,
@@ -477,6 +479,8 @@ describe("seriesStaleness", () => {
     expect(seriesStaleness(overrides({ lastMatchedOn: "2026-06-30" }), "2026-07-08")).toEqual({
       lastMatchedOn: "2026-06-30",
       daysSinceLastMatch: 8,
+      // unmeasured: the quiet the ledger has read is the quiet to today
+      checkedDaysSinceLastMatch: 8,
       stepDays: 7,
       toleranceDays: 12.5,
       isStale: false,
@@ -566,7 +570,7 @@ describe("seriesStaleness", () => {
     // … and a paycheque this quiet is late, never lapsed — money in does not stop
     expect(seriesEvidence({ ...base, kind: "income", lastMatchedOn: "2026-02-01" }, today, checked)).toBe("running-late");
     // the same gate the forecast reads, not a second copy of it
-    expect(seriesHasLapsed({ ...base, lastMatchedOn: "2026-02-01" }, today)).toBe(true);
+    expect(seriesHasLapsed({ ...base, lastMatchedOn: "2026-02-01" }, today, checked)).toBe(true);
     expect(lapsedSeriesShouldStopForecasting("income")).toBe(false);
   });
 
@@ -589,9 +593,9 @@ describe("seriesStaleness", () => {
     };
     const today = "2026-07-08";
     const ages = [null, "2026-07-05", "2026-04-25", "2026-02-01"]; // never, fresh, late, lapsed
-    // ⛔ …and every checked day: awaiting statements is a live, projected word too (unmeasured, nothing checked, a
-    // checked day before the late charge's tolerance ran out, yesterday)
-    const checkedDays = [undefined, null, "2026-04-01", "2026-07-07"];
+    // ⛔ …and every checked day: awaiting statements is a live, projected word too (every day read, nothing checked,
+    // a checked day before the late charge's tolerance ran out, yesterday)
+    const checkedDays = [today, null, "2026-04-01", "2026-07-07"];
     let lapsedSeen = 0;
     let awaitingSeen = 0;
     for (const status of ["detected", "confirmed", "dismissed", "ended"] as const) {
@@ -603,15 +607,15 @@ describe("seriesStaleness", () => {
             if (evidence === "lapsed") lapsedSeen += 1;
             if (evidence === "awaiting-statements") awaitingSeen += 1;
             expect(seriesIsProjected(status, evidence), `${status} · ${kind} · ${lastMatchedOn} · ${checked}`).toBe(
-              seriesIsForecast(row, today),
+              seriesIsForecast(row, today, checked),
             );
           }
         }
       }
     }
-    // the grid reaches the cases that matter: a lapsed series, of every money-out kind, at every status and every
-    // checked day — the lapse is judged on the day of the question — and a series awaiting statements
-    expect(lapsedSeen).toBe(4 * 4 * checkedDays.length);
+    // the grid reaches the cases that matter: a lapsed series, of every money-out kind, at every status, on the two
+    // checked days that read past its lapse line — the lapse is judged on read days (§6A 57) — and one awaiting
+    expect(lapsedSeen).toBe(4 * 4 * 2);
     expect(awaitingSeen).toBeGreaterThan(0);
   });
 });
@@ -734,15 +738,134 @@ describe("a series is late only on days the ledger has checked", () => {
     expect(seriesEvidence({ ...monthly, lastMatchedOn: "2026-09-20" }, today, "2026-08-12")).toBe("active");
   });
 
-  test("⛔ the forecast's lapse rule is not this rule: a money-out series past the lapse bar stays lapsed", () => {
-    // 157 days to today, past 3 cycles — the forecast drops it, and the All tab must say so whatever was checked
+  test("⚖️ the forecast's lapse is measured to the same checked day: quiet only over unread days, it awaits statements", () => {
+    // 157 days to today, past 3 cycles — but its account is read only through Jun 1, 29 days after its last charge
     const quiet = { ...monthly, lastMatchedOn: "2026-05-04" };
-    expect(seriesHasLapsed(quiet, today)).toBe(true);
-    expect(seriesEvidence(quiet, today, "2026-06-01")).toBe("lapsed");
-    // money in never lapses: the same quiet over unchecked days only awaits statements
+    expect(seriesHasLapsed(quiet, today, "2026-06-01")).toBe(false);
+    expect(seriesEvidence(quiet, today, "2026-06-01")).toBe("awaiting-statements");
+    // read through yesterday, the same quiet is past the lapse line on days the ledger has read: lapsed
+    expect(seriesHasLapsed(quiet, today, "2026-10-07")).toBe(true);
+    expect(seriesEvidence(quiet, today, "2026-10-07")).toBe("lapsed");
+    // money in never lapses: read or not, the same quiet is late at most
     expect(seriesEvidence({ ...quiet, kind: "income" }, today, "2026-06-01")).toBe("awaiting-statements");
+    expect(seriesEvidence({ ...quiet, kind: "income" }, today, "2026-10-07")).toBe("running-late");
   });
 });
+
+/*
+ * ⚖️ A SERIES LAPSES — drops out of the forecast — ONLY ON DAYS ITS ACCOUNTS' STATEMENTS HAVE COVERED: measured to its
+ * checked-through day, like running late, never to today across unread days (owner, 2026-10-08, §6A 57).
+ *
+ * 🔴 Measured on a copy of his ledger 2026-10-08 with no new imports, measured to today: Rocket Money lapsed Oct 18,
+ * FPL Oct 30, and the rent ($2,109.00), car lease, car insurance and Breezeline Dec 4–6 — on 2026-12-07 the
+ * subscriptions card's lapsed lines came to $3,281.48 a month, the runway's committed bills fell from $3,452.25 to
+ * $467.69 a month and /recurring's December forecast spent $282.21, purely because no statement had been uploaded.
+ */
+describe("a series lapses only on days the ledger has checked (§6A 57)", () => {
+  // monthly 30 → lapse line 30 × 3 + 3 = 93 days
+  const rent = {
+    cadence: "monthly" as const,
+    userCadence: null,
+    intervalDaysAvg: 30,
+    nextExpectedOn: "2026-10-01",
+    userNextExpectedOn: null,
+    nextExpectedAmountCents: -210_900,
+    userAmountCents: null,
+    status: "confirmed" as const,
+    kind: "bill" as const,
+    lastMatchedOn: "2026-09-02",
+  };
+
+  test("his rent on 2026-12-07: 96 days to today, 23 on Wells Fargo's read days — still forecast", () => {
+    const today = "2026-12-07";
+    expect(seriesHasLapsed(rent, today, "2026-09-24")).toBe(false);
+    expect(hasStoppedForecasting(rent, today, "2026-09-24")).toBe(false);
+    expect(seriesIsForecast(rent, today, "2026-09-24")).toBe(true);
+    expect(seriesEvidence(rent, today, "2026-09-24")).toBe("awaiting-statements");
+    // the same 96 days, READ: two rents missed on statements that cover them — it has stopped
+    expect(hasStoppedForecasting(rent, today, "2026-12-06")).toBe(true);
+    expect(seriesEvidence(rent, today, "2026-12-06")).toBe("lapsed");
+  });
+
+  test("read through yesterday or past today, a series lapses exactly as it did measured to today", () => {
+    for (const today of ["2026-08-14", "2026-10-08", "2026-12-07"]) {
+      for (const lastMatchedOn of ["2024-05-07", "2025-05-25", "2026-01-08", "2026-07-05", "2026-09-02", today]) {
+        const s = { ...rent, lastMatchedOn };
+        const overLine = diffDaysOf(lastMatchedOn, today) > 93;
+        for (const checked of [addDays(today, -1), today, "2099-12-31"]) {
+          expect(seriesHasLapsed(s, today, checked), `${lastMatchedOn} · ${today} · ${checked}`).toBe(overLine);
+        }
+      }
+    }
+  });
+
+  /*
+   * The boundary is the checked day's, the one running late uses: the checked day itself is read, so a frontier on
+   * the last day inside the line still lets the next day's charge be on time; read one day further, it is settled.
+   */
+  test("Amazon Prime's shape, read past every day it could have charged on time: lapsed on 2026-10-08", () => {
+    // 30.5 × 3 + 3 = 94.5: Jul 5 → Oct 8 is 95 days, Jul 5 → Oct 7 is 94
+    const prime = { ...rent, kind: "subscription" as const, intervalDaysAvg: 30.5, lastMatchedOn: "2026-07-05" };
+    const today = "2026-10-08";
+    expect(hasStoppedForecasting(prime, today, "2026-10-06")).toBe(false);
+    expect(hasStoppedForecasting(prime, today, "2026-10-07")).toBe(true);
+    expect(seriesEvidence(prime, today, "2026-10-07")).toBe("lapsed");
+  });
+
+  /*
+   * ⚠️ HIS Amazon Prime is NOT read that far. Its last two charges were Venture X (Jun 5, read through Sep 13) and
+   * Chase Sapphire (Jul 5, read through Sep 2), so `checkedThroughBySeries` gives Sep 2: Aug 5 was read empty on every
+   * card it uses, Sep 5 is unread on the card it charged last. One missed charge read — late, not stopped.
+   */
+  test("his Amazon Prime as the ledger reads it on 2026-10-08: one missed charge read, so running late", () => {
+    const prime = { ...rent, kind: "subscription" as const, intervalDaysAvg: 30.5, lastMatchedOn: "2026-07-05" };
+    expect(hasStoppedForecasting(prime, "2026-10-08", "2026-09-02")).toBe(false);
+    expect(seriesEvidence(prime, "2026-10-08", "2026-09-02")).toBe("running-late");
+  });
+
+  test("never posted never lapses — it has not started (unchanged)", () => {
+    for (const checked of [null, "2026-09-24", "2026-12-07"]) {
+      expect(hasStoppedForecasting({ ...rent, lastMatchedOn: null }, "2026-12-07", checked)).toBe(false);
+    }
+  });
+
+  test("money in never lapses, read or not (unchanged)", () => {
+    const pay = { ...rent, kind: "income" as const, nextExpectedAmountCents: 114_192, lastMatchedOn: "2026-01-08" };
+    for (const checked of [null, "2026-02-01", "2026-12-06"]) {
+      expect(hasStoppedForecasting(pay, "2026-12-07", checked)).toBe(false);
+    }
+  });
+
+  test("an account with no checked record cannot make a series lapse", () => {
+    expect(hasStoppedForecasting({ ...rent, lastMatchedOn: "2024-05-07" }, "2026-12-07", null)).toBe(false);
+  });
+
+  /*
+   * ⛔ Lapsed is late, further: the lapse line is past the late line and both are measured to the same day, so a
+   * series the forecast has let go is late on read days — never one still awaiting statements.
+   */
+  test("lapsed is always late on the same read days", () => {
+    const today = "2026-12-07";
+    let lapsedSeen = 0;
+    for (const lastMatchedOn of ["2024-05-07", "2026-07-05", "2026-08-01", "2026-09-02", "2026-11-30"]) {
+      for (const checked of [null, "2026-08-12", "2026-09-24", "2026-10-30", "2026-11-05", "2026-12-06"]) {
+        const s = { ...rent, lastMatchedOn };
+        if (!hasStoppedForecasting(s, today, checked)) continue;
+        lapsedSeen += 1;
+        expect(seriesStaleness(s, today, checked), `${lastMatchedOn} · ${checked}`).toMatchObject({
+          isStale: true,
+          awaitingStatements: false,
+        });
+      }
+    }
+    expect(lapsedSeen).toBeGreaterThan(3);
+  });
+});
+
+/** Whole days from `a` to `b` — the arithmetic the lapse line is drawn in, restated for the expectations above. */
+function diffDaysOf(a: string, b: string): number {
+  return Math.round((Date.parse(`${b}T00:00:00Z`) - Date.parse(`${a}T00:00:00Z`)) / 86_400_000);
+}
 
 /* ── synthetic corpus (Phase 6 fixed targets) ─────────────────────────── */
 
@@ -1135,6 +1258,16 @@ describe("detection on the synthetic corpus", () => {
     return row;
   }
 
+  /**
+   * The card — where Netflix posts — read through `to` by the balance walk. ⚖️ A series lapses only on days the ledger
+   * has checked (§6A 57): a fixture that means "quiet past its lapse line" has to have looked at the quiet days.
+   */
+  function cardReadThrough(to: string): void {
+    for (let day = "2026-01-01"; day <= to; day = addDays(day, 1)) {
+      bundle.db.insert(dailyBalances).values({ accountId: cardId, day, balanceCents: 0, basis: "derived" }).run();
+    }
+  }
+
   test("precision ≥ 95% and recall ≥ 90% against the known series", () => {
     const detected = allSeries();
     const known = new Set<string>(KNOWN_SERIES_NAMES);
@@ -1323,6 +1456,7 @@ describe("detection on the synthetic corpus", () => {
       .set({ lastMatchedOn: "2025-05-25" })
       .where(eq(recurringSeries.id, netflix.id))
       .run();
+    cardReadThrough(addDays(TODAY, -1));
 
     expect(upcomingOccurrences(bundle.db, TODAY, 30).some((o) => o.name === "Netflix")).toBe(false);
   });
@@ -1382,6 +1516,7 @@ describe("detection on the synthetic corpus", () => {
   // 13 months later is exactly the stale-suggestion case (real data: UBER *ONE)
   test("a stale stored next-expected is listed rolled forward, never as a past date", () => {
     const later = "2027-08-08";
+    cardReadThrough(addDays(later, -1));
     const listed = listSeries(bundle.db, later);
 
     const live = listed.filter((s) => s.status === "detected" || s.status === "confirmed");
@@ -1477,6 +1612,8 @@ describe("detection on the synthetic corpus", () => {
 });
 
 describe("seriesHasLapsed", () => {
+  // ⚖️ every day to the day of the question read: the frontier at today measures to today (§6A 57 — the describe
+  // "a series lapses only on days the ledger has checked" holds the unread days)
   const base = {
     cadence: "monthly" as const,
     userCadence: null,
@@ -1489,11 +1626,11 @@ describe("seriesHasLapsed", () => {
 
   test("a series that posted and then went quiet past its tolerance has lapsed", () => {
     // UBER *ONE: 446 days against a 49-day tolerance
-    expect(seriesHasLapsed({ ...base, lastMatchedOn: "2025-05-25" }, "2026-08-14")).toBe(true);
+    expect(seriesHasLapsed({ ...base, lastMatchedOn: "2025-05-25" }, "2026-08-14", "2026-08-14")).toBe(true);
   });
 
   test("a series still posting within tolerance has not", () => {
-    expect(seriesHasLapsed({ ...base, lastMatchedOn: "2026-07-16" }, "2026-08-14")).toBe(false);
+    expect(seriesHasLapsed({ ...base, lastMatchedOn: "2026-07-16" }, "2026-08-14", "2026-08-14")).toBe(false);
   });
 
   /**
@@ -1502,7 +1639,7 @@ describe("seriesHasLapsed", () => {
    */
   test("a series that has NEVER posted has not lapsed — it has not started", () => {
     const commitment = { ...base, lastMatchedOn: null };
-    expect(seriesHasLapsed(commitment, "2026-08-14")).toBe(false);
+    expect(seriesHasLapsed(commitment, "2026-08-14", "2026-08-14")).toBe(false);
     // while isSeriesActive, correctly, calls the same row inactive
     expect(isSeriesActive({ ...commitment, status: "confirmed" as const }, "2026-08-14")).toBe(false);
   });
@@ -1520,16 +1657,16 @@ describe("seriesHasLapsed", () => {
    */
   test("a monthly bill one cycle quiet is late, not lapsed — statements arrive monthly", () => {
     // the rent's exact shape on 2026-08-26: 49 days quiet, ~1.6 cycles
-    expect(seriesHasLapsed({ ...base, lastMatchedOn: "2026-07-08" }, "2026-08-26")).toBe(false);
+    expect(seriesHasLapsed({ ...base, lastMatchedOn: "2026-07-08" }, "2026-08-26", "2026-08-26")).toBe(false);
     // and FPL's, which was one day behind it
-    expect(seriesHasLapsed({ ...base, lastMatchedOn: "2026-07-10" }, "2026-08-26")).toBe(false);
+    expect(seriesHasLapsed({ ...base, lastMatchedOn: "2026-07-10" }, "2026-08-26", "2026-08-26")).toBe(false);
   });
 
   test("a bill that has missed several cycles has genuinely stopped", () => {
     // DIRECT PAYMENT HOFFMAN: 230 days quiet, ~7.5 cycles — he moved
-    expect(seriesHasLapsed({ ...base, lastMatchedOn: "2026-01-08" }, "2026-08-26")).toBe(true);
+    expect(seriesHasLapsed({ ...base, lastMatchedOn: "2026-01-08" }, "2026-08-26", "2026-08-26")).toBe(true);
     // CHATGPT SUBSCRIPTION: 841 days, ~27.6 cycles
-    expect(seriesHasLapsed({ ...base, lastMatchedOn: "2024-05-07" }, "2026-08-26")).toBe(true);
+    expect(seriesHasLapsed({ ...base, lastMatchedOn: "2024-05-07" }, "2026-08-26", "2026-08-26")).toBe(true);
   });
 
   /**
@@ -1542,7 +1679,7 @@ describe("seriesHasLapsed", () => {
   test("the forecast gate is looser than the active/inactive split, deliberately", () => {
     const oneCycleQuiet = { ...base, lastMatchedOn: "2026-07-08" };
     expect(isSeriesActive({ ...oneCycleQuiet, status: "confirmed" as const }, "2026-08-26")).toBe(false);
-    expect(seriesHasLapsed(oneCycleQuiet, "2026-08-26")).toBe(false);
+    expect(seriesHasLapsed(oneCycleQuiet, "2026-08-26", "2026-08-26")).toBe(false);
   });
 });
 

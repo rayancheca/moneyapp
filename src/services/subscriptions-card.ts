@@ -8,6 +8,7 @@ import { levelledMonthlyCents } from "@/lib/income-basis";
 import { wholeToleranceDays } from "@/lib/recurring-step";
 import { outsidePortfolioCashAccountIds } from "./accounts";
 import { activeTxnsInRange, isAgentsSeries } from "./analytics";
+import { checkedThroughBySeries } from "./cash-earnings";
 import { COMMITTED_KINDS, SPEND_BASELINE_MONTHS, baselineWindow } from "./committed";
 import {
   effectiveSeries,
@@ -106,6 +107,11 @@ export interface SubscriptionLine {
    * How far past its OWN tolerance the evidence is, in days. Null when the
    * series has not lapsed. One means a bill that is late; seven hundred means a
    * subscription that is over, and the card must not flatten the two.
+   *
+   * ⚖️ Counted on days the ledger has READ — to the day after the series' checked day, never past today
+   * (`checkedDaysSinceLastMatch`), the day its lapse is measured to (§6A 57) — so it cannot grow between uploads.
+   * 🔴 Counted to today, it grew a day each morning nothing was imported: "Amazon Prime · 47 days past tolerance" on
+   * his ledger 2026-10-08, 107 by Dec 7, with no statement read past Sep 2 on its card.
    */
   daysPastTolerance: number | null;
   /** net money out inside the window, refunds netted (positive = money out) */
@@ -257,6 +263,8 @@ export function subscriptionsCard(
   const lapsed: SubscriptionLine[] = [];
   let unforecastableCount = 0;
   let endedCount = 0;
+  // the day each series' accounts are read through — its lapse and its days past tolerance are measured there (§6A 57)
+  const checkedOf = checkedThroughBySeries(db, today);
 
   for (const s of rows) {
     const eff = effectiveSeries(s);
@@ -291,7 +299,9 @@ export function subscriptionsCard(
       continue;
     }
 
-    const staleness = seriesStaleness(s, today);
+    const checkedThrough = checkedOf(s.id);
+    // "last charged" is the age to today (`daysSinceLastMatch`); late and lapsed are read-day claims
+    const staleness = seriesStaleness(s, today, checkedThrough);
     const totals = posted.get(s.id) ?? { cents: 0, count: 0 };
     const line: SubscriptionLine = {
       seriesId: s.id,
@@ -317,17 +327,17 @@ export function subscriptionsCard(
 
     // exactly the pair `upcomingOccurrences` filters on, so this card's split
     // and the forecast's cannot disagree about which series are being projected
-    const stopsForecasting = hasStoppedForecasting(s, today);
+    const stopsForecasting = hasStoppedForecasting(s, today, checkedThrough);
     if (stopsForecasting) {
       lapsed.push({
         ...line,
         // a type narrowing, not a guard: `seriesHasLapsed` is false unless
-        // `lastMatchedOn` is set, and `daysSinceLastMatch` is null only when it
-        // is not — TypeScript cannot see that, the arithmetic can
+        // `checkedDaysSinceLastMatch` is set — TypeScript cannot see that, the
+        // arithmetic can
         daysPastTolerance:
-          staleness.daysSinceLastMatch === null
+          staleness.checkedDaysSinceLastMatch === null
             ? null
-            : staleness.daysSinceLastMatch - wholeToleranceDays(staleness.toleranceDays),
+            : staleness.checkedDaysSinceLastMatch - wholeToleranceDays(staleness.toleranceDays),
       });
     } else {
       live.push(line);

@@ -282,6 +282,8 @@ describe("recurringCalendar", () => {
     // feature: a dead subscription is cancelled; irregular cash pay is not.
     buildMonthlyNetflix();
     detectRecurringSeries(bundle.db, TODAY);
+    // ⚖️ the card read through yesterday: a series lapses only on days the ledger has checked (§6A 57)
+    cardCheckedThrough("2025-05-01", addDays(TODAY, -1));
     const lapse = (kind: "bill" | "income") =>
       bundle.db
         .update(recurringSeries)
@@ -690,6 +692,8 @@ describe("recurringCalendar", () => {
     // view July from a 'today' far past the last charge (2026-06-15): the series
     // is inactive, so no upcoming/missed clutter — but March still shows posted
     const farFuture = "2027-01-10";
+    // ⚖️ …and every day to it read: a series lapses only on days the ledger has checked (§6A 57)
+    cardCheckedThrough("2026-01-01", addDays(farFuture, -1));
     const july = recurringCalendar(bundle.db, "2026-07", farFuture);
     expect(july.entryCount).toBe(0);
     expect(july.missedCount).toBe(0);

@@ -100,7 +100,9 @@ export function overdueForSeries(
       ),
     )
     .all();
-  const live = rows.filter((r) => !hasStoppedForecasting(r, today));
+  // measured to each series' checked day, as every forward leg measures it (§6A 57)
+  const checkedThrough = checkedThroughBySeries(db, today);
+  const live = rows.filter((r) => !hasStoppedForecasting(r, today, checkedThrough(r.id)));
   if (live.length === 0) return { totalCents: 0, series: [] };
 
   // postings linked to these series, widened by the largest tolerance so a bill

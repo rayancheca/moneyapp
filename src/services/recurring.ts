@@ -928,6 +928,8 @@ const ANNUALIZED_MONTHS = 12;
 export function annualizedCentsOf(
   s: ForecastableRow & { id: string; name: string },
   today: string,
+  // the series' checked day — `seriesIsForecast` measures the lapse there (§6A 57)
+  checkedThrough: string | null,
 ): number | null {
   /*
    * ⛔ AN ENDED OR DISMISSED SERIES HAS NO YEAR AHEAD OF IT. The forecast does
@@ -943,7 +945,7 @@ export function annualizedCentsOf(
    * the owner's ledger 2026-10-08 `/recurring/<Amazon Prime>` read "Lapsed" over "~$59.88/yr", and its End dialog
    * "Leaving the forecast ~$59.88 / yr" — of $4.99 the forecast had stopped carrying that morning.
    */
-  if (!seriesIsForecast(s, today)) return null;
+  if (!seriesIsForecast(s, today, checkedThrough)) return null;
   const series = toProjectable(s);
   /*
    * ⛔ NO NEXT DATE IS NO FIGURE. `projectOccurrences` returns nothing without
@@ -1005,7 +1007,7 @@ export function listSeries(db: AppDatabase, today: string = todayIso()): SeriesV
       // forecast does not expect; stored, it is the past. 🔴 Rolled on status alone, a CONFIRMED subscription that
       // lapsed sat in the All tab's "Lapsed — no longer forecast" with a future Next — measured on a copy of his
       // ledger 2026-10-08 with Amazon Prime confirmed: "Nov 5".
-      const nextExpectedOn = seriesIsForecast(s, today)
+      const nextExpectedOn = seriesIsForecast(s, today, checkedThrough(s.id))
         ? nextStillToCome(db, s, today)
         : seriesIsOver(s.status)
           ? eff.nextExpectedOn
@@ -1033,7 +1035,7 @@ export function listSeries(db: AppDatabase, today: string = todayIso()): SeriesV
           : null,
         isActive: isSeriesActive(s, today),
         evidence: seriesEvidence(s, today, checkedThrough(s.id)),
-        annualizedCents: annualizedCentsOf(s, today),
+        annualizedCents: annualizedCentsOf(s, today, checkedThrough(s.id)),
         endsOn: s.userEndsOn ?? null,
       } satisfies SeriesView;
     })
@@ -1087,6 +1089,13 @@ export interface SeriesStaleness {
   lastMatchedOn: string | null;
   /** days from lastMatchedOn to today; null when there is nothing to measure */
   daysSinceLastMatch: number | null;
+  /**
+   * The quiet the ledger has READ: days from lastMatchedOn to the day after `checkedThrough`, never past today — what
+   * late (`isStale`) and lapsed (`seriesHasLapsed`) both measure, and the subscriptions card's "days past tolerance".
+   * Unmeasured (`checkedThrough` undefined) it is `daysSinceLastMatch`; null when never billed, or when nothing is
+   * checked — no read day can say a charge is missing.
+   */
+  checkedDaysSinceLastMatch: number | null;
   /** the effective step: user cadence → nominal, else the detected average gap */
   stepDays: number;
   /** step × INACTIVE_MISS_LIMIT + cadence grace — past this the evidence is late */
@@ -1230,6 +1239,9 @@ const INACTIVE_MISS_LIMIT = 1.5;
  * "should I keep predicting this?" is a question about the future, and being
  * wrong there deletes a real bill from a budget. Being too eager to call
  * something dead is the expensive mistake, so only the forecast gate moves.
+ *
+ * ⚠️ Since §6A 57 (owner, 2026-10-08) the cycles are counted on days the ledger has READ (`seriesHasLapsed`), so the
+ * cycle of import lag above can no longer reach it; the number is unchanged, and so is every lapse read to today.
  */
 const LAPSED_MISS_LIMIT = 3;
 
@@ -1258,9 +1270,10 @@ function lapsedToleranceDays(staleness: SeriesStaleness): number {
  * (Chase, last Jul 28) read late for charges due after Aug 12. Statements land monthly, each on its own day — the
  * gap between uploads is the normal state, not a warning (owner, 2026-08-05).
  *
- * ⚠️ `checkedThrough` undefined measures to today: a caller asking how OLD the evidence is (`isSeriesActive`,
- * `seriesHasLapsed`, the subscriptions card's "last charged") rather than claiming it is late. A surface that says
- * "running late", counts it, or tones a badge by it passes the frontier.
+ * ⚠️ `checkedThrough` undefined measures to today: a caller asking how OLD the evidence is (`isSeriesActive`) rather
+ * than claiming it is late — `daysSinceLastMatch`, the age "last seen" prints, is to today whatever is passed. A
+ * surface that says "running late", counts it, or tones a badge by it passes the frontier — and so does the
+ * forecast's lapse (`seriesHasLapsed`, §6A 57).
  */
 export function seriesStaleness(
   s: SeriesOverrides & { lastMatchedOn: string | null },
@@ -1287,14 +1300,22 @@ export function seriesStaleness(
     checkedThrough === undefined || checkedThrough === null || compareDates(addDays(checkedThrough, 1), today) >= 0
       ? today
       : addDays(checkedThrough, 1);
-  // never billed has nothing to be late FROM, checked or not; unmeasured is measured to today
+  // the quiet on read days; unmeasured is measured to today, and with nothing checked nothing has been read
+  const checkedDaysSinceLastMatch =
+    s.lastMatchedOn === null || checkedThrough === null
+      ? null
+      : checkedThrough === undefined
+        ? daysSinceLastMatch
+        : diffDays(s.lastMatchedOn, measuredTo);
+  // never billed has nothing to be late FROM, checked or not
   const lateOnCheckedDays =
-    s.lastMatchedOn === null || checkedThrough === undefined
+    s.lastMatchedOn === null
       ? pastTolerance
-      : checkedThrough !== null && diffDays(s.lastMatchedOn, measuredTo) > toleranceDays;
+      : checkedDaysSinceLastMatch !== null && checkedDaysSinceLastMatch > toleranceDays;
   return {
     lastMatchedOn: s.lastMatchedOn,
     daysSinceLastMatch,
+    checkedDaysSinceLastMatch,
     stepDays,
     toleranceDays,
     isStale: lateOnCheckedDays,
@@ -1355,14 +1376,25 @@ export function lapsedSeriesShouldStopForecasting(kind: SeriesKind): boolean {
  * $559.89/month of real lease from the Car budget to remove $4.99 of dead Uber.
  *
  * Lapsed means "it stopped", which only a series that once started can do.
+ *
+ * ⚖️ …and only ON DAYS THE LEDGER HAS READ: the quiet is measured to `checkedThrough` — the series' frontier from
+ * `checkedThroughBySeries`, the day "Awaiting statements" is measured to (`seriesStaleness`) — never to today across
+ * days no statement covers (owner, 2026-10-08, §6A 57). With nothing checked, nothing has lapsed. 🔴 Measured to today
+ * on a copy of his ledger 2026-10-08 with no new imports, Rocket Money lapsed Oct 18, FPL Oct 30, and the rent
+ * ($2,109.00), car lease, car insurance and Breezeline Dec 4–6: on 2026-12-07 the runway's committed bills fell from
+ * $3,452.25 to $467.69 a month and /recurring's December forecast spent $282.21 — every one of them waiting on an
+ * upload, none of them missed on a statement. Read through the day of the question, it lapses exactly as before.
+ *
+ * ⛔ No default for either day: the day of the question and the day it was read through are both the caller's to say.
  */
 export function seriesHasLapsed(
   s: SeriesOverrides & { lastMatchedOn: string | null },
-  today: string = todayIso(),
+  today: string,
+  checkedThrough: string | null,
 ): boolean {
-  const staleness = seriesStaleness(s, today);
-  if (staleness.lastMatchedOn === null || staleness.daysSinceLastMatch === null) return false;
-  return staleness.daysSinceLastMatch > lapsedToleranceDays(staleness);
+  const staleness = seriesStaleness(s, today, checkedThrough);
+  if (staleness.checkedDaysSinceLastMatch === null) return false;
+  return staleness.checkedDaysSinceLastMatch > lapsedToleranceDays(staleness);
 }
 
 /**
@@ -1379,8 +1411,10 @@ export function hasStoppedForecasting(
   s: SeriesOverrides & { kind: SeriesKind; lastMatchedOn: string | null },
   // no default: every caller says which day it is asking on
   today: string,
+  // …and how far the accounts it posts to are read (`checkedThroughBySeries`) — the lapse is measured there (§6A 57)
+  checkedThrough: string | null,
 ): boolean {
-  return lapsedSeriesShouldStopForecasting(s.kind) && seriesHasLapsed(s, today);
+  return lapsedSeriesShouldStopForecasting(s.kind) && seriesHasLapsed(s, today, checkedThrough);
 }
 
 /** What `seriesIsForecast` reads — the stored row, overrides intact, as `hasStoppedForecasting` takes it. */
@@ -1399,10 +1433,11 @@ type ForecastableRow = SeriesOverrides & { status: SeriesStatus; kind: SeriesKin
  */
 export function seriesIsForecast(
   s: ForecastableRow,
-  // no default, like `hasStoppedForecasting`: the day of the question
+  // no default, like `hasStoppedForecasting`: the day of the question, and the series' checked day
   today: string,
+  checkedThrough: string | null,
 ): boolean {
-  return !seriesIsOver(s.status) && !hasStoppedForecasting(s, today);
+  return !seriesIsOver(s.status) && !hasStoppedForecasting(s, today, checkedThrough);
 }
 
 /**
@@ -1557,7 +1592,7 @@ export function upcomingOccurrences(
     .where(inArray(recurringSeries.status, ["detected", "confirmed"]))
     .all();
   const agentsCash = outsidePortfolioCashAccountIds(db);
-  // late only on days the ledger has checked (`seriesStaleness`) — the chip and the footer's count read it
+  // late and lapsed only on days the ledger has checked (`seriesStaleness`) — the chip, the footer's count, the filter
   const checkedThrough = checkedThroughBySeries(db, today);
 
   // today is day ONE of the window — see the docstring's rent-twice measurement
@@ -1570,7 +1605,7 @@ export function upcomingOccurrences(
     // calls a NEVER-posted series inactive, which would delete the $559.89 car
     // lease and $361.49 insurance the owner registered for 2026-09-11 and that
     // have no postings yet by definition.
-    .filter((s) => !hasStoppedForecasting(s, today))
+    .filter((s) => !hasStoppedForecasting(s, today, checkedThrough(s.id)))
     .filter((s) => !isAgentsSeries(agentsCash, s))
     .flatMap((s) => {
       const staleness = seriesStaleness(s, today, checkedThrough(s.id));
@@ -1597,17 +1632,17 @@ export function upcomingOccurrences(
  * described by its status, and callers badge those separately.
  *
  * ⛔ Late only on days the ledger has checked (`seriesStaleness`): `checkedThrough` is the series' frontier from
- * `checkedThroughBySeries`, and past tolerance only after it is "awaiting-statements". Lapsed is asked FIRST and to
- * today, because it is the forecast's rule — a series the forecast has dropped must not be filed as one it still
- * projects.
+ * `checkedThroughBySeries`, and past tolerance only after it is "awaiting-statements". Lapsed is asked FIRST, because
+ * it is the forecast's rule — a series the forecast has dropped must not be filed as one it still projects — and on
+ * the same read days (§6A 57), so a lapsed series is always late there too, never one awaiting statements.
  */
 export function seriesEvidence(
   s: SeriesOverrides & { status: SeriesStatus; kind: SeriesKind; lastMatchedOn: string | null },
   today: string,
-  checkedThrough: string | null | undefined,
+  checkedThrough: string | null,
 ): SeriesEvidence {
   if (s.lastMatchedOn === null) return "never-billed";
   if (isSeriesActive(s, today)) return "active";
-  if (hasStoppedForecasting(s, today)) return "lapsed";
+  if (hasStoppedForecasting(s, today, checkedThrough)) return "lapsed";
   return seriesStaleness(s, today, checkedThrough).awaitingStatements ? "awaiting-statements" : "running-late";
 }

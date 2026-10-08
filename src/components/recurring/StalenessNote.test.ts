@@ -7,6 +7,7 @@ import { StaleFooter, StaleMark } from "./StalenessNote";
 const late: SeriesStaleness = {
   lastMatchedOn: "2026-07-05",
   daysSinceLastMatch: 72,
+  checkedDaysSinceLastMatch: 72,
   stepDays: 30,
   toleranceDays: 48,
   isStale: true,
@@ -15,6 +16,7 @@ const late: SeriesStaleness = {
 const never: SeriesStaleness = {
   lastMatchedOn: null,
   daysSinceLastMatch: null,
+  checkedDaysSinceLastMatch: null,
   stepDays: 30,
   toleranceDays: 48,
   isStale: true,
@@ -100,6 +102,8 @@ describe("awaiting statements", () => {
   const unread: SeriesStaleness = {
     lastMatchedOn: "2026-09-24",
     daysSinceLastMatch: 14,
+    // Sep 24 → Sep 25, the day after its checked day
+    checkedDaysSinceLastMatch: 1,
     stepDays: 7,
     toleranceDays: 12.5,
     isStale: false,

@@ -4,12 +4,14 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { createDatabase, type DbBundle } from "@/db/client";
 import { accounts } from "@/db/schema/accounts";
+import { dailyBalances } from "@/db/schema/balances";
 import { categories } from "@/db/schema/categories";
 import { institutions } from "@/db/schema/institutions";
 import { recurringSeries, type Cadence, type SeriesKind, type SeriesStatus } from "@/db/schema/recurring";
 import { transactionSplits } from "@/db/schema/transaction-splits";
 import { transactions } from "@/db/schema/transactions";
 import { seedDatabase } from "@/db/seed";
+import { addDays } from "@/lib/dates";
 import { upcomingOccurrences } from "./recurring";
 import { subscriptionsCard } from "./subscriptions-card";
 
@@ -80,6 +82,16 @@ beforeEach(() => {
       updatedAt: now(),
     })
     .run();
+  /*
+   * ⚖️ …AND IT HAS TO HAVE BEEN READ: a series lapses only on days the ledger has checked (§6A 57), and every series
+   * below names this account. Read by the balance walk from the day it opens through today, so "lapsed" here means
+   * what it meant measured to today.
+   */
+  const read: (typeof dailyBalances.$inferInsert)[] = [];
+  for (let day = "2025-01-01"; day <= TODAY; day = addDays(day, 1)) {
+    read.push({ accountId, day, balanceCents: 0, basis: "derived" });
+  }
+  bundle.db.insert(dailyBalances).values(read).run();
 });
 
 afterEach(() => {
@@ -122,6 +134,8 @@ function addSeries(opts: {
       lastMatchedOn: opts.lastMatchedOn === undefined ? FRESH : opts.lastMatchedOn,
       userAmountCents: opts.userAmountCents ?? null,
       userEndsOn: opts.userEndsOn ?? null,
+      // the read account (see beforeEach): where every series here posts
+      accountId,
       createdAt: now(),
       updatedAt: now(),
     })

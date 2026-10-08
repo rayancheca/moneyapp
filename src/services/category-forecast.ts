@@ -16,6 +16,7 @@ import { outsidePortfolioCashAccountIds } from "./accounts";
 import { loadCategoryIndex, offAgentsCash, recurringSeriesIdsForSubtree, type CategoryIndex } from "./analytics";
 import { listBudgetableCategories } from "./budgets";
 import { isUpfrontCarRow, upfrontCarRule, type UpfrontCarRule } from "./car-upfront";
+import { checkedThroughBySeries } from "./cash-earnings";
 import { trailingFullMonths } from "./forecast";
 import { hasStoppedForecasting, projectOccurrences, toProjectable } from "./recurring";
 import { linkIsNotRecurring, seriesIdsNotDrawnAsRecurring } from "./recurring-link";
@@ -82,6 +83,8 @@ interface PredictContext {
   upfrontCar: UpfrontCarRule | null;
   /** the day a lapsed series is measured against */
   today: string;
+  /** `checkedThroughBySeries` — the day each series' lapse is measured to (§6A 57) */
+  checkedThrough: (seriesId: string) => string | null;
   target: PeriodBounds;
   targetLabel: string;
   months: { start: string; end: string; key: string }[];
@@ -224,6 +227,7 @@ function buildContext(db: AppDatabase, today: string): PredictContext {
     agentsCash: [...agentsCash],
     upfrontCar: upfrontCarRule(index, agentsCash, notDrawnAsRecurring),
     today,
+    checkedThrough: checkedThroughBySeries(db, today),
     target,
     targetLabel: monthLabel(monthKey(target.start)),
     months: trailingFullMonths(today, PREDICT_TRAILING_MONTHS),
@@ -258,7 +262,7 @@ function predictWith(
     // a series that stopped posting projects nothing — the gate budgetTail,
     // the month forecast and the calendar already apply (a never-posted
     // commitment has not lapsed: it has not started)
-    if (hasStoppedForecasting(series, ctx.today)) continue;
+    if (hasStoppedForecasting(series, ctx.today, ctx.checkedThrough(series.id))) continue;
     if (!subtreeSeriesIds.has(series.id)) continue;
     for (const o of projectOccurrences(toProjectable(series), ctx.target.start, ctx.target.end)) {
       if (o.amountCents < 0) occurrences.push({ day: o.date, amountCents: -o.amountCents });

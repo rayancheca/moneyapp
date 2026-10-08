@@ -5,9 +5,11 @@ import { eq } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { createDatabase, type DbBundle } from "@/db/client";
 import { seedDatabase } from "@/db/seed";
+import { dailyBalances } from "@/db/schema/balances";
 import { categories } from "@/db/schema/categories";
 import { institutions } from "@/db/schema/institutions";
 import { recurringSeries, type SeriesKind } from "@/db/schema/recurring";
+import { transactions } from "@/db/schema/transactions";
 import { arrearsSentence } from "@/lib/committed";
 import { addDays } from "@/lib/dates";
 import { createAccount } from "./accounts";
@@ -34,12 +36,17 @@ import { subscriptionsCard } from "./subscriptions-card";
  * ⛔ The fixture is that shape: a $4.99 subscription last seen 94 days before TODAY on a 30-day step (its lapse line
  * is 93 days, so it lapses ON today), due on the 5th, and a rent that is merely late beside it so no assertion here
  * can pass by every surface being empty.
+ *
+ * ⚖️ The subscription's card is read past today: a series lapses only on days the ledger has checked (§6A 57), and
+ * these tests are about the day it does. The rent's checking account stays unread, so its Oct 1 is still "no import
+ * has covered it yet".
  */
 const TODAY = "2026-10-08";
 
 let dir: string;
 let bundle: DbBundle;
 let checking: string;
+let card: string;
 let prime: string;
 let rent: string;
 
@@ -54,6 +61,7 @@ function addSeries(opts: {
   amountCents: number;
   lastMatchedOn: string;
   categoryName: string;
+  accountId?: string;
 }): string {
   return bundle.db
     .insert(recurringSeries)
@@ -68,7 +76,7 @@ function addSeries(opts: {
       nextExpectedAmountCents: opts.amountCents,
       lastMatchedOn: opts.lastMatchedOn,
       userCategoryId: categoryId(opts.categoryName),
-      accountId: checking,
+      accountId: opts.accountId ?? checking,
     })
     .returning({ id: recurringSeries.id })
     .get().id;
@@ -80,6 +88,11 @@ beforeEach(() => {
   seedDatabase(bundle.db);
   const chase = bundle.db.select().from(institutions).where(eq(institutions.name, "Chase")).get()!;
   checking = createAccount(bundle.db, { institutionId: chase.id, name: "Checking", type: "checking" });
+  card = createAccount(bundle.db, { institutionId: chase.id, name: "Card", type: "credit" });
+  // the card read by the balance walk through the end of October — every day of the sweeps below (§6A 57)
+  for (let day = "2026-06-01"; day <= "2026-10-31"; day = addDays(day, 1)) {
+    bundle.db.insert(dailyBalances).values({ accountId: card, day, balanceCents: 0, basis: "derived" }).run();
+  }
   // Jul 6 → Oct 8 is 94 days: past the 93-day lapse line today, on it (not past) yesterday
   prime = addSeries({
     name: "Prime",
@@ -88,7 +101,26 @@ beforeEach(() => {
     amountCents: -499,
     lastMatchedOn: "2026-07-06",
     categoryName: "Streaming",
+    accountId: card,
   });
+  // its last charge, on the card — an account with no rows has no checked days, only a hand-kept balance
+  bundle.db
+    .insert(transactions)
+    .values({
+      accountId: card,
+      postedOn: "2026-07-06",
+      amountCents: -499,
+      rawDescription: "PRIME",
+      normalizedDescription: "PRIME",
+      recurringSeriesId: prime,
+      status: "active",
+      needsReview: false,
+      occurrenceIndex: 0,
+      dedupeHash: "prime-2026-07-06",
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    })
+    .run();
   rent = addSeries({
     name: "Rent",
     kind: "bill",
@@ -152,8 +184,10 @@ describe("a series the forecast has stopped forecasting is not owed this month e
   });
 
   test("swept across the lapse: owed while it is forecast, nowhere from the day it is not", () => {
+    const states = new Set<boolean>();
     for (let day = "2026-10-06"; day <= "2026-10-12"; day = addDays(day, 1)) {
       const stopped = subscriptionsCard(bundle.db, day)!.lapsed.some((l) => l.name === "Prime");
+      states.add(stopped);
       const owed = owedOn(prime, "Prime", "Streaming", day);
       if (stopped) {
         expect({ day, ...owed }).toEqual({ day, ...NOWHERE });
@@ -169,6 +203,8 @@ describe("a series the forecast has stopped forecasting is not owed this month e
         });
       }
     }
+    // ⛔ the sweep crosses the lapse — both branches above ran, or it proved nothing
+    expect(states).toEqual(new Set([false, true]));
   });
 });
 
@@ -215,8 +251,10 @@ describe("a series the forecast has let go has no future on its own page or in t
   });
 
   test("swept across the lapse: a future while it is forecast, none from the day it is not", () => {
+    const states = new Set<boolean>();
     for (let day = "2026-10-06"; day <= "2026-10-12"; day = addDays(day, 1)) {
       const stopped = subscriptionsCard(bundle.db, day)!.lapsed.some((l) => l.name === "Prime");
+      states.add(stopped);
       const f = forwardOf(prime, "Streaming", day);
       if (stopped) {
         expect({ day, ...f }).toEqual({
@@ -239,6 +277,8 @@ describe("a series the forecast has let go has no future on its own page or in t
         });
       }
     }
+    // ⛔ the sweep crosses the lapse — both branches above ran, or it proved nothing
+    expect(states).toEqual(new Set([false, true]));
   });
 
   test("the late rent beside it keeps its whole future — this is the lapse, not lateness", () => {
