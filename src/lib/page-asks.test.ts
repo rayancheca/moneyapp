@@ -1,15 +1,18 @@
-import { describe, expect, test } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
 import {
   afterCommit,
   askedParams,
+  BACK_SAVE_WAIT_MS,
   backSave,
   canonicalHref,
   createPageAsks,
   isForeign,
+  navigateAfterBackSaves,
   pageLinkHref,
   pressBase,
   withAsk,
   type PageAsk,
+  type PageAsks,
   type PressTarget,
 } from "./page-asks";
 import type { ViewSpec } from "./view-state";
@@ -418,6 +421,96 @@ describe("createPageAsks: Back's saves still being written", () => {
     expect(asks.isNewest("/h?view=returns&range=1M")).toBe(true);
     asks.moved();
     expect(asks.isNewest("/h?view=returns&range=1M")).toBe(false);
+  });
+});
+
+/**
+ * A URL writer that writes nothing (a range pill, ‹ ›, a /recurring tab, the benchmark) goes once
+ * Back's saves have landed — and 🔴 a save that never lands held the range pill forever.
+ */
+describe("navigateAfterBackSaves", () => {
+  const flush = (): Promise<void> => new Promise((resolve) => setImmediate(resolve));
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  test("goes at once while no save of Back's view is being written", () => {
+    const asks = createPageAsks();
+    asks.ask("/h?range=1M", {});
+    const go = vi.fn();
+    navigateAfterBackSaves(asks, "/h?range=1M", go);
+    expect(go).toHaveBeenCalledTimes(1);
+  });
+
+  test("goes once Back's saves have landed, while its URL is still the newest asked", async () => {
+    const asks = createPageAsks();
+    let land!: () => void;
+    asks.backSaveSent(new Promise<void>((resolve) => (land = resolve)));
+    asks.ask("/h?range=1M", {});
+    const go = vi.fn();
+    navigateAfterBackSaves(asks, "/h?range=1M", go);
+    await flush();
+    expect(go).not.toHaveBeenCalled();
+    land();
+    await flush();
+    expect(go).toHaveBeenCalledTimes(1);
+  });
+
+  test("a save that never lands holds it BACK_SAVE_WAIT_MS, and no longer", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const asks = createPageAsks();
+    asks.backSaveSent(new Promise<void>(() => {})); // hung: never lands, never refused
+    asks.ask("/h?range=1M", {});
+    const go = vi.fn();
+    navigateAfterBackSaves(asks, "/h?range=1M", go);
+    await vi.advanceTimersByTimeAsync(BACK_SAVE_WAIT_MS - 1);
+    expect(go).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(go).toHaveBeenCalledTimes(1);
+  });
+
+  test("goes nowhere when a newer URL was asked while it waited: the newer one goes", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const asks = createPageAsks();
+    asks.backSaveSent(new Promise<void>(() => {}));
+    asks.ask("/h?range=1M", {});
+    const pill = vi.fn();
+    navigateAfterBackSaves(asks, "/h?range=1M", pill);
+    asks.ask("/h?range=1M&bench=QQQ", {}); // the benchmark, built on the pill's URL
+    const bench = vi.fn();
+    navigateAfterBackSaves(asks, "/h?range=1M&bench=QQQ", bench);
+    await vi.advanceTimersByTimeAsync(BACK_SAVE_WAIT_MS);
+    expect(pill).not.toHaveBeenCalled();
+    expect(bench).toHaveBeenCalledTimes(1);
+  });
+
+  test("goes nowhere when he followed a link, or went Back, while it waited", async () => {
+    const link = (asks: PageAsks): void => asks.departing("/elsewhere", "push"); // the sidebar's
+    const back = (asks: PageAsks): void => asks.moved();
+    for (const move of [link, back]) {
+      const asks = createPageAsks();
+      let land!: () => void;
+      asks.backSaveSent(new Promise<void>((resolve) => (land = resolve)));
+      asks.ask("/h?range=1M", {});
+      const pill = vi.fn();
+      navigateAfterBackSaves(asks, "/h?range=1M", pill);
+      move(asks);
+      land();
+      await flush();
+      expect(pill).not.toHaveBeenCalled();
+    }
+  });
+
+  test("a save that lands first leaves no timer behind", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const asks = createPageAsks();
+    let land!: () => void;
+    asks.backSaveSent(new Promise<void>((resolve) => (land = resolve)));
+    asks.ask("/h?range=1M", {});
+    navigateAfterBackSaves(asks, "/h?range=1M", () => {});
+    land();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(vi.getTimerCount()).toBe(0);
   });
 });
 

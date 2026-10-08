@@ -296,13 +296,17 @@ export function backSave(
 /** How a navigation enters the browser's history. */
 export type HistoryKind = "push" | "replace";
 
-/** Where a press navigates once its write has landed, and how (`PageAsks.landing`). */
+/**
+ * Where a press navigates once its write has landed, and how (`PageAsks.landing`) — and where a URL
+ * writer that writes nothing goes (`useUrlWriter`).
+ */
 export interface Landing {
   href: string;
   kind: HistoryKind;
   /**
-   * false for an asked URL (a mid-page chart stays under the cursor); true for a link made
-   * again — Next's default, which every link in the app keeps (none passes `scroll: false`)
+   * false for a press's asked URL, a range pill's or the benchmark's (a mid-page chart stays under
+   * the cursor); true for a link, made again or a same-page one followed (‹ ›, a tab) — Next's
+   * default, which every link in the app keeps (none passes `scroll: false`)
    */
   scroll: boolean;
 }
@@ -389,9 +393,10 @@ export interface PageAsks {
   backSaveSent(save: Promise<unknown>): void;
   /**
    * Settles once every save of Back's view sent so far has landed; null when none is being
-   * written. ⚖️ B2: a URL writer that writes nothing (a range pill) navigates after it — a
-   * navigation overtakes a server action in Next's queue, and 🔴 the pill's page, drawn before
-   * Back's save landed, drew the saved view he had walked away from.
+   * written. ⚖️ B2: a URL writer that writes nothing (a range pill, ‹ ›, a tab, the benchmark)
+   * navigates after it, or after BACK_SAVE_WAIT_MS (`navigateAfterBackSaves`) — a navigation
+   * overtakes a server action in Next's queue, and 🔴 the pill's page, drawn before Back's save
+   * landed, drew the saved view he had walked away from.
    */
   backSavesLanding(): Promise<void> | null;
 }
@@ -485,4 +490,42 @@ export function createPageAsks(): PageAsks {
     },
     backSavesLanding: () => (backSaves.length === 0 ? null : Promise.all(backSaves).then(() => undefined)),
   };
+}
+
+/**
+ * How long a URL writer that writes nothing waits on Back's saves (`navigateAfterBackSaves`) before
+ * it goes anyway. A save lands in well under a second, a dev server compiling the action in a few;
+ * one that has not landed by then (a server that took it and never answered) has left the saved
+ * view the one he walked away from, and every page drawn draws that anyway. 🔴 Unbounded, a hung
+ * save held the range pill forever.
+ */
+export const BACK_SAVE_WAIT_MS = 5_000;
+
+/**
+ * Navigates (`go`) a URL writer that writes nothing — a range pill, a period arrow ‹ ›, a /recurring
+ * tab, the benchmark — to `href`, the URL it has just asked for: at once while no save of Back's view
+ * is being written; else once they have landed or BACK_SAVE_WAIT_MS has passed, whichever is first,
+ * and then only while `href` is still the newest asked (`isNewest`): a press made meanwhile goes to
+ * its own URL, built on this one, and a link followed or a Back meanwhile is where he went.
+ *
+ * ⚖️ B2: a navigation overtakes a server action in Next's queue, and 🔴 the writer's page, drawn
+ * before Back's save landed, drew the saved view he had walked away from — the range pill waited;
+ * ‹ ›, the tabs and the benchmark did not. The wait is a plain promise, never a React transition:
+ * 🔴 the pill awaited it inside one, and React holds every transition's update until each async one
+ * it is entangled with has settled — with Back's save hung, a link he followed next was never drawn.
+ */
+export function navigateAfterBackSaves(asks: PageAsks, href: string, go: () => void): void {
+  const landing = asks.backSavesLanding();
+  if (landing === null) {
+    go();
+    return;
+  }
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const waited = new Promise<void>((resolve) => {
+    timer = setTimeout(resolve, BACK_SAVE_WAIT_MS);
+  });
+  void Promise.race([landing, waited]).then(() => {
+    clearTimeout(timer);
+    if (asks.isNewest(href)) go();
+  });
 }

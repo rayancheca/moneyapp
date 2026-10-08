@@ -7,8 +7,9 @@ import { CASH_VIEW_SPEC } from "@/components/spending/spending-view-spec";
 import { CALENDAR_VIEW_SPEC, RECURRING_CALENDAR_SURFACE } from "@/components/recurring/recurring-view-spec";
 import { WHERE_VIEW_SPEC } from "@/lib/massif-layout";
 import { PERIOD_PARAM_KEYS } from "@/lib/period";
+import { BACK_SAVE_WAIT_MS } from "@/lib/page-asks";
 import { resolveViewState, viewStateToParams, type ViewState } from "@/lib/view-state";
-import { idle, World, type HarnessPage } from "./useViewState.harness";
+import { idle, World, type HarnessPage, type ServerWork } from "./useViewState.harness";
 
 vi.mock("next/navigation", async () => (await import("./useViewState.harness")).nextNavigation);
 vi.mock("@/app/settings/actions", async () => (await import("./useViewState.harness")).settingsActions);
@@ -75,7 +76,20 @@ afterEach(async () => {
   for (const key of Object.keys(ui)) delete ui[key];
   for (const key of Object.keys(pills)) delete pills[key];
   pressOnDraw = null;
+  vi.useRealTimers();
 });
+
+/**
+ * Serves every save of Back's view the server holds, oldest first, checking before each that the
+ * URL writer pressed meanwhile has asked the server for nothing: it waits for them to land.
+ */
+async function serveBackSavesFirst(page: { readonly pending: ServerWork[]; serve(kind: "write"): Promise<ServerWork> }) {
+  expect(page.pending.some((work) => work.kind === "write")).toBe(true);
+  while (page.pending.some((work) => work.kind === "write")) {
+    expect(page.pending.filter((work) => work.kind === "render")).toEqual([]);
+    await page.serve("write");
+  }
+}
 
 // ---------------------------------------------------------------- a holding: one switcher
 interface HoldingRsc {
@@ -955,6 +969,110 @@ describe("Back/Forward to a page with view pills", () => {
     expect(page.shown).toMatchObject({ view: { view: "value" } });
     expect(page.persisted.investments).toMatchObject({ view: "value" });
     expect(page.history.map((entry) => entry.url)).toEqual(["/investments?range=1M", "/investments?range=1Y&view=returns"]);
+  });
+
+  /**
+   * 🔴 A save of Back's view that never lands — a server that took it and never answered — held the
+   * pill forever, and every navigation after it (below). It goes after BACK_SAVE_WAIT_MS: by then
+   * the saved view is still the one he walked away from, and any page drawn draws it anyway.
+   */
+  test("a range pill pressed while Back's save hangs goes after BACK_SAVE_WAIT_MS, never before", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const page = await open(portfolioPage, "/investments?range=1Y");
+    ui.portfolio!.setView("view", "returns");
+    await page.settle();
+    page.back();
+    await idle(); // Back's save, held: it never lands
+
+    pills.range!("1M");
+    await vi.advanceTimersByTimeAsync(BACK_SAVE_WAIT_MS - 1);
+    await idle();
+    expect(page.pending).toEqual([{ kind: "write", label: 'investments {"view":"value","unit":"dollar","lens":"chart"}' }]);
+    await vi.advanceTimersByTimeAsync(1);
+    await idle();
+    await page.serve("render");
+
+    expect(page.url).toBe("/investments?range=1M");
+    expect(page.pending).toEqual([{ kind: "write", label: 'investments {"view":"value","unit":"dollar","lens":"chart"}' }]);
+  });
+
+  /**
+   * 🔴 The pill waited inside a transition, and React holds a transition's update until every async
+   * one it is entangled with has settled: with Back's save hung, a link he followed next — any
+   * navigation — was never drawn. The wait holds nothing but the pill.
+   */
+  test("a link followed while a range pill waits on Back's save is drawn at once", async () => {
+    const page = await open(portfolioPage, "/investments?range=1Y");
+    ui.portfolio!.setView("view", "returns");
+    await page.settle();
+    page.back();
+    await idle(); // Back's save, held
+
+    pills.range!("1M");
+    await idle();
+    page.router.push("/investments?view=returns"); // a link that carries a view
+    await idle();
+    await page.serve("render");
+    expect(ui.portfolio!.state).toMatchObject({ view: "returns" }); // drawn, Back's save still held
+
+    await page.settle();
+    expect(page.url).toBe("/investments?view=returns"); // and the pill, no longer the newest, goes nowhere
+  });
+
+  /** ⚖️ B2, the same for every URL writer that writes nothing: a period arrow, a tab, the benchmark */
+  test("‹ followed while Back's saves are being written goes once they land", async () => {
+    const page = await open(spendingPage, "/spending?period=2026-07");
+    ui.cash!.setView("cash", "table");
+    await page.settle();
+    page.back();
+    await idle();
+
+    pills.period!("2026-06");
+    await idle();
+    await serveBackSavesFirst(page);
+    await page.settle();
+
+    expect(page.url).toBe("/spending?period=2026-06");
+    expect(page.shown).toMatchObject({ cash: { cash: "chart" } });
+    expect(page.persisted.spending).toMatchObject({ cash: "chart" });
+  });
+
+  test("All then Calendar, clicked while Back's save is being written: the row height Back showed", async () => {
+    const page = await open(recurringPage, "/recurring?tab=calendar");
+    ui.cal!.setView("cal", "compact");
+    await page.settle();
+    page.back();
+    await idle();
+
+    pills.tab!("all");
+    pills.tab!("calendar");
+    await idle();
+    await serveBackSavesFirst(page);
+    await page.settle();
+
+    expect(page.url).toBe("/recurring?tab=calendar");
+    expect(page.shown).toMatchObject({ cal: { cal: "regular" } });
+    expect(page.navigations.map((nav) => nav.url)).toEqual([
+      "/recurring?tab=calendar&cal=compact",
+      "/recurring?tab=calendar", // All, no longer the newest once the save landed, went nowhere
+    ]);
+  });
+
+  test("a benchmark picked while Back's save is being written goes once it lands", async () => {
+    const page = await open(portfolioPage, "/investments?range=1Y");
+    ui.portfolio!.setView("view", "returns");
+    await page.settle();
+    page.back();
+    await idle();
+
+    pills.bench!("QQQ");
+    await idle();
+    await serveBackSavesFirst(page);
+    await page.settle();
+
+    expect(page.url).toBe("/investments?range=1Y&bench=QQQ");
+    expect(page.shown).toMatchObject({ view: { view: "value" } });
+    expect(page.persisted.investments).toMatchObject({ view: "value" });
   });
 
   /** 🔴 The same across /spending's two cards: the lens press drew the cash card he had left. */

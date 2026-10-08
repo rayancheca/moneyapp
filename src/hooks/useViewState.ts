@@ -6,6 +6,7 @@ import { setDimension, viewHrefQuery, type ViewSpec, type ViewState } from "@/li
 import type { Landing, PressBase } from "@/lib/page-asks";
 import { saveViewPreferenceAction } from "@/app/settings/actions";
 import { usePageAsks } from "./usePageAsks";
+import { useUrlWriter } from "./useUrlWriter";
 
 /**
  * The React glue over the pure view-state model (NS#2 Pillar 2). The RSC resolves
@@ -79,6 +80,7 @@ export function useViewState(opts: UseViewStateOptions): UseViewStateResult {
   const { surface, spec, state, basePath, baseParams, carry = NO_CARRY } = opts;
   const router = useRouter();
   const asks = usePageAsks();
+  const write = useUrlWriter();
   const [isPending, startTransition] = useTransition();
 
   const pressBase = useCallback(
@@ -131,8 +133,9 @@ export function useViewState(opts: UseViewStateOptions): UseViewStateResult {
   // dimensions his saved view drew, and of those the URL held only the ones a press of his put
   // there (`backSave`) — never a linked view. A carried key only as the URL holds it, and only
   // when his press put it there: the hero's `accts` is every account in its URL when nothing is
-  // curated, and saving that would curate. Best-effort and silent, like a press's own; a range
-  // pill pressed while it is being written navigates once it lands (`backSavesLanding`).
+  // curated, and saving that would curate. Best-effort and silent, like a press's own; a URL writer
+  // that writes nothing (a range pill, ‹ ›, a tab, `setParam`) pressed while it is being written
+  // navigates once it lands, or after BACK_SAVE_WAIT_MS (`useUrlWriter`).
   const resavedFor = useRef<number | null>(null);
   useLayoutEffect(() => {
     const back = asks?.backLanding() ?? null;
@@ -152,16 +155,17 @@ export function useViewState(opts: UseViewStateOptions): UseViewStateResult {
     [spec, updateView],
   );
 
+  // writes nothing itself, so ⚖️ B2: while Back's save is being written it goes once that lands, or
+  // after BACK_SAVE_WAIT_MS, as the range pill does (`useUrlWriter`)
   const setParam = useCallback(
     (key: string, value: string | null) => {
       const base = pressBase();
       const { [key]: _replaced, ...rest } = base.params;
       const params = value === null ? rest : { ...rest, [key]: value };
       const href = `${basePath}${viewHrefQuery(spec, base.view, { ...params, ...carriedParams(carry, base.view) })}`;
-      asks?.ask(href, {});
-      router.push(href, { scroll: false });
+      write({ href, kind: "push", scroll: false });
     },
-    [asks, pressBase, spec, basePath, carry, router],
+    [pressBase, spec, basePath, carry, write],
   );
 
   return { state, setView, updateView, setParam, isPending };
