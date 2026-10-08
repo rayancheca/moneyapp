@@ -185,8 +185,9 @@ export type ScheduleProven = boolean;
  * `observedThrough` is the last day the ledger has actually been shown for the
  * account(s) this series bills on — `null` when nothing is known at all, which
  * is the most cautious input and yields the most cautious answer. ⚖️ An account
- * no statement will ever come for (archived, or a cash wallet) counts as shown
- * through today (`silenceObservedThrough`, 2026-10-08): nothing more is coming.
+ * no statement will ever come for (archived, a cash wallet, or one never
+ * imported) counts as shown through today (`silenceObservedThrough`,
+ * 2026-10-08): nothing more is coming.
  * `scheduleIsProven` says whether the expected DATE is worth holding a biller
  * to; see `ScheduleProven`.
  *

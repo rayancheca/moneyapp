@@ -38,8 +38,10 @@ import { subscriptionsCard } from "./subscriptions-card";
  * can pass by every surface being empty.
  *
  * ⚖️ The subscription's card is read past today: a series lapses only on days the ledger has checked (§6A 57), and
- * these tests are about the day it does. The rent's checking account stays unread, so its Oct 1 is still "no import
- * has covered it yet".
+ * these tests are about the day it does. The rent's checking account is read only through Sep 24, so its Oct 1 is
+ * still "no import has covered it yet". ⚠️ Read through Sep 24, not left with nothing read: an account nothing has
+ * been read on counts as read through today, as an archived one does (review of 6eee6ea), and its Oct 1 would be
+ * "never posted".
  */
 const TODAY = "2026-10-08";
 
@@ -82,6 +84,27 @@ function addSeries(opts: {
     .get().id;
 }
 
+/** A payment the series' own row records, on `accountId`. */
+function paid(accountId: string, seriesId: string, postedOn: string, amountCents: number, label: string): void {
+  bundle.db
+    .insert(transactions)
+    .values({
+      accountId,
+      postedOn,
+      amountCents,
+      rawDescription: label,
+      normalizedDescription: label,
+      recurringSeriesId: seriesId,
+      status: "active",
+      needsReview: false,
+      occurrenceIndex: 0,
+      dedupeHash: `${label}-${postedOn}`,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    })
+    .run();
+}
+
 beforeEach(() => {
   dir = fs.mkdtempSync(path.join(os.tmpdir(), "moneyapp-arrears-lapsed-"));
   bundle = createDatabase(path.join(dir, "t.db"));
@@ -104,23 +127,7 @@ beforeEach(() => {
     accountId: card,
   });
   // its last charge, on the card — an account with no rows has no checked days, only a hand-kept balance
-  bundle.db
-    .insert(transactions)
-    .values({
-      accountId: card,
-      postedOn: "2026-07-06",
-      amountCents: -499,
-      rawDescription: "PRIME",
-      normalizedDescription: "PRIME",
-      recurringSeriesId: prime,
-      status: "active",
-      needsReview: false,
-      occurrenceIndex: 0,
-      dedupeHash: "prime-2026-07-06",
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    })
-    .run();
+  paid(card, prime, "2026-07-06", -499, "PRIME");
   rent = addSeries({
     name: "Rent",
     kind: "bill",
@@ -129,6 +136,11 @@ beforeEach(() => {
     lastMatchedOn: "2026-09-01",
     categoryName: "Rent",
   });
+  // its last payment, on the checking account — read by the balance walk through Sep 24, a week before Oct 1
+  paid(checking, rent, "2026-09-01", -210900, "RENT");
+  for (let day = "2026-06-01"; day <= "2026-09-24"; day = addDays(day, 1)) {
+    bundle.db.insert(dailyBalances).values({ accountId: checking, day, balanceCents: 0, basis: "derived" }).run();
+  }
   for (const name of ["Streaming", "Rent"]) {
     createBudget(bundle.db, { categoryId: categoryId(name), period: "monthly", amountCents: 300000, startsOn: "2026-01-01" });
   }

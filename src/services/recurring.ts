@@ -1107,8 +1107,8 @@ export interface SeriesStaleness {
   isStale: boolean;
   /**
    * The last day the ledger has checked every account this series posts to NOW — today for one no statement
-   * is coming for (`silenceMeasuredThroughBySeries`) — null when one of them has no checked record, or undefined
-   * when the caller did not measure it.
+   * is coming for, or one with no checked record (`silenceMeasuredThroughBySeries`) — null when it posts to no account
+   * the ledger knows, or undefined when the caller did not measure it.
    */
   checkedThrough?: string | null;
   /**
@@ -1387,9 +1387,10 @@ export function lapsedSeriesShouldStopForecasting(kind: SeriesKind): boolean {
  * $3,452.25 to $467.69 a month and /recurring's December forecast spent $282.21 — every one of them waiting on an
  * upload, none of them missed on a statement. Read through the day of the question, it lapses exactly as before.
  *
- * ⚖️ …and where no upload is coming — an archived account, a cash wallet — the frontier IS the day of the question
- * (`silenceMeasuredThroughBySeries`, review of 98acbeb): read to an archived card's frozen day, its bills were
- * forecast as "Awaiting statements" for good, and owed in the runway's arrears every month a year on.
+ * ⚖️ …and where no upload is coming — an archived account, a cash wallet, an account nothing has been read on — the
+ * frontier IS the day of the question (`silenceMeasuredThroughBySeries`, reviews of 98acbeb and 6eee6ea): read to an
+ * archived card's frozen day, its bills were forecast as "Awaiting statements" for good, and owed in the runway's
+ * arrears every month a year on; held at null on a live account with no checked record, the same.
  *
  * ⛔ No default for either day: the day of the question and the day it was read through are both the caller's to say.
  */
