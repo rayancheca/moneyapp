@@ -1,4 +1,4 @@
-import { arrearsSplit, NO_IMPORT_YET, splitClause, type ArrearsReading } from "@/lib/arrears-reading";
+import { arrearsAlarms, arrearsClause, arrearsSplit, NO_IMPORT_YET, type ArrearsReading } from "@/lib/arrears-reading";
 import { addCalendarMonths, compareDates, isoWeekday } from "@/lib/dates";
 import { endsInsideHorizon } from "@/lib/committed";
 import { dayWindowLabel } from "@/lib/period";
@@ -429,7 +429,7 @@ export function staleComponentEntries(components: readonly ForecastComponent[]):
  * 2026-10-08 this read "Oct 1 — not posted" in warning colour under rent and its utilities, here and under
  * `/categories/<Housing>`, of a day no import had reached; the runway beside it said "no import has covered it yet".
  * ⚖️ Staleness between uploads is never a warning (his words 2026-08-05), so the unread note is quiet: `warning` is
- * false only when none of it has been read.
+ * false only when none of it has been read (`arrearsAlarms`).
  */
 export function overdueNote(
   date: string,
@@ -437,10 +437,8 @@ export function overdueNote(
   reading: ArrearsReading,
 ): { text: string; warning: boolean } {
   const more = occurrenceCount > 1 ? ` and ${occurrenceCount - 1} more` : "";
-  const split = arrearsSplit(reading);
-  const said =
-    split.kind === "read" ? "not posted" : split.kind === "unread" ? NO_IMPORT_YET : splitClause(split, "not posted");
-  return { text: `${shortDate(date)}${more} — ${said}`, warning: split.kind !== "unread" };
+  const text = `${shortDate(date)}${more} — ${arrearsClause(reading, "not posted")}`;
+  return { text, warning: arrearsAlarms(reading) };
 }
 
 /**
@@ -453,6 +451,13 @@ export function overdueNote(
  * a second one: "not posted" and the warning only for what the ledger has read; ⚖️ the rest is quiet — staleness
  * between uploads is normal, never a warning (his words 2026-08-05).
  *
+ * 🔴 …AND THE READ BODY VOUCHED FOR DAYS NO IMPORT HAD REACHED. A due day counts as read once the imports reach the day
+ * ITSELF (`arrearsThisMonth`, the calendar's rule), while a posting up to `toleranceDays` after it still pays it — so
+ * with the account imported through the due day, "with no posting within 3 days of it" was a claim about the three
+ * days after, unread (review of 2e6c74b, 2026-10-08; the e2e fixture's Meal Kit, due Jul 5 on a card imported through
+ * Jul 5, said it of Jul 6–8). ⛔ The body claims what the rule checked: the imports reach its day, and hold no posting
+ * within the tolerance. Whether "read" should wait for the tolerance is his call (asked 2026-10-08).
+ *
  * The forecast and this month's budget count all of it whichever way it reads — both say so.
  */
 export function alreadyDueWords(
@@ -462,26 +467,27 @@ export function alreadyDueWords(
   const split = arrearsSplit(reading);
   const within = `within ${toleranceDays} ${toleranceDays === 1 ? "day" : "days"} of it`;
   const counted = "The forecast counts it, and so does this month's budget.";
+  const warning = arrearsAlarms(reading);
   if (split.kind === "read") {
     return {
       heading: "Already due, and not posted",
-      body: `Inside this calendar month, with no posting ${within}. ${counted}`,
-      warning: true,
+      body: `Inside this calendar month, and the imports, which reach its day, hold no posting ${within}. ${counted}`,
+      warning,
     };
   }
   if (split.kind === "unread") {
     return {
       heading: `Already due — ${NO_IMPORT_YET}`,
       body: `Inside this calendar month, on a day no import has reached yet — it may well have posted. ${counted}`,
-      warning: false,
+      warning,
     };
   }
   return {
-    heading: `Already due: ${splitClause(split, "not posted")}`,
+    heading: `Already due: ${arrearsClause(reading, "not posted")}`,
     body:
-      `Inside this calendar month. Where the ledger has been imported, nothing posted ${within}; the rest falls on ` +
+      `Inside this calendar month. Where the imports reach, they hold no posting ${within}; the rest falls on ` +
       "days no import has reached yet. The forecast counts all of it, and so does this month's budget.",
-    warning: true,
+    warning,
   };
 }
 

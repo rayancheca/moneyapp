@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { arrearsSplit, arrearsTail, NO_IMPORT_YET, splitClause } from "./arrears-reading";
+import { arrearsAlarms, arrearsSplit, arrearsTail, NO_IMPORT_YET, splitClause } from "./arrears-reading";
 
 /**
  * 🔴 The rent's own page read "Already due, and not posted" of an Oct 1 no import had reached (his ledger,
@@ -48,5 +48,28 @@ describe("arrearsTail — the words after a lead, in the runway's voice", () => 
     expect(splitClause(arrearsSplit({ owedCents: 3000, unreadCents: 1000 }), "not posted")).toBe(
       "$20.00 not posted, and no import has covered the other $10.00 yet",
     );
+  });
+});
+
+/**
+ * 🔴 The runway printed "A further $2,291.21 came due earlier this month and no import has covered it yet." in red on
+ * a copy of his ledger 2026-10-08 — the one surface still sounding an alarm over money the rent's page, the Next
+ * column and /categories said quietly. ⚖️ Staleness between uploads is normal, never a warning (his words 2026-08-05).
+ */
+describe("arrearsAlarms — the tone every arrears surface takes", () => {
+  test("arrears on days the ledger has read sound it", () => {
+    expect(arrearsAlarms({ owedCents: 210900, unreadCents: 0 })).toBe(true);
+  });
+
+  test("arrears no import has reached do not", () => {
+    expect(arrearsAlarms({ owedCents: 229121, unreadCents: 229121 })).toBe(false);
+  });
+
+  test("a mix does, for the part that is late", () => {
+    expect(arrearsAlarms({ owedCents: 3000, unreadCents: 1000 })).toBe(true);
+  });
+
+  test("nothing owed sounds nothing", () => {
+    expect(arrearsAlarms({ owedCents: 0, unreadCents: 0 })).toBe(false);
   });
 });

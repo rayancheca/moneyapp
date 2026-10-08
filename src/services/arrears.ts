@@ -211,6 +211,13 @@ export function arrearsThisMonth(db: AppDatabase, seriesIds: ReadonlySet<string>
  * (Venture X, Chase Checking, Wells Fargo) to the same Aug 12; it posts from Wells Fargo now, read only through
  * Sep 24, so its Oct 1 payment is unread under either rule and "no import has covered it yet" is true.
  *
+ * ⚠️ A due day is read once its accounts are imported through the day ITSELF — the calendar's boundary
+ * (`settledVerdict`'s `occurrenceDate <= observedThrough`) — not through the day plus the `toleranceDays` a covering
+ * posting may still land within (`overdueForSeries`). So "read" vouches for the due day and before, never the days
+ * after it, and no surface may claim more (`alreadyDueWords`, review of 2e6c74b 2026-10-08). Whether it should wait
+ * for the tolerance — here and in the calendar's ✕ together — is his call, asked 2026-10-08. Pinned by
+ * recurring-detail.test.ts ("imported through, and no further").
+ *
  * Moved here from `committedBook` (2026-10-08) so every caller of `arrearsThisMonth` reads the same amount.
  */
 function arrearsReadCents(db: AppDatabase, late: BudgetTail, today: string): ReadonlyMap<string, number> {

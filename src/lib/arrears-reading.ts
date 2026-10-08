@@ -48,13 +48,36 @@ export function splitClause(split: ArrearsSplit, notPosted: string): string {
 }
 
 /**
+ * The split said as one clause: `notPosted` when all of it has been read, "no import has covered it yet" when none of
+ * it has, and both halves by amount for a mix — the words after "Oct 1 —" in the Next column and after "Already due
+ * this month," in the End dialog (`seriesEndLines`).
+ */
+export function arrearsClause(reading: ArrearsReading, notPosted: string): string {
+  const split = arrearsSplit(reading);
+  if (split.kind === "read") return notPosted;
+  if (split.kind === "unread") return NO_IMPORT_YET;
+  return splitClause(split, notPosted);
+}
+
+/**
  * What follows a lead such as "came due Oct 1": " and <notPosted>", " and no import has covered it yet", or
  * ": $R <notPosted>, and no import has covered the other $U yet". `notPosted` is the surface's own word for the read
  * half ("never posted" on the runway, "has not posted" in the math table).
  */
 export function arrearsTail(reading: ArrearsReading, notPosted: string): string {
-  const split = arrearsSplit(reading);
-  if (split.kind === "read") return ` and ${notPosted}`;
-  if (split.kind === "unread") return ` and ${NO_IMPORT_YET}`;
-  return `: ${splitClause(split, notPosted)}`;
+  const clause = arrearsClause(reading, notPosted);
+  return arrearsSplit(reading).kind === "mixed" ? `: ${clause}` : ` and ${clause}`;
+}
+
+/**
+ * Whether a surface may sound its alarm — warning or negative tone — over these arrears: only when some of it fell on
+ * days the ledger has read. ⚖️ Staleness between uploads is normal, never a warning (his words 2026-08-05).
+ *
+ * 🔴 The runway printed "A further $2,291.21 came due earlier this month and no import has covered it yet." in
+ * `text-negative` on a copy of his ledger 2026-10-08, while the rent's page, `/recurring`'s Next column and
+ * `/categories/<Housing>` said the same money quietly — each had decided its own tone. One rule: the bill's page
+ * (`alreadyDueWords`), the Next column and the category list (`overdueNote`), and the runway card.
+ */
+export function arrearsAlarms(reading: ArrearsReading): boolean {
+  return arrearsSplit(reading).readCents > 0;
 }

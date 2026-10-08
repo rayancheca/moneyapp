@@ -10,7 +10,9 @@ import { institutions } from "@/db/schema/institutions";
 import { merchants } from "@/db/schema/merchants";
 import { recurringSeries } from "@/db/schema/recurring";
 import { transactions } from "@/db/schema/transactions";
+import { seriesEndInput, seriesEndLines } from "@/components/recurring/end-radius";
 import { addDays } from "@/lib/dates";
+import { formatCents } from "@/lib/money";
 import { isNull } from "drizzle-orm";
 import { dedupeHash } from "@/lib/hash";
 import { normalizeDescription } from "@/lib/normalize";
@@ -375,6 +377,39 @@ describe("seriesDetail", () => {
         occurrenceCount: 3,
         unreadCents: 1000,
       });
+    });
+
+    /*
+     * ⚠️ THE BOUNDARY, PINNED. A due day counts as read once every account the series bills on is imported through the
+     * day ITSELF — the calendar's rule (`settledVerdict` grades `missed` on the same frontier) — not through the day
+     * plus the `toleranceDays` a covering posting may still land within. 🔴 No test held it: `<= 0` for `< 0` in
+     * `arrearsReadCents` passed 958 tests (review of 2e6c74b, 2026-10-08). Whether it should wait for the tolerance
+     * is his call (asked 2026-10-08); until then the card claims only this (`alreadyDueWords`).
+     */
+    test("a due day the Card is imported through, and no further, is read; the day before it is not", () => {
+      const id = dueJulyFirst();
+      insertTxn({ postedOn: "2026-06-30", amountCents: -800, rawDescription: "CAFE" });
+      expect(seriesDetail(bundle.db, id, TODAY).overdue).toMatchObject({ unreadCents: 1549 });
+      insertTxn({ postedOn: "2026-07-01", amountCents: -800, rawDescription: "CAFE" });
+      expect(seriesDetail(bundle.db, id, TODAY).overdue).toMatchObject({ unreadCents: 0 });
+    });
+
+    /*
+     * 🔴 THE END DIALOG SAID "not imported" OF A DAY THAT WAS. With the Card read through Jul 5, Netflix's own page said
+     * "Already due, and not posted" in warning colour over Jul 1, while "End this series" on the same page listed
+     * "Already due this month, not imported" — it took the arrears' amount, date and count and dropped how far the
+     * ledger had read them (review of 2e6c74b, 2026-10-08). ⛔ One builder from the page's data, one split.
+     */
+    test("the End dialog says of a due day what the card says, read or not", () => {
+      const id = dueJulyFirst();
+      const arrearsLine = () =>
+        seriesEndLines(seriesEndInput(seriesDetail(bundle.db, id, TODAY)), formatCents).find((l) =>
+          l.label.startsWith("Already due"),
+        );
+      // the Card's newest row is Jun 15: no import has reached Jul 1
+      expect(arrearsLine()).toEqual({ label: "Already due this month, no import has covered it yet", value: "$15.49" });
+      insertTxn({ postedOn: "2026-07-05", amountCents: -800, rawDescription: "CAFE" });
+      expect(arrearsLine()).toEqual({ label: "Already due this month, not posted", value: "$15.49" });
     });
   });
 

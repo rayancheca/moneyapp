@@ -2,7 +2,8 @@ import Link from "next/link";
 import { InfoTip } from "@/components/ui/InfoTip";
 import { Money } from "@/components/ui/Money";
 import { SurfaceCard } from "@/components/ui/SurfaceCard";
-import { arrearsSentence, baselineCaption, shrinkCaption } from "@/lib/committed";
+import { arrearsAlarms } from "@/lib/arrears-reading";
+import { arrearsReadingOf, arrearsSentence, baselineCaption, shrinkCaption } from "@/lib/committed";
 import { RUNWAY_JARGON } from "@/lib/jargon";
 import { formatCents } from "@/lib/money";
 import type { RunwayAssumption, RunwayAssumptionId } from "@/lib/runway";
@@ -80,6 +81,7 @@ export function RunwayCard({ data }: { data: RunwayCardData }) {
   const { runway, committed, spend, incomeBasisExplanation } = data;
   const shrink = shrinkCaption(committed);
   const arrears = arrearsSentence(committed);
+  const arrearsAlarm = arrearsAlarms(arrearsReadingOf(committed));
   const burning = runway.kind === "burning";
   // three states, not two: `unknown` is a WITHHELD verdict and must not borrow
   // the positive tone `covered` earns by actually measuring something
@@ -221,8 +223,14 @@ export function RunwayCard({ data }: { data: RunwayCardData }) {
               $2,284.75 a month for a $2,109.00 bill.
               ⛔ "Never posted" only of days the ledger has read — the sentence
               is `lib/committed`'s `arrearsSentence`, where a test reaches each
-              branch. */}
-          {arrears !== null && <p className="mt-1 text-negative">{arrears}</p>}
+              branch.
+              🔴 …and red only for them. On a copy of his ledger 2026-10-08 this
+              printed "…and no import has covered it yet." in `text-negative`,
+              the one surface still sounding an alarm over money the rent's page,
+              the Next column and /categories said quietly. ⚖️ Staleness between
+              uploads is normal, never a warning (his words 2026-08-05) — the
+              tone is `arrearsAlarms`, every arrears surface's. */}
+          {arrears !== null && <p className={arrearsAlarm ? "mt-1 text-negative" : "mt-1"}>{arrears}</p>}
         </div>
       )}
 

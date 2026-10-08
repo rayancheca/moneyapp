@@ -447,7 +447,21 @@ describe("alreadyDueWords", () => {
     const w = alreadyDueWords({ owedCents: 210900, unreadCents: 0 }, 3);
     expect(w.heading).toBe("Already due, and not posted");
     expect(w.warning).toBe(true);
-    expect(w.body).toContain("with no posting within 3 days of it");
+  });
+
+  /*
+   * 🔴 IT VOUCHED FOR DAYS NO IMPORT HAD REACHED. A due day counts as read once the imports reach the day ITSELF
+   * (`arrearsThisMonth`, the calendar's rule), while a posting up to `toleranceDays` AFTER it still pays it — so with
+   * Netflix due Jul 1 and its card imported only through Jul 1 or Jul 2, the body read "with no posting within 3 days
+   * of it", a claim about Jul 2–4 (review of 2e6c74b, 2026-10-08). The e2e fixture is that case: Meal Kit is due Jul 5,
+   * its card imported through Jul 5, and the page said it of Jul 6–8. ⛔ The body claims what the rule checked: the
+   * imports reach its day and hold no posting within the tolerance — never that the days after it were read.
+   */
+  test("the read body claims only what was read: the imports reach its day, not the days after it", () => {
+    expect(alreadyDueWords({ owedCents: 210900, unreadCents: 0 }, 3).body).toBe(
+      "Inside this calendar month, and the imports, which reach its day, hold no posting within 3 days of it. " +
+        "The forecast counts it, and so does this month's budget.",
+    );
   });
 
   test("unread is quiet and says it in the runway's words", () => {
@@ -463,7 +477,11 @@ describe("alreadyDueWords", () => {
     const w = alreadyDueWords({ owedCents: 3000, unreadCents: 1000 }, 1);
     expect(w.heading).toBe("Already due: $20.00 not posted, and no import has covered the other $10.00 yet");
     expect(w.warning).toBe(true);
-    expect(w.body).toContain("within 1 day of it");
+    // the read half, like the read body, only as far as the imports reach
+    expect(w.body).toBe(
+      "Inside this calendar month. Where the imports reach, they hold no posting within 1 day of it; the rest falls " +
+        "on days no import has reached yet. The forecast counts all of it, and so does this month's budget.",
+    );
   });
 });
 

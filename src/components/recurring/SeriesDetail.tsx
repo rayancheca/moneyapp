@@ -2,7 +2,7 @@
 
 import { useState, useTransition } from "react";
 import { SERIES_EVIDENCE_LABEL, noScheduleReason } from "@/lib/series-evidence";
-import { seriesEndLines } from "./end-radius";
+import { seriesEndInput, seriesEndLines } from "./end-radius";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { renameSeriesAction, setSeriesStatusAction } from "@/app/recurring/actions";
@@ -224,19 +224,9 @@ export function SeriesDetail({
           confirmLabel="End this series"
           radius={{
             headline: `${data.name} stops being expected: it leaves the forecast, the recurring calendar, and every budget's expected tail.`,
-            // the arrears, the span and the kept rows — see `seriesEndLines`
-            lines: seriesEndLines(
-              {
-                annualizedCents: data.annualizedCents,
-                overdueCents: Math.abs(data.overdue?.amountCents ?? 0),
-                overdueOn: data.overdue?.date ?? null,
-                overdueCount: data.overdue?.occurrenceCount ?? 0,
-                nextChargeOn: data.nextExpected[0]?.date ?? null,
-                endsOn: data.endsOn,
-                linkedCount: data.linkedTxns.length,
-              },
-              formatCents,
-            ),
+            // the arrears — said as far as the ledger has read them, as the card below says them — the span and the
+            // kept rows; see `seriesEndLines`
+            lines: seriesEndLines(seriesEndInput(data), formatCents),
             reassurance:
               "Nothing is deleted — the charges stay in your ledger, and Confirm brings the series back if it starts again.",
           }}
