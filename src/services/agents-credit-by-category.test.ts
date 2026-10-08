@@ -7,7 +7,6 @@ import { createDatabase, type DbBundle } from "@/db/client";
 import { seedDatabase } from "@/db/seed";
 import { accounts } from "@/db/schema/accounts";
 import { categories } from "@/db/schema/categories";
-import { importFiles, statementPeriods } from "@/db/schema/imports";
 import { institutions } from "@/db/schema/institutions";
 import { merchants } from "@/db/schema/merchants";
 import { recurringSeries, type SeriesKind } from "@/db/schema/recurring";
@@ -19,6 +18,7 @@ import { addManualAnchor } from "./anchors";
 import { netWorthAttribution } from "./attribution";
 import { netWorthSeries, rebuildAccount } from "./derivation";
 import { forecastCurrentMonth, forecastForMonth } from "./forecast";
+import { printOnOneStatement } from "./printed-statement-fixture";
 
 /**
  * ⚖️ Owner decision 2026-10-06 (§6A 39): a scheduled CREDIT to the agent's cash is named by its CATEGORY, as the
@@ -123,45 +123,6 @@ function agentsSchedule(input: {
   return id;
 }
 
-/**
- * One imported Robinhood statement printing every account in `accountIds`, as his August statement prints Robinhood
- * Agentic beside an investment account — the fact `accountLiquidity` reads to call a deposit account investable.
- */
-function printOnOneStatement(institutionId: string, accountIds: readonly string[]): void {
-  const fileId = "robinhood-2026-08";
-  const now = new Date().toISOString();
-  bundle.db
-    .insert(importFiles)
-    .values({
-      id: fileId,
-      fileName: `${fileId}.pdf`,
-      fileSha256: `sha-${fileId}`,
-      format: "pdf",
-      institutionId,
-      status: "parsed",
-      storagePath: `/tmp/${fileId}.pdf`,
-      importedAt: now,
-      createdAt: now,
-      updatedAt: now,
-    })
-    .run();
-  accountIds.forEach((accountId, i) => {
-    bundle.db
-      .insert(statementPeriods)
-      .values({
-        id: `${fileId}-${i}`,
-        importFileId: fileId,
-        accountId,
-        periodStart: "2026-08-01",
-        periodEnd: "2026-08-31",
-        reconciliation: "reconciled",
-        createdAt: now,
-        updatedAt: now,
-      })
-      .run();
-  });
-}
-
 /** take a schedule and its rows back off the ledger, so the next case reads from the same start */
 function drop(id: string): void {
   bundle.db.delete(transactions).where(eq(transactions.recurringSeriesId, id)).run();
@@ -183,7 +144,7 @@ beforeEach(() => {
   book = createAccount(bundle.db, { institutionId: rh.id, name: "Robinhood Agentic Brokerage", type: "investment", subtype: "brokerage" });
   bundle.db.update(accounts).set({ cashAccountId: agentic }).where(eq(accounts.id, book)).run();
   // …and printed beside it, as on his ledger: the agent's cash is investable, no part of his EOM cash
-  printOnOneStatement(rh.id, [agentic, book]);
+  printOnOneStatement(bundle.db, rh.id, [agentic, book]);
   gold = bundle.db.select().from(merchants).where(eq(merchants.canonicalName, "Robinhood Gold")).get()!.id;
 
   addManualAnchor(bundle.db, { accountId: wellsFargo, anchoredOn: "2026-08-31", enteredCents: 392_640 });
@@ -537,7 +498,7 @@ describe("§6A 43 — a clawback filed in an income category lowers the agent's 
  * ⚖️ Owner decision 2026-10-06 (§6A 45): the AGENT'S income "at your recent pace" NETS its posted income-category
  * clawbacks, as the bridge nets them inside "Agent's income" (§6A 43) — one rule for both,
  * `isAgentsIncomeCategoryRow`: an income-category row on the agent's cash, either sign. 🔴 The pace bucketed the
- * agent's trailing rows by `isAgentsIncome`, credits only, so a clawback no live schedule owns — none detected, or one
+ * agent's trailing rows by their credits only, so a clawback no live schedule owns — none detected, or one
  * he dismissed, whose rows fall to the pace — lowered the bridge's "Agent's income" and no reading on the card, EOM net
  * worth included: $4.00 paid and $3.00 clawed back each month was +$1.00 on the bridge and +$3.48 projected. ⛔ HIS
  * pace is still his money in only (`isIncome`): his clawback lowers no projection of his.

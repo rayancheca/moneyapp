@@ -19,7 +19,6 @@ import { createAccount, outsidePortfolioCashAccountIds } from "./accounts";
 import {
   categorySpending,
   incomeByMonth,
-  isAgentsIncome,
   isAgentsIncomeCategoryRow,
   isIncome,
   loadCategoryIndex,
@@ -37,6 +36,7 @@ import { forecastCurrentMonth, forecastForMonth } from "./forecast";
 import { incomeCard } from "./income-card";
 import { ledgerOpens, ledgerReaches } from "./observation-frontier";
 import { periodActivity } from "./period-activity";
+import { printOnOneStatement } from "./printed-statement-fixture";
 import { provenanceFor } from "./provenance";
 import { upcomingOccurrences } from "./recurring";
 import { calendarMonthFlow, recurringCalendar } from "./recurring-calendar";
@@ -118,6 +118,8 @@ beforeEach(() => {
   // the agent's brokerage book, paired with its cash account — what makes Agentic's money the agent's
   book = createAccount(bundle.db, { institutionId: rh.id, name: "Robinhood Agentic Brokerage", type: "investment", subtype: "brokerage" });
   bundle.db.update(accounts).set({ cashAccountId: agentic }).where(eq(accounts.id, book)).run();
+  // …and printed beside it, as on his ledger: the agent's cash is investable, no part of his spendable cash
+  printOnOneStatement(bundle.db, rh.id, [agentic, book]);
 
   // the three balances his ledger reads on 2026-08-31
   addManualAnchor(bundle.db, { accountId: wellsFargo, anchoredOn: "2026-08-31", enteredCents: 392_640 });
@@ -727,18 +729,14 @@ describe("the agent's income is no row of his on an income category's own page",
     // filed Investment Contribution on his ledger, both legs (handoff 2026-09-15b)
     const contribution = catId("Transfers > Investment Contribution");
     const funding = { accountId: agentic, categoryId: contribution, amountCents: 2_664 };
-    const read = (txn: typeof funding) => [
-      isAgentsIncomeCategoryRow(idx, agentsCash, txn),
-      isAgentsIncome(idx, agentsCash, txn),
-      isIncome(idx, agentsCash, txn),
-    ];
-    expect(read(funding)).toEqual([false, false, false]);
-    // the agent's month-end interest is the agent's either sign, and its income only as a credit
+    const read = (txn: typeof funding) => [isAgentsIncomeCategoryRow(idx, agentsCash, txn), isIncome(idx, agentsCash, txn)];
+    expect(read(funding)).toEqual([false, false]);
+    // the agent's month-end interest is the agent's either sign, and never his income
     const interest = { ...funding, categoryId: catId("Income > Interest"), amountCents: 4 };
-    expect(read(interest)).toEqual([true, true, false]);
-    expect(read({ ...interest, amountCents: -4 })).toEqual([true, false, false]);
-    // …and on his own account the same row is his income
-    expect(read({ ...interest, accountId: robinhoodCash })).toEqual([false, false, true]);
+    expect(read(interest)).toEqual([true, false]);
+    expect(read({ ...interest, amountCents: -4 })).toEqual([true, false]);
+    // …and on his own account the same row is his income as a credit
+    expect(read({ ...interest, accountId: robinhoodCash })).toEqual([false, true]);
   });
 
   /*
