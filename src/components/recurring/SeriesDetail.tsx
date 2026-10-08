@@ -2,6 +2,7 @@
 
 import { useState, useTransition } from "react";
 import { SERIES_EVIDENCE_LABEL, noScheduleReason } from "@/lib/series-evidence";
+import { billedWithLabel } from "@/lib/billed-with";
 import { seriesEndLines } from "./end-radius";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -157,6 +158,17 @@ export function SeriesDetail({
                 forecast projects. The badge is the word the evidence chooses. */}
             {(data.status === "detected" || data.status === "confirmed") && data.evidence !== "active" ? (
               <Badge tone="warning">{SERIES_EVIDENCE_LABEL[data.evidence]}</Badge>
+            ) : null}
+            {/* ⚖️ Paid inside another series' payment (owner decision 2026-10-08, §6A 59): whose postings its
+                evidence is, and when they last said so — "billed with the rent, last seen Sep 2", linked to the
+                rent. 🔴 This page wore "Never billed" over money paid inside every rent payment. */}
+            {data.billedWith !== null ? (
+              <Link
+                href={`/recurring/${data.billedWith.id}`}
+                className="inline-flex items-center gap-1 rounded-full border border-line px-2 py-0.5 text-xs text-ink-muted transition-colors duration-(--duration-fast) hover:border-line-strong hover:text-ink"
+              >
+                {billedWithLabel(data, today)}
+              </Link>
             ) : null}
             {/* 🔴 The one place a reader would go to check when a series stops,
                 and the only surface that did not say. The runway card and the

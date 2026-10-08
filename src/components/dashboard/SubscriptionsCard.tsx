@@ -36,11 +36,21 @@ function days(n: number): string {
 
 /** A row's evidence, in its own voice: when it last charged, or that it never has. */
 function Evidence({ line }: { line: SubscriptionLine }) {
+  const late = line.daysPastTolerance === null ? "" : ` · ${days(line.daysPastTolerance)} past tolerance`;
+  /* ⚖️ Paid inside another series' payment (§6A 59): "billed with the rent, last seen Sep 2". 🔴 His `Rent utilities
+     & fees` read "never billed" here, paid inside every rent payment. */
+  if (line.billedWithLabel !== null)
+    return (
+      <span className="block text-[11px] text-ink-faint">
+        {line.billedWithLabel}
+        {late}
+      </span>
+    );
   if (line.neverBilled) return <span className="block text-[11px] text-ink-faint">never billed</span>;
   return (
     <span className="block text-[11px] text-ink-faint">
       last seen {line.lastMatchedLabel}
-      {line.daysPastTolerance === null ? "" : ` · ${days(line.daysPastTolerance)} past tolerance`}
+      {late}
     </span>
   );
 }

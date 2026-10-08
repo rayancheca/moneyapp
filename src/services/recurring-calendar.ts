@@ -16,6 +16,7 @@ import {
   type PerPayday,
 } from "@/lib/per-payday";
 import { RECURRING_HISTORY_STATUSES } from "@/lib/series-evidence";
+import { billedWithPhrase } from "@/lib/billed-with";
 import {
   forecastConfidence,
   settledVerdict,
@@ -26,6 +27,7 @@ import {
 } from "@/lib/occurrence-verdict";
 import { outsidePortfolioCashAccountIds } from "./accounts";
 import { isAgentsSeries, loadCategoryIndex } from "./analytics";
+import { withBillingCarriers } from "./billing-carriers";
 import { frontierForSeries, observationFrontier, seriesAccountIds } from "./observation-frontier";
 import {
   paydayProjectable,
@@ -225,6 +227,12 @@ export interface CalendarEntry {
    * in the Day Sheet. The owner's decision, 2026-09-14.
    */
   neverBilled: boolean;
+  /**
+   * ⚖️ "billed with the rent" — the series is paid inside another series' payment (`billedWithPhrase`, owner decision
+   * 2026-10-08, §6A 59), so its evidence is the carrier's. Only on a future entry, like `neverBilled`; null otherwise.
+   * Printed where "never billed" stood: "Rent utilities & fees upcoming (scheduled, billed with the rent)".
+   */
+  billedWith: string | null;
   /**
    * The series' category hue, for the mark drawn beside it.
    *
@@ -577,7 +585,11 @@ export function recurringCalendar(
      */
     .filter((s) => !isAgentsSeries(agentsCash, s));
   const seriesById = new Map(historyRows.map((s) => [s.id, s]));
-  const forecastRows = historyRows.filter((s) => s.status === "detected" || s.status === "confirmed");
+  // ⚖️ each with the carrier it is billed with — its evidence (`lastSeenOn`, §6A 59)
+  const forecastRows = withBillingCarriers(
+    db,
+    historyRows.filter((s) => s.status === "detected" || s.status === "confirmed"),
+  );
   const postingCounts = postingCountBySeries(db);
   const hues = seriesHues(db);
 
@@ -708,6 +720,7 @@ export function recurringCalendar(
         confidence: null,
         isStale: false,
         neverBilled: false,
+        billedWith: null,
         hue: hues.get(s.id) ?? null,
       });
       const dates = postedDatesBySeries.get(s.id) ?? [];
@@ -755,6 +768,8 @@ export function recurringCalendar(
     const evidence = seriesEvidence(s, today);
     const isStale = evidence === "running-late";
     const neverBilled = evidence === "never-billed";
+    // ⚖️ paid inside another series' payment — whose postings its evidence is (§6A 59)
+    const billedWith = s.billedWith === null ? null : billedWithPhrase(s.billedWith);
     const settlement = settlements.get(s.id);
     for (const o of occurrences) {
       /*
@@ -804,6 +819,7 @@ export function recurringCalendar(
             confidence: null,
             isStale: false,
             neverBilled: false,
+            billedWith: null,
             hue: hues.get(s.id) ?? null,
           });
           continue;
@@ -845,6 +861,7 @@ export function recurringCalendar(
         confidence: isFuture ? confidence : null,
         isStale: isFuture && isStale,
         neverBilled: isFuture && neverBilled,
+        billedWith: isFuture ? billedWith : null,
         hue: hues.get(s.id) ?? null,
       });
     }

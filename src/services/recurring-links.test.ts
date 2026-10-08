@@ -494,8 +494,9 @@ describe("isSeriesActive (Active/Inactive split, §4.1)", () => {
       nextExpectedAmountCents: null,
       userAmountCents: null,
       lastMatchedOn: "2026-06-15",
+      billedWith: null,
       ...over,
-    }) as SeriesOverrides & { status: "confirmed"; lastMatchedOn: string | null };
+    }) as SeriesOverrides & { status: "confirmed"; lastMatchedOn: string | null; billedWith: null };
 
   test("a recent charge is active; a long-stale one is inactive", () => {
     expect(isSeriesActive(s({ lastMatchedOn: "2026-06-15" }), "2026-07-08")).toBe(true);

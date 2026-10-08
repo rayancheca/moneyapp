@@ -22,6 +22,7 @@ function entry(over: Partial<CalendarEntry> & Pick<CalendarEntry, "seriesId" | "
     confidence: null,
     isStale: false,
     neverBilled: false,
+    billedWith: null,
     hue: null,
     ...over,
   };

@@ -1,5 +1,6 @@
 import { and, asc, eq, inArray, lte, ne } from "drizzle-orm";
 import { seriesIsOver, type SeriesEvidence } from "@/lib/series-evidence";
+import { lastSeenOn, type BillingCarrier, type EvidenceSource } from "@/lib/billed-with";
 import type { AppDatabase } from "@/db/client";
 import { categories } from "@/db/schema/categories";
 import { merchants } from "@/db/schema/merchants";
@@ -26,6 +27,7 @@ import {
 import { parseAmountHistory, rateOn, seriesAmountCents } from "@/lib/series-kind";
 import { outsidePortfolioCashAccountIds } from "./accounts";
 import { isAgentsSeries } from "./analytics";
+import { billingCarriers, withBillingCarriers } from "./billing-carriers";
 /*
  * ⚠️ A cycle, on purpose: settlement walks the occurrences `projectOccurrences`
  * draws, and `upcomingOccurrences` and `listSeries` ask settlement which of them
@@ -861,12 +863,18 @@ export interface SeriesView {
   nextExpectedAmountCents: number | null;
   status: SeriesStatus;
   confidence: number | null;
+  /** its OWN newest matched charge — the stored column; what it was last SEEN by is `lastSeenOn` */
   lastMatchedOn: string | null;
   matchedCount: number;
   /** derived: within cadence+grace of its last charge (§4.1 Active/Inactive) */
   isActive: boolean;
   /** what the evidence says, in the word every surface uses — `isActive` is its first case */
   evidence: SeriesEvidence;
+  /**
+   * ⚖️ The series it is billed inside (§6A 59), or null — its row says "billed with the rent". 🔴 Without it,
+   * `Rent utilities & fees` sat under "Never billed" with "0 matched", paid inside every rent payment.
+   */
+  billedWith: BillingCarrier | null;
   /** effective per-occurrence amount × occurrences/year (magnitude) */
   annualizedCents: number | null;
   /**
@@ -997,9 +1005,12 @@ export function listSeries(db: AppDatabase, today: string = todayIso()): SeriesV
   }
   // the series page's and the popover's own reading of what posted — see `postedAvgCents`
   const posted = postedAveragesBySeries(db, rows.map((r) => r.series), today);
+  // ⚖️ the carrier each series is billed with — its evidence (`lastSeenOn`, §6A 59)
+  const carriers = billingCarriers(db);
 
   return rows
-    .map(({ series: s, merchantName }) => {
+    .map(({ series: row, merchantName }) => {
+      const s = { ...row, billedWith: carriers.get(row.id) ?? null };
       const eff = effectiveSeries(s);
       // Show the same date the forecast projects: rolled forward off a stale
       // stored value. Only for the statuses the forecast actually projects —
@@ -1039,6 +1050,7 @@ export function listSeries(db: AppDatabase, today: string = todayIso()): SeriesV
         evidence: seriesEvidence(s, today),
         annualizedCents: annualizedCentsOf(s, today),
         endsOn: s.userEndsOn ?? null,
+        billedWith: s.billedWith,
       } satisfies SeriesView;
     })
     .sort(
@@ -1083,7 +1095,10 @@ export interface SeriesOccurrence {
  * exactly the arithmetic isSeriesActive splits on, so the two cannot disagree.
  */
 export interface SeriesStaleness {
-  /** newest matched charge, or null when nothing has ever matched the series */
+  /**
+   * When the series was last SEEN (`lastSeenOn`): its newest matched charge, or its carrier's when it is billed inside
+   * another series' payment (§6A 59) — null when nothing has ever matched either
+   */
   lastMatchedOn: string | null;
   /** days from lastMatchedOn to today; null when there is nothing to measure */
   daysSinceLastMatch: number | null;
@@ -1264,9 +1279,14 @@ function lapsedToleranceDays(staleness: SeriesStaleness): number {
  * How late a series is, measured against the same threshold the Active/Inactive
  * split uses. Status plays no part — a dismissed series can still be perfectly
  * fresh, and freshness is what this reports.
+ *
+ * ⚖️ The evidence is `lastSeenOn` — the carrier's postings too, for a series billed inside another's payment (owner
+ * decision 2026-10-08, §6A 59). Every evidence reader below (`isSeriesActive`, `seriesHasLapsed`, `seriesEvidence`,
+ * the forecast's gate) reads it through here or through `lastSeenOn`, so `Rent utilities & fees` is as fresh, as
+ * late or as lapsed as the rent it is paid inside — never "never billed" beside it.
  */
 export function seriesStaleness(
-  s: SeriesOverrides & { lastMatchedOn: string | null },
+  s: SeriesOverrides & EvidenceSource,
   today: string = todayIso(),
 ): SeriesStaleness {
   // Deliberately NOT stepPlan(): this measures how old the EVIDENCE is, which
@@ -1276,9 +1296,10 @@ export function seriesStaleness(
   const cadence = s.userCadence ?? s.cadence;
   const stepDays = s.userCadence ? CADENCE_NOMINAL_DAYS[cadence] : s.intervalDaysAvg ?? CADENCE_NOMINAL_DAYS[cadence];
   const toleranceDays = stepDays * INACTIVE_MISS_LIMIT + CADENCE_TOLERANCE_DAYS[cadence];
-  const daysSinceLastMatch = s.lastMatchedOn ? diffDays(s.lastMatchedOn, today) : null;
+  const seen = lastSeenOn(s);
+  const daysSinceLastMatch = seen ? diffDays(seen, today) : null;
   return {
-    lastMatchedOn: s.lastMatchedOn,
+    lastMatchedOn: seen,
     daysSinceLastMatch,
     stepDays,
     toleranceDays,
@@ -1293,7 +1314,7 @@ export function seriesStaleness(
  * it. dismissed/ended series are never active.
  */
 export function isSeriesActive(
-  s: SeriesOverrides & { status: SeriesStatus; lastMatchedOn: string | null },
+  s: SeriesOverrides & EvidenceSource & { status: SeriesStatus },
   today: string = todayIso(),
 ): boolean {
   if (s.status === "dismissed" || s.status === "ended") return false;
@@ -1340,7 +1361,7 @@ export function lapsedSeriesShouldStopForecasting(kind: SeriesKind): boolean {
  * Lapsed means "it stopped", which only a series that once started can do.
  */
 export function seriesHasLapsed(
-  s: SeriesOverrides & { lastMatchedOn: string | null },
+  s: SeriesOverrides & EvidenceSource,
   today: string = todayIso(),
 ): boolean {
   const staleness = seriesStaleness(s, today);
@@ -1359,7 +1380,7 @@ export function seriesHasLapsed(
  * today, and it judged the lapse on that day instead.
  */
 export function hasStoppedForecasting(
-  s: SeriesOverrides & { kind: SeriesKind; lastMatchedOn: string | null },
+  s: SeriesOverrides & EvidenceSource & { kind: SeriesKind },
   // no default: every caller says which day it is asking on
   today: string,
 ): boolean {
@@ -1367,7 +1388,7 @@ export function hasStoppedForecasting(
 }
 
 /** What `seriesIsForecast` reads — the stored row, overrides intact, as `hasStoppedForecasting` takes it. */
-type ForecastableRow = SeriesOverrides & { status: SeriesStatus; kind: SeriesKind; lastMatchedOn: string | null };
+type ForecastableRow = SeriesOverrides & EvidenceSource & { status: SeriesStatus; kind: SeriesKind };
 
 /**
  * Does the forecast PROJECT this series today? A status it projects (detected, confirmed — `seriesIsOver` is the
@@ -1543,11 +1564,10 @@ export function upcomingOccurrences(
   today: string = todayIso(),
   windowDays = 30,
 ): SeriesOccurrence[] {
-  const live = db
-    .select()
-    .from(recurringSeries)
-    .where(inArray(recurringSeries.status, ["detected", "confirmed"]))
-    .all();
+  const live = withBillingCarriers(
+    db,
+    db.select().from(recurringSeries).where(inArray(recurringSeries.status, ["detected", "confirmed"])).all(),
+  );
   const agentsCash = outsidePortfolioCashAccountIds(db);
 
   // today is day ONE of the window — see the docstring's rent-twice measurement
@@ -1584,12 +1604,15 @@ export function upcomingOccurrences(
  *
  * Only meaningful for a detected/confirmed series; a dismissed or ended one is
  * described by its status, and callers badge those separately.
+ *
+ * ⚖️ Never billed is NEITHER it nor its carrier ever seen (`lastSeenOn`, §6A 59). 🔴 It read the series' own column,
+ * and `Rent utilities & fees` — paid inside every rent payment — sat under "Never billed" on the All tab.
  */
 export function seriesEvidence(
-  s: SeriesOverrides & { status: SeriesStatus; kind: SeriesKind; lastMatchedOn: string | null },
+  s: SeriesOverrides & EvidenceSource & { status: SeriesStatus; kind: SeriesKind },
   today: string = todayIso(),
 ): SeriesEvidence {
-  if (s.lastMatchedOn === null) return "never-billed";
+  if (lastSeenOn(s) === null) return "never-billed";
   if (isSeriesActive(s, today)) return "active";
   return hasStoppedForecasting(s, today) ? "lapsed" : "running-late";
 }

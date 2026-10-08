@@ -338,7 +338,19 @@ export function staleSummaryLabel(entries: readonly StaleEntry[], window: string
  * and filed the lease under "Never billed". The owner chose the All tab's word
  * (2026-09-14) — `SERIES_EVIDENCE_LABEL`, not a third spelling of it.
  */
-export function upcomingEvidenceWord(e: { isStale: boolean; neverBilled: boolean }): string | null {
+export function upcomingEvidenceWord(e: {
+  isStale: boolean;
+  neverBilled: boolean;
+  billedWith: string | null;
+}): string | null {
+  /*
+   * ⚖️ Paid inside another series' payment (§6A 59): whose postings its evidence is, first — "Rent utilities & fees
+   * upcoming (scheduled, billed with the rent)". 🔴 It read "(scheduled, never billed)", paid inside every rent.
+   */
+  if (e.billedWith !== null) {
+    if (e.neverBilled) return `${e.billedWith}, which has never been billed`;
+    return e.isStale ? `${e.billedWith}, evidence stale` : e.billedWith;
+  }
   if (e.neverBilled) return SERIES_EVIDENCE_LABEL["never-billed"].toLowerCase();
   return e.isStale ? "evidence stale" : null;
 }

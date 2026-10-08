@@ -1,4 +1,4 @@
-import { integer, real, sqliteTable, text } from "drizzle-orm/sqlite-core";
+import { integer, real, sqliteTable, text, type AnySQLiteColumn } from "drizzle-orm/sqlite-core";
 import { id, timestamps } from "./common";
 import { accounts } from "./accounts";
 import { categories } from "./categories";
@@ -102,6 +102,17 @@ export const recurringSeries = sqliteTable("recurring_series", {
    * paycheque.
    */
   userEndsOn: text("user_ends_on"),
+  /**
+   * ⚖️ The series this one is BILLED INSIDE — its money posts as part of that series' payment, never as a row of its
+   * own (owner decision 2026-10-08, §6A 59: `Rent utilities & fees`, $182.21, is paid inside the rent — Sep 2's
+   * $2,291.21 is the rent's $2,109.00 + $182.21). Its EVIDENCE is the carrier's postings (`lastSeenOn`, read through
+   * `billingCarriers`): "billed with the rent, last seen Sep 2", never "never billed". Its amount, its schedule and
+   * its arrears stay its own. NULL = billed on its own.
+   *
+   * ⚠️ One hop: the carrier's own `last_matched_on`, whatever it is billed with. A merge of the carrier leaves this
+   * on the ended source, whose evidence stops there — point it at the merged series.
+   */
+  userBilledWithSeriesId: text("user_billed_with_series_id").references((): AnySQLiteColumn => recurringSeries.id),
   // Set when this series is merged INTO another: it becomes `ended` and its
   // occurrences relink to the target. Detection forward-maps through this so a
   // merged-away identity is never resurrected (§4.3).

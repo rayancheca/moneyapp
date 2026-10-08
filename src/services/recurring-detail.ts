@@ -1,5 +1,6 @@
 import { and, desc, eq, isNull, lte, ne, or, sql } from "drizzle-orm";
 import type { SeriesEvidence } from "@/lib/series-evidence";
+import type { BillingCarrier } from "@/lib/billed-with";
 import type { AppDatabase } from "@/db/client";
 import { accounts } from "@/db/schema/accounts";
 import { categories } from "@/db/schema/categories";
@@ -16,6 +17,7 @@ import { expectedCentsOf, paydayReadings, type PaydayReading, type PerPayday } f
 import { stepFrom, stepPlan } from "@/lib/recurring-step";
 import { loadCategoryIndex } from "./analytics";
 import { arrearsThisMonth } from "./arrears";
+import { billingCarriers } from "./billing-carriers";
 import { paydaySettlement, readsPerPayday, stillToCome } from "./payday-settlement";
 import { postedAveragesBySeries } from "./posted-average";
 import {
@@ -163,6 +165,12 @@ export interface SeriesDetail {
   /** the word every surface uses for its evidence — see `lib/series-evidence` */
   evidence: SeriesEvidence;
   /**
+   * ⚖️ The series it is billed inside (owner decision 2026-10-08, §6A 59), or null — the page says "billed with the
+   * rent, last seen Sep 2" and links it. 🔴 `/recurring/<Rent utilities & fees>` wore a "Never billed" badge, of money
+   * paid inside every rent payment.
+   */
+  billedWith: BillingCarrier | null;
+  /**
    * The day this series stops, or null when it runs on — `userEndsOn`, the only
    * end day the ledger holds and the one `projectOccurrences` clamps its walk
    * on.
@@ -233,8 +241,10 @@ export function seriesDetail(
   seriesId: string,
   today: string = todayIso(),
 ): SeriesDetail {
-  const s = db.select().from(recurringSeries).where(eq(recurringSeries.id, seriesId)).get();
-  if (!s) throw new Error(`Unknown recurring series ${seriesId}`);
+  const row = db.select().from(recurringSeries).where(eq(recurringSeries.id, seriesId)).get();
+  if (!row) throw new Error(`Unknown recurring series ${seriesId}`);
+  // ⚖️ with the carrier it is billed with — its evidence (`lastSeenOn`, §6A 59)
+  const s = { ...row, billedWith: billingCarriers(db).get(row.id) ?? null };
 
   const merchant = s.merchantId
     ? db
@@ -438,6 +448,7 @@ export function seriesDetail(
     lastMatchedOn: s.lastMatchedOn,
     isActive: isSeriesActive(s, today),
     evidence: seriesEvidence(s, today),
+    billedWith: s.billedWith,
     endsOn: s.userEndsOn ?? null,
     annualizedCents: annualizedCentsOf(s, today),
     nextExpected,

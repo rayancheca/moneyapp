@@ -10,6 +10,7 @@ import { recurringSeries } from "@/db/schema/recurring";
 import { transactions } from "@/db/schema/transactions";
 import { dedupeHash } from "@/lib/hash";
 import { seriesIsProjected } from "@/lib/series-evidence";
+import type { EvidenceSource } from "@/lib/billed-with";
 import { addDays } from "@/lib/dates";
 import { normalizeDescription } from "@/lib/normalize";
 import { createAccount } from "./accounts";
@@ -439,7 +440,7 @@ describe("projectOccurrences", () => {
   });
 
   test("staleness supplied by the caller rides onto every occurrence", () => {
-    const staleness = seriesStaleness({ ...series, userCadence: null, userNextExpectedOn: null, userAmountCents: null, lastMatchedOn: "2026-06-16" }, "2026-07-08");
+    const staleness = seriesStaleness({ ...series, userCadence: null, userNextExpectedOn: null, userAmountCents: null, lastMatchedOn: "2026-06-16", billedWith: null }, "2026-07-08");
     const occ = projectOccurrences({ ...series, staleness }, "2026-07-08", "2026-07-31");
     expect(occ).toHaveLength(4);
     expect(occ.every((o) => o.staleness === staleness)).toBe(true);
@@ -486,8 +487,8 @@ describe("lapsedSeriesShouldStopForecasting", () => {
 
 describe("seriesStaleness", () => {
   const overrides = (
-    over: Partial<SeriesOverrides & { lastMatchedOn: string | null }> = {},
-  ): SeriesOverrides & { lastMatchedOn: string | null } => ({
+    over: Partial<SeriesOverrides & EvidenceSource> = {},
+  ): SeriesOverrides & EvidenceSource => ({
     cadence: "weekly",
     userCadence: null,
     intervalDaysAvg: 7,
@@ -496,6 +497,7 @@ describe("seriesStaleness", () => {
     nextExpectedAmountCents: null,
     userAmountCents: null,
     lastMatchedOn: "2026-07-01",
+    billedWith: null,
     ...over,
   });
 
@@ -579,6 +581,7 @@ describe("seriesStaleness", () => {
       nextExpectedAmountCents: -5000,
       userAmountCents: null,
       status: "confirmed" as const,
+      billedWith: null,
     };
     const today = "2026-07-08";
     expect(seriesEvidence({ ...base, kind: "bill", lastMatchedOn: null }, today)).toBe("never-billed");
@@ -613,21 +616,27 @@ describe("seriesStaleness", () => {
     };
     const today = "2026-07-08";
     const ages = [null, "2026-07-05", "2026-04-25", "2026-02-01"]; // never, fresh, late, lapsed
+    // ⚖️ …and billed inside a carrier's payment at every age of ITS evidence (§6A 59)
+    const carriers = [null, ...ages.map((a) => ({ id: "rent", name: "Flamingo South Beach (rent)", lastMatchedOn: a }))];
     let lapsedSeen = 0;
     for (const status of ["detected", "confirmed", "dismissed", "ended"] as const) {
       for (const kind of ["bill", "subscription", "income", "transfer", "other"] as const) {
         for (const lastMatchedOn of ages) {
-          const row = { ...base, status, kind, lastMatchedOn };
-          const evidence = seriesEvidence(row, today);
-          if (evidence === "lapsed") lapsedSeen += 1;
-          expect(seriesIsProjected(status, evidence), `${status} · ${kind} · ${lastMatchedOn}`).toBe(
-            seriesIsForecast(row, today),
-          );
+          for (const billedWith of carriers) {
+            const row = { ...base, status, kind, lastMatchedOn, billedWith };
+            const evidence = seriesEvidence(row, today);
+            if (evidence === "lapsed") lapsedSeen += 1;
+            expect(
+              seriesIsProjected(status, evidence),
+              `${status} · ${kind} · ${lastMatchedOn} · carrier ${billedWith?.lastMatchedOn}`,
+            ).toBe(seriesIsForecast(row, today));
+          }
         }
       }
     }
-    // the grid reaches the case that matters: a lapsed series, of every money-out kind, at every status
-    expect(lapsedSeen).toBe(4 * 4);
+    // the grid reaches the case that matters: a lapsed series, of every money-out kind, at every status — seen last
+    // on the lapsed day by its own posting, its carrier's, or both (4 pairs)
+    expect(lapsedSeen).toBe(4 * 4 * 4);
   });
 });
 
@@ -1368,6 +1377,7 @@ describe("seriesHasLapsed", () => {
     userNextExpectedOn: null,
     nextExpectedAmountCents: -499,
     userAmountCents: null,
+    billedWith: null,
   };
 
   test("a series that posted and then went quiet past its tolerance has lapsed", () => {

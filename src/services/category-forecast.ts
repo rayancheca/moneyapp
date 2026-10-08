@@ -4,6 +4,7 @@ import { budgets } from "@/db/schema/budgets";
 import { recurringSeries } from "@/db/schema/recurring";
 import { transactions } from "@/db/schema/transactions";
 import { transactionSplits } from "@/db/schema/transaction-splits";
+import type { BillingCarrier } from "@/lib/billed-with";
 import { monthLabel } from "@/lib/calendar-math";
 import { addDays, compareDates, monthKey, periodBounds, todayIso, type PeriodBounds } from "@/lib/dates";
 import {
@@ -14,6 +15,7 @@ import {
 import { projectRecurringDriven, projectTrailingAverage } from "@/lib/projection";
 import { outsidePortfolioCashAccountIds } from "./accounts";
 import { loadCategoryIndex, offAgentsCash, recurringSeriesIdsForSubtree, type CategoryIndex } from "./analytics";
+import { withBillingCarriers } from "./billing-carriers";
 import { listBudgetableCategories } from "./budgets";
 import { isUpfrontCarRow, upfrontCarRule, type UpfrontCarRule } from "./car-upfront";
 import { trailingFullMonths } from "./forecast";
@@ -65,8 +67,9 @@ interface PredictContext {
   index: CategoryIndex;
   /** earliest active transaction date, or null when the ledger is empty */
   earliestDate: string | null;
-  /** active (detected|confirmed) recurring series rows, for per-subtree projection */
-  activeSeries: (typeof recurringSeries.$inferSelect)[];
+  /** active (detected|confirmed) recurring series rows, for per-subtree projection — each with the carrier it is
+   *  billed with, whose postings its lapse reads (`lastSeenOn`, §6A 59) */
+  activeSeries: (typeof recurringSeries.$inferSelect & { billedWith: BillingCarrier | null })[];
   /** series whose still-tagged rows are not recurring money
    *  (`seriesIdsNotDrawnAsRecurring` — the dismissed ones): false positives whose
    *  spend is really variable, so it falls BACK into the discretionary trend
@@ -215,11 +218,10 @@ function buildContext(db: AppDatabase, today: string): PredictContext {
   return {
     index,
     earliestDate,
-    activeSeries: db
-      .select()
-      .from(recurringSeries)
-      .where(inArray(recurringSeries.status, ["detected", "confirmed"]))
-      .all(),
+    activeSeries: withBillingCarriers(
+      db,
+      db.select().from(recurringSeries).where(inArray(recurringSeries.status, ["detected", "confirmed"])).all(),
+    ),
     notDrawnAsRecurring,
     agentsCash: [...agentsCash],
     upfrontCar: upfrontCarRule(index, agentsCash, notDrawnAsRecurring),

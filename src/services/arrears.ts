@@ -5,6 +5,7 @@ import { transactions } from "@/db/schema/transactions";
 import { addDays, compareDates, diffDays, periodBounds } from "@/lib/dates";
 import { sharedFrontier, type UnbankedFrontier } from "@/lib/unbanked-income";
 import { earliestVerified, landingAccountsBySeries } from "./cash-earnings";
+import { withBillingCarriers } from "./billing-carriers";
 import { accountCoverage } from "./coverage";
 import { paydayProjectable, paydaySettlementsBySeries } from "./payday-settlement";
 import { hasStoppedForecasting, projectOccurrences, toProjectable } from "./recurring";
@@ -97,16 +98,21 @@ export function overdueForSeries(
   if (seriesIds.size === 0) return { totalCents: 0, series: [] };
   if (compareDates(periodStart, through) > 0) return { totalCents: 0, series: [] };
 
-  const rows = db
-    .select()
-    .from(recurringSeries)
-    .where(
-      and(
-        inArray(recurringSeries.id, [...seriesIds]),
-        inArray(recurringSeries.status, ["detected", "confirmed"]),
-      ),
-    )
-    .all();
+  // each with the carrier it is billed with: a series paid inside another's payment lapses when its carrier does
+  // (`lastSeenOn`, §6A 59) — and owes what it owes as before, its own occurrences against its own postings
+  const rows = withBillingCarriers(
+    db,
+    db
+      .select()
+      .from(recurringSeries)
+      .where(
+        and(
+          inArray(recurringSeries.id, [...seriesIds]),
+          inArray(recurringSeries.status, ["detected", "confirmed"]),
+        ),
+      )
+      .all(),
+  );
   const live = rows.filter((r) => !hasStoppedForecasting(r, today));
   if (live.length === 0) return { totalCents: 0, series: [] };
 

@@ -592,6 +592,8 @@ export function DaySheetBody({ entries }: { entries: readonly CalendarEntry[] })
                     {/* not a warning: nothing is late about a bill the bank has
                         not charged yet — the All tab's "Never billed" */}
                     {e.neverBilled ? <Badge tone="neutral">{SERIES_EVIDENCE_LABEL["never-billed"]}</Badge> : null}
+                    {/* ⚖️ paid inside another series' payment (§6A 59) — where "Never billed" stood */}
+                    {e.billedWith !== null ? <Badge tone="neutral">{e.billedWith}</Badge> : null}
                     <span className="text-[11px] text-ink-faint">{KIND_LABEL[e.kind]}</span>
                   </span>
                   {e.confidence ? (

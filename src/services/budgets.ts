@@ -17,6 +17,7 @@ import {
   type PeriodBounds,
 } from "@/lib/dates";
 import { outsidePortfolioCashAccountIds } from "./accounts";
+import { withBillingCarriers } from "./billing-carriers";
 import {
   activeTxnsInRange,
   categorySpending,
@@ -1139,17 +1140,21 @@ export function budgetTail(
 
   // Only live series forecast a tail — a dismissed/ended series whose past rows
   // are still tagged must not resurrect as an "expected" charge (matches
-  // upcomingOccurrences' detected|confirmed horizon).
-  const rows = db
-    .select()
-    .from(recurringSeries)
-    .where(
-      and(
-        inArray(recurringSeries.id, [...seriesIds]),
-        inArray(recurringSeries.status, ["detected", "confirmed"]),
-      ),
-    )
-    .all();
+  // upcomingOccurrences' detected|confirmed horizon). Each with the carrier it is billed with, whose postings are
+  // its evidence (`lastSeenOn`, §6A 59) — the lapse gate below reads them.
+  const rows = withBillingCarriers(
+    db,
+    db
+      .select()
+      .from(recurringSeries)
+      .where(
+        and(
+          inArray(recurringSeries.id, [...seriesIds]),
+          inArray(recurringSeries.status, ["detected", "confirmed"]),
+        ),
+      )
+      .all(),
+  );
 
   const series: BudgetTailSeries[] = [];
   let totalCents = 0;

@@ -2,12 +2,14 @@ import { and, eq, gte, inArray, isNotNull, lte } from "drizzle-orm";
 import type { AppDatabase } from "@/db/client";
 import { recurringSeries, type Cadence } from "@/db/schema/recurring";
 import { transactions } from "@/db/schema/transactions";
+import { billedWithLabel } from "@/lib/billed-with";
 import { addCalendarMonths, monthKey, todayIso } from "@/lib/dates";
 import { formatDayShortIn } from "@/lib/format-date";
 import { levelledMonthlyCents } from "@/lib/income-basis";
 import { wholeToleranceDays } from "@/lib/recurring-step";
 import { outsidePortfolioCashAccountIds } from "./accounts";
 import { activeTxnsInRange, isAgentsSeries } from "./analytics";
+import { withBillingCarriers } from "./billing-carriers";
 import { COMMITTED_KINDS, SPEND_BASELINE_MONTHS, baselineWindow } from "./committed";
 import {
   effectiveSeries,
@@ -88,7 +90,7 @@ export interface SubscriptionLine {
   perOccurrenceCents: number;
   /** that charge levelled to a month — `weekly × 4` would lose a month a year */
   monthlyCents: number;
-  /** newest matched charge; null = the bank has never billed this at all */
+  /** when it was last SEEN (`lastSeenOn` — its carrier's charge too, §6A 59); null = never billed at all */
   lastMatchedOn: string | null;
   /**
    * The same day, spelled for a SENTENCE — "Aug 4", or "Jan 16, 2025" across a
@@ -114,6 +116,13 @@ export interface SubscriptionLine {
   postedCount: number;
   /** the bank has never billed it — a hand-registered commitment */
   neverBilled: boolean;
+  /**
+   * ⚖️ "billed with the rent, last seen Sep 2" — the row's evidence when it is paid inside another series' payment
+   * (`billedWithLabel`, owner decision 2026-10-08, §6A 59); null when it is billed on its own. 🔴 His `Rent utilities
+   * & fees` read "never billed" here, and its $182.21 stood in "$477.90 of the figure above — 12.5% of it — has
+   * never been billed by a bank", paid inside every rent payment.
+   */
+  billedWithLabel: string | null;
 }
 
 export interface SubscriptionsCard {
@@ -222,11 +231,11 @@ export function subscriptionsCard(
 ): SubscriptionsCard | null {
   const kinds = new Set<string>(COMMITTED_KINDS);
   const agentsCash = outsidePortfolioCashAccountIds(db);
-  const rows = db
-    .select()
-    .from(recurringSeries)
-    .where(inArray(recurringSeries.status, ["detected", "confirmed"]))
-    .all()
+  // ⚖️ each with the carrier it is billed with — its evidence (`lastSeenOn`, §6A 59)
+  const rows = withBillingCarriers(
+    db,
+    db.select().from(recurringSeries).where(inArray(recurringSeries.status, ["detected", "confirmed"])).all(),
+  )
     // money OUT only. `COMMITTED_KINDS` rather than "everything but income":
     // a `transfer` series moves money between accounts the owner already holds,
     // so committing it here would count money that never leaves, and `other` is
@@ -312,7 +321,9 @@ export function subscriptionsCard(
       postedCount: totals.count,
       // never billed is NOT lapsed: nothing has stopped, nothing ever started.
       // The car lease and its insurance live here.
+      // ⚖️ …and a series billed inside another's payment is seen when its carrier is (`lastSeenOn`, §6A 59)
       neverBilled: staleness.lastMatchedOn === null,
+      billedWithLabel: billedWithLabel(s, today),
     };
 
     // exactly the pair `upcomingOccurrences` filters on, so this card's split

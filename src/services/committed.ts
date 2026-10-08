@@ -31,6 +31,7 @@ import {
   type AnalyticsTxn,
 } from "./analytics";
 import { arrearsThisMonth, overdueForSeries } from "./arrears";
+import { withBillingCarriers } from "./billing-carriers";
 import { incomeExpectation, type BudgetTail } from "./budgets";
 import { CAR_LEASE_TERM_MONTHS, isUpfrontCarRow, readUpfrontCarRule, upfrontCarRule } from "./car-upfront";
 import { frontierForSeries, ledgerOpens, observationFrontier, seriesAccountIds } from "./observation-frontier";
@@ -417,11 +418,11 @@ export function committedBook(
    */
   const late = arrearsThisMonth(db, moneyOut, today);
   const readById = arrearsReadCents(db, late, today);
-  const lateRows = db
-    .select()
-    .from(recurringSeries)
-    .where(inArray(recurringSeries.status, ["detected", "confirmed"]))
-    .all();
+  // each with the carrier it is billed with — a late line is evidenced by its carrier's postings too (§6A 59)
+  const lateRows = withBillingCarriers(
+    db,
+    db.select().from(recurringSeries).where(inArray(recurringSeries.status, ["detected", "confirmed"])).all(),
+  );
   const staleById = new Map(lateRows.map((s) => [s.id, seriesStaleness(s, today)]));
 
   const overdue: CommittedOccurrence[] = late.series.map((s) => ({

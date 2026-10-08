@@ -49,15 +49,30 @@ describe("unsettledReasonWord", () => {
 
 describe("upcomingEvidenceWord", () => {
   test("a series that has never charged is 'never billed', in the All tab's word", () => {
-    expect(upcomingEvidenceWord({ isStale: false, neverBilled: true })).toBe("never billed");
+    expect(upcomingEvidenceWord({ isStale: false, neverBilled: true, billedWith: null })).toBe("never billed");
   });
 
   test("a series running late keeps 'evidence stale'", () => {
-    expect(upcomingEvidenceWord({ isStale: true, neverBilled: false })).toBe("evidence stale");
+    expect(upcomingEvidenceWord({ isStale: true, neverBilled: false, billedWith: null })).toBe("evidence stale");
   });
 
   test("fresh evidence needs no word", () => {
-    expect(upcomingEvidenceWord({ isStale: false, neverBilled: false })).toBeNull();
+    expect(upcomingEvidenceWord({ isStale: false, neverBilled: false, billedWith: null })).toBeNull();
+  });
+
+  /*
+   * ⚖️ His decision 59 (2026-10-08): `Rent utilities & fees` is paid inside the rent. 🔴 Its upcoming entry read
+   * "(scheduled, never billed)"; it says whose postings its evidence is, and what they say.
+   */
+  test("a series billed inside another's payment says so — and what its carrier's evidence says", () => {
+    const rent = "billed with the rent";
+    expect(upcomingEvidenceWord({ isStale: false, neverBilled: false, billedWith: rent })).toBe("billed with the rent");
+    expect(upcomingEvidenceWord({ isStale: true, neverBilled: false, billedWith: rent })).toBe(
+      "billed with the rent, evidence stale",
+    );
+    expect(upcomingEvidenceWord({ isStale: false, neverBilled: true, billedWith: rent })).toBe(
+      "billed with the rent, which has never been billed",
+    );
   });
 });
 
@@ -96,7 +111,7 @@ describe("staleLabel", () => {
   test("a series nothing ever matched is never billed, in the word every other surface uses", () => {
     const never = staleness({ lastMatchedOn: null, daysSinceLastMatch: null });
     expect(staleLabel(never)).toBe("never billed");
-    expect(staleLabel(never)).toBe(upcomingEvidenceWord({ isStale: true, neverBilled: true }));
+    expect(staleLabel(never)).toBe(upcomingEvidenceWord({ isStale: true, neverBilled: true, billedWith: null }));
     expect(staleLabel(never)).not.toBe("never seen");
   });
 });

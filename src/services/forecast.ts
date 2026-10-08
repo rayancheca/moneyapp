@@ -32,6 +32,7 @@ import {
   hasStoppedForecasting,
 } from "./recurring";
 import { arrearsThisMonth, unbankedIncomeForSeries, unbankedIncomeTotals, type UnbankedIncomeTotals } from "./arrears";
+import { withBillingCarriers } from "./billing-carriers";
 import { isUpfrontCarRow, upfrontCarRule } from "./car-upfront";
 import { stillToCome } from "./payday-settlement";
 import { activeSplitsInRange } from "./transaction-splits";
@@ -466,12 +467,12 @@ function fixedComponents(
   monthEnd: string,
   { outside, agentsSeries }: ForecastReads,
 ): ForecastLeg {
-  // status only — staleness is disclosed per component, never used to exclude
-  const live = db
-    .select()
-    .from(recurringSeries)
-    .where(inArray(recurringSeries.status, ["detected", "confirmed"]))
-    .all();
+  // status only — staleness is disclosed per component, never used to exclude; each row with the carrier it is billed
+  // with, whose postings are its evidence (`lastSeenOn`, §6A 59)
+  const live = withBillingCarriers(
+    db,
+    db.select().from(recurringSeries).where(inArray(recurringSeries.status, ["detected", "confirmed"])).all(),
+  );
 
   const components: { component: ForecastComponent; firstDate: string }[] = [];
   let cashCents = 0;
@@ -643,13 +644,12 @@ function fixedComponents(
  */
 function arrearsComponents(db: AppDatabase, today: string, { outside, agentsSeries }: ForecastReads): ForecastLeg {
   // every live series the forecast would project; `overdueForSeries` applies the
-  // money-out and lapsed rules itself, and transfers are never spending here
-  const live = db
-    .select()
-    .from(recurringSeries)
-    .where(inArray(recurringSeries.status, ["detected", "confirmed"]))
-    .all()
-    .filter((s) => seriesIsIncomeOrSpending(s.kind));
+  // money-out and lapsed rules itself, and transfers are never spending here; each row with the carrier it is billed
+  // with, so a line's staleness note reads its carrier's postings too (`lastSeenOn`, §6A 59)
+  const live = withBillingCarriers(
+    db,
+    db.select().from(recurringSeries).where(inArray(recurringSeries.status, ["detected", "confirmed"])).all(),
+  ).filter((s) => seriesIsIncomeOrSpending(s.kind));
   const byId = new Map(live.map((s) => [s.id, s]));
   const late = arrearsThisMonth(db, new Set(byId.keys()), today);
   /*
