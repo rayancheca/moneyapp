@@ -48,6 +48,8 @@ import {
   type ReplayAnchor,
 } from "./derivation";
 import { PART_ENTERED, VERDICT_PRESENTATION } from "@/lib/provenance-verdict";
+import { billedWithEvidence } from "@/lib/billed-with";
+import { billingCarriers } from "./billing-carriers";
 import { postedAveragesBySeries } from "./posted-average";
 import { MIN_OCCURRENCES } from "./recurring";
 
@@ -1740,8 +1742,21 @@ function recurringSeriesProvenance(db: AppDatabase, id: string, today: string): 
           ? `${distinct.size} different amounts`
           : undefined;
 
+  /*
+   * ⚖️ BILLED INSIDE ANOTHER SERIES' PAYMENT (owner decision 2026-10-08, §6A 59): no row will ever post under its own
+   * name, and its evidence is its carrier's postings — the words the chip on its page prints (`billedWithLabel`).
+   * 🔴 Read off its own postings alone, his `Rent utilities & fees` page — chip "billed with the rent, last seen Sep
+   * 2" — opened this popover, and both insight popovers citing it ("3rd largest of your 13 scheduled commitments",
+   * "5.3% of what your scheduled commitments cost"), on "Nothing tagged to it has ever posted, so there is no
+   * evidence behind it at all": never billed, in other words, of money the bank takes inside the rent every month.
+   */
+  const billedWith = billingCarriers(db).get(id) ?? null;
   const observed = (): string => {
-    if (n === 0) return "Nothing tagged to it has ever posted, so there is no evidence behind it at all.";
+    if (n === 0)
+      return (
+        billedWithEvidence({ lastMatchedOn: series.lastMatchedOn, billedWith }, today) ??
+        "Nothing tagged to it has ever posted, so there is no evidence behind it at all."
+      );
     if (n < MIN_OCCURRENCES)
       return `Only ${n} tagged ${n === 1 ? "posting has" : "postings have"} ever landed — below the ${MIN_OCCURRENCES} this app requires before calling a repeat a pattern, so it is an anecdote rather than a statistic.`;
     if (distinct.size === 1)

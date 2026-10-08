@@ -17,9 +17,11 @@ import { billingCarriers } from "./billing-carriers";
 import { budgetTail } from "./budgets";
 import { committedBook } from "./committed";
 import { forecastCurrentMonth, forecastForMonth } from "./forecast";
+import { provenanceFor } from "./provenance";
 import { hasStoppedForecasting, listSeries, seriesEvidence, upcomingOccurrences } from "./recurring";
 import { recurringCalendar } from "./recurring-calendar";
 import { seriesDetail } from "./recurring-detail";
+import { recurringInsightInput } from "./recurring-insights";
 import { subscriptionsCard } from "./subscriptions-card";
 
 /**
@@ -253,6 +255,41 @@ describe("its page, and the committed lines", () => {
     expect(d.evidence).toBe("active");
     expect(d.billedWith).toEqual({ id: RENT, name: "Flamingo South Beach (rent)", lastMatchedOn: "2026-09-02" });
     expect(seriesDetail(bundle.db, RENT, TODAY).billedWith).toBeNull();
+  });
+
+  /*
+   * ⛔ "Never billed" in other words is still never billed. 🔴 On a copy of his ledger with the link set (2026-10-08)
+   * his page's chip read "billed with the rent, last seen Sep 2" while its Per charge popover — and both insight
+   * popovers, "3rd largest of your 13 scheduled commitments" and "5.3% of what your scheduled commitments cost", which
+   * cite the same proof — read "Nothing tagged to it has ever posted, so there is no evidence behind it at all."
+   */
+  test("its amount popover and its insights' proof say billed with the rent — never 'no evidence behind it'", () => {
+    const amountProof = () => provenanceFor(bundle.db, { kind: "recurringSeries", id: UTIL, today: TODAY })!;
+    expect(amountProof().headline).toContain("no evidence behind it at all");
+    link();
+    const headline = amountProof().headline;
+    expect(headline).not.toContain("no evidence");
+    expect(headline).not.toContain("ever posted");
+    expect(headline).toContain("billed with the rent, last seen Sep 2");
+    // ⛔ his amount, still his: the verdict and the source he set
+    expect(amountProof().verdict).toBe("manual");
+    expect(amountProof().sources.map((s) => s.label)).toContain("you set this to -$182.21");
+    // the insights cite this same proof
+    const input = recurringInsightInput(bundle.db, UTIL, TODAY)!;
+    expect(input.candidates.length).toBeGreaterThan(0);
+    for (const c of input.candidates) expect(c.prove()!.headline).toBe(headline);
+    // the gym, never billed, still says so
+    const gym = provenanceFor(bundle.db, { kind: "recurringSeries", id: GYM, today: TODAY })!.headline;
+    expect(gym).toContain("no evidence behind it at all");
+  });
+
+  /* a carrier the bank has never billed lends nothing — the sentence says that, as the card's label does */
+  test("billed with a rent that has never been billed: its popover says so, and that nothing stands behind it", () => {
+    bundle.db.update(recurringSeries).set({ lastMatchedOn: null }).where(eq(recurringSeries.id, RENT)).run();
+    link();
+    const headline = provenanceFor(bundle.db, { kind: "recurringSeries", id: UTIL, today: TODAY })!.headline;
+    expect(headline).toContain("billed with the rent, which has never been billed");
+    expect(headline).toContain("no evidence behind it at all");
   });
 
   test("the committed book's line is evidenced, and leaves the unevidenced figure", () => {

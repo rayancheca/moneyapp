@@ -1,5 +1,12 @@
 import { describe, expect, test } from "vitest";
-import { billedWithLabel, billedWithPhrase, carrierWord, lastSeenOn, type BillingCarrier } from "./billed-with";
+import {
+  billedWithEvidence,
+  billedWithLabel,
+  billedWithPhrase,
+  carrierWord,
+  lastSeenOn,
+  type BillingCarrier,
+} from "./billed-with";
 
 /**
  * ⚖️ His decision 59 (2026-10-08): `Rent utilities & fees` ($182.21) is paid INSIDE the rent payment each month —
@@ -71,5 +78,26 @@ describe("billedWithPhrase / billedWithLabel — the words where 'never billed' 
 
   test("a series billed with nothing has no such label", () => {
     expect(billedWithLabel({ lastMatchedOn: "2026-09-02", billedWith: null }, TODAY)).toBeNull();
+  });
+});
+
+/* 🔴 Its amount popover read "Nothing tagged to it has ever posted, so there is no evidence behind it at all." */
+describe("billedWithEvidence — what its proof says stands behind it, in the chip's own words", () => {
+  test("his: the rent's postings are its evidence", () => {
+    expect(billedWithEvidence({ lastMatchedOn: null, billedWith: RENT }, TODAY)).toBe(
+      "No row posts under its own name — it is billed with the rent, last seen Sep 2: paid inside the rent's payment, " +
+        "so the rent's postings are its evidence.",
+    );
+  });
+
+  test("a carrier the bank has never billed lends nothing, and the sentence says nothing stands behind it", () => {
+    expect(billedWithEvidence({ lastMatchedOn: null, billedWith: { ...RENT, lastMatchedOn: null } }, TODAY)).toBe(
+      "No row posts under its own name — it is billed with the rent, which has never been billed, so there is no " +
+        "evidence behind it at all.",
+    );
+  });
+
+  test("a series billed on its own has no such sentence", () => {
+    expect(billedWithEvidence({ lastMatchedOn: null, billedWith: null }, TODAY)).toBeNull();
   });
 });

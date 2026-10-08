@@ -71,8 +71,27 @@ export function billedWithPhrase(carrier: Pick<BillingCarrier, "name">): string 
  */
 export function billedWithLabel(s: EvidenceSource, today: string): string | null {
   if (s.billedWith === null) return null;
-  const seen = lastSeenOn(s);
-  const phrase = billedWithPhrase(s.billedWith);
+  return carriedLabel(s.billedWith, lastSeenOn(s), today);
+}
+
+function carriedLabel(carrier: Pick<BillingCarrier, "name">, seen: string | null, today: string): string {
+  const phrase = billedWithPhrase(carrier);
   if (seen === null) return `${phrase}, which has never been billed`;
   return `${phrase}, last seen ${formatDayShortIn(seen, today)}`;
+}
+
+/**
+ * What the proof of its amount says of the evidence behind it when no row has posted under its own name — the
+ * sentence where "Nothing tagged to it has ever posted, so there is no evidence behind it at all" stood (the amount
+ * popover on its page, and every insight that cites it). Its carrier's postings ARE its evidence, named in the chip's
+ * own words (`billedWithLabel`); a carrier the bank has never billed lends none, and the sentence says that too. Null
+ * for a series billed on its own.
+ */
+export function billedWithEvidence(s: EvidenceSource, today: string): string | null {
+  if (s.billedWith === null) return null;
+  const seen = lastSeenOn(s);
+  const lead = `No row posts under its own name — it is ${carriedLabel(s.billedWith, seen, today)}`;
+  if (seen === null) return `${lead}, so there is no evidence behind it at all.`;
+  const carrier = carrierWord(s.billedWith.name);
+  return `${lead}: paid inside ${carrier}'s payment, so ${carrier}'s postings are its evidence.`;
 }
