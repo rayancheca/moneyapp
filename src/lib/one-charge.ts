@@ -1,5 +1,5 @@
 import type { Cadence } from "@/db/schema/recurring";
-import { compareDates, diffDays } from "@/lib/dates";
+import { addDays, compareDates } from "@/lib/dates";
 import { formatDayShortIn } from "@/lib/format-date";
 import { stepFrom, stepPlan } from "@/lib/recurring-step";
 
@@ -16,13 +16,18 @@ import { stepFrom, stepPlan } from "@/lib/recurring-step";
  * that asks it of the ledger is `oneChargeDays` (services/recurring).
  */
 
-/** What the question reads — an `EffectiveSeries`, structurally: override-first values. */
+/**
+ * What the question reads — an `EffectiveSeries`, structurally (override-first values), and the series' own stored
+ * `toleranceDays`: how many days after its day a charge may settle and still be that day's (`absorbIntoLiveSeries` gives a
+ * final charge the same days past the end).
+ */
 export interface OneChargeSchedule {
   cadence: Cadence;
   intervalDaysAvg: number | null;
   anchorDay: number | null;
   nextExpectedOn: string | null;
   userEndsOn: string | null;
+  toleranceDays: number;
 }
 
 /**
@@ -41,23 +46,32 @@ export interface OneChargeSchedule {
  * reached January. It has charged since August, so its schedule began long before that cycle.
  *
  * `firstMatchedOn` is the EARLIEST charge the ledger knows of — the first active row linked to the series, or its own
- * `lastMatchedOn` when that is earlier (`oneChargeDays` reads both) — null when nothing ever charged. It belongs to the
- * occurrence it lands NEARER: nearer the step before (a tie included) it is that cycle's charge, so the schedule held
- * more than one; nearer the day — on it, a few days early, or late — it IS the one charge. 🔴 The cut-off was the
- * step before's nominal day, and `posted_on` is the SETTLE date: his Car insurance is due on the 11th and its first
- * charge posted Aug 12, so as a two-payment policy (Aug + Sep 11) it read "once · Sep 11". ⚖️ A posted one-off stays
- * one charge (decided 2026-10-08): its schedule still held one, and it is over — the walk stops at its end day, the
- * subscriptions card counts it ended.
+ * `lastMatchedOn` when that is earlier (`oneChargeDays` reads both) — null when nothing ever charged. On or before the
+ * step before plus the series' own `toleranceDays` it is that cycle's charge (or an earlier one's), so the schedule
+ * held more than one; after it — on the day, late, or paid weeks early — it IS the one charge. ⚖️ A posted one-off
+ * stays one charge (decided 2026-10-08): its schedule still held one, and it is over — the walk stops at its end day,
+ * the subscriptions card counts it ended.
+ *
+ * 🔴 The cut-off was the step before's nominal day (review of 8a4ac47), and `posted_on` is the SETTLE date: his Car
+ * insurance is due on the 11th and its first charge posted Aug 12, so as a two-payment policy (Aug + Sep 11) it read
+ * "once · Sep 11". 🔴 It then moved to HALFWAY between the two days (review of 3044ea6), and his balance paid Oct 12–26
+ * read monthly again — on a copy of his ledger a -$72.74 row posted 2026-10-20 put $72.74 a month back in the card's
+ * headline. He has paid this insurer early before: the $1,000 on Sep 3 made this balance. Settle lag is days.
+ *
+ * ⚠️ What dates cannot tell apart: the one charge paid about a cycle early (the balance on or before Oct 14) and the
+ * first charge of a two-payment schedule (Oct 11 + Nov 11), posted on time. This reads both as two, so a balance
+ * paid that early and attached to it goes back into the card's monthly figure (a copy of his ledger, posted Oct 13:
+ * $3,816.92) — the lesser mistake: the other one calls a monthly bill "once" and hides it from that figure.
  */
 export function isOneCharge(s: OneChargeSchedule, firstMatchedOn: string | null): boolean {
   if (s.userEndsOn === null || s.nextExpectedOn === null) return false;
-  // the same step the walk takes — so a weekly one-off looks a week either side, not a month
+  // the same step the walk takes — so a weekly one-off looks back a week, not a month
   const plan = stepPlan(s.cadence, s.intervalDaysAvg, s.anchorDay);
   if (compareDates(s.nextExpectedOn, s.userEndsOn) > 0) return false;
   if (compareDates(stepFrom(s.nextExpectedOn, plan, 1), s.userEndsOn) <= 0) return false;
   if (firstMatchedOn === null) return true;
-  const stepBefore = stepFrom(s.nextExpectedOn, plan, -1);
-  return diffDays(stepBefore, firstMatchedOn) > diffDays(firstMatchedOn, s.nextExpectedOn);
+  const stepBeforeSettled = addDays(stepFrom(s.nextExpectedOn, plan, -1), s.toleranceDays);
+  return compareDates(firstMatchedOn, stepBeforeSettled) > 0;
 }
 
 /** The cadence word for a one-charge series — in the slot `CADENCE_LABEL` fills for every other series. */

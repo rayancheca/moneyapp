@@ -1412,10 +1412,15 @@ export function rollForwardNextExpected(eff: EffectiveSeries, today: string = to
  */
 export function oneChargeDays(
   db: AppDatabase,
-  rows: readonly (SeriesOverrides & { id: string; lastMatchedOn: string | null })[],
+  rows: readonly (SeriesOverrides & { id: string; lastMatchedOn: string | null; toleranceDays: number })[],
 ): Map<string, string> {
   const candidates = rows
-    .map((s) => ({ id: s.id, eff: effectiveSeries(s), lastMatchedOn: s.lastMatchedOn }))
+    .map((s) => ({
+      id: s.id,
+      // the series' own settle tolerance — how late an earlier cycle's charge may post and still be that cycle's
+      eff: { ...effectiveSeries(s), toleranceDays: s.toleranceDays },
+      lastMatchedOn: s.lastMatchedOn,
+    }))
     .filter((c) => isOneCharge(c.eff, null));
   const days = new Map<string, string>();
   if (candidates.length === 0) return days;

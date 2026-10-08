@@ -11,7 +11,7 @@ import { budgetTail } from "./budgets";
 import { seriesInCategory } from "./category-detail";
 import { forecastCurrentMonth, forecastForMonth } from "./forecast";
 import { merchantIntelligence } from "./merchants";
-import { seedHisCarSeries } from "./one-charge-fixture";
+import { type OneChargeLedger, seedHisCarSeries } from "./one-charge-fixture";
 import {
   effectiveSeries,
   listSeries,
@@ -21,6 +21,7 @@ import {
   toProjectable,
 } from "./recurring";
 import { seriesDetail, setSeriesOverrides } from "./recurring-detail";
+import { attachTransactions } from "./recurring-links";
 import { subscriptionsCard } from "./subscriptions-card";
 
 /**
@@ -40,12 +41,14 @@ let bundle: DbBundle;
 let carId: string;
 let balanceId: string;
 let insuranceId: string;
+let ledger: OneChargeLedger;
 
 beforeEach(() => {
   dir = fs.mkdtempSync(path.join(os.tmpdir(), "moneyapp-onecharge-"));
   bundle = createDatabase(path.join(dir, "t.db"));
   seedDatabase(bundle.db);
-  ({ carId, balanceId, insuranceId } = seedHisCarSeries(bundle.db));
+  ledger = seedHisCarSeries(bundle.db);
+  ({ carId, balanceId, insuranceId } = ledger);
 });
 
 afterEach(() => {
@@ -110,6 +113,22 @@ describe("oneChargeDays — the one reading every surface asks", () => {
     // …and with its next day on its end, as the first reading would have taken it
     bundle.db.update(recurringSeries).set({ userEndsOn: "2026-07-06" }).where(eq(recurringSeries.id, storageId)).run();
     expect(oneChargeDays(bundle.db, rows()).has(storageId)).toBe(false);
+  });
+
+  /*
+   * 🔴 Review of 3044ea6, on a copy of his ledger: a -$72.74 row posted 2026-10-20 and attached to the balance read as
+   * October's charge (nearer Oct 11 than Nov 11), so the balance went back to "$72.74 a month" in the card's headline
+   * ($3,738.18 → $3,810.92), its one-offs emptied, and every printer said monthly again. He paid this insurer early
+   * once already — the $1,000 on Sep 3 made this balance.
+   */
+  test("the balance paid three weeks early, attached by hand, stays one charge — and out of the monthly figure", () => {
+    const paid = ledger.charge("2026-10-20", -7274, null);
+    attachTransactions(bundle.db, balanceId, [paid], "2026-10-21");
+    const rows = bundle.db.select().from(recurringSeries).all();
+    expect([...oneChargeDays(bundle.db, rows)]).toEqual([[balanceId, "2026-11-11"]]);
+    const card = subscriptionsCard(bundle.db, "2026-10-21")!;
+    expect(card.live.some((l) => l.seriesId === balanceId)).toBe(false);
+    expect(card.oneOffs.map((o) => [o.seriesId, o.cadenceLabel])).toEqual([[balanceId, "once · Nov 11"]]);
   });
 
   test("a write that moves only the due day earlier, inside the end, keeps one charge — on that day", () => {
