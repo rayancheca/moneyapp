@@ -58,8 +58,8 @@ function salaryCategoryId(): string {
 
 /**
  * His series as his ledger stores it — weekly Thursdays, his $1,141.92, no cached spread, detection's anchor — with
- * the history the guarded write will set. `anchor` is Jul 23 on his ledger; Jun 4 draws the paydays from his first
- * deposit on, as one payday universe will.
+ * the history the guarded write will set. `anchor` is Jul 23 on his ledger; either way his paydays open on Jun 4, the
+ * first payday (`firstPaydayOn`, §6A 55 step B).
  */
 function addPaySeries(anchor: string): void {
   bundle.db
@@ -163,7 +163,7 @@ afterEach(() => {
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
-describe("his ledger as it stands — the paydays drawn from his anchor, Jul 23", () => {
+describe("his ledger as it stands — anchored Jul 23, his paydays open on Jun 4", () => {
   const TODAY = "2026-10-08";
   let ids: ReturnType<typeof hisFour>;
   beforeEach(() => {
@@ -171,32 +171,37 @@ describe("his ledger as it stands — the paydays drawn from his anchor, Jul 23"
     ids = hisFour();
   });
 
-  test("settlement: Sep 23 pays Sep 24, 17, 10 and 3; Sep 24 pays Aug 27; June's money pays nothing", () => {
+  /* ⚖️ Step B: the walk opens on Jun 4, so Jun 4's cash week is paid by its own deposit — 🔴 drawn from the Jul 23
+     anchor, it read "toward no payday" beside an income card that had earned it. */
+  test("settlement: Jun 4 pays Jun 4; Sep 23 pays Sep 24, 17, 10, 3; Sep 24 pays Aug 27; Jun 5's $400 nothing", () => {
     const s = paydaySettlement(bundle.db, PAY, TODAY);
     expect(s.portions.map((p) => `${p.paydayOn} ← ${p.depositOn}`).sort()).toEqual([
+      "2026-06-04 ← 2026-06-04",
       "2026-08-27 ← 2026-09-24",
       "2026-09-03 ← 2026-09-23",
       "2026-09-10 ← 2026-09-23",
       "2026-09-17 ← 2026-09-23",
       "2026-09-24 ← 2026-09-23",
     ]);
-    expect(s.unallocatedCents).toBe(CASH + 40_000);
+    expect(s.unallocatedCents).toBe(40_000);
   });
 
-  /* ⛔ No "toward the payday of Aug 27" anywhere in June: both rows read toward no payday, ungraded. */
-  test("June's two deposits read toward no payday — not toward Aug 27", () => {
-    for (const [day, id, cents] of [
-      ["2026-06-04", ids.jun4, CASH],
-      ["2026-06-05", ids.jun5, 40_000],
-    ] as const) {
-      expect(rowOf("2026-06", day, id, TODAY)).toMatchObject({
-        state: "paid",
-        amountCents: cents,
-        settlesPaydaysOn: [],
-        towardNoPayday: true,
-        expectedAmountCents: CASH,
-      });
-    }
+  /* ⛔ No "toward the payday of Aug 27" anywhere in June: Jun 4 pays its own payday, Jun 5 none — ungraded. */
+  test("June's deposits stay in June — Jun 4 paid its own payday, Jun 5 toward no payday", () => {
+    expect(rowOf("2026-06", "2026-06-04", ids.jun4, TODAY)).toMatchObject({
+      state: "paid",
+      amountCents: CASH,
+      settlesPaydaysOn: [],
+      towardNoPayday: false,
+      expectedAmountCents: CASH,
+    });
+    expect(rowOf("2026-06", "2026-06-05", ids.jun5, TODAY)).toMatchObject({
+      state: "paid",
+      amountCents: 40_000,
+      settlesPaydaysOn: [],
+      towardNoPayday: true,
+      expectedAmountCents: CASH,
+    });
   });
 
   /* 55a: the cash week of Aug 20 is not paid by payroll money — it stands unpaid, at its own rate. */
@@ -266,10 +271,10 @@ describe("his ledger as it stands — the paydays drawn from his anchor, Jul 23"
 });
 
 /**
- * The same ledger, drawn from his first deposit's payday (Jun 4) — the universe step B of §6A 55 gives every reader.
- * Here Jun 4's cash week is a payday paid, and it is a sample of a cash week's pay.
+ * The same ledger anchored on Jun 4 itself — the same paydays, since step B of §6A 55 opens every reader on the first
+ * payday whichever anchor detection stored. Jun 4's cash week is a payday paid, and a sample of a cash week's pay.
  */
-describe("his ledger drawn from his first deposit — Jun 4 is a cash week paid in full", () => {
+describe("his ledger anchored on his first payday — Jun 4 is a cash week paid in full", () => {
   const TODAY = "2026-10-08";
   let ids: ReturnType<typeof hisFour>;
   beforeEach(() => {
@@ -351,14 +356,19 @@ describe("the posted average — his series page, the All tab and the popover re
     expect(s.popover).not.toContain("which is not what you set");
   });
 
-  test("his ledger as it stands, before the history is written — the same", () => {
+  /*
+   * ⚠️ Before the history is written, Jun 4's cash week — a payday his own deposit paid since step B opens his paydays
+   * there — is a week of the ONE rate the series has, paid $94.92 short: $1,047.00, the lump's weeks and Sep 24
+   * average $1,110.28 ± $54.80. That is the reading the history exists to correct; with it set (above), nothing.
+   */
+  test("his ledger as it stands, before the history is written — Jun 4 is a short week of the one rate", () => {
     addPaySeries("2026-07-23");
     bundle.db.update(recurringSeries).set({ userAmountHistory: null }).where(eq(recurringSeries.id, PAY)).run();
     hisFour();
     const s = surfaces();
-    expect([s.pageAvg, s.allTab]).toEqual([WEEK, WEEK]);
-    expect(s.page).toEqual(NOTHING_TO_ADD);
-    expect(s.popover).not.toContain("which is not what you set");
+    expect([s.pageAvg, s.allTab]).toEqual([111_028, 111_028]);
+    expect(s.page).toEqual({ text: "± $54.80", attachedToHeadline: false, avgLine: 111_028 });
+    expect(s.popover).toContain("average of what actually posted is $1,110.28, which is not what you set.");
   });
 
   /* ⛔ Drawn from his first deposit, Jun 4 pays its cash week in full — a payday of the cash era, not of today's. */

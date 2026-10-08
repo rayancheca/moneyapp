@@ -1,4 +1,6 @@
+import type { Cadence } from "@/db/schema/recurring";
 import { addDays, compareDates, diffDays } from "./dates";
+import { signedStepsToReach, stepFrom, stepPlan } from "./recurring-step";
 
 /**
  * SETTLE BACKWARDS — which paydays a deposit has paid down.
@@ -126,6 +128,54 @@ export interface AttributedDeposit {
   postedOn: string;
   /** positive money-in cents */
   amountCents: number;
+}
+
+/** The schedule a pay series walks: its effective cadence, measured gap, proven day and anchor (`EffectiveSeries`). */
+export interface PaydayRhythm {
+  cadence: Cadence;
+  intervalDaysAvg: number | null;
+  anchorDay: number | null;
+  /** the schedule's anchor — the date its rhythm is stepped from; null when it has none */
+  nextExpectedOn: string | null;
+}
+
+/**
+ * ⚖️ THE FIRST PAYDAY — where every reader of a pay series' paydays opens (§6A 55, step B): the anchor's rhythm walked
+ * BACK to the first date on or after the first deposit less the tolerance. The settlement walks from it, the recurring
+ * calendar and /budgets draw from it, and Earned vs banked counts from it (`startedOn`).
+ *
+ * 🔴 TWO PAYDAY UNIVERSES. Earned vs banked counted from the first DEPOSIT; the settlement, the calendar and /budgets
+ * from the stored ANCHOR — `stepsToReach` never walks back. On his ledger (2026-10-08) the card earned June's cash
+ * weeks from Jun 4, while the calendar drew no payday before detection's Jul 23 and Jun 4's $1,047.00 read "toward no
+ * payday"; on the e2e fixture, whose Paycheck deposits fall on the other Fridays of its biweekly anchor, the card
+ * counted one Friday and the calendar the next.
+ *
+ * Why the first deposit less the TOLERANCE: a deposit answers a payday within the tolerance before it (settlement's
+ * anchor clause), so the first payday it can have been for is the first one in that reach. And only BACK — an anchor
+ * already before the first deposit is itself the first payday, as the settlement has always drawn it.
+ *
+ * The evidence is settlement's: money IN that has ARRIVED (`hasArrived`). Null when there is none — a series nobody
+ * has been paid by has no paydays to grade. With no anchor there is no rhythm to walk, and the first deposit's own day
+ * opens it (no projection draws a payday without an anchor).
+ */
+export function firstPaydayOn(
+  schedule: PaydayRhythm,
+  toleranceDays: number,
+  deposits: readonly AttributedDeposit[],
+  today: string,
+): string | null {
+  const firstDepositOn = deposits
+    .filter((d) => d.amountCents > 0 && hasArrived(d.postedOn, today))
+    .reduce<string | null>(
+      (first, d) => (first === null || compareDates(d.postedOn, first) < 0 ? d.postedOn : first),
+      null,
+    );
+  if (firstDepositOn === null) return null;
+  const anchor = schedule.nextExpectedOn;
+  if (anchor === null) return firstDepositOn;
+  const plan = stepPlan(schedule.cadence, schedule.intervalDaysAvg, schedule.anchorDay);
+  const steps = signedStepsToReach(anchor, plan, addDays(firstDepositOn, -toleranceDays));
+  return stepFrom(anchor, plan, Math.min(0, steps));
 }
 
 export interface PaydaySettlementInput {

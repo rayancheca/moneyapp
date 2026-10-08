@@ -6,7 +6,7 @@ import { addDays, compareDates, diffDays, periodBounds } from "@/lib/dates";
 import { sharedFrontier, type UnbankedFrontier } from "@/lib/unbanked-income";
 import { earliestVerified, landingAccountsBySeries } from "./cash-earnings";
 import { accountCoverage } from "./coverage";
-import { settledPaydaysBySeries } from "./payday-settlement";
+import { paydayProjectable, paydaySettlementsBySeries } from "./payday-settlement";
 import { hasStoppedForecasting, projectOccurrences, toProjectable } from "./recurring";
 
 /**
@@ -239,8 +239,12 @@ export function unbankedIncomeForSeries(
    * single week it lands on. `lib/payday-settlement` carries the rule and the
    * decision; the point of reading it here is that /budgets, the recurring
    * calendar and this figure cannot disagree about the same Thursday.
+   *
+   * ⚖️ …nor about which Thursdays there were: the walk opens on the series' first payday, the one its settlement
+   * walked from (`paydayProjectable`, §6A 55 step B), so a window before the stored anchor names the paydays Earned vs
+   * banked counts in it.
    */
-  const settled = settledPaydaysBySeries(
+  const settlements = paydaySettlementsBySeries(
     db,
     live.map((r) => r.id),
     today,
@@ -248,8 +252,9 @@ export function unbankedIncomeForSeries(
 
   const unmet = live
     .map((s) => {
-      const met = settled.get(s.id) ?? new Map<string, string>();
-      const occ = projectOccurrences(toProjectable(s), periodStart, addDays(today, -1))
+      const settlement = settlements.get(s.id);
+      const met = settlement?.settledBy ?? new Map<string, string>();
+      const occ = projectOccurrences(paydayProjectable(s, settlement), periodStart, addDays(today, -1))
         .filter((o) => o.amountCents > 0)
         .filter((o) => !met.has(o.date));
       return { s, occ };

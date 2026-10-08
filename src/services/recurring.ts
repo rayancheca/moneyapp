@@ -16,10 +16,12 @@ import { addCalendarMonths, addDays, compareDates, diffDays, todayIso } from "@/
 import {
   CADENCE_NOMINAL_DAYS,
   deriveAnchorDay,
+  signedStepsToReach,
   stepFrom,
   stepPlan,
   stepSpanDays,
   stepsToReach,
+  walkDayOfMonth,
 } from "@/lib/recurring-step";
 import { parseAmountHistory, rateOn, seriesAmountCents } from "@/lib/series-kind";
 import { outsidePortfolioCashAccountIds } from "./accounts";
@@ -1109,6 +1111,16 @@ interface ProjectableSeries {
   amountHistory: readonly RatePeriod[] | null;
   /** copied onto every occurrence this series projects */
   staleness?: SeriesStaleness;
+  /**
+   * ⚖️ Where the schedule OPENS, when that is before its anchor: a pay series' first payday — its anchor's rhythm
+   * walked back to its first deposit (`firstPaydayOn`, §6A 55 step B). The walk starts here and never earlier. Absent,
+   * it starts at the anchor, as every projection did before.
+   *
+   * ⛔ Every reader that grades a pay series' PAST paydays passes it — the settlement, the recurring calendar, /budgets
+   * and its passed-unpaid leg (`paydayProjectable`) — so each names the paydays Earned vs banked counts. A forward
+   * reader (the forecast, Upcoming) need not: no payday on the rhythm falls between today and the first payday.
+   */
+  firstOn?: string | null;
 }
 
 /** The user-override columns that shadow detection's values (§4.4). */
@@ -1449,12 +1461,19 @@ export function projectOccurrences(
    * clamped reports the clamped day. That is the same answer the walk already
    * gives, so this adds no new error — it exposes the one already there.
    */
-  const anchorDayOfMonth = plan.calendarMonths
-    ? (plan.anchorDay ?? Number(anchor.slice(8, 10)))
-    : null;
+  const anchorDayOfMonth = walkDayOfMonth(anchor, plan);
+
+  /*
+   * ⚖️ Opened on the series' first payday when it has one (`firstOn`): the anchor's own rhythm, stepped BACK by index
+   * from the anchor — never re-anchored on that earlier date, whose day a short month may have clamped. Otherwise the
+   * walk is floored at the anchor (`stepsToReach`).
+   */
+  const firstStep = series.firstOn
+    ? Math.max(signedStepsToReach(anchor, plan, from), signedStepsToReach(anchor, plan, series.firstOn))
+    : stepsToReach(anchor, plan, from);
 
   const occurrences: SeriesOccurrence[] = [];
-  for (let i = stepsToReach(anchor, plan, from); ; i++) {
+  for (let i = firstStep; ; i++) {
     const date = stepFrom(anchor, plan, i);
     if (compareDates(date, last) > 0) break;
     occurrences.push({

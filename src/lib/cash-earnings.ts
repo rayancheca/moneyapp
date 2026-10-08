@@ -70,7 +70,11 @@ export interface PaySeries {
   cadence: Cadence;
   /** measured average gap, or null to fall back to the cadence's nominal step */
   intervalDaysAvg: number | null;
-  /** true day-of-month when the postings prove one; see `deriveAnchorDay` */
+  /**
+   * The day of the month a calendar-stepped schedule lands on — its proven day (`deriveAnchorDay`), else its anchor's
+   * own (`walkDayOfMonth`). ⛔ Not `startedOn`'s day: the first payday is the anchor's rhythm walked back
+   * (`firstPaydayOn`), and walked into a short month it may have been clamped.
+   */
   anchorDay: number | null;
   /** what one pay period is worth NOW, in cents (`seriesAmountCents`); positive for income */
   amountCents: number;
@@ -80,7 +84,10 @@ export interface PaySeries {
    * it cannot price his cash weeks at the payroll rate in silence.
    */
   amountHistory: readonly RatePeriod[] | null;
-  /** first day the schedule was in force — also the walk's anchor */
+  /**
+   * The schedule's first payday — also the walk's anchor. ⚖️ The day every reader of its paydays opens on
+   * (`firstPaydayOn`, §6A 55 step B), so this walk names the paydays the settlement, the calendar and /budgets draw.
+   */
   startedOn: string;
   /** last day it was in force, or null while it is still running */
   endedOn: string | null;

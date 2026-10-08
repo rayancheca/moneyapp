@@ -1,6 +1,7 @@
 import { describe, expect, test } from "vitest";
 import { addDays } from "./dates";
 import {
+  firstPaydayOn,
   hasArrived,
   portionsAcross,
   settlePaydaysBackwards,
@@ -486,5 +487,55 @@ describe("hasArrived", () => {
     expect(hasArrived("2026-09-30", "2026-10-01")).toBe(true);
     expect(hasArrived("2026-10-01", "2026-10-01")).toBe(true);
     expect(hasArrived("2026-10-02", "2026-10-01")).toBe(false);
+  });
+});
+
+/*
+ * ⚖️ ONE PAYDAY UNIVERSE (§6A 55, step B): the first payday every reader of a pay series opens on — its anchor's
+ * rhythm walked back to the first date on or after its first deposit less the tolerance.
+ *
+ * 🔴 Two universes: Earned vs banked counted from the first DEPOSIT (his Jun 4), settlement, the calendar and /budgets
+ * from the stored ANCHOR (his Jul 23 — `stepsToReach` never walks back). On the e2e fixture the two were a week apart.
+ */
+describe("firstPaydayOn", () => {
+  const his = { cadence: "weekly" as const, intervalDaysAvg: null, nextExpectedOn: "2026-07-23", anchorDay: null };
+  const TODAY = "2026-10-08";
+  const hisDeposits = [paid("2026-09-24", WEEK), paid("2026-06-05", 40_000), paid("2026-06-04", 104_700)];
+
+  test("his: the Jul 23 anchor walks back to Thursday Jun 4, the day of his first deposit", () => {
+    expect(firstPaydayOn(his, 3, hisDeposits, TODAY)).toBe("2026-06-04");
+  });
+
+  test("a deposit the day after its payday, or the tolerance after, still opens on that payday", () => {
+    expect(firstPaydayOn(his, 3, [paid("2026-06-05", WEEK)], TODAY)).toBe("2026-06-04");
+    expect(firstPaydayOn(his, 3, [paid("2026-06-07", WEEK)], TODAY)).toBe("2026-06-04");
+    // one day further, the payday before it is out of reach: the first payday is the one after
+    expect(firstPaydayOn(his, 3, [paid("2026-06-08", WEEK)], TODAY)).toBe("2026-06-11");
+  });
+
+  test("the e2e fixture's shape: deposits a week off the anchor's rhythm open on the anchor's rhythm", () => {
+    const paycheck = { ...his, cadence: "biweekly" as const, intervalDaysAvg: 14, nextExpectedOn: "2026-07-10" };
+    expect(firstPaydayOn(paycheck, 3, [paid("2024-07-05", 294_319), paid("2024-07-19", 294_319)], "2026-07-08")).toBe(
+      "2024-07-12",
+    );
+  });
+
+  test("an anchor already before the first deposit is the first payday — the walk only goes back", () => {
+    expect(firstPaydayOn({ ...his, nextExpectedOn: "2026-05-28" }, 3, hisDeposits, TODAY)).toBe("2026-05-28");
+  });
+
+  test("the evidence is money in that has arrived: a clawback or a row dated after today opens nothing", () => {
+    expect(firstPaydayOn(his, 3, [paid("2026-05-07", -WEEK), ...hisDeposits], TODAY)).toBe("2026-06-04");
+    expect(firstPaydayOn(his, 3, [paid("2026-06-04", WEEK)], "2026-06-03")).toBeNull();
+    expect(firstPaydayOn(his, 3, [], TODAY)).toBeNull();
+  });
+
+  test("no anchor, no rhythm to walk: the first deposit's own day", () => {
+    expect(firstPaydayOn({ ...his, nextExpectedOn: null }, 3, hisDeposits, TODAY)).toBe("2026-06-04");
+  });
+
+  test("a monthly schedule walks back by calendar months, clamped into a short month", () => {
+    const monthly = { cadence: "monthly" as const, intervalDaysAvg: 30, nextExpectedOn: "2026-07-30", anchorDay: null };
+    expect(firstPaydayOn(monthly, 3, [paid("2026-02-27", 500_000)], TODAY)).toBe("2026-02-28");
   });
 });

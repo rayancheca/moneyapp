@@ -4,10 +4,12 @@ import { recurringSeries } from "@/db/schema/recurring";
 import { transactions } from "@/db/schema/transactions";
 import { compareDates, todayIso } from "@/lib/dates";
 import { cashEarnings, type CashEarnings, type PaySeries } from "@/lib/cash-earnings";
-import { parseAmountHistory, seriesAmountCents } from "@/lib/series-kind";
+import { firstPaydayOn } from "@/lib/payday-settlement";
+import { stepPlan, walkDayOfMonth } from "@/lib/recurring-step";
 import { outsidePortfolioCashAccountIds } from "./accounts";
 import { isAgentsIncomeSeries } from "./analytics";
 import { accountCoverage } from "./coverage";
+import { effectiveSeries } from "./recurring";
 
 /**
  * Earned versus banked, read off the real ledger.
@@ -24,7 +26,10 @@ import { accountCoverage } from "./coverage";
  * series on that day; the $150 row that was once matched there has since been
  * re-categorised to `Transfers > Internal Transfer` and unlinked. The newest
  * genuinely linked deposit is 2026-06-05. Reading the cache would understate
- * the silence by a month, so this reads the rows.
+ * the silence by a month, so this reads the rows. ⚖️ The life opens on the
+ * series' FIRST PAYDAY (`firstPaydayOn`, §6A 55 step B): its schedule's rhythm
+ * walked back to the first linked deposit — the day the settlement, the
+ * recurring calendar and /budgets open on too.
  *
  * **2. Only ATTRIBUTED deposits count as banked.** A row counts when it carries
  * `recurring_series_id`, never merely because it looks like a cash deposit. The
@@ -192,6 +197,9 @@ export function cashEarningsReadings(
       cadence: recurringSeries.cadence,
       userCadence: recurringSeries.userCadence,
       intervalDaysAvg: recurringSeries.intervalDaysAvg,
+      nextExpectedOn: recurringSeries.nextExpectedOn,
+      userNextExpectedOn: recurringSeries.userNextExpectedOn,
+      toleranceDays: recurringSeries.toleranceDays,
       nextExpectedAmountCents: recurringSeries.nextExpectedAmountCents,
       userAmountCents: recurringSeries.userAmountCents,
       userAmountHistory: recurringSeries.userAmountHistory,
@@ -229,34 +237,40 @@ export function cashEarningsReadings(
       .map((r) => ({ postedOn: r.postedOn, amountCents: r.amountCents }));
 
     /*
-     * A schedule with no evidence at all has no life to bound, so it implies
-     * nothing rather than implying everything since the epoch. `startedOn` is
-     * the first deposit the owner actually attributed to it — the earliest
-     * moment we can say the arrangement existed.
+     * THE schedule every projection of this series walks (`effectiveSeries`): the owner's cadence, date and amount
+     * over detection's, and its past rates read strictly (§6A 55) — a history it cannot read refuses the reading
+     * rather than implying his cash weeks at today's rate. 🔴 The amount was the owner's, else the POSTED AVERAGE: a
+     * second spelling of "the amount", implied at one rate here and projected at another by the calendar, the forecast
+     * and the payday settlement.
      */
-    const firstBanked = banked[0];
-    if (firstBanked === undefined) continue;
-
-    /*
-     * THE amount — the owner's, else detection's next amount — that every projection of this series reads
-     * (`seriesAmountCents`). 🔴 It was the owner's, else the POSTED AVERAGE: a second spelling of "the amount", so a
-     * series with none of his own was implied at one rate here and projected at another by the calendar, the forecast
-     * and the payday settlement. And its past, dated (§6A 55), read strictly: a history it cannot read refuses the
-     * reading rather than implying his cash weeks at today's rate.
-     */
-    const amountCents = seriesAmountCents(s);
+    const eff = effectiveSeries(s);
+    const amountCents = eff.nextExpectedAmountCents;
     if (amountCents === null || amountCents <= 0) continue;
 
+    /*
+     * ⚖️ The series' FIRST PAYDAY (`firstPaydayOn`, §6A 55 step B): its schedule's rhythm walked back to the first
+     * deposit attributed to it — the earliest moment we can say the arrangement existed, on the day the settlement,
+     * the recurring calendar and /budgets open on. A schedule with no evidence at all has no life to bound, so it
+     * implies nothing rather than implying everything since the epoch.
+     *
+     * 🔴 It was the first deposit's own date, walked by the deposits' rhythm. On the e2e fixture Paycheck's deposits
+     * fall on the other Fridays of its biweekly anchor: this card counted "14 paydays, Jan 2 – Jul 3" while the
+     * calendar drew Jan 9 … Jun 26 and the settlement walked only from Jul 10. On his ledger the card counted his cash
+     * weeks from Jun 4 and no other page drew one before Jul 23.
+     */
+    const startedOn = firstPaydayOn(eff, s.toleranceDays, banked, today);
+    if (startedOn === null) continue;
+
+    const plan = stepPlan(eff.cadence, eff.intervalDaysAvg, eff.anchorDay);
     const pay: PaySeries = {
-      cadence: s.userCadence ?? s.cadence,
-      // a user-set cadence replaces the measured gap: the owner declaring
-      // "weekly" outranks an average taken over two deposits a day apart
-      intervalDaysAvg: s.userCadence ? null : s.intervalDaysAvg,
-      anchorDay: s.anchorDay ?? null,
+      cadence: eff.cadence,
+      intervalDaysAvg: eff.intervalDaysAvg,
+      // the anchor's day, not the first payday's: walked back into a short month, that one may have been clamped
+      anchorDay: eff.nextExpectedOn === null ? eff.anchorDay : walkDayOfMonth(eff.nextExpectedOn, plan),
       amountCents,
-      amountHistory: parseAmountHistory(s.userAmountHistory, amountCents),
-      startedOn: firstBanked.postedOn,
-      endedOn: s.userEndsOn ?? null,
+      amountHistory: eff.amountHistory,
+      startedOn,
+      endedOn: eff.userEndsOn,
     };
 
     const reading: CashEarningsReading = {

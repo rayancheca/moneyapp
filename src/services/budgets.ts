@@ -45,7 +45,7 @@ import {
 } from "./arrears";
 import type { UnbankedFrontier } from "@/lib/unbanked-income";
 import { portionsAcross } from "@/lib/payday-settlement";
-import { paydaySettlementsBySeries } from "./payday-settlement";
+import { paydayProjectable, paydaySettlementsBySeries } from "./payday-settlement";
 import { effectiveSeries, hasStoppedForecasting, projectOccurrences, toProjectable } from "./recurring";
 import { linkIsRecurring, rowIsRecurring, seriesIdsNotDrawnAsRecurring } from "./recurring-link";
 
@@ -991,7 +991,12 @@ export function incomeExpectation(
   const paidForAnotherMonthDeposits = new Set<string>();
   const paidForAnotherMonthPaydays = new Set<string>();
   for (const s of live) {
-    const inPeriod = projectOccurrences(toProjectable(s), start, end).filter(
+    /*
+     * ⚖️ From the series' first payday (`paydayProjectable`, §6A 55 step B) — the paydays its settlement walked and
+     * Earned vs banked counts. 🔴 From the stored anchor, his June scheduled no payday while the income card earned
+     * four cash weeks in it.
+     */
+    const inPeriod = projectOccurrences(paydayProjectable(s, settlements.get(s.id)), start, end).filter(
       (o) => o.amountCents > 0,
     );
     scheduledOccurrences += inPeriod.length;

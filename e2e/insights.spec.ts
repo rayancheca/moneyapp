@@ -22,7 +22,7 @@ import { expect, test } from "@playwright/test";
  * claimed they were.
  *
  * ⚠️ Scoped by id, not by heading text. `getByRole(name:)` matches on SUBSTRING,
- * and this page already carries "What this page cannot see".
+ * and this page can carry "What this page cannot see".
  */
 
 const STRIP = "section:has(#ledger-insights)";
