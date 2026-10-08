@@ -109,6 +109,29 @@ function coverThrough(accountId: string, from: string, to: string): void {
   }
 }
 
+/** A payroll deposit attributed to the series — $14,000, fourteen of its $1,000 paydays in one lump. */
+function payroll(id: string, accountId: string, postedOn: string): void {
+  bundle.db
+    .insert(transactions)
+    .values({
+      id,
+      accountId,
+      postedOn,
+      amountCents: 1_400_000,
+      rawDescription: "PAYROLL",
+      normalizedDescription: "PAYROLL",
+      categoryId: salaryId(),
+      recurringSeriesId: SERIES,
+      status: "active",
+      needsReview: false,
+      occurrenceIndex: 0,
+      dedupeHash: `h-${id}`,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    })
+    .run();
+}
+
 const read = (from: string, to: string) =>
   cashEarningsReadings(bundle.db, { from, to, today: TODAY, withChecked: true })[0]!;
 
@@ -140,25 +163,7 @@ describe("cashEarningsReadings — how much of a window the landing account has 
     const WF = "acct-wf";
     addAccount(WF);
     bundle.db.update(recurringSeries).set({ accountId: WF }).where(eq(recurringSeries.id, SERIES)).run();
-    bundle.db
-      .insert(transactions)
-      .values({
-        id: "t-wf",
-        accountId: WF,
-        postedOn: "2026-09-03",
-        amountCents: 1_400_000,
-        rawDescription: "PAYROLL",
-        normalizedDescription: "PAYROLL",
-        categoryId: salaryId(),
-        recurringSeriesId: SERIES,
-        status: "active",
-        needsReview: false,
-        occurrenceIndex: 0,
-        dedupeHash: "h-wf",
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-      })
-      .run();
+    payroll("t-wf", WF, "2026-09-03");
     coverThrough(CHASE, "2026-06-01", "2026-08-12");
     coverThrough(WF, "2026-06-01", "2026-09-10");
 
@@ -166,6 +171,29 @@ describe("cashEarningsReadings — how much of a window the landing account has 
     expect(sep.checkedThrough).toBe("2026-09-10");
     expect(sep.periodsSinceBanked).toBe(1); // Sep 10
     expect(sep.checkedPeriodsSinceBanked).toBe(1);
+  });
+
+  /**
+   * …and the read silence never outruns the silence — which the test above cannot show: its frontier (Sep 10) is
+   * past the last deposit (Sep 3), where the silence read as of the frontier IS the silence. 🔴 With `checkedSilence`
+   * deleted from `cashEarningsReadings` every test here stayed green (mutation-checked 2026-10-08). Here the named
+   * account is read only through Jul 9, BEFORE the last deposit, which landed elsewhere: as of Jul 9 the schedule had
+   * been silent four Thursdays since Jun 11, against the one (Sep 10) it really has — and every silent payday falls
+   * after Sep 3, so none of them is on a read day.
+   */
+  test("a frontier before the last deposit reads none of the silence, never more than there is", () => {
+    const WF = "acct-wf";
+    addAccount(WF);
+    bundle.db.update(recurringSeries).set({ accountId: WF }).where(eq(recurringSeries.id, SERIES)).run();
+    payroll("t-jun", WF, "2026-06-11");
+    payroll("t-sep", CHASE, "2026-09-03");
+    coverThrough(WF, "2026-06-01", "2026-07-09");
+    coverThrough(CHASE, "2026-06-01", "2026-09-10");
+
+    const sep = read("2026-09-01", "2026-09-30");
+    expect(sep.checkedThrough).toBe("2026-07-09");
+    expect(sep.periodsSinceBanked).toBe(1); // Sep 10
+    expect(sep.checkedPeriodsSinceBanked).toBe(0);
   });
 
   test("a landing account with no checked record has no frontier, and nothing is counted as read", () => {
