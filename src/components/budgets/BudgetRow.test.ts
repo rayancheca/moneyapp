@@ -16,6 +16,7 @@ import { createAccount } from "@/services/accounts";
 import { budgetPaceStatuses, createBudget, type BudgetPaceStatus } from "@/services/budgets";
 import { createCashWallet } from "@/services/cash-wallets";
 import { addManualTransaction } from "@/services/manual-transactions";
+import { seedHisCarSeries } from "@/services/one-charge-fixture";
 import { BudgetRow } from "./BudgetRow";
 
 // rendering never navigates or submits; the row and its controls only need these to exist
@@ -29,6 +30,20 @@ vi.mock("@/app/budgets/actions", () => ({
   setBudgetRolloverAction: async () => ({ ok: true }),
   updateBudgetPeriodAction: async () => ({ ok: true }),
 }));
+/*
+ * A popover renders its contents only while open, and nothing opens one in a static render — so the list of what is
+ * still expected (the tail's popover) is invisible to this file unless a test opens it. Closed unless one does.
+ */
+const popovers = vi.hoisted(() => ({ forceOpen: false }));
+vi.mock("@/components/ui/Popover", async (importOriginal) => {
+  const real = await importOriginal<typeof import("@/components/ui/Popover")>();
+  const { createElement: h } = await import("react");
+  return {
+    ...real,
+    Popover: (props: Parameters<typeof real.Popover>[0]) =>
+      h(real.Popover, { ...props, open: props.open || popovers.forceOpen }),
+  };
+});
 
 /**
  * The row, rendered from what `budgetPaceStatuses` returns — for the ONE part of
@@ -162,5 +177,52 @@ describe("BudgetRow — what it draws beside the verdict", () => {
     const html = render(s);
     expect(html).toContain("Off pace");
     expect(html).toMatch(/Projected ≈ <\/span><span class="[^"]*text-warning/);
+  });
+});
+
+/*
+ * ⚖️ Owner decision 2026-10-08 (§6A 56): the one-time Nov 11 car-insurance balance reads "once" wherever a cadence is
+ * printed — here, the list behind "… expected before Nov 30", where every line names its day and its cadence. 🔴 Review
+ * of 3044ea6 put this line back on the stored cadence ("Nov 11 · monthly") with every component test still green.
+ */
+describe("BudgetRow — the expected list prints a schedule of one charge as once", () => {
+  const NOVEMBER = "2026-11-02";
+
+  afterEach(() => {
+    popovers.forceOpen = false;
+  });
+
+  test("Nov 11 · once for the balance, beside a monthly bill that stays monthly", () => {
+    const his = seedHisCarSeries(bundle.db);
+    // his lease, monthly on the 15th to 2028 — a line in the same month with a cadence to print
+    bundle.db
+      .insert(recurringSeries)
+      .values({
+        name: "Car lease",
+        kind: "bill",
+        cadence: "monthly",
+        intervalDaysAvg: 30,
+        nextExpectedOn: "2026-11-15",
+        nextExpectedAmountCents: -69504,
+        userEndsOn: "2028-08-15",
+        status: "confirmed",
+        lastMatchedOn: "2026-10-15",
+        userCategoryId: his.carId,
+      })
+      .run();
+    createBudget(bundle.db, { categoryId: his.carId, period: "monthly", amountCents: 150_000, startsOn: "2026-11-01" });
+    const s = budgetPaceStatuses(bundle.db, NOVEMBER).find((x) => x.categoryName === "Transport")!;
+    expect(s.tail.map((t) => t.name)).toEqual(
+      expect.arrayContaining(["Car lease", "Car insurance — Nov 11 balance after the $1,000 early payment"]),
+    );
+
+    popovers.forceOpen = true;
+    const html = render(s);
+    const lines = [...html.matchAll(/<li>([\s\S]*?)<\/li>/g)].map((m) =>
+      m[1]!.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim(),
+    );
+    const lineOf = (name: string): string | undefined => lines.find((l) => l.startsWith(`${name} `));
+    expect(lineOf("Car insurance — Nov 11 balance after the $1,000 early payment")).toContain("Nov 11 · once");
+    expect(lineOf("Car lease")).toContain("Nov 15 · monthly");
   });
 });

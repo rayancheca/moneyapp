@@ -136,7 +136,8 @@ describe("the window captions beside the runway card", () => {
     } as SubscriptionsCardData;
     const card = text(renderToStaticMarkup(createElement(SubscriptionsCard, { data: withOneOff })));
     expect(card).toContain("$100.00a month, still forecast");
-    expect(card).toContain("Car insurance — Nov 11 balanceonce · Nov 11 · never billed$72.74");
+    // under its own heading, after the live lines — 🔴 review of 3044ea6: no test printed the heading's word
+    expect(card).toMatch(/One-off.*Car insurance — Nov 11 balanceonce · Nov 11 · never billed\$72\.74/);
 
     const none = text(renderToStaticMarkup(createElement(SubscriptionsCard, { data: subscriptions(6) })));
     expect(none).not.toContain("One-off");

@@ -1,21 +1,17 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { and, eq, isNull } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { createDatabase, type DbBundle } from "@/db/client";
 import { seedDatabase } from "@/db/seed";
-import { categories } from "@/db/schema/categories";
-import { institutions } from "@/db/schema/institutions";
 import { merchants } from "@/db/schema/merchants";
 import { recurringSeries } from "@/db/schema/recurring";
-import { transactions } from "@/db/schema/transactions";
-import { dedupeHash } from "@/lib/hash";
-import { createAccount } from "./accounts";
 import { budgetTail } from "./budgets";
 import { seriesInCategory } from "./category-detail";
 import { forecastCurrentMonth, forecastForMonth } from "./forecast";
 import { merchantIntelligence } from "./merchants";
+import { seedHisCarSeries } from "./one-charge-fixture";
 import {
   effectiveSeries,
   listSeries,
@@ -34,85 +30,22 @@ import { subscriptionsCard } from "./subscriptions-card";
  * forecast's math table — and each must now say "once", from the ONE reading (`oneChargeDays`). Car insurance itself
  * (two charges left, ends 2027-01-11) is a monthly bill in its last months, and must not.
  *
- * The two series are his, as stored on 2026-10-08.
+ * The two series are his, as stored on 2026-10-08 (`seedHisCarSeries`). What each printer then SAYS is pinned beside
+ * the printer, from the same fixture.
  */
 const TODAY = "2026-10-08";
 
 let dir: string;
 let bundle: DbBundle;
-let checkingId: string;
 let carId: string;
 let balanceId: string;
 let insuranceId: string;
-let seq = 0;
-
-function insertTxn(postedOn: string, amountCents: number, seriesId: string): void {
-  seq += 1;
-  const raw = `PROGRESSIVE ${seq}`;
-  bundle.db
-    .insert(transactions)
-    .values({
-      accountId: checkingId,
-      postedOn,
-      amountCents,
-      rawDescription: raw,
-      normalizedDescription: raw,
-      categoryId: carId,
-      recurringSeriesId: seriesId,
-      dedupeHash: dedupeHash({ accountId: checkingId, postedOn, amountCents, rawDescription: raw, occurrenceIndex: seq }),
-    })
-    .run();
-}
 
 beforeEach(() => {
   dir = fs.mkdtempSync(path.join(os.tmpdir(), "moneyapp-onecharge-"));
   bundle = createDatabase(path.join(dir, "t.db"));
   seedDatabase(bundle.db);
-  const chase = bundle.db.select().from(institutions).where(eq(institutions.name, "Chase")).get()!;
-  checkingId = createAccount(bundle.db, { institutionId: chase.id, name: "Checking", type: "checking" });
-  carId = bundle.db
-    .select()
-    .from(categories)
-    .where(and(eq(categories.name, "Transport"), isNull(categories.parentId)))
-    .get()!.id;
-  balanceId = bundle.db
-    .insert(recurringSeries)
-    .values({
-      name: "Car insurance — Nov 11 balance after the $1,000 early payment",
-      kind: "bill",
-      cadence: "monthly",
-      intervalDaysAvg: 30,
-      nextExpectedOn: "2026-11-11",
-      userNextExpectedOn: "2026-11-11",
-      userEndsOn: "2026-11-11",
-      nextExpectedAmountCents: -7274,
-      userAmountCents: -7274,
-      status: "confirmed",
-      lastMatchedOn: null,
-      userCategoryId: carId,
-    })
-    .returning({ id: recurringSeries.id })
-    .get().id;
-  insuranceId = bundle.db
-    .insert(recurringSeries)
-    .values({
-      name: "Car insurance",
-      kind: "bill",
-      cadence: "monthly",
-      intervalDaysAvg: 30,
-      nextExpectedOn: "2026-09-11",
-      userNextExpectedOn: "2026-12-11",
-      userEndsOn: "2027-01-11",
-      nextExpectedAmountCents: -36149,
-      userAmountCents: -35758,
-      status: "confirmed",
-      lastMatchedOn: "2026-09-03",
-      userCategoryId: carId,
-    })
-    .returning({ id: recurringSeries.id })
-    .get().id;
-  insertTxn("2026-08-12", -35758, insuranceId);
-  insertTxn("2026-09-03", -100000, insuranceId);
+  ({ carId, balanceId, insuranceId } = seedHisCarSeries(bundle.db));
 });
 
 afterEach(() => {
