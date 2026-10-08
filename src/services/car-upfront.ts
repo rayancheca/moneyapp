@@ -4,7 +4,19 @@ import { outsidePortfolioCashAccountIds } from "./accounts";
 import { loadCategoryIndex, spendingBucket, type AnalyticsTxn, type CategoryIndex } from "./analytics";
 import { rowIsRecurring, seriesIdsNotDrawnAsRecurring } from "./recurring-link";
 
-/** The day the lease starts — its first scheduled payment. Money handed over before it is the car's up-front money. */
+/**
+ * The day the lease starts — the first day of its term — and NOT a payment day. Money handed over before it is the
+ * car's up-front money (⚖️ owner decision 2026-10-07, §6A 52: "before the lease starts (2026-09-11)").
+ *
+ * Why the 11th: it is the start he gave for the lease on 2026-08-11 ("from 2026-09-11"), and so the first of the 24
+ * months the car card spreads the up-front money over (`CAR_LEASE_TERM_MONTHS`). The payment he named for that day was
+ * superseded by the Mercedes-Benz statement — the lease bills $695.04 on the 15th, first due 2026-09-15 (paid early,
+ * 2026-09-02) — and the 11th is the insurance's billing day ($357.58, first premium 2026-08-11, posted 08-12), not
+ * the lease's. It falls after every row he handed over up front (the $5,000 cash on 08-11, the $1,100 deposit on 08-12).
+ *
+ * ⛔ A bill paid before it is still a bill: the 09-02 lease payment and the first premium are linked to their series,
+ * and `isUpfrontCarRow` asks the link as well as the date.
+ */
 export const CAR_LEASE_STARTS_ON = "2026-09-11";
 
 /** The term the car's up-front money buys: the lease, 2026-09-11 → 2028-08-11. */

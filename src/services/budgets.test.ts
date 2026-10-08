@@ -1509,12 +1509,20 @@ describe("budgetOneOffCents — too big to be a rate, unless a bill already acco
     expect(budgetOneOffCents([row(-10_001)], 10_000, notDrawn, null)).toBe(10_001);
   });
 
+  /** …a refund the same: one the size of the plan is the rate, one cent over is an event (netted as money back). */
+  test("both ends of the threshold for a refund", () => {
+    expect(budgetOneOffCents([row(10_000)], 10_000, notDrawn, null)).toBe(0);
+    expect(budgetOneOffCents([row(10_001)], 10_000, notDrawn, null)).toBe(-10_001);
+    // a purchase and its return, each over the plan, net to nothing held out
+    expect(budgetOneOffCents([row(-41_264), row(41_264)], 10_000, notDrawn, null)).toBe(0);
+  });
+
   test("a row a series drawn as recurring owns is never a one-off; a dismissed series' row is", () => {
     expect(budgetOneOffCents([row(-50_000, "live-series")], 10_000, notDrawn, null)).toBe(0);
     expect(budgetOneOffCents([row(-50_000, "dismissed-series")], 10_000, notDrawn, null)).toBe(50_000);
     expect(
-      budgetOneOffCents([row(-50_000, "live-series"), row(-20_000), row(-3_000), row(25_000)], 10_000, notDrawn, null),
-    ).toBe(20_000); // a refund is not a charge, and small spend is the rate
+      budgetOneOffCents([row(-50_000, "live-series"), row(-20_000), row(-3_000), row(2_500)], 10_000, notDrawn, null),
+    ).toBe(20_000); // small spend and a small refund are the rate
   });
 });
 
@@ -1745,6 +1753,48 @@ describe("budgetPaceStatuses — end-to-end pace, projection, and tail", () => {
     expect(row(billAtPlan).projectedCents).toBe(14_000 + 11_500);
     expect(row(billCentOver).recurringPostedCents).toBe(10_001);
     expect(row(billCentOver).projectedCents).toBe(14_001 + 11_500);
+  });
+
+  /**
+   * 🔴 THE RETURN OF A ONE-OFF HID ITS OWN SIZE OF ORDINARY SPEND. A purchase bigger than the plan is held out of the
+   * run-rate; its return, the same size the other way, was not — so once it posted, `spent − oneOff` came to the
+   * ordinary spend LESS the return, and the run-rate lost exactly that much. His ledger does this: Shopping −$412.64 on
+   * 2026-05-12 and +$412.64 on 05-20 (also −/+$1,087.66 in March 2026, −/+$544.36 in February 2024), each over the
+   * $280.00 plan. Measured on a copy with the budget started early, the projection fell $890.27 → $383.64 the day the
+   * return posted: what had been spent so far, nothing more. A refund larger than the plan is the same event in
+   * reverse — counted (the row is graded net), never a rate.
+   */
+  test("a purchase and its return, each over the plan, leave the run-rate together", () => {
+    const shopping = createBudget(bundle.db, {
+      categoryId: catId("Shopping"),
+      period: "monthly",
+      amountCents: 10_000,
+      startsOn: "2026-07-01",
+    });
+    spend("2026-07-02", -41_264, "Shopping > General");
+    spend("2026-07-04", -4_000, "Shopping > Clothing");
+    spend("2026-07-06", 41_264, "Shopping > General");
+
+    const row = budgetPaceStatuses(bundle.db, "2026-07-08").find((s) => s.budget.id === shopping)!;
+    expect(row.spentCents).toBe(4_000);
+    // the $40.00 is the rate: 4_000 × 23/8
+    expect(row.projectedCents).toBe(4_000 + 11_500);
+    expect(row.pace).toBe("at-risk");
+  });
+
+  test("a refund over the plan with no purchase beside it is counted once, and the rate beside it still runs", () => {
+    const shopping = createBudget(bundle.db, {
+      categoryId: catId("Shopping"),
+      period: "monthly",
+      amountCents: 10_000,
+      startsOn: "2026-07-01",
+    });
+    spend("2026-07-03", 30_000, "Shopping > General"); // a June purchase, returned in July
+    spend("2026-07-04", -4_000, "Shopping > Clothing");
+
+    const row = budgetPaceStatuses(bundle.db, "2026-07-08").find((s) => s.budget.id === shopping)!;
+    expect(row.spentCents).toBe(-26_000);
+    expect(row.projectedCents).toBe(-26_000 + 11_500);
   });
 
   /*

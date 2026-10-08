@@ -1,3 +1,4 @@
+import { upfrontCarLeftOut } from "./committed";
 import type { IncomeBasisKind } from "./income-basis";
 import { formatCents } from "./money";
 
@@ -88,6 +89,12 @@ export interface RunwayInput {
   incomeBasisKind?: IncomeBasisKind;
   /** measured total spend per month, positive magnitude */
   monthlySpendCents: number;
+  /**
+   * The car's up-front money the spend term LEFT OUT of the months it measured (`SpendBaseline.upfrontCarCents`, owner
+   * decision 2026-10-07, §6A 51): handed over once, so no part of a monthly rate. Read only to say so when it is all
+   * those months hold. Default 0.
+   */
+  upfrontCarCents?: number;
 }
 
 /**
@@ -238,6 +245,14 @@ export function runway(input: RunwayInput): Runway {
   ];
 
   if (!measured) {
+    /*
+     * 🔴 "Nothing has been spent" was false when the car's up-front money was all the months held: the spend term
+     * leaves it out (§6A 51), so it reads $0.00 over months the caption beneath says $6,100.00 was left out of. Still
+     * withheld — money handed over once is no rate — but said in the caption's own words (`upfrontCarLeftOut`). A net
+     * REFUND of it is money back, not spending, so the plain sentence stays true there.
+     */
+    const upfront = input.upfrontCarCents ?? 0;
+    const spentUpfront = upfront > 0 ? upfrontCarLeftOut(upfront) : null;
     return {
       kind: "unknown",
       netCashCents,
@@ -246,8 +261,11 @@ export function runway(input: RunwayInput): Runway {
       withInvestments,
       headline: "Not enough spending to measure",
       explanation:
-        "Nothing has been spent in the months counted below, so there is no rate to " +
-        "measure a runway against. This fills in once a month of spending is imported.",
+        spentUpfront === null
+          ? "Nothing has been spent in the months counted below, so there is no rate to " +
+            "measure a runway against. This fills in once a month of spending is imported."
+          : `Apart from ${spentUpfront}, nothing has been spent in the months counted below, so there is no rate to ` +
+            "measure a runway against. This fills in once a month of other spending is imported.",
       assumptions,
     };
   }

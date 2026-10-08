@@ -609,12 +609,31 @@ export function baselineCaption(window: {
   if (span === null) {
     return "No complete month has been imported yet, so there is no spending average to stand on.";
   }
-  const upfront = window.upfrontCarCents ?? 0;
-  const leftOut =
-    upfront === 0
-      ? ""
-      : `, leaving out the ${formatCents(upfront)} paid up front for the car, which the car card spreads over the lease`;
-  return `Spending averaged over ${span}${leftOut}. This month is still running and is not counted.`;
+  const leftOut = upfrontCarLeftOut(window.upfrontCarCents ?? 0);
+  const clause = leftOut === null ? "" : `, leaving out ${leftOut}`;
+  return `Spending averaged over ${span}${clause}. This month is still running and is not counted.`;
+}
+
+/**
+ * The car's up-front money a spending average left out (`SpendBaseline.upfrontCarCents`, §6A 51), as a noun phrase —
+ * or null when it left none out.
+ *
+ * ⛔ ONE PHRASE for every sentence that names it: the caption under the runway card (`baselineCaption`) and the
+ * withheld verdict above it (`runway`), when that money is all the months counted hold. Two spellings of one amount on
+ * one card is how a figure and its words drift.
+ *
+ * 🔴 A NET REFUND IS NOT MONEY PAID UP FRONT. The sum is the card's own (`isUpfrontCarRow`, either sign), so a window
+ * holding a refund of the deposit and not the deposit — paid in an earlier month — is negative, and the caption read
+ * "leaving out the -$1,100.00 paid up front for the car". It is named as the refund it is, and not dropped: the average
+ * is then the plain one PLUS the refund ÷ the months, and a caption calling it "averaged over …" without saying so
+ * would lie by omission exactly as it would over a payment.
+ */
+export function upfrontCarLeftOut(cents: number): string | null {
+  if (cents === 0) return null;
+  return cents > 0
+    ? `the ${formatCents(cents)} paid up front for the car, which the car card spreads over the lease`
+    : `the ${formatCents(-cents)} refunded of the money paid up front for the car, which the car card takes off what ` +
+        "it spreads over the lease";
 }
 
 /**

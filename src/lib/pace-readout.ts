@@ -13,9 +13,11 @@ import type { ResolvedPeriod } from "./period";
  * say "at least" was the one a reader lands on to check the other.
  *
  * ⛔ The MATH is not touched. `computePace`/`projectPace` stay a straight-line
- * extrapolation of what has been imported — the tile reads the same
- * `cashFlow.pace` — which is exactly why the words must mark the figures as
- * lower bounds whenever elapsed days are missing from them.
+ * extrapolation of what has been imported — less the car's up-front money,
+ * which is counted once and never extrapolated (owner decision 2026-10-07,
+ * §6A 51) — and the tile reads the same `cashFlow.pace`. That is exactly why
+ * the words must mark the figures as lower bounds whenever elapsed days are
+ * missing from them.
  */
 
 /**

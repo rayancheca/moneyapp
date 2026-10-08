@@ -550,6 +550,8 @@ export function runwayCard(db: AppDatabase, today: string = todayIso()): RunwayC
       // on the same row the first time a lump switched the basis to "banked".
       incomeBasisKind: income.basis.kind,
       monthlySpendCents: spend.monthlyCents,
+      // …and what the spend term left out, so a withheld verdict cannot say nothing was spent (§6A 51)
+      upfrontCarCents: spend.upfrontCarCents,
     }),
     committed: committedBook(db, today),
     spend,

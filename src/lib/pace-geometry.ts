@@ -86,11 +86,14 @@ export function paceGeometry(input: PaceGeometryInput): PaceGeometry | null {
     solid += ` H ${x(firstActualIdx + i)} V ${y(measured[i]!)}`;
   }
 
-  // Filled, because `projectedCents` is `actualToDate × daysInMonth / elapsed`
-  // and so always owns the top of the scale — which pins the measured line's
-  // ceiling to exactly `elapsed / daysInMonth` of the band on every day of every
-  // month. Early in a month it is squeezed into the bottom tenth no matter what
-  // was spent: measured on the fixture, an 8-day range came to 2.0px against a
+  // Filled, because `projectedCents` is `upfront + (actualToDate − upfront) ×
+  // daysInMonth / elapsed` (`computePace`) — the car's up-front money counted
+  // once and never extrapolated (owner decision 2026-10-07, §6A 51), the rest a
+  // straight line — and so always owns the top of the scale. That pins the
+  // measured line's ceiling to `elapsed / daysInMonth` of the band on every day
+  // of every month, and only a month holding up-front money lifts it above.
+  // Early in a month it is squeezed into the bottom tenth no matter what was
+  // spent: measured on the fixture, an 8-day range came to 2.0px against a
   // 1.75px stroke, so a staircase rendered as a flat hairline. A region against
   // a true zero survives that squeeze; a hairline does not.
   const area = `${solid} V ${y(0)} H ${x(firstActualIdx)} Z`;

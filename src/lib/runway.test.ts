@@ -194,6 +194,29 @@ describe("runway — nothing measured yet", () => {
   test("measured net refunds are a measurement, not an absence", () => {
     expect(runway({ ...fresh, monthlySpendCents: -5000 }).kind).toBe("covered");
   });
+
+  /**
+   * ⚖️ §6A 51: the spend term leaves the car's up-front money out. 🔴 When that money was the ONLY spending in the
+   * months counted, the withheld verdict said "Nothing has been spent in the months counted below" — over a caption
+   * naming $6,100.00 left out of those very months. The verdict stays withheld (money handed over once is no rate);
+   * the sentence names what was spent, in the caption's own words (`upfrontCarLeftOut`).
+   */
+  test("the car's up-front money alone is named, never 'nothing has been spent'", () => {
+    const r = runway({ ...fresh, upfrontCarCents: 610_000 });
+    expect(r.kind).toBe("unknown");
+    expect(r.headline).toBe("Not enough spending to measure");
+    expect(r.explanation).toBe(
+      "Apart from the $6,100.00 paid up front for the car, which the car card spreads over the lease, nothing has " +
+        "been spent in the months counted below, so there is no rate to measure a runway against. This fills in once " +
+        "a month of other spending is imported.",
+    );
+  });
+
+  /** A refund of it is money back, not spending: nothing has been spent, and the caption names the refund. */
+  test("a refund of the up-front money alone leaves the plain sentence true", () => {
+    expect(runway({ ...fresh, upfrontCarCents: -10_000 }).explanation).toBe(runway(fresh).explanation);
+    expect(runway(fresh).explanation).toMatch(/^Nothing has been spent in the months counted below/);
+  });
 });
 
 describe("runway — cash that has already run out", () => {

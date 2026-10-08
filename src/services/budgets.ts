@@ -551,7 +551,8 @@ export interface PaceProjectionInput {
    * bigger than the whole period's budget is an event, not a daily habit, and
    * extrapolating it is how a $5,000 car deposit on day 1 of a 21-day window
    * projected $105,000 against a $921.38 budget. It still counts as spent — it
-   * is simply not evidence about the remaining days.
+   * is simply not evidence about the remaining days. A REFUND that size is the
+   * same event in reverse, so this can be negative (`budgetOneOffCents`).
    *
    * ⛔ DISJOINT from `recurringPostedCents` (`budgetOneOffCents`): both are
    * subtracted before the extrapolation, so a row in both hides its own size
@@ -613,6 +614,15 @@ export function projectSpend(input: PaceProjectionInput): number {
  * budget larger than the $1,100 deposit the deposit was paced over the rest of August as a habit. ⛔ ONE set, not two
  * terms: a down payment both up front and over the plan is held out once — subtracted twice, it would hide its own
  * size of ordinary spend (a repair) from the run-rate. Either sign, as the card nets a refund of the deposit.
+ *
+ * 🔴 …AND A REFUND LARGER THAN THE PLAN, the same event in reverse. Only a CHARGE was held out, so when a purchase over
+ * the plan was returned inside the period the purchase left the run-rate and its return stayed in it, and `spent −
+ * oneOff` came to the ordinary spend LESS the return: the return hid its own size of everyday spend — the shape the
+ * paragraph above calls a defect. His ledger does it (Shopping, $280.00 plan): −$412.64 on 2026-05-12, +$412.64 on
+ * 05-20; −/+$1,087.66 in March 2026; −/+$544.36 in February 2024. Measured on a copy with that budget started early,
+ * the projection fell $890.27 → $383.64 the day the return posted — the spend so far and no rate at all; held out
+ * with its purchase, it reads $594.64. A big refund of an earlier month's purchase is netted as money back (the row is
+ * graded net) and never a rate either. Latent on his live budgets, which began 2026-07-16 and have seen none.
  */
 export function budgetOneOffCents(
   rows: readonly UpfrontCarCandidate[],
@@ -622,7 +632,7 @@ export function budgetOneOffCents(
 ): number {
   return rows
     .filter((t) => !rowIsRecurring(t.recurringSeriesId, notDrawn))
-    .filter((t) => isUpfrontCarRow(upfront, t) || -t.amountCents > planCents)
+    .filter((t) => isUpfrontCarRow(upfront, t) || Math.abs(t.amountCents) > planCents)
     .reduce((sum, t) => sum - t.amountCents, 0);
 }
 
