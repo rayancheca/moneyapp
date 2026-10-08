@@ -1263,13 +1263,8 @@ describe("detection on the synthetic corpus", () => {
    * has checked (§6A 57): a fixture that means "quiet past its lapse line" has to have looked at the quiet days.
    */
   function cardReadThrough(to: string): void {
-    readThrough(cardId, to);
-  }
-
-  /** `accountId` read through `to` by the balance walk, from the corpus' first month. */
-  function readThrough(accountId: string, to: string): void {
     for (let day = "2026-01-01"; day <= to; day = addDays(day, 1)) {
-      bundle.db.insert(dailyBalances).values({ accountId, day, balanceCents: 0, basis: "derived" }).run();
+      bundle.db.insert(dailyBalances).values({ accountId: cardId, day, balanceCents: 0, basis: "derived" }).run();
     }
   }
 
@@ -1496,24 +1491,18 @@ describe("detection on the synthetic corpus", () => {
   // would delete ~$1,046/wk of income he is still earning. It stays, marked.
   test("a stale income series is still projected, carrying how old its evidence is", () => {
     const later = "2026-08-01"; // 37 days after the last cash deposit (2026-06-25)
-    /*
-     * ⚖️ The checking account it lands in is read only through Jun 30, so the ledger has not looked for a deposit
-     * since: awaiting statements — never "late" over days nobody has read (2026-10-08). ⚠️ Read through Jun 30, not
-     * left with nothing checked: an account with no checked record is measured to today, as an archived one is
-     * (review of 6eee6ea) — no statement has ever come for it to wait on.
-     */
-    readThrough(checkingId, "2026-06-30");
     const salary = upcomingOccurrences(bundle.db, later, 30).filter((o) => o.name === "Employer (cash)");
 
     expect(salary.length).toBeGreaterThan(0);
     expect(salary.every((o) => o.amountCents > 0)).toBe(true);
-    // still projected, still its age
+    // ⚖️ Nothing here has been checked (no balance walk, no statement), so the ledger has not looked for a deposit
+    // since: awaiting statements — never "late" over days nobody has read (2026-10-08). Still projected, still its age.
     expect(salary[0]!.staleness).toMatchObject({
       lastMatchedOn: "2026-06-25",
       daysSinceLastMatch: 37,
       isStale: false,
       awaitingStatements: true,
-      checkedThrough: "2026-06-30",
+      checkedThrough: null,
     });
     // every occurrence of the series is marked, not just the first
     expect(salary.every((o) => o.staleness?.awaitingStatements === true)).toBe(true);

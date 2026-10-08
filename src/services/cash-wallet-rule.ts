@@ -83,10 +83,10 @@ export function cashWalletIds(db: AppDatabase): ReadonlySet<string> {
  *
  * ⛔ ONE rule, made of the two that already exist — never a third spelling of either. /imports asks these accounts
  * for their statements (`statementPulls`, `statementGaps`); only these hold a silence back to the day their
- * statements have covered, once anything has been read on them — a series' lapse and running late, a past bill
- * missed, an arrears payment never posted (`silenceReadThrough`, §6A 57); and only these date spending while one of
- * them was spent from — a /budgets row, /spending's cut, "What changed" (`accountsThatDate`). `lib/budget-verdict`'s
- * "Cash only", which forbids an "Awaiting statements" that never arrives, stands on the wallet half.
+ * statements have covered — a series' lapse and running late, a past bill missed, an arrears payment never posted
+ * (`silenceReadThrough`, §6A 57); and only these date spending while one of them was spent from — a /budgets row,
+ * /spending's cut, "What changed" (`accountsThatDate`). `lib/budget-verdict`'s "Cash only", which forbids an
+ * "Awaiting statements" that never arrives, stands on the wallet half.
  */
 export function accountsAwaitingStatements(db: AppDatabase): ReadonlySet<string> {
   const wallets = cashWalletIds(db);
@@ -103,24 +103,11 @@ export function accountsAwaitingStatements(db: AppDatabase): ReadonlySet<string>
 
 /**
  * How far an account counts as read when a SILENCE on it is graded — a series running late or lapsed, a past bill
- * missed, an arrears payment that never posted: as far as its statements have reached (`readThrough`) while one is
- * still coming for it (`accountsAwaitingStatements`), and through TODAY when none ever will — archived, or a wallet —
- * or when nothing on it has been read at all (`readThrough` null: no checked record for the lapse, no import for the
- * calendar).
+ * missed, an arrears payment that never posted: as far as its statements have reached (`readThrough`, null for none)
+ * while one is still coming for it (`accountsAwaitingStatements`), and through TODAY when none ever will.
  *
  * ⚖️ 2026-10-08 (review of 98acbeb): his rule is that an upload arriving late can never make a bill vanish, and for an
  * archived account or a wallet none is coming — so its quiet is measured as if read through the day of the question.
- *
- * ⚖️ …and an account with nothing read on it holds nothing back either (review of 6eee6ea): there is no read day to
- * hold a series to, and held to none it was forecast for good. 🔴 On a copy of his ledger with Amazon Prime's account
- * set to Capital One 360 Checking (live, nothing imported — /imports never asks it for a statement, `statementPulls`),
- * at 2026-12-07 and again at 2027-10-08 it read "Awaiting statements" with a next date of Nov 5, 2027 and stayed live
- * on the subscriptions card; archived, the same series read lapsed on both days. Only the SILENCE moves: what the
- * ledger has read of it stays nothing (`checkedThroughBySeries`), and /imports' rule is unchanged.
- *
- * ⚠️ An investment account has no checked record however many statements it has — priced, not walked
- * (`accountCoverage`) — so a series on one is measured to today, as every series was before §6A 57. None lands on one
- * on his ledger (2026-10-08); in the e2e fixture four detected Robinhood Brokerage series do, all inside their lines.
  *
  * ⛔ ONE rule for every surface that grades a silence: the day a series' silence is measured to
  * (`silenceMeasuredThroughBySeries`, over each account's checked record) and the day the calendar and the runway's
@@ -133,8 +120,8 @@ export function silenceReadThrough(
   accountId: string,
   readThrough: string | null,
   today: string,
-): string {
-  return awaiting.has(accountId) && readThrough !== null ? readThrough : today;
+): string | null {
+  return awaiting.has(accountId) ? readThrough : today;
 }
 
 /** A statement period, an import anchor (statement/ofx_ledger/live) or an imported row on the account. */

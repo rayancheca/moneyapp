@@ -191,9 +191,8 @@ export function checkedSilence(
  * landing place is unchecked, a deposit could be sitting in it unseen and no
  * surface may claim the ledger looked.
  *
- * ⚠️ The day a series' SILENCE is measured to reads an account no statement is coming for — or one with nothing
- * checked at all — as checked through today (`silenceMeasuredThroughBySeries`): there it never collapses, and never
- * holds a series back.
+ * ⚠️ The day a series' SILENCE is measured to reads an account no statement is coming for as checked through today
+ * (`silenceMeasuredThroughBySeries`): there it never collapses, and never holds a series back.
  */
 export function earliestVerified(
   accountIds: ReadonlySet<string>,
@@ -262,10 +261,8 @@ export const checkedThroughBySeries = cache(function checkedThroughBySeries(
 /**
  * Per series, the day its silence is measured to — whether it is running late, "Awaiting statements" or lapsed
  * (`seriesStaleness`, `seriesHasLapsed`, §6A 57): `checkedThroughBySeries`' day, except that an account no statement
- * is coming for, or one with no checked record, counts as read through TODAY — `silenceReadThrough`, the rule the
- * calendar and the runway's arrears grade a past bill by too (`silenceObservedThrough`). Null only for a series that
- * names no account and has nothing linked to it — on his ledger 2026-10-08 the four commitments he registered by hand
- * and never charged (parking, the gym, rent utilities, the insurance balance), which cannot lapse.
+ * is coming for counts as read through TODAY — `silenceReadThrough`, the rule the calendar and the runway's arrears
+ * grade a past bill by too (`silenceObservedThrough`).
  *
  * ⚖️ An account a statement is still COMING for (`accountsAwaitingStatements` — not archived, not a cash wallet)
  * holds a series back to the day its statements have covered; one no statement will ever cover does not (2026-10-08,
@@ -279,11 +276,8 @@ export const checkedThroughBySeries = cache(function checkedThroughBySeries(
  * then is an archived one read through today. 🔴 Chosen among the accounts still awaited, the rent fell back to the
  * accounts it had left (`landingAccountsBySeries`).
  *
- * ⚖️ …and an account with NO checked record does not hold it back either (review of 6eee6ea): there is no read day to
- * hold a series to (`silenceReadThrough`). 🔴 Held at null, a series naming one was forecast for good — Amazon Prime on
- * Capital One 360 Checking read "Awaiting statements", next Nov 5, 2027, on 2027-10-08 (a copy of his ledger). ⚠️ What
- * the ledger has READ of it stays nothing: the income card, the passed paydays and /spending's reading still say they
- * cannot tell (`checkedThroughBySeries`).
+ * ⚠️ An awaited account with NO checked record still holds its series where nothing has been read (null), as the
+ * income card, the passed paydays and /spending's reading all require: a statement can still come for it.
  *
  * ⚡ Memoised for the reason `accountCoverage` gives (`react`'s `cache`, one request, never a module-level Map): every
  * budget's tail and arrears walk asks it, and measured on a copy of his ledger 2026-10-08 one call is 2.65ms past the

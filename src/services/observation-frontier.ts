@@ -402,11 +402,8 @@ export function accountsThatDate(
  * while the calendar filed its Nov 8 $50 "not yet known" and the runway said "no import has covered it yet" — waiting
  * for a statement /imports never asks for, until the series lapsed on Dec 7.
  *
- * ⚠️ Investment accounts stay out, as above. An account never imported is read through today too: nothing read on it,
- * no statement has ever come for it, and /imports never asks one (review of 6eee6ea). It decides a series' day only
- * where nothing else the series has paid from was imported — a bill registered by hand naming it, never charged: the
- * runway calls its payment "never posted", as it would on an archived account, never "no import has covered it yet"
- * every month. A series with no account at all still reads `frontierForSeries`' `null`.
+ * ⚠️ Investment accounts stay out, as above. An account never imported holds no day while a statement is still coming
+ * for it — `frontierForSeries`' `null` — and today once none is.
  *
  * ⚡ Memoised for the render, as `observationFrontier` is.
  */
@@ -418,7 +415,8 @@ export const silenceObservedThrough = cache(function silenceObservedThrough(
   const awaiting = accountsAwaitingStatements(db);
   const out = new Map<string, string>();
   for (const { id } of db.select({ id: accounts.id }).from(accounts).where(ne(accounts.type, "investment")).all()) {
-    out.set(id, silenceReadThrough(awaiting, id, byAccount.get(id) ?? null, today));
+    const through = silenceReadThrough(awaiting, id, byAccount.get(id) ?? null, today);
+    if (through !== null) out.set(id, through);
   }
   return { byAccount: out };
 });

@@ -322,10 +322,12 @@ describe("a series lapses only on days the ledger has checked — every surface 
 });
 
 /**
- * ⚖️ An account NO STATEMENT WILL EVER COME FOR — archived, a cash wallet (`accountsAwaitingStatements`), or one with
- * nothing read on it at all — does not hold the lapse back: its series are measured to today, as every series was
- * before §6A 57 (2026-10-08, review of 98acbeb). His rule is that an upload arriving late can never make a bill vanish;
- * for these none is coming.
+ * ⚖️ An account NO STATEMENT WILL EVER COME FOR — archived, or a cash wallet (`accountsAwaitingStatements`) — does not
+ * hold the lapse back: its series are measured to today, as every series was before §6A 57 (2026-10-08, review of
+ * 98acbeb). His rule is that an upload arriving late can never make a bill vanish; for these none is coming.
+ *
+ * ⚠️ A LIVE account with no checked record still holds its series where nothing has been read: a statement can still
+ * come for it, and the income card, the passed paydays and /spending's reading say so in words (their own tests).
  *
  * ⚠️ It moves every SILENCE — the lapse, running late, a past bill missed, an arrears payment that never posted
  * (`silenceReadThrough`) — not what the ledger has read: the pay sentences still name the day the archived account's
@@ -465,64 +467,6 @@ describe("an account no statement will ever come for does not hold the lapse bac
     expect(listSeries(bundle.db, "2026-09-01").find((s) => s.id === CASH_BILL)!.evidence).toBe("running-late");
   });
 
-  /*
-   * 🔴 A LIVE account with nothing read on it held its series where nothing had been read (review of 6eee6ea), against
-   * the decision: on a copy of his ledger with Amazon Prime's account set to Capital One 360 Checking (live, nothing
-   * ever imported), at 2026-12-07 and again at 2027-10-08 its silence day was null, its chip "Awaiting statements", its
-   * next date Nov 5, 2027, and the subscriptions card still listed it live — the "Awaiting statements" that never
-   * arrives, a year on. Archived, the same series read lapsed on both days. /imports never asks it for a statement: it
-   * has never had one (`statementPulls`).
-   */
-  test("a series on a live account with nothing read lapses on the day it would with the account read through today", () => {
-    const C1 = "acct-c1-360";
-    addAccount(C1);
-    // the insurance and the internet name it — where they land now (`landingAccountsBySeries`)
-    for (const id of [INSURANCE, BREEZELINE]) {
-      bundle.db.update(recurringSeries).set({ accountId: C1 }).where(eq(recurringSeries.id, id)).run();
-    }
-    const days = [OCT, NOV, DEC, YEAR_ON];
-    const unread = days.map((today) => readingOf([INSURANCE, BREEZELINE], today));
-    for (const today of days) {
-      expect(silenceMeasuredThroughBySeries(bundle.db, today)(INSURANCE), today).toBe(today);
-      // …while what the ledger has READ of it is still nothing — the day the pay sentences name (review of 82d75d7)
-      expect(checkedThroughBySeries(bundle.db, today)(INSURANCE), today).toBeNull();
-    }
-
-    let from = "2026-03-01";
-    const readToToday = days.map((today) => {
-      readAccountThrough(C1, today, from);
-      from = addDays(today, 1);
-      return readingOf([INSURANCE, BREEZELINE], today);
-    });
-
-    expect(unread).toEqual(readToToday);
-    // …and they do lapse: the insurance by December, both a year on — gone from the forecast and the runway's bills
-    expect(new Map(unread[2]!.map((r) => [r.id, r.evidence]))).toEqual(new Map([[INSURANCE, "lapsed"], [BREEZELINE, "running-late"]]));
-    expect(unread[3]!.map((r) => [r.evidence, r.next, r.committed])).toEqual([["lapsed", null, false], ["lapsed", null, false]]);
-  });
-
-  /*
-   * ⛔ The same rule for the runway's arrears and the calendar (`silenceReadThrough`): an account with nothing ever
-   * imported reads as an archived one does. 🔴 Held at "no import has covered it yet", a bill naming it waited every
-   * month on an import /imports never asks for — the archived card's defect (review of e00e6b8), on a live account.
-   */
-  test("the runway reads a bill on a live account with nothing imported as it reads one on an archived account", () => {
-    const C1 = "acct-c1-360";
-    addAccount(C1);
-    bundle.db.update(recurringSeries).set({ accountId: C1 }).where(eq(recurringSeries.id, GYM)).run();
-    const OCT_25 = "2026-10-25";
-    const arrears = () => {
-      const book = committedBook(bundle.db, OCT_25);
-      return { cents: book.overdueCents, unread: book.overdueUnreadCents, sentence: arrearsSentence(book) };
-    };
-    const live = arrears();
-    updateAccount(bundle.db, C1, { isActive: false });
-
-    expect(live).toEqual(arrears());
-    // the gym's Oct 22 $100 is the one payment read; the rest wait on Wells Fargo, Venture X and Chase Checking
-    expect(live.cents - live.unread).toBe(10_000);
-  });
-
   test("the runway's arrears stop owing an archived card's bill once it lapses — never every month for good", () => {
     updateAccount(bundle.db, VX, { isActive: false });
     // October: the insurance's Oct 3 is 35 days after its Sep 3, inside its line — owed, as read through today
@@ -534,10 +478,10 @@ describe("an account no statement will ever come for does not hold the lapse bac
     }
   });
 
-  /** An account read through `today` both ways the ledger reads one: its days walked, and a row on today. */
-  function readAccountThrough(accountId: string, today: string, from: string): void {
-    checkedThrough(accountId, from, today);
-    spent(accountId, categoryId("Health"), today, -100);
+  /** Venture X read through `today` both ways the ledger reads an account: its days walked, and a row on today. */
+  function readVentureXThrough(today: string, from: string): void {
+    checkedThrough(VX, from, today);
+    spent(VX, categoryId("Health"), today, -100);
   }
 
   /*
@@ -565,7 +509,7 @@ describe("an account no statement will ever come for does not hold the lapse bac
     updateAccount(bundle.db, VX, { isActive: true });
     let through = "2026-09-13";
     const readToToday = days.map((today) => {
-      readAccountThrough(VX, today, addDays(through, 1));
+      readVentureXThrough(today, addDays(through, 1));
       through = today;
       return graded(today);
     });
@@ -585,7 +529,7 @@ describe("an account no statement will ever come for does not hold the lapse bac
     updateAccount(bundle.db, VX, { isActive: false });
     const archived = arrears(NOV_20);
     updateAccount(bundle.db, VX, { isActive: true });
-    readAccountThrough(VX, NOV_20, "2026-09-14");
+    readVentureXThrough(NOV_20, "2026-09-14");
 
     expect(archived).toEqual(arrears(NOV_20));
     // the insurance's Nov 3 and Breezeline's Nov 10 are read; the rent and the lease (Wells Fargo, Sep 24) are not

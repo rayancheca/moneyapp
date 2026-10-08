@@ -468,11 +468,10 @@ export function committedBook(
  * (Venture X, Chase Checking, Wells Fargo) to the same Aug 12; it posts from Wells Fargo now, read only through
  * Sep 24, so its Oct 1 payment is unread under either rule and "no import has covered it yet" is true.
  *
- * ⚖️ …and an account no statement will come for — archived, a cash wallet, or one nothing was ever imported for — is
- * read through today, the calendar's frontier for the same reason (`silenceObservedThrough`): its bills' silence is
- * measured there (2026-10-08, review of 6eee6ea). 🔴 Read to an archived card's last import (review of e00e6b8),
- * Venture X's Breezeline was "running late" on /recurring and its Nov 8 still "no import has covered it yet" here, at
- * 2026-11-20 — an import /imports never asks for.
+ * ⚖️ …and an account no statement will come for — archived, or a cash wallet — is read through today, the calendar's
+ * frontier for the same reason (`silenceObservedThrough`): its bills' silence is measured there (2026-10-08). 🔴 Read
+ * to an archived card's last import (review of e00e6b8), Venture X's Breezeline was "running late" on /recurring and
+ * its Nov 8 still "no import has covered it yet" here, at 2026-11-20 — an import /imports never asks for.
  */
 function arrearsReadCents(db: AppDatabase, late: BudgetTail, today: string): ReadonlyMap<string, number> {
   const read = new Map<string, number>();
