@@ -21,7 +21,7 @@ import {
 import { outsidePortfolioCashAccountIds } from "./accounts";
 import { isAgentsSeries, loadCategoryIndex } from "./analytics";
 import { silenceMeasuredThroughBySeries } from "./cash-earnings";
-import { frontierForSeries, observationFrontier, seriesAccountIds } from "./observation-frontier";
+import { frontierForSeries, seriesAccountIds, silenceObservedThrough } from "./observation-frontier";
 import { paydayReadingsBySeries, paydaySettlementsBySeries, readsPerPayday } from "./payday-settlement";
 import {
   effectiveSeries,
@@ -691,7 +691,9 @@ export function recurringCalendar(
   // late and lapsed only on days the ledger has checked (`seriesEvidence`, §6A 57) — the gate and a future entry's words
   const checkedThrough = silenceMeasuredThroughBySeries(db, today);
   const needsFrontier = compareDates(monthStart, today) < 0;
-  const frontier = needsFrontier ? observationFrontier(db) : null;
+  // …and a past bill missed only on days read, an account no statement is coming for read through today — the
+  // chip's rule (`silenceObservedThrough`), so a bill filed late there is never "not imported yet" here
+  const frontier = needsFrontier ? silenceObservedThrough(db, today) : null;
   const accountsBySeries = needsFrontier ? seriesAccountIds(db) : null;
 
   for (const s of forecastRows) {

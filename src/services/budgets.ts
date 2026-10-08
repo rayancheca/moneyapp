@@ -58,6 +58,7 @@ import { incomeBasis, levelledMonthlyCents, type IncomeBasis } from "@/lib/incom
 import { daysNotImportedYet } from "@/lib/empty-period";
 import { categoryReach, type CategoryReach } from "@/lib/category-reach";
 import {
+  accountsThatDate,
   frontierForSeries,
   ledgerOpens,
   ledgerReaches,
@@ -1333,7 +1334,8 @@ export interface CategoryCoverage {
  *
  * ⚖️ …AND SO ARE ARCHIVED ACCOUNTS, while an account a statement is still coming
  * for was spent from — the one rule (`accountsAwaitingStatements`) /imports asks
- * for its statements by and a series' lapse is held back by (2026-10-08). An
+ * for its statements by and a series' lapse is held back by (2026-10-08), asked
+ * as /spending's cut and the dashboard ask it (`accountsThatDate`). An
  * archived card is never imported again, so its last statement held the row for
  * as long as its rows stayed in the window: "Awaiting statements", which
  * `lib/budget-verdict` forbids for a statement that never arrives. 🔴 On a copy
@@ -1370,10 +1372,9 @@ export function categoryCoverage(
   );
   // ⚖️ a wallet is counted on its own and never dates the row
   const imported = new Set([...spentFrom].filter((id) => !wallets.has(id)));
-  // ⚖️ …nor does an archived account, while one a statement is still coming for has a day
-  const awaited = new Set([...imported].filter((id) => awaiting.has(id)));
   return {
-    importedThroughOn: frontierForSeries(frontier, awaited) ?? frontierForSeries(frontier, imported),
+    // ⚖️ …nor does an archived account, while one a statement is still coming for has a day (`accountsThatDate`)
+    importedThroughOn: frontierForSeries(frontier, accountsThatDate(frontier, imported, awaiting)),
     spentFromSince,
     spentFromAccounts: imported.size,
     spentFromWallets: spentFrom.size - imported.size,

@@ -12,6 +12,7 @@ import { recurringSeries } from "@/db/schema/recurring";
 import { transactions } from "@/db/schema/transactions";
 import { seedDatabase } from "@/db/seed";
 import { budgetVerdict } from "@/lib/budget-verdict";
+import { arrearsSentence } from "@/lib/committed";
 import { addDays, compareDates } from "@/lib/dates";
 import { updateAccount } from "./accounts";
 import { arrearsThisMonth, unbankedIncomeForSeries } from "./arrears";
@@ -22,6 +23,7 @@ import { predictCategory } from "./category-forecast";
 import { committedBook, runwayCard } from "./committed";
 import { forecastCurrentMonth } from "./forecast";
 import { incomeCard } from "./income-card";
+import { moversCard, spendingCoverageThrough } from "./movers-card";
 import { listSeries, upcomingOccurrences } from "./recurring";
 import { recurringCalendar } from "./recurring-calendar";
 import { seriesDetail } from "./recurring-detail";
@@ -327,8 +329,10 @@ describe("a series lapses only on days the ledger has checked — every surface 
  * ⚠️ A LIVE account with no checked record still holds its series where nothing has been read: a statement can still
  * come for it, and the income card, the passed paydays and /spending's reading say so in words (their own tests).
  *
- * ⚠️ It moves the LAPSE, not what the ledger has read: the pay sentences and /budgets' days still name the day the
- * archived account's statements reached (`checkedThroughBySeries`), never today (review of 82d75d7).
+ * ⚠️ It moves every SILENCE — the lapse, running late, a past bill missed, an arrears payment that never posted
+ * (`silenceReadThrough`) — not what the ledger has read: the pay sentences still name the day the archived account's
+ * statements reached (`checkedThroughBySeries`), never today (review of 82d75d7), and spending is dated by the
+ * accounts still read while one was spent from (`accountsThatDate`).
  *
  * 🔴 Read to the archived card's frozen checked day (98acbeb), every series on it still inside its line was forecast
  * for good as "Awaiting statements": Breezeline (Venture X, last Sep 10) read so on 2026-12-07, and the car insurance
@@ -474,12 +478,108 @@ describe("an account no statement will ever come for does not hold the lapse bac
     }
   });
 
+  /** Venture X read through `today` both ways the ledger reads an account: its days walked, and a row on today. */
+  function readVentureXThrough(today: string, from: string): void {
+    checkedThrough(VX, from, today);
+    spent(VX, categoryId("Health"), today, -100);
+  }
+
+  /*
+   * 🔴 The calendar and the runway's arrears graded an archived card's past bills against its frozen last import
+   * (review of e00e6b8): on a copy of his ledger with Venture X archived, at 2026-11-20, Breezeline's chip read
+   * "running late" while the calendar filed its Nov 8 $50 "not yet known" (not imported yet) and the runway counted it
+   * in "…came due earlier this month and no import has covered it yet" — an import /imports never asks for.
+   */
+  test("the calendar grades an archived card's past bills as it would with the card read through today", () => {
+    // a third charge each, so the schedule is proven and a silent day can be graded at all (`scheduleIsProven`)
+    posted(VX, INSURANCE, "2026-07-03", -35_758);
+    posted(VX, BREEZELINE, "2026-07-10", -5_000);
+    const days = ["2026-10-20", "2026-11-20"];
+    const graded = (today: string): string[] =>
+      Object.entries(recurringCalendar(bundle.db, today.slice(0, 7), today).entriesByDay)
+        .flatMap(([day, entries]) =>
+          entries
+            .filter((e) => ON_VX.includes(e.seriesId))
+            .map((e) => `${day} ${e.seriesId} ${e.state} ${e.unsettledReason}`),
+        )
+        .sort();
+
+    updateAccount(bundle.db, VX, { isActive: false });
+    const archived = days.map(graded);
+    updateAccount(bundle.db, VX, { isActive: true });
+    let through = "2026-09-13";
+    const readToToday = days.map((today) => {
+      readVentureXThrough(today, addDays(through, 1));
+      through = today;
+      return graded(today);
+    });
+
+    expect(archived).toEqual(readToToday);
+    // …graded, never waiting: November's insurance and internet are missed, as the chip beside them says late
+    expect(archived[1]!.filter((e) => e.endsWith(" missed null"))).toHaveLength(2);
+    expect(archived.flat().some((e) => e.includes("not_imported"))).toBe(false);
+  });
+
+  test("the runway calls an archived card's late bill what it would read through today — never 'no import has covered it yet'", () => {
+    const NOV_20 = "2026-11-20";
+    const arrears = (today: string) => {
+      const book = committedBook(bundle.db, today);
+      return { cents: book.overdueCents, unread: book.overdueUnreadCents, sentence: arrearsSentence(book) };
+    };
+    updateAccount(bundle.db, VX, { isActive: false });
+    const archived = arrears(NOV_20);
+    updateAccount(bundle.db, VX, { isActive: true });
+    readVentureXThrough(NOV_20, "2026-09-14");
+
+    expect(archived).toEqual(arrears(NOV_20));
+    // the insurance's Nov 3 and Breezeline's Nov 10 are read; the rent and the lease (Wells Fargo, Sep 24) are not
+    expect(archived.cents - archived.unread).toBe(35_758 + 5_000);
+  });
+
+  /*
+   * 🔴 /spending's comparison cut, the dashboard's "What changed" and the year insights waited on an archived account
+   * while /budgets no longer did (review of e00e6b8): on a copy of his ledger with Chase Checking archived, at
+   * 2026-11-20, every /budgets row moved off Chase's Aug 12 (to Sep 2 and Sep 13) while `spendingCoverageThrough`
+   * still returned Aug 12 — and /spending kept printing "shown through Aug 12 at the earliest".
+   */
+  test("/spending's cut and the dashboard's 'What changed' date by the accounts a statement is still coming for", () => {
+    const health = categoryId("Health");
+    const OCT_20 = "2026-10-20";
+    // Chase Checking and Wells Fargo spent from every month of the baseline: both habits (`liveSpendersOver`)
+    for (const m of ["02", "03", "04", "05", "06", "07"]) spent(CHASE, health, `2026-${m}-05`, -3_000);
+    for (const m of ["02", "03", "04", "05", "06", "07", "08", "09"]) spent(WF, health, `2026-${m}-06`, -2_000);
+    // …and Wells Fargo and Venture X imported past September's last day; Chase Checking stops at Jul 28 (FPL)
+    spent(WF, health, "2026-10-02", -2_000);
+    spent(VX, health, "2026-10-02", -1_000);
+    expect(spendingCoverageThrough(bundle.db, OCT_20)).toBe("2026-07-28");
+    expect(moversCard(bundle.db, OCT_20)).toBeNull();
+
+    updateAccount(bundle.db, CHASE, { isActive: false });
+    expect(spendingCoverageThrough(bundle.db, OCT_20)).toBe("2026-10-02");
+    const card = moversCard(bundle.db, OCT_20)!;
+    expect(card.month).toBe("2026-09");
+    expect(card.lagging.map((l) => l.accountId)).not.toContain(CHASE);
+    // the day the card names is the day /spending cuts at
+    expect(card.lagging.map((l) => l.through).sort()[0]).toBe("2026-10-02");
+
+    // with no account it spends from left to read, the archived one's own last day, as /budgets keeps it
+    updateAccount(bundle.db, WF, { isActive: false });
+    updateAccount(bundle.db, VX, { isActive: false });
+    expect(spendingCoverageThrough(bundle.db, OCT_20)).toBe("2026-07-28");
+  });
+
   /*
    * ⚠️ The decision moved the LAPSE, not what the ledger has read. 🔴 Measured to today, the pay sentences claimed the
    * archived account's unread days (review of 82d75d7): on a copy of his ledger with Wells Fargo archived, the income
    * card on 2026-10-29 said "4 of them fall on days the records already cover, through Oct 29 — so the pay did not
    * reach a bank" and "$16,823.72 never reached a bank", and /recurring warned "Cash pay that never reaches a bank" —
    * Wells Fargo's statements stop at Sep 24.
+   *
+   * ⚠️ OPEN, his wording (review of e00e6b8): beside these sentences the pay's chip reads "running late" and the
+   * MONEY IN band "all of it running late" — the pair recurring.ts records as a defect. Neither word is right of an
+   * account no statement will come for: "the ledger has not looked" promises a look that never comes, and "the records
+   * cover … did not reach a bank" claims days nobody read. Its "has not looked" and "running-late" assertions pin
+   * today's split until he chooses.
    */
   test("a pay landing on an archived account: its paydays are read only as far as its statements reached", () => {
     const OCT_29 = "2026-10-29";

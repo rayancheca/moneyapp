@@ -33,7 +33,7 @@ import {
 import { arrearsThisMonth, overdueForSeries } from "./arrears";
 import { incomeExpectation, type BudgetTail } from "./budgets";
 import { CAR_LEASE_TERM_MONTHS, isUpfrontCarRow, readUpfrontCarRule, upfrontCarRule } from "./car-upfront";
-import { frontierForSeries, ledgerOpens, observationFrontier, seriesAccountIds } from "./observation-frontier";
+import { frontierForSeries, ledgerOpens, seriesAccountIds, silenceObservedThrough } from "./observation-frontier";
 import { silenceMeasuredThroughBySeries } from "./cash-earnings";
 import { seriesStaleness, upcomingOccurrences } from "./recurring";
 import { seriesIdsNotDrawnAsRecurring } from "./recurring-link";
@@ -454,7 +454,7 @@ export function committedBook(
  * 🔴 It said "never posted" of all $2,296.20 on 2026-10-07 while October was
  * imported for none of those accounts. ⛔ NO NEW RULE: "has the ledger read this
  * bill's day" is the recurring calendar's — `frontierForSeries` over
- * `observationFrontier` and `seriesAccountIds`, the input `settledVerdict`
+ * `silenceObservedThrough` and `seriesAccountIds`, the input `settledVerdict`
  * grades `missed` against `not_imported` with — and "is this payment late" is
  * still `overdueForSeries`, asked again only up to that day. A series with no
  * account the ledger knows reads nothing: the calendar's `null`, and the
@@ -467,6 +467,11 @@ export function committedBook(
  * imported. Measured on a copy of his ledger 2026-10-08: rent names no account, so pay's rule reads the same three
  * (Venture X, Chase Checking, Wells Fargo) to the same Aug 12; it posts from Wells Fargo now, read only through
  * Sep 24, so its Oct 1 payment is unread under either rule and "no import has covered it yet" is true.
+ *
+ * ⚖️ …and an account no statement will come for — archived, or a cash wallet — is read through today, the calendar's
+ * frontier for the same reason (`silenceObservedThrough`): its bills' silence is measured there (2026-10-08). 🔴 Read
+ * to an archived card's last import (review of e00e6b8), Venture X's Breezeline was "running late" on /recurring and
+ * its Nov 8 still "no import has covered it yet" here, at 2026-11-20 — an import /imports never asks for.
  */
 function arrearsReadCents(db: AppDatabase, late: BudgetTail, today: string): ReadonlyMap<string, number> {
   const read = new Map<string, number>();
@@ -475,7 +480,7 @@ function arrearsReadCents(db: AppDatabase, late: BudgetTail, today: string): Rea
   const monthStart = periodBounds(today, "monthly").start;
   const yesterday = addDays(today, -1);
 
-  const frontier = observationFrontier(db);
+  const frontier = silenceObservedThrough(db, today);
   const accountsBySeries = seriesAccountIds(db);
   // series read only part-way through the arrears window, grouped by the day they are read to
   const partly = new Map<string, Set<string>>();

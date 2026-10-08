@@ -82,10 +82,11 @@ export function cashWalletIds(db: AppDatabase): ReadonlySet<string> {
  * statement ever cover another day.
  *
  * ⛔ ONE rule, made of the two that already exist — never a third spelling of either. /imports asks these accounts
- * for their statements (`statementPulls`, `statementGaps`); only these hold a series' lapse back to the day their
- * statements have covered (`silenceMeasuredThroughBySeries`, §6A 57); and only these date a /budgets row while one
- * of them was spent from (`categoryCoverage`). `lib/budget-verdict`'s "Cash only", which forbids an "Awaiting
- * statements" that never arrives, stands on the wallet half.
+ * for their statements (`statementPulls`, `statementGaps`); only these hold a silence back to the day their
+ * statements have covered — a series' lapse and running late, a past bill missed, an arrears payment never posted
+ * (`silenceReadThrough`, §6A 57); and only these date spending while one of them was spent from — a /budgets row,
+ * /spending's cut, "What changed" (`accountsThatDate`). `lib/budget-verdict`'s "Cash only", which forbids an
+ * "Awaiting statements" that never arrives, stands on the wallet half.
  */
 export function accountsAwaitingStatements(db: AppDatabase): ReadonlySet<string> {
   const wallets = cashWalletIds(db);
@@ -98,6 +99,29 @@ export function accountsAwaitingStatements(db: AppDatabase): ReadonlySet<string>
       .map((a) => a.id)
       .filter((id) => !wallets.has(id)),
   );
+}
+
+/**
+ * How far an account counts as read when a SILENCE on it is graded — a series running late or lapsed, a past bill
+ * missed, an arrears payment that never posted: as far as its statements have reached (`readThrough`, null for none)
+ * while one is still coming for it (`accountsAwaitingStatements`), and through TODAY when none ever will.
+ *
+ * ⚖️ 2026-10-08 (review of 98acbeb): his rule is that an upload arriving late can never make a bill vanish, and for an
+ * archived account or a wallet none is coming — so its quiet is measured as if read through the day of the question.
+ *
+ * ⛔ ONE rule for every surface that grades a silence: the day a series' silence is measured to
+ * (`silenceMeasuredThroughBySeries`, over each account's checked record) and the day the calendar and the runway's
+ * arrears grade a past bill against (`silenceObservedThrough`, over each account's newest import). 🔴 Only the first
+ * asked it (review of e00e6b8): with Venture X archived, at 2026-11-20, Breezeline's chip read "running late" beside
+ * a calendar that filed its Nov 8 "not yet known" and a runway that said "no import has covered it yet".
+ */
+export function silenceReadThrough(
+  awaiting: ReadonlySet<string>,
+  accountId: string,
+  readThrough: string | null,
+  today: string,
+): string | null {
+  return awaiting.has(accountId) ? readThrough : today;
 }
 
 /** A statement period, an import anchor (statement/ofx_ledger/live) or an imported row on the account. */

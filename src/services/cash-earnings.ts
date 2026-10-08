@@ -7,7 +7,7 @@ import { compareDates, todayIso } from "@/lib/dates";
 import { cashEarnings, type CashEarnings, type PaySeries } from "@/lib/cash-earnings";
 import { outsidePortfolioCashAccountIds } from "./accounts";
 import { isAgentsIncomeSeries } from "./analytics";
-import { accountsAwaitingStatements } from "./cash-wallet-rule";
+import { accountsAwaitingStatements, silenceReadThrough } from "./cash-wallet-rule";
 import { accountCoverage, archivedAccountCoverage } from "./coverage";
 
 /**
@@ -261,7 +261,8 @@ export const checkedThroughBySeries = cache(function checkedThroughBySeries(
 /**
  * Per series, the day its silence is measured to — whether it is running late, "Awaiting statements" or lapsed
  * (`seriesStaleness`, `seriesHasLapsed`, §6A 57): `checkedThroughBySeries`' day, except that an account no statement
- * is coming for counts as read through TODAY.
+ * is coming for counts as read through TODAY — `silenceReadThrough`, the rule the calendar and the runway's arrears
+ * grade a past bill by too (`silenceObservedThrough`).
  *
  * ⚖️ An account a statement is still COMING for (`accountsAwaitingStatements` — not archived, not a cash wallet)
  * holds a series back to the day its statements have covered; one no statement will ever cover does not (2026-10-08,
@@ -291,7 +292,7 @@ export const silenceMeasuredThroughBySeries = cache(function silenceMeasuredThro
   const readThrough = new Map(
     [...landings.values()]
       .flatMap((ids) => [...ids])
-      .map((id) => [id, awaiting.has(id) ? (verifiedThroughByAccount.get(id) ?? null) : today] as const),
+      .map((id) => [id, silenceReadThrough(awaiting, id, verifiedThroughByAccount.get(id) ?? null, today)] as const),
   );
   return (seriesId) => earliestVerified(landings.get(seriesId) ?? new Set<string>(), readThrough, today);
 });
