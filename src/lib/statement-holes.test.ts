@@ -149,3 +149,53 @@ describe("the loop bound", () => {
     expect(holes[0]!.days).toBe(1430);
   });
 });
+
+/*
+ * ⛔ A HOLE IS COUNTED ON THE CYCLE IN FORCE WHEN IT HAPPENED. Once the newest
+ * closes move the rhythm (`statementCadence`'s moved-cycle rule), the rhythm
+ * describes the closes since the move — and walking it through an older hole
+ * counts the wrong days.
+ *
+ * 🔴 Measured on a copy of the owner's ledger on 2026-10-08: Discover's 2025 hole
+ * (Aug 2 and Sep 2 never imported) walked on the Capital One 9th counted only
+ * Aug 9, and /imports' Missing-statements line dropped from 5 statements to 4.
+ */
+describe("a cycle that moved", () => {
+  /** Discover's real cadence on 2026-10-08: the 9th since Aug 9, the 2nd on the ten closes before. */
+  const CAPITAL_ONE: StatementCadence = {
+    rhythm: { kind: "day-of-month", day: 9 },
+    toleranceDays: 2,
+    closes: 2,
+    movedFrom: { day: 2, closes: 10, since: "2026-08-09" },
+  };
+
+  test("a hole from before the move is counted on the old cycle", () => {
+    const holes = statementHoles(
+      [
+        { start: "2025-06-03", end: "2025-07-02" },
+        { start: "2025-09-03", end: "2025-10-02" },
+      ],
+      CAPITAL_ONE,
+    );
+    expect(holes).toEqual([{ from: "2025-07-03", to: "2025-09-02", days: 62, closes: 2 }]);
+  });
+
+  test("a hole after the move is counted on the new cycle", () => {
+    // Discover's earlier move, the 18th to the 2nd in 2025: walked on the 18th,
+    // the same 2025 hole would count Aug 18 alone
+    const moved: StatementCadence = {
+      rhythm: { kind: "day-of-month", day: 2 },
+      toleranceDays: 1,
+      closes: 3,
+      movedFrom: { day: 18, closes: 9, since: "2025-05-02" },
+    };
+    const holes = statementHoles(
+      [
+        { start: "2025-06-03", end: "2025-07-02" },
+        { start: "2025-09-03", end: "2025-10-02" },
+      ],
+      moved,
+    );
+    expect(holes).toEqual([{ from: "2025-07-03", to: "2025-09-02", days: 62, closes: 2 }]);
+  });
+});

@@ -1,5 +1,5 @@
 import { addDays, diffDays } from "./dates";
-import { nextCloseAfter, type StatementCadence } from "./statement-cadence";
+import { nextCloseAfter, rhythmOn, type StatementCadence } from "./statement-cadence";
 
 /**
  * The statements an account never had — the other half of "did my upload work?".
@@ -97,10 +97,16 @@ export function statementHoles(
  */
 function closesWithin(from: string, to: string, cadence: StatementCadence): number | null {
   if (cadence.rhythm.kind === "unknown") return null;
+  /*
+   * The rhythm in force WHEN the hole happened, not today's. A hole never holds
+   * the first close of a moved cycle — that close ends an imported period — so
+   * the whole window sits on one side of the move and its last day decides.
+   */
+  const rhythm = rhythmOn(cadence, to);
   let at: string | null = addDays(from, -1);
   let count = 0;
   while (count < MAX_CLOSES_PER_HOLE) {
-    at = nextCloseAfter(cadence.rhythm, at);
+    at = nextCloseAfter(rhythm, at);
     if (at === null || at > to) break;
     /*
      * ⚠️ No "did it advance?" guard here, deliberately. `statementCadence`
