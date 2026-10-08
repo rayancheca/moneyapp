@@ -2,7 +2,7 @@ import { eq } from "drizzle-orm";
 import { seriesDrawsAsRecurring, seriesRowLabel, type SeriesEvidence } from "@/lib/series-evidence";
 import type { AppDatabase } from "@/db/client";
 import { categories, type CategoryKind } from "@/db/schema/categories";
-import { addDays, periodBounds } from "@/lib/dates";
+import { periodBounds } from "@/lib/dates";
 import { unreachedKind, type UnreachedKind } from "@/lib/empty-period";
 import { withOwnRow } from "@/lib/subcategory-rows";
 import {
@@ -16,7 +16,7 @@ import {
   type DateRange,
 } from "./analytics";
 import { budgetStatuses, categoryReachFor, type CategoryReachContext } from "./budgets";
-import { overdueForSeries } from "./arrears";
+import { arrearsThisMonth } from "./arrears";
 import { listSeries } from "./recurring";
 
 /**
@@ -303,7 +303,7 @@ export interface CategorySeriesRow {
    * than it looks" — and `/recurring`'s Next column has printed it since the
    * same defect was fixed there on 2026-09-04.
    *
-   * ⛔ Same call every other surface makes: `overdueForSeries` over the calendar
+   * ⛔ Same call every other surface makes: `arrearsThisMonth`, over the calendar
    * month, closing the day BEFORE today, so a bill due today is due rather than
    * late. Arrears are scoped to the calendar month by the owner's decision of
    * 2026-09-02.
@@ -335,7 +335,7 @@ export function seriesInCategory(db: AppDatabase, categoryId: string, today: str
 
   // one call for the whole card, keyed by series — see `CategorySeriesRow.overdue`
   const overdueById = new Map(
-    overdueForSeries(db, ids, periodBounds(today, "monthly").start, addDays(today, -1)).series.map(
+    arrearsThisMonth(db, ids, today).series.map(
       (o) => [o.id, { date: o.nextDate, occurrenceCount: o.occurrenceCount }] as const,
     ),
   );

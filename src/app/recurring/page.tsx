@@ -1,8 +1,8 @@
 import type { Metadata } from "next";
 import { z } from "zod";
 import { getDb } from "@/db/client";
-import { addDays, monthKey, periodBounds, todayIso } from "@/lib/dates";
-import { overdueForSeries } from "@/services/arrears";
+import { monthKey, todayIso } from "@/lib/dates";
+import { arrearsThisMonth } from "@/services/arrears";
 import { forecastCurrentMonth } from "@/services/forecast";
 import { listSeries, upcomingOccurrences } from "@/services/recurring";
 import { readSettings } from "@/services/settings";
@@ -59,7 +59,7 @@ export default async function RecurringPage({
 
   /*
    * ⛔ Same call the forecast above the tabs makes, and the same one the bill's
-   * own page makes: the calendar month, closing the day before today, so a bill
+   * own page makes (`arrearsThisMonth`): the calendar month, closing the day before today, so a bill
    * due TODAY is due rather than late. Without it the "Next" column walked
    * forward past a charge the math table on this very screen named as "came due
    * 2026-09-01 and has not posted".
@@ -68,7 +68,7 @@ export default async function RecurringPage({
     series.filter((s) => s.status === "detected" || s.status === "confirmed").map((s) => s.id),
   );
   const overdueBySeries = new Map(
-    overdueForSeries(db, liveIds, periodBounds(today, "monthly").start, addDays(today, -1)).series.map(
+    arrearsThisMonth(db, liveIds, today).series.map(
       (o) => [o.id, { date: o.nextDate, occurrenceCount: o.occurrenceCount }] as const,
     ),
   );

@@ -271,6 +271,7 @@ export function SeriesDetail({
             detectedCadence={data.detectedCadence}
             accountName={data.accountName}
             status={data.status}
+            evidence={data.evidence}
             onChanged={onChanged}
           />
           <dl className="mt-4 grid grid-cols-2 gap-4 border-t border-line pt-4 sm:grid-cols-4">
@@ -384,11 +385,12 @@ export function SeriesDetail({
         {/* 🔴 An ENDED or DISMISSED series projected three dated future
             charges here — see `noScheduleReason`. Dropping the card silently
             would leave the reader wondering where the schedule went, so the
-            reason goes where it was. */}
-        {noScheduleReason(data.status) ? (
+            reason goes where it was. So did a LAPSED one, under its own
+            "Lapsed" badge, and it gets its reason the same way. */}
+        {noScheduleReason(data.status, data.evidence) ? (
           <SurfaceCard>
             <h2 className="mb-1 text-sm font-medium">Nothing expected</h2>
-            <p className="text-xs text-ink-muted">{noScheduleReason(data.status)}</p>
+            <p className="text-xs text-ink-muted">{noScheduleReason(data.status, data.evidence)}</p>
           </SurfaceCard>
         ) : null}
 

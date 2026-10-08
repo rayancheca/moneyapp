@@ -3,10 +3,12 @@ import {
   SERIES_EVIDENCE_LABEL,
   SERIES_EVIDENCE_NOTE,
   SUGGESTION_NOTE,
+  suggestionNote,
   seriesRowLabel,
   type SeriesEvidence,
   noScheduleReason,
   seriesIsOver,
+  seriesIsProjected,
   seriesDrawsAsRecurring,
   RECURRING_HISTORY_STATUSES,
 } from "./series-evidence";
@@ -37,6 +39,28 @@ describe("the evidence vocabulary", () => {
   test("the suggestions note says they are already forecast", () => {
     expect(SUGGESTION_NOTE).toContain("forecast");
     expect(SUGGESTION_NOTE).toContain("not yet confirmed");
+  });
+
+  /*
+   * 🔴 …EXCEPT ONE THE FORECAST HAS LET GO. On a copy of the owner's ledger 2026-10-08 the note read "already in the
+   * forecast above" over two cards, Rocket Money (running late, forecast) and Amazon Prime — "· lapsed" on its own
+   * card, in no figure above it: Committed was $3,569.98 over 8 lines without it. The note is true of every
+   * suggestion the page projects (`seriesIsProjected`) and must say which ones those are when they are not all.
+   */
+  test("a note over a lapsed suggestion does not claim every suggestion is forecast — it names the exception", () => {
+    for (const e of EVERY) {
+      const note = suggestionNote([e]);
+      if (seriesIsProjected("detected", e)) {
+        expect(note, e).toBe(SUGGESTION_NOTE);
+      } else {
+        expect(note, e).not.toBe(SUGGESTION_NOTE);
+        expect(note, e).toContain("not yet confirmed");
+        // the exception, in the word the suggestion card marks it with
+        expect(note, e).toContain(`unless marked ${SERIES_EVIDENCE_LABEL[e].toLowerCase()}`);
+      }
+    }
+    expect(suggestionNote(["running-late", "lapsed"])).toBe(suggestionNote(["lapsed"]));
+    expect(suggestionNote(["active", "running-late", "never-billed"])).toBe(SUGGESTION_NOTE);
   });
 });
 
@@ -84,18 +108,35 @@ describe("seriesRowLabel — evidence for a live series, status for one that is 
 
 describe("noScheduleReason", () => {
   test("an ended series says its future is over and its past is not", () => {
-    expect(noScheduleReason("ended")).toContain("has ended");
-    expect(noScheduleReason("ended")).toContain("stay in the ledger");
+    expect(noScheduleReason("ended", "lapsed")).toContain("has ended");
+    expect(noScheduleReason("ended", "lapsed")).toContain("stay in the ledger");
   });
 
   /* ⛔ Dismissed is HIS decision, not the app's — the sentence says so. */
   test("a dismissed series is described as the owner's decision", () => {
-    expect(noScheduleReason("dismissed")).toContain("You said");
+    expect(noScheduleReason("dismissed", "active")).toContain("You said");
   });
 
-  test("a live series has no reason to give — it still has a schedule", () => {
-    expect(noScheduleReason("confirmed")).toBeNull();
-    expect(noScheduleReason("detected")).toBeNull();
+  test("a live series that is still forecast has no reason to give — it still has a schedule", () => {
+    for (const e of ["active", "never-billed", "running-late"] as const) {
+      expect(noScheduleReason("confirmed", e)).toBeNull();
+      expect(noScheduleReason("detected", e)).toBeNull();
+    }
+  });
+
+  /*
+   * 🔴 A LAPSED series lost its "Next expected" card (the forecast let it go, so its page stopped projecting it) and
+   * nothing took the card's place: `/recurring/<Amazon Prime>` would read "Lapsed" over no schedule and no word why.
+   * The sentence is the evidence's — the app's reading, not his decision — and says what brings it back.
+   */
+  test("a live series the forecast has let go says why nothing is expected, and that a charge brings it back", () => {
+    for (const status of ["confirmed", "detected"] as const) {
+      const reason = noScheduleReason(status, "lapsed");
+      expect(reason).toContain("no longer forecast");
+      expect(reason).toContain("a new charge brings it back");
+      expect(reason).toContain("stay in the ledger");
+      expect(reason).not.toContain("You said");
+    }
   });
 });
 
@@ -114,10 +155,28 @@ describe("seriesIsOver — the one predicate two sentences on the page turn on",
     expect(seriesIsOver("detected")).toBe(false);
   });
 
-  test("noScheduleReason speaks for exactly the statuses this names", () => {
+  test("seriesIsProjected: a live status whose evidence the forecast has not let go — and nothing else", () => {
+    for (const e of EVERY) {
+      expect(seriesIsProjected("ended", e)).toBe(false);
+      expect(seriesIsProjected("dismissed", e)).toBe(false);
+      expect(seriesIsProjected("confirmed", e)).toBe(e !== "lapsed");
+      expect(seriesIsProjected("detected", e)).toBe(e !== "lapsed");
+    }
+  });
+
+  /*
+   * 🔴 THE SAME DEFECT, A SECOND TIME. The lapse was carried into `noScheduleReason` privately (`e === "lapsed"`) and
+   * this linkage was loosened to accept it, while `CadenceSentence` kept asking `seriesIsOver` alone — so on a copy
+   * of the owner's ledger 2026-10-08 `/recurring/<Amazon Prime>` read "charges monthly around the 5th, about $4.99"
+   * above "Nothing expected · …nothing more is expected from it". Both sentences ask `seriesIsProjected` now; the
+   * sentence's half of the linkage is asserted on its render (CadenceSentence.test).
+   */
+  test("noScheduleReason speaks for exactly the series the page does not project", () => {
     // the linkage, not two lists that happen to agree today
     for (const s of ["detected", "confirmed", "dismissed", "ended"] as const) {
-      expect(noScheduleReason(s) !== null).toBe(seriesIsOver(s));
+      for (const e of EVERY) {
+        expect(noScheduleReason(s, e) !== null, `${s} · ${e}`).toBe(!seriesIsProjected(s, e));
+      }
     }
   });
 });

@@ -846,7 +846,9 @@ export interface SeriesView {
   /**
    * effective next-expected (user override first), rolled forward past a stale
    * stored value so a live series never lists a "next" date in the past — nor a
-   * payday a deposit has already paid (`nextStillToCome`)
+   * payday a deposit has already paid (`nextStillToCome`). Null for a live series
+   * the forecast has let go (`seriesIsForecast`): nothing is next. An ended or
+   * dismissed one keeps the stored date, which no surface prints as a next date.
    */
   nextExpectedOn: string | null;
   /** the stored (un-rolled) effective next-expected — what the detector last wrote */
@@ -922,18 +924,26 @@ const ANNUALIZED_MONTHS = 12;
  * `Car insurance` moves — $4,337.88 → $1,807.45, the figure the dashboard has
  * been printing all along.
  */
-export function annualizedCentsOf(series: ProjectableSeries, status: SeriesStatus, today: string): number | null {
+export function annualizedCentsOf(
+  s: ForecastableRow & { id: string; name: string },
+  today: string,
+): number | null {
   /*
    * ⛔ AN ENDED OR DISMISSED SERIES HAS NO YEAR AHEAD OF IT. The forecast does
    * not project these statuses, but a stored next date survives the status
    * change, and rolled forward from a stale anchor it annualized anyway:
    * `/recurring/<Hoffman LL>` printed "Annualized ~$21,437.52/yr" directly above
    * "Nothing expected — nothing more is expected from it". Measured 2026-09-14:
-   * 25 of 27 ended/dismissed series pages. `status` is a required parameter so a
+   * 25 of 27 ended/dismissed series pages. The whole row is the parameter so a
    * third caller cannot forget it — the no-next-date guard below closed only
    * the half of this that c9458a6 could see.
+   *
+   * ⛔ …NOR DOES ONE THE FORECAST HAS LET GO (`seriesIsForecast`). 🔴 It asked the status alone, and on a copy of
+   * the owner's ledger 2026-10-08 `/recurring/<Amazon Prime>` read "Lapsed" over "~$59.88/yr", and its End dialog
+   * "Leaving the forecast ~$59.88 / yr" — of $4.99 the forecast had stopped carrying that morning.
    */
-  if (seriesIsOver(status)) return null;
+  if (!seriesIsForecast(s, today)) return null;
+  const series = toProjectable(s);
   /*
    * ⛔ NO NEXT DATE IS NO FIGURE. `projectOccurrences` returns nothing without
    * one, which summed to a measured "~$0.00/yr" — printed on /recurring/<Knack
@@ -989,8 +999,15 @@ export function listSeries(db: AppDatabase, today: string = todayIso()): SeriesV
       // ⛔ …and past a payday a deposit has already paid (`nextStillToCome`, the
       // Upcoming tab's own reading). 🔴 Read on Sep 30 the Next column named Oct 1,
       // the payday Wed Sep 30's deposit paid, beside an Upcoming tab starting Oct 8.
-      const isProjected = s.status === "detected" || s.status === "confirmed";
-      const nextExpectedOn = isProjected ? nextStillToCome(db, s, today) : eff.nextExpectedOn;
+      // ⛔ A live series the forecast has let go (`seriesIsForecast`) has NO next date: rolled, it is a charge the
+      // forecast does not expect; stored, it is the past. 🔴 Rolled on status alone, a CONFIRMED subscription that
+      // lapsed sat in the All tab's "Lapsed — no longer forecast" with a future Next — measured on a copy of his
+      // ledger 2026-10-08 with Amazon Prime confirmed: "Nov 5".
+      const nextExpectedOn = seriesIsForecast(s, today)
+        ? nextStillToCome(db, s, today)
+        : seriesIsOver(s.status)
+          ? eff.nextExpectedOn
+          : null;
       return {
         id: s.id,
         name: s.name,
@@ -1014,7 +1031,7 @@ export function listSeries(db: AppDatabase, today: string = todayIso()): SeriesV
           : null,
         isActive: isSeriesActive(s, today),
         evidence: seriesEvidence(s, today),
-        annualizedCents: annualizedCentsOf(toProjectable(s), s.status, today),
+        annualizedCents: annualizedCentsOf(s, today),
         endsOn: s.userEndsOn ?? null,
       } satisfies SeriesView;
     })
@@ -1293,6 +1310,46 @@ export function seriesHasLapsed(
 }
 
 /**
+ * Has the forecast LET THIS SERIES GO? Its evidence ran out (`seriesHasLapsed`) and it is money that stops when it
+ * does (`lapsedSeriesShouldStopForecasting` — money in never lapses). The one predicate every surface asks: the
+ * forward legs, the subscriptions card's "stopped being forecast", the calendar, and the arrears walk.
+ *
+ * ⛔ `today` is the day of the QUESTION, never the last day of whatever window the caller walks. 🔴 On the owner's
+ * ledger 2026-10-08 Amazon Prime lapsed that morning, and the runway card still said its Oct 5 $4.99 "came due
+ * earlier this month" two cards above "STOPPED BEING FORECAST — Amazon Prime": the arrears leg closes the day before
+ * today, and it judged the lapse on that day instead.
+ */
+export function hasStoppedForecasting(
+  s: SeriesOverrides & { kind: SeriesKind; lastMatchedOn: string | null },
+  // no default: every caller says which day it is asking on
+  today: string,
+): boolean {
+  return lapsedSeriesShouldStopForecasting(s.kind) && seriesHasLapsed(s, today);
+}
+
+/** What `seriesIsForecast` reads — the stored row, overrides intact, as `hasStoppedForecasting` takes it. */
+type ForecastableRow = SeriesOverrides & { status: SeriesStatus; kind: SeriesKind; lastMatchedOn: string | null };
+
+/**
+ * Does the forecast PROJECT this series today? A status it projects (detected, confirmed — `seriesIsOver` is the
+ * other two) and not let go (`hasStoppedForecasting`). Every figure that walks a series FORWARD asks this: the
+ * bill's own page ("Next expected", the sentence's date, "Annualized", the End dialog built from them), `/recurring`'s
+ * All tab (Next, Annualized), the category card that reads it, and the insights' set of live commitments.
+ *
+ * 🔴 The status half alone was written three times — `listSeries`, `seriesDetail`, `recurring-insights` — and only
+ * the last asked the lapse. Measured on a copy of the owner's ledger 2026-10-08, `/recurring/<Amazon Prime>`: the
+ * badge "Lapsed" (note: "no longer forecast") over "Next expected Nov 5 · Dec 5 · Jan 5" and "~$59.88/yr", and an End
+ * dialog promising "Leaving the forecast ~$59.88 / yr" of a series the forecast had let go that morning.
+ */
+export function seriesIsForecast(
+  s: ForecastableRow,
+  // no default, like `hasStoppedForecasting`: the day of the question
+  today: string,
+): boolean {
+  return !seriesIsOver(s.status) && !hasStoppedForecasting(s, today);
+}
+
+/**
  * The first non-past occurrence of a series, stepping from its effective
  * next_expected_on the same way projectOccurrences does. The stored column is
  * the detector's output as of its last run and goes stale between runs — the
@@ -1455,7 +1512,7 @@ export function upcomingOccurrences(
     // calls a NEVER-posted series inactive, which would delete the $559.89 car
     // lease and $361.49 insurance the owner registered for 2026-09-11 and that
     // have no postings yet by definition.
-    .filter((s) => !(lapsedSeriesShouldStopForecasting(s.kind) && seriesHasLapsed(s, today)))
+    .filter((s) => !hasStoppedForecasting(s, today))
     .filter((s) => !isAgentsSeries(agentsCash, s))
     .flatMap((s) => {
       const projected = projectOccurrences(toProjectable(s, seriesStaleness(s, today)), today, to);
@@ -1486,5 +1543,5 @@ export function seriesEvidence(
 ): SeriesEvidence {
   if (s.lastMatchedOn === null) return "never-billed";
   if (isSeriesActive(s, today)) return "active";
-  return lapsedSeriesShouldStopForecasting(s.kind) && seriesHasLapsed(s, today) ? "lapsed" : "running-late";
+  return hasStoppedForecasting(s, today) ? "lapsed" : "running-late";
 }

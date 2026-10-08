@@ -17,7 +17,7 @@ import { loadCategoryIndex, offAgentsCash, recurringSeriesIdsForSubtree, type Ca
 import { listBudgetableCategories } from "./budgets";
 import { isUpfrontCarRow, upfrontCarRule, type UpfrontCarRule } from "./car-upfront";
 import { trailingFullMonths } from "./forecast";
-import { lapsedSeriesShouldStopForecasting, projectOccurrences, seriesHasLapsed, toProjectable } from "./recurring";
+import { hasStoppedForecasting, projectOccurrences, toProjectable } from "./recurring";
 import { linkIsNotRecurring, seriesIdsNotDrawnAsRecurring } from "./recurring-link";
 
 /**
@@ -258,7 +258,7 @@ function predictWith(
     // a series that stopped posting projects nothing — the gate budgetTail,
     // the month forecast and the calendar already apply (a never-posted
     // commitment has not lapsed: it has not started)
-    if (lapsedSeriesShouldStopForecasting(series.kind) && seriesHasLapsed(series, ctx.today)) continue;
+    if (hasStoppedForecasting(series, ctx.today)) continue;
     if (!subtreeSeriesIds.has(series.id)) continue;
     for (const o of projectOccurrences(toProjectable(series), ctx.target.start, ctx.target.end)) {
       if (o.amountCents < 0) occurrences.push({ day: o.date, amountCents: -o.amountCents });

@@ -46,7 +46,7 @@ import {
 import type { UnbankedFrontier } from "@/lib/unbanked-income";
 import { portionsAcross } from "@/lib/payday-settlement";
 import { paydaySettlementsBySeries } from "./payday-settlement";
-import { effectiveSeries, projectOccurrences, seriesHasLapsed, toProjectable } from "./recurring";
+import { effectiveSeries, hasStoppedForecasting, projectOccurrences, toProjectable } from "./recurring";
 import { linkIsRecurring, rowIsRecurring, seriesIdsNotDrawnAsRecurring } from "./recurring-link";
 
 // the overdue rule now lives in ./arrears (the forecast needs it too, and
@@ -1098,7 +1098,8 @@ export function budgetOverdue(
 ): BudgetTail {
   const seriesIds = recurringSeriesIdsForCategory(db, categoryId);
   if (seriesIds.size === 0) return { totalCents: 0, series: [] };
-  return overdueForSeries(db, seriesIds, periodStart, today);
+  // the only arrears leg that closes ON today (see `budgetTail`), so the day it walks to is the day it is asked on
+  return overdueForSeries(db, seriesIds, periodStart, today, today);
 }
 
 export function budgetTail(
@@ -1150,8 +1151,9 @@ export function budgetTail(
   for (const s of rows) {
     // a series that stopped charging is not a forecast — see seriesHasLapsed for
     // why this is not `isSeriesActive` (a registered commitment has no postings
-    // yet and must still be projected)
-    if (seriesHasLapsed(s, today)) continue;
+    // yet and must still be projected). `hasStoppedForecasting`, the predicate
+    // `budgetOverdue` asks too: money in never lapses, in either leg.
+    if (hasStoppedForecasting(s, today)) continue;
     const occ = projectOccurrences(toProjectable(s), from, periodEnd).filter((o) => o.amountCents < 0);
     if (occ.length === 0) continue;
     const amountCents = occ.reduce((sum, o) => sum - o.amountCents, 0); // money-out → positive

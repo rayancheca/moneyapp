@@ -136,7 +136,7 @@ describe("the first posting of a commitment that has never posted", () => {
     const utilitiesRow = post({ postedOn: "2026-09-01", amountCents: -18221, raw: "FLAMINGO UTIL FEES" });
     const gymRow = post({ postedOn: "2026-09-23", amountCents: -10000, raw: "GYM MEMBERSHIP", accountId: card }); // a day late
     // the fixture expresses the defect: posted, and still owed
-    expect(overdueForSeries(bundle.db, new Set([utilities]), "2026-09-01", TODAY).totalCents).toBe(18221);
+    expect(overdueForSeries(bundle.db, new Set([utilities]), "2026-09-01", TODAY, TODAY).totalCents).toBe(18221);
 
     expect(linkRowsMadeActive(bundle.db, [leaseRow, utilitiesRow, gymRow], TODAY)).toEqual({ absorbed: 0, firstPostings: 3 });
 
@@ -149,7 +149,7 @@ describe("the first posting of a commitment that has never posted", () => {
       expect(linkOf(row).seriesLinkSource).toBe("detected");
       expect(seriesRow(series).lastMatchedOn).toBe(day);
     }
-    expect(overdueForSeries(bundle.db, new Set([utilities]), "2026-09-01", TODAY).totalCents).toBe(0);
+    expect(overdueForSeries(bundle.db, new Set([utilities]), "2026-09-01", TODAY, TODAY).totalCents).toBe(0);
   });
 
   test("a second run changes nothing — the series now posts, and posting series are absorption's", () => {
@@ -378,7 +378,7 @@ describe("what a first-posting link leaves the rest of the app believing", () =>
     const due = october.entriesByDay["2026-10-15"]?.find((e) => e.name === "Car lease" && e.transactionId === null);
     expect(due).toMatchObject({ state: "unsettled", unsettledReason: "schedule_unproven" });
     // the open disagreement named above
-    expect(overdueForSeries(bundle.db, new Set([lease]), "2026-10-01", "2026-10-25").totalCents).toBe(69504);
+    expect(overdueForSeries(bundle.db, new Set([lease]), "2026-10-01", "2026-10-25", "2026-10-25").totalCents).toBe(69504);
   });
 
   test("Detect now leaves three import-linked lease payments on Car lease — no duplicate series", () => {
@@ -405,6 +405,6 @@ describe("what a first-posting link leaves the rest of the app believing", () =>
     expect(summary.created).toBe(0);
     expect(bundle.db.select().from(recurringSeries).all()).toHaveLength(seriesBefore);
     expect(rows.map((id) => linkOf(id).recurringSeriesId)).toEqual([lease, lease, lease]);
-    expect(overdueForSeries(bundle.db, new Set([lease]), "2026-11-01", "2026-12-05").totalCents).toBe(0);
+    expect(overdueForSeries(bundle.db, new Set([lease]), "2026-11-01", "2026-12-05", "2026-12-05").totalCents).toBe(0);
   });
 });

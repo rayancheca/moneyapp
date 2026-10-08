@@ -29,10 +29,9 @@ import {
   toProjectable,
   type SeriesOccurrence,
   type SeriesStaleness,
-  lapsedSeriesShouldStopForecasting,
-  seriesHasLapsed,
+  hasStoppedForecasting,
 } from "./recurring";
-import { overdueForSeries, unbankedIncomeForSeries, unbankedIncomeTotals, type UnbankedIncomeTotals } from "./arrears";
+import { arrearsThisMonth, unbankedIncomeForSeries, unbankedIncomeTotals, type UnbankedIncomeTotals } from "./arrears";
 import { isUpfrontCarRow, upfrontCarRule } from "./car-upfront";
 import { stillToCome } from "./payday-settlement";
 import { activeSplitsInRange } from "./transaction-splits";
@@ -517,7 +516,7 @@ function fixedComponents(
      * test and kept by the kind test, and that is the $4,233.69 → $45.69
      * collapse arriving by a different door.
      */
-    if (lapsedSeriesShouldStopForecasting(series.kind) && seriesHasLapsed(series, today)) continue;
+    if (hasStoppedForecasting(series, today)) continue;
     // forecast reads user overrides first (§4.4): amount, cadence, next-expected
     const staleness = seriesStaleness(series, today);
     /*
@@ -625,12 +624,7 @@ function fixedComponents(
  * as still-to-come would inflate EOM cash on a ledger whose owner is paid in
  * cash.
  */
-function arrearsComponents(
-  db: AppDatabase,
-  today: string,
-  monthStart: string,
-  { outside, agentsSeries }: ForecastReads,
-): ForecastLeg {
+function arrearsComponents(db: AppDatabase, today: string, { outside, agentsSeries }: ForecastReads): ForecastLeg {
   // every live series the forecast would project; `overdueForSeries` applies the
   // money-out and lapsed rules itself, and transfers are never spending here
   const live = db
@@ -640,7 +634,7 @@ function arrearsComponents(
     .all()
     .filter((s) => seriesIsIncomeOrSpending(s.kind));
   const byId = new Map(live.map((s) => [s.id, s]));
-  const late = overdueForSeries(db, new Set(byId.keys()), monthStart, addDays(today, -1));
+  const late = arrearsThisMonth(db, new Set(byId.keys()), today);
   /*
    * ⚖️ A schedule of the agent's that came due and has not posted is the agent's to pay (owner decision 2026-10-02):
    * no line of his, and still money net worth will pay — EOM net worth alone, under the band the forward leg names it
@@ -1256,7 +1250,7 @@ function currentMonthParts(db: AppDatabase, today: string, reads: ForecastReads)
       [
         // arrears first: they are dated before every forward occurrence, and the
         // math table reads in the order this array is built
-        arrearsComponents(db, today, monthStart, reads),
+        arrearsComponents(db, today, reads),
         fixedComponents(db, today, today, monthEnd, reads),
       ],
       [

@@ -30,7 +30,8 @@ import {
   recurringSeriesIdsForCategory,
   type AnalyticsTxn,
 } from "./analytics";
-import { incomeExpectation, overdueForSeries, type BudgetTail } from "./budgets";
+import { arrearsThisMonth, overdueForSeries } from "./arrears";
+import { incomeExpectation, type BudgetTail } from "./budgets";
 import { CAR_LEASE_TERM_MONTHS, isUpfrontCarRow, readUpfrontCarRule, upfrontCarRule } from "./car-upfront";
 import { frontierForSeries, ledgerOpens, observationFrontier, seriesAccountIds } from "./observation-frontier";
 import { seriesStaleness, upcomingOccurrences } from "./recurring";
@@ -414,10 +415,8 @@ export function committedBook(
    * today", which is true whether it is late or due, and no longer reads as a
    * contradiction of a card that reports no arrears on the same day.
    */
-  const monthStart = periodBounds(today, "monthly").start;
-  const yesterday = addDays(today, -1);
-  const late = overdueForSeries(db, moneyOut, monthStart, yesterday);
-  const readById = arrearsReadCents(db, late, monthStart, yesterday);
+  const late = arrearsThisMonth(db, moneyOut, today);
+  const readById = arrearsReadCents(db, late, today);
   const lateRows = db
     .select()
     .from(recurringSeries)
@@ -466,14 +465,12 @@ export function committedBook(
  * (Venture X, Chase Checking, Wells Fargo) to the same Aug 12; it posts from Wells Fargo now, read only through
  * Sep 24, so its Oct 1 payment is unread under either rule and "no import has covered it yet" is true.
  */
-function arrearsReadCents(
-  db: AppDatabase,
-  late: BudgetTail,
-  monthStart: string,
-  yesterday: string,
-): ReadonlyMap<string, number> {
+function arrearsReadCents(db: AppDatabase, late: BudgetTail, today: string): ReadonlyMap<string, number> {
   const read = new Map<string, number>();
   if (late.series.length === 0) return read;
+  // `arrearsThisMonth`'s window, walked again below only as far as each series has been read
+  const monthStart = periodBounds(today, "monthly").start;
+  const yesterday = addDays(today, -1);
 
   const frontier = observationFrontier(db);
   const accountsBySeries = seriesAccountIds(db);
@@ -490,7 +487,7 @@ function arrearsReadCents(
   }
   const lateById = new Map(late.series.map((s) => [s.id, s.amountCents] as const));
   for (const [through, ids] of partly) {
-    for (const s of overdueForSeries(db, ids, monthStart, through).series) {
+    for (const s of overdueForSeries(db, ids, monthStart, through, today).series) {
       read.set(s.id, Math.min(s.amountCents, lateById.get(s.id) ?? 0));
     }
   }

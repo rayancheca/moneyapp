@@ -24,12 +24,11 @@ import { frontierForSeries, observationFrontier, seriesAccountIds } from "./obse
 import { paydayReadingsBySeries, paydaySettlementsBySeries, readsPerPayday } from "./payday-settlement";
 import {
   effectiveSeries,
-  lapsedSeriesShouldStopForecasting,
+  hasStoppedForecasting,
   MIN_OCCURRENCES,
   populationStddev,
   projectOccurrences,
   seriesEvidence,
-  seriesHasLapsed,
   toProjectable,
 } from "./recurring";
 import { seriesCategoryIds } from "./series-category";
@@ -693,7 +692,7 @@ export function recurringCalendar(
   const accountsBySeries = needsFrontier ? seriesAccountIds(db) : null;
 
   for (const s of forecastRows) {
-    if (lapsedSeriesShouldStopForecasting(s.kind) && seriesHasLapsed(s, today)) continue;
+    if (hasStoppedForecasting(s, today)) continue;
     const occurrences = projectOccurrences(toProjectable(s), monthStart, monthEnd);
     const postedDates = postedDatesBySeries.get(s.id) ?? [];
     const confidence = forecastConfidence(s);

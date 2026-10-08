@@ -2,12 +2,12 @@ import { and, eq, gte, inArray, lte } from "drizzle-orm";
 import type { AppDatabase } from "@/db/client";
 import { recurringSeries } from "@/db/schema/recurring";
 import { transactions } from "@/db/schema/transactions";
-import { addDays, compareDates, diffDays } from "@/lib/dates";
+import { addDays, compareDates, diffDays, periodBounds } from "@/lib/dates";
 import { sharedFrontier, type UnbankedFrontier } from "@/lib/unbanked-income";
 import { earliestVerified, landingAccountsBySeries } from "./cash-earnings";
 import { accountCoverage } from "./coverage";
 import { settledPaydaysBySeries } from "./payday-settlement";
-import { projectOccurrences, seriesHasLapsed, toProjectable } from "./recurring";
+import { hasStoppedForecasting, projectOccurrences, toProjectable } from "./recurring";
 
 /**
  * ARREARS — bills that came due inside a window and that no posting covers.
@@ -74,15 +74,22 @@ export interface UnbankedIncome {
  * keeps a missed PAYDAY out of every caller. An outflow nobody paid is money
  * still owed; an inflow nobody banked is evidence about the imports, and
  * carrying it forward would inflate a cash projection.
+ *
+ * ⛔ The walk is `[periodStart, through]`; `today` is the day of the QUESTION, and a series the forecast has let go
+ * that day (`hasStoppedForecasting`) is owed for none of the window. They are two parameters because every caller but
+ * `/budgets` closes the walk the day BEFORE today, and with one parameter the lapse was judged on that day. 🔴 Measured
+ * on the owner's ledger 2026-10-08: Amazon Prime lapsed that morning, and the runway card, /recurring's month forecast
+ * and the bill's own page still owed its Oct 5 $4.99 beside the subscriptions card's "STOPPED BEING FORECAST".
  */
 export function overdueForSeries(
   db: AppDatabase,
   seriesIds: ReadonlySet<string>,
   periodStart: string,
+  through: string,
   today: string,
 ): BudgetTail {
   if (seriesIds.size === 0) return { totalCents: 0, series: [] };
-  if (compareDates(periodStart, today) > 0) return { totalCents: 0, series: [] };
+  if (compareDates(periodStart, through) > 0) return { totalCents: 0, series: [] };
 
   const rows = db
     .select()
@@ -94,7 +101,7 @@ export function overdueForSeries(
       ),
     )
     .all();
-  const live = rows.filter((r) => !seriesHasLapsed(r, today));
+  const live = rows.filter((r) => !hasStoppedForecasting(r, today));
   if (live.length === 0) return { totalCents: 0, series: [] };
 
   // postings linked to these series, widened by the largest tolerance so a bill
@@ -109,7 +116,7 @@ export function overdueForSeries(
         eq(transactions.status, "active"),
         inArray(transactions.recurringSeriesId, [...seriesIds]),
         gte(transactions.postedOn, addDays(periodStart, -maxTolerance)),
-        lte(transactions.postedOn, addDays(today, maxTolerance)),
+        lte(transactions.postedOn, addDays(through, maxTolerance)),
       ),
     )
     .all()) {
@@ -121,7 +128,7 @@ export function overdueForSeries(
   let totalCents = 0;
   for (const s of live) {
     const posted = postedBySeries.get(s.id) ?? [];
-    const occ = projectOccurrences(toProjectable(s), periodStart, today)
+    const occ = projectOccurrences(toProjectable(s), periodStart, through)
       .filter((o) => o.amountCents < 0)
       .filter((o) => !posted.some((p) => Math.abs(diffDays(p, o.date)) <= s.toleranceDays));
     if (occ.length === 0) continue;
@@ -139,6 +146,21 @@ export function overdueForSeries(
   }
   series.sort((a, b) => compareDates(a.nextDate, b.nextDate) || a.name.localeCompare(b.name));
   return { totalCents, series };
+}
+
+/**
+ * What these series owe THIS CALENDAR MONTH: `overdueForSeries` over `[the 1st, the day before today]`, asked today.
+ *
+ * ⚖️ Arrears are scoped to the calendar month — owner decision 2026-09-02; this does not widen the leg. It closes the
+ * day BEFORE today because the forward legs own today: a bill due today and unposted is due, not late (see
+ * `committedBook`). `/budgets` alone closes on today, inclusive, and calls `overdueForSeries` itself (`budgetOverdue`).
+ *
+ * ⛔ ONE CALL, every surface that says a bill "came due": the runway card, the month forecast, /recurring's Next
+ * column, the bill's own page and the category page. Each spelled the window out by hand, and each passed its last
+ * day as the day to judge a lapse on — see `overdueForSeries`.
+ */
+export function arrearsThisMonth(db: AppDatabase, seriesIds: ReadonlySet<string>, today: string): BudgetTail {
+  return overdueForSeries(db, seriesIds, periodBounds(today, "monthly").start, addDays(today, -1), today);
 }
 
 /**
@@ -194,8 +216,8 @@ export function unbankedIncomeForSeries(
     )
     .all()
     /*
-     * ⛔ No `seriesHasLapsed` filter, unlike the bills walk. Money in never
-     * lapses (`lapsedSeriesShouldStopForecasting`), and a pay series going quiet
+     * ⛔ No lapse filter, unlike the bills walk — and none is needed: money in
+     * never lapses (`hasStoppedForecasting`), and a pay series going quiet
      * for three cycles is the very case this figure exists to report — dropping
      * it here would delete the sentence exactly when it matters most.
      */

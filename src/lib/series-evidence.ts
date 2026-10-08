@@ -43,6 +43,22 @@ export const SUGGESTION_NOTE =
   "detected, not yet confirmed — and already in the forecast above, until you say they are not recurring";
 
 /**
+ * The note over the suggestions actually on the tab: `SUGGESTION_NOTE` while the forecast carries every one of them,
+ * and the exception named — in the word each such card is marked with — when it does not.
+ *
+ * 🔴 A detected series is projected like a confirmed one only while the forecast has not LET IT GO
+ * (`seriesIsProjected`). On a copy of the owner's ledger 2026-10-08 the note said "already in the forecast above" over
+ * Rocket Money (running late, forecast) and Amazon Prime, whose own card read "· lapsed" and whose $4.99 was in no
+ * figure above it: Committed $3,569.98 over 8 lines, without it. The claim was true of one card of two.
+ */
+export function suggestionNote(evidences: readonly SeriesEvidence[]): string {
+  const exception = evidences.find((e) => !seriesIsProjected("detected", e));
+  if (exception === undefined) return SUGGESTION_NOTE;
+  const mark = SERIES_EVIDENCE_LABEL[exception].toLowerCase();
+  return `detected, not yet confirmed — and, unless marked ${mark}, already in the forecast above, until you say they are not recurring`;
+}
+
+/**
  * What a LIVE series' row is qualified by — or, for a series that is no longer
  * live, its status instead.
  *
@@ -126,6 +142,24 @@ export function seriesIsOver(status: SeriesStatusForCopy): boolean {
 }
 
 /**
+ * Does a series' own page PROJECT it — a present-tense schedule with a day to edit, rather than "Nothing expected"?
+ * The client-safe reading of `seriesIsForecast` (services/recurring), from the two facts the page already carries: a
+ * status the forecast projects (`seriesIsOver` names the other two), and evidence the forecast has not let go —
+ * `lapsed` is exactly `hasStoppedForecasting` for a live series (`seriesEvidence`; recurring.test asserts the two
+ * agree for every status, kind and age). ONE predicate, because the cadence sentence, the "Nothing expected" card and
+ * the suggestions note all turn on it.
+ *
+ * 🔴 The lapse was carried into `noScheduleReason` privately (`evidence === "lapsed"`) and `CadenceSentence` kept
+ * asking `seriesIsOver` alone — the split recorded above `seriesIsOver`, again. On a copy of the owner's ledger
+ * 2026-10-08 `/recurring/<Amazon Prime>` read "charges monthly around the 5th, about $4.99" — the 5th read off a
+ * stored 2026-08-05 — above "Nothing expected · …nothing more is expected from it", with a date editor whose Save
+ * toasted "Next expected …" while the page, which judges the lapse by the last charge, kept saying "Nothing expected".
+ */
+export function seriesIsProjected(status: SeriesStatusForCopy, evidence: SeriesEvidence): boolean {
+  return !seriesIsOver(status) && evidence !== "lapsed";
+}
+
+/**
  * The statuses whose charges are DRAWN as recurring — every status but
  * dismissed. ONE predicate, because four surfaces turn on it.
  *
@@ -150,8 +184,19 @@ export function seriesDrawsAsRecurring(status: SeriesStatusForCopy): boolean {
   return status !== "dismissed";
 }
 
-export function noScheduleReason(status: SeriesStatusForCopy): string | null {
-  if (!seriesIsOver(status)) return null;
+/**
+ * ⛔ …and for a LIVE series the forecast has let go — the evidence's `lapsed`, which is the app's reading, not his
+ * decision, so the sentence says what brings it back. 🔴 Its page stopped projecting it (`seriesIsForecast`) and the
+ * "Next expected" card went with nothing in its place: `/recurring/<Amazon Prime>` would have read "Lapsed" over no
+ * schedule and no word why. A card removed is not a claim withdrawn, and a claim withdrawn needs its reason.
+ *
+ * ⛔ Speaks for exactly the series `seriesIsProjected` says the page does not project — the predicate the cadence
+ * sentence asks too, so the two cannot disagree about whether anything is expected.
+ */
+export function noScheduleReason(status: SeriesStatusForCopy, evidence: SeriesEvidence): string | null {
+  if (seriesIsProjected(status, evidence)) return null;
+  if (!seriesIsOver(status))
+    return "This series has gone quiet past the point a bill stops, so it is no longer forecast and nothing more is expected from it — a new charge brings it back. Its charges below stay in the ledger.";
   if (status === "ended")
     return "This series has ended, so nothing more is expected from it. Its charges below stay in the ledger.";
   if (status === "dismissed")
