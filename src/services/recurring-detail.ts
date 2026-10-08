@@ -16,7 +16,7 @@ import { paydayReadings, type PaydayReading, type PerPayday } from "@/lib/per-pa
 import { stepFrom, stepPlan } from "@/lib/recurring-step";
 import { loadCategoryIndex } from "./analytics";
 import { arrearsThisMonth } from "./arrears";
-import { checkedThroughBySeries } from "./cash-earnings";
+import { silenceMeasuredThroughBySeries } from "./cash-earnings";
 import { paydaySettlement, readsPerPayday, stillToCome } from "./payday-settlement";
 import {
   annualizedCentsOf,
@@ -334,7 +334,7 @@ export function seriesDetail(
    * and its category card hid the very same Nov 5.
    */
   // the day its accounts are read through: late and lapsed are both measured there (§6A 57) — the badge reads it too
-  const checkedThrough = checkedThroughBySeries(db, today)(s.id);
+  const checkedThrough = silenceMeasuredThroughBySeries(db, today)(s.id);
   const projects = seriesIsForecast(s, today, checkedThrough);
 
   // Size the projection window off the series' own step so even a long-interval

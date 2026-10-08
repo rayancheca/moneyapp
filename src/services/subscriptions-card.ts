@@ -8,7 +8,7 @@ import { levelledMonthlyCents } from "@/lib/income-basis";
 import { wholeToleranceDays } from "@/lib/recurring-step";
 import { outsidePortfolioCashAccountIds } from "./accounts";
 import { activeTxnsInRange, isAgentsSeries } from "./analytics";
-import { checkedThroughBySeries } from "./cash-earnings";
+import { silenceMeasuredThroughBySeries } from "./cash-earnings";
 import { COMMITTED_KINDS, SPEND_BASELINE_MONTHS, baselineWindow } from "./committed";
 import {
   effectiveSeries,
@@ -264,7 +264,7 @@ export function subscriptionsCard(
   let unforecastableCount = 0;
   let endedCount = 0;
   // the day each series' accounts are read through — its lapse and its days past tolerance are measured there (§6A 57)
-  const checkedOf = checkedThroughBySeries(db, today);
+  const checkedOf = silenceMeasuredThroughBySeries(db, today);
 
   for (const s of rows) {
     const eff = effectiveSeries(s);

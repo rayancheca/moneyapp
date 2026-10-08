@@ -33,7 +33,7 @@ import {
 } from "./recurring";
 import { arrearsThisMonth, unbankedIncomeForSeries, unbankedIncomeTotals, type UnbankedIncomeTotals } from "./arrears";
 import { isUpfrontCarRow, upfrontCarRule } from "./car-upfront";
-import { checkedThroughBySeries } from "./cash-earnings";
+import { silenceMeasuredThroughBySeries } from "./cash-earnings";
 import { stillToCome } from "./payday-settlement";
 import { activeSplitsInRange } from "./transaction-splits";
 import { linkIsNotRecurring, seriesIdsNotDrawnAsRecurring } from "./recurring-link";
@@ -94,7 +94,10 @@ interface ForecastReads {
   agentsCash: ReadonlySet<string>;
   /** `agentsSeriesBands` — every schedule on the agent's cash, and the band its money is named by */
   agentsSeries: ReadonlyMap<string, AgentsBand>;
-  /** `checkedThroughBySeries` — a series is late, or lapsed, only on days the ledger has checked (`seriesStaleness`) */
+  /**
+   * `silenceMeasuredThroughBySeries` — a series is late, or lapsed, only on days the ledger has checked
+   * (`seriesStaleness`), and to today where no statement is coming
+   */
   checkedThrough: (seriesId: string) => string | null;
 }
 
@@ -1147,7 +1150,7 @@ function forecastReads(db: AppDatabase, today: string): ForecastReads {
     outside: accountsOutsideCash(db),
     agentsCash,
     agentsSeries: agentsSeriesBands(db, agentsCash),
-    checkedThrough: checkedThroughBySeries(db, today),
+    checkedThrough: silenceMeasuredThroughBySeries(db, today),
   };
 }
 

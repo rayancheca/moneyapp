@@ -82,9 +82,10 @@ export function cashWalletIds(db: AppDatabase): ReadonlySet<string> {
  * statement ever cover another day.
  *
  * ⛔ ONE rule, made of the two that already exist — never a third spelling of either. /imports asks these accounts
- * for their statements (`statementPulls`, `statementGaps`), and only these hold a series' lapse back to the day their
- * statements have covered (`checkedThroughBySeries`, §6A 57); /budgets' "Cash only" stands on the wallet half
- * (`lib/budget-verdict`), which forbids an "Awaiting statements" that never arrives.
+ * for their statements (`statementPulls`, `statementGaps`); only these hold a series' lapse back to the day their
+ * statements have covered (`silenceMeasuredThroughBySeries`, §6A 57); and only these date a /budgets row while one
+ * of them was spent from (`categoryCoverage`). `lib/budget-verdict`'s "Cash only", which forbids an "Awaiting
+ * statements" that never arrives, stands on the wallet half.
  */
 export function accountsAwaitingStatements(db: AppDatabase): ReadonlySet<string> {
   const wallets = cashWalletIds(db);

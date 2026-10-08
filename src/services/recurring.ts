@@ -23,7 +23,7 @@ import {
 import { seriesAmountCents } from "@/lib/series-kind";
 import { outsidePortfolioCashAccountIds } from "./accounts";
 import { isAgentsSeries } from "./analytics";
-import { checkedThroughBySeries } from "./cash-earnings";
+import { silenceMeasuredThroughBySeries } from "./cash-earnings";
 /*
  * ⚠️ A cycle, on purpose: settlement walks the occurrences `projectOccurrences`
  * draws, and `upcomingOccurrences` and `listSeries` ask settlement which of them
@@ -987,7 +987,7 @@ export function listSeries(db: AppDatabase, today: string = todayIso()): SeriesV
     .all();
   const countBySeries = new Map<string, number>();
   const sumBySeries = new Map<string, number>();
-  const checkedThrough = checkedThroughBySeries(db, today);
+  const checkedThrough = silenceMeasuredThroughBySeries(db, today);
   for (const t of tagged) {
     if (!t.recurringSeriesId) continue;
     countBySeries.set(t.recurringSeriesId, (countBySeries.get(t.recurringSeriesId) ?? 0) + 1);
@@ -1106,8 +1106,9 @@ export interface SeriesStaleness {
    */
   isStale: boolean;
   /**
-   * The last day the ledger has checked every account this series posts to NOW (`checkedThroughBySeries`), null
-   * when one of them has no checked record — or undefined when the caller did not measure it.
+   * The last day the ledger has checked every account this series posts to NOW — today for one no statement
+   * is coming for (`silenceMeasuredThroughBySeries`) — null when one of them has no checked record, or undefined
+   * when the caller did not measure it.
    */
   checkedThrough?: string | null;
   /**
@@ -1259,9 +1260,10 @@ function lapsedToleranceDays(staleness: SeriesStaleness): number {
  * fresh, and freshness is what this reports.
  *
  * ⛔ LATE IS A CLAIM ABOUT DAYS THE LEDGER HAS CHECKED. `checkedThrough` is the last day every account the series
- * posts to NOW has been checked through (`checkedThroughBySeries` — the frontier the passed-payday sentences name),
- * and the evidence is late only if its last on-time day is on or before it — read, with nothing on it. Past tolerance
- * only over days after it, the tolerance runs out on days nobody has checked: `awaitingStatements`, never `isStale`.
+ * posts to NOW has been checked through (`silenceMeasuredThroughBySeries` — on every account a statement is still
+ * coming for, the frontier the passed-payday sentences name), and the evidence is late only if its last on-time day is
+ * on or before it — read, with nothing on it. Past tolerance only over days after it, the tolerance runs out on days
+ * nobody has checked: `awaitingStatements`, never `isStale`.
  *
  * 🔴 Measured to today, it published a warning about imports that had not happened. His ledger 2026-10-08:
  * /recurring said of his pay "It falls after Thu, Sep 24, 2026, the last day every account that pay lands in has been
@@ -1378,16 +1380,16 @@ export function lapsedSeriesShouldStopForecasting(kind: SeriesKind): boolean {
  * Lapsed means "it stopped", which only a series that once started can do.
  *
  * ⚖️ …and only ON DAYS THE LEDGER HAS READ: the quiet is measured to `checkedThrough` — the series' frontier from
- * `checkedThroughBySeries`, the day "Awaiting statements" is measured to (`seriesStaleness`) — never to today across
- * days no statement covers (owner, 2026-10-08, §6A 57). With nothing checked, nothing has lapsed. 🔴 Measured to today
+ * `silenceMeasuredThroughBySeries`, the day "Awaiting statements" is measured to (`seriesStaleness`) — never to today
+ * across days no statement covers (owner, 2026-10-08, §6A 57). With nothing checked, nothing has lapsed. 🔴 Measured to today
  * on a copy of his ledger 2026-10-08 with no new imports, Rocket Money lapsed Oct 18, FPL Oct 30, and the rent
  * ($2,109.00), car lease, car insurance and Breezeline Dec 4–6: on 2026-12-07 the runway's committed bills fell from
  * $3,452.25 to $467.69 a month and /recurring's December forecast spent $282.21 — every one of them waiting on an
  * upload, none of them missed on a statement. Read through the day of the question, it lapses exactly as before.
  *
  * ⚖️ …and where no upload is coming — an archived account, a cash wallet — the frontier IS the day of the question
- * (`checkedThroughBySeries`, review of 98acbeb): read to an archived card's frozen day, its bills were forecast as
- * "Awaiting statements" for good, and owed in the runway's arrears every month a year on.
+ * (`silenceMeasuredThroughBySeries`, review of 98acbeb): read to an archived card's frozen day, its bills were
+ * forecast as "Awaiting statements" for good, and owed in the runway's arrears every month a year on.
  *
  * ⛔ No default for either day: the day of the question and the day it was read through are both the caller's to say.
  */
@@ -1415,7 +1417,8 @@ export function hasStoppedForecasting(
   s: SeriesOverrides & { kind: SeriesKind; lastMatchedOn: string | null },
   // no default: every caller says which day it is asking on
   today: string,
-  // …and how far the accounts it posts to are read (`checkedThroughBySeries`) — the lapse is measured there (§6A 57)
+  // …and how far the accounts it posts to are read (`silenceMeasuredThroughBySeries`) — the lapse is measured there
+  // (§6A 57)
   checkedThrough: string | null,
 ): boolean {
   return lapsedSeriesShouldStopForecasting(s.kind) && seriesHasLapsed(s, today, checkedThrough);
@@ -1597,7 +1600,7 @@ export function upcomingOccurrences(
     .all();
   const agentsCash = outsidePortfolioCashAccountIds(db);
   // late and lapsed only on days the ledger has checked (`seriesStaleness`) — the chip, the footer's count, the filter
-  const checkedThrough = checkedThroughBySeries(db, today);
+  const checkedThrough = silenceMeasuredThroughBySeries(db, today);
 
   // today is day ONE of the window — see the docstring's rent-twice measurement
   const to = addDays(today, windowDays - 1);
@@ -1636,9 +1639,9 @@ export function upcomingOccurrences(
  * described by its status, and callers badge those separately.
  *
  * ⛔ Late only on days the ledger has checked (`seriesStaleness`): `checkedThrough` is the series' frontier from
- * `checkedThroughBySeries`, and past tolerance only after it is "awaiting-statements". Lapsed is asked FIRST, because
- * it is the forecast's rule — a series the forecast has dropped must not be filed as one it still projects — and on
- * the same read days (§6A 57), so a lapsed series is always late there too, never one awaiting statements.
+ * `silenceMeasuredThroughBySeries`, and past tolerance only after it is "awaiting-statements". Lapsed is asked FIRST,
+ * because it is the forecast's rule — a series the forecast has dropped must not be filed as one it still projects —
+ * and on the same read days (§6A 57), so a lapsed series is always late there too, never one awaiting statements.
  */
 export function seriesEvidence(
   s: SeriesOverrides & { status: SeriesStatus; kind: SeriesKind; lastMatchedOn: string | null },

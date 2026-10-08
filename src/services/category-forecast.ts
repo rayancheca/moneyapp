@@ -16,7 +16,7 @@ import { outsidePortfolioCashAccountIds } from "./accounts";
 import { loadCategoryIndex, offAgentsCash, recurringSeriesIdsForSubtree, type CategoryIndex } from "./analytics";
 import { listBudgetableCategories } from "./budgets";
 import { isUpfrontCarRow, upfrontCarRule, type UpfrontCarRule } from "./car-upfront";
-import { checkedThroughBySeries } from "./cash-earnings";
+import { silenceMeasuredThroughBySeries } from "./cash-earnings";
 import { trailingFullMonths } from "./forecast";
 import { hasStoppedForecasting, projectOccurrences, toProjectable } from "./recurring";
 import { linkIsNotRecurring, seriesIdsNotDrawnAsRecurring } from "./recurring-link";
@@ -83,7 +83,7 @@ interface PredictContext {
   upfrontCar: UpfrontCarRule | null;
   /** the day a lapsed series is measured against */
   today: string;
-  /** `checkedThroughBySeries` — the day each series' lapse is measured to (§6A 57) */
+  /** `silenceMeasuredThroughBySeries` — the day each series' lapse is measured to (§6A 57) */
   checkedThrough: (seriesId: string) => string | null;
   target: PeriodBounds;
   targetLabel: string;
@@ -227,7 +227,7 @@ function buildContext(db: AppDatabase, today: string): PredictContext {
     agentsCash: [...agentsCash],
     upfrontCar: upfrontCarRule(index, agentsCash, notDrawnAsRecurring),
     today,
-    checkedThrough: checkedThroughBySeries(db, today),
+    checkedThrough: silenceMeasuredThroughBySeries(db, today),
     target,
     targetLabel: monthLabel(monthKey(target.start)),
     months: trailingFullMonths(today, PREDICT_TRAILING_MONTHS),

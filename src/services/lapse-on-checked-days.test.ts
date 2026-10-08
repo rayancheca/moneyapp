@@ -11,15 +11,17 @@ import { institutions } from "@/db/schema/institutions";
 import { recurringSeries } from "@/db/schema/recurring";
 import { transactions } from "@/db/schema/transactions";
 import { seedDatabase } from "@/db/seed";
+import { budgetVerdict } from "@/lib/budget-verdict";
 import { addDays, compareDates } from "@/lib/dates";
 import { updateAccount } from "./accounts";
-import { arrearsThisMonth } from "./arrears";
-import { budgetPaceStatuses, createBudget } from "./budgets";
-import { checkedThroughBySeries } from "./cash-earnings";
+import { arrearsThisMonth, unbankedIncomeForSeries } from "./arrears";
+import { budgetPaceStatuses, categoryReachFor, createBudget } from "./budgets";
+import { cashEarningsReadings, checkedThroughBySeries, silenceMeasuredThroughBySeries } from "./cash-earnings";
 import { accountsAwaitingStatements } from "./cash-wallet-rule";
 import { predictCategory } from "./category-forecast";
 import { committedBook, runwayCard } from "./committed";
 import { forecastCurrentMonth } from "./forecast";
+import { incomeCard } from "./income-card";
 import { listSeries, upcomingOccurrences } from "./recurring";
 import { recurringCalendar } from "./recurring-calendar";
 import { seriesDetail } from "./recurring-detail";
@@ -126,6 +128,29 @@ function posted(accountId: string, seriesId: string, postedOn: string, amountCen
       rawDescription: `ROW ${seq}`,
       normalizedDescription: `ROW ${seq}`,
       recurringSeriesId: seriesId,
+      status: "active",
+      needsReview: false,
+      occurrenceIndex: 0,
+      dedupeHash: `h-${seq}`,
+      createdAt: now(),
+      updatedAt: now(),
+    })
+    .run();
+}
+
+/** A categorised row no series claims — what /budgets grades a category from. */
+function spent(accountId: string, categoryId: string, postedOn: string, amountCents: number): void {
+  seq += 1;
+  bundle.db
+    .insert(transactions)
+    .values({
+      id: `t-${seq}`,
+      accountId,
+      postedOn,
+      amountCents,
+      rawDescription: `SPENT ${seq}`,
+      normalizedDescription: `SPENT ${seq}`,
+      categoryId,
       status: "active",
       needsReview: false,
       occurrenceIndex: 0,
@@ -302,6 +327,9 @@ describe("a series lapses only on days the ledger has checked — every surface 
  * ⚠️ A LIVE account with no checked record still holds its series where nothing has been read: a statement can still
  * come for it, and the income card, the passed paydays and /spending's reading say so in words (their own tests).
  *
+ * ⚠️ It moves the LAPSE, not what the ledger has read: the pay sentences and /budgets' days still name the day the
+ * archived account's statements reached (`checkedThroughBySeries`), never today (review of 82d75d7).
+ *
  * 🔴 Read to the archived card's frozen checked day (98acbeb), every series on it still inside its line was forecast
  * for good as "Awaiting statements": Breezeline (Venture X, last Sep 10) read so on 2026-12-07, and the car insurance
  * stayed a committed bill and $357.58 of the runway's arrears every month, a year on. …and a series that ALSO charged
@@ -320,13 +348,13 @@ describe("an account no statement will ever come for does not hold the lapse bac
     bundle.db.update(accounts).set({ institutionId: cash }).where(eq(accounts.id, id)).run();
   }
 
-  /** What every lapse surface says of Venture X's series on `today`. */
-  function readingOfVentureX(today: string) {
+  /** What every lapse surface says of these series on `today`. */
+  function readingOf(ids: readonly string[], today: string) {
     const card = subscriptionsCard(bundle.db, today)!;
     const listed = new Map(listSeries(bundle.db, today).map((s) => [s.id, s]));
     const upcoming = new Set(upcomingOccurrences(bundle.db, today, 70).map((o) => o.seriesId));
     const book = new Set(committedBook(bundle.db, today).lines.map((l) => l.seriesId));
-    return ON_VX.map((id) => ({
+    return ids.map((id) => ({
       id,
       evidence: listed.get(id)!.evidence,
       next: listed.get(id)!.nextExpectedOn,
@@ -338,14 +366,14 @@ describe("an account no statement will ever come for does not hold the lapse bac
 
   test("an archived card's series lapse on the day they would with the card read through today", () => {
     updateAccount(bundle.db, VX, { isActive: false });
-    const archived = [OCT, NOV, DEC].map(readingOfVentureX);
+    const archived = [OCT, NOV, DEC].map((today) => readingOf(ON_VX, today));
 
     updateAccount(bundle.db, VX, { isActive: true });
     let through = "2026-09-13";
     const readToToday = [OCT, NOV, DEC].map((today) => {
       checkedThrough(VX, addDays(through, 1), today);
       through = today;
-      return readingOfVentureX(today);
+      return readingOf(ON_VX, today);
     });
 
     expect(archived).toEqual(readToToday);
@@ -354,11 +382,39 @@ describe("an account no statement will ever come for does not hold the lapse bac
     expect(december).toEqual(new Map([[INSURANCE, "lapsed"], [BREEZELINE, "running-late"], [DEAD, "lapsed"]]));
   });
 
+  /*
+   * 🔴 Where it posts now was chosen AFTER the archived account's postings were dropped (review of 82d75d7), so a
+   * series whose newest charges are on it fell back to the accounts it had LEFT. On a copy of his ledger with Wells
+   * Fargo archived, the rent (Venture X Jun 16, Chase Checking Jul 8, Wells Fargo Aug 4 + Sep 2) was measured to
+   * Chase's Aug 12 — before its own last charge — and read "Awaiting statements" on 2026-12-07, while the car lease
+   * beside it (Wells Fargo only, the same Sep 2) was measured to today and had lapsed.
+   */
+  test("a series whose newest charges are on the archived account lapses as if it were read through today", () => {
+    posted(VX, RENT, "2026-06-16", -210_900);
+    posted(CHASE, RENT, "2026-07-08", -210_900);
+    updateAccount(bundle.db, WF, { isActive: false });
+    const archived = [OCT, NOV, DEC].map((today) => readingOf([RENT, LEASE], today));
+
+    updateAccount(bundle.db, WF, { isActive: true });
+    let through = "2026-09-24";
+    const readToToday = [OCT, NOV, DEC].map((today) => {
+      checkedThrough(WF, addDays(through, 1), today);
+      through = today;
+      return readingOf([RENT, LEASE], today);
+    });
+
+    expect(archived).toEqual(readToToday);
+    // one archived account, the same last charge: the same verdict — never sent back to Chase's Aug 12
+    expect(new Map(archived[2]!.map((r) => [r.id, r.evidence]))).toEqual(new Map([[RENT, "lapsed"], [LEASE, "lapsed"]]));
+  });
+
   test.each([OCT, NOV, DEC, YEAR_ON])("%s: an archived card's series never read 'Awaiting statements'", (today) => {
     updateAccount(bundle.db, VX, { isActive: false });
     const listed = new Map(listSeries(bundle.db, today).map((s) => [s.id, s.evidence]));
     for (const id of ON_VX) expect(listed.get(id), id).not.toBe("awaiting-statements");
-    expect(checkedThroughBySeries(bundle.db, today)(BREEZELINE)).toBe(today);
+    expect(silenceMeasuredThroughBySeries(bundle.db, today)(BREEZELINE)).toBe(today);
+    // …while what the ledger has READ of it stops where its statements did — the day the pay sentences name
+    expect(checkedThroughBySeries(bundle.db, today)(BREEZELINE)).toBe("2026-09-13");
   });
 
   test("a series that charged on an archived card AND a live one is measured by the live card's checked day", () => {
@@ -369,26 +425,26 @@ describe("an account no statement will ever come for does not hold the lapse bac
     updateAccount(bundle.db, VX, { isActive: false });
 
     // Wells Fargo, read through Sep 24: 67 quiet read days — late, inside its 93-day line
-    expect(checkedThroughBySeries(bundle.db, DEC)(MOVED)).toBe("2026-09-24");
+    expect(silenceMeasuredThroughBySeries(bundle.db, DEC)(MOVED)).toBe("2026-09-24");
     expect(listSeries(bundle.db, DEC).find((s) => s.id === MOVED)!.evidence).toBe("running-late");
 
     // read through Dec 6, it lapses — never pinned to the archived card's Sep 13
     checkedThrough(WF, "2026-09-25", "2026-12-06");
-    expect(checkedThroughBySeries(bundle.db, DEC)(MOVED)).toBe("2026-12-06");
+    expect(silenceMeasuredThroughBySeries(bundle.db, DEC)(MOVED)).toBe("2026-12-06");
     expect(subscriptionsCard(bundle.db, DEC)!.lapsed.some((l) => l.seriesId === MOVED)).toBe(true);
     expect(upcomingOccurrences(bundle.db, DEC, 70).some((o) => o.seriesId === MOVED)).toBe(false);
 
     // …and with no card it posts to left to read, to today
     updateAccount(bundle.db, WF, { isActive: false });
-    expect(checkedThroughBySeries(bundle.db, DEC)(MOVED)).toBe(DEC);
+    expect(silenceMeasuredThroughBySeries(bundle.db, DEC)(MOVED)).toBe(DEC);
   });
 
   test("a series naming an account no statement will come for is measured to today", () => {
     bundle.db.update(recurringSeries).set({ accountId: VX }).where(eq(recurringSeries.id, RENT)).run();
-    expect(checkedThroughBySeries(bundle.db, DEC)(RENT)).toBe("2026-09-13");
+    expect(silenceMeasuredThroughBySeries(bundle.db, DEC)(RENT)).toBe("2026-09-13");
     updateAccount(bundle.db, VX, { isActive: false });
     // it names where it lands now, so its Wells Fargo history does not stand in for it
-    expect(checkedThroughBySeries(bundle.db, DEC)(RENT)).toBe(DEC);
+    expect(silenceMeasuredThroughBySeries(bundle.db, DEC)(RENT)).toBe(DEC);
   });
 
   test("a cash wallet's series is measured to today — what he typed is all that will ever come", () => {
@@ -401,7 +457,7 @@ describe("an account no statement will ever come for does not hold the lapse bac
     posted(WALLET, CASH_BILL, "2026-06-01", -10_000);
     posted(WALLET, CASH_BILL, "2026-07-01", -10_000);
 
-    for (const today of [OCT, DEC]) expect(checkedThroughBySeries(bundle.db, today)(CASH_BILL), today).toBe(today);
+    for (const today of [OCT, DEC]) expect(silenceMeasuredThroughBySeries(bundle.db, today)(CASH_BILL), today).toBe(today);
     // read to today it lapses like any series: Jul 1 to Oct 8 is 99 quiet days, against its 93
     expect(listSeries(bundle.db, OCT).find((s) => s.id === CASH_BILL)!.evidence).toBe("lapsed");
     expect(listSeries(bundle.db, "2026-09-01").find((s) => s.id === CASH_BILL)!.evidence).toBe("running-late");
@@ -416,6 +472,71 @@ describe("an account no statement will ever come for does not hold the lapse bac
       const book = runwayCard(bundle.db, today).committed;
       expect(book.lines.some((l) => l.seriesId === INSURANCE), today).toBe(false);
     }
+  });
+
+  /*
+   * ⚠️ The decision moved the LAPSE, not what the ledger has read. 🔴 Measured to today, the pay sentences claimed the
+   * archived account's unread days (review of 82d75d7): on a copy of his ledger with Wells Fargo archived, the income
+   * card on 2026-10-29 said "4 of them fall on days the records already cover, through Oct 29 — so the pay did not
+   * reach a bank" and "$16,823.72 never reached a bank", and /recurring warned "Cash pay that never reaches a bank" —
+   * Wells Fargo's statements stop at Sep 24.
+   */
+  test("a pay landing on an archived account: its paydays are read only as far as its statements reached", () => {
+    const OCT_29 = "2026-10-29";
+    posted(WF, PAY, "2026-09-17", 114_192);
+    posted(WF, PAY, "2026-09-24", 114_192);
+    bundle.db.update(recurringSeries).set({ lastMatchedOn: "2026-09-24" }).where(eq(recurringSeries.id, PAY)).run();
+    updateAccount(bundle.db, WF, { isActive: false });
+
+    // the dashboard's income card: four paydays since Sep 24, none of them on a day a statement covered
+    const line = incomeCard(bundle.db, OCT_29)!.pay.find((l) => l.seriesId === PAY)!;
+    expect(line).toMatchObject({ checkedThrough: "2026-09-24", silentPeriods: 4, checkedSilentPeriods: 0 });
+    expect(line.gapLabel).not.toBe("never reached a bank");
+    expect(line.verdict).not.toContain("did not reach a bank");
+    expect(line.verdict).toContain("so the ledger has not looked");
+    // /budgets' and /recurring's passed paydays, and /spending's note, read the same day
+    const unbanked = unbankedIncomeForSeries(bundle.db, new Set([PAY]), "2026-10-01", OCT_29);
+    expect(unbanked.series[0]).toMatchObject({ checkedThrough: "2026-09-24", occurrenceCount: 4, checkedOccurrenceCount: 0 });
+    expect(forecastCurrentMonth(bundle.db, OCT_29).unbankedIncome).toMatchObject({
+      checkedOccurrenceCount: 0,
+      frontier: { kind: "day", through: "2026-09-24" },
+    });
+    const reading = cashEarningsReadings(bundle.db, { from: "2026-09-01", to: OCT_29, today: OCT_29, withChecked: true });
+    expect(reading.find((r) => r.seriesId === PAY)).toMatchObject({ checkedThrough: "2026-09-24", checkedPeriodsSinceBanked: 0 });
+    // …while its silence is measured to today: no statement is coming to wait for, so it is late, never awaiting
+    expect(listSeries(bundle.db, OCT_29).find((s) => s.id === PAY)!.evidence).toBe("running-late");
+  });
+
+  /*
+   * 🔴 /budgets dated a category by every account it was spent from, archived ones too (review of 82d75d7): on a copy
+   * of his ledger with Venture X archived, Health on 2027-01-20 was "imported through Sep 13, 2026" — Venture X's last
+   * statement — with 20 days unaccounted, "Awaiting statements" for a statement that never comes, while every other
+   * account it was spent from was read further. It would last until Venture X's rows left the six-month window.
+   */
+  test("/budgets: an archived card never dates a row while an account still read was spent from", () => {
+    const health = categoryId("Health");
+    createBudget(bundle.db, { categoryId: health, period: "monthly", amountCents: 300_000, startsOn: "2026-01-01" });
+    spent(VX, health, "2026-08-20", -4_000);
+    spent(WF, health, "2026-10-20", -2_500);
+    const row = () => budgetPaceStatuses(bundle.db, "2026-10-20").find((b) => b.budget.categoryId === health)!;
+    // live, Venture X (its newest row Sep 10) holds the row back: October is its statement's to show
+    expect(row()).toMatchObject({ importedThroughOn: "2026-09-10", uncoveredDays: 20 });
+
+    updateAccount(bundle.db, VX, { isActive: false });
+    expect(row()).toMatchObject({ importedThroughOn: "2026-10-20", uncoveredDays: 0, spentFromAccounts: 2 });
+    expect(budgetVerdict(row()).headline).not.toBe("Awaiting statements");
+    // the category page one click away asks the same rule
+    expect(categoryReachFor(bundle.db, health, "2026-10-01", "2026-10-20").through).toBe("2026-10-20");
+  });
+
+  test("/budgets: a category spent only from an archived card keeps that card's own day — never 'nothing imported'", () => {
+    const health = categoryId("Health");
+    spent(VX, health, "2026-08-20", -4_000);
+    updateAccount(bundle.db, VX, { isActive: false });
+    expect(categoryReachFor(bundle.db, health, "2026-10-01", "2026-10-20")).toMatchObject({
+      whose: "category",
+      through: "2026-09-10",
+    });
   });
 
   test("the accounts a statement is still coming for: not archived, not a cash wallet", () => {

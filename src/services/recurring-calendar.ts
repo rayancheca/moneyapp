@@ -20,7 +20,7 @@ import {
 } from "@/lib/occurrence-verdict";
 import { outsidePortfolioCashAccountIds } from "./accounts";
 import { isAgentsSeries, loadCategoryIndex } from "./analytics";
-import { checkedThroughBySeries } from "./cash-earnings";
+import { silenceMeasuredThroughBySeries } from "./cash-earnings";
 import { frontierForSeries, observationFrontier, seriesAccountIds } from "./observation-frontier";
 import { paydayReadingsBySeries, paydaySettlementsBySeries, readsPerPayday } from "./payday-settlement";
 import {
@@ -689,7 +689,7 @@ export function recurringCalendar(
   // month that ends on or after today: a wholly-future month has no past
   // occurrence to grade, so it needs no coverage query at all.
   // late and lapsed only on days the ledger has checked (`seriesEvidence`, §6A 57) — the gate and a future entry's words
-  const checkedThrough = checkedThroughBySeries(db, today);
+  const checkedThrough = silenceMeasuredThroughBySeries(db, today);
   const needsFrontier = compareDates(monthStart, today) < 0;
   const frontier = needsFrontier ? observationFrontier(db) : null;
   const accountsBySeries = needsFrontier ? seriesAccountIds(db) : null;

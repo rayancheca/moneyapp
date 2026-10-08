@@ -4,7 +4,7 @@ import { recurringSeries } from "@/db/schema/recurring";
 import { transactions } from "@/db/schema/transactions";
 import { addDays, compareDates, diffDays, periodBounds } from "@/lib/dates";
 import { sharedFrontier, type UnbankedFrontier } from "@/lib/unbanked-income";
-import { checkedThroughBySeries } from "./cash-earnings";
+import { checkedThroughBySeries, silenceMeasuredThroughBySeries } from "./cash-earnings";
 import { settledPaydaysBySeries } from "./payday-settlement";
 import { hasStoppedForecasting, projectOccurrences, toProjectable } from "./recurring";
 
@@ -43,8 +43,9 @@ export interface UnbankedIncomeSeries extends BudgetTailSeries {
   /**
    * `earliestVerified` over the accounts this pay has landed in — the last day
    * the ledger has read every place its deposit could arrive — or null when one
-   * of them has no checked record, or the pay has never landed anywhere; today
-   * when it lands only where no statement is coming (`checkedThroughBySeries`).
+   * of them has no checked record, or the pay has never landed anywhere
+   * (`checkedThroughBySeries` — archived accounts read only as far as their
+   * statements reached, never to today).
    */
   checkedThrough: string | null;
   /** of `occurrenceCount`, the paydays dated on or before `checkedThrough` */
@@ -101,8 +102,8 @@ export function overdueForSeries(
       ),
     )
     .all();
-  // measured to each series' checked day, as every forward leg measures it (§6A 57)
-  const checkedThrough = checkedThroughBySeries(db, today);
+  // measured to each series' checked day, as every forward leg measures it (§6A 57) — today where none is coming
+  const checkedThrough = silenceMeasuredThroughBySeries(db, today);
   const live = rows.filter((r) => !hasStoppedForecasting(r, today, checkedThrough(r.id)));
   if (live.length === 0) return { totalCents: 0, series: [] };
 
@@ -261,8 +262,9 @@ export function unbankedIncomeForSeries(
    * account that pay has landed in — was read through Aug 12.
    *
    * ⛔ The frontier is `cashEarningsReadings`' rule, not a second one: the same
-   * `checkedThroughBySeries` (`landingAccountsBySeries` and `earliestVerified` over `accountCoverage`), so
-   * /spending and these two surfaces cannot disagree about which paydays were
+   * `checkedThroughBySeries` (`landingAccountsBySeries` and `earliestVerified`
+   * over every account's checked record, archived ones to their last statement),
+   * so /spending and these two surfaces cannot disagree about which paydays were
    * read. A payday ON the frontier day was read. Coverage is only read when a
    * payday is actually unmet, so the common month costs nothing extra.
    */

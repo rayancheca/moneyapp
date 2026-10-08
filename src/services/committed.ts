@@ -34,7 +34,7 @@ import { arrearsThisMonth, overdueForSeries } from "./arrears";
 import { incomeExpectation, type BudgetTail } from "./budgets";
 import { CAR_LEASE_TERM_MONTHS, isUpfrontCarRow, readUpfrontCarRule, upfrontCarRule } from "./car-upfront";
 import { frontierForSeries, ledgerOpens, observationFrontier, seriesAccountIds } from "./observation-frontier";
-import { checkedThroughBySeries } from "./cash-earnings";
+import { silenceMeasuredThroughBySeries } from "./cash-earnings";
 import { seriesStaleness, upcomingOccurrences } from "./recurring";
 import { seriesIdsNotDrawnAsRecurring } from "./recurring-link";
 
@@ -424,7 +424,7 @@ export function committedBook(
     .where(inArray(recurringSeries.status, ["detected", "confirmed"]))
     .all();
   // late only on days the ledger has checked — the forward leg's occurrences carry the same reading
-  const checkedThrough = checkedThroughBySeries(db, today);
+  const checkedThrough = silenceMeasuredThroughBySeries(db, today);
   const staleById = new Map(lateRows.map((s) => [s.id, seriesStaleness(s, today, checkedThrough(s.id))]));
 
   const overdue: CommittedOccurrence[] = late.series.map((s) => ({

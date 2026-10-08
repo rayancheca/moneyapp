@@ -6,7 +6,7 @@ import { isPrintableName } from "@/lib/printable-name";
 import { seriesIsIncomeOrSpending } from "@/lib/series-kind";
 import { outsidePortfolioCashAccountIds } from "./accounts";
 import { isAgentsSeries } from "./analytics";
-import { checkedThroughBySeries } from "./cash-earnings";
+import { silenceMeasuredThroughBySeries } from "./cash-earnings";
 import { surfaceInsights, type InsightInput } from "./insight-surface";
 import type { InsightCandidate, SurfaceInsights } from "./insights";
 import { provenanceFor } from "./provenance";
@@ -117,7 +117,7 @@ export function recurringInsightInput(
    */
   const rows = new Map(db.select().from(recurringSeries).all().map((r) => [r.id, r as LapseInput]));
   // the lapse is measured to each series' checked day, as `listSeries` measured it (§6A 57)
-  const checkedOf = checkedThroughBySeries(db, today);
+  const checkedOf = silenceMeasuredThroughBySeries(db, today);
   const self = all.find((s) => s.id === seriesId);
   if (!self || !isLive(self, rows.get(seriesId), today, checkedOf(seriesId))) return null;
   /*
