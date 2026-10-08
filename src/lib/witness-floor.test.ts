@@ -938,6 +938,48 @@ describe("ledgerCheckMode — the command line", () => {
     }
   });
 
+  /*
+   * 🔴 Nor were the format characters (`Cf`) that are not default-ignorable — the interlinear annotation marks
+   * U+FFF9–FFFB, the Egyptian hieroglyph format controls U+13430–1343F, the Arabic number signs: a reason of only those
+   * was taken, and its dry run said it would store "Acknowledged on <day>: " and nothing a statement shows.
+   */
+  it("⛔ a reason of only format characters is refused, dry run or not", () => {
+    const blanks = ["￹￺￻", "\u{13430}\u{1343F}", "؀۝܏", "￹ ​\u0007⠀"];
+    for (const reason of blanks) {
+      for (const confirm of [[], ["--confirm"]]) {
+        expect(() => ledgerCheckMode(["--acknowledge-left-out=3f9a0c12de", `--reason=${reason}`, ...confirm])).toThrow(
+          /--reason needs what the session read on the statement/,
+        );
+      }
+    }
+  });
+
+  /*
+   * 🔴 A control character INSIDE a reason — words beside it, so it says something — was kept, stored, and printed raw
+   * wherever the reason is: an escape a terminal obeys, a bell, a C1 control a page shows as nothing. Refused now, dry
+   * run or not, by name. A tab or a line break is whitespace, collapsed to a space as ever (below); U+0085 NEXT LINE is
+   * no whitespace to `\s`, so it is one of these.
+   */
+  it("⛔ a reason carrying a control character is refused, dry run or not, naming it — nothing was written", () => {
+    const carrying: [string, string][] = [
+      [`${READ_IT}\u001B[2J`, "U+001B"],
+      ["July statement\u0007, page 1", "U+0007"],
+      ["July statement \u009B page 1", "U+009B"],
+      ["July statement\u0085page 1", "U+0085"],
+      ["July statement, page 1 \u007F", "U+007F"],
+    ];
+    for (const [reason, named] of carrying) {
+      for (const confirm of [[], ["--confirm"]]) {
+        const run = () => ledgerCheckMode(["--acknowledge-left-out=3f9a0c12de", `--reason=${reason}`, ...confirm]);
+        expect(run).toThrow(WitnessFlagRefusal);
+        expect(run).toThrow(
+          `--reason carries a control character, ${named}, that every surface would print raw — nothing was written: ` +
+            "--reason='<what the statement shows>', in characters a reader sees",
+        );
+      }
+    }
+  });
+
   it("the reason is kept whole — its commas, colons and equals signs — on one line, its spaces collapsed", () => {
     const mode = ledgerCheckMode(["--acknowledge-left-out=3f9a0c12de", "--reason=  July, p. 1:\n  fee =  $25.00 , reversed  "]);
     expect(mode).toEqual({ mode: "acknowledge", tokens: ["3f9a0c12de"], confirm: false, reason: "July, p. 1: fee = $25.00 , reversed" });

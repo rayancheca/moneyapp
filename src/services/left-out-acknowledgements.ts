@@ -2,6 +2,7 @@ import { asc } from "drizzle-orm";
 import type { AppDatabase } from "@/db/client";
 import { leftOutAcknowledgements } from "@/db/schema/ledger-check";
 import {
+  reasonCarriesControl,
   reasonSaysNothing,
   type LeftOutAcknowledgement,
   type LeftOutAcknowledgementWrite,
@@ -26,8 +27,11 @@ export function readLeftOutAcknowledgements(db: AppDatabase): LeftOutAcknowledge
  *
  * ⛔ And by more than that CHECK covers: it trims ASCII whitespace only (char 9–13 and 32), and migration 0024 is
  * applied to the real ledger, never edited. Here a reason says nothing when only Unicode whitespace and invisible
- * characters are in it — a no-break, ideographic or zero-width space, a joiner, a BOM, a control character, the braille
- * blank (`reasonSaysNothing`).
+ * characters are in it — a no-break, ideographic or zero-width space, a joiner, a BOM, a format or control character,
+ * the braille blank (`reasonSaysNothing`).
+ *
+ * ⛔ Nor one carrying a control character anywhere, words beside it or not — it would be stored, and printed raw with
+ * the line wherever it is printed: refused by name, ALL of them, before anything is written (`reasonCarriesControl`).
  */
 export function writeLeftOutAcknowledgements(db: AppDatabase, writes: readonly LeftOutAcknowledgementWrite[]): void {
   if (writes.length === 0) return;
@@ -37,6 +41,12 @@ export function writeLeftOutAcknowledgements(db: AppDatabase, writes: readonly L
       `refused: an acknowledgement says what the session read on the statement, and the one for ${blank.description} on ` +
         `${blank.printedOn} says nothing — nothing was written`,
     );
+  }
+  for (const write of writes) {
+    const carries = reasonCarriesControl(write.reason);
+    if (carries !== null) {
+      throw new Error(`refused: the reason for ${write.description} on ${write.printedOn} ${carries} — nothing was written`);
+    }
   }
   db.transaction((tx) => {
     for (const write of writes) tx.insert(leftOutAcknowledgements).values({ ...write }).run();

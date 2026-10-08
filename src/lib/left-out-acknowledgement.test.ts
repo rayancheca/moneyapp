@@ -449,6 +449,95 @@ describe("planAcknowledging — the guarded write, a dry run first", () => {
   });
 
   /*
+   * 🔴 Beside two reasons stored, a run giving a third was told "--reason is not the reason stored, which stays", and
+   * refused as one that "never changes a stored one nor gives lines alike two" — as if one were stored, and its lines
+   * alike did not carry two already. Worded by how many are stored now; one stored reads as it did (above).
+   */
+  test("⛔ another reason beside two stored: said and refused by their count — never 'the reason stored'", () => {
+    const [first, second] = [
+      { on: "2026-10-04", reason: "Printed on the July statement." },
+      { on: "2026-10-05", reason: READ_IT },
+    ];
+    const twins = [line({ acknowledged: first }), line({ rowId: "row-twin", acknowledged: second })];
+    const mark = leftOutToken(line());
+    const another = { on: "2026-10-06", reason: "My own words for it." };
+    const all = planAcknowledging(twins, [mark], another);
+    expect(all.lines).toEqual([
+      `${mark}: acknowledged already, and --reason is not one of the 2 reasons stored, which stay: this step never ` +
+        "changes a stored one — Acknowledged on 2026-10-04: Printed on the July statement.",
+      `${mark}: acknowledged already, and --reason is not one of the 2 reasons stored, which stay: this step never ` +
+        `changes a stored one — Acknowledged on 2026-10-05: ${READ_IT}`,
+    ]);
+    const refused =
+      "REFUSED: --reason is not one of the 2 reasons stored, and this step never changes a stored one nor gives lines " +
+      "alike another — nothing was written. Stored:";
+    expect(reasonChangeRefusal(all.reasonsKept)[0]).toBe(refused);
+    // one left open beside them: each reason stored is said with how many lines carry it, in the count's words too
+    const partly = planAcknowledging([...twins, line({ rowId: "row-third" })], [mark], another);
+    expect(partly.lines).toEqual([
+      `${mark}: 1 of its 3 lines alike acknowledged already, and --reason is not one of the 2 reasons stored, which ` +
+        "stay: this step never changes a stored one nor gives lines alike another — Acknowledged on 2026-10-04: " +
+        "Printed on the July statement.",
+      `${mark}: 1 of its 3 lines alike acknowledged already, and --reason is not one of the 2 reasons stored, which ` +
+        `stay: this step never changes a stored one nor gives lines alike another — Acknowledged on 2026-10-05: ${READ_IT}`,
+    ]);
+    expect(reasonChangeRefusal(partly.reasonsKept)[0]).toBe(refused);
+  });
+
+  /*
+   * The count is of REASONS stored, never of acknowledgements. A mark acknowledged on one day, its line alike left out
+   * since and confirmed on another with the reason stored, exactly — as its dry run requires — carries two
+   * acknowledgements and one reason: the usual way a mark comes to carry two. 🔴 The test above stores two that differ
+   * in day AND reason, and counting the acknowledgements passed it, 44 of 44 — while a run giving another reason here
+   * read "not one of the 2 reasons stored" beside one (review of 34e97eb). One reason reads as one, however many days.
+   */
+  test("⛔ one reason stored on two days: another reason reads 'the reason stored', which stays — never '2 reasons'", () => {
+    const [first, second] = [
+      { on: "2026-10-04", reason: READ_IT },
+      { on: "2026-10-05", reason: READ_IT },
+    ];
+    const twins = [line({ acknowledged: first }), line({ rowId: "row-twin", acknowledged: second })];
+    const mark = leftOutToken(line());
+    const another = { on: "2026-10-06", reason: "My own words for it." };
+    const all = planAcknowledging(twins, [mark], another);
+    expect(all.reasonsKept).toEqual([{ mark, stored: [first, second] }]);
+    expect(all.lines).toEqual(
+      [first, second].map(
+        ({ on }) =>
+          `${mark}: acknowledged already, and --reason is not the reason stored, which stays: this step never changes a ` +
+          `stored one — Acknowledged on ${on}: ${READ_IT}`,
+      ),
+    );
+    expect(reasonChangeRefusal(all.reasonsKept)).toEqual([
+      REFUSED,
+      `  ${mark}: Acknowledged on 2026-10-04: ${READ_IT}`,
+      `  ${mark}: Acknowledged on 2026-10-05: ${READ_IT}`,
+    ]);
+    // one left open beside them: each day said with how many lines carry it, and the reason still one
+    const lines = [...twins, line({ rowId: "row-third" })];
+    const partly = planAcknowledging(lines, [mark], another);
+    expect(partly.lines).toEqual(
+      [first, second].map(
+        ({ on }) =>
+          `${mark}: 1 of its 3 lines alike acknowledged already, and --reason is not the reason stored, which stays: this ` +
+          `step never changes a stored one nor gives lines alike two — Acknowledged on ${on}: ${READ_IT}`,
+      ),
+    );
+    expect(reasonChangeRefusal(partly.reasonsKept)[0]).toBe(REFUSED);
+    // with no reason, the dry run and the run that confirms it name the one reason, once — no "or"
+    const dry = planAcknowledging(lines, [mark], { on: "2026-10-06", reason: null });
+    expect(dry.reasonsStored).toEqual(new Map([[mark, [READ_IT]]]));
+    const quoted = "--reason='July statement, page 1: the bank'\\''s opening deposit, reversed the same day by the card it came from'";
+    expect(dry.lines.at(-1)).toBe(
+      `${mark}: stores no reason yet — --confirm needs the reason its lines alike carry, exactly: ${quoted}, printed ` +
+        "with the line from then on",
+    );
+    expect(confirmingStep([mark], dry, null)).toEqual([
+      `Only once each line is read on its statement: the same command with ${quoted} --confirm`,
+    ]);
+  });
+
+  /*
    * The day is in the key: two lines alike but for the day the file prints are two lines — two marks, and an
    * acknowledgement of one never covers the other, beside it or alone.
    */
@@ -511,7 +600,8 @@ const shellArgs = (text: string): string[] => shellWords(text).filter((word) => 
 const runsNamed = (step: readonly string[], dryRun: readonly string[]): string[][][] => {
   const [said, ...below] = step;
   if (below.length === 0) return [[[...dryRun, ...shellArgs(said!.slice(said!.indexOf("the same command with ")))]]];
-  const inPlace = said!.endsWith("in place of its own:");
+  // its header may go on to say why a mark has an "or" below its run
+  const inPlace = said!.includes("in place of its own");
   const runs: string[][][] = [];
   for (const text of below) {
     const run = inPlace ? shellArgs(text) : [...dryRun, ...shellArgs(text)];
@@ -532,6 +622,15 @@ describe("confirmingStep — what a dry run ends with: the run that confirms it"
   const ONE_A_RUN =
     "Only once each line is read on its statement, one run a mark — a reason says what ONE line is: the same command " +
     "with these arguments in place of its own:";
+  /*
+   * 🔴 Several marks, one with lines alike carrying two reasons: its runs came "or" one below the other under a header
+   * that said only "one run a mark" — never why a mark had two, nor that its open lines take one of them. One mark alone
+   * says so (below); several say it in one sentence more, and only when an "or" follows.
+   */
+  const ONE_A_RUN_OR =
+    "Only once each line is read on its statement, one run a mark — a reason says what ONE line is: the same command " +
+    'with these arguments in place of its own. Where "or" follows a run, that mark\'s lines alike carry more than one ' +
+    "reason, and its open lines take one of them, exactly, never another:";
   const runOf = (mark: string) => `    --acknowledge-left-out=${mark} --reason='<what the statement shows>' --confirm`;
   /** a plan's open lines, with no line alike acknowledged: no reason stored to name */
   const opened = (open: AcknowledgeableLine[]) => ({ open, reasonsStored: new Map<string, readonly string[]>() });
@@ -617,7 +716,7 @@ describe("confirmingStep — what a dry run ends with: the run that confirms it"
     ]);
     const both = planAcknowledging(lines, [OPENING_MARK, COFFEE_MARK], { on: "2026-10-06", reason: null });
     expect(confirmingStep([OPENING_MARK, COFFEE_MARK], both, null)).toEqual([
-      ONE_A_RUN,
+      ONE_A_RUN_OR,
       `    --acknowledge-left-out=${OPENING_MARK} --reason='Printed on the July statement.' --confirm`,
       `    or --acknowledge-left-out=${OPENING_MARK} --reason=${READ_IT_QUOTED} --confirm`,
       runOf(COFFEE_MARK),

@@ -154,6 +154,47 @@ describe("the acknowledgements a ledger keeps (`left_out_acknowledgements`)", ()
     expect(readLeftOutAcknowledgements(bundle.db)).toEqual([]);
   });
 
+  /*
+   * 🔴 Nor were the format characters (`Cf`) that are not default-ignorable — the interlinear annotation marks
+   * U+FFF9–FFFB, the Egyptian hieroglyph format controls U+13430–1343F, the Arabic number signs: a reason of only those
+   * was stored, and printed as nothing a statement shows.
+   */
+  test("⛔ a reason of only format characters says nothing — refused, nothing written", () => {
+    const blanks = ["￹￺￻", "\u{13430}\u{1343F}", "؀۝܏", "￹ ​\u0007⠀"];
+    for (const reason of blanks) {
+      const before = changes();
+      expect(() => writeLeftOutAcknowledgements(bundle.db, [OPENING, { ...OPENING, reason }])).toThrow(
+        /an acknowledgement says what the session read on the statement/,
+      );
+      expect(changes()).toBe(before);
+    }
+    expect(readLeftOutAcknowledgements(bundle.db)).toEqual([]);
+  });
+
+  /*
+   * 🔴 A control character INSIDE a reason — words beside it, so it says something — was stored, and printed raw
+   * wherever the reason is: an escape a terminal obeys, a bell. The table's one writer refuses it by name, and every
+   * write given with it, before anything is written — a line break too: a stored reason is on one line, and the command
+   * line collapses whitespace before it gets here (`ledgerCheckMode`).
+   */
+  test("⛔ a reason carrying a control character is refused by name — nothing written", () => {
+    const carrying: [string, string][] = [
+      [`${OPENING.reason}\u001B[2J`, "U+001B"],
+      ["July statement\u0007, page 1", "U+0007"],
+      ["July statement,\npage 1", "U+000A"],
+      ["July statement\u0085page 1", "U+0085"],
+    ];
+    for (const [reason, named] of carrying) {
+      const before = changes();
+      expect(() => writeLeftOutAcknowledgements(bundle.db, [OPENING, { ...OPENING, reason }])).toThrow(
+        `refused: the reason for WFB Opening Deposit From Card on 2026-07-27 carries a control character, ${named}, ` +
+          "that every surface would print raw — nothing was written",
+      );
+      expect(changes()).toBe(before);
+    }
+    expect(readLeftOutAcknowledgements(bundle.db)).toEqual([]);
+  });
+
   test("what the session read, an invisible character in it or not, is a reason — stored as given", () => {
     writeLeftOutAcknowledgements(bundle.db, [{ ...OPENING, reason: `​${OPENING.reason} ` }]);
     expect(readLeftOutAcknowledgements(bundle.db).map((a) => a.reason)).toEqual([`​${OPENING.reason} `]);
