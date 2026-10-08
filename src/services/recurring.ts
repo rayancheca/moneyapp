@@ -1137,13 +1137,15 @@ interface ProjectableSeries {
    */
   firstOn?: string | null;
   /**
-   * ⛔ …and the walk back draws the PAST only: dates before this day — the reader's today — and none on or after it.
-   * From today on a schedule is its anchor's, as every forward reader projects it (the forecast, Upcoming, /budgets'
-   * expected leg), so a payday between today and an anchor he dated ahead is on no reader's schedule rather than on
-   * some. 🔴 Walked back unbounded, his next payday dated Oct 22 on Oct 8 left Oct 8 and Oct 15 in /budgets'
-   * scheduled figure and drawn "upcoming" on the calendar, while the forecast and Upcoming opened on Oct 22 —
-   * $2,283.84 in no leg (a copy of his ledger, 2026-10-08). An anchor on or before today holds nothing back: every
-   * date the walk back adds lies before it. Absent, nothing is held back.
+   * ⛔ …and the walk back draws the PAST and the paydays money has REACHED only: dates before this day
+   * (`walkBackBound` — the later of the reader's today and the day after the last deposit's date plus the tolerance)
+   * and none on or after it. Beyond it a schedule is its anchor's, as every forward reader projects it (the forecast,
+   * Upcoming, /budgets' expected leg), so a payday between today and an anchor he dated ahead, that no money reached,
+   * is on no reader's schedule rather than on some. 🔴 Walked back unbounded, his next payday dated Oct 22 on Oct 8
+   * left Oct 8 and Oct 15 in /budgets' scheduled figure and drawn "upcoming" on the calendar, while the forecast and
+   * Upcoming opened on Oct 22 — $2,283.84 in no leg (a copy of his ledger, 2026-10-08). 🔴 Bounded at today alone,
+   * a payday paid on the day — the anchor detection dates a step after it — was on no reader's schedule either. An
+   * anchor on or before today holds nothing back: every date the walk back adds lies before it. Absent, nothing is.
    */
   walkBackBefore?: string | null;
 }
@@ -1507,7 +1509,8 @@ export function projectOccurrences(
   for (let i = firstStep; ; i++) {
     const date = stepFrom(anchor, plan, i);
     if (compareDates(date, last) > 0) break;
-    // a step back from the anchor is drawn only in the past (`walkBackBefore`); from today the anchor's walk opens
+    // a step back from the anchor is drawn only in the past or where money reached (`walkBackBefore`); beyond, the
+    // anchor's walk opens
     if (i < 0 && series.walkBackBefore && compareDates(date, series.walkBackBefore) >= 0) continue;
     occurrences.push({
       seriesId: series.id,

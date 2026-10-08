@@ -178,6 +178,32 @@ export function firstPaydayOn(
   return stepFrom(anchor, plan, Math.min(0, steps));
 }
 
+/**
+ * ⚖️ WHERE THE WALK BACK ENDS — the first day it does not draw (`ProjectableSeries.walkBackBefore`): the later of today
+ * and the day after the last arrived deposit's REACH, its date plus the tolerance — settlement's own bound on the
+ * paydays a deposit can pay (§6A 55b). The walk back from the anchor draws the past, and the paydays money has
+ * already reached; from there on the schedule is its anchor's, as every forward reader projects it.
+ *
+ * 🔴 Bounded at today alone, the day his pay was imported on payday lost that payday. Detection dates the next payday
+ * one step after the last deposit, so on Thu Sep 24 with that day's deposit in, the anchor was Oct 1 and Sep 24 lay on
+ * the walk back: no past reader drew it and no forward reader does (they open on the anchor). /budgets scheduled three
+ * of September's four Thursdays, the Sep 23 lump paid Aug 27 instead, and Sep 24's own deposit read "toward no
+ * payday" — and the next day, Sep 24 in the past, it all came back: one deposit's payday changed overnight with
+ * nothing imported. ⛔ Not `>` today either: an anchor he dates ahead (Oct 22, set on Oct 8) with no money near it
+ * must still leave Oct 8 off every past reader, since no forward reader draws it.
+ *
+ * A payday drawn this way is one a deposit settles — the newest it reaches, inside its tolerance (the anchor clause) —
+ * so it leaves /budgets' schedule through the posted leg, never into no leg. The evidence is settlement's: money IN
+ * that has ARRIVED (`hasArrived`).
+ */
+export function walkBackBound(deposits: readonly AttributedDeposit[], toleranceDays: number, today: string): string {
+  const reachedThrough = deposits
+    .filter((d) => d.amountCents > 0 && hasArrived(d.postedOn, today))
+    .map((d) => addDays(d.postedOn, toleranceDays))
+    .reduce((latest, day) => (compareDates(day, latest) > 0 ? day : latest), addDays(today, -1));
+  return addDays(reachedThrough, 1);
+}
+
 export interface PaydaySettlementInput {
   /** every occurrence the ledger draws for the series, in any order */
   occurrences: readonly PaydayOccurrence[];

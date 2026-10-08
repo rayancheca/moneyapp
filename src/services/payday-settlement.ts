@@ -8,6 +8,7 @@ import {
   hasArrived,
   noSettlement,
   settlePaydaysBackwards,
+  walkBackBound,
   type PaydaySettlement,
 } from "@/lib/payday-settlement";
 import { paydayReadings, type PaydayReading } from "@/lib/per-payday";
@@ -79,10 +80,12 @@ export function paydaySettlement(db: AppDatabase, seriesId: string, today: strin
 
   /*
    * The walk opens on the series' first payday — its effective anchor's rhythm walked back to the first deposit — and
-   * reaches `today + toleranceDays`. Money has arrived, so there is a first payday.
+   * reaches `today + toleranceDays`. Money has arrived, so there is a first payday. Walking back it draws the past and
+   * the paydays that money has reached (`walkBackBound`), the ones every past reader draws beside it.
    */
   const firstOn = firstPaydayOn(effectiveSeries(s), s.toleranceDays, deposits, today);
-  const projectable = paydayProjectable(s, { firstPaydayOn: firstOn }, today);
+  const walkBackBefore = walkBackBound(deposits, s.toleranceDays, today);
+  const projectable = paydayProjectable(s, { firstPaydayOn: firstOn, walkBackBefore }, today);
   const occurrences = projectOccurrences(projectable, firstOn ?? today, addDays(today, s.toleranceDays)).filter(
     (o) => o.amountCents > 0,
   );
@@ -94,7 +97,7 @@ export function paydaySettlement(db: AppDatabase, seriesId: string, today: strin
     toleranceDays: s.toleranceDays,
     periodOf: (day) => ratePeriodOf(projectable, day),
   });
-  return { ...settlement, firstPaydayOn: firstOn };
+  return { ...settlement, firstPaydayOn: firstOn, walkBackBefore };
 }
 
 /**
@@ -106,25 +109,38 @@ export function paydaySettlement(db: AppDatabase, seriesId: string, today: strin
  */
 export interface SeriesPaydaySettlement extends PaydaySettlement {
   firstPaydayOn: string | null;
+  /**
+   * …and where its walk back ENDED (`walkBackBound`): the first day after the past and the paydays money has reached.
+   * Rides on the answer for `firstPaydayOn`'s reason — a reader bounding its walk back at today alone drops a payday
+   * the settlement paid. Null when no money has arrived: there is no walk back.
+   */
+  walkBackBefore: string | null;
 }
 
-const unsettled = (): SeriesPaydaySettlement => ({ ...noSettlement(), firstPaydayOn: null });
+const unsettled = (): SeriesPaydaySettlement => ({ ...noSettlement(), firstPaydayOn: null, walkBackBefore: null });
 
 /**
  * A series' projection over its whole payday universe: `toProjectable`, opened on the first payday its settlement
  * walked from (`firstPaydayOn`). ⛔ One rule for every reader of past paydays — a reader projecting from the anchor
  * alone names fewer paydays than the settlement it reads, and than Earned vs banked counts.
  *
- * ⛔ The walk back is for the PAST (`walkBackBefore`, today): from today on the schedule is its anchor's, the one the
- * forecast, Upcoming and /budgets' expected leg project. 🔴 Unbounded, a next payday he dated ahead — Oct 22, set on
- * Oct 8 — left Oct 8 and Oct 15 scheduled on /budgets and drawn upcoming on the calendar, in no other figure.
+ * ⛔ The walk back is for the PAST and for the paydays money has REACHED (`walkBackBefore`, the settlement's
+ * `walkBackBound`; today when there is no settlement): beyond them the schedule is its anchor's, the one the forecast,
+ * Upcoming and /budgets' expected leg project. 🔴 Unbounded, a next payday he dated ahead — Oct 22, set on Oct 8 —
+ * left Oct 8 and Oct 15 scheduled on /budgets and drawn upcoming on the calendar, in no other figure. 🔴 Bounded at
+ * today alone, his payday imported on payday — detection then dates the next one a week ahead — fell off every past
+ * reader: /budgets scheduled three of September's four Thursdays on Sep 24 (§6A 55 step B review, 2026-10-08).
  */
 export function paydayProjectable(
   s: Parameters<typeof toProjectable>[0],
-  settlement: Pick<SeriesPaydaySettlement, "firstPaydayOn"> | undefined,
+  settlement: Pick<SeriesPaydaySettlement, "firstPaydayOn" | "walkBackBefore"> | undefined,
   today: string,
 ): ReturnType<typeof toProjectable> {
-  return { ...toProjectable(s), firstOn: settlement?.firstPaydayOn ?? null, walkBackBefore: today };
+  return {
+    ...toProjectable(s),
+    firstOn: settlement?.firstPaydayOn ?? null,
+    walkBackBefore: settlement?.walkBackBefore ?? today,
+  };
 }
 
 /**

@@ -236,15 +236,90 @@ describe("his ledger — the income card and settlement name the same paydays, f
       expect(upcoming.map((o) => o.date)).toEqual(["2026-10-22", "2026-10-29", "2026-11-05"]);
     });
 
-    /* a week that lands Tue Oct 6 pays the last payday before it, Oct 1 — not an Oct 8 that is on no schedule */
-    test("the settlement walks the same paydays — none between today and his date", () => {
-      deposit("2026-10-06", WEEK);
+    test("the settlement walks the same paydays — none between today and his date that no money reached", () => {
       const s = paydaySettlement(bundle.db, PAY, TODAY);
       expect(s.firstPaydayOn).toBe("2026-06-04");
-      expect([...s.settledBy.entries()].filter(([payday]) => payday >= "2026-10-01")).toEqual([
-        ["2026-10-01", "2026-10-06"],
-      ]);
+      expect([...s.settledBy.keys()].filter((payday) => payday >= "2026-10-01")).toEqual([]);
       expect(incomeCard(bundle.db, TODAY)!.pay[0]!.paydaysLabel).toBe("18 paydays, Jun 4 – Oct 1");
+    });
+
+    /*
+     * A week that lands Tue Oct 6 has REACHED Oct 8 (its date plus the tolerance — the settlement's own reach, §6A
+     * 55b): it pays Oct 8, read on Oct 8 as on Oct 9, and every reader draws Oct 8 paid. 🔴 Bounded at today, the
+     * walk back left Oct 8 off the schedule on Oct 8 — Oct 6's money paid Oct 1 — and drew it the next day, when the
+     * same money paid Oct 8 and left Oct 1 unpaid: one deposit's payday changed overnight with nothing imported.
+     */
+    test("a week that lands Tue Oct 6 pays Oct 8, which it reached — the same answer the next day", () => {
+      deposit("2026-10-06", WEEK);
+      const october = (today: string): [string, string][] =>
+        [...paydaySettlement(bundle.db, PAY, today).settledBy.entries()].filter(([payday]) => payday >= "2026-10-01");
+      expect(october(TODAY)).toEqual([["2026-10-08", "2026-10-06"]]);
+      expect(october("2026-10-09")).toEqual(october(TODAY));
+      expect(drawnPaydays("2026-10", TODAY)).toEqual(["2026-10-01", "2026-10-22", "2026-10-29"]);
+      const oct = incomeExpectation(bundle.db, "2026-10-01", "2026-10-31", TODAY);
+      expect([oct.scheduledOccurrences, oct.passedUnpaidOccurrences, oct.expectedCents]).toEqual([4, 1, WEEK * 2]);
+      expect(
+        oct.postedCents - oct.paidForAnotherMonthCents + oct.expectedCents + oct.passedUnpaidCents +
+          oct.paidByAnotherMonthCents,
+      ).toBe(oct.scheduledCents);
+    });
+  });
+
+  /*
+   * ⛔ …AND A PAYDAY MONEY HAS ALREADY REACHED IS PAST, whatever day it is. Detection dates the next payday one step
+   * after the last deposit (`last.postedOn + medianGap`), so on the day his pay is imported on payday the anchor is a
+   * week ahead and today's payday lies on the walk back — as it does when he dates "Next expected" next Thursday on a
+   * Thursday he was paid.
+   *
+   * 🔴 Bounded at today, the walk back dropped today's payday from every past reader, and no forward reader draws it
+   * (they open on the anchor). Measured on a copy of his ledger (both writes applied) with Oct 1 stored, read Sep 24:
+   * /budgets "3 paydays fall in this month, scheduled at $3,425.76" of September's four Thursdays; the Sep 23 lump
+   * paid Aug 27 instead of Sep 24; Sep 24's deposit read "toward no payday"; $1,541.92 unallocated — beside an income
+   * card counting "17 paydays, Jun 4 – Sep 24". The next day it all came back.
+   */
+  describe.each([
+    ["detection's next date", { nextExpectedOn: "2026-10-01" }],
+    ["a next date he set by hand", { userNextExpectedOn: "2026-10-01" }],
+  ])("paid on payday, the next payday one step ahead — %s, read on Sep 24", (_, anchor) => {
+    const PAYDAY = "2026-09-24";
+    beforeEach(() => {
+      bundle.db.update(recurringSeries).set(anchor).where(eq(recurringSeries.id, PAY)).run();
+    });
+
+    test("month by month, Earned vs banked and /budgets count the same paydays — September's four Thursdays", () => {
+      const { card, budgets } = countsByMonth(["2026-06", "2026-07", "2026-08", "2026-09"], PAYDAY);
+      expect(card).toEqual([4, 5, 4, 4]);
+      expect(budgets).toEqual(card);
+      expect(incomeCard(bundle.db, PAYDAY)!.pay[0]!.paydaysLabel).toBe("17 paydays, Jun 4 – Sep 24");
+    });
+
+    test("September on /budgets: four paydays scheduled, every one paid — none in no leg", () => {
+      const sep = incomeExpectation(bundle.db, "2026-09-01", "2026-09-30", PAYDAY);
+      expect([sep.scheduledOccurrences, sep.scheduledCents]).toEqual([4, WEEK * 4]);
+      expect([sep.passedUnpaidCents, sep.expectedCents]).toEqual([0, 0]);
+      expect(
+        sep.postedCents - sep.paidForAnotherMonthCents + sep.expectedCents + sep.passedUnpaidCents +
+          sep.paidByAnotherMonthCents,
+      ).toBe(sep.scheduledCents);
+    });
+
+    test("the settlement pays Sep 24 with the Sep 23 lump and Aug 27 with Sep 24's week — as the next day does", () => {
+      const s = paydaySettlement(bundle.db, PAY, PAYDAY);
+      expect([s.settledBy.get(PAYDAY), s.settledBy.get("2026-08-27")]).toEqual(["2026-09-23", "2026-09-24"]);
+      expect(s.unallocatedCents).toBe(40_000);
+      const portions = (today: string): string[] =>
+        paydaySettlement(bundle.db, PAY, today).portions.map((p) => `${p.paydayOn} ← ${p.depositOn} ${p.cents}`);
+      expect(portions("2026-09-25")).toEqual(portions(PAYDAY));
+    });
+
+    test("the calendar: Sep 24's deposit pays Aug 27, never toward no payday; the lump pays four weeks", () => {
+      const sep = recurringCalendar(bundle.db, "2026-09", PAYDAY).entriesByDay;
+      const row = (day: string) => sep[day]!.find((e) => e.seriesId === PAY && e.transactionId !== null)!;
+      expect([row(PAYDAY).towardNoPayday, row(PAYDAY).settlesPaydaysOn]).toEqual([false, ["2026-08-27"]]);
+      expect([row("2026-09-23").perPayday, row("2026-09-23").settlesPaydaysOn]).toEqual([
+        { paydays: 4, cents: WEEK },
+        [],
+      ]);
     });
   });
 });

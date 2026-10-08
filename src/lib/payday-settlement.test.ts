@@ -5,6 +5,7 @@ import {
   hasArrived,
   portionsAcross,
   settlePaydaysBackwards,
+  walkBackBound,
   type AttributedDeposit,
   type PaydayOccurrence,
 } from "./payday-settlement";
@@ -537,5 +538,33 @@ describe("firstPaydayOn", () => {
   test("a monthly schedule walks back by calendar months, clamped into a short month", () => {
     const monthly = { cadence: "monthly" as const, intervalDaysAvg: 30, nextExpectedOn: "2026-07-30", anchorDay: null };
     expect(firstPaydayOn(monthly, 3, [paid("2026-02-27", 500_000)], TODAY)).toBe("2026-02-28");
+  });
+});
+
+/**
+ * ⚖️ WHERE THE WALK BACK ENDS: the past, and every payday money has already reached — the last arrived deposit's date
+ * plus the tolerance, settlement's own reach (§6A 55b). 🔴 Bounded at today alone, the day his pay was imported on
+ * payday — detection then dates the next payday a week ahead — today's payday fell off every past reader.
+ */
+describe("walkBackBound", () => {
+  const SEP24 = "2026-09-24";
+
+  test("paid on payday: the walk back draws today's payday — it ends the day after the deposit's reach", () => {
+    expect(walkBackBound([paid("2026-09-23", WEEK * 4), paid(SEP24, WEEK)], 3, SEP24)).toBe("2026-09-28");
+  });
+
+  test("money the day before a payday reached it; money four days before it did not", () => {
+    expect(walkBackBound([paid("2026-10-06", WEEK)], 3, "2026-10-08")).toBe("2026-10-10");
+    expect(walkBackBound([paid("2026-10-04", WEEK)], 3, "2026-10-08")).toBe("2026-10-08");
+  });
+
+  test("no money reached past today: the past only — today, whatever the anchor says", () => {
+    expect(walkBackBound([paid(SEP24, WEEK)], 3, "2026-10-08")).toBe("2026-10-08");
+    expect(walkBackBound([], 3, "2026-10-08")).toBe("2026-10-08");
+  });
+
+  test("the evidence is money in that has arrived: a clawback or a row dated after today reaches nothing", () => {
+    expect(walkBackBound([paid("2026-10-08", -WEEK)], 3, "2026-10-08")).toBe("2026-10-08");
+    expect(walkBackBound([paid("2026-10-09", WEEK)], 3, "2026-10-08")).toBe("2026-10-08");
   });
 });
