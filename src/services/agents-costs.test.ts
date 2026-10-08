@@ -42,6 +42,7 @@ import { merchantIntelligence } from "./merchants";
 import { noticesCard } from "./notices-card";
 import { ledgerOpens, ledgerReaches } from "./observation-frontier";
 import { periodActivity } from "./period-activity";
+import { printOnOneStatement } from "./printed-statement-fixture";
 import { provenanceFor } from "./provenance";
 import { upcomingOccurrences } from "./recurring";
 import { calendarMonthFlow, recurringCalendar } from "./recurring-calendar";
@@ -150,6 +151,8 @@ beforeEach(() => {
   // the agent's brokerage book, paired with its cash account — what makes Agentic's money the agent's
   book = createAccount(bundle.db, { institutionId: rh.id, name: "Robinhood Agentic Brokerage", type: "investment", subtype: "brokerage" });
   bundle.db.update(accounts).set({ cashAccountId: agentic }).where(eq(accounts.id, book)).run();
+  // …and printed beside it, as on his ledger: the agent's cash is investable, no part of his spendable cash
+  printOnOneStatement(bundle.db, rh.id, [agentic, book]);
   gold = bundle.db.select().from(merchants).where(eq(merchants.canonicalName, "Robinhood Gold")).get()!.id;
 
   // the three balances his ledger reads on 2026-08-31

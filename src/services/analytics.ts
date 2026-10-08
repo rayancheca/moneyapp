@@ -375,7 +375,8 @@ export function spendingBucket(
  * The rows `spendingBucket` leaves out for WHOSE they are, and only those, bucketed as his would be: on the agent's
  * cash, an expense-kind row either sign (`isAgentsCostCategoryRow`) or an unfiled outflow. Not his spending (owner
  * decisions 2026-10-02 and 2026-10-05) and still money net worth pays, which is why the forecast projects it into EOM
- * net worth alone (`MonthForecast.agentsCosts`) — never into a line that says Spending. `isAgentsIncome`'s mirror.
+ * net worth alone (`MonthForecast.agentsCosts`) — never into a line that says Spending. The spending side's
+ * `isAgentsIncomeCategoryRow`, with the unfiled leg `spendingBucket` has.
  */
 export function agentsCostBucket(
   idx: CategoryIndex,
@@ -481,22 +482,6 @@ export function isIncome(
 }
 
 /**
- * The rows `isIncome` leaves out for WHOSE they are, and only those: income by category and sign, paid into the
- * agent's cash. Not his (owner decision 2026-09-28) and still money net worth holds, which is why the forecast
- * projects it into EOM net worth alone (`MonthForecast.agentsIncome`) — never into a line that says Income.
- *
- * Credits only, for a surface that counts the agent's rows. ⛔ Not for one that NETS them: the bridge and the
- * forecast's pace ask `isAgentsIncomeCategoryRow`, either sign (owner decisions 2026-10-06, §6A 43 and §6A 45).
- */
-export function isAgentsIncome(
-  idx: CategoryIndex,
-  agentsCash: ReadonlySet<string>,
-  txn: Pick<AnalyticsTxn, "accountId" | "categoryId" | "amountCents">,
-): boolean {
-  return txn.amountCents > 0 && isAgentsIncomeCategoryRow(idx, agentsCash, txn);
-}
-
-/**
  * Whether a row of an INCOME category is the AGENT'S: on its cash account, EITHER SIGN. `isIncome`'s account half,
  * and the whole rule for a surface that NETS an income category's rows rather than counting its credits — the
  * category's own page (`spendingTransactions`), the Fees card's interest, and the bridge's "Agent's income" with the
@@ -508,6 +493,11 @@ export function isAgentsIncome(
  * not: `/categories/<Income>` read "Received" over the agent's dividend and interest too, an "Interest" subcategory
  * that was the agent's alone, and the dashboard's Fees card set the agent's interest against his fees as "interest
  * back".
+ *
+ * ⛔ There is no credits-only test of the agent's income, and none is wanted: every reader of the agent's income rows
+ * nets or counts them either sign (§6A 43, §6A 45). 🔴 Three asked the credits alone — the bridge's bands, the
+ * forecast's pace, the empty state's clause — and each left the agent's clawback out; the helper they shared, left
+ * with no caller, was deleted 2026-10-08.
  */
 export function isAgentsIncomeCategoryRow(
   idx: CategoryIndex,
@@ -574,7 +564,7 @@ export type AgentsBand = Extract<AttributionBandKey, "agentIncome" | "agentCosts
  *
  * ⚖️ Owner decision 2026-10-06 (§6A 43): …and so is a scheduled DEBIT. Filed in an income category, money out of the
  * agent's cash — a clawback — LOWERS the agent's income, which can then net below zero. 🔴 This asked the income half's
- * sign (`isAgentsIncome`): the posted clawback sat in the bridge's Moved, and the forecast, finding no band, netted its
+ * sign (credits only): the posted clawback sat in the bridge's Moved, and the forecast, finding no band, netted its
  * schedule inside "Agent's costs" by its sign — one clawback, a transfer on the bridge and a cost on the card.
  * ⛔ The agent's alone: HIS clawback stays in Moved, and the Income band is his money in only (`isIncome`).
  */
@@ -988,8 +978,11 @@ export function spendingTransactions(db: AppDatabase, filter: TxnFilter): Analyt
  * `outsidePortfolioCashAccountIds`, read once per server render — `react`'s `cache`, `activeTxnsInRange`'s reason. Every
  * budget grades through `spendingTransactions` (`categorySpending`, once per closed period), so the account read that
  * an expense page now pays would otherwise be paid per budget per period. Outside a render it reads every call.
+ *
+ * Shared with the empty state's agent clause (`agentsMoneyRowCount`), which reads after the page's row list has.
+ * ⛔ Read-only: the set is every caller's in the render.
  */
-const agentsCashOfRender = cache(function agentsCashOfRender(db: AppDatabase): ReadonlySet<string> {
+export const agentsCashOfRender = cache(function agentsCashOfRender(db: AppDatabase): ReadonlySet<string> {
   return outsidePortfolioCashAccountIds(db);
 });
 

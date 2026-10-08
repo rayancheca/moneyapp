@@ -32,6 +32,7 @@ import { netWorthSeries, rebuildAccount } from "./derivation";
 import { forecastCurrentMonth } from "./forecast";
 import { ledgerOpens, ledgerReaches } from "./observation-frontier";
 import { periodActivity } from "./period-activity";
+import { printOnOneStatement } from "./printed-statement-fixture";
 import { provenanceFor } from "./provenance";
 import { uncategorizedCount } from "./review-count";
 import { spendingSankey } from "./sankey";
@@ -43,6 +44,7 @@ import {
   periodTotals,
   spendingEmptyCopy,
 } from "./spending";
+import { setSplits } from "./transaction-splits";
 import { matchingTransactionIds } from "./transactions-query";
 
 /**
@@ -136,6 +138,8 @@ beforeEach(() => {
   // the agent's brokerage book, paired with its cash account — what makes Agentic's money the agent's
   book = createAccount(bundle.db, { institutionId: rh.id, name: "Robinhood Agentic Brokerage", type: "investment", subtype: "brokerage" });
   bundle.db.update(accounts).set({ cashAccountId: agentic }).where(eq(accounts.id, book)).run();
+  // …and printed beside it, as on his ledger: the agent's cash is investable, no part of his spendable cash
+  printOnOneStatement(bundle.db, rh.id, [agentic, book]);
 
   addManualAnchor(bundle.db, { accountId: wellsFargo, anchoredOn: "2026-08-31", enteredCents: 392_640 });
   addManualAnchor(bundle.db, { accountId: agentic, anchoredOn: "2026-08-31", enteredCents: 2_664 });
@@ -314,7 +318,7 @@ describe("the agent's unfiled money out is not his spending", () => {
   /*
    * 🔴 §6A 43: money OUT of the agent's cash filed in an income category — a clawback of what it was paid — is the
    * agent's: it lowers "Agent's income" on the bridge and at the pace (`isAgentsIncomeCategoryRow`, either sign), and is
-   * none of his spending or income. The count asked the credits alone (`isAgentsIncome`), so a day holding only the
+   * none of his spending or income. The count asked the credits alone, so a day holding only the
    * agent's clawback read a measured zero and said nothing of the money left out.
    */
   test("⛔ the clause counts the agent's income-category clawback — its money out, as the bridge nets it — and not his", () => {
@@ -371,6 +375,43 @@ describe("a category's own page names the agent's money its window left out", ()
     // ⛔ the clause is the category's, not the day's: a category the agent's money is not in says nothing of it
     expect(agentsMoneyRowCount(bundle.db, day, { categoryId: catId("Food") })).toBe(0);
     expect(categoryEmptyState("Food", day).description).not.toContain("agent");
+  });
+
+  /*
+   * A SPLIT row arrives as one part-row per part (`activeTxnsInRange`), each filed apart — so the count is of
+   * TRANSACTIONS, and a part is asked where IT is filed, not where its row is. Hypothetical, as `agents-costs.test.ts`
+   * splits the agent's Gold fee: one charge, filed Bank Fees, split across two Fees subcategories and Shopping.
+   */
+  test("⛔ a split row of the agent's is one row — counted once, on every page one of its parts is filed under", () => {
+    const day = { from: "2026-09-05", to: "2026-09-05" };
+    post(agentic, day.from, -1_000, "Fees > Bank Fees", "Gold Monthly Fee and margin");
+    const row = bundle.db
+      .select()
+      .from(transactions)
+      .where(and(eq(transactions.accountId, agentic), eq(transactions.postedOn, day.from)))
+      .get()!;
+    setSplits(bundle.db, row.id, [
+      { categoryId: catId("Fees > Bank Fees"), amountCents: -500 },
+      { categoryId: catId("Fees > ATM Fees"), amountCents: -100 },
+      { categoryId: catId("Shopping > General"), amountCents: -400 },
+    ]);
+    const pages = [
+      // two of its parts under one page are still the one row
+      ["Fees", 1],
+      ["Fees > Bank Fees", 1],
+      ["Fees > ATM Fees", 1],
+      // the part filed apart from its row is counted where it is filed
+      ["Shopping", 1],
+      ["Shopping > General", 1],
+      ["Food", 0],
+    ] as const;
+    for (const [pathStr, rows] of pages) {
+      expect(categorySpending(bundle.db, { categoryId: catId(pathStr), ...day }).txnCount, pathStr).toBe(0);
+      expect(agentsMoneyRowCount(bundle.db, day, { categoryId: catId(pathStr) }), pathStr).toBe(rows);
+    }
+    expect(categoryEmptyState("Shopping", day).description).toMatch(AGENTS_LEFT_OUT);
+    // …and /spending's day: three part-rows, one transaction
+    expect(agentsMoneyRowCount(bundle.db, day)).toBe(1);
   });
 
   test("⛔ a page that lists the agent's rows leaves none out — a transfer, and the unfiled", () => {

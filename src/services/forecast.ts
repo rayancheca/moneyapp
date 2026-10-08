@@ -921,7 +921,7 @@ function variableIncomeComponents(
    *
    * ⚖️ Owner decision 2026-10-06 (§6A 45): the agent's are bucketed EITHER SIGN, by the rule the bridge nets "Agent's
    * income" by (`isAgentsIncomeCategoryRow`, §6A 43), so a posted clawback no live schedule owns — none detected, or
-   * one he dismissed — nets inside its bucket. 🔴 They were the agent's credits only (`isAgentsIncome`): $4.00 paid and
+   * one he dismissed — nets inside its bucket. 🔴 They were the agent's credits only: $4.00 paid and
    * $3.00 clawed back each month was +$1.00 on the bridge and +$3.48 here. ⛔ His are still his money in only
    * (`isIncome`).
    *

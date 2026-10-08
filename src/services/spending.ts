@@ -25,6 +25,7 @@ import { NO_MERCHANT, OTHER_SERIES_KEY, UNCATEGORIZED_SERIES_KEY } from "@/lib/l
 import { outsidePortfolioCashAccountIds } from "./accounts";
 import {
   activeTxnsInRange,
+  agentsCashOfRender,
   agentsCostBucket,
   isAgentsCostCategoryRow,
   isAgentsIncomeCategoryRow,
@@ -979,15 +980,19 @@ export function honestyBuckets(db: AppDatabase, range: DateRange): HonestyBucket
  * 2026-10-06, §6A 43). Its transfers are not among them — the $26.64 he funded it with is a transfer, which /spending's
  * empty state already says it does not count.
  *
- * 🔴 It asked the credits alone (`isAgentsIncome`), so a day holding only the agent's clawback read a measured zero and
- * never said the agent's money was left out.
+ * 🔴 It asked the credits alone, so a day holding only the agent's clawback read a measured zero and never said the
+ * agent's money was left out.
  *
  * `categoryId` narrows it to one category's subtree — the rows `/categories/<id>` leaves out of its own
  * (`spendingTransactions`): the agent's in an income or expense category, and none in a page that lists every account
  * (a transfer, the system "Uncategorized", whose rows arrive unfiled).
+ *
+ * ⚡ Whose accounts are the agent's is the render's one read (`agentsCashOfRender`), the one the page's row list made.
+ * 🔴 It read them itself: two more account queries on every empty `/spending` and `/categories/<id>`, measured on a
+ * copy of his ledger 2026-10-08.
  */
 export function agentsMoneyRowCount(db: AppDatabase, range: DateRange, scope: { categoryId?: string } = {}): number {
-  const agentsCash = outsidePortfolioCashAccountIds(db);
+  const agentsCash = agentsCashOfRender(db);
   if (agentsCash.size === 0) return 0;
   const idx = loadCategoryIndex(db);
   const subtree = scope.categoryId === undefined ? null : new Set(idx.subtreeIds(scope.categoryId));
