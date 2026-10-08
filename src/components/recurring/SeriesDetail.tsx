@@ -156,7 +156,7 @@ export function SeriesDetail({
             {/* 🔴 "Inactive" sat beside "Next expected Sep 11" on a series the
                 forecast projects. The badge is the word the evidence chooses. */}
             {(data.status === "detected" || data.status === "confirmed") && data.evidence !== "active" ? (
-              // ⛔ not looked for is no warning — `seriesEvidenceTone`
+              // ⛔ awaiting statements is no warning — `seriesEvidenceTone`
               <Badge tone={seriesEvidenceTone(data.evidence)}>{SERIES_EVIDENCE_LABEL[data.evidence]}</Badge>
             ) : null}
             {/* 🔴 The one place a reader would go to check when a series stops,

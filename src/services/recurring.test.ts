@@ -456,7 +456,7 @@ describe("seriesStaleness", () => {
       stepDays: 7,
       toleranceDays: 12.5,
       isStale: false,
-      notLookedFor: false,
+      awaitingStatements: false,
     });
   });
 
@@ -584,54 +584,54 @@ describe("a series is late only on days the ledger has checked", () => {
     const s = seriesStaleness(weekly, today, "2026-09-24");
     expect(s.daysSinceLastMatch).toBe(14); // the fact stays
     expect(s.isStale).toBe(false);
-    expect(s.notLookedFor).toBe(true);
+    expect(s.awaitingStatements).toBe(true);
     expect(s.checkedThrough).toBe("2026-09-24");
-    expect(seriesEvidence(weekly, today, "2026-09-24")).toBe("not-looked-for");
+    expect(seriesEvidence(weekly, today, "2026-09-24")).toBe("awaiting-statements");
   });
 
   test("checked past the payday it missed, the same pay IS late", () => {
     // Oct 1 was read with nothing in it: Sep 24 → Oct 7 is 13 days, past 12.5
     const s = seriesStaleness(weekly, today, "2026-10-07");
     expect(s.isStale).toBe(true);
-    expect(s.notLookedFor).toBe(false);
+    expect(s.awaitingStatements).toBe(false);
     expect(seriesEvidence(weekly, today, "2026-10-07")).toBe("running-late");
   });
 
-  test("Rocket Money: Jul 15, Chase checked through Aug 12 — not looked for, never late", () => {
-    expect(seriesStaleness(monthly, today, "2026-08-12")).toMatchObject({ isStale: false, notLookedFor: true });
-    expect(seriesEvidence(monthly, today, "2026-08-12")).toBe("not-looked-for");
+  test("Rocket Money: Jul 15, Chase checked through Aug 12 — awaiting statements, never late", () => {
+    expect(seriesStaleness(monthly, today, "2026-08-12")).toMatchObject({ isStale: false, awaitingStatements: true });
+    expect(seriesEvidence(monthly, today, "2026-08-12")).toBe("awaiting-statements");
   });
 
   test("the boundary is the tolerance itself, measured to the checked day", () => {
     // Jul 15 + 48 = Sep 1: checked through it, the charge could still be on time
-    expect(seriesStaleness(monthly, today, "2026-09-01")).toMatchObject({ isStale: false, notLookedFor: true });
+    expect(seriesStaleness(monthly, today, "2026-09-01")).toMatchObject({ isStale: false, awaitingStatements: true });
     // one more checked day and the bill is late on days the ledger has read
-    expect(seriesStaleness(monthly, today, "2026-09-02")).toMatchObject({ isStale: true, notLookedFor: false });
+    expect(seriesStaleness(monthly, today, "2026-09-02")).toMatchObject({ isStale: true, awaitingStatements: false });
   });
 
   test("an account with no checked record cannot make a series late", () => {
-    expect(seriesStaleness(monthly, today, null)).toMatchObject({ isStale: false, notLookedFor: true, checkedThrough: null });
-    expect(seriesEvidence(monthly, today, null)).toBe("not-looked-for");
+    expect(seriesStaleness(monthly, today, null)).toMatchObject({ isStale: false, awaitingStatements: true, checkedThrough: null });
+    expect(seriesEvidence(monthly, today, null)).toBe("awaiting-statements");
   });
 
   test("a last charge past the checked day is newer than anything checked, so nothing is late", () => {
-    expect(seriesStaleness(monthly, today, "2026-07-01")).toMatchObject({ isStale: false, notLookedFor: true });
+    expect(seriesStaleness(monthly, today, "2026-07-01")).toMatchObject({ isStale: false, awaitingStatements: true });
   });
 
   test("a frontier past today is today", () => {
     // fresh to today: neither late nor waiting, whatever the checked day says
     expect(seriesStaleness({ ...monthly, lastMatchedOn: "2026-09-20" }, today, "2026-12-31")).toMatchObject({
       isStale: false,
-      notLookedFor: false,
+      awaitingStatements: false,
     });
-    expect(seriesStaleness(monthly, today, "2026-12-31")).toMatchObject({ isStale: true, notLookedFor: false });
+    expect(seriesStaleness(monthly, today, "2026-12-31")).toMatchObject({ isStale: true, awaitingStatements: false });
   });
 
   test("never billed is never billed: stale, not waiting on a check", () => {
     for (const checked of ["2026-08-12", null]) {
       expect(seriesStaleness({ ...monthly, lastMatchedOn: null }, today, checked)).toMatchObject({
         isStale: true,
-        notLookedFor: false,
+        awaitingStatements: false,
       });
       expect(seriesEvidence({ ...monthly, lastMatchedOn: null }, today, checked)).toBe("never-billed");
     }
@@ -640,7 +640,7 @@ describe("a series is late only on days the ledger has checked", () => {
   test("fresh to today is active, whatever the checked day", () => {
     expect(seriesStaleness({ ...monthly, lastMatchedOn: "2026-09-20" }, today, "2026-08-12")).toMatchObject({
       isStale: false,
-      notLookedFor: false,
+      awaitingStatements: false,
     });
     expect(seriesEvidence({ ...monthly, lastMatchedOn: "2026-09-20" }, today, "2026-08-12")).toBe("active");
   });
@@ -650,8 +650,8 @@ describe("a series is late only on days the ledger has checked", () => {
     const quiet = { ...monthly, lastMatchedOn: "2026-05-04" };
     expect(seriesHasLapsed(quiet, today)).toBe(true);
     expect(seriesEvidence(quiet, today, "2026-06-01")).toBe("lapsed");
-    // money in never lapses: the same quiet over unchecked days is only not looked for
-    expect(seriesEvidence({ ...quiet, kind: "income" }, today, "2026-06-01")).toBe("not-looked-for");
+    // money in never lapses: the same quiet over unchecked days only awaits statements
+    expect(seriesEvidence({ ...quiet, kind: "income" }, today, "2026-06-01")).toBe("awaiting-statements");
   });
 });
 
@@ -1273,16 +1273,16 @@ describe("detection on the synthetic corpus", () => {
     expect(salary.length).toBeGreaterThan(0);
     expect(salary.every((o) => o.amountCents > 0)).toBe(true);
     // ⚖️ Nothing here has been checked (no balance walk, no statement), so the ledger has not looked for a deposit
-    // since: not looked for — never "late" over days nobody has read (2026-10-08). Still projected, still its age.
+    // since: awaiting statements — never "late" over days nobody has read (2026-10-08). Still projected, still its age.
     expect(salary[0]!.staleness).toMatchObject({
       lastMatchedOn: "2026-06-25",
       daysSinceLastMatch: 37,
       isStale: false,
-      notLookedFor: true,
+      awaitingStatements: true,
       checkedThrough: null,
     });
     // every occurrence of the series is marked, not just the first
-    expect(salary.every((o) => o.staleness?.notLookedFor === true)).toBe(true);
+    expect(salary.every((o) => o.staleness?.awaitingStatements === true)).toBe(true);
   });
 
   test("setSeriesStatus rejects unknown ids", () => {

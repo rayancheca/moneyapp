@@ -704,7 +704,7 @@ export function recurringCalendar(
     // that never charged is "never billed", not stale (see `CalendarEntry.isStale`).
     // A lapsed money-out series was skipped above and money in never lapses, so
     // "running-late" is exactly "stale on checked days, having charged before" —
-    // quiet only past its account's checked day is not looked for, and says nothing.
+    // past tolerance only after its accounts' checked day is awaiting statements, and says nothing.
     const evidence = seriesEvidence(s, today, checkedThrough(s.id));
     const isStale = evidence === "running-late";
     const neverBilled = evidence === "never-billed";

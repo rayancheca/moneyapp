@@ -119,14 +119,14 @@ describe("AllSeriesView — an annualized figure says when the series stops insi
 
 /**
  * 🔴 His ledger 2026-10-08: the pay and Rocket Money sat under "Running late" for charges due after the last day
- * their accounts had been checked through. Not looked for is its own quiet section — never filed as late.
+ * their accounts had been checked through. Awaiting statements is its own quiet section — never filed as late.
  */
-describe("AllSeriesView — not looked for is its own section, never Running late", () => {
+describe("AllSeriesView — awaiting statements is its own section, never Running late", () => {
   const html = renderToStaticMarkup(
     createElement(AllSeriesView, {
       series: [
-        series({ id: "p", name: "It America LLC (weekly pay)", status: "confirmed", evidence: "not-looked-for" }),
-        series({ id: "r", name: "Rocket Money", status: "detected", evidence: "not-looked-for" }),
+        series({ id: "p", name: "It America LLC (weekly pay)", status: "confirmed", evidence: "awaiting-statements" }),
+        series({ id: "r", name: "Rocket Money", status: "detected", evidence: "awaiting-statements" }),
         series({ id: "l", name: "Streaming", status: "confirmed", evidence: "running-late" }),
       ],
       overdueBySeries: new Map(),
@@ -135,14 +135,16 @@ describe("AllSeriesView — not looked for is its own section, never Running lat
   );
   const section = (id: string): string => html.split(`id="${id}"`)[1]?.split("</section>")[0] ?? "";
 
-  test("the pay is under Not looked for yet, the truly late series under Running late", () => {
-    expect(section("rec-not-looked-for-yet")).toContain("It America LLC (weekly pay)");
-    expect(section("rec-not-looked-for-yet")).not.toContain("Streaming");
+  test("the pay is under Awaiting statements, the truly late series under Running late", () => {
+    expect(section("rec-awaiting-statements")).toContain("It America LLC (weekly pay)");
+    expect(section("rec-awaiting-statements")).not.toContain("Streaming");
     expect(section("rec-running-late")).toContain("Streaming");
     expect(section("rec-running-late")).not.toContain("It America");
   });
 
-  test("a suggestion says it is not looked for, not late", () => {
-    expect(decode(html.replace(/<[^>]+>/g, ""))).toContain("Detected: Subscription · Monthly · about -$15.49 · not looked for yet");
+  test("a suggestion says it is awaiting statements, not late", () => {
+    expect(decode(html.replace(/<[^>]+>/g, ""))).toContain(
+      "Detected: Subscription · Monthly · about -$15.49 · awaiting statements",
+    );
   });
 });

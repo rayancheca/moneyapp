@@ -10,7 +10,7 @@ const late: SeriesStaleness = {
   stepDays: 30,
   toleranceDays: 48,
   isStale: true,
-  notLookedFor: false,
+  awaitingStatements: false,
 };
 const never: SeriesStaleness = {
   lastMatchedOn: null,
@@ -18,7 +18,7 @@ const never: SeriesStaleness = {
   stepDays: 30,
   toleranceDays: 48,
   isStale: true,
-  notLookedFor: false,
+  awaitingStatements: false,
 };
 
 /**
@@ -96,7 +96,7 @@ describe("StaleFooter", () => {
  * 🔴 His ledger 2026-10-08: "It America LLC (weekly pay) … last seen 14d ago" in an amber badge, counted in "4 series
  * are running late", for a payday on a day Wells Fargo had not been checked through. The age stays; the warning goes.
  */
-describe("not looked for yet", () => {
+describe("awaiting statements", () => {
   const unread: SeriesStaleness = {
     lastMatchedOn: "2026-09-24",
     daysSinceLastMatch: 14,
@@ -104,7 +104,7 @@ describe("not looked for yet", () => {
     toleranceDays: 12.5,
     isStale: false,
     checkedThrough: "2026-09-24",
-    notLookedFor: true,
+    awaitingStatements: true,
   };
 
   test("the chip keeps the fact, never the warning", () => {
@@ -120,8 +120,9 @@ describe("not looked for yet", () => {
         entries: [{ key: "p", name: "It America LLC (weekly pay)", staleness: unread }],
       }),
     );
-    expect(html).toContain("In October 2026, 1 series has not been looked for yet — still projected");
-    expect(html).toContain("checked only through Sep 24, 2026");
+    expect(html).toContain("In October 2026, 1 series is awaiting statements — still projected");
+    expect(html).toContain("Sep 24, 2026 is the last day every account it posts to has been checked through");
+    expect(html).toContain("why these cannot be called late yet");
     expect(html).not.toContain("running late");
     expect(html).not.toContain("text-warning");
   });

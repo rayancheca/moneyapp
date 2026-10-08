@@ -1034,7 +1034,7 @@ export interface SeriesOccurrence {
  * exactly the arithmetic isSeriesActive splits on, so the two cannot disagree.
  *
  * ⚠️ …about the AGE. Measured against a `checkedThrough` day, a series past
- * tolerance to today may still not be late (`notLookedFor`); `isSeriesActive`
+ * tolerance to today may still not be late (`awaitingStatements`); `isSeriesActive`
  * answers "is there recent evidence?" to today, and calls it not active.
  */
 export interface SeriesStaleness {
@@ -1057,10 +1057,11 @@ export interface SeriesStaleness {
    */
   checkedThrough?: string | null;
   /**
-   * Past tolerance as of today, but not as of `checkedThrough`: the charge it is waiting on falls on days nobody
-   * has looked at. NOT late — the voice of "the ledger has not looked for its deposit". Never with `isStale`.
+   * Past tolerance as of today, but not as of `checkedThrough`: its tolerance runs out on days nobody has checked, so
+   * it cannot be called late yet — "Awaiting statements" (`SERIES_EVIDENCE_LABEL`). NOT late. Never with `isStale`.
+   * ⚠️ Says nothing about whether the next charge's due day was checked: it may have been (`stalenessSentence`).
    */
-  notLookedFor: boolean;
+  awaitingStatements: boolean;
 }
 
 interface ProjectableSeries {
@@ -1203,7 +1204,7 @@ function lapsedToleranceDays(staleness: SeriesStaleness): number {
  * ⛔ LATE IS A CLAIM ABOUT DAYS THE LEDGER HAS CHECKED. `checkedThrough` is the last day every account the series
  * posts to NOW has been checked through (`checkedThroughBySeries` — the frontier the passed-payday sentences name),
  * and the evidence is late only if it had run past tolerance by then. Past tolerance only over days after it, the
- * charge it is waiting on sits on days nobody has looked at: `notLookedFor`, never `isStale`.
+ * tolerance runs out on days nobody has checked: `awaitingStatements`, never `isStale`.
  *
  * 🔴 Measured to today, it published a warning about imports that had not happened. His ledger 2026-10-08:
  * /recurring said of his pay "It falls after Thu, Sep 24, 2026, the last day every account that pay lands in has been
@@ -1243,7 +1244,7 @@ export function seriesStaleness(
     toleranceDays,
     isStale: lateOnCheckedDays,
     checkedThrough,
-    notLookedFor: pastTolerance && !lateOnCheckedDays,
+    awaitingStatements: pastTolerance && !lateOnCheckedDays,
   };
 }
 
@@ -1501,8 +1502,9 @@ export function upcomingOccurrences(
  * described by its status, and callers badge those separately.
  *
  * ⛔ Late only on days the ledger has checked (`seriesStaleness`): `checkedThrough` is the series' frontier from
- * `checkedThroughBySeries`, and quiet only past it is "not-looked-for". Lapsed is asked FIRST and to today, because
- * it is the forecast's rule — a series the forecast has dropped must not be filed as one it still projects.
+ * `checkedThroughBySeries`, and past tolerance only after it is "awaiting-statements". Lapsed is asked FIRST and to
+ * today, because it is the forecast's rule — a series the forecast has dropped must not be filed as one it still
+ * projects.
  */
 export function seriesEvidence(
   s: SeriesOverrides & { status: SeriesStatus; kind: SeriesKind; lastMatchedOn: string | null },
@@ -1512,5 +1514,5 @@ export function seriesEvidence(
   if (s.lastMatchedOn === null) return "never-billed";
   if (isSeriesActive(s, today)) return "active";
   if (lapsedSeriesShouldStopForecasting(s.kind) && seriesHasLapsed(s, today)) return "lapsed";
-  return seriesStaleness(s, today, checkedThrough).notLookedFor ? "not-looked-for" : "running-late";
+  return seriesStaleness(s, today, checkedThrough).awaitingStatements ? "awaiting-statements" : "running-late";
 }

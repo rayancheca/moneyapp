@@ -17,7 +17,7 @@ export type OverdueBySeries = ReadonlyMap<string, { date: string; occurrenceCoun
 /**
  * The "All" sub-view (ux-overhaul-plan §4.1): a suggestion queue up top —
  * freshly detected series awaiting a decision — then the confirmed series by
- * what their EVIDENCE says (`lib/series-evidence`): active, not looked for yet,
+ * what their EVIDENCE says (`lib/series-evidence`): active, awaiting statements,
  * running late, never billed, lapsed. Each row shows the effective amount (what
  * the forecast projects), the posted average beneath it when the two differ, the next
  * expected date and the annualized cost. Confirm / Not-recurring and Dismiss
@@ -43,7 +43,7 @@ export function AllSeriesView({
   const suggestions = series.filter((s) => s.status === "detected");
   const confirmed = series.filter((s) => s.status === "confirmed");
   const active = confirmed.filter((s) => s.evidence === "active");
-  const notLookedFor = confirmed.filter((s) => s.evidence === "not-looked-for");
+  const awaitingStatements = confirmed.filter((s) => s.evidence === "awaiting-statements");
   const late = confirmed.filter((s) => s.evidence === "running-late");
   const neverBilled = confirmed.filter((s) => s.evidence === "never-billed");
   const lapsed = confirmed.filter((s) => s.evidence === "lapsed");
@@ -86,8 +86,8 @@ export function AllSeriesView({
       {/* 🔴 His pay and Rocket Money sat under Running late for charges due after the last day their accounts had
           been checked through (2026-10-08). Their own section, beside Active and never muted: nothing is known to
           be wrong — the ledger has not looked yet. */}
-      {notLookedFor.length > 0 ? (
-        <SeriesSection title={SERIES_EVIDENCE_LABEL["not-looked-for"]} note={SERIES_EVIDENCE_NOTE["not-looked-for"]} series={notLookedFor} overdueBySeries={overdueBySeries} today={today} />
+      {awaitingStatements.length > 0 ? (
+        <SeriesSection title={SERIES_EVIDENCE_LABEL["awaiting-statements"]} note={SERIES_EVIDENCE_NOTE["awaiting-statements"]} series={awaitingStatements} overdueBySeries={overdueBySeries} today={today} />
       ) : null}
       {late.length > 0 ? (
         <SeriesSection title="Running late" note={SERIES_EVIDENCE_NOTE["running-late"]} series={late} overdueBySeries={overdueBySeries} today={today} muted />

@@ -15,27 +15,33 @@
  * vocabulary, kept client-safe so components can label without importing the
  * database.
  */
-export type SeriesEvidence = "active" | "never-billed" | "not-looked-for" | "running-late" | "lapsed";
+export type SeriesEvidence = "active" | "never-billed" | "awaiting-statements" | "running-late" | "lapsed";
 
 /**
- * ⚖️ "Not looked for yet": quiet past its tolerance only over days after the last day its account has been checked
- * through — the voice of "the ledger has not looked for its deposit" (2026-10-07), never "late". Statements arrive
- * monthly, each on its own day, and the gap between them is the normal state (owner, 2026-08-05).
+ * ⚖️ "Awaiting statements": past its tolerance today, but not by the last day every account it posts to has been
+ * checked through — so it cannot be called late until a statement covers more. Never "late": statements arrive
+ * monthly, each on its own day, and the gap between them is the normal state (owner, 2026-08-05). /budgets' word for a
+ * verdict withheld until the days are covered, for the same reason.
+ *
+ * 🔴 It was "Not looked for yet", which is false once a statement covers the charge's due day but not the end of its
+ * grace: the real Breezeline row (2026-10-08 copy), due Oct 11, checked through Oct 13, tolerance out on Oct 24. The
+ * state is decided by when the TOLERANCE runs out, so its words say that, true on both sides of the due day.
  */
 export const SERIES_EVIDENCE_LABEL: Record<SeriesEvidence, string> = {
   active: "Active",
   "never-billed": "Never billed",
-  "not-looked-for": "Not looked for yet",
+  "awaiting-statements": "Awaiting statements",
   "running-late": "Running late",
   lapsed: "Lapsed",
 };
 
 /**
- * The badge tone for a live series' evidence. ⛔ Not looked for is not a warning: nothing is known to be wrong, only
- * not yet read. 🔴 His pay's page wore an amber "Running late" for a payday on a day no import covered (2026-10-08).
+ * The badge tone for a live series' evidence. ⛔ Awaiting statements is not a warning: nothing is known to be wrong,
+ * only not yet checked far enough. 🔴 His pay's page wore an amber "Running late" for a payday on a day no import
+ * covered (2026-10-08).
  */
 export function seriesEvidenceTone(evidence: SeriesEvidence): "neutral" | "warning" {
-  return evidence === "not-looked-for" ? "neutral" : "warning";
+  return evidence === "awaiting-statements" ? "neutral" : "warning";
 }
 
 /**
@@ -94,8 +100,8 @@ export function seriesRowLabel(
 export const SERIES_EVIDENCE_NOTE: Record<SeriesEvidence, string> = {
   active: "charged within their cadence, and forecast",
   "never-billed": "registered by hand and forecast — the bank has not charged them yet",
-  "not-looked-for":
-    "still forecast — the charge each is waiting on falls after the last day its account has been checked through, so the ledger has not looked for it yet",
+  "awaiting-statements":
+    "still forecast — each one's tolerance runs out after the last day its accounts have been checked through, so none can be called late yet",
   "running-late": "still forecast — the last charge is older than the cadence allows",
   lapsed: "no longer forecast — quiet past the point a bill stops",
 };
