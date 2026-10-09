@@ -34,20 +34,34 @@ test("the statement schedule states each account's measured cycle", async ({ pag
   const flat = rows.map((t) => t.replace(/\s+/g, " ").trim());
 
   /*
-   * Every row: the rhythm measured from the account's own closes, then the last
+   * Every row: the account's name and where its statements are pulled (his
+   * request 2026-10-09 — the Discover card at Capital One, his answer the same
+   * day), the rhythm measured from the account's own closes, then the last
    * close and the next one predicted from it. Four of these accounts close on
    * the LAST DAY of the month — the shape a 30-day step gets wrong — and the
    * panel has to name that rather than call it "the 30th".
    */
   expect(flat).toEqual([
-    "Chase Freedom Unlimited On schedule closes around the 4th, from 12 statements last one closed Jul 4, 4 days ago · next closes Aug 4",
-    "Chase Savings On schedule closes on the last day of the month, from 12 statements last one closed Jun 30, 8 days ago · next closes Jul 31",
-    "Chase Total Checking On schedule closes on the last day of the month, from 12 statements last one closed Jun 30, 8 days ago · next closes Jul 31",
-    "Discover it Card On schedule closes around the 14th, from 12 statements last one closed Jun 14, 24 days ago · next closes Jul 14",
-    "Robinhood Brokerage On schedule closes on the last day of the month, from 12 statements last one closed Jun 30, 8 days ago · next closes Jul 31",
-    "SoFi Checking On schedule closes on the last day of the month, from 12 statements last one closed Jun 30, 8 days ago · next closes Jul 31",
-    "SoFi Savings On schedule closes on the last day of the month, from 12 statements last one closed Jun 30, 8 days ago · next closes Jul 31",
+    "Chase Freedom Unlimited Chase · statements ↗ On schedule closes around the 4th, from 12 statements last one closed Jul 4, 4 days ago · next closes Aug 4",
+    "Chase Savings Chase · statements ↗ On schedule closes on the last day of the month, from 12 statements last one closed Jun 30, 8 days ago · next closes Jul 31",
+    "Chase Total Checking Chase · statements ↗ On schedule closes on the last day of the month, from 12 statements last one closed Jun 30, 8 days ago · next closes Jul 31",
+    "Discover it Card Capital One · statements ↗ On schedule closes around the 14th, from 12 statements last one closed Jun 14, 24 days ago · next closes Jul 14",
+    "Robinhood Brokerage Robinhood sign-in · then Account → Reports and statements ↗ On schedule closes on the last day of the month, from 12 statements last one closed Jun 30, 8 days ago · next closes Jul 31",
+    "SoFi Checking SoFi sign-in · then Statements ↗ On schedule closes on the last day of the month, from 12 statements last one closed Jun 30, 8 days ago · next closes Jul 31",
+    "SoFi Savings SoFi sign-in · then Statements ↗ On schedule closes on the last day of the month, from 12 statements last one closed Jun 30, 8 days ago · next closes Jul 31",
   ]);
+
+  // each name is a link out to the bank, in a new tab, with nothing handed back to it
+  const discover = card.getByRole("link", {
+    name: "Discover it Card — opens Capital One's statements site in a new tab",
+  });
+  await expect(discover).toHaveAttribute(
+    "href",
+    "https://verified.capitalone.com/auth/signin?Product=Card&Action=Documents",
+  );
+  await expect(discover).toHaveAttribute("target", "_blank");
+  await expect(discover).toHaveAttribute("rel", "noopener noreferrer");
+  await expect(card.getByRole("link")).toHaveCount(7);
 
   // an account that has never issued a statement is absent, not flagged: the
   // wallet is a physical one and nagging about its statements would be invented

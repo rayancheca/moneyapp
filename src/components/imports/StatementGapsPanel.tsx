@@ -2,6 +2,7 @@ import { Icon } from "@/components/shell/Icon";
 import { SurfaceCard } from "@/components/ui/SurfaceCard";
 import { MONTHS_SHORT } from "@/lib/format-date";
 import type { AccountStatementGaps } from "@/services/statement-gaps";
+import { StatementAccountName } from "./StatementAccountName";
 
 /**
  * "Which statements do I not have" — the question `/imports` could not answer.
@@ -23,6 +24,10 @@ import type { AccountStatementGaps } from "@/services/statement-gaps";
  * statement to fetch: its file is already imported, and fetching it again adds
  * nothing (`statementGaps`). The intro paragraph is unchanged for every ledger
  * with no such window, which is every ledger today.
+ *
+ * ⚖️ Each account with a window to fetch opens its bank's statements site (`StatementAccountName`, his request
+ * 2026-10-09), through the schedule's own resolver. 🔴 The schedule linked its rows first and this panel kept them
+ * plain — on his ledger the Discover row, five statements to fetch, opened Capital One above and nothing here.
  */
 
 /** "Aug 19 – Sep 18, 2024", collapsing a shared year and a shared month. */
@@ -67,7 +72,7 @@ export function StatementGapsPanel({ gaps }: { gaps: readonly AccountStatementGa
           {gaps.map((g) => (
             <li key={g.accountId} className="py-2.5">
               <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
-                <span className="text-sm font-medium">{g.accountName}</span>
+                <StatementAccountName name={g.accountName} site={g.site} />
                 {g.holes.length > 0 && (
                   <span className="figures ml-auto text-xs text-ink-faint">
                     {g.missingCloses === null

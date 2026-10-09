@@ -4,6 +4,7 @@ import { accounts } from "@/db/schema/accounts";
 import { institutions } from "@/db/schema/institutions";
 import { todayIso } from "@/lib/dates";
 import { statementPull, type StatementPull } from "@/lib/statement-cadence";
+import { statementSiteFor, type StatementSite } from "@/lib/statement-sites";
 import { ACCOUNT_ORDER } from "./account-order";
 import { accountsAwaitingStatements } from "./cash-wallet-rule";
 import { statementsByAccount } from "./statements-by-account";
@@ -20,6 +21,8 @@ import { statementsByAccount } from "./statements-by-account";
 export interface AccountStatementPull extends StatementPull {
   accountId: string;
   accountName: string;
+  /** where he goes to download it (his request 2026-10-09) — null for a bank with no researched site */
+  site: StatementSite | null;
 }
 
 /**
@@ -34,7 +37,7 @@ export function statementPulls(
   // only the accounts a statement is still coming for — the rule the lapse is held back by, too
   const awaiting = accountsAwaitingStatements(db);
   const rows = db
-    .select({ id: accounts.id, name: accounts.name })
+    .select({ id: accounts.id, name: accounts.name, type: accounts.type, institutionName: institutions.name })
     .from(accounts)
     .innerJoin(institutions, eq(accounts.institutionId, institutions.id))
     // THE order: the dashboard Statements teaser prints these as they come
@@ -49,6 +52,7 @@ export function statementPulls(
     // An account that has never had a statement is not overdue for one — Cash on
     // Hand is a physical wallet and issues none. Silence is the honest output.
     if (!periods) return [];
-    return [{ accountId: a.id, accountName: a.name, ...statementPull(periods.map((p) => p.end), today) }];
+    const pull = statementPull(periods.map((p) => p.end), today);
+    return [{ accountId: a.id, accountName: a.name, site: statementSiteFor(a), ...pull }];
   });
 }

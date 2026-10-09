@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { StatementAccountName } from "@/components/imports/StatementAccountName";
 import { Icon } from "@/components/shell/Icon";
 import { pullDemand } from "@/lib/statement-cadence";
 import type { AccountStatementPull } from "@/services/statement-pulls";
@@ -15,7 +16,8 @@ import type { AccountStatementPull } from "@/services/statement-pulls";
  * between monthly uploads.
  *
  * Every string comes from lib/statement-cadence.ts, shared with the /imports
- * panel, so the two surfaces cannot word the same fact differently.
+ * panel, so the two surfaces cannot word the same fact differently — and each name opens the bank's statements site
+ * through the panel's own `StatementAccountName` (lib/statement-sites.ts), so they cannot link it differently either.
  */
 export function StatementsTeaser({ pulls }: { pulls: readonly AccountStatementPull[] }) {
   if (pulls.length === 0) return null; // no account issues statements at all
@@ -51,7 +53,7 @@ export function StatementsTeaser({ pulls }: { pulls: readonly AccountStatementPu
         <ul className="divide-y divide-line rounded-(--radius-card) border border-line bg-surface-raised">
           {due.map((p) => (
             <li key={p.accountId} className="flex flex-wrap items-baseline gap-x-3 gap-y-0.5 px-4 py-3">
-              <span className="text-sm font-medium">{p.accountName}</span>
+              <StatementAccountName name={p.accountName} site={p.site} />
               <span className="text-xs text-warning">{pullDemand(p)}</span>
             </li>
           ))}
