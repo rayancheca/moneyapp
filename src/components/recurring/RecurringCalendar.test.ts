@@ -1,7 +1,16 @@
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, test, vi } from "vitest";
-import type { CalendarEntry, RecurringCalendarMonth } from "@/services/recurring-calendar";
+import { createDatabase } from "@/db/client";
+import { accounts } from "@/db/schema/accounts";
+import { institutions } from "@/db/schema/institutions";
+import { recurringSeries } from "@/db/schema/recurring";
+import { transactions } from "@/db/schema/transactions";
+import { seedDatabase } from "@/db/seed";
+import { recurringCalendar, type CalendarEntry, type RecurringCalendarMonth } from "@/services/recurring-calendar";
 
 // the server action pulls in next/cache and the database client
 vi.mock("@/app/recurring/actions", () => ({ loadRecurringMonthAction: vi.fn() }));
@@ -507,5 +516,72 @@ describe("RecurringCalendar — a day paid inside another's payment", () => {
     expect(html).not.toContain("missed");
     const sheet = decode(renderToStaticMarkup(createElement(DaySheetBody, { entries: oct1 })));
     expect(sheet).toContain("paid — paid by its payment of Sep 30, 2026");
+  });
+});
+
+/*
+ * ⚖️ THE READ SIDE, RENDERED FROM THE SERVICE — his decision 60 (2026-10-08): a ✕ only once the imports reach a due day
+ * plus its grace. 🔴 With the e2e fixture's Meal Kit quiet (559aa52), nothing rendered the red ✕, its spoken "missed" or
+ * the footer's "N missed" any more (review of 559aa52): every month above is built by hand with `missedCount: 0`. Here
+ * the grid is what `recurringCalendar` returns for a $45.00 bill due Jul 1 with 3 days' grace on its own account,
+ * today Jul 8, on either side of the boundary.
+ */
+describe("RecurringCalendar — a missed bill, rendered from the service, at the grace boundary", () => {
+  function julyWithBillReadThrough(through: string): string {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "moneyapp-calendar-read-"));
+    const bundle = createDatabase(path.join(dir, "t.db"));
+    try {
+      seedDatabase(bundle.db);
+      const at = new Date().toISOString();
+      const institutionId = bundle.db.select().from(institutions).all()[0]!.id;
+      bundle.db
+        .insert(accounts)
+        .values({ id: "acct", institutionId, name: "Checking", type: "checking", currency: "USD", isActive: true,
+          displayOrder: 0, createdAt: at, updatedAt: at })
+        .run();
+      bundle.db
+        .insert(recurringSeries)
+        .values({ id: "storage", name: "Storage unit", accountId: "acct", kind: "bill", cadence: "monthly",
+          intervalDaysAvg: 30, amountCentsAvg: -4500, toleranceDays: 3, nextExpectedOn: "2026-07-01",
+          nextExpectedAmountCents: -4500, userEndsOn: "2026-07-10", lastMatchedOn: "2026-06-01", status: "confirmed",
+          createdAt: at, updatedAt: at })
+        .run();
+      // an import of the account has reached `through`: a row of no series on it (`observationFrontier`)
+      bundle.db
+        .insert(transactions)
+        .values({ id: "t-coffee", accountId: "acct", postedOn: through, amountCents: -450, rawDescription: "COFFEE",
+          normalizedDescription: "COFFEE", status: "active", needsReview: false, occurrenceIndex: 0,
+          dedupeHash: "h-coffee", createdAt: at, updatedAt: at })
+        .run();
+      const month = recurringCalendar(bundle.db, "2026-07", "2026-07-08");
+      return decode(renderToStaticMarkup(createElement(RecurringCalendar, { initialMonth: month, today: "2026-07-08" })));
+    } finally {
+      bundle.sqlite.close();
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  }
+
+  /** the Jul 1 cell: its spoken name and the state glyph drawn beside its figure */
+  function jul1(html: string): { name: string; glyph: string } {
+    const cell = /<button[^>]*aria-label="(Jul 1, 2026 — [^"]*)"[^>]*>([\s\S]*?)<\/button>/.exec(html);
+    if (!cell) throw new Error("no Jul 1 cell");
+    const glyph = /<span class="text-\[9px\] font-bold leading-none ([^"]*)">([^<]*)<\/span>/.exec(cell[2]!);
+    return { name: cell[1]!, glyph: glyph ? `${glyph[2]} ${glyph[1]}` : "none" };
+  }
+  const footerMissed = (html: string) => /<span class="([^"]*)">(\d+) missed<\/span>/.exec(html)?.slice(1, 3) ?? null;
+
+  test("imported through Jul 4 — due + grace — the cell draws the red ✕, says missed, and the footer counts it", () => {
+    const html = julyWithBillReadThrough("2026-07-04");
+    expect(jul1(html)).toEqual({ name: "Jul 1, 2026 — 1 item: Storage unit missed -$45.00", glyph: "✕ text-negative" });
+    expect(footerMissed(html)).toEqual(["text-xs font-medium text-negative", "1"]);
+  });
+
+  test("imported through Jul 3 — due + grace − 1 — a quiet ?, in the runway's unread words, and nothing missed", () => {
+    const html = julyWithBillReadThrough("2026-07-03");
+    expect(jul1(html)).toEqual({
+      name: "Jul 1, 2026 — 1 item: Storage unit not yet known (no import has covered it yet) -$45.00",
+      glyph: "? text-ink-muted",
+    });
+    expect(footerMissed(html)).toBeNull();
   });
 });

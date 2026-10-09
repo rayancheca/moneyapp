@@ -93,6 +93,22 @@ test.describe("dashboard decision cards", () => {
     }
   });
 
+  /*
+   * ⚖️ His decision 60 (2026-10-08): "never posted" — in the negative tone — only for a due day whose day AND grace
+   * the imports reach; the rest quietly "no import has covered it yet". The seed straddles it: Storage unit ($45.00,
+   * due Jul 1, SoFi Checking imported through Jul 4 = its day + 3 days' grace) is read; Meal Kit ($125.00, due Jul 5,
+   * its card imported through Jul 5 alone) is not. 🔴 With Meal Kit turned quiet (559aa52) nothing in e2e rendered the
+   * read half any more (review of 559aa52).
+   */
+  test("the runway's arrears say never posted only of the read half, in the negative tone", async ({ page }) => {
+    const card = page.locator("section:has(#decisions-heading)");
+    const arrears = card.locator("p", { hasText: /^A further / });
+    await expect(arrears).toHaveText(
+      "A further $170.00 came due earlier this month: $45.00 never posted, and no import has covered the other $125.00 yet.",
+    );
+    await expect(arrears).toHaveClass(/\btext-negative\b/);
+  });
+
   test("net cash is exactly the cash rows, so the column reads as arithmetic", async ({ page }) => {
     const card = page.locator("section:has(#decisions-heading)");
     const all = await rows(card);

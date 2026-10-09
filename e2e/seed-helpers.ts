@@ -605,7 +605,8 @@ async function seedBudgets(db: AppDatabase): Promise<void> {
    * day PLUS its grace (`toleranceDays`, 3 here — through Jul 8), the days a
    * payment may still post on. So at E2E_FAKE_TODAY it reads "not yet known" on
    * the calendar and "no import has covered it yet", quietly, on /budgets, the
-   * runway and its page — and no seeded bill draws the red ✕.
+   * runway and its page. The red ✕ is Storage unit's (below), read through its
+   * due day + 3.
    */
   const mealKitAccount = db
     .select({ id: accountsTable.id })
@@ -631,21 +632,28 @@ async function seedBudgets(db: AppDatabase): Promise<void> {
     .run();
 
   /*
-   * A bill on an account that has NOT been imported that far — the `unsettled`
-   * state, which had no rendered path at all until this series existed.
+   * A bill whose day AND grace the ledger HAS read, with nothing posted — the
+   * `missed` state: the red ✕, its spoken "missed", the footer's "1 missed" and
+   * the runway's "$45.00 never posted" in the negative tone.
    *
-   * It is the case the whole day-state split was built for. Before it, an
-   * expected charge that had not posted was `missed` full stop, and on the real
-   * ledger that painted six red marks across August 2026 of which only two were
-   * real; the rest were days whose statements simply had not been uploaded yet,
-   * which in this ledger is the normal monthly rhythm.
+   * ⚖️ Since his decision 60 (2026-10-08) a due day is read only once its
+   * accounts are imported through the day PLUS its grace (`toleranceDays`, 3
+   * here). 🔴 That turned Meal Kit (above) quiet, and with it the fixture's only
+   * read bill: nothing in e2e or the visual suite reached the read side any more
+   * (review of 559aa52). So the two bills now stand either side of the rule:
+   * Meal Kit imported through its due day alone — "no import has covered it
+   * yet" — and this one through its due day + 3, EXACTLY the boundary — "missed".
    *
-   * SoFi Checking is the account because the ledger stops short of the charge
-   * there: its newest imported row is 2026-07-04 and its newest statement closes
-   * 2026-06-30, so the frontier is 2026-07-04 and a 2026-07-06 occurrence sits
-   * two days past everything the app has been shown. That also makes this the
-   * only e2e exercising `observationFrontier` end to end — the income branch
-   * short-circuits before the frontier is ever consulted.
+   * Until 559aa52 this series was the `unsettled` path (due 2026-07-06, two days
+   * past everything SoFi had shown); Meal Kit carries that state now, in the same
+   * words (`NO_IMPORT_YET`), so no state lost its rendered path.
+   *
+   * SoFi Checking is the account because the ledger stops exactly there: its
+   * newest imported row is 2026-07-04 and its newest statement closes
+   * 2026-06-30, so the frontier is 2026-07-04 — the 2026-07-01 occurrence plus
+   * its 3 days' grace. That also makes this the only e2e exercising
+   * `observationFrontier` end to end — the income branch short-circuits before
+   * the frontier is ever consulted.
    *
    * ⚠️ It must be an account that exists by the time `seedBudgets` runs (§8).
    * Venture X and Capital One 360 Checking are staler and would read better in
@@ -654,10 +662,10 @@ async function seedBudgets(db: AppDatabase): Promise<void> {
    * hard failure and not a `?.`.
    *
    * Placed to cost nothing else on the page:
-   *   - 2026-07-06 is BEFORE E2E_FAKE_TODAY (2026-07-08), so it is already past
+   *   - 2026-07-01 is BEFORE E2E_FAKE_TODAY (2026-07-08), so it is already past
    *     and gradeable, and `fixedComponents` projects from TODAY forward
    *     (forecast.ts:158) — so no projected figure moves;
-   *   - `userEndsOn` caps it before the next monthly step (2026-08-06), keeping
+   *   - `userEndsOn` caps it before the next monthly step (2026-08-01), keeping
    *     it out of the 30-day Upcoming list and the dashboard's 14-day strip;
    *   - it is money OUT, so `incomeBasis`' levelling skips it outright
    *     (budgets.ts:664, `perOccurrenceCents <= 0`).
@@ -688,10 +696,10 @@ async function seedBudgets(db: AppDatabase): Promise<void> {
       cadence: "monthly",
       intervalDaysAvg: 30,
       amountCentsAvg: -45_00,
-      nextExpectedOn: "2026-07-06",
+      nextExpectedOn: "2026-07-01",
       nextExpectedAmountCents: -45_00,
       userEndsOn: "2026-07-10",
-      lastMatchedOn: "2026-06-06",
+      lastMatchedOn: "2026-06-01",
       status: "confirmed",
     })
     .run();

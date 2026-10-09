@@ -35,12 +35,13 @@ test("every day with activity prints its own signed total", async ({ page }) => 
    * The seeded July, in full. Each row is `<day> <glyph> <compact net> <series>`
    * — the series name is the DOMINANT entry on the day (calendar-day-weight),
    * which is unambiguous here because every seeded day carries exactly one:
+   *   Jul 1  Storage   −$45.00    missed    (due 07-01, SoFi Checking imported
+   *                                            through 07-04 — its day AND its 3
+   *                                            days' grace: ⚖️ read, §6A 60)
    *   Jul 5  Meal Kit  −$125.00   not known (due 07-05, the card imported through
    *                                            07-05 — but a payment may still post
    *                                            through 07-08, its 3 days' grace: ⚖️
    *                                            not read until then, §6A 60)
-   *   Jul 6  Storage   −$45.00    not known (due, but SoFi Checking is imported
-   *                                            only through 07-04 — no evidence)
    *   Jul 9  Rent      −$1,800.00 upcoming
    *   Jul 10 Paycheck  +$2,943.19 upcoming (biweekly → 07-24 as well)
    *   Jul 16 Netflix   −$15.99    upcoming
@@ -58,8 +59,8 @@ test("every day with activity prints its own signed total", async ({ page }) => 
   // because a monogram is letters; Netflix contributes no token at all because
   // its tile is the brand's own mark.
   expect(await cellTexts(page)).toEqual([
+    "1 SU ✕ -45 Storage unit",
     "5 MK ? -125 Meal Kit",
-    "6 SU ? -45 Storage unit",
     "9 R • -1.8k Rent",
     "10 P • 2.9k Paycheck",
     "16 • -16 Netflix",
@@ -69,8 +70,8 @@ test("every day with activity prints its own signed total", async ({ page }) => 
     "26 CI • -128 Car Insurance",
   ]);
 
-  // …and the month footer totals them. Expected excludes the not-yet-known Meal
-  // Kit and Storage unit: -1800 + 2943.19 - 15.99 - 49 - 450 + 2943.19 - 128 = 3443.39.
+  // …and the month footer totals them. Expected excludes the missed Storage unit
+  // and the not-yet-known Meal Kit: -1800 + 2943.19 - 15.99 - 49 - 450 + 2943.19 - 128 = 3443.39.
   // `innerText` applies text-transform, and the footer's labels are uppercased
   // in CSS — so these read SETTLED/EXPECTED, not Settled/Expected.
   const grid = page.getByRole("grid", { name: "July 2026" }).locator("..");
@@ -81,11 +82,11 @@ test("every day with activity prints its own signed total", async ({ page }) => 
   // old footer printed "POSTED $0.00" beside a bare "1 missed", which reads as a
   // month in which nothing happened and one thing failed — both misleading, and
   // mutually reinforcing.
-  // ⚖️ $125.00 (Meal Kit, read through its day but not its grace) + $45.00
-  // (Storage unit, not even its day) — and nothing missed: a ✕ only once the
-  // imports reach a due day plus its grace (§6A 60, 2026-10-08).
-  expect(footer).toContain("NOT YET KNOWN $170.00");
-  expect(footer).not.toMatch(/\d+ missed/);
+  // ⚖️ $125.00 (Meal Kit, read through its day but not its grace) — and one
+  // missed: Storage unit, whose day AND grace are imported (§6A 60, 2026-10-08).
+  // The two bills stand either side of the rule, so both readings stay pinned.
+  expect(footer).toContain("NOT YET KNOWN $125.00");
+  expect(footer).toContain("1 missed");
 });
 
 /**
@@ -170,7 +171,7 @@ for (const { width, expectNames } of NARROW_WIDTHS) {
     // make both assertions above vacuous the day a selector stops matching.
     // Nine populated days in July 2026 — the eight recurring marks (the six that
     // were here plus §9's two car commitments) and the "Storage unit" charge the
-    // ledger cannot settle.
+    // ledger has read and found missing.
     expect(await amounts.count()).toBe(9);
 
     /*
@@ -206,22 +207,21 @@ test("a day cell enumerates its series, state and amount for a screen reader", a
   await expect(
     page.getByRole("button", { name: "Jul 9, 2026 — 1 item: Rent upcoming (expected) -$1,800.00" }),
   ).toBeVisible();
-  // ⚖️ Meal Kit's Jul 5 is NOT a settled mark any more: its card is imported
-  // through Jul 5, but a payment may still post through Jul 8 (3 days' grace),
-  // so it carries the reason, like Storage's below (§6A 60, 2026-10-08) — in
-  // the runway's unread words, which are true of an imported day short of its
-  // grace where "not imported yet" was not.
+  // A settled mark carries NO qualifier — it has an outcome, not a confidence.
+  // ⚖️ Storage unit's Jul 1 is read: SoFi Checking is imported through Jul 4,
+  // its day plus its 3 days' grace, and nothing posted (§6A 60, 2026-10-08).
   await expect(
-    page.getByRole("button", {
-      name: "Jul 5, 2026 — 1 item: Meal Kit not yet known (no import has covered it yet) -$125.00",
-    }),
+    page.getByRole("button", { name: "Jul 1, 2026 — 1 item: Storage unit missed -$45.00" }),
   ).toBeVisible();
   // …and an ungradeable one carries the REASON, which is the whole point of the
   // state: "missed" and "not yet known" are different claims about the same
-  // silence, and only one of them is an accusation.
+  // silence, and only one of them is an accusation. ⚖️ Meal Kit's card is
+  // imported through Jul 5, but a payment may still post through Jul 8 (3 days'
+  // grace), so it is not read (§6A 60) — in the runway's unread words, which are
+  // true of an imported day short of its grace where "not imported yet" was not.
   await expect(
     page.getByRole("button", {
-      name: "Jul 6, 2026 — 1 item: Storage unit not yet known (no import has covered it yet) -$45.00",
+      name: "Jul 5, 2026 — 1 item: Meal Kit not yet known (no import has covered it yet) -$125.00",
     }),
   ).toBeVisible();
 
