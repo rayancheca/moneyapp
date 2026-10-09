@@ -175,6 +175,36 @@ describe("statementPulls", () => {
     expect(names).toEqual(["Chase Checking"]);
   });
 
+  /**
+   * ⚖️ His request 2026-10-09: each row leads straight to the bank's site. The pull carries the site its institution
+   * resolves to (`statementSiteFor`), so the schedule and the dashboard teaser read one answer — and the Discover card
+   * resolves through its ACCOUNT type and institution, the two things the rule reads.
+   */
+  test("each pull carries the site its statements are pulled at", () => {
+    const chase = makeAccount("Chase Checking");
+    const discoverInst = bundle.db.select().from(institutions).where(eq(institutions.name, "Discover")).get()!;
+    const discover = createAccount(bundle.db, { institutionId: discoverInst.id, name: "Discover", type: "credit" });
+    for (const id of [chase, discover]) {
+      for (const end of ["2026-05-31", "2026-06-30", "2026-07-31"]) {
+        fileId = newFile(`${id}-${end}.pdf`);
+        addPeriod(id, end);
+      }
+    }
+    const sites = Object.fromEntries(statementPulls(bundle.db, TODAY).map((p) => [p.accountName, p.site]));
+    expect(sites).toEqual({
+      "Chase Checking": {
+        bank: "Chase",
+        url: "https://www.chase.com/personal/mobile-online-banking/statements",
+        opens: "statements",
+      },
+      Discover: {
+        bank: "Capital One",
+        url: "https://verified.capitalone.com/auth/signin?Product=Card&Action=Documents",
+        opens: "statements",
+      },
+    });
+  });
+
   test("an inactive account is not chased for statements", () => {
     const id = makeAccount("Closed Card");
     for (const end of ["2026-04-30", "2026-05-31", "2026-06-30"]) {

@@ -1,6 +1,7 @@
 import { SurfaceCard } from "@/components/ui/SurfaceCard";
 import { pullSentence, rhythmPhrase, type PullStatus } from "@/lib/statement-cadence";
 import type { AccountStatementPull } from "@/services/statement-pulls";
+import { StatementAccountName } from "./StatementAccountName";
 
 /**
  * Which statement to go and download, per account.
@@ -19,6 +20,9 @@ import type { AccountStatementPull } from "@/services/statement-pulls";
  * lib/statement-cadence.ts, because the e2e fixture renders `waiting` on all
  * seven of its accounts — `due` and `behind` are unreachable from Playwright,
  * and the lib is what the 100%-branch gate covers.
+ *
+ * Each account's name opens the bank's statements site (`StatementAccountName`, his request 2026-10-09); where it
+ * goes and what the hint says are lib/statement-sites.ts's, shared with the dashboard teaser.
  */
 
 const STATUS_ORDER: Record<PullStatus, number> = { behind: 0, due: 1, unknown: 2, waiting: 3 };
@@ -64,7 +68,7 @@ export function StatementSchedule({ pulls }: { pulls: AccountStatementPull[] }) 
           return (
             <li key={p.accountId} className="flex flex-wrap items-baseline gap-x-3 gap-y-1 py-2.5">
               <span className={`size-1.5 shrink-0 rounded-full ${meta.dot}`} aria-hidden="true" />
-              <span className="text-sm font-medium">{p.accountName}</span>
+              <StatementAccountName name={p.accountName} site={p.site} />
               <span className={`text-xs font-medium ${meta.text}`}>{meta.label}</span>
               <span className="basis-full text-xs text-ink-faint sm:ml-auto sm:basis-auto">
                 {rhythmPhrase(p.cadence)}
