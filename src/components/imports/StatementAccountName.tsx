@@ -4,8 +4,8 @@ import { statementSiteHint, statementSiteLabel, type StatementSite } from "@/lib
  * An account's name where a statement is waiting for it — a link straight to the bank's site when it has one.
  *
  * ⚖️ His request 2026-10-09: "make it so i can click on each and it leads me straight to the website so i can pull
- * the statement". Shared by /imports' Statement schedule and the dashboard's Statements teaser, so the account he is
- * told to pull opens the same page from both.
+ * the statement". Shared by /imports' Statement schedule and its "Statements you do not have" panel, and the
+ * dashboard's Statements teaser, so the account he is told to pull opens the same page from all three.
  *
  * A plain `<a>`, never `next/link`: nothing is prefetched, and the bank hears from this Mac only when he clicks.
  * `noopener noreferrer` — the bank's tab gets no handle on this window and no Referer naming the app.

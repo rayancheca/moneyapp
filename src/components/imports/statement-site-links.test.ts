@@ -10,16 +10,20 @@ import type { AccountType } from "@/db/schema/accounts";
 import { importFiles, statementPeriods } from "@/db/schema/imports";
 import { institutions } from "@/db/schema/institutions";
 import { seedDatabase } from "@/db/seed";
+import { recordWithheldSections } from "@/lib/import-file-label";
 import { createAccount, createInstitution } from "@/services/accounts";
+import { statementGaps } from "@/services/statement-gaps";
 import { statementPulls } from "@/services/statement-pulls";
 import { StatementsTeaser } from "@/components/dashboard/StatementsTeaser";
+import { StatementGapsPanel } from "./StatementGapsPanel";
 import { StatementSchedule } from "./StatementSchedule";
 
 /**
  * His request 2026-10-09: "make it so i can click on each and it leads me straight to the website so i can pull the
- * statement". Both surfaces that name an account to pull — /imports' Statement schedule and the dashboard's
- * Statements teaser — rendered as the pages render them, over accounts built through the app's own path, so the link
- * is read off the institution the ledger files each account under.
+ * statement". Every surface that names an account's statement to fetch — /imports' Statement schedule and its
+ * "Statements you do not have" panel, and the dashboard's Statements teaser — rendered as the pages render them, over
+ * accounts built through the app's own path, so the link is read off the institution the ledger files each account
+ * under.
  */
 
 const TODAY = "2026-08-14";
@@ -50,30 +54,33 @@ function institutionId(name: string): string {
   return row ? row.id : createInstitution(bundle.db, name);
 }
 
+/** One statement for the account, in a file of its own — `statement_periods` is unique per file and account. */
+function addStatement(instId: string, accountId: string, start: string, end: string): void {
+  seq += 1;
+  const fileId = bundle.db
+    .insert(importFiles)
+    .values({
+      fileName: `${seq}.pdf`,
+      fileSha256: `sha-${seq}`,
+      format: "pdf",
+      institutionId: instId,
+      status: "parsed",
+      storagePath: `/tmp/${seq}.pdf`,
+      importedAt: TODAY,
+    })
+    .returning({ id: importFiles.id })
+    .get().id;
+  bundle.db
+    .insert(statementPeriods)
+    .values({ importFileId: fileId, accountId, periodStart: start, periodEnd: end, reconciliation: "reconciled" })
+    .run();
+}
+
 /** An account whose three month-end closes leave July's behind it on TODAY — "Ready to pull" on both surfaces. */
 function pullableAccount(institution: string, name: string, type: AccountType): void {
   const instId = institutionId(institution);
   const accountId = createAccount(bundle.db, { institutionId: instId, name, type });
-  for (const end of ["2026-04-30", "2026-05-31", "2026-06-30"]) {
-    seq += 1;
-    const fileId = bundle.db
-      .insert(importFiles)
-      .values({
-        fileName: `${seq}.pdf`,
-        fileSha256: `sha-${seq}`,
-        format: "pdf",
-        institutionId: instId,
-        status: "parsed",
-        storagePath: `/tmp/${seq}.pdf`,
-        importedAt: TODAY,
-      })
-      .returning({ id: importFiles.id })
-      .get().id;
-    bundle.db
-      .insert(statementPeriods)
-      .values({ importFileId: fileId, accountId, periodStart: end, periodEnd: end, reconciliation: "reconciled" })
-      .run();
-  }
+  for (const end of ["2026-04-30", "2026-05-31", "2026-06-30"]) addStatement(instId, accountId, end, end);
 }
 
 function seedHisInstitutions(): void {
@@ -171,5 +178,98 @@ describe.each([
     const row = rowOf(render(), "Ally Savings");
     expect(linksIn(row)).toEqual([]);
     expect(decode(row)).not.toContain("↗");
+  });
+});
+
+/**
+ * 🔴 The panel two cards below the schedule, "Statements you do not have", kept every name plain text — measured on a
+ * copy of his ledger (review of 8f7c5ec): "Discover 5 statements · 152 days", four holes from Aug 2024 to Sep 2025,
+ * and 0 links, while the same Discover row in the schedule above opened Capital One. Its intro says "These are files
+ * to fetch", and it lists the most of them.
+ */
+describe("Statements you do not have (/imports)", () => {
+  /** Monthly statements closing on the 18th, the one closing Sep 18, 2024 never imported. */
+  function accountWithAHole(institution: string, name: string, type: AccountType): void {
+    const instId = institutionId(institution);
+    const accountId = createAccount(bundle.db, { institutionId: instId, name, type });
+    addStatement(instId, accountId, "2024-06-19", "2024-07-18");
+    addStatement(instId, accountId, "2024-07-19", "2024-08-18");
+    addStatement(instId, accountId, "2024-09-19", "2024-10-18");
+    addStatement(instId, accountId, "2024-10-19", "2024-11-18");
+  }
+
+  /** A file already imported WITHOUT the account's Nov 2024 section — listed, but "fetching it again adds nothing". */
+  function withheldNovember(instId: string, accountId: string): void {
+    seq += 1;
+    bundle.db
+      .insert(importFiles)
+      .values({
+        fileName: `w-${seq}.pdf`,
+        fileSha256: `sha-${seq}`,
+        format: "pdf",
+        institutionId: instId,
+        status: "parsed",
+        error: recordWithheldSections([
+          {
+            accountId,
+            accountName: "Robinhood Agentic",
+            last4: "9651",
+            periodStart: "2024-11-19",
+            periodEnd: "2024-12-18",
+            reason: "it shows $26.22 of securities, and this account is read as cash only",
+          },
+        ]),
+        storagePath: `/tmp/w-${seq}.pdf`,
+        importedAt: TODAY,
+      })
+      .run();
+  }
+
+  function renderGaps(): string {
+    return renderToStaticMarkup(createElement(StatementGapsPanel, { gaps: statementGaps(bundle.db) }));
+  }
+
+  test("the Discover card's missing statements open Capital One, as the schedule's row does", () => {
+    accountWithAHole("Discover", "Discover", "credit");
+
+    const markup = renderGaps();
+
+    expect(linksIn(rowOf(markup, "Discover"))).toEqual([
+      {
+        href: CAPITAL_ONE_CARDS,
+        target: "_blank",
+        rel: "noopener noreferrer",
+        label: "Discover — opens Capital One's statements site in a new tab",
+        text: "Discover Capital One · statements ↗",
+      },
+    ]);
+    // and the row still says what is missing, beside the link
+    expect(decode(rowOf(markup, "Discover").replace(/<[^>]+>/g, " "))).toMatch(/1 statement · 31 days/);
+  });
+
+  test("a bank nobody researched, and a Capital One BANK account, stay plain text", () => {
+    accountWithAHole("Ally", "Ally Savings", "savings");
+    accountWithAHole("Capital One", "Capital One 360 Checking", "checking");
+
+    const markup = renderGaps();
+
+    for (const name of ["Ally Savings", "Capital One 360 Checking"]) {
+      expect(linksIn(rowOf(markup, name))).toEqual([]);
+      expect(decode(rowOf(markup, name))).not.toContain("↗");
+    }
+  });
+
+  test("⛔ a row whose only window is already imported stays plain text — fetching it again adds nothing", () => {
+    // Robinhood Agentic's real shape, one cycle earlier: no window to fetch, one withheld
+    const instId = institutionId("Robinhood");
+    const accountId = createAccount(bundle.db, { institutionId: instId, name: "Robinhood Agentic", type: "checking" });
+    addStatement(instId, accountId, "2024-09-19", "2024-10-18");
+    addStatement(instId, accountId, "2024-10-19", "2024-11-18");
+    withheldNovember(instId, accountId);
+
+    const row = rowOf(renderGaps(), "Robinhood Agentic");
+
+    expect(decode(row)).toContain("fetching it again adds nothing");
+    expect(linksIn(row)).toEqual([]);
   });
 });

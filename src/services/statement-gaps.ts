@@ -7,6 +7,7 @@ import { diffDays } from "@/lib/dates";
 import { withheldSectionsOf } from "@/lib/import-file-label";
 import { statementCadence } from "@/lib/statement-cadence";
 import { statementHoles, type StatementHole } from "@/lib/statement-holes";
+import { statementSiteFor, type StatementSite } from "@/lib/statement-sites";
 import { ACCOUNT_ORDER } from "./account-order";
 import { accountsAwaitingStatements } from "./cash-wallet-rule";
 import { statementsByAccount } from "./statements-by-account";
@@ -52,6 +53,12 @@ export interface WithheldWindow {
 export interface AccountStatementGaps {
   accountId: string;
   accountName: string;
+  /**
+   * where he fetches what is missing (his request 2026-10-09) — the schedule's `statementSiteFor`, so the two panels
+   * cannot send him to different places; null for a bank with no researched site, and null when every window listed
+   * is withheld: the panel says fetching it again adds nothing, and a link beside that would ask him to anyway
+   */
+  site: StatementSite | null;
   holes: StatementHole[];
   /** the sum of `closes` across holes; null where no hole could be counted */
   missingCloses: number | null;
@@ -88,7 +95,7 @@ export function statementGaps(db: AppDatabase): AccountStatementGaps[] {
   // only the accounts a statement is still coming for (`accountsAwaitingStatements`) — the schedule's rule
   const awaiting = accountsAwaitingStatements(db);
   const rows = db
-    .select({ id: accounts.id, name: accounts.name })
+    .select({ id: accounts.id, name: accounts.name, type: accounts.type, institutionName: institutions.name })
     .from(accounts)
     .innerJoin(institutions, eq(accounts.institutionId, institutions.id))
     // THE order: StatementGapsPanel prints these as they come
@@ -122,6 +129,7 @@ export function statementGaps(db: AppDatabase): AccountStatementGaps[] {
     out.push({
       accountId: account.id,
       accountName: account.name,
+      site: holes.length > 0 ? statementSiteFor(account) : null,
       holes,
       // null rather than 0 when nothing could be counted: "0 statements
       // missing" beside a 60-day hole is a contradiction on its own line

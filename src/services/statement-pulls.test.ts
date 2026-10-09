@@ -205,6 +205,33 @@ describe("statementPulls", () => {
     });
   });
 
+  /**
+   * 🔴 The case above resolves the same whatever type the pull hands `statementSiteFor` — a Chase account links to
+   * Chase and the Discover card to Capital One either way — so a pull that dropped or forced the type passed it (the
+   * review of 8f7c5ec forced `type: "credit"`: 34 of 34 green). His ledger holds Capital One 360 Checking beside
+   * Venture X; once a 360 statement is imported, only the account's own type keeps it off the card-documents sign-in.
+   */
+  test("⛔ a Capital One BANK account's pull carries no site — it is the account's own type that says so", () => {
+    const capitalOne = bundle.db.select().from(institutions).where(eq(institutions.name, "Capital One")).get()!;
+    const ventureX = createAccount(bundle.db, { institutionId: capitalOne.id, name: "Venture X", type: "credit" });
+    const checking = createAccount(bundle.db, {
+      institutionId: capitalOne.id,
+      name: "Capital One 360 Checking",
+      type: "checking",
+    });
+    for (const id of [ventureX, checking]) {
+      for (const end of ["2026-05-31", "2026-06-30", "2026-07-31"]) {
+        fileId = newFile(`${id}-${end}.pdf`);
+        addPeriod(id, end);
+      }
+    }
+    const sites = Object.fromEntries(statementPulls(bundle.db, TODAY).map((p) => [p.accountName, p.site?.url ?? null]));
+    expect(sites).toEqual({
+      "Capital One 360 Checking": null,
+      "Venture X": "https://verified.capitalone.com/auth/signin?Product=Card&Action=Documents",
+    });
+  });
+
   test("an inactive account is not chased for statements", () => {
     const id = makeAccount("Closed Card");
     for (const end of ["2026-04-30", "2026-05-31", "2026-06-30"]) {

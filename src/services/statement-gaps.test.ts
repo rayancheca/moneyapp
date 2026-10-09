@@ -1,14 +1,16 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { eq } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { createDatabase, type DbBundle } from "@/db/client";
-import { accounts } from "@/db/schema/accounts";
+import { accounts, type AccountType } from "@/db/schema/accounts";
 import { importFiles, statementPeriods, type ImportStatus, type ReconciliationState } from "@/db/schema/imports";
 import { institutions } from "@/db/schema/institutions";
 import { seedDatabase } from "@/db/seed";
 import { addCalendarMonths, addDays } from "@/lib/dates";
 import { recordWithheldSections } from "@/lib/import-file-label";
+import { createInstitution } from "./accounts";
 import { statementGaps } from "./statement-gaps";
 
 /**
@@ -19,15 +21,39 @@ import { statementGaps } from "./statement-gaps";
 let dir: string;
 let bundle: DbBundle;
 
-function addAccount(id: string, name: string): void {
-  const institutionId = bundle.db.select().from(institutions).all()[0]!.id;
+/** Where a row's missing statements are fetched (lib/statement-sites.ts), read off its institution and type. */
+const CHASE = {
+  bank: "Chase",
+  url: "https://www.chase.com/personal/mobile-online-banking/statements",
+  opens: "statements",
+};
+const CAPITAL_ONE_CARDS = {
+  bank: "Capital One",
+  url: "https://verified.capitalone.com/auth/signin?Product=Card&Action=Documents",
+  opens: "statements",
+};
+const ROBINHOOD = {
+  bank: "Robinhood",
+  url: "https://robinhood.com/login",
+  opens: "sign-in",
+  then: "Account → Reports and statements",
+};
+
+function institutionIdOf(name: string): string {
+  const row = bundle.db.select().from(institutions).where(eq(institutions.name, name)).get();
+  return row ? row.id : createInstitution(bundle.db, name);
+}
+
+/** An account filed under `institution` — the seed's first, Chase, unless the test files it elsewhere. */
+function addAccount(id: string, name: string, institution = "Chase", type: AccountType = "credit"): void {
+  const institutionId = institutionIdOf(institution);
   bundle.db
     .insert(accounts)
     .values({
       id,
       institutionId,
       name,
-      type: "credit",
+      type,
       currency: "USD",
       isActive: true,
       displayOrder: 0,
@@ -125,7 +151,7 @@ afterEach(() => {
 describe("what is missing", () => {
   test("names the exact window and how many statements it is", () => {
     // Discover's real shape: monthly periods closing on the 18th, one absent
-    addAccount("a-1", "Discover");
+    addAccount("a-1", "Discover", "Discover");
     addPeriod("a-1", "2024-06-19", "2024-07-18");
     addPeriod("a-1", "2024-07-19", "2024-08-18");
     addPeriod("a-1", "2024-09-19", "2024-10-18");
@@ -135,6 +161,7 @@ describe("what is missing", () => {
       {
         accountId: "a-1",
         accountName: "Discover",
+        site: CAPITAL_ONE_CARDS,
         holes: [{ from: "2024-08-19", to: "2024-09-18", days: 31, closes: 1 }],
         missingCloses: 1,
         missingDays: 31,
@@ -244,6 +271,8 @@ describe("a statement imported WITHOUT this account's section", () => {
       {
         accountId: "a-1",
         accountName: "Robinhood Agentic",
+        // nothing listed is a file to fetch, so nothing links out (below: "where he fetches what is missing")
+        site: null,
         holes: [],
         missingCloses: null,
         missingDays: 0,
@@ -279,6 +308,8 @@ describe("a statement imported WITHOUT this account's section", () => {
       {
         accountId: "a-1",
         accountName: "Robinhood Agentic",
+        // nothing listed is a file to fetch, so nothing links out (below: "where he fetches what is missing")
+        site: null,
         holes: [],
         missingCloses: null,
         missingDays: 0,
@@ -302,6 +333,8 @@ describe("a statement imported WITHOUT this account's section", () => {
       {
         accountId: "a-1",
         accountName: "Robinhood Agentic",
+        // nothing listed is a file to fetch, so nothing links out (below: "where he fetches what is missing")
+        site: null,
         holes: [],
         missingCloses: null,
         missingDays: 0,
@@ -378,6 +411,7 @@ describe("a document with no printed balances is not a statement", () => {
       {
         accountId: "a-1",
         accountName: "Chase Sapphire",
+        site: CHASE,
         holes: [missing],
         missingCloses: 3,
         missingDays: 91,
@@ -412,7 +446,7 @@ describe("⛔ an OPENING statement is a statement, though it printed no opening 
   const ROBINHOOD_STATEMENT = "robinhood-brokerage-statement-pdf";
 
   test("the month between an opening statement and the next one is a file to fetch", () => {
-    addAccount("a-1", "Robinhood Agentic");
+    addAccount("a-1", "Robinhood Agentic", "Robinhood", "checking");
     addPeriod("a-1", "2026-06-01", "2026-06-30", "not_applicable", ROBINHOOD_STATEMENT);
     addPeriod("a-1", "2026-08-01", "2026-08-31", "reconciled", ROBINHOOD_STATEMENT);
     addPeriod("a-1", "2026-09-01", "2026-09-30", "reconciled", ROBINHOOD_STATEMENT);
@@ -423,6 +457,7 @@ describe("⛔ an OPENING statement is a statement, though it printed no opening 
       {
         accountId: "a-1",
         accountName: "Robinhood Agentic",
+        site: ROBINHOOD,
         holes: [{ from: "2026-07-01", to: "2026-07-31", days: 31, closes: 1 }],
         missingCloses: 1,
         missingDays: 31,
@@ -454,5 +489,60 @@ describe("⛔ an OPENING statement is a statement, though it printed no opening 
     }
 
     expect(statementGaps(bundle.db)).toEqual([]);
+  });
+});
+
+describe("⚖️ where he fetches what is missing (his request 2026-10-09)", () => {
+  /**
+   * "make it so i can click on each and it leads me straight to the website so i can pull the statement". This panel
+   * lists the most statements to fetch on his ledger — Discover, five across 152 days — so its rows carry the site the
+   * Statement schedule's do, through the same `statementSiteFor`, read off the same two things: the institution the
+   * ledger files the account under, and the account's TYPE.
+   */
+
+  /** Monthly statements closing on the 18th, the one closing Sep 18, 2024 never imported. */
+  function addStatementsWithAHole(id: string): void {
+    addPeriod(id, "2024-06-19", "2024-07-18");
+    addPeriod(id, "2024-07-19", "2024-08-18");
+    addPeriod(id, "2024-09-19", "2024-10-18");
+    addPeriod(id, "2024-10-19", "2024-11-18");
+  }
+
+  test("each row carries its bank's site — the Discover card's is Capital One's (his answer 2026-10-09)", () => {
+    addAccount("a-1", "Discover", "Discover", "credit");
+    addAccount("a-2", "Chase Sapphire", "Chase", "credit");
+    addAccount("a-3", "Ally Savings", "Ally", "savings"); // a bank nobody researched
+    for (const id of ["a-1", "a-2", "a-3"]) addStatementsWithAHole(id);
+
+    const sites = Object.fromEntries(statementGaps(bundle.db).map((g) => [g.accountName, g.site]));
+
+    expect(sites).toEqual({ Discover: CAPITAL_ONE_CARDS, "Chase Sapphire": CHASE, "Ally Savings": null });
+  });
+
+  test("⛔ a Capital One BANK account gets no link — Capital One's link opens card documents", () => {
+    // his ledger holds both: Venture X (credit) and Capital One 360 Checking — one institution, two types
+    addAccount("a-1", "Venture X", "Capital One", "credit");
+    addAccount("a-2", "Capital One 360 Checking", "Capital One", "checking");
+    addStatementsWithAHole("a-1");
+    addStatementsWithAHole("a-2");
+
+    const sites = Object.fromEntries(statementGaps(bundle.db).map((g) => [g.accountName, g.site]));
+
+    expect(sites).toEqual({ "Venture X": CAPITAL_ONE_CARDS, "Capital One 360 Checking": null });
+  });
+
+  test("⛔ a row of withheld windows only gets no link: the panel says fetching it again adds nothing", () => {
+    addAccount("a-1", "Robinhood Agentic", "Robinhood", "checking");
+    addPeriod("a-1", "2026-06-01", "2026-06-30");
+    addPeriod("a-1", "2026-07-01", "2026-07-31");
+    addWithheldFile("a-1", "2026-08-01", "2026-08-31");
+    expect(statementGaps(bundle.db).map((g) => [g.withheld.length, g.site])).toEqual([[1, null]]);
+
+    // a month that IS missing beside it, and there is something to fetch at Robinhood again
+    addPeriod("a-1", "2026-10-01", "2026-10-31");
+
+    expect(statementGaps(bundle.db).map((g) => [g.holes.length, g.withheld.length, g.site])).toEqual([
+      [1, 1, ROBINHOOD],
+    ]);
   });
 });

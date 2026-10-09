@@ -4,8 +4,9 @@ import type { AccountType } from "@/db/schema/accounts";
  * Where each account's statements are downloaded — the ONE place that knows.
  *
  * ⚖️ His request 2026-10-09, on /imports' Statement schedule: "make it so i can click on each and it leads me straight
- * to the website so i can pull the statement". The schedule and the dashboard's Statements teaser both link an
- * account's name through `statementSiteFor`, so the two surfaces cannot send him to different places.
+ * to the website so i can pull the statement". The schedule, /imports' "Statements you do not have" panel and the
+ * dashboard's Statements teaser all link an account's name through `statementSiteFor`, so no two of them can send him
+ * to different places.
  *
  * ⛔ Every URL is one the bank's OWN pages link to (researched 2026-10-09) — never a guessed deep link. A deep link
  * that is guessed fails silently on the one evening he goes to pull a statement; a sign-in page plus the next step,
