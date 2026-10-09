@@ -49,7 +49,7 @@ import {
 } from "./arrears";
 import type { UnbankedFrontier } from "@/lib/unbanked-income";
 import { portionsAcross } from "@/lib/payday-settlement";
-import { paydayProjectable, paydaySettlementsBySeries } from "./payday-settlement";
+import { paydayProjectable, paydaySettlementsBySeries, stillToCome, stillToComeReader } from "./payday-settlement";
 import { silenceMeasuredThroughBySeries } from "./cash-earnings";
 import { effectiveSeries, hasStoppedForecasting, oneChargeDays, projectOccurrences, toProjectable } from "./recurring";
 import { linkIsRecurring, rowIsRecurring, seriesIdsNotDrawnAsRecurring } from "./recurring-link";
@@ -1141,13 +1141,13 @@ export function budgetTail(
 
   /*
    * ⛔ STRICTLY AFTER TODAY, AND THE REASON IS NOT THE CALENDAR — it is that
-   * this leg does NOT check postings and the overdue leg does.
+   * the overdue leg closes ON today and checks postings.
    *
    * `overdueForSeries` drops an occurrence a linked charge already covers
-   * (within the series' own tolerance); this walk projects the schedule and
-   * nothing else. A bill due TODAY may already have posted, in which case
-   * `spentCents` holds it — so it belongs in the leg that can see that, and
-   * putting it here would count it twice.
+   * (within the series' own tolerance); this walk projects the schedule less
+   * what a payment has already paid (below). A bill due TODAY may already have
+   * posted, in which case `spentCents` holds it — so it belongs in the leg that
+   * can see that, and putting it here would count it twice.
    *
    * ⚠️ That is why `/budgets` and the runway card split the same instant
    * differently and BOTH are right. `committedBook`'s forward leg is a RATE
@@ -1179,6 +1179,13 @@ export function budgetTail(
   );
   // ⚖️ §6A 56 — the cadence word this list prints, from the one reading every cadence printer asks
   const oneCharge = oneChargeDays(db, rows);
+  /*
+   * ⛔ …and a day after today a payment has ALREADY paid is not still to come either — the bill paid early, which
+   * `spentCents` holds (`stillToComeReader`, the forecast's and the Upcoming tab's reading; in another period, that
+   * period's spend holds it, as the calendar settles it there). 🔴 A bill due Oct 22 and paid Oct 20 was counted here
+   * on top of the Oct 20 row, read on Oct 21 (review of 50020a2).
+   */
+  const toCome = stillToComeReader(db, rows, today);
 
   const series: BudgetTailLine[] = [];
   let totalCents = 0;
@@ -1190,7 +1197,9 @@ export function budgetTail(
     // yet and must still be projected). `hasStoppedForecasting`, the predicate
     // `budgetOverdue` asks too: money in never lapses, in either leg.
     if (hasStoppedForecasting(s, today, checkedThrough(s.id))) continue;
-    const occ = projectOccurrences(toProjectable(s), from, periodEnd).filter((o) => o.amountCents < 0);
+    const occ = stillToCome(toCome, s, projectOccurrences(toProjectable(s), from, periodEnd)).filter(
+      (o) => o.amountCents < 0,
+    );
     if (occ.length === 0) continue;
     const amountCents = occ.reduce((sum, o) => sum - o.amountCents, 0); // money-out → positive
     totalCents += amountCents;

@@ -2,6 +2,7 @@ import { and, eq, gt, inArray } from "drizzle-orm";
 import type { AppDatabase } from "@/db/client";
 import { recurringSeries, type SeriesKind, type SeriesStatus } from "@/db/schema/recurring";
 import { transactions } from "@/db/schema/transactions";
+import type { BillingCarrier } from "@/lib/billed-with";
 import { addDays } from "@/lib/dates";
 import {
   firstPaydayOn,
@@ -13,6 +14,7 @@ import {
 } from "@/lib/payday-settlement";
 import { paydayReadings, type PaydayReading } from "@/lib/per-payday";
 import { ratePeriodOf } from "@/lib/series-kind";
+import { billPaymentsBySeries, paymentFor } from "./billing-carriers";
 import {
   effectiveSeries,
   projectOccurrences,
@@ -157,40 +159,46 @@ export function settledPaydaysForSeries(db: AppDatabase, seriesId: string, today
 }
 
 /**
- * A series' projected occurrences less the paydays its deposits have already
- * paid down — what is STILL TO COME.
+ * A series' projected occurrences less the ones already paid — what is STILL TO COME.
  *
  * ⚖️ A payday a deposit has already paid down is not still to come: settle
  * backwards is his decision of 2026-09-28, and a lump that posts BEFORE the
  * payday it covers (Wed Sep 30's deposit pays Thu Oct 1) is in the bank
  * already. Listing that payday ahead counts the money twice.
  *
- * ⛔ ONE READING for every surface that looks ahead: the forecast, the upcoming
- * list (/recurring's Upcoming tab, the dashboard's strip and its "before your
- * next paycheck") and a series' "Next expected" — and, through `nextStillToCome`,
- * every surface that names a series' single next date to come. 🔴 Only the forecast
- * asked: on Sep 30 the dashboard waited on Oct 1's pay — the pay that had come
- * the day before — and said nothing was due before it, while $2,000.00 of rent
- * due Oct 5 falls before the pay that will actually come, on Oct 8.
+ * ⚖️ …nor is a bill's day a payment has already paid — its own within its grace, or, billed inside another, its
+ * carrier's (§6A 59): the test the arrears and the calendar grade the same day by (`paymentFor` over
+ * `billPaymentsBySeries`). The rent paid Sep 30 has paid its Oct 1 and the $182.21 inside it; that money has left.
+ * 🔴 "Money out is never paid down", this said (review of 50020a2): on a linked copy of his ledger with a rent payment
+ * posted Sep 30, the calendar drew both Oct 1s paid while October's forecast card still projected them — committed
+ * net $2,134.63 under a grid whose Expected read $4,425.84, exactly $2,291.21 apart — and the Upcoming tab, the
+ * dashboard strip, the rent's "Next expected" and the All tab's Next all named Oct 1.
  *
- * Income only: settlement speaks about deposits, and a bill's absence is
- * `overdueForSeries`'.
+ * ⛔ ONE READING for every surface that looks ahead at what is still to pay: the
+ * forecast (and the dashboard's free-to-spend through it), the upcoming list
+ * (/recurring's Upcoming tab, the dashboard's strip and its "before your next
+ * paycheck"), /budgets' forward tail and a series' "Next expected" — and, through
+ * `nextStillToCome`, every surface that names a series' single next date to come.
+ * 🔴 Only the forecast asked: on Sep 30 the dashboard waited on Oct 1's pay — the
+ * pay that had come the day before — and said nothing was due before it, while
+ * $2,000.00 of rent due Oct 5 falls before the pay that will actually come, on Oct 8.
+ *
+ * ⛔ NOT a RATE: N months hold N payments of a monthly bill whatever day they are asked on, paid or not
+ * (`scheduledOccurrences` — the committed book, the car card).
  */
 export function stillToCome<T extends { date: string }>(
-  db: AppDatabase,
-  series: { id: string; kind: SeriesKind },
+  toCome: StillToCome,
+  series: { id: string },
   occurrences: readonly T[],
-  today: string,
 ): T[] {
-  const toCome = isStillToCome(db, series, today);
-  return occurrences.filter((o) => toCome(o.date));
+  return occurrences.filter((o) => toCome(series.id, o.date));
 }
 
 /**
  * A series' NEXT date still to come: the schedule's next occurrence
- * (`rollForwardNextExpected`), stepped past every payday a deposit has already
- * paid down — the first date of the list `stillToCome` leaves, without projecting
- * a list to find it.
+ * (`rollForwardNextExpected`), stepped past every one already paid — a payday a
+ * deposit has paid down, a bill's day a payment has paid — the first date of the
+ * list `stillToCome` leaves, without projecting a list to find it.
  *
  * 🔴 The single next date never asked. `/recurring?tab=all`'s "Next" and
  * `/categories/<Income>`'s "· next" (`listSeries`) read the bare schedule, so on Sep
@@ -203,45 +211,75 @@ export function stillToCome<T extends { date: string }>(
  * the date it opens on as the schedule's anchor, and a payday paid early is still on
  * the schedule. 🔴 Opened on this, a Save with nothing changed anchored his weekly
  * pay past the payday a deposit had paid, which then left the projection
- * `paydaySettlement` walks.
+ * `paydaySettlement` walks. A bill's day paid early is on the schedule the same way.
  *
- * ⛔ Not a second copy of the rule: `isStillToCome` is the predicate `stillToCome`
+ * ⛔ Not a second copy of the rule: `toCome` is the predicate `stillToCome`
  * filters with, and the steps are `rollForwardNextExpected`'s, so the walk visits
- * exactly the dates settlement graded (both step the effective schedule from its
- * anchor). It ends because settlement names finitely many paydays and every step
- * moves strictly forward.
+ * exactly the dates settlement and the payments graded (both step the effective
+ * schedule from its anchor). It ends because settlement names finitely many paydays,
+ * a ledger holds finitely many payments, and every step moves strictly forward.
  *
- * Null when the schedule has no next date, or none a deposit has not already paid:
- * a series whose last payday was paid early expects nothing more, which is what its
- * own page's list says. Money out is never paid down, so a bill's next date is its
- * schedule's, read without a query.
+ * Null when the schedule has no next date, or none not already paid: a series whose
+ * last occurrence was paid early expects nothing more, which is what its own page's
+ * list says.
  */
 export function nextStillToCome(
-  db: AppDatabase,
-  series: ProjectionOverrides & { id: string; kind: SeriesKind },
+  toCome: StillToCome,
+  series: ProjectionOverrides & { id: string },
   today: string,
 ): string | null {
   const eff = effectiveSeries(series);
-  const toCome = isStillToCome(db, series, today);
   let next = rollForwardNextExpected(eff, today);
-  while (next !== null && !toCome(next)) next = rollForwardNextExpected(eff, addDays(next, 1));
+  while (next !== null && !toCome(series.id, next)) next = rollForwardNextExpected(eff, addDays(next, 1));
   return next;
 }
 
+/** Whether a series' occurrence on a date is still to come — `stillToComeReader`'s answer, asked per date. */
+export type StillToCome = (seriesId: string, date: string) => boolean;
+
+/** What `stillToComeReader` reads of a series: its kind, and for a bill its grace and the carrier it is billed with. */
+export interface StillToComeSeries {
+  id: string;
+  kind: SeriesKind;
+  toleranceDays: number;
+  billedWith: BillingCarrier | null;
+}
+
 /**
- * Whether a series' occurrence on a date is still to come — the predicate behind
- * both shapes of the question, a list (`stillToCome`) and a single next date
- * (`nextStillToCome`), so the two can only ever drop the same paydays. Asked once
- * per series: the settlement is read when this is built, not per date.
+ * Whether each of these series' occurrences on a date is still to come — the predicate behind both shapes of the
+ * question, a list (`stillToCome`) and a single next date (`nextStillToCome`), so the two can only ever drop the same
+ * days. Read once for every series a surface walks: settlement per pay series, and ONE read of the payments that may
+ * pay the rest (`billPaymentsBySeries`). ⚠️ Never per series: the series column has no index, so each read scans every
+ * transaction — about a millisecond over his 12,847 rows (measured 2026-10-09), and forty-odd of them on every page
+ * that looks ahead would not be.
+ *
+ * ⚖️ A pay series' paydays are settlement's: a deposit pays down the paydays behind it (his decision of 2026-09-28),
+ * and a row merely near a payday paid nothing settlement did not spend on it — the calendar's order too. Every other
+ * series' day is paid by a payment within its grace (`paymentFor`), its own or its carrier's, as the arrears and the
+ * calendar grade it.
+ *
+ * ⛔ Asked of days from today on — every caller walks forward from today — so the payments are read from today less
+ * the widest grace, with no end: a payment can pay a day only within its grace of it.
  */
-function isStillToCome(
+export function stillToComeReader(
   db: AppDatabase,
-  series: { id: string; kind: SeriesKind },
+  series: readonly StillToComeSeries[],
   today: string,
-): (date: string) => boolean {
-  if (series.kind !== "income") return () => true;
-  const settled = settledPaydaysForSeries(db, series.id, today);
-  return (date) => !settled.has(date);
+): StillToCome {
+  const settled = new Map(
+    series.filter((s) => s.kind === "income").map((s) => [s.id, settledPaydaysForSeries(db, s.id, today)] as const),
+  );
+  const payments = billPaymentsBySeries(
+    db,
+    series.filter((s) => s.kind !== "income"),
+    today,
+    null,
+  );
+  return (seriesId, date) => {
+    const paydays = settled.get(seriesId);
+    if (paydays !== undefined) return !paydays.has(date);
+    return paymentFor(payments.get(seriesId) ?? [], date) === undefined;
+  };
 }
 
 /**

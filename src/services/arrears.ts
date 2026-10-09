@@ -1,11 +1,10 @@
-import { and, eq, gte, inArray, lte } from "drizzle-orm";
+import { and, inArray } from "drizzle-orm";
 import type { AppDatabase } from "@/db/client";
 import { recurringSeries } from "@/db/schema/recurring";
-import { transactions } from "@/db/schema/transactions";
 import { addDays, compareDates, periodBounds } from "@/lib/dates";
 import { lastDueDayRead, type DueDayReading } from "@/lib/occurrence-verdict";
 import { sharedFrontier, type UnbankedFrontier } from "@/lib/unbanked-income";
-import { carrierPaymentsBySeries, paymentFor, withBillingCarriers, type Payment } from "./billing-carriers";
+import { billPaymentsBySeries, paymentFor, withBillingCarriers } from "./billing-carriers";
 import { checkedThroughBySeries, silenceMeasuredThroughBySeries } from "./cash-earnings";
 import { dueDayReadings } from "./observation-frontier";
 import { paydayProjectable, paydaySettlementsBySeries } from "./payday-settlement";
@@ -121,42 +120,21 @@ export function overdueForSeries(
   const live = rows.filter((r) => !hasStoppedForecasting(r, today, checkedThrough(r.id)));
   if (live.length === 0) return { totalCents: 0, series: [] };
 
-  // postings linked to these series, widened by the largest tolerance so a bill
-  // that landed a few days either side of its due date still counts as paid
-  const maxTolerance = live.reduce((m, r) => Math.max(m, r.toleranceDays), 0);
-  const tolerance = new Map(live.map((r) => [r.id, r.toleranceDays] as const));
-  const paymentsBySeries = new Map<string, Payment[]>();
-  for (const row of db
-    .select({ seriesId: transactions.recurringSeriesId, postedOn: transactions.postedOn })
-    .from(transactions)
-    .where(
-      and(
-        eq(transactions.status, "active"),
-        inArray(transactions.recurringSeriesId, [...seriesIds]),
-        gte(transactions.postedOn, addDays(periodStart, -maxTolerance)),
-        lte(transactions.postedOn, addDays(through, maxTolerance)),
-      ),
-    )
-    .all()) {
-    if (row.seriesId === null) continue;
-    // a series the forecast has let go owes nothing for a posting to pay
-    const toleranceDays = tolerance.get(row.seriesId);
-    if (toleranceDays === undefined) continue;
-    const payment = { postedOn: row.postedOn, toleranceDays };
-    paymentsBySeries.set(row.seriesId, [...(paymentsBySeries.get(row.seriesId) ?? []), payment]);
-  }
   /*
+   * Postings linked to these series, widened by the largest tolerance so a bill that landed a few days either side of
+   * its due date still counts as paid — the reading every reader that looks ahead asks too (`billPaymentsBySeries`).
+   *
    * ⚖️ A series billed inside another's payment is paid by its carrier's payments too, each by the carrier's own test
    * (`carrierPaymentsBySeries`, implied by §6A 59, 2026-10-08). 🔴 Graded on its own postings — it has none, ever — its
    * $182.21 came due every 1st and "has not posted" beside the rent's payment that paid it. Its amount is untouched:
    * still owed at its own $182.21 when the rent has not paid, and owed nowhere when it has.
    */
-  const carried = carrierPaymentsBySeries(db, live, periodStart, through);
+  const paymentsBySeries = billPaymentsBySeries(db, live, periodStart, through);
 
   const series: BudgetTailSeries[] = [];
   let totalCents = 0;
   for (const s of live) {
-    const payments = [...(paymentsBySeries.get(s.id) ?? []), ...(carried.get(s.id) ?? [])];
+    const payments = paymentsBySeries.get(s.id) ?? [];
     const occ = projectOccurrences(toProjectable(s), periodStart, through)
       .filter((o) => o.amountCents < 0)
       .filter((o) => paymentFor(payments, o.date) === undefined);

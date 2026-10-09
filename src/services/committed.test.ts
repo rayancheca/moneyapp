@@ -1155,6 +1155,33 @@ describe("carCard", () => {
     expect(c.cost.monthlyCents).toBe(69504);
   });
 
+  /*
+   * ⛔ …and one PAID two days early is too: the book prices the schedule (`scheduledOccurrences`), not what is still
+   * to pay — the lease paid Sep 13 is still September's lease. The lists that look ahead drop it (review of 50020a2).
+   */
+  test("a car bill paid two days early is still inside the book — a rate prices the schedule", () => {
+    const carId = createCarCategory();
+    const ANCHOR = "2026-09-15";
+    const lease = addSeries({
+      name: "Car lease",
+      kind: "bill",
+      nextExpectedOn: ANCHOR,
+      amountCents: -69504,
+      userCategoryId: carId,
+      userEndsOn: ANCHOR,
+    });
+    insertTxn({
+      postedOn: "2026-09-13",
+      amountCents: -69504,
+      rawDescription: "MERCEDES-BENZ FIN PAYMENT",
+      categoryId: carId,
+      recurringSeriesId: lease,
+    });
+    const c = carCard(bundle.db, "2026-09-14")!;
+    expect(c.cost.committedCents).toBe(69504);
+    expect(c.cost.monthlyCents).toBe(69504);
+  });
+
   test("discloses the first date a car commitment runs out", () => {
     const carId = createCarCategory();
     addSeries({

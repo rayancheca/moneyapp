@@ -38,7 +38,7 @@ import { arrearsThisMonth, unbankedIncomeForSeries, unbankedIncomeTotals, type U
 import { withBillingCarriers } from "./billing-carriers";
 import { isUpfrontCarRow, upfrontCarRule } from "./car-upfront";
 import { silenceMeasuredThroughBySeries } from "./cash-earnings";
-import { stillToCome } from "./payday-settlement";
+import { stillToCome, stillToComeReader } from "./payday-settlement";
 import { activeSplitsInRange } from "./transaction-splits";
 import { linkIsNotRecurring, seriesIdsNotDrawnAsRecurring } from "./recurring-link";
 
@@ -494,6 +494,8 @@ function fixedComponents(
     db.select().from(recurringSeries).where(inArray(recurringSeries.status, ["detected", "confirmed"])).all(),
   );
   const oneCharge = oneChargeDays(db, live);
+  // what is still to come of each — read once for every series (`stillToComeReader`), asked per occurrence below
+  const toCome = stillToComeReader(db, live, today);
 
   const components: { component: ForecastComponent; firstDate: string }[] = [];
   let cashCents = 0;
@@ -566,14 +568,16 @@ function fixedComponents(
      * and `services/payday-settlement` is its one home — `stillToCome` is its
      * reading for every surface that looks ahead, never a second spelling.
      *
-     * ⚠️ The lookup is taken per SERIES, not per occurrence: pass 31's measured
-     * lesson is that per-row query building was 44% of this app's CPU.
+     * ⚖️ …and so is a bill's day a payment has already paid — the rent paid Sep 30 for Oct 1, and what it carries
+     * (§6A 59). 🔴 October's card projected both on top of the balance that held the payment (review of 50020a2).
+     *
+     * ⚠️ The lookup is read once for every series, never per occurrence: pass 31's
+     * measured lesson is that per-row query building was 44% of this app's CPU.
      */
     const occurrences: SeriesOccurrence[] = stillToCome(
-      db,
+      toCome,
       series,
       projectOccurrences(toProjectable(series, staleness), from, monthEnd),
-      today,
     );
     if (occurrences.length === 0) continue;
     /*

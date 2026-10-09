@@ -2026,7 +2026,10 @@ describe("budgetPaceStatuses — end-to-end pace, projection, and tail", () => {
 
     const status = budgetPaceStatuses(bundle.db, "2026-07-08").find((s) => s.budget.id === id)!;
     expect(status.spentCents).toBe(180_000); // the future-dated charge has posted this period
-    expect(status.expectedTailCents).toBe(180_000); // the series still projects 07-25
+    // ⚖️ …and it PAYS the 07-25 bill — the calendar's test (`paymentFor`), drawn as that day's row — so the tail no
+    // longer lists it beside the spend that holds it (`stillToComeReader`, review of 50020a2). It listed 180k here
+    // while the series still projected 07-25.
+    expect(status.expectedTailCents).toBe(0);
     // counted ONCE: spend-to-date is 0 (07-25 > today) so projected = tail only,
     // floored at the 180k already posted — never 360k.
     expect(status.projectedCents).toBe(180_000);

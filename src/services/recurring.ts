@@ -37,7 +37,7 @@ import { silenceMeasuredThroughBySeries } from "./cash-earnings";
  * loading, so the order they load in cannot matter. `posted-average` closes the
  * same cycle the same way: it reads `effectiveSeries`, and `listSeries` it.
  */
-import { nextStillToCome, stillToCome } from "./payday-settlement";
+import { nextStillToCome, stillToCome, stillToComeReader } from "./payday-settlement";
 import { postedAveragesBySeries } from "./posted-average";
 
 /**
@@ -1019,10 +1019,23 @@ export function listSeries(db: AppDatabase, today: string = todayIso()): SeriesV
   const posted = postedAveragesBySeries(db, rows.map((r) => r.series), today);
   // ⚖️ the carrier each series is billed with — its evidence (`lastSeenOn`, §6A 59)
   const carriers = billingCarriers(db);
+  const withCarriers = rows.map(({ series: row, merchantName }) => ({
+    s: { ...row, billedWith: carriers.get(row.id) ?? null },
+    merchantName,
+  }));
+  // the series the forecast carries — the ones a next date is stepped for — and what is still to come of each, read
+  // once for all of them (`stillToComeReader`)
+  const forecast = new Set(
+    withCarriers.filter(({ s }) => seriesIsForecast(s, today, checkedThrough(s.id))).map(({ s }) => s.id),
+  );
+  const toCome = stillToComeReader(
+    db,
+    withCarriers.filter(({ s }) => forecast.has(s.id)).map(({ s }) => s),
+    today,
+  );
 
-  return rows
-    .map(({ series: row, merchantName }) => {
-      const s = { ...row, billedWith: carriers.get(row.id) ?? null };
+  return withCarriers
+    .map(({ s, merchantName }) => {
       const eff = effectiveSeries(s);
       // Show the same date the forecast projects: rolled forward off a stale
       // stored value. Only for the statuses the forecast actually projects —
@@ -1030,12 +1043,14 @@ export function listSeries(db: AppDatabase, today: string = todayIso()): SeriesV
       // ⛔ …and past a payday a deposit has already paid (`nextStillToCome`, the
       // Upcoming tab's own reading). 🔴 Read on Sep 30 the Next column named Oct 1,
       // the payday Wed Sep 30's deposit paid, beside an Upcoming tab starting Oct 8.
+      // ⛔ …and past a bill's day a payment has already paid. 🔴 With the rent paid Sep 30 it named Oct 1 for the
+      // rent and its utilities, beside a Calendar tab drawing both paid (review of 50020a2).
       // ⛔ A live series the forecast has let go (`seriesIsForecast`) has NO next date: rolled, it is a charge the
       // forecast does not expect; stored, it is the past. 🔴 Rolled on status alone, a CONFIRMED subscription that
       // lapsed sat in the All tab's "Lapsed — no longer forecast" with a future Next — measured on a copy of his
       // ledger 2026-10-08 with Amazon Prime confirmed: "Nov 5".
-      const nextExpectedOn = seriesIsForecast(s, today, checkedThrough(s.id))
-        ? nextStillToCome(db, s, today)
+      const nextExpectedOn = forecast.has(s.id)
+        ? nextStillToCome(toCome, s, today)
         : seriesIsOver(s.status)
           ? eff.nextExpectedOn
           : null;
@@ -1735,12 +1750,44 @@ export function projectOccurrences(
  * drew Oct 1 "paid by the deposit of Sep 30" and the forecast counted four
  * October paydays — and the dashboard waited on that pay, so "before your next
  * paycheck" left out the rent due before the pay that will actually come.
+ *
+ * ⛔ …nor is a bill's day a payment has already paid (`stillToCome` again). 🔴 With the rent paid Sep 30, the tab and
+ * the dashboard strip listed Oct 1's rent and its utilities beside a Calendar tab drawing both paid (review of
+ * 50020a2).
  */
 export function upcomingOccurrences(
   db: AppDatabase,
   today: string = todayIso(),
   windowDays = 30,
 ): SeriesOccurrence[] {
+  const walked = forecastWalk(db, today, windowDays);
+  const toCome = stillToComeReader(db, walked.map((w) => w.series), today);
+  return walked.flatMap(({ series, projected }) => stillToCome(toCome, series, projected)).sort(byDayThenName);
+}
+
+/**
+ * Every occurrence the SCHEDULE holds in the same window, paid or not — `upcomingOccurrences` before `stillToCome`.
+ *
+ * ⛔ For a RATE only: the committed book and the car card price N payments into N months, and "a posted bill still
+ * belongs in it" (`committedBook`). The rent paid Sep 30 for Oct 1 is still one of twelve; left out, a $2,109.00 bill
+ * reads $1,933.25 a month on the day it was paid early — the sawtooth `committedBook` measured and refused. A list of
+ * what is still to pay reads `upcomingOccurrences`.
+ */
+export function scheduledOccurrences(
+  db: AppDatabase,
+  today: string = todayIso(),
+  windowDays = 30,
+): SeriesOccurrence[] {
+  return forecastWalk(db, today, windowDays)
+    .flatMap((w) => w.projected)
+    .sort(byDayThenName);
+}
+
+const byDayThenName = (a: SeriesOccurrence, b: SeriesOccurrence): number =>
+  compareDates(a.date, b.date) || a.name.localeCompare(b.name);
+
+/** The series the forecast carries, each with what its schedule holds in `[today, today + windowDays − 1]`. */
+function forecastWalk(db: AppDatabase, today: string, windowDays: number) {
   const live = withBillingCarriers(
     db,
     db.select().from(recurringSeries).where(inArray(recurringSeries.status, ["detected", "confirmed"])).all(),
@@ -1749,7 +1796,7 @@ export function upcomingOccurrences(
   // late and lapsed only on days the ledger has checked (`seriesStaleness`) — the chip, the footer's count, the filter
   const checkedThrough = silenceMeasuredThroughBySeries(db, today);
 
-  // today is day ONE of the window — see the docstring's rent-twice measurement
+  // today is day ONE of the window — see `upcomingOccurrences`' rent-twice measurement
   const to = addDays(today, windowDays - 1);
   return live
     // A series whose evidence has run out is not a forecast. UBER *ONE last
@@ -1761,12 +1808,10 @@ export function upcomingOccurrences(
     // have no postings yet by definition.
     .filter((s) => !hasStoppedForecasting(s, today, checkedThrough(s.id)))
     .filter((s) => !isAgentsSeries(agentsCash, s))
-    .flatMap((s) => {
-      const staleness = seriesStaleness(s, today, checkedThrough(s.id));
-      const projected = projectOccurrences(toProjectable(s, staleness), today, to);
-      return stillToCome(db, s, projected, today);
-    })
-    .sort((a, b) => compareDates(a.date, b.date) || a.name.localeCompare(b.name));
+    .map((s) => ({
+      series: s,
+      projected: projectOccurrences(toProjectable(s, seriesStaleness(s, today, checkedThrough(s.id))), today, to),
+    }));
 }
 
 /**

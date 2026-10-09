@@ -19,7 +19,7 @@ import { loadCategoryIndex } from "./analytics";
 import { arrearsThisMonth } from "./arrears";
 import { billingCarriers } from "./billing-carriers";
 import { silenceMeasuredThroughBySeries } from "./cash-earnings";
-import { paydaySettlement, readsPerPayday, stillToCome } from "./payday-settlement";
+import { paydaySettlement, readsPerPayday, stillToCome, stillToComeReader } from "./payday-settlement";
 import { postedAveragesBySeries } from "./posted-average";
 import {
   annualizedCentsOf,
@@ -395,9 +395,12 @@ export function seriesDetail(
   // "Next expected — Oct 1" for the payday Wed Sep 30's deposit paid early.
   // Settlement reaches `toleranceDays` past today, so the window reaches that
   // much further and a payday it drops still leaves NEXT_EXPECTED_COUNT behind.
+  // ⛔ …and less a bill's day a payment has already paid — the same reading, and the same reach: a payment pays a day
+  // only within its grace of it. 🔴 With the rent paid Sep 30 the rent's page listed Oct 1, Nov 1 and Dec 1 next, and
+  // its End dialog read "every charge from Oct 1, 2026 on", beside a calendar drawing Oct 1 paid (review of 50020a2).
   const nextExpected = projects
     ? stillToCome(
-        db,
+        stillToComeReader(db, [s], today),
         s,
         projectOccurrences(
           toProjectable(s),
@@ -407,7 +410,6 @@ export function seriesDetail(
             s.toleranceDays,
           ),
         ),
-        today,
       ).slice(0, NEXT_EXPECTED_COUNT)
     : [];
 

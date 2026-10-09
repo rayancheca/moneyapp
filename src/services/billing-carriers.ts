@@ -106,14 +106,14 @@ export function paymentFor<P extends Payment>(payments: readonly P[], dueOn: str
  * ⛔ Amounts are not asked: the carrier's payment pays what is billed inside it whatever it adds up to — as a covering
  * posting pays the bill it covers (`overdueForSeries`). Its money is on the carrier's row, counted there, once.
  *
- * `[from, to]` is the window of due days asked about; postings are read the carrier's tolerance either side of it.
- * Nothing is asked of a ledger with no link.
+ * `[from, to]` is the window of due days asked about — `to` null for no end — and postings are read the carrier's
+ * tolerance either side of it. Nothing is asked of a ledger with no link.
  */
 export function carrierPaymentsBySeries(
   db: AppDatabase,
   rows: readonly { id: string; billedWith: BillingCarrier | null }[],
   from: string,
-  to: string,
+  to: string | null,
 ): ReadonlyMap<string, readonly Payment[]> {
   const carried = rows.filter((r): r is typeof r & { billedWith: BillingCarrier } => r.billedWith !== null);
   if (carried.length === 0) return new Map();
@@ -136,7 +136,7 @@ export function carrierPaymentsBySeries(
         eq(transactions.status, "active"),
         inArray(transactions.recurringSeriesId, carrierIds),
         gte(transactions.postedOn, addDays(from, -widest)),
-        lte(transactions.postedOn, addDays(to, widest)),
+        to === null ? undefined : lte(transactions.postedOn, addDays(to, widest)),
       ),
     )
     .all()) {
@@ -145,4 +145,48 @@ export function carrierPaymentsBySeries(
     byCarrier.set(row.seriesId, [...(byCarrier.get(row.seriesId) ?? []), payment]);
   }
   return new Map(carried.map((r) => [r.id, byCarrier.get(r.billedWith.id) ?? []] as const));
+}
+
+/**
+ * Every payment that may PAY each series' occurrences due inside `[from, to]` (`to` null for no end): its own postings,
+ * each judged by its own tolerance, and — billed inside another — its carrier's, each by the carrier's
+ * (`carrierPaymentsBySeries`). Keyed by series id; read in one pass for all of them. Postings are read the widest
+ * tolerance either side of the window.
+ *
+ * ⛔ What `paymentFor` is asked over by every grader that says a bill's day is paid or owed: the arrears
+ * (`overdueForSeries`) and every reader that looks ahead (`stillToComeReader`). The calendar reads the same two halves
+ * apart — it draws its own postings and names a carrier's (`paidWith`) — over the same window rule, so the three cannot
+ * grade one Oct 1 apart.
+ *
+ * 🔴 The readers that look ahead never asked (review of 50020a2): with the rent paid Sep 30, the calendar drew its Oct
+ * 1 paid while the forecast card, the Upcoming tab, the dashboard strip and the rent's page still listed it coming.
+ */
+export function billPaymentsBySeries(
+  db: AppDatabase,
+  rows: readonly { id: string; toleranceDays: number; billedWith: BillingCarrier | null }[],
+  from: string,
+  to: string | null,
+): ReadonlyMap<string, readonly Payment[]> {
+  if (rows.length === 0) return new Map();
+  const tolerance = new Map(rows.map((r) => [r.id, r.toleranceDays] as const));
+  const widest = Math.max(0, ...tolerance.values());
+  const own = new Map<string, Payment[]>();
+  for (const row of db
+    .select({ seriesId: transactions.recurringSeriesId, postedOn: transactions.postedOn })
+    .from(transactions)
+    .where(
+      and(
+        eq(transactions.status, "active"),
+        inArray(transactions.recurringSeriesId, [...tolerance.keys()]),
+        gte(transactions.postedOn, addDays(from, -widest)),
+        to === null ? undefined : lte(transactions.postedOn, addDays(to, widest)),
+      ),
+    )
+    .all()) {
+    if (row.seriesId === null) continue;
+    const payment = { postedOn: row.postedOn, toleranceDays: tolerance.get(row.seriesId) ?? 0 };
+    own.set(row.seriesId, [...(own.get(row.seriesId) ?? []), payment]);
+  }
+  const carried = carrierPaymentsBySeries(db, rows, from, to);
+  return new Map(rows.map((r) => [r.id, [...(own.get(r.id) ?? []), ...(carried.get(r.id) ?? [])]] as const));
 }

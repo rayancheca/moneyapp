@@ -34,7 +34,7 @@ import { incomeExpectation } from "./budgets";
 import { CAR_LEASE_TERM_MONTHS, isUpfrontCarRow, readUpfrontCarRule, upfrontCarRule } from "./car-upfront";
 import { ledgerOpens } from "./observation-frontier";
 import { silenceMeasuredThroughBySeries } from "./cash-earnings";
-import { seriesStaleness, upcomingOccurrences } from "./recurring";
+import { scheduledOccurrences, seriesStaleness } from "./recurring";
 import { seriesIdsNotDrawnAsRecurring } from "./recurring-link";
 
 /**
@@ -218,7 +218,7 @@ export const COMMITTED_KINDS = ["bill", "subscription"] as const;
 
 /**
  * Every live series that represents a payment HE owes — none on the agent's cash, which pays its own (`isAgentsSeries`,
- * owner decision 2026-10-02): its forward occurrences already leave through `upcomingOccurrences`, and this is the set
+ * owner decision 2026-10-02): its forward occurrences already leave through `scheduledOccurrences`, and this is the set
  * its overdue leg reads.
  */
 function moneyOutSeriesIds(db: AppDatabase): Set<string> {
@@ -376,8 +376,14 @@ export function committedBook(
   const moneyOut = moneyOutSeriesIds(db);
   const endsById = endsOnBySeries(db);
 
+  /*
+   * ⛔ THE SCHEDULE, PAID OR NOT (`scheduledOccurrences`) — a rate, as above: a bill paid early is still one of the N.
+   * 🔴 Read through what is still to pay (`upcomingOccurrences`, which drops a day a payment has paid since the review
+   * of 50020a2), the rent paid Sep 30 for Oct 1 left eleven rents in twelve months: $1,933.25 a month for a $2,109.00
+   * bill, on that day alone.
+   */
   const occurrences = // +1: `windowDays` counts days and today is the first — see its docstring
-    upcomingOccurrences(db, today, diffDays(today, horizon.projectThrough) + 1)
+    scheduledOccurrences(db, today, diffDays(today, horizon.projectThrough) + 1)
     .filter((o) => moneyOut.has(o.seriesId))
     .filter((o) => withinMonthHorizon(horizon, o.date, o.anchorDayOfMonth))
     .map((o) => toCommitted(o, endsById.get(o.seriesId) ?? null));
@@ -572,8 +578,9 @@ export function carCard(db: AppDatabase, today: string = todayIso()): CarCard | 
   const horizon = monthHorizon(today, months);
   const carEndsById = endsOnBySeries(db);
 
+  // ⛔ the schedule, paid or not (`scheduledOccurrences`): the lease paid two days early is still this month's lease
   const occurrences = // +1: `windowDays` counts days and today is the first — see its docstring
-    upcomingOccurrences(db, today, diffDays(today, horizon.projectThrough) + 1)
+    scheduledOccurrences(db, today, diffDays(today, horizon.projectThrough) + 1)
     .filter((o) => carSeries.has(o.seriesId))
     .filter((o) => withinMonthHorizon(horizon, o.date, o.anchorDayOfMonth))
     .map((o) => toCommitted(o, carEndsById.get(o.seriesId) ?? null));
