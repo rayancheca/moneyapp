@@ -5,7 +5,7 @@ import { recurringSeries, type SeriesKind } from "@/db/schema/recurring";
 import { transactions } from "@/db/schema/transactions";
 import { daysInMonthOf } from "@/lib/calendar-math";
 import { isCategoryHueName, type CategoryHueName } from "@/lib/category-palette";
-import { compareDates, diffDays, monthKey, periodBounds, todayIso } from "@/lib/dates";
+import { addDays, compareDates, diffDays, monthKey, periodBounds, todayIso } from "@/lib/dates";
 import { flowEntryOf, monthFlow, type MonthFlow, type MonthFlowEntry } from "@/lib/month-flow";
 import { hasArrived, portionsAcross, type SettlementPortion } from "@/lib/payday-settlement";
 import {
@@ -247,8 +247,12 @@ export interface CalendarEntry {
    *
    * 🔴 Without it, on a copy of his ledger with the link set (2026-10-08), September drew Sep 1 "not yet known" beside
    * the rent's Sep 2 $2,291.21 that paid it ($2,109.00 + $182.21).
+   *
+   * `carrier` is null where the payment is the series' OWN, landed in another month — the rent paid Sep 30 for Oct 1:
+   * nothing posted on October's grid either, and the arrears' test pays the day with it (`paymentFor`), so it is named
+   * the same way, "paid by its payment of Sep 30, 2026".
    */
-  paidWith: { readonly carrier: string; readonly postedOn: string } | null;
+  paidWith: { readonly carrier: string | null; readonly postedOn: string } | null;
   /**
    * The series' category hue, for the mark drawn beside it.
    *
@@ -613,6 +617,37 @@ export function recurringCalendar(
   const pushEntry = (date: string, entry: CalendarEntry): void => {
     (entriesByDay[date] ??= []).push(entry);
   };
+  /**
+   * A bill's occurrence paid by a payment this grid does not draw on its day — its own, landed in another month, or its
+   * carrier's (§6A 59): drawn paid on its own day at its own amount, naming the payment (`paidWith`), and settling $0.00
+   * here, because the money is on the payment's row, counted there, once.
+   */
+  const pushPaidElsewhere = (
+    s: { id: string; name: string; kind: SeriesKind },
+    o: { date: string; amountCents: number },
+    paidWith: NonNullable<CalendarEntry["paidWith"]>,
+  ): void =>
+    pushEntry(o.date, {
+      seriesId: s.id,
+      name: s.name,
+      kind: s.kind,
+      state: "paid",
+      amountCents: o.amountCents,
+      expectedAmountCents: o.amountCents,
+      transactionId: null,
+      settledByDepositsOn: [],
+      settlesPaydaysOn: [],
+      perPayday: null,
+      towardNoPayday: false,
+      settledCents: 0,
+      unsettledReason: null,
+      confidence: null,
+      isStale: false,
+      neverBilled: false,
+      billedWith: null,
+      paidWith,
+      hue: hues.get(s.id) ?? null,
+    });
 
   /*
    * ⚖️ SETTLE BACKWARDS, his decision of 2026-09-28: a deposit attributed to a
@@ -661,7 +696,20 @@ export function recurringCalendar(
 
   // 1) posted charges tagged to a drawable series, inside the month
   const postedDatesBySeries = new Map<string, string[]>();
+  /*
+   * ⚖️ …and every posting that may PAY one of its bills: the month widened by the widest tolerance either side, as the
+   * arrears read it (`overdueForSeries`) — each judged by its own series' tolerance (`paymentFor`). Only the month's
+   * own are drawn.
+   *
+   * 🔴 Read inside the month alone, one Oct 1 had two answers (review of 1a1b753). What is billed inside the rent is paid
+   * by the rent's postings either side of the edge (`carrierPaymentsBySeries`); the rent's own Oct 1 saw October's
+   * only. On a linked copy of his ledger with a rent payment posted Sep 30, October drew the rent "upcoming" (Sep 30),
+   * "not yet known" (Oct 2) and a red ✕ "missed" (Oct 9, read through Oct 4) beside "Rent utilities & fees paid (paid
+   * with the rent's payment of Sep 30)" — while the rent's page and the runway, reading the arrears, owed nothing.
+   */
+  const paymentsBySeries = new Map<string, { postedOn: string; toleranceDays: number }[]>();
   if (historyRows.length > 0) {
+    const widest = Math.max(0, ...historyRows.map((s) => s.toleranceDays));
     const posted = db
       .select({
         id: transactions.id,
@@ -674,8 +722,8 @@ export function recurringCalendar(
         and(
           eq(transactions.status, "active"),
           isNotNull(transactions.recurringSeriesId),
-          gte(transactions.postedOn, monthStart),
-          lte(transactions.postedOn, monthEnd),
+          gte(transactions.postedOn, addDays(monthStart, -widest)),
+          lte(transactions.postedOn, addDays(monthEnd, widest)),
         ),
       )
       .all();
@@ -684,6 +732,11 @@ export function recurringCalendar(
       const s = p.seriesId ? seriesById.get(p.seriesId) : undefined;
       // tagged to a DISMISSED series — the owner said not recurring — or to the agent's income, which is not his
       if (!s) continue;
+      const payments = paymentsBySeries.get(s.id) ?? [];
+      payments.push({ postedOn: p.postedOn, toleranceDays: s.toleranceDays });
+      paymentsBySeries.set(s.id, payments);
+      // drawn on another month's grid, where it landed
+      if (!insideMonth(p.postedOn)) continue;
       /*
        * ⛔ NOTHING AFTER TODAY HAS ARRIVED, on a pay series settlement speaks
        * about — settlement's own boundary (`hasArrived`), so a row it did not
@@ -782,8 +835,9 @@ export function recurringCalendar(
      */
     const occurrences = projectOccurrences(paydayProjectable(s, settlements.get(s.id), today), monthStart, monthEnd);
     const postedDates = postedDatesBySeries.get(s.id) ?? [];
-    // the arrears' test of a covering posting (`paymentFor`), over the postings this grid draws
-    const ownPayments = postedDates.map((postedOn) => ({ postedOn, toleranceDays: s.toleranceDays }));
+    // the arrears' test of a covering posting (`paymentFor`), over the postings the arrears read — the month's and its
+    // edges' (step 1)
+    const ownPayments = paymentsBySeries.get(s.id) ?? [];
     const confidence = forecastConfidence(s);
     // ONE evidence word, the one the All tab files the series under: a series
     // that never charged is "never billed", not stale (see `CalendarEntry.isStale`).
@@ -854,7 +908,18 @@ export function recurringCalendar(
       } else {
         // a bill, or money settlement does not speak about: a posting within
         // the series' tolerance is this occurrence, drawn on the day it landed
-        if (paymentFor(ownPayments, o.date) !== undefined) continue;
+        const ownPaid = paymentFor(ownPayments, o.date);
+        if (ownPaid !== undefined && insideMonth(ownPaid.postedOn)) continue;
+        /*
+         * ⚖️ …which may be in ANOTHER month, the rent paid Sep 30 for Oct 1: drawn paid on its own day, naming the day
+         * it landed (`paidWith`, no carrier) and settling $0.00 here — its money is on that month's row, counted there,
+         * once. 🔴 Graded on October's postings alone it was "upcoming", then "missed", beside arrears that owed
+         * nothing (step 1).
+         */
+        if (ownPaid !== undefined) {
+          pushPaidElsewhere(s, o, { carrier: null, postedOn: ownPaid.postedOn });
+          continue;
+        }
         /*
          * ⚖️ …and one billed inside another's payment is paid by its carrier's payment for that period — the arrears'
          * own test (`carrierPaymentsBySeries`, implied by §6A 59, 2026-10-08). Drawn paid on its own day, naming the
@@ -862,27 +927,7 @@ export function recurringCalendar(
          */
         const carrierPaid = paymentFor(carried.get(s.id) ?? [], o.date);
         if (carrierPaid !== undefined && s.billedWith !== null) {
-          pushEntry(o.date, {
-            seriesId: s.id,
-            name: s.name,
-            kind: s.kind,
-            state: "paid",
-            amountCents: o.amountCents,
-            expectedAmountCents: o.amountCents,
-            transactionId: null,
-            settledByDepositsOn: [],
-            settlesPaydaysOn: [],
-            perPayday: null,
-            towardNoPayday: false,
-            settledCents: 0,
-            unsettledReason: null,
-            confidence: null,
-            isStale: false,
-            neverBilled: false,
-            billedWith: null,
-            paidWith: { carrier: carrierWord(s.billedWith.name), postedOn: carrierPaid.postedOn },
-            hue: hues.get(s.id) ?? null,
-          });
+          pushPaidElsewhere(s, o, { carrier: carrierWord(s.billedWith.name), postedOn: carrierPaid.postedOn });
           continue;
         }
       }

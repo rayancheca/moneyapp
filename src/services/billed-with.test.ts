@@ -716,6 +716,81 @@ describe("settlement follows the carrier — paid once the rent's payment for th
     });
   });
 
+  /*
+   * 🔴 One Oct 1, two answers (review of 1a1b753): the utilities were paid by the rent's postings either side of the
+   * month's edge (`carrierPaymentsBySeries` reads the rent's tolerance past it), the rent's own Oct 1 only by postings
+   * inside October. On a linked copy of his ledger with a rent payment posted Sep 30, October drew the rent "upcoming"
+   * (Sep 30), "not yet known" (Oct 2) and a red ✕ "missed" (Oct 9, read through Oct 4) beside "Rent utilities & fees
+   * paid (paid with the rent's payment of Sep 30)" — while the rent's page and the runway owed nothing.
+   */
+  test("the rent paid Sep 30 pays its own Oct 1 and what it carries — one Oct 1, one answer, the arrears' answer", () => {
+    rentPaid("t-jul", "2026-07-08", -228570); // his third payment: the rent's schedule is measured (`scheduleIsProven`)
+    rentPaid("t-sep30", "2026-09-30");
+    link();
+    const oct1 = (today: string) =>
+      [onDay("2026-10", "2026-10-01", RENT, today), onDay("2026-10", "2026-10-01", UTIL, today)].map((e) => ({
+        state: e?.state,
+        paidWith: e?.paidWith,
+        settledCents: e?.settledCents,
+      }));
+    const paidBySep30 = [
+      // ⛔ settling $0.00 on October's grid: the payment is September's row, counted there, once
+      { state: "paid", paidWith: { carrier: null, postedOn: "2026-09-30" }, settledCents: 0 },
+      { state: "paid", paidWith: { carrier: "the rent", postedOn: "2026-09-30" }, settledCents: 0 },
+    ];
+    // the day it posted, the day after, and with the rent's account read past Oct 1 and its 3 days' grace
+    expect(oct1("2026-09-30")).toEqual(paidBySep30);
+    expect(oct1("2026-10-02")).toEqual(paidBySep30);
+    rentAccountImportedThrough("2026-10-07");
+    expect(oct1("2026-10-09")).toEqual(paidBySep30);
+    expect(recurringCalendar(bundle.db, "2026-10", "2026-10-09").missedCount).toBe(0);
+    // …which is what the arrears say of the same Oct 1: nothing owed
+    expect(arrearsThisMonth(bundle.db, new Set([RENT, UTIL]), "2026-10-09").series).toEqual([]);
+    expect(seriesDetail(bundle.db, RENT, "2026-10-09").overdue).toBeNull();
+    // September draws the payment itself, on the day it landed, with its money — and October draws no day of September's
+    expect(Object.keys(recurringCalendar(bundle.db, "2026-10", "2026-10-09").entriesByDay).sort()[0]).toBe("2026-10-01");
+    expect(onDay("2026-09", "2026-09-30", RENT, "2026-10-09")).toMatchObject({
+      transactionId: "t-sep30",
+      settledCents: -229121,
+      paidWith: null,
+    });
+  });
+
+  test("a bill paid across the month's other edge: Sep 30's gym is paid by its Oct 2 payment, on September's grid", () => {
+    bundle.db
+      .update(recurringSeries)
+      .set({ nextExpectedOn: "2026-09-30", accountId: "acct" })
+      .where(eq(recurringSeries.id, GYM))
+      .run();
+    bundle.db
+      .insert(transactions)
+      .values({
+        id: "t-gym",
+        accountId: "acct",
+        postedOn: "2026-10-02",
+        amountCents: -10000,
+        rawDescription: "GYM",
+        normalizedDescription: "GYM",
+        categoryId,
+        recurringSeriesId: GYM,
+        status: "active",
+        needsReview: false,
+        occurrenceIndex: 0,
+        dedupeHash: "h-gym",
+        createdAt: now(),
+        updatedAt: now(),
+      })
+      .run();
+    rentAccountImportedThrough("2026-10-07");
+    expect(onDay("2026-09", "2026-09-30", GYM)).toMatchObject({
+      state: "paid",
+      transactionId: null,
+      paidWith: { carrier: null, postedOn: "2026-10-02" },
+      settledCents: 0,
+    });
+    expect(onDay("2026-10", "2026-10-02", GYM)).toMatchObject({ transactionId: "t-gym", settledCents: -10000 });
+  });
+
   test("a rent with too few charges to grade: what is billed inside it waits with it, never missed alone", () => {
     link();
     rentAccountImportedThrough("2026-10-07");

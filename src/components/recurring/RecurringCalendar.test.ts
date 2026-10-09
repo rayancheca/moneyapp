@@ -480,4 +480,32 @@ describe("RecurringCalendar — a day paid inside another's payment", () => {
     // its money is the rent's row's: nothing of it is counted on Sep 1
     expect(sheet).toContain("$0.00 counted on this day");
   });
+
+  /*
+   * 🔴 The rent paid Sep 30 for Oct 1 (review of 1a1b753): October drew its Oct 1 "missed" beside the utilities "paid
+   * with the rent's payment of Sep 30". Its own payment, landed in September, names its day the same way — nothing on
+   * October's grid posted it. The entries are what the service returns (billed-with.test pins it).
+   */
+  test("a day paid by its own payment in another month names that day — beside what the payment carries", () => {
+    const oct1 = [
+      entry({
+        seriesId: "rent",
+        name: "Flamingo South Beach (rent)",
+        state: "paid",
+        amountCents: -210900,
+        settledCents: 0,
+        paidWith: { carrier: null, postedOn: "2026-09-30" },
+      }),
+      { ...util, paidWith: { carrier: "the rent", postedOn: "2026-09-30" } },
+    ];
+    const october = { ...month, monthKey: "2026-10", entriesByDay: { "2026-10-01": oct1 }, postedNetCents: 0 };
+    const html = decode(renderToStaticMarkup(createElement(RecurringCalendar, { initialMonth: october, today: "2026-10-09" })));
+    expect(html).toContain(
+      `aria-label="Oct 1, 2026 — 2 items: Flamingo South Beach (rent) paid (paid by its payment of Sep 30, 2026) -$2,109.00; ` +
+        `Rent utilities & fees paid (paid with the rent's payment of Sep 30, 2026) -$182.21"`,
+    );
+    expect(html).not.toContain("missed");
+    const sheet = decode(renderToStaticMarkup(createElement(DaySheetBody, { entries: oct1 })));
+    expect(sheet).toContain("paid — paid by its payment of Sep 30, 2026");
+  });
 });

@@ -72,7 +72,11 @@ export interface Payment {
  * The payment that pays a due day — the nearest within its own tolerance of it, the earlier of two as near — or
  * undefined. ⛔ The one test of "did a posting cover this occurrence" for every grader of a bill: the arrears
  * (`overdueForSeries`) and the calendar (a posting of its own, or its carrier's), so the two cannot grade one Oct 1
- * apart.
+ * apart — given the same postings: each grader reads its window widened by the tolerance either side.
+ *
+ * 🔴 The calendar read a bill's own postings inside the month alone (review of 1a1b753): with the rent paid Sep 30,
+ * October drew its Oct 1 "missed" beside the utilities "paid with the rent's payment of Sep 30", and the arrears owed
+ * neither.
  */
 export function paymentFor<P extends Payment>(payments: readonly P[], dueOn: string): P | undefined {
   let best: P | undefined;

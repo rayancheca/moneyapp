@@ -232,11 +232,15 @@ function settlesWord(e: CalendarEntry): string | null {
 /**
  * ⚖️ A DAY PAID INSIDE ANOTHER'S PAYMENT SAYS WHOSE (implied by §6A 59, 2026-10-08) — `settledByWord`'s reason:
  * nothing posted under its own name on Sep 1, and the word beside it is `paid`. Named, the reader can go to Sep 2 and
- * find the rent's $2,291.21 that carries its $182.21.
+ * find the rent's $2,291.21 that carries its $182.21. A day paid by its own payment in another month — the rent paid
+ * Sep 30 for Oct 1 — names that day the same way: nothing on October's grid posted it.
  */
 function paidWithWord(e: CalendarEntry): string | null {
   if (e.paidWith === null) return null;
-  return `paid with ${e.paidWith.carrier}'s payment of ${longDate(e.paidWith.postedOn)}`;
+  const day = longDate(e.paidWith.postedOn);
+  return e.paidWith.carrier === null
+    ? `paid by its payment of ${day}`
+    : `paid with ${e.paidWith.carrier}'s payment of ${day}`;
 }
 
 /**
