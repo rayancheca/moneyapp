@@ -11,6 +11,7 @@ import { recurringSeries } from "@/db/schema/recurring";
 import { transactions } from "@/db/schema/transactions";
 import { seedDatabase } from "@/db/seed";
 import { addDays } from "@/lib/dates";
+import { arrearsThisMonth } from "@/services/arrears";
 import {
   LABEL_PREFIX,
   PAYMENTS,
@@ -179,6 +180,34 @@ describe("the plan", () => {
     expect(after.figures.line?.billedWithLabel).toBe(LABEL_PREFIX);
     expect([before.figures.utilitiesEvidence, after.figures.utilitiesEvidence]).toEqual(["never-billed", "active"]);
     expect(after.figures.money).toBe(before.figures.money);
+  });
+
+  /*
+   * ⚖️ What is billed inside the rent is READ where the rent is (settlement follows the carrier, implied by §6A 59,
+   * 2026-10-08): once Wells Fargo is imported past Oct 1 and its grace with no rent posted, the rent's Oct 1 reads "not
+   * posted" and — linked — so does its utilities', where alone it read "no import has covered it yet". That is the
+   * reading the link exists to fix, not money. 🔴 Hashed with the money, it refused the write in exactly that state (a
+   * copy of his ledger read through Oct 7, 2026-10-09: "the money moved").
+   */
+  test("rehearsed with Wells Fargo read past Oct 1 and the rent unpaid: its Oct 1 reads as the rent's — no money moves", () => {
+    addRow("wf-read-oct-7", "2026-10-07", -450, null); // an import of Wells Fargo has reached Oct 7: a row of no series
+    const reading = () =>
+      arrearsThisMonth(bundle.db, new Set([RENT.id, UTILITIES.id]), TODAY).series.map((s) => [
+        s.id,
+        s.amountCents,
+        s.unreadCents,
+      ]);
+    expect(reading()).toEqual([
+      [RENT.id, 210_900, 0],
+      [UTILITIES.id, 18_221, 18_221],
+    ]);
+    const { before, after, failures } = rehearse(bundle, TODAY);
+    expect(failures).toEqual([]);
+    expect(after.figures.money).toBe(before.figures.money);
+    expect(reading()).toEqual([
+      [RENT.id, 210_900, 0],
+      [UTILITIES.id, 18_221, 0],
+    ]);
   });
 
   test("written: its row is billed with the rent; every other series is billed with nothing", () => {

@@ -25,7 +25,8 @@
  * identical; the utilities read exactly the rent's evidence, and "billed with the rent, last seen Sep 2" on the
  * Subscriptions card; the card's never-billed figure falls by exactly its $182.21 and its headline holds; and his
  * amount, the forecast (every line, every total, the next 400 days of occurrences), the arrears and the committed
- * book's money are identical to the cent.
+ * book's money are identical to the cent. Their READING may move — its Oct 1 is read on the rent's accounts once
+ * linked, so "no import has covered it yet" becomes "not posted" where the rent's already is (`figuresOf`).
  */
 import { eq, inArray } from "drizzle-orm";
 import type { DbBundle } from "@/db/client";
@@ -251,6 +252,7 @@ function figuresOf(bundle: DbBundle, today: string): Figures {
   const forecast = forecastCurrentMonth(bundle.db, today);
   const live = new Set(listed.filter((s) => s.status === "detected" || s.status === "confirmed").map((s) => s.id));
   const book = committedBook(bundle.db, today);
+  const arrears = arrearsThisMonth(bundle.db, live, today);
   return {
     neverBilledCents: card?.neverBilledMonthlyCents ?? null,
     liveMonthlyCents: card?.liveMonthlyCents ?? null,
@@ -260,11 +262,21 @@ function figuresOf(bundle: DbBundle, today: string): Figures {
         : { neverBilled: line.neverBilled, billedWithLabel: line.billedWithLabel, monthlyCents: line.monthlyCents },
     utilitiesEvidence: listed.find((s) => s.id === UTILITIES.id)?.evidence ?? null,
     rentEvidence: listed.find((s) => s.id === RENT.id)?.evidence ?? null,
+    /*
+     * ⚖️ Money, not its reading: what is billed inside the rent is read on the rent's accounts (implied by §6A 59,
+     * 2026-10-08), so once those are imported past a 1st the rent has not paid, its arrears' unread part and its
+     * forecast line's clause ("no import has covered it yet" → "has not posted") follow the rent's — the reading the
+     * link exists to fix. 🔴 Hashed here, they refused the write in exactly that state (a copy of his ledger read
+     * through Oct 7, 2026-10-09). Every cent, every line, every occurrence and every arrears day is still held.
+     */
     money: sha256Json({
-      lines: forecast.components.map((c) => [c.label, c.kind, c.cents, c.detail]),
+      lines: forecast.components.map((c) => [c.label, c.kind, c.cents]),
       totals: [forecast.projectedSpendCents, forecast.projectedIncomeCents],
       occurrences: upcomingOccurrences(bundle.db, today, 400).map((o) => [o.seriesId, o.date, o.amountCents]),
-      arrears: arrearsThisMonth(bundle.db, live, today),
+      arrears: [
+        arrears.totalCents,
+        arrears.series.map((s) => [s.id, s.nextDate, s.amountCents, s.occurrenceCount, s.occurrenceCents]),
+      ],
       committed: [
         book.totalCents,
         book.overdueCents,

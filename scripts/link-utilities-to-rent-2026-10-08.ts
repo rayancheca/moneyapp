@@ -19,7 +19,13 @@
  * balance, the status counts and every other series are compared before and after, on the rehearsal copy and on the
  * ledger; the utilities must read the rent's evidence ("billed with the rent, last seen Sep 2"), the Subscriptions
  * card's never-billed figure must fall by exactly $182.21, and the forecast, its occurrences, the arrears and the
- * committed book's money must not move by a cent. Any state but the measured one or the written one is refused.
+ * committed book's money must not move by a cent (their reading may: linked, its Oct 1 is read on the rent's
+ * accounts). Any state but the measured one or the written one is refused.
+ *
+ * Re-run on a copy of his ledger 2026-10-09 with the settlement that follows the carrier: APPLIED, never billed
+ * $405.16 → $222.95 (today's figures); Sep 1 then reads "paid with the rent's payment of Sep 2". With Wells Fargo,
+ * Venture X and Chase Checking imported through Oct 7 and no rent posted, the rent's Oct 1 reads "never posted" and
+ * — linked — so does its utilities'; the money guard no longer mistakes that reading for money.
  *
  * ## Rehearsed on copies of his ledger (moneyapp-copy-2026-10-08.db, migrations through 0024), 2026-10-08
  *
