@@ -164,6 +164,20 @@ test("the spend row carries its arithmetic under it", () => {
       })
       .run();
   }
+  // his weekly pay, so the earn row beside it reads as his did: "What you earn a month $4,948.32"
+  bundle.db
+    .insert(recurringSeries)
+    .values({
+      name: "It America LLC (weekly pay)",
+      kind: "income",
+      cadence: "weekly",
+      status: "confirmed",
+      intervalDaysAvg: 7,
+      toleranceDays: 2,
+      nextExpectedOn: "2026-09-17",
+      nextExpectedAmountCents: 114192,
+    })
+    .run();
 
   const card = runwayCard(bundle.db, TODAY);
   expect(card.runway.assumptions.find((a) => a.id === "spend")!.cents).toBe(120000 - 4550);
@@ -173,8 +187,15 @@ test("the spend row carries its arithmetic under it", () => {
     "$1,154.50",
     "$1,200.00 spent − $45.50 back, over 1 month",
   ]);
-  // the caption is the spend row's alone
-  expect(rowDescriptions(markup, "Cash you can spend today")).toEqual(["$3,007.60"]);
+  /*
+   * …and the spend row's alone. 🔴 This guard read "Cash you can spend today", a cash row rendered with no caption prop
+   * at all, so it could not fail: with the card passing `spendArithmetic` to BOTH flow rows, measured on bcfab98, the
+   * dashboard's and the runway services' tests stayed green (12 files, 161 tests) while his card would have printed
+   * "$56,444.55 spent − $888.62 back − $6,100.00 up front, over 6 months" under "What you earn a month $4,948.32". The
+   * row that shares the caption prop is the earn row; the sentence is on the card once.
+   */
+  expect(rowDescriptions(markup, "What you earn a month")).toEqual(["$4,948.32"]);
+  expect(markup.split("$1,200.00 spent − $45.50 back, over 1 month")).toHaveLength(2);
 });
 
 /** The text of every `<dd>` in the row whose link reads `label`, in order. */
