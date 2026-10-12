@@ -17,6 +17,7 @@ import { institutions } from "@/db/schema/institutions";
 import { transactions } from "@/db/schema/transactions";
 import { transactionSplits } from "@/db/schema/transaction-splits";
 import { provenanceTriggerName, type PresentedVerdict } from "@/lib/provenance-verdict";
+import { balanceLessNotes } from "@/lib/statement-evidence-notes";
 import { addManualAnchor } from "./anchors";
 import { createCashWallet } from "./cash-wallets";
 import { addManualTransaction } from "./manual-transactions";
@@ -449,6 +450,99 @@ describe("provenanceFor — a statement period", () => {
     expect(p.verdict).toBe("unverified");
     expect(p.headline).toMatch(/carries no balances/i);
     expect(p.checkedThrough).toBeNull();
+  });
+});
+
+/* ── an account's opening statement ───────────────────────────────────── */
+
+/**
+ * An account's OPENING statement is a statement (`countsAsStatement`): Robinhood printed `N/A` for its opening, so it
+ * parses into a balance-less period exactly as a report does — but the file recorded its closing, and /imports'
+ * footer names it "an account's first and printed no opening balance".
+ *
+ * 🔴 Measured on a copy of his ledger 2026-10-12: Robinhood Agentic's +$26.64 on Jun 5, 2026 — the one row on the
+ * ledger from `747059b1-3904-3242-af2e-de66f2c94f5e.pdf` — opened a sheet whose headline read "…which recorded
+ * Robinhood Agentic's balance on Jun 30, 2026 — but …" over a period line reading "2026-06-01 → 2026-06-30 |
+ * coverage declared, but this file carries no balances to check against". The same PDF holds a reconciled Robinhood
+ * Cash period. The period line read the state alone; the footer reads the schedule's rule.
+ */
+describe("provenanceFor — an account's opening statement", () => {
+  const OPENING_LINE =
+    "the account's first statement — it printed no opening balance, so nothing in it could have failed";
+  const REPORT_LINE = "coverage declared, but this file carries no balances to check against";
+
+  /** His ledger's shape: one Robinhood PDF, Robinhood Cash's June reconciled, Agentic's first printed `N/A`. */
+  function agenticJune(): { agentic: string; file: string; period: string; txn: string } {
+    const agentic = addAccount("ag", "Robinhood Agentic", "checking");
+    const cash = addAccount("rc", "Robinhood Cash", "checking");
+    const file = addFile("f1", "747059b1-3904-3242-af2e-de66f2c94f5e.pdf", "robinhood-brokerage-statement-pdf");
+    addPeriod("p-cash", cash, file, "2026-06-01", "2026-06-30", "reconciled");
+    const period = addPeriod("p-ag", agentic, file, "2026-06-01", "2026-06-30", "not_applicable", {
+      beginning: null,
+      ending: null,
+    });
+    addAnchor(agentic, "2026-06-30", "ofx_ledger", file);
+    addDays(agentic, [
+      { day: "2026-06-04", basis: "derived_unverified", cents: 0 },
+      { day: "2026-06-05", basis: "derived_unverified", cents: 2664 },
+      { day: "2026-06-30", basis: "anchored", cents: 2664 },
+    ]);
+    const txn = addTxn(agentic, "2026-06-05", { importFileId: file, cents: 2664 });
+    return { agentic, file, period, txn };
+  }
+
+  const periodLine = (p: { sources: { kind: string; detail?: string }[] }) =>
+    p.sources.filter((s) => s.kind === "period").map((s) => s.detail);
+
+  test("🔴 a row's sheet names its period the account's first statement — not a file that carries no balances", () => {
+    const { txn } = agenticJune();
+
+    const p = provenanceFor(bundle.db, { kind: "transaction", id: txn })!;
+    expect(p.headline).toContain("which recorded Robinhood Agentic's balance on Jun 30, 2026");
+    expect(periodLine(p)).toEqual([OPENING_LINE]);
+  });
+
+  test("…and so does the account's balance on a day the statement covers", () => {
+    const { agentic } = agenticJune();
+
+    const p = provenanceFor(bundle.db, { kind: "accountBalance", accountId: agentic, day: "2026-06-05" })!;
+    expect(periodLine(p)).toEqual([OPENING_LINE]);
+  });
+
+  test("…and the period's own sheet (latent: /imports opens one only for a period that printed balances)", () => {
+    const { period } = agenticJune();
+
+    const p = provenanceFor(bundle.db, { kind: "statementPeriod", id: period })!;
+    expect(p.verdict).toBe("unverified");
+    expect(p.headline).toBe(
+      "This is Robinhood Agentic's first statement — it printed no opening balance, so nothing in it could have " +
+        "failed.",
+    );
+    expect(p.headline).not.toMatch(/carries no balances/);
+  });
+
+  test("the footer on /imports and the sheet make the same claims of it", () => {
+    const [footer] = balanceLessNotes({ reportDocuments: 0, openingStatements: 1 });
+    for (const claim of ["first", "printed no opening balance", "nothing in it could have failed"]) {
+      expect(footer).toContain(claim);
+      expect(OPENING_LINE).toContain(claim);
+    }
+  });
+
+  test("a spending report's period still carries no balances — the line reads the file's kind, not the state", () => {
+    const id = addAccount("s", "Chase Sapphire", "credit");
+    const file = addFile("f2", "Spending Report PDF (1).pdf", "chase-spending-report-pdf");
+    const period = addPeriod("p-sr", id, file, "2026-01-01", "2026-07-10", "not_applicable", {
+      beginning: null,
+      ending: null,
+    });
+    addDays(id, [{ day: "2026-03-02", basis: "derived_unverified" }]);
+    const txn = addTxn(id, "2026-03-02", { importFileId: file });
+
+    const day = provenanceFor(bundle.db, { kind: "accountBalance", accountId: id, day: "2026-03-02" })!;
+    expect(periodLine(provenanceFor(bundle.db, { kind: "transaction", id: txn })!)).toEqual([REPORT_LINE]);
+    expect(periodLine(day)).toEqual([REPORT_LINE]);
+    expect(provenanceFor(bundle.db, { kind: "statementPeriod", id: period })!.headline).toMatch(/carries no balances/);
   });
 });
 

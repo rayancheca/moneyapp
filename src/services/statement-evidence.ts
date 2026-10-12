@@ -2,7 +2,7 @@ import { desc, eq } from "drizzle-orm";
 import type { AppDatabase } from "@/db/client";
 import { accounts } from "@/db/schema/accounts";
 import { importFiles, statementPeriods, type ReconciliationState } from "@/db/schema/imports";
-import { carriesBalances, countsAsStatement } from "./statements-by-account";
+import { carriesBalances, isOpeningStatement } from "./statements-by-account";
 
 /** One `statement_periods` row as /imports lists it. */
 export interface ImportsPeriod {
@@ -67,7 +67,8 @@ export function statementEvidence(db: AppDatabase): StatementEvidence {
 
   const evidence = periods.filter((p) => carriesBalances(p.reconciliation));
   const balanceLess = periods.filter((p) => !carriesBalances(p.reconciliation));
-  const openingStatements = balanceLess.filter((p) => countsAsStatement(p)).length;
-  const reportDocuments = new Set(balanceLess.filter((p) => !countsAsStatement(p)).map((p) => p.importFileId)).size;
+  // one reading with the transaction and balance sheets' period line (`isOpeningStatement`)
+  const openingStatements = balanceLess.filter((p) => isOpeningStatement(p)).length;
+  const reportDocuments = new Set(balanceLess.filter((p) => !isOpeningStatement(p)).map((p) => p.importFileId)).size;
   return { periods, evidence, reportDocuments, openingStatements };
 }

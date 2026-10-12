@@ -52,6 +52,7 @@ import { billedWithEvidence } from "@/lib/billed-with";
 import { billingCarriers } from "./billing-carriers";
 import { postedAveragesBySeries } from "./posted-average";
 import { MIN_OCCURRENCES } from "./recurring";
+import { isOpeningStatement, type PeriodKind } from "./statements-by-account";
 
 /**
  * "Prove it" — given a figure the app has rendered, what is it standing on?
@@ -487,6 +488,25 @@ const PERIOD_VERDICT_TEXT: Record<string, string> = {
   not_applicable: "coverage declared, but this file carries no balances to check against",
 };
 
+/** Why an account's opening statement proves nothing — /imports' footer says it of one (`balanceLessNotes`). */
+const OPENING_STATEMENT_WHY = "it printed no opening balance, so nothing in it could have failed";
+
+/**
+ * What a statement period concluded, as its line on a sheet reads.
+ *
+ * 🔴 `not_applicable` was read as "this file carries no balances" whatever the file was. Robinhood Agentic's Jun 2026
+ * opening statement is that state too — `N/A` printed for its opening — yet it is a statement (`countsAsStatement`)
+ * and its file recorded Agentic's closing. Measured on a copy of his ledger 2026-10-12: the sheet of Agentic's
+ * +$26.64 on Jun 5 read "…which recorded Robinhood Agentic's balance on Jun 30, 2026 — but …" over "2026-06-01 →
+ * 2026-06-30 | coverage declared, but this file carries no balances to check against", while /imports' footer counted
+ * it "an account's first". Every day of Agentic's June and Robinhood Cash's Dec 2023 read the same on its balance
+ * sheet (latent there: /accounts asks for the newest day). It now reads the file's kind (`isOpeningStatement`).
+ */
+function periodDetail(p: PeriodKind): string {
+  if (isOpeningStatement(p)) return `the account's first statement — ${OPENING_STATEMENT_WHY}`;
+  return PERIOD_VERDICT_TEXT[p.reconciliation] ?? p.reconciliation;
+}
+
 /* ── transaction ──────────────────────────────────────────────────────── */
 
 function transactionProvenance(db: AppDatabase, id: string): Provenance | null {
@@ -537,7 +557,7 @@ function transactionProvenance(db: AppDatabase, id: string): Provenance | null {
       on: file.importedAt.slice(0, 10),
     });
   }
-  if (period) sources.push(periodSource(period));
+  if (period) sources.push(periodSource({ ...period, parserProfile: file?.parserProfile ?? null }));
 
   /**
    * ⛔ A row is NOT proven merely because a file carried it, and treating it
@@ -849,11 +869,18 @@ function anchorOnOrBefore(db: AppDatabase, accountId: string, day: string): DayA
   };
 }
 
-/** Every statement period of an account that covers a day, oldest-closing first. */
+/** Every statement period of an account that covers a day, oldest-closing first, with the parser that read its file. */
 function periodsCovering(db: AppDatabase, accountId: string, day: string) {
   return db
-    .select()
+    .select({
+      periodStart: statementPeriods.periodStart,
+      periodEnd: statementPeriods.periodEnd,
+      reconciliation: statementPeriods.reconciliation,
+      parserProfile: importFiles.parserProfile,
+    })
     .from(statementPeriods)
+    // a left join, as `statementsByAccount`'s: a period is never dropped for want of its file row
+    .leftJoin(importFiles, eq(importFiles.id, statementPeriods.importFileId))
     .where(
       and(
         eq(statementPeriods.accountId, accountId),
@@ -865,11 +892,11 @@ function periodsCovering(db: AppDatabase, accountId: string, day: string) {
     .all();
 }
 
-function periodSource(p: { periodStart: string; periodEnd: string; reconciliation: string }): ProvenanceSource {
+function periodSource(p: PeriodKind & { periodStart: string; periodEnd: string }): ProvenanceSource {
   return {
     kind: "period",
     label: `${p.periodStart} → ${p.periodEnd}`,
-    detail: PERIOD_VERDICT_TEXT[p.reconciliation] ?? p.reconciliation,
+    detail: periodDetail(p),
   };
 }
 
@@ -1164,12 +1191,20 @@ function statementPeriodProvenance(db: AppDatabase, id: string): Provenance | nu
         ? "market_value"
         : "unverified";
 
+  // ⛔ an opening statement is no file without balances — the period line's rule (`periodDetail`); latent here, as
+  // /imports opens this sheet only for a period that printed balances (`statementEvidence`)
+  const opening = isOpeningStatement({
+    reconciliation: period.reconciliation,
+    parserProfile: file?.parserProfile ?? null,
+  });
   const headline =
     period.reconciliation === "reconciled"
       ? `The opening balance plus every row in this period equals the closing balance, to the cent. ${grouped(rows.length)} ${rows.length === 1 ? "row was" : "rows were"} checked.`
       : period.reconciliation === "value_anchor"
         ? `This is an investment statement: it records what ${account?.name ?? "the account"} was worth, and any difference is absorbed as market movement. There is no arithmetic here that could fail.`
-        : `This file declares which days it covers but carries no balances, so nothing in it can be checked against a total.`;
+        : opening
+          ? `This is ${account?.name ?? "the account"}'s first statement — ${OPENING_STATEMENT_WHY}.`
+          : `This file declares which days it covers but carries no balances, so nothing in it can be checked against a total.`;
 
   const sources: ProvenanceSource[] = [];
   if (file) {

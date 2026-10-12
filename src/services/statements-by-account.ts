@@ -75,6 +75,21 @@ export function carriesBalances(reconciliation: ReconciliationState): boolean {
   return reconciliation !== "not_applicable";
 }
 
+/**
+ * A statement that printed no balances to check — an account's OPENING statement (`countsAsStatement`, above): every
+ * reader that says what a balance-less period IS asks this, never the state alone, so a page cannot call one a file
+ * that "carries no balances" while the schedule counts it.
+ *
+ * 🔴 Two readers of one fact. /imports' footer named Robinhood Agentic's Jun 2026 opening statement "an account's
+ * first" (`statementEvidence`), while the sheet of the one row on his ledger from its file still read "coverage
+ * declared, but this file carries no balances to check against" — off `reconciliation` alone, under a headline
+ * saying the file recorded Agentic's balance on Jun 30 (measured on a copy of his ledger 2026-10-12, provenance.ts
+ * `periodDetail`).
+ */
+export function isOpeningStatement(period: PeriodKind): boolean {
+  return !carriesBalances(period.reconciliation) && countsAsStatement(period);
+}
+
 /** Every account's statements (`countsAsStatement`), oldest first — the rows both statement panels read. */
 export function statementsByAccount(db: AppDatabase): Map<string, StatementPeriodRef[]> {
   const rows = db

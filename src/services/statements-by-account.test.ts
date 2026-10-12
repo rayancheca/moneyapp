@@ -1,7 +1,12 @@
 import { describe, expect, test } from "vitest";
 import { RECONCILIATION_STATES } from "@/db/schema/imports";
 import { PROFILES } from "@/services/import/profiles";
-import { OPENING_STATEMENT_PROFILES, carriesBalances, countsAsStatement } from "./statements-by-account";
+import {
+  OPENING_STATEMENT_PROFILES,
+  carriesBalances,
+  countsAsStatement,
+  isOpeningStatement,
+} from "./statements-by-account";
 
 /**
  * Which `statement_periods` rows are statements (the schedule and Missing statements) and which printed balances
@@ -37,5 +42,20 @@ describe("carriesBalances", () => {
     expect(carriesBalances("not_applicable")).toBe(false);
     expect(countsAsStatement({ reconciliation: "not_applicable", parserProfile: "robinhood-brokerage-statement-pdf" })).toBe(true);
     for (const state of RECONCILIATION_STATES.filter((s) => s !== "not_applicable")) expect(carriesBalances(state)).toBe(true);
+  });
+});
+
+describe("isOpeningStatement", () => {
+  test("a statement that printed no balances — never one that did, never a report", () => {
+    const opening = "robinhood-brokerage-statement-pdf";
+    const balanceLess = (parserProfile: string | null) =>
+      isOpeningStatement({ reconciliation: "not_applicable", parserProfile });
+    expect(balanceLess(opening)).toBe(true);
+    // a Robinhood statement that printed both balances is a statement, but no opening one
+    for (const reconciliation of RECONCILIATION_STATES.filter((s) => s !== "not_applicable")) {
+      expect(isOpeningStatement({ reconciliation, parserProfile: opening })).toBe(false);
+    }
+    expect(balanceLess("chase-spending-report-pdf")).toBe(false);
+    expect(balanceLess(null)).toBe(false);
   });
 });
