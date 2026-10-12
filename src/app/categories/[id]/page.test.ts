@@ -113,3 +113,20 @@ describe("the empty window and the trend ask the category's own day, through the
     expect(page).toMatch(/categoryEmptyCopy\([^;]*reachCtx,?\s*\}\)/);
   });
 });
+
+/*
+ * 🔴 THE BUDGET CARD WAS THE SECOND READER OF THE SAME UNIMPORTED OCTOBER, AND DID NOT MOVE WITH THE HEADLINE. On his
+ * ledger copy 2026-10-12 `/categories/<Housing>` read "— October 2026 has not been imported yet" over a card grading
+ * Oct 1 – 31 "$0.00 of $2,291.21 · $2,291.21 left" in green, while /budgets withheld the same row ("Awaiting
+ * statements"). ⛔ The card reads the row's verdict (`categoryBudgetRef` → `budgetVerdict`) through its component, and
+ * the page chooses no colour of its own from `alert`.
+ */
+describe("the budget card is drawn from its /budgets row's reading", () => {
+  const page = fs.readFileSync(path.join(process.cwd(), "src/app/categories/[id]/page.tsx"), "utf8");
+
+  test("the page hands the ref to CategoryBudgetCard and grades nothing itself", () => {
+    expect(page).toMatch(/<CategoryBudgetCard budget=\{budget\}/);
+    expect(page).not.toMatch(/budget\.alert ===/);
+    expect(page).not.toContain("text-positive");
+  });
+});

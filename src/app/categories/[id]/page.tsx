@@ -4,8 +4,7 @@ import { notFound } from "next/navigation";
 import { getDb } from "@/db/client";
 import { categories } from "@/db/schema/categories";
 import { compareDates, todayIso } from "@/lib/dates";
-import { formatDayLong, formatDayShort } from "@/lib/format-date";
-import { formatCents } from "@/lib/money";
+import { formatDayLong } from "@/lib/format-date";
 import { parsePeriodParams, resolvePeriod, withPeriod } from "@/lib/period";
 import { ledgerOpens } from "@/services/observation-frontier";
 import { categorySpending } from "@/services/analytics";
@@ -25,6 +24,7 @@ import { categoryInsights } from "@/services/spending-insights";
 import { categoryEmptyCopy, ledgerFirstDay, topMerchants } from "@/services/spending";
 import { loadSpendingCategoryTxns } from "@/app/spending/actions";
 import { CategoryChip } from "@/components/ui/CategoryChip";
+import { CategoryBudgetCard } from "@/components/categories/CategoryBudgetCard";
 import { CategoryHeadline } from "@/components/categories/CategoryHeadline";
 import { CategoryMoveMenu } from "@/components/categories/CategoryMoveMenu";
 import { CategoryNameHeading } from "@/components/categories/CategoryNameHeading";
@@ -257,47 +257,8 @@ export default async function CategoryPage({
           <MonthlyTrendBars points={trend} flowLabel={flowLabel} />
         </SurfaceCard>
 
-        {budget && (
-          <SurfaceCard>
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <div>
-                <h2 className="text-sm font-medium">Budget</h2>
-                <p className="text-xs text-ink-faint">
-                  {/* 🔴 The window, because this page has a PERIOD SELECTOR and
-                      the budget is always graded at today. Unnamed, the card
-                      answered "how much of Housing went out?" with $0.00 on a
-                      screen whose headline answered it with $2,653.58. Same
-                      words as /budgets' own detail card. */}
-                  {budget.period} budget · grading {formatDayShort(budget.bounds.start)} –{" "}
-                  {formatDayShort(budget.bounds.end)}
-                  {/* the "left" figure beside this is measured from AVAILABLE, so a
-                      carry has to be named here or the two cannot be reconciled */}
-                  {budget.rolloverCents > 0 &&
-                    ` · ${formatCents(budget.amountCents)} plan + ${formatCents(budget.rolloverCents)} rolled over`}
-                </p>
-              </div>
-              <div className="flex items-center gap-4 text-sm">
-                <span>
-                  <Money cents={budget.spentCents} /> of <Money cents={budget.availableCents} />
-                </span>
-                <span
-                  className={
-                    budget.alert === "over"
-                      ? "text-negative"
-                      : budget.alert === "warn80"
-                        ? "text-warning"
-                        : "text-positive"
-                  }
-                >
-                  {budget.remainingCents >= 0
-                    ? `${formatCents(budget.remainingCents)} left`
-                    : `${formatCents(-budget.remainingCents)} over`}
-                </span>
-                <Link href={budget.href} className="text-accent hover:underline">Budgets →</Link>
-              </div>
-            </div>
-          </SurfaceCard>
-        )}
+        {/* ⛔ graded the way its /budgets row grades it — withheld over a window nobody has imported (`CategoryBudgetCard`) */}
+        {budget && <CategoryBudgetCard budget={budget} />}
 
         {/* `*:min-w-0` is load-bearing, not cosmetic. A grid track defaults to
             minmax(auto, 1fr) and `auto` as a MINIMUM resolves to min-content, so a

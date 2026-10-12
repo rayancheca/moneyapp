@@ -3,6 +3,8 @@ import { seriesDrawsAsRecurring, seriesRowLabel, type SeriesEvidence } from "@/l
 import type { AppDatabase } from "@/db/client";
 import { categories, type CategoryKind } from "@/db/schema/categories";
 import type { ArrearsReading } from "@/lib/arrears-reading";
+import { budgetCoverageSentence } from "@/lib/budget-coverage";
+import { budgetVerdict, type BudgetVerdict } from "@/lib/budget-verdict";
 import { periodBounds } from "@/lib/dates";
 import { unreachedKind, type UnreachedKind } from "@/lib/empty-period";
 import { withOwnRow } from "@/lib/subcategory-rows";
@@ -16,7 +18,7 @@ import {
   recurringSeriesIdsForCategory,
   type DateRange,
 } from "./analytics";
-import { budgetStatuses, categoryReachFor, type CategoryReachContext } from "./budgets";
+import { budgetPaceStatusOf, budgetStatuses, categoryReachFor, type CategoryReachContext } from "./budgets";
 import { arrearsThisMonth } from "./arrears";
 import { listSeries } from "./recurring";
 
@@ -416,6 +418,16 @@ export interface CategoryBudgetRef {
    */
   bounds: { start: string; end: string };
   alert: "none" | "warn80" | "over";
+  /**
+   * The row's reading on /budgets, word for word (`budgetVerdict` over the row's own `budgetPaceStatusOf`).
+   *
+   * 🔴 The card printed `alert` alone, which never asks how much of the window was imported: on his ledger copy
+   * 2026-10-12 `/categories/<Housing>` read "— October 2026 has not been imported yet" over "$0.00 of $2,291.21 ·
+   * $2,291.21 left" in green for the same Oct 1 – 31, while /budgets withheld that row ("Awaiting statements").
+   */
+  verdict: BudgetVerdict;
+  /** the row's own coverage sentence (`budgetCoverageSentence`) while its verdict is withheld; null otherwise */
+  coverageSentence: string | null;
   href: string;
 }
 
@@ -423,6 +435,9 @@ export interface CategoryBudgetRef {
 export function categoryBudgetRef(db: AppDatabase, categoryId: string, refDate: string): CategoryBudgetRef | null {
   const status = budgetStatuses(db, refDate).find((s) => s.budget.categoryId === categoryId);
   if (!status) return null;
+  // ⛔ the row /budgets draws, built by the code that draws it — one row's projection and coverage, not all of them
+  const pace = budgetPaceStatusOf(db, status, refDate);
+  const verdict = budgetVerdict(pace);
   return {
     amountCents: status.budget.amountCents,
     rolloverCents: status.rolloverCents,
@@ -432,6 +447,8 @@ export function categoryBudgetRef(db: AppDatabase, categoryId: string, refDate: 
     period: status.budget.period,
     bounds: { start: status.bounds.start, end: status.bounds.end },
     alert: status.alert,
+    verdict,
+    coverageSentence: verdict.withheld ? budgetCoverageSentence(pace) : null,
     href: "/budgets",
   };
 }
