@@ -709,7 +709,7 @@ describe("the agent's cost SERIES is not his bill either", () => {
    * §6A 27's income series, mirrored: every reader that projects, sums, ranks or lists a spending series as HIS read
    * every live series. Detected on the agent's cash, its Gold fee was a Fees bill of his on the forecast (October's
    * came due and "has not posted"), /budgets' overdue and tail, Predict budgets, the runway's committed bills, the
-   * Upcoming lists and the dashboard's "before your next paycheck".
+   * Upcoming lists and the dashboard's "due by your next paycheck".
    */
   test("⛔ a series detected on the agent's cash moves no figure that projects his bills", () => {
     hisCar();

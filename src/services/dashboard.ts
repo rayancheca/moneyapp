@@ -27,7 +27,7 @@ import { cashFlowByPeriod } from "./spending";
  */
 
 const UPCOMING_WINDOW_DAYS = 14;
-/** how far ahead to look for the next paycheck when summing bills due before it */
+/** how far ahead to look for the next paycheck when summing bills due by it */
 const PAYCHECK_HORIZON_DAYS = 45;
 const SPARKLINE_DAYS = 30;
 
@@ -68,8 +68,9 @@ export interface UpcomingBills {
   /** signed net of the window's occurrences */
   netCents: number;
   /**
-   * Spending owed before the next projected paycheck, present only when an
-   * income series exists to define "next paycheck" (§7.1 [RM-S]).
+   * Spending owed BY the next projected paycheck — due on or before its day — present only when an
+   * income series exists to define "next paycheck" (§7.1 [RM-S]). The strip says "due by", not
+   * "before": a bill due ON the payday is in it (measured on his ledger copy 2026-10-12: all $701.04 was).
    */
   beforePaycheck: { cents: number; date: string } | null;
 }
@@ -206,11 +207,11 @@ function upcomingBills(db: AppDatabase, today: string): UpcomingBills {
   }));
   const netCents = items.reduce((sum, i) => sum + i.amountCents, 0);
 
-  // "before your next paycheck": look further out to find the next income
+  // "due by your next paycheck": look further out to find the next income
   // occurrence, then sum the spending occurrences that fall on or before it.
   const horizon = upcomingOccurrences(db, today, PAYCHECK_HORIZON_DAYS).filter((o) => o.kind !== "transfer");
   // ⚖️ HIS paycheck: `upcomingOccurrences` holds no payday of the agent's cash (`isAgentsIncomeSeries`, owner
-  // decision 2026-09-28). 🔴 On a fixture, the agent's Oct 31 interest stood in for his Nov 5 pay, so "due before
+  // decision 2026-09-28). 🔴 On a fixture, the agent's Oct 31 interest stood in for his Nov 5 pay, so "due by
   // your next paycheck" stopped counting bills five days short
   const nextPaycheck = horizon.find((o) => o.kind === "income") ?? null;
   const beforePaycheck = nextPaycheck

@@ -169,7 +169,7 @@ describe("dashboardData: upcoming bills", () => {
     expect(upcoming.netCents).toBe(-1500_00 + 2000_00 - 15_99);
   });
 
-  test('"before your next paycheck" sums bills due on or before the next income date', () => {
+  test('"due by your next paycheck" sums bills due on or before the next income date', () => {
     seedSeries({ name: "Rent", kind: "bill", cadence: "monthly", nextExpectedOn: "2026-07-09", amountCents: -1500_00, lastMatchedOn: "2026-06-09", intervalDaysAvg: 30 });
     seedSeries({ name: "Payroll", kind: "income", cadence: "biweekly", nextExpectedOn: "2026-07-10", amountCents: 2000_00, lastMatchedOn: "2026-06-26", intervalDaysAvg: 14 });
     seedSeries({ name: "Netflix", kind: "subscription", cadence: "monthly", nextExpectedOn: "2026-07-20", amountCents: -15_99, lastMatchedOn: "2026-06-20", intervalDaysAvg: 30 });

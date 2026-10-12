@@ -312,13 +312,13 @@ export async function seedInvestments(db: AppDatabase, today: string): Promise<v
 
 /**
  * Deterministic recurring series for the §7 dashboard teasers (upcoming-bills
- * strip, "before your next paycheck", spending pace's fixed components) and a
+ * strip, "due by your next paycheck", spending pace's fixed components) and a
  * live /recurring/[id] drill target. Detection is NOT run in the seed (it would
  * tag fixture transactions and churn the transactions/spending baselines), so we
  * insert a small, fixed set of series with NO linked rows — every date is
  * relative to E2E_FAKE_TODAY (2026-07-08), so the strip, the paycheck line, and
  * the forecast are identical every run. Income precedes the paycheck-adjacent
- * bill so "$X due before your next paycheck" resolves to exactly Rent.
+ * bill so "$X due by your next paycheck" resolves to exactly Rent.
  */
 async function seedRecurring(db: AppDatabase): Promise<void> {
   const { recurringSeries } = await import("../src/db/schema/recurring");
@@ -784,7 +784,7 @@ export async function seedE2eDatabase(dbPath: string): Promise<SeedSummary> {
     await seedInvestments(db, E2E_FAKE_TODAY);
 
     // §7 Dashboard: a fixed set of recurring series so the upcoming-bills strip,
-    // the "before your next paycheck" line, and the pace forecast have content
+    // the "due by your next paycheck" line, and the pace forecast have content
     await seedRecurring(db);
 
     // §8 Budgets: pace bars in all three tones + one expected-recurring tail

@@ -7,8 +7,12 @@ import { formatCents } from "@/lib/money";
 /**
  * The upcoming-bills strip (ux-overhaul-plan §7.1): the next 14 days of projected
  * occurrences as a horizontal rail of chips, each linking to its series page.
- * When income series exist it leads with "$X due before your next paycheck"
+ * When income series exist it leads with "$X due by your next paycheck"
  * [RM-S]. Empty stays a live handoff to /recurring, never a dead-end.
+ *
+ * ⛔ "BY", NOT "BEFORE": `upcomingBills` sums the bills due ON OR BEFORE the payday. 🔴 The line said "before",
+ * and on his ledger copy 2026-10-12 read "$701.04 due before your next paycheck (Oct 15)" over the car lease
+ * $695.04 and Rocket Money $6.00 — both due Oct 15, the payday itself, so none of it was due before it.
  */
 export function UpcomingBillsStrip({ data }: { data: UpcomingBills }) {
   return (
@@ -22,7 +26,7 @@ export function UpcomingBillsStrip({ data }: { data: UpcomingBills }) {
             <span className="figures font-medium text-ink">
               {formatCents(-data.beforePaycheck.cents)}
             </span>{" "}
-            due before your next paycheck{" "}
+            due by your next paycheck{" "}
             <span className="text-ink-faint">({shortDate(data.beforePaycheck.date)})</span>
           </p>
         )}
