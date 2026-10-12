@@ -57,6 +57,9 @@ export const MIN_MOVED_CLOSES = 2;
  * sit three days apart on it (2025-11-13 → 12-10 → 2026-01-13). Two closes of a
  * single cycle can differ that much; wider than that, they are two late closes,
  * not a cycle. Discover's Capital One closes (Aug 9, Sep 8) sit one day apart.
+ *
+ * All of them, or all but ONE (`oneCycle`): a single close off the new cycle is
+ * a late close of it, exactly as a single close off the old one is not a move.
  */
 export const CYCLE_AGREEMENT_DAYS = 3;
 
@@ -250,8 +253,10 @@ function measuredCadence(ends: readonly string[]): StatementCadence {
   return dayOfMonthCadence(ends);
 }
 
+type DayOfMonthCadence = StatementCadence & { readonly rhythm: Extract<StatementRhythm, { kind: "day-of-month" }> };
+
 /** The median day of `ends` (at least two closes) and the wander around it. */
-function dayOfMonthCadence(ends: readonly string[]): StatementCadence {
+function dayOfMonthCadence(ends: readonly string[]): DayOfMonthCadence {
   const days = ends.map(dayOfMonth);
   const day = Math.round(median(days));
   const spread = trimmedMaxDeviation(days.map((d) => Math.abs(d - day)));
@@ -274,11 +279,12 @@ function dayOfMonthCadence(ends: readonly string[]): StatementCadence {
  * — a day the account no longer closes on — for half a year after the change.
  *
  * The rule: the newest closes are a new cycle when there are at least
- * MIN_MOVED_CLOSES of them, they sit within CYCLE_AGREEMENT_DAYS of each other,
- * and EVERY one of them sits off the older closes' day by more than the older
- * closes' own tolerance. The rhythm then follows them alone — their median day,
- * their spread plus PUBLISH_SLACK_DAYS — and `movedFrom` keeps what the older
- * closes said, so the phrase can state that two closes is thin evidence.
+ * MIN_MOVED_CLOSES of them, they sit within CYCLE_AGREEMENT_DAYS of each other —
+ * all of them, or all but one (`oneCycle`) — and EVERY one of them, that one
+ * included, sits off the older closes' day by more than the older closes' own
+ * tolerance. The rhythm then follows them alone — their median day, their
+ * spread plus PUBLISH_SLACK_DAYS — and `movedFrom` keeps what the older closes
+ * said, so the phrase can state that two closes is thin evidence.
  *
  * ⛔ "The newest closes" is every close since the move, not just the two newest.
  * A two-newest rule holds for one month: when the third close on the new cycle
@@ -286,6 +292,23 @@ function dayOfMonthCadence(ends: readonly string[]): StatementCadence {
  * trimmed, widens their tolerance past the move, and the rhythm snaps back to
  * the old day. So the longest run that qualifies wins, which also folds a
  * transitional first close into the new cycle's wander instead of dropping it.
+ *
+ * ⛔ The older closes are asked only which DAY they closed on, never how often.
+ * The window as a whole already answered that — this runs only when it reads
+ * as a day of the month — and a missing statement is a long gap that changes
+ * nothing about the day. 🔴 Measured on his ledger copy 2026-10-12: Discover's
+ * statements on the 18th are missing Sep and Nov 2024, and re-measured as a
+ * rhythm of their own, two 61-day gaps among five closes read as "about every
+ * 46 days" — so after January 2026's import no move was found, and the row read
+ * "closes around the 2nd, from 12 statements" at a 17-day tolerance, between
+ * December's and February's "the N before closed around the 18th".
+ *
+ * 🔴 And one close off the NEW cycle is a late close of it. Queued 2026-10-09:
+ * when every close since the move had to agree, one Capital One close four days
+ * off its cycle broke the run, and the panel went back to the cycle the card
+ * had left — "closes around the 2nd … next closes Jan 2" after Oct 9, Nov 9 and
+ * a Dec 13. The late close stays in the run, so it widens the new cycle's
+ * tolerance (the newest is never trimmed) rather than ending the cycle.
  *
  * ⚠️ What this cannot catch, stated: a single late close (one is never a move),
  * and a run that the older closes' tolerance already spans — closes that land
@@ -297,16 +320,36 @@ function dayOfMonthCadence(ends: readonly string[]): StatementCadence {
  */
 function movedCycle(ends: readonly string[]): StatementCadence | null {
   for (let moved = ends.length - MIN_CLOSES; moved >= MIN_MOVED_CLOSES; moved--) {
-    const before = measuredCadence(ends.slice(0, -moved));
-    if (before.rhythm.kind !== "day-of-month") continue;
+    const older = ends.slice(0, -moved);
+    // closes on the last day of every month are no DAY to have moved off — the
+    // case `statementCadence` leaves alone, left alone here as it always was
+    if (older.every(isMonthEnd)) continue;
+    const before = dayOfMonthCadence(older);
     const oldDay = before.rhythm.day;
     const run = ends.slice(-moved);
     const days = run.map(dayOfMonth);
-    if (Math.max(...days) - Math.min(...days) > CYCLE_AGREEMENT_DAYS) continue;
+    if (!oneCycle(days)) continue;
     if (days.some((d) => Math.abs(d - oldDay) <= before.toleranceDays)) continue;
     return { ...dayOfMonthCadence(run), movedFrom: { day: oldDay, closes: before.closes } };
   }
   return null;
+}
+
+/**
+ * Whether the days of the closes since a move are ONE cycle: within
+ * CYCLE_AGREEMENT_DAYS of each other, all of them or all but one.
+ *
+ * The one left out is an extreme of the sorted days — dropping a close from the
+ * middle leaves both ends, and so the spread, where they were. And at least
+ * MIN_MOVED_CLOSES must agree without it, so a run of two never has one: the
+ * 9th and the 13th are two late closes, not a cycle and a late close of it.
+ */
+function oneCycle(days: readonly number[]): boolean {
+  const sorted = [...days].sort((a, b) => a - b);
+  const last = sorted.length - 1;
+  const agree = (low: number, high: number) => sorted[high]! - sorted[low]! <= CYCLE_AGREEMENT_DAYS;
+  if (agree(0, last)) return true;
+  return last >= MIN_MOVED_CLOSES && (agree(1, last) || agree(0, last - 1));
 }
 
 function firstOfMonth(iso: string): string {

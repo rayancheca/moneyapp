@@ -594,6 +594,112 @@ describe("a cycle that moved", () => {
     expect(c.toleranceDays).toBe(3);
   });
 
+  /*
+   * 🔴 ONE CLOSE OFF THE NEW CYCLE. Queued 2026-10-09 (§6C discover-cycle): every close since a move had to sit
+   * within CYCLE_AGREEMENT_DAYS of the others, so a single Capital One close four days off its cycle broke the run,
+   * and the panel went back to the cycle the card had left — after Oct 9, Nov 9 and a Dec 13 it read "closes around
+   * the 2nd, from 12 statements" and "next closes Jan 2", a day the card no longer closes on, until enough closes
+   * agreed again. One close is never a move (the one-off test above); it is never a move BACK either.
+   */
+  test("one close four days off the new cycle is a late close — the row keeps the 9th", () => {
+    const closes = [...DISCOVER_REAL, "2026-10-09", "2026-11-09", "2026-12-13"];
+    const c = statementCadence(closes);
+    expect(c.rhythm).toEqual({ kind: "day-of-month", day: 9 });
+    expect(c.closes).toBe(5);
+    expect(c.movedFrom).toEqual({ day: 2, closes: 7 });
+    // the newest close is never trimmed: its four days of lateness hold the reminder back, for this one cycle
+    expect(c.toleranceDays).toBe(5);
+    expect(rhythmPhrase(c)).toBe(
+      "closes around the 9th, from its last 5 statements — the 7 before closed around the 2nd",
+    );
+    expect(pullSentence(statementPull(closes, "2026-12-20"))).toBe(
+      "last one closed Dec 13, 7 days ago · next closes Jan 9",
+    );
+    // the very next statement four days off, too: two closes that agree and one late one are still the 9th
+    const october = statementCadence([...DISCOVER_REAL, "2026-10-13"]);
+    expect(october.rhythm).toEqual({ kind: "day-of-month", day: 9 });
+    expect(october.movedFrom).toEqual({ day: 2, closes: 9 });
+  });
+
+  test("a late close inside the new cycle's run is held as its wander, not a reason to go back", () => {
+    // the 14th between the 8th and the 9th: once it is no longer the newest close it is still one outlier
+    const c = statementCadence([...DISCOVER_REAL, "2026-10-14", "2026-11-09"]);
+    expect(c.rhythm).toEqual({ kind: "day-of-month", day: 9 });
+    expect(c.closes).toBe(4);
+    expect(c.movedFrom).toEqual({ day: 2, closes: 8 });
+    // five days off the 9th, and below five observations nothing is trimmed: a later reminder, never an early one
+    expect(c.toleranceDays).toBe(6);
+  });
+
+  test("a transitional first close four days short of the new cycle folds into it as its one outlier", () => {
+    // the 5th is off the 2nd and four short of the 9th: the run is the four closes since the move, as above
+    const c = statementCadence([
+      ...TEN_ON_THE_SECOND.slice(0, 8), "2026-06-05", "2026-07-09", "2026-08-09", "2026-09-09",
+    ]);
+    expect(c.rhythm).toEqual({ kind: "day-of-month", day: 9 });
+    expect(c.closes).toBe(4);
+    expect(c.movedFrom).toEqual({ day: 2, closes: 8 });
+    expect(c.toleranceDays).toBe(5);
+  });
+
+  test("two closes off the new cycle are not one outlier — the run agrees but for ONE close", () => {
+    // the 9th and the 14th in turn: whichever is the cycle, the other day is two closes, not one late one
+    const c = statementCadence([...TEN_ON_THE_SECOND, "2026-08-09", "2026-09-14", "2026-10-09", "2026-11-14"]);
+    expect(c.rhythm).toEqual({ kind: "day-of-month", day: 2 });
+    expect(c.movedFrom).toBeUndefined();
+  });
+
+  /*
+   * 🔴 HOLES IN THE OLD CYCLE. Queued 2026-10-09 (§6C discover-cycle), measured on his ledger copy 2026-10-12: the
+   * closes before a move were re-measured as a rhythm of their own, gaps and all, and Discover's statements on the
+   * 18th are missing Sep and Nov 2024. Two 61-day gaps among five closes put their median gap at 46 days — "about
+   * every 46 days", not a day of the month — so after January 2026's import no move was found, and the row read
+   * "closes around the 2nd, from 12 statements" at a 17-day tolerance between December's "the 6 before closed
+   * around the 18th" and February's "the 4 before". The window as a whole is monthly; the older closes are asked
+   * only which DAY they closed on.
+   */
+  test("missing statements in the old cycle do not hide the move — Discover's real January 2026", () => {
+    const january = DISCOVER_REAL.slice(0, DISCOVER_REAL.indexOf("2026-01-02") + 1);
+    const c = statementCadence(january);
+    expect(c.rhythm).toEqual({ kind: "day-of-month", day: 2 });
+    expect(c.closes).toBe(7);
+    expect(c.toleranceDays).toBe(1);
+    expect(c.movedFrom).toEqual({ day: 18, closes: 5 });
+    expect(rhythmPhrase(c)).toBe(
+      "closes around the 2nd, from its last 7 statements — the 5 before closed around the 18th",
+    );
+  });
+
+  test("Discover's real history, import by import: the phrase never flips back and forth", () => {
+    const first = DISCOVER_REAL.indexOf("2025-05-02");
+    const said = DISCOVER_REAL.slice(first).map((close, i) => [
+      close,
+      rhythmPhrase(statementCadence(DISCOVER_REAL.slice(0, first + i + 1))),
+    ]);
+    const moved = (n: number, before: number, from: string, to = "2nd") =>
+      `closes around the ${to}, from ${n < MIN_CLOSES ? "only " : ""}its last ${n} statements — ` +
+      `the ${before} before closed around the ${from}`;
+    expect(said).toEqual([
+      // one close on the 2nd is a late close
+      ["2025-05-02", "closes around the 18th, from 12 statements"],
+      ["2025-06-02", moved(2, 10, "18th")],
+      ["2025-07-02", moved(3, 9, "18th")],
+      ["2025-10-02", moved(4, 8, "18th")],
+      ["2025-11-02", moved(5, 7, "18th")],
+      ["2025-12-02", moved(6, 6, "18th")],
+      ["2026-01-02", moved(7, 5, "18th")],
+      ["2026-02-02", moved(8, 4, "18th")],
+      ["2026-03-02", moved(9, 3, "18th")],
+      // two closes on the 18th are below the bar: the window is measured whole, and its median is the 2nd
+      ["2026-04-02", "closes around the 2nd, from 12 statements"],
+      ["2026-05-02", "closes around the 2nd, from 12 statements"],
+      ["2026-06-02", "closes around the 2nd, from 12 statements"],
+      ["2026-07-02", "closes around the 2nd, from 12 statements"],
+      ["2026-08-09", "closes around the 2nd, from 12 statements"],
+      ["2026-09-08", moved(2, 10, "2nd", "9th")],
+    ]);
+  });
+
   test("a month-end account is never re-measured from its newest closes", () => {
     const c = statementCadence([
       "2025-10-31", "2025-11-30", "2025-12-31", "2026-01-31", "2026-02-28", "2026-03-31", "2026-04-30",
