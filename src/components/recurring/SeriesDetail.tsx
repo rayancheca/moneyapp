@@ -1,7 +1,12 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import { SERIES_EVIDENCE_LABEL, noScheduleReason, seriesEvidenceTone } from "@/lib/series-evidence";
+import {
+  SERIES_EVIDENCE_LABEL,
+  noScheduleReason,
+  seriesCanBeReshaped,
+  seriesEvidenceTone,
+} from "@/lib/series-evidence";
 import { billedWithLabel } from "@/lib/billed-with";
 import { seriesEndInput, seriesEndLines } from "./end-radius";
 import Link from "next/link";
@@ -116,7 +121,8 @@ export function SeriesDetail({
   // or reshaped (§4.3). A dismissed/user-ended series can be re-confirmed but not
   // edited until it is live again.
   const isMergedAway = data.mergedInto !== null;
-  const isLive = data.status === "detected" || data.status === "confirmed";
+  // the predicate `seriesDetail` reads the merge preview on, so it is read exactly where the control renders
+  const isLive = seriesCanBeReshaped(data.status);
 
   function setStatus(status: "confirmed" | "dismissed" | "ended", label: string): void {
     void setSeriesStatusAction({ seriesId: data.id, status }).then((r) => {

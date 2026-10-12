@@ -164,6 +164,18 @@ export function seriesIsOver(status: SeriesStatusForCopy): boolean {
 }
 
 /**
+ * Can a series' own page reshape it — attach rows to it, merge another series in (§4.3)? Only a live one: rows moved
+ * onto an ended or dismissed series leave the forecast and the calendar, and `mergeSeries` refuses such a target. ONE
+ * predicate, because the page renders the controls on it and `seriesDetail` reads the merge preview on it (§6A 54).
+ *
+ * 🔴 The preview — every candidate and what merging it would file — was read on every series page, the ended and
+ * dismissed pages included, where the control it feeds is hidden (review of §6A 54, 2026-10-08).
+ */
+export function seriesCanBeReshaped(status: SeriesStatusForCopy): boolean {
+  return status === "detected" || status === "confirmed";
+}
+
+/**
  * Does a series' own page PROJECT it — a present-tense schedule with a day to edit, rather than "Nothing expected"?
  * The client-safe reading of `seriesIsForecast` (services/recurring), from the two facts the page already carries: a
  * status the forecast projects (`seriesIsOver` names the other two), and evidence the forecast has not let go —

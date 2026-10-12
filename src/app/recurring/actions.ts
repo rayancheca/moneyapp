@@ -282,6 +282,8 @@ export async function mergeIntoSeriesAction(
     const result = mergeSeries(getDb(), sourceId, targetId);
     revalidateRecurring(targetId);
     revalidatePath(`/recurring/${sourceId}`);
+    // a merge files the source's rows not filed yet under the target's category, as attaching does (§6A 54)
+    revalidatePath("/transactions");
     return { ok: true, data: result };
   } catch (error: unknown) {
     return failure(error, "Failed to merge");
