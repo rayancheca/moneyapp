@@ -15,6 +15,7 @@ import { dedupeHash } from "@/lib/hash";
 import { createAccount } from "@/services/accounts";
 import { budgetPaceStatuses, createBudget, type BudgetPaceStatus } from "@/services/budgets";
 import { createCashWallet } from "@/services/cash-wallets";
+import { checkedThrough } from "@/services/checked-days-fixture";
 import { addManualTransaction } from "@/services/manual-transactions";
 import { seedHisCarSeries } from "@/services/one-charge-fixture";
 import { BudgetRow } from "./BudgetRow";
@@ -270,6 +271,8 @@ describe("BudgetRow — the arrears line says the runway's split, in its tone", 
         dedupeHash: dedupeHash({ accountId: card, postedOn: opts.readThrough, amountCents: -800, rawDescription, occurrenceIndex: 0 }),
       })
       .run();
+    // …and its balances checked through it: the day its chip measures to, which the ✕ reads (his decision 62)
+    checkedThrough(bundle.db, card, opts.readThrough);
     createBudget(bundle.db, { categoryId: catId("Housing"), period: "monthly", amountCents: 300_000, startsOn: AUG_1 });
     return statusFor("Housing");
   }

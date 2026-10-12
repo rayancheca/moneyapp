@@ -239,7 +239,7 @@ export function arrearsInWindow(
  * 🔴 The runway said "never posted" of all $2,296.20 on 2026-10-07 while October was
  * imported for none of those accounts. ⛔ NO NEW RULE: "has the ledger read this
  * bill's day" is the recurring calendar's — `dueDayIsRead` over `dueDayReadings`
- * (`frontierForSeries` over `silenceObservedThrough` and `landingAccountsBySeries`,
+ * (the day its "running late" chip measures to, `silenceMeasuredThroughBySeries`,
  * and the series' grace), the predicate `settledVerdict` grades `missed` against
  * `not_imported` with — and "is this payment late" is still `overdueForSeries`,
  * asked again only up to the last due day read (`lastDueDayRead`). A series with
@@ -253,7 +253,9 @@ export function arrearsInWindow(
  * posted" of a day /recurring calls not imported. 🔴 It was every account the bill had EVER paid from
  * (`seriesAccountIds`): on his ledger copy 2026-10-12 the rent's Oct 1 waited for Chase Checking's Aug 12 — one July
  * payment — while its chip read Wells Fargo through Sep 24, so once Wells Fargo showed no rent its chip would say
- * "running late" beside "no import has covered it yet" here, until Chase Checking was imported past Oct 4.
+ * "running late" beside "no import has covered it yet" here, until Chase Checking was imported past Oct 4. ⛔ …and on
+ * the chip's DAY, each account to its checked balance: read to its newest imported row (review of 9940f1c), rows past
+ * Wells Fargo's last checked balance made this "never posted" beside a chip saying "Awaiting statements".
  *
  * ⚖️ A series billed inside another's payment is read on its carrier's accounts too (`landingAccountsBySeries`,
  * §6A 59), so its Oct 1 is "not posted" exactly when the rent's is and quiet exactly when the rent's is — never one of
@@ -267,7 +269,7 @@ export function arrearsInWindow(
  * (imported through due + grace − 1: quiet; through due + grace: not posted) on every surface.
  *
  * ⚖️ …and an account no statement will come for — archived, or a cash wallet — is read through today, the calendar's
- * frontier for the same reason (`silenceObservedThrough`): its bills' silence is measured there (2026-10-08). 🔴 Read
+ * frontier for the same reason (`silenceReadThrough`): its bills' silence is measured there (2026-10-08). 🔴 Read
  * to an archived card's last import (review of e00e6b8), Venture X's Breezeline was "running late" on /recurring and
  * its Nov 8 still "no import has covered it yet" here, at 2026-11-20 — an import /imports never asks for.
  *

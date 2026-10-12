@@ -820,9 +820,8 @@ export function recurringCalendar(
   const checkedThrough = silenceMeasuredThroughBySeries(db, today);
   const needsFrontier = compareDates(monthStart, today) < 0;
   // …and a past bill missed only once its day AND its grace are read (`dueDayIsRead`, ⚖️ his decision 60, 2026-10-08)
-  // on the accounts it posts to now (his decision 62, 2026-10-12), an account no statement is coming for read through
-  // today — the chip's accounts and rule (`silenceObservedThrough`), so a bill filed late there is never "not imported
-  // yet" here
+  // on the day its chip measures to (his decision 62, 2026-10-12): the accounts it posts to now, each to its checked
+  // balance, one no statement is coming for through today — so a bill filed late there is never "not imported yet" here
   const readingOf = needsFrontier ? dueDayReadings(db, today) : null;
   // what pays each series billed inside another: its carrier's payments (§6A 59) — nothing is asked without a link
   const carried = carrierPaymentsBySeries(db, forecastRows, monthStart, monthEnd);

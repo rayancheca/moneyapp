@@ -110,10 +110,10 @@ export function accountsAwaitingStatements(db: AppDatabase): ReadonlySet<string>
  * archived account or a wallet none is coming — so its quiet is measured as if read through the day of the question.
  *
  * ⛔ ONE rule for every surface that grades a silence: the day a series' silence is measured to
- * (`silenceMeasuredThroughBySeries`, over each account's checked record) and the day the calendar and the runway's
- * arrears grade a past bill against (`silenceObservedThrough`, over each account's newest import). 🔴 Only the first
- * asked it (review of e00e6b8): with Venture X archived, at 2026-11-20, Breezeline's chip read "running late" beside
- * a calendar that filed its Nov 8 "not yet known" and a runway that said "no import has covered it yet".
+ * (`silenceMeasuredThroughBySeries`, over each account's checked record) — since his decision 62 (2026-10-12) also the
+ * day the calendar and the runway's arrears grade a past bill against (`dueDayReadings`). 🔴 Only the chip asked it
+ * (review of e00e6b8): with Venture X archived, at 2026-11-20, Breezeline's chip read "running late" beside a calendar
+ * that filed its Nov 8 "not yet known" and a runway that said "no import has covered it yet".
  */
 export function silenceReadThrough(
   awaiting: ReadonlySet<string>,

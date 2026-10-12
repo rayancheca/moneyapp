@@ -19,6 +19,7 @@ import { arrearsThisMonth } from "./arrears";
 import { billingCarriers } from "./billing-carriers";
 import { budgetOverdue, budgetTail } from "./budgets";
 import { silenceMeasuredThroughBySeries } from "./cash-earnings";
+import { checkedThrough } from "./checked-days-fixture";
 import { committedBook } from "./committed";
 import { forecastCurrentMonth, forecastForMonth } from "./forecast";
 import { provenanceFor } from "./provenance";
@@ -584,8 +585,12 @@ describe("settlement follows the carrier — paid once the rent's payment for th
       .run();
   }
 
-  /** an import of the rent's account has reached `day`: a row of no series on it (`observationFrontier`) */
+  /**
+   * an import of the rent's account has reached `day`: a row of no series on it (`observationFrontier`) and its
+   * balances checked through it — the day its chip measures to, which the ✕ reads (his decision 62, 2026-10-12)
+   */
   function rentAccountImportedThrough(day: string): void {
+    checkedThrough(bundle.db, "acct", day);
     bundle.db
       .insert(transactions)
       .values({

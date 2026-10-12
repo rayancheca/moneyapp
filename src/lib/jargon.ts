@@ -265,7 +265,7 @@ export const RECURRING_JARGON = {
   paidDifferent:
     "The charge turned up, but for enough more or less than usual to be worth a look — measured against how much this bill normally varies, not against a fixed percentage.",
   /*
-   * 🔴 Since an account no statement will come for is read through today (`silenceObservedThrough`, review of
+   * 🔴 Since an account no statement will come for is read through today (`silenceReadThrough`, review of
    * e00e6b8), a bill on an archived card is graded missed with no statement imported: "HAVE been imported" alone was
    * false of it. The clause names the other way a day counts as read, in the words /imports' rule is made of.
    *

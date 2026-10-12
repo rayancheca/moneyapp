@@ -89,6 +89,14 @@ function importedThrough(accountId: string, day: string): void {
 /** accountId → the last day its balance walk has been written through */
 const checkedTo = new Map<string, string>();
 
+/**
+ * Rows of the account imported through `day` and its balances checked NO further — an activity download past its last
+ * closing balance: `observationFrontier` reaches `day`, `accountCoverage` does not.
+ */
+function rowsOnlyThrough(accountId: string, day: string): void {
+  posted(accountId, day, -450, null);
+}
+
 beforeEach(() => {
   checkedTo.clear();
   dir = fs.mkdtempSync(path.join(os.tmpdir(), "moneyapp-not-posted-landing-"));
@@ -180,7 +188,7 @@ function chipOf(seriesId: string, today = TODAY) {
 describe("a bill's due days are read where it posts NOW — its last two payments' accounts (decision 62)", () => {
   test("his ledger today: the rent is read through Wells Fargo's Sep 24, not Chase Checking's Aug 12", () => {
     expect(dueDayReadings(bundle.db, TODAY)(RENT)).toEqual({ observedThrough: "2026-09-24", graceDays: 3 });
-    // the chip's accounts, and so the chip's day: both arbiters reach Sep 24 on Wells Fargo here
+    // the chip's day itself: Wells Fargo, checked through Sep 24
     expect(dueDayReadings(bundle.db, TODAY)(RENT).observedThrough).toBe(
       silenceMeasuredThroughBySeries(bundle.db, TODAY)(RENT),
     );
@@ -210,7 +218,7 @@ describe("a bill's due days are read where it posts NOW — its last two payment
   });
 });
 
-describe("the chip and the ✕ read the same accounts — one day", () => {
+describe("the chip and the ✕ read one day: the same accounts, each to its checked balance", () => {
   /*
    * Sep 2 + 48 days' tolerance is Oct 20: Wells Fargo read empty through Oct 20 makes the rent late. On that same
    * reading its Oct 1 has long been past its grace — "running late" beside "not posted", never "no import has
@@ -223,6 +231,53 @@ describe("the chip and the ✕ read the same accounts — one day", () => {
     expect(seriesDetail(bundle.db, RENT, today).evidence).toBe("running-late");
     expect(dueDayReadings(bundle.db, today)(RENT).observedThrough).toBe(chipOf(RENT, today).checkedThrough);
     expect(oct1(RENT, today)).toEqual(NOT_POSTED);
+  });
+
+  /*
+   * 🔴 Review of 9940f1c: the ✕ took the chip's ACCOUNTS but read each to its newest imported row, while the chip reads
+   * each to its checked balance. With Wells Fargo's rows imported through Oct 21 and its balances checked only through
+   * Sep 24, the chip said "Awaiting statements" — Sep 24 the last day checked, "so it cannot be called late yet" —
+   * while the calendar drew Oct 1 ✕, the page said "Already due, and not posted" and the runway "never posted".
+   */
+  test("Wells Fargo's rows reach Oct 21, its balances Sep 24: the ✕ reads the chip's Sep 24 — quiet beside it", () => {
+    const today = "2026-10-25";
+    rowsOnlyThrough(WF, "2026-10-21");
+    expect(chipOf(RENT, today)).toMatchObject({ checkedThrough: "2026-09-24", awaitingStatements: true, isStale: false });
+    expect(seriesDetail(bundle.db, RENT, today).evidence).toBe("awaiting-statements");
+    expect(dueDayReadings(bundle.db, today)(RENT)).toEqual({ observedThrough: "2026-09-24", graceDays: 3 });
+    expect(oct1(RENT, today)).toEqual(QUIET);
+    expect(oct1(UTIL, today)).toEqual(QUIET);
+    expect(arrearsSentence(committedBook(bundle.db, today))).not.toContain("never posted");
+  });
+
+  /*
+   * ⛔ One reading, whatever shape the accounts take: the day the ✕ grades a due day against IS the day the chip
+   * measures its silence to (`silenceMeasuredThroughBySeries`) — rows past a checked balance, an account it left read
+   * further than the one it uses, a bill that names one account and paid its last two from another (whose accounts
+   * decide is his open question — the two must agree either way), an archived account read through today.
+   */
+  test.each([
+    ["as imported", () => {}],
+    ["rows past Wells Fargo's checked balance", () => rowsOnlyThrough(WF, "2026-10-21")],
+    ["Chase Checking, which it left, read through Oct 10", () => importedThrough(CHASE, "2026-10-10")],
+    [
+      "the rent NAMES Chase Checking, read through Oct 10, and paid its last two from Wells Fargo",
+      () => {
+        bundle.db.update(recurringSeries).set({ accountId: CHASE }).where(eq(recurringSeries.id, RENT)).run();
+        importedThrough(CHASE, "2026-10-10");
+        rowsOnlyThrough(WF, "2026-10-21");
+      },
+    ],
+    [
+      "Wells Fargo archived",
+      () => bundle.db.update(accounts).set({ isActive: false }).where(eq(accounts.id, WF)).run(),
+    ],
+  ] as const)("%s: every series' ✕ day is its chip's day", (_shape, arrange) => {
+    const today = "2026-10-25";
+    arrange();
+    const reading = dueDayReadings(bundle.db, today);
+    const chip = silenceMeasuredThroughBySeries(bundle.db, today);
+    for (const id of [RENT, UTIL, PARKING]) expect([id, reading(id).observedThrough]).toEqual([id, chip(id)]);
   });
 });
 

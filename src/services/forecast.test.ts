@@ -13,6 +13,7 @@ import { recurringSeries, type Cadence, type SeriesKind, type SeriesStatus } fro
 import { transactions, type TransactionStatus } from "@/db/schema/transactions";
 import { dedupeHash } from "@/lib/hash";
 import { createAccount } from "./accounts";
+import { checkedThrough } from "./checked-days-fixture";
 import { forecastCurrentMonth, forecastForMonth, trailingFullMonths } from "./forecast";
 import { seriesIdsNotDrawnAsRecurring } from "./recurring-link";
 
@@ -413,9 +414,13 @@ describe("forecastCurrentMonth", () => {
     });
     const rentLine = () => forecastCurrentMonth(bundle.db, TODAY).components.find((c) => c.label === "Rent")!;
     insertTxn(checkingId, "2026-07-03", -1200, { categoryName: "Groceries" });
+    checkedThrough(bundle.db, checkingId, "2026-07-03");
     expect(rentLine()).toMatchObject({ kind: "fixed", cents: -210900 });
     expect(rentLine().detail).toBe("1 × -$2,109.00 (monthly), came due Jul 1 and no import has covered it yet");
     insertTxn(checkingId, "2026-07-04", -1200, { categoryName: "Groceries" });
+    // a row alone is not enough: its balances checked through it — the chip's day, which the ✕ reads (decision 62)
+    expect(rentLine().detail).toBe("1 × -$2,109.00 (monthly), came due Jul 1 and no import has covered it yet");
+    checkedThrough(bundle.db, checkingId, "2026-07-04");
     expect(rentLine().detail).toBe("1 × -$2,109.00 (monthly), came due Jul 1 and has not posted");
   });
 

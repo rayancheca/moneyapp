@@ -16,6 +16,7 @@ import { dedupeHash } from "@/lib/hash";
 import { createAccount } from "./accounts";
 import { budgetPaceStatuses, categoryReachContext, categoryReachFor, createBudget } from "./budgets";
 import { createCashWallet } from "./cash-wallets";
+import { checkedThrough } from "./checked-days-fixture";
 import { addManualTransaction } from "./manual-transactions";
 import { ledgerOpens } from "./observation-frontier";
 import { provenanceFor } from "./provenance";
@@ -381,6 +382,8 @@ describe("seriesInCategory", () => {
       .get().id;
     insertTxn({ postedOn: "2026-06-01", amountCents: -180_000, category: "Housing > Rent", seriesId: rent });
     insertTxn({ postedOn: "2026-07-06", amountCents: -900, category: "Food" });
+    // …and its balances checked through it: the day its chip measures to, which the ✕ reads (his decision 62)
+    checkedThrough(bundle.db, cardId, "2026-07-06");
 
     expect(seriesInCategory(bundle.db, catId("Housing"), TODAY)[0]!.overdue).toMatchObject({ owedCents: 180_000, unreadCents: 0 });
   });

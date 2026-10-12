@@ -10,6 +10,7 @@ import { institutions } from "@/db/schema/institutions";
 import { recurringSeries } from "@/db/schema/recurring";
 import { transactions } from "@/db/schema/transactions";
 import { seedDatabase } from "@/db/seed";
+import { checkedThrough } from "@/services/checked-days-fixture";
 import { recurringCalendar, type CalendarEntry, type RecurringCalendarMonth } from "@/services/recurring-calendar";
 
 // the server action pulls in next/cache and the database client
@@ -546,13 +547,15 @@ describe("RecurringCalendar — a missed bill, rendered from the service, at the
           nextExpectedAmountCents: -4500, userEndsOn: "2026-07-10", lastMatchedOn: "2026-06-01", status: "confirmed",
           createdAt: at, updatedAt: at })
         .run();
-      // an import of the account has reached `through`: a row of no series on it (`observationFrontier`)
+      // an import of the account has reached `through`: a row of no series on it (`observationFrontier`) and its
+      // balances checked through it — the day its chip measures to, which the ✕ reads (his decision 62, 2026-10-12)
       bundle.db
         .insert(transactions)
         .values({ id: "t-coffee", accountId: "acct", postedOn: through, amountCents: -450, rawDescription: "COFFEE",
           normalizedDescription: "COFFEE", status: "active", needsReview: false, occurrenceIndex: 0,
           dedupeHash: "h-coffee", createdAt: at, updatedAt: at })
         .run();
+      checkedThrough(bundle.db, "acct", through);
       const month = recurringCalendar(bundle.db, "2026-07", "2026-07-08");
       return decode(renderToStaticMarkup(createElement(RecurringCalendar, { initialMonth: month, today: "2026-07-08" })));
     } finally {

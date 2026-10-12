@@ -35,9 +35,9 @@ test("every day with activity prints its own signed total", async ({ page }) => 
    * The seeded July, in full. Each row is `<day> <glyph> <compact net> <series>`
    * — the series name is the DOMINANT entry on the day (calendar-day-weight),
    * which is unambiguous here because every seeded day carries exactly one:
-   *   Jul 1  Storage   −$45.00    missed    (due 07-01, SoFi Checking imported
+   *   Jul 1  Storage   −$45.00    missed    (due 07-01, Chase Freedom checked
    *                                            through 07-04 — its day AND its 3
-   *                                            days' grace: ⚖️ read, §6A 60)
+   *                                            days' grace: ⚖️ read, §6A 60, 62)
    *   Jul 5  Meal Kit  −$125.00   not known (due 07-05, the card imported through
    *                                            07-05 — but a payment may still post
    *                                            through 07-08, its 3 days' grace: ⚖️
@@ -208,8 +208,9 @@ test("a day cell enumerates its series, state and amount for a screen reader", a
     page.getByRole("button", { name: "Jul 9, 2026 — 1 item: Rent upcoming (expected) -$1,800.00" }),
   ).toBeVisible();
   // A settled mark carries NO qualifier — it has an outcome, not a confidence.
-  // ⚖️ Storage unit's Jul 1 is read: SoFi Checking is imported through Jul 4,
-  // its day plus its 3 days' grace, and nothing posted (§6A 60, 2026-10-08).
+  // ⚖️ Storage unit's Jul 1 is read: Chase Freedom Unlimited is checked through
+  // Jul 4, its day plus its 3 days' grace, and nothing posted (§6A 60, 2026-10-08;
+  // read to the checked balance, his decision 62, 2026-10-12).
   await expect(
     page.getByRole("button", { name: "Jul 1, 2026 — 1 item: Storage unit missed -$45.00" }),
   ).toBeVisible();
