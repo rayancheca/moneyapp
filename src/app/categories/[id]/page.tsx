@@ -25,12 +25,12 @@ import { categoryInsights } from "@/services/spending-insights";
 import { categoryEmptyCopy, ledgerFirstDay, topMerchants } from "@/services/spending";
 import { loadSpendingCategoryTxns } from "@/app/spending/actions";
 import { CategoryChip } from "@/components/ui/CategoryChip";
+import { CategoryHeadline } from "@/components/categories/CategoryHeadline";
 import { CategoryMoveMenu } from "@/components/categories/CategoryMoveMenu";
 import { CategoryNameHeading } from "@/components/categories/CategoryNameHeading";
 import { moveDestinations as categoryMoveDestinations } from "@/services/category-edit";
 import { Icon } from "@/components/shell/Icon";
 import { Money } from "@/components/ui/Money";
-import { ProvenancePopover } from "@/components/ui/ProvenancePopover";
 import { InsightList } from "@/components/insights/InsightList";
 import { SurfaceCard } from "@/components/ui/SurfaceCard";
 import { buildCategoryPickerOptions } from "@/components/transactions/category-options";
@@ -103,13 +103,6 @@ export default async function CategoryPage({
 
   const { spentCents, txnCount } = categorySpending(db, { categoryId: id, from: range.from, to: range.to });
   const flowCents = sign * spentCents;
-  const spendProvenance = provenanceFor(db, {
-    kind: "categorySpend",
-    categoryId: id,
-    from: range.from,
-    to: range.to,
-    label: header.name,
-  });
 
   /*
    * ⛔ THE TREND IS ANCHORED TO THE PERIOD THIS PAGE IS SHOWING, not to today.
@@ -172,6 +165,18 @@ export default async function CategoryPage({
       : null;
   // the title carries the antecedent — "4 days of IT" has none without it
   const emptyText = emptyCopy ? `${emptyCopy.title}. ${emptyCopy.description}` : undefined;
+  // ⚡ a dash has no figure to prove (`CategoryHeadline`), so its empty total's proof — a second read of the
+  // category's day — is not asked for one
+  const spendProvenance =
+    emptyCopy?.figure === "dash"
+      ? null
+      : provenanceFor(db, {
+          kind: "categorySpend",
+          categoryId: id,
+          from: range.from,
+          to: range.to,
+          label: header.name,
+        });
 
   const insights = categoryInsights(db, id, today);
   const subcats = categorySubcategorySplit(db, id, range);
@@ -225,22 +230,15 @@ export default async function CategoryPage({
             </p>
           </div>
         </div>
-        <div className="text-right">
-          <div className="text-[11px] font-medium uppercase tracking-[0.12em] text-ink-faint">
-            {flowLabel} · {period.label}
-            {/* the total's proof is the proof of the rows underneath it, and its
-                weakest row sets the verdict */}
-            {spendProvenance && (
-              <ProvenancePopover
-                label={`this ${flowLabel.toLowerCase()} total`}
-                provenance={spendProvenance}
-                placement="bottom-end"
-              />
-            )}
-          </div>
-          <Money cents={flowCents} className="figures text-2xl font-semibold" />
-          <div className="text-xs text-ink-faint">{txnCount} {txnCount === 1 ? "transaction" : "transactions"}</div>
-        </div>
+        {/* ⛔ a dash, not $0.00, where its own empty state below says nobody has looked (`CategoryHeadline`) */}
+        <CategoryHeadline
+          flowLabel={flowLabel}
+          periodLabel={period.label}
+          flowCents={flowCents}
+          txnCount={txnCount}
+          empty={emptyCopy}
+          provenance={spendProvenance}
+        />
       </header>
 
       <div className="mb-6">

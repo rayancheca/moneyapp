@@ -13,9 +13,11 @@ import { normalizeDescription } from "@/lib/normalize";
 import { comparePeriods, type PeriodComparison } from "@/lib/compared-windows";
 import {
   daysNotImportedYet,
+  emptyFigure,
   emptyPeriodCopy,
   emptyPeriodReason,
   unreachedKind,
+  type EmptyFigure,
   type UnreachedKind,
 } from "@/lib/empty-period";
 import { subBuckets, type ResolvedPeriod } from "@/lib/period";
@@ -1059,13 +1061,18 @@ export function spendingEmptyCopy(
  * through Wed, Aug 12, 2026"), and a category spent only from cash wallets says so in that row's own words
  * (`lib/category-reach`). The agent's money is said on every one of those branches. ⛔ One builder: the page had a
  * second (`categoryEmptyWindowCopy`) for one day, and taking it would have dropped the agent's clause unseen.
+ *
+ * …and the headline over that sentence is drawn in the same world (`figure`, `lib/empty-period::emptyFigure`): a dash
+ * where not one elapsed day was read. 🔴 It printed "$0.00 · 0 transactions" directly above "October 2026 has not been
+ * imported yet" on `/categories/<Housing>` (his ledger copy, 2026-10-12). Carried out of this one read of the
+ * category's day, so the figure and the sentence cannot be asked against two.
  */
 export function categoryEmptyCopy(
   db: AppDatabase,
   categoryId: string,
   range: DateRange,
   opts: CategoryEmptyCopyOpts,
-): { title: string; description: string } {
+): CategoryEmptyCopy {
   const reach = categoryReachFor(db, categoryId, range.from, opts.today, opts.reachCtx);
   const reason = emptyPeriodReason({
     from: range.from,
@@ -1074,10 +1081,18 @@ export function categoryEmptyCopy(
     ledgerOpens: opts.ledgerOpens,
     ledgerReaches: reach.through,
   });
-  return categoryEmptyPeriodCopy(reason, { label: opts.label, from: range.from }, reach, opts.formatDay, {
+  const copy = categoryEmptyPeriodCopy(reason, { label: opts.label, from: range.from }, reach, opts.formatDay, {
     ledgerOpens: opts.ledgerOpens,
     agentsMoney: agentsMoneyRowCount(db, range, { categoryId }) > 0,
   });
+  return { ...copy, figure: emptyFigure(reason) };
+}
+
+/** `/categories/<id>`'s empty window: the sentence its cards print, and what its headline prints over it */
+export interface CategoryEmptyCopy {
+  title: string;
+  description: string;
+  figure: EmptyFigure;
 }
 
 /** `/categories/<id>`'s: the day is the category's own, so it hands in the reads that ask it — never a ledger day */

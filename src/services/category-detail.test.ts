@@ -654,5 +654,45 @@ describe("⚖️ §6A 49 — a category page asks its own imported-through day",
       "Nothing recorded for October 2026. Gifts & Donations is spent only from a cash wallet since Apr 1 — no statement will ever cover it. " +
         "Nothing was typed in for this period, so there is no import to wait for.",
     );
+    // a wallet holds what was typed into it, so its nothing is read: the headline keeps its $0.00
+    expect(copy.figure).toBe("zero");
+  });
+
+  /*
+   * 🔴 THE HEADLINE PRINTED $0.00 OVER ITS OWN "NOT IMPORTED YET". Read on his ledger copy 2026-10-12:
+   * `/categories/<Housing>?period=2026-10` headlined "SPENT · OCTOBER 2026  $0.00  0 transactions" directly above
+   * "October 2026 has not been imported yet … spending in Housing is imported through Wed, Aug 12, 2026". The world the
+   * headline is drawn in is the one the sentence under it is written in — one read of the category's own day, carried
+   * out of the same builder (`figure`), never a second derivation on the page.
+   */
+  test("the headline's figure is asked in the sentence's own world: a dash wherever no elapsed day was read", () => {
+    carLedger();
+    const figureOf = (categoryPath: string, from: string, to: string, label: string) => {
+      // only an EMPTY window has an empty state; a window holding rows prints its figure
+      expect(categorySpending(bundle.db, { categoryId: catId(categoryPath), from, to }).txnCount).toBe(0);
+      const copy = emptyCopy(categoryPath, from, to, label);
+      return [copy.figure, copy.title];
+    };
+    // past the category's own Aug 12 — the ledger reaches Sep 24, the day that would have called these read
+    expect(figureOf("Transport", "2026-10-01", "2026-10-31", "October 2026")).toEqual(["dash", "October 2026 has not been imported yet"]);
+    expect(figureOf("Fees", "2026-09-01", "2026-09-20", "Sep 1 – 20, 2026")).toEqual(["dash", "Sep 1 – 20, 2026 has not been imported yet"]);
+    // before the ledger's first row (Jul 3)
+    expect(figureOf("Transport", "2026-06-01", "2026-06-30", "June 2026")).toEqual(["dash", "June 2026 is before your records begin"]);
+    // a month that has not begun has no elapsed day to have read
+    expect(figureOf("Transport", "2026-11-01", "2026-11-30", "November 2026")).toEqual(["dash", "November 2026 has not happened yet"]);
+    // an income category asks the same rule — no account of its own, so the ledger's Sep 24, and October is past it
+    expect(figureOf("Income > Salary", "2026-10-01", "2026-10-31", "October 2026")).toEqual(["dash", "October 2026 has not been imported yet"]);
+    // every elapsed day read (Fees through Aug 12), nothing posted: a measured $0.00
+    expect(figureOf("Fees", "2026-07-10", "2026-07-31", "Jul 10 – 31, 2026")[0]).toBe("zero");
+    // Aug 6–12 read, Aug 13–20 not: the empty state calls it a lower bound, and so does the figure
+    const partly = emptyCopy("Fees", "2026-08-06", "2026-08-20", "Aug 6 – 20, 2026");
+    expect(partly.figure).toBe("lower-bound");
+    expect(partly.description).toMatch(/so this is a lower bound rather than a measurement\./);
+  });
+
+  test("an empty ledger has looked at nothing: a dash", () => {
+    // no carLedger(): not one row anywhere
+    const copy = emptyCopy("Transport", "2026-10-01", "2026-10-31", "October 2026");
+    expect([copy.figure, copy.title]).toEqual(["dash", "Nothing imported yet"]);
   });
 });

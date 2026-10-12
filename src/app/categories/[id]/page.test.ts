@@ -97,6 +97,16 @@ describe("the empty window and the trend ask the category's own day, through the
     expect(page.match(/emptyText=\{emptyText\}/g)).toHaveLength(2);
   });
 
+  /*
+   * 🔴 The headline printed `<Money cents={flowCents}>` and "0 transactions" whatever the window's world: "$0.00" over
+   * "October 2026 has not been imported yet" on his ledger copy 2026-10-12. It is drawn from the same reading now.
+   */
+  test("the headline is handed that one reading and prints no figure of its own", () => {
+    expect(page).toMatch(/<CategoryHeadline[^>]*\sempty=\{emptyCopy\}/);
+    expect(page).not.toMatch(/<Money cents=\{flowCents\}/);
+    expect(page).not.toMatch(/\{txnCount\} \{txnCount === 1/);
+  });
+
   test("the trend is handed the same reach context", () => {
     expect(page).toMatch(/const reachCtx = categoryReachContext\(db\);/);
     expect(page).toMatch(/categoryMonthlyTrend\([^;]*reachCtx,?\s*\)/);
