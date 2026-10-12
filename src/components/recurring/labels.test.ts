@@ -23,6 +23,8 @@ import {
   postedSpreadReading,
   seriesVerb,
   futureDateLabel,
+  attachedToastTitle,
+  filedToastTitle,
   mergedToastTitle,
   mergeFilingClause,
   unsettledReasonWord,
@@ -727,6 +729,19 @@ describe("merge sentences (§6A 54)", () => {
       "Car lease 2 merged in · 3 moved · 2 filed under Car > Lease",
     );
     expect(mergedToastTitle("Car lease 2", { relinked: 3, filed: null })).toBe("Car lease 2 merged in · 3 moved");
+  });
+
+  /*
+   * 🔴 Review of §6A 54 (2026-10-08): the merge's toast named what it filed while attaching — the same rule (§6A 47) —
+   * said only "2 attached". Every hand link's toast now ends in the one clause, read from its action's own result.
+   */
+  test("attaching's toasts name what they filed in the merge's own words — and read as before when nothing was", () => {
+    expect(attachedToastTitle({ attached: 3, filed: filing })).toBe("3 attached · 2 filed under Car > Lease");
+    expect(attachedToastTitle({ attached: 3, filed: null })).toBe("3 attached");
+    expect(filedToastTitle("Attached to Car lease", { filed: { ...filing, count: 1 } })).toBe(
+      "Attached to Car lease · 1 filed under Car > Lease",
+    );
+    expect(filedToastTitle("Attached to Car lease", { filed: null })).toBe("Attached to Car lease");
   });
 });
 

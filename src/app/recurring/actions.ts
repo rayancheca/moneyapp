@@ -28,6 +28,7 @@ import {
   detachTransaction,
   mergeSeries,
   undoSeriesCreation,
+  type AttachResult,
   type CreateSeriesResult,
   type MergeResult,
 } from "@/services/recurring-links";
@@ -54,6 +55,7 @@ const SERIES_LABELS = {
   seriesId: "Series",
   sourceId: "Series",
   targetId: "Series",
+  shown: "What the merge files",
   transactionId: "Transaction",
   transactionIds: "Transactions",
   name: "Name",
@@ -209,14 +211,14 @@ const attachSchema = z.object({
 
 export async function attachToSeriesAction(
   input: z.input<typeof attachSchema>,
-): Promise<ActionResult<{ attached: number; undo: UndoPatch }>> {
+): Promise<ActionResult<AttachResult>> {
   try {
     const { seriesId, transactionIds } = attachSchema.parse(input);
     const result = attachTransactions(getDb(), seriesId, transactionIds);
     revalidateRecurring(seriesId);
-    // attaching may file an unfiled row under the series' category (§6A 47)
+    // attaching may file an unfiled row under the series' category (§6A 47) — and its toast says what it filed
     revalidatePath("/transactions");
-    return { ok: true, data: { attached: result.attached, undo: result.undo } };
+    return { ok: true, data: { attached: result.attached, undo: result.undo, filed: result.filed } };
   } catch (error: unknown) {
     return failure(error, "Failed to attach");
   }
@@ -272,14 +274,19 @@ export async function undoCreateSeriesAction(
   }
 }
 
-const mergeSchema = z.object({ sourceId: z.string().min(1), targetId: z.string().min(1) });
+const mergeSchema = z.object({
+  sourceId: z.string().min(1),
+  targetId: z.string().min(1),
+  // ⚖️ §6A 54: what the confirmation told him it would file — the merge refuses to file anything else
+  shown: z.object({ categoryId: z.string().min(1), count: z.number().int().positive() }).nullable(),
+});
 
 export async function mergeIntoSeriesAction(
   input: z.input<typeof mergeSchema>,
 ): Promise<ActionResult<MergeResult>> {
   try {
-    const { sourceId, targetId } = mergeSchema.parse(input);
-    const result = mergeSeries(getDb(), sourceId, targetId);
+    const { sourceId, targetId, shown } = mergeSchema.parse(input);
+    const result = mergeSeries(getDb(), sourceId, targetId, undefined, shown);
     revalidateRecurring(targetId);
     revalidatePath(`/recurring/${sourceId}`);
     // a merge files the source's rows not filed yet under the target's category, as attaching does (§6A 54)

@@ -27,10 +27,23 @@ import { splitTxnIdsIn } from "./transaction-splits";
  * nothing. All work happens in one synchronous transaction.
  */
 
+/**
+ * What a hand link filed (§6A 47 attach, §6A 54 merge): the series' category — printed as every surface prints a
+ * category path — and how many rows not filed yet went under it. One shape for every hand link, so each toast names
+ * its filing in the same words.
+ */
+export interface HandFiling {
+  readonly categoryId: string;
+  readonly categoryPath: string;
+  readonly count: number;
+}
+
 export interface AttachResult {
   attached: number;
   /** lossless inverse — restores each row's prior series AND link ownership, and the category of a row it filed */
   undo: UndoPatch;
+  /** the rows attaching filed under the series' category; null when it filed none */
+  filed: HandFiling | null;
 }
 
 /** A row's filing columns as they stood before a hand link — what its undo restores — and the money it moves. */
@@ -61,6 +74,12 @@ function holdsMoney(seriesKind: SeriesKind, categoryKind: CategoryKind, amountCe
 interface FilingPlan {
   readonly categoryId: string;
   readonly rows: readonly FilingBefore[];
+}
+
+/** A filing plan and what it says it files — the one reading the write and the sentence about it both take. */
+interface PlannedFiling {
+  readonly plan: FilingPlan;
+  readonly filing: HandFiling;
 }
 
 /** The series' half of the filing rule: the category it files under and the money it can hold. */
@@ -96,6 +115,16 @@ function rowsToFile(
   return unfiled.filter((r) => !split.has(r.id) && holdsMoney(target.seriesKind, target.categoryKind, r.amountCents));
 }
 
+/** Filing `rows` under `target`, and what that files — null for no row to file. One shape for attach and merge. */
+function plannedFiling(idx: CategoryIndex, target: FilingTarget, rows: readonly FilingBefore[]): PlannedFiling | null {
+  if (rows.length === 0) return null;
+  const { categoryId } = target;
+  return {
+    plan: { categoryId, rows },
+    filing: { categoryId, categoryPath: categoryPathOf(idx, categoryId), count: rows.length },
+  };
+}
+
 /**
  * Owner decision 2026-10-07 (§6A 47): linking a row to a series BY HAND files a row not filed yet under that series'
  * category; a row already filed keeps its own. ⚖️ 2026-10-08 (§6A 54): merging a series in is the same act for every
@@ -117,13 +146,12 @@ function rowsToFile(
  *
  * ⛔ Only a link that is his: detection's links (absorption, first posting, a created series' members) file nothing.
  */
-function planFiling(db: AppDatabase, seriesId: string, rows: readonly FilingBefore[]): FilingPlan | null {
+function planFiling(db: AppDatabase, seriesId: string, rows: readonly FilingBefore[]): PlannedFiling | null {
   const idx = loadCategoryIndex(db);
   if (!rows.some((r) => idx.isUncategorized(r.categoryId))) return null;
   const target = filingTargetOf(db, idx, seriesId);
   if (target === null) return null;
-  const toFile = rowsToFile(db, idx, target, rows);
-  return toFile.length === 0 ? null : { categoryId: target.categoryId, rows: toFile };
+  return plannedFiling(idx, target, rowsToFile(db, idx, target, rows));
 }
 
 /**
@@ -152,18 +180,22 @@ function writeFiling(tx: AppDatabase, plan: FilingPlan | null): Map<string, Undo
   return filedBefore;
 }
 
-/** Files `rows` as linking them to `seriesId` by hand files them (`planFiling`); returns their prior columns. */
+/**
+ * Files `rows` as linking them to `seriesId` by hand files them (`planFiling`); returns their prior columns, for the
+ * undo, and what it filed, for the toast — as a merge returns its own (`MergeResult.filed`).
+ */
 function fileUnfiledUnderSeries(
   tx: AppDatabase,
   seriesId: string,
   rows: readonly FilingBefore[],
-): Map<string, UndoFields> {
-  return writeFiling(tx, planFiling(tx, seriesId, rows));
+): { filedBefore: Map<string, UndoFields>; filed: HandFiling | null } {
+  const planned = planFiling(tx, seriesId, rows);
+  return { filedBefore: writeFiling(tx, planned?.plan ?? null), filed: planned?.filing ?? null };
 }
 
 /**
  * Attaches transactions to a series by hand (a user-owned link). A row not filed yet is filed under the series'
- * category (`fileUnfiledUnderSeries`, §6A 47); the undo puts that back too.
+ * category (`fileUnfiledUnderSeries`, §6A 47); the undo puts that back too, and `filed` says what it filed.
  */
 export function attachTransactions(
   db: AppDatabase,
@@ -171,9 +203,10 @@ export function attachTransactions(
   transactionIds: readonly string[],
   today: string = todayIso(),
 ): AttachResult {
-  if (transactionIds.length === 0) return { attached: 0, undo: { rows: [] } };
+  if (transactionIds.length === 0) return { attached: 0, undo: { rows: [] }, filed: null };
   const ctx = loadRecomputeCtx(db);
   let attached = 0;
+  let filed: HandFiling | null = null;
   const undo: UndoPatch = { rows: [] };
   db.transaction((tx) => {
     const mergedById = new Map(
@@ -205,7 +238,9 @@ export function attachTransactions(
       .where(and(inArray(transactions.id, [...transactionIds]), eq(transactions.status, "active")))
       .all();
     // filed against the TARGET's category, before the link moves any row onto it
-    const filedBefore = fileUnfiledUnderSeries(tx, target, rows);
+    const filing = fileUnfiledUnderSeries(tx, target, rows);
+    const { filedBefore } = filing;
+    filed = filing.filed;
     undo.rows = rows.map((r) => ({
       id: r.id,
       prev: {
@@ -230,7 +265,7 @@ export function attachTransactions(
     recomputeSeriesStats(tx, target, today, ctx);
     for (const former of formerSeriesIds) recomputeSeriesStats(tx, former, today, ctx);
   });
-  return { attached, undo };
+  return { attached, undo, filed };
 }
 
 export interface DetachResult {
@@ -272,21 +307,33 @@ export function detachTransaction(
   return { formerSeriesId, undo };
 }
 
-/**
- * What merging a series in files (§6A 54): the target's category — printed as every surface prints a category path —
- * and how many of the source's rows go under it.
- */
-export interface MergeFiling {
-  readonly categoryId: string;
-  readonly categoryPath: string;
-  readonly count: number;
-}
-
 export interface MergeResult {
   relinked: number;
   targetId: string;
   /** the rows the merge filed under the target's category; null when it filed none */
-  filed: MergeFiling | null;
+  filed: HandFiling | null;
+}
+
+/** What the merge confirmation told him it would file, sent with his press (§6A 54): the category and the count. */
+export interface ShownFiling {
+  readonly categoryId: string;
+  readonly count: number;
+}
+
+/**
+ * What a merge says when it would file other than the confirmation showed — and it then writes nothing. The page
+ * re-reads on it, so the confirmation he reads again names what the merge files now.
+ */
+export const MERGE_FILING_CHANGED =
+  "Nothing was merged — what it would file has changed since you opened it. Read it again before you merge.";
+
+/**
+ * Whether the merge files what he was shown: the same category and the same count — or nothing, as he was told. The
+ * category by id: one renamed in between is still the category he chose.
+ */
+function filesAsShown(shown: ShownFiling | null, filing: HandFiling | null): boolean {
+  if (shown === null || filing === null) return shown === filing;
+  return shown.categoryId === filing.categoryId && shown.count === filing.count;
 }
 
 /** A category's path as every surface prints it (`formatCategoryPath`); an unknown id throws. */
@@ -306,12 +353,8 @@ function movedByMerge(sourceIds: readonly string[]): SQL {
  * to its LIVE series, as the merge links there; its category is read before any row moves (`filingTargetOf`), and each
  * source's rows go through the attach rule's own row half (`rowsToFile`).
  */
-function mergePlans(
-  db: AppDatabase,
-  targetId: string,
-  sourceIds: readonly string[],
-): Map<string, { plan: FilingPlan; filing: MergeFiling }> {
-  const out = new Map<string, { plan: FilingPlan; filing: MergeFiling }>();
+function mergePlans(db: AppDatabase, targetId: string, sourceIds: readonly string[]): Map<string, PlannedFiling> {
+  const out = new Map<string, PlannedFiling>();
   if (sourceIds.length === 0) return out;
   const mergedById = new Map(
     db
@@ -336,14 +379,10 @@ function mergePlans(
     .from(transactions)
     .where(and(movedByMerge(sourceIds), uncategorizedWhere(idx)))
     .all();
-  const categoryPath = categoryPathOf(idx, target.categoryId);
   for (const sourceId of sourceIds) {
     const rows = rowsToFile(db, idx, target, unfiled.filter((r) => r.seriesId === sourceId));
-    if (rows.length === 0) continue;
-    out.set(sourceId, {
-      plan: { categoryId: target.categoryId, rows },
-      filing: { categoryId: target.categoryId, categoryPath, count: rows.length },
-    });
+    const planned = plannedFiling(idx, target, rows);
+    if (planned !== null) out.set(sourceId, planned);
   }
   return out;
 }
@@ -357,8 +396,54 @@ export function mergeFilings(
   db: AppDatabase,
   targetId: string,
   sourceIds: readonly string[],
-): Map<string, MergeFiling> {
+): Map<string, HandFiling> {
   return new Map([...mergePlans(db, targetId, sourceIds)].map(([id, p]) => [id, p.filing]));
+}
+
+/**
+ * The merge, read before it writes: its refusals, the LIVE target it links to, and what it files — throwing for a
+ * merge it refuses. `shown` is what the confirmation named; a merge that would file anything else is refused
+ * (`MERGE_FILING_CHANGED`). Undefined only for a caller with no confirmation (a script; a test of the mechanics) — the
+ * page's action always sends it, its schema requires it.
+ */
+function readMerge(
+  db: AppDatabase,
+  sourceId: string,
+  targetId: string,
+  shown: ShownFiling | null | undefined,
+): { finalTarget: string; planned: PlannedFiling | null } {
+  const rows = db
+    .select({
+      id: recurringSeries.id,
+      status: recurringSeries.status,
+      mergedIntoId: recurringSeries.mergedIntoId,
+    })
+    .from(recurringSeries)
+    .all();
+  const mergedById = new Map(rows.map((s) => [s.id, s.mergedIntoId]));
+  const statusById = new Map(rows.map((s) => [s.id, s.status]));
+  if (!mergedById.has(sourceId)) throw new Error(`Unknown recurring series ${sourceId}`);
+  if (!mergedById.has(targetId)) throw new Error(`Unknown recurring series ${targetId}`);
+  // A source that was already merged has no live occurrences to move; merging
+  // it again would overwrite its mergedIntoId and split its history from its
+  // future charges (an irreversible split-brain). Reject it.
+  if (mergedById.get(sourceId) !== null || statusById.get(sourceId) === "ended") {
+    throw new Error("Series has already been merged");
+  }
+  // the target may itself have been merged onward — follow to the live one
+  const finalTarget = resolveMergeTarget(targetId, mergedById);
+  if (finalTarget === sourceId) throw new Error("Cannot merge a series into itself");
+  // The target must be LIVE. Relinking onto a dismissed/ended series would move
+  // the source's charges to a series the forecast/calendar/upcoming views all
+  // exclude (status IN detected|confirmed) — the money would silently vanish.
+  const targetStatus = statusById.get(finalTarget);
+  if (targetStatus !== "detected" && targetStatus !== "confirmed") {
+    throw new Error("Cannot merge into an inactive series");
+  }
+  // filed against the target's category BEFORE the relink moves the source's filed rows onto it
+  const planned = mergePlans(db, finalTarget, [sourceId]).get(sourceId) ?? null;
+  if (shown !== undefined && !filesAsShown(shown, planned?.filing ?? null)) throw new Error(MERGE_FILING_CHANGED);
+  return { finalTarget, planned };
 }
 
 /**
@@ -370,56 +455,35 @@ export function mergeFilings(
  * ⚖️ 2026-10-08 (§6A 54): a merge is his link for every row it moves, so a row not filed yet is filed under the
  * TARGET's category as attaching files it (`mergeFilings`, read before the relink). There is no undo button for a
  * merge; the restore point below holds every row as it was, filing included.
+ *
+ * ⚖️ 2026-10-08 (§6A 54): `shown` is what the confirmation told him it would file. 🔴 Review of §6A 54: the
+ * confirmation was read when the page rendered and the merge re-read when he pressed, and nothing checked they still
+ * agreed — a row filed or unfiled in another tab, or the target named by another category, and the merge filed what
+ * he was never shown. It now refuses, writing nothing (`readMerge`).
  */
 export function mergeSeries(
   db: AppDatabase,
   sourceId: string,
   targetId: string,
   today: string = todayIso(),
+  shown?: ShownFiling | null,
 ): MergeResult {
   if (sourceId === targetId) throw new Error("Cannot merge a series into itself");
+  // ⛔ Every refusal BEFORE the restore point: a refused merge writes nothing — a spare restore point would push his
+  // oldest out of the twelve kept. Read again inside the write below, the one reading the merge writes by.
+  readMerge(db, sourceId, targetId, shown);
   const ctx = loadRecomputeCtx(db);
   let relinked = 0;
   let finalTarget = targetId;
-  let filed: MergeFiling | null = null;
+  let filed: HandFiling | null = null;
   // A merge has no inverse: the source ends, its mergedIntoId is permanent, and
-  // detection forward-maps its identity so it can never be resurrected. Rows
-  // rejected inside the transaction leave a harmless spare restore point.
+  // detection forward-maps its identity so it can never be resurrected.
   withPreMutationSnapshot(db, "merge-series", () => {
     db.transaction((tx) => {
-      const rows = tx
-        .select({
-          id: recurringSeries.id,
-          status: recurringSeries.status,
-          mergedIntoId: recurringSeries.mergedIntoId,
-        })
-        .from(recurringSeries)
-        .all();
-      const mergedById = new Map(rows.map((s) => [s.id, s.mergedIntoId]));
-      const statusById = new Map(rows.map((s) => [s.id, s.status]));
-      if (!mergedById.has(sourceId)) throw new Error(`Unknown recurring series ${sourceId}`);
-      if (!mergedById.has(targetId)) throw new Error(`Unknown recurring series ${targetId}`);
-      // A source that was already merged has no live occurrences to move; merging
-      // it again would overwrite its mergedIntoId and split its history from its
-      // future charges (an irreversible split-brain). Reject it.
-      if (mergedById.get(sourceId) !== null || statusById.get(sourceId) === "ended") {
-        throw new Error("Series has already been merged");
-      }
-      // the target may itself have been merged onward — follow to the live one
-      finalTarget = resolveMergeTarget(targetId, mergedById);
-      if (finalTarget === sourceId) throw new Error("Cannot merge a series into itself");
-      // The target must be LIVE. Relinking onto a dismissed/ended series would move
-      // the source's charges to a series the forecast/calendar/upcoming views all
-      // exclude (status IN detected|confirmed) — the money would silently vanish.
-      const targetStatus = statusById.get(finalTarget);
-      if (targetStatus !== "detected" && targetStatus !== "confirmed") {
-        throw new Error("Cannot merge into an inactive series");
-      }
-
-      // filed against the target's category BEFORE the relink moves the source's filed rows onto it
-      const filing = mergePlans(tx, finalTarget, [sourceId]).get(sourceId);
-      writeFiling(tx, filing?.plan ?? null);
-      filed = filing?.filing ?? null;
+      const read = readMerge(tx, sourceId, targetId, shown);
+      finalTarget = read.finalTarget;
+      writeFiling(tx, read.planned?.plan ?? null);
+      filed = read.planned?.filing ?? null;
 
       const res = tx
         .update(transactions)
@@ -447,6 +511,8 @@ export interface CreateSeriesResult {
   linked: number;
   /** per-row prior link state — the lossless inverse of the links this call made */
   undo: UndoPatch;
+  /** what joining a live series filed, as attaching files (§6A 47); null when it filed none — and when it created */
+  filed: HandFiling | null;
 }
 
 /**
@@ -552,7 +618,7 @@ export function createSeriesFromTransaction(
         );
       }
       // joining his row to a live series is his link — filed as an attach files it (§6A 47)
-      const filedBefore = fileUnfiledUnderSeries(tx, targetId, [seed]);
+      const { filedBefore, filed } = fileUnfiledUnderSeries(tx, targetId, [seed]);
       const undo: UndoPatch = {
         rows: [
           {
@@ -566,7 +632,7 @@ export function createSeriesFromTransaction(
         .where(eq(transactions.id, seed.id))
         .run();
       recomputeSeriesStats(tx, targetId, today, ctx);
-      result = { mode: "attached", seriesId: targetId, name: target.name, linked: 1, undo };
+      result = { mode: "attached", seriesId: targetId, name: target.name, linked: 1, undo, filed };
       return;
     }
 
@@ -669,7 +735,7 @@ export function createSeriesFromTransaction(
     // settle over the linked set — with real evidence this derives cadence,
     // amounts, next-expected, and kind exactly as detection would (§4.3)
     recomputeSeriesStats(tx, seriesId, today, ctx);
-    result = { mode: "created", seriesId, name, linked: members.length, undo };
+    result = { mode: "created", seriesId, name, linked: members.length, undo, filed: null };
   });
   return result!;
 }

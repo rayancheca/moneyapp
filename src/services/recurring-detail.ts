@@ -33,7 +33,7 @@ import {
   seriesEvidence,
   seriesIsForecast,
 } from "./recurring";
-import { mergeFilings, type MergeFiling } from "./recurring-links";
+import { mergeFilings, type HandFiling } from "./recurring-links";
 import { seriesCategoryIds } from "./series-category";
 
 /**
@@ -95,7 +95,7 @@ export interface SeriesMergeCandidate {
    * ⚖️ §6A 54 (2026-10-08): what merging it in would file under this series' category — the count and path the
    * confirmation names before he presses; null when it files nothing. The reading `mergeSeries` writes by.
    */
-  filing: MergeFiling | null;
+  filing: HandFiling | null;
 }
 
 export interface SeriesDetail {

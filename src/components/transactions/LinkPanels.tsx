@@ -17,6 +17,7 @@ import {
   type SeriesLinkPanelData,
   type TransferLinkPanelData,
 } from "@/app/transactions/sheet-actions";
+import { filedToastTitle } from "@/components/recurring/labels";
 import { offerUndoToast } from "./undo-toast";
 
 /**
@@ -228,7 +229,8 @@ export function SeriesLinkPanel({
         }
         // candidates are detected/confirmed only — a live series
         setPanel({ linked: { id: seriesId, name, drawsAsRecurring: true }, candidates: [] });
-        offerUndoToast(`Attached to ${name}`, r.data.undo, () => {
+        // names what attaching filed (§6A 47), in the merge toast's own clause
+        offerUndoToast(filedToastTitle(`Attached to ${name}`, r.data), r.data.undo, () => {
           setPanel(null);
           setOpen(false);
           onChanged();
@@ -257,7 +259,8 @@ export function SeriesLinkPanel({
         setPanel({ linked: { id: seriesId, name, drawsAsRecurring: true }, candidates: [] });
         setOpen(false);
         toast({
-          title: mode === "created" ? `Marked "${name}" as recurring` : `Attached to ${name}`,
+          // joining a live series files the row as attaching does (§6A 47) — and says so in the same clause
+          title: filedToastTitle(mode === "created" ? `Marked "${name}" as recurring` : `Attached to ${name}`, r.data),
           action: {
             label: "Undo",
             onAction: () =>
