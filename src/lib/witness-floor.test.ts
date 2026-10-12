@@ -980,6 +980,34 @@ describe("ledgerCheckMode — the command line", () => {
     }
   });
 
+  /*
+   * 🔴 A bidi control among a reason's words — an embedding, override or isolate, U+202A–202E and U+2066–2069 — is no
+   * whitespace to `\s`, no control character and no reason of nothing: it was kept, its dry run said it would store it,
+   * and stored it is printed raw, the words after it reordered wherever the line is printed. Refused now, dry run or
+   * not, by name.
+   */
+  it("⛔ a reason carrying a bidi control is refused, dry run or not, naming it — nothing was written", () => {
+    for (const c of [0x202a, 0x202b, 0x202c, 0x202d, 0x202e, 0x2066, 0x2067, 0x2068, 0x2069]) {
+      const reason = `July statement, ${String.fromCodePoint(c)}page 1`;
+      for (const confirm of [[], ["--confirm"]]) {
+        const run = () => ledgerCheckMode(["--acknowledge-left-out=3f9a0c12de", `--reason=${reason}`, ...confirm]);
+        expect(run).toThrow(WitnessFlagRefusal);
+        expect(run).toThrow(
+          `--reason carries a bidi control, U+${c.toString(16).toUpperCase()}, that every surface would print raw — ` +
+            "nothing was written: --reason='<what the statement shows>', in characters a reader sees",
+        );
+      }
+    }
+  });
+
+  /* a line or paragraph separator is whitespace to `\s`: a space here, as a tab or a line break is — never refused */
+  it("a line or paragraph separator in --reason is a space, as a line break is", () => {
+    const [ls, ps] = [String.fromCodePoint(0x2028), String.fromCodePoint(0x2029)];
+    const mode = ledgerCheckMode(["--acknowledge-left-out=3f9a0c12de", `--reason=July, p. 1:${ls}fee${ps} reversed`]);
+    const reason = "July, p. 1: fee reversed";
+    expect(mode).toEqual({ mode: "acknowledge", tokens: ["3f9a0c12de"], confirm: false, reason });
+  });
+
   it("the reason is kept whole — its commas, colons and equals signs — on one line, its spaces collapsed", () => {
     const mode = ledgerCheckMode(["--acknowledge-left-out=3f9a0c12de", "--reason=  July, p. 1:\n  fee =  $25.00 , reversed  "]);
     expect(mode).toEqual({ mode: "acknowledge", tokens: ["3f9a0c12de"], confirm: false, reason: "July, p. 1: fee = $25.00 , reversed" });

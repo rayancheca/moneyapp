@@ -100,16 +100,21 @@ const NEVER_CHANGED = "this step never changes a stored one";
 const TAKE_ONE = "its open lines take one of them, exactly, never another";
 
 /**
- * every character that prints as nothing: Unicode whitespace, the zero-width and other invisible ones, the format
- * characters, the C0 and C1 control characters, and U+2800 BRAILLE PATTERN BLANK
+ * every character that is no word: Unicode whitespace, the zero-width and other invisible ones, the format characters,
+ * the C0 and C1 control characters, and U+2800 BRAILLE PATTERN BLANK. Most print as nothing; not every one — a few
+ * format characters print a sign of their own, Unicode's prepended concatenation marks (the Arabic number signs
+ * U+0600–0605, the end of ayah U+06DD, the Kaithi number sign U+110BD …), each set over the digits after it.
+ *
+ * 🔴 It said "every character that prints as nothing", and `\p{Cf}` holds those signs: what they share is that none
+ * is a word, and a reason of only them says nothing a statement shows, whatever it prints.
  */
 const INVISIBLE = /[\p{White_Space}\p{Default_Ignorable_Code_Point}\p{Cf}\p{Cc}\u2800]/gu;
 
 /**
- * Whether a reason says nothing: nothing is left once every Unicode whitespace character and every invisible one —
- * zero-width spaces and joiners, the byte-order mark, bidi marks, the soft hyphen (`Default_Ignorable_Code_Point`), the
- * format characters (`Cf`), the control characters (`Cc`), the braille blank — is taken out. The command line
- * (`ledgerCheckMode`) and the table's one writer (`writeLeftOutAcknowledgements`) refuse it.
+ * Whether a reason says nothing: nothing is left once every Unicode whitespace character, every invisible one —
+ * zero-width spaces and joiners, the byte-order mark, bidi marks, the soft hyphen (`Default_Ignorable_Code_Point`) —
+ * every format character (`Cf`), every control character (`Cc`) and the braille blank are taken out (`INVISIBLE`). The
+ * command line (`ledgerCheckMode`) and the table's one writer (`writeLeftOutAcknowledgements`) refuse it.
  *
  * 🔴 Both trimmed as `\s` and `trim()` do — Unicode whitespace, no zero-width character — and the table's CHECK
  * (migration 0024, applied to the real ledger: never edited) trims ASCII whitespace only: a reason of one U+200B was
@@ -123,21 +128,45 @@ export function reasonSaysNothing(reason: string): boolean {
 }
 
 /**
- * What a reason carrying a control character (`Cc`) anywhere is refused with — "carries a control character, U+001B,
- * that every surface would print raw" — or null when it carries none: ONE phrasing for the command line
- * (`ledgerCheckMode`) and the table's one writer (`writeLeftOutAcknowledgements`), which both refuse it.
+ * What a reason may never carry among its words, by what each is called: stored, it would be printed raw with the
+ * line wherever it is printed — a control character a terminal obeys, a separator breaking the one line a stored
+ * reason is on, a bidi control reordering the words after it.
+ */
+const NEVER_AMONG_WORDS: readonly { readonly is: RegExp; readonly called: string }[] = [
+  { is: /\p{Cc}/u, called: "a control character" },
+  { is: /\p{Zl}/u, called: "a line separator" },
+  { is: /\p{Zp}/u, called: "a paragraph separator" },
+  // the embeddings, overrides and isolates — LRE RLE PDF LRO RLO, LRI RLI FSI PDI
+  { is: /[\u202A-\u202E\u2066-\u2069]/u, called: "a bidi control" },
+];
+
+/**
+ * What a reason carrying a control character (`Cc`), a line or paragraph separator (`Zl`, `Zp`) or a bidi control
+ * anywhere is refused with, the first it carries named — "carries a control character, U+001B, that every surface
+ * would print raw" — or null when it carries none: ONE phrasing for the command line (`ledgerCheckMode`) and the
+ * table's one writer (`writeLeftOutAcknowledgements`), which both refuse it.
  *
  * 🔴 Only a reason of NOTHING but control characters was refused (`reasonSaysNothing`): one with words beside an escape,
  * a bell or a C1 control said something, so it was stored — and printed raw with the line wherever it is printed, an
  * escape a terminal obeys and a page shows as nothing. ⛔ Refused, never taken out: a stored reason is exactly what the
- * session gave, nothing added or dropped (`acknowledgedSentence`). The command line collapses whitespace first, so a tab
- * or a line break there is a space, never this; given to the writer it is this — a stored reason is on one line.
+ * session gave, nothing added or dropped (`acknowledgedSentence`). The command line collapses whitespace first, so a
+ * tab, a line break, a line or a paragraph separator there is a space, never this; given to the writer it is this — a
+ * stored reason is on one line.
+ *
+ * 🔴 U+2028 LINE SEPARATOR and U+2029 PARAGRAPH SEPARATOR are whitespace, no `Cc`: the writer took them, though a
+ * stored reason is on one line. 🔴 A bidi control beside words — an embedding, override or isolate, U+202A–202E and
+ * U+2066–2069 — passed both guards, to be stored and printed with the words after it reordered: an override reverses
+ * them. The bidi MARKS (U+200E, U+200F, U+061C) are not refused among words: each is one invisible character of a
+ * direction, and opens no run.
  */
 export function reasonCarriesControl(reason: string): string | null {
-  const control = /\p{Cc}/u.exec(reason)?.[0];
-  if (control === undefined) return null;
-  const code = control.codePointAt(0)!.toString(16).toUpperCase().padStart(4, "0");
-  return `carries a control character, U+${code}, that every surface would print raw`;
+  for (const char of reason) {
+    const never = NEVER_AMONG_WORDS.find(({ is }) => is.test(char));
+    if (never === undefined) continue;
+    const code = char.codePointAt(0)!.toString(16).toUpperCase().padStart(4, "0");
+    return `carries ${never.called}, U+${code}, that every surface would print raw`;
+  }
+  return null;
 }
 
 /** What an acknowledgement of `line` is keyed by: its first printer's printing of it. */
@@ -304,12 +333,14 @@ export function planAcknowledging(
         said.push(`${token}: acknowledged already, and ${notStored}, ${stays}: ${NEVER_CHANGED} — ${acknowledgedSentence(ack)}`);
       }
     } else {
-      // some acknowledged, the rest open: what is stored is said first, with how many lines carry it
+      /*
+       * some acknowledged, the rest open: what is stored is said first, each beside how many of its lines are
+       * acknowledged. 🔴 It counted the lines carrying each acknowledgement, the day in it: one reason stored on two
+       * days read "1 of its 3 lines alike acknowledged already" twice, where 2 of the 3 are.
+       */
       const and = another ? `and ${notStored}, ${stays}: ${NEVER_CHANGED} ${nor}` : "and lines alike take one reason";
-      for (const ack of stored) {
-        const n = carried.filter((a) => sameAcknowledgement(a, ack)).length;
-        said.push(`${token}: ${n} of its ${marked.length} lines alike acknowledged already, ${and} — ${acknowledgedSentence(ack)}`);
-      }
+      const count = `${carried.length} of its ${marked.length} lines alike acknowledged already`;
+      for (const ack of stored) said.push(`${token}: ${count}, ${and} — ${acknowledgedSentence(ack)}`);
       if (another) {
         reasonsKept.push({ mark: token, stored });
         continue;
@@ -345,7 +376,7 @@ function acknowledgesSaid(
 /**
  * `--reason=` with a reason stored, quoted as a shell reads it back whole: single quotes keep every character but the
  * quote itself, which closes them, is escaped, and opens them again. A stored reason is on one line (`ledgerCheckMode`;
- * the writer refuses a line break, `reasonCarriesControl`).
+ * the writer refuses a line break, a line separator and a paragraph separator, `reasonCarriesControl`).
  */
 const reasonArgument = (reason: string): string => `--reason='${reason.replace(/'/g, "'\\''")}'`;
 

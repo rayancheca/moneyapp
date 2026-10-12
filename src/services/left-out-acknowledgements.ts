@@ -30,8 +30,10 @@ export function readLeftOutAcknowledgements(db: AppDatabase): LeftOutAcknowledge
  * characters are in it — a no-break, ideographic or zero-width space, a joiner, a BOM, a format or control character,
  * the braille blank (`reasonSaysNothing`).
  *
- * ⛔ Nor one carrying a control character anywhere, words beside it or not — it would be stored, and printed raw with
- * the line wherever it is printed: refused by name, ALL of them, before anything is written (`reasonCarriesControl`).
+ * ⛔ Nor one carrying a control character, a line or paragraph separator (U+2028, U+2029) or a bidi control anywhere,
+ * words beside it or not — it would be stored, and printed raw with the line wherever it is printed: a stored reason is
+ * on one line, its words in the order given. Refused by name, ALL of them, before anything is written
+ * (`reasonCarriesControl`).
  */
 export function writeLeftOutAcknowledgements(db: AppDatabase, writes: readonly LeftOutAcknowledgementWrite[]): void {
   if (writes.length === 0) return;

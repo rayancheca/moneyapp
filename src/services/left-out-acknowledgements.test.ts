@@ -195,6 +195,37 @@ describe("the acknowledgements a ledger keeps (`left_out_acknowledgements`)", ()
     expect(readLeftOutAcknowledgements(bundle.db)).toEqual([]);
   });
 
+  /*
+   * 🔴 "The writer refuses a line break" (`reasonArgument`), and it took U+2028 LINE SEPARATOR and U+2029 PARAGRAPH
+   * SEPARATOR — whitespace, no control character: given here, one was stored, though a stored reason is on one line.
+   * 🔴 A bidi control among a reason's words — an embedding, override or isolate, U+202A–202E and U+2066–2069 — passed
+   * both guards: words beside it, and no `Cc`. Stored, it is printed raw, the words after it reordered: an override
+   * reverses them, so "\u202E1 egap" reads "page 1". Each is refused now by name, every write given with it, before
+   * anything is written.
+   */
+  test("⛔ a separator or a bidi control among a reason's words is refused by name — nothing written", () => {
+    const bidi = [0x202a, 0x202b, 0x202c, 0x202d, 0x202e, 0x2066, 0x2067, 0x2068, 0x2069];
+    const carrying: [string, string][] = [
+      ["July statement,\u2028page 1", "a line separator, U+2028"],
+      ["July statement,\u2029page 1", "a paragraph separator, U+2029"],
+      ...bidi.map((c): [string, string] => {
+        const code = c.toString(16).toUpperCase();
+        return [`July statement, ${String.fromCodePoint(c)}page 1`, `a bidi control, U+${code}`];
+      }),
+      // the first one in the reason is the one named
+      ["July\u2067 statement\u0007, page 1", "a bidi control, U+2067"],
+    ];
+    for (const [reason, named] of carrying) {
+      const before = changes();
+      expect(() => writeLeftOutAcknowledgements(bundle.db, [OPENING, { ...OPENING, reason }])).toThrow(
+        `refused: the reason for WFB Opening Deposit From Card on 2026-07-27 carries ${named}, that every surface ` +
+          "would print raw — nothing was written",
+      );
+      expect(changes()).toBe(before);
+    }
+    expect(readLeftOutAcknowledgements(bundle.db)).toEqual([]);
+  });
+
   test("what the session read, an invisible character in it or not, is a reason — stored as given", () => {
     writeLeftOutAcknowledgements(bundle.db, [{ ...OPENING, reason: `​${OPENING.reason} ` }]);
     expect(readLeftOutAcknowledgements(bundle.db).map((a) => a.reason)).toEqual([`​${OPENING.reason} `]);

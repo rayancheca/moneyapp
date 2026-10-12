@@ -573,10 +573,16 @@ What the table enforces, whoever writes (a raw INSERT too): NOT NULL, and CHECK
 return, space (SQLite's one-argument `trim()` strips spaces only). Nothing more: a no-break space
 (U+00A0), an ideographic space (U+3000) or a zero-width space (U+200B) passes it. What the app's
 writer adds: `writeLeftOutAcknowledgements`, and `--reason` on the command line before it
-(`ledgerCheckMode`), refuse a reason with nothing left once every Unicode whitespace character and
+(`ledgerCheckMode`), refuse a reason with nothing left once every Unicode whitespace character,
 every invisible one — zero-width spaces and joiners, the BOM, bidi marks, the soft hyphen
-(`Default_Ignorable_Code_Point`) — is taken out (`reasonSaysNothing`). Migration 0024 is applied to
-the real ledger and never edited: a wider CHECK would take a new migration rebuilding the table.
+(`Default_Ignorable_Code_Point`) — every format character (`Cf`), every control character (`Cc`)
+and U+2800 BRAILLE PATTERN BLANK are taken out (`reasonSaysNothing`). Both also refuse, by name,
+a reason carrying among its words a control character, a line or paragraph separator (U+2028,
+U+2029) or a bidi control — an embedding, override or isolate, U+202A–202E and U+2066–2069 —
+which every surface would print raw (`reasonCarriesControl`); the command line collapses every
+run of whitespace to one space first, so a tab, a line break or a separator there is a space.
+Migration 0024 is applied to the real ledger and never edited: a wider CHECK would take a new
+migration rebuilding the table.
 It is what the session read on the statement, in its words: an entry without a reason is a check
 quieted, not passed — and a later run never changes it, nor gives lines alike two: another
 `--reason` for a line acknowledged already, or for a line alike one (a mark partly acknowledged),
