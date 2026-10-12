@@ -34,7 +34,7 @@ import {
   type SeriesStaleness,
   hasStoppedForecasting,
 } from "./recurring";
-import { arrearsThisMonth, unbankedIncomeForSeries, unbankedIncomeTotals, type UnbankedIncomeTotals } from "./arrears";
+import { arrearsThisMonth, unbankedIncomeThisMonth, unbankedIncomeTotals, type UnbankedIncomeTotals } from "./arrears";
 import { withBillingCarriers } from "./billing-carriers";
 import { isUpfrontCarRow, upfrontCarRule } from "./car-upfront";
 import { silenceMeasuredThroughBySeries } from "./cash-earnings";
@@ -1334,7 +1334,8 @@ function currentMonthForecast(db: AppDatabase, today: string, reads: ForecastRea
       .filter((r) => !isAgentsIncomeSeries(reads.agentsCash, r))
       .map((r) => r.id),
   );
-  const unbanked = unbankedIncomeForSeries(db, incomeSeriesIds, monthStart, today);
+  // the month's window, the one the pay series' own page lists the same paydays over (`unbankedIncomeThisMonth`)
+  const unbanked = unbankedIncomeThisMonth(db, incomeSeriesIds, today);
 
   // the components ARE the math: totals derive from them, exactly
   const projectedIncomeCents = components.reduce((sum, c) => (c.cents > 0 ? sum + c.cents : sum), 0);

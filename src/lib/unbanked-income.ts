@@ -111,3 +111,39 @@ export function unbankedIncomeFrontierClause(
   }
   return `${checkedPart}; ${other} ${unread === 1 ? "falls" : "fall"} ${after}.`;
 }
+
+/**
+ * What /budgets says after the passed paydays when every one fell on a day the ledger has checked — the frontier
+ * clause has nothing to add — and what the pay series' own page says then too.
+ */
+export const IMPORTS_NOT_EARNINGS =
+  "That is evidence about what has been imported, not about whether the money was earned.";
+
+/** How the forecast's note and a pay series' own page word the paydays that passed this month with no deposit. */
+export interface PassedPaydaysWords {
+  /** "1 payday", "2 paydays" — before the amount */
+  count: string;
+  /** after it: "already passed this month", with "with no deposit imported" only when the clause has nothing to say */
+  passed: string;
+  /** the paydays nobody has looked for (`unbankedIncomeFrontierClause`), or null when the ledger checked them all */
+  unread: string | null;
+  /** some payday fell on a day the ledger has checked and no deposit met it — the note's warning tone */
+  warning: boolean;
+}
+
+/**
+ * The forecast's sentence about this month's passed paydays, in the parts each surface lays out its own way: the
+ * forecast's note runs them into one paragraph, the pay series' own page heads the list of its paydays with them.
+ *
+ * ⛔ One home for the words. 🔴 The pay series' page said nothing of Oct 1 or Oct 8 while the forecast named both (a
+ * copy of his ledger, 2026-10-12); it says it now in these words, so the two cannot word the same Thursdays apart.
+ */
+export function passedPaydaysWords(r: UnbankedIncomeReading, formatDay: (iso: string) => string): PassedPaydaysWords {
+  const unread = unbankedIncomeFrontierClause(r, formatDay);
+  return {
+    count: r.occurrenceCount === 1 ? "1 payday" : `${r.occurrenceCount} paydays`,
+    passed: unread === null ? "already passed this month with no deposit imported" : "already passed this month",
+    unread,
+    warning: r.checkedOccurrenceCount > 0,
+  };
+}

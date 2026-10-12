@@ -59,6 +59,11 @@ export interface UnbankedIncomeSeries extends BudgetTailSeries {
   /** of `occurrenceCount`, the paydays dated on or before `checkedThrough` */
   checkedOccurrenceCount: number;
   checkedCents: number;
+  /**
+   * Each passed payday's date, in order, beside `occurrenceCents` — what the pay series' own page lists, one row a
+   * payday. 🔴 Its page named none of Oct 1 or Oct 8 beside a forecast naming both (a copy of his ledger, 2026-10-12).
+   */
+  occurrenceDates: readonly string[];
 }
 
 export interface UnbankedIncome {
@@ -428,10 +433,27 @@ export function unbankedIncomeForSeries(
       checkedThrough,
       checkedOccurrenceCount: checked.length,
       checkedCents: checked.reduce((sum, o) => sum + o.amountCents, 0),
+      occurrenceDates: occ.map((o) => o.date),
     };
   });
   series.sort((a, b) => compareDates(a.nextDate, b.nextDate) || a.name.localeCompare(b.name));
   return { totalCents: series.reduce((sum, x) => sum + x.amountCents, 0), series };
+}
+
+/**
+ * `unbankedIncomeForSeries` over THIS calendar month, `[the 1st, today)` — the income mirror of `arrearsThisMonth`.
+ *
+ * ⛔ ONE WINDOW for the two surfaces that name this month's passed paydays one by one or all together: the forecast's
+ * note on /recurring and the pay series' own page. 🔴 The page said nothing of them: on a copy of his ledger
+ * 2026-10-12 `/recurring/<It America LLC (weekly pay)>` read "Awaiting statements" and "Next expected Oct 15", while
+ * the forecast said "2 paydays worth $2,283.84 already passed this month". /budgets reads its budget's own window.
+ */
+export function unbankedIncomeThisMonth(
+  db: AppDatabase,
+  seriesIds: ReadonlySet<string>,
+  today: string,
+): UnbankedIncome {
+  return unbankedIncomeForSeries(db, seriesIds, periodBounds(today, "monthly").start, today);
 }
 
 /** One reading of the unbanked paydays, for a sentence about all of them. */
