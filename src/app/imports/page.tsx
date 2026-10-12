@@ -161,9 +161,11 @@ export default async function ImportsPage({
    *
    * 🔴 …and the footer then called it "a spending report, an export without a closing figure": measured on a copy of
    * his ledger 2026-10-12, "5 imported documents" were three such documents and two Robinhood opening statements the
-   * schedule above counts. `statementEvidence` reads the list and splits the rest by the schedule's own rule.
+   * schedule above counts. `statementEvidence` reads the list and splits the rest by the schedule's own rule — and,
+   * since the review of 601f155 (e2e copy: 18 OFX downloads owning their LEDGERBAL read "an export without a closing
+   * figure"), by what each file recorded, the sheets' rule (`balanceLessKind`).
    */
-  const { periods, evidence, reportDocuments, openingStatements } = statementEvidence(db);
+  const { periods, evidence, balanceLess } = statementEvidence(db);
   const recentPeriods = evidence.slice(0, RECENT_PERIODS).map((p) => ({
     ...p,
     provenance: provenanceFor(db, { kind: "statementPeriod", id: p.id }),
@@ -282,7 +284,7 @@ export default async function ImportsPage({
                 {evidence.length - recentPeriods.length} older periods are not listed.
               </p>
             )}
-            {balanceLessNotes({ reportDocuments, openingStatements }).map((note) => (
+            {balanceLessNotes(balanceLess).map((note) => (
               <p key={note} className="mt-1 text-xs text-ink-faint">
                 {note}
               </p>

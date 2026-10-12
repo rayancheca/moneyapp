@@ -69,7 +69,8 @@ export const OPENING_STATEMENT_PROFILES: ReadonlySet<string> = new Set(["robinho
  * Whether a period printed balances — something to reconcile or to price. This is what /imports' "What the
  * statements proved" list and its three tiles count, and it is NOT `countsAsStatement`: an opening statement arrived
  * on the cycle (the panels count it), but with no opening printed nothing in it could have failed. The page reads both
- * through `statementEvidence` (services/statement-evidence.ts), whose footer names which of the two each left-out is.
+ * through `statementEvidence` (services/statement-evidence.ts), whose footer names what each left-out is
+ * (`balanceLessKind`, below).
  */
 export function carriesBalances(reconciliation: ReconciliationState): boolean {
   return reconciliation !== "not_applicable";
@@ -77,8 +78,8 @@ export function carriesBalances(reconciliation: ReconciliationState): boolean {
 
 /**
  * A statement that printed no balances to check — an account's OPENING statement (`countsAsStatement`, above): every
- * reader that says what a balance-less period IS asks this, never the state alone, so a page cannot call one a file
- * that "carries no balances" while the schedule counts it.
+ * reader that says what a balance-less period IS asks this (through `balanceLessKind`, below), never the state alone,
+ * so a page cannot call one a file that "carries no balances" while the schedule counts it.
  *
  * 🔴 Two readers of one fact. /imports' footer named Robinhood Agentic's Jun 2026 opening statement "an account's
  * first" (`statementEvidence`), while the sheet of the one row on his ledger from its file still read "coverage
@@ -88,6 +89,34 @@ export function carriesBalances(reconciliation: ReconciliationState): boolean {
  */
 export function isOpeningStatement(period: PeriodKind): boolean {
   return !carriesBalances(period.reconciliation) && countsAsStatement(period);
+}
+
+/** What `balanceLessKind` reads of a period: its kind, and the newest balance its file recorded for the account. */
+export interface BalanceLessFacts extends PeriodKind {
+  /** `fileRecordedBalanceOn` (services/file-recorded-balance.ts) of the period's file and account */
+  readonly recordedOn: string | null;
+}
+
+/**
+ * What a period that printed no balances IS: an account's opening statement (`isOpeningStatement`), a file that
+ * recorded the account's balance but no opening one — an OFX download's LEDGERBAL — or one that recorded none, a
+ * Spending Report or a balance-less export. Null for a period that printed balances.
+ *
+ * ⛔ Every reader that names one asks this — the period line on a row's and a day's sheet, the period's own sheet
+ * (provenance.ts) and /imports' footer (`statementEvidence`) — so no page calls a file that recorded a balance one that
+ * "carries no balances", nor a statement the schedule counts a report.
+ *
+ * 🔴 601f155 read the opening statement off the parser and left every other balance-less period to the state: the
+ * review of it, on a copy of data/e2e.db (2026-10-12), found 18 of the fixture's 27 OFX downloads reading "this file
+ * carries no balances to check against" under the balance that same file recorded. ⚠️ The opening statement is asked
+ * first: Agentic's June PDF recorded its close too, and it is still the account's first statement.
+ */
+export type BalanceLessKind = "opening_statement" | "balance_recorded" | "no_balance";
+
+export function balanceLessKind(period: BalanceLessFacts): BalanceLessKind | null {
+  if (carriesBalances(period.reconciliation)) return null;
+  if (isOpeningStatement(period)) return "opening_statement";
+  return period.recordedOn === null ? "no_balance" : "balance_recorded";
 }
 
 /** Every account's statements (`countsAsStatement`), oldest first — the rows both statement panels read. */

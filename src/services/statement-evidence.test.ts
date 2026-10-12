@@ -5,6 +5,7 @@ import { eq } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { createDatabase, type DbBundle } from "@/db/client";
 import { seedDatabase } from "@/db/seed";
+import { KEPT_OPENING_SOURCE, balanceAnchors, type AnchorSource } from "@/db/schema/balances";
 import { importFiles, statementPeriods, type ReconciliationState } from "@/db/schema/imports";
 import { institutions } from "@/db/schema/institutions";
 import { createAccount } from "./accounts";
@@ -59,6 +60,11 @@ function addPeriod(fileId: string, accountId: string, start: string, end: string
     .get().id;
 }
 
+/** A balance `fileId` recorded for an account, as the import writes one: a `balance_anchors` row the file owns. */
+function addAnchor(fileId: string, accountId: string, day: string, source: AnchorSource): void {
+  bundle.db.insert(balanceAnchors).values({ accountId, anchoredOn: day, balanceCents: 1000, source, importFileId: fileId }).run();
+}
+
 beforeEach(() => {
   dir = fs.mkdtempSync(path.join(os.tmpdir(), "moneyapp-evidence-"));
   bundle = createDatabase(path.join(dir, "t.db"));
@@ -70,8 +76,9 @@ afterEach(() => {
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
-/** His ledger's shape, 2026-10-12: one Robinhood PDF that opened Agentic beside two sections with balances, a
- *  Spending Report, a balance-less export, and an OFX download whose two accounts both printed none. */
+/** His ledger's shape, 2026-10-12: one Robinhood PDF that opened Agentic — recording its Jun 30 close — beside two
+ *  sections with balances, a Spending Report, a balance-less export, and an OFX download whose two accounts both
+ *  printed none. */
 function hisShape() {
   const agentic = makeAccount("Robinhood Agentic");
   const cash = makeAccount("Robinhood Cash");
@@ -82,6 +89,8 @@ function hisShape() {
 
   const june = newFile("747059b1.pdf", "robinhood-brokerage-statement-pdf");
   const opening = addPeriod(june, agentic, "2026-06-01", "2026-06-30", "not_applicable");
+  // measured on the copy: the PDF owns Agentic's Jun 30 balance, as `ofx_ledger`
+  addAnchor(june, agentic, "2026-06-30", "ofx_ledger");
   const cashJune = addPeriod(june, cash, "2026-06-01", "2026-06-30", "reconciled");
   const brokerageJune = addPeriod(june, brokerage, "2026-06-01", "2026-06-30", "value_anchor");
   const july = newFile("rh-2026-07.pdf", "robinhood-brokerage-statement-pdf");
@@ -125,13 +134,16 @@ describe("statementEvidence — what /imports' \"What the statements proved\" li
     });
   });
 
-  test("🔴 the footer's two counts: documents that are no statement at all, and opening statements — by the schedule's rule", () => {
+  test("🔴 the footer's counts: documents that are no statement at all, and opening statements — by the schedule's rule", () => {
     hisShape();
-    const { periods, evidence, reportDocuments, openingStatements } = statementEvidence(bundle.db);
-    // the Spending Report, the Rocket Money export and the OFX download — ONE document, though it printed two accounts
-    expect(reportDocuments).toBe(3);
-    // Agentic's June section, though the PDF it came out of printed balances for two other accounts
-    expect(openingStatements).toBe(1);
+    const { periods, evidence, balanceLess } = statementEvidence(bundle.db);
+    expect(balanceLess).toEqual({
+      // the Spending Report, the Rocket Money export and the OFX download — ONE document, though it printed two accounts
+      reportDocuments: 3,
+      recordedBalanceDocuments: 0,
+      // Agentic's June section, though the PDF it came out of printed balances for two other accounts and its own close
+      openingStatements: 1,
+    });
     // ⚠️ documents, not periods: five periods are left out of the list, the OFX's two among them
     expect(periods.length - evidence.length).toBe(5);
   });
@@ -139,6 +151,66 @@ describe("statementEvidence — what /imports' \"What the statements proved\" li
   test("no balance-less period, nothing to name", () => {
     const account = makeAccount("Chase Checking");
     addPeriod(newFile("a.pdf", "chase-checking-statement-pdf"), account, "2026-08-01", "2026-08-31", "reconciled");
-    expect(statementEvidence(bundle.db)).toMatchObject({ reportDocuments: 0, openingStatements: 0 });
+    expect(statementEvidence(bundle.db).balanceLess).toEqual({
+      reportDocuments: 0,
+      recordedBalanceDocuments: 0,
+      openingStatements: 0,
+    });
+  });
+});
+
+/**
+ * 🔴 The review of 601f155, on a copy of data/e2e.db (2026-10-12): the footer read "27 imported documents carried no
+ * balance to check — a spending report, an export without a closing figure" of 27 OFX downloads — none of them a
+ * spending report, and 18 owning the balance they recorded (LEDGERBAL, an `ofx_ledger` anchor) on the account each
+ * declares. Not reachable on his ledger today: its three such documents own no balance (measured on the copy); it is
+ * the day he imports a Chase QFX download. A document is now named by what the ledger keeps of it (`balanceLessKind`).
+ */
+describe("statementEvidence — a download that recorded a balance but no opening one", () => {
+  test("🔴 counted as one that recorded a balance, never as a document that carried none", () => {
+    const freedom = makeAccount("Chase Freedom Unlimited");
+    const q3 = newFile("Chase1111_Activity_2024-07-01_2024-09-30.QFX", "ofx-generic");
+    addPeriod(q3, freedom, "2024-07-01", "2024-09-30", "not_applicable");
+    addAnchor(q3, freedom, "2024-09-30", "ofx_ledger");
+
+    expect(statementEvidence(bundle.db).balanceLess).toEqual({
+      reportDocuments: 0,
+      recordedBalanceDocuments: 1,
+      openingStatements: 0,
+    });
+  });
+
+  test("⛔ the balance must be the file's own, on the account it declares", () => {
+    const freedom = makeAccount("Chase Freedom Unlimited");
+    const savings = makeAccount("Chase Savings");
+    // a balance it recorded on ANOTHER account is not one on this one
+    const q3 = newFile("Chase1111_Activity_2024-07-01_2024-09-30.QFX", "ofx-generic");
+    addPeriod(q3, freedom, "2024-07-01", "2024-09-30", "not_applicable");
+    addAnchor(q3, savings, "2024-09-30", "ofx_ledger");
+    // an opening it keeps for a statement he un-imported was never printed by it (`kept-openings`)
+    const csv = newFile("Chase8721_Activity_2024-07-01_2024-09-30.CSV", "chase-deposit-csv");
+    addPeriod(csv, savings, "2024-07-01", "2024-09-30", "not_applicable");
+    addAnchor(csv, savings, "2024-06-30", KEPT_OPENING_SOURCE);
+
+    expect(statementEvidence(bundle.db).balanceLess).toEqual({
+      reportDocuments: 2,
+      recordedBalanceDocuments: 0,
+      openingStatements: 0,
+    });
+  });
+
+  test("⚠️ one download printing two accounts, one with a balance and one without, is named in both sentences", () => {
+    const freedom = makeAccount("Chase Freedom Unlimited");
+    const checking = makeAccount("Chase Total Checking");
+    const download = newFile("download.qfx", "ofx-generic");
+    addPeriod(download, freedom, "2024-07-01", "2024-09-30", "not_applicable");
+    addPeriod(download, checking, "2024-07-01", "2024-09-30", "not_applicable");
+    addAnchor(download, checking, "2024-09-30", "ofx_ledger");
+
+    expect(statementEvidence(bundle.db).balanceLess).toEqual({
+      reportDocuments: 1,
+      recordedBalanceDocuments: 1,
+      openingStatements: 0,
+    });
   });
 });

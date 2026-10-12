@@ -2,7 +2,9 @@ import { desc, eq } from "drizzle-orm";
 import type { AppDatabase } from "@/db/client";
 import { accounts } from "@/db/schema/accounts";
 import { importFiles, statementPeriods, type ReconciliationState } from "@/db/schema/imports";
-import { carriesBalances, isOpeningStatement } from "./statements-by-account";
+import type { BalanceLessCounts } from "@/lib/statement-evidence-notes";
+import { fileRecordedBalanceOnSql } from "./file-recorded-balance";
+import { balanceLessKind, carriesBalances, type BalanceLessKind } from "./statements-by-account";
 
 /** One `statement_periods` row as /imports lists it. */
 export interface ImportsPeriod {
@@ -16,6 +18,9 @@ export interface ImportsPeriod {
   readonly marketChangeCents: number | null;
   /** the parser that read its file — what tells an opening statement from a report (`countsAsStatement`) */
   readonly parserProfile: string | null;
+  /** the newest balance its file recorded for the account (`fileRecordedBalanceOn`) — what tells a download from a
+   *  report */
+  readonly recordedOn: string | null;
 }
 
 export interface StatementEvidence {
@@ -23,16 +28,16 @@ export interface StatementEvidence {
   readonly periods: ImportsPeriod[];
   /** the ones that printed balances (`carriesBalances`), in the same order — "What the statements proved" lists these */
   readonly evidence: ImportsPeriod[];
-  /** imported DOCUMENTS whose balance-less periods are no statement at all: a Spending Report, a balance-less export */
-  readonly reportDocuments: number;
-  /** balance-less periods that ARE statements (`countsAsStatement`): an account's first, printed without an opening */
-  readonly openingStatements: number;
+  /** what the rest are, one count per `balanceLessKind` — the footer's (`balanceLessNotes`) */
+  readonly balanceLess: BalanceLessCounts;
 }
 
 /**
  * What /imports' "What the statements proved" reads of `statement_periods`: the periods that printed balances, and —
- * for its footer — what each period it leaves out IS, by the rule the statement schedule and Statements you do not
- * have read (`countsAsStatement`), so the page cannot call a statement the schedule counts anything but a statement.
+ * for its footer — what each period it leaves out IS (`balanceLessKind`): by the rule the statement schedule and
+ * Statements you do not have read (`countsAsStatement`), so the page cannot call a statement the schedule counts
+ * anything but a statement, and by what its file recorded (`fileRecordedBalanceOn`), so it cannot call a download that
+ * recorded a balance "an export without a closing figure".
  *
  * 🔴 Measured on a copy of his ledger, 2026-10-12: the footer counted `periods.length - evidence.length` and called
  * all five "a spending report, an export without a closing figure" — two Chase Spending Reports and a Rocket Money
@@ -40,10 +45,16 @@ export interface StatementEvidence {
  * the schedule above it as statements. It now reads "3 imported documents …" and "2 statements were each an
  * account's first …" (`balanceLessNotes`, lib/statement-evidence-notes.ts).
  *
- * ⚠️ Reports are counted as DOCUMENTS, the word the footer uses: one OFX download can print two accounts with no
- * balance, two periods of one file. Opening statements are counted as statements — Agentic's came out of a PDF that
- * also printed Robinhood Cash's and the brokerage book's balances, so it is a statement without balances inside a
- * document that had them.
+ * 🔴 …and the split still read the rest off the state. The review of 601f155, on a copy of data/e2e.db: "27 imported
+ * documents carried no balance to check — a spending report, an export without a closing figure" of 27 OFX downloads,
+ * 18 owning the balance each recorded on its account. Not reachable on his ledger today (its three own none, measured
+ * on the copy); it is the day he imports a Chase QFX download.
+ *
+ * ⚠️ Reports and downloads are counted as DOCUMENTS, the word the footer uses: one OFX download can print two
+ * accounts with no balance, two periods of one file — and one that recorded a balance on one account and none on the
+ * other is named in both sentences, each true of one of them. Opening statements are counted as statements —
+ * Agentic's came out of a PDF that also printed Robinhood Cash's and the brokerage book's balances, so it is a
+ * statement without balances inside a document that had them.
  */
 export function statementEvidence(db: AppDatabase): StatementEvidence {
   const periods: ImportsPeriod[] = db
@@ -57,6 +68,7 @@ export function statementEvidence(db: AppDatabase): StatementEvidence {
       gapCents: statementPeriods.gapCents,
       marketChangeCents: statementPeriods.marketChangeCents,
       parserProfile: importFiles.parserProfile,
+      recordedOn: fileRecordedBalanceOnSql(db, statementPeriods),
     })
     .from(statementPeriods)
     .innerJoin(accounts, eq(statementPeriods.accountId, accounts.id))
@@ -66,9 +78,16 @@ export function statementEvidence(db: AppDatabase): StatementEvidence {
     .all();
 
   const evidence = periods.filter((p) => carriesBalances(p.reconciliation));
-  const balanceLess = periods.filter((p) => !carriesBalances(p.reconciliation));
-  // one reading with the transaction and balance sheets' period line (`isOpeningStatement`)
-  const openingStatements = balanceLess.filter((p) => isOpeningStatement(p)).length;
-  const reportDocuments = new Set(balanceLess.filter((p) => !isOpeningStatement(p)).map((p) => p.importFileId)).size;
-  return { periods, evidence, reportDocuments, openingStatements };
+  // one reading with the transaction and balance sheets' period line (`balanceLessKind`)
+  const ofKind = (kind: BalanceLessKind) => periods.filter((p) => balanceLessKind(p) === kind);
+  const documents = (kind: BalanceLessKind) => new Set(ofKind(kind).map((p) => p.importFileId)).size;
+  return {
+    periods,
+    evidence,
+    balanceLess: {
+      reportDocuments: documents("no_balance"),
+      recordedBalanceDocuments: documents("balance_recorded"),
+      openingStatements: ofKind("opening_statement").length,
+    },
+  };
 }

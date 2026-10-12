@@ -1,4 +1,4 @@
-import { and, asc, count, desc, eq, inArray, lte, gte, ne, sum } from "drizzle-orm";
+import { and, asc, count, desc, eq, inArray, lte, gte, sum } from "drizzle-orm";
 import { beforeFirstBalanceDetail, unverifiedDetail } from "@/lib/coverage-detail";
 import { formatDayFull } from "@/lib/format-date";
 import type { AppDatabase } from "@/db/client";
@@ -52,7 +52,8 @@ import { billedWithEvidence } from "@/lib/billed-with";
 import { billingCarriers } from "./billing-carriers";
 import { postedAveragesBySeries } from "./posted-average";
 import { MIN_OCCURRENCES } from "./recurring";
-import { isOpeningStatement, type PeriodKind } from "./statements-by-account";
+import { balanceLessKind, type BalanceLessFacts } from "./statements-by-account";
+import { fileRecordedBalanceOn, fileRecordedBalanceOnSql } from "./file-recorded-balance";
 
 /**
  * "Prove it" — given a figure the app has rendered, what is it standing on?
@@ -492,6 +493,14 @@ const PERIOD_VERDICT_TEXT: Record<string, string> = {
 const OPENING_STATEMENT_WHY = "it printed no opening balance, so nothing in it could have failed";
 
 /**
+ * Why a file that recorded the account's balance, but no opening one, proves nothing by its period — /imports' footer
+ * says it of one (`balanceLessNotes`). ⛔ Not `OPENING_STATEMENT_WHY`: a download's balance can fail — the chain
+ * replays onto it from the balance before — so "nothing in it could have failed" would be false of it; its period
+ * alone reconciles nothing.
+ */
+const NO_OPENING_TO_RECONCILE = "but no opening one, so the period itself reconciles nothing";
+
+/**
  * What a statement period concluded, as its line on a sheet reads.
  *
  * 🔴 `not_applicable` was read as "this file carries no balances" whatever the file was. Robinhood Agentic's Jun 2026
@@ -500,10 +509,22 @@ const OPENING_STATEMENT_WHY = "it printed no opening balance, so nothing in it c
  * +$26.64 on Jun 5 read "…which recorded Robinhood Agentic's balance on Jun 30, 2026 — but …" over "2026-06-01 →
  * 2026-06-30 | coverage declared, but this file carries no balances to check against", while /imports' footer counted
  * it "an account's first". Every day of Agentic's June and Robinhood Cash's Dec 2023 read the same on its balance
- * sheet (latent there: /accounts asks for the newest day). It now reads the file's kind (`isOpeningStatement`).
+ * sheet (latent there: /accounts asks for the newest day).
+ *
+ * 🔴 …and that fix read the PARSER, so every other balance-less period still read the state: an OFX download records
+ * the account's balance (LEDGERBAL) and declares its days, and its line said it carries none. The review of 601f155,
+ * on a copy of data/e2e.db: Chase Freedom Unlimited's balance on Sep 30, 2024 listed the QFX's "balance recorded on
+ * Sep 30, 2024" over its own period line "…this file carries no balances to check against", under a headline saying
+ * every row replayed onto a recorded balance; a row's sheet from it read "…which recorded Chase Freedom Unlimited's
+ * balance on Sep 30, 2024" over the same line — 18 of the fixture's 27 balance-less periods. The line now reads what
+ * the file recorded, by the row headline's rule (`balanceLessKind`, `fileRecordedBalanceOn`).
  */
-function periodDetail(p: PeriodKind): string {
-  if (isOpeningStatement(p)) return `the account's first statement — ${OPENING_STATEMENT_WHY}`;
+function periodDetail(p: BalanceLessFacts): string {
+  const kind = balanceLessKind(p);
+  if (kind === "opening_statement") return `the account's first statement — ${OPENING_STATEMENT_WHY}`;
+  if (kind === "balance_recorded" && p.recordedOn !== null) {
+    return `coverage declared, and this file recorded the account's balance on ${readableDay(p.recordedOn)} — ${NO_OPENING_TO_RECONCILE}`;
+  }
   return PERIOD_VERDICT_TEXT[p.reconciliation] ?? p.reconciliation;
 }
 
@@ -547,6 +568,25 @@ function transactionProvenance(db: AppDatabase, id: string): Provenance | null {
     .from(statementPeriods)
     .where(and(eq(statementPeriods.importFileId, txn.importFileId), eq(statementPeriods.accountId, txn.accountId)))
     .get();
+  /*
+   * 🔴 S31: …AND A FILE CAN RECORD A BALANCE WITH NO PERIOD AT ALL. A bank CSV
+   * creates no statement period; its running balance lands in
+   * `balance_anchors` as an `ofx_ledger` row (import/service.ts
+   * `upsertAnchor(…, "ofx_ledger", fileRow.id, …)`). Reading "carries no
+   * balances" off the period alone told 1,078 rows from
+   * `Chase3522_Activity_20260710.CSV` "That file carries no balances of its
+   * own" — of the file whose 2026-07-08 balance of $1,120.90
+   * `/accounts/<Chase Checking>` lists under Balances as "bank
+   * export". Measured 2026-09-14. The other derived-day files (the Spending
+   * Report PDFs, the Discover and Robinhood CSVs) own no anchor, and keep their
+   * sentence.
+   *
+   * ⛔ ONE rule with the period line below (`fileRecordedBalanceOn`): the row's
+   * own period is this file's on this account, and the review of 601f155 found
+   * the line saying "carries no balances" under this headline's "which recorded
+   * Chase Freedom Unlimited's balance on Sep 30, 2024" (e2e copy, 2026-10-12).
+   */
+  const fileAnchorOn = fileRecordedBalanceOn(db, txn.importFileId, txn.accountId);
 
   const sources: ProvenanceSource[] = [];
   if (file) {
@@ -557,7 +597,9 @@ function transactionProvenance(db: AppDatabase, id: string): Provenance | null {
       on: file.importedAt.slice(0, 10),
     });
   }
-  if (period) sources.push(periodSource({ ...period, parserProfile: file?.parserProfile ?? null }));
+  if (period) {
+    sources.push(periodSource({ ...period, parserProfile: file?.parserProfile ?? null, recordedOn: fileAnchorOn }));
+  }
 
   /**
    * ⛔ A row is NOT proven merely because a file carried it, and treating it
@@ -593,32 +635,6 @@ function transactionProvenance(db: AppDatabase, id: string): Provenance | null {
    * an `ofx_ledger` anchor, and must keep reading "records a value".
    */
   const periodBalance = period?.endingBalanceCents !== null && period?.endingBalanceCents !== undefined;
-  /*
-   * 🔴 S31: …AND A FILE CAN RECORD A BALANCE WITH NO PERIOD AT ALL. A bank CSV
-   * creates no statement period; its running balance lands in
-   * `balance_anchors` as an `ofx_ledger` row (import/service.ts
-   * `upsertAnchor(…, "ofx_ledger", fileRow.id, …)`). Reading "carries no
-   * balances" off the period alone told 1,078 rows from
-   * `Chase3522_Activity_20260710.CSV` "That file carries no balances of its
-   * own" — of the file whose 2026-07-08 balance of $1,120.90
-   * `/accounts/<Chase Checking>` lists under Balances as "bank
-   * export". Measured 2026-09-14. The other derived-day files (the Spending
-   * Report PDFs, the Discover and Robinhood CSVs) own no anchor, and keep their
-   * sentence.
-   */
-  const fileAnchor = db
-    .select({ anchoredOn: balanceAnchors.anchoredOn })
-    .from(balanceAnchors)
-    .where(
-      and(
-        eq(balanceAnchors.importFileId, txn.importFileId),
-        eq(balanceAnchors.accountId, txn.accountId),
-        // ⛔ the file that keeps an opening from a statement he un-imported never printed that balance (`kept-openings`)
-        ne(balanceAnchors.source, KEPT_OPENING_SOURCE),
-      ),
-    )
-    .orderBy(desc(balanceAnchors.anchoredOn))
-    .get();
   const dayVerdict: ProvenanceVerdict =
     day && account ? (isInvestment(account.type) ? "market_value" : BASIS_VERDICT[day.basis]) : "unknown";
 
@@ -687,7 +703,7 @@ function transactionProvenance(db: AppDatabase, id: string): Provenance | null {
     dayVerdict,
     brokenSince: coverage?.brokenSince ?? null,
     periodBalance,
-    fileAnchorOn: fileAnchor?.anchoredOn,
+    fileAnchorOn: fileAnchorOn ?? undefined,
     anchorOfDay,
     rowFileId: txn.importFileId,
   });
@@ -869,7 +885,10 @@ function anchorOnOrBefore(db: AppDatabase, accountId: string, day: string): DayA
   };
 }
 
-/** Every statement period of an account that covers a day, oldest-closing first, with the parser that read its file. */
+/**
+ * Every statement period of an account that covers a day, oldest-closing first, with the parser that read its file and
+ * the balance that file recorded for the account — what its line reads (`periodDetail`).
+ */
 function periodsCovering(db: AppDatabase, accountId: string, day: string) {
   return db
     .select({
@@ -877,6 +896,7 @@ function periodsCovering(db: AppDatabase, accountId: string, day: string) {
       periodEnd: statementPeriods.periodEnd,
       reconciliation: statementPeriods.reconciliation,
       parserProfile: importFiles.parserProfile,
+      recordedOn: fileRecordedBalanceOnSql(db, statementPeriods),
     })
     .from(statementPeriods)
     // a left join, as `statementsByAccount`'s: a period is never dropped for want of its file row
@@ -892,7 +912,7 @@ function periodsCovering(db: AppDatabase, accountId: string, day: string) {
     .all();
 }
 
-function periodSource(p: PeriodKind & { periodStart: string; periodEnd: string }): ProvenanceSource {
+function periodSource(p: BalanceLessFacts & { periodStart: string; periodEnd: string }): ProvenanceSource {
   return {
     kind: "period",
     label: `${p.periodStart} → ${p.periodEnd}`,
@@ -1191,20 +1211,26 @@ function statementPeriodProvenance(db: AppDatabase, id: string): Provenance | nu
         ? "market_value"
         : "unverified";
 
-  // ⛔ an opening statement is no file without balances — the period line's rule (`periodDetail`); latent here, as
-  // /imports opens this sheet only for a period that printed balances (`statementEvidence`)
-  const opening = isOpeningStatement({
+  // ⛔ an opening statement, or a download that recorded the account's balance, is no file without balances — the period
+  // line's rule (`periodDetail`); latent here, as /imports opens this sheet only for a period that printed balances
+  // (`statementEvidence`)
+  const recordedOn = fileRecordedBalanceOn(db, period.importFileId, period.accountId);
+  const kind = balanceLessKind({
     reconciliation: period.reconciliation,
     parserProfile: file?.parserProfile ?? null,
+    recordedOn,
   });
+  const name = account?.name ?? "the account";
   const headline =
     period.reconciliation === "reconciled"
       ? `The opening balance plus every row in this period equals the closing balance, to the cent. ${grouped(rows.length)} ${rows.length === 1 ? "row was" : "rows were"} checked.`
       : period.reconciliation === "value_anchor"
-        ? `This is an investment statement: it records what ${account?.name ?? "the account"} was worth, and any difference is absorbed as market movement. There is no arithmetic here that could fail.`
-        : opening
-          ? `This is ${account?.name ?? "the account"}'s first statement — ${OPENING_STATEMENT_WHY}.`
-          : `This file declares which days it covers but carries no balances, so nothing in it can be checked against a total.`;
+        ? `This is an investment statement: it records what ${name} was worth, and any difference is absorbed as market movement. There is no arithmetic here that could fail.`
+        : kind === "opening_statement"
+          ? `This is ${name}'s first statement — ${OPENING_STATEMENT_WHY}.`
+          : kind === "balance_recorded" && recordedOn !== null
+            ? `This file declares which days it covers and recorded ${name}'s balance on ${readableDay(recordedOn)} — ${NO_OPENING_TO_RECONCILE}.`
+            : `This file declares which days it covers but carries no balances, so nothing in it can be checked against a total.`;
 
   const sources: ProvenanceSource[] = [];
   if (file) {

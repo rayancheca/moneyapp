@@ -3,6 +3,7 @@ import { RECONCILIATION_STATES } from "@/db/schema/imports";
 import { PROFILES } from "@/services/import/profiles";
 import {
   OPENING_STATEMENT_PROFILES,
+  balanceLessKind,
   carriesBalances,
   countsAsStatement,
   isOpeningStatement,
@@ -57,5 +58,39 @@ describe("isOpeningStatement", () => {
     }
     expect(balanceLess("chase-spending-report-pdf")).toBe(false);
     expect(balanceLess(null)).toBe(false);
+  });
+});
+
+/**
+ * What a period that printed no balances IS — three kinds, and every reader names one by this: the period line on a
+ * row's and a day's sheet, the period's own sheet, and /imports' footer.
+ *
+ * 🔴 The review of 601f155, on a copy of data/e2e.db (2026-10-12): an OFX download declares its days and records the
+ * account's balance (LEDGERBAL, an `ofx_ledger` anchor of the same file), yet its period line read "this file carries
+ * no balances to check against" under that file's "balance recorded on Sep 30, 2024" — 18 of the fixture's 27
+ * balance-less periods. The state cannot tell them apart, nor can the parser; what the file recorded for the account
+ * can.
+ */
+describe("balanceLessKind", () => {
+  const of = (parserProfile: string | null, recordedOn: string | null) =>
+    balanceLessKind({ reconciliation: "not_applicable", parserProfile, recordedOn });
+
+  test("a period that printed balances is none of them", () => {
+    for (const reconciliation of RECONCILIATION_STATES.filter((s) => s !== "not_applicable")) {
+      expect(balanceLessKind({ reconciliation, parserProfile: "ofx-generic", recordedOn: "2024-09-30" })).toBeNull();
+    }
+  });
+
+  test("🔴 a file that recorded the account's balance — whatever read it — is not one that carries none", () => {
+    expect(of("ofx-generic", "2024-09-30")).toBe("balance_recorded");
+    expect(of("ofx-generic", null)).toBe("no_balance");
+    expect(of("chase-spending-report-pdf", null)).toBe("no_balance");
+    expect(of(null, "2024-09-30")).toBe("balance_recorded");
+  });
+
+  test("an account's opening statement stays a statement, though its file recorded the close", () => {
+    // Robinhood Agentic, Jun 2026: `N/A` printed for the opening, the Jun 30 close an anchor of the same PDF
+    expect(of("robinhood-brokerage-statement-pdf", "2026-06-30")).toBe("opening_statement");
+    expect(of("robinhood-brokerage-statement-pdf", null)).toBe("opening_statement");
   });
 });
