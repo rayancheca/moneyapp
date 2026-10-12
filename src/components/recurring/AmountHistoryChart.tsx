@@ -16,6 +16,7 @@ import {
 import { DataTable, type Column } from "@/components/ui/DataTable";
 import { formatCents, formatCentsSigned } from "@/lib/money";
 import type { PerPayday } from "@/lib/per-payday";
+import { postedAsWord } from "@/lib/posted-average";
 import type { AmountHistoryPoint } from "@/services/recurring-detail";
 import { longDate, perPaydayWord, shortDate, TOWARD_NO_PAYDAY } from "./labels";
 
@@ -31,6 +32,17 @@ interface AmountRow {
   expectedCents: number | null;
   /** its money paid no payday — said, and graded against nothing (`AmountHistoryPoint.towardNoPayday`) */
   towardNoPayday: boolean;
+  /** the rows one payment posted as (`AmountHistoryPoint.postings`) */
+  postings?: number;
+}
+
+/**
+ * "one payment, posted as 2" — a bar that sums a day's rows says so, in the table and the tooltip alike, so the
+ * linked list's two Jun 16 rows read as this one bar. Null for a payment posted whole.
+ */
+function paymentWord(r: Pick<AmountRow, "postings">): string | null {
+  const word = postedAsWord({ postings: r.postings ?? 1 });
+  return word === null ? null : `one payment, ${word}`;
 }
 
 /** The table lens's columns: the tooltip's own facts, as a column each. */
@@ -45,6 +57,7 @@ function AMOUNT_COLUMNS(expectedCents: number | null): Column<AmountRow>[] {
         <>
           <span className="figures">{formatCentsSigned(r.amountCents)}</span>
           {r.perPayday ? <span className="block text-[11px] text-ink-faint">{perPaydayWord(r.perPayday)}</span> : null}
+          {paymentWord(r) !== null ? <span className="block text-[11px] text-ink-faint">{paymentWord(r)}</span> : null}
         </>
       ),
     },
@@ -107,6 +120,10 @@ interface AmountHistoryChartProps {
  * ⚖️ And each point against its OWN time's rate (owner decision 2026-10-08, §6A 55): his cash weeks against
  * $1,047.00, his payroll weeks against $1,141.92 — a step line where the rate changed, and the table's "vs expected"
  * per row. 🔴 One expectation for all time read his Jun 4 cash week "vs expected -$94.92".
+ *
+ * ⛔ A bill's bar is a PAYMENT, as its posted average is (`AmountHistoryPoint.postings`): his rent's Jun 16 card rows
+ * are one bar of -$2,434.80, "one payment, posted as 2", +$325.80 over. 🔴 Drawn per row, the table read "each of the
+ * 5 posted occurrences … -$1,100.00 -$1,009.00 · -$1,334.80 -$774.20" under a Per charge of four (2026-10-12).
  */
 export function AmountHistoryChart({ points, expectedCents, asTable = false }: AmountHistoryChartProps) {
   const data = useMemo(
@@ -122,6 +139,7 @@ export function AmountHistoryChart({ points, expectedCents, asTable = false }: A
           expectedCents: p.expectedCents,
           expectedMagnitude: p.expectedCents === null ? null : Math.abs(p.expectedCents) / 100,
           towardNoPayday: p.towardNoPayday,
+          postings: p.postings,
         };
       }),
     [points],
@@ -199,6 +217,7 @@ export function AmountHistoryChart({ points, expectedCents, asTable = false }: A
                   <div className="figures mt-0.5 text-sm font-medium">{formatCentsSigned(p.amountCents)}</div>
                   {p.perPayday ? <div className="mt-0.5 text-ink-faint">{perPaydayWord(p.perPayday)}</div> : null}
                   {p.towardNoPayday ? <div className="mt-0.5 text-ink-faint">{TOWARD_NO_PAYDAY}</div> : null}
+                  {paymentWord(p) !== null ? <div className="mt-0.5 text-ink-faint">{paymentWord(p)}</div> : null}
                   {p.expectedCents !== null && p.comparableCents !== p.expectedCents ? (
                     <div className="mt-0.5 text-ink-faint">expected {formatCents(p.expectedCents)}</div>
                   ) : null}

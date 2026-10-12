@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
 import { paydayReadings, type PaydayReading } from "./per-payday";
-import { postedAverage, readsPerOccurrence } from "./posted-average";
+import { occurrencesOf, postedAsWord, postedAverage, readsPerOccurrence } from "./posted-average";
 import type { RateSchedule } from "./series-kind";
 
 const WEEK = 114_192;
@@ -94,6 +94,25 @@ describe("postedAverage — a series read as it posted", () => {
         stddevCents: null,
       });
     }
+  });
+});
+
+/**
+ * What each payment paid — the samples of the average, and what the popover counts and the Amount history draws beside
+ * it (`occurrencesOf`), so none of the three can count a payment another does not.
+ */
+describe("occurrencesOf — a day's rows are one payment", () => {
+  test("his rent: four payments oldest first, Jun 16's of two rows", () => {
+    expect(occurrencesOf([...RENT_ROWS].reverse())).toEqual([
+      { postedOn: "2026-06-16", amountCents: -243_480, postings: 2 },
+      { postedOn: "2026-07-08", amountCents: -228_570, postings: 1 },
+      { postedOn: "2026-08-04", amountCents: -223_711, postings: 1 },
+      { postedOn: "2026-09-02", amountCents: -229_121, postings: 1 },
+    ]);
+  });
+
+  test("a payment posted as several says so; one posted whole says nothing", () => {
+    expect(occurrencesOf(RENT_ROWS).map(postedAsWord)).toEqual(["posted as 2", null, null, null]);
   });
 });
 

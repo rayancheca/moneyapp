@@ -78,6 +78,12 @@ export interface AmountHistoryPoint {
    * ledger, 2026-10-08).
    */
   towardNoPayday: boolean;
+  /**
+   * The rows the bank posted this PAYMENT as, for a series read per occurrence (`SeriesPostedAverage.occurrences`): a
+   * day's rows are one point, their sum, said "one payment, posted as 2" (`postedAsWord`). Absent for a row drawn as
+   * it posted. 🔴 Drawn per row, his rent's Jun 16 payment of -$2,434.80 read as two charges under -$2,109.00.
+   */
+  postings?: number;
 }
 
 export interface SeriesCategoryRef {
@@ -343,19 +349,6 @@ export function seriesDetail(
   const readings = readsPerPayday(s)
     ? paydayReadings(linked, paydaySettlement(db, s.id, today).portions, eff)
     : new Map<string, PaydayReading>();
-  const amountHistory: AmountHistoryPoint[] = [...linked].reverse().map((t) => {
-    const reading = readings.get(t.id);
-    return {
-      date: t.postedOn,
-      amountCents: t.amountCents,
-      perPayday: reading?.perPayday ?? null,
-      // ⚖️ each row against its own time's rate (§6A 55), by the calendar's own rule — a pay row, the rate of the
-      // payday it paid, and nothing when it paid none; any other row, its own day's
-      expectedCents: expectedCentsOf(reading, eff, t.postedOn),
-      towardNoPayday: reading?.towardNoPayday ?? false,
-    };
-  });
-
   /*
    * What posted, averaged, and its sample standard deviation — the reading `listSeries` publishes to the All tab and
    * the popover names (`postedAveragesBySeries`): a pay series' is what a payday paid at the rate in force now, a
@@ -363,6 +356,35 @@ export function seriesDetail(
    * the seed that used to be printed here claimed a spread for series with none at all.
    */
   const posted = postedAveragesBySeries(db, [s], today).get(s.id)!;
+
+  /*
+   * ⛔ A bar per PAYMENT where the average is per payment (`posted.occurrences`) — Jun 16's two card rows one bar, said
+   * "one payment, posted as 2" — as a lump of pay is drawn as the calendar reads it. 🔴 Row by row, his rent's history
+   * read "each of the 5 posted occurrences … Jun 16, 2026 -$1,100.00 -$1,009.00 · -$1,334.80 -$774.20" under a Per
+   * charge of four payments, each above the -$2,109.00 (review of af5b0fa, a copy of his ledger, 2026-10-12).
+   */
+  const amountHistory: AmountHistoryPoint[] =
+    posted.occurrences !== null
+      ? posted.occurrences.map((o) => ({
+          date: o.postedOn,
+          amountCents: o.amountCents,
+          perPayday: null,
+          expectedCents: expectedCentsOf(undefined, eff, o.postedOn),
+          towardNoPayday: false,
+          postings: o.postings,
+        }))
+      : [...linked].reverse().map((t) => {
+          const reading = readings.get(t.id);
+          return {
+            date: t.postedOn,
+            amountCents: t.amountCents,
+            perPayday: reading?.perPayday ?? null,
+            // ⚖️ each row against its own time's rate (§6A 55), by the calendar's own rule — a pay row, the rate of
+            // the payday it paid, and nothing when it paid none; any other row, its own day's
+            expectedCents: expectedCentsOf(reading, eff, t.postedOn),
+            towardNoPayday: reading?.towardNoPayday ?? false,
+          };
+        });
 
   /*
    * 🔴 ONLY THE STATUSES THE FORECAST PROJECTS, and the rule was already

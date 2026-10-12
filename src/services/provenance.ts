@@ -1,6 +1,6 @@
 import { and, asc, count, desc, eq, inArray, lte, gte, ne, sum } from "drizzle-orm";
 import { beforeFirstBalanceDetail, unverifiedDetail } from "@/lib/coverage-detail";
-import { formatDayFull } from "@/lib/format-date";
+import { formatDayFull, formatDayShortIn } from "@/lib/format-date";
 import type { AppDatabase } from "@/db/client";
 import { accounts, type AccountType } from "@/db/schema/accounts";
 import { categories } from "@/db/schema/categories";
@@ -50,6 +50,7 @@ import {
 import { PART_ENTERED, VERDICT_PRESENTATION } from "@/lib/provenance-verdict";
 import { billedWithEvidence, carriesPhrase } from "@/lib/billed-with";
 import { billingCarriers } from "./billing-carriers";
+import { postedAsWord } from "@/lib/posted-average";
 import { postedAveragesBySeries } from "./posted-average";
 import { MIN_OCCURRENCES } from "./recurring";
 
@@ -1675,9 +1676,31 @@ function recurringSeriesProvenance(db: AppDatabase, id: string, today: string): 
     .where(and(eq(transactions.recurringSeriesId, id), eq(transactions.status, "active")))
     .all();
 
+  /*
+   * ⛔ WHAT THE WORDS COUNT AND RANGE IS WHAT THE AVERAGE AVERAGES (`postedAveragesBySeries`): a series read per
+   * occurrence is counted, ranged and graded by its PAYMENTS (`SeriesPostedAverage.occurrences`); any other by its rows.
+   * 🔴 Row by row beside a per-payment average, his rent's popover read "Its 5 tagged postings since Jun 16, 2026 were 5
+   * different amounts, from -$2,291.21 to -$1,100.00 … ⚠️ The ledger's own average of what actually posted is
+   * -$2,312.20" — an average outside the range it had just stated (review of af5b0fa, a copy of his ledger,
+   * 2026-10-12). A series whose every row is its own payment reads exactly as it did.
+   *
+   * ⚠️ The anecdote gate (`MIN_OCCURRENCES`) still counts ROWS, `n`: detection (`analyzeGroup`) and the calendar's
+   * proven band (`lib/occurrence-verdict`) count rows against that same bar, and "below the 3 this app requires" names
+   * theirs.
+   */
+  const posted = postedAveragesBySeries(db, [series], today).get(id)!;
   const n = postings.length;
-  const distinct = new Set(postings.map((p) => p.amountCents));
-  const days = postings.map((p) => p.postedOn).sort();
+  const payments = posted.occurrences ?? postings.map((p) => ({ ...p, postings: 1 }));
+  const k = payments.length;
+  const distinct = new Set(payments.map((p) => p.amountCents));
+  const days = payments.map((p) => p.postedOn).sort();
+  // "Jun 16's posted as 2" — each payment the bank posted as several rows; empty when every row is a payment
+  const split = payments
+    .flatMap((p) => {
+      const word = postedAsWord(p);
+      return word === null ? [] : [`${formatDayShortIn(p.postedOn, today)}'s ${word}`];
+    })
+    .join(", ");
   const userSet = series.userAmountCents !== null;
 
   const sources: ProvenanceSource[] = [];
@@ -1689,17 +1712,19 @@ function recurringSeriesProvenance(db: AppDatabase, id: string, today: string): 
     });
   }
   if (n > 0) {
+    const amounts =
+      distinct.size === 1
+        ? // ⚠️ "every one of them" over a single posting is a plural claim
+          // about a population of one — it read exactly that way for FPL.
+          k === 1
+          ? `it was ${formatCents([...distinct][0]!)}`
+          : `every one of them ${formatCents([...distinct][0]!)}`
+        : `${distinct.size} different amounts, ${formatCents(Math.min(...distinct))} to ${formatCents(Math.max(...distinct))}`;
     sources.push({
       kind: "period",
       label: `${n} tagged ${n === 1 ? "posting" : "postings"} in the ledger`,
-      detail:
-        distinct.size === 1
-          ? // ⚠️ "every one of them" over a single posting is a plural claim
-            // about a population of one — it read exactly that way for FPL.
-            n === 1
-            ? `it was ${formatCents([...distinct][0]!)}`
-            : `every one of them ${formatCents([...distinct][0]!)}`
-          : `${distinct.size} different amounts, ${formatCents(Math.min(...distinct))} to ${formatCents(Math.max(...distinct))}`,
+      // the documents are rows; what they paid is counted per payment, as the average is
+      detail: split === "" ? amounts : `${k === 1 ? "one payment" : `${k} payments`} (${split}): ${amounts}`,
       on: days[0],
     });
   }
@@ -1759,9 +1784,13 @@ function recurringSeriesProvenance(db: AppDatabase, id: string, today: string): 
       );
     if (n < MIN_OCCURRENCES)
       return `Only ${n} tagged ${n === 1 ? "posting has" : "postings have"} ever landed — below the ${MIN_OCCURRENCES} this app requires before calling a repeat a pattern, so it is an anecdote rather than a statistic.`;
-    if (distinct.size === 1)
-      return `All ${n} tagged postings since ${readableDay(days[0]!)} were ${formatCents([...distinct][0]!)}, exactly.`;
-    return `Its ${n} tagged postings since ${readableDay(days[0]!)} were ${distinct.size} different amounts, from ${formatCents(Math.min(...distinct))} to ${formatCents(Math.max(...distinct))} — so any single figure for it is an average, not a repeat.`;
+    // every row its own payment: "5 tagged postings", as it always read; else "4 payments (5 tagged postings: …)"
+    if (k === 1)
+      return `Its ${n} tagged postings are one payment, of ${formatCents(payments[0]!.amountCents)} on ${readableDay(days[0]!)}.`;
+    const counted = split === "" ? `${k} tagged postings` : `${k} payments`;
+    const since = `since ${readableDay(days[0]!)}${split === "" ? "" : ` (${n} tagged postings: ${split})`}`;
+    if (distinct.size === 1) return `All ${counted} ${since} were ${formatCents([...distinct][0]!)}, exactly.`;
+    return `Its ${counted} ${since} were ${distinct.size} different amounts, from ${formatCents(Math.min(...distinct))} to ${formatCents(Math.max(...distinct))} — so any single figure for it is an average, not a repeat.`;
   };
 
   /*
@@ -1790,7 +1819,7 @@ function recurringSeriesProvenance(db: AppDatabase, id: string, today: string): 
    * ledger's own average of what actually posted is $1,789.15, which is not what you set." of his $1,141.92 — a cash
    * week, $400.00, a four-week lump and a week (a copy of his ledger, 2026-10-08).
    */
-  const { avgCents: postedAvgCents, carries } = postedAveragesBySeries(db, [series], today).get(id)!;
+  const { avgCents: postedAvgCents, carries } = posted;
   /*
    * ⚖️ …and names what is billed inside its payments (§6A 59) — the money that makes the two differ, in the words the
    * series page and the All tab print beside the same figure (`carriesPhrase`). 🔴 His rent's read "⚠️ … is

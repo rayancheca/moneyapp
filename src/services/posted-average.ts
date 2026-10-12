@@ -3,7 +3,14 @@ import type { AppDatabase } from "@/db/client";
 import type { recurringSeries } from "@/db/schema/recurring";
 import { transactions } from "@/db/schema/transactions";
 import { paydayReadings, type ReadableRow } from "@/lib/per-payday";
-import { postedAverage, readsPerOccurrence, type PostedAverage, type PostedReading } from "@/lib/posted-average";
+import {
+  occurrencesOf,
+  postedAverage,
+  readsPerOccurrence,
+  type Occurrence,
+  type PostedAverage,
+  type PostedReading,
+} from "@/lib/posted-average";
 import { carriedNamesBySeries } from "./billing-carriers";
 import { paydaySettlement, readsPerPayday } from "./payday-settlement";
 import { effectiveSeries } from "./recurring";
@@ -15,6 +22,14 @@ export interface SeriesPostedAverage extends PostedAverage {
    * it prints (`carriesPhrase`). Empty for a series that carries nothing.
    */
   carries: readonly string[];
+  /**
+   * What each payment paid, oldest first (`occurrencesOf`) — the samples of the average, when the series reads per
+   * occurrence (`readsPerOccurrence`); null when it reads per payday or as posted. ⛔ What the popover's sentence counts
+   * and ranges, and what the series page's Amount history draws, beside this average. 🔴 Row by row beside it, his
+   * rent's popover read "5 different amounts, from -$2,291.21 to -$1,100.00" before "average … is -$2,312.20", and its
+   * page "each of the 5 posted occurrences" under a Per charge of four (review of af5b0fa, 2026-10-12).
+   */
+  occurrences: readonly Occurrence[] | null;
 }
 
 /**
@@ -62,7 +77,11 @@ export function postedAveragesBySeries(
       : readsPerOccurrence(s)
         ? { per: "occurrence" }
         : { per: "row" };
-    out.set(s.id, { ...postedAverage(rows, reading, schedule), carries: carried.get(s.id) ?? [] });
+    out.set(s.id, {
+      ...postedAverage(rows, reading, schedule),
+      carries: carried.get(s.id) ?? [],
+      occurrences: reading.per === "occurrence" ? occurrencesOf(rows) : null,
+    });
   }
   return out;
 }

@@ -67,6 +67,77 @@ describe("the posted average, per occurrence — his rent on the page, the All t
     );
   });
 
+  /*
+   * ⛔ The sentence before the average counts and ranges what the average is OF — four payments, not five rows. 🔴 At
+   * af5b0fa the popover read "Its 5 tagged postings since Jun 16, 2026 were 5 different amounts, from -$2,291.21 to
+   * -$1,100.00 … ⚠️ The ledger's own average of what actually posted is -$2,312.20": an average outside the range the
+   * sentence before it had just stated (review of af5b0fa, provenanceFor on a copy of his ledger, 2026-10-12).
+   */
+  test("the popover counts and ranges the four payments, and its average lies inside that range", () => {
+    const p = provenanceFor(bundle.db, { kind: "recurringSeries", id: rent.rentId, today: TODAY })!;
+    expect(p.headline).toContain(
+      "Its 4 payments since Jun 16, 2026 (5 tagged postings: Jun 16's posted as 2) were 4 different amounts, from " +
+        "-$2,434.80 to -$2,237.11 — so any single figure for it is an average, not a repeat.",
+    );
+    const cents = (s: string): number => Math.round(Number(s.replace(/[$,]/g, "")) * 100);
+    const [, lo, hi] = /from (-?\$[\d,.]+) to (-?\$[\d,.]+)/.exec(p.headline)!;
+    const avg = cents(/actually posted is (-?\$[\d,.]+[\d])/.exec(p.headline)![1]!);
+    expect(avg).toBeGreaterThanOrEqual(cents(lo!));
+    expect(avg).toBeLessThanOrEqual(cents(hi!));
+    // the evidence list counts the same way: five documents, four payments
+    expect(p.sources[1]).toMatchObject({
+      label: "5 tagged postings in the ledger",
+      detail: "4 payments (Jun 16's posted as 2): 4 different amounts, -$2,434.80 to -$2,237.11",
+    });
+  });
+
+  /*
+   * ⛔ …and grades them so: a bill whose every PAYMENT was $50.00 is a repeat, however the bank split one of them. 🔴 Row
+   * by row, Jul 5's $20.00 and $30.00 badged it "3 different amounts" — the "N different amounts" badge any series not
+   * set by hand wears when one payment posts as two rows (review of af5b0fa).
+   */
+  test("a bill not set by hand: one payment posted as two rows is still one $50.00", () => {
+    const { id } = bundle.db
+      .insert(recurringSeries)
+      .values({ name: "Breezeline", kind: "bill", cadence: "monthly", status: "confirmed", toleranceDays: 3 })
+      .returning({ id: recurringSeries.id })
+      .get();
+    const rows = [
+      ["2026-06-05", -5_000],
+      ["2026-07-05", -2_000],
+      ["2026-07-05", -3_000],
+      ["2026-08-05", -5_000],
+    ] as const;
+    for (const [day, c] of rows) rent.charge(day, c, id);
+    const p = provenanceFor(bundle.db, { kind: "recurringSeries", id, today: TODAY })!;
+    expect([p.verdict, p.badgeWord]).toEqual(["derived", undefined]);
+    expect(p.headline).toContain(
+      "All 3 payments since Jun 5, 2026 (4 tagged postings: Jul 5's posted as 2) were -$50.00, exactly.",
+    );
+    const history = seriesDetail(bundle.db, id, TODAY)!.amountHistory;
+    expect(history.map((h) => [h.date, h.amountCents, h.postings ?? 1])).toEqual([
+      ["2026-06-05", -5_000, 1],
+      ["2026-07-05", -5_000, 2],
+      ["2026-08-05", -5_000, 1],
+    ]);
+  });
+
+  /* a day's rows that are the series' only payment are one payment — never "All 1 payments" */
+  test("three rows of one day read as one payment, in the singular", () => {
+    const { id } = bundle.db
+      .insert(recurringSeries)
+      .values({ name: "Parking", kind: "bill", cadence: "monthly", status: "confirmed", toleranceDays: 3 })
+      .returning({ id: recurringSeries.id })
+      .get();
+    for (const c of [-1_000, -1_000, -500]) rent.charge("2026-09-05", c, id);
+    const p = provenanceFor(bundle.db, { kind: "recurringSeries", id, today: TODAY })!;
+    expect(p.headline).toContain("Its 3 tagged postings are one payment, of -$25.00 on Sep 5, 2026.");
+    expect(p.sources[0]).toMatchObject({
+      label: "3 tagged postings in the ledger",
+      detail: "one payment (Sep 5's posted as 3): it was -$25.00",
+    });
+  });
+
   test("the utilities carry nothing, and once unlinked the rent carries nothing either", () => {
     expect(surfaces(rent.utilitiesId).page[2]).toEqual([]);
     bundle.db

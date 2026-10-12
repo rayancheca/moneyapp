@@ -1,4 +1,5 @@
 import type { SeriesKind, SeriesStatus } from "@/db/schema/recurring";
+import { compareDates } from "./dates";
 import { spreadSampleCents, type PaydayReading, type ReadableRow } from "./per-payday";
 import { currentRatePeriod, ratePeriodOf, type RateSchedule } from "./series-kind";
 
@@ -63,7 +64,7 @@ export function postedAverage(
     reading.per === "payday"
       ? perPaydaySamples(rows, reading.readings, schedule)
       : reading.per === "occurrence"
-        ? perOccurrenceSamples(rows)
+        ? occurrencesOf(rows).map((o) => o.amountCents)
         : rows.map((r) => r.amountCents);
   if (samples.length === 0) return { avgCents: null, stddevCents: null };
   const mean = samples.reduce((a, c) => a + c, 0) / samples.length;
@@ -88,9 +89,19 @@ function perPaydaySamples(
   });
 }
 
+/** One payment of a series read per occurrence: its day, what it paid, and how many rows the bank posted it as. */
+export interface Occurrence {
+  postedOn: string;
+  amountCents: number;
+  /** the rows of that day — 1 for a payment posted whole; his card posted Jun 16's rent as 2 */
+  postings: number;
+}
+
 /**
- * What each payment paid: a day's rows summed — one payment the bank posted as several, as his card posted Jun 16's
- * rent as two. A row of another day is another payment, however near.
+ * What each payment paid, oldest first: a day's rows summed — one payment the bank posted as several, as his card
+ * posted Jun 16's rent as two. A row of another day is another payment, however near. The samples of the posted
+ * average (`readsPerOccurrence`), and — through `SeriesPostedAverage.occurrences` — what the popover's sentence counts
+ * and ranges and what the series page's Amount history draws, so neither can count a payment the average does not.
  *
  * ⚠️ Not the series' tolerance either side, the reach the calendar gives a payment of a due day (`paymentFor`): the
  * calendar pays a due day with ONE posting, and walks due days only from the anchor forward — the rent's from Sep 1, so
@@ -98,8 +109,25 @@ function perPaydaySamples(
  * separate charges became one: on the e2e fixture after "Detect now", Chipotle's visits of Sep 19 and 21, 2025 (and
  * four more pairs) and Sweetgreen's lunches of Jan 20, 21 and 22, 2026 — each one sample of two or three meals.
  */
-function perOccurrenceSamples(rows: readonly ReadableRow[]): number[] {
-  const byDay = new Map<string, number>();
-  for (const r of rows) byDay.set(r.postedOn, (byDay.get(r.postedOn) ?? 0) + r.amountCents);
-  return [...byDay.values()];
+export function occurrencesOf(rows: readonly Pick<ReadableRow, "postedOn" | "amountCents">[]): Occurrence[] {
+  const byDay = new Map<string, Occurrence>();
+  for (const r of rows) {
+    const o = byDay.get(r.postedOn);
+    byDay.set(
+      r.postedOn,
+      o === undefined
+        ? { postedOn: r.postedOn, amountCents: r.amountCents, postings: 1 }
+        : { ...o, amountCents: o.amountCents + r.amountCents, postings: o.postings + 1 },
+    );
+  }
+  return [...byDay.values()].sort((a, b) => compareDates(a.postedOn, b.postedOn));
+}
+
+/**
+ * "posted as 2" — a payment the bank posted as several rows, said where it is counted as one: the popover's "(5
+ * tagged postings: Jun 16's posted as 2)" and the Amount history's "one payment, posted as 2". Null for a payment
+ * posted whole, which says nothing new.
+ */
+export function postedAsWord(o: Pick<Occurrence, "postings">): string | null {
+  return o.postings > 1 ? `posted as ${o.postings}` : null;
 }

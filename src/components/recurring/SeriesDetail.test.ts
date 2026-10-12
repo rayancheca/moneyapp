@@ -144,4 +144,30 @@ describe("SeriesDetail — the rent's posted avg is per payment, and names what 
     expect(stat).not.toContain("posted avg");
     expect(stat).not.toContain("carry");
   });
+
+  /*
+   * ⛔ The Amount history counts what the Per charge above it averages: a payment per bar, Jun 16's two card rows one.
+   * 🔴 Row by row, his page (table lens) read "Charge amount for each of the 5 posted occurrences … Jun 16, 2026
+   * -$1,100.00 -$1,009.00 · Jun 16, 2026 -$1,334.80 -$774.20" under "posted avg -$2,312.20 ± $85.27" — 5 occurrences
+   * and 4 on one page, and a payment $325.80 OVER the $2,109.00 read as two under it (review of af5b0fa, 2026-10-12).
+   */
+  test("the Amount history: four payments, Jun 16's one bar of -$2,434.80, $325.80 over", () => {
+    const html = decode(
+      renderToStaticMarkup(
+        createElement(SeriesDetail, {
+          data: seriesDetail(bundle.db, rent.rentId, TODAY)!,
+          today: TODAY,
+          viewState: resolveViewState(RECURRING_SERIES_VIEW_SPEC, { lens: "table" }, undefined),
+          basePath: `/recurring/${rent.rentId}`,
+        }),
+      ),
+    );
+    const at = html.indexOf("Charge amount for each of");
+    const table = html.slice(at, html.indexOf("</table>", at)).replace(/<[^>]+>/g, " ").replace(/\s+/g, " ");
+    expect(table).toContain("Charge amount for each of the 4 posted occurrences, newest first, against the expected");
+    expect(table).toContain("Jun 16, 2026 -$2,434.80 one payment, posted as 2 +$325.80");
+    expect(table).not.toContain("-$1,100.00");
+    expect(table).not.toContain("-$1,334.80");
+    expect(table).toContain("Sep 2, 2026 -$2,291.21 +$182.21");
+  });
 });
