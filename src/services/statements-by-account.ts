@@ -68,7 +68,8 @@ export const OPENING_STATEMENT_PROFILES: ReadonlySet<string> = new Set(["robinho
 /**
  * Whether a period printed balances — something to reconcile or to price. This is what /imports' "What the
  * statements proved" list and its three tiles count, and it is NOT `countsAsStatement`: an opening statement arrived
- * on the cycle (the panels count it), but with no opening printed nothing in it could have failed.
+ * on the cycle (the panels count it), but with no opening printed nothing in it could have failed. The page reads both
+ * through `statementEvidence` (services/statement-evidence.ts), whose footer names which of the two each left-out is.
  */
 export function carriesBalances(reconciliation: ReconciliationState): boolean {
   return reconciliation !== "not_applicable";
