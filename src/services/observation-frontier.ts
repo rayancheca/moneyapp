@@ -1,5 +1,5 @@
 import { cache } from "react";
-import { and, asc, desc, eq, isNotNull, ne, sql } from "drizzle-orm";
+import { asc, desc, eq, ne, sql } from "drizzle-orm";
 import type { AppDatabase } from "@/db/client";
 import { accounts } from "@/db/schema/accounts";
 import { balanceAnchors } from "@/db/schema/balances";
@@ -9,6 +9,7 @@ import { transactions } from "@/db/schema/transactions";
 import { compareDates } from "@/lib/dates";
 import type { DueDayReading } from "@/lib/occurrence-verdict";
 import { billingCarriers } from "./billing-carriers";
+import { landingAccountsBySeries } from "./cash-earnings";
 import { accountsAwaitingStatements, silenceReadThrough } from "./cash-wallet-rule";
 
 /**
@@ -284,55 +285,6 @@ export function ledgerReaches(db: AppDatabase): string | null {
 }
 
 /**
- * Which accounts a series' charges land on — its own `account_id` if it has one,
- * plus every account its tagged postings have actually touched.
- *
- * Both, not either. Ten of the twenty-six live series carry no `account_id` at
- * all — including every commitment the owner registered by hand, which is to say
- * rent, the car lease, the car insurance, FPL, Breezeline and the cash job — so
- * the column alone answers nothing for exactly the series that matter most.
- * And the column alone is wrong even where it is set: Netflix names Chase
- * Sapphire while its history posted to Chase Sapphire AND Discover.
- *
- * ⚖️ …and a series BILLED INSIDE another's payment (§6A 59) is paid where its carrier is: its carrier's accounts are
- * added to its own, as its late and lapse already borrow them (`landingAccountsBySeries`). 🔴 With none of its own,
- * `Rent utilities & fees` was read on no account at all: once the rent's account is read past a 1st the rent did not
- * pay, the rent's Oct 1 read "not posted" in warning colour while its utilities' — the same payment — still read "no
- * import has covered it yet", on the runway, its page and the calendar alike (billed-with.test, 2026-10-08). The
- * carrier is the live series, followed through any merge (`billingCarriers`).
- */
-export function seriesAccountIds(db: AppDatabase): Map<string, Set<string>> {
-  const bySeries = new Map<string, Set<string>>();
-  const add = (seriesId: string, accountId: string): void => {
-    const set = bySeries.get(seriesId);
-    if (set) set.add(accountId);
-    else bySeries.set(seriesId, new Set([accountId]));
-  };
-
-  for (const s of db
-    .select({ id: recurringSeries.id, accountId: recurringSeries.accountId })
-    .from(recurringSeries)
-    .where(isNotNull(recurringSeries.accountId))
-    .all()) {
-    if (s.accountId) add(s.id, s.accountId);
-  }
-
-  for (const r of db
-    .select({ seriesId: transactions.recurringSeriesId, accountId: transactions.accountId })
-    .from(transactions)
-    .where(and(eq(transactions.status, "active"), isNotNull(transactions.recurringSeriesId)))
-    .all()) {
-    if (r.seriesId) add(r.seriesId, r.accountId);
-  }
-
-  for (const [id, carrier] of billingCarriers(db)) {
-    for (const accountId of bySeries.get(carrier.id) ?? []) add(id, accountId);
-  }
-
-  return bySeries;
-}
-
-/**
  * The frontier that governs one series: the EARLIEST among the accounts it bills
  * on, or `null` when it cannot be attributed to any imported account at all.
  *
@@ -341,6 +293,12 @@ export function seriesAccountIds(db: AppDatabase): Map<string, Set<string>> {
  * Venture X, both have to have been looked at; if either is unimported the
  * charge could be sitting in it. Taking the latest would let one fresh account
  * vouch for a stale one.
+ *
+ * ⚖️ …among the accounts a bill posts to NOW — its last two payments' accounts, or the one it names, its carrier's
+ * added (`landingAccountsBySeries`) — his decision 62 (2026-10-12, `dueDayReadings`), never every account it ever paid
+ * from. A fresh account still cannot vouch for one the bill may land in; an account it LEFT no longer holds it back.
+ * 🔴 Over every account, measured on his ledger copy 2026-10-12, the rent's due days were read to Aug 12 — Chase
+ * Checking, which paid ONE rent, in July — while its "running late" chip read Wells Fargo through Sep 24.
  *
  * ⚠️ There is deliberately NO ledger-wide fallback. The first version took the
  * earliest frontier in the whole ledger for an unattributable series, and it was
@@ -436,10 +394,23 @@ export const silenceObservedThrough = cache(function silenceObservedThrough(
 
 /**
  * ⚖️ How far the ledger has read the days each series' bill can be paid on (`DueDayReading`) — what `dueDayIsRead`
- * grades, his decision 60 (2026-10-08): the silence frontier of every account the series bills on, the earliest of them
- * (`frontierForSeries` over `silenceObservedThrough` and `seriesAccountIds`, its carrier's accounts included), and its
- * grace — the widest window a payment that pays it may post in: its own `toleranceDays`, and for a series billed inside
- * another's payment its carrier's too, whose payments pay it by the carrier's own test (`carrierPaymentsBySeries`).
+ * grades, his decision 60 (2026-10-08): the silence frontier of the accounts the series posts to now, the earliest of
+ * them (`frontierForSeries` over `silenceObservedThrough` and `landingAccountsBySeries`, its carrier's accounts
+ * included), and its grace — the widest window a payment that pays it may post in: its own `toleranceDays`, and for a
+ * series billed inside another's payment its carrier's too, whose payments pay it by the carrier's own test
+ * (`carrierPaymentsBySeries`).
+ *
+ * ⚖️ His decision 62 (2026-10-12): the accounts its LAST TWO PAYMENTS posted to — or the one it names — the landing
+ * rule its "running late" chip and its lapse are measured on (`silenceMeasuredThroughBySeries`), never every account
+ * it ever paid from. 🔴 Over every account (`seriesAccountIds`, measured on his ledger copy 2026-10-12) the rent's due
+ * days were read to Aug 12 — Chase Checking, which paid ONE rent, in July — while its chip read Wells Fargo through
+ * Sep 24: once Wells Fargo's next statement showed no rent, the chip would say "running late" while the rent's page
+ * said "no import has covered it yet" until Chase Checking, an account it no longer pays from, was imported past Oct 4.
+ *
+ * ⚠️ The chip's ACCOUNTS, each read to its newest import — decision 60's "imported through" — where the chip reads
+ * each to its checked record (`checkedThroughBySeries`). They part only on an account whose imports run past its last
+ * closed balance: on his ledger copy 2026-10-12 every series but three dismissed ones reads its chip's day, and those
+ * three post to Robinhood Cash — imported through Sep 9, checked through Aug 31.
  *
  * ⛔ ONE READING for the calendar's ✕ (`settledVerdict`) and the arrears' read half (`arrearsReadCents`), so the
  * accounts and the grace a due day is read by are chosen once. 🔴 Graded on its own 3 days, a utilities bill carried by
@@ -447,7 +418,7 @@ export const silenceObservedThrough = cache(function silenceObservedThrough(
  */
 export function dueDayReadings(db: AppDatabase, today: string): (seriesId: string) => DueDayReading {
   const frontier = silenceObservedThrough(db, today);
-  const accountsBySeries = seriesAccountIds(db);
+  const accountsBySeries = landingAccountsBySeries(db);
   const carriers = billingCarriers(db);
   const tolerance = new Map(
     db

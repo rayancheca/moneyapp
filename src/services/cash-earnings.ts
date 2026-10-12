@@ -112,8 +112,9 @@ const POSTING_DAYS_THAT_SAY_WHERE = 2;
  *
  * ⛔ ONE rule for every caller — the dashboard's income card, /spending's note
  * (`cashEarningsReadings`), the passed-payday sentence on /budgets and
- * /recurring (`unbankedIncomeForSeries`) and whether a series is running late
- * (`silenceMeasuredThroughBySeries`) — so no two can name a different day.
+ * /recurring (`unbankedIncomeForSeries`), whether a series is running late
+ * (`silenceMeasuredThroughBySeries`) and — ⚖️ his decision 62 (2026-10-12) — whether a bill's due day is read, the
+ * calendar's ✕ and every "not posted" (`dueDayReadings`) — so no two can name a different day.
  *
  * ⛔ Chosen over EVERY account it posted to, archived ones too — whether a statement is still coming for one is the
  * frontier's question (`silenceMeasuredThroughBySeries`), never this one's. 🔴 Chosen among the accounts still
