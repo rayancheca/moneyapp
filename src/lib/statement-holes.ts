@@ -100,6 +100,21 @@ export function statementHoles(
 }
 
 /**
+ * Half a monthly cycle. A step of a hole's walk is a close of its own only when it lands MORE than this
+ * before `to` (`closesWithin`): a walk that sits off the real closes puts one step about a month before `to`
+ * and the next about on it, and half a cycle each way is as far off as it may sit and still tell the two
+ * apart. A step exactly half a cycle off is as near `to` as the close a month before it, and goes with `to`.
+ *
+ * 🔴 Strictly more, measured on his ledger copy 2026-10-12: Discover's move from the 18th to the 2nd puts a
+ * walk on the 18th fifteen days before every close on the 2nd (May 18 → Jun 2), and counted on their own
+ * those steps put 4 statements in a hole that holds 3. Dropping every run of one to eight statements of every
+ * account makes 1,590 holes: counted on or before half a cycle, 25 miscount; walked to `to` plus the wander,
+ * 13; this way 5 — all five shared with the wander walk, and none on a monthly cycle (three every-n-days
+ * rhythms, two windows with no rhythm at all).
+ */
+const HALF_A_CYCLE_DAYS = 15;
+
+/**
  * How many closes the rhythm puts inside a window.
  *
  * Walks the account's own rhythm from the day before the hole rather than
@@ -109,8 +124,7 @@ export function statementHoles(
  * ⛔ A hole is bounded by two CLOSES: the day before it ends the last statement
  * imported, and `to` ends the last one missing, because the next imported period
  * starts the day after it. So a day-of-month cycle is walked on the day of the
- * close that OPENED the hole — the cycle in force then, read from the hole itself
- * — and its last step may land inside the cycle's wander past `to`.
+ * close that OPENED the hole — the cycle in force then, read from the hole itself.
  *
  * 🔴 Why the day comes from the hole: the walk stepped on today's day, which a
  * moved cycle makes wrong for every hole before the move. Measured by a second
@@ -121,55 +135,74 @@ export function statementHoles(
  * old day instead (`rhythmOn`, 2026-10-08) worked only while the old closes were
  * still inside the window — a special case with an expiry date.
  *
- * ⚠️ Why the last step gets the wander: Chase Checking's real cycle lands on the
- * 10th–13th, and Sep 13 → Nov 10, 2022 is two statements — walked on the 13th the
- * second step is Nov 13, three days past the end. Counting the rhythm's own days
- * inside the window is wrong the other way: Dec 10, 2025 → Jan 13 is one
- * statement, and the 11th falls in it twice. Removing each of Chase Checking's
- * real statements, and each adjacent pair, the old walk miscounted 30 of the 91
- * holes, counting the rhythm's days 45, this walk none.
+ * ⛔ And on a monthly cycle `to` counts ITSELF: the walk counts only the closes it
+ * puts more than HALF_A_CYCLE_DAYS before `to`, and the close at `to` is one more.
+ * A walk on the opening close's day is as late, or as early, as that close was on
+ * every step, so asking a step to land on `to` asks both ends of the hole to sit
+ * on the same day — and they need not. 🔴 Three times it went wrong, each fixed
+ * for its own case first:
  *
- * Only a day-of-month cycle gets either. A month-end close needs no wander, and
- * an every-n-days tolerance is a spread of GAPS — on an irregular account wide
- * enough to invent a statement in a window its rhythm puts none in.
+ *   - Chase Checking's cycle lands on the 10th–13th, and Sep 13 → Nov 10, 2022 is
+ *     two statements: walked on the 13th the second step is Nov 13, three days
+ *     past the end. Counting the rhythm's own days inside the window is wrong the
+ *     other way — Dec 10, 2025 → Jan 13 is one statement, and the 11th falls in it
+ *     twice. Removing each of its real statements, and each adjacent pair, the
+ *     walk to `to` miscounted 30 of the 91 holes and counting the rhythm's days
+ *     45, so the last step was given the cycle's wander past `to`.
+ *   - Once a late close is no longer the newest, the trim drops it from the
+ *     wander: given Capital One's Oct 9, Nov 9, a late Dec 13 and Jan 9 never
+ *     imported, the hole Dec 14 → Jan 9 walked to Jan 13 and read no count. The
+ *     floor that followed (75e4353) counted one where the walk found none…
+ *   - …and with Feb 9 missing too, two still read one: Jan 13 counted, Feb 13 past
+ *     Feb 9 + 2. Measured by the review on a copy of his ledger, 2026-10-12:
+ *     "58 days, 1 statement" and "6 statements · 210 days" for 7, beside a
+ *     schedule reading "closes around the 9th". A hole that ends at an EARLY close
+ *     did the same — Oct 10 → Dec 5, holding Nov 9 and Dec 5, read one — and had
+ *     before any of the three.
  *
- * ⛔ A walk that lands no step in the hole still counts ONE on a monthly cycle:
- * `to` is a close, and a day-of-month or month-end cycle cannot fit two into a
- * window shorter than its own step. 🔴 It returned null instead, and the hole read
- * no count: a close that landed late opens the hole past the cycle's day, and a
- * month stepped on that day overshoots `to` by more than the wander once the late
- * close is no longer the newest and the trim has dropped it. Measured on a copy
- * of his ledger 2026-10-12, given the Capital One closes 5ac1588 queued (Oct 9,
- * Nov 9, a late Dec 13, Jan 9 never imported, Feb 9): the hole Dec 14 → Jan 9
- * read "27 days", and Missing statements' header, which sums only counted holes,
- * "5 statements · 179 days" for 6. As his ledger stands no hole reads null, and
- * dropping each statement, and each adjacent pair, of every account counts every
- * window as before. An every-n-days rhythm is no such bound — 107 days measured
- * across missing monthly statements puts none in a 60-day hole that holds two —
- * so a hole it misses stays uncounted.
+ * As his ledger stands every hole reads as before, and so does the e2e fixture's.
+ * Discover's real periods followed by a year of Capital One closes on the 9th, one
+ * of them two to six days late or two to four early, with every run of one to
+ * three of them dropped, make 2,880 holes, and every one counts what was dropped —
+ * the wander walk miscounted 82 of them, and before its floor (75e4353) 154.
+ *
+ * An every-n-days rhythm is no such bound — 107 days measured across missing
+ * monthly statements puts none in a 60-day hole that holds two — so it is walked
+ * to `to` itself, and a hole it misses stays uncounted. Nor is its tolerance ever
+ * given to the walk: a spread of GAPS, on an irregular account wide enough to
+ * invent a statement in a window its rhythm puts none in.
  */
 function closesWithin(from: string, to: string, cadence: StatementCadence): number | null {
   if (cadence.rhythm.kind === "unknown") return null;
   const opening = addDays(from, -1);
-  const [rhythm, last]: [StatementRhythm, string] =
+  if (cadence.rhythm.kind === "every-n-days") {
+    const count = stepsThrough(cadence.rhythm, opening, to, MAX_CLOSES_PER_HOLE);
+    return count === 0 ? null : count;
+  }
+  const rhythm: StatementRhythm =
     cadence.rhythm.kind === "day-of-month"
-      ? [{ kind: "day-of-month", day: Number(opening.slice(8, 10)) }, addDays(to, cadence.toleranceDays)]
-      : [cadence.rhythm, to];
-  let at: string | null = opening;
+      ? { kind: "day-of-month", day: Number(opening.slice(8, 10)) }
+      : cadence.rhythm;
+  // the closes MORE than half a cycle before `to`, then `to`'s own — within the bound every walk keeps
+  return stepsThrough(rhythm, opening, addDays(to, -HALF_A_CYCLE_DAYS - 1), MAX_CLOSES_PER_HOLE - 1) + 1;
+}
+
+/** How many steps of `rhythm` after `from` land on or before `last` — at most `cap` of them. */
+function stepsThrough(rhythm: StatementRhythm, from: string, last: string, cap: number): number {
+  let at: string | null = from;
   let count = 0;
-  while (count < MAX_CLOSES_PER_HOLE) {
+  while (count < cap) {
     at = nextCloseAfter(rhythm, at);
     if (at === null || at > last) break;
     /*
      * ⚠️ No "did it advance?" guard here, deliberately. `statementCadence`
      * documents that its `every-n-days` step cannot round below 1 ("a zero
      * step, which nextCloseAfter would never advance past, is unreachable"),
-     * both monthly arms step by calendar months, and `MAX_CLOSES_PER_HOLE`
-     * bounds the loop regardless. A second guard for the same impossibility
-     * would be a branch no input could reach.
+     * both monthly arms step by calendar months, and `cap` (MAX_CLOSES_PER_HOLE
+     * at most) bounds the loop regardless. A second guard for the same
+     * impossibility would be a branch no input could reach.
      */
     count += 1;
   }
-  if (count > 0) return count;
-  return cadence.rhythm.kind === "every-n-days" ? null : 1;
+  return count;
 }
