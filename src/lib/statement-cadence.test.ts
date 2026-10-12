@@ -691,6 +691,69 @@ describe("a cycle that moved", () => {
     expect(transitional.closes).toBe(3);
     expect(transitional.movedFrom).toEqual({ day: 18, closes: 9 });
     expect(transitional.toleranceDays).toBe(1);
+    // the same Jul 14 AFTER a close on the 9th is the new cycle's late close: only the run's first can be the old's
+    const late = statementCadence([...nineOnThe18th, "2026-06-09", "2026-07-14", "2026-08-09", "2026-09-09"]);
+    expect(late.rhythm).toEqual({ kind: "day-of-month", day: 9 });
+    expect(late.closes).toBe(4);
+    expect(late.movedFrom).toEqual({ day: 18, closes: 8 });
+    expect(late.toleranceDays).toBe(6);
+  });
+
+  /*
+   * 🔴 THE OLD CYCLE'S LATE CLOSE CAN ONLY BE THE RUN'S FIRST. The review of 4effbce, 2026-10-12: "nearer the new
+   * day" was asked of whichever close was left out, wherever it sat in time, and Discover moved UP the month — an
+   * early Capital One close on the 5th sits three off the 2nd and four short of the 9th, so a run with one threw the
+   * move out even after closes on the 9th. With his real closes, then Oct 9 and an early Nov 5, the row read
+   * "closes around the 2nd, from 12 statements · next closes Dec 2", and on Dec 14 "one closed 12 days ago, not
+   * imported" where it had read "5 days ago". A close that comes after one on the new cycle is that cycle's own.
+   */
+  test("on a move up the month, an early close after the move is the new cycle's — the row keeps the 9th", () => {
+    const closes = [...DISCOVER_REAL, "2026-10-09", "2026-11-05"];
+    const c = statementCadence(closes);
+    expect(c.rhythm).toEqual({ kind: "day-of-month", day: 9 });
+    expect(c.closes).toBe(4);
+    expect(c.movedFrom).toEqual({ day: 2, closes: 8 });
+    // four days early and the newest, so never trimmed: the reminder waits for it, for this one cycle
+    expect(c.toleranceDays).toBe(5);
+    expect(rhythmPhrase(c)).toBe(
+      "closes around the 9th, from its last 4 statements — the 8 before closed around the 2nd",
+    );
+    expect(pullSentence(statementPull(closes, "2026-11-20"))).toBe(
+      "last one closed Nov 5, 15 days ago · next closes Dec 9",
+    );
+    expect(pullSentence(statementPull(closes, "2026-12-14"))).toBe(
+      "last one closed Nov 5, 39 days ago · one closed 5 days ago, not imported",
+    );
+    // the same early close in the middle of the run, a 9th after it
+    const middle = statementCadence([...DISCOVER_REAL, "2026-10-05", "2026-11-09"]);
+    expect(middle.rhythm).toEqual({ kind: "day-of-month", day: 9 });
+    expect(middle.closes).toBe(4);
+    expect(middle.movedFrom).toEqual({ day: 2, closes: 8 });
+    expect(middle.toleranceDays).toBe(5);
+  });
+
+  test("an early close after the move, import by import: never back to the 2nd, never a day it skipped", () => {
+    const first = DISCOVER_REAL.length;
+    const closes = [
+      ...DISCOVER_REAL,
+      "2026-10-05",
+      ...Array.from({ length: 6 }, (_, i) => addCalendarMonths("2026-11-09", i)),
+    ];
+    const said = closes
+      .slice(first)
+      .map((close, i) => [close, rhythmPhrase(statementCadence(closes.slice(0, first + i + 1)))]);
+    const moved = (n: number, before: number, to = "9th") =>
+      `closes around the ${to}, from its last ${n} statements — the ${before} before closed around the 2nd`;
+    expect(said).toEqual([
+      // Aug 9, Sep 8 and Oct 5: their median is the 8th, a day it closed on
+      ["2026-10-05", moved(3, 9, "8th")],
+      ["2026-11-09", moved(4, 8)],
+      ["2026-12-09", moved(5, 7)],
+      ["2027-01-09", moved(6, 6)],
+      ["2027-02-09", moved(7, 5)],
+      ["2027-03-09", moved(8, 4)],
+      ["2027-04-09", moved(9, 3)],
+    ]);
   });
 
   test("two closes off the new cycle are not one outlier — the run agrees but for ONE close", () => {

@@ -280,9 +280,9 @@ function dayOfMonthCadence(ends: readonly string[]): DayOfMonthCadence {
  *
  * The rule: the newest closes are a new cycle when there are at least
  * MIN_MOVED_CLOSES of them, they sit within CYCLE_AGREEMENT_DAYS of each other —
- * all of them, or all but one that sits nearer their day than the old one
- * (`oneCycle`) — and EVERY one of them, that one included, sits off the older
- * closes' day by more than the older closes' own tolerance. The rhythm then
+ * all of them, or all but one, which sits nearer their day than the old one if
+ * it is the first (`oneCycle`) — and EVERY one of them, that one included, sits
+ * off the older closes' day by more than their own tolerance. The rhythm then
  * follows them alone — their median day, their spread plus PUBLISH_SLACK_DAYS —
  * and `movedFrom` keeps what the older closes said, so the phrase can state that
  * two closes is thin evidence.
@@ -347,17 +347,31 @@ function movedCycle(ends: readonly string[]): StatementCadence | null {
  * MIN_MOVED_CLOSES must agree without it, so a run of two never has one: the
  * 9th and the 13th are two late closes, not a cycle and a late close of it.
  *
- * ⛔ And it sits nearer `newDay` than `oldDay`, the day the older closes left —
- * strictly; a close as near the one as the other stays with the old cycle. The
- * longest run wins, so without this the slot takes in the old cycle's own last
- * late close, and below five closes nothing is trimmed: its distance from the
- * new day becomes the new cycle's tolerance. 🔴 Found by the review, 2026-10-12:
- * ten closes on the 2nd, then Jul 4, Aug 9 and Sep 9 — the 4th, two off the 2nd
- * and five off the 9th, joined the run at tolerance 6, and on Oct 14 the
- * statement that closed Oct 9 read "counted as late from Oct 15" where it had
- * read "one closed 5 days ago, not imported". Left with the old cycle, it is the
- * newest of the older closes, so it widens THEIR tolerance, as it did before
- * the slot — and the 9th, seven off the 2nd, still sits past it.
+ * ⛔ And when it is the run's FIRST close, it sits nearer `newDay` than
+ * `oldDay`, the day the older closes left — strictly; a close as near the one
+ * as the other stays with the old cycle. The longest run wins, so without this
+ * the slot takes in the old cycle's own last late close, and below five closes
+ * nothing is trimmed: its distance from the new day becomes the new cycle's
+ * tolerance. 🔴 Found by the review, 2026-10-12: ten closes on the 2nd, then
+ * Jul 4, Aug 9 and Sep 9 — the 4th, two off the 2nd and five off the 9th, joined
+ * the run at tolerance 6, and on Oct 14 the statement that closed Oct 9 read
+ * "counted as late from Oct 15" where it had read "one closed 5 days ago, not
+ * imported". Left with the old cycle, it is the newest of the older closes, so
+ * it widens THEIR tolerance, as it did before the slot — and the 9th, seven off
+ * the 2nd, still sits past it.
+ *
+ * ⛔ ONLY the first: every other close in the run comes after one on the new
+ * cycle, so it is that cycle's own early or late close, wherever its day sits.
+ * 🔴 Found by the review of 4effbce, 2026-10-12: asked of whichever close was
+ * left out, the rule threw out a move UP the month — Discover's, 2nd → 9th — at
+ * its first early close: the 5th is three off the 2nd and four short of the 9th.
+ * His real closes, then Oct 9 and Nov 5, read "closes around the 2nd, from 12
+ * statements · next closes Dec 2"; an early Oct 5 then 9ths read the 2nd, the
+ * 2nd, the 4th and the 7th, month by month, before the 9th.
+ *
+ * `day === days[0]` names the first close by its day, and that is exact: the
+ * close left out is the only one on its day — were another on it, dropping one
+ * would leave both ends where they were, and the run would have agreed whole.
  */
 function oneCycle(days: readonly number[], newDay: number, oldDay: number): boolean {
   const sorted = [...days].sort((a, b) => a - b);
@@ -365,7 +379,7 @@ function oneCycle(days: readonly number[], newDay: number, oldDay: number): bool
   const agree = (low: number, high: number) => sorted[high]! - sorted[low]! <= CYCLE_AGREEMENT_DAYS;
   if (agree(0, last)) return true;
   if (last < MIN_MOVED_CLOSES) return false;
-  const ofTheNewCycle = (day: number) => Math.abs(day - newDay) < Math.abs(day - oldDay);
+  const ofTheNewCycle = (day: number) => day !== days[0] || Math.abs(day - newDay) < Math.abs(day - oldDay);
   return (agree(1, last) && ofTheNewCycle(sorted[0]!)) || (agree(0, last - 1) && ofTheNewCycle(sorted[last]!));
 }
 
