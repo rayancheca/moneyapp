@@ -270,6 +270,18 @@ describe("the posted average of a bill with a rate history — the payments at t
     });
   });
 
+  /* the boundary's other end: Aug 4's payment, on the first day of the rate in force now, is counted everywhere */
+  test("raised Aug 4, the day he paid: that payment is the new rate's — -$2,264.16 on all three", () => {
+    raise("2026-08-03");
+    const s = surfaces();
+    expect(s.page).toEqual([-226_416, 3_825]);
+    expect(s.allTab).toBe(-226_416);
+    expect(s.popover.headline).toContain(
+      "Its 2 payments at the rate in force since Aug 4, 2026 were 2 different amounts, from -$2,291.21 to -$2,237.11",
+    );
+    expect(s.popover.headline).toContain("average of what actually posted is -$2,264.16");
+  });
+
   test("raised Sep 1: its one payment since, -$2,291.21, and no spread", () => {
     raise("2026-08-31");
     const s = surfaces();

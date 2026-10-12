@@ -122,6 +122,19 @@ describe("postedAverage — a series read per occurrence, with a rate history", 
     expect(atTodaysRate(occurrencesOf(RENT_ROWS), raisedAug5).map((o) => o.postedOn)).toEqual(["2026-09-02"]);
   });
 
+  /*
+   * …and the boundary's other end: a payment ON the first day of the new rate is the new rate's. 🔴 Untested, a filter
+   * that dropped it passed all 217 tests of this rule (review of a64b99a, 2026-10-12).
+   */
+  test("a payment ON the first day of the new rate is the new rate's", () => {
+    const raisedAug4 = { ...RAISED_AUG_1, amountHistory: [{ throughOn: "2026-08-03", amountCents: -200_000 }] };
+    expect(atTodaysRate(occurrencesOf(RENT_ROWS), raisedAug4).map((o) => o.postedOn)).toEqual([
+      "2026-08-04",
+      "2026-09-02",
+    ]);
+    expect(postedAverage(RENT_ROWS, PER_OCCURRENCE, raisedAug4)).toEqual({ avgCents: -226_416, stddevCents: 3_825 });
+  });
+
   /* ⛔ the pay rule is its own (§6A 55), and as posted is as posted: neither reading is narrowed here */
   test("a series read as it posted keeps every row, whatever its history", () => {
     expect(postedAverage(RENT_ROWS, AS_POSTED, RAISED_AUG_1)).toEqual(postedAverage(RENT_ROWS, AS_POSTED, FLAT));

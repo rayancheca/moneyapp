@@ -1665,6 +1665,11 @@ function differentAmountsWords(distinct: ReadonlySet<number>): string {
   return `${distinct.size} different amounts, from ${lo} to ${hi} — ${why}`;
 }
 
+/** Why fewer than `MIN_OCCURRENCES` is not a pattern — the anecdote gate's words, wherever it holds a series back. */
+const BELOW_A_PATTERN =
+  `below the ${MIN_OCCURRENCES} this app requires before calling a repeat a pattern, ` +
+  "so it is an anecdote rather than a statistic";
+
 /** "Its 4 payments before Aug 1, 2026 were at an earlier rate" */
 function earlierWords({ era, earlier }: Pick<AtTodaysRate, "era" | "earlier">): string {
   const its = earlier === 1 ? "Its one payment" : `Its ${earlier} payments`;
@@ -1675,7 +1680,9 @@ function earlierWords({ era, earlier }: Pick<AtTodaysRate, "era" | "earlier">): 
  * ⚖️ The headline's sentence for a bill with payments either side of a rate change (owner decision 2026-10-12, §6A
  * 63): it counts and ranges the payments its average is of — those at the rate in force now — and says that the ones
  * before are left out, and why. With none since, it says there is no average yet, as the page and the All tab print
- * none. Latent on his ledger, 2026-10-12: only his pay has a history, and pay is not read per payment.
+ * none. With fewer than `MIN_OCCURRENCES` since, it says they are an anecdote, as its badge does ("seen once at the new
+ * rate"): the gate counts them, not the rows before the change. Latent on his ledger, 2026-10-12: only his pay has a
+ * history, and pay is not read per payment.
  */
 function observedAtTodaysRate({ era, earlier, payments, split, distinct }: AtTodaysRate): string {
   const before = earlierWords({ era, earlier });
@@ -1691,7 +1698,12 @@ function observedAtTodaysRate({ era, earlier, payments, split, distinct }: AtTod
       : distinct.size === 1
         ? `were ${formatCents([...distinct][0]!)}, exactly`
         : `were ${differentAmountsWords(distinct)}`;
-  return `${counted}${posted} ${what}. ${before}, and ${earlier === 1 ? "is" : "are"} not counted.`;
+  // the anecdote gate on what is counted (`seen`): "That is one payment at the rate in force now — below the 3 …"
+  const thin =
+    k < MIN_OCCURRENCES
+      ? ` That is ${k === 1 ? "one payment" : `${k} payments`} at the rate in force now — ${BELOW_A_PATTERN}.`
+      : "";
+  return `${counted}${posted} ${what}. ${before}, and ${earlier === 1 ? "is" : "are"} not counted.${thin}`;
 }
 
 /** …and its evidence line: "2 payments at the rate in force since Aug 1: … · 2 before it, at an earlier rate" */
@@ -1759,9 +1771,12 @@ function recurringSeriesProvenance(db: AppDatabase, id: string, today: string): 
    * and why they are left out (`era`, `earlier`). With none at the rate in force now there is no average, and they say
    * so. A series whose rate never changed has no `era`: it reads exactly as it did.
    *
-   * ⚠️ The anecdote gate (`MIN_OCCURRENCES`) still counts ROWS, `n`: detection (`analyzeGroup`) and the calendar's
-   * proven band (`lib/occurrence-verdict`) count rows against that same bar, and "below the 3 this app requires" names
-   * theirs.
+   * ⚠️ The anecdote gate (`MIN_OCCURRENCES`) counts ROWS, `n`: detection (`analyzeGroup`) and the calendar's proven
+   * band (`lib/occurrence-verdict`) count rows against that same bar, and "below the 3 this app requires" names theirs.
+   * ⚖️ …but with an `era`, the PAYMENTS at the rate in force now (`seen`, §6A 63): what the amount stands on is what
+   * the average averages, and the cadence the rows prove is not what changed. 🔴 Gated on every rate's rows, his Netflix
+   * given a history through Jun 30, 2025 (hypothetical) read "adds up" on its ONE payment since — the 17 before got it
+   * past the 3, and one payment trivially agrees with itself (review of a64b99a, a copy of his ledger, 2026-10-12).
    */
   const posted = postedAveragesBySeries(db, [series], today).get(id)!;
   const n = postings.length;
@@ -1773,6 +1788,8 @@ function recurringSeriesProvenance(db: AppDatabase, id: string, today: string): 
   const earlier = (posted.everyOccurrence?.length ?? k) - k;
   // the day that rate began — null when no payment is left out, which every series whose rate never changed is
   const era = earlier > 0 ? posted.rateSince : null;
+  // what the anecdote gate counts — the rows, or with an `era` the payments at the rate in force now (§6A 63)
+  const seen = era === null ? n : k;
   // "Jun 16's posted as 2" — each payment the bank posted as several rows; empty when every row is a payment
   const split = payments
     .flatMap((p) => {
@@ -1823,7 +1840,7 @@ function recurringSeriesProvenance(db: AppDatabase, id: string, today: string): 
     ? "manual"
     : n === 0
       ? "unknown"
-      : n < MIN_OCCURRENCES
+      : seen < MIN_OCCURRENCES
         ? "unverified"
         : distinct.size === 1
           ? "derived"
@@ -1843,10 +1860,11 @@ function recurringSeriesProvenance(db: AppDatabase, id: string, today: string): 
    */
   const badgeWord = userSet
     ? undefined
-    : n === 0
+    : // nothing tagged, or nothing at the rate in force now (§6A 63): nothing checks it, and "seen 0 times" says less
+      seen === 0
       ? undefined
-      : n < MIN_OCCURRENCES
-        ? `seen ${n === 1 ? "once" : `${n} times`}`
+      : seen < MIN_OCCURRENCES
+        ? `seen ${seen === 1 ? "once" : `${seen} times`}${era === null ? "" : " at the new rate"}`
         : distinct.size > 1
           ? `${distinct.size} different amounts`
           : undefined;
@@ -1866,9 +1884,11 @@ function recurringSeriesProvenance(db: AppDatabase, id: string, today: string): 
         billedWithEvidence({ lastMatchedOn: series.lastMatchedOn, billedWith }, today) ??
         "Nothing tagged to it has ever posted, so there is no evidence behind it at all."
       );
-    if (n < MIN_OCCURRENCES)
-      return `Only ${n} tagged ${n === 1 ? "posting has" : "postings have"} ever landed — below the ${MIN_OCCURRENCES} this app requires before calling a repeat a pattern, so it is an anecdote rather than a statistic.`;
+    // ⚖️ before the rows' gate: with an `era` the words count what the badge and the average count (§6A 63) — never
+    // "Only 2 tagged postings have ever landed" beside an average of the one at the rate in force now
     if (era !== null) return observedAtTodaysRate({ era, earlier, payments, split, distinct });
+    if (n < MIN_OCCURRENCES)
+      return `Only ${n} tagged ${n === 1 ? "posting has" : "postings have"} ever landed — ${BELOW_A_PATTERN}.`;
     // every row its own payment: "5 tagged postings", as it always read; else "4 payments (5 tagged postings: …)"
     if (k === 1)
       return `Its ${n} tagged postings are one payment, of ${formatCents(payments[0]!.amountCents)} on ${readableDay(days[0]!)}.`;

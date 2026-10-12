@@ -1734,6 +1734,104 @@ describe("provenanceFor — a recurring series' amount", () => {
   });
 });
 
+/**
+ * ⚖️ Owner decision 2026-10-12 (§6A 63): a bill or subscription with a rate history averages only the payments at the
+ * rate in force now — so those are the evidence its popover GRADES, as they are what its sentence counts. Latent on his
+ * ledger (2026-10-12), where only his pay has a history: the recorded history here is hypothetical; the amounts are his
+ * Netflix's own, -$16.86 then -$19.59 (from Feb 25, 2025), never set by hand, so its verdict is the evidence's.
+ *
+ * 🔴 Graded on the rows of every rate (review of a64b99a, a copy of his ledger, 2026-10-12): his Netflix given a history
+ * through Jun 30, 2025 read "adds up" on its ONE payment since — the 17 before the change got it past the 3 the app
+ * requires before calling a repeat a pattern, and one payment trivially agrees with itself — beside "Its one payment at
+ * the rate in force since Jul 1, 2025 was -$19.59".
+ */
+describe("provenanceFor — a recurring series' amount, with a rate history (§6A 63)", () => {
+  const TODAY_ERA = "2026-10-12";
+  const OLD_RATE = -1686;
+  const NEW_RATE = -1959;
+  const OLD_DAYS = ["2026-01-15", "2026-02-15", "2026-03-15", "2026-04-15", "2026-05-15"];
+
+  /** -$16.86 on each of `oldDays`, recorded as the rate through May 31; then `newRate` paid on its days */
+  function raisedSubscription(newRate: readonly (readonly [string, number])[], oldDays = OLD_DAYS): string {
+    const s = addSeries("Netflix", { amountAvg: NEW_RATE });
+    const acct = addAccount(`card-${s}`, "Chase Sapphire", "credit");
+    for (const d of oldDays) tagToSeries(addTxn(acct, d, { cents: OLD_RATE }), s);
+    for (const [d, c] of newRate) tagToSeries(addTxn(acct, d, { cents: c }), s);
+    bundle.db.run(
+      sql`UPDATE recurring_series SET user_amount_history = ${JSON.stringify([
+        { throughOn: "2026-05-31", amountCents: OLD_RATE },
+      ])} WHERE id = ${s}`,
+    );
+    return s;
+  }
+  const popover = (id: string) => provenanceFor(bundle.db, { kind: "recurringSeries", id, today: TODAY_ERA })!;
+
+  test("one payment at the new rate is an anecdote, however many came before the change", () => {
+    const p = popover(raisedSubscription([["2026-06-15", NEW_RATE]]));
+    expect(p.verdict).toBe("unverified");
+    expect(p.badgeWord).toBe("seen once at the new rate");
+    expect(p.headline).toContain(
+      "Its one payment at the rate in force since Jun 1, 2026 was -$19.59, on Jun 15, 2026. Its 5 payments before " +
+        "Jun 1, 2026 were at an earlier rate, and are not counted. That is one payment at the rate in force now — " +
+        "below the 3 this app requires before calling a repeat a pattern, so it is an anecdote rather than a " +
+        "statistic.",
+    );
+  });
+
+  test("two identical payments at the new rate are still not a pattern", () => {
+    const p = popover(raisedSubscription([["2026-06-15", NEW_RATE], ["2026-07-15", NEW_RATE]]));
+    expect(p.verdict).toBe("unverified");
+    expect(p.badgeWord).toBe("seen 2 times at the new rate");
+    expect(p.headline).toContain("Its 2 payments at the rate in force since Jun 1, 2026 were -$19.59, exactly.");
+    expect(p.headline).toContain("That is 2 payments at the rate in force now — below the 3 this app requires");
+  });
+
+  /* ⛔ graded on the new rate's amounts alone: the old rate's -$16.86 is not a disagreement */
+  test("three identical payments at the new rate add up, though the rate before was another", () => {
+    const newRate = [["2026-06-15", NEW_RATE], ["2026-07-15", NEW_RATE], ["2026-08-15", NEW_RATE]] as const;
+    const p = popover(raisedSubscription(newRate));
+    expect(p.verdict).toBe("derived");
+    expect(p.badgeWord).toBeUndefined();
+    expect(p.headline).toContain("Its 3 payments at the rate in force since Jun 1, 2026 were -$19.59, exactly.");
+    expect(p.headline).not.toContain("below the 3");
+  });
+
+  test("three at the new rate that disagree name their own amounts, not the old rate's", () => {
+    const p = popover(raisedSubscription([["2026-06-15", NEW_RATE], ["2026-07-15", -1999], ["2026-08-15", NEW_RATE]]));
+    expect(p.verdict).toBe("unverified");
+    expect(p.badgeWord).toBe("2 different amounts");
+  });
+
+  /*
+   * ⛔ Fewer than 3 rows in all: the words count the one payment at the new rate, as the badge and the average do —
+   * never "Only 2 tagged postings have ever landed" beside an average of one of them.
+   */
+  test("one payment either side of the change: the badge and the words count the one at the new rate", () => {
+    const p = popover(raisedSubscription([["2026-06-15", NEW_RATE]], ["2026-05-15"]));
+    expect(p.verdict).toBe("unverified");
+    expect(p.badgeWord).toBe("seen once at the new rate");
+    expect(p.headline).not.toContain("Only 2 tagged postings");
+    expect(p.headline).toContain(
+      "Its one payment at the rate in force since Jun 1, 2026 was -$19.59, on Jun 15, 2026. Its one payment before " +
+        "Jun 1, 2026 was at an earlier rate, and is not counted. That is one payment at the rate in force now",
+    );
+  });
+
+  /* nothing at the new rate is nothing checking it — never "seen N times" of the old rate's payments */
+  test("nothing paid at the new rate yet: nothing checks it, however many payments came before", () => {
+    for (const oldDays of [OLD_DAYS, ["2026-04-15", "2026-05-15"]]) {
+      const p = popover(raisedSubscription([], oldDays));
+      expect(p.verdict).toBe("unverified");
+      expect(p.badgeWord).toBeUndefined();
+      expect(p.headline).toContain(
+        `Its ${oldDays.length} payments before Jun 1, 2026 were at an earlier rate, and nothing has posted at the ` +
+          "rate in force since — so there is no average of it yet.",
+      );
+      expect(p.headline).not.toContain("below the 3");
+    }
+  });
+});
+
 /* ── all spending in a window ─────────────────────────────────────────── */
 
 function addKindedCategory(id: string, name: string, kind: "expense" | "income" | "transfer"): string {
