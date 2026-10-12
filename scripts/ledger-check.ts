@@ -86,7 +86,7 @@ import { filesWithoutPrintedLines } from "@/services/import/import-records";
 import { acknowledgementsMatchingNothing, linesLeftOut } from "@/services/import/lines-left-out";
 import { readAcrossBanksNotice, readsAcrossBanks } from "@/services/import/reads-across-banks";
 import { lineLeftOutNotice } from "@/lib/import-file-label";
-import { listed } from "@/lib/ledger-check-listing";
+import { beyondBackfillsNotice, keptOpeningNotice, listed, namedFiles } from "@/lib/ledger-check-listing";
 import {
   acknowledgementWrites,
   confirmingStep,
@@ -360,8 +360,7 @@ for (const [name, cents] of Object.entries(syntheticNetCents)) {
 const onKeptOpenings = Object.entries(keptOpenings);
 console.log(`accounts standing only on the opening of a statement you un-imported: ${onKeptOpenings.length}`);
 for (const [name, day] of onKeptOpenings) {
-  const sentence = `${name}: stands only on the opening of a statement you un-imported (${day}) — unchecked, and no witness`;
-  console.log(listed("kept opening", sentence));
+  console.log(listed("kept opening", keptOpeningNotice(name, day)));
 }
 console.log(`stale verdicts: ${staleVerdicts.length}`);
 
@@ -424,8 +423,6 @@ const backfillable = unrecorded.filter((f) => f.backfillCanRead);
  * if anything but the records changes).
  */
 const beyondBackfills = unrecorded.filter((f) => !f.backfillCanRead);
-const named = (files: readonly { fileName: string }[]) =>
-  `${files.slice(0, 3).map((f) => f.fileName).join(", ")}${files.length > 3 ? ", …" : ""}`;
 console.log(
   `import records: ${unrecorded.length} parsed file(s) with no record of what they print` +
     ` — ${backfillable.length} the backfills can read, ${beyondBackfills.length} read at a version their profile has moved past`,
@@ -434,7 +431,7 @@ const recordFailures = [
   ...(backfillable.length === 0
     ? []
     : [
-        `${backfillable.length} imported file(s) have no record of what they print (${named(backfillable)}) — a ledger older than its records. Before any un-import, run:\n` +
+        `${backfillable.length} imported file(s) have no record of what they print (${namedFiles(backfillable)}) — a ledger older than its records. Before any un-import, run:\n` +
           "    pnpm tsx scripts/record-account-numbers.ts --db=<ledger> --confirm\n" +
           "    pnpm tsx scripts/record-statement-copies.ts --db=<ledger> --confirm\n" +
           "    pnpm tsx scripts/record-printed-lines.ts --db=<ledger> --confirm",
@@ -452,18 +449,7 @@ const recordFailures = [
  * `engineCategoryCarry`; re-measured 2026-09-28 on a copy: no category moves.)
  */
 if (beyondBackfills.length > 0) {
-  console.log(
-    listed(
-      "beyond the backfills",
-      `${beyondBackfills.length} of them were read at a version their profile has moved past (${named(beyondBackfills)}) — ` +
-        "the backfills read a file only at the version that imported it, so they cannot cover these. " +
-        "Un-importing any file whose rows one of them also prints loses those rows. " +
-        "Re-read them at their profile's version (it refuses unless only the records change):\n" +
-        "    pnpm tsx scripts/reread-unrecorded-files.ts --db=<ledger>             # rehearse on a copy, write nothing\n" +
-        "    pnpm tsx scripts/reread-unrecorded-files.ts --db=<ledger> --confirm   # restore point, write, re-check",
-      { warns: true },
-    ),
-  );
+  console.log(listed("beyond the backfills", beyondBackfillsNotice(beyondBackfills), { warns: true }));
 }
 
 /*
@@ -485,11 +471,6 @@ const leftOut = linesLeftOut(db);
 const acknowledged = leftOut.filter((line) => line.acknowledged !== null);
 console.log(`lines left out by a re-read: ${leftOut.length}${acknowledged.length === 0 ? "" : ` — ${acknowledged.length} acknowledged`}`);
 for (const line of acknowledged) console.log(listed("line-left-out, acknowledged", lineLeftOutNotice(line)));
-const accountNameOf = new Map(accounts.map((a) => [a.id, a.name] as const));
-for (const ack of acknowledgementsMatchingNothing(db, leftOut)) {
-  const accountName = accountNameOf.get(ack.accountId) ?? ack.accountId;
-  console.log(listed("acknowledgement matching no line", unmatchedAcknowledgementNotice(ack, accountName)));
-}
 const leftOutFailures = leftOut
   .filter((line) => line.acknowledged === null)
   .map((line) => `[line-left-out ${leftOutToken(line)}] ${lineLeftOutNotice(line)}`);
@@ -499,6 +480,20 @@ if (leftOutFailures.length > 0) {
       "    pnpm ledger-check --acknowledge-left-out=<mark> --reason='<what the statement shows>'             # prints what it would store\n" +
       "    pnpm ledger-check --acknowledge-left-out=<mark> --reason='<what the statement shows>' --confirm   # records it, in the ledger",
   );
+}
+/*
+ * …and the acknowledgements no line left out matches now, counted on a line of their own, every run, as the other kinds
+ * it names. 🔴 They were listed under the count of the lines left out, so a ledger with none printed "lines left out by
+ * a re-read: 0" directly above the acknowledgement it named, and the pre-commit hook, which prints a listing under its
+ * count line, printed the 0 above it too (the handoff of 2026-10-09, §6C; measured on a copy of his ledger, 2026-10-12,
+ * with one acknowledgement added that no line matches — his own holds none).
+ */
+const accountNameOf = new Map(accounts.map((a) => [a.id, a.name] as const));
+const matchingNoLine = acknowledgementsMatchingNothing(db, leftOut);
+console.log(`acknowledgements matching no line left out: ${matchingNoLine.length}`);
+for (const ack of matchingNoLine) {
+  const accountName = accountNameOf.get(ack.accountId) ?? ack.accountId;
+  console.log(listed("acknowledgement matching no line", unmatchedAcknowledgementNotice(ack, accountName)));
 }
 
 /*

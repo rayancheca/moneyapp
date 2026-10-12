@@ -3,7 +3,10 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
-import { listed } from "@/lib/ledger-check-listing";
+import { lineLeftOutNotice } from "@/lib/import-file-label";
+import { beyondBackfillsNotice, keptOpeningNotice, listed } from "@/lib/ledger-check-listing";
+import { unmatchedAcknowledgementNotice } from "@/lib/left-out-acknowledgement";
+import { readAcrossBanksNotice } from "@/services/import/reads-across-banks";
 
 /**
  * The pre-commit hook (.githooks/pre-commit) runs `pnpm ledger-check` and is quiet when it passes — but for what the
@@ -14,7 +17,10 @@ import { listed } from "@/lib/ledger-check-listing";
  *
  * The hook is run as git runs it — `sh`, from the checkout — with a `pnpm` on PATH that prints what a run of the check
  * printed and exits as it did, so this tests the hook alone; what the check prints is tested where it is made
- * (ledger-check-listing.test.ts, and the source gates beside this file).
+ * (ledger-check-listing.test.ts, and the source gates beside this file). Each listing below is built by the sentence
+ * the check prints it with: 🔴 they were copies, and drifted from it — an account with no colon after its name, an
+ * acknowledged line in words no surface prints, the files beyond the backfills with half their sentence (the handoff
+ * of 2026-10-09, §6C).
  */
 const HOOK = path.join(process.cwd(), ".githooks", "pre-commit");
 
@@ -58,36 +64,65 @@ function commitAfter(lines: readonly string[], exits: number) {
   return { status: r.status, out: r.stdout, err: r.stderr };
 }
 
-/** What a passing run prints of a healthy ledger — the shape his printed on a copy, 2026-10-08 — and nothing named. */
+/**
+ * What a passing run prints of a healthy ledger — his, on a copy, 2026-10-12, with the first of each book's fifteen
+ * value-anchor disagreements — and nothing named.
+ */
 const HEALTHY = [
   "Cash on Hand: -$5,000.00 in the balance chain has no source document",
   "accounts standing only on the opening of a statement you un-imported: 0",
   "stale verdicts: 0",
-  "value anchors: 43 checked · 1 disagree · 0 the app cannot value",
+  "value anchors: 43 checked · 15 disagree · 0 the app cannot value",
   "  Robinhood Brokerage 2025-08-31  off by $8.16",
+  "  Robinhood Crypto 2025-10-31  off by -$0.14",
   "import records: 0 parsed file(s) with no record of what they print — 0 the backfills can read, 0 read at a version their profile has moved past",
   "lines left out by a re-read: 0",
+  "acknowledgements matching no line left out: 0",
   "reads of accounts at two banks: 0",
-  "rate histories: 0 stored · 0 the app cannot read",
+  "rate histories: 1 stored · 0 the app cannot read",
   "witness marks: value anchors 43 · chain endpoints 222 · chain windows 212 · statement periods 256 · accounts 13",
   "",
   "ledger matches the recorded baseline, and no stored verdict has gone stale",
 ];
 
+/* each, the line the check prints for these facts — built by the sentence it prints it with */
 const TWO_BANKS = listed(
   "read at two banks",
-  "x.pdf reads accounts at Robinhood and SoFi — one column names one bank, so the Chase it records is the importer's guess",
+  readAcrossBanksNotice({ fileName: "x.pdf", status: "parsed", banks: ["Robinhood", "SoFi"], recorded: "Chase" }),
   { warns: true },
 );
-const ACKNOWLEDGED = listed("line-left-out, acknowledged", "+$25.00 on 2026-07-01, DEPOSIT, on Wells Fargo — Acknowledged on 2026-10-02: printed twice");
-const KEPT = listed("kept opening", "Wells Fargo Everyday Checking stands only on the opening of a statement you un-imported (2026-07-01) — unchecked, and no witness");
-const OLDER = listed(
-  "beyond the backfills",
-  "2 of them were read at a version their profile has moved past (a.pdf, b.pdf) — run:\n" +
-    "    pnpm tsx scripts/reread-unrecorded-files.ts --db=<ledger>             # rehearse on a copy, write nothing\n" +
-    "    pnpm tsx scripts/reread-unrecorded-files.ts --db=<ledger> --confirm   # restore point, write, re-check",
-  { warns: true },
+const ACKNOWLEDGED = listed(
+  "line-left-out, acknowledged",
+  lineLeftOutNotice({
+    accountName: "Wells Fargo Everyday Checking",
+    printedOn: "2026-07-01",
+    amountCents: 2500,
+    description: "DEPOSIT",
+    printedBy: ["wf-2026-07.pdf"],
+    readBy: "wf-2026-07.pdf",
+    acknowledged: { on: "2026-10-02", reason: "printed twice on the statement's page 1" },
+  }),
 );
+const MATCHING_NO_LINE = listed(
+  "acknowledgement matching no line",
+  unmatchedAcknowledgementNotice(
+    {
+      id: "ack-1",
+      accountId: "wells-fargo",
+      printedOn: "2026-07-08",
+      amountCents: -400,
+      printedWords: "zelle to landlord",
+      printerSha256: "0".repeat(64),
+      description: "ZELLE TO LANDLORD",
+      acknowledgedOn: "2026-10-02",
+      reason: "printed twice on the statement's page 2",
+      createdAt: "2026-10-02T12:00:00.000Z",
+    },
+    "Wells Fargo Everyday Checking",
+  ),
+);
+const KEPT = listed("kept opening", keptOpeningNotice("Wells Fargo Everyday Checking", "2026-07-01"));
+const OLDER = listed("beyond the backfills", beyondBackfillsNotice([{ fileName: "a.pdf" }, { fileName: "b.pdf" }]), { warns: true });
 
 /** The same run, naming one of each kind under its count line. */
 const NAMING = [
@@ -95,12 +130,15 @@ const NAMING = [
   "accounts standing only on the opening of a statement you un-imported: 1",
   KEPT,
   "stale verdicts: 0",
-  "value anchors: 43 checked · 1 disagree · 0 the app cannot value",
+  "value anchors: 43 checked · 15 disagree · 0 the app cannot value",
   "  Robinhood Brokerage 2025-08-31  off by $8.16",
+  "  Robinhood Crypto 2025-10-31  off by -$0.14",
   "import records: 2 parsed file(s) with no record of what they print — 0 the backfills can read, 2 read at a version their profile has moved past",
   OLDER,
   "lines left out by a re-read: 1 — 1 acknowledged",
   ACKNOWLEDGED,
+  "acknowledgements matching no line left out: 1",
+  MATCHING_NO_LINE,
   "reads of accounts at two banks: 1",
   TWO_BANKS,
   "rate histories: 1 stored · 0 the app cannot read",
@@ -127,11 +165,31 @@ describe("the pre-commit hook, when the ledger check passes", () => {
         OLDER,
         "lines left out by a re-read: 1 — 1 acknowledged",
         ACKNOWLEDGED,
+        "acknowledgements matching no line left out: 1",
+        MATCHING_NO_LINE,
         "reads of accounts at two banks: 1",
         TWO_BANKS,
         "",
       ].join("\n"),
     );
+  });
+
+  /*
+   * 🔴 The check listed it under the count of the lines left out, so with none left out the hook printed "lines left out
+   * by a re-read: 0" directly above it (the handoff of 2026-10-09, §6C; on a copy of his ledger, 2026-10-12, with one
+   * acknowledgement added that no line matches). Its count is its own now (scripts/ledger-check-listings.test.ts).
+   */
+  test("an acknowledgement matching no line is printed under its own count — never under a count of 0 lines left out", () => {
+    const run = HEALTHY.flatMap((line) =>
+      line === "acknowledgements matching no line left out: 0" ? ["acknowledgements matching no line left out: 1", MATCHING_NO_LINE] : [line],
+    );
+    const { err } = commitAfter(run, 0);
+    expect(err).toBe(
+      ["pnpm ledger-check passed, and names what it does not fail on:", "acknowledgements matching no line left out: 1", MATCHING_NO_LINE, ""].join(
+        "\n",
+      ),
+    );
+    expect(err).not.toContain("lines left out by a re-read: 0");
   });
 
   test("a value the check disagrees with and has baselined is no listing: it is not printed", () => {
@@ -142,10 +200,15 @@ describe("the pre-commit hook, when the ledger check passes", () => {
   });
 
   test("a listing's count line is printed once, however many it names", () => {
-    const another = listed("read at two banks", "y.pdf reads accounts at Chase and SoFi — one column names one bank, so the Chase it records is the importer's guess", {
-      warns: true,
-    });
-    const { err } = commitAfter([...HEALTHY.slice(0, 7), "reads of accounts at two banks: 2", TWO_BANKS, another, ...HEALTHY.slice(8)], 0);
+    const another = listed(
+      "read at two banks",
+      readAcrossBanksNotice({ fileName: "y.pdf", status: "superseded", banks: ["Chase", "SoFi"], recorded: "Chase" }),
+      { warns: true },
+    );
+    const run = HEALTHY.flatMap((line) =>
+      line === "reads of accounts at two banks: 0" ? ["reads of accounts at two banks: 2", TWO_BANKS, another] : [line],
+    );
+    const { err } = commitAfter(run, 0);
     expect(err).toBe(
       ["pnpm ledger-check passed, and names what it does not fail on:", "reads of accounts at two banks: 2", TWO_BANKS, another, ""].join("\n"),
     );
@@ -154,7 +217,16 @@ describe("the pre-commit hook, when the ledger check passes", () => {
 
 describe("the pre-commit hook, when the ledger check fails", () => {
   test("prints everything it printed, and stops the commit", () => {
-    const failing = [...NAMING.slice(0, -2), "", "LEDGER CHECK FAILED — 1 finding(s):", "  [line-left-out 3f9a0c12de] -$4.00 on 2026-09-01"];
+    const notAcknowledged = lineLeftOutNotice({
+      accountName: "Chase Checking",
+      printedOn: "2026-09-01",
+      amountCents: -400,
+      description: "MONTHLY SERVICE FEE",
+      printedBy: ["chase-2026-09.pdf"],
+      readBy: "chase-2026-09.pdf",
+      acknowledged: null,
+    });
+    const failing = [...NAMING.slice(0, -2), "", "LEDGER CHECK FAILED — 1 finding(s):", `  [line-left-out 3f9a0c12de] ${notAcknowledged}`];
     const { status, out, err } = commitAfter(failing, 1);
     expect(status).toBe(1);
     expect(out).toBe("");
