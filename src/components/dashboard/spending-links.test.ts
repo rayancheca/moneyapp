@@ -135,7 +135,9 @@ describe("a dashboard card's Spending link opens the months the card read", () =
      * series at all, so the basis is "calendar" — money already in plus pay
      * still due — and calling that "what you earn a month" was the same
      * mis-naming a five-week lump exposed on the "banked" basis.
+     * …and it names that month rather than leaning on a bare `/spending` resolving to it (`incomeBasisHref`): under
+     * `levelled` the same row opens the pay schedule instead, so the link is the basis's, not the page default's.
      */
-    expect(hrefOfLink(markup, "Income expected this window")).toBe("/spending");
+    expect(hrefOfLink(markup, "Income expected this window")).toBe("/spending?period=2026-08");
   });
 });

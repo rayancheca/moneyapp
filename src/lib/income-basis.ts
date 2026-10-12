@@ -1,6 +1,7 @@
 import type { Cadence } from "@/db/schema/recurring";
 import { BUDGET_JARGON } from "./jargon";
 import { formatCents } from "./money";
+import { withPeriod, type ResolvedPeriod } from "./period";
 
 /**
  * Which income figure a monthly budget should be graded against.
@@ -225,4 +226,31 @@ export function incomeBasis({
     monthDeltaCents,
     monthNote: monthNoteOf(scheduledCents, scheduledOccurrences, monthDeltaCents, true),
   };
+}
+
+export interface IncomeBasisHrefInput {
+  kind: IncomeBasisKind;
+  /** the series whose annualised rates `levelled` sums — `IncomeExpectation.levelledSeriesIds` */
+  levelledSeriesIds: readonly string[];
+  /** the window `banked` and `calendar` measured */
+  window: ResolvedPeriod;
+}
+
+/**
+ * Where the reader checks the income figure — chosen by the basis, because each one has a different thing behind it.
+ *
+ * - `levelled`  a RATE from the pay schedule(s): one schedule opens its own page, more than one the list of every
+ *               schedule (`/recurring?tab=all`), where each prints its cadence and amount beside the others.
+ * - `banked`    money that landed in the window, and `calendar` that money plus the pay still due in it: both are
+ *               the window's, so `/spending` for exactly that window — named, never a bare `/spending` leaning on
+ *               the page's default, the shape `spendingHref` was built to retire.
+ *
+ * 🔴 Measured on his ledger copy 2026-10-12: "What you earn a month $4,948.32", levelled from the confirmed It America
+ * LLC weekly pay, linked to a bare `/spending` — October, which reads "not imported yet": a month of deposits for a
+ * figure that is no month's deposits at all.
+ */
+export function incomeBasisHref({ kind, levelledSeriesIds, window }: IncomeBasisHrefInput): string {
+  if (kind !== "levelled") return withPeriod("/spending", window);
+  // a levelled figure has at least one series behind it (`levelledCents > 0`); the list stands in if none was named
+  return levelledSeriesIds.length === 1 ? `/recurring/${levelledSeriesIds[0]}` : "/recurring?tab=all";
 }

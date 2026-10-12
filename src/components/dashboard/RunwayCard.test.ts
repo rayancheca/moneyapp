@@ -107,6 +107,36 @@ test("the investments row links to the accounts it sums, brokerage cash included
 });
 
 /**
+ * 🔴 Measured on his ledger copy 2026-10-12: "What you earn a month $4,948.32" — a rate levelled from his confirmed
+ * weekly pay — linked to a bare `/spending`, which opened October and read "not imported yet". The service builds
+ * `incomeHref` from the basis (its tests pin each one); this pins the half they cannot see, that the row renders it.
+ */
+test("the earn row opens the pay schedule its rate is levelled from", () => {
+  const pay = bundle.db
+    .insert(recurringSeries)
+    .values({
+      name: "It America LLC (weekly pay)",
+      kind: "income",
+      cadence: "weekly",
+      status: "confirmed",
+      intervalDaysAvg: 7,
+      toleranceDays: 2,
+      nextExpectedOn: "2026-09-17",
+      nextExpectedAmountCents: 114192,
+    })
+    .returning({ id: recurringSeries.id })
+    .get().id;
+
+  const card = runwayCard(bundle.db, TODAY);
+  expect(card.runway.assumptions.find((a) => a.id === "income")).toMatchObject({
+    label: "What you earn a month",
+    cents: Math.round((114192 * 52) / 12),
+  });
+  const markup = renderToStaticMarkup(createElement(RunwayCard, { data: card }));
+  expect(hrefOfLink(markup, "What you earn a month")).toBe(`/recurring/${pay}`);
+});
+
+/**
  * 🔴 Measured on the owner's ledger 2026-10-07: "A further $2,296.20 came due
  * earlier this month and never posted." while October is imported for none of
  * the accounts those bills post from. A bill no import has reached reads in

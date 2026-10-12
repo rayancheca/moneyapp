@@ -35,6 +35,11 @@ import type { RunwayCard as RunwayCardData } from "@/services/committed";
  * include the running one, and a bare `/spending` opens the running one. That
  * link is the service's `spendingHref`, built from the months averaged.
  *
+ * ⛔ Not `income` either: what is behind its figure depends on the basis that chose it, so the link is the service's
+ * `incomeHref` (`incomeBasisHref`). 🔴 It was `/spending` here, for every basis: measured on his ledger copy
+ * 2026-10-12, "What you earn a month $4,948.32" — a rate levelled from his confirmed weekly pay — opened October,
+ * which read "not imported yet". A levelled rate opens the pay schedule it comes from.
+ *
  * ⛔ Not `/investments` for `investments`: that page values the investment
  * accounts' holdings and nothing else, and this figure also carries the
  * brokerage's own cash (`cashPosition` — Robinhood Cash and Robinhood Agentic,
@@ -42,10 +47,9 @@ import type { RunwayCard as RunwayCardData } from "@/services/committed";
  * read $109,002.47 against $108,974.93 of holdings. `/accounts` lists every
  * account the figure sums.
  */
-const ASSUMPTION_HREF: Record<Exclude<RunwayAssumptionId, "spend">, string> = {
+const ASSUMPTION_HREF: Record<Exclude<RunwayAssumptionId, "spend" | "income">, string> = {
   liquid: "/accounts",
   cards: "/accounts",
-  income: "/spending",
   investments: "/accounts",
 };
 
@@ -88,7 +92,8 @@ export function RunwayCard({ data }: { data: RunwayCardData }) {
   const withheld = runway.kind === "unknown";
   const by = (id: RunwayAssumptionId): RunwayAssumption | undefined =>
     runway.assumptions.find((a) => a.id === id);
-  const hrefOf = (id: RunwayAssumptionId): string => (id === "spend" ? data.spendingHref : ASSUMPTION_HREF[id]);
+  const hrefOf = (id: RunwayAssumptionId): string =>
+    id === "spend" ? data.spendingHref : id === "income" ? data.incomeHref : ASSUMPTION_HREF[id];
 
   const cashRows = (["liquid", "cards"] as const).map(by).filter((a) => a !== undefined);
   const flowRows = (["spend", "income"] as const).map(by).filter((a) => a !== undefined);

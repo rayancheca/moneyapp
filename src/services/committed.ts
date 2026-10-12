@@ -18,6 +18,7 @@ import {
   periodBounds,
   todayIso,
 } from "@/lib/dates";
+import { incomeBasisHref } from "@/lib/income-basis";
 import { resolvePeriod, withPeriod } from "@/lib/period";
 import { runway, type Runway } from "@/lib/runway";
 import { cashPosition, outsidePortfolioCashAccountIds } from "./accounts";
@@ -468,6 +469,14 @@ export interface RunwayCard {
    * ("There is no comparison for September 2026 yet: …").
    */
   spendingHref: string;
+  /**
+   * Where the income row's figure is checked — `incomeBasisHref`, chosen by the basis that chose the figure: the pay
+   * schedule a `levelled` rate comes from, or `/spending` for the month `banked` and `calendar` measured.
+   *
+   * 🔴 It was a bare `/spending` for every basis. Measured on his ledger copy 2026-10-12: "What you earn a month
+   * $4,948.32", levelled from his confirmed weekly pay, opened October, which read "not imported yet".
+   */
+  incomeHref: string;
   /** how the income term was chosen — `incomeBasis`'s own explanation */
   incomeBasisExplanation: string;
   today: string;
@@ -525,6 +534,12 @@ export function runwayCard(db: AppDatabase, today: string = todayIso()): RunwayC
         today,
       ),
     ),
+    incomeHref: incomeBasisHref({
+      kind: income.basis.kind,
+      levelledSeriesIds: income.levelledSeriesIds,
+      // the calendar month `income` was asked about — the window `banked` and `calendar` measured
+      window: resolvePeriod({ period: monthKey(month.start) }, today),
+    }),
     incomeBasisExplanation: income.basis.explanation,
     today,
   };

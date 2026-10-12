@@ -672,6 +672,65 @@ describe("runwayCard", () => {
   });
 
   /**
+   * 🔴 THE EARN ROW OPENED A MONTH, AND ITS FIGURE IS A RATE. Measured on his ledger copy 2026-10-12: "What you earn
+   * a month $4,948.32" — levelled from the confirmed It America LLC weekly pay — linked to a bare `/spending`, which
+   * opened October and read "not imported yet". A link opens what is behind its number: under `levelled` that is the
+   * schedule(s) the rate sums, under `banked` and `calendar` the month they measured.
+   */
+  describe("the income row opens what its basis is made of", () => {
+    test("levelled from one pay schedule: that schedule's page", () => {
+      const salary = addSeries({ name: "Salary", kind: "income", nextExpectedOn: "2026-09-01", amountCents: 200000 });
+      const card = runwayCard(bundle.db, TODAY);
+      expect(card.runway.assumptions.find((a) => a.id === "income")).toMatchObject({
+        label: "What you earn a month",
+        cents: 200000,
+      });
+      expect(card.incomeHref).toBe(`/recurring/${salary}`);
+    });
+
+    test("levelled from two schedules: the list of every schedule", () => {
+      addSeries({ name: "Salary", kind: "income", nextExpectedOn: "2026-09-01", amountCents: 200000 });
+      addSeries({ name: "Tutoring", kind: "income", nextExpectedOn: "2026-09-03", amountCents: 30000 });
+      const card = runwayCard(bundle.db, TODAY);
+      expect(card.runway.assumptions.find((a) => a.id === "income")!.cents).toBe(230000);
+      expect(card.incomeHref).toBe("/recurring?tab=all");
+    });
+
+    // the set is the one the RATE sums: a schedule that stopped levels to nothing and is not behind the figure
+    test("a schedule that stopped paying is not behind the rate, so it is not behind the link", () => {
+      const salary = addSeries({ name: "Salary", kind: "income", nextExpectedOn: "2026-09-01", amountCents: 200000 });
+      addSeries({
+        name: "Old job",
+        kind: "income",
+        nextExpectedOn: "2026-07-01",
+        amountCents: 150000,
+        userEndsOn: "2026-07-31",
+      });
+      const card = runwayCard(bundle.db, TODAY);
+      expect(card.runway.assumptions.find((a) => a.id === "income")!.cents).toBe(200000);
+      expect(card.incomeHref).toBe(`/recurring/${salary}`);
+    });
+
+    test("banked: the month whose arrivals it counted", () => {
+      addSeries({ name: "Salary", kind: "income", nextExpectedOn: "2026-09-01", amountCents: 200000 });
+      const salaryCategory = bundle.db.select().from(categories).where(eq(categories.name, "Salary")).get()!.id;
+      insertTxn({ postedOn: "2026-08-10", amountCents: 500000, rawDescription: "BONUS", categoryId: salaryCategory });
+      const card = runwayCard(bundle.db, TODAY);
+      expect(card.runway.assumptions.find((a) => a.id === "income")).toMatchObject({
+        label: "Income that has landed this window",
+        cents: 500000,
+      });
+      expect(card.incomeHref).toBe("/spending?period=2026-08");
+    });
+
+    test("calendar: the month it added up", () => {
+      const card = runwayCard(bundle.db, TODAY);
+      expect(card.runway.assumptions.find((a) => a.id === "income")!.label).toBe("Income expected this window");
+      expect(card.incomeHref).toBe("/spending?period=2026-08");
+    });
+  });
+
+  /**
    * 🔴 `/accounts/<x>` promises, by name, that "Archiving takes {name} out of
    * net worth, the assets and owed totals, and every analytic." Every other
    * service that reads accounts keeps that promise — `coverage`, `cards-owed`,
