@@ -97,9 +97,17 @@ describe("the posted average, per occurrence — his rent on the page, the All t
    * set by hand wears when one payment posts as two rows (review of af5b0fa).
    */
   test("a bill not set by hand: one payment posted as two rows is still one $50.00", () => {
+    // its forecast -$50.00, as linking Jun 5's row by hand seeds it (`recurring-links`): what "adds up" grades
     const { id } = bundle.db
       .insert(recurringSeries)
-      .values({ name: "Breezeline", kind: "bill", cadence: "monthly", status: "confirmed", toleranceDays: 3 })
+      .values({
+        name: "Breezeline",
+        kind: "bill",
+        cadence: "monthly",
+        status: "confirmed",
+        toleranceDays: 3,
+        nextExpectedAmountCents: -5_000,
+      })
       .returning({ id: recurringSeries.id })
       .get();
     const rows = [
@@ -120,6 +128,15 @@ describe("the posted average, per occurrence — his rent on the page, the All t
       ["2026-07-05", -5_000, 2],
       ["2026-08-05", -5_000, 1],
     ]);
+
+    /*
+     * ⛔ …but a repeat of -$50.00 does not "add up" to a forecast of another amount: detection's, the mean of the four
+     * ROWS (`analyzeGroup`), is -$37.50 — what no payment paid (review of 442de07, 2026-10-12).
+     */
+    bundle.db.update(recurringSeries).set({ nextExpectedAmountCents: -3_750 }).where(eq(recurringSeries.id, id)).run();
+    const rowMean = provenanceFor(bundle.db, { kind: "recurringSeries", id, today: TODAY })!;
+    expect([rowMean.verdict, rowMean.badgeWord]).toEqual(["unverified", "paid -$50.00 each time"]);
+    expect(rowMean.headline).toContain("were -$50.00, exactly. None of the 3 paid the -$37.50 forecast here.");
   });
 
   /* a day's rows that are the series' only payment are one payment — never "All 1 payments" */
@@ -136,6 +153,11 @@ describe("the posted average, per occurrence — his rent on the page, the All t
       label: "3 tagged postings in the ledger",
       detail: "one payment (Sep 5's posted as 3): it was -$25.00",
     });
+    // …and beside a forecast it did not pay — the three rows' mean, as detection reads them — says so, singular too
+    bundle.db.update(recurringSeries).set({ nextExpectedAmountCents: -833 }).where(eq(recurringSeries.id, id)).run();
+    const off = provenanceFor(bundle.db, { kind: "recurringSeries", id, today: TODAY })!;
+    expect([off.verdict, off.badgeWord]).toEqual(["unverified", "paid -$25.00 each time"]);
+    expect(off.headline).toContain("of -$25.00 on Sep 5, 2026. It did not pay the -$8.33 forecast here.");
   });
 
   test("the utilities carry nothing, and once unlinked the rent carries nothing either", () => {
@@ -321,6 +343,54 @@ describe("the posted average of a bill with a rate history — the payments at t
       ["2026-08-04", -223_711, -210_900, 1],
       ["2026-09-02", -229_121, -210_900, 1],
     ]);
+  });
+
+  /*
+   * ⚖️ "the rate in force NOW" is the rate of Oct 12 (§6A 63): an increase recorded before its first day — -$2,300.00
+   * from Nov 1, his -$2,109.00 through Oct 31 — is not in force yet, and his four payments were made at the rate that
+   * is. 🔴 Held to the last era recorded, a copy of his ledger with that history (review of 442de07, 2026-10-12) printed
+   * no posted average on the page or the All tab, and the popover read "Its 4 payments before Nov 1, 2026 were at an
+   * earlier rate, and nothing has posted at the rate in force since" — beside an Amount history drawing all four
+   * against -$2,109.00, the rate `rateOn` reads for Oct 12.
+   */
+  test("recorded Oct 12, raised from Nov 1: his four payments still count — -$2,312.20 on all three", () => {
+    bundle.db
+      .update(recurringSeries)
+      .set({ userAmountCents: -230_000, userAmountHistory: [{ throughOn: "2026-10-31", amountCents: -210_900 }] })
+      .where(eq(recurringSeries.id, rent.rentId))
+      .run();
+    const s = surfaces();
+    expect(s.page).toEqual([-231_220, 8_527]);
+    expect(s.allTab).toBe(-231_220);
+    expect(s.popover.headline).toContain("average of what actually posted is -$2,312.20, which is not what you set");
+    expect(s.popover.headline).toContain("Its 4 payments since Jun 16, 2026 (5 tagged postings: Jun 16's posted as 2)");
+    expect(JSON.stringify(s.popover)).not.toMatch(/Nov 1|earlier rate|no average of it yet/);
+    expect(s.detail.amountHistory.map((h) => h.expectedCents)).toEqual([-210_900, -210_900, -210_900, -210_900]);
+  });
+
+  /* …and with a period before it too, the rate in force is the middle one: Aug 4's and Sep 2's payments */
+  test("raised Aug 1, and again from Nov 1: the payments since Aug 1 — -$2,264.16 on all three", () => {
+    bundle.db
+      .update(recurringSeries)
+      .set({
+        userAmountCents: -230_000,
+        userAmountHistory: [
+          { throughOn: "2026-07-31", amountCents: -200_000 },
+          { throughOn: "2026-10-31", amountCents: -210_900 },
+        ],
+      })
+      .where(eq(recurringSeries.id, rent.rentId))
+      .run();
+    const s = surfaces();
+    expect(s.page).toEqual([-226_416, 3_825]);
+    expect(s.allTab).toBe(-226_416);
+    expect(s.popover.headline).toContain(
+      "Its 2 payments at the rate in force since Aug 1, 2026 were 2 different amounts, from -$2,291.21 to -$2,237.11",
+    );
+    expect(s.popover.headline).toContain(
+      "Its 2 payments before Aug 1, 2026 were at an earlier rate, and are not counted.",
+    );
+    expect(s.popover.headline).not.toContain("Nov 1");
   });
 
   /* a history that ends before his first payment changes nothing anyone reads */

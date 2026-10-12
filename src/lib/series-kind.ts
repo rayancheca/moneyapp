@@ -63,18 +63,29 @@ export function ratePeriodOf(series: Pick<RateSchedule, "amountHistory">, day: s
   return era === -1 ? history.length : era;
 }
 
-/** The rate era in force NOW — the one `ratePeriodOf` gives every day past the last dated period. */
-export function currentRatePeriod(series: Pick<RateSchedule, "amountHistory">): number {
-  return (series.amountHistory ?? []).length;
+/**
+ * The rate era in force NOW — the one `today` is in, whose rate `rateOn(today)` reads: past the last dated period for
+ * a history of the past alone, as his pay's is.
+ *
+ * ⚖️ "the rate in force now" (owner decisions 2026-10-08 and 2026-10-12, §6A 55 and 63) is TODAY's. 🔴 Read as the
+ * last era recorded, a rent increase recorded on Oct 12 to start Nov 1 (-$2,109.00 through Oct 31) was "the rate in
+ * force since Nov 1, 2026" on Oct 12, and no payment was made at it: on a copy of his ledger with that history, the
+ * page and the All tab printed no posted average, and the popover said none had posted "at the rate in force since",
+ * beside an Amount history drawing all four payments against -$2,109.00 (review of 442de07, 2026-10-12). The reader
+ * does not refuse a period that has not ended — a projection prices each occurrence on its own day (`rateOn`).
+ */
+export function currentRatePeriod(series: Pick<RateSchedule, "amountHistory">, today: string): number {
+  return ratePeriodOf(series, today);
 }
 
 /**
- * The first day of the rate in force now — the day after the last dated period ends; null for a series whose rate
- * has never changed. Where the popover's words about a bill's posted average start counting (§6A 63).
+ * The first day of the rate in force now (`currentRatePeriod`) — the day after the period before it ends; null when
+ * no rate came before it, which a series whose rate never changed never has. Where the popover's words about a bill's
+ * posted average start counting (§6A 63).
  */
-export function currentRateSince(series: Pick<RateSchedule, "amountHistory">): string | null {
-  const last = series.amountHistory?.at(-1);
-  return last === undefined ? null : addDays(last.throughOn, 1);
+export function currentRateSince(series: Pick<RateSchedule, "amountHistory">, today: string): string | null {
+  const before = series.amountHistory?.[currentRatePeriod(series, today) - 1];
+  return before === undefined ? null : addDays(before.throughOn, 1);
 }
 
 /**

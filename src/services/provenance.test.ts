@@ -1590,7 +1590,8 @@ describe("provenanceFor — a recurring series' amount", () => {
 
   test("at MIN_OCCURRENCES with every posting identical, the forecast is backed by measured evidence", () => {
     const acct = addAccount("a", "Chase Checking", "checking");
-    const s = addSeries("Amazon Prime");
+    // the forecast is what they paid — "adds up" is over the figure (see the test after this one)
+    const s = addSeries("Amazon Prime", { amountAvg: -499 });
     for (const d of ["2026-05-05", "2026-06-05", "2026-07-05"]) tagToSeries(addTxn(acct, d, { cents: -499 }), s);
 
     const p = provenanceFor(bundle.db, { kind: "recurringSeries", id: s })!;
@@ -1600,6 +1601,24 @@ describe("provenanceFor — a recurring series' amount", () => {
     // ⛔ never `sourced` — no document states NEXT month's amount
     expect(p.verdict).not.toBe("sourced");
     expect(p.headline).toContain("a forecast, not a record");
+  });
+
+  /*
+   * ⛔ …and agreeing with each other is not agreeing with the FIGURE: "adds up" grades the amount on screen, so every
+   * counted payment must be it. 🔴 Graded on the payments alone, a forecast none of them paid read "adds up" — his
+   * Netflix's -$17.75 beside "were -$19.59, exactly" (review of 442de07, a copy of his ledger, 2026-10-12).
+   */
+  test("at MIN_OCCURRENCES, identical postings that are not the forecast do not add up to it", () => {
+    const acct = addAccount("a", "Chase Checking", "checking");
+    const s = addSeries("Amazon Prime", { amountAvg: -495 });
+    for (const d of ["2026-05-05", "2026-06-05", "2026-07-05"]) tagToSeries(addTxn(acct, d, { cents: -499 }), s);
+
+    const p = provenanceFor(bundle.db, { kind: "recurringSeries", id: s })!;
+    expect(p.verdict).toBe("unverified");
+    expect(p.badgeWord).toBe("paid -$4.99 each time");
+    expect(p.headline).toContain(
+      "All 3 tagged postings since May 5, 2026 were -$4.99, exactly. None of the 3 paid the -$4.95 forecast here.",
+    );
   });
 
   /**
@@ -1751,9 +1770,16 @@ describe("provenanceFor — a recurring series' amount, with a rate history (§6
   const NEW_RATE = -1959;
   const OLD_DAYS = ["2026-01-15", "2026-02-15", "2026-03-15", "2026-04-15", "2026-05-15"];
 
-  /** -$16.86 on each of `oldDays`, recorded as the rate through May 31; then `newRate` paid on its days */
-  function raisedSubscription(newRate: readonly (readonly [string, number])[], oldDays = OLD_DAYS): string {
-    const s = addSeries("Netflix", { amountAvg: NEW_RATE });
+  /**
+   * -$16.86 on each of `oldDays`, recorded as the rate through May 31; then `newRate` paid on its days. `forecast` is
+   * detection's amount (`nextExpectedAmountCents`) — the new rate unless a test says otherwise.
+   */
+  function raisedSubscription(
+    newRate: readonly (readonly [string, number])[],
+    oldDays = OLD_DAYS,
+    forecast = NEW_RATE,
+  ): string {
+    const s = addSeries("Netflix", { amountAvg: NEW_RATE, nextAmount: forecast });
     const acct = addAccount(`card-${s}`, "Chase Sapphire", "credit");
     for (const d of oldDays) tagToSeries(addTxn(acct, d, { cents: OLD_RATE }), s);
     for (const [d, c] of newRate) tagToSeries(addTxn(acct, d, { cents: c }), s);
@@ -1794,6 +1820,26 @@ describe("provenanceFor — a recurring series' amount, with a rate history (§6
     expect(p.badgeWord).toBeUndefined();
     expect(p.headline).toContain("Its 3 payments at the rate in force since Jun 1, 2026 were -$19.59, exactly.");
     expect(p.headline).not.toContain("below the 3");
+  });
+
+  /*
+   * ⛔ …but only when the figure graded IS that amount. A forecast nobody set is detection's
+   * (`nextExpectedAmountCents`): the mean of the rows it saw, at both rates. 🔴 Graded on the payments alone, his Netflix
+   * given its real price change as a history (through Feb 24, 2025) read "adds up" over a Per charge of -$17.75 — the
+   * mean of its 18 rows — beside "Its 6 payments at the rate in force since Feb 25, 2025 were -$19.59, exactly." and
+   * "posted avg -$19.59" (review of 442de07, a copy of his ledger, 2026-10-12).
+   */
+  test("three identical payments at the new rate do not add up to a forecast none of them paid", () => {
+    // detection's mean of the eight rows, at both rates: -$17.88
+    const forecast = Math.round((OLD_DAYS.length * OLD_RATE + 3 * NEW_RATE) / (OLD_DAYS.length + 3));
+    const newRate = [["2026-06-15", NEW_RATE], ["2026-07-15", NEW_RATE], ["2026-08-15", NEW_RATE]] as const;
+    const p = popover(raisedSubscription(newRate, OLD_DAYS, forecast));
+    expect(p.verdict).toBe("unverified");
+    expect(p.badgeWord).toBe("paid -$19.59 at the new rate");
+    expect(p.headline).toContain(
+      "Its 3 payments at the rate in force since Jun 1, 2026 were -$19.59, exactly. Its 5 payments before Jun 1, " +
+        "2026 were at an earlier rate, and are not counted. None of the 3 paid the -$17.88 forecast here.",
+    );
   });
 
   test("three at the new rate that disagree name their own amounts, not the old rate's", () => {

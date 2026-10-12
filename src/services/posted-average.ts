@@ -39,8 +39,9 @@ export interface SeriesPostedAverage extends PostedAverage {
    */
   everyOccurrence: readonly Occurrence[] | null;
   /**
-   * The first day of the rate in force now (`currentRateSince`) — null for a series whose rate never changed. Where the
-   * popover's words start counting when `everyOccurrence` holds payments `occurrences` leaves out (§6A 63).
+   * The first day of the rate in force now (`currentRateSince`, on `today`) — null for a series whose rate never
+   * changed, or none changed before today's. Where the popover's words start counting when `everyOccurrence` holds
+   * payments `occurrences` leaves out (§6A 63).
    */
   rateSince: string | null;
 }
@@ -93,12 +94,12 @@ export function postedAveragesBySeries(
         : { per: "row" };
     const every = reading.per === "occurrence" ? occurrencesOf(rows) : null;
     out.set(s.id, {
-      ...postedAverage(rows, reading, schedule),
+      ...postedAverage(rows, reading, schedule, today),
       carries: carried.get(s.id) ?? [],
       // ⚖️ the payments the average is of — `postedAverage` reads them by this same rule (§6A 63)
-      occurrences: every === null ? null : atTodaysRate(every, schedule),
+      occurrences: every === null ? null : atTodaysRate(every, schedule, today),
       everyOccurrence: every,
-      rateSince: currentRateSince(schedule),
+      rateSince: currentRateSince(schedule, today),
     });
   }
   return out;

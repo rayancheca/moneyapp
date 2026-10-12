@@ -57,17 +57,18 @@ export function readsPerOccurrence(s: { kind: SeriesKind; status: SeriesStatus }
   return s.kind !== "income" && s.status !== "dismissed";
 }
 
-/** The reading, from a series' active rows (`PostedReading`). */
+/** The reading, from a series' active rows (`PostedReading`), with the rate in force on `today`. */
 export function postedAverage(
   rows: readonly ReadableRow[],
   reading: PostedReading,
   schedule: Pick<RateSchedule, "amountHistory">,
+  today: string,
 ): PostedAverage {
   const samples =
     reading.per === "payday"
-      ? perPaydaySamples(rows, reading.readings, schedule)
+      ? perPaydaySamples(rows, reading.readings, schedule, today)
       : reading.per === "occurrence"
-        ? atTodaysRate(occurrencesOf(rows), schedule).map((o) => o.amountCents)
+        ? atTodaysRate(occurrencesOf(rows), schedule, today).map((o) => o.amountCents)
         : rows.map((r) => r.amountCents);
   if (samples.length === 0) return { avgCents: null, stddevCents: null };
   const mean = samples.reduce((a, c) => a + c, 0) / samples.length;
@@ -76,13 +77,18 @@ export function postedAverage(
   return { avgCents: Math.round(mean), stddevCents: Math.round(Math.sqrt(variance)) };
 }
 
-/** What each payday of the rate era in force now paid — the calendar's spread samples, held to today's rate. */
+/**
+ * What each payday of the rate era in force now (`currentRatePeriod` — today's) paid: the calendar's spread samples,
+ * held to today's rate. ⚖️ One "in force now" for pay and bills (§6A 55, §6A 63): a raise recorded before its first
+ * day is not in force until then, and the weeks paid at the rate that is still average.
+ */
 function perPaydaySamples(
   rows: readonly ReadableRow[],
   readings: ReadonlyMap<string, PaydayReading>,
   schedule: Pick<RateSchedule, "amountHistory">,
+  today: string,
 ): number[] {
-  const now = currentRatePeriod(schedule);
+  const now = currentRatePeriod(schedule, today);
   return rows.flatMap((r) => {
     const reading = readings.get(r.id);
     // a row with no reading is held on its own day, as `expectedCentsOf` holds it
@@ -129,18 +135,20 @@ export function occurrencesOf(rows: readonly Pick<ReadableRow, "postedOn" | "amo
 
 /**
  * ⚖️ The payments a series read per occurrence averages: those whose day falls in the rate era in force now
- * (`ratePeriodOf` … `currentRatePeriod`) — owner decision 2026-10-12 (§6A 63), the pay rule's era (§6A 55) on a bill:
- * if a rent increase is recorded with the old rate's dates, its posted avg is what he has paid at the new rate. Every
- * payment of a series whose rate never changed. Through `SeriesPostedAverage.occurrences`, also what the popover's
- * sentence counts and ranges, so it cannot count a payment the average leaves out.
+ * (`ratePeriodOf` … `currentRatePeriod`, on `today`) — owner decision 2026-10-12 (§6A 63), the pay rule's era (§6A 55)
+ * on a bill: if a rent increase is recorded with the old rate's dates, its posted avg is what he has paid at the new
+ * rate — and until the new rate's first day, at the rate still in force. Every payment of a series whose rate never
+ * changed. Through `SeriesPostedAverage.occurrences`, also what the popover's sentence counts and ranges, so it cannot
+ * count a payment the average leaves out.
  *
  * ⚠️ Latent on his ledger (2026-10-12): only his pay has a history, and pay is read per payday, never through here.
  */
 export function atTodaysRate(
   occurrences: readonly Occurrence[],
   schedule: Pick<RateSchedule, "amountHistory">,
+  today: string,
 ): Occurrence[] {
-  const now = currentRatePeriod(schedule);
+  const now = currentRatePeriod(schedule, today);
   return occurrences.filter((o) => ratePeriodOf(schedule, o.postedOn) === now);
 }
 

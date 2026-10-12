@@ -51,6 +51,7 @@ import { PART_ENTERED, VERDICT_PRESENTATION } from "@/lib/provenance-verdict";
 import { billedWithEvidence, carriesPhrase } from "@/lib/billed-with";
 import { billingCarriers } from "./billing-carriers";
 import { postedAsWord, type Occurrence } from "@/lib/posted-average";
+import { seriesAmountCents } from "@/lib/series-kind";
 import { postedAveragesBySeries } from "./posted-average";
 import { MIN_OCCURRENCES } from "./recurring";
 
@@ -1726,6 +1727,15 @@ function eraDetail(input: {
 }
 
 /**
+ * "None of the 3 paid the -$17.88 forecast here." — why the `k` payments counted, all of one amount, do not check the
+ * figure graded: none of them is it. Said after the sentence naming that amount, so "them" has been named.
+ */
+function notTheForecastWords(k: number, figure: number): string {
+  const forecast = `the ${formatCents(figure)} forecast here`;
+  return k === 1 ? `It did not pay ${forecast}.` : `None of the ${k} paid ${forecast}.`;
+}
+
+/**
  * What a forecast amount is standing on.
  *
  * ⚠️ The handoff predicted this could reuse `categorySpend`'s "sum of rows"
@@ -1798,6 +1808,17 @@ function recurringSeriesProvenance(db: AppDatabase, id: string, today: string): 
     })
     .join(", ");
   const userSet = series.userAmountCents !== null;
+  /*
+   * ⛔ "adds up" is over the FIGURE graded — the amount on screen (`seriesAmountCents`): his, else detection's forecast.
+   * Payments that agree with each other and not with it do not check it (`offFigure`). 🔴 Graded on the payments
+   * alone, his Netflix given its real price change as a history (through Feb 24, 2025) read "adds up" over a Per charge
+   * of -$17.75 — detection's mean of its 18 rows, at both rates — beside "Its 6 payments at the rate in force since Feb
+   * 25, 2025 were -$19.59, exactly." and "posted avg -$19.59" (review of 442de07, a copy of his ledger, 2026-10-12).
+   */
+  const figure = seriesAmountCents(series);
+  // what every counted payment paid, when they paid one amount; null when they differ, or there are none
+  const agreed = distinct.size === 1 ? [...distinct][0]! : null;
+  const offFigure = !userSet && seen >= MIN_OCCURRENCES && agreed !== null && figure !== null && agreed !== figure;
 
   const sources: ProvenanceSource[] = [];
   if (userSet) {
@@ -1835,6 +1856,9 @@ function recurringSeriesProvenance(db: AppDatabase, id: string, today: string): 
    * guess about the future and no amount of evidence makes it a fact, so the
    * strongest word available here is `derived` — never `sourced`, which would
    * claim a document states next month's amount.
+   *
+   * ⛔ …and `derived` only when the evidence agrees ON the figure: payments of one
+   * amount that is not the one on screen check it and disagree (`offFigure`).
    */
   const verdict: ProvenanceVerdict = userSet
     ? "manual"
@@ -1842,7 +1866,7 @@ function recurringSeriesProvenance(db: AppDatabase, id: string, today: string): 
       ? "unknown"
       : seen < MIN_OCCURRENCES
         ? "unverified"
-        : distinct.size === 1
+        : agreed !== null && agreed === figure
           ? "derived"
           : "unverified";
 
@@ -1867,7 +1891,10 @@ function recurringSeriesProvenance(db: AppDatabase, id: string, today: string): 
         ? `seen ${seen === 1 ? "once" : `${seen} times`}${era === null ? "" : " at the new rate"}`
         : distinct.size > 1
           ? `${distinct.size} different amounts`
-          : undefined;
+          : // checked by documents that agree, on another amount: "paid -$19.59 at the new rate"
+            offFigure
+            ? `paid ${formatCents(agreed!)} ${era === null ? "each time" : "at the new rate"}`
+            : undefined;
 
   /*
    * ⚖️ BILLED INSIDE ANOTHER SERIES' PAYMENT (owner decision 2026-10-08, §6A 59): no row will ever post under its own
@@ -1937,9 +1964,12 @@ function recurringSeriesProvenance(db: AppDatabase, id: string, today: string): 
       ? ` ⚠️ The ledger's own average of what actually posted is ${formatCents(postedAvgCents)}, which is not what you set${why}.`
       : "";
 
+  // …and why payments that agree do not check it (`offFigure`): "None of the 3 paid the -$17.88 forecast here."
+  const offWords = offFigure ? ` ${notTheForecastWords(k, figure!)}` : "";
+
   const headline = userSet
     ? `You set this amount yourself, so it is exactly as right as you are. ${observed()}${disagreement}`
-    : `This is a forecast, not a record — it says what the app expects next, and nothing has happened yet to check it against. ${observed()}`;
+    : `This is a forecast, not a record — it says what the app expects next, and nothing has happened yet to check it against. ${observed()}${offWords}`;
 
   return {
     verdict,

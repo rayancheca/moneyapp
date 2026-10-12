@@ -3,6 +3,8 @@ import { paydayReadings, type PaydayReading } from "./per-payday";
 import { atTodaysRate, occurrencesOf, postedAsWord, postedAverage, readsPerOccurrence } from "./posted-average";
 import type { RateSchedule } from "./series-kind";
 
+/** the day the rate in force is read on — his ledger copy's, 2026-10-12 */
+const TODAY = "2026-10-12";
 const WEEK = 114_192;
 const CASH = 104_700;
 /** a series whose rate has never changed */
@@ -51,7 +53,7 @@ const RENT_ROWS = rowsOf([
  */
 describe("postedAverage — a series read per occurrence", () => {
   test("his rent: Jun 16's two rows are one payment — -$2,312.20 ± $85.27 over four", () => {
-    expect(postedAverage(RENT_ROWS, PER_OCCURRENCE, FLAT)).toEqual({ avgCents: -231_220, stddevCents: 8_527 });
+    expect(postedAverage(RENT_ROWS, PER_OCCURRENCE, FLAT, TODAY)).toEqual({ avgCents: -231_220, stddevCents: 8_527 });
   });
 
   /* Car insurance: Aug 12's $357.58 and Sep 3's $1,000.00 early payment are an occurrence each */
@@ -60,8 +62,8 @@ describe("postedAverage — a series read per occurrence", () => {
       ["2026-08-12", -35_758],
       ["2026-09-03", -100_000],
     ]);
-    expect(postedAverage(car, PER_OCCURRENCE, FLAT)).toEqual(postedAverage(car, AS_POSTED, FLAT));
-    expect(postedAverage(car, PER_OCCURRENCE, FLAT)).toEqual({ avgCents: -67_879, stddevCents: 45_426 });
+    expect(postedAverage(car, PER_OCCURRENCE, FLAT, TODAY)).toEqual(postedAverage(car, AS_POSTED, FLAT, TODAY));
+    expect(postedAverage(car, PER_OCCURRENCE, FLAT, TODAY)).toEqual({ avgCents: -67_879, stddevCents: 45_426 });
   });
 
   /* ⛔ a payment is a day's rows: a day later is the next payment, however near — no window the rows can chain across */
@@ -70,11 +72,11 @@ describe("postedAverage — a series read per occurrence", () => {
       ["2026-06-16", -110_000],
       ["2026-06-17", -133_480],
     ]);
-    expect(postedAverage(rows, PER_OCCURRENCE, FLAT).avgCents).toBe(Math.round((-110_000 - 133_480) / 2));
+    expect(postedAverage(rows, PER_OCCURRENCE, FLAT, TODAY).avgCents).toBe(Math.round((-110_000 - 133_480) / 2));
   });
 
   test("one payment of two rows is one sample: no spread", () => {
-    expect(postedAverage(RENT_ROWS.slice(0, 2), PER_OCCURRENCE, FLAT)).toEqual({
+    expect(postedAverage(RENT_ROWS.slice(0, 2), PER_OCCURRENCE, FLAT, TODAY)).toEqual({
       avgCents: -243_480,
       stddevCents: null,
     });
@@ -94,8 +96,11 @@ describe("postedAverage — a series read per occurrence, with a rate history", 
   };
 
   test("payments either side of the change: only Aug 4's and Sep 2's are averaged — -$2,264.16 ± $38.25", () => {
-    expect(postedAverage(RENT_ROWS, PER_OCCURRENCE, RAISED_AUG_1)).toEqual({ avgCents: -226_416, stddevCents: 3_825 });
-    expect(atTodaysRate(occurrencesOf(RENT_ROWS), RAISED_AUG_1).map((o) => o.postedOn)).toEqual([
+    expect(postedAverage(RENT_ROWS, PER_OCCURRENCE, RAISED_AUG_1, TODAY)).toEqual({
+      avgCents: -226_416,
+      stddevCents: 3_825,
+    });
+    expect(atTodaysRate(occurrencesOf(RENT_ROWS), RAISED_AUG_1, TODAY).map((o) => o.postedOn)).toEqual([
       "2026-08-04",
       "2026-09-02",
     ]);
@@ -104,22 +109,25 @@ describe("postedAverage — a series read per occurrence, with a rate history", 
   /* ⛔ never the old rate's average in its place: no payment at the rate in force now is no posted average */
   test("only old-rate payments: no average at all", () => {
     const raisedOct1 = { ...RAISED_AUG_1, amountHistory: [{ throughOn: "2026-09-30", amountCents: -200_000 }] };
-    expect(postedAverage(RENT_ROWS, PER_OCCURRENCE, raisedOct1)).toEqual({ avgCents: null, stddevCents: null });
-    expect(atTodaysRate(occurrencesOf(RENT_ROWS), raisedOct1)).toEqual([]);
+    expect(postedAverage(RENT_ROWS, PER_OCCURRENCE, raisedOct1, TODAY)).toEqual({ avgCents: null, stddevCents: null });
+    expect(atTodaysRate(occurrencesOf(RENT_ROWS), raisedOct1, TODAY)).toEqual([]);
   });
 
   test("a history that ends before the first payment, or none, reads every payment", () => {
     const raisedLongAgo = { ...RAISED_AUG_1, amountHistory: [{ throughOn: "2025-12-31", amountCents: -200_000 }] };
     for (const schedule of [raisedLongAgo, FLAT]) {
-      expect(postedAverage(RENT_ROWS, PER_OCCURRENCE, schedule)).toEqual({ avgCents: -231_220, stddevCents: 8_527 });
-      expect(atTodaysRate(occurrencesOf(RENT_ROWS), schedule)).toEqual(occurrencesOf(RENT_ROWS));
+      expect(postedAverage(RENT_ROWS, PER_OCCURRENCE, schedule, TODAY)).toEqual({
+        avgCents: -231_220,
+        stddevCents: 8_527,
+      });
+      expect(atTodaysRate(occurrencesOf(RENT_ROWS), schedule, TODAY)).toEqual(occurrencesOf(RENT_ROWS));
     }
   });
 
   /* the payday rule's own era test, on a payment's one day: the day a period runs through is still that period's */
   test("a payment ON the last day of the old rate is the old rate's", () => {
     const raisedAug5 = { ...RAISED_AUG_1, amountHistory: [{ throughOn: "2026-08-04", amountCents: -200_000 }] };
-    expect(atTodaysRate(occurrencesOf(RENT_ROWS), raisedAug5).map((o) => o.postedOn)).toEqual(["2026-09-02"]);
+    expect(atTodaysRate(occurrencesOf(RENT_ROWS), raisedAug5, TODAY).map((o) => o.postedOn)).toEqual(["2026-09-02"]);
   });
 
   /*
@@ -128,28 +136,63 @@ describe("postedAverage — a series read per occurrence, with a rate history", 
    */
   test("a payment ON the first day of the new rate is the new rate's", () => {
     const raisedAug4 = { ...RAISED_AUG_1, amountHistory: [{ throughOn: "2026-08-03", amountCents: -200_000 }] };
-    expect(atTodaysRate(occurrencesOf(RENT_ROWS), raisedAug4).map((o) => o.postedOn)).toEqual([
+    expect(atTodaysRate(occurrencesOf(RENT_ROWS), raisedAug4, TODAY).map((o) => o.postedOn)).toEqual([
       "2026-08-04",
       "2026-09-02",
     ]);
-    expect(postedAverage(RENT_ROWS, PER_OCCURRENCE, raisedAug4)).toEqual({ avgCents: -226_416, stddevCents: 3_825 });
+    expect(postedAverage(RENT_ROWS, PER_OCCURRENCE, raisedAug4, TODAY)).toEqual({
+      avgCents: -226_416,
+      stddevCents: 3_825,
+    });
+  });
+
+  /*
+   * ⚖️ "the rate in force NOW" (§6A 63) is the rate of today's era, not the last one recorded: an increase recorded
+   * before its first day — -$2,300.00 from Nov 1, -$2,109.00 through Oct 31 — is not in force on Oct 12, and every
+   * payment so far was made at the rate that is. 🔴 Held to the last era recorded, the rent read NO posted average on
+   * Oct 12, on a copy of his ledger with that history (review of 442de07, 2026-10-12).
+   */
+  test("a rate change recorded before its first day: every payment at today's rate is still averaged", () => {
+    const raisedNov1 = {
+      nextExpectedAmountCents: -230_000,
+      amountHistory: [{ throughOn: "2026-10-31", amountCents: -210_900 }],
+    };
+    expect(postedAverage(RENT_ROWS, PER_OCCURRENCE, raisedNov1, TODAY)).toEqual({
+      avgCents: -231_220,
+      stddevCents: 8_527,
+    });
+    expect(atTodaysRate(occurrencesOf(RENT_ROWS), raisedNov1, TODAY)).toEqual(occurrencesOf(RENT_ROWS));
+    // …and from Nov 1, those four are the earlier rate's
+    expect(atTodaysRate(occurrencesOf(RENT_ROWS), raisedNov1, "2026-11-01")).toEqual([]);
+    // with a period before the one in force today too, the era in force is the middle one
+    const twice = {
+      ...raisedNov1,
+      amountHistory: [{ throughOn: "2026-07-31", amountCents: -200_000 }, ...raisedNov1.amountHistory],
+    };
+    expect(atTodaysRate(occurrencesOf(RENT_ROWS), twice, TODAY).map((o) => o.postedOn)).toEqual([
+      "2026-08-04",
+      "2026-09-02",
+    ]);
   });
 
   /* ⛔ the pay rule is its own (§6A 55), and as posted is as posted: neither reading is narrowed here */
   test("a series read as it posted keeps every row, whatever its history", () => {
-    expect(postedAverage(RENT_ROWS, AS_POSTED, RAISED_AUG_1)).toEqual(postedAverage(RENT_ROWS, AS_POSTED, FLAT));
+    expect(postedAverage(RENT_ROWS, AS_POSTED, RAISED_AUG_1, TODAY)).toEqual(
+      postedAverage(RENT_ROWS, AS_POSTED, FLAT, TODAY),
+    );
   });
 });
 
 describe("postedAverage — a series read as it posted", () => {
   test("is the rows' own mean and sample spread", () => {
-    expect(postedAverage(RENT_ROWS, AS_POSTED, FLAT)).toEqual({ avgCents: -184_976, stddevCents: 58_358 });
+    expect(postedAverage(RENT_ROWS, AS_POSTED, FLAT, TODAY)).toEqual({ avgCents: -184_976, stddevCents: 58_358 });
   });
 
   test("names no average with nothing linked, and no spread under two rows", () => {
     for (const reading of [AS_POSTED, PER_OCCURRENCE]) {
-      expect(postedAverage([], reading, FLAT)).toEqual({ avgCents: null, stddevCents: null });
-      expect(postedAverage([{ id: "a", postedOn: "2025-06-02", amountCents: -183_527 }], reading, FLAT)).toEqual({
+      expect(postedAverage([], reading, FLAT, TODAY)).toEqual({ avgCents: null, stddevCents: null });
+      const one = [{ id: "a", postedOn: "2025-06-02", amountCents: -183_527 }];
+      expect(postedAverage(one, reading, FLAT, TODAY)).toEqual({
         avgCents: -183_527,
         stddevCents: null,
       });
@@ -205,12 +248,12 @@ describe("readsPerOccurrence — a series with a schedule of charges", () => {
 describe("postedAverage — his pay, read per payday", () => {
   test("his ledger with its history set: the lump is one week, June paid no payday — $1,141.92, no spread", () => {
     const readings = paydayReadings(HIS_ROWS, HIS_PORTIONS, HIS);
-    expect(postedAverage(HIS_ROWS, payday(readings), HIS)).toEqual({ avgCents: WEEK, stddevCents: 0 });
+    expect(postedAverage(HIS_ROWS, payday(readings), HIS, TODAY)).toEqual({ avgCents: WEEK, stddevCents: 0 });
   });
 
   test("his ledger as it stands, before the history is written — the same reading", () => {
     const readings = paydayReadings(HIS_ROWS, HIS_PORTIONS, FLAT);
-    expect(postedAverage(HIS_ROWS, payday(readings), FLAT)).toEqual({ avgCents: WEEK, stddevCents: 0 });
+    expect(postedAverage(HIS_ROWS, payday(readings), FLAT, TODAY)).toEqual({ avgCents: WEEK, stddevCents: 0 });
   });
 
   /* ⛔ Only the rate era in force now: Jun 4's cash week, paid in full at $1,047.00, is no sample of a payroll week. */
@@ -218,10 +261,10 @@ describe("postedAverage — his pay, read per payday", () => {
     const portions = [...HIS_PORTIONS, { paydayOn: "2026-06-04", depositOn: "2026-06-04", cents: CASH }];
     const readings = paydayReadings(HIS_ROWS, portions, HIS);
     expect(readings.get("jun4")?.isPaydaySample).toBe(true);
-    expect(postedAverage(HIS_ROWS, payday(readings), HIS)).toEqual({ avgCents: WEEK, stddevCents: 0 });
+    expect(postedAverage(HIS_ROWS, payday(readings), HIS, TODAY)).toEqual({ avgCents: WEEK, stddevCents: 0 });
     // with no history there is one era, and the cash week is a sample of it
     const flat = paydayReadings(HIS_ROWS, portions, FLAT);
-    expect(postedAverage(HIS_ROWS, payday(flat), FLAT).avgCents).toBe(Math.round((CASH + WEEK + WEEK) / 3));
+    expect(postedAverage(HIS_ROWS, payday(flat), FLAT, TODAY).avgCents).toBe(Math.round((CASH + WEEK + WEEK) / 3));
   });
 
   /* Wed Aug 26's deposit paid Thu Aug 27, the first payroll week: it is held — and averaged — in the payroll era. */
@@ -235,7 +278,7 @@ describe("postedAverage — his pay, read per payday", () => {
       { paydayOn: "2026-09-03", depositOn: "2026-09-03", cents: WEEK },
     ];
     const readings = paydayReadings(rows, portions, HIS);
-    expect(postedAverage(rows, payday(readings), HIS).avgCents).toBe(Math.round((115_000 + WEEK) / 2));
+    expect(postedAverage(rows, payday(readings), HIS, TODAY).avgCents).toBe(Math.round((115_000 + WEEK) / 2));
   });
 
   /* A third weekly deposit and a $1,200.00 week: the samples are the lump, Sep 24, Oct 1 and Oct 8. */
@@ -250,21 +293,36 @@ describe("postedAverage — his pay, read per payday", () => {
       { paydayOn: "2026-10-01", depositOn: "2026-10-01", cents: WEEK },
       { paydayOn: "2026-10-08", depositOn: "2026-10-08", cents: 120_000 },
     ];
-    expect(postedAverage(rows, payday(paydayReadings(rows, portions, HIS)), HIS)).toEqual({
+    expect(postedAverage(rows, payday(paydayReadings(rows, portions, HIS)), HIS, TODAY)).toEqual({
       avgCents: 115_644,
       stddevCents: 2_904,
     });
   });
 
+  /*
+   * ⚖️ One "in force now" for pay and bills (§6A 55, §6A 63): a raise recorded before its first day — $1,200.00 from
+   * Nov 1, $1,141.92 through Oct 31 — is not in force on Oct 12. 🔴 Held to the last era recorded, his pay would read
+   * no posted average until a week at $1,200.00 had been paid.
+   */
+  test("a raise recorded before its first day: the weeks at today's rate are still averaged", () => {
+    const raisedNov1: RateSchedule = {
+      nextExpectedAmountCents: 120_000,
+      amountHistory: [...HIS.amountHistory!, { throughOn: "2026-10-31", amountCents: WEEK }],
+    };
+    const readings = paydayReadings(HIS_ROWS, HIS_PORTIONS, raisedNov1);
+    expect(postedAverage(HIS_ROWS, payday(readings), raisedNov1, TODAY)).toEqual({ avgCents: WEEK, stddevCents: 0 });
+    expect(postedAverage(HIS_ROWS, payday(readings), raisedNov1, "2026-11-01").avgCents).toBeNull();
+  });
+
   /* a row the reading does not cover is held on its own day, as `expectedCentsOf` holds it */
   test("a row with no reading is averaged in its own day's era", () => {
     const rows = [HIS_ROWS[0]!, HIS_ROWS[3]!];
-    expect(postedAverage(rows, payday(new Map()), HIS)).toEqual({ avgCents: WEEK, stddevCents: null });
+    expect(postedAverage(rows, payday(new Map()), HIS, TODAY)).toEqual({ avgCents: WEEK, stddevCents: null });
   });
 
   test("a pay series with no payday paid names no average", () => {
     const rows = HIS_ROWS.slice(0, 2);
-    expect(postedAverage(rows, payday(paydayReadings(rows, [], HIS)), HIS)).toEqual({
+    expect(postedAverage(rows, payday(paydayReadings(rows, [], HIS)), HIS, TODAY)).toEqual({
       avgCents: null,
       stddevCents: null,
     });

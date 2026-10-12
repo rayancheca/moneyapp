@@ -35,6 +35,8 @@ describe("seriesIsIncomeOrSpending", () => {
  */
 const HIS_HISTORY: readonly RatePeriod[] = [{ throughOn: "2026-08-26", amountCents: 104_700 }];
 const HIS_PAY = { nextExpectedAmountCents: 114_192, amountHistory: HIS_HISTORY };
+/** the day the rate in force is read on — his ledger copy's, 2026-10-12 */
+const TODAY = "2026-10-12";
 
 describe("rateOn", () => {
   test("with no history, every day — past or future — reads the series' own amount", () => {
@@ -99,18 +101,40 @@ describe("ratePeriodOf", () => {
 
   /* the era the posted average reads (`lib/posted-average`): the rate in force now */
   test("the era in force now is the one every day past the last period is in", () => {
-    expect(currentRatePeriod({ amountHistory: null })).toBe(0);
-    expect(currentRatePeriod(HIS_PAY)).toBe(ratePeriodOf(HIS_PAY, "2099-12-31"));
-    expect(currentRatePeriod(HIS_PAY)).toBe(1);
+    expect(currentRatePeriod({ amountHistory: null }, TODAY)).toBe(0);
+    expect(currentRatePeriod(HIS_PAY, TODAY)).toBe(ratePeriodOf(HIS_PAY, "2099-12-31"));
+    expect(currentRatePeriod(HIS_PAY, TODAY)).toBe(1);
   });
 
   /* the day the posted average's words start counting from (§6A 63): the first day of the era in force now */
   test("the rate in force now began the day after the last period — none with no history", () => {
-    expect(currentRateSince({ amountHistory: null })).toBeNull();
-    expect(currentRateSince(HIS_PAY)).toBe("2026-08-27");
-    expect(ratePeriodOf(HIS_PAY, currentRateSince(HIS_PAY)!)).toBe(currentRatePeriod(HIS_PAY));
+    expect(currentRateSince({ amountHistory: null }, TODAY)).toBeNull();
+    expect(currentRateSince(HIS_PAY, TODAY)).toBe("2026-08-27");
+    expect(ratePeriodOf(HIS_PAY, currentRateSince(HIS_PAY, TODAY)!)).toBe(currentRatePeriod(HIS_PAY, TODAY));
     const yearEnd = { amountHistory: [{ throughOn: "2025-12-31", amountCents: -200_000 }] };
-    expect(currentRateSince(yearEnd)).toBe("2026-01-01");
+    expect(currentRateSince(yearEnd, TODAY)).toBe("2026-01-01");
+  });
+
+  /*
+   * ⚖️ "in force NOW" is today's era (§6A 63): a period recorded before its last day has passed — a raise from Nov 1,
+   * recorded on Oct 12 — is the rate in force until it ends, as `rateOn(today)` reads it. 🔴 Read as the last era
+   * recorded, the rent's popover said "the rate in force since Nov 1, 2026" on Oct 12 (review of 442de07, 2026-10-12).
+   */
+  test("a period that has not ended yet is the one in force, from the day after the period before it", () => {
+    const raisedNov1 = {
+      nextExpectedAmountCents: 120_000,
+      amountHistory: [...HIS_HISTORY, { throughOn: "2026-10-31", amountCents: 114_192 }],
+    };
+    expect(currentRatePeriod(raisedNov1, TODAY)).toBe(1);
+    expect(rateOn(raisedNov1, TODAY)).toBe(114_192);
+    expect(currentRateSince(raisedNov1, TODAY)).toBe("2026-08-27");
+    // from Nov 1 it is the series' own amount, as it always was past the last period
+    expect(currentRatePeriod(raisedNov1, "2026-11-01")).toBe(2);
+    expect(currentRateSince(raisedNov1, "2026-11-01")).toBe("2026-11-01");
+    // a first period that has not ended: no rate began before today's, so none is named
+    const onlyAhead = { amountHistory: [{ throughOn: "2026-10-31", amountCents: -210_900 }] };
+    expect(currentRatePeriod(onlyAhead, TODAY)).toBe(0);
+    expect(currentRateSince(onlyAhead, TODAY)).toBeNull();
   });
 });
 
