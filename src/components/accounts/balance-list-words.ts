@@ -27,7 +27,7 @@ export interface BalanceListWords {
 const HEADING = "Balances";
 
 /** `refusal` is `countRefusal`'s answer for the account: null where he may count a balance. */
-export function balanceListWords(refusal: Pick<CountRefusal, "why"> | null): BalanceListWords {
+export function balanceListWords(refusal: Pick<CountRefusal, "kind" | "why"> | null): BalanceListWords {
   if (refusal === null) {
     return {
       takesCount: true,
@@ -42,11 +42,16 @@ export function balanceListWords(refusal: Pick<CountRefusal, "why"> | null): Bal
    * counted yet." and "add one you counted below". Each of its statements writes a value anchor, so an empty list is
    * the edge of a book's life, not its usual state — and there it says what the account is instead. ⚖️ §6A 58: so
    * does an account priced from its holdings, whose curve never reads a balance.
+   *
+   * 🔴 …and its list is not waiting on one: "No balances yet — Robinhood Crypto is priced from its holdings." under a
+   * header printing the value its holdings price (the e2e fixture's Robinhood Crypto). "Yet" stays where a balance is
+   * still to come — a book's next statement, and the header's line, shown only while the curve has no day at all.
    */
+  const waits = refusal.kind === "book" ? " yet" : "";
   return {
     takesCount: false,
     heading: HEADING,
-    empty: `No balances yet — ${refusal.why}.`,
+    empty: `No balances${waits} — ${refusal.why}.`,
     noBalanceYet: `No balance yet — ${refusal.why}.`,
   };
 }

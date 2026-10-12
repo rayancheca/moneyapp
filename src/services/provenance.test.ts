@@ -2285,17 +2285,18 @@ describe("provenanceFor — a count of one keeps its numeral and a singular noun
     addTxn(hole, "2026-08-02", { cents: 150_000 });
 
     const p = provenanceFor(bundle.db, { kind: "netWorth", day: TODAY })!;
+    // ⚖️ no balance of any kind is "no balance" — "recorded" is a statement's (§6A 50), as on the cards-owed proof
     expect(p.inputs.find((i) => i.label === "Wells Fargo Everyday Checking")!.detail).toBe(
-      "1 row but no recorded balance — not in this total",
+      "1 row but no balance — not in this total",
     );
-    expect(p.headline).toContain("holds 1 row worth $1,500.00");
+    expect(p.headline).toContain("holds 1 row worth $1,500.00 that this total cannot see, because it has no balance.");
 
     addTxn(hole, "2026-08-03", { cents: -50_000 });
     expect(
       provenanceFor(bundle.db, { kind: "netWorth", day: TODAY })!.inputs.find(
         (i) => i.label === "Wells Fargo Everyday Checking",
       )!.detail,
-    ).toBe("2 rows but no recorded balance — not in this total");
+    ).toBe("2 rows but no balance — not in this total");
   });
 
   test.each([

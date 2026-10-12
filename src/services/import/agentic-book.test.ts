@@ -2027,13 +2027,13 @@ describe("⛔ the agent's book holds only what its statements prove", () => {
     const before = wholeLedger(bundle.db);
 
     expect(() => addManualAnchor(bundle.db, { accountId: book.id, anchoredOn: "2026-09-14", enteredCents: 50_000 })).toThrow(
-      "Robinhood Agentic Brokerage holds only what its statements prove — a balance typed here would outlive them",
+      "Robinhood Agentic Brokerage holds only what its statements prove — a balance you counted here would outlive them",
     );
     const brokerage = bundle.db.select().from(accounts).where(eq(accounts.name, "Robinhood Brokerage")).get()!;
     const counted = (accountId: string) => () =>
       addManualAnchor(bundle.db, { accountId, anchoredOn: "2026-09-14", enteredCents: 50_000 });
     expect(counted(brokerage.id)).toThrow(
-      "Robinhood Brokerage is priced from its holdings — a balance you count there plays no part in its curve",
+      "Robinhood Brokerage is priced from its holdings — a balance you counted there would play no part in its curve",
     );
     expect(wholeLedger(bundle.db)).toEqual(before);
 

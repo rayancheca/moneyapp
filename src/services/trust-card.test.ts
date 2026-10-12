@@ -531,7 +531,7 @@ describe("trustCard — empty accounts versus holes", () => {
     expect(line.isHole).toBe(true);
     expect(line.isEmpty).toBe(false);
     expect(line.strandedRows).toBe(2);
-    expect(line.detail).toContain("no recorded balance");
+    expect(line.detail).toBe("2 rows but no balance — not in this total");
   });
 
   /**

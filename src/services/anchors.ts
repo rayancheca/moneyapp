@@ -40,11 +40,23 @@ export type ManualAnchorInput = z.infer<typeof manualAnchorInputSchema>;
 
 /** Why an account takes no balance the owner counts — `countRefusal`'s answer. */
 export interface CountRefusal {
+  /**
+   * Which rule refuses: a brokerage book, whose statements write the balances it is valued by, or an account priced
+   * from its holdings, whose curve never reads a balance at all — so an empty list there waits on none.
+   */
+  kind: "book" | "pricedFromHoldings";
   /** what the account is — the account page says it where "Add a balance you counted" would be */
   why: string;
   /** `addManualAnchor`'s refusal: the why, and what a count there would do */
   message: string;
 }
+
+/*
+ * ⚖️ "counted" is the one verb for a balance he typed (§6A 50, 2026-10-07), and both refusals name it as the form's
+ * title does. 🔴 The book's said "a balance typed here would outlive them" beside the priced account's "a balance you
+ * count there plays no part in its curve" — two verbs for one act.
+ */
+const A_COUNT = "a balance you counted";
 
 /**
  * Why the owner may NOT count a balance for this account, or null where he may. The account page (through
@@ -77,12 +89,12 @@ export function countRefusal(
   // the book first: its statements write holding events too, and its own words say why
   if (account.cashAccountId !== null) {
     const why = `${account.name} holds only what its statements prove`;
-    return { why, message: `${why} — a balance typed here would outlive them` };
+    return { kind: "book", why, message: `${why} — ${A_COUNT} here would outlive them` };
   }
   if (derivesFromHoldings(db, account)) {
     // the remove dialog's words for a balance already there (`removeBalanceRadius`)
     const why = `${account.name} is priced from its holdings`;
-    return { why, message: `${why} — a balance you count there plays no part in its curve` };
+    return { kind: "pricedFromHoldings", why, message: `${why} — ${A_COUNT} there would play no part in its curve` };
   }
   return null;
 }

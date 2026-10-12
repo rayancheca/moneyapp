@@ -9,9 +9,9 @@ describe("balanceListWords — the list's words follow the rule that offers the 
   // `countRefusal`'s answers — services/anchors.test.ts pins which account gets which
   const checking = null;
   // a brokerage book: the import makes it, values it from what its statements prove, and takes no typed balance
-  const book = { why: "Robinhood Agentic Brokerage holds only what its statements prove" };
+  const book = { kind: "book", why: "Robinhood Agentic Brokerage holds only what its statements prove" } as const;
   // ⚖️ §6A 58: an account priced from its holdings takes no balance he counts either
-  const priced = { why: "Robinhood Brokerage is priced from its holdings" };
+  const priced = { kind: "pricedFromHoldings", why: "Robinhood Brokerage is priced from its holdings" } as const;
 
   test("an account that takes a balance he counts is invited to add one, in his words (§6A 50)", () => {
     expect(balanceListWords(checking)).toEqual({
@@ -47,13 +47,20 @@ describe("balanceListWords — the list's words follow the rule that offers the 
    * holding events × closes and never reads a recorded balance: a $17,000.00 count changed nothing, was listed "you
    * counted it", and its remove dialog said it "verifies nothing and plays no part in its curve" (§6A 58).
    */
-  test("an account priced from its holdings takes no balance he counts, and neither empty line invites one", () => {
+  /*
+   * 🔴 …and its empty list waited on a balance it will never read: "No balances yet — Robinhood Crypto is priced from
+   * its holdings." under a header printing the value its holdings price (the e2e fixture's Robinhood Crypto: no balance
+   * in its list, two holding events). A book's list is the edge of its life, and its next statement brings one.
+   */
+  test("an account priced from its holdings takes no balance he counts, and its empty list waits on none", () => {
     const words = balanceListWords(priced);
 
     expect(words.takesCount).toBe(false);
-    expect(words.empty).toBe("No balances yet — Robinhood Brokerage is priced from its holdings.");
+    expect(words.empty).toBe("No balances — Robinhood Brokerage is priced from its holdings.");
+    // the header's line shows only while the curve has no day at all, and there a value is still to come
     expect(words.noBalanceYet).toBe("No balance yet — Robinhood Brokerage is priced from its holdings.");
     for (const line of [words.empty, words.noBalanceYet]) expect(line).not.toMatch(/count|add one|below/i);
+    expect(words.empty).not.toMatch(/yet/);
   });
 
   test("the heading names every kind the list holds, on every account", () => {

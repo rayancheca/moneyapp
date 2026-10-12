@@ -355,6 +355,15 @@ export function unverifiedDetail(
 const plural = (n: number, one: string, many: string): string => (n === 1 ? one : many);
 
 /**
+ * An account a total leaves out because it has no balance of ANY kind — no statement's, no export's, no live reading,
+ * none he counted: the cards-owed proof's line for such a card, and net worth's after its row count.
+ *
+ * ⚖️ "recorded" is a statement's balance (§6A 50, 2026-10-07). 🔴 Both proofs said "no recorded balance — not in this
+ * total", which says only that no statement printed one — two lines under the cards' own "no balance in the ledger".
+ */
+export const NO_BALANCE_NOT_IN_TOTAL = "no balance — not in this total";
+
+/**
  * "Aug 3, 2026" — readable, and it always carries the year.
  *
  * ⚠️ `formatDayShort` drops the year, and these dates are forensic rather than

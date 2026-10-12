@@ -1,6 +1,11 @@
 import { and, asc, eq, inArray } from "drizzle-orm";
 import { apportionPercents } from "@/lib/apportion";
-import { beforeFirstBalance, beforeFirstBalanceClause, unverifiedDetail } from "@/lib/coverage-detail";
+import {
+  beforeFirstBalance,
+  beforeFirstBalanceClause,
+  NO_BALANCE_NOT_IN_TOTAL,
+  unverifiedDetail,
+} from "@/lib/coverage-detail";
 import type { AppDatabase } from "@/db/client";
 import { transactions } from "@/db/schema/transactions";
 import { diffDays, todayIso } from "@/lib/dates";
@@ -211,7 +216,7 @@ export interface CardsOwedCard {
    */
   oldestCheckedThrough: string | null;
   daysSinceOldest: number | null;
-  /** cards with no recorded balance: while > 0 the total is a floor */
+  /** cards with no balance of any kind: while > 0 the total is a floor */
   unpricedCards: number;
   /** owed on DEACTIVATED cards, which this card leaves out and runway does not */
   closedOwedCents: number;
@@ -573,7 +578,7 @@ function composedProvenance(
      */
     detail:
       c.owedCents === null
-        ? "no recorded balance — not in this total"
+        ? NO_BALANCE_NOT_IN_TOTAL
         : `${formatCents(Math.abs(c.owedCents))} ${c.owedCents < 0 ? "in credit" : "owed"}, ${
             c.caveat ??
             (c.checkedThrough === null

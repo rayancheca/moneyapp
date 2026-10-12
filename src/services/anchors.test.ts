@@ -454,8 +454,9 @@ describe("countRefusal — a count is refused where the rebuild never reads one 
     const before = ledgerOf(brokerage);
 
     const refusal =
-      "Robinhood Brokerage is priced from its holdings — a balance you count there plays no part in its curve";
+      "Robinhood Brokerage is priced from its holdings — a balance you counted there would play no part in its curve";
     expect(countRefusal(bundle.db, row(brokerage))).toEqual({
+      kind: "pricedFromHoldings",
       why: "Robinhood Brokerage is priced from its holdings",
       message: refusal,
     });
@@ -475,6 +476,11 @@ describe("countRefusal — a count is refused where the rebuild never reads one 
     ]);
   });
 
+  /*
+   * 🔴 "a balance typed here would outlive them" beside the priced account's "a balance you count there" — two verbs
+   * for one act. ⚖️ §6A 50 (2026-10-07): "counted" is the one verb for a balance he typed, and both refusals name it
+   * as the form's title does: "a balance you counted".
+   */
   test("a checking account takes a count; a brokerage book is refused in its own words, first", () => {
     const cash = account("Robinhood Agentic", "checking");
     const book = account("Robinhood Agentic Brokerage", "investment");
@@ -484,9 +490,10 @@ describe("countRefusal — a count is refused where the rebuild never reads one 
 
     expect(countRefusal(bundle.db, row(cash))).toBeNull();
     expect(countRefusal(bundle.db, row(book))).toEqual({
+      kind: "book",
       why: "Robinhood Agentic Brokerage holds only what its statements prove",
       message:
-        "Robinhood Agentic Brokerage holds only what its statements prove — a balance typed here would outlive them",
+        "Robinhood Agentic Brokerage holds only what its statements prove — a balance you counted here would outlive them",
     });
   });
 

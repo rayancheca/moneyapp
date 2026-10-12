@@ -1,5 +1,5 @@
 import { and, asc, count, desc, eq, inArray, lte, gte, ne, sum } from "drizzle-orm";
-import { beforeFirstBalanceDetail, unverifiedDetail } from "@/lib/coverage-detail";
+import { beforeFirstBalanceDetail, NO_BALANCE_NOT_IN_TOTAL, unverifiedDetail } from "@/lib/coverage-detail";
 import { formatDayFull } from "@/lib/format-date";
 import type { AppDatabase } from "@/db/client";
 import { accounts, type AccountType } from "@/db/schema/accounts";
@@ -1358,7 +1358,7 @@ function netWorthProvenance(db: AppDatabase, day: string | undefined): Provenanc
                   : "you are the statement"
                 : (rowSums.get(c.accountId)?.n ?? 0) > 0
                   ? // 🔴 "1 rows" — beside the headline's own "holds 1 row" for the same account
-                    `${grouped(rowSums.get(c.accountId)!.n)} ${rowSums.get(c.accountId)!.n === 1 ? "row" : "rows"} but no recorded balance — not in this total`
+                    `${grouped(rowSums.get(c.accountId)!.n)} ${rowSums.get(c.accountId)!.n === 1 ? "row" : "rows"} but ${NO_BALANCE_NOT_IN_TOTAL}`
                   : "empty — no rows, no balance"),
   }));
 
@@ -1414,7 +1414,8 @@ function netWorthProvenance(db: AppDatabase, day: string | undefined): Provenanc
   const holeText = holes
     .map((h) => {
       const r = rowSums.get(h.accountId)!;
-      return `${h.accountName} holds ${grouped(r.n)} ${r.n === 1 ? "row" : "rows"} worth ${formatCents(r.cents)} that this total cannot see, because it has no recorded balance`;
+      // ⚖️ no balance of any kind — "recorded" is a statement's (§6A 50), as in its line (`NO_BALANCE_NOT_IN_TOTAL`)
+      return `${h.accountName} holds ${grouped(r.n)} ${r.n === 1 ? "row" : "rows"} worth ${formatCents(r.cents)} that this total cannot see, because it has no balance`;
     })
     .join("; ");
 
