@@ -8,6 +8,7 @@ import { createDatabase, type DbBundle } from "@/db/client";
 import { seedDatabase } from "@/db/seed";
 import { resolveViewState } from "@/lib/view-state";
 import { seedHisCarSeries, type OneChargeLedger } from "@/services/one-charge-fixture";
+import { seedHisRent, type RentLedger } from "@/services/rent-fixture";
 import { seriesDetail } from "@/services/recurring-detail";
 import { RECURRING_SERIES_VIEW_SPEC } from "./recurring-view-spec";
 
@@ -87,5 +88,60 @@ describe("SeriesDetail — a schedule of one charge reads once, on its own page"
     expect(statOf(html, "Cadence")).toBe("Monthly");
     expect(words(html)).toContain("charges monthly");
     expect(words(html)).not.toContain("once");
+  });
+});
+
+/*
+ * The rent's Per charge names what each PAYMENT paid — Jun 16's two card rows one payment — and that its payments
+ * carry the utilities (§6A 59). 🔴 His page read "posted avg -$1,849.76 ± $583.58" under "-$2,109.00", though every
+ * month he paid more (a copy of his ledger, 2026-10-12). From his rent as stored (`seedHisRent`), through
+ * `seriesDetail`.
+ */
+describe("SeriesDetail — the rent's posted avg is per payment, and names what its payments carry", () => {
+  const TODAY = "2026-10-12";
+  let dir: string;
+  let bundle: DbBundle;
+  let rent: RentLedger;
+
+  beforeEach(() => {
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), "moneyapp-series-detail-rent-"));
+    bundle = createDatabase(path.join(dir, "t.db"));
+    seedDatabase(bundle.db);
+    rent = seedHisRent(bundle.db);
+  });
+
+  afterEach(() => {
+    bundle.sqlite.close();
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  /** the Per charge stat, its words only */
+  const perChargeOf = (seriesId: string): string => {
+    const html = decode(
+      renderToStaticMarkup(
+        createElement(SeriesDetail, {
+          data: seriesDetail(bundle.db, seriesId, TODAY)!,
+          today: TODAY,
+          viewState: resolveViewState(RECURRING_SERIES_VIEW_SPEC, {}, undefined),
+          basePath: `/recurring/${seriesId}`,
+        }),
+      ),
+    );
+    const at = html.indexOf(">Per charge<");
+    const stat = html.slice(at, html.indexOf("</dd>", at));
+    return stat.replace(/<[^>]+>/g, "").replace(/^>Per charge/, "");
+  };
+
+  test("the rent: posted avg -$2,312.20 ± $85.27 · its payments carry Rent utilities & fees too", () => {
+    expect(perChargeOf(rent.rentId)).toContain(
+      "-$2,109.00posted avg -$2,312.20 ± $85.27 · its payments carry Rent utilities & fees too",
+    );
+  });
+
+  test("the utilities print no average, and carry nothing", () => {
+    const stat = perChargeOf(rent.utilitiesId);
+    expect(stat).toContain("-$182.21");
+    expect(stat).not.toContain("posted avg");
+    expect(stat).not.toContain("carry");
   });
 });

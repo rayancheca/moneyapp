@@ -3,7 +3,7 @@ import { confirmSeriesAction, dismissSeriesAction } from "@/app/recurring/action
 import { Money } from "@/components/ui/Money";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { SERIES_EVIDENCE_LABEL, SERIES_EVIDENCE_NOTE, suggestionNote } from "@/lib/series-evidence";
-import { billedWithPhrase } from "@/lib/billed-with";
+import { billedWithPhrase, carriesPhrase } from "@/lib/billed-with";
 import type { ArrearsReading } from "@/lib/arrears-reading";
 import type { SeriesView } from "@/services/recurring";
 import { cadenceLabel, KIND_LABEL, annualizedEndNote, futureDateLabel, overdueNote } from "./labels";
@@ -249,6 +249,8 @@ function SeriesRow({
   overdue: OverdueEntry | null;
   today: string;
 }) {
+  // ⚖️ what is billed inside its payments (§6A 59): money its posted average holds — the series page's words
+  const carried = carriesPhrase(s.carries);
   return (
     <tr className="border-b border-line last:border-b-0">
       <th scope="row" className="px-4 py-3 text-left font-medium">
@@ -283,6 +285,7 @@ function SeriesRow({
             {s.postedAvgCents !== null && s.postedAvgCents !== s.nextExpectedAmountCents ? (
               <span className="figures block text-[10px] text-ink-faint">
                 posted avg <Money cents={s.postedAvgCents} flow />
+                {carried !== null ? ` · ${carried}` : ""}
               </span>
             ) : null}
           </>

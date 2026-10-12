@@ -4,6 +4,7 @@ import {
   billedWithLabel,
   billedWithPhrase,
   carrierWord,
+  carriesPhrase,
   lastSeenOn,
   type BillingCarrier,
 } from "./billed-with";
@@ -99,5 +100,23 @@ describe("billedWithEvidence — what its proof says stands behind it, in the ch
 
   test("a series billed on its own has no such sentence", () => {
     expect(billedWithEvidence({ lastMatchedOn: null, billedWith: null }, TODAY)).toBeNull();
+  });
+});
+
+/**
+ * ⚖️ §6A 59 the other way round: what is billed INSIDE a series' payments is money its posted average holds. 🔴 His
+ * rent's page read "posted avg -$2,312.20" under "-$2,109.00" with nothing to say the $182.21 utilities are in it.
+ */
+describe("carriesPhrase — what a carrier's posted average holds too", () => {
+  test("names what its payments carry, in the line's quiet words", () => {
+    expect(carriesPhrase(["Rent utilities & fees"])).toBe("its payments carry Rent utilities & fees too");
+    expect(carriesPhrase(["Parking", "Rent utilities & fees"])).toBe(
+      "its payments carry Parking and Rent utilities & fees too",
+    );
+    expect(carriesPhrase(["A", "B", "C"])).toBe("its payments carry A, B and C too");
+  });
+
+  test("says nothing of a series that carries nothing", () => {
+    expect(carriesPhrase([])).toBeNull();
   });
 });

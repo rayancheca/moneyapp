@@ -9,6 +9,7 @@ import { createDatabase, type DbBundle } from "@/db/client";
 import { seedDatabase } from "@/db/seed";
 import { recurringSeries } from "@/db/schema/recurring";
 import { seedHisCarSeries, type OneChargeLedger } from "@/services/one-charge-fixture";
+import { seedHisRent } from "@/services/rent-fixture";
 import { listSeries, type SeriesView } from "@/services/recurring";
 
 // the server actions pull in next/cache and the database client
@@ -40,6 +41,7 @@ function series(over: Partial<SeriesView> & Pick<SeriesView, "id" | "name" | "st
     // 🔴 left out, every fixture here read "Once": `cadenceLabel` asks `=== null`, and undefined is not
     oneChargeOn: null,
     billedWith: null,
+    carries: [],
     ...over,
   } as SeriesView;
 }
@@ -278,6 +280,51 @@ describe("AllSeriesView — a series billed inside another's payment says so on 
     expect(text).toContain("Rent utilities & fees||Bill · 0 matched · billed with the rent|");
     expect(text).toContain("Gym||Bill · 0 matched|");
     expect(text.match(/billed with/g)).toHaveLength(1);
+  });
+});
+
+/*
+ * The rent's "posted avg" is what each payment paid — Jun 16's two card rows one payment — and its payments carry
+ * the utilities (§6A 59). 🔴 His row read "posted avg -$1,849.76" under "-$2,109.00" (a copy of his ledger,
+ * 2026-10-12). From his rent as stored (`seedHisRent`), through the reading the page itself asks (`listSeries`).
+ */
+describe("AllSeriesView — the rent's posted avg is per payment, and names what its payments carry", () => {
+  const TODAY = "2026-10-12";
+  let dir: string;
+  let bundle: DbBundle;
+
+  beforeEach(() => {
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), "moneyapp-all-series-rent-"));
+    bundle = createDatabase(path.join(dir, "t.db"));
+    seedDatabase(bundle.db);
+    seedHisRent(bundle.db);
+  });
+
+  afterEach(() => {
+    bundle.sqlite.close();
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  /** the row's amount cell, its words only */
+  const amountCellOf = (name: string): string => {
+    const series = listSeries(bundle.db, TODAY);
+    const html = decode(
+      renderToStaticMarkup(createElement(AllSeriesView, { series, overdueBySeries: new Map(), today: TODAY })),
+    );
+    const at = html.indexOf(`>${name}</a>`);
+    const row = html.slice(at, html.indexOf("</tr>", at));
+    const cell = /<td class="px-3 py-3 text-right">(.*?)<\/td>/.exec(row)?.[1] ?? "";
+    return cell.replace(/<[^>]+>/g, "");
+  };
+
+  test("the rent: -$2,109.00, posted avg -$2,312.20 · its payments carry Rent utilities & fees too", () => {
+    expect(amountCellOf("Flamingo South Beach (rent)")).toBe(
+      "-$2,109.00posted avg -$2,312.20 · its payments carry Rent utilities & fees too",
+    );
+  });
+
+  test("the utilities, which post nothing of their own, print no average and carry nothing", () => {
+    expect(amountCellOf("Rent utilities & fees")).toBe("-$182.21");
   });
 });
 

@@ -910,8 +910,13 @@ export interface SeriesView {
    *
    * ⚖️ A pay series' is what a PAYDAY paid at the rate in force now (`postedAveragesBySeries`, §6A 55) — the series
    * page's and the popover's own figure. 🔴 The raw mean, his row read "posted avg +$1,789.15" beside "+$1,141.92".
+   *
+   * A bill's is what each OCCURRENCE was paid — a day's rows one payment. 🔴 Row by row, his rent read "posted avg
+   * -$1,849.76" beside "-$2,109.00", though every month he paid more (a copy of his ledger, 2026-10-12).
    */
   postedAvgCents: number | null;
+  /** ⚖️ the series billed inside its payments (§6A 59) — named beside "posted avg" (`carriesPhrase`); empty for none */
+  carries: readonly string[];
 }
 
 /** the span an "annualized" figure covers — twelve months from today */
@@ -1073,6 +1078,7 @@ export function listSeries(db: AppDatabase, today: string = todayIso()): SeriesV
         lastMatchedOn: s.lastMatchedOn,
         matchedCount: countBySeries.get(s.id) ?? 0,
         postedAvgCents: posted.get(s.id)?.avgCents ?? null,
+        carries: posted.get(s.id)?.carries ?? [],
         isActive: isSeriesActive(s, today),
         evidence: seriesEvidence(s, today, checkedThrough(s.id)),
         annualizedCents: annualizedCentsOf(s, today, checkedThrough(s.id)),

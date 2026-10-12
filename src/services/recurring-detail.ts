@@ -164,8 +164,13 @@ export interface SeriesDetail {
    *
    * ⚖️ A pay series' is what a PAYDAY paid at the rate in force now (`lib/posted-average`, §6A 55) — one reading with
    * the All tab and the popover. 🔴 The raw mean, his page read "posted avg +$1,789.15 ± 1881.46" under "+$1,141.92".
+   *
+   * A bill's is what each OCCURRENCE was paid — a day's rows one payment. 🔴 Row by row, his rent's page read "posted
+   * avg -$1,849.76 ± $583.58" under "-$2,109.00", though every month he paid more (a copy of his ledger, 2026-10-12).
    */
   postedAvgCents: number | null;
+  /** ⚖️ the series billed inside its payments (§6A 59) — named on its posted avg line (`carriesPhrase`) */
+  carries: readonly string[];
   intervalDaysAvg: number | null;
   toleranceDays: number;
   confidence: number | null;
@@ -353,9 +358,9 @@ export function seriesDetail(
 
   /*
    * What posted, averaged, and its sample standard deviation — the reading `listSeries` publishes to the All tab and
-   * the popover names (`postedAveragesBySeries`): a pay series' is what a payday paid at the rate in force now. Two
-   * samples is the floor of a spread: with one there is nothing to vary, and the seed that used to be printed here
-   * claimed a spread for series with none at all.
+   * the popover names (`postedAveragesBySeries`): a pay series' is what a payday paid at the rate in force now, a
+   * bill's what each occurrence was paid. Two samples is the floor of a spread: with one there is nothing to vary, and
+   * the seed that used to be printed here claimed a spread for series with none at all.
    */
   const posted = postedAveragesBySeries(db, [s], today).get(s.id)!;
 
@@ -481,6 +486,7 @@ export function seriesDetail(
     amountCentsStddev: s.amountCentsStddev,
     postedStddevCents: posted.stddevCents,
     postedAvgCents: posted.avgCents,
+    carries: posted.carries,
     intervalDaysAvg: s.intervalDaysAvg,
     toleranceDays: s.toleranceDays,
     confidence: s.confidence,

@@ -48,7 +48,7 @@ import {
   type ReplayAnchor,
 } from "./derivation";
 import { PART_ENTERED, VERDICT_PRESENTATION } from "@/lib/provenance-verdict";
-import { billedWithEvidence } from "@/lib/billed-with";
+import { billedWithEvidence, carriesPhrase } from "@/lib/billed-with";
 import { billingCarriers } from "./billing-carriers";
 import { postedAveragesBySeries } from "./posted-average";
 import { MIN_OCCURRENCES } from "./recurring";
@@ -1790,10 +1790,17 @@ function recurringSeriesProvenance(db: AppDatabase, id: string, today: string): 
    * ledger's own average of what actually posted is $1,789.15, which is not what you set." of his $1,141.92 — a cash
    * week, $400.00, a four-week lump and a week (a copy of his ledger, 2026-10-08).
    */
-  const postedAvgCents = postedAveragesBySeries(db, [series], today).get(id)!.avgCents;
+  const { avgCents: postedAvgCents, carries } = postedAveragesBySeries(db, [series], today).get(id)!;
+  /*
+   * ⚖️ …and names what is billed inside its payments (§6A 59) — the money that makes the two differ, in the words the
+   * series page and the All tab print beside the same figure (`carriesPhrase`). 🔴 His rent's read "⚠️ … is
+   * -$2,312.20, which is not what you set." of a $2,109.00 that never carried the $182.21 utilities (2026-10-12).
+   */
+  const carried = carriesPhrase(carries);
+  const why = carried !== null ? ` — ${carried}` : "";
   const disagreement =
     userSet && postedAvgCents !== null && postedAvgCents !== series.userAmountCents
-      ? ` ⚠️ The ledger's own average of what actually posted is ${formatCents(postedAvgCents)}, which is not what you set.`
+      ? ` ⚠️ The ledger's own average of what actually posted is ${formatCents(postedAvgCents)}, which is not what you set${why}.`
       : "";
 
   const headline = userSet

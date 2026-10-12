@@ -51,6 +51,29 @@ export function billingCarriers(db: AppDatabase): ReadonlyMap<string, BillingCar
 }
 
 /**
+ * ⚖️ The other way round: per CARRIER, the names of the series billed inside its payments (§6A 59) — keyed by the LIVE
+ * carrier (`billingCarriers`, through any merge), names in order. A carrier's posted average holds their money too, and
+ * the line naming it says so (`carriesPhrase`). Nothing is asked of a ledger with no link.
+ */
+export function carriedNamesBySeries(db: AppDatabase): ReadonlyMap<string, readonly string[]> {
+  const carriers = billingCarriers(db);
+  if (carriers.size === 0) return new Map();
+  const names = new Map(
+    db
+      .select({ id: recurringSeries.id, name: recurringSeries.name })
+      .from(recurringSeries)
+      .where(inArray(recurringSeries.id, [...carriers.keys()]))
+      .all()
+      .map((s) => [s.id, s.name] as const),
+  );
+  const out = new Map<string, string[]>();
+  for (const [carriedId, carrier] of carriers) {
+    out.set(carrier.id, [...(out.get(carrier.id) ?? []), names.get(carriedId)!].sort((a, b) => a.localeCompare(b)));
+  }
+  return out;
+}
+
+/**
  * The rows, each with the carrier it is billed with (`billedWith`, null when billed on its own) — how a series row
  * reaches an evidence reader (`seriesStaleness`, `seriesEvidence`, `hasStoppedForecasting`…), which REQUIRE it.
  */

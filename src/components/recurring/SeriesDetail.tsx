@@ -2,7 +2,7 @@
 
 import { useState, useTransition } from "react";
 import { SERIES_EVIDENCE_LABEL, noScheduleReason, seriesEvidenceTone } from "@/lib/series-evidence";
-import { billedWithLabel } from "@/lib/billed-with";
+import { billedWithLabel, carriesPhrase } from "@/lib/billed-with";
 import { seriesEndInput, seriesEndLines } from "./end-radius";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -104,6 +104,8 @@ export function SeriesDetail({
     data.postedAvgCents,
     data.postedStddevCents,
   );
+  // ⚖️ what is billed inside its payments (§6A 59) — money that average holds — named on its line, as the All tab does
+  const carried = carriesPhrase(data.carries);
   // ending a series takes money off the forecast and the calendar — the one
   // status change on this page that changes what the app predicts
   const [endingSeries, setEndingSeries] = useState(false);
@@ -327,6 +329,7 @@ export function SeriesDetail({
                     <span className="figures block text-[11px] font-normal text-ink-faint">
                       posted avg <Money cents={postedSpread.avgLine} flow />
                       {postedSpread.text !== null ? ` ${postedSpread.text}` : ""}
+                      {carried !== null ? ` · ${carried}` : ""}
                     </span>
                   ) : null}
                 </>

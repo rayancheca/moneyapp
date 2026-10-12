@@ -65,6 +65,20 @@ export function billedWithPhrase(carrier: Pick<BillingCarrier, "name">): string 
 }
 
 /**
+ * "its payments carry Rent utilities & fees too" — said, in the line's own quiet words, wherever a CARRIER's posted
+ * average is named (the series page's Per charge, the All tab, the amount popover): what is billed inside its payments
+ * is money that average holds. `names` are the series billed inside it (`carriedNamesBySeries`); null for none.
+ *
+ * 🔴 His rent's page read "posted avg -$2,312.20" under "-$2,109.00" — and the popover "⚠️ … which is not what you
+ * set" — with nothing to say the $182.21 utilities are inside every payment (a copy of his ledger, 2026-10-12).
+ */
+export function carriesPhrase(names: readonly string[]): string | null {
+  if (names.length === 0) return null;
+  const list = names.length === 1 ? names[0] : `${names.slice(0, -1).join(", ")} and ${names.at(-1)}`;
+  return `its payments carry ${list} too`;
+}
+
+/**
  * "billed with the rent, last seen Sep 2" — the words where "never billed" stood, on the Subscriptions card and the
  * series' own page. Null for a series billed on its own. The day is `lastSeenOn`, spelled for a sentence
  * (`formatDayShortIn`, the card's own "last seen" spelling).
