@@ -3,6 +3,7 @@ import { type RatePeriod, SERIES_KINDS } from "@/db/schema/recurring";
 import {
   AmountHistoryError,
   currentRatePeriod,
+  currentRateSince,
   parseAmountHistory,
   parseAmountHistoryText,
   ratePeriodOf,
@@ -101,6 +102,15 @@ describe("ratePeriodOf", () => {
     expect(currentRatePeriod({ amountHistory: null })).toBe(0);
     expect(currentRatePeriod(HIS_PAY)).toBe(ratePeriodOf(HIS_PAY, "2099-12-31"));
     expect(currentRatePeriod(HIS_PAY)).toBe(1);
+  });
+
+  /* the day the posted average's words start counting from (§6A 63): the first day of the era in force now */
+  test("the rate in force now began the day after the last period — none with no history", () => {
+    expect(currentRateSince({ amountHistory: null })).toBeNull();
+    expect(currentRateSince(HIS_PAY)).toBe("2026-08-27");
+    expect(ratePeriodOf(HIS_PAY, currentRateSince(HIS_PAY)!)).toBe(currentRatePeriod(HIS_PAY));
+    const yearEnd = { amountHistory: [{ throughOn: "2025-12-31", amountCents: -200_000 }] };
+    expect(currentRateSince(yearEnd)).toBe("2026-01-01");
   });
 });
 

@@ -50,7 +50,7 @@ import {
 import { PART_ENTERED, VERDICT_PRESENTATION } from "@/lib/provenance-verdict";
 import { billedWithEvidence, carriesPhrase } from "@/lib/billed-with";
 import { billingCarriers } from "./billing-carriers";
-import { postedAsWord } from "@/lib/posted-average";
+import { postedAsWord, type Occurrence } from "@/lib/posted-average";
 import { postedAveragesBySeries } from "./posted-average";
 import { MIN_OCCURRENCES } from "./recurring";
 
@@ -1643,6 +1643,76 @@ function holdingProvenance(db: AppDatabase, symbol: string, assetType: AssetType
 
 /* ── a recurring series' amount ───────────────────────────────────────── */
 
+/** What the popover says of a bill whose rate changed after some of its payments (§6A 63) — see `era` below. */
+interface AtTodaysRate {
+  /** the first day of the rate in force now (`SeriesPostedAverage.rateSince`) */
+  era: string;
+  /** the payments before it — at least one */
+  earlier: number;
+  /** the payments since it, oldest first: what the average averages (`SeriesPostedAverage.occurrences`) */
+  payments: readonly Occurrence[];
+  /** "Sep 2's posted as 2" — those of `payments` the bank posted as several rows; empty when none was */
+  split: string;
+  /** what `payments` paid, each amount once */
+  distinct: ReadonlySet<number>;
+}
+
+/** "4 different amounts, from -$2,434.80 to -$2,237.11 — so any single figure for it is an average, not a repeat" */
+function differentAmountsWords(distinct: ReadonlySet<number>): string {
+  const lo = formatCents(Math.min(...distinct));
+  const hi = formatCents(Math.max(...distinct));
+  const why = "so any single figure for it is an average, not a repeat";
+  return `${distinct.size} different amounts, from ${lo} to ${hi} — ${why}`;
+}
+
+/** "Its 4 payments before Aug 1, 2026 were at an earlier rate" */
+function earlierWords({ era, earlier }: Pick<AtTodaysRate, "era" | "earlier">): string {
+  const its = earlier === 1 ? "Its one payment" : `Its ${earlier} payments`;
+  return `${its} before ${readableDay(era)} ${earlier === 1 ? "was" : "were"} at an earlier rate`;
+}
+
+/**
+ * ⚖️ The headline's sentence for a bill with payments either side of a rate change (owner decision 2026-10-12, §6A
+ * 63): it counts and ranges the payments its average is of — those at the rate in force now — and says that the ones
+ * before are left out, and why. With none since, it says there is no average yet, as the page and the All tab print
+ * none. Latent on his ledger, 2026-10-12: only his pay has a history, and pay is not read per payment.
+ */
+function observedAtTodaysRate({ era, earlier, payments, split, distinct }: AtTodaysRate): string {
+  const before = earlierWords({ era, earlier });
+  if (payments.length === 0)
+    return `${before}, and nothing has posted at the rate in force since — so there is no average of it yet.`;
+  const k = payments.length;
+  const rows = payments.reduce((sum, p) => sum + p.postings, 0);
+  const counted = `${k === 1 ? "Its one payment" : `Its ${k} payments`} at the rate in force since ${readableDay(era)}`;
+  const posted = split === "" ? "" : ` (${rows} tagged postings: ${split})`;
+  const what =
+    k === 1
+      ? `was ${formatCents(payments[0]!.amountCents)}, on ${readableDay(payments[0]!.postedOn)}`
+      : distinct.size === 1
+        ? `were ${formatCents([...distinct][0]!)}, exactly`
+        : `were ${differentAmountsWords(distinct)}`;
+  return `${counted}${posted} ${what}. ${before}, and ${earlier === 1 ? "is" : "are"} not counted.`;
+}
+
+/** …and its evidence line: "2 payments at the rate in force since Aug 1: … · 2 before it, at an earlier rate" */
+function eraDetail(input: {
+  era: string;
+  earlier: number;
+  k: number;
+  split: string;
+  amounts: string;
+  today: string;
+}): string {
+  const { era, earlier, k, split, amounts, today } = input;
+  const day = formatDayShortIn(era, today);
+  if (k === 0)
+    return earlier === 1
+      ? `one payment, before ${day}, at an earlier rate`
+      : `${earlier} payments, all before ${day}, at an earlier rate`;
+  const since = `${k === 1 ? "one payment" : `${k} payments`} at the rate in force since ${day}`;
+  return `${since}${split === "" ? "" : ` (${split})`}: ${amounts} · ${earlier} before it, at an earlier rate`;
+}
+
 /**
  * What a forecast amount is standing on.
  *
@@ -1684,6 +1754,11 @@ function recurringSeriesProvenance(db: AppDatabase, id: string, today: string): 
    * -$2,312.20" — an average outside the range it had just stated (review of af5b0fa, a copy of his ledger,
    * 2026-10-12). A series whose every row is its own payment reads exactly as it did.
    *
+   * ⚖️ …and only the payments at the rate in force now (owner decision 2026-10-12, §6A 63): a bill with a rate history
+   * averages those alone, so these words count, range and grade those alone, and say how many came before the change
+   * and why they are left out (`era`, `earlier`). With none at the rate in force now there is no average, and they say
+   * so. A series whose rate never changed has no `era`: it reads exactly as it did.
+   *
    * ⚠️ The anecdote gate (`MIN_OCCURRENCES`) still counts ROWS, `n`: detection (`analyzeGroup`) and the calendar's
    * proven band (`lib/occurrence-verdict`) count rows against that same bar, and "below the 3 this app requires" names
    * theirs.
@@ -1694,6 +1769,10 @@ function recurringSeriesProvenance(db: AppDatabase, id: string, today: string): 
   const k = payments.length;
   const distinct = new Set(payments.map((p) => p.amountCents));
   const days = payments.map((p) => p.postedOn).sort();
+  // the payments before the rate in force now, drawn on the page's Amount history but in no figure here
+  const earlier = (posted.everyOccurrence?.length ?? k) - k;
+  // the day that rate began — null when no payment is left out, which every series whose rate never changed is
+  const era = earlier > 0 ? posted.rateSince : null;
   // "Jun 16's posted as 2" — each payment the bank posted as several rows; empty when every row is a payment
   const split = payments
     .flatMap((p) => {
@@ -1713,19 +1792,24 @@ function recurringSeriesProvenance(db: AppDatabase, id: string, today: string): 
   }
   if (n > 0) {
     const amounts =
-      distinct.size === 1
-        ? // ⚠️ "every one of them" over a single posting is a plural claim
-          // about a population of one — it read exactly that way for FPL.
-          k === 1
-          ? `it was ${formatCents([...distinct][0]!)}`
-          : `every one of them ${formatCents([...distinct][0]!)}`
-        : `${distinct.size} different amounts, ${formatCents(Math.min(...distinct))} to ${formatCents(Math.max(...distinct))}`;
+      // none at the rate in force now (§6A 63) has no amounts — `eraDetail` says so; Math.min() of none is Infinity
+      k === 0
+        ? ""
+        : distinct.size === 1
+          ? // ⚠️ "every one of them" over a single posting is a plural claim
+            // about a population of one — it read exactly that way for FPL.
+            k === 1
+            ? `it was ${formatCents([...distinct][0]!)}`
+            : `every one of them ${formatCents([...distinct][0]!)}`
+          : `${distinct.size} different amounts, ${formatCents(Math.min(...distinct))} to ${formatCents(Math.max(...distinct))}`;
+    const counted = split === "" ? amounts : `${k === 1 ? "one payment" : `${k} payments`} (${split}): ${amounts}`;
     sources.push({
       kind: "period",
       label: `${n} tagged ${n === 1 ? "posting" : "postings"} in the ledger`,
-      // the documents are rows; what they paid is counted per payment, as the average is
-      detail: split === "" ? amounts : `${k === 1 ? "one payment" : `${k} payments`} (${split}): ${amounts}`,
-      on: days[0],
+      // the documents are rows; what they paid is counted per payment, as the average is — at the rate it is of
+      detail: era === null ? counted : eraDetail({ era, earlier, k, split, amounts, today }),
+      // the first document's day, counted or not
+      on: postings.map((p) => p.postedOn).sort()[0],
     });
   }
 
@@ -1784,13 +1868,14 @@ function recurringSeriesProvenance(db: AppDatabase, id: string, today: string): 
       );
     if (n < MIN_OCCURRENCES)
       return `Only ${n} tagged ${n === 1 ? "posting has" : "postings have"} ever landed — below the ${MIN_OCCURRENCES} this app requires before calling a repeat a pattern, so it is an anecdote rather than a statistic.`;
+    if (era !== null) return observedAtTodaysRate({ era, earlier, payments, split, distinct });
     // every row its own payment: "5 tagged postings", as it always read; else "4 payments (5 tagged postings: …)"
     if (k === 1)
       return `Its ${n} tagged postings are one payment, of ${formatCents(payments[0]!.amountCents)} on ${readableDay(days[0]!)}.`;
     const counted = split === "" ? `${k} tagged postings` : `${k} payments`;
     const since = `since ${readableDay(days[0]!)}${split === "" ? "" : ` (${n} tagged postings: ${split})`}`;
     if (distinct.size === 1) return `All ${counted} ${since} were ${formatCents([...distinct][0]!)}, exactly.`;
-    return `Its ${counted} ${since} were ${distinct.size} different amounts, from ${formatCents(Math.min(...distinct))} to ${formatCents(Math.max(...distinct))} — so any single figure for it is an average, not a repeat.`;
+    return `Its ${counted} ${since} were ${differentAmountsWords(distinct)}.`;
   };
 
   /*

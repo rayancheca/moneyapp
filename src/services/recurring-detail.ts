@@ -79,8 +79,8 @@ export interface AmountHistoryPoint {
    */
   towardNoPayday: boolean;
   /**
-   * The rows the bank posted this PAYMENT as, for a series read per occurrence (`SeriesPostedAverage.occurrences`): a
-   * day's rows are one point, their sum, said "one payment, posted as 2" (`postedAsWord`). Absent for a row drawn as
+   * The rows the bank posted this PAYMENT as, for a series read per occurrence (`SeriesPostedAverage.everyOccurrence`):
+   * a day's rows are one point, their sum, said "one payment, posted as 2" (`postedAsWord`). Absent for a row drawn as
    * it posted. 🔴 Drawn per row, his rent's Jun 16 payment of -$2,434.80 read as two charges under -$2,109.00.
    */
   postings?: number;
@@ -358,14 +358,17 @@ export function seriesDetail(
   const posted = postedAveragesBySeries(db, [s], today).get(s.id)!;
 
   /*
-   * ⛔ A bar per PAYMENT where the average is per payment (`posted.occurrences`) — Jun 16's two card rows one bar, said
-   * "one payment, posted as 2" — as a lump of pay is drawn as the calendar reads it. 🔴 Row by row, his rent's history
-   * read "each of the 5 posted occurrences … Jun 16, 2026 -$1,100.00 -$1,009.00 · -$1,334.80 -$774.20" under a Per
-   * charge of four payments, each above the -$2,109.00 (review of af5b0fa, a copy of his ledger, 2026-10-12).
+   * ⛔ A bar per PAYMENT where the average is per payment (`posted.everyOccurrence`) — Jun 16's two card rows one bar,
+   * said "one payment, posted as 2" — as a lump of pay is drawn as the calendar reads it. 🔴 Row by row, his rent's
+   * history read "each of the 5 posted occurrences … Jun 16, 2026 -$1,100.00 -$1,009.00 · -$1,334.80 -$774.20" under a
+   * Per charge of four payments, each above the -$2,109.00 (review of af5b0fa, a copy of his ledger, 2026-10-12).
+   *
+   * ⚖️ Every payment at every rate, each against its own time's (§6A 55): a history is drawn whole, as his pay's cash
+   * weeks are, though the Per charge above averages only the payments at the rate in force now (§6A 63).
    */
   const amountHistory: AmountHistoryPoint[] =
-    posted.occurrences !== null
-      ? posted.occurrences.map((o) => ({
+    posted.everyOccurrence !== null
+      ? posted.everyOccurrence.map((o) => ({
           date: o.postedOn,
           amountCents: o.amountCents,
           perPayday: null,

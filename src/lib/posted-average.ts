@@ -15,7 +15,10 @@ import { currentRatePeriod, ratePeriodOf, type RateSchedule } from "./series-kin
  * CURRENT rate (`PaydayReading.ratePeriod`), because a dated rate change is not a change in what a week pays.
  *
  * A series with a schedule of charges (`readsPerOccurrence`) averages what each OCCURRENCE was paid: the rows of one
- * payment are one sample. Any other series averages its rows as they posted.
+ * payment are one sample. ⚖️ …and only the payments made at the rate in force now (owner decision 2026-10-12, §6A 63 —
+ * `atTodaysRate`), as his pay is held to its current rate: a rent increase recorded with the old rate's dates leaves
+ * the old rent out of the average, and with no payment yet at the new rate there is NO average. Any other series
+ * averages its rows as they posted.
  *
  * 🔴 Measured on a copy of his ledger 2026-10-08: the raw mean of his four deposits — Jun 4's $1,047.00 cash week,
  * Jun 5's $400.00, the Sep 23 lump of $4,567.68 and Sep 24's $1,141.92 — is $1,789.15, an amount no payday ever paid.
@@ -64,7 +67,7 @@ export function postedAverage(
     reading.per === "payday"
       ? perPaydaySamples(rows, reading.readings, schedule)
       : reading.per === "occurrence"
-        ? occurrencesOf(rows).map((o) => o.amountCents)
+        ? atTodaysRate(occurrencesOf(rows), schedule).map((o) => o.amountCents)
         : rows.map((r) => r.amountCents);
   if (samples.length === 0) return { avgCents: null, stddevCents: null };
   const mean = samples.reduce((a, c) => a + c, 0) / samples.length;
@@ -99,9 +102,10 @@ export interface Occurrence {
 
 /**
  * What each payment paid, oldest first: a day's rows summed — one payment the bank posted as several, as his card
- * posted Jun 16's rent as two. A row of another day is another payment, however near. The samples of the posted
- * average (`readsPerOccurrence`), and — through `SeriesPostedAverage.occurrences` — what the popover's sentence counts
- * and ranges and what the series page's Amount history draws, so neither can count a payment the average does not.
+ * posted Jun 16's rent as two. A row of another day is another payment, however near. The payments of the posted
+ * average (`readsPerOccurrence`) — those at the rate in force now, `atTodaysRate` — and, every one of them, what the
+ * series page's Amount history draws (`SeriesPostedAverage.everyOccurrence`), so neither the average, the popover's
+ * sentence nor the history can count a payment as two.
  *
  * ⚠️ Not the series' tolerance either side, the reach the calendar gives a payment of a due day (`paymentFor`): the
  * calendar pays a due day with ONE posting, and walks due days only from the anchor forward — the rent's from Sep 1, so
@@ -121,6 +125,23 @@ export function occurrencesOf(rows: readonly Pick<ReadableRow, "postedOn" | "amo
     );
   }
   return [...byDay.values()].sort((a, b) => compareDates(a.postedOn, b.postedOn));
+}
+
+/**
+ * ⚖️ The payments a series read per occurrence averages: those whose day falls in the rate era in force now
+ * (`ratePeriodOf` … `currentRatePeriod`) — owner decision 2026-10-12 (§6A 63), the pay rule's era (§6A 55) on a bill:
+ * if a rent increase is recorded with the old rate's dates, its posted avg is what he has paid at the new rate. Every
+ * payment of a series whose rate never changed. Through `SeriesPostedAverage.occurrences`, also what the popover's
+ * sentence counts and ranges, so it cannot count a payment the average leaves out.
+ *
+ * ⚠️ Latent on his ledger (2026-10-12): only his pay has a history, and pay is read per payday, never through here.
+ */
+export function atTodaysRate(
+  occurrences: readonly Occurrence[],
+  schedule: Pick<RateSchedule, "amountHistory">,
+): Occurrence[] {
+  const now = currentRatePeriod(schedule);
+  return occurrences.filter((o) => ratePeriodOf(schedule, o.postedOn) === now);
 }
 
 /**

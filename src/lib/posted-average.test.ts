@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
 import { paydayReadings, type PaydayReading } from "./per-payday";
-import { occurrencesOf, postedAsWord, postedAverage, readsPerOccurrence } from "./posted-average";
+import { atTodaysRate, occurrencesOf, postedAsWord, postedAverage, readsPerOccurrence } from "./posted-average";
 import type { RateSchedule } from "./series-kind";
 
 const WEEK = 114_192;
@@ -78,6 +78,53 @@ describe("postedAverage — a series read per occurrence", () => {
       avgCents: -243_480,
       stddevCents: null,
     });
+  });
+});
+
+/**
+ * ⚖️ Owner decision 2026-10-12 (§6A 63): a bill or subscription with a rate history averages ONLY the payments made at
+ * the rate in force now, as his pay does (§6A 55) — a dated rate change is not a change in what a payment pays. Latent
+ * on his ledger, where only his pay has a history: the rent's increase here is hypothetical, -$2,000.00 through Jul 31.
+ */
+describe("postedAverage — a series read per occurrence, with a rate history", () => {
+  /** the rent as if raised Aug 1, 2026: Jun 16's and Jul 8's payments were at the rate before */
+  const RAISED_AUG_1: RateSchedule = {
+    nextExpectedAmountCents: -210_900,
+    amountHistory: [{ throughOn: "2026-07-31", amountCents: -200_000 }],
+  };
+
+  test("payments either side of the change: only Aug 4's and Sep 2's are averaged — -$2,264.16 ± $38.25", () => {
+    expect(postedAverage(RENT_ROWS, PER_OCCURRENCE, RAISED_AUG_1)).toEqual({ avgCents: -226_416, stddevCents: 3_825 });
+    expect(atTodaysRate(occurrencesOf(RENT_ROWS), RAISED_AUG_1).map((o) => o.postedOn)).toEqual([
+      "2026-08-04",
+      "2026-09-02",
+    ]);
+  });
+
+  /* ⛔ never the old rate's average in its place: no payment at the rate in force now is no posted average */
+  test("only old-rate payments: no average at all", () => {
+    const raisedOct1 = { ...RAISED_AUG_1, amountHistory: [{ throughOn: "2026-09-30", amountCents: -200_000 }] };
+    expect(postedAverage(RENT_ROWS, PER_OCCURRENCE, raisedOct1)).toEqual({ avgCents: null, stddevCents: null });
+    expect(atTodaysRate(occurrencesOf(RENT_ROWS), raisedOct1)).toEqual([]);
+  });
+
+  test("a history that ends before the first payment, or none, reads every payment", () => {
+    const raisedLongAgo = { ...RAISED_AUG_1, amountHistory: [{ throughOn: "2025-12-31", amountCents: -200_000 }] };
+    for (const schedule of [raisedLongAgo, FLAT]) {
+      expect(postedAverage(RENT_ROWS, PER_OCCURRENCE, schedule)).toEqual({ avgCents: -231_220, stddevCents: 8_527 });
+      expect(atTodaysRate(occurrencesOf(RENT_ROWS), schedule)).toEqual(occurrencesOf(RENT_ROWS));
+    }
+  });
+
+  /* the payday rule's own era test, on a payment's one day: the day a period runs through is still that period's */
+  test("a payment ON the last day of the old rate is the old rate's", () => {
+    const raisedAug5 = { ...RAISED_AUG_1, amountHistory: [{ throughOn: "2026-08-04", amountCents: -200_000 }] };
+    expect(atTodaysRate(occurrencesOf(RENT_ROWS), raisedAug5).map((o) => o.postedOn)).toEqual(["2026-09-02"]);
+  });
+
+  /* ⛔ the pay rule is its own (§6A 55), and as posted is as posted: neither reading is narrowed here */
+  test("a series read as it posted keeps every row, whatever its history", () => {
+    expect(postedAverage(RENT_ROWS, AS_POSTED, RAISED_AUG_1)).toEqual(postedAverage(RENT_ROWS, AS_POSTED, FLAT));
   });
 });
 

@@ -1,5 +1,5 @@
 import type { RatePeriod, SeriesKind } from "@/db/schema/recurring";
-import { compareDates, isValidIsoDate } from "./dates";
+import { addDays, compareDates, isValidIsoDate } from "./dates";
 
 /**
  * Whether a recurring series' money is his income or his spending — every kind's is, by its sign, except a
@@ -66,6 +66,15 @@ export function ratePeriodOf(series: Pick<RateSchedule, "amountHistory">, day: s
 /** The rate era in force NOW — the one `ratePeriodOf` gives every day past the last dated period. */
 export function currentRatePeriod(series: Pick<RateSchedule, "amountHistory">): number {
   return (series.amountHistory ?? []).length;
+}
+
+/**
+ * The first day of the rate in force now — the day after the last dated period ends; null for a series whose rate
+ * has never changed. Where the popover's words about a bill's posted average start counting (§6A 63).
+ */
+export function currentRateSince(series: Pick<RateSchedule, "amountHistory">): string | null {
+  const last = series.amountHistory?.at(-1);
+  return last === undefined ? null : addDays(last.throughOn, 1);
 }
 
 /**

@@ -190,3 +190,137 @@ describe("the posted average, per occurrence — his rent on the page, the All t
 
   const series = (id: string) => bundle.db.select().from(recurringSeries).where(eq(recurringSeries.id, id)).get()!;
 });
+
+/**
+ * ⚖️ Owner decision 2026-10-12 (§6A 63): a bill or subscription with a rate history (`user_amount_history`) averages
+ * ONLY the payments made at the rate in force now, as his pay does (§6A 55) — on the series page, the All tab and the
+ * popover alike, and the popover's sentence counts the payments that average is of. No payment at the rate in force now
+ * is no posted average, never the old rate's.
+ *
+ * Latent on his ledger (2026-10-12), where only his pay has a history: the rent's increase here is hypothetical —
+ * -$2,000.00 through the day named, -$2,109.00 (his own figure) since.
+ */
+describe("the posted average of a bill with a rate history — the payments at the rate in force now", () => {
+  const TODAY = "2026-10-12";
+  let dir: string;
+  let bundle: DbBundle;
+  let rent: RentLedger;
+
+  beforeEach(() => {
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), "moneyapp-posted-average-era-"));
+    bundle = createDatabase(path.join(dir, "t.db"));
+    seedDatabase(bundle.db);
+    rent = seedHisRent(bundle.db);
+  });
+
+  afterEach(() => {
+    bundle.sqlite.close();
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  /** the rent as if it had been -$2,000.00 through `throughOn` */
+  const raise = (throughOn: string): void => {
+    bundle.db
+      .update(recurringSeries)
+      .set({ userAmountHistory: [{ throughOn, amountCents: -200_000 }] })
+      .where(eq(recurringSeries.id, rent.rentId))
+      .run();
+  };
+  const surfaces = () => {
+    const d = seriesDetail(bundle.db, rent.rentId, TODAY)!;
+    const row = listSeries(bundle.db, TODAY).find((s) => s.id === rent.rentId)!;
+    const p = provenanceFor(bundle.db, { kind: "recurringSeries", id: rent.rentId, today: TODAY })!;
+    return { page: [d.postedAvgCents, d.postedStddevCents], allTab: row.postedAvgCents, popover: p, detail: d };
+  };
+
+  test("raised Aug 1: Aug 4's and Sep 2's payments — -$2,264.16 ± $38.25 on all three, not -$2,312.20", () => {
+    raise("2026-07-31");
+    const s = surfaces();
+    expect(s.page).toEqual([-226_416, 3_825]);
+    expect(s.allTab).toBe(-226_416);
+    expect(s.popover.headline).toContain("average of what actually posted is -$2,264.16, which is not what you set");
+    expect(s.popover.headline).not.toContain("-$2,312.20");
+  });
+
+  /*
+   * ⛔ The sentence before the average counts and ranges what the average is OF: the two payments at the rate in force
+   * now — and says where the other two went. Jun 16's two card rows are at the old rate, so no "posted as 2" is named.
+   */
+  test("the popover counts the two payments the average is of, and names the two before the change", () => {
+    raise("2026-07-31");
+    const p = surfaces().popover;
+    expect(p.headline).toContain(
+      "Its 2 payments at the rate in force since Aug 1, 2026 were 2 different amounts, from -$2,291.21 to " +
+        "-$2,237.11 — so any single figure for it is an average, not a repeat. Its 2 payments before Aug 1, 2026 were " +
+        "at an earlier rate, and are not counted.",
+    );
+    expect(p.headline).not.toContain("posted as 2");
+    const cents = (s: string): number => Math.round(Number(s.replace(/[$,]/g, "")) * 100);
+    const [, lo, hi] = /from (-?\$[\d,.]+) to (-?\$[\d,.]+)/.exec(p.headline)!;
+    const avg = cents(/actually posted is (-?\$[\d,.]+[\d])/.exec(p.headline)![1]!);
+    expect(avg).toBeGreaterThanOrEqual(cents(lo!));
+    expect(avg).toBeLessThanOrEqual(cents(hi!));
+    // the documents are still five rows; what they paid is counted as the average counts it
+    expect(p.sources[1]).toMatchObject({
+      label: "5 tagged postings in the ledger",
+      detail:
+        "2 payments at the rate in force since Aug 1: 2 different amounts, -$2,291.21 to -$2,237.11 · 2 before it, " +
+        "at an earlier rate",
+      on: "2026-06-16",
+    });
+  });
+
+  test("raised Sep 1: its one payment since, -$2,291.21, and no spread", () => {
+    raise("2026-08-31");
+    const s = surfaces();
+    expect(s.page).toEqual([-229_121, null]);
+    expect(s.allTab).toBe(-229_121);
+    expect(s.popover.headline).toContain(
+      "Its one payment at the rate in force since Sep 1, 2026 was -$2,291.21, on Sep 2, 2026. Its 3 payments before " +
+        "Sep 1, 2026 were at an earlier rate, and are not counted.",
+    );
+  });
+
+  /* ⛔ never the old rate's average in its place */
+  test("raised Oct 1, nothing paid since: NO posted average on the page, the All tab or the popover", () => {
+    raise("2026-09-30");
+    const s = surfaces();
+    expect(s.page).toEqual([null, null]);
+    expect(s.allTab).toBeNull();
+    expect(s.popover.headline).not.toContain("average of what actually posted");
+    expect(s.popover.headline).toContain(
+      "Its 4 payments before Oct 1, 2026 were at an earlier rate, and nothing has posted at the rate in force since — " +
+        "so there is no average of it yet.",
+    );
+    expect(s.popover.sources[1]).toMatchObject({
+      label: "5 tagged postings in the ledger",
+      detail: "4 payments, all before Oct 1, at an earlier rate",
+      on: "2026-06-16",
+    });
+    expect(JSON.stringify(s.popover)).not.toMatch(/undefined|NaN|Infinity/);
+  });
+
+  /* the history is a history: every payment is drawn, each against its own time's rate (§6A 55), as his pay's is */
+  test("the Amount history still draws all four payments, the two before Aug 1 against -$2,000.00", () => {
+    raise("2026-07-31");
+    expect(surfaces().detail.amountHistory.map((h) => [h.date, h.amountCents, h.expectedCents, h.postings])).toEqual([
+      ["2026-06-16", -243_480, -200_000, 2],
+      ["2026-07-08", -228_570, -200_000, 1],
+      ["2026-08-04", -223_711, -210_900, 1],
+      ["2026-09-02", -229_121, -210_900, 1],
+    ]);
+  });
+
+  /* a history that ends before his first payment changes nothing anyone reads */
+  test("raised before Jun 16: every surface reads exactly as with no history", () => {
+    const before = surfaces();
+    raise("2026-05-31");
+    const after = surfaces();
+    expect(after.page).toEqual(before.page);
+    expect(after.allTab).toBe(before.allTab);
+    expect(after.popover).toEqual(before.popover);
+    expect(after.detail.amountHistory.map((h) => h.amountCents)).toEqual(
+      before.detail.amountHistory.map((h) => h.amountCents),
+    );
+  });
+});
