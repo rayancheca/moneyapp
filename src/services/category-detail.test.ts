@@ -13,6 +13,7 @@ import { recurringSeries } from "@/db/schema/recurring";
 import { transactions, type TransactionStatus } from "@/db/schema/transactions";
 import { budgetCoverageSentence } from "@/lib/budget-coverage";
 import { budgetVerdict } from "@/lib/budget-verdict";
+import { periodBounds } from "@/lib/dates";
 import { formatDayLong } from "@/lib/format-date";
 import { dedupeHash } from "@/lib/hash";
 import { createAccount } from "./accounts";
@@ -751,6 +752,85 @@ describe("⚖️ §6A 49 — a category page asks its own imported-through day",
       spentCents: 1_200,
       verdict: { headline: "On track · 12% used", withheld: false },
       coverageSentence: null,
+    });
+  });
+
+  /*
+   * 🔴 THE CARD AND THE HEADLINE OVER IT NAMED TWO DAYS FOR ONE WINDOW. A category with no account of its own asks its
+   * nearest ancestor, then the ledger, on its page (`categoryReachFor`); its budget row asked no day at all and counted
+   * every elapsed day. On a copy of his ledger copy 2026-10-12, a monthly budget made on Travel › Hotels (3 rows ever,
+   * none since March) at 2026-09-02: the headline a measured $0.00 ("This window sits inside what has been imported"),
+   * the card under it "Awaiting statements · nothing imported for this category since Mar 1 · 2 days of this period
+   * unaccounted"; Utilities › Mobile the same. And once the ancestor's day moves inside the window, the headline counts
+   * N days where the card kept counting all of them. ⛔ The row asks the page's day — `categoryReachFor`, never a copy.
+   */
+  test("a budget on a category with no account of its own counts what its page counts, against the page's day", () => {
+    carLedger();
+    createBudget(bundle.db, { categoryId: catId("Fees > Interest Charges"), period: "monthly", amountCents: 5_000, startsOn: "2026-01-01" });
+    createBudget(bundle.db, { categoryId: catId("Travel"), period: "monthly", amountCents: 20_000, startsOn: "2026-01-01" });
+
+    /** the page's headline world and its budget card, asked as `/categories/<id>` asks them on `refDate` */
+    const onePage = (categoryPath: string, refDate: string, label: string) => {
+      const { start, end } = periodBounds(refDate, "monthly");
+      const copy = categoryEmptyCopy(bundle.db, catId(categoryPath), { from: start, to: end }, {
+        today: refDate,
+        label,
+        ledgerOpens: ledgerOpens(bundle.db),
+        formatDay: formatDayLong,
+      });
+      const row = budgetPaceStatuses(bundle.db, refDate).find((s) => s.budget.categoryId === catId(categoryPath))!;
+      const ref = categoryBudgetRef(bundle.db, catId(categoryPath), refDate)!;
+      // one rule: the card is its /budgets row, word for word
+      expect(ref.verdict).toEqual(budgetVerdict(row));
+      expect(ref.coverageSentence).toBe(ref.verdict.withheld ? budgetCoverageSentence(row) : null);
+      return {
+        figure: copy.figure,
+        description: copy.description,
+        uncoveredDays: row.uncoveredDays,
+        verdict: ref.verdict.headline,
+        sentence: ref.coverageSentence,
+      };
+    };
+
+    // Aug 1 – 10, every day read on Fees' Aug 12: the page's measured $0.00 is the card's measurement too
+    expect(onePage("Fees > Interest Charges", "2026-08-10", "August 2026")).toMatchObject({
+      figure: "zero",
+      uncoveredDays: 0,
+      verdict: "On track · 0% used",
+      sentence: null,
+    });
+    // Aug 1 – 20, read through Fees' Aug 12: the page's lower bound counts 8 days, and so does the card
+    const august = onePage("Fees > Interest Charges", "2026-08-20", "August 2026");
+    expect(august.figure).toBe("lower-bound");
+    expect(august.description).toMatch(/^8 days of it have not been imported — spending in Fees is imported through Wed, Aug 12, 2026, /);
+    expect(august).toMatchObject({
+      uncoveredDays: 8,
+      verdict: "Awaiting statements",
+      sentence: "nothing imported for this category since Feb 1 · spending in Fees imported through Aug 12 · 8 days of this period unaccounted",
+    });
+    // October, past Fees' Aug 12: the dash and the withheld card name one day and one count
+    const october = onePage("Fees > Interest Charges", OCT_7, "October 2026");
+    expect(october.figure).toBe("dash");
+    expect(october.description).toMatch(/^Nothing has been imported for 7 days of it; spending in Fees is imported through Wed, Aug 12, 2026\. /);
+    expect(october).toMatchObject({
+      uncoveredDays: 7,
+      verdict: "Awaiting statements",
+      sentence: "nothing imported for this category since Apr 1 · spending in Fees imported through Aug 12 · 7 days of this period unaccounted",
+    });
+
+    // a top-level category with no ancestor to ask: the ledger's Sep 24 on the page, so on the card
+    expect(onePage("Travel", "2026-09-20", "September 2026")).toMatchObject({
+      figure: "zero",
+      uncoveredDays: 0,
+      verdict: "On track · 0% used",
+      sentence: null,
+    });
+    const travel = onePage("Travel", OCT_7, "October 2026");
+    expect(travel.description).toMatch(/^Nothing has been imported for 7 days of it; the ledger is imported through Thu, Sep 24, 2026\. /);
+    expect(travel).toMatchObject({
+      figure: "dash",
+      uncoveredDays: 7,
+      sentence: "nothing imported for this category since Apr 1 · the ledger imported through Sep 24 · 7 days of this period unaccounted",
     });
   });
 });

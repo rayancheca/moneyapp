@@ -104,3 +104,77 @@ describe("budgetCoverageSentence — the withheld row", () => {
     );
   });
 });
+
+/*
+ * 🔴 A BUDGET ON A CATEGORY WITH NO ACCOUNT OF ITS OWN COUNTED EVERY ELAPSED DAY, WHILE ITS PAGE ASKED AN ANCESTOR.
+ * Measured on a copy of his ledger copy 2026-10-12, with a monthly budget made on Travel › Hotels (3 rows ever, none
+ * since March): at 2026-09-02 `/categories/<Hotels>` headlined a measured $0.00 ("This window sits inside what has been
+ * imported") over a budget card reading "Awaiting statements · nothing imported for this category since Mar 1 · 2 days
+ * of this period unaccounted" — and at 2026-08-12 the same split, 12 days. The page asks the nearest ancestor, then
+ * the ledger (§6A 49, `categoryReachFor`); the row counted against no day at all, so it waited for a statement no
+ * import could bring. ⛔ The row counts against the page's day now, and names whose day it is in the page's words.
+ */
+describe("a category with no import day of its own names the day its page counts it against", () => {
+  const dormant = (over: Partial<BudgetCoverageInput> = {}): BudgetCoverageInput =>
+    input({
+      importedThroughOn: null,
+      spentFromAccounts: 0,
+      spentFromSince: "2026-04-01",
+      uncoveredDays: 7,
+      bounds: { start: "2026-10-01" },
+      ...over,
+    });
+  const fees = {
+    whose: "ancestor" as const,
+    name: "Fees",
+    coverage: { importedThroughOn: "2026-08-12", spentFromSince: "2026-04-01", spentFromAccounts: 1, spentFromWallets: 0 },
+  };
+
+  test("its nearest ancestor's day, named as the ancestor's — the page's 'spending in Fees is imported through'", () => {
+    expect(budgetCoverageSentence(dormant({ borrowedDay: fees }))).toBe(
+      "nothing imported for this category since Apr 1 · spending in Fees imported through Aug 12 · 7 days of this period unaccounted",
+    );
+    // the panel's fact is the same two clauses, without the count
+    expect(budgetCoverageFact(dormant({ borrowedDay: fees }))).toBe(
+      "nothing imported for this category since Apr 1 · spending in Fees imported through Aug 12",
+    );
+    // spent only from accounts no import dates says so, and names the same day
+    expect(budgetCoverageFact(dormant({ spentFromAccounts: 1, borrowedDay: fees }))).toBe(
+      "spent only from accounts with no import date since Apr 1 · spending in Fees imported through Aug 12",
+    );
+  });
+
+  test("an ancestor spent only from cash wallets is named in its own row's words", () => {
+    const gifts = (wallets: number) => ({
+      whose: "ancestor" as const,
+      name: "Gifts & Donations",
+      coverage: { importedThroughOn: null, spentFromSince: "2026-04-01", spentFromAccounts: 0, spentFromWallets: wallets },
+    });
+    expect(budgetCoverageFact(dormant({ borrowedDay: gifts(1) }))).toBe(
+      "nothing imported for this category since Apr 1 · Gifts & Donations spent only from a cash wallet since Apr 1",
+    );
+    expect(budgetCoverageFact(dormant({ borrowedDay: gifts(2) }))).toMatch(/ · Gifts & Donations spent only from cash wallets since Apr 1$/);
+  });
+
+  test("the ledger's day, where no ancestor has one — in the ledger's words", () => {
+    expect(budgetCoverageSentence(dormant({ borrowedDay: { whose: "ledger", on: "2026-09-24" } }))).toBe(
+      "nothing imported for this category since Apr 1 · the ledger imported through Sep 24 · 7 days of this period unaccounted",
+    );
+    // an empty ledger has no day to name: the category's own fact stands alone
+    expect(budgetCoverageFact(dormant({ borrowedDay: { whose: "ledger", on: null } }))).toBe(
+      "nothing imported for this category since Apr 1",
+    );
+  });
+
+  test("a borrowed day outside the graded period's year carries its year", () => {
+    const january = { start: "2027-01-01" };
+    expect(
+      budgetCoverageFact(dormant({ bounds: january, spentFromSince: "2026-07-01", borrowedDay: { whose: "ledger", on: "2026-12-20" } })),
+    ).toBe("nothing imported for this category since Jul 1, 2026 · the ledger imported through Dec 20, 2026");
+  });
+
+  test("a category with a day of its own, or spent only from cash, never names another's", () => {
+    expect(budgetCoverageFact(input({ borrowedDay: fees }))).toBe("spending imported through Sep 2");
+    expect(budgetCoverageFact(dormant({ spentFromWallets: 1, borrowedDay: fees }))).toBe("spent only from a cash wallet since Apr 1");
+  });
+});

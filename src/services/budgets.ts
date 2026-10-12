@@ -60,6 +60,7 @@ export { overdueForSeries };
 export type { BudgetTail, BudgetTailSeries };
 import { incomeBasis, levelledMonthlyCents, type IncomeBasis } from "@/lib/income-basis";
 import { daysNotImportedYet } from "@/lib/empty-period";
+import { spentOnlyFromCashWallets, type BorrowedDay } from "@/lib/budget-coverage";
 import { categoryReach, type CategoryReach } from "@/lib/category-reach";
 import {
   accountsThatDate,
@@ -1374,6 +1375,8 @@ export interface CategoryCoverage {
  * read the same there on 2026-09-15). The page names the category's own day
  * now, through `categoryReachFor` below — this function, never a copy — and so
  * do its trend's empty months and its headline's proof (`categorySpend`).
+ * Where THIS names no day (and the row is not cash only), the row asks the page's
+ * in turn — an ancestor's, else the ledger's (`borrowedReach`).
  *
  * ⚖️ …AND SO ARE ARCHIVED ACCOUNTS, while an account a statement is still coming
  * for was spent from — the one rule (`accountsAwaitingStatements`) /imports asks
@@ -1505,41 +1508,73 @@ export interface BudgetPaceStatus extends BudgetStatus, CategoryCoverage {
   overdue: ArrearsSeries[];
   /**
    * Days of THIS window the ledger cannot speak for: the elapsed days past
-   * `importedThroughOn`, all of them when it is null (`daysNotImportedYet`) —
-   * a row spent only from cash wallets keeps them all, and says why instead
-   * (`lib/budget-coverage::spentOnlyFromCashWallets`).
+   * `importedThroughOn` — past `borrowedDay`'s where the category has none of its
+   * own (`daysNotImportedYet`). A row spent only from cash wallets keeps them all,
+   * and says why instead (`lib/budget-coverage::spentOnlyFromCashWallets`).
    * >0 means the row's spent/pace/% figures are lower bounds, not measurements,
    * and the UI must not report a verdict — "On track" over an unimported month
    * is the one failure mode a budgeting tool cannot afford.
    */
   uncoveredDays: number;
+  /**
+   * the page's day where the category has no import day of its own and is not cash only (`borrowedReach`) — what
+   * `uncoveredDays` was counted against, named in the row's sentence; null otherwise
+   */
+  borrowedDay: BorrowedDay | null;
 }
 
 /** The reads every pace row shares — asked once per render, however many rows it builds. */
-interface BudgetPaceReads {
+interface BudgetPaceReads extends CategoryReachContext {
   /** the series whose charges are not recurring money */
   notDrawn: ReadonlySet<string>;
   /** the car's up-front money, spent once and never a rate (§6A 51, `budgetOneOffCents`) */
   upfront: UpfrontCarRule | null;
-  /** where the import stands, per account… */
-  frontier: ObservationFrontier;
-  /** …and at the ledger's opening end */
+  /** the ledger's opening end — the import's per-account frontier, wallets and awaited accounts are the page's reads */
   opens: string | null;
-  /** the cash wallets, which no import ever reaches (⚖️ `categoryCoverage`) */
-  wallets: ReadonlySet<string>;
-  /** the accounts a statement is still coming for (⚖️ `categoryCoverage`) */
-  awaiting: ReadonlySet<string>;
 }
 
 function budgetPaceReads(db: AppDatabase): BudgetPaceReads {
   const notDrawn = seriesIdsNotDrawnAsRecurring(db);
   return {
+    // ⛔ the reads `/categories/[id]` asks its day with, so the row can ask the same one (`borrowedReach`)
+    ...categoryReachContext(db),
     notDrawn,
     upfront: upfrontCarRule(loadCategoryIndex(db), outsidePortfolioCashAccountIds(db), notDrawn),
-    frontier: observationFrontier(db),
     opens: ledgerOpens(db),
-    wallets: cashWalletIds(db),
-    awaiting: accountsAwaitingStatements(db),
+  };
+}
+
+/**
+ * ⚖️ The day a budget on a category with NO IMPORT DAY OF ITS OWN counts its window against: the one its page asks
+ * (§6A 49, `categoryReachFor`) — the nearest ancestor's, else the ledger's. Null where the category has a day of its
+ * own, and where it is spent only from cash wallets (⚖️ 2026-09-15: it keeps every elapsed day and reads "Cash only").
+ *
+ * 🔴 The row asked no day at all, so every elapsed day was "unaccounted" and the row waited for a statement no import
+ * could bring. On a copy of his ledger copy 2026-10-12, a monthly budget made on Travel › Hotels (3 rows ever, none
+ * since March) at 2026-09-02: `/categories/<Hotels>` headlined a measured $0.00 and its budget card, one block below,
+ * "Awaiting statements · nothing imported for this category since Mar 1 · 2 days of this period unaccounted" — and once
+ * Travel's day moved inside the window, the headline would count N days where the card kept counting all of them.
+ * None of his 12 budgets is on such a category; one made on a dormant subcategory is.
+ *
+ * ⛔ `categoryReachFor` itself, never a copy of its walk: a second walk is a second day.
+ */
+function borrowedReach(
+  db: AppDatabase,
+  categoryId: string,
+  own: CategoryCoverage,
+  periodStart: string,
+  refDate: string,
+  ctx: CategoryReachContext,
+): { through: string | null; day: BorrowedDay } | null {
+  if (own.importedThroughOn !== null || spentOnlyFromCashWallets(own)) return null;
+  // own names no day, so this is an ancestor's (an import day, or cash only — read through today) or the ledger's
+  const reach = categoryReachFor(db, categoryId, periodStart, refDate, ctx);
+  return {
+    through: reach.through,
+    day:
+      reach.whose === "ledger"
+        ? { whose: "ledger", on: reach.through }
+        : { whose: "ancestor", name: reach.owner.name, coverage: reach.coverage },
   };
 }
 
@@ -1640,12 +1675,14 @@ export function budgetPaceStatusOf(
   // `daysNotImportedYet`, the dashboard tile's and /spending's, not a third
   // copy of the clamp — only the frontier it is given is this category's.
   const coverage = categoryCoverage(db, s.budget.categoryId, start, refDate, frontier, wallets, awaiting);
+  // ⚖️ no day of its own: the page's, so the card under its headline counts what the headline counts (`borrowedReach`)
+  const borrowed = borrowedReach(db, s.budget.categoryId, coverage, start, refDate, reads);
   const uncoveredDays = daysNotImportedYet({
     from: start,
     to: end,
     today: refDate,
     ledgerOpens: opens,
-    ledgerReaches: coverage.importedThroughOn,
+    ledgerReaches: borrowed === null ? coverage.importedThroughOn : borrowed.through,
   });
   return {
     ...s,
@@ -1653,6 +1690,7 @@ export function budgetPaceStatusOf(
     overdueUnreadCents: overdue.series.reduce((sum, o) => sum + o.unreadCents, 0),
     overdue: overdue.series,
     ...coverage,
+    borrowedDay: borrowed?.day ?? null,
     uncoveredDays,
     totalDays,
     elapsedDays,

@@ -2107,6 +2107,8 @@ describe("data coverage (uncoveredDays / importedThroughOn)", () => {
     const s = budgetPaceStatuses(bundle.db, TODAY).find((x) => x.categoryName === "Travel")!;
     expect(s.importedThroughOn).toBeNull();
     expect(s.spentFromAccounts).toBe(0);
+    // its page's day is the ledger's, and an empty ledger has none: every elapsed day is unread
+    expect(s.borrowedDay).toEqual({ whose: "ledger", on: null });
     expect(s.uncoveredDays).toBe(11);
   });
 
@@ -2186,13 +2188,24 @@ describe("data coverage (uncoveredDays / importedThroughOn)", () => {
     expect(s.uncoveredDays).toBe(208); // Jan 16 .. Aug 11 inclusive
   });
 
-  test("spending only on accounts with no import date leaves the window unread, and says there were accounts", () => {
+  /*
+   * 🔴 This pinned the whole window unread (11 days) — a statement no import could bring, while the category's page
+   * counted the same window against the ledger's day (§6A 49, `categoryReachFor`). On one page the budget card and the
+   * headline over it named two days and two counts (review of e37997b, measured on a copy of his ledger copy
+   * 2026-10-12). ⛔ The row asks the page's day: no ancestor here, so the ledger's.
+   */
+  test("spending only on accounts with no import date says there were accounts, and counts against its page's day", () => {
     // investment accounts are priced, not imported, so they have no frontier
     spend("2026-08-05", -3_000, "Food", account("Brokerage", "investment"));
     const s = foodBudget();
     expect(s.importedThroughOn).toBeNull();
     expect(s.spentFromAccounts).toBe(1);
-    expect(s.uncoveredDays).toBe(11);
+    // the ledger reaches its one row, Aug 5: Aug 6 – 11 are the days nobody has looked at
+    expect(s.borrowedDay).toEqual({ whose: "ledger", on: "2026-08-05" });
+    expect(s.uncoveredDays).toBe(6);
+    expect(budgetCoverageSentence(s)).toBe(
+      "spent only from accounts with no import date since Feb 1 · the ledger imported through Aug 5 · 6 days of this period unaccounted",
+    );
   });
 
   test("⚖️ a cash wallet is left out: its row inside the window neither holds the budget back nor counts as an account", () => {
