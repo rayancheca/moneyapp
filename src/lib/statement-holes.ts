@@ -44,7 +44,9 @@ export interface StatementHole {
   /**
    * How many statements the account's own rhythm says closed inside this
    * window. Null when the rhythm is unknown — a count invented from a flat
-   * 30-day assumption would be a number nobody measured.
+   * 30-day assumption would be a number nobody measured — and when an
+   * every-n-days rhythm puts no close in it; never null on a monthly cycle,
+   * where a window ends at a close (`closesWithin`).
    */
   readonly closes: number | null;
 }
@@ -130,6 +132,21 @@ export function statementHoles(
  * Only a day-of-month cycle gets either. A month-end close needs no wander, and
  * an every-n-days tolerance is a spread of GAPS — on an irregular account wide
  * enough to invent a statement in a window its rhythm puts none in.
+ *
+ * ⛔ A walk that lands no step in the hole still counts ONE on a monthly cycle:
+ * `to` is a close, and a day-of-month or month-end cycle cannot fit two into a
+ * window shorter than its own step. 🔴 It returned null instead, and the hole read
+ * no count: a close that landed late opens the hole past the cycle's day, and a
+ * month stepped on that day overshoots `to` by more than the wander once the late
+ * close is no longer the newest and the trim has dropped it. Measured on a copy
+ * of his ledger 2026-10-12, given the Capital One closes 5ac1588 queued (Oct 9,
+ * Nov 9, a late Dec 13, Jan 9 never imported, Feb 9): the hole Dec 14 → Jan 9
+ * read "27 days", and Missing statements' header, which sums only counted holes,
+ * "5 statements · 179 days" for 6. As his ledger stands no hole reads null, and
+ * dropping each statement, and each adjacent pair, of every account counts every
+ * window as before. An every-n-days rhythm is no such bound — 107 days measured
+ * across missing monthly statements puts none in a 60-day hole that holds two —
+ * so a hole it misses stays uncounted.
  */
 function closesWithin(from: string, to: string, cadence: StatementCadence): number | null {
   if (cadence.rhythm.kind === "unknown") return null;
@@ -153,5 +170,6 @@ function closesWithin(from: string, to: string, cadence: StatementCadence): numb
      */
     count += 1;
   }
-  return count === 0 ? null : count;
+  if (count > 0) return count;
+  return cadence.rhythm.kind === "every-n-days" ? null : 1;
 }
