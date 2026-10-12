@@ -21,7 +21,11 @@ import { statementsByAccount } from "./statements-by-account";
 export interface AccountStatementPull extends StatementPull {
   accountId: string;
   accountName: string;
-  /** where he goes to download it (his request 2026-10-09) — null for a bank with no researched site */
+  /**
+   * where he goes to download it (his request 2026-10-09) — `statementSiteFor`'s: null for a bank with no researched
+   * site, or an account its bank's one researched link does not serve (Capital One's is for cards, so Capital One 360
+   * Checking gets none)
+   */
   site: StatementSite | null;
 }
 

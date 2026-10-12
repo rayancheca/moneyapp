@@ -51,9 +51,11 @@ test("the statement schedule states each account's measured cycle", async ({ pag
     "SoFi Savings SoFi sign-in · then Statements ↗ On schedule closes on the last day of the month, from 12 statements last one closed Jun 30, 8 days ago · next closes Jul 31",
   ]);
 
-  // each name is a link out to the bank, in a new tab, with nothing handed back to it
+  // each name is a link out to the bank, in a new tab, with nothing handed back to it — named by everything it
+  // shows, the hint included, so voice control finds it by what is on screen (WCAG 2.5.3)
   const discover = card.getByRole("link", {
-    name: "Discover it Card — opens Capital One's statements site in a new tab",
+    name: "Discover it Card, Capital One · statements — opens in a new tab",
+    exact: true,
   });
   await expect(discover).toHaveAttribute(
     "href",

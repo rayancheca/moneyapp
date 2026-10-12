@@ -92,7 +92,11 @@ const SITES: ReadonlyMap<string, SiteEntry> = new Map(Object.entries({
  */
 const PULLED_AT: ReadonlyMap<string, string> = new Map([["Discover", "Capital One"]]);
 
-/** The site an account's statements are pulled at; null for a wallet, or a bank nobody researched. */
+/**
+ * The site an account's statements are pulled at. Null for a wallet or a bank nobody researched, and null for an
+ * account its bank's one researched link does not serve: Capital One's lands on CARD documents, so Capital One 360
+ * Checking gets none rather than the card one.
+ */
 export function statementSiteFor(account: {
   readonly institutionName: string;
   readonly type: AccountType;
@@ -107,9 +111,15 @@ export function statementSiteHint(site: StatementSite): string {
   return site.opens === "statements" ? `${site.bank} · statements` : `${site.bank} sign-in · then ${site.then}`;
 }
 
-/** The link's accessible name — it starts with the visible account name, so voice control still finds it. */
+/**
+ * The link's accessible name: everything the link shows, in its order — the account's name, then the hint — and
+ * only then the new tab, which nothing on screen says (WCAG 2.5.3 Label in Name).
+ *
+ * 🔴 It carried the account's name and then reworded the hint ("— opens SoFi's sign-in in a new tab, then
+ * Statements"), so a voice-control user saying "click SoFi sign-in" or "click Chase statements" found no link —
+ * measured on his ledger copy 2026-10-12, 11 of 11 linked names on the Statement schedule. The hint is
+ * `statementSiteHint`'s, never reworded here, so what the link shows and what it is called cannot drift apart.
+ */
 export function statementSiteLabel(accountName: string, site: StatementSite): string {
-  return site.opens === "statements"
-    ? `${accountName} — opens ${site.bank}'s statements site in a new tab`
-    : `${accountName} — opens ${site.bank}'s sign-in in a new tab, then ${site.then}`;
+  return `${accountName}, ${statementSiteHint(site)} — opens in a new tab`;
 }

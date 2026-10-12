@@ -94,19 +94,40 @@ describe("statementSiteHint", () => {
 });
 
 describe("statementSiteLabel", () => {
-  // the accessible name starts with the visible one, so "click Chase Checking" still finds it by voice
-  test("names the account, the bank and the new tab", () => {
+  /**
+   * 🔴 WCAG 2.5.3 Label in Name: the link's visible text is the account's name AND the hint beside it, and the
+   * accessible name carried only the name, then reworded the hint ("— opens Chase's statements site in a new tab",
+   * "— opens SoFi's sign-in in a new tab, then Statements"), so a voice-control user saying "click SoFi sign-in" or
+   * "click Chase statements" found no link. Measured on his ledger copy 2026-10-12: all 11 linked names on the
+   * Statement schedule. The name now reads the visible text in its order, then adds only the new tab.
+   */
+  test.each([
+    ["Chase Checking", "Chase", "checking"],
+    ["Discover", "Discover", "credit"],
+    ["Venture X", "Capital One", "credit"],
+    ["Wells Fargo Everyday Checking", "Wells Fargo", "checking"],
+    ["SoFi Savings", "SoFi", "savings"],
+    ["Robinhood Brokerage", "Robinhood", "investment"],
+  ] as const)("%s: the name begins with all the link shows — its name, then the hint", (name, inst, type) => {
+    const site = siteOf(inst, type);
+    expect(statementSiteLabel(name, site).startsWith(`${name}, ${statementSiteHint(site)}`)).toBe(true);
+  });
+
+  test("a statements link: the visible text, then the new tab", () => {
     expect(statementSiteLabel("Chase Checking", siteOf("Chase", "checking"))).toBe(
-      "Chase Checking — opens Chase's statements site in a new tab",
+      "Chase Checking, Chase · statements — opens in a new tab",
     );
     expect(statementSiteLabel("Discover", siteOf("Discover", "credit"))).toBe(
-      "Discover — opens Capital One's statements site in a new tab",
+      "Discover, Capital One · statements — opens in a new tab",
     );
   });
 
-  test("a sign-in label carries the next step", () => {
+  test("a sign-in link: the next step is in the visible text, so the name carries it in the same words", () => {
     expect(statementSiteLabel("SoFi Checking", siteOf("SoFi", "checking"))).toBe(
-      "SoFi Checking — opens SoFi's sign-in in a new tab, then Statements",
+      "SoFi Checking, SoFi sign-in · then Statements — opens in a new tab",
+    );
+    expect(statementSiteLabel("Robinhood Agentic", siteOf("Robinhood", "checking"))).toBe(
+      "Robinhood Agentic, Robinhood sign-in · then Account → Reports and statements — opens in a new tab",
     );
   });
 });
