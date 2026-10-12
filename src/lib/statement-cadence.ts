@@ -280,11 +280,12 @@ function dayOfMonthCadence(ends: readonly string[]): DayOfMonthCadence {
  *
  * The rule: the newest closes are a new cycle when there are at least
  * MIN_MOVED_CLOSES of them, they sit within CYCLE_AGREEMENT_DAYS of each other —
- * all of them, or all but one (`oneCycle`) — and EVERY one of them, that one
- * included, sits off the older closes' day by more than the older closes' own
- * tolerance. The rhythm then follows them alone — their median day, their
- * spread plus PUBLISH_SLACK_DAYS — and `movedFrom` keeps what the older closes
- * said, so the phrase can state that two closes is thin evidence.
+ * all of them, or all but one that sits nearer their day than the old one
+ * (`oneCycle`) — and EVERY one of them, that one included, sits off the older
+ * closes' day by more than the older closes' own tolerance. The rhythm then
+ * follows them alone — their median day, their spread plus PUBLISH_SLACK_DAYS —
+ * and `movedFrom` keeps what the older closes said, so the phrase can state that
+ * two closes is thin evidence.
  *
  * ⛔ "The newest closes" is every close since the move, not just the two newest.
  * A two-newest rule holds for one month: when the third close on the new cycle
@@ -328,28 +329,44 @@ function movedCycle(ends: readonly string[]): StatementCadence | null {
     const oldDay = before.rhythm.day;
     const run = ends.slice(-moved);
     const days = run.map(dayOfMonth);
-    if (!oneCycle(days)) continue;
+    const after = dayOfMonthCadence(run);
+    if (!oneCycle(days, after.rhythm.day, oldDay)) continue;
     if (days.some((d) => Math.abs(d - oldDay) <= before.toleranceDays)) continue;
-    return { ...dayOfMonthCadence(run), movedFrom: { day: oldDay, closes: before.closes } };
+    return { ...after, movedFrom: { day: oldDay, closes: before.closes } };
   }
   return null;
 }
 
 /**
- * Whether the days of the closes since a move are ONE cycle: within
- * CYCLE_AGREEMENT_DAYS of each other, all of them or all but one.
+ * Whether the days of the closes since a move are ONE cycle — the cycle on
+ * `newDay`, the day the run reports: within CYCLE_AGREEMENT_DAYS of each other,
+ * all of them or all but one.
  *
  * The one left out is an extreme of the sorted days — dropping a close from the
  * middle leaves both ends, and so the spread, where they were. And at least
  * MIN_MOVED_CLOSES must agree without it, so a run of two never has one: the
  * 9th and the 13th are two late closes, not a cycle and a late close of it.
+ *
+ * ⛔ And it sits nearer `newDay` than `oldDay`, the day the older closes left —
+ * strictly; a close as near the one as the other stays with the old cycle. The
+ * longest run wins, so without this the slot takes in the old cycle's own last
+ * late close, and below five closes nothing is trimmed: its distance from the
+ * new day becomes the new cycle's tolerance. 🔴 Found by the review, 2026-10-12:
+ * ten closes on the 2nd, then Jul 4, Aug 9 and Sep 9 — the 4th, two off the 2nd
+ * and five off the 9th, joined the run at tolerance 6, and on Oct 14 the
+ * statement that closed Oct 9 read "counted as late from Oct 15" where it had
+ * read "one closed 5 days ago, not imported". Left with the old cycle, it is the
+ * newest of the older closes, so it widens THEIR tolerance, as it did before
+ * the slot — and the 9th, seven off the 2nd, still sits past it.
  */
-function oneCycle(days: readonly number[]): boolean {
+function oneCycle(days: readonly number[], newDay: number, oldDay: number): boolean {
   const sorted = [...days].sort((a, b) => a - b);
   const last = sorted.length - 1;
   const agree = (low: number, high: number) => sorted[high]! - sorted[low]! <= CYCLE_AGREEMENT_DAYS;
   if (agree(0, last)) return true;
-  return last >= MIN_MOVED_CLOSES && (agree(1, last) || agree(0, last - 1));
+  if (last < MIN_MOVED_CLOSES) return false;
+  const ofTheNewCycle = (day: number) => Math.abs(day - newDay) < Math.abs(day - oldDay);
+  return (agree(1, last) && ofTheNewCycle(sorted[0]!)) || (agree(0, last - 1) && ofTheNewCycle(sorted[last]!));
 }
 
 function firstOfMonth(iso: string): string {

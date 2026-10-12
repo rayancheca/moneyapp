@@ -631,15 +631,66 @@ describe("a cycle that moved", () => {
     expect(c.toleranceDays).toBe(6);
   });
 
-  test("a transitional first close four days short of the new cycle folds into it as its one outlier", () => {
-    // the 5th is off the 2nd and four short of the 9th: the run is the four closes since the move, as above
-    const c = statementCadence([
+  /*
+   * 🔴 THE ONE OUTLIER IS THE NEW CYCLE'S, NEVER THE OLD ONE'S LAST LATE CLOSE. The review, 2026-10-12
+   * (zz-probe4): the slot took in whichever extreme the others agreed without, and the longest run wins — so a
+   * close only a little off the OLD day joined the new run, and below five closes nothing is trimmed: the Jul 4
+   * below, two off the 2nd and five off the 9th, set the new cycle's tolerance to 6, and on Oct 14 the statement
+   * that closed Oct 9 read "closes around Oct 9 on this rhythm — counted as late from Oct 15" where it had read
+   * "one closed 5 days ago". Taken in only when it sits nearer the day the run reports than the day it left, it
+   * stays with the old cycle, where the rule before the slot left it — as does the 5th below, three off the 2nd
+   * and four short of the 9th.
+   */
+  test("a close nearer the old day than the new one is the old cycle's late close — the new one stays tight", () => {
+    const tenOnTheSecond = Array.from({ length: 10 }, (_, i) => addCalendarMonths("2025-09-02", i));
+    const closes = [...tenOnTheSecond, "2026-07-04", "2026-08-09", "2026-09-09"];
+    const c = statementCadence(closes);
+    expect(c.rhythm).toEqual({ kind: "day-of-month", day: 9 });
+    expect(c.closes).toBe(2);
+    expect(c.toleranceDays).toBe(1);
+    expect(c.movedFrom).toEqual({ day: 2, closes: 10 });
+    expect(rhythmPhrase(c)).toBe(
+      "closes around the 9th, from only its last 2 statements — the 10 before closed around the 2nd",
+    );
+    expect(pullSentence(statementPull(closes, "2026-10-14"))).toBe(
+      "last one closed Sep 9, 35 days ago · one closed 5 days ago, not imported",
+    );
+    // the transitional 5th: three off the 2nd, four short of the 9th
+    const fifth = statementCadence([
       ...TEN_ON_THE_SECOND.slice(0, 8), "2026-06-05", "2026-07-09", "2026-08-09", "2026-09-09",
     ]);
-    expect(c.rhythm).toEqual({ kind: "day-of-month", day: 9 });
-    expect(c.closes).toBe(4);
-    expect(c.movedFrom).toEqual({ day: 2, closes: 8 });
-    expect(c.toleranceDays).toBe(5);
+    expect(fifth.rhythm).toEqual({ kind: "day-of-month", day: 9 });
+    expect(fifth.closes).toBe(3);
+    expect(fifth.movedFrom).toEqual({ day: 2, closes: 9 });
+    expect(fifth.toleranceDays).toBe(1);
+    // as near the one as the other — the 6th, four off the 2nd and four short of the 10th — stays with the old
+    const tie = statementCadence([...tenOnTheSecond, "2026-07-06", "2026-08-10", "2026-09-10"]);
+    expect(tie.rhythm).toEqual({ kind: "day-of-month", day: 10 });
+    expect(tie.closes).toBe(2);
+    expect(tie.toleranceDays).toBe(1);
+  });
+
+  /*
+   * The same rule on a move DOWN the month (Discover's own 2025 move went from the 18th to the 2nd): the outlier
+   * nearer the new day is the new cycle's early close, whichever end of the sorted days it sits at, and the one
+   * nearer the day it left is the old cycle's.
+   */
+  test("on a move down the month, an early close of the new cycle is its outlier and a transitional one is not", () => {
+    const nineOnThe18th = Array.from({ length: 9 }, (_, i) => addCalendarMonths("2025-09-18", i));
+    // Jul 5: four short of the 9th, thirteen off the 18th — the new cycle's, which before the slot read the 18th
+    const early = statementCadence([...nineOnThe18th, "2026-06-09", "2026-07-05", "2026-08-09", "2026-09-09"]);
+    expect(early.rhythm).toEqual({ kind: "day-of-month", day: 9 });
+    expect(early.closes).toBe(4);
+    expect(early.movedFrom).toEqual({ day: 18, closes: 8 });
+    expect(early.toleranceDays).toBe(5);
+    // Jun 14: five past the 9th, four short of the 18th — the old cycle's
+    const transitional = statementCadence([
+      ...nineOnThe18th, "2026-06-14", "2026-07-09", "2026-08-09", "2026-09-09",
+    ]);
+    expect(transitional.rhythm).toEqual({ kind: "day-of-month", day: 9 });
+    expect(transitional.closes).toBe(3);
+    expect(transitional.movedFrom).toEqual({ day: 18, closes: 9 });
+    expect(transitional.toleranceDays).toBe(1);
   });
 
   test("two closes off the new cycle are not one outlier — the run agrees but for ONE close", () => {
