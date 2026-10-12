@@ -2,6 +2,7 @@ import type { AppDatabase } from "@/db/client";
 import { STALE_PERIODS, type CashEarningsBasis } from "@/lib/cash-earnings";
 import { addCalendarMonths, diffDays, monthKey, periodBounds, todayIso } from "@/lib/dates";
 import { formatDayShort, formatMonthYear } from "@/lib/format-date";
+import { monthIncomeLink, type IncomeLink } from "@/lib/income-basis";
 import { formatCents } from "@/lib/money";
 import {
   LAST_CHECKED_DAY,
@@ -212,6 +213,13 @@ export interface IncomePayLine extends Gap {
 export interface IncomeCard {
   /** the monthly figure `/budgets` grades against — `incomeBasis`', unchanged */
   monthlyRateCents: number;
+  /**
+   * The header link: where `monthlyRateCents` is checked, and the page it opens in a word — `monthIncomeLink`, the
+   * runway's earn row's link. 🔴 It was a bare `/recurring` (Upcoming) over the same figure (review of 59de07f,
+   * 2026-10-12): on his ledger copy that day the rate is levelled from It America LLC's weekly pay, whose page it
+   * now opens.
+   */
+  incomeLink: IncomeLink;
   /** the sentence under the headline: how much of the implied pay was banked */
   summary: string;
   pay: IncomePayLine[];
@@ -433,6 +441,7 @@ export function incomeCard(db: AppDatabase, today: string = todayIso()): IncomeC
 
   return {
     monthlyRateCents: expectation.basis.cents,
+    incomeLink: monthIncomeLink(expectation, month.start, today),
     summary: summaryFor(bankedSharePct, totals.impliedCents, totals.bankedCents, windowFrom),
     pay,
     totals,

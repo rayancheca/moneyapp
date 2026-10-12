@@ -8,9 +8,11 @@ import { afterEach, beforeEach, expect, test } from "vitest";
 import { createDatabase, type DbBundle } from "@/db/client";
 import { accounts } from "@/db/schema/accounts";
 import { dailyBalances } from "@/db/schema/balances";
+import { categories } from "@/db/schema/categories";
 import { importFiles, statementPeriods } from "@/db/schema/imports";
 import { institutions } from "@/db/schema/institutions";
 import { recurringSeries } from "@/db/schema/recurring";
+import { transactions } from "@/db/schema/transactions";
 import { seedDatabase } from "@/db/seed";
 import { createAccount } from "@/services/accounts";
 import { runwayCard } from "@/services/committed";
@@ -135,6 +137,52 @@ test("the earn row opens the pay schedule its rate is levelled from", () => {
   const markup = renderToStaticMarkup(createElement(RunwayCard, { data: card }));
   expect(hrefOfLink(markup, "What you earn a month")).toBe(`/recurring/${pay}`);
 });
+
+/**
+ * ⚖️ His decision 61 (2026-10-12): the spend row keeps its link and gets its arithmetic captioned under it. The
+ * service builds the sentence (`spendArithmetic`, its tests pin the sum); this pins that it renders as the spend row's
+ * own description, under its figure, and that the row and its link are unchanged.
+ */
+test("the spend row carries its arithmetic under it", () => {
+  const checking = bundle.db.select().from(accounts).where(eq(accounts.name, "Checking")).get()!.id;
+  const groceries = bundle.db.select().from(categories).where(eq(categories.name, "Groceries")).get()!.id;
+  // August is the one complete month: the ledger opens on its first day
+  for (const [i, [postedOn, amountCents]] of ([
+    ["2026-08-01", -120000],
+    ["2026-08-20", 4550],
+  ] as const).entries()) {
+    bundle.db
+      .insert(transactions)
+      .values({
+        accountId: checking,
+        postedOn,
+        amountCents,
+        rawDescription: "SUPERMARKET",
+        normalizedDescription: "SUPERMARKET",
+        categoryId: groceries,
+        dedupeHash: `runway-spend-${i}`,
+      })
+      .run();
+  }
+
+  const card = runwayCard(bundle.db, TODAY);
+  expect(card.runway.assumptions.find((a) => a.id === "spend")!.cents).toBe(120000 - 4550);
+  const markup = renderToStaticMarkup(createElement(RunwayCard, { data: card }));
+  expect(hrefOfLink(markup, "What you spend a month")).toBe("/spending?from=2026-08-01&to=2026-08-31");
+  expect(rowDescriptions(markup, "What you spend a month")).toEqual([
+    "$1,154.50",
+    "$1,200.00 spent − $45.50 back, over 1 month",
+  ]);
+  // the caption is the spend row's alone
+  expect(rowDescriptions(markup, "Cash you can spend today")).toEqual(["$3,007.60"]);
+});
+
+/** The text of every `<dd>` in the row whose link reads `label`, in order. */
+function rowDescriptions(markup: string, label: string): string[] {
+  const row = new RegExp(`<a [^>]*>${label}</a>.*?</dt>(.*?)</div>`).exec(markup);
+  if (!row) return [];
+  return [...row[1]!.matchAll(/<dd[^>]*>(.*?)<\/dd>/g)].map((m) => m[1]!.replace(/<[^>]+>/g, ""));
+}
 
 /**
  * 🔴 Measured on the owner's ledger 2026-10-07: "A further $2,296.20 came due

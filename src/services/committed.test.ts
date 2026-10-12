@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { createDatabase, type DbBundle } from "@/db/client";
 import { seedDatabase } from "@/db/seed";
 import { addCalendarMonths, addDays, daysInMonthOf, monthKey } from "@/lib/dates";
+import { parsePeriodParams, resolvePeriod } from "@/lib/period";
 import { dailyBalances } from "@/db/schema/balances";
 import { importFiles, statementPeriods } from "@/db/schema/imports";
 import { categories } from "@/db/schema/categories";
@@ -17,6 +18,7 @@ import { normalizeDescription } from "@/lib/normalize";
 import { createAccount, updateAccount } from "./accounts";
 import { baselineWindow, carCard, committedBook, runwayCard, spendBaseline, SPEND_BASELINE_MONTHS } from "./committed";
 import { forecastCurrentMonth } from "./forecast";
+import { cashFlowByPeriod } from "./spending";
 
 /**
  * A seeded ledger shaped like the real one at 2026-08-24, small enough to reason
@@ -669,6 +671,58 @@ describe("runwayCard", () => {
     const march = runwayCard(bundle.db, "2026-03-10");
     expect(march.spend).toMatchObject({ months: 1, fromMonth: "2026-02", toMonth: "2026-02" });
     expect(march.spendingHref).toBe("/spending?from=2026-02-01&to=2026-02-28");
+  });
+
+  /**
+   * ⚖️ His decision 61 (2026-10-12): the spend row keeps its link and gets its ARITHMETIC captioned under it, every
+   * figure the one the linked page or the car card prints. Measured on his ledger copy that day: /spending for Apr–Sep
+   * prints SPENT $56,444.55 and REFUNDS +$888.62, the average leaves out the $6,100.00 paid up front for the car, and
+   * $49,455.93 ÷ 6 = $8,242.655 — the row's $8,242.66.
+   */
+  describe("the spend row's arithmetic", () => {
+    /** The window a `/spending` link opens, resolved the way the page resolves it. */
+    const windowOf = (href: string, today: string) => {
+      const q = new URLSearchParams(href.split("?")[1]);
+      return resolvePeriod(parsePeriodParams({ period: q.get("period"), from: q.get("from"), to: q.get("to") }), today);
+    };
+    /** Every "$1,234.56" in a sentence, in order, as cents. */
+    const figuresOf = (s: string): number[] =>
+      [...s.matchAll(/\$([\d,]+\.\d{2})/g)].map((m) => Math.round(Number(m[1]!.replaceAll(",", "")) * 100));
+
+    test("divides to the row's figure to the cent, and each figure is the linked page's or the car card's", () => {
+      const carId = createCarCategory();
+      // the car's up-front money inside the window — before the lease starts, linked to no bill: the car card's rule
+      insertTxn({ postedOn: "2026-07-11", amountCents: -610000, rawDescription: "CAR DEPOSIT", categoryId: carId });
+      // money back inside the window, and five cents more spent: a total that divides to half a cent
+      insertTxn({ postedOn: "2026-05-09", amountCents: 88862, rawDescription: "SUPERMARKET REFUND" });
+      insertTxn({ postedOn: "2026-06-03", amountCents: -5, rawDescription: "SUPERMARKET" });
+
+      const card = runwayCard(bundle.db, TODAY);
+      const row = card.runway.assumptions.find((a) => a.id === "spend")!;
+      expect(card.spendArithmetic).toBe("$54,100.05 spent − $888.62 back − $6,100.00 up front, over 6 months");
+
+      // read back off the sentence: (spent − back − up front) ÷ months is the row, to the cent
+      const [spent, back, upfront] = figuresOf(card.spendArithmetic!) as [number, number, number];
+      const months = Number(/over (\d+) months?$/.exec(card.spendArithmetic!)![1]);
+      expect((spent - back - upfront) / months).toBe(785_190.5);
+      expect(row.cents).toBe(785_191);
+      expect(Math.round((spent - back - upfront) / months)).toBe(row.cents);
+
+      // SPENT and REFUNDS as the page the row links to prints them, and the up-front money as the car card does
+      const page = cashFlowByPeriod(bundle.db, windowOf(card.spendingHref, TODAY), TODAY).totals;
+      expect([spent, back]).toEqual([page.spentCents, page.refundsCents]);
+      expect(upfront).toBe(carCard(bundle.db, TODAY)!.cost.upfrontCents);
+    });
+
+    test("a term that is zero is not printed", () => {
+      expect(runwayCard(bundle.db, TODAY).spendArithmetic).toBe("$48,000.00 spent, over 6 months");
+    });
+
+    test("a one-month window is that month's sum, and no complete month is no sum", () => {
+      expect(runwayCard(bundle.db, "2026-03-10").spendArithmetic).toBe("$8,000.00 spent, over 1 month");
+      // the ledger opens 2026-02-01: in February no month is complete, and the average has nothing to divide
+      expect(runwayCard(bundle.db, "2026-02-20").spendArithmetic).toBeNull();
+    });
   });
 
   /**

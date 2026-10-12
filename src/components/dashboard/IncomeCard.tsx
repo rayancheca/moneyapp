@@ -36,11 +36,13 @@ export function IncomeCard({ data }: { data: IncomeCardData }) {
     <SurfaceCard>
       <div className="flex items-baseline justify-between gap-3">
         <h3 className="text-xs font-medium uppercase tracking-[0.12em] text-ink-faint">Earned vs banked</h3>
+        {/* where the headline is checked, and the word for that page — the runway's earn row's link
+            (`monthIncomeLink`); it was a bare /recurring, Upcoming, over the same figure */}
         <Link
-          href="/recurring"
+          href={data.incomeLink.href}
           className="text-xs text-ink-muted transition-colors duration-(--duration-fast) hover:text-ink"
         >
-          Schedule →
+          {`${data.incomeLink.label} →`}
         </Link>
       </div>
 

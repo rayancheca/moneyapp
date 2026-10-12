@@ -1,7 +1,8 @@
 import type { Cadence } from "@/db/schema/recurring";
+import { monthKey } from "./dates";
 import { BUDGET_JARGON } from "./jargon";
 import { formatCents } from "./money";
-import { withPeriod, type ResolvedPeriod } from "./period";
+import { resolvePeriod, withPeriod, type ResolvedPeriod } from "./period";
 
 /**
  * Which income figure a monthly budget should be graded against.
@@ -253,4 +254,33 @@ export function incomeBasisHref({ kind, levelledSeriesIds, window }: IncomeBasis
   if (kind !== "levelled") return withPeriod("/spending", window);
   // a levelled figure has at least one series behind it (`levelledCents > 0`); the list stands in if none was named
   return levelledSeriesIds.length === 1 ? `/recurring/${levelledSeriesIds[0]}` : "/recurring?tab=all";
+}
+
+/** Where a surface's monthly income figure is checked, and the page it opens in a word. */
+export interface IncomeLink {
+  href: string;
+  /** "Schedule" for a pay schedule's page or the list of them, "Spending" for the month on /spending */
+  label: "Schedule" | "Spending";
+}
+
+/**
+ * The link for the month's income figure — `incomeBasisHref` over `incomeExpectation`'s own basis and series, for the
+ * calendar month that call was asked about (`monthStart`).
+ *
+ * ⛔ ONE LINK FOR EVERY SURFACE THAT PRINTS THE FIGURE: the runway's "What you earn a month" and the Earned vs banked
+ * card's header. 🔴 The card's "Schedule →" opened a bare `/recurring` — Upcoming, a list of what is due — over the
+ * same monthly basis the runway's row had just been pointed at its pay schedule for (review of 59de07f, 2026-10-12).
+ * ⛔ …and the word follows the page: "Schedule →" over `/spending` would name a page it does not open.
+ */
+export function monthIncomeLink(
+  expectation: { basis: { kind: IncomeBasisKind }; levelledSeriesIds: readonly string[] },
+  monthStart: string,
+  today: string,
+): IncomeLink {
+  const { kind } = expectation.basis;
+  const window = resolvePeriod({ period: monthKey(monthStart) }, today);
+  return {
+    href: incomeBasisHref({ kind, levelledSeriesIds: expectation.levelledSeriesIds, window }),
+    label: kind === "levelled" ? "Schedule" : "Spending",
+  };
 }
