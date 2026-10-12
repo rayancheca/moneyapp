@@ -10,10 +10,10 @@ import {
   categorySectionNotes,
   holdingPriceSectionNotes,
   NAME_LIST_SEPARATOR,
-  PATH_SEPARATOR,
   RESERVED_NOTE_PHRASES,
   type SectionNote,
 } from "./section-notes";
+import { PATH_SEPARATOR } from "./category-path";
 
 const row = (over: Partial<Parameters<typeof budgetSectionNotes>[0]["rows"][number]> = {}) => ({
   categoryPath: "Food",

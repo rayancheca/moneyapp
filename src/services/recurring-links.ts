@@ -6,7 +6,7 @@ import { recurringSeries, type Cadence, type SeriesKind } from "@/db/schema/recu
 import { transactions, type CategorizationSource } from "@/db/schema/transactions";
 import { todayIso } from "@/lib/dates";
 import { deriveAnchorDay, stepFrom, stepPlan } from "@/lib/recurring-step";
-import { PATH_SEPARATOR } from "@/lib/section-notes";
+import { formatCategoryPath } from "@/lib/category-path";
 import { loadCategoryIndex, uncategorizedWhere, type CategoryIndex } from "./analytics";
 import { applyUndoPatch, type UndoFields, type UndoPatch } from "./bulk-edit";
 import { clearReviewIfSettled } from "./duplicate-lifecycle";
@@ -289,12 +289,11 @@ export interface MergeResult {
   filed: MergeFiling | null;
 }
 
-/** A category as every surface prints its path: "Parent > Child", a top-level bare. */
+/** A category's path as every surface prints it (`formatCategoryPath`); an unknown id throws. */
 function categoryPathOf(idx: CategoryIndex, id: string): string {
   const node = idx.byId.get(id);
   if (node === undefined) throw new Error(`Unknown category ${id}`);
-  const parent = node.parentId === null ? undefined : idx.byId.get(node.parentId);
-  return parent === undefined ? node.name : `${parent.name}${PATH_SEPARATOR}${node.name}`;
+  return formatCategoryPath(node.parentId === null ? null : idx.byId.get(node.parentId)?.name, node.name);
 }
 
 /** The rows merging `sourceIds` moves: their ACTIVE rows — the one set the merge relinks and files. */

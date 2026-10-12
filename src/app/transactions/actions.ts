@@ -62,6 +62,7 @@ import {
   retroApplyRule,
   ruleFromCorrection,
 } from "@/services/rule-corrections";
+import { formatCategoryPath } from "@/lib/category-path";
 import { humanizeDescriptionKey, strippedDescriptionKey } from "@/lib/description-key";
 import { parseFilters, type SearchParams, type TxnNotice } from "@/components/transactions/query";
 import {
@@ -291,7 +292,7 @@ function categoryLabelFor(db: AppDatabase, categoryId: string): string {
   const cat = all.find((c) => c.id === categoryId);
   if (!cat) return "Uncategorized";
   const parent = cat.parentId ? all.find((c) => c.id === cat.parentId) : undefined;
-  return parent ? `${parent.name} > ${cat.name}` : cat.name;
+  return formatCategoryPath(parent?.name, cat.name);
 }
 
 /**

@@ -11,6 +11,7 @@ import {
   type RuleActions,
   type RuleConditions,
 } from "@/db/schema/rules";
+import { formatCategoryPath } from "@/lib/category-path";
 import { humanizeDescriptionKey } from "@/lib/description-key";
 import { countRuleChanges } from "./rule-corrections";
 
@@ -147,7 +148,7 @@ export function sentenceContext(db: AppDatabase): SentenceContext {
       const c = byId.get(id);
       if (!c) return "a category";
       const parent = c.parentId ? byId.get(c.parentId) : undefined;
-      return parent ? `${parent.name} > ${c.name}` : c.name;
+      return formatCategoryPath(parent?.name, c.name);
     },
     merchantName: (id) => merch.get(id) ?? "a merchant",
     accountName: (id) => accs.get(id) ?? "an account",

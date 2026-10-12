@@ -5,6 +5,7 @@ import { accounts } from "@/db/schema/accounts";
 import { categories } from "@/db/schema/categories";
 import { merchants } from "@/db/schema/merchants";
 import { transactions } from "@/db/schema/transactions";
+import { formatCategoryPath } from "@/lib/category-path";
 import { strippedDescriptionKey } from "@/lib/description-key";
 import { todayIso } from "@/lib/dates";
 import { bulkApply, type BulkResult } from "./bulk-edit";
@@ -108,7 +109,7 @@ function buildCategoryLabels(db: AppDatabase): Map<string, string> {
   return new Map(
     all.map((c) => {
       const parent = c.parentId ? byId.get(c.parentId) : undefined;
-      return [c.id, parent ? `${parent.name} > ${c.name}` : c.name];
+      return [c.id, formatCategoryPath(parent?.name, c.name)];
     }),
   );
 }

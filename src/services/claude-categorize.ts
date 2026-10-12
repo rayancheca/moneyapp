@@ -7,6 +7,7 @@ import { categories } from "@/db/schema/categories";
 import { merchantAliases, merchants } from "@/db/schema/merchants";
 import { appSettings } from "@/db/schema/settings";
 import { transactions } from "@/db/schema/transactions";
+import { formatCategoryPath } from "@/lib/category-path";
 import { isPrintableName } from "@/lib/printable-name";
 import { notUserOwned } from "./merchants";
 
@@ -124,7 +125,7 @@ function taxonomyPaths(db: AppDatabase): string[] {
   const byId = new Map(rows.map((r) => [r.id, r]));
   return rows
     .filter((r) => r.kind !== "system")
-    .map((r) => (r.parentId ? `${byId.get(r.parentId)?.name} > ${r.name}` : r.name))
+    .map((r) => formatCategoryPath(r.parentId === null ? null : byId.get(r.parentId)?.name, r.name))
     .sort();
 }
 

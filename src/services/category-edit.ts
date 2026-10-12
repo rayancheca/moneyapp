@@ -7,6 +7,7 @@ import { transactions } from "@/db/schema/transactions";
 import { transactionSplits } from "@/db/schema/transaction-splits";
 import { normalizeOrder } from "@/lib/reorder";
 import { CREATABLE_CATEGORY_KINDS, KIND_ORDER, type CreatableCategoryKind } from "@/lib/category-kinds";
+import { formatCategoryPath } from "@/lib/category-path";
 import { REPLAY_STATUSES } from "./derivation";
 
 /**
@@ -79,6 +80,22 @@ const IMPORT_HINT_PATHS = new Set([
   "Investments > Buys",
   "Investments > Sells",
 ]);
+
+/**
+ * Whether a category — its name under its parent's name, null for a top-level — is one the import profiles resolve
+ * through. The ONE reading of the two sets above for every guard (archive, move, rename, the move menu, the manager's
+ * locked rows); the path is printed by the one printer, so it is spelled as the sets spell it.
+ */
+function isImportHint(parentName: string | null | undefined, name: string): boolean {
+  if (parentName === null) return IMPORT_HINT_ROOTS.has(name);
+  return IMPORT_HINT_PATHS.has(formatCategoryPath(parentName, name));
+}
+
+/** The name of `row`'s parent, null for a top-level category — what `isImportHint` reads it under. */
+function parentNameOf(db: AppDatabase, row: { parentId: string | null }): string | null | undefined {
+  if (row.parentId === null) return null;
+  return db.select({ name: categories.name }).from(categories).where(eq(categories.id, row.parentId)).get()?.name;
+}
 
 export interface RenameCategoryResult {
   id: string;
@@ -181,10 +198,7 @@ export function archiveCategory(db: AppDatabase, categoryId: string): ArchiveCat
   if (row.kind === "transfer" || row.kind === "system") {
     throw new Error("Transfer and system categories stay active — detection depends on them");
   }
-  const hintPath = row.parentId
-    ? `${db.select({ name: categories.name }).from(categories).where(eq(categories.id, row.parentId)).get()?.name} > ${row.name}`
-    : row.name;
-  if ((row.parentId === null && IMPORT_HINT_ROOTS.has(row.name)) || IMPORT_HINT_PATHS.has(hintPath)) {
+  if (isImportHint(parentNameOf(db, row), row.name)) {
     throw new Error("Imports auto-categorize into this category — it stays active");
   }
   const liveChild = db
@@ -230,10 +244,7 @@ export function moveCategory(db: AppDatabase, categoryId: string, newParentId: s
   if (row.kind === "transfer" || row.kind === "system") {
     throw new Error("Transfer and system categories stay put — detection depends on them");
   }
-  const hintPath = row.parentId
-    ? `${db.select({ name: categories.name }).from(categories).where(eq(categories.id, row.parentId)).get()?.name} > ${row.name}`
-    : row.name;
-  if ((row.parentId === null && IMPORT_HINT_ROOTS.has(row.name)) || IMPORT_HINT_PATHS.has(hintPath)) {
+  if (isImportHint(parentNameOf(db, row), row.name)) {
     throw new Error("Imports auto-categorize through this category — it stays fixed until import hints match by id");
   }
   if (newParentId === row.parentId) return { id: row.id, parentId: row.parentId };
@@ -305,10 +316,8 @@ function destinationsFrom(all: readonly CategoryRowShape[], categoryId: string):
   const row = all.find((c) => c.id === categoryId);
   if (!row) return [];
   if (row.kind === "transfer" || row.kind === "system") return [];
-  const hintPath = row.parentId
-    ? `${all.find((c) => c.id === row.parentId)?.name} > ${row.name}`
-    : row.name;
-  if ((row.parentId === null && IMPORT_HINT_ROOTS.has(row.name)) || IMPORT_HINT_PATHS.has(hintPath)) return [];
+  const parentName = row.parentId === null ? null : all.find((c) => c.id === row.parentId)?.name;
+  if (isImportHint(parentName, row.name)) return [];
   if (row.parentId === null) {
     // one level deep — a root with children stays a root
     if (all.some((c) => c.parentId === categoryId)) return [];
@@ -344,10 +353,7 @@ export function renameCategory(db: AppDatabase, categoryId: string, newName: str
   if (row.kind === "transfer" || row.kind === "system") {
     throw new Error("Transfer and system categories keep their names — transfer detection matches on them");
   }
-  const hintPath = row.parentId
-    ? `${db.select({ name: categories.name }).from(categories).where(eq(categories.id, row.parentId)).get()?.name} > ${row.name}`
-    : row.name;
-  if ((row.parentId === null && IMPORT_HINT_ROOTS.has(row.name)) || IMPORT_HINT_PATHS.has(hintPath)) {
+  if (isImportHint(parentNameOf(db, row), row.name)) {
     throw new Error("Imports auto-categorize by this name — it stays fixed until import hints match by id");
   }
   if (name === row.name) return { id: row.id, name };
@@ -459,8 +465,7 @@ export interface CategoryTreeNode {
 /** Is this category one the rename/move/archive guards refuse to touch? */
 function isProtected(name: string, parentName: string | null, kind: CategoryKind): boolean {
   if (kind === "transfer" || kind === "system") return true;
-  if (parentName === null) return IMPORT_HINT_ROOTS.has(name);
-  return IMPORT_HINT_PATHS.has(`${parentName} > ${name}`);
+  return isImportHint(parentName, name);
 }
 
 /**
