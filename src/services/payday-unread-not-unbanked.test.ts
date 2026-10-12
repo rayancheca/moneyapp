@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { eq } from "drizzle-orm";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
@@ -13,6 +14,8 @@ import { transactions } from "@/db/schema/transactions";
 import { seedDatabase } from "@/db/seed";
 import { addDays, compareDates } from "@/lib/dates";
 import { unbankedIncomeForSeries } from "./arrears";
+import { checkedThroughBySeries, silenceMeasuredThroughBySeries } from "./cash-earnings";
+import { CASH_INSTITUTION_NAME } from "./cash-wallet-rule";
 import { recurringCalendar, type CalendarEntry } from "./recurring-calendar";
 
 // the server action pulls in next/cache and the database client
@@ -152,16 +155,45 @@ describe("a payday the ledger has not looked for says so on the calendar — as 
    * ⛔ ONE READING: the calendar's "not banked yet" marks are exactly the paydays the forecast and /budgets count as
    * checked (`checkedOccurrenceCount`), and its "no import has covered it yet" marks the ones they say nobody has
    * looked for.
+   *
+   * 🔴 With Wells Fargo open the two frontiers are the same day, so a calendar reading its paydays against the day a
+   * series' SILENCE is measured to (`silenceMeasuredThroughBySeries`, which `recurringCalendar` binds to a local named
+   * `checkedThrough` a few lines above its payday frontier) passed every test (review of 7fc67d5). They part on a
+   * landing account no statement is coming for (`accountsAwaitingStatements`), archived or a cash wallet: its silence
+   * is read through today, while the days the ledger has looked at stop where its record does
+   * (`checkedThroughBySeries`, review of 82d75d7). Under that swap Oct 1 and Oct 8 read "not banked yet" beside a
+   * forecast note and /budgets saying "the ledger has not looked for their deposits"; swapped in the note's count
+   * instead, the split fails here.
    */
-  test("the calendar's two reasons split the passed paydays exactly where the forecast's note does", () => {
-    const passed = unbankedIncomeForSeries(bundle.db, new Set([PAY]), "2026-06-01", TODAY).series[0]!;
-    const marks = unsettledPaydays();
-    expect(marks.filter((d) => d.endsWith(" unbanked"))).toHaveLength(passed.checkedOccurrenceCount);
-    expect(marks.filter((d) => d.endsWith(" not_imported"))).toHaveLength(
-      passed.occurrenceCount - passed.checkedOccurrenceCount,
-    );
-    expect(passed.occurrenceCount - passed.checkedOccurrenceCount).toBe(2);
-  });
+  test.each([
+    { landing: "open", archived: false, wallet: false, silenceThrough: "2026-09-24" },
+    { landing: "archived", archived: true, wallet: false, silenceThrough: TODAY },
+    { landing: "a cash wallet", archived: false, wallet: true, silenceThrough: TODAY },
+  ])(
+    "the calendar's two reasons split the passed paydays where the forecast's note does — Wells Fargo $landing",
+    ({ archived, wallet, silenceThrough }) => {
+      bundle.db.update(accounts).set({ isActive: !archived }).where(eq(accounts.id, WF)).run();
+      if (wallet) {
+        const cash = bundle.db.insert(institutions).values({ name: CASH_INSTITUTION_NAME }).returning().get();
+        bundle.db.update(accounts).set({ institutionId: cash.id }).where(eq(accounts.id, WF)).run();
+      }
+      // the fixture can tell the two frontiers apart: the days looked at stop at Sep 24 either way
+      expect(checkedThroughBySeries(bundle.db, TODAY)(PAY)).toBe("2026-09-24");
+      expect(silenceMeasuredThroughBySeries(bundle.db, TODAY)(PAY)).toBe(silenceThrough);
+
+      const passed = unbankedIncomeForSeries(bundle.db, new Set([PAY]), "2026-06-01", TODAY).series[0]!;
+      const marks = unsettledPaydays();
+      expect(marks.filter((d) => d.startsWith("2026-10"))).toEqual([
+        "2026-10-01 not_imported",
+        "2026-10-08 not_imported",
+      ]);
+      expect(marks.filter((d) => d.endsWith(" unbanked"))).toHaveLength(passed.checkedOccurrenceCount);
+      expect(marks.filter((d) => d.endsWith(" not_imported"))).toHaveLength(
+        passed.occurrenceCount - passed.checkedOccurrenceCount,
+      );
+      expect(passed.occurrenceCount - passed.checkedOccurrenceCount).toBe(2);
+    },
+  );
 
   test("THE BOUNDARY: a payday ON the day its accounts are checked through was looked for", () => {
     checkedThrough(WF, "2026-09-25", "2026-10-01");
