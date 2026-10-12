@@ -450,6 +450,10 @@ export function upcomingEvidenceWord(e: {
  * a day an import HAS reached short of it: the e2e fixture's Meal Kit, due Jul 5 on a card imported through Jul 5.
  * ⚖️ His decision 60 (2026-10-08): until then "no import has covered it yet" — the runway's unread words
  * (`NO_IMPORT_YET`), shared, so the calendar's "?" and every arrears surface say one thing of one due day.
+ *
+ * …and of a PAYDAY after the day its pay's accounts are checked through (`paydayIsRead`), where every pay sentence
+ * says "the ledger has not looked for its deposit". "Not banked yet" is said only of a day someone looked at. 🔴 It
+ * was said of every passed payday: his Oct 1 and Oct 8 (ledger copy, 2026-10-12), after Sep 24.
  */
 const UNSETTLED_REASON_WORD: Record<UnsettledReason, string> = {
   not_imported: NO_IMPORT_YET,
