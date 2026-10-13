@@ -184,16 +184,22 @@ describe("unbankedIncomeForSeries — a passed payday is measured against the da
    * weekly payroll, whose series names Wells Fargo (checked through Sep 24; he
    * moved it there 2026-09-28). Two Jun 4–5 ATM deposits in Chase Checking,
    * checked through Aug 12, dragged the frontier back. A payday's deposit is
-   * looked for where the pay lands NOW — the series' own account when it names
-   * one.
+   * looked for where the pay lands NOW — the account it names, and where its
+   * last two deposits landed (his decision 66, 2026-10-12): on his ledger both
+   * are Wells Fargo, and the June deposits are history.
    */
   test("a series that names its account is looked for there, not where old pay landed", () => {
     const WF = "acct-wf";
     addAccount(WF);
     bundle.db.update(recurringSeries).set({ accountId: WF }).where(eq(recurringSeries.id, SERIES)).run();
-    deposit(WF, SERIES, "2026-08-27");
     readThrough(CHASE, "2026-06-01", "2026-08-12");
     readThrough(WF, "2026-06-01", "2026-09-10");
+    deposit(WF, SERIES, "2026-08-27");
+    // ⚖️ ONE deposit there after Chase's Jun 4: its last two deposit days are on both, so both are read and the
+    // earlier day stands (his decision 66) — no Sep payday on a read day yet
+    expect(unbanked("2026-09-01").series[0]).toMatchObject({ checkedThrough: "2026-08-12", checkedOccurrenceCount: 0 });
+    // two in a row on the account it names, as on his ledger (Sep 17 and 24): Chase is left behind
+    deposit(WF, SERIES, "2026-08-20");
     // walk [Sep 1, Sep 14]: Sep 3 and Sep 10 on read Wells Fargo days
     expect(unbanked("2026-09-01").series[0]).toMatchObject({
       occurrenceCount: 2,

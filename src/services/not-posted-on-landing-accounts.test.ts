@@ -253,8 +253,8 @@ describe("the chip and the ✕ read one day: the same accounts, each to its chec
   /*
    * ⛔ One reading, whatever shape the accounts take: the day the ✕ grades a due day against IS the day the chip
    * measures its silence to (`silenceMeasuredThroughBySeries`) — rows past a checked balance, an account it left read
-   * further than the one it uses, a bill that names one account and paid its last two from another (whose accounts
-   * decide is his open question — the two must agree either way), an archived account read through today.
+   * further than the one it uses, a bill that names one account and paid its last two from another (read on both, his
+   * decision 66), an archived account read through today.
    */
   test.each([
     ["as imported", () => {}],
@@ -281,6 +281,63 @@ describe("the chip and the ✕ read one day: the same accounts, each to its chec
   });
 });
 
+/*
+ * ⚖️ His decision 66 (2026-10-12): a bill that NAMES one account but paid its last two from another is read on BOTH —
+ * the account it names and the accounts of its last two payment days — and the EARLIER day stands (`earliestVerified`).
+ *
+ * 🔴 "A named account replaces the history": the named account alone was read, so a bill paying from another read
+ * "running late", lapsed and drew its ✕ on days where it does not pay — while the account it does pay from had not
+ * been read past the due day at all. On his ledger copy 2026-10-12 only the dismissed PURA VIDA BAY ROAD MIAMI BEACH
+ * has the shape: it names Venture X and paid its last two (Jul 19, Jul 21) on Chase Sapphire.
+ */
+describe("a bill naming one account and paying from another is read on both — the earlier day stands (decision 66)", () => {
+  /** The rent names Chase Checking; its last two payments (Aug 4, Sep 2) are on Wells Fargo. */
+  function rentNamesChase(): void {
+    bundle.db.update(recurringSeries).set({ accountId: CHASE }).where(eq(recurringSeries.id, RENT)).run();
+  }
+
+  test("Chase Checking, which it names, read through Oct 21: not 'running late', not 'not posted' — Wells Fargo is unread", () => {
+    const today = "2026-10-25";
+    rentNamesChase();
+    // past Oct 1 + 3 days' grace and past Sep 2 + 48 days' tolerance (Oct 20) — on the account it does not pay from
+    importedThrough(CHASE, "2026-10-21");
+    expect(dueDayReadings(bundle.db, today)(RENT)).toEqual({ observedThrough: "2026-09-24", graceDays: 3 });
+    expect(chipOf(RENT, today)).toMatchObject({ checkedThrough: "2026-09-24", isStale: false, awaitingStatements: true });
+    expect(seriesDetail(bundle.db, RENT, today).evidence).toBe("awaiting-statements");
+    expect(oct1(RENT, today)).toEqual(QUIET);
+    // what is billed with it follows its carrier: one payment, one answer
+    expect(oct1(UTIL, today)).toEqual(QUIET);
+    expect(arrearsSentence(committedBook(bundle.db, today))).not.toContain("never posted");
+  });
+
+  test("the earlier day stands: Chase Checking through Oct 10, Wells Fargo through Oct 3 is quiet; through Oct 4, not posted", () => {
+    rentNamesChase();
+    importedThrough(CHASE, "2026-10-10");
+    importedThrough(WF, "2026-10-03");
+    expect(dueDayReadings(bundle.db, TODAY)(RENT).observedThrough).toBe("2026-10-03");
+    expect(oct1(RENT)).toEqual(QUIET);
+    importedThrough(WF, "2026-10-04");
+    expect(oct1(RENT)).toEqual(NOT_POSTED);
+  });
+
+  test("…and the account it names is still read: Wells Fargo through Oct 10 cannot vouch while Chase Checking stops at Aug 12", () => {
+    rentNamesChase();
+    importedThrough(WF, "2026-10-10");
+    expect(dueDayReadings(bundle.db, TODAY)(RENT).observedThrough).toBe("2026-08-12");
+    expect(oct1(RENT)).toEqual(QUIET);
+    // what is billed with it is read on its carrier's accounts — the one the carrier names among them
+    expect(dueDayReadings(bundle.db, TODAY)(UTIL)).toEqual(dueDayReadings(bundle.db, TODAY)(RENT));
+    expect(oct1(UTIL)).toEqual(QUIET);
+  });
+
+  test("a bill naming the account its last two payments posted to reads that account alone, as before", () => {
+    bundle.db.update(recurringSeries).set({ accountId: WF }).where(eq(recurringSeries.id, RENT)).run();
+    importedThrough(WF, "2026-10-04");
+    expect(dueDayReadings(bundle.db, TODAY)(RENT).observedThrough).toBe("2026-10-04");
+    expect(oct1(RENT)).toEqual(NOT_POSTED);
+  });
+});
+
 describe("a bill that has never charged and names no account has been read nowhere", () => {
   test("parking, registered by hand: no import has covered it yet, whatever is imported", () => {
     importedThrough(WF, "2026-10-10");
@@ -291,6 +348,7 @@ describe("a bill that has never charged and names no account has been read nowhe
 
   test("…while one that NAMES its account is read there before it ever charges", () => {
     bundle.db.update(recurringSeries).set({ accountId: WF }).where(eq(recurringSeries.id, PARKING)).run();
+    // no payment day to add to it (his decision 66): the account it names alone
     expect(dueDayReadings(bundle.db, TODAY)(PARKING).observedThrough).toBe("2026-09-24");
     importedThrough(WF, "2026-10-04");
     expect(dueDayReadings(bundle.db, TODAY)(PARKING).observedThrough).toBe("2026-10-04");

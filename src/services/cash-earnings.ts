@@ -81,15 +81,17 @@ export interface CashEarningsWindow {
 }
 
 /**
- * How many of its newest posting DAYS say where a series that names no account posts now. One charge elsewhere
- * can be a one-off — his $1,000 early insurance payment left Wells Fargo on Sep 3, while the bill charges Venture
- * X — but two in a row is a move: the rent, on Wells Fargo Aug 4 and Sep 2 after Venture X and Chase Checking.
+ * How many of its newest posting DAYS say where a series posts now — beside the account it names, when it names one
+ * (his decision 66). One charge elsewhere can be a one-off — his $1,000 early insurance payment left Wells Fargo on
+ * Sep 3, while the bill charges Venture X — but two in a row is a move: the rent, on Wells Fargo Aug 4 and Sep 2 after
+ * Venture X and Chase Checking.
  */
 const POSTING_DAYS_THAT_SAY_WHERE = 2;
 
 /**
- * Where each series' next deposit — or charge — is looked for: where it lands NOW — the series' own `account_id`
- * when it names one, otherwise every account its newest `POSTING_DAYS_THAT_SAY_WHERE` posting days posted to.
+ * Where each series' next deposit — or charge — is looked for: where it lands NOW — every account its newest
+ * `POSTING_DAYS_THAT_SAY_WHERE` posting days posted to, AND the series' own `account_id` when it names one (his
+ * decision 66, 2026-10-12). A series that has never posted is looked for where it names alone, or nowhere.
  *
  * 🔴 Every account pay had EVER landed in, measured on a copy of the owner's
  * ledger 2026-10-07: It America LLC's weekly payroll names Wells Fargo, checked
@@ -97,7 +99,8 @@ const POSTING_DAYS_THAT_SAY_WHERE = 2;
  * deposits sit in Chase Checking, checked through Aug 12 — and `earliestVerified`
  * took Aug 12. The dashboard called seven paydays in a read account unread, and
  * /recurring and /budgets said Oct 1 "falls after Wed, Aug 12, 2026". A pay
- * series that names its account has told the app where to look.
+ * series that names its account has told the app where to look — and its last
+ * two deposits, on Wells Fargo, say the same: the June ones are history.
  *
  * 🔴 AND A SERIES THAT NAMES NONE has told it by where it has posted lately. Measured on a copy of his ledger
  * 2026-10-08: Flamingo South Beach (rent) posted on Venture X (Jun 16), Chase Checking (Jul 8), then Wells Fargo
@@ -109,6 +112,15 @@ const POSTING_DAYS_THAT_SAY_WHERE = 2;
  * ⚠️ Not only the newest day: one charge elsewhere does not move a series (`POSTING_DAYS_THAT_SAY_WHERE`), and
  * while it might still land in either account, both are looked at — the earlier frontier stands, as for any account
  * it could land in (`earliestVerified`).
+ *
+ * ⚖️ A NAMED account is ADDED to them, never put in their place — read on both, and the earlier frontier stands
+ * (`earliestVerified`), his decision 66 (2026-10-12). The account it names is where he says it lands; its last two
+ * payment days are where it has landed; while they differ a charge could sit in either. 🔴 "A named account replaces
+ * the history" read a bill naming one account and paying from another only where it does not pay: on a copy of his
+ * ledger 2026-10-12 the dismissed PURA VIDA BAY ROAD MIAMI BEACH names Venture X, read through Sep 13, and paid its
+ * last two (Jul 19, Jul 21) on Chase Sapphire, read through Sep 2 — Venture X alone could call it late, lapse it and
+ * draw its ✕ on days no Sapphire statement had read. It alone reads a different day (Sep 13 → Sep 2); the pay, the
+ * rent, its utilities and every live bill read the same day as before.
  *
  * ⛔ ONE rule for every caller — the dashboard's income card, /spending's note
  * (`cashEarningsReadings`), the passed-payday sentence on /budgets and
@@ -145,13 +157,13 @@ export function landingAccountsBySeries(db: AppDatabase): Map<string, Set<string
   const out = new Map<string, Set<string>>(
     [...postings].map(([id, list]) => [id, accountsItPostsToNow(list)] as const),
   );
-  // a named account replaces the history: that is where the pay lands now
+  // ⚖️ a named account is ADDED to where its last two posting days posted — never put in their place (his decision 66)
   for (const s of db
     .select({ id: recurringSeries.id, accountId: recurringSeries.accountId })
     .from(recurringSeries)
     .where(isNotNull(recurringSeries.accountId))
     .all()) {
-    if (s.accountId !== null) out.set(s.id, new Set([s.accountId]));
+    if (s.accountId !== null) out.set(s.id, new Set([s.accountId, ...(out.get(s.id) ?? [])]));
   }
   /*
    * ⚖️ A series BILLED INSIDE another's payment (§6A 59) posts where its carrier posts: its evidence is the carrier's

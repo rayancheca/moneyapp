@@ -164,6 +164,9 @@ describe("cashEarningsReadings — how much of a window the landing account has 
     const WF = "acct-wf";
     addAccount(WF);
     bundle.db.update(recurringSeries).set({ accountId: WF }).where(eq(recurringSeries.id, SERIES)).run();
+    // its last two deposits on the account it names, as on his ledger — the June one in Chase is history (a last two
+    // split across both would read both, his decision 66)
+    payroll("t-wf-aug", WF, "2026-08-27");
     payroll("t-wf", WF, "2026-09-03");
     coverThrough(CHASE, "2026-06-01", "2026-08-12");
     coverThrough(WF, "2026-06-01", "2026-09-10");

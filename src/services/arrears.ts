@@ -251,8 +251,8 @@ export function arrearsInWindow(
  * no account the ledger knows reads nothing: the calendar's `null`, and the
  * cautious answer.
  *
- * ⚖️ Read where the bill posts NOW — the accounts its last two payments posted to, or the one it names
- * (`landingAccountsBySeries`) — his decision 62 (2026-10-12): the accounts its "running late" chip and its lapse are
+ * ⚖️ Read where the bill posts NOW — the accounts its last two payments posted to and the one it names
+ * (`landingAccountsBySeries`, 66) — his decision 62 (2026-10-12): the accounts its "running late" chip and its lapse are
  * measured on. "Never posted" is still a negative claim, so every account it may land in now must be read past its
  * day — and the calendar grades `missed` against `not_imported` on the same accounts, so the card never says "never
  * posted" of a day /recurring calls not imported. 🔴 It was every account the bill had EVER paid from
