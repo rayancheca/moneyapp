@@ -14,6 +14,8 @@ import { seedDatabase } from "@/db/seed";
 import { budgetVerdict } from "@/lib/budget-verdict";
 import { arrearsSentence } from "@/lib/committed";
 import { addDays, compareDates } from "@/lib/dates";
+import { projectedEvidence } from "@/lib/series-evidence";
+import { staleComponentEntries, staleOccurrenceEntries } from "@/components/recurring/labels";
 import { updateAccount } from "./accounts";
 import { arrearsThisMonth, unbankedIncomeForSeries } from "./arrears";
 import { budgetPaceStatuses, categoryReachFor, createBudget } from "./budgets";
@@ -319,6 +321,40 @@ describe("a series lapses only on days the ledger has checked — every surface 
     expect(ids.has(RENT)).toBe(false);
     expect(ids.has(LEASE)).toBe(false);
   });
+
+  /*
+   * 🔴 Review of 2026-10-08: Amazon Prime read "running late" in the forecast's band and footer and "Lapsed" on the All
+   * tab of the same page — its lapse measured to today on one surface and to its checked day on the other. Every
+   * surface prints ONE word for a series: the forecast's own let-go (`hasStoppedForecasting`) for lapsed, and
+   * `projectedEvidence` for every series it still projects — the All tab, the chips, the footers and the band.
+   */
+  test.each([OCT, DEC, "2027-01-20"])(
+    "%s: the forecast's band and footer, and the Upcoming footer, say of each series the All tab's word",
+    (today) => {
+      // Wells Fargo read past the missed days: in December the rent and the lease have lapsed, his pay is late
+      checkedThrough(WF, "2026-09-25", "2026-12-06");
+      const word = new Map(listSeries(bundle.db, today).map((s) => [s.name, s.evidence]));
+      const forecast = forecastCurrentMonth(bundle.db, today).components;
+      const entries = [
+        ...staleComponentEntries(forecast),
+        ...staleOccurrenceEntries(upcomingOccurrences(bundle.db, today, 30)),
+      ];
+      expect(entries.length, today).toBeGreaterThan(0);
+      for (const e of entries) expect(projectedEvidence(e.staleness), `${today} · ${e.name}`).toBe(word.get(e.name));
+      // …the band's "running late" is exactly the series the All tab calls running late
+      for (const c of forecast.filter((x) => x.kind === "fixed")) {
+        const banded = c.staleness!.isStale && c.staleness!.daysSinceLastMatch !== null;
+        expect(banded, `${today} · ${c.label}`).toBe(word.get(c.label) === "running-late");
+      }
+      // …and a series the All tab calls lapsed is in no footer and no band
+      const lapsed = [...word].filter(([, w]) => w === "lapsed").map(([name]) => name);
+      expect(lapsed.length, today).toBeGreaterThan(0);
+      for (const name of lapsed) {
+        expect(entries.some((e) => e.name === name), `${today} · ${name}`).toBe(false);
+        expect(forecast.some((c) => c.label === name), `${today} · ${name}`).toBe(false);
+      }
+    },
+  );
 });
 
 /**

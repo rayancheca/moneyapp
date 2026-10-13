@@ -18,7 +18,7 @@ import { flowEntryOf } from "@/lib/month-flow";
 import { CALENDAR_DENSITY_CLASS } from "./recurring-view-spec";
 import { formatCents } from "@/lib/money";
 import type { ForecastConfidence } from "@/lib/occurrence-verdict";
-import { SERIES_EVIDENCE_LABEL } from "@/lib/series-evidence";
+import { SERIES_EVIDENCE_LABEL, seriesEvidenceTone } from "@/lib/series-evidence";
 import {
   calendarMonthFlow,
   type CalendarEntry,
@@ -599,8 +599,10 @@ export function DaySheetBody({ entries }: { entries: readonly CalendarEntry[] })
                     ) : null}
                     {e.isStale ? <Badge tone="warning">evidence stale</Badge> : null}
                     {/* not a warning: nothing is late about a bill the bank has
-                        not charged yet — the All tab's "Never billed" */}
-                    {e.neverBilled ? <Badge tone="neutral">{SERIES_EVIDENCE_LABEL["never-billed"]}</Badge> : null}
+                        not charged yet — the All tab's "Never billed", in the series page's tone */}
+                    {e.neverBilled ? (
+                      <Badge tone={seriesEvidenceTone("never-billed")}>{SERIES_EVIDENCE_LABEL["never-billed"]}</Badge>
+                    ) : null}
                     {/* ⚖️ paid inside another series' payment (§6A 59) — where "Never billed" stood */}
                     {e.billedWith !== null ? <Badge tone="neutral">{e.billedWith}</Badge> : null}
                     <span className="text-[11px] text-ink-faint">{KIND_LABEL[e.kind]}</span>

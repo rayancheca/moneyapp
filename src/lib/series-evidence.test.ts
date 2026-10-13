@@ -1,8 +1,9 @@
 import { describe, expect, test } from "vitest";
+import type { SeriesKind } from "@/db/schema/recurring";
 import {
   SERIES_EVIDENCE_LABEL,
-  SERIES_EVIDENCE_NOTE,
   SUGGESTION_NOTE,
+  seriesEvidenceNote,
   seriesEvidenceTone,
   suggestionNote,
   seriesRowLabel,
@@ -15,12 +16,15 @@ import {
 } from "./series-evidence";
 
 const EVERY: readonly SeriesEvidence[] = ["active", "never-billed", "awaiting-statements", "running-late", "lapsed"];
+const KIND_MIXES: readonly (readonly SeriesKind[])[] = [["bill"], ["income"], ["income", "subscription"], ["transfer"]];
+/** a section of bills — the note as it has always read */
+const billsNote = (e: SeriesEvidence): string => seriesEvidenceNote(e, ["bill", "subscription"]);
 
 describe("the evidence vocabulary", () => {
   test("every state has a label and a note, and none of them is the word 'inactive'", () => {
     for (const e of EVERY) {
       expect(SERIES_EVIDENCE_LABEL[e].length).toBeGreaterThan(0);
-      expect(SERIES_EVIDENCE_NOTE[e].length).toBeGreaterThan(0);
+      for (const kinds of KIND_MIXES) expect(seriesEvidenceNote(e, kinds).length).toBeGreaterThan(0);
       // 🔴 the word the All tab used for three different facts at once
       expect(SERIES_EVIDENCE_LABEL[e].toLowerCase()).not.toContain("inactive");
     }
@@ -36,25 +40,41 @@ describe("the evidence vocabulary", () => {
    * when the tolerance runs out, so that is what it says; the label is /budgets' word for a verdict withheld until
    * the days are covered.
    */
-  test("awaiting statements is never called late, never unread, and is the one quiet tone", () => {
+  test("awaiting statements is never called late, never unread, and is quiet", () => {
     expect(SERIES_EVIDENCE_LABEL["awaiting-statements"]).toBe("Awaiting statements");
     expect(SERIES_EVIDENCE_LABEL["awaiting-statements"].toLowerCase()).not.toContain("late");
-    expect(SERIES_EVIDENCE_NOTE["awaiting-statements"]).toContain(
-      "each one's tolerance runs out after the last day its accounts have been checked through",
-    );
-    expect(SERIES_EVIDENCE_NOTE["awaiting-statements"]).toContain("none can be called late yet");
-    expect(SERIES_EVIDENCE_NOTE["awaiting-statements"]).not.toContain("looked for");
+    for (const kinds of KIND_MIXES) {
+      const note = seriesEvidenceNote("awaiting-statements", kinds);
+      expect(note).toContain("each one's tolerance runs out after the last day its accounts have been checked through");
+      expect(note).toContain("none can be called late yet");
+      expect(note).not.toContain("looked for");
+    }
     expect(seriesEvidenceTone("awaiting-statements")).toBe("neutral");
-    for (const e of EVERY.filter((x) => x !== "awaiting-statements")) expect(seriesEvidenceTone(e)).toBe("warning");
     expect(seriesRowLabel("confirmed", "awaiting-statements")).toBe("awaiting statements");
     expect(seriesRowLabel("detected", "awaiting-statements")).toBe("suggested · awaiting statements");
   });
 
+  /*
+   * 🔴 Review of 2026-10-08: the series page wore an amber "Never billed" badge while the chip beside the same series'
+   * projection called it neutral — "nothing is late about a bill the bank has not charged yet". One tone, and it warns
+   * only of what IS late: a series that has charged and gone quiet on read days, or that the forecast let go.
+   */
+  test("the badge warns only of what is late — running late and lapsed; never billed is as quiet as awaiting statements", () => {
+    expect(seriesEvidenceTone("running-late")).toBe("warning");
+    expect(seriesEvidenceTone("lapsed")).toBe("warning");
+    expect(seriesEvidenceTone("never-billed")).toBe("neutral");
+    expect(seriesEvidenceTone("awaiting-statements")).toBe("neutral");
+    expect(seriesEvidenceTone("active")).toBe("neutral");
+  });
+
   test("a state that is still forecast says so, and the one that is not says that", () => {
-    expect(SERIES_EVIDENCE_NOTE["awaiting-statements"]).toContain("still forecast");
-    expect(SERIES_EVIDENCE_NOTE["running-late"]).toContain("still forecast");
-    expect(SERIES_EVIDENCE_NOTE["never-billed"]).toContain("forecast");
-    expect(SERIES_EVIDENCE_NOTE.lapsed).toContain("no longer forecast");
+    for (const kinds of KIND_MIXES) {
+      expect(seriesEvidenceNote("awaiting-statements", kinds)).toContain("still forecast");
+      expect(seriesEvidenceNote("running-late", kinds)).toContain("still forecast");
+      expect(seriesEvidenceNote("never-billed", kinds)).toContain("forecast");
+      expect(seriesEvidenceNote("active", kinds)).toContain("forecast");
+    }
+    expect(billsNote("lapsed")).toContain("no longer forecast");
   });
 
   /*
@@ -87,6 +107,54 @@ describe("the evidence vocabulary", () => {
     }
     expect(suggestionNote(["running-late", "lapsed"])).toBe(suggestionNote(["lapsed"]));
     expect(suggestionNote(["active", "running-late", "never-billed"])).toBe(SUGGESTION_NOTE);
+  });
+});
+
+/*
+ * 🔴 Review of 2026-10-08: the evidence words said "charge" of his weekly pay — "N series have not been looked for
+ * yet" over "the charge each is waiting on", of a payroll DEPOSIT into Wells Fargo. Those two are gone (Awaiting
+ * statements, 2026-10-08), and the notes over the All tab's other sections still said it: "charged within their
+ * cadence" over his pay in Active, "the last charge is older than the cadence allows" over it in Running late. A
+ * section's note words its postings by the kinds it holds — `seriesVerb`'s split: deposited, moved, charged.
+ */
+describe("seriesEvidenceNote — a deposit is a deposit, a charge a charge", () => {
+  test("a section of bills reads as it always has", () => {
+    expect(billsNote("active")).toBe("charged within their cadence, and forecast");
+    expect(billsNote("never-billed")).toBe("registered by hand and forecast — the bank has not charged them yet");
+    expect(billsNote("running-late")).toBe("still forecast — the last charge is older than the cadence allows");
+    expect(billsNote("lapsed")).toBe("no longer forecast — quiet past the point a bill stops");
+  });
+
+  test("his pay alone is deposited, never charged", () => {
+    for (const e of ["active", "never-billed", "running-late", "awaiting-statements"] as const) {
+      expect(seriesEvidenceNote(e, ["income"]), e).not.toMatch(/charg/);
+    }
+    expect(seriesEvidenceNote("active", ["income"])).toBe("deposited within their cadence, and forecast");
+    expect(seriesEvidenceNote("running-late", ["income"])).toBe(
+      "still forecast — the last deposit is older than the cadence allows",
+    );
+    expect(seriesEvidenceNote("never-billed", ["income"])).toBe(
+      "registered by hand and forecast — nothing has been deposited for them yet",
+    );
+  });
+
+  test("his pay beside bills names both, charge first", () => {
+    expect(seriesEvidenceNote("active", ["income", "bill", "subscription"])).toBe(
+      "charged or deposited within their cadence, and forecast",
+    );
+    expect(seriesEvidenceNote("running-late", ["subscription", "income"])).toBe(
+      "still forecast — the last charge or deposit is older than the cadence allows",
+    );
+    expect(seriesEvidenceNote("never-billed", ["bill", "income"])).toBe(
+      "registered by hand and forecast — nothing has been charged or deposited for them yet",
+    );
+  });
+
+  test("a transfer is moved", () => {
+    expect(seriesEvidenceNote("active", ["transfer"])).toBe("moved within their cadence, and forecast");
+    expect(seriesEvidenceNote("running-late", ["transfer"])).toBe(
+      "still forecast — the last transfer is older than the cadence allows",
+    );
   });
 });
 

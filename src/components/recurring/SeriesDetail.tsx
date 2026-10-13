@@ -168,7 +168,7 @@ export function SeriesDetail({
             {/* 🔴 "Inactive" sat beside "Next expected Sep 11" on a series the
                 forecast projects. The badge is the word the evidence chooses. */}
             {(data.status === "detected" || data.status === "confirmed") && data.evidence !== "active" ? (
-              // ⛔ awaiting statements is no warning — `seriesEvidenceTone`
+              // ⛔ awaiting statements and never billed are no warning — `seriesEvidenceTone`, the chip's tone too
               <Badge tone={seriesEvidenceTone(data.evidence)}>{SERIES_EVIDENCE_LABEL[data.evidence]}</Badge>
             ) : null}
             {/* ⚖️ Paid inside another series' payment (owner decision 2026-10-08, §6A 59): whose postings its

@@ -267,6 +267,29 @@ describe("AllSeriesView — awaiting statements is its own section, never Runnin
     expect(section("rec-running-late")).not.toContain("It America");
   });
 
+  /*
+   * 🔴 Review of 2026-10-08: the evidence words said "charge" of his payroll deposit. A section's note words what it
+   * holds — `seriesEvidenceNote`, by kind.
+   */
+  test("a section holding his pay says deposited; one of bills says charged, as it always has", () => {
+    const words = decode(
+      renderToStaticMarkup(
+        createElement(AllSeriesView, {
+          series: [
+            series({ id: "p", name: "It America LLC (weekly pay)", status: "confirmed", kind: "income", evidence: "running-late" }),
+            series({ id: "b", name: "Breezeline", status: "confirmed", kind: "bill" }),
+            series({ id: "w", name: "Wages", status: "confirmed", kind: "income" }),
+          ],
+          overdueBySeries: new Map(),
+          today: "2026-10-08",
+        }),
+      ).replace(/<[^>]+>/g, ""),
+    );
+    expect(words).toContain("charged or deposited within their cadence, and forecast");
+    expect(words).toContain("still forecast — the last deposit is older than the cadence allows");
+    expect(words).not.toContain("the last charge");
+  });
+
   test("a suggestion says it is awaiting statements, not late", () => {
     expect(decode(html.replace(/<[^>]+>/g, ""))).toContain(
       "Detected: Subscription · Monthly · about -$15.49 · awaiting statements",

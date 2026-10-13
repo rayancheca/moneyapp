@@ -7,7 +7,7 @@ import { formatCents } from "@/lib/money";
 import type { UnsettledReason } from "@/lib/occurrence-verdict";
 import { ONE_CHARGE_WORD } from "@/lib/one-charge";
 import type { PerPayday } from "@/lib/per-payday";
-import { SERIES_EVIDENCE_LABEL } from "@/lib/series-evidence";
+import { postingOf, projectedEvidence, SERIES_EVIDENCE_LABEL, seriesEvidenceTone } from "@/lib/series-evidence";
 import type { Cadence, SeriesKind, SeriesStatus } from "@/db/schema/recurring";
 import type { ForecastComponent } from "@/services/forecast";
 import type { SeriesOccurrence, SeriesStaleness } from "@/services/recurring";
@@ -157,9 +157,11 @@ export function schedulePhrase(cadence: Cadence, nextExpectedOn: string): { conn
  * read off a stale `next_expected_on` — reading as a date still to come.
  */
 export function seriesVerb(kind: SeriesKind, over: boolean = false): string {
-  if (kind === "income") return over ? "deposited" : "deposits";
-  if (kind === "transfer") return over ? "moved" : "moves";
-  return over ? "charged" : "charges";
+  // the past tense is the evidence notes' own (`postingOf`) — one split of deposit, transfer and charge
+  if (over) return postingOf(kind).past;
+  if (kind === "income") return "deposits";
+  if (kind === "transfer") return "moves";
+  return "charges";
 }
 
 /* ── staleness disclosure ──────────────────────────────────────────────────
@@ -189,27 +191,36 @@ export function staleLabel(s: SeriesStaleness): string {
 }
 
 /**
- * The marker's tone. A bill the bank has not charged yet is NOT a warning —
- * the calendar's Day Sheet already says so ("nothing is late about a bill the
- * bank has not charged yet") — and the Upcoming list badged the car lease in
- * warning amber on the morning of its first payment.
+ * The marker's tone — the series page's badge's, for the word both read (`seriesEvidenceTone` of `projectedEvidence`):
+ * one state, one tone. A bill the bank has not charged yet is NOT a warning — the calendar's Day Sheet already says so
+ * ("nothing is late about a bill the bank has not charged yet") — and the Upcoming list badged the car lease in
+ * warning amber on the morning of its first payment. 🔴 …while the series page badged "Never billed" in amber
+ * beside this neutral chip (review of 2026-10-08).
  */
 export function staleMarkTone(s: SeriesStaleness): "warning" | "neutral" {
-  return staleIsLate(s) ? "warning" : "neutral";
+  return seriesEvidenceTone(projectedEvidence(s));
 }
 
 /**
  * Late in the only sense that warns: it has charged, and its evidence ran past tolerance on days the ledger has
  * checked. ⛔ Never billed is not late (above), and neither is awaiting statements (`seriesStaleness`): 🔴 his pay
  * read "last seen 14d ago" in amber for a payday on a day Wells Fargo had not been checked through (2026-10-08).
+ *
+ * ⛔ The All tab's own word for the series (`projectedEvidence`), never a second split of the staleness flags here —
+ * so the footer, the band and the All tab cannot file one series under two words.
  */
 function staleIsLate(s: SeriesStaleness): boolean {
-  return s.isStale && s.daysSinceLastMatch !== null;
+  return projectedEvidence(s) === "running-late";
 }
 
 /** Past tolerance today, not by its accounts' checked day: it cannot be called late yet (`seriesStaleness`). */
 function staleIsAwaiting(s: SeriesStaleness): boolean {
-  return s.awaitingStatements && s.daysSinceLastMatch !== null;
+  return projectedEvidence(s) === "awaiting-statements";
+}
+
+/** Nothing — its own or its carrier's — has ever matched it: it rests on the schedule alone. */
+function staleIsNeverBilled(s: SeriesStaleness): boolean {
+  return projectedEvidence(s) === "never-billed";
 }
 
 /** The footer is a warning only when at least one of its series is actually late. */
@@ -233,7 +244,7 @@ export function staleFooterIsWarning(entries: readonly StaleEntry[]): boolean {
  */
 export function staleFooterHint(entries: readonly StaleEntry[]): string {
   const late = staleFooterIsWarning(entries);
-  const never = entries.some((e) => e.staleness.daysSinceLastMatch === null);
+  const never = entries.some((e) => staleIsNeverBilled(e.staleness));
   const awaiting = entries.some((e) => staleIsAwaiting(e.staleness));
   let rests: string | null = null;
   if (late && never) rests = "rest on old evidence or on the schedule alone";
@@ -252,7 +263,9 @@ export function staleFooterHint(entries: readonly StaleEntry[]): string {
 export function stalenessSentence(s: SeriesStaleness): string {
   const expects = `expected about every ${Math.round(s.stepDays)} days`;
   if (s.lastMatchedOn === null || s.daysSinceLastMatch === null) {
-    return `${expects}, but no charge has ever matched it — still projected, on the schedule alone`;
+    // in its siblings' words ("nothing has matched since"), true of a deposit as of a charge — 🔴 it said "no charge"
+    // of every series, a hand-registered pay included (review of 2026-10-08)
+    return `${expects}, but nothing has ever matched it — still projected, on the schedule alone`;
   }
   /*
    * ⛔ Awaiting statements: the age is a fact, "past the tolerance" is not a finding — the tolerance runs out on days
@@ -383,9 +396,10 @@ export interface StaleEntry {
  * (his ledger, 2026-10-08). They are counted apart, in the badges' word (`SERIES_EVIDENCE_LABEL`), and never warn.
  */
 export function staleSummaryLabel(entries: readonly StaleEntry[], window: string): string {
-  const never = entries.filter((e) => e.staleness.daysSinceLastMatch === null).length;
+  // each counted under its All-tab word (`projectedEvidence`), never as what is left over from the other two
+  const late = entries.filter((e) => staleIsLate(e.staleness)).length;
+  const never = entries.filter((e) => staleIsNeverBilled(e.staleness)).length;
   const awaiting = entries.filter((e) => staleIsAwaiting(e.staleness)).length;
-  const late = entries.length - never - awaiting;
   // the first clause carries the noun: "1 series is running late and 2 have never been billed"
   const clauses = [
     { n: late, verb: (n: number) => (n === 1 ? "is running late" : "are running late") },

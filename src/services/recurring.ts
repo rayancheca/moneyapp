@@ -1,5 +1,5 @@
 import { and, asc, eq, inArray, lte, min, ne } from "drizzle-orm";
-import { seriesIsOver, type SeriesEvidence } from "@/lib/series-evidence";
+import { projectedEvidence, seriesIsOver, type SeriesEvidence } from "@/lib/series-evidence";
 import { lastSeenOn, type BillingCarrier, type EvidenceSource } from "@/lib/billed-with";
 import type { AppDatabase } from "@/db/client";
 import { categories } from "@/db/schema/categories";
@@ -1847,6 +1847,12 @@ function forecastWalk(db: AppDatabase, today: string, windowDays: number) {
  * because it is the forecast's rule — a series the forecast has dropped must not be filed as one it still projects —
  * and on the same read days (§6A 57), so a lapsed series is always late there too, never one awaiting statements.
  *
+ * ⛔ Every series it still projects is worded by `projectedEvidence` — the predicate the forecast's chips, footers
+ * and band read off the same `seriesStaleness`, so the All tab and the forecast above it cannot file one series under
+ * two words. 🔴 On 2026-10-08 Amazon Prime read "running late" in the forecast's band and footer and "Lapsed" on the
+ * All tab of the same page. A fresh series reads `active` there: fresh to today (`isSeriesActive`) is exactly
+ * neither late on read days nor past tolerance today.
+ *
  * ⚖️ Never billed is NEITHER it nor its carrier ever seen (`lastSeenOn`, §6A 59). 🔴 It read the series' own column,
  * and `Rent utilities & fees` — paid inside every rent payment — sat under "Never billed" on the All tab.
  */
@@ -1855,8 +1861,7 @@ export function seriesEvidence(
   today: string,
   checkedThrough: string | null,
 ): SeriesEvidence {
-  if (lastSeenOn(s) === null) return "never-billed";
-  if (isSeriesActive(s, today)) return "active";
+  // never billed has nothing to lapse from (`seriesHasLapsed`), so it falls through to its own word below
   if (hasStoppedForecasting(s, today, checkedThrough)) return "lapsed";
-  return seriesStaleness(s, today, checkedThrough).awaitingStatements ? "awaiting-statements" : "running-late";
+  return projectedEvidence(seriesStaleness(s, today, checkedThrough));
 }

@@ -1,5 +1,6 @@
 import { describe, expect, test } from "vitest";
 import { NO_IMPORT_YET } from "@/lib/arrears-reading";
+import { projectedEvidence, seriesEvidenceTone, type SeriesEvidence } from "@/lib/series-evidence";
 import type { ForecastComponent } from "@/services/forecast";
 import type { SeriesOccurrence, SeriesStaleness } from "@/services/recurring";
 import {
@@ -146,6 +147,33 @@ describe("staleMarkTone", () => {
   });
 });
 
+/*
+ * 🔴 Review of 2026-10-08: the series page wore "Never billed" in amber while this chip called the same state neutral,
+ * and the forecast's footer said "running late" of a series the All tab on the same page filed as lapsed — one state
+ * with two tones, one word from two predicates. The chip, the footer and the badge read ONE word (`projectedEvidence`)
+ * and wear ONE tone (`seriesEvidenceTone`).
+ */
+describe("one word, one tone — the chip, the footer and the series page's badge", () => {
+  const states: [SeriesEvidence, SeriesStaleness][] = [
+    ["running-late", staleness()],
+    ["never-billed", staleness({ lastMatchedOn: null, daysSinceLastMatch: null, checkedDaysSinceLastMatch: null })],
+    ["awaiting-statements", staleness({ isStale: false, awaitingStatements: true, checkedThrough: "2026-06-30" })],
+    ["active", staleness({ daysSinceLastMatch: 3, checkedDaysSinceLastMatch: 3, isStale: false })],
+  ];
+
+  test.each(states)("%s: the chip reads the badge's word, in the badge's tone", (word, s) => {
+    expect(projectedEvidence(s)).toBe(word);
+    expect(staleMarkTone(s)).toBe(seriesEvidenceTone(word));
+  });
+
+  test("the footer counts each under the word the All tab files it under", () => {
+    const entries = states.filter(([w]) => w !== "active").map(([w, s]) => ({ key: w, name: w, staleness: s }));
+    expect(staleSummaryLabel(entries, "In October 2026")).toBe(
+      "In October 2026, 1 series is running late, 1 has never been billed and 1 is awaiting statements — all still projected",
+    );
+  });
+});
+
 /**
  * 🔴 "In the next 30 days, 4 series are running late and 3 have never charged —
  * all still projected · why these numbers rest on old evidence" — measured on
@@ -201,9 +229,15 @@ describe("stalenessSentence", () => {
     );
   });
 
-  test("with no match at all it says so instead of formatting a null date", () => {
+  /*
+   * …in its siblings' words — "nothing has matched since …" — true of a deposit as of a charge. 🔴 It said "no charge
+   * has ever matched it" of every series nothing ever matched, a hand-registered pay included (review of 2026-10-08:
+   * the evidence words said "charge" of his payroll deposit).
+   */
+  test("with no match at all it says so instead of formatting a null date — of a deposit as of a charge", () => {
     const sentence = stalenessSentence(staleness({ lastMatchedOn: null, daysSinceLastMatch: null }));
-    expect(sentence).toContain("no charge has ever matched it");
+    expect(sentence).toContain("nothing has ever matched it");
+    expect(sentence).not.toMatch(/charge|deposit/);
     expect(sentence).not.toContain("null");
   });
 });

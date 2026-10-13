@@ -2,6 +2,7 @@ import { Money } from "@/components/ui/Money";
 import { SurfaceCard } from "@/components/ui/SurfaceCard";
 import { forecastSplit } from "@/lib/forecast-split";
 import { formatDayLong } from "@/lib/format-date";
+import { projectedEvidence } from "@/lib/series-evidence";
 import { passedPaydaysWords } from "@/lib/unbanked-income";
 import type { MonthForecast } from "@/services/forecast";
 import { ForecastComposition } from "./ForecastComposition";
@@ -317,16 +318,19 @@ export function ForecastCard({ forecast: f }: ForecastCardProps) {
    * identity arithmetic rather than a coincidence worth re-checking here.
    */
   const split = forecastSplit(
-    f.components.map((c) => ({
-      kind: c.kind,
-      cents: c.cents,
-      // late on checked days only: awaiting statements carries `isStale: false` and the band never names it
-      // (`seriesStaleness`) — guarded by rendering this card, services/late-over-unread-days.test.ts
-      isStale: c.staleness?.isStale,
-      // never CHARGED, not never seen: `daysSinceLastMatch` is null exactly
-      // when no charge has ever matched the series
-      neverCharged: c.staleness?.daysSinceLastMatch === null,
-    })),
+    f.components.map((c) => {
+      // the All tab's word for the series (`projectedEvidence`) — the band's "running late" is exactly its Running late
+      const word = c.staleness === undefined ? null : projectedEvidence(c.staleness);
+      return {
+        kind: c.kind,
+        cents: c.cents,
+        // late on checked days only: awaiting statements is no part of it and the band never names it
+        // (`seriesStaleness`) — guarded by rendering this card, services/late-over-unread-days.test.ts
+        isStale: word === "running-late" || word === "never-billed",
+        // never CHARGED, not never seen: nothing — its own or its carrier's — has ever matched the series
+        neverCharged: word === "never-billed",
+      };
+    }),
   );
 
   return (

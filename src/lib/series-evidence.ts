@@ -1,3 +1,5 @@
+import type { SeriesKind } from "@/db/schema/recurring";
+
 /**
  * What the EVIDENCE says about a live recurring series, and the one word each
  * surface uses for it.
@@ -36,12 +38,46 @@ export const SERIES_EVIDENCE_LABEL: Record<SeriesEvidence, string> = {
 };
 
 /**
- * The badge tone for a live series' evidence. ⛔ Awaiting statements is not a warning: nothing is known to be wrong,
- * only not yet checked far enough. 🔴 His pay's page wore an amber "Running late" for a payday on a day no import
- * covered (2026-10-08).
+ * The badge tone for a live series' evidence — the series page's badge and every staleness chip (`staleMarkTone`):
+ * ONE tone per state, a warning only of what is late — charged, then quiet past tolerance on read days, or let go.
+ *
+ * ⛔ Awaiting statements is not a warning: nothing is known to be wrong, only not yet checked far enough. 🔴 His pay's
+ * page wore an amber "Running late" for a payday on a day no import covered (2026-10-08). ⛔ Nor is never billed:
+ * nothing is late about a bill the bank has not charged yet (the calendar's Day Sheet). 🔴 The series page wore
+ * "Never billed" in amber beside a chip that called the same state neutral (review of 2026-10-08).
  */
 export function seriesEvidenceTone(evidence: SeriesEvidence): "neutral" | "warning" {
-  return evidence === "awaiting-statements" ? "neutral" : "warning";
+  return evidence === "running-late" || evidence === "lapsed" ? "warning" : "neutral";
+}
+
+/** The staleness facts a projected series' word is read from — `SeriesStaleness` (services/recurring), structurally. */
+export interface StalenessFacts {
+  /** when it was last seen; null when nothing — its own or its carrier's — ever matched */
+  lastMatchedOn: string | null;
+  /** past tolerance on days the ledger has checked */
+  isStale: boolean;
+  /** past tolerance today, but not by its checked day */
+  awaitingStatements: boolean;
+}
+
+/**
+ * The word for a series the forecast still PROJECTS, read off its staleness — `seriesEvidence` for every series it has
+ * not let go (lapsed is the forecast's own let-go, `hasStoppedForecasting`), and the word every staleness chip, footer
+ * and band reads. ONE predicate, so the All tab, the series page and the forecast above them cannot file one series
+ * under two words.
+ *
+ * 🔴 The footer split its entries by the staleness flags itself (`staleSummaryLabel`), the All tab by `seriesEvidence`,
+ * and on 2026-10-08 Amazon Prime read "running late" in the forecast's band and footer and "Lapsed" on the All tab of
+ * the same page — the lapse measured to today on one surface and to the checked day on the other (§6A 57 put both on
+ * the checked day; this keeps them on one word).
+ *
+ * ⚠️ `isStale` is true of a never-billed series too — no evidence is past every tolerance — so never billed is asked
+ * first: "running late" is only true of a series that has posted.
+ */
+export function projectedEvidence(s: StalenessFacts): Exclude<SeriesEvidence, "lapsed"> {
+  if (s.lastMatchedOn === null) return "never-billed";
+  if (s.isStale) return "running-late";
+  return s.awaitingStatements ? "awaiting-statements" : "active";
 }
 
 /**
@@ -112,15 +148,64 @@ export function seriesRowLabel(
   return evidence === "active" ? null : SERIES_EVIDENCE_LABEL[evidence].toLowerCase();
 }
 
-/** One line on each state, for a section note. */
-export const SERIES_EVIDENCE_NOTE: Record<SeriesEvidence, string> = {
-  active: "charged within their cadence, and forecast",
-  "never-billed": "registered by hand and forecast — the bank has not charged them yet",
-  "awaiting-statements":
-    "still forecast — each one's tolerance runs out after the last day its accounts have been checked through, so none can be called late yet",
-  "running-late": "still forecast — the last charge is older than the cadence allows",
-  lapsed: "no longer forecast — quiet past the point a bill stops",
+/**
+ * What one posting of a series is called, by kind — a deposit of money in, a transfer of money moved, a charge of the
+ * rest: `seriesVerb`'s split (components/recurring/labels), whose past tense this is.
+ */
+const POSTING: Record<"charge" | "deposit" | "transfer", { noun: string; past: string }> = {
+  charge: { noun: "charge", past: "charged" },
+  deposit: { noun: "deposit", past: "deposited" },
+  transfer: { noun: "transfer", past: "moved" },
 };
+
+/** The posting a series of this kind makes — the one place a kind is told a deposit from a charge. */
+export function postingOf(kind: SeriesKind): (typeof POSTING)[keyof typeof POSTING] {
+  if (kind === "income") return POSTING.deposit;
+  if (kind === "transfer") return POSTING.transfer;
+  return POSTING.charge;
+}
+
+/** "charge", "deposit", "charge or deposit" — every posting the kinds make, charge first, each once. */
+function postingsOf(kinds: readonly SeriesKind[], part: "noun" | "past"): string {
+  const made = new Set(kinds.map(postingOf));
+  return Object.values(POSTING)
+    .filter((p) => made.has(p))
+    .map((p) => p[part])
+    .join(" or ");
+}
+
+/**
+ * One line on each state, for a section note — worded by the kinds the section HOLDS: "deposited" of his pay,
+ * "charged" of a bill, both when both are there.
+ *
+ * 🔴 Review of 2026-10-08: the evidence words said "charge" of his payroll deposit — "N series have not been looked
+ * for yet" over "the charge each is waiting on" (both gone with Awaiting statements, 2026-10-08), and still "charged
+ * within their cadence" over his pay in Active and "the last charge is older than the cadence allows" over it in
+ * Running late.
+ *
+ * ⚠️ Lapsed is money-out only — money in never lapses (`lapsedSeriesShouldStopForecasting`) — and its "bill" is a
+ * transfer's too, which this does not settle. Awaiting statements says nothing of what posts.
+ */
+export function seriesEvidenceNote(evidence: SeriesEvidence, kinds: readonly SeriesKind[]): string {
+  // an empty section prints no note; its words default to a bill's
+  const of = kinds.length === 0 ? (["bill"] as const) : kinds;
+  const chargesOnly = of.every((k) => postingOf(k) === POSTING.charge);
+  switch (evidence) {
+    case "active":
+      return `${postingsOf(of, "past")} within their cadence, and forecast`;
+    case "never-billed":
+      // a bill's words as he has always read them; "the bank has not deposited" his pay would be false of who pays it
+      return chargesOnly
+        ? "registered by hand and forecast — the bank has not charged them yet"
+        : `registered by hand and forecast — nothing has been ${postingsOf(of, "past")} for them yet`;
+    case "awaiting-statements":
+      return "still forecast — each one's tolerance runs out after the last day its accounts have been checked through, so none can be called late yet";
+    case "running-late":
+      return `still forecast — the last ${postingsOf(of, "noun")} is older than the cadence allows`;
+    case "lapsed":
+      return "no longer forecast — quiet past the point a bill stops";
+  }
+}
 
 /** The four statuses this vocabulary speaks about. */
 export type SeriesStatusForCopy = "detected" | "confirmed" | "dismissed" | "ended";
