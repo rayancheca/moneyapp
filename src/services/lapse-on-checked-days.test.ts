@@ -249,6 +249,22 @@ describe("a series lapses only on days the ledger has checked — every surface 
     }
   });
 
+  /*
+   * 🔴 Review of §6A 57: "last seen Apr 25 · 94 days past tolerance" — the date is calendar age, the count is read
+   * days, and a reader working from the date to Oct 8 gets 118. The count says which days it counted: through the
+   * checked day, when that is short of today.
+   */
+  test("…and say which days they counted when that stops short of today — never when it runs to today", () => {
+    for (const today of [OCT, DEC]) {
+      expect(subscriptionsCard(bundle.db, today)!.lapsed[0]!.pastToleranceThroughLabel, today).toBe("Sep 13");
+    }
+    // Venture X read through the day before: the count runs to today, and agrees with "last seen Apr 25"
+    checkedThrough(VX, "2026-09-14", addDays(OCT, -1));
+    const dead = subscriptionsCard(bundle.db, OCT)!.lapsed.find((l) => l.seriesId === DEAD)!;
+    expect(dead.pastToleranceThroughLabel).toBeNull();
+    expect(dead.daysPastTolerance).toBe(dead.daysSinceLastMatch! - 48);
+  });
+
   test.each([OCT, DEC])("%s: the runway's committed book keeps every bill, and its arrears walk asks the same", (today) => {
     const book = committedBook(bundle.db, today);
     const lines = new Set(book.lines.map((l) => l.seriesId));

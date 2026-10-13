@@ -19,6 +19,7 @@ import {
   oneChargeDays,
   rollForwardNextExpected,
   seriesStaleness,
+  type SeriesStaleness,
 } from "./recurring";
 
 /**
@@ -118,6 +119,15 @@ export interface SubscriptionLine {
    * his ledger 2026-10-08, 107 by Dec 7, with no statement read past Sep 2 on its card.
    */
   daysPastTolerance: number | null;
+  /**
+   * The last read day `daysPastTolerance` counted — its accounts' checked day, spelled ("Sep 13") — when the count
+   * stops short of today; null when it runs to today, where it is the calendar age "last seen" beside it implies, and
+   * when the line has not lapsed.
+   *
+   * 🔴 Review of §6A 57: "last seen Apr 25 · 94 days past tolerance" beside a date from which a reader counts 118 to
+   * Oct 8 — read days against calendar age, the card not saying which. The line now says "…, checked through Sep 13".
+   */
+  pastToleranceThroughLabel: string | null;
   /** net money out inside the window, refunds netted (positive = money out) */
   postedCents: number;
   /** charges inside the window; a refund nets the money without counting one */
@@ -263,6 +273,17 @@ function postedBySeries(db: AppDatabase, from: string, to: string): Map<string, 
   return out;
 }
 
+/**
+ * The checked day a lapsed line's count of read days stopped at, spelled for its sentence — when that is short of
+ * today: the quiet on read days (`checkedDaysSinceLastMatch`, to the day after the checked day) is then less than its
+ * age to today (`daysSinceLastMatch`, what "last seen <day>" implies). Null when the two are one count.
+ */
+function countedThroughLabel(staleness: SeriesStaleness, today: string): string | null {
+  const { checkedThrough, checkedDaysSinceLastMatch: read, daysSinceLastMatch: age } = staleness;
+  if (read === null || age === null || read >= age || !checkedThrough) return null;
+  return formatDayShortIn(checkedThrough, today);
+}
+
 export function subscriptionsCard(
   db: AppDatabase,
   today: string = todayIso(),
@@ -386,6 +407,7 @@ export function subscriptionsCard(
       lastMatchedLabel,
       daysSinceLastMatch: staleness.daysSinceLastMatch,
       daysPastTolerance: null,
+      pastToleranceThroughLabel: null,
       postedCents: totals.cents,
       postedCount: totals.count,
       // never billed is NOT lapsed: nothing has stopped, nothing ever started.
@@ -408,6 +430,7 @@ export function subscriptionsCard(
           staleness.checkedDaysSinceLastMatch === null
             ? null
             : staleness.checkedDaysSinceLastMatch - wholeToleranceDays(staleness.toleranceDays),
+        pastToleranceThroughLabel: countedThroughLabel(staleness, today),
       });
     } else {
       live.push(line);

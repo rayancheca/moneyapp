@@ -34,10 +34,9 @@ function days(n: number): string {
   return `${n} ${n === 1 ? "day" : "days"}`;
 }
 
-/** What `Evidence` reads — a one-off has no tolerance to be past, so that one is optional. */
-type EvidenceFacts = Pick<SubscriptionLine, "neverBilled" | "lastMatchedLabel" | "billedWithLabel"> & {
-  daysPastTolerance?: number | null;
-};
+/** What `Evidence` reads — a one-off has no tolerance to be past, so those two are optional. */
+type EvidenceFacts = Pick<SubscriptionLine, "neverBilled" | "lastMatchedLabel" | "billedWithLabel"> &
+  Partial<Pick<SubscriptionLine, "daysPastTolerance" | "pastToleranceThroughLabel">>;
 
 /**
  * A row's evidence, in its own voice: when it last charged, or that it never has. `lead` goes first when the row
@@ -46,7 +45,14 @@ type EvidenceFacts = Pick<SubscriptionLine, "neverBilled" | "lastMatchedLabel" |
 function Evidence({ line, lead }: { line: EvidenceFacts; lead?: string }) {
   const prefix = lead === undefined ? "" : `${lead} · `;
   const pastTolerance = line.daysPastTolerance ?? null;
-  const late = pastTolerance === null ? "" : ` · ${days(pastTolerance)} past tolerance`;
+  /* ⚖️ Counted on read days (§6A 57) — so, beside "last seen <day>", it says which: "…, checked through Sep 13" when
+     the count stops short of today (`pastToleranceThroughLabel`). 🔴 "last seen Apr 25 · 94 days past tolerance"
+     read as 118 to anyone counting from the date (review of §6A 57). */
+  const through = line.pastToleranceThroughLabel ?? null;
+  const late =
+    pastTolerance === null
+      ? ""
+      : ` · ${days(pastTolerance)} past tolerance${through === null ? "" : `, checked through ${through}`}`;
   /* ⚖️ Paid inside another series' payment (§6A 59): "billed with the rent, last seen Sep 2". 🔴 His `Rent utilities
      & fees` read "never billed" here, paid inside every rent payment. */
   if (line.billedWithLabel !== null)
