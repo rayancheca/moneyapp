@@ -38,10 +38,13 @@ import {
  *
  * ⚖️ WHERE THE WALK STOPS, backwards: the series' FIRST PAYDAY (`firstPaydayOn`,
  * §6A 55 step B) — its anchor's rhythm walked back to its first deposit. A payday
- * before any money arrived is one the ledger has no reason to think was ever
- * owed, so it is not projected and cannot be retro-settled, however large a lump
- * lands. His series is anchored 2026-07-23 and first paid on 2026-06-04: the
- * walk opens on Thursday Jun 4.
+ * before both its anchor and any money is one the ledger has no reason to think
+ * was ever owed, so it is not projected and cannot be retro-settled, however
+ * large a lump lands. His series is anchored 2026-07-23 and first paid on
+ * 2026-06-04: the walk opens on Thursday Jun 4. ⚠️ An anchor already before the
+ * first deposit opens it there instead, so a first paycheck that is a lump pays
+ * back to it — and an anchor typed months back earns months no deposit answered
+ * (`firstPaydayOn`: an owner's call, queued 2026-10-13).
  *
  * 🔴 It opened on the stored ANCHOR (`projectOccurrences` floors its walk there),
  * while Earned vs banked counted from the first deposit: on his ledger June's

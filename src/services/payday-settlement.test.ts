@@ -15,7 +15,7 @@ import { addDays } from "@/lib/dates";
 import { unbankedIncomeForSeries } from "./arrears";
 import { incomeExpectation } from "./budgets";
 import { forecastCurrentMonth } from "./forecast";
-import { settledPaydaysForSeries } from "./payday-settlement";
+import { paydaySettlement, settledPaydaysForSeries } from "./payday-settlement";
 import { recurringCalendar } from "./recurring-calendar";
 
 /**
@@ -212,10 +212,16 @@ describe("settledPaydaysForSeries — a deposit pays down the paydays behind it"
     expect(settled("2026-09-24")).toEqual(["2026-09-24"]);
   });
 
-  /* ⛔ Never before the series' first evidence. The ledger starts matching this
-     schedule in June 2026; a payday it has no reason to think was ever owed
-     must not be invented and then retired. */
-  test("the walk stops at the series' first attributed deposit", () => {
+  /*
+   * ⛔ Never before the series' anchor and its first deposit: a payday the ledger has no reason to think was ever owed
+   * must not be invented and then retired. The second job is anchored on its first payday, Sep 3, and first paid on
+   * Sep 17 — four weeks at once. Aug 27 is no payday of it, so a week's money stays over; Sep 3 and 10, before the
+   * deposit but not before the anchor, are paid by it. ⚠️ An anchor before the first deposit is the first payday
+   * (`firstPaydayOn`) — walked forward to the deposit, Sep 3 and 10 would go unpaid and the lump read as a raise
+   * (an owner's call, queued 2026-10-13). 🔴 Named "the walk stops at the series' first attributed deposit", of a
+   * walk that stops at the anchor, two weeks before it.
+   */
+  test("a first deposit that is a lump pays back to the anchor, and never before it", () => {
     addPaySeries("series-late", "Second job", "2026-09-03");
     deposit("series-late", "2026-09-17", WEEK * 4);
     expect([...settledPaydaysForSeries(bundle.db, "series-late", TODAY).keys()].sort()).toEqual([
@@ -223,6 +229,8 @@ describe("settledPaydaysForSeries — a deposit pays down the paydays behind it"
       "2026-09-10",
       "2026-09-17",
     ]);
+    const s = paydaySettlement(bundle.db, "series-late", TODAY);
+    expect([s.firstPaydayOn, s.unallocatedCents]).toEqual(["2026-09-03", WEEK]);
   });
 });
 
