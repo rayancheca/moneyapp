@@ -15,10 +15,13 @@ import { transactions } from "@/db/schema/transactions";
 import { addDays, diffDays, todayIso } from "@/lib/dates";
 import { isStaleClose } from "@/lib/holding-price-age";
 import { formatCents } from "@/lib/money";
-import { A_LOWER_BOUND, emptyPeriodReason } from "@/lib/empty-period";
-import { ledgerOpens, ledgerReaches } from "./observation-frontier";
+import { budgetCoverageSentence, readThroughSentence, spentOnlyFromCashWallets } from "@/lib/budget-coverage";
+import { A_LOWER_BOUND, daysNotImportedYet, emptyPeriodReason } from "@/lib/empty-period";
+import { ledgerOpens, ledgerReaches, observationFrontier } from "./observation-frontier";
+import { accountsAwaitingStatements } from "./cash-wallet-rule";
 import { outsidePortfolioCashAccountIds, ownPortfolioAccountIds } from "./accounts";
-import { categoryReachFor } from "./budgets";
+import { categoryReachFor, categoryWindowReading } from "./budgets";
+import { spendingCoverageThrough } from "./movers-card";
 import {
   activeTxnsInRange,
   isHisExpenseRow,
@@ -108,6 +111,11 @@ export type ProvenanceVerdict =
   | "market_value"
   /** computed, and nothing checks it */
   | "unverified"
+  /**
+   * a TOTAL over a window some of whose elapsed days are past its own read frontier — ⚖️ his decision 72 (2026-10-13):
+   * it keeps its figure, a lower bound however well its rows check (`summedRowsProof`)
+   */
+  | "partly_read"
   /** the owner entered this by hand — a row, a holding, an amount; he is the source */
   | "manual"
   /**
@@ -124,14 +132,20 @@ export type ProvenanceVerdict =
 const VERDICT_RANK: Record<ProvenanceVerdict, number> = {
   broken: 0,
   unknown: 1,
-  unverified: 2,
-  market_value: 3,
-  manual: 4,
+  /*
+   * ⚖️ decision 72: under every row's weakness short of a break or no basis at all. A row nothing checks is still a
+   * row found, and a day nobody has read can hold any number of them — so a window read in part says "partly read"
+   * over unchecked rows, rows he typed and rows priced from holdings alike
+   */
+  partly_read: 2,
+  unverified: 3,
+  market_value: 4,
+  manual: 5,
   // his count of a whole balance beside his entry of one row: both his word, never a check — distinct only so a
   // worst-first order has no ties (trust-card's `worstFirst`)
-  counted: 5,
-  derived: 6,
-  sourced: 7,
+  counted: 6,
+  derived: 7,
+  sourced: 8,
 };
 
 export function weakestVerdict(verdicts: readonly ProvenanceVerdict[]): ProvenanceVerdict {
@@ -212,6 +226,21 @@ export interface Provenance {
    * (`provenanceTriggerName`) — `PART_ENTERED`'s "part of it was entered by hand". Travels with `badgeWord`.
    */
   badgeName?: string;
+  /**
+   * ⚖️ Decision 72 (2026-10-13): a summed total whose window has elapsed days past its own read frontier — how many,
+   * and /budgets' line for them ("spending imported through Aug 12 · 30 days of this period unaccounted"), which the
+   * surface prints UNDER the figure. Present whatever the verdict (a break still outranks it); absent for a window read
+   * in full, for an empty window (its own proof says what it is), and for a figure that is not a total over a window.
+   */
+  partlyRead?: PartlyRead;
+}
+
+/** A summed total's window read only in part (`Provenance.partlyRead`) — never built for a window read in full. */
+export interface PartlyRead {
+  /** elapsed days of the window past the day it is read through — /budgets' count for the same window; at least 1 */
+  uncoveredDays: number;
+  /** the line under the figure, in /budgets' words (`budgetCoverageSentence`, `readThroughSentence`) */
+  line: string;
 }
 
 export type FigureRef =
@@ -2435,8 +2464,60 @@ function categorySpendProvenance(
    * the ledger's, `/categories/<Fees>?from=2026-09-01&to=2026-09-20` would call its $0.00 "zero rather than unproven"
    * above "…has not been imported yet … spending in Fees is imported through Wed, Aug 12, 2026".
    */
-  const reaches = rows.length === 0 ? categoryReachFor(db, categoryId, from, todayIso()).through : undefined;
-  return summedRowsProvenance(db, rows, label ?? category.name, from, to, reaches);
+  const subject = label ?? category.name;
+  if (rows.length === 0) {
+    return summedRowsProvenance(db, rows, subject, from, to, categoryReachFor(db, categoryId, from, todayIso()).through);
+  }
+  /*
+   * ⚖️ Decision 72 grades a SPEND total: the line under it is /budgets' ("spending imported through …"), which no
+   * Received or Net page could print. ❓ Whether an income or transfer page's total reads "partly read" is his call.
+   */
+  const unread = kind === "expense" ? categoryPartlyRead(db, categoryId, from, to) : null;
+  return summedRowsProvenance(db, rows, subject, from, to, undefined, unread);
+}
+
+/**
+ * ⚖️ His decision 72 (2026-10-13): how much of a category's window its OWN day has not read — the reading its /budgets
+ * row is graded by (`categoryWindowReading`: the category's day, else its page's — an ancestor's, else the ledger's),
+ * worded as that row words it (`budgetCoverageSentence`). 🔴 Measured on his ledger copy 2026-10-13:
+ * `/categories/<Food>?period=month&from=2026-09-01&to=2026-09-30` printed "adds up · $160.72 · 25 transactions" — 25
+ * Venture X rows, "Checked through 2026-09-13" — while Food's budget card on the same page named Aug 12, the day Chase
+ * Sapphire and Chase Checking, which Food is spent from too, are imported through.
+ *
+ * Clipped at today, as /budgets clips: a running month counts only its elapsed days (`daysNotImportedYet`).
+ * ⚖️ A category spent ONLY from cash wallets is as read as it will ever be (2026-09-15) — no statement is coming, so it
+ * is never partly read; a wallet beside a card is left out of the day, and the card's day stands (`categoryCoverage`).
+ */
+function categoryPartlyRead(db: AppDatabase, categoryId: string, from: string, to: string): PartlyRead | null {
+  const reading = categoryWindowReading(db, categoryId, { start: from, end: to }, todayIso());
+  if (spentOnlyFromCashWallets(reading) || reading.uncoveredDays === 0) return null;
+  return { uncoveredDays: reading.uncoveredDays, line: budgetCoverageSentence({ ...reading, bounds: { start: from } }) };
+}
+
+/**
+ * ⚖️ Decision 72 for ALL spending: read through `spendingCoverageThrough` — the last day every account he spends from
+ * has been imported through, the day /spending's What moved and the dashboard's "What changed" already name. 🔴
+ * Measured on his ledger copy 2026-10-13: `/spending` for September chipped "adds up … 43 rows from 3 documents" beside
+ * its own What moved naming Aug 12.
+ *
+ * ⚖️ CASH WALLETS ARE LEFT OUT (2026-09-15, the /budgets rule): with no account a statement is still coming for that
+ * has an import day — an empty ledger, or one of cash wallets alone — the day `spendingCoverageThrough` falls back to
+ * is a wallet's newest typed row, which no import will ever move. Nothing is graded partly read then: "partly read"
+ * forever would be a claim no statement could correct.
+ */
+function allSpendPartlyRead(db: AppDatabase, from: string, to: string): PartlyRead | null {
+  const today = todayIso();
+  const { byAccount } = observationFrontier(db);
+  if (![...accountsAwaitingStatements(db)].some((id) => byAccount.has(id))) return null;
+  const through = spendingCoverageThrough(db, today);
+  if (through === null) return null;
+  const n = daysNotImportedYet({ from, to, today, ledgerOpens: ledgerOpens(db), ledgerReaches: through });
+  return n === 0 ? null : { uncoveredDays: n, line: readThroughSentence(through, n, { start: from }) };
+}
+
+/** What a proof says of a window read only in part — the sentence after its rows', in /budgets' words. */
+function partlyReadSentence(unread: PartlyRead): string {
+  return ` It is read only in part: ${unread.line}, so this total is ${A_LOWER_BOUND}.`;
 }
 
 /**
@@ -2481,6 +2562,12 @@ function merchantSpendProvenance(
     .all()
     .filter((r) => isHisExpenseRow(idx, agentsCash, r));
 
+  /*
+   * ⚖️ Decision 72 does not grade this one yet. Its window is no period a reader picked — it is the merchant's own
+   * first and last visit (`merchant-insights`), shown on no other surface — and no rule names a merchant's read day.
+   * ❓ His call (measured on his ledger copy 2026-10-13: 12 of 254 merchant pages with a proof have a last visit past
+   * the earliest import day of the accounts they were paid from — Flamingo South Beach, Sep 2 against Aug 12).
+   */
   return summedRowsProvenance(db, rows, label ?? merchant.canonicalName, from, to);
 }
 
@@ -2529,6 +2616,8 @@ function accountRowsProvenance(db: AppDatabase, accountId: string, label: string
       inputs: [],
     };
   }
+  // ⚖️ never partly read (decision 72): one account's rows through its own newest row are read by construction — its
+  // import day is never earlier than that row (`observationFrontier`)
   return summedRowsProvenance(db, rows, subject, rows[0]!.postedOn, rows[rows.length - 1]!.postedOn);
 }
 
@@ -2600,10 +2689,14 @@ function allSpendProvenance(
 ): Provenance {
   const rows = allSpendRows(db, from, to);
   const subject = label ?? "your spending";
-  if (!against) return summedRowsProvenance(db, rows, subject, from, to);
+  const unread = allSpendPartlyRead(db, from, to);
+  if (!against) return summedRowsProvenance(db, rows, subject, from, to, undefined, unread);
 
   const priorRows = allSpendRows(db, against.from, against.to);
   const priorSubject = against.label ?? "the window it is compared against";
+  const priorUnread = allSpendPartlyRead(db, against.from, against.to);
+  // ⚖️ decision 72: a comparison stands on both windows, so either read in part makes the claim partly read
+  const eitherUnread = unread ?? priorUnread;
 
   /**
    * ⛔ The grading runs over BOTH windows' rows at once, and that is the point
@@ -2637,13 +2730,19 @@ function allSpendProvenance(
     subject,
     from < against.from ? from : against.from,
     to > against.to ? to : against.to,
+    undefined,
+    eitherUnread,
   );
 
   const count = (n: number): string => `${grouped(n)} ${n === 1 ? "row" : "rows"}`;
+  // the window whose line it is, named — a change is no lower bound, so the sentence says only which half is read in part
+  const unreadNote =
+    eitherUnread === null ? "" : ` ${unread !== null ? subject : priorSubject} is read only in part: ${eitherUnread.line}.`;
   return {
     verdict: combined.verdict,
     badgeWord: combined.badgeWord,
     badgeName: combined.badgeName,
+    ...(eitherUnread === null ? {} : { partlyRead: eitherUnread }),
     /*
      * 🔴 The date was borrowed and the sentence saying whose word it is was not.
      * Measured 2026-09-28 on a copy of the real ledger: this proof of August 2026
@@ -2657,7 +2756,7 @@ function allSpendProvenance(
     headline:
       `This compares two windows, so it stands on both — and is only as proven as the weaker of them. ` +
       `${subject} holds ${count(rows.length)}; ${priorSubject} holds ${count(priorRows.length)}. ` +
-      `A change between two figures cannot be better evidenced than the figures themselves.${dateNote}`,
+      `A change between two figures cannot be better evidenced than the figures themselves.${dateNote}${unreadNote}`,
     sources: combined.sources,
     checkedThrough: combined.checkedThrough,
     /*
@@ -2667,12 +2766,13 @@ function allSpendProvenance(
     inputs: [
       {
         label: subject,
-        verdict: summedRowsProvenance(db, rows, subject, from, to).verdict,
+        verdict: summedRowsProvenance(db, rows, subject, from, to, undefined, unread).verdict,
         detail: `${count(rows.length)}, ${readableDay(from)} to ${readableDay(to)}`,
       },
       {
         label: priorSubject,
-        verdict: summedRowsProvenance(db, priorRows, priorSubject, against.from, against.to).verdict,
+        verdict: summedRowsProvenance(db, priorRows, priorSubject, against.from, against.to, undefined, priorUnread)
+          .verdict,
         detail: `${count(priorRows.length)}, ${readableDay(against.from)} to ${readableDay(against.to)}`,
       },
     ],
@@ -2713,8 +2813,10 @@ function summedRowsProvenance(
   to: string,
   /** the day an EMPTY window is asked against — `summedRowsProof`'s */
   reaches?: string | null,
+  /** the window's days its own day has not read — `summedRowsProof`'s */
+  unread?: PartlyRead | null,
 ): Provenance {
-  return summedRowsProof(db, rows, subject, from, to, reaches).provenance;
+  return summedRowsProof(db, rows, subject, from, to, reaches, unread).provenance;
 }
 
 /**
@@ -2734,6 +2836,12 @@ function summedRowsProof(
    * population of their own — a category total's is the category's (`categorySpendProvenance`)
    */
   reaches?: string | null,
+  /**
+   * ⚖️ decision 72: the window's elapsed days past the day its own population is read through, and /budgets' line for
+   * them — the caller's, because whose day it is (a category's, all spending's) is the caller's
+   * (`categoryPartlyRead`, `allSpendPartlyRead`). Absent or null: read in full, or a total with no window of its own.
+   */
+  unread?: PartlyRead | null,
 ): { provenance: Provenance; dateNote: string } {
   if (rows.length === 0) {
     /*
@@ -2836,7 +2944,13 @@ function summedRowsProof(
    */
   const byHand = verdicts.filter((v) => v === "manual").length;
   const weak = rows.length - proven - marked - byHand;
-  const verdict = weakestVerdict(verdicts);
+  /*
+   * ⚖️ His decision 72 (2026-10-13): a total over a window some of whose elapsed days its own day has not read keeps its
+   * figure and reads "partly read" — the window is a part of the total too, and a total is only as proven as its
+   * weakest part. Only a break or a row with no basis at all outranks it (`VERDICT_RANK`).
+   */
+  const unreadWindow = unread ?? null;
+  const verdict = weakestVerdict(unreadWindow === null ? verdicts : [...verdicts, "partly_read"]);
 
   const fileIds = [...new Set(rows.map((r) => r.importFileId).filter((f): f is string => f !== null))];
   const files =
@@ -2912,19 +3026,25 @@ function summedRowsProof(
     // the badge only overrides when rows are genuinely UNCHECKED — a category
     // that is entirely market value should read "market value", not a fraction
     // …and a market-value total wears the verdict's word whenever any of it is not priced from holdings
+    // …and a window read in part wears its own word: the fraction is a fact about rows, and its rows are not the weak part
     badgeWord:
-      weak === 0
-        ? verdict === "market_value"
-          ? marketValueBadgeWord(held === 0)
-          : partEntered
-            ? PART_ENTERED.word
-            : undefined
-        : `${grouped(rows.length - weak)} of ${grouped(rows.length)} checked`,
+      verdict === "partly_read"
+        ? undefined
+        : weak === 0
+          ? verdict === "market_value"
+            ? marketValueBadgeWord(held === 0)
+            : partEntered
+              ? PART_ENTERED.word
+              : undefined
+          : `${grouped(rows.length - weak)} of ${grouped(rows.length)} checked`,
     badgeName: partEntered ? PART_ENTERED.name : undefined,
-    headline: `This total is the sum of ${parts.join(", ")}. A total is only as proven as its weakest row.${footing.note}`,
+    headline:
+      `This total is the sum of ${parts.join(", ")}. A total is only as proven as its weakest row.${footing.note}` +
+      (unreadWindow === null ? "" : partlyReadSentence(unreadWindow)),
     sources,
     checkedThrough: footing.through,
     inputs: [],
+    ...(unreadWindow === null ? {} : { partlyRead: unreadWindow }),
   };
   return { provenance, dateNote: footing.note };
 }

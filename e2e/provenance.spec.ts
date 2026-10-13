@@ -28,10 +28,11 @@ async function gotoHydrated(page: Page, path: string): Promise<void> {
 
 /**
  * Every word the badge is allowed to say. A blank badge reads as "fine". ("you counted it": a balance he typed, §6A 50;
- * "part you entered": a total only part of which he typed)
+ * "part you entered": a total only part of which he typed; "partly read": a total over days its accounts have not been
+ * imported through, ⚖️ decision 72)
  */
 const VERDICT_WORDS =
-  /on a statement|adds up|market value|you entered it|you counted it|part you entered|nothing checks it|no basis yet|does not add up|\d+ of \d+ add up/;
+  /on a statement|adds up|market value|you entered it|you counted it|part you entered|partly read|nothing checks it|no basis yet|does not add up|\d+ of \d+ add up/;
 
 test("the dashboard headline says what it is standing on, and names what it cannot see", async ({ page }) => {
   await gotoHydrated(page, "/");

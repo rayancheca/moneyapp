@@ -2,6 +2,7 @@ import { describe, expect, test } from "vitest";
 import {
   budgetCoverageFact,
   budgetCoverageSentence,
+  readThroughSentence,
   spendUnread,
   spentOnlyFromCashWallets,
   type BudgetCoverageInput,
@@ -124,6 +125,24 @@ describe("budgetCoverageSentence — the withheld row", () => {
   test("a single day is singular", () => {
     expect(budgetCoverageSentence(input({ importedThroughOn: "2026-09-14", uncoveredDays: 1 }))).toBe(
       "spending imported through Sep 14 · 1 day of this period unaccounted",
+    );
+  });
+});
+
+/*
+ * ⚖️ His decision 72 (2026-10-13): a total over a window some of whose days are past its own read frontier reads
+ * "partly read", with /budgets' line under the figure. /spending's total has a day (`spendingCoverageThrough`) and no
+ * category facts, so it asks the row's sentence for a NAMED day — ⛔ the row's own words, never a copy of them.
+ */
+describe("readThroughSentence — /budgets' line for a window read through a named day", () => {
+  test("is the row's sentence, word for word, wherever the row names a day", () => {
+    for (const over of [{}, { importedThroughOn: "2026-09-14", uncoveredDays: 1 }, { bounds: { start: "2027-01-01" } }]) {
+      const row = input(over);
+      expect(readThroughSentence(row.importedThroughOn!, row.uncoveredDays, row.bounds)).toBe(budgetCoverageSentence(row));
+    }
+    // /spending's September on his ledger copy 2026-10-13: every account he spends from read through Aug 12
+    expect(readThroughSentence("2026-08-12", 30, { start: "2026-09-01" })).toBe(
+      "spending imported through Aug 12 · 30 days of this period unaccounted",
     );
   });
 });

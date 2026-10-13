@@ -445,6 +445,12 @@ export default async function SpendingPage({
               </h2>
               <span className="text-xs text-ink-faint">tap a category to open its page</span>
             </div>
+            {/* ⚖️ decision 72 (2026-10-13): the days the chip calls partly read, in /budgets' words. 🔴 On his ledger
+                copy 2026-10-13 September's chip read "adds up" over a month every account he spends from was
+                imported through Aug 12 — the day What moved, above, names. */}
+            {spendProvenance?.partlyRead && (
+              <p className="mb-2 text-xs text-ink-faint">{spendProvenance.partlyRead.line}</p>
+            )}
             {/* three lenses on one set of rows: the ranked list this card has
                 always shown (default), the spatial relief, and every figure as
                 a table. The lens lives in the URL and persists per surface. */}

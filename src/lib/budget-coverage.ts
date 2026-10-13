@@ -140,7 +140,7 @@ export function spendUnread(
  */
 export function budgetCoverageFact(input: Omit<BudgetCoverageInput, "uncoveredDays">): string {
   const day = (iso: string): string => formatDayShortIn(iso, input.bounds.start);
-  if (input.importedThroughOn !== null) return `spending imported through ${day(input.importedThroughOn)}`;
+  if (input.importedThroughOn !== null) return importedThroughFact(input.importedThroughOn, input.bounds.start);
   if (spentOnlyFromCashWallets(input)) {
     return `spent only from ${input.spentFromWallets === 1 ? "a cash wallet" : "cash wallets"} since ${day(input.spentFromSince)}`;
   }
@@ -164,6 +164,29 @@ export function budgetCoverageSentence(input: BudgetCoverageInput): string {
   if (spentOnlyFromCashWallets(input)) {
     return `${budgetCoverageFact(input)} — no statement will ever cover ${input.spentFromWallets === 1 ? "it" : "them"}`;
   }
-  const n = input.uncoveredDays;
-  return `${budgetCoverageFact(input)} · ${n} ${n === 1 ? "day" : "days"} of this period unaccounted`;
+  return `${budgetCoverageFact(input)} · ${unaccountedDays(input.uncoveredDays)}`;
+}
+
+/** "spending imported through Sep 2" — a named day, as the row names it; a day outside the period's year carries it */
+function importedThroughFact(on: string, periodStart: string): string {
+  return `spending imported through ${formatDayShortIn(on, periodStart)}`;
+}
+
+/** "13 days of this period unaccounted" — scoped to the PERIOD, never to the gap since the import (see the top) */
+function unaccountedDays(n: number): string {
+  return `${n} ${n === 1 ? "day" : "days"} of this period unaccounted`;
+}
+
+/**
+ * "spending imported through Aug 12 · 30 days of this period unaccounted" — the row's sentence for a window read through
+ * a NAMED day, for a total that has the day and none of a category's facts.
+ *
+ * ⚖️ His decision 72 (2026-10-13): a total over a window some of whose days are past its own read frontier reads
+ * "partly read", with /budgets' line under its figure. /spending's total is read through `spendingCoverageThrough` —
+ * the day every account he spends from has been imported through — and spent from no one category, so it asks for the
+ * line here. ⛔ The row's own clauses (`importedThroughFact`, `unaccountedDays`), so the two cannot word one window two
+ * ways: `budgetCoverageSentence` of a row with that day reads exactly this.
+ */
+export function readThroughSentence(on: string, uncoveredDays: number, bounds: { start: string }): string {
+  return `${importedThroughFact(on, bounds.start)} · ${unaccountedDays(uncoveredDays)}`;
 }

@@ -141,3 +141,16 @@ describe("the empty state is the service's", () => {
     expect(source).not.toMatch(/\bemptyPeriodReason\(/);
   });
 });
+
+/*
+ * ⚖️ His decision 72 (2026-10-13): the period's spending over days every account he spends from has not been imported
+ * through reads "partly read", with /budgets' line under it. ⛔ The line is the PROOF's (`Provenance.partlyRead`), so
+ * the chip and the words under it cannot count two windows — the page writes no sentence of its own. Source, not
+ * render: the page reads the database.
+ */
+describe("a period read only in part says so under Where it went, in the proof's own words", () => {
+  test("the page prints the proof's line and counts no days of its own", () => {
+    expect(source).toMatch(/\{spendProvenance\?\.partlyRead && \(\s*<p [^>]*>\{spendProvenance\.partlyRead\.line\}<\/p>/);
+    expect(source).not.toMatch(/\breadThroughSentence\(|\bbudgetCoverageSentence\(|\bdaysNotImportedYet\(/);
+  });
+});

@@ -20,7 +20,22 @@ describe("VERDICT_PRESENTATION", () => {
    */
   test("covers every verdict the service can return", () => {
     expect([...ALL].sort()).toEqual(
-      ["broken", "counted", "derived", "manual", "market_value", "sourced", "unknown", "unverified"].sort(),
+      ["broken", "counted", "derived", "manual", "market_value", "partly_read", "sourced", "unknown", "unverified"].sort(),
+    );
+  });
+
+  /*
+   * ⚖️ His decision 72 (2026-10-13): a total over a window some of whose days are past its own read frontier keeps its
+   * figure, and its chip reads "partly read" — amber, the weak tone — instead of "adds up". 🔴 Measured on his ledger
+   * copy 2026-10-13: `/categories/<Food>` for September read "adds up · $160.72" over a month Food's own budget card, on
+   * the same page, calls imported through Aug 12.
+   */
+  test('⚖️ a total over days its accounts have not been imported through reads "partly read", in the weak tone', () => {
+    expect(VERDICT_PRESENTATION.partly_read.word).toBe("partly read");
+    expect(VERDICT_PRESENTATION.partly_read.tone).toBe("weak");
+    expect(VERDICT_PRESENTATION.partly_read.icon).toBe(VERDICT_PRESENTATION.unverified.icon);
+    expect(provenanceTriggerName("this spent total", "partly_read")).toBe(
+      "How this spent total is known — it is partly read: not every account behind it has been imported through all of its days",
     );
   });
 

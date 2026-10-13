@@ -72,6 +72,19 @@ export const VERDICT_PRESENTATION = {
     tone: "weak",
     ariaSuffix: "has nothing checking it",
   },
+  /*
+   * ⚖️ His decision 72 (2026-10-13): a TOTAL over a window some of whose days are past its own read frontier keeps its
+   * figure, and reads this instead of "adds up" — the weak tone, because a figure that has not seen every day is a
+   * lower bound however well its rows check. 🔴 Measured on his ledger copy 2026-10-13: `/categories/<Food>` for
+   * September read "adds up · $160.72 · 25 transactions" (25 Venture X rows) while Food's budget card on the same page
+   * named Aug 12 as the day its accounts are imported through. The service decides which windows (`summedRowsProof`).
+   */
+  partly_read: {
+    word: "partly read",
+    icon: "circle-alert",
+    tone: "weak",
+    ariaSuffix: "is partly read: not every account behind it has been imported through all of its days",
+  },
   unknown: {
     word: "no basis yet",
     icon: "circle-alert",
