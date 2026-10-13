@@ -187,9 +187,10 @@ describe("dashboardData: upcoming bills", () => {
    * changed no test, because no fixture bill and paycheque shared a date.
    *
    * The cost is the dashboard understating what he must cover before the money
-   * arrives — by a whole rent payment, on the day it matters most.
+   * arrives — by a whole rent payment, on the day it matters most. Named in the
+   * strip's own word since 06801fc: "due BY your next paycheck".
    */
-  test("a bill due ON the paycheck day is counted before it, not after", () => {
+  test("a bill due ON the paycheck day is due by it — counted, not left for after the pay", () => {
     seedSeries({ name: "Rent", kind: "bill", cadence: "monthly", nextExpectedOn: "2026-07-10", amountCents: -1500_00, lastMatchedOn: "2026-06-10", intervalDaysAvg: 30 });
     seedSeries({ name: "Payroll", kind: "income", cadence: "biweekly", nextExpectedOn: "2026-07-10", amountCents: 2000_00, lastMatchedOn: "2026-06-26", intervalDaysAvg: 14 });
 
@@ -218,18 +219,18 @@ describe("dashboardData: upcoming bills", () => {
     expect(upcoming.items.every((i) => i.date >= TODAY && i.date <= last)).toBe(true);
   });
 
-  test("no income series → no before-paycheck line", () => {
+  test('no income series → no "due by your next paycheck" line', () => {
     seedSeries({ name: "Rent", kind: "bill", cadence: "monthly", nextExpectedOn: "2026-07-09", amountCents: -1500_00, lastMatchedOn: "2026-06-09", intervalDaysAvg: 30 });
     expect(dashboardData(bundle.db, TODAY).upcoming.beforePaycheck).toBeNull();
   });
 
-  test("recurring TRANSFERS are net-worth-neutral: excluded from items and before-paycheck", () => {
+  test("recurring TRANSFERS are net-worth-neutral: excluded from items and from what is due by the paycheck", () => {
     seedSeries({ name: "Payroll", kind: "income", cadence: "biweekly", nextExpectedOn: "2026-07-10", amountCents: 2000_00, lastMatchedOn: "2026-06-26", intervalDaysAvg: 14 });
     // an auto-transfer to savings: a negative leg due BEFORE the paycheck
     seedSeries({ name: "To Savings", kind: "transfer", cadence: "biweekly", nextExpectedOn: "2026-07-09", amountCents: -500_00, lastMatchedOn: "2026-06-25", intervalDaysAvg: 14 });
 
     const { upcoming } = dashboardData(bundle.db, TODAY);
-    // the transfer is neither a "bill due" nor counted before the paycheck
+    // the transfer is neither a "bill due" nor counted in what is due by the paycheck
     expect(upcoming.items.map((i) => i.name)).not.toContain("To Savings");
     expect(upcoming.beforePaycheck).toEqual({ date: "2026-07-10", cents: 0 });
   });
