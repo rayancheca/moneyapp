@@ -1,5 +1,6 @@
 import type { Cadence, RatePeriod } from "@/db/schema/recurring";
 import { addDays, compareDates } from "./dates";
+import { daysThatBanked } from "./posted-average";
 import { stepFrom, stepPlan, stepsToReach } from "./recurring-step";
 import { rateOn } from "./series-kind";
 
@@ -108,6 +109,10 @@ export interface CashEarningsInput {
    * `recurring_series_id`. Order does not matter. Passing every inbound row
    * instead would count his mother's cash as wages, which is precisely the
    * mistake the 2026-07-21 rows were rescued from.
+   *
+   * Money out too — a return or a clawback is negative, and `bankedCents` is what reached a bank, net. ⚖️ But only a
+   * DAY that nets to money in banked anything (`daysThatBanked`, his decision 75, 2026-10-13): a payroll and its
+   * same-day return pay no payday today and are no pay arriving.
    */
   banked: readonly { postedOn: string; amountCents: number }[];
   /** window, inclusive at both ends */
@@ -152,7 +157,7 @@ export interface CashEarnings {
    */
   firstPeriodOn: string | null;
   lastPeriodOn: string | null;
-  /** most recent attributed deposit at or before `today`, or null */
+  /** the most recent day at or before `today` whose attributed rows banked money (`daysThatBanked`), or null */
   lastBankedOn: string | null;
   /** whole pay periods since `lastBankedOn`, or since the series started */
   periodsSinceBanked: number;
@@ -170,8 +175,6 @@ const EMPTY: CashEarnings = {
   periodsSinceBanked: 0,
 };
 
-/** The later of two dates. */
-const laterOf = (a: string, b: string): string => (compareDates(a, b) >= 0 ? a : b);
 /** The earlier of two dates. */
 const earlierOf = (a: string, b: string): string => (compareDates(a, b) <= 0 ? a : b);
 
@@ -272,8 +275,12 @@ export function cashEarnings({
    * banked has been checked and missed, and `todayIsComplete` says so. Found
    * by its tests the moment this rule landed: a cut-off on a Thursday lost the
    * Thursday.
+   *
+   * ⚖️ A day that BANKED money (`daysThatBanked`, his decision 75, 2026-10-13): a deposit returned the same day landed
+   * nothing, so its payday is still to come, as the calendar draws it. 🔴 Any row dated today counted, money out too.
    */
-  const paidToday = banked.some((b) => b.postedOn === today);
+  const bankedDays = daysThatBanked(banked.filter((b) => compareDates(b.postedOn, today) <= 0));
+  const paidToday = bankedDays.some((b) => b.postedOn === today);
   const earnedThrough = paidToday || todayIsComplete ? today : addDays(today, -1);
   const scheduleEnd = earlierOf(to, earnedThrough);
 
@@ -285,12 +292,9 @@ export function cashEarnings({
   // `lastBankedOn` answers "when did pay last arrive", which is a question about
   // the series rather than about the window — a June window must still know
   // that nothing has landed since, so this looks at every attributed deposit up
-  // to today, not only the ones inside `[from, to]`.
-  const seen = banked.filter((b) => compareDates(b.postedOn, today) <= 0);
-  const lastBankedOn = seen.reduce<string | null>(
-    (latest, b) => (latest === null ? b.postedOn : laterOf(latest, b.postedOn)),
-    null,
-  );
+  // to today, not only the ones inside `[from, to]`. ⚖️ A day that BANKED money (decision 75): money out is no pay
+  // arriving, nor a payroll and its same-day return. 🔴 Any row counted — a return's own day read as the last pay.
+  const lastBankedOn = bankedDays.at(-1)?.postedOn ?? null;
 
   if (series === null) {
     return { ...EMPTY, bankedCents, lastBankedOn };

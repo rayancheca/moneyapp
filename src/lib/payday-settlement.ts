@@ -1,5 +1,6 @@
 import type { Cadence } from "@/db/schema/recurring";
 import { addDays, compareDates, diffDays } from "./dates";
+import { daysThatBanked } from "./posted-average";
 import { signedStepsToReach, stepFrom, stepPlan } from "./recurring-step";
 
 /**
@@ -85,6 +86,15 @@ import { signedStepsToReach, stepFrom, stepPlan } from "./recurring-step";
  * its era. 🔴 With his history set, the payroll week of Sep 24 walked back past Aug 27 and paid the CASH week of
  * Aug 20 at $1,047.00, leaving $94.92 of a payroll week to read as change against a week it never answered.
  *
+ * ⚖️ AND A DAY IS ITS NET (his decision 75, 2026-10-13). The walk takes a DAY's attributed rows together
+ * (`daysThatBanked`, the posted average's same-day netting): a day that nets to $0.00 or below — a deposit and its
+ * same-day return — banked nothing and pays no payday; a partial return the same day leaves the day its net, and the
+ * anchor clause answers its payday with that. Money out on ANOTHER day is no same-day return: it is a day of its own
+ * that banked nothing, and the deposit's day pays as it always has. 🔴 Read row by row, money in only, a payroll
+ * returned the same day paid its payday on the calendar beside a posted average that said the day paid nothing.
+ * ⚠️ Two deposits on one day are one deposit too — the unit the readings already took (`lib/per-payday`) — so one
+ * week sent as two transfers that day pays its payday in full, where a short first transfer used to answer it alone.
+ *
  * ⚠️ ONE CONSEQUENCE WORTH STATING. Where a series' tolerance is wide enough to
  * reach two of its own occurrences, one deposit used to meet both. It no longer
  * does — the second needs its own money. That is (A) rather than a regression:
@@ -123,10 +133,18 @@ export function hasArrived(postedOn: string, today: string): boolean {
   return compareDates(postedOn, today) <= 0;
 }
 
-/** One deposit the owner (or detection) attributed to the pay series. */
+/**
+ * One row the owner (or detection) attributed to the pay series — money in, or money of it going back out.
+ *
+ * ⚖️ Read by the DAY, never the row (`daysThatBanked`, his decision 75, 2026-10-13): a day's rows net, and only a day
+ * that nets to money in banked anything — so it alone is a deposit to the walk and to its reach (`walkBackBound`). A
+ * deposit and its same-day return banked nothing and pay no payday; a partial return the same day banked its net.
+ * 🔴 Read row by row, money in only, a payroll returned the same day still paid its payday. ⚠️ Where the paydays
+ * BEGIN is pay sent, row by row (`firstPaydayOn`): a returned payroll's payday is kept, unbanked.
+ */
 export interface AttributedDeposit {
   postedOn: string;
-  /** positive money-in cents */
+  /** signed cents: money in is positive, a return or clawback negative */
   amountCents: number;
 }
 
@@ -163,9 +181,11 @@ export interface PaydayRhythm {
  * Apr 2 – Oct 8" and $29,980.44 earned, not "19 paydays, Jun 4 – Oct 8" and $20,557.44 (a copy of his ledger,
  * 2026-10-12). Latent: his anchor is Jul 23, after Jun 4.
  *
- * The evidence is settlement's: money IN that has ARRIVED (`hasArrived`). Null when there is none — a series nobody
- * has been paid by has no paydays to grade. With no anchor there is no rhythm to walk, and the first deposit's own day
- * opens it (no projection draws a payday without an anchor).
+ * The evidence is money IN that has ARRIVED (`hasArrived`), row by row — pay SENT. ⚖️ Not the days that banked
+ * (`daysThatBanked`): a first payroll returned the same day still says the job was paying then, and decision 75 keeps
+ * its payday on the calendar, unbanked — it is no reason to erase the payday. Null when there is none — a series
+ * nobody has been paid by has no paydays to grade. With no anchor there is no rhythm to walk, and the first deposit's
+ * own day opens it (no projection draws a payday without an anchor).
  */
 export function firstPaydayOn(
   schedule: PaydayRhythm,
@@ -202,12 +222,12 @@ export function firstPaydayOn(
  * must still leave Oct 8 off every past reader, since no forward reader draws it.
  *
  * A payday drawn this way is one a deposit settles — the newest it reaches, inside its tolerance (the anchor clause) —
- * so it leaves /budgets' schedule through the posted leg, never into no leg. The evidence is settlement's: money IN
- * that has ARRIVED (`hasArrived`).
+ * so it leaves /budgets' schedule through the posted leg, never into no leg. The evidence is settlement's: the days
+ * that BANKED money (`daysThatBanked`, decision 75) and have ARRIVED (`hasArrived`) — a payroll returned the same day
+ * reached no payday, and the one ahead of it drawn here would be paid by nothing and in no leg of /budgets.
  */
 export function walkBackBound(deposits: readonly AttributedDeposit[], toleranceDays: number, today: string): string {
-  const reachedThrough = deposits
-    .filter((d) => d.amountCents > 0 && hasArrived(d.postedOn, today))
+  const reachedThrough = daysThatBanked(deposits.filter((d) => hasArrived(d.postedOn, today)))
     .map((d) => addDays(d.postedOn, toleranceDays))
     .reduce((latest, day) => (compareDates(day, latest) > 0 ? day : latest), addDays(today, -1));
   return addDays(reachedThrough, 1);
@@ -442,8 +462,9 @@ export function settlePaydaysBackwards({
    */
   let carried: readonly Held[] = [];
 
-  // oldest first, so the queue drains in the order the money actually arrived
-  for (const d of [...deposits].sort((a, b) => compareDates(a.postedOn, b.postedOn))) {
+  // a day's rows by their net, money in only (`daysThatBanked`, decision 75) — oldest first, so the queue drains in
+  // the order the money actually arrived
+  for (const d of daysThatBanked(deposits)) {
     const era = depositEra(d.postedOn, byDateDesc, toleranceDays, periodOf);
     let held: readonly Held[] = [
       ...carried,

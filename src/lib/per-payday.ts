@@ -177,8 +177,10 @@ function firstPaydayByDeposit(portions: readonly SettlementPortion[]): ReadonlyM
  * Each row's reading, from the series' settlement (`portions`), held to the
  * series' rate at the payday it paid (`schedule`, `rateOn`).
  *
- * Read as the one amount it is: money out (settlement reads deposits only), no sample of what a payday pays,
- * and a day's deposits whose money paid no payday on its own (`dayPerPayday`).
+ * Read as the one amount it is: money out (settlement spends a day's net, never a row of money out), no sample of
+ * what a payday pays, and a day's deposits whose money paid no payday on its own (`dayPerPayday`) — among them a
+ * payroll returned the same day, whose day banked nothing (decision 75): no portion names it, so it reads toward no
+ * payday.
  */
 export function paydayReadings(
   rows: readonly ReadableRow[],

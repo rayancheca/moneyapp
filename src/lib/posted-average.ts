@@ -236,6 +236,25 @@ export function nettedToNothing(rows: readonly Pick<ReadableRow, "postedOn" | "a
   return daysOf(rows).filter((o) => o.amountCents === 0);
 }
 
+/**
+ * The days whose rows BANKED money, oldest first: a day's rows netted (`occurrencesOf`), where the net is money in —
+ * the deposits a pay series' settlement walks (`settlePaydaysBackwards`) and the reach of its walk back
+ * (`walkBackBound`), and Earned vs banked's last pay to arrive and its payday today (`cashEarnings`).
+ *
+ * ⚖️ His decision 75 (2026-10-13): a day whose pay-linked rows net to $0.00 — a deposit and its same-day return —
+ * banked nothing, and pays no payday: the rule this module's average already read a pay series' days by
+ * (`nettedToNothing`), now every reader's. A day netting below $0.00 — money out alone, or a return larger than the
+ * day's pay — banks nothing either; a partial return the same day banked its net. 🔴 Settlement read money IN row by
+ * row, so a payroll returned the same day still paid its payday — the calendar drew it paid and the income card
+ * counted it the last pay to arrive, beside an average that said the day paid nothing (hypothetical: no money out is
+ * linked to his pay, a copy of his ledger 2026-10-13).
+ *
+ * ⛔ THE UNIT IS THE DAY, as per payday it always was (`lib/per-payday`): two deposits on one day are one day's money.
+ */
+export function daysThatBanked(rows: readonly Pick<ReadableRow, "postedOn" | "amountCents">[]): Occurrence[] {
+  return occurrencesOf(rows).filter((o) => o.amountCents > 0);
+}
+
 /** A day's rows summed, one per day, oldest first — what `occurrencesOf` and `nettedToNothing` divide between them. */
 function daysOf(rows: readonly Pick<ReadableRow, "postedOn" | "amountCents">[]): Occurrence[] {
   const byDay = new Map<string, Occurrence>();
