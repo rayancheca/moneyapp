@@ -37,7 +37,8 @@ describe("ledger-check — lines left out by a re-read", () => {
   test("an acknowledged one is named still, saying so and why — and an acknowledgement matching no line is named too", () => {
     expect(script).toMatch(/const acknowledged = leftOut\.filter\(\(line\) => line\.acknowledged !== null\);/);
     expect(script).toContain('for (const line of acknowledged) console.log(listed("line-left-out, acknowledged", lineLeftOutNotice(line)));');
-    expect(script).toMatch(/for \(const ack of acknowledgementsMatchingNothing\(db, leftOut\)\)/);
+    expect(script).toMatch(/const matchingNoLine = acknowledgementsMatchingNothing\(db, leftOut\);\n/);
+    expect(script).toContain("for (const ack of matchingNoLine) {");
   });
 
   test("the way out it prints for a failing line asks for what the session read on the statement", () => {

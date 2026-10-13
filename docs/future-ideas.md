@@ -1320,7 +1320,9 @@ reproducible). Build a new `chaseCheckingStatementPdf` profile and register it i
 **Shipped:** archive re-architected to `data/statements/<account-slug>/` (root env
 `MONEYAPP_ORIGINALS_DIR`, default moved to data/statements); the DB's `import_files.storage_path`
 points there; new uploads auto-store into the resolved account's folder (single-account → per-account
-slug, multi-account → `<institution>-combined/`, parse-fail → institution bucket); the 13 legacy flat
+slug, multi-account → `<institution>-combined/`, parse-fail → institution bucket — since refined: a read
+of accounts at two banks or more → ONE folder whose name lists every bank, `robinhood-and-sofi-combined/`,
+2026-10-08, and a read no account files rests in `_unfiled/`, 2026-10-01, see A2); the 13 legacy flat
 files were migrated (`migrateStorageLayout`). Confirmed slugs: chase-checking-3522, chase-sapphire-9805,
 capital-one-venturex-4147, discover-4741, robinhood-brokerage-3525, robinhood-crypto, robinhood-cash,
 sofi-checking-9067, sofi-savings-5791. All 52 `data/inbox` files imported + tracked; 3 new parsers
@@ -1469,8 +1471,11 @@ sliver of that. Changes:
 disk** (only per-instance, wiped `/tmp`). The archive today is local-fs only —
 `src/services/import/service.ts`: `statementsRoot()` → `archiveTo(folder, name, buf)` (writes
 `data/statements/_unfiled/<sha16>-<name>`) → `relocateArchive()` into the per-account folder
-resolved by `accountsFolder()` (1 acct → `accountSlug`, >1 → `<institution>-combined`, no account
-→ stays in `_unfiled/`, never a guessed bank's folder) → `importFiles.storagePath` persisted.
+resolved by `accountsFolder()` (1 acct → `accountSlug`, >1 at one bank → `<institution>-combined`, >1
+at two banks or more → ONE folder whose name lists every bank, alphabetical —
+`robinhood-and-sofi-combined` (since 2026-10-08; it went to the folder of whichever account the
+statement printed first) — no account → stays in `_unfiled/`, never a guessed bank's folder) →
+`importFiles.storagePath` persisted.
 **Good news from the audit: `storage_path` is WRITE-ONLY** — no route/page ever reads the bytes
 back (no download route exists), so there is no "serve to browser" path to rewire; only the
 write/relocate path needs abstracting. Plan:

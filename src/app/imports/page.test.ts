@@ -61,3 +61,26 @@ describe("/imports — a line a re-read left out, under the read", () => {
     expect(page).toMatch(/className="text-\[11px\] text-warning">\s*\{notice\}/);
   });
 });
+
+/**
+ * 🔴 The footer under "What the statements proved" called all five of his balance-less periods "a spending report, an
+ * export without a closing figure" (copy of his ledger, 2026-10-12) — two were Robinhood opening statements the
+ * statement schedule above it counts as statements. Which periods the list holds and what the footer says of the rest
+ * are pinned in services/statement-evidence.test.ts and lib/statement-evidence-notes.test.ts; this pins that the page
+ * asks them, and filters nothing of its own.
+ */
+describe("/imports — what the statements proved, and what its footer names", () => {
+  test("the list, its counts and its footer are read from `statementEvidence`", () => {
+    expect(page).toMatch(/const \{ periods, evidence, balanceLess \} = statementEvidence\(db\);/);
+    expect(page).toMatch(/const recentPeriods = evidence\.slice\(0, RECENT_PERIODS\)\.map\(/);
+    expect(page).not.toMatch(/carriesBalances\(|countsAsStatement\(|balanceLessKind\(/);
+  });
+
+  // 🔴 …and a download that recorded a balance was "an export without a closing figure" (review of 601f155): every
+  // count the footer names arrives in `balanceLess` whole, so the page cannot hand it two of three
+  test("the footer renders every note `balanceLessNotes` gives, and writes none of its own", () => {
+    expect(page).toMatch(/\{balanceLessNotes\(balanceLess\)\.map\(\(note\) => \(/);
+    expect(page).toMatch(/<p key=\{note\} className="mt-1 text-xs text-ink-faint">\s*\{note\}\s*<\/p>/);
+    expect(page).not.toMatch(/carried no balance|recorded a balance/);
+  });
+});

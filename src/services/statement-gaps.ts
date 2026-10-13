@@ -55,8 +55,10 @@ export interface AccountStatementGaps {
   accountName: string;
   /**
    * where he fetches what is missing (his request 2026-10-09) — the schedule's `statementSiteFor`, so the two panels
-   * cannot send him to different places; null for a bank with no researched site, and null when every window listed
-   * is withheld: the panel says fetching it again adds nothing, and a link beside that would ask him to anyway
+   * cannot send him to different places. Null for a bank with no researched site; null for an account its bank's
+   * one researched link does not serve (Capital One's is for cards, so Capital One 360 Checking gets none); and null
+   * when every window listed is withheld: the panel says fetching it again adds nothing, and a link beside that would
+   * ask him to anyway
    */
   site: StatementSite | null;
   holes: StatementHole[];

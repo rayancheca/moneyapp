@@ -1,8 +1,7 @@
 import type { Metadata } from "next";
 import { count, desc, eq } from "drizzle-orm";
 import { getDb } from "@/db/client";
-import { accounts } from "@/db/schema/accounts";
-import { importFiles, statementPeriods, type ImportStatus } from "@/db/schema/imports";
+import { importFiles, type ImportStatus } from "@/db/schema/imports";
 import { transactions } from "@/db/schema/transactions";
 import { statementGaps } from "@/services/statement-gaps";
 import { CoveragePanel } from "@/components/imports/CoveragePanel";
@@ -13,7 +12,7 @@ import type { AccountType } from "@/db/schema/accounts";
 import { derivesFromHoldings, heldCountsByAccount } from "@/services/derivation";
 import { provenanceFor } from "@/services/provenance";
 import { statementPulls } from "@/services/statement-pulls";
-import { carriesBalances } from "@/services/statements-by-account";
+import { statementEvidence } from "@/services/statement-evidence";
 import { unimportAcknowledgement, unimportRadius } from "@/components/imports/unimport-radius";
 import {
   NO_UNIMPORT_ROWS,
@@ -28,6 +27,7 @@ import { linesLeftOut } from "@/services/import/lines-left-out";
 import { copyHandOvers } from "@/services/import/statement-copies";
 import { importRowQualifiers, importRowSubject, leftOutNoticesByRead, withheldNoticeOf } from "@/lib/import-file-label";
 import { dayWindowLabel } from "@/lib/period";
+import { balanceLessNotes } from "@/lib/statement-evidence-notes";
 import { ConfirmActionButton } from "@/components/ui/Confirm";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { Money } from "@/components/ui/Money";
@@ -121,21 +121,6 @@ export default async function ImportsPage({
   const { leaving: leavingNetWorth, keeping: keepingOpening } = netWorthEffectsByFile(db, handOvers, printers);
   const countsOf = (fileId: string): UnimportCounts => unimportCounts.get(fileId) ?? NO_UNIMPORT_ROWS;
 
-  const periods = db
-    .select({
-      id: statementPeriods.id,
-      accountName: accounts.name,
-      periodStart: statementPeriods.periodStart,
-      periodEnd: statementPeriods.periodEnd,
-      reconciliation: statementPeriods.reconciliation,
-      gapCents: statementPeriods.gapCents,
-      marketChangeCents: statementPeriods.marketChangeCents,
-    })
-    .from(statementPeriods)
-    .innerJoin(accounts, eq(statementPeriods.accountId, accounts.id))
-    .orderBy(desc(statementPeriods.periodEnd))
-    .all();
-
   const coverage = accountCoverage(db);
   // ⛔ the grade says `market_value` of every investment account; which of them
   // holdings actually price is the rebuild's own branch, never the grade
@@ -173,9 +158,14 @@ export default async function ImportsPage({
    * printed balances (`carriesBalances`). NOT the statement panels' rule — a
    * Robinhood opening statement is a statement there, but it printed no opening,
    * so nothing in it could have failed and it proved nothing here.
+   *
+   * 🔴 …and the footer then called it "a spending report, an export without a closing figure": measured on a copy of
+   * his ledger 2026-10-12, "5 imported documents" were three such documents and two Robinhood opening statements the
+   * schedule above counts. `statementEvidence` reads the list and splits the rest by the schedule's own rule — and,
+   * since the review of 601f155 (e2e copy: 18 OFX downloads owning their LEDGERBAL read "an export without a closing
+   * figure"), by what each file recorded, the sheets' rule (`balanceLessKind`).
    */
-  const evidence = periods.filter((p) => carriesBalances(p.reconciliation));
-  const notApplicable = periods.length - evidence.length;
+  const { periods, evidence, balanceLess } = statementEvidence(db);
   const recentPeriods = evidence.slice(0, RECENT_PERIODS).map((p) => ({
     ...p,
     provenance: provenanceFor(db, { kind: "statementPeriod", id: p.id }),
@@ -294,13 +284,11 @@ export default async function ImportsPage({
                 {evidence.length - recentPeriods.length} older periods are not listed.
               </p>
             )}
-            {notApplicable > 0 && (
-              <p className="mt-1 text-xs text-ink-faint">
-                {notApplicable} imported {notApplicable === 1 ? "document" : "documents"} carried no balance to
-                check — a spending report, an export without a closing figure — and{" "}
-                {notApplicable === 1 ? "is" : "are"} neither a period above nor in the counts.
+            {balanceLessNotes(balanceLess).map((note) => (
+              <p key={note} className="mt-1 text-xs text-ink-faint">
+                {note}
               </p>
-            )}
+            ))}
           </SurfaceCard>
         )}
 

@@ -136,10 +136,48 @@ function renderTeaser(): string {
   return renderToStaticMarkup(createElement(StatementsTeaser, { pulls: statementPulls(bundle.db, TODAY) }));
 }
 
+/** The words a voice-control user says to click a link: case, and the hint's ·, → and — are not spoken. */
+const spoken = (s: string): string[] =>
+  s
+    .toLowerCase()
+    .split(/\s+/)
+    .map((w) => w.replace(/[^\p{L}\p{N}]/gu, ""))
+    .filter(Boolean);
+
+/**
+ * Every `<a>` in the markup: the text it shows (the aria-hidden ↗ left out) and its accessible name — the
+ * `aria-label` when it has one, else that text, as the browser computes it.
+ */
+function namesOfLinks(markup: string): { shows: string; name: string }[] {
+  return [...markup.matchAll(/<a\b([^>]*)>([\s\S]*?)<\/a>/g)].map(([, attrs, inner]) => {
+    const shows = decode(inner!.replace(/<span aria-hidden="true">[\s\S]*?<\/span>/g, "").replace(/<[^>]+>/g, " "))
+      .replace(/\s+/g, " ")
+      .trim();
+    const label = /\baria-label="([^"]*)"/.exec(attrs!);
+    return { shows, name: label ? decode(label[1]!) : shows };
+  });
+}
+
+/**
+ * 🔴 WCAG 2.5.3 Label in Name: a voice-control user says what the link shows — the account's name AND the hint
+ * beside it — and the accessible name has to answer to it. The name carried the account's name, then reworded the
+ * hint ("— opens SoFi's sign-in in a new tab, then Statements"), so "click SoFi sign-in" found nothing. Measured on
+ * his ledger copy 2026-10-12: 11 of 11 linked names on the Statement schedule. Read off each surface as rendered.
+ */
+function expectEveryNameToBeginWithWhatItShows(markup: string, links: number): void {
+  const named = namesOfLinks(markup);
+  expect(named).toHaveLength(links);
+  for (const { shows, name } of named) {
+    expect({ shows, name: spoken(name).slice(0, spoken(shows).length) }).toEqual({ shows, name: spoken(shows) });
+  }
+}
+
 describe.each([
-  ["the Statement schedule (/imports)", renderSchedule],
-  ["the Statements teaser (dashboard)", renderTeaser],
-])("%s", (_surface, render) => {
+  // the bank links: Chase, Discover, SoFi, Wells Fargo — Ally has none
+  ["the Statement schedule (/imports)", renderSchedule, 4],
+  // ...and the teaser's own "Import →" to /imports
+  ["the Statements teaser (dashboard)", renderTeaser, 5],
+] as const)("%s", (_surface, render, links) => {
   beforeEach(seedHisInstitutions);
 
   test("an account's name opens its bank's statements in a new tab, and nothing follows it back", () => {
@@ -150,7 +188,7 @@ describe.each([
       target: "_blank",
       // noopener: the bank's page cannot reach back into this window; noreferrer: it is not told this app exists
       rel: "noopener noreferrer",
-      label: "Chase Checking — opens Chase's statements site in a new tab",
+      label: "Chase Checking, Chase · statements — opens in a new tab",
       text: "Chase Checking Chase · statements ↗",
     });
   });
@@ -159,19 +197,23 @@ describe.each([
     const [link] = linksIn(rowOf(render(), "Discover"));
     expect(link!.href).toBe(CAPITAL_ONE_CARDS);
     expect(link!.text).toBe("Discover Capital One · statements ↗");
-    expect(link!.label).toBe("Discover — opens Capital One's statements site in a new tab");
+    expect(link!.label).toBe("Discover, Capital One · statements — opens in a new tab");
   });
 
   test("a sign-in-only bank says where to go once he is in", () => {
     const [link] = linksIn(rowOf(render(), "SoFi Savings"));
     expect(link!.href).toBe(SOFI);
     expect(link!.text).toBe("SoFi Savings SoFi sign-in · then Statements ↗");
-    expect(link!.label).toBe("SoFi Savings — opens SoFi's sign-in in a new tab, then Statements");
+    expect(link!.label).toBe("SoFi Savings, SoFi sign-in · then Statements — opens in a new tab");
   });
 
   test("a link whose query string carries & arrives intact", () => {
     const [link] = linksIn(rowOf(render(), "Wells Fargo Everyday Checking"));
     expect(link!.href).toBe(WELLS_FARGO);
+  });
+
+  test("every link's name begins with what it shows — the account, then the hint (WCAG 2.5.3)", () => {
+    expectEveryNameToBeginWithWhatItShows(render(), links);
   });
 
   test("an account with no researched site stays plain text — no link, no hint", () => {
@@ -239,12 +281,20 @@ describe("Statements you do not have (/imports)", () => {
         href: CAPITAL_ONE_CARDS,
         target: "_blank",
         rel: "noopener noreferrer",
-        label: "Discover — opens Capital One's statements site in a new tab",
+        label: "Discover, Capital One · statements — opens in a new tab",
         text: "Discover Capital One · statements ↗",
       },
     ]);
     // and the row still says what is missing, beside the link
     expect(decode(rowOf(markup, "Discover").replace(/<[^>]+>/g, " "))).toMatch(/1 statement · 31 days/);
+  });
+
+  test("every link's name begins with what it shows, a sign-in's next step included (WCAG 2.5.3)", () => {
+    accountWithAHole("Discover", "Discover", "credit");
+    accountWithAHole("SoFi", "SoFi Checking", "checking");
+    accountWithAHole("Robinhood", "Robinhood Brokerage", "investment");
+
+    expectEveryNameToBeginWithWhatItShows(renderGaps(), 3);
   });
 
   test("a bank nobody researched, and a Capital One BANK account, stay plain text", () => {
