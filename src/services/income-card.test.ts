@@ -2,7 +2,10 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { and, eq, isNull } from "drizzle-orm";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
+import { IncomeCard } from "@/components/dashboard/IncomeCard";
 import { createDatabase, type DbBundle } from "@/db/client";
 import { accounts } from "@/db/schema/accounts";
 import { dailyBalances } from "@/db/schema/balances";
@@ -13,6 +16,7 @@ import { transactions } from "@/db/schema/transactions";
 import { seedDatabase } from "@/db/seed";
 import { addDays, periodBounds } from "@/lib/dates";
 import { incomeExpectation } from "./budgets";
+import { runwayCard } from "./committed";
 import { incomeCard } from "./income-card";
 
 /**
@@ -520,6 +524,45 @@ describe("incomeCard", () => {
     // and the two must differ here, or this test could not tell them apart
     expect(card.monthlyRateCents).toBe(433_333);
     expect(expectation.scheduledCents).not.toBe(card.monthlyRateCents);
+  });
+
+  /**
+   * 🔴 Review of 59de07f (2026-10-12): "Schedule →" opened a bare `/recurring` — Upcoming, a list of what is due —
+   * over the same monthly figure the runway's earn row opens the pay schedule for. One link for one figure
+   * (`monthIncomeLink`): the schedule it is levelled from, or under a measured basis the month it measured — and the
+   * word on it names that page.
+   */
+  describe("the header link opens what the headline is made of, as the runway's earn row does", () => {
+    const headerLink = (card: NonNullable<ReturnType<typeof incomeCard>>): { text: string; href: string } => {
+      const markup = renderToStaticMarkup(createElement(IncomeCard, { data: card }));
+      const m = /<h3[^>]*>Earned vs banked<\/h3><a [^>]*href="([^"]*)"[^>]*>([^<]*)<\/a>/.exec(markup);
+      return { text: m![2]!, href: m![1]!.replaceAll("&amp;", "&") };
+    };
+
+    test("a levelled rate: the pay schedule, called a schedule", () => {
+      addSeries();
+      addTxn(PAY_START, 100_000);
+      coverThrough(CHASE, "2026-06-01", "2026-08-12");
+
+      const card = incomeCard(bundle.db, TODAY)!;
+      expect(card.incomeLink).toEqual({ href: `/recurring/${SERIES}`, label: "Schedule" });
+      expect(card.incomeLink.href).toBe(runwayCard(bundle.db, TODAY).incomeHref);
+      expect(headerLink(card)).toEqual({ text: "Schedule →", href: `/recurring/${SERIES}` });
+    });
+
+    test("a banked month: that month, called by the page it opens", () => {
+      addSeries();
+      addTxn(PAY_START, 100_000);
+      // a lump in August that outruns the levelled $4,333.33
+      addTxn("2026-08-13", 1_000_000);
+      coverThrough(CHASE, "2026-06-01", "2026-08-12");
+
+      const card = incomeCard(bundle.db, TODAY)!;
+      expect(card.monthlyRateCents).toBe(1_000_000);
+      expect(card.incomeLink).toEqual({ href: "/spending?period=2026-08", label: "Spending" });
+      expect(card.incomeLink.href).toBe(runwayCard(bundle.db, TODAY).incomeHref);
+      expect(headerLink(card)).toEqual({ text: "Spending →", href: "/spending?period=2026-08" });
+    });
   });
 
   /**

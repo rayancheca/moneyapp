@@ -12,6 +12,7 @@ import {
   COMMITTED_ORIGIN_LABEL,
   monthHorizon,
   shrinkCaption,
+  spendArithmeticCaption,
   upfrontCarLeftOut,
   withinMonthHorizon,
   committedOutflows,
@@ -415,6 +416,49 @@ describe("upfrontCarLeftOut — one phrase for the up-front money an average lef
     expect(c).not.toContain("2022-09");
     expect(c).not.toContain("Sep 2022");
     expect(c).not.toContain("0 complete");
+  });
+});
+
+/**
+ * ⚖️ His decision 61 (2026-10-12): "What you spend a month" keeps its link and gets its arithmetic captioned under it.
+ * Measured on his ledger copy that day: the linked /spending window prints SPENT $56,444.55 and REFUNDS +$888.62, the
+ * average leaves out the $6,100.00 paid up front for the car, and $49,455.93 ÷ 6 = $8,242.655 — the row's $8,242.66.
+ */
+describe("spendArithmeticCaption — the sum under the spend row", () => {
+  const sum = (spentCents: number, refundsCents: number, upfrontCarCents: number, months: number) =>
+    spendArithmeticCaption({ spentCents, refundsCents, upfrontCarCents, months });
+
+  test("his ledger's window, every term present", () => {
+    expect(sum(5_644_455, 88_862, 610_000, 6)).toBe(
+      "$56,444.55 spent − $888.62 back − $6,100.00 up front, over 6 months",
+    );
+  });
+
+  test("a term that is zero is dropped, never printed as − $0.00", () => {
+    expect(sum(4_800_000, 0, 610_000, 6)).toBe("$48,000.00 spent − $6,100.00 up front, over 6 months");
+    expect(sum(4_800_000, 88_862, 0, 6)).toBe("$48,000.00 spent − $888.62 back, over 6 months");
+    const bare = sum(4_800_000, 0, 0, 6);
+    expect(bare).toBe("$48,000.00 spent, over 6 months");
+    expect(bare).not.toContain("$0.00");
+  });
+
+  /**
+   * A refund of the deposit inside the window, the deposit before it: "back" holds the refund and the average does
+   * not (`isUpfrontCarRow`, either sign), so the sum adds it again — named as the refund it is, never as "− -$".
+   */
+  test("a net up-front refund is added back, as a refund", () => {
+    const c = sum(4_800_000, 110_000, -110_000, 6);
+    expect(c).toBe("$48,000.00 spent − $1,100.00 back + $1,100.00 up-front refund, over 6 months");
+    expect(c).not.toContain("-$");
+  });
+
+  test("one month is singular", () => {
+    expect(sum(800_000, 0, 0, 1)).toBe("$8,000.00 spent, over 1 month");
+  });
+
+  // ⛔ zero months is no average — `baselineCaption` says so under the card, and this has nothing to divide
+  test("no complete month: no sum", () => {
+    expect(sum(12_345, 0, 0, 0)).toBeNull();
   });
 });
 

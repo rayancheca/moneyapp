@@ -338,7 +338,7 @@ describe("the agent's income SERIES is not his pay either", () => {
    * 🔴 Only the POSTED leg of /budgets' header had learned whose money is whose. Its forward legs and the income basis
    * read every live income series, so "$X in so far" left the agent's interest out while "$Y still expected" on the
    * same line counted its next payment — and the basis behind the runway's "What you earn a month", the forecast's
-   * "Projected income" and the dashboard's "before your next paycheck" did the same.
+   * "Projected income" and the dashboard's "due by your next paycheck" did the same.
    */
   test("⛔ a series detected on the agent's cash moves no figure that projects his pay", () => {
     hisPay();

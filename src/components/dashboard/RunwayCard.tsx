@@ -35,6 +35,11 @@ import type { RunwayCard as RunwayCardData } from "@/services/committed";
  * include the running one, and a bare `/spending` opens the running one. That
  * link is the service's `spendingHref`, built from the months averaged.
  *
+ * ⛔ Not `income` either: what is behind its figure depends on the basis that chose it, so the link is the service's
+ * `incomeHref` (`monthIncomeLink`, the Earned vs banked card's too). 🔴 It was `/spending` here, for every basis:
+ * measured on his ledger copy 2026-10-12, "What you earn a month $4,948.32" — a rate levelled from his confirmed
+ * weekly pay — opened October, which read "not imported yet". A levelled rate opens the pay schedule it comes from.
+ *
  * ⛔ Not `/investments` for `investments`: that page values the investment
  * accounts' holdings and nothing else, and this figure also carries the
  * brokerage's own cash (`cashPosition` — Robinhood Cash and Robinhood Agentic,
@@ -42,20 +47,35 @@ import type { RunwayCard as RunwayCardData } from "@/services/committed";
  * read $109,002.47 against $108,974.93 of holdings. `/accounts` lists every
  * account the figure sums.
  */
-const ASSUMPTION_HREF: Record<Exclude<RunwayAssumptionId, "spend">, string> = {
+const ASSUMPTION_HREF: Record<Exclude<RunwayAssumptionId, "spend" | "income">, string> = {
   liquid: "/accounts",
   cards: "/accounts",
-  income: "/spending",
   investments: "/accounts",
 };
 
 /** Rows the card prints as a subtraction rather than as a balance. */
 const SUBTRACTED: ReadonlySet<RunwayAssumptionId> = new Set<RunwayAssumptionId>(["cards"]);
 
-function AssumptionRow({ a, href, tip }: { a: RunwayAssumption; href: string; tip?: string }) {
+/** A row: its label and its figure on one line. */
+const ROW = "flex items-baseline justify-between gap-3";
+/** …and one with a caption, a grid so the caption can span the line under both — no other row changes. */
+const CAPTIONED_ROW = "grid grid-cols-[minmax(0,1fr)_auto] items-baseline gap-x-3";
+
+function AssumptionRow({
+  a,
+  href,
+  tip,
+  caption,
+}: {
+  a: RunwayAssumption;
+  href: string;
+  tip?: string;
+  /** how the figure was reached, under it — a second `<dd>` of the same term, spanning the row */
+  caption?: string | null;
+}) {
   const subtracted = SUBTRACTED.has(a.id);
   return (
-    <div className="flex items-baseline justify-between gap-3">
+    <div className={caption ? CAPTIONED_ROW : ROW}>
       <dt className="flex min-w-0 items-center gap-1.5">
         <Link
           href={href}
@@ -73,6 +93,7 @@ function AssumptionRow({ a, href, tip }: { a: RunwayAssumption; href: string; ti
           {formatCents(a.cents)}
         </span>
       </dd>
+      {caption && <dd className="col-span-2 mt-0.5 text-[11px] leading-relaxed text-ink-faint">{caption}</dd>}
     </div>
   );
 }
@@ -88,7 +109,8 @@ export function RunwayCard({ data }: { data: RunwayCardData }) {
   const withheld = runway.kind === "unknown";
   const by = (id: RunwayAssumptionId): RunwayAssumption | undefined =>
     runway.assumptions.find((a) => a.id === id);
-  const hrefOf = (id: RunwayAssumptionId): string => (id === "spend" ? data.spendingHref : ASSUMPTION_HREF[id]);
+  const hrefOf = (id: RunwayAssumptionId): string =>
+    id === "spend" ? data.spendingHref : id === "income" ? data.incomeHref : ASSUMPTION_HREF[id];
 
   const cashRows = (["liquid", "cards"] as const).map(by).filter((a) => a !== undefined);
   const flowRows = (["spend", "income"] as const).map(by).filter((a) => a !== undefined);
@@ -140,7 +162,9 @@ export function RunwayCard({ data }: { data: RunwayCardData }) {
           picks between have nothing in common, so the page must not paraphrase
           whichever one is live. It was computed and dropped in the first
           version of this card: the same defect pass 62 filed as
-          "axisStartsAtZero computed, never rendered". */}
+          "axisStartsAtZero computed, never rendered".
+          ⚖️ The spend row carries its arithmetic under it, his decision 61 (2026-10-12) — the operands as /spending
+          and the car card print them (`spendArithmetic`), so the row can be checked without leaving its link. */}
       <dl className="mt-3 space-y-1.5 border-t border-line pt-3 text-sm">
         {flowRows.map((a) => (
           <AssumptionRow
@@ -148,6 +172,7 @@ export function RunwayCard({ data }: { data: RunwayCardData }) {
             a={a}
             href={hrefOf(a.id)}
             tip={a.id === "income" ? incomeBasisExplanation : undefined}
+            caption={a.id === "spend" ? data.spendArithmetic : undefined}
           />
         ))}
         <div className="flex items-baseline justify-between gap-3 border-t border-line pt-1.5">

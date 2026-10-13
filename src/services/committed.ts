@@ -7,6 +7,7 @@ import {
   heaviestMonth,
   heaviestMonthEnding,
   monthHorizon,
+  spendArithmeticCaption,
   withinMonthHorizon,
   type CommittedOccurrence,
   type CommittedOutflows,
@@ -18,6 +19,7 @@ import {
   periodBounds,
   todayIso,
 } from "@/lib/dates";
+import { monthIncomeLink } from "@/lib/income-basis";
 import { resolvePeriod, withPeriod } from "@/lib/period";
 import { runway, type Runway } from "@/lib/runway";
 import { cashPosition, outsidePortfolioCashAccountIds } from "./accounts";
@@ -36,6 +38,7 @@ import { ledgerOpens } from "./observation-frontier";
 import { silenceMeasuredThroughBySeries } from "./cash-earnings";
 import { scheduledOccurrences, seriesStaleness } from "./recurring";
 import { seriesIdsNotDrawnAsRecurring } from "./recurring-link";
+import { cashFlowByPeriod } from "./spending";
 
 /**
  * The two decision cards of pass 63 — how long the money lasts, and what the
@@ -468,6 +471,24 @@ export interface RunwayCard {
    * ("There is no comparison for September 2026 yet: …").
    */
   spendingHref: string;
+  /**
+   * The spend row's arithmetic, captioned under it — `spendArithmeticCaption`: SPENT and REFUNDS as `/spending` prints
+   * them for `spendingHref`'s window (`cashFlowByPeriod`, the page's own read), less `spend.upfrontCarCents`, over
+   * `spend.months`. Null when no complete month was averaged.
+   *
+   * ⚖️ His decision 61 (2026-10-12): the row keeps its link and gets its arithmetic captioned. Measured on his ledger
+   * copy that day: "$56,444.55 spent − $888.62 back − $6,100.00 up front, over 6 months" — $49,455.93 ÷ 6, the row's
+   * $8,242.66.
+   */
+  spendArithmetic: string | null;
+  /**
+   * Where the income row's figure is checked — `monthIncomeLink`, chosen by the basis that chose the figure: the pay
+   * schedule a `levelled` rate comes from, or `/spending` for the month `banked` and `calendar` measured.
+   *
+   * 🔴 It was a bare `/spending` for every basis. Measured on his ledger copy 2026-10-12: "What you earn a month
+   * $4,948.32", levelled from his confirmed weekly pay, opened October, which read "not imported yet".
+   */
+  incomeHref: string;
   /** how the income term was chosen — `incomeBasis`'s own explanation */
   incomeBasisExplanation: string;
   today: string;
@@ -499,6 +520,13 @@ export function runwayCard(db: AppDatabase, today: string = todayIso()): RunwayC
   const month = periodBounds(today, "monthly");
   const income = incomeExpectation(db, month.start, month.end, today);
   const spend = spendBaseline(db, today);
+  // the months `spend` averaged, as `baselineWindow` bounds them — the window the spend row opens and its caption sums
+  const spendWindow = resolvePeriod(
+    { period: null, from: `${spend.fromMonth}-01`, to: periodBounds(`${spend.toMonth}-01`, "monthly").end },
+    today,
+  );
+  // …and what that page prints for it: its own read, so the caption's SPENT and REFUNDS are the page's (§6A 61)
+  const spendWindowTotals = cashFlowByPeriod(db, spendWindow, today).totals;
 
   return {
     runway: runway({
@@ -517,14 +545,16 @@ export function runwayCard(db: AppDatabase, today: string = todayIso()): RunwayC
     }),
     committed: committedBook(db, today),
     spend,
-    // the months `spend` averaged, as `baselineWindow` bounds them — see the field
-    spendingHref: withPeriod(
-      "/spending",
-      resolvePeriod(
-        { period: null, from: `${spend.fromMonth}-01`, to: periodBounds(`${spend.toMonth}-01`, "monthly").end },
-        today,
-      ),
-    ),
+    // see the field
+    spendingHref: withPeriod("/spending", spendWindow),
+    spendArithmetic: spendArithmeticCaption({
+      spentCents: spendWindowTotals.spentCents,
+      refundsCents: spendWindowTotals.refundsCents,
+      upfrontCarCents: spend.upfrontCarCents,
+      months: spend.months,
+    }),
+    // the calendar month `income` was asked about — the window `banked` and `calendar` measured
+    incomeHref: monthIncomeLink(income, month.start, today).href,
     incomeBasisExplanation: income.basis.explanation,
     today,
   };

@@ -2,7 +2,15 @@ import { describe, expect, test } from "vitest";
 import type { Cadence } from "@/db/schema/recurring";
 import { CADENCES } from "@/db/schema/recurring";
 import { BUDGET_JARGON } from "./jargon";
-import { incomeBasis, levelledMonthlyCents, OCCURRENCES_PER_YEAR } from "./income-basis";
+import {
+  incomeBasis,
+  incomeBasisHref,
+  levelledMonthlyCents,
+  monthIncomeLink,
+  OCCURRENCES_PER_YEAR,
+  type IncomeBasisKind,
+} from "./income-basis";
+import { resolvePeriod } from "./period";
 
 describe("OCCURRENCES_PER_YEAR", () => {
   test("covers every cadence the schema can store", () => {
@@ -265,5 +273,60 @@ describe("incomeBasis — which figure budgets are graded against", () => {
       expect(note ?? "").not.toContain("left to allocate");
       expect(note ?? "").not.toContain("Over-allocated by");
     }
+  });
+});
+
+/**
+ * 🔴 Measured on his ledger copy 2026-10-12: the runway's "What you earn a month $4,948.32" linked to a bare
+ * `/spending` — October, which reads "not imported yet" — while the figure is a rate from his confirmed pay
+ * (`levelled`). The drill-down contract: a link opens what is behind its number, and each basis has a different
+ * thing behind it.
+ */
+describe("incomeBasisHref — where the income figure is checked", () => {
+  const october = resolvePeriod({ period: "2026-10" }, "2026-10-12");
+  const PAY = "019f72da-1fbc-7000-a434-6840bae2d231";
+
+  test("a rate from one pay schedule opens that schedule's page", () => {
+    expect(incomeBasisHref({ kind: "levelled", levelledSeriesIds: [PAY], window: october })).toBe(
+      `/recurring/${PAY}`,
+    );
+  });
+
+  test("a rate summed from more than one schedule opens the list of every schedule", () => {
+    expect(incomeBasisHref({ kind: "levelled", levelledSeriesIds: [PAY, "side-gig"], window: october })).toBe(
+      "/recurring?tab=all",
+    );
+  });
+
+  test("a measurement opens the window it measured, never a bare /spending", () => {
+    expect(incomeBasisHref({ kind: "banked", levelledSeriesIds: [PAY], window: october })).toBe(
+      "/spending?period=2026-10",
+    );
+    expect(incomeBasisHref({ kind: "calendar", levelledSeriesIds: [], window: october })).toBe(
+      "/spending?period=2026-10",
+    );
+  });
+});
+
+/**
+ * 🔴 Review of 59de07f (2026-10-12): the Earned vs banked card's "Schedule →" opened a bare `/recurring` — Upcoming —
+ * over the same monthly basis the runway's earn row had just been pointed at its pay schedule for. One link, built
+ * once, for every surface that prints the month's income figure — and its word names the page it opens.
+ */
+describe("monthIncomeLink — the month's income figure, and where it is checked", () => {
+  const PAY = "019f72da-1fbc-7000-a434-6840bae2d231";
+  const link = (kind: IncomeBasisKind, levelledSeriesIds: string[], monthStart: string) =>
+    monthIncomeLink({ basis: { kind }, levelledSeriesIds }, monthStart, "2026-10-12");
+
+  test("a levelled rate: its schedule, called a schedule", () => {
+    expect(link("levelled", [PAY], "2026-10-01")).toEqual({ href: `/recurring/${PAY}`, label: "Schedule" });
+    const two = link("levelled", [PAY, "side-gig"], "2026-10-01");
+    expect(two).toEqual({ href: "/recurring?tab=all", label: "Schedule" });
+  });
+
+  // ⛔ "Schedule →" over /spending would name a page it does not open
+  test("a measurement: the calendar month it was asked about, called by the page it opens", () => {
+    expect(link("banked", [PAY], "2026-10-01")).toEqual({ href: "/spending?period=2026-10", label: "Spending" });
+    expect(link("calendar", [], "2026-09-01")).toEqual({ href: "/spending?period=2026-09", label: "Spending" });
   });
 });

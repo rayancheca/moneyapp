@@ -757,6 +757,12 @@ export interface IncomeExpectation {
   paidForAnotherMonthPaydays: string[];
   /** which figure budgets are graded against, and how this month sits on it */
   basis: IncomeBasis;
+  /**
+   * The series whose annualised rates the levelled figure sums, in the order walked — what is behind `basis` under
+   * `levelled` (`incomeBasisHref`). ⛔ Not `series`: that is the forward leg's, and a schedule whose next payday
+   * this month has already met is behind the rate while it is in no "still expected" figure.
+   */
+  levelledSeriesIds: string[];
   /** the live income series contributing to expectedCents */
   series: { id: string; name: string; amountCents: number }[];
 }
@@ -961,6 +967,8 @@ export function incomeExpectation(
    */
   const horizon = addDays(addCalendarMonths(start, BASIS_HORIZON_MONTHS), -1);
   let levelledCents = 0;
+  // …and whose rates they are, added on the same line, so the link and the figure cannot name different sets
+  const levelledSeriesIds: string[] = [];
   /*
    * The money that crossed the month line, both ways: another month's money
    * that paid paydays in this window (the fourth leg), and money in
@@ -1035,6 +1043,7 @@ export function incomeExpectation(
     );
     if (!stillPaying) continue;
     levelledCents += levelledMonthlyCents(perOccurrenceCents, eff.cadence);
+    levelledSeriesIds.push(s.id);
   }
 
   /*
@@ -1063,6 +1072,7 @@ export function incomeExpectation(
       scheduledOccurrences,
       measuredCents,
     }),
+    levelledSeriesIds,
     passedUnpaidCents,
     passedUnpaidOccurrences,
     passedUnpaidCheckedOccurrences: passed.checkedOccurrenceCount,

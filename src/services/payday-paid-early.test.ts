@@ -25,7 +25,7 @@ import { seriesDetail, setSeriesOverrides } from "./recurring-detail";
  * drops that payday ("A payday a deposit has already paid down is not still to
  * come") and the calendar draws it paid by the deposit of Sep 30 — but
  * `upcomingOccurrences` projected from today without asking settlement, so
- * /recurring's Upcoming tab, the dashboard's upcoming strip and its "before
+ * /recurring's Upcoming tab, the dashboard's upcoming strip and its "due by
  * your next paycheck" line still waited on Oct 1's pay, and so did the series
  * page's "Next expected". Read on Sep 30, the dashboard said nothing was due
  * before that paycheck — while the $2,000.00 rent due Oct 5 falls before the

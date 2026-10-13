@@ -1746,7 +1746,7 @@ export function projectOccurrences(
  * 🔴 The /recurring Upcoming tab listed the agent's month-end interest as
  * "Income" and counted it in its 30-day net, and the dashboard's Upcoming list
  * did the same, while the forecast card above the tab left it out. Every caller
- * reads it here — the dashboard's "before your next paycheck" too — so none of
+ * reads it here — the dashboard's "due by your next paycheck" too — so none of
  * them carries a copy of the rule.
  *
  * ⛔ A payday a deposit has already paid down is not upcoming (`stillToCome`,
@@ -1754,7 +1754,7 @@ export function projectOccurrences(
  * never asked: read on Sep 30 with Wed Sep 30's deposit paying Thu Oct 1 early,
  * the Upcoming tab still listed Oct 1's pay while the Calendar tab beside it
  * drew Oct 1 "paid by the deposit of Sep 30" and the forecast counted four
- * October paydays — and the dashboard waited on that pay, so "before your next
+ * October paydays — and the dashboard waited on that pay, so "due by your next
  * paycheck" left out the rent due before the pay that will actually come.
  *
  * ⛔ …nor is a bill's day a payment has already paid (`stillToCome` again). 🔴 With the rent paid Sep 30, the tab and

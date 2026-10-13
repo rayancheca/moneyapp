@@ -647,6 +647,43 @@ export function upfrontCarLeftOut(cents: number): string | null {
         "it spreads over the lease";
 }
 
+/** The operands of a spending average, as the pages they come from print them — `spendArithmeticCaption`. */
+export interface SpendArithmetic {
+  /** SPENT on `/spending` for the window the average covers — gross money out (`cashFlowByPeriod`) */
+  spentCents: number;
+  /** REFUNDS on that page — money back in expense categories, never negative */
+  refundsCents: number;
+  /** the car's up-front money the average left out (`SpendBaseline.upfrontCarCents`), either sign */
+  upfrontCarCents: number;
+  /** the complete months the average divides by */
+  months: number;
+}
+
+/**
+ * The arithmetic under "What you spend a month": the window's SPENT, less what came back, less the car's up-front
+ * money, over the months — "$56,444.55 spent − $888.62 back − $6,100.00 up front, over 6 months".
+ *
+ * ⚖️ His decision 61 (2026-10-12), asked as an either/or: the row keeps its link to the months it averaged, and its
+ * arithmetic is captioned under it. Measured on his ledger copy that day: that /spending window prints SPENT $56,444.55
+ * and REFUNDS +$888.62, the runway leaves out the $6,100.00 paid up front for the car (§6A 48/51/52), and
+ * $49,455.93 ÷ 6 = $8,242.655 — the row's $8,242.66.
+ *
+ * ⛔ Operands, never a re-derived total: each is a figure a page prints — /spending its SPENT and REFUNDS, the car card
+ * its up-front money — so the reader can find every one, and the sum divides to the row (`runwayCard`'s tests).
+ * A term that is zero is dropped; SPENT never is, or the sentence would open on a minus. A NET refund of the up-front
+ * money is ADDED: "back" holds it and the average does not (`isUpfrontCarRow`, either sign), so it is named as the
+ * refund it is — never "− -$" (`upfrontCarLeftOut`'s 🔴). Null with no complete month: there is nothing to divide.
+ */
+export function spendArithmeticCaption(a: SpendArithmetic): string | null {
+  const { spentCents, refundsCents, upfrontCarCents, months } = a;
+  if (months < 1) return null;
+  const terms = [`${formatCents(spentCents)} spent`];
+  if (refundsCents !== 0) terms.push(`− ${formatCents(refundsCents)} back`);
+  if (upfrontCarCents > 0) terms.push(`− ${formatCents(upfrontCarCents)} up front`);
+  if (upfrontCarCents < 0) terms.push(`+ ${formatCents(-upfrontCarCents)} up-front refund`);
+  return `${terms.join(" ")}, over ${monthCount(months)}`;
+}
+
 /**
  * "6 complete months", "1 complete month", "4 months" — a month count whose noun
  * agrees with it.

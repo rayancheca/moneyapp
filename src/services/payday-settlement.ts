@@ -176,7 +176,7 @@ export function settledPaydaysForSeries(db: AppDatabase, seriesId: string, today
  *
  * ⛔ ONE READING for every surface that looks ahead at what is still to pay: the
  * forecast (and the dashboard's free-to-spend through it), the upcoming list
- * (/recurring's Upcoming tab, the dashboard's strip and its "before your next
+ * (/recurring's Upcoming tab, the dashboard's strip and its "due by your next
  * paycheck"), /budgets' forward tail and a series' "Next expected" — and, through
  * `nextStillToCome`, every surface that names a series' single next date to come.
  * 🔴 Only the forecast asked: on Sep 30 the dashboard waited on Oct 1's pay — the
