@@ -106,13 +106,27 @@ describe("SubscriptionsCard — each line's evidence, in its own voice", () => {
       data(
         [line({ seriesId: "b", name: "Breezeline" })],
         [
-          line({ seriesId: "d", name: "Dead streaming", lastMatchedLabel: "Apr 25", daysPastTolerance: 94, pastToleranceThroughLabel: "Sep 13" }),
+          // Apr 25 → Sep 13 is 141 days, less the 48-day tolerance (`pastToleranceOf`, services/subscriptions-card)
+          line({ seriesId: "d", name: "Dead streaming", lastMatchedLabel: "Apr 25", daysPastTolerance: 93, pastToleranceThroughLabel: "Sep 13" }),
           line({ seriesId: "o", name: "Old landlord", lastMatchedLabel: "Jan 8", daysPastTolerance: 225 }),
         ],
       ),
     );
-    expect(t).toContain("|Dead streaming||last seen Apr 25 · 94 days past tolerance, checked through Sep 13|");
+    expect(t).toContain("|Dead streaming||last seen Apr 25 · 93 days past tolerance, checked through Sep 13|");
     expect(t).toContain("|Old landlord||last seen Jan 8 · 225 days past tolerance|");
+  });
+
+  /*
+   * 🔴 Review of f117d68: the line learned to name its checked day and the card's lead sentence, over the same count,
+   * did not — "The largest is Dead streaming, last seen Apr 25, 93 days past its own tolerance." reads as 118 to
+   * anyone counting from Apr 25 to Oct 8. One count, one clause, both places.
+   */
+  test("the lead sentence's largest lapsed line names the day its count ran to, as its row does", () => {
+    const dead = line({ seriesId: "d", name: "Dead streaming", lastMatchedLabel: "Apr 25", daysPastTolerance: 93, pastToleranceThroughLabel: "Sep 13" });
+    const t = text(data([line({ seriesId: "b", name: "Breezeline" })], [dead])).replace(/\|/g, "");
+    expect(t).toContain("The largest is Dead streaming, last seen Apr 25, 93 days past its own tolerance, checked through Sep 13.");
+    const toToday = text(data([line({ seriesId: "b", name: "Breezeline" })], [{ ...dead, pastToleranceThroughLabel: null }]));
+    expect(toToday.replace(/\|/g, "")).toContain("last seen Apr 25, 93 days past its own tolerance.");
   });
 
   /*

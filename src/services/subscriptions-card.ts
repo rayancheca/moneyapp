@@ -3,7 +3,7 @@ import type { AppDatabase } from "@/db/client";
 import { recurringSeries, type Cadence } from "@/db/schema/recurring";
 import { transactions } from "@/db/schema/transactions";
 import { billedWithLabel } from "@/lib/billed-with";
-import { addCalendarMonths, monthKey, todayIso } from "@/lib/dates";
+import { addCalendarMonths, compareDates, diffDays, monthKey, todayIso } from "@/lib/dates";
 import { formatDayShortIn } from "@/lib/format-date";
 import { levelledMonthlyCents } from "@/lib/income-basis";
 import { oneChargePhrase } from "@/lib/one-charge";
@@ -113,15 +113,19 @@ export interface SubscriptionLine {
    * series has not lapsed. One means a bill that is late; seven hundred means a
    * subscription that is over, and the card must not flatten the two.
    *
-   * ⚖️ Counted on days the ledger has READ — to the day after the series' checked day, never past today
-   * (`checkedDaysSinceLastMatch`), the day its lapse is measured to (§6A 57) — so it cannot grow between uploads.
-   * 🔴 Counted to today, it grew a day each morning nothing was imported: "Amazon Prime · 47 days past tolerance" on
-   * his ledger 2026-10-08, 107 by Dec 7, with no statement read past Sep 2 on its card.
+   * ⚖️ Counted on days the ledger has READ — to the series' checked day, never past today (§6A 57) — so it cannot grow
+   * between uploads. 🔴 Counted to today, it grew a day each morning nothing was imported: "Amazon Prime · 47 days
+   * past tolerance" on his ledger 2026-10-08, 107 by Dec 7, with no statement read past Sep 2 on its card.
+   *
+   * ⛔ Counted to the day the line NAMES (`pastToleranceThroughLabel`, or today when it names none): last seen to that
+   * day, less the tolerance — the sum a reader does from the two dates printed. 🔴 Review of f117d68: counted to the
+   * day AFTER the checked day (`checkedDaysSinceLastMatch`, the lapse's own measure), it read "last seen Apr 25 · 94
+   * days past tolerance, checked through Sep 13", where Apr 25 → Sep 13 less 48 is 93.
    */
   daysPastTolerance: number | null;
   /**
-   * The last read day `daysPastTolerance` counted — its accounts' checked day, spelled ("Sep 13") — when the count
-   * stops short of today; null when it runs to today, where it is the calendar age "last seen" beside it implies, and
+   * The checked day `daysPastTolerance` counted to — its accounts' checked day, spelled ("Sep 13") — when that is
+   * short of today; null when the count runs to today, where it is the calendar age "last seen" beside it implies, and
    * when the line has not lapsed.
    *
    * 🔴 Review of §6A 57: "last seen Apr 25 · 94 days past tolerance" beside a date from which a reader counts 118 to
@@ -274,14 +278,28 @@ function postedBySeries(db: AppDatabase, from: string, to: string): Map<string, 
 }
 
 /**
- * The checked day a lapsed line's count of read days stopped at, spelled for its sentence — when that is short of
- * today: the quiet on read days (`checkedDaysSinceLastMatch`, to the day after the checked day) is then less than its
- * age to today (`daysSinceLastMatch`, what "last seen <day>" implies). Null when the two are one count.
+ * A lapsed line's days past tolerance and the day they were counted to, spelled — ONE function, so the count and the
+ * day the line names cannot disagree: last seen to that day, less the tolerance, which is the sum a reader does from
+ * "last seen Apr 25 · 93 days past tolerance, checked through Sep 13". The day is the series' checked day when that
+ * is short of today (named), else today (unnamed — the age "last seen" implies).
+ *
+ * 🔴 Review of f117d68: the count was the lapse's measure (`checkedDaysSinceLastMatch`, to the day AFTER the checked
+ * day) and the label named the checked day — "94 days past tolerance, checked through Sep 13", one over the 93 the two
+ * printed dates give. The lapse itself still measures to the day after (`seriesHasLapsed`); only what is printed moves.
  */
-function countedThroughLabel(staleness: SeriesStaleness, today: string): string | null {
-  const { checkedThrough, checkedDaysSinceLastMatch: read, daysSinceLastMatch: age } = staleness;
-  if (read === null || age === null || read >= age || !checkedThrough) return null;
-  return formatDayShortIn(checkedThrough, today);
+function pastToleranceOf(
+  staleness: SeriesStaleness,
+  today: string,
+): Pick<SubscriptionLine, "daysPastTolerance" | "pastToleranceThroughLabel"> {
+  const { lastMatchedOn, checkedThrough } = staleness;
+  // a type narrowing, not a guard: a lapsed series has been seen, and its checked day is set (`seriesHasLapsed`)
+  if (lastMatchedOn === null || !checkedThrough) return { daysPastTolerance: null, pastToleranceThroughLabel: null };
+  const shortOfToday = compareDates(checkedThrough, today) < 0;
+  const countedTo = shortOfToday ? checkedThrough : today;
+  return {
+    daysPastTolerance: diffDays(lastMatchedOn, countedTo) - wholeToleranceDays(staleness.toleranceDays),
+    pastToleranceThroughLabel: shortOfToday ? formatDayShortIn(checkedThrough, today) : null,
+  };
 }
 
 export function subscriptionsCard(
@@ -421,17 +439,8 @@ export function subscriptionsCard(
     // and the forecast's cannot disagree about which series are being projected
     const stopsForecasting = hasStoppedForecasting(s, today, checkedThrough);
     if (stopsForecasting) {
-      lapsed.push({
-        ...line,
-        // a type narrowing, not a guard: `seriesHasLapsed` is false unless
-        // `checkedDaysSinceLastMatch` is set — TypeScript cannot see that, the
-        // arithmetic can
-        daysPastTolerance:
-          staleness.checkedDaysSinceLastMatch === null
-            ? null
-            : staleness.checkedDaysSinceLastMatch - wholeToleranceDays(staleness.toleranceDays),
-        pastToleranceThroughLabel: countedThroughLabel(staleness, today),
-      });
+      // the count and the day it ran to, from one reading (`pastToleranceOf`)
+      lapsed.push({ ...line, ...pastToleranceOf(staleness, today) });
     } else {
       live.push(line);
     }

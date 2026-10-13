@@ -242,10 +242,15 @@ describe("a series lapses only on days the ledger has checked — every surface 
     for (const id of [...STILL_FORECAST, GYM]) expect(live.has(id), `${today} · ${id}`).toBe(true);
   });
 
+  /*
+   * 🔴 Review of f117d68: "last seen Apr 25 · 94 days past tolerance, checked through Sep 13" — counted to Sep 14, the
+   * day AFTER the day it names, so a reader counting from the two dates printed gets Apr 25 → Sep 13 = 141, less the
+   * 48-day tolerance, 93. The count runs to the day it names: the checked day, or today when it is read through today.
+   */
   test("the subscriptions card's days past tolerance count read days only — they cannot grow between uploads", () => {
-    // Apr 25 → Sep 14 (the day after Venture X's checked Sep 13) is 142 days, against the 48-day tolerance
+    // Apr 25 → Sep 13 (Venture X's checked day, which the line names) is 141 days, against the 48-day tolerance
     for (const today of [OCT, DEC]) {
-      expect(subscriptionsCard(bundle.db, today)!.lapsed[0]!.daysPastTolerance, today).toBe(142 - 48);
+      expect(subscriptionsCard(bundle.db, today)!.lapsed[0]!.daysPastTolerance, today).toBe(141 - 48);
     }
   });
 
@@ -258,8 +263,13 @@ describe("a series lapses only on days the ledger has checked — every surface 
     for (const today of [OCT, DEC]) {
       expect(subscriptionsCard(bundle.db, today)!.lapsed[0]!.pastToleranceThroughLabel, today).toBe("Sep 13");
     }
-    // Venture X read through the day before: the count runs to today, and agrees with "last seen Apr 25"
+    // Venture X read through the day before: still short of today, so it names Oct 7 — and counts to it
     checkedThrough(VX, "2026-09-14", addDays(OCT, -1));
+    const yesterday = subscriptionsCard(bundle.db, OCT)!.lapsed.find((l) => l.seriesId === DEAD)!;
+    expect(yesterday.pastToleranceThroughLabel).toBe("Oct 7");
+    expect(yesterday.daysPastTolerance).toBe(yesterday.daysSinceLastMatch! - 1 - 48);
+    // …and read through today: the count runs to today, and agrees with "last seen Apr 25"
+    checkedThrough(VX, OCT, OCT);
     const dead = subscriptionsCard(bundle.db, OCT)!.lapsed.find((l) => l.seriesId === DEAD)!;
     expect(dead.pastToleranceThroughLabel).toBeNull();
     expect(dead.daysPastTolerance).toBe(dead.daysSinceLastMatch! - 48);

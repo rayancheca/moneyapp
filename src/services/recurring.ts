@@ -1148,9 +1148,12 @@ export interface SeriesStaleness {
   daysSinceLastMatch: number | null;
   /**
    * The quiet the ledger has READ: days from lastMatchedOn to the day after `checkedThrough`, never past today — what
-   * late (`isStale`) and lapsed (`seriesHasLapsed`) both measure, and the subscriptions card's "days past tolerance".
-   * Unmeasured (`checkedThrough` undefined) it is `daysSinceLastMatch`; null when never billed, or when nothing is
-   * checked — no read day can say a charge is missing.
+   * late (`isStale`) and lapsed (`seriesHasLapsed`) both measure. Unmeasured (`checkedThrough` undefined) it is
+   * `daysSinceLastMatch`; null when never billed, or when nothing is checked — no read day can say a charge is missing.
+   *
+   * ⛔ Not the subscriptions card's printed "days past tolerance", which counts to the day its line NAMES — the checked
+   * day itself (`pastToleranceOf`). 🔴 Printed from this, it read "94 days past tolerance, checked through Sep 13"
+   * beside "last seen Apr 25": one over what the two dates give (review of f117d68).
    */
   checkedDaysSinceLastMatch: number | null;
   /** the effective step: user cadence → nominal, else the detected average gap */
