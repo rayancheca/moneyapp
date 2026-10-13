@@ -1165,6 +1165,17 @@ export interface SeriesStaleness {
   checkedDaysSinceLastMatch: number | null;
   /** the effective step: user cadence → nominal, else the detected average gap */
   stepDays: number;
+  /**
+   * The day of its ONE charge when its whole schedule holds one (`oneChargeDays`), null when it does not — undefined
+   * when the caller did not ask. ⚖️ §6A 56 (2026-10-08): such a series is "once · Nov 11" wherever a cadence prints, and
+   * its staleness sentence says "expected once on Nov 11, 2026", never `stepDays`' "about every 30 days".
+   *
+   * ⛔ Asked by every reader whose staleness is DISCLOSED — the forecast's two legs and Upcoming (`forecastWalk`), the
+   * chip's tooltip and the footers'. 🔴 It was not carried, and on his ledger copy 2026-10-13 /recurring's Upcoming
+   * footer read "Car insurance — Nov 11 balance … — expected about every 30 days", a tab from the All tab's
+   * "once · Nov 11".
+   */
+  oneChargeOn?: string | null;
   /** step × INACTIVE_MISS_LIMIT + cadence grace — past this the evidence is late */
   toleranceDays: number;
   /**
@@ -1426,6 +1437,8 @@ export function seriesStaleness(
   s: SeriesOverrides & EvidenceSource,
   today: string = todayIso(),
   checkedThrough?: string | null,
+  // its one charge's day, from `oneChargeDays` — a reader that discloses staleness passes it (`oneChargeOn`)
+  oneChargeOn?: string | null,
 ): SeriesStaleness {
   // Deliberately NOT stepPlan(): this measures how old the EVIDENCE is, which
   // is a span of days whatever calendar the series bills on. The projection's
@@ -1465,6 +1478,7 @@ export function seriesStaleness(
     daysSinceLastMatch,
     checkedDaysSinceLastMatch,
     stepDays,
+    ...(oneChargeOn === undefined ? {} : { oneChargeOn }),
     toleranceDays,
     isStale: lateOnCheckedDays,
     checkedThrough,
@@ -1892,6 +1906,8 @@ function forecastWalk(db: AppDatabase, today: string, windowDays: number) {
 
   // today is day ONE of the window — see `upcomingOccurrences`' rent-twice measurement
   const to = addDays(today, windowDays - 1);
+  // a one-charge series' staleness says "once on Nov 11", as its cadence does (`SeriesStaleness.oneChargeOn`)
+  const oneCharge = oneChargeDays(db, live);
   return live
     // A series whose evidence has run out is not a forecast. UBER *ONE last
     // charged 2025-05-25 and was still listed as a bill due next week, wearing
@@ -1904,7 +1920,11 @@ function forecastWalk(db: AppDatabase, today: string, windowDays: number) {
     .filter((s) => !isAgentsSeries(agentsCash, s))
     .map((s) => ({
       series: s,
-      projected: projectOccurrences(toProjectable(s, seriesStaleness(s, today, checkedThrough(s.id))), today, to),
+      projected: projectOccurrences(
+        toProjectable(s, seriesStaleness(s, today, checkedThrough(s.id), oneCharge.get(s.id) ?? null)),
+        today,
+        to,
+      ),
     }));
 }
 

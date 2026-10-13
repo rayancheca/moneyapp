@@ -287,7 +287,13 @@ export function staleFooterHint(entries: readonly StaleEntry[]): string {
  * the marker's tooltip and as the footer's per-series line.
  */
 export function stalenessSentence(s: SeriesStaleness): string {
-  const expects = `expected about every ${Math.round(s.stepDays)} days`;
+  /* ⚖️ A schedule of ONE charge is expected once, on its day (§6A 56) — the cadence slot's "once · Nov 11". 🔴 It read
+     "expected about every 30 days" of the Nov 11 balance in /recurring's Upcoming footer (his ledger copy,
+     2026-10-13). */
+  const expects =
+    typeof s.oneChargeOn === "string"
+      ? `expected ${ONE_CHARGE_WORD} on ${longDate(s.oneChargeOn)}`
+      : `expected about every ${Math.round(s.stepDays)} days`;
   if (s.lastMatchedOn === null || s.daysSinceLastMatch === null) {
     // in its siblings' words ("nothing has matched since"), true of a deposit as of a charge — 🔴 it said "no charge"
     // of every series, a hand-registered pay included (review of 2026-10-08)

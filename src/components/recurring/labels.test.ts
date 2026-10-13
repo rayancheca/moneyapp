@@ -252,6 +252,23 @@ describe("stalenessSentence", () => {
     );
   });
 
+  /*
+   * ⚖️ §6A 56 (2026-10-08): a schedule of ONE charge is "once · Nov 11" wherever a cadence prints. 🔴 Visible on his
+   * ledger copy 2026-10-13: Upcoming's footer read "Car insurance — Nov 11 balance … — expected about every 30 days".
+   */
+  test("a one-charge series is expected once, on its day — its rhythm is no rhythm, whatever the stored step", () => {
+    const never = staleness({ lastMatchedOn: null, daysSinceLastMatch: null, stepDays: 30, oneChargeOn: "2026-11-11" });
+    expect(stalenessSentence(never)).toBe(
+      "expected once on Nov 11, 2026, but nothing has ever matched it — still projected, on the schedule alone",
+    );
+    expect(stalenessSentence({ ...never, lastMatchedOn: "2026-06-16", daysSinceLastMatch: 22 })).toMatch(
+      /^expected once on Nov 11, 2026, but nothing has matched since Jun 16, 2026/,
+    );
+    // not one charge, or not asked: its step, as ever
+    expect(stalenessSentence({ ...never, oneChargeOn: null })).toMatch(/^expected about every 30 days/);
+    expect(stalenessSentence({ ...never, oneChargeOn: undefined })).toMatch(/^expected about every 30 days/);
+  });
+
   test("a fractional detected interval renders as a whole number of days", () => {
     expect(stalenessSentence(staleness({ stepDays: 30.2, toleranceDays: 48.3 }))).toContain(
       "every 30 days",

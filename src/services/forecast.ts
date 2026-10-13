@@ -565,8 +565,9 @@ function fixedComponents(
     // ⚖️ …measured to the series' checked day, like running late, never across unread days (§6A 57)
     if (hasStoppedForecasting(series, today, checkedThrough(series.id))) continue;
     // forecast reads user overrides first (§4.4): amount, cadence, next-expected
-    // late only on days the ledger has checked — the chip, the MONEY IN/OUT band and the footer's count
-    const staleness = seriesStaleness(series, today, checkedThrough(series.id));
+    // late only on days the ledger has checked — the chip, the MONEY IN/OUT band and the footer's count; a one-charge
+    // series' sentence says "once on Nov 11", as its line's "(once)" does (`SeriesStaleness.oneChargeOn`)
+    const staleness = seriesStaleness(series, today, checkedThrough(series.id), oneCharge.get(series.id) ?? null);
     /*
      * ⚖️ A payday a deposit has already paid down is not still to come. ⛔ The
      * same double count `incomeExpectation` used to publish, arriving by the
@@ -720,7 +721,7 @@ function arrearsComponents(
       kind: "fixed" as const,
       cents: -s.amountCents,
       detail: `${ratesTimesCounts(s.occurrenceCents.map((c) => -c))} (${cadenceWordOf(series, oneCharge)}), came due ${formatDayShortIn(s.nextDate, today)}${tail}`,
-      staleness: seriesStaleness(series, today, checkedThrough(series.id)),
+      staleness: seriesStaleness(series, today, checkedThrough(series.id), oneCharge.get(series.id) ?? null),
     };
   });
   // the same rule as the forward leg: a late bill on an account outside cash is
