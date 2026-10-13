@@ -59,6 +59,8 @@ const DISCRETIONARY = [
 /** First month lived entirely under the income-based plan. */
 const ROLLOVER_STARTS_ON = "2026-09-01";
 const CURRENT_PERIOD_START = "2026-08-01";
+/** The day this ran — what a closed period's days are read against (⚖️ decision 67, `carryInto`). */
+const RAN_ON = "2026-08-21";
 
 const money = (c: number): string =>
   `$${(c / 100).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -151,7 +153,7 @@ async function main(): Promise<void> {
   }
   const carried = after
     .filter((r) => r.rolloverEnabled)
-    .map((r) => ({ name: r.name, cents: carryInto(db, r, CURRENT_PERIOD_START) }))
+    .map((r) => ({ name: r.name, cents: carryInto(db, r, CURRENT_PERIOD_START, RAN_ON).cents }))
     .filter((c) => c.cents !== 0);
   if (carried.length > 0) {
     throw new Error(

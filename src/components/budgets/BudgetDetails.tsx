@@ -12,6 +12,7 @@ import { ROLLOVER_SUBTRACTS } from "@/lib/arrears-reading";
 import { budgetCoverageFact } from "@/lib/budget-coverage";
 import { formatDayShort } from "@/lib/format-date";
 import { formatCents, parseAmountToCents } from "@/lib/money";
+import { ROLLOVER_WAITS, rolloverHeldBackSentence } from "@/lib/rollover-held-back";
 import type { BudgetPaceStatus } from "@/services/budgets";
 import { PERIOD_WORD } from "./BudgetAmountEditor";
 
@@ -47,6 +48,8 @@ export function BudgetDetails({ status, rolloverEnabled }: BudgetDetailsProps) {
   const { budget } = status;
   const [pending, startTransition] = useTransition();
   const [period, setPeriod] = useState<BudgetPeriodKind>(budget.period);
+  // named in the budget's own period, the one its carry walked — not a period picked here and not yet saved
+  const heldBack = rolloverHeldBackSentence(status.rolloverHeldBack, budget.period, status.bounds.start);
 
   function changePeriod(next: BudgetPeriodKind): void {
     const previous = period;
@@ -147,10 +150,13 @@ export function BudgetDetails({ status, rolloverEnabled }: BudgetDetailsProps) {
               }}
             />
           </div>
+          {/* ⚖️ decision 67: what the carry is waiting on is named beside the figure it explains, and
+              the rule that holds it back is the one that makes the last sentence true */}
           <p className="text-ink-faint">
-            Banked <Money cents={status.rolloverCents} /> from closed periods. A period that came in
-            under plan adds its leftover; one that went over adds nothing, and overspend is never
-            carried as a debt. {ROLLOVER_SUBTRACTS}
+            Banked <Money cents={status.rolloverCents} /> from closed periods.
+            {heldBack && ` ${heldBack}`} A period that came in under plan adds its leftover; one that
+            went over adds nothing, and overspend is never carried as a debt. {ROLLOVER_SUBTRACTS}{" "}
+            {ROLLOVER_WAITS}
           </p>
         </div>
       ) : (

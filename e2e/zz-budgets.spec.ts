@@ -17,7 +17,10 @@ import { expect, test, type Locator, type Page } from "@playwright/test";
  * covered it yet" (§6A 65) — not as "not posted" (§6A 60, 2026-10-08).
  *
  * Utilities is the one budget with rollover ON, banking $133.00 from two closed
- * months against $250.00/month.
+ * months against $250.00/month. ⚖️ Both are read whole — its accounts are
+ * imported through Jul 5 — so neither is held back (decision 67, 2026-10-13: a
+ * closed period with a day not yet read banks nothing until its statements land).
+ * Measured on a fresh seed 2026-10-13: May and June "measured", $133.00 carried.
  */
 
 /** The budget row `<li>` carrying a given top-level category link. */
@@ -492,6 +495,10 @@ test("a budget row opens its settings in place, and says what rollover does", as
   const utilities = budgetRow(page, "Utilities");
   await utilities.getByRole("button", { name: "Details for the Utilities budget" }).click();
   await expect(utilities.getByText(/Banked/)).toBeVisible();
+  // ⚖️ decision 67: May and June are read whole, so nothing is held back — and the panel says why a period no
+  // statement has covered could not have banked
+  await expect(utilities.getByText(/a missing statement cannot bank itself as savings/)).toBeVisible();
+  await expect(utilities.getByText(/so nothing rolls over from/)).toHaveCount(0);
   await expect(
     utilities.getByRole("button", { name: /Utilities rollover cap: empty/ }),
   ).toBeVisible();

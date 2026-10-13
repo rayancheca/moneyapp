@@ -83,10 +83,11 @@ export const NO_STATEMENT_YET = noStatementHasCovered("it");
  * 🔴 It said "Bills that came due and never posted are subtracted" — the one definition left saying "never posted",
  * where his words are "not posted" (decisions 60 and 65), and a negative claim no surface may make of an unread day.
  *
- * 🔴 …and it ended "so a missing statement cannot bank itself as savings" (review of 8f9f408): `carryInto` banks a
- * closed period's plan less what was FOUND in it, so a period no statement has covered banks all of it. On his ledger
+ * 🔴 …and it ended "so a missing statement cannot bank itself as savings" (review of 8f9f408): `carryInto` banked a
+ * closed period's plan less what was FOUND in it, so a period no statement had covered banked all of it. On his ledger
  * copy 2026-10-12 Cash & ATM banked $130.00 and Fees $15.00 from a September with no row and no day read, Travel
- * $70.00 from one read through Sep 2. ❓ Whether such a period holds back its carry is his call (`carryInto`).
+ * $70.00 from one read through Sep 2. ⚖️ Decision 67 (2026-10-13): such a period banks nothing until its statements
+ * land — and the clause is said by that rule, its own cause (`lib/rollover-held-back::ROLLOVER_WAITS`), not here.
  */
 export const ROLLOVER_SUBTRACTS =
   `Bills that came due are subtracted whether they are not posted or ${noStatementHasCovered("them")}.`;

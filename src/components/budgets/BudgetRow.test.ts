@@ -540,25 +540,28 @@ describe("BudgetDetails — what rollover subtracts, in his words", () => {
 
   /*
    * 🔴 Review of 8f9f408: the sentence ended "…, so a missing statement cannot bank itself as savings" — and `carryInto`
-   * banks the whole plan of a closed period nobody has read, its $0.00 taken as "spent nothing". On his ledger copy
-   * 2026-10-12 (every rolling budget carries from Sep 1): Cash & ATM banked $130.00 and Fees $15.00 from a September
-   * with no row and no day read, Travel $70.00 from one read through Sep 2. ❓ Whether such a period holds back its
-   * carry is his call; until then the panel claims nothing the carry does not do.
+   * banked the whole plan of a closed period nobody had read, its $0.00 taken as "spent nothing". On his ledger copy
+   * 2026-10-12 (every rolling budget carries from Sep 1) September banked $761.52 no statement confirmed: Cash & ATM
+   * $130.00 and Fees $15.00 with no row and no day read, Travel $70.00 from one read through Sep 2.
+   * ⚖️ Decision 67 (2026-10-13): such a period banks nothing until its statements land — so the panel says so, names
+   * the period it is waiting on, and the carry arrives on its own once the statement is in.
    */
-  test("a closed period no statement has covered banks its plan — so the panel does not claim it cannot", () => {
+  test("a closed period no statement has covered banks nothing — the panel names it, and the carry arrives with it", () => {
     const chase = bundle.db.select().from(institutions).where(eq(institutions.name, "Chase")).get()!;
     const card = createAccount(bundle.db, { institutionId: chase.id, name: "Card", type: "credit" });
-    // the Card's import stops at Jun 30, and so does what the ledger has read of Food
-    const row = { accountId: card, postedOn: "2026-06-30", amountCents: -1_000, rawDescription: "SPEND 2026-06-30" };
-    bundle.db
-      .insert(transactions)
-      .values({
-        ...row,
-        normalizedDescription: row.rawDescription,
-        categoryId: catId("Food"),
-        dedupeHash: dedupeHash({ ...row, occurrenceIndex: 0 }),
-      })
-      .run();
+    const foodRow = (postedOn: string, amountCents: number): void => {
+      const row = { accountId: card, postedOn, amountCents, rawDescription: `SPEND ${postedOn}` };
+      bundle.db
+        .insert(transactions)
+        .values({
+          ...row,
+          normalizedDescription: row.rawDescription,
+          categoryId: catId("Food"),
+          dedupeHash: dedupeHash({ ...row, occurrenceIndex: 0 }),
+        })
+        .run();
+    };
+    foodRow("2026-06-30", -1_000); // the Card's import stops at Jun 30, and so does what the ledger has read of Food
     const id = createBudget(bundle.db, {
       categoryId: catId("Food"),
       period: "monthly",
@@ -566,15 +569,25 @@ describe("BudgetDetails — what rollover subtracts, in his words", () => {
       startsOn: "2026-06-01",
     });
     setBudgetRollover(bundle.db, id, { enabled: true, startsOn: "2026-07-01" });
-    // the conditions under which the sentence is false: July, closed, not one day of it read, banked whole
+    const panelText = (): string =>
+      renderToStaticMarkup(createElement(BudgetDetails, { status: statusFor("Food"), rolloverEnabled: true }))
+        .replace(/<[^>]+>/g, "")
+        .replace(/\s+/g, " ");
+    // the conditions under which the sentence was false: July, closed, not one day of it read
     const july = budgetPaceStatuses(bundle.db, "2026-07-31").find((x) => x.categoryName === "Food")!;
     expect(july.noDayRead).toBe(true);
-    const s = statusFor("Food");
-    expect(s.rolloverCents).toBe(3_000);
-    const text = renderToStaticMarkup(createElement(BudgetDetails, { status: s, rolloverEnabled: true }))
-      .replace(/<[^>]+>/g, "")
-      .replace(/\s+/g, " ");
-    expect(text).toContain("Banked $30.00 from closed periods.");
-    expect(text).not.toMatch(/cannot bank|a missing statement/);
+
+    // …so it banks nothing, and the panel names the period it is waiting on
+    expect(statusFor("Food").rolloverCents).toBe(0);
+    expect(panelText()).toContain(
+      "Banked $0.00 from closed periods. July 2026 is not fully imported, so nothing rolls over from it yet.",
+    );
+    expect(panelText()).toContain("so a missing statement cannot bank itself as savings.");
+
+    foodRow("2026-08-01", -500); // July's statement lands: the Card is read past Jul 31
+    expect(statusFor("Food").rolloverCents).toBe(3_000);
+    expect(panelText()).toContain("Banked $30.00 from closed periods. A period that came in under plan");
+    expect(panelText()).not.toContain("so nothing rolls over");
+    expect(panelText()).toContain("so a missing statement cannot bank itself as savings.");
   });
 });

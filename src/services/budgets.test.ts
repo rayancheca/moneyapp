@@ -2384,6 +2384,15 @@ describe("data coverage (uncoveredDays / importedThroughOn)", () => {
  * is only implied by a happy-path assertion is a rule the next pass will delete.
  */
 describe("rollover", () => {
+  /*
+   * ⚖️ A closed period banks only once every day of it is read (decision 67, below), so these rules are tested over a
+   * card imported from Jan 2 through Jul 1: every closed period they walk is read whole, Food spent from it or not.
+   */
+  beforeEach(() => {
+    spend("2026-01-02", -1, "Shopping");
+    spend("2026-07-01", -1, "Shopping");
+  });
+
   /** A Food budget of `amountCents`/month from `startsOn`, rollover already on. */
   function rollingFoodBudget(startsOn: string, amountCents = 500_00): string {
     const id = createBudget(bundle.db, {
@@ -2542,7 +2551,106 @@ describe("rollover", () => {
       rolloverStartsOn: null,
       rolloverCapCents: null,
     };
-    expect(carryInto(bundle.db, budget, "2026-06-15")).toBe(160_00);
+    expect(carryInto(bundle.db, budget, "2026-06-15", "2026-06-15")).toEqual({ cents: 160_00, heldBack: [] });
+  });
+});
+
+/*
+ * ⚖️ OWNER DECISION 2026-10-13 (decision 67): a CLOSED period with ANY day not yet read — by the day its category page
+ * asks that window against (`categoryReachFor`) — banks NOTHING into the carry until its statements land. The carry is
+ * derived on every load, so it arrives on its own. 🔴 Measured on his ledger copy 2026-10-12: September banked $761.52
+ * that no statement confirmed — Cash & ATM $130.00 and Fees $15.00 with no day of it read, Food $399.28, Shopping
+ * $19.55, Transport $127.69 and Travel $70.00 read in part ("Available $355.64 ($227.95 plan + $127.69 rolled over)").
+ */
+describe("⚖️ decision 67 — a closed period with a day not yet read banks nothing", () => {
+  function rollingBudget(categoryPath: string, startsOn: string, period: "monthly" | "weekly" = "monthly"): string {
+    const id = createBudget(bundle.db, { categoryId: catId(categoryPath), period, amountCents: 500_00, startsOn });
+    setBudgetRollover(bundle.db, id, { enabled: true });
+    return id;
+  }
+
+  function carried(categoryPath: string, refDate = "2026-07-15") {
+    const s = budgetStatuses(bundle.db, refDate).find((r) => r.categoryPath === categoryPath);
+    if (!s) throw new Error(`no ${categoryPath} budget status`);
+    return { cents: s.rolloverCents, availableCents: s.availableCents, heldBack: s.rolloverHeldBack };
+  }
+
+  const JUNE = { start: "2026-06-01", end: "2026-06-30" };
+  const MAY = { start: "2026-05-01", end: "2026-05-31" };
+  /** the ledger's first row, long before any budget below opens — so only the import's far end is in question */
+  const ledgerOpensJan2 = () => spend("2026-01-02", -1, "Shopping");
+
+  test("read in part, a period banks nothing until its statement lands — and then the carry arrives on its own", () => {
+    ledgerOpensJan2();
+    rollingBudget("Food", "2026-05-01");
+    spend("2026-05-10", -100_00, "Food");
+    spend("2026-06-20", -50_00, "Food"); // the card's import stops Jun 20
+
+    // May is read whole and banks its $400; June, read through the 20th, banks nothing — not its $450
+    expect(carried("Food")).toEqual({ cents: 400_00, availableCents: 900_00, heldBack: [JUNE] });
+
+    spend("2026-06-30", -1, "Shopping"); // June's statement lands: the card is read through Jun 30
+    expect(carried("Food")).toEqual({ cents: 850_00, availableCents: 1_350_00, heldBack: [] });
+  });
+
+  test("not one day of it read — Cash & ATM's and Fees' September — it banks nothing; Available is the plan", () => {
+    ledgerOpensJan2();
+    rollingBudget("Food", "2026-05-01");
+    spend("2026-04-30", -20_00, "Food"); // the card's import stops before May opens
+
+    expect(carried("Food")).toEqual({ cents: 0, availableCents: 500_00, heldBack: [MAY, JUNE] });
+  });
+
+  test("a day before the records begin is a day nobody has read either", () => {
+    rollingBudget("Food", "2026-04-01");
+    spend("2026-05-10", -100_00, "Food"); // the ledger's first row: April and May 1–9 were never imported
+    spend("2026-07-01", -1, "Shopping"); // the card is read through Jul 1
+
+    // only June banks; banking April's whole plan is the fabrication `startsOn` already refuses
+    const april = { start: "2026-04-01", end: "2026-04-30" };
+    expect(carried("Food")).toEqual({ cents: 500_00, availableCents: 1_000_00, heldBack: [april, MAY] });
+  });
+
+  test("⚖️ spent only from a cash wallet, a period banks by its own rule — no statement is coming to wait for", () => {
+    const wallet = createCashWallet(bundle.db, { name: "Cash on Hand", openingOn: "2026-04-01", openingBalanceCents: 100_000 });
+    for (const [postedOn, amountCents] of [["2026-04-15", -10_00], ["2026-05-10", -100_00]] as const) {
+      const description = "CASH";
+      addManualTransaction(bundle.db, { accountId: wallet, postedOn, amountCents, description, categoryId: catId("Food") });
+    }
+    rollingBudget("Food", "2026-05-01");
+
+    expect(carried("Food")).toEqual({ cents: 900_00, availableCents: 1_400_00, heldBack: [] });
+  });
+
+  test("a category with no account of its own waits on its page's day — its parent's, never the ledger's", () => {
+    const chase = bundle.db.select().from(institutions).where(eq(institutions.name, "Chase")).get()!;
+    const other = createAccount(bundle.db, { institutionId: chase.id, name: "Other", type: "checking" });
+    ledgerOpensJan2();
+    rollingBudget("Food > Coffee", "2026-05-01");
+    spend("2026-05-10", -100_00, "Food");
+    spend("2026-06-20", -50_00, "Food"); // Food's card stops Jun 20…
+    spend("2026-07-15", -1, "Shopping", other); // …while the ledger reaches Jul 15 on another account
+
+    expect(carried("Food > Coffee")).toEqual({ cents: 500_00, availableCents: 1_000_00, heldBack: [JUNE] });
+  });
+
+  test("carryInto names the weeks it held back", () => {
+    ledgerOpensJan2();
+    rollingBudget("Food", "2026-06-01", "weekly"); // a Monday
+    spend("2026-06-03", -40_00, "Food");
+    spend("2026-06-10", -1, "Shopping"); // the card is read through Jun 10, inside the second week
+    const budget = {
+      categoryId: catId("Food"),
+      period: "weekly" as const,
+      amountCents: 500_00,
+      startsOn: "2026-06-01",
+      rolloverStartsOn: null,
+      rolloverCapCents: null,
+    };
+    expect(carryInto(bundle.db, budget, "2026-06-15", "2026-06-15")).toEqual({
+      cents: 460_00,
+      heldBack: [{ start: "2026-06-08", end: "2026-06-14" }],
+    });
   });
 });
 

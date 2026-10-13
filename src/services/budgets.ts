@@ -83,8 +83,8 @@ import { accountsAwaitingStatements, cashWalletIds } from "./cash-wallet-rule";
  * descendant of another budgeted category so totals never double-count.
  *
  * Rollover is opt-in per budget and off by default. Off, leftover/overrun is
- * informational only. On, unspent plan from CLOSED periods accumulates (see
- * `carryInto`) and every "how am I doing" figure — pct, alert, pace, remaining —
+ * informational only. On, unspent plan from CLOSED periods read whole accumulates
+ * (see `carryInto`) and every "how am I doing" figure — pct, alert, pace, remaining —
  * grades against `availableCents` instead. Totals and the expected-income
  * comparison deliberately stay on the plan amount.
  */
@@ -231,8 +231,10 @@ export interface BudgetStatus {
   spentCents: number;
   /** the rows `spentCents` was summed from — 0 is a window in which not one row was found (⚖️ §6A 64) */
   txnCount: number;
-  /** unspent plan banked from CLOSED periods; 0 whenever rollover is off */
+  /** unspent plan banked from CLOSED periods read whole (⚖️ decision 67); 0 whenever rollover is off */
   rolloverCents: number;
+  /** ⚖️ decision 67: the closed periods that banked nothing because a day of them is not read yet; empty when off */
+  rolloverHeldBack: PeriodBounds[];
   /** amountCents + rolloverCents — the line this period is actually graded against */
   availableCents: number;
   remainingCents: number;
@@ -262,12 +264,34 @@ interface CarryableBudget {
   rolloverCapCents: number | null;
 }
 
+/** What a rolling budget banked, and what it held back (⚖️ decision 67). */
+export interface RolloverCarry {
+  /** unspent plan banked from the CLOSED periods every day of which has been read */
+  cents: number;
+  /** the closed periods that banked nothing because a day of them is not read yet, oldest first */
+  heldBack: PeriodBounds[];
+}
+
+/**
+ * The reads `carryInto` asks a closed period's days against: its category page's (`categoryReachFor`), and the day the
+ * ledger opens.
+ */
+export interface CarryReads extends CategoryReachContext {
+  /** `ledgerOpens(db)` — a day before it is a day nobody has read */
+  opens: string | null;
+}
+
+export function carryReads(db: AppDatabase): CarryReads {
+  return { ...categoryReachContext(db), opens: ledgerOpens(db) };
+}
+
 /**
  * Unspent plan banked from every CLOSED period, for a budget with rollover on.
  *
- *     balance = clampToCap(max(0, balance + amount − spent(p) − overdue(p)))
+ *     balance = clampToCap(max(0, balance + amount − spent(p) − overdue(p)))   — p read whole
+ *     balance = balance                                                        — p not read whole yet
  *
- * Four rules, each of which exists because the alternative asserts something the
+ * Five rules, each of which exists because the alternative asserts something the
  * ledger does not support:
  *
  * - **Floor at zero.** Carrying deficits forward would leave every category whose
@@ -294,35 +318,62 @@ interface CarryableBudget {
  *   either back-dates (the carry silently changes) or posts in September (banked
  *   once, charged again).
  *
- * ❓ A closed period is graded on the spend FOUND in it, so one no statement has
- * covered banks its plan as though nothing was spent — on his ledger copy
- * 2026-10-12 Cash & ATM's $130.00 and Fees' $15.00 from a September with no row
- * and no day read, Travel's $70.00 from one read through Sep 2. Whether such a
- * period holds back its carry until it is read (§6A 64's dash, for a closed
- * period) is his call (review of 8f9f408); `ROLLOVER_SUBTRACTS` claims nothing
- * either way.
+ * - ⚖️ **Bank nothing from a period not read whole** — owner decision 2026-10-13
+ *   (decision 67). A closed period is graded on the spend FOUND in it, so one no
+ *   statement has covered banked its plan as though nothing was spent. 🔴 On his
+ *   ledger copy 2026-10-12 September banked $761.52 no statement confirmed: Cash &
+ *   ATM $130.00 and Fees $15.00 with no day of it read, Food $399.28, Shopping
+ *   $19.55, Transport $127.69 and Travel $70.00 read in part — Transport read
+ *   "Available $355.64 ($227.95 plan + $127.69 rolled over)" over a September its
+ *   accounts were imported through Aug 12. Such a period passes the balance on
+ *   untouched — as though it spent its plan exactly — and is named in `heldBack`.
+ *   Read is asked as its category PAGE asks that window (`categoryReachFor`, the
+ *   day the row counts `uncoveredDays` against — its own, its ancestor's, else the
+ *   ledger's), and every day of it must be read (`emptyPeriodReason` "measured"):
+ *   a day past that day, or before the ledger opens, is a day nobody has looked
+ *   at. ⚖️ A category spent only from cash wallets by its own rule (2026-09-15):
+ *   its page reads it through today, so it banks — no statement is coming to wait
+ *   for. Nothing is stored, so the carry arrives on the load after the statement.
  *
  * Derived at read time and never stored: the 2026-08-03 import back-filled
  * $623.58 of spend into an already-closed July, so a stored balance would have
  * been stale within 72 hours.
  *
- * Cost: one `categorySpending` + one `budgetOverdue` per closed period, which
- * grows with calendar time. Deliberately exact rather than truncated to a recent
- * window — a silently-bounded lookback would report a carry that is not the sum
- * of the periods it claims to cover. `rolloverStartsOn` is the supported way to
- * bound it.
+ * Cost: one `categorySpending` + one `budgetOverdue` per closed period read, and
+ * one `categoryReachFor` per distinct accounts window (`spentFromSinceFor` — every
+ * period inside the last six months shares one), which grows with calendar time.
+ * Deliberately exact rather than truncated to a recent window — a silently-bounded
+ * lookback would report a carry that is not the sum of the periods it claims to
+ * cover. `rolloverStartsOn` is the supported way to bound it.
  */
 export function carryInto(
   db: AppDatabase,
   budget: CarryableBudget,
   currentPeriodStart: string,
-): number {
+  today: string,
+  reads: CarryReads = carryReads(db),
+): RolloverCarry {
   const from = budget.rolloverStartsOn ?? budget.startsOn;
   const first = periodBounds(from, budget.period);
   // a period the budget only partly owned is skipped whole, never prorated
   let cursor = compareDates(first.start, from) < 0 ? addDays(first.end, 1) : first.start;
+  // the day a window is read through depends on its start only through the accounts window it opens
+  const reachedThrough = new Map<string, string | null>();
+  const readWhole = (p: PeriodBounds): boolean => {
+    const since = spentFromSinceFor(p.start, today);
+    let through = reachedThrough.get(since);
+    if (through === undefined) {
+      // asked from `since`, which opens the same accounts window `p.start` does (`spentFromSinceFor`)
+      through = categoryReachFor(db, budget.categoryId, since, today, reads).through;
+      reachedThrough.set(since, through);
+    }
+    // every day of it read: none past that day, none before the ledger opens
+    const window = { from: p.start, to: p.end, today, ledgerOpens: reads.opens, ledgerReaches: through };
+    return emptyPeriodReason(window).kind === "measured";
+  };
 
   let balance = 0;
+  const heldBack: PeriodBounds[] = [];
   while (compareDates(cursor, currentPeriodStart) < 0) {
     const p = periodBounds(cursor, budget.period);
     /*
@@ -340,6 +391,12 @@ export function carryInto(
      * unreachable rather than wrong.
      */
     if (compareDates(p.end, currentPeriodStart) >= 0) break;
+    cursor = addDays(p.end, 1);
+    // ⚖️ decision 67: a day of it not read yet, so it banks nothing until its statements land
+    if (!readWhole(p)) {
+      heldBack.push(p);
+      continue;
+    }
     const spent = categorySpending(db, {
       categoryId: budget.categoryId,
       from: p.start,
@@ -348,16 +405,21 @@ export function carryInto(
     const overdue = budgetOverdue(db, budget.categoryId, p.start, p.end).totalCents;
     balance = Math.max(0, balance + budget.amountCents - spent - overdue);
     if (budget.rolloverCapCents !== null) balance = Math.min(balance, budget.rolloverCapCents);
-    cursor = addDays(p.end, 1);
   }
-  return balance;
+  return { cents: balance, heldBack };
 }
 
-/** Actual-vs-budget for every active budget, evaluated in refDate's period. */
-export function budgetStatuses(db: AppDatabase, refDate: string = todayIso()): BudgetStatus[] {
+const NOTHING_CARRIED: RolloverCarry = { cents: 0, heldBack: [] };
+
+/**
+ * Actual-vs-budget for every active budget, evaluated in refDate's period. `reads` are the carry's (`carryReads`),
+ * asked once and only when a budget rolls over — `budgetPaceStatuses` hands in the ones it already holds.
+ */
+export function budgetStatuses(db: AppDatabase, refDate: string = todayIso(), reads?: CarryReads): BudgetStatus[] {
   const idx = loadCategoryIndex(db);
   const rows = db.select().from(budgets).where(eq(budgets.isActive, true)).all();
   const budgetedCategoryIds = new Set(rows.map((r) => r.categoryId));
+  let carryReadsOnce = reads;
 
   return rows
     .map((b): BudgetStatus => {
@@ -377,7 +439,10 @@ export function budgetStatuses(db: AppDatabase, refDate: string = todayIso()): B
       // Banked plan from closed periods. Off by default, and `carryInto` is not
       // even called then, so a non-rollover budget grades exactly as it did
       // before the column existed.
-      const rolloverCents = b.rolloverEnabled ? carryInto(db, b, period.start) : 0;
+      const carry = b.rolloverEnabled
+        ? carryInto(db, b, period.start, refDate, (carryReadsOnce ??= carryReads(db)))
+        : NOTHING_CARRIED;
+      const rolloverCents = carry.cents;
       const availableCents = b.amountCents + rolloverCents;
       const node = idx.byId.get(b.categoryId);
       if (!node) throw new Error(`Budget ${b.id} points at unknown category ${b.categoryId}`);
@@ -413,6 +478,7 @@ export function budgetStatuses(db: AppDatabase, refDate: string = todayIso()): B
         spentCents,
         txnCount,
         rolloverCents,
+        rolloverHeldBack: carry.heldBack,
         availableCents,
         // Every "how am I doing" figure grades against AVAILABLE, not plan: with
         // rollover on, the owner has said the carry is part of the line. Splitting
@@ -1324,6 +1390,17 @@ export interface CategoryCoverage {
 }
 
 /**
+ * Where the window of accounts a category was spent from opens (`categoryCoverage`): the inline editor's guide window,
+ * `GUIDANCE_MONTHS` full months before `refDate`'s month, or `periodStart` when that is earlier. Every window starting
+ * inside the guide window asks the same accounts, and so reads through the same day — what `carryInto` asks once.
+ */
+function spentFromSinceFor(periodStart: string, refDate: string): string {
+  // always GUIDANCE_MONTHS windows, oldest first
+  const windowStart = trailingFullMonths(refDate, GUIDANCE_MONTHS)[0]!.start;
+  return compareDates(periodStart, windowStart) < 0 ? periodStart : windowStart;
+}
+
+/**
  * Through which day this budget's spending has been imported: the EARLIEST
  * import frontier (`observationFrontier`) among the accounts its subtree was
  * spent from — `frontierForSeries`, the recurring calendar's question asked of
@@ -1434,9 +1511,7 @@ export function categoryCoverage(
   // `accountsAwaitingStatements`: only these date the row while one of them was spent from
   awaiting: ReadonlySet<string>,
 ): CategoryCoverage {
-  // always GUIDANCE_MONTHS windows, oldest first
-  const windowStart = trailingFullMonths(refDate, GUIDANCE_MONTHS)[0]!.start;
-  const spentFromSince = compareDates(periodStart, windowStart) < 0 ? periodStart : windowStart;
+  const spentFromSince = spentFromSinceFor(periodStart, refDate);
   const spentFrom = new Set(
     spendingTransactions(db, { categoryId, from: spentFromSince, to: refDate }).map((t) => t.accountId),
   );
@@ -1559,24 +1634,25 @@ export interface BudgetPaceStatus extends BudgetStatus, CategoryCoverage {
   borrowedDay: BorrowedDay | null;
 }
 
-/** The reads every pace row shares — asked once per render, however many rows it builds. */
-interface BudgetPaceReads extends CategoryReachContext {
+/**
+ * The reads every pace row shares — asked once per render, however many rows it builds. The carry's (`CarryReads`) are
+ * among them: the ledger's opening end, and the import's per-account frontier, wallets and awaited accounts its page
+ * asks a day with.
+ */
+interface BudgetPaceReads extends CarryReads {
   /** the series whose charges are not recurring money */
   notDrawn: ReadonlySet<string>;
   /** the car's up-front money, spent once and never a rate (§6A 51, `budgetOneOffCents`) */
   upfront: UpfrontCarRule | null;
-  /** the ledger's opening end — the import's per-account frontier, wallets and awaited accounts are the page's reads */
-  opens: string | null;
 }
 
 function budgetPaceReads(db: AppDatabase): BudgetPaceReads {
   const notDrawn = seriesIdsNotDrawnAsRecurring(db);
   return {
     // ⛔ the reads `/categories/[id]` asks its day with, so the row can ask the same one (`borrowedReach`)
-    ...categoryReachContext(db),
+    ...carryReads(db),
     notDrawn,
     upfront: upfrontCarRule(loadCategoryIndex(db), outsidePortfolioCashAccountIds(db), notDrawn),
-    opens: ledgerOpens(db),
   };
 }
 
@@ -1622,7 +1698,7 @@ function borrowedReach(
  */
 export function budgetPaceStatuses(db: AppDatabase, refDate: string = todayIso()): BudgetPaceStatus[] {
   const reads = budgetPaceReads(db);
-  return budgetStatuses(db, refDate).map((s) => budgetPaceStatusOf(db, s, refDate, reads));
+  return budgetStatuses(db, refDate, reads).map((s) => budgetPaceStatusOf(db, s, refDate, reads));
 }
 
 /**
