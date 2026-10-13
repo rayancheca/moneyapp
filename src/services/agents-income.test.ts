@@ -15,7 +15,7 @@ import { parseFilters } from "@/components/transactions/query";
 import { dedupeHash } from "@/lib/hash";
 import { cashFlowSegmentHref } from "@/lib/ledger-href";
 import { resolvePeriod } from "@/lib/period";
-import { createAccount, outsidePortfolioCashAccountIds } from "./accounts";
+import { accountLiquidity, createAccount, outsidePortfolioCashAccountIds } from "./accounts";
 import {
   categorySpending,
   incomeByMonth,
@@ -36,7 +36,7 @@ import { forecastCurrentMonth, forecastForMonth } from "./forecast";
 import { incomeCard } from "./income-card";
 import { ledgerOpens, ledgerReaches } from "./observation-frontier";
 import { periodActivity } from "./period-activity";
-import { printOnOneStatement } from "./printed-statement-fixture";
+import { printOnOneStatement, unprint } from "./printed-statement-fixture";
 import { provenanceFor } from "./provenance";
 import { upcomingOccurrences } from "./recurring";
 import { calendarMonthFlow, recurringCalendar } from "./recurring-calendar";
@@ -420,6 +420,34 @@ describe("the agent's income SERIES is not his pay either", () => {
     expect(afterNov.committed.eomNetWorthCents - beforeNov.committed.eomNetWorthCents).toBe(8);
     expect(afterNov.projectedEomNetWorthCents - beforeNov.projectedEomNetWorthCents).toBe(8);
     expect(afterNov.committed.incomeCents).toBe(beforeNov.committed.incomeCents);
+  });
+
+  /**
+   * ⛔ …nor EOM cash wherever the agent's cash sits: the forward leg asks a series' band BEFORE its account.
+   * 🔴 Printed beside its book (8537f05, as on his ledger), Agentic is investable and its interest stays out of EOM
+   * cash by the account rule alone — with the band asked after the cash walk, every test stayed green. Until a
+   * statement prints it there, the agent's cash is spendable, and what the agent is paid is still not cash he can
+   * spend (owner decision 2026-09-28).
+   */
+  test("⛔ …nor EOM cash on an agent's cash no statement has printed beside its book yet", () => {
+    hisPay();
+    unprint(bundle.db, agentic);
+    expect(accountLiquidity(bundle.db).get(agentic)).toBe("spendable");
+    expect(outsidePortfolioCashAccountIds(bundle.db).has(agentic)).toBe(true);
+    const read = () =>
+      [forecastCurrentMonth(bundle.db, TODAY), forecastForMonth(bundle.db, "2026-11", TODAY)!].map((f) => ({
+        committed: f.committed.eomCashCents,
+        pace: f.projectedEomCashCents,
+        agents: f.agentsIncome.netCents,
+      }));
+    const before = read();
+    agentsInterest();
+    const after = read();
+
+    // still the agent's: Oct 31, and Nov 30 on top of it
+    expect(after.map((m) => m.agents)).toEqual([before[0]!.agents + 4, before[1]!.agents + 8]);
+    // …and not one cent of it reaches his month-end cash
+    expect(after.map((m) => [m.committed, m.pace])).toEqual(before.map((m) => [m.committed, m.pace]));
   });
 
   test("the rule's own edge: unpaired, the account is his, and so is the series", () => {

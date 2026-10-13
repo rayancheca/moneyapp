@@ -1,3 +1,4 @@
+import { eq } from "drizzle-orm";
 import type { AppDatabase } from "@/db/client";
 import { importFiles, statementPeriods } from "@/db/schema/imports";
 
@@ -44,4 +45,13 @@ export function printOnOneStatement(db: AppDatabase, institutionId: string, acco
       })
       .run();
   });
+}
+
+/**
+ * TEST FIXTURE. Takes `accountId` off every statement printed for it: the ledger before a statement has printed the
+ * agent's cash beside its book. Still the agent's — the pairing says whose it is — and SPENDABLE (`accountLiquidity`),
+ * so the rule that keeps the agent's money out of his month-end cash is the only thing that does.
+ */
+export function unprint(db: AppDatabase, accountId: string): void {
+  db.delete(statementPeriods).where(eq(statementPeriods.accountId, accountId)).run();
 }
