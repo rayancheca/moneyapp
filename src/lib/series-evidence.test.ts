@@ -12,6 +12,8 @@ import {
   seriesIsProjected,
   seriesDrawsAsRecurring,
   RECURRING_HISTORY_STATUSES,
+  lapsedSectionNote,
+  seriesPostingWords,
 } from "./series-evidence";
 
 const EVERY: readonly SeriesEvidence[] = ["active", "never-billed", "awaiting-statements", "running-late", "lapsed"];
@@ -55,6 +57,28 @@ describe("the evidence vocabulary", () => {
     expect(SERIES_EVIDENCE_NOTE["running-late"]).toContain("still forecast");
     expect(SERIES_EVIDENCE_NOTE["never-billed"]).toContain("forecast");
     expect(SERIES_EVIDENCE_NOTE.lapsed).toContain("no longer forecast");
+  });
+
+  /*
+   * 🔴 The Lapsed section's note said "quiet past the point a bill stops" over whatever it held — and a live transfer
+   * or `other` series lapses too (`lapsedSeriesShouldStopForecasting` spares only pay). ⛔ The words the page's own
+   * "Nothing expected" reason says of each kind (`seriesPostingWords`); a bill's are as he has always read them.
+   */
+  test("the Lapsed section's note says what stops in the words of the series it holds", () => {
+    expect(lapsedSectionNote(["bill", "subscription"])).toBe(SERIES_EVIDENCE_NOTE.lapsed);
+    expect(lapsedSectionNote(["bill"])).toBe("no longer forecast — quiet past the point a bill stops");
+    expect(lapsedSectionNote(["transfer"])).toBe("no longer forecast — quiet past the point a transfer stops");
+    expect(lapsedSectionNote(["other", "other"])).toBe(
+      "no longer forecast — quiet past the point a recurring payment stops",
+    );
+    // a mix names no one kind's words for all of them
+    expect(lapsedSectionNote(["bill", "transfer"])).toBe(
+      "no longer forecast — quiet past the point a recurring series stops",
+    );
+    for (const kind of ["transfer", "other"] as const) {
+      expect(lapsedSectionNote(["bill", kind])).not.toContain("a bill");
+      expect(lapsedSectionNote([kind]).replace(seriesPostingWords(kind).stops, "")).not.toContain("a bill");
+    }
   });
 
   /*

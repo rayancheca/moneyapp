@@ -114,7 +114,7 @@ export function seriesRowLabel(
   return evidence === "active" ? null : SERIES_EVIDENCE_LABEL[evidence].toLowerCase();
 }
 
-/** One line on each state, for a section note. */
+/** One line on each state, for a section note — a bill's words; the Lapsed section words its own (`lapsedSectionNote`). */
 export const SERIES_EVIDENCE_NOTE: Record<SeriesEvidence, string> = {
   active: "charged within their cadence, and forecast",
   "never-billed": "registered by hand and forecast — the bank has not charged them yet",
@@ -230,14 +230,40 @@ export function seriesDrawsAsRecurring(status: SeriesStatusForCopy): boolean {
  * (SPY) and (COKE) (dismissed). ⚖️ A bill's and a subscription's words are as he has always read them.
  *
  * ⚠️ Pay never lapses (`lapsedSeriesShouldStopForecasting`), so its `stops` is said only if that rule changes.
+ *
+ * ⛔ ONE table for every sentence on the page that names what a series posts — the card, the End dialog's lines and
+ * reassurance (`end-radius`), the Lapsed section's note (`lapsedSectionNote`). 🔴 The card learned it and the End
+ * dialog on the same page did not: on his ledger copy 2026-10-12 STOCK LENDING (COKE)'s card read "Its deposits below
+ * stay in the ledger." over a dialog saying "the charges stay in your ledger".
  */
-const SCHEDULE_REASON_WORDS: Record<SeriesKind, { stops: string; posting: string; postings: string }> = {
+interface SeriesPostingWords {
+  readonly stops: string;
+  readonly posting: string;
+  readonly postings: string;
+}
+
+const SCHEDULE_REASON_WORDS: Record<SeriesKind, SeriesPostingWords> = {
   bill: { stops: "a bill", posting: "charge", postings: "charges" },
   subscription: { stops: "a bill", posting: "charge", postings: "charges" },
   income: { stops: "pay", posting: "deposit", postings: "deposits" },
   transfer: { stops: "a transfer", posting: "transfer", postings: "transfers" },
   other: { stops: "a recurring payment", posting: "payment", postings: "payments" },
 };
+
+export function seriesPostingWords(kind: SeriesKind): SeriesPostingWords {
+  return SCHEDULE_REASON_WORDS[kind];
+}
+
+/**
+ * The Lapsed section's note on `/recurring`'s All tab, in the words of the series it holds: one kind's `stops` when
+ * they share it, else a series'. 🔴 It said "quiet past the point a bill stops" whatever it held, and a live transfer or
+ * `other` series lapses too — only pay never does. A bill's and a subscription's words are `SERIES_EVIDENCE_NOTE`'s.
+ */
+export function lapsedSectionNote(kinds: readonly SeriesKind[]): string {
+  const stops = new Set(kinds.map((k) => SCHEDULE_REASON_WORDS[k].stops));
+  const [only] = stops;
+  return `no longer forecast — quiet past the point ${stops.size === 1 && only ? only : "a recurring series"} stops`;
+}
 
 /**
  * ⛔ …and for a LIVE series the forecast has let go — the evidence's `lapsed`, which is the app's reading, not his

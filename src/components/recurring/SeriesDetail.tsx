@@ -8,7 +8,7 @@ import {
   seriesEvidenceTone,
 } from "@/lib/series-evidence";
 import { billedWithLabel, carriesPhrase } from "@/lib/billed-with";
-import { seriesEndHeadline, seriesEndInput, seriesEndLines } from "./end-radius";
+import { seriesEndHeadline, seriesEndInput, seriesEndLines, seriesEndReassurance } from "./end-radius";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { renameSeriesAction, setSeriesStatusAction } from "@/app/recurring/actions";
@@ -248,13 +248,14 @@ export function SeriesDetail({
           title="End this series"
           confirmLabel="End this series"
           radius={{
-            // what ending takes out — nothing, of a series the forecast already let go (`seriesEndHeadline`)
+            // what ending takes out — nothing, of a series the forecast already let go — and what it puts back, of
+            // one he said is not recurring (`seriesEndHeadline`)
             headline: seriesEndHeadline(data),
             // the arrears — said as far as the ledger has read them, as the card below says them — the span and the
             // kept rows; see `seriesEndLines`
             lines: seriesEndLines(seriesEndInput(data), formatCents),
-            reassurance:
-              "Nothing is deleted — the charges stay in your ledger, and Confirm brings the series back if it starts again.",
+            // in what the series posts, as the "Nothing expected" card says it (`seriesPostingWords`)
+            reassurance: seriesEndReassurance(data.kind),
           }}
         />
       ) : null}
