@@ -19,6 +19,7 @@ import { categorizeAll, detectTransfers } from "./categorize";
 import {
   absorbIntoLiveSeries,
   amountsAreStable,
+  annualizedCentsOf,
   analyzeGroup,
   detectRecurringSeries,
   loadRecomputeCtx,
@@ -672,6 +673,62 @@ describe("seriesStaleness", () => {
     // …and every row whose schedule has ended is ended, whatever its evidence — a finished schedule is not late or
     // lapsed (a new charge would not bring it back)
     expect(endedSeen).toBe(4 * 5 * 4 * 4 * 5);
+  });
+});
+
+/*
+ * ⛔ An end before today leaves NO annualized figure — so the qualifier printed under one (`annualizedCaveat`, and the
+ * All tab's `annualizedEndNote`) never speaks of a series that has already stopped: both printers print it only beside
+ * a figure. 🔴 The qualifier kept a "stopped" sentence for that case — "a year this series no longer bills — it
+ * stopped on …" — which 0af5689 made unreachable when it took the "~$0.00/yr" away, and its comment still promised Car
+ * insurance would reach it on 2027-01-12 (review of the 10-12/13 batches). This grid is the proof the branch was dead.
+ */
+describe("annualizedCentsOf — no year ahead of a series whose end has passed", () => {
+  const row = {
+    id: "s",
+    name: "Car insurance",
+    kind: "bill" as const,
+    status: "confirmed" as "detected" | "confirmed",
+    cadence: "monthly" as "weekly" | "biweekly" | "monthly" | "quarterly" | "annual",
+    userCadence: null,
+    intervalDaysAvg: null,
+    nextExpectedOn: "2026-09-11" as string | null,
+    userNextExpectedOn: null as string | null,
+    nextExpectedAmountCents: -35758,
+    userAmountCents: null,
+    userEndsOn: null as string | null,
+    userAmountHistory: null,
+    lastMatchedOn: "2026-09-01" as string | null,
+    billedWith: null,
+  };
+  const today = "2026-09-11";
+
+  test("null for every end before today, whatever its cadence, anchor, status or evidence", () => {
+    let asked = 0;
+    for (const cadence of ["weekly", "biweekly", "monthly", "quarterly", "annual"] as const) {
+      for (const nextExpectedOn of [null, "2025-01-15", "2026-08-01", "2026-09-11", "2026-12-01"]) {
+        for (const userNextExpectedOn of [null, "2026-07-20", "2027-02-01"]) {
+          for (const userEndsOn of ["2025-06-30", "2026-08-01", "2026-09-10"]) {
+            for (const status of ["detected", "confirmed"] as const) {
+              for (const lastMatchedOn of [null, "2026-09-01", "2025-01-01"]) {
+                const s = { ...row, cadence, nextExpectedOn, userNextExpectedOn, userEndsOn, status, lastMatchedOn };
+                asked += 1;
+                expect(
+                  annualizedCentsOf(s, today, today),
+                  `${cadence} · ${nextExpectedOn} · ${userNextExpectedOn} · ends ${userEndsOn} · ${status} · ${lastMatchedOn}`,
+                ).toBeNull();
+              }
+            }
+          }
+        }
+      }
+    }
+    expect(asked).toBe(5 * 5 * 3 * 3 * 2 * 3);
+  });
+
+  test("…while the same series ending today or later still has one — the grid above is not vacuous", () => {
+    expect(annualizedCentsOf({ ...row, userEndsOn: today }, today, today)).toBe(35758);
+    expect(annualizedCentsOf({ ...row, userEndsOn: "2027-01-11" }, today, today)).toBe(5 * 35758);
   });
 });
 

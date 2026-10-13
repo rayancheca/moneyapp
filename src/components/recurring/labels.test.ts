@@ -835,7 +835,7 @@ describe("annualizedCaveat — a year is qualified only when the series stops in
   test("the table's short form says the same thing on the same days", () => {
     expect(annualizedEndNote("2027-01-11", TODAY)).toBe("ends Jan 11, 2027");
     expect(annualizedEndNote("2026-11-11", TODAY)).toBe("ends Nov 11, 2026");
-    expect(annualizedEndNote("2026-08-01", TODAY)).toBe("ended Aug 1, 2026");
+    expect(annualizedEndNote("2026-08-01", TODAY)).toBeNull();
     for (const endsOn of [null, "2028-08-15", "2027-09-11", "2027-09-10", "2026-08-01", "2027-01-11"]) {
       expect(annualizedEndNote(endsOn, TODAY) === null, String(endsOn)).toBe(annualizedCaveat(endsOn, TODAY) === null);
     }
@@ -850,21 +850,25 @@ describe("annualizedCaveat — a year is qualified only when the series stops in
    * 🔴 A WINDOW HAS TWO ENDS. The first version checked only the far one, so a
    * series that had already stopped read "stops on Aug 1, 2026, inside them" of
    * a window beginning Sep 11 — and this test pinned that as correct. It does
-   * not stop inside those twelve months; it stopped before them, and the
-   * annualized figure over them is a fiction rather than a partial year.
+   * not stop inside those twelve months; it stopped before them.
+   *
+   * ⛔ …and since 0af5689 such a series HAS no annualized figure to qualify: `annualizedCentsOf` is null for every end
+   * before today (the proof is in recurring.test.ts), and both printers print the qualifier only under a figure. The
+   * "a year this series no longer bills — it stopped on …" sentence written for it could never render, and its comment
+   * said Car insurance would reach it on 2027-01-12 — that day its row reads "—". Silence, not a dead sentence.
    */
-  test("a series that has ALREADY stopped gets the STRONGER sentence, not the same one", () => {
-    expect(annualizedCaveat("2026-08-01", TODAY)).toBe(
-      "a year this series no longer bills — it stopped on Aug 1, 2026",
-    );
-    expect(annualizedCaveat("2026-08-01", TODAY)).not.toContain("inside them");
+  test("a series that has ALREADY stopped is not qualified — it has no year ahead, and no figure to qualify", () => {
+    for (const endsOn of ["2026-08-01", "2026-09-10"]) {
+      expect(annualizedCaveat(endsOn, TODAY), endsOn).toBeNull();
+      expect(annualizedEndNote(endsOn, TODAY), endsOn).toBeNull();
+    }
   });
 
   test("the near end is TODAY, and a series ending today still has a year to say something about", () => {
     expect(annualizedCaveat(TODAY, TODAY)).toBe(
       "the twelve months from today — this one stops on Sep 11, 2026, inside them",
     );
-    expect(annualizedCaveat("2026-09-10", TODAY)).toContain("no longer bills");
+    expect(annualizedEndNote(TODAY, TODAY)).toBe("ends Sep 11, 2026");
   });
 });
 

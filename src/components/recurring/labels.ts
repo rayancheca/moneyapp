@@ -814,34 +814,33 @@ const MONTHS_IN_YEAR = 12;
  * book calls it with a window whose near end is `input.from`, this caller with
  * one whose near end is TODAY — so a series that had ALREADY stopped came back
  * "stops on Aug 1, 2026, inside them" of a window beginning Sep 11. It does not
- * stop inside those twelve months; it stopped before them, and the annualized
- * figure over them is not a partial year but a fiction. That case gets the
- * stronger sentence, not the weaker one. Not reachable today — both end-dated
- * series are in the future — but `Car insurance` reaches it on 2027-01-12.
+ * stop inside those twelve months; it stopped before them.
+ *
+ * ⛔ …and such a series has NO figure to qualify: `annualizedCentsOf` is null for every end before today (a schedule
+ * its end has closed is not forecast — `scheduleHasEnded`), and both printers print this only under a figure. So it is
+ * silent. 🔴 It kept a sentence for that case — "a year this series no longer bills — it stopped on …" — that 0af5689
+ * made unreachable when it took the "~$0.00/yr" away, under a comment promising Car insurance would reach it on
+ * 2027-01-12, the day its figure reads "—" (review of the 10-12/13 batches; the grid in recurring.test.ts is the proof).
  */
 export function annualizedCaveat(endsOn: string | null, today: string): string | null {
   const end = annualizedEnd(endsOn, today);
   if (end === null) return null;
-  return end.stopped
-    ? `a year this series no longer bills — it stopped on ${longDate(end.endsOn)}`
-    : `the twelve months from today — this one stops on ${longDate(end.endsOn)}, inside them`;
+  return `the twelve months from today — this one stops on ${longDate(end)}, inside them`;
 }
 
 /**
- * The ONE gate both annualized qualifiers read: does the series stop before the
- * twelve months from today are out — and has it already stopped? Null when the
- * figure needs no qualifying.
+ * The ONE gate both annualized qualifiers read: does the series stop inside the twelve months from today — on or after
+ * today, before they are out? Its end day then, else null: the figure needs no qualifying, or there is none.
  */
-function annualizedEnd(endsOn: string | null, today: string): { endsOn: string; stopped: boolean } | null {
+function annualizedEnd(endsOn: string | null, today: string): string | null {
   if (endsOn === null) return null;
-  if (compareDates(endsOn, today) < 0) return { endsOn, stopped: true };
-  if (!endsInsideHorizon(endsOn, addCalendarMonths(today, MONTHS_IN_YEAR))) return null;
-  return { endsOn, stopped: false };
+  // stopped already: no year ahead of it, so no figure under which to say so (above)
+  if (compareDates(endsOn, today) < 0) return null;
+  return endsInsideHorizon(endsOn, addCalendarMonths(today, MONTHS_IN_YEAR)) ? endsOn : null;
 }
 
 /**
- * `annualizedCaveat`'s short form, for a table cell: "ends Jan 11, 2027", or
- * "ended Aug 1, 2026".
+ * `annualizedCaveat`'s short form, for a table cell: "ends Jan 11, 2027".
  *
  * 🔴 `/recurring?tab=all` printed "Car insurance | Monthly | -$357.58 |
  * ~$715.16/yr" and "Car insurance — Nov 11 balance … | Monthly | -$72.74 |
@@ -854,8 +853,7 @@ function annualizedEnd(endsOn: string | null, today: string): { endsOn: string; 
  */
 export function annualizedEndNote(endsOn: string | null, today: string): string | null {
   const end = annualizedEnd(endsOn, today);
-  if (end === null) return null;
-  return `${end.stopped ? "ended" : "ends"} ${longDate(end.endsOn)}`;
+  return end === null ? null : `ends ${longDate(end)}`;
 }
 
 /**
