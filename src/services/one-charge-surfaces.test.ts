@@ -303,7 +303,7 @@ describe("from Nov 12, its one day passed — its schedule has ended, on every s
     const d = seriesDetail(bundle.db, balanceId, today);
     expect(d.evidence).toBe("schedule-ended");
     expect(seriesIsProjected(d.status, d.evidence)).toBe(false);
-    expect(noScheduleReason(d.status, d.evidence)).toContain("Its schedule has ended");
+    expect(noScheduleReason(d.status, d.evidence, d.kind)).toContain("Its schedule has ended");
     expect(d.nextExpected).toEqual([]);
     expect(listSeries(bundle.db, today).find((s) => s.id === balanceId)!.evidence).toBe("schedule-ended");
     // the subscriptions card's own word for the same series, on the same day

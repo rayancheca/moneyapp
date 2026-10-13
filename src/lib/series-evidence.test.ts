@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import type { SeriesKind } from "@/db/schema/recurring";
+import { SERIES_KINDS, type SeriesKind } from "@/db/schema/recurring";
 import {
   SERIES_EVIDENCE_LABEL,
   SUGGESTION_NOTE,
@@ -202,19 +202,56 @@ describe("seriesRowLabel — evidence for a live series, status for one that is 
 
 describe("noScheduleReason", () => {
   test("an ended series says its future is over and its past is not", () => {
-    expect(noScheduleReason("ended", "lapsed")).toContain("has ended");
-    expect(noScheduleReason("ended", "lapsed")).toContain("stay in the ledger");
+    expect(noScheduleReason("ended", "lapsed", "bill")).toContain("has ended");
+    expect(noScheduleReason("ended", "lapsed", "bill")).toContain("stay in the ledger");
   });
 
   /* ⛔ Dismissed is HIS decision, not the app's — the sentence says so. */
   test("a dismissed series is described as the owner's decision", () => {
-    expect(noScheduleReason("dismissed", "active")).toContain("You said");
+    expect(noScheduleReason("dismissed", "active", "bill")).toContain("You said");
   });
 
   test("a live series that is still forecast has no reason to give — it still has a schedule", () => {
     for (const e of ["active", "never-billed", "awaiting-statements", "running-late"] as const) {
-      expect(noScheduleReason("confirmed", e)).toBeNull();
-      expect(noScheduleReason("detected", e)).toBeNull();
+      expect(noScheduleReason("confirmed", e, "bill")).toBeNull();
+      expect(noScheduleReason("detected", e, "bill")).toBeNull();
+    }
+  });
+
+  /*
+   * 🔴 Review of 49cc98f: item (4)'s sweep stopped at the All tab. On a copy of his ledger (2026-10-12) asked about
+   * 2026-11-12, `/recurring/<Fordham Payroll>` (income, ended) read "Nothing expected · This series has ended, so
+   * nothing more is expected from it. Its charges below stay in the ledger." above 56 "DIRECT DEPOSIT FORDHAM UNIVERSI
+   * PAYROLL" rows — and Knack Tutoring (ended) and STOCK LENDING (SPY)/(COKE) (dismissed) the same. What it keeps is
+   * worded by its kind (`postingOf`), as the evidence notes are; a bill's sentences read as he has always read them.
+   */
+  test("what the page keeps is worded by kind — his pay's deposits, a transfer's transfers, a bill's charges", () => {
+    expect(noScheduleReason("ended", "running-late", "income")).toBe(
+      "This series has ended, so nothing more is expected from it. Its deposits below stay in the ledger.",
+    );
+    expect(noScheduleReason("dismissed", "running-late", "income")).toBe(
+      "You said this is not a recurring series, so nothing is expected from it and nothing is forecast. Its deposits below stay in the ledger.",
+    );
+    expect(noScheduleReason("confirmed", "schedule-ended", "transfer")).toBe(
+      "Its schedule has ended — every date it holds has come — so nothing more is expected from it. Its transfers below stay in the ledger.",
+    );
+    // a transfer lapses (money in never does — `lapsedSeriesShouldStopForecasting`), and what brings it back is a transfer
+    expect(noScheduleReason("confirmed", "lapsed", "transfer")).toContain(
+      "— a new transfer brings it back. Its transfers below stay in the ledger.",
+    );
+    for (const kind of ["income", "transfer"] as const) {
+      for (const s of ["detected", "confirmed", "dismissed", "ended"] as const) {
+        for (const e of EVERY) expect(noScheduleReason(s, e, kind) ?? "", `${kind} · ${s} · ${e}`).not.toMatch(/charge/);
+      }
+    }
+    // a bill's, a subscription's and an other's, word for word as before
+    for (const kind of ["bill", "subscription", "other"] as const) {
+      expect(noScheduleReason("ended", "active", kind)).toBe(
+        "This series has ended, so nothing more is expected from it. Its charges below stay in the ledger.",
+      );
+      expect(noScheduleReason("confirmed", "lapsed", kind)).toBe(
+        "This series has gone quiet past the point a bill stops, so it is no longer forecast and nothing more is expected from it — a new charge brings it back. Its charges below stay in the ledger.",
+      );
     }
   });
 
@@ -225,7 +262,7 @@ describe("noScheduleReason", () => {
    */
   test("a live series the forecast has let go says why nothing is expected, and that a charge brings it back", () => {
     for (const status of ["confirmed", "detected"] as const) {
-      const reason = noScheduleReason(status, "lapsed");
+      const reason = noScheduleReason(status, "lapsed", "bill");
       expect(reason).toContain("no longer forecast");
       expect(reason).toContain("a new charge brings it back");
       expect(reason).toContain("stay in the ledger");
@@ -271,7 +308,10 @@ describe("seriesIsOver — the one predicate two sentences on the page turn on",
     // the linkage, not two lists that happen to agree today
     for (const s of ["detected", "confirmed", "dismissed", "ended"] as const) {
       for (const e of EVERY) {
-        expect(noScheduleReason(s, e) !== null, `${s} · ${e}`).toBe(!seriesIsProjected(s, e));
+        // …whatever its kind: the kind words the sentence, never whether there is one
+        for (const k of SERIES_KINDS) {
+          expect(noScheduleReason(s, e, k) !== null, `${s} · ${e} · ${k}`).toBe(!seriesIsProjected(s, e));
+        }
       }
     }
   });
@@ -283,13 +323,13 @@ describe("seriesIsOver — the one predicate two sentences on the page turn on",
    */
   test("an ended schedule gives its own reason; his ended and dismissed keep theirs", () => {
     for (const s of ["detected", "confirmed"] as const) {
-      expect(noScheduleReason(s, "schedule-ended")).toBe(
+      expect(noScheduleReason(s, "schedule-ended", "bill")).toBe(
         "Its schedule has ended — every date it holds has come — so nothing more is expected from it. Its charges below stay in the ledger.",
       );
-      expect(noScheduleReason(s, "lapsed")).toContain("a new charge brings it back");
+      expect(noScheduleReason(s, "lapsed", "bill")).toContain("a new charge brings it back");
     }
-    expect(noScheduleReason("ended", "schedule-ended")).toBe(noScheduleReason("ended", "active"));
-    expect(noScheduleReason("dismissed", "schedule-ended")).toBe(noScheduleReason("dismissed", "active"));
+    expect(noScheduleReason("ended", "schedule-ended", "bill")).toBe(noScheduleReason("ended", "active", "bill"));
+    expect(noScheduleReason("dismissed", "schedule-ended", "bill")).toBe(noScheduleReason("dismissed", "active", "bill"));
     // quiet — the subscriptions card's "already ended", never a warning
     expect(seriesEvidenceTone("schedule-ended")).toBe("neutral");
     expect(SERIES_EVIDENCE_LABEL["schedule-ended"]).toBe("Ended");

@@ -127,6 +127,8 @@ export function SeriesDetail({
   const isMergedAway = data.mergedInto !== null;
   // the predicate `seriesDetail` reads the merge preview on, so it is read exactly where the control renders
   const isLive = seriesCanBeReshaped(data.status);
+  // why nothing is expected, in its kind's words — "Its deposits below" of his pay (`noScheduleReason`)
+  const nothingExpected = noScheduleReason(data.status, data.evidence, data.kind);
 
   function setStatus(status: "confirmed" | "dismissed" | "ended", label: string): void {
     void setSeriesStatusAction({ seriesId: data.id, status }).then((r) => {
@@ -394,10 +396,10 @@ export function SeriesDetail({
             would leave the reader wondering where the schedule went, so the
             reason goes where it was. So did a LAPSED one, under its own
             "Lapsed" badge, and it gets its reason the same way. */}
-        {noScheduleReason(data.status, data.evidence) ? (
+        {nothingExpected ? (
           <SurfaceCard>
             <h2 className="mb-1 text-sm font-medium">Nothing expected</h2>
-            <p className="text-xs text-ink-muted">{noScheduleReason(data.status, data.evidence)}</p>
+            <p className="text-xs text-ink-muted">{nothingExpected}</p>
           </SurfaceCard>
         ) : null}
 

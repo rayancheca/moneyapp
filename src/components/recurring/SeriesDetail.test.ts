@@ -8,6 +8,8 @@ import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { createDatabase, type DbBundle } from "@/db/client";
 import { seedDatabase } from "@/db/seed";
 import { recurringSeries, SERIES_STATUSES } from "@/db/schema/recurring";
+import { transactions } from "@/db/schema/transactions";
+import { dedupeHash } from "@/lib/hash";
 import { resolveViewState } from "@/lib/view-state";
 import { seedHisCarSeries, type OneChargeLedger } from "@/services/one-charge-fixture";
 import { seedHisRent, type RentLedger } from "@/services/rent-fixture";
@@ -241,5 +243,81 @@ describe("SeriesDetail — the merge preview is read only where the merge contro
     // live, its candidate is the Nov 11 balance; ended or dismissed, nothing is read and nothing renders
     expect(data.mergeCandidates.map((c) => c.id)).toEqual(live ? [his.balanceId] : []);
     expect(html.includes("Merge another series in")).toBe(live);
+  });
+});
+
+/*
+ * 🔴 Review of 49cc98f — item (4)'s sweep stopped at the All tab. On a copy of his ledger (2026-10-12) asked about
+ * 2026-11-12, `/recurring/<Fordham Payroll>` (income, ended) read "Nothing expected · This series has ended, so nothing
+ * more is expected from it. Its charges below stay in the ledger." above 56 "DIRECT DEPOSIT FORDHAM UNIVERSI PAYROLL"
+ * rows. A pay is deposited, not charged — on the page that lists its deposits, as on the All tab. Through
+ * `seriesDetail`, as the page builds it, so the test asks whether the page hands the sentence its kind.
+ */
+describe("SeriesDetail — his ended payroll's page keeps its deposits, not its charges", () => {
+  const TODAY = "2026-11-12";
+  let dir: string;
+  let bundle: DbBundle;
+  let payId: string;
+
+  beforeEach(() => {
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), "moneyapp-series-detail-pay-"));
+    bundle = createDatabase(path.join(dir, "t.db"));
+    seedDatabase(bundle.db);
+    const his = seedHisCarSeries(bundle.db);
+    payId = bundle.db
+      .insert(recurringSeries)
+      .values({
+        name: "Fordham Payroll",
+        kind: "income",
+        cadence: "biweekly",
+        intervalDaysAvg: 14,
+        nextExpectedOn: "2025-06-06",
+        nextExpectedAmountCents: 76_200,
+        status: "ended",
+        lastMatchedOn: "2025-05-23",
+      })
+      .returning({ id: recurringSeries.id })
+      .get().id;
+    ["2025-05-09", "2025-05-23"].forEach((postedOn, i) => {
+      const raw = "DIRECT DEPOSIT FORDHAM UNIVERSI PAYROLL";
+      bundle.db
+        .insert(transactions)
+        .values({
+          accountId: his.checkingId,
+          postedOn,
+          amountCents: 76_200,
+          rawDescription: raw,
+          normalizedDescription: raw,
+          recurringSeriesId: payId,
+          dedupeHash: dedupeHash({ accountId: his.checkingId, postedOn, amountCents: 76_200, rawDescription: raw, occurrenceIndex: i }),
+        })
+        .run();
+    });
+  });
+
+  afterEach(() => {
+    bundle.sqlite.close();
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  const pageWords = (): string =>
+    decode(
+      renderToStaticMarkup(
+        createElement(SeriesDetail, {
+          data: seriesDetail(bundle.db, payId, TODAY)!,
+          today: TODAY,
+          viewState: resolveViewState(RECURRING_SERIES_VIEW_SPEC, {}, undefined),
+          basePath: `/recurring/${payId}`,
+        }),
+      ),
+    )
+      .replace(/<[^>]+>/g, " ")
+      .replace(/\s+/g, " ");
+
+  test("Nothing expected: its deposits below stay in the ledger", () => {
+    const text = pageWords();
+    expect(text).toContain("Nothing expected");
+    expect(text).toContain("This series has ended, so nothing more is expected from it. Its deposits below stay in the ledger.");
+    expect(text).not.toContain("Its charges");
   });
 });

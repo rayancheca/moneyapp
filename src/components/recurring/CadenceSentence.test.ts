@@ -108,7 +108,7 @@ describe("CadenceSentence — a series the forecast has let go is described in t
     for (const status of EVERY_STATUS) {
       for (const evidence of EVERY_EVIDENCE) {
         const { text, dialogTriggers } = render(status, evidence);
-        const nothingExpected = noScheduleReason(status, evidence) !== null;
+        const nothingExpected = noScheduleReason(status, evidence, "subscription") !== null;
         expect(text.startsWith("charged "), `${status} · ${evidence}`).toBe(nothingExpected);
         expect(text.includes("around the"), `${status} · ${evidence}`).toBe(!nothingExpected);
         expect(dialogTriggers, `${status} · ${evidence}`).toBe(nothingExpected ? 1 : 2);

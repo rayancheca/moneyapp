@@ -166,10 +166,10 @@ export function seriesRowLabel(
  * What one posting of a series is called, by kind — a deposit of money in, a transfer of money moved, a charge of the
  * rest: `seriesVerb`'s split (components/recurring/labels), whose past tense this is.
  */
-const POSTING: Record<"charge" | "deposit" | "transfer", { noun: string; past: string }> = {
-  charge: { noun: "charge", past: "charged" },
-  deposit: { noun: "deposit", past: "deposited" },
-  transfer: { noun: "transfer", past: "moved" },
+const POSTING: Record<"charge" | "deposit" | "transfer", { noun: string; nouns: string; past: string }> = {
+  charge: { noun: "charge", nouns: "charges", past: "charged" },
+  deposit: { noun: "deposit", nouns: "deposits", past: "deposited" },
+  transfer: { noun: "transfer", nouns: "transfers", past: "moved" },
 };
 
 /** The posting a series of this kind makes — the one place a kind is told a deposit from a charge. */
@@ -332,17 +332,28 @@ export function seriesDrawsAsRecurring(status: SeriesStatusForCopy): boolean {
  *
  * ⛔ Speaks for exactly the series `seriesIsProjected` says the page does not project — the predicate the cadence
  * sentence asks too, so the two cannot disagree about whether anything is expected.
+ *
+ * ⛔ What it keeps, and what brings it back, are worded by its KIND (`postingOf`) — deposits of his pay, transfers of
+ * money moved, charges of the rest. 🔴 Review of 49cc98f: on a copy of his ledger (2026-10-12) asked about 2026-11-12,
+ * `/recurring/<Fordham Payroll>` (income, ended) read "Its charges below stay in the ledger." above 56 "DIRECT DEPOSIT
+ * FORDHAM UNIVERSI PAYROLL" rows; Knack Tutoring (ended) and STOCK LENDING (SPY)/(COKE) (dismissed) the same.
+ * ⚠️ "The point a bill stops" is the lapse's word for a transfer too, as in `seriesEvidenceNote` — not settled here.
  */
-export function noScheduleReason(status: SeriesStatusForCopy, evidence: SeriesEvidence): string | null {
+export function noScheduleReason(
+  status: SeriesStatusForCopy,
+  evidence: SeriesEvidence,
+  kind: SeriesKind,
+): string | null {
   if (seriesIsProjected(status, evidence)) return null;
-  if (status === "ended")
-    return "This series has ended, so nothing more is expected from it. Its charges below stay in the ledger.";
+  const posting = postingOf(kind);
+  const kept = `Its ${posting.nouns} below stay in the ledger.`;
+  if (status === "ended") return `This series has ended, so nothing more is expected from it. ${kept}`;
   if (status === "dismissed")
-    return "You said this is not a recurring series, so nothing is expected from it and nothing is forecast. Its charges below stay in the ledger.";
+    return `You said this is not a recurring series, so nothing is expected from it and nothing is forecast. ${kept}`;
   /* ⛔ Its schedule's own end, before the lapse: a new charge does not bring back a schedule with no date left.
      🔴 A month past its one day the Nov 11 balance's page said nothing of why nothing was expected (review of
      0af5689). "More": a last date that came due unposted is still owed this month — the already-due card says so. */
   if (evidence === "schedule-ended")
-    return "Its schedule has ended — every date it holds has come — so nothing more is expected from it. Its charges below stay in the ledger.";
-  return "This series has gone quiet past the point a bill stops, so it is no longer forecast and nothing more is expected from it — a new charge brings it back. Its charges below stay in the ledger.";
+    return `Its schedule has ended — every date it holds has come — so nothing more is expected from it. ${kept}`;
+  return `This series has gone quiet past the point a bill stops, so it is no longer forecast and nothing more is expected from it — a new ${posting.noun} brings it back. ${kept}`;
 }
