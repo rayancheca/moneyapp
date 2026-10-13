@@ -255,9 +255,12 @@ test("a bill that came due and has not posted is disclosed on its budget row", a
     /\$125\.00 was expected by now and no statement has covered it yet\.$/,
   );
 
-  // …and it is committed money, so it lands in the projection exactly once:
-  // $653.36 of extrapolated variable spend + $125.00 overdue = $778.36
-  await expect(food.getByText("$778.36")).toBeVisible();
+  // ⚖️ …and no projection is printed over it: Food is partly read, "Awaiting statements", and a partly read row
+  // offers no "Projected ≈" (his decision 69, 2026-10-13). The committed money still lands in the projection exactly
+  // once ($653.36 extrapolated + $125.00 overdue = $778.36) — pinned where it is computed, budgets.test.ts ("and the
+  // projection counts it exactly once"); here only its absence from the page.
+  await expect(food.getByText("Projected ≈")).toHaveCount(0);
+  await expect(food.getByText("$778.36")).toHaveCount(0);
 });
 
 test("a rolling budget names the line it is graded against, and the toggle turns it off", async ({
