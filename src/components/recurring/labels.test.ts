@@ -22,6 +22,7 @@ import {
   overdueNote,
   perPaydayWord,
   postedSpreadReading,
+  seriesEndBadge,
   seriesVerb,
   futureDateLabel,
   attachedToastTitle,
@@ -927,6 +928,28 @@ describe("annualizedCaveat — a year is qualified only when the series stops in
  * the confirmation says so before he presses — a merge has no undo button. Nothing to file → the sentence he has
  * always read, unchanged.
  */
+/*
+ * ⛔ One tense for one fact: the badge says "Ended" exactly when the card says "Its schedule has ended", with the day
+ * the schedule ran out. 🔴 An end between two due days read "Ends Jan 5, 2027" beside "Its schedule has ended".
+ */
+describe("seriesEndBadge — the end in the tense of the schedule", () => {
+  test("a date still to come: the end ahead, in the future tense", () => {
+    expect(seriesEndBadge("2027-01-11", null, "2026-10-13")).toBe("Ends Jan 11, 2027");
+  });
+
+  test("ran out: Ended, on the day it ran out — never the end day still to come", () => {
+    expect(seriesEndBadge("2027-01-05", "2026-12-11", "2026-12-12")).toBe("Ended Dec 11, 2026");
+    // …and the same day after the end has passed: no jump to the end on Jan 6
+    expect(seriesEndBadge("2027-01-05", "2026-12-11", "2027-01-20")).toBe("Ended Dec 11, 2026");
+    // the Nov 11 balance, its end its one day: as it has read since 0af5689
+    expect(seriesEndBadge("2026-11-11", "2026-11-11", "2026-11-12")).toBe("Ended Nov 11, 2026");
+  });
+
+  test("a schedule that held no date: the end day's own tense", () => {
+    expect(seriesEndBadge("2027-01-05", null, "2027-01-06")).toBe("Ended Jan 5, 2027");
+  });
+});
+
 describe("merge sentences (§6A 54)", () => {
   const filing = { categoryId: "c1", categoryPath: "Car > Lease", count: 2 };
 

@@ -149,6 +149,42 @@ describe("SeriesDetail — a schedule of one charge reads once, on its own page"
     expect(text).toContain("Ended Jan 11, 2027");
     expect(text).toContain("Its charges below stay in the ledger.");
   });
+
+  /*
+   * ⛔ ONE TENSE FOR ONE FACT. An end that falls between two due days closes the schedule at the last day before it:
+   * Car insurance ending Jan 5, 2027 holds Dec 11 and nothing after. From Dec 12 the card says "Its schedule has ended
+   * — every date it holds has come"; the badge beside it read "Ends Jan 5, 2027", in the future tense (review of the
+   * 10-12/13 batches). Its past tense names the day the schedule ran out — "Ended Jan 5" would be a day still to come
+   * — and keeps naming it after the end day, so the badge never changes its date on Jan 6.
+   */
+  test.each(["2026-12-12", "2027-01-05", "2027-01-20"])(
+    "%s, an end between two due days: 'Ended Dec 11, 2026' beside 'Its schedule has ended' — never 'Ends'",
+    (today) => {
+      bundle.db
+        .update(recurringSeries)
+        .set({ userEndsOn: "2027-01-05" })
+        .where(eq(recurringSeries.id, his.insuranceId))
+        .run();
+      const html = pageOn(his.insuranceId, today);
+      const text = words(html);
+      expect(text).toContain("Its schedule has ended");
+      expect(text).toContain("Ended Dec 11, 2026");
+      expect(text).not.toContain("Ends Jan 5, 2027");
+      expect(text).not.toContain("Ended Jan 5, 2027");
+      expect(html).not.toMatch(/text-warning[^>]*>Ended/);
+    },
+  );
+
+  test("…while a date is still to come the end is ahead of it, in the future tense: 'Ends Jan 5, 2027'", () => {
+    bundle.db
+      .update(recurringSeries)
+      .set({ userEndsOn: "2027-01-05" })
+      .where(eq(recurringSeries.id, his.insuranceId))
+      .run();
+    const text = words(pageOn(his.insuranceId, "2026-12-11"));
+    expect(text).toContain("Ends Jan 5, 2027");
+    expect(text).not.toContain("Its schedule has ended");
+  });
 });
 
 /*

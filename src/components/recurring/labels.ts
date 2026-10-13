@@ -874,6 +874,25 @@ export function annualizedEndNote(endsOn: string | null, today: string): string 
 }
 
 /**
+ * The series page's end badge: "Ends Jan 11, 2027" while a date is still to come, and once its schedule has ended —
+ * the All tab's "Ended", the card's "Its schedule has ended — every date it holds has come" — "Ended" with the day it
+ * RAN OUT (`scheduleRanOutOn`), its last date on or before the end.
+ *
+ * ⛔ ONE TENSE FOR ONE FACT, off the fact the card states, never the end day alone. 🔴 The tense read the end day: an
+ * end between two due days — Car insurance ending Jan 5, 2027, its last date Dec 11 — read "Ends Jan 5, 2027" from
+ * Dec 12 beside "Its schedule has ended" (review of the 10-12/13 batches). "Ended Jan 5" would name a day to come, so
+ * the day is the one it ran out — and stays that day after the end has passed, never jumping to the end on Jan 6.
+ * Where the two are one day (the Nov 11 balance, Car insurance's Jan 11) it reads as it did.
+ *
+ * ⚠️ A schedule that held no date at all (an anchor past its end) has no day it ran out: the end day's tense, as before.
+ */
+export function seriesEndBadge(endsOn: string, ranOutOn: string | null, today: string): string {
+  const ended = SERIES_EVIDENCE_LABEL["schedule-ended"];
+  if (ranOutOn !== null) return `${ended} ${longDate(ranOutOn)}`;
+  return `${compareDates(endsOn, today) < 0 ? ended : "Ends"} ${longDate(endsOn)}`;
+}
+
+/**
  * A lump of pay, as the calendar's cell, its Day Sheet and the series page's
  * history all name it — "4 paydays at $1,141.92 each" — so the deposit's own
  * amount never stands unexplained beside a one-week expectation.

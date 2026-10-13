@@ -35,6 +35,7 @@ import {
   populationStddev,
   projectOccurrences,
   rollForwardNextExpected,
+  scheduleRanOutOn,
   seriesHasLapsed,
   seriesIsForecast,
   seriesStaleness,
@@ -727,6 +728,39 @@ describe("annualizedCentsOf — no year ahead of a series whose end has passed",
   test("…while the same series ending today or later still has one — the grid above is not vacuous", () => {
     expect(annualizedCentsOf({ ...row, userEndsOn: today }, today, today)).toBe(35758);
     expect(annualizedCentsOf({ ...row, userEndsOn: "2027-01-11" }, today, today)).toBe(5 * 35758);
+  });
+});
+
+/*
+ * The end badge's day once a schedule is over (`seriesEndBadge`): the last date it held, which an end between two due
+ * days does not name. 🔴 Car insurance ending Jan 5 read "Ends Jan 5, 2027" beside "Its schedule has ended".
+ */
+describe("scheduleRanOutOn — the day a closed schedule ran out", () => {
+  const row = {
+    cadence: "monthly" as "weekly" | "monthly",
+    userCadence: null,
+    intervalDaysAvg: null,
+    nextExpectedOn: "2026-09-11",
+    userNextExpectedOn: null as string | null,
+    nextExpectedAmountCents: -35758,
+    userAmountCents: null,
+    userEndsOn: null as string | null,
+  };
+
+  test("its last date on or before the end — null while one is to come, or when it held none", () => {
+    const mid = { ...row, userNextExpectedOn: "2026-12-11", userEndsOn: "2027-01-05" };
+    expect(scheduleRanOutOn(mid, "2026-12-11")).toBeNull(); // Dec 11 is still to come today
+    for (const day of ["2026-12-12", "2027-01-05", "2027-01-06", "2027-03-01"]) {
+      expect(scheduleRanOutOn(mid, day), day).toBe("2026-12-11");
+    }
+    // an end ON a due day ran out on it — the Nov 11 balance's, and Car insurance's own
+    expect(scheduleRanOutOn({ ...mid, userEndsOn: "2027-01-11" }, "2027-01-12")).toBe("2027-01-11");
+    // a weekly schedule stepped by days: Thursdays from Oct 1, ending Sunday Oct 18 → Oct 15
+    const weekly = { ...row, cadence: "weekly" as const, userNextExpectedOn: "2026-10-01", userEndsOn: "2026-10-18" };
+    expect(scheduleRanOutOn(weekly, "2026-10-16")).toBe("2026-10-15");
+    // no end, or an anchor past its end: nothing to name
+    expect(scheduleRanOutOn({ ...mid, userEndsOn: null }, "2027-03-01")).toBeNull();
+    expect(scheduleRanOutOn({ ...mid, userNextExpectedOn: "2027-02-11" }, "2027-03-01")).toBeNull();
   });
 });
 

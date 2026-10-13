@@ -1672,6 +1672,24 @@ export function scheduleHasEnded(s: SeriesOverrides, today: string): boolean {
 }
 
 /**
+ * The day a schedule its end has closed RAN OUT (`scheduleHasEnded`): its last date on or before its end, stepped from
+ * the anchor as the walk steps — null while a date is still to come, or when it held none (an anchor past its end).
+ *
+ * ⛔ The end badge's day once the schedule is over (`seriesEndBadge`): not the end itself, which can fall between two
+ * due days. 🔴 Car insurance ending Jan 5, 2027 holds Dec 11 and nothing after; from Dec 12 its page read "Ends Jan 5,
+ * 2027" in the future tense beside "Its schedule has ended — every date it holds has come" (review of the 10-12/13
+ * batches; no end on his ledger copy 2026-10-13 falls between due days — each is a due day itself).
+ */
+export function scheduleRanOutOn(s: SeriesOverrides, today: string): string | null {
+  if (!scheduleHasEnded(s, today)) return null;
+  const eff = effectiveSchedule(s);
+  // `scheduleHasEnded` holds only with a next day and an end (`rollForwardNextExpected`'s two nulls)
+  const plan = stepPlan(eff.cadence, eff.intervalDaysAvg, eff.anchorDay);
+  const past = stepsToReach(eff.nextExpectedOn!, plan, addDays(eff.userEndsOn!, 1));
+  return past === 0 ? null : stepFrom(eff.nextExpectedOn!, plan, past - 1);
+}
+
+/**
  * The series among `rows` whose whole schedule holds ONE charge, each to the day of that charge — `isOneCharge`
  * (lib/one-charge) asked of the ledger. ⚖️ Owner decision 2026-10-08 (§6A 56): such a series reads "once · Nov 11"
  * wherever a cadence is printed, and is no monthly cost. Every surface that prints a cadence, and the subscriptions
