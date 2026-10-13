@@ -88,9 +88,10 @@ describe("oneChargeDays — the one reading every surface asks", () => {
   });
 
   /*
-   * 🔴 Caught widening the rule, on a copy of the e2e db: its "Storage unit" — monthly, last matched Jun 6, next Jul 6,
-   * ends Jul 10, NO row linked — read "once · Jul 6". Its earlier charge lives only in the series' own `lastMatchedOn`,
-   * and a monthly bill in its last month must never read once.
+   * 🔴 Caught widening the rule, on a copy of the e2e db: its "Storage unit" — monthly, last matched Jun 1, next Jul 1,
+   * ends Jul 10, NO row linked (`seedBudgets`; Jun 6 and Jul 6 when it was caught, until e2a5c55) — read "once". Its
+   * earlier charge lives only in the series' own `lastMatchedOn`, and a monthly bill in its last month must never read
+   * once.
    */
   test("a charge the series' own last-matched day records counts, with no row linked", () => {
     const storageId = bundle.db
@@ -100,10 +101,10 @@ describe("oneChargeDays — the one reading every surface asks", () => {
         kind: "bill",
         cadence: "monthly",
         intervalDaysAvg: 30,
-        nextExpectedOn: "2026-07-06",
+        nextExpectedOn: "2026-07-01",
         nextExpectedAmountCents: -4500,
         userEndsOn: "2026-07-10",
-        lastMatchedOn: "2026-06-06",
+        lastMatchedOn: "2026-06-01",
         status: "confirmed",
       })
       .returning({ id: recurringSeries.id })
@@ -111,7 +112,7 @@ describe("oneChargeDays — the one reading every surface asks", () => {
     const rows = () => bundle.db.select().from(recurringSeries).all();
     expect(oneChargeDays(bundle.db, rows()).has(storageId)).toBe(false);
     // …and with its next day on its end, as the first reading would have taken it
-    bundle.db.update(recurringSeries).set({ userEndsOn: "2026-07-06" }).where(eq(recurringSeries.id, storageId)).run();
+    bundle.db.update(recurringSeries).set({ userEndsOn: "2026-07-01" }).where(eq(recurringSeries.id, storageId)).run();
     expect(oneChargeDays(bundle.db, rows()).has(storageId)).toBe(false);
   });
 

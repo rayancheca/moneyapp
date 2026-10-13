@@ -1632,7 +1632,8 @@ export function oneChargeDays(
   for (const { id, eff, lastMatchedOn } of candidates) {
     /* the EARLIEST charge the ledger knows of: the first linked row, or the series' own last-matched day when that is
        earlier. 🔴 Widening the rule (review of 8a4ac47) named the e2e db's "Storage unit" — monthly, last matched
-       Jun 6, next Jul 6, ends Jul 10, no row linked — "once · Jul 6": its earlier charge lives only in the column. */
+       Jun 1, next Jul 1, ends Jul 10, no row linked (Jun 6 and Jul 6 until e2a5c55) — "once": its earlier charge
+       lives only in the column. */
     const linked = firstMatched.get(id) ?? null;
     const earliest =
       linked === null || (lastMatchedOn !== null && compareDates(lastMatchedOn, linked) < 0) ? lastMatchedOn : linked;
