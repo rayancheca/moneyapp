@@ -5,7 +5,9 @@ import {
   arrearsSplit,
   arrearsTail,
   DAYS_TO_POST_NOT_OVER,
+  HAS_NOT_POSTED,
   NO_STATEMENT_YET,
+  NOT_POSTED,
   overdueReading,
   splitClause,
 } from "./arrears-reading";
@@ -51,21 +53,21 @@ describe("arrearsSplit", () => {
 });
 
 describe("arrearsTail — the words after a lead, in the runway's voice", () => {
-  test("read: the surface's own word for unposted", () => {
-    expect(arrearsTail({ owedCents: 210900, unreadCents: 0 }, "has not posted")).toBe(" and has not posted");
+  test("read: the surface's own form of the one word for unposted", () => {
+    expect(arrearsTail({ owedCents: 210900, unreadCents: 0 }, HAS_NOT_POSTED)).toBe(" and has not posted");
   });
 
   test("unread: never 'not posted' — no statement has covered it yet", () => {
-    const tail = arrearsTail({ owedCents: 210900, unreadCents: 210900 }, "has not posted");
+    const tail = arrearsTail({ owedCents: 210900, unreadCents: 210900 }, HAS_NOT_POSTED);
     expect(tail).toBe(` and ${NO_STATEMENT_YET}`);
     expect(tail).not.toMatch(/not posted/);
   });
 
   test("mixed: both halves, each named by its amount", () => {
-    expect(arrearsTail({ owedCents: 3000, unreadCents: 1000 }, "never posted")).toBe(
-      ": $20.00 never posted, and no statement has covered the other $10.00 yet",
+    expect(arrearsTail({ owedCents: 3000, unreadCents: 1000 }, HAS_NOT_POSTED)).toBe(
+      ": $20.00 has not posted, and no statement has covered the other $10.00 yet",
     );
-    expect(splitClause(arrearsSplit({ owedCents: 3000, unreadCents: 1000 }), "not posted")).toBe(
+    expect(splitClause(arrearsSplit({ owedCents: 3000, unreadCents: 1000 }), NOT_POSTED)).toBe(
       "$20.00 not posted, and no statement has covered the other $10.00 yet",
     );
   });
@@ -86,6 +88,25 @@ describe("arrearsTail — the words after a lead, in the runway's voice", () => 
 });
 
 /*
+ * 🔴 THE RUNWAY'S OWN WORD. Every other surface said the read half "has not posted" or "not posted" (his decisions 60
+ * and 65) — the math table "came due Oct 1 and has not posted", /budgets' row "$X expected by now and not posted" —
+ * while the runway alone said "$45.00 never posted" (pinned in e2e/decision-cards.spec.ts): its own word, passed in as
+ * a free string. The words live here now, one per grammar — after a lead that has a subject, and in a fragment — and
+ * no other can be passed.
+ */
+describe("the read half's words — one home, two grammars", () => {
+  test("'has not posted' after a lead, 'not posted' in a fragment", () => {
+    expect(HAS_NOT_POSTED).toBe("has not posted");
+    expect(NOT_POSTED).toBe("not posted");
+  });
+
+  test("no surface may pass its own word for it", () => {
+    // @ts-expect-error — "never posted" was the runway's own word; the type admits only the two above
+    expect(arrearsTail({ owedCents: 4500, unreadCents: 0 }, "never posted")).toBe(" and never posted");
+  });
+});
+
+/*
  * 🔴 An archived card's bill due Oct 6 read "no import has covered it yet" on Oct 8, on every arrears surface (review of
  * the 2026-10-08 batch) — an import /imports will never ask for. Its account is read through today; what it waits for
  * is its days to post (`inGraceCents`). ⚖️ No new verdict: unread and quiet as before — the words only.
@@ -99,14 +120,14 @@ describe("an unread half no statement is keeping unread — its days to post", (
 
   test("all of the unread waits on its days to post: says so — for one bill or several — and stays quiet", () => {
     const reading = { owedCents: 4500, unreadCents: 4500, inGraceCents: 4500 };
-    expect(arrearsTail(reading, "never posted")).toBe(` and ${DAYS_TO_POST_NOT_OVER}`);
+    expect(arrearsTail(reading, HAS_NOT_POSTED)).toBe(` and ${DAYS_TO_POST_NOT_OVER}`);
     expect(arrearsClause(reading, "not posted", "them")).toBe("the days a payment has to post are not over yet");
     expect(arrearsAlarms(reading)).toBe(false);
   });
 
   test("beside a read half, both by amount", () => {
-    expect(arrearsTail({ owedCents: 3000, unreadCents: 1000, inGraceCents: 1000 }, "never posted")).toBe(
-      ": $20.00 never posted, and the days a payment has to post for the other $10.00 are not over yet",
+    expect(arrearsTail({ owedCents: 3000, unreadCents: 1000, inGraceCents: 1000 }, HAS_NOT_POSTED)).toBe(
+      ": $20.00 has not posted, and the days a payment has to post for the other $10.00 are not over yet",
     );
   });
 
@@ -116,11 +137,11 @@ describe("an unread half no statement is keeping unread — its days to post", (
    * like the rest.
    */
   test("a statement awaited for any of it keeps the statement's words", () => {
-    expect(arrearsTail({ owedCents: 3000, unreadCents: 3000, inGraceCents: 1000 }, "never posted")).toBe(
+    expect(arrearsTail({ owedCents: 3000, unreadCents: 3000, inGraceCents: 1000 }, HAS_NOT_POSTED)).toBe(
       ` and ${NO_STATEMENT_YET}`,
     );
-    expect(arrearsTail({ owedCents: 3000, unreadCents: 2000, inGraceCents: 1000 }, "never posted")).toBe(
-      ": $10.00 never posted, and no statement has covered the other $20.00 yet",
+    expect(arrearsTail({ owedCents: 3000, unreadCents: 2000, inGraceCents: 1000 }, HAS_NOT_POSTED)).toBe(
+      ": $10.00 has not posted, and no statement has covered the other $20.00 yet",
     );
   });
 });

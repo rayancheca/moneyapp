@@ -2,7 +2,7 @@ import { and, eq, gte, inArray, lte } from "drizzle-orm";
 import type { AppDatabase } from "@/db/client";
 import { recurringSeries } from "@/db/schema/recurring";
 import { transactions } from "@/db/schema/transactions";
-import { arrearsTail } from "@/lib/arrears-reading";
+import { arrearsTail, HAS_NOT_POSTED } from "@/lib/arrears-reading";
 import { addCalendarMonths, addDays, compareDates, diffDays, monthKey, periodBounds, todayIso } from "@/lib/dates";
 import { forecastSplit } from "@/lib/forecast-split";
 import { projectOngoingIncome, projectOngoingNetIncome } from "@/lib/income-forecast";
@@ -714,7 +714,7 @@ function arrearsComponents(
      * Oct 1 and has not posted" of rent on a copy of his ledger 2026-10-08, a day no import had reached, beside a
      * runway saying "no import has covered it yet" of the same money.
      */
-    const tail = arrearsTail(arrearsReadingOfSeries(s), "has not posted");
+    const tail = arrearsTail(arrearsReadingOfSeries(s), HAS_NOT_POSTED);
     return {
       label: s.name,
       kind: "fixed" as const,

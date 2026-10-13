@@ -206,7 +206,7 @@ const NOT_POSTED = {
     ["Already due, and not posted", true],
   ],
   endDialog: ["Already due this month, not posted", "Already due this month, not posted"],
-  runway: ["A further $2,291.21 came due earlier this month and never posted.", true],
+  runway: ["A further $2,291.21 came due earlier this month and has not posted.", true],
   budgets: [[229121, 0, 0]],
   forecast: [" and has not posted", " and has not posted"],
 };
@@ -297,7 +297,7 @@ describe("the grace is the bill's — and, for one billed with the rent, the ren
       card: [NOT_POSTED.card[0], QUIET.card[1]],
       endDialog: [NOT_POSTED.endDialog[0], QUIET.endDialog[1]],
       runway: [
-        "A further $2,291.21 came due earlier this month: $2,109.00 never posted, and no statement has covered the " +
+        "A further $2,291.21 came due earlier this month: $2,109.00 has not posted, and no statement has covered the " +
           "other $182.21 yet.",
         true,
       ],
@@ -499,7 +499,7 @@ describe("the grace is the bill's — and, for one billed with the rent, the ren
     expect(surfaces([RENT]).calendar).toEqual([["unsettled", "not_imported"]]);
     importedThrough("2026-10-02");
     expect(surfaces([RENT]).calendar).toEqual([["missed", null]]);
-    expect(surfaces([RENT]).runway[0]).toMatch(/: \$2,109\.00 never posted, and no statement has covered the other/);
+    expect(surfaces([RENT]).runway[0]).toMatch(/: \$2,109\.00 has not posted, and no statement has covered the other/);
   });
 });
 

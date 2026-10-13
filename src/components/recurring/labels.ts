@@ -4,6 +4,7 @@ import {
   arrearsSplit,
   DAYS_TO_POST_NOT_OVER,
   NO_STATEMENT_YET,
+  NOT_POSTED,
   unreadWaitsOnDaysToPost,
   type ArrearsReading,
 } from "@/lib/arrears-reading";
@@ -622,7 +623,7 @@ export function overdueNote(
   reading: ArrearsReading,
 ): { text: string; warning: boolean } {
   const more = occurrenceCount > 1 ? ` and ${occurrenceCount - 1} more` : "";
-  const text = `${shortDate(date)}${more} — ${arrearsClause(reading, "not posted")}`;
+  const text = `${shortDate(date)}${more} — ${arrearsClause(reading, NOT_POSTED)}`;
   return { text, warning: arrearsAlarms(reading) };
 }
 
@@ -715,7 +716,7 @@ export function alreadyDueWords(
           : "their days, the days a payment has to post, are"
         : `the ${days(graceDays)} past ${one ? "it" : "each"} a payment has to post are`;
     return {
-      heading: `Already due — ${arrearsClause(reading, "not posted")}`,
+      heading: `Already due — ${arrearsClause(reading, NOT_POSTED)}`,
       body: waitsOnDays
         ? `${lead}, and ${toPost} not over yet, so ${all} may still post. ${counted}`
         : `${lead}, and no statement reaches ${short} yet — the days a payment has to post — so ${all} may well ` +
@@ -728,7 +729,7 @@ export function alreadyDueWords(
   const withinIt = noPostingOf("it");
   const rest = waitsOnDays ? DAYS_TO_POST_NOT_OVER : "no statement reaches that far yet";
   return {
-    heading: `Already due: ${arrearsClause(reading, "not posted")}`,
+    heading: `Already due: ${arrearsClause(reading, NOT_POSTED)}`,
     body:
       `Inside this calendar month. Where the statements reach ${pastADueDay}, they hold no posting ${withinIt}; for ` +
       `the rest, ${rest}. The forecast counts all of it, and so does this month's budget.`,

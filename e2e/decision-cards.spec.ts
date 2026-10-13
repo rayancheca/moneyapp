@@ -94,18 +94,20 @@ test.describe("dashboard decision cards", () => {
   });
 
   /*
-   * ⚖️ His decision 60 (2026-10-08): "never posted" — in the negative tone — only for a due day whose day AND grace
+   * ⚖️ His decision 60 (2026-10-08): "has not posted" — in the negative tone — only for a due day whose day AND grace
    * the checked statements reach; the rest quietly "no statement has covered it yet" (his decision 65, 2026-10-12).
+   * 🔴 The runway alone said "$45.00 never posted", its own word, beside every other surface's "has not posted" or
+   * "not posted" — the words are `lib/arrears-reading`'s now (`HAS_NOT_POSTED`).
    * The seed straddles it: Storage unit ($45.00,
    * due Jul 1, its card checked through Jul 4 = its day + 3 days' grace) is read; Meal Kit ($125.00, due Jul 5,
    * its card imported through Jul 5 alone) is not. 🔴 With Meal Kit turned quiet (559aa52) nothing in e2e rendered the
    * read half any more (review of 559aa52).
    */
-  test("the runway's arrears say never posted only of the read half, in the negative tone", async ({ page }) => {
+  test("the runway's arrears say has not posted only of the read half, in the negative tone", async ({ page }) => {
     const card = page.locator("section:has(#decisions-heading)");
     const arrears = card.locator("p", { hasText: /^A further / });
     await expect(arrears).toHaveText(
-      "A further $170.00 came due earlier this month: $45.00 never posted, and no statement has covered the other $125.00 yet.",
+      "A further $170.00 came due earlier this month: $45.00 has not posted, and no statement has covered the other $125.00 yet.",
     );
     await expect(arrears).toHaveClass(/\btext-negative\b/);
   });

@@ -1,6 +1,6 @@
 import type { BlastRadiusLine } from "@/components/ui/blast-radius";
 import type { SeriesKind } from "@/db/schema/recurring";
-import { arrearsClause } from "@/lib/arrears-reading";
+import { arrearsClause, NOT_POSTED } from "@/lib/arrears-reading";
 import {
   seriesDrawsAsRecurring,
   seriesIsProjected,
@@ -215,7 +215,7 @@ export function seriesEndLines(
       : []),
     // past first, then future — the order `budgetDeactivateLines` reads in; "not posted" only of read days
     ...(input.overdueCents > 0
-      ? [{ label: `Already due this month, ${arrearsClause(reading, "not posted")}`, value: overdueValue }]
+      ? [{ label: `Already due this month, ${arrearsClause(reading, NOT_POSTED)}`, value: overdueValue }]
       : []),
     { label: `Upcoming ${postings} off the calendar`, value: upcomingValue(input) },
     {

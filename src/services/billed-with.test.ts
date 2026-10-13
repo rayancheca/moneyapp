@@ -766,7 +766,7 @@ describe("settlement follows the carrier — paid once the rent's payment for th
     expect(reading()).toEqual({
       unread: [0, 0],
       page: [0, 0],
-      runway: "A further $2,291.21 came due earlier this month and never posted.",
+      runway: "A further $2,291.21 came due earlier this month and has not posted.",
       calendar: [
         ["missed", null],
         ["missed", null],

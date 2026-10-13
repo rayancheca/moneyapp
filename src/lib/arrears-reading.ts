@@ -67,6 +67,19 @@ export function overdueReading(o: { amountCents: number; unreadCents: number; in
   return { owedCents: -o.amountCents, unreadCents: o.unreadCents, inGraceCents: o.inGraceCents };
 }
 
+/**
+ * ⚖️ The words for the READ half (his decisions 60 and 65), in the two grammars a surface says them in: after a lead
+ * that has a subject — "came due Oct 1 and has not posted", "$45.00 has not posted" — and in a fragment, "Oct 1 — not
+ * posted", "$X expected by now and not posted". No surface passes a word of its own (`NotPostedWords`).
+ *
+ * 🔴 The runway passed its own: "A further $170.00 came due earlier this month: $45.00 never posted, and no statement
+ * has covered the other $125.00 yet." (e2e/decision-cards.spec.ts), beside the math table's "has not posted" and
+ * /budgets' "not posted" of the same kind of day — and "never" is final of a day a payment past its grace still pays.
+ */
+export const HAS_NOT_POSTED = "has not posted";
+export const NOT_POSTED = "not posted";
+export type NotPostedWords = typeof HAS_NOT_POSTED | typeof NOT_POSTED;
+
 /** "no statement has covered <what> yet" — the unread half, said of "it", "them" or "the other $U". */
 function noStatementHasCovered(what: string): string {
   return `no statement has covered ${what} yet`;
@@ -120,7 +133,7 @@ export type ArrearsPronoun = "it" | "them";
  * A mixed split in the runway's voice: "$R <notPosted>, and no statement has covered the other $U yet" — or, when it
  * waits on no statement, "…, and the days a payment has to post for the other $U are not over yet".
  */
-export function splitClause(split: ArrearsSplit, notPosted: string): string {
+export function splitClause(split: ArrearsSplit, notPosted: NotPostedWords): string {
   const read = formatCents(split.readCents);
   const unread = formatCents(split.unreadCents);
   if (unreadWaitsOnDaysToPost(split)) {
@@ -135,7 +148,11 @@ export function splitClause(split: ArrearsSplit, notPosted: string): string {
  * amount for a mix: the words after "Oct 1 —" in the Next column and after "Already due this month," in the End dialog
  * (`seriesEndLines`) and after "Due this period by today," in /budgets' (`budgetDeactivateLines`).
  */
-export function arrearsClause(reading: ArrearsReading, notPosted: string, pronoun: ArrearsPronoun = "it"): string {
+export function arrearsClause(
+  reading: ArrearsReading,
+  notPosted: NotPostedWords,
+  pronoun: ArrearsPronoun = "it",
+): string {
   const split = arrearsSplit(reading);
   if (split.kind === "read") return notPosted;
   if (split.kind === "unread") {
@@ -147,11 +164,15 @@ export function arrearsClause(reading: ArrearsReading, notPosted: string, pronou
 
 /**
  * What follows a lead such as "came due Oct 1": " and <notPosted>", " and no statement has covered it yet", or
- * ": $R <notPosted>, and no statement has covered the other $U yet". `notPosted` is the surface's own word for the
- * read half ("never posted" on the runway, "has not posted" in the math table and /budgets' spoken row, "not posted"
- * on the row itself and its page note).
+ * ": $R <notPosted>, and no statement has covered the other $U yet". `notPosted` is the read half's words in the
+ * surface's grammar: `HAS_NOT_POSTED` on the runway, in the math table and /budgets' spoken row, `NOT_POSTED` on the
+ * row itself and its page note.
  */
-export function arrearsTail(reading: ArrearsReading, notPosted: string, pronoun: ArrearsPronoun = "it"): string {
+export function arrearsTail(
+  reading: ArrearsReading,
+  notPosted: NotPostedWords,
+  pronoun: ArrearsPronoun = "it",
+): string {
   const clause = arrearsClause(reading, notPosted, pronoun);
   return arrearsSplit(reading).kind === "mixed" ? `: ${clause}` : ` and ${clause}`;
 }

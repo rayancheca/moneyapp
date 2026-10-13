@@ -22,7 +22,7 @@
  */
 
 import type { Cadence } from "@/db/schema/recurring";
-import { arrearsTail, type ArrearsReading } from "@/lib/arrears-reading";
+import { arrearsTail, HAS_NOT_POSTED, type ArrearsReading } from "@/lib/arrears-reading";
 import { addCalendarMonths, compareDates, daysInMonthOf, monthKey, withDayOfMonth } from "@/lib/dates";
 import { monthWindowLabel } from "@/lib/format-date";
 import { dayWindowLabel } from "@/lib/period";
@@ -68,7 +68,7 @@ export interface CommittedOccurrence {
    * ARREARS ONLY: of this payment's magnitude, the part that fell due on days no
    * checked statement has reached for the accounts the series bills on — money that may
    * well have posted where nobody has looked. Absent means all of it: the
-   * cautious reading, because the sentence it feeds says "never posted" only of
+   * cautious reading, because the sentence it feeds says "has not posted" only of
    * the rest (`arrearsSentence`).
    */
   unreadCents?: number;
@@ -174,7 +174,7 @@ export interface CommittedOutflows {
   /**
    * Of `overdueCents`, the part on days no checked statement has reached for the
    * accounts those bills post from — summed from each arrears payment's `unreadCents`.
-   * What `arrearsSentence` refuses to call "never posted".
+   * What `arrearsSentence` refuses to call "has not posted".
    */
   overdueUnreadCents: number;
   /**
@@ -390,7 +390,7 @@ export function committedBillsNamed(lines: readonly CommittedLine[]): string | n
  * 🔴 It read "A further $2,296.20 came due earlier this month and never
  * posted." on the owner's ledger 2026-10-07, while October was imported for
  * none of the accounts those bills post from — and /budgets said the same money
- * is "due by today and no import has covered them yet". "Never posted" is kept
+ * is "due by today and no import has covered them yet". A negative claim is kept
  * for the part on days the ledger has read (`overdueUnreadCents` is the rest);
  * the unread part takes /budgets' words. "Came due" stays: this leg closes the
  * day BEFORE today (see `committedBook`), so every payment in it is past due.
@@ -398,11 +398,15 @@ export function committedBillsNamed(lines: readonly CommittedLine[]): string | n
  * ⛔ The split is `arrearsTail`'s, the one the bill's own page, `/recurring`'s Next column and the math table say it
  * through (`lib/arrears-reading`).
  *
+ * 🔴 …and the read half kept its own word, "never posted", where every other surface says "has not posted" or "not
+ * posted" (his decisions 60 and 65): "$45.00 never posted" on the e2e runway beside the math table's "came due … and
+ * has not posted". The words are the builder's now (`HAS_NOT_POSTED`), and no other can be passed.
+ *
  * Null when nothing is late — silence, never "nothing came due".
  */
 export function arrearsSentence(book: ArrearsBook): string | null {
   if (book.overdueCents <= 0) return null;
-  const tail = arrearsTail(arrearsReadingOf(book), "never posted");
+  const tail = arrearsTail(arrearsReadingOf(book), HAS_NOT_POSTED);
   return `A further ${formatCents(book.overdueCents)} came due earlier this month${tail}.`;
 }
 

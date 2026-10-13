@@ -11,7 +11,7 @@ import { ProvenancePopover } from "@/components/ui/ProvenancePopover";
 import { NumberRoll } from "@/components/ui/NumberRoll";
 import { InfoTip } from "@/components/ui/InfoTip";
 import { Popover, usePopover } from "@/components/ui/Popover";
-import { arrearsAlarms, arrearsTail } from "@/lib/arrears-reading";
+import { arrearsAlarms, arrearsTail, HAS_NOT_POSTED, NOT_POSTED } from "@/lib/arrears-reading";
 import { formatDayShort } from "@/lib/format-date";
 import { budgetCoverageSentence } from "@/lib/budget-coverage";
 import { budgetVerdict } from "@/lib/budget-verdict";
@@ -120,7 +120,7 @@ export function BudgetRow({ status, guidanceCents, spentProvenance, planProvenan
     unreadCents: status.overdueUnreadCents,
     inGraceCents: status.overdueInGraceCents,
   };
-  const arrearsLine = `${formatCents(status.overdueCents)} expected by now${arrearsTail(arrears, "not posted")}`;
+  const arrearsLine = `${formatCents(status.overdueCents)} expected by now${arrearsTail(arrears, NOT_POSTED)}`;
 
   // The elapsed fraction is what the today mark encodes, and the mark is
   // `aria-hidden` — so without this clause the spoken row is strictly poorer
@@ -143,7 +143,7 @@ export function BudgetRow({ status, guidanceCents, spentProvenance, planProvenan
       : ""
   }${
     status.overdueCents > 0
-      ? ` ${formatCents(status.overdueCents)} was expected by now${arrearsTail(arrears, "has not posted")}.`
+      ? ` ${formatCents(status.overdueCents)} was expected by now${arrearsTail(arrears, HAS_NOT_POSTED)}.`
       : ""
   }`;
 

@@ -210,9 +210,9 @@ function rowDescriptions(markup: string, label: string): string[] {
  * 🔴 Measured on the owner's ledger 2026-10-07: "A further $2,296.20 came due
  * earlier this month and never posted." while October is imported for none of
  * the accounts those bills post from. A bill no checked statement has reached
- * reads in /budgets' words; "never posted" is kept for days the ledger has read.
+ * reads in /budgets' words; "has not posted" is kept for days the ledger has read.
  */
-test("arrears no checked statement has reached are not called never posted", () => {
+test("arrears no checked statement has reached are not called unposted", () => {
   bundle.db
     .insert(recurringSeries)
     .values({
@@ -231,7 +231,7 @@ test("arrears no checked statement has reached are not called never posted", () 
   expect(card.committed.overdueCents).toBe(210900);
   const markup = renderToStaticMarkup(createElement(RunwayCard, { data: card }));
   expect(markup).toContain("A further $2,109.00 came due earlier this month and no statement has covered it yet.");
-  expect(markup).not.toContain("never posted");
+  expect(markup).not.toContain("not posted");
   /*
    * 🔴 …and it said so in red. On a copy of his ledger 2026-10-08 the runway was the one surface still treating
    * staleness as an alarm: "A further $2,291.21 came due earlier this month and no import has covered it yet." in
@@ -292,8 +292,9 @@ test("arrears on days the ledger has read keep the negative tone", () => {
 
   const card = runwayCard(bundle.db, TODAY);
   expect(card.committed.overdueUnreadCents).toBe(0);
+  // ⚖️ "has not posted" — every surface's words for a read due day (his decisions 60 and 65), never "never posted"
   expect(arrearsLine(renderToStaticMarkup(createElement(RunwayCard, { data: card })))).toEqual({
-    text: "A further $2,109.00 came due earlier this month and never posted.",
+    text: "A further $2,109.00 came due earlier this month and has not posted.",
     alarm: true,
   });
 });

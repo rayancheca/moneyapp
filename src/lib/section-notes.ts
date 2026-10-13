@@ -1,11 +1,11 @@
-import { arrearsTail } from "./arrears-reading";
+import { arrearsTail, NOT_POSTED } from "./arrears-reading";
 import { spendUnread, spentOnlyFromCashWallets, type BudgetCoverageInput } from "./budget-coverage";
 import { formatCategoryPath } from "./category-path";
 import { isStaleClose, newestQuotedOn } from "./holding-price-age";
 import { formatCents } from "./money";
 import { dayWindowLabel } from "./period";
 import { STALE_PERIODS, type CashEarningsBasis } from "./cash-earnings";
-import { LAST_CHECKED_DAY } from "./unbanked-income";
+import { LAST_CHECKED_DAY, notLookedForDeposits } from "./unbanked-income";
 
 /**
  * A section note is AUTHORED COPY selected by a MEASURED predicate, with every
@@ -138,7 +138,7 @@ export function budgetSectionNotes(input: BudgetNoteInput): SectionNote[] {
     const inGrace = overdue.reduce((sum, r) => sum + r.overdueInGraceCents, 0);
     const said = arrearsTail(
       { owedCents: total, unreadCents: unread, inGraceCents: inGrace },
-      "not posted",
+      NOT_POSTED,
       bills === 1 ? "it" : "them",
     );
     notes.push({
@@ -619,9 +619,15 @@ export function cashEarningsSectionNotes(input: CashEarningsNoteInput): SectionN
           : `Across the whole schedule, ${r.periodsSinceBanked} expected paydays have passed ` +
             `since the last deposit on ${input.formatDay(r.lastBankedOn)}${readPart}`;
       // a list of explanations is only complete when the ledger looked at every payday it counts
+      /*
+       * ⚖️ …and the one it adds says what the quiet waits for (his decision 65, 2026-10-12), in the forecast's words
+       * (`notLookedForDeposits`). 🔴 It said "or it has not been imported yet" of paydays past a CHECKED day — the
+       * e2e fixture's Chase Total Checking is checked through Jun 30 with rows imported to Jul 4.
+       */
+      const unlooked = through === null ? r.periodsSinceBanked : r.periodsSinceBanked - readSilence;
       const explanations =
         measuredRead && (through === null || readSilence < r.periodsSinceBanked)
-          ? "that money was held as cash, spent as cash, the schedule has ended, or it has not been imported yet"
+          ? `that money was held as cash, spent as cash, the schedule has ended, or ${notLookedForDeposits(unlooked)}`
           : "that money was held as cash, spent as cash, or the schedule has ended";
       notes.push({
         id: `cash-earnings-unbanked-${r.seriesName}`,

@@ -646,7 +646,7 @@ async function seedBudgets(db: AppDatabase): Promise<void> {
   /*
    * A bill whose day AND grace the ledger HAS read, with nothing posted — the
    * `missed` state: the red ✕, its spoken "missed", the footer's "1 missed" and
-   * the runway's "$45.00 never posted" in the negative tone.
+   * the runway's "$45.00 has not posted" in the negative tone.
    *
    * ⚖️ Since his decision 60 (2026-10-08) a due day is read only once its
    * accounts are imported through the day PLUS its grace (`toleranceDays`, 3

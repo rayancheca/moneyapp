@@ -833,6 +833,34 @@ describe("cashEarningsSectionNotes", () => {
     expect(note!.body).toContain("9 of them fall on days the records cover, through 2026-08-12");
   });
 
+  /*
+   * 🔴 "…OR IT HAS NOT BEEN IMPORTED YET" of paydays past the CHECKED day. The list of explanations gained a fourth when
+   * some paydays fall after `LAST_CHECKED_DAY` — and said it in import words, of a day measured to a checked statement
+   * balance: the e2e fixture's Chase Total Checking is checked through Jun 30 with rows imported to Jul 4. ⚖️ His
+   * decision 65 (2026-10-12): the words name what the quiet waits for. The forecast, /budgets, the dashboard and this
+   * note's own claim already say it — "the ledger has not looked for their deposits" (`notLookedForDeposits`).
+   */
+  test("paydays past the checked day are ones the ledger has not looked for, never 'not imported'", () => {
+    const [note] = notes({ ...checked, periodsSinceBanked: 14 });
+    expect(note!.body).toContain(
+      "— that money was held as cash, spent as cash, the schedule has ended, or the ledger has not looked for their " +
+        "deposits. The income figures",
+    );
+    expect(note!.body).not.toContain("imported");
+  });
+
+  test("…of one payday, its deposit", () => {
+    const [note] = notes({ ...checked, periodsSinceBanked: 10 });
+    expect(note!.body).toContain("9 of them fall on days the records cover, through 2026-08-12");
+    expect(note!.body).toContain(", or the ledger has not looked for its deposit. ");
+  });
+
+  test("…and of an account with no checked record, every payday's", () => {
+    const [note] = notes({ ...checked, checkedThrough: null, checkedPeriodsCovered: 0, checkedPeriodsSinceBanked: 0 });
+    expect(note!.body).toContain(", or the ledger has not looked for their deposits. ");
+    expect(note!.body).not.toContain("imported");
+  });
+
   test("an account with no checked record claims nothing about what reached it", () => {
     const [note] = notes({ ...checked, checkedThrough: null, checkedPeriodsCovered: 0, checkedPeriodsSinceBanked: 0 });
     expect(note!.body).not.toContain("reached an account");

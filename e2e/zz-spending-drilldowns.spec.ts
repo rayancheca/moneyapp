@@ -190,6 +190,16 @@ test("cash-earnings note scopes July's passed payday to what has been imported",
       "account that pay lands in has been checked through — so the ledger has not looked for it.",
   );
   await expect(note).not.toContainText("none of it reached an account");
+  /*
+   * ⚖️ His decision 65 (2026-10-12): the explanation the unchecked payday adds names what its quiet waits for, in the
+   * forecast's words. 🔴 It read "…the schedule has ended, or it has not been imported yet." of a payday past Jun 30,
+   * a CHECKED day, with Chase Total Checking's rows imported to Jul 4 (measured on a fresh scratch seed 2026-10-13).
+   */
+  await expect(note).toContainText(
+    "— that money was held as cash, spent as cash, the schedule has ended, or the ledger has not looked for its " +
+      "deposit.",
+  );
+  await expect(note).not.toContainText("imported");
 });
 
 test("cash-earnings note calls June's checked paydays unbanked, and names them", async ({ page }) => {

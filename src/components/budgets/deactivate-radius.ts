@@ -1,5 +1,5 @@
 import type { BlastRadiusLine } from "@/components/ui/blast-radius";
-import { arrearsClause } from "@/lib/arrears-reading";
+import { arrearsClause, NOT_POSTED } from "@/lib/arrears-reading";
 
 /**
  * What the owner is switching off when he deactivates a budget, in his units.
@@ -83,7 +83,7 @@ export function budgetDeactivateLines(
                 unreadCents: input.overdueUnreadCents,
                 inGraceCents: input.overdueInGraceCents,
               },
-              "not posted",
+              NOT_POSTED,
             )}`,
             value: formatCents(input.overdueCents),
           },

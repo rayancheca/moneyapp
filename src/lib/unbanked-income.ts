@@ -44,6 +44,18 @@ export const LAST_CHECKED_DAY = "the last day every account that pay lands in ha
 export const NOT_CHECKED = "the ledger has not checked every account that pay could land in";
 
 /**
+ * What the quiet of a payday after `LAST_CHECKED_DAY` waits for — "the ledger has not looked for its deposit", or
+ * "…their deposits" of several: the forecast's note, /budgets, the dashboard and /spending's cash-earnings note.
+ *
+ * ⚖️ His decision 65 (2026-10-12): the words name what the quiet waits for — a checked statement balance, not an
+ * import. 🔴 /spending's note listed "or it has not been imported yet" among the explanations of paydays past the
+ * checked day, while the e2e fixture's Chase Total Checking is checked through Jun 30 with rows imported to Jul 4.
+ */
+export function notLookedForDeposits(paydays: number): string {
+  return paydays === 1 ? "the ledger has not looked for its deposit" : "the ledger has not looked for their deposits";
+}
+
+/**
  * ⚖️ §6A 68 (2026-10-13): what /budgets' header SAYS where it prints "— in so far" — not one day of the month checked
  * where the pay lands (`IncomeExpectation.noIncomeDayRead`). A screen reader given the bare dash hears nothing, or "em
  * dash", where the figure was; the spoken line says why there is none, as a budget row's does under §6A 64.
@@ -113,9 +125,7 @@ export function unbankedIncomeFrontierClause(
       ? `after ${formatDay(r.frontier.through)}, ${LAST_CHECKED_DAY}`
       : `after the last day the accounts ${unread === 1 ? "its" : "their"} pay lands in have been checked through, which differs by schedule`;
   if (checkedPart === null) {
-    return unread === 1
-      ? `It falls ${after} — so the ledger has not looked for its deposit.`
-      : `They all fall ${after} — so the ledger has not looked for their deposits.`;
+    return `${unread === 1 ? "It falls" : "They all fall"} ${after} — so ${notLookedForDeposits(unread)}.`;
   }
   return `${checkedPart}; ${other} ${unread === 1 ? "falls" : "fall"} ${after}.`;
 }

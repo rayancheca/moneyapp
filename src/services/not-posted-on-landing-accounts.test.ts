@@ -209,7 +209,7 @@ describe("a bill's due days are read where it posts NOW — its last two payment
     importedThrough(WF, "2026-10-04");
     // Chase Checking still stops at Aug 12: an account the rent left cannot hold its day unread
     expect(oct1(RENT)).toEqual(NOT_POSTED);
-    expect(arrearsSentence(committedBook(bundle.db, TODAY))).toContain("never posted");
+    expect(arrearsSentence(committedBook(bundle.db, TODAY))).toContain("has not posted");
   });
 
   test("what is billed with the rent is read where the rent posts now — one payment, one answer", () => {
@@ -258,7 +258,7 @@ describe("the chip and the ✕ read one day: the same accounts, each to its chec
     });
     expect(oct1(RENT, today)).toEqual(QUIET);
     expect(oct1(UTIL, today)).toEqual(QUIET);
-    expect(arrearsSentence(committedBook(bundle.db, today))).not.toContain("never posted");
+    expect(arrearsSentence(committedBook(bundle.db, today))).not.toContain("has not posted");
   });
 
   /*
@@ -345,7 +345,7 @@ describe("a bill naming one account and paying from another is read on both — 
     expect(oct1(RENT, today)).toEqual(QUIET);
     // what is billed with it follows its carrier: one payment, one answer
     expect(oct1(UTIL, today)).toEqual(QUIET);
-    expect(arrearsSentence(committedBook(bundle.db, today))).not.toContain("never posted");
+    expect(arrearsSentence(committedBook(bundle.db, today))).not.toContain("has not posted");
   });
 
   test("the earlier day stands: Chase Checking through Oct 10, Wells Fargo through Oct 3 is quiet; through Oct 4, not posted", () => {

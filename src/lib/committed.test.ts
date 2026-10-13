@@ -358,21 +358,26 @@ describe("arrears — never posted only of days the ledger has read", () => {
     expect(arrearsSentence({ overdueCents: 0, overdueUnreadCents: 0 })).toBeNull();
   });
 
-  test("days the ledger has read may say never posted", () => {
-    expect(arrearsSentence({ overdueCents: 229620, overdueUnreadCents: 0 })).toBe(
-      "A further $2,296.20 came due earlier this month and never posted.",
-    );
+  /*
+   * 🔴 …and of those days it said "never posted", its own word, where every other surface says "has not posted" or
+   * "not posted" (his decisions 60 and 65): the math table "came due Oct 1 and has not posted", /budgets' spoken row
+   * "was expected by now and has not posted". One word for the read half, from the one builder (`HAS_NOT_POSTED`).
+   */
+  test("days the ledger has read say it has not posted, in every surface's words", () => {
+    const s = arrearsSentence({ overdueCents: 229620, overdueUnreadCents: 0 })!;
+    expect(s).toBe("A further $2,296.20 came due earlier this month and has not posted.");
+    expect(s).not.toContain("never posted");
   });
 
-  test("days no checked statement covers say so in /budgets' words, never 'never posted'", () => {
+  test("days no checked statement covers say so in /budgets' words, never 'has not posted'", () => {
     const s = arrearsSentence({ overdueCents: 229620, overdueUnreadCents: 229620 })!;
     expect(s).toBe("A further $2,296.20 came due earlier this month and no statement has covered it yet.");
-    expect(s).not.toContain("never posted");
+    expect(s).not.toContain("not posted");
   });
 
   test("a mix names each part by what the ledger can say of it", () => {
     expect(arrearsSentence({ overdueCents: 229620, overdueUnreadCents: 210900 })).toBe(
-      "A further $2,296.20 came due earlier this month: $187.20 never posted, and no statement has covered the other $2,109.00 yet.",
+      "A further $2,296.20 came due earlier this month: $187.20 has not posted, and no statement has covered the other $2,109.00 yet.",
     );
   });
 });
