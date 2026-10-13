@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { MonthKeyParseError, addMonths, daysInMonthOf, monthLabel, monthMatrix, type CalendarDay, type WeekStart, weekdayLabels } from "./calendar-math";
+import { MonthKeyParseError, addMonths, daysInMonthOf, monthsBetween, monthLabel, monthMatrix, type CalendarDay, type WeekStart, weekdayLabels } from "./calendar-math";
 import { addDays } from "./dates";
 
 const INVALID_KEYS = ["", "2026", "2026-7", "202607", "2026-00", "2026-13", "2026-07-01", "abc"];
@@ -20,6 +20,24 @@ describe("addMonths", () => {
 
   test.each(INVALID_KEYS)("rejects invalid month key %j", (key) => {
     expect(() => addMonths(key, 1)).toThrow(MonthKeyParseError);
+  });
+});
+
+describe("monthsBetween", () => {
+  test.each([
+    ["2026-07", "2026-06", -1],
+    ["2026-07", "2026-08", 1],
+    ["2026-01", "2025-12", -1],
+    ["2026-07", "2024-07", -24],
+    ["2026-07", "2026-07", 0],
+  ])("monthsBetween(%s, %s) -> %d, and addMonths walks it back", (from, to, months) => {
+    expect(monthsBetween(from, to)).toBe(months);
+    expect(addMonths(from, monthsBetween(from, to))).toBe(to);
+  });
+
+  test.each(INVALID_KEYS)("rejects invalid month key %j on either side", (key) => {
+    expect(() => monthsBetween(key, "2026-07")).toThrow(MonthKeyParseError);
+    expect(() => monthsBetween("2026-07", key)).toThrow(MonthKeyParseError);
   });
 });
 
