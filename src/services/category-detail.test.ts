@@ -733,15 +733,16 @@ describe("⚖️ §6A 49 — a category page asks its own imported-through day",
       return ref;
     };
 
-    // Car in October: $0.00 of an unimported month — withheld, in the row's words, not "$300.00 left" in green
+    // Car in October: an unimported month — withheld, in the row's words, not "$300.00 left" in green; and ⚖️ not one
+    // day of it read, so no Spent and no Left at all (§6A 64)
     expect(both("Transport", OCT_7)).toMatchObject({
       spentCents: 0,
-      verdict: { headline: "Awaiting statements", withheld: true },
+      verdict: { headline: "Awaiting statements", withheld: true, unread: true },
       coverageSentence: "spending imported through Aug 12 · 7 days of this period unaccounted",
     });
     // ⚖️ a category spent only from a cash wallet offers no reading, and says why (owner decision 2026-09-15)
     expect(both("Gifts & Donations", OCT_7)).toMatchObject({
-      verdict: { headline: "Cash only", withheld: true },
+      verdict: { headline: "Cash only", withheld: true, unread: false },
       coverageSentence: "spent only from a cash wallet since Apr 1 — no statement will ever cover it",
     });
     // past the line on partial data is a fact more data cannot undo: graded, not withheld
@@ -786,6 +787,9 @@ describe("⚖️ §6A 49 — a category page asks its own imported-through day",
       // one rule: the card is its /budgets row, word for word
       expect(ref.verdict).toEqual(budgetVerdict(row));
       expect(ref.coverageSentence).toBe(ref.verdict.withheld ? budgetCoverageSentence(row) : null);
+      // ⚖️ §6A 64 — and over a window holding no rows, the card prints a dash exactly where the headline over it does
+      expect(row.txnCount).toBe(0);
+      expect(ref.verdict.unread, `${categoryPath} @ ${refDate}`).toBe(copy.figure === "dash");
       return {
         figure: copy.figure,
         description: copy.description,

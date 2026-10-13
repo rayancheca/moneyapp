@@ -23,6 +23,8 @@ const row = (over: Partial<Parameters<typeof budgetSectionNotes>[0]["rows"][numb
   pace: "under" as const,
   spentFromAccounts: 1,
   spentFromWallets: 0,
+  noDayRead: false,
+  txnCount: 1,
   ...over,
   // unread unless a test says otherwise — his ledger's arrears 2026-10-08, on days no import had reached
   overdueUnreadCents: over.overdueUnreadCents ?? over.overdueCents ?? 0,
@@ -276,6 +278,43 @@ describe("budgetSectionNotes", () => {
     const body = notes.map((n) => n.body).join(" ");
     expect(body).toMatch(/lower bounds/);
     expect(body).not.toMatch(/projected|on track|will be/i);
+  });
+
+  /*
+   * ⚖️ OWNER DECISION 2026-10-12 (§6A 64): a row not one elapsed day of whose window has been read prints no Spent and
+   * no Left — so the note may not call its spend a lower bound. 🔴 Measured on his ledger copy 2026-10-12: "12 of 12
+   * budgets are grading days the ledger has not reached — 12 days each. Their spend and percentages are lower bounds,
+   * not measurements" over twelve rows that print no spend and no percentage at all. ⛔ The rows' own test
+   * (`lib/budget-coverage::spendUnread`), so the note and the rows cannot disagree about which rows print a dash.
+   */
+  describe("⚖️ §6A 64 — rows that print no spend", () => {
+    const UNREAD = { uncoveredDays: 12, noDayRead: true, txnCount: 0 } as const;
+    const coverage = (rows: ReturnType<typeof row>[]) =>
+      budgetSectionNotes({ rows }).find((n) => n.id === "budgets-coverage")!.body;
+
+    test("every one of them: no spend is called a lower bound", () => {
+      expect(coverage([row({ ...UNREAD, categoryPath: "Car" }), row({ ...UNREAD, categoryPath: "Food" })])).toBe(
+        "2 of 2 budgets are grading days the ledger has not reached — 12 days each. Not one elapsed day of their " +
+          "periods has been imported, so neither their spend nor a verdict is shown.",
+      );
+    });
+
+    test("some of them: each kind is said of the rows it is true of", () => {
+      expect(coverage([row({ ...UNREAD, categoryPath: "Car" }), row({ categoryPath: "Food", uncoveredDays: 4 })])).toBe(
+        "2 of 2 budgets are grading days the ledger has not reached — up to 12 days on Car. No verdict is shown for " +
+          "any of them: 1 has not had one elapsed day imported, so no spend is shown there either, and the others' " +
+          "spend and percentages are lower bounds, not measurements.",
+      );
+      const twoUnread = [row({ ...UNREAD, categoryPath: "Car" }), row({ ...UNREAD, categoryPath: "Fees" })];
+      expect(coverage([...twoUnread, row({ uncoveredDays: 4 })])).toMatch(/: 2 have not had one elapsed day imported/);
+    });
+
+    test("a row found in it, or one spent only from cash, keeps its figures and the lower-bound words", () => {
+      for (const kept of [{ txnCount: 1 }, { spentFromAccounts: 0, spentFromWallets: 1 }]) {
+        const body = coverage([row({ ...UNREAD, ...kept }), row({ uncoveredDays: 4 })]);
+        expect(body).toMatch(/Their spend and percentages are lower bounds, not measurements, so no verdict is shown/);
+      }
+    });
   });
 });
 

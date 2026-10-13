@@ -1,5 +1,5 @@
 import { arrearsTail } from "./arrears-reading";
-import { spentOnlyFromCashWallets, type BudgetCoverageInput } from "./budget-coverage";
+import { spendUnread, spentOnlyFromCashWallets, type BudgetCoverageInput } from "./budget-coverage";
 import { formatCategoryPath } from "./category-path";
 import { isStaleClose, newestQuotedOn } from "./holding-price-age";
 import { formatCents } from "./money";
@@ -94,6 +94,9 @@ export interface BudgetNoteInput {
     /** the row's accounts, so a cash-only row is told apart by the rule the row itself uses */
     spentFromAccounts: BudgetCoverageInput["spentFromAccounts"];
     spentFromWallets: BudgetCoverageInput["spentFromWallets"];
+    /** ⚖️ §6A 64: whether the row prints a dash for its spend, by the row's own test (`spendUnread`) */
+    noDayRead: boolean;
+    txnCount: number;
   }[];
 }
 
@@ -189,12 +192,25 @@ export function budgetSectionNotes(input: BudgetNoteInput): SectionNote[] {
      */
     const tied = uncovered.length > 1 && uncovered.every((r) => r.uncoveredDays === worst.uncoveredDays);
     const days = `${worst.uncoveredDays} ${worst.uncoveredDays === 1 ? "day" : "days"}`;
+    /*
+     * ⚖️ §6A 64 (2026-10-12): a row not one elapsed day of whose window has been read prints no spend at all, so its
+     * spend is no lower bound. 🔴 On his ledger copy 2026-10-12 this read "Their spend and percentages are lower
+     * bounds, not measurements" over twelve rows that print "—" for both. ⛔ The rows' own test (`spendUnread`).
+     */
+    const unread = uncovered.filter((r) => spendUnread(r)).length;
+    const shown =
+      unread === 0
+        ? "Their spend and percentages are lower bounds, not measurements, so no verdict is shown for them."
+        : unread === uncovered.length
+          ? "Not one elapsed day of their periods has been imported, so neither their spend nor a verdict is shown."
+          : `No verdict is shown for any of them: ${unread} ${unread === 1 ? "has" : "have"} not had one elapsed ` +
+            "day imported, so no spend is shown there either, and the others' spend and percentages are lower " +
+            "bounds, not measurements.";
     notes.push({
       id: "budgets-coverage",
       body:
         `${uncovered.length} of ${input.rows.length} budgets are grading days the ledger has not ` +
-        `reached — ${tied ? `${days} each` : `up to ${days} on ${worst.categoryPath}`}. Their spend and ` +
-        `percentages are lower bounds, not measurements, so no verdict is shown for them.`,
+        `reached — ${tied ? `${days} each` : `up to ${days} on ${worst.categoryPath}`}. ${shown}`,
     });
   }
 

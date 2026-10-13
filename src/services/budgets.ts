@@ -59,7 +59,7 @@ import { linkIsRecurring, rowIsRecurring, seriesIdsNotDrawnAsRecurring } from ".
 export { overdueForSeries };
 export type { BudgetTail, BudgetTailSeries };
 import { incomeBasis, levelledMonthlyCents, type IncomeBasis } from "@/lib/income-basis";
-import { daysNotImportedYet } from "@/lib/empty-period";
+import { daysNotImportedYet, emptyFigure, emptyPeriodReason, type EmptyPeriodInput } from "@/lib/empty-period";
 import { spentOnlyFromCashWallets, type BorrowedDay } from "@/lib/budget-coverage";
 import { formatCategoryPath } from "@/lib/category-path";
 import { categoryReach, type CategoryReach } from "@/lib/category-reach";
@@ -229,6 +229,8 @@ export interface BudgetStatus {
   partialPeriod: boolean;
   /** subtree rollup of active expense spending inside bounds */
   spentCents: number;
+  /** the rows `spentCents` was summed from — 0 is a window in which not one row was found (⚖️ §6A 64) */
+  txnCount: number;
   /** unspent plan banked from CLOSED periods; 0 whenever rollover is off */
   rolloverCents: number;
   /** amountCents + rolloverCents — the line this period is actually graded against */
@@ -359,7 +361,7 @@ export function budgetStatuses(db: AppDatabase, refDate: string = todayIso()): B
       const period = periodBounds(refDate, b.period);
       const partialPeriod = compareDates(b.startsOn, period.start) > 0;
       const bounds: PeriodBounds = partialPeriod ? { start: b.startsOn, end: period.end } : period;
-      const { spentCents } = categorySpending(db, {
+      const { spentCents, txnCount } = categorySpending(db, {
         categoryId: b.categoryId,
         from: bounds.start,
         to: bounds.end,
@@ -401,6 +403,7 @@ export function budgetStatuses(db: AppDatabase, refDate: string = todayIso()): B
         bounds,
         partialPeriod,
         spentCents,
+        txnCount,
         rolloverCents,
         availableCents,
         // Every "how am I doing" figure grades against AVAILABLE, not plan: with
@@ -1528,6 +1531,13 @@ export interface BudgetPaceStatus extends BudgetStatus, CategoryCoverage {
    */
   uncoveredDays: number;
   /**
+   * ⚖️ §6A 64 (2026-10-12): NOT ONE elapsed day of this window has been read by the day `uncoveredDays` is counted
+   * against — the category headline's question (`lib/empty-period::emptyFigure` "dash"), asked of the same window and
+   * day. With no row found in it the row prints "—" for Spent and Left (`lib/budget-coverage::spendUnread`). True of
+   * a row spent only from cash wallets, which has no day at all; that row keeps its figures by the predicate's rule.
+   */
+  noDayRead: boolean;
+  /**
    * the page's day where the category has no import day of its own and is not cash only (`borrowedReach`) — what
    * `uncoveredDays` was counted against, named in the row's sentence; null otherwise
    */
@@ -1688,13 +1698,14 @@ export function budgetPaceStatusOf(
   const coverage = categoryCoverage(db, s.budget.categoryId, start, refDate, frontier, wallets, awaiting);
   // ⚖️ no day of its own: the page's, so the card under its headline counts what the headline counts (`borrowedReach`)
   const borrowed = borrowedReach(db, s.budget.categoryId, coverage, start, refDate, reads);
-  const uncoveredDays = daysNotImportedYet({
+  const window: EmptyPeriodInput = {
     from: start,
     to: end,
     today: refDate,
     ledgerOpens: opens,
     ledgerReaches: borrowed === null ? coverage.importedThroughOn : borrowed.through,
-  });
+  };
+  const uncoveredDays = daysNotImportedYet(window);
   return {
     ...s,
     overdueCents: overdue.totalCents,
@@ -1703,6 +1714,9 @@ export function budgetPaceStatusOf(
     ...coverage,
     borrowedDay: borrowed?.day ?? null,
     uncoveredDays,
+    // ⚖️ §6A 64: the headline's dash (`emptyFigure`) over the window and day the count above was taken on, never a
+    // second reading of either
+    noDayRead: emptyFigure(emptyPeriodReason(window)) === "dash",
     totalDays,
     elapsedDays,
     elapsedFraction: elapsedDays / totalDays,

@@ -47,7 +47,12 @@ import { arrearsClause } from "@/lib/arrears-reading";
 export interface BudgetDeactivateInput {
   /** the plan itself, already formatted with its period word */
   budgetPhrase: string;
-  spentCents: number;
+  /**
+   * ⚖️ null where not one elapsed day of the period has been read and nothing was found in it — the row behind the
+   * dialog prints "Spent —", and so does this (owner decision 2026-10-12, §6A 64). 🔴 All 12 of his confirmations
+   * read "$0.00" there on his ledger copy 2026-10-12, over an October nobody had imported a day of.
+   */
+  spentCents: number | null;
   /** bills due on or before today — late, or due today and not yet posted */
   overdueCents: number;
   /** of `overdueCents`, the part on days no import has reached (`BudgetPaceStatus.overdueUnreadCents`) */
@@ -62,7 +67,7 @@ export function budgetDeactivateLines(
 ): BlastRadiusLine[] {
   return [
     { label: "Budget stopped", value: input.budgetPhrase, irreversible: true },
-    { label: "Spent so far this period", value: formatCents(input.spentCents) },
+    { label: "Spent so far this period", value: input.spentCents === null ? "—" : formatCents(input.spentCents) },
     ...(input.overdueCents > 0
       ? [
           // ⛔ both ends: the figure is `budgetOverdue` from the period start to

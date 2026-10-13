@@ -145,7 +145,8 @@ export const CATEGORY_KIND_JARGON: Record<string, string> = {
  * would eventually disagree about the same graphic. `paceOver` does NOT use it:
  * that row draws no mark, and would be describing something it does not render.
  */
-const BAR_PARTS = "The filled part is what has gone so far, and the dark mark is how far through the period you are";
+const TODAY_MARK = "the dark mark is how far through the period you are";
+const BAR_PARTS = `The filled part is what has gone so far, and ${TODAY_MARK}`;
 
 /**
  * …and how to read pace off them, for the three states that offer a reading of
@@ -209,6 +210,11 @@ export const BUDGET_JARGON = {
   paceOver:
     "Spending has already passed the line, and no later import can undo that — this reading is measured rather than a forecast. The bar is full and no longer to scale, and the period mark is left off because there is nothing left for it to divide.",
   paceWithheld: `Days in this window have no imported spending yet, so the amount and the percentage can only rise — they are floors rather than measurements. No reading is offered over them, because calling an unimported month healthy is the one error this page must not make. ${BAR_ANATOMY}`,
+  /*
+   * ⚖️ §6A 64 (2026-10-12): not one elapsed day read, so the row prints a dash for what has gone and what is left —
+   * no amount, no percentage and no fill for a body to describe. It names the one mark the bar still draws.
+   */
+  paceUnread: `Not one day of this window so far has been imported, so there is no amount to show: a zero would say nothing was spent on days nobody has looked at. The plan stands; what has gone and what remains of it wait for the statements that cover them. No reading is offered, and ${TODAY_MARK}.`,
   // ⚖️ owner, 2026-09-15: a category spent only from cash wallets waits for no statement and gets no reading
   paceCashOnly: `Everything in this window was typed into a cash wallet, and a wallet has no statements, so no import will ever show what was not typed in. The amount is what was recorded; no reading of where it is heading is offered over it. ${BAR_PARTS}.`,
 } as const;

@@ -1,4 +1,4 @@
-import { spentOnlyFromCashWallets, type BudgetCoverageInput } from "./budget-coverage";
+import { spendUnread, spentOnlyFromCashWallets, type BudgetCoverageInput } from "./budget-coverage";
 import { BUDGET_JARGON } from "./jargon";
 
 /**
@@ -18,7 +18,8 @@ import { BUDGET_JARGON } from "./jargon";
  * and no cash wallet exists while /budgets is visited (the wallet specs run
  * after `zz-budgets`). So three of the five states below cannot render in any
  * Playwright run, and a component-level assertion would pass whether or not they
- * were right. This
+ * were right — four of six since §6A 64's dash, which no fixture row reaches
+ * (every one of the four has a day of July read). This
  * module is inside the 100%-coverage gate, which forces every branch to be
  * executed by a test that can actually see it.
  */
@@ -56,6 +57,11 @@ export interface BudgetVerdict {
    * question, not decided here.
    */
   showsProjection: boolean;
+  /**
+   * ⚖️ §6A 64 (2026-10-12): not one elapsed day of the window read and not one row found in it — Spent and Left print
+   * "—", the plan stands, and the bar carries no measured value (`lib/budget-coverage::spendUnread`). Always withheld.
+   */
+  unread: boolean;
 }
 
 const LABEL: Record<BudgetPaceKind, string> = {
@@ -70,6 +76,10 @@ export interface BudgetVerdictInput extends Pick<BudgetCoverageInput, "spentFrom
   pct: number;
   /** days of this window the ledger has not covered */
   uncoveredDays: number;
+  /** not one elapsed day of this window read by the row's own day (`BudgetPaceStatus.noDayRead`) */
+  noDayRead: boolean;
+  /** the rows found in this window (`BudgetStatus.txnCount`) */
+  txnCount: number;
 }
 
 export function budgetVerdict(input: BudgetVerdictInput): BudgetVerdict {
@@ -86,6 +96,7 @@ export function budgetVerdict(input: BudgetVerdictInput): BudgetVerdict {
       barIsFull: true,
       withheld: false,
       showsProjection: false,
+      unread: false,
     };
   }
 
@@ -105,6 +116,26 @@ export function budgetVerdict(input: BudgetVerdictInput): BudgetVerdict {
       barIsFull: false,
       withheld: true,
       showsProjection: false,
+      unread: false,
+    };
+  }
+
+  /*
+   * ⚖️ OWNER DECISION 2026-10-12 (§6A 64): not one elapsed day read and nothing found, so there is no figure to give
+   * a floor of — the dashboard's pace tile and the category headline's dash (`lib/empty-period::emptyFigure`). The
+   * row's headline is the withheld one; its definition names only what the row still draws. Ahead of the day count
+   * because the headline must be withheld wherever the figures are: a window that has not opened (unreachable from the
+   * app, which stamps a budget's start with today) counts no days and would otherwise be graded under a dash.
+   */
+  if (spendUnread(input)) {
+    return {
+      headline: "Awaiting statements",
+      explanation: BUDGET_JARGON.paceUnread,
+      barIsFull: false,
+      withheld: true,
+      // ❓ kept as "Awaiting statements" keeps it — see `showsProjection`
+      showsProjection: true,
+      unread: true,
     };
   }
 
@@ -124,6 +155,7 @@ export function budgetVerdict(input: BudgetVerdictInput): BudgetVerdict {
       withheld: true,
       // ❓ kept as it was before this field existed — see `showsProjection`
       showsProjection: true,
+      unread: false,
     };
   }
 
@@ -133,5 +165,6 @@ export function budgetVerdict(input: BudgetVerdictInput): BudgetVerdict {
     barIsFull: false,
     withheld: false,
     showsProjection: true,
+    unread: false,
   };
 }

@@ -2286,6 +2286,56 @@ describe("data coverage (uncoveredDays / importedThroughOn)", () => {
     expect(budgetCoverageSentence(s)).toBe("spent only from a cash wallet since Feb 1 — no statement will ever cover it");
     const notes = budgetSectionNotes({ rows: [{ ...s, overdueBills: 0 }] });
     expect(notes.find((n) => n.id === "budgets-coverage")).toBeUndefined();
+    // ⚖️ §6A 64: no import will ever read a wallet's day, so its typed figures are never dashed for want of one
+    expect(s.noDayRead).toBe(true);
+    expect(v.unread).toBe(false);
+  });
+
+  /*
+   * ⚖️ OWNER DECISION 2026-10-12 (§6A 64): where NO elapsed day of a budget's window is imported, Spent and Left print
+   * "—" (the plan stays) — the dashboard's pace tile and the category headline's rule (`lib/empty-period::emptyFigure`),
+   * asked of the row's OWN window and day: the ones `uncoveredDays` is counted on. 🔴 Measured on his ledger copy
+   * 2026-10-12: all 12 rows read "Spent $0.00 · Left $X" over an October the accounts they are spent from were imported
+   * through Aug 12 or Sep 2 — "you have spent nothing" of a month nobody had looked at.
+   */
+  describe("⚖️ §6A 64 — whether one elapsed day of the window has been read", () => {
+    test("an account read only before the window opens leaves no day of it read and no row in it: a dash", () => {
+      spend("2026-07-20", -5_000, "Food");
+      const s = foodBudget();
+      expect(s.uncoveredDays).toBe(11);
+      expect(s.noDayRead).toBe(true);
+      expect(s.txnCount).toBe(0);
+      expect(budgetVerdict(s).unread).toBe(true);
+    });
+
+    test("an empty ledger has read nothing either", () => {
+      createBudget(bundle.db, { categoryId: catId("Travel"), period: "monthly", amountCents: 50_000, startsOn: "2026-08-01" });
+      const s = budgetPaceStatuses(bundle.db, TODAY).find((x) => x.categoryName === "Travel")!;
+      expect(s.noDayRead).toBe(true);
+      expect(budgetVerdict(s).unread).toBe(true);
+    });
+
+    // ⛔ two ends: the window's first day read is a floor, not a dash
+    test("one day read keeps the lower-bound shape", () => {
+      spend("2026-07-20", -5_000, "Food");
+      spend("2026-08-01", -1_000, "Shopping"); // the card Food is spent from, read through Aug 1
+      const s = foodBudget();
+      expect(s.importedThroughOn).toBe("2026-08-01");
+      expect(s.uncoveredDays).toBe(10);
+      expect(s.noDayRead).toBe(false);
+      expect(budgetVerdict(s).unread).toBe(false);
+    });
+
+    test("a fresher account's charge inside the window is found — a floor, never a dash", () => {
+      const fresh = account("Fresh");
+      spend("2026-07-20", -5_000, "Food"); // the card: Food's day, Jul 20
+      spend("2026-08-05", -1_200, "Food", fresh);
+      const s = foodBudget();
+      expect(s.importedThroughOn).toBe("2026-07-20");
+      expect(s.noDayRead).toBe(true);
+      expect([s.txnCount, s.spentCents]).toEqual([1, 1_200]);
+      expect(budgetVerdict(s).unread).toBe(false);
+    });
   });
 });
 

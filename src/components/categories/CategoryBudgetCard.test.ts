@@ -16,7 +16,10 @@ import { CategoryBudgetCard } from "./CategoryBudgetCard";
  * shape now: the row's withheld verdict, the row's coverage sentence, and a "left" that is not called healthy.
  */
 
-const ROW = { spentFromAccounts: 1, spentFromWallets: 0 };
+const ROW = { spentFromAccounts: 1, spentFromWallets: 0, noDayRead: false, txnCount: 1 };
+
+/** ⚖️ §6A 64: his October, 2026-10-12 — not one elapsed day of it read (Aug 12), and not one row found in it */
+const UNREAD = { noDayRead: true, txnCount: 0 } as const;
 
 /** Housing on his ledger copy 2026-10-12, as `categoryBudgetRef` returns it — less the reading, which each test sets */
 const HOUSING = {
@@ -33,7 +36,7 @@ const HOUSING = {
 
 const AWAITING: CategoryBudgetRef = {
   ...HOUSING,
-  verdict: budgetVerdict({ ...ROW, pace: "at-risk", pct: 0, uncoveredDays: 12 }),
+  verdict: budgetVerdict({ ...ROW, ...UNREAD, pace: "at-risk", pct: 0, uncoveredDays: 12 }),
   coverageSentence: "spending imported through Aug 12 · 12 days of this period unaccounted",
 };
 
@@ -53,14 +56,30 @@ function classOf(html: string, words: string): string {
 }
 
 describe("CategoryBudgetCard — /budgets' reading of the same row and window", () => {
-  test("an unimported month is withheld in the row's words, not graded in green", () => {
+  /*
+   * ⚖️ OWNER DECISION 2026-10-12 (§6A 64): not one elapsed day of the window read, so Spent and Left print "—" and the
+   * plan stands — the headline above this card prints its own "—" over the same October (`CategoryHeadline`).
+   */
+  test("an unimported month is withheld in the row's words, not graded in green — and prints no Spent and no Left", () => {
     const html = render(AWAITING);
     expect(text(html)).toBe(
       "Budget Awaiting statements monthly budget · grading Oct 1 – Oct 31 " +
         "spending imported through Aug 12 · 12 days of this period unaccounted " +
-        "$0.00 of $2,291.21 $2,291.21 left Budgets →",
+        "— of $2,291.21 — left Budgets →",
     );
+    expect(html).not.toContain("$0.00");
     // /budgets' "Left" carries no colour while its verdict is withheld — and neither does this one
+    expect(classOf(html, "— left")).not.toMatch(/text-(positive|warning|negative)/);
+  });
+
+  test("a month read in part keeps its $0.00, the floor its coverage sentence calls it", () => {
+    const partly: CategoryBudgetRef = {
+      ...HOUSING,
+      verdict: budgetVerdict({ ...ROW, txnCount: 0, pace: "at-risk", pct: 0, uncoveredDays: 9 }),
+      coverageSentence: "spending imported through Oct 3 · 9 days of this period unaccounted",
+    };
+    const html = render(partly);
+    expect(text(html)).toMatch(/ \$0\.00 of \$2,291\.21 \$2,291\.21 left Budgets →$/);
     expect(classOf(html, "$2,291.21 left")).not.toMatch(/text-(positive|warning|negative)/);
   });
 
@@ -80,7 +99,15 @@ describe("CategoryBudgetCard — /budgets' reading of the same row and window", 
   test("⚖️ a category spent only from a cash wallet says so, and no statement is promised", () => {
     const cash: CategoryBudgetRef = {
       ...HOUSING,
-      verdict: budgetVerdict({ spentFromAccounts: 0, spentFromWallets: 1, pace: "under", pct: 0, uncoveredDays: 12 }),
+      // ⚖️ a wallet's day is never read by an import, so its typed figures stand (§6A 64 leaves them be)
+      verdict: budgetVerdict({
+        ...UNREAD,
+        spentFromAccounts: 0,
+        spentFromWallets: 1,
+        pace: "under",
+        pct: 0,
+        uncoveredDays: 12,
+      }),
       coverageSentence: "spent only from a cash wallet since Apr 1 — no statement will ever cover it",
     };
     const html = render(cash);

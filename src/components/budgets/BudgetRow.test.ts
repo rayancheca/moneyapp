@@ -18,6 +18,7 @@ import { createCashWallet } from "@/services/cash-wallets";
 import { checkedThrough } from "@/services/checked-days-fixture";
 import { addManualTransaction } from "@/services/manual-transactions";
 import { seedHisCarSeries } from "@/services/one-charge-fixture";
+import { provenanceFor } from "@/services/provenance";
 import { BudgetRow } from "./BudgetRow";
 
 // rendering never navigates or submits; the row and its controls only need these to exist
@@ -178,6 +179,105 @@ describe("BudgetRow — what it draws beside the verdict", () => {
     const html = render(s);
     expect(html).toContain("Off pace");
     expect(html).toMatch(/Projected ≈ <\/span><span class="[^"]*text-warning/);
+  });
+});
+
+/*
+ * ⚖️ OWNER DECISION 2026-10-12 (§6A 64): where NO elapsed day of a budget's window is imported, Spent and Left print
+ * "—" and Budget stays — the dashboard's pace tile and the category headline's rule (`lib/empty-period::emptyFigure`).
+ * 🔴 Measured on his ledger copy 2026-10-12: all 12 rows read "Spent $0.00 · Left $X", a bar announcing "0% of
+ * budget", over an October the accounts they are spent from were imported through Aug 12 or Sep 2.
+ */
+describe("BudgetRow — ⚖️ §6A 64, a window not one day of which has been read", () => {
+  /** Food spent on a Card read through `readThrough` (a Shopping row that day), under an August Food budget */
+  function foodReadThrough(readThrough: string): BudgetPaceStatus {
+    const chase = bundle.db.select().from(institutions).where(eq(institutions.name, "Chase")).get()!;
+    const card = createAccount(bundle.db, { institutionId: chase.id, name: "Card", type: "credit" });
+    for (const [postedOn, category] of [
+      ["2026-07-20", "Food"],
+      [readThrough, "Shopping"],
+    ] as const) {
+      const rawDescription = `SPEND ${postedOn} ${category}`;
+      bundle.db
+        .insert(transactions)
+        .values({
+          accountId: card,
+          postedOn,
+          amountCents: -1_000,
+          rawDescription,
+          normalizedDescription: rawDescription,
+          categoryId: catId(category),
+          dedupeHash: dedupeHash({ accountId: card, postedOn, amountCents: -1_000, rawDescription, occurrenceIndex: 0 }),
+        })
+        .run();
+    }
+    createBudget(bundle.db, { categoryId: catId("Food"), period: "monthly", amountCents: 30_000, startsOn: "2026-08-01" });
+    return statusFor("Food");
+  }
+
+  const spoken = (html: string): string => /aria-valuetext="([^"]*)"/.exec(html)![1]!;
+  /** `html` less every element marked aria-hidden — a rolling figure's digit strips — nesting counted */
+  function withoutHidden(html: string): string {
+    let out = "";
+    let at = 0;
+    for (;;) {
+      const start = html.indexOf('<span aria-hidden="true"', at);
+      if (start === -1) return out + html.slice(at);
+      out += html.slice(at, start);
+      let depth = 0;
+      const tag = /<(\/?)span\b[^>]*>/g;
+      tag.lastIndex = start;
+      for (let m = tag.exec(html); m; m = tag.exec(html)) {
+        depth += m[1] ? -1 : 1;
+        if (depth === 0) {
+          at = tag.lastIndex;
+          break;
+        }
+      }
+    }
+  }
+
+  /** the figures cluster's text — "Spent … Budget … Left …" — as a reader hears it, tags dropped */
+  const CLUSTER = /<span class="text-ink-faint">Spent <\/span>[\s\S]*?(?=<div class="flex flex-wrap items-center gap-1">)/;
+  const figures = (html: string): string =>
+    withoutHidden(CLUSTER.exec(html)![0]!)
+      .replace(/<!-- -->/g, "")
+      .replace(/<[^>]+>/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+
+  test("Spent and Left print a dash, the plan stands, and the bar announces no measured value", () => {
+    const s = foodReadThrough("2026-07-31");
+    const spentProof = provenanceFor(bundle.db, {
+      kind: "categorySpend",
+      categoryId: s.budget.categoryId,
+      from: s.bounds.start,
+      to: s.bounds.end,
+      label: s.categoryPath,
+    });
+    const html = renderToStaticMarkup(
+      createElement(BudgetRow, { status: s, guidanceCents: 0, spentProvenance: spentProof, planProvenance: null }),
+    );
+    expect(figures(html)).toMatch(/^Spent — Budget \$300\.00 Left —/);
+    expect(html).not.toContain("$0.00");
+    // ⛔ no proof beside a dash: the popover proves a rendered figure (`CategoryHeadline`)
+    expect(html).not.toMatch(/How Food spent is known/);
+    // the no-verdict look: the withheld headline and its coverage sentence, and a bar with no measured value on it
+    expect(html).toContain("Awaiting statements");
+    expect(html).toContain("spending imported through Jul 31 · 11 days of this period unaccounted");
+    expect(html).not.toMatch(/aria-valuenow=/);
+    expect(spoken(html)).toBe(
+      "Food: no day of this period imported yet, so neither spent nor left is shown against $300.00. " +
+        "35% of this period has passed. spending imported through Jul 31 · 11 days of this period unaccounted.",
+    );
+  });
+
+  test("the control: one day read keeps today's lower-bound shape — $0.00 and a bar at 0", () => {
+    const s = foodReadThrough("2026-08-01");
+    const html = render(s);
+    expect(figures(html)).toMatch(/^Spent \$0\.00 Budget \$300\.00 Left \$300\.00/);
+    expect(html).toContain('aria-valuenow="0"');
+    expect(spoken(html)).toMatch(/^Food: \$0\.00 of \$300\.00 \(0% of budget\)\. /);
   });
 });
 

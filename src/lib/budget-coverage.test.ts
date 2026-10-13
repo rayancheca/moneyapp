@@ -2,6 +2,7 @@ import { describe, expect, test } from "vitest";
 import {
   budgetCoverageFact,
   budgetCoverageSentence,
+  spendUnread,
   spentOnlyFromCashWallets,
   type BudgetCoverageInput,
 } from "./budget-coverage";
@@ -31,6 +32,28 @@ describe("spentOnlyFromCashWallets — the one test for a cash-only row", () => 
     expect(spentOnlyFromCashWallets({ spentFromAccounts: 1, spentFromWallets: 0 })).toBe(false);
     // Car on the real ledger 2026-09-15: Cash on Hand beside Chase Checking and Venture X
     expect(spentOnlyFromCashWallets({ spentFromAccounts: 2, spentFromWallets: 1 })).toBe(false);
+  });
+});
+
+/*
+ * ⚖️ OWNER DECISION 2026-10-12 (§6A 64): Spent and Left print "—" where not one elapsed day of the window was read and
+ * nothing was found in it. ⛔ The one test the row's headline, the page note and the page's proofs all read — so each
+ * guard is pinned here, where the page's own caller (which asks no verdict first) depends on it.
+ */
+describe("spendUnread — the one test for a row that prints no spend", () => {
+  const UNREAD = { spentFromAccounts: 2, spentFromWallets: 0, noDayRead: true, txnCount: 0 };
+
+  test("not one day read and nothing found: a dash", () => {
+    expect(spendUnread(UNREAD)).toBe(true);
+    // a wallet beside an imported account is not cash only
+    expect(spendUnread({ ...UNREAD, spentFromWallets: 1 })).toBe(true);
+  });
+
+  test("a day read, a row found, or a row spent only from cash: the figures stand", () => {
+    expect(spendUnread({ ...UNREAD, noDayRead: false })).toBe(false);
+    expect(spendUnread({ ...UNREAD, txnCount: 1 })).toBe(false);
+    // ⚖️ no import will ever read a wallet's day — a dash would hide what was typed for good
+    expect(spendUnread({ ...UNREAD, spentFromAccounts: 0, spentFromWallets: 1 })).toBe(false);
   });
 });
 

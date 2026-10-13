@@ -84,10 +84,10 @@ export function BudgetRow({ status, guidanceCents, spentProvenance, planProvenan
 
   // The headline, what it means, and whether the bar is still to scale — all
   // from one branch, so the words and the definition beside them cannot drift.
-  // Every state it can return is unit-tested; only two of the five can render in
+  // Every state it can return is unit-tested; only two of the six can render in
   // the e2e fixture.
   const verdict = budgetVerdict(status);
-  const { headline, withheld: undermeasured, barIsFull } = verdict;
+  const { headline, withheld: undermeasured, barIsFull, unread } = verdict;
 
   const spentPct = clampPct(status.pct * 100);
   // divides by AVAILABLE, the same denominator as `pct` — dividing the tail by the
@@ -124,13 +124,16 @@ export function BudgetRow({ status, guidanceCents, spentProvenance, planProvenan
   // nothing would state it. Placed EARLY in the sentence on purpose: the overdue
   // clause at the end is asserted with an end-anchored regex.
   const elapsedSentence = `${Math.round(status.elapsedFraction * 100)}% of this period has passed`;
+  const rolledOver = status.rolloverCents > 0 ? ` (${formatCents(status.rolloverCents)} rolled over)` : "";
   // the spoken sentence uses the SAME denominator the visual bar does, or
   // assistive tech gets a strictly worse number than the sighted reader
-  const valueText = `${status.categoryPath}: ${formatCents(status.spentCents)} of ${formatCents(
-    status.availableCents,
-  )}${
-    status.rolloverCents > 0 ? ` (${formatCents(status.rolloverCents)} rolled over)` : ""
-  } (${pctDisplay}% of budget). ${elapsedSentence}. ${undermeasured ? budgetCoverageSentence(status) : paceSentence(status)}.${
+  // ⚖️ …and, where the row prints "—" (§6A 64), no "$0.00" and no "0% of budget" for it to hear instead
+  const available = formatCents(status.availableCents);
+  const spentClause = unread
+    ? `no day of this period imported yet, so neither spent nor left is shown against ${available}${rolledOver}`
+    : `${formatCents(status.spentCents)} of ${available}${rolledOver} (${pctDisplay}% of budget)`;
+  const reading = undermeasured ? budgetCoverageSentence(status) : paceSentence(status);
+  const valueText = `${status.categoryPath}: ${spentClause}. ${elapsedSentence}. ${reading}.${
     status.expectedTailCents > 0
       ? ` ${formatCents(status.expectedTailCents)} in recurring still expected this period.`
       : ""
@@ -173,12 +176,14 @@ export function BudgetRow({ status, guidanceCents, spentProvenance, planProvenan
         </div>
       </div>
 
+      {/* ⚖️ §6A 64: with no day read the bar carries no value — an indeterminate progressbar, not a measured 0% — and
+          keeps the withheld row's look; its fill is empty because nothing is known to fill it with. */}
       <div
         role="progressbar"
         aria-label={`${status.categoryPath} budget`}
         aria-valuemin={0}
         aria-valuemax={100}
-        aria-valuenow={Math.round(spentPct)}
+        aria-valuenow={unread ? undefined : Math.round(spentPct)}
         aria-valuetext={valueText}
         className="relative mt-3 h-2.5"
       >
@@ -291,11 +296,19 @@ export function BudgetRow({ status, guidanceCents, spentProvenance, planProvenan
         <div className="flex flex-wrap items-baseline gap-x-4 gap-y-1">
           <span>
             <span className="text-ink-faint">Spent </span>
-            <Money cents={status.spentCents} />
-            {/* the actual is a SUM of rows, so it is only as proven as its
-                weakest one — beside the figure, never wrapping it */}
-            {spentProvenance && (
-              <ProvenancePopover label={`${status.categoryPath} spent`} provenance={spentProvenance} />
+            {/* ⚖️ §6A 64: an em dash, not a $0.00, where not one elapsed day of the window has been read — the pace
+                tile's and the category headline's rule. ⛔ No proof beside it: the popover proves a rendered figure. */}
+            {unread ? (
+              <span className="figures text-ink-faint">—</span>
+            ) : (
+              <>
+                <Money cents={status.spentCents} />
+                {/* the actual is a SUM of rows, so it is only as proven as its
+                    weakest one — beside the figure, never wrapping it */}
+                {spentProvenance && (
+                  <ProvenancePopover label={`${status.categoryPath} spent`} provenance={spentProvenance} />
+                )}
+              </>
             )}
           </span>
           {/* With a carry, "Budget $50 · Left $631" cannot be reconciled by the
@@ -326,10 +339,15 @@ export function BudgetRow({ status, guidanceCents, spentProvenance, planProvenan
           </span>
           <span>
             <span className="text-ink-faint">{over ? "Over by " : "Left "}</span>
-            <NumberRoll
-              value={formatCents(Math.abs(status.remainingCents))}
-              className={over ? "text-negative" : undefined}
-            />
+            {/* ⚖️ §6A 64: what is left of a plan nothing has been read against is not known either */}
+            {unread ? (
+              <span className="figures text-ink-faint">—</span>
+            ) : (
+              <NumberRoll
+                value={formatCents(Math.abs(status.remainingCents))}
+                className={over ? "text-negative" : undefined}
+              />
+            )}
           </span>
           {/* the verdict decides, not `pace` alone: a "Cash only" row is under or
               at-risk and still offers no reading of where it is heading */}
@@ -372,7 +390,8 @@ export function BudgetRow({ status, guidanceCents, spentProvenance, planProvenan
               lines: budgetDeactivateLines(
                 {
                   budgetPhrase: `${formatCents(budget.amountCents)} / ${PERIOD_WORD[budget.period]}`,
-                  spentCents: status.spentCents,
+                  // ⚖️ §6A 64: the row's dash, not a "$0.00" the row refuses to print
+                  spentCents: unread ? null : status.spentCents,
                   overdueCents: status.overdueCents,
                   overdueUnreadCents: status.overdueUnreadCents,
                   expectedTailCents: status.expectedTailCents,

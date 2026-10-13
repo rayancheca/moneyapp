@@ -25,6 +25,20 @@ describe("budgetDeactivateLines", () => {
    * confirmation named the plan and "$0.00 spent" and stopped, over a month in
    * which the whole $2,291.21 had come due on Sep 1 and never posted.
    */
+  /*
+   * ⚖️ OWNER DECISION 2026-10-12 (§6A 64): not one elapsed day of the window read, so the row behind the dialog prints
+   * "Spent —" — and the dialog does not answer the same question with "$0.00". 🔴 Measured on his ledger copy
+   * 2026-10-12: all 12 budgets' confirmations read "Spent so far this period $0.00" over an October no account they are
+   * spent from had been imported for a day of.
+   */
+  test("a period not one day of which has been read: a dash, as on the row", () => {
+    const lines = budgetDeactivateLines({ ...HOUSING, spentCents: null }, formatCents);
+    expect(lines[1]).toEqual({ label: "Spent so far this period", value: "—" });
+    expect(lines.map((l) => l.value)).not.toContain("$0.00");
+    // a measured zero keeps its figure
+    expect(budgetDeactivateLines(HOUSING, formatCents)[1]).toEqual({ label: "Spent so far this period", value: "$0.00" });
+  });
+
   test("names the arrears the row behind it reports", () => {
     const lines = budgetDeactivateLines(HOUSING, formatCents);
     expect(lines.map((l) => l.label)).toEqual([
