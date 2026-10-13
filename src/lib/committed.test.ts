@@ -1,5 +1,6 @@
 import { describe, expect, test } from "vitest";
 import type { Cadence } from "@/db/schema/recurring";
+import { formatCents } from "@/lib/money";
 import {
   arrearsSentence,
   baselineCaption,
@@ -8,6 +9,7 @@ import {
   monthCount,
   endingLead,
   endingOthersClause,
+  endingShortfallFor,
   heaviestMonth,
   heaviestMonthEnding,
   COMMITTED_ORIGIN_LABEL,
@@ -711,6 +713,8 @@ describe("shrinkCaption", () => {
     expect(caption).toContain("$301.24"); // its contribution to the rate
     expect(caption).toContain("$361.49"); // what it actually charges
     expect(caption).toContain("$60.25"); // how much lower the rate is for it
+    // one series stops, and the whole difference is its own
+    expect(caption).toContain("The rate above is $60.25 a month lower for it.");
   });
 
   /* A commitment with one payment left is billed "once", not "1 times" — the
@@ -742,6 +746,11 @@ describe("shrinkCaption", () => {
     expect(book.shortfallPerMonthCents).toBeGreaterThan(
       book.lines.find((l) => l.name === "Car insurance")!.shortfallPerMonthCents,
     );
+    /* 🔴 …and then it credited the lead with the whole difference anyway: "The rate above is $364.66 a month lower for
+       it." on his runway card — $297.98 of it Car insurance's, $66.68 the Nov 11 balance's (a copy of his ledger,
+       2026-10-13). The figure is the book's, so the words are too. */
+    expect(caption).toContain(`The rate above is ${formatCents(book.shortfallPerMonthCents)} a month lower for the two of them.`);
+    expect(caption).not.toContain("lower for it");
   });
 
   test("three or more ending series are counted in the plural", () => {
@@ -754,6 +763,7 @@ describe("shrinkCaption", () => {
       ],
     });
     expect(shrinkCaption(book)!).toContain("2 others");
+    expect(shrinkCaption(book)!).toContain("a month lower for all 3 of them.");
   });
 });
 
@@ -787,6 +797,12 @@ describe("endingLead", () => {
     expect(endingOthersClause(0)).toBe("");
     expect(endingOthersClause(1)).toBe(", and one other does too");
     expect(endingOthersClause(2)).toBe(", and 2 others do too");
+  });
+
+  test("…and the shortfall is said to be all of theirs, the lead's and the others' together", () => {
+    expect(endingShortfallFor(0)).toBe("for it");
+    expect(endingShortfallFor(1)).toBe("for the two of them");
+    expect(endingShortfallFor(2)).toBe("for all 3 of them");
   });
 });
 

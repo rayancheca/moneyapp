@@ -464,7 +464,7 @@ describe("feesCard", () => {
     // SHOWN: the money is on the card, at its real amount
     expect(unfiled.cents).toBe(30_369);
     expect(card.unfiledNote).toContain("2 charges are filed on Fees itself");
-    expect(card.unfiledNote).toContain("$302.00");
+    expect(card.unfiledNote).toContain("The largest is $302.00");
     expect(card.unfiledNote).toContain("Direct Payment NYS DTF PIT Tax Paymnt");
     // NOT COUNTED: only the $10.00 genuine fee reaches the bank-fee total
     expect(card.recent.paidCents).toBe(1_000);
@@ -502,8 +502,21 @@ describe("feesCard", () => {
       expect(card.unfiledNote).toContain("$0.15");
       expect(card.unfiledNote).toContain(card.allTimeFromLabel);
       expect(card.unfiledNote).toContain("not in the all-time figures");
+      // 🔴 "The largest is $0.15" of the ONE charge filed there (the dashboard, a copy of his ledger, 2026-10-13)
+      expect(card.unfiledNote).toContain("it is not in the all-time figures. It is $0.15 — “FOREIGN EXCHANGE RATE ADJUSTMENT FEE”.");
+      expect(card.unfiledNote).not.toContain("largest");
     },
   );
+
+  test("two unfiled charges outside the recent window still name the largest", () => {
+    fee("2026-07-02", 1000);
+    addTxn("2026-01-31", -15, topId("Fees"), "FOREIGN EXCHANGE RATE ADJUSTMENT FEE");
+    addTxn("2025-11-03", -516, topId("Fees"), "CANADA IMMIGRATION");
+
+    const note = feesCard(bundle.db, TODAY)!.unfiledNote!;
+    expect(note).toContain("2 charges are filed on Fees itself");
+    expect(note).toContain("they are not in the all-time figures. The largest is $5.16 — “CANADA IMMIGRATION”.");
+  });
 
   test.each(["2026-02-01", "2026-07-31"])(
     "an unfiled row ON the recent window's edge (%s) is told once, in the recent sentence, in the singular",
@@ -516,6 +529,9 @@ describe("feesCard", () => {
       expect(note).toContain("what it is");
       expect(note).not.toContain("what they are");
       expect(note).not.toContain("all-time");
+      // one charge has no largest
+      expect(note).toContain("It is $0.15 — “FOREIGN EXCHANGE RATE ADJUSTMENT FEE”.");
+      expect(note).not.toContain("largest");
     },
   );
 
@@ -573,7 +589,9 @@ describe("feesCard", () => {
 
     const note = feesCard(bundle.db, TODAY)!.unfiledNote!;
     expect(note).toContain("1 charge and 1 credit are filed on Fees itself");
-    expect(note).toContain("The largest charge is $5.00");
+    // ONE charge beside the credit: "the charge", never "the largest charge" — and not "it", which reads as both rows
+    expect(note).toContain("The charge is $5.00 — “WIRE FEE”.");
+    expect(note).not.toContain("largest");
   });
 
   test("a bucket with nothing in it is an absence, not a row reading $0.00", () => {

@@ -93,6 +93,16 @@ export function sharedFrontier(days: readonly (string | null)[]): UnbankedFronti
 }
 
 /**
+ * "It falls", "Both fall", "They all fall" — every one of `paydays` passed paydays, as the clause below opens.
+ *
+ * 🔴 Two read "They all fall after Thu, Sep 24, 2026" on the dashboard's Earned vs banked, /budgets' header, his pay's
+ * page and the forecast's note (Oct 1 and Oct 8, a copy of his ledger, 2026-10-13). Two are both.
+ */
+function everyOneFalls(paydays: number): string {
+  return paydays === 1 ? "It falls" : paydays === 2 ? "Both fall" : "They all fall";
+}
+
+/**
  * The sentence naming the passed paydays nobody has looked for yet — or null
  * when every one of them fell on a day the ledger has checked, so the surface's
  * own "with no deposit" sentence is already true.
@@ -135,9 +145,7 @@ export function unbankedIncomeFrontierClause(
     r.frontier.kind === "day"
       ? `after ${formatDay(r.frontier.through)}, ${LAST_CHECKED_DAY}`
       : `after the last day the accounts ${unread === 1 ? "its" : "their"} pay lands in have been checked through, which differs by schedule`;
-  if (checkedPart === null) {
-    return `${unread === 1 ? "It falls" : "They all fall"} ${after} — so ${notLookedForDeposits(unread)}.`;
-  }
+  if (checkedPart === null) return `${everyOneFalls(unread)} ${after} — so ${notLookedForDeposits(unread)}.`;
   return `${checkedPart}; ${other} ${unread === 1 ? "falls" : "fall"} ${after}.`;
 }
 

@@ -31,8 +31,15 @@ describe("unbankedIncomeFrontierClause — which passed paydays the ledger has l
     expect(clause(3, 3, PER_SCHEDULE)).toBeNull();
   });
 
+  /*
+   * 🔴 Two paydays read "They all fall after Thu, Sep 24, 2026" — on the dashboard's Earned vs banked, /budgets' header,
+   * his pay's page and the forecast's note (a copy of his ledger, 2026-10-13, Oct 1 and Oct 8). Two are both.
+   */
   test("every payday after the frontier — the owner's September", () => {
     expect(clause(2, 0, "2026-08-12")).toBe(
+      "Both fall after Wed, Aug 12, 2026, the last day every account that pay lands in has been checked through — so the ledger has not looked for their deposits.",
+    );
+    expect(clause(3, 0, "2026-08-12")).toBe(
       "They all fall after Wed, Aug 12, 2026, the last day every account that pay lands in has been checked through — so the ledger has not looked for their deposits.",
     );
     expect(clause(1, 0, "2026-08-12")).toBe(
@@ -61,6 +68,9 @@ describe("unbankedIncomeFrontierClause — which passed paydays the ledger has l
   test("schedules checked through different days: no day is named, and the reason is", () => {
     expect(clause(4, 0, PER_SCHEDULE)).toBe(
       "They all fall after the last day the accounts their pay lands in have been checked through, which differs by schedule — so the ledger has not looked for their deposits.",
+    );
+    expect(clause(2, 0, PER_SCHEDULE)).toBe(
+      "Both fall after the last day the accounts their pay lands in have been checked through, which differs by schedule — so the ledger has not looked for their deposits.",
     );
     expect(clause(4, 1, PER_SCHEDULE)).toBe(
       "1 falls on a day already checked, with no deposit; the other 3 fall after the last day the accounts their pay lands in have been checked through, which differs by schedule.",

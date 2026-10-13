@@ -22,6 +22,7 @@ import {
   overdueNote,
   perPaydayWord,
   postedSpreadReading,
+  seriesAccountWord,
   seriesVerb,
   futureDateLabel,
   attachedToastTitle,
@@ -741,6 +742,28 @@ describe("postedSpreadReading", () => {
   test("prints the band as money — the sign, the dollar and the separator", () => {
     expect(postedSpreadReading(-210_900, -184_976, 58_358).text).toBe("± $583.58");
     expect(postedSpreadReading(114_192, 178_915, 188_146).text).toBe("± $1,881.46");
+  });
+});
+
+/*
+ * 🔴 His pay's page read "deposits weekly on Thursdays, about $1,141.92 from Wells Fargo Everyday Checking." (a copy of
+ * his ledger, 2026-10-13). The word before the account says which way the money moves through it.
+ */
+describe("seriesAccountWord — into the account money lands in, from the one it leaves", () => {
+  test("pay lands into its account; a bill, a subscription and any other payment leave from theirs", () => {
+    expect(seriesAccountWord("income", 114_192)).toBe("into");
+    for (const kind of ["bill", "subscription", "other"] as const) expect(seriesAccountWord(kind, -499), kind).toBe("from");
+  });
+
+  test("a transfer is one leg of a move between his accounts, and its sign says which", () => {
+    expect(seriesAccountWord("transfer", -99_302)).toBe("from");
+    expect(seriesAccountWord("transfer", 99_302)).toBe("into");
+  });
+
+  test("with no amount to read a sign from, the kind decides — pay into, everything else from", () => {
+    expect(seriesAccountWord("income", null)).toBe("into");
+    expect(seriesAccountWord("transfer", null)).toBe("from");
+    expect(seriesAccountWord("bill", null)).toBe("from");
   });
 });
 

@@ -514,6 +514,16 @@ export function feesCard(db: AppDatabase, today: string = todayIso()): FeesCard 
     ]
       .filter((p) => p !== null)
       .join(" and ");
+  /*
+   * The sentence naming the largest of the charges `rowsPhrase` counted — both halves say it in these words.
+   * 🔴 "Since Dec 2022, 1 charge is filed on Fees itself …, and it is not in the all-time figures. The largest is
+   * $0.15" on the dashboard (a copy of his ledger, 2026-10-13): one charge has no largest. Alone, it is "it"; beside
+   * a credit, "it" would read as both rows, so it is "the charge".
+   */
+  const largestPhrase = (charges: number, credits: number, largest: (typeof rows)[number]): string => {
+    const which = charges > 1 ? `The largest ${credits > 0 ? "charge " : ""}is` : credits > 0 ? "The charge is" : "It is";
+    return `${which} ${formatCents(-largest.amountCents)} — “${largest.rawDescription}”.`;
+  };
   const largestUnfiled = largestOf(unfiledRows);
   const recentCharges = unfiledRows.filter((t) => t.amountCents < 0).length;
   const recentCredits = unfiledRows.filter((t) => t.amountCents > 0).length;
@@ -521,7 +531,7 @@ export function feesCard(db: AppDatabase, today: string = todayIso()): FeesCard 
   const recentUnfiledNote =
     largestUnfiled === undefined
       ? null
-      : `${rowsPhrase(recentCharges, recentCredits)} ${recentOne ? "is" : "are"} filed on Fees itself rather than as a kind of fee, so the ledger has not said what ${recentOne ? "it is" : "they are"}. The largest ${recentCredits > 0 ? "charge " : ""}is ${formatCents(-largestUnfiled.amountCents)} — “${largestUnfiled.rawDescription}”.`;
+      : `${rowsPhrase(recentCharges, recentCredits)} ${recentOne ? "is" : "are"} filed on Fees itself rather than as a kind of fee, so the ledger has not said what ${recentOne ? "it is" : "they are"}. ${largestPhrase(recentCharges, recentCredits, largestUnfiled)}`;
   /*
    * 🔴 THE ALL-TIME HALF LEFT ROWS OUT AND SAID NOTHING. The sentence above
    * reads the RECENT window only, but the all-time figures exclude parent rows
@@ -563,7 +573,7 @@ export function feesCard(db: AppDatabase, today: string = todayIso()): FeesCard 
     : recentUnfiledNote !== null
       ? `Since ${allTimeLabel}, ${rowsPhrase(n, c)} ${amountPhrase} ${allTimeOne ? "is" : "are"} filed there, and none of it is in the all-time figures either.`
       : `Since ${allTimeLabel}, ${rowsPhrase(n, c)} ${allTimeOne ? "is" : "are"} filed on Fees itself rather than as a kind of fee, and ${allTimeOne ? "it is" : "they are"} not in the all-time figures.` +
-        (largestEver === undefined ? "" : ` The largest ${c > 0 ? "charge " : ""}is ${formatCents(-largestEver.amountCents)} — “${largestEver.rawDescription}”.`);
+        (largestEver === undefined ? "" : ` ${largestPhrase(n, c, largestEver)}`);
   const unfiledNote = [recentUnfiledNote, allTimeUnfiledNote].filter((s) => s !== null).join(" ") || null;
 
   /*

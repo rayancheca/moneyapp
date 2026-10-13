@@ -700,6 +700,23 @@ describe("incomeCard", () => {
       expect(line.verdict).not.toContain("lumps");
     });
 
+    /*
+     * 🔴 Earned vs banked on a copy of his ledger 2026-10-13: "2 paydays have passed since the last deposit on Sep 24.
+     * They all fall after Sep 24, …" — of Oct 1 and Oct 8. Two are both.
+     */
+    test("two paydays after the checked day are both, never 'they all'", () => {
+      addSeries();
+      paidThrough("2026-08-06");
+      coverThrough(CHASE, "2026-06-01", "2026-08-06");
+
+      const line = incomeCard(bundle.db, TODAY)!.pay[0]!;
+      expect(line.silentPeriods).toBe(2);
+      expect(line.checkedSilentPeriods).toBe(0);
+      expect(line.verdict).toBe(
+        "2 paydays have passed since the last deposit on Aug 6. Both fall after Aug 6, the last day every account that pay lands in has been checked through — so the ledger has not looked for their deposits.",
+      );
+    });
+
     test("a silence straddling the checked day names both halves", () => {
       addSeries();
       paidThrough("2026-08-06");

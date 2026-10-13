@@ -467,8 +467,21 @@ export function shrinkCaption(book: {
     `${lead.name} stops inside that window — evidenced through ${dayWindowLabel(endsOn, endsOn)}, with no renewal ` +
     `in the ledger${endingOthersClause(others)} — so it is billed ${times} rather than throughout, and counts ` +
     `${formatCents(lead.perMonthCents)} a month here against the ${formatCents(lead.perOccurrenceCents)} ` +
-    `it charges. The rate above is ${formatCents(book.shortfallPerMonthCents)} a month lower for it.`
+    `it charges. The rate above is ${formatCents(book.shortfallPerMonthCents)} a month lower ` +
+    `${endingShortfallFor(others)}.`
   );
+}
+
+/**
+ * Whose shortfall the book's figure is — "for it", "for the two of them", "for all 3 of them": the lead and the
+ * others `endingOthersClause` counted, since `shortfallPerMonthCents` sums every ending line's.
+ *
+ * 🔴 It was "for it" whatever ended: his runway card read "…and one other does too … The rate above is $364.66 a
+ * month lower for it." — $297.98 of it Car insurance's and $66.68 the Nov 11 balance's (a copy of his ledger,
+ * 2026-10-13), the whole difference credited to the one it names.
+ */
+export function endingShortfallFor(others: number): string {
+  return others === 0 ? "for it" : others === 1 ? "for the two of them" : `for all ${others + 1} of them`;
 }
 
 /** The commitment a book names as ending, and how many others end beside it. */
