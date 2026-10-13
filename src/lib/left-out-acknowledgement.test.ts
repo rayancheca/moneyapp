@@ -472,13 +472,13 @@ describe("planAcknowledging — the guarded write, a dry run first", () => {
       "REFUSED: --reason is not one of the 2 reasons stored, and this step never changes a stored one nor gives lines " +
       "alike another — nothing was written. Stored:";
     expect(reasonChangeRefusal(all.reasonsKept)[0]).toBe(refused);
-    // one left open beside them: each reason stored is said with how many lines carry it, in the count's words too
+    // one left open beside them: each reason stored is said, beside how many of its lines are acknowledged — 2, not 1
     const partly = planAcknowledging([...twins, line({ rowId: "row-third" })], [mark], another);
     expect(partly.lines).toEqual([
-      `${mark}: 1 of its 3 lines alike acknowledged already, and --reason is not one of the 2 reasons stored, which ` +
+      `${mark}: 2 of its 3 lines alike acknowledged already, and --reason is not one of the 2 reasons stored, which ` +
         "stay: this step never changes a stored one nor gives lines alike another — Acknowledged on 2026-10-04: " +
         "Printed on the July statement.",
-      `${mark}: 1 of its 3 lines alike acknowledged already, and --reason is not one of the 2 reasons stored, which ` +
+      `${mark}: 2 of its 3 lines alike acknowledged already, and --reason is not one of the 2 reasons stored, which ` +
         `stay: this step never changes a stored one nor gives lines alike another — Acknowledged on 2026-10-05: ${READ_IT}`,
     ]);
     expect(reasonChangeRefusal(partly.reasonsKept)[0]).toBe(refused);
@@ -513,14 +513,25 @@ describe("planAcknowledging — the guarded write, a dry run first", () => {
       `  ${mark}: Acknowledged on 2026-10-04: ${READ_IT}`,
       `  ${mark}: Acknowledged on 2026-10-05: ${READ_IT}`,
     ]);
-    // one left open beside them: each day said with how many lines carry it, and the reason still one
+    /*
+     * one left open beside them: each day said, and the reason still one. 🔴 Each day's line counted the lines carrying
+     * that DAY's acknowledgement, and read "1 of its 3 lines alike acknowledged already" twice, of one reason, where 2
+     * of the 3 are: the count is of the mark's lines acknowledged, whatever day each was — given the reason stored too
+     */
     const lines = [...twins, line({ rowId: "row-third" })];
     const partly = planAcknowledging(lines, [mark], another);
     expect(partly.lines).toEqual(
       [first, second].map(
         ({ on }) =>
-          `${mark}: 1 of its 3 lines alike acknowledged already, and --reason is not the reason stored, which stays: this ` +
+          `${mark}: 2 of its 3 lines alike acknowledged already, and --reason is not the reason stored, which stays: this ` +
           `step never changes a stored one nor gives lines alike two — Acknowledged on ${on}: ${READ_IT}`,
+      ),
+    );
+    expect(planAcknowledging(lines, [mark], { on: "2026-10-06", reason: READ_IT }).lines.slice(0, 2)).toEqual(
+      [first, second].map(
+        ({ on }) =>
+          `${mark}: 2 of its 3 lines alike acknowledged already, and lines alike take one reason — Acknowledged on ${on}: ` +
+          READ_IT,
       ),
     );
     expect(reasonChangeRefusal(partly.reasonsKept)[0]).toBe(REFUSED);
