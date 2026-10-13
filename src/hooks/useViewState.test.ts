@@ -1050,6 +1050,99 @@ describe("Back/Forward to a page with view pills", () => {
     expect(page.pending.map((work) => work.kind)).toEqual(["write", "write"]);
   });
 
+  /**
+   * 🔴 Bounded, a press to the DEFAULT view went at BACK_SAVE_WAIT_MS to a URL that carries no view, and the page
+   * drew the saved one — his Return, which neither Back's save nor the press's own write, queued behind it, had
+   * reached. Both landed later, saved Value, and nothing drew it again: Return until a reload (review of ab13868).
+   * It still goes then, the pill's range with it, and goes again once its write lands, as every press is drawn.
+   */
+  test("a press to the default view while Back's save hangs goes at BACK_SAVE_WAIT_MS, and once its write lands", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const page = await open(portfolioPage, "/investments?range=1Y");
+    ui.portfolio!.setView("view", "returns");
+    await page.settle();
+    pills.bench!("QQQ");
+    await page.settle();
+    page.back(); // to his Return's page
+    await idle(); // Back's save, held
+    expect(page.url).toBe("/investments?range=1Y&view=returns");
+
+    pills.range!("1M");
+    await idle();
+    ui.portfolio!.setView("view", "value"); // the default: its URL carries no view, the saved preference draws it
+    await idle();
+    await vi.advanceTimersByTimeAsync(BACK_SAVE_WAIT_MS);
+    await idle();
+    await page.serve("render");
+    expect(page.url).toBe("/investments?range=1M"); // the pill's range, at BACK_SAVE_WAIT_MS
+
+    await page.serve("write"); // Back's save, late
+    await page.serve("write"); // and the press's own, behind it
+    await page.settle();
+    expect(page.persisted.investments).toMatchObject({ view: "value" });
+    expect(page.url).toBe("/investments?range=1M");
+    expect(ui.portfolio!.state).toMatchObject({ view: "value" });
+    expect(page.history.map((entry) => entry.url)).toEqual([
+      "/investments?range=1Y",
+      "/investments?range=1Y&view=returns",
+      "/investments?range=1M",
+    ]);
+  });
+
+  /**
+   * ⛔ Never by waiting on its write inside the press's transition instead: React holds every navigation made
+   * meanwhile until that transition settles, and unbounded, a link he followed while Back's save hung was never drawn
+   * (measured 2026-10-13 on 60d0d96's wait).
+   */
+  test("a link followed while a default-view press waits on Back's hung save is drawn by BACK_SAVE_WAIT_MS", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const page = await open(portfolioPage, "/investments?range=1Y");
+    ui.portfolio!.setView("view", "returns");
+    await page.settle();
+    pills.bench!("QQQ");
+    await page.settle();
+    page.back();
+    await idle(); // Back's save, held: it never lands
+
+    ui.portfolio!.setView("view", "value");
+    await idle();
+    page.router.push("/investments?view=returns&unit=percent"); // a link that carries a view
+    await idle();
+    await page.serve("render");
+    await vi.advanceTimersByTimeAsync(BACK_SAVE_WAIT_MS);
+    await idle();
+    // the press, going by then: the link made again, its write not landed
+    if (page.pending.some((work) => work.kind === "render")) await page.serve("render");
+
+    expect(page.url).toBe("/investments?view=returns&unit=percent");
+    expect(ui.portfolio!.state).toMatchObject({ view: "returns", unit: "percent" });
+  });
+
+  /**
+   * 🔴 The same for a URL writer: gone at BACK_SAVE_WAIT_MS, the pill's page drew the saved view he had walked away
+   * from, and once Back's save landed late nothing drew the one Back showed. It goes again then, while the newest.
+   */
+  test("a range pill gone at BACK_SAVE_WAIT_MS goes again once Back's save lands: the view Back showed", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const page = await open(portfolioPage, "/investments?range=1Y");
+    ui.portfolio!.setView("view", "returns");
+    await page.settle();
+    page.back(); // Value, as he left it
+    await idle(); // Back's save, held
+
+    pills.range!("1M");
+    await vi.advanceTimersByTimeAsync(BACK_SAVE_WAIT_MS);
+    await idle();
+    await page.serve("render");
+    expect(page.url).toBe("/investments?range=1M");
+
+    await page.serve("write"); // Back's save, late
+    await page.settle();
+    expect(page.persisted.investments).toMatchObject({ view: "value" });
+    expect(ui.portfolio!.state).toMatchObject({ view: "value" });
+    expect(page.history.map((entry) => entry.url)).toEqual(["/investments?range=1M", "/investments?range=1Y&view=returns"]);
+  });
+
   /** ⚖️ B2, the same for every URL writer that writes nothing: a period arrow, a tab, the benchmark */
   test("‹ followed while Back's saves are being written goes once they land", async () => {
     const page = await open(spendingPage, "/spending?period=2026-07");

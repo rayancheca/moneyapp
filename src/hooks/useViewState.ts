@@ -102,26 +102,30 @@ export function useViewState(opts: UseViewStateOptions): UseViewStateResult {
       const href = `${basePath}${viewHrefQuery(spec, next, { ...base.params, ...carriedParams(carry, next) })}`;
       asks?.ask(href, next);
       startTransition(async () => {
+        // To the NEWEST asked URL, which every press made since this one built on — not to
+        // this press's own, or a range pill pressed meanwhile would be navigated away from.
+        // A link he followed meanwhile is made again, so its page draws this write; after
+        // Back, nowhere — he is not dragged back to the page he left, and Back's own save of
+        // the view it shows (below), sent after this write, is the one that stays.
+        const go = (): void => {
+          const to: Landing | null = asks === null ? { href, kind: "push", scroll: false } : asks.landing();
+          if (to !== null) router[to.kind](to.href, { scroll: to.scroll });
+        };
         // Persist BEFORE navigating. Switching to the DEFAULT view drops its URL
         // param (clean links), so the RSC falls back to the PERSISTED preference —
         // it must already be written or the navigation re-reads the stale value.
         // Best-effort: on a transport error we still navigate (the URL drives
         // non-default views), and never surface a toast for a view toggle.
         // ⚖️ B2: queued behind a save of Back's view that hangs, no longer than
-        // BACK_SAVE_WAIT_MS — the bound every URL writer has (`pressWriteLanding`).
+        // BACK_SAVE_WAIT_MS — the bound every URL writer has — and, cut short, again once
+        // the write lands: a default view only the saved one draws (`pressWriteLanding`).
         const write = saveViewPreferenceAction(surface, next);
         try {
-          await (asks === null ? write : pressWriteLanding(asks, write));
+          await (asks === null ? write : pressWriteLanding(asks, write, go));
         } catch {
           /* persistence is best-effort */
         }
-        // To the NEWEST asked URL, which every press made since this one built on — not to
-        // this press's own, or a range pill pressed meanwhile would be navigated away from.
-        // A link he followed meanwhile is made again, so its page draws this write; after
-        // Back, nowhere — he is not dragged back to the page he left, and Back's own save of
-        // the view it shows (below), sent after this write, is the one that stays.
-        const to: Landing | null = asks === null ? { href, kind: "push", scroll: false } : asks.landing();
-        if (to !== null) router[to.kind](to.href, { scroll: to.scroll });
+        go();
       });
     },
     [asks, pressBase, surface, spec, state, basePath, carry, router],

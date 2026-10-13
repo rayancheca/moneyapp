@@ -496,8 +496,9 @@ export function createPageAsks(): PageAsks {
  * How long a URL writer that writes nothing waits on Back's saves (`navigateAfterBackSaves`) before
  * it goes anyway. A save lands in well under a second, a dev server compiling the action in a few;
  * one that has not landed by then (a server that took it and never answered) has left the saved
- * view the one he walked away from, and every page drawn draws that anyway. 🔴 Unbounded, a hung
- * save held the range pill forever.
+ * view the one he walked away from, and every page drawn draws that anyway — until it lands, when
+ * what went early goes again (`boundedByBackSaves`). 🔴 Unbounded, a hung save held the range pill
+ * forever.
  */
 export const BACK_SAVE_WAIT_MS = 5_000;
 
@@ -506,13 +507,17 @@ export const BACK_SAVE_WAIT_MS = 5_000;
  * tab, the benchmark — to `href`, the URL it has just asked for: at once while no save of Back's view
  * is being written; else once they have landed or BACK_SAVE_WAIT_MS has passed, whichever is first,
  * and then only while `href` is still the newest asked (`isNewest`): a press made meanwhile goes to
- * its own URL, built on this one, and a link followed or a Back meanwhile is where he went.
+ * its own URL, built on this one, and a link followed or a Back meanwhile is where he went. Gone at
+ * BACK_SAVE_WAIT_MS, it goes again once they land, still only while the newest.
  *
  * ⚖️ B2: a navigation overtakes a server action in Next's queue, and 🔴 the writer's page, drawn
  * before Back's save landed, drew the saved view he had walked away from — the range pill waited;
  * ‹ ›, the tabs and the benchmark did not. The wait is a plain promise, never a React transition:
  * 🔴 the pill awaited it inside one, and React holds every transition's update until each async one
  * it is entangled with has settled — with Back's save hung, a link he followed next was never drawn.
+ * 🔴 Gone at BACK_SAVE_WAIT_MS, the pill's page drew the saved view he had walked away from, and a
+ * save landing after that drew nothing again: the view Back showed only after a reload (review of
+ * ab13868).
  */
 export function navigateAfterBackSaves(asks: PageAsks, href: string, go: () => void): void {
   const landing = asks.backSavesLanding();
@@ -520,46 +525,60 @@ export function navigateAfterBackSaves(asks: PageAsks, href: string, go: () => v
     go();
     return;
   }
-  void boundedByBackSaves(landing, landing).then(() => {
+  const goIfNewest = (): void => {
     if (asks.isNewest(href)) go();
-  });
+  };
+  void boundedByBackSaves(landing, landing, goIfNewest).then(goIfNewest);
 }
 
 /**
  * What a press waits on before it navigates (`useViewState`): its own `write` — and, while a save of Back's view is
- * being written, no longer than BACK_SAVE_WAIT_MS unless those land first. Settles either way, a refused write too
- * (persistence is best-effort).
+ * being written, no longer than BACK_SAVE_WAIT_MS unless those land first; cut short, it calls `again` once the write
+ * lands. Settles either way, a refused write too (persistence is best-effort).
  *
  * 🔴 Every URL writer that writes nothing was bounded (`navigateAfterBackSaves`), and the press made after one was
  * not: Next queues a server action behind the one in flight, so with Back's save hung the press's own write never ran
  * and the press never went — and the pill it built on, no longer the newest asked, went nowhere either: neither the
  * pill's range nor the press's view was ever drawn (review of 8af8286). Bounded, the press goes when the pill would
- * have, to the newest asked URL, which holds both. ⛔ Only while Back's saves are hung: once they land, the write
- * behind them runs, and a press goes once its write has landed, as ever — its view may be the default, which only
- * the saved preference draws. ⛔ With none in flight it is the write ITSELF, never a promise over it: one more tick
- * moved the press's navigation after the next action Next's queue starts, and 22 tests of `useViewState.test.ts`
- * failed.
+ * have, to the newest asked URL, which holds both. ⛔ Only while Back's saves are hung: once they land in time, the
+ * write behind them runs, and a press goes once its write has landed, as ever. 🔴 Cut short, a press to the DEFAULT
+ * view went to a URL that carries no view, which only the saved preference draws: the page drew his Return, which
+ * neither Back's save nor the press's write behind it had reached, and once both landed nothing drew the Value
+ * (review of ab13868). So it goes `again` then, as every press goes once its write has landed. ⛔ Never by waiting
+ * on the write longer instead: the press waits inside its transition, and React holds every navigation made meanwhile
+ * until that settles — unbounded, a link he followed while Back's save hung was never drawn (measured 2026-10-13).
+ * ⛔ With none in flight it is the write ITSELF, never a promise over it: one more tick moved the press's navigation
+ * after the next action Next's queue starts, and 22 tests of `useViewState.test.ts` failed.
  */
-export function pressWriteLanding(asks: PageAsks, write: Promise<unknown>): Promise<unknown> {
+export function pressWriteLanding(asks: PageAsks, write: Promise<unknown>, again: () => void): Promise<unknown> {
   const landing = asks.backSavesLanding();
   if (landing === null) return write;
   const own = write.then(
     () => undefined,
     () => undefined,
   );
-  return boundedByBackSaves(own, landing);
+  return boundedByBackSaves(own, landing, again);
 }
 
 /**
  * Settles once `wanted` does — or once BACK_SAVE_WAIT_MS has passed with Back's saves (`landing`) still unlanded,
- * whichever is first. Leaves no timer behind.
+ * whichever is first. Cut short, it calls `again` once `wanted` settles: what went before it landed goes again, drawn
+ * from what landed. Leaves no timer behind, and adds no tick to `wanted`'s way through.
  */
-function boundedByBackSaves(wanted: Promise<void>, landing: Promise<void>): Promise<void> {
+function boundedByBackSaves(wanted: Promise<void>, landing: Promise<void>, again: () => void): Promise<void> {
   let timer: ReturnType<typeof setTimeout> | undefined;
+  let landed = false;
+  void wanted.then(() => {
+    landed = true;
+  });
   const hung = new Promise<void>((resolve) => {
     timer = setTimeout(resolve, BACK_SAVE_WAIT_MS);
   });
   // Back's saves landed in time: nothing is hung, and only `wanted` settles it
   void landing.then(() => clearTimeout(timer));
-  return Promise.race([wanted, hung]).then(() => clearTimeout(timer));
+  const bounded = Promise.race([wanted, hung]).then(() => clearTimeout(timer));
+  void bounded.then(() => {
+    if (!landed) void wanted.then(again);
+  });
+  return bounded;
 }

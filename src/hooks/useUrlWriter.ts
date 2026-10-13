@@ -10,8 +10,8 @@ import { usePageAsks } from "./usePageAsks";
  * `useRangeParam`), a same-page link (`usePageLinks`: a period arrow ‹ ›, a /recurring tab) and a
  * param beside the view (`useViewState`'s `setParam`: the benchmark). It asks for its URL
  * (lib/page-asks.ts), so a press made before that page is drawn builds on it, then goes there — once
- * Back's saves of the view on screen have landed, or BACK_SAVE_WAIT_MS has passed
- * (`navigateAfterBackSaves`). One rule, every writer: 🔴 only the pill waited, so ‹ pressed while
+ * Back's saves of the view on screen have landed, or BACK_SAVE_WAIT_MS has passed and again once they
+ * land (`navigateAfterBackSaves`). One rule, every writer: 🔴 only the pill waited, so ‹ pressed while
  * Back's save was being written drew June in the view he had walked away from.
  */
 export function useUrlWriter(): (to: Landing) => void {

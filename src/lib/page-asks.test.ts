@@ -470,6 +470,40 @@ describe("navigateAfterBackSaves", () => {
     expect(go).toHaveBeenCalledTimes(1);
   });
 
+  /**
+   * 🔴 Gone at BACK_SAVE_WAIT_MS, its page drew the saved view he had walked away from, and a save that landed
+   * after that drew nothing again (review of ab13868): it goes again once they land, while still the newest asked.
+   */
+  test("gone at BACK_SAVE_WAIT_MS, it goes again once Back's saves land late, while still the newest asked", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const asks = createPageAsks();
+    let land!: () => void;
+    asks.backSaveSent(new Promise<void>((resolve) => (land = resolve)));
+    asks.ask("/h?range=1M", {});
+    const go = vi.fn();
+    navigateAfterBackSaves(asks, "/h?range=1M", go);
+    await vi.advanceTimersByTimeAsync(BACK_SAVE_WAIT_MS);
+    expect(go).toHaveBeenCalledTimes(1);
+    land();
+    await flush();
+    expect(go).toHaveBeenCalledTimes(2);
+  });
+
+  test("gone at BACK_SAVE_WAIT_MS, not again once a newer URL was asked: the newer one goes", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const asks = createPageAsks();
+    let land!: () => void;
+    asks.backSaveSent(new Promise<void>((resolve) => (land = resolve)));
+    asks.ask("/h?range=1M", {});
+    const go = vi.fn();
+    navigateAfterBackSaves(asks, "/h?range=1M", go);
+    await vi.advanceTimersByTimeAsync(BACK_SAVE_WAIT_MS);
+    asks.ask("/h?range=1M&view=returns", { view: "returns" }); // a press, built on the pill's URL
+    land();
+    await flush();
+    expect(go).toHaveBeenCalledTimes(1);
+  });
+
   test("goes nowhere when a newer URL was asked while it waited: the newer one goes", async () => {
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     const asks = createPageAsks();
@@ -517,7 +551,9 @@ describe("navigateAfterBackSaves", () => {
 
 /**
  * A press goes once its own write has landed — and 🔴 Next queues that write behind a save of Back's view, so with
- * one hung the press never went (review of 8af8286). Bounded as every URL writer is, only while Back's saves hang.
+ * one hung the press never went (review of 8af8286). Bounded as every URL writer is, only while Back's saves hang;
+ * 🔴 cut short, it goes `again` once its write lands, or a press to the default view kept the view he left
+ * (review of ab13868).
  */
 describe("pressWriteLanding", () => {
   const flush = (): Promise<void> => new Promise((resolve) => setImmediate(resolve));
@@ -529,7 +565,7 @@ describe("pressWriteLanding", () => {
   test("with no save of Back's view in flight, the press waits on its write — the very promise", () => {
     const asks = createPageAsks();
     const write = new Promise<unknown>(() => {});
-    expect(pressWriteLanding(asks, write)).toBe(write);
+    expect(pressWriteLanding(asks, write, () => {})).toBe(write);
   });
 
   test("with Back's save hung, it settles at BACK_SAVE_WAIT_MS, never before, though its write never ran", async () => {
@@ -537,11 +573,33 @@ describe("pressWriteLanding", () => {
     const asks = createPageAsks();
     asks.backSaveSent(new Promise<void>(() => {}));
     const settled = vi.fn();
-    void pressWriteLanding(asks, new Promise<unknown>(() => {})).then(settled);
+    const again = vi.fn();
+    void pressWriteLanding(asks, new Promise<unknown>(() => {}), again).then(settled);
     await vi.advanceTimersByTimeAsync(BACK_SAVE_WAIT_MS - 1);
     expect(settled).not.toHaveBeenCalled();
     await vi.advanceTimersByTimeAsync(1);
     expect(settled).toHaveBeenCalledTimes(1);
+    expect(again).not.toHaveBeenCalled(); // its write has not landed
+  });
+
+  test("cut short at BACK_SAVE_WAIT_MS, it calls `again` once its write lands, or is refused — once", async () => {
+    for (const outcome of ["landed", "refused"] as const) {
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+      const asks = createPageAsks();
+      asks.backSaveSent(new Promise<void>(() => {}));
+      let answer!: () => void;
+      const write = new Promise<unknown>((resolve, reject) => {
+        answer = outcome === "landed" ? () => resolve({ ok: true }) : () => reject(new Error("offline"));
+      });
+      const again = vi.fn();
+      void pressWriteLanding(asks, write, again);
+      await vi.advanceTimersByTimeAsync(BACK_SAVE_WAIT_MS);
+      expect(again).not.toHaveBeenCalled();
+      answer();
+      await flush();
+      expect(again).toHaveBeenCalledTimes(1);
+      vi.useRealTimers();
+    }
   });
 
   test("once Back's save lands in time, it waits on its write alone, however long, and leaves no timer", async () => {
@@ -552,7 +610,8 @@ describe("pressWriteLanding", () => {
     let written!: () => void;
     const write = new Promise<unknown>((resolve) => (written = () => resolve({ ok: true })));
     const settled = vi.fn();
-    void pressWriteLanding(asks, write).then(settled);
+    const again = vi.fn();
+    void pressWriteLanding(asks, write, again).then(settled);
     land();
     await vi.advanceTimersByTimeAsync(0);
     expect(vi.getTimerCount()).toBe(0);
@@ -561,6 +620,7 @@ describe("pressWriteLanding", () => {
     written();
     await flush();
     expect(settled).toHaveBeenCalledTimes(1);
+    expect(again).not.toHaveBeenCalled(); // never cut short: it goes once, after its write
   });
 
   test("a refused write settles it as a landed one does, and leaves no timer", async () => {
@@ -568,10 +628,13 @@ describe("pressWriteLanding", () => {
     const asks = createPageAsks();
     asks.backSaveSent(new Promise<void>(() => {}));
     const settled = vi.fn();
-    void pressWriteLanding(asks, Promise.reject(new Error("offline"))).then(settled);
+    const again = vi.fn();
+    void pressWriteLanding(asks, Promise.reject(new Error("offline")), again).then(settled);
     await vi.advanceTimersByTimeAsync(0);
     expect(settled).toHaveBeenCalledTimes(1);
     expect(vi.getTimerCount()).toBe(0);
+    await flush();
+    expect(again).not.toHaveBeenCalled();
   });
 });
 
