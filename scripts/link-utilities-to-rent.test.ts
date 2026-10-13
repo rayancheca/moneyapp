@@ -12,6 +12,7 @@ import { transactions } from "@/db/schema/transactions";
 import { seedDatabase } from "@/db/seed";
 import { addDays } from "@/lib/dates";
 import { arrearsThisMonth } from "@/services/arrears";
+import { checkedThrough } from "@/services/checked-days-fixture";
 import {
   LABEL_PREFIX,
   PAYMENTS,
@@ -191,6 +192,8 @@ describe("the plan", () => {
    */
   test("rehearsed with Wells Fargo read past Oct 1 and the rent unpaid: its Oct 1 reads as the rent's — no money moves", () => {
     addRow("wf-read-oct-7", "2026-10-07", -450, null); // an import of Wells Fargo has reached Oct 7: a row of no series
+    // ⚖️ …and its statement balances with it: a due day is read on the CHECKED day since his decisions 62/65 (2026-10-12)
+    checkedThrough(bundle.db, WELLS, "2026-10-07", "2026-10-01");
     const reading = () =>
       arrearsThisMonth(bundle.db, new Set([RENT.id, UTILITIES.id]), TODAY).series.map((s) => [
         s.id,
