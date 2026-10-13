@@ -408,9 +408,15 @@ describe("yearSummaryView — the pay line names the job its rows are attached t
     expect(line.caveat).toBeUndefined();
   });
 
+  /*
+   * Thursday paydays that two bank holidays moved to the Friday: Veterans Day, Thu Nov 11, 2027, and Thanksgiving, Thu
+   * Nov 25 — both days the Federal Reserve's ACH does not settle. 🔴 It was dated Fri Jan 22, 2027, the day after a
+   * Thursday that is no holiday — the week a neighbouring comment once blamed on MLK Day, a Monday (review of the
+   * weekly-payroll label, 2026-10-08).
+   */
   test("a payday a bank holiday moved by a day is still regular", () => {
     const pay = paySeries("It America LLC (weekly pay)");
-    for (const day of ["2027-01-07", "2027-01-14", "2027-01-22", "2027-01-28", "2027-02-04"]) {
+    for (const day of ["2027-10-28", "2027-11-04", "2027-11-12", "2027-11-18", "2027-11-26", "2027-12-02"]) {
       insert({ postedOn: day, amountCents: 114192, rawDescription: "It America LLC Payroll", categoryName: "Salary", seriesId: pay });
     }
     expect(payLine(2027).caveat).toBeUndefined();
@@ -420,8 +426,8 @@ describe("yearSummaryView — the pay line names the job its rows are attached t
    * 🔴 …but one moved a day EACH WAY in consecutive weeks was called irregular. His Wells Fargo payroll has landed
    * on a Wednesday (Sep 23) and a Thursday (Sep 24); here it lands Wed Jan 13 (a day early), Fri Jan 22 (a day late)
    * and Wed Jan 27 — every deposit within a day of its Thursday, gaps 6, 9, 5, 8. Their SPREAD is 4, past the old
-   * 3-day slack. Recurring detection holds a weekly gap to 2 days (`CADENCE_TOLERANCE_DAYS`), and every one of these
-   * is inside it.
+   * 3-day slack. A gap is held to the step by the series' own tolerance — his 3 days, detection's weekly 2
+   * (`gapKeepsStep`) — and every one of these is inside either.
    */
   test("a weekly payroll a day early one week and a day late the next is still regular", () => {
     const pay = paySeries("It America LLC (weekly pay)");
@@ -577,8 +583,8 @@ describe("yearSummaryView — the pay line names the job its rows are attached t
   /*
    * 🔴 A monthly payroll on the last business day was irregular under both earlier rules. 2027: Fri Jan 29 (the 31st
    * a Sunday), Fri Feb 26 (the 28th a Sunday), Wed Mar 31, Fri Apr 30, Fri May 28 (the 31st Memorial Day) — gaps 28,
-   * 33, 30, 28, a spread of 5 and a median of 29 that 33 misses by 4. Each is within detection's 3 days of a month's
-   * 28 to 31.
+   * 33, 30, 28, a spread of 5 and a median of 29 that 33 misses by 4. Each is within the series' 3 days — detection's
+   * monthly 3 too — of a month's 28 to 31.
    */
   test("a monthly payroll on the last business day is regular", () => {
     const pay = paySeries("Monthly payroll");
