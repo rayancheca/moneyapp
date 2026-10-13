@@ -47,6 +47,8 @@ export interface SeriesEndInput {
   overdueCents: number;
   /** of `overdueCents`, the part on days no import has reached (`ArrearsReading.unreadCents`) */
   overdueUnreadCents: number;
+  /** of `overdueUnreadCents`, the part no import keeps unread (`ArrearsReading.inGraceCents`) */
+  overdueInGraceCents: number;
   overdueOn: string | null;
   /** how many occurrences the arrears covers (the page's own "and N more") */
   overdueCount: number;
@@ -65,6 +67,7 @@ export function seriesEndInput(
     annualizedCents: data.annualizedCents,
     overdueCents: Math.abs(data.overdue?.amountCents ?? 0),
     overdueUnreadCents: data.overdue?.unreadCents ?? 0,
+    overdueInGraceCents: data.overdue?.inGraceCents ?? 0,
     overdueOn: data.overdue?.date ?? null,
     overdueCount: data.overdue?.occurrenceCount ?? 0,
     nextChargeOn: data.nextExpected[0]?.date ?? null,
@@ -90,7 +93,11 @@ export function seriesEndLines(
     input.overdueCount > 1
       ? `${formatCents(input.overdueCents)} across ${input.overdueCount} charges`
       : formatCents(input.overdueCents);
-  const reading = { owedCents: input.overdueCents, unreadCents: input.overdueUnreadCents };
+  const reading = {
+    owedCents: input.overdueCents,
+    unreadCents: input.overdueUnreadCents,
+    inGraceCents: input.overdueInGraceCents,
+  };
   return [
     ...(input.annualizedCents !== null
       ? [

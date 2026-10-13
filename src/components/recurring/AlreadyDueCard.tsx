@@ -1,4 +1,5 @@
 import { Money } from "@/components/ui/Money";
+import { overdueReading } from "@/lib/arrears-reading";
 import { SurfaceCard } from "@/components/ui/SurfaceCard";
 import type { SeriesDetail } from "@/services/recurring-detail";
 import { alreadyDueWords, longDate } from "./labels";
@@ -20,8 +21,7 @@ import { alreadyDueWords, longDate } from "./labels";
  * for another.
  */
 export function AlreadyDueCard({ overdue }: { overdue: NonNullable<SeriesDetail["overdue"]> }) {
-  const reading = { owedCents: -overdue.amountCents, unreadCents: overdue.unreadCents };
-  const words = alreadyDueWords(reading, overdue.graceDays);
+  const words = alreadyDueWords(overdueReading(overdue), overdue.graceDays);
   return (
     <SurfaceCard>
       <h2 className={words.warning ? "mb-1 text-sm font-medium text-warning" : "mb-1 text-sm font-medium"}>

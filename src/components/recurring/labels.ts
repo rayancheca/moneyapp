@@ -1,4 +1,12 @@
-import { arrearsAlarms, arrearsClause, arrearsSplit, NO_IMPORT_YET, type ArrearsReading } from "@/lib/arrears-reading";
+import {
+  arrearsAlarms,
+  arrearsClause,
+  arrearsSplit,
+  DAYS_TO_POST_NOT_OVER,
+  NO_IMPORT_YET,
+  unreadWaitsOnDaysToPost,
+  type ArrearsReading,
+} from "@/lib/arrears-reading";
 import { addCalendarMonths, compareDates, diffDays, isoWeekday } from "@/lib/dates";
 import { endsInsideHorizon } from "@/lib/committed";
 import { dayWindowLabel } from "@/lib/period";
@@ -454,9 +462,14 @@ export function upcomingEvidenceWord(e: {
  * …and of a PAYDAY after the day its pay's accounts are checked through (`paydayIsRead`), where every pay sentence
  * says "the ledger has not looked for its deposit". "Not banked yet" is said only of a day someone looked at. 🔴 It
  * was said of every passed payday: his Oct 1 and Oct 8 (ledger copy, 2026-10-12), after Sep 24.
+ *
+ * …and of a day whose accounts are read through today — an archived card, a cash wallet — still inside its days to
+ * post, the arrears' words for the same money (`DAYS_TO_POST_NOT_OVER`). 🔴 It read "no import has covered it yet" of
+ * an import that will never come (review of the 2026-10-08 batch).
  */
 const UNSETTLED_REASON_WORD: Record<UnsettledReason, string> = {
   not_imported: NO_IMPORT_YET,
+  in_grace: DAYS_TO_POST_NOT_OVER,
   unbanked: "not banked yet",
   schedule_unproven: "too few charges to grade yet",
 };
@@ -555,6 +568,11 @@ export function overdueNote(
  * the unread body, which now includes a day the imports reached short of its grace, says how far they must reach.
  * `graceDays` is the grace the read half waited for (`ArrearsSeries.graceDays`).
  *
+ * …and where no import keeps the unread half unread — its accounts read through today, an archived card or a cash
+ * wallet — the heading and the body say its days to post are not over (`unreadWaitsOnDaysToPost`), never how far an
+ * import must reach. 🔴 They said "no import reaches 3 days past it yet" of an import that will never come (review of
+ * the 2026-10-08 batch).
+ *
  * The forecast and this month's budget count all of it whichever way it reads — both say so.
  */
 export function alreadyDueWords(
@@ -567,6 +585,8 @@ export function alreadyDueWords(
   const past = graceDays === 0 ? "its day" : `${days(graceDays)} past it`;
   const counted = "The forecast counts it, and so does this month's budget.";
   const warning = arrearsAlarms(reading);
+  // ⚖️ unread only for days to post still to come — its accounts read through today: said so, never "no import"
+  const waitsOnDays = unreadWaitsOnDaysToPost(split);
   if (split.kind === "read") {
     return {
       heading: "Already due, and not posted",
@@ -575,20 +595,24 @@ export function alreadyDueWords(
     };
   }
   if (split.kind === "unread") {
+    const toPost =
+      graceDays === 0 ? "its day, the day a payment has to post, is" : `the ${past} a payment has to post are`;
     return {
-      heading: `Already due — ${NO_IMPORT_YET}`,
-      body:
-        `Inside this calendar month, and no import reaches ${past} yet — the days a payment has to post — so it may ` +
-        `well have posted. ${counted}`,
+      heading: `Already due — ${arrearsClause(reading, "not posted")}`,
+      body: waitsOnDays
+        ? `Inside this calendar month, and ${toPost} not over yet, so it may still post. ${counted}`
+        : `Inside this calendar month, and no import reaches ${past} yet — the days a payment has to post — so it may ` +
+          `well have posted. ${counted}`,
       warning,
     };
   }
   const pastADueDay = graceDays === 0 ? "a due day" : `${days(graceDays)} past a due day`;
+  const rest = waitsOnDays ? DAYS_TO_POST_NOT_OVER : "no import reaches that far yet";
   return {
     heading: `Already due: ${arrearsClause(reading, "not posted")}`,
     body:
       `Inside this calendar month. Where the imports reach ${pastADueDay}, they hold no posting ${within}; for the ` +
-      "rest, no import reaches that far yet. The forecast counts all of it, and so does this month's budget.",
+      `rest, ${rest}. The forecast counts all of it, and so does this month's budget.`,
     warning,
   };
 }

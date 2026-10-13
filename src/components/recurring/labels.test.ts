@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { NO_IMPORT_YET } from "@/lib/arrears-reading";
+import { DAYS_TO_POST_NOT_OVER, NO_IMPORT_YET } from "@/lib/arrears-reading";
 import type { ForecastComponent } from "@/services/forecast";
 import type { SeriesOccurrence, SeriesStaleness } from "@/services/recurring";
 import {
@@ -60,6 +60,16 @@ describe("unsettledReasonWord", () => {
   test("the coverage reason is the arrears' unread words — true of a day imported short of its grace", () => {
     expect(unsettledReasonWord("not_imported")).toBe(NO_IMPORT_YET);
     expect(unsettledReasonWord("not_imported")).toBe("no import has covered it yet");
+  });
+
+  /*
+   * 🔴 …and of a day on an archived card or a cash wallet, read through today, whose grace runs past it (review of the
+   * 2026-10-08 batch): "no import has covered it yet" of an import that will never come. Its days to post are what it
+   * waits for — the arrears' words for the same money (`DAYS_TO_POST_NOT_OVER`).
+   */
+  test("the grace reason says its days to post are not over — the arrears' words, never 'no import'", () => {
+    expect(unsettledReasonWord("in_grace")).toBe(DAYS_TO_POST_NOT_OVER);
+    expect(unsettledReasonWord("in_grace")).toBe("the days a payment has to post are not over yet");
   });
 });
 
@@ -514,6 +524,35 @@ describe("alreadyDueWords", () => {
     expect(w.body).toBe(
       "Inside this calendar month, and no import reaches 3 days past it yet — the days a payment has to post — so it " +
         "may well have posted. The forecast counts it, and so does this month's budget.",
+    );
+  });
+
+  /*
+   * 🔴 An archived card's bill due Oct 6, on Oct 8: "Already due — no import has covered it yet" and "no import reaches
+   * 3 days past it yet" — of an import that will never come (review of the 2026-10-08 batch). Its account is read
+   * through today (`silenceReadThrough`); all it waits for is its days to post.
+   */
+  test("unread with nothing left to import says its days to post are not over — quiet, and no 'import'", () => {
+    const w = alreadyDueWords({ owedCents: 229121, unreadCents: 229121, inGraceCents: 229121 }, 3);
+    expect(w.heading).toBe("Already due — the days a payment has to post are not over yet");
+    expect(w.warning).toBe(false);
+    expect(w.body).toBe(
+      "Inside this calendar month, and the 3 days past it a payment has to post are not over yet, so it may still " +
+        "post. The forecast counts it, and so does this month's budget.",
+    );
+    expect(`${w.heading} ${w.body}`).not.toMatch(/import|not posted|no posting/);
+  });
+
+  test("a mix with nothing left to import names the rest by its days to post", () => {
+    const w = alreadyDueWords({ owedCents: 3000, unreadCents: 1000, inGraceCents: 1000 }, 6);
+    expect(w.heading).toBe(
+      "Already due: $20.00 not posted, and the days a payment has to post for the other $10.00 are not over yet",
+    );
+    expect(w.warning).toBe(true);
+    expect(w.body).toBe(
+      "Inside this calendar month. Where the imports reach 6 days past a due day, they hold no posting within 6 days " +
+        "of it; for the rest, the days a payment has to post are not over yet. The forecast counts all of it, and so " +
+        "does this month's budget.",
     );
   });
 

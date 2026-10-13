@@ -108,6 +108,7 @@ export default async function BudgetsPage({
       overdueBills: s.overdue.reduce((n, o) => n + o.occurrenceCount, 0),
       // …and how far the ledger has read it, so the note says "not posted" only where the row does
       overdueUnreadCents: s.overdueUnreadCents,
+      overdueInGraceCents: s.overdueInGraceCents,
       uncoveredDays: s.uncoveredDays,
       pace: s.pace,
       // so a row spent only from cash wallets is left out on the row's own rule

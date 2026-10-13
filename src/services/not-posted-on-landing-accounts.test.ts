@@ -187,7 +187,11 @@ function chipOf(seriesId: string, today = TODAY) {
 
 describe("a bill's due days are read where it posts NOW — its last two payments' accounts (decision 62)", () => {
   test("his ledger today: the rent is read through Wells Fargo's Sep 24, not Chase Checking's Aug 12", () => {
-    expect(dueDayReadings(bundle.db, TODAY)(RENT)).toEqual({ observedThrough: "2026-09-24", graceDays: 3 });
+    expect(dueDayReadings(bundle.db, TODAY)(RENT)).toEqual({
+      observedThrough: "2026-09-24",
+      graceDays: 3,
+      readsToToday: false,
+    });
     // the chip's day itself: Wells Fargo, checked through Sep 24
     expect(dueDayReadings(bundle.db, TODAY)(RENT).observedThrough).toBe(
       silenceMeasuredThroughBySeries(bundle.db, TODAY)(RENT),
@@ -244,7 +248,11 @@ describe("the chip and the ✕ read one day: the same accounts, each to its chec
     rowsOnlyThrough(WF, "2026-10-21");
     expect(chipOf(RENT, today)).toMatchObject({ checkedThrough: "2026-09-24", awaitingStatements: true, isStale: false });
     expect(seriesDetail(bundle.db, RENT, today).evidence).toBe("awaiting-statements");
-    expect(dueDayReadings(bundle.db, today)(RENT)).toEqual({ observedThrough: "2026-09-24", graceDays: 3 });
+    expect(dueDayReadings(bundle.db, today)(RENT)).toEqual({
+      observedThrough: "2026-09-24",
+      graceDays: 3,
+      readsToToday: false,
+    });
     expect(oct1(RENT, today)).toEqual(QUIET);
     expect(oct1(UTIL, today)).toEqual(QUIET);
     expect(arrearsSentence(committedBook(bundle.db, today))).not.toContain("never posted");

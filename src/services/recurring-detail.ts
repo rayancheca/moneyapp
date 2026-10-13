@@ -249,6 +249,9 @@ export interface SeriesDetail {
    * (`ArrearsSeries.unreadCents`). 🔴 Without it the card read "Already due, and not posted" in warning colour over
    * rent's Oct 1 on a copy of his ledger 2026-10-08, a day no import had covered (Wells Fargo read through Sep 24).
    *
+   * `inGraceCents` — of `unreadCents`, the part no import keeps unread: its accounts read through today, waiting only
+   * for its days to post (`ArrearsSeries.inGraceCents`) — what the card and the End dialog say in those words.
+   *
    * `graceDays` — the days after a due day a payment may still post on, which the read half waited for
    * (`ArrearsSeries.graceDays`, ⚖️ §6A 60): what the card says the imports reach past it.
    */
@@ -257,6 +260,7 @@ export interface SeriesDetail {
     amountCents: number;
     occurrenceCount: number;
     unreadCents: number;
+    inGraceCents: number;
     graceDays: number;
   } | null;
   /**
@@ -524,6 +528,7 @@ export function seriesDetail(
         amountCents: -late.amountCents,
         occurrenceCount: late.occurrenceCount,
         unreadCents: late.unreadCents,
+        inGraceCents: late.inGraceCents,
         graceDays: late.graceDays,
       }
     : null;

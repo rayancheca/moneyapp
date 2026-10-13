@@ -963,7 +963,9 @@ export function recurringCalendar(
             o.date,
             {
               // ⚖️ the arrears' reading of the same day (`dueDayReadings`): a ✕ exactly where they say "not posted"
-              dueDay: readingOf ? readingOf(s.id) : { observedThrough: null, graceDays: s.toleranceDays },
+              dueDay: readingOf
+                ? readingOf(s.id)
+                : { observedThrough: null, graceDays: s.toleranceDays, readsToToday: false },
               // the passed paydays' frontier (`unbankedIncomeForSeries`): "no import has covered it yet" exactly where
               // the forecast, /budgets and the dashboard say "the ledger has not looked for its deposit"
               paydaysCheckedThrough: paydaysCheckedOf ? paydaysCheckedOf(s.id) : null,

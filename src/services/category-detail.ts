@@ -19,7 +19,7 @@ import {
   type DateRange,
 } from "./analytics";
 import { budgetPaceStatusOf, budgetStatuses, categoryReachFor, type CategoryReachContext } from "./budgets";
-import { arrearsThisMonth } from "./arrears";
+import { arrearsReadingOfSeries, arrearsThisMonth } from "./arrears";
 import { listSeries } from "./recurring";
 
 /**
@@ -351,7 +351,7 @@ export function seriesInCategory(db: AppDatabase, categoryId: string, today: str
       (o) =>
         [
           o.id,
-          { date: o.nextDate, occurrenceCount: o.occurrenceCount, owedCents: o.amountCents, unreadCents: o.unreadCents },
+          { date: o.nextDate, occurrenceCount: o.occurrenceCount, ...arrearsReadingOfSeries(o) },
         ] as const,
     ),
   );

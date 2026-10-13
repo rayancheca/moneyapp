@@ -24,8 +24,15 @@ describe("absenceIsEvidence", () => {
   });
 });
 
-/** The accounts a series bills on imported through `observedThrough`, with `graceDays` for a payment to post. */
-const read = (observedThrough: string | null, graceDays = 3): DueDayReading => ({ observedThrough, graceDays });
+/**
+ * The accounts a series bills on imported through `observedThrough`, with `graceDays` for a payment to post — and, by
+ * default, not through today, so an import is what an unread day waits for.
+ */
+const read = (observedThrough: string | null, graceDays = 3, readsToToday = false): DueDayReading => ({
+  observedThrough,
+  graceDays,
+  readsToToday,
+});
 
 /** A bill's reading: what `settledVerdict` grades money out by — its due day's (`read`). */
 const bill = (observedThrough: string | null, graceDays = 3): OccurrenceReading => ({
@@ -121,6 +128,26 @@ describe("settledVerdict", () => {
       state: "missed",
       reason: null,
     });
+  });
+
+  /*
+   * 🔴 An archived card or a cash wallet is read through today (`silenceReadThrough`), so all a day due inside its last
+   * grace waits for is days still to come — and it read "no import has covered it yet" of an import that will never
+   * come (review of the 2026-10-08 batch). ⚖️ No new verdict: unsettled, as before; the reason names what it waits for.
+   */
+  test("unread on accounts read through today: its days to post are not over — unsettled, never missed", () => {
+    const throughToday = (graceDays: number): OccurrenceReading => ({
+      dueDay: read("2026-10-08", graceDays, true),
+      paydaysCheckedThrough: null,
+    });
+    expect(settledVerdict("bill", "2026-10-06", throughToday(3), true)).toEqual({
+      state: "unsettled",
+      reason: "in_grace",
+    });
+    // …and read once those days are over, as any day: missed
+    expect(settledVerdict("bill", "2026-10-05", throughToday(3), true)).toEqual({ state: "missed", reason: null });
+    // …and the cautious reasons come first wherever they apply — a payday is graded by the pay's own frontier
+    expect(settledVerdict("income", "2026-10-06", throughToday(3), true).reason).toBe("not_imported");
   });
 
   test("a bill on the frontier day itself is not yet known — its grace has not been imported", () => {

@@ -1,6 +1,7 @@
 import { and, inArray } from "drizzle-orm";
 import type { AppDatabase } from "@/db/client";
 import { recurringSeries } from "@/db/schema/recurring";
+import type { ArrearsReading } from "@/lib/arrears-reading";
 import { addDays, compareDates, periodBounds } from "@/lib/dates";
 import { lastDueDayRead, paydayIsRead, type DueDayReading } from "@/lib/occurrence-verdict";
 import { sharedFrontier, type UnbankedFrontier } from "@/lib/unbanked-income";
@@ -169,6 +170,13 @@ export interface ArrearsSeries extends BudgetTailSeries {
    */
   unreadCents: number;
   /**
+   * Of `unreadCents`, the part NO IMPORT keeps unread: the series' accounts are read through today
+   * (`DueDayReading.readsToToday` — archived, a cash wallet, or checked to the day), so it waits only for its days to
+   * post — all of `unreadCents` then, or none. What every arrears surface says in its own words
+   * (`ArrearsReading.inGraceCents`), never "no import has covered it yet".
+   */
+  inGraceCents: number;
+  /**
    * The days after a due day a payment may still post on that its read half waited for — the series' `toleranceDays`,
    * widened, for a carrier and every series billed inside it, to the widest among them (`dueDayReadings`, ⚖️ §6A 60).
    * What the bill's page says the imports reach past it (`alreadyDueWords`).
@@ -228,12 +236,22 @@ export function arrearsInWindow(
   const readById = arrearsReadCents(db, late, readingOf, periodStart, through, today);
   return {
     totalCents: late.totalCents,
-    series: late.series.map((s) => ({
-      ...s,
-      unreadCents: s.amountCents - (readById.get(s.id) ?? 0),
-      graceDays: readingOf(s.id).graceDays,
-    })),
+    series: late.series.map((s) => {
+      const reading = readingOf(s.id);
+      const unreadCents = s.amountCents - (readById.get(s.id) ?? 0);
+      return {
+        ...s,
+        unreadCents,
+        inGraceCents: reading.readsToToday ? unreadCents : 0,
+        graceDays: reading.graceDays,
+      };
+    }),
   };
+}
+
+/** A late series' arrears as the reading every sentence of them is said through (`lib/arrears-reading`). */
+export function arrearsReadingOfSeries(s: ArrearsSeries): ArrearsReading {
+  return { owedCents: s.amountCents, unreadCents: s.unreadCents, inGraceCents: s.inGraceCents };
 }
 
 /**

@@ -72,6 +72,11 @@ export interface CommittedOccurrence {
    * the rest (`arrearsSentence`).
    */
   unreadCents?: number;
+  /**
+   * ARREARS ONLY: of `unreadCents`, the part no import keeps unread — the series' accounts read through today, so it
+   * waits only for its days to post (`ArrearsSeries.inGraceCents`). Absent means none of it.
+   */
+  inGraceCents?: number;
 }
 
 export interface CommittedInput {
@@ -172,6 +177,11 @@ export interface CommittedOutflows {
    * What `arrearsSentence` refuses to call "never posted".
    */
   overdueUnreadCents: number;
+  /**
+   * Of `overdueUnreadCents`, the part no import keeps unread — summed from each arrears payment's `inGraceCents`. What
+   * `arrearsSentence` says waits for its days to post, never "no import has covered it yet".
+   */
+  overdueInGraceCents: number;
   /** how many arrears payments `overdueCents` is made of */
   overdueCount: number;
   /**
@@ -246,6 +256,7 @@ export function committedOutflows(input: CommittedInput): CommittedOutflows {
   let inflowCount = 0;
   let overdueCount = 0;
   let overdueUnreadCents = 0;
+  let overdueInGraceCents = 0;
 
   const take = (o: CommittedOccurrence, origin: CommittedOrigin): void => {
     if (o.amountCents > 0) {
@@ -262,8 +273,10 @@ export function committedOutflows(input: CommittedInput): CommittedOutflows {
     const isArrears = origin === "overdue";
     if (isArrears) {
       overdueCount += 1;
-      // clamped to the payment: never more unread than there is to read
-      overdueUnreadCents += Math.min(magnitude, Math.max(0, o.unreadCents ?? magnitude));
+      // clamped to the payment: never more unread than there is to read — and never more of it in grace than is unread
+      const unread = Math.min(magnitude, Math.max(0, o.unreadCents ?? magnitude));
+      overdueUnreadCents += unread;
+      overdueInGraceCents += Math.min(unread, Math.max(0, o.inGraceCents ?? 0));
     }
     const acc = bySeries.get(o.seriesId) ?? {
       seriesId: o.seriesId,
@@ -339,6 +352,7 @@ export function committedOutflows(input: CommittedInput): CommittedOutflows {
     perMonthCents: Math.round(totalCents / months),
     overdueCents: lines.reduce((s, l) => s + l.overdueCents, 0),
     overdueUnreadCents,
+    overdueInGraceCents,
     overdueCount,
     unevidencedCents: lines.reduce((s, l) => s + (l.neverPosted ? l.totalCents : 0), 0),
     shortfallPerMonthCents: lines.reduce((s, l) => s + l.shortfallPerMonthCents, 0),
@@ -371,15 +385,20 @@ export function arrearsSentence(book: ArrearsBook): string | null {
   return `A further ${formatCents(book.overdueCents)} came due earlier this month${tail}.`;
 }
 
-/** The two book figures `arrearsSentence` and its tone read. */
-type ArrearsBook = Pick<CommittedOutflows, "overdueCents" | "overdueUnreadCents">;
+/** The book figures `arrearsSentence` and its tone read — the in-grace part absent for none of it. */
+type ArrearsBook = Pick<CommittedOutflows, "overdueCents" | "overdueUnreadCents"> &
+  Partial<Pick<CommittedOutflows, "overdueInGraceCents">>;
 
 /**
  * The book's arrears as the read/unread split every arrears surface says them through — the runway card takes its
  * sentence (`arrearsSentence`) and its tone (`arrearsAlarms`) from the same reading.
  */
 export function arrearsReadingOf(book: ArrearsBook): ArrearsReading {
-  return { owedCents: book.overdueCents, unreadCents: book.overdueUnreadCents };
+  return {
+    owedCents: book.overdueCents,
+    unreadCents: book.overdueUnreadCents,
+    inGraceCents: book.overdueInGraceCents,
+  };
 }
 
 /**

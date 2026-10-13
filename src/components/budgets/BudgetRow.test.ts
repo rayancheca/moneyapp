@@ -239,7 +239,12 @@ describe("BudgetRow — the arrears line says the runway's split, in its tone", 
   const AUG_1 = "2026-08-01";
 
   /** a Housing bill on its own Card, the Card read through `readThrough`, under an August Housing budget */
-  function housingWithBill(opts: { cents: number; readThrough: string; weekly?: boolean }): BudgetPaceStatus {
+  function housingWithBill(opts: {
+    cents: number;
+    readThrough: string;
+    weekly?: boolean;
+    dueOn?: string;
+  }): BudgetPaceStatus {
     const chase = bundle.db.select().from(institutions).where(eq(institutions.name, "Chase")).get()!;
     const card = createAccount(bundle.db, { institutionId: chase.id, name: "Rent card", type: "credit" });
     bundle.db
@@ -250,7 +255,7 @@ describe("BudgetRow — the arrears line says the runway's split, in its tone", 
         cadence: opts.weekly ? "weekly" : "monthly",
         intervalDaysAvg: opts.weekly ? 7 : 30,
         amountCentsAvg: -opts.cents,
-        nextExpectedOn: AUG_1,
+        nextExpectedOn: opts.dueOn ?? AUG_1,
         nextExpectedAmountCents: -opts.cents,
         status: "confirmed",
         lastMatchedOn: AUG_1,
@@ -314,6 +319,23 @@ describe("BudgetRow — the arrears line says the runway's split, in its tone", 
     expect(line.className).toMatch(/\btext-warning\b/);
     expect(spoken(html)).toMatch(
       / \$100\.00 was expected by now: \$50\.00 has not posted, and no import has covered the other \$50\.00 yet\.$/,
+    );
+  });
+
+  /*
+   * 🔴 Its Card read through today, a bill due yesterday still inside its 3 days to post read "no import has covered it
+   * yet" (review of the 2026-10-08 batch) — what is unread is days still to come, and on an archived card or a cash
+   * wallet no import ever will. The row says what it waits for, quietly.
+   */
+  test("read through today, its days to post not over: says so, quietly — never 'no import'", () => {
+    const html = render(housingWithBill({ cents: 228_570, readThrough: TODAY, dueOn: "2026-08-10" }));
+    const line = arrearsLine(html);
+    expect(line.text).toBe(
+      "$2,285.70 expected by now and the days a payment has to post are not over yet · Rent Aug 10",
+    );
+    expect(line.className).not.toMatch(/text-(warning|negative)\b/);
+    expect(spoken(html)).toMatch(
+      / \$2,285\.70 was expected by now and the days a payment has to post are not over yet\.$/,
     );
   });
 });

@@ -1516,6 +1516,11 @@ export interface BudgetPaceStatus extends BudgetStatus, CategoryCoverage {
    * dialog and the page note may not call "not posted", nor warn about.
    */
   overdueUnreadCents: number;
+  /**
+   * Of `overdueUnreadCents`, the part no import keeps unread (`ArrearsSeries.inGraceCents`) — what they say waits for
+   * its days to post, never "no import has covered it yet".
+   */
+  overdueInGraceCents: number;
   overdue: ArrearsSeries[];
   /**
    * Days of THIS window the ledger cannot speak for: the elapsed days past
@@ -1699,6 +1704,7 @@ export function budgetPaceStatusOf(
     ...s,
     overdueCents: overdue.totalCents,
     overdueUnreadCents: overdue.series.reduce((sum, o) => sum + o.unreadCents, 0),
+    overdueInGraceCents: overdue.series.reduce((sum, o) => sum + o.inGraceCents, 0),
     overdue: overdue.series,
     ...coverage,
     borrowedDay: borrowed?.day ?? null,

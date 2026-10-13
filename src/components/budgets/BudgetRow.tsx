@@ -115,7 +115,11 @@ export function BudgetRow({ status, guidanceCents, spentProvenance, planProvenan
    * warning (his words 2026-08-05). ⛔ The runway's split and tone (`lib/arrears-reading`): "not posted" and the
    * warning only for what the ledger has read; the line, the spoken sentence and the dialog all read this one.
    */
-  const arrears = { owedCents: status.overdueCents, unreadCents: status.overdueUnreadCents };
+  const arrears = {
+    owedCents: status.overdueCents,
+    unreadCents: status.overdueUnreadCents,
+    inGraceCents: status.overdueInGraceCents,
+  };
   const arrearsLine = `${formatCents(status.overdueCents)} expected by now${arrearsTail(arrears, "not posted")}`;
 
   // The elapsed fraction is what the today mark encodes, and the mark is
@@ -375,6 +379,7 @@ export function BudgetRow({ status, guidanceCents, spentProvenance, planProvenan
                   spentCents: status.spentCents,
                   overdueCents: status.overdueCents,
                   overdueUnreadCents: status.overdueUnreadCents,
+                  overdueInGraceCents: status.overdueInGraceCents,
                   expectedTailCents: status.expectedTailCents,
                 },
                 formatCents,

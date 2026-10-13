@@ -10,7 +10,7 @@ import { institutions } from "@/db/schema/institutions";
 import { recurringSeries } from "@/db/schema/recurring";
 import { transactions } from "@/db/schema/transactions";
 import { seedDatabase } from "@/db/seed";
-import { arrearsAlarms } from "@/lib/arrears-reading";
+import { arrearsAlarms, overdueReading } from "@/lib/arrears-reading";
 import { arrearsReadingOf, arrearsSentence } from "@/lib/committed";
 import { formatCents } from "@/lib/money";
 import { alreadyDueWords } from "@/components/recurring/labels";
@@ -138,8 +138,8 @@ function importedThrough(day: string): void {
 }
 
 /** What every surface that says a bill came due says of these series' Oct 1, at TODAY. */
-function surfaces(ids: readonly string[] = [RENT, UTIL]) {
-  const calendar = recurringCalendar(bundle.db, "2026-10", TODAY).entriesByDay["2026-10-01"] ?? [];
+function surfaces(ids: readonly string[] = [RENT, UTIL], [dueOn, dueWord] = ["2026-10-01", "Oct 1"]) {
+  const calendar = recurringCalendar(bundle.db, "2026-10", TODAY).entriesByDay[dueOn] ?? [];
   const book = committedBook(bundle.db, TODAY);
   const components = forecastCurrentMonth(bundle.db, TODAY).components;
   return {
@@ -149,11 +149,8 @@ function surfaces(ids: readonly string[] = [RENT, UTIL]) {
     }),
     card: ids.map((id) => {
       const d = seriesDetail(bundle.db, id, TODAY);
-      // the page's own grace (`overdue.graceDays`), as `AlreadyDueCard` passes it
-      const w = alreadyDueWords(
-        { owedCents: -d.overdue!.amountCents, unreadCents: d.overdue!.unreadCents },
-        d.overdue!.graceDays,
-      );
+      // the page's own reading and grace (`overdue.graceDays`), as `AlreadyDueCard` passes them
+      const w = alreadyDueWords(overdueReading(d.overdue!), d.overdue!.graceDays);
       return [w.heading, w.warning];
     }),
     endDialog: ids.map(
@@ -163,10 +160,15 @@ function surfaces(ids: readonly string[] = [RENT, UTIL]) {
         )!.label,
     ),
     runway: [arrearsSentence(book), arrearsAlarms(arrearsReadingOf(book))],
-    budgets: budgetPaceStatuses(bundle.db, TODAY).map((s) => [s.overdueCents, s.overdueUnreadCents]),
+    budgets: budgetPaceStatuses(bundle.db, TODAY).map((s) => [
+      s.overdueCents,
+      s.overdueUnreadCents,
+      s.overdueInGraceCents,
+    ]),
     forecast: ids.map((id) => {
       const name = id === RENT ? "Flamingo South Beach (rent)" : "Rent utilities & fees";
-      return /came due Oct 1(.*)$/.exec(components.find((c) => c.label === name)!.detail ?? "")![1];
+      const detail = components.find((c) => c.label === name)!.detail ?? "";
+      return new RegExp(`came due ${dueWord}(.*)$`).exec(detail)![1];
     }),
   };
 }
@@ -185,7 +187,7 @@ const QUIET = {
     "Already due this month, no import has covered it yet",
   ],
   runway: ["A further $2,291.21 came due earlier this month and no import has covered it yet.", false],
-  budgets: [[229121, 229121]],
+  budgets: [[229121, 229121, 0]],
   forecast: [" and no import has covered it yet", " and no import has covered it yet"],
 };
 
@@ -200,7 +202,7 @@ const NOT_POSTED = {
   ],
   endDialog: ["Already due this month, not posted", "Already due this month, not posted"],
   runway: ["A further $2,291.21 came due earlier this month and never posted.", true],
-  budgets: [[229121, 0]],
+  budgets: [[229121, 0, 0]],
   forecast: [" and has not posted", " and has not posted"],
 };
 
@@ -311,8 +313,8 @@ describe("a bill read part of the way is split by which due days' grace the impo
       .run();
     importedThrough("2026-10-09");
     const late = arrearsThisMonth(bundle.db, new Set(["laundry"]), "2026-10-20").series[0]!;
-    // Oct 8 is imported, but not Oct 10, the last day a payment for it may post on
-    expect([late.amountCents, late.unreadCents]).toEqual([3000, 2000]);
+    // Oct 8 is imported, but not Oct 10, the last day a payment for it may post on — and an import is what it waits for
+    expect([late.amountCents, late.unreadCents, late.inGraceCents]).toEqual([3000, 2000, 0]);
   });
 });
 
@@ -333,6 +335,82 @@ describe("an account no statement will come for is read through today — and st
     const oct6 = recurringCalendar(bundle.db, "2026-10", TODAY).entriesByDay["2026-10-06"]!.find(
       (e) => e.seriesId === RENT,
     )!;
-    expect([oct6.state, oct6.unsettledReason]).toEqual(["unsettled", "not_imported"]);
+    expect([oct6.state, oct6.unsettledReason]).toEqual(["unsettled", "in_grace"]);
+  });
+
+  /*
+   * 🔴 …and it said "no import has covered it yet" while it waited (review of the 2026-10-08 batch): of an archived
+   * card, an import /imports will never ask for. What it waits for is its 3 days to post — said in the words its own
+   * page's body already uses, "the days a payment has to post", on every surface that said the other. ⚖️ No new
+   * verdict: quiet, unsettled and unread exactly as before; the words only.
+   */
+  test("archived, due Oct 6: every surface says the days a payment has to post are not over — never 'no import'", () => {
+    bundle.db.update(accounts).set({ isActive: false }).where(eq(accounts.id, "acct")).run();
+    bundle.db
+      .update(recurringSeries)
+      .set({ anchorDay: 6, nextExpectedOn: "2026-10-06", userNextExpectedOn: "2026-10-06" })
+      .run();
+    expect(surfaces([RENT, UTIL], ["2026-10-06", "Oct 6"])).toEqual({
+      calendar: [
+        ["unsettled", "in_grace"],
+        ["unsettled", "in_grace"],
+      ],
+      card: [
+        ["Already due — the days a payment has to post are not over yet", false],
+        ["Already due — the days a payment has to post are not over yet", false],
+      ],
+      endDialog: [
+        "Already due this month, the days a payment has to post are not over yet",
+        "Already due this month, the days a payment has to post are not over yet",
+      ],
+      runway: [
+        "A further $2,291.21 came due earlier this month and the days a payment has to post are not over yet.",
+        false,
+      ],
+      budgets: [[229121, 229121, 229121]],
+      forecast: [
+        " and the days a payment has to post are not over yet",
+        " and the days a payment has to post are not over yet",
+      ],
+    });
+  });
+
+  test("a weekly bill on it, read part of the way: what is read is not posted, the rest waits for its days", () => {
+    bundle.db.update(accounts).set({ isActive: false }).where(eq(accounts.id, "acct")).run();
+    bundle.db
+      .insert(recurringSeries)
+      .values({
+        id: "laundry",
+        name: "Laundry",
+        kind: "bill",
+        cadence: "weekly",
+        intervalDaysAvg: 7,
+        amountCentsAvg: -1000,
+        nextExpectedAmountCents: -1000,
+        nextExpectedOn: "2026-10-01",
+        toleranceDays: 6,
+        status: "confirmed",
+        accountId: "acct",
+        userCategoryId: categoryId,
+        createdAt: now(),
+        updatedAt: now(),
+      })
+      .run();
+    // read through Oct 20: Oct 1 and Oct 8 are past their 6 days, Oct 15 has until Oct 21
+    const late = arrearsThisMonth(bundle.db, new Set(["laundry"]), "2026-10-20").series[0]!;
+    expect([late.amountCents, late.unreadCents, late.inGraceCents]).toEqual([3000, 1000, 1000]);
+  });
+
+  test("a live account checked through today says the same: what it waits for is days still to come", () => {
+    bundle.db
+      .update(recurringSeries)
+      .set({ anchorDay: 6, nextExpectedOn: "2026-10-06", userNextExpectedOn: "2026-10-06" })
+      .where(eq(recurringSeries.id, RENT))
+      .run();
+    // one day short of today, an import is what it waits for
+    importedThrough("2026-10-07");
+    expect(surfaces([RENT], ["2026-10-06", "Oct 6"]).calendar).toEqual([["unsettled", "not_imported"]]);
+    importedThrough(TODAY);
+    expect(surfaces([RENT], ["2026-10-06", "Oct 6"]).calendar).toEqual([["unsettled", "in_grace"]]);
   });
 });

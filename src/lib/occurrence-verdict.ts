@@ -41,6 +41,12 @@ export type UnsettledReason =
    * accounts its pay lands in through it (`paydayIsRead`)
    */
   | "not_imported"
+  /**
+   * money OUT, on accounts read through today (`DueDayReading.readsToToday`) — archived, a cash wallet, or checked to
+   * the day: no import keeps it unread, only the days a payment has to post, still to come. ⚖️ Not a new verdict: the
+   * same quiet "?" as `not_imported`, in the words of what it waits for.
+   */
+  | "in_grace"
   /** money IN, on a day the ledger HAS looked: its absence from the ledger is never proof it did not happen */
   | "unbanked"
   /** too few postings to know when this is due — the date itself is a guess */
@@ -201,6 +207,12 @@ export interface DueDayReading {
    * inside, the widest among that carrier and every series billed inside it (`dueDayReadings`) — one day for the pair.
    */
   graceDays: number;
+  /**
+   * Whether `observedThrough` reaches TODAY — every account it may land in imported or checked to the day, or one no
+   * statement will come for (archived, a cash wallet). A due day unread then waits for no import: only for the days a
+   * payment has to post, still to come — the words `in_grace` and `ArrearsReading.inGraceCents` say it in.
+   */
+  readsToToday: boolean;
 }
 
 /**
@@ -290,7 +302,9 @@ export function settledVerdict(
     const looked = paydayIsRead(occurrenceDate, reading.paydaysCheckedThrough);
     return { state: "unsettled", reason: looked ? "unbanked" : "not_imported" };
   }
-  if (!dueDayIsRead(occurrenceDate, reading.dueDay)) return { state: "unsettled", reason: "not_imported" };
+  if (!dueDayIsRead(occurrenceDate, reading.dueDay)) {
+    return { state: "unsettled", reason: reading.dueDay.readsToToday ? "in_grace" : "not_imported" };
+  }
   if (!scheduleIsProven) return { state: "unsettled", reason: "schedule_unproven" };
   return { state: "missed", reason: null };
 }

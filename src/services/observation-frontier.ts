@@ -416,9 +416,12 @@ export function dueDayReadings(db: AppDatabase, today: string): (seriesId: strin
   }
   return (seriesId) => {
     const pair = carriers.get(seriesId)?.id ?? seriesId;
+    const observedThrough = measuredThrough(seriesId);
     return {
-      observedThrough: measuredThrough(seriesId),
+      observedThrough,
       graceDays: pairGrace.get(pair) ?? tolerance.get(seriesId) ?? 0,
+      // read to the day of the question: what is unread waits only for days still to come (`in_grace`)
+      readsToToday: observedThrough !== null && compareDates(observedThrough, today) >= 0,
     };
   };
 }
