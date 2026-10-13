@@ -886,18 +886,21 @@ describe("ledgerCheckMode — the command line", () => {
       tokens: ["3f9a0c12de"],
       confirm: false,
       reason: null,
+      carriedRefusal: null,
     });
     expect(ledgerCheckMode(["--acknowledge-left-out=3f9a0c12de,0b1c2d3e4f,3f9a0c12de"])).toEqual({
       mode: "acknowledge",
       tokens: ["3f9a0c12de", "0b1c2d3e4f"],
       confirm: false,
       reason: null,
+      carriedRefusal: null,
     });
     expect(ledgerCheckMode(["--acknowledge-left-out=3f9a0c12de", `--reason=${READ_IT}`, "--confirm"])).toEqual({
       mode: "acknowledge",
       tokens: ["3f9a0c12de"],
       confirm: true,
       reason: READ_IT,
+      carriedRefusal: null,
     });
   });
 
@@ -959,6 +962,11 @@ describe("ledgerCheckMode — the command line", () => {
    * wherever the reason is: an escape a terminal obeys, a bell, a C1 control a page shows as nothing. Refused now, dry
    * run or not, by name. A tab or a line break is whitespace, collapsed to a space as ever (below); U+0085 NEXT LINE is
    * no whitespace to `\s`, so it is one of these.
+   *
+   * ⛔ The command line names the refusal and ledger-check makes it before its step says or writes a thing — unless
+   * the mark's lines alike carry that reason stored already, from before the guard: an open line alike takes it exactly
+   * (`reasonCarriedAlready`, lib/left-out-acknowledgement.test.ts; the order, scripts/ledger-check-left-out.test.ts).
+   * 🔴 Refused here, before the ledger was read, such a mark failed ledger-check for good (review of 3872004).
    */
   it("⛔ a reason carrying a control character is refused, dry run or not, naming it — nothing was written", () => {
     const carrying: [string, string][] = [
@@ -970,12 +978,14 @@ describe("ledgerCheckMode — the command line", () => {
     ];
     for (const [reason, named] of carrying) {
       for (const confirm of [[], ["--confirm"]]) {
-        const run = () => ledgerCheckMode(["--acknowledge-left-out=3f9a0c12de", `--reason=${reason}`, ...confirm]);
-        expect(run).toThrow(WitnessFlagRefusal);
-        expect(run).toThrow(
-          `--reason carries a control character, ${named}, that every surface would print raw — nothing was written: ` +
+        const mode = ledgerCheckMode(["--acknowledge-left-out=3f9a0c12de", `--reason=${reason}`, ...confirm]);
+        expect(mode).toMatchObject({
+          mode: "acknowledge",
+          reason,
+          carriedRefusal:
+            `--reason carries a control character, ${named}, that every surface would print raw — nothing was written: ` +
             "--reason='<what the statement shows>', in characters a reader sees",
-        );
+        });
       }
     }
   });
@@ -984,18 +994,20 @@ describe("ledgerCheckMode — the command line", () => {
    * 🔴 A bidi control among a reason's words — an embedding, override or isolate, U+202A–202E and U+2066–2069 — is no
    * whitespace to `\s`, no control character and no reason of nothing: it was kept, its dry run said it would store it,
    * and stored it is printed raw, the words after it reordered wherever the line is printed. Refused now, dry run or
-   * not, by name.
+   * not, by name — unless its lines alike carry it stored already, as above.
    */
   it("⛔ a reason carrying a bidi control is refused, dry run or not, naming it — nothing was written", () => {
     for (const c of [0x202a, 0x202b, 0x202c, 0x202d, 0x202e, 0x2066, 0x2067, 0x2068, 0x2069]) {
       const reason = `July statement, ${String.fromCodePoint(c)}page 1`;
       for (const confirm of [[], ["--confirm"]]) {
-        const run = () => ledgerCheckMode(["--acknowledge-left-out=3f9a0c12de", `--reason=${reason}`, ...confirm]);
-        expect(run).toThrow(WitnessFlagRefusal);
-        expect(run).toThrow(
-          `--reason carries a bidi control, U+${c.toString(16).toUpperCase()}, that every surface would print raw — ` +
+        const mode = ledgerCheckMode(["--acknowledge-left-out=3f9a0c12de", `--reason=${reason}`, ...confirm]);
+        expect(mode).toMatchObject({
+          mode: "acknowledge",
+          reason,
+          carriedRefusal:
+            `--reason carries a bidi control, U+${c.toString(16).toUpperCase()}, that every surface would print raw — ` +
             "nothing was written: --reason='<what the statement shows>', in characters a reader sees",
-        );
+        });
       }
     }
   });
@@ -1005,12 +1017,18 @@ describe("ledgerCheckMode — the command line", () => {
     const [ls, ps] = [String.fromCodePoint(0x2028), String.fromCodePoint(0x2029)];
     const mode = ledgerCheckMode(["--acknowledge-left-out=3f9a0c12de", `--reason=July, p. 1:${ls}fee${ps} reversed`]);
     const reason = "July, p. 1: fee reversed";
-    expect(mode).toEqual({ mode: "acknowledge", tokens: ["3f9a0c12de"], confirm: false, reason });
+    expect(mode).toEqual({ mode: "acknowledge", tokens: ["3f9a0c12de"], confirm: false, reason, carriedRefusal: null });
   });
 
   it("the reason is kept whole — its commas, colons and equals signs — on one line, its spaces collapsed", () => {
     const mode = ledgerCheckMode(["--acknowledge-left-out=3f9a0c12de", "--reason=  July, p. 1:\n  fee =  $25.00 , reversed  "]);
-    expect(mode).toEqual({ mode: "acknowledge", tokens: ["3f9a0c12de"], confirm: false, reason: "July, p. 1: fee = $25.00 , reversed" });
+    expect(mode).toEqual({
+      mode: "acknowledge",
+      tokens: ["3f9a0c12de"],
+      confirm: false,
+      reason: "July, p. 1: fee = $25.00 , reversed",
+      carriedRefusal: null,
+    });
   });
 
   it("⛔ one reason names one line: --reason beside two marks is refused — each its own run, its own reason", () => {

@@ -419,8 +419,8 @@ export type LedgerCheckMode =
   | { mode: "check" }
   | { mode: "lower"; kinds: WitnessKind[]; confirm: boolean }
   // ⛔ `--confirm` only WITH a reason — the type says so, so the write is never reached without one
-  | { mode: "acknowledge"; tokens: string[]; confirm: false; reason: string | null }
-  | { mode: "acknowledge"; tokens: string[]; confirm: true; reason: string };
+  | { mode: "acknowledge"; tokens: string[]; confirm: false; reason: string | null; carriedRefusal: string | null }
+  | { mode: "acknowledge"; tokens: string[]; confirm: true; reason: string; carriedRefusal: string | null };
 
 const LOWER = "--lower-marks";
 /** ⚖️ Owner, 2026-10-02 (§6A 30): a line left out, acknowledged after a session read it on the statement */
@@ -481,9 +481,7 @@ export function ledgerCheckMode(argv: readonly string[]): LedgerCheckMode {
  * `--reason='<what the statement shows>'`, kept whole — commas, colons and equals signs are the session's words — on
  * one line, every run of whitespace one space: it is printed inside a sentence. Null when none is given. ⛔ One of
  * only whitespace, zero-width, format and control characters, or the braille blank, says nothing, and is refused
- * (`reasonSaysNothing`). ⛔ So is one carrying a control character or a bidi control among its words, dry run or not:
- * stored, it would be printed raw wherever the line is (`reasonCarriesControl`). A line or paragraph separator is
- * whitespace to `\s`, a space here, as a tab or a line break is.
+ * (`reasonSaysNothing`). A line or paragraph separator is whitespace to `\s`, a space here, as a tab or a line break is.
  */
 function reasonOf(args: readonly string[]): string | null {
   if (args.length === 0) return null;
@@ -494,11 +492,21 @@ function reasonOf(args: readonly string[]): string | null {
   if (reasonSaysNothing(reason)) {
     throw new WitnessFlagRefusal(`${REASON} needs what the session read on the statement: ${SAYS}`);
   }
-  const carries = reasonCarriesControl(reason);
-  if (carries !== null) {
-    throw new WitnessFlagRefusal(`${REASON} ${carries} — nothing was written: ${SAYS}, in characters a reader sees`);
-  }
   return reason;
+}
+
+/**
+ * What a reason carrying a control character or a bidi control among its words is refused with, dry run or not —
+ * stored, it would be printed raw wherever the line is (`reasonCarriesControl`) — or null for one carrying none.
+ *
+ * ⛔ Named here, refused by ledger-check before its step says or writes a thing — unless the mark's lines alike carry
+ * that reason stored already (`reasonCarriedAlready`): ⚖️ §6A 30, an open line takes the reason its lines alike carry,
+ * exactly. 🔴 Review of 3872004 (2026-10-12): refused here, before the ledger was read, a reason stored before its guard
+ * could never be given again, and a mark partly acknowledged with it failed ledger-check for good.
+ */
+function carriedRefusalOf(reason: string | null): string | null {
+  const carries = reason === null ? null : reasonCarriesControl(reason);
+  return carries === null ? null : `${REASON} ${carries} — nothing was written: ${SAYS}, in characters a reader sees`;
 }
 
 /**
@@ -532,14 +540,15 @@ function acknowledgeMode(args: readonly string[], reasons: readonly string[], co
         `with its own ${REASON}`,
     );
   }
-  if (!confirm) return { mode: "acknowledge", tokens: marks, confirm, reason };
+  const carriedRefusal = carriedRefusalOf(reason);
+  if (!confirm) return { mode: "acknowledge", tokens: marks, confirm, reason, carriedRefusal };
   if (reason === null) {
     throw new WitnessFlagRefusal(
       `--confirm records an acknowledgement, and one needs ${SAYS} — what the session read on the statement, stored ` +
         "and printed with the line: an acknowledgement without a reason is a check quieted, not passed. Nothing was written",
     );
   }
-  return { mode: "acknowledge", tokens: marks, confirm, reason };
+  return { mode: "acknowledge", tokens: marks, confirm, reason, carriedRefusal };
 }
 
 function lowerMode(lowers: readonly string[], confirm: boolean): LedgerCheckMode {
