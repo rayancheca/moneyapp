@@ -7,6 +7,7 @@ import { CalendarGrid } from "@/components/ui/CalendarGrid";
 import { Money } from "@/components/ui/Money";
 import { Sheet } from "@/components/ui/Sheet";
 import { toast } from "@/components/ui/Toast";
+import { useMonthPaging } from "@/hooks/useMonthPaging";
 import type { CalendarDay } from "@/lib/calendar-math";
 import { formatDayLong } from "@/lib/format-date";
 import { formatCents, formatCentsSigned } from "@/lib/money";
@@ -37,24 +38,15 @@ function cellFill(cell: PnlDayCell | undefined, scaleCents: number): string {
 }
 
 export function PnlCalendar({ initialMonth, today }: { initialMonth: PnlCalendarMonth; today: string }) {
-  const [month, setMonth] = useState(initialMonth);
+  // 🔴 a ‹ pressed while the last month loaded stepped from the month on screen and asked for it again (review of
+  // f978583, 2026-10-13: ‹ ‹ on 2026-10 drew 2026-09) — every calendar on the grid pages by `useMonthPaging`
+  const { month, changeMonth } = useMonthPaging(initialMonth, (monthKey) => loadPnlMonthAction({ monthKey }));
   const [openDay, setOpenDay] = useState<string | null>(null);
   const [dayDetail, setDayDetail] = useState<PnlDayDetail | null>(null);
   const [, startTransition] = useTransition();
-  // latest-request guards: rapid month/day taps must not let a slow earlier
+  // latest-request guard: rapid day taps must not let a slow earlier
   // fetch resolve last and render stale data under the newer header
-  const monthReqRef = useRef(initialMonth.monthKey);
   const dayReqRef = useRef<string | null>(null);
-
-  function changeMonth(monthKey: string): void {
-    monthReqRef.current = monthKey;
-    startTransition(async () => {
-      const r = await loadPnlMonthAction({ monthKey });
-      if (monthReqRef.current !== monthKey) return; // superseded by a newer month
-      if (r.ok) setMonth(r.data);
-      else toast({ title: r.error, tone: "negative" });
-    });
-  }
 
   function openDaySheet(iso: string): void {
     dayReqRef.current = iso;

@@ -10,6 +10,7 @@ import { compactDayAmount } from "@/lib/calendar-day-weight";
 import { formatCents } from "@/lib/money";
 import { formatDayLong, formatDayShort, formatMonthYear } from "@/lib/format-date";
 import { loadSpendHeatmap } from "@/app/spending/actions";
+import { useMonthPaging } from "@/hooks/useMonthPaging";
 import { dayLedgerHref } from "@/lib/ledger-href";
 import type { HeatDay, SpendHeatmap as SpendHeatmapData } from "@/services/spending";
 
@@ -200,23 +201,19 @@ interface SpendHeatmapProps {
 
 export function SpendHeatmap({ initial, today, ledgerOpens, ledgerReaches }: SpendHeatmapProps) {
   const router = useRouter();
-  const [data, setData] = useState(initial);
-  const [pending, setPending] = useState(false);
   const [openDay, setOpenDay] = useState<string | null>(null);
+  /*
+   * 🔴 A ‹ pressed while the last month loaded stepped from the month on screen and asked for it again, whichever
+   * month answered LAST was drawn, the first answer cleared the busy state, and a failed load said nothing (review of
+   * f978583, 2026-10-13: a quick ‹ › on October asked for September and then November). Every calendar on the grid
+   * pages by `useMonthPaging`; a day from the old month has no meaning in the new one, so its sheet closes.
+   */
+  const { month: data, changeMonth, pending } = useMonthPaging(initial, loadSpendHeatmap, () => setOpenDay(null));
 
   const byDay = new Map(data.days.map((d) => [d.iso, d]));
   const monthName = formatMonthYear(`${data.monthKey}-01`);
   const scale = Math.max(data.maxOutflowCents, data.maxInflowCents);
   const detail = openDay === null ? null : (byDay.get(openDay) ?? null);
-
-  async function changeMonth(monthKey: string) {
-    setPending(true);
-    const res = await loadSpendHeatmap(monthKey);
-    if (res.ok) setData(res.data);
-    setPending(false);
-    // a day from the old month has no meaning in the new one
-    setOpenDay(null);
-  }
 
   function cellLabel(iso: string): string {
     return heatCellLabel({

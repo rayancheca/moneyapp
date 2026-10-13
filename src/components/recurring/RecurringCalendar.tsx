@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState, useTransition } from "react";
+import { useState } from "react";
 import Link from "next/link";
 import { loadRecurringMonthAction } from "@/app/recurring/actions";
 import { Badge } from "@/components/ui/Badge";
@@ -9,10 +9,10 @@ import { MerchantMark } from "@/components/ui/MerchantMark";
 import { InfoTip } from "@/components/ui/InfoTip";
 import { Money } from "@/components/ui/Money";
 import { Sheet } from "@/components/ui/Sheet";
-import { toast } from "@/components/ui/Toast";
+import { useMonthPaging } from "@/hooks/useMonthPaging";
 import { compactDayTotal, dayTotalCents, dayWeight, heaviestDayCents } from "@/lib/calendar-day-weight";
 import { heatMixPercent } from "@/lib/calendar-heat";
-import { addMonths, monthsBetween, type CalendarDay } from "@/lib/calendar-math";
+import type { CalendarDay } from "@/lib/calendar-math";
 import { RECURRING_JARGON } from "@/lib/jargon";
 import { flowEntryOf } from "@/lib/month-flow";
 import { CALENDAR_DENSITY_CLASS } from "./recurring-view-spec";
@@ -277,33 +277,14 @@ function entrySummary(e: CalendarEntry): string {
  * month through a server action (the grid never reaches the wall clock itself).
  */
 export function RecurringCalendar({ initialMonth, today, density = "tall", onMonthLoaded }: RecurringCalendarProps) {
-  const [month, setMonth] = useState(initialMonth);
+  // a press steps from the month last asked for and only the newest ask draws — the rule of every calendar on the
+  // grid (`useMonthPaging`); it hands up the whole month, not its key, because the tab badge above counts it too
+  const { month, changeMonth } = useMonthPaging(
+    initialMonth,
+    (monthKey) => loadRecurringMonthAction({ monthKey }),
+    onMonthLoaded,
+  );
   const [openDay, setOpenDay] = useState<string | null>(null);
-  const [, startTransition] = useTransition();
-  /*
-   * The month last ASKED for, which a press steps from — not the month on screen. 🔴 The grid steps from the month it
-   * shows, so a press landing while the last one's month was still loading asked for that same month again and was
-   * lost: e2e's 24 presses back from July 2026 stopped at May 2025, June 2025 or August 2024 (gate of 60d0d96,
-   * 2026-10-13, once each month's read had grown by a few milliseconds). Only the newest ask may draw.
-   */
-  const asked = useRef(initialMonth.monthKey);
-
-  function changeMonth(stepTo: string): void {
-    const monthKey = addMonths(asked.current, monthsBetween(month.monthKey, stepTo));
-    asked.current = monthKey;
-    startTransition(async () => {
-      const r = await loadRecurringMonthAction({ monthKey });
-      // a later press asked for another month: this answer is stale, and the newest one draws
-      if (asked.current !== monthKey) return;
-      if (r.ok) {
-        setMonth(r.data);
-        // the whole month, not its key — the tab badge above counts it too
-        onMonthLoaded?.(r.data);
-      } else {
-        toast({ title: r.error, tone: "negative" });
-      }
-    });
-  }
 
   function cellLabel(iso: string): string {
     const entries = month.entriesByDay[iso] ?? [];
