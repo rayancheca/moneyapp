@@ -4,7 +4,7 @@ import path from "node:path";
 import { eq } from "drizzle-orm";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { afterEach, beforeEach, expect, test } from "vitest";
+import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { createDatabase, type DbBundle } from "@/db/client";
 import { accounts } from "@/db/schema/accounts";
 import { dailyBalances } from "@/db/schema/balances";
@@ -295,6 +295,63 @@ test("arrears on days the ledger has read keep the negative tone", () => {
   expect(arrearsLine(renderToStaticMarkup(createElement(RunwayCard, { data: card })))).toEqual({
     text: "A further $2,109.00 came due earlier this month and never posted.",
     alarm: true,
+  });
+});
+
+/**
+ * 🔴 A one-time charge whose day has passed is owed and nothing of it is still to come: its committed line carries
+ * arrears and $0.00 of the rate — and the rate named it, "…, and 10 more" bills that "come to $3,446.19 a month" (the
+ * Nov 11 car-insurance balance asked about Nov 12, a copy of his ledger 2026-10-12). It is said where it is owed: the
+ * arrears sentence. `committedBillsNamed` is the rule; this pins that the card prints it.
+ */
+describe("the bills the rate names are the bills inside it", () => {
+  const balance = (): void => {
+    bundle.db
+      .insert(recurringSeries)
+      .values({
+        name: "Insurance balance",
+        kind: "bill",
+        cadence: "monthly",
+        status: "confirmed",
+        intervalDaysAvg: 30,
+        nextExpectedOn: "2026-09-05",
+        userNextExpectedOn: "2026-09-05",
+        userEndsOn: "2026-09-05",
+        nextExpectedAmountCents: -7274,
+      })
+      .run();
+  };
+  const text = (): string =>
+    renderToStaticMarkup(createElement(RunwayCard, { data: runwayCard(bundle.db, TODAY) }))
+      .replace(/<[^>]+>/g, "")
+      .replace(/&amp;/g, "&");
+
+  test("a one-time charge past its day is in the arrears sentence, never among the bills that come to the rate", () => {
+    balance();
+    bundle.db
+      .insert(recurringSeries)
+      .values({
+        name: "Gym",
+        kind: "subscription",
+        cadence: "monthly",
+        status: "confirmed",
+        intervalDaysAvg: 30,
+        nextExpectedOn: "2026-09-22",
+        nextExpectedAmountCents: -10000,
+      })
+      .run();
+    const t = text();
+    expect(t).toContain("Committed bills come to $100.00 a month — Gym.");
+    expect(t).not.toContain("Insurance balance");
+    expect(t).toContain("A further $72.74 came due earlier this month");
+  });
+
+  test("…and with nothing inside the rate, no $0.00 rate is printed — only what came due", () => {
+    balance();
+    const t = text();
+    expect(t).not.toContain("Committed bills come to");
+    expect(t).not.toContain("$0.00 a month");
+    expect(t).toContain("A further $72.74 came due earlier this month");
   });
 });
 

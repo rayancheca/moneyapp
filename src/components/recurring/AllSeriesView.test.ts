@@ -223,6 +223,23 @@ describe("AllSeriesView — a schedule of one charge reads Once in the cadence s
     expect(card).toContain("Detected: Bill · Once");
     expect(card).not.toContain("Monthly");
   });
+
+  /* 🔴 From Nov 12 its one day has passed, and its row read "~$0.00/yr" (a copy of his ledger, 2026-10-12). */
+  test("from Nov 12, its day passed, its row prints no year ahead of it", () => {
+    const html = decode(
+      renderToStaticMarkup(
+        createElement(AllSeriesView, {
+          series: listSeries(bundle.db, "2026-11-12"),
+          overdueBySeries: new Map(),
+          today: "2026-11-12",
+        }),
+      ),
+    );
+    const at = html.indexOf(`>${BALANCE}</a>`);
+    const row = html.slice(at, html.indexOf("</tr>", at)).replace(/<[^>]+>/g, "|");
+    expect(row).not.toContain("/yr");
+    expect(html).not.toContain("$0.00");
+  });
 });
 
 /**

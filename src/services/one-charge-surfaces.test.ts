@@ -7,8 +7,10 @@ import { createDatabase, type DbBundle } from "@/db/client";
 import { seedDatabase } from "@/db/seed";
 import { merchants } from "@/db/schema/merchants";
 import { recurringSeries } from "@/db/schema/recurring";
+import { committedBillsNamed } from "@/lib/committed";
 import { budgetTail } from "./budgets";
 import { seriesInCategory } from "./category-detail";
+import { committedBook } from "./committed";
 import { forecastCurrentMonth, forecastForMonth } from "./forecast";
 import { merchantIntelligence } from "./merchants";
 import { type OneChargeLedger, seedHisCarSeries } from "./one-charge-fixture";
@@ -241,5 +243,48 @@ describe("every cadence printer reads it", () => {
     const line = late.components.find((c) => c.label.startsWith("Car insurance — Nov 11"))!;
     // "once" in the cadence slot; no import reaches Nov 11 on this fixture, so the runway's unread words follow
     expect(line.detail).toBe("1 × -$72.74 (once), came due Nov 11 and no import has covered it yet");
+  });
+});
+
+/*
+ * 🔴 From Nov 12 the balance's one day has passed: its schedule holds nothing still to come, and two surfaces made a
+ * rate of that nothing. Measured on a copy of his ledger (2026-10-12) asked about 2026-11-12: "~$0.00/yr" on its own
+ * page and the All tab, and a committed line of $0.00 a month on the runway — one of "…, and 10 more" bills that
+ * "come to $3,446.19 a month", none of it its. What it still owes is the arrears it came due as — the runway's arrears
+ * sentence and the forecast's "came due Nov 11" say so — and the subscriptions card already counts it ended.
+ */
+describe("from Nov 12, its one day passed — no $0.00 rate and no $0.00 line", () => {
+  const NOV12 = "2026-11-12";
+
+  test("its own page and the All tab print no year ahead of it — Car insurance, still billing, keeps its own", () => {
+    expect(seriesDetail(bundle.db, balanceId, NOV12).annualizedCents).toBeNull();
+    const listed = new Map(listSeries(bundle.db, NOV12).map((s) => [s.id, s]));
+    expect(listed.get(balanceId)!.annualizedCents).toBeNull();
+    // two premiums left inside the year, Dec 11 and Jan 11
+    expect(listed.get(insuranceId)!.annualizedCents).toBe(2 * 35758);
+    expect(seriesDetail(bundle.db, insuranceId, NOV12).annualizedCents).toBe(2 * 35758);
+  });
+
+  test("…while on its day the year ahead of it is its one charge", () => {
+    expect(seriesDetail(bundle.db, balanceId, "2026-11-11").annualizedCents).toBe(7274);
+    expect(listSeries(bundle.db, "2026-11-11").find((s) => s.id === balanceId)!.annualizedCents).toBe(7274);
+  });
+
+  test("the subscriptions card files it ended — no One-off line, no monthly line", () => {
+    const card = subscriptionsCard(bundle.db, NOV12)!;
+    expect(card.oneOffs).toEqual([]);
+    expect(card.live.some((l) => l.seriesId === balanceId)).toBe(false);
+    expect(card.endedCount).toBe(1);
+  });
+
+  test("the runway names only the bills inside its rate — the balance's arrears are said beside it, not as a line of it", () => {
+    const book = committedBook(bundle.db, NOV12);
+    // owed, and nothing of it inside the horizon: the line that carries the arrears
+    expect(book.lines.find((l) => l.seriesId === balanceId)).toMatchObject({ occurrences: 0, totalCents: 0, overdueCents: 7274 });
+    expect(committedBillsNamed(book.lines)).toBe("Car insurance");
+    // on its day it is inside the rate, and named
+    expect(committedBillsNamed(committedBook(bundle.db, "2026-11-11").lines)).toBe(
+      "Car insurance, Car insurance — Nov 11 balance after the $1,000 early payment",
+    );
   });
 });

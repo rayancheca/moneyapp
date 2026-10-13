@@ -3,7 +3,7 @@ import { InfoTip } from "@/components/ui/InfoTip";
 import { Money } from "@/components/ui/Money";
 import { SurfaceCard } from "@/components/ui/SurfaceCard";
 import { arrearsAlarms } from "@/lib/arrears-reading";
-import { arrearsReadingOf, arrearsSentence, baselineCaption, shrinkCaption } from "@/lib/committed";
+import { arrearsReadingOf, arrearsSentence, baselineCaption, committedBillsNamed, shrinkCaption } from "@/lib/committed";
 import { RUNWAY_JARGON } from "@/lib/jargon";
 import { formatCents } from "@/lib/money";
 import type { RunwayAssumption, RunwayAssumptionId } from "@/lib/runway";
@@ -101,6 +101,8 @@ function AssumptionRow({
 export function RunwayCard({ data }: { data: RunwayCardData }) {
   const { runway, committed, spend, incomeBasisExplanation } = data;
   const shrink = shrinkCaption(committed);
+  // the bills inside the rate — never a line that carries only arrears (`committedBillsNamed`)
+  const billsNamed = committedBillsNamed(committed.lines);
   const arrears = arrearsSentence(committed);
   const arrearsAlarm = arrearsAlarms(arrearsReadingOf(committed));
   const burning = runway.kind === "burning";
@@ -215,18 +217,18 @@ export function RunwayCard({ data }: { data: RunwayCardData }) {
           own line rather than being phrased around. */}
       {(committed.totalCents > 0 || committed.overdueCents > 0) && (
         <div className="mt-3 border-t border-line pt-3 text-xs leading-relaxed text-ink-muted">
-          <p className="flex items-start gap-1.5">
-            <span>
-              <span className="text-ink">Committed bills</span> come to{" "}
-              <Money cents={committed.perMonthCents} className="text-ink" /> a month —{" "}
-              {committed.lines
-                .slice(0, 3)
-                .map((l) => l.name)
-                .join(", ")}
-              {committed.lines.length > 3 ? `, and ${committed.lines.length - 3} more` : ""}.
-            </span>
-            <InfoTip term="Committed bills">{RUNWAY_JARGON.committed}</InfoTip>
-          </p>
+          {/* 🔴 A one-time charge past its day was one of the bills named here, at $0.00 of the rate — and with
+              nothing else inside it the card read "come to $0.00 a month — Insurance balance." It is owed: the
+              arrears sentence below says it. */}
+          {billsNamed !== null && (
+            <p className="flex items-start gap-1.5">
+              <span>
+                <span className="text-ink">Committed bills</span> come to{" "}
+                <Money cents={committed.perMonthCents} className="text-ink" /> a month — {billsNamed}.
+              </span>
+              <InfoTip term="Committed bills">{RUNWAY_JARGON.committed}</InfoTip>
+            </p>
+          )}
           {/* ⛔ WHY THIS RATE IS LOWER THAN THE BILLS THEMSELVES COME TO — his
               call on 2026-09-02. The subscriptions card on this same screen
               levels each bill to a month and read $210.87 higher, and both were

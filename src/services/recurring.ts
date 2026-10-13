@@ -979,8 +979,14 @@ export function annualizedCentsOf(
    * one, which summed to a measured "~$0.00/yr" — printed on /recurring/<Knack
    * Tutoring> three lines under the series' own per-charge amount. The rule this
    * replaced multiplied the amount out regardless; neither was a fact.
+   *
+   * ⛔ …AND NO DATE STILL TO COME IS NO FIGURE: a schedule its end has closed (`rollForwardNextExpected`, the test the
+   * subscriptions card counts a series ENDED by). 🔴 From Nov 12 the one-time Nov 11 car-insurance balance read
+   * "~$0.00/yr" on its own page and the All tab (a copy of his ledger, 2026-10-12) — a stored next day, and nothing
+   * after it inside its end.
    */
-  if (series.nextExpectedAmountCents === null || series.nextExpectedOn === null) return null;
+  if (series.nextExpectedAmountCents === null) return null;
+  if (rollForwardNextExpected(effectiveSeries(s), today) === null) return null;
   /*
    * 🔴 HALF-OPEN. `projectOccurrences` is INCLUSIVE at its far end, so
    * `[today, today + 12 months]` is 366 days and holds THIRTEEN occurrences of a
