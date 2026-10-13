@@ -28,7 +28,7 @@ import {
 import { outsidePortfolioCashAccountIds } from "./accounts";
 import { isAgentsSeries, loadCategoryIndex } from "./analytics";
 import { carrierPaymentsBySeries, paymentFor, withBillingCarriers } from "./billing-carriers";
-import { silenceMeasuredThroughBySeries } from "./cash-earnings";
+import { checkedThroughBySeries, silenceMeasuredThroughBySeries } from "./cash-earnings";
 import { dueDayReadings } from "./observation-frontier";
 import {
   paydayProjectable,
@@ -823,6 +823,10 @@ export function recurringCalendar(
   // an account no statement is coming for read through today — the chip's rule (`silenceObservedThrough`), so a bill
   // filed late there is never "not imported yet" here
   const readingOf = needsFrontier ? dueDayReadings(db, today) : null;
+  // …and a passed payday "not banked yet" only once the ledger has looked for its deposit (`paydayIsRead`): the day
+  // every pay sentence names, where the pay lands NOW — never the bills' reading, which takes every account it ever
+  // landed in
+  const paydaysCheckedOf = needsFrontier ? checkedThroughBySeries(db, today) : null;
   // what pays each series billed inside another: its carrier's payments (§6A 59) — nothing is asked without a link
   const carried = carrierPaymentsBySeries(db, forecastRows, monthStart, monthEnd);
 
@@ -941,8 +945,13 @@ export function recurringCalendar(
         : settledVerdict(
             s.kind,
             o.date,
-            // ⚖️ the arrears' reading of the same day (`dueDayReadings`): a ✕ exactly where they say "not posted"
-            readingOf ? readingOf(s.id) : { observedThrough: null, graceDays: s.toleranceDays },
+            {
+              // ⚖️ the arrears' reading of the same day (`dueDayReadings`): a ✕ exactly where they say "not posted"
+              dueDay: readingOf ? readingOf(s.id) : { observedThrough: null, graceDays: s.toleranceDays },
+              // the passed paydays' frontier (`unbankedIncomeForSeries`): "no import has covered it yet" exactly where
+              // the forecast, /budgets and the dashboard say "the ledger has not looked for its deposit"
+              paydaysCheckedThrough: paydaysCheckedOf ? paydaysCheckedOf(s.id) : null,
+            },
             // ⚖️ a day billed inside another's payment is the carrier's day, measured by the carrier's charges — never
             // "missed" alone beside a rent whose own date is too thinly charged to grade (§6A 59)
             scheduleIsProven(postingCounts.get(s.billedWith?.id ?? s.id) ?? 0),

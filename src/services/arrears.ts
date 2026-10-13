@@ -2,7 +2,7 @@ import { and, inArray } from "drizzle-orm";
 import type { AppDatabase } from "@/db/client";
 import { recurringSeries } from "@/db/schema/recurring";
 import { addDays, compareDates, periodBounds } from "@/lib/dates";
-import { lastDueDayRead, type DueDayReading } from "@/lib/occurrence-verdict";
+import { lastDueDayRead, paydayIsRead, type DueDayReading } from "@/lib/occurrence-verdict";
 import { sharedFrontier, type UnbankedFrontier } from "@/lib/unbanked-income";
 import { billPaymentsBySeries, paymentFor, withBillingCarriers } from "./billing-carriers";
 import { checkedThroughBySeries, silenceMeasuredThroughBySeries } from "./cash-earnings";
@@ -410,12 +410,15 @@ export function unbankedIncomeForSeries(
    * so /spending and these two surfaces cannot disagree about which paydays were
    * read. A payday ON the frontier day was read. Coverage is only read when a
    * payday is actually unmet, so the common month costs nothing extra.
+   *
+   * ⛔ …nor can the calendar: a payday is checked by `paydayIsRead`, the predicate that decides its "not banked yet"
+   * against "no import has covered it yet" (`settledVerdict`).
    */
   const checkedOf = checkedThroughBySeries(db, today);
 
   const series = unmet.map(({ s, occ }): UnbankedIncomeSeries => {
     const checkedThrough = checkedOf(s.id);
-    const checked = checkedThrough === null ? [] : occ.filter((o) => compareDates(o.date, checkedThrough) <= 0);
+    const checked = occ.filter((o) => paydayIsRead(o.date, checkedThrough));
     return {
       id: s.id,
       name: s.name,

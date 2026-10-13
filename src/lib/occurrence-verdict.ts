@@ -36,9 +36,12 @@ import { addDays, compareDates } from "./dates";
 
 /** A past occurrence that never posted, and why we cannot call it missed. */
 export type UnsettledReason =
-  /** the ledger has not been shown this day for the account(s) this bills on */
+  /**
+   * the ledger has not been shown this day for the account(s) this bills on — or, for a payday, has not checked the
+   * accounts its pay lands in through it (`paydayIsRead`)
+   */
   | "not_imported"
-  /** money IN: its absence from the ledger is never proof it did not happen */
+  /** money IN, on a day the ledger HAS looked: its absence from the ledger is never proof it did not happen */
   | "unbanked"
   /** too few postings to know when this is due — the date itself is a guess */
   | "schedule_unproven";
@@ -227,11 +230,43 @@ export function dueDayIsRead(dueOn: string, reading: DueDayReading): boolean {
 }
 
 /**
+ * WHETHER THE LEDGER HAS LOOKED FOR A PAYDAY'S DEPOSIT: `checkedThrough` is the last day every account the pay lands
+ * in NOW has been checked through (`checkedThroughBySeries`, the day every pay sentence names — `LAST_CHECKED_DAY`), or
+ * null when one of them has no checked record. A payday ON that day was looked for: a deposit dated on it is in the
+ * records. No grace — the pay's sentences give none.
+ *
+ * ⛔ THE ONE PREDICATE for whether a passed payday was looked for: the calendar's "not banked yet" against "no import
+ * has covered it yet" (`settledVerdict`), and the checked half of the passed paydays (`unbankedIncomeForSeries`) that
+ * the forecast's note, /budgets and the dashboard say "the ledger has not looked for their deposits" through.
+ *
+ * ⛔ Never the bills' reading (`dueDayReadings`): it reads every account a series EVER posted to. Measured on his ledger
+ * copy 2026-10-12, that is Chase Checking's Aug 12 for the pay, which lands in Wells Fargo, checked through Sep 24 —
+ * and Aug 13 and Aug 20 would read unlooked-for beside a dashboard that counts them checked.
+ */
+export function paydayIsRead(paydayOn: string, checkedThrough: string | null): boolean {
+  return checkedThrough !== null && compareDates(paydayOn, checkedThrough) <= 0;
+}
+
+/** How far the ledger has read the days one series' past occurrences are graded on — each direction by its own rule. */
+export interface OccurrenceReading {
+  /** money OUT: its accounts' silence frontier and its grace (`dueDayReadings`) — what `dueDayIsRead` grades */
+  dueDay: DueDayReading;
+  /** money IN: the last day every account its pay lands in now is checked through (`checkedThroughBySeries`) */
+  paydaysCheckedThrough: string | null;
+}
+
+/**
  * The verdict on a PAST expected occurrence that did not post.
  *
- * `reading` is how far the ledger has read the days this bill can be paid on — its accounts' frontier and its grace
- * (`DueDayReading`): ⚖️ the day is graded only once both have been imported (`dueDayIsRead`, his decision 60,
+ * `reading.dueDay` is how far the ledger has read the days this bill can be paid on — its accounts' frontier and its
+ * grace (`DueDayReading`): ⚖️ the day is graded only once both have been imported (`dueDayIsRead`, his decision 60,
  * 2026-10-08). `scheduleIsProven` says whether the expected DATE is worth holding a biller to; see `ScheduleProven`.
+ *
+ * Money in is never `missed` (`absenceIsEvidence`), but it asks the same question first: whether anyone has LOOKED
+ * (`paydayIsRead` over `reading.paydaysCheckedThrough`). 🔴 It answered "unbanked" of every passed payday before
+ * asking. Measured on his ledger copy 2026-10-12: the calendar drew Oct 1 and Oct 8 "not yet known (not banked yet)"
+ * while the dashboard, the forecast and /budgets said they "fall after Sep 24, the last day every account that pay
+ * lands in has been checked through — so the ledger has not looked for their deposits".
  *
  * The state and its reason are returned from ONE call on purpose. `budgetVerdict`
  * established the rule after a headline and its own definition drifted apart on
@@ -242,13 +277,17 @@ export function dueDayIsRead(dueOn: string, reading: DueDayReading): boolean {
 export function settledVerdict(
   kind: SeriesKind,
   occurrenceDate: string,
-  reading: DueDayReading,
+  reading: OccurrenceReading,
   scheduleIsProven: ScheduleProven,
 ): SettledVerdict {
-  if (!absenceIsEvidence(kind)) return { state: "unsettled", reason: "unbanked" };
-  // Coverage first: where the day — and the grace after it — has not been imported, nothing at all can be said, which
-  // is a stronger and more actionable answer than "we are unsure when this is due".
-  if (!dueDayIsRead(occurrenceDate, reading)) return { state: "unsettled", reason: "not_imported" };
+  // Coverage first: where nobody has looked — a payday after its pay's checked day, a bill's day or the grace after it
+  // not imported — nothing at all can be said, which is a stronger and more actionable answer than "not banked yet"
+  // or "we are unsure when this is due".
+  if (!absenceIsEvidence(kind)) {
+    const looked = paydayIsRead(occurrenceDate, reading.paydaysCheckedThrough);
+    return { state: "unsettled", reason: looked ? "unbanked" : "not_imported" };
+  }
+  if (!dueDayIsRead(occurrenceDate, reading.dueDay)) return { state: "unsettled", reason: "not_imported" };
   if (!scheduleIsProven) return { state: "unsettled", reason: "schedule_unproven" };
   return { state: "missed", reason: null };
 }

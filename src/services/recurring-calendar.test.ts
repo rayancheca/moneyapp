@@ -488,6 +488,9 @@ describe("recurringCalendar", () => {
       insertTxn({ postedOn: day, amountCents: 104700, rawDescription: "CASH JOB WEEKLY PAY" });
     }
     insertTxn({ postedOn: "2026-07-19", amountCents: -2200, rawDescription: "GROCERY" });
+    // …and CHECKED (`paydayIsRead`): a payday no checked record reaches reads "no import has covered it yet", as the
+    // pay's sentences say "the ledger has not looked" (his ledger copy, 2026-10-12)
+    cardCheckedThrough("2026-06-01", "2026-07-19");
     detectRecurringSeries(bundle.db, TODAY);
     bundle.db
       .update(recurringSeries)
@@ -504,6 +507,7 @@ describe("recurringCalendar", () => {
       expect(e.state).not.toBe("missed");
       if (e.state === "unsettled") expect(e.unsettledReason).toBe("unbanked");
     }
+    expect(unpaid.some((e) => e.unsettledReason === "unbanked")).toBe(true);
   });
 
   test("an ENDED series keeps its history and loses its forecast", () => {
