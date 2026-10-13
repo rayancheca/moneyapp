@@ -7,8 +7,9 @@ import { createDatabase, type DbBundle } from "@/db/client";
 import { seedDatabase } from "@/db/seed";
 import { merchants } from "@/db/schema/merchants";
 import { recurringSeries } from "@/db/schema/recurring";
+import { staleComponentEntries } from "@/components/recurring/labels";
 import { committedBillsNamed } from "@/lib/committed";
-import { noScheduleReason, seriesIsProjected } from "@/lib/series-evidence";
+import { noScheduleReason, projectedEvidence, seriesIsProjected } from "@/lib/series-evidence";
 import { budgetTail } from "./budgets";
 import { seriesInCategory } from "./category-detail";
 import { committedBook } from "./committed";
@@ -303,7 +304,7 @@ describe("from Nov 12, its one day passed — its schedule has ended, on every s
     const d = seriesDetail(bundle.db, balanceId, today);
     expect(d.evidence).toBe("schedule-ended");
     expect(seriesIsProjected(d.status, d.evidence)).toBe(false);
-    expect(noScheduleReason(d.status, d.evidence, d.kind)).toContain("Its schedule has ended");
+    expect(noScheduleReason(d.status, d.evidence, d.kind, d.linkedTxns.length > 0)).toContain("Its schedule has ended");
     expect(d.nextExpected).toEqual([]);
     expect(listSeries(bundle.db, today).find((s) => s.id === balanceId)!.evidence).toBe("schedule-ended");
     // the subscriptions card's own word for the same series, on the same day
@@ -324,5 +325,33 @@ describe("from Nov 12, its one day passed — its schedule has ended, on every s
       expect(seriesDetail(bundle.db, insuranceId, today).evidence, today).not.toBe("schedule-ended");
     }
     expect(seriesDetail(bundle.db, insuranceId, "2027-01-12").evidence).toBe("schedule-ended");
+  });
+});
+
+/*
+ * 🔴 Review of 49cc98f: Nov 12–30 one /recurring page filed the balance under two words — "never billed … still
+ * projected" in the forecast (its math-table chip, "$172.74 of it never billed" in the money-out band, "2 series have
+ * never been billed" in the footer) and "Ended — nothing more forecast" on the All tab below it (a copy of his ledger,
+ * 2026-10-12, asked about 2026-11-12). The forecast still counts what came due Nov 11 — the arrears leg, on purpose —
+ * so the series is a line of both, and each must say of it the word the other does: ONE predicate.
+ */
+describe("Nov 12–30: the forecast above the All tab says of the balance the All tab's word", () => {
+  const BALANCE = "Car insurance — Nov 11 balance after the $1,000 early payment";
+
+  test.each(["2026-11-11", "2026-11-12", "2026-11-30"])("%s: every fixed line's word is its series' All-tab word", (today) => {
+    const word = new Map(listSeries(bundle.db, today).map((s) => [s.name, s.evidence]));
+    const fixed = forecastCurrentMonth(bundle.db, today).components.filter((c) => c.kind === "fixed");
+    // a line of the month to Nov 30 — forward on its day, came due after it
+    expect(fixed.some((c) => c.label === BALANCE), today).toBe(true);
+    for (const c of fixed) expect(projectedEvidence(c.staleness!), `${today} · ${c.label}`).toBe(word.get(c.label));
+  });
+
+  test("…so from Nov 12 no footer names it never billed, while the $72.74 it came due as is still counted", () => {
+    const nov12 = forecastCurrentMonth(bundle.db, "2026-11-12").components;
+    expect(nov12.find((c) => c.label === BALANCE)!.cents).toBe(-7274);
+    expect(staleComponentEntries(nov12).map((e) => e.name)).not.toContain(BALANCE);
+    // on its day it is still the footer's never billed
+    const nov11 = forecastCurrentMonth(bundle.db, "2026-11-11").components;
+    expect(staleComponentEntries(nov11).map((e) => e.name)).toContain(BALANCE);
   });
 });

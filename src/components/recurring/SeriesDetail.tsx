@@ -7,6 +7,7 @@ import {
   postingOf,
   seriesCanBeReshaped,
   seriesEvidenceTone,
+  seriesPageEvidenceBadge,
 } from "@/lib/series-evidence";
 import { billedWithLabel, carriesPhrase } from "@/lib/billed-with";
 import { seriesEndInput, seriesEndLines, seriesEndReassurance } from "./end-radius";
@@ -129,7 +130,9 @@ export function SeriesDetail({
   // the predicate `seriesDetail` reads the merge preview on, so it is read exactly where the control renders
   const isLive = seriesCanBeReshaped(data.status);
   // why nothing is expected, in its kind's words — "Its deposits below" of his pay (`noScheduleReason`)
-  const nothingExpected = noScheduleReason(data.status, data.evidence, data.kind);
+  // …promising rows "below" only when some are linked
+  const nothingExpected = noScheduleReason(data.status, data.evidence, data.kind, data.linkedTxns.length > 0);
+  const evidenceBadge = seriesPageEvidenceBadge(data.evidence, data.neverPosted);
   /* What one posting is called on this page — "Per deposit", "Its deposits live there now" of his pay (`postingOf`).
      🔴 His pay's page read "Per charge +$1,141.92" (a copy of his ledger, 2026-10-12, review of 49cc98f). */
   const posting = postingOf(data.kind);
@@ -176,12 +179,12 @@ export function SeriesDetail({
             <span className="text-xs text-ink-faint">{KIND_LABEL[data.kind]}</span>
             {/* 🔴 "Inactive" sat beside "Next expected Sep 11" on a series the
                 forecast projects. The badge is the word the evidence chooses. */}
-            {/* ⛔ …but not "Ended": its end badge below says it, with the day */}
-            {(data.status === "detected" || data.status === "confirmed") &&
-            data.evidence !== "active" &&
-            data.evidence !== "schedule-ended" ? (
+            {/* ⛔ …but not "Ended": its end badge below says it, with the day — and beside it "Never billed" when
+                nothing ever posted, the fact "Ended" does not carry (`seriesPageEvidenceBadge`). 🔴 Review of 49cc98f:
+                from Nov 12 the Nov 11 balance's page had lost its "Never billed" with nothing in its place. */}
+            {(data.status === "detected" || data.status === "confirmed") && evidenceBadge !== null ? (
               // ⛔ awaiting statements and never billed are no warning — `seriesEvidenceTone`, the chip's tone too
-              <Badge tone={seriesEvidenceTone(data.evidence)}>{SERIES_EVIDENCE_LABEL[data.evidence]}</Badge>
+              <Badge tone={seriesEvidenceTone(evidenceBadge)}>{SERIES_EVIDENCE_LABEL[evidenceBadge]}</Badge>
             ) : null}
             {/* ⚖️ Paid inside another series' payment (owner decision 2026-10-08, §6A 59): whose postings its
                 evidence is, and when they last said so — "billed with the rent, last seen Sep 2", linked to the
@@ -305,6 +308,7 @@ export function SeriesDetail({
             accountName={data.accountName}
             status={data.status}
             evidence={data.evidence}
+            neverPosted={data.neverPosted}
             oneCharge={
               data.oneChargeOn === null
                 ? null

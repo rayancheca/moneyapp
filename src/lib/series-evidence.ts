@@ -72,10 +72,21 @@ export interface StalenessFacts {
   isStale: boolean;
   /** past tolerance today, but not by its checked day */
   awaitingStatements: boolean;
+  /** no date from today on inside its end (`scheduleHasEnded`) — a line of the forecast only as what came due */
+  scheduleEnded: boolean;
 }
 
 /**
- * The word for a series the forecast still PROJECTS, read off its staleness — `seriesEvidence` for every series it has
+ * Has nothing — its own postings or its carrier's (§6A 59) — ever matched the series? Never billed's own test, ONE
+ * predicate: `projectedEvidence` asks it for the word, and a series' page asks it of a schedule that has ended, whose
+ * word no longer says (`seriesVerb`'s "was expected", the page's "Never billed" beside "Ended Nov 11, 2026").
+ */
+export function neverPosted(s: Pick<StalenessFacts, "lastMatchedOn">): boolean {
+  return s.lastMatchedOn === null;
+}
+
+/**
+ * The word for a series the forecast still counts, read off its staleness — `seriesEvidence` for every series it has
  * not let go (lapsed is the forecast's own let-go, `hasStoppedForecasting`), and the word every staleness chip, footer
  * and band reads. ONE predicate, so the All tab, the series page and the forecast above them cannot file one series
  * under two words.
@@ -87,11 +98,33 @@ export interface StalenessFacts {
  *
  * ⚠️ `isStale` is true of a never-billed series too — no evidence is past every tolerance — so never billed is asked
  * first: "running late" is only true of a series that has posted.
+ *
+ * ⛔ …and a schedule its end has closed before either — `seriesEvidence`'s first question, here too. The forecast
+ * counts what such a schedule came due as this month (the arrears leg, on purpose), so it is a line of the forecast
+ * and a row of the All tab on one page. 🔴 Review of 49cc98f: Nov 12–30 the Nov 11 balance read "never billed … still
+ * projected" in the forecast — its chip, "$172.74 of it never billed" in the money-out band, "2 series have never been
+ * billed" in the footer — over "Ended — nothing more forecast" on the All tab (his ledger copy, 2026-10-12).
  */
-export function projectedEvidence(s: StalenessFacts): Exclude<SeriesEvidence, "lapsed" | "schedule-ended"> {
-  if (s.lastMatchedOn === null) return "never-billed";
+export function projectedEvidence(s: StalenessFacts): Exclude<SeriesEvidence, "lapsed"> {
+  if (s.scheduleEnded) return "schedule-ended";
+  if (neverPosted(s)) return "never-billed";
   if (s.isStale) return "running-late";
   return s.awaitingStatements ? "awaiting-statements" : "active";
+}
+
+/**
+ * The evidence badge a LIVE series' own page wears beside its status, or null for none: its word — but for a schedule
+ * its end has closed, whose end badge already says "Ended Nov 11, 2026", the one fact that word no longer carries:
+ * "Never billed", when nothing ever posted. ⚖️ The owner's word for the Nov 11 balance, on the subscriptions card's
+ * One-off line too ("once · Nov 11 · never billed", §6A 56).
+ *
+ * 🔴 Review of 49cc98f: from Nov 12 the balance's page dropped "Never billed" with nothing in its place, and read
+ * "charged once on Nov 11" over "Linked transactions · 0" (his ledger copy, 2026-10-12, asked about 2026-11-12).
+ */
+export function seriesPageEvidenceBadge(evidence: SeriesEvidence, neverPosted: boolean): SeriesEvidence | null {
+  if (evidence === "active") return null;
+  if (evidence === "schedule-ended") return neverPosted ? "never-billed" : null;
+  return evidence;
 }
 
 /**
@@ -338,22 +371,26 @@ export function seriesDrawsAsRecurring(status: SeriesStatusForCopy): boolean {
  * `/recurring/<Fordham Payroll>` (income, ended) read "Its charges below stay in the ledger." above 56 "DIRECT DEPOSIT
  * FORDHAM UNIVERSI PAYROLL" rows; Knack Tutoring (ended) and STOCK LENDING (SPY)/(COKE) (dismissed) the same.
  * ⚠️ "The point a bill stops" is the lapse's word for a transfer too, as in `seriesEvidenceNote` — not settled here.
+ *
+ * ⛔ …and promised only when the page HAS rows below (`rowsBelow`). 🔴 Review of 49cc98f: the Nov 11 balance's page read
+ * "Its charges below stay in the ledger." over "No linked transactions yet" (his ledger copy, 2026-10-12, Nov 12).
  */
 export function noScheduleReason(
   status: SeriesStatusForCopy,
   evidence: SeriesEvidence,
   kind: SeriesKind,
+  rowsBelow: boolean,
 ): string | null {
   if (seriesIsProjected(status, evidence)) return null;
   const posting = postingOf(kind);
-  const kept = `Its ${posting.nouns} below stay in the ledger.`;
-  if (status === "ended") return `This series has ended, so nothing more is expected from it. ${kept}`;
+  const kept = rowsBelow ? ` Its ${posting.nouns} below stay in the ledger.` : "";
+  if (status === "ended") return `This series has ended, so nothing more is expected from it.${kept}`;
   if (status === "dismissed")
-    return `You said this is not a recurring series, so nothing is expected from it and nothing is forecast. ${kept}`;
+    return `You said this is not a recurring series, so nothing is expected from it and nothing is forecast.${kept}`;
   /* ⛔ Its schedule's own end, before the lapse: a new charge does not bring back a schedule with no date left.
      🔴 A month past its one day the Nov 11 balance's page said nothing of why nothing was expected (review of
      0af5689). "More": a last date that came due unposted is still owed this month — the already-due card says so. */
   if (evidence === "schedule-ended")
-    return `Its schedule has ended — every date it holds has come — so nothing more is expected from it. ${kept}`;
-  return `This series has gone quiet past the point a bill stops, so it is no longer forecast and nothing more is expected from it — a new ${posting.noun} brings it back. ${kept}`;
+    return `Its schedule has ended — every date it holds has come — so nothing more is expected from it.${kept}`;
+  return `This series has gone quiet past the point a bill stops, so it is no longer forecast and nothing more is expected from it — a new ${posting.noun} brings it back.${kept}`;
 }

@@ -3,6 +3,7 @@ import type { SeriesStaleness } from "@/services/recurring";
 import {
   staleFooterHint,
   staleFooterIsWarning,
+  staleIsDisclosed,
   staleLabel,
   staleMarkTone,
   stalenessSentence,
@@ -32,8 +33,9 @@ export function StaleMark({
   staleness?: SeriesStaleness;
   className?: string;
 }) {
-  // ⛔ awaiting statements keeps its age as a fact, in a neutral badge — `staleMarkTone`
-  if (!staleness?.isStale && !staleness?.awaitingStatements) return null;
+  // ⛔ awaiting statements keeps its age as a fact, in a neutral badge — `staleMarkTone`; and a schedule its end has
+  // closed wears none — the footer's predicate (`staleIsDisclosed`), never the flags
+  if (staleness === undefined || !staleIsDisclosed(staleness)) return null;
   return (
     <span title={stalenessSentence(staleness)}>
       {/* ⛔ Neutral for a series the bank has never billed — see `staleMarkTone` */}

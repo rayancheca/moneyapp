@@ -101,27 +101,53 @@ describe("SeriesDetail — a schedule of one charge reads once, on its own page"
    * · Ends Nov 11, 2026 … charges once on Nov 11, about $72.74. Annualized —" — a present-tense schedule a month past,
    * and no "Nothing expected" card, while the subscriptions card counted it ended.
    */
-  test("a month past its one day: past tense, ended — and a 'Nothing expected' card saying why", () => {
-    const DEC12 = "2026-12-12";
-    const html = decode(
+  const pageOn = (seriesId: string, today: string): string =>
+    decode(
       renderToStaticMarkup(
         createElement(SeriesDetail, {
-          data: seriesDetail(bundle.db, his.balanceId, DEC12)!,
-          today: DEC12,
+          data: seriesDetail(bundle.db, seriesId, today)!,
+          today,
           viewState: resolveViewState(RECURRING_SERIES_VIEW_SPEC, {}, undefined),
-          basePath: `/recurring/${his.balanceId}`,
+          basePath: `/recurring/${seriesId}`,
         }),
       ),
     );
-    const text = words(html);
-    expect(text).toContain("charged once on Nov 11, about $72.74");
-    expect(text).not.toContain("charges once");
-    expect(text).toContain("Nothing expected");
-    expect(text).toContain("Its schedule has ended");
-    // its end, in the past tense and the quiet tone the subscriptions card's "already ended" is said in
-    expect(text).toContain("Ended Nov 11, 2026");
-    expect(text).not.toContain("Ends Nov 11, 2026");
-    expect(html).not.toMatch(/text-warning[^>]*>Ended Nov 11/);
+
+  /*
+   * 🔴 Review of 49cc98f: a schedule its end had closed read in the past tense of a posting — "charged once on Nov 11,
+   * about $72.74" over "Linked transactions · 0", of a balance the bank has never charged, and its "Never billed" badge
+   * was gone (a copy of his ledger, 2026-10-12, asked about 2026-11-12). The tense says the schedule is over; what it
+   * did is the evidence's to say — nothing, so it was expected, and it is never billed.
+   */
+  test.each(["2026-11-12", "2026-12-12"])(
+    "%s, past its one day: 'was expected', never 'charged' — Never billed beside Ended, and no charges 'below'",
+    (today) => {
+      const html = pageOn(his.balanceId, today);
+      const text = words(html);
+      expect(text).toContain("was expected once on Nov 11, about $72.74");
+      expect(text).not.toContain("charged once");
+      expect(text).not.toContain("charges once");
+      expect(text).toContain("Nothing expected");
+      expect(text).toContain("Its schedule has ended");
+      // nothing is linked, so nothing "below" stays anywhere
+      expect(text).toContain("No linked transactions yet");
+      expect(text).not.toContain("below stay in the ledger");
+      // both facts: never billed, quiet as everywhere (`seriesEvidenceTone`), and its end in the past tense
+      expect(html).toMatch(/text-ink-muted[^>]*>Never billed</);
+      expect(text).toContain("Ended Nov 11, 2026");
+      expect(text).not.toContain("Ends Nov 11, 2026");
+      expect(html).not.toMatch(/text-warning[^>]*>Ended Nov 11/);
+    },
+  );
+
+  /* …while a schedule that ended after it HAD charged says so: Car insurance, its last premium Jan 11, 2027 */
+  test("Car insurance from Jan 12, 2027: 'charged monthly', no Never billed, and its charges below stay", () => {
+    const text = words(pageOn(his.insuranceId, "2027-01-12"));
+    expect(text).toContain("charged monthly, about $357.58");
+    expect(text).not.toContain("was expected");
+    expect(text).not.toContain("Never billed");
+    expect(text).toContain("Ended Jan 11, 2027");
+    expect(text).toContain("Its charges below stay in the ledger.");
   });
 });
 

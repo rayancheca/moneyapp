@@ -101,6 +101,7 @@ const staleness = (over: Partial<SeriesStaleness> = {}): SeriesStaleness => ({
   toleranceDays: 12.5,
   isStale: true,
   awaitingStatements: false,
+  scheduleEnded: false,
   ...over,
 });
 
@@ -345,12 +346,12 @@ describe("staleSummaryLabel", () => {
   const late = (days: number): StaleEntry => ({
     key: `late-${days}`,
     name: `Late ${days}`,
-    staleness: { lastMatchedOn: "2026-06-05", daysSinceLastMatch: days, checkedDaysSinceLastMatch: days, stepDays: 7, toleranceDays: 14, isStale: true, awaitingStatements: false },
+    staleness: { lastMatchedOn: "2026-06-05", daysSinceLastMatch: days, checkedDaysSinceLastMatch: days, stepDays: 7, toleranceDays: 14, isStale: true, awaitingStatements: false, scheduleEnded: false },
   });
   const never = (n: number): StaleEntry => ({
     key: `never-${n}`,
     name: `Never ${n}`,
-    staleness: { lastMatchedOn: null, daysSinceLastMatch: null, checkedDaysSinceLastMatch: null, stepDays: 30, toleranceDays: 48, isStale: true, awaitingStatements: false },
+    staleness: { lastMatchedOn: null, daysSinceLastMatch: null, checkedDaysSinceLastMatch: null, stepDays: 30, toleranceDays: 48, isStale: true, awaitingStatements: false, scheduleEnded: false },
   });
 
   test("the real ledger's mix names both, and neither count is the other's", () => {
@@ -632,9 +633,20 @@ describe("seriesVerb — a series that is over is described in the past", () => 
   test("a series that is over is past tense, by kind", () => {
     // 🔴 27 ended or dismissed series read "charges monthly around the 8th"
     // above their own "nothing more is expected from it", 2026-09-10.
-    expect(seriesVerb("bill", true)).toBe("charged");
-    expect(seriesVerb("income", true)).toBe("deposited");
-    expect(seriesVerb("transfer", true)).toBe("moved");
+    expect(seriesVerb("bill", { posted: true })).toBe("charged");
+    expect(seriesVerb("income", { posted: true })).toBe("deposited");
+    expect(seriesVerb("transfer", { posted: true })).toBe("moved");
+  });
+
+  /*
+   * 🔴 Review of 49cc98f: "charged once on Nov 11, about $72.74" over "Linked transactions · 0" — the Nov 11 balance's
+   * schedule had ended and the bank had never charged it (a copy of his ledger, 2026-10-12, asked about 2026-11-12).
+   * Past tense says the schedule is over; a posting it never made is no past it has.
+   */
+  test("…and one that never posted was expected, whatever its kind — never 'charged', 'deposited' or 'moved'", () => {
+    for (const kind of ["bill", "subscription", "income", "transfer", "other"] as const) {
+      expect(seriesVerb(kind, { posted: false }), kind).toBe("was expected");
+    }
   });
 
   test("the default is present, so no caller silently changes tense", () => {

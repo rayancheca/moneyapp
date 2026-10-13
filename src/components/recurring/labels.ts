@@ -155,10 +155,15 @@ export function schedulePhrase(cadence: Cadence, nextExpectedOn: string): { conn
  * ⛔ Past tense fixes the whole clause, not just the verb: "charged monthly
  * around the 8th" is true of a series that did, and stops the day-of-month —
  * read off a stale `next_expected_on` — reading as a date still to come.
+ *
+ * ⛔ …and "charged" only of a series that DID: one nothing ever matched (`neverPosted`) was expected, whatever its kind
+ * — so an over sentence must say which (`{ posted }`, no default). 🔴 Review of 49cc98f: from Nov 12 the Nov 11
+ * balance's page read "charged once on Nov 11, about $72.74" over "Linked transactions · 0" — a charge the bank never
+ * made (his ledger copy, 2026-10-12); a never-billed Gym given an end read "charged monthly, about $100.00".
  */
-export function seriesVerb(kind: SeriesKind, over: boolean = false): string {
+export function seriesVerb(kind: SeriesKind, over: false | { posted: boolean } = false): string {
   // the past tense is the evidence notes' own (`postingOf`) — one split of deposit, transfer and charge
-  if (over) return postingOf(kind).past;
+  if (over) return over.posted ? postingOf(kind).past : "was expected";
   if (kind === "income") return "deposits";
   if (kind === "transfer") return "moves";
   return "charges";
@@ -221,6 +226,17 @@ function staleIsAwaiting(s: SeriesStaleness): boolean {
 /** Nothing — its own or its carrier's — has ever matched it: it rests on the schedule alone. */
 function staleIsNeverBilled(s: SeriesStaleness): boolean {
   return projectedEvidence(s) === "never-billed";
+}
+
+/**
+ * Does a line's chip and footer disclose its evidence — late, never billed or awaiting statements? Off the word
+ * (`projectedEvidence`), never the flags: a schedule its end has closed is still `isStale` when it never posted, and
+ * none of it — nothing more is expected of it. ONE predicate for the chip (`StaleMark`) and every footer's entries.
+ * 🔴 Review of 49cc98f: Nov 12–30 the Nov 11 balance's line wore "never billed" and the footer said "expected about
+ * every 30 days … still projected" of it, over the All tab's "Ended — nothing more forecast" (his ledger copy).
+ */
+export function staleIsDisclosed(s: SeriesStaleness): boolean {
+  return staleIsLate(s) || staleIsNeverBilled(s) || staleIsAwaiting(s);
 }
 
 /** The footer is a warning only when at least one of its series is actually late. */
@@ -532,7 +548,7 @@ export function staleOccurrenceEntries(occurrences: readonly SeriesOccurrence[])
   const bySeries = new Map<string, StaleEntry>();
   for (const o of occurrences) {
     // ⛔ awaiting statements reaches the footer too, counted apart (`staleSummaryLabel`): the chip's why is reachable
-    if (!(o.staleness?.isStale || o.staleness?.awaitingStatements) || bySeries.has(o.seriesId)) continue;
+    if (o.staleness === undefined || !staleIsDisclosed(o.staleness) || bySeries.has(o.seriesId)) continue;
     bySeries.set(o.seriesId, { key: o.seriesId, name: o.name, staleness: o.staleness });
   }
   return [...bySeries.values()];
@@ -550,7 +566,8 @@ export function staleComponentEntries(components: readonly ForecastComponent[]):
   const entries: StaleEntry[] = [];
   const seen = new Set<string>();
   for (const c of components) {
-    if (!(c.staleness?.isStale || c.staleness?.awaitingStatements) || seen.has(c.label)) continue;
+    // ⛔ the chip's predicate (`staleIsDisclosed`): a line whose schedule has ended is no footer's
+    if (c.staleness === undefined || !staleIsDisclosed(c.staleness) || seen.has(c.label)) continue;
     seen.add(c.label);
     entries.push({ key: c.label, name: c.label, staleness: c.staleness });
   }

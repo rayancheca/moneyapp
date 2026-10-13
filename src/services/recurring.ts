@@ -1176,6 +1176,14 @@ export interface SeriesStaleness {
    * ⚠️ Says nothing about whether the next charge's due day was checked: it may have been (`stalenessSentence`).
    */
   awaitingStatements: boolean;
+  /**
+   * No date from today on inside its end (`scheduleHasEnded`): nothing more is expected, so nothing is late, awaited or
+   * still projected — the word is "Ended" (`projectedEvidence`), and no chip or footer discloses its age. Still a line
+   * of this month's forecast for what it came due as (the arrears leg), so the word the forecast reads must know it.
+   * 🔴 Review of 49cc98f: Nov 12–30 the Nov 11 balance was "never billed … still projected" in the forecast and "Ended"
+   * on the All tab below it (his ledger copy, 2026-10-12).
+   */
+  scheduleEnded: boolean;
 }
 
 interface ProjectableSeries {
@@ -1453,6 +1461,7 @@ export function seriesStaleness(
     isStale: lateOnCheckedDays,
     checkedThrough,
     awaitingStatements: pastTolerance && !lateOnCheckedDays,
+    scheduleEnded: scheduleHasEnded(s, today),
   };
 }
 
@@ -1624,7 +1633,8 @@ export function rollForwardNextExpected(eff: EffectiveSchedule, today: string = 
  * (`userEndsOn`)? The second of `rollForwardNextExpected`'s two nulls, which the subscriptions card counts ENDED by
  * ("1 has already ended, so it costs nothing going forward") and the first of which is a series with no date at all.
  * ONE predicate, asked by every reader that files a live series as projected or not: the evidence word
- * (`seriesEvidence`'s `schedule-ended`), the forecast's forward set (`seriesIsForecast`), and the card.
+ * (`seriesEvidence`'s `schedule-ended`), the forecast's forward set (`seriesIsForecast`), and the card — and carried
+ * on its staleness (`scheduleEnded`), so the forecast's chips, band and footer read the All tab's word for it too.
  *
  * 🔴 Review of 0af5689: from Nov 12 the Nov 11 car-insurance balance was ENDED to its annualized figure and the
  * subscriptions card, and live and forecast to its own page ("charges once on Nov 11, about $72.74", no "Nothing
@@ -1911,8 +1921,10 @@ export function seriesEvidence(
   today: string,
   checkedThrough: string | null,
 ): SeriesEvidence {
-  if (scheduleHasEnded(s, today)) return "schedule-ended";
+  // the forecast's word for it (`projectedEvidence`) asks the schedule's end first too — off these same facts
+  const staleness = seriesStaleness(s, today, checkedThrough);
+  if (staleness.scheduleEnded) return "schedule-ended";
   // never billed has nothing to lapse from (`seriesHasLapsed`), so it falls through to its own word below
   if (hasStoppedForecasting(s, today, checkedThrough)) return "lapsed";
-  return projectedEvidence(seriesStaleness(s, today, checkedThrough));
+  return projectedEvidence(staleness);
 }

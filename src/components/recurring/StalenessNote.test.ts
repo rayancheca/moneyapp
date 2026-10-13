@@ -12,6 +12,7 @@ const late: SeriesStaleness = {
   toleranceDays: 48,
   isStale: true,
   awaitingStatements: false,
+  scheduleEnded: false,
 };
 const never: SeriesStaleness = {
   lastMatchedOn: null,
@@ -21,6 +22,7 @@ const never: SeriesStaleness = {
   toleranceDays: 48,
   isStale: true,
   awaitingStatements: false,
+  scheduleEnded: false,
 };
 
 /**
@@ -109,6 +111,7 @@ describe("awaiting statements", () => {
     isStale: false,
     checkedThrough: "2026-09-24",
     awaitingStatements: true,
+    scheduleEnded: false,
   };
 
   test("the chip keeps the fact, never the warning", () => {

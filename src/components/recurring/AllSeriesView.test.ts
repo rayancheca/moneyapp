@@ -10,12 +10,14 @@ import { seedDatabase } from "@/db/seed";
 import { recurringSeries } from "@/db/schema/recurring";
 import { seedHisCarSeries, type OneChargeLedger } from "@/services/one-charge-fixture";
 import { seedHisRent } from "@/services/rent-fixture";
+import { forecastCurrentMonth } from "@/services/forecast";
 import { listSeries, type SeriesView } from "@/services/recurring";
 
 // the server actions pull in next/cache and the database client
 vi.mock("@/app/recurring/actions", () => ({ confirmSeriesAction: vi.fn(), dismissSeriesAction: vi.fn() }));
 
 const { AllSeriesView } = await import("./AllSeriesView");
+const { ForecastCard } = await import("./ForecastCard");
 
 function series(over: Partial<SeriesView> & Pick<SeriesView, "id" | "name" | "status">): SeriesView {
   return {
@@ -259,6 +261,34 @@ describe("AllSeriesView — a schedule of one charge reads Once in the cadence s
     expect(section("rec-never-billed")).not.toContain(BALANCE);
     // Car insurance, a premium still to come on Jan 11, is not
     expect(section("rec-ended")).not.toContain(">Car insurance</a>");
+  });
+
+  /*
+   * 🔴 Review of 49cc98f: on one /recurring page, Nov 12–30, the forecast called the balance "never billed" — its chip,
+   * "$172.74 of it never billed" in the money-out band, "2 series have never been billed … still projected" in the
+   * footer — and the All tab below filed it "Ended — nothing more forecast" (a copy of his ledger, 2026-10-12, asked
+   * about 2026-11-12). The page renders both; so does this. The $72.74 it came due as stays a line of the forecast.
+   */
+  test("Nov 12: the forecast above the All tab calls it nothing the All tab does not — its $72.74 still counted", () => {
+    const NOV12 = "2026-11-12";
+    const card = (today: string): string =>
+      decode(renderToStaticMarkup(createElement(ForecastCard, { forecast: forecastCurrentMonth(bundle.db, today) })));
+    const forecast = card(NOV12);
+    const all = decode(
+      renderToStaticMarkup(
+        createElement(AllSeriesView, { series: listSeries(bundle.db, NOV12), overdueBySeries: new Map(), today: NOV12 }),
+      ),
+    );
+    const section = (id: string): string => all.split(`id="${id}"`)[1]?.split("</section>")[0] ?? "";
+    expect(section("rec-ended")).toContain(BALANCE);
+    // the fixture's one never-billed series is the balance: the forecast names no never-billed money at all
+    const text = forecast.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ");
+    expect(text).toContain(`${BALANCE} Fixed (series) 1 × -$72.74 (once), came due Nov 11`);
+    expect(text).not.toMatch(/never billed|never been billed|still projected, on the schedule alone/);
+    // …and on its day, still projected and never billed, it is both the forecast's and the All tab's never billed
+    const NOV11 = "2026-11-11";
+    expect(card(NOV11).replace(/<[^>]+>/g, " ")).toMatch(/never billed/);
+    expect(listSeries(bundle.db, NOV11).find((s) => s.id === his.balanceId)!.evidence).toBe("never-billed");
   });
 });
 

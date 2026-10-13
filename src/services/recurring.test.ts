@@ -514,6 +514,8 @@ describe("seriesStaleness", () => {
       toleranceDays: 12.5,
       isStale: false,
       awaitingStatements: false,
+      // no end, so a date still to come
+      scheduleEnded: false,
     });
   });
 
