@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
 import { DAYS_TO_POST_NOT_OVER, NO_STATEMENT_YET } from "@/lib/arrears-reading";
-import { projectedEvidence, seriesEvidenceTone, type SeriesEvidence } from "@/lib/series-evidence";
+import { projectedEvidence, seriesEvidenceTone, seriesPostingWords, type SeriesEvidence } from "@/lib/series-evidence";
 import type { ForecastComponent } from "@/services/forecast";
 import type { SeriesOccurrence, SeriesStaleness } from "@/services/recurring";
 import {
@@ -772,6 +772,22 @@ describe("seriesVerb — a series that is over is described in the past", () => 
 
   test("the default is present, so no caller silently changes tense", () => {
     expect(seriesVerb("bill", false)).toBe(seriesVerb("bill"));
+  });
+
+  /*
+   * ⚖️ An `other` series' postings are PAYMENTS — it may be money in, a monthly credit (`seriesPostingWords`, the merge
+   * choice of 6cae7c5): "Per payment", "Its payments below stay in the ledger", "paid monthly" once over. 🔴 Its present
+   * tense still said "charges monthly around the 8th" on the same page — the one verb that table did not give.
+   */
+  test("an `other` series pays and paid — present and past from the one posting-words table, for every kind", () => {
+    expect(seriesVerb("other")).toBe("pays");
+    expect(seriesVerb("other", { posted: true })).toBe("paid");
+    // a bill's and a subscription's words are as he has always read them
+    expect(seriesVerb("subscription")).toBe("charges");
+    for (const kind of ["bill", "subscription", "income", "transfer", "other"] as const) {
+      expect(seriesVerb(kind), kind).toBe(seriesPostingWords(kind).present);
+      expect(seriesVerb(kind, { posted: true }), kind).toBe(seriesPostingWords(kind).past);
+    }
   });
 });
 

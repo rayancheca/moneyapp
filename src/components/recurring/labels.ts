@@ -172,11 +172,11 @@ export function schedulePhrase(cadence: Cadence, nextExpectedOn: string): { conn
  * made (his ledger copy, 2026-10-12); a never-billed Gym given an end read "charged monthly, about $100.00".
  */
 export function seriesVerb(kind: SeriesKind, over: false | { posted: boolean } = false): string {
-  // the past tense is the evidence notes' own (`seriesPostingWords`) — one table of deposit, transfer, payment and charge
-  if (over) return over.posted ? seriesPostingWords(kind).past : "was expected";
-  if (kind === "income") return "deposits";
-  if (kind === "transfer") return "moves";
-  return "charges";
+  // both tenses are the evidence notes' own (`seriesPostingWords`) — one table of deposit, transfer, payment and
+  // charge, so an `other` series pays and paid as its "Per payment" says
+  const words = seriesPostingWords(kind);
+  if (over) return over.posted ? words.past : "was expected";
+  return words.present;
 }
 
 /* ── staleness disclosure ──────────────────────────────────────────────────
