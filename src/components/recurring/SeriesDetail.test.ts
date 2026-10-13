@@ -1,11 +1,13 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { eq } from "drizzle-orm";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { createDatabase, type DbBundle } from "@/db/client";
 import { seedDatabase } from "@/db/seed";
+import { recurringSeries, SERIES_STATUSES } from "@/db/schema/recurring";
 import { resolveViewState } from "@/lib/view-state";
 import { seedHisCarSeries, type OneChargeLedger } from "@/services/one-charge-fixture";
 import { seedHisRent, type RentLedger } from "@/services/rent-fixture";
@@ -169,5 +171,47 @@ describe("SeriesDetail — the rent's posted avg is per payment, and names what 
     expect(table).not.toContain("-$1,100.00");
     expect(table).not.toContain("-$1,334.80");
     expect(table).toContain("Sep 2, 2026 -$2,291.21 +$182.21");
+  });
+});
+
+/*
+ * The merge preview (§6A 54 — each candidate and what merging it would file) is read only for a page that renders the
+ * merge control: a live series, the one predicate the page and `seriesDetail` both ask (`seriesCanBeReshaped`).
+ * 🔴 Every series page computed it, the ended and dismissed pages included, where the control is hidden (review of
+ * §6A 54, 2026-10-08) — a reading of every live series' unfiled rows that nothing on the page shows.
+ */
+describe("SeriesDetail — the merge preview is read only where the merge control renders", () => {
+  const TODAY = "2026-10-08";
+  let dir: string;
+  let bundle: DbBundle;
+  let his: OneChargeLedger;
+
+  beforeEach(() => {
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), "moneyapp-series-merge-"));
+    bundle = createDatabase(path.join(dir, "t.db"));
+    seedDatabase(bundle.db);
+    his = seedHisCarSeries(bundle.db);
+  });
+
+  afterEach(() => {
+    bundle.sqlite.close();
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  test.each(SERIES_STATUSES)("Car insurance %s: candidates exactly where the control renders", (status) => {
+    bundle.db.update(recurringSeries).set({ status }).where(eq(recurringSeries.id, his.insuranceId)).run();
+    const data = seriesDetail(bundle.db, his.insuranceId, TODAY);
+    const html = renderToStaticMarkup(
+      createElement(SeriesDetail, {
+        data,
+        today: TODAY,
+        viewState: resolveViewState(RECURRING_SERIES_VIEW_SPEC, {}, undefined),
+        basePath: `/recurring/${his.insuranceId}`,
+      }),
+    );
+    const live = status === "detected" || status === "confirmed";
+    // live, its candidate is the Nov 11 balance; ended or dismissed, nothing is read and nothing renders
+    expect(data.mergeCandidates.map((c) => c.id)).toEqual(live ? [his.balanceId] : []);
+    expect(html.includes("Merge another series in")).toBe(live);
   });
 });

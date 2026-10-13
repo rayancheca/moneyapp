@@ -10,6 +10,7 @@ import { appSettings } from "@/db/schema/settings";
 import { transactions } from "@/db/schema/transactions";
 import { transferAmbiguities } from "@/db/schema/transfer-ambiguities";
 import { diffDays, todayIso } from "@/lib/dates";
+import { formatCategoryPath } from "@/lib/category-path";
 import { strippedDescriptionKey } from "@/lib/description-key";
 import { formatCents } from "@/lib/money";
 import { investmentSideAccountIds } from "./accounts";
@@ -74,7 +75,7 @@ function bankCategoryIds(db: AppDatabase): Map<string, string> {
   const byId = new Map(rows.map((r) => [r.id, r]));
   const byPath = new Map<string, string>();
   for (const r of rows) {
-    const path = r.parentId ? `${byId.get(r.parentId)?.name} > ${r.name}` : r.name;
+    const path = formatCategoryPath(r.parentId === null ? null : byId.get(r.parentId)?.name, r.name);
     byPath.set(path, r.id);
   }
   const out = new Map<string, string>();

@@ -1,5 +1,6 @@
 import { arrearsTail } from "./arrears-reading";
 import { spentOnlyFromCashWallets, type BudgetCoverageInput } from "./budget-coverage";
+import { formatCategoryPath } from "./category-path";
 import { isStaleClose, newestQuotedOn } from "./holding-price-age";
 import { formatCents } from "./money";
 import { dayWindowLabel } from "./period";
@@ -57,10 +58,11 @@ export const RESERVED_NOTE_PHRASES = [
 ] as const;
 
 /**
- * How a note punctuates a list of category names, and how it punctuates a path.
+ * How a note punctuates a list of category names. (A path is punctuated by the
+ * one path printer, `formatCategoryPath` in `./category-path`.)
  *
- * Named rather than inlined because both are only unambiguous while a category
- * name cannot contain them — a note that states a COUNT and then joins names
+ * Named rather than inlined because it is only unambiguous while a category
+ * name cannot contain it — a note that states a COUNT and then joins names
  * with ", " contradicts its own list the moment one name has a comma in it
  * ("2 categories hold no transactions: Food, Drink, Pets" says two, lists
  * three). `FORBIDDEN_NAME_CHARS` in `services/category-edit` is what makes that
@@ -68,7 +70,6 @@ export const RESERVED_NOTE_PHRASES = [
  * separator here fails the build rather than silently reopening the ambiguity.
  */
 export const NAME_LIST_SEPARATOR = ", ";
-export const PATH_SEPARATOR = " > ";
 
 export interface BudgetNoteInput {
   /** one entry per active budget in the graded set */
@@ -320,7 +321,7 @@ export function categoryNoteRows<T extends { id: string; name: string; isArchive
       hasScheduledSeries: scheduledIds.has(root.id),
     },
     ...root.children.map((child) => ({
-      path: `${root.name}${PATH_SEPARATOR}${child.name}`,
+      path: formatCategoryPath(root.name, child.name),
       subtreeTxnCount: txnCountOf(child.id),
       isArchived: child.isArchived,
       hasLiveChildren: false,

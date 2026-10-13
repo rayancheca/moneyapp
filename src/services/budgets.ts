@@ -61,6 +61,7 @@ export type { BudgetTail, BudgetTailSeries };
 import { incomeBasis, levelledMonthlyCents, type IncomeBasis } from "@/lib/income-basis";
 import { daysNotImportedYet } from "@/lib/empty-period";
 import { spentOnlyFromCashWallets, type BorrowedDay } from "@/lib/budget-coverage";
+import { formatCategoryPath } from "@/lib/category-path";
 import { categoryReach, type CategoryReach } from "@/lib/category-reach";
 import {
   accountsThatDate,
@@ -396,7 +397,7 @@ export function budgetStatuses(db: AppDatabase, refDate: string = todayIso()): B
           rolloverCapCents: b.rolloverCapCents,
         },
         categoryName: node.name,
-        categoryPath: parent ? `${parent.name} > ${node.name}` : node.name,
+        categoryPath: formatCategoryPath(parent?.name, node.name),
         bounds,
         partialPeriod,
         spentCents,

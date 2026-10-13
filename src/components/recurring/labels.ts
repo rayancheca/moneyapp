@@ -11,7 +11,7 @@ import { SERIES_EVIDENCE_LABEL } from "@/lib/series-evidence";
 import type { Cadence, SeriesKind, SeriesStatus } from "@/db/schema/recurring";
 import type { ForecastComponent } from "@/services/forecast";
 import type { SeriesOccurrence, SeriesStaleness } from "@/services/recurring";
-import type { MergeFiling, MergeResult } from "@/services/recurring-links";
+import type { AttachResult, HandFiling, MergeResult } from "@/services/recurring-links";
 
 export const CADENCE_LABEL: Record<Cadence, string> = {
   weekly: "Weekly",
@@ -745,15 +745,28 @@ export const TOWARD_NO_PAYDAY = "toward no payday";
  * filed yet and the category the merge files them under, said BEFORE he presses (a merge has no undo button). Null
  * when the merge files nothing: the confirmation then reads as it always has.
  */
-export function mergeFilingClause(filing: MergeFiling | null): string | null {
+export function mergeFilingClause(filing: HandFiling | null): string | null {
   return filing === null ? null : `${filing.count} not filed yet will be filed under ${filing.categoryPath}.`;
 }
 
 /**
- * The merge's toast — what moved, and what the merge filed (§6A 54) in the same voice. It reads the merge's own result
- * whole, so the page cannot report the move and leave the filing out.
+ * A hand link's toast — `lead` says what it linked, and the one clause after it what it filed: "· 2 filed under Car >
+ * Lease" (§6A 47 attach, §6A 54 merge). It reads the action's own result, so a page cannot report the link and leave
+ * the filing out; with nothing filed, the toast reads as it always has.
+ *
+ * 🔴 Review of §6A 54 (2026-10-08): the merge's toast named what it filed, while attaching — the same rule — said only
+ * "2 attached", and the row moved to its series' category with nothing on the page saying so.
  */
-export function mergedToastTitle(name: string, { relinked, filed }: Pick<MergeResult, "relinked" | "filed">): string {
-  const moved = `${name} merged in · ${relinked} moved`;
-  return filed === null ? moved : `${moved} · ${filed.count} filed under ${filed.categoryPath}`;
+export function filedToastTitle(lead: string, { filed }: { readonly filed: HandFiling | null }): string {
+  return filed === null ? lead : `${lead} · ${filed.count} filed under ${filed.categoryPath}`;
+}
+
+/** The merge's toast — what moved, then what the merge filed (`filedToastTitle`), from the merge's own result. */
+export function mergedToastTitle(name: string, result: Pick<MergeResult, "relinked" | "filed">): string {
+  return filedToastTitle(`${name} merged in · ${result.relinked} moved`, result);
+}
+
+/** The series page's attach toast — how many it attached, then what attaching filed (`filedToastTitle`). */
+export function attachedToastTitle(result: Pick<AttachResult, "attached" | "filed">): string {
+  return filedToastTitle(`${result.attached} attached`, result);
 }

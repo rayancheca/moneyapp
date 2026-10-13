@@ -1,6 +1,6 @@
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, test, vi } from "vitest";
+import { beforeEach, describe, expect, test, vi } from "vitest";
 import type { SeriesMergeCandidate } from "@/services/recurring-detail";
 
 // the server actions pull in next/cache and the database client
@@ -10,8 +10,15 @@ vi.mock("@/app/recurring/actions", () => ({
   mergeIntoSeriesAction: vi.fn(),
   searchAttachCandidatesAction: vi.fn(),
 }));
+// the toasts a press raises, read as raised
+vi.mock("@/components/ui/Toast", async (actual) => ({ ...(await actual<object>()), toast: vi.fn() }));
+vi.mock("@/components/transactions/undo-toast", () => ({ offerUndoToast: vi.fn() }));
 
-const { MergeConfirmation } = await import("./SeriesMembership");
+const { MergeConfirmation, pressAttach, pressMerge } = await import("./SeriesMembership");
+const { attachToSeriesAction, mergeIntoSeriesAction } = await import("@/app/recurring/actions");
+const { toast } = await import("@/components/ui/Toast");
+const { offerUndoToast } = await import("@/components/transactions/undo-toast");
+const { settleAction } = await import("@/hooks/useAction");
 
 const decode = (s: string): string =>
   s.replace(/&quot;/g, '"').replace(/&#x27;/g, "'").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&");
@@ -57,5 +64,88 @@ describe("the merge confirmation, as rendered (§6A 54)", () => {
 
   test("the choice under it is still Cancel or Merge in", () => {
     expect(confirmation({ ...base, filing: null }).buttons).toEqual(["Cancel", "Merge in"]);
+  });
+});
+
+/**
+ * `useAction().run` without React — the same settle (`settleAction`) and the same routing: a success to `onSuccess`, a
+ * failure to `onError`. A run here is always the newest, so nothing is superseded.
+ */
+const run: Parameters<typeof pressMerge>[0] = async (task, options) => {
+  const result = await settleAction(task, options?.fallback);
+  if (result.ok) options?.onSuccess?.(result.data);
+  else options?.onError?.(result.error);
+  return result;
+};
+
+/*
+ * ⚖️ §6A 54 (2026-10-08): the confirmation names what the merge files, and the toast names what it filed.
+ * 🔴 Review of §6A 54: the toast's filing was tested only on its label function — `MergeControl` could hand it a loose
+ * `null` with every test green — and the confirmation, read when the page rendered, went to the merge unchecked. The
+ * press is now made here, where `MergeControl` makes it.
+ */
+describe("the merge press, as MergeControl makes it (§6A 54)", () => {
+  const filing = { categoryId: "c1", categoryPath: "Car > Lease", count: 2 };
+  const candidate: SeriesMergeCandidate = { id: "s2", name: "Car lease 2", kind: "bill", filing };
+  const after = { close: vi.fn(), onChanged: vi.fn() };
+
+  beforeEach(() => {
+    vi.mocked(toast).mockClear();
+    after.close.mockClear();
+    after.onChanged.mockClear();
+  });
+
+  test("carries what the confirmation showed, and the toast names what the merge filed", async () => {
+    const merged = { relinked: 3, targetId: "s1", filed: filing };
+    vi.mocked(mergeIntoSeriesAction).mockResolvedValue({ ok: true, data: merged });
+
+    await pressMerge(run, "s1", candidate, after);
+
+    expect(mergeIntoSeriesAction).toHaveBeenLastCalledWith({ sourceId: "s2", targetId: "s1", shown: filing });
+    expect(toast).toHaveBeenCalledWith({ title: "Car lease 2 merged in · 3 moved · 2 filed under Car > Lease" });
+    expect(after.close).toHaveBeenCalledOnce();
+    expect(after.onChanged).toHaveBeenCalledOnce();
+  });
+
+  test("nothing shown, nothing filed — the toast he has always read", async () => {
+    const merged = { relinked: 3, targetId: "s1", filed: null };
+    vi.mocked(mergeIntoSeriesAction).mockResolvedValue({ ok: true, data: merged });
+
+    await pressMerge(run, "s1", { ...candidate, name: "Rent", filing: null }, after);
+
+    expect(mergeIntoSeriesAction).toHaveBeenLastCalledWith({ sourceId: "s2", targetId: "s1", shown: null });
+    expect(toast).toHaveBeenCalledWith({ title: "Rent merged in · 3 moved" });
+  });
+
+  test("a refusal says why, stays open, and re-reads the page — so it names what the merge files now", async () => {
+    const refusal =
+      "Nothing was merged — what it would file has changed since you opened it. Read it again before you merge.";
+    vi.mocked(mergeIntoSeriesAction).mockResolvedValue({ ok: false, error: refusal });
+
+    await pressMerge(run, "s1", candidate, after);
+
+    expect(toast).toHaveBeenCalledWith({ title: refusal, tone: "negative" });
+    expect(after.close).not.toHaveBeenCalled();
+    expect(after.onChanged).toHaveBeenCalledOnce();
+  });
+});
+
+/*
+ * 🔴 Review of §6A 54 (2026-10-08): the merge's toast named what it filed while attaching — the same rule, §6A 47 —
+ * said only "2 attached". The attach press is made here, where `AttachPanel` makes it.
+ */
+describe("the attach press, as AttachPanel makes it", () => {
+  test("its undo toast names what attaching filed, from the attach's own result", async () => {
+    const undo = { rows: [] };
+    const filed = { categoryId: "c1", categoryPath: "Car > Lease", count: 1 };
+    vi.mocked(attachToSeriesAction).mockResolvedValue({ ok: true, data: { attached: 2, undo, filed } });
+    const after = { cleared: vi.fn(), onChanged: vi.fn() };
+
+    await pressAttach(run, "s1", ["t1", "t2"], after);
+
+    expect(attachToSeriesAction).toHaveBeenLastCalledWith({ seriesId: "s1", transactionIds: ["t1", "t2"] });
+    expect(offerUndoToast).toHaveBeenCalledWith("2 attached · 1 filed under Car > Lease", undo, after.onChanged);
+    expect(after.cleared).toHaveBeenCalledOnce();
+    expect(after.onChanged).toHaveBeenCalledOnce();
   });
 });

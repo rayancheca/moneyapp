@@ -1,5 +1,5 @@
 import { and, desc, eq, isNull, lte, ne, or, sql } from "drizzle-orm";
-import type { SeriesEvidence } from "@/lib/series-evidence";
+import { seriesCanBeReshaped, type SeriesEvidence } from "@/lib/series-evidence";
 import type { UnbankedIncomeReading } from "@/lib/unbanked-income";
 import type { BillingCarrier } from "@/lib/billed-with";
 import type { AppDatabase } from "@/db/client";
@@ -35,7 +35,7 @@ import {
   seriesEvidence,
   seriesIsForecast,
 } from "./recurring";
-import { mergeFilings, type MergeFiling } from "./recurring-links";
+import { mergeFilings, type HandFiling } from "./recurring-links";
 import { seriesCategoryIds } from "./series-category";
 
 /**
@@ -103,7 +103,7 @@ export interface SeriesMergeCandidate {
    * ⚖️ §6A 54 (2026-10-08): what merging it in would file under this series' category — the count and path the
    * confirmation names before he presses; null when it files nothing. The reading `mergeSeries` writes by.
    */
-  filing: MergeFiling | null;
+  filing: HandFiling | null;
 }
 
 /** One passed payday with no deposit against it — its day, and its own day's rate (§6A 55). */
@@ -278,7 +278,7 @@ export interface SeriesDetail {
   linkedTxns: SeriesLinkedTxn[];
   /** linked charge amounts oldest → newest, for the drift chart */
   amountHistory: AmountHistoryPoint[];
-  /** other live series this one can merge in */
+  /** other live series this one can merge in — none on a page that cannot be reshaped (`seriesCanBeReshaped`) */
   mergeCandidates: SeriesMergeCandidate[];
 }
 
@@ -329,6 +329,25 @@ function unbankedPaydaysOf(
 }
 
 const NEXT_EXPECTED_COUNT = 3;
+
+/** The other live series that can merge into `seriesId`, each with what merging it would file (§6A 54). */
+function mergeCandidatesOf(db: AppDatabase, seriesId: string): SeriesMergeCandidate[] {
+  const liveOthers = db
+    .select({ id: recurringSeries.id, name: recurringSeries.name, kind: recurringSeries.kind })
+    .from(recurringSeries)
+    .where(
+      and(
+        ne(recurringSeries.id, seriesId),
+        isNull(recurringSeries.mergedIntoId),
+        or(eq(recurringSeries.status, "detected"), eq(recurringSeries.status, "confirmed")),
+      ),
+    )
+    .orderBy(recurringSeries.name)
+    .all();
+  // one reading with the merge's own write (`mergeFilings`), so the confirmation names exactly what it files
+  const filings = mergeFilings(db, seriesId, liveOthers.map((c) => c.id));
+  return liveOthers.map((c) => ({ ...c, filing: filings.get(c.id) ?? null }));
+}
 
 export function seriesDetail(
   db: AppDatabase,
@@ -512,21 +531,8 @@ export function seriesDetail(
 
   const namedCategoryId = seriesCategoryIds(db, loadCategoryIndex(db), [s.id]).get(s.id);
 
-  const liveOthers = db
-    .select({ id: recurringSeries.id, name: recurringSeries.name, kind: recurringSeries.kind })
-    .from(recurringSeries)
-    .where(
-      and(
-        ne(recurringSeries.id, seriesId),
-        isNull(recurringSeries.mergedIntoId),
-        or(eq(recurringSeries.status, "detected"), eq(recurringSeries.status, "confirmed")),
-      ),
-    )
-    .orderBy(recurringSeries.name)
-    .all();
-  // one reading with the merge's own write (`mergeFilings`), so the confirmation names exactly what it files
-  const filings = mergeFilings(db, seriesId, liveOthers.map((c) => c.id));
-  const mergeCandidates: SeriesMergeCandidate[] = liveOthers.map((c) => ({ ...c, filing: filings.get(c.id) ?? null }));
+  // read only where the page renders the merge control — the one predicate both ask
+  const mergeCandidates = seriesCanBeReshaped(s.status) ? mergeCandidatesOf(db, seriesId) : [];
 
   return {
     id: s.id,

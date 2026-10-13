@@ -20,7 +20,7 @@ import type {
   SeriesLinkedTxn,
   SeriesMergeCandidate,
 } from "@/services/recurring-detail";
-import { KIND_LABEL, mergedToastTitle, mergeFilingClause } from "./labels";
+import { attachedToastTitle, KIND_LABEL, mergedToastTitle, mergeFilingClause } from "./labels";
 
 /** Full linked history with a per-row "not part of this series" detach (§4.2). */
 export function LinkedTransactions({
@@ -86,6 +86,30 @@ export function LinkedTransactions({
 
 const SEARCH_DEBOUNCE_MS = 200;
 
+/** `useAction().run` — handed to the presses below, so each is made, and tested, outside the component that owns it. */
+type ActionRun = ReturnType<typeof useAction>["run"];
+
+/**
+ * The attach press, as `AttachPanel` makes it. Its undo toast names what attaching filed (`attachedToastTitle`, §6A
+ * 47) from the attach's own result, and offers the attach's own lossless patch, in ONE transaction: each row's prior
+ * link AND the category attaching filed. Detaching row by row left the category behind and stamped a detach marker
+ * on every row.
+ */
+export function pressAttach(
+  run: ActionRun,
+  seriesId: string,
+  transactionIds: string[],
+  after: { cleared: () => void; onChanged: () => void },
+): Promise<unknown> {
+  return run(() => attachToSeriesAction({ seriesId, transactionIds }), {
+    onSuccess: (result) => {
+      after.onChanged();
+      after.cleared();
+      offerUndoToast(attachedToastTitle(result), result.undo, after.onChanged);
+    },
+  });
+}
+
 /** "Find transactions" attach flow (§4.2): search unlinked rows, checkbox-attach. */
 export function AttachPanel({
   seriesId,
@@ -149,16 +173,12 @@ export function AttachPanel({
   function attach(): void {
     const ids = [...selected];
     if (ids.length === 0) return;
-    void run(() => attachToSeriesAction({ seriesId, transactionIds: ids }), {
-      onSuccess: ({ attached, undo }) => {
-        onChanged();
+    void pressAttach(run, seriesId, ids, {
+      cleared: () => {
         setSelected(new Set());
         setQuery("");
-        // the attach's own lossless patch, in ONE transaction: each row's prior
-        // link AND the category attaching filed (§6A 47). Detaching row by row
-        // left the category behind and stamped a detach marker on every row.
-        offerUndoToast(`${attached} attached`, undo, onChanged);
       },
+      onChanged,
     });
   }
 
@@ -241,6 +261,35 @@ export function AttachPanel({
   );
 }
 
+/**
+ * The merge press, as `MergeControl` makes it. ⚖️ §6A 54 (2026-10-08): it carries what the confirmation showed
+ * (`shown`), and the merge refuses — writing nothing — when it would file anything else; a refusal leaves the
+ * confirmation open and re-reads the page, so the sentence he reads again names what the merge files now. The toast
+ * names what the merge filed, from the merge's own result (`mergedToastTitle`).
+ *
+ * 🔴 Review of §6A 54: the confirmation was read when the page rendered and the merge re-read when he pressed, with
+ * nothing checking they agreed; and the toast's filing was tested only on its label function.
+ */
+export function pressMerge(
+  run: ActionRun,
+  seriesId: string,
+  source: SeriesMergeCandidate,
+  after: { close: () => void; onChanged: () => void },
+): Promise<unknown> {
+  const input = { sourceId: source.id, targetId: seriesId, shown: source.filing };
+  return run(() => mergeIntoSeriesAction(input), {
+    onSuccess: (result) => {
+      after.close();
+      after.onChanged();
+      toast({ title: mergedToastTitle(source.name, result) });
+    },
+    onError: (message) => {
+      after.onChanged();
+      toast({ title: message, tone: "negative" });
+    },
+  });
+}
+
 /** Merge another live series INTO this one (§4.2): its charges relink, it ends. */
 export function MergeControl({
   seriesId,
@@ -253,7 +302,10 @@ export function MergeControl({
 }) {
   const { anchorRef, open, close, triggerProps } = usePopover<HTMLButtonElement>();
   const [query, setQuery] = useState("");
-  const [pending, setPending] = useState<SeriesMergeCandidate | null>(null);
+  // the candidate he picked, by id: read from the page's own candidates, so a re-read page (a refused press) re-reads
+  // what its confirmation says — the series merged elsewhere meanwhile drops back to the list
+  const [pendingId, setPendingId] = useState<string | null>(null);
+  const pending = candidates.find((c) => c.id === pendingId) ?? null;
   const { run, pending: merging } = useAction();
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -261,7 +313,7 @@ export function MergeControl({
     if (open) inputRef.current?.focus();
     else {
       setQuery("");
-      setPending(null);
+      setPendingId(null);
     }
   }, [open]);
 
@@ -271,13 +323,7 @@ export function MergeControl({
   }, [candidates, query]);
 
   function merge(source: SeriesMergeCandidate): void {
-    void run(() => mergeIntoSeriesAction({ sourceId: source.id, targetId: seriesId }), {
-      onSuccess: (result) => {
-        close();
-        onChanged();
-        toast({ title: mergedToastTitle(source.name, result) });
-      },
-    });
+    void pressMerge(run, seriesId, source, { close, onChanged });
   }
 
   if (candidates.length === 0) return null;
@@ -305,7 +351,7 @@ export function MergeControl({
           <MergeConfirmation
             candidate={pending}
             merging={merging}
-            onCancel={() => setPending(null)}
+            onCancel={() => setPendingId(null)}
             onConfirm={() => merge(pending)}
           />
         ) : (
@@ -330,7 +376,7 @@ export function MergeControl({
                     <button
                       type="button"
                       aria-label={`Choose ${c.name} to merge in`}
-                      onClick={() => setPending(c)}
+                      onClick={() => setPendingId(c.id)}
                       className="flex w-full items-center justify-between gap-2 rounded-md px-2.5 py-1.5 text-left text-sm text-ink-muted transition-colors duration-(--duration-fast) hover:bg-surface-sunken hover:text-ink"
                     >
                       <span className="truncate">{c.name}</span>

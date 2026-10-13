@@ -3,6 +3,7 @@ import type { AppDatabase } from "@/db/client";
 import { accounts } from "@/db/schema/accounts";
 import { merchants } from "@/db/schema/merchants";
 import { transactions } from "@/db/schema/transactions";
+import { formatCategoryPath } from "@/lib/category-path";
 import { monthKey, todayIso } from "@/lib/dates";
 import { loadRules, ruleMatches } from "./categorize";
 import { loadCategoryIndex, monthKeysBack } from "./analytics";
@@ -132,7 +133,7 @@ function categoryLabeler(db: AppDatabase): (id: string) => string {
     const node = byId.get(id);
     if (!node) return "a category";
     const parent = node.parentId ? byId.get(node.parentId) : undefined;
-    return parent ? `${parent.name} > ${node.name}` : node.name;
+    return formatCategoryPath(parent?.name, node.name);
   };
 }
 

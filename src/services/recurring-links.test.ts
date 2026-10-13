@@ -33,9 +33,11 @@ import {
   attachTransactions,
   createSeriesFromTransaction,
   detachTransaction,
+  MERGE_FILING_CHANGED,
   mergeFilings,
   mergeSeries,
   undoSeriesCreation,
+  type ShownFiling,
 } from "./recurring-links";
 
 const TODAY = "2026-07-08";
@@ -1012,6 +1014,46 @@ describe("attaching files an unfiled row under the series' category (§6A 47)", 
     const result = createSeriesFromTransaction(bundle.db, ids.at(-1)!, TODAY);
     expect(result.mode).toBe("created");
     for (const id of ids.slice(1)) expect(txnRow(id).categoryId).toBeNull();
+    expect(result.filed).toBeNull();
+  });
+
+  /*
+   * 🔴 Review of §6A 54 (2026-10-08): the merge's toast names what it filed, and attaching — the same rule (§6A 47) —
+   * said only "2 attached": the row moved to Car › Lease with nothing on the page saying so. Each hand link now
+   * reports what it filed, as the merge does, so its toast can name it.
+   */
+  test("attaching reports what it filed — the category path and how many; null when it filed none", () => {
+    const netflix = seriesFor(netflixId);
+    const streaming = categoryId("Subscriptions", "Streaming");
+    nameSeries(netflix.id, streaming);
+    const loose = insertTxn({ postedOn: "2026-06-28", amountCents: -1549, rawDescription: "NFLX PREPAY" });
+    const coffee = insertTxn({ postedOn: "2026-06-29", amountCents: -742, rawDescription: "CORNER COFFEE" });
+    file(coffee, categoryId("Food", "Coffee"), "rule", 0.8);
+
+    const result = attachTransactions(bundle.db, netflix.id, [loose, coffee], TODAY);
+
+    expect(result.attached).toBe(2);
+    expect(result.filed).toEqual({ categoryId: streaming, categoryPath: "Subscriptions > Streaming", count: 1 });
+    const filedNothing = insertTxn({ postedOn: "2026-07-01", amountCents: -742, rawDescription: "CORNER COFFEE 2" });
+    file(filedNothing, categoryId("Food", "Coffee"), "rule", 0.8);
+    expect(attachTransactions(bundle.db, netflix.id, [filedNothing], TODAY).filed).toBeNull();
+  });
+
+  test("'Make recurring' that joins a series reports what it filed, as attaching does", () => {
+    const netflix = seriesFor(netflixId);
+    const streaming = categoryId("Subscriptions", "Streaming");
+    nameSeries(netflix.id, streaming);
+    const fresh = insertTxn({
+      postedOn: "2026-07-01",
+      amountCents: -1549,
+      rawDescription: "NETFLIX.COM",
+      merchantId: netflixId,
+    });
+
+    const result = createSeriesFromTransaction(bundle.db, fresh, TODAY);
+
+    expect(result.mode).toBe("attached");
+    expect(result.filed).toEqual({ categoryId: streaming, categoryPath: "Subscriptions > Streaming", count: 1 });
   });
 
   describe("money that the series' kind or category cannot hold stays unfiled", () => {
@@ -1414,6 +1456,130 @@ describe("attaching files an unfiled row under the series' category (§6A 47)", 
 
       expect(previews.get(spotify.id)?.count).toBe(6);
       expect(previews.has(empty)).toBe(false);
+    });
+
+    /*
+     * ⚖️ 2026-10-08 (§6A 54): the confirmation names what the merge files before he presses, and the press carries
+     * what it named (`shown`). 🔴 Review of §6A 54: the confirmation was read when the page rendered and the merge
+     * re-read when he pressed, and nothing checked they still agreed — a row filed or unfiled in between, or the
+     * target named by another category, and the merge filed what he was never shown. It now refuses, writing nothing:
+     * not even a restore point, which would push his oldest one out of the twelve kept.
+     */
+    describe("the press carries what the confirmation showed — the merge refuses anything else", () => {
+      function restorePoints(): string[] {
+        const backups = path.join(dir, "backups");
+        return fs.existsSync(backups) ? fs.readdirSync(backups).filter((f) => f.startsWith("pre-")) : [];
+      }
+      /** Every column a merge writes: the links, the series, the filing. */
+      function ledger() {
+        const rows = bundle.db
+          .select({
+            id: transactions.id,
+            categoryId: transactions.categoryId,
+            categorizationSource: transactions.categorizationSource,
+            categorizationConfidence: transactions.categorizationConfidence,
+            needsReview: transactions.needsReview,
+          })
+          .from(transactions)
+          .orderBy(asc(transactions.id))
+          .all();
+        return { ...snapshot(), rows };
+      }
+      function refused(sourceId: string, targetId: string, shown: ShownFiling | null): void {
+        const before = ledger();
+        expect(() => mergeSeries(bundle.db, sourceId, targetId, TODAY, shown)).toThrow(MERGE_FILING_CHANGED);
+        expect(ledger()).toEqual(before);
+        expect(restorePoints()).toEqual([]);
+      }
+      function preview(sourceId: string, targetId: string) {
+        return mergeFilings(bundle.db, targetId, [sourceId]).get(sourceId) ?? null;
+      }
+
+      test("a row of the source filed since he read it: the count is not his — refused, nothing written", () => {
+        const netflix = seriesFor(netflixId);
+        const spotify = seriesFor(spotifyId);
+        nameSeries(netflix.id, categoryId("Subscriptions", "Streaming"));
+        const shown = preview(spotify.id, netflix.id);
+        expect(shown?.count).toBe(6);
+        file(taggedIds(spotify.id)[0]!, categoryId("Food", "Coffee"), "user", 1);
+
+        refused(spotify.id, netflix.id, shown);
+      });
+
+      test("a row of the source unfiled since he read it — refused", () => {
+        const netflix = seriesFor(netflixId);
+        const spotify = seriesFor(spotifyId);
+        nameSeries(netflix.id, categoryId("Subscriptions", "Streaming"));
+        const [first] = taggedIds(spotify.id) as [string];
+        file(first, categoryId("Food", "Coffee"), "user", 1);
+        const shown = preview(spotify.id, netflix.id);
+        expect(shown?.count).toBe(5);
+        file(first, null, null, null);
+
+        refused(spotify.id, netflix.id, shown);
+      });
+
+      test("the target named by another category since — the same count under another name is refused", () => {
+        const netflix = seriesFor(netflixId);
+        const spotify = seriesFor(spotifyId);
+        nameSeries(netflix.id, categoryId("Subscriptions", "Streaming"));
+        const shown = preview(spotify.id, netflix.id);
+        nameSeries(netflix.id, categoryId("Subscriptions", "Software"));
+        expect(preview(spotify.id, netflix.id)?.count).toBe(shown?.count);
+
+        refused(spotify.id, netflix.id, shown);
+      });
+
+      test("he read that nothing would be filed, and now something would — refused", () => {
+        const netflix = seriesFor(netflixId);
+        const spotify = seriesFor(spotifyId);
+        expect(preview(spotify.id, netflix.id)).toBeNull();
+        nameSeries(netflix.id, categoryId("Subscriptions", "Streaming"));
+
+        refused(spotify.id, netflix.id, null);
+      });
+
+      test("he read a filing, and now nothing would be filed — refused", () => {
+        const netflix = seriesFor(netflixId);
+        const spotify = seriesFor(spotifyId);
+        nameSeries(netflix.id, categoryId("Subscriptions", "Streaming"));
+        const shown = preview(spotify.id, netflix.id);
+        setKind(netflix.id, "transfer");
+
+        refused(spotify.id, netflix.id, shown);
+      });
+
+      test("what he read is what it files — it merges, files exactly that, and takes its restore point", () => {
+        const netflix = seriesFor(netflixId);
+        const spotify = seriesFor(spotifyId);
+        const streaming = categoryId("Subscriptions", "Streaming");
+        nameSeries(netflix.id, streaming);
+        const shown = preview(spotify.id, netflix.id);
+
+        const result = mergeSeries(bundle.db, spotify.id, netflix.id, TODAY, shown);
+
+        expect(result.filed).toEqual({ categoryId: streaming, categoryPath: "Subscriptions > Streaming", count: 6 });
+        expect(restorePoints()).toHaveLength(1);
+      });
+
+      test("nothing read, nothing filed — the merge he has always made goes ahead", () => {
+        const netflix = seriesFor(netflixId);
+        const spotify = seriesFor(spotifyId);
+
+        const result = mergeSeries(bundle.db, spotify.id, netflix.id, TODAY, null);
+
+        expect(result.relinked).toBe(6);
+        expect(result.filed).toBeNull();
+      });
+
+      test("a merge refused for any other reason takes no restore point either", () => {
+        const netflix = seriesFor(netflixId);
+        const spotify = seriesFor(spotifyId);
+        setSeriesStatus(bundle.db, netflix.id, "dismissed");
+
+        expect(() => mergeSeries(bundle.db, spotify.id, netflix.id, TODAY, null)).toThrow(/inactive series/);
+        expect(restorePoints()).toEqual([]);
+      });
     });
   });
 });

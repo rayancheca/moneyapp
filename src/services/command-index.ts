@@ -8,6 +8,7 @@ import { merchants } from "@/db/schema/merchants";
 import { ACCOUNT_ORDER } from "./account-order";
 import { ownPortfolioAccountIds } from "./accounts";
 import { hrefCategoryId } from "./analytics";
+import { formatCategoryPath } from "@/lib/category-path";
 import { ledgerHref } from "@/lib/ledger-href";
 import { isIconName, type IconName } from "@/components/shell/Icon";
 import type { CommandPaletteGroup } from "@/components/ui/CommandPalette";
@@ -65,7 +66,7 @@ export function commandEntityGroups(db: AppDatabase): CommandPaletteGroup[] {
         const parentName = c.parentId ? catNameById.get(c.parentId) : undefined;
         return {
           id: `category-${c.id}`,
-          label: parentName ? `${parentName} > ${c.name}` : c.name,
+          label: formatCategoryPath(parentName, c.name),
           hint: "Category",
           icon: isIconName(c.icon) ? c.icon : ("tag" as IconName),
           /*

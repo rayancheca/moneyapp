@@ -1,5 +1,6 @@
 import type { categories } from "@/db/schema/categories";
 import type { CategoryPickerOption } from "./CategoryPicker";
+import { formatCategoryPath } from "@/lib/category-path";
 
 /**
  * Flat, pre-ordered CategoryPicker options — each root then its children
@@ -27,7 +28,7 @@ export function buildCategoryPickerOptions(
       .map((c) => ({
         id: c.id,
         name: c.name,
-        label: `${root.name} > ${c.name}`,
+        label: formatCategoryPath(root.name, c.name),
         hue: c.color ?? root.color,
         icon: c.icon ?? root.icon,
         depth: 1,
