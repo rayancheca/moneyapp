@@ -44,6 +44,14 @@ export const LAST_CHECKED_DAY = "the last day every account that pay lands in ha
 export const NOT_CHECKED = "the ledger has not checked every account that pay could land in";
 
 /**
+ * ⚖️ §6A 68 (2026-10-13): what /budgets' header SAYS where it prints "— in so far" — not one day of the month checked
+ * where the pay lands (`IncomeExpectation.noIncomeDayRead`). A screen reader given the bare dash hears nothing, or "em
+ * dash", where the figure was; the spoken line says why there is none, as a budget row's does under §6A 64.
+ */
+export const NO_INCOME_DAY_CHECKED =
+  "no day of this month checked yet in the accounts that pay lands in, so nothing is shown";
+
+/**
  * The one day several schedules' landing accounts were checked through — each
  * schedule's own `earliestVerified` — when they share one.
  *

@@ -50,7 +50,7 @@ import {
 import type { UnbankedFrontier } from "@/lib/unbanked-income";
 import { portionsAcross } from "@/lib/payday-settlement";
 import { paydayProjectable, paydaySettlementsBySeries, stillToCome, stillToComeReader } from "./payday-settlement";
-import { silenceMeasuredThroughBySeries } from "./cash-earnings";
+import { checkedThroughBySeries, silenceMeasuredThroughBySeries } from "./cash-earnings";
 import { effectiveSeries, hasStoppedForecasting, oneChargeDays, projectOccurrences, toProjectable } from "./recurring";
 import { linkIsRecurring, rowIsRecurring, seriesIdsNotDrawnAsRecurring } from "./recurring-link";
 
@@ -60,6 +60,7 @@ export { overdueForSeries };
 export type { BudgetTail, BudgetTailSeries };
 import { incomeBasis, levelledMonthlyCents, type IncomeBasis } from "@/lib/income-basis";
 import { daysNotImportedYet, emptyFigure, emptyPeriodReason, type EmptyPeriodInput } from "@/lib/empty-period";
+import { paydayIsRead } from "@/lib/occurrence-verdict";
 import { spentOnlyFromCashWallets, type BorrowedDay } from "@/lib/budget-coverage";
 import { formatCategoryPath } from "@/lib/category-path";
 import { categoryReach, type CategoryReach } from "@/lib/category-reach";
@@ -747,6 +748,13 @@ export interface IncomeExpectation {
   /** money already in, inside [start, today] */
   postedCents: number;
   /**
+   * ⚖️ §6A 68 (2026-10-13): NOT ONE day of this window has been checked in the accounts any live pay series lands in
+   * (`checkedThroughBySeries`, the frontier the passed paydays' sentence names) and no income posted in it — so
+   * `postedCents` is no measurement, and the header prints "— in so far" for it. ⛔ Money found keeps its figure: a
+   * deposit in the ledger is in so far whatever day the balances are checked through (§6A 64's rule for a row found).
+   */
+  noIncomeDayRead: boolean;
+  /**
    * money still expected, from TODAY through end — less every payday a deposit
    * has already paid (that money is in `postedCents`, or in
    * `paidByAnotherMonthCents` when it landed outside this window)
@@ -1038,6 +1046,15 @@ export function incomeExpectation(
   const passedUnpaidCents = passed.totalCents;
   const passedUnpaidOccurrences = passed.occurrenceCount;
   /*
+   * ⚖️ §6A 68 (2026-10-13): whether ANY day of this window has been checked where the pay lands — the third leg's own
+   * frontier (`checkedThroughBySeries`), asked of the window's first day: one that has reached the 1st has read at
+   * least that day (`paydayIsRead`), one that has not has read none. 🔴 Measured on his ledger copy 2026-10-12: "$0.00
+   * in so far, $3,425.76 still expected" over an October with Wells Fargo, where It America LLC's pay lands, checked
+   * through Sep 24 — a zero nobody had looked for. ⚡ Asked only when nothing posted: money in keeps its figure anyway.
+   */
+  const checkedOf = postedCents === 0 ? checkedThroughBySeries(db, today) : null;
+  const noIncomeDayRead = checkedOf !== null && live.every((s) => !paydayIsRead(start, checkedOf(s.id)));
+  /*
    * The annualised rate every live series pays, summed.
    *
    * A series earns its rate by still being alive across the year ahead, NOT by
@@ -1143,6 +1160,7 @@ export function incomeExpectation(
 
   return {
     postedCents,
+    noIncomeDayRead,
     expectedCents,
     scheduledCents,
     scheduledOccurrences,

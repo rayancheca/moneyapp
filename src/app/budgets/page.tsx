@@ -4,7 +4,7 @@ import { spendUnread } from "@/lib/budget-coverage";
 import { periodBounds, todayIso, type PeriodBounds } from "@/lib/dates";
 import { formatDayLong, formatDayShort } from "@/lib/format-date";
 import { paidByAnotherMonthNote, paidForAnotherMonthNote } from "@/lib/paid-by-another-month";
-import { IMPORTS_NOT_EARNINGS, unbankedIncomeFrontierClause } from "@/lib/unbanked-income";
+import { IMPORTS_NOT_EARNINGS, NO_INCOME_DAY_CHECKED, unbankedIncomeFrontierClause } from "@/lib/unbanked-income";
 import {
   budgetGuidanceCents,
   budgetPaceStatuses,
@@ -241,7 +241,21 @@ export default async function BudgetsPage({
               income.paidByAnotherMonthCents > 0) && (
               <>
                 {" · "}
-                <Money cents={income.postedCents} /> in so far,{" "}
+                {/* ⚖️ §6A 68 (2026-10-13): an em dash, not a $0.00, while not one day of the month has been checked
+                    where the pay lands — the frontier the passed paydays' line below names. 🔴 His ledger copy
+                    2026-10-12 read "$0.00 in so far, $3,425.76 still expected" over an October nothing had read. */}
+                {income.noIncomeDayRead ? (
+                  <>
+                    <span aria-hidden="true">
+                      <span className="figures text-ink-faint">—</span> in so far,
+                    </span>
+                    <span className="sr-only">{NO_INCOME_DAY_CHECKED} in so far,</span>
+                  </>
+                ) : (
+                  <>
+                    <Money cents={income.postedCents} /> in so far,
+                  </>
+                )}{" "}
                 <Money cents={income.expectedCents} /> still expected
                 {income.series.length > 0 && ` from ${income.series[0]!.name}`}
               </>

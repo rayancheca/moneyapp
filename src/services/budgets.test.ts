@@ -1347,6 +1347,74 @@ describe("incomeExpectation — the term /budgets never had", () => {
   });
 });
 
+/*
+ * ⚖️ OWNER DECISION 2026-10-13 (§6A 68): the header's "in so far" prints "—", not "$0.00", while NO day of the month
+ * has been checked in the accounts the pay lands in — the frontier the passed paydays' sentence beneath it names
+ * (`checkedThroughBySeries`). 🔴 Measured on his ledger copy 2026-10-12: "$0.00 in so far, $3,425.76 still expected"
+ * over an October nothing had read — Wells Fargo, where It America LLC's pay lands, checked through Sep 24.
+ */
+describe("incomeExpectation — §6A 68: no income day of the month checked", () => {
+  let checkingId: string;
+
+  beforeEach(() => {
+    const chase = bundle.db.select().from(institutions).where(eq(institutions.name, "Chase")).get()!;
+    checkingId = createAccount(bundle.db, { institutionId: chase.id, name: "Checking", type: "checking" });
+  });
+
+  /** a weekly pay series landing in Checking, Thursdays from Jun 4 */
+  function weeklyPay(name = "It America LLC (weekly pay)", accountId: string = checkingId): string {
+    const id = createSeries({
+      name,
+      nextExpectedOn: "2026-06-04",
+      nextExpectedAmountCents: 114_192,
+      kind: "income",
+      cadence: "weekly",
+      intervalDaysAvg: 7,
+    });
+    bundle.db.update(recurringSeries).set({ accountId }).where(eq(recurringSeries.id, id)).run();
+    return id;
+  }
+
+  const month = (today: string) => incomeExpectation(bundle.db, "2026-06-01", "2026-06-30", today);
+
+  test("checked only through the month before, nothing posted: no day of the month is read", () => {
+    weeklyPay();
+    checkedThrough(bundle.db, checkingId, "2026-05-28");
+    const got = month("2026-06-12");
+    expect(got.postedCents).toBe(0);
+    expect(got.noIncomeDayRead).toBe(true);
+  });
+
+  test("one day of the month checked is a day read — the $0.00 stands, as today", () => {
+    weeklyPay();
+    checkedThrough(bundle.db, checkingId, "2026-06-01");
+    expect(month("2026-06-12")).toMatchObject({ postedCents: 0, noIncomeDayRead: false });
+  });
+
+  test("an account the pay lands in with no checked record reads no day", () => {
+    weeklyPay();
+    expect(month("2026-06-12").noIncomeDayRead).toBe(true);
+  });
+
+  // ⛔ §6A 64's rule for a row found: a deposit in the ledger is money in so far, whatever day the balances reach
+  test("income posted in the month keeps its figure, however far the balances are checked", () => {
+    weeklyPay();
+    checkedThrough(bundle.db, checkingId, "2026-05-28");
+    spend("2026-06-04", 114_192, "Income > Salary", checkingId);
+    expect(month("2026-06-12")).toMatchObject({ postedCents: 114_192, noIncomeDayRead: false });
+  });
+
+  test("with two schedules, one checked into the month is enough — some day of it was read", () => {
+    const chase = bundle.db.select().from(institutions).where(eq(institutions.name, "Chase")).get()!;
+    const savings = createAccount(bundle.db, { institutionId: chase.id, name: "Savings", type: "savings" });
+    weeklyPay();
+    weeklyPay("Tutoring (weekly pay)", savings);
+    checkedThrough(bundle.db, checkingId, "2026-05-28");
+    checkedThrough(bundle.db, savings, "2026-06-05");
+    expect(month("2026-06-12").noIncomeDayRead).toBe(false);
+  });
+});
+
 describe("budgetOverdue — the bill that came due and never arrived", () => {
   test("an expected occurrence with no posting is overdue; a posted one is not", () => {
     const rent = createSeries({
