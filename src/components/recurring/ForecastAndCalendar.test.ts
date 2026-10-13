@@ -1,25 +1,18 @@
-import { createElement, isValidElement, type ReactElement, type ReactNode } from "react";
+import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, test, vi } from "vitest";
+import { findElement, HookSlots } from "@/hooks/hook-slots.harness";
 import type { MonthForecast } from "@/services/forecast";
 import type { RecurringCalendarMonth } from "@/services/recurring-calendar";
 
 /*
- * The hooks two components on this page call, routed to `HookSlots` (below)
- * while a test is stepping a component by hand, and to React otherwise — so
- * the static renders in this file are real renders.
+ * The hooks two components on this page call, routed to a `HookSlots` while a
+ * test is stepping a component by hand, and to React otherwise — so the static
+ * renders in this file are real renders.
  */
-const hookHost = vi.hoisted(() => ({
-  current: null as null | { useState(init: unknown): unknown; useTransition(): unknown },
-}));
-vi.mock("react", async (importOriginal) => {
-  const real = await importOriginal<typeof import("react")>();
-  return {
-    ...real,
-    useState: (init: unknown) => (hookHost.current ? hookHost.current.useState(init) : real.useState(init)),
-    useTransition: () => (hookHost.current ? hookHost.current.useTransition() : real.useTransition()),
-  };
-});
+vi.mock("react", async (importOriginal) =>
+  (await import("@/hooks/hook-slots.harness")).routeHooks(await importOriginal<typeof import("react")>()),
+);
 
 // server actions pull in next/cache and the database client; the view-state
 // hook needs an app router that a static render does not mount
@@ -91,66 +84,6 @@ describe("ForecastAndCalendar — the Calendar badge counts the month on screen"
     expect(badge("All")).toBe("15");
   });
 });
-
-/**
- * One component's hook state, held across calls, so a test can call a function
- * component, fire a prop its output wires up, let the transition settle, and
- * call it again — which is what paging IS, and what a static render cannot do.
- * The repo has no DOM environment; this steps the two components' own code
- * rather than a copy of it.
- */
-class HookSlots {
-  private readonly values: unknown[] = [];
-  private cursor = 0;
-  private readonly transitions: Promise<unknown>[] = [];
-
-  render<P>(component: (props: P) => ReactNode, props: P): ReactNode {
-    this.cursor = 0;
-    hookHost.current = this;
-    try {
-      return component(props);
-    } finally {
-      hookHost.current = null;
-    }
-  }
-
-  useState(init: unknown): [unknown, (next: unknown) => void] {
-    const slot = this.cursor++;
-    if (!(slot in this.values)) this.values[slot] = typeof init === "function" ? (init as () => unknown)() : init;
-    const set = (next: unknown): void => {
-      this.values[slot] = typeof next === "function" ? (next as (prev: unknown) => unknown)(this.values[slot]) : next;
-    };
-    return [this.values[slot], set];
-  }
-
-  useTransition(): [boolean, (fn: () => unknown) => void] {
-    this.cursor++;
-    return [
-      false,
-      (fn) => {
-        const result = fn();
-        if (result instanceof Promise) this.transitions.push(result);
-      },
-    ];
-  }
-
-  async settle(): Promise<void> {
-    while (this.transitions.length > 0) await this.transitions.shift();
-  }
-}
-
-function findElement(node: ReactNode, type: unknown): ReactElement<Record<string, unknown>> | null {
-  if (Array.isArray(node)) {
-    for (const child of node) {
-      const found = findElement(child, type);
-      if (found) return found;
-    }
-    return null;
-  }
-  if (!isValidElement<Record<string, unknown>>(node)) return null;
-  if (node.type === type) return node;
-  return findElement(node.props.children as ReactNode, type);
-}
 
 /**
  * 🔴 THE TRANSITION ITSELF — the defect was that the badge did not move when
