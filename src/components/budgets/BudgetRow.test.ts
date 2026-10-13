@@ -13,11 +13,13 @@ import { recurringSeries } from "@/db/schema/recurring";
 import { transactions } from "@/db/schema/transactions";
 import { dedupeHash } from "@/lib/hash";
 import { createAccount } from "@/services/accounts";
-import { budgetPaceStatuses, createBudget, type BudgetPaceStatus } from "@/services/budgets";
+import { budgetPaceStatuses, createBudget, setBudgetRollover, type BudgetPaceStatus } from "@/services/budgets";
 import { createCashWallet } from "@/services/cash-wallets";
 import { checkedThrough } from "@/services/checked-days-fixture";
 import { addManualTransaction } from "@/services/manual-transactions";
 import { seedHisCarSeries } from "@/services/one-charge-fixture";
+import { provenanceFor } from "@/services/provenance";
+import { BudgetDetails } from "./BudgetDetails";
 import { BudgetRow } from "./BudgetRow";
 
 // rendering never navigates or submits; the row and its controls only need these to exist
@@ -225,6 +227,141 @@ describe("BudgetRow — what it draws beside the verdict", () => {
 });
 
 /*
+ * ⚖️ OWNER DECISION 2026-10-12 (§6A 64): where NO elapsed day of a budget's window is imported, Spent and Left print
+ * "—" and Budget stays — the dashboard's pace tile and the category headline's rule (`lib/empty-period::emptyFigure`).
+ * 🔴 Measured on his ledger copy 2026-10-12: all 12 rows read "Spent $0.00 · Left $X", a bar announcing "0% of
+ * budget", over an October the accounts they are spent from were imported through Aug 12 or Sep 2.
+ */
+describe("BudgetRow — ⚖️ §6A 64, a window not one day of which has been read", () => {
+  /** Food spent on a Card read through `readThrough` (a Shopping row that day), under an August Food budget */
+  function foodReadThrough(readThrough: string): BudgetPaceStatus {
+    const chase = bundle.db.select().from(institutions).where(eq(institutions.name, "Chase")).get()!;
+    const card = createAccount(bundle.db, { institutionId: chase.id, name: "Card", type: "credit" });
+    for (const [postedOn, category] of [
+      ["2026-07-20", "Food"],
+      [readThrough, "Shopping"],
+    ] as const) {
+      const rawDescription = `SPEND ${postedOn} ${category}`;
+      bundle.db
+        .insert(transactions)
+        .values({
+          accountId: card,
+          postedOn,
+          amountCents: -1_000,
+          rawDescription,
+          normalizedDescription: rawDescription,
+          categoryId: catId(category),
+          dedupeHash: dedupeHash({ accountId: card, postedOn, amountCents: -1_000, rawDescription, occurrenceIndex: 0 }),
+        })
+        .run();
+    }
+    createBudget(bundle.db, { categoryId: catId("Food"), period: "monthly", amountCents: 30_000, startsOn: "2026-08-01" });
+    return statusFor("Food");
+  }
+
+  const spoken = (html: string): string => /aria-valuetext="([^"]*)"/.exec(html)![1]!;
+  /** `html` less every element marked aria-hidden — a rolling figure's digit strips — nesting counted */
+  function withoutHidden(html: string): string {
+    let out = "";
+    let at = 0;
+    for (;;) {
+      const start = html.indexOf('<span aria-hidden="true"', at);
+      if (start === -1) return out + html.slice(at);
+      out += html.slice(at, start);
+      let depth = 0;
+      const tag = /<(\/?)span\b[^>]*>/g;
+      tag.lastIndex = start;
+      for (let m = tag.exec(html); m; m = tag.exec(html)) {
+        depth += m[1] ? -1 : 1;
+        if (depth === 0) {
+          at = tag.lastIndex;
+          break;
+        }
+      }
+    }
+  }
+
+  /** the figures cluster's text — "Spent … Budget … Left …" — as a reader hears it, tags dropped */
+  const CLUSTER = /<span class="text-ink-faint">Spent <\/span>[\s\S]*?(?=<div class="flex flex-wrap items-center gap-1">)/;
+  const figures = (html: string): string =>
+    withoutHidden(CLUSTER.exec(html)![0]!)
+      .replace(/<!-- -->/g, "")
+      .replace(/<[^>]+>/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+
+  test("Spent and Left print a dash, the plan stands, and the bar announces no measured value", () => {
+    const s = foodReadThrough("2026-07-31");
+    const spentProof = provenanceFor(bundle.db, {
+      kind: "categorySpend",
+      categoryId: s.budget.categoryId,
+      from: s.bounds.start,
+      to: s.bounds.end,
+      label: s.categoryPath,
+    });
+    const html = renderToStaticMarkup(
+      createElement(BudgetRow, { status: s, guidanceCents: 0, spentProvenance: spentProof, planProvenance: null }),
+    );
+    expect(figures(html)).toMatch(/^Spent — Budget \$300\.00 Left —/);
+    expect(html).not.toContain("$0.00");
+    // ⛔ no proof beside a dash: the popover proves a rendered figure (`CategoryHeadline`)
+    expect(html).not.toMatch(/How Food spent is known/);
+    // the no-verdict look: the withheld headline and its coverage sentence, and a bar with no measured value on it
+    expect(html).toContain("Awaiting statements");
+    expect(html).toContain("spending imported through Jul 31 · 11 days of this period unaccounted");
+    expect(html).not.toMatch(/aria-valuenow=/);
+    expect(spoken(html)).toBe(
+      "Food: no day of this period imported yet, so neither spent nor left is shown against $300.00. " +
+        "35% of this period has passed. spending imported through Jul 31 · 11 days of this period unaccounted.",
+    );
+  });
+
+  /*
+   * 🔴 Review of 6f217a7: the dashed row still printed "Projected ≈" — the tail and the arrears over the $0.00 it will
+   * not print — in the pace colour, and drew its dashed tail in it: on his ledger copy 2026-10-12 Housing "Projected ≈
+   * $2,291.21" and Transport "$368.86" in amber beside "Spent —" and "Left —", Transport's amber tail filling the bar.
+   */
+  test("…and no projection beside the dash, nor a pace colour on the tail of what is still expected", () => {
+    bundle.db
+      .insert(recurringSeries)
+      .values({
+        name: "Meal plan",
+        kind: "bill",
+        cadence: "monthly",
+        intervalDaysAvg: 30,
+        amountCentsAvg: -40_000,
+        nextExpectedOn: "2026-08-20",
+        nextExpectedAmountCents: -40_000,
+        status: "confirmed",
+        lastMatchedOn: "2026-07-20",
+        userCategoryId: catId("Food"),
+      })
+      .run();
+    const s = foodReadThrough("2026-07-31");
+    // the conditions under which the row drew both — without them this test could not fail
+    expect(s.noDayRead).toBe(true);
+    expect(s.pace).toBe("at-risk");
+    expect(s.projectedCents).toBe(40_000);
+    const html = render(s);
+    expect(figures(html)).toMatch(/^Spent — Budget \$300\.00 Left —/);
+    expect(html).not.toContain("Projected");
+    const tail = tailClass(html);
+    expect(tail).not.toBeNull();
+    expect(tail).not.toMatch(/text-(positive|warning|negative)\b/);
+    // what is still expected keeps its own line: a schedule, not a reading of the dashed window
+    expect(withoutHidden(html).replace(/<!-- -->/g, "")).toMatch(/\$400\.00<\/span> expected before Aug 31/);
+  });
+
+  test("the control: one day read keeps today's lower-bound shape — $0.00 and a bar at 0", () => {
+    const s = foodReadThrough("2026-08-01");
+    const html = render(s);
+    expect(figures(html)).toMatch(/^Spent \$0\.00 Budget \$300\.00 Left \$300\.00/);
+    expect(html).toContain('aria-valuenow="0"');
+    expect(spoken(html)).toMatch(/^Food: \$0\.00 of \$300\.00 \(0% of budget\)\. /);
+  });
+});
+
+/*
  * ⚖️ Owner decision 2026-10-08 (§6A 56): the one-time Nov 11 car-insurance balance reads "once" wherever a cadence is
  * printed — here, the list behind "… expected before Nov 30", where every line names its day and its cadence. 🔴 Review
  * of 3044ea6 put this line back on the stored cadence ("Nov 11 · monthly") with every component test still green.
@@ -329,16 +466,16 @@ describe("BudgetRow — the arrears line says the runway's split, in its tone", 
 
   const spoken = (html: string): string => /aria-valuetext="([^"]*)"/.exec(html)![1]!;
 
-  test("a due day no import has reached: the runway's words, quietly", () => {
+  test("a due day no checked statement has reached: the runway's words, quietly", () => {
     const html = render(housingWithBill({ cents: 228_570, readThrough: "2026-07-31" }));
     const line = arrearsLine(html);
-    expect(line.text).toBe("$2,285.70 expected by now and no import has covered it yet · Rent Aug 1");
+    expect(line.text).toBe("$2,285.70 expected by now and no statement has covered it yet · Rent Aug 1");
     expect(line.className).not.toMatch(/text-(warning|negative)\b/);
-    expect(spoken(html)).toMatch(/ \$2,285\.70 was expected by now and no import has covered it yet\.$/);
+    expect(spoken(html)).toMatch(/ \$2,285\.70 was expected by now and no statement has covered it yet\.$/);
     expect(html).not.toMatch(/not imported|has not been imported/);
   });
 
-  test("a due day an import has reached, with nothing posted: \"not posted\", in warning", () => {
+  test("a due day a checked statement has reached, with nothing posted: \"not posted\", in warning", () => {
     const html = render(housingWithBill({ cents: 228_570, readThrough: "2026-08-05" }));
     const line = arrearsLine(html);
     expect(line.text).toBe("$2,285.70 expected by now and not posted · Rent Aug 1");
@@ -352,11 +489,70 @@ describe("BudgetRow — the arrears line says the runway's split, in its tone", 
     const html = render(housingWithBill({ cents: 5_000, readThrough: "2026-08-05", weekly: true }));
     const line = arrearsLine(html);
     expect(line.text).toMatch(
-      /^\$100\.00 expected by now: \$50\.00 not posted, and no import has covered the other \$50\.00 yet · /,
+      /^\$100\.00 expected by now: \$50\.00 not posted, and no statement has covered the other \$50\.00 yet · /,
     );
     expect(line.className).toMatch(/\btext-warning\b/);
     expect(spoken(html)).toMatch(
-      / \$100\.00 was expected by now: \$50\.00 has not posted, and no import has covered the other \$50\.00 yet\.$/,
+      / \$100\.00 was expected by now: \$50\.00 has not posted, and no statement has covered the other \$50\.00 yet\.$/,
     );
+  });
+});
+
+/**
+ * 🔴 THE ONE DEFINITION STILL SAYING "never posted". Opened, a rolling budget explains what it banks: "Bills that
+ * came due and never posted are subtracted, so a missing statement cannot bank itself as savings." His words for a
+ * bill a checked statement shows nothing for are "not posted" (decisions 60 and 65), and "never posted" is a negative
+ * claim the arrears may make only of read days (`lib/arrears-reading`) — while the rollover subtracts all of
+ * `budgetOverdue`, read or not, which is the sentence's own point. ⛔ Both halves, in the split's two phrases.
+ */
+describe("BudgetDetails — what rollover subtracts, in his words", () => {
+  test("a rolling budget's panel says not posted, and names the half no statement has covered", () => {
+    createBudget(bundle.db, { categoryId: catId("Food"), period: "monthly", amountCents: 3_000, startsOn: "2026-06-01" });
+    const panel = createElement(BudgetDetails, { status: statusFor("Food"), rolloverEnabled: true });
+    const html = renderToStaticMarkup(panel).replace(/<!-- -->/g, "").replace(/\s+/g, " ");
+    expect(html).not.toContain("never posted");
+    expect(html).toContain(
+      "Bills that came due are subtracted whether they are not posted or no statement has covered them yet.",
+    );
+  });
+
+  /*
+   * 🔴 Review of 8f9f408: the sentence ended "…, so a missing statement cannot bank itself as savings" — and `carryInto`
+   * banks the whole plan of a closed period nobody has read, its $0.00 taken as "spent nothing". On his ledger copy
+   * 2026-10-12 (every rolling budget carries from Sep 1): Cash & ATM banked $130.00 and Fees $15.00 from a September
+   * with no row and no day read, Travel $70.00 from one read through Sep 2. ❓ Whether such a period holds back its
+   * carry is his call; until then the panel claims nothing the carry does not do.
+   */
+  test("a closed period no statement has covered banks its plan — so the panel does not claim it cannot", () => {
+    const chase = bundle.db.select().from(institutions).where(eq(institutions.name, "Chase")).get()!;
+    const card = createAccount(bundle.db, { institutionId: chase.id, name: "Card", type: "credit" });
+    // the Card's import stops at Jun 30, and so does what the ledger has read of Food
+    const row = { accountId: card, postedOn: "2026-06-30", amountCents: -1_000, rawDescription: "SPEND 2026-06-30" };
+    bundle.db
+      .insert(transactions)
+      .values({
+        ...row,
+        normalizedDescription: row.rawDescription,
+        categoryId: catId("Food"),
+        dedupeHash: dedupeHash({ ...row, occurrenceIndex: 0 }),
+      })
+      .run();
+    const id = createBudget(bundle.db, {
+      categoryId: catId("Food"),
+      period: "monthly",
+      amountCents: 3_000,
+      startsOn: "2026-06-01",
+    });
+    setBudgetRollover(bundle.db, id, { enabled: true, startsOn: "2026-07-01" });
+    // the conditions under which the sentence is false: July, closed, not one day of it read, banked whole
+    const july = budgetPaceStatuses(bundle.db, "2026-07-31").find((x) => x.categoryName === "Food")!;
+    expect(july.noDayRead).toBe(true);
+    const s = statusFor("Food");
+    expect(s.rolloverCents).toBe(3_000);
+    const text = renderToStaticMarkup(createElement(BudgetDetails, { status: s, rolloverEnabled: true }))
+      .replace(/<[^>]+>/g, "")
+      .replace(/\s+/g, " ");
+    expect(text).toContain("Banked $30.00 from closed periods.");
+    expect(text).not.toMatch(/cannot bank|a missing statement/);
   });
 });

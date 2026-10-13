@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { NO_IMPORT_YET } from "@/lib/arrears-reading";
+import { NO_STATEMENT_YET } from "@/lib/arrears-reading";
 import type { ForecastComponent } from "@/services/forecast";
 import type { SeriesOccurrence, SeriesStaleness } from "@/services/recurring";
 import {
@@ -54,12 +54,13 @@ describe("unsettledReasonWord", () => {
    * 🔴 Since a due day is read only with its grace (§6A 60, `dueDayIsRead`), `not_imported` is also the reason of a
    * day an import HAS reached short of its grace: the e2e fixture's Meal Kit, due Jul 5 on a card imported through
    * Jul 5, read "not yet known (not imported yet)" of an imported day. ⚖️ His decision 60 (2026-10-08): until the day
-   * and its grace are imported, "no import has covered it yet" — the runway's unread words, shared, so the calendar's
-   * "?" and every arrears surface say one thing of one Oct 1.
+   * and its grace are imported, the runway's unread words, shared, so the calendar's "?" and every arrears surface say
+   * one thing of one Oct 1. ⚖️ His decision 65 (2026-10-12): read to each account's last CHECKED statement balance, so
+   * "no statement has covered it yet" — true too of a day the imported rows have passed and no statement has.
    */
   test("the coverage reason is the arrears' unread words — true of a day imported short of its grace", () => {
-    expect(unsettledReasonWord("not_imported")).toBe(NO_IMPORT_YET);
-    expect(unsettledReasonWord("not_imported")).toBe("no import has covered it yet");
+    expect(unsettledReasonWord("not_imported")).toBe(NO_STATEMENT_YET);
+    expect(unsettledReasonWord("not_imported")).toBe("no statement has covered it yet");
   });
 });
 
@@ -450,15 +451,15 @@ describe("overdueNote", () => {
    * Fargo, read through Sep 24. ⚖️ Over unread days never "not posted"; staleness between uploads is normal, never a
    * warning (his words 2026-08-05; the class approved 2026-10-07).
    */
-  test("a day no import has reached is quiet, and says no import has covered it yet", () => {
+  test("a day no checked statement has reached is quiet, and says no statement has covered it yet", () => {
     const note = overdueNote("2026-10-01", 1, { owedCents: 210900, unreadCents: 210900 });
-    expect(note).toEqual({ text: "Oct 1 — no import has covered it yet", warning: false });
+    expect(note).toEqual({ text: "Oct 1 — no statement has covered it yet", warning: false });
     expect(note.text).not.toMatch(/not posted/);
   });
 
   test("part read and part unread says both, by amount, and keeps the warning for the part that is late", () => {
     expect(overdueNote("2026-07-01", 3, { owedCents: 3000, unreadCents: 1000 })).toEqual({
-      text: "Jul 1 and 2 more — $20.00 not posted, and no import has covered the other $10.00 yet",
+      text: "Jul 1 and 2 more — $20.00 not posted, and no statement has covered the other $10.00 yet",
       warning: true,
     });
   });
@@ -476,55 +477,101 @@ describe("overdueNote", () => {
  */
 describe("alreadyDueWords", () => {
   test("read and unposted keeps 'Already due, and not posted', in warning", () => {
-    const w = alreadyDueWords({ owedCents: 210900, unreadCents: 0 }, 3);
+    const w = alreadyDueWords({ owedCents: 210900, unreadCents: 0 }, 3, 1);
     expect(w.heading).toBe("Already due, and not posted");
     expect(w.warning).toBe(true);
   });
 
   /*
-   * ⚖️ WHAT WAS READ IS NOW THE GRACE TOO — his decision 60 (2026-10-08). A due day counts as read once the imports
+   * ⚖️ WHAT WAS READ IS NOW THE GRACE TOO — his decision 60 (2026-10-08). A due day counts as read once the records
    * reach it PLUS the `toleranceDays` a posting may still land within (`dueDayIsRead`), so the body can say what the
-   * rule checked: the imports reach that far past it and hold no posting within the tolerance. 🔴 It used to be read on
-   * the day ITSELF, so the body could only say "which reach its day" (review of 2e6c74b) — while the heading said "not
-   * posted" of Jul 6–8 for the e2e fixture's Meal Kit (due Jul 5, its card imported through Jul 5).
+   * rule checked: they reach that far past it and hold no posting within the tolerance. 🔴 It used to be read on the
+   * day ITSELF, so the body could only say "which reach its day" (review of 2e6c74b) — while the heading said "not
+   * posted" of Jul 6–8 for the e2e fixture's Meal Kit (due Jul 5, its card imported through Jul 5). ⚖️ The records are
+   * the checked statements (his decision 65, 2026-10-12), and the body names them.
    */
-  test("the read body says what was read: the imports reach the grace past its day, and hold no posting in it", () => {
-    expect(alreadyDueWords({ owedCents: 210900, unreadCents: 0 }, 3).body).toBe(
-      "Inside this calendar month, and the imports, which reach 3 days past it, hold no posting within 3 days of it. " +
+  test("the read body says what was read: statements reach the grace past its day and hold no posting in it", () => {
+    expect(alreadyDueWords({ owedCents: 210900, unreadCents: 0 }, 3, 1).body).toBe(
+      "Inside this calendar month, and the statements reach 3 days past it with no posting within 3 days of it. " +
         "The forecast counts it, and so does this month's budget.",
     );
   });
 
   test("a bill with no grace is read on its day, and says so", () => {
-    expect(alreadyDueWords({ owedCents: 5000, unreadCents: 0 }, 0).body).toBe(
-      "Inside this calendar month, and the imports, which reach its day, hold no posting on it. " +
+    expect(alreadyDueWords({ owedCents: 5000, unreadCents: 0 }, 0, 1).body).toBe(
+      "Inside this calendar month, and the statements reach its day with no posting on it. " +
         "The forecast counts it, and so does this month's budget.",
     );
   });
 
   /*
-   * ⚖️ Unread now includes a day the imports HAVE reached, short of its grace (§6A 60) — so the body cannot say "on a
-   * day no import has reached": it says how far they must reach, and why the money may be there.
+   * 🔴 THE READ BODY SAID "it" OF EVERY BILL, AND SAID IT AWKWARDLY: "Inside this calendar month, and the statements,
+   * which reach 3 days past it, hold no posting within 3 days of it." A weekly bill owes this month's arrears on two,
+   * three or four due days (`occurrenceCount`, the card's own "and N more"), and the statements were said to reach
+   * past "it" and to hold nothing within days "of it" — one day of several. Each due day is read the same way
+   * (`dueDayIsRead`), so the body says it of each.
+   */
+  test("several due days, read: the statements reach past each and hold no posting near any of them", () => {
+    expect(alreadyDueWords({ owedCents: 14000, unreadCents: 0 }, 3, 2).body).toBe(
+      "Both due days are inside this calendar month, and the statements reach 3 days past each with no posting " +
+        "within 3 days of either. The forecast counts both, and so does this month's budget.",
+    );
+    expect(alreadyDueWords({ owedCents: 22001, unreadCents: 0 }, 3, 3).body).toBe(
+      "All 3 due days are inside this calendar month, and the statements reach 3 days past each with no posting " +
+        "within 3 days of any of them. The forecast counts all 3, and so does this month's budget.",
+    );
+    expect(alreadyDueWords({ owedCents: 14000, unreadCents: 0 }, 0, 2).body).toBe(
+      "Both due days are inside this calendar month, and the statements reach both with no posting on either. " +
+        "The forecast counts both, and so does this month's budget.",
+    );
+  });
+
+  test("several due days, unread: no statement reaches past any of them, so they may well have posted", () => {
+    expect(alreadyDueWords({ owedCents: 14000, unreadCents: 14000 }, 3, 2).body).toBe(
+      "Both due days are inside this calendar month, and no statement reaches 3 days past either yet — the days a " +
+        "payment has to post — so both may well have posted. The forecast counts both, and so does this month's budget.",
+    );
+    expect(alreadyDueWords({ owedCents: 22001, unreadCents: 22001 }, 3, 3).body).toBe(
+      "All 3 due days are inside this calendar month, and no statement reaches 3 days past any of them yet — the " +
+        "days a payment has to post — so all 3 may well have posted. The forecast counts all 3, and so does this " +
+        "month's budget.",
+    );
+  });
+
+  test("no body for several due days speaks of one", () => {
+    for (const n of [2, 3, 4]) {
+      for (const unreadCents of [0, 3000]) {
+        for (const grace of [0, 3]) {
+          const body = alreadyDueWords({ owedCents: 3000, unreadCents }, grace, n).body;
+          expect(body, `${n} · ${unreadCents} · ${grace}`).not.toMatch(/\bit\b/);
+        }
+      }
+    }
+  });
+
+  /*
+   * ⚖️ Unread now includes a day the statements HAVE reached, short of its grace (§6A 60) — so the body cannot say "on
+   * a day no statement has reached": it says how far they must reach, and why the money may be there.
    */
   test("unread is quiet and says it in the runway's words", () => {
-    const w = alreadyDueWords({ owedCents: 210900, unreadCents: 210900 }, 3);
-    expect(w.heading).toBe("Already due — no import has covered it yet");
+    const w = alreadyDueWords({ owedCents: 210900, unreadCents: 210900 }, 3, 1);
+    expect(w.heading).toBe("Already due — no statement has covered it yet");
     expect(w.warning).toBe(false);
     expect(`${w.heading} ${w.body}`).not.toMatch(/not posted|no posting/);
     expect(w.body).toBe(
-      "Inside this calendar month, and no import reaches 3 days past it yet — the days a payment has to post — so it " +
-        "may well have posted. The forecast counts it, and so does this month's budget.",
+      "Inside this calendar month, and no statement reaches 3 days past it yet — the days a payment has to post — " +
+        "so it may well have posted. The forecast counts it, and so does this month's budget.",
     );
   });
 
   test("a mix names both halves by amount", () => {
-    const w = alreadyDueWords({ owedCents: 3000, unreadCents: 1000 }, 1);
-    expect(w.heading).toBe("Already due: $20.00 not posted, and no import has covered the other $10.00 yet");
+    const w = alreadyDueWords({ owedCents: 3000, unreadCents: 1000 }, 1, 3);
+    expect(w.heading).toBe("Already due: $20.00 not posted, and no statement has covered the other $10.00 yet");
     expect(w.warning).toBe(true);
-    // the read half, like the read body, only as far as the imports reach
+    // the read half, like the read body, only as far as the statements reach
     expect(w.body).toBe(
-      "Inside this calendar month. Where the imports reach 1 day past a due day, they hold no posting within 1 day " +
-        "of it; for the rest, no import reaches that far yet. The forecast counts all of it, and so does this " +
+      "Inside this calendar month. Where the statements reach 1 day past a due day, they hold no posting within 1 " +
+        "day of it; for the rest, no statement reaches that far yet. The forecast counts all of it, and so does this " +
         "month's budget.",
     );
   });

@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { getDb } from "@/db/client";
+import { spendUnread } from "@/lib/budget-coverage";
 import { periodBounds, todayIso, type PeriodBounds } from "@/lib/dates";
 import { formatDayLong, formatDayShort } from "@/lib/format-date";
 import { paidByAnotherMonthNote, paidForAnotherMonthNote } from "@/lib/paid-by-another-month";
@@ -113,6 +114,9 @@ export default async function BudgetsPage({
       // so a row spent only from cash wallets is left out on the row's own rule
       spentFromAccounts: s.spentFromAccounts,
       spentFromWallets: s.spentFromWallets,
+      // ⚖️ §6A 64: …and a row that prints "—" for its spend is not called a lower bound
+      noDayRead: s.noDayRead,
+      txnCount: s.txnCount,
     })),
   });
 
@@ -128,13 +132,17 @@ export default async function BudgetsPage({
   const spendProvenance = new Map(
     statuses.map((s) => [
       s.budget.id,
-      provenanceFor(db, {
-        kind: "categorySpend",
-        categoryId: s.budget.categoryId,
-        from: s.bounds.start,
-        to: s.bounds.end,
-        label: s.categoryPath,
-      }),
+      // ⚡ a dash has no figure to prove (⚖️ §6A 64, `BudgetRow`), so its empty total is not asked for a proof — the
+      // category page's rule for its headline
+      spendUnread(s)
+        ? null
+        : provenanceFor(db, {
+            kind: "categorySpend",
+            categoryId: s.budget.categoryId,
+            from: s.bounds.start,
+            to: s.bounds.end,
+            label: s.categoryPath,
+          }),
     ]),
   );
 

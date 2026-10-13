@@ -145,7 +145,8 @@ export const CATEGORY_KIND_JARGON: Record<string, string> = {
  * would eventually disagree about the same graphic. `paceOver` does NOT use it:
  * that row draws no mark, and would be describing something it does not render.
  */
-const BAR_PARTS = "The filled part is what has gone so far, and the dark mark is how far through the period you are";
+const TODAY_MARK = "the dark mark is how far through the period you are";
+const BAR_PARTS = `The filled part is what has gone so far, and ${TODAY_MARK}`;
 
 /**
  * …and how to read pace off them, for the three states that offer a reading of
@@ -209,6 +210,11 @@ export const BUDGET_JARGON = {
   paceOver:
     "Spending has already passed the line, and no later import can undo that — this reading is measured rather than a forecast. The bar is full and no longer to scale, and the period mark is left off because there is nothing left for it to divide.",
   paceWithheld: `Days in this window have no imported spending yet, so the amount and the percentage can only rise — they are floors rather than measurements. No reading is offered over them, because calling an unimported month healthy is the one error this page must not make. ${BAR_ANATOMY}`,
+  /*
+   * ⚖️ §6A 64 (2026-10-12): not one elapsed day read, so the row prints a dash for what has gone and what is left —
+   * no amount, no percentage and no fill for a body to describe. It names the one mark the bar still draws.
+   */
+  paceUnread: `Not one day of this window so far has been imported, so there is no amount to show: a zero would say nothing was spent on days nobody has looked at. The plan stands; what has gone and what remains of it wait for the statements that cover them. No reading is offered, and ${TODAY_MARK}.`,
   // ⚖️ owner, 2026-09-15: a category spent only from cash wallets waits for no statement and gets no reading
   paceCashOnly: `Everything in this window was typed into a cash wallet, and a wallet has no statements, so no import will ever show what was not typed in. The amount is what was recorded; no reading of where it is heading is offered over it. ${BAR_PARTS}.`,
 } as const;
@@ -234,9 +240,10 @@ export const RUNWAY_JARGON = {
    * "A further $X came due earlier this month and never posted". A definition
    * that outlives the figure it defines is worse than none.
    *
-   * 🔴 …and "never arrived" outlived the sentence too: since 2026-10-07 it says "no import has covered it yet" of
-   * arrears on days no import has reached (`arrearsTail`), and on a copy of his ledger 2026-10-08 the whole $2,291.21
-   * was such a day. ⚖️ Over unread days never a negative claim, so the definition makes none.
+   * 🔴 …and "never arrived" outlived the sentence too: since 2026-10-07 it says "no import has covered it yet" —
+   * since his decision 65 (2026-10-12) "no statement has covered it yet" — of arrears on days no checked statement
+   * has reached (`arrearsTail`), and on a copy of his ledger 2026-10-08 the whole $2,291.21 was such a day. ⚖️ Over
+   * unread days never a negative claim, so the definition makes none.
    */
   committed:
     "Money already agreed to, as a monthly rate: what a recurring schedule says is coming over the next twelve months, divided by twelve. Bills that already fell due are not in it: the ones nothing has covered yet are named separately, because a debt already owed is not part of a rate.",
@@ -274,8 +281,13 @@ export const RECURRING_JARGON = {
    */
   missed:
     "Nothing turned up, and the statements covering that day and the few days after it a late payment could still post on HAVE been imported (or none ever will be, because its account is archived or a cash wallet), so the silence is an answer rather than a gap in the records.",
+  /*
+   * ⚖️ His decision 65 (2026-10-12): an unread day waits for each account's last CHECKED statement balance, and its "?"
+   * says "no statement has covered it yet" (`NO_STATEMENT_YET`). 🔴 This said the day "may not be imported yet" — false
+   * of a day a rows-only import has passed while its statements stop short (review of cf0bbdf).
+   */
   notYetKnown:
-    "Nothing turned up, but the ledger cannot say whether it should have — the day, or the few days after it a payment may still post on, may not be imported yet, the money may be cash you were handed and have not deposited, or this bill may not have charged enough times yet for the app to grade it. None of those is evidence that a payment failed.",
+    "Nothing turned up, but the ledger cannot say whether it should have — the day, or the few days after it a payment may still post on, may not be covered by a statement yet, the money may be cash you were handed and have not deposited, or this bill may not have charged enough times yet for the app to grade it. None of those is evidence that a payment failed.",
   upcoming: "Expected on or after today, so nothing has had the chance to happen yet.",
   scheduled:
     "You told the app this amount or this date, which makes it the firmest kind of claim here — firmer than a bill with years of history behind it.",

@@ -328,7 +328,7 @@ describe("seriesDetail", () => {
       .run();
 
     const d = seriesDetail(bundle.db, id, TODAY);
-    // the Card's newest row is Jun 15, so no import has reached Jul 1 — all of it unread
+    // the Card's newest row is Jun 15, so no statement has reached Jul 1 — all of it unread
     expect(d.overdue).toEqual({
       date: "2026-07-01",
       amountCents: -1549,
@@ -423,8 +423,8 @@ describe("seriesDetail", () => {
         seriesEndLines(seriesEndInput(seriesDetail(bundle.db, id, TODAY)), formatCents).find((l) =>
           l.label.startsWith("Already due"),
         );
-      // the Card's newest row is Jun 15: no import has reached Jul 1
-      expect(arrearsLine()).toEqual({ label: "Already due this month, no import has covered it yet", value: "$15.49" });
+      // the Card's newest row is Jun 15: no statement has reached Jul 1
+      expect(arrearsLine()).toEqual({ label: "Already due this month, no statement has covered it yet", value: "$15.49" });
       cardReadThrough("2026-07-05");
       expect(arrearsLine()).toEqual({ label: "Already due this month, not posted", value: "$15.49" });
     });

@@ -30,9 +30,9 @@ function render(
  * uploads is normal, never a warning (his words 2026-08-05).
  */
 describe("AlreadyDueCard — the bill's own page follows the runway's read/unread split", () => {
-  test("a day no import has reached is a quiet heading in the runway's words", () => {
+  test("a day no checked statement has reached is a quiet heading in the runway's words", () => {
     const r = render({ date: "2026-10-01", amountCents: -210900, occurrenceCount: 1, unreadCents: 210900 });
-    expect(r.heading).toBe("Already due — no import has covered it yet");
+    expect(r.heading).toBe("Already due — no statement has covered it yet");
     expect(r.headingClass).not.toContain("text-warning");
     expect(r.text).not.toMatch(/not posted/);
     expect(r.text).toContain("Oct 1, 2026");
@@ -50,12 +50,28 @@ describe("AlreadyDueCard — the bill's own page follows the runway's read/unrea
    */
   test("the body names the grace the read waited for", () => {
     const r = render({ date: "2026-10-01", amountCents: -18221, occurrenceCount: 1, unreadCents: 0 }, 5);
-    expect(r.text).toContain("which reach 5 days past it, hold no posting within 5 days of it");
+    expect(r.text).toContain("the statements reach 5 days past it with no posting within 5 days of it");
+  });
+
+  /*
+   * 🔴 The body said "it" of every bill — the statements "reach 3 days past it" and hold nothing "within 3 days of it"
+   * — over a line reading "Jul 2, 2026 and 1 more": a weekly bill owing two due days this month. ⛔ The card says the
+   * body of the due days it lists (`occurrenceCount`), not of the first.
+   */
+  test("a bill owing two due days says the body of both, as its line counts them", () => {
+    const read = render({ date: "2026-07-02", amountCents: -14000, occurrenceCount: 2, unreadCents: 0 });
+    expect(read.text).toContain("Jul 2, 2026 and 1 more");
+    expect(read.text).toContain(
+      "Both due days are inside this calendar month, and the statements reach 3 days past each with no posting " +
+        "within 3 days of either. The forecast counts both, and so does this month's budget.",
+    );
+    const unread = render({ date: "2026-07-02", amountCents: -14000, occurrenceCount: 2, unreadCents: 14000 });
+    expect(unread.text).toContain("no statement reaches 3 days past either yet");
   });
 
   test("a mix says both, and counts the ones behind the first", () => {
     const r = render({ date: "2026-07-01", amountCents: -3000, occurrenceCount: 3, unreadCents: 1000 });
-    expect(r.heading).toBe("Already due: $20.00 not posted, and no import has covered the other $10.00 yet");
+    expect(r.heading).toBe("Already due: $20.00 not posted, and no statement has covered the other $10.00 yet");
     expect(r.headingClass).toContain("text-warning");
     expect(r.text).toContain("Jul 1, 2026 and 2 more");
   });

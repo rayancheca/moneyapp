@@ -90,6 +90,8 @@ describe("jargon copy", () => {
         "paceAtRisk",
         "paceOver",
         "paceWithheld",
+        // ⚖️ §6A 64: withheld, and not one elapsed day read — the row prints no Spent and no Left
+        "paceUnread",
         "paceCashOnly",
       ].sort(),
     );

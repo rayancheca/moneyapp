@@ -101,6 +101,35 @@ export function spentOnlyFromCashWallets(
 }
 
 /**
+ * ⚖️ OWNER DECISION 2026-10-12 (§6A 64): Spent and Left print "—" — Budget stays — where NOT ONE elapsed day of the
+ * window has been read by the row's own day (`noDayRead`, the category headline's `emptyFigure` asked of the window
+ * `uncoveredDays` is counted on) and not one row was found in it. The dashboard's pace tile and the category headline
+ * already refuse "$0.00" there: "you have spent nothing" is a claim about a month nobody has looked at.
+ *
+ * 🔴 Measured on his ledger copy 2026-10-12: all 12 rows on /budgets and Housing's card on its category page read
+ * "$0.00" spent and the whole plan left, over an October the accounts they are spent from were imported through Aug 12
+ * or Sep 2 — under a headline on that page reading "—" for the same October.
+ *
+ * ⛔ A row found keeps the figures: a row is read through the EARLIEST of its accounts' days, so a fresher account's
+ * charge can stand in a window that day has not reached, and the headline above the card prints its total. ⚖️ So does
+ * a row spent only from cash wallets (2026-09-15): no import will ever read a wallet's day, and a dash would hide what
+ * was typed for good.
+ *
+ * One test for the row's headline (`budgetVerdict`), the page note (`budgetSectionNotes`) and the page's proofs, so
+ * they cannot disagree about which rows print a dash.
+ */
+export function spendUnread(
+  input: Pick<BudgetCoverageInput, "spentFromAccounts" | "spentFromWallets"> & {
+    /** not one elapsed day of the window has been read by the row's own day (`BudgetPaceStatus.noDayRead`) */
+    noDayRead: boolean;
+    /** the rows found in the window (`BudgetStatus.txnCount`) */
+    txnCount: number;
+  },
+): boolean {
+  return input.noDayRead && input.txnCount === 0 && !spentOnlyFromCashWallets(input);
+}
+
+/**
  * "spending imported through Sep 2".
  *
  * ⚠️ When no account has an import date, three different worlds, and only one of

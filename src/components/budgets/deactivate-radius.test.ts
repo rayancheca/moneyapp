@@ -15,7 +15,7 @@ describe("budgetDeactivateLines", () => {
     budgetPhrase: "$2,291.21 / month",
     spentCents: 0,
     overdueCents: 229_121,
-    // his ledger 2026-10-08: rent and its utilities, both Oct 1, on days no import has reached
+    // his ledger 2026-10-08: rent and its utilities, both Oct 1, on days no checked statement has reached
     overdueUnreadCents: 229_121,
     expectedTailCents: 0,
   };
@@ -25,12 +25,26 @@ describe("budgetDeactivateLines", () => {
    * confirmation named the plan and "$0.00 spent" and stopped, over a month in
    * which the whole $2,291.21 had come due on Sep 1 and never posted.
    */
+  /*
+   * ⚖️ OWNER DECISION 2026-10-12 (§6A 64): not one elapsed day of the window read, so the row behind the dialog prints
+   * "Spent —" — and the dialog does not answer the same question with "$0.00". 🔴 Measured on his ledger copy
+   * 2026-10-12: all 12 budgets' confirmations read "Spent so far this period $0.00" over an October no account they are
+   * spent from had been imported for a day of.
+   */
+  test("a period not one day of which has been read: a dash, as on the row", () => {
+    const lines = budgetDeactivateLines({ ...HOUSING, spentCents: null }, formatCents);
+    expect(lines[1]).toEqual({ label: "Spent so far this period", value: "—" });
+    expect(lines.map((l) => l.value)).not.toContain("$0.00");
+    // a measured zero keeps its figure
+    expect(budgetDeactivateLines(HOUSING, formatCents)[1]).toEqual({ label: "Spent so far this period", value: "$0.00" });
+  });
+
   test("names the arrears the row behind it reports", () => {
     const lines = budgetDeactivateLines(HOUSING, formatCents);
     expect(lines.map((l) => l.label)).toEqual([
       "Budget stopped",
       "Spent so far this period",
-      "Due this period by today, no import has covered it yet",
+      "Due this period by today, no statement has covered it yet",
     ]);
     expect(lines[2]!.value).toBe("$2,291.21");
   });
@@ -54,7 +68,7 @@ describe("budgetDeactivateLines", () => {
       },
       formatCents,
     );
-    expect(lines[2]).toEqual({ label: "Due this period by today, no import has covered it yet", value: "$1,056.53" });
+    expect(lines[2]).toEqual({ label: "Due this period by today, no statement has covered it yet", value: "$1,056.53" });
     expect(lines.every((l) => !/already|came due|by now/i.test(l.label))).toBe(true);
     // …and it still names the window its figure starts at, like its siblings
     expect(lines.slice(1).every((l) => /this period/.test(l.label))).toBe(true);
@@ -69,7 +83,7 @@ describe("budgetDeactivateLines", () => {
     expect(lines.map((l) => [l.label, l.value])).toEqual([
       ["Budget stopped", "$15.00 / month"],
       ["Spent so far this period", "$0.00"],
-      ["Due this period by today, no import has covered it yet", "$4.99"],
+      ["Due this period by today, no statement has covered it yet", "$4.99"],
       ["Recurring still expected this period", "$6.00"],
     ]);
   });
@@ -94,21 +108,21 @@ describe("budgetDeactivateLines", () => {
       headline: "Housing stops being budgeted.",
       lines: budgetDeactivateLines(HOUSING, formatCents),
     });
-    expect(spoken).toContain("Due this period by today, no import has covered it yet: $2,291.21.");
+    expect(spoken).toContain("Due this period by today, no statement has covered it yet: $2,291.21.");
   });
 
   /*
    * 🔴 "not imported" OF A DAY THAT WAS IMPORTED. The label said it whatever the ledger had read, so where an import
    * had reached the due day the dialog contradicted the row behind it — the same falsehood "End this series" said
    * on the bill's own page (review of a132c57, 2026-10-08). ⛔ The row's split (`arrearsClause`): "not posted" only of
-   * read days, "no import has covered it yet" of the rest, both by amount for a mix.
+   * read days, "no statement has covered it yet" of the rest, both by amount for a mix.
    */
   test("says \"not posted\" only of what the ledger has read", () => {
     const label = (overdueUnreadCents: number) =>
       budgetDeactivateLines({ ...HOUSING, overdueUnreadCents }, formatCents)[2]!.label;
     expect(label(0)).toBe("Due this period by today, not posted");
     expect(label(18_221)).toBe(
-      "Due this period by today, $2,109.00 not posted, and no import has covered the other $182.21 yet",
+      "Due this period by today, $2,109.00 not posted, and no statement has covered the other $182.21 yet",
     );
     for (const unread of [0, 18_221, 229_121]) expect(label(unread)).not.toContain("not imported");
   });

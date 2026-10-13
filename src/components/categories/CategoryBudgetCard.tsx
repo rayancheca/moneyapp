@@ -62,14 +62,29 @@ export function CategoryBudgetCard({ budget }: CategoryBudgetCardProps) {
           {budget.coverageSentence !== null && <p className="text-xs text-ink-faint">{budget.coverageSentence}</p>}
         </div>
         <div className="flex items-center gap-4 text-sm">
-          <span>
-            <Money cents={budget.spentCents} /> of <Money cents={budget.availableCents} />
-          </span>
-          <span className={leftTone(budget)}>
-            {budget.remainingCents >= 0
-              ? `${formatCents(budget.remainingCents)} left`
-              : `${formatCents(-budget.remainingCents)} over`}
-          </span>
+          {/* ⚖️ §6A 64 (2026-10-12): not one elapsed day of the window read, so no spent and no left — the dash the
+              headline above prints over the same October, and /budgets' row; the plan stands. 🔴 It read "$0.00 of
+              $2,291.21 · $2,291.21 left" under that headline's "—" on his ledger copy 2026-10-12. */}
+          {verdict.unread ? (
+            <>
+              <span>
+                <span className="text-ink-faint">—</span> of <Money cents={budget.availableCents} />
+              </span>
+              {/* in no colour: a withheld verdict's "left" never is (`leftTone`), and this one is not even a figure */}
+              <span className="text-ink-faint">— left</span>
+            </>
+          ) : (
+            <>
+              <span>
+                <Money cents={budget.spentCents} /> of <Money cents={budget.availableCents} />
+              </span>
+              <span className={leftTone(budget)}>
+                {budget.remainingCents >= 0
+                  ? `${formatCents(budget.remainingCents)} left`
+                  : `${formatCents(-budget.remainingCents)} over`}
+              </span>
+            </>
+          )}
           <Link href={budget.href} className="text-accent hover:underline">Budgets →</Link>
         </div>
       </div>

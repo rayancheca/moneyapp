@@ -586,7 +586,15 @@ const accountCoverageCached = cache(function accountCoverageCached(
         .sort()
         .at(-1) ?? null;
 
-    if (!hasTxn) {
+    /*
+     * ⛔ …but only where nothing BUT his word stands under it. A statement with no rows — a card nothing was charged
+     * on, its opening and closing balances equal — closes its own chain, and the account is checked through its close
+     * like any other. 🔴 It was graded `manual` (`verifiedThrough` null), so a bill naming it was read nowhere: its due
+     * days waited for good on a statement that had already come (`dueDayReadings`, ⚖️ his decision 65, 2026-10-12).
+     * Latent: on his ledger copy 2026-10-12 the one account with recorded balances and no row is Robinhood Brokerage,
+     * an investment account graded above.
+     */
+    if (!hasTxn && closed.size === 0) {
       return {
         ...base,
         grade: "manual" as const,

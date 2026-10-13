@@ -186,7 +186,7 @@ describe("the plan", () => {
   /*
    * ⚖️ What is billed inside the rent is READ where the rent is (settlement follows the carrier, implied by §6A 59,
    * 2026-10-08): once Wells Fargo is imported past Oct 1 and its grace with no rent posted, the rent's Oct 1 reads "not
-   * posted" and — linked — so does its utilities', where alone it read "no import has covered it yet". That is the
+   * posted" and — linked — so does its utilities', where alone it read "no statement has covered it yet". That is the
    * reading the link exists to fix, not money. 🔴 Hashed with the money, it refused the write in exactly that state (a
    * copy of his ledger read through Oct 7, 2026-10-09: "the money moved").
    */

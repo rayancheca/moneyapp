@@ -3,7 +3,19 @@ import { budgetVerdict, type BudgetVerdictInput } from "./budget-verdict";
 import { BUDGET_JARGON } from "./jargon";
 
 const verdict = (over: Partial<BudgetVerdictInput> = {}) =>
-  budgetVerdict({ pace: "under", pct: 0.2, uncoveredDays: 0, spentFromAccounts: 1, spentFromWallets: 0, ...over });
+  budgetVerdict({
+    pace: "under",
+    pct: 0.2,
+    uncoveredDays: 0,
+    spentFromAccounts: 1,
+    spentFromWallets: 0,
+    noDayRead: false,
+    txnCount: 1,
+    ...over,
+  });
+
+/** ⚖️ §6A 64: not one elapsed day of the window read, and not one row found in it — his October, 2026-10-12 */
+const UNREAD = { pace: "under", pct: 0, uncoveredDays: 12, noDayRead: true, txnCount: 0 } as const;
 
 /** spent from a cash wallet in the window, and from no other account */
 const CASH_ONLY = { spentFromAccounts: 0, spentFromWallets: 1 } as const;
@@ -156,6 +168,77 @@ describe("budgetVerdict", () => {
     expect(verdict({ pace: "at-risk", uncoveredDays: 3 }).showsProjection).toBe(true);
     // a wallet beside an imported account is not cash only
     expect(verdict({ pace: "at-risk", spentFromAccounts: 2, spentFromWallets: 1 }).showsProjection).toBe(true);
+  });
+
+  /*
+   * ⚖️ OWNER DECISION 2026-10-12 (§6A 64): where NO elapsed day of a budget's window is imported, Spent and Left print
+   * "—" and the plan stands — the dashboard's pace tile and the category headline's rule (`lib/empty-period::
+   * emptyFigure`). 🔴 Measured on his ledger copy 2026-10-12: all 12 rows read "Spent $0.00 · Left $X" over an October
+   * not one day of which any account they are spent from had been imported for (Aug 12 / Sep 2).
+   */
+  describe("⚖️ §6A 64 — a window not one day of which has been read prints no Spent and no Left", () => {
+    test("the figures are withheld under the withheld headline, with a definition of what the row draws", () => {
+      const v = verdict(UNREAD);
+      expect(v.unread).toBe(true);
+      expect(v.headline).toBe("Awaiting statements");
+      expect(v.withheld).toBe(true);
+      expect(v.barIsFull).toBe(false);
+      expect(v.explanation).toBe(BUDGET_JARGON.paceUnread);
+      // the body names the mark the row still draws, and no amount or fill the row does not print
+      expect(v.explanation).toMatch(/the dark mark is how far through the period you are/);
+      expect(v.explanation).not.toMatch(/filled part|floors|percentage/);
+    });
+
+    /*
+     * 🔴 Review of 6f217a7: the dashed row still printed "Projected ≈" — `projectSpend` over the $0.00 the row will not
+     * print, so only the recurring tail and the arrears — in the pace colour, beside a definition saying no reading is
+     * offered. On his ledger copy 2026-10-12, 6 of the 12 dashed rows: Housing "Projected ≈ $2,291.21" and Transport
+     * "$368.86" in amber (the rent unread, Transport's tail past its $355.64), Car, Health, Subscriptions and Utilities
+     * plain. ⚖️ §6A 64 named the dashboard's pace tile, whose dash withholds "$0.00 projected" with "$0.00 spent".
+     */
+    test("…and says nothing of where spending is heading: no projection, in any pace", () => {
+      for (const pace of ["under", "at-risk"] as const) {
+        expect(verdict({ ...UNREAD, pace }).showsProjection).toBe(false);
+      }
+      // the control: a partly read window keeps the projection it had (❓ his call, `showsProjection`)
+      expect(verdict({ ...UNREAD, pace: "at-risk", noDayRead: false }).showsProjection).toBe(true);
+    });
+
+    test("a partly read window keeps today's lower-bound shape", () => {
+      const v = verdict({ ...UNREAD, noDayRead: false });
+      expect(v.unread).toBe(false);
+      expect(v.headline).toBe("Awaiting statements");
+      expect(v.explanation).toBe(BUDGET_JARGON.paceWithheld);
+    });
+
+    /*
+     * ⛔ The category headline's rule, whole: it prints a dash only over a window holding NO rows. A row is read
+     * through the earliest of its accounts' days, so a fresher account's charge can stand in a window that day has not
+     * reached — a found row is a floor, never a dash (`CategoryHeadline` prints it above the same card).
+     */
+    test("a row found in it keeps the figures, as the headline above the card keeps its total", () => {
+      const v = verdict({ ...UNREAD, pct: 0.1, txnCount: 1 });
+      expect(v.unread).toBe(false);
+      expect(v.explanation).toBe(BUDGET_JARGON.paceWithheld);
+    });
+
+    test("⚖️ a cash-only row keeps its typed figures — no import will ever read a wallet's day", () => {
+      const v = verdict({ ...UNREAD, ...CASH_ONLY });
+      expect(v.unread).toBe(false);
+      expect(v.headline).toBe("Cash only");
+    });
+
+    test("every other state prints its figures", () => {
+      for (const v of [
+        verdict({ pace: "under" }),
+        verdict({ pace: "at-risk" }),
+        verdict({ uncoveredDays: 3 }),
+        verdict({ pace: "over", pct: 1.08, uncoveredDays: 12 }),
+        verdict(CASH_ONLY),
+      ]) {
+        expect(v.unread).toBe(false);
+      }
+    });
   });
 
   test("barIsFull tracks pace, not the sign of what is left", () => {

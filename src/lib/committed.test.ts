@@ -324,15 +324,15 @@ describe("arrears — never posted only of days the ledger has read", () => {
     );
   });
 
-  test("days no import covers say so in /budgets' words, never 'never posted'", () => {
+  test("days no checked statement covers say so in /budgets' words, never 'never posted'", () => {
     const s = arrearsSentence({ overdueCents: 229620, overdueUnreadCents: 229620 })!;
-    expect(s).toBe("A further $2,296.20 came due earlier this month and no import has covered it yet.");
+    expect(s).toBe("A further $2,296.20 came due earlier this month and no statement has covered it yet.");
     expect(s).not.toContain("never posted");
   });
 
   test("a mix names each part by what the ledger can say of it", () => {
     expect(arrearsSentence({ overdueCents: 229620, overdueUnreadCents: 210900 })).toBe(
-      "A further $2,296.20 came due earlier this month: $187.20 never posted, and no import has covered the other $2,109.00 yet.",
+      "A further $2,296.20 came due earlier this month: $187.20 never posted, and no statement has covered the other $2,109.00 yet.",
     );
   });
 });

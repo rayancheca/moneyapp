@@ -215,3 +215,47 @@ describe("SeriesDetail — the merge preview is read only where the merge contro
     expect(html.includes("Merge another series in")).toBe(live);
   });
 });
+
+/*
+ * 🔴 "Nothing expected" said "Its charges below stay in the ledger" of every kind — of his ended pay's deposits too
+ * (Knack Tutoring, Fordham Payroll; his ledger copy 2026-10-12). ⛔ The page hands the reason the series' own kind
+ * (`noScheduleReason`), not a bill's by default.
+ */
+describe("SeriesDetail — the Nothing expected card names what the series posted", () => {
+  const TODAY = "2026-10-08";
+  let dir: string;
+  let bundle: DbBundle;
+  let his: OneChargeLedger;
+
+  beforeEach(() => {
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), "moneyapp-series-kind-"));
+    bundle = createDatabase(path.join(dir, "t.db"));
+    seedDatabase(bundle.db);
+    his = seedHisCarSeries(bundle.db);
+  });
+
+  afterEach(() => {
+    bundle.sqlite.close();
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  test.each([
+    ["income", "Its deposits below stay in the ledger."],
+    ["transfer", "Its transfers below stay in the ledger."],
+    ["bill", "Its charges below stay in the ledger."],
+  ] as const)("an ended %s series: %s", (kind, kept) => {
+    const insurance = eq(recurringSeries.id, his.insuranceId);
+    bundle.db.update(recurringSeries).set({ status: "ended", kind }).where(insurance).run();
+    const html = decode(
+      renderToStaticMarkup(
+        createElement(SeriesDetail, {
+          data: seriesDetail(bundle.db, his.insuranceId, TODAY),
+          today: TODAY,
+          viewState: resolveViewState(RECURRING_SERIES_VIEW_SPEC, {}, undefined),
+          basePath: `/recurring/${his.insuranceId}`,
+        }),
+      ),
+    );
+    expect(html).toContain(`This series has ended, so nothing more is expected from it. ${kept}`);
+  });
+});

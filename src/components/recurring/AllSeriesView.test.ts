@@ -167,6 +167,26 @@ describe("AllSeriesView — the suggestions note claims the forecast only for th
   });
 });
 
+/** 🔴 "quiet past the point a bill stops" over whatever lapsed — a live transfer lapses too (`lapsedSectionNote`). */
+describe("AllSeriesView — the Lapsed section's note is worded by what it holds", () => {
+  const lapsedNoteOf = (fixture: SeriesView[]): string => {
+    const html = decode(
+      renderToStaticMarkup(createElement(AllSeriesView, { series: fixture, overdueBySeries: new Map(), today: "2026-10-12" })),
+    );
+    const at = html.indexOf(">Lapsed");
+    return at < 0 ? "" : html.slice(at, html.indexOf("</h2>", at)).replace(/<[^>]+>/g, "");
+  };
+  const lapsed = { status: "confirmed", evidence: "lapsed", nextExpectedOn: null, annualizedCents: null } as const;
+
+  test("a lapsed transfer is said to have stopped as a transfer, a subscription as a bill", () => {
+    const savings = series({ id: "t", name: "Savings sweep", kind: "transfer", nextExpectedAmountCents: -5_000, ...lapsed });
+    const prime = series({ id: "p", name: "Amazon Prime", ...lapsed });
+    expect(lapsedNoteOf([savings])).toContain("no longer forecast — quiet past the point a transfer stops");
+    expect(lapsedNoteOf([savings])).not.toContain("a bill");
+    expect(lapsedNoteOf([prime])).toContain("no longer forecast — quiet past the point a bill stops");
+  });
+});
+
 /*
  * ⚖️ Owner decision 2026-10-08 (§6A 56): the one-time Nov 11 car-insurance balance reads "Once" in the cadence slot —
  * its day is the Next cell beside it — and Car insurance, a monthly bill in its last months, reads "Monthly". 🔴 It read
@@ -350,7 +370,7 @@ describe("AllSeriesView — the Next column's late note follows the runway's rea
 
   test("unread: quiet, and in the runway's words", () => {
     const note = noteOf(210900);
-    expect(note).toContain("Oct 1 — no import has covered it yet");
+    expect(note).toContain("Oct 1 — no statement has covered it yet");
     expect(note).not.toContain("text-warning");
   });
 

@@ -1500,7 +1500,7 @@ describe("budgetPaceStatuses — /budgets' arrears carry the read/unread split",
     checkedThrough(bundle.db, cardId, day);
   }
 
-  test("a due day no import has reached is unread, all of it", () => {
+  test("a due day no checked statement has reached is unread, all of it", () => {
     housingBill({ name: "Rent", dueOn: "2026-06-08", cents: 228_570 });
     cardReadThrough("2026-06-07"); // the Card is read through Jun 7, the day before rent
     const s = housing();
@@ -1535,10 +1535,16 @@ describe("budgetPaceStatuses — /budgets' arrears carry the read/unread split",
    * this one closes ON today, so "read to the end of the window" means read through today. Asked with the month's
    * window, a Card read through yesterday would call a bill due today read — "not posted" of a day nobody has seen.
    * (Weekly, so the series' first late day is read and only the window's end can decide today's.)
+   *
+   * 🔴 …and with no grace, or the window's end decides nothing. Since a due day is read only with its grace (his
+   * decision 60), a 3-day grace read the Cleaner only through Jun 16 — short of yesterday whichever end the walk was
+   * handed — and `arrearsReadCents` closing on the month's yesterday passed every test here (2026-10-13). A bill paid
+   * on its day exactly is read through the Card's last day, so only the window's own end keeps today unread.
    */
   test("a bill due today, with the Card read through yesterday, is unread — the leg closes on today", () => {
-    housingBill({ name: "Cleaner", dueOn: "2026-06-06", cents: 5_000, cadence: "weekly" });
-    cardReadThrough("2026-06-19"); // Jun 6 and Jun 13 read; Jun 20, today, is not
+    const cleaner = housingBill({ name: "Cleaner", dueOn: "2026-06-06", cents: 5_000, cadence: "weekly" });
+    bundle.db.update(recurringSeries).set({ toleranceDays: 0 }).where(eq(recurringSeries.id, cleaner)).run();
+    cardReadThrough("2026-06-19"); // every due day through Jun 19 read; Jun 20, today, is not
     expect(housing()).toMatchObject({ overdueCents: 15_000, overdueUnreadCents: 5_000 });
   });
 
@@ -2311,6 +2317,56 @@ describe("data coverage (uncoveredDays / importedThroughOn)", () => {
     expect(budgetCoverageSentence(s)).toBe("spent only from a cash wallet since Feb 1 — no statement will ever cover it");
     const notes = budgetSectionNotes({ rows: [{ ...s, overdueBills: 0 }] });
     expect(notes.find((n) => n.id === "budgets-coverage")).toBeUndefined();
+    // ⚖️ §6A 64: no import will ever read a wallet's day, so its typed figures are never dashed for want of one
+    expect(s.noDayRead).toBe(true);
+    expect(v.unread).toBe(false);
+  });
+
+  /*
+   * ⚖️ OWNER DECISION 2026-10-12 (§6A 64): where NO elapsed day of a budget's window is imported, Spent and Left print
+   * "—" (the plan stays) — the dashboard's pace tile and the category headline's rule (`lib/empty-period::emptyFigure`),
+   * asked of the row's OWN window and day: the ones `uncoveredDays` is counted on. 🔴 Measured on his ledger copy
+   * 2026-10-12: all 12 rows read "Spent $0.00 · Left $X" over an October the accounts they are spent from were imported
+   * through Aug 12 or Sep 2 — "you have spent nothing" of a month nobody had looked at.
+   */
+  describe("⚖️ §6A 64 — whether one elapsed day of the window has been read", () => {
+    test("an account read only before the window opens leaves no day of it read and no row in it: a dash", () => {
+      spend("2026-07-20", -5_000, "Food");
+      const s = foodBudget();
+      expect(s.uncoveredDays).toBe(11);
+      expect(s.noDayRead).toBe(true);
+      expect(s.txnCount).toBe(0);
+      expect(budgetVerdict(s).unread).toBe(true);
+    });
+
+    test("an empty ledger has read nothing either", () => {
+      createBudget(bundle.db, { categoryId: catId("Travel"), period: "monthly", amountCents: 50_000, startsOn: "2026-08-01" });
+      const s = budgetPaceStatuses(bundle.db, TODAY).find((x) => x.categoryName === "Travel")!;
+      expect(s.noDayRead).toBe(true);
+      expect(budgetVerdict(s).unread).toBe(true);
+    });
+
+    // ⛔ two ends: the window's first day read is a floor, not a dash
+    test("one day read keeps the lower-bound shape", () => {
+      spend("2026-07-20", -5_000, "Food");
+      spend("2026-08-01", -1_000, "Shopping"); // the card Food is spent from, read through Aug 1
+      const s = foodBudget();
+      expect(s.importedThroughOn).toBe("2026-08-01");
+      expect(s.uncoveredDays).toBe(10);
+      expect(s.noDayRead).toBe(false);
+      expect(budgetVerdict(s).unread).toBe(false);
+    });
+
+    test("a fresher account's charge inside the window is found — a floor, never a dash", () => {
+      const fresh = account("Fresh");
+      spend("2026-07-20", -5_000, "Food"); // the card: Food's day, Jul 20
+      spend("2026-08-05", -1_200, "Food", fresh);
+      const s = foodBudget();
+      expect(s.importedThroughOn).toBe("2026-07-20");
+      expect(s.noDayRead).toBe(true);
+      expect([s.txnCount, s.spentCents]).toEqual([1, 1_200]);
+      expect(budgetVerdict(s).unread).toBe(false);
+    });
   });
 });
 

@@ -206,7 +206,7 @@ export interface DueDayReading {
 /**
  * The last DUE day the ledger has read for a series: the day its accounts are shown through, less its grace — null when
  * nothing is read. A due day on or before it is read (`dueDayIsRead`); one after it may still be paid by a posting no
- * import has reached.
+ * checked statement has reached.
  */
 export function lastDueDayRead(reading: DueDayReading): string | null {
   return reading.observedThrough === null ? null : addDays(reading.observedThrough, -reading.graceDays);
@@ -217,7 +217,8 @@ export function lastDueDayRead(reading: DueDayReading): string | null {
  * last two payments' accounts, his decision 62 — its carrier's too, for one billed inside another's payment) is read
  * through the due day PLUS its grace, the days a payment may still post on — read as its "running late" chip reads
  * them, to each account's checked balance (`dueDayReadings`). Until then a payment may be sitting where no statement
- * has reached, so nothing may say "not posted" of it — "no import has covered it yet", quiet.
+ * has reached, so nothing may say "not posted" of it — ⚖️ "no statement has covered it yet" (his decision 65,
+ * 2026-10-12: the words name what it waits for), quiet.
  *
  * ⛔ THE ONE PREDICATE for every claim that a bill did not post: the calendar's red ✕ (`settledVerdict`), and the read
  * half of the arrears (`arrearsReadCents`) that the bill's page, the runway, /budgets, the End dialog, the forecast's
@@ -238,9 +239,10 @@ export function dueDayIsRead(dueOn: string, reading: DueDayReading): boolean {
  * null when one of them has no checked record. A payday ON that day was looked for: a deposit dated on it is in the
  * records. No grace — the pay's sentences give none.
  *
- * ⛔ THE ONE PREDICATE for whether a passed payday was looked for: the calendar's "not banked yet" against "no import
- * has covered it yet" (`settledVerdict`), and the checked half of the passed paydays (`unbankedIncomeForSeries`) that
- * the forecast's note, /budgets and the dashboard say "the ledger has not looked for their deposits" through.
+ * ⛔ THE ONE PREDICATE for whether a passed payday was looked for: the calendar's "not banked yet" against "no
+ * statement has covered it yet" (`settledVerdict`), and the checked half of the passed paydays
+ * (`unbankedIncomeForSeries`) that the forecast's note, /budgets and the dashboard say "the ledger has not looked for
+ * their deposits" through.
  *
  * ⛔ Never the bills' reading (`dueDayReadings`): it reads every account a series EVER posted to. Measured on his ledger
  * copy 2026-10-12, that is Chase Checking's Aug 12 for the pay, which lands in Wells Fargo, checked through Sep 24 —

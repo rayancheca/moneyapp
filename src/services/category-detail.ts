@@ -424,6 +424,8 @@ export interface CategoryBudgetRef {
    * 🔴 The card printed `alert` alone, which never asks how much of the window was imported: on his ledger copy
    * 2026-10-12 `/categories/<Housing>` read "— October 2026 has not been imported yet" over "$0.00 of $2,291.21 ·
    * $2,291.21 left" in green for the same Oct 1 – 31, while /budgets withheld that row ("Awaiting statements").
+   * ⚖️ …and with not one elapsed day of it read, `unread`: the card prints "—" for spent and left, as the row does and
+   * as the headline above it does (§6A 64, 2026-10-12) — `spentCents` and `remainingCents` stand unprinted.
    */
   verdict: BudgetVerdict;
   /** the row's own coverage sentence (`budgetCoverageSentence`) while its verdict is withheld; null otherwise */

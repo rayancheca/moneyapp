@@ -499,7 +499,7 @@ describe("recurringCalendar", () => {
       insertTxn({ postedOn: day, amountCents: 104700, rawDescription: "CASH JOB WEEKLY PAY" });
     }
     insertTxn({ postedOn: "2026-07-19", amountCents: -2200, rawDescription: "GROCERY" });
-    // …and CHECKED (`paydayIsRead`): a payday no checked record reaches reads "no import has covered it yet", as the
+    // …and CHECKED (`paydayIsRead`): a payday no checked record reaches reads "no statement has covered it yet", as the
     // pay's sentences say "the ledger has not looked" (his ledger copy, 2026-10-12)
     cardCheckedThrough("2026-06-01", "2026-07-19");
     detectRecurringSeries(bundle.db, TODAY);

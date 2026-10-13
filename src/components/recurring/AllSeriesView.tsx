@@ -2,7 +2,7 @@ import Link from "next/link";
 import { confirmSeriesAction, dismissSeriesAction } from "@/app/recurring/actions";
 import { Money } from "@/components/ui/Money";
 import { EmptyState } from "@/components/ui/EmptyState";
-import { SERIES_EVIDENCE_LABEL, SERIES_EVIDENCE_NOTE, suggestionNote } from "@/lib/series-evidence";
+import { SERIES_EVIDENCE_LABEL, SERIES_EVIDENCE_NOTE, lapsedSectionNote, suggestionNote } from "@/lib/series-evidence";
 import { billedWithPhrase, carriesPhrase } from "@/lib/billed-with";
 import type { ArrearsReading } from "@/lib/arrears-reading";
 import type { SeriesView } from "@/services/recurring";
@@ -101,8 +101,9 @@ export function AllSeriesView({
       {neverBilled.length > 0 ? (
         <SeriesSection title="Never billed" note={SERIES_EVIDENCE_NOTE["never-billed"]} series={neverBilled} overdueBySeries={overdueBySeries} today={today} muted />
       ) : null}
+      {/* a live transfer or `other` series lapses too — the note says what stops in their words (`lapsedSectionNote`) */}
       {lapsed.length > 0 ? (
-        <SeriesSection title="Lapsed" note={SERIES_EVIDENCE_NOTE.lapsed} series={lapsed} overdueBySeries={overdueBySeries} today={today} muted />
+        <SeriesSection title="Lapsed" note={lapsedSectionNote(lapsed.map((s) => s.kind))} series={lapsed} overdueBySeries={overdueBySeries} today={today} muted />
       ) : null}
     </div>
   );
@@ -303,8 +304,8 @@ function SeriesRow({
             the 1st and never posted was invisible here — while the math table
             at the top of this same page named it: "came due 2026-09-01 and has
             not posted". Same call as the forecast, the runway, /budgets and the
-            bill's own page. Quiet when no import has reached the day — the
-            runway's split (`overdueNote`). */}
+            bill's own page. Quiet when no checked statement has reached the
+            day — the runway's split (`overdueNote`). */}
         {overdue && <OverdueNote overdue={overdue} />}
       </td>
       <td className="px-3 py-3 text-right text-ink-muted">
