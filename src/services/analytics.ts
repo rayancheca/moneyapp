@@ -979,8 +979,10 @@ export function spendingTransactions(db: AppDatabase, filter: TxnFilter): Analyt
  * budget grades through `spendingTransactions` (`categorySpending`, once per closed period), so the account read that
  * an expense page now pays would otherwise be paid per budget per period. Outside a render it reads every call.
  *
- * Shared with the empty state's agent clause (`agentsMoneyRowCount`), which reads after the page's row list has.
- * ⛔ Read-only: the set is every caller's in the render.
+ * Shared with every reader in `services/spending` — /spending's cash flow, merchants, heatmap and honesty buckets —
+ * and the empty state's agent clause (`agentsMoneyRowCount`), which reads after the page's rows have:
+ * `/categories/<id>`'s row list here, `/spending`'s cash flow there. ⛔ Read-only: the set is every caller's in the
+ * render.
  */
 export const agentsCashOfRender = cache(function agentsCashOfRender(db: AppDatabase): ReadonlySet<string> {
   return outsidePortfolioCashAccountIds(db);

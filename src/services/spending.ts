@@ -24,7 +24,6 @@ import { subBuckets, type ResolvedPeriod } from "@/lib/period";
 import { alignByIndex, projectPace } from "@/lib/projection";
 import { allocationsFor } from "@/lib/transaction-splits";
 import { NO_MERCHANT, OTHER_SERIES_KEY, UNCATEGORIZED_SERIES_KEY } from "@/lib/ledger-href";
-import { outsidePortfolioCashAccountIds } from "./accounts";
 import {
   activeTxnsInRange,
   agentsCashOfRender,
@@ -87,7 +86,7 @@ export interface PeriodTotals {
 
 export function periodTotals(db: AppDatabase, range: DateRange): PeriodTotals {
   const idx = loadCategoryIndex(db);
-  const agentsCash = outsidePortfolioCashAccountIds(db);
+  const agentsCash = agentsCashOfRender(db);
   let earnedCents = 0;
   let spentCents = 0;
   let refundsCents = 0;
@@ -214,7 +213,9 @@ export function ledgerFirstDay(db: AppDatabase): string | null {
 
 export function cashFlowByPeriod(db: AppDatabase, period: ResolvedPeriod, today: string): CashFlow {
   const idx = loadCategoryIndex(db);
-  const agentsCash = outsidePortfolioCashAccountIds(db);
+  // the render's one read of whose accounts are the agent's — /spending's empty state asks it after this one
+  // (`agentsMoneyRowCount`), as every reader in this module does
+  const agentsCash = agentsCashOfRender(db);
   const colorOf = categoryColors(db);
   const buckets = subBuckets(period);
   const byMonth = (buckets[0]?.key.length ?? 10) === 7;
@@ -574,7 +575,7 @@ export function dailySpendHeatmap(db: AppDatabase, month: string): SpendHeatmap 
   const to = periodBounds(from, "monthly").end;
   const idx = loadCategoryIndex(db);
   // the day's spent and earned bars are the Spent and Income cards' populations, read one day at a time
-  const agentsCash = outsidePortfolioCashAccountIds(db);
+  const agentsCash = agentsCashOfRender(db);
   interface Cell {
     spentCents: number;
     incomeCents: number;
@@ -678,7 +679,7 @@ function spendingRowsInRange(
   range: DateRange,
   subtreeIds?: ReadonlySet<string>,
 ): SpendRow[] {
-  const agentsCash = outsidePortfolioCashAccountIds(db);
+  const agentsCash = agentsCashOfRender(db);
   const rows = db
     .select({
       id: transactions.id,
@@ -932,7 +933,7 @@ export interface HonestyBuckets {
 
 export function honestyBuckets(db: AppDatabase, range: DateRange): HonestyBuckets {
   const idx = loadCategoryIndex(db);
-  const agentsCash = outsidePortfolioCashAccountIds(db);
+  const agentsCash = agentsCashOfRender(db);
   let uncatSpent = 0;
   let uncatCount = 0;
   for (const txn of activeTxnsInRange(db, range.from, range.to)) {
@@ -989,9 +990,14 @@ export function honestyBuckets(db: AppDatabase, range: DateRange): HonestyBucket
  * (`spendingTransactions`): the agent's in an income or expense category, and none in a page that lists every account
  * (a transfer, the system "Uncategorized", whose rows arrive unfiled).
  *
- * ⚡ Whose accounts are the agent's is the render's one read (`agentsCashOfRender`), the one the page's row list made.
- * 🔴 It read them itself: two more account queries on every empty `/spending` and `/categories/<id>`, measured on a
- * copy of his ledger 2026-10-08.
+ * ⚡ Whose accounts are the agent's is the render's one read (`agentsCashOfRender`), the one the page's rows made
+ * before it: `/categories/<id>`'s row list (`spendingTransactions`), `/spending`'s cash flow (`cashFlowByPeriod`),
+ * whose totals decide that the window is empty. 🔴 It read them itself: two more account queries on every empty
+ * `/spending` and `/categories/<id>`, measured on a copy of his ledger 2026-10-08. 🔴 …and on `/spending` it still did
+ * after that fix, which claimed the reuse there: none of that page's own reads went through the cached one (review of
+ * 8537f05). Every read in this module shares it now: an empty `/spending` render of the agent-money fixture,
+ * 2026-10-13, made 18 account queries from its cash flow to its empty state, the clause's 2 among them; 10 now, none
+ * of them the clause's.
  */
 export function agentsMoneyRowCount(db: AppDatabase, range: DateRange, scope: { categoryId?: string } = {}): number {
   const agentsCash = agentsCashOfRender(db);

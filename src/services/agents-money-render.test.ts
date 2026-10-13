@@ -10,6 +10,7 @@ import { categories } from "@/db/schema/categories";
 import { institutions } from "@/db/schema/institutions";
 import { transactions } from "@/db/schema/transactions";
 import { dedupeHash } from "@/lib/hash";
+import { resolvePeriod } from "@/lib/period";
 
 /*
  * `cache` from React's SERVER build — the build Next renders a server component with, which memoises inside one
@@ -31,13 +32,13 @@ const { createAccount } = await import("./accounts");
 const { spendingTransactions } = await import("./analytics");
 const { ledgerOpens, ledgerReaches } = await import("./observation-frontier");
 const { printOnOneStatement } = await import("./printed-statement-fixture");
-const { agentsMoneyRowCount, categoryEmptyCopy, spendingEmptyCopy } = await import("./spending");
+const { agentsMoneyRowCount, cashFlowByPeriod, categoryEmptyCopy, spendingEmptyCopy } = await import("./spending");
 
 /**
- * ⚡ `agentsMoneyRowCount` asks whose accounts are the agent's through the read the page's row list already made
- * (`agentsCashOfRender`). Measured 2026-10-08 on a copy of his ledger, before: every empty `/spending` and
- * `/categories/<id>` request read the accounts twice for it (`ownPortfolioAccountIds`, then the pairing) on top of
- * the one cached read every row list in the same render shares.
+ * ⚡ `agentsMoneyRowCount` asks whose accounts are the agent's through the read the page's rows already made
+ * (`agentsCashOfRender`): `/categories/<id>`'s row list, `/spending`'s cash flow. Measured 2026-10-08 on a copy of
+ * his ledger, before: every empty `/spending` and `/categories/<id>` request read the accounts twice for it
+ * (`ownPortfolioAccountIds`, then the pairing) on top of the one cached read every row list in the same render shares.
  */
 
 const TODAY = "2026-10-05";
@@ -125,22 +126,41 @@ afterEach(() => {
 });
 
 describe("the empty state's agent clause reads whose accounts are whose once per render", () => {
-  /** what each page renders once the day reads empty: the row list, then its empty state */
-  function emptyPages() {
+  const opts = () => ({
+    today: TODAY,
+    label: "the day",
+    ledgerOpens: ledgerOpens(bundle.db),
+    formatDay: (iso: string) => iso,
+  });
+
+  /** `/categories/<Fees>` once the day reads empty: its row list, then its empty state */
+  function emptyCategoryPage() {
     const fees = catId("Fees");
-    const opts = { today: TODAY, label: "the day", ledgerOpens: ledgerOpens(bundle.db), formatDay: (iso: string) => iso };
     expect(spendingTransactions(bundle.db, { categoryId: fees, ...DAY })).toEqual([]);
     const afterRows = accountReads;
-    const category = categoryEmptyCopy(bundle.db, fees, DAY, opts);
-    const spending = spendingEmptyCopy(bundle.db, DAY, { ...opts, ledgerReaches: ledgerReaches(bundle.db) });
-    return { reads: accountReads - afterRows, said: [category.description, spending.description], count: agentsMoneyRowCount(bundle.db, DAY) };
+    const said = categoryEmptyCopy(bundle.db, fees, DAY, opts()).description;
+    return { reads: accountReads - afterRows, said };
+  }
+
+  /**
+   * `/spending` once the day reads empty: its cash flow — the rows whose totals decide that it is (`hasActivity`) —
+   * then its empty state. 🔴 This test once stood /spending's empty state behind `/categories/<id>`'s row list, which
+   * /spending never draws: there the clause made its own read (2 queries), measured on this fixture 2026-10-13.
+   */
+  function emptySpendingPage() {
+    const period = resolvePeriod({ from: DAY.from, to: DAY.to }, TODAY);
+    expect(cashFlowByPeriod(bundle.db, period, TODAY).totals).toMatchObject({ spentCents: 0, earnedCents: 0 });
+    const afterRows = accountReads;
+    const said = spendingEmptyCopy(bundle.db, DAY, { ...opts(), ledgerReaches: ledgerReaches(bundle.db) }).description;
+    return { reads: accountReads - afterRows, said };
   }
 
   test("⚡ inside one render: none beyond the row list's — and both empty states still say the agent's money is left out", () => {
-    const page = inOneRender(emptyPages);
-    expect(page.reads).toBe(0);
-    for (const said of page.said) expect(said).toContain("none of it is counted here");
-    expect(page.count).toBe(1);
+    for (const page of [inOneRender(emptyCategoryPage), inOneRender(emptySpendingPage)]) {
+      expect(page.reads).toBe(0);
+      expect(page.said).toContain("none of it is counted here");
+    }
+    expect(agentsMoneyRowCount(bundle.db, DAY)).toBe(1);
   });
 
   test("⛔ outside a render nothing is memoised: tests and scripts read every call, as they always have", () => {
