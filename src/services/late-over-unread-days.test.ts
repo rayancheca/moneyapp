@@ -78,7 +78,7 @@ function addSeries(o: {
   cadence: "weekly" | "monthly";
   accountId: string | null;
   amountCents: number;
-  lastMatchedOn: string;
+  lastMatchedOn: string | null;
   nextExpectedOn: string;
   status?: "confirmed" | "detected";
 }): void {
@@ -374,11 +374,12 @@ describe("a series with no account of its own is looked for where its newest cha
     expect(sentence).not.toMatch(/-\d+ of the/);
   });
 
-  test("the landing accounts: the account it names, else every account its last two posting days posted to", () => {
+  test("the landing accounts: every account its last two posting days posted to, and the account it names", () => {
     rentThatMoved();
     // two charges in a row on Wells Fargo: it moved there — Venture X and Chase are left behind
     expect([...(landingAccountsBySeries(bundle.db).get(RENT) ?? [])]).toEqual([WF]);
-    // a series naming its account keeps it, whatever its old rows say (the 2026-10-07 rule)
+    // a series naming its account is read there, whatever its OLD rows say (the 2026-10-07 rule): the pay's Jun 4–5 in
+    // Chase are not among its last two posting days, Sep 17 and 24 on Wells Fargo, the account it names
     expect([...(landingAccountsBySeries(bundle.db).get(PAY) ?? [])]).toEqual([WF]);
     // ONE charge elsewhere is not a move (his $1,000 early insurance payment from Wells Fargo, the bill on Venture X):
     // it could land in either, so both are looked at — and the earlier frontier stands
@@ -387,6 +388,32 @@ describe("a series with no account of its own is looked for where its newest cha
     // every row of a day counts: a split payment on the newest day names both accounts
     posted(VX, RENT, "2026-10-01", -1_000);
     expect(new Set(landingAccountsBySeries(bundle.db).get(RENT))).toEqual(new Set([WF, CHASE, VX]));
+  });
+
+  /*
+   * ⚖️ His decision 66 (2026-10-12): a named account is ADDED to where its last two posting days posted, never put in
+   * their place — read on both, the earlier day stands (`earliestVerified`). 🔴 It replaced them: a bill naming one
+   * account and paying from another was read only where it does not pay.
+   */
+  test("a series naming one account and paying its last two from another lands on both (his decision 66)", () => {
+    rentThatMoved();
+    bundle.db.update(recurringSeries).set({ accountId: CHASE }).where(eq(recurringSeries.id, RENT)).run();
+    expect(new Set(landingAccountsBySeries(bundle.db).get(RENT))).toEqual(new Set([CHASE, WF]));
+    // Chase Checking, read through Aug 12, and Wells Fargo, through Sep 24: the earlier stands
+    const rent = upcomingOccurrences(bundle.db, "2026-10-21", 30).find((o) => o.seriesId === RENT)!;
+    expect(rent.staleness).toMatchObject({ checkedThrough: "2026-08-12", awaitingStatements: true });
+    // never charged, nothing to add: the account it names alone
+    addSeries({
+      id: "series-gym",
+      name: "Gym",
+      kind: "bill",
+      cadence: "monthly",
+      accountId: VX,
+      amountCents: -10_000,
+      lastMatchedOn: null,
+      nextExpectedOn: "2026-10-22",
+    });
+    expect([...(landingAccountsBySeries(bundle.db).get("series-gym") ?? [])]).toEqual([VX]);
   });
 });
 

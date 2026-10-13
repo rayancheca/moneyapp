@@ -370,8 +370,8 @@ export function accountsThatDate(
  * `toleranceDays`, and for a series billed inside another's payment its carrier's too, whose payments pay it by the
  * carrier's own test (`carrierPaymentsBySeries`).
  *
- * ⚖️ His decision 62 (2026-10-12): read where the bill posts NOW — the accounts its LAST TWO PAYMENTS posted to, or the
- * one it names, its carrier's added (`landingAccountsBySeries`) — never every account it ever paid from. 🔴 Over every
+ * ⚖️ His decision 62 (2026-10-12): read where the bill posts NOW — its LAST TWO PAYMENTS' accounts and the one it names
+ * (66), its carrier's added (`landingAccountsBySeries`) — never every account it ever paid from. 🔴 Over every
  * account (`seriesAccountIds`, measured on his ledger copy 2026-10-12) the rent's due days were read to Aug 12 — Chase
  * Checking, which paid ONE rent, in July — while its chip read Wells Fargo through Sep 24: once Wells Fargo's next
  * statement showed no rent, the chip would say "running late" while the rent's page said "no import has covered it

@@ -443,12 +443,21 @@ describe("an account no statement will ever come for does not hold the lapse bac
     expect(silenceMeasuredThroughBySeries(bundle.db, DEC)(MOVED)).toBe(DEC);
   });
 
-  test("a series naming an account no statement will come for is measured to today", () => {
+  test("a series naming an account no statement will come for is measured to today — unless it pays from another", () => {
     bundle.db.update(recurringSeries).set({ accountId: VX }).where(eq(recurringSeries.id, RENT)).run();
+    bundle.db.update(recurringSeries).set({ accountId: VX }).where(eq(recurringSeries.id, GYM)).run();
+    // ⚖️ read on Venture X, which it names, AND Wells Fargo, where its last two payments posted — the earlier day stands
+    // (his decision 66, 2026-10-12)
     expect(silenceMeasuredThroughBySeries(bundle.db, DEC)(RENT)).toBe("2026-09-13");
     updateAccount(bundle.db, VX, { isActive: false });
-    // it names where it lands now, so its Wells Fargo history does not stand in for it
-    expect(silenceMeasuredThroughBySeries(bundle.db, DEC)(RENT)).toBe(DEC);
+    // never charged, it lands where it names: no statement is coming, so to today
+    expect(silenceMeasuredThroughBySeries(bundle.db, DEC)(GYM)).toBe(DEC);
+    // …but Wells Fargo, where the rent still pays from, holds it to Sep 24. 🔴 Under "a named account replaces the
+    // history" its Wells Fargo history did not stand in for it: measured to today, the rent LAPSED at Dec 7 (96 quiet
+    // days against its 93) on days no statement of the account it pays from had read
+    expect(silenceMeasuredThroughBySeries(bundle.db, DEC)(RENT)).toBe("2026-09-24");
+    expect(listSeries(bundle.db, DEC).find((s) => s.id === RENT)!.evidence).toBe("awaiting-statements");
+    expect(upcomingOccurrences(bundle.db, DEC, 70).some((o) => o.seriesId === RENT)).toBe(true);
   });
 
   test("a cash wallet's series is measured to today — what he typed is all that will ever come", () => {

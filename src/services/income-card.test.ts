@@ -194,15 +194,18 @@ describe("incomeCard", () => {
    * is for paydays after Aug 12" — false of seven paydays in a read account —
    * and, its as-of-Aug-12 silence (9) outrunning the real one (1), the verdict
    * fell through to "a schedule is called stale only after 3 quiet periods" of a
-   * payday nobody had looked for. Mirrored here: Jun 4 in Chase, a ten-week lump
-   * on Aug 13 in SoFi, the series naming SoFi.
+   * payday nobody had looked for. Mirrored here: Jun 4 in Chase, then ten weeks'
+   * pay in SoFi — Aug 6 and Aug 13, its last two deposits, as his are on Wells
+   * Fargo — the series naming SoFi. (A last two split across Chase and SoFi
+   * would read both, his decision 66.)
    */
   describe("pay is looked for where it lands now", () => {
     function movedToSofi(): void {
       addAccount(SOFI, "SoFi Checking");
       addSeries({ accountId: SOFI });
       addTxn(PAY_START, 100_000, { accountId: CHASE });
-      addTxn("2026-08-13", 1_000_000, { accountId: SOFI });
+      addTxn("2026-08-06", 900_000, { accountId: SOFI });
+      addTxn("2026-08-13", 100_000, { accountId: SOFI });
       coverThrough(CHASE, "2026-06-01", "2026-07-09");
       coverThrough(SOFI, "2026-06-01", "2026-08-13");
     }

@@ -190,9 +190,9 @@ export interface DueDayReading {
   /**
    * The last day the ledger has been shown for the account(s) this series posts to now — ⚖️ the day its "running late"
    * chip measures to (`silenceMeasuredThroughBySeries`, his decision 62, 2026-10-12): the accounts its last two payments
-   * posted to, or the one it names, each to its checked balance — `null` when nothing is known at all, the most cautious
-   * input. ⚖️ An account no statement will ever come for (archived, or a cash wallet) counts as shown through today
-   * (`silenceReadThrough`, 2026-10-08): nothing more is coming.
+   * posted to and the one it names (his decision 66), each to its checked balance, the earliest — `null` when nothing is
+   * known at all, the most cautious input. ⚖️ An account no statement will ever come for (archived, or a cash wallet)
+   * counts as shown through today (`silenceReadThrough`, 2026-10-08): nothing more is coming.
    */
   observedThrough: string | null;
   /**
