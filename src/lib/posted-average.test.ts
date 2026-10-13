@@ -384,16 +384,60 @@ describe("postedAverage — his pay, read per payday", () => {
  * 2026-10-12).
  */
 describe("perPaydayEvidence — his pay, what the average is of", () => {
-  test("his ledger with its history set: the lump and Sep 24, each per payday; June's two at an earlier rate", () => {
-    const readings = paydayReadings(HIS_ROWS, HIS_PORTIONS, HIS);
+  /* His paydays open on Jun 4 (§6A 55 step B), so Jun 4's cash week is a payday of the earlier rate, paid in full. */
+  test("his ledger with its history set: the lump and Sep 24, each per payday; Jun 4 at an earlier rate", () => {
+    const portions = [...HIS_PORTIONS, { paydayOn: "2026-06-04", depositOn: "2026-06-04", cents: CASH }];
+    const readings = paydayReadings(HIS_ROWS, portions, HIS);
     expect(perPaydayEvidence(HIS_ROWS, readings, HIS, TODAY)).toEqual({
       samples: [
         { postedOn: "2026-09-23", cents: WEEK, paydays: 4, dayCents: WEEK * 4, deposits: 1 },
         { postedOn: "2026-09-24", cents: WEEK, paydays: 1, dayCents: WEEK, deposits: 1 },
       ],
-      earlier: 2,
-      noPaydayOfTheirOwn: 0,
+      earlier: 1,
+      later: 0,
+      noPaydayOfTheirOwn: 1,
     });
+  });
+
+  /*
+   * ⛔ Money that paid NO payday is held to no rate (`PaydayReading.expectedCents`): it answers no week, whatever era
+   * its day falls in — so it is no earlier rate's either. 🔴 At 78c21ee the era was read first, and his Jun 5 $400.00
+   * was "at an earlier rate" in the popover while the calendar and the Amount history drew it toward no payday (a copy
+   * of his ledger, 2026-10-12).
+   */
+  test("June's money, toward no payday, is no earlier rate's: it paid no payday of its own", () => {
+    const readings = paydayReadings(HIS_ROWS, HIS_PORTIONS, HIS);
+    expect(readings.get("jun5")).toMatchObject({ towardNoPayday: true, ratePeriod: 0 });
+    const e = perPaydayEvidence(HIS_ROWS, readings, HIS, TODAY);
+    expect([e.earlier, e.later, e.noPaydayOfTheirOwn]).toEqual([0, 0, 2]);
+  });
+
+  /*
+   * ⛔ A payday of a raise recorded AHEAD, paid early — his payroll lands the Wednesday before the Thursday it pays —
+   * is of a LATER era than today's: left out of the average, and never counted as an earlier rate's. 🔴 At 78c21ee
+   * every era but today's was `earlier`, and the popover said Wed Sep 30's $1,200.00 was "before Aug 27, 2026 … at an
+   * earlier rate".
+   */
+  test("a payday of a raise recorded ahead, paid the day before it begins, is a later rate's", () => {
+    const raisedOct1: RateSchedule = {
+      nextExpectedAmountCents: 120_000,
+      amountHistory: [...HIS.amountHistory!, { throughOn: "2026-09-30", amountCents: WEEK }],
+    };
+    const rows = [...HIS_ROWS, { id: "sep30", postedOn: "2026-09-30", amountCents: 120_000 }];
+    const portions = [
+      ...HIS_PORTIONS,
+      { paydayOn: "2026-06-04", depositOn: "2026-06-04", cents: CASH },
+      { paydayOn: "2026-10-01", depositOn: "2026-09-30", cents: 120_000 },
+    ];
+    const readings = paydayReadings(rows, portions, raisedOct1);
+    const e = perPaydayEvidence(rows, readings, raisedOct1, "2026-09-30");
+    expect(e.samples.map((s) => s.postedOn)).toEqual(["2026-09-23", "2026-09-24"]);
+    expect([e.earlier, e.later, e.noPaydayOfTheirOwn]).toEqual([1, 1, 1]);
+    expect(postedAverage(rows, payday(readings), raisedOct1, "2026-09-30").avgCents).toBe(WEEK);
+    // on Oct 1 the raise is in force, and Sep 30's deposit is its one sample
+    const oct1 = perPaydayEvidence(rows, readings, raisedOct1, "2026-10-01");
+    expect(oct1.samples.map((s) => [s.postedOn, s.cents])).toEqual([["2026-09-30", 120_000]]);
+    expect([oct1.earlier, oct1.later, oct1.noPaydayOfTheirOwn]).toEqual([3, 0, 1]);
   });
 
   /* With no history there is one era: Jun 4's cash week is a sample of it, and Jun 5's $400.00 paid no payday. */
@@ -423,6 +467,7 @@ describe("perPaydayEvidence — his pay, what the average is of", () => {
     expect(e).toEqual({
       samples: [{ postedOn: "2026-09-24", cents: WEEK, paydays: 5, dayCents: WEEK * 5, deposits: 2 }],
       earlier: 0,
+      later: 0,
       noPaydayOfTheirOwn: 0,
     });
   });

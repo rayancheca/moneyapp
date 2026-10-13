@@ -20,6 +20,7 @@ import { paydaySettlement } from "./payday-settlement";
 import { provenanceFor } from "./provenance";
 import { listSeries, populationStddev } from "./recurring";
 import { recurringCalendar, type CalendarEntry } from "./recurring-calendar";
+import { recurringInsights } from "./recurring-insights";
 import { seriesDetail } from "./recurring-detail";
 
 /**
@@ -412,14 +413,20 @@ describe("the posted average — his series page, the All tab and the popover re
    * force now — and name the rows left out. 🔴 They described the rows as they posted: "Its 4 tagged postings since Jun
    * 4, 2026 were 4 different amounts, from $400.00 to $4,567.68 — so any single figure for it is an average, not a
    * repeat." — of an average every payroll payday paid exactly (provenanceFor on a copy of his ledger, 2026-10-12).
+   *
+   * ⛔ …and Jun 5's $400.00 paid NO payday: it answers no week, so no week's rate is what it is held to
+   * (`PaydayReading.expectedCents`) — not "an earlier rate", as the calendar, the Amount history and the words before
+   * the history is written all say. 🔴 At 78c21ee: "Its 2 deposits before Aug 27, 2026 were at an earlier rate" — Jun
+   * 4's cash week AND Jun 5's $400.00 (a copy of his ledger, 2026-10-12).
    */
-  test("with his history set: per payday, two deposits paid $1,141.92 exactly; June's two were an earlier rate", () => {
+  test("with his history set: per payday, two deposits paid $1,141.92 exactly; Jun 4 earlier, Jun 5 no payday", () => {
     addPaySeries("2026-07-23");
     hisFour();
     const p = provenanceFor(bundle.db, { kind: "recurringSeries", id: PAY, today: TODAY })!;
     expect(p.headline).toContain(
       "Per payday, its 2 deposits at the rate in force since Aug 27, 2026 (Sep 23's $4,567.68 paid 4 paydays) paid " +
-        "$1,141.92, exactly. Its 2 deposits before Aug 27, 2026 were at an earlier rate, and are not counted.",
+        "$1,141.92, exactly. Its one deposit before Aug 27, 2026 was at an earlier rate, and is not counted. Its one " +
+        "other deposit paid no payday on its own, and is not counted.",
     );
     expect(p.headline).not.toContain("an average, not a repeat");
     expect(p.headline).not.toContain("$400.00 to $4,567.68");
@@ -429,7 +436,7 @@ describe("the posted average — his series page, the All tab and the popover re
       label: "4 tagged postings in the ledger",
       detail:
         "2 deposits at the rate in force since Aug 27 (Sep 23's $4,567.68 paid 4 paydays): every one of them " +
-        "$1,141.92 a payday · 2 before it, at an earlier rate",
+        "$1,141.92 a payday · 1 before it, at an earlier rate · 1 paid no payday on its own",
     });
   });
 
@@ -453,8 +460,9 @@ describe("the posted average — his series page, the All tab and the popover re
     const p = provenanceFor(bundle.db, { kind: "recurringSeries", id: PAY, today: TODAY })!;
     expect(p.headline).toContain(
       "Per payday, its 2 deposits at the rate in force since Aug 27, 2026 (Sep 23's $4,567.68 paid 4 paydays) paid " +
-        "$1,141.92, exactly. Its 2 deposits before Aug 27, 2026 were at an earlier rate, and are not counted. ⚠️ The " +
-        "ledger's own average of what actually posted is $1,141.92, which is not what you set.",
+        "$1,141.92, exactly. Its one deposit before Aug 27, 2026 was at an earlier rate, and is not counted. Its one " +
+        "other deposit paid no payday on its own, and is not counted. ⚠️ The ledger's own average of what actually " +
+        "posted is $1,141.92, which is not what you set.",
     );
     expect(JSON.stringify(p)).not.toMatch(/Nov 1|no average/);
     expect([surfaces().pageAvg, surfaces().allTab]).toEqual([WEEK, WEEK]);
@@ -487,6 +495,116 @@ describe("the posted average — his series page, the All tab and the popover re
     expect(asked("2026-10-07")).not.toContain("which is not what you set");
     expect(asked("2026-10-08")).toContain("$1,156.44, which is not what you set");
   });
+});
+
+/**
+ * ⚖️ A RAISE HE RECORDS — $1,200.00 from Thu Oct 1, $1,141.92 through Sep 30 — read by the popover either side of its
+ * first day (§6A 55, §6A 63: "the rate in force now" is today's).
+ */
+describe("a raise recorded in his history: the popover either side of its first day", () => {
+  const RAISED = 120_000;
+  beforeEach(() => {
+    addPaySeries("2026-07-23");
+    bundle.db
+      .update(recurringSeries)
+      .set({ userAmountCents: RAISED, userAmountHistory: [...HISTORY, { throughOn: "2026-09-30", amountCents: WEEK }] })
+      .where(eq(recurringSeries.id, PAY))
+      .run();
+    hisFour();
+  });
+  const period = (today: string) =>
+    provenanceFor(bundle.db, { kind: "recurringSeries", id: PAY, today })!.sources.find((s) => s.kind === "period");
+
+  /*
+   * ⛔ No deposit at the rate in force now — the raise has begun, and the statement that would carry its first week
+   * has not been imported (statements lag; nothing since Sep 24) — is a page with no average, not a page that fails.
+   * 🔴 At 78c21ee the evidence line ranged the samples it did not have — `Math.min()` of none is Infinity — and
+   * /recurring/<his pay> threw "RangeError: Invalid cents value: Infinity", as did the insights that cite it.
+   */
+  test("Oct 2, nothing imported since Sep 24: the page renders, and says there is no average at the new rate", () => {
+    const TODAY = "2026-10-02";
+    const p = provenanceFor(bundle.db, { kind: "recurringSeries", id: PAY, today: TODAY })!;
+    expect(p.headline).toContain(
+      "No deposit at the rate in force since Oct 1, 2026 has paid a payday on its own, so there is no average of " +
+        "what a payday paid at it yet. Its 3 deposits before Oct 1, 2026 were at an earlier rate, and are not " +
+        "counted. Its one other deposit paid no payday on its own, and is not counted.",
+    );
+    expect(p.headline).not.toContain("not what you set");
+    expect(period(TODAY)).toMatchObject({
+      label: "4 tagged postings in the ledger",
+      detail:
+        "no deposit at the rate in force since Oct 1 paid a payday on its own · 3 before it, at an earlier rate · " +
+        "1 paid no payday on its own",
+    });
+    expect(p.badgeWord).toBeUndefined();
+    // …and the page's other readers of it
+    expect(seriesDetail(bundle.db, PAY, TODAY).postedAvgCents).toBeNull();
+    expect(() => recurringInsights(bundle.db, PAY, TODAY)).not.toThrow();
+  });
+
+  /*
+   * ⛔ His payroll lands the Wednesday before the Thursday it pays, so Wed Sep 30's $1,200.00 pays Thu Oct 1 — a
+   * payday of the raise, which is not in force on Sep 30. It is left out of the average, and named for what it is: a
+   * LATER rate's, dated from that rate's first day. 🔴 At 78c21ee it was counted with June's: "Its 3 deposits before
+   * Aug 27, 2026 were at an earlier rate" and "· 3 before it, at an earlier rate" — a deposit of Sep 30, at a higher
+   * rate (hypothetical: no raise is recorded on his ledger, a copy of it 2026-10-12).
+   */
+  test("Wed Sep 30's $1,200.00 pays Thu Oct 1: a later rate's, not in force yet — never 'before Aug 27'", () => {
+    const TODAY = "2026-09-30";
+    readThrough("2026-09-25", TODAY);
+    deposit(TODAY, RAISED);
+    expect(paydaySettlement(bundle.db, PAY, TODAY).settledBy.get("2026-10-01")).toBe(TODAY);
+    const p = provenanceFor(bundle.db, { kind: "recurringSeries", id: PAY, today: TODAY })!;
+    expect(p.headline).toContain(
+      "Per payday, its 2 deposits at the rate in force since Aug 27, 2026 (Sep 23's $4,567.68 paid 4 paydays) paid " +
+        "$1,141.92, exactly. Its one deposit before Aug 27, 2026 was at an earlier rate, and is not counted. Its one " +
+        "deposit toward a payday from Oct 1, 2026 is at a later rate, not in force yet, and is not counted. Its one " +
+        "other deposit paid no payday on its own, and is not counted.",
+    );
+    expect(period(TODAY)).toMatchObject({
+      label: "5 tagged postings in the ledger",
+      detail:
+        "2 deposits at the rate in force since Aug 27 (Sep 23's $4,567.68 paid 4 paydays): every one of them " +
+        "$1,141.92 a payday · 1 before it, at an earlier rate · 1 toward a payday from Oct 1, at a later rate not " +
+        "in force yet · 1 paid no payday on its own",
+    });
+    // the average is today's rate's, as it was: the Sep 30 deposit is no sample of it
+    expect(seriesDetail(bundle.db, PAY, TODAY).postedAvgCents).toBe(WEEK);
+    // …and on Oct 1 the raise is in force, and Sep 30's $1,200.00 is its one payday paid
+    expect(provenanceFor(bundle.db, { kind: "recurringSeries", id: PAY, today: "2026-10-01" })!.headline).toContain(
+      "Per payday, its one deposit at the rate in force since Oct 1, 2026 paid $1,200.00.",
+    );
+  });
+});
+
+/*
+ * ⛔ ONE COUNT, with a raise recorded ahead and no rate before today's: the gate counts the paydays paid at the rate in
+ * force now, not every row — a deposit toward the raise's first payday is no evidence of today's rate (hypothetical:
+ * a first job's pay, its raise recorded before it begins).
+ */
+test("a raise recorded ahead of a first week: the gate counts paydays at today's rate, not the raise's deposit", () => {
+  const TODAY = "2026-09-30";
+  addPaySeries("2026-07-23");
+  bundle.db
+    .update(recurringSeries)
+    .set({ userAmountCents: 120_000, userAmountHistory: [{ throughOn: "2026-09-30", amountCents: WEEK }] })
+    .where(eq(recurringSeries.id, PAY))
+    .run();
+  readThrough("2026-09-25", TODAY);
+  deposit(TODAY, 120_000);
+  const said = () => provenanceFor(bundle.db, { kind: "recurringSeries", id: PAY, today: TODAY })!;
+  const later =
+    "Its one deposit toward a payday from Oct 1, 2026 is at a later rate, not in force yet, and is not counted.";
+  // its only deposit pays the raise's first payday: nothing at the rate in force now — "now", no rate before it
+  expect(said().headline).toContain(
+    "No deposit at the rate in force now has paid a payday on its own, so there is no average of what a payday " +
+      `paid at it yet. ${later}`,
+  );
+  deposit("2026-09-24", WEEK);
+  expect(said().headline).toContain(
+    `Per payday, its one deposit since Sep 24, 2026 paid $1,141.92. ${later} That is one payday at the rate in force ` +
+      "now — below the 3",
+  );
 });
 
 /* ⛔ At a constant rate the residuals' spread is the samples' own — no series without a history reads differently. */

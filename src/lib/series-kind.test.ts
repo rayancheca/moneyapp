@@ -4,6 +4,7 @@ import {
   AmountHistoryError,
   currentRatePeriod,
   currentRateSince,
+  nextRateSince,
   parseAmountHistory,
   parseAmountHistoryText,
   ratePeriodOf,
@@ -135,6 +136,16 @@ describe("ratePeriodOf", () => {
     const onlyAhead = { amountHistory: [{ throughOn: "2026-10-31", amountCents: -210_900 }] };
     expect(currentRatePeriod(onlyAhead, TODAY)).toBe(0);
     expect(currentRateSince(onlyAhead, TODAY)).toBeNull();
+  });
+
+  /* where a deposit paid early, toward a payday of a raise not in force yet, is dated (`PerPaydayEvidence.later`) */
+  test("the next rate begins the day after the one in force ends — none when nothing is recorded ahead", () => {
+    const raisedNov1 = { amountHistory: [...HIS_HISTORY, { throughOn: "2026-10-31", amountCents: 114_192 }] };
+    expect(nextRateSince(raisedNov1, TODAY)).toBe("2026-11-01");
+    expect(ratePeriodOf(raisedNov1, nextRateSince(raisedNov1, TODAY)!)).toBe(currentRatePeriod(raisedNov1, TODAY) + 1);
+    expect(nextRateSince(raisedNov1, "2026-11-01")).toBeNull();
+    expect(nextRateSince(HIS_PAY, TODAY)).toBeNull();
+    expect(nextRateSince({ amountHistory: null }, TODAY)).toBeNull();
   });
 });
 

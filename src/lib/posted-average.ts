@@ -106,9 +106,17 @@ export interface PaydaySample {
 export interface PerPaydayEvidence {
   /** what each deposit day of the rate era in force now paid per payday, oldest first — what the average averages */
   samples: readonly PaydaySample[];
-  /** tagged rows of another rate era — each held to its own time's rate, and not averaged */
+  /** tagged rows that paid paydays of an EARLIER rate era — each held to its own time's rate, and not averaged */
   earlier: number;
-  /** tagged rows of the era in force now whose money paid no payday of its own — toward none, or part of one */
+  /**
+   * tagged rows that paid paydays of a LATER rate era — a raise recorded ahead, whose first week's pay landed while
+   * the old rate is in force — held to that rate, and not averaged until it is in force
+   */
+  later: number;
+  /**
+   * tagged rows whose money paid no payday of its own: toward none at all, of any era — held to no rate, so of none
+   * (`PaydayReading.expectedCents`) — or part of one of the era in force now
+   */
   noPaydayOfTheirOwn: number;
 }
 
@@ -116,6 +124,13 @@ export interface PerPaydayEvidence {
  * The samples of the rate era in force now (`currentRatePeriod` — today's), and the rows left out. ⚖️ One "in force
  * now" for pay and bills (§6A 55, §6A 63): a raise recorded before its first day is not in force until then, and the
  * weeks paid at the rate that is still average.
+ *
+ * ⛔ Money toward no payday first: it answers no week, so no era's rate is what it is held to — and the words call it
+ * what the calendar and the Amount history draw it, "toward no payday". 🔴 Read by its era first, his Jun 5 $400.00
+ * was "at an earlier rate" in the popover (a copy of his ledger, 2026-10-12), and "paid no payday on its own" with
+ * no history written. ⛔ …then an era's DIRECTION: a deposit pays the era of the payday it anchors to, which can
+ * begin after today (`depositEra`). 🔴 Every era but today's was `earlier`, and a Wednesday's pay for a raise
+ * beginning Thursday read "before Aug 27, 2026 … at an earlier rate" (review of 78c21ee).
  */
 export function perPaydayEvidence(
   rows: readonly ReadableRow[],
@@ -132,13 +147,16 @@ export function perPaydayEvidence(
   }
   const samples: PaydaySample[] = [];
   let earlier = 0;
+  let later = 0;
   for (const r of rows) {
     const reading = readings.get(r.id);
+    // money that paid no payday is no era's (`noPaydayOfTheirOwn`, below)
+    if (reading?.towardNoPayday === true) continue;
     // a row with no reading is held on its own day, as `expectedCentsOf` holds it
-    if ((reading?.ratePeriod ?? ratePeriodOf(schedule, r.postedOn)) !== now) {
-      earlier += 1;
-      continue;
-    }
+    const era = reading?.ratePeriod ?? ratePeriodOf(schedule, r.postedOn);
+    if (era < now) earlier += 1;
+    if (era > now) later += 1;
+    if (era !== now) continue;
     const cents = spreadSampleCents(r.amountCents, reading);
     if (cents === null) continue;
     const per = reading?.perPayday ?? null;
@@ -150,7 +168,8 @@ export function perPaydayEvidence(
   return {
     samples: samples.sort((a, b) => compareDates(a.postedOn, b.postedOn)),
     earlier,
-    noPaydayOfTheirOwn: rows.length - earlier - sampled,
+    later,
+    noPaydayOfTheirOwn: rows.length - earlier - later - sampled,
   };
 }
 

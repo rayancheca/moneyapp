@@ -15,7 +15,7 @@ import {
   type PostedAverage,
   type PostedReading,
 } from "@/lib/posted-average";
-import { currentRateSince } from "@/lib/series-kind";
+import { currentRateSince, nextRateSince } from "@/lib/series-kind";
 import { carriedNamesBySeries } from "./billing-carriers";
 import { paydaySettlement, readsPerPayday } from "./payday-settlement";
 import { effectiveSeries } from "./recurring";
@@ -60,6 +60,11 @@ export interface SeriesPostedAverage extends PostedAverage {
    * payments `occurrences` leaves out (§6A 63).
    */
   rateSince: string | null;
+  /**
+   * The first day of the rate recorded after the one in force now (`nextRateSince`) — null when none is recorded
+   * ahead. Where the popover dates a pay deposit that paid a payday of it early (`PerPaydayEvidence.later`).
+   */
+  nextRateSince: string | null;
 }
 
 /**
@@ -119,6 +124,7 @@ export function postedAveragesBySeries(
       // ⚖️ …and a pay series' paydays — `postedAverage` reads them by this same rule (§6A 55)
       perPayday: reading.per === "payday" ? perPaydayEvidence(rows, reading.readings, schedule, today) : null,
       rateSince: currentRateSince(schedule, today),
+      nextRateSince: nextRateSince(schedule, today),
     });
   }
   return out;
