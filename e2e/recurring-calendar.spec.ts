@@ -38,13 +38,17 @@ test("every day with activity prints its own signed total", async ({ page }) => 
    *   Jul 1  Storage   −$45.00    missed    (due 07-01, Chase Freedom checked
    *                                            through 07-04 — its day AND its 3
    *                                            days' grace: ⚖️ read, §6A 60, 62)
+   *   Jul 3  Paycheck  +$2,943.19 not known (a payday on the ACME deposits'
+   *                                            Fridays; Chase Total Checking is
+   *                                            read through 06-30, so the ledger
+   *                                            has not looked for its deposit)
    *   Jul 5  Meal Kit  −$125.00   not known (due 07-05, the card imported through
    *                                            07-05 — but a payment may still post
    *                                            through 07-08, its 3 days' grace: ⚖️
    *                                            not read until then, §6A 60)
    *   Jul 9  Rent      −$1,800.00 upcoming
-   *   Jul 10 Paycheck  +$2,943.19 upcoming (biweekly → 07-24 as well)
    *   Jul 16 Netflix   −$15.99    upcoming
+   *   Jul 17 Paycheck  +$2,943.19 upcoming (biweekly → 07-31 as well)
    *   Jul 20 Gym       −$49.00    upcoming
    *   Jul 22 Car Lease −$450.00   upcoming (§9 — the car card had no fixture)
    *   Jul 26 Car Ins.  −$128.00   upcoming
@@ -60,18 +64,20 @@ test("every day with activity prints its own signed total", async ({ page }) => 
   // its tile is the brand's own mark.
   expect(await cellTexts(page)).toEqual([
     "1 SU ✕ -45 Storage unit",
+    "3 P ? 2.9k Paycheck",
     "5 MK ? -125 Meal Kit",
     "9 R • -1.8k Rent",
-    "10 P • 2.9k Paycheck",
     "16 • -16 Netflix",
+    "17 P • 2.9k Paycheck",
     "20 GM • -49 Gym Membership",
     "22 CL • -450 Car Lease",
-    "24 P • 2.9k Paycheck",
     "26 CI • -128 Car Insurance",
+    "31 P • 2.9k Paycheck",
   ]);
 
   // …and the month footer totals them. Expected excludes the missed Storage unit
-  // and the not-yet-known Meal Kit: -1800 + 2943.19 - 15.99 - 49 - 450 + 2943.19 - 128 = 3443.39.
+  // and the not-yet-known Jul 3 payday and Meal Kit:
+  // -1800 - 15.99 + 2943.19 - 49 - 450 - 128 + 2943.19 = 3443.39.
   // `innerText` applies text-transform, and the footer's labels are uppercased
   // in CSS — so these read SETTLED/EXPECTED, not Settled/Expected.
   const grid = page.getByRole("grid", { name: "July 2026" }).locator("..");
@@ -82,10 +88,11 @@ test("every day with activity prints its own signed total", async ({ page }) => 
   // old footer printed "POSTED $0.00" beside a bare "1 missed", which reads as a
   // month in which nothing happened and one thing failed — both misleading, and
   // mutually reinforcing.
-  // ⚖️ $125.00 (Meal Kit, read through its day but not its grace) — and one
+  // ⚖️ $3,068.19: Meal Kit's $125.00 (read through its day but not its grace) and
+  // Paycheck's Jul 3 $2,943.19 (its account read through Jun 30) — and one
   // missed: Storage unit, whose day AND grace are imported (§6A 60, 2026-10-08).
   // The two bills stand either side of the rule, so both readings stay pinned.
-  expect(footer).toContain("NOT YET KNOWN $125.00");
+  expect(footer).toContain("NOT YET KNOWN $3,068.19");
   expect(footer).toContain("1 missed");
 });
 
@@ -169,10 +176,11 @@ for (const { width, expectNames } of NARROW_WIDTHS) {
 
     // guard the guard: a filter over an empty set also returns [], which would
     // make both assertions above vacuous the day a selector stops matching.
-    // Nine populated days in July 2026 — the eight recurring marks (the six that
-    // were here plus §9's two car commitments) and the "Storage unit" charge the
-    // ledger has read and found missing.
-    expect(await amounts.count()).toBe(9);
+    // Ten populated days in July 2026 — the nine recurring marks (the six that
+    // were here, §9's two car commitments and Paycheck's Jul 3, a payday on its
+    // deposits' Fridays the ledger has not read yet) and the "Storage unit"
+    // charge the ledger has read and found missing.
+    expect(await amounts.count()).toBe(10);
 
     /*
      * …and the breakpoint itself, which every check above would pass without.
@@ -259,17 +267,15 @@ test("paging back to a posted charge renders it as paid", async ({ page }) => {
    * than loosened: "and nothing else" is half of what this assertion is worth.
    */
   /*
-   * ⚖️ …and two paydays of its own (§6A 55 step B): Paycheck's paydays are its anchor's Fridays walked back to its
-   * first deposit — Jul 12 and Jul 26, the week after each ACME deposit's. Jul 19's deposit paid Jul 12 (its money
-   * drawn on the 19th, so the 12th's figure is 0), Aug 2's paid Jul 26, and Jul 5's, a week before the first payday,
-   * paid none.
+   * ⚖️ …and its paydays are those deposits' own days (§6A 55 step B): Paycheck's paydays are its anchor's Fridays
+   * walked back to its first deposit, and the anchor is the deposits' rhythm — so Jul 5 and Jul 19 each pay
+   * themselves. 🔴 Anchored a week late (Jul 10), it drew Jul 12 and Jul 26 as well: Jul 19's deposit paid Jul 12,
+   * Aug 2's paid Jul 26, and Jul 5's, a week before the first payday, paid none.
    */
   expect(await cellTexts(page)).toEqual([
     "3 ✓ -15 Netflix",
     "5 P ✓ 2.9k Paycheck",
-    "12 P ✓ 0 Paycheck",
     "19 P ✓ 2.9k Paycheck",
-    "26 P ✓ 2.9k Paycheck",
   ]);
 
   /*
@@ -280,7 +286,7 @@ test("paging back to a posted charge renders it as paid", async ({ page }) => {
    */
   const grid = page.getByRole("grid", { name: "July 2024" }).locator("..");
   const footer = (await grid.innerText()).replace(/\s+/g, " ");
-  // Jul 5 and Jul 19's deposits, Jul 26's payday paid by Aug 2's, less Netflix
-  expect(footer).toContain("SETTLED +$8,814.08");
+  // Jul 5 and Jul 19's deposits, less Netflix: 2 × 2943.19 - 15.49 = 5870.89
+  expect(footer).toContain("SETTLED +$5,870.89");
   expect(footer).toContain("EXPECTED $0.00");
 });

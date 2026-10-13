@@ -75,7 +75,8 @@ const ROUTES: readonly VisualRoute[] = [
   // ⚠️ What these eight CAN see is bounded by the seed. At E2E_FAKE_TODAY the
   // July grid renders `missed` (Storage unit, its card checked through
   // its due day + 3 days' grace), `unsettled` (Meal Kit, its card imported
-  // through its due day but not its grace — ⚖️ §6A 60) and `upcoming`;
+  // through its due day but not its grace — ⚖️ §6A 60; and Paycheck's Jul 3,
+  // its account read through Jun 30) and `upcoming`;
   // `paid` is reachable by paging (recurring-calendar.spec asserts it there)
   // and `paid_different` is not reachable at all, because no seeded posting
   // lands outside its series' tolerance band.
