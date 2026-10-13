@@ -327,7 +327,7 @@ describe("yearSummaryView — the cash job's story is only told where it happene
       // his 2026 shape, moved to each year: two cash lumps in June, a payroll lump in September
       const postedOn = [`${year}-06-04`, `${year}-06-05`, `${year}-09-23`, `${year}-09-24`];
       for (const seriesName of ["It America LLC (weekly pay)", null]) {
-        const naming = cashJobNaming(year, { seriesName, postedOn });
+        const naming = cashJobNaming(year, { seriesName, toleranceDays: seriesName === null ? null : 3, postedOn });
         const early = year < 2026;
         const named = seriesName !== null;
         const at = `${year}, ${named ? "named" : "unattached"}`;
@@ -454,13 +454,14 @@ describe("yearSummaryView — the pay line names the job its rows are attached t
    * ⛔ The invariant the caveat owes, every case of it: deposits each within a day of their payday are not
    * "deposited irregularly", however few there are. Every ±1-day offset of 3 to 7 paydays — weekly, biweekly and
    * four-weekly, and monthly on the 1st, the 15th and the last day (review, 2026-10-08: it enumerated 7 and 14 only,
-   * and 28 failed 1,401 of 2,187 seven-deposit cases).
+   * and 28 failed 1,401 of 2,187 seven-deposit cases). Held to detection's tolerance — rows in no series — the tightest
+   * a pay line is held to (a weekly series detection made keeps its 2 days; his keeps 3).
    */
   function flaggedWithinADay(paydays: readonly string[]): string[] {
     const flagged: string[] = [];
     for (let code = 0; code < 3 ** paydays.length; code++) {
       const postedOn = paydays.map((day, i) => addDays(day, (Math.floor(code / 3 ** i) % 3) - 1));
-      const naming = cashJobNaming(2027, { seriesName: "It America LLC (weekly pay)", postedOn });
+      const naming = cashJobNaming(2027, { seriesName: null, toleranceDays: null, postedOn });
       if (naming.caveat !== undefined) flagged.push(postedOn.join(", "));
     }
     return flagged;
@@ -506,19 +507,43 @@ describe("yearSummaryView — the pay line names the job its rows are attached t
   });
 
   /*
-   * ⛔ The step has two ends, and each is pinned just outside it (review, 2026-10-08: widening the tolerance by a day
-   * or two, or dropping its lower bound, left every test green). A weekly gap of 10 is a payday three days late; a gap
-   * of 4 one three days early; a gap of 2 a deposit that is not the week's pay at all — which the old spread rule
-   * flagged too, so losing the lower end would take back a caveat he already had.
+   * ⚖️ ONE TOLERANCE: a gap keeps the step within the series' OWN tolerance (`toleranceDays`, his 3) — the window
+   * settlement and the calendar hold a deposit to its payday — so a payday up to 3 days off, between two on time, is
+   * regular. 🔴 The caveat held each gap to detection's weekly 2 days: his Thursday payroll landing on a Sunday read
+   * "Deposited irregularly" on /summary while the calendar drew that payday paid on time (review of the weekly-payroll
+   * label, 2026-10-08).
    */
   test.each([
     ["two paydays three days late (7, 10, 7)", ["2027-01-07", "2027-01-14", "2027-01-24", "2027-01-31"]],
     ["two paydays three days early (7, 4, 7)", ["2027-01-07", "2027-01-14", "2027-01-18", "2027-01-25"]],
+    ["one payday three days late (7, 10, 4, 7)", ["2027-01-07", "2027-01-14", "2027-01-24", "2027-01-28", "2027-02-04"]],
+  ])("a weekly payroll with %s keeps his series' 3-day tolerance — regular", (_case, days) => {
+    const pay = paySeries("It America LLC (weekly pay)");
+    expect(bundle.db.select().from(recurringSeries).where(eq(recurringSeries.id, pay)).get()!.toleranceDays).toBe(3);
+    for (const day of days) {
+      insert({ postedOn: day, amountCents: 114192, rawDescription: "It America LLC Payroll", categoryName: "Salary", seriesId: pay });
+    }
+    expect(payLine(2027).caveat).toBeUndefined();
+  });
+
+  /*
+   * ⛔ …and both ends of it are pinned one day outside (review, 2026-10-08: widening the tolerance by a day or two, or
+   * dropping its lower bound, left every test green). A weekly gap of 11 is a payday four days late; one of 3, four
+   * days early; one of 2 a deposit that is not the week's pay at all — which the old spread rule flagged too. ⚠️ A gap
+   * holds the tolerance once: Sun Jan 24, three days late for Jan 21, and Mon Jan 25, three days early for Jan 28, are
+   * each within his 3 days of their Thursdays, but a day apart is no weekly rhythm, and reads irregular.
+   */
+  test.each([
+    ["two paydays four days late (7, 11, 7)", ["2027-01-07", "2027-01-14", "2027-01-25", "2027-02-01"]],
+    ["two paydays four days early (7, 3, 7)", ["2027-01-07", "2027-01-14", "2027-01-17", "2027-01-24"]],
     [
       "an extra deposit two days after payday (7, 2, 5, 7)",
       ["2027-01-07", "2027-01-14", "2027-01-16", "2027-01-21", "2027-01-28"],
     ],
-    ["one payday three days late (7, 10, 4, 7)", ["2027-01-07", "2027-01-14", "2027-01-24", "2027-01-28", "2027-02-04"]],
+    [
+      "a payday three days late, the next three early (7, 10, 1, 10)",
+      ["2027-01-07", "2027-01-14", "2027-01-24", "2027-01-25", "2027-02-04"],
+    ],
   ])("a weekly payroll with %s is irregular, and the caveat says so", (_case, days) => {
     const pay = paySeries("It America LLC (weekly pay)");
     for (const day of days) {
@@ -526,6 +551,26 @@ describe("yearSummaryView — the pay line names the job its rows are attached t
     }
     expect(payLine(2027).caveat).toBe(
       "Deposited irregularly, so a calendar year captures what reached the bank rather than what was worked.",
+    );
+  });
+
+  /*
+   * ⚖️ The series' OWN tolerance, whatever it is: a weekly series detection made keeps detection's 2 days, and rows in
+   * no series are held to the one detection would give a series of them. Two paydays three days late keep his 3 days
+   * and break detection's 2.
+   */
+  test("a series detection made keeps its own 2 days; rows in no series are held to detection's", () => {
+    const days = ["2027-01-07", "2027-01-14", "2027-01-24", "2027-01-31"];
+    const pay = paySeries("Payroll");
+    bundle.db.update(recurringSeries).set({ toleranceDays: 2 }).where(eq(recurringSeries.id, pay)).run();
+    for (const day of days) {
+      insert({ postedOn: day, amountCents: 114192, rawDescription: "Payroll", categoryName: "Salary", seriesId: pay });
+    }
+    expect(payLine(2027).caveat).toContain("Deposited irregularly");
+    bundle.db.update(recurringSeries).set({ toleranceDays: 3 }).where(eq(recurringSeries.id, pay)).run();
+    expect(payLine(2027).caveat).toBeUndefined();
+    expect(cashJobNaming(2027, { seriesName: null, toleranceDays: null, postedOn: days }).caveat).toContain(
+      "Deposited irregularly",
     );
   });
 
@@ -545,7 +590,7 @@ describe("yearSummaryView — the pay line names the job its rows are attached t
 
   test("a week with no deposit breaks the rhythm, and the caveat says so", () => {
     const pay = paySeries("It America LLC (weekly pay)");
-    // Jan 21 never banked: 14 days is no week (5 to 9), and 7 is no fortnight (11 to 17)
+    // Jan 21 never banked: 14 days is no week (4 to 10 at his 3 days), and 7 is no fortnight (11 to 17)
     for (const day of ["2027-01-07", "2027-01-14", "2027-01-28", "2027-02-04"]) {
       insert({ postedOn: day, amountCents: 114192, rawDescription: "It America LLC Payroll", categoryName: "Salary", seriesId: pay });
     }

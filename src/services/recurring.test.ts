@@ -146,10 +146,16 @@ describe("gapKeepsStep — both ends of every cadence's step", () => {
     ["quarterly", 82, 99],
     ["annual", 351, 380],
   ] as const)("%s keeps a gap of %i to %i days, and not a day past either end", (cadence, shortest, longest) => {
-    expect(gapKeepsStep(shortest, cadence)).toBe(true);
-    expect(gapKeepsStep(longest, cadence)).toBe(true);
-    expect(gapKeepsStep(shortest - 1, cadence)).toBe(false);
-    expect(gapKeepsStep(longest + 1, cadence)).toBe(false);
+    expect(gapKeepsStep(shortest, cadence, null)).toBe(true);
+    expect(gapKeepsStep(longest, cadence, null)).toBe(true);
+    expect(gapKeepsStep(shortest - 1, cadence, null)).toBe(false);
+    expect(gapKeepsStep(longest + 1, cadence, null)).toBe(false);
+  });
+
+  /* ⚖️ ONE TOLERANCE: a series' own stores the window settlement holds its deposits to — his weekly pay's 3 days. */
+  test("a series' own tolerance replaces detection's: his weekly 3 days keep a gap of 4 to 10", () => {
+    expect([3, 4, 10, 11].map((gap) => gapKeepsStep(gap, "weekly", 3))).toEqual([false, true, true, false]);
+    expect([24, 25, 34, 35].map((gap) => gapKeepsStep(gap, "monthly", 3))).toEqual([false, true, true, false]);
   });
 });
 
