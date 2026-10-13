@@ -63,6 +63,13 @@ export function addMonths(monthKey: string, delta: number): string {
   return `${pad(y, 4)}-${pad(m, 2)}`;
 }
 
+/** How many months `to` lies after `from` — negative before it; `addMonths(from, monthsBetween(from, to)) === to`. */
+export function monthsBetween(from: string, to: string): number {
+  const [fy, fm] = monthParts(from);
+  const [ty, tm] = monthParts(to);
+  return (ty - fy) * 12 + (tm - fm);
+}
+
 /** "July 2026" — built from the const name array, no Date locale surprises. */
 export function monthLabel(monthKey: string): string {
   const [year, month] = monthParts(monthKey);
