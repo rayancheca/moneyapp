@@ -149,6 +149,18 @@ describe("the loop bound", () => {
     // the day count is still exactly true, whatever the close count was capped to
     expect(holes[0]!.days).toBe(1430);
   });
+
+  test("a monthly cycle's hole is held to the same bound, the close that ends it included", () => {
+    // six years on the 2nd: 72 statements, walked for 59 and the one at `to`
+    const holes = statementHoles(
+      [
+        { start: "2015-01-03", end: "2015-02-02" },
+        { start: "2021-02-03", end: "2021-03-02" },
+      ],
+      monthly(2),
+    );
+    expect(holes[0]!.closes).toBe(MAX_CLOSES_PER_HOLE);
+  });
 });
 
 /*
@@ -303,5 +315,120 @@ describe("the cycle a hole was on, read from the hole itself", () => {
       const two = holesOf(CHASE_CHECKING_PERIODS.filter((_, j) => j !== i && j !== i + 1)).map((h) => h.closes);
       expect({ missing, two }).toEqual({ missing, two: [2] });
     }
+  });
+
+  /*
+   * ⛔ A hole shorter than one cycle is the ONE statement that ends it: `to` is a close, and a monthly cycle
+   * cannot fit two into less than a month. 🔴 The walk counted none and the hole read no count: a close that
+   * lands LATE opens the hole past the cycle's own day, and a month stepped on that day overshoots `to` by more
+   * than the wander — the late close is not the newest any more, so the trim has dropped it from the tolerance.
+   * Missing statements' header sums only the holes it could count, so it read 5 statements beside 179 days.
+   */
+  test("a statement missing right after a late close is one statement, and the header counts it", () => {
+    // Capital One's next closes as 5ac1588 queued them — Oct 9, Nov 9, then one late on Dec 13 — and Jan 9's
+    // statement never imported, Feb 9's imported
+    const periods: StatementPeriodRef[] = [
+      ...DISCOVER_PERIODS,
+      { start: "2026-09-09", end: "2026-10-09" },
+      { start: "2026-10-10", end: "2026-11-09" },
+      { start: "2026-11-10", end: "2026-12-13" },
+      { start: "2027-01-10", end: "2027-02-09" },
+    ];
+    // the cycle is still the 9th, and Dec 13 is its wander no longer: walked on the 13th, the step is Jan 13
+    expect(statementCadence(periods.map((p) => p.end))).toMatchObject({
+      rhythm: { kind: "day-of-month", day: 9 },
+      toleranceDays: 2,
+    });
+    const holes = holesOf(periods);
+    expect(holes.at(-1)).toEqual({ from: "2026-12-14", to: "2027-01-09", days: 27, closes: 1 });
+    expect(holes.map((h) => h.closes)).toEqual([1, 1, 1, 2, 1]);
+  });
+
+  /*
+   * 🔴 …and TWO missing after it read one. The review, 2026-10-12, on a copy of his ledger (zz-probe2): the walk
+   * steps on the late close's 13th, so every step lands four days late, and the one for the statement that ends
+   * the hole overshoots `to` past the wander — Jan 13 counted, Feb 13 past Feb 9 + 2. The floor above lifted only
+   * a count of none. Missing statements read "58 days, 1 statement" and "6 statements · 210 days" for 7, on a
+   * cycle the schedule beside it calls "closes around the 9th". `to` is a close: it counts itself, and the walk
+   * counts only the closes more than half a cycle before it.
+   */
+  test("two statements missing after a late close are two — the walk's own lateness never eats the last", () => {
+    const periods: StatementPeriodRef[] = [
+      ...DISCOVER_PERIODS,
+      { start: "2026-09-09", end: "2026-10-09" },
+      { start: "2026-10-10", end: "2026-11-09" },
+      { start: "2026-11-10", end: "2026-12-13" },
+      // Jan 9 and Feb 9 never imported, Mar 9 imported
+      { start: "2027-02-10", end: "2027-03-09" },
+    ];
+    expect(statementCadence(periods.map((p) => p.end)).rhythm).toEqual({ kind: "day-of-month", day: 9 });
+    const holes = holesOf(periods);
+    expect(holes.at(-1)).toEqual({ from: "2026-12-14", to: "2027-02-09", days: 58, closes: 2 });
+    // the header: 7 statements · 210 days
+    expect(holes.map((h) => h.closes)).toEqual([1, 1, 1, 2, 2]);
+    expect(holes.reduce((n, h) => n + h.days, 0)).toBe(210);
+  });
+
+  /*
+   * ⚠️ A step exactly half a cycle before `to` is `to`'s own close. Discover's 45-day statement Mar 19 → May 2,
+   * 2025 moved its cycle from the 18th to the 2nd, so a walk on the 18th sits fifteen days before every close on
+   * the 2nd after it — May 18 before Jun 2 — and counted on its own puts one statement too many in a hole across
+   * the move. Measured on his ledger copy 2026-10-12 by dropping runs of his real statements.
+   */
+  test("a hole across Discover's move from the 18th to the 2nd counts its statements, not the walk's steps", () => {
+    const without = (...ends: string[]) => DISCOVER_PERIODS.filter((p) => !ends.includes(p.end));
+    // the statement that moved the cycle, beside Mar 18's already missing: Mar 18 and May 2
+    expect(holesOf(without("2025-05-02"))[2]).toEqual({ from: "2025-02-19", to: "2025-05-02", days: 73, closes: 2 });
+    // …and the one after it too: Mar 18, May 2 and Jun 2
+    expect(holesOf(without("2025-05-02", "2025-06-02"))[2]).toEqual({
+      from: "2025-02-19",
+      to: "2025-06-02",
+      days: 104,
+      closes: 3,
+    });
+  });
+
+  test("a hole that ends at an EARLY close counts it beside the one before it", () => {
+    // Nov 9 and an early Dec 5 never imported: walked on the 9th, the second step is Dec 9, past Dec 5 + the
+    // wander — wrong before the moved-cycle rule changed too (the review, 2026-10-12)
+    const periods: StatementPeriodRef[] = [
+      ...DISCOVER_PERIODS,
+      { start: "2026-09-09", end: "2026-10-09" },
+      { start: "2026-12-06", end: "2027-01-09" },
+    ];
+    expect(holesOf(periods).at(-1)).toEqual({ from: "2026-10-10", to: "2026-12-05", days: 57, closes: 2 });
+  });
+});
+
+describe("what a hole shorter than its cycle's step holds", () => {
+  test("a month-end cycle counts the one close that ends the hole, even after an off-cycle close", () => {
+    // an older statement that closed mid-month — the cycle before a move to month-end — then a short one
+    // missing: the month-end walk from Jan 15 steps to Feb 29, past the Jan 31 that ends the hole
+    const monthEnd: StatementCadence = { rhythm: { kind: "month-end" }, toleranceDays: 1, closes: 12 };
+    const holes = statementHoles(
+      [
+        { start: "2023-12-16", end: "2024-01-15" },
+        { start: "2024-02-01", end: "2024-02-29" },
+      ],
+      monthEnd,
+    );
+    expect(holes).toEqual([{ from: "2024-01-16", to: "2024-01-31", days: 16, closes: 1 }]);
+  });
+
+  test("⛔ an every-n-days rhythm that puts no close in the hole still refuses to count it", () => {
+    /*
+     * Not a monthly cycle, so a window shorter than its step can hold several statements: three monthly
+     * statements with two and three missing between them measure `every-n-days: 107`. That rhythm is
+     * contradicted by the hole — it ends at a close the rhythm did not put there — and "1 statement" would be
+     * a floor printed as a count. statement-gaps.test.ts pins the panel's side of it.
+     */
+    const periods: StatementPeriodRef[] = [
+      { start: "2024-01-19", end: "2024-02-18" },
+      { start: "2024-04-19", end: "2024-05-18" },
+      { start: "2024-08-19", end: "2024-09-18" },
+    ];
+    const cadence = statementCadence(periods.map((p) => p.end));
+    expect(cadence.rhythm).toEqual({ kind: "every-n-days", days: 107 });
+    expect(statementHoles(periods, cadence).map((h) => h.closes)).toEqual([null, null]);
   });
 });
