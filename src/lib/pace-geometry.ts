@@ -89,9 +89,15 @@ export function paceGeometry(input: PaceGeometryInput): PaceGeometry | null {
   // Filled, because `projectedCents` is `upfront + (actualToDate − upfront) ×
   // daysInMonth / elapsed` (`computePace`) — the car's up-front money counted
   // once and never extrapolated (owner decision 2026-10-07, §6A 51), the rest a
-  // straight line — and so always owns the top of the scale. That pins the
-  // measured line's ceiling to `elapsed / daysInMonth` of the band on every day
-  // of every month, and only a month holding up-front money lifts it above.
+  // straight line — and so owns the top of the scale whenever `upfront` is no
+  // more than `actualToDate`. With none, that pins the measured line's ceiling
+  // to `elapsed / daysInMonth` of the band; up-front money between zero and
+  // `actualToDate` lifts it above. ⛔ Those bounds are the caller's, not this
+  // function's: `computePace` adds only outflows to both sums, the up-front ones
+  // among them, so a refunded deposit is a refund and never a negative up-front
+  // sum (which would sink the ceiling below `elapsed / daysInMonth`). A
+  // projection under the measured peak — an up-front sum over `actualToDate` —
+  // hands the peak the top (`max`).
   // Early in a month it is squeezed into the bottom tenth no matter what was
   // spent: measured on the fixture, an 8-day range came to 2.0px against a
   // 1.75px stroke, so a staircase rendered as a flat hairline. A region against

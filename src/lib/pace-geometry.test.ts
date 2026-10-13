@@ -129,6 +129,23 @@ describe("paceGeometry", () => {
     expect(geo.todayX).toBe(x(3));
   });
 
+  /**
+   * What owns the top of the scale, as the comment over `area` states it (corrected after the review of the §6A 51
+   * pace: it said the projection "always" owns it). 8 of 31 days measured, $80.00 spent so far.
+   */
+  test("the line's ceiling: elapsed/days with nothing up front, higher with some, the whole band under the peak", () => {
+    const eightDays = month(31, [1000, 2000, 3000, 4000, 5000, 6000, 7000, 8000]);
+    const top = PACE_VH - 4;
+    const ceiling = (projectedCents: number): number =>
+      (top - paceGeometry({ actualCents: eightDays, projectedCents })!.todayY) / (PACE_VH - 8);
+    // nothing up front: 8_000 × 31/8 — the line reaches 8/31 of the band, to the rounding of a tenth of a pixel
+    expect(ceiling(31_000)).toBeCloseTo(8 / 31, 2);
+    // $40.00 of it up front, counted once: 4_000 + 4_000 × 31/8 — higher
+    expect(ceiling(4_000 + 15_500)).toBeGreaterThan(8 / 31 + 0.1);
+    // a projection under the measured peak (an up-front sum over the spend so far): the peak takes the whole band
+    expect(ceiling(5_000)).toBe(1);
+  });
+
   test("today's marker sits on the last measured point", () => {
     const geo = paceGeometry({ actualCents: JULY, projectedCents: JULY_PROJECTED })!;
     expect(geo.solid.endsWith(`V ${geo.todayY}`)).toBe(true);

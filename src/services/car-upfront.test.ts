@@ -523,6 +523,22 @@ describe("every spending rate leaves the up-front money out (owner decision 2026
   });
 
   /**
+   * The dashboard chart's scale rests on this (`lib/pace-geometry`): the projection owns the top only while the
+   * up-front sum is between zero and the spend so far. A refund of the deposit — before the lease starts, so up-front
+   * money by the card's rule, either sign — is a refund to the pace, outside both sums: never a negative up-front sum.
+   */
+  test("the pace's up-front sum stays between zero and the spend so far when the deposit comes back", () => {
+    const day = "2026-09-20";
+    insertTxn({ postedOn: "2026-09-05", amountCents: -DEPOSIT, categoryId: carId, accountId: cardId });
+    const pace = cashFlowByPeriod(bundle.db, resolvePeriod({}, day), day).pace!;
+
+    expect(pace.upfrontToDateCents).toBe(0);
+    // groceries, a premium and the lease: $1,502.62 in 20 of 30 days, at its pace
+    expect(pace.actualToDateCents).toBe(45_000 - INSURANCE - LEASE);
+    expect(pace.projectedCents).toBe(Math.round(((45_000 - INSURANCE - LEASE) * 30) / 20));
+  });
+
+  /**
    * /budgets' run-rate is the same arithmetic per category. Its one-off guard catches a charge bigger than the whole
    * plan; on a $7,000 Car budget neither the $5,000 nor the $1,100 is, and both were extrapolated over the rest of
    * August. The up-front money is spent — the row is graded on it — but it is no rate.
