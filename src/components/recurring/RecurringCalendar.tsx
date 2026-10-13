@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useRef, useState, useTransition } from "react";
 import Link from "next/link";
 import { loadRecurringMonthAction } from "@/app/recurring/actions";
 import { Badge } from "@/components/ui/Badge";
@@ -12,7 +12,7 @@ import { Sheet } from "@/components/ui/Sheet";
 import { toast } from "@/components/ui/Toast";
 import { compactDayTotal, dayTotalCents, dayWeight, heaviestDayCents } from "@/lib/calendar-day-weight";
 import { heatMixPercent } from "@/lib/calendar-heat";
-import type { CalendarDay } from "@/lib/calendar-math";
+import { addMonths, monthsBetween, type CalendarDay } from "@/lib/calendar-math";
 import { RECURRING_JARGON } from "@/lib/jargon";
 import { flowEntryOf } from "@/lib/month-flow";
 import { CALENDAR_DENSITY_CLASS } from "./recurring-view-spec";
@@ -280,10 +280,21 @@ export function RecurringCalendar({ initialMonth, today, density = "tall", onMon
   const [month, setMonth] = useState(initialMonth);
   const [openDay, setOpenDay] = useState<string | null>(null);
   const [, startTransition] = useTransition();
+  /*
+   * The month last ASKED for, which a press steps from — not the month on screen. 🔴 The grid steps from the month it
+   * shows, so a press landing while the last one's month was still loading asked for that same month again and was
+   * lost: e2e's 24 presses back from July 2026 stopped at May 2025, June 2025 or August 2024 (gate of 60d0d96,
+   * 2026-10-13, once each month's read had grown by a few milliseconds). Only the newest ask may draw.
+   */
+  const asked = useRef(initialMonth.monthKey);
 
-  function changeMonth(monthKey: string): void {
+  function changeMonth(stepTo: string): void {
+    const monthKey = addMonths(asked.current, monthsBetween(month.monthKey, stepTo));
+    asked.current = monthKey;
     startTransition(async () => {
       const r = await loadRecurringMonthAction({ monthKey });
+      // a later press asked for another month: this answer is stale, and the newest one draws
+      if (asked.current !== monthKey) return;
       if (r.ok) {
         setMonth(r.data);
         // the whole month, not its key — the tab badge above counts it too
