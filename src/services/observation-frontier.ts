@@ -1,5 +1,5 @@
 import { cache } from "react";
-import { and, asc, desc, eq, isNotNull, ne, sql } from "drizzle-orm";
+import { asc, desc, eq, ne, sql } from "drizzle-orm";
 import type { AppDatabase } from "@/db/client";
 import { accounts } from "@/db/schema/accounts";
 import { balanceAnchors } from "@/db/schema/balances";
@@ -9,7 +9,7 @@ import { transactions } from "@/db/schema/transactions";
 import { compareDates } from "@/lib/dates";
 import type { DueDayReading } from "@/lib/occurrence-verdict";
 import { billingCarriers } from "./billing-carriers";
-import { accountsAwaitingStatements, silenceReadThrough } from "./cash-wallet-rule";
+import { silenceMeasuredThroughBySeries } from "./cash-earnings";
 
 /**
  * "Through which day has the ledger actually been SHOWN this account?"
@@ -21,6 +21,10 @@ import { accountsAwaitingStatements, silenceReadThrough } from "./cash-wallet-ru
  * verified through a day on which nothing has been imported since. The calendar
  * needs the weaker fact, because the only thing it is entitled to say is whether
  * a silent day was ever looked at.
+ *
+ * ⚠️ …no longer for a bill's due day: the calendar's ✕ and every "not posted" read the day its "running late" chip
+ * measures to, each account to its CHECKED balance (`dueDayReadings`, his decision 62, 2026-10-12, review of 9940f1c)
+ * — one reading, so the chip never says "cannot be called late yet" beside a ✕. This still dates spending.
  *
  * ## Two arbiters, deliberately
  *
@@ -284,55 +288,6 @@ export function ledgerReaches(db: AppDatabase): string | null {
 }
 
 /**
- * Which accounts a series' charges land on — its own `account_id` if it has one,
- * plus every account its tagged postings have actually touched.
- *
- * Both, not either. Ten of the twenty-six live series carry no `account_id` at
- * all — including every commitment the owner registered by hand, which is to say
- * rent, the car lease, the car insurance, FPL, Breezeline and the cash job — so
- * the column alone answers nothing for exactly the series that matter most.
- * And the column alone is wrong even where it is set: Netflix names Chase
- * Sapphire while its history posted to Chase Sapphire AND Discover.
- *
- * ⚖️ …and a series BILLED INSIDE another's payment (§6A 59) is paid where its carrier is: its carrier's accounts are
- * added to its own, as its late and lapse already borrow them (`landingAccountsBySeries`). 🔴 With none of its own,
- * `Rent utilities & fees` was read on no account at all: once the rent's account is read past a 1st the rent did not
- * pay, the rent's Oct 1 read "not posted" in warning colour while its utilities' — the same payment — still read "no
- * import has covered it yet", on the runway, its page and the calendar alike (billed-with.test, 2026-10-08). The
- * carrier is the live series, followed through any merge (`billingCarriers`).
- */
-export function seriesAccountIds(db: AppDatabase): Map<string, Set<string>> {
-  const bySeries = new Map<string, Set<string>>();
-  const add = (seriesId: string, accountId: string): void => {
-    const set = bySeries.get(seriesId);
-    if (set) set.add(accountId);
-    else bySeries.set(seriesId, new Set([accountId]));
-  };
-
-  for (const s of db
-    .select({ id: recurringSeries.id, accountId: recurringSeries.accountId })
-    .from(recurringSeries)
-    .where(isNotNull(recurringSeries.accountId))
-    .all()) {
-    if (s.accountId) add(s.id, s.accountId);
-  }
-
-  for (const r of db
-    .select({ seriesId: transactions.recurringSeriesId, accountId: transactions.accountId })
-    .from(transactions)
-    .where(and(eq(transactions.status, "active"), isNotNull(transactions.recurringSeriesId)))
-    .all()) {
-    if (r.seriesId) add(r.seriesId, r.accountId);
-  }
-
-  for (const [id, carrier] of billingCarriers(db)) {
-    for (const accountId of bySeries.get(carrier.id) ?? []) add(id, accountId);
-  }
-
-  return bySeries;
-}
-
-/**
  * The frontier that governs one series: the EARLIEST among the accounts it bills
  * on, or `null` when it cannot be attributed to any imported account at all.
  *
@@ -341,6 +296,11 @@ export function seriesAccountIds(db: AppDatabase): Map<string, Set<string>> {
  * Venture X, both have to have been looked at; if either is unimported the
  * charge could be sitting in it. Taking the latest would let one fresh account
  * vouch for a stale one.
+ *
+ * ⚠️ A bill's due days are no longer read here: since his decision 62 (2026-10-12) `dueDayReadings` reads the day its
+ * "running late" chip measures to (`silenceMeasuredThroughBySeries` — the earliest of the accounts it posts to NOW, as
+ * here). 🔴 Here, over every account it ever paid from, the rent's due days were read to Aug 12 (his ledger copy,
+ * 2026-10-12) — Chase Checking, which paid ONE rent, in July — while its chip read Wells Fargo through Sep 24.
  *
  * ⚠️ There is deliberately NO ledger-wide fallback. The first version took the
  * earliest frontier in the whole ledger for an unattributable series, and it was
@@ -404,50 +364,34 @@ export function accountsThatDate(
 }
 
 /**
- * `observationFrontier` as a SILENCE is graded against: every account a statement is still coming for at its newest
- * import, and every one no statement will come for — archived, or a cash wallet — through TODAY
- * (`silenceReadThrough`, the rule a series' running late and lapse are measured by). What the calendar grades a past
- * bill `missed` against `not_imported` with, and what the runway's arrears call "never posted" against "no import has
- * covered it yet" with.
- *
- * ⚖️ 2026-10-08 (review of 98acbeb): an archived account is never imported again, so its quiet counts as read. 🔴 Read
- * to its frozen day (review of e00e6b8): with Venture X archived, at 2026-11-20, Breezeline's chip said "running late"
- * while the calendar filed its Nov 8 $50 "not yet known" and the runway said "no import has covered it yet" — waiting
- * for a statement /imports never asks for, until the series lapsed on Dec 7.
- *
- * ⚠️ Investment accounts stay out, as above. An account never imported holds no day while a statement is still coming
- * for it — `frontierForSeries`' `null` — and today once none is.
- *
- * ⚡ Memoised for the render, as `observationFrontier` is.
- */
-export const silenceObservedThrough = cache(function silenceObservedThrough(
-  db: AppDatabase,
-  today: string,
-): ObservationFrontier {
-  const { byAccount } = observationFrontier(db);
-  const awaiting = accountsAwaitingStatements(db);
-  const out = new Map<string, string>();
-  for (const { id } of db.select({ id: accounts.id }).from(accounts).where(ne(accounts.type, "investment")).all()) {
-    const through = silenceReadThrough(awaiting, id, byAccount.get(id) ?? null, today);
-    if (through !== null) out.set(id, through);
-  }
-  return { byAccount: out };
-});
-
-/**
  * ⚖️ How far the ledger has read the days each series' bill can be paid on (`DueDayReading`) — what `dueDayIsRead`
- * grades, his decision 60 (2026-10-08): the silence frontier of every account the series bills on, the earliest of them
- * (`frontierForSeries` over `silenceObservedThrough` and `seriesAccountIds`, its carrier's accounts included), and its
- * grace — the widest window a payment that pays it may post in: its own `toleranceDays`, and for a series billed inside
- * another's payment its carrier's too, whose payments pay it by the carrier's own test (`carrierPaymentsBySeries`).
+ * grades, his decision 60 (2026-10-08): the day its "running late" chip and its lapse measure its silence to
+ * (`silenceMeasuredThroughBySeries`), and its grace — the widest window a payment that pays it may post in: its own
+ * `toleranceDays`, and for a series billed inside another's payment its carrier's too, whose payments pay it by the
+ * carrier's own test (`carrierPaymentsBySeries`).
+ *
+ * ⚖️ His decision 62 (2026-10-12): read where the bill posts NOW — the accounts its LAST TWO PAYMENTS posted to, or the
+ * one it names, its carrier's added (`landingAccountsBySeries`) — never every account it ever paid from. 🔴 Over every
+ * account (`seriesAccountIds`, measured on his ledger copy 2026-10-12) the rent's due days were read to Aug 12 — Chase
+ * Checking, which paid ONE rent, in July — while its chip read Wells Fargo through Sep 24: once Wells Fargo's next
+ * statement showed no rent, the chip would say "running late" while the rent's page said "no import has covered it
+ * yet" until Chase Checking, an account it no longer pays from, was imported past Oct 4.
+ *
+ * ⛔ THE CHIP'S DAY ITSELF, never its accounts read another way: each account to its CHECKED balance — "statements
+ * cover", his words for a ✕ (60) as for a lapse (57, the checked-through day) — the earliest of them, nothing read while
+ * one it may land in has no checked record, and an account no statement is coming for (archived, a cash wallet) read
+ * through today (`silenceReadThrough`, 2026-10-08). 🔴 Its accounts each read to their newest imported row (review of
+ * 9940f1c): with Wells Fargo's rows imported through Oct 21 and its balances checked only through Sep 24, the chip said
+ * "Awaiting statements" — Sep 24 the last day checked, "so it cannot be called late yet" — beside an Oct 1 ✕, "Already
+ * due, and not posted" and "never posted". On his ledger copy 2026-10-12 only three dismissed series read a different
+ * day for it: they post to Robinhood Cash, imported through Sep 9, checked through Aug 31.
  *
  * ⛔ ONE READING for the calendar's ✕ (`settledVerdict`) and the arrears' read half (`arrearsReadCents`), so the
  * accounts and the grace a due day is read by are chosen once. 🔴 Graded on its own 3 days, a utilities bill carried by
  * a rent with 5 would say "not posted" on Oct 4 beside a rent still quiet until Oct 6 — one payment, two answers.
  */
 export function dueDayReadings(db: AppDatabase, today: string): (seriesId: string) => DueDayReading {
-  const frontier = silenceObservedThrough(db, today);
-  const accountsBySeries = seriesAccountIds(db);
+  const measuredThrough = silenceMeasuredThroughBySeries(db, today);
   const carriers = billingCarriers(db);
   const tolerance = new Map(
     db
@@ -460,7 +404,7 @@ export function dueDayReadings(db: AppDatabase, today: string): (seriesId: strin
     const own = tolerance.get(seriesId) ?? 0;
     const carrierId = carriers.get(seriesId)?.id;
     return {
-      observedThrough: frontierForSeries(frontier, accountsBySeries.get(seriesId)),
+      observedThrough: measuredThrough(seriesId),
       graceDays: carrierId === undefined ? own : Math.max(own, tolerance.get(carrierId) ?? 0),
     };
   };

@@ -15,6 +15,7 @@ import { recurringSeries } from "@/db/schema/recurring";
 import { transactions } from "@/db/schema/transactions";
 import { seedDatabase } from "@/db/seed";
 import { createAccount } from "@/services/accounts";
+import { checkedThrough } from "@/services/checked-days-fixture";
 import { runwayCard } from "@/services/committed";
 import { RunwayCard } from "./RunwayCard";
 
@@ -260,6 +261,20 @@ test("arrears on days the ledger has read keep the negative tone", () => {
       updatedAt: now,
     })
     .run();
+  // …a row in it and its balances checked through the statement: the day its chip measures to, which the ✕ reads (his
+  // decision 62, 2026-10-12) — an account that never had a row is its owner's word, never checked (`accountCoverage`)
+  bundle.db
+    .insert(transactions)
+    .values({
+      accountId: checking,
+      postedOn: "2026-09-14",
+      amountCents: -450,
+      rawDescription: "COFFEE",
+      normalizedDescription: "COFFEE",
+      dedupeHash: "chk-coffee-2026-09-14",
+    })
+    .run();
+  checkedThrough(bundle.db, checking, "2026-09-14", "2026-08-15");
   bundle.db
     .insert(recurringSeries)
     .values({

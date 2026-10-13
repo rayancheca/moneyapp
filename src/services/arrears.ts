@@ -244,23 +244,27 @@ export function arrearsInWindow(
  * 🔴 The runway said "never posted" of all $2,296.20 on 2026-10-07 while October was
  * imported for none of those accounts. ⛔ NO NEW RULE: "has the ledger read this
  * bill's day" is the recurring calendar's — `dueDayIsRead` over `dueDayReadings`
- * (`frontierForSeries` over `silenceObservedThrough` and `seriesAccountIds`, and
- * the series' grace), the predicate `settledVerdict` grades `missed` against
+ * (the day its "running late" chip measures to, `silenceMeasuredThroughBySeries`,
+ * and the series' grace), the predicate `settledVerdict` grades `missed` against
  * `not_imported` with — and "is this payment late" is still `overdueForSeries`,
  * asked again only up to the last due day read (`lastDueDayRead`). A series with
  * no account the ledger knows reads nothing: the calendar's `null`, and the
  * cautious answer.
  *
- * ⛔ NOT pay's "where it lands now" (`landingAccountsBySeries`, 2026-10-07). "Never posted" is a NEGATIVE claim, so
- * every account a bill has paid from must be read past its day — the calendar's rule, which grades `missed` against
- * `not_imported` with the same accounts (`seriesAccountIds`: the named account AND the history; Netflix names Sapphire
- * and has billed Discover). Fewer accounts here would let the card say "never posted" of a day /recurring calls not
- * imported. Measured on a copy of his ledger 2026-10-08: rent names no account, so pay's rule reads the same three
- * (Venture X, Chase Checking, Wells Fargo) to the same Aug 12; it posts from Wells Fargo now, read only through
- * Sep 24, so its Oct 1 payment is unread under either rule and "no import has covered it yet" is true.
+ * ⚖️ Read where the bill posts NOW — the accounts its last two payments posted to, or the one it names
+ * (`landingAccountsBySeries`) — his decision 62 (2026-10-12): the accounts its "running late" chip and its lapse are
+ * measured on. "Never posted" is still a negative claim, so every account it may land in now must be read past its
+ * day — and the calendar grades `missed` against `not_imported` on the same accounts, so the card never says "never
+ * posted" of a day /recurring calls not imported. 🔴 It was every account the bill had EVER paid from
+ * (`seriesAccountIds`): on his ledger copy 2026-10-12 the rent's Oct 1 waited for Chase Checking's Aug 12 — one July
+ * payment — while its chip read Wells Fargo through Sep 24, so once Wells Fargo showed no rent its chip would say
+ * "running late" beside "no import has covered it yet" here, until Chase Checking was imported past Oct 4. ⛔ …and on
+ * the chip's DAY, each account to its checked balance: read to its newest imported row (review of 9940f1c), rows past
+ * Wells Fargo's last checked balance made this "never posted" beside a chip saying "Awaiting statements".
  *
- * ⚖️ A series billed inside another's payment is read on its carrier's accounts too (`seriesAccountIds`, §6A 59), so
- * its Oct 1 is "not posted" exactly when the rent's is and quiet exactly when the rent's is — never one of each.
+ * ⚖️ A series billed inside another's payment is read on its carrier's accounts too (`landingAccountsBySeries`,
+ * §6A 59), so its Oct 1 is "not posted" exactly when the rent's is and quiet exactly when the rent's is — never one of
+ * each.
  *
  * ⚖️ A due day is read once its accounts are imported through the day PLUS its grace — the `toleranceDays` a covering
  * posting may still land within (`overdueForSeries`, `paymentFor`) — his decision 60 (2026-10-08), here and in the
@@ -270,7 +274,7 @@ export function arrearsInWindow(
  * (imported through due + grace − 1: quiet; through due + grace: not posted) on every surface.
  *
  * ⚖️ …and an account no statement will come for — archived, or a cash wallet — is read through today, the calendar's
- * frontier for the same reason (`silenceObservedThrough`): its bills' silence is measured there (2026-10-08). 🔴 Read
+ * frontier for the same reason (`silenceReadThrough`): its bills' silence is measured there (2026-10-08). 🔴 Read
  * to an archived card's last import (review of e00e6b8), Venture X's Breezeline was "running late" on /recurring and
  * its Nov 8 still "no import has covered it yet" here, at 2026-11-20 — an import /imports never asks for.
  *

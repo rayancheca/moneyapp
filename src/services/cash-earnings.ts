@@ -112,8 +112,9 @@ const POSTING_DAYS_THAT_SAY_WHERE = 2;
  *
  * ⛔ ONE rule for every caller — the dashboard's income card, /spending's note
  * (`cashEarningsReadings`), the passed-payday sentence on /budgets and
- * /recurring (`unbankedIncomeForSeries`) and whether a series is running late
- * (`silenceMeasuredThroughBySeries`) — so no two can name a different day.
+ * /recurring (`unbankedIncomeForSeries`), whether a series is running late
+ * (`silenceMeasuredThroughBySeries`) and — ⚖️ his decision 62 (2026-10-12) — whether a bill's due day is read, the
+ * calendar's ✕ and every "not posted" (`dueDayReadings`) — so no two can name a different day.
  *
  * ⛔ Chosen over EVERY account it posted to, archived ones too — whether a statement is still coming for one is the
  * frontier's question (`silenceMeasuredThroughBySeries`), never this one's. 🔴 Chosen among the accounts still
@@ -281,8 +282,8 @@ export const checkedThroughBySeries = cache(function checkedThroughBySeries(
 /**
  * Per series, the day its silence is measured to — whether it is running late, "Awaiting statements" or lapsed
  * (`seriesStaleness`, `seriesHasLapsed`, §6A 57): `checkedThroughBySeries`' day, except that an account no statement
- * is coming for counts as read through TODAY — `silenceReadThrough`, the rule the calendar and the runway's arrears
- * grade a past bill by too (`silenceObservedThrough`).
+ * is coming for counts as read through TODAY — `silenceReadThrough`. ⚖️ The very day the calendar's ✕ and the runway's
+ * arrears grade a past bill against (`dueDayReadings`, his decision 62, 2026-10-12, review of 9940f1c).
  *
  * ⚖️ An account a statement is still COMING for (`accountsAwaitingStatements` — not archived, not a cash wallet)
  * holds a series back to the day its statements have covered; one no statement will ever cover does not (2026-10-08,

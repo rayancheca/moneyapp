@@ -14,6 +14,7 @@ import { transactions } from "@/db/schema/transactions";
 import { dedupeHash } from "@/lib/hash";
 import { normalizeDescription } from "@/lib/normalize";
 import { createAccount } from "./accounts";
+import { checkedThrough } from "./checked-days-fixture";
 import { detectRecurringSeries, setSeriesStatus } from "./recurring";
 import { MIN_OCCURRENCES } from "./recurring";
 import { classifyPostedAmount, recurringCalendar, scheduleIsProven } from "./recurring-calendar";
@@ -63,6 +64,15 @@ function cardCheckedThrough(from: string, to: string): void {
   for (let day = from; day <= to; day = addDays(day, 1)) {
     bundle.db.insert(dailyBalances).values({ accountId: cardId, day, balanceCents: 0, basis: "derived" }).run();
   }
+}
+
+/**
+ * An import of the card has reached `day`: a row on it, and its balance walk checked through it — the day its chip
+ * measures to, which a bill's ✕ reads (`dueDayReadings`, his decision 62, 2026-10-12).
+ */
+function cardImportedThrough(day: string): void {
+  insertTxn({ postedOn: day, amountCents: -2200, rawDescription: "GROCERY" });
+  checkedThrough(bundle.db, cardId, day);
 }
 
 /** A monthly Netflix series charging on the 15th; the June charge can drift. */
@@ -326,7 +336,7 @@ describe("recurringCalendar", () => {
     // was wrong by thirteen days, and a red ✕ reporting the biller delinquent on
     // a date the app had invented.
     insertTxn({ postedOn: "2026-06-15", amountCents: -1421, rawDescription: "FPL ELEC PYMT" });
-    insertTxn({ postedOn: "2026-07-18", amountCents: -2200, rawDescription: "GROCERY" });
+    cardImportedThrough("2026-07-18");
     const id = bundle.db
       .insert(recurringSeries)
       .values({
@@ -358,7 +368,7 @@ describe("recurringCalendar", () => {
     // The car lease: registered by hand for a date the owner chose, with no
     // postings at all. Nothing could have been extrapolated, so the date is his
     // statement — and a payment that never arrives is a real miss.
-    insertTxn({ postedOn: "2026-07-18", amountCents: -2200, rawDescription: "GROCERY" });
+    cardImportedThrough("2026-07-18");
     bundle.db
       .insert(recurringSeries)
       .values({
@@ -402,7 +412,7 @@ describe("recurringCalendar", () => {
    */
   test("a typed schedule with ONE hand-linked charge is not graded missed — and naming the account it bills on makes it not imported", () => {
     insertTxn({ postedOn: "2026-06-12", amountCents: -35758, rawDescription: "PROGRESSIVE INS" });
-    insertTxn({ postedOn: "2026-07-18", amountCents: -2200, rawDescription: "GROCERY" });
+    cardImportedThrough("2026-07-18");
     const id = bundle.db
       .insert(recurringSeries)
       .values({
@@ -444,6 +454,7 @@ describe("recurringCalendar", () => {
         dedupeHash: "checking-row-2026-07-04",
       })
       .run();
+    checkedThrough(bundle.db, checkingId, "2026-07-04");
     bundle.db.update(recurringSeries).set({ accountId: checkingId }).where(eq(recurringSeries.id, id)).run();
     expect(insuranceOn11th()).toMatchObject({ state: "unsettled", unsettledReason: "not_imported" });
   });
@@ -470,7 +481,7 @@ describe("recurringCalendar", () => {
     // same account dated after the occurrence proves the import walked past it,
     // so the silence on the 15th is a real answer.
     buildMonthlyNetflix();
-    insertTxn({ postedOn: "2026-07-18", amountCents: -2200, rawDescription: "GROCERY" });
+    cardImportedThrough("2026-07-18");
     detectRecurringSeries(bundle.db, TODAY);
     const july = recurringCalendar(bundle.db, "2026-07", "2026-07-20");
     const day = july.entriesByDay["2026-07-15"];
@@ -741,7 +752,7 @@ describe("G2 (a) — a date the owner typed does not make one charge a proven sc
   test("one linked charge + a user next date: the miss reads too few charges to grade, not missed", () => {
     insertTxn({ postedOn: "2026-06-12", amountCents: -35758, rawDescription: "PROGRESSIVE INS" });
     // the card is imported past the 11th, so the reason is the schedule, not the import
-    insertTxn({ postedOn: "2026-07-18", amountCents: -2200, rawDescription: "GROCERY" });
+    cardImportedThrough("2026-07-18");
     const id = bundle.db
       .insert(recurringSeries)
       .values({

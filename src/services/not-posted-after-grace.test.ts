@@ -17,6 +17,7 @@ import { alreadyDueWords } from "@/components/recurring/labels";
 import { seriesEndInput, seriesEndLines } from "@/components/recurring/end-radius";
 import { arrearsThisMonth } from "./arrears";
 import { budgetPaceStatuses, createBudget } from "./budgets";
+import { checkedThrough } from "./checked-days-fixture";
 import { committedBook } from "./committed";
 import { forecastCurrentMonth } from "./forecast";
 import { recurringCalendar } from "./recurring-calendar";
@@ -127,9 +128,13 @@ afterEach(() => {
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
-/** An import of the checking account has reached `day` — a row of no series on it (`observationFrontier`). */
+/**
+ * An import of the checking account has reached `day` — a row of no series on it (`observationFrontier`) and its
+ * balances checked through it (`checkedThrough`): the chip's day, which the ✕ reads (his decision 62, 2026-10-12).
+ */
 function importedThrough(day: string): void {
   bundle.db.insert(transactions).values(row(`t-coffee-${day}`, day, -450, null, "COFFEE")).run();
+  checkedThrough(bundle.db, "acct", day);
 }
 
 /** What every surface that says a bill came due says of these series' Oct 1, at TODAY. */
@@ -294,7 +299,7 @@ describe("a bill read part of the way is split by which due days' grace the impo
 
 describe("an account no statement will come for is read through today — and still waits for the grace", () => {
   /*
-   * ⚖️ An archived account is read through the day of the question (`silenceObservedThrough`, 2026-10-08), so its
+   * ⚖️ An archived account is read through the day of the question (`silenceReadThrough`, 2026-10-08), so its
    * bills' days are read as soon as their grace has passed — never waiting for a statement /imports will not ask for —
    * and not before: a bill due inside the last three days may still post (elsewhere, or late).
    */

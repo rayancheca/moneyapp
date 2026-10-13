@@ -819,9 +819,9 @@ export function recurringCalendar(
   // late and lapsed only on days the ledger has checked (`seriesEvidence`, §6A 57) — the gate and a future entry's words
   const checkedThrough = silenceMeasuredThroughBySeries(db, today);
   const needsFrontier = compareDates(monthStart, today) < 0;
-  // …and a past bill missed only once its day AND its grace are read (`dueDayIsRead`, ⚖️ his decision 60, 2026-10-08),
-  // an account no statement is coming for read through today — the chip's rule (`silenceObservedThrough`), so a bill
-  // filed late there is never "not imported yet" here
+  // …and a past bill missed only once its day AND its grace are read (`dueDayIsRead`, ⚖️ his decision 60, 2026-10-08)
+  // on the day its chip measures to (his decision 62, 2026-10-12): the accounts it posts to now, each to its checked
+  // balance, one no statement is coming for through today — so a bill filed late there is never "not imported yet" here
   const readingOf = needsFrontier ? dueDayReadings(db, today) : null;
   // …and a passed payday "not banked yet" only once the ledger has looked for its deposit (`paydayIsRead`): the day
   // every pay sentence names, where the pay lands NOW — never the bills' reading, which takes every account it ever

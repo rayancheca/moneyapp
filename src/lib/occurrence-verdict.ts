@@ -184,13 +184,15 @@ export type ScheduleProven = boolean;
 
 /**
  * How far the ledger has read the days a series' bill can be PAID on: the last day it has been shown for every account
- * the series bills on, and the grace a payment has to post after its due day.
+ * the series posts to now, and the grace a payment has to post after its due day.
  */
 export interface DueDayReading {
   /**
-   * The last day the ledger has been shown for the account(s) this series bills on — `null` when nothing is known at
-   * all, the most cautious input. ⚖️ An account no statement will ever come for (archived, or a cash wallet) counts as
-   * shown through today (`silenceObservedThrough`, 2026-10-08): nothing more is coming.
+   * The last day the ledger has been shown for the account(s) this series posts to now — ⚖️ the day its "running late"
+   * chip measures to (`silenceMeasuredThroughBySeries`, his decision 62, 2026-10-12): the accounts its last two payments
+   * posted to, or the one it names, each to its checked balance — `null` when nothing is known at all, the most cautious
+   * input. ⚖️ An account no statement will ever come for (archived, or a cash wallet) counts as shown through today
+   * (`silenceReadThrough`, 2026-10-08): nothing more is coming.
    */
   observedThrough: string | null;
   /**
@@ -211,10 +213,11 @@ export function lastDueDayRead(reading: DueDayReading): string | null {
 }
 
 /**
- * ⚖️ WHETHER A DUE DAY HAS BEEN READ — his decision 60 (2026-10-08): once every account the series bills on (its
- * carrier's too, for one billed inside another's payment) is imported through the due day PLUS its grace, the days a
- * payment may still post on. Until then a payment may be sitting where no import has reached, so nothing may say "not
- * posted" of it — "no import has covered it yet", quiet.
+ * ⚖️ WHETHER A DUE DAY HAS BEEN READ — his decision 60 (2026-10-08): once every account the series posts to now (its
+ * last two payments' accounts, his decision 62 — its carrier's too, for one billed inside another's payment) is read
+ * through the due day PLUS its grace, the days a payment may still post on — read as its "running late" chip reads
+ * them, to each account's checked balance (`dueDayReadings`). Until then a payment may be sitting where no statement
+ * has reached, so nothing may say "not posted" of it — "no import has covered it yet", quiet.
  *
  * ⛔ THE ONE PREDICATE for every claim that a bill did not post: the calendar's red ✕ (`settledVerdict`), and the read
  * half of the arrears (`arrearsReadCents`) that the bill's page, the runway, /budgets, the End dialog, the forecast's

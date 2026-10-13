@@ -16,6 +16,7 @@ import { transactions } from "@/db/schema/transactions";
 import { dedupeHash } from "@/lib/hash";
 import { normalizeDescription } from "@/lib/normalize";
 import { createAccount, updateAccount } from "./accounts";
+import { checkedThrough } from "./checked-days-fixture";
 import { baselineWindow, carCard, committedBook, runwayCard, spendBaseline, SPEND_BASELINE_MONTHS } from "./committed";
 import { forecastCurrentMonth } from "./forecast";
 import { cashFlowByPeriod } from "./spending";
@@ -596,6 +597,8 @@ describe("committedBook", () => {
     test("a bill due on a day its account has been imported past is read", () => {
       internetOnChecking();
       insertTxn({ postedOn: "2026-08-20", amountCents: -1000, rawDescription: "CAFE" });
+      // …and its balances checked through it: the day its chip measures to, which the ✕ reads (his decision 62)
+      checkedThrough(bundle.db, checkingId, "2026-08-20");
       const book = committedBook(bundle.db, TODAY, 12);
       expect(book.overdueCents).toBe(5000);
       expect(book.overdueUnreadCents).toBe(0);

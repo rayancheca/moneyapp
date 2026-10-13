@@ -17,6 +17,7 @@ import { isNull } from "drizzle-orm";
 import { dedupeHash } from "@/lib/hash";
 import { normalizeDescription } from "@/lib/normalize";
 import { createAccount } from "./accounts";
+import { checkedThrough } from "./checked-days-fixture";
 import { detectRecurringSeries, listSeries } from "./recurring";
 import {
   renameSeries,
@@ -352,9 +353,15 @@ describe("seriesDetail", () => {
       return id;
     }
 
+    /** An import of the Card has reached `day`: a row on it, and its balances checked through it (`checkedThrough`). */
+    function cardReadThrough(day: string): void {
+      insertTxn({ postedOn: day, amountCents: -800, rawDescription: "CAFE" });
+      checkedThrough(bundle.db, cardId, day);
+    }
+
     test("a due day the Card has been imported past is read", () => {
       const id = dueJulyFirst();
-      insertTxn({ postedOn: "2026-07-05", amountCents: -800, rawDescription: "CAFE" });
+      cardReadThrough("2026-07-05");
       expect(seriesDetail(bundle.db, id, TODAY).overdue).toMatchObject({ amountCents: -1549, unreadCents: 0 });
     });
 
@@ -376,7 +383,7 @@ describe("seriesDetail", () => {
         .returning({ id: recurringSeries.id })
         .get().id;
       // the Card is read through Jul 10: Jul 1 and Jul 8 are read, Jul 15 is not
-      insertTxn({ postedOn: "2026-07-10", amountCents: -800, rawDescription: "CAFE" });
+      cardReadThrough("2026-07-10");
       expect(seriesDetail(bundle.db, weekly, "2026-07-20").overdue).toEqual({
         date: "2026-07-01",
         amountCents: -3000,
@@ -396,11 +403,11 @@ describe("seriesDetail", () => {
     test("a due day the Card is imported through, with its 3 days' grace, is read; a day short of that is not", () => {
       const id = dueJulyFirst();
       bundle.db.update(recurringSeries).set({ toleranceDays: 3 }).where(eq(recurringSeries.id, id)).run();
-      insertTxn({ postedOn: "2026-07-01", amountCents: -800, rawDescription: "CAFE" });
+      cardReadThrough("2026-07-01");
       expect(seriesDetail(bundle.db, id, TODAY).overdue).toMatchObject({ unreadCents: 1549, graceDays: 3 });
-      insertTxn({ postedOn: "2026-07-03", amountCents: -800, rawDescription: "CAFE" });
+      cardReadThrough("2026-07-03");
       expect(seriesDetail(bundle.db, id, TODAY).overdue).toMatchObject({ unreadCents: 1549 });
-      insertTxn({ postedOn: "2026-07-04", amountCents: -800, rawDescription: "CAFE" });
+      cardReadThrough("2026-07-04");
       expect(seriesDetail(bundle.db, id, TODAY).overdue).toMatchObject({ unreadCents: 0 });
     });
 
@@ -418,7 +425,7 @@ describe("seriesDetail", () => {
         );
       // the Card's newest row is Jun 15: no import has reached Jul 1
       expect(arrearsLine()).toEqual({ label: "Already due this month, no import has covered it yet", value: "$15.49" });
-      insertTxn({ postedOn: "2026-07-05", amountCents: -800, rawDescription: "CAFE" });
+      cardReadThrough("2026-07-05");
       expect(arrearsLine()).toEqual({ label: "Already due this month, not posted", value: "$15.49" });
     });
   });

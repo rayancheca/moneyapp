@@ -18,6 +18,7 @@ import { recurringSeries } from "@/db/schema/recurring";
 import type { Cadence, SeriesKind, SeriesStatus } from "@/db/schema/recurring";
 import { createAccount } from "./accounts";
 import { createCashWallet } from "./cash-wallets";
+import { checkedThrough } from "./checked-days-fixture";
 import { addManualTransaction } from "./manual-transactions";
 import { setSplits } from "./transaction-splits";
 import { categorySpending, recurringSeriesIdsForCategory } from "./analytics";
@@ -1493,9 +1494,15 @@ describe("budgetPaceStatuses — /budgets' arrears carry the read/unread split",
     return budgetPaceStatuses(bundle.db, TODAY).find((s) => s.categoryName === "Housing")!;
   }
 
+  /** An import of the Card has reached `day`: a row on it, and its balances checked through it (`checkedThrough`). */
+  function cardReadThrough(day: string): void {
+    spend(day, -800, "Food");
+    checkedThrough(bundle.db, cardId, day);
+  }
+
   test("a due day no import has reached is unread, all of it", () => {
     housingBill({ name: "Rent", dueOn: "2026-06-08", cents: 228_570 });
-    spend("2026-06-07", -800, "Food"); // the Card is read through Jun 7, the day before rent
+    cardReadThrough("2026-06-07"); // the Card is read through Jun 7, the day before rent
     const s = housing();
     expect(s.overdueCents).toBe(228_570);
     expect(s.overdueUnreadCents).toBe(228_570);
@@ -1509,15 +1516,15 @@ describe("budgetPaceStatuses — /budgets' arrears carry the read/unread split",
    */
   test("a due day is read once the Card is imported through it and its grace — not a day sooner", () => {
     housingBill({ name: "Rent", dueOn: "2026-06-08", cents: 228_570 });
-    spend("2026-06-10", -800, "Food");
+    cardReadThrough("2026-06-10");
     expect(housing()).toMatchObject({ overdueCents: 228_570, overdueUnreadCents: 228_570 });
-    spend("2026-06-11", -800, "Food");
+    cardReadThrough("2026-06-11");
     expect(housing()).toMatchObject({ overdueCents: 228_570, overdueUnreadCents: 0 });
   });
 
   test("a weekly bill read part of the way is split by amount", () => {
     housingBill({ name: "Cleaner", dueOn: "2026-06-03", cents: 5_000, cadence: "weekly" });
-    spend("2026-06-13", -800, "Food"); // Jun 3 and Jun 10 read, each with its 3 days' grace; Jun 17 is not
+    cardReadThrough("2026-06-13"); // Jun 3 and Jun 10 read, each with its 3 days' grace; Jun 17 is not
     const s = housing();
     expect(s.overdueCents).toBe(15_000);
     expect(s.overdueUnreadCents).toBe(5_000);
@@ -1531,7 +1538,7 @@ describe("budgetPaceStatuses — /budgets' arrears carry the read/unread split",
    */
   test("a bill due today, with the Card read through yesterday, is unread — the leg closes on today", () => {
     housingBill({ name: "Cleaner", dueOn: "2026-06-06", cents: 5_000, cadence: "weekly" });
-    spend("2026-06-19", -800, "Food"); // Jun 6 and Jun 13 read; Jun 20, today, is not
+    cardReadThrough("2026-06-19"); // Jun 6 and Jun 13 read; Jun 20, today, is not
     expect(housing()).toMatchObject({ overdueCents: 15_000, overdueUnreadCents: 5_000 });
   });
 
@@ -1542,7 +1549,7 @@ describe("budgetPaceStatuses — /budgets' arrears carry the read/unread split",
   test("a budget that opens mid-month measures the read half over its own window", () => {
     housingBill({ name: "Cleaner", dueOn: "2026-06-03", cents: 5_000, cadence: "weekly" });
     createBudget(bundle.db, { categoryId: catId("Housing"), period: "monthly", amountCents: 300_000, startsOn: "2026-06-10" });
-    spend("2026-06-13", -800, "Food"); // Jun 10 read, with its grace; Jun 17 is not
+    cardReadThrough("2026-06-13"); // Jun 10 read, with its grace; Jun 17 is not
     expect(housing()).toMatchObject({ overdueCents: 10_000, overdueUnreadCents: 5_000 });
   });
 });

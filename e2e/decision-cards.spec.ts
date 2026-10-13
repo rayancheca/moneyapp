@@ -96,7 +96,7 @@ test.describe("dashboard decision cards", () => {
   /*
    * ⚖️ His decision 60 (2026-10-08): "never posted" — in the negative tone — only for a due day whose day AND grace
    * the imports reach; the rest quietly "no import has covered it yet". The seed straddles it: Storage unit ($45.00,
-   * due Jul 1, SoFi Checking imported through Jul 4 = its day + 3 days' grace) is read; Meal Kit ($125.00, due Jul 5,
+   * due Jul 1, its card checked through Jul 4 = its day + 3 days' grace) is read; Meal Kit ($125.00, due Jul 5,
    * its card imported through Jul 5 alone) is not. 🔴 With Meal Kit turned quiet (559aa52) nothing in e2e rendered the
    * read half any more (review of 559aa52).
    */

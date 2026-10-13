@@ -606,7 +606,8 @@ async function seedBudgets(db: AppDatabase): Promise<void> {
    * payment may still post on. So at E2E_FAKE_TODAY it reads "not yet known" on
    * the calendar and "no import has covered it yet", quietly, on /budgets, the
    * runway and its page. The red ✕ is Storage unit's (below), read through its
-   * due day + 3.
+   * due day + 3. (Since his decision 62, 2026-10-12, a due day is read to the
+   * card's CHECKED balance, Jul 4 — quiet either way.)
    */
   const mealKitAccount = db
     .select({ id: accountsTable.id })
@@ -648,12 +649,14 @@ async function seedBudgets(db: AppDatabase): Promise<void> {
    * past everything SoFi had shown); Meal Kit carries that state now, in the same
    * words (`NO_IMPORT_YET`), so no state lost its rendered path.
    *
-   * SoFi Checking is the account because the ledger stops exactly there: its
-   * newest imported row is 2026-07-04 and its newest statement closes
-   * 2026-06-30, so the frontier is 2026-07-04 — the 2026-07-01 occurrence plus
-   * its 3 days' grace. That also makes this the only e2e exercising
-   * `observationFrontier` end to end — the income branch short-circuits before
-   * the frontier is ever consulted.
+   * Chase Freedom Unlimited — Meal Kit's card — is the account because its
+   * balances are CHECKED exactly there: through 2026-07-04, the 2026-07-01
+   * occurrence plus its 3 days' grace. ⚖️ A due day is read on the day its
+   * "running late" chip measures to, each account to its checked balance
+   * (`dueDayReadings`, his decision 62, 2026-10-12). 🔴 On SoFi Checking, its
+   * account until then, rows reach Jul 4 but balances only Jun 30 (its statement
+   * closes on the last of the month): read that way the red ✕ went quiet and the
+   * fixture lost its read side again (review of 9940f1c).
    *
    * ⚠️ It must be an account that exists by the time `seedBudgets` runs (§8).
    * Venture X and Capital One 360 Checking are staler and would read better in
@@ -681,17 +684,10 @@ async function seedBudgets(db: AppDatabase): Promise<void> {
    * series with no postings to a budget, and this one must not disturb the
    * "exactly one overdue row" assertions.
    */
-  const stale = db
-    .select({ id: accountsTable.id })
-    .from(accountsTable)
-    .where(eq(accountsTable.name, "SoFi Checking"))
-    .get();
-  if (!stale) throw new Error("seedBudgets: missing SoFi Checking");
-
   db.insert(recurringSeries)
     .values({
       name: "Storage unit",
-      accountId: stale.id,
+      accountId: mealKitAccount.id,
       kind: "bill",
       cadence: "monthly",
       intervalDaysAvg: 30,

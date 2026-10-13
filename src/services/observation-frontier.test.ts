@@ -18,7 +18,6 @@ import {
   ledgerReaches,
   observationFrontier,
   observedThrough,
-  seriesAccountIds,
 } from "./observation-frontier";
 
 let dir: string;
@@ -199,8 +198,9 @@ describe("ledgerReaches", () => {
 
 describe("frontierForSeries", () => {
   test("takes the EARLIEST of the accounts a series bills on", () => {
-    // Netflix names Chase Sapphire and posted to Discover too. To say a charge
-    // is missing from it, both have to have been looked at.
+    // Amazon Prime's last two charges posted to Chase Sapphire and Venture X
+    // (`landingAccountsBySeries`). To say a charge is missing from it, both
+    // have to have been looked at.
     const stale = addAccount("SoFi", "checking");
     const fresh = addAccount("Venture", "credit");
     addTxn(stale, "2026-07-31");
@@ -230,39 +230,6 @@ describe("frontierForSeries", () => {
     const f = observationFrontier(bundle.db);
     // …and specifically does NOT borrow its live sibling's frontier.
     expect(frontierForSeries(f, new Set([never]))).toBeNull();
-  });
-});
-
-describe("seriesAccountIds", () => {
-  test("unions the series' own column with every account its postings touched", () => {
-    const a = addAccount("A", "checking");
-    const b = addAccount("B", "credit");
-    const seriesId = "s-1";
-    const now = new Date().toISOString();
-    bundle.db.run(
-      `insert into recurring_series (id, name, account_id, kind, cadence, tolerance_days, status, created_at, updated_at)
-       values ('${seriesId}', 'Netflix', '${a}', 'subscription', 'monthly', 3, 'ended', '${now}', '${now}')`,
-    );
-    addTxn(b, "2026-05-01", { seriesId });
-
-    expect(seriesAccountIds(bundle.db).get(seriesId)).toEqual(new Set([a, b]));
-  });
-
-  test("a series with a column and no postings still reports its account", () => {
-    const a = addAccount("A", "checking");
-    const seriesId = "s-2";
-    const now = new Date().toISOString();
-    bundle.db.run(
-      `insert into recurring_series (id, name, account_id, kind, cadence, tolerance_days, status, created_at, updated_at)
-       values ('${seriesId}', 'Merged away', '${a}', 'subscription', 'monthly', 3, 'ended', '${now}', '${now}')`,
-    );
-    expect(seriesAccountIds(bundle.db).get(seriesId)).toEqual(new Set([a]));
-  });
-
-  test("untagged rows are not attributed to any series", () => {
-    const a = addAccount("A", "checking");
-    addTxn(a, "2026-05-01");
-    expect(seriesAccountIds(bundle.db).size).toBe(0);
   });
 });
 

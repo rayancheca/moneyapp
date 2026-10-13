@@ -73,7 +73,7 @@ const ROUTES: readonly VisualRoute[] = [
   // lives in `?tab=`, so it is a route like any other.
   //
   // ⚠️ What these eight CAN see is bounded by the seed. At E2E_FAKE_TODAY the
-  // July grid renders `missed` (Storage unit, its SoFi account imported through
+  // July grid renders `missed` (Storage unit, its card checked through
   // its due day + 3 days' grace), `unsettled` (Meal Kit, its card imported
   // through its due day but not its grace — ⚖️ §6A 60) and `upcoming`;
   // `paid` is reachable by paging (recurring-calendar.spec asserts it there)

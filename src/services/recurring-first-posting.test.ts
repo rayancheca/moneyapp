@@ -12,6 +12,7 @@ import { dedupeHash } from "@/lib/hash";
 import { normalizeDescription } from "@/lib/normalize";
 import { createAccount } from "./accounts";
 import { overdueForSeries } from "./arrears";
+import { checkedThrough } from "./checked-days-fixture";
 import { detectRecurringSeries, projectOccurrences, toProjectable } from "./recurring";
 import { recurringCalendar } from "./recurring-calendar";
 import { planFirstPostings } from "./recurring-first-posting";
@@ -368,8 +369,9 @@ describe("what a first-posting link leaves the rest of the app believing", () =>
     // change to either side has to be made on purpose.
     const lease = carLease({ accountId: card });
     const first = post({ postedOn: "2026-09-15", amountCents: -69504, raw: "TOYOTA LEASE PMT", accountId: card });
-    // the card has been shown through Oct 20, and no October lease payment is in it
+    // the card has been shown — and its balances checked — through Oct 20, and no October lease payment is in it
     post({ postedOn: "2026-10-20", amountCents: -2200, raw: "GROCERY", accountId: card });
+    checkedThrough(bundle.db, card, "2026-10-20");
 
     linkRowsMadeActive(bundle.db, [first], "2026-10-25");
     expect(linkOf(first).recurringSeriesId).toBe(lease);
