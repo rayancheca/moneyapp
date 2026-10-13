@@ -10,14 +10,25 @@ import type { RecurringCalendarMonth } from "@/services/recurring-calendar";
  * the static renders in this file are real renders.
  */
 const hookHost = vi.hoisted(() => ({
-  current: null as null | { useState(init: unknown): unknown; useTransition(): unknown },
+  current: null as null | {
+    useState(init: unknown): unknown;
+    useTransition(): unknown;
+    useRef(init: unknown): unknown;
+  },
 }));
+/*
+ * ⛔ EVERY hook the two components call, or a call reaches the real React with no component rendering and throws.
+ * 🔴 5d156a4 gave `RecurringCalendar` a `useRef` (the month last asked for) and the paging test below failed on
+ * "Cannot read properties of null (reading 'useRef')" from then on — at main aa23d34 and on every branch merged from it
+ * (review of 7458684): the guard on the Calendar badge following the grid had stopped running.
+ */
 vi.mock("react", async (importOriginal) => {
   const real = await importOriginal<typeof import("react")>();
   return {
     ...real,
     useState: (init: unknown) => (hookHost.current ? hookHost.current.useState(init) : real.useState(init)),
     useTransition: () => (hookHost.current ? hookHost.current.useTransition() : real.useTransition()),
+    useRef: (init: unknown) => (hookHost.current ? hookHost.current.useRef(init) : real.useRef(init)),
   };
 });
 
@@ -123,6 +134,13 @@ class HookSlots {
     return [this.values[slot], set];
   }
 
+  /** one object per slot, kept across renders — what a ref IS */
+  useRef(init: unknown): { current: unknown } {
+    const slot = this.cursor++;
+    if (!(slot in this.values)) this.values[slot] = { current: init };
+    return this.values[slot] as { current: unknown };
+  }
+
   useTransition(): [boolean, (fn: () => unknown) => void] {
     this.cursor++;
     return [
@@ -200,5 +218,51 @@ describe("ForecastAndCalendar — the Calendar badge follows the grid when it pa
     const html = renderToStaticMarkup(strip());
     expect(html).toMatch(/>Calendar<span[^>]*>13<\/span>/);
     expect(html).toMatch(/>Upcoming<span[^>]*>10<\/span>/);
+  });
+
+  /*
+   * 🔴 5d156a4: the grid steps from the month it SHOWS, so a second press while October was still loading asked for
+   * October again and was lost — e2e's 24 presses back stopped short of July 2024. The calendar steps from the month
+   * last ASKED for, and only the newest answer draws. Two presses before the first answer: November is asked for and
+   * drawn, and October's late answer moves nothing.
+   */
+  test("a second press while October loads asks for November — and October's late answer does not draw", async () => {
+    vi.mocked(actions.loadMonthForecastAction).mockResolvedValue({ ok: false, error: "not under test" });
+    const load = vi.mocked(actions.loadRecurringMonthAction);
+    load.mockReset();
+    // October's answer is held back until November's has drawn — the order a slow month's read arrives in
+    let answerOctober!: (answer: Awaited<ReturnType<typeof actions.loadRecurringMonthAction>>) => void;
+    load.mockReturnValueOnce(new Promise((resolve) => (answerOctober = resolve)));
+    load.mockResolvedValueOnce({ ok: true, data: month("2026-11", 13) });
+    const page = new HookSlots();
+    const grid = new HookSlots();
+    const props = {
+      initialForecast: { monthKey: "2026-09" } as MonthForecast,
+      initialMonth: month("2026-09", 12),
+      today: "2026-09-15",
+      view: {},
+      tab: "calendar" as const,
+      counts: { upcoming: 10, all: 15, calendar: 12 },
+    };
+    const press = (): void => {
+      const calendar = findElement(page.render(ForecastAndCalendar, props), RecurringCalendar)!;
+      const cells = findElement(
+        grid.render(RecurringCalendar, calendar.props as unknown as Parameters<typeof RecurringCalendar>[0]),
+        CalendarGrid,
+      )!;
+      // the grid still shows September, so its "next" is October both times
+      (cells.props.onMonthChange as (key: string) => void)("2026-10");
+    };
+    press();
+    press();
+    // November answers and draws first…
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    // …then October's stale answer arrives
+    answerOctober({ ok: true, data: month("2026-10", 14) });
+    await grid.settle();
+    await page.settle();
+    expect(load.mock.calls.map(([arg]) => arg.monthKey)).toEqual(["2026-10", "2026-11"]);
+    const strip = findElement(page.render(ForecastAndCalendar, props), RecurringTabs)!;
+    expect((strip.props.counts as Record<string, number>).calendar).toBe(13);
   });
 });
