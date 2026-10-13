@@ -3,7 +3,7 @@
 import { useCallback, useLayoutEffect, useRef, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { setDimension, viewHrefQuery, type ViewSpec, type ViewState } from "@/lib/view-state";
-import type { Landing, PressBase } from "@/lib/page-asks";
+import { pressWriteLanding, type Landing, type PressBase } from "@/lib/page-asks";
 import { saveViewPreferenceAction } from "@/app/settings/actions";
 import { usePageAsks } from "./usePageAsks";
 import { useUrlWriter } from "./useUrlWriter";
@@ -107,8 +107,11 @@ export function useViewState(opts: UseViewStateOptions): UseViewStateResult {
         // it must already be written or the navigation re-reads the stale value.
         // Best-effort: on a transport error we still navigate (the URL drives
         // non-default views), and never surface a toast for a view toggle.
+        // ⚖️ B2: queued behind a save of Back's view that hangs, no longer than
+        // BACK_SAVE_WAIT_MS — the bound every URL writer has (`pressWriteLanding`).
+        const write = saveViewPreferenceAction(surface, next);
         try {
-          await saveViewPreferenceAction(surface, next);
+          await (asks === null ? write : pressWriteLanding(asks, write));
         } catch {
           /* persistence is best-effort */
         }

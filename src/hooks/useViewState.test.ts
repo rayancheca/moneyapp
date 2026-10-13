@@ -1019,6 +1019,37 @@ describe("Back/Forward to a page with view pills", () => {
     expect(page.url).toBe("/investments?view=returns"); // and the pill, no longer the newest, goes nowhere
   });
 
+  /**
+   * 🔴 BACK_SAVE_WAIT_MS bounded every URL writer but not the press made after one. A press goes once its own write
+   * has landed, and Next queues that write behind Back's: with Back's save hung, the press never went, and the pill —
+   * no longer the newest asked once the press built on it — went nowhere either. Neither the 1M nor the Return was
+   * ever drawn (review of 8af8286). Bounded like the others, the press goes when they do, to its URL, which holds both.
+   */
+  test("a view pressed after a pill while Back's save hangs: both drawn at BACK_SAVE_WAIT_MS, not before", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const page = await open(portfolioPage, "/investments?range=1Y");
+    ui.portfolio!.setView("view", "returns");
+    await page.settle();
+    page.back();
+    await idle(); // Back's save, held: it never lands
+
+    pills.range!("1M");
+    await idle();
+    ui.portfolio!.setView("view", "returns"); // built on the pill's URL; its write queued behind Back's
+    await idle();
+    await vi.advanceTimersByTimeAsync(BACK_SAVE_WAIT_MS - 1);
+    await idle();
+    expect(page.pending.map((work) => work.kind)).toEqual(["write"]);
+    await vi.advanceTimersByTimeAsync(1);
+    await idle();
+    await page.serve("render");
+
+    expect(page.url).toBe("/investments?range=1M&view=returns");
+    expect(ui.portfolio!.state).toMatchObject({ view: "returns" });
+    // Back's save, still held, and the press's own write behind it: sent, and landing whenever the server answers
+    expect(page.pending.map((work) => work.kind)).toEqual(["write", "write"]);
+  });
+
   /** ⚖️ B2, the same for every URL writer that writes nothing: a period arrow, a tab, the benchmark */
   test("‹ followed while Back's saves are being written goes once they land", async () => {
     const page = await open(spendingPage, "/spending?period=2026-07");

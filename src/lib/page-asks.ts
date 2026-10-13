@@ -520,12 +520,46 @@ export function navigateAfterBackSaves(asks: PageAsks, href: string, go: () => v
     go();
     return;
   }
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const waited = new Promise<void>((resolve) => {
-    timer = setTimeout(resolve, BACK_SAVE_WAIT_MS);
-  });
-  void Promise.race([landing, waited]).then(() => {
-    clearTimeout(timer);
+  void boundedByBackSaves(landing, landing).then(() => {
     if (asks.isNewest(href)) go();
   });
+}
+
+/**
+ * What a press waits on before it navigates (`useViewState`): its own `write` — and, while a save of Back's view is
+ * being written, no longer than BACK_SAVE_WAIT_MS unless those land first. Settles either way, a refused write too
+ * (persistence is best-effort).
+ *
+ * 🔴 Every URL writer that writes nothing was bounded (`navigateAfterBackSaves`), and the press made after one was
+ * not: Next queues a server action behind the one in flight, so with Back's save hung the press's own write never ran
+ * and the press never went — and the pill it built on, no longer the newest asked, went nowhere either: neither the
+ * pill's range nor the press's view was ever drawn (review of 8af8286). Bounded, the press goes when the pill would
+ * have, to the newest asked URL, which holds both. ⛔ Only while Back's saves are hung: once they land, the write
+ * behind them runs, and a press goes once its write has landed, as ever — its view may be the default, which only
+ * the saved preference draws. ⛔ With none in flight it is the write ITSELF, never a promise over it: one more tick
+ * moved the press's navigation after the next action Next's queue starts, and 22 tests of `useViewState.test.ts`
+ * failed.
+ */
+export function pressWriteLanding(asks: PageAsks, write: Promise<unknown>): Promise<unknown> {
+  const landing = asks.backSavesLanding();
+  if (landing === null) return write;
+  const own = write.then(
+    () => undefined,
+    () => undefined,
+  );
+  return boundedByBackSaves(own, landing);
+}
+
+/**
+ * Settles once `wanted` does — or once BACK_SAVE_WAIT_MS has passed with Back's saves (`landing`) still unlanded,
+ * whichever is first. Leaves no timer behind.
+ */
+function boundedByBackSaves(wanted: Promise<void>, landing: Promise<void>): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const hung = new Promise<void>((resolve) => {
+    timer = setTimeout(resolve, BACK_SAVE_WAIT_MS);
+  });
+  // Back's saves landed in time: nothing is hung, and only `wanted` settles it
+  void landing.then(() => clearTimeout(timer));
+  return Promise.race([wanted, hung]).then(() => clearTimeout(timer));
 }

@@ -10,6 +10,7 @@ import {
   navigateAfterBackSaves,
   pageLinkHref,
   pressBase,
+  pressWriteLanding,
   withAsk,
   type PageAsk,
   type PageAsks,
@@ -510,6 +511,66 @@ describe("navigateAfterBackSaves", () => {
     navigateAfterBackSaves(asks, "/h?range=1M", () => {});
     land();
     await vi.advanceTimersByTimeAsync(0);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+});
+
+/**
+ * A press goes once its own write has landed — and 🔴 Next queues that write behind a save of Back's view, so with
+ * one hung the press never went (review of 8af8286). Bounded as every URL writer is, only while Back's saves hang.
+ */
+describe("pressWriteLanding", () => {
+  const flush = (): Promise<void> => new Promise((resolve) => setImmediate(resolve));
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  /** ⛔ The write itself, not a promise over it: one more tick reorders the press against Next's next action. */
+  test("with no save of Back's view in flight, the press waits on its write — the very promise", () => {
+    const asks = createPageAsks();
+    const write = new Promise<unknown>(() => {});
+    expect(pressWriteLanding(asks, write)).toBe(write);
+  });
+
+  test("with Back's save hung, it settles at BACK_SAVE_WAIT_MS, never before, though its write never ran", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const asks = createPageAsks();
+    asks.backSaveSent(new Promise<void>(() => {}));
+    const settled = vi.fn();
+    void pressWriteLanding(asks, new Promise<unknown>(() => {})).then(settled);
+    await vi.advanceTimersByTimeAsync(BACK_SAVE_WAIT_MS - 1);
+    expect(settled).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(settled).toHaveBeenCalledTimes(1);
+  });
+
+  test("once Back's save lands in time, it waits on its write alone, however long, and leaves no timer", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const asks = createPageAsks();
+    let land!: () => void;
+    asks.backSaveSent(new Promise<void>((resolve) => (land = resolve)));
+    let written!: () => void;
+    const write = new Promise<unknown>((resolve) => (written = () => resolve({ ok: true })));
+    const settled = vi.fn();
+    void pressWriteLanding(asks, write).then(settled);
+    land();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(vi.getTimerCount()).toBe(0);
+    await vi.advanceTimersByTimeAsync(BACK_SAVE_WAIT_MS * 2);
+    expect(settled).not.toHaveBeenCalled();
+    written();
+    await flush();
+    expect(settled).toHaveBeenCalledTimes(1);
+  });
+
+  test("a refused write settles it as a landed one does, and leaves no timer", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const asks = createPageAsks();
+    asks.backSaveSent(new Promise<void>(() => {}));
+    const settled = vi.fn();
+    void pressWriteLanding(asks, Promise.reject(new Error("offline"))).then(settled);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(settled).toHaveBeenCalledTimes(1);
     expect(vi.getTimerCount()).toBe(0);
   });
 });
