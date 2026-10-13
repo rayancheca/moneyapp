@@ -1,6 +1,7 @@
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, test } from "vitest";
+import type { CarriedGrace } from "@/lib/occurrence-verdict";
 import { AlreadyDueCard } from "./AlreadyDueCard";
 
 const decode = (s: string): string =>
@@ -9,13 +10,14 @@ const decode = (s: string): string =>
 function render(
   overdue: { date: string; amountCents: number; occurrenceCount: number; unreadCents: number; inGraceCents?: number },
   graceDays = 3,
+  carriedGrace: CarriedGrace | null = null,
 ): {
   heading: string;
   headingClass: string;
   text: string;
 } {
   // an import is what the unread part waits for, unless a test says its days to post are
-  const props = { overdue: { inGraceCents: 0, ...overdue, graceDays } };
+  const props = { overdue: { inGraceCents: 0, ...overdue, graceDays, carriedGrace } };
   const html = decode(renderToStaticMarkup(createElement(AlreadyDueCard, props)));
   const h2 = /<h2 class="([^"]*)">([\s\S]*?)<\/h2>/.exec(html);
   return {
@@ -53,6 +55,16 @@ describe("AlreadyDueCard — the bill's own page follows the runway's read/unrea
   test("the body names the grace the read waited for", () => {
     const r = render({ date: "2026-10-01", amountCents: -18221, occurrenceCount: 1, unreadCents: 0 }, 5);
     expect(r.text).toContain("which reach 5 days past it, hold no posting within 5 days of it");
+  });
+
+  // …and billed inside the rent with a window of its own of another width, each by name (`overdue.carriedGrace`)
+  test("the body names the windows that grace is made of — its own 3 days, the rent's 5", () => {
+    const carried = { ownDays: 3, carrierName: "Flamingo South Beach (rent)", carrierDays: 5 };
+    const r = render({ date: "2026-10-01", amountCents: -18221, occurrenceCount: 1, unreadCents: 0 }, 5, carried);
+    expect(r.text).toContain(
+      "which reach 5 days past it, hold no posting of its own within 3 days of it, and none of the rent's payments " +
+        "within 5 days of it.",
+    );
   });
 
   /*

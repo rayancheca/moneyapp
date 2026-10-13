@@ -486,7 +486,7 @@ describe("overdueNote", () => {
  */
 describe("alreadyDueWords", () => {
   test("read and unposted keeps 'Already due, and not posted', in warning", () => {
-    const w = alreadyDueWords({ owedCents: 210900, unreadCents: 0 }, 3);
+    const w = alreadyDueWords({ owedCents: 210900, unreadCents: 0 }, 3, null);
     expect(w.heading).toBe("Already due, and not posted");
     expect(w.warning).toBe(true);
   });
@@ -499,14 +499,14 @@ describe("alreadyDueWords", () => {
    * posted" of Jul 6–8 for the e2e fixture's Meal Kit (due Jul 5, its card imported through Jul 5).
    */
   test("the read body says what was read: the imports reach the grace past its day, and hold no posting in it", () => {
-    expect(alreadyDueWords({ owedCents: 210900, unreadCents: 0 }, 3).body).toBe(
+    expect(alreadyDueWords({ owedCents: 210900, unreadCents: 0 }, 3, null).body).toBe(
       "Inside this calendar month, and the imports, which reach 3 days past it, hold no posting within 3 days of it. " +
         "The forecast counts it, and so does this month's budget.",
     );
   });
 
   test("a bill with no grace is read on its day, and says so", () => {
-    expect(alreadyDueWords({ owedCents: 5000, unreadCents: 0 }, 0).body).toBe(
+    expect(alreadyDueWords({ owedCents: 5000, unreadCents: 0 }, 0, null).body).toBe(
       "Inside this calendar month, and the imports, which reach its day, hold no posting on it. " +
         "The forecast counts it, and so does this month's budget.",
     );
@@ -517,7 +517,7 @@ describe("alreadyDueWords", () => {
    * day no import has reached": it says how far they must reach, and why the money may be there.
    */
   test("unread is quiet and says it in the runway's words", () => {
-    const w = alreadyDueWords({ owedCents: 210900, unreadCents: 210900 }, 3);
+    const w = alreadyDueWords({ owedCents: 210900, unreadCents: 210900 }, 3, null);
     expect(w.heading).toBe("Already due — no import has covered it yet");
     expect(w.warning).toBe(false);
     expect(`${w.heading} ${w.body}`).not.toMatch(/not posted|no posting/);
@@ -533,7 +533,7 @@ describe("alreadyDueWords", () => {
    * through today (`silenceReadThrough`); all it waits for is its days to post.
    */
   test("unread with nothing left to import says its days to post are not over — quiet, and no 'import'", () => {
-    const w = alreadyDueWords({ owedCents: 229121, unreadCents: 229121, inGraceCents: 229121 }, 3);
+    const w = alreadyDueWords({ owedCents: 229121, unreadCents: 229121, inGraceCents: 229121 }, 3, null);
     expect(w.heading).toBe("Already due — the days a payment has to post are not over yet");
     expect(w.warning).toBe(false);
     expect(w.body).toBe(
@@ -544,7 +544,7 @@ describe("alreadyDueWords", () => {
   });
 
   test("a mix with nothing left to import names the rest by its days to post", () => {
-    const w = alreadyDueWords({ owedCents: 3000, unreadCents: 1000, inGraceCents: 1000 }, 6);
+    const w = alreadyDueWords({ owedCents: 3000, unreadCents: 1000, inGraceCents: 1000 }, 6, null);
     expect(w.heading).toBe(
       "Already due: $20.00 not posted, and the days a payment has to post for the other $10.00 are not over yet",
     );
@@ -556,8 +556,43 @@ describe("alreadyDueWords", () => {
     );
   });
 
+  /*
+   * 🔴 ONE FIGURE FOR TWO WINDOWS (review of 44eb3e7). A bill billed inside another's payment is paid by a posting of its
+   * own within its own tolerance, or by its carrier's within the carrier's (`paymentFor`, each by its own series') — and
+   * its grace is the wider. With the rent's 5 and the utilities' own 3, their page read "hold no posting within 5 days
+   * of it" beside a posting of their own four days off Oct 1, which paid them nothing.
+   */
+  test("billed inside the rent with its own narrower window: the read body names each window", () => {
+    const carried = { ownDays: 3, carrierName: "Flamingo South Beach (rent)", carrierDays: 5 };
+    expect(alreadyDueWords({ owedCents: 18221, unreadCents: 0 }, 5, carried).body).toBe(
+      "Inside this calendar month, and the imports, which reach 5 days past it, hold no posting of its own within 3 " +
+        "days of it, and none of the rent's payments within 5 days of it. The forecast counts it, and so does this " +
+        "month's budget.",
+    );
+  });
+
+  test("…its own the wider: still each window — and a mix names them where the imports reach", () => {
+    const carried = { ownDays: 5, carrierName: "Flamingo South Beach (rent)", carrierDays: 3 };
+    expect(alreadyDueWords({ owedCents: 18221, unreadCents: 0 }, 5, carried).body).toContain(
+      "hold no posting of its own within 5 days of it, and none of the rent's payments within 3 days of it.",
+    );
+    expect(alreadyDueWords({ owedCents: 36442, unreadCents: 18221 }, 5, carried).body).toBe(
+      "Inside this calendar month. Where the imports reach 5 days past a due day, they hold no posting of its own " +
+        "within 5 days of it, and none of the rent's payments within 3 days of it; for the rest, no import reaches " +
+        "that far yet. The forecast counts all of it, and so does this month's budget.",
+    );
+  });
+
+  // ⚖️ his ledger: rent and utilities both 3 days — one window, one figure, exactly as before
+  test("billed inside the rent on the same days: one window, one figure", () => {
+    const carried = { ownDays: 3, carrierName: "Flamingo South Beach (rent)", carrierDays: 3 };
+    expect(alreadyDueWords({ owedCents: 18221, unreadCents: 0 }, 3, carried).body).toBe(
+      alreadyDueWords({ owedCents: 18221, unreadCents: 0 }, 3, null).body,
+    );
+  });
+
   test("a mix names both halves by amount", () => {
-    const w = alreadyDueWords({ owedCents: 3000, unreadCents: 1000 }, 1);
+    const w = alreadyDueWords({ owedCents: 3000, unreadCents: 1000 }, 1, null);
     expect(w.heading).toBe("Already due: $20.00 not posted, and no import has covered the other $10.00 yet");
     expect(w.warning).toBe(true);
     // the read half, like the read body, only as far as the imports reach

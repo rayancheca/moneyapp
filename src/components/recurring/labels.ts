@@ -12,7 +12,8 @@ import { endsInsideHorizon } from "@/lib/committed";
 import { dayWindowLabel } from "@/lib/period";
 import { wholeToleranceDays } from "@/lib/recurring-step";
 import { formatCents } from "@/lib/money";
-import type { UnsettledReason } from "@/lib/occurrence-verdict";
+import type { CarriedGrace, UnsettledReason } from "@/lib/occurrence-verdict";
+import { carrierWord } from "@/lib/billed-with";
 import { ONE_CHARGE_WORD } from "@/lib/one-charge";
 import type { PerPayday } from "@/lib/per-payday";
 import { SERIES_EVIDENCE_LABEL } from "@/lib/series-evidence";
@@ -574,14 +575,26 @@ export function overdueNote(
  * the 2026-10-08 batch).
  *
  * The forecast and this month's budget count all of it whichever way it reads — both say so.
+ *
+ * ⚖️ …and billed inside another's payment (§6A 59) with windows of two widths (`carried`), "no posting" names each: a
+ * posting of its own within its own days, a payment of its carrier's within the carrier's (`paymentFor`). 🔴 One
+ * figure, the wider, stood for both (review of 44eb3e7): with the rent's 5 days and the utilities' own 3, their page
+ * read "hold no posting within 5 days of it" beside a posting of their own four days off the day, which paid them
+ * nothing. Of the same width — his rent and utilities, both 3 — one figure is true of both, and stays.
  */
 export function alreadyDueWords(
   reading: ArrearsReading,
   graceDays: number,
+  carried: CarriedGrace | null,
 ): { heading: string; body: string; warning: boolean } {
   const split = arrearsSplit(reading);
   const days = (n: number) => `${n} ${n === 1 ? "day" : "days"}`;
-  const within = graceDays === 0 ? "on it" : `within ${days(graceDays)} of it`;
+  const of = (n: number) => (n === 0 ? "on it" : `within ${days(n)} of it`);
+  const within =
+    carried === null || carried.ownDays === carried.carrierDays
+      ? of(graceDays)
+      : `of its own ${of(carried.ownDays)}, and none of ${carrierWord(carried.carrierName)}'s payments ` +
+        of(carried.carrierDays);
   const past = graceDays === 0 ? "its day" : `${days(graceDays)} past it`;
   const counted = "The forecast counts it, and so does this month's budget.";
   const warning = arrearsAlarms(reading);

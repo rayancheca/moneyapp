@@ -100,14 +100,37 @@ export interface Payment {
  * 🔴 The calendar read a bill's own postings inside the month alone (review of 1a1b753): with the rent paid Sep 30,
  * October drew its Oct 1 "missed" beside the utilities "paid with the rent's payment of Sep 30", and the arrears owed
  * neither.
+ *
+ * ⚖️ …and when none is on time, the payment it is LATE for: the earliest posted past its tolerance after the day and
+ * before the next due day's own tolerance opens (`nextDueOn`, `nextDueDayAfter`), where it would be that day's, early.
+ * The grace is the days a payment has to post before anything may say "not posted" (his decision 60, 2026-10-08); a
+ * payment that comes after them is still the payment of that day. 🔴 It paid nothing (review of 44eb3e7): the rent paid
+ * Oct 5, four days past its Oct 1 and its 3 days, was drawn beside a red ✕ on Oct 1, the runway said "A further
+ * $2,291.21 came due earlier this month and never posted.", and /budgets counted it in what was spent AND in what came
+ * due — $4,599.86 projected for one month's rent. His July rent posted Jul 8, and his own next date (Sep 1) holds the
+ * rent's walk, so an import never moves a late day off it.
+ *
+ * `nextDueOn` null asks nothing late — only a reader of days from today on passes it (`stillToComeReader`): a payment
+ * past a day's grace posts after today, and no import has brought one.
  */
-export function paymentFor<P extends Payment>(payments: readonly P[], dueOn: string): P | undefined {
+export function paymentFor<P extends Payment>(
+  payments: readonly P[],
+  dueOn: string,
+  nextDueOn: string | null,
+): P | undefined {
   let best: P | undefined;
   for (const p of payments) {
     const gap = Math.abs(diffDays(p.postedOn, dueOn));
     if (gap > p.toleranceDays) continue;
     const bestGap = best === undefined ? Infinity : Math.abs(diffDays(best.postedOn, dueOn));
     if (gap < bestGap || (gap === bestGap && compareDates(p.postedOn, best!.postedOn) < 0)) best = p;
+  }
+  if (best !== undefined || nextDueOn === null) return best;
+  for (const p of payments) {
+    // late: past its own tolerance after the day, and short of the next due day's — each by its own series' days
+    if (diffDays(dueOn, p.postedOn) <= p.toleranceDays) continue;
+    if (diffDays(p.postedOn, nextDueOn) <= p.toleranceDays) continue;
+    if (best === undefined || compareDates(p.postedOn, best.postedOn) < 0) best = p;
   }
   return best;
 }

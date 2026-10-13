@@ -18,10 +18,10 @@ import { alreadyDueWords, longDate } from "./labels";
  *
  * ⚖️ The grace it names is the one the read half waited for (`overdue.graceDays`, his decision 60, 2026-10-08) — for a
  * bill paid inside the rent's payment, the rent's when it is wider — never the series' own beside a rule that waited
- * for another.
+ * for another. …and where its own window and the rent's differ, each by name (`overdue.carriedGrace`).
  */
 export function AlreadyDueCard({ overdue }: { overdue: NonNullable<SeriesDetail["overdue"]> }) {
-  const words = alreadyDueWords(overdueReading(overdue), overdue.graceDays);
+  const words = alreadyDueWords(overdueReading(overdue), overdue.graceDays, overdue.carriedGrace);
   return (
     <SurfaceCard>
       <h2 className={words.warning ? "mb-1 text-sm font-medium text-warning" : "mb-1 text-sm font-medium"}>

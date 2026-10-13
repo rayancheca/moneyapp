@@ -169,8 +169,8 @@ function oct1(seriesId: string, today = TODAY) {
     (c) => c.seriesId === seriesId,
   )!;
   const d = seriesDetail(bundle.db, seriesId, today);
-  const { amountCents, unreadCents, graceDays } = d.overdue!;
-  const words = alreadyDueWords({ owedCents: -amountCents, unreadCents }, graceDays);
+  const { amountCents, unreadCents, graceDays, carriedGrace } = d.overdue!;
+  const words = alreadyDueWords({ owedCents: -amountCents, unreadCents }, graceDays, carriedGrace);
   return { calendar: [e.state, e.unsettledReason], card: [words.heading, words.warning] };
 }
 

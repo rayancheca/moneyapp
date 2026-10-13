@@ -3,13 +3,13 @@ import type { AppDatabase } from "@/db/client";
 import { recurringSeries } from "@/db/schema/recurring";
 import type { ArrearsReading } from "@/lib/arrears-reading";
 import { addDays, compareDates, periodBounds } from "@/lib/dates";
-import { lastDueDayRead, paydayIsRead, type DueDayReading } from "@/lib/occurrence-verdict";
+import { lastDueDayRead, paydayIsRead, type CarriedGrace, type DueDayReading } from "@/lib/occurrence-verdict";
 import { sharedFrontier, type UnbankedFrontier } from "@/lib/unbanked-income";
 import { billPaymentsBySeries, paymentFor, withBillingCarriers } from "./billing-carriers";
 import { checkedThroughBySeries, silenceMeasuredThroughBySeries } from "./cash-earnings";
-import { dueDayReadings } from "./observation-frontier";
+import { dueDayGraces, dueDayReadings } from "./observation-frontier";
 import { paydayProjectable, paydaySettlementsBySeries } from "./payday-settlement";
-import { hasStoppedForecasting, projectOccurrences, toProjectable } from "./recurring";
+import { hasStoppedForecasting, nextDueDayAfter, projectOccurrences, toProjectable } from "./recurring";
 
 /**
  * ARREARS — bills that came due inside a window and that no posting covers.
@@ -134,16 +134,21 @@ export function overdueForSeries(
    * (`carrierPaymentsBySeries`, implied by §6A 59, 2026-10-08). 🔴 Graded on its own postings — it has none, ever — its
    * $182.21 came due every 1st and "has not posted" beside the rent's payment that paid it. Its amount is untouched:
    * still owed at its own $182.21 when the rent has not paid, and owed nowhere when it has.
+   *
+   * ⚖️ …with NO END: a payment past a day's grace pays it late, until the next due day's grace opens (`paymentFor`),
+   * and that can be past `through` and its tolerance — the arrears' walk read only as far as the ledger has read
+   * (`arrearsReadCents`) must see the late payment the whole walk saw. No posting is dated past today.
    */
-  const paymentsBySeries = billPaymentsBySeries(db, live, periodStart, through);
+  const paymentsBySeries = billPaymentsBySeries(db, live, periodStart, null);
 
   const series: BudgetTailSeries[] = [];
   let totalCents = 0;
   for (const s of live) {
     const payments = paymentsBySeries.get(s.id) ?? [];
-    const occ = projectOccurrences(toProjectable(s), periodStart, through)
+    const projectable = toProjectable(s);
+    const occ = projectOccurrences(projectable, periodStart, through)
       .filter((o) => o.amountCents < 0)
-      .filter((o) => paymentFor(payments, o.date) === undefined);
+      .filter((o) => paymentFor(payments, o.date, nextDueDayAfter(projectable, o.date)) === undefined);
     if (occ.length === 0) continue;
     const amountCents = occ.reduce((sum, o) => sum - o.amountCents, 0);
     totalCents += amountCents;
@@ -182,6 +187,12 @@ export interface ArrearsSeries extends BudgetTailSeries {
    * (`dueDayReadings`, ⚖️ §6A 60). What the bill's page says the imports reach past it (`alreadyDueWords`).
    */
   graceDays: number;
+  /**
+   * Billed inside another's payment (§6A 59): the two windows `graceDays` is the wider of — a posting of its own within
+   * its own days, a payment of its carrier's within the carrier's — which the bill's page names each (`alreadyDueWords`,
+   * `dueDayGraces`). Null for a bill paid on its own, whose one window is `graceDays`.
+   */
+  carriedGrace: CarriedGrace | null;
 }
 
 export interface Arrears {
@@ -231,8 +242,10 @@ export function arrearsInWindow(
 ): Arrears {
   const late = overdueForSeries(db, seriesIds, periodStart, through, today);
   if (late.series.length === 0) return { totalCents: late.totalCents, series: [] };
-  // ⛔ one reading of every late series' due days: the split below, and the grace each card says it waited for
-  const readingOf = dueDayReadings(db, today);
+  // ⛔ one reading of every late series' due days: the split below, and the grace each card says it waited for — with
+  // the windows that grace is made of, for one billed inside another's payment
+  const graceOf = dueDayGraces(db);
+  const readingOf = dueDayReadings(db, today, graceOf);
   const readById = arrearsReadCents(db, late, readingOf, periodStart, through, today);
   return {
     totalCents: late.totalCents,
@@ -244,6 +257,7 @@ export function arrearsInWindow(
         unreadCents,
         inGraceCents: reading.readsToToday ? unreadCents : 0,
         graceDays: reading.graceDays,
+        carriedGrace: graceOf(s.id).carried,
       };
     }),
   };

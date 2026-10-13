@@ -1713,6 +1713,23 @@ export function projectOccurrences(
 }
 
 /**
+ * The due day after `day` on a series' schedule — `projectOccurrences`' next step from its anchor, by index, its end
+ * disregarded: where a LATE payment of `day` stops being late and starts paying the next one early (`paymentFor`).
+ * Null for a series with no schedule.
+ *
+ * ⛔ Its end is disregarded because a bill's LAST due day can be paid late too — a lease ending Oct 10 whose Oct 1
+ * posts Oct 12 was paid; with no step after it, nothing would ever pay it late.
+ */
+export function nextDueDayAfter(
+  series: Pick<ProjectableSeries, "cadence" | "intervalDaysAvg" | "nextExpectedOn" | "anchorDay">,
+  day: string,
+): string | null {
+  if (!series.nextExpectedOn) return null;
+  const plan = stepPlan(series.cadence, series.intervalDaysAvg, series.anchorDay ?? null);
+  return stepFrom(series.nextExpectedOn, plan, signedStepsToReach(series.nextExpectedOn, plan, addDays(day, 1)));
+}
+
+/**
  * All live (detected|confirmed) series' occurrences in the next N days.
  *
  * ⛔ `windowDays` is a COUNT OF DAYS, and today is the first of them. The window

@@ -2,6 +2,7 @@ import { and, desc, eq, isNull, lte, ne, or, sql } from "drizzle-orm";
 import { seriesCanBeReshaped, type SeriesEvidence } from "@/lib/series-evidence";
 import type { UnbankedIncomeReading } from "@/lib/unbanked-income";
 import type { BillingCarrier } from "@/lib/billed-with";
+import type { CarriedGrace } from "@/lib/occurrence-verdict";
 import type { AppDatabase } from "@/db/client";
 import { accounts } from "@/db/schema/accounts";
 import { categories } from "@/db/schema/categories";
@@ -254,6 +255,9 @@ export interface SeriesDetail {
    *
    * `graceDays` — the days after a due day a payment may still post on, which the read half waited for
    * (`ArrearsSeries.graceDays`, ⚖️ §6A 60): what the card says the imports reach past it.
+   *
+   * `carriedGrace` — billed inside another's payment, the two windows that grace is made of, which the card names each
+   * (`ArrearsSeries.carriedGrace`); null for a bill paid on its own.
    */
   overdue: {
     date: string;
@@ -262,6 +266,7 @@ export interface SeriesDetail {
     unreadCents: number;
     inGraceCents: number;
     graceDays: number;
+    carriedGrace: CarriedGrace | null;
   } | null;
   /**
    * The income side of `overdue`: this month's paydays that passed with no deposit against them — null when none did,
@@ -530,6 +535,7 @@ export function seriesDetail(
         unreadCents: late.unreadCents,
         inGraceCents: late.inGraceCents,
         graceDays: late.graceDays,
+        carriedGrace: late.carriedGrace,
       }
     : null;
   const unbankedPaydays = unbankedPaydaysOf(db, s, today);

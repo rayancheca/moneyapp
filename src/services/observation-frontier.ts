@@ -7,7 +7,7 @@ import { statementPeriods } from "@/db/schema/imports";
 import { recurringSeries } from "@/db/schema/recurring";
 import { transactions } from "@/db/schema/transactions";
 import { compareDates } from "@/lib/dates";
-import type { DueDayReading } from "@/lib/occurrence-verdict";
+import type { CarriedGrace, DueDayReading } from "@/lib/occurrence-verdict";
 import { billingCarriers } from "./billing-carriers";
 import { silenceMeasuredThroughBySeries } from "./cash-earnings";
 
@@ -401,9 +401,40 @@ export function accountsThatDate(
  * Oct 4 could pay, or "hold no posting within 5 days of it" beside its own Oct 5 row. Waiting on the accounts of what
  * it carries would wait on a card the rent never paid from — decision 62's own 🔴. Latent on his ledger copy
  * 2026-10-12: the rent and its utilities both have 3, and the utilities no posting of their own.
+ *
+ * ⚠️ NOT HIS ANSWER YET: item (2) of the 2026-10-12 queue asked for the pair to answer on ONE day, and this is the
+ * other reading, each on its own grace — put to him 2026-10-13 as an either/or. The grace itself is `dueDayGraces`'.
  */
-export function dueDayReadings(db: AppDatabase, today: string): (seriesId: string) => DueDayReading {
+export function dueDayReadings(
+  db: AppDatabase,
+  today: string,
+  graceOf: (seriesId: string) => DueDayGrace = dueDayGraces(db),
+): (seriesId: string) => DueDayReading {
   const measuredThrough = silenceMeasuredThroughBySeries(db, today);
+  return (seriesId) => {
+    const observedThrough = measuredThrough(seriesId);
+    return {
+      observedThrough,
+      graceDays: graceOf(seriesId).graceDays,
+      // read to the day of the question: what is unread waits only for days still to come (`in_grace`)
+      readsToToday: observedThrough !== null && compareDates(observedThrough, today) >= 0,
+    };
+  };
+}
+
+/** A series' grace (`DueDayReading.graceDays`), and — billed inside another's payment — the windows it is made of. */
+export interface DueDayGrace {
+  graceDays: number;
+  carried: CarriedGrace | null;
+}
+
+/**
+ * Each series' grace, as `dueDayReadings` reads a due day by it: its own `toleranceDays`, and for one billed inside
+ * another's payment the wider of its own and its carrier's — with the two windows it is made of (`CarriedGrace`), so
+ * the bill's page names the windows its day waited for, never one figure for two (`alreadyDueWords`, review of
+ * 44eb3e7). ⛔ One reading for both: `arrearsInWindow` passes this to `dueDayReadings` and keeps its windows.
+ */
+export function dueDayGraces(db: AppDatabase): (seriesId: string) => DueDayGrace {
   const carriers = billingCarriers(db);
   const tolerance = new Map(
     db
@@ -413,14 +444,10 @@ export function dueDayReadings(db: AppDatabase, today: string): (seriesId: strin
       .map((s) => [s.id, s.toleranceDays] as const),
   );
   return (seriesId) => {
-    const own = tolerance.get(seriesId) ?? 0;
-    const carrierId = carriers.get(seriesId)?.id;
-    const observedThrough = measuredThrough(seriesId);
-    return {
-      observedThrough,
-      graceDays: carrierId === undefined ? own : Math.max(own, tolerance.get(carrierId) ?? 0),
-      // read to the day of the question: what is unread waits only for days still to come (`in_grace`)
-      readsToToday: observedThrough !== null && compareDates(observedThrough, today) >= 0,
-    };
+    const ownDays = tolerance.get(seriesId) ?? 0;
+    const carrier = carriers.get(seriesId);
+    if (carrier === undefined) return { graceDays: ownDays, carried: null };
+    const carrierDays = tolerance.get(carrier.id) ?? 0;
+    return { graceDays: Math.max(ownDays, carrierDays), carried: { ownDays, carrierName: carrier.name, carrierDays } };
   };
 }

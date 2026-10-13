@@ -278,7 +278,8 @@ export function stillToComeReader(
   return (seriesId, date) => {
     const paydays = settled.get(seriesId);
     if (paydays !== undefined) return !paydays.has(date);
-    return paymentFor(payments.get(seriesId) ?? [], date) === undefined;
+    // nothing late asked (`paymentFor`): a payment past the grace of a day from today on would post after today
+    return paymentFor(payments.get(seriesId) ?? [], date, null) === undefined;
   };
 }
 

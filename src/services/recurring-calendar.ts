@@ -1,4 +1,4 @@
-import { and, eq, gte, inArray, isNotNull, lte, sql } from "drizzle-orm";
+import { and, eq, gte, inArray, isNotNull, sql } from "drizzle-orm";
 import type { AppDatabase } from "@/db/client";
 import { categories } from "@/db/schema/categories";
 import { recurringSeries, type SeriesKind } from "@/db/schema/recurring";
@@ -40,6 +40,7 @@ import {
   effectiveSeries,
   hasStoppedForecasting,
   MIN_OCCURRENCES,
+  nextDueDayAfter,
   populationStddev,
   projectOccurrences,
   seriesEvidence,
@@ -688,11 +689,16 @@ export function recurringCalendar(
    * either side of the edge — Sep 30 and Oct 2, each a day from Oct 1 — names the earlier of two as near, so October
    * drew Oct 1 "paid (paid by its payment of Sep 30, 2026)" at $2,109.00 beside the Oct 2 row that stood for it too.
    */
-  const paymentNamedFor = <P extends Payment>(payments: readonly P[], dueOn: string): P | undefined =>
+  const paymentNamedFor = <P extends Payment>(
+    payments: readonly P[],
+    dueOn: string,
+    nextDueOn: string | null,
+  ): P | undefined =>
     paymentFor(
       payments.filter((p) => insideMonth(p.postedOn)),
       dueOn,
-    ) ?? paymentFor(payments, dueOn);
+      nextDueOn,
+    ) ?? paymentFor(payments, dueOn, nextDueOn);
   /** per series, per deposit day: this month's money that paid ANOTHER month's paydays, still to charge to a row */
   const owedElsewhere = new Map<string, Map<string, SettlementPortion[]>>();
   /** per series, per payday in this month: the money ANOTHER month's deposits put into it */
@@ -719,6 +725,9 @@ export function recurringCalendar(
    * only. On a linked copy of his ledger with a rent payment posted Sep 30, October drew the rent "upcoming" (Sep 30),
    * "not yet known" (Oct 2) and a red ✕ "missed" (Oct 9, read through Oct 4) beside "Rent utilities & fees paid (paid
    * with the rent's payment of Sep 30)" — while the rent's page and the runway, reading the arrears, owed nothing.
+   *
+   * ⚖️ …and with NO END, as the arrears read it: a payment past a day's grace pays it late until the next due day's
+   * grace opens (`paymentFor`), so the month's last rent may be paid in the next one — drawn there, named here.
    */
   const paymentsBySeries = new Map<string, { postedOn: string; toleranceDays: number }[]>();
   if (historyRows.length > 0) {
@@ -736,7 +745,6 @@ export function recurringCalendar(
           eq(transactions.status, "active"),
           isNotNull(transactions.recurringSeriesId),
           gte(transactions.postedOn, addDays(monthStart, -widest)),
-          lte(transactions.postedOn, addDays(monthEnd, widest)),
         ),
       )
       .all();
@@ -840,8 +848,9 @@ export function recurringCalendar(
   // every pay sentence names, where the pay lands NOW — never the bills' reading, which takes every account it ever
   // landed in
   const paydaysCheckedOf = needsFrontier ? checkedThroughBySeries(db, today) : null;
-  // what pays each series billed inside another: its carrier's payments (§6A 59) — nothing is asked without a link
-  const carried = carrierPaymentsBySeries(db, forecastRows, monthStart, monthEnd);
+  // what pays each series billed inside another: its carrier's payments (§6A 59) — nothing is asked without a link —
+  // read with no end, as step 1 reads its own: a carrier's payment past its grace pays the day it is late for
+  const carried = carrierPaymentsBySeries(db, forecastRows, monthStart, null);
 
   for (const s of forecastRows) {
     if (hasStoppedForecasting(s, today, checkedThrough(s.id))) continue;
@@ -850,7 +859,8 @@ export function recurringCalendar(
      * step B), the one Earned vs banked counts from. 🔴 Projected from the stored anchor, his June drew no payday at
      * all: Jun 4's $1,047.00 read "toward no payday" beside an income card that had earned four cash weeks that month.
      */
-    const occurrences = projectOccurrences(paydayProjectable(s, settlements.get(s.id), today), monthStart, monthEnd);
+    const projectable = paydayProjectable(s, settlements.get(s.id), today);
+    const occurrences = projectOccurrences(projectable, monthStart, monthEnd);
     const postedDates = postedDatesBySeries.get(s.id) ?? [];
     // the arrears' test of a covering posting (`paymentFor`), over the postings the arrears read — the month's and its
     // edges' (step 1)
@@ -925,8 +935,11 @@ export function recurringCalendar(
       } else {
         // a bill, or money settlement does not speak about: a posting within
         // the series' tolerance is this occurrence, drawn on the day it landed —
-        // one on this grid before one in another month (`paymentNamedFor`)
-        const ownPaid = paymentNamedFor(ownPayments, o.date);
+        // one on this grid before one in another month (`paymentNamedFor`) —
+        // or, none on time, the one it is late for, before the next due day's
+        // grace opens (`paymentFor`): the rent paid Oct 5 is its Oct 1, drawn once
+        const nextDueOn = nextDueDayAfter(projectable, o.date);
+        const ownPaid = paymentNamedFor(ownPayments, o.date, nextDueOn);
         if (ownPaid !== undefined && insideMonth(ownPaid.postedOn)) continue;
         /*
          * ⚖️ …which may be in ANOTHER month, the rent paid Sep 30 for Oct 1: drawn paid on its own day, naming the day
@@ -945,7 +958,7 @@ export function recurringCalendar(
          * payment named is the one the carrier's own occurrence is drawn by (`paymentNamedFor`): beside a rent paid in
          * halves either side of the edge, the half on this grid.
          */
-        const carrierPaid = paymentNamedFor(carried.get(s.id) ?? [], o.date);
+        const carrierPaid = paymentNamedFor(carried.get(s.id) ?? [], o.date, nextDueOn);
         if (carrierPaid !== undefined && s.billedWith !== null) {
           pushPaidElsewhere(s, o, { carrier: carrierWord(s.billedWith.name), postedOn: carrierPaid.postedOn });
           continue;
