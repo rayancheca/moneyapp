@@ -78,7 +78,8 @@ function addSeries(o: {
   cadence: "weekly" | "monthly";
   accountId: string | null;
   amountCents: number;
-  lastMatchedOn: string;
+  /** null: registered by hand, nothing ever matched — never billed */
+  lastMatchedOn: string | null;
   nextExpectedOn: string;
   status?: "confirmed" | "detected";
 }): void {
@@ -128,14 +129,26 @@ function posted(accountId: string, seriesId: string, postedOn: string, amountCen
 
 /**
  * The composition band's heading for each side, and the late-money label beside it (`ForecastComposition`'s `Side`),
- * or null when the side prints none.
+ * or null when the side prints none. The header row holds the heading and the label, and nothing else.
  */
 function bandLabels(html: string): Map<string, string | null> {
   const band = new Map<string, string | null>();
-  for (const m of html.matchAll(/<h3[^>]*>([^<]+)<\/h3>(?:<span[^>]*title="see[^"]*"[^>]*>([^<]*)<\/span>)?/g)) {
-    band.set(m[1]!, m[2] ?? null);
+  for (const m of html.matchAll(/<h3[^>]*>([^<]+)<\/h3>(.*?)<\/div>/g)) {
+    const label = m[2]!.replace(/<[^>]+>/g, "");
+    band.set(m[1]!, label === "" ? null : label);
   }
   return band;
+}
+
+/** Each part of a side's label: its words, its tone, and the word below it points at (`title="see “…”, below"`). */
+function bandParts(html: string, side: string): { text: string; tone: "warning" | "neutral"; points: string }[] {
+  const at = html.indexOf(`>${side}</h3>`);
+  const header = html.slice(at, html.indexOf("</div>", at));
+  return [...header.matchAll(/<span class="([^"]*)" title="see “([^”]*)”, below">([^<]*)<\/span>/g)].map((m) => ({
+    text: m[3]!,
+    tone: /\btext-warning\b/.test(m[1]!) ? "warning" : "neutral",
+    points: m[2]!,
+  }));
 }
 
 /** Days the balance walk has read — what `accountCoverage` grades checked. */
@@ -287,6 +300,55 @@ describe("running late is said only of days the ledger has checked — every sur
     const lines = new Map(committedBook(bundle.db, TODAY).lines.map((l) => [l.seriesId, l.isStale]));
     expect(lines.get(UTILITY)).toBe(false);
     expect(lines.get(LATE)).toBe(true);
+  });
+});
+
+/*
+ * 🔴 One state, one tone (review of 481e357): the chip and the series page's badge learned that never billed is quiet,
+ * and the MONEY IN/OUT band above them kept it in amber. Measured on his ledger copy at today = 2026-10-12, October's
+ * money out read "$468.86 of it never billed" (Parking, Gym) and November's "$172.74 of it never billed", warning-toned
+ * and titled 'see "running late", below' — over a footer saying "2 series have never been billed and 3 are awaiting
+ * statements", with nothing running late for the title to point at.
+ */
+describe("the band says each part in the badge's tone, and points at the footer's word for it", () => {
+  const GYM = "series-gym";
+  beforeEach(() => {
+    // registered by hand, first due Oct 20: nothing has ever matched it
+    addSeries({
+      id: GYM,
+      name: "Gym",
+      kind: "bill",
+      cadence: "monthly",
+      accountId: VX,
+      amountCents: -4_000,
+      lastMatchedOn: null,
+      nextExpectedOn: "2026-10-20",
+    });
+  });
+  const card = (): string =>
+    renderToStaticMarkup(createElement(ForecastCard, { forecast: forecastCurrentMonth(bundle.db, TODAY) }));
+
+  test("late money in amber, never-billed money quiet — each pointing at its own word, which the footer prints", () => {
+    const html = card();
+    expect(bandLabels(html).get("Money out")).toBe(`${formatCents(1_599)} of it running late · ${formatCents(4_000)} never billed`);
+    expect(bandParts(html, "Money out")).toEqual([
+      { text: `${formatCents(1_599)} of it running late`, tone: "warning", points: "running late" },
+      { text: `${formatCents(4_000)} never billed`, tone: "neutral", points: "never been billed" },
+    ]);
+    const text = html.replace(/<[^>]+>/g, "");
+    expect(text).toContain("1 series is running late");
+    expect(text).toContain("1 has never been billed");
+  });
+
+  test("a side whose only stale money has never been billed wears no warning at all", () => {
+    bundle.db.update(recurringSeries).set({ status: "ended" }).where(eq(recurringSeries.id, LATE)).run();
+    const html = card();
+    expect(bandParts(html, "Money out")).toEqual([
+      { text: `${formatCents(4_000)} of it never billed`, tone: "neutral", points: "never been billed" },
+    ]);
+    const at = html.indexOf(">Money out</h3>");
+    expect(html.slice(at, html.indexOf("</div>", at))).not.toContain("text-warning");
+    expect(html.replace(/<[^>]+>/g, "")).not.toContain("running late");
   });
 });
 
