@@ -1,6 +1,23 @@
 {
   "version": "0.0.1",
   "configurations": [
-    { "name": "moneyapp-dev", "runtimeExecutable": "pnpm", "runtimeArgs": ["dev", "-p", "3111"], "port": 3111 }
+    {
+      "name": "moneyapp-dev",
+      "runtimeExecutable": "pnpm",
+      "runtimeArgs": [
+        "dev",
+        "-p",
+        "3111"
+      ],
+      "port": 3111
+    },
+    {
+      "name": "moneyapp-dev-3000",
+      "runtimeExecutable": "pnpm",
+      "runtimeArgs": [
+        "dev"
+      ],
+      "port": 3000
+    }
   ]
 }
