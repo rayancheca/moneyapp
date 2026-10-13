@@ -197,8 +197,8 @@ export interface DueDayReading {
   observedThrough: string | null;
   /**
    * The days after its due day a covering payment may still post on — the bill's `toleranceDays`, the window
-   * `paymentFor` pays an occurrence within; for a bill paid inside another's payment, the widest of its own and its
-   * carrier's (`dueDayReadings`).
+   * `paymentFor` pays an occurrence within; for a bill paid inside another's payment and for the one it is paid
+   * inside, the widest among that carrier and every series billed inside it (`dueDayReadings`) — one day for the pair.
    */
   graceDays: number;
 }

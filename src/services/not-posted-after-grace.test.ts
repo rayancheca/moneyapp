@@ -259,8 +259,27 @@ describe("the grace is the bill's — and, for one billed with the rent, the ren
     );
   });
 
+  /*
+   * 🔴 …and the other way round it split (review of the 2026-10-08 batch): the grace of what is billed inside the rent
+   * was the wider of its own and the rent's, the rent's its own alone — so with the utilities' own at 5, imports through
+   * Oct 4 drew the rent's Oct 1 a red ✕ "not posted" beside the utilities' quiet "?", one payment, two answers. A
+   * payment of its own may still pay the utilities through Oct 6 (`paymentFor`, each by its own series' tolerance), so
+   * neither may speak before then: the pair waits for the wider grace in it, both of them.
+   */
+  test("what the rent carries, with 5 days' grace of its own, holds the rent to Oct 6 too — one day for the pair", () => {
+    bundle.db.update(recurringSeries).set({ toleranceDays: 5 }).where(eq(recurringSeries.id, UTIL)).run();
+    importedThrough("2026-10-05");
+    expect(surfaces()).toEqual(QUIET);
+    importedThrough("2026-10-06");
+    expect(surfaces()).toEqual(NOT_POSTED);
+    // …and the rent's own page names the grace its day waited for — 5, the pair's, never its own 3
+    expect(seriesDetail(bundle.db, RENT, TODAY).overdue!.graceDays).toBe(5);
+  });
+
   test("a bill billed on its own waits its own grace: one day's grace is read the day after", () => {
     bundle.db.update(recurringSeries).set({ toleranceDays: 1 }).where(eq(recurringSeries.id, RENT)).run();
+    // on its own: carrying nothing either — linked, it waits for the 3 days of what it carries (the test above)
+    bundle.db.update(recurringSeries).set({ userBilledWithSeriesId: null }).where(eq(recurringSeries.id, UTIL)).run();
     importedThrough("2026-10-01");
     expect(surfaces([RENT]).calendar).toEqual([["unsettled", "not_imported"]]);
     importedThrough("2026-10-02");
