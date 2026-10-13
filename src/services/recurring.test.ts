@@ -713,10 +713,8 @@ describe("annualizedCentsOf — no year ahead of a series whose end has passed",
               for (const lastMatchedOn of [null, "2026-09-01", "2025-01-01"]) {
                 const s = { ...row, cadence, nextExpectedOn, userNextExpectedOn, userEndsOn, status, lastMatchedOn };
                 asked += 1;
-                expect(
-                  annualizedCentsOf(s, today, today),
-                  `${cadence} · ${nextExpectedOn} · ${userNextExpectedOn} · ends ${userEndsOn} · ${status} · ${lastMatchedOn}`,
-                ).toBeNull();
+                const label = `${cadence} · ${nextExpectedOn} · ${userNextExpectedOn} · ends ${userEndsOn}`;
+                expect(annualizedCentsOf(s, today, today), `${label} · ${status} · ${lastMatchedOn}`).toBeNull();
               }
             }
           }
