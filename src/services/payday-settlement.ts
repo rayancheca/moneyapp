@@ -10,6 +10,8 @@ import {
   noSettlement,
   settlePaydaysBackwards,
   walkBackBound,
+  type AttributedDeposit,
+  type PaydayOccurrence,
   type PaydaySettlement,
 } from "@/lib/payday-settlement";
 import { paydayReadings, type PaydayReading } from "@/lib/per-payday";
@@ -102,7 +104,13 @@ export function paydaySettlement(db: AppDatabase, seriesId: string, today: strin
     toleranceDays: s.toleranceDays,
     periodOf: (day) => ratePeriodOf(projectable, day),
   });
-  return { ...settlement, firstPaydayOn: firstOn, walkBackBefore };
+  return {
+    ...settlement,
+    firstPaydayOn: firstOn,
+    walkBackBefore,
+    paydays: occurrences.map((o) => ({ date: o.date, amountCents: o.amountCents })),
+    deposits,
+  };
 }
 
 /**
@@ -120,9 +128,22 @@ export interface SeriesPaydaySettlement extends PaydaySettlement {
    * the settlement paid. Null when no money has arrived: there is no walk back.
    */
   walkBackBefore: string | null;
+  /**
+   * …and what it WALKED: every payday it drew, each at its own era's rate, and the money that had arrived. ⛔ For a
+   * reader publishing a window's figures off this answer (`payShortfall`, /spending's shortfall note): its paydays and
+   * its deposits are these, never a second projection whose days or rates could part from the ones settled.
+   */
+  paydays: readonly PaydayOccurrence[];
+  deposits: readonly AttributedDeposit[];
 }
 
-const unsettled = (): SeriesPaydaySettlement => ({ ...noSettlement(), firstPaydayOn: null, walkBackBefore: null });
+const unsettled = (): SeriesPaydaySettlement => ({
+  ...noSettlement(),
+  firstPaydayOn: null,
+  walkBackBefore: null,
+  paydays: [],
+  deposits: [],
+});
 
 /**
  * A series' projection over its whole payday universe: `toProjectable`, opened on the first payday its settlement

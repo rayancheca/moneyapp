@@ -875,14 +875,8 @@ export function perPaydayWord(p: PerPayday): string {
   return `${each}, with the day's ${others === 1 ? "other deposit" : `${others} other deposits`}`;
 }
 
-/**
- * ⚖️ A DEPOSIT WHOSE MONEY PAID NO PAYDAY SAYS SO (`PaydayReading.towardNoPayday`, §6A 55b): its money pays nothing
- * past its own date plus the tolerance, so what is left of it after the paydays it reached answers no week — and is
- * graded against none. One phrase for the calendar's cell and Day Sheet and the series page's history, so the two
- * cannot word the same row two ways. 🔴 Before the reach bound June's $400.00 read "paid (toward the payday of Aug
- * 27, 2026)"; after it, the series page still graded the row "-$647.00" beside the calendar's "toward no payday".
- */
-export const TOWARD_NO_PAYDAY = "toward no payday";
+/** ⚖️ A deposit whose money paid no payday says so (§6A 55b) — `lib/per-payday`'s one phrase, where it is explained. */
+export { TOWARD_NO_PAYDAY } from "@/lib/per-payday";
 
 /**
  * ⚖️ Owner decision 2026-10-08 (§6A 54): the merge confirmation's last sentence — how many of the source's rows are not

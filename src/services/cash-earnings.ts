@@ -5,6 +5,7 @@ import { recurringSeries } from "@/db/schema/recurring";
 import { transactions } from "@/db/schema/transactions";
 import { compareDates, todayIso } from "@/lib/dates";
 import { cashEarnings, type CashEarnings, type PaySeries } from "@/lib/cash-earnings";
+import { payShortfall, type PayShortfall } from "@/lib/pay-shortfall";
 import { firstPaydayOn } from "@/lib/payday-settlement";
 import { stepPlan, walkDayOfMonth } from "@/lib/recurring-step";
 import { outsidePortfolioCashAccountIds } from "./accounts";
@@ -12,6 +13,7 @@ import { isAgentsIncomeSeries } from "./analytics";
 import { billingCarriers } from "./billing-carriers";
 import { accountsAwaitingStatements, silenceReadThrough } from "./cash-wallet-rule";
 import { accountCoverage, archivedAccountCoverage } from "./coverage";
+import { paydaySettlement } from "./payday-settlement";
 import { effectiveSeries } from "./recurring";
 
 /**
@@ -64,6 +66,15 @@ export interface CashEarningsReading extends CashEarnings {
   checkedPeriodsCovered?: number;
   /** of `periodsSinceBanked`, the ones on or before `checkedThrough` (0 when it is null) */
   checkedPeriodsSinceBanked?: number;
+  /**
+   * The window's READ paydays against the series' settlement (`payShortfall`): what deposits inside the window banked
+   * of them, what deposits outside it paid, and what no deposit paid — /spending's shortfall note. Present only with
+   * `withChecked`, since "read" is that frontier's word.
+   *
+   * ⛔ The settlement's own paydays and money (`paydaySettlement`), so the note names Aug 27 paid by the deposit of
+   * Sep 24 exactly where the calendar draws it — never a second walk of this reading's schedule.
+   */
+  shortfall?: PayShortfall;
 }
 
 export interface CashEarningsWindow {
@@ -444,8 +455,9 @@ export function cashEarningsReadings(
       continue;
     }
     const checkedThrough = checkedOf(s.id);
+    const shortfall = payShortfall(paydaySettlement(db, s.id, today), { from, to, today, checkedThrough });
     if (checkedThrough === null) {
-      readings.push({ ...reading, checkedThrough, checkedPeriodsCovered: 0, checkedPeriodsSinceBanked: 0 });
+      readings.push({ ...reading, checkedThrough, checkedPeriodsCovered: 0, checkedPeriodsSinceBanked: 0, shortfall });
       continue;
     }
     /*
@@ -471,6 +483,7 @@ export function cashEarningsReadings(
         reading.lastBankedOn,
         checkedThrough,
       ),
+      shortfall,
     });
   }
 

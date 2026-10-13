@@ -101,6 +101,16 @@ export interface PaydayReading {
   towardNoPayday: boolean;
 }
 
+/**
+ * ⚖️ A DEPOSIT WHOSE MONEY PAID NO PAYDAY SAYS SO (`PaydayReading.towardNoPayday`, §6A 55b): its money pays nothing
+ * past its own date plus the tolerance, so what is left of it after the paydays it reached answers no week — and is
+ * graded against none. One phrase for the calendar's cell and Day Sheet, the series page's history and /spending's
+ * shortfall note, so no two can word the same row two ways. 🔴 Before the reach bound June's $400.00 read "paid
+ * (toward the payday of Aug 27, 2026)"; after it, the series page still graded the row "-$647.00" beside the
+ * calendar's "toward no payday". Here, in `lib`, since a /spending note needs it too (`components` re-exports it).
+ */
+export const TOWARD_NO_PAYDAY = "toward no payday";
+
 /** The rows a reading is taken of: a series' postings. */
 export interface ReadableRow {
   id: string;

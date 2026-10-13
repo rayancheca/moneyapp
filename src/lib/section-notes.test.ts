@@ -14,6 +14,7 @@ import {
   type SectionNote,
 } from "./section-notes";
 import { PATH_SEPARATOR } from "./category-path";
+import type { PayShortfall } from "./pay-shortfall";
 
 const row = (over: Partial<Parameters<typeof budgetSectionNotes>[0]["rows"][number]> = {}) => ({
   categoryPath: "Food",
@@ -965,6 +966,196 @@ describe("cashEarningsSectionNotes", () => {
     });
     expect(out).toHaveLength(2);
     expect(new Set(out.map((n) => n.id)).size).toBe(2);
+  });
+
+  /*
+   * 🔴 Read on his ledger 2026-10-13: /spending September printed the surplus note (the Sep 24 deposit paid Aug 27),
+   * and August — Aug 6, 13 and 20 paid by no deposit, Aug 27 by Sep 24's — said nothing beside "INCOME $54.12"; June
+   * read Salary $1,447.00 against four paydays of $4,188.00 with no note. The unbanked note speaks only of a STALE
+   * series, and his is "Awaiting statements". These rows carry what the page measures (`payShortfall`); the figures
+   * are a copy of his ledger's, today 2026-10-13, Wells Fargo checked through Thu Sep 24.
+   */
+  describe("a window whose read paydays were not banked inside it — the shortfall note", () => {
+    const HIS = {
+      seriesName: "It America LLC (weekly pay)",
+      basis: "series-live" as const,
+      lastBankedOn: "2026-09-24",
+      periodsSinceBanked: 2,
+      checkedThrough: "2026-09-24",
+      checkedPeriodsSinceBanked: 0,
+    };
+    const AUGUST: PayShortfall = {
+      readPaydays: 4,
+      firstReadOn: "2026-08-06",
+      lastReadOn: "2026-08-27",
+      readCents: 428_292,
+      bankedInsideCents: 0,
+      paidOutside: [{ depositOn: "2026-09-24", paydays: ["2026-08-27"], cents: 114_192, early: false }],
+      neverBankedCents: 314_100,
+      unlookedPaydays: 0,
+      towardNoPayday: [],
+    };
+    const august = (over: Partial<PayShortfall> = {}) =>
+      notes({
+        ...HIS,
+        impliedCents: 428_292,
+        bankedCents: 0,
+        unbankedCents: 428_292,
+        firstPeriodOn: "2026-08-06",
+        lastPeriodOn: "2026-08-27",
+        periodsCovered: 4,
+        checkedPeriodsCovered: 4,
+        shortfall: { ...AUGUST, ...over },
+      });
+
+    test("August: the payday a later deposit paid is named with that deposit, the rest never reached a bank", () => {
+      const out = august();
+      expect(out).toHaveLength(1);
+      expect(out[0]!.id).toBe("cash-earnings-shortfall-It America LLC (weekly pay)");
+      expect(out[0]!.body).toBe(
+        "It America LLC (weekly pay)'s paydays over Aug 6 – 27, 2026 came to $4,282.92, and none of it was banked " +
+          "inside the window: $1,141.92 (Aug 27) was paid by the deposit of 2026-09-24 and $3,141.00 never reached a " +
+          "bank.",
+      );
+    });
+
+    test("June: what was banked, what never was — and the $400.00 that paid no payday, in the calendar's words", () => {
+      const [note] = notes({
+        ...HIS,
+        impliedCents: 418_800,
+        bankedCents: 144_700,
+        unbankedCents: 274_100,
+        firstPeriodOn: "2026-06-04",
+        lastPeriodOn: "2026-06-25",
+        shortfall: {
+          ...AUGUST,
+          firstReadOn: "2026-06-04",
+          lastReadOn: "2026-06-25",
+          readCents: 418_800,
+          bankedInsideCents: 104_700,
+          paidOutside: [],
+          neverBankedCents: 314_100,
+          towardNoPayday: [{ depositOn: "2026-06-05", cents: 40_000 }],
+        },
+      });
+      expect(note!.body).toBe(
+        "It America LLC (weekly pay)'s paydays over Jun 4 – 25, 2026 came to $4,188.00, of which $1,047.00 was " +
+          "banked inside the window and $3,141.00 never reached a bank. $400.00 from the deposit of 2026-06-05 went " +
+          "toward no payday.",
+      );
+    });
+
+    test("July: no deposit paid any of it", () => {
+      const [note] = august({
+        firstReadOn: "2026-07-02",
+        lastReadOn: "2026-07-30",
+        readPaydays: 5,
+        readCents: 523_500,
+        paidOutside: [],
+        neverBankedCents: 523_500,
+      });
+      expect(note!.body).toBe(
+        "It America LLC (weekly pay)'s paydays over Jul 2 – 30, 2026 came to $5,235.00, and none of it reached a bank.",
+      );
+    });
+
+    test("paydays after the checked day are named as not looked for (decision 65), never as unbanked", () => {
+      const [note] = august({ unlookedPaydays: 2 });
+      expect(note!.body).toContain(
+        " never reached a bank; 2 more paydays in the window fall after 2026-09-24, the last day every account that " +
+          "pay lands in has been checked through — so the ledger has not looked for their deposits.",
+      );
+      const [one] = august({ unlookedPaydays: 1 });
+      expect(one!.body).toContain(
+        "; 1 more payday in the window falls after 2026-09-24, the last day every account that pay lands in has been " +
+          "checked through — so the ledger has not looked for its deposit.",
+      );
+    });
+
+    test("a payday a deposit paid before the window began was paid early (§6A 29)", () => {
+      const [note] = august({
+        firstReadOn: "2026-10-01",
+        lastReadOn: "2026-10-08",
+        readPaydays: 2,
+        readCents: 228_384,
+        paidOutside: [{ depositOn: "2026-09-30", paydays: ["2026-10-01"], cents: 114_192, early: true }],
+        neverBankedCents: 114_192,
+      });
+      expect(note!.body).toContain(
+        "none of it was banked inside the window: $1,141.92 (Oct 1) was paid early, by the deposit of 2026-09-30 and " +
+          "$1,141.92 never reached a bank.",
+      );
+    });
+
+    test("several paydays one deposit paid, and paydays paid by several deposits, each named", () => {
+      const [note] = august({
+        paidOutside: [
+          { depositOn: "2026-07-30", paydays: ["2026-08-06"], cents: 104_700, early: true },
+          { depositOn: "2026-09-24", paydays: ["2026-08-20", "2026-08-27"], cents: 218_892, early: false },
+        ],
+        neverBankedCents: 104_700,
+      });
+      expect(note!.body).toContain(
+        ": $1,047.00 (Aug 6) was paid early, by the deposit of 2026-07-30, $2,188.92 (Aug 20 and Aug 27) was paid by " +
+          "the deposit of 2026-09-24, and $1,047.00 never reached a bank.",
+      );
+    });
+
+    test("every read payday paid, some from outside the window: no 'never'", () => {
+      const [note] = august({ bankedInsideCents: 314_100, neverBankedCents: 0 });
+      expect(note!.body).toContain(
+        "came to $4,282.92, of which $3,141.00 was banked inside the window and $1,141.92 (Aug 27) was paid by the " +
+          "deposit of 2026-09-24.",
+      );
+      expect(note!.body).not.toContain("never");
+    });
+
+    test("a window banked in full inside itself says nothing new — September keeps its surplus note alone", () => {
+      const out = notes({
+        ...HIS,
+        impliedCents: 456_768,
+        bankedCents: 570_960,
+        unbankedCents: -114_192,
+        firstPeriodOn: "2026-09-03",
+        lastPeriodOn: "2026-09-24",
+        shortfall: {
+          ...AUGUST,
+          firstReadOn: "2026-09-03",
+          lastReadOn: "2026-09-24",
+          readCents: 456_768,
+          bankedInsideCents: 456_768,
+          paidOutside: [],
+          neverBankedCents: 0,
+        },
+      });
+      expect(out.map((n) => n.id)).toEqual(["cash-earnings-catchup-It America LLC (weekly pay)"]);
+    });
+
+    test("no read payday, no note — a window of unread paydays is the forecast's to name", () => {
+      const unread = { readPaydays: 0, readCents: 0, firstReadOn: null, lastReadOn: null, paidOutside: [] };
+      expect(august({ ...unread, neverBankedCents: 0, unlookedPaydays: 2 })).toEqual([]);
+    });
+
+    test("a stale series keeps the note it has — never both", () => {
+      const out = notes({ shortfall: { ...AUGUST, readCents: 523_000, neverBankedCents: 523_000, paidOutside: [] } });
+      expect(out.map((n) => n.id)).toEqual(["cash-earnings-unbanked-Cash job (weekly pay)"]);
+    });
+
+    test("…but a stale series whose unbanked note holds back (too few quiet READ paydays) still names the shortfall", () => {
+      const out = notes({
+        checkedThrough: "2026-08-12",
+        periodsCovered: 5,
+        checkedPeriodsCovered: 5,
+        checkedPeriodsSinceBanked: 2,
+        shortfall: { ...AUGUST, readCents: 523_000, bankedInsideCents: 313_600, paidOutside: [], neverBankedCents: 209_400 },
+      });
+      expect(out.map((n) => n.id)).toEqual(["cash-earnings-shortfall-Cash job (weekly pay)"]);
+    });
+
+    test("no confirmed schedule, no note, whatever the figures say", () => {
+      expect(august().length).toBe(1);
+      expect(notes({ ...HIS, basis: "no-series", shortfall: AUGUST })).toEqual([]);
+    });
   });
 });
 
