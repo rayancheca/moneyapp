@@ -10,6 +10,7 @@ import { institutions } from "@/db/schema/institutions";
 import { recurringSeries } from "@/db/schema/recurring";
 import { transactions } from "@/db/schema/transactions";
 import { seedDatabase } from "@/db/seed";
+import { arrearsThisMonth } from "./arrears";
 import { budgetTail } from "./budgets";
 import { committedBook } from "./committed";
 import { dashboardData } from "./dashboard";
@@ -267,6 +268,72 @@ describe("a rent split either side of the month's edge is one occurrence on Octo
   test("September draws its own half on the day it landed, and no occurrence of October's", () => {
     const sep = recurringCalendar(bundle.db, "2026-09", today).entriesByDay;
     expect(sep["2026-09-30"]?.map((e) => [e.seriesId, e.transactionId])).toEqual([[RENT, "t-rent-sep30"]]);
+  });
+});
+
+/*
+ * ⛔ EACH PAYMENT IS JUDGED BY ITS OWN SERIES' TOLERANCE — never the widest one the read was widened by. Every reader
+ * reads postings the widest tolerance either side of its window (`billPaymentsBySeries`, `carrierPaymentsBySeries`,
+ * the calendar's step 1) and then holds each to its own series' days (`paymentFor`). 🔴 Nothing pinned the second half
+ * (review of the 2026-10-08 batch): judging every posting by the widest passed every test. On his ledger copy
+ * 2026-10-12 the Venture X annual fee has 14 days and the rent 3 — so a rent payment five days off its 1st would have
+ * paid it, on every surface.
+ *
+ * Here the gym gets an annual fee's 14 days and a series billed inside it, so it is a carrier too: the rent's payments
+ * are held to the rent's 3, and so is what the rent carries.
+ */
+describe("a payment pays a bill only within ITS series' grace — a wider one elsewhere in the ledger lends it none", () => {
+  beforeEach(() => {
+    bundle.db.update(recurringSeries).set({ toleranceDays: 14 }).where(eq(recurringSeries.id, GYM)).run();
+    bundle.db
+      .insert(recurringSeries)
+      .values({
+        id: "locker",
+        name: "Gym locker",
+        kind: "bill",
+        cadence: "monthly",
+        intervalDaysAvg: 30,
+        toleranceDays: 3,
+        nextExpectedOn: "2026-10-22",
+        nextExpectedAmountCents: -1500,
+        userAmountCents: -1500,
+        anchorDay: 22,
+        status: "confirmed",
+        userCategoryId: categoryId,
+        userBilledWithSeriesId: GYM,
+        createdAt: now(),
+        updatedAt: now(),
+      })
+      .run();
+  });
+
+  test("paid Sep 26, five days early: Oct 1 is still coming on every reader that looks ahead — and what it carries", () => {
+    rentPaid("2026-09-26");
+    expect(ours(upcomingOccurrences(bundle.db, TODAY, 30))).toEqual([
+      [RENT, "2026-10-01"],
+      [UTIL, "2026-10-01"],
+    ]);
+    expect(octoberBills()).toEqual([
+      `${RENT_NAME} 1 × -$2,109.00 (monthly), next Oct 1`,
+      `${UTIL_NAME} 1 × -$182.21 (monthly), next Oct 1`,
+    ]);
+  });
+
+  test("paid Oct 6, five days late: Oct 1 is owed — the arrears, and the calendar beside the Oct 6 row", () => {
+    rentPaid("2026-10-06");
+    const today = "2026-10-08";
+    // asked of every bill, as the runway asks: the gym's 14 days widen the read, and lend the rent none of them
+    const all = new Set([RENT, UTIL, GYM, "locker"]);
+    expect(arrearsThisMonth(bundle.db, all, today).series.map((s) => [s.id, s.amountCents])).toEqual([
+      [RENT, 210900],
+      [UTIL, 18221],
+    ]);
+    const grid = recurringCalendar(bundle.db, "2026-10", today).entriesByDay;
+    expect(grid["2026-10-01"]?.map((e) => [e.seriesId, e.transactionId, e.paidWith])).toEqual([
+      [RENT, null, null],
+      [UTIL, null, null],
+    ]);
+    expect(grid["2026-10-06"]?.map((e) => [e.seriesId, e.transactionId])).toEqual([[RENT, "t-rent-2026-10-06"]]);
   });
 });
 
