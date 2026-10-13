@@ -10,7 +10,7 @@ import { appSettings } from "@/db/schema/settings";
 import { transactions } from "@/db/schema/transactions";
 import { transferAmbiguities } from "@/db/schema/transfer-ambiguities";
 import { diffDays, todayIso } from "@/lib/dates";
-import { formatCategoryPath } from "@/lib/category-path";
+import { formatCategoryPath, parseCategoryPath } from "@/lib/category-path";
 import { strippedDescriptionKey } from "@/lib/description-key";
 import { formatCents } from "@/lib/money";
 import { investmentSideAccountIds } from "./accounts";
@@ -478,11 +478,11 @@ function dismissAmbiguitiesAnchoredOn(db: AppDatabase, transactionId: string): n
 }
 
 function categoryIdByPath(db: AppDatabase, path: string): string {
-  const [parentName, subName] = path.split(" > ");
+  const { parentName, childName: subName } = parseCategoryPath(path);
   const parent = db
     .select()
     .from(categories)
-    .where(and(eq(categories.name, parentName!), isNull(categories.parentId)))
+    .where(and(eq(categories.name, parentName), isNull(categories.parentId)))
     .get();
   if (!parent) throw new Error(`Missing category ${parentName}`);
   if (!subName) return parent.id;

@@ -3,6 +3,7 @@ import type { AppDatabase } from "@/db/client";
 import { accounts } from "@/db/schema/accounts";
 import { categories } from "@/db/schema/categories";
 import { transactions } from "@/db/schema/transactions";
+import { parseCategoryPath } from "@/lib/category-path";
 import { addDays, diffDays } from "@/lib/dates";
 import { investmentSideAccountIds } from "./accounts";
 import type { BulkResult, UndoFields } from "./bulk-edit";
@@ -27,11 +28,11 @@ const CANDIDATE_WINDOW_DAYS = 14;
 const CANDIDATE_LIMIT = 8;
 
 function categoryIdByPath(db: AppDatabase, path: string): string {
-  const [parentName, subName] = path.split(" > ");
+  const { parentName, childName: subName } = parseCategoryPath(path);
   const parent = db
     .select()
     .from(categories)
-    .where(and(eq(categories.name, parentName!), isNull(categories.parentId)))
+    .where(and(eq(categories.name, parentName), isNull(categories.parentId)))
     .get();
   if (!parent) throw new Error(`Missing category ${parentName}`);
   if (!subName) return parent.id;
