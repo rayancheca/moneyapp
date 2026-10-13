@@ -4,8 +4,7 @@ import { notFound } from "next/navigation";
 import { getDb } from "@/db/client";
 import { categories } from "@/db/schema/categories";
 import { compareDates, todayIso } from "@/lib/dates";
-import { formatDayLong, formatDayShort } from "@/lib/format-date";
-import { formatCents } from "@/lib/money";
+import { formatDayLong } from "@/lib/format-date";
 import { parsePeriodParams, resolvePeriod, withPeriod } from "@/lib/period";
 import { ledgerOpens } from "@/services/observation-frontier";
 import { categorySpending } from "@/services/analytics";
@@ -25,12 +24,13 @@ import { categoryInsights } from "@/services/spending-insights";
 import { categoryEmptyCopy, ledgerFirstDay, topMerchants } from "@/services/spending";
 import { loadSpendingCategoryTxns } from "@/app/spending/actions";
 import { CategoryChip } from "@/components/ui/CategoryChip";
+import { CategoryBudgetCard } from "@/components/categories/CategoryBudgetCard";
+import { CategoryHeadline } from "@/components/categories/CategoryHeadline";
 import { CategoryMoveMenu } from "@/components/categories/CategoryMoveMenu";
 import { CategoryNameHeading } from "@/components/categories/CategoryNameHeading";
 import { moveDestinations as categoryMoveDestinations } from "@/services/category-edit";
 import { Icon } from "@/components/shell/Icon";
 import { Money } from "@/components/ui/Money";
-import { ProvenancePopover } from "@/components/ui/ProvenancePopover";
 import { InsightList } from "@/components/insights/InsightList";
 import { SurfaceCard } from "@/components/ui/SurfaceCard";
 import { buildCategoryPickerOptions } from "@/components/transactions/category-options";
@@ -103,13 +103,6 @@ export default async function CategoryPage({
 
   const { spentCents, txnCount } = categorySpending(db, { categoryId: id, from: range.from, to: range.to });
   const flowCents = sign * spentCents;
-  const spendProvenance = provenanceFor(db, {
-    kind: "categorySpend",
-    categoryId: id,
-    from: range.from,
-    to: range.to,
-    label: header.name,
-  });
 
   /*
    * ⛔ THE TREND IS ANCHORED TO THE PERIOD THIS PAGE IS SHOWING, not to today.
@@ -172,6 +165,18 @@ export default async function CategoryPage({
       : null;
   // the title carries the antecedent — "4 days of IT" has none without it
   const emptyText = emptyCopy ? `${emptyCopy.title}. ${emptyCopy.description}` : undefined;
+  // ⚡ a dash has no figure to prove (`CategoryHeadline`), so its empty total's proof — a second read of the
+  // category's day — is not asked for one
+  const spendProvenance =
+    emptyCopy?.figure === "dash"
+      ? null
+      : provenanceFor(db, {
+          kind: "categorySpend",
+          categoryId: id,
+          from: range.from,
+          to: range.to,
+          label: header.name,
+        });
 
   const insights = categoryInsights(db, id, today);
   const subcats = categorySubcategorySplit(db, id, range);
@@ -225,22 +230,15 @@ export default async function CategoryPage({
             </p>
           </div>
         </div>
-        <div className="text-right">
-          <div className="text-[11px] font-medium uppercase tracking-[0.12em] text-ink-faint">
-            {flowLabel} · {period.label}
-            {/* the total's proof is the proof of the rows underneath it, and its
-                weakest row sets the verdict */}
-            {spendProvenance && (
-              <ProvenancePopover
-                label={`this ${flowLabel.toLowerCase()} total`}
-                provenance={spendProvenance}
-                placement="bottom-end"
-              />
-            )}
-          </div>
-          <Money cents={flowCents} className="figures text-2xl font-semibold" />
-          <div className="text-xs text-ink-faint">{txnCount} {txnCount === 1 ? "transaction" : "transactions"}</div>
-        </div>
+        {/* ⛔ a dash, not $0.00, where its own empty state below says nobody has looked (`CategoryHeadline`) */}
+        <CategoryHeadline
+          flowLabel={flowLabel}
+          periodLabel={period.label}
+          flowCents={flowCents}
+          txnCount={txnCount}
+          empty={emptyCopy}
+          provenance={spendProvenance}
+        />
       </header>
 
       <div className="mb-6">
@@ -259,47 +257,8 @@ export default async function CategoryPage({
           <MonthlyTrendBars points={trend} flowLabel={flowLabel} />
         </SurfaceCard>
 
-        {budget && (
-          <SurfaceCard>
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <div>
-                <h2 className="text-sm font-medium">Budget</h2>
-                <p className="text-xs text-ink-faint">
-                  {/* 🔴 The window, because this page has a PERIOD SELECTOR and
-                      the budget is always graded at today. Unnamed, the card
-                      answered "how much of Housing went out?" with $0.00 on a
-                      screen whose headline answered it with $2,653.58. Same
-                      words as /budgets' own detail card. */}
-                  {budget.period} budget · grading {formatDayShort(budget.bounds.start)} –{" "}
-                  {formatDayShort(budget.bounds.end)}
-                  {/* the "left" figure beside this is measured from AVAILABLE, so a
-                      carry has to be named here or the two cannot be reconciled */}
-                  {budget.rolloverCents > 0 &&
-                    ` · ${formatCents(budget.amountCents)} plan + ${formatCents(budget.rolloverCents)} rolled over`}
-                </p>
-              </div>
-              <div className="flex items-center gap-4 text-sm">
-                <span>
-                  <Money cents={budget.spentCents} /> of <Money cents={budget.availableCents} />
-                </span>
-                <span
-                  className={
-                    budget.alert === "over"
-                      ? "text-negative"
-                      : budget.alert === "warn80"
-                        ? "text-warning"
-                        : "text-positive"
-                  }
-                >
-                  {budget.remainingCents >= 0
-                    ? `${formatCents(budget.remainingCents)} left`
-                    : `${formatCents(-budget.remainingCents)} over`}
-                </span>
-                <Link href={budget.href} className="text-accent hover:underline">Budgets →</Link>
-              </div>
-            </div>
-          </SurfaceCard>
-        )}
+        {/* ⛔ graded the way its /budgets row grades it — withheld over a window nobody has imported (`CategoryBudgetCard`) */}
+        {budget && <CategoryBudgetCard budget={budget} />}
 
         {/* `*:min-w-0` is load-bearing, not cosmetic. A grid track defaults to
             minmax(auto, 1fr) and `auto` as a MINIMUM resolves to min-content, so a

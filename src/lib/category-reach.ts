@@ -18,9 +18,10 @@ import { AGENTS_MONEY_LEFT_OUT, emptyPeriodCopy, type EmptyPeriodReason } from "
  *    says "cash only" in the row's own words (`budgetCoverageSentence`) instead of waiting for a statement.
  *  - spent from no account in the window, or only from accounts with no import date (priced investment accounts):
  *    no account of its own narrows the day. `categoryReachFor` then asks the nearest ANCESTOR, and only a category
- *    with none to ask keeps the ledger's day, named as the ledger's. ⚠️ The budget row counts every elapsed day of
- *    such a window as unaccounted; a page whose category has no rows anywhere near the window would then call every
- *    month "not imported", which no import could change.
+ *    with none to ask keeps the ledger's day, named as the ledger's. Counting every elapsed day instead would call
+ *    every month of a dormant category "not imported", which no import could change — and the budget row, which did
+ *    count them all, now asks this same day (`services/budgets::borrowedReach`): 🔴 its card read "Awaiting statements
+ *    · 2 days of this period unaccounted" under its page's measured $0.00 (review of e37997b, 2026-10-12).
  */
 export type CategoryCoverageFacts = Pick<
   BudgetCoverageInput,

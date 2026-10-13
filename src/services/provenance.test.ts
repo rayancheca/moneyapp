@@ -1248,6 +1248,25 @@ describe("provenanceFor — a category total", () => {
     expect(p.headline).toMatch(/zero rather than unproven/);
   });
 
+  /*
+   * 🔴 …AND A WINDOW THE IMPORT STOPS INSIDE HAS BEEN LOOKED AT, IN PART. It was called "a window nobody has looked at"
+   * under a headline the page calls a lower bound — `/categories/<id>`'s "No spending or income in the part of … that
+   * has been imported … so this is a lower bound rather than a measurement" (113 empty category-months on his ledger
+   * copy 2026-10-12). The proof says what the page says.
+   */
+  test("an empty window the import stops INSIDE is a lower bound, not a window nobody looked at", () => {
+    const acct = addAccount("a", "Chase Checking", "checking");
+    const cat = addCategory("c-food", "Fixture Food");
+    addTxn(acct, "2019-03-01");
+    addTxn(acct, "2019-09-30");
+    // Sep 15–30 read, Oct 1–15 not
+    const p = provenanceFor(bundle.db, { kind: "categorySpend", categoryId: cat, from: "2019-09-15", to: "2019-10-15" })!;
+    expect(p.headline).toBe(
+      "Nothing has been imported for 15 days between Sep 15, 2019 and Oct 15, 2019, so this zero is a lower bound rather than a measurement.",
+    );
+    expect(p.verdict).toBe("unknown");
+  });
+
   /** A row past its account's `verifiedThrough` is not covered by it. */
   test("a row after the chain stops being checked drags the total", () => {
     const acct = addAccount("a", "Robinhood Cash", "checking");

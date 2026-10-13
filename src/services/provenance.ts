@@ -15,7 +15,7 @@ import { transactions } from "@/db/schema/transactions";
 import { diffDays, todayIso } from "@/lib/dates";
 import { isStaleClose } from "@/lib/holding-price-age";
 import { formatCents } from "@/lib/money";
-import { emptyPeriodReason } from "@/lib/empty-period";
+import { A_LOWER_BOUND, emptyPeriodReason } from "@/lib/empty-period";
 import { ledgerOpens, ledgerReaches } from "./observation-frontier";
 import { outsidePortfolioCashAccountIds, ownPortfolioAccountIds } from "./accounts";
 import { categoryReachFor } from "./budgets";
@@ -2402,12 +2402,22 @@ function summedRowsProof(
       ledgerReaches: reaches === undefined ? ledgerReaches(db) : reaches,
     });
     const window = `${readableDay(from)} and ${readableDay(to)}`;
+    /*
+     * 🔴 …AND A WINDOW THE IMPORT STOPS INSIDE HAS BEEN LOOKED AT, IN PART. It was "a window nobody has looked at" under
+     * a headline `/categories/<id>` calls a lower bound, over cards saying "No spending or income in the part of … that
+     * has been imported … so this is a lower bound rather than a measurement" — 113 empty category-months on his ledger
+     * copy 2026-10-12. One phrase for the three (`A_LOWER_BOUND`).
+     */
+    const days = `${reason.uncoveredDays} ${reason.uncoveredDays === 1 ? "day" : "days"}`;
+    const unread = `Nothing has been imported for ${days} between ${window}`;
     const provenance: Provenance = {
       verdict: "unknown",
       headline:
         reason.kind === "measured"
           ? `No rows in ${subject} between ${window}, so this total is zero rather than unproven.`
-          : `Nothing has been imported for ${reason.uncoveredDays} ${reason.uncoveredDays === 1 ? "day" : "days"} between ${window}, so this zero is a window nobody has looked at rather than a measurement.`,
+          : reason.kind === "partly-covered"
+            ? `${unread}, so this zero is ${A_LOWER_BOUND}.`
+            : `${unread}, so this zero is a window nobody has looked at rather than a measurement.`,
       sources: [],
       checkedThrough: null,
       inputs: [],

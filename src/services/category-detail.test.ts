@@ -11,6 +11,9 @@ import { categories } from "@/db/schema/categories";
 import { institutions } from "@/db/schema/institutions";
 import { recurringSeries } from "@/db/schema/recurring";
 import { transactions, type TransactionStatus } from "@/db/schema/transactions";
+import { budgetCoverageSentence } from "@/lib/budget-coverage";
+import { budgetVerdict } from "@/lib/budget-verdict";
+import { periodBounds } from "@/lib/dates";
 import { formatDayLong } from "@/lib/format-date";
 import { dedupeHash } from "@/lib/hash";
 import { createAccount } from "./accounts";
@@ -654,5 +657,180 @@ describe("⚖️ §6A 49 — a category page asks its own imported-through day",
       "Nothing recorded for October 2026. Gifts & Donations is spent only from a cash wallet since Apr 1 — no statement will ever cover it. " +
         "Nothing was typed in for this period, so there is no import to wait for.",
     );
+    // a wallet holds what was typed into it, so its nothing is read: the headline keeps its $0.00
+    expect(copy.figure).toBe("zero");
+  });
+
+  /*
+   * 🔴 THE HEADLINE PRINTED $0.00 OVER ITS OWN "NOT IMPORTED YET". Read on his ledger copy 2026-10-12:
+   * `/categories/<Housing>?period=2026-10` headlined "SPENT · OCTOBER 2026  $0.00  0 transactions" directly above
+   * "October 2026 has not been imported yet … spending in Housing is imported through Wed, Aug 12, 2026". The world the
+   * headline is drawn in is the one the sentence under it is written in — one read of the category's own day, carried
+   * out of the same builder (`figure`), never a second derivation on the page.
+   */
+  test("the headline's figure is asked in the sentence's own world: a dash wherever no elapsed day was read", () => {
+    carLedger();
+    const figureOf = (categoryPath: string, from: string, to: string, label: string) => {
+      // only an EMPTY window has an empty state; a window holding rows prints its figure
+      expect(categorySpending(bundle.db, { categoryId: catId(categoryPath), from, to }).txnCount).toBe(0);
+      const copy = emptyCopy(categoryPath, from, to, label);
+      return [copy.figure, copy.title];
+    };
+    // past the category's own Aug 12 — the ledger reaches Sep 24, the day that would have called these read
+    expect(figureOf("Transport", "2026-10-01", "2026-10-31", "October 2026")).toEqual(["dash", "October 2026 has not been imported yet"]);
+    expect(figureOf("Fees", "2026-09-01", "2026-09-20", "Sep 1 – 20, 2026")).toEqual(["dash", "Sep 1 – 20, 2026 has not been imported yet"]);
+    // before the ledger's first row (Jul 3)
+    expect(figureOf("Transport", "2026-06-01", "2026-06-30", "June 2026")).toEqual(["dash", "June 2026 is before your records begin"]);
+    // a month that has not begun has no elapsed day to have read
+    expect(figureOf("Transport", "2026-11-01", "2026-11-30", "November 2026")).toEqual(["dash", "November 2026 has not happened yet"]);
+    // an income category asks the same rule — no account of its own, so the ledger's Sep 24, and October is past it
+    expect(figureOf("Income > Salary", "2026-10-01", "2026-10-31", "October 2026")).toEqual(["dash", "October 2026 has not been imported yet"]);
+    // every elapsed day read (Fees through Aug 12), nothing posted: a measured $0.00
+    expect(figureOf("Fees", "2026-07-10", "2026-07-31", "Jul 10 – 31, 2026")[0]).toBe("zero");
+    // Aug 6–12 read, Aug 13–20 not: the empty state calls it a lower bound, and so does the figure
+    const partly = emptyCopy("Fees", "2026-08-06", "2026-08-20", "Aug 6 – 20, 2026");
+    expect(partly.figure).toBe("lower-bound");
+    expect(partly.description).toMatch(/so this is a lower bound rather than a measurement\./);
+  });
+
+  test("an empty ledger has looked at nothing: a dash", () => {
+    // no carLedger(): not one row anywhere
+    const copy = emptyCopy("Transport", "2026-10-01", "2026-10-31", "October 2026");
+    expect([copy.figure, copy.title]).toEqual(["dash", "Nothing imported yet"]);
+  });
+
+  /*
+   * 🔴 THE BUDGET CARD GRADED A MONTH NOBODY HAD IMPORTED, IN GREEN. On his ledger copy 2026-10-12
+   * `/categories/<Housing>` headlined "— October 2026 has not been imported yet" and, one card below, "monthly budget ·
+   * grading Oct 1 – Oct 31 · $0.00 of $2,291.21 · $2,291.21 left" in `text-positive` — while the same row on /budgets
+   * read "Awaiting statements" over "spending imported through Aug 12 · 12 days of this period unaccounted". All 12 of
+   * his budgets read the same way. ⛔ The card carries its /budgets row's verdict (`budgetVerdict`) and sentence
+   * (`budgetCoverageSentence`), read off the one pace status /budgets builds for that row — never a second rule.
+   */
+  test("the budget card reads its /budgets row's verdict and coverage sentence, from that row's own pace status", () => {
+    const { walletId } = carLedger();
+    addManualTransaction(bundle.db, {
+      accountId: walletId,
+      postedOn: "2026-08-20",
+      amountCents: -2_500,
+      description: "FLOWERS",
+      categoryId: catId("Gifts & Donations"),
+    });
+    createBudget(bundle.db, { categoryId: catId("Transport"), period: "monthly", amountCents: 30_000, startsOn: "2026-01-01" });
+    createBudget(bundle.db, { categoryId: catId("Fees"), period: "monthly", amountCents: 10_000, startsOn: "2026-01-01" });
+    createBudget(bundle.db, { categoryId: catId("Gifts & Donations"), period: "monthly", amountCents: 10_000, startsOn: "2026-01-01" });
+
+    const both = (categoryPath: string, refDate: string) => {
+      const row = budgetPaceStatuses(bundle.db, refDate).find((s) => s.budget.categoryId === catId(categoryPath))!;
+      const ref = categoryBudgetRef(bundle.db, catId(categoryPath), refDate)!;
+      const verdict = budgetVerdict(row);
+      // one rule: the card's reading IS the row's, word for word
+      expect(ref.verdict, `${categoryPath} @ ${refDate}`).toEqual(verdict);
+      expect(ref.coverageSentence, `${categoryPath} @ ${refDate}`).toBe(verdict.withheld ? budgetCoverageSentence(row) : null);
+      return ref;
+    };
+
+    // Car in October: $0.00 of an unimported month — withheld, in the row's words, not "$300.00 left" in green
+    expect(both("Transport", OCT_7)).toMatchObject({
+      spentCents: 0,
+      verdict: { headline: "Awaiting statements", withheld: true },
+      coverageSentence: "spending imported through Aug 12 · 7 days of this period unaccounted",
+    });
+    // ⚖️ a category spent only from a cash wallet offers no reading, and says why (owner decision 2026-09-15)
+    expect(both("Gifts & Donations", OCT_7)).toMatchObject({
+      verdict: { headline: "Cash only", withheld: true },
+      coverageSentence: "spent only from a cash wallet since Apr 1 — no statement will ever cover it",
+    });
+    // past the line on partial data is a fact more data cannot undo: graded, not withheld
+    expect(both("Transport", "2026-09-30")).toMatchObject({
+      alert: "over",
+      verdict: { headline: "Over budget by 19%", withheld: false },
+      coverageSentence: null,
+    });
+    // every elapsed day read (Fees through Aug 12, graded Aug 1 – 10): a measurement, and no coverage sentence
+    expect(both("Fees", "2026-08-10")).toMatchObject({
+      spentCents: 1_200,
+      verdict: { headline: "On track · 12% used", withheld: false },
+      coverageSentence: null,
+    });
+  });
+
+  /*
+   * 🔴 THE CARD AND THE HEADLINE OVER IT NAMED TWO DAYS FOR ONE WINDOW. A category with no account of its own asks its
+   * nearest ancestor, then the ledger, on its page (`categoryReachFor`); its budget row asked no day at all and counted
+   * every elapsed day. On a copy of his ledger copy 2026-10-12, a monthly budget made on Travel › Hotels (3 rows ever,
+   * none since March) at 2026-09-02: the headline a measured $0.00 ("This window sits inside what has been imported"),
+   * the card under it "Awaiting statements · nothing imported for this category since Mar 1 · 2 days of this period
+   * unaccounted"; Utilities › Mobile the same. And once the ancestor's day moves inside the window, the headline counts
+   * N days where the card kept counting all of them. ⛔ The row asks the page's day — `categoryReachFor`, never a copy.
+   */
+  test("a budget on a category with no account of its own counts what its page counts, against the page's day", () => {
+    carLedger();
+    createBudget(bundle.db, { categoryId: catId("Fees > Interest Charges"), period: "monthly", amountCents: 5_000, startsOn: "2026-01-01" });
+    createBudget(bundle.db, { categoryId: catId("Travel"), period: "monthly", amountCents: 20_000, startsOn: "2026-01-01" });
+
+    /** the page's headline world and its budget card, asked as `/categories/<id>` asks them on `refDate` */
+    const onePage = (categoryPath: string, refDate: string, label: string) => {
+      const { start, end } = periodBounds(refDate, "monthly");
+      const copy = categoryEmptyCopy(bundle.db, catId(categoryPath), { from: start, to: end }, {
+        today: refDate,
+        label,
+        ledgerOpens: ledgerOpens(bundle.db),
+        formatDay: formatDayLong,
+      });
+      const row = budgetPaceStatuses(bundle.db, refDate).find((s) => s.budget.categoryId === catId(categoryPath))!;
+      const ref = categoryBudgetRef(bundle.db, catId(categoryPath), refDate)!;
+      // one rule: the card is its /budgets row, word for word
+      expect(ref.verdict).toEqual(budgetVerdict(row));
+      expect(ref.coverageSentence).toBe(ref.verdict.withheld ? budgetCoverageSentence(row) : null);
+      return {
+        figure: copy.figure,
+        description: copy.description,
+        uncoveredDays: row.uncoveredDays,
+        verdict: ref.verdict.headline,
+        sentence: ref.coverageSentence,
+      };
+    };
+
+    // Aug 1 – 10, every day read on Fees' Aug 12: the page's measured $0.00 is the card's measurement too
+    expect(onePage("Fees > Interest Charges", "2026-08-10", "August 2026")).toMatchObject({
+      figure: "zero",
+      uncoveredDays: 0,
+      verdict: "On track · 0% used",
+      sentence: null,
+    });
+    // Aug 1 – 20, read through Fees' Aug 12: the page's lower bound counts 8 days, and so does the card
+    const august = onePage("Fees > Interest Charges", "2026-08-20", "August 2026");
+    expect(august.figure).toBe("lower-bound");
+    expect(august.description).toMatch(/^8 days of it have not been imported — spending in Fees is imported through Wed, Aug 12, 2026, /);
+    expect(august).toMatchObject({
+      uncoveredDays: 8,
+      verdict: "Awaiting statements",
+      sentence: "nothing imported for this category since Feb 1 · spending in Fees imported through Aug 12 · 8 days of this period unaccounted",
+    });
+    // October, past Fees' Aug 12: the dash and the withheld card name one day and one count
+    const october = onePage("Fees > Interest Charges", OCT_7, "October 2026");
+    expect(october.figure).toBe("dash");
+    expect(october.description).toMatch(/^Nothing has been imported for 7 days of it; spending in Fees is imported through Wed, Aug 12, 2026\. /);
+    expect(october).toMatchObject({
+      uncoveredDays: 7,
+      verdict: "Awaiting statements",
+      sentence: "nothing imported for this category since Apr 1 · spending in Fees imported through Aug 12 · 7 days of this period unaccounted",
+    });
+
+    // a top-level category with no ancestor to ask: the ledger's Sep 24 on the page, so on the card
+    expect(onePage("Travel", "2026-09-20", "September 2026")).toMatchObject({
+      figure: "zero",
+      uncoveredDays: 0,
+      verdict: "On track · 0% used",
+      sentence: null,
+    });
+    const travel = onePage("Travel", OCT_7, "October 2026");
+    expect(travel.description).toMatch(/^Nothing has been imported for 7 days of it; the ledger is imported through Thu, Sep 24, 2026\. /);
+    expect(travel).toMatchObject({
+      figure: "dash",
+      uncoveredDays: 7,
+      sentence: "nothing imported for this category since Apr 1 · the ledger imported through Sep 24 · 7 days of this period unaccounted",
+    });
   });
 });

@@ -60,6 +60,7 @@ export { overdueForSeries };
 export type { BudgetTail, BudgetTailSeries };
 import { incomeBasis, levelledMonthlyCents, type IncomeBasis } from "@/lib/income-basis";
 import { daysNotImportedYet } from "@/lib/empty-period";
+import { spentOnlyFromCashWallets, type BorrowedDay } from "@/lib/budget-coverage";
 import { categoryReach, type CategoryReach } from "@/lib/category-reach";
 import {
   accountsThatDate,
@@ -1384,6 +1385,8 @@ export interface CategoryCoverage {
  * read the same there on 2026-09-15). The page names the category's own day
  * now, through `categoryReachFor` below — this function, never a copy — and so
  * do its trend's empty months and its headline's proof (`categorySpend`).
+ * Where THIS names no day (and the row is not cash only), the row asks the page's
+ * in turn — an ancestor's, else the ledger's (`borrowedReach`).
  *
  * ⚖️ …AND SO ARE ARCHIVED ACCOUNTS, while an account a statement is still coming
  * for was spent from — the one rule (`accountsAwaitingStatements`) /imports asks
@@ -1515,133 +1518,201 @@ export interface BudgetPaceStatus extends BudgetStatus, CategoryCoverage {
   overdue: ArrearsSeries[];
   /**
    * Days of THIS window the ledger cannot speak for: the elapsed days past
-   * `importedThroughOn`, all of them when it is null (`daysNotImportedYet`) —
-   * a row spent only from cash wallets keeps them all, and says why instead
-   * (`lib/budget-coverage::spentOnlyFromCashWallets`).
+   * `importedThroughOn` — past `borrowedDay`'s where the category has none of its
+   * own (`daysNotImportedYet`). A row spent only from cash wallets keeps them all,
+   * and says why instead (`lib/budget-coverage::spentOnlyFromCashWallets`).
    * >0 means the row's spent/pace/% figures are lower bounds, not measurements,
    * and the UI must not report a verdict — "On track" over an unimported month
    * is the one failure mode a budgeting tool cannot afford.
    */
   uncoveredDays: number;
+  /**
+   * the page's day where the category has no import day of its own and is not cash only (`borrowedReach`) — what
+   * `uncoveredDays` was counted against, named in the row's sentence; null otherwise
+   */
+  borrowedDay: BorrowedDay | null;
+}
+
+/** The reads every pace row shares — asked once per render, however many rows it builds. */
+interface BudgetPaceReads extends CategoryReachContext {
+  /** the series whose charges are not recurring money */
+  notDrawn: ReadonlySet<string>;
+  /** the car's up-front money, spent once and never a rate (§6A 51, `budgetOneOffCents`) */
+  upfront: UpfrontCarRule | null;
+  /** the ledger's opening end — the import's per-account frontier, wallets and awaited accounts are the page's reads */
+  opens: string | null;
+}
+
+function budgetPaceReads(db: AppDatabase): BudgetPaceReads {
+  const notDrawn = seriesIdsNotDrawnAsRecurring(db);
+  return {
+    // ⛔ the reads `/categories/[id]` asks its day with, so the row can ask the same one (`borrowedReach`)
+    ...categoryReachContext(db),
+    notDrawn,
+    upfront: upfrontCarRule(loadCategoryIndex(db), outsidePortfolioCashAccountIds(db), notDrawn),
+    opens: ledgerOpens(db),
+  };
+}
+
+/**
+ * ⚖️ The day a budget on a category with NO IMPORT DAY OF ITS OWN counts its window against: the one its page asks
+ * (§6A 49, `categoryReachFor`) — the nearest ancestor's, else the ledger's. Null where the category has a day of its
+ * own, and where it is spent only from cash wallets (⚖️ 2026-09-15: it keeps every elapsed day and reads "Cash only").
+ *
+ * 🔴 The row asked no day at all, so every elapsed day was "unaccounted" and the row waited for a statement no import
+ * could bring. On a copy of his ledger copy 2026-10-12, a monthly budget made on Travel › Hotels (3 rows ever, none
+ * since March) at 2026-09-02: `/categories/<Hotels>` headlined a measured $0.00 and its budget card, one block below,
+ * "Awaiting statements · nothing imported for this category since Mar 1 · 2 days of this period unaccounted" — and once
+ * Travel's day moved inside the window, the headline would count N days where the card kept counting all of them.
+ * None of his 12 budgets is on such a category; one made on a dormant subcategory is.
+ *
+ * ⛔ `categoryReachFor` itself, never a copy of its walk: a second walk is a second day.
+ */
+function borrowedReach(
+  db: AppDatabase,
+  categoryId: string,
+  own: CategoryCoverage,
+  periodStart: string,
+  refDate: string,
+  ctx: CategoryReachContext,
+): { through: string | null; day: BorrowedDay } | null {
+  if (own.importedThroughOn !== null || spentOnlyFromCashWallets(own)) return null;
+  // own names no day, so this is an ancestor's (an import day, or cash only — read through today) or the ledger's
+  const reach = categoryReachFor(db, categoryId, periodStart, refDate, ctx);
+  return {
+    through: reach.through,
+    day:
+      reach.whose === "ledger"
+        ? { whose: "ledger", on: reach.through }
+        : { whose: "ancestor", name: reach.owner.name, coverage: reach.coverage },
+  };
 }
 
 /**
  * budgetStatuses enriched with pace, projection, and the expected tail — the
- * data behind the §8 bars. Kept separate from the lean budgetStatuses so the
- * category page's budget reference stays cheap; only the /budgets page pays for
- * the per-row projection + tail.
+ * data behind the §8 bars. Kept separate from the lean budgetStatuses so a
+ * caller pays for the per-row projection + tail only on the rows it draws:
+ * /budgets on every row, `/categories/[id]` on its own one (`budgetPaceStatusOf`).
  */
 export function budgetPaceStatuses(db: AppDatabase, refDate: string = todayIso()): BudgetPaceStatus[] {
-  // one read for every row: the series whose charges are not recurring money
-  const notDrawn = seriesIdsNotDrawnAsRecurring(db);
-  // …and the car's up-front money, spent once and never a rate (§6A 51, `budgetOneOffCents`)
-  const upfront = upfrontCarRule(loadCategoryIndex(db), outsidePortfolioCashAccountIds(db), notDrawn);
-  // …and where the import stands, per account and at the ledger's opening end
-  const frontier = observationFrontier(db);
-  const opens = ledgerOpens(db);
-  // …and which accounts are cash wallets, which no import ever reaches, and which a statement is still coming for
-  // (⚖️ `categoryCoverage`)
-  const wallets = cashWalletIds(db);
-  const awaiting = accountsAwaitingStatements(db);
-  return budgetStatuses(db, refDate).map((s) => {
-    const { start, end } = s.bounds;
-    // budgetStatuses evaluates the period CONTAINING refDate, start-clamped to
-    // startsOn, so pace is measured over the budget's OWN life inside the period
-    // (a 4-day-old budget paces on 4 days, not on the month). refDate ∈
-    // [start,end] for any budget that has already begun; a future-dated startsOn
-    // has not opened its window yet, hence the clamps — elapsedDays floors at 0
-    // and the span never divides by a non-positive number.
-    const totalDays = Math.max(1, diffDays(start, end) + 1);
-    const elapsedDays = Math.min(totalDays, Math.max(0, diffDays(start, refDate) + 1));
-    // Project from spend-TO-DATE ([start, refDate]), NOT full-period spend: a
-    // future-dated posting inside the period (a bill logged/posted early) must
-    // not be counted both as already-spent AND as an expected-tail occurrence
-    // of its own series — recomputeSeriesStats ignores postedOn > today, so the
-    // series still projects that same date. spentToDate ([start,today]) and the
-    // tail ((today,end]) are disjoint by construction, so the projection adds
-    // each future charge exactly once.
-    const spentToDate = categorySpending(db, {
-      categoryId: s.budget.categoryId,
-      from: start,
-      to: refDate,
-    }).spentCents;
-    const posted = recurringPostedCents(db, s.budget.categoryId, start, refDate, notDrawn);
-    /*
-     * A single charge larger than the WHOLE period's budget is an event, not a
-     * rate. The owner's $5,000 car deposit landed on day 1 of a 21-day window
-     * against a $921.38 budget and the linear run-rate turned it into a
-     * $105,000 projection. It stays in spentCents — he spent it, the row is
-     * honestly `over` — but it tells you nothing about the other 20 days, so it
-     * must not be extrapolated. Threshold is the budget itself rather than an
-     * invented multiple: anything that alone exhausts the period cannot be the
-     * daily habit the run-rate is modelling. A bill that size is not one: it
-     * is already in `posted`, and `budgetOneOffCents` leaves it there.
-     *
-     * Deliberately the PLAN amount and not `availableCents`: this is a question
-     * about the shape of a charge, not about how much room is left. Raising the
-     * bar by a large carry would let the $5,000 deposit back into the run-rate
-     * and reproduce the $105,000 projection exactly.
-     */
-    const oneOffCents = budgetOneOffCents(
-      spendingTransactions(db, { categoryId: s.budget.categoryId, from: start, to: refDate }),
-      s.budget.amountCents,
-      notDrawn,
-      upfront,
-    );
-    // the tail lives inside the budget's window too: for a budget that starts
-    // LATER in this period, anchor a day before startsOn so budgetTail's
-    // strictly-after-anchor window opens exactly on startsOn, never earlier.
-    const tailFrom = compareDates(start, refDate) > 0 ? addDays(start, -1) : refDate;
-    const tail = budgetTail(db, s.budget.categoryId, end, tailFrom);
-    // due already, still not posted — disjoint from BOTH spentCents (it never
-    // posted) and the tail (which starts strictly after today)
-    const overdue = budgetOverdue(db, s.budget.categoryId, start, refDate);
-    const forecast = projectSpend({
-      spentCents: spentToDate,
-      recurringPostedCents: posted,
-      // an overdue bill is COMMITTED money, not an extrapolation — it belongs in
-      // the projection exactly once, alongside the forward tail
-      expectedTailCents: tail.totalCents + overdue.totalCents,
-      oneOffCents,
-      elapsedDays,
-      totalDays,
-    });
-    // never project below what has ALREADY posted for the whole period — a large
-    // future-dated non-recurring charge is a committed fact, not an estimate, so
-    // the full-period actual is the projection floor.
-    const projectedCents = Math.max(s.spentCents, forecast);
-    // the uncovered stretch is measured against the graded window only: a
-    // frontier before the window opens leaves the WHOLE elapsed window
-    // uncovered, and one on or past today leaves none. ⛔ The count is
-    // `daysNotImportedYet`, the dashboard tile's and /spending's, not a third
-    // copy of the clamp — only the frontier it is given is this category's.
-    const coverage = categoryCoverage(db, s.budget.categoryId, start, refDate, frontier, wallets, awaiting);
-    const uncoveredDays = daysNotImportedYet({
-      from: start,
-      to: end,
-      today: refDate,
-      ledgerOpens: opens,
-      ledgerReaches: coverage.importedThroughOn,
-    });
-    return {
-      ...s,
-      overdueCents: overdue.totalCents,
-      overdueUnreadCents: overdue.series.reduce((sum, o) => sum + o.unreadCents, 0),
-      overdue: overdue.series,
-      ...coverage,
-      uncoveredDays,
-      totalDays,
-      elapsedDays,
-      elapsedFraction: elapsedDays / totalDays,
-      recurringPostedCents: posted,
-      expectedTailCents: tail.totalCents,
-      projectedCents,
-      // graded against AVAILABLE so pace and pct cannot disagree; `over` still
-      // means "past the line", it is just that rollover moves the line
-      pace: computePace(s.spentCents, projectedCents, s.availableCents),
-      tail: tail.series,
-    };
+  const reads = budgetPaceReads(db);
+  return budgetStatuses(db, refDate).map((s) => budgetPaceStatusOf(db, s, refDate, reads));
+}
+
+/**
+ * ONE budget row's pace status — the row /budgets draws, built by the same code for any page that reads one row.
+ *
+ * ⛔ One rule, every caller. 🔴 `/categories/[id]`'s budget card read the lean `budgetStatuses` alone, and on his
+ * ledger copy 2026-10-12 graded Housing's unimported October "$0.00 of $2,291.21 · $2,291.21 left" in green while
+ * /budgets withheld the same row and window ("Awaiting statements"). It reads its verdict off this now.
+ */
+export function budgetPaceStatusOf(
+  db: AppDatabase,
+  s: BudgetStatus,
+  refDate: string,
+  reads: BudgetPaceReads = budgetPaceReads(db),
+): BudgetPaceStatus {
+  const { notDrawn, upfront, frontier, opens, wallets, awaiting } = reads;
+  const { start, end } = s.bounds;
+  // budgetStatuses evaluates the period CONTAINING refDate, start-clamped to
+  // startsOn, so pace is measured over the budget's OWN life inside the period
+  // (a 4-day-old budget paces on 4 days, not on the month). refDate ∈
+  // [start,end] for any budget that has already begun; a future-dated startsOn
+  // has not opened its window yet, hence the clamps — elapsedDays floors at 0
+  // and the span never divides by a non-positive number.
+  const totalDays = Math.max(1, diffDays(start, end) + 1);
+  const elapsedDays = Math.min(totalDays, Math.max(0, diffDays(start, refDate) + 1));
+  // Project from spend-TO-DATE ([start, refDate]), NOT full-period spend: a
+  // future-dated posting inside the period (a bill logged/posted early) must
+  // not be counted both as already-spent AND as an expected-tail occurrence
+  // of its own series — recomputeSeriesStats ignores postedOn > today, so the
+  // series still projects that same date. spentToDate ([start,today]) and the
+  // tail ((today,end]) are disjoint by construction, so the projection adds
+  // each future charge exactly once.
+  const spentToDate = categorySpending(db, {
+    categoryId: s.budget.categoryId,
+    from: start,
+    to: refDate,
+  }).spentCents;
+  const posted = recurringPostedCents(db, s.budget.categoryId, start, refDate, notDrawn);
+  /*
+   * A single charge larger than the WHOLE period's budget is an event, not a
+   * rate. The owner's $5,000 car deposit landed on day 1 of a 21-day window
+   * against a $921.38 budget and the linear run-rate turned it into a
+   * $105,000 projection. It stays in spentCents — he spent it, the row is
+   * honestly `over` — but it tells you nothing about the other 20 days, so it
+   * must not be extrapolated. Threshold is the budget itself rather than an
+   * invented multiple: anything that alone exhausts the period cannot be the
+   * daily habit the run-rate is modelling. A bill that size is not one: it
+   * is already in `posted`, and `budgetOneOffCents` leaves it there.
+   *
+   * Deliberately the PLAN amount and not `availableCents`: this is a question
+   * about the shape of a charge, not about how much room is left. Raising the
+   * bar by a large carry would let the $5,000 deposit back into the run-rate
+   * and reproduce the $105,000 projection exactly.
+   */
+  const oneOffCents = budgetOneOffCents(
+    spendingTransactions(db, { categoryId: s.budget.categoryId, from: start, to: refDate }),
+    s.budget.amountCents,
+    notDrawn,
+    upfront,
+  );
+  // the tail lives inside the budget's window too: for a budget that starts
+  // LATER in this period, anchor a day before startsOn so budgetTail's
+  // strictly-after-anchor window opens exactly on startsOn, never earlier.
+  const tailFrom = compareDates(start, refDate) > 0 ? addDays(start, -1) : refDate;
+  const tail = budgetTail(db, s.budget.categoryId, end, tailFrom);
+  // due already, still not posted — disjoint from BOTH spentCents (it never
+  // posted) and the tail (which starts strictly after today)
+  const overdue = budgetOverdue(db, s.budget.categoryId, start, refDate);
+  const forecast = projectSpend({
+    spentCents: spentToDate,
+    recurringPostedCents: posted,
+    // an overdue bill is COMMITTED money, not an extrapolation — it belongs in
+    // the projection exactly once, alongside the forward tail
+    expectedTailCents: tail.totalCents + overdue.totalCents,
+    oneOffCents,
+    elapsedDays,
+    totalDays,
   });
+  // never project below what has ALREADY posted for the whole period — a large
+  // future-dated non-recurring charge is a committed fact, not an estimate, so
+  // the full-period actual is the projection floor.
+  const projectedCents = Math.max(s.spentCents, forecast);
+  // the uncovered stretch is measured against the graded window only: a
+  // frontier before the window opens leaves the WHOLE elapsed window
+  // uncovered, and one on or past today leaves none. ⛔ The count is
+  // `daysNotImportedYet`, the dashboard tile's and /spending's, not a third
+  // copy of the clamp — only the frontier it is given is this category's.
+  const coverage = categoryCoverage(db, s.budget.categoryId, start, refDate, frontier, wallets, awaiting);
+  // ⚖️ no day of its own: the page's, so the card under its headline counts what the headline counts (`borrowedReach`)
+  const borrowed = borrowedReach(db, s.budget.categoryId, coverage, start, refDate, reads);
+  const uncoveredDays = daysNotImportedYet({
+    from: start,
+    to: end,
+    today: refDate,
+    ledgerOpens: opens,
+    ledgerReaches: borrowed === null ? coverage.importedThroughOn : borrowed.through,
+  });
+  return {
+    ...s,
+    overdueCents: overdue.totalCents,
+    overdueUnreadCents: overdue.series.reduce((sum, o) => sum + o.unreadCents, 0),
+    overdue: overdue.series,
+    ...coverage,
+    borrowedDay: borrowed?.day ?? null,
+    uncoveredDays,
+    totalDays,
+    elapsedDays,
+    elapsedFraction: elapsedDays / totalDays,
+    recurringPostedCents: posted,
+    expectedTailCents: tail.totalCents,
+    projectedCents,
+    // graded against AVAILABLE so pace and pct cannot disagree; `over` still
+    // means "past the line", it is just that rollover moves the line
+    pace: computePace(s.spentCents, projectedCents, s.availableCents),
+    tail: tail.series,
+  };
 }
 
 const GUIDANCE_MONTHS = 6;

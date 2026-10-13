@@ -48,6 +48,44 @@ export interface BudgetCoverageInput {
   uncoveredDays: number;
   /** the graded window: a day outside its year is printed with its year */
   bounds: { start: string };
+  /**
+   * The day `uncoveredDays` was counted against when the category has none of its own and is not cash only — the day
+   * its page asks (`BorrowedDay`); absent or null otherwise, and never read then.
+   */
+  borrowedDay?: BorrowedDay | null;
+}
+
+/** the facts a category's own day is read from — its ancestor's, where one is borrowed */
+type CoverageFacts = Pick<
+  BudgetCoverageInput,
+  "importedThroughOn" | "spentFromSince" | "spentFromAccounts" | "spentFromWallets"
+>;
+
+/**
+ * Whose day a category with no import day of its own is counted against: its page's (`services/budgets::
+ * categoryReachFor`, ⚖️ §6A 49) — the nearest ANCESTOR that has one (an import day, or cash only), with that ancestor's
+ * own facts, or else the LEDGER's day (null on an empty ledger).
+ *
+ * 🔴 The row counted against no day at all, so every elapsed day was "unaccounted" while the page one click away asked
+ * the ancestor: on a copy of his ledger copy 2026-10-12, a budget on Travel › Hotels (none since March) read "Awaiting
+ * statements · nothing imported for this category since Mar 1 · 2 days of this period unaccounted" under its page's
+ * measured $0.00 — "Awaiting statements" for a statement no import could bring.
+ */
+export type BorrowedDay =
+  | { whose: "ancestor"; name: string; coverage: CoverageFacts }
+  | { whose: "ledger"; on: string | null };
+
+/**
+ * "spending in Fees imported through Aug 12" — whose day it is, in the page's words ("spending in Fees is imported
+ * through …", "the ledger is imported through …"); an ancestor spent only from cash in its own row's. Null on an
+ * empty ledger, which has no day to name.
+ */
+function borrowedDayClause(borrowed: BorrowedDay, day: (iso: string) => string, periodStart: string): string | null {
+  if (borrowed.whose === "ledger") return borrowed.on === null ? null : `the ledger imported through ${day(borrowed.on)}`;
+  const { importedThroughOn } = borrowed.coverage;
+  return importedThroughOn !== null
+    ? `spending in ${borrowed.name} imported through ${day(importedThroughOn)}`
+    : `${borrowed.name} ${budgetCoverageFact({ ...borrowed.coverage, bounds: { start: periodStart } })}`;
 }
 
 /**
@@ -77,9 +115,13 @@ export function budgetCoverageFact(input: Omit<BudgetCoverageInput, "uncoveredDa
   if (spentOnlyFromCashWallets(input)) {
     return `spent only from ${input.spentFromWallets === 1 ? "a cash wallet" : "cash wallets"} since ${day(input.spentFromSince)}`;
   }
-  return input.spentFromAccounts === 0
-    ? `nothing imported for this category since ${day(input.spentFromSince)}`
-    : `spent only from accounts with no import date since ${day(input.spentFromSince)}`;
+  const own =
+    input.spentFromAccounts === 0
+      ? `nothing imported for this category since ${day(input.spentFromSince)}`
+      : `spent only from accounts with no import date since ${day(input.spentFromSince)}`;
+  // ⛔ the day the count was taken against is named beside it, or "7 days unaccounted" has no day to be counted from
+  const borrowed = input.borrowedDay ? borrowedDayClause(input.borrowedDay, day, input.bounds.start) : null;
+  return borrowed === null ? own : `${own} · ${borrowed}`;
 }
 
 /**

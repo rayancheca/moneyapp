@@ -1,6 +1,8 @@
 import { describe, expect, test } from "vitest";
 import {
+  A_LOWER_BOUND,
   daysNotImportedYet,
+  emptyFigure,
   emptyPeriodCopy,
   emptyPeriodReason,
   emptyTrendCopy,
@@ -512,5 +514,45 @@ describe("unreachedDashNote — the line a table prints about its dashes", () =>
 
   test("nothing dashed, nothing said", () => {
     expect(unreachedDashNote([], "day")).toBeNull();
+  });
+});
+
+/**
+ * 🔴 A HEADLINE THAT PRINTED $0.00 OVER ITS OWN "NOT IMPORTED YET". Read on his ledger 2026-10-12:
+ * `/categories/<Housing>?period=2026-10` headlined "SPENT · OCTOBER 2026  $0.00  0 transactions" directly above its own
+ * "October 2026 has not been imported yet … spending in Housing is imported through Wed, Aug 12, 2026" — while its trend
+ * refused a $0.00 bar for the same month and the dashboard's pace tile prints "an em dash, not a $0.00" in exactly
+ * this case. One rule for what a figure over an EMPTY window prints, in every world the window can be in.
+ */
+describe("emptyFigure — what a headline prints over a window no row was found in", () => {
+  test("a window nobody has looked at — past the import, before the records, an empty ledger — is a dash", () => {
+    expect(emptyFigure(reason())).toBe("dash"); // after-records: Sep 1–4 all past Aug 31
+    expect(emptyFigure(reason({ from: "2022-10-01", to: "2022-10-31" }))).toBe("dash"); // before-records
+    expect(emptyFigure(reason({ ledgerOpens: null, ledgerReaches: null }))).toBe("dash"); // no-ledger
+    expect(emptyFigure(reason({ from: "2026-10-01", to: "2026-10-31" }))).toBe("dash"); // future: no elapsed day at all
+    for (const r of [
+      reason(),
+      reason({ from: "2022-10-01", to: "2022-10-31" }),
+      reason({ ledgerOpens: null, ledgerReaches: null }),
+      reason({ from: "2026-10-01", to: "2026-10-31" }),
+    ]) {
+      expect(["after-records", "before-records", "no-ledger", "future"]).toContain(r.kind);
+    }
+  });
+
+  test("a measured zero keeps its $0.00 — every elapsed day was read, and nothing posted", () => {
+    const measured = reason({ from: "2026-08-01", to: "2026-08-31" });
+    expect(measured.kind).toBe("measured");
+    expect(emptyFigure(measured)).toBe("zero");
+  });
+
+  test("a window imported only in part keeps its figure, called the lower bound its empty state calls it", () => {
+    const partly = reason({ from: "2026-08-20", to: "2026-09-03" });
+    expect(partly.kind).toBe("partly-covered");
+    expect(emptyFigure(partly)).toBe("lower-bound");
+    // the empty state's words for the same window, so the headline can say the same
+    expect(emptyPeriodCopy(partly, "Aug 20 – Sep 3, 2026", "2026-08-31", (d) => d).description).toContain(
+      `so this is ${A_LOWER_BOUND}.`,
+    );
   });
 });

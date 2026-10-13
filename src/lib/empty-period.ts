@@ -90,6 +90,38 @@ export function emptyPeriodReason(input: EmptyPeriodInput): EmptyPeriodReason {
 export type UnreachedKind = Exclude<EmptyPeriodKind, "measured" | "partly-covered">;
 
 /**
+ * What a window imported only in part holds when nothing was found in it — the empty state's words and the headline's
+ * and the proof's over it (`emptyFigure`, `provenance::summedRowsProof`), so the three cannot call one zero two things.
+ */
+export const A_LOWER_BOUND = "a lower bound rather than a measurement";
+
+/**
+ * What a headline figure prints over a window in which NOT ONE ROW was found:
+ *  - `zero` — every elapsed day was read and nothing posted: $0.00 is the measurement;
+ *  - `lower-bound` — the import stops (or the records open) inside it: $0.00 stands, called what the empty state
+ *    below it calls it (`A_LOWER_BOUND`);
+ *  - `dash` — not one elapsed day was read: past the import, before the records, an empty ledger, or a window that
+ *    has not begun. The dashboard's pace tile's rule: "an em dash, not a $0.00: when not one elapsed day of the month
+ *    is imported, 'you have spent nothing' is a claim about a month nobody has looked at" — and the trend's, whose
+ *    bar for the same month is no bar (`unreachedKind`).
+ *
+ * 🔴 `/categories/<Housing>?period=2026-10` headlined "SPENT · OCTOBER 2026  $0.00  0 transactions" directly above its
+ * own "October 2026 has not been imported yet … spending in Housing is imported through Wed, Aug 12, 2026". Measured on
+ * his ledger copy 2026-10-12, 80 categories × Jan 2022 – Oct 2026: 111 empty months past their category's own day and
+ * 560 before the records begin printed $0.00 — while 2,168 empty months every elapsed day of which was read are the
+ * measured zeros that keep it.
+ *
+ * ⛔ Asked of the reason the empty state was written from, never re-derived: whose day it is (the ledger's, a
+ * category's) is the caller's, and a second derivation is a second day.
+ */
+export type EmptyFigure = "zero" | "lower-bound" | "dash";
+
+export function emptyFigure(reason: EmptyPeriodReason): EmptyFigure {
+  if (reason.kind === "measured") return "zero";
+  return reason.kind === "partly-covered" ? "lower-bound" : "dash";
+}
+
+/**
  * Whether a window's figures can be read at all — null when they are a
  * measurement, or which world it sits in when they are not: it has not
  * happened, it is before the records begin, or nothing has been imported for it.
@@ -305,7 +337,7 @@ export function emptyPeriodCopy(
         description:
           `${days(reason.uncoveredDays)} of it ${reason.uncoveredDays === 1 ? "has" : "have"} not been imported` +
           // ", and": each cause ends on a date with its year ("Aug 25, 2022, and …")
-          `${causes.length > 0 ? ` — ${causes.join(", and ")}` : ""}, so this is a lower bound rather than a measurement.` +
+          `${causes.length > 0 ? ` — ${causes.join(", and ")}` : ""}, so this is ${A_LOWER_BOUND}.` +
           (opts.agentsMoney ? AGENTS_MONEY_LEFT_OUT : ""),
       };
     }
