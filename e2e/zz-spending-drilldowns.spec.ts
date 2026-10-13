@@ -160,10 +160,10 @@ test("the day heatmap follows the selected period (regression: prop-desync)", as
  * of it reached an account" for 2026-07.
  */
 test("cash-earnings note is silent on a month whose paydays all banked", async ({ page }) => {
-  // April's paydays are Apr 3 and Apr 17 — Paycheck's anchor Fridays (§6A 55
-  // step B) — and the deposits of Apr 10 and Apr 24 banked both. The schedule
-  // still reads series-stale as of FAKE_TODAY, so this is the `unbankedCents > 0`
-  // half of the gate.
+  // April's paydays are Apr 10 and Apr 24 — Paycheck's anchor Fridays (§6A 55
+  // step B), which are its deposits' own — and the deposits of those days banked
+  // both. The schedule still reads series-stale as of FAKE_TODAY, so this is the
+  // `unbankedCents > 0` half of the gate.
   await page.goto("/spending?period=2026-04");
   await expect(page.getByRole("link", { name: /^Savings rate/ }).first()).toBeVisible();
   await expect(page.getByLabel("What this page cannot see")).toHaveCount(0);
@@ -171,20 +171,25 @@ test("cash-earnings note is silent on a month whose paydays all banked", async (
 
 /*
  * ⚖️ ONE PAYDAY UNIVERSE (§6A 55 step B): the note counts Paycheck's paydays where the recurring calendar, /budgets
- * and the settlement draw them — its anchor's Fridays (Jul 10, Jun 26, Jun 12 …), walked back to its first deposit.
- * 🔴 It counted the DEPOSITS' Fridays, a week off: July held "Jul 3, 2026", a payday no other page drew.
+ * and the settlement draw them — its anchor's Fridays (Jul 17, Jul 3, Jun 19, Jun 5 …), walked back to its first
+ * deposit. The anchor is the ACME deposits' own rhythm, so those are the deposits' Fridays too.
  *
- * ⚠️ So this fixture can no longer express a payday past the checked frontier: Chase Total Checking is read through
- * Jun 30 and the anchor's Fridays skip from Jun 26 to Jul 10, after FAKE_TODAY. The unlooked-for sentence keeps its
- * coverage in src/lib/section-notes.test.ts; here, July is silent and June's two paydays fall on checked days.
- * Measured on a pristine fixture before and after `detectRecurringSeries` (2026-10-08): "Detect now", which runs
- * before this file, leaves Paycheck's anchor, interval and links as seeded: the silence is July's, not an empty
- * series.
+ * 🔴 Anchored a week late (Jul 10), the fixture could not express a payday past the checked frontier: its Fridays
+ * skipped from Jun 26 to Jul 10, after FAKE_TODAY, and July was silent. On the deposits' rhythm Jul 3 has passed,
+ * and Chase Total Checking — the account that pay lands in — is read through Jun 30: the payday the ledger has not
+ * looked for, which the note must not call unbanked. Measured on a fresh scratch seed before and after
+ * `detectRecurringSeries` (2026-10-13): "Detect now", which runs before this file, leaves Paycheck's anchor, interval
+ * and links as seeded, and the note reads the same.
  */
-test("cash-earnings note is silent on a month whose first payday is still to come", async ({ page }) => {
+test("cash-earnings note scopes July's passed payday to what has been imported", async ({ page }) => {
   await page.goto("/spending?period=2026-07");
-  await expect(page.getByRole("link", { name: /^Savings rate/ }).first()).toBeVisible();
-  await expect(page.getByLabel("What this page cannot see")).toHaveCount(0);
+  const note = page.getByLabel("What this page cannot see");
+  await expect(note).toHaveCount(1);
+  await expect(note).toContainText(
+    "Paycheck implies $2,943.19 of earnings on Jul 3, 2026, all of it after Tue, Jun 30, 2026, the last day every " +
+      "account that pay lands in has been checked through — so the ledger has not looked for it.",
+  );
+  await expect(note).not.toContainText("none of it reached an account");
 });
 
 test("cash-earnings note calls June's checked paydays unbanked, and names them", async ({ page }) => {
@@ -192,7 +197,7 @@ test("cash-earnings note calls June's checked paydays unbanked, and names them",
   const note = page.getByLabel("What this page cannot see");
   await expect(note).toHaveCount(1);
   await expect(note).toContainText(
-    "Paycheck implies $5,886.38 of earnings over Jun 12 – 26, 2026 and none of it reached an account.",
+    "Paycheck implies $5,886.38 of earnings over Jun 5 – 19, 2026 and none of it reached an account.",
   );
   await expect(note).not.toContainText("has been checked through");
 });

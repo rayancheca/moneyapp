@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import type { AppDatabase } from "../src/db/client";
+import type { recurringSeries as RecurringSeriesTable } from "../src/db/schema/recurring";
 import type { ImportInput } from "../src/services/import/service";
 
 /**
@@ -317,11 +318,19 @@ export async function seedInvestments(db: AppDatabase, today: string): Promise<v
  * tag fixture transactions and churn the transactions/spending baselines), so we
  * insert a small, fixed set of series with NO linked rows — every date is
  * relative to E2E_FAKE_TODAY (2026-07-08), so the strip, the paycheck line, and
- * the forecast are identical every run. Income precedes the paycheck-adjacent
- * bill so "$X due by your next paycheck" resolves to exactly Rent.
+ * the forecast are identical every run. Two bills fall before the next payday,
+ * so "$X due by your next paycheck" is Rent and Netflix: $1,815.99 by Jul 17.
  */
 async function seedRecurring(db: AppDatabase): Promise<void> {
   const { recurringSeries } = await import("../src/db/schema/recurring");
+  db.insert(recurringSeries).values(seededRecurringValues()).run();
+}
+
+/**
+ * The rows `seedRecurring` writes, exported so scripts/fixtures/e2e-paycheck-anchor.test.ts grades the series the
+ * seed inserts rather than a copy of them.
+ */
+export function seededRecurringValues(): (typeof RecurringSeriesTable.$inferInsert)[] {
   const rows = [
     /*
      * ⚠️ $2,943.19, which is what the ACME deposits in the corpus actually are.
@@ -330,27 +339,29 @@ async function seedRecurring(db: AppDatabase): Promise<void> {
      * nobody was ever paid became a $256.81 "drift" on every payday, and three
      * near-identical notices crowded the notices card. A schedule should agree
      * with its own evidence.
+     *
+     * ⚠️ …and so should its DAYS. Anchored Fri Jul 10, a week off the ACME deposits (Fridays from 2024-07-05, every
+     * 14 days to 2026-05-08), every month read "paid by the deposit of a week later" under one payday universe
+     * (§6A 55 step B): July 2024's Jul 5 deposit paid none, Jul 19's paid Jul 12. Jul 17 is the deposits' own rhythm
+     * carried past FAKE_TODAY (scripts/fixtures/e2e-paycheck-anchor.test.ts). `lastMatchedOn` stays Jun 26: walked
+     * with the anchor to Jul 3 it would be a match on a day Chase Total Checking has not been read through (Jun 30).
      */
-    { name: "Paycheck", kind: "income" as const, cadence: "biweekly" as const, nextExpectedOn: "2026-07-10", nextExpectedAmountCents: 2_943_19, lastMatchedOn: "2026-06-26", intervalDaysAvg: 14 },
+    { name: "Paycheck", kind: "income" as const, cadence: "biweekly" as const, nextExpectedOn: "2026-07-17", nextExpectedAmountCents: 2_943_19, lastMatchedOn: "2026-06-26", intervalDaysAvg: 14 },
     { name: "Rent", kind: "bill" as const, cadence: "monthly" as const, nextExpectedOn: "2026-07-09", nextExpectedAmountCents: -1_800_00, lastMatchedOn: "2026-06-09", intervalDaysAvg: 30 },
     { name: "Netflix", kind: "subscription" as const, cadence: "monthly" as const, nextExpectedOn: "2026-07-16", nextExpectedAmountCents: -15_99, lastMatchedOn: "2026-06-16", intervalDaysAvg: 30 },
     { name: "Gym Membership", kind: "subscription" as const, cadence: "monthly" as const, nextExpectedOn: "2026-07-20", nextExpectedAmountCents: -49_00, lastMatchedOn: "2026-06-20", intervalDaysAvg: 30 },
   ];
-  db.insert(recurringSeries)
-    .values(
-      rows.map((r) => ({
-        name: r.name,
-        kind: r.kind,
-        cadence: r.cadence,
-        intervalDaysAvg: r.intervalDaysAvg,
-        amountCentsAvg: r.nextExpectedAmountCents,
-        nextExpectedOn: r.nextExpectedOn,
-        nextExpectedAmountCents: r.nextExpectedAmountCents,
-        lastMatchedOn: r.lastMatchedOn,
-        status: "confirmed" as const,
-      })),
-    )
-    .run();
+  return rows.map((r) => ({
+    name: r.name,
+    kind: r.kind,
+    cadence: r.cadence,
+    intervalDaysAvg: r.intervalDaysAvg,
+    amountCentsAvg: r.nextExpectedAmountCents,
+    nextExpectedOn: r.nextExpectedOn,
+    nextExpectedAmountCents: r.nextExpectedAmountCents,
+    lastMatchedOn: r.lastMatchedOn,
+    status: "confirmed" as const,
+  }));
 }
 
 /**

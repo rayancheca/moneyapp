@@ -103,17 +103,17 @@ test("the header grades against the ANNUALISED rate, and names the month underne
   // amount the ACME deposits in the corpus actually are, since §9 links them to
   // this series and a schedule should agree with its own evidence.
   // $2,943.19 × 26 ÷ 12 = $6,376.91 — the figure the header grades against, and
-  // the SAME figure in every month of the year. July 2026 holds two of its
-  // paydays (the 10th and the 24th), worth $5,886.38, and the old header graded
-  // against posted-plus-still-due for this particular month, which moved
-  // whenever the calendar did.
+  // the SAME figure in every month of the year. July 2026 holds three of its
+  // paydays (the 3rd, the 17th and the 31st — the ACME deposits' Fridays), worth
+  // $8,829.57, and the old header graded against posted-plus-still-due for this
+  // particular month, which moved whenever the calendar did.
   await expect(page.getByText("$6,376.91")).toBeVisible();
   await expect(page.getByText("$7,662.00")).toHaveCount(0);
 
   // The calendar month is named, not deleted — the levelling is disclosed on
-  // screen rather than only in a tooltip. $6,376.91 − $5,886.38 = $490.53.
+  // screen rather than only in a tooltip. $6,376.91 − $8,829.57 = −$2,452.66.
   await expect(
-    page.getByText("2 paydays fall in this month, scheduled at $5,886.38 — $490.53 under"),
+    page.getByText("3 paydays fall in this month, scheduled at $8,829.57 — $2,452.66 over"),
   ).toBeVisible();
 
   // and the tooltip mounted on the term describes the arithmetic that produced

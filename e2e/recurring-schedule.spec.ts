@@ -28,7 +28,7 @@ test("the upcoming list places every monthly series on its own day of month", as
   /*
    * Anchors from seedRecurring / seedBudgets, each stepped by ONE calendar
    * month where a second occurrence lands inside the window:
-   *   Rent 07-09 · Paycheck 07-10 (biweekly, so 07-24 and 08-07 too)
+   *   Rent 07-09 · Paycheck 07-17 (biweekly, so 07-31 too; 08-14 is past the window)
    *   Netflix 07-16 · Gym 07-20 · Meal Kit 07-05 → 08-05
    *   Car Lease 07-22 · Car Insurance 07-26  (§9 — the car card had no fixture)
    *
@@ -48,20 +48,25 @@ test("the upcoming list places every monthly series on its own day of month", as
    * the defect, so it is the expectation that changed, and the row it lost is
    * named here so nobody quietly adds it back.
    *
+   * ⚠️ Aug 7 was a payday of the old Jul 10 anchor, a week off Paycheck's own
+   * deposits. On the deposits' Fridays (Jul 17) the third payday is Aug 14 and
+   * no row stands on the window's far edge, so that edge is pinned where it can
+   * be: recurring.test.ts, "the last day of an N-day window is day N-1".
+   *
    * ⚠️ Car Insurance sits on the 26th and not the 24th deliberately: on the 24th
-   * it shared a day with a payday, and this test's own premise — one monthly
-   * series per day of month — would have been broken by the fixture rather than
-   * by the app.
+   * it shared a day with a payday of the old anchor, and this test's own premise
+   * — one monthly series per day of month — would have been broken by the
+   * fixture rather than by the app.
    */
   const dates = schedule.map((row) => /^([A-Z][a-z]{2} \d{1,2})/.exec(row)?.[1] ?? row);
   expect(dates).toEqual([
     "Jul 9",
-    "Jul 10",
     "Jul 16",
+    "Jul 17",
     "Jul 20",
     "Jul 22",
-    "Jul 24",
     "Jul 26",
+    "Jul 31",
     "Aug 5",
   ]);
 
@@ -70,4 +75,16 @@ test("the upcoming list places every monthly series on its own day of month", as
   const mealKit = schedule.find((row) => row.includes("Meal Kit"));
   expect(mealKit).toBeDefined();
   expect(mealKit!.startsWith("Aug 5")).toBe(true);
+});
+
+/**
+ * …and the dashboard's line over the same schedule, which no e2e text read. "$X due by your next paycheck" sums
+ * every bill due ON OR BEFORE the next payday (`upcomingBills`): Rent Jul 9 and Netflix Jul 16 by Paycheck's Jul 17,
+ * the ACME deposits' own Friday. Two bills, so the figure is a sum; under the old Jul 10 anchor it was Rent alone.
+ */
+test("the dashboard's paycheck line sums the bills due by the next payday", async ({ page }) => {
+  await page.goto("/");
+  await expect(page.locator("p", { hasText: "due by your next paycheck" })).toHaveText(
+    "$1,815.99 due by your next paycheck (Jul 17)",
+  );
 });
