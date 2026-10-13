@@ -44,9 +44,10 @@ const pay = (checkedThrough: string | null, dueDay: DueDayReading = read(null)):
 
 /*
  * ⚖️ His decision 60 (2026-10-08): a bill reads "not posted" — and the calendar's red ✕ — only once statements cover
- * the due day PLUS the bill's tolerance, the days a payment may still post on; until then "no import has covered it
- * yet", quiet. 🔴 Read on the due day itself, the e2e fixture's Meal Kit (due Jul 5, its card imported through Jul 5)
- * was drawn ✕ "missed" while a payment on Jul 6, 7 or 8 would still have paid it — days no import had reached.
+ * the due day PLUS the bill's tolerance, the days a payment may still post on; until then "no statement has covered it
+ * yet" (his decision 65, 2026-10-12), quiet. 🔴 Read on the due day itself, the e2e fixture's Meal Kit (due Jul 5, its
+ * card imported through Jul 5) was drawn ✕ "missed" while a payment on Jul 6, 7 or 8 would still have paid it — days
+ * no import had reached.
  */
 describe("dueDayIsRead — the one predicate (§6A 60)", () => {
   test("THE BOUNDARY: imported through the due day + its grace − 1 is not read; through due + grace is", () => {
@@ -160,7 +161,7 @@ describe("settledVerdict", () => {
    * said they "fall after Sep 24, the last day every account that pay lands in has been checked through — so the
    * ledger has not looked for their deposits". "Not banked yet" claims someone looked.
    */
-  test("a payday after the day its accounts are checked through: no import has covered it yet", () => {
+  test("a payday after the day its accounts are checked through: no statement has covered it yet", () => {
     expect(settledVerdict("income", "2026-10-01", pay("2026-09-24"), true)).toEqual({
       state: "unsettled",
       reason: "not_imported",

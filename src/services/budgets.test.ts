@@ -1500,7 +1500,7 @@ describe("budgetPaceStatuses — /budgets' arrears carry the read/unread split",
     checkedThrough(bundle.db, cardId, day);
   }
 
-  test("a due day no import has reached is unread, all of it", () => {
+  test("a due day no checked statement has reached is unread, all of it", () => {
     housingBill({ name: "Rent", dueOn: "2026-06-08", cents: 228_570 });
     cardReadThrough("2026-06-07"); // the Card is read through Jun 7, the day before rent
     const s = housing();

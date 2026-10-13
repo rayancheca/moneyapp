@@ -350,7 +350,7 @@ describe("AllSeriesView — the Next column's late note follows the runway's rea
 
   test("unread: quiet, and in the runway's words", () => {
     const note = noteOf(210900);
-    expect(note).toContain("Oct 1 — no import has covered it yet");
+    expect(note).toContain("Oct 1 — no statement has covered it yet");
     expect(note).not.toContain("text-warning");
   });
 

@@ -245,12 +245,12 @@ export interface SeriesDetail {
    * late. Arrears are scoped to the calendar month by the owner's decision of
    * 2026-09-02; a wider leg here would disagree with every other surface.
    *
-   * `unreadCents` — of `amountCents`' magnitude, the part on days no import has reached, the runway's split
+   * `unreadCents` — of `amountCents`' magnitude, the part on days no checked statement has reached, the runway's split
    * (`ArrearsSeries.unreadCents`). 🔴 Without it the card read "Already due, and not posted" in warning colour over
    * rent's Oct 1 on a copy of his ledger 2026-10-08, a day no import had covered (Wells Fargo read through Sep 24).
    *
    * `graceDays` — the days after a due day a payment may still post on, which the read half waited for
-   * (`ArrearsSeries.graceDays`, ⚖️ §6A 60): what the card says the imports reach past it.
+   * (`ArrearsSeries.graceDays`, ⚖️ §6A 60): what the card says the statements reach past it (§6A 65).
    */
   overdue: {
     date: string;

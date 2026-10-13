@@ -26,7 +26,7 @@ const row = (over: Partial<Parameters<typeof budgetSectionNotes>[0]["rows"][numb
   noDayRead: false,
   txnCount: 1,
   ...over,
-  // unread unless a test says otherwise — his ledger's arrears 2026-10-08, on days no import had reached
+  // unread unless a test says otherwise — his ledger's arrears 2026-10-08, on days no checked statement had reached
   overdueUnreadCents: over.overdueUnreadCents ?? over.overdueCents ?? 0,
 });
 
@@ -127,11 +127,11 @@ describe("budgetSectionNotes", () => {
         "room left is smaller than it looks.",
     );
     expect(body(18_221)).toBe(
-      "2 bills totalling $2,291.21 due by today: $2,109.00 not posted, and no import has covered the other $182.21 " +
+      "2 bills totalling $2,291.21 due by today: $2,109.00 not posted, and no statement has covered the other $182.21 " +
         "yet — 1 budget: Housing. That money is committed, so the room left is smaller than it looks.",
     );
     expect(body(229_121)).toBe(
-      "2 bills totalling $2,291.21 due by today and no import has covered them yet — 1 budget: Housing. That money " +
+      "2 bills totalling $2,291.21 due by today and no statement has covered them yet — 1 budget: Housing. That money " +
         "is committed, so the room left is smaller than it looks.",
     );
   });
@@ -143,7 +143,7 @@ describe("budgetSectionNotes", () => {
         row({ categoryPath: "Utilities", overdueCents: 10_887, overdueUnreadCents: 0, overdueBills: 2 }),
       ],
     }).find((n) => n.id === "budgets-overdue")!.body;
-    expect(body).toContain("$2,400.08 due by today: $108.87 not posted, and no import has covered the other $2,291.21 yet");
+    expect(body).toContain("$2,400.08 due by today: $108.87 not posted, and no statement has covered the other $2,291.21 yet");
   });
 
   test("counts under-measured rows, exempting `over` the same way the row does", () => {

@@ -26,8 +26,8 @@ import { seriesDetail } from "./recurring-detail";
 /**
  * ⚖️ His decision 60 (2026-10-08): a bill reads "not posted" (warning) — and the calendar's red ✕ — only once
  * statements cover the due day PLUS the bill's tolerance, the grace days a payment may still post on; until then "no
- * import has covered it yet", quiet. ONE rule on the calendar (`settledVerdict`), the bill's page, the runway,
- * /budgets, the End dialog and the forecast's arrears line.
+ * statement has covered it yet" (his decision 65, 2026-10-12), quiet. ONE rule on the calendar (`settledVerdict`), the
+ * bill's page, the runway, /budgets, the End dialog and the forecast's arrears line.
  *
  * 🔴 "Read" meant the due day itself. The e2e fixture's Meal Kit — due Jul 5, its card imported through Jul 5 — drew
  * a red ✕ "missed", "Already due, and not posted" in warning colour and "$125.00 never posted" on the runway, while a
@@ -177,16 +177,16 @@ const QUIET = {
     ["unsettled", "not_imported"],
   ],
   card: [
-    ["Already due — no import has covered it yet", false],
-    ["Already due — no import has covered it yet", false],
+    ["Already due — no statement has covered it yet", false],
+    ["Already due — no statement has covered it yet", false],
   ],
   endDialog: [
-    "Already due this month, no import has covered it yet",
-    "Already due this month, no import has covered it yet",
+    "Already due this month, no statement has covered it yet",
+    "Already due this month, no statement has covered it yet",
   ],
-  runway: ["A further $2,291.21 came due earlier this month and no import has covered it yet.", false],
+  runway: ["A further $2,291.21 came due earlier this month and no statement has covered it yet.", false],
   budgets: [[229121, 229121]],
-  forecast: [" and no import has covered it yet", " and no import has covered it yet"],
+  forecast: [" and no statement has covered it yet", " and no statement has covered it yet"],
 };
 
 const NOT_POSTED = {
@@ -213,7 +213,7 @@ describe("a due day is read once its accounts are imported through the due day +
    * THE BOUNDARY. Oct 1 + 3 days' grace is Oct 4: a payment on Oct 2, 3 or 4 still pays the rent's Oct 1, so an
    * import that has reached only Oct 3 cannot vouch that none came.
    */
-  test("imported through Oct 3 — due + grace − 1 — every surface still says no import has covered it yet", () => {
+  test("imported through Oct 3 — due + grace − 1 — every surface still says no statement has covered it yet", () => {
     importedThrough("2026-10-03");
     expect(surfaces()).toEqual(QUIET);
   });
@@ -255,7 +255,7 @@ describe("the grace is the bill's — and, for one billed with the rent, the ren
     const utilities = seriesDetail(bundle.db, UTIL, TODAY).overdue!;
     expect(utilities.graceDays).toBe(5);
     expect(alreadyDueWords({ owedCents: -utilities.amountCents, unreadCents: 0 }, utilities.graceDays).body).toContain(
-      "the imports, which reach 5 days past it, hold no posting within 5 days of it",
+      "the statements, which reach 5 days past it, hold no posting within 5 days of it",
     );
   });
 
@@ -265,11 +265,11 @@ describe("the grace is the bill's — and, for one billed with the rent, the ren
     expect(surfaces([RENT]).calendar).toEqual([["unsettled", "not_imported"]]);
     importedThrough("2026-10-02");
     expect(surfaces([RENT]).calendar).toEqual([["missed", null]]);
-    expect(surfaces([RENT]).runway[0]).toMatch(/: \$2,109\.00 never posted, and no import has covered the other/);
+    expect(surfaces([RENT]).runway[0]).toMatch(/: \$2,109\.00 never posted, and no statement has covered the other/);
   });
 });
 
-describe("a bill read part of the way is split by which due days' grace the imports reach", () => {
+describe("a bill read part of the way is split by which due days' grace the checked statements reach", () => {
   test("a weekly bill with 2 days' grace, imported through Oct 9: Oct 1 is read, Oct 8 and Oct 15 are not", () => {
     bundle.db
       .insert(recurringSeries)

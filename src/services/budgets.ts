@@ -1515,8 +1515,8 @@ export interface BudgetPaceStatus extends BudgetStatus, CategoryCoverage {
   /** bills expected on/before today that never posted — money committed but missing */
   overdueCents: number;
   /**
-   * Of `overdueCents`, the part on days no import has reached (`ArrearsReading.unreadCents`) — what the row, its
-   * dialog and the page note may not call "not posted", nor warn about.
+   * Of `overdueCents`, the part on days no checked statement has reached (`ArrearsReading.unreadCents`) — what the
+   * row, its dialog and the page note may not call "not posted", nor warn about.
    */
   overdueUnreadCents: number;
   overdue: ArrearsSeries[];

@@ -87,7 +87,7 @@ export interface BudgetNoteInput {
      * it could catch it.
      */
     overdueBills: number;
-    /** of `overdueCents`, the part on days no import has reached (`BudgetPaceStatus.overdueUnreadCents`) */
+    /** of `overdueCents`, the part on days no checked statement has reached (`BudgetPaceStatus.overdueUnreadCents`) */
     overdueUnreadCents: number;
     uncoveredDays: number;
     pace: "under" | "at-risk" | "over";

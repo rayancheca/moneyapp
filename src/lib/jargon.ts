@@ -240,9 +240,10 @@ export const RUNWAY_JARGON = {
    * "A further $X came due earlier this month and never posted". A definition
    * that outlives the figure it defines is worse than none.
    *
-   * 🔴 …and "never arrived" outlived the sentence too: since 2026-10-07 it says "no import has covered it yet" of
-   * arrears on days no import has reached (`arrearsTail`), and on a copy of his ledger 2026-10-08 the whole $2,291.21
-   * was such a day. ⚖️ Over unread days never a negative claim, so the definition makes none.
+   * 🔴 …and "never arrived" outlived the sentence too: since 2026-10-07 it says "no import has covered it yet" —
+   * since his decision 65 (2026-10-12) "no statement has covered it yet" — of arrears on days no checked statement
+   * has reached (`arrearsTail`), and on a copy of his ledger 2026-10-08 the whole $2,291.21 was such a day. ⚖️ Over
+   * unread days never a negative claim, so the definition makes none.
    */
   committed:
     "Money already agreed to, as a monthly rate: what a recurring schedule says is coming over the next twelve months, divided by twelve. Bills that already fell due are not in it: the ones nothing has covered yet are named separately, because a debt already owed is not part of a rate.",

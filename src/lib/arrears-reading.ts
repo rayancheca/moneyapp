@@ -5,10 +5,17 @@ import { formatCents } from "@/lib/money";
  * said through.
  *
  * ⛔ ONE SPLIT, EVERY SURFACE. "Not posted" is a negative claim, so it may be made only of the part of the arrears on
- * days an import has reached for the accounts the bill pays from — ⚖️ the due day AND its grace, the days a payment may
- * still post on (his decision 60, 2026-10-08, `dueDayIsRead`) — (`arrearsReadCents`, carried by `arrearsThisMonth`).
- * The rest is "no import has covered it yet" — ⚖️ staleness between uploads is normal, never a warning (his words
- * 2026-08-05; the class approved 2026-10-07).
+ * days a statement has covered: on each account the bill posts to NOW (his decision 62, 2026-10-12), CHECKED to its
+ * last statement balance — the day its "running late" chip measures to (`dueDayReadings` over
+ * `silenceMeasuredThroughBySeries`) — through the due day AND its grace, the days a payment may still post on (⚖️ his
+ * decision 60, 2026-10-08, `dueDayIsRead`; `arrearsReadCents`, carried by `arrearsThisMonth`). The rest is "no
+ * statement has covered it yet" — ⚖️ staleness between uploads is normal, never a warning (his words 2026-08-05; the
+ * class approved 2026-10-07).
+ *
+ * ⚖️ His decision 65 (2026-10-12): the words name what the quiet waits for. 🔴 They said "no import has covered it yet"
+ * while the reading waited for a checked balance (since deafb5e): with Wells Fargo's rows imported through Oct 21 and
+ * its balances checked only through Sep 24, at Oct 25 the rent's page said no import had covered Oct 1 — seventeen
+ * days inside what was imported (not-posted-on-landing-accounts.test.ts).
  *
  * 🔴 The runway learned this on 2026-10-07 and the bill's own page did not. On a copy of his ledger 2026-10-08,
  * `/recurring/<Flamingo South Beach (rent)>` read "Already due, and not posted" in warning colour over Oct 1 — rent
@@ -19,7 +26,7 @@ import { formatCents } from "@/lib/money";
 export interface ArrearsReading {
   /** what came due and no posting covers, as a positive money-out magnitude */
   owedCents: number;
-  /** of `owedCents`, the part on days no import has reached — the rest has been read */
+  /** of `owedCents`, the part on days no checked statement has reached — the rest has been read */
   unreadCents: number;
 }
 
@@ -39,36 +46,41 @@ export function arrearsSplit({ owedCents, unreadCents }: ArrearsReading): Arrear
   return { readCents: read, unreadCents: unread, kind: unread === 0 ? "read" : read === 0 ? "unread" : "mixed" };
 }
 
-/** The words for the unread half — /budgets' and the runway's. */
-export const NO_IMPORT_YET = "no import has covered it yet";
+/** "no statement has covered <what> yet" — the unread half, said of "it", "them" or "the other $U". */
+function noStatementHasCovered(what: string): string {
+  return `no statement has covered ${what} yet`;
+}
+
+/** The words for the unread half — every arrears surface's, and the calendar's "?" of a due day (decision 65). */
+export const NO_STATEMENT_YET = noStatementHasCovered("it");
 
 /** What the unread words say it of: one bill ("it"), or several (/budgets' page note, "them"). */
 export type ArrearsPronoun = "it" | "them";
 
-/** A mixed split in the runway's voice: "$R <notPosted>, and no import has covered the other $U yet". */
+/** A mixed split in the runway's voice: "$R <notPosted>, and no statement has covered the other $U yet". */
 export function splitClause(split: ArrearsSplit, notPosted: string): string {
   const read = formatCents(split.readCents);
-  return `${read} ${notPosted}, and no import has covered the other ${formatCents(split.unreadCents)} yet`;
+  return `${read} ${notPosted}, and ${noStatementHasCovered(`the other ${formatCents(split.unreadCents)}`)}`;
 }
 
 /**
- * The split said as one clause: `notPosted` when all of it has been read, "no import has covered it yet" when none of
- * it has, and both halves by amount for a mix — the words after "Oct 1 —" in the Next column and after "Already due
- * this month," in the End dialog (`seriesEndLines`) and after "Due this period by today," in /budgets'
+ * The split said as one clause: `notPosted` when all of it has been read, "no statement has covered it yet" when none
+ * of it has, and both halves by amount for a mix — the words after "Oct 1 —" in the Next column and after "Already
+ * due this month," in the End dialog (`seriesEndLines`) and after "Due this period by today," in /budgets'
  * (`budgetDeactivateLines`).
  */
 export function arrearsClause(reading: ArrearsReading, notPosted: string, pronoun: ArrearsPronoun = "it"): string {
   const split = arrearsSplit(reading);
   if (split.kind === "read") return notPosted;
-  if (split.kind === "unread") return pronoun === "it" ? NO_IMPORT_YET : `no import has covered ${pronoun} yet`;
+  if (split.kind === "unread") return noStatementHasCovered(pronoun);
   return splitClause(split, notPosted);
 }
 
 /**
- * What follows a lead such as "came due Oct 1": " and <notPosted>", " and no import has covered it yet", or
- * ": $R <notPosted>, and no import has covered the other $U yet". `notPosted` is the surface's own word for the read
- * half ("never posted" on the runway, "has not posted" in the math table and /budgets' spoken row, "not posted" on
- * the row itself and its page note).
+ * What follows a lead such as "came due Oct 1": " and <notPosted>", " and no statement has covered it yet", or
+ * ": $R <notPosted>, and no statement has covered the other $U yet". `notPosted` is the surface's own word for the
+ * read half ("never posted" on the runway, "has not posted" in the math table and /budgets' spoken row, "not posted"
+ * on the row itself and its page note).
  */
 export function arrearsTail(reading: ArrearsReading, notPosted: string, pronoun: ArrearsPronoun = "it"): string {
   const clause = arrearsClause(reading, notPosted, pronoun);

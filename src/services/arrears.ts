@@ -163,9 +163,9 @@ export function overdueForSeries(
 
 export interface ArrearsSeries extends BudgetTailSeries {
   /**
-   * Of `amountCents` (a positive magnitude, as is this), the part that fell due on days no import has reached for the
-   * accounts the series bills on — money that may well have posted where nobody has looked (`arrearsReadCents`). What
-   * no surface may call "not posted" (`lib/arrears-reading`).
+   * Of `amountCents` (a positive magnitude, as is this), the part that fell due on days no checked statement has
+   * reached for the accounts the series bills on — money that may well have posted where nobody has looked
+   * (`arrearsReadCents`). What no surface may call "not posted" (`lib/arrears-reading`).
    */
   unreadCents: number;
   /**
@@ -421,7 +421,7 @@ export function unbankedIncomeForSeries(
    * payday is actually unmet, so the common month costs nothing extra.
    *
    * ⛔ …nor can the calendar: a payday is checked by `paydayIsRead`, the predicate that decides its "not banked yet"
-   * against "no import has covered it yet" (`settledVerdict`).
+   * against "no statement has covered it yet" (`settledVerdict`).
    */
   const checkedOf = checkedThroughBySeries(db, today);
 

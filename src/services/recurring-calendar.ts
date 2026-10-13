@@ -948,8 +948,8 @@ export function recurringCalendar(
             {
               // ⚖️ the arrears' reading of the same day (`dueDayReadings`): a ✕ exactly where they say "not posted"
               dueDay: readingOf ? readingOf(s.id) : { observedThrough: null, graceDays: s.toleranceDays },
-              // the passed paydays' frontier (`unbankedIncomeForSeries`): "no import has covered it yet" exactly where
-              // the forecast, /budgets and the dashboard say "the ledger has not looked for its deposit"
+              // the passed paydays' frontier (`unbankedIncomeForSeries`): "no statement has covered it yet" exactly
+              // where the forecast, /budgets and the dashboard say "the ledger has not looked for its deposit"
               paydaysCheckedThrough: paydaysCheckedOf ? paydaysCheckedOf(s.id) : null,
             },
             // ⚖️ a day billed inside another's payment is the carrier's day, measured by the carrier's charges — never

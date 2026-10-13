@@ -386,16 +386,16 @@ describe("BudgetRow — the arrears line says the runway's split, in its tone", 
 
   const spoken = (html: string): string => /aria-valuetext="([^"]*)"/.exec(html)![1]!;
 
-  test("a due day no import has reached: the runway's words, quietly", () => {
+  test("a due day no checked statement has reached: the runway's words, quietly", () => {
     const html = render(housingWithBill({ cents: 228_570, readThrough: "2026-07-31" }));
     const line = arrearsLine(html);
-    expect(line.text).toBe("$2,285.70 expected by now and no import has covered it yet · Rent Aug 1");
+    expect(line.text).toBe("$2,285.70 expected by now and no statement has covered it yet · Rent Aug 1");
     expect(line.className).not.toMatch(/text-(warning|negative)\b/);
-    expect(spoken(html)).toMatch(/ \$2,285\.70 was expected by now and no import has covered it yet\.$/);
+    expect(spoken(html)).toMatch(/ \$2,285\.70 was expected by now and no statement has covered it yet\.$/);
     expect(html).not.toMatch(/not imported|has not been imported/);
   });
 
-  test("a due day an import has reached, with nothing posted: \"not posted\", in warning", () => {
+  test("a due day a checked statement has reached, with nothing posted: \"not posted\", in warning", () => {
     const html = render(housingWithBill({ cents: 228_570, readThrough: "2026-08-05" }));
     const line = arrearsLine(html);
     expect(line.text).toBe("$2,285.70 expected by now and not posted · Rent Aug 1");
@@ -409,11 +409,11 @@ describe("BudgetRow — the arrears line says the runway's split, in its tone", 
     const html = render(housingWithBill({ cents: 5_000, readThrough: "2026-08-05", weekly: true }));
     const line = arrearsLine(html);
     expect(line.text).toMatch(
-      /^\$100\.00 expected by now: \$50\.00 not posted, and no import has covered the other \$50\.00 yet · /,
+      /^\$100\.00 expected by now: \$50\.00 not posted, and no statement has covered the other \$50\.00 yet · /,
     );
     expect(line.className).toMatch(/\btext-warning\b/);
     expect(spoken(html)).toMatch(
-      / \$100\.00 was expected by now: \$50\.00 has not posted, and no import has covered the other \$50\.00 yet\.$/,
+      / \$100\.00 was expected by now: \$50\.00 has not posted, and no statement has covered the other \$50\.00 yet\.$/,
     );
   });
 });

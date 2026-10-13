@@ -303,8 +303,8 @@ function SeriesRow({
             the 1st and never posted was invisible here — while the math table
             at the top of this same page named it: "came due 2026-09-01 and has
             not posted". Same call as the forecast, the runway, /budgets and the
-            bill's own page. Quiet when no import has reached the day — the
-            runway's split (`overdueNote`). */}
+            bill's own page. Quiet when no checked statement has reached the
+            day — the runway's split (`overdueNote`). */}
         {overdue && <OverdueNote overdue={overdue} />}
       </td>
       <td className="px-3 py-3 text-right text-ink-muted">

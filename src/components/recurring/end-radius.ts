@@ -45,7 +45,7 @@ export interface SeriesEndInput {
   annualizedCents: number | null;
   /** arrears magnitude — 0 when nothing is late; disjoint from the tail below */
   overdueCents: number;
-  /** of `overdueCents`, the part on days no import has reached (`ArrearsReading.unreadCents`) */
+  /** of `overdueCents`, the part on days no checked statement has reached (`ArrearsReading.unreadCents`) */
   overdueUnreadCents: number;
   overdueOn: string | null;
   /** how many occurrences the arrears covers (the page's own "and N more") */

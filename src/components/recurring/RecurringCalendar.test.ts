@@ -521,11 +521,11 @@ describe("RecurringCalendar — a day paid inside another's payment", () => {
 });
 
 /*
- * ⚖️ THE READ SIDE, RENDERED FROM THE SERVICE — his decision 60 (2026-10-08): a ✕ only once the imports reach a due day
- * plus its grace. 🔴 With the e2e fixture's Meal Kit quiet (559aa52), nothing rendered the red ✕, its spoken "missed" or
- * the footer's "N missed" any more (review of 559aa52): every month above is built by hand with `missedCount: 0`. Here
- * the grid is what `recurringCalendar` returns for a $45.00 bill due Jul 1 with 3 days' grace on its own account,
- * today Jul 8, on either side of the boundary.
+ * ⚖️ THE READ SIDE, RENDERED FROM THE SERVICE — his decision 60 (2026-10-08): a ✕ only once the checked statements
+ * reach a due day plus its grace. 🔴 With the e2e fixture's Meal Kit quiet (559aa52), nothing rendered the red ✕, its
+ * spoken "missed" or the footer's "N missed" any more (review of 559aa52): every month above is built by hand with
+ * `missedCount: 0`. Here the grid is what `recurringCalendar` returns for a $45.00 bill due Jul 1 with 3 days' grace on
+ * its own account, today Jul 8, on either side of the boundary.
  */
 describe("RecurringCalendar — a missed bill, rendered from the service, at the grace boundary", () => {
   function julyWithBillReadThrough(through: string): string {
@@ -582,7 +582,7 @@ describe("RecurringCalendar — a missed bill, rendered from the service, at the
   test("imported through Jul 3 — due + grace − 1 — a quiet ?, in the runway's unread words, and nothing missed", () => {
     const html = julyWithBillReadThrough("2026-07-03");
     expect(jul1(html)).toEqual({
-      name: "Jul 1, 2026 — 1 item: Storage unit not yet known (no import has covered it yet) -$45.00",
+      name: "Jul 1, 2026 — 1 item: Storage unit not yet known (no statement has covered it yet) -$45.00",
       glyph: "? text-ink-muted",
     });
     expect(footerMissed(html)).toBeNull();

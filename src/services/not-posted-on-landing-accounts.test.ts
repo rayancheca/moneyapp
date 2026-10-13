@@ -5,7 +5,7 @@ import { eq } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { createDatabase, type DbBundle } from "@/db/client";
 import { accounts } from "@/db/schema/accounts";
-import { dailyBalances } from "@/db/schema/balances";
+import { balanceAnchors, dailyBalances } from "@/db/schema/balances";
 import { categories } from "@/db/schema/categories";
 import { institutions } from "@/db/schema/institutions";
 import { recurringSeries } from "@/db/schema/recurring";
@@ -13,9 +13,11 @@ import { transactions } from "@/db/schema/transactions";
 import { seedDatabase } from "@/db/seed";
 import { arrearsSentence } from "@/lib/committed";
 import { addDays, compareDates } from "@/lib/dates";
-import { alreadyDueWords } from "@/components/recurring/labels";
+import { alreadyDueWords, unsettledReasonWord } from "@/components/recurring/labels";
+import type { UnsettledReason } from "@/lib/occurrence-verdict";
 import { silenceMeasuredThroughBySeries } from "./cash-earnings";
 import { committedBook } from "./committed";
+import { rebuildAccount } from "./derivation";
 import { dueDayReadings } from "./observation-frontier";
 import { upcomingOccurrences } from "./recurring";
 import { recurringCalendar } from "./recurring-calendar";
@@ -174,9 +176,10 @@ function oct1(seriesId: string, today = TODAY) {
   return { calendar: [e.state, e.unsettledReason], card: [words.heading, words.warning] };
 }
 
+/** ⚖️ His decision 65 (2026-10-12): an unread due day waits for a statement, and says so. */
 const QUIET = {
   calendar: ["unsettled", "not_imported"],
-  card: ["Already due — no import has covered it yet", false],
+  card: ["Already due — no statement has covered it yet", false],
 };
 const NOT_POSTED = { calendar: ["missed", null], card: ["Already due, and not posted", true] };
 
@@ -221,7 +224,7 @@ describe("a bill's due days are read where it posts NOW — its last two payment
 describe("the chip and the ✕ read one day: the same accounts, each to its checked balance", () => {
   /*
    * Sep 2 + 48 days' tolerance is Oct 20: Wells Fargo read empty through Oct 20 makes the rent late. On that same
-   * reading its Oct 1 has long been past its grace — "running late" beside "not posted", never "no import has
+   * reading its Oct 1 has long been past its grace — "running late" beside "not posted", never "no statement has
    * covered it yet".
    */
   test("Wells Fargo read through Oct 21, no rent: the chip says running late, its Oct 1 not posted", () => {
@@ -248,6 +251,28 @@ describe("the chip and the ✕ read one day: the same accounts, each to its chec
     expect(oct1(RENT, today)).toEqual(QUIET);
     expect(oct1(UTIL, today)).toEqual(QUIET);
     expect(arrearsSentence(committedBook(bundle.db, today))).not.toContain("never posted");
+  });
+
+  /*
+   * ⚖️ His decision 65 (2026-10-12): the quiet waits for each account's last CHECKED statement balance, so the words
+   * say what it waits for. 🔴 This same reading said "Already due — no import has covered it yet" of an Oct 1 whose
+   * grace Wells Fargo's imported rows had passed by seventeen days (Oct 4; rows through Oct 21) — it is its statements,
+   * checked through Sep 24, that have not covered it.
+   */
+  test("…and quiet in what it waits for: no STATEMENT has covered Oct 1, though the imported rows have", () => {
+    const today = "2026-10-25";
+    rowsOnlyThrough(WF, "2026-10-21");
+    const { amountCents, unreadCents, graceDays } = seriesDetail(bundle.db, RENT, today).overdue!;
+    const card = alreadyDueWords({ owedCents: -amountCents, unreadCents }, graceDays);
+    expect(card.heading).not.toContain("no import");
+    expect(card.heading).toBe("Already due — no statement has covered it yet");
+    expect(card.body).toContain("no statement reaches 3 days past it yet");
+    const reason = oct1(RENT, today).calendar[1] as UnsettledReason;
+    expect(unsettledReasonWord(reason)).toBe("no statement has covered it yet");
+    // the rent, its utilities and the parking spot, all unread
+    expect(arrearsSentence(committedBook(bundle.db, today))).toBe(
+      "A further $2,441.21 came due earlier this month and no statement has covered it yet.",
+    );
   });
 
   /*
@@ -282,7 +307,7 @@ describe("the chip and the ✕ read one day: the same accounts, each to its chec
 });
 
 describe("a bill that has never charged and names no account has been read nowhere", () => {
-  test("parking, registered by hand: no import has covered it yet, whatever is imported", () => {
+  test("parking, registered by hand: no statement has covered it yet, whatever is imported", () => {
     importedThrough(WF, "2026-10-10");
     importedThrough(CHASE, "2026-10-10");
     expect(dueDayReadings(bundle.db, TODAY)(PARKING).observedThrough).toBeNull();
@@ -294,5 +319,43 @@ describe("a bill that has never charged and names no account has been read nowhe
     expect(dueDayReadings(bundle.db, TODAY)(PARKING).observedThrough).toBe("2026-09-24");
     importedThrough(WF, "2026-10-04");
     expect(dueDayReadings(bundle.db, TODAY)(PARKING).observedThrough).toBe("2026-10-04");
+  });
+
+  /*
+   * ⚖️ His decision 65 (2026-10-12): an unread due day waits for a CHECKED statement — so a statement that came is
+   * one. 🔴 An account whose only import was a statement with no rows graded `manual` (`accountCoverage`), checked
+   * nowhere: a bill naming it said "no statement has covered it yet" beside the statement that had. Latent on his
+   * ledger copy 2026-10-12.
+   */
+  test("…and one naming a card whose only import is a statement with no rows is read through that statement", () => {
+    const CARD = "acct-quiet-card";
+    const institutionId = bundle.db.select().from(institutions).all()[0]!.id;
+    bundle.db
+      .insert(accounts)
+      .values({
+        id: CARD,
+        institutionId,
+        name: "Quiet Card",
+        type: "credit",
+        currency: "USD",
+        isActive: true,
+        displayOrder: 0,
+        createdAt: now(),
+        updatedAt: now(),
+      })
+      .run();
+    // its Sep 6 – Oct 5 statement: opens the day before, closes on Oct 5, $0.00 both, nothing posted
+    for (const anchoredOn of ["2026-09-05", "2026-10-05"]) {
+      bundle.db
+        .insert(balanceAnchors)
+        .values({ accountId: CARD, anchoredOn, balanceCents: 0, source: "statement", createdAt: now(), updatedAt: now() })
+        .run();
+    }
+    rebuildAccount(bundle.db, CARD, TODAY);
+    bundle.db.update(recurringSeries).set({ accountId: CARD }).where(eq(recurringSeries.id, PARKING)).run();
+
+    expect(dueDayReadings(bundle.db, TODAY)(PARKING).observedThrough).toBe("2026-10-05");
+    // Oct 1 + 3 days' grace is Oct 4, inside the statement: nothing posted, so not posted
+    expect(oct1(PARKING)).toEqual(NOT_POSTED);
   });
 });

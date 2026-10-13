@@ -27,7 +27,7 @@ const { RecurringCalendar } = await import("@/components/recurring/RecurringCale
  * America LLC (weekly pay)" (+$1,141.92) "not yet known (not banked yet)", while the dashboard, the forecast and
  * /budgets said they "fall after Sep 24, the last day every account that pay lands in has been checked through — so
  * the ledger has not looked for their deposits". `settledVerdict` answered "unbanked" of EVERY passed payday before it
- * asked whether anyone had looked; a bill's day asks first ("no import has covered it yet", his decision 60).
+ * asked whether anyone had looked; a bill's day asks first ("no statement has covered it yet", his decisions 60, 65).
  *
  * ⛔ The fixture is that ledger's shape (as `late-over-unread-days`): the pay lands in Wells Fargo, checked through
  * Sep 24, and once landed in Chase Checking (two June ATM deposits), checked through Aug 12. The bills' reading
@@ -139,7 +139,7 @@ function unsettledPaydays(): string[] {
 }
 
 describe("a payday the ledger has not looked for says so on the calendar — as every pay sentence does", () => {
-  test("Oct 1 and Oct 8 fall after Wells Fargo's Sep 24: no import has covered them yet", () => {
+  test("Oct 1 and Oct 8 fall after Wells Fargo's Sep 24: no statement has covered them yet", () => {
     const october = unsettledPaydays().filter((d) => d.startsWith("2026-10"));
     expect(october).toEqual(["2026-10-01 not_imported", "2026-10-08 not_imported"]);
   });
@@ -153,7 +153,7 @@ describe("a payday the ledger has not looked for says so on the calendar — as 
 
   /*
    * ⛔ ONE READING: the calendar's "not banked yet" marks are exactly the paydays the forecast and /budgets count as
-   * checked (`checkedOccurrenceCount`), and its "no import has covered it yet" marks the ones they say nobody has
+   * checked (`checkedOccurrenceCount`), and its "no statement has covered it yet" marks the ones they say nobody has
    * looked for.
    *
    * 🔴 With Wells Fargo open the two frontiers are the same day, so a calendar reading its paydays against the day a
@@ -210,7 +210,7 @@ describe("a payday the ledger has not looked for says so on the calendar — as 
       "'",
     );
     expect(html).toContain(
-      'aria-label="Oct 1, 2026 — 1 item: It America LLC (weekly pay) not yet known (no import has covered it yet) $1,141.92"',
+      'aria-label="Oct 1, 2026 — 1 item: It America LLC (weekly pay) not yet known (no statement has covered it yet) $1,141.92"',
     );
     expect(html).not.toContain("not banked yet");
   });

@@ -1,4 +1,10 @@
-import { arrearsAlarms, arrearsClause, arrearsSplit, NO_IMPORT_YET, type ArrearsReading } from "@/lib/arrears-reading";
+import {
+  arrearsAlarms,
+  arrearsClause,
+  arrearsSplit,
+  NO_STATEMENT_YET,
+  type ArrearsReading,
+} from "@/lib/arrears-reading";
 import { addCalendarMonths, compareDates, diffDays, isoWeekday } from "@/lib/dates";
 import { endsInsideHorizon } from "@/lib/committed";
 import { dayWindowLabel } from "@/lib/period";
@@ -448,15 +454,17 @@ export function upcomingEvidenceWord(e: {
  *
  * 🔴 `not_imported` read "not imported yet" — false, since a due day is read only with its grace (`dueDayIsRead`), of
  * a day an import HAS reached short of it: the e2e fixture's Meal Kit, due Jul 5 on a card imported through Jul 5.
- * ⚖️ His decision 60 (2026-10-08): until then "no import has covered it yet" — the runway's unread words
- * (`NO_IMPORT_YET`), shared, so the calendar's "?" and every arrears surface say one thing of one due day.
+ * ⚖️ His decision 60 (2026-10-08): until then the runway's unread words, shared, so the calendar's "?" and every
+ * arrears surface say one thing of one due day — ⚖️ since his decision 65 (2026-10-12) "no statement has covered it
+ * yet" (`NO_STATEMENT_YET`): the day is read to each account's last CHECKED statement balance (`dueDayReadings`), so
+ * "no import" was false of a day the imported rows had passed.
  *
  * …and of a PAYDAY after the day its pay's accounts are checked through (`paydayIsRead`), where every pay sentence
  * says "the ledger has not looked for its deposit". "Not banked yet" is said only of a day someone looked at. 🔴 It
  * was said of every passed payday: his Oct 1 and Oct 8 (ledger copy, 2026-10-12), after Sep 24.
  */
 const UNSETTLED_REASON_WORD: Record<UnsettledReason, string> = {
-  not_imported: NO_IMPORT_YET,
+  not_imported: NO_STATEMENT_YET,
   unbanked: "not banked yet",
   schedule_unproven: "too few charges to grade yet",
 };
@@ -550,10 +558,14 @@ export function overdueNote(
  * due day, "with no posting within 3 days of it" was a claim about the three days after, unread (review of 2e6c74b,
  * 2026-10-08; the e2e fixture's Meal Kit, due Jul 5 on a card imported through Jul 5, said it of Jul 6–8).
  *
- * ⚖️ His decision 60 (2026-10-08): a due day is read once the imports reach it PLUS its grace (`dueDayIsRead`), so the
- * read body says what the rule checked — the imports reach `graceDays` past it and hold no posting within them — and
- * the unread body, which now includes a day the imports reached short of its grace, says how far they must reach.
- * `graceDays` is the grace the read half waited for (`ArrearsSeries.graceDays`).
+ * ⚖️ His decision 60 (2026-10-08): a due day is read once the records reach it PLUS its grace (`dueDayIsRead`), so the
+ * read body says what the rule checked — they reach `graceDays` past it and hold no posting within them — and the
+ * unread body, which includes a day they reached short of its grace, says how far they must reach. `graceDays` is the
+ * grace the read half waited for (`ArrearsSeries.graceDays`).
+ *
+ * ⚖️ His decision 65 (2026-10-12): the records are each account's CHECKED statements (`dueDayReadings`), and every body
+ * says "statements". 🔴 "No import reaches 3 days past it yet" was said of the rent's Oct 1 with Wells Fargo's rows
+ * imported through Oct 21 — its balances checked only through Sep 24 (not-posted-on-landing-accounts.test.ts).
  *
  * The forecast and this month's budget count all of it whichever way it reads — both say so.
  */
@@ -570,16 +582,17 @@ export function alreadyDueWords(
   if (split.kind === "read") {
     return {
       heading: "Already due, and not posted",
-      body: `Inside this calendar month, and the imports, which reach ${past}, hold no posting ${within}. ${counted}`,
+      body:
+        `Inside this calendar month, and the statements, which reach ${past}, hold no posting ${within}. ` + counted,
       warning,
     };
   }
   if (split.kind === "unread") {
     return {
-      heading: `Already due — ${NO_IMPORT_YET}`,
+      heading: `Already due — ${NO_STATEMENT_YET}`,
       body:
-        `Inside this calendar month, and no import reaches ${past} yet — the days a payment has to post — so it may ` +
-        `well have posted. ${counted}`,
+        `Inside this calendar month, and no statement reaches ${past} yet — the days a payment has to post — so it ` +
+        `may well have posted. ${counted}`,
       warning,
     };
   }
@@ -587,8 +600,8 @@ export function alreadyDueWords(
   return {
     heading: `Already due: ${arrearsClause(reading, "not posted")}`,
     body:
-      `Inside this calendar month. Where the imports reach ${pastADueDay}, they hold no posting ${within}; for the ` +
-      "rest, no import reaches that far yet. The forecast counts all of it, and so does this month's budget.",
+      `Inside this calendar month. Where the statements reach ${pastADueDay}, they hold no posting ${within}; for ` +
+      "the rest, no statement reaches that far yet. The forecast counts all of it, and so does this month's budget.",
     warning,
   };
 }

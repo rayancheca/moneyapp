@@ -40,9 +40,10 @@ import { arrearsClause } from "@/lib/arrears-reading";
  * ledger had read, so where an import had reached the due day it contradicted
  * the row behind it — the falsehood "End this series" told on the bill's own
  * page until a132c57 (review of a132c57, 2026-10-08). ⛔ The row's split
- * (`arrearsClause`): "not posted" only of read days, "no import has covered it
- * yet" of the rest, both by amount for a mix. His Housing on 2026-10-08: "Due
- * this period by today, no import has covered it yet: $2,291.21".
+ * (`arrearsClause`): "not posted" only of read days, "no statement has covered
+ * it yet" of the rest (§6A 65), both by amount for a mix. His Housing on
+ * 2026-10-08: "Due this period by today, no import has covered it yet:
+ * $2,291.21".
  */
 export interface BudgetDeactivateInput {
   /** the plan itself, already formatted with its period word */
@@ -55,7 +56,7 @@ export interface BudgetDeactivateInput {
   spentCents: number | null;
   /** bills due on or before today — late, or due today and not yet posted */
   overdueCents: number;
-  /** of `overdueCents`, the part on days no import has reached (`BudgetPaceStatus.overdueUnreadCents`) */
+  /** of `overdueCents`, the part on days no checked statement has reached (`BudgetPaceStatus.overdueUnreadCents`) */
   overdueUnreadCents: number;
   /** recurring still to come before the period closes */
   expectedTailCents: number;

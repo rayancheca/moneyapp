@@ -1,5 +1,12 @@
 import { describe, expect, test } from "vitest";
-import { arrearsAlarms, arrearsSplit, arrearsTail, NO_IMPORT_YET, splitClause } from "./arrears-reading";
+import {
+  arrearsAlarms,
+  arrearsClause,
+  arrearsSplit,
+  arrearsTail,
+  NO_STATEMENT_YET,
+  splitClause,
+} from "./arrears-reading";
 
 /**
  * 🔴 The rent's own page read "Already due, and not posted" of an Oct 1 no import had reached (his ledger,
@@ -35,19 +42,33 @@ describe("arrearsTail — the words after a lead, in the runway's voice", () => 
     expect(arrearsTail({ owedCents: 210900, unreadCents: 0 }, "has not posted")).toBe(" and has not posted");
   });
 
-  test("unread: never 'not posted' — no import has covered it yet", () => {
+  test("unread: never 'not posted' — no statement has covered it yet", () => {
     const tail = arrearsTail({ owedCents: 210900, unreadCents: 210900 }, "has not posted");
-    expect(tail).toBe(` and ${NO_IMPORT_YET}`);
+    expect(tail).toBe(` and ${NO_STATEMENT_YET}`);
     expect(tail).not.toMatch(/not posted/);
   });
 
   test("mixed: both halves, each named by its amount", () => {
     expect(arrearsTail({ owedCents: 3000, unreadCents: 1000 }, "never posted")).toBe(
-      ": $20.00 never posted, and no import has covered the other $10.00 yet",
+      ": $20.00 never posted, and no statement has covered the other $10.00 yet",
     );
     expect(splitClause(arrearsSplit({ owedCents: 3000, unreadCents: 1000 }), "not posted")).toBe(
-      "$20.00 not posted, and no import has covered the other $10.00 yet",
+      "$20.00 not posted, and no statement has covered the other $10.00 yet",
     );
+  });
+
+  /*
+   * ⚖️ His decision 65 (2026-10-12): a due day is read to each account's last CHECKED statement balance
+   * (`dueDayReadings`), so the unread half waits for a statement and says so — of one bill, of several, of a remainder.
+   */
+  test("the unread words name a statement, whatever they are said of", () => {
+    expect(NO_STATEMENT_YET).toBe("no statement has covered it yet");
+    const unread = { owedCents: 229121, unreadCents: 229121 };
+    expect(arrearsClause(unread, "not posted", "them")).toBe("no statement has covered them yet");
+    const mixed = arrearsClause({ owedCents: 3000, unreadCents: 1000 }, "not posted");
+    for (const words of [NO_STATEMENT_YET, arrearsClause(unread, "not posted", "them"), mixed]) {
+      expect(words).not.toMatch(/import/);
+    }
   });
 });
 
@@ -61,7 +82,7 @@ describe("arrearsAlarms — the tone every arrears surface takes", () => {
     expect(arrearsAlarms({ owedCents: 210900, unreadCents: 0 })).toBe(true);
   });
 
-  test("arrears no import has reached do not", () => {
+  test("arrears no checked statement has reached do not", () => {
     expect(arrearsAlarms({ owedCents: 229121, unreadCents: 229121 })).toBe(false);
   });
 

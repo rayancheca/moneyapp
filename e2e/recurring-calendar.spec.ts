@@ -222,7 +222,7 @@ test("a day cell enumerates its series, state and amount for a screen reader", a
   // true of an imported day short of its grace where "not imported yet" was not.
   await expect(
     page.getByRole("button", {
-      name: "Jul 5, 2026 — 1 item: Meal Kit not yet known (no import has covered it yet) -$125.00",
+      name: "Jul 5, 2026 — 1 item: Meal Kit not yet known (no statement has covered it yet) -$125.00",
     }),
   ).toBeVisible();
 

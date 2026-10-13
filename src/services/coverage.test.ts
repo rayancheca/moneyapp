@@ -963,6 +963,49 @@ describe("two counts of his do not check each other, through the rebuild", () =>
   });
 });
 
+describe("a statement with no rows checks the account through it", () => {
+  /*
+   * 🔴 An account whose only import is a statement with no rows — a card nothing was charged on, its opening and
+   * closing balances equal — was graded `manual`, as if he had typed its balance: `verifiedThrough` null, so a bill
+   * that names it was read nowhere and its due days waited for good on a statement that had already come
+   * (`dueDayReadings` — ⚖️ his decision 65, 2026-10-12: an unread due day waits for each account's last CHECKED
+   * statement balance). Latent: no account on his ledger copy 2026-10-12 has a statement and no row.
+   */
+  const REBUILT_ON = "2026-08-20";
+
+  function anchorAt(accountId: string, day: string, source: "manual" | "statement", cents: number): void {
+    const now = new Date().toISOString();
+    bundle.db
+      .insert(balanceAnchors)
+      .values({ accountId, anchoredOn: day, balanceCents: cents, source, createdAt: now, updatedAt: now })
+      .run();
+  }
+
+  const at = (accountId: string) => accountCoverage(bundle.db, REBUILT_ON).find((c) => c.accountId === accountId)!;
+
+  test("its opening and closing balances, equal, close the chain: checked through its close", () => {
+    const id = addAccount("a-quiet-card", "Quiet Card", "credit");
+    // a July statement: opens the day before its first day, closes on its last, $0.00 both, nothing posted
+    anchorAt(id, "2026-06-30", "statement", 0);
+    anchorAt(id, "2026-07-31", "statement", 0);
+    rebuildAccount(bundle.db, id, REBUILT_ON);
+
+    const c = at(id);
+    expect(c.grade).toBe("verified");
+    expect(c.verifiedThrough).toBe("2026-07-31");
+    expect(c.chainOpensOn).toBe("2026-06-30");
+    expect(footingThrough(c)).toEqual({ day: "2026-07-31", countedOn: null, brokeOn: null });
+  });
+
+  test("…while a balance he typed, with no row, is still his count and nothing else", () => {
+    const id = addAccount("a-typed-only", "Drawer", "checking");
+    anchorAt(id, "2026-07-31", "manual", 10_000);
+    rebuildAccount(bundle.db, id, REBUILT_ON);
+
+    expect(at(id)).toMatchObject({ grade: "manual", verifiedThrough: null, lastManualUpdate: "2026-07-31" });
+  });
+});
+
 describe("footingThrough — where a figure on one account stops being checked", () => {
   /*
    * ⚖️ His answer, 2026-10-05: a typed-balance account that BREAKS bounds every "checked through" date the day before

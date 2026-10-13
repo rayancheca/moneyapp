@@ -38,8 +38,8 @@ import { subscriptionsCard } from "./subscriptions-card";
  * can pass by every surface being empty.
  *
  * ⚖️ The subscription's card is read past today: a series lapses only on days the ledger has checked (§6A 57), and
- * these tests are about the day it does. The rent's checking account stays unread, so its Oct 1 is still "no import
- * has covered it yet".
+ * these tests are about the day it does. The rent's checking account stays unread, so its Oct 1 is still "no
+ * statement has covered it yet".
  */
 const TODAY = "2026-10-08";
 
@@ -163,7 +163,7 @@ describe("a series the forecast has stopped forecasting is not owed this month e
     expect(book.lines.map((l) => l.name)).toEqual(["Rent"]);
     expect(book.overdueCents).toBe(210900);
     expect(book.overdueCount).toBe(1);
-    expect(arrearsSentence(book)).toBe("A further $2,109.00 came due earlier this month and no import has covered it yet.");
+    expect(arrearsSentence(book)).toBe("A further $2,109.00 came due earlier this month and no statement has covered it yet.");
     // the card's "Committed bills come to $X a month — A, B, and N more" names `lines`
     expect(runwayCard(bundle.db, TODAY).committed.lines.map((l) => l.name)).toEqual(["Rent"]);
 

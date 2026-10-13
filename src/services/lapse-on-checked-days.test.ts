@@ -520,7 +520,7 @@ describe("an account no statement will ever come for does not hold the lapse bac
     expect(archived.flat().some((e) => e.includes("not_imported"))).toBe(false);
   });
 
-  test("the runway calls an archived card's late bill what it would read through today — never 'no import has covered it yet'", () => {
+  test("the runway calls an archived card's late bill what it would read through today — never 'no statement has covered it yet'", () => {
     const NOV_20 = "2026-11-20";
     const arrears = (today: string) => {
       const book = committedBook(bundle.db, today);

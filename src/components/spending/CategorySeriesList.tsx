@@ -48,7 +48,7 @@ export function CategorySeriesList({ rows, today }: { rows: CategorySeriesRow[];
                     `overdueNote` is the wording /recurring's Next column has
                     used since the same defect was fixed there, and this was its
                     second caller. See `CategorySeriesRow.overdue`. Quiet when no
-                    import has reached the day — the runway's split. */}
+                    checked statement has reached the day — the runway's split. */}
                 {s.overdue && <OverdueNote overdue={s.overdue} />}
                 {/* ⛔ The word is chosen WITH the row, in `lib/series-evidence`.
                     Chosen here from `evidence` alone, it read "lapsed" over five

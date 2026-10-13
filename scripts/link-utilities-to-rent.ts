@@ -26,7 +26,7 @@
  * Subscriptions card; the card's never-billed figure falls by exactly its $182.21 and its headline holds; and his
  * amount, the forecast (every line, every total, the next 400 days of occurrences), the arrears and the committed
  * book's money are identical to the cent. Their READING may move — its Oct 1 is read on the rent's accounts once
- * linked, so "no import has covered it yet" becomes "not posted" where the rent's already is (`figuresOf`).
+ * linked, so "no statement has covered it yet" becomes "not posted" where the rent's already is (`figuresOf`).
  */
 import { eq, inArray } from "drizzle-orm";
 import type { DbBundle } from "@/db/client";
@@ -265,7 +265,7 @@ function figuresOf(bundle: DbBundle, today: string): Figures {
     /*
      * ⚖️ Money, not its reading: what is billed inside the rent is read on the rent's accounts (implied by §6A 59,
      * 2026-10-08), so once those are imported past a 1st the rent has not paid, its arrears' unread part and its
-     * forecast line's clause ("no import has covered it yet" → "has not posted") follow the rent's — the reading the
+     * forecast line's clause ("no statement has covered it yet" → "has not posted") follow the rent's — the reading the
      * link exists to fix. 🔴 Hashed here, they refused the write in exactly that state (a copy of his ledger read
      * through Oct 7, 2026-10-09). Every cent, every line, every occurrence and every arrears day is still held.
      */

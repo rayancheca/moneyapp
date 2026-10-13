@@ -604,7 +604,7 @@ async function seedBudgets(db: AppDatabase): Promise<void> {
    * missed: a due day is read only once its accounts are imported through the
    * day PLUS its grace (`toleranceDays`, 3 here — through Jul 8), the days a
    * payment may still post on. So at E2E_FAKE_TODAY it reads "not yet known" on
-   * the calendar and "no import has covered it yet", quietly, on /budgets, the
+   * the calendar and "no statement has covered it yet", quietly, on /budgets, the
    * runway and its page. The red ✕ is Storage unit's (below), read through its
    * due day + 3. (Since his decision 62, 2026-10-12, a due day is read to the
    * card's CHECKED balance, Jul 4 — quiet either way.)
@@ -642,12 +642,12 @@ async function seedBudgets(db: AppDatabase): Promise<void> {
    * here). 🔴 That turned Meal Kit (above) quiet, and with it the fixture's only
    * read bill: nothing in e2e or the visual suite reached the read side any more
    * (review of 559aa52). So the two bills now stand either side of the rule:
-   * Meal Kit imported through its due day alone — "no import has covered it
+   * Meal Kit imported through its due day alone — "no statement has covered it
    * yet" — and this one through its due day + 3, EXACTLY the boundary — "missed".
    *
    * Until 559aa52 this series was the `unsettled` path (due 2026-07-06, two days
    * past everything SoFi had shown); Meal Kit carries that state now, in the same
-   * words (`NO_IMPORT_YET`), so no state lost its rendered path.
+   * words (`NO_STATEMENT_YET`), so no state lost its rendered path.
    *
    * Chase Freedom Unlimited — Meal Kit's card — is the account because its
    * balances are CHECKED exactly there: through 2026-07-04, the 2026-07-01

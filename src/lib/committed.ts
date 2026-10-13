@@ -66,7 +66,7 @@ export interface CommittedOccurrence {
   endsOn: string | null;
   /**
    * ARREARS ONLY: of this payment's magnitude, the part that fell due on days no
-   * import has reached for the accounts the series bills on — money that may
+   * checked statement has reached for the accounts the series bills on — money that may
    * well have posted where nobody has looked. Absent means all of it: the
    * cautious reading, because the sentence it feeds says "never posted" only of
    * the rest (`arrearsSentence`).
@@ -167,8 +167,8 @@ export interface CommittedOutflows {
    */
   overdueCents: number;
   /**
-   * Of `overdueCents`, the part on days no import has reached for the accounts
-   * those bills post from — summed from each arrears payment's `unreadCents`.
+   * Of `overdueCents`, the part on days no checked statement has reached for the
+   * accounts those bills post from — summed from each arrears payment's `unreadCents`.
    * What `arrearsSentence` refuses to call "never posted".
    */
   overdueUnreadCents: number;

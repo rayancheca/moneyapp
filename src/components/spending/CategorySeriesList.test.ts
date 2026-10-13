@@ -89,7 +89,7 @@ function noteOf(row: CategorySeriesRow): string {
 describe("CategorySeriesList — the late note follows the runway's read/unread split", () => {
   test("unread: quiet, in the runway's words", () => {
     const note = noteOf(rent(210900));
-    expect(note).toContain("Oct 1 — no import has covered it yet");
+    expect(note).toContain("Oct 1 — no statement has covered it yet");
     expect(note).not.toContain("text-warning");
   });
 
