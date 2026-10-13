@@ -178,8 +178,8 @@ export interface ArrearsSeries extends BudgetTailSeries {
   inGraceCents: number;
   /**
    * The days after a due day a payment may still post on that its read half waited for — the series' `toleranceDays`,
-   * widened, for a carrier and every series billed inside it, to the widest among them (`dueDayReadings`, ⚖️ §6A 60).
-   * What the bill's page says the imports reach past it (`alreadyDueWords`).
+   * widened to its carrier's for one billed inside another's payment, never a carrier's to what it carries
+   * (`dueDayReadings`, ⚖️ §6A 60). What the bill's page says the imports reach past it (`alreadyDueWords`).
    */
   graceDays: number;
 }

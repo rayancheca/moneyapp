@@ -368,8 +368,7 @@ export function accountsThatDate(
  * grades, his decision 60 (2026-10-08): the day its "running late" chip and its lapse measure its silence to
  * (`silenceMeasuredThroughBySeries`), and its grace — the widest window a payment that pays it may post in: its own
  * `toleranceDays`, and for a series billed inside another's payment its carrier's too, whose payments pay it by the
- * carrier's own test (`carrierPaymentsBySeries`) — and, the pair answering on one day, a carrier's the widest of what
- * it carries (below).
+ * carrier's own test (`carrierPaymentsBySeries`). A carrier's is its own alone (below).
  *
  * ⚖️ His decision 62 (2026-10-12): read where the bill posts NOW — the accounts its LAST TWO PAYMENTS posted to, or the
  * one it names, its carrier's added (`landingAccountsBySeries`) — never every account it ever paid from. 🔴 Over every
@@ -391,12 +390,17 @@ export function accountsThatDate(
  * accounts and the grace a due day is read by are chosen once. 🔴 Graded on its own 3 days, a utilities bill carried by
  * a rent with 5 would say "not posted" on Oct 4 beside a rent still quiet until Oct 6 — one payment, two answers.
  *
- * ⛔ …and ONE GRACE FOR THE PAIR: a carrier and every series billed inside it are read with the widest grace among
- * them. 🔴 The carried took the wider of its own and its carrier's while the carrier kept its own (review of the
- * 2026-10-08 batch): with the utilities' own at 5 and the rent's at 3, imports through Oct 4 drew the rent's Oct 1 a red
- * ✕ beside the utilities' quiet "?". Each payment still pays by its own series' tolerance (`paymentFor`), so a posting
- * of the utilities' own may pay them through Oct 6 — neither may say "not posted" before then, and the rent waits with
- * them. Latent on his ledger copy 2026-10-12: the rent and its utilities both have 3.
+ * ⛔ …and A CARRIER'S IS ITS OWN — its own grace, its own accounts — never what is billed inside it. Only its own
+ * payments pay it (`paymentFor`, each by its own series' tolerance), and his decisions read a bill's "not posted" on
+ * the bill's own tolerance (60) and where its last two payments posted (62). So the pair can split one way only — the
+ * rent not posted beside the utilities quiet, while a payment of their own (a wider grace, an account read less far)
+ * may still post — and both say what is true of their own day. 🔴 One grace for the pair (5557162, review of the
+ * 2026-10-12 batch): the rent waited for the widest grace among everything billed with it, asking neither a status nor
+ * a due day — an annual item carried (14 days) held every monthly rent day 14 days, one ended in June held it 7, and
+ * the rent's page said "no import reaches 14 days past it yet … so it may well have posted" of a rent no posting after
+ * Oct 4 could pay, or "hold no posting within 5 days of it" beside its own Oct 5 row. Waiting on the accounts of what
+ * it carries would wait on a card the rent never paid from — decision 62's own 🔴. Latent on his ledger copy
+ * 2026-10-12: the rent and its utilities both have 3, and the utilities no posting of their own.
  */
 export function dueDayReadings(db: AppDatabase, today: string): (seriesId: string) => DueDayReading {
   const measuredThrough = silenceMeasuredThroughBySeries(db, today);
@@ -408,18 +412,13 @@ export function dueDayReadings(db: AppDatabase, today: string): (seriesId: strin
       .all()
       .map((s) => [s.id, s.toleranceDays] as const),
   );
-  // per carrier, the widest grace among it and what is billed inside it
-  const pairGrace = new Map<string, number>();
-  for (const [carriedId, carrier] of carriers) {
-    const widest = pairGrace.get(carrier.id) ?? tolerance.get(carrier.id) ?? 0;
-    pairGrace.set(carrier.id, Math.max(widest, tolerance.get(carriedId) ?? 0));
-  }
   return (seriesId) => {
-    const pair = carriers.get(seriesId)?.id ?? seriesId;
+    const own = tolerance.get(seriesId) ?? 0;
+    const carrierId = carriers.get(seriesId)?.id;
     const observedThrough = measuredThrough(seriesId);
     return {
       observedThrough,
-      graceDays: pairGrace.get(pair) ?? tolerance.get(seriesId) ?? 0,
+      graceDays: carrierId === undefined ? own : Math.max(own, tolerance.get(carrierId) ?? 0),
       // read to the day of the question: what is unread waits only for days still to come (`in_grace`)
       readsToToday: observedThrough !== null && compareDates(observedThrough, today) >= 0,
     };

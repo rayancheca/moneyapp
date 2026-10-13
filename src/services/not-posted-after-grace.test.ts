@@ -262,26 +262,155 @@ describe("the grace is the bill's — and, for one billed with the rent, the ren
   });
 
   /*
-   * 🔴 …and the other way round it split (review of the 2026-10-08 batch): the grace of what is billed inside the rent
-   * was the wider of its own and the rent's, the rent's its own alone — so with the utilities' own at 5, imports through
-   * Oct 4 drew the rent's Oct 1 a red ✕ "not posted" beside the utilities' quiet "?", one payment, two answers. A
-   * payment of its own may still pay the utilities through Oct 6 (`paymentFor`, each by its own series' tolerance), so
-   * neither may speak before then: the pair waits for the wider grace in it, both of them.
+   * ⚖️ …and the rent's grace stays the rent's: his decision 60 (2026-10-08) reads "not posted" once statements cover
+   * the due day plus THE BILL's tolerance, and only the rent's own payments pay the rent (`paymentFor`). What it
+   * carries waits for every payment that may pay IT — a payment of its own within its own 5 days, too — so the pair can
+   * split one way only: the rent not posted beside the utilities quiet, while a payment of theirs may still post.
+   *
+   * 🔴 One grace for the pair (5557162, review of the 2026-10-12 batch): the rent waited for the widest grace among what
+   * it carries, so its Oct 1 stayed quiet past its own days — "no import reaches 5 days past it yet … so it may well
+   * have posted", of a rent no posting after Oct 4 could pay — and with an annual item carried, every rent day of the
+   * year waited 14 (below).
    */
-  test("what the rent carries, with 5 days' grace of its own, holds the rent to Oct 6 too — one day for the pair", () => {
+  test("what the rent carries, with 5 days' grace of its own, waits to Oct 6 — the rent is not posted on Oct 4", () => {
     bundle.db.update(recurringSeries).set({ toleranceDays: 5 }).where(eq(recurringSeries.id, UTIL)).run();
-    importedThrough("2026-10-05");
-    expect(surfaces()).toEqual(QUIET);
+    importedThrough("2026-10-04");
+    expect(surfaces()).toEqual({
+      calendar: [NOT_POSTED.calendar[0], QUIET.calendar[1]],
+      card: [NOT_POSTED.card[0], QUIET.card[1]],
+      endDialog: [NOT_POSTED.endDialog[0], QUIET.endDialog[1]],
+      runway: [
+        "A further $2,291.21 came due earlier this month: $2,109.00 never posted, and no import has covered the " +
+          "other $182.21 yet.",
+        true,
+      ],
+      budgets: [[229121, 18221, 0]],
+      forecast: [NOT_POSTED.forecast[0], QUIET.forecast[1]],
+    });
     importedThrough("2026-10-06");
     expect(surfaces()).toEqual(NOT_POSTED);
-    // …and the rent's own page names the grace its day waited for — 5, the pair's, never its own 3
-    expect(seriesDetail(bundle.db, RENT, TODAY).overdue!.graceDays).toBe(5);
+    // …each page naming the grace its own day waited for: the rent's 3, the utilities' own 5
+    expect([RENT, UTIL].map((id) => seriesDetail(bundle.db, id, TODAY).overdue!.graceDays)).toEqual([3, 5]);
+  });
+
+  /*
+   * 🔴 …and its page claimed a window its payments are not judged by (review of 5557162): with the utilities' 5 days
+   * lent to it, a rent paid Oct 5 — four days after Oct 1, past its own 3 — read "Already due, and not posted … the
+   * imports, which reach 5 days past it, hold no posting within 5 days of it", beside its own Oct 5 row.
+   */
+  test("a rent paid four days late is not posted, and its page says so within its own 3 days — not 5", () => {
+    bundle.db.update(recurringSeries).set({ toleranceDays: 5 }).where(eq(recurringSeries.id, UTIL)).run();
+    bundle.db.insert(transactions).values(row("t-oct5", "2026-10-05", -229121, RENT, "FLAMINGO SOUTH BEACH")).run();
+    importedThrough("2026-10-07");
+    const october = recurringCalendar(bundle.db, "2026-10", TODAY).entriesByDay;
+    expect(october["2026-10-01"]!.find((e) => e.seriesId === RENT)!.state).toBe("missed");
+    expect(october["2026-10-05"]!.find((e) => e.seriesId === RENT)!.transactionId).toBe("t-oct5");
+    const rent = seriesDetail(bundle.db, RENT, TODAY).overdue!;
+    expect(alreadyDueWords(overdueReading(rent), rent.graceDays).body).toContain(
+      "the imports, which reach 3 days past it, hold no posting within 3 days of it",
+    );
+  });
+
+  /*
+   * 🔴 THE PAIR'S GRACE ASKED NO DAY (review of 5557162): the widest tolerance among everything billed with the rent —
+   * no status asked, no due day — so an annual item carried (14 days, `CADENCE_TOLERANCE_DAYS`) held every monthly rent
+   * day 14 days, and an item ended in June held it 7: the rent's Oct 1 read "no import reaches 14 days past it yet … so
+   * it may well have posted" in October, a month the item does not fall due in. Read on its own grace, it lends none.
+   */
+  test("an annual item billed with the rent, due Jan 1, lends the rent's Oct 1 none of its 14 days", () => {
+    bundle.db
+      .insert(recurringSeries)
+      .values({
+        id: "renters",
+        name: "Renters insurance",
+        kind: "bill",
+        cadence: "annual",
+        intervalDaysAvg: 365,
+        amountCentsAvg: -12000,
+        nextExpectedAmountCents: -12000,
+        nextExpectedOn: "2027-01-01",
+        anchorDay: 1,
+        toleranceDays: 14,
+        status: "confirmed",
+        userBilledWithSeriesId: RENT,
+        userCategoryId: categoryId,
+        createdAt: now(),
+        updatedAt: now(),
+      })
+      .run();
+    importedThrough("2026-10-04");
+    expect(surfaces()).toEqual(NOT_POSTED);
+  });
+
+  test("a quarterly item once billed with the rent, ended Jun 30, lends it none of its 7 days", () => {
+    bundle.db
+      .insert(recurringSeries)
+      .values({
+        id: "parking",
+        name: "Parking permit",
+        kind: "bill",
+        cadence: "quarterly",
+        intervalDaysAvg: 91,
+        amountCentsAvg: -9000,
+        nextExpectedAmountCents: -9000,
+        nextExpectedOn: "2026-07-01",
+        anchorDay: 1,
+        toleranceDays: 7,
+        status: "ended",
+        userEndsOn: "2026-06-30",
+        userBilledWithSeriesId: RENT,
+        userCategoryId: categoryId,
+        createdAt: now(),
+        updatedAt: now(),
+      })
+      .run();
+    importedThrough("2026-10-04");
+    expect(surfaces()).toEqual(NOT_POSTED);
+  });
+
+  /*
+   * ⚖️ …and on its own accounts: his decision 62 (2026-10-12) reads a bill where its last two payments posted — the
+   * rent's checking account — never where what it carries once posted on its own. What it carries is read on both
+   * (`landingAccountsBySeries`): a payment of its own may still sit on the card no statement has reached since Sep 20.
+   * 🔴 (review of 5557162) Its commit said the pair now says "not posted" on the same day; here it cannot, and must not:
+   * read on the card too, the rent's Oct 1 would wait on an account it never paid from — decision 62's own 🔴.
+   */
+  test("utilities once paid on a card of their own wait for that card; the rent reads its own account", () => {
+    const institutionId = bundle.db.select().from(institutions).all()[0]!.id;
+    bundle.db
+      .insert(accounts)
+      .values({
+        id: "card",
+        institutionId,
+        name: "Card",
+        type: "credit",
+        currency: "USD",
+        isActive: true,
+        displayOrder: 1,
+        createdAt: now(),
+        updatedAt: now(),
+      })
+      .run();
+    bundle.db
+      .insert(transactions)
+      .values([
+        { ...row("t-u-jul", "2026-07-01", -18221, UTIL, "FLAMINGO UTILITIES"), accountId: "card" },
+        { ...row("t-u-aug", "2026-08-01", -18221, UTIL, "FLAMINGO UTILITIES"), accountId: "card" },
+      ])
+      .run();
+    bundle.db.update(recurringSeries).set({ lastMatchedOn: "2026-08-01" }).where(eq(recurringSeries.id, UTIL)).run();
+    checkedThrough(bundle.db, "card", "2026-09-20");
+    importedThrough("2026-10-07");
+    expect(surfaces().calendar).toEqual([NOT_POSTED.calendar[0], QUIET.calendar[1]]);
+    const late = arrearsThisMonth(bundle.db, new Set([RENT, UTIL]), TODAY).series;
+    expect(late.map((s) => [s.id, s.unreadCents])).toEqual([
+      [RENT, 0],
+      [UTIL, 18221],
+    ]);
   });
 
   test("a bill billed on its own waits its own grace: one day's grace is read the day after", () => {
     bundle.db.update(recurringSeries).set({ toleranceDays: 1 }).where(eq(recurringSeries.id, RENT)).run();
-    // on its own: carrying nothing either — linked, it waits for the 3 days of what it carries (the test above)
-    bundle.db.update(recurringSeries).set({ userBilledWithSeriesId: null }).where(eq(recurringSeries.id, UTIL)).run();
     importedThrough("2026-10-01");
     expect(surfaces([RENT]).calendar).toEqual([["unsettled", "not_imported"]]);
     importedThrough("2026-10-02");
