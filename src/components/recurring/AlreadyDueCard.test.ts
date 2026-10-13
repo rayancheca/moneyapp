@@ -1,20 +1,24 @@
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, test } from "vitest";
+import type { CarriedGrace } from "@/lib/occurrence-verdict";
 import { AlreadyDueCard } from "./AlreadyDueCard";
 
 const decode = (s: string): string =>
   s.replace(/&quot;/g, '"').replace(/&#x27;/g, "'").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&");
 
 function render(
-  overdue: { date: string; amountCents: number; occurrenceCount: number; unreadCents: number },
+  overdue: { date: string; amountCents: number; occurrenceCount: number; unreadCents: number; inGraceCents?: number },
   graceDays = 3,
+  carriedGrace: CarriedGrace | null = null,
 ): {
   heading: string;
   headingClass: string;
   text: string;
 } {
-  const html = decode(renderToStaticMarkup(createElement(AlreadyDueCard, { overdue: { ...overdue, graceDays } })));
+  // a statement is what the unread part waits for, unless a test says its days to post are
+  const props = { overdue: { inGraceCents: 0, ...overdue, graceDays, carriedGrace } };
+  const html = decode(renderToStaticMarkup(createElement(AlreadyDueCard, props)));
   const h2 = /<h2 class="([^"]*)">([\s\S]*?)<\/h2>/.exec(html);
   return {
     headingClass: h2?.[1] ?? "",
@@ -67,6 +71,33 @@ describe("AlreadyDueCard — the bill's own page follows the runway's read/unrea
     );
     const unread = render({ date: "2026-07-02", amountCents: -14000, occurrenceCount: 2, unreadCents: 14000 });
     expect(unread.text).toContain("no statement reaches 3 days past either yet");
+  });
+
+  // …and billed inside the rent with a window of its own of another width, each by name (`overdue.carriedGrace`)
+  test("the body names the windows that grace is made of — its own 3 days, the rent's 5", () => {
+    const carried = { ownDays: 3, carrierName: "Flamingo South Beach (rent)", carrierDays: 5 };
+    const r = render({ date: "2026-10-01", amountCents: -18221, occurrenceCount: 1, unreadCents: 0 }, 5, carried);
+    expect(r.text).toContain(
+      "the statements reach 5 days past it with no posting of its own within 3 days of it, and none of the rent's " +
+        "payments within 5 days of it.",
+    );
+  });
+
+  /*
+   * 🔴 An archived card's bill, its days to post not over, read "Already due — no import has covered it yet" (review of
+   * the 2026-10-08 batch): an import that will never come. The card passes what no statement keeps unread through.
+   */
+  test("a day waiting only for its days to post says so — quiet, and no 'import'", () => {
+    const r = render({
+      date: "2026-10-06",
+      amountCents: -4500,
+      occurrenceCount: 1,
+      unreadCents: 4500,
+      inGraceCents: 4500,
+    });
+    expect(r.heading).toBe("Already due — the days a payment has to post are not over yet");
+    expect(r.headingClass).not.toContain("text-warning");
+    expect(r.text).not.toMatch(/import/);
   });
 
   test("a mix says both, and counts the ones behind the first", () => {

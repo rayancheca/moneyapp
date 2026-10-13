@@ -270,13 +270,19 @@ describe("recurringCalendar", () => {
     expect(july.entriesByDay[paid]?.[0]).toMatchObject({ state: "paid", transactionId: id });
   });
 
-  test("a posting one day PAST the tolerance leaves the occurrence standing", () => {
+  /*
+   * ⚖️ One day PAST the tolerance the posting pays the day LATE (`paymentFor`), short of the next due day's grace —
+   * drawn once, on the day it landed, as one on time is. 🔴 This test pinned the occurrence standing beside it (review of
+   * 44eb3e7): the rent paid Oct 5 for Oct 1 drew a red ✕ beside its own row, and every money surface counted it twice.
+   */
+  test("a posting one day PAST the tolerance pays the occurrence late — drawn once, on the day it landed", () => {
     buildMonthlyNetflix();
     detectRecurringSeries(bundle.db, TODAY);
     const s = netflix();
     const due = "2026-07-15";
+    const paid = addDays(due, s.toleranceDays + 1);
     const id = insertTxn({
-      postedOn: addDays(due, s.toleranceDays + 1),
+      postedOn: paid,
       amountCents: -1549,
       rawDescription: "NETFLIX.COM",
       merchantId: netflixId,
@@ -284,7 +290,8 @@ describe("recurringCalendar", () => {
     bundle.db.update(transactions).set({ recurringSeriesId: s.id }).where(eq(transactions.id, id)).run();
 
     const july = recurringCalendar(bundle.db, "2026-07", TODAY);
-    expect(july.entriesByDay[due]?.[0]).toMatchObject({ state: "upcoming" });
+    expect(july.entriesByDay[due]).toBeUndefined();
+    expect(july.entriesByDay[paid]?.[0]).toMatchObject({ state: "paid", transactionId: id });
   });
 
   test("a lapsed BILL drops off the calendar, a lapsed INCOME series does not", () => {

@@ -1694,7 +1694,8 @@ export function oneChargeDays(
   for (const { id, eff, lastMatchedOn } of candidates) {
     /* the EARLIEST charge the ledger knows of: the first linked row, or the series' own last-matched day when that is
        earlier. 🔴 Widening the rule (review of 8a4ac47) named the e2e db's "Storage unit" — monthly, last matched
-       Jun 6, next Jul 6, ends Jul 10, no row linked — "once · Jul 6": its earlier charge lives only in the column. */
+       Jun 1, next Jul 1, ends Jul 10, no row linked (Jun 6 and Jul 6 until e2a5c55) — "once": its earlier charge
+       lives only in the column. */
     const linked = firstMatched.get(id) ?? null;
     const earliest =
       linked === null || (lastMatchedOn !== null && compareDates(lastMatchedOn, linked) < 0) ? lastMatchedOn : linked;
@@ -1771,6 +1772,23 @@ export function projectOccurrences(
     });
   }
   return occurrences;
+}
+
+/**
+ * The due day after `day` on a series' schedule — `projectOccurrences`' next step from its anchor, by index, its end
+ * disregarded: where a LATE payment of `day` stops being late and starts paying the next one early (`paymentFor`).
+ * Null for a series with no schedule.
+ *
+ * ⛔ Its end is disregarded because a bill's LAST due day can be paid late too — a lease ending Oct 10 whose Oct 1
+ * posts Oct 12 was paid; with no step after it, nothing would ever pay it late.
+ */
+export function nextDueDayAfter(
+  series: Pick<ProjectableSeries, "cadence" | "intervalDaysAvg" | "nextExpectedOn" | "anchorDay">,
+  day: string,
+): string | null {
+  if (!series.nextExpectedOn) return null;
+  const plan = stepPlan(series.cadence, series.intervalDaysAvg, series.anchorDay ?? null);
+  return stepFrom(series.nextExpectedOn, plan, signedStepsToReach(series.nextExpectedOn, plan, addDays(day, 1)));
 }
 
 /**

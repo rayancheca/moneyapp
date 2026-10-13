@@ -447,8 +447,10 @@ export function committedBook(
     // projection walk the forward leg reads
     cadence: s.cadence as Cadence,
     endsOn: endsById.get(s.id) ?? null,
-    // how far the ledger has read it — `arrearsThisMonth` carries it, for `arrearsSentence`
+    // how far the ledger has read it, and what no statement keeps unread — `arrearsThisMonth` carries both, for
+    // `arrearsSentence`
     unreadCents: s.unreadCents,
+    inGraceCents: s.inGraceCents,
   }));
 
   return committedOutflows({ from: today, to, months, occurrences, overdue });

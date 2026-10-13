@@ -171,8 +171,8 @@ function oct1(seriesId: string, today = TODAY) {
     (c) => c.seriesId === seriesId,
   )!;
   const d = seriesDetail(bundle.db, seriesId, today);
-  const { amountCents, unreadCents, graceDays, occurrenceCount } = d.overdue!;
-  const words = alreadyDueWords({ owedCents: -amountCents, unreadCents }, graceDays, occurrenceCount);
+  const { amountCents, unreadCents, graceDays, occurrenceCount, carriedGrace } = d.overdue!;
+  const words = alreadyDueWords({ owedCents: -amountCents, unreadCents }, graceDays, occurrenceCount, carriedGrace);
   return { calendar: [e.state, e.unsettledReason], card: [words.heading, words.warning] };
 }
 
@@ -190,7 +190,11 @@ function chipOf(seriesId: string, today = TODAY) {
 
 describe("a bill's due days are read where it posts NOW — its last two payments' accounts (decision 62)", () => {
   test("his ledger today: the rent is read through Wells Fargo's Sep 24, not Chase Checking's Aug 12", () => {
-    expect(dueDayReadings(bundle.db, TODAY)(RENT)).toEqual({ observedThrough: "2026-09-24", graceDays: 3 });
+    expect(dueDayReadings(bundle.db, TODAY)(RENT)).toEqual({
+      observedThrough: "2026-09-24",
+      graceDays: 3,
+      readsToToday: false,
+    });
     // the chip's day itself: Wells Fargo, checked through Sep 24
     expect(dueDayReadings(bundle.db, TODAY)(RENT).observedThrough).toBe(
       silenceMeasuredThroughBySeries(bundle.db, TODAY)(RENT),
@@ -247,7 +251,11 @@ describe("the chip and the ✕ read one day: the same accounts, each to its chec
     rowsOnlyThrough(WF, "2026-10-21");
     expect(chipOf(RENT, today)).toMatchObject({ checkedThrough: "2026-09-24", awaitingStatements: true, isStale: false });
     expect(seriesDetail(bundle.db, RENT, today).evidence).toBe("awaiting-statements");
-    expect(dueDayReadings(bundle.db, today)(RENT)).toEqual({ observedThrough: "2026-09-24", graceDays: 3 });
+    expect(dueDayReadings(bundle.db, today)(RENT)).toEqual({
+      observedThrough: "2026-09-24",
+      graceDays: 3,
+      readsToToday: false,
+    });
     expect(oct1(RENT, today)).toEqual(QUIET);
     expect(oct1(UTIL, today)).toEqual(QUIET);
     expect(arrearsSentence(committedBook(bundle.db, today))).not.toContain("never posted");
@@ -262,8 +270,9 @@ describe("the chip and the ✕ read one day: the same accounts, each to its chec
   test("…and quiet in what it waits for: no STATEMENT has covered Oct 1, though the imported rows have", () => {
     const today = "2026-10-25";
     rowsOnlyThrough(WF, "2026-10-21");
-    const { amountCents, unreadCents, graceDays, occurrenceCount } = seriesDetail(bundle.db, RENT, today).overdue!;
-    const card = alreadyDueWords({ owedCents: -amountCents, unreadCents }, graceDays, occurrenceCount);
+    const overdue = seriesDetail(bundle.db, RENT, today).overdue!;
+    const { amountCents, unreadCents, graceDays, occurrenceCount, carriedGrace } = overdue;
+    const card = alreadyDueWords({ owedCents: -amountCents, unreadCents }, graceDays, occurrenceCount, carriedGrace);
     expect(card.heading).not.toContain("no import");
     expect(card.heading).toBe("Already due — no statement has covered it yet");
     expect(card.body).toContain("no statement reaches 3 days past it yet");
@@ -326,7 +335,11 @@ describe("a bill naming one account and paying from another is read on both — 
     rentNamesChase();
     // past Oct 1 + 3 days' grace and past Sep 2 + 48 days' tolerance (Oct 20) — on the account it does not pay from
     importedThrough(CHASE, "2026-10-21");
-    expect(dueDayReadings(bundle.db, today)(RENT)).toEqual({ observedThrough: "2026-09-24", graceDays: 3 });
+    expect(dueDayReadings(bundle.db, today)(RENT)).toEqual({
+      observedThrough: "2026-09-24",
+      graceDays: 3,
+      readsToToday: false,
+    });
     expect(chipOf(RENT, today)).toMatchObject({ checkedThrough: "2026-09-24", isStale: false, awaitingStatements: true });
     expect(seriesDetail(bundle.db, RENT, today).evidence).toBe("awaiting-statements");
     expect(oct1(RENT, today)).toEqual(QUIET);

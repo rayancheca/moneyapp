@@ -28,6 +28,12 @@ export interface ArrearsReading {
   owedCents: number;
   /** of `owedCents`, the part on days no checked statement has reached — the rest has been read */
   unreadCents: number;
+  /**
+   * Of `unreadCents`, the part NO STATEMENT keeps unread: its accounts are read through today — archived or a cash
+   * wallet, which nothing will ever be imported for, or checked to the day (`DueDayReading.readsToToday`) — so all it
+   * waits for is the days a payment has to post, still to come. Absent: none of it.
+   */
+  inGraceCents?: number;
 }
 
 export type ArrearsKind = "read" | "unread" | "mixed";
@@ -35,15 +41,30 @@ export type ArrearsKind = "read" | "unread" | "mixed";
 export interface ArrearsSplit {
   readCents: number;
   unreadCents: number;
+  /** of `unreadCents`, the part only its days to post keep unread (`ArrearsReading.inGraceCents`) */
+  inGraceCents: number;
   kind: ArrearsKind;
 }
 
 /** The read and unread halves, clamped: never more unread than is owed, never less than nothing. */
-export function arrearsSplit({ owedCents, unreadCents }: ArrearsReading): ArrearsSplit {
+export function arrearsSplit({ owedCents, unreadCents, inGraceCents = 0 }: ArrearsReading): ArrearsSplit {
   const owed = Math.max(0, owedCents);
   const unread = Math.min(owed, Math.max(0, unreadCents));
   const read = owed - unread;
-  return { readCents: read, unreadCents: unread, kind: unread === 0 ? "read" : read === 0 ? "unread" : "mixed" };
+  return {
+    readCents: read,
+    unreadCents: unread,
+    inGraceCents: Math.min(unread, Math.max(0, inGraceCents)),
+    kind: unread === 0 ? "read" : read === 0 ? "unread" : "mixed",
+  };
+}
+
+/**
+ * A bill's OWN arrears as the reading its page says them through — the "Already due" card (`alreadyDueWords`) and its
+ * End dialog (`seriesEndInput`): `seriesDetail.overdue`, whose amount is signed money out.
+ */
+export function overdueReading(o: { amountCents: number; unreadCents: number; inGraceCents: number }): ArrearsReading {
+  return { owedCents: -o.amountCents, unreadCents: o.unreadCents, inGraceCents: o.inGraceCents };
 }
 
 /** "no statement has covered <what> yet" — the unread half, said of "it", "them" or "the other $U". */
@@ -70,25 +91,56 @@ export const NO_STATEMENT_YET = noStatementHasCovered("it");
 export const ROLLOVER_SUBTRACTS =
   `Bills that came due are subtracted whether they are not posted or ${noStatementHasCovered("them")}.`;
 
+/**
+ * ⚖️ The words for an unread half no statement keeps unread (`inGraceCents`) — in the words the bill's page already
+ * says what a due day waits for in, "the days a payment has to post" (`alreadyDueWords`). No new verdict: quiet,
+ * unsettled and unread exactly as "no statement has covered it yet" (`NO_STATEMENT_YET`) is; the words only.
+ *
+ * 🔴 An archived card's bill due Oct 6 read "no import has covered it yet" on Oct 8 (review of the 2026-10-08 batch),
+ * on every surface that says it — of an import /imports will never ask for. Its account is read through today
+ * (`silenceReadThrough`); all it waits for is its 3 days to post.
+ */
+export const DAYS_TO_POST_NOT_OVER = "the days a payment has to post are not over yet";
+
+/**
+ * Whether ALL of the unread half waits on its days to post alone — what every sentence of it says through, the bill's
+ * page bodies too (`alreadyDueWords`). ⚠️ Only a sum of several bills can hold both kinds — one bill's accounts are
+ * read through today or not — and a statement IS awaited for part of such a sum, so it keeps the statement's words:
+ * true of that part, and quiet like the rest.
+ */
+export function unreadWaitsOnDaysToPost(split: ArrearsSplit): boolean {
+  return split.unreadCents > 0 && split.inGraceCents === split.unreadCents;
+}
+
 /** What the unread words say it of: one bill ("it"), or several (/budgets' page note, "them"). */
 export type ArrearsPronoun = "it" | "them";
 
-/** A mixed split in the runway's voice: "$R <notPosted>, and no statement has covered the other $U yet". */
+/**
+ * A mixed split in the runway's voice: "$R <notPosted>, and no statement has covered the other $U yet" — or, when it
+ * waits on no statement, "…, and the days a payment has to post for the other $U are not over yet".
+ */
 export function splitClause(split: ArrearsSplit, notPosted: string): string {
   const read = formatCents(split.readCents);
-  return `${read} ${notPosted}, and ${noStatementHasCovered(`the other ${formatCents(split.unreadCents)}`)}`;
+  const unread = formatCents(split.unreadCents);
+  if (unreadWaitsOnDaysToPost(split)) {
+    return `${read} ${notPosted}, and the days a payment has to post for the other ${unread} are not over yet`;
+  }
+  return `${read} ${notPosted}, and ${noStatementHasCovered(`the other ${unread}`)}`;
 }
 
 /**
  * The split said as one clause: `notPosted` when all of it has been read, "no statement has covered it yet" when none
- * of it has, and both halves by amount for a mix — the words after "Oct 1 —" in the Next column and after "Already
- * due this month," in the End dialog (`seriesEndLines`) and after "Due this period by today," in /budgets'
- * (`budgetDeactivateLines`).
+ * of it has — "the days a payment has to post are not over yet" when it waits on no statement — and both halves by
+ * amount for a mix: the words after "Oct 1 —" in the Next column and after "Already due this month," in the End dialog
+ * (`seriesEndLines`) and after "Due this period by today," in /budgets' (`budgetDeactivateLines`).
  */
 export function arrearsClause(reading: ArrearsReading, notPosted: string, pronoun: ArrearsPronoun = "it"): string {
   const split = arrearsSplit(reading);
   if (split.kind === "read") return notPosted;
-  if (split.kind === "unread") return noStatementHasCovered(pronoun);
+  if (split.kind === "unread") {
+    if (unreadWaitsOnDaysToPost(split)) return DAYS_TO_POST_NOT_OVER;
+    return noStatementHasCovered(pronoun);
+  }
   return splitClause(split, notPosted);
 }
 

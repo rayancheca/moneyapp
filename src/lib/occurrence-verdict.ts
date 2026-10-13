@@ -41,6 +41,12 @@ export type UnsettledReason =
    * accounts its pay lands in through it (`paydayIsRead`)
    */
   | "not_imported"
+  /**
+   * money OUT, on accounts read through today (`DueDayReading.readsToToday`) — archived, a cash wallet, or checked to
+   * the day: no statement keeps it unread, only the days a payment has to post, still to come. ⚖️ Not a new verdict: the
+   * same quiet "?" as `not_imported`, in the words of what it waits for.
+   */
+  | "in_grace"
   /** money IN, on a day the ledger HAS looked: its absence from the ledger is never proof it did not happen */
   | "unbanked"
   /** too few postings to know when this is due — the date itself is a guess */
@@ -197,10 +203,32 @@ export interface DueDayReading {
   observedThrough: string | null;
   /**
    * The days after its due day a covering payment may still post on — the bill's `toleranceDays`, the window
-   * `paymentFor` pays an occurrence within; for a bill paid inside another's payment, the widest of its own and its
-   * carrier's (`dueDayReadings`).
+   * `paymentFor` pays an occurrence ON TIME within (one past it pays it late, once it has come); for a bill paid
+   * inside another's payment, the widest of its own and its carrier's (`dueDayGraces`, the two by name in
+   * `CarriedGrace`) — and a carrier's its own alone, never widened by what it carries.
    */
   graceDays: number;
+  /**
+   * Whether `observedThrough` reaches TODAY — every account it may land in imported or checked to the day, or one no
+   * statement will come for (archived, a cash wallet). A due day unread then waits for no import: only for the days a
+   * payment has to post, still to come — the words `in_grace` and `ArrearsReading.inGraceCents` say it in.
+   */
+  readsToToday: boolean;
+}
+
+/**
+ * ⚖️ The two windows a bill billed inside another's payment (§6A 59) is paid within: a posting of its own within its
+ * own `toleranceDays` of a due day, and a payment of its carrier's within the CARRIER's — each payment by its own
+ * series' tolerance (`paymentFor`). Its grace is the wider (`DueDayReading.graceDays`); what its page says the imports
+ * hold no posting within names each (`alreadyDueWords`). 🔴 It named the wider alone (review of 44eb3e7): with the
+ * rent's 5 and the utilities' own 3, their page read "hold no posting within 5 days of it" beside a posting of their
+ * own four days off the day, which paid them nothing.
+ */
+export interface CarriedGrace {
+  readonly ownDays: number;
+  /** the carrier's own name — "Flamingo South Beach (rent)", said "the rent" (`carrierWord`) */
+  readonly carrierName: string;
+  readonly carrierDays: number;
 }
 
 /**
@@ -292,7 +320,9 @@ export function settledVerdict(
     const looked = paydayIsRead(occurrenceDate, reading.paydaysCheckedThrough);
     return { state: "unsettled", reason: looked ? "unbanked" : "not_imported" };
   }
-  if (!dueDayIsRead(occurrenceDate, reading.dueDay)) return { state: "unsettled", reason: "not_imported" };
+  if (!dueDayIsRead(occurrenceDate, reading.dueDay)) {
+    return { state: "unsettled", reason: reading.dueDay.readsToToday ? "in_grace" : "not_imported" };
+  }
   if (!scheduleIsProven) return { state: "unsettled", reason: "schedule_unproven" };
   return { state: "missed", reason: null };
 }

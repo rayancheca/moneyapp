@@ -58,6 +58,8 @@ export interface BudgetDeactivateInput {
   overdueCents: number;
   /** of `overdueCents`, the part on days no checked statement has reached (`BudgetPaceStatus.overdueUnreadCents`) */
   overdueUnreadCents: number;
+  /** of `overdueUnreadCents`, the part no statement keeps unread (`BudgetPaceStatus.overdueInGraceCents`) */
+  overdueInGraceCents: number;
   /** recurring still to come before the period closes */
   expectedTailCents: number;
 }
@@ -76,7 +78,11 @@ export function budgetDeactivateLines(
           // month, his decision 2026-09-02), and the sibling lines name the period
           {
             label: `Due this period by today, ${arrearsClause(
-              { owedCents: input.overdueCents, unreadCents: input.overdueUnreadCents },
+              {
+                owedCents: input.overdueCents,
+                unreadCents: input.overdueUnreadCents,
+                inGraceCents: input.overdueInGraceCents,
+              },
               "not posted",
             )}`,
             value: formatCents(input.overdueCents),

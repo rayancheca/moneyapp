@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import { z } from "zod";
 import { getDb } from "@/db/client";
 import { monthKey, todayIso } from "@/lib/dates";
-import { arrearsThisMonth } from "@/services/arrears";
+import { arrearsReadingOfSeries, arrearsThisMonth } from "@/services/arrears";
 import { forecastCurrentMonth } from "@/services/forecast";
 import { listSeries, upcomingOccurrences } from "@/services/recurring";
 import { readSettings } from "@/services/settings";
@@ -73,7 +73,7 @@ export default async function RecurringPage({
         [
           o.id,
           // with how far the ledger has read it, so the note says "not posted" only of read days (`overdueNote`)
-          { date: o.nextDate, occurrenceCount: o.occurrenceCount, owedCents: o.amountCents, unreadCents: o.unreadCents },
+          { date: o.nextDate, occurrenceCount: o.occurrenceCount, ...arrearsReadingOfSeries(o) },
         ] as const,
     ),
   );

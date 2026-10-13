@@ -1385,8 +1385,11 @@ describe("budgetOverdue — the bill that came due and never arrived", () => {
    * a second time on top of the charge already in `spentCents`. This is also
    * the committed book's overdue rule, so the runway card inherits it, and
    * `recurring-calendar` documents itself as having to agree with it.
+   *
+   * ⚠️ One day further is no longer unpaid but LATE (below), so the edge is pinned where the two halves of `paymentFor`
+   * meet: on time to the limit, late only past it — `<` for `<=` in the first leaves the 11th paying nothing.
    */
-  test("a posting EXACTLY toleranceDays late is paid, and one day further is not", () => {
+  test("a posting EXACTLY toleranceDays late is paid on time", () => {
     const bill = createSeries({ name: "Wifi", nextExpectedOn: "2026-06-08", nextExpectedAmountCents: -5_000 });
     bindSeries(bill, "Housing");
     // default toleranceDays is 3: the 11th is exactly at the limit
@@ -1394,11 +1397,16 @@ describe("budgetOverdue — the bill that came due and never arrived", () => {
     expect(budgetOverdue(bundle.db, catId("Housing"), "2026-06-01", "2026-06-20").totalCents).toBe(0);
   });
 
-  test("a posting one day PAST toleranceDays leaves the bill overdue", () => {
+  /*
+   * ⚖️ …and one day further pays it LATE (`paymentFor`): past its grace and short of the next due day's, a payment is
+   * still the payment of the day it is late for. 🔴 This test pinned it overdue (review of 44eb3e7) — the very cost the
+   * note above names: the $50.00 in `spentCents` and again here, as the rent paid Oct 5 for Oct 1 was on his shape.
+   */
+  test("a posting one day PAST toleranceDays pays the bill late — never overdue beside the spend that holds it", () => {
     const bill = createSeries({ name: "Wifi", nextExpectedOn: "2026-06-08", nextExpectedAmountCents: -5_000 });
     bindSeries(bill, "Housing");
     spendLinked("2026-06-12", -5_000, "Housing", bill);
-    expect(budgetOverdue(bundle.db, catId("Housing"), "2026-06-01", "2026-06-20").totalCents).toBe(5_000);
+    expect(budgetOverdue(bundle.db, catId("Housing"), "2026-06-01", "2026-06-20").totalCents).toBe(0);
   });
 
   test("the tolerance is symmetric — EARLY by exactly the limit is paid too", () => {

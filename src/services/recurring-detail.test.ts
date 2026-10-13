@@ -334,7 +334,11 @@ describe("seriesDetail", () => {
       amountCents: -1549,
       occurrenceCount: 1,
       unreadCents: 1549,
+      // …awaiting an import: the Card is read through Jun 15, not today
+      inGraceCents: 0,
       graceDays: netflix().toleranceDays,
+      // billed on its own: one window, `graceDays`
+      carriedGrace: null,
     });
     // and the forward list still opens after today, never restating it
     expect(d.nextExpected.every((o) => o.date >= TODAY)).toBe(true);
@@ -389,7 +393,9 @@ describe("seriesDetail", () => {
         amountCents: -3000,
         occurrenceCount: 3,
         unreadCents: 1000,
+        inGraceCents: 0,
         graceDays: 1,
+        carriedGrace: null,
       });
     });
 

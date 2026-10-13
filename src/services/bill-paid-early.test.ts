@@ -10,6 +10,7 @@ import { institutions } from "@/db/schema/institutions";
 import { recurringSeries } from "@/db/schema/recurring";
 import { transactions } from "@/db/schema/transactions";
 import { seedDatabase } from "@/db/seed";
+import { arrearsThisMonth } from "./arrears";
 import { budgetTail } from "./budgets";
 import { committedBook } from "./committed";
 import { dashboardData } from "./dashboard";
@@ -232,6 +233,176 @@ describe("the boundary is the rent's own grace — the arrears' and the calendar
     bundle.db.update(recurringSeries).set({ userBilledWithSeriesId: null }).where(eq(recurringSeries.id, UTIL)).run();
     expect(ours(upcomingOccurrences(bundle.db, TODAY, 30))).toEqual([[UTIL, "2026-10-01"]]);
     expect(octoberBills()).toEqual([`${UTIL_NAME} 1 × -$182.21 (monthly), next Oct 1`]);
+  });
+});
+
+/*
+ * 🔴 ONE OCCURRENCE DRAWN TWICE (review of the 2026-10-08 batch, §6A 59). The rent paid in two halves either side of
+ * the month's edge — Sep 30 and Oct 2, each a day from its Oct 1 — and October drew its Oct 1 twice: a $2,109.00
+ * "paid (paid by its payment of Sep 30, 2026)" mark, and beside it the Oct 2 row. The arrears' test names the nearer,
+ * the earlier of two as near (`paymentFor`): Sep 30, on September's grid — so the mark stood while the Oct 2 row, a
+ * posting of its own within its grace on THIS grid, stood for the same day.
+ */
+describe("a rent split either side of the month's edge is one occurrence on October's grid", () => {
+  const today = "2026-10-05";
+  beforeEach(() => {
+    pay("t-rent-sep30", RENT, "2026-09-30", -110000);
+    pay("t-rent-oct2", RENT, "2026-10-02", -119121);
+  });
+
+  test("the rent's Oct 1 is the Oct 2 row it draws — no second mark naming Sep 30 beside it", () => {
+    const grid = recurringCalendar(bundle.db, "2026-10", today).entriesByDay;
+    const rent = Object.entries(grid).flatMap(([day, entries]) =>
+      entries.filter((e) => e.seriesId === RENT).map((e) => [day, e.transactionId, e.paidWith]),
+    );
+    expect(rent).toEqual([["2026-10-02", "t-rent-oct2", null]]);
+  });
+
+  test("what the rent carries names the payment drawn beside it, Oct 2 — the one the reader can find on this grid", () => {
+    const oct1 = recurringCalendar(bundle.db, "2026-10", today).entriesByDay["2026-10-01"] ?? [];
+    expect(oct1.map((e) => [e.seriesId, e.state, e.paidWith, e.settledCents])).toEqual([
+      [UTIL, "paid", { carrier: "the rent", postedOn: "2026-10-02" }, 0],
+    ]);
+  });
+
+  test("September draws its own half on the day it landed, and no occurrence of October's", () => {
+    const sep = recurringCalendar(bundle.db, "2026-09", today).entriesByDay;
+    expect(sep["2026-09-30"]?.map((e) => [e.seriesId, e.transactionId])).toEqual([[RENT, "t-rent-sep30"]]);
+  });
+});
+
+/*
+ * ⛔ EACH PAYMENT IS JUDGED BY ITS OWN SERIES' TOLERANCE — never the widest one the read was widened by. Every reader
+ * reads postings the widest tolerance either side of its window (`billPaymentsBySeries`, `carrierPaymentsBySeries`,
+ * the calendar's step 1) and then holds each to its own series' days (`paymentFor`). 🔴 Nothing pinned the second half
+ * (review of the 2026-10-08 batch): judging every posting by the widest passed every test. On his ledger copy
+ * 2026-10-12 the Venture X annual fee has 14 days and the rent 3 — so a rent payment five days off its 1st would have
+ * paid it, on every surface.
+ *
+ * Here the gym gets an annual fee's 14 days and a series billed inside it, so it is a carrier too: the rent's payments
+ * are held to the rent's 3, and so is what the rent carries.
+ */
+describe("a payment pays a bill only within ITS series' grace — a wider one elsewhere in the ledger lends it none", () => {
+  beforeEach(() => {
+    bundle.db.update(recurringSeries).set({ toleranceDays: 14 }).where(eq(recurringSeries.id, GYM)).run();
+    bundle.db
+      .insert(recurringSeries)
+      .values({
+        id: "locker",
+        name: "Gym locker",
+        kind: "bill",
+        cadence: "monthly",
+        intervalDaysAvg: 30,
+        toleranceDays: 3,
+        nextExpectedOn: "2026-10-22",
+        nextExpectedAmountCents: -1500,
+        userAmountCents: -1500,
+        anchorDay: 22,
+        status: "confirmed",
+        userCategoryId: categoryId,
+        userBilledWithSeriesId: GYM,
+        createdAt: now(),
+        updatedAt: now(),
+      })
+      .run();
+  });
+
+  test("paid Sep 26, five days early: Oct 1 is still coming on every reader that looks ahead — and what it carries", () => {
+    rentPaid("2026-09-26");
+    expect(ours(upcomingOccurrences(bundle.db, TODAY, 30))).toEqual([
+      [RENT, "2026-10-01"],
+      [UTIL, "2026-10-01"],
+    ]);
+    expect(octoberBills()).toEqual([
+      `${RENT_NAME} 1 × -$2,109.00 (monthly), next Oct 1`,
+      `${UTIL_NAME} 1 × -$182.21 (monthly), next Oct 1`,
+    ]);
+  });
+
+  /*
+   * ⚖️ …and after the day: a payment past a day's grace pays the day it is LATE for, until the next due day's grace
+   * opens (`paymentFor`) — by its own series' days too. 🔴 This test pinned the rent paid Oct 6 as owing its Oct 1
+   * beside the Oct 6 row (review of 44eb3e7): the $2,291.21 counted in what was spent and in what came due.
+   */
+  test("paid Oct 6, five days late: Oct 1 is paid late — owed nowhere, the Oct 6 row standing for it", () => {
+    rentPaid("2026-10-06");
+    const today = "2026-10-08";
+    const all = new Set([RENT, UTIL, GYM, "locker"]);
+    expect(arrearsThisMonth(bundle.db, all, today).series).toEqual([]);
+    const grid = recurringCalendar(bundle.db, "2026-10", today).entriesByDay;
+    expect(grid["2026-10-01"]?.map((e) => [e.seriesId, e.transactionId, e.paidWith])).toEqual([
+      [UTIL, null, { carrier: "the rent", postedOn: "2026-10-06" }],
+    ]);
+    expect(grid["2026-10-06"]?.map((e) => [e.seriesId, e.transactionId])).toEqual([[RENT, "t-rent-2026-10-06"]]);
+  });
+
+  /*
+   * Where the rent's own days decide it: paid Oct 27 — four days before Nov 1, outside the rent's 3 — it is late for
+   * Oct 1, and Nov 1 is still to come. Held to the gym's 14 days it would have been Nov 1's, early, and Oct 1 owed.
+   */
+  test("paid Oct 27, four days before Nov 1: late for Oct 1 by the rent's 3 days, never Nov 1's by the gym's 14", () => {
+    rentPaid("2026-10-27");
+    const today = "2026-10-28";
+    // asked of every bill, as the runway asks: the gym's 14 days widen the read, and lend the rent none of them
+    const all = new Set([RENT, UTIL, GYM, "locker"]);
+    expect(arrearsThisMonth(bundle.db, all, today).series.map((s) => s.id)).toEqual([GYM, "locker"]);
+    const grid = recurringCalendar(bundle.db, "2026-10", today).entriesByDay;
+    expect(grid["2026-10-01"]?.map((e) => [e.seriesId, e.transactionId, e.paidWith])).toEqual([
+      [UTIL, null, { carrier: "the rent", postedOn: "2026-10-27" }],
+    ]);
+    expect(ours(upcomingOccurrences(bundle.db, today, 30))).toEqual([
+      [RENT, "2026-11-01"],
+      [UTIL, "2026-11-01"],
+    ]);
+    const november = recurringCalendar(bundle.db, "2026-11", today).entriesByDay["2026-11-01"] ?? [];
+    expect(november.map((e) => [e.seriesId, e.state])).toEqual([
+      [RENT, "upcoming"],
+      [UTIL, "upcoming"],
+    ]);
+  });
+});
+
+/*
+ * ⚖️ …and a payment past a day's grace can land in the NEXT month: the gym due Oct 22, paid Nov 10 — late, short of
+ * Nov 22's grace (`paymentFor`). October's grid names it, as it names the rent paid Sep 30 for Oct 1, and so does what
+ * is billed inside the gym; November draws the row once, and Nov 22 is still to come. Read to October's end and the
+ * widest grace past it (Nov 3), October saw no payment at all.
+ */
+describe("a bill paid late in the next month is named on its own month's grid", () => {
+  test("the gym's Oct 22, paid Nov 10: October names the payment, and November draws the row once", () => {
+    bundle.db
+      .insert(recurringSeries)
+      .values({
+        id: "locker",
+        name: "Gym locker",
+        kind: "bill",
+        cadence: "monthly",
+        intervalDaysAvg: 30,
+        toleranceDays: 3,
+        nextExpectedOn: "2026-10-22",
+        nextExpectedAmountCents: -1500,
+        userAmountCents: -1500,
+        anchorDay: 22,
+        status: "confirmed",
+        userCategoryId: categoryId,
+        userBilledWithSeriesId: GYM,
+        createdAt: now(),
+        updatedAt: now(),
+      })
+      .run();
+    pay("t-gym-nov10", GYM, "2026-11-10", -11500);
+    const today = "2026-11-12";
+    const oct22 = recurringCalendar(bundle.db, "2026-10", today).entriesByDay["2026-10-22"] ?? [];
+    expect(oct22.map((e) => [e.seriesId, e.state, e.paidWith]).sort()).toEqual([
+      [GYM, "paid", { carrier: null, postedOn: "2026-11-10" }],
+      ["locker", "paid", { carrier: "Gym", postedOn: "2026-11-10" }],
+    ]);
+    const november = recurringCalendar(bundle.db, "2026-11", today).entriesByDay;
+    expect(november["2026-11-10"]?.map((e) => [e.seriesId, e.transactionId])).toEqual([[GYM, "t-gym-nov10"]]);
+    expect(november["2026-11-22"]?.map((e) => [e.seriesId, e.state]).sort()).toEqual([
+      [GYM, "upcoming"],
+      ["locker", "upcoming"],
+    ]);
   });
 });
 

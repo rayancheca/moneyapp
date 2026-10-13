@@ -1,4 +1,5 @@
 import { Money } from "@/components/ui/Money";
+import { overdueReading } from "@/lib/arrears-reading";
 import { SurfaceCard } from "@/components/ui/SurfaceCard";
 import type { SeriesDetail } from "@/services/recurring-detail";
 import { alreadyDueWords, longDate } from "./labels";
@@ -17,12 +18,16 @@ import { alreadyDueWords, longDate } from "./labels";
  *
  * ⚖️ The grace it names is the one the read half waited for (`overdue.graceDays`, his decision 60, 2026-10-08) — for a
  * bill paid inside the rent's payment, the rent's when it is wider — never the series' own beside a rule that waited
- * for another.
+ * for another. …and where its own window and the rent's differ, each by name (`overdue.carriedGrace`).
  */
 export function AlreadyDueCard({ overdue }: { overdue: NonNullable<SeriesDetail["overdue"]> }) {
-  const reading = { owedCents: -overdue.amountCents, unreadCents: overdue.unreadCents };
-  // …said of each due day it owes this month, the "and N more" below included
-  const words = alreadyDueWords(reading, overdue.graceDays, overdue.occurrenceCount);
+  // …said of each due day it owes this month, the "and N more" below included — and of each window it is paid in
+  const words = alreadyDueWords(
+    overdueReading(overdue),
+    overdue.graceDays,
+    overdue.occurrenceCount,
+    overdue.carriedGrace,
+  );
   return (
     <SurfaceCard>
       <h2 className={words.warning ? "mb-1 text-sm font-medium text-warning" : "mb-1 text-sm font-medium"}>

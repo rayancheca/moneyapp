@@ -2,7 +2,9 @@ import {
   arrearsAlarms,
   arrearsClause,
   arrearsSplit,
+  DAYS_TO_POST_NOT_OVER,
   NO_STATEMENT_YET,
+  unreadWaitsOnDaysToPost,
   type ArrearsReading,
 } from "@/lib/arrears-reading";
 import { addCalendarMonths, compareDates, diffDays, isoWeekday } from "@/lib/dates";
@@ -10,7 +12,8 @@ import { endsInsideHorizon } from "@/lib/committed";
 import { dayWindowLabel } from "@/lib/period";
 import { wholeToleranceDays } from "@/lib/recurring-step";
 import { formatCents } from "@/lib/money";
-import type { UnsettledReason } from "@/lib/occurrence-verdict";
+import type { CarriedGrace, UnsettledReason } from "@/lib/occurrence-verdict";
+import { carrierWord } from "@/lib/billed-with";
 import { ONE_CHARGE_WORD } from "@/lib/one-charge";
 import type { PerPayday } from "@/lib/per-payday";
 import { projectedEvidence, SERIES_EVIDENCE_LABEL, seriesEvidenceTone, seriesPostingWords } from "@/lib/series-evidence";
@@ -536,9 +539,14 @@ export function upcomingEvidenceWord(e: {
  * …and of a PAYDAY after the day its pay's accounts are checked through (`paydayIsRead`), where every pay sentence
  * says "the ledger has not looked for its deposit". "Not banked yet" is said only of a day someone looked at. 🔴 It
  * was said of every passed payday: his Oct 1 and Oct 8 (ledger copy, 2026-10-12), after Sep 24.
+ *
+ * …and of a day whose accounts are read through today — an archived card, a cash wallet — still inside its days to
+ * post, the arrears' words for the same money (`DAYS_TO_POST_NOT_OVER`). 🔴 It read "no import has covered it yet" of
+ * an import that will never come (review of the 2026-10-08 batch).
  */
 const UNSETTLED_REASON_WORD: Record<UnsettledReason, string> = {
   not_imported: NO_STATEMENT_YET,
+  in_grace: DAYS_TO_POST_NOT_OVER,
   unbanked: "not banked yet",
   schedule_unproven: "too few charges to grade yet",
 };
@@ -648,12 +656,24 @@ export function overdueNote(
  * read and unread bodies say it of each: "Both due days are inside this calendar month, and the statements reach
  * 3 days past each with no posting within 3 days of either." A mix is several by construction and says "a due day".
  *
+ * …and where no statement keeps the unread half unread — its accounts read through today, an archived card or a cash
+ * wallet — the heading and the body say its days to post are not over (`unreadWaitsOnDaysToPost`), never how far a
+ * statement must reach. 🔴 They said "no import reaches 3 days past it yet" of an import that will never come (review
+ * of the 2026-10-08 batch).
+ *
  * The forecast and this month's budget count all of it whichever way it reads — both say so.
+ *
+ * ⚖️ …and billed inside another's payment (§6A 59) with windows of two widths (`carried`), "no posting" names each: a
+ * posting of its own within its own days, a payment of its carrier's within the carrier's (`paymentFor`). 🔴 One
+ * figure, the wider, stood for both (review of 44eb3e7): with the rent's 5 days and the utilities' own 3, their page
+ * read "hold no posting within 5 days of it" beside a posting of their own four days off the day, which paid them
+ * nothing. Of the same width — his rent and utilities, both 3 — one figure is true of both, and stays.
  */
 export function alreadyDueWords(
   reading: ArrearsReading,
   graceDays: number,
   occurrenceCount: number,
+  carried: CarriedGrace | null,
 ): { heading: string; body: string; warning: boolean } {
   const split = arrearsSplit(reading);
   const days = (n: number) => `${n} ${n === 1 ? "day" : "days"}`;
@@ -665,9 +685,18 @@ export function alreadyDueWords(
     : `${n === 2 ? "Both" : `All ${n}`} due days are inside this calendar month`;
   const all = one ? "it" : n === 2 ? "both" : `all ${n}`;
   const any = one ? "it" : n === 2 ? "either" : "any of them";
-  const within = graceDays === 0 ? `on ${any}` : `within ${days(graceDays)} of ${any}`;
+  const ofDay = (grace: number, day: string) => (grace === 0 ? `on ${day}` : `within ${days(grace)} of ${day}`);
+  // "no posting …" of a due day — of its own days and its carrier's when the two differ (`carried`)
+  const noPostingOf = (day: string) =>
+    carried === null || carried.ownDays === carried.carrierDays
+      ? ofDay(graceDays, day)
+      : `of its own ${ofDay(carried.ownDays, day)}, and none of ${carrierWord(carried.carrierName)}'s payments ` +
+        ofDay(carried.carrierDays, day);
+  const within = noPostingOf(any);
   const counted = `The forecast counts ${all}, and so does this month's budget.`;
   const warning = arrearsAlarms(reading);
+  // ⚖️ unread only for days to post still to come — its accounts read through today: said so, never "no statement"
+  const waitsOnDays = unreadWaitsOnDaysToPost(split);
   if (split.kind === "read") {
     const onTheDay = one ? "its day" : n === 2 ? "both" : "all of them";
     const reach = graceDays === 0 ? onTheDay : `${days(graceDays)} past ${one ? "it" : "each"}`;
@@ -679,22 +708,30 @@ export function alreadyDueWords(
   }
   if (split.kind === "unread") {
     const short = graceDays === 0 ? (one ? "its day" : any) : `${days(graceDays)} past ${any}`;
+    const toPost =
+      graceDays === 0
+        ? one
+          ? "its day, the day a payment has to post, is"
+          : "their days, the days a payment has to post, are"
+        : `the ${days(graceDays)} past ${one ? "it" : "each"} a payment has to post are`;
     return {
-      heading: `Already due — ${NO_STATEMENT_YET}`,
-      body:
-        `${lead}, and no statement reaches ${short} yet — the days a payment has to post — so ${all} may well have ` +
-        `posted. ${counted}`,
+      heading: `Already due — ${arrearsClause(reading, "not posted")}`,
+      body: waitsOnDays
+        ? `${lead}, and ${toPost} not over yet, so ${all} may still post. ${counted}`
+        : `${lead}, and no statement reaches ${short} yet — the days a payment has to post — so ${all} may well ` +
+          `have posted. ${counted}`,
       warning,
     };
   }
   const pastADueDay = graceDays === 0 ? "a due day" : `${days(graceDays)} past a due day`;
   // said of that one due day
-  const withinIt = graceDays === 0 ? "on it" : `within ${days(graceDays)} of it`;
+  const withinIt = noPostingOf("it");
+  const rest = waitsOnDays ? DAYS_TO_POST_NOT_OVER : "no statement reaches that far yet";
   return {
     heading: `Already due: ${arrearsClause(reading, "not posted")}`,
     body:
       `Inside this calendar month. Where the statements reach ${pastADueDay}, they hold no posting ${withinIt}; for ` +
-      "the rest, no statement reaches that far yet. The forecast counts all of it, and so does this month's budget.",
+      `the rest, ${rest}. The forecast counts all of it, and so does this month's budget.`,
     warning,
   };
 }

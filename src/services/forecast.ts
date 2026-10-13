@@ -34,7 +34,13 @@ import {
   type SeriesStaleness,
   hasStoppedForecasting,
 } from "./recurring";
-import { arrearsThisMonth, unbankedIncomeThisMonth, unbankedIncomeTotals, type UnbankedIncomeTotals } from "./arrears";
+import {
+  arrearsReadingOfSeries,
+  arrearsThisMonth,
+  unbankedIncomeThisMonth,
+  unbankedIncomeTotals,
+  type UnbankedIncomeTotals,
+} from "./arrears";
 import { withBillingCarriers } from "./billing-carriers";
 import { isUpfrontCarRow, upfrontCarRule } from "./car-upfront";
 import { silenceMeasuredThroughBySeries } from "./cash-earnings";
@@ -708,7 +714,7 @@ function arrearsComponents(
      * Oct 1 and has not posted" of rent on a copy of his ledger 2026-10-08, a day no import had reached, beside a
      * runway saying "no import has covered it yet" of the same money.
      */
-    const tail = arrearsTail({ owedCents: s.amountCents, unreadCents: s.unreadCents }, "has not posted");
+    const tail = arrearsTail(arrearsReadingOfSeries(s), "has not posted");
     return {
       label: s.name,
       kind: "fixed" as const,

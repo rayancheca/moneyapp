@@ -2,6 +2,7 @@ import { and, desc, eq, isNull, lte, ne, or, sql } from "drizzle-orm";
 import { neverPosted, seriesCanBeReshaped, type SeriesEvidence } from "@/lib/series-evidence";
 import type { UnbankedIncomeReading } from "@/lib/unbanked-income";
 import type { BillingCarrier } from "@/lib/billed-with";
+import type { CarriedGrace } from "@/lib/occurrence-verdict";
 import type { AppDatabase } from "@/db/client";
 import { accounts } from "@/db/schema/accounts";
 import { categories } from "@/db/schema/categories";
@@ -257,15 +258,23 @@ export interface SeriesDetail {
    * (`ArrearsSeries.unreadCents`). 🔴 Without it the card read "Already due, and not posted" in warning colour over
    * rent's Oct 1 on a copy of his ledger 2026-10-08, a day no import had covered (Wells Fargo read through Sep 24).
    *
+   * `inGraceCents` — of `unreadCents`, the part no statement keeps unread: its accounts read through today, waiting
+   * only for its days to post (`ArrearsSeries.inGraceCents`) — what the card and the End dialog say in those words.
+   *
    * `graceDays` — the days after a due day a payment may still post on, which the read half waited for
    * (`ArrearsSeries.graceDays`, ⚖️ §6A 60): what the card says the statements reach past it (§6A 65).
+   *
+   * `carriedGrace` — billed inside another's payment, the two windows that grace is made of, which the card names each
+   * (`ArrearsSeries.carriedGrace`); null for a bill paid on its own.
    */
   overdue: {
     date: string;
     amountCents: number;
     occurrenceCount: number;
     unreadCents: number;
+    inGraceCents: number;
     graceDays: number;
+    carriedGrace: CarriedGrace | null;
   } | null;
   /**
    * The income side of `overdue`: this month's paydays that passed with no deposit against them — null when none did,
@@ -554,7 +563,9 @@ export function seriesDetail(
         amountCents: -late.amountCents,
         occurrenceCount: late.occurrenceCount,
         unreadCents: late.unreadCents,
+        inGraceCents: late.inGraceCents,
         graceDays: late.graceDays,
+        carriedGrace: late.carriedGrace,
       }
     : null;
   const unbankedPaydays = unbankedPaydaysOf(db, s, today);

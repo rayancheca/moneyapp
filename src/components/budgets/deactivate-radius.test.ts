@@ -17,6 +17,8 @@ describe("budgetDeactivateLines", () => {
     overdueCents: 229_121,
     // his ledger 2026-10-08: rent and its utilities, both Oct 1, on days no checked statement has reached
     overdueUnreadCents: 229_121,
+    // …waiting for a statement, not for days still to come
+    overdueInGraceCents: 0,
     expectedTailCents: 0,
   };
 
@@ -64,6 +66,7 @@ describe("budgetDeactivateLines", () => {
         spentCents: 0,
         overdueCents: 36_149 + 69_504,
         overdueUnreadCents: 36_149 + 69_504,
+        overdueInGraceCents: 0,
         expectedTailCents: 0,
       },
       formatCents,
@@ -77,7 +80,14 @@ describe("budgetDeactivateLines", () => {
   /** ⛔ Disjoint by construction — both are printed, neither absorbs the other. */
   test("prints arrears and the forward tail as two separate lines", () => {
     const lines = budgetDeactivateLines(
-      { budgetPhrase: "$15.00 / month", spentCents: 0, overdueCents: 499, overdueUnreadCents: 499, expectedTailCents: 600 },
+      {
+        budgetPhrase: "$15.00 / month",
+        spentCents: 0,
+        overdueCents: 499,
+        overdueUnreadCents: 499,
+        overdueInGraceCents: 0,
+        expectedTailCents: 600,
+      },
       formatCents,
     );
     expect(lines.map((l) => [l.label, l.value])).toEqual([
@@ -90,7 +100,14 @@ describe("budgetDeactivateLines", () => {
 
   test("says nothing about either when there is nothing to say", () => {
     const lines = budgetDeactivateLines(
-      { budgetPhrase: "$130.00 / month", spentCents: 4_200, overdueCents: 0, overdueUnreadCents: 0, expectedTailCents: 0 },
+      {
+        budgetPhrase: "$130.00 / month",
+        spentCents: 4_200,
+        overdueCents: 0,
+        overdueUnreadCents: 0,
+        overdueInGraceCents: 0,
+        expectedTailCents: 0,
+      },
       formatCents,
     );
     expect(lines.map((l) => l.label)).toEqual(["Budget stopped", "Spent so far this period"]);
@@ -125,5 +142,14 @@ describe("budgetDeactivateLines", () => {
       "Due this period by today, $2,109.00 not posted, and no statement has covered the other $182.21 yet",
     );
     for (const unread of [0, 18_221, 229_121]) expect(label(unread)).not.toContain("not imported");
+  });
+
+  /*
+   * 🔴 …and "no import has covered it yet" of bills on an archived card or a cash wallet, read through today, whose days
+   * to post are not over (review of the 2026-10-08 batch): no import will ever come. The row's words for it.
+   */
+  test("says the days a payment has to post are not over when no statement keeps it unread", () => {
+    const lines = budgetDeactivateLines({ ...HOUSING, overdueInGraceCents: 229_121 }, formatCents);
+    expect(lines[2]!.label).toBe("Due this period by today, the days a payment has to post are not over yet");
   });
 });

@@ -371,7 +371,13 @@ describe("seriesInCategory", () => {
     const rows = seriesInCategory(bundle.db, catId("Housing"), TODAY);
     expect(rows).toHaveLength(1);
     // the June charge is the Card's newest row, so no statement has reached Jul 1 — the note's quiet reading
-    expect(rows[0]!.overdue).toEqual({ date: "2026-07-01", occurrenceCount: 1, owedCents: 180_000, unreadCents: 180_000 });
+    expect(rows[0]!.overdue).toEqual({
+      date: "2026-07-01",
+      occurrenceCount: 1,
+      owedCents: 180_000,
+      unreadCents: 180_000,
+      inGraceCents: 0,
+    });
     // the next date STAYS — August's charge is still coming
     expect(rows[0]!.nextExpectedOn).toBe("2026-08-01");
   });

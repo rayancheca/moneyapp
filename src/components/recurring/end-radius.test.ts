@@ -15,6 +15,7 @@ const base: SeriesEndInput = {
   annualizedCents: -2_530_800,
   overdueCents: 0,
   overdueUnreadCents: 0,
+  overdueInGraceCents: 0,
   overdueOn: null,
   overdueCount: 0,
   nextChargeOn: "2026-10-01",

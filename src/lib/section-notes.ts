@@ -89,6 +89,8 @@ export interface BudgetNoteInput {
     overdueBills: number;
     /** of `overdueCents`, the part on days no checked statement has reached (`BudgetPaceStatus.overdueUnreadCents`) */
     overdueUnreadCents: number;
+    /** of `overdueUnreadCents`, the part no statement keeps unread (`BudgetPaceStatus.overdueInGraceCents`) */
+    overdueInGraceCents: number;
     uncoveredDays: number;
     pace: "under" | "at-risk" | "over";
     /** the row's accounts, so a cash-only row is told apart by the rule the row itself uses */
@@ -133,7 +135,12 @@ export function budgetSectionNotes(input: BudgetNoteInput): SectionNote[] {
      * what the ledger has read.
      */
     const unread = overdue.reduce((sum, r) => sum + r.overdueUnreadCents, 0);
-    const said = arrearsTail({ owedCents: total, unreadCents: unread }, "not posted", bills === 1 ? "it" : "them");
+    const inGrace = overdue.reduce((sum, r) => sum + r.overdueInGraceCents, 0);
+    const said = arrearsTail(
+      { owedCents: total, unreadCents: unread, inGraceCents: inGrace },
+      "not posted",
+      bills === 1 ? "it" : "them",
+    );
     notes.push({
       id: "budgets-overdue",
       body:

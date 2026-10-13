@@ -28,6 +28,8 @@ const row = (over: Partial<Parameters<typeof budgetSectionNotes>[0]["rows"][numb
   ...over,
   // unread unless a test says otherwise — his ledger's arrears 2026-10-08, on days no checked statement had reached
   overdueUnreadCents: over.overdueUnreadCents ?? over.overdueCents ?? 0,
+  // …and a statement is what that waits for, unless a test says its days to post are
+  overdueInGraceCents: over.overdueInGraceCents ?? 0,
 });
 
 describe("budgetSectionNotes", () => {
@@ -144,6 +146,20 @@ describe("budgetSectionNotes", () => {
       ],
     }).find((n) => n.id === "budgets-overdue")!.body;
     expect(body).toContain("$2,400.08 due by today: $108.87 not posted, and no statement has covered the other $2,291.21 yet");
+  });
+
+  /*
+   * 🔴 …and "no import has covered them yet" of bills on accounts read through today — an archived card, a cash wallet
+   * — whose days to post are not over (review of the 2026-10-08 batch): no import will ever come. Summed as the rest.
+   */
+  test("bills waiting only for their days to post say so — summed across rows, as the total is", () => {
+    const body = budgetSectionNotes({
+      rows: [
+        row({ categoryPath: "Housing", overdueCents: 229_121, overdueInGraceCents: 229_121, overdueBills: 2 }),
+        row({ categoryPath: "Storage", overdueCents: 4_500, overdueInGraceCents: 4_500, overdueBills: 1 }),
+      ],
+    }).find((n) => n.id === "budgets-overdue")!.body;
+    expect(body).toContain("3 bills totalling $2,336.21 due by today and the days a payment has to post are not over yet");
   });
 
   test("counts under-measured rows, exempting `over` the same way the row does", () => {
