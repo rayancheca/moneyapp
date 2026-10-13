@@ -15,6 +15,7 @@ import { Icon } from "@/components/shell/Icon";
 import { useAction } from "@/hooks/useAction";
 import { offerUndoToast } from "@/components/transactions/undo-toast";
 import { transactionSubjects } from "@/lib/row-subject";
+import { seriesPostingWords } from "@/lib/series-evidence";
 import type {
   AttachCandidate,
   SeriesLinkedTxn,
@@ -400,6 +401,10 @@ export function MergeControl({
  * the merge files them under — the count `mergeSeries` itself writes by (`SeriesMergeCandidate.filing`). With nothing
  * to file it reads as it always has. 🔴 Its own component so the sentence is tested as rendered: inline in
  * `MergeControl`, behind a popover and a pick, no test reached it and deleting it left every test green.
+ *
+ * ⛔ What moves is what the CANDIDATE posts, in the page's words for it (`seriesPostingWords`): "Its deposits move
+ * here" of pay. 🔴 It said "Its charges move here" whatever was picked — on his ledger copy 2026-10-13 every series
+ * page but his pay's offers "It America LLC (weekly pay)" to merge in, and picking it called his deposits charges.
  */
 export function MergeConfirmation({
   candidate,
@@ -416,8 +421,8 @@ export function MergeConfirmation({
   return (
     <div className="p-1">
       <p className="text-sm text-ink">
-        Merge <span className="font-medium">{candidate.name}</span> into this series? Its charges move here and it
-        ends.
+        Merge <span className="font-medium">{candidate.name}</span> into this series? Its{" "}
+        {seriesPostingWords(candidate.kind).postings} move here and it ends.
         {filing === null ? null : ` ${filing}`}
       </p>
       <div className="mt-3 flex justify-end gap-2">
