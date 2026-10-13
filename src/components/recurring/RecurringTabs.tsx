@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { usePageLinks } from "@/hooks/usePageLinks";
+import { SERIES_LIST_PARAM } from "@/lib/recurring-list";
 
 export const RECURRING_TABS = ["upcoming", "all", "calendar"] as const;
 export type RecurringTab = (typeof RECURRING_TABS)[number];
@@ -9,12 +10,14 @@ export type RecurringTab = (typeof RECURRING_TABS)[number];
 const LABELS: Record<RecurringTab, string> = { upcoming: "Upcoming", all: "All", calendar: "Calendar" };
 
 /**
- * The params a tab link replaces: its `tab`. Every other param of the URL rides along (the
- * calendar's `cal`) — never the `?error=` a refused "Detect now" or confirm redirected back with:
- * the banner reports an action that already happened, and a tab moves on from it, as it always has
- * and as a press does since 2026-10-06 (`ONE_SHOT_PARAMS`, lib/page-asks.ts).
+ * The params a tab link replaces: its `tab`, and the series a link narrowed the All tab to
+ * (`SERIES_LIST_PARAM`) — a tab is the way back to every series, All's own included. Every other
+ * param of the URL rides along (the calendar's `cal`) — never the `?error=` a refused "Detect now"
+ * or confirm redirected back with: the banner reports an action that already happened, and a tab
+ * moves on from it, as it always has and as a press does since 2026-10-06 (`ONE_SHOT_PARAMS`,
+ * lib/page-asks.ts).
  */
-export const RECURRING_TAB_LINK_KEYS: readonly string[] = ["tab"];
+export const RECURRING_TAB_LINK_KEYS: readonly string[] = ["tab", SERIES_LIST_PARAM];
 
 interface RecurringTabsProps {
   tab: RecurringTab;

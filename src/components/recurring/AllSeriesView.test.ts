@@ -470,3 +470,39 @@ describe("AllSeriesView — the Next column's late note follows the runway's rea
     expect(note).toContain("text-warning");
   });
 });
+
+/**
+ * 🔴 A rate summed from more than one pay schedule opened a bare `/recurring?tab=all` (review of the dashboard links,
+ * 2026-10-12). Narrowed to the series its link names (`seriesListed`), the tab says so over them and offers the rest:
+ * the badge over it still counts every series, and two rows under "All 14" would say nothing of the other twelve.
+ */
+describe("AllSeriesView — narrowed by a link, it says what it shows and how to see the rest", () => {
+  const fixture = [
+    series({ id: "pay", name: "Salary", status: "confirmed", kind: "income", nextExpectedAmountCents: 200000 }),
+    series({ id: "gig", name: "Tutoring", status: "confirmed", kind: "income", nextExpectedAmountCents: 30000 }),
+  ];
+  const text = (html: string): string => decode(html.replace(/<[^>]+>/g, " ")).replace(/\s+/g, " ");
+  const render = (props: { series: SeriesView[]; narrowed?: { shown: number; of: number } | null }): string =>
+    renderToStaticMarkup(createElement(AllSeriesView, { ...props, overdueBySeries: new Map(), today: "2026-10-13" }));
+
+  test("the line over the rows, and a link to every series", () => {
+    const html = render({ series: fixture, narrowed: { shown: 2, of: 14 } });
+    expect(text(html)).toContain("Showing 2 of 14 series — the ones behind the figure you followed. Show all 14");
+    expect(html).toMatch(/<a[^>]*href="\/recurring\?tab=all"[^>]*>Show all 14<\/a>/);
+    // above the rows it describes
+    expect(html.indexOf("the figure you followed")).toBeLessThan(html.indexOf("Salary"));
+    expect(text(html)).toContain("Tutoring");
+  });
+
+  test("unnarrowed, nothing is said", () => {
+    expect(text(render({ series: fixture }))).not.toContain("the figure you followed");
+    expect(text(render({ series: fixture, narrowed: null }))).not.toContain("the figure you followed");
+  });
+
+  // ⛔ never "No active series" — "Run Detect now" — over a ledger of fourteen
+  test("none of the named series still listed: the line and the link, and no empty state", () => {
+    const html = render({ series: [], narrowed: { shown: 0, of: 14 } });
+    expect(text(html)).toContain("None of the series behind the figure you followed is listed any more. Show all 14");
+    expect(text(html)).not.toContain("No active series");
+  });
+});

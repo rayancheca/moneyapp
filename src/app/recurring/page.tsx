@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { z } from "zod";
 import { getDb } from "@/db/client";
 import { monthKey, todayIso } from "@/lib/dates";
+import { isListedSeries, namedSeriesOf, SERIES_LIST_PARAM, seriesListed } from "@/lib/recurring-list";
 import { arrearsReadingOfSeries, arrearsThisMonth } from "@/services/arrears";
 import { forecastCurrentMonth } from "@/services/forecast";
 import { listSeries, upcomingOccurrences } from "@/services/recurring";
@@ -80,10 +81,15 @@ export default async function RecurringPage({
 
   const counts: Record<RecurringTab, number> = {
     upcoming: upcoming.length,
-    all: series.filter((s) => s.status !== "dismissed" && s.status !== "ended").length,
+    all: series.filter(isListedSeries).length,
     calendar: calendarMonth.entryCount,
   };
   const hasSeries = series.length > 0;
+  /*
+   * The All tab, narrowed to the series a link named (`?series=`, `seriesListHref`) — the schedules a monthly income
+   * rate is summed from. 🔴 That link opened every series the ledger lists, bills among them (review, 2026-10-12).
+   */
+  const listed = seriesListed(series, namedSeriesOf(firstParam(raw[SERIES_LIST_PARAM])));
 
   return (
     <>
@@ -140,7 +146,12 @@ export default async function RecurringPage({
               {tab === "upcoming" ? (
                 <UpcomingList occurrences={upcoming} />
               ) : (
-                <AllSeriesView series={series} overdueBySeries={overdueBySeries} today={today} />
+                <AllSeriesView
+                  series={listed.rows}
+                  narrowed={listed.narrowed}
+                  overdueBySeries={overdueBySeries}
+                  today={today}
+                />
               )}
             </div>
           </>
