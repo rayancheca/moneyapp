@@ -16,8 +16,20 @@ import type { SeriesKind } from "@/db/schema/recurring";
  * The rule lives in `services/recurring` (`seriesEvidence`); this is the
  * vocabulary, kept client-safe so components can label without importing the
  * database.
+ *
+ * ⛔ `schedule-ended` is the SCHEDULE's own let-go, as `lapsed` is the forecast's: a live series whose end
+ * (`userEndsOn`) leaves no date still to come (`scheduleHasEnded`) — the Nov 11 car-insurance balance from Nov 12. Asked
+ * before the evidence: a finished schedule is not late, never billed or lapsed, whatever its last charge says. 🔴 It
+ * was ended to the subscriptions card and the annualized figure and live to its own page and the All tab (review of
+ * 0af5689).
  */
-export type SeriesEvidence = "active" | "never-billed" | "awaiting-statements" | "running-late" | "lapsed";
+export type SeriesEvidence =
+  | "active"
+  | "never-billed"
+  | "awaiting-statements"
+  | "running-late"
+  | "lapsed"
+  | "schedule-ended";
 
 /**
  * ⚖️ "Awaiting statements": past its tolerance today, but not by the last day every account it posts to has been
@@ -35,6 +47,8 @@ export const SERIES_EVIDENCE_LABEL: Record<SeriesEvidence, string> = {
   "awaiting-statements": "Awaiting statements",
   "running-late": "Running late",
   lapsed: "Lapsed",
+  // the subscriptions card's word for the same series: "1 has already ended, so it costs nothing going forward"
+  "schedule-ended": "Ended",
 };
 
 /**
@@ -74,7 +88,7 @@ export interface StalenessFacts {
  * ⚠️ `isStale` is true of a never-billed series too — no evidence is past every tolerance — so never billed is asked
  * first: "running late" is only true of a series that has posted.
  */
-export function projectedEvidence(s: StalenessFacts): Exclude<SeriesEvidence, "lapsed"> {
+export function projectedEvidence(s: StalenessFacts): Exclude<SeriesEvidence, "lapsed" | "schedule-ended"> {
   if (s.lastMatchedOn === null) return "never-billed";
   if (s.isStale) return "running-late";
   return s.awaitingStatements ? "awaiting-statements" : "active";
@@ -204,6 +218,9 @@ export function seriesEvidenceNote(evidence: SeriesEvidence, kinds: readonly Ser
       return `still forecast — the last ${postingsOf(of, "noun")} is older than the cadence allows`;
     case "lapsed":
       return "no longer forecast — quiet past the point a bill stops";
+    case "schedule-ended":
+      // "more": a last date that came due unposted is still owed in its month (the Next column says so)
+      return "nothing more forecast — every date their schedules hold has come";
   }
 }
 
@@ -273,9 +290,13 @@ export function seriesCanBeReshaped(status: SeriesStatusForCopy): boolean {
  * 2026-10-08 `/recurring/<Amazon Prime>` read "charges monthly around the 5th, about $4.99" — the 5th read off a
  * stored 2026-08-05 — above "Nothing expected · …nothing more is expected from it", with a date editor whose Save
  * toasted "Next expected …" while the page, which judges the lapse by the last charge, kept saying "Nothing expected".
+ *
+ * ⛔ …nor a schedule its end has closed (`schedule-ended`, `scheduleHasEnded`). 🔴 Review of 0af5689: a month past
+ * its one day, the Nov 11 balance's page read "charges once on Nov 11, about $72.74" with no "Nothing expected" card,
+ * while its annualized figure and the subscriptions card had ended it (a copy of his ledger, asked about 2026-12-12).
  */
 export function seriesIsProjected(status: SeriesStatusForCopy, evidence: SeriesEvidence): boolean {
-  return !seriesIsOver(status) && evidence !== "lapsed";
+  return !seriesIsOver(status) && evidence !== "lapsed" && evidence !== "schedule-ended";
 }
 
 /**
@@ -314,11 +335,14 @@ export function seriesDrawsAsRecurring(status: SeriesStatusForCopy): boolean {
  */
 export function noScheduleReason(status: SeriesStatusForCopy, evidence: SeriesEvidence): string | null {
   if (seriesIsProjected(status, evidence)) return null;
-  if (!seriesIsOver(status))
-    return "This series has gone quiet past the point a bill stops, so it is no longer forecast and nothing more is expected from it — a new charge brings it back. Its charges below stay in the ledger.";
   if (status === "ended")
     return "This series has ended, so nothing more is expected from it. Its charges below stay in the ledger.";
   if (status === "dismissed")
     return "You said this is not a recurring series, so nothing is expected from it and nothing is forecast. Its charges below stay in the ledger.";
-  return null;
+  /* ⛔ Its schedule's own end, before the lapse: a new charge does not bring back a schedule with no date left.
+     🔴 A month past its one day the Nov 11 balance's page said nothing of why nothing was expected (review of
+     0af5689). "More": a last date that came due unposted is still owed this month — the already-due card says so. */
+  if (evidence === "schedule-ended")
+    return "Its schedule has ended — every date it holds has come — so nothing more is expected from it. Its charges below stay in the ledger.";
+  return "This series has gone quiet past the point a bill stops, so it is no longer forecast and nothing more is expected from it — a new charge brings it back. Its charges below stay in the ledger.";
 }

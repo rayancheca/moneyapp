@@ -240,6 +240,26 @@ describe("AllSeriesView — a schedule of one charge reads Once in the cadence s
     expect(row).not.toContain("/yr");
     expect(html).not.toContain("$0.00");
   });
+
+  /*
+   * 🔴 Review of 0af5689: a month past its one day the row sat under "Never billed — registered by hand and forecast —
+   * the bank has not charged them yet", of money nothing forecasts from Dec 1 (a copy of his ledger, 2026-10-12, asked
+   * about 2026-12-12). It is filed where the subscriptions card files it: ended.
+   */
+  test("a month past its day it is filed Ended — never under 'registered by hand and forecast'", () => {
+    const DEC12 = "2026-12-12";
+    const html = decode(
+      renderToStaticMarkup(
+        createElement(AllSeriesView, { series: listSeries(bundle.db, DEC12), overdueBySeries: new Map(), today: DEC12 }),
+      ),
+    );
+    const section = (id: string): string => html.split(`id="${id}"`)[1]?.split("</section>")[0] ?? "";
+    expect(section("rec-ended")).toContain(BALANCE);
+    expect(section("rec-ended")).toMatch(/^[^>]*>Ended<span[^>]*>— nothing more forecast — every date their schedules hold has come</);
+    expect(section("rec-never-billed")).not.toContain(BALANCE);
+    // Car insurance, a premium still to come on Jan 11, is not
+    expect(section("rec-ended")).not.toContain(">Car insurance</a>");
+  });
 });
 
 /**

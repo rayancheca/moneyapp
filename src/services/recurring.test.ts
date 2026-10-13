@@ -628,21 +628,29 @@ describe("seriesStaleness", () => {
     const checkedDays = [today, null, "2026-04-01", "2026-07-07"];
     // ⚖️ …and billed inside a carrier's payment at every age of ITS evidence (§6A 59)
     const carriers = [null, ...ages.map((a) => ({ id: "rent", name: "Flamingo South Beach (rent)", lastMatchedOn: a }))];
+    // ⛔ …and with a schedule its end has closed: Aug 1 is the next day, and nothing is left inside a Jul 1 end. 🔴 The
+    // page projected the Nov 11 balance a month past its day while the forecast and the subscriptions card had ended it
+    // (review of 0af5689)
+    const ends = [null, "2026-07-01"];
     let lapsedSeen = 0;
     let awaitingSeen = 0;
+    let endedSeen = 0;
     for (const status of ["detected", "confirmed", "dismissed", "ended"] as const) {
       for (const kind of ["bill", "subscription", "income", "transfer", "other"] as const) {
         for (const lastMatchedOn of ages) {
           for (const checked of checkedDays) {
             for (const billedWith of carriers) {
-              const row = { ...base, status, kind, lastMatchedOn, billedWith };
-              const evidence = seriesEvidence(row, today, checked);
-              if (evidence === "lapsed") lapsedSeen += 1;
-              if (evidence === "awaiting-statements") awaitingSeen += 1;
-              expect(
-                seriesIsProjected(status, evidence),
-                `${status} · ${kind} · ${lastMatchedOn} · ${checked} · carrier ${billedWith?.lastMatchedOn}`,
-              ).toBe(seriesIsForecast(row, today, checked));
+              for (const userEndsOn of ends) {
+                const row = { ...base, status, kind, lastMatchedOn, billedWith, userEndsOn };
+                const evidence = seriesEvidence(row, today, checked);
+                if (evidence === "lapsed") lapsedSeen += 1;
+                if (evidence === "awaiting-statements") awaitingSeen += 1;
+                if (evidence === "schedule-ended") endedSeen += 1;
+                expect(
+                  seriesIsProjected(status, evidence),
+                  `${status} · ${kind} · ${lastMatchedOn} · ${checked} · carrier ${billedWith?.lastMatchedOn} · ends ${userEndsOn}`,
+                ).toBe(seriesIsForecast(row, today, checked));
+              }
             }
           }
         }
@@ -653,6 +661,9 @@ describe("seriesStaleness", () => {
     // day by its own posting, its carrier's, or both (4 pairs, §6A 59); and one awaiting
     expect(lapsedSeen).toBe(4 * 4 * 2 * 4);
     expect(awaitingSeen).toBeGreaterThan(0);
+    // …and every row whose schedule has ended is ended, whatever its evidence — a finished schedule is not late or
+    // lapsed (a new charge would not bring it back)
+    expect(endedSeen).toBe(4 * 5 * 4 * 4 * 5);
   });
 });
 

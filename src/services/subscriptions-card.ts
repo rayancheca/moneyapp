@@ -17,7 +17,7 @@ import {
   effectiveSeries,
   hasStoppedForecasting,
   oneChargeDays,
-  rollForwardNextExpected,
+  scheduleHasEnded,
   seriesStaleness,
   type SeriesStaleness,
 } from "./recurring";
@@ -371,16 +371,20 @@ export function subscriptionsCard(
      * arithmetic that needs it, and `null` here covers both reasons a series
      * has no next date: it never had one, or it is over.
      */
-    const nextOn = rollForwardNextExpected(eff, today);
-    if (nextOn === null) {
-      /*
-       * ⛔ Two different reasons wear one null, and they earn different
-       * sentences. No stored date at all is unforecastable; a stored date the
-       * series has outlived is ENDED — it has an amount and a rhythm, and only
-       * the future is missing.
-       */
-      if (eff.nextExpectedOn === null) unforecastableCount += 1;
-      else endedCount += 1;
+    /*
+     * ⛔ Two different reasons wear `rollForwardNextExpected`'s one null, and
+     * they earn different sentences. No stored date at all is unforecastable; a
+     * stored date the series has outlived is ENDED — it has an amount and a
+     * rhythm, and only the future is missing. ENDED is `scheduleHasEnded`, the
+     * predicate /recurring files the same series by ("Ended"), so the card and
+     * the page cannot call one series ended and live (review of 0af5689).
+     */
+    if (eff.nextExpectedOn === null) {
+      unforecastableCount += 1;
+      continue;
+    }
+    if (scheduleHasEnded(s, today)) {
+      endedCount += 1;
       continue;
     }
 
@@ -392,8 +396,8 @@ export function subscriptionsCard(
 
     /*
      * ⚖️ ONE CHARGE STILL TO COME (owner decision 2026-10-08, §6A 56): listed as a one-off, out of every monthly
-     * figure. After the `nextOn` gate on purpose — a one-off whose day has passed is OVER and goes to `endedCount`
-     * with every other finished commitment, rather than lingering here as though it were still owed.
+     * figure. After the end gate on purpose (`scheduleHasEnded`) — a one-off whose day has passed is OVER and goes to
+     * `endedCount` with every other finished commitment, rather than lingering here as though it were still owed.
      */
     const oneChargeOn = oneCharge.get(s.id);
     if (oneChargeOn !== undefined) {

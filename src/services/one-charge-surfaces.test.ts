@@ -8,6 +8,7 @@ import { seedDatabase } from "@/db/seed";
 import { merchants } from "@/db/schema/merchants";
 import { recurringSeries } from "@/db/schema/recurring";
 import { committedBillsNamed } from "@/lib/committed";
+import { noScheduleReason, seriesIsProjected } from "@/lib/series-evidence";
 import { budgetTail } from "./budgets";
 import { seriesInCategory } from "./category-detail";
 import { committedBook } from "./committed";
@@ -286,5 +287,42 @@ describe("from Nov 12, its one day passed — no $0.00 rate and no $0.00 line", 
     expect(committedBillsNamed(committedBook(bundle.db, "2026-11-11").lines)).toBe(
       "Car insurance, Car insurance — Nov 11 balance after the $1,000 early payment",
     );
+  });
+});
+
+/*
+ * 🔴 Review of 0af5689: from Nov 12 the balance was ENDED to its annualized figure and to the subscriptions card ("1 has
+ * already ended") — and live and forecast to its own page and the All tab. Measured on a copy of his ledger
+ * (2026-10-12) at 2026-12-12: its page read "Confirmed · Bill · Never billed · Ends Nov 11, 2026 … charges once on
+ * Nov 11, about $72.74. Annualized —", a present-tense schedule a month past with no "Nothing expected" card, and the
+ * All tab filed it under "Never billed — registered by hand and forecast — the bank has not charged them yet". From
+ * Dec 1 nothing forecasts it. A schedule with no date still to come inside its end is ENDED, in one word, everywhere.
+ */
+describe("from Nov 12, its one day passed — its schedule has ended, on every surface that files it", () => {
+  test.each(["2026-11-12", "2026-12-12"])("%s: its page and the All tab call it ended and project nothing", (today) => {
+    const d = seriesDetail(bundle.db, balanceId, today);
+    expect(d.evidence).toBe("schedule-ended");
+    expect(seriesIsProjected(d.status, d.evidence)).toBe(false);
+    expect(noScheduleReason(d.status, d.evidence)).toContain("Its schedule has ended");
+    expect(d.nextExpected).toEqual([]);
+    expect(listSeries(bundle.db, today).find((s) => s.id === balanceId)!.evidence).toBe("schedule-ended");
+    // the subscriptions card's own word for the same series, on the same day
+    expect(subscriptionsCard(bundle.db, today)!.endedCount).toBe(1);
+  });
+
+  test("…while the charge it came due as is still owed in its month: the already-due card stays to Nov 30", () => {
+    expect(seriesDetail(bundle.db, balanceId, "2026-11-12").overdue).toMatchObject({ date: "2026-11-11", occurrenceCount: 1 });
+    expect(seriesDetail(bundle.db, balanceId, "2026-11-30").overdue).not.toBeNull();
+    expect(seriesDetail(bundle.db, balanceId, "2026-12-12").overdue).toBeNull();
+  });
+
+  test("on its day it is still projected — and Car insurance, two premiums left, is not ended until Jan 12", () => {
+    const nov11 = seriesDetail(bundle.db, balanceId, "2026-11-11");
+    expect(nov11.evidence).toBe("never-billed");
+    expect(seriesIsProjected(nov11.status, nov11.evidence)).toBe(true);
+    for (const today of ["2026-11-12", "2026-12-12", "2027-01-11"]) {
+      expect(seriesDetail(bundle.db, insuranceId, today).evidence, today).not.toBe("schedule-ended");
+    }
+    expect(seriesDetail(bundle.db, insuranceId, "2027-01-12").evidence).toBe("schedule-ended");
   });
 });

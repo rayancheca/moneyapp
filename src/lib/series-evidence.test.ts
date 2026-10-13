@@ -15,7 +15,7 @@ import {
   RECURRING_HISTORY_STATUSES,
 } from "./series-evidence";
 
-const EVERY: readonly SeriesEvidence[] = ["active", "never-billed", "awaiting-statements", "running-late", "lapsed"];
+const EVERY: readonly SeriesEvidence[] = ["active", "never-billed", "awaiting-statements", "running-late", "lapsed", "schedule-ended"];
 const KIND_MIXES: readonly (readonly SeriesKind[])[] = [["bill"], ["income"], ["income", "subscription"], ["transfer"]];
 /** a section of bills — the note as it has always read */
 const billsNote = (e: SeriesEvidence): string => seriesEvidenceNote(e, ["bill", "subscription"]);
@@ -249,12 +249,14 @@ describe("seriesIsOver — the one predicate two sentences on the page turn on",
     expect(seriesIsOver("detected")).toBe(false);
   });
 
-  test("seriesIsProjected: a live status whose evidence the forecast has not let go — and nothing else", () => {
+  // ⛔ …nor its schedule's end (`schedule-ended`): 🔴 the Nov 11 balance projected a month past its day (review of 0af5689)
+  test("seriesIsProjected: a live status whose evidence neither the forecast nor its schedule has let go", () => {
     for (const e of EVERY) {
+      const letGo = e === "lapsed" || e === "schedule-ended";
       expect(seriesIsProjected("ended", e)).toBe(false);
       expect(seriesIsProjected("dismissed", e)).toBe(false);
-      expect(seriesIsProjected("confirmed", e)).toBe(e !== "lapsed");
-      expect(seriesIsProjected("detected", e)).toBe(e !== "lapsed");
+      expect(seriesIsProjected("confirmed", e)).toBe(!letGo);
+      expect(seriesIsProjected("detected", e)).toBe(!letGo);
     }
   });
 
@@ -272,6 +274,25 @@ describe("seriesIsOver — the one predicate two sentences on the page turn on",
         expect(noScheduleReason(s, e) !== null, `${s} · ${e}`).toBe(!seriesIsProjected(s, e));
       }
     }
+  });
+
+  /*
+   * A schedule its end has closed says so — and never that a new charge brings it back, which is the lapse's reason and
+   * false of a schedule with no date left. His own word wins: a series he ended or dismissed says that, whatever its
+   * schedule did (review of 0af5689).
+   */
+  test("an ended schedule gives its own reason; his ended and dismissed keep theirs", () => {
+    for (const s of ["detected", "confirmed"] as const) {
+      expect(noScheduleReason(s, "schedule-ended")).toBe(
+        "Its schedule has ended — every date it holds has come — so nothing more is expected from it. Its charges below stay in the ledger.",
+      );
+      expect(noScheduleReason(s, "lapsed")).toContain("a new charge brings it back");
+    }
+    expect(noScheduleReason("ended", "schedule-ended")).toBe(noScheduleReason("ended", "active"));
+    expect(noScheduleReason("dismissed", "schedule-ended")).toBe(noScheduleReason("dismissed", "active"));
+    // quiet — the subscriptions card's "already ended", never a warning
+    expect(seriesEvidenceTone("schedule-ended")).toBe("neutral");
+    expect(SERIES_EVIDENCE_LABEL["schedule-ended"]).toBe("Ended");
   });
 });
 

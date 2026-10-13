@@ -91,6 +91,34 @@ describe("SeriesDetail — a schedule of one charge reads once, on its own page"
     expect(words(html)).toContain("charges monthly");
     expect(words(html)).not.toContain("once");
   });
+
+  /*
+   * 🔴 Review of 0af5689, on a copy of his ledger (2026-10-12) asked about 2026-12-12: "Confirmed · Bill · Never billed
+   * · Ends Nov 11, 2026 … charges once on Nov 11, about $72.74. Annualized —" — a present-tense schedule a month past,
+   * and no "Nothing expected" card, while the subscriptions card counted it ended.
+   */
+  test("a month past its one day: past tense, ended — and a 'Nothing expected' card saying why", () => {
+    const DEC12 = "2026-12-12";
+    const html = decode(
+      renderToStaticMarkup(
+        createElement(SeriesDetail, {
+          data: seriesDetail(bundle.db, his.balanceId, DEC12)!,
+          today: DEC12,
+          viewState: resolveViewState(RECURRING_SERIES_VIEW_SPEC, {}, undefined),
+          basePath: `/recurring/${his.balanceId}`,
+        }),
+      ),
+    );
+    const text = words(html);
+    expect(text).toContain("charged once on Nov 11, about $72.74");
+    expect(text).not.toContain("charges once");
+    expect(text).toContain("Nothing expected");
+    expect(text).toContain("Its schedule has ended");
+    // its end, in the past tense and the quiet tone the subscriptions card's "already ended" is said in
+    expect(text).toContain("Ended Nov 11, 2026");
+    expect(text).not.toContain("Ends Nov 11, 2026");
+    expect(html).not.toMatch(/text-warning[^>]*>Ended Nov 11/);
+  });
 });
 
 /*

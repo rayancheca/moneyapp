@@ -517,7 +517,14 @@ export function seriesDetail(
       ).slice(0, NEXT_EXPECTED_COUNT)
     : [];
 
-  const late = projects ? (arrearsThisMonth(db, new Set([seriesId]), today).series[0] ?? null) : null;
+  /*
+   * ⛔ The BACKWARD half asks the arrears walk's own rule — a live status, not let go (`overdueForSeries` filters both)
+   * — never `projects`, which is forward: a schedule its end has closed projects nothing and still owes the last date
+   * that came due unposted this month. 🔴 Gated on `projects` once the schedule's end joined it, the Nov 11 balance's
+   * already-due card would have gone from Nov 12 while the forecast and the runway still owed its $72.74 (review of
+   * 0af5689).
+   */
+  const late = arrearsThisMonth(db, new Set([seriesId]), today).series[0] ?? null;
   const overdue = late
     ? {
         date: late.nextDate,

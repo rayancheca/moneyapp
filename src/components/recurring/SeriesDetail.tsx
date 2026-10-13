@@ -15,6 +15,7 @@ import { renameSeriesAction, setSeriesStatusAction } from "@/app/recurring/actio
 import { isTableLens, LENS_DIMENSION, LENS_LABELS } from "@/components/charts/chart-lens";
 import { ViewSwitcher } from "@/components/ui/ViewSwitcher";
 import { useViewState } from "@/hooks/useViewState";
+import { compareDates } from "@/lib/dates";
 import { formatDayShortIn } from "@/lib/format-date";
 import { formatCents } from "@/lib/money";
 import type { Provenance } from "@/services/provenance";
@@ -167,7 +168,10 @@ export function SeriesDetail({
             <span className="text-xs text-ink-faint">{KIND_LABEL[data.kind]}</span>
             {/* 🔴 "Inactive" sat beside "Next expected Sep 11" on a series the
                 forecast projects. The badge is the word the evidence chooses. */}
-            {(data.status === "detected" || data.status === "confirmed") && data.evidence !== "active" ? (
+            {/* ⛔ …but not "Ended": its end badge below says it, with the day */}
+            {(data.status === "detected" || data.status === "confirmed") &&
+            data.evidence !== "active" &&
+            data.evidence !== "schedule-ended" ? (
               // ⛔ awaiting statements and never billed are no warning — `seriesEvidenceTone`, the chip's tone too
               <Badge tone={seriesEvidenceTone(data.evidence)}>{SERIES_EVIDENCE_LABEL[data.evidence]}</Badge>
             ) : null}
@@ -190,7 +194,15 @@ export function SeriesDetail({
             {/* the same date the caveat below may name, spelled the same way —
                 a raw ISO string here would have the page printing one day two
                 ways, two inches apart */}
-            {data.endsOn !== null ? <Badge tone="warning">Ends {longDate(data.endsOn)}</Badge> : null}
+            {/* ⛔ …and in the tense of its day, worn in the evidence's tone once its schedule has ended — the All
+                tab's "Ended", the subscriptions card's "already ended". 🔴 "Ends Nov 11, 2026" in amber, a month past
+                that day (review of 0af5689, his ledger copy asked about 2026-12-12). */}
+            {data.endsOn !== null ? (
+              <Badge tone={data.evidence === "schedule-ended" ? seriesEvidenceTone(data.evidence) : "warning"}>
+                {compareDates(data.endsOn, today) < 0 ? SERIES_EVIDENCE_LABEL["schedule-ended"] : "Ends"}{" "}
+                {longDate(data.endsOn)}
+              </Badge>
+            ) : null}
             {data.merchant ? (
               <Link
                 href={`/merchants/${data.merchant.id}`}

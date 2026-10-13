@@ -31,7 +31,7 @@ function noteOf(evidence: SeriesEvidence, rows: readonly SeriesView[]): string {
  * The "All" sub-view (ux-overhaul-plan §4.1): a suggestion queue up top —
  * freshly detected series awaiting a decision — then the confirmed series by
  * what their EVIDENCE says (`lib/series-evidence`): active, awaiting statements,
- * running late, never billed, lapsed. Each row shows the effective amount (what
+ * running late, never billed, lapsed, ended. Each row shows the effective amount (what
  * the forecast projects), the posted average beneath it when the two differ, the next
  * expected date and the annualized cost. Confirm / Not-recurring and Dismiss
  * reuse the existing value-preserving server actions.
@@ -60,6 +60,7 @@ export function AllSeriesView({
   const late = confirmed.filter((s) => s.evidence === "running-late");
   const neverBilled = confirmed.filter((s) => s.evidence === "never-billed");
   const lapsed = confirmed.filter((s) => s.evidence === "lapsed");
+  const scheduleEnded = confirmed.filter((s) => s.evidence === "schedule-ended");
 
   if (series.filter((s) => s.status !== "dismissed" && s.status !== "ended").length === 0) {
     return (
@@ -111,6 +112,11 @@ export function AllSeriesView({
       ) : null}
       {lapsed.length > 0 ? (
         <SeriesSection title="Lapsed" note={noteOf("lapsed", lapsed)} series={lapsed} overdueBySeries={overdueBySeries} today={today} muted />
+      ) : null}
+      {/* 🔴 A month past its one day the Nov 11 balance sat under "Never billed — registered by hand and forecast",
+          while the subscriptions card counted it ended (review of 0af5689). Filed where the card files it. */}
+      {scheduleEnded.length > 0 ? (
+        <SeriesSection title={SERIES_EVIDENCE_LABEL["schedule-ended"]} note={noteOf("schedule-ended", scheduleEnded)} series={scheduleEnded} overdueBySeries={overdueBySeries} today={today} muted />
       ) : null}
     </div>
   );
