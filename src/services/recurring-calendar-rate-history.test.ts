@@ -607,6 +607,87 @@ test("a raise recorded ahead of a first week: the gate counts paydays at today's
   );
 });
 
+/**
+ * ⛔ ONE COUNT WITH NO RATE HISTORY TOO: a pay series' anecdote gate counts the paydays its deposits paid, as it does
+ * once a rate change leaves a deposit out — never its rows. 🔴 Gated on its rows, a detected pay series (forecast
+ * $1,141.92, no amount of his, no history) whose one week came as three same-day transfers read "derived", no badge
+ * and no anecdote, beside "Per payday, its 3 deposits since Sep 17, 2026 (Sep 17's 3 deposits, $1,141.92, paid one
+ * payday) paid $1,141.92." — one payday graded as three; given a history, the same payday read "seen once at the new
+ * rate" (review of b3f90b7, hypothetical: his pay has a history).
+ */
+describe("a pay series with no rate history: the gate counts paydays, as with one", () => {
+  const TODAY = "2026-09-20";
+  beforeEach(() => {
+    addPaySeries("2026-09-24");
+    bundle.db
+      .update(recurringSeries)
+      .set({ status: "detected", userAmountCents: null, userAmountHistory: null, nextExpectedAmountCents: WEEK })
+      .where(eq(recurringSeries.id, PAY))
+      .run();
+  });
+  const said = () => provenanceFor(bundle.db, { kind: "recurringSeries", id: PAY, today: TODAY })!;
+
+  test("one week sent as three same-day transfers is one payday — an anecdote, never 'adds up'", () => {
+    deposit("2026-09-17", 50_000);
+    deposit("2026-09-17", 40_000);
+    deposit("2026-09-17", 24_192);
+    const p = said();
+    expect(p.headline).toContain(
+      "Per payday, its 3 deposits since Sep 17, 2026 (Sep 17's 3 deposits, $1,141.92, paid one payday) paid " +
+        "$1,141.92. That is one payday — below the 3 this app requires before calling a repeat a pattern",
+    );
+    expect(p.headline).not.toContain("tagged postings have ever landed");
+    expect([p.verdict, p.badgeWord]).toEqual(["unverified", "seen once"]);
+  });
+
+  /*
+   * …and one payday short of the forecast checks nothing either: an anecdote. 🔴 Gated on its 3 rows it was graded
+   * against the forecast, "paid $1,000.00 each time" and "It did not pay the $1,141.92 forecast here." (at b3f90b7).
+   */
+  test("one payday of three transfers short of the forecast: 'seen once', never graded against it", () => {
+    deposit("2026-09-17", 50_000);
+    deposit("2026-09-17", 40_000);
+    deposit("2026-09-17", 10_000);
+    const p = said();
+    expect(p.headline).toContain("paid $1,000.00. That is one payday — below the 3");
+    expect(p.headline).not.toContain("forecast here");
+    expect([p.verdict, p.badgeWord]).toEqual(["unverified", "seen once"]);
+  });
+
+  /* …and a lump is the paydays it paid on its own, as with a history: a week and a three-week lump are four */
+  test("a week, then a three-week lump, at the forecast: four paydays, past the gate — as with a history", () => {
+    deposit("2026-08-27", WEEK);
+    deposit("2026-09-17", WEEK * 3);
+    const p = said();
+    expect(p.headline).toContain(
+      "Per payday, its 2 deposits since Aug 27, 2026 (Sep 17's $3,425.76 paid 3 paydays) paid $1,141.92, exactly.",
+    );
+    expect(p.headline).not.toContain("anecdote");
+    expect([p.verdict, p.badgeWord]).toEqual(["derived", undefined]);
+  });
+
+  /* …and money that paid no payday of its own is no payday seen: one week and a $400.00 the day after are one */
+  test("a week and $400.00 that paid no payday: one payday seen, never 'seen 2 times'", () => {
+    deposit("2026-09-10", WEEK);
+    deposit("2026-09-11", 40_000);
+    const p = said();
+    expect(p.headline).toContain(
+      "Per payday, its one deposit since Sep 10, 2026 paid $1,141.92. Its one other deposit paid no payday on its " +
+        "own, and is not counted. That is one payday — below the 3",
+    );
+    expect([p.verdict, p.badgeWord]).toEqual(["unverified", "seen once"]);
+  });
+
+  /* every row its own payday: the rows ARE the paydays, and the words read as they always did */
+  test("two weeks, one deposit each: 'Only 2 tagged postings have ever landed', as it always read", () => {
+    deposit("2026-09-10", WEEK);
+    deposit("2026-09-17", WEEK);
+    const p = said();
+    expect(p.headline).toContain("Only 2 tagged postings have ever landed — below the 3");
+    expect([p.verdict, p.badgeWord]).toEqual(["unverified", "seen 2 times"]);
+  });
+});
+
 /* ⛔ At a constant rate the residuals' spread is the samples' own — no series without a history reads differently. */
 test("residual spread equals the raw spread when the rate never changed", () => {
   const samples = [WEEK, 115_000, 113_000, WEEK, 120_000];

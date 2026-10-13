@@ -1901,10 +1901,11 @@ function leftOutOfPaydaysWords(evidence: PerPaydayEvidence, era: string | null, 
 /**
  * ⚖️ The headline's sentence for a pay series read per payday (§6A 55): it counts and ranges what its average is of —
  * what each deposit paid PER PAYDAY, at the rate in force now (`PerPaydayEvidence`) — names a lump by the paydays it
- * paid, and says which tagged rows are left out and why. Gated as the bills are: once a rate change leaves a deposit
- * out (`countsPaydays`), on the PAYDAYS the deposits at the rate in force now paid — a lump of four weeks is four
- * paydays at the rate, though one sample of it. With none — a raise begun, its first week's statement not imported
- * yet — it says there is no average at it yet, as the page and the All tab print none.
+ * paid, and says which tagged rows are left out and why. Gated as the bills are, on what is counted: the PAYDAYS the
+ * deposits at the rate in force now paid (`paydaysSeen`) — a lump of four weeks is four paydays at the rate, though one
+ * sample of it, and one week sent as three transfers is one payday — with a rate change or without one. With none — a
+ * raise begun, its first week's statement not imported yet — it says there is no average at it yet, as the page and
+ * the All tab print none.
  *
  * 🔴 It described the rows as they posted: his pay's popover read "Its 4 tagged postings since Jun 4, 2026 were 4
  * different amounts, from $400.00 to $4,567.68 — so any single figure for it is an average, not a repeat." beside an
@@ -1921,12 +1922,14 @@ function observedPerPayday(input: {
   const { evidence, era, next, seen, n, today } = input;
   const { samples } = evidence;
   const left = leftOutOfPaydaysWords(evidence, era, next).map((s) => ` ${s}`).join("");
+  const now = rateLeavesOut(evidence) ? " at the rate in force now" : "";
+  // every row its own payday: "Only 2 tagged postings", as it always read; else the paydays the gate counted
   const thin =
     seen >= MIN_OCCURRENCES
       ? ""
-      : !countsPaydays(evidence)
+      : oneRowEachPayday(evidence)
         ? ` Only ${n} tagged ${n === 1 ? "posting has" : "postings have"} ever landed — ${BELOW_A_PATTERN}.`
-        : ` That is ${seen === 1 ? "one payday" : `${seen} paydays`} at the rate in force now — ${BELOW_A_PATTERN}.`;
+        : ` That is ${seen === 1 ? "one payday" : `${seen} paydays`}${now} — ${BELOW_A_PATTERN}.`;
   if (samples.length === 0) {
     const at = atTheRateWords(evidence, era, readableDay);
     const average = `there is no average of what a payday paid${at === "" ? "" : " at it yet"}`;
@@ -1980,21 +1983,42 @@ function perPaydayDetail(evidence: PerPaydayEvidence, era: string | null, next: 
 
 /**
  * " at the rate in force since Oct 1, 2026" — where a pay series with no sample says no deposit paid a payday: at
- * the rate in force now, once a rate change leaves a deposit out (`countsPaydays`), dated when one came before it;
+ * the rate in force now, once a rate change leaves a deposit out (`rateLeavesOut`), dated when one came before it;
  * "" with no change, when no deposit at all has paid one on its own.
  */
 function atTheRateWords(evidence: PerPaydayEvidence, era: string | null, day: (d: string) => string): string {
   if (era !== null) return ` at the rate in force since ${day(era)}`;
-  return countsPaydays(evidence) ? " at the rate in force now" : "";
+  return rateLeavesOut(evidence) ? " at the rate in force now" : "";
 }
 
 /**
- * ⚖️ What a pay series' anecdote gate counts (§6A 55; one count, above `seen`): the PAYDAYS its deposits paid at the
- * rate in force now once a rate change leaves a deposit out — paid before that rate, or toward one not in force yet —
- * and its rows while none does.
+ * Whether a rate change leaves a deposit out of a pay series' average — paid before the rate in force now, or toward
+ * one not in force yet: its words then say what they count is "at the rate in force now".
  */
-function countsPaydays(evidence: PerPaydayEvidence): boolean {
+function rateLeavesOut(evidence: PerPaydayEvidence): boolean {
   return evidence.earlier + evidence.later > 0;
+}
+
+/**
+ * ⚖️ What a pay series' anecdote gate counts (§6A 55; one count, above `seen`): the PAYDAYS its deposits at the rate
+ * in force now paid on their own — what the average stands on, with a rate change or without one. A lump of four weeks
+ * is four; one week sent as three same-day transfers is one. 🔴 Gated on its ROWS while no rate change left a deposit
+ * out, a detected pay series whose one week came as three transfers read "derived", no badge and no anecdote, beside
+ * "Per payday, its 3 deposits since Sep 17, 2026 (Sep 17's 3 deposits, $1,141.92, paid one payday) paid $1,141.92."
+ * — and given a history, "seen once at the new rate" of the same payday (review of b3f90b7, hypothetical).
+ */
+function paydaysSeen(evidence: PerPaydayEvidence): number {
+  return evidence.samples.reduce((sum, s) => sum + s.paydays, 0);
+}
+
+/**
+ * Every tagged row its own payday — a deposit alone on its day, paying one week, of the rate in force now: its rows
+ * ARE its paydays, and the words count "tagged postings", as they always read.
+ */
+function oneRowEachPayday(evidence: PerPaydayEvidence): boolean {
+  const { samples, noPaydayOfTheirOwn } = evidence;
+  const alone = samples.every((s) => s.deposits === 1 && s.paydays === 1);
+  return alone && noPaydayOfTheirOwn === 0 && !rateLeavesOut(evidence);
 }
 
 /**
@@ -2050,8 +2074,8 @@ function recurringSeriesProvenance(db: AppDatabase, id: string, today: string): 
    * trivially agrees with itself (review of a64b99a, a copy of his ledger, 2026-10-12). 🔴 …and gated on rows with no
    * rate change, three rows of two -$50.00 payments read "adds up" beside "All 2 payments … were -$50.00, exactly",
    * and three rows of ONE "paid -$25.00 each time" (at 7904ee2). Detection (`analyzeGroup`) and the calendar's proven
-   * band (`scheduleIsProven`) still count rows against the same bar, for the cadence the rows prove; a pay series keeps
-   * its own (§6A 55): its rows with no rate change, the paydays its deposits paid with one.
+   * band (`scheduleIsProven`) still count rows against the same bar, for the cadence the rows prove; a pay series
+   * counts the paydays its deposits paid (§6A 55, `paydaysSeen`), with a rate change or without one.
    */
   const posted = postedAveragesBySeries(db, [series], today).get(id)!;
   const n = postings.length;
@@ -2075,15 +2099,9 @@ function recurringSeriesProvenance(db: AppDatabase, id: string, today: string): 
   const earlier = paydays === null ? before.length : paydays.earlier;
   // the day that rate began — null when no payment is left out, which every series whose rate never changed is
   const era = earlier > 0 ? posted.rateSince : null;
-  // what the anecdote gate counts (one count, above) — the payments the average averages, or for pay its rows, and
-  // once a rate change leaves a deposit out (`countsPaydays`) the PAYDAYS its deposits paid at the rate in force now:
-  // a lump of four weeks is four paydays at the rate, one sample
-  const seen =
-    paydays === null
-      ? k
-      : countsPaydays(paydays)
-        ? paydays.samples.reduce((sum, s) => sum + s.paydays, 0)
-        : n;
+  // what the anecdote gate counts (one count, above) — the payments the average averages, or for pay the PAYDAYS its
+  // deposits paid at the rate in force now (`paydaysSeen`): a lump of four weeks is four paydays, one sample
+  const seen = paydays === null ? k : paydaysSeen(paydays);
   // …and the first day of a rate recorded ahead, which a deposit paid early can pay (`PerPaydayEvidence.later`)
   const next = posted.nextRateSince;
   // "Jun 16's posted as 2" — each payment the bank posted as several rows; empty when every row is a payment
