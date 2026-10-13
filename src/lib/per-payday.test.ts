@@ -299,7 +299,7 @@ describe("paydayReadings — what is read as the one amount it is", () => {
     }
   });
 
-  test("a deposit settlement spent on nothing reads toward no payday; money out is the one amount it is", () => {
+  test("an unspent deposit reads toward no payday; money out is the one amount it is, and no sample", () => {
     const readings = paydayReadings(
       [
         { id: "unspent", postedOn: "2026-06-04", amountCents: WEEK },
@@ -310,7 +310,14 @@ describe("paydayReadings — what is read as the one amount it is", () => {
     );
     // held to nothing — it answers no week — though its era is still its own day's, a cash week's
     expect(readings.get("unspent")).toEqual(reads(false, null, true, 0));
-    expect(readings.get("clawback")).toEqual(reads(true, WEEK, false, 1));
+    /*
+     * ⛔ …and money out is NO SAMPLE of what a payday pays: it is no deposit, and paid no payday. 🔴 A sample, a
+     * -$50.00 clawback on his pay was a residual of -$1,191.92 in the calendar's spread, and the band it widened read
+     * a $1,200.00 week `paid`; a payroll returned the same day was a "-$1,141.92" deposit in the posted average —
+     * $380.64 beside two weeks at $1,141.92 (review of 6c59cdb, hypothetical: no money out is linked to his pay).
+     */
+    expect(readings.get("clawback")).toEqual(reads(false, WEEK, false, 1));
+    expect(spreadSampleCents(-5_000, readings.get("clawback"))).toBeNull();
   });
 
   test("a row with no reading at all — a bill — is the amount it is", () => {

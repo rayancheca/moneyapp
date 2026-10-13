@@ -197,10 +197,18 @@ const STEP_SPAN_DAYS = Object.fromEntries(CADENCES.map((cadence) => [cadence, st
 >;
 
 /**
- * Does this gap keep its cadence's STEP — within detection's tolerance (`CADENCE_TOLERANCE_DAYS`) of one step's
- * length (`stepSpanDays`)? A weekly gap of 5 to 9 days does: every payday within a day of its weekday. A monthly gap
- * of 25 to 34 does: a month runs 28 to 31 days, and a four-weekly step's 28 is one of them. /summary's "Deposited
- * irregularly" caveat (`depositsAreIrregular`) asks this instead of keeping a slack of its own.
+ * Does this gap keep its cadence's STEP — within a tolerance of one step's length (`stepSpanDays`)? The tolerance is
+ * the series' own (`toleranceDays`), else the one detection gives a series of that cadence (`CADENCE_TOLERANCE_DAYS`).
+ * At detection's, a weekly gap of 5 to 9 days does: every payday within a day of its weekday. A monthly gap of 25 to
+ * 34 does: a month runs 28 to 31 days, and a four-weekly step's 28 is one of them. /summary's "Deposited irregularly"
+ * caveat (`depositsAreIrregular`) asks this instead of keeping a slack of its own.
+ *
+ * ⚖️ ONE TOLERANCE: a series' stored tolerance is the window settlement and the calendar hold its deposit to its
+ * payday, so the caveat holds its gaps to it too — at his 3 days a weekly gap of 4 to 10, a payday up to 3 days off
+ * between two on time. 🔴 Held to detection's weekly 2, his Thursday payroll landing on a Sunday read "Deposited
+ * irregularly" on /summary while the calendar drew it paid on time (review of the weekly-payroll label, 2026-10-08).
+ * ⚠️ A gap holds the tolerance once: two deposits in a row off in opposite directions by more than half of it — Sun
+ * three days late, Mon three days early, a day apart — read irregular, though each is within it of its own payday.
  *
  * 🔴 Not detection's `gapConsistency` test, which holds a gap to the MEDIAN gap: that is a confidence score over many
  * rows, and over a few the median is pulled off the step — gaps 8, 8, 5 (each payday within a day of its Thursday)
@@ -210,9 +218,9 @@ const STEP_SPAN_DAYS = Object.fromEntries(CADENCES.map((cadence) => [cadence, st
  * late then a day early is 26 days apart, 4 short of 30, and 1,978 of the 3,267 ways 3 to 7 four-weekly deposits can
  * each land within a day were called irregular. A payday on the 1st did it every February.
  */
-export function gapKeepsStep(gap: number, cadence: Cadence): boolean {
+export function gapKeepsStep(gap: number, cadence: Cadence, toleranceDays: number | null): boolean {
   const [shortest, longest] = STEP_SPAN_DAYS[cadence];
-  const tolerance = CADENCE_TOLERANCE_DAYS[cadence];
+  const tolerance = toleranceDays ?? CADENCE_TOLERANCE_DAYS[cadence];
   return gap >= shortest - tolerance && gap <= longest + tolerance;
 }
 

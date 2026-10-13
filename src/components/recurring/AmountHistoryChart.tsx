@@ -45,6 +45,28 @@ function paymentWord(r: Pick<AmountRow, "postings">): string | null {
   return word === null ? null : `one payment, ${word}`;
 }
 
+/** One bar of the chart: what its tooltip and its table row say of it. */
+type ChartPoint = Omit<AmountRow, "key">;
+
+/**
+ * One bar's hover card: its signed amount, and the facts its table row carries (`AMOUNT_COLUMNS`) — a lump's paydays,
+ * money toward no payday, "one payment, posted as 2" (`paymentWord`), and what it was expected to be on its own day.
+ */
+export function AmountTooltip({ point: p }: { point: ChartPoint }) {
+  return (
+    <div className="rounded-md border border-line bg-surface-raised px-3 py-2 text-xs shadow-sm">
+      <div className="text-ink-faint">{p.date}</div>
+      <div className="figures mt-0.5 text-sm font-medium">{formatCentsSigned(p.amountCents)}</div>
+      {p.perPayday ? <div className="mt-0.5 text-ink-faint">{perPaydayWord(p.perPayday)}</div> : null}
+      {p.towardNoPayday ? <div className="mt-0.5 text-ink-faint">{TOWARD_NO_PAYDAY}</div> : null}
+      {paymentWord(p) !== null ? <div className="mt-0.5 text-ink-faint">{paymentWord(p)}</div> : null}
+      {p.expectedCents !== null && p.comparableCents !== p.expectedCents ? (
+        <div className="mt-0.5 text-ink-faint">expected {formatCents(p.expectedCents)}</div>
+      ) : null}
+    </div>
+  );
+}
+
 /** The table lens's columns: the tooltip's own facts, as a column each. */
 function AMOUNT_COLUMNS(expectedCents: number | null): Column<AmountRow>[] {
   return [
@@ -210,19 +232,7 @@ export function AmountHistoryChart({ points, expectedCents, asTable = false }: A
             content={({ active, payload }) => {
               if (!active || !payload?.length) return null;
               const p = payload[0]?.payload as (typeof data)[number] | undefined;
-              if (!p) return null;
-              return (
-                <div className="rounded-md border border-line bg-surface-raised px-3 py-2 text-xs shadow-sm">
-                  <div className="text-ink-faint">{p.date}</div>
-                  <div className="figures mt-0.5 text-sm font-medium">{formatCentsSigned(p.amountCents)}</div>
-                  {p.perPayday ? <div className="mt-0.5 text-ink-faint">{perPaydayWord(p.perPayday)}</div> : null}
-                  {p.towardNoPayday ? <div className="mt-0.5 text-ink-faint">{TOWARD_NO_PAYDAY}</div> : null}
-                  {paymentWord(p) !== null ? <div className="mt-0.5 text-ink-faint">{paymentWord(p)}</div> : null}
-                  {p.expectedCents !== null && p.comparableCents !== p.expectedCents ? (
-                    <div className="mt-0.5 text-ink-faint">expected {formatCents(p.expectedCents)}</div>
-                  ) : null}
-                </div>
-              );
+              return p ? <AmountTooltip point={p} /> : null;
             }}
           />
           <Bar dataKey="magnitude" fill="var(--chart-1)" radius={[3, 3, 0, 0]} isAnimationActive={false} />

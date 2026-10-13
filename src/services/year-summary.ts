@@ -459,6 +459,12 @@ const PAY_RULE_LABEL = "Salary, not Fordham payroll";
 export interface PayLineFacts {
   /** the one income series every row is attached to, or null when they sit in several or in none */
   seriesName: string | null;
+  /**
+   * …and its own tolerance (`recurring_series.tolerance_days`) — the window settlement and the calendar hold its
+   * deposits to their paydays, and so the caveat its gaps (`gapKeepsStep`); null with no one series, which detection's
+   * tolerance stands in for. Required, so a caller cannot hold his pay to a tolerance it is not held to elsewhere.
+   */
+  toleranceDays: number | null;
   /** each row's posted day */
   postedOn: readonly string[];
 }
@@ -480,7 +486,7 @@ export function cashJobNaming(year: number, facts: PayLineFacts): { label: strin
       basis: named
         ? `${rule} Work-study ended ${ended}, and these deposits are the job that replaced it.`
         : `${rule} Work-study ended ${ended}; these rows are not all attached to one pay series, so which job they are, this ledger does not say.`,
-      ...(depositsAreIrregular(facts.postedOn)
+      ...(depositsAreIrregular(facts.postedOn, facts.toleranceDays)
         ? {
             caveat:
               "Deposited irregularly, so a calendar year captures what reached the bank rather than what was worked.",
@@ -500,11 +506,16 @@ export function cashJobNaming(year: number, facts: PayLineFacts): { label: strin
  * Do the rows SHOW irregular deposits? Only a rhythm can be broken, so it takes three deposit days — two gaps — to
  * show one; fewer says nothing, and the caveat stays off rather than guessing.
  *
- * ⛔ DETECTION'S RHYTHM, NOT A SLACK OF ITS OWN. The rows keep one when some cadence's step holds every gap by
- * detection's tolerance (`gapKeepsStep`: a weekly gap of 5 to 9 days, a monthly one of 25 to 34), so no series is
- * assumed and it holds for rows in none. Rows no cadence holds keep no rhythm a payroll keeps — his 2026, two June ATM
- * lumps and a September payroll lump (gaps 1, 110, 1), is that; so is a skipped week (7, 14, 7), which neither the
+ * ⛔ DETECTION'S RHYTHM, NOT A SLACK OF ITS OWN. The rows keep one when some cadence's step holds every gap
+ * (`gapKeepsStep`: at detection's tolerance a weekly gap of 5 to 9 days, a monthly one of 25 to 34), so no cadence is
+ * assumed and it holds for rows in no series. Rows no cadence holds keep no rhythm a payroll keeps — his 2026, two June
+ * ATM lumps and a September payroll lump (gaps 1, 110, 1), is that; so is a skipped week (7, 14, 7), which neither the
  * week nor the fortnight holds.
+ *
+ * ⚖️ …held to the SERIES' OWN TOLERANCE when one names the line (`toleranceDays`) — the window settlement and the
+ * calendar hold its deposits to — and to detection's for rows in none. 🔴 Held to detection's weekly 2 days, his
+ * Thursday payroll landing on a Sunday read "Deposited irregularly" here while the calendar drew it paid on time
+ * (review of the weekly-payroll label, 2026-10-08). Latent on his ledger: his 2026 holds its June lumps either way.
  *
  * 🔴 It allowed the gaps a SPREAD of 3 days (longest minus shortest), a number of its own. A weekly payday moved a day
  * early one week and a day late the next — Wed, Fri, Wed — has gaps 9 and 5, a spread of 4, so the caveat called a
@@ -523,11 +534,11 @@ export function cashJobNaming(year: number, facts: PayLineFacts): { label: strin
  * and then a day early is 26 days apart, 4 short of 30. The median is gone, and a month's step is the calendar's 28
  * to 31.
  */
-function depositsAreIrregular(postedOn: readonly string[]): boolean {
+function depositsAreIrregular(postedOn: readonly string[], toleranceDays: number | null): boolean {
   const days = [...new Set(postedOn)].sort();
   if (days.length < 3) return false;
   const gaps = days.slice(1).map((day, i) => diffDays(days[i]!, day));
-  return !CADENCES.some((cadence) => gaps.every((gap) => gapKeepsStep(gap, cadence)));
+  return !CADENCES.some((cadence) => gaps.every((gap) => gapKeepsStep(gap, cadence, toleranceDays)));
 }
 
 /**
@@ -545,14 +556,21 @@ function payLineFacts(db: AppDatabase, rows: readonly LineRow[]): PayLineFacts {
   const postedOn = rows.map((r) => r.postedOn);
   const ids = new Set(rows.map((r) => r.recurringSeriesId));
   const [only] = [...ids];
-  if (ids.size !== 1 || only === null || only === undefined) return { seriesName: null, postedOn };
+  if (ids.size !== 1 || only === null || only === undefined) return { seriesName: null, toleranceDays: null, postedOn };
   const series = db
-    .select({ name: recurringSeries.name, kind: recurringSeries.kind, status: recurringSeries.status })
+    .select({
+      name: recurringSeries.name,
+      kind: recurringSeries.kind,
+      status: recurringSeries.status,
+      toleranceDays: recurringSeries.toleranceDays,
+    })
     .from(recurringSeries)
     .where(eq(recurringSeries.id, only))
     .get();
   const named = series !== undefined && series.kind === "income" && seriesNamesPay(series.status);
-  return { seriesName: named ? series.name : null, postedOn };
+  return named
+    ? { seriesName: series.name, toleranceDays: series.toleranceDays, postedOn }
+    : { seriesName: null, toleranceDays: null, postedOn };
 }
 
 export function yearSummaryView(db: AppDatabase, year: number, today: string): YearSummaryView {

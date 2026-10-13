@@ -17,6 +17,11 @@ import { resolveMergeTarget } from "./recurring";
  * the card's live figure, with nothing on screen to say why. His link stays as he wrote it; the READING follows the
  * merge. A carrier merged INTO the series it carries lends nothing: its postings are that series' own now.
  *
+ * ⚖️ …and so do the WORDS: the carrier is named by the live series' own name (`carrierWord`) on every surface — merged
+ * into detection's "Flamingo South Beach", "billed with Flamingo South Beach"; named "… (rent)", "billed with the
+ * rent" again — never the ended rent's word on one surface and the live series' on another (review of §6A 59,
+ * resolved 2026-10-13; pinned in billed-with.test.ts, "after the merge every surface names…").
+ *
  * Two small queries rather than a self-join: `aliasedTable` breaks drizzle's row inference (see `seriesHues`), and on
  * a ledger with no link the second is never asked. The second reads every series, as detection's merge map does — a
  * merge chain can pass through any of them.

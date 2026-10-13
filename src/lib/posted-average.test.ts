@@ -1,6 +1,14 @@
 import { describe, expect, test } from "vitest";
 import { paydayReadings, type PaydayReading } from "./per-payday";
-import { atTodaysRate, occurrencesOf, postedAsWord, postedAverage, readsPerOccurrence } from "./posted-average";
+import {
+  atTodaysRate,
+  nettedToNothing,
+  occurrencesOf,
+  perPaydayEvidence,
+  postedAsWord,
+  postedAverage,
+  readsPerOccurrence,
+} from "./posted-average";
 import type { RateSchedule } from "./series-kind";
 
 /** the day the rate in force is read on — his ledger copy's, 2026-10-12 */
@@ -220,6 +228,45 @@ describe("occurrencesOf — a day's rows are one payment", () => {
 });
 
 /**
+ * ⛔ A day whose rows net to $0.00 paid nothing: a charge and its same-day reversal are no payment — no sample of the
+ * average, no bar of the Amount history, no payment the popover counts — and are named for what they are instead
+ * (`nettedToNothing`). 🔴 Summed as a day, they were one more payment, of $0.00: his rent with a -$50.00 charge and its
+ * reversal on Jul 20 (hypothetical — no day on his ledger nets to $0.00, a copy of it 2026-10-12) averaged -$1,849.76
+ * ± $1,036.68 over five "payments" at 7904ee2 — the very mean a row-by-row reading printed before payments were read.
+ */
+describe("occurrencesOf — a day that nets to $0.00 is no payment", () => {
+  const REVERSED = [
+    ...RENT_ROWS,
+    ...rowsOf([
+      ["2026-07-20", -5_000],
+      ["2026-07-20", 5_000],
+    ]).map((r) => ({ ...r, id: `rev-${r.id}` })),
+  ];
+
+  test("his rent's four payments, without Jul 20's charge and its reversal", () => {
+    expect(occurrencesOf(REVERSED)).toEqual(occurrencesOf(RENT_ROWS));
+    expect(nettedToNothing(REVERSED)).toEqual([{ postedOn: "2026-07-20", amountCents: 0, postings: 2 }]);
+  });
+
+  test("…so the average is the four payments' — -$2,312.20 ± $85.27, not -$1,849.76 over five", () => {
+    expect(postedAverage(REVERSED, PER_OCCURRENCE, FLAT, TODAY)).toEqual({ avgCents: -231_220, stddevCents: 8_527 });
+  });
+
+  test("a charge partly reversed the same day is the payment it nets to", () => {
+    const partly = rowsOf([
+      ["2026-07-20", -5_000],
+      ["2026-07-20", 2_000],
+    ]);
+    expect(occurrencesOf(partly)).toEqual([{ postedOn: "2026-07-20", amountCents: -3_000, postings: 2 }]);
+    expect(nettedToNothing(partly)).toEqual([]);
+  });
+
+  test("a series whose every day paid something has nothing netted", () => {
+    expect(nettedToNothing(RENT_ROWS)).toEqual([]);
+  });
+});
+
+/**
  * Which reading a series' rows take: per payday while it is pay (`readsPerPayday`, untouched), per occurrence for a
  * series with a schedule of charges, and as posted for the rest — money in that has ended, whose rule is the pay rule's
  * (§6A 55), and a series he dismissed, which has no occurrence at all.
@@ -326,5 +373,160 @@ describe("postedAverage — his pay, read per payday", () => {
       avgCents: null,
       stddevCents: null,
     });
+  });
+});
+
+/**
+ * ⚖️ WHAT A PAY SERIES' AVERAGE IS OF, and what it leaves out — the one reading the average and the amount popover's
+ * words take (§6A 55). 🔴 The popover described the rows as they posted: his pay's read "Its 4 tagged postings since
+ * Jun 4, 2026 were 4 different amounts, from $400.00 to $4,567.68 — so any single figure for it is an average, not a
+ * repeat." beside an average of $1,141.92 that every payday at the rate in force paid exactly (a copy of his ledger,
+ * 2026-10-12).
+ */
+describe("perPaydayEvidence — his pay, what the average is of", () => {
+  /* His paydays open on Jun 4 (§6A 55 step B), so Jun 4's cash week is a payday of the earlier rate, paid in full. */
+  test("his ledger with its history set: the lump and Sep 24, each per payday; Jun 4 at an earlier rate", () => {
+    const portions = [...HIS_PORTIONS, { paydayOn: "2026-06-04", depositOn: "2026-06-04", cents: CASH }];
+    const readings = paydayReadings(HIS_ROWS, portions, HIS);
+    expect(perPaydayEvidence(HIS_ROWS, readings, HIS, TODAY)).toEqual({
+      samples: [
+        { postedOn: "2026-09-23", cents: WEEK, paydays: 4, dayCents: WEEK * 4, deposits: 1 },
+        { postedOn: "2026-09-24", cents: WEEK, paydays: 1, dayCents: WEEK, deposits: 1 },
+      ],
+      earlier: 1,
+      later: 0,
+      noPaydayOfTheirOwn: 1,
+      moneyOut: 0,
+      netted: [],
+    });
+  });
+
+  /*
+   * ⛔ Money that paid NO payday is held to no rate (`PaydayReading.expectedCents`): it answers no week, whatever era
+   * its day falls in — so it is no earlier rate's either. 🔴 At 78c21ee the era was read first, and his Jun 5 $400.00
+   * was "at an earlier rate" in the popover while the calendar and the Amount history drew it toward no payday (a copy
+   * of his ledger, 2026-10-12).
+   */
+  test("June's money, toward no payday, is no earlier rate's: it paid no payday of its own", () => {
+    const readings = paydayReadings(HIS_ROWS, HIS_PORTIONS, HIS);
+    expect(readings.get("jun5")).toMatchObject({ towardNoPayday: true, ratePeriod: 0 });
+    const e = perPaydayEvidence(HIS_ROWS, readings, HIS, TODAY);
+    expect([e.earlier, e.later, e.noPaydayOfTheirOwn]).toEqual([0, 0, 2]);
+  });
+
+  /*
+   * ⛔ A payday of a raise recorded AHEAD, paid early — his payroll lands the Wednesday before the Thursday it pays —
+   * is of a LATER era than today's: left out of the average, and never counted as an earlier rate's. 🔴 At 78c21ee
+   * every era but today's was `earlier`, and the popover said Wed Sep 30's $1,200.00 was "before Aug 27, 2026 … at an
+   * earlier rate".
+   */
+  test("a payday of a raise recorded ahead, paid the day before it begins, is a later rate's", () => {
+    const raisedOct1: RateSchedule = {
+      nextExpectedAmountCents: 120_000,
+      amountHistory: [...HIS.amountHistory!, { throughOn: "2026-09-30", amountCents: WEEK }],
+    };
+    const rows = [...HIS_ROWS, { id: "sep30", postedOn: "2026-09-30", amountCents: 120_000 }];
+    const portions = [
+      ...HIS_PORTIONS,
+      { paydayOn: "2026-06-04", depositOn: "2026-06-04", cents: CASH },
+      { paydayOn: "2026-10-01", depositOn: "2026-09-30", cents: 120_000 },
+    ];
+    const readings = paydayReadings(rows, portions, raisedOct1);
+    const e = perPaydayEvidence(rows, readings, raisedOct1, "2026-09-30");
+    expect(e.samples.map((s) => s.postedOn)).toEqual(["2026-09-23", "2026-09-24"]);
+    expect([e.earlier, e.later, e.noPaydayOfTheirOwn]).toEqual([1, 1, 1]);
+    expect(postedAverage(rows, payday(readings), raisedOct1, "2026-09-30").avgCents).toBe(WEEK);
+    // on Oct 1 the raise is in force, and Sep 30's deposit is its one sample
+    const oct1 = perPaydayEvidence(rows, readings, raisedOct1, "2026-10-01");
+    expect(oct1.samples.map((s) => [s.postedOn, s.cents])).toEqual([["2026-09-30", 120_000]]);
+    expect([oct1.earlier, oct1.later, oct1.noPaydayOfTheirOwn]).toEqual([3, 0, 1]);
+  });
+
+  /* With no history there is one era: Jun 4's cash week is a sample of it, and Jun 5's $400.00 paid no payday. */
+  test("one era: Jun 4's week is a sample, and Jun 5's $400.00 paid no payday of its own", () => {
+    const portions = [...HIS_PORTIONS, { paydayOn: "2026-06-04", depositOn: "2026-06-04", cents: CASH }];
+    const e = perPaydayEvidence(HIS_ROWS, paydayReadings(HIS_ROWS, portions, FLAT), FLAT, TODAY);
+    expect(e.samples.map((s) => [s.postedOn, s.cents])).toEqual([
+      ["2026-06-04", CASH],
+      ["2026-09-23", WEEK],
+      ["2026-09-24", WEEK],
+    ]);
+    expect([e.earlier, e.noPaydayOfTheirOwn]).toEqual([0, 1]);
+  });
+
+  /* ⛔ THE UNIT IS THE DAY: a lump and its week on one day are one sample of the day's money, made of two deposits. */
+  test("a lump and the week on one day are one sample, of two deposits and the day's money", () => {
+    const rows = [
+      { id: "lump", postedOn: "2026-09-24", amountCents: WEEK * 4 },
+      { id: "week", postedOn: "2026-09-24", amountCents: WEEK },
+    ];
+    const portions = ["2026-09-24", "2026-09-17", "2026-09-10", "2026-09-03", "2026-08-27"].map((paydayOn) => ({
+      paydayOn,
+      depositOn: "2026-09-24",
+      cents: WEEK,
+    }));
+    const e = perPaydayEvidence(rows, paydayReadings(rows, portions, FLAT), FLAT, TODAY);
+    expect(e).toEqual({
+      samples: [{ postedOn: "2026-09-24", cents: WEEK, paydays: 5, dayCents: WEEK * 5, deposits: 2 }],
+      earlier: 0,
+      later: 0,
+      noPaydayOfTheirOwn: 0,
+      moneyOut: 0,
+      netted: [],
+    });
+  });
+
+  /*
+   * ⛔ MONEY OUT IS NO DEPOSIT, and a day that nets to $0.00 paid nothing (`nettedToNothing`, the rule a bill's
+   * payments are read by): neither is a sample of what a payday paid. 🔴 Read as a deposit, a payroll returned the same
+   * day was a sample of -$1,141.92, and two weeks at $1,141.92 averaged $380.64 (review of 6c59cdb, hypothetical: no
+   * money out is linked to his pay, a copy of his ledger 2026-10-12).
+   */
+  test("a week returned the same day nets to nothing; one returned the day after is money out", () => {
+    const rows = [
+      { id: "sep10", postedOn: "2026-09-10", amountCents: WEEK },
+      { id: "sep17", postedOn: "2026-09-17", amountCents: WEEK },
+      { id: "sep17back", postedOn: "2026-09-17", amountCents: -WEEK },
+      { id: "sep24", postedOn: "2026-09-24", amountCents: WEEK },
+      { id: "sep25back", postedOn: "2026-09-25", amountCents: -WEEK },
+    ];
+    // settlement reads deposits only: each week's deposit pays its own payday
+    const portions = ["2026-09-10", "2026-09-17", "2026-09-24"].map((paydayOn) => ({
+      paydayOn,
+      depositOn: paydayOn,
+      cents: WEEK,
+    }));
+    const readings = paydayReadings(rows, portions, FLAT);
+    expect(perPaydayEvidence(rows, readings, FLAT, TODAY)).toEqual({
+      samples: [
+        { postedOn: "2026-09-10", cents: WEEK, paydays: 1, dayCents: WEEK, deposits: 1 },
+        { postedOn: "2026-09-24", cents: WEEK, paydays: 1, dayCents: WEEK, deposits: 1 },
+      ],
+      earlier: 0,
+      later: 0,
+      noPaydayOfTheirOwn: 0,
+      moneyOut: 1,
+      netted: [{ postedOn: "2026-09-17", amountCents: 0, postings: 2 }],
+    });
+    expect(postedAverage(rows, payday(readings), FLAT, TODAY)).toEqual({ avgCents: WEEK, stddevCents: 0 });
+  });
+
+  /* ⛔ ONE READING: the average is the mean of exactly these samples, whatever the rows. */
+  test("the average averages exactly its samples", () => {
+    const rows = [
+      ...HIS_ROWS,
+      { id: "oct1", postedOn: "2026-10-01", amountCents: WEEK },
+      { id: "oct8", postedOn: "2026-10-08", amountCents: 120_000 },
+    ];
+    const portions = [
+      ...HIS_PORTIONS,
+      { paydayOn: "2026-10-01", depositOn: "2026-10-01", cents: WEEK },
+      { paydayOn: "2026-10-08", depositOn: "2026-10-08", cents: 120_000 },
+    ];
+    const readings = paydayReadings(rows, portions, HIS);
+    const { samples } = perPaydayEvidence(rows, readings, HIS, TODAY);
+    const mean = samples.reduce((sum, s) => sum + s.cents, 0) / samples.length;
+    expect(postedAverage(rows, payday(readings), HIS, TODAY).avgCents).toBe(Math.round(mean));
+    expect(samples).toHaveLength(4);
   });
 });

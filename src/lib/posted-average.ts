@@ -66,7 +66,7 @@ export function postedAverage(
 ): PostedAverage {
   const samples =
     reading.per === "payday"
-      ? perPaydaySamples(rows, reading.readings, schedule, today)
+      ? perPaydayEvidence(rows, reading.readings, schedule, today).samples.map((s) => s.cents)
       : reading.per === "occurrence"
         ? atTodaysRate(occurrencesOf(rows), schedule, today).map((o) => o.amountCents)
         : rows.map((r) => r.amountCents);
@@ -78,24 +78,123 @@ export function postedAverage(
 }
 
 /**
- * What each payday of the rate era in force now (`currentRatePeriod` — today's) paid: the calendar's spread samples,
- * held to today's rate. ⚖️ One "in force now" for pay and bills (§6A 55, §6A 63): a raise recorded before its first
- * day is not in force until then, and the weeks paid at the rate that is still average.
+ * One sample of a pay series read per payday: a deposit DAY whose money paid a payday on its own, read as the calendar
+ * holds it to the expectation (`spreadSampleCents`) — a week, a lump at what each of its paydays was paid, or a day's
+ * deposits read together (`PaydayReading.perPayday`, "the unit is the day").
  */
-function perPaydaySamples(
+export interface PaydaySample {
+  /** the deposit's day */
+  postedOn: string;
+  /** what it paid per payday — the posted average's sample */
+  cents: number;
+  /** the paydays its money paid on its own: 1 for a week */
+  paydays: number;
+  /** what its day's deposits came to — the row itself when it stood alone */
+  dayCents: number;
+  /** the deposits that made it: 1 for a deposit alone on its day */
+  deposits: number;
+}
+
+/**
+ * ⚖️ What a pay series' posted average is OF, and what it leaves out (§6A 55) — ONE reading for the average
+ * (`postedAverage`) and the amount popover's words (`SeriesPostedAverage.perPayday`), so the words cannot count or
+ * range a row the average leaves out. 🔴 They described the rows as they posted: his pay's popover read "Its 4 tagged
+ * postings since Jun 4, 2026 were 4 different amounts, from $400.00 to $4,567.68 — so any single figure for it is an
+ * average, not a repeat." beside an average of $1,141.92 that every payday at the rate in force paid exactly (a copy of
+ * his ledger, 2026-10-12).
+ */
+export interface PerPaydayEvidence {
+  /** what each deposit day of the rate era in force now paid per payday, oldest first — what the average averages */
+  samples: readonly PaydaySample[];
+  /** tagged rows that paid paydays of an EARLIER rate era — each held to its own time's rate, and not averaged */
+  earlier: number;
+  /**
+   * tagged rows that paid paydays of a LATER rate era — a raise recorded ahead, whose first week's pay landed while
+   * the old rate is in force — held to that rate, and not averaged until it is in force
+   */
+  later: number;
+  /**
+   * tagged rows whose money paid no payday of its own: toward none at all, of any era — held to no rate, so of none
+   * (`PaydayReading.expectedCents`) — or part of one of the era in force now
+   */
+  noPaydayOfTheirOwn: number;
+  /** tagged rows of money out, on a day that did not net to $0.00 — no deposit, so no payday's pay, of any era */
+  moneyOut: number;
+  /**
+   * The days whose tagged rows net to $0.00, oldest first (`nettedToNothing`, the rule a bill's payments are read by):
+   * a payroll and its same-day return paid nothing, and none of their rows is counted above — named instead, so the
+   * words still account for every row.
+   */
+  netted: readonly Occurrence[];
+}
+
+/**
+ * The samples of the rate era in force now (`currentRatePeriod` — today's), and the rows left out. ⚖️ One "in force
+ * now" for pay and bills (§6A 55, §6A 63): a raise recorded before its first day is not in force until then, and the
+ * weeks paid at the rate that is still average.
+ *
+ * ⛔ Money toward no payday first: it answers no week, so no era's rate is what it is held to — and the words call it
+ * what the calendar and the Amount history draw it, "toward no payday". 🔴 Read by its era first, his Jun 5 $400.00
+ * was "at an earlier rate" in the popover (a copy of his ledger, 2026-10-12), and "paid no payday on its own" with
+ * no history written. ⛔ …then an era's DIRECTION: a deposit pays the era of the payday it anchors to, which can
+ * begin after today (`depositEra`). 🔴 Every era but today's was `earlier`, and a Wednesday's pay for a raise
+ * beginning Thursday read "before Aug 27, 2026 … at an earlier rate" (review of 78c21ee).
+ *
+ * ⛔ And before any of it, a day whose rows net to $0.00 paid nothing (`nettedToNothing` — ONE rule, a bill's and his
+ * pay's), and money out is no deposit (`moneyOut`): neither is a sample, nor any era's. 🔴 A payroll returned the same
+ * day was a "-$1,141.92" deposit: two weeks at $1,141.92 averaged $380.64 on the page, the All tab and the popover,
+ * "from -$1,141.92 to $1,141.92" (review of 6c59cdb, hypothetical: no money out is linked to his pay).
+ */
+export function perPaydayEvidence(
   rows: readonly ReadableRow[],
   readings: ReadonlyMap<string, PaydayReading>,
   schedule: Pick<RateSchedule, "amountHistory">,
   today: string,
-): number[] {
+): PerPaydayEvidence {
   const now = currentRatePeriod(schedule, today);
-  return rows.flatMap((r) => {
+  const netted = nettedToNothing(rows);
+  const paidNothing = new Set(netted.map((o) => o.postedOn));
+  const counted = rows.filter((r) => !paidNothing.has(r.postedOn));
+  // a day's deposits, read together where settlement saw them as one (`PerPayday.deposits`)
+  const days = new Map<string, { cents: number; deposits: number }>();
+  for (const r of counted.filter((row) => row.amountCents > 0)) {
+    const day = days.get(r.postedOn);
+    days.set(r.postedOn, { cents: (day?.cents ?? 0) + r.amountCents, deposits: (day?.deposits ?? 0) + 1 });
+  }
+  const samples: PaydaySample[] = [];
+  let earlier = 0;
+  let later = 0;
+  let moneyOut = 0;
+  for (const r of counted) {
     const reading = readings.get(r.id);
+    // money that paid no payday is no era's (`noPaydayOfTheirOwn`, below)
+    if (reading?.towardNoPayday === true) continue;
+    // …and money out is no deposit: no payday's pay, of any era
+    if (r.amountCents <= 0) {
+      moneyOut += 1;
+      continue;
+    }
     // a row with no reading is held on its own day, as `expectedCentsOf` holds it
-    if ((reading?.ratePeriod ?? ratePeriodOf(schedule, r.postedOn)) !== now) return [];
-    const sample = spreadSampleCents(r.amountCents, reading);
-    return sample === null ? [] : [sample];
-  });
+    const era = reading?.ratePeriod ?? ratePeriodOf(schedule, r.postedOn);
+    if (era < now) earlier += 1;
+    if (era > now) later += 1;
+    if (era !== now) continue;
+    const cents = spreadSampleCents(r.amountCents, reading);
+    if (cents === null) continue;
+    const per = reading?.perPayday ?? null;
+    const day = per?.deposits === undefined ? { cents: r.amountCents, deposits: 1 } : days.get(r.postedOn)!;
+    const { cents: dayCents, deposits } = day;
+    samples.push({ postedOn: r.postedOn, cents, paydays: per?.paydays ?? 1, dayCents, deposits });
+  }
+  const sampled = samples.reduce((n, s) => n + s.deposits, 0);
+  return {
+    samples: samples.sort((a, b) => compareDates(a.postedOn, b.postedOn)),
+    earlier,
+    later,
+    noPaydayOfTheirOwn: counted.length - earlier - later - moneyOut - sampled,
+    moneyOut,
+    netted,
+  };
 }
 
 /** One payment of a series read per occurrence: its day, what it paid, and how many rows the bank posted it as. */
@@ -118,8 +217,27 @@ export interface Occurrence {
  * no due day of the calendar's is paid by Jun 16 at all. 🔴 Read as rows within the tolerance of a payment's first,
  * separate charges became one: on the e2e fixture after "Detect now", Chipotle's visits of Sep 19 and 21, 2025 (and
  * four more pairs) and Sweetgreen's lunches of Jan 20, 21 and 22, 2026 — each one sample of two or three meals.
+ *
+ * ⛔ A day whose rows net to $0.00 paid nothing — a charge and its same-day reversal — and is no payment: no sample, no
+ * bar, none the popover counts (`nettedToNothing` names it instead). 🔴 Summed as a day it was a payment of $0.00: his
+ * rent with a hypothetical -$50.00 charged and reversed on Jul 20 read "posted avg -$1,849.76 ± $1,036.68" over five.
  */
 export function occurrencesOf(rows: readonly Pick<ReadableRow, "postedOn" | "amountCents">[]): Occurrence[] {
+  return daysOf(rows).filter((o) => o.amountCents !== 0);
+}
+
+/**
+ * The days whose rows net to $0.00, oldest first — a charge and its same-day reversal: tagged postings that paid no
+ * payment (`occurrencesOf` leaves them out), named where the rows are counted so they still add up. ⛔ ONE rule: a pay
+ * series' days too — a payroll and its same-day return paid no payday (`PerPaydayEvidence.netted`). None on his
+ * ledger (a copy of it, 2026-10-12).
+ */
+export function nettedToNothing(rows: readonly Pick<ReadableRow, "postedOn" | "amountCents">[]): Occurrence[] {
+  return daysOf(rows).filter((o) => o.amountCents === 0);
+}
+
+/** A day's rows summed, one per day, oldest first — what `occurrencesOf` and `nettedToNothing` divide between them. */
+function daysOf(rows: readonly Pick<ReadableRow, "postedOn" | "amountCents">[]): Occurrence[] {
   const byDay = new Map<string, Occurrence>();
   for (const r of rows) {
     const o = byDay.get(r.postedOn);

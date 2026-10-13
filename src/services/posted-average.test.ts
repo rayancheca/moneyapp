@@ -139,8 +139,13 @@ describe("the posted average, per occurrence — his rent on the page, the All t
     expect(rowMean.headline).toContain("were -$50.00, exactly. None of the 3 paid the -$37.50 forecast here.");
   });
 
-  /* a day's rows that are the series' only payment are one payment — never "All 1 payments" */
-  test("three rows of one day read as one payment, in the singular", () => {
+  /*
+   * A day's rows that are the series' only payment are one payment — never "All 1 payments" — and ONE payment is what
+   * the anecdote gate counts (§6A 63's count, with or without a rate change): the badge, the grade and the sentence
+   * all say one. 🔴 Gated on its three rows, it read "paid -$25.00 each time" and "It did not pay the -$8.33 forecast
+   * here" — a repeat, of a payment made once (this test at 7904ee2).
+   */
+  test("three rows of one day read as one payment, in the singular — and are graded as one", () => {
     const { id } = bundle.db
       .insert(recurringSeries)
       .values({ name: "Parking", kind: "bill", cadence: "monthly", status: "confirmed", toleranceDays: 3 })
@@ -148,16 +153,162 @@ describe("the posted average, per occurrence — his rent on the page, the All t
       .get();
     for (const c of [-1_000, -1_000, -500]) rent.charge("2026-09-05", c, id);
     const p = provenanceFor(bundle.db, { kind: "recurringSeries", id, today: TODAY })!;
-    expect(p.headline).toContain("Its 3 tagged postings are one payment, of -$25.00 on Sep 5, 2026.");
+    expect(p.headline).toContain(
+      "Its 3 tagged postings are one payment, of -$25.00 on Sep 5, 2026. That is one payment — below the 3 this app " +
+        "requires before calling a repeat a pattern, so it is an anecdote rather than a statistic.",
+    );
     expect(p.sources[0]).toMatchObject({
       label: "3 tagged postings in the ledger",
       detail: "one payment (Sep 5's posted as 3): it was -$25.00",
     });
-    // …and beside a forecast it did not pay — the three rows' mean, as detection reads them — says so, singular too
+    // …and beside a forecast it did not pay — the three rows' mean, as detection reads them — one payment still
     bundle.db.update(recurringSeries).set({ nextExpectedAmountCents: -833 }).where(eq(recurringSeries.id, id)).run();
     const off = provenanceFor(bundle.db, { kind: "recurringSeries", id, today: TODAY })!;
-    expect([off.verdict, off.badgeWord]).toEqual(["unverified", "paid -$25.00 each time"]);
-    expect(off.headline).toContain("of -$25.00 on Sep 5, 2026. It did not pay the -$8.33 forecast here.");
+    expect([off.verdict, off.badgeWord]).toEqual(["unverified", "seen once"]);
+    expect(off.headline).not.toMatch(/each time|did not pay/);
+  });
+
+  /*
+   * ⛔ ONE COUNT, PAYMENTS: the gate, the badge and the sentence count what the average averages — with a rate change
+   * (§6A 63) and without one. 🔴 Gated on rows at 7904ee2, three rows of two payments of -$50.00 read "adds up", no
+   * badge, beside "All 2 payments since Jun 5, 2026 … were -$50.00, exactly" — while the same two payments after a
+   * rate change read "seen 2 times at the new rate".
+   */
+  test("two payments of three rows are two: 'seen 2 times', and the sentence says why", () => {
+    const { id } = bundle.db
+      .insert(recurringSeries)
+      .values({
+        name: "Breezeline",
+        kind: "bill",
+        cadence: "monthly",
+        status: "confirmed",
+        toleranceDays: 3,
+        nextExpectedAmountCents: -5_000,
+      })
+      .returning({ id: recurringSeries.id })
+      .get();
+    for (const [day, c] of [
+      ["2026-06-05", -5_000],
+      ["2026-07-05", -2_000],
+      ["2026-07-05", -3_000],
+    ] as const)
+      rent.charge(day, c, id);
+    const p = provenanceFor(bundle.db, { kind: "recurringSeries", id, today: TODAY })!;
+    expect([p.verdict, p.badgeWord]).toEqual(["unverified", "seen 2 times"]);
+    expect(p.headline).toContain(
+      "Both payments since Jun 5, 2026 (3 tagged postings: Jul 5's posted as 2) were -$50.00, exactly. That is 2 " +
+        "payments — below the 3 this app requires before calling a repeat a pattern, so it is an anecdote rather " +
+        "than a statistic.",
+    );
+  });
+
+  /*
+   * ⛔ A charge and its same-day reversal paid NOTHING: no payment the average averages, no bar of the Amount history,
+   * none the popover counts — named instead, so the rows still add up to the documents. Hypothetical: no day on his
+   * ledger nets to $0.00 (a copy of it, 2026-10-12). 🔴 Summed as a day they were a $0.00 payment: at 7904ee2 the
+   * rent's page read "posted avg -$1,849.76 ± $1,036.68" over five "payments".
+   */
+  test("a charge and its same-day reversal are no payment — on the page, the All tab, the history, the popover", () => {
+    rent.charge("2026-07-20", -5_000, rent.rentId);
+    rent.charge("2026-07-20", 5_000, rent.rentId);
+    const s = surfaces(rent.rentId);
+    expect(s.page.slice(0, 2)).toEqual([-231_220, 8_527]);
+    expect(s.allTab[0]).toBe(-231_220);
+    expect(seriesDetail(bundle.db, rent.rentId, TODAY)!.amountHistory.map((h) => h.date)).toEqual([
+      "2026-06-16",
+      "2026-07-08",
+      "2026-08-04",
+      "2026-09-02",
+    ]);
+    const p = provenanceFor(bundle.db, { kind: "recurringSeries", id: rent.rentId, today: TODAY })!;
+    expect(p.headline).toContain(
+      "Its 4 payments since Jun 16, 2026 (5 tagged postings: Jun 16's posted as 2) were 4 different amounts, from " +
+        "-$2,434.80 to -$2,237.11 — so any single figure for it is an average, not a repeat. Nothing stayed paid on " +
+        "Jul 20: its 2 tagged postings net to $0.00, and are not counted.",
+    );
+    expect(p.sources[1]).toMatchObject({
+      label: "7 tagged postings in the ledger",
+      detail:
+        "4 payments (Jun 16's posted as 2): 4 different amounts, -$2,434.80 to -$2,237.11 · 2 on Jul 20, netting to " +
+        "$0.00",
+    });
+  });
+
+  /* …and a bill whose every payment was -$50.00 still "adds up" around one that was charged and reversed */
+  test("three payments of -$50.00 and a reversed charge: still a repeat that adds up", () => {
+    const { id } = bundle.db
+      .insert(recurringSeries)
+      .values({
+        name: "Breezeline",
+        kind: "bill",
+        cadence: "monthly",
+        status: "confirmed",
+        toleranceDays: 3,
+        nextExpectedAmountCents: -5_000,
+      })
+      .returning({ id: recurringSeries.id })
+      .get();
+    for (const [day, c] of [
+      ["2026-06-05", -5_000],
+      ["2026-07-05", -5_000],
+      ["2026-07-20", -5_000],
+      ["2026-07-20", 5_000],
+      ["2026-08-05", -5_000],
+    ] as const)
+      rent.charge(day, c, id);
+    const p = provenanceFor(bundle.db, { kind: "recurringSeries", id, today: TODAY })!;
+    expect([p.verdict, p.badgeWord]).toEqual(["derived", undefined]);
+    expect(p.headline).toContain(
+      "All 3 payments since Jun 5, 2026 were -$50.00, exactly. Nothing stayed paid on Jul 20: its 2 tagged postings " +
+        "net to $0.00, and are not counted.",
+    );
+    expect(p.sources[0]).toMatchObject({
+      label: "5 tagged postings in the ledger",
+      detail: "3 payments: every one of them -$50.00 · 2 on Jul 20, netting to $0.00",
+    });
+    expect(seriesDetail(bundle.db, id, TODAY)!.amountHistory.map((h) => h.amountCents)).toEqual([
+      -5_000, -5_000, -5_000,
+    ]);
+  });
+
+  /* …and a series whose only charge was reversed has no payment, no average, and says so — then one payment beside */
+  test("a charge reversed the same day: no payment, no average — and beside one payment, every row named", () => {
+    const { id } = bundle.db
+      .insert(recurringSeries)
+      .values({ name: "Gym", kind: "subscription", cadence: "monthly", status: "confirmed", toleranceDays: 3 })
+      .returning({ id: recurringSeries.id })
+      .get();
+    rent.charge("2026-09-05", -4_000, id);
+    rent.charge("2026-09-05", 4_000, id);
+    const d = seriesDetail(bundle.db, id, TODAY)!;
+    expect([d.postedAvgCents, d.postedStddevCents, d.amountHistory]).toEqual([null, null, []]);
+    const p = provenanceFor(bundle.db, { kind: "recurringSeries", id, today: TODAY })!;
+    expect([p.verdict, p.badgeWord]).toEqual(["unverified", undefined]);
+    expect(p.headline).toContain(
+      "No payment of it has posted. Nothing stayed paid on Sep 5: its 2 tagged postings net to $0.00, and are not " +
+        "counted.",
+    );
+    expect(p.sources[0]).toMatchObject({
+      label: "2 tagged postings in the ledger",
+      detail: "no payment · 2 on Sep 5, netting to $0.00",
+    });
+    expect(JSON.stringify(p)).not.toMatch(/undefined|NaN|Infinity/);
+
+    // …then one payment, and another charge reversed: one payment, two days that paid nothing — every row named
+    rent.charge("2026-10-05", -4_000, id);
+    rent.charge("2026-10-06", -4_000, id);
+    rent.charge("2026-10-06", 4_000, id);
+    const later = provenanceFor(bundle.db, { kind: "recurringSeries", id, today: TODAY })!;
+    expect([later.verdict, later.badgeWord]).toEqual(["unverified", "seen once"]);
+    expect(later.headline).toContain(
+      "Its one payment was -$40.00, on Oct 5, 2026. That is one payment — below the 3 this app requires before " +
+        "calling a repeat a pattern, so it is an anecdote rather than a statistic. Nothing stayed paid on Sep 5 and " +
+        "Oct 6: their 4 tagged postings net to $0.00 a day, and are not counted.",
+    );
+    expect(later.sources[0]).toMatchObject({
+      label: "5 tagged postings in the ledger",
+      detail: "one payment: it was -$40.00 · 4 on Sep 5 and Oct 6, netting to $0.00 a day",
+    });
   });
 
   test("the utilities carry nothing, and once unlinked the rent carries nothing either", () => {
@@ -282,13 +433,28 @@ describe("the posted average of a bill with a rate history — the payments at t
     const avg = cents(/actually posted is (-?\$[\d,.]+[\d])/.exec(p.headline)![1]!);
     expect(avg).toBeGreaterThanOrEqual(cents(lo!));
     expect(avg).toBeLessThanOrEqual(cents(hi!));
-    // the documents are still five rows; what they paid is counted as the average counts it
+    /*
+     * the documents are still five rows; what they paid is counted as the average counts it — and the line adds up to
+     * them: 2 payments + 2 before it, one of which the card posted as two. 🔴 At 7904ee2 it read "· 2 before it, at an
+     * earlier rate" under "5 tagged postings": four of the five accounted for.
+     */
     expect(p.sources[1]).toMatchObject({
       label: "5 tagged postings in the ledger",
       detail:
-        "2 payments at the rate in force since Aug 1: 2 different amounts, -$2,291.21 to -$2,237.11 · 2 before it, " +
-        "at an earlier rate",
+        "2 payments at the rate in force since Aug 1: 2 different amounts, -$2,291.21 to -$2,237.11 · 2 before it " +
+        "(Jun 16's posted as 2), at an earlier rate",
       on: "2026-06-16",
+    });
+  });
+
+  /* …and with only Jun 16's payment of two rows before the change: 3 payments + 1 before it of 2 rows = 5 */
+  test("raised Jul 1: the one payment before it, posted as two, is named — the line adds up to five", () => {
+    raise("2026-06-30");
+    expect(surfaces().popover.sources[1]).toMatchObject({
+      label: "5 tagged postings in the ledger",
+      detail:
+        "3 payments at the rate in force since Jul 1: 3 different amounts, -$2,291.21 to -$2,237.11 · 1 before it " +
+        "(Jun 16's posted as 2), at an earlier rate",
     });
   });
 
@@ -326,9 +492,10 @@ describe("the posted average of a bill with a rate history — the payments at t
       "Its 4 payments before Oct 1, 2026 were at an earlier rate, and nothing has posted at the rate in force since — " +
         "so there is no average of it yet.",
     );
+    // five rows: four payments, Jun 16's posted as two
     expect(s.popover.sources[1]).toMatchObject({
       label: "5 tagged postings in the ledger",
-      detail: "4 payments, all before Oct 1, at an earlier rate",
+      detail: "4 payments (Jun 16's posted as 2), all before Oct 1, at an earlier rate",
       on: "2026-06-16",
     });
     expect(JSON.stringify(s.popover)).not.toMatch(/undefined|NaN|Infinity/);
@@ -362,10 +529,42 @@ describe("the posted average of a bill with a rate history — the payments at t
     const s = surfaces();
     expect(s.page).toEqual([-231_220, 8_527]);
     expect(s.allTab).toBe(-231_220);
-    expect(s.popover.headline).toContain("average of what actually posted is -$2,312.20, which is not what you set");
+    /*
+     * ⛔ …held to the rate he set for TODAY, the rate it is the average of — and named, since it is not the -$2,300.00
+     * on screen. 🔴 Held to the -$2,300.00 not in force yet, an average AT -$2,300.00 would have read "which is not
+     * what you set" beside it, and one at -$2,109.00 the same (review of 6c59cdb, hypothetical).
+     */
+    expect(s.popover.headline).toContain(
+      "average of what actually posted is -$2,312.20, which is not the -$2,109.00 you set through Oct 31, 2026 — its " +
+        "payments carry Rent utilities & fees too.",
+    );
     expect(s.popover.headline).toContain("Its 4 payments since Jun 16, 2026 (5 tagged postings: Jun 16's posted as 2)");
     expect(JSON.stringify(s.popover)).not.toMatch(/Nov 1|earlier rate|no average of it yet/);
     expect(s.detail.amountHistory.map((h) => h.expectedCents)).toEqual([-210_900, -210_900, -210_900, -210_900]);
+  });
+
+  /* …and a bill that paid exactly the rate in force, its rise recorded ahead: no disagreement to warn of */
+  test("a rise recorded from Nov 1: payments of the -$50.00 in force now disagree with nothing", () => {
+    const { id } = bundle.db
+      .insert(recurringSeries)
+      .values({
+        name: "Breezeline",
+        kind: "bill",
+        cadence: "monthly",
+        status: "confirmed",
+        toleranceDays: 3,
+        userAmountCents: -5_500,
+        userAmountHistory: [{ throughOn: "2026-10-31", amountCents: -5_000 }],
+      })
+      .returning({ id: recurringSeries.id })
+      .get();
+    for (const day of ["2026-07-05", "2026-08-05", "2026-09-05"]) rent.charge(day, -5_000, id);
+    const p = provenanceFor(bundle.db, { kind: "recurringSeries", id, today: TODAY })!;
+    // 🔴 held to the -$55.00 not in force yet: "⚠️ … is -$50.00, which is not what you set." (at 6c59cdb)
+    expect(p.headline).toContain("All 3 tagged postings since Jul 5, 2026 were -$50.00, exactly.");
+    expect(p.headline).not.toContain("⚠️");
+    // the rate on screen is still the one he set from Nov 1 — the average line names the -$50.00 under it
+    expect(seriesDetail(bundle.db, id, TODAY)!.postedAvgCents).toBe(-5_000);
   });
 
   /* …and with a period before it too, the rate in force is the middle one: Aug 4's and Sep 2's payments */

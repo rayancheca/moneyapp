@@ -65,6 +65,11 @@ export interface PaydayReading {
    * False, too, for every deposit of a day read per payday but its first: the
    * day is one sample, and one row carries it — and for a row whose day's money
    * paid no payday at all (`towardNoPayday`).
+   *
+   * ⛔ False for money out: it is no deposit, and paid no payday. 🔴 A sample, a -$50.00 clawback linked to his pay
+   * was a residual of -$1,191.92 in the calendar's spread — a band that read a $1,200.00 week `paid` — and a payroll
+   * returned the same day a "-$1,141.92" deposit of the posted average, $380.64 beside two weeks at $1,141.92 (review
+   * of 6c59cdb, hypothetical: no money out is linked to his pay, a copy of his ledger 2026-10-12).
    */
   isPaydaySample: boolean;
   /**
@@ -172,8 +177,8 @@ function firstPaydayByDeposit(portions: readonly SettlementPortion[]): ReadonlyM
  * Each row's reading, from the series' settlement (`portions`), held to the
  * series' rate at the payday it paid (`schedule`, `rateOn`).
  *
- * Read as the one amount it is: money out (settlement reads deposits only), and
- * a day's deposits whose money paid no payday on its own (`dayPerPayday`).
+ * Read as the one amount it is: money out (settlement reads deposits only), no sample of what a payday pays,
+ * and a day's deposits whose money paid no payday on its own (`dayPerPayday`).
  */
 export function paydayReadings(
   rows: readonly ReadableRow[],
@@ -194,7 +199,7 @@ export function paydayReadings(
         r.id,
         {
           perPayday: null,
-          isPaydaySample: true,
+          isPaydaySample: false,
           expectedCents: rateOn(schedule, r.postedOn),
           ratePeriod: ratePeriodOf(schedule, r.postedOn),
           towardNoPayday: false,

@@ -1,7 +1,7 @@
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, test } from "vitest";
-import { AmountHistoryChart } from "./AmountHistoryChart";
+import { AmountHistoryChart, AmountTooltip } from "./AmountHistoryChart";
 
 const decode = (s: string): string =>
   s.replace(/&quot;/g, '"').replace(/&#x27;/g, "'").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&");
@@ -131,5 +131,44 @@ describe("AmountHistoryChart — a deposit whose money paid no payday, in the ta
     ]);
     expect(html).toContain("against the expected $1,141.92");
     expect(rowIn(html, "Sep 18, 2026")).toContain("toward no payday");
+  });
+});
+
+/**
+ * ⛔ A BAR'S TOOLTIP SAYS WHAT ITS TABLE ROW SAYS (`paymentWord`): a bar that sums a day's rows is "one payment, posted
+ * as 2", so the linked list's two Jun 16 rows read as this one bar. 🔴 Untested at 7904ee2 — only the table lens's row
+ * was pinned (`SeriesDetail.test`), and recharts draws the tooltip on hover alone, where no static render reaches it.
+ */
+describe("AmountTooltip — what one bar's hover card says", () => {
+  const RENT = -210900;
+  const render = (point: Parameters<typeof AmountTooltip>[0]["point"]): string =>
+    decode(renderToStaticMarkup(createElement(AmountTooltip, { point })));
+  const jun16 = {
+    date: "2026-06-16",
+    amountCents: -243480,
+    perPayday: null,
+    comparableCents: -243480,
+    expectedCents: RENT,
+    towardNoPayday: false,
+  };
+
+  test("his rent's Jun 16 bar: one payment the card posted as two, against the rate", () => {
+    const html = render({ ...jun16, postings: 2 });
+    expect(html).toContain("-$2,434.80");
+    expect(html).toContain("one payment, posted as 2");
+    expect(html).toContain("expected -$2,109.00");
+  });
+
+  test("a payment posted whole says nothing of postings", () => {
+    expect(render({ ...jun16, postings: 1 })).not.toContain("posted as");
+    expect(render(jun16)).not.toContain("posted as");
+  });
+
+  test("a lump of pay says its paydays, and money toward no payday says so", () => {
+    const lump = { ...jun16, amountCents: WEEK * 4, perPayday: { paydays: 4, cents: WEEK }, comparableCents: WEEK };
+    expect(render({ ...lump, expectedCents: WEEK })).toContain("4 paydays at $1,141.92 each");
+    const none = { ...jun16, amountCents: 40000, comparableCents: 40000, expectedCents: null, towardNoPayday: true };
+    expect(render(none)).toContain("toward no payday");
+    expect(render(none)).not.toContain("expected");
   });
 });

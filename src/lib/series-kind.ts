@@ -89,6 +89,17 @@ export function currentRateSince(series: Pick<RateSchedule, "amountHistory">, to
 }
 
 /**
+ * The first day of the rate recorded AFTER the one in force now — the day after today's period ends; null when none
+ * is recorded ahead, as on every series of his ledger (a copy of it, 2026-10-12). Where the popover dates a pay
+ * deposit that paid a payday of it early (`PerPaydayEvidence.later`): his payroll lands the Wednesday before the
+ * Thursday it pays, so the deposit for a raise's first week arrives while the old rate is still in force.
+ */
+export function nextRateSince(series: Pick<RateSchedule, "amountHistory">, today: string): string | null {
+  const now = series.amountHistory?.[currentRatePeriod(series, today)];
+  return now === undefined ? null : addDays(now.throughOn, 1);
+}
+
+/**
  * What one occurrence of a series is worth on `day`, net-worth-signed: the first past period that runs through it,
  * else the rate in force now. ⚖️ Each payday is measured against its OWN time's rate (owner decision 2026-10-08,
  * §6A 55) — his cash weeks through Aug 26 at $1,047.00, Aug 27 on at $1,141.92. 🔴 With one amount for all time, the
