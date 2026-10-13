@@ -1,8 +1,18 @@
 "use client";
 
-import { useState, useTransition } from "react";
-import { BENCHMARK_PRESETS, NO_BENCHMARK, isBenchmarkOff, normalizeBenchmarkSymbol } from "@/lib/benchmark-symbol";
+import { useCallback, useState, useTransition } from "react";
+import {
+  BENCHMARK_PRESETS,
+  NO_BENCHMARK,
+  isBenchmarkOff,
+  normalizeBenchmarkChoice,
+  normalizeBenchmarkSymbol,
+} from "@/lib/benchmark-symbol";
+import { pressWriteLanding } from "@/lib/page-asks";
 import { setBenchmarkAction } from "@/app/investments/actions";
+import type { ActionResult } from "@/app/transactions/action-types";
+import { settleAction } from "@/hooks/useAction";
+import { usePageAsks } from "@/hooks/usePageAsks";
 
 /**
  * The Return views' benchmark picker (Robinhood-parity item 4): the preset
@@ -28,25 +38,81 @@ interface BenchmarkPickerProps {
   hasData: boolean;
 }
 
-export function BenchmarkPicker({ value, onPicked, hasData }: BenchmarkPickerProps) {
+export interface BenchmarkPick {
+  /** persist `symbol`, then go to the chart with it (`onPicked`); `onKept` runs as it goes */
+  pick: (symbol: string, onKept?: () => void) => void;
+  isPending: boolean;
+  /** why the last pick was refused, or the picker's own reason; null when there is none */
+  error: string | null;
+  setError: (error: string | null) => void;
+}
+
+type Kept = ActionResult<{ symbol: string }>;
+
+/**
+ * A benchmark pick: its action persists the symbol (or refuses it, with the reason), then `onPicked` goes to the
+ * chart with the symbol it kept.
+ *
+ * ⚖️ B2: Next queues the action behind a save of Back's view that is being written, so it waits on it no longer than
+ * BACK_SAVE_WAIT_MS while that save hangs — the bound a view press has (`pressWriteLanding`). Cut short, it goes to
+ * the symbol he picked, which its URL carries as a press's carries its view (through `onPicked`, a URL writer, which
+ * waits on Back's saves its own BACK_SAVE_WAIT_MS), and again once the action answers: the symbol it kept, or why it
+ * was refused. 🔴 Unbounded (review of ab13868, 2026-10-13), a pick made while Back's save hung was never drawn and
+ * its picker stayed disabled — and, since it waits inside its transition, a link he followed next was never drawn
+ * either (React holds every navigation until that transition settles). With nothing in flight, or once Back's saves
+ * land in time, it waits on its action however long (a ticker's two years of closes are fetched first), as ever.
+ */
+export function useBenchmarkPick(onPicked: (symbol: string) => void): BenchmarkPick {
+  const asks = usePageAsks();
   const [isPending, startTransition] = useTransition();
+  const [error, setError] = useState<string | null>(null);
+
+  const pick = useCallback(
+    (symbol: string, onKept?: () => void): void => {
+      setError(null);
+      startTransition(async () => {
+        const answer: { result?: Kept } = {};
+        const kept = settleAction(() => setBenchmarkAction(symbol), "Couldn't set the benchmark").then((result) => {
+          answer.result = result;
+          return result;
+        });
+        const answered = (result: Kept): void => {
+          if (!result.ok) {
+            setError(result.error);
+            return;
+          }
+          onKept?.();
+          onPicked(result.data.symbol);
+        };
+        await (asks === null ? kept : pressWriteLanding(asks, kept, () => void kept.then(answered)));
+        if (answer.result !== undefined) {
+          answered(answer.result);
+          return;
+        }
+        // cut short: the symbol he picked, as the action will read it — its answer follows once it lands
+        const asked = normalizeBenchmarkChoice(symbol);
+        if (asked === null) return;
+        onKept?.();
+        onPicked(asked);
+      });
+    },
+    [asks, onPicked],
+  );
+
+  return { pick, isPending, error, setError };
+}
+
+export function BenchmarkPicker({ value, onPicked, hasData }: BenchmarkPickerProps) {
   const [customOpen, setCustomOpen] = useState(false);
   const [customText, setCustomText] = useState("");
-  const [error, setError] = useState<string | null>(null);
+  const { pick: pickSymbol, isPending, error, setError } = useBenchmarkPick(onPicked);
   const isPreset = BENCHMARK_PRESETS.some((p) => p.symbol === value);
   const isOff = isBenchmarkOff(value);
 
   function pick(symbol: string): void {
-    setError(null);
-    startTransition(async () => {
-      const result = await setBenchmarkAction(symbol);
-      if (!result.ok) {
-        setError(result.error);
-        return;
-      }
+    pickSymbol(symbol, () => {
       setCustomOpen(false);
       setCustomText("");
-      onPicked(result.data.symbol);
     });
   }
 
