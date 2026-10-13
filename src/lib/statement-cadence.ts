@@ -292,7 +292,12 @@ function dayOfMonthCadence(ends: readonly string[]): DayOfMonthCadence {
  * lands, the first one becomes the newest of the OLDER closes, where it is never
  * trimmed, widens their tolerance past the move, and the rhythm snaps back to
  * the old day. So the longest run that qualifies wins, which also folds a
- * transitional first close into the new cycle's wander instead of dropping it.
+ * transitional first close into the new cycle's wander instead of dropping it —
+ * but only one NEARER THE NEW DAY. A first close the run has to leave out to
+ * agree, sitting nearer the old day or as near the one as the other, makes that
+ * run fail (`oneCycle`, since 4effbce): the next run is one close shorter, and
+ * the close stays with the older ones as their late close, widening THEIR
+ * tolerance instead.
  *
  * ⛔ The older closes are asked only which DAY they closed on, never how often.
  * The window as a whole already answered that — this runs only when it reads
