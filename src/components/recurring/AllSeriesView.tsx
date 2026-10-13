@@ -104,7 +104,14 @@ export function AllSeriesView({
         </section>
       ) : null}
 
-      <SeriesSection title="Active" note={noteOf("active", active)} series={active} overdueBySeries={overdueBySeries} today={today} />
+      {/* Unnarrowed, Active stands even when empty: it is where a confirmed suggestion goes. 🔴 Narrowed to his pay
+          schedules with none of them active, it printed "Active — charged within their cadence · 0 · No active series
+          yet — confirm a suggestion above" over two rows of pay: a bill's word, and no suggestion above (review of
+          a9384a7; measured on his ledger copy 2026-10-13, which holds 8 active series). A narrowed tab prints only
+          the sections its rows fill. */}
+      {narrowed === null || active.length > 0 ? (
+        <SeriesSection title="Active" note={noteOf("active", active)} series={active} overdueBySeries={overdueBySeries} today={today} />
+      ) : null}
       {/* 🔴 His pay and Rocket Money sat under Running late for charges due after the last day their accounts had
           been checked through (2026-10-08). Their own section, beside Active and never muted: nothing is known to
           be wrong — the ledger has not looked yet. */}

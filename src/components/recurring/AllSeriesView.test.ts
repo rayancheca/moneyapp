@@ -499,6 +499,46 @@ describe("AllSeriesView — narrowed by a link, it says what it shows and how to
     expect(text(render({ series: fixture, narrowed: null }))).not.toContain("the figure you followed");
   });
 
+  /*
+   * 🔴 Review of a9384a7: narrowed to his pay schedules, none of them active, the tab printed "Active — charged within
+   * their cadence, and forecast · 0 · No active series yet — confirm a suggestion above." over two rows of pay — a
+   * bill's word over a drill-down of pay, an empty section's default, and no suggestion above. Measured on his ledger
+   * copy 2026-10-13 with Fordham Payroll standing in for a second schedule: the ledger holds 8 active series, and It
+   * America LLC is awaiting statements. A schedule registered by hand starts never billed, so his first second job
+   * would print it.
+   */
+  test("none of the named schedules active: no empty Active section over them", () => {
+    const awaiting = fixture.map((s) => ({ ...s, evidence: "awaiting-statements" as const }));
+    const html = render({ series: awaiting, narrowed: { shown: 2, of: 15 } });
+    expect(html).not.toContain('id="rec-active"');
+    expect(text(html)).not.toContain("No active series yet");
+    expect(text(html)).not.toMatch(/charged/);
+    // the two schedules are still there, under the section their evidence files them in
+    const section = html.split('id="rec-awaiting-statements"')[1]?.split("</section>")[0] ?? "";
+    expect(section).toContain("Salary");
+    expect(section).toContain("Tutoring");
+  });
+
+  // unnarrowed, an empty Active is where a confirmed suggestion goes, and says so under the suggestion it means
+  test("unnarrowed, an empty Active still stands under a suggestion", () => {
+    const html = render({
+      series: [
+        series({ id: "s", name: "Streaming", status: "detected" }),
+        { ...fixture[0]!, evidence: "awaiting-statements" as const },
+      ],
+    });
+    expect(html).toContain('id="rec-active"');
+    expect(text(html)).toContain("No active series yet — confirm a suggestion above.");
+  });
+
+  test("narrowed, an Active section that holds a schedule is still printed, in pay words", () => {
+    const mixed = [fixture[0]!, { ...fixture[1]!, evidence: "awaiting-statements" as const }];
+    const html = render({ series: mixed, narrowed: { shown: 2, of: 15 } });
+    const section = html.split('id="rec-active"')[1]?.split("</section>")[0] ?? "";
+    expect(section).toContain("Salary");
+    expect(text(section)).toContain("deposited within their cadence");
+  });
+
   // ⛔ never "No active series" — "Run Detect now" — over a ledger of fourteen
   test("none of the named series still listed: the line and the link, and no empty state", () => {
     const html = render({ series: [], narrowed: { shown: 0, of: 14 } });
