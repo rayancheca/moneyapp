@@ -395,7 +395,7 @@ describe("what the ledger cannot answer", () => {
     expect(cardsOwedCard(bundle.db, TODAY)).toBeNull();
   });
 
-  test("a card with no recorded balance is not a card you owe nothing on", () => {
+  test("a card with no balance is not a card you owe nothing on", () => {
     twoCards();
     bundle.db.delete(dailyBalances).where(eq(dailyBalances.accountId, "acct-beta")).run();
 
@@ -412,6 +412,14 @@ describe("what the ledger cannot answer", () => {
     expect(card.explanation).toBe(
       "Across 2 cards, each as of its own last statement except 1 that no statement has checked. " +
         "The oldest of them closed Aug 5 — 5 days ago. 1 of them has no balance in the ledger, so this is a floor.",
+    );
+    /*
+     * 🔴 "no recorded balance — not in this total" of a card with no balance of ANY kind — no statement's, no
+     * export's, no live reading, none he counted. ⚖️ "recorded" is a statement's balance (§6A 50, 2026-10-07), so the
+     * proof said only that no statement printed one, two lines under the explanation's "no balance in the ledger".
+     */
+    expect(card.provenance.inputs.find((i) => i.label === "Beta ····2222")!.detail).toBe(
+      "no balance — not in this total",
     );
   });
 

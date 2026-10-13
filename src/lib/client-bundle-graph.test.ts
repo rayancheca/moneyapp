@@ -95,6 +95,31 @@ describe("no client bundle reaches the database or the filesystem", () => {
     expect(leaks.map(formatLeak)).toEqual([]);
   });
 
+  /*
+   * 🔴 A MODULE UNDER src/components IS ONE IMPORT AWAY FROM A BROWSER BUNDLE, client or not. balance-list-words.ts
+   * (9d29632) imported the VALUE `takesTypedBalance` from services/anchors, which reaches db/backup → better-sqlite3:
+   * only the server page imported it, so the walk from client roots saw nothing, and the first client component to
+   * reuse the list's words would have failed `next build` as 0b8d2af did. Its import is type-only since 51054df; this
+   * walks every module there, so the next one is caught where it is written, not where it is first imported.
+   */
+  it("on this tree, no module under src/components reaches a forbidden module, client or not", () => {
+    const modules = sourceFiles("src/components");
+    expect(modules).toContain("src/components/accounts/balance-list-words.ts");
+    const leaks = findClientBundleLeaks(REAL_TREE, modules, BROWSER_FORBIDDEN);
+    expect(leaks.map(formatLeak)).toEqual([]);
+  });
+
+  it("names the chain when a module under src/components reaches the database through a value import", () => {
+    // balance-list-words.ts as 9d29632 wrote it, over the real service graph
+    const words = "src/components/accounts/balance-list-words.ts";
+    const tree = overlay(REAL_TREE, {
+      [words]: `import { countRefusal } from "@/services/anchors";\nexport const rule = countRefusal;\n`,
+    });
+    expect(findClientBundleLeaks(tree, [words], BROWSER_FORBIDDEN).map(formatLeak)).toContain(
+      `${words} → src/services/anchors.ts → src/db/backup.ts`,
+    );
+  });
+
   it("names the whole chain when a client component reaches db/backup through a service", () => {
     // Staged over the REAL service graph: manual-transactions imports the pre-mutation snapshot.
     const staged = "src/components/zz-staged-leak.tsx";

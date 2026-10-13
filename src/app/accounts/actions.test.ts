@@ -132,7 +132,8 @@ describe("addAnchorResultAction", () => {
 
     expect(result).toEqual({
       ok: false,
-      error: "Robinhood Brokerage is priced from its holdings — a balance you count there plays no part in its curve",
+      error:
+        "Robinhood Brokerage is priced from its holdings — a balance you counted there would play no part in its curve",
     });
     expect(db.select().from(balanceAnchors).where(eq(balanceAnchors.accountId, brokerage)).all()).toEqual([]);
   });

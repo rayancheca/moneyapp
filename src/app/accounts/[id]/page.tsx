@@ -26,6 +26,7 @@ import { AccountHoldingsTable } from "@/components/accounts/AccountHoldingsTable
 import { InsightList } from "@/components/insights/InsightList";
 import { AccountNameHeading } from "@/components/accounts/AccountNameHeading";
 import { AnchorForm } from "@/components/accounts/AnchorForm";
+import { archiveAccountRadius } from "@/components/accounts/archive-account-radius";
 import { balanceListWords } from "@/components/accounts/balance-list-words";
 import { removeBalanceControls, removeBalanceRadius } from "@/components/accounts/remove-balance-radius";
 import { BalanceFigure } from "@/components/accounts/BalanceFigure";
@@ -35,7 +36,6 @@ import { EditAccountButton } from "@/components/accounts/EditAccountButton";
 import { buildCategoryPickerOptions } from "@/components/transactions/category-options";
 import { RecentTransactions } from "@/components/transactions/RecentTransactions";
 import { Breadcrumbs } from "@/components/ui/Breadcrumbs";
-import { countPhrase } from "@/components/ui/blast-radius";
 import { ConfirmActionButton } from "@/components/ui/Confirm";
 import { provenanceFor } from "@/services/provenance";
 import { balanceDayIsExact } from "@/services/coverage";
@@ -505,43 +505,14 @@ export default async function AccountDetailPage({
               triggerClassName="text-xs text-ink-faint transition-colors duration-(--duration-fast) hover:text-ink"
               title="Archive this account"
               confirmLabel="Archive it"
-              radius={{
-                headline: `Archiving takes ${account.name} out of net worth, the assets and owed totals, and every analytic. Nothing is deleted.`,
-                lines: [
-                  ...(latest
-                    ? [
-                        {
-                          label: "Net worth will read",
-                          value:
-                            latest.balanceCents === 0
-                              ? "unchanged"
-                              : `${formatCents(Math.abs(latest.balanceCents))} ${
-                                  latest.balanceCents > 0 ? "lower" : "higher"
-                                }`,
-                        },
-                        {
-                          /* 🔴 `liability ? "Owed" : "Balance"` is `balanceHeading`
-                             re-decided by hand, two hundred lines under the call
-                             that gets it right — and it read "Owed, leaving the
-                             totals · -$82.72" for Chase Sapphire on 2026-09-08,
-                             a card that owes nothing. Six surfaces said "in
-                             credit" about that balance on that day, and this one
-                             is a confirmation for an action that moves money out
-                             of every total. */
-                          label: `${balanceHeading(latest.balanceCents, liability).label}, leaving the totals`,
-                          value: formatCents(balanceHeading(latest.balanceCents, liability).cents),
-                        },
-                      ]
-                    : []),
-                  {
-                    // every kind of balance the list above holds, so it names none ("recorded" is a statement's)
-                    label: "Balances kept",
-                    value: countPhrase(anchors.length, "balance"),
-                  },
-                ],
-                reassurance:
-                  "Restore account puts it back exactly as it is now — transactions, balances and history are untouched.",
-              }}
+              /* ⛔ every line is `archiveAccountRadius`'s, tested there: the figure the header prints, and the count
+                 of the list above */
+              radius={archiveAccountRadius({
+                accountName: account.name,
+                isLiability: liability,
+                latestCents: latest?.balanceCents ?? null,
+                balances: anchors.length,
+              })}
             />
           ) : (
             <form action={setAccountActiveAction}>

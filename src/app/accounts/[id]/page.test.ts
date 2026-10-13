@@ -1,6 +1,16 @@
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
-import { describe, expect, test } from "vitest";
+import { eq } from "drizzle-orm";
+import { afterEach, beforeEach, describe, expect, test } from "vitest";
+import { balanceListWords } from "@/components/accounts/balance-list-words";
+import { createDatabase, type DbBundle } from "@/db/client";
+import { accounts } from "@/db/schema/accounts";
+import { holdingEvents } from "@/db/schema/holding-events";
+import { institutions } from "@/db/schema/institutions";
+import { seedDatabase } from "@/db/seed";
+import { createAccount, getAccount } from "@/services/accounts";
+import { addManualAnchor, countRefusal } from "@/services/anchors";
 
 /**
  * ⛔ THE REMOVE-BALANCE DIALOG ASKS THE DERIVATION WHAT REMOVAL CHANGES.
@@ -126,11 +136,75 @@ describe("/accounts/[id] — the balance form and the list's words answer one ru
 
   /**
    * 🔴 The archive dialog counts the list's balances, and no screenshot opens it: setting its reassurance back to
-   * "transactions, recorded balances and history" passed every test here (the gate above is case-sensitive).
+   * "transactions, recorded balances and history" passed every test here (the gate above is case-sensitive). Its words
+   * are `archiveAccountRadius`'s now, pinned in components/accounts/archive-account-radius.test.ts, and the page hands
+   * it the figure its header prints and the count of the list it renders.
    */
-  test("the archive dialog names the balances it keeps as the list's heading does — never \"recorded\"", () => {
-    expect(source).toMatch(/label: "Balances kept",\s*value: countPhrase\(anchors\.length, "balance"\)/);
-    expect(source).toMatch(/— transactions, balances and history are untouched\."/);
-    expect(source).not.toMatch(/recorded balances/i);
+  test("the archive dialog's words are archiveAccountRadius', and the page keeps no copy", () => {
+    expect(source.match(/archiveAccountRadius\(/g) ?? []).toHaveLength(1);
+    expect(source).toMatch(/latestCents: latest\?\.balanceCents \?\? null,\s*balances: anchors\.length,/);
+    expect(source).not.toMatch(/leaving the totals|Balances kept|Kept on its page|untouched|recorded balances/i);
+  });
+});
+
+/**
+ * 🔴 THE GATE ABOVE READ HOW `balanceListWords` IS CALLED, NOT WHAT IT IS GIVEN. `balance-list-words.test.ts` feeds it
+ * refusals written by hand, so a `countRefusal` answering in another shape — a `why` with its own full stop, a kind the
+ * words do not know, an account row the page loads without its `cashAccountId` — would pass both. Here each kind of
+ * account is made through the app's own paths, loaded as the page loads it (`getAccount`), and handed over exactly as
+ * the page hands it: the form is offered where `addManualAnchor` takes a count, and nowhere else.
+ */
+describe("/accounts/[id] — what the balance list's words are given", () => {
+  let dir: string;
+  let bundle: DbBundle;
+
+  beforeEach(() => {
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), "moneyapp-account-page-words-"));
+    bundle = createDatabase(path.join(dir, "t.db"));
+    seedDatabase(bundle.db);
+  });
+
+  afterEach(() => {
+    bundle.sqlite.close();
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  test("the page loads the account it gives countRefusal by its own id", () => {
+    expect(source).toMatch(/const account = getAccount\(db, id\);\s*if \(!account\) notFound\(\);/);
+  });
+
+  test("each kind of account gets the words its own refusal says, and the form exactly where a count is taken", () => {
+    const { db } = bundle;
+    const robinhood = db.select().from(institutions).where(eq(institutions.name, "Robinhood")).get()!.id;
+    const make = (name: string, type: "checking" | "investment") =>
+      createAccount(db, { institutionId: robinhood, name, type });
+    const checking = make("Robinhood Agentic", "checking");
+    const book = make("Robinhood Agentic Brokerage", "investment");
+    db.update(accounts).set({ cashAccountId: checking }).where(eq(accounts.id, book)).run();
+    const priced = make("Robinhood Crypto", "investment");
+    db.insert(holdingEvents)
+      .values({ accountId: priced, symbol: "BTC", assetType: "crypto", occurredOn: "2026-07-01", quantityDeltaE8: 1e7 })
+      .run();
+    const bare = make("Bare holding", "investment");
+
+    // what the page renders for each, from what the page is given
+    const pageWords = (id: string) => balanceListWords(countRefusal(db, getAccount(db, id)!));
+    const takesACount = (id: string) => {
+      try {
+        addManualAnchor(db, { accountId: id, anchoredOn: "2026-07-10", enteredCents: 100_000 });
+        return true;
+      } catch {
+        return false;
+      }
+    };
+
+    expect(pageWords(checking).empty).toBe("No balances counted yet.");
+    expect(pageWords(book).empty).toBe(
+      "No balances yet — Robinhood Agentic Brokerage holds only what its statements prove.",
+    );
+    expect(pageWords(priced).empty).toBe("No balances — Robinhood Crypto is priced from its holdings.");
+    expect(pageWords(bare).empty).toBe("No balances counted yet.");
+    for (const id of [checking, book, priced, bare]) expect(pageWords(id).takesCount).toBe(takesACount(id));
+    expect([checking, book, priced, bare].map(takesACount)).toEqual([true, false, false, true]);
   });
 });
