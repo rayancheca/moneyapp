@@ -171,8 +171,8 @@ function oct1(seriesId: string, today = TODAY) {
     (c) => c.seriesId === seriesId,
   )!;
   const d = seriesDetail(bundle.db, seriesId, today);
-  const { amountCents, unreadCents, graceDays } = d.overdue!;
-  const words = alreadyDueWords({ owedCents: -amountCents, unreadCents }, graceDays);
+  const { amountCents, unreadCents, graceDays, occurrenceCount } = d.overdue!;
+  const words = alreadyDueWords({ owedCents: -amountCents, unreadCents }, graceDays, occurrenceCount);
   return { calendar: [e.state, e.unsettledReason], card: [words.heading, words.warning] };
 }
 
@@ -262,8 +262,8 @@ describe("the chip and the ✕ read one day: the same accounts, each to its chec
   test("…and quiet in what it waits for: no STATEMENT has covered Oct 1, though the imported rows have", () => {
     const today = "2026-10-25";
     rowsOnlyThrough(WF, "2026-10-21");
-    const { amountCents, unreadCents, graceDays } = seriesDetail(bundle.db, RENT, today).overdue!;
-    const card = alreadyDueWords({ owedCents: -amountCents, unreadCents }, graceDays);
+    const { amountCents, unreadCents, graceDays, occurrenceCount } = seriesDetail(bundle.db, RENT, today).overdue!;
+    const card = alreadyDueWords({ owedCents: -amountCents, unreadCents }, graceDays, occurrenceCount);
     expect(card.heading).not.toContain("no import");
     expect(card.heading).toBe("Already due — no statement has covered it yet");
     expect(card.body).toContain("no statement reaches 3 days past it yet");

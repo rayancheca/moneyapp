@@ -8,6 +8,7 @@ import { InlineEditableText } from "@/components/ui/InlineEditableText";
 import { Money } from "@/components/ui/Money";
 import { toast } from "@/components/ui/Toast";
 import { BUDGET_PERIODS, type BudgetPeriodKind } from "@/db/schema/budgets";
+import { ROLLOVER_SUBTRACTS } from "@/lib/arrears-reading";
 import { budgetCoverageFact } from "@/lib/budget-coverage";
 import { formatDayShort } from "@/lib/format-date";
 import { formatCents, parseAmountToCents } from "@/lib/money";
@@ -149,8 +150,7 @@ export function BudgetDetails({ status, rolloverEnabled }: BudgetDetailsProps) {
           <p className="text-ink-faint">
             Banked <Money cents={status.rolloverCents} /> from closed periods. A period that came in
             under plan adds its leftover; one that went over adds nothing, and overspend is never
-            carried as a debt. Bills that came due and never posted are subtracted, so a missing
-            statement cannot bank itself as savings.
+            carried as a debt. {ROLLOVER_SUBTRACTS}, so a missing statement cannot bank itself as savings.
           </p>
         </div>
       ) : (

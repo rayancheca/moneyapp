@@ -21,7 +21,8 @@ import { alreadyDueWords, longDate } from "./labels";
  */
 export function AlreadyDueCard({ overdue }: { overdue: NonNullable<SeriesDetail["overdue"]> }) {
   const reading = { owedCents: -overdue.amountCents, unreadCents: overdue.unreadCents };
-  const words = alreadyDueWords(reading, overdue.graceDays);
+  // …said of each due day it owes this month, the "and N more" below included
+  const words = alreadyDueWords(reading, overdue.graceDays, overdue.occurrenceCount);
   return (
     <SurfaceCard>
       <h2 className={words.warning ? "mb-1 text-sm font-medium text-warning" : "mb-1 text-sm font-medium"}>

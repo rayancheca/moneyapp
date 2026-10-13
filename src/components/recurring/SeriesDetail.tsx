@@ -8,7 +8,7 @@ import {
   seriesEvidenceTone,
 } from "@/lib/series-evidence";
 import { billedWithLabel, carriesPhrase } from "@/lib/billed-with";
-import { seriesEndInput, seriesEndLines } from "./end-radius";
+import { seriesEndHeadline, seriesEndInput, seriesEndLines } from "./end-radius";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { renameSeriesAction, setSeriesStatusAction } from "@/app/recurring/actions";
@@ -126,6 +126,8 @@ export function SeriesDetail({
   const isMergedAway = data.mergedInto !== null;
   // the predicate `seriesDetail` reads the merge preview on, so it is read exactly where the control renders
   const isLive = seriesCanBeReshaped(data.status);
+  // why no schedule is shown, worded by what the series posts — null while the page projects it (`noScheduleReason`)
+  const nothingExpected = noScheduleReason(data.status, data.evidence, data.kind);
 
   function setStatus(status: "confirmed" | "dismissed" | "ended", label: string): void {
     void setSeriesStatusAction({ seriesId: data.id, status }).then((r) => {
@@ -246,7 +248,8 @@ export function SeriesDetail({
           title="End this series"
           confirmLabel="End this series"
           radius={{
-            headline: `${data.name} stops being expected: it leaves the forecast, the recurring calendar, and every budget's expected tail.`,
+            // what ending takes out — nothing, of a series the forecast already let go (`seriesEndHeadline`)
+            headline: seriesEndHeadline(data),
             // the arrears — said as far as the ledger has read them, as the card below says them — the span and the
             // kept rows; see `seriesEndLines`
             lines: seriesEndLines(seriesEndInput(data), formatCents),
@@ -382,10 +385,10 @@ export function SeriesDetail({
             would leave the reader wondering where the schedule went, so the
             reason goes where it was. So did a LAPSED one, under its own
             "Lapsed" badge, and it gets its reason the same way. */}
-        {noScheduleReason(data.status, data.evidence) ? (
+        {nothingExpected !== null ? (
           <SurfaceCard>
             <h2 className="mb-1 text-sm font-medium">Nothing expected</h2>
-            <p className="text-xs text-ink-muted">{noScheduleReason(data.status, data.evidence)}</p>
+            <p className="text-xs text-ink-muted">{nothingExpected}</p>
           </SurfaceCard>
         ) : null}
 

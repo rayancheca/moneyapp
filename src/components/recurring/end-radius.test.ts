@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
 import { formatCents } from "@/lib/money";
-import { seriesEndLines, type SeriesEndInput } from "./end-radius";
+import { seriesEndHeadline, seriesEndLines, type SeriesEndInput } from "./end-radius";
 
 const base: SeriesEndInput = {
   annualizedCents: -2_530_800,
@@ -101,5 +101,41 @@ describe("seriesEndLines", () => {
   test("one linked transaction is singular", () => {
     expect(value({ ...base, linkedCount: 1 }, "Linked transactions kept")).toBe("1 transaction");
     expect(value(base, "Linked transactions kept")).toBe("4 transactions");
+  });
+});
+
+/**
+ * 🔴 THE HEADLINE PROMISED WHAT THE LINES DID NOT SHOW. On a LAPSED series the dialog read "Amazon Prime stops being
+ * expected: it leaves the forecast, the recurring calendar, and every budget's expected tail." over "Upcoming charges
+ * off the calendar · none scheduled" and the kept rows — nothing leaving, because the forecast had already let it go
+ * (`seriesIsForecast`), and so had the calendar and every budget's tail. ⛔ The predicate the page's "Nothing
+ * expected" card and its cadence sentence ask (`seriesIsProjected`), so the headline cannot disagree with them.
+ */
+describe("seriesEndHeadline", () => {
+  test("a series the forecast projects leaves the forecast, the calendar and every budget's tail", () => {
+    for (const status of ["confirmed", "detected"] as const) {
+      for (const evidence of ["active", "never-billed", "awaiting-statements", "running-late"] as const) {
+        expect(seriesEndHeadline({ name: "Rent", status, evidence }), `${status} · ${evidence}`).toBe(
+          "Rent stops being expected: it leaves the forecast, the recurring calendar, and every budget's expected tail.",
+        );
+      }
+    }
+  });
+
+  test("a lapsed series is already out of all three — ending it takes nothing out of them", () => {
+    for (const status of ["confirmed", "detected"] as const) {
+      const headline = seriesEndHeadline({ name: "Amazon Prime", status, evidence: "lapsed" });
+      expect(headline, status).toBe(
+        "Amazon Prime is already out of the forecast, the recurring calendar and every budget's expected tail, so " +
+          "ending it takes nothing out of them.",
+      );
+      expect(headline, status).not.toContain("leaves the forecast");
+    }
+  });
+
+  test("…and so is a series he said is not recurring", () => {
+    expect(seriesEndHeadline({ name: "Nabila Inc", status: "dismissed", evidence: "lapsed" })).not.toContain(
+      "leaves the forecast",
+    );
   });
 });

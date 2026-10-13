@@ -1,3 +1,5 @@
+import type { SeriesKind } from "@/db/schema/recurring";
+
 /**
  * What the EVIDENCE says about a live recurring series, and the one word each
  * surface uses for it.
@@ -219,21 +221,50 @@ export function seriesDrawsAsRecurring(status: SeriesStatusForCopy): boolean {
 }
 
 /**
+ * What the "Nothing expected" reason calls a series and what it posts, by kind: what stops when it goes quiet, and
+ * the one and the many of what it posts — the rows the card under it lists.
+ *
+ * 🔴 It said "a bill" and "charges" of every kind: of a lapsed transfer, of an `other` series — which may be money in,
+ * a monthly credit (`forecast.ts`) — and, ended or dismissed, of pay. On his ledger copy 2026-10-12 "Its charges
+ * below stay in the ledger" stood over the deposits of Knack Tutoring and Fordham Payroll (ended) and STOCK LENDING
+ * (SPY) and (COKE) (dismissed). ⚖️ A bill's and a subscription's words are as he has always read them.
+ *
+ * ⚠️ Pay never lapses (`lapsedSeriesShouldStopForecasting`), so its `stops` is said only if that rule changes.
+ */
+const SCHEDULE_REASON_WORDS: Record<SeriesKind, { stops: string; posting: string; postings: string }> = {
+  bill: { stops: "a bill", posting: "charge", postings: "charges" },
+  subscription: { stops: "a bill", posting: "charge", postings: "charges" },
+  income: { stops: "pay", posting: "deposit", postings: "deposits" },
+  transfer: { stops: "a transfer", posting: "transfer", postings: "transfers" },
+  other: { stops: "a recurring payment", posting: "payment", postings: "payments" },
+};
+
+/**
  * ⛔ …and for a LIVE series the forecast has let go — the evidence's `lapsed`, which is the app's reading, not his
  * decision, so the sentence says what brings it back. 🔴 Its page stopped projecting it (`seriesIsForecast`) and the
  * "Next expected" card went with nothing in its place: `/recurring/<Amazon Prime>` would have read "Lapsed" over no
  * schedule and no word why. A card removed is not a claim withdrawn, and a claim withdrawn needs its reason.
  *
  * ⛔ Speaks for exactly the series `seriesIsProjected` says the page does not project — the predicate the cadence
- * sentence asks too, so the two cannot disagree about whether anything is expected.
+ * sentence asks too, so the two cannot disagree about whether anything is expected. Worded by what the series posts
+ * (`SCHEDULE_REASON_WORDS`).
  */
-export function noScheduleReason(status: SeriesStatusForCopy, evidence: SeriesEvidence): string | null {
+export function noScheduleReason(
+  status: SeriesStatusForCopy,
+  evidence: SeriesEvidence,
+  kind: SeriesKind,
+): string | null {
   if (seriesIsProjected(status, evidence)) return null;
-  if (!seriesIsOver(status))
-    return "This series has gone quiet past the point a bill stops, so it is no longer forecast and nothing more is expected from it — a new charge brings it back. Its charges below stay in the ledger.";
-  if (status === "ended")
-    return "This series has ended, so nothing more is expected from it. Its charges below stay in the ledger.";
+  const words = SCHEDULE_REASON_WORDS[kind];
+  const kept = `Its ${words.postings} below stay in the ledger.`;
+  if (!seriesIsOver(status)) {
+    return (
+      `This series has gone quiet past the point ${words.stops} stops, so it is no longer forecast and nothing more ` +
+      `is expected from it — a new ${words.posting} brings it back. ${kept}`
+    );
+  }
+  if (status === "ended") return `This series has ended, so nothing more is expected from it. ${kept}`;
   if (status === "dismissed")
-    return "You said this is not a recurring series, so nothing is expected from it and nothing is forecast. Its charges below stay in the ledger.";
+    return `You said this is not a recurring series, so nothing is expected from it and nothing is forecast. ${kept}`;
   return null;
 }

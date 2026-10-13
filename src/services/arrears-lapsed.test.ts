@@ -10,8 +10,10 @@ import { categories } from "@/db/schema/categories";
 import { institutions } from "@/db/schema/institutions";
 import { recurringSeries, type SeriesKind } from "@/db/schema/recurring";
 import { transactions } from "@/db/schema/transactions";
+import { seriesEndHeadline, seriesEndInput, seriesEndLines } from "@/components/recurring/end-radius";
 import { arrearsSentence } from "@/lib/committed";
 import { addDays } from "@/lib/dates";
+import { formatCents } from "@/lib/money";
 import { createAccount } from "./accounts";
 import { budgetPaceStatuses, createBudget } from "./budgets";
 import { seriesInCategory } from "./category-detail";
@@ -275,6 +277,30 @@ describe("a series the forecast has let go has no future on its own page or in t
           listAnnualized: 12 * 499,
           categoryNext: "2026-11-05",
         });
+      }
+    }
+    // ⛔ the sweep crosses the lapse — both branches above ran, or it proved nothing
+    expect(states).toEqual(new Set([false, true]));
+  });
+
+  /*
+   * 🔴 …AND ITS END DIALOG STILL PROMISED IT WOULD LEAVE. Once the forecast let Prime go, the dialog's lines lost
+   * "Leaving the forecast" and read "Upcoming charges off the calendar · none scheduled" — and its headline still said
+   * "Prime stops being expected: it leaves the forecast, the recurring calendar, and every budget's expected tail."
+   * ⛔ Read off the page's own data, the headline and the lines turn on the same day.
+   */
+  test("swept across the lapse: the End dialog's headline is true of its lines on both sides", () => {
+    const states = new Set<boolean>();
+    for (let day = "2026-10-06"; day <= "2026-10-12"; day = addDays(day, 1)) {
+      const page = seriesDetail(bundle.db, prime, day);
+      const headline = seriesEndHeadline(page);
+      const lines = seriesEndLines(seriesEndInput(page), formatCents);
+      const leaving = lines.some((l) => l.label === "Leaving the forecast");
+      states.add(leaving);
+      expect({ day, says: headline.includes("leaves the forecast") }).toEqual({ day, says: leaving });
+      if (!leaving) {
+        expect(headline, day).toContain("already out of the forecast");
+        expect(lines.find((l) => l.label === "Upcoming charges off the calendar")?.value, day).toBe("none scheduled");
       }
     }
     // ⛔ the sweep crosses the lapse — both branches above ran, or it proved nothing

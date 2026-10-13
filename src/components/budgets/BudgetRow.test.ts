@@ -19,6 +19,7 @@ import { checkedThrough } from "@/services/checked-days-fixture";
 import { addManualTransaction } from "@/services/manual-transactions";
 import { seedHisCarSeries } from "@/services/one-charge-fixture";
 import { provenanceFor } from "@/services/provenance";
+import { BudgetDetails } from "./BudgetDetails";
 import { BudgetRow } from "./BudgetRow";
 
 // rendering never navigates or submits; the row and its controls only need these to exist
@@ -414,6 +415,26 @@ describe("BudgetRow — the arrears line says the runway's split, in its tone", 
     expect(line.className).toMatch(/\btext-warning\b/);
     expect(spoken(html)).toMatch(
       / \$100\.00 was expected by now: \$50\.00 has not posted, and no statement has covered the other \$50\.00 yet\.$/,
+    );
+  });
+});
+
+/**
+ * 🔴 THE ONE DEFINITION STILL SAYING "never posted". Opened, a rolling budget explains what it banks: "Bills that
+ * came due and never posted are subtracted, so a missing statement cannot bank itself as savings." His words for a
+ * bill a checked statement shows nothing for are "not posted" (decisions 60 and 65), and "never posted" is a negative
+ * claim the arrears may make only of read days (`lib/arrears-reading`) — while the rollover subtracts all of
+ * `budgetOverdue`, read or not, which is the sentence's own point. ⛔ Both halves, in the split's two phrases.
+ */
+describe("BudgetDetails — what rollover subtracts, in his words", () => {
+  test("a rolling budget's panel says not posted, and names the half no statement has covered", () => {
+    createBudget(bundle.db, { categoryId: catId("Food"), period: "monthly", amountCents: 3_000, startsOn: "2026-06-01" });
+    const panel = createElement(BudgetDetails, { status: statusFor("Food"), rolloverEnabled: true });
+    const html = renderToStaticMarkup(panel).replace(/<!-- -->/g, "").replace(/\s+/g, " ");
+    expect(html).not.toContain("never posted");
+    expect(html).toContain(
+      "Bills that came due are subtracted whether they are not posted or no statement has covered them yet, so a " +
+        "missing statement cannot bank itself as savings.",
     );
   });
 });

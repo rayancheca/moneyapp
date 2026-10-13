@@ -1535,10 +1535,16 @@ describe("budgetPaceStatuses — /budgets' arrears carry the read/unread split",
    * this one closes ON today, so "read to the end of the window" means read through today. Asked with the month's
    * window, a Card read through yesterday would call a bill due today read — "not posted" of a day nobody has seen.
    * (Weekly, so the series' first late day is read and only the window's end can decide today's.)
+   *
+   * 🔴 …and with no grace, or the window's end decides nothing. Since a due day is read only with its grace (his
+   * decision 60), a 3-day grace read the Cleaner only through Jun 16 — short of yesterday whichever end the walk was
+   * handed — and `arrearsReadCents` closing on the month's yesterday passed every test here (2026-10-13). A bill paid
+   * on its day exactly is read through the Card's last day, so only the window's own end keeps today unread.
    */
   test("a bill due today, with the Card read through yesterday, is unread — the leg closes on today", () => {
-    housingBill({ name: "Cleaner", dueOn: "2026-06-06", cents: 5_000, cadence: "weekly" });
-    cardReadThrough("2026-06-19"); // Jun 6 and Jun 13 read; Jun 20, today, is not
+    const cleaner = housingBill({ name: "Cleaner", dueOn: "2026-06-06", cents: 5_000, cadence: "weekly" });
+    bundle.db.update(recurringSeries).set({ toleranceDays: 0 }).where(eq(recurringSeries.id, cleaner)).run();
+    cardReadThrough("2026-06-19"); // every due day through Jun 19 read; Jun 20, today, is not
     expect(housing()).toMatchObject({ overdueCents: 15_000, overdueUnreadCents: 5_000 });
   });
 

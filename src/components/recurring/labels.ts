@@ -567,40 +567,58 @@ export function overdueNote(
  * says "statements". 🔴 "No import reaches 3 days past it yet" was said of the rent's Oct 1 with Wells Fargo's rows
  * imported through Oct 21 — its balances checked only through Sep 24 (not-posted-on-landing-accounts.test.ts).
  *
+ * 🔴 …AND THE READ BODY WAS AWKWARD AND SAID "it" OF EVERY BILL: "Inside this calendar month, and the statements,
+ * which reach 3 days past it, hold no posting within 3 days of it." A weekly bill owes the month's arrears on two to
+ * five due days (`occurrenceCount`, the card's own "and N more"), each read the same way (`dueDayIsRead`) — so the
+ * read and unread bodies say it of each: "Both due days are inside this calendar month, and the statements reach
+ * 3 days past each with no posting within 3 days of either." A mix is several by construction and says "a due day".
+ *
  * The forecast and this month's budget count all of it whichever way it reads — both say so.
  */
 export function alreadyDueWords(
   reading: ArrearsReading,
   graceDays: number,
+  occurrenceCount: number,
 ): { heading: string; body: string; warning: boolean } {
   const split = arrearsSplit(reading);
   const days = (n: number) => `${n} ${n === 1 ? "day" : "days"}`;
-  const within = graceDays === 0 ? "on it" : `within ${days(graceDays)} of it`;
-  const past = graceDays === 0 ? "its day" : `${days(graceDays)} past it`;
-  const counted = "The forecast counts it, and so does this month's budget.";
+  // the due days the bodies speak of: one ("it"), both, or all n of them
+  const n = Math.max(1, occurrenceCount);
+  const one = n === 1;
+  const lead = one
+    ? "Inside this calendar month"
+    : `${n === 2 ? "Both" : `All ${n}`} due days are inside this calendar month`;
+  const all = one ? "it" : n === 2 ? "both" : `all ${n}`;
+  const any = one ? "it" : n === 2 ? "either" : "any of them";
+  const within = graceDays === 0 ? `on ${any}` : `within ${days(graceDays)} of ${any}`;
+  const counted = `The forecast counts ${all}, and so does this month's budget.`;
   const warning = arrearsAlarms(reading);
   if (split.kind === "read") {
+    const onTheDay = one ? "its day" : n === 2 ? "both" : "all of them";
+    const reach = graceDays === 0 ? onTheDay : `${days(graceDays)} past ${one ? "it" : "each"}`;
     return {
       heading: "Already due, and not posted",
-      body:
-        `Inside this calendar month, and the statements, which reach ${past}, hold no posting ${within}. ` + counted,
+      body: `${lead}, and the statements reach ${reach} with no posting ${within}. ${counted}`,
       warning,
     };
   }
   if (split.kind === "unread") {
+    const short = graceDays === 0 ? (one ? "its day" : any) : `${days(graceDays)} past ${any}`;
     return {
       heading: `Already due — ${NO_STATEMENT_YET}`,
       body:
-        `Inside this calendar month, and no statement reaches ${past} yet — the days a payment has to post — so it ` +
-        `may well have posted. ${counted}`,
+        `${lead}, and no statement reaches ${short} yet — the days a payment has to post — so ${all} may well have ` +
+        `posted. ${counted}`,
       warning,
     };
   }
   const pastADueDay = graceDays === 0 ? "a due day" : `${days(graceDays)} past a due day`;
+  // said of that one due day
+  const withinIt = graceDays === 0 ? "on it" : `within ${days(graceDays)} of it`;
   return {
     heading: `Already due: ${arrearsClause(reading, "not posted")}`,
     body:
-      `Inside this calendar month. Where the statements reach ${pastADueDay}, they hold no posting ${within}; for ` +
+      `Inside this calendar month. Where the statements reach ${pastADueDay}, they hold no posting ${withinIt}; for ` +
       "the rest, no statement reaches that far yet. The forecast counts all of it, and so does this month's budget.",
     warning,
   };

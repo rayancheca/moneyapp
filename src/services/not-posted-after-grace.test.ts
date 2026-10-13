@@ -153,6 +153,7 @@ function surfaces(ids: readonly string[] = [RENT, UTIL]) {
       const w = alreadyDueWords(
         { owedCents: -d.overdue!.amountCents, unreadCents: d.overdue!.unreadCents },
         d.overdue!.graceDays,
+        d.overdue!.occurrenceCount,
       );
       return [w.heading, w.warning];
     }),
@@ -254,9 +255,12 @@ describe("the grace is the bill's — and, for one billed with the rent, the ren
     // that waited for 5 (`seriesDetail.overdue.graceDays`, the card's words)
     const utilities = seriesDetail(bundle.db, UTIL, TODAY).overdue!;
     expect(utilities.graceDays).toBe(5);
-    expect(alreadyDueWords({ owedCents: -utilities.amountCents, unreadCents: 0 }, utilities.graceDays).body).toContain(
-      "the statements, which reach 5 days past it, hold no posting within 5 days of it",
+    const words = alreadyDueWords(
+      { owedCents: -utilities.amountCents, unreadCents: 0 },
+      utilities.graceDays,
+      utilities.occurrenceCount,
     );
+    expect(words.body).toContain("the statements reach 5 days past it with no posting within 5 days of it");
   });
 
   test("a bill billed on its own waits its own grace: one day's grace is read the day after", () => {

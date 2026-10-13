@@ -1,5 +1,6 @@
 import type { BlastRadiusLine } from "@/components/ui/blast-radius";
 import { arrearsClause } from "@/lib/arrears-reading";
+import { seriesIsProjected } from "@/lib/series-evidence";
 import type { SeriesDetail } from "@/services/recurring-detail";
 import { longDate } from "./labels";
 
@@ -71,6 +72,29 @@ export function seriesEndInput(
     endsOn: data.endsOn,
     linkedCount: data.linkedTxns.length,
   };
+}
+
+/**
+ * The dialog's headline — what ending takes out, true of the lines under it.
+ *
+ * 🔴 It said "<name> stops being expected: it leaves the forecast, the recurring calendar, and every budget's expected
+ * tail." of every series, a LAPSED one too — whose lines show nothing leaving: no "Leaving the forecast" (its page
+ * carries no year, `seriesIsForecast`), no arrears, "Upcoming charges off the calendar · none scheduled". The forecast
+ * had let it go already, and so had the calendar and every budget's tail (`hasStoppedForecasting`). ⛔ The predicate
+ * the page's "Nothing expected" card and cadence sentence ask (`seriesIsProjected`), so the three cannot disagree —
+ * a series he said is not recurring included.
+ */
+export function seriesEndHeadline(data: Pick<SeriesDetail, "name" | "status" | "evidence">): string {
+  if (seriesIsProjected(data.status, data.evidence)) {
+    return (
+      `${data.name} stops being expected: it leaves the forecast, the recurring calendar, and every budget's ` +
+      "expected tail."
+    );
+  }
+  return (
+    `${data.name} is already out of the forecast, the recurring calendar and every budget's expected tail, so ` +
+    "ending it takes nothing out of them."
+  );
 }
 
 /** The upcoming clause — a span, never a count off a capped preview. */
