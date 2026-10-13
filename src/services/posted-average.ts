@@ -6,9 +6,11 @@ import { paydayReadings, type ReadableRow } from "@/lib/per-payday";
 import {
   atTodaysRate,
   occurrencesOf,
+  perPaydayEvidence,
   postedAverage,
   readsPerOccurrence,
   type Occurrence,
+  type PerPaydayEvidence,
   type PostedAverage,
   type PostedReading,
 } from "@/lib/posted-average";
@@ -38,6 +40,13 @@ export interface SeriesPostedAverage extends PostedAverage {
    * page read "each of the 5 posted occurrences" under a Per charge of four (review of af5b0fa, 2026-10-12).
    */
   everyOccurrence: readonly Occurrence[] | null;
+  /**
+   * What a series read per payday (`readsPerPayday`) averages, and the rows it leaves out (`perPaydayEvidence`, §6A
+   * 55): ⛔ what the popover's sentence counts and ranges beside this average; null for a series read otherwise.
+   * 🔴 Row by row, his pay's popover read "4 different amounts, from $400.00 to $4,567.68 — so any single figure for
+   * it is an average, not a repeat" beside an average every payroll payday paid exactly (2026-10-12).
+   */
+  perPayday: PerPaydayEvidence | null;
   /**
    * The first day of the rate in force now (`currentRateSince`, on `today`) — null for a series whose rate never
    * changed, or none changed before today's. Where the popover's words start counting when `everyOccurrence` holds
@@ -99,6 +108,8 @@ export function postedAveragesBySeries(
       // ⚖️ the payments the average is of — `postedAverage` reads them by this same rule (§6A 63)
       occurrences: every === null ? null : atTodaysRate(every, schedule, today),
       everyOccurrence: every,
+      // ⚖️ …and a pay series' paydays — `postedAverage` reads them by this same rule (§6A 55)
+      perPayday: reading.per === "payday" ? perPaydayEvidence(rows, reading.readings, schedule, today) : null,
       rateSince: currentRateSince(schedule, today),
     });
   }

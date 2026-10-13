@@ -1,6 +1,13 @@
 import { describe, expect, test } from "vitest";
 import { paydayReadings, type PaydayReading } from "./per-payday";
-import { atTodaysRate, occurrencesOf, postedAsWord, postedAverage, readsPerOccurrence } from "./posted-average";
+import {
+  atTodaysRate,
+  occurrencesOf,
+  perPaydayEvidence,
+  postedAsWord,
+  postedAverage,
+  readsPerOccurrence,
+} from "./posted-average";
 import type { RateSchedule } from "./series-kind";
 
 /** the day the rate in force is read on — his ledger copy's, 2026-10-12 */
@@ -326,5 +333,76 @@ describe("postedAverage — his pay, read per payday", () => {
       avgCents: null,
       stddevCents: null,
     });
+  });
+});
+
+/**
+ * ⚖️ WHAT A PAY SERIES' AVERAGE IS OF, and what it leaves out — the one reading the average and the amount popover's
+ * words take (§6A 55). 🔴 The popover described the rows as they posted: his pay's read "Its 4 tagged postings since
+ * Jun 4, 2026 were 4 different amounts, from $400.00 to $4,567.68 — so any single figure for it is an average, not a
+ * repeat." beside an average of $1,141.92 that every payday at the rate in force paid exactly (a copy of his ledger,
+ * 2026-10-12).
+ */
+describe("perPaydayEvidence — his pay, what the average is of", () => {
+  test("his ledger with its history set: the lump and Sep 24, each per payday; June's two at an earlier rate", () => {
+    const readings = paydayReadings(HIS_ROWS, HIS_PORTIONS, HIS);
+    expect(perPaydayEvidence(HIS_ROWS, readings, HIS, TODAY)).toEqual({
+      samples: [
+        { postedOn: "2026-09-23", cents: WEEK, paydays: 4, dayCents: WEEK * 4, deposits: 1 },
+        { postedOn: "2026-09-24", cents: WEEK, paydays: 1, dayCents: WEEK, deposits: 1 },
+      ],
+      earlier: 2,
+      noPaydayOfTheirOwn: 0,
+    });
+  });
+
+  /* With no history there is one era: Jun 4's cash week is a sample of it, and Jun 5's $400.00 paid no payday. */
+  test("one era: Jun 4's week is a sample, and Jun 5's $400.00 paid no payday of its own", () => {
+    const portions = [...HIS_PORTIONS, { paydayOn: "2026-06-04", depositOn: "2026-06-04", cents: CASH }];
+    const e = perPaydayEvidence(HIS_ROWS, paydayReadings(HIS_ROWS, portions, FLAT), FLAT, TODAY);
+    expect(e.samples.map((s) => [s.postedOn, s.cents])).toEqual([
+      ["2026-06-04", CASH],
+      ["2026-09-23", WEEK],
+      ["2026-09-24", WEEK],
+    ]);
+    expect([e.earlier, e.noPaydayOfTheirOwn]).toEqual([0, 1]);
+  });
+
+  /* ⛔ THE UNIT IS THE DAY: a lump and its week on one day are one sample of the day's money, made of two deposits. */
+  test("a lump and the week on one day are one sample, of two deposits and the day's money", () => {
+    const rows = [
+      { id: "lump", postedOn: "2026-09-24", amountCents: WEEK * 4 },
+      { id: "week", postedOn: "2026-09-24", amountCents: WEEK },
+    ];
+    const portions = ["2026-09-24", "2026-09-17", "2026-09-10", "2026-09-03", "2026-08-27"].map((paydayOn) => ({
+      paydayOn,
+      depositOn: "2026-09-24",
+      cents: WEEK,
+    }));
+    const e = perPaydayEvidence(rows, paydayReadings(rows, portions, FLAT), FLAT, TODAY);
+    expect(e).toEqual({
+      samples: [{ postedOn: "2026-09-24", cents: WEEK, paydays: 5, dayCents: WEEK * 5, deposits: 2 }],
+      earlier: 0,
+      noPaydayOfTheirOwn: 0,
+    });
+  });
+
+  /* ⛔ ONE READING: the average is the mean of exactly these samples, whatever the rows. */
+  test("the average averages exactly its samples", () => {
+    const rows = [
+      ...HIS_ROWS,
+      { id: "oct1", postedOn: "2026-10-01", amountCents: WEEK },
+      { id: "oct8", postedOn: "2026-10-08", amountCents: 120_000 },
+    ];
+    const portions = [
+      ...HIS_PORTIONS,
+      { paydayOn: "2026-10-01", depositOn: "2026-10-01", cents: WEEK },
+      { paydayOn: "2026-10-08", depositOn: "2026-10-08", cents: 120_000 },
+    ];
+    const readings = paydayReadings(rows, portions, HIS);
+    const { samples } = perPaydayEvidence(rows, readings, HIS, TODAY);
+    const mean = samples.reduce((sum, s) => sum + s.cents, 0) / samples.length;
+    expect(postedAverage(rows, payday(readings), HIS, TODAY).avgCents).toBe(Math.round(mean));
+    expect(samples).toHaveLength(4);
   });
 });

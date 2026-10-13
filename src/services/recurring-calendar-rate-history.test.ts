@@ -407,6 +407,49 @@ describe("the posted average — his series page, the All tab and the popover re
     expect(s.popover).toContain("average of what actually posted is $1,156.44, which is not what you set.");
   });
 
+  /*
+   * ⛔ THE WORDS BEFORE THE AVERAGE COUNT AND RANGE WHAT IT IS OF — what each deposit paid PER PAYDAY, at the rate in
+   * force now — and name the rows left out. 🔴 They described the rows as they posted: "Its 4 tagged postings since Jun
+   * 4, 2026 were 4 different amounts, from $400.00 to $4,567.68 — so any single figure for it is an average, not a
+   * repeat." — of an average every payroll payday paid exactly (provenanceFor on a copy of his ledger, 2026-10-12).
+   */
+  test("with his history set: per payday, two deposits paid $1,141.92 exactly; June's two were an earlier rate", () => {
+    addPaySeries("2026-07-23");
+    hisFour();
+    const p = provenanceFor(bundle.db, { kind: "recurringSeries", id: PAY, today: TODAY })!;
+    expect(p.headline).toContain(
+      "Per payday, its 2 deposits at the rate in force since Aug 27, 2026 (Sep 23's $4,567.68 paid 4 paydays) paid " +
+        "$1,141.92, exactly. Its 2 deposits before Aug 27, 2026 were at an earlier rate, and are not counted.",
+    );
+    expect(p.headline).not.toContain("an average, not a repeat");
+    expect(p.headline).not.toContain("$400.00 to $4,567.68");
+    // five paydays at the rate in force — no anecdote
+    expect(p.headline).not.toContain("anecdote");
+    expect(p.sources.find((s) => s.kind === "period")).toMatchObject({
+      label: "4 tagged postings in the ledger",
+      detail:
+        "2 deposits at the rate in force since Aug 27 (Sep 23's $4,567.68 paid 4 paydays): every one of them " +
+        "$1,141.92 a payday · 2 before it, at an earlier rate",
+    });
+  });
+
+  /* Before the history is written there is one era: Jun 4's cash week is a payday of it, Jun 5's $400.00 none. */
+  test("before the history is written: per payday, two amounts, the average inside them, Jun 5 left out", () => {
+    addPaySeries("2026-07-23");
+    bundle.db.update(recurringSeries).set({ userAmountHistory: null }).where(eq(recurringSeries.id, PAY)).run();
+    hisFour();
+    const p = provenanceFor(bundle.db, { kind: "recurringSeries", id: PAY, today: TODAY })!;
+    expect(p.headline).toContain(
+      "Per payday, its 3 deposits since Jun 4, 2026 (Sep 23's $4,567.68 paid 4 paydays) paid 2 different amounts, " +
+        "from $1,047.00 to $1,141.92 — so any single figure for it is an average, not a repeat. Its one other " +
+        "deposit paid no payday on its own, and is not counted.",
+    );
+    const cents = (s: string): number => Math.round(Number(s.replace(/[$,]/g, "")) * 100);
+    const [, lo, hi] = /from (\$[\d,.]+) to (\$[\d,.]+)/.exec(p.headline)!;
+    const avg = cents(/actually posted is (\$[\d,.]+[\d])/.exec(p.headline)![1]!);
+    expect([avg >= cents(lo!), avg <= cents(hi!)]).toEqual([true, true]);
+  });
+
   /* The popover reads the evidence on the day the page asks, as the page does: on Oct 7 the $1,200.00 is not in. */
   test("the popover reads what had arrived by the day it is asked", () => {
     addPaySeries("2026-07-23");
