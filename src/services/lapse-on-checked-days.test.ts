@@ -329,8 +329,14 @@ describe("a series lapses only on days the ledger has checked — every surface 
   });
 
   test("read past the missed days, the same bills DO lapse — the rule moved the measuring day, not the line", () => {
-    // Wells Fargo read through Dec 6: the rent missed Oct 1 and Nov 1, the lease Oct 15 and Nov 15, on read statements
-    checkedThrough(WF, "2026-09-25", "2026-12-06");
+    /*
+     * The line is three cycles of READ quiet after the last posting (`LAPSED_MISS_LIMIT`): for the rent and the lease,
+     * last posted Sep 2, 3 × 30 + 3 = 93 days — the rent's Oct 1, Nov 1 and Dec 1 read missing, grace included. Read
+     * through Dec 3 the quiet is 93 days (to Dec 4) and neither has lapsed; through Dec 6 it is 96.
+     */
+    checkedThrough(WF, "2026-09-25", "2026-12-03");
+    expect(subscriptionsCard(bundle.db, DEC)!.lapsed.map((l) => l.seriesId)).toEqual([DEAD]);
+    checkedThrough(WF, "2026-12-04", "2026-12-06");
     const card = subscriptionsCard(bundle.db, DEC)!;
     expect(new Set(card.lapsed.map((l) => l.seriesId))).toEqual(new Set([RENT, LEASE, DEAD]));
     const ids = new Set(upcomingOccurrences(bundle.db, DEC, 70).map((o) => o.seriesId));

@@ -1325,26 +1325,33 @@ const INACTIVE_MISS_LIMIT = 1.5;
  * the card said so. `FPL (electricity)` sat at 47 of 48 and would have gone the
  * same way the next morning.
  *
- * ⚠️ The cause is structural, not a one-off. Statements arrive MONTHLY and each
- * lands on its own date (docs: statement cadence), so `last_matched_on` trails
- * reality by up to a full cycle simply because the evidence has not been
- * imported yet. A limit of 1.5 cycles therefore condemns any monthly bill whose
- * statement is a fortnight late — which is most of them, most of the time.
+ * The cause then was import lag: statements arrive MONTHLY and each lands on its own date (docs: statement cadence),
+ * and the quiet was counted to today, so a bill whose statement was a fortnight late looked a cycle quiet. Three was
+ * chosen as "one cycle of import lag plus two genuinely missed charges".
  *
- * Three is the smallest limit that survives that lag with room to spare: one
- * cycle of import lag plus two genuinely missed charges. It is not fitted to
- * the data, but it does separate it cleanly — measured 2026-08-26, the dead
- * series sit at 7.5, 25.3, 26.0 and 27.6 cycles while every live one is under
- * 1.7, so nothing lands anywhere near the boundary.
+ * ⚖️ THAT REASON NO LONGER APPLIES (re-documented 2026-10-13; the number and every lapse are unchanged). Since §6A 57
+ * (owner, 2026-10-08) the quiet is counted on days the ledger has READ (`seriesHasLapsed`, to its accounts' checked
+ * day): import lag cannot lapse a series at all, and every cycle in the three is a cycle a read statement shows
+ * empty. A monthly bill lapses once 3 × 30 + 3 = 93 read days follow its last posting — its third charge due after
+ * it, grace included, read missing. Three stays for what is still true:
+ *
+ *  - The two bars cost opposite things. Past 1.5 the series reads "Running late" and is STILL projected — a warning
+ *    that costs nothing if it is wrong; past 3 it leaves every forward figure — the runway, the budgets, the forecast.
+ *    The cycles between are the window in which a bill read missing is flagged and still counted, so he sees it go
+ *    quiet before it leaves a budget.
+ *  - A read statement without the charge is not yet proof the bill stopped: paid from another account or by hand,
+ *    or posted under a description the detector has not linked, it reads exactly like a missed charge, so one read
+ *    miss cannot say which it was. Three in a row can.
+ *  - It still separates the measured data cleanly: on 2026-08-26 (counted to today then, which can only overstate a
+ *    read-day count) the dead series sat at 7.5, 25.3, 26.0 and 27.6 cycles and every live one under 1.7.
+ *
+ * It is a judgement, not a fit.
  *
  * ⛔ `isSeriesActive` deliberately does NOT use this. "Is there recent
  * evidence?" is a question about the past and 1.5 cycles is a fair answer;
  * "should I keep predicting this?" is a question about the future, and being
  * wrong there deletes a real bill from a budget. Being too eager to call
  * something dead is the expensive mistake, so only the forecast gate moves.
- *
- * ⚠️ Since §6A 57 (owner, 2026-10-08) the cycles are counted on days the ledger has READ (`seriesHasLapsed`), so the
- * cycle of import lag above can no longer reach it; the number is unchanged, and so is every lapse read to today.
  */
 const LAPSED_MISS_LIMIT = 3;
 
