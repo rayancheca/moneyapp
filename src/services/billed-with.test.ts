@@ -14,6 +14,7 @@ import { seedDatabase } from "@/db/seed";
 import { addDays, compareDates } from "@/lib/dates";
 import { forecastSplit } from "@/lib/forecast-split";
 import { arrearsSentence } from "@/lib/committed";
+import { billedWithLabel, billedWithPhrase } from "@/lib/billed-with";
 import { stalePartLabel, staleSummaryLabel, upcomingEvidenceWord } from "@/components/recurring/labels";
 import { arrearsThisMonth } from "./arrears";
 import { billingCarriers } from "./billing-carriers";
@@ -440,6 +441,58 @@ describe("a merge of the carrier — the link follows the rent to the series it 
     expect(line.billedWithLabel).toBe("billed with Flamingo South Beach, last seen Dec 2");
     // ⛔ the link column itself is his write, untouched — the reading follows the merge
     expect(bundle.db.select().from(recurringSeries).where(eq(recurringSeries.id, UTIL)).get()!.userBilledWithSeriesId).toBe(RENT);
+  });
+
+  /*
+   * ⚖️ THE WORDS FOLLOW THE LIVE CARRIER'S OWN NAME, on every surface (review of §6A 59, resolved 2026-10-13): merged
+   * into detection's "Flamingo South Beach", the utilities read "billed with Flamingo South Beach" — the series whose
+   * postings are their evidence now — and named "Flamingo South Beach (rent)", "billed with the rent" again. Never the
+   * ended rent's word on one surface and the live series' on the next: his link stays as he wrote it, and every
+   * reading of it — the chip, the card, the All tab, the calendar's two phrases and the popover — follows the merge.
+   */
+  test("after the merge every surface names the series it was merged into — and its own word, once it has one", () => {
+    link();
+    mergeRentIntoDetectedSeries();
+    const words = (today: string) => {
+      const detail = seriesDetail(bundle.db, UTIL, today);
+      const row = listSeries(bundle.db, today).find((s) => s.id === UTIL)!;
+      const entries = (month: string) =>
+        Object.values(recurringCalendar(bundle.db, month, today).entriesByDay)
+          .flat()
+          .filter((e) => e.seriesId === UTIL);
+      return {
+        chip: billedWithLabel(detail, today),
+        card: subscriptionsCard(bundle.db, today)!.live.find((l) => l.seriesId === UTIL)!.billedWithLabel,
+        allTab: row.billedWith === null ? null : billedWithPhrase(row.billedWith),
+        upcoming: entries("2027-01").find((e) => e.billedWith !== null)?.billedWith ?? null,
+        paidWith: entries("2026-12").find((e) => e.paidWith !== null)?.paidWith?.carrier ?? null,
+        popover: provenanceFor(bundle.db, { kind: "recurringSeries", id: UTIL, today })!.headline,
+      };
+    };
+    const merged = words(TODAY_DEC);
+    expect({ ...merged, popover: undefined }).toEqual({
+      chip: "billed with Flamingo South Beach, last seen Dec 2",
+      card: "billed with Flamingo South Beach, last seen Dec 2",
+      allTab: "billed with Flamingo South Beach",
+      upcoming: "billed with Flamingo South Beach",
+      paidWith: "Flamingo South Beach",
+      popover: undefined,
+    });
+    expect(merged.popover).toContain(
+      "it is billed with Flamingo South Beach, last seen Dec 2: paid inside Flamingo South Beach's payment",
+    );
+    expect(JSON.stringify(merged)).not.toContain("the rent");
+
+    bundle.db.update(recurringSeries).set({ name: "Flamingo South Beach (rent)" }).where(eq(recurringSeries.id, WF)).run();
+    const named = words(TODAY_DEC);
+    expect([named.chip, named.card, named.allTab, named.upcoming, named.paidWith]).toEqual([
+      "billed with the rent, last seen Dec 2",
+      "billed with the rent, last seen Dec 2",
+      "billed with the rent",
+      "billed with the rent",
+      "the rent",
+    ]);
+    expect(named.popover).toContain("it is billed with the rent, last seen Dec 2: paid inside the rent's payment");
   });
 
   test("Dec 5, 93 days after the ended rent's Sep 2: still forecast on every surface, because the rent still posts", () => {
