@@ -345,10 +345,21 @@ function verdictFor(line: Omit<IncomePayLine, "verdict">): string {
   return `${since}, but only ${checkedSilentPeriods} of them fall on days the records cover. The other ${unlooked} sit inside the ${unreadDays ?? 0} days past ${formatDayShort(checkedThrough)}, ${LAST_CHECKED_DAY}, so the ledger has not looked.`;
 }
 
+/** The first day the card measures from: the spend baseline's months back from this month's 1st. */
+function cardWindowFrom(today: string): string {
+  return `${monthKey(addCalendarMonths(`${monthKey(today)}-01`, -SPEND_BASELINE_MONTHS))}-01`;
+}
+
+/**
+ * The series Earned vs banked prints a pay line for — its own readings, one line each, so a page asking "is it on
+ * the card?" reads the card. The End dialog on a pay series names the line ending it takes off (`seriesEndHeadline`).
+ */
+export function incomeCardSeriesIds(db: AppDatabase, today: string = todayIso()): ReadonlySet<string> {
+  return new Set(cashEarningsReadings(db, { from: cardWindowFrom(today), to: today, today }).map((r) => r.seriesId));
+}
+
 export function incomeCard(db: AppDatabase, today: string = todayIso()): IncomeCard | null {
-  const months = SPEND_BASELINE_MONTHS;
-  const currentMonth = monthKey(today);
-  const windowFrom = `${monthKey(addCalendarMonths(`${currentMonth}-01`, -months))}-01`;
+  const windowFrom = cardWindowFrom(today);
 
   const readings = cashEarningsReadings(db, { from: windowFrom, to: today, today });
   // No confirmed income series with evidence behind it: there is no schedule to

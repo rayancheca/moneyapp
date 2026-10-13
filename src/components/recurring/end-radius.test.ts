@@ -190,6 +190,8 @@ describe("seriesEndHeadline", () => {
     evidence: "active",
     kind: "bill",
     nextExpectedAmountCents: -210_900,
+    isHisPay: false,
+    onEarnedVsBanked: false,
     linkedTxns: [],
     ...over,
   });
@@ -208,16 +210,36 @@ describe("seriesEndHeadline", () => {
   /*
    * 🔴 Pay is in no budget's tail — `budgetTail` keeps money out alone (`o.amountCents < 0`) — and on his ledger copy
    * 2026-10-12 `/recurring/<It America LLC (weekly pay)>`'s dialog said it would leave "every budget's expected tail".
+   * 🔴 …and then it named the two it left and not what pay IS in (review of 17ff00a): the monthly income /budgets
+   * grades against and the runway counts on, and Earned vs banked's line. Each checked against what ending it moves,
+   * on a ledger, in `pay-page-passed-paydays.test.ts`.
    */
-  test("money in leaves the forecast and the calendar — no budget's tail ever held it", () => {
+  test("money in leaves no budget's tail — his pay leaves the income your budgets and runway count on", () => {
     const pay = subject({
       name: "It America LLC (weekly pay)",
       kind: "income",
       evidence: "awaiting-statements",
       nextExpectedAmountCents: 114_192,
+      isHisPay: true,
+      onEarnedVsBanked: true,
     });
     expect(seriesEndHeadline(pay)).toBe(
-      "It America LLC (weekly pay) stops being expected: it leaves the forecast and the recurring calendar.",
+      "It America LLC (weekly pay) stops being expected: it leaves the forecast, the recurring calendar, the monthly " +
+        "income your budgets and runway count on, and its line on Earned vs banked.",
+    );
+    expect(seriesEndHeadline({ ...pay, onEarnedVsBanked: false })).toBe(
+      "It America LLC (weekly pay) stops being expected: it leaves the forecast, the recurring calendar, and the " +
+        "monthly income your budgets and runway count on.",
+    );
+    // a transfer in, or the agent's income (`isAgentsIncomeSeries`): in neither
+    const transferIn = subject({ name: "From savings", kind: "transfer", nextExpectedAmountCents: 50_000 });
+    expect(seriesEndHeadline(transferIn)).toBe(
+      "From savings stops being expected: it leaves the forecast and the recurring calendar.",
+    );
+    // ended, his pay is already out of the income too — the same list, as a bill's is the same in both
+    expect(seriesEndHeadline({ ...pay, name: "Fordham Payroll", status: "ended", onEarnedVsBanked: false })).toBe(
+      "Fordham Payroll is already out of the forecast, the recurring calendar and the monthly income your budgets " +
+        "and runway count on, so ending it takes nothing out of them.",
     );
     // an `other` series of money in lapses (only pay never does) — already out of the two that held it
     const refund = subject({ name: "Refund", kind: "other", evidence: "lapsed", nextExpectedAmountCents: 500 });

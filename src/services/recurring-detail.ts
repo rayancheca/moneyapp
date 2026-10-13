@@ -21,6 +21,7 @@ import { isAgentsIncomeSeries, loadCategoryIndex } from "./analytics";
 import { arrearsThisMonth, unbankedIncomeThisMonth, unbankedIncomeTotals } from "./arrears";
 import { billingCarriers } from "./billing-carriers";
 import { silenceMeasuredThroughBySeries } from "./cash-earnings";
+import { incomeCardSeriesIds } from "./income-card";
 import { paydaySettlement, readsPerPayday, stillToCome, stillToComeReader } from "./payday-settlement";
 import { postedAveragesBySeries } from "./posted-average";
 import {
@@ -274,6 +275,16 @@ export interface SeriesDetail {
    * out (`isAgentsIncomeSeries`, owner decision 2026-09-28).
    */
   unbankedPaydays: UnbankedPaydays | null;
+  /**
+   * His pay — an income series that is not the agent's (`isAgentsIncomeSeries`, owner decision 2026-09-28): while it is
+   * live, `incomeExpectation` levels it into the monthly income /budgets grades against and the runway counts on. The
+   * End dialog names that income (`seriesEndHeadline`). 🔴 It said ending It America LLC (weekly pay) left "the forecast
+   * and the recurring calendar" — and on a copy of his ledger 2026-10-12 ending it took /budgets' expected income from
+   * $4,948.32 to $0.00 and the runway from 2.6 months of cash to 1.0.
+   */
+  isHisPay: boolean;
+  /** A pay line of the dashboard's Earned vs banked card — the card's own readings (`incomeCardSeriesIds`). */
+  onEarnedVsBanked: boolean;
   /** full linked history, newest first */
   linkedTxns: SeriesLinkedTxn[];
   /** linked charge amounts oldest → newest, for the drift chart */
@@ -303,6 +314,11 @@ function categoryRef(id: string, catById: ReadonlyMap<string, CatRow>): SeriesCa
   };
 }
 
+/** `SeriesDetail.isHisPay`: income, and not the agent's — the filter `incomeExpectation` and the forecast read by. */
+function isHisPay(db: AppDatabase, s: { readonly kind: SeriesKind; readonly accountId: string | null }): boolean {
+  return s.kind === "income" && !isAgentsIncomeSeries(outsidePortfolioCashAccountIds(db), s);
+}
+
 /**
  * This month's passed paydays with no deposit, for one series' page — `SeriesDetail.unbankedPaydays`. Null for a bill
  * and for the agent's income (the forecast's own series filter), and when nothing passed unpaid.
@@ -314,7 +330,7 @@ function unbankedPaydaysOf(
   s: { readonly id: string; readonly kind: SeriesKind; readonly accountId: string | null },
   today: string,
 ): UnbankedPaydays | null {
-  if (s.kind !== "income" || isAgentsIncomeSeries(outsidePortfolioCashAccountIds(db), s)) return null;
+  if (!isHisPay(db, s)) return null;
   const unbanked = unbankedIncomeThisMonth(db, new Set([s.id]), today);
   const passed = unbanked.series[0];
   if (passed === undefined) return null;
@@ -528,6 +544,9 @@ export function seriesDetail(
       }
     : null;
   const unbankedPaydays = unbankedPaydaysOf(db, s, today);
+  const hisPay = isHisPay(db, s);
+  // the card reads confirmed pay alone (`cashEarningsReadings`): asked first only so no other page walks its readings
+  const onEarnedVsBanked = hisPay && s.status === "confirmed" && incomeCardSeriesIds(db, today).has(s.id);
 
   const namedCategoryId = seriesCategoryIds(db, loadCategoryIndex(db), [s.id]).get(s.id);
 
@@ -588,6 +607,8 @@ export function seriesDetail(
     nextExpected,
     overdue,
     unbankedPaydays,
+    isHisPay: hisPay,
+    onEarnedVsBanked,
     linkedTxns,
     amountHistory,
     mergeCandidates,

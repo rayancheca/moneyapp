@@ -16,10 +16,14 @@ import { seedDatabase } from "@/db/seed";
 import { addDays, periodBounds } from "@/lib/dates";
 import { resolveViewState } from "@/lib/view-state";
 import { RECURRING_SERIES_VIEW_SPEC } from "@/components/recurring/recurring-view-spec";
+import { seriesEndHeadline } from "@/components/recurring/end-radius";
 import { createAccount } from "./accounts";
 import { incomeExpectation } from "./budgets";
+import { runwayCard } from "./committed";
 import { forecastCurrentMonth } from "./forecast";
+import { incomeCard } from "./income-card";
 import { printOnOneStatement } from "./printed-statement-fixture";
+import { setSeriesStatus } from "./recurring";
 import { seriesDetail } from "./recurring-detail";
 
 // rendering never navigates or submits; the page and its controls only need these to exist
@@ -87,7 +91,7 @@ function addAccount(id: string): void {
 function addSeries(
   id: string,
   name: string,
-  opts: { kind?: SeriesKind; cents?: number; status?: "confirmed" | "ended"; accountId?: string } = {},
+  opts: { kind?: SeriesKind; cents?: number; status?: "detected" | "confirmed" | "ended"; accountId?: string } = {},
 ): void {
   const cents = opts.cents ?? 100_000;
   bundle.db
@@ -134,6 +138,21 @@ function deposit(accountId: string, seriesId: string, postedOn: string, cents = 
       updatedAt: now(),
     })
     .run();
+}
+
+/** The agent's cash — a Robinhood checking account its brokerage book sweeps into, on one statement: its id. */
+function addAgentsCash(): string {
+  const rh = bundle.db.select().from(institutions).where(eq(institutions.name, "Robinhood")).get()!;
+  const agentic = createAccount(bundle.db, { institutionId: rh.id, name: "Robinhood Agentic", type: "checking" });
+  const book = createAccount(bundle.db, {
+    institutionId: rh.id,
+    name: "Robinhood Agentic Brokerage",
+    type: "investment",
+    subtype: "brokerage",
+  });
+  bundle.db.update(accounts).set({ cashAccountId: agentic }).where(eq(accounts.id, book)).run();
+  printOnOneStatement(bundle.db, rh.id, [agentic, book]);
+  return agentic;
 }
 
 /** Days the balance walk has read — the second arbiter `accountCoverage` grades. */
@@ -247,16 +266,7 @@ describe("a pay series' own page lists the paydays that passed this month with n
    * forecast and /budgets leave its schedule out of the passed paydays, so its page names none either.
    */
   test("the agent's income series stays out, as the forecast leaves it out", () => {
-    const rh = bundle.db.select().from(institutions).where(eq(institutions.name, "Robinhood")).get()!;
-    const agentic = createAccount(bundle.db, { institutionId: rh.id, name: "Robinhood Agentic", type: "checking" });
-    const book = createAccount(bundle.db, {
-      institutionId: rh.id,
-      name: "Robinhood Agentic Brokerage",
-      type: "investment",
-      subtype: "brokerage",
-    });
-    bundle.db.update(accounts).set({ cashAccountId: agentic }).where(eq(accounts.id, book)).run();
-    printOnOneStatement(bundle.db, rh.id, [agentic, book]);
+    const agentic = addAgentsCash();
     addSeries("series-agent", "Agent interest", { cents: 4, accountId: agentic });
     deposit(agentic, "series-agent", "2026-06-04", 4);
     readThrough(CHASE, "2026-06-01", "2026-08-12");
@@ -312,5 +322,105 @@ describe("the page renders the block from that reading", () => {
     deposit(CHASE, "series-bill", "2026-06-04", -5_000);
     readThrough(CHASE, "2026-06-01", "2026-08-12");
     expect(words("series-bill")).not.toMatch(/already passed this month|payday/);
+  });
+});
+
+/*
+ * 🔴 ENDING PAY SAID IT TOOK OUT LESS THAN IT DOES (review of 17ff00a). `/recurring/<It America LLC (weekly pay)>`'s
+ * End dialog read "It America LLC (weekly pay) stops being expected: it leaves the forecast and the recurring
+ * calendar." — and pay is the monthly income /budgets grades against and the runway counts on (`incomeExpectation`).
+ * Ended on a copy of his ledger 2026-10-12: /budgets' expected income went from $4,948.32 to $0.00, the runway from
+ * "2.6 months of cash" to "1.0 months of cash", and the dashboard's Earned vs banked card went with its one line.
+ * ⛔ Each claim checked against what ending the series moves: it is ended, read, and put back.
+ */
+describe("the End dialog on pay names every income reader ending it moves", () => {
+  /** What his income readers print — /budgets' expected income, the runway's burn, Earned vs banked's pay lines. */
+  function incomeRead() {
+    const month = periodBounds(TODAY, "monthly");
+    return {
+      budgets: incomeExpectation(bundle.db, month.start, month.end, TODAY).basis.cents,
+      runway: runwayCard(bundle.db, TODAY).runway.netBurnCents,
+      earnedVsBanked: (incomeCard(bundle.db, TODAY)?.pay ?? []).map((l) => l.seriesId),
+    };
+  }
+
+  /** What ending `id` moves, measured: ended, read, and its status put back. */
+  function endingMoves(id: string) {
+    const { status } = bundle.db.select().from(recurringSeries).where(eq(recurringSeries.id, id)).get()!;
+    const before = incomeRead();
+    setSeriesStatus(bundle.db, id, "ended");
+    const after = incomeRead();
+    bundle.db.update(recurringSeries).set({ status }).where(eq(recurringSeries.id, id)).run();
+    return {
+      budgets: after.budgets !== before.budgets,
+      runway: after.runway !== before.runway,
+      earnedVsBanked: before.earnedVsBanked.includes(id) && !after.earnedVsBanked.includes(id),
+    };
+  }
+
+  /** …and what the dialog's headline says ending it moves, read off the page's own data. */
+  function headlineSays(id: string) {
+    const headline = seriesEndHeadline(page(id));
+    return {
+      budgets: headline.includes("your budgets"),
+      runway: headline.includes("runway"),
+      earnedVsBanked: headline.includes("Earned vs banked"),
+    };
+  }
+
+  beforeEach(() => readThrough(CHASE, "2026-06-01", "2026-08-12"));
+
+  test("his confirmed pay: the income /budgets and the runway count on, and its line on Earned vs banked", () => {
+    expect(endingMoves(SERIES)).toEqual({ budgets: true, runway: true, earnedVsBanked: true });
+    expect(headlineSays(SERIES)).toEqual(endingMoves(SERIES));
+    expect(seriesEndHeadline(page(SERIES))).toBe(
+      "It America LLC (weekly pay) stops being expected: it leaves the forecast, the recurring calendar, the monthly " +
+        "income your budgets and runway count on, and its line on Earned vs banked.",
+    );
+  });
+
+  // ⛔ Earned vs banked implies earnings from CONFIRMED pay alone (`cashEarningsReadings`): no line to lose
+  test("his detected pay: the income /budgets and the runway count on, and no Earned vs banked", () => {
+    bundle.db.update(recurringSeries).set({ status: "detected" }).where(eq(recurringSeries.id, SERIES)).run();
+    expect(endingMoves(SERIES)).toEqual({ budgets: true, runway: true, earnedVsBanked: false });
+    expect(headlineSays(SERIES)).toEqual(endingMoves(SERIES));
+    expect(seriesEndHeadline(page(SERIES))).toBe(
+      "It America LLC (weekly pay) stops being expected: it leaves the forecast, the recurring calendar, and the " +
+        "monthly income your budgets and runway count on.",
+    );
+  });
+
+  // ⛔ …nor from a schedule with nothing banked yet: no first payday, no line (`cashEarningsReadings`)
+  test("his confirmed pay with nothing banked yet: the income they count on, and no line on Earned vs banked", () => {
+    addSeries("series-new", "New job (weekly pay)");
+    expect(endingMoves("series-new")).toEqual({ budgets: true, runway: true, earnedVsBanked: false });
+    expect(headlineSays("series-new")).toEqual(endingMoves("series-new"));
+  });
+
+  // ⚖️ what the agent's cash is paid is not his income (`isAgentsIncomeSeries`, owner decision 2026-09-28)
+  test("the agent's income moves none of his income readers, and the dialog names none", () => {
+    const agentic = addAgentsCash();
+    addSeries("series-agent", "Agent interest", { cents: 4, accountId: agentic });
+    deposit(agentic, "series-agent", "2026-06-04", 4);
+    expect(endingMoves("series-agent")).toEqual({ budgets: false, runway: false, earnedVsBanked: false });
+    expect(headlineSays("series-agent")).toEqual(endingMoves("series-agent"));
+  });
+
+  test("a bill moves none of them either — its headline is the budget tail's, unchanged", () => {
+    addSeries("series-bill", "Gym", { kind: "bill", cents: -5_000 });
+    // charged through the last read week, so the forecast still holds it (a quiet one lapses)
+    for (let day = "2026-06-04"; day <= "2026-08-12"; day = addDays(day, 7)) {
+      deposit(CHASE, "series-bill", day, -5_000);
+    }
+    bundle.db
+      .update(recurringSeries)
+      .set({ lastMatchedOn: "2026-08-06", nextExpectedOn: "2026-08-13" })
+      .where(eq(recurringSeries.id, "series-bill"))
+      .run();
+    expect(endingMoves("series-bill")).toEqual({ budgets: false, runway: false, earnedVsBanked: false });
+    expect(headlineSays("series-bill")).toEqual(endingMoves("series-bill"));
+    expect(seriesEndHeadline(page("series-bill"))).toBe(
+      "Gym stops being expected: it leaves the forecast, the recurring calendar, and every budget's expected tail.",
+    );
   });
 });

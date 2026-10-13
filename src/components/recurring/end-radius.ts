@@ -119,18 +119,39 @@ export function seriesEndInput(
  * pay, an `other` credit, a transfer in — was never in one: on his ledger copy 2026-10-12 It America LLC (weekly pay)
  * "stops being expected: it leaves the forecast, the recurring calendar, and every budget's expected tail". The sign is
  * the amount the forecast projects (`nextExpectedAmountCents`, `effectiveSeries`).
+ *
+ * 🔴 …AND THEN IT LEFT OUT WHAT PAY IS IN (review of 17ff00a): "It America LLC (weekly pay) stops being expected: it
+ * leaves the forecast and the recurring calendar." Pay is the monthly income /budgets grades against and the runway
+ * counts on (`incomeExpectation`), and a confirmed one is a line of the dashboard's Earned vs banked. Ended on a copy of
+ * his ledger 2026-10-12: "Budgeted $X of $4,948.32 expected income" became "…of $0.00", the runway went from "2.6
+ * months of cash" to "1.0 months of cash", and Earned vs banked went with its one line. ⛔ Both from the readers' own
+ * rules (`SeriesDetail.isHisPay`, `onEarnedVsBanked`); the agent's income is in neither, and its dialog names neither.
  */
-export type SeriesEndSubject = Pick<SeriesDetail, "name" | "status" | "evidence" | "kind" | "nextExpectedAmountCents"> & {
+export type SeriesEndSubject = Pick<
+  SeriesDetail,
+  "name" | "status" | "evidence" | "kind" | "nextExpectedAmountCents" | "isHisPay" | "onEarnedVsBanked"
+> & {
   linkedTxns: readonly unknown[];
 };
 
+const LIST = new Intl.ListFormat("en", { style: "long", type: "conjunction" });
+
+/** What a series is in while it is expected: the budgets' tail for money out (`budgetTail`), his income for his pay. */
+function expectedIn(data: SeriesEndSubject): string[] {
+  const always = ["the forecast", "the recurring calendar"];
+  if ((data.nextExpectedAmountCents ?? 0) < 0) return [...always, "every budget's expected tail"];
+  if (!data.isHisPay) return always;
+  return [
+    ...always,
+    "the monthly income your budgets and runway count on",
+    ...(data.onEarnedVsBanked ? ["its line on Earned vs banked"] : []),
+  ];
+}
+
 export function seriesEndHeadline(data: SeriesEndSubject): string {
-  const inBudgetTails = (data.nextExpectedAmountCents ?? 0) < 0;
+  const where = expectedIn(data);
   if (seriesIsProjected(data.status, data.evidence)) {
-    return inBudgetTails
-      ? `${data.name} stops being expected: it leaves the forecast, the recurring calendar, and every budget's ` +
-          "expected tail."
-      : `${data.name} stops being expected: it leaves the forecast and the recurring calendar.`;
+    return `${data.name} stops being expected: it leaves ${LIST.format(where)}.`;
   }
   if (endDrawsAsRecurring(data.status, data.linkedTxns.length)) {
     return (
@@ -139,10 +160,9 @@ export function seriesEndHeadline(data: SeriesEndSubject): string {
       "calendar and left out of your recent pace."
     );
   }
-  const where = inBudgetTails
-    ? "the forecast, the recurring calendar and every budget's expected tail"
-    : "the forecast and the recurring calendar";
-  return `${data.name} is already out of ${where}, so ending it takes nothing out of them.`;
+  // no serial comma before the clause that follows — as the sentence has always read
+  const out = where.length < 3 ? LIST.format(where) : `${where.slice(0, -1).join(", ")} and ${where.at(-1)}`;
+  return `${data.name} is already out of ${out}, so ending it takes nothing out of them.`;
 }
 
 /** What survives — the rows, in what the series posts (`seriesPostingWords`), as the card under the dialog says them. */
