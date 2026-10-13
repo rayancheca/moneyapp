@@ -3,7 +3,7 @@ import { getDb } from "@/db/client";
 import { periodBounds, todayIso, type PeriodBounds } from "@/lib/dates";
 import { formatDayLong, formatDayShort } from "@/lib/format-date";
 import { paidByAnotherMonthNote, paidForAnotherMonthNote } from "@/lib/paid-by-another-month";
-import { unbankedIncomeFrontierClause } from "@/lib/unbanked-income";
+import { IMPORTS_NOT_EARNINGS, unbankedIncomeFrontierClause } from "@/lib/unbanked-income";
 import {
   budgetGuidanceCents,
   budgetPaceStatuses,
@@ -275,8 +275,7 @@ export default async function BudgetsPage({
                 <> with no deposit against {income.passedUnpaidOccurrences === 1 ? "it" : "them"}</>
               )}{" "}
               — counted in neither figure above.{" "}
-              {passedUnread ??
-                "That is evidence about what has been imported, not about whether the money was earned."}
+              {passedUnread ?? IMPORTS_NOT_EARNINGS}
             </p>
           )}
           {/* 🔴 THE FOURTH LEG, NAMED — his answer to §6A 29. A payday paid by

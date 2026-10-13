@@ -1,5 +1,6 @@
 import { and, desc, eq, isNull, lte, ne, or, sql } from "drizzle-orm";
 import type { SeriesEvidence } from "@/lib/series-evidence";
+import type { UnbankedIncomeReading } from "@/lib/unbanked-income";
 import type { BillingCarrier } from "@/lib/billed-with";
 import type { AppDatabase } from "@/db/client";
 import { accounts } from "@/db/schema/accounts";
@@ -15,8 +16,9 @@ import { transactions } from "@/db/schema/transactions";
 import { addDays, isValidIsoDate, todayIso } from "@/lib/dates";
 import { expectedCentsOf, paydayReadings, type PaydayReading, type PerPayday } from "@/lib/per-payday";
 import { stepFrom, stepPlan } from "@/lib/recurring-step";
-import { loadCategoryIndex } from "./analytics";
-import { arrearsThisMonth } from "./arrears";
+import { outsidePortfolioCashAccountIds } from "./accounts";
+import { isAgentsIncomeSeries, loadCategoryIndex } from "./analytics";
+import { arrearsThisMonth, unbankedIncomeThisMonth, unbankedIncomeTotals } from "./arrears";
 import { billingCarriers } from "./billing-carriers";
 import { silenceMeasuredThroughBySeries } from "./cash-earnings";
 import { paydaySettlement, readsPerPayday, stillToCome, stillToComeReader } from "./payday-settlement";
@@ -102,6 +104,19 @@ export interface SeriesMergeCandidate {
    * confirmation names before he presses; null when it files nothing. The reading `mergeSeries` writes by.
    */
   filing: MergeFiling | null;
+}
+
+/** One passed payday with no deposit against it — its day, and its own day's rate (§6A 55). */
+export interface UnbankedPayday {
+  date: string;
+  amountCents: number;
+}
+
+/** A pay series' passed paydays this month, as the forecast's note reads them (`SeriesDetail.unbankedPaydays`). */
+export interface UnbankedPaydays extends UnbankedIncomeReading {
+  totalCents: number;
+  /** in date order; their amounts sum to `totalCents` */
+  paydays: readonly UnbankedPayday[];
 }
 
 export interface SeriesDetail {
@@ -244,6 +259,21 @@ export interface SeriesDetail {
     unreadCents: number;
     graceDays: number;
   } | null;
+  /**
+   * The income side of `overdue`: this month's paydays that passed with no deposit against them — null when none did,
+   * on a bill, and on the agent's income.
+   *
+   * 🔴 `/recurring/<It America LLC (weekly pay)>` on a copy of his ledger 2026-10-12 read "Awaiting statements" and
+   * "Next expected Oct 15", and said nothing of Oct 1 or Oct 8. The forecast on /recurring said "2 paydays worth
+   * $2,283.84 already passed this month … the ledger has not looked for their deposits", /budgets the same, and every
+   * bill's page lists what came due. The page that is ABOUT that pay was the only one silent.
+   *
+   * ⛔ The forecast's reading, not a second one: `unbankedIncomeThisMonth` over the month the forecast walks, with its
+   * checked split and frontier (`unbankedIncomeTotals`) — so the page and the note cannot name different Thursdays,
+   * or call one checked the other calls unread. ⚖️ The agent's income stays out as the forecast and /budgets leave it
+   * out (`isAgentsIncomeSeries`, owner decision 2026-09-28).
+   */
+  unbankedPaydays: UnbankedPaydays | null;
   /** full linked history, newest first */
   linkedTxns: SeriesLinkedTxn[];
   /** linked charge amounts oldest → newest, for the drift chart */
@@ -270,6 +300,31 @@ function categoryRef(id: string, catById: ReadonlyMap<string, CatRow>): SeriesCa
     name: cat.name,
     hue: cat.color ?? parent?.color ?? null,
     icon: cat.icon ?? parent?.icon ?? null,
+  };
+}
+
+/**
+ * This month's passed paydays with no deposit, for one series' page — `SeriesDetail.unbankedPaydays`. Null for a bill
+ * and for the agent's income (the forecast's own series filter), and when nothing passed unpaid.
+ *
+ * The kind is asked first only so a bill's page skips the walk, which reads income alone (`unbankedIncomeForSeries`).
+ */
+function unbankedPaydaysOf(
+  db: AppDatabase,
+  s: { readonly id: string; readonly kind: SeriesKind; readonly accountId: string | null },
+  today: string,
+): UnbankedPaydays | null {
+  if (s.kind !== "income" || isAgentsIncomeSeries(outsidePortfolioCashAccountIds(db), s)) return null;
+  const unbanked = unbankedIncomeThisMonth(db, new Set([s.id]), today);
+  const passed = unbanked.series[0];
+  if (passed === undefined) return null;
+  const { totalCents, occurrenceCount, checkedOccurrenceCount, frontier } = unbankedIncomeTotals(unbanked);
+  return {
+    totalCents,
+    occurrenceCount,
+    checkedOccurrenceCount,
+    frontier,
+    paydays: passed.occurrenceDates.map((date, i) => ({ date, amountCents: passed.occurrenceCents[i]! })),
   };
 }
 
@@ -453,6 +508,7 @@ export function seriesDetail(
         graceDays: late.graceDays,
       }
     : null;
+  const unbankedPaydays = unbankedPaydaysOf(db, s, today);
 
   const namedCategoryId = seriesCategoryIds(db, loadCategoryIndex(db), [s.id]).get(s.id);
 
@@ -525,6 +581,7 @@ export function seriesDetail(
     annualizedCents: annualizedCentsOf(s, today, checkedThrough),
     nextExpected,
     overdue,
+    unbankedPaydays,
     linkedTxns,
     amountHistory,
     mergeCandidates,

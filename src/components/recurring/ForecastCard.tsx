@@ -2,7 +2,7 @@ import { Money } from "@/components/ui/Money";
 import { SurfaceCard } from "@/components/ui/SurfaceCard";
 import { forecastSplit } from "@/lib/forecast-split";
 import { formatDayLong } from "@/lib/format-date";
-import { unbankedIncomeFrontierClause } from "@/lib/unbanked-income";
+import { passedPaydaysWords } from "@/lib/unbanked-income";
 import type { MonthForecast } from "@/services/forecast";
 import { ForecastComposition } from "./ForecastComposition";
 import { monthLabel, staleComponentEntries } from "./labels";
@@ -21,16 +21,17 @@ interface ForecastCardProps {
  * clause speak only of paydays on days the ledger has checked; the rest are
  * named as not looked for (`unbankedIncomeFrontierClause`), as /spending names
  * them.
+ *
+ * ⛔ In `passedPaydaysWords`, the words the pay series' own page heads its list of the same paydays with.
  */
 export function UnbankedIncomeNote({ unbanked: u }: { unbanked: MonthForecast["unbankedIncome"] }) {
-  const unread = unbankedIncomeFrontierClause(u, formatDayLong);
+  const w = passedPaydaysWords(u, formatDayLong);
   const names = u.names.length > 0 ? ` (${u.names.join(", ")})` : "";
   return (
-    <p className={`mt-1 text-xs ${u.checkedOccurrenceCount > 0 ? "text-warning" : "text-ink-faint"}`}>
-      {u.occurrenceCount === 1 ? "1 payday" : `${u.occurrenceCount} paydays`} worth <Money cents={u.totalCents} />{" "}
-      already passed this month{unread === null ? " with no deposit imported" : ""}
-      {names} — not counted above, and not in EOM cash. {unread === null ? "" : `${unread} `}
-      {u.checkedOccurrenceCount > 0 ? "Cash pay that never reaches a bank" : "Pay the ledger has not looked for"}{" "}
+    <p className={`mt-1 text-xs ${w.warning ? "text-warning" : "text-ink-faint"}`}>
+      {w.count} worth <Money cents={u.totalCents} /> {w.passed}
+      {names} — not counted above, and not in EOM cash. {w.unread === null ? "" : `${w.unread} `}
+      {w.warning ? "Cash pay that never reaches a bank" : "Pay the ledger has not looked for"}{" "}
       cannot be projected as arriving; the month strip below counts it, because that line is the schedule.
     </p>
   );

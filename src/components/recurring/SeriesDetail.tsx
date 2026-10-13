@@ -31,6 +31,7 @@ import type { SeriesDetail as SeriesDetailData } from "@/services/recurring-deta
 import { AlreadyDueCard } from "./AlreadyDueCard";
 import { AmountHistoryChart } from "./AmountHistoryChart";
 import { CadenceSentence } from "./CadenceSentence";
+import { PassedPaydaysCard } from "./PassedPaydaysCard";
 import { AttachPanel, LinkedTransactions, MergeControl } from "./SeriesMembership";
 import { annualizedCaveat, cadenceLabel, KIND_LABEL, longDate, postedSpreadReading, STATUS_LABEL } from "./labels";
 
@@ -367,6 +368,8 @@ export function SeriesDetail({
 
         {/* 🔴 THE BACKWARD HALF — and said only as far as the ledger has read it (`AlreadyDueCard`) */}
         {data.overdue ? <AlreadyDueCard overdue={data.overdue} /> : null}
+        {/* …and pay's: this month's paydays with no deposit, in the forecast's words (`PassedPaydaysCard`) */}
+        {data.unbankedPaydays ? <PassedPaydaysCard passed={data.unbankedPaydays} /> : null}
 
         {/* 🔴 An ENDED or DISMISSED series projected three dated future
             charges here — see `noScheduleReason`. Dropping the card silently
