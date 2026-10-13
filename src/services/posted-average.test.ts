@@ -529,10 +529,42 @@ describe("the posted average of a bill with a rate history — the payments at t
     const s = surfaces();
     expect(s.page).toEqual([-231_220, 8_527]);
     expect(s.allTab).toBe(-231_220);
-    expect(s.popover.headline).toContain("average of what actually posted is -$2,312.20, which is not what you set");
+    /*
+     * ⛔ …held to the rate he set for TODAY, the rate it is the average of — and named, since it is not the -$2,300.00
+     * on screen. 🔴 Held to the -$2,300.00 not in force yet, an average AT -$2,300.00 would have read "which is not
+     * what you set" beside it, and one at -$2,109.00 the same (review of 6c59cdb, hypothetical).
+     */
+    expect(s.popover.headline).toContain(
+      "average of what actually posted is -$2,312.20, which is not the -$2,109.00 you set through Oct 31, 2026 — its " +
+        "payments carry Rent utilities & fees too.",
+    );
     expect(s.popover.headline).toContain("Its 4 payments since Jun 16, 2026 (5 tagged postings: Jun 16's posted as 2)");
     expect(JSON.stringify(s.popover)).not.toMatch(/Nov 1|earlier rate|no average of it yet/);
     expect(s.detail.amountHistory.map((h) => h.expectedCents)).toEqual([-210_900, -210_900, -210_900, -210_900]);
+  });
+
+  /* …and a bill that paid exactly the rate in force, its rise recorded ahead: no disagreement to warn of */
+  test("a rise recorded from Nov 1: payments of the -$50.00 in force now disagree with nothing", () => {
+    const { id } = bundle.db
+      .insert(recurringSeries)
+      .values({
+        name: "Breezeline",
+        kind: "bill",
+        cadence: "monthly",
+        status: "confirmed",
+        toleranceDays: 3,
+        userAmountCents: -5_500,
+        userAmountHistory: [{ throughOn: "2026-10-31", amountCents: -5_000 }],
+      })
+      .returning({ id: recurringSeries.id })
+      .get();
+    for (const day of ["2026-07-05", "2026-08-05", "2026-09-05"]) rent.charge(day, -5_000, id);
+    const p = provenanceFor(bundle.db, { kind: "recurringSeries", id, today: TODAY })!;
+    // 🔴 held to the -$55.00 not in force yet: "⚠️ … is -$50.00, which is not what you set." (at 6c59cdb)
+    expect(p.headline).toContain("All 3 tagged postings since Jul 5, 2026 were -$50.00, exactly.");
+    expect(p.headline).not.toContain("⚠️");
+    // the rate on screen is still the one he set from Nov 1 — the average line names the -$50.00 under it
+    expect(seriesDetail(bundle.db, id, TODAY)!.postedAvgCents).toBe(-5_000);
   });
 
   /* …and with a period before it too, the rate in force is the middle one: Aug 4's and Sep 2's payments */

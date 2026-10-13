@@ -118,6 +118,14 @@ export interface PerPaydayEvidence {
    * (`PaydayReading.expectedCents`) — or part of one of the era in force now
    */
   noPaydayOfTheirOwn: number;
+  /** tagged rows of money out, on a day that did not net to $0.00 — no deposit, so no payday's pay, of any era */
+  moneyOut: number;
+  /**
+   * The days whose tagged rows net to $0.00, oldest first (`nettedToNothing`, the rule a bill's payments are read by):
+   * a payroll and its same-day return paid nothing, and none of their rows is counted above — named instead, so the
+   * words still account for every row.
+   */
+  netted: readonly Occurrence[];
 }
 
 /**
@@ -131,6 +139,11 @@ export interface PerPaydayEvidence {
  * no history written. ⛔ …then an era's DIRECTION: a deposit pays the era of the payday it anchors to, which can
  * begin after today (`depositEra`). 🔴 Every era but today's was `earlier`, and a Wednesday's pay for a raise
  * beginning Thursday read "before Aug 27, 2026 … at an earlier rate" (review of 78c21ee).
+ *
+ * ⛔ And before any of it, a day whose rows net to $0.00 paid nothing (`nettedToNothing` — ONE rule, a bill's and his
+ * pay's), and money out is no deposit (`moneyOut`): neither is a sample, nor any era's. 🔴 A payroll returned the same
+ * day was a "-$1,141.92" deposit: two weeks at $1,141.92 averaged $380.64 on the page, the All tab and the popover,
+ * "from -$1,141.92 to $1,141.92" (review of 6c59cdb, hypothetical: no money out is linked to his pay).
  */
 export function perPaydayEvidence(
   rows: readonly ReadableRow[],
@@ -139,19 +152,28 @@ export function perPaydayEvidence(
   today: string,
 ): PerPaydayEvidence {
   const now = currentRatePeriod(schedule, today);
+  const netted = nettedToNothing(rows);
+  const paidNothing = new Set(netted.map((o) => o.postedOn));
+  const counted = rows.filter((r) => !paidNothing.has(r.postedOn));
   // a day's deposits, read together where settlement saw them as one (`PerPayday.deposits`)
   const days = new Map<string, { cents: number; deposits: number }>();
-  for (const r of rows.filter((row) => row.amountCents > 0)) {
+  for (const r of counted.filter((row) => row.amountCents > 0)) {
     const day = days.get(r.postedOn);
     days.set(r.postedOn, { cents: (day?.cents ?? 0) + r.amountCents, deposits: (day?.deposits ?? 0) + 1 });
   }
   const samples: PaydaySample[] = [];
   let earlier = 0;
   let later = 0;
-  for (const r of rows) {
+  let moneyOut = 0;
+  for (const r of counted) {
     const reading = readings.get(r.id);
     // money that paid no payday is no era's (`noPaydayOfTheirOwn`, below)
     if (reading?.towardNoPayday === true) continue;
+    // …and money out is no deposit: no payday's pay, of any era
+    if (r.amountCents <= 0) {
+      moneyOut += 1;
+      continue;
+    }
     // a row with no reading is held on its own day, as `expectedCentsOf` holds it
     const era = reading?.ratePeriod ?? ratePeriodOf(schedule, r.postedOn);
     if (era < now) earlier += 1;
@@ -169,7 +191,9 @@ export function perPaydayEvidence(
     samples: samples.sort((a, b) => compareDates(a.postedOn, b.postedOn)),
     earlier,
     later,
-    noPaydayOfTheirOwn: rows.length - earlier - later - sampled,
+    noPaydayOfTheirOwn: counted.length - earlier - later - moneyOut - sampled,
+    moneyOut,
+    netted,
   };
 }
 
@@ -204,7 +228,8 @@ export function occurrencesOf(rows: readonly Pick<ReadableRow, "postedOn" | "amo
 
 /**
  * The days whose rows net to $0.00, oldest first — a charge and its same-day reversal: tagged postings that paid no
- * payment (`occurrencesOf` leaves them out), named where the rows are counted so they still add up. None on his
+ * payment (`occurrencesOf` leaves them out), named where the rows are counted so they still add up. ⛔ ONE rule: a pay
+ * series' days too — a payroll and its same-day return paid no payday (`PerPaydayEvidence.netted`). None on his
  * ledger (a copy of it, 2026-10-12).
  */
 export function nettedToNothing(rows: readonly Pick<ReadableRow, "postedOn" | "amountCents">[]): Occurrence[] {

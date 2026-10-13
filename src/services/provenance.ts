@@ -12,7 +12,7 @@ import { holdings, priceCache, type AssetType } from "@/db/schema/holdings";
 import { importFiles, statementPeriods } from "@/db/schema/imports";
 import { recurringSeries } from "@/db/schema/recurring";
 import { transactions } from "@/db/schema/transactions";
-import { diffDays, todayIso } from "@/lib/dates";
+import { addDays, diffDays, todayIso } from "@/lib/dates";
 import { isStaleClose } from "@/lib/holding-price-age";
 import { formatCents } from "@/lib/money";
 import { A_LOWER_BOUND, emptyPeriodReason } from "@/lib/empty-period";
@@ -51,9 +51,9 @@ import { PART_ENTERED, VERDICT_PRESENTATION } from "@/lib/provenance-verdict";
 import { billedWithEvidence, carriesPhrase } from "@/lib/billed-with";
 import { billingCarriers } from "./billing-carriers";
 import { postedAsWord, type Occurrence, type PaydaySample, type PerPaydayEvidence } from "@/lib/posted-average";
-import { seriesAmountCents } from "@/lib/series-kind";
+import { rateOn, seriesAmountCents } from "@/lib/series-kind";
 import { postedAveragesBySeries } from "./posted-average";
-import { MIN_OCCURRENCES } from "./recurring";
+import { effectiveSeries, MIN_OCCURRENCES } from "./recurring";
 import { balanceLessKind, type BalanceLessFacts } from "./statements-by-account";
 import { fileRecordedBalanceOn, fileRecordedBalanceOnSql } from "./file-recorded-balance";
 
@@ -1873,11 +1873,12 @@ function towardLaterWords(later: number, next: string | null, day: (d: string) =
 /**
  * The deposits a pay series' average leaves out, and why: "Its one deposit before Aug 27, 2026 was at an earlier
  * rate …", "Its one deposit toward a payday from Oct 1, 2026 is at a later rate, not in force yet …" (`next`, the
- * first day of that rate) and "Its one other deposit paid no payday on its own …" — each as `perPaydayEvidence`
- * sorts it, so the words, the calendar and the Amount history give a row one description.
+ * first day of that rate), "Its one other deposit paid no payday on its own …" and "Its one tagged posting of money
+ * out paid no payday …" — each as `perPaydayEvidence` sorts it, so the words, the calendar and the Amount history give
+ * a row one description.
  */
 function leftOutOfPaydaysWords(evidence: PerPaydayEvidence, era: string | null, next: string | null): string[] {
-  const { samples, earlier, later, noPaydayOfTheirOwn: ownless } = evidence;
+  const { samples, earlier, later, noPaydayOfTheirOwn: ownless, moneyOut } = evidence;
   const out: string[] = [];
   if (earlier > 0) {
     const before = era === null ? "" : ` before ${readableDay(era)}`;
@@ -1894,6 +1895,11 @@ function leftOutOfPaydaysWords(evidence: PerPaydayEvidence, era: string | null, 
     const other = samples.length + earlier + later > 0 ? "other " : "";
     const which = ownless === 1 ? `Its one ${other}deposit` : `Its ${ownless} ${other}deposits`;
     out.push(`${which} paid no payday on ${ownless === 1 ? "its" : "their"} own, ${notCounted(ownless)}`);
+  }
+  // ⛔ money out is no deposit (`PerPaydayEvidence.moneyOut`) — never "Its 3 deposits … from -$1,141.92"
+  if (moneyOut > 0) {
+    const which = moneyOut === 1 ? "Its one tagged posting" : `Its ${moneyOut} tagged postings`;
+    out.push(`${which} of money out paid no payday, ${notCounted(moneyOut)}`);
   }
   return out;
 }
@@ -1921,7 +1927,9 @@ function observedPerPayday(input: {
 }): string {
   const { evidence, era, next, seen, n, today } = input;
   const { samples } = evidence;
-  const left = leftOutOfPaydaysWords(evidence, era, next).map((s) => ` ${s}`).join("");
+  const leftOut = leftOutOfPaydaysWords(evidence, era, next).map((s) => ` ${s}`).join("");
+  // …and the days that paid nothing, in a bill's words (`nettedWords`): "Nothing stayed paid on Sep 17: …"
+  const left = `${leftOut}${nettedWords(evidence.netted, today)}`;
   const now = rateLeavesOut(evidence) ? " at the rate in force now" : "";
   // every row its own payday: "Only 2 tagged postings", as it always read; else the paydays the gate counted
   const thin =
@@ -1958,12 +1966,15 @@ function observedPerPayday(input: {
  * of 78c21ee: a raise from Oct 1, on Oct 2, nothing imported since Sep 24).
  */
 function perPaydayDetail(evidence: PerPaydayEvidence, era: string | null, next: string | null, today: string): string {
-  const { samples, earlier, later, noPaydayOfTheirOwn: ownless } = evidence;
+  const { samples, earlier, later, noPaydayOfTheirOwn: ownless, moneyOut, netted } = evidence;
   const day = (d: string): string => formatDayShortIn(d, today);
   const rest = [
     earlier > 0 ? `${earlier} ${era === null ? "at another rate" : "before it, at an earlier rate"}` : null,
     later > 0 ? `${later} ${towardLaterWords(later, next, day)}, at a later rate not in force yet` : null,
     ownless > 0 ? `${ownless} paid no payday on ${ownless === 1 ? "its" : "their"} own` : null,
+    moneyOut > 0 ? `${moneyOut} of money out, paying no payday` : null,
+    // "2 on Sep 17, netting to $0.00" — as a bill's line names them
+    netted.length > 0 ? nettedDetail(netted, today) : null,
   ]
     .flatMap((part) => (part === null ? [] : [` · ${part}`]))
     .join("");
@@ -2016,9 +2027,9 @@ function paydaysSeen(evidence: PerPaydayEvidence): number {
  * ARE its paydays, and the words count "tagged postings", as they always read.
  */
 function oneRowEachPayday(evidence: PerPaydayEvidence): boolean {
-  const { samples, noPaydayOfTheirOwn } = evidence;
+  const { samples, noPaydayOfTheirOwn, moneyOut, netted } = evidence;
   const alone = samples.every((s) => s.deposits === 1 && s.paydays === 1);
-  return alone && noPaydayOfTheirOwn === 0 && !rateLeavesOut(evidence);
+  return alone && noPaydayOfTheirOwn === 0 && moneyOut === 0 && netted.length === 0 && !rateLeavesOut(evidence);
 }
 
 /**
@@ -2292,9 +2303,24 @@ function recurringSeriesProvenance(db: AppDatabase, id: string, today: string): 
    */
   const carried = carriesPhrase(carries);
   const why = carried !== null ? ` — ${carried}` : "";
+  /*
+   * ⚖️ …held to the rate he set for TODAY (`rateOn`), the rate that average is of (§6A 55, §6A 63) — named when a rate
+   * is recorded after it, since the amount on screen is then that later one: "which is not the $1,141.92 you set
+   * through Oct 31, 2026". 🔴 Held to the amount on screen, his pay with a raise recorded from Nov 1 read "… paid
+   * $1,141.92, exactly. … ⚠️ The ledger's own average of what actually posted is $1,141.92, which is not what you
+   * set." — he set $1,141.92 through Oct 31 (review of 6c59cdb; at 78c21ee too, hypothetical: no rate is recorded
+   * ahead on his ledger, a copy of it 2026-10-12).
+   */
+  const inForce = rateOn(effectiveSeries(series), today);
+  const ahead = posted.nextRateSince;
+  const youSet =
+    ahead === null || inForce === null
+      ? "what you set"
+      : `the ${formatCents(inForce)} you set through ${readableDay(addDays(ahead, -1))}`;
   const disagreement =
-    userSet && postedAvgCents !== null && postedAvgCents !== series.userAmountCents
-      ? ` ⚠️ The ledger's own average of what actually posted is ${formatCents(postedAvgCents)}, which is not what you set${why}.`
+    userSet && postedAvgCents !== null && postedAvgCents !== inForce
+      ? ` ⚠️ The ledger's own average of what actually posted is ${formatCents(postedAvgCents)}, which is not ` +
+        `${youSet}${why}.`
       : "";
 
   // …and why payments that agree do not check it (`offFigure`): "None of the 3 paid the -$17.88 forecast here."

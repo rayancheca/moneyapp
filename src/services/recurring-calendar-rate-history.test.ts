@@ -284,6 +284,21 @@ describe("his ledger as it stands — anchored Jul 23, his paydays open on Jun 4
     });
     expect(payNotices(TODAY)).toEqual([expect.stringContaining(`${PAY_NAME} rose by $58.08`)]);
   });
+
+  /*
+   * ⛔ …and money out linked to his pay is no sample of what a payday pays (`PaydayReading.isPaydaySample`): it widens
+   * no band. 🔴 A sample, a -$50.00 clawback on Sep 30 was a residual of -$1,191.92, and the band it widened read the
+   * $1,200.00 week `paid` (review of 6c59cdb, hypothetical: no money out is linked to his pay).
+   */
+  test("a clawback beside them is no variance: the $1,200.00 week still reads changed", () => {
+    deposit("2026-09-30", -5_000);
+    deposit("2026-10-01", WEEK);
+    const raise = deposit("2026-10-08", 120_000);
+    expect(rowOf("2026-10", "2026-10-08", raise, TODAY)).toMatchObject({
+      state: "paid_different",
+      expectedAmountCents: WEEK,
+    });
+  });
 });
 
 /**
@@ -445,9 +460,13 @@ describe("the posted average — his series page, the All tab and the popover re
    * from then, $1,141.92 through Oct 31 — is not in force yet. The popover counts from Aug 27, the start of the rate
    * that is, and keeps its average: no future day is "the rate in force since". Measured on a copy of his ledger with
    * that history (2026-10-12): the same words, and $1,141.92 on the page and the All tab.
+   *
+   * ⛔ …and holds that average to the rate he set for TODAY, which it is the average of: $1,141.92 is what he set
+   * through Oct 31, so nothing disagrees. 🔴 Held to the $1,200.00 he set from Nov 1, it read "… paid $1,141.92,
+   * exactly. … ⚠️ The ledger's own average of what actually posted is $1,141.92, which is not what you set." — a
+   * warning of a disagreement that is not there (review of 6c59cdb; at 78c21ee too).
    */
-  test("a raise recorded ahead, from Nov 1: counted from Aug 27, the average kept — never 'since Nov 1'", () => {
-    addPaySeries("2026-07-23");
+  const raisedFromNov1 = (): void => {
     bundle.db
       .update(recurringSeries)
       .set({
@@ -456,16 +475,33 @@ describe("the posted average — his series page, the All tab and the popover re
       })
       .where(eq(recurringSeries.id, PAY))
       .run();
+  };
+  test("a raise recorded ahead, from Nov 1: counted from Aug 27, the average kept — never 'since Nov 1'", () => {
+    addPaySeries("2026-07-23");
+    raisedFromNov1();
     hisFour();
     const p = provenanceFor(bundle.db, { kind: "recurringSeries", id: PAY, today: TODAY })!;
     expect(p.headline).toContain(
       "Per payday, its 2 deposits at the rate in force since Aug 27, 2026 (Sep 23's $4,567.68 paid 4 paydays) paid " +
         "$1,141.92, exactly. Its one deposit before Aug 27, 2026 was at an earlier rate, and is not counted. Its one " +
-        "other deposit paid no payday on its own, and is not counted. ⚠️ The ledger's own average of what actually " +
-        "posted is $1,141.92, which is not what you set.",
+        "other deposit paid no payday on its own, and is not counted.",
     );
+    expect(p.headline).not.toContain("⚠️");
     expect(JSON.stringify(p)).not.toMatch(/Nov 1|no average/);
     expect([surfaces().pageAvg, surfaces().allTab]).toEqual([WEEK, WEEK]);
+  });
+
+  /* …and when what posted does differ from it, the warning names the rate it is held to — not the $1,200.00 shown */
+  test("a raise recorded ahead and a $1,200.00 week: held to the $1,141.92 he set through Oct 31", () => {
+    addPaySeries("2026-07-23");
+    raisedFromNov1();
+    hisFour();
+    deposit("2026-10-01", WEEK);
+    deposit("2026-10-08", 120_000);
+    expect(surfaces().popover).toContain(
+      "⚠️ The ledger's own average of what actually posted is $1,156.44, which is not the $1,141.92 you set through " +
+        "Oct 31, 2026.",
+    );
   });
 
   /* Before the history is written there is one era: Jun 4's cash week is a payday of it, Jun 5's $400.00 none. */
@@ -568,8 +604,10 @@ describe("a raise recorded in his history: the popover either side of its first 
         "$1,141.92 a payday · 1 before it, at an earlier rate · 1 toward a payday from Oct 1, at a later rate not " +
         "in force yet · 1 paid no payday on its own",
     });
-    // the average is today's rate's, as it was: the Sep 30 deposit is no sample of it
+    // the average is today's rate's, as it was: the Sep 30 deposit is no sample of it — and today's rate is what he
+    // set through Sep 30, so nothing disagrees (🔴 held to the raise not in force yet: "which is not what you set")
     expect(seriesDetail(bundle.db, PAY, TODAY).postedAvgCents).toBe(WEEK);
+    expect(p.headline).not.toContain("⚠️");
     // …and on Oct 1 the raise is in force, and Sep 30's $1,200.00 is its one payday paid
     expect(provenanceFor(bundle.db, { kind: "recurringSeries", id: PAY, today: "2026-10-01" })!.headline).toContain(
       "Per payday, its one deposit at the rate in force since Oct 1, 2026 paid $1,200.00.",
@@ -676,6 +714,54 @@ describe("a pay series with no rate history: the gate counts paydays, as with on
         "own, and is not counted. That is one payday — below the 3",
     );
     expect([p.verdict, p.badgeWord]).toEqual(["unverified", "seen once"]);
+  });
+
+  /*
+   * ⛔ MONEY OUT IS NO DEPOSIT, and a day whose rows net to $0.00 paid nothing — the rule a bill's payments are read by
+   * (`nettedToNothing`): a payroll returned the same day is no payday's pay, named so the rows still add up. 🔴 Read
+   * as a deposit, the page and the All tab printed a posted avg of $380.64, and the popover "Per payday, its 3 deposits
+   * since Sep 10, 2026 paid 2 different amounts, from -$1,141.92 to $1,141.92", badged "2 different amounts" — and
+   * set by hand, "⚠️ The ledger's own average of what actually posted is $380.64, which is not what you set." (review
+   * of 6c59cdb, hypothetical: no money out is linked to his pay, a copy of his ledger 2026-10-12).
+   */
+  test("a week returned the same day: nothing stayed paid that day — never a -$1,141.92 deposit or $380.64", () => {
+    deposit("2026-09-10", WEEK);
+    deposit("2026-09-17", WEEK);
+    deposit("2026-09-17", -WEEK);
+    expect(seriesDetail(bundle.db, PAY, TODAY).postedAvgCents).toBe(WEEK);
+    expect(listSeries(bundle.db, TODAY).find((s) => s.id === PAY)!.postedAvgCents).toBe(WEEK);
+    const p = said();
+    expect(p.headline).toContain(
+      "Per payday, its one deposit since Sep 10, 2026 paid $1,141.92. Nothing stayed paid on Sep 17: its 2 tagged " +
+        "postings net to $0.00, and are not counted. That is one payday — below the 3",
+    );
+    expect(p.headline).not.toMatch(/-\$1,141\.92|different amounts|\$380\.64/);
+    expect([p.verdict, p.badgeWord]).toEqual(["unverified", "seen once"]);
+    expect(p.sources.find((s) => s.kind === "period")).toMatchObject({
+      label: "3 tagged postings in the ledger",
+      detail: "one deposit: $1,141.92 a payday · 2 on Sep 17, netting to $0.00",
+    });
+    // …and set by hand at $1,141.92, the average agrees with him
+    bundle.db.update(recurringSeries).set({ userAmountCents: WEEK }).where(eq(recurringSeries.id, PAY)).run();
+    expect(said().headline).not.toContain("not what you set");
+  });
+
+  /* …and returned the day after, it is money out — no deposit, no payday — and both weeks are paydays seen */
+  test("a week returned the day after: money out, never a deposit — two paydays at $1,141.92", () => {
+    deposit("2026-09-10", WEEK);
+    deposit("2026-09-17", WEEK);
+    deposit("2026-09-18", -WEEK);
+    expect(seriesDetail(bundle.db, PAY, TODAY).postedAvgCents).toBe(WEEK);
+    const p = said();
+    expect(p.headline).toContain(
+      "Per payday, its 2 deposits since Sep 10, 2026 paid $1,141.92, exactly. Its one tagged posting of money out " +
+        "paid no payday, and is not counted. That is 2 paydays — below the 3",
+    );
+    expect([p.verdict, p.badgeWord]).toEqual(["unverified", "seen 2 times"]);
+    expect(p.sources.find((s) => s.kind === "period")).toMatchObject({
+      label: "3 tagged postings in the ledger",
+      detail: "2 deposits: every one of them $1,141.92 a payday · 1 of money out, paying no payday",
+    });
   });
 
   /* every row its own payday: the rows ARE the paydays, and the words read as they always did */

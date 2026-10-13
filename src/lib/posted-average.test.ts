@@ -396,6 +396,8 @@ describe("perPaydayEvidence — his pay, what the average is of", () => {
       earlier: 1,
       later: 0,
       noPaydayOfTheirOwn: 1,
+      moneyOut: 0,
+      netted: [],
     });
   });
 
@@ -469,7 +471,44 @@ describe("perPaydayEvidence — his pay, what the average is of", () => {
       earlier: 0,
       later: 0,
       noPaydayOfTheirOwn: 0,
+      moneyOut: 0,
+      netted: [],
     });
+  });
+
+  /*
+   * ⛔ MONEY OUT IS NO DEPOSIT, and a day that nets to $0.00 paid nothing (`nettedToNothing`, the rule a bill's
+   * payments are read by): neither is a sample of what a payday paid. 🔴 Read as a deposit, a payroll returned the same
+   * day was a sample of -$1,141.92, and two weeks at $1,141.92 averaged $380.64 (review of 6c59cdb, hypothetical: no
+   * money out is linked to his pay, a copy of his ledger 2026-10-12).
+   */
+  test("a week returned the same day nets to nothing; one returned the day after is money out", () => {
+    const rows = [
+      { id: "sep10", postedOn: "2026-09-10", amountCents: WEEK },
+      { id: "sep17", postedOn: "2026-09-17", amountCents: WEEK },
+      { id: "sep17back", postedOn: "2026-09-17", amountCents: -WEEK },
+      { id: "sep24", postedOn: "2026-09-24", amountCents: WEEK },
+      { id: "sep25back", postedOn: "2026-09-25", amountCents: -WEEK },
+    ];
+    // settlement reads deposits only: each week's deposit pays its own payday
+    const portions = ["2026-09-10", "2026-09-17", "2026-09-24"].map((paydayOn) => ({
+      paydayOn,
+      depositOn: paydayOn,
+      cents: WEEK,
+    }));
+    const readings = paydayReadings(rows, portions, FLAT);
+    expect(perPaydayEvidence(rows, readings, FLAT, TODAY)).toEqual({
+      samples: [
+        { postedOn: "2026-09-10", cents: WEEK, paydays: 1, dayCents: WEEK, deposits: 1 },
+        { postedOn: "2026-09-24", cents: WEEK, paydays: 1, dayCents: WEEK, deposits: 1 },
+      ],
+      earlier: 0,
+      later: 0,
+      noPaydayOfTheirOwn: 0,
+      moneyOut: 1,
+      netted: [{ postedOn: "2026-09-17", amountCents: 0, postings: 2 }],
+    });
+    expect(postedAverage(rows, payday(readings), FLAT, TODAY)).toEqual({ avgCents: WEEK, stddevCents: 0 });
   });
 
   /* ⛔ ONE READING: the average is the mean of exactly these samples, whatever the rows. */
