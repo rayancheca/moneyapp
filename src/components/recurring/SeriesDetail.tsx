@@ -6,6 +6,8 @@ import {
   noScheduleReason,
   seriesCanBeReshaped,
   seriesEvidenceTone,
+  seriesPageEvidenceBadge,
+  seriesPostingWords,
 } from "@/lib/series-evidence";
 import { billedWithLabel, carriesPhrase } from "@/lib/billed-with";
 import { seriesEndHeadline, seriesEndInput, seriesEndLines, seriesEndReassurance } from "./end-radius";
@@ -15,6 +17,7 @@ import { renameSeriesAction, setSeriesStatusAction } from "@/app/recurring/actio
 import { isTableLens, LENS_DIMENSION, LENS_LABELS } from "@/components/charts/chart-lens";
 import { ViewSwitcher } from "@/components/ui/ViewSwitcher";
 import { useViewState } from "@/hooks/useViewState";
+import { compareDates } from "@/lib/dates";
 import { formatDayShortIn } from "@/lib/format-date";
 import { formatCents } from "@/lib/money";
 import type { Provenance } from "@/services/provenance";
@@ -126,8 +129,15 @@ export function SeriesDetail({
   const isMergedAway = data.mergedInto !== null;
   // the predicate `seriesDetail` reads the merge preview on, so it is read exactly where the control renders
   const isLive = seriesCanBeReshaped(data.status);
-  // why no schedule is shown, worded by what the series posts — null while the page projects it (`noScheduleReason`)
-  const nothingExpected = noScheduleReason(data.status, data.evidence, data.kind);
+  // why no schedule is shown, worded by what the series posts — "Its deposits below" of his pay; null while the page
+  // projects it (`noScheduleReason`) …promising rows "below" only when some are linked
+  const nothingExpected = noScheduleReason(data.status, data.evidence, data.kind, data.linkedTxns.length > 0);
+  const evidenceBadge = seriesPageEvidenceBadge(data.evidence, data.neverPosted);
+  /* What one posting is called on this page — "Per deposit", "Its deposits live there now" of his pay — the "Nothing
+     expected" card's and the End dialog's own words (`seriesPostingWords`). 🔴 His pay's page read "Per charge +$1,141.92" (a copy of his ledger, 2026-10-12, review of 49cc98f). */
+  const posting = seriesPostingWords(data.kind);
+  // the End dialog's lines and last word, from the page's own data in one place (`seriesEndInput`)
+  const endInput = seriesEndInput(data);
 
   function setStatus(status: "confirmed" | "dismissed" | "ended", label: string): void {
     void setSeriesStatusAction({ seriesId: data.id, status }).then((r) => {
@@ -169,9 +179,12 @@ export function SeriesDetail({
             <span className="text-xs text-ink-faint">{KIND_LABEL[data.kind]}</span>
             {/* 🔴 "Inactive" sat beside "Next expected Sep 11" on a series the
                 forecast projects. The badge is the word the evidence chooses. */}
-            {(data.status === "detected" || data.status === "confirmed") && data.evidence !== "active" ? (
-              // ⛔ awaiting statements is no warning — `seriesEvidenceTone`
-              <Badge tone={seriesEvidenceTone(data.evidence)}>{SERIES_EVIDENCE_LABEL[data.evidence]}</Badge>
+            {/* ⛔ …but not "Ended": its end badge below says it, with the day — and beside it "Never billed" when
+                nothing ever posted, the fact "Ended" does not carry (`seriesPageEvidenceBadge`). 🔴 Review of 49cc98f:
+                from Nov 12 the Nov 11 balance's page had lost its "Never billed" with nothing in its place. */}
+            {(data.status === "detected" || data.status === "confirmed") && evidenceBadge !== null ? (
+              // ⛔ awaiting statements and never billed are no warning — `seriesEvidenceTone`, the chip's tone too
+              <Badge tone={seriesEvidenceTone(evidenceBadge)}>{SERIES_EVIDENCE_LABEL[evidenceBadge]}</Badge>
             ) : null}
             {/* ⚖️ Paid inside another series' payment (owner decision 2026-10-08, §6A 59): whose postings its
                 evidence is, and when they last said so — "billed with the rent, last seen Sep 2", linked to the
@@ -192,7 +205,15 @@ export function SeriesDetail({
             {/* the same date the caveat below may name, spelled the same way —
                 a raw ISO string here would have the page printing one day two
                 ways, two inches apart */}
-            {data.endsOn !== null ? <Badge tone="warning">Ends {longDate(data.endsOn)}</Badge> : null}
+            {/* ⛔ …and in the tense of its day, worn in the evidence's tone once its schedule has ended — the All
+                tab's "Ended", the subscriptions card's "already ended". 🔴 "Ends Nov 11, 2026" in amber, a month past
+                that day (review of 0af5689, his ledger copy asked about 2026-12-12). */}
+            {data.endsOn !== null ? (
+              <Badge tone={data.evidence === "schedule-ended" ? seriesEvidenceTone(data.evidence) : "warning"}>
+                {compareDates(data.endsOn, today) < 0 ? SERIES_EVIDENCE_LABEL["schedule-ended"] : "Ends"}{" "}
+                {longDate(data.endsOn)}
+              </Badge>
+            ) : null}
             {data.merchant ? (
               <Link
                 href={`/merchants/${data.merchant.id}`}
@@ -253,7 +274,7 @@ export function SeriesDetail({
             headline: seriesEndHeadline(data),
             // the arrears — said as far as the ledger has read them, as the card below says them — the span and the
             // kept rows; see `seriesEndLines`
-            lines: seriesEndLines(seriesEndInput(data), formatCents),
+            lines: seriesEndLines(endInput, formatCents),
             // in what the series posts, as the "Nothing expected" card says it (`seriesPostingWords`)
             reassurance: seriesEndReassurance(data.kind),
           }}
@@ -266,7 +287,7 @@ export function SeriesDetail({
           <Link href={`/recurring/${data.mergedInto.id}`} className="font-medium text-accent hover:underline">
             {data.mergedInto.name}
           </Link>
-          . Its charges live there now.
+          . Its {posting.postings} live there now.
         </p>
       ) : null}
 
@@ -290,6 +311,7 @@ export function SeriesDetail({
             accountName={data.accountName}
             status={data.status}
             evidence={data.evidence}
+            neverPosted={data.neverPosted}
             oneCharge={
               data.oneChargeOn === null
                 ? null
@@ -315,7 +337,7 @@ export function SeriesDetail({
             {/* the badge goes on PER CHARGE, the figure the forecast actually
                 publishes. "Annualized" is that number multiplied out, so a
                 second badge would answer one question twice. */}
-            <Stat label="Per charge" provenance={provenance}>
+            <Stat label={`Per ${posting.posting}`} provenance={provenance}>
               {data.nextExpectedAmountCents !== null ? (
                 <>
                   <Money cents={data.nextExpectedAmountCents} flow />

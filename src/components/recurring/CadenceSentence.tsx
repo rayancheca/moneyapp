@@ -28,6 +28,11 @@ interface CadenceSentenceProps {
   /** …and so does a live series the forecast has let go (`lapsed`) — see `seriesIsProjected` */
   evidence: SeriesEvidence;
   /**
+   * Nothing — its own or its carrier's — ever matched it (`neverPosted`): over, it "was expected", never "charged" —
+   * see `seriesVerb`. 🔴 The Nov 11 balance read "charged once on Nov 11" over 0 linked rows (review of 49cc98f).
+   */
+  neverPosted: boolean;
+  /**
    * The day of its ONE charge, and that day spelled — set when the whole schedule holds one charge (`oneChargeOn`).
    * ⚖️ Owner decision 2026-10-08 (§6A 56): the sentence reads "charges once on Nov 11", with no cadence menu.
    */
@@ -50,8 +55,19 @@ function tokenClass(overridden: boolean): string {
  * hand a field back to detection.
  */
 export function CadenceSentence(props: CadenceSentenceProps) {
-  const { seriesId, kind, cadence, nextExpectedOn, amountCents, accountName, status, evidence, oneCharge, onChanged } =
-    props;
+  const {
+    seriesId,
+    kind,
+    cadence,
+    nextExpectedOn,
+    amountCents,
+    accountName,
+    status,
+    evidence,
+    neverPosted,
+    oneCharge,
+    onChanged,
+  } = props;
   /* ⛔ The predicate the "Nothing expected" card asks (`noScheduleReason`), not a second one. 🔴 This read
      `seriesIsOver(status)` alone after the card learned the lapse, so on a copy of the owner's ledger 2026-10-08
      `/recurring/<Amazon Prime>` read "charges monthly around the 5th, about $4.99" above "nothing more is expected
@@ -88,7 +104,7 @@ export function CadenceSentence(props: CadenceSentenceProps) {
      * ProvenancePopover on the same page. See ProvenancePopover's docstring.
      */
     <div className="text-[15px] leading-relaxed text-ink-muted">
-      {seriesVerb(kind, over)}{" "}
+      {seriesVerb(kind, over && { posted: !neverPosted })}{" "}
       {/* ⚖️ §6A 56 (2026-10-08): a schedule of ONE charge says once, and on which day. No cadence menu — a cadence
           is the step the walk takes, and one charge takes none. The day stays when the series is over: it is the
           schedule itself, not a rhythm read off a stale date (the rule the clause below follows). 🔴 The Nov 11

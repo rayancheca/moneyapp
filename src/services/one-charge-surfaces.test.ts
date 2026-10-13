@@ -7,8 +7,12 @@ import { createDatabase, type DbBundle } from "@/db/client";
 import { seedDatabase } from "@/db/seed";
 import { merchants } from "@/db/schema/merchants";
 import { recurringSeries } from "@/db/schema/recurring";
+import { staleComponentEntries } from "@/components/recurring/labels";
+import { committedBillsNamed } from "@/lib/committed";
+import { noScheduleReason, projectedEvidence, seriesIsProjected } from "@/lib/series-evidence";
 import { budgetTail } from "./budgets";
 import { seriesInCategory } from "./category-detail";
+import { committedBook } from "./committed";
 import { forecastCurrentMonth, forecastForMonth } from "./forecast";
 import { merchantIntelligence } from "./merchants";
 import { type OneChargeLedger, seedHisCarSeries } from "./one-charge-fixture";
@@ -241,5 +245,113 @@ describe("every cadence printer reads it", () => {
     const line = late.components.find((c) => c.label.startsWith("Car insurance — Nov 11"))!;
     // "once" in the cadence slot; no statement reaches Nov 11 on this fixture, so the runway's unread words follow
     expect(line.detail).toBe("1 × -$72.74 (once), came due Nov 11 and no statement has covered it yet");
+  });
+});
+
+/*
+ * 🔴 From Nov 12 the balance's one day has passed: its schedule holds nothing still to come, and two surfaces made a
+ * rate of that nothing. Measured on a copy of his ledger (2026-10-12) asked about 2026-11-12: "~$0.00/yr" on its own
+ * page and the All tab, and a committed line of $0.00 a month on the runway — one of "…, and 10 more" bills that
+ * "come to $3,446.19 a month", none of it its. What it still owes is the arrears it came due as — the runway's arrears
+ * sentence and the forecast's "came due Nov 11" say so — and the subscriptions card already counts it ended.
+ */
+describe("from Nov 12, its one day passed — no $0.00 rate and no $0.00 line", () => {
+  const NOV12 = "2026-11-12";
+
+  test("its own page and the All tab print no year ahead of it — Car insurance, still billing, keeps its own", () => {
+    expect(seriesDetail(bundle.db, balanceId, NOV12).annualizedCents).toBeNull();
+    const listed = new Map(listSeries(bundle.db, NOV12).map((s) => [s.id, s]));
+    expect(listed.get(balanceId)!.annualizedCents).toBeNull();
+    // two premiums left inside the year, Dec 11 and Jan 11
+    expect(listed.get(insuranceId)!.annualizedCents).toBe(2 * 35758);
+    expect(seriesDetail(bundle.db, insuranceId, NOV12).annualizedCents).toBe(2 * 35758);
+  });
+
+  test("…while on its day the year ahead of it is its one charge", () => {
+    expect(seriesDetail(bundle.db, balanceId, "2026-11-11").annualizedCents).toBe(7274);
+    expect(listSeries(bundle.db, "2026-11-11").find((s) => s.id === balanceId)!.annualizedCents).toBe(7274);
+  });
+
+  test("the subscriptions card files it ended — no One-off line, no monthly line", () => {
+    const card = subscriptionsCard(bundle.db, NOV12)!;
+    expect(card.oneOffs).toEqual([]);
+    expect(card.live.some((l) => l.seriesId === balanceId)).toBe(false);
+    expect(card.endedCount).toBe(1);
+  });
+
+  test("the runway names only the bills inside its rate — the balance's arrears are said beside it, not as a line of it", () => {
+    const book = committedBook(bundle.db, NOV12);
+    // owed, and nothing of it inside the horizon: the line that carries the arrears
+    expect(book.lines.find((l) => l.seriesId === balanceId)).toMatchObject({ occurrences: 0, totalCents: 0, overdueCents: 7274 });
+    expect(committedBillsNamed(book.lines)).toBe("Car insurance");
+    // on its day it is inside the rate, and named
+    expect(committedBillsNamed(committedBook(bundle.db, "2026-11-11").lines)).toBe(
+      "Car insurance, Car insurance — Nov 11 balance after the $1,000 early payment",
+    );
+  });
+});
+
+/*
+ * 🔴 Review of 0af5689: from Nov 12 the balance was ENDED to its annualized figure and to the subscriptions card ("1 has
+ * already ended") — and live and forecast to its own page and the All tab. Measured on a copy of his ledger
+ * (2026-10-12) at 2026-12-12: its page read "Confirmed · Bill · Never billed · Ends Nov 11, 2026 … charges once on
+ * Nov 11, about $72.74. Annualized —", a present-tense schedule a month past with no "Nothing expected" card, and the
+ * All tab filed it under "Never billed — registered by hand and forecast — the bank has not charged them yet". From
+ * Dec 1 nothing forecasts it. A schedule with no date still to come inside its end is ENDED, in one word, everywhere.
+ */
+describe("from Nov 12, its one day passed — its schedule has ended, on every surface that files it", () => {
+  test.each(["2026-11-12", "2026-12-12"])("%s: its page and the All tab call it ended and project nothing", (today) => {
+    const d = seriesDetail(bundle.db, balanceId, today);
+    expect(d.evidence).toBe("schedule-ended");
+    expect(seriesIsProjected(d.status, d.evidence)).toBe(false);
+    expect(noScheduleReason(d.status, d.evidence, d.kind, d.linkedTxns.length > 0)).toContain("Its schedule has ended");
+    expect(d.nextExpected).toEqual([]);
+    expect(listSeries(bundle.db, today).find((s) => s.id === balanceId)!.evidence).toBe("schedule-ended");
+    // the subscriptions card's own word for the same series, on the same day
+    expect(subscriptionsCard(bundle.db, today)!.endedCount).toBe(1);
+  });
+
+  test("…while the charge it came due as is still owed in its month: the already-due card stays to Nov 30", () => {
+    expect(seriesDetail(bundle.db, balanceId, "2026-11-12").overdue).toMatchObject({ date: "2026-11-11", occurrenceCount: 1 });
+    expect(seriesDetail(bundle.db, balanceId, "2026-11-30").overdue).not.toBeNull();
+    expect(seriesDetail(bundle.db, balanceId, "2026-12-12").overdue).toBeNull();
+  });
+
+  test("on its day it is still projected — and Car insurance, two premiums left, is not ended until Jan 12", () => {
+    const nov11 = seriesDetail(bundle.db, balanceId, "2026-11-11");
+    expect(nov11.evidence).toBe("never-billed");
+    expect(seriesIsProjected(nov11.status, nov11.evidence)).toBe(true);
+    for (const today of ["2026-11-12", "2026-12-12", "2027-01-11"]) {
+      expect(seriesDetail(bundle.db, insuranceId, today).evidence, today).not.toBe("schedule-ended");
+    }
+    expect(seriesDetail(bundle.db, insuranceId, "2027-01-12").evidence).toBe("schedule-ended");
+  });
+});
+
+/*
+ * 🔴 Review of 49cc98f: Nov 12–30 one /recurring page filed the balance under two words — "never billed … still
+ * projected" in the forecast (its math-table chip, "$172.74 of it never billed" in the money-out band, "2 series have
+ * never been billed" in the footer) and "Ended — nothing more forecast" on the All tab below it (a copy of his ledger,
+ * 2026-10-12, asked about 2026-11-12). The forecast still counts what came due Nov 11 — the arrears leg, on purpose —
+ * so the series is a line of both, and each must say of it the word the other does: ONE predicate.
+ */
+describe("Nov 12–30: the forecast above the All tab says of the balance the All tab's word", () => {
+  const BALANCE = "Car insurance — Nov 11 balance after the $1,000 early payment";
+
+  test.each(["2026-11-11", "2026-11-12", "2026-11-30"])("%s: every fixed line's word is its series' All-tab word", (today) => {
+    const word = new Map(listSeries(bundle.db, today).map((s) => [s.name, s.evidence]));
+    const fixed = forecastCurrentMonth(bundle.db, today).components.filter((c) => c.kind === "fixed");
+    // a line of the month to Nov 30 — forward on its day, came due after it
+    expect(fixed.some((c) => c.label === BALANCE), today).toBe(true);
+    for (const c of fixed) expect(projectedEvidence(c.staleness!), `${today} · ${c.label}`).toBe(word.get(c.label));
+  });
+
+  test("…so from Nov 12 no footer names it never billed, while the $72.74 it came due as is still counted", () => {
+    const nov12 = forecastCurrentMonth(bundle.db, "2026-11-12").components;
+    expect(nov12.find((c) => c.label === BALANCE)!.cents).toBe(-7274);
+    expect(staleComponentEntries(nov12).map((e) => e.name)).not.toContain(BALANCE);
+    // on its day it is still the footer's never billed
+    const nov11 = forecastCurrentMonth(bundle.db, "2026-11-11").components;
+    expect(staleComponentEntries(nov11).map((e) => e.name)).toContain(BALANCE);
   });
 });

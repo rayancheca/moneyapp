@@ -519,7 +519,9 @@ function fixedComponents(
      * `LAPSED_MISS_LIMIT` is 3 cycles where staleness is 1.5, and it exists
      * because those two decisions cost opposite things: dropping a bill whose
      * statement is a fortnight late is how rent once vanished from the runway
-     * for being ONE DAY over. Three missed cycles is not a late statement.
+     * for being ONE DAY over. Three missed cycles is not a late statement — and
+     * since §6A 57 a late statement cannot lapse a bill at all: the cycles are
+     * counted on read days, each one a statement read without the charge.
      *
      * Staleness itself is still only DISCLOSED, never used to exclude — the
      * "N series are running late — still projected" note is the same as ever.

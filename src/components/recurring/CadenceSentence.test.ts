@@ -8,7 +8,7 @@ vi.mock("@/app/recurring/actions", () => ({ setSeriesOverridesAction: vi.fn() })
 
 const { CadenceSentence } = await import("./CadenceSentence");
 
-const EVERY_EVIDENCE: readonly SeriesEvidence[] = ["active", "never-billed", "awaiting-statements", "running-late", "lapsed"];
+const EVERY_EVIDENCE: readonly SeriesEvidence[] = ["active", "never-billed", "awaiting-statements", "running-late", "lapsed", "schedule-ended"];
 const EVERY_STATUS: readonly SeriesStatusForCopy[] = ["detected", "confirmed", "dismissed", "ended"];
 
 const decode = (s: string): string =>
@@ -36,6 +36,8 @@ function render(
       accountName: "Chase Sapphire",
       status,
       evidence,
+      // Amazon Prime has charged — its last on Jul 5
+      neverPosted: false,
       oneCharge: null,
       onChanged: () => undefined,
       ...overrides,
@@ -60,6 +62,8 @@ describe("CadenceSentence — a schedule of one charge says once, and on which d
     amountCents: -7274,
     userNextExpectedOn: "2026-11-11",
     userAmountCents: -7274,
+    // the bank has never charged it
+    neverPosted: true,
     oneCharge: { day: "2026-11-11", label: "Nov 11" },
   } as const satisfies Partial<SentenceProps>;
 
@@ -71,10 +75,23 @@ describe("CadenceSentence — a schedule of one charge says once, and on which d
     expect(dialogTriggers).toBe(2);
   });
 
+  /*
+   * ⛔ …and "was expected", never "charged": the bank never charged it. 🔴 Review of 49cc98f: from Nov 12 its page read
+   * "charged once on Nov 11, about $72.74" over "Linked transactions · 0" (his ledger copy, 2026-10-12).
+   */
   test("once it is over the day stays — a one-off's day is its schedule, not a rhythm read off a stale date", () => {
-    const { text, dialogTriggers } = render("ended", "never-billed", nov11);
-    expect(text).toBe("charged once on Nov 11, about $72.74 from Chase Sapphire.");
-    expect(dialogTriggers).toBe(1);
+    for (const [status, evidence] of [
+      ["ended", "never-billed"],
+      ["confirmed", "schedule-ended"],
+    ] as const) {
+      const { text, dialogTriggers } = render(status, evidence, nov11);
+      expect(text, `${status} · ${evidence}`).toBe("was expected once on Nov 11, about $72.74 from Chase Sapphire.");
+      expect(dialogTriggers).toBe(1);
+    }
+    // paid, it was charged
+    expect(render("confirmed", "schedule-ended", { ...nov11, neverPosted: false }).text).toBe(
+      "charged once on Nov 11, about $72.74 from Chase Sapphire.",
+    );
   });
 });
 
@@ -108,7 +125,7 @@ describe("CadenceSentence — a series the forecast has let go is described in t
     for (const status of EVERY_STATUS) {
       for (const evidence of EVERY_EVIDENCE) {
         const { text, dialogTriggers } = render(status, evidence);
-        const nothingExpected = noScheduleReason(status, evidence, "subscription") !== null;
+        const nothingExpected = noScheduleReason(status, evidence, "subscription", true) !== null;
         expect(text.startsWith("charged "), `${status} · ${evidence}`).toBe(nothingExpected);
         expect(text.includes("around the"), `${status} · ${evidence}`).toBe(!nothingExpected);
         expect(dialogTriggers, `${status} · ${evidence}`).toBe(nothingExpected ? 1 : 2);

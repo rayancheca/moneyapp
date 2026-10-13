@@ -2,7 +2,7 @@ import Link from "next/link";
 import { confirmSeriesAction, dismissSeriesAction } from "@/app/recurring/actions";
 import { Money } from "@/components/ui/Money";
 import { EmptyState } from "@/components/ui/EmptyState";
-import { SERIES_EVIDENCE_LABEL, SERIES_EVIDENCE_NOTE, lapsedSectionNote, suggestionNote } from "@/lib/series-evidence";
+import { SERIES_EVIDENCE_LABEL, seriesEvidenceNote, suggestionNote, type SeriesEvidence } from "@/lib/series-evidence";
 import { billedWithPhrase, carriesPhrase } from "@/lib/billed-with";
 import type { ArrearsReading } from "@/lib/arrears-reading";
 import type { SeriesView } from "@/services/recurring";
@@ -20,10 +20,18 @@ export type OverdueBySeries = ReadonlyMap<string, OverdueEntry>;
 type OverdueEntry = { date: string; occurrenceCount: number } & ArrearsReading;
 
 /**
+ * A section's note, in the words of what it holds — "deposited" over his pay, "charged" over a bill
+ * (`seriesEvidenceNote`). 🔴 "charged within their cadence" stood over his weekly pay (review of 2026-10-08).
+ */
+function noteOf(evidence: SeriesEvidence, rows: readonly SeriesView[]): string {
+  return seriesEvidenceNote(evidence, rows.map((s) => s.kind));
+}
+
+/**
  * The "All" sub-view (ux-overhaul-plan §4.1): a suggestion queue up top —
  * freshly detected series awaiting a decision — then the confirmed series by
  * what their EVIDENCE says (`lib/series-evidence`): active, awaiting statements,
- * running late, never billed, lapsed. Each row shows the effective amount (what
+ * running late, never billed, lapsed, ended. Each row shows the effective amount (what
  * the forecast projects), the posted average beneath it when the two differ, the next
  * expected date and the annualized cost. Confirm / Not-recurring and Dismiss
  * reuse the existing value-preserving server actions.
@@ -52,6 +60,7 @@ export function AllSeriesView({
   const late = confirmed.filter((s) => s.evidence === "running-late");
   const neverBilled = confirmed.filter((s) => s.evidence === "never-billed");
   const lapsed = confirmed.filter((s) => s.evidence === "lapsed");
+  const scheduleEnded = confirmed.filter((s) => s.evidence === "schedule-ended");
 
   if (series.filter((s) => s.status !== "dismissed" && s.status !== "ended").length === 0) {
     return (
@@ -88,22 +97,27 @@ export function AllSeriesView({
         </section>
       ) : null}
 
-      <SeriesSection title="Active" note={SERIES_EVIDENCE_NOTE.active} series={active} overdueBySeries={overdueBySeries} today={today} />
+      <SeriesSection title="Active" note={noteOf("active", active)} series={active} overdueBySeries={overdueBySeries} today={today} />
       {/* 🔴 His pay and Rocket Money sat under Running late for charges due after the last day their accounts had
           been checked through (2026-10-08). Their own section, beside Active and never muted: nothing is known to
           be wrong — the ledger has not looked yet. */}
       {awaitingStatements.length > 0 ? (
-        <SeriesSection title={SERIES_EVIDENCE_LABEL["awaiting-statements"]} note={SERIES_EVIDENCE_NOTE["awaiting-statements"]} series={awaitingStatements} overdueBySeries={overdueBySeries} today={today} />
+        <SeriesSection title={SERIES_EVIDENCE_LABEL["awaiting-statements"]} note={noteOf("awaiting-statements", awaitingStatements)} series={awaitingStatements} overdueBySeries={overdueBySeries} today={today} />
       ) : null}
       {late.length > 0 ? (
-        <SeriesSection title="Running late" note={SERIES_EVIDENCE_NOTE["running-late"]} series={late} overdueBySeries={overdueBySeries} today={today} muted />
+        <SeriesSection title="Running late" note={noteOf("running-late", late)} series={late} overdueBySeries={overdueBySeries} today={today} muted />
       ) : null}
       {neverBilled.length > 0 ? (
-        <SeriesSection title="Never billed" note={SERIES_EVIDENCE_NOTE["never-billed"]} series={neverBilled} overdueBySeries={overdueBySeries} today={today} muted />
+        <SeriesSection title="Never billed" note={noteOf("never-billed", neverBilled)} series={neverBilled} overdueBySeries={overdueBySeries} today={today} muted />
       ) : null}
-      {/* a live transfer or `other` series lapses too — the note says what stops in their words (`lapsedSectionNote`) */}
+      {/* a live transfer or `other` series lapses too — the note says what stops in their words (`lapsedSectionNote`, through `noteOf`) */}
       {lapsed.length > 0 ? (
-        <SeriesSection title="Lapsed" note={lapsedSectionNote(lapsed.map((s) => s.kind))} series={lapsed} overdueBySeries={overdueBySeries} today={today} muted />
+        <SeriesSection title="Lapsed" note={noteOf("lapsed", lapsed)} series={lapsed} overdueBySeries={overdueBySeries} today={today} muted />
+      ) : null}
+      {/* 🔴 A month past its one day the Nov 11 balance sat under "Never billed — registered by hand and forecast",
+          while the subscriptions card counted it ended (review of 0af5689). Filed where the card files it. */}
+      {scheduleEnded.length > 0 ? (
+        <SeriesSection title={SERIES_EVIDENCE_LABEL["schedule-ended"]} note={noteOf("schedule-ended", scheduleEnded)} series={scheduleEnded} overdueBySeries={overdueBySeries} today={today} muted />
       ) : null}
     </div>
   );

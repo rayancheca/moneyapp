@@ -1,5 +1,6 @@
 import { describe, expect, test } from "vitest";
 import { NO_STATEMENT_YET } from "@/lib/arrears-reading";
+import { projectedEvidence, seriesEvidenceTone, type SeriesEvidence } from "@/lib/series-evidence";
 import type { ForecastComponent } from "@/services/forecast";
 import type { SeriesOccurrence, SeriesStaleness } from "@/services/recurring";
 import {
@@ -101,6 +102,7 @@ const staleness = (over: Partial<SeriesStaleness> = {}): SeriesStaleness => ({
   toleranceDays: 12.5,
   isStale: true,
   awaitingStatements: false,
+  scheduleEnded: false,
   ...over,
 });
 
@@ -144,6 +146,33 @@ describe("staleMarkTone", () => {
 
   test("no evidence at all is not", () => {
     expect(staleMarkTone(staleness({ lastMatchedOn: null, daysSinceLastMatch: null }))).toBe("neutral");
+  });
+});
+
+/*
+ * 🔴 Review of 2026-10-08: the series page wore "Never billed" in amber while this chip called the same state neutral,
+ * and the forecast's footer said "running late" of a series the All tab on the same page filed as lapsed — one state
+ * with two tones, one word from two predicates. The chip, the footer and the badge read ONE word (`projectedEvidence`)
+ * and wear ONE tone (`seriesEvidenceTone`).
+ */
+describe("one word, one tone — the chip, the footer and the series page's badge", () => {
+  const states: [SeriesEvidence, SeriesStaleness][] = [
+    ["running-late", staleness()],
+    ["never-billed", staleness({ lastMatchedOn: null, daysSinceLastMatch: null, checkedDaysSinceLastMatch: null })],
+    ["awaiting-statements", staleness({ isStale: false, awaitingStatements: true, checkedThrough: "2026-06-30" })],
+    ["active", staleness({ daysSinceLastMatch: 3, checkedDaysSinceLastMatch: 3, isStale: false })],
+  ];
+
+  test.each(states)("%s: the chip reads the badge's word, in the badge's tone", (word, s) => {
+    expect(projectedEvidence(s)).toBe(word);
+    expect(staleMarkTone(s)).toBe(seriesEvidenceTone(word));
+  });
+
+  test("the footer counts each under the word the All tab files it under", () => {
+    const entries = states.filter(([w]) => w !== "active").map(([w, s]) => ({ key: w, name: w, staleness: s }));
+    expect(staleSummaryLabel(entries, "In October 2026")).toBe(
+      "In October 2026, 1 series is running late, 1 has never been billed and 1 is awaiting statements — all still projected",
+    );
   });
 });
 
@@ -202,9 +231,15 @@ describe("stalenessSentence", () => {
     );
   });
 
-  test("with no match at all it says so instead of formatting a null date", () => {
+  /*
+   * …in its siblings' words — "nothing has matched since …" — true of a deposit as of a charge. 🔴 It said "no charge
+   * has ever matched it" of every series nothing ever matched, a hand-registered pay included (review of 2026-10-08:
+   * the evidence words said "charge" of his payroll deposit).
+   */
+  test("with no match at all it says so instead of formatting a null date — of a deposit as of a charge", () => {
     const sentence = stalenessSentence(staleness({ lastMatchedOn: null, daysSinceLastMatch: null }));
-    expect(sentence).toContain("no charge has ever matched it");
+    expect(sentence).toContain("nothing has ever matched it");
+    expect(sentence).not.toMatch(/charge|deposit/);
     expect(sentence).not.toContain("null");
   });
 });
@@ -312,12 +347,12 @@ describe("staleSummaryLabel", () => {
   const late = (days: number): StaleEntry => ({
     key: `late-${days}`,
     name: `Late ${days}`,
-    staleness: { lastMatchedOn: "2026-06-05", daysSinceLastMatch: days, checkedDaysSinceLastMatch: days, stepDays: 7, toleranceDays: 14, isStale: true, awaitingStatements: false },
+    staleness: { lastMatchedOn: "2026-06-05", daysSinceLastMatch: days, checkedDaysSinceLastMatch: days, stepDays: 7, toleranceDays: 14, isStale: true, awaitingStatements: false, scheduleEnded: false },
   });
   const never = (n: number): StaleEntry => ({
     key: `never-${n}`,
     name: `Never ${n}`,
-    staleness: { lastMatchedOn: null, daysSinceLastMatch: null, checkedDaysSinceLastMatch: null, stepDays: 30, toleranceDays: 48, isStale: true, awaitingStatements: false },
+    staleness: { lastMatchedOn: null, daysSinceLastMatch: null, checkedDaysSinceLastMatch: null, stepDays: 30, toleranceDays: 48, isStale: true, awaitingStatements: false, scheduleEnded: false },
   });
 
   test("the real ledger's mix names both, and neither count is the other's", () => {
@@ -645,9 +680,20 @@ describe("seriesVerb — a series that is over is described in the past", () => 
   test("a series that is over is past tense, by kind", () => {
     // 🔴 27 ended or dismissed series read "charges monthly around the 8th"
     // above their own "nothing more is expected from it", 2026-09-10.
-    expect(seriesVerb("bill", true)).toBe("charged");
-    expect(seriesVerb("income", true)).toBe("deposited");
-    expect(seriesVerb("transfer", true)).toBe("moved");
+    expect(seriesVerb("bill", { posted: true })).toBe("charged");
+    expect(seriesVerb("income", { posted: true })).toBe("deposited");
+    expect(seriesVerb("transfer", { posted: true })).toBe("moved");
+  });
+
+  /*
+   * 🔴 Review of 49cc98f: "charged once on Nov 11, about $72.74" over "Linked transactions · 0" — the Nov 11 balance's
+   * schedule had ended and the bank had never charged it (a copy of his ledger, 2026-10-12, asked about 2026-11-12).
+   * Past tense says the schedule is over; a posting it never made is no past it has.
+   */
+  test("…and one that never posted was expected, whatever its kind — never 'charged', 'deposited' or 'moved'", () => {
+    for (const kind of ["bill", "subscription", "income", "transfer", "other"] as const) {
+      expect(seriesVerb(kind, { posted: false }), kind).toBe("was expected");
+    }
   });
 
   test("the default is present, so no caller silently changes tense", () => {

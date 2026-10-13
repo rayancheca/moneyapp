@@ -322,3 +322,39 @@ describe("seriesEndHeadline", () => {
     );
   });
 });
+
+/*
+ * 🔴 Review of 49cc98f — item (4)'s sweep, the series page's End dialog: on a copy of his ledger (2026-10-12) asked
+ * about 2026-11-12, his pay's (It America LLC, weekly) read "Upcoming charges off the calendar: every charge from Nov
+ * 12, 2026 on" over "Nothing is deleted — the charges stay in your ledger". Its lines are worded by kind
+ * (`seriesPostingWords`), as its page's "Nothing expected" card is; a bill's read as before.
+ */
+describe("seriesEndLines — worded by kind", () => {
+  test("his pay loses deposits, a transfer transfers; a bill's lines read as they always have", () => {
+    const pay: SeriesEndInput = { ...base, kind: "income", nextChargeOn: "2026-11-12" };
+    expect(labels(pay)).toEqual(["Leaving the forecast", "Upcoming deposits off the calendar", "Linked transactions kept"]);
+    expect(value(pay, "Upcoming deposits off the calendar")).toBe("every deposit from Nov 12, 2026 on");
+    const moved: SeriesEndInput = { ...base, kind: "transfer", endsOn: "2027-06-01" };
+    expect(value(moved, "Upcoming transfers off the calendar")).toBe("every transfer from Oct 1, 2026 to Jun 1, 2027");
+    for (const kind of ["income", "transfer"] as const) {
+      const late: SeriesEndInput = { ...unread(421_800), kind, overdueOn: "2026-09-01", overdueCount: 2 };
+      const said = seriesEndLines(late, formatCents).map((l) => `${l.label} ${l.value}`);
+      expect(said.join(" · "), kind).not.toMatch(/charge/);
+      expect(seriesEndReassurance(kind), kind).not.toMatch(/charge/);
+    }
+    for (const kind of ["bill", "subscription"] as const) {
+      expect(value({ ...base, kind }, "Upcoming charges off the calendar")).toBe("every charge from Oct 1, 2026 on");
+    }
+    // ⛔ an `other` series' are its payments — it may be money in (`seriesPostingWords`, merged 2026-10-13)
+    expect(value({ ...base, kind: "other" }, "Upcoming payments off the calendar")).toBe("every payment from Oct 1, 2026 on");
+  });
+
+  test("Nothing is deleted — the deposits of his pay stay in the ledger, the charges of a bill", () => {
+    expect(seriesEndReassurance("income")).toBe(
+      "Nothing is deleted — the deposits stay in your ledger, and Confirm brings the series back if it starts again.",
+    );
+    expect(seriesEndReassurance(base.kind)).toBe(
+      "Nothing is deleted — the charges stay in your ledger, and Confirm brings the series back if it starts again.",
+    );
+  });
+});

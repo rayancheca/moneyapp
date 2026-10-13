@@ -1,5 +1,5 @@
 import { and, asc, eq, inArray, lte, min, ne } from "drizzle-orm";
-import { seriesIsOver, type SeriesEvidence } from "@/lib/series-evidence";
+import { projectedEvidence, seriesIsOver, type SeriesEvidence } from "@/lib/series-evidence";
 import { lastSeenOn, type BillingCarrier, type EvidenceSource } from "@/lib/billed-with";
 import type { AppDatabase } from "@/db/client";
 import { categories } from "@/db/schema/categories";
@@ -979,6 +979,11 @@ export function annualizedCentsOf(
    * one, which summed to a measured "~$0.00/yr" — printed on /recurring/<Knack
    * Tutoring> three lines under the series' own per-charge amount. The rule this
    * replaced multiplied the amount out regardless; neither was a fact.
+   *
+   * ⛔ …AND NO DATE STILL TO COME IS NO FIGURE: a schedule its end has closed is not forecast (`seriesIsForecast`
+   * asks `scheduleHasEnded`, the test the subscriptions card counts a series ENDED by — above). 🔴 From Nov 12 the
+   * one-time Nov 11 car-insurance balance read "~$0.00/yr" on its own page and the All tab (a copy of his ledger,
+   * 2026-10-12) — a stored next day, and nothing after it inside its end.
    */
   if (series.nextExpectedAmountCents === null || series.nextExpectedOn === null) return null;
   /*
@@ -1142,9 +1147,12 @@ export interface SeriesStaleness {
   daysSinceLastMatch: number | null;
   /**
    * The quiet the ledger has READ: days from lastMatchedOn to the day after `checkedThrough`, never past today — what
-   * late (`isStale`) and lapsed (`seriesHasLapsed`) both measure, and the subscriptions card's "days past tolerance".
-   * Unmeasured (`checkedThrough` undefined) it is `daysSinceLastMatch`; null when never billed, or when nothing is
-   * checked — no read day can say a charge is missing.
+   * late (`isStale`) and lapsed (`seriesHasLapsed`) both measure. Unmeasured (`checkedThrough` undefined) it is
+   * `daysSinceLastMatch`; null when never billed, or when nothing is checked — no read day can say a charge is missing.
+   *
+   * ⛔ Not the subscriptions card's printed "days past tolerance", which counts to the day its line NAMES — the checked
+   * day itself (`pastToleranceOf`). 🔴 Printed from this, it read "94 days past tolerance, checked through Sep 13"
+   * beside "last seen Apr 25": one over what the two dates give (review of f117d68).
    */
   checkedDaysSinceLastMatch: number | null;
   /** the effective step: user cadence → nominal, else the detected average gap */
@@ -1168,6 +1176,14 @@ export interface SeriesStaleness {
    * ⚠️ Says nothing about whether the next charge's due day was checked: it may have been (`stalenessSentence`).
    */
   awaitingStatements: boolean;
+  /**
+   * No date from today on inside its end (`scheduleHasEnded`): nothing more is expected, so nothing is late, awaited or
+   * still projected — the word is "Ended" (`projectedEvidence`), and no chip or footer discloses its age. Still a line
+   * of this month's forecast for what it came due as (the arrears leg), so the word the forecast reads must know it.
+   * 🔴 Review of 49cc98f: Nov 12–30 the Nov 11 balance was "never billed … still projected" in the forecast and "Ended"
+   * on the All tab below it (his ledger copy, 2026-10-12).
+   */
+  scheduleEnded: boolean;
 }
 
 interface ProjectableSeries {
@@ -1268,6 +1284,22 @@ export interface EffectiveSeries {
 
 export function effectiveSeries(s: ProjectionOverrides): EffectiveSeries {
   return {
+    ...effectiveSchedule(s),
+    nextExpectedAmountCents: seriesAmountCents(s),
+    // ⛔ strict: a history it cannot read refuses the series out loud, never reads as "the rate never changed"
+    amountHistory: parseAmountHistory(s.userAmountHistory, seriesAmountCents(s)),
+  };
+}
+
+/** WHEN a series falls — `EffectiveSeries` less its money: what `rollForwardNextExpected` steps. */
+export type EffectiveSchedule = Pick<EffectiveSeries, "cadence" | "intervalDaysAvg" | "nextExpectedOn" | "anchorDay" | "userEndsOn">;
+
+/**
+ * The effective schedule (user override first), for a reader that asks only when — a date reader holds no stored rate
+ * history, which `effectiveSeries` reads strictly (`ProjectionOverrides`). `effectiveSeries` is this plus the money.
+ */
+export function effectiveSchedule(s: SeriesOverrides): EffectiveSchedule {
+  return {
     cadence: s.userCadence ?? s.cadence,
     // a user cadence override abandons the detected interval — step by the
     // override's nominal cadence length instead of the old detected gap.
@@ -1278,15 +1310,12 @@ export function effectiveSeries(s: ProjectionOverrides): EffectiveSeries {
     // putting 13 charges ($650) in the committed year instead of 12 ($600).
     intervalDaysAvg: s.userCadence || s.userNextExpectedOn ? null : s.intervalDaysAvg,
     nextExpectedOn: s.userNextExpectedOn ?? s.nextExpectedOn,
-    nextExpectedAmountCents: seriesAmountCents(s),
     // A user-set date IS the day-of-month, so the detected anchor must yield to
     // it — otherwise picking the 15th on a month-end series would be silently
     // re-dayed to the 31st and the override would look ignored. Same shape as
     // the cadence override abandoning the detected interval, just above.
     anchorDay: s.userNextExpectedOn ? null : (s.anchorDay ?? null),
     userEndsOn: s.userEndsOn ?? null,
-    // ⛔ strict: a history it cannot read refuses the series out loud, never reads as "the rate never changed"
-    amountHistory: parseAmountHistory(s.userAmountHistory, seriesAmountCents(s)),
   };
 }
 
@@ -1319,26 +1348,33 @@ const INACTIVE_MISS_LIMIT = 1.5;
  * the card said so. `FPL (electricity)` sat at 47 of 48 and would have gone the
  * same way the next morning.
  *
- * ⚠️ The cause is structural, not a one-off. Statements arrive MONTHLY and each
- * lands on its own date (docs: statement cadence), so `last_matched_on` trails
- * reality by up to a full cycle simply because the evidence has not been
- * imported yet. A limit of 1.5 cycles therefore condemns any monthly bill whose
- * statement is a fortnight late — which is most of them, most of the time.
+ * The cause then was import lag: statements arrive MONTHLY and each lands on its own date (docs: statement cadence),
+ * and the quiet was counted to today, so a bill whose statement was a fortnight late looked a cycle quiet. Three was
+ * chosen as "one cycle of import lag plus two genuinely missed charges".
  *
- * Three is the smallest limit that survives that lag with room to spare: one
- * cycle of import lag plus two genuinely missed charges. It is not fitted to
- * the data, but it does separate it cleanly — measured 2026-08-26, the dead
- * series sit at 7.5, 25.3, 26.0 and 27.6 cycles while every live one is under
- * 1.7, so nothing lands anywhere near the boundary.
+ * ⚖️ THAT REASON NO LONGER APPLIES (re-documented 2026-10-13; the number and every lapse are unchanged). Since §6A 57
+ * (owner, 2026-10-08) the quiet is counted on days the ledger has READ (`seriesHasLapsed`, to its accounts' checked
+ * day): import lag cannot lapse a series at all, and every cycle in the three is a cycle a read statement shows
+ * empty. A monthly bill lapses once 3 × 30 + 3 = 93 read days follow its last posting — its third charge due after
+ * it, grace included, read missing. Three stays for what is still true:
+ *
+ *  - The two bars cost opposite things. Past 1.5 the series reads "Running late" and is STILL projected — a warning
+ *    that costs nothing if it is wrong; past 3 it leaves every forward figure — the runway, the budgets, the forecast.
+ *    The cycles between are the window in which a bill read missing is flagged and still counted, so he sees it go
+ *    quiet before it leaves a budget.
+ *  - A read statement without the charge is not yet proof the bill stopped: paid from another account or by hand,
+ *    or posted under a description the detector has not linked, it reads exactly like a missed charge, so one read
+ *    miss cannot say which it was. Three in a row can.
+ *  - It still separates the measured data cleanly: on 2026-08-26 (counted to today then, which can only overstate a
+ *    read-day count) the dead series sat at 7.5, 25.3, 26.0 and 27.6 cycles and every live one under 1.7.
+ *
+ * It is a judgement, not a fit.
  *
  * ⛔ `isSeriesActive` deliberately does NOT use this. "Is there recent
  * evidence?" is a question about the past and 1.5 cycles is a fair answer;
  * "should I keep predicting this?" is a question about the future, and being
  * wrong there deletes a real bill from a budget. Being too eager to call
  * something dead is the expensive mistake, so only the forecast gate moves.
- *
- * ⚠️ Since §6A 57 (owner, 2026-10-08) the cycles are counted on days the ledger has READ (`seriesHasLapsed`), so the
- * cycle of import lag above can no longer reach it; the number is unchanged, and so is every lapse read to today.
  */
 const LAPSED_MISS_LIMIT = 3;
 
@@ -1425,6 +1461,7 @@ export function seriesStaleness(
     isStale: lateOnCheckedDays,
     checkedThrough,
     awaitingStatements: pastTolerance && !lateOnCheckedDays,
+    scheduleEnded: scheduleHasEnded(s, today),
   };
 }
 
@@ -1539,6 +1576,10 @@ type ForecastableRow = SeriesOverrides & EvidenceSource & { status: SeriesStatus
  * the last asked the lapse. Measured on a copy of the owner's ledger 2026-10-08, `/recurring/<Amazon Prime>`: the
  * badge "Lapsed" (note: "no longer forecast") over "Next expected Nov 5 · Dec 5 · Jan 5" and "~$59.88/yr", and an End
  * dialog promising "Leaving the forecast ~$59.88 / yr" of a series the forecast had let go that morning.
+ *
+ * ⛔ …and a schedule with a date still to come (`scheduleHasEnded`): nothing walks forward past an end. 🔴 Review of
+ * 0af5689: the Nov 11 balance's page projected it a month past its one day while the subscriptions card had ended it.
+ * ⚠️ FORWARD only: what came due before today is the arrears walk's, which asks the status and the lapse alone.
  */
 export function seriesIsForecast(
   s: ForecastableRow,
@@ -1546,7 +1587,7 @@ export function seriesIsForecast(
   today: string,
   checkedThrough: string | null,
 ): boolean {
-  return !seriesIsOver(s.status) && !hasStoppedForecasting(s, today, checkedThrough);
+  return !seriesIsOver(s.status) && !scheduleHasEnded(s, today) && !hasStoppedForecasting(s, today, checkedThrough);
 }
 
 /**
@@ -1578,13 +1619,34 @@ export function seriesIsForecast(
  * only, prints no date, and asks only whether the schedule is over, and settlement
  * never speaks about money out.
  */
-export function rollForwardNextExpected(eff: EffectiveSeries, today: string = todayIso()): string | null {
+export function rollForwardNextExpected(eff: EffectiveSchedule, today: string = todayIso()): string | null {
   if (!eff.nextExpectedOn) return null;
   const plan = stepPlan(eff.cadence, eff.intervalDaysAvg, eff.anchorDay);
   const next = stepFrom(eff.nextExpectedOn, plan, stepsToReach(eff.nextExpectedOn, plan, today));
   // inclusive: a series ends ON its end date, so that day's charge still happens
   if (eff.userEndsOn && compareDates(next, eff.userEndsOn) > 0) return null;
   return next;
+}
+
+/**
+ * Has the series' SCHEDULE run out — a next day to step from, and no date from today on inside its end
+ * (`userEndsOn`)? The second of `rollForwardNextExpected`'s two nulls, which the subscriptions card counts ENDED by
+ * ("1 has already ended, so it costs nothing going forward") and the first of which is a series with no date at all.
+ * ONE predicate, asked by every reader that files a live series as projected or not: the evidence word
+ * (`seriesEvidence`'s `schedule-ended`), the forecast's forward set (`seriesIsForecast`), and the card — and carried
+ * on its staleness (`scheduleEnded`), so the forecast's chips, band and footer read the All tab's word for it too.
+ *
+ * 🔴 Review of 0af5689: from Nov 12 the Nov 11 car-insurance balance was ENDED to its annualized figure and the
+ * subscriptions card, and live and forecast to its own page ("charges once on Nov 11, about $72.74", no "Nothing
+ * expected") and the All tab ("Never billed — registered by hand and forecast") — a copy of his ledger asked about
+ * 2026-12-12, where nothing forecasts it from Dec 1.
+ *
+ * ⚠️ Says nothing of what came due BEFORE today: a last date that came due unposted is still owed in its month — the
+ * arrears walk asks the status and the lapse, never this (`overdueForSeries`).
+ */
+export function scheduleHasEnded(s: SeriesOverrides, today: string): boolean {
+  const schedule = effectiveSchedule(s);
+  return schedule.nextExpectedOn !== null && rollForwardNextExpected(schedule, today) === null;
 }
 
 /**
@@ -1841,16 +1903,28 @@ function forecastWalk(db: AppDatabase, today: string, windowDays: number) {
  * because it is the forecast's rule — a series the forecast has dropped must not be filed as one it still projects —
  * and on the same read days (§6A 57), so a lapsed series is always late there too, never one awaiting statements.
  *
+ * ⛔ Every series it still projects is worded by `projectedEvidence` — the predicate the forecast's chips, footers
+ * and band read off the same `seriesStaleness`, so the All tab and the forecast above it cannot file one series under
+ * two words. 🔴 On 2026-10-08 Amazon Prime read "running late" in the forecast's band and footer and "Lapsed" on the
+ * All tab of the same page. A fresh series reads `active` there: fresh to today (`isSeriesActive`) is exactly
+ * neither late on read days nor past tolerance today.
+ *
  * ⚖️ Never billed is NEITHER it nor its carrier ever seen (`lastSeenOn`, §6A 59). 🔴 It read the series' own column,
  * and `Rent utilities & fees` — paid inside every rent payment — sat under "Never billed" on the All tab.
+ *
+ * ⛔ A schedule its end has closed is asked before ANY of it (`scheduleHasEnded`): finished is not late, never billed
+ * or lapsed — a new charge would not bring it back. 🔴 Review of 0af5689: a month past its one day the Nov 11 balance
+ * sat under "Never billed — registered by hand and forecast" on the All tab, ended on the subscriptions card.
  */
 export function seriesEvidence(
   s: SeriesOverrides & EvidenceSource & { status: SeriesStatus; kind: SeriesKind },
   today: string,
   checkedThrough: string | null,
 ): SeriesEvidence {
-  if (lastSeenOn(s) === null) return "never-billed";
-  if (isSeriesActive(s, today)) return "active";
+  // the forecast's word for it (`projectedEvidence`) asks the schedule's end first too — off these same facts
+  const staleness = seriesStaleness(s, today, checkedThrough);
+  if (staleness.scheduleEnded) return "schedule-ended";
+  // never billed has nothing to lapse from (`seriesHasLapsed`), so it falls through to its own word below
   if (hasStoppedForecasting(s, today, checkedThrough)) return "lapsed";
-  return seriesStaleness(s, today, checkedThrough).awaitingStatements ? "awaiting-statements" : "running-late";
+  return projectedEvidence(staleness);
 }

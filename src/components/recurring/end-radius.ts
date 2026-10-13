@@ -46,6 +46,12 @@ import { longDate } from "./labels";
  * (review of 2e6c74b, 2026-10-08; Netflix due Jul 1, its card read through
  * Jul 5). ⛔ The card's split, the runway's (`arrearsClause`), built from the
  * page's data in one place (`seriesEndInput`).
+ *
+ * 🔴 …AND IT CALLED HIS PAY'S DEPOSITS CHARGES. On a copy of his ledger (2026-10-12) asked about 2026-11-12, his pay's
+ * dialog (It America LLC, weekly) read "Upcoming charges off the calendar: every charge from Nov 12, 2026 on" over
+ * "Nothing is deleted — the charges stay in your ledger" (review of 49cc98f, item (4)'s sweep). What it loses and
+ * keeps is worded by its kind (`seriesPostingWords`), as the page's "Nothing expected" card is; a bill's lines read
+ * as before.
  */
 export interface SeriesEndInput {
   /** what it posts — the lines say charges, deposits, transfers or payments as the page's card does (`seriesPostingWords`) */

@@ -34,10 +34,26 @@ function days(n: number): string {
   return `${n} ${n === 1 ? "day" : "days"}`;
 }
 
-/** What `Evidence` reads — a one-off has no tolerance to be past, so that one is optional. */
-type EvidenceFacts = Pick<SubscriptionLine, "neverBilled" | "lastMatchedLabel" | "billedWithLabel"> & {
-  daysPastTolerance?: number | null;
-};
+/** What `Evidence` reads — a one-off has no tolerance to be past, so those two are optional. */
+type EvidenceFacts = Pick<SubscriptionLine, "neverBilled" | "lastMatchedLabel" | "billedWithLabel"> &
+  Partial<Pick<SubscriptionLine, "daysPastTolerance" | "pastToleranceThroughLabel">>;
+
+/**
+ * How far past its tolerance a lapsed line is, and the day that was counted to — "94 days past tolerance, checked
+ * through Sep 13" — or null when the line has not lapsed. `whose` is the lead sentence's "its own". ONE phrase for the
+ * row and the lead sentence over the same count.
+ *
+ * ⚖️ Counted on read days (§6A 57) — so, beside "last seen <day>", it says which: "…, checked through Sep 13" when the
+ * count stops short of today (`pastToleranceThroughLabel`). 🔴 "last seen Apr 25 · 94 days past tolerance" read as 118
+ * to anyone counting from the date (review of §6A 57). 🔴 …and the lead sentence over the same count kept the bare
+ * "93 days past its own tolerance" (review of f117d68).
+ */
+function pastTolerancePhrase(line: EvidenceFacts, whose: "" | "its own " = ""): string | null {
+  const pastTolerance = line.daysPastTolerance ?? null;
+  if (pastTolerance === null) return null;
+  const through = line.pastToleranceThroughLabel ?? null;
+  return `${days(pastTolerance)} past ${whose}tolerance${through === null ? "" : `, checked through ${through}`}`;
+}
 
 /**
  * A row's evidence, in its own voice: when it last charged, or that it never has. `lead` goes first when the row
@@ -45,8 +61,8 @@ type EvidenceFacts = Pick<SubscriptionLine, "neverBilled" | "lastMatchedLabel" |
  */
 function Evidence({ line, lead }: { line: EvidenceFacts; lead?: string }) {
   const prefix = lead === undefined ? "" : `${lead} · `;
-  const pastTolerance = line.daysPastTolerance ?? null;
-  const late = pastTolerance === null ? "" : ` · ${days(pastTolerance)} past tolerance`;
+  const phrase = pastTolerancePhrase(line);
+  const late = phrase === null ? "" : ` · ${phrase}`;
   /* ⚖️ Paid inside another series' payment (§6A 59): "billed with the rent, last seen Sep 2". 🔴 His `Rent utilities
      & fees` read "never billed" here, paid inside every rent payment. */
   if (line.billedWithLabel !== null)
@@ -134,9 +150,10 @@ export function SubscriptionsCard({ data }: { data: SubscriptionsCardData }) {
             Another <Money cents={lapsedMonthlyCents} className="text-ink" /> a month is registered and no longer
             forecast — {lapsedSharePct.toFixed(1)}% of everything on the books. The largest is{" "}
             <span className="text-ink">{largestLapsed.name}</span>, last seen {largestLapsed.lastMatchedLabel}
-            {largestLapsed.daysPastTolerance === null
+            {/* its row's phrase over the same count — the day counted to included (`pastTolerancePhrase`) */}
+            {pastTolerancePhrase(largestLapsed, "its own ") === null
               ? ""
-              : `, ${days(largestLapsed.daysPastTolerance)} past its own tolerance`}
+              : `, ${pastTolerancePhrase(largestLapsed, "its own ")}`}
             .
           </>
         )}

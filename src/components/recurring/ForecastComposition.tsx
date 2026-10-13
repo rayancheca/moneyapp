@@ -1,6 +1,14 @@
+import { Fragment } from "react";
 import { Money } from "@/components/ui/Money";
 import type { ForecastSplit, ForecastSplitSide } from "@/lib/forecast-split";
-import { stalePartLabel } from "./labels";
+import { seriesEvidenceTone } from "@/lib/series-evidence";
+import { staleFooterWord, staleParts } from "./labels";
+
+/** A part's tone, as the chips and the series page's badge wear it (`seriesEvidenceTone`). */
+const PART_TONE_CLASS: Record<ReturnType<typeof seriesEvidenceTone>, string> = {
+  warning: "text-warning",
+  neutral: "text-ink-muted",
+};
 
 /**
  * What the two headline figures are MADE OF — committed bills against a
@@ -83,16 +91,30 @@ function Part({
 }
 
 function Side({ spec, side }: { spec: SideSpec; side: ForecastSplitSide }) {
-  const stale = stalePartLabel(side);
+  const parts = staleParts(side);
   return (
     <div>
       <div className="flex items-baseline justify-between gap-3">
         <h3 className="text-[11px] font-medium uppercase tracking-[0.1em] text-ink-faint">
           {spec.title}
         </h3>
-        {stale && (
-          <span className="text-[11px] text-warning" title="see “running late”, below">
-            {stale}
+        {/* ⛔ Each part in its own word's tone, pointing at the footer's word for it: late money warns, never-billed
+            money is quiet — the chips' and the series page's badge's tone (`seriesEvidenceTone`). 🔴 The whole label
+            wore amber under 'see "running late", below': "$468.86 of it never billed" over October's money out on
+            his ledger copy at today = 2026-10-12, with nothing running late in the footer (review of 481e357). */}
+        {parts.length > 0 && (
+          <span className="text-[11px] text-ink-faint">
+            {parts.map((p, i) => (
+              <Fragment key={p.evidence}>
+                {i > 0 ? " · " : null}
+                <span
+                  className={PART_TONE_CLASS[seriesEvidenceTone(p.evidence)]}
+                  title={`see “${staleFooterWord(p.evidence)}”, below`}
+                >
+                  {p.text}
+                </span>
+              </Fragment>
+            ))}
           </span>
         )}
       </div>

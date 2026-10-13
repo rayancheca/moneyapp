@@ -4,6 +4,7 @@ import {
   arrearsSentence,
   baselineCaption,
   baselineSpan,
+  committedBillsNamed,
   monthCount,
   endingLead,
   endingOthersClause,
@@ -275,6 +276,45 @@ describe("committedOutflows — overdue bills", () => {
     });
     expect(result.totalCents).toBe(1926625);
     expect(result.inflowCents).toBe(5000);
+  });
+});
+
+/*
+ * 🔴 "Committed bills come to $3,446.19 a month — Flamingo South Beach (rent), Car lease, Rent utilities & fees, and
+ * 10 more." — one of the ten the Nov 11 car-insurance balance, asked about Nov 12 on a copy of his ledger (2026-10-12):
+ * a line carrying its $72.74 of arrears and $0.00 of that rate. The arrears sentence beside the rate says that money.
+ */
+describe("committedBillsNamed — the bills a rate is named by are the bills inside it", () => {
+  const BALANCE_LATE: CommittedOccurrence = {
+    seriesId: seriesIdOf("Car insurance balance"),
+    name: "Car insurance balance",
+    date: "2026-08-20",
+    amountCents: -7274,
+    lastMatchedOn: null,
+    cadence: "monthly",
+    endsOn: "2026-08-20",
+    isStale: true,
+  };
+
+  test("three by name, largest first, and the rest counted", () => {
+    expect(committedBillsNamed(committedOutflows(REAL).lines)).toBe(
+      "Flamingo South Beach (rent), Car lease, Car insurance, and 2 more",
+    );
+  });
+
+  test("a line that carries only arrears is neither named nor counted", () => {
+    const book = committedOutflows({ ...REAL, overdue: [BALANCE_LATE] });
+    expect(book.lines).toHaveLength(6);
+    expect(committedBillsNamed(book.lines)).toBe("Flamingo South Beach (rent), Car lease, Car insurance, and 2 more");
+  });
+
+  test("…and a book of nothing but arrears names no bill — it has no rate to name them under", () => {
+    expect(committedBillsNamed(committedOutflows({ ...REAL, occurrences: [], overdue: [BALANCE_LATE] }).lines)).toBeNull();
+  });
+
+  test("three or fewer are all named", () => {
+    const three = committedOutflows({ ...REAL, occurrences: REAL.occurrences.filter((o) => !o.name.startsWith("FPL") && !o.name.startsWith("Breezeline")) });
+    expect(committedBillsNamed(three.lines)).toBe("Flamingo South Beach (rent), Car lease, Car insurance");
   });
 });
 

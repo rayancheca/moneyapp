@@ -13,7 +13,7 @@ import { formatCents } from "@/lib/money";
 import type { UnsettledReason } from "@/lib/occurrence-verdict";
 import { ONE_CHARGE_WORD } from "@/lib/one-charge";
 import type { PerPayday } from "@/lib/per-payday";
-import { SERIES_EVIDENCE_LABEL } from "@/lib/series-evidence";
+import { projectedEvidence, SERIES_EVIDENCE_LABEL, seriesEvidenceTone, seriesPostingWords } from "@/lib/series-evidence";
 import type { Cadence, SeriesKind, SeriesStatus } from "@/db/schema/recurring";
 import type { ForecastComponent } from "@/services/forecast";
 import type { SeriesOccurrence, SeriesStaleness } from "@/services/recurring";
@@ -161,11 +161,18 @@ export function schedulePhrase(cadence: Cadence, nextExpectedOn: string): { conn
  * ⛔ Past tense fixes the whole clause, not just the verb: "charged monthly
  * around the 8th" is true of a series that did, and stops the day-of-month —
  * read off a stale `next_expected_on` — reading as a date still to come.
+ *
+ * ⛔ …and "charged" only of a series that DID: one nothing ever matched (`neverPosted`) was expected, whatever its kind
+ * — so an over sentence must say which (`{ posted }`, no default). 🔴 Review of 49cc98f: from Nov 12 the Nov 11
+ * balance's page read "charged once on Nov 11, about $72.74" over "Linked transactions · 0" — a charge the bank never
+ * made (his ledger copy, 2026-10-12); a never-billed Gym given an end read "charged monthly, about $100.00".
  */
-export function seriesVerb(kind: SeriesKind, over: boolean = false): string {
-  if (kind === "income") return over ? "deposited" : "deposits";
-  if (kind === "transfer") return over ? "moved" : "moves";
-  return over ? "charged" : "charges";
+export function seriesVerb(kind: SeriesKind, over: false | { posted: boolean } = false): string {
+  // the past tense is the evidence notes' own (`seriesPostingWords`) — one table of deposit, transfer, payment and charge
+  if (over) return over.posted ? seriesPostingWords(kind).past : "was expected";
+  if (kind === "income") return "deposits";
+  if (kind === "transfer") return "moves";
+  return "charges";
 }
 
 /* ── staleness disclosure ──────────────────────────────────────────────────
@@ -195,27 +202,47 @@ export function staleLabel(s: SeriesStaleness): string {
 }
 
 /**
- * The marker's tone. A bill the bank has not charged yet is NOT a warning —
- * the calendar's Day Sheet already says so ("nothing is late about a bill the
- * bank has not charged yet") — and the Upcoming list badged the car lease in
- * warning amber on the morning of its first payment.
+ * The marker's tone — the series page's badge's, for the word both read (`seriesEvidenceTone` of `projectedEvidence`):
+ * one state, one tone. A bill the bank has not charged yet is NOT a warning — the calendar's Day Sheet already says so
+ * ("nothing is late about a bill the bank has not charged yet") — and the Upcoming list badged the car lease in
+ * warning amber on the morning of its first payment. 🔴 …while the series page badged "Never billed" in amber
+ * beside this neutral chip (review of 2026-10-08).
  */
 export function staleMarkTone(s: SeriesStaleness): "warning" | "neutral" {
-  return staleIsLate(s) ? "warning" : "neutral";
+  return seriesEvidenceTone(projectedEvidence(s));
 }
 
 /**
  * Late in the only sense that warns: it has charged, and its evidence ran past tolerance on days the ledger has
  * checked. ⛔ Never billed is not late (above), and neither is awaiting statements (`seriesStaleness`): 🔴 his pay
  * read "last seen 14d ago" in amber for a payday on a day Wells Fargo had not been checked through (2026-10-08).
+ *
+ * ⛔ The All tab's own word for the series (`projectedEvidence`), never a second split of the staleness flags here —
+ * so the footer, the band and the All tab cannot file one series under two words.
  */
 function staleIsLate(s: SeriesStaleness): boolean {
-  return s.isStale && s.daysSinceLastMatch !== null;
+  return projectedEvidence(s) === "running-late";
 }
 
 /** Past tolerance today, not by its accounts' checked day: it cannot be called late yet (`seriesStaleness`). */
 function staleIsAwaiting(s: SeriesStaleness): boolean {
-  return s.awaitingStatements && s.daysSinceLastMatch !== null;
+  return projectedEvidence(s) === "awaiting-statements";
+}
+
+/** Nothing — its own or its carrier's — has ever matched it: it rests on the schedule alone. */
+function staleIsNeverBilled(s: SeriesStaleness): boolean {
+  return projectedEvidence(s) === "never-billed";
+}
+
+/**
+ * Does a line's chip and footer disclose its evidence — late, never billed or awaiting statements? Off the word
+ * (`projectedEvidence`), never the flags: a schedule its end has closed is still `isStale` when it never posted, and
+ * none of it — nothing more is expected of it. ONE predicate for the chip (`StaleMark`) and every footer's entries.
+ * 🔴 Review of 49cc98f: Nov 12–30 the Nov 11 balance's line wore "never billed" and the footer said "expected about
+ * every 30 days … still projected" of it, over the All tab's "Ended — nothing more forecast" (his ledger copy).
+ */
+export function staleIsDisclosed(s: SeriesStaleness): boolean {
+  return staleIsLate(s) || staleIsNeverBilled(s) || staleIsAwaiting(s);
 }
 
 /** The footer is a warning only when at least one of its series is actually late. */
@@ -239,7 +266,7 @@ export function staleFooterIsWarning(entries: readonly StaleEntry[]): boolean {
  */
 export function staleFooterHint(entries: readonly StaleEntry[]): string {
   const late = staleFooterIsWarning(entries);
-  const never = entries.some((e) => e.staleness.daysSinceLastMatch === null);
+  const never = entries.some((e) => staleIsNeverBilled(e.staleness));
   const awaiting = entries.some((e) => staleIsAwaiting(e.staleness));
   let rests: string | null = null;
   if (late && never) rests = "rest on old evidence or on the schedule alone";
@@ -258,7 +285,9 @@ export function staleFooterHint(entries: readonly StaleEntry[]): string {
 export function stalenessSentence(s: SeriesStaleness): string {
   const expects = `expected about every ${Math.round(s.stepDays)} days`;
   if (s.lastMatchedOn === null || s.daysSinceLastMatch === null) {
-    return `${expects}, but no charge has ever matched it — still projected, on the schedule alone`;
+    // in its siblings' words ("nothing has matched since"), true of a deposit as of a charge — 🔴 it said "no charge"
+    // of every series, a hand-registered pay included (review of 2026-10-08)
+    return `${expects}, but nothing has ever matched it — still projected, on the schedule alone`;
   }
   /*
    * ⛔ Awaiting statements: the age is a fact, "past the tolerance" is not a finding — the tolerance runs out on days
@@ -301,14 +330,37 @@ export function stalenessSentence(s: SeriesStaleness): string {
  * on the magnitudes says out loud that this is a question about size, not about
  * direction.
  */
-export function stalePartLabel(side: {
+export function stalePartLabel(side: StaleSide): string | null {
+  const parts = staleParts(side);
+  return parts.length === 0 ? null : parts.map((p) => p.text).join(" · ");
+}
+
+/** What `staleParts` reads of one side of the band — `ForecastSplitSide` (lib/forecast-split), structurally. */
+interface StaleSide {
   fixedCents: number;
   fixedStaleCents: number;
   fixedStaleCount: number;
   fixedNeverChargedCents: number;
   fixedNeverChargedCount: number;
-}): string | null {
-  if (side.fixedStaleCount === 0 || side.fixedStaleCents === 0) return null;
+}
+
+/** One part of the band's label: its words, and the evidence word they say — its tone and the footer's word for it. */
+export interface StalePart {
+  evidence: "running-late" | "never-billed";
+  text: string;
+}
+
+/**
+ * The band's label in its parts, each with the word it says (`stalePartLabel` joins them) — so the band can wear each
+ * part in that word's tone (`seriesEvidenceTone`) and point it at the footer's word for it (`staleFooterWord`).
+ *
+ * 🔴 One state, one tone (review of 481e357): the chip and the series page's badge called never billed quiet, and the
+ * band wore it in amber under 'see "running late", below' — on his ledger copy at today = 2026-10-12, "$468.86 of it
+ * never billed" over October's money out and "$172.74 of it never billed" over November's, above a footer with nothing
+ * running late in it.
+ */
+export function staleParts(side: StaleSide): StalePart[] {
+  if (side.fixedStaleCount === 0 || side.fixedStaleCents === 0) return [];
   const stale = Math.abs(side.fixedStaleCents);
   const never = Math.abs(side.fixedNeverChargedCents);
   const late = stale - never;
@@ -323,12 +375,33 @@ export function stalePartLabel(side: {
    * late had never been charged by a bank. The MONEY IN side on the same card
    * IS all late, so the two must be able to say different things.
    */
-  const part = (cents: number, phrase: string): string =>
-    cents === whole ? `all of it ${phrase}` : `${formatCents(cents)} of it ${phrase}`;
-  if (never === 0) return part(late, "running late");
-  if (late === 0) return part(never, "never billed");
+  const part = (evidence: StalePart["evidence"], cents: number, phrase: string): StalePart => ({
+    evidence,
+    text: cents === whole ? `all of it ${phrase}` : `${formatCents(cents)} of it ${phrase}`,
+  });
+  if (never === 0) return [part("running-late", late, "running late")];
+  if (late === 0) return [part("never-billed", never, "never billed")];
   // both, and each named with its own figure — a reader can add them up
-  return `${formatCents(late)} of it running late · ${formatCents(never)} never billed`;
+  return [
+    part("running-late", late, "running late"),
+    { evidence: "never-billed", text: `${formatCents(never)} never billed` },
+  ];
+}
+
+/**
+ * The words the disclosure footer counts each state in — "1 series IS RUNNING LATE, 2 have NEVER BEEN BILLED" — and
+ * so the word the band's tooltip sends the reader to find there ('see "never been billed", below'). ONE spelling:
+ * 🔴 the band titled never-billed money 'see "running late", below' over a footer that held nothing running late
+ * (review of 481e357).
+ */
+const STALE_FOOTER_WORD: Record<"running-late" | "never-billed" | "awaiting-statements", string> = {
+  "running-late": "running late",
+  "never-billed": "never been billed",
+  "awaiting-statements": "awaiting statements",
+};
+
+export function staleFooterWord(evidence: keyof typeof STALE_FOOTER_WORD): string {
+  return STALE_FOOTER_WORD[evidence];
 }
 
 /** One stale series, as the disclosure footer lists it. */
@@ -389,14 +462,15 @@ export interface StaleEntry {
  * (his ledger, 2026-10-08). They are counted apart, in the badges' word (`SERIES_EVIDENCE_LABEL`), and never warn.
  */
 export function staleSummaryLabel(entries: readonly StaleEntry[], window: string): string {
-  const never = entries.filter((e) => e.staleness.daysSinceLastMatch === null).length;
+  // each counted under its All-tab word (`projectedEvidence`), never as what is left over from the other two
+  const late = entries.filter((e) => staleIsLate(e.staleness)).length;
+  const never = entries.filter((e) => staleIsNeverBilled(e.staleness)).length;
   const awaiting = entries.filter((e) => staleIsAwaiting(e.staleness)).length;
-  const late = entries.length - never - awaiting;
   // the first clause carries the noun: "1 series is running late and 2 have never been billed"
   const clauses = [
-    { n: late, verb: (n: number) => (n === 1 ? "is running late" : "are running late") },
-    { n: never, verb: (n: number) => (n === 1 ? "has never been billed" : "have never been billed") },
-    { n: awaiting, verb: (n: number) => (n === 1 ? "is awaiting statements" : "are awaiting statements") },
+    { n: late, verb: (n: number) => `${n === 1 ? "is" : "are"} ${STALE_FOOTER_WORD["running-late"]}` },
+    { n: never, verb: (n: number) => `${n === 1 ? "has" : "have"} ${STALE_FOOTER_WORD["never-billed"]}` },
+    { n: awaiting, verb: (n: number) => `${n === 1 ? "is" : "are"} ${STALE_FOOTER_WORD["awaiting-statements"]}` },
   ]
     .filter((c) => c.n > 0)
     .map((c, i) => `${c.n} ${i === 0 ? "series " : ""}${c.verb(c.n)}`);
@@ -482,7 +556,7 @@ export function staleOccurrenceEntries(occurrences: readonly SeriesOccurrence[])
   const bySeries = new Map<string, StaleEntry>();
   for (const o of occurrences) {
     // ⛔ awaiting statements reaches the footer too, counted apart (`staleSummaryLabel`): the chip's why is reachable
-    if (!(o.staleness?.isStale || o.staleness?.awaitingStatements) || bySeries.has(o.seriesId)) continue;
+    if (o.staleness === undefined || !staleIsDisclosed(o.staleness) || bySeries.has(o.seriesId)) continue;
     bySeries.set(o.seriesId, { key: o.seriesId, name: o.name, staleness: o.staleness });
   }
   return [...bySeries.values()];
@@ -500,7 +574,8 @@ export function staleComponentEntries(components: readonly ForecastComponent[]):
   const entries: StaleEntry[] = [];
   const seen = new Set<string>();
   for (const c of components) {
-    if (!(c.staleness?.isStale || c.staleness?.awaitingStatements) || seen.has(c.label)) continue;
+    // ⛔ the chip's predicate (`staleIsDisclosed`): a line whose schedule has ended is no footer's
+    if (c.staleness === undefined || !staleIsDisclosed(c.staleness) || seen.has(c.label)) continue;
     seen.add(c.label);
     entries.push({ key: c.label, name: c.label, staleness: c.staleness });
   }

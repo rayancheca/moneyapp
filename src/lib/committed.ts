@@ -348,6 +348,27 @@ export function committedOutflows(input: CommittedInput): CommittedOutflows {
   };
 }
 
+/** How many bills a rate names before counting the rest — "…, Car lease, Rent utilities & fees, and 9 more". */
+const BILLS_NAMED = 3;
+
+/**
+ * The bills "Committed bills come to $X a month — …" names: the lines INSIDE the rate, largest first, three by name and
+ * the rest counted. Null when no line is — a book of nothing but arrears has no rate to name bills under, and the card
+ * prints no "$0.00 a month" over it.
+ *
+ * ⛔ A line that carries only arrears (`occurrences` 0) is the money that came due before the horizon opened, and none
+ * of the rate: `arrearsSentence` says it beside the rate. 🔴 Asked about Nov 12 on a copy of his ledger (2026-10-12),
+ * the one-time Nov 11 car-insurance balance — owed, nothing of it still to come — was one of "…, and 10 more" bills
+ * that "come to $3,446.19 a month", at $0.00 of it.
+ */
+export function committedBillsNamed(lines: readonly CommittedLine[]): string | null {
+  const inRate = lines.filter((l) => l.occurrences > 0);
+  if (inRate.length === 0) return null;
+  const named = inRate.slice(0, BILLS_NAMED).map((l) => l.name).join(", ");
+  const rest = inRate.length - BILLS_NAMED;
+  return rest > 0 ? `${named}, and ${rest} more` : named;
+}
+
 /**
  * The runway card's arrears sentence: what came due before today and has not
  * posted, said only as far as the ledger has looked.

@@ -14,6 +14,8 @@ import { seedDatabase } from "@/db/seed";
 import { budgetVerdict } from "@/lib/budget-verdict";
 import { arrearsSentence } from "@/lib/committed";
 import { addDays, compareDates } from "@/lib/dates";
+import { projectedEvidence } from "@/lib/series-evidence";
+import { staleComponentEntries, staleOccurrenceEntries } from "@/components/recurring/labels";
 import { updateAccount } from "./accounts";
 import { arrearsThisMonth, unbankedIncomeForSeries } from "./arrears";
 import { budgetPaceStatuses, categoryReachFor, createBudget } from "./budgets";
@@ -240,11 +242,37 @@ describe("a series lapses only on days the ledger has checked — every surface 
     for (const id of [...STILL_FORECAST, GYM]) expect(live.has(id), `${today} · ${id}`).toBe(true);
   });
 
+  /*
+   * 🔴 Review of f117d68: "last seen Apr 25 · 94 days past tolerance, checked through Sep 13" — counted to Sep 14, the
+   * day AFTER the day it names, so a reader counting from the two dates printed gets Apr 25 → Sep 13 = 141, less the
+   * 48-day tolerance, 93. The count runs to the day it names: the checked day, or today when it is read through today.
+   */
   test("the subscriptions card's days past tolerance count read days only — they cannot grow between uploads", () => {
-    // Apr 25 → Sep 14 (the day after Venture X's checked Sep 13) is 142 days, against the 48-day tolerance
+    // Apr 25 → Sep 13 (Venture X's checked day, which the line names) is 141 days, against the 48-day tolerance
     for (const today of [OCT, DEC]) {
-      expect(subscriptionsCard(bundle.db, today)!.lapsed[0]!.daysPastTolerance, today).toBe(142 - 48);
+      expect(subscriptionsCard(bundle.db, today)!.lapsed[0]!.daysPastTolerance, today).toBe(141 - 48);
     }
+  });
+
+  /*
+   * 🔴 Review of §6A 57: "last seen Apr 25 · 94 days past tolerance" — the date is calendar age, the count is read
+   * days, and a reader working from the date to Oct 8 gets 118. The count says which days it counted: through the
+   * checked day, when that is short of today.
+   */
+  test("…and say which days they counted when that stops short of today — never when it runs to today", () => {
+    for (const today of [OCT, DEC]) {
+      expect(subscriptionsCard(bundle.db, today)!.lapsed[0]!.pastToleranceThroughLabel, today).toBe("Sep 13");
+    }
+    // Venture X read through the day before: still short of today, so it names Oct 7 — and counts to it
+    checkedThrough(VX, "2026-09-14", addDays(OCT, -1));
+    const yesterday = subscriptionsCard(bundle.db, OCT)!.lapsed.find((l) => l.seriesId === DEAD)!;
+    expect(yesterday.pastToleranceThroughLabel).toBe("Oct 7");
+    expect(yesterday.daysPastTolerance).toBe(yesterday.daysSinceLastMatch! - 1 - 48);
+    // …and read through today: the count runs to today, and agrees with "last seen Apr 25"
+    checkedThrough(VX, OCT, OCT);
+    const dead = subscriptionsCard(bundle.db, OCT)!.lapsed.find((l) => l.seriesId === DEAD)!;
+    expect(dead.pastToleranceThroughLabel).toBeNull();
+    expect(dead.daysPastTolerance).toBe(dead.daysSinceLastMatch! - 48);
   });
 
   test.each([OCT, DEC])("%s: the runway's committed book keeps every bill, and its arrears walk asks the same", (today) => {
@@ -311,14 +339,54 @@ describe("a series lapses only on days the ledger has checked — every surface 
   });
 
   test("read past the missed days, the same bills DO lapse — the rule moved the measuring day, not the line", () => {
-    // Wells Fargo read through Dec 6: the rent missed Oct 1 and Nov 1, the lease Oct 15 and Nov 15, on read statements
-    checkedThrough(WF, "2026-09-25", "2026-12-06");
+    /*
+     * The line is three cycles of READ quiet after the last posting (`LAPSED_MISS_LIMIT`): for the rent and the lease,
+     * last posted Sep 2, 3 × 30 + 3 = 93 days — the rent's Oct 1, Nov 1 and Dec 1 read missing, grace included. Read
+     * through Dec 3 the quiet is 93 days (to Dec 4) and neither has lapsed; through Dec 6 it is 96.
+     */
+    checkedThrough(WF, "2026-09-25", "2026-12-03");
+    expect(subscriptionsCard(bundle.db, DEC)!.lapsed.map((l) => l.seriesId)).toEqual([DEAD]);
+    checkedThrough(WF, "2026-12-04", "2026-12-06");
     const card = subscriptionsCard(bundle.db, DEC)!;
     expect(new Set(card.lapsed.map((l) => l.seriesId))).toEqual(new Set([RENT, LEASE, DEAD]));
     const ids = new Set(upcomingOccurrences(bundle.db, DEC, 70).map((o) => o.seriesId));
     expect(ids.has(RENT)).toBe(false);
     expect(ids.has(LEASE)).toBe(false);
   });
+
+  /*
+   * 🔴 Review of 2026-10-08: Amazon Prime read "running late" in the forecast's band and footer and "Lapsed" on the All
+   * tab of the same page — its lapse measured to today on one surface and to its checked day on the other. Every
+   * surface prints ONE word for a series: the forecast's own let-go (`hasStoppedForecasting`) for lapsed, and
+   * `projectedEvidence` for every series it still projects — the All tab, the chips, the footers and the band.
+   */
+  test.each([OCT, DEC, "2027-01-20"])(
+    "%s: the forecast's band and footer, and the Upcoming footer, say of each series the All tab's word",
+    (today) => {
+      // Wells Fargo read past the missed days: in December the rent and the lease have lapsed, his pay is late
+      checkedThrough(WF, "2026-09-25", "2026-12-06");
+      const word = new Map(listSeries(bundle.db, today).map((s) => [s.name, s.evidence]));
+      const forecast = forecastCurrentMonth(bundle.db, today).components;
+      const entries = [
+        ...staleComponentEntries(forecast),
+        ...staleOccurrenceEntries(upcomingOccurrences(bundle.db, today, 30)),
+      ];
+      expect(entries.length, today).toBeGreaterThan(0);
+      for (const e of entries) expect(projectedEvidence(e.staleness), `${today} · ${e.name}`).toBe(word.get(e.name));
+      // …the band's "running late" is exactly the series the All tab calls running late
+      for (const c of forecast.filter((x) => x.kind === "fixed")) {
+        const banded = c.staleness!.isStale && c.staleness!.daysSinceLastMatch !== null;
+        expect(banded, `${today} · ${c.label}`).toBe(word.get(c.label) === "running-late");
+      }
+      // …and a series the All tab calls lapsed is in no footer and no band
+      const lapsed = [...word].filter(([, w]) => w === "lapsed").map(([name]) => name);
+      expect(lapsed.length, today).toBeGreaterThan(0);
+      for (const name of lapsed) {
+        expect(entries.some((e) => e.name === name), `${today} · ${name}`).toBe(false);
+        expect(forecast.some((c) => c.label === name), `${today} · ${name}`).toBe(false);
+      }
+    },
+  );
 });
 
 /**

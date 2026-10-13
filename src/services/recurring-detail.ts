@@ -1,5 +1,5 @@
 import { and, desc, eq, isNull, lte, ne, or, sql } from "drizzle-orm";
-import { seriesCanBeReshaped, type SeriesEvidence } from "@/lib/series-evidence";
+import { neverPosted, seriesCanBeReshaped, type SeriesEvidence } from "@/lib/series-evidence";
 import type { UnbankedIncomeReading } from "@/lib/unbanked-income";
 import type { BillingCarrier } from "@/lib/billed-with";
 import type { AppDatabase } from "@/db/client";
@@ -35,6 +35,7 @@ import {
   type SeriesOccurrence,
   seriesEvidence,
   seriesIsForecast,
+  seriesStaleness,
 } from "./recurring";
 import { mergeFilings, type HandFiling } from "./recurring-links";
 import { seriesCategoryIds } from "./series-category";
@@ -200,6 +201,12 @@ export interface SeriesDetail {
   isActive: boolean;
   /** the word every surface uses for its evidence — see `lib/series-evidence` */
   evidence: SeriesEvidence;
+  /**
+   * Nothing — its own postings or its carrier's — has ever matched it: never billed's own test (`neverPosted`), which
+   * the word stops saying once the schedule has ended. The page still says it: "Never billed" beside "Ended Nov 11,
+   * 2026", and "was expected", never "charged". 🔴 Review of 49cc98f: "charged once on Nov 11" over 0 linked rows.
+   */
+  neverPosted: boolean;
   /**
    * ⚖️ The series it is billed inside (owner decision 2026-10-08, §6A 59), or null — the page says "billed with the
    * rent, last seen Sep 2" and links it. 🔴 `/recurring/<Rent utilities & fees>` wore a "Never billed" badge, of money
@@ -533,7 +540,14 @@ export function seriesDetail(
       ).slice(0, NEXT_EXPECTED_COUNT)
     : [];
 
-  const late = projects ? (arrearsThisMonth(db, new Set([seriesId]), today).series[0] ?? null) : null;
+  /*
+   * ⛔ The BACKWARD half asks the arrears walk's own rule — a live status, not let go (`overdueForSeries` filters both)
+   * — never `projects`, which is forward: a schedule its end has closed projects nothing and still owes the last date
+   * that came due unposted this month. 🔴 Gated on `projects` once the schedule's end joined it, the Nov 11 balance's
+   * already-due card would have gone from Nov 12 while the forecast and the runway still owed its $72.74 (review of
+   * 0af5689).
+   */
+  const late = arrearsThisMonth(db, new Set([seriesId]), today).series[0] ?? null;
   const overdue = late
     ? {
         date: late.nextDate,
@@ -600,6 +614,7 @@ export function seriesDetail(
     isActive: isSeriesActive(s, today),
     // late only on days the ledger has checked — the badge's word and its tone (`seriesEvidenceTone`)
     evidence: seriesEvidence(s, today, checkedThrough),
+    neverPosted: neverPosted(seriesStaleness(s, today, checkedThrough)),
     billedWith: s.billedWith,
     endsOn: s.userEndsOn ?? null,
     oneChargeOn: oneChargeDays(db, [s]).get(s.id) ?? null,

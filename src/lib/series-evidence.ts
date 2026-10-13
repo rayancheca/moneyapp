@@ -16,8 +16,20 @@ import type { SeriesKind } from "@/db/schema/recurring";
  * The rule lives in `services/recurring` (`seriesEvidence`); this is the
  * vocabulary, kept client-safe so components can label without importing the
  * database.
+ *
+ * ⛔ `schedule-ended` is the SCHEDULE's own let-go, as `lapsed` is the forecast's: a live series whose end
+ * (`userEndsOn`) leaves no date still to come (`scheduleHasEnded`) — the Nov 11 car-insurance balance from Nov 12. Asked
+ * before the evidence: a finished schedule is not late, never billed or lapsed, whatever its last charge says. 🔴 It
+ * was ended to the subscriptions card and the annualized figure and live to its own page and the All tab (review of
+ * 0af5689).
  */
-export type SeriesEvidence = "active" | "never-billed" | "awaiting-statements" | "running-late" | "lapsed";
+export type SeriesEvidence =
+  | "active"
+  | "never-billed"
+  | "awaiting-statements"
+  | "running-late"
+  | "lapsed"
+  | "schedule-ended";
 
 /**
  * ⚖️ "Awaiting statements": past its tolerance today, but not by the last day every account it posts to has been
@@ -35,15 +47,84 @@ export const SERIES_EVIDENCE_LABEL: Record<SeriesEvidence, string> = {
   "awaiting-statements": "Awaiting statements",
   "running-late": "Running late",
   lapsed: "Lapsed",
+  // the subscriptions card's word for the same series: "1 has already ended, so it costs nothing going forward"
+  "schedule-ended": "Ended",
 };
 
 /**
- * The badge tone for a live series' evidence. ⛔ Awaiting statements is not a warning: nothing is known to be wrong,
- * only not yet checked far enough. 🔴 His pay's page wore an amber "Running late" for a payday on a day no import
- * covered (2026-10-08).
+ * The badge tone for a live series' evidence — the series page's badge and every staleness chip (`staleMarkTone`):
+ * ONE tone per state, a warning only of what is late — charged, then quiet past tolerance on read days, or let go.
+ *
+ * ⛔ Awaiting statements is not a warning: nothing is known to be wrong, only not yet checked far enough. 🔴 His pay's
+ * page wore an amber "Running late" for a payday on a day no import covered (2026-10-08). ⛔ Nor is never billed:
+ * nothing is late about a bill the bank has not charged yet (the calendar's Day Sheet). 🔴 The series page wore
+ * "Never billed" in amber beside a chip that called the same state neutral (review of 2026-10-08).
  */
 export function seriesEvidenceTone(evidence: SeriesEvidence): "neutral" | "warning" {
-  return evidence === "awaiting-statements" ? "neutral" : "warning";
+  return evidence === "running-late" || evidence === "lapsed" ? "warning" : "neutral";
+}
+
+/** The staleness facts a projected series' word is read from — `SeriesStaleness` (services/recurring), structurally. */
+export interface StalenessFacts {
+  /** when it was last seen; null when nothing — its own or its carrier's — ever matched */
+  lastMatchedOn: string | null;
+  /** past tolerance on days the ledger has checked */
+  isStale: boolean;
+  /** past tolerance today, but not by its checked day */
+  awaitingStatements: boolean;
+  /** no date from today on inside its end (`scheduleHasEnded`) — a line of the forecast only as what came due */
+  scheduleEnded: boolean;
+}
+
+/**
+ * Has nothing — its own postings or its carrier's (§6A 59) — ever matched the series? Never billed's own test, ONE
+ * predicate: `projectedEvidence` asks it for the word, and a series' page asks it of a schedule that has ended, whose
+ * word no longer says (`seriesVerb`'s "was expected", the page's "Never billed" beside "Ended Nov 11, 2026").
+ */
+export function neverPosted(s: Pick<StalenessFacts, "lastMatchedOn">): boolean {
+  return s.lastMatchedOn === null;
+}
+
+/**
+ * The word for a series the forecast still counts, read off its staleness — `seriesEvidence` for every series it has
+ * not let go (lapsed is the forecast's own let-go, `hasStoppedForecasting`), and the word every staleness chip, footer
+ * and band reads. ONE predicate, so the All tab, the series page and the forecast above them cannot file one series
+ * under two words.
+ *
+ * 🔴 The footer split its entries by the staleness flags itself (`staleSummaryLabel`), the All tab by `seriesEvidence`,
+ * and on 2026-10-08 Amazon Prime read "running late" in the forecast's band and footer and "Lapsed" on the All tab of
+ * the same page — the lapse measured to today on one surface and to the checked day on the other (§6A 57 put both on
+ * the checked day; this keeps them on one word).
+ *
+ * ⚠️ `isStale` is true of a never-billed series too — no evidence is past every tolerance — so never billed is asked
+ * first: "running late" is only true of a series that has posted.
+ *
+ * ⛔ …and a schedule its end has closed before either — `seriesEvidence`'s first question, here too. The forecast
+ * counts what such a schedule came due as this month (the arrears leg, on purpose), so it is a line of the forecast
+ * and a row of the All tab on one page. 🔴 Review of 49cc98f: Nov 12–30 the Nov 11 balance read "never billed … still
+ * projected" in the forecast — its chip, "$172.74 of it never billed" in the money-out band, "2 series have never been
+ * billed" in the footer — over "Ended — nothing more forecast" on the All tab (his ledger copy, 2026-10-12).
+ */
+export function projectedEvidence(s: StalenessFacts): Exclude<SeriesEvidence, "lapsed"> {
+  if (s.scheduleEnded) return "schedule-ended";
+  if (neverPosted(s)) return "never-billed";
+  if (s.isStale) return "running-late";
+  return s.awaitingStatements ? "awaiting-statements" : "active";
+}
+
+/**
+ * The evidence badge a LIVE series' own page wears beside its status, or null for none: its word — but for a schedule
+ * its end has closed, whose end badge already says "Ended Nov 11, 2026", the one fact that word no longer carries:
+ * "Never billed", when nothing ever posted. ⚖️ The owner's word for the Nov 11 balance, on the subscriptions card's
+ * One-off line too ("once · Nov 11 · never billed", §6A 56).
+ *
+ * 🔴 Review of 49cc98f: from Nov 12 the balance's page dropped "Never billed" with nothing in its place, and read
+ * "charged once on Nov 11" over "Linked transactions · 0" (his ledger copy, 2026-10-12, asked about 2026-11-12).
+ */
+export function seriesPageEvidenceBadge(evidence: SeriesEvidence, neverPosted: boolean): SeriesEvidence | null {
+  if (evidence === "active") return null;
+  if (evidence === "schedule-ended") return neverPosted ? "never-billed" : null;
+  return evidence;
 }
 
 /**
@@ -114,15 +195,99 @@ export function seriesRowLabel(
   return evidence === "active" ? null : SERIES_EVIDENCE_LABEL[evidence].toLowerCase();
 }
 
-/** One line on each state, for a section note — a bill's words; the Lapsed section words its own (`lapsedSectionNote`). */
-export const SERIES_EVIDENCE_NOTE: Record<SeriesEvidence, string> = {
-  active: "charged within their cadence, and forecast",
-  "never-billed": "registered by hand and forecast — the bank has not charged them yet",
-  "awaiting-statements":
-    "still forecast — each one's tolerance runs out after the last day its accounts have been checked through, so none can be called late yet",
-  "running-late": "still forecast — the last charge is older than the cadence allows",
-  lapsed: "no longer forecast — quiet past the point a bill stops",
+/**
+ * What a series calls what it posts, by kind: what stops when it goes quiet, the one and the many of what it posts —
+ * the rows the "Nothing expected" card lists — and its past tense, the evidence notes' verb and `seriesVerb`'s.
+ *
+ * 🔴 It said "a bill" and "charges" of every kind: of a lapsed transfer, of an `other` series — which may be money in,
+ * a monthly credit (`forecast.ts`) — and, ended or dismissed, of pay. On his ledger copy 2026-10-12 "Its charges
+ * below stay in the ledger" stood over the deposits of Knack Tutoring and Fordham Payroll (ended) and STOCK LENDING
+ * (SPY) and (COKE) (dismissed). ⚖️ A bill's and a subscription's words are as he has always read them.
+ *
+ * ⚠️ Pay never lapses (`lapsedSeriesShouldStopForecasting`), so its `stops` is said only if that rule changes.
+ *
+ * ⛔ ONE table for every sentence on the page that names what a series posts — the card, the End dialog's lines and
+ * reassurance (`end-radius`), the page's "Per deposit" (`SeriesDetail`), the cadence sentence's past tense
+ * (`seriesVerb`), the All tab's section notes (`seriesEvidenceNote`, `lapsedSectionNote`). 🔴 The card learned it and
+ * the End dialog on the same page did not: on his ledger copy 2026-10-12 STOCK LENDING (COKE)'s card read "Its
+ * deposits below stay in the ledger." over a dialog saying "the charges stay in your ledger". 🔴 …and two branches
+ * wrote it twice the same day: a second split (`postingOf`) called an `other` series' postings "charges" beside this
+ * table's "payments" — its page would have read "Per charge" over "Its payments below stay in the ledger" (merged
+ * 2026-10-13). ⚠️ `seriesVerb`'s PRESENT tense still says "charges" of an `other` series — not settled here.
+ */
+interface SeriesPostingWords {
+  readonly stops: string;
+  readonly posting: string;
+  readonly postings: string;
+  readonly past: string;
+}
+
+const SCHEDULE_REASON_WORDS: Record<SeriesKind, SeriesPostingWords> = {
+  bill: { stops: "a bill", posting: "charge", postings: "charges", past: "charged" },
+  subscription: { stops: "a bill", posting: "charge", postings: "charges", past: "charged" },
+  income: { stops: "pay", posting: "deposit", postings: "deposits", past: "deposited" },
+  transfer: { stops: "a transfer", posting: "transfer", postings: "transfers", past: "moved" },
+  other: { stops: "a recurring payment", posting: "payment", postings: "payments", past: "paid" },
 };
+
+export function seriesPostingWords(kind: SeriesKind): SeriesPostingWords {
+  return SCHEDULE_REASON_WORDS[kind];
+}
+
+/** "charge", "deposit", "charge or deposit" — every word the kinds post with, in the table's order (charge first), each once. */
+function postingsOf(kinds: readonly SeriesKind[], part: "posting" | "past"): string {
+  const made = new Set(kinds.map((k) => SCHEDULE_REASON_WORDS[k][part]));
+  return Array.from(new Set(Object.values(SCHEDULE_REASON_WORDS).map((w) => w[part])))
+    .filter((w) => made.has(w))
+    .join(" or ");
+}
+
+/**
+ * The Lapsed section's note on `/recurring`'s All tab, in the words of the series it holds: one kind's `stops` when
+ * they share it, else a series'. 🔴 It said "quiet past the point a bill stops" whatever it held, and a live transfer or
+ * `other` series lapses too — only pay never does. A section of bills reads as he has always read it.
+ */
+export function lapsedSectionNote(kinds: readonly SeriesKind[]): string {
+  const stops = new Set(kinds.map((k) => SCHEDULE_REASON_WORDS[k].stops));
+  const [only] = stops;
+  return `no longer forecast — quiet past the point ${stops.size === 1 && only ? only : "a recurring series"} stops`;
+}
+
+/**
+ * One line on each state, for a section note — worded by the kinds the section HOLDS: "deposited" of his pay,
+ * "charged" of a bill, both when both are there.
+ *
+ * 🔴 Review of 2026-10-08: the evidence words said "charge" of his payroll deposit — "N series have not been looked
+ * for yet" over "the charge each is waiting on" (both gone with Awaiting statements, 2026-10-08), and still "charged
+ * within their cadence" over his pay in Active and "the last charge is older than the cadence allows" over it in
+ * Running late.
+ *
+ * Lapsed is money-out only — money in never lapses (`lapsedSeriesShouldStopForecasting`) — and says what stops in the
+ * words of the series it holds (`lapsedSectionNote`). Awaiting statements says nothing of what posts.
+ */
+export function seriesEvidenceNote(evidence: SeriesEvidence, kinds: readonly SeriesKind[]): string {
+  // an empty section prints no note; its words default to a bill's
+  const of = kinds.length === 0 ? (["bill"] as const) : kinds;
+  const chargesOnly = of.every((k) => SCHEDULE_REASON_WORDS[k].posting === "charge");
+  switch (evidence) {
+    case "active":
+      return `${postingsOf(of, "past")} within their cadence, and forecast`;
+    case "never-billed":
+      // a bill's words as he has always read them; "the bank has not deposited" his pay would be false of who pays it
+      return chargesOnly
+        ? "registered by hand and forecast — the bank has not charged them yet"
+        : `registered by hand and forecast — nothing has been ${postingsOf(of, "past")} for them yet`;
+    case "awaiting-statements":
+      return "still forecast — each one's tolerance runs out after the last day its accounts have been checked through, so none can be called late yet";
+    case "running-late":
+      return `still forecast — the last ${postingsOf(of, "posting")} is older than the cadence allows`;
+    case "lapsed":
+      return lapsedSectionNote(of);
+    case "schedule-ended":
+      // "more": a last date that came due unposted is still owed in its month (the Next column says so)
+      return "nothing more forecast — every date their schedules hold has come";
+  }
+}
 
 /** The four statuses this vocabulary speaks about. */
 export type SeriesStatusForCopy = "detected" | "confirmed" | "dismissed" | "ended";
@@ -190,9 +355,13 @@ export function seriesCanBeReshaped(status: SeriesStatusForCopy): boolean {
  * 2026-10-08 `/recurring/<Amazon Prime>` read "charges monthly around the 5th, about $4.99" — the 5th read off a
  * stored 2026-08-05 — above "Nothing expected · …nothing more is expected from it", with a date editor whose Save
  * toasted "Next expected …" while the page, which judges the lapse by the last charge, kept saying "Nothing expected".
+ *
+ * ⛔ …nor a schedule its end has closed (`schedule-ended`, `scheduleHasEnded`). 🔴 Review of 0af5689: a month past
+ * its one day, the Nov 11 balance's page read "charges once on Nov 11, about $72.74" with no "Nothing expected" card,
+ * while its annualized figure and the subscriptions card had ended it (a copy of his ledger, asked about 2026-12-12).
  */
 export function seriesIsProjected(status: SeriesStatusForCopy, evidence: SeriesEvidence): boolean {
-  return !seriesIsOver(status) && evidence !== "lapsed";
+  return !seriesIsOver(status) && evidence !== "lapsed" && evidence !== "schedule-ended";
 }
 
 /**
@@ -221,76 +390,42 @@ export function seriesDrawsAsRecurring(status: SeriesStatusForCopy): boolean {
 }
 
 /**
- * What the "Nothing expected" reason calls a series and what it posts, by kind: what stops when it goes quiet, and
- * the one and the many of what it posts — the rows the card under it lists.
- *
- * 🔴 It said "a bill" and "charges" of every kind: of a lapsed transfer, of an `other` series — which may be money in,
- * a monthly credit (`forecast.ts`) — and, ended or dismissed, of pay. On his ledger copy 2026-10-12 "Its charges
- * below stay in the ledger" stood over the deposits of Knack Tutoring and Fordham Payroll (ended) and STOCK LENDING
- * (SPY) and (COKE) (dismissed). ⚖️ A bill's and a subscription's words are as he has always read them.
- *
- * ⚠️ Pay never lapses (`lapsedSeriesShouldStopForecasting`), so its `stops` is said only if that rule changes.
- *
- * ⛔ ONE table for every sentence on the page that names what a series posts — the card, the End dialog's lines and
- * reassurance (`end-radius`), the Lapsed section's note (`lapsedSectionNote`). 🔴 The card learned it and the End
- * dialog on the same page did not: on his ledger copy 2026-10-12 STOCK LENDING (COKE)'s card read "Its deposits below
- * stay in the ledger." over a dialog saying "the charges stay in your ledger".
- */
-interface SeriesPostingWords {
-  readonly stops: string;
-  readonly posting: string;
-  readonly postings: string;
-}
-
-const SCHEDULE_REASON_WORDS: Record<SeriesKind, SeriesPostingWords> = {
-  bill: { stops: "a bill", posting: "charge", postings: "charges" },
-  subscription: { stops: "a bill", posting: "charge", postings: "charges" },
-  income: { stops: "pay", posting: "deposit", postings: "deposits" },
-  transfer: { stops: "a transfer", posting: "transfer", postings: "transfers" },
-  other: { stops: "a recurring payment", posting: "payment", postings: "payments" },
-};
-
-export function seriesPostingWords(kind: SeriesKind): SeriesPostingWords {
-  return SCHEDULE_REASON_WORDS[kind];
-}
-
-/**
- * The Lapsed section's note on `/recurring`'s All tab, in the words of the series it holds: one kind's `stops` when
- * they share it, else a series'. 🔴 It said "quiet past the point a bill stops" whatever it held, and a live transfer or
- * `other` series lapses too — only pay never does. A bill's and a subscription's words are `SERIES_EVIDENCE_NOTE`'s.
- */
-export function lapsedSectionNote(kinds: readonly SeriesKind[]): string {
-  const stops = new Set(kinds.map((k) => SCHEDULE_REASON_WORDS[k].stops));
-  const [only] = stops;
-  return `no longer forecast — quiet past the point ${stops.size === 1 && only ? only : "a recurring series"} stops`;
-}
-
-/**
  * ⛔ …and for a LIVE series the forecast has let go — the evidence's `lapsed`, which is the app's reading, not his
  * decision, so the sentence says what brings it back. 🔴 Its page stopped projecting it (`seriesIsForecast`) and the
  * "Next expected" card went with nothing in its place: `/recurring/<Amazon Prime>` would have read "Lapsed" over no
  * schedule and no word why. A card removed is not a claim withdrawn, and a claim withdrawn needs its reason.
  *
  * ⛔ Speaks for exactly the series `seriesIsProjected` says the page does not project — the predicate the cadence
- * sentence asks too, so the two cannot disagree about whether anything is expected. Worded by what the series posts
- * (`SCHEDULE_REASON_WORDS`).
+ * sentence asks too, so the two cannot disagree about whether anything is expected.
+ *
+ * ⛔ What it keeps, and what stops and brings it back, are worded by its KIND (`seriesPostingWords`) — deposits of his
+ * pay, transfers of money moved, payments of an `other` series, charges of a bill. 🔴 Review of 49cc98f: on a copy of
+ * his ledger (2026-10-12) asked about 2026-11-12, `/recurring/<Fordham Payroll>` (income, ended) read "Its charges below
+ * stay in the ledger." above 56 "DIRECT DEPOSIT FORDHAM UNIVERSI PAYROLL" rows; Knack Tutoring (ended) and STOCK
+ * LENDING (SPY)/(COKE) (dismissed) the same.
+ *
+ * ⛔ …and promised only when the page HAS rows below (`rowsBelow`). 🔴 Review of 49cc98f: the Nov 11 balance's page read
+ * "Its charges below stay in the ledger." over "No linked transactions yet" (his ledger copy, 2026-10-12, Nov 12).
  */
 export function noScheduleReason(
   status: SeriesStatusForCopy,
   evidence: SeriesEvidence,
   kind: SeriesKind,
+  rowsBelow: boolean,
 ): string | null {
   if (seriesIsProjected(status, evidence)) return null;
   const words = SCHEDULE_REASON_WORDS[kind];
-  const kept = `Its ${words.postings} below stay in the ledger.`;
-  if (!seriesIsOver(status)) {
-    return (
-      `This series has gone quiet past the point ${words.stops} stops, so it is no longer forecast and nothing more ` +
-      `is expected from it — a new ${words.posting} brings it back. ${kept}`
-    );
-  }
-  if (status === "ended") return `This series has ended, so nothing more is expected from it. ${kept}`;
+  const kept = rowsBelow ? ` Its ${words.postings} below stay in the ledger.` : "";
+  if (status === "ended") return `This series has ended, so nothing more is expected from it.${kept}`;
   if (status === "dismissed")
-    return `You said this is not a recurring series, so nothing is expected from it and nothing is forecast. ${kept}`;
-  return null;
+    return `You said this is not a recurring series, so nothing is expected from it and nothing is forecast.${kept}`;
+  /* ⛔ Its schedule's own end, before the lapse: a new charge does not bring back a schedule with no date left.
+     🔴 A month past its one day the Nov 11 balance's page said nothing of why nothing was expected (review of
+     0af5689). "More": a last date that came due unposted is still owed this month — the already-due card says so. */
+  if (evidence === "schedule-ended")
+    return `Its schedule has ended — every date it holds has come — so nothing more is expected from it.${kept}`;
+  return (
+    `This series has gone quiet past the point ${words.stops} stops, so it is no longer forecast and nothing more ` +
+    `is expected from it — a new ${words.posting} brings it back.${kept}`
+  );
 }
