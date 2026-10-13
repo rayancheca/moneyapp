@@ -179,6 +179,49 @@ describe("BudgetRow — what it draws beside the verdict", () => {
     expect(html).toContain("Off pace");
     expect(html).toMatch(/Projected ≈ <\/span><span class="[^"]*text-warning/);
   });
+
+  /**
+   * 🔴 "Projected ≈ -$1,050.14" (review of c7a3510; Shopping, 2024-05-10 on his ledger copy with the budget started
+   * early): a refund over the plan nets the month below zero, and the rate beside it, held apart from the refund, still
+   * came to less than nothing. Neither the row nor its spoken sentence reads a projection below zero — and one of $0.00
+   * beside a spend below it says nothing the spend does not.
+   */
+  test("a month a refund nets below zero prints no projection, and speaks none below zero", () => {
+    const chase = bundle.db.select().from(institutions).where(eq(institutions.name, "Chase")).get()!;
+    const card = createAccount(bundle.db, { institutionId: chase.id, name: "Card", type: "credit" });
+    for (const [postedOn, amountCents] of [
+      ["2026-08-05", 5_000], // a July purchase, returned — more than the whole plan
+      ["2026-08-11", -1_000],
+    ] as const) {
+      const rawDescription = `SPEND ${postedOn}`;
+      bundle.db
+        .insert(transactions)
+        .values({
+          accountId: card,
+          postedOn,
+          amountCents,
+          rawDescription,
+          normalizedDescription: rawDescription,
+          categoryId: catId("Food"),
+          dedupeHash: dedupeHash({ accountId: card, postedOn, amountCents, rawDescription, occurrenceIndex: 0 }),
+        })
+        .run();
+    }
+    createBudget(bundle.db, { categoryId: catId("Food"), period: "monthly", amountCents: 3_000, startsOn: "2026-08-01" });
+
+    const s = statusFor("Food");
+    // a covered window and an on-track verdict — the row that prints a projection, had it one to print
+    expect(s.uncoveredDays).toBe(0);
+    expect(s.pace).toBe("under");
+    expect(s.spentCents).toBe(-4_000);
+
+    const html = render(s);
+    expect(html).toContain("On track");
+    expect(html).not.toContain("Projected");
+    const spoken = /aria-valuetext="([^"]*)"/.exec(html)?.[1] ?? "";
+    expect(spoken).toMatch(/on track/);
+    expect(spoken).not.toMatch(/projected -/);
+  });
 });
 
 /*

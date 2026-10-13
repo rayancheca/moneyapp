@@ -332,8 +332,11 @@ export function BudgetRow({ status, guidanceCents, spentProvenance, planProvenan
             />
           </span>
           {/* the verdict decides, not `pace` alone: a "Cash only" row is under or
-              at-risk and still offers no reading of where it is heading */}
-          {verdict.showsProjection && status.projectedCents !== status.spentCents && (
+              at-risk and still offers no reading of where it is heading. Only a
+              projection that says more than the spend so far: never one equal to
+              it, nor the $0.00 floor beside a month a refund took below zero
+              (`budgetPaceStatusOf`) */}
+          {verdict.showsProjection && status.projectedCents > Math.max(0, status.spentCents) && (
             <span>
               <span className="text-ink-faint">Projected ≈ </span>
               <Money cents={status.projectedCents} className={status.pace === "at-risk" ? "text-warning" : undefined} />

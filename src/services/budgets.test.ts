@@ -1897,12 +1897,37 @@ describe("budgetPaceStatuses — end-to-end pace, projection, and tail", () => {
       amountCents: 10_000,
       startsOn: "2026-07-01",
     });
+    spend("2026-07-03", 12_000, "Shopping > General"); // a June purchase, returned in July
+    spend("2026-07-04", -4_000, "Shopping > Clothing");
+
+    const row = budgetPaceStatuses(bundle.db, "2026-07-08").find((s) => s.budget.id === shopping)!;
+    expect(row.spentCents).toBe(-8_000);
+    // the $40.00 is the rate: 4_000 × 23/8, on top of the month netted below zero
+    expect(row.projectedCents).toBe(-8_000 + 11_500);
+  });
+
+  /**
+   * 🔴 A PROJECTION BELOW ZERO. Held out as an event, a refund over the plan leaves the rate beside it running — and in
+   * a month the refund nets below zero, the rate added to it still came to less than nothing (review of c7a3510): on
+   * his ledger copy 2026-10-12, Shopping's $280.00 budget started early read "Projected ≈ -$1,050.14" on 2024-05-10,
+   * beside −$1,605.11 spent. A projection never reads below what has been spent, nor below zero: the month spends
+   * nothing more than it has given back.
+   */
+  test("a refund over the plan that nets the month below zero projects no lower than zero", () => {
+    const shopping = createBudget(bundle.db, {
+      categoryId: catId("Shopping"),
+      period: "monthly",
+      amountCents: 10_000,
+      startsOn: "2026-07-01",
+    });
     spend("2026-07-03", 30_000, "Shopping > General"); // a June purchase, returned in July
     spend("2026-07-04", -4_000, "Shopping > Clothing");
 
     const row = budgetPaceStatuses(bundle.db, "2026-07-08").find((s) => s.budget.id === shopping)!;
     expect(row.spentCents).toBe(-26_000);
-    expect(row.projectedCents).toBe(-26_000 + 11_500);
+    // −26_000 + the rate's 11_500 is still below zero
+    expect(row.projectedCents).toBe(0);
+    expect(row.pace).toBe("under");
   });
 
   /*

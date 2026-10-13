@@ -630,7 +630,9 @@ export function projectSpend(input: PaceProjectionInput): number {
  * 05-20; −/+$1,087.66 in March 2026; −/+$544.36 in February 2024. Measured on a copy with that budget started early,
  * the projection fell $890.27 → $383.64 the day the return posted — the spend so far and no rate at all; held out
  * with its purchase, it reads $594.64. A big refund of an earlier month's purchase is netted as money back (the row is
- * graded net) and never a rate either. Latent on his live budgets, which began 2026-07-16 and have seen none.
+ * graded net) and never a rate either. Latent on his live budgets, which began 2026-07-16 and have seen none. Where
+ * that refund nets the month below zero, it and the rate beside it can come to less than nothing: the projection
+ * floors at zero (`budgetPaceStatusOf`).
  */
 export function budgetOneOffCents(
   rows: readonly UpfrontCarCandidate[],
@@ -1679,7 +1681,13 @@ export function budgetPaceStatusOf(
   // never project below what has ALREADY posted for the whole period — a large
   // future-dated non-recurring charge is a committed fact, not an estimate, so
   // the full-period actual is the projection floor.
-  const projectedCents = Math.max(s.spentCents, forecast);
+  // 🔴 …nor below zero. A refund over the plan is held out of the rate as an event (`budgetOneOffCents`), so in a month
+  // it nets below zero the rate beside it still runs, and the two came to less than nothing. On his ledger copy
+  // 2026-10-12, Shopping's $280.00 budget started early: May 2024 (−$1,605.11) read "Projected ≈ -$1,050.14" on the
+  // 10th and below zero every day to the 30th (review of c7a3510). The month spends nothing more than it has given
+  // back; the row prints no $0.00 beside a spend below it (`BudgetRow`), as it prints none equal to the spend. Latent
+  // on his live budgets.
+  const projectedCents = Math.max(0, s.spentCents, forecast);
   // the uncovered stretch is measured against the graded window only: a
   // frontier before the window opens leaves the WHOLE elapsed window
   // uncovered, and one on or past today leaves none. ⛔ The count is
