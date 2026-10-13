@@ -236,6 +236,41 @@ describe("the boundary is the rent's own grace — the arrears' and the calendar
 });
 
 /*
+ * 🔴 ONE OCCURRENCE DRAWN TWICE (review of the 2026-10-08 batch, §6A 59). The rent paid in two halves either side of
+ * the month's edge — Sep 30 and Oct 2, each a day from its Oct 1 — and October drew its Oct 1 twice: a $2,109.00
+ * "paid (paid by its payment of Sep 30, 2026)" mark, and beside it the Oct 2 row. The arrears' test names the nearer,
+ * the earlier of two as near (`paymentFor`): Sep 30, on September's grid — so the mark stood while the Oct 2 row, a
+ * posting of its own within its grace on THIS grid, stood for the same day.
+ */
+describe("a rent split either side of the month's edge is one occurrence on October's grid", () => {
+  const today = "2026-10-05";
+  beforeEach(() => {
+    pay("t-rent-sep30", RENT, "2026-09-30", -110000);
+    pay("t-rent-oct2", RENT, "2026-10-02", -119121);
+  });
+
+  test("the rent's Oct 1 is the Oct 2 row it draws — no second mark naming Sep 30 beside it", () => {
+    const grid = recurringCalendar(bundle.db, "2026-10", today).entriesByDay;
+    const rent = Object.entries(grid).flatMap(([day, entries]) =>
+      entries.filter((e) => e.seriesId === RENT).map((e) => [day, e.transactionId, e.paidWith]),
+    );
+    expect(rent).toEqual([["2026-10-02", "t-rent-oct2", null]]);
+  });
+
+  test("what the rent carries names the payment drawn beside it, Oct 2 — the one the reader can find on this grid", () => {
+    const oct1 = recurringCalendar(bundle.db, "2026-10", today).entriesByDay["2026-10-01"] ?? [];
+    expect(oct1.map((e) => [e.seriesId, e.state, e.paidWith, e.settledCents])).toEqual([
+      [UTIL, "paid", { carrier: "the rent", postedOn: "2026-10-02" }, 0],
+    ]);
+  });
+
+  test("September draws its own half on the day it landed, and no occurrence of October's", () => {
+    const sep = recurringCalendar(bundle.db, "2026-09", today).entriesByDay;
+    expect(sep["2026-09-30"]?.map((e) => [e.seriesId, e.transactionId])).toEqual([[RENT, "t-rent-sep30"]]);
+  });
+});
+
+/*
  * The same hole inside one month: the calendar covers a bill's day with a posting of its own within its grace, while
  * the month forecast — and /budgets' tail, and the dashboard's free-to-spend through it — still counted the day on
  * top of the posting its "spent so far" already holds.

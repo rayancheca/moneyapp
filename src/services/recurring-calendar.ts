@@ -27,7 +27,7 @@ import {
 } from "@/lib/occurrence-verdict";
 import { outsidePortfolioCashAccountIds } from "./accounts";
 import { isAgentsSeries, loadCategoryIndex } from "./analytics";
-import { carrierPaymentsBySeries, paymentFor, withBillingCarriers } from "./billing-carriers";
+import { carrierPaymentsBySeries, paymentFor, withBillingCarriers, type Payment } from "./billing-carriers";
 import { checkedThroughBySeries, silenceMeasuredThroughBySeries } from "./cash-earnings";
 import { dueDayReadings } from "./observation-frontier";
 import {
@@ -680,6 +680,19 @@ export function recurringCalendar(
   );
   const insideMonth = (day: string): boolean =>
     compareDates(day, monthStart) >= 0 && compareDates(day, monthEnd) <= 0;
+  /**
+   * The payment this grid NAMES for a bill's occurrence: one it draws itself — a posting inside the month within its
+   * grace — else the arrears' nearest (`paymentFor`), in another month. Paid or not is `paymentFor`'s answer either way.
+   *
+   * 🔴 The arrears' nearest alone drew one occurrence twice (review of the 2026-10-08 batch): the rent paid in halves
+   * either side of the edge — Sep 30 and Oct 2, each a day from Oct 1 — names the earlier of two as near, so October
+   * drew Oct 1 "paid (paid by its payment of Sep 30, 2026)" at $2,109.00 beside the Oct 2 row that stood for it too.
+   */
+  const paymentNamedFor = <P extends Payment>(payments: readonly P[], dueOn: string): P | undefined =>
+    paymentFor(
+      payments.filter((p) => insideMonth(p.postedOn)),
+      dueOn,
+    ) ?? paymentFor(payments, dueOn);
   /** per series, per deposit day: this month's money that paid ANOTHER month's paydays, still to charge to a row */
   const owedElsewhere = new Map<string, Map<string, SettlementPortion[]>>();
   /** per series, per payday in this month: the money ANOTHER month's deposits put into it */
@@ -911,8 +924,9 @@ export function recurringCalendar(
         // nothing paid it, whatever lies near it: graded below like any payday
       } else {
         // a bill, or money settlement does not speak about: a posting within
-        // the series' tolerance is this occurrence, drawn on the day it landed
-        const ownPaid = paymentFor(ownPayments, o.date);
+        // the series' tolerance is this occurrence, drawn on the day it landed —
+        // one on this grid before one in another month (`paymentNamedFor`)
+        const ownPaid = paymentNamedFor(ownPayments, o.date);
         if (ownPaid !== undefined && insideMonth(ownPaid.postedOn)) continue;
         /*
          * ⚖️ …which may be in ANOTHER month, the rent paid Sep 30 for Oct 1: drawn paid on its own day, naming the day
@@ -927,9 +941,11 @@ export function recurringCalendar(
         /*
          * ⚖️ …and one billed inside another's payment is paid by its carrier's payment for that period — the arrears'
          * own test (`carrierPaymentsBySeries`, implied by §6A 59, 2026-10-08). Drawn paid on its own day, naming the
-         * payment (`paidWith`), and settling $0.00 here: its money is on the carrier's row, counted there, once.
+         * payment (`paidWith`), and settling $0.00 here: its money is on the carrier's row, counted there, once. The
+         * payment named is the one the carrier's own occurrence is drawn by (`paymentNamedFor`): beside a rent paid in
+         * halves either side of the edge, the half on this grid.
          */
-        const carrierPaid = paymentFor(carried.get(s.id) ?? [], o.date);
+        const carrierPaid = paymentNamedFor(carried.get(s.id) ?? [], o.date);
         if (carrierPaid !== undefined && s.billedWith !== null) {
           pushPaidElsewhere(s, o, { carrier: carrierWord(s.billedWith.name), postedOn: carrierPaid.postedOn });
           continue;
