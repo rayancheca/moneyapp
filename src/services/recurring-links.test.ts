@@ -2,7 +2,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { asc, eq } from "drizzle-orm";
-import { afterEach, beforeEach, describe, expect, test } from "vitest";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { createDatabase, type DbBundle } from "@/db/client";
 import { seedDatabase } from "@/db/seed";
 import { categories } from "@/db/schema/categories";
@@ -1579,6 +1579,60 @@ describe("attaching files an unfiled row under the series' category (§6A 47)", 
 
         expect(() => mergeSeries(bundle.db, spotify.id, netflix.id, TODAY, null)).toThrow(/inactive series/);
         expect(restorePoints()).toEqual([]);
+      });
+
+      /*
+       * 🔴 Review of 474e757 (2026-10-12): the merge reads again inside its own transaction — the reading it writes by —
+       * and a refusal THERE came after its restore point: written, and his oldest of the twelve kept pruned to make room
+       * for it, though the comment and the commit said a refused merge writes nothing. What that reading catches is a
+       * write landing while the restore point is taken (another tab, a script): planted here at that moment.
+       */
+      test("refused by its reading inside the write — the backups folder as it was, his oldest of the twelve kept", () => {
+        const netflix = seriesFor(netflixId);
+        const spotify = seriesFor(spotifyId);
+        nameSeries(netflix.id, categoryId("Subscriptions", "Streaming"));
+        const shown = preview(spotify.id, netflix.id);
+        const backups = path.join(dir, "backups");
+        fs.mkdirSync(backups, { recursive: true });
+        const twelve = Array.from({ length: 12 }, (_, i) => `pre-2026-01-${String(i + 1).padStart(2, "0")}T090000-older.db`);
+        for (const name of twelve) fs.writeFileSync(path.join(backups, name), "");
+        const links = snapshot();
+        const prepare = bundle.sqlite.prepare.bind(bundle.sqlite);
+        const between = vi.spyOn(bundle.sqlite, "prepare").mockImplementation(((source: string) => {
+          const statement = prepare(source);
+          if (!source.startsWith("VACUUM INTO")) return statement;
+          return {
+            run: (...params: unknown[]) => {
+              const done = statement.run(...params);
+              file(taggedIds(spotify.id)[0]!, categoryId("Food", "Coffee"), "user", 1);
+              return done;
+            },
+          };
+        }) as unknown as typeof bundle.sqlite.prepare);
+        try {
+          expect(() => mergeSeries(bundle.db, spotify.id, netflix.id, TODAY, shown)).toThrow(MERGE_FILING_CHANGED);
+        } finally {
+          between.mockRestore();
+        }
+
+        expect(snapshot()).toEqual(links);
+        expect(restorePoints().sort()).toEqual(twelve);
+      });
+
+      test("…and a merge that writes takes its restore point, keeping twelve: the oldest goes only then", () => {
+        const netflix = seriesFor(netflixId);
+        const spotify = seriesFor(spotifyId);
+        const backups = path.join(dir, "backups");
+        fs.mkdirSync(backups, { recursive: true });
+        const twelve = Array.from({ length: 12 }, (_, i) => `pre-2026-01-${String(i + 1).padStart(2, "0")}T090000-older.db`);
+        for (const name of twelve) fs.writeFileSync(path.join(backups, name), "");
+
+        mergeSeries(bundle.db, spotify.id, netflix.id, TODAY, null);
+
+        const after = restorePoints().sort();
+        expect(after).toHaveLength(12);
+        expect(after.slice(0, 11)).toEqual(twelve.slice(1));
+        expect(after[11]).toMatch(/-merge-series\.db$/);
       });
     });
   });
