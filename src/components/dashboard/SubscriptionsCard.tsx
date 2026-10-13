@@ -4,6 +4,7 @@ import { Money } from "@/components/ui/Money";
 import { SurfaceCard } from "@/components/ui/SurfaceCard";
 import { formatCents } from "@/lib/money";
 import { baselineSpan } from "@/lib/committed";
+import { largestLead } from "@/lib/largest-lead";
 import type { SubscriptionLine, SubscriptionsCard as SubscriptionsCardData } from "@/services/subscriptions-card";
 
 /**
@@ -147,8 +148,9 @@ export function SubscriptionsCard({ data }: { data: SubscriptionsCardData }) {
           <>Nothing on the books has gone quiet long enough to stop being counted.</>
         ) : (
           <>
+            {/* 🔴 "The largest is" over ONE lapsed line (review of f63b011) — one has no largest (`largestLead`) */}
             Another <Money cents={lapsedMonthlyCents} className="text-ink" /> a month is registered and no longer
-            forecast — {lapsedSharePct.toFixed(1)}% of everything on the books. The largest is{" "}
+            forecast — {lapsedSharePct.toFixed(1)}% of everything on the books. {largestLead(lapsed.length)}{" "}
             <span className="text-ink">{largestLapsed.name}</span>, last seen {largestLapsed.lastMatchedLabel}
             {/* its row's phrase over the same count — the day counted to included (`pastTolerancePhrase`) */}
             {pastTolerancePhrase(largestLapsed, "its own ") === null

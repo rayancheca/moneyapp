@@ -2,6 +2,7 @@ import type { AppDatabase } from "@/db/client";
 import { addCalendarMonths, monthKey, periodBounds, todayIso } from "@/lib/dates";
 import { monthCount } from "@/lib/committed";
 import { formatMonthYear, monthWindowLabel } from "@/lib/format-date";
+import { largestLead } from "@/lib/largest-lead";
 import { ledgerHref } from "@/lib/ledger-href";
 import { formatCents } from "@/lib/money";
 import { resolvePeriod, withPeriod } from "@/lib/period";
@@ -518,12 +519,12 @@ export function feesCard(db: AppDatabase, today: string = todayIso()): FeesCard 
    * The sentence naming the largest of the charges `rowsPhrase` counted — both halves say it in these words.
    * 🔴 "Since Dec 2022, 1 charge is filed on Fees itself …, and it is not in the all-time figures. The largest is
    * $0.15" on the dashboard (a copy of his ledger, 2026-10-13): one charge has no largest. Alone, it is "it"; beside
-   * a credit, "it" would read as both rows, so it is "the charge".
+   * a credit, "it" would read as both rows, so it is "the charge" — the words every such sentence opens with
+   * (`largestLead`).
    */
-  const largestPhrase = (charges: number, credits: number, largest: (typeof rows)[number]): string => {
-    const which = charges > 1 ? `The largest ${credits > 0 ? "charge " : ""}is` : credits > 0 ? "The charge is" : "It is";
-    return `${which} ${formatCents(-largest.amountCents)} — “${largest.rawDescription}”.`;
-  };
+  const largestPhrase = (charges: number, credits: number, largest: (typeof rows)[number]): string =>
+    `${largestLead(charges, credits > 0 ? "charge" : undefined)} ${formatCents(-largest.amountCents)} — ` +
+    `“${largest.rawDescription}”.`;
   const largestUnfiled = largestOf(unfiledRows);
   const recentCharges = unfiledRows.filter((t) => t.amountCents < 0).length;
   const recentCredits = unfiledRows.filter((t) => t.amountCents > 0).length;

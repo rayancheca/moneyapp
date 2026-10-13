@@ -124,9 +124,24 @@ describe("SubscriptionsCard — each line's evidence, in its own voice", () => {
   test("the lead sentence's largest lapsed line names the day its count ran to, as its row does", () => {
     const dead = line({ seriesId: "d", name: "Dead streaming", lastMatchedLabel: "Apr 25", daysPastTolerance: 93, pastToleranceThroughLabel: "Sep 13" });
     const t = text(data([line({ seriesId: "b", name: "Breezeline" })], [dead])).replace(/\|/g, "");
-    expect(t).toContain("The largest is Dead streaming, last seen Apr 25, 93 days past its own tolerance, checked through Sep 13.");
+    expect(t).toContain("It is Dead streaming, last seen Apr 25, 93 days past its own tolerance, checked through Sep 13.");
     const toToday = text(data([line({ seriesId: "b", name: "Breezeline" })], [{ ...dead, pastToleranceThroughLabel: null }]));
     expect(toToday.replace(/\|/g, "")).toContain("last seen Apr 25, 93 days past its own tolerance.");
+  });
+
+  /*
+   * 🔴 Review of f63b011: "The largest is Dead streaming" over ONE lapsed line — the words the fees card had just stopped
+   * printing over one charge ("The largest is $0.15"), kept here and asked for by the test above. Latent on his ledger
+   * copy 2026-10-13, where nothing has lapsed; one lapsed subscription is how Amazon Prime read on 2026-10-08.
+   */
+  test("one lapsed line is 'It'; two or more have a largest", () => {
+    const dead = line({ seriesId: "d", name: "Dead streaming", lastMatchedLabel: "Apr 25", daysPastTolerance: 93 });
+    const one = text(data([line({ seriesId: "b", name: "Breezeline" })], [dead])).replace(/\|/g, "");
+    expect(one).toContain("of everything on the books. It is Dead streaming, last seen Apr 25");
+    expect(one).not.toContain("The largest");
+    const old = line({ seriesId: "o", name: "Old landlord", lastMatchedLabel: "Jan 8", daysPastTolerance: 225 });
+    const two = text(data([line({ seriesId: "b", name: "Breezeline" })], [dead, old])).replace(/\|/g, "");
+    expect(two).toContain("of everything on the books. The largest is Dead streaming, last seen Apr 25");
   });
 
   /*

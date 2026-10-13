@@ -254,6 +254,15 @@ describe("deviationDescription", () => {
     expect(deviationDescription(layout, fmt, WINDOWS)).not.toContain("1 categories");
   });
 
+  // 🔴 "1 category moved …: 1 up, 0 down. The largest move is RENT" — one move has no largest (`largestLead`)
+  test("one category that moved is 'the move', not 'the largest move'", () => {
+    const layout = computeDeviationLayout([row("rent", 200_00, 100_00)], OPTS);
+    expect(deviationDescription(layout, fmt, WINDOWS)).toContain("1 up, 0 down. The move is RENT, up $100.00.");
+    expect(deviationDescription(layout, fmt, WINDOWS)).not.toContain("largest");
+    const two = computeDeviationLayout([row("rent", 200_00, 100_00), row("food", 10_00, 40_00)], OPTS);
+    expect(deviationDescription(two, fmt, WINDOWS)).toContain("The largest move is RENT, up $100.00.");
+  });
+
   test("the empty state is a sentence", () => {
     expect(deviationDescription(computeDeviationLayout([], OPTS), fmt, WINDOWS)).toBe(
       "Nothing changed between June 2026 and July 2026.",
