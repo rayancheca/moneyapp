@@ -412,6 +412,11 @@ test("each row's tooltip explains the reading that row is showing", async ({ pag
     const row = budgetRow(page, category);
     await expect(row.getByText(/floors rather than measurements/)).toHaveCount(1);
     await expect(row.getByText(/already passed the line/)).toHaveCount(0);
+    /*
+     * ⚖️ Decision 69 (2026-10-13): …and, read in part, prints no projection beside it. 🔴 Before it, on a fresh seed
+     * Food printed "Projected ≈ $778.36" and Subscriptions "Projected ≈ $76.01" in amber over its amber dashed tail.
+     */
+    await expect(row.getByText(/Projected ≈/)).toHaveCount(0);
   }
 
   // …and the two forward-looking bodies are absent, because no row is in either
@@ -438,11 +443,13 @@ test("the today mark is drawn only where the bar is still to scale", async ({ pa
   await expect(housing.locator("[data-today-tick]")).toHaveCount(0);
   await expect(housing.getByText(/no longer to scale/)).toHaveCount(1);
 
-  // every other row is under the line, so the mark is a real boundary there
+  // every other row is under the line, so the mark is a real boundary there — and its tip names it. ⚖️ Decision 69
+  // (2026-10-13): all three are read in part, so the tip teaches no pace reading off it ("fill behind the mark…")
   for (const category of ["Food", "Subscriptions", "Utilities"]) {
     const row = budgetRow(page, category);
     await expect(row.locator("[data-today-tick]")).toHaveCount(1);
-    await expect(row.getByText(/fill behind the mark/)).toHaveCount(1);
+    await expect(row.getByText(/the dark mark is how far through the period you are/)).toHaveCount(1);
+    await expect(row.getByText(/fill behind the mark/)).toHaveCount(0);
   }
 
   /*

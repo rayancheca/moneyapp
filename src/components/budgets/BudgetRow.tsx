@@ -355,7 +355,9 @@ export function BudgetRow({ status, guidanceCents, spentProvenance, planProvenan
           </span>
           {/* the verdict decides, not `pace` alone: a "Cash only" row is under or
               at-risk and still offers no reading of where it is heading — nor
-              does a dashed one (§6A 64), whose projection stands on its $0.00. Only a
+              does a dashed one (§6A 64), whose projection stands on its $0.00,
+              nor ⚖️ one read in part (decision 69), whose projection stands on
+              floors. Only a
               projection that says more than the spend so far: never one equal to
               it, nor the $0.00 floor beside a month a refund took below zero
               (`budgetPaceStatusOf`) */}

@@ -359,6 +359,46 @@ describe("BudgetRow — ⚖️ §6A 64, a window not one day of which has been r
     expect(html).toContain('aria-valuenow="0"');
     expect(spoken(html)).toMatch(/^Food: \$0\.00 of \$300\.00 \(0% of budget\)\. /);
   });
+
+  /*
+   * ⚖️ OWNER DECISION 2026-10-13 (decision 69): a window read in PART prints no "Projected ≈" and draws its dashed
+   * tail in no pace colour either, as the dashed row above does — its figures are floors, and a projection of floors
+   * is a reading the row's own definition says it does not offer. The bills still to come keep their own line.
+   */
+  test("⚖️ decision 69: a window read in part shows its figures, but no projection and no pace colour", () => {
+    bundle.db
+      .insert(recurringSeries)
+      .values({
+        name: "Meal plan",
+        kind: "bill",
+        cadence: "monthly",
+        intervalDaysAvg: 30,
+        amountCentsAvg: -40_000,
+        nextExpectedOn: "2026-08-20",
+        nextExpectedAmountCents: -40_000,
+        status: "confirmed",
+        lastMatchedOn: "2026-07-20",
+        userCategoryId: catId("Food"),
+      })
+      .run();
+    const s = foodReadThrough("2026-08-05");
+    // the conditions under which the row drew both — without them this test could not fail
+    expect(s.noDayRead).toBe(false);
+    expect(s.uncoveredDays).toBeGreaterThan(0);
+    expect(s.pace).toBe("at-risk");
+    expect(s.projectedCents).toBeGreaterThan(Math.max(0, s.spentCents));
+    const html = render(s);
+    expect(html).toContain("Awaiting statements");
+    expect(figures(html)).toMatch(/^Spent \$0\.00 Budget \$300\.00 Left \$300\.00/);
+    expect(html).not.toContain("Projected");
+    const tail = tailClass(html);
+    expect(tail).not.toBeNull();
+    expect(tail).not.toMatch(/text-(positive|warning|negative)\b/);
+    expect(withoutHidden(html).replace(/<!-- -->/g, "")).toMatch(/\$400\.00<\/span> expected before Aug 31/);
+    // the spoken row says what is missing, not where spending is heading
+    expect(spoken(html)).not.toMatch(/projected|on track|off pace/);
+    expect(spoken(html)).toMatch(/spending imported through Aug 5 · 6 days of this period unaccounted\./);
+  });
 });
 
 /*

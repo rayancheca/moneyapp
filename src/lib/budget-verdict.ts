@@ -52,9 +52,9 @@ export interface BudgetVerdict {
    * offered.
    *
    * False for `over` (its reading is measured rather than a forecast, and its
-   * full bar leaves the tail no room), for "Cash only", and for §6A 64's dash.
-   * ❓ True for a partly read "Awaiting statements", as before this field
-   * existed — an owner question, not decided here.
+   * full bar leaves the tail no room), for "Cash only", for §6A 64's dash, and
+   * ⚖️ for a window read in part (decision 69, 2026-10-13): true only for the two
+   * graded readings, "On track" and "Off pace".
    */
   showsProjection: boolean;
   /**
@@ -158,8 +158,12 @@ export function budgetVerdict(input: BudgetVerdictInput): BudgetVerdict {
       explanation: BUDGET_JARGON.paceWithheld,
       barIsFull: false,
       withheld: true,
-      // ❓ kept as it was before this field existed — see `showsProjection`
-      showsProjection: true,
+      /*
+       * ⚖️ OWNER DECISION 2026-10-13 (decision 69): a window read in part prints no "Projected ≈" and draws its tail in
+       * no pace colour, as the fully unread one already does (§6A 64) — a projection of floors is the reading this
+       * branch withholds. The bills still to come keep their own "$X expected before <day>" line, a schedule.
+       */
+      showsProjection: false,
       unread: false,
     };
   }

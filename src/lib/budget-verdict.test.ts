@@ -136,7 +136,9 @@ describe("budgetVerdict", () => {
      * body already says no reading of where it is heading is offered.
      */
     expect(verdict(CASH_ONLY).explanation).not.toMatch(/fill behind the mark|slower than time/);
-    for (const v of [verdict({ pace: "under" }), verdict({ pace: "at-risk" }), verdict({ uncoveredDays: 3 })]) {
+    // ⚖️ …nor, since decision 69, does a window read in part — see its own describe below
+    expect(verdict({ uncoveredDays: 3 }).explanation).not.toMatch(/fill behind the mark|slower than time/);
+    for (const v of [verdict({ pace: "under" }), verdict({ pace: "at-risk" })]) {
       expect(v.explanation).toMatch(/fill behind the mark means spending is slower than time/);
     }
   });
@@ -159,13 +161,8 @@ describe("budgetVerdict", () => {
     // the two graded readings ARE about where it is heading
     expect(verdict({ pace: "under" }).showsProjection).toBe(true);
     expect(verdict({ pace: "at-risk" }).showsProjection).toBe(true);
-    /*
-     * ❓ "Awaiting statements" keeps its projection, as it had before this field
-     * existed — although its body also says no reading is offered. Pinned, not
-     * blessed: whether a withheld row should drop it too is the owner's call, and
-     * it moves the budgets baselines.
-     */
-    expect(verdict({ pace: "at-risk", uncoveredDays: 3 }).showsProjection).toBe(true);
+    // ⚖️ …and a window read in part makes none either (decision 69, 2026-10-13 — its own describe below)
+    expect(verdict({ pace: "at-risk", uncoveredDays: 3 }).showsProjection).toBe(false);
     // a wallet beside an imported account is not cash only
     expect(verdict({ pace: "at-risk", spentFromAccounts: 2, spentFromWallets: 1 }).showsProjection).toBe(true);
   });
@@ -200,8 +197,8 @@ describe("budgetVerdict", () => {
       for (const pace of ["under", "at-risk"] as const) {
         expect(verdict({ ...UNREAD, pace }).showsProjection).toBe(false);
       }
-      // the control: a partly read window keeps the projection it had (❓ his call, `showsProjection`)
-      expect(verdict({ ...UNREAD, pace: "at-risk", noDayRead: false }).showsProjection).toBe(true);
+      // the control: a window read whole projects (and since decision 69 a partly read one does not — below)
+      expect(verdict({ ...UNREAD, pace: "at-risk", noDayRead: false, uncoveredDays: 0 }).showsProjection).toBe(true);
     });
 
     test("a partly read window keeps today's lower-bound shape", () => {
@@ -238,6 +235,43 @@ describe("budgetVerdict", () => {
       ]) {
         expect(v.unread).toBe(false);
       }
+    });
+  });
+
+  /*
+   * ⚖️ OWNER DECISION 2026-10-13 (decision 69): a window read in PART — "Awaiting statements" with some day of it read
+   * or a row found in it — prints no "Projected ≈" and wears no pace colour, as the fully unread one already does
+   * (§6A 64); the bills still to come keep their own "$X expected before <day>" line. 🔴 Its definition said "No
+   * reading is offered" beside a projection of floors in the pace colour, and taught "fill behind the mark means
+   * spending is slower than time" over days nobody had read — behind the mark because unread, not because slow.
+   */
+  describe("⚖️ decision 69 — a window read in part says nothing of where spending is heading", () => {
+    test("no projection, in any pace, however few days are missing — read day or row found", () => {
+      for (const pace of ["under", "at-risk"] as const) {
+        for (const uncoveredDays of [1, 15]) {
+          for (const read of [{ noDayRead: false, txnCount: 0 }, { noDayRead: true, txnCount: 2 }]) {
+            const v = verdict({ pace, pct: 0.4, uncoveredDays, ...read });
+            expect(v.headline).toBe("Awaiting statements");
+            expect(v.unread).toBe(false);
+            expect(v.showsProjection).toBe(false);
+          }
+        }
+      }
+      // the control: the same rows read whole are graded, and project
+      for (const pace of ["under", "at-risk"] as const) {
+        expect(verdict({ pace, pct: 0.4, uncoveredDays: 0 }).showsProjection).toBe(true);
+      }
+    });
+
+    test("its definition says no reading of where it is heading is offered, and teaches none off the mark", () => {
+      const v = verdict({ pace: "at-risk", uncoveredDays: 3 });
+      expect(v.explanation).toBe(BUDGET_JARGON.paceWithheld);
+      expect(v.explanation).toMatch(/no reading of where it is heading is offered/i);
+      expect(v.explanation).not.toMatch(/fill behind the mark|slower than time|where this is heading/);
+      // …and still names the two parts the row draws, and what its figures are
+      expect(v.explanation).toMatch(/The filled part is what has gone so far/);
+      expect(v.explanation).toMatch(/the dark mark is how far through the period you are/);
+      expect(v.explanation).toMatch(/floors rather than measurements/);
     });
   });
 

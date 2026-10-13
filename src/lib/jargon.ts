@@ -149,12 +149,14 @@ const TODAY_MARK = "the dark mark is how far through the period you are";
 const BAR_PARTS = `The filled part is what has gone so far, and ${TODAY_MARK}`;
 
 /**
- * …and how to read pace off them, for the three states that offer a reading of
- * where spending is heading or withhold one that is coming.
+ * …and how to read pace off them, for the two states that offer a reading of
+ * where spending is heading.
  *
  * ⚖️ NOT "Cash only" (owner, 2026-09-15): that row makes no pace claim, and
  * "fill behind the mark means spending is slower than time" is one. Its body
- * names the parts and stops.
+ * names the parts and stops. ⚖️ Nor a window read in part (decision 69,
+ * 2026-10-13): its fill stands behind the mark because days are unread, not
+ * because spending is slow, and the row offers no reading over it.
  */
 const BAR_ANATOMY = `${BAR_PARTS} — fill behind the mark means spending is slower than time.`;
 
@@ -209,7 +211,8 @@ export const BUDGET_JARGON = {
   paceAtRisk: `Spending is still inside the line today, but at this rate it lands on or past the line before the period ends — the reading is about where this is heading, not where it stands. ${BAR_ANATOMY}`,
   paceOver:
     "Spending has already passed the line, and no later import can undo that — this reading is measured rather than a forecast. The bar is full and no longer to scale, and the period mark is left off because there is nothing left for it to divide.",
-  paceWithheld: `Days in this window have no imported spending yet, so the amount and the percentage can only rise — they are floors rather than measurements. No reading is offered over them, because calling an unimported month healthy is the one error this page must not make. ${BAR_ANATOMY}`,
+  // ⚖️ decision 69 (2026-10-13): no projection beside it and no pace colour, so no pace reading off the mark either
+  paceWithheld: `Days in this window have no imported spending yet, so the amount and the percentage can only rise — they are floors rather than measurements. No reading of where it is heading is offered over them, because calling an unimported month healthy is the one error this page must not make. ${BAR_PARTS}.`,
   /*
    * ⚖️ §6A 64 (2026-10-12): not one elapsed day read, so the row prints a dash for what has gone and what is left —
    * no amount, no percentage and no fill for a body to describe. It names the one mark the bar still draws.
