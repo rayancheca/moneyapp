@@ -55,13 +55,24 @@ export function notLookedForDeposits(paydays: number): string {
   return paydays === 1 ? "the ledger has not looked for its deposit" : "the ledger has not looked for their deposits";
 }
 
+/** Where §6A 68 looks for a checked day — one phrase for the spoken line and the income card's note. */
+const IN_ACCOUNTS_PAY_LANDS_IN = "in the accounts that pay lands in";
+
 /**
  * ⚖️ §6A 68 (2026-10-13): what /budgets' header SAYS where it prints "— in so far" — not one day of the month checked
  * where the pay lands (`IncomeExpectation.noIncomeDayRead`). A screen reader given the bare dash hears nothing, or "em
- * dash", where the figure was; the spoken line says why there is none, as a budget row's does under §6A 64.
+ * dash", where the figure was; the spoken line says why there is none, as a budget row's does under §6A 64. The
+ * dashboard's "Income recorded in <month>" row speaks it too, where it prints the same dash.
  */
-export const NO_INCOME_DAY_CHECKED =
-  "no day of this month checked yet in the accounts that pay lands in, so nothing is shown";
+export const NO_INCOME_DAY_CHECKED = `no day of this month checked yet ${IN_ACCOUNTS_PAY_LANDS_IN}, so nothing is shown`;
+
+/**
+ * ⚖️ §6A 68's second reader (2026-10-13): the note under Earned vs banked's "Income recorded in Oct 2026 —", in place
+ * of "an empty month is what an unimported month looks like…" — which says nothing of whether anyone has looked.
+ */
+export function noIncomeDayCheckedNote(month: string): string {
+  return `Not one day of ${month} has been checked ${IN_ACCOUNTS_PAY_LANDS_IN}, so nothing is shown.`;
+}
 
 /**
  * The one day several schedules' landing accounts were checked through — each

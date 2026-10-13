@@ -2,6 +2,7 @@ import Link from "next/link";
 import { Money } from "@/components/ui/Money";
 import { SurfaceCard } from "@/components/ui/SurfaceCard";
 import { formatCents } from "@/lib/money";
+import { NO_INCOME_DAY_CHECKED } from "@/lib/unbanked-income";
 import type { IncomeCard as IncomeCardData } from "@/services/income-card";
 
 /**
@@ -113,7 +114,17 @@ export function IncomeCard({ data }: { data: IncomeCardData }) {
 
       <div className="mt-3 flex items-baseline justify-between gap-3 border-t border-line pt-3 text-sm">
         <span className="min-w-0 truncate text-ink-muted">Income recorded in {data.postedMonth}</span>
-        <Money cents={data.postedThisMonthCents} className="shrink-0" />
+        {/* ⚖️ §6A 68 (2026-10-13): an em dash, not a $0.00, exactly where /budgets' header prints "— in so far" — the
+            same reading, passed through (`noIncomeDayRead`), and the same spoken line. 🔴 His ledger copy 2026-10-12
+            read "Income recorded in Oct 2026  $0.00" while the pace tile on this dashboard read "—". */}
+        {data.noIncomeDayRead ? (
+          <span className="shrink-0">
+            <span aria-hidden="true" className="figures text-ink-faint">—</span>
+            <span className="sr-only">{NO_INCOME_DAY_CHECKED}</span>
+          </span>
+        ) : (
+          <Money cents={data.postedThisMonthCents} className="shrink-0" />
+        )}
       </div>
       <p className="mt-1 max-w-prose text-[11px] leading-relaxed text-ink-faint">{data.postedNote}</p>
 

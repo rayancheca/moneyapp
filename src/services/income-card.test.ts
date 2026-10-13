@@ -15,6 +15,7 @@ import { recurringSeries } from "@/db/schema/recurring";
 import { transactions } from "@/db/schema/transactions";
 import { seedDatabase } from "@/db/seed";
 import { addDays, periodBounds } from "@/lib/dates";
+import { NO_INCOME_DAY_CHECKED } from "@/lib/unbanked-income";
 import { incomeExpectation } from "./budgets";
 import { runwayCard } from "./committed";
 import { incomeCard } from "./income-card";
@@ -738,5 +739,140 @@ describe("incomeCard", () => {
       expect(line.verdict).not.toContain("lumps");
       expect(line.verdict).not.toContain("has not looked");
     });
+  });
+});
+
+/*
+ * ⚖️ His decision 68 (2026-10-13), its second reader: "Income recorded in <month>" prints "—" exactly where /budgets'
+ * header prints "— in so far" — `incomeExpectation(...).noIncomeDayRead`, passed through, never re-derived. "Same rule
+ * as your budget dashes (64) and the pace tile: no day read, no $0.00." 🔴 Measured on his ledger copy 2026-10-12:
+ * "Income recorded in Oct 2026  $0.00" over "An empty month is what an unimported month looks like…", with Wells
+ * Fargo, where It America LLC's pay lands, checked through Sep 24 — while the pace tile on the same dashboard read "—".
+ */
+describe("Income recorded — §6A 68: no day of the month checked where the pay lands", () => {
+  type Card = NonNullable<ReturnType<typeof incomeCard>>;
+
+  /** the "Income recorded in …" row as rendered: what the eye reads, and what a screen reader hears */
+  function recordedRow(card: Card): { visible: string; spoken: string } {
+    const markup = renderToStaticMarkup(createElement(IncomeCard, { data: card }));
+    const row = /<div [^>]*>(<span [^>]*>Income recorded in [\s\S]*?)<\/div>/.exec(markup)![1]!;
+    const text = (html: string): string => html.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
+    return {
+      visible: text(row.replace(/<span class="sr-only">[\s\S]*?<\/span>/g, "")),
+      spoken: text(row.replace(/<span aria-hidden="true"[^>]*>[\s\S]*?<\/span>/g, "")),
+    };
+  }
+
+  /** what /budgets' header reads off the same ledger — its own call, as the page makes it */
+  function budgetsHeader(): ReturnType<typeof incomeExpectation> {
+    const month = periodBounds(TODAY, "monthly");
+    return incomeExpectation(bundle.db, month.start, month.end, TODAY);
+  }
+
+  describe("the service", () => {
+    test("checked only through the month before, nothing posted: no day read, and the note says so", () => {
+      addSeries();
+      addTxn(PAY_START, 100_000);
+      coverThrough(CHASE, "2026-06-01", "2026-07-31");
+
+      const card = incomeCard(bundle.db, TODAY)!;
+      expect(card.postedThisMonthCents).toBe(0);
+      expect(card.noIncomeDayRead).toBe(true);
+      expect(card.postedNote).toBe(
+        "Not one day of Aug 2026 has been checked in the accounts that pay lands in, so nothing is shown.",
+      );
+      expect(card.postedNote).not.toContain("unimported month");
+    });
+
+    test("one day of the month checked: the $0.00 stands, with the empty-month note, as today", () => {
+      addSeries();
+      addTxn(PAY_START, 100_000);
+      coverThrough(CHASE, "2026-06-01", "2026-08-01");
+
+      const card = incomeCard(bundle.db, TODAY)!;
+      expect(card.noIncomeDayRead).toBe(false);
+      expect(card.postedThisMonthCents).toBe(0);
+      expect(card.postedNote).toContain("what an unimported month looks like");
+    });
+
+    // ⛔ §6A 64's rule for a row found: a deposit in the ledger is money in so far, whatever day the balances reach
+    test("income posted in the month keeps its figure, however far the balances are checked", () => {
+      addSeries();
+      addTxn(PAY_START, 100_000);
+      addTxn("2026-08-06", 100_000);
+      coverThrough(CHASE, "2026-06-01", "2026-07-31");
+
+      const card = incomeCard(bundle.db, TODAY)!;
+      expect(card.noIncomeDayRead).toBe(false);
+      expect(card.postedThisMonthCents).toBe(100_000);
+      expect(card.postedNote).toBe("That is what has been imported so far, not what was earned in Aug 2026.");
+    });
+  });
+
+  describe("the card", () => {
+    test("no day read: the row reads 'Income recorded in Aug 2026 —', and says why aloud — never $0.00", () => {
+      addSeries();
+      addTxn(PAY_START, 100_000);
+      coverThrough(CHASE, "2026-06-01", "2026-07-31");
+
+      const row = recordedRow(incomeCard(bundle.db, TODAY)!);
+      expect(row.visible).toBe("Income recorded in Aug 2026 —");
+      expect(row.spoken).toBe(`Income recorded in Aug 2026 ${NO_INCOME_DAY_CHECKED}`);
+      expect(row.spoken).not.toContain("—");
+      expect(row.visible).not.toContain("$0.00");
+    });
+
+    test("a day of the month checked: the row prints its $0.00", () => {
+      addSeries();
+      addTxn(PAY_START, 100_000);
+      coverThrough(CHASE, "2026-06-01", "2026-08-01");
+
+      const row = recordedRow(incomeCard(bundle.db, TODAY)!);
+      expect(row).toEqual({ visible: "Income recorded in Aug 2026 $0.00", spoken: "Income recorded in Aug 2026 $0.00" });
+    });
+
+    test("money posted: the row prints the figure", () => {
+      addSeries();
+      addTxn(PAY_START, 100_000);
+      addTxn("2026-08-06", 100_000);
+      coverThrough(CHASE, "2026-06-01", "2026-07-31");
+
+      expect(recordedRow(incomeCard(bundle.db, TODAY)!).visible).toBe("Income recorded in Aug 2026 $1,000.00");
+    });
+  });
+
+  /*
+   * One reading, two surfaces, on each ledger both of /budgets' answers are read off. The third is the one a
+   * re-derivation from the card's own lines gets wrong: a detected schedule — no line here, the card reads confirmed
+   * ones — lands in SoFi, checked into August, so /budgets has read a day of the month where pay lands and prints its
+   * $0.00, and so must the card.
+   */
+  test.each<[string, () => void, boolean]>([
+    ["checked only through July", () => coverThrough(CHASE, "2026-06-01", "2026-07-31"), true],
+    ["checked through Aug 1", () => coverThrough(CHASE, "2026-06-01", "2026-08-01"), false],
+    [
+      "Chase through July, a detected schedule's SoFi into August",
+      () => {
+        addAccount(SOFI, "SoFi Checking");
+        addSeries({ id: "series-tutoring", name: "Tutoring (weekly pay)", status: "detected" });
+        addTxn("2026-06-05", 30_000, { seriesId: "series-tutoring", accountId: SOFI });
+        coverThrough(CHASE, "2026-06-01", "2026-07-31");
+        coverThrough(SOFI, "2026-06-01", "2026-08-05");
+      },
+      false,
+    ],
+  ])("the card and /budgets' header agree on one ledger — %s", (_name, arrange, dashed) => {
+    addSeries();
+    addTxn(PAY_START, 100_000);
+    arrange();
+
+    const header = budgetsHeader();
+    const card = incomeCard(bundle.db, TODAY)!;
+    expect(header.noIncomeDayRead).toBe(dashed);
+    expect(card.noIncomeDayRead).toBe(dashed);
+    expect(card.pay.map((l) => l.seriesId)).toEqual([SERIES]);
+    expect(recordedRow(card).visible).toBe(
+      dashed ? "Income recorded in Aug 2026 —" : "Income recorded in Aug 2026 $0.00",
+    );
   });
 });

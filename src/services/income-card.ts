@@ -7,6 +7,7 @@ import { formatCents } from "@/lib/money";
 import {
   LAST_CHECKED_DAY,
   NOT_CHECKED,
+  noIncomeDayCheckedNote,
   sharedFrontier,
   unbankedIncomeFrontierClause,
   type UnbankedFrontier,
@@ -238,9 +239,16 @@ export interface IncomeCard {
   bankedSharePct: number | null;
   /** income the ledger has actually recorded in the current calendar month */
   postedThisMonthCents: number;
+  /**
+   * ⚖️ §6A 68's second reader (2026-10-13): `incomeExpectation(...).noIncomeDayRead`, passed through — not one day of
+   * the month checked where the pay lands and nothing posted, so `postedThisMonthCents` is no measurement and the row
+   * prints "—", exactly where /budgets' header prints "— in so far". ⛔ Never re-derived from this card's own lines:
+   * /budgets reads every live pay series, detected ones too, and a second rule would let the two pages disagree.
+   */
+  noIncomeDayRead: boolean;
   /** "Aug 2026" — the month that figure describes */
   postedMonth: string;
-  /** why an empty month is not the same as an unpaid one */
+  /** why an empty month is not the same as an unpaid one — or, with no day of it checked, why nothing is shown */
   postedNote: string;
   /** what a difference is NOT — the standing caveat, never omitted */
   caveat: string;
@@ -458,9 +466,16 @@ export function incomeCard(db: AppDatabase, today: string = todayIso()): IncomeC
     totals,
     bankedSharePct,
     postedThisMonthCents,
+    noIncomeDayRead: expectation.noIncomeDayRead,
     postedMonth,
-    postedNote:
-      postedThisMonthCents === 0
+    /*
+     * 🔴 With no day of the month checked where the pay lands, "an empty month is what an unimported month looks like"
+     * stood under a $0.00 nobody had looked for — his ledger copy 2026-10-12, Wells Fargo checked through Sep 24 —
+     * while /budgets' header printed "— in so far" off the same reading. The note says why there is no figure.
+     */
+    postedNote: expectation.noIncomeDayRead
+      ? noIncomeDayCheckedNote(postedMonth)
+      : postedThisMonthCents === 0
         ? `No income at all has been recorded in ${postedMonth}. An empty month is what an unimported month looks like as well as what an unpaid one looks like — the lines above say which this is.`
         : `That is what has been imported so far, not what was earned in ${postedMonth}.`,
     caveat: CAVEAT,

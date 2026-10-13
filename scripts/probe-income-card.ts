@@ -38,7 +38,8 @@ if (card === null) {
   }
   console.log(`\n   TOTALS    implied ${formatCents(card.totals.impliedCents)} · banked ${formatCents(card.totals.bankedCents)} · ${formatCents(card.totals.gapMagnitudeCents)} ${card.totals.gapLabel}`);
   console.log(`   SHARE     ${card.bankedSharePct === null ? "null (withheld)" : `${card.bankedSharePct}%`}  finite=${Number.isFinite(card.bankedSharePct ?? 0)}`);
-  console.log(`   POSTED    ${formatCents(card.postedThisMonthCents)} in ${card.postedMonth}`);
+  // ⚖️ §6A 68: "—" where the card prints it — no day of the month checked where the pay lands
+  console.log(`   POSTED    ${card.noIncomeDayRead ? "—" : formatCents(card.postedThisMonthCents)} in ${card.postedMonth}`);
   console.log(`   NOTE      ${card.postedNote}`);
   console.log(`   CAVEAT    ${card.caveat}`);
 }
