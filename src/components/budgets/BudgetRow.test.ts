@@ -13,7 +13,7 @@ import { recurringSeries } from "@/db/schema/recurring";
 import { transactions } from "@/db/schema/transactions";
 import { dedupeHash } from "@/lib/hash";
 import { createAccount } from "@/services/accounts";
-import { budgetPaceStatuses, createBudget, type BudgetPaceStatus } from "@/services/budgets";
+import { budgetPaceStatuses, createBudget, setBudgetRollover, type BudgetPaceStatus } from "@/services/budgets";
 import { createCashWallet } from "@/services/cash-wallets";
 import { checkedThrough } from "@/services/checked-days-fixture";
 import { addManualTransaction } from "@/services/manual-transactions";
@@ -273,6 +273,42 @@ describe("BudgetRow — ⚖️ §6A 64, a window not one day of which has been r
     );
   });
 
+  /*
+   * 🔴 Review of 6f217a7: the dashed row still printed "Projected ≈" — the tail and the arrears over the $0.00 it will
+   * not print — in the pace colour, and drew its dashed tail in it: on his ledger copy 2026-10-12 Housing "Projected ≈
+   * $2,291.21" and Transport "$368.86" in amber beside "Spent —" and "Left —", Transport's amber tail filling the bar.
+   */
+  test("…and no projection beside the dash, nor a pace colour on the tail of what is still expected", () => {
+    bundle.db
+      .insert(recurringSeries)
+      .values({
+        name: "Meal plan",
+        kind: "bill",
+        cadence: "monthly",
+        intervalDaysAvg: 30,
+        amountCentsAvg: -40_000,
+        nextExpectedOn: "2026-08-20",
+        nextExpectedAmountCents: -40_000,
+        status: "confirmed",
+        lastMatchedOn: "2026-07-20",
+        userCategoryId: catId("Food"),
+      })
+      .run();
+    const s = foodReadThrough("2026-07-31");
+    // the conditions under which the row drew both — without them this test could not fail
+    expect(s.noDayRead).toBe(true);
+    expect(s.pace).toBe("at-risk");
+    expect(s.projectedCents).toBe(40_000);
+    const html = render(s);
+    expect(figures(html)).toMatch(/^Spent — Budget \$300\.00 Left —/);
+    expect(html).not.toContain("Projected");
+    const tail = tailClass(html);
+    expect(tail).not.toBeNull();
+    expect(tail).not.toMatch(/text-(positive|warning|negative)\b/);
+    // what is still expected keeps its own line: a schedule, not a reading of the dashed window
+    expect(withoutHidden(html).replace(/<!-- -->/g, "")).toMatch(/\$400\.00<\/span> expected before Aug 31/);
+  });
+
   test("the control: one day read keeps today's lower-bound shape — $0.00 and a bar at 0", () => {
     const s = foodReadThrough("2026-08-01");
     const html = render(s);
@@ -433,8 +469,47 @@ describe("BudgetDetails — what rollover subtracts, in his words", () => {
     const html = renderToStaticMarkup(panel).replace(/<!-- -->/g, "").replace(/\s+/g, " ");
     expect(html).not.toContain("never posted");
     expect(html).toContain(
-      "Bills that came due are subtracted whether they are not posted or no statement has covered them yet, so a " +
-        "missing statement cannot bank itself as savings.",
+      "Bills that came due are subtracted whether they are not posted or no statement has covered them yet.",
     );
+  });
+
+  /*
+   * 🔴 Review of 8f9f408: the sentence ended "…, so a missing statement cannot bank itself as savings" — and `carryInto`
+   * banks the whole plan of a closed period nobody has read, its $0.00 taken as "spent nothing". On his ledger copy
+   * 2026-10-12 (every rolling budget carries from Sep 1): Cash & ATM banked $130.00 and Fees $15.00 from a September
+   * with no row and no day read, Travel $70.00 from one read through Sep 2. ❓ Whether such a period holds back its
+   * carry is his call; until then the panel claims nothing the carry does not do.
+   */
+  test("a closed period no statement has covered banks its plan — so the panel does not claim it cannot", () => {
+    const chase = bundle.db.select().from(institutions).where(eq(institutions.name, "Chase")).get()!;
+    const card = createAccount(bundle.db, { institutionId: chase.id, name: "Card", type: "credit" });
+    // the Card's import stops at Jun 30, and so does what the ledger has read of Food
+    const row = { accountId: card, postedOn: "2026-06-30", amountCents: -1_000, rawDescription: "SPEND 2026-06-30" };
+    bundle.db
+      .insert(transactions)
+      .values({
+        ...row,
+        normalizedDescription: row.rawDescription,
+        categoryId: catId("Food"),
+        dedupeHash: dedupeHash({ ...row, occurrenceIndex: 0 }),
+      })
+      .run();
+    const id = createBudget(bundle.db, {
+      categoryId: catId("Food"),
+      period: "monthly",
+      amountCents: 3_000,
+      startsOn: "2026-06-01",
+    });
+    setBudgetRollover(bundle.db, id, { enabled: true, startsOn: "2026-07-01" });
+    // the conditions under which the sentence is false: July, closed, not one day of it read, banked whole
+    const july = budgetPaceStatuses(bundle.db, "2026-07-31").find((x) => x.categoryName === "Food")!;
+    expect(july.noDayRead).toBe(true);
+    const s = statusFor("Food");
+    expect(s.rolloverCents).toBe(3_000);
+    const text = renderToStaticMarkup(createElement(BudgetDetails, { status: s, rolloverEnabled: true }))
+      .replace(/<[^>]+>/g, "")
+      .replace(/\s+/g, " ");
+    expect(text).toContain("Banked $30.00 from closed periods.");
+    expect(text).not.toMatch(/cannot bank|a missing statement/);
   });
 });

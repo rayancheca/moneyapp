@@ -150,7 +150,7 @@ export function BudgetDetails({ status, rolloverEnabled }: BudgetDetailsProps) {
           <p className="text-ink-faint">
             Banked <Money cents={status.rolloverCents} /> from closed periods. A period that came in
             under plan adds its leftover; one that went over adds nothing, and overspend is never
-            carried as a debt. {ROLLOVER_SUBTRACTS}, so a missing statement cannot bank itself as savings.
+            carried as a debt. {ROLLOVER_SUBTRACTS}
           </p>
         </div>
       ) : (

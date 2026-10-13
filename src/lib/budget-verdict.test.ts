@@ -189,6 +189,21 @@ describe("budgetVerdict", () => {
       expect(v.explanation).not.toMatch(/filled part|floors|percentage/);
     });
 
+    /*
+     * 🔴 Review of 6f217a7: the dashed row still printed "Projected ≈" — `projectSpend` over the $0.00 the row will not
+     * print, so only the recurring tail and the arrears — in the pace colour, beside a definition saying no reading is
+     * offered. On his ledger copy 2026-10-12, 6 of the 12 dashed rows: Housing "Projected ≈ $2,291.21" and Transport
+     * "$368.86" in amber (the rent unread, Transport's tail past its $355.64), Car, Health, Subscriptions and Utilities
+     * plain. ⚖️ §6A 64 named the dashboard's pace tile, whose dash withholds "$0.00 projected" with "$0.00 spent".
+     */
+    test("…and says nothing of where spending is heading: no projection, in any pace", () => {
+      for (const pace of ["under", "at-risk"] as const) {
+        expect(verdict({ ...UNREAD, pace }).showsProjection).toBe(false);
+      }
+      // the control: a partly read window keeps the projection it had (❓ his call, `showsProjection`)
+      expect(verdict({ ...UNREAD, pace: "at-risk", noDayRead: false }).showsProjection).toBe(true);
+    });
+
     test("a partly read window keeps today's lower-bound shape", () => {
       const v = verdict({ ...UNREAD, noDayRead: false });
       expect(v.unread).toBe(false);

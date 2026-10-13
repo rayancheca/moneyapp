@@ -350,7 +350,8 @@ export function BudgetRow({ status, guidanceCents, spentProvenance, planProvenan
             )}
           </span>
           {/* the verdict decides, not `pace` alone: a "Cash only" row is under or
-              at-risk and still offers no reading of where it is heading */}
+              at-risk and still offers no reading of where it is heading — nor
+              does a dashed one (§6A 64), whose projection stands on its $0.00 */}
           {verdict.showsProjection && status.projectedCents !== status.spentCents && (
             <span>
               <span className="text-ink-faint">Projected ≈ </span>

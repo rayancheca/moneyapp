@@ -528,7 +528,8 @@ describe("RecurringCalendar — a day paid inside another's payment", () => {
  * its own account, today Jul 8, on either side of the boundary.
  */
 describe("RecurringCalendar — a missed bill, rendered from the service, at the grace boundary", () => {
-  function julyWithBillReadThrough(through: string): string {
+  /** `rowsThrough`: the newest imported row, when an import of rows alone has run past the checked balance */
+  function julyWithBillReadThrough(through: string, rowsThrough: string = through): string {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "moneyapp-calendar-read-"));
     const bundle = createDatabase(path.join(dir, "t.db"));
     try {
@@ -551,7 +552,7 @@ describe("RecurringCalendar — a missed bill, rendered from the service, at the
       // balances checked through it — the day its chip measures to, which the ✕ reads (his decision 62, 2026-10-12)
       bundle.db
         .insert(transactions)
-        .values({ id: "t-coffee", accountId: "acct", postedOn: through, amountCents: -450, rawDescription: "COFFEE",
+        .values({ id: "t-coffee", accountId: "acct", postedOn: rowsThrough, amountCents: -450, rawDescription: "COFFEE",
           normalizedDescription: "COFFEE", status: "active", needsReview: false, occurrenceIndex: 0,
           dedupeHash: "h-coffee", createdAt: at, updatedAt: at })
         .run();
@@ -586,5 +587,21 @@ describe("RecurringCalendar — a missed bill, rendered from the service, at the
       glyph: "? text-ink-muted",
     });
     expect(footerMissed(html)).toBeNull();
+  });
+
+  /*
+   * 🔴 Review of cf0bbdf: the "?" says "no statement has covered it yet" (his decision 65, 2026-10-12) and the legend's
+   * definition of it still said "the day, or the few days after it a payment may still post on, may not be imported
+   * yet" — false of a day a rows-only import has passed (his Rocket Money export is one): on the
+   * not-posted-on-landing-accounts fixture the rent's Oct 1 and all 3 grace days are imported, its statements checked
+   * through Sep 24. Latent on his ledger copy 2026-10-12, where Wells Fargo's newest row is its checked day.
+   */
+  test("rows imported past due + grace, statements checked short of it — the legend says what the ? waits for", () => {
+    const html = julyWithBillReadThrough("2026-07-03", "2026-07-20");
+    expect(jul1(html).name).toBe(
+      "Jul 1, 2026 — 1 item: Storage unit not yet known (no statement has covered it yet) -$45.00",
+    );
+    expect(html).not.toContain("may not be imported yet");
+    expect(html).toContain("the few days after it a payment may still post on, may not be covered by a statement yet");
   });
 });

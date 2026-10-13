@@ -52,9 +52,9 @@ export interface BudgetVerdict {
    * offered.
    *
    * False for `over` (its reading is measured rather than a forecast, and its
-   * full bar leaves the tail no room) and for "Cash only".
-   * ❓ True for "Awaiting statements", as before this field existed — an owner
-   * question, not decided here.
+   * full bar leaves the tail no room), for "Cash only", and for §6A 64's dash.
+   * ❓ True for a partly read "Awaiting statements", as before this field
+   * existed — an owner question, not decided here.
    */
   showsProjection: boolean;
   /**
@@ -133,8 +133,13 @@ export function budgetVerdict(input: BudgetVerdictInput): BudgetVerdict {
       explanation: BUDGET_JARGON.paceUnread,
       barIsFull: false,
       withheld: true,
-      // ❓ kept as "Awaiting statements" keeps it — see `showsProjection`
-      showsProjection: true,
+      /*
+       * ⚖️ §6A 64 named the dashboard's pace tile, whose dash withholds "$0.00 projected" with "$0.00 spent" — and the
+       * projection is `projectSpend` over the very $0.00 this row will not print. 🔴 Review of 6f217a7: kept, it read
+       * "Projected ≈ $2,291.21" in amber beside "Spent —" and "Left —" on his ledger copy 2026-10-12 (Housing; the rent
+       * unread), Transport's dashed tail amber across the bar, under a definition saying no reading is offered.
+       */
+      showsProjection: false,
       unread: true,
     };
   }

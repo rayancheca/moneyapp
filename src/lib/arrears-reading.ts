@@ -56,13 +56,19 @@ export const NO_STATEMENT_YET = noStatementHasCovered("it");
 
 /**
  * What a rolling budget subtracts before it banks a closed period — said of BOTH halves, because it subtracts both:
- * all of the period's `budgetOverdue`, read or not, so a missing statement cannot bank itself as savings.
+ * all of the period's `budgetOverdue`, read or not. The whole sentence, so no surface adds a reason the carry does
+ * not bear out.
  *
  * 🔴 It said "Bills that came due and never posted are subtracted" — the one definition left saying "never posted",
  * where his words are "not posted" (decisions 60 and 65), and a negative claim no surface may make of an unread day.
+ *
+ * 🔴 …and it ended "so a missing statement cannot bank itself as savings" (review of 8f9f408): `carryInto` banks a
+ * closed period's plan less what was FOUND in it, so a period no statement has covered banks all of it. On his ledger
+ * copy 2026-10-12 Cash & ATM banked $130.00 and Fees $15.00 from a September with no row and no day read, Travel
+ * $70.00 from one read through Sep 2. ❓ Whether such a period holds back its carry is his call (`carryInto`).
  */
 export const ROLLOVER_SUBTRACTS =
-  `Bills that came due are subtracted whether they are not posted or ${noStatementHasCovered("them")}`;
+  `Bills that came due are subtracted whether they are not posted or ${noStatementHasCovered("them")}.`;
 
 /** What the unread words say it of: one bill ("it"), or several (/budgets' page note, "them"). */
 export type ArrearsPronoun = "it" | "them";

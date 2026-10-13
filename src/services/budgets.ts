@@ -294,6 +294,14 @@ interface CarryableBudget {
  *   either back-dates (the carry silently changes) or posts in September (banked
  *   once, charged again).
  *
+ * ❓ A closed period is graded on the spend FOUND in it, so one no statement has
+ * covered banks its plan as though nothing was spent — on his ledger copy
+ * 2026-10-12 Cash & ATM's $130.00 and Fees' $15.00 from a September with no row
+ * and no day read, Travel's $70.00 from one read through Sep 2. Whether such a
+ * period holds back its carry until it is read (§6A 64's dash, for a closed
+ * period) is his call (review of 8f9f408); `ROLLOVER_SUBTRACTS` claims nothing
+ * either way.
+ *
  * Derived at read time and never stored: the 2026-08-03 import back-filled
  * $623.58 of spend into an already-closed July, so a stored balance would have
  * been stale within 72 hours.

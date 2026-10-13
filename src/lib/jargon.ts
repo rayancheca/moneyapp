@@ -281,8 +281,13 @@ export const RECURRING_JARGON = {
    */
   missed:
     "Nothing turned up, and the statements covering that day and the few days after it a late payment could still post on HAVE been imported (or none ever will be, because its account is archived or a cash wallet), so the silence is an answer rather than a gap in the records.",
+  /*
+   * ⚖️ His decision 65 (2026-10-12): an unread day waits for each account's last CHECKED statement balance, and its "?"
+   * says "no statement has covered it yet" (`NO_STATEMENT_YET`). 🔴 This said the day "may not be imported yet" — false
+   * of a day a rows-only import has passed while its statements stop short (review of cf0bbdf).
+   */
   notYetKnown:
-    "Nothing turned up, but the ledger cannot say whether it should have — the day, or the few days after it a payment may still post on, may not be imported yet, the money may be cash you were handed and have not deposited, or this bill may not have charged enough times yet for the app to grade it. None of those is evidence that a payment failed.",
+    "Nothing turned up, but the ledger cannot say whether it should have — the day, or the few days after it a payment may still post on, may not be covered by a statement yet, the money may be cash you were handed and have not deposited, or this bill may not have charged enough times yet for the app to grade it. None of those is evidence that a payment failed.",
   upcoming: "Expected on or after today, so nothing has had the chance to happen yet.",
   scheduled:
     "You told the app this amount or this date, which makes it the firmest kind of claim here — firmer than a bill with years of history behind it.",
