@@ -1769,23 +1769,71 @@ function observedAtTodaysRate({ era, earlier, payments, split, distinct }: AtTod
   return `${counted}${posted} ${what}. ${before}, and ${earlier === 1 ? "is" : "are"} not counted.${thin}`;
 }
 
-/** …and its evidence line: "2 payments at the rate in force since Aug 1: … · 2 before it, at an earlier rate" */
+/**
+ * …and its evidence line: "2 payments at the rate in force since Aug 1: … · 2 before it (Jun 16's posted as 2), at an
+ * earlier rate" — the payments before it named as those since are (`earlierSplit`), so the line adds up to its label's
+ * rows. 🔴 At 7904ee2 it read "· 2 before it, at an earlier rate" under "5 tagged postings in the ledger": the rent
+ * raised Aug 1 (hypothetical), whose Jun 16 payment the card posted as two.
+ */
 function eraDetail(input: {
   era: string;
   earlier: number;
+  earlierSplit: string;
   k: number;
   split: string;
   amounts: string;
   today: string;
 }): string {
-  const { era, earlier, k, split, amounts, today } = input;
+  const { era, earlier, earlierSplit, k, split, amounts, today } = input;
   const day = formatDayShortIn(era, today);
+  const was = earlierSplit === "" ? "" : ` (${earlierSplit})`;
   if (k === 0)
     return earlier === 1
-      ? `one payment, before ${day}, at an earlier rate`
-      : `${earlier} payments, all before ${day}, at an earlier rate`;
+      ? `one payment${was}, before ${day}, at an earlier rate`
+      : `${earlier} payments${was}, all before ${day}, at an earlier rate`;
   const since = `${k === 1 ? "one payment" : `${k} payments`} at the rate in force since ${day}`;
-  return `${since}${split === "" ? "" : ` (${split})`}: ${amounts} · ${earlier} before it, at an earlier rate`;
+  return `${since}${split === "" ? "" : ` (${split})`}: ${amounts} · ${earlier} before it${was}, at an earlier rate`;
+}
+
+/** "Jun 16's posted as 2" — each of `payments` the bank posted as several rows (`postedAsWord`); "" when none was */
+function splitWords(payments: readonly Occurrence[], today: string): string {
+  return payments
+    .flatMap((p) => {
+      const word = postedAsWord(p);
+      return word === null ? [] : [`${formatDayShortIn(p.postedOn, today)}'s ${word}`];
+    })
+    .join(", ");
+}
+
+/** "Jul 20", "Jul 20 and Aug 9", "Jul 20, Aug 9 and Sep 3" */
+function daysWords(days: readonly Occurrence[], today: string): string {
+  const named = days.map((o) => formatDayShortIn(o.postedOn, today));
+  return named.length < 3 ? named.join(" and ") : `${named.slice(0, -1).join(", ")} and ${named.at(-1)}`;
+}
+
+/**
+ * ⛔ The days whose rows net to $0.00 (`nettedToNothing`) — a charge and its same-day reversal, no payment — named
+ * after the payments are counted, so the words still account for every tagged row: " Nothing stayed paid on Jul 20:
+ * its 2 tagged postings net to $0.00, and are not counted." "" with none, as on every series of his ledger (a copy of
+ * it, 2026-10-12).
+ */
+function nettedWords(netted: readonly Occurrence[], today: string): string {
+  if (netted.length === 0) return "";
+  const rows = netted.reduce((sum, o) => sum + o.postings, 0);
+  const whose = netted.length === 1 ? "its" : "their";
+  const what =
+    rows === 1
+      ? `${whose} one tagged posting is $0.00`
+      : `${whose} ${rows} tagged postings net to $0.00${netted.length === 1 ? "" : " a day"}`;
+  return ` Nothing stayed paid on ${daysWords(netted, today)}: ${what}, ${notCounted(rows)}`;
+}
+
+/** …and its evidence line: "2 on Jul 20, netting to $0.00" — "" with none */
+function nettedDetail(netted: readonly Occurrence[], today: string): string {
+  if (netted.length === 0) return "";
+  const rows = netted.reduce((sum, o) => sum + o.postings, 0);
+  const net = rows === 1 ? "of $0.00" : `netting to $0.00${netted.length === 1 ? "" : " a day"}`;
+  return `${rows === 1 ? "one" : rows} on ${daysWords(netted, today)}, ${net}`;
 }
 
 /**
@@ -1949,16 +1997,21 @@ function recurringSeriesProvenance(db: AppDatabase, id: string, today: string): 
    * and why they are left out (`era`, `earlier`). With none at the rate in force now there is no average, and they say
    * so. A series whose rate never changed has no `era`: it reads exactly as it did.
    *
-   * ⚠️ The anecdote gate (`MIN_OCCURRENCES`) counts ROWS, `n`: detection (`analyzeGroup`) and the calendar's proven
-   * band (`lib/occurrence-verdict`) count rows against that same bar, and "below the 3 this app requires" names theirs.
-   * ⚖️ …but with an `era`, the PAYMENTS at the rate in force now (`seen`, §6A 63): what the amount stands on is what
-   * the average averages, and the cadence the rows prove is not what changed. 🔴 Gated on every rate's rows, his Netflix
-   * given a history through Jun 30, 2025 (hypothetical) read "adds up" on its ONE payment since — the 17 before got it
-   * past the 3, and one payment trivially agrees with itself (review of a64b99a, a copy of his ledger, 2026-10-12).
+   * ⛔ ONE COUNT: the anecdote gate (`MIN_OCCURRENCES`, `seen`) counts what the average averages — a series read per
+   * occurrence, its PAYMENTS at the rate in force now, with a rate change (§6A 63) or without one: what the amount
+   * stands on is what the average averages. 🔴 Gated on every rate's rows, his Netflix given a history through Jun 30,
+   * 2025 (hypothetical) read "adds up" on its ONE payment since — the 17 before got it past the 3, and one payment
+   * trivially agrees with itself (review of a64b99a, a copy of his ledger, 2026-10-12). 🔴 …and gated on rows with no
+   * rate change, three rows of two -$50.00 payments read "adds up" beside "All 2 payments … were -$50.00, exactly",
+   * and three rows of ONE "paid -$25.00 each time" (at 7904ee2). Detection (`analyzeGroup`) and the calendar's proven
+   * band (`scheduleIsProven`) still count rows against the same bar, for the cadence the rows prove; a pay series keeps
+   * its own (§6A 55): its rows with no rate change, the paydays its deposits paid with one.
    */
   const posted = postedAveragesBySeries(db, [series], today).get(id)!;
   const n = postings.length;
   const payments = posted.occurrences ?? postings.map((p) => ({ ...p, postings: 1 }));
+  // ⛔ days whose rows net to $0.00 — no payment, named so the words still account for every row (`nettedToNothing`)
+  const netted = posted.netted ?? [];
   /*
    * ⚖️ …and a pay series read per payday by what each deposit paid PER PAYDAY, at the rate in force now (§6A 55 —
    * `SeriesPostedAverage.perPayday`): its samples are what is counted, ranged and graded, as the average averages them.
@@ -1969,21 +2022,20 @@ function recurringSeriesProvenance(db: AppDatabase, id: string, today: string): 
   const k = paydays === null ? payments.length : paydays.samples.length;
   const distinct = new Set(paydays === null ? payments.map((p) => p.amountCents) : paydays.samples.map((s) => s.cents));
   const days = payments.map((p) => p.postedOn).sort();
-  // the payments — or deposits — of another rate than the one in force now, drawn on the page's Amount history but in
-  // no figure here
-  const earlier = paydays === null ? (posted.everyOccurrence?.length ?? k) - k : paydays.earlier;
+  // the payments of another rate than the one in force now, drawn on the page's Amount history but in no figure here
+  const countedDays = new Set(payments.map((p) => p.postedOn));
+  const before = (posted.everyOccurrence ?? []).filter((o) => !countedDays.has(o.postedOn));
+  // …or for pay, the deposits
+  const earlier = paydays === null ? before.length : paydays.earlier;
   // the day that rate began — null when no payment is left out, which every series whose rate never changed is
   const era = earlier > 0 ? posted.rateSince : null;
-  // what the anecdote gate counts — the rows, or with an `era` the payments at the rate in force now (§6A 63), and for
-  // pay the PAYDAYS its deposits since paid: a lump of four weeks is four paydays at the rate, though one sample
-  const seen = era === null ? n : paydays === null ? k : paydays.samples.reduce((sum, s) => sum + s.paydays, 0);
+  // what the anecdote gate counts (one count, above) — the payments the average averages, or for pay its rows, and
+  // with an `era` the PAYDAYS its deposits since paid: a lump of four weeks is four paydays at the rate, one sample
+  const seen = paydays === null ? k : era === null ? n : paydays.samples.reduce((sum, s) => sum + s.paydays, 0);
   // "Jun 16's posted as 2" — each payment the bank posted as several rows; empty when every row is a payment
-  const split = payments
-    .flatMap((p) => {
-      const word = postedAsWord(p);
-      return word === null ? [] : [`${formatDayShortIn(p.postedOn, today)}'s ${word}`];
-    })
-    .join(", ");
+  const split = splitWords(payments, today);
+  // every tagged row its own payment — nothing posted as several, nothing netted: the words count "tagged postings"
+  const oneRowEach = split === "" && netted.length === 0;
   const userSet = series.userAmountCents !== null;
   /*
    * ⛔ "adds up" is over the FIGURE graded — the amount on screen (`seriesAmountCents`): his, else detection's forecast.
@@ -2017,7 +2069,14 @@ function recurringSeriesProvenance(db: AppDatabase, id: string, today: string): 
             ? `it was ${formatCents([...distinct][0]!)}`
             : `every one of them ${formatCents([...distinct][0]!)}`
           : `${distinct.size} different amounts, ${formatCents(Math.min(...distinct))} to ${formatCents(Math.max(...distinct))}`;
-    const counted = split === "" ? amounts : `${k === 1 ? "one payment" : `${k} payments`} (${split}): ${amounts}`;
+    const counted = oneRowEach
+      ? amounts
+      : k === 0
+        ? "no payment"
+        : `${k === 1 ? "one payment" : `${k} payments`}${split === "" ? "" : ` (${split})`}: ${amounts}`;
+    // …and the rows that paid nothing, so the line adds up to the label: "· 2 on Jul 20, netting to $0.00"
+    const nothing = netted.length === 0 ? "" : ` · ${nettedDetail(netted, today)}`;
+    const earlierSplit = splitWords(before, today);
     sources.push({
       kind: "period",
       label: `${n} tagged ${n === 1 ? "posting" : "postings"} in the ledger`,
@@ -2026,9 +2085,7 @@ function recurringSeriesProvenance(db: AppDatabase, id: string, today: string): 
       detail:
         paydays !== null
           ? perPaydayDetail(paydays, era, today)
-          : era === null
-            ? counted
-            : eraDetail({ era, earlier, k, split, amounts, today }),
+          : `${era === null ? counted : eraDetail({ era, earlier, earlierSplit, k, split, amounts, today })}${nothing}`,
       // the first document's day, counted or not
       on: postings.map((p) => p.postedOn).sort()[0],
     });
@@ -2096,18 +2153,37 @@ function recurringSeriesProvenance(db: AppDatabase, id: string, today: string): 
       );
     // ⚖️ a pay series, per payday (§6A 55): what the average is of, the rows it leaves out, and the gate on them
     if (paydays !== null) return observedPerPayday({ evidence: paydays, era, seen, n, today });
+    // ⛔ …and after the payments, the rows that paid nothing — so the words account for every tagged row
+    const nothing = nettedWords(netted, today);
     // ⚖️ before the rows' gate: with an `era` the words count what the badge and the average count (§6A 63) — never
     // "Only 2 tagged postings have ever landed" beside an average of the one at the rate in force now
-    if (era !== null) return observedAtTodaysRate({ era, earlier, payments, split, distinct });
-    if (n < MIN_OCCURRENCES)
+    if (era !== null) return `${observedAtTodaysRate({ era, earlier, payments, split, distinct })}${nothing}`;
+    // every row its own payment: "Only 2 tagged postings", as it always read
+    if (oneRowEach && n < MIN_OCCURRENCES)
       return `Only ${n} tagged ${n === 1 ? "posting has" : "postings have"} ever landed — ${BELOW_A_PATTERN}.`;
+    if (k === 0) return `No payment of it has posted.${nothing}`;
+    // ⛔ the gate on what is counted (`seen`, one count): "That is 2 payments — below the 3 …", as with a rate change
+    const thin =
+      k < MIN_OCCURRENCES ? ` That is ${k === 1 ? "one payment" : `${k} payments`} — ${BELOW_A_PATTERN}.` : "";
+    if (k === 1) {
+      const only = payments[0]!;
+      const paid = formatCents(only.amountCents);
+      const word = postedAsWord(only);
+      const one =
+        netted.length === 0
+          ? `Its ${n} tagged postings are one payment, of ${paid} on ${readableDay(only.postedOn)}.`
+          : `Its one payment was ${paid}, on ${readableDay(only.postedOn)}${word === null ? "" : `, ${word}`}.`;
+      return `${one}${thin}${nothing}`;
+    }
     // every row its own payment: "5 tagged postings", as it always read; else "4 payments (5 tagged postings: …)"
-    if (k === 1)
-      return `Its ${n} tagged postings are one payment, of ${formatCents(payments[0]!.amountCents)} on ${readableDay(days[0]!)}.`;
-    const counted = split === "" ? `${k} tagged postings` : `${k} payments`;
-    const since = `since ${readableDay(days[0]!)}${split === "" ? "" : ` (${n} tagged postings: ${split})`}`;
-    if (distinct.size === 1) return `All ${counted} ${since} were ${formatCents([...distinct][0]!)}, exactly.`;
-    return `Its ${counted} ${since} were ${differentAmountsWords(distinct)}.`;
+    const counted = oneRowEach ? `${k} tagged postings` : `${k} payments`;
+    const rows = payments.reduce((sum, p) => sum + p.postings, 0);
+    const since = `since ${readableDay(days[0]!)}${split === "" ? "" : ` (${rows} tagged postings: ${split})`}`;
+    if (distinct.size === 1) {
+      const all = k === 2 ? "Both payments" : `All ${counted}`;
+      return `${all} ${since} were ${formatCents([...distinct][0]!)}, exactly.${thin}${nothing}`;
+    }
+    return `Its ${counted} ${since} were ${differentAmountsWords(distinct)}.${thin}${nothing}`;
   };
 
   /*

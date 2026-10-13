@@ -174,8 +174,26 @@ export interface Occurrence {
  * no due day of the calendar's is paid by Jun 16 at all. 🔴 Read as rows within the tolerance of a payment's first,
  * separate charges became one: on the e2e fixture after "Detect now", Chipotle's visits of Sep 19 and 21, 2025 (and
  * four more pairs) and Sweetgreen's lunches of Jan 20, 21 and 22, 2026 — each one sample of two or three meals.
+ *
+ * ⛔ A day whose rows net to $0.00 paid nothing — a charge and its same-day reversal — and is no payment: no sample, no
+ * bar, none the popover counts (`nettedToNothing` names it instead). 🔴 Summed as a day it was a payment of $0.00: his
+ * rent with a hypothetical -$50.00 charged and reversed on Jul 20 read "posted avg -$1,849.76 ± $1,036.68" over five.
  */
 export function occurrencesOf(rows: readonly Pick<ReadableRow, "postedOn" | "amountCents">[]): Occurrence[] {
+  return daysOf(rows).filter((o) => o.amountCents !== 0);
+}
+
+/**
+ * The days whose rows net to $0.00, oldest first — a charge and its same-day reversal: tagged postings that paid no
+ * payment (`occurrencesOf` leaves them out), named where the rows are counted so they still add up. None on his
+ * ledger (a copy of it, 2026-10-12).
+ */
+export function nettedToNothing(rows: readonly Pick<ReadableRow, "postedOn" | "amountCents">[]): Occurrence[] {
+  return daysOf(rows).filter((o) => o.amountCents === 0);
+}
+
+/** A day's rows summed, one per day, oldest first — what `occurrencesOf` and `nettedToNothing` divide between them. */
+function daysOf(rows: readonly Pick<ReadableRow, "postedOn" | "amountCents">[]): Occurrence[] {
   const byDay = new Map<string, Occurrence>();
   for (const r of rows) {
     const o = byDay.get(r.postedOn);

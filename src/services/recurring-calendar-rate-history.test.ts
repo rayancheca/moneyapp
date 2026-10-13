@@ -433,6 +433,33 @@ describe("the posted average — his series page, the All tab and the popover re
     });
   });
 
+  /*
+   * ⚖️ "The rate in force now" is TODAY's (§6A 55, §6A 63): a raise recorded on Oct 12 to start Nov 1 — $1,200.00
+   * from then, $1,141.92 through Oct 31 — is not in force yet. The popover counts from Aug 27, the start of the rate
+   * that is, and keeps its average: no future day is "the rate in force since". Measured on a copy of his ledger with
+   * that history (2026-10-12): the same words, and $1,141.92 on the page and the All tab.
+   */
+  test("a raise recorded ahead, from Nov 1: counted from Aug 27, the average kept — never 'since Nov 1'", () => {
+    addPaySeries("2026-07-23");
+    bundle.db
+      .update(recurringSeries)
+      .set({
+        userAmountCents: 120_000,
+        userAmountHistory: [...HISTORY, { throughOn: "2026-10-31", amountCents: WEEK }],
+      })
+      .where(eq(recurringSeries.id, PAY))
+      .run();
+    hisFour();
+    const p = provenanceFor(bundle.db, { kind: "recurringSeries", id: PAY, today: TODAY })!;
+    expect(p.headline).toContain(
+      "Per payday, its 2 deposits at the rate in force since Aug 27, 2026 (Sep 23's $4,567.68 paid 4 paydays) paid " +
+        "$1,141.92, exactly. Its 2 deposits before Aug 27, 2026 were at an earlier rate, and are not counted. ⚠️ The " +
+        "ledger's own average of what actually posted is $1,141.92, which is not what you set.",
+    );
+    expect(JSON.stringify(p)).not.toMatch(/Nov 1|no average/);
+    expect([surfaces().pageAvg, surfaces().allTab]).toEqual([WEEK, WEEK]);
+  });
+
   /* Before the history is written there is one era: Jun 4's cash week is a payday of it, Jun 5's $400.00 none. */
   test("before the history is written: per payday, two amounts, the average inside them, Jun 5 left out", () => {
     addPaySeries("2026-07-23");

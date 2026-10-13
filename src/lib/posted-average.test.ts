@@ -2,6 +2,7 @@ import { describe, expect, test } from "vitest";
 import { paydayReadings, type PaydayReading } from "./per-payday";
 import {
   atTodaysRate,
+  nettedToNothing,
   occurrencesOf,
   perPaydayEvidence,
   postedAsWord,
@@ -223,6 +224,45 @@ describe("occurrencesOf — a day's rows are one payment", () => {
 
   test("a payment posted as several says so; one posted whole says nothing", () => {
     expect(occurrencesOf(RENT_ROWS).map(postedAsWord)).toEqual(["posted as 2", null, null, null]);
+  });
+});
+
+/**
+ * ⛔ A day whose rows net to $0.00 paid nothing: a charge and its same-day reversal are no payment — no sample of the
+ * average, no bar of the Amount history, no payment the popover counts — and are named for what they are instead
+ * (`nettedToNothing`). 🔴 Summed as a day, they were one more payment, of $0.00: his rent with a -$50.00 charge and its
+ * reversal on Jul 20 (hypothetical — no day on his ledger nets to $0.00, a copy of it 2026-10-12) averaged -$1,849.76
+ * ± $1,036.68 over five "payments" at 7904ee2 — the very mean a row-by-row reading printed before payments were read.
+ */
+describe("occurrencesOf — a day that nets to $0.00 is no payment", () => {
+  const REVERSED = [
+    ...RENT_ROWS,
+    ...rowsOf([
+      ["2026-07-20", -5_000],
+      ["2026-07-20", 5_000],
+    ]).map((r) => ({ ...r, id: `rev-${r.id}` })),
+  ];
+
+  test("his rent's four payments, without Jul 20's charge and its reversal", () => {
+    expect(occurrencesOf(REVERSED)).toEqual(occurrencesOf(RENT_ROWS));
+    expect(nettedToNothing(REVERSED)).toEqual([{ postedOn: "2026-07-20", amountCents: 0, postings: 2 }]);
+  });
+
+  test("…so the average is the four payments' — -$2,312.20 ± $85.27, not -$1,849.76 over five", () => {
+    expect(postedAverage(REVERSED, PER_OCCURRENCE, FLAT, TODAY)).toEqual({ avgCents: -231_220, stddevCents: 8_527 });
+  });
+
+  test("a charge partly reversed the same day is the payment it nets to", () => {
+    const partly = rowsOf([
+      ["2026-07-20", -5_000],
+      ["2026-07-20", 2_000],
+    ]);
+    expect(occurrencesOf(partly)).toEqual([{ postedOn: "2026-07-20", amountCents: -3_000, postings: 2 }]);
+    expect(nettedToNothing(partly)).toEqual([]);
+  });
+
+  test("a series whose every day paid something has nothing netted", () => {
+    expect(nettedToNothing(RENT_ROWS)).toEqual([]);
   });
 });
 

@@ -5,6 +5,7 @@ import { transactions } from "@/db/schema/transactions";
 import { paydayReadings, type ReadableRow } from "@/lib/per-payday";
 import {
   atTodaysRate,
+  nettedToNothing,
   occurrencesOf,
   perPaydayEvidence,
   postedAverage,
@@ -40,6 +41,12 @@ export interface SeriesPostedAverage extends PostedAverage {
    * page read "each of the 5 posted occurrences" under a Per charge of four (review of af5b0fa, 2026-10-12).
    */
   everyOccurrence: readonly Occurrence[] | null;
+  /**
+   * The days whose tagged rows net to $0.00, at every rate, oldest first (`nettedToNothing`) — a charge and its
+   * same-day reversal, no payment of `everyOccurrence`: what the popover names so its counts add up to the rows; null
+   * where `occurrences` is.
+   */
+  netted: readonly Occurrence[] | null;
   /**
    * What a series read per payday (`readsPerPayday`) averages, and the rows it leaves out (`perPaydayEvidence`, §6A
    * 55): ⛔ what the popover's sentence counts and ranges beside this average; null for a series read otherwise.
@@ -108,6 +115,7 @@ export function postedAveragesBySeries(
       // ⚖️ the payments the average is of — `postedAverage` reads them by this same rule (§6A 63)
       occurrences: every === null ? null : atTodaysRate(every, schedule, today),
       everyOccurrence: every,
+      netted: reading.per === "occurrence" ? nettedToNothing(rows) : null,
       // ⚖️ …and a pay series' paydays — `postedAverage` reads them by this same rule (§6A 55)
       perPayday: reading.per === "payday" ? perPaydayEvidence(rows, reading.readings, schedule, today) : null,
       rateSince: currentRateSince(schedule, today),
