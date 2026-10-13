@@ -1,5 +1,7 @@
 import type { BlastRadiusLine } from "@/components/ui/blast-radius";
+import type { SeriesKind } from "@/db/schema/recurring";
 import { arrearsClause } from "@/lib/arrears-reading";
+import { postingOf } from "@/lib/series-evidence";
 import type { SeriesDetail } from "@/services/recurring-detail";
 import { longDate } from "./labels";
 
@@ -39,8 +41,15 @@ import { longDate } from "./labels";
  * (review of 2e6c74b, 2026-10-08; Netflix due Jul 1, its card read through
  * Jul 5). ⛔ The card's split, the runway's (`arrearsClause`), built from the
  * page's data in one place (`seriesEndInput`).
+ *
+ * 🔴 …AND IT CALLED HIS PAY'S DEPOSITS CHARGES. On a copy of his ledger (2026-10-12) asked about 2026-11-12, his pay's
+ * dialog (It America LLC, weekly) read "Upcoming charges off the calendar: every charge from Nov 12, 2026 on" over
+ * "Nothing is deleted — the charges stay in your ledger" (review of 49cc98f, item (4)'s sweep). What it loses and
+ * keeps is worded by its kind (`postingOf`), as the page's "Nothing expected" card is; a bill's lines read as before.
  */
 export interface SeriesEndInput {
+  /** what one posting is called — deposits of pay, transfers of money moved, charges of the rest (`postingOf`) */
+  kind: SeriesKind;
   /** a year at today's amounts, or null when the series cannot carry one */
   annualizedCents: number | null;
   /** arrears magnitude — 0 when nothing is late; disjoint from the tail below */
@@ -59,9 +68,10 @@ export interface SeriesEndInput {
 
 /** The page's own data as the dialog's input — every field from the figure the page itself prints. */
 export function seriesEndInput(
-  data: Pick<SeriesDetail, "annualizedCents" | "overdue" | "nextExpected" | "endsOn" | "linkedTxns">,
+  data: Pick<SeriesDetail, "kind" | "annualizedCents" | "overdue" | "nextExpected" | "endsOn" | "linkedTxns">,
 ): SeriesEndInput {
   return {
+    kind: data.kind,
     annualizedCents: data.annualizedCents,
     overdueCents: Math.abs(data.overdue?.amountCents ?? 0),
     overdueUnreadCents: data.overdue?.unreadCents ?? 0,
@@ -77,18 +87,25 @@ export function seriesEndInput(
 function upcomingValue(input: SeriesEndInput): string {
   if (input.nextChargeOn === null) return "none scheduled";
   const from = longDate(input.nextChargeOn);
+  const { noun } = postingOf(input.kind);
   return input.endsOn === null
-    ? `every charge from ${from} on`
-    : `every charge from ${from} to ${longDate(input.endsOn)}`;
+    ? `every ${noun} from ${from} on`
+    : `every ${noun} from ${from} to ${longDate(input.endsOn)}`;
+}
+
+/** The dialog's last word: nothing is deleted — what it posted stays, in its kind's noun ("the deposits" of his pay). */
+export function seriesEndReassurance(input: Pick<SeriesEndInput, "kind">): string {
+  return `Nothing is deleted — the ${postingOf(input.kind).nouns} stay in your ledger, and Confirm brings the series back if it starts again.`;
 }
 
 export function seriesEndLines(
   input: SeriesEndInput,
   formatCents: (cents: number) => string,
 ): BlastRadiusLine[] {
+  const { nouns } = postingOf(input.kind);
   const overdueValue =
     input.overdueCount > 1
-      ? `${formatCents(input.overdueCents)} across ${input.overdueCount} charges`
+      ? `${formatCents(input.overdueCents)} across ${input.overdueCount} ${nouns}`
       : formatCents(input.overdueCents);
   const reading = { owedCents: input.overdueCents, unreadCents: input.overdueUnreadCents };
   return [
@@ -105,7 +122,7 @@ export function seriesEndLines(
     ...(input.overdueCents > 0
       ? [{ label: `Already due this month, ${arrearsClause(reading, "not posted")}`, value: overdueValue }]
       : []),
-    { label: "Upcoming charges off the calendar", value: upcomingValue(input) },
+    { label: `Upcoming ${nouns} off the calendar`, value: upcomingValue(input) },
     {
       label: "Linked transactions kept",
       value: `${input.linkedCount} ${input.linkedCount === 1 ? "transaction" : "transactions"}`,

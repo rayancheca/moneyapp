@@ -10,10 +10,12 @@ import { seedDatabase } from "@/db/seed";
 import { recurringSeries, SERIES_STATUSES } from "@/db/schema/recurring";
 import { transactions } from "@/db/schema/transactions";
 import { dedupeHash } from "@/lib/hash";
+import { formatCents } from "@/lib/money";
 import { resolveViewState } from "@/lib/view-state";
 import { seedHisCarSeries, type OneChargeLedger } from "@/services/one-charge-fixture";
 import { seedHisRent, type RentLedger } from "@/services/rent-fixture";
 import { seriesDetail } from "@/services/recurring-detail";
+import { seriesEndInput, seriesEndLines, seriesEndReassurance } from "./end-radius";
 import { RECURRING_SERIES_VIEW_SPEC } from "./recurring-view-spec";
 
 // rendering never navigates or submits; the page and its controls only need these to exist
@@ -319,5 +321,35 @@ describe("SeriesDetail — his ended payroll's page keeps its deposits, not its 
     expect(text).toContain("Nothing expected");
     expect(text).toContain("This series has ended, so nothing more is expected from it. Its deposits below stay in the ledger.");
     expect(text).not.toContain("Its charges");
+  });
+
+  /* 🔴 …and the same page's stat read "Per charge +$762.00" — his live pay's "Per charge +$1,141.92" (the copy, 11-12) */
+  test("its amount is per deposit, and nothing on the page calls a deposit a charge", () => {
+    const text = pageWords();
+    expect(text).toContain("Per deposit");
+    expect(text).not.toMatch(/charge/i);
+  });
+
+  // the End dialog renders only once opened, so its words are asked of the input the page builds them from
+  test("its End dialog loses and keeps deposits — from the page's own data", () => {
+    const input = seriesEndInput(seriesDetail(bundle.db, payId, TODAY));
+    const said = [...seriesEndLines(input, formatCents).map((l) => `${l.label}: ${l.value}`), seriesEndReassurance(input)];
+    expect(said).toContain("Upcoming deposits off the calendar: none scheduled");
+    expect(said).toContain(
+      "Nothing is deleted — the deposits stay in your ledger, and Confirm brings the series back if it starts again.",
+    );
+    expect(said.join(" · ")).not.toMatch(/charge/i);
+  });
+
+  test("merged into his current pay, its deposits live there now", () => {
+    const into = bundle.db
+      .insert(recurringSeries)
+      .values({ name: "It America LLC (weekly pay)", kind: "income", cadence: "weekly", status: "confirmed" })
+      .returning({ id: recurringSeries.id })
+      .get().id;
+    bundle.db.update(recurringSeries).set({ mergedIntoId: into }).where(eq(recurringSeries.id, payId)).run();
+    const text = pageWords();
+    expect(text).toContain("This series was merged into It America LLC (weekly pay) . Its deposits live there now.");
+    expect(text).not.toMatch(/charge/i);
   });
 });

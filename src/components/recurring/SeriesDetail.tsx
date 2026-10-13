@@ -4,11 +4,12 @@ import { useState, useTransition } from "react";
 import {
   SERIES_EVIDENCE_LABEL,
   noScheduleReason,
+  postingOf,
   seriesCanBeReshaped,
   seriesEvidenceTone,
 } from "@/lib/series-evidence";
 import { billedWithLabel, carriesPhrase } from "@/lib/billed-with";
-import { seriesEndInput, seriesEndLines } from "./end-radius";
+import { seriesEndInput, seriesEndLines, seriesEndReassurance } from "./end-radius";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { renameSeriesAction, setSeriesStatusAction } from "@/app/recurring/actions";
@@ -129,6 +130,11 @@ export function SeriesDetail({
   const isLive = seriesCanBeReshaped(data.status);
   // why nothing is expected, in its kind's words — "Its deposits below" of his pay (`noScheduleReason`)
   const nothingExpected = noScheduleReason(data.status, data.evidence, data.kind);
+  /* What one posting is called on this page — "Per deposit", "Its deposits live there now" of his pay (`postingOf`).
+     🔴 His pay's page read "Per charge +$1,141.92" (a copy of his ledger, 2026-10-12, review of 49cc98f). */
+  const posting = postingOf(data.kind);
+  // the End dialog's lines and last word, from the page's own data in one place (`seriesEndInput`)
+  const endInput = seriesEndInput(data);
 
   function setStatus(status: "confirmed" | "dismissed" | "ended", label: string): void {
     void setSeriesStatusAction({ seriesId: data.id, status }).then((r) => {
@@ -263,9 +269,8 @@ export function SeriesDetail({
             headline: `${data.name} stops being expected: it leaves the forecast, the recurring calendar, and every budget's expected tail.`,
             // the arrears — said as far as the ledger has read them, as the card below says them — the span and the
             // kept rows; see `seriesEndLines`
-            lines: seriesEndLines(seriesEndInput(data), formatCents),
-            reassurance:
-              "Nothing is deleted — the charges stay in your ledger, and Confirm brings the series back if it starts again.",
+            lines: seriesEndLines(endInput, formatCents),
+            reassurance: seriesEndReassurance(endInput),
           }}
         />
       ) : null}
@@ -276,7 +281,7 @@ export function SeriesDetail({
           <Link href={`/recurring/${data.mergedInto.id}`} className="font-medium text-accent hover:underline">
             {data.mergedInto.name}
           </Link>
-          . Its charges live there now.
+          . Its {posting.nouns} live there now.
         </p>
       ) : null}
 
@@ -325,7 +330,7 @@ export function SeriesDetail({
             {/* the badge goes on PER CHARGE, the figure the forecast actually
                 publishes. "Annualized" is that number multiplied out, so a
                 second badge would answer one question twice. */}
-            <Stat label="Per charge" provenance={provenance}>
+            <Stat label={`Per ${posting.noun}`} provenance={provenance}>
               {data.nextExpectedAmountCents !== null ? (
                 <>
                   <Money cents={data.nextExpectedAmountCents} flow />
