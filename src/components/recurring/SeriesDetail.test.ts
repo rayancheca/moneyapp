@@ -185,6 +185,52 @@ describe("SeriesDetail — a schedule of one charge reads once, on its own page"
     expect(text).toContain("Ends Jan 5, 2027");
     expect(text).not.toContain("Its schedule has ended");
   });
+
+  /*
+   * 🔴 Review of 7a3c702 — the same end with the date DETECTION stores: reset to detected after Dec 11 posted, the
+   * anchor is a step past it, Jan 11 (`stepFrom(last.postedOn, plan, 1)`), past the Jan 5 end. On a copy of his ledger
+   * set up so, the page read "Ends Jan 5, 2027" beside "Its schedule has ended" on Dec 12 and Jan 5, and "Ended Jan 5,
+   * 2027" from Jan 6. The tests above typed the anchor, so none had asked.
+   */
+  test.each(["2026-12-12", "2027-01-05", "2027-01-06"])(
+    "%s, detection's anchor a step past the end: 'Ended Dec 11, 2026', as with a typed one",
+    (today) => {
+      his.charge("2026-12-11", -35758, his.insuranceId);
+      bundle.db
+        .update(recurringSeries)
+        .set({
+          userNextExpectedOn: null,
+          nextExpectedOn: "2027-01-11",
+          lastMatchedOn: "2026-12-11",
+          userEndsOn: "2027-01-05",
+        })
+        .where(eq(recurringSeries.id, his.insuranceId))
+        .run();
+      const text = words(pageOn(his.insuranceId, today));
+      expect(text).toContain("Its schedule has ended");
+      expect(text).toContain("Ended Dec 11, 2026");
+      expect(text).not.toContain("Ends Jan 5, 2027");
+      expect(text).not.toContain("Ended Jan 5, 2027");
+    },
+  );
+
+  /*
+   * ⚖️ §6A 56 (2026-10-08): ONE charge reads once, wherever its schedule is spelled — the End dialog's too. 🔴 Review of
+   * 7a3c702: on his ledger copy 2026-10-13 the balance's dialog read "Upcoming charges off the calendar: every charge
+   * from Nov 11, 2026 to Nov 11, 2026", a span of one day, one click from "charges once on Nov 11".
+   */
+  test("the balance's End dialog: its one charge 'once on Nov 11, 2026', never a span from a day to itself", () => {
+    const said = seriesEndLines(seriesEndInput(seriesDetail(bundle.db, his.balanceId, TODAY)), formatCents).map(
+      (l) => `${l.label}: ${l.value}`,
+    );
+    expect(said).toContain("Upcoming charges off the calendar: once on Nov 11, 2026");
+    expect(said.join(" · ")).not.toContain("every charge");
+    // Car insurance, two charges left, still names its span
+    const insurance = seriesEndLines(seriesEndInput(seriesDetail(bundle.db, his.insuranceId, TODAY)), formatCents);
+    expect(insurance.map((l) => `${l.label}: ${l.value}`)).toContain(
+      "Upcoming charges off the calendar: every charge from Dec 11, 2026 to Jan 11, 2027",
+    );
+  });
 });
 
 /*

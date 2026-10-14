@@ -945,7 +945,7 @@ describe("seriesEndBadge — the end in the tense of the schedule", () => {
     expect(seriesEndBadge("2026-11-11", "2026-11-11", "2026-11-12")).toBe("Ended Nov 11, 2026");
   });
 
-  test("a schedule that held no date: the end day's own tense", () => {
+  test("no day it ran out (no date to step from): the end day's own tense", () => {
     expect(seriesEndBadge("2027-01-05", null, "2027-01-06")).toBe("Ended Jan 5, 2027");
   });
 });

@@ -747,7 +747,7 @@ describe("scheduleRanOutOn — the day a closed schedule ran out", () => {
     userEndsOn: null as string | null,
   };
 
-  test("its last date on or before the end — null while one is to come, or when it held none", () => {
+  test("its last date on or before the end — null while one is to come, or with no end", () => {
     const mid = { ...row, userNextExpectedOn: "2026-12-11", userEndsOn: "2027-01-05" };
     expect(scheduleRanOutOn(mid, "2026-12-11")).toBeNull(); // Dec 11 is still to come today
     for (const day of ["2026-12-12", "2027-01-05", "2027-01-06", "2027-03-01"]) {
@@ -758,9 +758,33 @@ describe("scheduleRanOutOn — the day a closed schedule ran out", () => {
     // a weekly schedule stepped by days: Thursdays from Oct 1, ending Sunday Oct 18 → Oct 15
     const weekly = { ...row, cadence: "weekly" as const, userNextExpectedOn: "2026-10-01", userEndsOn: "2026-10-18" };
     expect(scheduleRanOutOn(weekly, "2026-10-16")).toBe("2026-10-15");
-    // no end, or an anchor past its end: nothing to name
+    // no end: nothing to name
     expect(scheduleRanOutOn({ ...mid, userEndsOn: null }, "2027-03-01")).toBeNull();
-    expect(scheduleRanOutOn({ ...mid, userNextExpectedOn: "2027-02-11" }, "2027-03-01")).toBeNull();
+  });
+
+  /*
+   * 🔴 Review of 7a3c702: detection stores its anchor one step AFTER the last posting (`stepFrom(last.postedOn, plan,
+   * 1)`), so once Dec 11 posted, Car insurance's detected anchor (a reset to detected) was Jan 11 — past a Jan 5 end —
+   * and the forward step found no date: "Ends Jan 5, 2027" came back beside "Its schedule has ended" (a copy of his
+   * ledger, asked about 2026-12-12 and 2027-01-05), and "Ended Jan 5, 2027" from Jan 6 where the unposted shape read
+   * "Ended Dec 11, 2026". The day it ran out is the anchor's rhythm stepped BACK to the end.
+   */
+  test("detection's anchor, a step past the end once the last charge posted: the day it ran out, stepped back", () => {
+    const detected = { ...row, nextExpectedOn: "2027-01-11", userEndsOn: "2027-01-05" };
+    for (const day of ["2026-12-12", "2027-01-05", "2027-01-06", "2027-03-01"]) {
+      expect(scheduleRanOutOn(detected, day), day).toBe("2026-12-11");
+    }
+    // the same day as the unposted shape, whose anchor still holds Dec 11
+    expect(scheduleRanOutOn({ ...detected, nextExpectedOn: "2026-12-11" }, "2026-12-12")).toBe("2026-12-11");
+    // a typed anchor past its end, as it reads after its rhythm's last day has come
+    const typedPast = { ...row, userNextExpectedOn: "2027-02-11", userEndsOn: "2027-01-05" };
+    expect(scheduleRanOutOn(typedPast, "2027-03-01")).toBe("2026-12-11");
+  });
+
+  test("…but never a day still to come: a typed anchor past its end, its rhythm's last day ahead, names none", () => {
+    // typed Feb 11 on a Jan 5 end, asked Oct 13: the rhythm's Dec 11 has not come — no day it RAN OUT
+    const typedPast = { ...row, userNextExpectedOn: "2027-02-11", userEndsOn: "2027-01-05" };
+    expect(scheduleRanOutOn(typedPast, "2026-10-13")).toBeNull();
   });
 });
 

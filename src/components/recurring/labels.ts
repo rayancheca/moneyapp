@@ -884,7 +884,9 @@ export function annualizedEndNote(endsOn: string | null, today: string): string 
  * the day is the one it ran out — and stays that day after the end has passed, never jumping to the end on Jan 6.
  * Where the two are one day (the Nov 11 balance, Car insurance's Jan 11) it reads as it did.
  *
- * ⚠️ A schedule that held no date at all (an anchor past its end) has no day it ran out: the end day's tense, as before.
+ * ⚠️ No day it ran out — no date to step from, or an anchor TYPED past its end whose rhythm's last day is still ahead
+ * (`scheduleRanOutOn`; a detected anchor past its end, a step after the last posting, ran out on that posting's day):
+ * the end day's tense.
  */
 export function seriesEndBadge(endsOn: string, ranOutOn: string | null, today: string): string {
   const ended = SERIES_EVIDENCE_LABEL["schedule-ended"];
