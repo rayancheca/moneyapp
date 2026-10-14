@@ -428,10 +428,10 @@ export function cashEarningsReadings(
      * the recurring calendar and /budgets open on. A schedule with no evidence at all has no life to bound, so it
      * implies nothing rather than implying everything since the epoch.
      *
-     * 🔴 It was the first deposit's own date, walked by the deposits' rhythm. On the e2e fixture Paycheck's deposits
-     * fall on the other Fridays of its biweekly anchor: this card counted "14 paydays, Jan 2 – Jul 3" while the
-     * calendar drew Jan 9 … Jun 26 and the settlement walked only from Jul 10. On his ledger the card counted his cash
-     * weeks from Jun 4 and no other page drew one before Jul 23.
+     * 🔴 It was the first deposit's own date, walked by the deposits' rhythm. On the e2e fixture, whose Paycheck was
+     * then anchored Fri Jul 10 — a week off its deposits' Fridays (their own Jul 17 since 8ef2fc5) — this card counted
+     * "14 paydays, Jan 2 – Jul 3" while the calendar drew Jan 9 … Jun 26 and the settlement walked only from Jul 10. On
+     * his ledger the card counted his cash weeks from Jun 4 and no other page drew one before Jul 23.
      */
     const startedOn = firstPaydayOn(eff, s.toleranceDays, banked, today);
     if (startedOn === null) continue;

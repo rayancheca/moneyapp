@@ -325,8 +325,9 @@ describe("his ledger — the income card and settlement name the same paydays, f
 });
 
 /**
- * The e2e fixture's shape: a biweekly Paycheck anchored Fri Jul 10, 2026, whose deposits fall on the OTHER Fridays.
- * The card counted the deposits' Fridays; the calendar and /budgets the anchor's. One universe: the anchor's.
+ * The e2e fixture's shape until 8ef2fc5: a biweekly Paycheck anchored Fri Jul 10, 2026, whose deposits fell on the
+ * OTHER Fridays (it is anchored on their own Jul 17 now). The card counted the deposits' Fridays; the calendar and
+ * /budgets the anchor's. One universe: the anchor's.
  */
 describe("deposits a week off the anchor's rhythm — the anchor's rhythm, walked back to them", () => {
   const TODAY = "2026-07-08";

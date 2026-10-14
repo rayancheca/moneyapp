@@ -169,8 +169,8 @@ export interface PaydayRhythm {
  * 🔴 TWO PAYDAY UNIVERSES. Earned vs banked counted from the first DEPOSIT; the settlement, the calendar and /budgets
  * from the stored ANCHOR — `stepsToReach` never walks back. On his ledger (2026-10-08) the card earned June's cash
  * weeks from Jun 4, while the calendar drew no payday before detection's Jul 23 and Jun 4's $1,047.00 read "toward no
- * payday"; on the e2e fixture, whose Paycheck deposits fall on the other Fridays of its biweekly anchor, the card
- * counted one Friday and the calendar the next.
+ * payday"; on the e2e fixture, whose Paycheck was then anchored a week off its deposits (Fri Jul 10 against the ACME
+ * Fridays; Jul 17, their own rhythm, since 8ef2fc5), the card counted one Friday and the calendar the next.
  *
  * Why the first deposit less the TOLERANCE: a deposit answers a payday within the tolerance before it (settlement's
  * anchor clause), so the first payday it can have been for is the first one in that reach. And only BACK — an anchor

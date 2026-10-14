@@ -502,7 +502,8 @@ async function seedMissingCards(db: AppDatabase): Promise<void> {
         amountCentsAvg: -128_00,
         /*
          * ⚠️ The 26th, not the 24th. On the 24th it shared a calendar day with a
-         * payday and the cell collapsed to one signed total ("2.8k Paycheck +1"),
+         * payday of Paycheck's old Jul 10 anchor (its paydays are Jul 3, 17 and 31
+         * since 8ef2fc5) and the cell collapsed to one signed total ("2.8k Paycheck +1"),
          * which broke `recurring-schedule`'s premise that every monthly series
          * sits on its own day of month — a fixture should not manufacture the
          * collision a spec exists to rule out.
