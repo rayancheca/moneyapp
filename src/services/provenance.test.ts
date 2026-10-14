@@ -3701,6 +3701,27 @@ describe("⚖️ decision 72 — a total over days its accounts have not been im
     expect(allSpend().partlyRead?.line).toBe("spending imported through Jul 30 · 1 day of this period unaccounted");
   });
 
+  /*
+   * ⛔ …and an EMPTY window is asked against it too. The empty branch asked the ledger's newest day, so a window with no
+   * row and not one day read by all spending's day read "zero rather than unproven" — 🔴 on his ledger copy 2026-10-13
+   * (review of 2fce458) `/spending` over Sep 13 – 22: "No rows in Sep 13 – 22, 2026 … so this total is zero rather than
+   * unproven", the ledger reaching Sep 24 on Wells Fargo while every card he spends from stops by Sep 12. The empty
+   * state under it is asked against the same day (`spendingEmptyCopy`), and §6A 64 calls that window a dash.
+   */
+  test("an empty window past that day is no measured zero — the empty proof is asked against it", () => {
+    cardThrough("2026-07-20");
+    readThrough(addAccount("b", "Wells Fargo", "checking"), "2026-07-31");
+    expect(spendingReadThrough(bundle.db, "2026-10-13")).toBe("2026-07-20");
+    const p = allSpend({ from: "2026-07-22", to: "2026-07-25" });
+    expect(p.verdict).toBe("unknown");
+    expect(p.headline).toBe(
+      "Nothing has been imported for 4 days between Jul 22, 2026 and Jul 25, 2026, so this zero is a window nobody has " +
+        "looked at rather than a measurement.",
+    );
+    // a window it has read keeps its measured zero
+    expect(allSpend({ from: "2026-07-11", to: "2026-07-19" }).headline).toMatch(/so this total is zero rather than unproven\.$/);
+  });
+
   test("…and there is none on a ledger of cash wallets alone, where no statement could ever move it", () => {
     const wallet = createCashWallet(bundle.db, { name: "Cash on Hand", openingOn: "2026-07-01", openingBalanceCents: 50_000 });
     addManualTransaction(bundle.db, { accountId: wallet, postedOn: "2026-07-10", amountCents: -1_000, description: "Lunch", categoryId: food });

@@ -165,4 +165,14 @@ describe("a period read only in part says so under Where it went, in the proof's
     expect(source).toMatch(/const readThrough = spendingReadThrough\(db, today\);/);
     expect(source).not.toMatch(/\bspendingCoverageThrough\(/);
   });
+
+  /*
+   * 🔴 …and the empty state called the same days "a measured zero": on his ledger copy 2026-10-13 (review of 2fce458)
+   * `?period=2026-09-15`, `?period=W2026-09-14` and `?from=2026-09-13&to=2026-09-22` read "This window sits inside what
+   * has been imported … a measured zero", asked against the ledger's newest row (Sep 24), while the heatmap's sheet for
+   * Sep 15 said "That is not the same as nothing happening". It is handed the page's one read of the day.
+   */
+  test("the empty state is handed that day too", () => {
+    expect(source).toMatch(/spendingEmptyCopy\(db, range, \{[^}]*\bspendingReadThrough: readThrough,/);
+  });
 });

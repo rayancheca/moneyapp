@@ -328,7 +328,8 @@ export default async function SpendingPage({
   // both ends of the ledger, read once: the empty state and the heatmap ask them
   const opens = ledgerOpens(db);
   const reaches = ledgerReaches(db);
-  // ⚖️ decision 72: the day the period's proof counts its unaccounted days from — the heatmap's days are read against it
+  // ⚖️ decision 72: the day the period's proof counts its unaccounted days from — the heatmap's days are read against
+  // it, and an empty window is asked against it (decision 64: no day read and no row is no measured zero)
   const readThrough = spendingReadThrough(db, today);
   const emptyCopy = hasActivity
     ? null
@@ -337,6 +338,7 @@ export default async function SpendingPage({
         label: period.label,
         ledgerOpens: opens,
         ledgerReaches: reaches,
+        spendingReadThrough: readThrough,
         formatDay: formatDayLong,
       });
 

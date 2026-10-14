@@ -2,7 +2,9 @@ import { describe, expect, test } from "vitest";
 import {
   budgetCoverageFact,
   budgetCoverageSentence,
+  nothingFoundSoFar,
   readThroughSentence,
+  spendingNotFoundFact,
   spendUnread,
   spentOnlyFromCashWallets,
   type BudgetCoverageInput,
@@ -218,5 +220,57 @@ describe("a category with no import day of its own names the day its page counts
   test("a category with a day of its own, or spent only from cash, never names another's", () => {
     expect(budgetCoverageFact(input({ borrowedDay: fees }))).toBe("spending imported through Sep 2");
     expect(budgetCoverageFact(dormant({ spentFromWallets: 1, borrowedDay: fees }))).toBe("spent only from a cash wallet since Apr 1");
+  });
+});
+
+/*
+ * ⚖️ Decisions 64 + 72 for a window of ALL his spending that is no total — one cash-flow bucket, one heatmap day: where it
+ * holds no spending row and not one of its elapsed days is read by the day every account he spends from is imported
+ * through, its Spent is "—", and this is why. 🔴 Measured on his ledger copy 2026-10-13 (review of 2fce458):
+ * `/spending?period=2026-09` — all spending read through Aug 12, the ledger through Sep 24 — tabled Sep 13 … Sep 22
+ * "$0.00 $0.00 $0.00" and Sep 23 "Spent $0.00" beside its $4,567.68, under a heatmap calling those days unaccounted.
+ */
+describe("spendingNotFoundFact — a window past the day all his spending is read through, with none found in it", () => {
+  const READ = "2026-08-12";
+  const window = { today: "2026-10-13", ledgerOpens: "2022-08-25", readThrough: READ, spentCents: 0 };
+  const day = (iso: string, over: Partial<Parameters<typeof spendingNotFoundFact>[0]> = {}) =>
+    spendingNotFoundFact({ ...window, from: iso, to: iso, ...over });
+
+  test("the day it is read through is a measurement; the day after it names that day", () => {
+    expect(day("2026-08-12")).toBeNull();
+    expect(day("2026-08-13")).toBe("spending imported through Aug 12");
+  });
+
+  test("a window holding spending keeps its figure, however little of it is read", () => {
+    expect(day("2026-09-05", { spentCents: 7_121 })).toBeNull();
+  });
+
+  test("a window with one day of its own read is a lower bound, not a dash", () => {
+    expect(spendingNotFoundFact({ ...window, from: "2026-08-12", to: "2026-08-20" })).toBeNull();
+    expect(spendingNotFoundFact({ ...window, from: "2026-08-13", to: "2026-08-20" })).toBe("spending imported through Aug 12");
+  });
+
+  test("a running window counts only the days that have happened", () => {
+    const october = { ...window, from: "2026-10-01", to: "2026-10-31" };
+    expect(spendingNotFoundFact(october)).toBe("spending imported through Aug 12");
+    // read through today: every elapsed day is read, and the days still to come are no part of the claim
+    expect(spendingNotFoundFact({ ...october, readThrough: "2026-10-13" })).toBeNull();
+  });
+
+  test("a window that has not begun has not happened — that is not this", () => {
+    expect(day("2026-10-20")).toBeNull();
+  });
+
+  /* ⚖️ a ledger of cash wallets alone has no day a statement could move (2026-09-15): nothing is waited for */
+  test("with no day to read against there is nothing to wait for", () => {
+    expect(day("2026-08-13", { readThrough: null })).toBeNull();
+  });
+
+  test("a read day outside the window's year carries its year", () => {
+    expect(day("2027-01-05", { today: "2027-01-20", readThrough: "2026-12-30" })).toBe("spending imported through Dec 30, 2026");
+  });
+
+  test("the words a cell, a tooltip or a sheet prints for it", () => {
+    expect(nothingFoundSoFar("spending imported through Aug 12")).toBe("nothing found so far — spending imported through Aug 12");
   });
 });

@@ -2505,12 +2505,11 @@ function categoryPartlyRead(db: AppDatabase, categoryId: string, from: string, t
  * forever would be a claim no statement could correct.
  *
  * ⛔ Asked through `spendingReadThrough`, the day /spending's heatmap reads its days against too — one day for the page.
+ * The caller reads it once (`allSpendProvenance`): an EMPTY window is asked against it as well.
  */
-function allSpendPartlyRead(db: AppDatabase, from: string, to: string): PartlyRead | null {
-  const today = todayIso();
-  const through = spendingReadThrough(db, today);
+function allSpendPartlyRead(db: AppDatabase, through: string | null, from: string, to: string): PartlyRead | null {
   if (through === null) return null;
-  const n = daysNotImportedYet({ from, to, today, ledgerOpens: ledgerOpens(db), ledgerReaches: through });
+  const n = daysNotImportedYet({ from, to, today: todayIso(), ledgerOpens: ledgerOpens(db), ledgerReaches: through });
   return n === 0 ? null : { uncoveredDays: n, line: readThroughSentence(through, n, { start: from }) };
 }
 
@@ -2695,12 +2694,21 @@ function allSpendProvenance(
 ): Provenance {
   const rows = allSpendRows(db, from, to);
   const subject = label ?? "your spending";
-  const unread = allSpendPartlyRead(db, from, to);
-  if (!against) return summedRowsProvenance(db, rows, subject, from, to, undefined, unread);
+  /*
+   * ⚖️ Decisions 64 + 72: the day every account he spends from is imported through grades a window with rows (partly
+   * read) AND one with none (`summedRowsProof`'s empty branch) — the ledger's own day only where there is no such day
+   * (cash wallets alone). 🔴 The empty branch asked the ledger's newest row: on his ledger copy 2026-10-13 (review of
+   * 2fce458) Sep 13 – 22 — no row, the ledger reaching Sep 24 on Wells Fargo, every card he spends from stopping by Sep
+   * 12 — read "so this total is zero rather than unproven", where /spending's empty state now reads a window not read.
+   */
+  const through = spendingReadThrough(db, todayIso());
+  const reaches = through ?? undefined;
+  const unread = allSpendPartlyRead(db, through, from, to);
+  if (!against) return summedRowsProvenance(db, rows, subject, from, to, reaches, unread);
 
   const priorRows = allSpendRows(db, against.from, against.to);
   const priorSubject = against.label ?? "the window it is compared against";
-  const priorUnread = allSpendPartlyRead(db, against.from, against.to);
+  const priorUnread = allSpendPartlyRead(db, through, against.from, against.to);
   // ⚖️ decision 72: a comparison stands on both windows, so either read in part makes the claim partly read
   const eitherUnread = unread ?? priorUnread;
 
@@ -2736,7 +2744,7 @@ function allSpendProvenance(
     subject,
     from < against.from ? from : against.from,
     to > against.to ? to : against.to,
-    undefined,
+    reaches,
     eitherUnread,
   );
 
@@ -2772,12 +2780,12 @@ function allSpendProvenance(
     inputs: [
       {
         label: subject,
-        verdict: summedRowsProvenance(db, rows, subject, from, to, undefined, unread).verdict,
+        verdict: summedRowsProvenance(db, rows, subject, from, to, reaches, unread).verdict,
         detail: `${count(rows.length)}, ${readableDay(from)} to ${readableDay(to)}`,
       },
       {
         label: priorSubject,
-        verdict: summedRowsProvenance(db, priorRows, priorSubject, against.from, against.to, undefined, priorUnread)
+        verdict: summedRowsProvenance(db, priorRows, priorSubject, against.from, against.to, reaches, priorUnread)
           .verdict,
         detail: `${count(priorRows.length)}, ${readableDay(against.from)} to ${readableDay(against.to)}`,
       },
@@ -2839,7 +2847,8 @@ function summedRowsProof(
   to: string,
   /**
    * the day an EMPTY window is asked against: the ledger's (`ledgerReaches`) unless the caller's rows have a narrower
-   * population of their own — a category total's is the category's (`categorySpendProvenance`)
+   * population of their own — a category total's is the category's (`categorySpendProvenance`), all spending's the day
+   * every account he spends from is imported through (`allSpendProvenance`, decisions 64 + 72)
    */
   reaches?: string | null,
   /**

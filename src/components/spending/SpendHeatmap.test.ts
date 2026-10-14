@@ -1,6 +1,8 @@
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, test } from "vitest";
 import type { HeatDay } from "@/services/spending";
-import { heatCellLabel, heatDaySheetSentence } from "./SpendHeatmap";
+import { DaySheetBody, heatCellLabel, heatDaySheetSentence } from "./SpendHeatmap";
 
 const TODAY = "2026-09-10";
 const REACHES = "2026-08-31";
@@ -277,5 +279,54 @@ describe("a day past the day all his spending is read through is unaccounted, no
   /* ⚖️ a ledger of cash wallets alone has no day a statement could move — the proof grades nothing partly read there */
   test("with no day to read against, an empty day the ledger reaches is a measurement, as before", () => {
     expect(cell("2026-08-20", null, { ...august, spendingReadThrough: null })).toBe("Aug 20: no spending or income");
+  });
+});
+
+/*
+ * ⚖️ Decisions 64 + 72: a day past the day all his spending is read through that holds income and no spending has its
+ * income found — and its spending NOT measured. 🔴 On his ledger copy 2026-10-13 (review of 2fce458), tapping Sep 23 on
+ * `/spending?period=2026-09` (his $4,567.68 of pay, no spending found) opened "SPENT $0.00 · 0 transactions" and "NET
+ * +$4,567.68 more income than spending" — a measured zero of spending, the day after Sep 22's sheet said not every
+ * account he spends from had been read for it. Sep 24 ($1,141.92) and Sep 9 ($0.07) did the same. The cell was right
+ * ("Sep 23: $4,567.68 income" claims nothing of spending); the sheet under it was not.
+ */
+describe("the day sheet of a day whose pay is found and whose spending is not read", () => {
+  const READ = "2026-08-12";
+  const sheetHtml = (iso: string, day: HeatDay, spendingReadThrough: string | null = READ) => {
+    const frontier = { today: TODAY, ledgerOpens: OPENS, ledgerReaches: REACHES, spendingReadThrough };
+    return renderToStaticMarkup(createElement(DaySheetBody, { iso, day, ...frontier }))
+      .replace(/<[^>]*>/g, " ")
+      .replace(/\s+/g, " ");
+  };
+
+  test("prints the pay, a dash under Spent with the reason, and no net it cannot know", () => {
+    const text = sheetHtml("2026-08-23", heat(0, 456_768, 0));
+    expect(text).toContain("Income $4,567.68");
+    expect(text).toContain("Spent — nothing found so far — spending imported through Aug 12");
+    expect(text).not.toContain("$0.00");
+    expect(text).not.toContain("0 transactions");
+    expect(text).not.toMatch(/more income than spending|Net/);
+  });
+
+  test("…while the cell keeps naming only what was found, as it did", () => {
+    const august = { monthKey: "2026-08", monthName: "August 2026", spendingReadThrough: READ };
+    expect(cell("2026-08-23", heat(0, 456_768, 0), august)).toBe("Aug 23: $4,567.68 income");
+  });
+
+  test("a day read through keeps its measured zero of spending and its net", () => {
+    const text = sheetHtml("2026-08-12", heat(0, 456_768, 0));
+    expect(text).toContain("Spent $0.00 0 transactions");
+    expect(text).toContain("Net +$4,567.68 more income than spending");
+  });
+
+  test("a day holding spending past it keeps every figure — what was found is a figure", () => {
+    const text = sheetHtml("2026-08-23", heat(12_50, 456_768, 2));
+    expect(text).toContain("Spent $12.50 2 transactions");
+    expect(text).toContain("Net +$4,555.18 more income than spending");
+  });
+
+  /* ⚖️ a ledger of cash wallets alone has no day a statement could move (2026-09-15) */
+  test("with no day to read against, the day is measured, as before", () => {
+    expect(sheetHtml("2026-08-23", heat(0, 456_768, 0), null)).toContain("Spent $0.00 0 transactions");
   });
 });

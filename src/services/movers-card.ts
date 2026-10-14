@@ -1,3 +1,4 @@
+import { cache } from "react";
 import type { AppDatabase } from "@/db/client";
 import { apportionPercents } from "@/lib/apportion";
 import { addCalendarMonths, monthKey, periodBounds, todayIso } from "@/lib/dates";
@@ -466,12 +467,20 @@ export function spendingCoverageThrough(db: AppDatabase, today: string = todayIs
  * and the heatmap on the same page reads its days against it (`SpendHeatmap`). 🔴 The heatmap was asked against the
  * ledger's newest row alone — on his ledger copy 2026-10-13 (review of 06c6bf3) Sep 13 … Sep 22 read "No spending or
  * income on this day." under "30 days of this period unaccounted".
+ *
+ * ⚡ MEMOISED FOR ONE SERVER RENDER (`react`'s `cache`, as `observationFrontier` — never a module-level Map). /spending
+ * asks it for its heatmap and empty state, its period's proof, and its cash flow and the prior period's — every bucket
+ * with no spending (decisions 64 + 72). Measured on his ledger copy 2026-10-13: 6.4ms a call; the page's own read, the
+ * September and August cash flows and September's proof took 35.3ms asked outside a render, 14.7ms inside one.
  */
-export function spendingReadThrough(db: AppDatabase, today: string = todayIso()): string | null {
+export const spendingReadThrough = cache(function spendingReadThrough(
+  db: AppDatabase,
+  today: string = todayIso(),
+): string | null {
   const { byAccount } = observationFrontier(db);
   if (![...accountsAwaitingStatements(db)].some((id) => byAccount.has(id))) return null;
   return spendingCoverageThrough(db, today);
-}
+});
 
 /**
  * What changed this month — or rather, in the newest month that can be said to

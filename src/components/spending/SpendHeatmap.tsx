@@ -6,9 +6,8 @@ import { useRouter } from "next/navigation";
 import { CalendarGrid } from "@/components/ui/CalendarGrid";
 import { Sheet } from "@/components/ui/Sheet";
 import { UNREACHED_PHRASE, unreachedKind, type UnreachedKind } from "@/lib/empty-period";
-import { importedThroughFact } from "@/lib/budget-coverage";
+import { nothingFoundSoFar, spendingNotFoundFact } from "@/lib/budget-coverage";
 import { compactDayAmount } from "@/lib/calendar-day-weight";
-import { compareDates } from "@/lib/dates";
 import { formatCents } from "@/lib/money";
 import { formatDayLong, formatDayShort, formatMonthYear } from "@/lib/format-date";
 import { loadSpendHeatmap } from "@/app/spending/actions";
@@ -69,9 +68,23 @@ function heatDayUnreached({ iso, day, today, ledgerOpens, ledgerReaches }: HeatD
 }
 
 /**
- * "spending imported through Aug 12" when the day holds no spending or income and is past the day every account he
- * spends from is read through — a day the ledger reached for SOME account, so neither unreached nor a measured zero —
- * or null when it is neither. Asked after `heatDayUnreached`: a day nobody has imported at all says that instead.
+ * "spending imported through Aug 12" when the day holds no spending and is past the day every account he spends from
+ * is read through — a day the ledger reached for SOME account, so its spending is neither unreached nor a measured
+ * zero — or null when it is neither: the cash-flow table's and chart's rule for the same day (`spendingNotFoundFact`).
+ * Asked after `heatDayUnreached`: a day nobody has imported at all says that instead.
+ *
+ * 🔴 The day sheet asked only `heatDayUnaccounted`, which stops at income: on his ledger copy 2026-10-13 (review of
+ * 2fce458) Sep 23 — $4,567.68 of pay, no spending found — opened "SPENT $0.00 · 0 transactions" and "NET +$4,567.68
+ * more income than spending", the day after Sep 22's sheet said not every account he spends from had been read for it.
+ */
+function heatDaySpendNotFound({ iso, day, today, ledgerOpens, spendingReadThrough }: HeatDayFrontier): string | null {
+  const spentCents = day?.spentCents ?? 0;
+  return spendingNotFoundFact({ from: iso, to: iso, today, ledgerOpens, readThrough: spendingReadThrough, spentCents });
+}
+
+/**
+ * The same, for a day that holds no income either — nothing at all found so far (`heatDaySpendNotFound`); null when
+ * its income is found, which the cell names instead ("Sep 23: $4,567.68 income" claims nothing of spending).
  *
  * ⚖️ His decision 72 (2026-10-13): one window reads one way everywhere. 🔴 Measured on his ledger copy 2026-10-13
  * (review of 06c6bf3): `/spending` for September printed "spending imported through Aug 12 · 30 days of this period
@@ -79,10 +92,8 @@ function heatDayUnreached({ iso, day, today, ledgerOpens, ledgerReaches }: HeatD
  * Sep 22 on "No spending or income on this day." — Venture X stops Sep 12 and Wells Fargo resumes Sep 23, while Chase
  * Sapphire and Chase Checking are imported through Aug 12. The day is the proof's, and so are the words.
  */
-function heatDayUnaccounted({ iso, day, spendingReadThrough }: HeatDayFrontier): string | null {
-  if (day !== null && (day.spentCents > 0 || day.incomeCents > 0)) return null;
-  if (spendingReadThrough === null || compareDates(iso, spendingReadThrough) <= 0) return null;
-  return importedThroughFact(spendingReadThrough, iso);
+function heatDayUnaccounted(input: HeatDayFrontier): string | null {
+  return (input.day?.incomeCents ?? 0) > 0 ? null : heatDaySpendNotFound(input);
 }
 
 /**
@@ -197,7 +208,7 @@ export function heatCellLabel({
    * ledger had reached them through Venture X and Wells Fargo, and not through the cards the rest is spent from.
    */
   const unaccounted = heatDayUnaccounted(frontier);
-  if (unaccounted !== null) return `${day}: nothing found so far — ${unaccounted}`;
+  if (unaccounted !== null) return `${day}: ${nothingFoundSoFar(unaccounted)}`;
   /*
    * ⛔ "no activity" IS AN ASSERTION ABOUT THE WHOLE LEDGER, and this chart
    * counts three things: expense-kind outflows, income-kind positives, and
@@ -387,7 +398,7 @@ function CellAmount({
  * --positive/--negative fall just under WCAG AA (the same rule the P/L day sheet
  * follows).
  */
-function DaySheetBody(props: HeatDayFrontier) {
+export function DaySheetBody(props: HeatDayFrontier) {
   const { iso, day } = props;
   const spent = day?.spentCents ?? 0;
   const income = day?.incomeCents ?? 0;
@@ -402,6 +413,11 @@ function DaySheetBody(props: HeatDayFrontier) {
       </div>
     );
   }
+  /*
+   * ⚖️ A day whose pay is found and whose spending is not read prints the pay, "—" under Spent with the reason, and no
+   * Net — the cash-flow table's row for the same day (decisions 64 + 72, `heatDaySpendNotFound`).
+   */
+  const spendNotFound = heatDaySpendNotFound(props);
 
   return (
     <div className="space-y-5">
@@ -410,10 +426,12 @@ function DaySheetBody(props: HeatDayFrontier) {
           <span className="text-xs font-medium uppercase tracking-[0.1em] text-ink">Spent</span>
           <div className="figures mt-1 flex items-center gap-1.5 text-xl font-semibold text-ink">
             <span aria-hidden className="size-2 rounded-full bg-negative" />
-            {formatCents(spent)}
+            {spendNotFound === null ? formatCents(spent) : "—"}
           </div>
           <p className="mt-0.5 text-xs text-ink-faint">
-            {day!.txnCount} {day!.txnCount === 1 ? "transaction" : "transactions"}
+            {spendNotFound !== null
+              ? nothingFoundSoFar(spendNotFound)
+              : `${day!.txnCount} ${day!.txnCount === 1 ? "transaction" : "transactions"}`}
           </p>
         </div>
         {income > 0 && (
@@ -427,7 +445,7 @@ function DaySheetBody(props: HeatDayFrontier) {
         )}
       </div>
 
-      {income > 0 && (
+      {income > 0 && spendNotFound === null && (
         <div>
           <span className="text-xs font-medium uppercase tracking-[0.1em] text-ink">Net</span>
           <div className="figures mt-1 text-lg font-semibold text-ink">

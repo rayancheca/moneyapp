@@ -21,6 +21,7 @@ const bucket = (key: string, label: string, over: Partial<CashFlowBucket> = {}):
   refundsCents: 0,
   netCents: 0,
   unreached: null,
+  spendingUnaccounted: null,
   ...over,
 });
 
@@ -131,5 +132,64 @@ describe("CashFlowView's table — a bucket the ledger has not reached", () => {
   test("a table with nothing dashed says nothing about dashes", () => {
     const html = renderTable(flow([bucket("2026-09-12", "12", { spendingCents: 475, netCents: -475 })]), "September 2026");
     expect(textOf(html)).not.toContain("A dash");
+  });
+});
+
+/*
+ * ⚖️ Decisions 64 + 72: a day past the day every account he spends from is imported through, holding no spending, is no
+ * measured zero. 🔴 Every figure below is what `cashFlowByPeriod` returned for `/spending?period=2026-09` on his ledger
+ * copy 2026-10-13 (review of 2fce458) — Sep 15 and Sep 23 printed "$0.00 $0.00 $0.00" and "$4,567.68 $0.00
+ * +$4,567.68" under a heatmap calling both days unaccounted, and a Where it went reading "30 days of this period
+ * unaccounted".
+ */
+describe("CashFlowView's table — a day past the day all his spending is read through", () => {
+  const FACT = "spending imported through Aug 12";
+  const september = flow([
+    bucket("2026-09-12", "12", { spendingCents: 475, netCents: -475 }),
+    bucket("2026-09-15", "15", { spendingUnaccounted: FACT }),
+    bucket("2026-09-23", "23", { incomeCents: 456_768, netCents: 456_768, spendingUnaccounted: FACT }),
+    bucket("2026-09-25", "25", { unreached: "after-records" }),
+  ]);
+  const NOTE =
+    "A dash is not a zero where nothing has been found so far — spending imported through Aug 12, and not every account " +
+    "you spend from has been read for that day.";
+
+  test("a day with nothing found prints no $0.00 — every money column is a dash", () => {
+    expect(rowCells(renderTable(september, "September 2026"), "15")).toEqual(["15", "—", "—", "—"]);
+  });
+
+  test("a day whose pay is found prints it, and a dash under Spent and Net", () => {
+    expect(rowCells(renderTable(september, "September 2026"), "23")).toEqual(["23", "$4,567.68", "—", "—"]);
+  });
+
+  test("a refund found is printed too; the rest of the day is a dash", () => {
+    const html = renderTable(
+      flow([bucket("2026-09-16", "16", { refundsCents: 1_800, netCents: 1_800, spendingUnaccounted: FACT })]),
+      "September 2026",
+    );
+    expect(rowCells(html, "16")).toEqual(["16", "—", "—", "$18.00", "—"]);
+  });
+
+  test("a day holding spending keeps its figures, its income's measured zero included", () => {
+    expect(rowCells(renderTable(september, "September 2026"), "12")).toEqual(["12", "$0.00", "$4.75", "-$4.75"]);
+  });
+
+  test("says why, naming the day, beside the worlds the other dashes are in — to the eye and in the caption", () => {
+    const html = renderTable(september, "September 2026");
+    const both = `A dash is not a zero: it marks a day that has not been imported yet. ${NOTE}`;
+    expect(textOf(/<caption[^>]*>(.*?)<\/caption>/.exec(html)![1]!)).toContain(both);
+    expect(html).toContain(`<p aria-hidden="true" class="mt-2 text-xs text-ink-faint">${both}</p>`);
+  });
+
+  test("…and alone, where no day is unreached", () => {
+    const html = renderTable(flow([bucket("2026-09-15", "15", { spendingUnaccounted: FACT })]), "September 2026");
+    expect(textOf(html)).toContain(NOTE);
+    expect(textOf(html)).not.toContain("it marks a day that");
+  });
+
+  test("a month bucket says month", () => {
+    const september = bucket("2026-09", "Sep", { incomeCents: 100, netCents: 100, spendingUnaccounted: FACT });
+    const html = renderTable(flow([september]), "2026");
+    expect(textOf(html)).toContain("has been read for that month.");
   });
 });

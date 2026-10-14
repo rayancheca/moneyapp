@@ -31,6 +31,7 @@ vi.mock("react", async (importOriginal) => {
 const { createAccount } = await import("./accounts");
 const { spendingTransactions } = await import("./analytics");
 const { ledgerOpens, ledgerReaches } = await import("./observation-frontier");
+const { spendingReadThrough } = await import("./movers-card");
 const { printOnOneStatement } = await import("./printed-statement-fixture");
 const { agentsMoneyRowCount, cashFlowByPeriod, categoryEmptyCopy, spendingEmptyCopy } = await import("./spending");
 
@@ -150,8 +151,14 @@ describe("the empty state's agent clause reads whose accounts are whose once per
   function emptySpendingPage() {
     const period = resolvePeriod({ from: DAY.from, to: DAY.to }, TODAY);
     expect(cashFlowByPeriod(bundle.db, period, TODAY).totals).toMatchObject({ spentCents: 0, earnedCents: 0 });
+    // the page's one read of all spending's day, made for its heatmap before the empty state asks for it
+    const readThrough = spendingReadThrough(bundle.db, TODAY);
     const afterRows = accountReads;
-    const said = spendingEmptyCopy(bundle.db, DAY, { ...opts(), ledgerReaches: ledgerReaches(bundle.db) }).description;
+    const said = spendingEmptyCopy(bundle.db, DAY, {
+      ...opts(),
+      ledgerReaches: ledgerReaches(bundle.db),
+      spendingReadThrough: readThrough,
+    }).description;
     return { reads: accountReads - afterRows, said };
   }
 
