@@ -1,4 +1,5 @@
 import type { AppDatabase } from "@/db/client";
+import type { UnreadMonths } from "@/lib/committed";
 import { addCalendarMonths, diffDays, monthKey, periodBounds, todayIso } from "@/lib/dates";
 import { multipleFact, multipleOfMagnitudes, type MultipleFact } from "@/lib/insight-facts";
 import { resolvePeriod, withPeriod } from "@/lib/period";
@@ -117,6 +118,11 @@ export interface EatingOutCard {
   months: number;
   fromMonth: string;
   toMonth: string;
+  /**
+   * The complete months the window leaves out unread, and the day that leaves them out (`BaselineWindow.unread`, his
+   * decision 71, 2026-10-13) — named in the caption beside the months it averaged (`unreadMonthsSentence`).
+   */
+  unread: UnreadMonths | null;
   /**
    * `/spending` over the months averaged — the drill-down contract for the
    * card's header link.
@@ -265,6 +271,7 @@ export function eatingOutCard(
     months: window.months,
     fromMonth,
     toMonth,
+    unread: window.unread,
     // the rows above were read over exactly [from, to] — see the field
     spendingHref: withPeriod("/spending", resolvePeriod({ period: null, from, to }, today)),
     isEmpty: totalCount === 0 || groceries.count === 0,

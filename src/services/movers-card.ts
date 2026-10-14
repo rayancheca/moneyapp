@@ -1,3 +1,4 @@
+import { cache } from "react";
 import type { AppDatabase } from "@/db/client";
 import { apportionPercents } from "@/lib/apportion";
 import { addCalendarMonths, monthKey, periodBounds, todayIso } from "@/lib/dates";
@@ -71,6 +72,12 @@ import { MIN_OCCURRENCES } from "./recurring";
  * its own delta by a sixth. Two figures a reader could hear as one word, so
  * neither card says "usual" without saying which months it means, in the
  * sentence directly under the headline.
+ *
+ * ⚖️ Since his decision 71 (2026-10-13) the runway's six END at the last month
+ * every account you spend from is read through to its end (`baselineWindow`
+ * over `spendingCoverageThrough`, below), not before today: on his ledger copy
+ * that day Feb–Jul, while this card, which looks back `MAX_MONTHS_BEHIND`
+ * months, found no month it could compare and drew nothing.
  *
  * ⚠️ The price of this choice is that the card is always talking about a month
  * that has closed, so it says which month, in words, above the numbers. A card
@@ -440,8 +447,16 @@ function candidateMonths(
  * his ledger at 2026-11-20, every /budgets row had moved off Chase's Aug 12 while
  * this — and /spending, the year insights and "What changed" through it — still
  * named Aug 12, for an account no statement will ever come for.
+ *
+ * ⚡ MEMOISED FOR ONE SERVER RENDER (`react`'s `cache`, never a module-level Map — `observationFrontier`'s rule). Since
+ * his decision 71 (2026-10-13) every card that quotes `baselineWindow` asks it too — six on one dashboard render — and
+ * measured on his ledger copy that day one call costs 5.5ms once warm. A string or null, so nothing shared can be
+ * mutated; callers pass `today`, so one render's calls share one key.
  */
-export function spendingCoverageThrough(db: AppDatabase, today: string = todayIso()): string | null {
+export const spendingCoverageThrough = cache(function spendingCoverageThrough(
+  db: AppDatabase,
+  today: string = todayIso(),
+): string | null {
   const currentMonth = monthKey(today);
   const frontier = observationFrontier(db);
   const awaiting = accountsAwaitingStatements(db);
@@ -454,7 +469,7 @@ export function spendingCoverageThrough(db: AppDatabase, today: string = todayIs
       ? new Set(governing.datingSpenders)
       : accountsThatDate(frontier, frontier.byAccount.keys(), awaiting),
   );
-}
+});
 
 /**
  * What changed this month — or rather, in the newest month that can be said to

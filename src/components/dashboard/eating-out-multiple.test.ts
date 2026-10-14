@@ -13,6 +13,7 @@ import { institutions } from "@/db/schema/institutions";
 import { transactions } from "@/db/schema/transactions";
 import { multipleFact } from "@/lib/insight-facts";
 import { eatingOutCard } from "@/services/eating-out";
+import { importedThrough } from "@/services/imported-through-fixture";
 import { EatingOutCard } from "./EatingOutCard";
 
 /**
@@ -109,6 +110,8 @@ beforeEach(() => {
   // the ledger opens on a month's first day, so the window is six whole months
   // (Feb–Jul 2026); uncategorised, so it is in neither bucket
   addTxn("2025-01-01", -1, null);
+  // ⚖️ …and read into the running month (decision 71), so every one of those months is read to its end
+  importedThrough(bundle.db, TODAY);
 });
 
 afterEach(() => {

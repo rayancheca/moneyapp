@@ -3,7 +3,7 @@ import { InfoTip } from "@/components/ui/InfoTip";
 import { Money } from "@/components/ui/Money";
 import { SurfaceCard } from "@/components/ui/SurfaceCard";
 import { formatCents } from "@/lib/money";
-import { baselineSpan } from "@/lib/committed";
+import { baselineSpan, unreadMonthsSentence } from "@/lib/committed";
 import type { EatingOutCard as EatingOutCardData } from "@/services/eating-out";
 
 /**
@@ -110,7 +110,10 @@ export function EatingOutCard({ data }: { data: EatingOutCardData }) {
     months,
     fromMonth,
     toMonth,
+    unread,
   } = data;
+  // the months the window leaves out unread, and why — the runway caption's sentence (`unreadMonthsSentence`)
+  const unreadNote = unreadMonthsSentence(unread);
 
   return (
     <SurfaceCard>
@@ -199,8 +202,10 @@ export function EatingOutCard({ data }: { data: EatingOutCardData }) {
         {/* ⛔ `baselineSpan`, the runway caption's phrase — "1 complete months"
             was this caption's own spelling. The service returns no card for a
             window of zero months, so the span is never null here. */}
+        {/* ⚖️ …and a window the frontier stopped short says why, in the runway's sentence (decision 71) */}
         That is {purchasesPerDay.toFixed(1)} purchases a day. Averaged over{" "}
-        {baselineSpan({ months, fromMonth, toMonth })}. This month is still running and is not counted.
+        {baselineSpan({ months, fromMonth, toMonth })}.{unreadNote === null ? "" : ` ${unreadNote}`} This month is still
+        running and is not counted.
       </p>
     </SurfaceCard>
   );

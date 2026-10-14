@@ -1,6 +1,6 @@
 import type { AppDatabase } from "@/db/client";
 import { addCalendarMonths, monthKey, periodBounds, todayIso } from "@/lib/dates";
-import { monthCount } from "@/lib/committed";
+import { monthCount, unreadMonthsSentence } from "@/lib/committed";
 import { formatMonthYear, monthWindowLabel } from "@/lib/format-date";
 import { ledgerHref } from "@/lib/ledger-href";
 import { formatCents } from "@/lib/money";
@@ -637,9 +637,18 @@ export function feesCard(db: AppDatabase, today: string = todayIso()): FeesCard 
    */
   const comparable = recent.direction !== "level" && allTime.direction !== "level";
   const reversed = comparable && recent.direction !== allTime.direction;
+  /*
+   * ⚖️ His decision 71 (2026-10-13): the window holds only months every account he spends from has been read through to
+   * the end of, so it can stop before the last complete month — and then says why, in the runway's sentence
+   * (`unreadMonthsSentence`). 🔴 …and stops being "the last" months: measured on his ledger copy that day, Feb–Jul.
+   */
+  const unreadNote = unreadMonthsSentence(window.unread);
+  const leftOut = unreadNote === null ? "" : ` ${unreadNote}`;
   const allTimeLead =
     basis === "allTime"
-      ? `Nothing at all has been charged or paid in the last ${monthCount(months, "complete")}.`
+      ? unreadNote === null
+        ? `Nothing at all has been charged or paid in the last ${monthCount(months, "complete")}.`
+        : `Nothing at all has been charged or paid over the ${monthCount(months, "complete")} ${windowLabel}.${leftOut}`
       : !comparable
         ? // ⛔ a window that came out exactly level runs neither the same way nor
           // the other way, and claiming either would be the card asserting a
@@ -652,7 +661,7 @@ export function feesCard(db: AppDatabase, today: string = todayIso()): FeesCard 
   const summary =
     basis === "allTime"
       ? `${allTimeLead} From ${formatMonthYear(firstOn)} the ledger holds ${formatCents(allTime.paidCents)} of fees against ${formatCents(allTime.earnedCents)} of interest, so ${standingClause(allTime)}.`
-      : `${formatCents(recent.paidCents)} went out in fees over the ${monthCount(months, "complete")} ${windowLabel}, across every account, against ${formatCents(recent.earnedCents)} of interest back. ${allTimeLead} from ${formatMonthYear(firstOn)} the ledger holds ${formatCents(allTime.earnedCents)} of interest against ${formatCents(allTime.paidCents)} of fees, so ${standingClause(allTime)}.`;
+      : `${formatCents(recent.paidCents)} went out in fees over the ${monthCount(months, "complete")} ${windowLabel}, across every account, against ${formatCents(recent.earnedCents)} of interest back.${leftOut} ${allTimeLead} from ${formatMonthYear(firstOn)} the ledger holds ${formatCents(allTime.earnedCents)} of interest against ${formatCents(allTime.paidCents)} of fees, so ${standingClause(allTime)}.`;
 
   return {
     basis,

@@ -7,10 +7,12 @@ import {
   heaviestMonth,
   heaviestMonthEnding,
   monthHorizon,
+  lastFullyReadMonth,
   spendArithmeticCaption,
   withinMonthHorizon,
   type CommittedOccurrence,
   type CommittedOutflows,
+  type UnreadMonths,
 } from "@/lib/committed";
 import {
   addCalendarMonths,
@@ -36,6 +38,7 @@ import { incomeExpectation } from "./budgets";
 import { CAR_LEASE_TERM_MONTHS, isUpfrontCarRow, readUpfrontCarRule, upfrontCarRule } from "./car-upfront";
 import { ledgerOpens } from "./observation-frontier";
 import { silenceMeasuredThroughBySeries } from "./cash-earnings";
+import { spendingCoverageThrough } from "./movers-card";
 import { scheduledOccurrences, seriesStaleness } from "./recurring";
 import { seriesIdsNotDrawnAsRecurring } from "./recurring-link";
 import { cashFlowByPeriod } from "./spending";
@@ -61,6 +64,9 @@ export const COMMITTED_HORIZON_MONTHS = 12;
  * dragged into the mean understates the rate by however much of the month is
  * left — measured 2026-08-24, August alone reads $6,683.25 against a $8,025.92
  * six-month mean, and including it would publish a runway a fifth too long.
+ *
+ * ⚖️ …and "complete" means READ in full, not only over (his decision 71, 2026-10-13): the six end at the last month
+ * every account you spend from has been imported through to its end — `baselineWindow` says which, and why.
  */
 export const SPEND_BASELINE_MONTHS = 6;
 
@@ -79,6 +85,8 @@ export interface SpendBaseline {
   /** first and last month key averaged, inclusive */
   fromMonth: string;
   toMonth: string;
+  /** the complete months the window leaves out unread, and why (`BaselineWindow.unread`, decision 71) */
+  unread: UnreadMonths | null;
 }
 
 /**
@@ -99,11 +107,21 @@ export interface BaselineWindow {
   to: string;
   fromMonth: string;
   toMonth: string;
+  /**
+   * The complete months after the window it leaves out because not every account you spend from has been read through
+   * their last day, with that day (`spendingCoverageThrough`, decision 71) — null when it leaves none out. Every caption
+   * that names the window says why (`unreadMonthsSentence`).
+   */
+  unread: UnreadMonths | null;
 }
 
 /**
  * The trailing window EVERY card shares: the last `months` COMPLETE calendar
- * months, floored at the first month the ledger covers in full.
+ * months, floored at the first month the ledger covers in full — and, since his
+ * decision 71 (2026-10-13), ending at the last month every account you spend
+ * from has been read through to its END (`spendingCoverageThrough`): a month
+ * read part of the way is left out, said so (`unread`), and the window slides
+ * back rather than shrinking.
  *
  * ⛔ ONE WINDOW, ONE PLACE. Five services import `SPEND_BASELINE_MONTHS`
  * precisely so they cannot quote different windows for one ledger — and a
@@ -133,10 +151,24 @@ export function baselineWindow(
   months: number = SPEND_BASELINE_MONTHS,
 ): BaselineWindow {
   const currentMonth = monthKey(today);
-  // the window runs from `currentMonth − months` to `currentMonth − 1`, so the
-  // incomplete current month is never in it
+  const lastComplete = monthKey(addCalendarMonths(`${currentMonth}-01`, -1));
+  /*
+   * ⚖️ His decision 71 (2026-10-13, asked as an either/or, the recommended option): an AVERAGE uses only months EVERY
+   * account he spends from has been read through to the END of — the day /spending's What-moved and the year summary
+   * already cut at (`spendingCoverageThrough`). 🔴 Measured on his ledger copy that day: this window was "6 complete
+   * months, Apr 2026 to Sep 2026" while Chase Checking was read only through Aug 12 and Chase Sapphire through Sep 2 —
+   * September's $5,417.30 held no Chase spending at all, and the runway read 2.6 months where the months read in full
+   * (Feb–Jul, $8,105.85 a month) make it 2.7. It returns to the calendar's months by itself as statements land.
+   *
+   * ⛔ The window keeps its LENGTH and slides back — `months` fully read months — rather than shrinking to the read
+   * ones: a shorter average is a different figure, and the floor below already shortens it where the ledger is young.
+   * With no account you spend from there is no frontier, and the calendar's window stands.
+   */
+  const through = spendingCoverageThrough(db, today);
+  const readTo = through === null ? lastComplete : minMonth(lastComplete, lastFullyReadMonth(through));
+  // the window runs from `readTo − (months − 1)` to `readTo`, and `readTo` is never the incomplete current month
   const asked: string[] = [];
-  for (let i = months; i >= 1; i--) asked.push(monthKey(addCalendarMonths(`${currentMonth}-01`, -i)));
+  for (let i = months - 1; i >= 0; i--) asked.push(monthKey(addCalendarMonths(`${readTo}-01`, -i)));
 
   const opens = ledgerOpens(db);
   const firstWholeMonth =
@@ -146,6 +178,12 @@ export function baselineWindow(
         ? monthKey(opens)
         : monthKey(addCalendarMonths(`${monthKey(opens)}-01`, 1));
   const keys = firstWholeMonth === null ? [] : asked.filter((k) => k >= firstWholeMonth);
+  // the complete months the frontier cut — never one before the floor, which the ledger cannot speak for at all
+  const unreadKeys: string[] = [];
+  for (let m = readTo; m < lastComplete; ) {
+    m = monthKey(addCalendarMonths(`${m}-01`, 1));
+    if (firstWholeMonth !== null && m >= firstWholeMonth) unreadKeys.push(m);
+  }
 
   const fromMonth = keys[0] ?? currentMonth;
   const toMonth = keys[keys.length - 1] ?? currentMonth;
@@ -156,7 +194,34 @@ export function baselineWindow(
     to: periodBounds(`${toMonth}-01`, "monthly").end,
     fromMonth,
     toMonth,
+    unread: through === null || unreadKeys.length === 0 ? null : { months: unreadKeys, through },
   };
+}
+
+/** The earlier of two month keys — 'YYYY-MM' compares as text. */
+function minMonth(a: string, b: string): string {
+  return a <= b ? a : b;
+}
+
+/**
+ * Spending by month over exactly the window's months — `monthlySpending` loaded over them (its `months` back from the
+ * window's last day, which are the window's keys: they are contiguous) and nothing either side.
+ *
+ * ⛔ The window is not "the last N months from today": it slides back behind the frontier (decision 71), so a load
+ * sized from today would miss its oldest months and take in the ones it leaves out.
+ */
+function spendingOverWindow(
+  db: AppDatabase,
+  w: BaselineWindow,
+  keep: (t: AnalyticsTxn) => boolean,
+): ReturnType<typeof monthlySpending> {
+  /*
+   * ⚠️ KNOWINGLY unkillable by test, and kept (`concentration-card`'s precedent): `monthlySpending` over zero months
+   * reads from "undefined-01", which sorts after every date, and finds nothing — the right answer by accident. The
+   * line states the contract an empty window has; the accident does not.
+   */
+  if (w.keys.length === 0) return [];
+  return monthlySpending(db, { months: w.keys.length, refDate: w.to, filter: keep });
 }
 
 /**
@@ -170,6 +235,11 @@ export function spendBaseline(
   today: string = todayIso(),
   months: number = SPEND_BASELINE_MONTHS,
 ): SpendBaseline {
+  return spendBaselineOver(db, baselineWindow(db, today, months));
+}
+
+/** `spendBaseline` over a window already taken — the car card's too, so its car spending is read over the same one. */
+function spendBaselineOver(db: AppDatabase, w: BaselineWindow): SpendBaseline {
   /*
    * ⚖️ Owner decision 2026-10-07 (§6A 51): the car's up-front money is not a month's spending. 🔴 Averaged in, his
    * $6,100 down payment and deposit (August) read as $1,016.67 a month of "What you spend a month" over Apr–Sep —
@@ -177,28 +247,18 @@ export function spendBaseline(
    * same money over the lease. One predicate, the card's own: `isUpfrontCarRow`.
    */
   const upfront = readUpfrontCarRule(db);
-  const sumByMonth = (keep: (t: AnalyticsTxn) => boolean): Map<string, number> => {
-    const byMonth = new Map<string, number>();
-    for (const c of monthlySpending(db, { months: months + 1, refDate: today, filter: keep })) {
-      byMonth.set(c.month, (byMonth.get(c.month) ?? 0) + c.spentCents);
-    }
-    return byMonth;
-  };
-  const spent = sumByMonth((t) => !isUpfrontCarRow(upfront, t));
-  const handedOver = upfront === null ? new Map<string, number>() : sumByMonth((t) => isUpfrontCarRow(upfront, t));
-
-  const w = baselineWindow(db, today, months);
-  const inWindow = (byMonth: ReadonlyMap<string, number>): number =>
-    w.keys.reduce((sum, k) => sum + (byMonth.get(k) ?? 0), 0);
-  const totalCents = inWindow(spent);
+  const sum = (keep: (t: AnalyticsTxn) => boolean): number =>
+    spendingOverWindow(db, w, keep).reduce((total, c) => total + c.spentCents, 0);
+  const totalCents = sum((t) => !isUpfrontCarRow(upfront, t));
   return {
     // no complete month inside the ledger means no measured rate; the total is
     // necessarily zero there, so this divides by one rather than by nothing
     monthlyCents: Math.round(totalCents / Math.max(1, w.months)),
-    upfrontCarCents: inWindow(handedOver),
+    upfrontCarCents: upfront === null ? 0 : sum((t) => isUpfrontCarRow(upfront, t)),
     months: w.months,
     fromMonth: w.fromMonth,
     toMonth: w.toMonth,
+    unread: w.unread,
   };
 }
 
@@ -673,19 +733,18 @@ export function carCard(db: AppDatabase, today: string = todayIso()): CarCard | 
    * but it will stop being zero in March, and a figure that silently becomes
    * wrong later is the kind this codebase keeps finding.
    */
-  const baseline = spendBaseline(db, today);
+  const window = baselineWindow(db, today);
+  const baseline = spendBaselineOver(db, window);
   /*
    * ⛔ …and the car spending it removes is the car spending the baseline HOLDS. The up-front money is already out of
    * it (§6A 51, `spendBaseline`), so taking it out here as well would subtract it twice and leave "before the car"
    * short of what he spends by the very amount the card spreads over the lease.
+   *
+   * 🔴 …over the baseline's OWN months (`spendingOverWindow`). This read the calendar's months back from today, from
+   * the window's first on: once the window slid back behind the frontier (decision 71), a car charge in a month it
+   * leaves out was taken off a baseline that never held it.
    */
-  const baselineCarCents = monthlySpending(db, {
-    months: SPEND_BASELINE_MONTHS + 1,
-    refDate: today,
-    filter: (t) => !isUpfrontCarRow(upfront, t),
-  })
-    .filter((c) => c.month !== monthKey(today))
-    .filter((c) => c.month >= baseline.fromMonth)
+  const baselineCarCents = spendingOverWindow(db, window, (t) => !isUpfrontCarRow(upfront, t))
     .filter((c) => c.categoryId !== null && subtree.has(c.categoryId))
     .reduce((s, c) => s + c.spentCents, 0);
   /*

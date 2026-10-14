@@ -5,6 +5,7 @@ import { addCalendarMonths, monthKey, periodBounds, todayIso } from "@/lib/dates
 import { formatMonthYear, monthWindowLabel } from "@/lib/format-date";
 import { formatCents } from "@/lib/money";
 import { cancelledTransferNote } from "@/lib/cancelled-transfer-note";
+import { unreadMonthsSentence } from "@/lib/committed";
 import { listAccounts } from "./accounts";
 import { activeTxnsInRange, loadCategoryIndex, type AnalyticsTxn, type CategoryIndex } from "./analytics";
 import { baselineWindow, SPEND_BASELINE_MONTHS } from "./committed";
@@ -220,6 +221,11 @@ export interface TransfersCard {
   months: number;
   fromMonth: string;
   toMonth: string;
+  /**
+   * Why the window stops before the last complete month — `unreadMonthsSentence` over `BaselineWindow.unread`, the
+   * runway caption's sentence (his decision 71, 2026-10-13); null when it stops nowhere short.
+   */
+  unreadNote: string | null;
   fromLabel: string;
   toLabel: string;
   today: string;
@@ -489,6 +495,7 @@ export function transfersCard(
     months: window.months,
     fromMonth,
     toMonth,
+    unreadNote: unreadMonthsSentence(window.unread),
     fromLabel,
     toLabel,
     today,

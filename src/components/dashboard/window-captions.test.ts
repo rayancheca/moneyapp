@@ -5,8 +5,10 @@ import { multipleFact } from "@/lib/insight-facts";
 import { resolvePeriod, withPeriod } from "@/lib/period";
 import type { EatingOutCard as EatingOutCardData } from "@/services/eating-out";
 import type { SubscriptionsCard as SubscriptionsCardData } from "@/services/subscriptions-card";
+import type { TransfersCard as TransfersCardData } from "@/services/transfers-card";
 import { EatingOutCard } from "./EatingOutCard";
 import { SubscriptionsCard } from "./SubscriptionsCard";
+import { TransfersCard } from "./TransfersCard";
 
 const text = (html: string): string =>
   html
@@ -36,6 +38,7 @@ describe("the window captions beside the runway card", () => {
     months,
     fromMonth: "2022-09",
     toMonth: "2022-09",
+    unread: null,
     // the rule `eatingOutCard` builds its link with, over this fixture's window
     spendingHref: withPeriod(
       "/spending",
@@ -63,6 +66,7 @@ describe("the window captions beside the runway card", () => {
       months,
       fromMonth: "2022-09",
       toMonth: "2022-09",
+      unread: null,
       today: "2022-10-15",
     }) as unknown as SubscriptionsCardData;
 
@@ -143,6 +147,66 @@ describe("the window captions beside the runway card", () => {
 
     const none = text(renderToStaticMarkup(createElement(SubscriptionsCard, { data: subscriptions(6) })));
     expect(none).not.toContain("One-off");
+  });
+
+  /**
+   * ⚖️ His decision 71 (2026-10-13): the window holds only months every account he spends from has been read through
+   * to the end of, and a caption that names a window stopping short says why — the runway's sentence, on both cards.
+   * Measured on his ledger copy that day: Feb 2026 to Jul 2026, Chase Checking read through Aug 12.
+   */
+  test("a window the frontier cut says which months it left out, and why, on both cards", () => {
+    const unread = { months: ["2026-08", "2026-09"], through: "2026-08-12" };
+    const why = "Aug 2026 and Sep 2026 are left out: Aug 12 is the last day every account you spend from has been imported through.";
+    const eat = text(
+      renderToStaticMarkup(
+        createElement(EatingOutCard, {
+          data: { ...eatingOut(6), fromMonth: "2026-02", toMonth: "2026-07", unread },
+        }),
+      ),
+    );
+    expect(eat).toContain(
+      `Averaged over 6 complete months, Feb 2026 to Jul 2026. ${why} This month is still running and is not counted.`,
+    );
+
+    const subs = text(
+      renderToStaticMarkup(
+        createElement(SubscriptionsCard, {
+          data: { ...subscriptions(6), fromMonth: "2026-02", toMonth: "2026-07", unread },
+        }),
+      ),
+    );
+    expect(subs).toContain(
+      "over 6 complete months, Feb 2026 to Jul 2026, refunds netted off. That is a total, not a rate — a bill that " +
+        `started or ended inside the window did not charge for all of it. ${why}`,
+    );
+    // …and a window the frontier emptied says it too, beside "nothing totalled"
+    const empty = text(
+      renderToStaticMarkup(createElement(SubscriptionsCard, { data: { ...subscriptions(0), unread } })),
+    );
+    expect(empty).toContain(`nothing here has been totalled from the charges themselves. ${why}`);
+  });
+
+  /** the transfers card names the window in its headline, and prints the same reason under its figures */
+  test("the transfers card prints why its months stop short, and nothing when they do not", () => {
+    const why = "Aug 2026 and Sep 2026 are left out: Aug 12 is the last day every account you spend from has been imported through.";
+    const transfers = (unreadNote: string | null): TransfersCardData =>
+      ({
+        headline: "$74,750.12",
+        headlineNoun: "left one account for another, Feb 2026 to Jul 2026",
+        summary: "None of this is income and none of it is spending.",
+        routes: [],
+        otherRouteNote: null,
+        otherRouteCents: 0,
+        routedCents: 0,
+        proof: { sentence: "Every one of the 3 departures is linked.", unpairedCount: 0, mirrorNote: null, strandedNote: null },
+        churnNote: null,
+        arrivalNote: null,
+        cancelledNote: null,
+        otherPartyNote: null,
+        unreadNote,
+      }) as unknown as TransfersCardData;
+    expect(text(renderToStaticMarkup(createElement(TransfersCard, { data: transfers(why) })))).toContain(why);
+    expect(text(renderToStaticMarkup(createElement(TransfersCard, { data: transfers(null) })))).not.toContain("left out");
   });
 
   test("a full window reads exactly as it did", () => {

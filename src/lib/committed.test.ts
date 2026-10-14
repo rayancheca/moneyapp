@@ -11,9 +11,12 @@ import {
   heaviestMonth,
   heaviestMonthEnding,
   COMMITTED_ORIGIN_LABEL,
+  lastFullyReadMonth,
+  measuredMonthsClause,
   monthHorizon,
   shrinkCaption,
   spendArithmeticCaption,
+  unreadMonthsSentence,
   upfrontCarLeftOut,
   withinMonthHorizon,
   committedOutflows,
@@ -426,6 +429,117 @@ describe("baselineCaption", () => {
         "running and is not counted.",
     );
     expect(c).not.toContain("-$");
+  });
+});
+
+/**
+ * ⚖️ His decision 71 (2026-10-13, asked as an either/or): an average uses only months every account he spends from has
+ * been read through to the END of. 🔴 Measured on his ledger copy that day: the runway averaged "6 complete months, Apr
+ * 2026 to Sep 2026" while Chase Checking was read only through Aug 12 — September's $5,417.30 held no Chase spending at
+ * all, beside a year summary and a /spending page that stop at Aug 12 for exactly that reason.
+ */
+describe("lastFullyReadMonth — the month a day of coverage reads to its end", () => {
+  test("a day inside a month reads the month before it; a month's own last day reads that month", () => {
+    expect(lastFullyReadMonth("2026-08-12")).toBe("2026-07");
+    expect(lastFullyReadMonth("2026-08-31")).toBe("2026-08");
+    expect(lastFullyReadMonth("2026-08-30")).toBe("2026-07");
+    expect(lastFullyReadMonth("2026-03-01")).toBe("2026-02");
+    // the calendar owns February, leap years included
+    expect(lastFullyReadMonth("2028-02-29")).toBe("2028-02");
+    expect(lastFullyReadMonth("2026-02-28")).toBe("2026-02");
+    expect(lastFullyReadMonth("2026-01-15")).toBe("2025-12");
+  });
+});
+
+describe("unreadMonthsSentence — why an average stops before the last complete month", () => {
+  test("names the months it leaves out and the day that leaves them out, in /spending's words", () => {
+    expect(unreadMonthsSentence({ months: ["2026-08", "2026-09"], through: "2026-08-12" })).toBe(
+      "Aug 2026 and Sep 2026 are left out: Aug 12 is the last day every account you spend from has been imported " +
+        "through.",
+    );
+    expect(unreadMonthsSentence({ months: ["2026-09"], through: "2026-09-29" })).toBe(
+      "Sep 2026 is left out: Sep 29 is the last day every account you spend from has been imported through.",
+    );
+    // three or more are one run of months, named by its two ends
+    expect(unreadMonthsSentence({ months: ["2026-07", "2026-08", "2026-09"], through: "2026-07-04" })).toBe(
+      "Jul 2026 to Sep 2026 are left out: Jul 4 is the last day every account you spend from has been imported through.",
+    );
+  });
+
+  test("the day carries its year when it is not the first left-out month's", () => {
+    // a ledger whose stub month was never a whole one: the day sits before the months it explains
+    expect(unreadMonthsSentence({ months: ["2026-01"], through: "2025-12-20" })).toBe(
+      "Jan 2026 is left out: Dec 20, 2025 is the last day every account you spend from has been imported through.",
+    );
+  });
+
+  test("nothing left out is no sentence", () => {
+    expect(unreadMonthsSentence(null)).toBeNull();
+    expect(unreadMonthsSentence({ months: [], through: "2026-08-12" })).toBeNull();
+  });
+
+  /** the runway's caption, under "What you spend a month" — the reason sits beside the window it explains */
+  test("the runway's caption says why the later months are not in its window", () => {
+    const unread = { months: ["2026-08", "2026-09"], through: "2026-08-12" };
+    expect(baselineCaption({ months: 6, fromMonth: "2026-02", toMonth: "2026-07", upfrontCarCents: 0, unread })).toBe(
+      "Spending averaged over 6 complete months, Feb 2026 to Jul 2026. Aug 2026 and Sep 2026 are left out: Aug 12 is " +
+        "the last day every account you spend from has been imported through. This month is still running and is not " +
+        "counted.",
+    );
+    // …after the up-front money it left out, when the window still holds some
+    expect(
+      baselineCaption({
+        months: 6,
+        fromMonth: "2026-03",
+        toMonth: "2026-08",
+        upfrontCarCents: 610_000,
+        unread: { months: ["2026-09"], through: "2026-09-02" },
+      }),
+    ).toBe(
+      "Spending averaged over 6 complete months, Mar 2026 to Aug 2026, leaving out the $6,100.00 paid up front for the " +
+        "car, which the car card spreads over the lease. Sep 2026 is left out: Sep 2 is the last day every account you " +
+        "spend from has been imported through. This month is still running and is not counted.",
+    );
+  });
+
+  /** ⛔ a window the frontier emptied is not "nothing imported": complete months were, just not in full */
+  test("a window the frontier emptied says which months it could not use", () => {
+    expect(
+      baselineCaption({
+        months: 0,
+        fromMonth: "2026-10",
+        toMonth: "2026-10",
+        unread: { months: ["2026-08", "2026-09"], through: "2026-08-12" },
+      }),
+    ).toBe(
+      "No complete month has been imported yet, so there is no spending average to stand on. Aug 2026 and Sep 2026 " +
+        "are left out: Aug 12 is the last day every account you spend from has been imported through.",
+    );
+  });
+});
+
+/**
+ * The car card sets its share against "what the last six months measured" — its baseline, `baselineWindow`'s. 🔴 Once
+ * the frontier slid that window back (decision 71), they were not the last six: on his ledger copy 2026-10-13, Feb 2026
+ * to Jul 2026.
+ */
+describe("measuredMonthsClause — the months the car card's share is set against", () => {
+  test("an uncut window is the last six months, as it always read", () => {
+    expect(measuredMonthsClause({ months: 6, fromMonth: "2026-04", toMonth: "2026-09", unread: null })).toBe(
+      "not what the last six months measured.",
+    );
+  });
+
+  test("a cut window names its months and says why the later ones are out", () => {
+    const unread = { months: ["2026-08", "2026-09"], through: "2026-08-12" };
+    expect(measuredMonthsClause({ months: 6, fromMonth: "2026-02", toMonth: "2026-07", unread })).toBe(
+      "not what the 6 complete months, Feb 2026 to Jul 2026, measured. Aug 2026 and Sep 2026 are left out: Aug 12 is " +
+        "the last day every account you spend from has been imported through.",
+    );
+    expect(measuredMonthsClause({ months: 0, fromMonth: "2026-10", toMonth: "2026-10", unread })).toBe(
+      "not anything measured: no month has been read in full yet. Aug 2026 and Sep 2026 are left out: Aug 12 is the " +
+        "last day every account you spend from has been imported through.",
+    );
   });
 });
 

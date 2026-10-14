@@ -53,6 +53,7 @@ import { cashFlowByPeriod, dailySpendHeatmap, largestTransactions, periodTotals,
 import { matchingTransactionIds } from "./transactions-query";
 import { setSplits } from "./transaction-splits";
 import { spendingCoverageThrough } from "./movers-card";
+import { importedThrough } from "./imported-through-fixture";
 
 /**
  * ⚖️ Owner decision 2026-10-02 (§6A 34): what the AGENT'S account PAYS — a fee, or any other expense charged to its
@@ -356,6 +357,8 @@ describe("the agent's fee is no fee the banks charged him", () => {
    * "$20.00 went out in fees": the agent's $5.00, charged to him.
    */
   test("⛔ the Fees card's paid half is his alone, and its lines open exactly it", () => {
+    // ⚖️ every account read into October (decision 71), so September is read to its end and is the card's window
+    importedThrough(bundle.db, TODAY);
     const card = feesCard(bundle.db, TODAY)!;
     expect([card.recent.from, card.recent.to, card.months]).toEqual([SEPT.from, SEPT.to, 1]);
     expect([card.recent.paidCents, card.recent.paidCharges, card.allTime.paidCents]).toEqual([HIS_FEE, 1, HIS_FEE]);
@@ -486,6 +489,8 @@ describe("Robinhood Gold, charged to the agent, is no merchant of his", () => {
   test("⛔ the eating-out card's dining is his alone", () => {
     post(wellsFargo, "2026-09-12", -2_000, "Food > Dining", "Dining");
     post(agentic, "2026-09-13", -3_000, "Food > Dining", "Dining");
+    // ⚖️ every account read into October (decision 71), so September is read to its end and is the card's window
+    importedThrough(bundle.db, TODAY);
     const dining = (card: ReturnType<typeof eatingOutCard>) => card?.eatingOut.find((l) => l.name === "Dining")?.spentCents;
     expect(dining(eatingOutCard(bundle.db, TODAY))).toBe(2_000);
     unpair();
@@ -877,6 +882,12 @@ describe("the agent's cost SERIES is not his bill either", () => {
   test("⛔ /categories/<Fees>'s Recurring series card, a budget's recurring spend and the subscriptions card", () => {
     hisCar();
     createBudget(bundle.db, { categoryId: catId("Fees"), period: "monthly", amountCents: 5_000, startsOn: SEPT.from });
+    /*
+     * ⚖️ every account read into October (decision 71), so September is read to its end: on a ledger this young no
+     * habit names the accounts you spend from, so the agent's Sep 20 charge would move the day the card's window is
+     * read through — a different question from whose bill it is
+     */
+    importedThrough(bundle.db, TODAY);
     const subscriptions = () => subscriptionsCard(bundle.db, TODAY);
     const before = subscriptions();
     const series = agentsGold();
