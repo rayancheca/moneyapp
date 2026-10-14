@@ -3765,51 +3765,194 @@ describe("⚖️ decision 72 — a total over days its accounts have not been im
   });
 
   /*
-   * The task's scope is a SPEND total, and the line is /budgets' — "spending imported through …" — which no Received
-   * or Net page could print. ❓ Whether an income page's total reads "partly read" too is his call (handoff).
+   * ⚖️ Decision 72 reaches the Received and Net pages (ruled implied 2026-10-14: one window reads one way everywhere).
+   * An income or transfer category's total is read by the category's OWN day — the accounts its rows landed in
+   * (`categoryCoverage`) — and its line's first word is what the page counts, as its empty state already words it
+   * ("income in Salary is imported through …", `reachSubject`). 🔴 Measured on his ledger copy 2026-10-13:
+   * `/categories/<Salary>` for September chipped "adds up" while SoFi Savings, which Salary landed in this spring, is
+   * read through Jul 31.
    */
-  test("an income category's Received total is not graded by spending's words", () => {
+  test("an income category's Received total is read by the accounts its income landed in, in income's words", () => {
     const pay = addKindedCategory("c-pay", "Fixture Salary", "income");
     const acct = addAccount("a", "Chase Checking", "checking");
     const file = addFile("f1", "july.pdf", "chase-checking-statement-pdf");
     addDays(acct, [{ day: "2026-07-01", basis: "anchored" }, { day: "2026-07-20", basis: "derived" }]);
     for (const day of ["2026-07-10", "2026-07-20"]) categorize(addTxn(acct, day, { importFileId: file, cents: 5_000 }), pay);
-    const p = provenanceFor(bundle.db, { kind: "categorySpend", categoryId: pay, ...JULY })!;
-    expect(p.verdict).toBe("derived");
-    expect(p.partlyRead).toBeUndefined();
+    const received = () => provenanceFor(bundle.db, { kind: "categorySpend", categoryId: pay, ...JULY })!;
+
+    const line = "income imported through Jul 20 · 11 days of this period unaccounted";
+    expect(received().verdict).toBe("partly_read");
+    expect(received().partlyRead).toEqual({ uncoveredDays: 11, line });
+    expect(received().headline).toMatch(new RegExp(` It is read only in part: ${line}, so this total is a lower bound`));
+
+    // read through its last day, it adds up as it always has
+    readThrough(acct, "2026-07-31");
+    expect(received().verdict).toBe("derived");
+    expect(received().partlyRead).toBeUndefined();
   });
 
-  /*
-   * ❓ HIS CALL, OPEN (review of 2fce458, the handoff's §6A): a merchant's own window — its first visit to its last
-   * (`merchant-insights`) — is not graded. Either it is read by the earliest import day of the accounts it was paid
-   * from, as a category's is (`categoryCoverage`), or it is left out: it ends on a row the ledger has read. Pinned as
-   * shipped until he answers, in the shape of his rent (Flamingo South Beach on his ledger copy 2026-10-13: one payment
-   * on Chase Checking, imported through Aug 12, the two since on Wells Fargo, read through Sep 24), where the category
-   * over the same days IS partly read.
-   */
-  test("❓ a merchant's own window is not graded — the category over the same days is", () => {
+  test("a transfer category's Net total is graded the same way, and names what it counts", () => {
+    const moves = addKindedCategory("c-moves", "Fixture Transfers", "transfer");
+    const acct = addAccount("a", "Chase Checking", "checking");
+    const file = addFile("f1", "july.pdf", "chase-checking-statement-pdf");
+    addDays(acct, [{ day: "2026-07-01", basis: "anchored" }, { day: "2026-07-20", basis: "derived" }]);
+    categorize(addTxn(acct, "2026-07-10", { importFileId: file, cents: -5_000 }), moves);
+    categorize(addTxn(acct, "2026-07-20", { importFileId: file, cents: 5_000 }), moves);
+    const p = provenanceFor(bundle.db, { kind: "categorySpend", categoryId: moves, ...JULY })!;
+    expect(p.verdict).toBe("partly_read");
+    expect(p.partlyRead).toEqual({
+      uncoveredDays: 11,
+      line: "activity imported through Jul 20 · 11 days of this period unaccounted",
+    });
+  });
+
+  /** his rent's shape on his ledger copy 2026-10-13 (Flamingo South Beach): one payment on Chase Checking, imported
+   *  through Aug 12, the two since on Wells Fargo, read through Sep 24 — here Jul 20 and Jul 31 */
+  function rentPaidFromTwoAccounts(): { checking: string; wells: string } {
     const checking = addAccount("a", "Chase Checking", "checking");
     const wells = addAccount("b", "Wells Fargo", "checking");
     const file = addFile("f1", "july.pdf", "chase-checking-statement-pdf");
     addDays(checking, [{ day: "2026-07-01", basis: "anchored" }, { day: "2026-07-20", basis: "derived" }]);
     addDays(wells, [{ day: "2026-07-01", basis: "anchored" }, { day: "2026-07-31", basis: "derived" }]);
-    bundle.db.insert(merchants).values({ id: "m-rent", canonicalName: "Fixture Landlord", createdAt: now(), updatedAt: now() }).run();
+    addMerchantRow("m-rent", "Fixture Landlord");
     for (const [acct, day] of [[checking, "2026-07-10"], [wells, "2026-07-25"], [wells, "2026-07-31"]] as const) {
-      const id = addTxn(acct, day, { importFileId: file });
-      categorize(id, food);
-      bundle.db.run(sql`UPDATE transactions SET merchant_id = 'm-rent' WHERE id = ${id}`);
+      atMerchant(addTxn(acct, day, { importFileId: file }), "m-rent", food);
     }
     // Chase Checking is read through Jul 20 by a row of its own elsewhere
     categorize(addTxn(checking, "2026-07-20", { importFileId: file }), food);
-    const window = { from: "2026-07-10", to: "2026-07-31" };
+    return { checking, wells };
+  }
 
-    const rent = provenanceFor(bundle.db, { kind: "merchantSpend", merchantId: "m-rent", ...window })!;
-    expect(rent.verdict).toBe("derived");
-    expect(rent.partlyRead).toBeUndefined();
-    expect(rent.headline).toMatch(/^This total is the sum of 3 rows from 1 document\./);
-    expect(foodTotal(window).partlyRead).toEqual({
+  function addMerchantRow(id: string, name: string): void {
+    bundle.db.insert(merchants).values({ id, canonicalName: name, createdAt: now(), updatedAt: now() }).run();
+  }
+
+  function atMerchant(txnId: string, merchantId: string, categoryId: string): void {
+    categorize(txnId, categoryId);
+    bundle.db.run(sql`UPDATE transactions SET merchant_id = ${merchantId} WHERE id = ${txnId}`);
+  }
+
+  const merchantTotal = (merchantId: string, window: { from: string; to: string }, shareOf?: string) =>
+    provenanceFor(bundle.db, { kind: "merchantSpend", merchantId, ...window, ...(shareOf ? { shareOf } : {}) })!;
+
+  /*
+   * ⚖️ Decision 72 reaches a merchant's own window (ruled implied 2026-10-14 — option (a) of the either/or in 6e6c3da):
+   * its first visit to its last, read by the EARLIEST import day of the accounts it was paid from — a category's rule
+   * (`categoryCoverage`), so the merchant and the category over the same days read the same day. 🔴
+   * Measured on his ledger copy 2026-10-13: "Flamingo South Beach is the largest of your 254 regular merchants, at
+   * $9,248.82 · adds up" over Jun 16 – Sep 2, while Chase Checking, which paid its July rent, is read through Aug 12.
+   */
+  test("a merchant's own window is read by the earliest import day of the accounts it was paid from", () => {
+    const { checking } = rentPaidFromTwoAccounts();
+    // a transfer at the merchant is no purchase of his (`isHisExpenseRow`): its account never holds the day back
+    const moves = addKindedCategory("c-moves", "Fixture Transfers", "transfer");
+    const savings = addAccount("c", "SoFi Savings", "savings");
+    addDays(savings, [{ day: "2026-07-01", basis: "anchored" }, { day: "2026-07-12", basis: "derived" }]);
+    atMerchant(addTxn(savings, "2026-07-12", { importFileId: "f1" }), "m-rent", moves);
+    const window = { from: "2026-07-10", to: "2026-07-31" };
+    const line = "spending imported through Jul 20 · 11 days of this period unaccounted";
+
+    const rent = merchantTotal("m-rent", window);
+    expect(rent.verdict).toBe("partly_read");
+    expect(rent.badgeWord).toBeUndefined();
+    expect(rent.partlyRead).toEqual({ uncoveredDays: 11, line });
+    expect(rent.headline).toBe(
+      "This total is the sum of 3 rows from 1 document. A total is only as proven as its weakest row. " +
+        `It is read only in part: ${line}, so this total is a lower bound rather than a measurement.`,
+    );
+    // one rule: the category over the same days reads the same day and prints the same line
+    expect(foodTotal(window).partlyRead).toEqual(rent.partlyRead);
+
+    // once every account it was paid from is read through its last visit, it adds up as it always has
+    readThrough(checking, "2026-07-31");
+    expect(merchantTotal("m-rent", window).verdict).toBe("derived");
+    expect(merchantTotal("m-rent", window).partlyRead).toBeUndefined();
+  });
+
+  /*
+   * ⚖️ CASH WALLETS ARE LEFT OUT (2026-09-15, the /budgets rule a merchant now reads by): a wallet's day is no import's,
+   * so a merchant paid from one beside a card follows the card, and one paid ONLY from wallets is never partly read.
+   */
+  test("a wallet never vouches for a card a merchant was paid from, and a merchant paid only from one is never graded", () => {
+    const checking = addAccount("a", "Chase Checking", "checking");
+    const file = addFile("f1", "july.pdf", "chase-checking-statement-pdf");
+    addDays(checking, [{ day: "2026-07-01", basis: "anchored" }, { day: "2026-07-20", basis: "derived" }]);
+    const wallet = createCashWallet(bundle.db, { name: "Cash on Hand", openingOn: "2026-07-01", openingBalanceCents: 50_000 });
+    const jar = createCashWallet(bundle.db, { name: "Coin Jar", openingOn: "2026-07-01", openingBalanceCents: 50_000 });
+    addMerchantRow("m-deli", "Fixture Deli");
+    addMerchantRow("m-cart", "Fixture Cart");
+    atMerchant(addTxn(checking, "2026-07-10", { importFileId: file }), "m-deli", food);
+    categorize(addTxn(checking, "2026-07-20", { importFileId: file }), food);
+    const cash = (accountId: string, day: string) =>
+      addManualTransaction(bundle.db, { accountId, postedOn: day, amountCents: -1_000, description: "Lunch", categoryId: food });
+    bundle.db.run(sql`UPDATE transactions SET merchant_id = 'm-deli' WHERE id = ${cash(wallet, "2026-07-31")}`);
+    for (const day of ["2026-07-05", "2026-07-15"]) {
+      bundle.db.run(sql`UPDATE transactions SET merchant_id = 'm-cart' WHERE id = ${cash(jar, day)}`);
+    }
+
+    expect(merchantTotal("m-deli", { from: "2026-07-10", to: "2026-07-31" }).partlyRead).toEqual({
       uncoveredDays: 11,
       line: "spending imported through Jul 20 · 11 days of this period unaccounted",
     });
+    // asked past the wallet's own newest row, which no import will ever move
+    const cart = merchantTotal("m-cart", { from: "2026-07-05", to: "2026-07-31" });
+    expect(cart.verdict).toBe("manual");
+    expect(cart.partlyRead).toBeUndefined();
+  });
+
+  /*
+   * ⚖️ A share sentence against a category total over a window inherits that total's grade (decision 72, ruled implied
+   * 2026-10-14): the share is the merchant's part of the CATEGORY's whole, and the whole is graded already. 🔴 Measured
+   * on his ledger copy 2026-10-13: "Breezeline is 100.0% of what you spent on Utilities over Aug 10 – Sep 10, 2026 · adds
+   * up" — Breezeline paid from Venture X, read through Sep 13; Utilities spent from Chase Checking too, through Aug 12.
+   * ⛔ The whole is no lower bound of the part's total, so its sentence says only which total is read in part.
+   */
+  test("a share of a category inherits that category total's grade over the same days", () => {
+    const checking = addAccount("a", "Chase Checking", "checking");
+    const venture = addAccount("b", "Venture X", "credit");
+    const file = addFile("f1", "july.pdf", "chase-checking-statement-pdf");
+    addDays(checking, [{ day: "2026-07-01", basis: "anchored" }, { day: "2026-07-20", basis: "derived" }]);
+    addDays(venture, [{ day: "2026-07-01", basis: "anchored" }, { day: "2026-07-25", basis: "derived" }]);
+    addMerchantRow("m-isp", "Fixture Internet");
+    for (const day of ["2026-07-10", "2026-07-25"]) atMerchant(addTxn(venture, day, { importFileId: file }), "m-isp", food);
+    categorize(addTxn(checking, "2026-07-20", { importFileId: file }), food);
+    const window = { from: "2026-07-10", to: "2026-07-25" };
+    const line = "spending imported through Jul 20 · 5 days of this period unaccounted";
+
+    // its own total is read in full — Venture X through its last visit
+    const own = merchantTotal("m-isp", window);
+    expect(own.verdict).toBe("derived");
+    expect(own.partlyRead).toBeUndefined();
+
+    const share = merchantTotal("m-isp", window, food);
+    expect(share.verdict).toBe("partly_read");
+    expect(share.partlyRead).toEqual(foodTotal(window).partlyRead);
+    expect(share.partlyRead).toEqual({ uncoveredDays: 5, line });
+    expect(share.headline).toBe(
+      "This total is the sum of 2 rows from 1 document. A total is only as proven as its weakest row. " +
+        `What it is a share of — Fixture Food over the same days — is read only in part: ${line}.`,
+    );
+    expect(share.headline).not.toMatch(/lower bound/);
+  });
+
+  test("…and with both read in part, both are said, and the line under it names the earlier day", () => {
+    rentPaidFromTwoAccounts();
+    // Food read through Jul 20 on Chase Checking; the rent ALSO paid once from a card read only through Jul 15, filed
+    // under another category, so the merchant's own day is earlier than the whole's
+    const shopping = addKindedCategory("c-shop", "Fixture Shopping", "expense");
+    const card = addAccount("c", "Chase Sapphire", "credit");
+    addDays(card, [{ day: "2026-07-01", basis: "anchored" }, { day: "2026-07-15", basis: "derived" }]);
+    atMerchant(addTxn(card, "2026-07-15", { importFileId: "f1" }), "m-rent", shopping);
+    const window = { from: "2026-07-10", to: "2026-07-31" };
+
+    const share = merchantTotal("m-rent", window, food);
+    expect(share.verdict).toBe("partly_read");
+    expect(share.partlyRead).toEqual({
+      uncoveredDays: 16,
+      line: "spending imported through Jul 15 · 16 days of this period unaccounted",
+    });
+    expect(share.headline).toMatch(
+      / It is read only in part: spending imported through Jul 15 · 16 days of this period unaccounted, so this total is a lower bound rather than a measurement\. What it is a share of — Fixture Food over the same days — is read only in part: spending imported through Jul 20 · 11 days of this period unaccounted\.$/,
+    );
   });
 });

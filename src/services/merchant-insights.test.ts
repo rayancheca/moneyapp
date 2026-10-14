@@ -42,13 +42,19 @@ function addMerchant(id: string, name: string): void {
 }
 
 let seq = 0;
-function addTxn(day: string, cents: number, categoryName: string | null, merchantId: string | null): void {
+function addTxn(
+  day: string,
+  cents: number,
+  categoryName: string | null,
+  merchantId: string | null,
+  accountId = ACCT,
+): void {
   seq += 1;
   bundle.db
     .insert(transactions)
     .values({
       id: `t-${seq}`,
-      accountId: ACCT,
+      accountId,
       importFileId: null,
       postedOn: day,
       amountCents: cents,
@@ -393,5 +399,50 @@ describe("what a merchant page adds", () => {
     const out = merchantInsights(bundle.db, "m-1", TODAY)!;
     // two rows, not twenty-two
     expect(out.insights[0]!.provenance.headline).toContain("2 rows");
+  });
+});
+
+/*
+ * ⚖️ Decision 72 (ruled implied 2026-10-14): the rank sentence's total is the merchant's own, read by the accounts it
+ * was paid from; the share sentence's whole is the CATEGORY over the merchant's span, and a share inherits that total's
+ * grade. 🔴 Measured on his ledger copy 2026-10-13: "Breezeline is 100.0% of what you spent on Utilities over Aug 10 –
+ * Sep 10, 2026 · adds up" — Breezeline on Venture X, read through Sep 13; Utilities spent from Chase Checking too,
+ * through Aug 12.
+ */
+describe("⚖️ decision 72 — each sentence is graded by the total it stands on", () => {
+  test("the share reads its category's day; the rank keeps the merchant's own", () => {
+    const institutionId = bundle.db.select().from(institutions).all()[0]!.id;
+    const at = new Date().toISOString();
+    bundle.db
+      .insert(accounts)
+      .values({
+        id: "acct-2",
+        institutionId,
+        name: "Venture X",
+        type: "credit",
+        currency: "USD",
+        isActive: true,
+        displayOrder: 1,
+        createdAt: at,
+        updatedAt: at,
+      })
+      .run();
+    addMerchant("m-1", "Zzz Internet");
+    addMerchant("m-2", "Zzz Deli");
+    addTxn("2026-07-10", -5_000, "Utilities", "m-1", "acct-2");
+    addTxn("2026-07-25", -5_000, "Utilities", "m-1", "acct-2");
+    addTxn("2026-07-11", -1_000, "Food", "m-2", "acct-2");
+    addTxn("2026-07-26", -1_000, "Food", "m-2", "acct-2");
+    // Chase Checking paid Utilities once and is read through that day
+    addTxn("2026-07-20", -1_000, "Utilities", null);
+
+    const out = merchantInsights(bundle.db, "m-1", TODAY)!;
+    const share = out.insights.find((i) => i.text.includes("% of what you spent on Utilities"))!;
+    const rank = out.insights.find((i) => i.text.includes("regular merchants"))!;
+    expect(share.provenance.partlyRead).toEqual({
+      uncoveredDays: 5,
+      line: "spending imported through Jul 20 · 5 days of this period unaccounted",
+    });
+    expect(rank.provenance.partlyRead).toBeUndefined();
   });
 });

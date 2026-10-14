@@ -1,3 +1,4 @@
+import type { CategoryKind } from "@/db/schema/categories";
 import { emptyPeriodReason } from "./empty-period";
 import { formatDayShortIn } from "./format-date";
 
@@ -54,6 +55,37 @@ export interface BudgetCoverageInput {
    * its page asks (`BorrowedDay`); absent or null otherwise, and never read then.
    */
   borrowedDay?: BorrowedDay | null;
+  /**
+   * What the window counts — the first word of its line (`countedFlow`). Absent, spending: every /budgets row, and
+   * every total decision 72 graded first. ⚖️ A Received or Net page's total names its own (`countedFlow`).
+   */
+  counted?: CountedFlow;
+}
+
+/** What a category's window counts, as its lines name it: "spending", "income", or "activity" for anything else. */
+export type CountedFlow = "spending" | "income" | "activity";
+
+/**
+ * "income" — the noun a category's day is named by, from its kind: the owner's own flow (`categoryFlowLabel`), Spent,
+ * Received, or a Net of anything else.
+ *
+ * ⚖️ Implied by his decision 72 (ruled by the orchestrator 2026-10-14: one window reads one way everywhere): a Received
+ * or Net page's total is graded by its category's own day as a Spent total is, so its line's first word follows what
+ * the page counts. ⛔ One noun for the line under the figure and for the page's empty state ("income in Salary is
+ * imported through …", `lib/category-reach`) — two would name one day two ways on one page.
+ */
+export function countedFlow(kind: CategoryKind): CountedFlow {
+  return kind === "expense" ? "spending" : kind === "income" ? "income" : "activity";
+}
+
+/**
+ * "spent only from" — how what is counted met the only accounts it touched, where none of them has an import day.
+ * 🔴 On the pristine e2e fixture (today 2026-07-08) `/categories/<Dividends>` for 2026 to date — its rows on a brokerage
+ * account no import dates — would have read "spent only from accounts with no import date" on a Received page.
+ */
+function onlyThrough(counted: CountedFlow): string {
+  if (counted === "spending") return "spent only from";
+  return counted === "income" ? "received only into" : "moved only through";
 }
 
 /** the facts a category's own day is read from — its ancestor's, where one is borrowed */
@@ -81,12 +113,18 @@ export type BorrowedDay =
  * through …", "the ledger is imported through …"); an ancestor spent only from cash in its own row's. Null on an
  * empty ledger, which has no day to name.
  */
-function borrowedDayClause(borrowed: BorrowedDay, day: (iso: string) => string, periodStart: string): string | null {
+function borrowedDayClause(
+  borrowed: BorrowedDay,
+  day: (iso: string) => string,
+  periodStart: string,
+  // an ancestor counts what its subtree counts — a subtree is one kind
+  counted: CountedFlow,
+): string | null {
   if (borrowed.whose === "ledger") return borrowed.on === null ? null : `the ledger imported through ${day(borrowed.on)}`;
   const { importedThroughOn } = borrowed.coverage;
   return importedThroughOn !== null
-    ? `spending in ${borrowed.name} imported through ${day(importedThroughOn)}`
-    : `${borrowed.name} ${budgetCoverageFact({ ...borrowed.coverage, bounds: { start: periodStart } })}`;
+    ? `${counted} in ${borrowed.name} imported through ${day(importedThroughOn)}`
+    : `${borrowed.name} ${budgetCoverageFact({ ...borrowed.coverage, bounds: { start: periodStart }, counted })}`;
 }
 
 /**
@@ -141,16 +179,20 @@ export function spendUnread(
  */
 export function budgetCoverageFact(input: Omit<BudgetCoverageInput, "uncoveredDays">): string {
   const day = (iso: string): string => formatDayShortIn(iso, input.bounds.start);
-  if (input.importedThroughOn !== null) return importedThroughFact(input.importedThroughOn, input.bounds.start);
+  const counted = input.counted ?? "spending";
+  if (input.importedThroughOn !== null) {
+    return importedThroughFact(input.importedThroughOn, input.bounds.start, counted);
+  }
   if (spentOnlyFromCashWallets(input)) {
-    return `spent only from ${input.spentFromWallets === 1 ? "a cash wallet" : "cash wallets"} since ${day(input.spentFromSince)}`;
+    const wallets = input.spentFromWallets === 1 ? "a cash wallet" : "cash wallets";
+    return `${onlyThrough(counted)} ${wallets} since ${day(input.spentFromSince)}`;
   }
   const own =
     input.spentFromAccounts === 0
       ? `nothing imported for this category since ${day(input.spentFromSince)}`
-      : `spent only from accounts with no import date since ${day(input.spentFromSince)}`;
+      : `${onlyThrough(counted)} accounts with no import date since ${day(input.spentFromSince)}`;
   // ⛔ the day the count was taken against is named beside it, or "7 days unaccounted" has no day to be counted from
-  const borrowed = input.borrowedDay ? borrowedDayClause(input.borrowedDay, day, input.bounds.start) : null;
+  const borrowed = input.borrowedDay ? borrowedDayClause(input.borrowedDay, day, input.bounds.start, counted) : null;
   return borrowed === null ? own : `${own} · ${borrowed}`;
 }
 
@@ -171,10 +213,11 @@ export function budgetCoverageSentence(input: BudgetCoverageInput): string {
 /**
  * "spending imported through Sep 2" — a named day, as the row names it; a day outside the period's year carries it.
  * ⚖️ Exported for decision 72's one-day windows: /spending's heatmap names the day a day past it is read through in
- * these words, the words under Where it went on the same page (`SpendHeatmap`'s `heatDayUnaccounted`).
+ * these words, the words under Where it went on the same page (`SpendHeatmap`'s `heatDayUnaccounted`). A Received or
+ * Net page's line names what it counts instead (`countedFlow`) — "income imported through Sep 24".
  */
-export function importedThroughFact(on: string, periodStart: string): string {
-  return `spending imported through ${formatDayShortIn(on, periodStart)}`;
+export function importedThroughFact(on: string, periodStart: string, counted: CountedFlow = "spending"): string {
+  return `${counted} imported through ${formatDayShortIn(on, periodStart)}`;
 }
 
 /**
