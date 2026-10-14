@@ -5,6 +5,11 @@ import { isStaleClose, newestQuotedOn } from "./holding-price-age";
 import { formatCents } from "./money";
 import { dayWindowLabel } from "./period";
 import { STALE_PERIODS, type CashEarningsBasis } from "./cash-earnings";
+import { compareDates } from "./dates";
+import { formatDayShortIn } from "./format-date";
+import { depositsOf } from "./paid-by-another-month";
+import type { PayShortfall } from "./pay-shortfall";
+import { TOWARD_NO_PAYDAY } from "./per-payday";
 import { LAST_CHECKED_DAY, notLookedForDeposits } from "./unbanked-income";
 
 /**
@@ -495,6 +500,11 @@ export interface CashEarningsNoteInput {
     checkedThrough?: string | null;
     checkedPeriodsCovered?: number;
     checkedPeriodsSinceBanked?: number;
+    /**
+     * The window's READ paydays against the settlement (`payShortfall`) — what the shortfall note prints. Absent
+     * means the caller did not measure it, and no such note is written.
+     */
+    shortfall?: PayShortfall;
   }[];
   formatDay: (iso: string) => string;
 }
@@ -551,13 +561,21 @@ function impliedSpanPhrase(firstOn: string | null, lastOn: string | null): strin
  * that at least three innocent explanations fit. So the note states all three
  * rather than picking one — the reader knows which is true and the app does not.
  *
- * Two notes, and both are deliberately narrow:
+ * Three notes, and each is deliberately narrow:
  *
- *   - a SILENT schedule is news. Banking in lumps is his ordinary rhythm, so a
- *     live schedule one week behind says nothing at all; only `series-stale`
- *     speaks, and `STALE_PERIODS` sets that bar at three missed periods.
+ *   - a SILENT schedule is news. Banking in lumps was his ordinary rhythm, so
+ *     the schedule's SILENCE is named only when `series-stale`, and
+ *     `STALE_PERIODS` sets that bar at three missed periods.
  *   - a period that banked MORE than it earned is also news, in the other
  *     direction: without it, the month he clears a backlog reads as a raise.
+ *     Read off the settlement, the surplus says which part was that and which
+ *     paid a later payday early (`surplusSplit`).
+ *   - and a period whose paydays on READ days came to more than it banked is its mirror (`payShortfallNote`) — what
+ *     paid them from outside the period, and what nothing paid. 🔴 Without it every window of a schedule that is
+ *     not stale was silent about its own unbanked paydays: on his ledger 2026-10-13 August read "INCOME $54.12"
+ *     beside four paydays of $4,282.92 and no note, one month from September's surplus note about the same lump.
+ *     ⛔ Never beside the surplus note: both read one banked figure, and the read paydays are some of those the
+ *     surplus is measured against (`payGap`) — 🔴 a window paid $900.00 then $1,300.00 printed both.
  */
 export function cashEarningsSectionNotes(input: CashEarningsNoteInput): SectionNote[] {
   const notes: SectionNote[] = [];
@@ -640,7 +658,18 @@ export function cashEarningsSectionNotes(input: CashEarningsNoteInput): SectionN
       continue;
     }
 
-    if (r.unbankedCents < 0) {
+    // ⛔ after the stale note's `continue`: a stale series keeps the note it has, and never prints both
+    const shortfall =
+      r.shortfall === undefined ? null : payShortfallNote(r.seriesName, r.shortfall, r.checkedThrough, input.formatDay);
+
+    /*
+     * ⛔ The surplus note only where the shortfall note is silent. Both measure one window's money, but the shortfall
+     * note measures what was left once money that paid ANOTHER window's payday is taken out — and names that money —
+     * so a window whose deposits paid Aug 27 and Oct 1 while its own Sep 24 was paid from outside it banked "more than
+     * its paydays came to" and "none of it" at once. 🔴 Review of 2a415d5, his ledger copy with the next Wells Fargo
+     * statement simulated: Sep 24 – Sep 30 read "banked $1,141.92 more than its paydays on Sep 24, 2026 came to".
+     */
+    if (r.unbankedCents < 0 && shortfall === null) {
       /*
        * 🔴 "Cash is deposited in lumps" was said of weekly ACH payroll into Wells
        * Fargo (measured 2026-10-07, September: one $4,567.68 deposit on Sep 23
@@ -652,12 +681,177 @@ export function cashEarningsSectionNotes(input: CashEarningsNoteInput): SectionN
         id: `cash-earnings-catchup-${r.seriesName}`,
         body:
           `${r.seriesName} banked ${formatCents(-r.unbankedCents)} more than its paydays` +
-          `${impliedSpanPhrase(r.firstPeriodOn, r.lastPeriodOn)} came to. ` +
-          `One deposit can bank several paydays at once, so the surplus is earlier pay arriving late — read it as a ` +
-          `backlog clearing rather than as a period that earned more.`,
+          `${impliedSpanPhrase(r.firstPeriodOn, r.lastPeriodOn)} came to.` +
+          surplusSplit(-r.unbankedCents, r.shortfall, r.lastPeriodOn, input.formatDay),
       });
     }
+    if (shortfall !== null) notes.push({ id: `cash-earnings-shortfall-${r.seriesName}`, body: shortfall });
   }
 
   return notes;
+}
+
+/** "A and B", "A, B, and C" — the platform's list, as /budgets' fourth figure joins its deposits. */
+const AND_LIST = new Intl.ListFormat("en", { style: "long", type: "conjunction" });
+
+const centsOf = (parts: readonly { cents: number }[]): number => parts.reduce((sum, p) => sum + p.cents, 0);
+
+/** Every payday the parts went into, oldest first, once each. */
+const paydaysOf = (parts: readonly { paydays: readonly string[] }[]): string[] =>
+  [...new Set(parts.flatMap((p) => p.paydays))].sort(compareDates);
+
+/**
+ * The shortfall note: what a period's paydays on READ days came to, what was banked inside the period, what deposits
+ * outside it paid of the rest — named by day, "paid early" when before it (§6A 29) — and what no deposit made up, in
+ * Earned vs banked's words ("never reached a bank"). Null when the period banked what its read paydays came to.
+ *
+ * ⚖️ THE SHORTFALL IS THE DASHBOARD'S (`payShortfall`'s `shortCents`, `payGap`, decision 55): the read paydays less
+ * EVERY deposit banked inside the period, so the sentence's figures — banked, paid from outside, never — add up to
+ * what the paydays came to, and a period that banked its whole schedule, however unevenly, says nothing. Money banked
+ * inside the period that paid no payday is named INSIDE the banked figure, in the calendar's words
+ * (`TOWARD_NO_PAYDAY`): it reached a bank, so it is not "never". Measured on his ledger copy 2026-10-13, June:
+ * "$1,447.00 was banked inside the window ($400.00 of it, from the deposit of Fri, Jun 5, 2026, went toward no payday)
+ * and $2,741.00 never reached a bank" — the page's Salary $1,447.00, and the dashboard's netting. 🔴 It read "$1,047.00
+ * was banked inside the window and $3,141.00 never reached a bank. $400.00 … went toward no payday.", and ALL read
+ * $11,517.00 never reached a bank beside the dashboard's $11,117.00 (review of a4b0fca).
+ *
+ * ⛔ Of READ paydays only. A payday after `LAST_CHECKED_DAY` that no deposit settled is named as not looked for —
+ * decision 65's words (`notLookedForDeposits`), never as unbanked — and a period with no read payday says nothing:
+ * the forecast and /budgets already name the quiet it waits on.
+ *
+ * ⛔ THE PERIOD'S OWN MONEY. Money banked inside it that paid a READ payday OUTSIDE it is the other period's — that
+ * period's note names it paying its payday — so it neither makes up a payday here nor goes unnamed: after the split,
+ * "another $X banked inside the window, from the deposit of …, paid Oct 1's payday early" (decisions 29/32's word) or
+ * "paid Sep 24's payday". 🔴 Review of 2a415d5: netted here as well, September (Wed Sep 30 paying Thu Oct 1, Sep 17
+ * never banked) said nothing while October named the same $1,141.92 paid early, and his Q3 stopped adding up to its
+ * months — "$7,234.08 never reached a bank" beside July's $5,235.00 and August's $3,141.00. ⛔ A payday no period
+ * reads — past `LAST_CHECKED_DAY` — is counted by none, so its money stays netted here, as Earned vs banked nets it
+ * (review of 3dc6527: September read "$1,141.92 never reached a bank" where the year and the dashboard did not).
+ *
+ * ⛔ EACH DEPOSIT WITH THE MONEY IT PUT IN (`pay-shortfall`'s "NO SECOND ALLOCATION"). When outside money paid more
+ * than the net shortfall — money inside paid no payday, and had no unpaid payday to net — the outside deposits keep
+ * their own figures and that money is named after the split, toward no payday. 🔴 Review of 2a415d5: Aug 14 – Sep 23
+ * on his ledger copy read "$1,047.00 (Aug 27) was paid by the deposit of Thu, Sep 24, 2026" — Aug 27 is a $1,141.92
+ * payday the Sep 24 deposit paid whole, and Aug 20's $1,047.00 that no deposit paid went unnamed.
+ */
+function payShortfallNote(
+  seriesName: string,
+  s: PayShortfall,
+  checkedThrough: string | null | undefined,
+  formatDay: (iso: string) => string,
+): string | null {
+  if (s.shortCents <= 0) return null;
+
+  // the paydays inside the span the lead names, so the span's year is theirs
+  const payday = (iso: string): string => formatDayShortIn(iso, s.lastReadOn ?? iso);
+  const outside = s.paidOutside.map(
+    (p) =>
+      `${formatCents(p.cents)} (${AND_LIST.format(p.paydays.map(payday))}) was paid ${p.early ? "early, " : ""}by ` +
+      `the ${depositsOf([p.depositOn], formatDay)}`,
+  );
+  const never = s.neverBankedCents > 0 ? [`${formatCents(s.neverBankedCents)} never reached a bank`] : [];
+  const rest = [...outside, ...never];
+
+  const noPaydayFrom = depositsOf(s.towardNoPayday.map((d) => d.depositOn), formatDay);
+  const noPayday =
+    s.noPaydayInsideCents > 0
+      ? ` (${formatCents(s.noPaydayInsideCents)} of it, from the ${noPaydayFrom}, went ${TOWARD_NO_PAYDAY})`
+      : "";
+  const banked = `${formatCents(s.bankedInsideCents)} was banked inside the window${noPayday}`;
+
+  const span = impliedSpanPhrase(s.firstReadOn, s.lastReadOn);
+  const lead = `${seriesName}'s paydays${span} came to ${formatCents(s.readCents)}`;
+  const split =
+    s.bankedInsideCents > 0
+      ? `, of which ${AND_LIST.format([banked, ...rest])}`
+      : outside.length === 0
+        ? ", and none of it reached a bank"
+        : `, and none of it was banked inside the window: ${AND_LIST.format(rest)}`;
+
+  const n = s.unlookedPaydays;
+  const unlooked =
+    n > 0 && checkedThrough
+      ? `; ${n} more ${n === 1 ? "payday in the window falls" : "paydays in the window fall"} after ` +
+        `${formatDay(checkedThrough)}, ${LAST_CHECKED_DAY} — so ${notLookedForDeposits(n)}`
+      : "";
+
+  return `${lead}${split}${beyondPhrase(s, payday, noPaydayFrom, formatDay)}${unlooked}.`;
+}
+
+/**
+ * The period's money the split does not hold, after it: what paid another period's payday (`paidAcross`), and what
+ * paid none of these paydays — so the banked figure, with these, is every deposit inside the period, as the page's
+ * income counts it. Empty when there is none.
+ */
+function beyondPhrase(
+  s: PayShortfall,
+  payday: (iso: string) => string,
+  noPaydayFrom: string,
+  formatDay: (iso: string) => string,
+): string {
+  const parts = [
+    ...s.paidAcross.map((p) => ({
+      cents: p.cents,
+      words:
+        `, from the ${depositsOf([p.depositOn], formatDay)}, paid ${paydaysNamed(p.paydays, payday)}` +
+        (p.early ? " early" : ""),
+    })),
+    ...(s.noPaydayBeyondCents > 0
+      ? [{ cents: s.noPaydayBeyondCents, words: `, from the ${noPaydayFrom}, went ${TOWARD_NO_PAYDAY}` }]
+      : []),
+    ...(s.otherBeyondCents > 0 ? [{ cents: s.otherBeyondCents, words: " went toward none of these paydays" }] : []),
+  ];
+  if (parts.length === 0) return "";
+  if (parts.length === 1) return `; another ${formatCents(parts[0]!.cents)} banked inside the window${parts[0]!.words}`;
+  return (
+    `; another ${formatCents(centsOf(parts))} banked inside the window paid none of them: ` +
+    AND_LIST.format(parts.map((p) => `${formatCents(p.cents)}${p.words}`))
+  );
+}
+
+/** "Oct 1's payday", "the paydays of Oct 1 and Oct 8" — one spelling for the surplus note and the shortfall note. */
+const paydaysNamed = (days: readonly string[], payday: (iso: string) => string): string =>
+  days.length === 1 ? `${payday(days[0]!)}'s payday` : `the paydays of ${AND_LIST.format(days.map(payday))}`;
+
+/**
+ * What a period's surplus was, read off the settlement (`payShortfall`), as the sentences after the surplus note's
+ * lead: pay for a LATER payday banked early — decisions 29/32's words, the money /budgets' next month names "paid
+ * early" and the next period's shortfall note "was paid early, by the deposit of" the same day — money that paid no
+ * payday, in the calendar's words (`TOWARD_NO_PAYDAY`), and the rest, earlier pay arriving late. Each part is capped at
+ * what is left of the surplus, so the parts add up to it; a reading taken without the settlement keeps the one
+ * sentence it always had.
+ *
+ * 🔴 It called ALL of a surplus "earlier pay arriving late — … a backlog clearing" (review of a4b0fca). With payroll
+ * landing the Wednesday before the Thursday it pays (his §6A 29 shape), September's Wed Sep 30 pays Thu Oct 1:
+ * September called that week of October's pay a backlog clearing while October named the same $1,141.92 paid early,
+ * by the deposit of Sep 30. And Jun 5 – Jun 5, holding only the $400.00 that paid no payday, read it as earlier pay.
+ */
+function surplusSplit(
+  surplusCents: number,
+  s: PayShortfall | undefined,
+  lastPeriodOn: string | null,
+  formatDay: (iso: string) => string,
+): string {
+  const backlog = (cents: number): string =>
+    ` One deposit can bank several paydays at once, so ` +
+    `${cents === surplusCents ? "the surplus" : `the other ${formatCents(cents)}`} is earlier pay arriving late — ` +
+    `read it as a backlog clearing rather than as a period that earned more.`;
+  if (s === undefined) return backlog(surplusCents);
+
+  const aheadCents = Math.min(surplusCents, centsOf(s.paidAhead));
+  const noPaydayCents = Math.min(surplusCents - aheadCents, centsOf(s.towardNoPayday));
+  const restCents = surplusCents - aheadCents - noPaydayCents;
+
+  // named as the shortfall note names a payday, in the year of the period's own paydays
+  const payday = (iso: string): string => formatDayShortIn(iso, lastPeriodOn ?? iso);
+  const paydays = paydaysNamed(paydaysOf(s.paidAhead), payday);
+  const aheadFrom = depositsOf(s.paidAhead.map((p) => p.depositOn), formatDay);
+  const noPaydayFrom = depositsOf(s.towardNoPayday.map((d) => d.depositOn), formatDay);
+  const ahead =
+    aheadCents > 0 ? ` ${formatCents(aheadCents)} of it, from the ${aheadFrom}, paid ${paydays} early.` : "";
+  const noPayday =
+    noPaydayCents > 0
+      ? ` ${formatCents(noPaydayCents)} of it, from the ${noPaydayFrom}, went ${TOWARD_NO_PAYDAY}.`
+      : "";
+  return `${ahead}${noPayday}${restCents > 0 ? backlog(restCents) : ""}`;
 }

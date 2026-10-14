@@ -1,5 +1,5 @@
 import type { AppDatabase } from "@/db/client";
-import { STALE_PERIODS, type CashEarningsBasis } from "@/lib/cash-earnings";
+import { payGap, STALE_PERIODS, type CashEarningsBasis } from "@/lib/cash-earnings";
 import { addCalendarMonths, diffDays, monthKey, periodBounds, todayIso } from "@/lib/dates";
 import { formatDayShort, formatMonthYear } from "@/lib/format-date";
 import { monthIncomeLink, type IncomeLink } from "@/lib/income-basis";
@@ -151,22 +151,21 @@ function gapOf(
   unreadImpliedCents: number,
   frontier: UnbankedFrontier,
 ): Gap {
-  const gapCents = impliedCents - bankedCents;
-  const unreadGapCents = gapCents > 0 ? Math.min(gapCents, Math.max(0, unreadImpliedCents)) : 0;
+  // ⛔ the one subtraction, shared with /spending's shortfall note (`payGap`)
+  const { gapCents, unreadGapCents, readGapCents } = payGap(impliedCents, bankedCents, unreadImpliedCents);
   return {
     gapCents,
     gapMagnitudeCents: gapCents === 0 ? 0 : Math.abs(gapCents),
     unreadGapCents,
-    gapLabel: gapLabelFor(gapCents, unreadGapCents, frontier),
+    gapLabel: gapLabelFor(gapCents, unreadGapCents, readGapCents, frontier),
   };
 }
 
-function gapLabelFor(gapCents: number, unreadGapCents: number, frontier: UnbankedFrontier): string {
+function gapLabelFor(gapCents: number, unreadGapCents: number, readCents: number, frontier: UnbankedFrontier): string {
   if (gapCents < 0) return "more than this window implies you earned";
   if (gapCents === 0) return "exactly what this window implies you earned";
   if (unreadGapCents === 0) return "never reached a bank";
 
-  const readCents = gapCents - unreadGapCents;
   if (frontier.kind === "unchecked") {
     return readCents === 0
       ? `${NOT_CHECKED}, so it cannot say whether any of it reached a bank.`

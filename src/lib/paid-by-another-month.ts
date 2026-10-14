@@ -5,9 +5,12 @@ import { formatCents } from "./money";
 /** The platform's own list — "A and B", "A, B, and C" — rather than a hand-rolled join. */
 const LIST = new Intl.ListFormat("en", { style: "long", type: "conjunction" });
 
-/** "deposit of Wed, Sep 30, 2026", "deposits of … and …" — named by day, so each can be found. */
-const depositsOf = (deposits: readonly string[]): string =>
-  `${deposits.length === 1 ? "deposit" : "deposits"} of ${LIST.format(deposits.map(formatDayLong))}`;
+/**
+ * "deposit of Wed, Sep 30, 2026", "deposits of … and …" — named by day, so each can be found. One phrase for /budgets'
+ * fourth figure and /spending's shortfall note, which passes its page's own day format.
+ */
+export const depositsOf = (deposits: readonly string[], formatDay: (iso: string) => string = formatDayLong): string =>
+  `${deposits.length === 1 ? "deposit" : "deposits"} of ${LIST.format(deposits.map(formatDay))}`;
 
 /** The fourth leg of `incomeExpectation`, as the header reads it. */
 export interface PaidByAnotherMonth {
