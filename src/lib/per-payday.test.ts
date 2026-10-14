@@ -315,8 +315,10 @@ describe("paydayReadings — what is read as the one amount it is", () => {
      * -$50.00 clawback on his pay was a residual of -$1,191.92 in the calendar's spread, and the band it widened read
      * a $1,200.00 week `paid`; a payroll returned the same day was a "-$1,141.92" deposit in the posted average —
      * $380.64 beside two weeks at $1,141.92 (review of 6c59cdb, hypothetical: no money out is linked to his pay).
+     * ⛔ …nor any week's pay, so it is held to no week's rate (decision 75): it answers none. 🔴 Held to its own day's,
+     * it read "fell by $1,091.92" on the dashboard (review of bbf17cb).
      */
-    expect(readings.get("clawback")).toEqual(reads(false, WEEK, false, 1));
+    expect(readings.get("clawback")).toEqual(reads(false, null, false, 1));
     expect(spreadSampleCents(-5_000, readings.get("clawback"))).toBeNull();
   });
 
@@ -340,7 +342,8 @@ describe("paydayReadings — what is read as the one amount it is", () => {
       perPayday: { paydays: 1, cents: WEEK - 50_000, returns: 1 },
     });
     expect(comparableCents(WEEK, week.get("in"))).toBe(WEEK - 50_000);
-    expect(week.get("back")).toEqual(reads(false, WEEK, false, 0));
+    // ⛔ the return is in the deposit's figure, so it is no week's figure of its own: held to nothing (review of bbf17cb)
+    expect(week.get("back")).toEqual(reads(false, null, false, 0));
 
     const lump = paydayReadings(
       [

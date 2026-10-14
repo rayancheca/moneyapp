@@ -89,6 +89,13 @@ export interface PaydayReading {
    * his Jun 5 $400.00 read "-$647.00" and "expected $1,047.00" on the series page, one tab over from a calendar that
    * drew it ungraded, "paid (toward no payday)" — one rule, two callers, two answers (a copy of his ledger,
    * 2026-10-08). Null, too, when the series has no rate at all.
+   *
+   * ⛔ And null for MONEY OUT (decision 75, 2026-10-13): it is no payday's pay — back the same day it is netted into
+   * its day's figure, which its deposit is held to the week as (`dayPerPayday`); on a day of its own it banked nothing
+   * and paid no payday. 🔴 Held to its own day's rate, $500.00 back on Sep 17 read amber and, stored before its
+   * deposit, put "It America LLC (weekly pay) fell by $641.92 between its usual amount and Sep 17." on the dashboard
+   * for a day $500.00 short, beside "vs expected -$641.92" on the series page; a $50.00 clawback "fell by $1,091.92"
+   * (review of bbf17cb, hypothetical: no money out is linked to his pay, a copy of his ledger 2026-10-13).
    */
   expectedCents: number | null;
   /**
@@ -206,7 +213,7 @@ function firstPaydayByDeposit(portions: readonly SettlementPortion[]): ReadonlyM
  * what a payday pays, and a day's deposits whose money paid no payday on its own (`dayPerPayday`) — among them a
  * payroll returned the same day, whose day banked nothing (decision 75): no portion names it, so it reads toward no
  * payday. ⚖️ A day that banked is read by its net (`dayPerPayday`): money out the same day is netted into its
- * deposits' figure, and is itself still drawn as the money out it is.
+ * deposits' figure, and is itself still drawn as the money out it is — held to no week (`expectedCents`).
  */
 export function paydayReadings(
   rows: readonly ReadableRow[],
@@ -231,7 +238,8 @@ export function paydayReadings(
         {
           perPayday: null,
           isPaydaySample: false,
-          expectedCents: rateOn(schedule, r.postedOn),
+          // no payday's pay, so no week's rate is what it is held to (decision 75) — its era is its own day's
+          expectedCents: null,
           ratePeriod: ratePeriodOf(schedule, r.postedOn),
           towardNoPayday: false,
         },
@@ -275,8 +283,9 @@ export function spreadSampleCents(amountCents: number, reading: PaydayReading | 
 /**
  * What a row is held to — ONE rule for every surface that grades or draws a row against the series' amount: a pay
  * row's reading (`PaydayReading.expectedCents`, the rate of the payday its money paid, and nothing for money that paid
- * none), else the series' rate on the row's own day (`rateOn`). ⚖️ Each row against its own time's rate (owner
- * decision 2026-10-08, §6A 55). Null means ungraded — the calendar draws it `paid`, the series page grades nothing.
+ * none, nor for money out), else the series' rate on the row's own day (`rateOn`). ⚖️ Each row against its own time's
+ * rate (owner decision 2026-10-08, §6A 55). Null means ungraded — the calendar draws it `paid`, the series page grades
+ * nothing.
  */
 export function expectedCentsOf(
   reading: PaydayReading | undefined,

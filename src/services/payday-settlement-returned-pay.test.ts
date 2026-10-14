@@ -16,9 +16,11 @@ import { unbankedIncomeForSeries } from "./arrears";
 import { incomeExpectation } from "./budgets";
 import { cashEarningsReadings } from "./cash-earnings";
 import { incomeCard } from "./income-card";
+import { noticesCard } from "./notices-card";
 import { paydaySettlement, settledPaydaysForSeries } from "./payday-settlement";
 import { postedAveragesBySeries } from "./posted-average";
 import { recurringCalendar } from "./recurring-calendar";
+import { seriesDetail } from "./recurring-detail";
 
 /**
  * ⚖️ HIS DECISION 75 (2026-10-13, an either/or, the recommended side): a day whose PAY-LINKED rows net to $0.00 — a
@@ -471,6 +473,53 @@ describe("a partial return the same day reads, everywhere, as one deposit of the
     expect(partly.deposit).toMatchObject({ heldAs: perPayday, paydays: 3 });
     rePost("2026-09-23", [WEEK * 4 - 50_000]);
     expect(partly).toEqual(readingOfDay("2026-09-23", read));
+  });
+});
+
+/*
+ * ⚖️ MONEY OUT IS NO PAYDAY'S PAY, so no week grades it (decision 75, every reader): back the same day it is netted
+ * into its day's figure, and the DEPOSIT is held to the week at that net; on a day of its own it banked nothing and
+ * paid no payday. Either way it answers no week — as money toward no payday answers none — so the calendar draws it
+ * ungraded and the series page holds it to nothing (`PaydayReading.expectedCents`).
+ * 🔴 Every surface that grades a row (`expectedCentsOf`) held money out to the week's $1,141.92: the $500.00 back on
+ * Sep 17 read amber and, stored first, put "It America LLC (weekly pay) fell by $641.92 between its usual amount and
+ * Sep 17." on the dashboard — for a day $500.00 short — beside "vs expected -$641.92" on the series page; a $50.00
+ * clawback on a day of its own "fell by $1,091.92"; and a payroll returned whole read green only while the measured
+ * spread was empty, amber under a cached one (review of bbf17cb, hypothetical: no money out is linked to his pay).
+ */
+describe("money out linked to his pay is held to no week", () => {
+  const graded = (day: string, cents: number) => {
+    const row = entriesOn(day).find((e) => e.transactionId !== null && e.amountCents === cents)!;
+    return [row.state, row.expectedAmountCents];
+  };
+  const heldTo = (day: string, cents: number) =>
+    seriesDetail(bundle.db, PAY, TODAY).amountHistory.find((p) => p.date === day && p.amountCents === cents)!
+      .expectedCents;
+  const payNotices = () =>
+    (noticesCard(bundle.db, TODAY)?.notices ?? []).map((n) => n.text).filter((t) => t.includes("It America LLC"));
+
+  test("$500.00 back the same day: the return is ungraded, and the one notice is the day's — $500.00 short", () => {
+    rePost("2026-09-17", [-50_000, WEEK]);
+    expect(graded("2026-09-17", -50_000)).toEqual(["paid", null]);
+    expect(heldTo("2026-09-17", -50_000)).toBeNull();
+    // the deposit is held to the week at the day's net, as it was
+    expect(graded("2026-09-17", WEEK)).toEqual(["paid_different", WEEK]);
+    expect(payNotices()).toEqual(["It America LLC (weekly pay) fell by $500.00 between its usual amount and Sep 17."]);
+  });
+
+  test("a payroll returned whole the same day: the return is ungraded, under a cached spread too", () => {
+    bundle.db.update(recurringSeries).set({ amountCentsStddev: 5_000 }).where(eq(recurringSeries.id, PAY)).run();
+    rePost("2026-09-17", [WEEK, -WEEK]);
+    expect(graded("2026-09-17", -WEEK)).toEqual(["paid", null]);
+    expect(heldTo("2026-09-17", -WEEK)).toBeNull();
+  });
+
+  test("a $50.00 clawback on a day of its own: ungraded, and nothing says his pay fell", () => {
+    payRow("2026-09-17", WEEK);
+    payRow("2026-09-18", -5_000);
+    expect(graded("2026-09-18", -5_000)).toEqual(["paid", null]);
+    expect(heldTo("2026-09-18", -5_000)).toBeNull();
+    expect(payNotices()).toEqual([]);
   });
 });
 
