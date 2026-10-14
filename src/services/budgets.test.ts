@@ -1465,9 +1465,10 @@ describe("budgetOverdue — the bill that came due and never arrived", () => {
   });
 
   /*
-   * ⚖️ …and one day further pays it LATE (`paymentFor`): past its grace and short of the next due day's, a payment is
-   * still the payment of the day it is late for. 🔴 This test pinned it overdue (review of 44eb3e7) — the very cost the
-   * note above names: the $50.00 in `spentCents` and again here, as the rent paid Oct 5 for Oct 1 was on his shape.
+   * ⚖️ …and one day further pays it LATE (`paymentFor`): past its grace and nearer it than the next due day (his
+   * decision 76), a payment is still the payment of the day it is late for. 🔴 This test pinned it overdue (review of
+   * 44eb3e7) — the very cost the note above names: the $50.00 in `spentCents` and again here, as the rent paid Oct 5
+   * for Oct 1 was on his shape.
    */
   test("a posting one day PAST toleranceDays pays the bill late — never overdue beside the spend that holds it", () => {
     const bill = createSeries({ name: "Wifi", nextExpectedOn: "2026-06-08", nextExpectedAmountCents: -5_000 });

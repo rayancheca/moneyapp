@@ -262,9 +262,9 @@ export interface CalendarEntry {
    * nothing posted on October's grid either, and the arrears' test pays the day with it (`paymentFor`), so it is named
    * the same way, "paid by its payment of Sep 30, 2026".
    *
-   * ⚖️ `early` where the payment posted MORE than its grace before the day, the day before it already paid (his
-   * decision 73, 2026-10-13, `paysEarly`): FPL's Aug 8 "paid early by its payment of Jul 28, 2026" — its Jul 28 row
-   * drawn in July, 11 days ahead of a 3-day grace. A payment within its grace, the rent's Sep 30 for Oct 1, is on time.
+   * ⚖️ `early` where the payment posted MORE than its grace before the day, nearer it than the day before (his
+   * decisions 73 and 76, `paysEarly`): FPL's Aug 8 "paid early by its payment of Jul 28, 2026" — its Jul 28 row drawn
+   * in July, 11 days ahead of a 3-day grace. A payment within its grace, the rent's Sep 30 for Oct 1, is on time.
    */
   paidWith: { readonly carrier: string | null; readonly postedOn: string; readonly early: boolean } | null;
   /**
@@ -704,9 +704,9 @@ export function recurringCalendar(
    * either side of the edge — Sep 30 and Oct 2, each a day from Oct 1 — names the earlier of two as near, so October
    * drew Oct 1 "paid (paid by its payment of Sep 30, 2026)" at $2,109.00 beside the Oct 2 row that stood for it too.
    *
-   * ⛔ Only among the payments on time: an early or late one is the walk's to name (⚖️ decision 73, 2026-10-13). Asked
-   * of the month's postings alone first, as it was, the walk names a payment of this month that pays the NEXT day early
-   * — FPL's Sep 28 for Oct 8, Sep 8 paid early by Aug 28 — as Sep 8's, late, beside an October naming it for Oct 8.
+   * ⛔ Only among the payments on time: an early or late one is the walk's to name (⚖️ decisions 73 and 76). Asked of
+   * the month's postings alone first, as it was, the walk names a payment of this month that pays the NEXT day early —
+   * FPL's Sep 28 for Oct 8, Sep 8 paid early by Aug 28 — as Sep 8's, late, beside an October naming it for Oct 8.
    */
   const paymentNamedFor = (payments: readonly BillPayment[], dueOn: string, dueDays: DueDays): BillPayment | undefined => {
     const paid = paymentFor(payments, dueOn, dueDays);
@@ -860,10 +860,10 @@ export function recurringCalendar(
    * "not yet known" (Oct 2) and a red ✕ "missed" (Oct 9, read through Oct 4) beside "Rent utilities & fees paid (paid
    * with the rent's payment of Sep 30)" — while the rent's page and the runway, reading the arrears, owed nothing.
    *
-   * ⚖️ …with NO END, as the arrears read them: a payment past a day's grace pays it late until the next due day's grace
-   * opens (`paymentFor`), so the month's last rent may be paid in the next one — drawn there, named here. ⚖️ …and NO
-   * START: one more than its grace early pays a day once the day before it is paid by another (his decision 73,
-   * 2026-10-13), read back through the series' history — FPL's Jul 28, drawn in July, pays August's Aug 8.
+   * ⚖️ …with NO END, as the arrears read them: a payment past a day's grace pays it late while it lies nearer it than
+   * the next due day (`paymentFor`, his decision 76, 2026-10-14), so the month's last rent may be paid in the next one
+   * — drawn there, named here. ⚖️ …and NO START: one more than its grace early pays a day it lies nearer than the day
+   * before (his decisions 73 and 76) — FPL's Jul 28, drawn in July, pays August's Aug 8.
    */
   const paymentsBySeries = billPaymentsBySeries(db, forecastRows);
 

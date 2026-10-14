@@ -135,12 +135,13 @@ export function overdueForSeries(
    * $182.21 came due every 1st and "has not posted" beside the rent's payment that paid it. Its amount is untouched:
    * still owed at its own $182.21 when the rent has not paid, and owed nowhere when it has.
    *
-   * ⚖️ …with NO END: a payment past a day's grace pays it late, until the next due day's grace opens (`paymentFor`),
-   * and that can be past `through` and its tolerance — the arrears' walk read only as far as the ledger has read
-   * (`arrearsReadCents`) must see the late payment the whole walk saw. No posting is dated past today.
+   * ⚖️ …with NO END: a payment past a day's grace pays it late while it lies nearer it than the next due day
+   * (`paymentFor`, ⚖️ his decision 76, 2026-10-14), and that can be past `through` and its tolerance — the arrears'
+   * walk read only as far as the ledger has read (`arrearsReadCents`) must see the late payment the whole walk saw. No
+   * posting is dated past today.
    *
-   * ⚖️ …and NO START: one more than its grace early pays a day once the day before it is paid by another (his decision
-   * 73, 2026-10-13), read back through the series' history — FPL's Jul 28 pays its Aug 8.
+   * ⚖️ …and NO START: one more than its grace early pays a day it lies nearer than the day before (his decisions 73 and
+   * 76), as far back as that day — FPL's Jul 28 pays its Aug 8, the Car lease's Sep 2 its Sep 15.
    */
   const paymentsBySeries = billPaymentsBySeries(db, live);
 

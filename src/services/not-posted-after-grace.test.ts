@@ -137,16 +137,6 @@ function importedThrough(day: string): void {
   checkedThrough(bundle.db, "acct", day);
 }
 
-/**
- * The rent's Sep 1 left unpaid — its Sep 2 row gone, June's (Jun 2) in its place so three payments still hold the rent
- * to its date (`scheduleIsProven`): a payment more than its grace before Oct 1 is then Sep 1's, late, never Oct 1's,
- * early (`paymentFor`, ⚖️ his decision 73, 2026-10-13).
- */
-function unpaySep1(): void {
-  bundle.db.delete(transactions).where(eq(transactions.id, "t-sep")).run();
-  bundle.db.insert(transactions).values(row("t-jun", "2026-06-02", -228570, RENT, "FLAMINGO SOUTH BEACH")).run();
-}
-
 /** What every surface that says a bill came due says of these series' Oct 1, at TODAY. */
 function surfaces(ids: readonly string[] = [RENT, UTIL], [dueOn, dueWord] = ["2026-10-01", "Oct 1"]) {
   const calendar = recurringCalendar(bundle.db, "2026-10", TODAY).entriesByDay[dueOn] ?? [];
@@ -324,54 +314,49 @@ describe("the grace is the bill's — and, for one billed with the rent, the ren
    * 🔴 …and its page claimed a window its payments are not judged by (review of 5557162): with the utilities' 5 days
    * lent to it, a rent paid four days off Oct 1 read "Already due, and not posted … the imports, which reach 5 days past
    * it, hold no posting within 5 days of it" beside its own row. That row was Oct 5, which now pays Oct 1 late (below);
-   * Sep 27, four days EARLY, outside its own 3, pays Oct 1 early once Sep 1 is paid (his decision 73, 2026-10-13) — so
-   * here Sep 1 is not (no Sep 2 row): Sep 27 is Sep 1's, late, Oct 1 is not posted, and the page says so within its own
-   * 3 days. June's rent, paid Jun 2, keeps three payments to hold the rent to its date (`scheduleIsProven`).
+   * and Sep 27, four days EARLY — nearer Oct 1 than Sep 1 — pays it early (⚖️ his decision 76, 2026-10-14): a row four
+   * days off its day pays it. So the page names its own 3 days where nothing has — and Sep 27 is early by those 3,
+   * never on time by the 5 lent.
    */
-  test("a rent paid four days early is not posted, and its page says so within its own 3 days — not 5", () => {
-    unpaySep1();
+  test("a rent not posted says so within its own 3 days — not 5; paid four days early, Oct 1 is paid EARLY", () => {
     bundle.db.update(recurringSeries).set({ toleranceDays: 5 }).where(eq(recurringSeries.id, UTIL)).run();
-    bundle.db.insert(transactions).values(row("t-sep27", "2026-09-27", -229121, RENT, "FLAMINGO SOUTH BEACH")).run();
     importedThrough("2026-10-07");
-    const october = recurringCalendar(bundle.db, "2026-10", TODAY).entriesByDay;
-    expect(october["2026-10-01"]!.find((e) => e.seriesId === RENT)!.state).toBe("missed");
+    const unpaid = recurringCalendar(bundle.db, "2026-10", TODAY).entriesByDay["2026-10-01"]!;
+    expect(unpaid.find((e) => e.seriesId === RENT)!.state).toBe("missed");
     const rent = seriesDetail(bundle.db, RENT, TODAY).overdue!;
     expect(
       alreadyDueWords(overdueReading(rent), rent.graceDays, rent.occurrenceCount, rent.carriedGrace).body,
     ).toContain(
       "the statements reach 3 days past it with no posting within 3 days of it",
     );
+    bundle.db.insert(transactions).values(row("t-sep27", "2026-09-27", -229121, RENT, "FLAMINGO SOUTH BEACH")).run();
+    const october = recurringCalendar(bundle.db, "2026-10", TODAY).entriesByDay;
+    expect(october["2026-10-01"]!.map((e) => [e.seriesId, e.state, e.paidWith])).toEqual([
+      [RENT, "paid", { carrier: null, postedOn: "2026-09-27", early: true }],
+      [UTIL, "paid", { carrier: "the rent", postedOn: "2026-09-27", early: true }],
+    ]);
+    expect(arrearsThisMonth(bundle.db, new Set([RENT, UTIL]), TODAY).series).toEqual([]);
   });
 
   /*
    * 🔴 THE MIRROR, ON WHAT IT CARRIES (review of 44eb3e7): with the rent's 5 days lent to the utilities, whose own are
-   * 3, a posting of their own four days off Oct 1 pays them nothing — and their page read "the imports, which reach 5
+   * 3, a posting of their own four days off Oct 1 paid them nothing — and their page read "the imports, which reach 5
    * days past it, hold no posting within 5 days of it" beside it. A bill billed inside another's payment is paid within
-   * two windows, each payment by its own series' tolerance (`paymentFor`): its page names each. ⚖️ Four days early it
-   * pays Oct 1 early once Sep 1 is paid (his decision 73, 2026-10-13), so here Sep 1 is not: their own Sep 27 is
-   * Sep 1's, late.
+   * two windows, each payment by its own series' tolerance (`paymentFor`): its page names each (above, where nothing
+   * pays them). ⚖️ Four days early, nearer Oct 1 than Sep 1, their own Sep 27 pays their Oct 1 early (his decision 76,
+   * 2026-10-14) — early by their own 3, never on time by the rent's 5 — and pays the rent nothing.
    */
-  test("what the rent carries, paid on its own four days early, names both windows: its own 3, the rent's 5", () => {
-    unpaySep1();
+  test("what the rent carries, paid on its own four days early: Oct 1 EARLY by its own 3 — the rent's owed", () => {
     bundle.db.update(recurringSeries).set({ toleranceDays: 5 }).where(eq(recurringSeries.id, RENT)).run();
     bundle.db.insert(transactions).values(row("t-u-sep27", "2026-09-27", -18221, UTIL, "FLAMINGO UTILITIES")).run();
     bundle.db.update(recurringSeries).set({ lastMatchedOn: "2026-09-27" }).where(eq(recurringSeries.id, UTIL)).run();
     importedThrough("2026-10-06");
-    expect(surfaces().calendar).toEqual(NOT_POSTED.calendar);
-    const utilities = seriesDetail(bundle.db, UTIL, TODAY).overdue!;
-    expect(utilities.graceDays).toBe(5);
-    expect(
-      alreadyDueWords(
-        overdueReading(utilities),
-        utilities.graceDays,
-        utilities.occurrenceCount,
-        utilities.carriedGrace,
-      ).body,
-    ).toBe(
-      "Inside this calendar month, and the statements reach 5 days past it with no posting of its own within 3 days " +
-        "of it, and none of the rent's payments within 5 days of it. The forecast counts it, and so does this month's " +
-        "budget.",
-    );
+    const october = recurringCalendar(bundle.db, "2026-10", TODAY).entriesByDay;
+    expect(october["2026-10-01"]!.map((e) => [e.seriesId, e.state, e.paidWith])).toEqual([
+      [RENT, "missed", null],
+      [UTIL, "paid", { carrier: null, postedOn: "2026-09-27", early: true }],
+    ]);
+    expect(arrearsThisMonth(bundle.db, new Set([RENT, UTIL]), TODAY).series.map((s) => s.id)).toEqual([RENT]);
     // …and the rent's own page, paid by its own payments alone, names its one window
     const rent = seriesDetail(bundle.db, RENT, TODAY).overdue!;
     expect(
@@ -547,10 +532,11 @@ describe("a bill read part of the way is split by which due days' grace the chec
   });
 
   /*
-   * ⛔ …and the walk read only as far as the ledger has read sees the late payment the whole walk saw. Paid Oct 12 —
-   * past Oct 8's 2 days, short of Oct 15's — the laundry's Oct 8 is paid late; its account is checked through Oct 11, so
-   * Oct 1 is read and owed, and Oct 15 is unread. Its postings read only to the read day and its grace (Oct 11), the
-   * short walk owed Oct 8 too and called Oct 15's $10.00 "never posted".
+   * ⛔ …and the walk read only as far as the ledger has read sees the late payment the whole walk saw. Paid Oct 11 —
+   * past Oct 8's 2 days, nearer it than Oct 15 (⚖️ his decision 76, 2026-10-14) — the laundry's Oct 8 is paid late; its
+   * account is checked through Oct 10, so Oct 1 is read and owed, and Oct 15 is unread. Its postings read only to the
+   * read day and its grace, the short walk owed Oct 8 too and called Oct 15's $10.00 "never posted". (Paid Oct 12, 3
+   * days before Oct 15 and 4 after Oct 8, it would be Oct 15's, early.)
    */
   test("a weekly bill paid late past its account's checked day: the short walk counts the late payment too", () => {
     bundle.db
@@ -572,8 +558,8 @@ describe("a bill read part of the way is split by which due days' grace the chec
         updatedAt: now(),
       })
       .run();
-    bundle.db.insert(transactions).values(row("t-laundry", "2026-10-12", -1000, "laundry", "LAUNDRY")).run();
-    checkedThrough(bundle.db, "acct", "2026-10-11");
+    bundle.db.insert(transactions).values(row("t-laundry", "2026-10-11", -1000, "laundry", "LAUNDRY")).run();
+    checkedThrough(bundle.db, "acct", "2026-10-10");
     const late = arrearsThisMonth(bundle.db, new Set(["laundry"]), "2026-10-20").series[0]!;
     // Oct 1 and Oct 15 owed; of them, Oct 15 is a day the checked balances do not reach with its grace
     expect([late.nextDate, late.occurrenceCount, late.amountCents, late.unreadCents]).toEqual([

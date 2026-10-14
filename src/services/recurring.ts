@@ -1859,11 +1859,12 @@ export function nextDueDayAfter(series: DueDaySchedule, day: string): string | n
 
 /**
  * The due day before `day` on a series' schedule — the step before the first on or after it, by index from its
- * anchor, which may lie behind the anchor: where a payment more than its grace EARLY for `day` starts (`paymentFor`,
- * ⚖️ his decision 73, 2026-10-13). Null for a series with no schedule.
+ * anchor, which may lie behind the anchor: where the gap a payment more than its grace EARLY for `day` lies in opens,
+ * and the day it must lie nearer `day` than (`paymentFor`, ⚖️ his decision 76, 2026-10-14). Null for a series with no
+ * schedule.
  *
- * ⛔ Not floored at the anchor, as `nextDueDayAfter` is not: his FPL is anchored on Sep 8 (his date), and the payment
- * that pays its Sep 8 early is read off Aug 8, paid early by Jul 28, itself read off Jul 8, paid by Jul 10.
+ * ⛔ Not floored at the anchor, as `nextDueDayAfter` is not: his Car lease is anchored on Oct 15 (his date), and its
+ * Sep 2 −$695.04 pays Sep 15 early only measured against Aug 15 — 18 days after it, 13 before Sep 15.
  */
 export function dueDayBefore(series: DueDaySchedule, day: string): string | null {
   if (!series.nextExpectedOn) return null;

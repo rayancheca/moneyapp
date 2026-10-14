@@ -271,9 +271,10 @@ describe("recurringCalendar", () => {
   });
 
   /*
-   * ⚖️ One day PAST the tolerance the posting pays the day LATE (`paymentFor`), short of the next due day's grace —
-   * drawn once, on the day it landed, as one on time is. 🔴 This test pinned the occurrence standing beside it (review of
-   * 44eb3e7): the rent paid Oct 5 for Oct 1 drew a red ✕ beside its own row, and every money surface counted it twice.
+   * ⚖️ One day PAST the tolerance the posting pays the day LATE (`paymentFor`), nearer it than the next due day (his
+   * decision 76) — drawn once, on the day it landed, as one on time is. 🔴 This test pinned the occurrence standing
+   * beside it (review of 44eb3e7): the rent paid Oct 5 for Oct 1 drew a red ✕ beside its own row, and every money
+   * surface counted it twice.
    */
   test("a posting one day PAST the tolerance pays the occurrence late — drawn once, on the day it landed", () => {
     buildMonthlyNetflix();
