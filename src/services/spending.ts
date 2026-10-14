@@ -30,8 +30,9 @@ import {
   agentsCostBucket,
   isAgentsCostCategoryRow,
   isAgentsIncomeCategoryRow,
+  hisIncomeRows,
+  incomeSeriesOfRender,
   isHisUnfiledSpending,
-  isIncome,
   ledgerHref,
   loadCategoryIndex,
   spendingBucket,
@@ -60,7 +61,8 @@ import { activeSplitsInRange } from "./transaction-splits";
  * `refundsCents` so a big cross-period credit can't drag "Spent" nonsensically
  * negative. Net still reconciles: netCents = earned + refunds − spent (a refund
  * is money in). Income is positive amounts in income-kind categories, off the
- * agent's cash account (`isIncome` — owner decision 2026-09-28), and spending is
+ * agent's cash account (`isIncome` — owner decision 2026-09-28), with his pay read
+ * by the day (`hisIncomeRows` — his decision 75, 2026-10-13), and spending is
  * off it too (`spendingBucket` — owner decision 2026-10-02).
  * (Per-category breakdown in analytics.ts stays netted — a separate view.)
  */
@@ -87,18 +89,20 @@ export interface PeriodTotals {
 export function periodTotals(db: AppDatabase, range: DateRange): PeriodTotals {
   const idx = loadCategoryIndex(db);
   const agentsCash = agentsCashOfRender(db);
-  let earnedCents = 0;
+  const rows = activeTxnsInRange(db, range.from, range.to);
   let spentCents = 0;
   let refundsCents = 0;
-  for (const txn of activeTxnsInRange(db, range.from, range.to)) {
-    if (spendingBucket(idx, agentsCash, txn)) {
-      // gross: only outflows are "spent"; a credit in an expense category is a refund
-      if (txn.amountCents < 0) spentCents += -txn.amountCents;
-      else refundsCents += txn.amountCents;
-      continue;
-    }
-    if (isIncome(idx, agentsCash, txn)) earnedCents += txn.amountCents;
+  for (const txn of rows) {
+    if (!spendingBucket(idx, agentsCash, txn)) continue;
+    // gross: only outflows are "spent"; a credit in an expense category is a refund
+    if (txn.amountCents < 0) spentCents += -txn.amountCents;
+    else refundsCents += txn.amountCents;
   }
+  // ⚖️ his pay by the day (decision 75): a payroll returned the same day is no Income, and so no Net
+  const earnedCents = hisIncomeRows(idx, agentsCash, incomeSeriesOfRender(db), rows).reduce(
+    (sum, r) => sum + r.amountCents,
+    0,
+  );
   const netCents = earnedCents + refundsCents - spentCents;
   return {
     earnedCents,
@@ -278,13 +282,17 @@ export function cashFlowByPeriod(db: AppDatabase, period: ResolvedPeriod, today:
       const total = spendTotals.get(catKey) ?? { name: sb.categoryName, cents: 0 };
       spendTotals.set(catKey, { name: sb.categoryName, cents: total.cents + out });
       classified.push({ bucket, kind: "spend", catKey, name: sb.categoryName, cents: out });
-    } else if (isIncome(idx, agentsCash, txn)) {
-      const node = idx.byId.get(txn.categoryId!)!;
-      earnedCents += txn.amountCents;
-      const total = incomeTotals.get(node.id) ?? { name: node.name, cents: 0 };
-      incomeTotals.set(node.id, { name: node.name, cents: total.cents + txn.amountCents });
-      classified.push({ bucket, kind: "income", catKey: node.id, name: node.name, cents: txn.amountCents });
     }
+  }
+  // ⚖️ his Income, his pay by the day (`hisIncomeRows`, decision 75) — the Income card's figure, bar by bar
+  for (const row of hisIncomeRows(idx, agentsCash, incomeSeriesOfRender(db), rows)) {
+    const bucket = bucketIndex.get(bucketKeyFor(row.postedOn, byMonth));
+    if (bucket === undefined) continue;
+    const node = idx.byId.get(row.categoryId)!;
+    earnedCents += row.amountCents;
+    const total = incomeTotals.get(node.id) ?? { name: node.name, cents: 0 };
+    incomeTotals.set(node.id, { name: node.name, cents: total.cents + row.amountCents });
+    classified.push({ bucket, kind: "income", catKey: node.id, name: node.name, cents: row.amountCents });
   }
 
   // spending series: top N by total + Other + Uncategorized (always explicit)
@@ -606,7 +614,8 @@ export function dailySpendHeatmap(db: AppDatabase, month: string): SpendHeatmap 
     db.select({ id: merchants.id, name: merchants.canonicalName }).from(merchants).all().map((m) => [m.id, m.name]),
   );
 
-  for (const txn of activeTxnsInRange(db, from, to)) {
+  const rows = activeTxnsInRange(db, from, to);
+  for (const txn of rows) {
     const cell = byDay.get(txn.postedOn) ?? newCell();
     const bucket = spendingBucket(idx, agentsCash, txn);
     // gross: a refund (positive in an expense category) is not a day's spending
@@ -625,13 +634,18 @@ export function dailySpendHeatmap(db: AppDatabase, month: string): SpendHeatmap 
       const entry = cell.merchants.get(key) ?? { name, cents: 0 };
       entry.cents += out;
       cell.merchants.set(key, entry);
-    } else if (isIncome(idx, agentsCash, txn)) {
-      cell.incomeCents += txn.amountCents;
     } else if (bucket) {
       // a credit in an expense category: the return the branch above skips
       cell.refundedCents += txn.amountCents;
     }
     byDay.set(txn.postedOn, cell);
+  }
+  // ⚖️ the earned bar is the Income card's figure read one day at a time — his pay by the day (`hisIncomeRows`,
+  // decision 75): no bar on a day whose payroll went back the same day, its net on a day partly returned
+  for (const row of hisIncomeRows(idx, agentsCash, incomeSeriesOfRender(db), rows)) {
+    const cell = byDay.get(row.postedOn) ?? newCell();
+    cell.incomeCents += row.amountCents;
+    byDay.set(row.postedOn, cell);
   }
 
   const days: HeatDay[] = [...byDay.entries()]

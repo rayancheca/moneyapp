@@ -2,7 +2,7 @@ import type { AppDatabase } from "@/db/client";
 import { categories } from "@/db/schema/categories";
 import type { LedgerRow } from "@/components/transactions/TransactionsLedger";
 import { outsidePortfolioCashAccountIds } from "./accounts";
-import { activeTxnsInRange, isIncome, loadCategoryIndex, spendingBucket } from "./analytics";
+import { activeTxnsInRange, hisIncomeRows, incomeSeriesOfRender, loadCategoryIndex, spendingBucket } from "./analytics";
 import { recentLedgerRows, type CategoryRow } from "./ledger-rows";
 
 /**
@@ -68,26 +68,24 @@ export function periodActivity(
   // one pass over the window: income, gross spending, and per-category gross
   const agentsCash = outsidePortfolioCashAccountIds(db);
   const inRange = activeTxnsInRange(db, from, to);
-  let inCents = 0;
   let outCents = 0;
   const grossByCategory = new Map<string | null, number>();
   for (const txn of inRange) {
     const bucket = spendingBucket(idx, agentsCash, txn);
-    if (bucket) {
-      // debits are money out; a credit in an expense category (a refund) is not
-      // "spending" and must not net the outflow down
-      if (txn.amountCents < 0) {
-        const gross = -txn.amountCents;
-        outCents += gross;
-        grossByCategory.set(bucket.categoryId, (grossByCategory.get(bucket.categoryId) ?? 0) + gross);
-      }
-      continue;
-    }
-    // /spending's Income: the panel prints the same word, so it asks the same classifier — which
-    // leaves the agent's cash account out (`isIncome`, owner decision 2026-09-28), as the Spent above
-    // does (`spendingBucket`, 2026-10-02)
-    if (isIncome(idx, agentsCash, txn)) inCents += txn.amountCents;
+    // debits are money out; a credit in an expense category (a refund) is not
+    // "spending" and must not net the outflow down
+    if (!bucket || txn.amountCents >= 0) continue;
+    const gross = -txn.amountCents;
+    outCents += gross;
+    grossByCategory.set(bucket.categoryId, (grossByCategory.get(bucket.categoryId) ?? 0) + gross);
   }
+  // /spending's Income: the panel prints the same word, so it asks the same reader — which leaves the agent's cash
+  // account out (`isIncome`, owner decision 2026-09-28), as the Spent above does (`spendingBucket`, 2026-10-02), and
+  // reads his pay by the day (`hisIncomeRows`, decision 75): a payroll returned the same day is no money in
+  const inCents = hisIncomeRows(idx, agentsCash, incomeSeriesOfRender(db), inRange).reduce(
+    (sum, r) => sum + r.amountCents,
+    0,
+  );
 
   const topCategories: PeriodTopCategory[] = [...grossByCategory.entries()]
     .sort((a, b) => b[1] - a[1] || labelOf(a[0], catById).localeCompare(labelOf(b[0], catById)))

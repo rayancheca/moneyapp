@@ -4,7 +4,14 @@ import { categoryHueVar, isCategoryHueName } from "@/lib/category-palette";
 import { ledgerHref } from "@/lib/ledger-href";
 import type { SankeyGraph, SankeyLinkInput, SankeyNodeInput } from "@/lib/sankey-layout";
 import { outsidePortfolioCashAccountIds } from "./accounts";
-import { activeTxnsInRange, isIncome, loadCategoryIndex, spendingBucket, type DateRange } from "./analytics";
+import {
+  activeTxnsInRange,
+  hisIncomeRows,
+  incomeSeriesOfRender,
+  loadCategoryIndex,
+  spendingBucket,
+  type DateRange,
+} from "./analytics";
 
 /**
  * The money-flow Sankey feed for a date range (dashboard hero + /spending view).
@@ -15,7 +22,7 @@ import { activeTxnsInRange, isIncome, loadCategoryIndex, spendingBucket, type Da
  *
  * Built directly from `activeTxnsInRange` on the SAME classifiers as
  * periodTotals/cashFlowByPeriod (split-aware, GROSS spend = `spendingBucket`,
- * income = `isIncome`: each off the agent's cash account), so every ribbon
+ * income = `hisIncomeRows`, his pay by the day: each off the agent's cash account), so every ribbon
  * reconciles to the StatCards and the ledger. Balance is exact:
  *   in  = earned + refunds + max(-net, 0)
  *   out = spent  + max(net, 0)
@@ -71,31 +78,32 @@ export function spendingSankey(db: AppDatabase, range: DateRange): SankeyGraph {
   let spent = 0;
   let refunds = 0;
 
-  for (const txn of activeTxnsInRange(db, range.from, range.to)) {
+  const rows = activeTxnsInRange(db, range.from, range.to);
+  for (const txn of rows) {
     const sb = spendingBucket(idx, agentsCash, txn);
-    if (sb) {
-      if (txn.amountCents >= 0) {
-        refunds += txn.amountCents; // a credit in an expense category — money back, not spend
-        continue;
-      }
-      const out = -txn.amountCents;
-      spent += out;
-      if (sb.categoryId === null) {
-        uncatSpend += out;
-        continue;
-      }
-      const cur = spendTop.get(sb.categoryId) ?? { name: sb.categoryName, hue: colorOf.get(sb.categoryId) ?? null, cents: 0 };
-      cur.cents += out;
-      spendTop.set(sb.categoryId, cur);
+    if (!sb) continue;
+    if (txn.amountCents >= 0) {
+      refunds += txn.amountCents; // a credit in an expense category — money back, not spend
       continue;
     }
-    if (isIncome(idx, agentsCash, txn)) {
-      const node = idx.byId.get(txn.categoryId!)!;
-      earned += txn.amountCents;
-      const cur = income.get(node.id) ?? { name: node.name, hue: colorOf.get(node.id) ?? null, cents: 0 };
-      cur.cents += txn.amountCents;
-      income.set(node.id, cur);
+    const out = -txn.amountCents;
+    spent += out;
+    if (sb.categoryId === null) {
+      uncatSpend += out;
+      continue;
     }
+    const cur = spendTop.get(sb.categoryId) ?? { name: sb.categoryName, hue: colorOf.get(sb.categoryId) ?? null, cents: 0 };
+    cur.cents += out;
+    spendTop.set(sb.categoryId, cur);
+  }
+  // the Income card's sources, his pay by the day (`hisIncomeRows`, decision 75): a payroll returned the same day
+  // flows into nothing
+  for (const row of hisIncomeRows(idx, agentsCash, incomeSeriesOfRender(db), rows)) {
+    const node = idx.byId.get(row.categoryId)!;
+    earned += row.amountCents;
+    const cur = income.get(node.id) ?? { name: node.name, hue: colorOf.get(node.id) ?? null, cents: 0 };
+    cur.cents += row.amountCents;
+    income.set(node.id, cur);
   }
 
   const net = earned + refunds - spent;

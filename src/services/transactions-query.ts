@@ -34,6 +34,78 @@ function idsWithTopKind(allCategories: readonly CategoryRef[], kind: CategoryKin
     .map((c) => c.id);
 }
 
+/** A row's columns as SQL — the outer ledger row's, or a subquery alias's. */
+interface RowColumns {
+  id: SQL;
+  accountId: SQL;
+  postedOn: SQL;
+  amountCents: SQL;
+  categoryId: SQL;
+  recurringSeriesId: SQL;
+  status: SQL;
+}
+const outerRow: RowColumns = {
+  id: sql`${transactions.id}`,
+  accountId: sql`${transactions.accountId}`,
+  postedOn: sql`${transactions.postedOn}`,
+  amountCents: sql`${transactions.amountCents}`,
+  categoryId: sql`${transactions.categoryId}`,
+  recurringSeriesId: sql`${transactions.recurringSeriesId}`,
+  status: sql`${transactions.status}`,
+};
+const aliasRow = (alias: "n" | "d"): RowColumns => ({
+  id: sql.raw(`${alias}.id`),
+  accountId: sql.raw(`${alias}.account_id`),
+  postedOn: sql.raw(`${alias}.posted_on`),
+  amountCents: sql.raw(`${alias}.amount_cents`),
+  categoryId: sql.raw(`${alias}.category_id`),
+  recurringSeriesId: sql.raw(`${alias}.recurring_series_id`),
+  status: sql.raw(`${alias}.status`),
+});
+/** `(a, b, …)` — empty is `()`, which SQLite reads as the empty list: `x IN ()` is false, `x NOT IN ()` true. */
+const listOf = (ids: readonly string[]): SQL => sql`(${sql.join(ids.map((id) => sql`${id}`), sql`, `)})`;
+
+/**
+ * ⚖️ HIS PAY READ BY THE DAY, in SQL — `hisIncomeRows`' reading (his decision 75, 2026-10-13), so the link under every
+ * figure that reads it opens the rows behind that figure: the Income card's (`income`), Net's (`cashflow`), the
+ * Sankey's sources and the cash-flow chart's income segments (`category=<income>&flow=in`).
+ *
+ * A pay day is a day's rows linked to one income series that no figure of Spent counts (`spendingBucket`), off the
+ * agent's cash; it is Income where one of them is his Income (`isIncome`) and the day netted to money in
+ * (`daysThatBanked`) — every one of its rows behind that figure, the money back too, and under the category of its
+ * largest row of his Income (then the lowest id). 🔴 The links opened money in row by row: under an Income card that
+ * counts no payroll returned the same day, its deposit; under a day partly returned, the deposit without the money
+ * back (review of 54d77ad).
+ */
+function hisPayDaysSql(allCategories: readonly CategoryRef[], agentsCash: readonly string[]) {
+  const income = listOf(idsWithTopKind(allCategories, "income"));
+  const expense = listOf(idsWithTopKind(allCategories, "expense"));
+  const system = listOf(allCategories.filter((c) => c.kind === "system").map((c) => c.id));
+  const agents = listOf(agentsCash);
+  const incomeSeries = sql`(SELECT rs.id FROM recurring_series rs WHERE rs.kind = 'income')`;
+  /** his and in no figure of Spent: off the agent's cash, neither an expense row nor an unfiled outflow */
+  const foldable = (r: RowColumns): SQL =>
+    sql`(${r.accountId} NOT IN ${agents} AND NOT ((${r.categoryId} IS NOT NULL AND ${r.categoryId} IN ${expense}) OR ((${r.categoryId} IS NULL OR ${r.categoryId} IN ${system}) AND ${r.amountCents} < 0)))`;
+  /** `isIncome` */
+  const isHisIncome = (r: RowColumns): SQL =>
+    sql`(${r.amountCents} > 0 AND ${r.categoryId} IS NOT NULL AND ${r.categoryId} IN ${income} AND ${r.accountId} NOT IN ${agents})`;
+  const n = aliasRow("n");
+  const d = aliasRow("d");
+  /** the (series, day) pairs whose Income is their net — `filedIn` narrows them to days counted under those ids */
+  const bankedPayDays = (filedIn?: readonly string[]): SQL => {
+    const dayCategory = sql`(SELECT ${d.categoryId} FROM transactions d WHERE ${d.status} = 'active' AND ${d.recurringSeriesId} = ${n.recurringSeriesId} AND ${d.postedOn} = ${n.postedOn} AND ${isHisIncome(d)} ORDER BY ${d.amountCents} DESC, ${d.id} LIMIT 1)`;
+    const filed = filedIn === undefined ? sql`` : sql` AND ${dayCategory} IN ${listOf(filedIn)}`;
+    return sql`(SELECT ${n.recurringSeriesId}, ${n.postedOn} FROM transactions n WHERE ${n.status} = 'active' AND ${n.recurringSeriesId} IN ${incomeSeries} AND ${foldable(n)} GROUP BY ${n.recurringSeriesId}, ${n.postedOn} HAVING SUM(${n.amountCents}) > 0 AND SUM(CASE WHEN ${isHisIncome(n)} THEN 1 ELSE 0 END) > 0${filed})`;
+  };
+  return {
+    /** the row is linked to an income series — read by its day, never alone (a row of his Income always is) */
+    linkedToPay: sql`(${outerRow.recurringSeriesId} IS NOT NULL AND ${outerRow.recurringSeriesId} IN ${incomeSeries})`,
+    /** the row is one a pay day's Income stands for — with `filedIn`, a day counted under one of those categories */
+    inBankedPayDay: (filedIn?: readonly string[]): SQL =>
+      sql`(${outerRow.recurringSeriesId} IS NOT NULL AND ${foldable(outerRow)} AND (${outerRow.recurringSeriesId}, ${outerRow.postedOn}) IN ${bankedPayDays(filedIn)})`,
+  };
+}
+
 export function viewCondition(view: TxnView): SQL {
   switch (view) {
     case "review":
@@ -71,6 +143,8 @@ export function filterConditions(
   agentsCash: readonly string[],
 ): SQL[] {
   const conds: SQL[] = [];
+  // set where an income category's `flow=in` has read its own sign — a pay day's money back is behind its figure
+  let incomeFlowRead = false;
   if (filters.account) conds.push(eq(transactions.accountId, filters.account));
   /*
    * ⛔ `merchant=none` is the NO-MERCHANT sentinel, the mirror of
@@ -146,6 +220,7 @@ export function filterConditions(
     // is the agent's cost, not his (owner decision 2026-10-02), and so is its
     // unfiled money out (2026-10-05) — the whole scope is off the agent's cash,
     // as `spendingBucket`'s account half is the whole account.
+    // ⚖️ …and income is `hisIncomeRows`: his pay read by the day (decision 75), every row a pay day's net stands for.
     const expenseIds = idsWithTopKind(allCategories, "expense");
     const incomeIds = idsWithTopKind(allCategories, "income");
     const spendingScope = and(
@@ -155,12 +230,17 @@ export function filterConditions(
       ),
       offAgentsCash(agentsCash),
     ) as SQL;
+    const payDays = hisPayDaysSql(allCategories, agentsCash);
     const incomeScope =
       incomeIds.length > 0
-        ? (and(
-            inArray(transactions.categoryId, incomeIds),
-            gt(transactions.amountCents, 0),
-            offAgentsCash(agentsCash),
+        ? (or(
+            and(
+              inArray(transactions.categoryId, incomeIds),
+              gt(transactions.amountCents, 0),
+              offAgentsCash(agentsCash),
+              sql`NOT ${payDays.linkedToPay}`,
+            ),
+            payDays.inBankedPayDay(),
           ) as SQL)
         : (sql`0 = 1` as SQL);
     if (filters.category === "spending") conds.push(spendingScope);
@@ -180,18 +260,16 @@ export function filterConditions(
       // Split-aware: an UNSPLIT row matches on its own category; a SPLIT row
       // matches only when one of its parts is in the subtree (its parent
       // category is a stale display 'primary', ignored — mirrors analytics).
-      conds.push(
-        or(
-          and(
-            inArray(transactions.categoryId, subtreeIds),
-            sql`NOT EXISTS (SELECT 1 FROM ${transactionSplits} WHERE ${transactionSplits.transactionId} = ${transactions.id})`,
-          ),
-          sql`${transactions.transferGroupId} IS NULL AND EXISTS (SELECT 1 FROM ${transactionSplits} WHERE ${transactionSplits.transactionId} = ${transactions.id} AND ${inArray(
-            transactionSplits.categoryId,
-            subtreeIds,
-          )})`,
-        ) as SQL,
-      );
+      const inSubtree = or(
+        and(
+          inArray(transactions.categoryId, subtreeIds),
+          sql`NOT EXISTS (SELECT 1 FROM ${transactionSplits} WHERE ${transactionSplits.transactionId} = ${transactions.id})`,
+        ),
+        sql`${transactions.transferGroupId} IS NULL AND EXISTS (SELECT 1 FROM ${transactionSplits} WHERE ${transactionSplits.transactionId} = ${transactions.id} AND ${inArray(
+          transactionSplits.categoryId,
+          subtreeIds,
+        )})`,
+      ) as SQL;
       /*
        * ⚖️ An income category's rows are HIS rows, drilled with `flow` or without (owner decision 2026-09-28): the
        * agent's cash is left out either sign, as `isAgentsIncomeCategoryRow` leaves it out of every figure here.
@@ -205,11 +283,28 @@ export function filterConditions(
        * `flow=out` is `spendingBucket` narrowed to the category — the Sankey's spending nodes, the cash-flow chart's
        * segments — and without it the category page, a budget's rows and the Fees card's lines. 🔴 `/categories/<Fees>`
        * opened the agent's Gold fee under a total that no longer counted it.
+       *
+       * ⚖️ `flow=in` on an income category is `hisIncomeRows` narrowed to it — his pay by the day (decision 75): a row
+       * linked to his pay is behind the figure only as one of its day's rows, every one of them, the money back too,
+       * where the day banked and counts under this category (`hisPayDaysSql`). 🔴 Money in row by row: "Salary"
+       * opened a payroll returned the same day under a segment that no longer counted it (review of 54d77ad).
        */
       const his = offAgentsCash(agentsCash);
       const category = filters.category;
       const isOfKind = (kind: CategoryKind) => idsWithTopKind(allCategories, kind).includes(category);
-      if (his && (isOfKind("income") || isOfKind("expense"))) conds.push(his);
+      if (filters.flow === "in" && isOfKind("income")) {
+        const payDays = hisPayDaysSql(allCategories, agentsCash);
+        conds.push(
+          or(
+            and(inSubtree, his, gt(transactions.amountCents, 0), sql`NOT ${payDays.linkedToPay}`),
+            payDays.inBankedPayDay(subtreeIds),
+          ) as SQL,
+        );
+        incomeFlowRead = true;
+      } else {
+        conds.push(inSubtree);
+        if (his && (isOfKind("income") || isOfKind("expense"))) conds.push(his);
+      }
     }
   }
   if (filters.from) conds.push(gte(transactions.postedOn, filters.from));
@@ -237,7 +332,7 @@ export function filterConditions(
   // direction filter — makes negatives-only aggregates (uncategorized outflows,
   // positive-only income segments) reconcile to their exact drill-down list
   if (filters.flow === "out") conds.push(lt(transactions.amountCents, 0));
-  else if (filters.flow === "in") conds.push(gt(transactions.amountCents, 0));
+  else if (filters.flow === "in" && !incomeFlowRead) conds.push(gt(transactions.amountCents, 0));
   return conds;
 }
 

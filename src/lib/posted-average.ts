@@ -257,7 +257,8 @@ export function nettedToNothing(rows: readonly Pick<ReadableRow, "postedOn" | "a
 /**
  * The days whose rows BANKED money, oldest first: a day's rows netted (`occurrencesOf`), where the net is money in —
  * the deposits a pay series' settlement walks (`settlePaydaysBackwards`) and the reach of its walk back
- * (`walkBackBound`), and Earned vs banked's last pay to arrive and its payday today (`cashEarnings`).
+ * (`walkBackBound`), Earned vs banked's last pay to arrive and its payday today (`cashEarnings`), and every figure
+ * that says Income (`hisIncomeRows`).
  *
  * ⚖️ His decision 75 (2026-10-13): a day whose pay-linked rows net to $0.00 — a deposit and its same-day return —
  * banked nothing, and pays no payday: the rule this module's average already read a pay series' days by
