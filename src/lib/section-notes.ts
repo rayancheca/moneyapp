@@ -624,7 +624,8 @@ export function cashEarningsSectionNotes(input: CashEarningsNoteInput): SectionN
           ? ` — and the account it lands in has not been checked, so the ledger cannot say whether any of it arrived.`
           : readCovered === 0
             ? `, all of it after ${through}, ${LAST_CHECKED_DAY} — so the ledger has not looked for it.`
-            : ` and ${reached} through ${through}; the other ${unread} ${unread === 1 ? "payday falls" : "paydays fall"} after that, ${LAST_CHECKED_DAY}.`;
+            : // "the other payday" of one — 🔴 "the other 1 payday falls after that" (review of 8ef2fc5)
+              ` and ${reached} through ${through}; ${unread === 1 ? "the other payday falls" : `the other ${unread} paydays fall`} after that, ${LAST_CHECKED_DAY}.`;
 
       const readPart =
         measuredRead && through !== null && readSilence < r.periodsSinceBanked
