@@ -2,6 +2,7 @@ import Link from "next/link";
 import { InfoTip } from "@/components/ui/InfoTip";
 import { Money } from "@/components/ui/Money";
 import { SurfaceCard } from "@/components/ui/SurfaceCard";
+import { measuredMonthsClause } from "@/lib/committed";
 import { RUNWAY_JARGON } from "@/lib/jargon";
 import { formatCents } from "@/lib/money";
 import type { CarCard as CarCardData } from "@/services/committed";
@@ -48,9 +49,11 @@ export function CarCostCard({ data }: { data: CarCardData }) {
           there, on one dashboard, with nothing saying they were different
           questions. Measured on the owner's ledger 2026-09-02. */}
       <p className="mt-1 text-xs leading-relaxed text-ink-muted">
+        {/* ⚖️ …and "the last six months" only while they are: a window the frontier slid back is named by its months,
+            with the reason (`measuredMonthsClause`, decision 71) */}
         That is {cost.allInSharePct.toFixed(1)}% of the{" "}
         <Money cents={cost.allInProjectedMonthlySpendCents} className="text-ink" /> a month you would spend
-        with the car fully paid every month — not what the last six months measured.
+        with the car fully paid every month — {measuredMonthsClause(data.baseline)}
       </p>
 
       <dl className="mt-4 space-y-1.5 border-t border-line pt-3 text-sm">

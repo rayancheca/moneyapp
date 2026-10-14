@@ -12,6 +12,7 @@ import { transactions } from "@/db/schema/transactions";
 import { dedupeHash } from "@/lib/hash";
 import { normalizeDescription } from "@/lib/normalize";
 import { rebuildAccount } from "@/services/derivation";
+import { importedThrough } from "@/services/imported-through-fixture";
 import { PROFILES } from "@/services/import/profiles";
 import { chaseCardStatementPdf } from "@/services/import/profiles/chase-card-statement-profile";
 import type { Line } from "@/services/import/profiles/pdf-profile";
@@ -133,6 +134,8 @@ async function attachedPayment(): Promise<Fixture> {
   expect(outcome).toMatchObject({ status: "parsed", inserted: 2, dedupedCrossFormat: 1 });
   const importFileId = db.select().from(importFiles).where(eq(importFiles.fileName, JULY)).get()!.id;
   db.update(transactions).set({ importFileId, fileLinkSource: "attached" }).where(eq(transactions.id, rowId)).run();
+  // ⚖️ …and both accounts read into the running month (decision 71), so July is read to its end and the window holds it
+  importedThrough(db, TODAY);
   rebuildAccount(db, cardId, TODAY);
   rebuildAccount(db, checkingAccountId, TODAY);
 

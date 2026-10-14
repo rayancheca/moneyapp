@@ -3,7 +3,7 @@ import { InfoTip } from "@/components/ui/InfoTip";
 import { Money } from "@/components/ui/Money";
 import { SurfaceCard } from "@/components/ui/SurfaceCard";
 import { formatCents } from "@/lib/money";
-import { baselineSpan } from "@/lib/committed";
+import { baselineSpan, emptyWindowOpening, unreadMonthsSentence } from "@/lib/committed";
 import type { SubscriptionLine, SubscriptionsCard as SubscriptionsCardData } from "@/services/subscriptions-card";
 
 /**
@@ -100,9 +100,12 @@ export function SubscriptionsCard({ data }: { data: SubscriptionsCardData }) {
     months,
     fromMonth,
     toMonth,
+    unread,
   } = data;
   // null when the ledger holds no complete month — see `baselineSpan`
   const span = baselineSpan({ months, fromMonth, toMonth });
+  // the months the window leaves out unread, and why — the runway caption's sentence (`unreadMonthsSentence`)
+  const unreadNote = unreadMonthsSentence(unread);
 
   return (
     <SurfaceCard>
@@ -267,9 +270,12 @@ export function SubscriptionsCard({ data }: { data: SubscriptionsCardData }) {
         {/* 🔴 "across 1 charges": the e2e fixture posts ONE subscription charge
             in its window, and the dashboard-grid baseline printed it. The
             numeral stays, as the counts below keep theirs. */}
+        {/* ⛔ the runway caption's opening (`emptyWindowOpening`): a window the frontier emptied was read, not in full */}
         {span === null
-          ? "No complete month has been imported yet, so nothing here has been totalled from the charges themselves."
+          ? `${emptyWindowOpening(unread)}, so nothing here has been totalled from the charges themselves.`
           : `Together these took ${formatCents(postedCents)} out across ${postedCount} ${postedCount === 1 ? "charge" : "charges"} over ${span}, refunds netted off. That is a total, not a rate — a bill that started or ended inside the window did not charge for all of it.`}
+        {/* ⚖️ …and a window the frontier stopped short says why, in the runway's sentence (decision 71) */}
+        {unreadNote !== null && ` ${unreadNote}`}
         {unforecastableCount > 0 &&
           ` ${unforecastableCount} more ${unforecastableCount === 1 ? "has" : "have"} no expected amount or no expected date, so nothing could be levelled from ${unforecastableCount === 1 ? "it" : "them"}.`}
         {/* ⛔ A separate sentence: an ended commitment has both an amount and a

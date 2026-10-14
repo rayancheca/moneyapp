@@ -11,6 +11,7 @@ import { transactions } from "@/db/schema/transactions";
 import { seedDatabase } from "@/db/seed";
 import { dedupeHash } from "@/lib/hash";
 import { createAccount } from "./accounts";
+import { importedThrough } from "./imported-through-fixture";
 import { TOP_ROUTES, transfersCard, type TransfersCard } from "./transfers-card";
 
 /**
@@ -59,6 +60,8 @@ beforeEach(() => {
       dedupeHash: "h-ledger-opens",
     })
     .run();
+  // ⚖️ …and read into the running month (decision 71), so every complete month is read to its end
+  importedThrough(bundle.db, TODAY);
 });
 
 afterEach(() => {
@@ -146,6 +149,7 @@ function everySentence(c: TransfersCard): string[] {
     c.arrivalNote,
     c.otherPartyNote,
     c.cancelledNote,
+    c.unreadNote,
     ...c.routes.map((r) => `${r.fromLabel} → ${r.toLabel} ${r.countLabel}`),
   ].filter((s): s is string => typeof s === "string");
 }
@@ -225,6 +229,53 @@ describe("the happy path", () => {
     const c = cardOrThrow();
     expect(c.routes).toHaveLength(1);
     expect(c.routes[0]).toMatchObject({ cents: 300_00, count: 2, countLabel: "2 transfers" });
+  });
+});
+
+/**
+ * ⚖️ His decision 71 (2026-10-13): the window every dashboard card quotes holds only months every account he spends from
+ * has been read through to the end of — this card reads it too (`baselineWindow`), so it moves with the others and
+ * says why. 🔴 Measured on his ledger copy that day it read "$65,151.13 left one account for another, Apr 2026 to Sep
+ * 2026" while Chase Checking — one end of most of those transfers — was read only through Aug 12.
+ */
+describe("a window the frontier has cut", () => {
+  test("a transfer in a month an account you spend from is read only part-way through is out, and the card says why", () => {
+    const inst = bundle.db.select().from(institutions).where(eq(institutions.name, "Chase")).get()!;
+    const lagging = createAccount(bundle.db, { institutionId: inst.id, name: "Delta Card", type: "credit" });
+    for (const day of ["2026-01-05", "2026-02-05", "2026-03-05", "2026-04-05", "2026-05-05", "2026-06-05", "2026-07-10"]) {
+      leg(lagging, day, -25_00, "");
+    }
+    transfer(A, B, "2026-06-04", 500_00, "g1");
+    transfer(A, B, "2026-07-04", 300_00, "g2");
+
+    const c = cardOrThrow();
+    expect(c.movedCents).toBe(500_00);
+    expect(c.headlineNoun).toBe("left one account for another, Jan 2026 to Jun 2026");
+    expect(c.unreadNote).toBe(
+      "Jul 2026 is left out: Jul 10 is the last day every account you spend from has been imported through.",
+    );
+  });
+
+  test("an uncut window has no such note", () => {
+    transfer(A, B, "2026-06-04", 500_00, "g1");
+    expect(cardOrThrow().unreadNote).toBeNull();
+  });
+
+  /**
+   * 🔴 Review of 69f51c1: a window the frontier EMPTIED is `baselineWindow`'s current-month fallback, and this card read
+   * it — "$200.00 left one account for another, Aug 2026" over the half-finished running month, then "Jun 2026 and Jul
+   * 2026 are left out: Jun 12 is the last day every account you spend from has been imported through" of the two complete
+   * months it would not count. Eating out and Fees refuse a window of no month (`window.months < 1`); so does this card.
+   */
+  test("a window the frontier emptied is no card, never the running month under a note about the complete ones", () => {
+    bundle.db.delete(transactions).run();
+    // the ledger opens on Jun 1, the Card is read only to Jun 12 — with no habit yet, every account dates the frontier
+    leg(A, "2026-06-01", -1, "");
+    leg(CARD, "2026-06-12", -1, "");
+    transfer(A, B, "2026-06-04", 500_00, "g1");
+    transfer(A, B, "2026-07-04", 300_00, "g2");
+    transfer(A, B, "2026-08-20", 200_00, "g3");
+    expect(card()).toBeNull();
   });
 });
 

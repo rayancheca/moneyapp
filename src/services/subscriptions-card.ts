@@ -3,6 +3,7 @@ import type { AppDatabase } from "@/db/client";
 import { recurringSeries, type Cadence } from "@/db/schema/recurring";
 import { transactions } from "@/db/schema/transactions";
 import { billedWithLabel } from "@/lib/billed-with";
+import type { UnreadMonths } from "@/lib/committed";
 import { addCalendarMonths, compareDates, diffDays, monthKey, todayIso } from "@/lib/dates";
 import { formatDayShortIn } from "@/lib/format-date";
 import { levelledMonthlyCents } from "@/lib/income-basis";
@@ -232,6 +233,11 @@ export interface SubscriptionsCard {
   months: number;
   fromMonth: string;
   toMonth: string;
+  /**
+   * The complete months the posted window leaves out unread, and the day that leaves them out (`BaselineWindow.unread`,
+   * his decision 71, 2026-10-13) — named after the total it bounds (`unreadMonthsSentence`).
+   */
+  unread: UnreadMonths | null;
   today: string;
 }
 
@@ -500,6 +506,7 @@ export function subscriptionsCard(
     months: window.months,
     fromMonth,
     toMonth,
+    unread: window.unread,
     today,
   };
 }

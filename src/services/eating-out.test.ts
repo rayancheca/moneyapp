@@ -11,6 +11,7 @@ import { transactions } from "@/db/schema/transactions";
 import { eq, and, isNull } from "drizzle-orm";
 import { addDays } from "@/lib/dates";
 import { eatingOutCard } from "./eating-out";
+import { importedThrough } from "./imported-through-fixture";
 
 const dayOffset = (from: string, n: number): string => addDays(from, n);
 
@@ -111,6 +112,8 @@ beforeEach(() => {
       updatedAt: new Date().toISOString(),
     })
     .run();
+  // ⚖️ …and read into the running month (decision 71), so every complete month is read to its end
+  importedThrough(bundle.db, TODAY);
 });
 
 afterEach(() => {
@@ -226,6 +229,35 @@ describe("eatingOutCard", () => {
     expect(eatingOutCard(bundle.db, TODAY)!.spendingHref).toBe("/spending?from=2026-02-01&to=2026-07-31");
     // the window's real last day — a February window ends on the 28th, not a notional 31st
     expect(eatingOutCard(bundle.db, "2026-03-10")!.spendingHref).toBe("/spending?from=2025-09-01&to=2026-02-28");
+  });
+
+  /**
+   * ⚖️ His decision 71 (2026-10-13): the window holds only months every account he spends from has been read through
+   * to the end of. 🔴 Measured on his ledger copy that day the card read "$1,371.18 a month … Averaged over 6 complete
+   * months, Apr 2026 to Sep 2026" while Chase Checking was read only through Aug 12 — $1,963.24 over Feb–Jul, the months
+   * read in full. A second account spending every month is read only through Jul 10: July leaves the window, the
+   * window slides back to Jan–Jun, and the card carries the months it left out for its caption to name.
+   */
+  test("a month an account you spend from is read only part-way through leaves the window, and the card says so", () => {
+    bundle.db
+      .insert(accounts)
+      .values({ id: "acct-2", institutionId: bundle.db.select().from(institutions).all()[0]!.id, name: "Card", type: "credit" })
+      .run();
+    for (const day of ["2026-01-05", "2026-02-05", "2026-03-05", "2026-04-05", "2026-05-05", "2026-06-05", "2026-07-10"]) {
+      seq += 1;
+      bundle.db
+        .insert(transactions)
+        .values({ accountId: "acct-2", postedOn: day, amountCents: -2500, rawDescription: `CARD ${seq}`, normalizedDescription: `CARD ${seq}`, categoryId: childId("Dining"), dedupeHash: `card-${seq}` })
+        .run();
+    }
+    addTxn("2026-07-12", -9900, "Dining");
+
+    const card = eatingOutCard(bundle.db, TODAY)!;
+    expect([card.months, card.fromMonth, card.toMonth]).toEqual([6, "2026-01", "2026-06"]);
+    expect(card.unread).toEqual({ months: ["2026-07"], through: "2026-07-10" });
+    // Jan–Jun's six card rows, and nothing of July's
+    expect(card.totalSpentCents).toBe(2500 * 6);
+    expect(card.spendingHref).toBe("/spending?from=2026-01-01&to=2026-06-30");
   });
 
   /** A child with nothing in it is an absence, not a row reading "0 coffees $0.00". */

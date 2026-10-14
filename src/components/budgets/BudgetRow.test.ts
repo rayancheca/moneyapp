@@ -88,7 +88,7 @@ function statusFor(name: string): BudgetPaceStatus {
 
 function render(status: BudgetPaceStatus): string {
   return renderToStaticMarkup(
-    createElement(BudgetRow, { status, guidanceCents: 0, spentProvenance: null, planProvenance: null }),
+    createElement(BudgetRow, { status, guide: null, spentProvenance: null, planProvenance: null }),
   );
 }
 
@@ -300,7 +300,7 @@ describe("BudgetRow — ⚖️ §6A 64, a window not one day of which has been r
       label: s.categoryPath,
     });
     const html = renderToStaticMarkup(
-      createElement(BudgetRow, { status: s, guidanceCents: 0, spentProvenance: spentProof, planProvenance: null }),
+      createElement(BudgetRow, { status: s, guide: null, spentProvenance: spentProof, planProvenance: null }),
     );
     expect(figures(html)).toMatch(/^Spent — Budget \$300\.00 Left —/);
     expect(html).not.toContain("$0.00");
@@ -629,5 +629,47 @@ describe("BudgetDetails — what rollover subtracts, in his words", () => {
     expect(panelText()).toContain("Banked $30.00 from closed periods. A period that came in under plan");
     expect(panelText()).not.toContain("so nothing rolls over");
     expect(panelText()).toContain("so a missing statement cannot bank itself as savings.");
+  });
+});
+
+/*
+ * ⚖️ His decision 71 (2026-10-13): the editor's guide averages the dashboard's window, and a window the frontier slid
+ * back names its months and says why (`budgetGuides`). This pins that the editor prints what it is handed: the lead
+ * beside the figure, and the note under it only when there is one.
+ */
+describe("BudgetRow — the inline editor's guide", () => {
+  afterEach(() => {
+    popovers.forceOpen = false;
+  });
+
+  function editorText(guide: Parameters<typeof BudgetRow>[0]["guide"]): string {
+    createBudget(bundle.db, { categoryId: catId("Food"), period: "monthly", amountCents: 60_000, startsOn: "2026-08-01" });
+    popovers.forceOpen = true;
+    return renderToStaticMarkup(
+      createElement(BudgetRow, { status: statusFor("Food"), guide, spentProvenance: null, planProvenance: null }),
+    )
+      .replace(/<[^>]+>/g, " ")
+      .replace(/\s+/g, " ");
+  }
+
+  test("a guide the frontier slid back prints its lead, its figure, and why", () => {
+    const note =
+      "Averaged over 6 complete months, Feb 2026 to Jul 2026. Aug 2026 and Sep 2026 are left out: Aug 12 is the last " +
+      "day every account you spend from has been imported through.";
+    const text = editorText({ cents: 221_650, lead: "6-mo avg", note });
+    expect(text).toContain("6-mo avg ≈ $2,216.50");
+    expect(text).toContain(note);
+  });
+
+  test("an uncut guide prints no note", () => {
+    const text = editorText({ cents: 74_169, lead: "6-mo avg", note: null });
+    expect(text).toContain("6-mo avg ≈ $741.69");
+    expect(text).not.toContain("left out");
+  });
+
+  test("no guide prints nothing", () => {
+    const text = editorText(null);
+    expect(text).not.toContain("avg ≈");
+    expect(text).not.toContain("left out");
   });
 });

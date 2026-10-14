@@ -12,6 +12,7 @@ import { transactionSplits } from "@/db/schema/transaction-splits";
 import { transactions } from "@/db/schema/transactions";
 import { seedDatabase } from "@/db/seed";
 import { addDays } from "@/lib/dates";
+import { importedThrough } from "./imported-through-fixture";
 import { upcomingOccurrences } from "./recurring";
 import { subscriptionsCard } from "./subscriptions-card";
 
@@ -92,6 +93,8 @@ beforeEach(() => {
     read.push({ accountId, day, balanceCents: 0, basis: "derived" });
   }
   bundle.db.insert(dailyBalances).values(read).run();
+  // ⚖️ …and its rows imported into the running month (decision 71), so every complete month is read to its end
+  importedThrough(bundle.db, TODAY);
 });
 
 afterEach(() => {
@@ -514,6 +517,34 @@ describe("subscriptionsCard — division guards", () => {
     expect(c.lapsedSharePct).toBe(0);
     expect(c.largestLapsed).toBeNull();
     expect(c.lapsed).toEqual([]);
+  });
+});
+
+/**
+ * ⚖️ His decision 71 (2026-10-13): the posted window holds only months every account he spends from has been read
+ * through to the end of. 🔴 Measured on his ledger copy that day the card read "$11,846.45 out across 19 charges over 6
+ * complete months, Apr 2026 to Sep 2026" while Chase Checking was read only through Aug 12 — $5,272.51 across 15 over
+ * Feb–Jul, the months read in full. A card spending every month is read only through Jul 10: July's charge is out of
+ * the total, and the card carries the months it left out for its caption to name.
+ */
+describe("subscriptionsCard — the posted total over a window the frontier has cut", () => {
+  test("a month an account you spend from is read only part-way through is out of the total, and the card says so", () => {
+    const institutionId = bundle.db.select().from(institutions).all()[0]!.id;
+    bundle.db.insert(accounts).values({ id: "acct-card", institutionId, name: "Card", type: "credit" }).run();
+    for (const [i, day] of ["2026-01-05", "2026-02-05", "2026-03-05", "2026-04-05", "2026-05-05", "2026-06-05", "2026-07-10"].entries()) {
+      bundle.db
+        .insert(transactions)
+        .values({ accountId: "acct-card", postedOn: day, amountCents: -2500, rawDescription: `CARD ${i}`, normalizedDescription: `CARD ${i}`, categoryId: null, dedupeHash: `card-${i}` })
+        .run();
+    }
+    const id = addSeries({ name: "Sub", amountCents: -1000, lastMatchedOn: FRESH });
+    addTxn({ seriesId: id, day: "2026-06-05", cents: -1000 });
+    addTxn({ seriesId: id, day: "2026-07-05", cents: -1000 });
+
+    const c = card()!;
+    expect([c.months, c.fromMonth, c.toMonth]).toEqual([6, "2026-01", "2026-06"]);
+    expect([c.postedCents, c.postedCount]).toEqual([1000, 1]);
+    expect(c.unread).toEqual({ months: ["2026-07"], through: "2026-07-10" });
   });
 });
 

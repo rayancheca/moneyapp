@@ -17,6 +17,7 @@ import { budgetCoverageSentence } from "@/lib/budget-coverage";
 import { budgetVerdict } from "@/lib/budget-verdict";
 import { formatCents } from "@/lib/money";
 import { ONE_CHARGE_WORD } from "@/lib/one-charge";
+import type { BudgetGuide } from "@/services/budget-guide";
 import type { BudgetPace, BudgetPaceStatus } from "@/services/budgets";
 import { DisclosureChevron, DisclosureRegion, useDisclosure } from "@/components/ui/Disclosure";
 import { BudgetAmountEditor, PERIOD_WORD } from "./BudgetAmountEditor";
@@ -50,7 +51,8 @@ function paceSentence(status: BudgetPaceStatus): string {
 
 interface BudgetRowProps {
   status: BudgetPaceStatus;
-  guidanceCents: number;
+  /** the inline editor's spend guide (`budgetGuides`) — null when there is none to print */
+  guide: BudgetGuide | null;
   /** what the SPENT figure is standing on — null while none can be computed */
   spentProvenance: Provenance | null;
   /**
@@ -73,7 +75,7 @@ interface BudgetRowProps {
  * The headline and the definition beside it both come from `budgetVerdict`, so
  * the words and their explanation are chosen by one branch.
  */
-export function BudgetRow({ status, guidanceCents, spentProvenance, planProvenance }: BudgetRowProps) {
+export function BudgetRow({ status, guide, spentProvenance, planProvenance }: BudgetRowProps) {
   const { budget, tail } = status;
   // Lifted out of BudgetRolloverToggle so the details panel reacts to the toggle
   // immediately. Left inside the toggle, the panel would read the stale server
@@ -380,7 +382,7 @@ export function BudgetRow({ status, guidanceCents, spentProvenance, planProvenan
           <BudgetAmountEditor
             budgetId={budget.id}
             amountCents={budget.amountCents}
-            guidanceCents={guidanceCents}
+            guide={guide}
             period={budget.period}
             categoryPath={status.categoryPath}
           />

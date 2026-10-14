@@ -23,8 +23,8 @@
 
 import type { Cadence } from "@/db/schema/recurring";
 import { arrearsTail, HAS_NOT_POSTED, type ArrearsReading } from "@/lib/arrears-reading";
-import { addCalendarMonths, compareDates, daysInMonthOf, monthKey, withDayOfMonth } from "@/lib/dates";
-import { monthWindowLabel } from "@/lib/format-date";
+import { addCalendarMonths, compareDates, daysInMonthOf, monthKey, periodBounds, withDayOfMonth } from "@/lib/dates";
+import { formatDayShortIn, formatMonthYear, monthWindowLabel } from "@/lib/format-date";
 import { dayWindowLabel } from "@/lib/period";
 import { levelledMonthlyCents, OCCURRENCES_PER_YEAR } from "@/lib/income-basis";
 import { formatCents } from "@/lib/money";
@@ -659,14 +659,152 @@ export function baselineCaption(window: {
    * of those months would be a caption that lies by omission.
    */
   upfrontCarCents?: number;
+  /** the complete months the window leaves out unread (`BaselineWindow.unread`, decision 71) — said, never silent */
+  unread?: UnreadMonths | null;
 }): string {
   const span = baselineSpan(window);
+  const unread = unreadMonthsSentence(window.unread ?? null);
+  const why = unread === null ? "" : ` ${unread}`;
   if (span === null) {
-    return "No complete month has been imported yet, so there is no spending average to stand on.";
+    return `${emptyWindowOpening(window.unread ?? null)}, so there is no spending average to stand on.${why}`;
   }
   const leftOut = upfrontCarLeftOut(window.upfrontCarCents ?? 0);
   const clause = leftOut === null ? "" : `, leaving out ${leftOut}`;
-  return `Spending averaged over ${span}${clause}. This month is still running and is not counted.`;
+  return `Spending averaged over ${span}${clause}.${why} This month is still running and is not counted.`;
+}
+
+/**
+ * What the car card's share is set against — "not what the last six months measured." — its baseline, which is
+ * `baselineWindow`'s.
+ *
+ * 🔴 Once the frontier slid that window back (his decision 71, 2026-10-13) they were not the last six months: measured on
+ * his ledger copy that day, Feb 2026 to Jul 2026 beside an October. So a cut window is named by its months, with the
+ * runway caption's reason (`unreadMonthsSentence`), and an uncut one reads exactly as it always did.
+ */
+export function measuredMonthsClause(window: {
+  months: number;
+  fromMonth: string;
+  toMonth: string;
+  unread?: UnreadMonths | null;
+}): string {
+  const unread = unreadMonthsSentence(window.unread ?? null);
+  if (unread === null) return "not what the last six months measured.";
+  const span = baselineSpan(window);
+  return span === null
+    ? `not anything measured: ${NONE_READ_IN_FULL}. ${unread}`
+    : `not what the ${span}, measured. ${unread}`;
+}
+
+/** What a window the frontier emptied is (decision 71): complete months were imported, none of them read in full. */
+const NONE_READ_IN_FULL = "no month has been read in full yet";
+
+/**
+ * How a caption over `baselineWindow` opens when the window holds no month — "No complete month has been imported
+ * yet", or, when the frontier emptied it, "No month has been read in full yet".
+ *
+ * 🔴 Review of cf8f8dc: the runway and Subscriptions captions kept "No complete month has been imported yet" over a
+ * window the frontier emptied and then named, in the next sentence, the complete months it left out — imported whole on
+ * one account, read only part of the way on another — beside the car card's "no month has been read in full yet" over
+ * the same window. A young ledger reaches it: with no habit yet every account dates the frontier, so one account last
+ * imported before the first whole month ends empties the window. ⛔ ONE PHRASE for all three (`NONE_READ_IN_FULL`).
+ */
+export function emptyWindowOpening(unread: UnreadMonths | null): string {
+  const phrase = unreadMonthsSentence(unread) === null ? "no complete month has been imported yet" : NONE_READ_IN_FULL;
+  return `${phrase[0]!.toUpperCase()}${phrase.slice(1)}`;
+}
+
+/**
+ * The complete months a spending window leaves out because not every account you spend from has been read through
+ * their last day — `BaselineWindow.unread` — and the day that leaves them out.
+ */
+export interface UnreadMonths {
+  /** 'YYYY-MM', oldest first: complete calendar months after the window and before the running one */
+  months: string[];
+  /** `spendingCoverageThrough` — the last day every account you spend from has been imported through */
+  through: string;
+}
+
+/**
+ * The last calendar month `through` reads to its END: its own month when it is that month's last day, else the month
+ * before — `baselineWindow`'s end under his decision 71.
+ *
+ * ⚖️ His decision 71 (2026-10-13, asked as an either/or): an average uses only months EVERY account he spends from has
+ * been read through to the end of. A month read to its 12th is not a twelfth of a measurement, it is none — the days
+ * after it are days nobody has looked at, not days on which nothing was spent.
+ */
+export function lastFullyReadMonth(through: string): string {
+  const own = monthKey(through);
+  return periodBounds(through, "monthly").end === through ? own : monthKey(addCalendarMonths(`${own}-01`, -1));
+}
+
+/**
+ * Why a spending window stops before the last complete month — "Aug 2026 and Sep 2026 are left out: Aug 12 is the last
+ * day every account you spend from has been imported through." Null when it leaves nothing out.
+ *
+ * ⛔ ONE SENTENCE for every caption that names `baselineWindow` — the runway's, Eating out's, Subscriptions', the fees
+ * and transfers cards' — in the words /spending's What-moved and the year summary already use for the same day
+ * (`spendingCoverageThrough`), so the dashboard and those pages name one frontier one way.
+ *
+ * ⚠️ The day carries its year only when it is not the first left-out month's: the frontier falls inside that month or
+ * before it (a stub month the window never counted), and the months beside it carry theirs.
+ */
+export function unreadMonthsSentence(unread: UnreadMonths | null): string | null {
+  if (unread === null || unread.months.length === 0) return null;
+  const { months, through } = unread;
+  const first = months[0]!;
+  const last = months[months.length - 1]!;
+  const named =
+    months.length === 1
+      ? `${formatMonthYear(`${first}-01`)} is`
+      : months.length === 2
+        ? `${formatMonthYear(`${first}-01`)} and ${formatMonthYear(`${last}-01`)} are`
+        : `${monthWindowLabel(first, last)} are`;
+  return `${named} left out: ${formatDayShortIn(through, `${first}-01`)} is the last day every account you spend from has been imported through.`;
+}
+
+/**
+ * What /budgets' inline editor says of its guide's window — "6-mo avg ≈ $X", and under it, when the frontier slid the
+ * window back, its months and why: "Averaged over 6 complete months, Feb 2026 to Jul 2026. Aug 2026 and Sep 2026 are
+ * left out: Aug 12 is the last day every account you spend from has been imported through." Null when the window holds
+ * no month: there is no guide to name.
+ *
+ * ⚖️ His decision 71 (2026-10-13) covers the guide as it covers the dashboard: it averages `baselineWindow`
+ * (`budget-guide.ts`). Read as "the last six months", a window slid back to Feb–Jul beside an October would be the
+ * dashboard caption's lie by omission, so it says what Eating out's caption says — `baselineSpan` and the runway's
+ * sentence (`unreadMonthsSentence`). ⛔ The lead counts the window's OWN months: a young ledger's floor makes them
+ * fewer than six, and "6-mo avg" over three would be a count the figure was not divided by.
+ */
+export function guideWindowWords(window: {
+  months: number;
+  fromMonth: string;
+  toMonth: string;
+  unread: UnreadMonths | null;
+}): { lead: string; note: string | null } | null {
+  const span = baselineSpan(window);
+  if (span === null) return null;
+  const unread = unreadMonthsSentence(window.unread);
+  return { lead: `${window.months}-mo avg`, note: unread === null ? null : `Averaged over ${span}. ${unread}` };
+}
+
+/**
+ * What /recurring's month forecast says of its spending pace when the frontier slid it back — "Spending's pace is
+ * averaged over 3 complete months, May 2026 to Jul 2026. Aug 2026 and Sep 2026 are left out: Aug 12 is the last day
+ * every account you spend from has been imported through." Null when it leaves nothing out.
+ *
+ * ⚖️ His decision 71 (2026-10-13) covers the pace's three months as it covers the dashboard's six (`paceMonths`). Its
+ * math table reads "3-mo avg" beside an October, and a reader takes that for Jul–Sep; so where they are not, the card
+ * names them and why, in `baselineSpan`'s and the runway's words (`unreadMonthsSentence`). ⚠️ "Spending's": the income
+ * pace still averages the calendar's months.
+ */
+export function spendPaceNote(window: {
+  months: number;
+  fromMonth: string;
+  toMonth: string;
+  unread: UnreadMonths | null;
+}): string | null {
+  const span = baselineSpan(window);
+  const unread = unreadMonthsSentence(window.unread);
+  return span === null || unread === null ? null : `Spending's pace is averaged over ${span}. ${unread}`;
 }
 
 /**

@@ -15,11 +15,13 @@ import { dedupeHash } from "@/lib/hash";
 import { baselineCaption } from "@/lib/committed";
 import { resolvePeriod } from "@/lib/period";
 import { createAccount } from "./accounts";
-import { budgetGuidanceCents, budgetPaceStatuses, createBudget } from "./budgets";
+import { budgetGuidanceCents } from "./budget-guide";
+import { budgetPaceStatuses, createBudget } from "./budgets";
 import { createCashWallet } from "./cash-wallets";
 import { predictBudgets, predictCategory } from "./category-forecast";
 import { carCard, runwayCard, spendBaseline } from "./committed";
 import { forecastCurrentMonth, forecastForMonth, type MonthForecast } from "./forecast";
+import { importedThrough } from "./imported-through-fixture";
 import { addManualTransaction } from "./manual-transactions";
 import { cashFlowByPeriod, spendingProjection } from "./spending";
 
@@ -159,6 +161,8 @@ beforeEach(() => {
   insertTxn({ postedOn: "2026-08-12", amountCents: INSURANCE, categoryId: carInsuranceId, recurringSeriesId: insuranceId });
   insertTxn({ postedOn: "2026-09-11", amountCents: INSURANCE, categoryId: carInsuranceId, recurringSeriesId: insuranceId });
   insertTxn({ postedOn: "2026-09-15", amountCents: LEASE, categoryId: carId, recurringSeriesId: leaseId });
+  // ⚖️ both accounts read into the running month (decision 71), so August and September are read to their ends
+  importedThrough(bundle.db, TODAY);
 });
 
 afterEach(() => {
@@ -328,6 +332,8 @@ describe("one rule: what the card calls up front is exactly what the pace leaves
     const book = createAccount(bundle.db, { institutionId: rh.id, name: "Robinhood Agentic Brokerage", type: "investment", subtype: "brokerage" });
     bundle.db.update(accounts).set({ cashAccountId: agentic }).where(eq(accounts.id, book)).run();
     insertTxn({ postedOn: "2026-09-09", amountCents: -10_000, categoryId: carId, accountId: agentic });
+    // ⚖️ the new account read into October too (decision 71), so the pace reads Jul–Sep, the calendar's three
+    importedThrough(bundle.db, TODAY);
 
     expect(carCard(bundle.db, TODAY)!.cost.upfrontCents).toBe(0);
     const f = forecastCurrentMonth(bundle.db, TODAY);
@@ -438,6 +444,7 @@ describe("every spending rate leaves the up-front money out (owner decision 2026
     // one July row opens the ledger, so August and September are the complete months counted
     insertTxn({ postedOn: "2026-07-05", amountCents: -40_000, categoryId: groceriesId });
     postTheUpfrontMoney();
+    importedThrough(bundle.db, TODAY);
 
     const r = runwayCard(bundle.db, TODAY);
     expect(r.spend).toMatchObject({ months: 2, monthlyCents: 0, upfrontCarCents: 610_000 });

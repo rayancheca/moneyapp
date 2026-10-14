@@ -14,6 +14,7 @@ import { seedDatabase } from "@/db/seed";
 import { runwayCard } from "@/services/committed";
 import { eatingOutCard } from "@/services/eating-out";
 import { feesCard } from "@/services/fees-card";
+import { importedThrough } from "@/services/imported-through-fixture";
 import { EatingOutCard } from "./EatingOutCard";
 import { FeesCard } from "./FeesCard";
 import { RunwayCard } from "./RunwayCard";
@@ -107,6 +108,8 @@ beforeEach(() => {
   addTxn("2026-07-02", -2000, childId("Food", "Dining"));
   addTxn("2026-07-03", -1500, childId("Food", "Groceries"));
   addTxn("2026-07-04", -500, childId("Fees", "Bank Fees"));
+  // ⚖️ …and read into the running month (decision 71), so July is read to its end and the window holds it
+  importedThrough(bundle.db, TODAY);
 });
 
 afterEach(() => {

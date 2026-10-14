@@ -30,6 +30,7 @@ import { categoryFlowLabel, categoryFlowSign } from "./category-detail";
 import { dashboardData } from "./dashboard";
 import { netWorthSeries, rebuildAccount } from "./derivation";
 import { forecastCurrentMonth } from "./forecast";
+import { importedThrough } from "./imported-through-fixture";
 import { ledgerOpens, ledgerReaches } from "./observation-frontier";
 import { periodActivity } from "./period-activity";
 import { printOnOneStatement } from "./printed-statement-fixture";
@@ -524,6 +525,8 @@ describe("the agent's trailing unfiled money out is not his pace", () => {
       post(wellsFargo, `${month}-10`, -HIS_UNFILED, null, "ATM Withdrawal");
       agentsUnfiled(month);
     }
+    // ⚖️ every account read into October (decision 71), so the pace reads Jul–Sep, the calendar's three
+    importedThrough(bundle.db, TODAY);
     const paired = forecastCurrentMonth(bundle.db, TODAY);
     unpair();
     const unpaired = forecastCurrentMonth(bundle.db, TODAY);
@@ -537,6 +540,8 @@ describe("the agent's trailing unfiled money out is not his pace", () => {
         ),
       )
       .run();
+    // …and Agentic read into October again: its read-through row is unfiled too, and went with them
+    importedThrough(bundle.db, TODAY);
     const without = forecastCurrentMonth(bundle.db, TODAY);
 
     const uncat = (f: typeof paired) => f.components.find((c) => c.label === "Uncategorized")?.cents;

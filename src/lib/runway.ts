@@ -1,4 +1,4 @@
-import { upfrontCarLeftOut } from "./committed";
+import { emptyWindowOpening, unreadMonthsSentence, upfrontCarLeftOut, type UnreadMonths } from "./committed";
 import type { IncomeBasisKind } from "./income-basis";
 import { formatCents } from "./money";
 
@@ -95,6 +95,12 @@ export interface RunwayInput {
    * those months hold. Default 0.
    */
   upfrontCarCents?: number;
+  /**
+   * How many months the spend term averaged and the complete months after them it left out unread
+   * (`SpendBaseline.months` and `.unread`, his decision 71, 2026-10-13) — read only to say, when nothing was measured,
+   * what fills the card in: a month READ in full, where the frontier cut the window. Default: nothing left out.
+   */
+  spendWindow?: { months: number; unread: UnreadMonths | null };
 }
 
 /**
@@ -253,6 +259,18 @@ export function runway(input: RunwayInput): Runway {
      */
     const upfront = input.upfrontCarCents ?? 0;
     const spentUpfront = upfront > 0 ? upfrontCarLeftOut(upfront) : null;
+    /*
+     * ⚖️ His decision 71 (2026-10-13): the spend term averages only months every account he spends from has been read
+     * through to the end of. 🔴 Review of 69f51c1: where the frontier EMPTIED that window, the caption beneath opened "No
+     * month has been read in full yet" and this sentence said "Nothing has been spent in the months counted below …
+     * This fills in once a month of spending is imported" — over $16,000 of June and July imported whole on one
+     * account, the other read to Jun 12. ⛔ The caption's own opening (`emptyWindowOpening`), and where the frontier cut
+     * the window what fills it in is a month READ in full, not one imported.
+     */
+    const unread = input.spendWindow?.unread ?? null;
+    const cut = unreadMonthsSentence(unread) !== null;
+    const fillsIn = (spending: string): string =>
+      `This fills in once a month of ${spending} is ${cut ? "read in full" : "imported"}.`;
     return {
       kind: "unknown",
       netCashCents,
@@ -261,11 +279,13 @@ export function runway(input: RunwayInput): Runway {
       withInvestments,
       headline: "Not enough spending to measure",
       explanation:
-        spentUpfront === null
-          ? "Nothing has been spent in the months counted below, so there is no rate to " +
-            "measure a runway against. This fills in once a month of spending is imported."
-          : `Apart from ${spentUpfront}, nothing has been spent in the months counted below, so there is no rate to ` +
-            "measure a runway against. This fills in once a month of other spending is imported.",
+        cut && input.spendWindow!.months === 0
+          ? `${emptyWindowOpening(unread)}, so there is no rate to measure a runway against. ${fillsIn("spending")}`
+          : spentUpfront === null
+            ? "Nothing has been spent in the months counted below, so there is no rate to " +
+              `measure a runway against. ${fillsIn("spending")}`
+            : `Apart from ${spentUpfront}, nothing has been spent in the months counted below, so there is no rate to ` +
+              `measure a runway against. ${fillsIn("other spending")}`,
       assumptions,
     };
   }

@@ -17,6 +17,7 @@ import { seedDatabase } from "@/db/seed";
 import { createAccount } from "@/services/accounts";
 import { checkedThrough } from "@/services/checked-days-fixture";
 import { runwayCard } from "@/services/committed";
+import { importedThrough } from "@/services/imported-through-fixture";
 import { RunwayCard } from "./RunwayCard";
 
 const TODAY = "2026-09-15";
@@ -179,6 +180,8 @@ test("the spend row carries its arithmetic under it", () => {
       nextExpectedAmountCents: 114192,
     })
     .run();
+  // ⚖️ read into the running month (decision 71), so August is read to its end
+  importedThrough(bundle.db, TODAY);
 
   const card = runwayCard(bundle.db, TODAY);
   expect(card.runway.assumptions.find((a) => a.id === "spend")!.cents).toBe(120000 - 4550);

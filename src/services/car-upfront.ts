@@ -47,7 +47,8 @@ export const CAR_LEASE_TERM_MONTHS = 24;
  *   - `forecast.ts::variableComponents` — the month forecast's pace (/recurring, the calendar, every month ahead);
  *   - `category-forecast.ts::nonRecurringSubtreeSpend` — /spending's predictions and /budgets' "Predict budgets";
  *   - `spending.ts::cashFlowByPeriod` — the running period's pace: the dashboard tile and /spending's "projected";
- *   - `budgets.ts::budgetOneOffCents` — /budgets' run-rate; `budgets.ts::budgetGuidanceCents` — the editor's guide.
+ *   - `budgets.ts::budgetOneOffCents` — /budgets' run-rate;
+ *   - `budget-guide.ts::budgetGuidanceCents` — the budget editor's guide.
  *
  * A rate either leaves it out of its window or, measuring the running period, counts it once as spent and never
  * extrapolates it.

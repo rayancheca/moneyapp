@@ -129,6 +129,7 @@ const october = (agentsCosts: MonthForecast["agentsCosts"]): MonthForecast => {
     projectedEomNetWorthCents: pace.eomNetWorthCents,
     committed: reading(agentsCosts.committedNetCents),
     components: [],
+    spendPaceNote: null,
     unbankedIncome: { totalCents: 0, occurrenceCount: 0, checkedOccurrenceCount: 0, frontier: { kind: "unchecked" }, names: [] },
     outsideCash: { netCents: 0, committedNetCents: 0, accountNames: [] },
     agentsIncome: { netCents: 0, committedNetCents: 0 },
