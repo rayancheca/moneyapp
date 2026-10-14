@@ -7,6 +7,7 @@ import {
   alreadyDueWords,
   annualizedCaveat,
   annualizedEndNote,
+  annualizedFigure,
   cadenceLabel,
   shortAgo,
   staleComponentEntries,
@@ -957,19 +958,60 @@ describe("annualizedCaveat — a year is qualified only when the series stops in
  */
 describe("seriesEndBadge — the end in the tense of the schedule", () => {
   test("a date still to come: the end ahead, in the future tense", () => {
-    expect(seriesEndBadge("2027-01-11", null, "2026-10-13")).toBe("Ends Jan 11, 2027");
+    expect(seriesEndBadge("2027-01-11", null, "2026-10-13", false)).toBe("Ends Jan 11, 2027");
   });
 
   test("ran out: Ended, on the day it ran out — never the end day still to come", () => {
-    expect(seriesEndBadge("2027-01-05", "2026-12-11", "2026-12-12")).toBe("Ended Dec 11, 2026");
+    expect(seriesEndBadge("2027-01-05", "2026-12-11", "2026-12-12", true)).toBe("Ended Dec 11, 2026");
     // …and the same day after the end has passed: no jump to the end on Jan 6
-    expect(seriesEndBadge("2027-01-05", "2026-12-11", "2027-01-20")).toBe("Ended Dec 11, 2026");
+    expect(seriesEndBadge("2027-01-05", "2026-12-11", "2027-01-20", true)).toBe("Ended Dec 11, 2026");
     // the Nov 11 balance, its end its one day: as it has read since 0af5689
-    expect(seriesEndBadge("2026-11-11", "2026-11-11", "2026-11-12")).toBe("Ended Nov 11, 2026");
+    expect(seriesEndBadge("2026-11-11", "2026-11-11", "2026-11-12", true)).toBe("Ended Nov 11, 2026");
   });
 
   test("no day it ran out (no date to step from): the end day's own tense", () => {
-    expect(seriesEndBadge("2027-01-05", null, "2027-01-06")).toBe("Ended Jan 5, 2027");
+    expect(seriesEndBadge("2027-01-05", null, "2027-01-06", false)).toBe("Ended Jan 5, 2027");
+  });
+
+  /*
+   * 🔴 An anchor TYPED past its end (Feb 11 on a Jan 11 end, asked Oct 13): its schedule holds no date, so the card reads
+   * "Its schedule has ended", and its rhythm's last day before the end is still ahead, so it ran out on no day yet
+   * (`scheduleRanOutOn`). The badge read "Ends Jan 11, 2027" beside the card (review of the late-lapse batch; his ledger
+   * copy 2026-10-13, Car insurance's anchor typed Feb 11). Ended — before the end it names, still to come.
+   */
+  test("its schedule ended, no day it ran out, the end still ahead: 'Ended before', never 'Ends'", () => {
+    expect(seriesEndBadge("2027-01-11", null, "2026-10-13", true)).toBe("Ended before Jan 11, 2027");
+    // on the end day itself it has not passed either
+    expect(seriesEndBadge("2027-01-11", null, "2027-01-11", true)).toBe("Ended before Jan 11, 2027");
+  });
+});
+
+/*
+ * ⚖️ Owner decision 2026-10-08 (§6A 56): ONE charge reads as one charge — its Annualized slot names that charge, never
+ * a year of it. 🔴 The Nov 11 balance's page read "Annualized ~$72.74/yr — the twelve months from today — this one
+ * stops on Nov 11, 2026, inside them", and its All-tab row "~$72.74/yr ends Nov 11, 2026", beside "Once" (his ledger
+ * copy, 2026-10-13).
+ */
+describe("annualizedFigure — a year at today's amounts, or its one charge", () => {
+  const monthly = { annualizedCents: 71516, oneChargeOn: null, nextExpectedAmountCents: -35758 };
+  const once = { annualizedCents: 7274, oneChargeOn: "2026-11-11", nextExpectedAmountCents: -7274 };
+
+  test("a schedule that repeats: ~ and /yr around its year", () => {
+    expect(annualizedFigure(monthly)).toEqual({ lead: "~", cents: 71516, tail: "/yr", once: false });
+  });
+
+  test("one charge: 'once · ' before the charge itself, nothing after", () => {
+    expect(annualizedFigure(once)).toEqual({ lead: "once · ", cents: 7274, tail: "", once: true });
+  });
+
+  // its one charge more than a year out projects nothing inside the year — the charge is still the charge
+  test("one charge past the year ahead: the charge, never $0.00", () => {
+    expect(annualizedFigure({ ...once, annualizedCents: 0, oneChargeOn: "2027-11-11" })!.cents).toBe(7274);
+  });
+
+  test("no year, no figure: the slot's dash", () => {
+    expect(annualizedFigure({ ...monthly, annualizedCents: null })).toBeNull();
+    expect(annualizedFigure({ ...once, annualizedCents: null })).toBeNull();
   });
 });
 

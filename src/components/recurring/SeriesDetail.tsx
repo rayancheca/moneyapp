@@ -6,6 +6,7 @@ import {
   noScheduleReason,
   seriesCanBeReshaped,
   seriesEvidenceTone,
+  seriesIsOver,
   seriesPageEvidenceBadge,
   seriesPostingWords,
 } from "@/lib/series-evidence";
@@ -42,6 +43,7 @@ import { PassedPaydaysCard } from "./PassedPaydaysCard";
 import { AttachPanel, LinkedTransactions, MergeControl } from "./SeriesMembership";
 import {
   annualizedCaveat,
+  annualizedFigure,
   cadenceLabel,
   KIND_LABEL,
   longDate,
@@ -114,6 +116,8 @@ export function SeriesDetail({
   // the year the ANNUALIZED figure is a year OF — qualified only when the
   // series stops inside it; see `annualizedCaveat`
   const annualizedNote = annualizedCaveat(data.endsOn, today);
+  // a year at today's amounts, or its one charge (§6A 56) — `annualizedFigure`, the All tab's and the End dialog's too
+  const yearFigure = annualizedFigure(data);
   // the ± hangs off the figure it is the spread of — see `postedSpreadReading`
   const postedSpread = postedSpreadReading(
     data.nextExpectedAmountCents,
@@ -217,9 +221,12 @@ export function SeriesDetail({
                 that day (review of 0af5689, his ledger copy asked about 2026-12-12). ⛔ The tense is the card's
                 fact, the day the schedule ran out (`seriesEndBadge`): 🔴 an end between two due days read "Ends
                 Jan 5, 2027" beside "Its schedule has ended" (review of the 10-12/13 batches). */}
-            {data.endsOn !== null ? (
+            {/* ⛔ …and none on a series he ended or said is not recurring: its status says it. 🔴 Car insurance ended
+                read "Ended · Bill · Ends Jan 11, 2027" in amber, and dismissed "Dismissed · Bill · Ends Jan 11, 2027" —
+                a schedule's end ahead of a series nothing expects any more (his ledger copy, 2026-10-13). */}
+            {data.endsOn !== null && !seriesIsOver(data.status) ? (
               <Badge tone={data.evidence === "schedule-ended" ? seriesEvidenceTone(data.evidence) : "warning"}>
-                {seriesEndBadge(data.endsOn, data.scheduleRanOutOn, today)}
+                {seriesEndBadge(data.endsOn, data.scheduleRanOutOn, today, data.evidence === "schedule-ended")}
               </Badge>
             ) : null}
             {data.merchant ? (
@@ -329,14 +336,24 @@ export function SeriesDetail({
           />
           <dl className="mt-4 grid grid-cols-2 gap-4 border-t border-line pt-4 sm:grid-cols-4">
             <Stat label="Annualized">
-              {data.annualizedCents !== null ? <>~<Money cents={data.annualizedCents} />/yr</> : "—"}
+              {/* ⚖️ §6A 56: a schedule of one charge reads that charge, "once · $72.74" — never a year of it
+                  (`annualizedFigure`) */}
+              {yearFigure !== null ? (
+                <>
+                  {yearFigure.lead}
+                  <Money cents={yearFigure.cents} />
+                  {yearFigure.tail}
+                </>
+              ) : (
+                "—"
+              )}
               {/* ⛔ the figure this qualifies, not the header — and only when it
                   needs qualifying. "a full year — this one is scheduled only to
                   2028-08-15" ran on the EXISTENCE of an end date, so it said
                   "only" over a lease that bills all twelve of the next twelve
                   months. `annualizedCaveat` is silent for every series that
-                  outlives the year. */}
-              {annualizedNote !== null && data.annualizedCents !== null ? (
+                  outlives the year — and one charge is no year to qualify. */}
+              {annualizedNote !== null && yearFigure !== null && !yearFigure.once ? (
                 <span className="mt-0.5 block text-[11px] font-normal text-ink-faint">
                   {annualizedNote}
                 </span>

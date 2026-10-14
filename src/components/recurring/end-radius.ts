@@ -9,7 +9,7 @@ import {
   type SeriesStatusForCopy,
 } from "@/lib/series-evidence";
 import type { SeriesDetail } from "@/services/recurring-detail";
-import { longDate } from "./labels";
+import { annualizedFigure, longDate } from "./labels";
 
 /**
  * What ending a series actually costs — the lines under "End this series".
@@ -62,7 +62,10 @@ export interface SeriesEndInput {
    * linked to it. See `endDrawsAsRecurring`.
    */
   drawnAsRecurringByEnding: boolean;
-  /** a year at today's amounts, or null when the series cannot carry one */
+  /**
+   * A year at today's amounts — or, of a schedule of one charge (`oneChargeOn`), that charge (`annualizedFigure`, the
+   * page's Annualized slot) — or null when the series cannot carry one
+   */
   annualizedCents: number | null;
   /** arrears magnitude — 0 when nothing is late; disjoint from the tail below */
   overdueCents: number;
@@ -101,13 +104,22 @@ function endDrawsAsRecurring(status: SeriesStatusForCopy, linkedCount: number): 
 export function seriesEndInput(
   data: Pick<
     SeriesDetail,
-    "kind" | "status" | "annualizedCents" | "overdue" | "nextExpected" | "oneChargeOn" | "endsOn" | "linkedTxns"
+    | "kind"
+    | "status"
+    | "annualizedCents"
+    | "nextExpectedAmountCents"
+    | "overdue"
+    | "nextExpected"
+    | "oneChargeOn"
+    | "endsOn"
+    | "linkedTxns"
   >,
 ): SeriesEndInput {
   return {
     kind: data.kind,
     drawnAsRecurringByEnding: endDrawsAsRecurring(data.status, data.linkedTxns.length),
-    annualizedCents: data.annualizedCents,
+    // the page's own Annualized figure — its one charge, of a schedule of one (§6A 56)
+    annualizedCents: annualizedFigure(data)?.cents ?? null,
     overdueCents: Math.abs(data.overdue?.amountCents ?? 0),
     overdueUnreadCents: data.overdue?.unreadCents ?? 0,
     overdueInGraceCents: data.overdue?.inGraceCents ?? 0,
@@ -220,7 +232,12 @@ export function seriesEndLines(
       ? [
           {
             label: "Leaving the forecast",
-            value: `~${formatCents(input.annualizedCents)} / yr`,
+            // ⚖️ §6A 56: one charge leaves as that charge — 🔴 "~$72.74 / yr" under "once on Nov 11, 2026" (his
+            // ledger copy, 2026-10-13)
+            value:
+              input.oneChargeOn === null
+                ? `~${formatCents(input.annualizedCents)} / yr`
+                : `~${formatCents(input.annualizedCents)}, its one ${seriesPostingWords(input.kind).posting}`,
             irreversible: true,
           },
         ]

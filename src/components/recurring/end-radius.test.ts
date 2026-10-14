@@ -109,6 +109,14 @@ describe("seriesEndLines", () => {
     ]);
   });
 
+  // ⚖️ §6A 56: one charge leaves as that charge, never "/ yr" — worded by what it posts, as every line here is
+  test("a schedule of one charge leaves the forecast as its one charge — or its one deposit", () => {
+    const once: SeriesEndInput = { ...base, annualizedCents: 7_274, oneChargeOn: "2026-11-11" };
+    expect(value(once, "Leaving the forecast")).toBe("~$72.74, its one charge");
+    expect(value({ ...once, kind: "income" }, "Leaving the forecast")).toBe("~$72.74, its one deposit");
+    expect(value({ ...base, annualizedCents: 7_274 }, "Leaving the forecast")).toBe("~$72.74 / yr");
+  });
+
   test("one linked transaction is singular", () => {
     expect(value({ ...base, linkedCount: 1 }, "Linked transactions kept")).toBe("1 transaction");
     expect(value(base, "Linked transactions kept")).toBe("4 transactions");
