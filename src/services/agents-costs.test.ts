@@ -53,7 +53,7 @@ import { cashFlowByPeriod, dailySpendHeatmap, largestTransactions, periodTotals,
 import { matchingTransactionIds } from "./transactions-query";
 import { setSplits } from "./transaction-splits";
 import { spendingCoverageThrough } from "./movers-card";
-import { importedThrough } from "./imported-through-fixture";
+import { importedThrough, ledgerOpenedOn } from "./imported-through-fixture";
 
 /**
  * ⚖️ Owner decision 2026-10-02 (§6A 34): what the AGENT'S account PAYS — a fee, or any other expense charged to its
@@ -506,7 +506,10 @@ describe("the agent's trailing costs are not his pace either", () => {
   test("⛔ the forecast's pace Spending leaves the agent's fee out, and its EOM net worth keeps it", () => {
     goldFee("2026-07-01");
     goldFee("2026-08-01");
-    // ⚖️ every account read into October (decision 71), so the pace reads Jul–Sep, the calendar's three
+    // ⚖️ every account read into October (decision 71), so the pace reads Jul–Sep, the calendar's three — and the
+    // ledger open before July on his accounts too, or deleting the agent's rows below moves its first whole month to
+    // September, and his pace with it (`paceMonths`' floor, review of 6d11c4d)
+    ledgerOpenedOn(bundle.db, "2026-06-30");
     importedThrough(bundle.db, TODAY);
     const paired = forecastCurrentMonth(bundle.db, TODAY);
     const pairedNov = forecastForMonth(bundle.db, "2026-11", TODAY)!;
@@ -623,6 +626,10 @@ describe("the rule's halves, at its home", () => {
   test("⛔ the category forecast's discretionary trend is his alone — a split part of the agent's included", () => {
     goldFee("2026-07-01");
     goldFee("2026-08-01");
+    // the ledger open before July on his accounts too, or deleting the agent's rows below moves its first whole month
+    // to September and his trend with it (`paceMonths`' floor, review of 6d11c4d) — and every account read into October
+    ledgerOpenedOn(bundle.db, "2026-06-30");
+    importedThrough(bundle.db, TODAY);
     // hypothetical: one charge of the agent's split across two categories — a part posts where its row does
     post(agentic, "2026-08-15", -1_000, "Fees > Bank Fees", "Gold Monthly Fee and margin");
     const split = bundle.db.select().from(transactions).where(eq(transactions.postedOn, "2026-08-15")).get()!;
@@ -634,6 +641,8 @@ describe("the rule's halves, at its home", () => {
     unpair();
     const unpaired = predictCategory(bundle.db, catId("Fees"), "Fees", TODAY);
     bundle.db.delete(transactions).where(eq(transactions.accountId, agentic)).run();
+    // …and Agentic read into October again, or its statement dates the trend back to Jul–Aug (decision 71)
+    importedThrough(bundle.db, TODAY);
     const without = predictCategory(bundle.db, catId("Fees"), "Fees", TODAY);
     expect(paired.forecast).toEqual(without.forecast);
     expect(unpaired.forecast.expectedTotalCents).toBeGreaterThan(without.forecast.expectedTotalCents);

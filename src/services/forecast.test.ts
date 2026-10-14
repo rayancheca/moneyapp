@@ -14,7 +14,7 @@ import { transactions, type TransactionStatus } from "@/db/schema/transactions";
 import { dedupeHash } from "@/lib/hash";
 import { createAccount } from "./accounts";
 import { checkedThrough } from "./checked-days-fixture";
-import { importedThrough } from "./imported-through-fixture";
+import { importedThrough, ledgerOpenedOn } from "./imported-through-fixture";
 import { forecastCurrentMonth, forecastForMonth, trailingFullMonths } from "./forecast";
 import { seriesIdsNotDrawnAsRecurring } from "./recurring-link";
 
@@ -102,8 +102,13 @@ describe("forecastCurrentMonth", () => {
    * ⚖️ Every account read into the running month, so the pace averages the calendar's three (his decision 71,
    * 2026-10-13: an average uses only months every account you spend from is read to the end of — `paceMonths`). A
    * fixture whose newest row is Jun 10 has read June for ten days, and its pace slides back a month.
+   *
+   * …and opened before April, so a trailing month with no row is a month of the ledger he spent nothing in. A month
+   * before the ledger's first whole month is no measurement at all, and no average reads it (`paceMonths`' floor —
+   * review of 6d11c4d): a fixture whose first row is Jun 10 has no whole month before July, and no pace.
    */
   function readIntoJuly(): void {
+    ledgerOpenedOn(bundle.db, "2026-03-01");
     importedThrough(bundle.db, TODAY);
   }
 

@@ -36,7 +36,7 @@ import { withBillingCarriers } from "./billing-carriers";
 import { incomeExpectation } from "./budgets";
 import { CAR_LEASE_TERM_MONTHS, isUpfrontCarRow, readUpfrontCarRule, upfrontCarRule } from "./car-upfront";
 import { silenceMeasuredThroughBySeries } from "./cash-earnings";
-import { averagesEndAt, firstWholeMonth } from "./read-in-full";
+import { averagedMonths } from "./read-in-full";
 import { scheduledOccurrences, seriesStaleness } from "./recurring";
 import { seriesIdsNotDrawnAsRecurring } from "./recurring-link";
 import { cashFlowByPeriod } from "./spending";
@@ -159,16 +159,12 @@ export function baselineWindow(
    * 2.7. It returns to the calendar's months by itself as statements land.
    *
    * ⛔ The window keeps its LENGTH and slides back — `months` fully read months — rather than shrinking to the read
-   * ones: a shorter average is a different figure, and the floor below already shortens it where the ledger is young.
+   * ones: a shorter average is a different figure, and the floor already shortens it where the ledger is young.
    * With no account you spend from there is no frontier, and the calendar's window stands.
    */
-  const end = averagesEndAt(db, today);
-  // the window runs from `end.month − (months − 1)` to `end.month`, never the incomplete current month
-  const asked: string[] = [];
-  for (let i = months - 1; i >= 0; i--) asked.push(monthKey(addCalendarMonths(`${end.month}-01`, -i)));
-
-  const floor = firstWholeMonth(db);
-  const keys = floor === null ? [] : asked.filter((k) => k >= floor);
+  // `end.month − (months − 1)` to `end.month`, never the incomplete current month, and floored — `averagedMonths`,
+  // the months /recurring's pace reads too (`paceMonths`)
+  const { keys, unread } = averagedMonths(db, today, months);
 
   const fromMonth = keys[0] ?? currentMonth;
   const toMonth = keys[keys.length - 1] ?? currentMonth;
@@ -179,7 +175,7 @@ export function baselineWindow(
     to: periodBounds(`${toMonth}-01`, "monthly").end,
     fromMonth,
     toMonth,
-    unread: end.unread,
+    unread,
   };
 }
 

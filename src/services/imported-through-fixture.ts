@@ -16,6 +16,25 @@ import { transactions } from "@/db/schema/transactions";
  * there, inside no window.
  */
 export function importedThrough(db: AppDatabase, day: string): void {
+  shownOn(db, day, "IMPORTED THROUGH", "imported-through");
+}
+
+/**
+ * TEST FIXTURE. The ledger opens on `day`: every account it holds — investment accounts aside — shown that day by
+ * `importedThrough`'s one-cent uncategorised credit, out of spending everywhere.
+ *
+ * ⛔ An average never reads a month before the ledger's first whole month (`averagedMonths` — `baselineWindow`'s six
+ * and `paceMonths`' three): a month before the ledger began is no measurement, not a month of nothing. A test whose
+ * trailing months are meant as months he spent nothing in opens its ledger before them. 🔴 Review of 6d11c4d: the pace
+ * had no floor, and these tests' "$0, $0, $300" were months before their first row. ⚠️ Date `day` before every other
+ * row and pair it with `importedThrough`, or an account shown on `day` alone dates the frontier there.
+ */
+export function ledgerOpenedOn(db: AppDatabase, day: string): void {
+  shownOn(db, day, "LEDGER OPENS", "ledger-opens");
+}
+
+/** Every account but an investment one shown on `day` — one uncategorised credit of a cent each. */
+function shownOn(db: AppDatabase, day: string, label: string, hashPrefix: string): void {
   const ids = db
     .select({ id: accounts.id })
     .from(accounts)
@@ -23,7 +42,7 @@ export function importedThrough(db: AppDatabase, day: string): void {
     .all()
     .map((a) => a.id);
   for (const accountId of ids) {
-    const rawDescription = `IMPORTED THROUGH ${day}`;
+    const rawDescription = `${label} ${day}`;
     db.insert(transactions)
       .values({
         accountId,
@@ -32,7 +51,7 @@ export function importedThrough(db: AppDatabase, day: string): void {
         rawDescription,
         normalizedDescription: rawDescription,
         categoryId: null,
-        dedupeHash: `imported-through-${accountId}-${day}`,
+        dedupeHash: `${hashPrefix}-${accountId}-${day}`,
       })
       .onConflictDoNothing()
       .run();

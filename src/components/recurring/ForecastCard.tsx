@@ -247,15 +247,32 @@ function Stat({ label, cents, flow = false }: { label: string; cents: number; fl
  * and `OutsideCashNote` prints each share that is not zero.
  */
 function PaceRow({ forecast: f }: { forecast: MonthForecast }) {
+  const heading = (
+    <h3 className="text-[11px] font-medium uppercase tracking-[0.1em] text-ink-faint">
+      If you also spend at your recent pace
+    </h3>
+  );
+  /*
+   * ⛔ A PACE OF NO MONTH IS NOT A PACE OF NOTHING. Where no month since the ledger's first whole one is read in full
+   * (`MonthForecast.spendPaceMonths`), every figure on this row but Income would be the headline's spending passed off
+   * as the pace — so none prints, and the row says why in the runway caption's words. 🔴 Review of 6d11c4d: on a young
+   * ledger it read "Spending $0.00 … EOM cash $322.58" over three months before the first record.
+   */
+  if (f.spendPaceMonths === 0) {
+    return (
+      <div className="mt-5 rounded-md border border-line bg-surface px-4 py-3">
+        {heading}
+        <p className="mt-2 text-xs leading-relaxed text-ink-faint">{f.spendPaceNote}</p>
+      </div>
+    );
+  }
   const paceIncome = f.projectedIncomeCents - f.committed.incomeCents;
   const paceSpend = f.projectedSpendCents - f.committed.spendCents;
   if (paceIncome === 0 && paceSpend === 0) return null;
 
   return (
     <div className="mt-5 rounded-md border border-line bg-surface px-4 py-3">
-      <h3 className="text-[11px] font-medium uppercase tracking-[0.1em] text-ink-faint">
-        If you also spend at your recent pace
-      </h3>
+      {heading}
       <dl className="mt-2 grid grid-cols-2 gap-x-6 gap-y-3 md:grid-cols-5">
         <PaceStat label="Income" cents={f.projectedIncomeCents} flow />
         <PaceStat label="Spending" cents={f.projectedSpendCents} flow />
