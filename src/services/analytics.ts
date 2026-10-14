@@ -504,6 +504,28 @@ export const incomeSeriesOfRender = cache(function incomeSeriesOfRender(db: AppD
   );
 });
 
+/**
+ * Whether a row linked to a pay series is a row of its PAY DAY — one no figure counts as spending: filed under Income
+ * (either sign), filed as a transfer, or an unfiled credit; never an unfiled debit nor a row filed under a spending
+ * category (`kindBucket` — his spending, or on the agent's cash the agent's costs). THE definition of a pay day's rows
+ * for every reader of one: settlement (`paydaySettlement`) and everything that draws or counts what it paid — the
+ * calendar's and the series page's per-payday readings, the posted average, Earned vs banked — and every figure that
+ * says Income (`hisIncomeRows`), so a day the calendar draws paid is a day Income counts, at the same net.
+ *
+ * ⚖️ Orchestrator's default (2026-10-14, his call open): an UNFILED debit linked to his pay on its payroll's day is his
+ * Uncategorized spending until he files it — the day still banked its payroll, settlement pays its payday, Income
+ * counts the deposit and Spent the debit, so Net is what the bank netted; filed under an income category or as a
+ * transfer it is his pay going back, and the day nets (decision 75). Attaching an unfiled row to a series files it
+ * (decision 47), so such a row comes only from a link made without filing.
+ * 🔴 Settlement read EVERY linked row while Income left his spending out: an unfiled $1,141.92 back beside Sep 17's
+ * payroll left Sep 17 unpaid on the calendar, unbanked on Earned vs banked and passed on /budgets, while "in so far"
+ * counted the payroll — $3,425.76 + $1,141.92 still expected + $1,141.92 passed against four paydays at $4,567.68
+ * (review of f1903f6; hypothetical: no money out is linked to his pay, a copy of his ledger 2026-10-13).
+ */
+export function isPayDayRow(idx: CategoryIndex, txn: Pick<AnalyticsTxn, "categoryId" | "amountCents">): boolean {
+  return kindBucket(idx, txn) === null;
+}
+
 /** One figure of his Income: a row of it (`isIncome`), or one DAY of his pay read by its net (`hisIncomeRows`). */
 export interface IncomeRow {
   postedOn: string;
@@ -523,10 +545,10 @@ export interface IncomeRow {
  *
  * ⚖️ His decision 75 (2026-10-13): a day whose rows linked to his pay net to $0.00 BANKED NOTHING, and a day partly
  * returned banked its net — read by `daysThatBanked`, the rule settlement spends a day by, so Income counts exactly
- * the days the calendar draws paid. A pay series' day is every row linked to it that day that no other figure counts
- * — his Income, either sign, a transfer's filing, an unfiled credit — and it is his Income only where one of its rows
- * is (`isIncome`): an unfiled credit alone on its day stays the review queue's, a return alone on a later day is no
- * same-day return and banks nothing. ⛔ Never a row that is his SPENDING (`spendingBucket`): that one is in Spent, so
+ * the days the calendar draws paid. A pay series' day is its rows that day settlement reads too (`isPayDayRow`), off
+ * the agent's cash — his Income, either sign, a transfer's filing, an unfiled credit — and it is his Income only where
+ * one of its rows is (`isIncome`): an unfiled credit alone on its day stays the review queue's, a return alone on a
+ * later day is no same-day return and banks nothing. ⛔ Never a row that is his SPENDING: that one is in Spent, so
  * Net already takes it off, and netted here too it would come off twice — an unfiled $1,141.92 return beside its
  * payroll read Income $2,283.84, Spent $1,141.92, Net $1,141.92 against the $2,283.84 the bank netted.
  * 🔴 Only "in so far" netted, and only rows filed under Income: /spending read $3,425.76 beside $2,283.84 in so far for
@@ -547,10 +569,7 @@ export function hisIncomeRows(
   for (const txn of txns) {
     const series = txn.recurringSeriesId;
     const onPayDay =
-      series !== null &&
-      incomeSeries.has(series) &&
-      !agentsCash.has(txn.accountId) &&
-      spendingBucket(idx, agentsCash, txn) === null;
+      series !== null && incomeSeries.has(series) && !agentsCash.has(txn.accountId) && isPayDayRow(idx, txn);
     if (onPayDay) {
       const key = `${series}|${txn.postedOn}`;
       payDays.set(key, [...(payDays.get(key) ?? []), txn]);

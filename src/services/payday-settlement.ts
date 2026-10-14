@@ -12,8 +12,9 @@ import {
   walkBackBound,
   type PaydaySettlement,
 } from "@/lib/payday-settlement";
-import { paydayReadings, type PaydayReading } from "@/lib/per-payday";
+import { paydayReadings, type PaydayReading, type ReadableRow } from "@/lib/per-payday";
 import { ratePeriodOf } from "@/lib/series-kind";
+import { isPayDayRow, loadCategoryIndex, type AnalyticsTxn, type CategoryIndex } from "./analytics";
 import { billPaymentsBySeries, paymentFor } from "./billing-carriers";
 import {
   effectiveSeries,
@@ -28,7 +29,8 @@ import {
  *
  * `lib/payday-settlement` owns the rule itself and says why. This supplies the
  * two inputs it needs and nothing else: every occurrence the ledger DRAWS for a
- * pay series, and every row attributed to it — money out too, since a day is read by its net (decision 75).
+ * pay series, and every row of its pay days (`isPayDayRow`) — money out too, since a day is read by its net (decision
+ * 75), and never his spending linked to it.
  *
  * ⛔ THE UNIVERSE IS NOT THE CALLER'S WINDOW, and it cannot be. A deposit in
  * September pays down paydays in August, so a September window that projected
@@ -62,8 +64,13 @@ export function paydaySettlement(db: AppDatabase, seriesId: string, today: strin
   const s = db.select().from(recurringSeries).where(eq(recurringSeries.id, seriesId)).get();
   if (!s || s.kind !== "income") return unsettled();
 
+  const idx = loadCategoryIndex(db);
   const rows = db
-    .select({ postedOn: transactions.postedOn, amountCents: transactions.amountCents })
+    .select({
+      postedOn: transactions.postedOn,
+      amountCents: transactions.amountCents,
+      categoryId: transactions.categoryId,
+    })
     .from(transactions)
     /*
      * ⚖️ Every row linked to it, money out too, because a DAY's rows are read by their net (`daysThatBanked`, his
@@ -79,8 +86,14 @@ export function paydaySettlement(db: AppDatabase, seriesId: string, today: strin
      * dated forward would otherwise retire paydays from a reading taken before
      * it posted. `hasArrived` is the boundary, so the recurring calendar, which
      * draws deposits beside this answer, cuts them on the same day.
+     *
+     * ⚖️ …and only its PAY DAY's rows (`isPayDayRow`), the rows every Income figure reads a pay day by
+     * (`hisIncomeRows`): a row linked to it that is his SPENDING — an unfiled debit, or one filed under a spending
+     * category — is in Spent, never in its day's money (orchestrator's default 2026-10-14, his call open). 🔴 Read with
+     * the rest, an unfiled $1,141.92 back beside Sep 17's payroll left Sep 17 unpaid while "in so far" counted the
+     * payroll — $3,425.76 + $1,141.92 still expected + $1,141.92 passed against four paydays at $4,567.68.
      */
-    .filter((d) => hasArrived(d.postedOn, today));
+    .filter((d) => hasArrived(d.postedOn, today) && isPayDayRow(idx, d));
   // no pay sent: nothing opens the walk (`firstPaydayOn` — a payroll returned the same day still opens it, unbanked)
   if (!rows.some((r) => r.amountCents > 0)) return unsettled();
 
@@ -339,13 +352,14 @@ export function paydayReadingsBySeries(
       .all()
       .map((s) => [s.id, effectiveSeries(s)] as const),
   );
-  const rowsBySeries = new Map<string, { id: string; postedOn: string; amountCents: number }[]>();
+  const rowsBySeries = new Map<string, PayRowSource[]>();
   for (const r of db
     .select({
       id: transactions.id,
       seriesId: transactions.recurringSeriesId,
       postedOn: transactions.postedOn,
       amountCents: transactions.amountCents,
+      categoryId: transactions.categoryId,
     })
     .from(transactions)
     .where(and(eq(transactions.status, "active"), inArray(transactions.recurringSeriesId, [...settlements.keys()])))
@@ -355,12 +369,27 @@ export function paydayReadingsBySeries(
     if (list) list.push(r);
     else rowsBySeries.set(r.seriesId, [r]);
   }
+  const idx = loadCategoryIndex(db);
   for (const [seriesId, settlement] of settlements) {
     const schedule = schedules.get(seriesId);
     if (!schedule) continue; // a series settlement spoke about is a row in this table — no schedule, no reading
-    out.set(seriesId, paydayReadings(rowsBySeries.get(seriesId) ?? [], settlement.portions, schedule));
+    out.set(seriesId, paydayReadings(asPayRows(idx, rowsBySeries.get(seriesId) ?? []), settlement.portions, schedule));
   }
   return out;
+}
+
+/** What `asPayRows` reads of a row: the posting, and where it is filed. */
+type PayRowSource = Omit<ReadableRow, "spending"> & Pick<AnalyticsTxn, "categoryId">;
+
+/**
+ * A pay series' rows as `lib/per-payday` reads them beside settlement's answer — each one that is no row of its pay
+ * day (`isPayDayRow`: his spending) flagged `spending`, so it is drawn and counted as the money it is and never netted
+ * into its day, as settlement never read it. ONE flagging for every reader of a pay series' rows per payday: the
+ * calendar (`paydayReadingsBySeries`), the series page's Amount history and the posted average with the popover's
+ * words (`postedAveragesBySeries`).
+ */
+export function asPayRows<T extends PayRowSource>(idx: CategoryIndex, rows: readonly T[]): (T & ReadableRow)[] {
+  return rows.map((r) => ({ ...r, spending: !isPayDayRow(idx, r) }));
 }
 
 /** The income series among a set of ids — the only ones settlement speaks about. */

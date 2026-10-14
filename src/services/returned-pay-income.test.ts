@@ -347,19 +347,53 @@ describe("a payroll returned on a LATER day is not a same-day return", () => {
 });
 
 /*
- * ⛔ AN UNFILED RETURN IS HIS SPENDING until it is filed (`spendingBucket`'s Uncategorized leg) — it is in Spent, so
- * Net already takes it off, and netting it out of Income as well would count it twice: Income $2,283.84, Spent
- * $1,141.92, Net $1,141.92 against $2,283.84 the bank netted. Which reading it gets — his pay going back, out of Spent
- * and netted into its day; or his spending until filed — is his call (open question, 2026-10-14). Until then the Income
- * figures keep one answer among themselves, and Net is what the bank netted.
+ * ⚖️ ONE DEFINITION OF A PAY DAY'S ROWS (`isPayDayRow`): settlement and every Income figure read the same rows, so a
+ * row linked to his pay that is his SPENDING — an unfiled debit, or one filed under a spending category — is in
+ * neither. Netted out of Income as well as counted in Spent it would come off twice: Income $2,283.84, Spent $1,141.92,
+ * Net $1,141.92 against the $2,283.84 the bank netted. ⚖️ Orchestrator's default (2026-10-14, his call open): an
+ * unfiled debit beside its payroll is his Uncategorized spending until he files it — the day still banked, settlement
+ * pays its payday, Income counts the deposit and Spent the debit; filed under Income or as a transfer it is his pay
+ * going back, and the day nets (decision 75).
+ * 🔴 Settlement read EVERY linked row: an unfiled $1,141.92 back beside Sep 17's payroll left Sep 17 unpaid — passed
+ * on /budgets — while "in so far" counted the payroll: $3,425.76 + $1,141.92 still expected + $1,141.92 passed against
+ * four paydays at $4,567.68 (review of f1903f6; hypothetical: no money out is linked to his pay).
  */
-describe("an unfiled return linked to his pay is counted once", () => {
-  test("in Spent as Uncategorized, never out of Income too — Net is what the bank netted", () => {
+describe("ONE definition of a pay day's rows — settlement and every Income figure read the same day", () => {
+  const bankFees = (): string => categoryId("Bank Fees", "Fees");
+  const sep17Paid = (): boolean =>
+    paydaySettlement(bundle.db, PAY, TODAY).portions.some((p) => p.paydayOn === "2026-09-17");
+  /** /budgets' September legs — in so far − paid for another month + still expected + passed — and its schedule */
+  function legs(): [number, number] {
+    const e = incomeExpectation(bundle.db, SEPT.from, SEPT.to, TODAY);
+    return [e.postedCents - e.paidForAnotherMonthCents + e.expectedCents + e.passedUnpaidCents, e.scheduledCents];
+  }
+
+  test.each([
+    ["unfiled", (): string | null => null],
+    ["filed under a spending category", bankFees],
+  ])("%s, the week's pay back the same day is his spending: Sep 17 is paid, Income counts it", (_, filedAs) => {
     payRow("2026-09-17", WEEK);
-    payRow("2026-09-17", -WEEK, null);
+    payRow("2026-09-17", -WEEK, filedAs());
+    expect(sep17Paid()).toBe(true);
+    expect(incomeEverywhere()).toEqual(everywhere(WEEK * 3));
+    // …and Spent shows the debit, once: Net is what the bank netted
     const totals = periodTotals(bundle.db, SEPT);
     expect([totals.spentCents, totals.netCents]).toEqual([WEEK, bankNetted()]);
-    expect(incomeEverywhere()).toEqual(everywhere(WEEK * 3));
+    expect(legs()).toEqual([WEEK * 4, WEEK * 4]);
+    incomeLinksAddUp();
+  });
+
+  test.each([
+    ["filed under Salary", salary],
+    ["filed as a transfer", internalTransfer],
+  ])("%s, it is his pay going back: Sep 17 banked nothing — unpaid, and in no Income figure", (_, filedAs) => {
+    payRow("2026-09-17", WEEK);
+    payRow("2026-09-17", -WEEK, filedAs());
+    expect(sep17Paid()).toBe(false);
+    expect(incomeEverywhere()).toEqual(everywhere(WEEK * 2));
+    const totals = periodTotals(bundle.db, SEPT);
+    expect([totals.spentCents, totals.netCents]).toEqual([0, bankNetted()]);
+    expect(legs()).toEqual([WEEK * 4, WEEK * 4]);
     incomeLinksAddUp();
   });
 });

@@ -70,8 +70,8 @@ const listOf = (ids: readonly string[]): SQL => sql`(${sql.join(ids.map((id) => 
  * figure that reads it opens the rows behind that figure: the Income card's (`income`), Net's (`cashflow`), the
  * Sankey's sources and the cash-flow chart's income segments (`category=<income>&flow=in`).
  *
- * A pay day is a day's rows linked to one income series that no figure of Spent counts (`spendingBucket`), off the
- * agent's cash; it is Income where one of them is his Income (`isIncome`) and the day netted to money in
+ * A pay day is a day's rows linked to one income series that no figure of Spent counts (`isPayDayRow`, settlement's
+ * too), off the agent's cash; it is Income where one of them is his Income (`isIncome`) and the day netted to money in
  * (`daysThatBanked`) — every one of its rows behind that figure, the money back too, and under the category of its
  * largest row of his Income (then the lowest id). 🔴 The links opened money in row by row: under an Income card that
  * counts no payroll returned the same day, its deposit; under a day partly returned, the deposit without the money
@@ -83,7 +83,7 @@ function hisPayDaysSql(allCategories: readonly CategoryRef[], agentsCash: readon
   const system = listOf(allCategories.filter((c) => c.kind === "system").map((c) => c.id));
   const agents = listOf(agentsCash);
   const incomeSeries = sql`(SELECT rs.id FROM recurring_series rs WHERE rs.kind = 'income')`;
-  /** his and in no figure of Spent: off the agent's cash, neither an expense row nor an unfiled outflow */
+  /** `isPayDayRow`, off the agent's cash: neither an expense row nor an unfiled outflow */
   const foldable = (r: RowColumns): SQL =>
     sql`(${r.accountId} NOT IN ${agents} AND NOT ((${r.categoryId} IS NOT NULL AND ${r.categoryId} IN ${expense}) OR ((${r.categoryId} IS NULL OR ${r.categoryId} IN ${system}) AND ${r.amountCents} < 0)))`;
   /** `isIncome` */

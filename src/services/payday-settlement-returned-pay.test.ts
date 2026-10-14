@@ -46,22 +46,23 @@ const PAY = "series-it-america";
 const WEEK = 114_192;
 const now = (): string => new Date().toISOString();
 
-function salaryId(): string {
-  const income = bundle.db
+function categoryId(name: string, parent: string): string {
+  const top = bundle.db
     .select()
     .from(categories)
-    .where(and(eq(categories.name, "Income"), isNull(categories.parentId)))
+    .where(and(eq(categories.name, parent), isNull(categories.parentId)))
     .get()!;
   return bundle.db
     .select()
     .from(categories)
-    .where(and(eq(categories.name, "Salary"), eq(categories.parentId, income.id)))
+    .where(and(eq(categories.name, name), eq(categories.parentId, top.id)))
     .get()!.id;
 }
+const salaryId = (): string => categoryId("Salary", "Income");
 
 let seq = 0;
-/** A row linked to his pay — a deposit, or (negative) the money of one going back out. */
-function payRow(postedOn: string, amountCents: number): void {
+/** A row linked to his pay — a deposit, or (negative) the money of one going back out — filed where it is filed. */
+function payRow(postedOn: string, amountCents: number, filedAs: string | null = salaryId()): void {
   seq += 1;
   bundle.db
     .insert(transactions)
@@ -72,7 +73,7 @@ function payRow(postedOn: string, amountCents: number): void {
       amountCents,
       rawDescription: amountCents > 0 ? "It America LLC Payroll" : "Return It America LLC Payroll",
       normalizedDescription: amountCents > 0 ? "IT AMERICA LLC PAYROLL" : "RETURN IT AMERICA LLC PAYROLL",
-      categoryId: salaryId(),
+      categoryId: filedAs,
       recurringSeriesId: PAY,
       seriesLinkSource: "user",
       status: "active",
@@ -487,17 +488,19 @@ describe("a partial return the same day reads, everywhere, as one deposit of the
  * clawback on a day of its own "fell by $1,091.92"; and a payroll returned whole read green only while the measured
  * spread was empty, amber under a cached one (review of bbf17cb, hypothetical: no money out is linked to his pay).
  */
-describe("money out linked to his pay is held to no week", () => {
-  const graded = (day: string, cents: number) => {
-    const row = entriesOn(day).find((e) => e.transactionId !== null && e.amountCents === cents)!;
-    return [row.state, row.expectedAmountCents];
-  };
-  const heldTo = (day: string, cents: number) =>
-    seriesDetail(bundle.db, PAY, TODAY).amountHistory.find((p) => p.date === day && p.amountCents === cents)!
-      .expectedCents;
-  const payNotices = () =>
-    (noticesCard(bundle.db, TODAY)?.notices ?? []).map((n) => n.text).filter((t) => t.includes("It America LLC"));
+/** How the calendar draws a row of his pay on a day — its state, and what it is held to */
+const graded = (day: string, cents: number) => {
+  const row = entriesOn(day).find((e) => e.transactionId !== null && e.amountCents === cents)!;
+  return [row.state, row.expectedAmountCents];
+};
+/** …and what the series page's Amount history holds it to */
+const heldTo = (day: string, cents: number) =>
+  seriesDetail(bundle.db, PAY, TODAY).amountHistory.find((p) => p.date === day && p.amountCents === cents)!
+    .expectedCents;
+const payNotices = () =>
+  (noticesCard(bundle.db, TODAY)?.notices ?? []).map((n) => n.text).filter((t) => t.includes("It America LLC"));
 
+describe("money out linked to his pay is held to no week", () => {
   test("$500.00 back the same day: the return is ungraded, and the one notice is the day's — $500.00 short", () => {
     rePost("2026-09-17", [-50_000, WEEK]);
     expect(graded("2026-09-17", -50_000)).toEqual(["paid", null]);
@@ -520,6 +523,74 @@ describe("money out linked to his pay is held to no week", () => {
     expect(graded("2026-09-18", -5_000)).toEqual(["paid", null]);
     expect(heldTo("2026-09-18", -5_000)).toBeNull();
     expect(payNotices()).toEqual([]);
+  });
+});
+
+/*
+ * ⚖️ ONE DEFINITION OF A PAY DAY'S ROWS (`isPayDayRow`), for settlement and every reader that draws or counts what it
+ * paid — the calendar's grading of the deposit, the posted average, Earned vs banked, /budgets' legs: a row linked to
+ * his pay that is his SPENDING — an unfiled debit, or one filed under a spending category — is no row of its day.
+ * ⚖️ Orchestrator's default (2026-10-14, his call open): it is his Uncategorized spending until he files it, so the day
+ * banked its payroll — and filed under Income or as a transfer it nets (decision 75, the tests above).
+ * 🔴 Settlement and every reader beside it read EVERY linked row: an unfiled $1,141.92 back beside Sep 17's payroll
+ * left Sep 17 unbanked on the calendar and the card while "in so far" counted the payroll (review of f1903f6;
+ * hypothetical: no money out is linked to his pay).
+ */
+describe("money linked to his pay that is his spending is no row of its pay day", () => {
+  const bankFeesId = (): string => categoryId("Bank Fees", "Fees");
+  /** what the posted average and the popover's words make of his pay's rows (`perPaydayEvidence`) */
+  const evidenceOf = (today = TODAY) => {
+    const s = bundle.db.select().from(recurringSeries).where(eq(recurringSeries.id, PAY)).get()!;
+    return postedAveragesBySeries(bundle.db, [s], today).get(PAY)!.perPayday!;
+  };
+
+  test.each([
+    ["unfiled", (): string | null => null],
+    ["filed under a spending category", bankFeesId],
+  ])("%s, the week's pay back on Sep 17 leaves every reader reading the day's payroll", (_, filedAs) => {
+    rePost("2026-09-17", [WEEK]);
+    const deposit = () =>
+      seriesDetail(bundle.db, PAY, TODAY).amountHistory.find((p) => p.date === "2026-09-17" && p.amountCents === WEEK);
+    const payroll = { ...readingOfDay("2026-09-17", TODAY), history: deposit() };
+    payRow("2026-09-17", -WEEK, filedAs());
+    // the calendar's Settled is the flow of every mark it draws — the debit's too, which left
+    expect({ ...readingOfDay("2026-09-17", TODAY), history: deposit() }).toEqual({ ...payroll, settledThatDay: 0 });
+    // the debit is drawn as the money out it is, held to no week, and the popover names it as that
+    expect(graded("2026-09-17", -WEEK)).toEqual(["paid", null]);
+    expect(heldTo("2026-09-17", -WEEK)).toBeNull();
+    const evidence = evidenceOf();
+    expect([evidence.moneyOut, evidence.noPaydayOfTheirOwn, evidence.netted]).toEqual([1, 0, []]);
+    expect(payNotices()).toEqual([]);
+  });
+
+  test("an unfiled $500.00 out on a lump's day leaves the lump whole — four weeks at $1,141.92", () => {
+    bundle.db.delete(transactions).run();
+    const read = "2026-09-28";
+    rePost("2026-09-23", [WEEK * 4]);
+    const lump = readingOfDay("2026-09-23", read);
+    payRow("2026-09-23", -50_000, null);
+    expect(readingOfDay("2026-09-23", read)).toEqual({ ...lump, settledThatDay: lump.settledThatDay - 50_000 });
+    expect(evidenceOf(read).samples.map((s) => [s.dayCents, s.returns])).toEqual([[WEEK * 4, 0]]);
+  });
+
+  test("beside a payroll returned whole the same day, it is named as money out — the day as netting to $0.00", () => {
+    rePost("2026-09-17", [WEEK, -WEEK]);
+    const returned = readingOfDay("2026-09-17", TODAY);
+    payRow("2026-09-17", -5_000, null);
+    expect(readingOfDay("2026-09-17", TODAY)).toEqual({ ...returned, settledThatDay: -5_000 });
+    const evidence = evidenceOf();
+    expect([evidence.moneyOut, evidence.netted.map((o) => [o.postedOn, o.postings])]).toEqual([
+      1,
+      [["2026-09-17", 2]],
+    ]);
+  });
+
+  test("a refund filed under a spending category, linked to his pay, pays no payday — it is no pay", () => {
+    bundle.db.delete(transactions).where(eq(transactions.postedOn, "2026-09-10")).run();
+    payRow("2026-09-10", WEEK, bankFeesId());
+    expect(settled()).toEqual(["2026-09-03"]);
+    expect(entriesOn("2026-09-10").find((e) => e.transactionId !== null)?.towardNoPayday).toBe(true);
+    expect([payLine().bankedCents, payLine().lastBankedOn]).toEqual([WEEK, "2026-09-03"]);
   });
 });
 

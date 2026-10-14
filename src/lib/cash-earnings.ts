@@ -106,7 +106,8 @@ export interface CashEarningsInput {
   series: PaySeries | null;
   /**
    * Deposits ATTRIBUTED to the series — on the real ledger, the rows carrying
-   * `recurring_series_id`. Order does not matter. Passing every inbound row
+   * `recurring_series_id` that are its pay day's (`isPayDayRow`: the rows
+   * settlement reads, never his spending linked to it). Order does not matter. Passing every inbound row
    * instead would count his mother's cash as wages, which is precisely the
    * mistake the 2026-07-21 rows were rescued from.
    *

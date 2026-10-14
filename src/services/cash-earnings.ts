@@ -8,7 +8,7 @@ import { cashEarnings, type CashEarnings, type PaySeries } from "@/lib/cash-earn
 import { firstPaydayOn } from "@/lib/payday-settlement";
 import { stepPlan, walkDayOfMonth } from "@/lib/recurring-step";
 import { outsidePortfolioCashAccountIds } from "./accounts";
-import { isAgentsIncomeSeries } from "./analytics";
+import { isAgentsIncomeSeries, isPayDayRow, loadCategoryIndex } from "./analytics";
 import { billingCarriers } from "./billing-carriers";
 import { accountsAwaitingStatements, silenceReadThrough } from "./cash-wallet-rule";
 import { accountCoverage, archivedAccountCoverage } from "./coverage";
@@ -378,16 +378,25 @@ export function cashEarningsReadings(
 
   if (series.length === 0) return [];
 
+  const idx = loadCategoryIndex(db);
+  /*
+   * ⚖️ A pay day's rows only (`isPayDayRow`) — the rows settlement spends and every Income figure reads: his spending
+   * linked to his pay is in Spent, never in what his pay banked (orchestrator's default 2026-10-14, his call open).
+   * 🔴 Read with the rest, an unfiled $1,141.92 back beside Sep 17's payroll banked nothing that day here while
+   * "Income recorded" counted the payroll.
+   */
   const linked = db
     .select({
       seriesId: transactions.recurringSeriesId,
       postedOn: transactions.postedOn,
       amountCents: transactions.amountCents,
+      categoryId: transactions.categoryId,
     })
     .from(transactions)
     .where(and(isNotNull(transactions.recurringSeriesId), eq(transactions.status, "active")))
     .orderBy(asc(transactions.postedOn))
-    .all();
+    .all()
+    .filter((r) => isPayDayRow(idx, r));
 
   const readings: CashEarningsReading[] = [];
   const checkedOf = withChecked ? checkedThroughBySeries(db, today) : null;

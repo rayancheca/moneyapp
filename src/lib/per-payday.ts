@@ -119,7 +119,17 @@ export interface ReadableRow {
   id: string;
   postedOn: string;
   amountCents: number;
+  /**
+   * Linked to the pay but no row of its pay day — his SPENDING: an unfiled debit, or a row filed under a spending
+   * category (`isPayDayRow`, services/analytics; flagged by `asPayRows`). ⚖️ Settlement never reads it, so no reading
+   * nets it into its day's money or takes it for a deposit: it is drawn as the money it is, held to no week, and a
+   * credit of it paid no payday (orchestrator's default 2026-10-14, his call open). Absent, the row is its pay day's.
+   */
+  spending?: boolean;
 }
+
+/** Whether a row is its pay day's — every row but his spending linked to it (`ReadableRow.spending`). */
+export const onPayDay = (r: Pick<ReadableRow, "spending">): boolean => r.spending !== true;
 
 /**
  * What a deposit paid PER PAYDAY, given how many paydays its money paid on its
@@ -213,7 +223,9 @@ function firstPaydayByDeposit(portions: readonly SettlementPortion[]): ReadonlyM
  * what a payday pays, and a day's deposits whose money paid no payday on its own (`dayPerPayday`) — among them a
  * payroll returned the same day, whose day banked nothing (decision 75): no portion names it, so it reads toward no
  * payday. ⚖️ A day that banked is read by its net (`dayPerPayday`): money out the same day is netted into its
- * deposits' figure, and is itself still drawn as the money out it is — held to no week (`expectedCents`).
+ * deposits' figure, and is itself still drawn as the money out it is — held to no week (`expectedCents`). ⛔ Only its
+ * pay day's rows (`onPayDay`): his spending linked to the pay is in no day's money, as settlement never read it — a
+ * debit of it is drawn as money out, a credit as money toward no payday, each held to no week.
  */
 export function paydayReadings(
   rows: readonly ReadableRow[],
@@ -225,14 +237,14 @@ export function paydayReadings(
   const depositsByDay = new Map<string, readonly ReadableRow[]>();
   // …and each day's money out, netted into its deposits' figure (decision 75)
   const returnsByDay = new Map<string, readonly ReadableRow[]>();
-  for (const r of rows) {
+  for (const r of rows.filter(onPayDay)) {
     const byDay = r.amountCents > 0 ? depositsByDay : returnsByDay;
     byDay.set(r.postedOn, [...(byDay.get(r.postedOn) ?? []), r]);
   }
 
   const out = new Map<string, PaydayReading>(
     rows
-      .filter((r) => r.amountCents <= 0)
+      .filter((r) => r.amountCents <= 0 || !onPayDay(r))
       .map((r) => [
         r.id,
         {
@@ -241,7 +253,8 @@ export function paydayReadings(
           // no payday's pay, so no week's rate is what it is held to (decision 75) — its era is its own day's
           expectedCents: null,
           ratePeriod: ratePeriodOf(schedule, r.postedOn),
-          towardNoPayday: false,
+          // money in that is his spending paid no payday — settlement never read it
+          towardNoPayday: r.amountCents > 0,
         },
       ]),
   );
