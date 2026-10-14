@@ -64,7 +64,7 @@ import { seriesCategoryIds } from "./series-category";
  *                               deposit: what it paid per payday, `lib/per-payday`)
  *   - upcoming        blue •  — an expected occurrence on/after today, unposted
  *   - missed          red ✕   — expected before today, unposted, day AND its grace
- *                               imported (`dueDayIsRead`, ⚖️ §6A 60)
+ *                               checked through, the last over (`dueDayIsRead`, ⚖️ §6A 60, 62)
  *   - unsettled       grey ?  — expected before today, unposted, and the ledger
  *                               cannot yet say (see `occurrence-verdict`)
  *
@@ -314,7 +314,7 @@ export interface RecurringCalendarMonth {
   postedNetCents: number;
   /** net-worth-signed sum of future (upcoming) expected charges, transfers' left out (`flowEntryOf`) */
   upcomingNetCents: number;
-  /** count of missed expected occurrences — days the ledger HAS been shown, with their grace (`dueDayIsRead`) */
+  /** count of missed expected occurrences — days the ledger HAS checked, with their grace (`dueDayIsRead`) */
   missedCount: number;
   /** count of past occurrences the ledger cannot yet speak to */
   unsettledCount: number;
@@ -843,11 +843,12 @@ export function recurringCalendar(
   const needsFrontier = compareDates(monthStart, today) < 0;
   // …and a past bill missed only once its day AND its grace are read (`dueDayIsRead`, ⚖️ his decision 60, 2026-10-08)
   // on the day its chip measures to (his decision 62, 2026-10-12): the accounts it posts to now, each to its checked
-  // balance, one no statement is coming for through today — so a bill filed late there is never "not imported yet" here
+  // balance, one no statement is coming for through today (today itself once it is over, `lastDueDayRead`) — so a bill
+  // filed late there is never "not imported yet" here
   const readingOf = needsFrontier ? dueDayReadings(db, today) : null;
   // …and a passed payday "not banked yet" only once the ledger has looked for its deposit (`paydayIsRead`): the day
-  // every pay sentence names, where the pay lands NOW — never the bills' reading, which takes every account it ever
-  // landed in
+  // every pay sentence names, where the pay lands NOW, each account to its checked record — never the bills' reading,
+  // which waits a grace and reads an account no statement is coming for through today
   const paydaysCheckedOf = needsFrontier ? checkedThroughBySeries(db, today) : null;
   /*
    * ⚖️ …and every posting that may PAY one of its bills, as the arrears read them (`billPaymentsBySeries`): its own and,

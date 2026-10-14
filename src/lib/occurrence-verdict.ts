@@ -209,9 +209,10 @@ export interface DueDayReading {
    */
   graceDays: number;
   /**
-   * Whether `observedThrough` reaches TODAY — every account it may land in imported or checked to the day, or one no
-   * statement will come for (archived, a cash wallet). A due day unread then waits for no import: only for the days a
-   * payment has to post, still to come — the words `in_grace` and `ArrearsReading.inGraceCents` say it in.
+   * Whether `observedThrough` reaches TODAY — every account it may land in checked to the day, or one no statement will
+   * come for (archived, a cash wallet). A due day unread then waits for no statement: only for the days a payment has to
+   * post, still to come — today among them, read once it is over (`lastDueDayRead`) — the words `in_grace` and
+   * `ArrearsReading.inGraceCents` say it in.
    */
   readsToToday: boolean;
 }
@@ -232,21 +233,29 @@ export interface CarriedGrace {
 }
 
 /**
- * The last DUE day the ledger has read for a series: the day its accounts are shown through, less its grace — null when
- * nothing is read. A due day on or before it is read (`dueDayIsRead`); one after it may still be paid by a posting no
- * checked statement has reached.
+ * The last DUE day the ledger has read for a series: the last day its accounts are read through, less its grace — null
+ * when nothing is read. A due day on or before it is read (`dueDayIsRead`); one after it may still be paid by a posting
+ * no checked statement has reached.
+ *
+ * ⛔ TODAY IS NEVER READ: a charge can still post on it — the "running late" chip measures to the day after the checked
+ * day, never past today (`seriesStaleness`) — so accounts read through today (`readsToToday`) are read through the day
+ * before. 🔴 Read through today itself (review of 384917c), an archived card at Oct 4 drew Oct 1's ✕ and every surface
+ * said "not posted" on the last of its 3 days — while a payment posting that day still paid it on time.
  */
 export function lastDueDayRead(reading: DueDayReading): string | null {
-  return reading.observedThrough === null ? null : addDays(reading.observedThrough, -reading.graceDays);
+  if (reading.observedThrough === null) return null;
+  const lastDayOver = reading.readsToToday ? addDays(reading.observedThrough, -1) : reading.observedThrough;
+  return addDays(lastDayOver, -reading.graceDays);
 }
 
 /**
  * ⚖️ WHETHER A DUE DAY HAS BEEN READ — his decision 60 (2026-10-08): once every account the series posts to now (its
- * last two payments' accounts, his decision 62 — its carrier's too, for one billed inside another's payment) is read
- * through the due day PLUS its grace, the days a payment may still post on — read as its "running late" chip reads
- * them, to each account's checked balance (`dueDayReadings`). Until then a payment may be sitting where no statement
- * has reached, so nothing may say "not posted" of it — ⚖️ "no statement has covered it yet" (his decision 65,
- * 2026-10-12: the words name what it waits for), quiet.
+ * last two payments' accounts, his decision 62, and the one it names, 66 — its carrier's too, for one billed inside
+ * another's payment) is read through the due day PLUS its grace, the days a payment may still post on, the last of them
+ * over (`lastDueDayRead`) — read as its "running late" chip reads them, to each account's checked balance
+ * (`dueDayReadings`). Until then a payment may be sitting where no statement has reached, so nothing may say "not
+ * posted" of it — ⚖️ "no statement has covered it yet" (his decision 65, 2026-10-12: the words name what it waits for),
+ * quiet.
  *
  * ⛔ THE ONE PREDICATE for every claim that a bill did not post: the calendar's red ✕ (`settledVerdict`), and the read
  * half of the arrears (`arrearsReadCents`) that the bill's page, the runway, /budgets, the End dialog, the forecast's
@@ -272,9 +281,13 @@ export function dueDayIsRead(dueOn: string, reading: DueDayReading): boolean {
  * (`unbankedIncomeForSeries`) that the forecast's note, /budgets and the dashboard say "the ledger has not looked for
  * their deposits" through.
  *
- * ⛔ Never the bills' reading (`dueDayReadings`): it reads every account a series EVER posted to. Measured on his ledger
- * copy 2026-10-12, that is Chase Checking's Aug 12 for the pay, which lands in Wells Fargo, checked through Sep 24 —
- * and Aug 13 and Aug 20 would read unlooked-for beside a dashboard that counts them checked.
+ * ⛔ Never the bills' reading (`dueDayReadings`), though both read where a series lands NOW (`landingAccountsBySeries`):
+ * that one waits a grace the pay's sentences do not give, and reads an account no statement is coming for (archived, a
+ * cash wallet) through TODAY (`silenceReadThrough`) — where this reads each to its checked record, an archived one's
+ * stopping where its statements did, a deposit after it unseen (`checkedThroughBySeries`). 🔴 When the bills' reading
+ * took every account a series EVER posted to (before his decision 62, 2026-10-12), it gave the pay Chase Checking's Aug
+ * 12 (his ledger copy 2026-10-12) — the pay lands in Wells Fargo, checked through Sep 24 — and Aug 13 and Aug 20 would
+ * have read unlooked-for beside a dashboard that counts them checked.
  */
 export function paydayIsRead(paydayOn: string, checkedThrough: string | null): boolean {
   return checkedThrough !== null && compareDates(paydayOn, checkedThrough) <= 0;
@@ -292,8 +305,9 @@ export interface OccurrenceReading {
  * The verdict on a PAST expected occurrence that did not post.
  *
  * `reading.dueDay` is how far the ledger has read the days this bill can be paid on — its accounts' frontier and its
- * grace (`DueDayReading`): ⚖️ the day is graded only once both have been imported (`dueDayIsRead`, his decision 60,
- * 2026-10-08). `scheduleIsProven` says whether the expected DATE is worth holding a biller to; see `ScheduleProven`.
+ * grace (`DueDayReading`): ⚖️ the day is graded only once its accounts are checked through both (`dueDayIsRead`, his
+ * decisions 60 and 65). `scheduleIsProven` says whether the expected DATE is worth holding a biller to; see
+ * `ScheduleProven`.
  *
  * Money in is never `missed` (`absenceIsEvidence`), but it asks the same question first: whether anyone has LOOKED
  * (`paydayIsRead` over `reading.paydaysCheckedThrough`). 🔴 It answered "unbanked" of every passed payday before

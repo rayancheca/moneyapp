@@ -280,7 +280,7 @@ export const RECURRING_JARGON = {
    * false of it. The clause names the other way a day counts as read, in the words /imports' rule is made of.
    *
    * ⚖️ …and "that day" is the day AND its grace, his decision 60 (2026-10-08, `dueDayIsRead`): a payment may post a few
-   * days late and still pay it, so a day imported without those is not yet known.
+   * days late and still pay it, so a day checked without those is not yet known.
    */
   missed:
     "Nothing turned up, and the statements covering that day and the few days after it a late payment could still post on HAVE been imported (or none ever will be, because its account is archived or a cash wallet), so the silence is an answer rather than a gap in the records.",

@@ -392,15 +392,21 @@ export function accountsThatDate(
  *
  * ⛔ …and A CARRIER'S IS ITS OWN — its own grace, its own accounts — never what is billed inside it. Only its own
  * payments pay it (`paymentFor`, each by its own series' tolerance), and his decisions read a bill's "not posted" on
- * the bill's own tolerance (60) and where its last two payments posted (62). So the pair can split one way only — the
- * rent not posted beside the utilities quiet, while a payment of their own (a wider grace, an account read less far)
- * may still post — and both say what is true of their own day. 🔴 One grace for the pair (5557162, review of the
- * 2026-10-12 batch): the rent waited for the widest grace among everything billed with it, asking neither a status nor
- * a due day — an annual item carried (14 days) held every monthly rent day 14 days, one ended in June held it 7, and
- * the rent's page said "no import reaches 14 days past it yet … so it may well have posted" of a rent no posting after
- * Oct 4 could pay, or "hold no posting within 5 days of it" beside its own Oct 5 row. Waiting on the accounts of what
- * it carries would wait on a card the rent never paid from — decision 62's own 🔴. Latent on his ledger copy
- * 2026-10-12: the rent and its utilities both have 3, and the utilities no posting of their own.
+ * the bill's own tolerance (60) and where its last two payments posted (62). So while the rent has an account to be
+ * read on, the pair splits one way only — the rent not posted beside the utilities quiet, while a payment of their own
+ * (a wider grace, an account read less far) may still post — and both say what is true of their own day. 🔴 One grace
+ * for the pair (5557162, review of the 2026-10-12 batch): the rent waited for the widest grace among everything billed
+ * with it, asking neither a status nor a due day — an annual item carried (14 days) held every monthly rent day 14
+ * days, one ended in June held it 7, and the rent's page said "no import reaches 14 days past it yet … so it may well
+ * have posted" of a rent no posting after Oct 4 could pay, or "hold no posting within 5 days of it" beside its own Oct
+ * 5 row. Waiting on the accounts of what it carries would wait on a card the rent never paid from — decision 62's own
+ * 🔴. Latent on his ledger copy 2026-10-12: the rent and its utilities both have 3, and the utilities no posting of
+ * their own.
+ *
+ * ⚠️ …and the OTHER way, when the rent has NO landing account — never posted, naming none: it is read nowhere and
+ * lends the utilities no account to wait on (`landingAccountsBySeries`), so utilities read on an account of their own
+ * say "not posted" beside the rent's "no statement has covered it yet" (a temp DB, 2026-10-14; "only one way", in
+ * 44eb3e7, was false of it). Latent: his rent posts to Wells Fargo.
  *
  * ⚠️ NOT HIS ANSWER YET: item (2) of the 2026-10-12 queue asked for the pair to answer on ONE day, and this is the
  * other reading, each on its own grace — put to him 2026-10-13 as an either/or. The grace itself is `dueDayGraces`'.

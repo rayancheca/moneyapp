@@ -137,18 +137,18 @@ function importedThrough(day: string): void {
   checkedThrough(bundle.db, "acct", day);
 }
 
-/** What every surface that says a bill came due says of these series' Oct 1, at TODAY. */
-function surfaces(ids: readonly string[] = [RENT, UTIL], [dueOn, dueWord] = ["2026-10-01", "Oct 1"]) {
-  const calendar = recurringCalendar(bundle.db, "2026-10", TODAY).entriesByDay[dueOn] ?? [];
-  const book = committedBook(bundle.db, TODAY);
-  const components = forecastCurrentMonth(bundle.db, TODAY).components;
+/** What every surface that says a bill came due says of these series' Oct 1, at `today` (TODAY unless given). */
+function surfaces(ids: readonly string[] = [RENT, UTIL], [dueOn, dueWord] = ["2026-10-01", "Oct 1"], today = TODAY) {
+  const calendar = recurringCalendar(bundle.db, "2026-10", today).entriesByDay[dueOn] ?? [];
+  const book = committedBook(bundle.db, today);
+  const components = forecastCurrentMonth(bundle.db, today).components;
   return {
     calendar: ids.map((id) => {
       const e = calendar.find((c) => c.seriesId === id)!;
       return [e.state, e.unsettledReason];
     }),
     card: ids.map((id) => {
-      const d = seriesDetail(bundle.db, id, TODAY);
+      const d = seriesDetail(bundle.db, id, today);
       // the page's own reading and grace (`overdue.graceDays`, `carriedGrace`), as `AlreadyDueCard` passes them
       const w = alreadyDueWords(
         overdueReading(d.overdue!),
@@ -160,12 +160,12 @@ function surfaces(ids: readonly string[] = [RENT, UTIL], [dueOn, dueWord] = ["20
     }),
     endDialog: ids.map(
       (id) =>
-        seriesEndLines(seriesEndInput(seriesDetail(bundle.db, id, TODAY)), formatCents).find((l) =>
+        seriesEndLines(seriesEndInput(seriesDetail(bundle.db, id, today)), formatCents).find((l) =>
           l.label.startsWith("Already due"),
         )!.label,
     ),
     runway: [arrearsSentence(book), arrearsAlarms(arrearsReadingOf(book))],
-    budgets: budgetPaceStatuses(bundle.db, TODAY).map((s) => [
+    budgets: budgetPaceStatuses(bundle.db, today).map((s) => [
       s.overdueCents,
       s.overdueUnreadCents,
       s.overdueInGraceCents,
@@ -211,7 +211,32 @@ const NOT_POSTED = {
   forecast: [" and has not posted", " and has not posted"],
 };
 
-describe("a due day is read once its accounts are imported through the due day + its grace (§6A 60)", () => {
+/** Read through today, inside its days to post: quiet, in the words of what it waits for (`DAYS_TO_POST_NOT_OVER`). */
+const DAYS_TO_POST = {
+  calendar: [
+    ["unsettled", "in_grace"],
+    ["unsettled", "in_grace"],
+  ],
+  card: [
+    ["Already due — the days a payment has to post are not over yet", false],
+    ["Already due — the days a payment has to post are not over yet", false],
+  ],
+  endDialog: [
+    "Already due this month, the days a payment has to post are not over yet",
+    "Already due this month, the days a payment has to post are not over yet",
+  ],
+  runway: [
+    "A further $2,291.21 came due earlier this month and the days a payment has to post are not over yet.",
+    false,
+  ],
+  budgets: [[229121, 229121, 229121]],
+  forecast: [
+    " and the days a payment has to post are not over yet",
+    " and the days a payment has to post are not over yet",
+  ],
+};
+
+describe("a due day is read once its accounts are checked through the due day + its grace (§6A 60, 65)", () => {
   test("nothing imported past his Sep 2 payment: every surface is quiet", () => {
     expect(surfaces()).toEqual(QUIET);
   });
@@ -277,8 +302,9 @@ describe("the grace is the bill's — and, for one billed with the rent, the ren
   /*
    * ⚖️ …and the rent's grace stays the rent's: his decision 60 (2026-10-08) reads "not posted" once statements cover
    * the due day plus THE BILL's tolerance, and only the rent's own payments pay the rent (`paymentFor`). What it
-   * carries waits for every payment that may pay IT — a payment of its own within its own 5 days, too — so the pair can
-   * split one way only: the rent not posted beside the utilities quiet, while a payment of theirs may still post.
+   * carries waits for every payment that may pay IT — a payment of its own within its own 5 days, too — so by grace the
+   * pair can split one way only: the rent not posted beside the utilities quiet, while a payment of theirs may still
+   * post. (By accounts it splits the other way when the rent has none to be read on — `dueDayReadings`.)
    *
    * 🔴 One grace for the pair (5557162, review of the 2026-10-12 batch): the rent waited for the widest grace among what
    * it carries, so its Oct 1 stayed quiet past its own days — "no import reaches 5 days past it yet … so it may well
@@ -457,8 +483,13 @@ describe("the grace is the bill's — and, for one billed with the rent, the ren
    * ⚖️ …and on its own accounts: his decision 62 (2026-10-12) reads a bill where its last two payments posted — the
    * rent's checking account — never where what it carries once posted on its own. What it carries is read on both
    * (`landingAccountsBySeries`): a payment of its own may still sit on the card no statement has reached since Sep 20.
-   * 🔴 (review of 5557162) Its commit said the pair now says "not posted" on the same day; here it cannot, and must not:
-   * read on the card too, the rent's Oct 1 would wait on an account it never paid from — decision 62's own 🔴.
+   * Read on the card too, the rent's Oct 1 would wait on an account it never paid from — decision 62's own 🔴.
+   *
+   * ⛔ A GUARD, NOT A FIX: no commit ever read the rent on the accounts of what it carries. 5557162 made the pair one by
+   * GRACE alone — its commit said the pair "now says 'not posted' on the same day", never true by accounts — and with
+   * both at 3 days here this passes on the code before 44eb3e7 too (run against 384917c, 2026-10-14): 44eb3e7 changed
+   * nothing it reads. It pins the reading as it has always been, so no other is built (review of 44eb3e7: it claimed to
+   * pin a change nobody made). Mutation-checked 2026-10-14: adding what it carries' accounts to the rent's turns it red.
    */
   test("utilities once paid on a card of their own wait for that card; the rent reads its own account", () => {
     const institutionId = bundle.db.select().from(institutions).all()[0]!.id;
@@ -603,29 +634,19 @@ describe("an account no statement will come for is read through today — and st
       .update(recurringSeries)
       .set({ anchorDay: 6, nextExpectedOn: "2026-10-06", userNextExpectedOn: "2026-10-06" })
       .run();
-    expect(surfaces([RENT, UTIL], ["2026-10-06", "Oct 6"])).toEqual({
-      calendar: [
-        ["unsettled", "in_grace"],
-        ["unsettled", "in_grace"],
-      ],
-      card: [
-        ["Already due — the days a payment has to post are not over yet", false],
-        ["Already due — the days a payment has to post are not over yet", false],
-      ],
-      endDialog: [
-        "Already due this month, the days a payment has to post are not over yet",
-        "Already due this month, the days a payment has to post are not over yet",
-      ],
-      runway: [
-        "A further $2,291.21 came due earlier this month and the days a payment has to post are not over yet.",
-        false,
-      ],
-      budgets: [[229121, 229121, 229121]],
-      forecast: [
-        " and the days a payment has to post are not over yet",
-        " and the days a payment has to post are not over yet",
-      ],
-    });
+    expect(surfaces([RENT, UTIL], ["2026-10-06", "Oct 6"])).toEqual(DAYS_TO_POST);
+  });
+
+  /*
+   * 🔴 …AND THE LAST OF THOSE DAYS WAS READ BEFORE IT WAS OVER (review of 384917c): read through today, Oct 1 plus its 3
+   * days was read ON Oct 4 — the calendar drew its ✕ and every surface said "not posted" on the last day a payment
+   * could post and still pay it on time. Today is never read: a charge can still post on it, as the "running late" chip
+   * measures (`seriesStaleness`). Oct 1 is read on Oct 5.
+   */
+  test("archived, at Oct 4 — the last of Oct 1's 3 days — every surface waits; on Oct 5 it is not posted", () => {
+    bundle.db.update(accounts).set({ isActive: false }).where(eq(accounts.id, "acct")).run();
+    expect(surfaces([RENT, UTIL], ["2026-10-01", "Oct 1"], "2026-10-04")).toEqual(DAYS_TO_POST);
+    expect(surfaces([RENT, UTIL], ["2026-10-01", "Oct 1"], "2026-10-05")).toEqual(NOT_POSTED);
   });
 
   test("a weekly bill on it, read part of the way: what is read is not posted, the rest waits for its days", () => {
@@ -665,5 +686,9 @@ describe("an account no statement will come for is read through today — and st
     expect(surfaces([RENT], ["2026-10-06", "Oct 6"]).calendar).toEqual([["unsettled", "not_imported"]]);
     importedThrough(TODAY);
     expect(surfaces([RENT], ["2026-10-06", "Oct 6"]).calendar).toEqual([["unsettled", "in_grace"]]);
+    // checked through Oct 9, its 3 days' last: still today, still waiting — read the next day, as any checked day
+    importedThrough("2026-10-09");
+    expect(surfaces([RENT], ["2026-10-06", "Oct 6"], "2026-10-09").calendar).toEqual([["unsettled", "in_grace"]]);
+    expect(surfaces([RENT], ["2026-10-06", "Oct 6"], "2026-10-10").calendar).toEqual([["missed", null]]);
   });
 });
