@@ -332,6 +332,8 @@ describe("one rule: what the card calls up front is exactly what the pace leaves
     const book = createAccount(bundle.db, { institutionId: rh.id, name: "Robinhood Agentic Brokerage", type: "investment", subtype: "brokerage" });
     bundle.db.update(accounts).set({ cashAccountId: agentic }).where(eq(accounts.id, book)).run();
     insertTxn({ postedOn: "2026-09-09", amountCents: -10_000, categoryId: carId, accountId: agentic });
+    // ⚖️ the new account read into October too (decision 71), so the pace reads Jul–Sep, the calendar's three
+    importedThrough(bundle.db, TODAY);
 
     expect(carCard(bundle.db, TODAY)!.cost.upfrontCents).toBe(0);
     const f = forecastCurrentMonth(bundle.db, TODAY);

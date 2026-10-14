@@ -19,7 +19,7 @@ import { withBillingCarriers } from "./billing-carriers";
 import { listBudgetableCategories } from "./budgets";
 import { isUpfrontCarRow, upfrontCarRule, type UpfrontCarRule } from "./car-upfront";
 import { silenceMeasuredThroughBySeries } from "./cash-earnings";
-import { trailingFullMonths } from "./forecast";
+import { paceMonths } from "./forecast";
 import { hasStoppedForecasting, projectOccurrences, toProjectable } from "./recurring";
 import { linkIsNotRecurring, seriesIdsNotDrawnAsRecurring } from "./recurring-link";
 
@@ -40,7 +40,7 @@ import { linkIsNotRecurring, seriesIdsNotDrawnAsRecurring } from "./recurring-li
  * gathers occurrences, trailing history, and the seasonal prior, then composes.
  */
 
-/** Trailing complete months of discretionary history that feed the trend. */
+/** Trailing complete months of discretionary history that feed the trend — read in full (`paceMonths`, decision 71). */
 export const PREDICT_TRAILING_MONTHS = 3;
 
 /** A predicted budget under this earns no budget (noise), cents. */
@@ -232,7 +232,13 @@ function buildContext(db: AppDatabase, today: string): PredictContext {
     checkedThrough: silenceMeasuredThroughBySeries(db, today),
     target,
     targetLabel: monthLabel(monthKey(target.start)),
-    months: trailingFullMonths(today, PREDICT_TRAILING_MONTHS),
+    /*
+     * ⚖️ His decision 71 (2026-10-13): the months every account you spend from is read to the end of — the pace
+     * /recurring's month forecast averages (`paceMonths`). 🔴 Review of cbee36b, measured on his ledger copy at
+     * 2026-10-13: Food's "November 2026 ≈ $466.84" averaged Jul–Sep (a −$827.43 trend) while Chase Checking was
+     * read only through Aug 12.
+     */
+    months: paceMonths(db, today, PREDICT_TRAILING_MONTHS).windows,
     seasonal,
   };
 }

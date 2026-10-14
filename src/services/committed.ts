@@ -7,7 +7,6 @@ import {
   heaviestMonth,
   heaviestMonthEnding,
   monthHorizon,
-  lastFullyReadMonth,
   spendArithmeticCaption,
   withinMonthHorizon,
   type CommittedOccurrence,
@@ -36,9 +35,8 @@ import { arrearsThisMonth } from "./arrears";
 import { withBillingCarriers } from "./billing-carriers";
 import { incomeExpectation } from "./budgets";
 import { CAR_LEASE_TERM_MONTHS, isUpfrontCarRow, readUpfrontCarRule, upfrontCarRule } from "./car-upfront";
-import { ledgerOpens } from "./observation-frontier";
 import { silenceMeasuredThroughBySeries } from "./cash-earnings";
-import { spendingCoverageThrough } from "./movers-card";
+import { averagesEndAt, firstWholeMonth } from "./read-in-full";
 import { scheduledOccurrences, seriesStaleness } from "./recurring";
 import { seriesIdsNotDrawnAsRecurring } from "./recurring-link";
 import { cashFlowByPeriod } from "./spending";
@@ -151,39 +149,26 @@ export function baselineWindow(
   months: number = SPEND_BASELINE_MONTHS,
 ): BaselineWindow {
   const currentMonth = monthKey(today);
-  const lastComplete = monthKey(addCalendarMonths(`${currentMonth}-01`, -1));
   /*
    * ⚖️ His decision 71 (2026-10-13, asked as an either/or, the recommended option): an AVERAGE uses only months EVERY
    * account he spends from has been read through to the END of — the day /spending's What-moved and the year summary
-   * already cut at (`spendingCoverageThrough`). 🔴 Measured on his ledger copy that day: this window was "6 complete
-   * months, Apr 2026 to Sep 2026" while Chase Checking was read only through Aug 12 and Chase Sapphire through Sep 2 —
-   * September's $5,417.30 held no Chase spending at all, and the runway read 2.6 months where the months read in full
-   * (Feb–Jul, $8,105.85 a month) make it 2.7. It returns to the calendar's months by itself as statements land.
+   * already cut at (`spendingCoverageThrough`); `averagesEndAt` says which month that is, and what it leaves out.
+   * 🔴 Measured on his ledger copy that day: this window was "6 complete months, Apr 2026 to Sep 2026" while Chase
+   * Checking was read only through Aug 12 and Chase Sapphire through Sep 2 — September's $5,417.30 held no Chase
+   * spending at all, and the runway read 2.6 months where the months read in full (Feb–Jul, $8,105.85 a month) make it
+   * 2.7. It returns to the calendar's months by itself as statements land.
    *
    * ⛔ The window keeps its LENGTH and slides back — `months` fully read months — rather than shrinking to the read
    * ones: a shorter average is a different figure, and the floor below already shortens it where the ledger is young.
    * With no account you spend from there is no frontier, and the calendar's window stands.
    */
-  const through = spendingCoverageThrough(db, today);
-  const readTo = through === null ? lastComplete : minMonth(lastComplete, lastFullyReadMonth(through));
-  // the window runs from `readTo − (months − 1)` to `readTo`, and `readTo` is never the incomplete current month
+  const end = averagesEndAt(db, today);
+  // the window runs from `end.month − (months − 1)` to `end.month`, never the incomplete current month
   const asked: string[] = [];
-  for (let i = months - 1; i >= 0; i--) asked.push(monthKey(addCalendarMonths(`${readTo}-01`, -i)));
+  for (let i = months - 1; i >= 0; i--) asked.push(monthKey(addCalendarMonths(`${end.month}-01`, -i)));
 
-  const opens = ledgerOpens(db);
-  const firstWholeMonth =
-    opens === null
-      ? null
-      : periodBounds(opens, "monthly").start === opens
-        ? monthKey(opens)
-        : monthKey(addCalendarMonths(`${monthKey(opens)}-01`, 1));
-  const keys = firstWholeMonth === null ? [] : asked.filter((k) => k >= firstWholeMonth);
-  // the complete months the frontier cut — never one before the floor, which the ledger cannot speak for at all
-  const unreadKeys: string[] = [];
-  for (let m = readTo; m < lastComplete; ) {
-    m = monthKey(addCalendarMonths(`${m}-01`, 1));
-    if (firstWholeMonth !== null && m >= firstWholeMonth) unreadKeys.push(m);
-  }
+  const floor = firstWholeMonth(db);
+  const keys = floor === null ? [] : asked.filter((k) => k >= floor);
 
   const fromMonth = keys[0] ?? currentMonth;
   const toMonth = keys[keys.length - 1] ?? currentMonth;
@@ -194,13 +179,8 @@ export function baselineWindow(
     to: periodBounds(`${toMonth}-01`, "monthly").end,
     fromMonth,
     toMonth,
-    unread: through === null || unreadKeys.length === 0 ? null : { months: unreadKeys, through },
+    unread: end.unread,
   };
-}
-
-/** The earlier of two month keys — 'YYYY-MM' compares as text. */
-function minMonth(a: string, b: string): string {
-  return a <= b ? a : b;
 }
 
 /**

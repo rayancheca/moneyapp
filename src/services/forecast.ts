@@ -8,6 +8,7 @@ import { forecastSplit } from "@/lib/forecast-split";
 import { projectOngoingIncome, projectOngoingNetIncome } from "@/lib/income-forecast";
 import { trailingPace } from "@/lib/projection";
 import { formatDayShortIn } from "@/lib/format-date";
+import { spendPaceNote, type UnreadMonths } from "@/lib/committed";
 import { formatCents } from "@/lib/money";
 import { ONE_CHARGE_WORD } from "@/lib/one-charge";
 import { seriesIsIncomeOrSpending } from "@/lib/series-kind";
@@ -47,6 +48,7 @@ import { silenceMeasuredThroughBySeries } from "./cash-earnings";
 import { stillToCome, stillToComeReader } from "./payday-settlement";
 import { activeSplitsInRange } from "./transaction-splits";
 import { linkIsNotRecurring, seriesIdsNotDrawnAsRecurring } from "./recurring-link";
+import { averagesEndAt } from "./read-in-full";
 
 /**
  * Current-month forecast (master-plan Phase 6) — every number traceable:
@@ -65,7 +67,8 @@ import { linkIsNotRecurring, seriesIdsNotDrawnAsRecurring } from "./recurring-li
  * unmarked would quietly assert a dead subscription is alive.
  *
  * VARIABLE: per top-level expense bucket, trailing average of the last 3
- * FULL months of active expense spending excluding the rows a recurring series
+ * FULL months every account he spends from is read to the end of (`paceMonths`,
+ * his decision 71) of active expense spending excluding the rows a recurring series
  * owns (`linkIsNotRecurring` — a DISMISSED series owns none) and the car's
  * up-front money (`isUpfrontCarRow`, owner decision 2026-10-07), plus a trend
  * adjustment capped at one typical (median) month and floored at
@@ -109,6 +112,8 @@ interface ForecastReads {
    * (`seriesStaleness`), and to today where no statement is coming
    */
   checkedThrough: (seriesId: string) => string | null;
+  /** `paceMonths` — the months the spending pace averages, behind the frontier (his decision 71) */
+  spendPace: PaceMonths;
 }
 
 /**
@@ -317,6 +322,13 @@ export interface MonthForecast {
   committed: ForecastTotals;
   components: ForecastComponent[];
   /**
+   * Which months the spending pace averaged, and why the later ones are left out, when the frontier cut them
+   * (`paceMonths`, his decision 71, 2026-10-13) — "Spending's pace is averaged over 3 complete months, May 2026 to Jul
+   * 2026. Aug 2026 and Sep 2026 are left out: Aug 12 is the last day every account you spend from has been imported
+   * through." Null when it reads the calendar's last three: "3-mo avg" then means what it says.
+   */
+  spendPaceNote: string | null;
+  /**
    * Paydays that already passed this month with nothing banked against them —
    * REPORTED, never projected.
    *
@@ -423,7 +435,7 @@ export interface OutsideCash {
   accountNames: string[];
 }
 
-interface MonthWindow {
+export interface MonthWindow {
   start: string;
   end: string;
   key: string;
@@ -431,15 +443,50 @@ interface MonthWindow {
 
 /** The last N full calendar months before the month containing `today`. */
 export function trailingFullMonths(today: string, count: number): MonthWindow[] {
+  return monthsEndingAt(monthKey(addDays(periodBounds(today, "monthly").start, -1)), count);
+}
+
+/** The `count` full calendar months ending with `lastMonth` ('YYYY-MM'), oldest first. */
+function monthsEndingAt(lastMonth: string, count: number): MonthWindow[] {
   const windows: MonthWindow[] = [];
-  let cursorStart = periodBounds(today, "monthly").start;
-  for (let i = 0; i < count; i++) {
-    const prevEnd = addDays(cursorStart, -1);
-    const bounds = periodBounds(prevEnd, "monthly");
-    windows.unshift({ start: bounds.start, end: bounds.end, key: monthKey(prevEnd) });
-    cursorStart = bounds.start;
+  for (let i = count - 1; i >= 0; i--) {
+    const bounds = periodBounds(addCalendarMonths(`${lastMonth}-01`, -i), "monthly");
+    windows.push({ start: bounds.start, end: bounds.end, key: monthKey(bounds.start) });
   }
-  return windows; // oldest → newest
+  return windows;
+}
+
+/** The months a spending pace averages today (`paceMonths`), and the complete months after them it leaves out. */
+export interface PaceMonths {
+  /** oldest → newest */
+  windows: MonthWindow[];
+  /** `AveragesEnd.unread` — null when the frontier leaves nothing out */
+  unread: UnreadMonths | null;
+}
+
+/**
+ * The `count` full months a trailing SPENDING pace averages — /recurring's month forecast and the category forecast
+ * /spending and Predict budgets print — ending at the last month every account you spend from is read to the end of.
+ *
+ * ⚖️ His decision 71 (2026-10-13): an average uses only months every account he spends from has been read through to
+ * the end of (`averagesEndAt`, the end `baselineWindow` takes too); the three months slide back rather than shrink. 🔴
+ * Review of cbee36b, measured on his ledger copy at 2026-10-13 with Chase Checking read only through Aug 12: Food read
+ * "3-mo avg $1,030.43 + trend -$827.43, × 19/31 days" over Jul–Sep — the fully read May–Jul say "3-mo avg $2,008.41 +
+ * trend -$176.57", about $1,000 more of October's last 19 days — and /spending's "November 2026 ≈ $466.84" stood on the
+ * same three months.
+ *
+ * ⚠️ No floor, unlike `baselineWindow`: a month before the ledger opens reads as a month of nothing, as it always did
+ * here. And spending's alone: the income pace still averages the calendar's months — the frontier is the day every
+ * account he SPENDS from is read to.
+ */
+export function paceMonths(db: AppDatabase, today: string, count: number = TRAILING_FULL_MONTHS): PaceMonths {
+  const end = averagesEndAt(db, today);
+  return { windows: monthsEndingAt(end.month, count), unread: end.unread };
+}
+
+/** `MonthForecast.spendPaceNote` of a pace's months. */
+function paceNote({ windows, unread }: PaceMonths): string | null {
+  return spendPaceNote({ months: windows.length, fromMonth: windows[0]!.key, toMonth: windows.at(-1)!.key, unread });
 }
 
 const CADENCE_LABEL: Record<string, string> = {
@@ -787,12 +834,12 @@ function bucketTrailing(
 
 function variableComponents(
   db: AppDatabase,
-  today: string,
   remainingDays: number,
   daysInMonth: number,
-  { notDrawn, outside, agentsCash }: ForecastReads,
+  { notDrawn, outside, agentsCash, spendPace }: ForecastReads,
 ): ForecastLeg {
-  const windows = trailingFullMonths(today, TRAILING_FULL_MONTHS);
+  // ⚖️ the months every account you spend from is read to the end of (`paceMonths`, his decision 71)
+  const windows = spendPace.windows;
   const rangeStart = windows[0]!.start;
   const rangeEnd = windows.at(-1)!.end;
 
@@ -1084,7 +1131,7 @@ function futureMonthParts(db: AppDatabase, today: string, key: string, reads: Fo
       [
         // the whole month remains, so the trailing pace applies in full
         variableIncomeComponents(db, today, daysInMonth, daysInMonth, reads),
-        variableComponents(db, today, daysInMonth, daysInMonth, reads),
+        variableComponents(db, daysInMonth, daysInMonth, reads),
       ],
     ),
   };
@@ -1200,6 +1247,8 @@ function forecastReads(db: AppDatabase, today: string): ForecastReads {
     agentsCash,
     agentsSeries: agentsSeriesBands(db, agentsCash),
     checkedThrough: silenceMeasuredThroughBySeries(db, today),
+    // once for the chain: every month of it paces spending over the same months, and the frontier is not cheap
+    spendPace: paceMonths(db, today),
   };
 }
 
@@ -1282,6 +1331,7 @@ export function forecastForMonth(
         netWorthCents + chained.committedNet + chained.committedAgentsNet + chained.committedAgentsCostNet,
     },
     components: parts.components,
+    spendPaceNote: paceNote(reads.spendPace),
     /*
      * A FUTURE month has no past inside it — every one of its paydays is still
      * to come, so there is nothing that has passed unbanked. Stated rather than
@@ -1317,7 +1367,7 @@ function currentMonthParts(db: AppDatabase, today: string, reads: ForecastReads)
       ],
       [
         variableIncomeComponents(db, today, remainingDays, daysInMonth, reads),
-        variableComponents(db, today, remainingDays, daysInMonth, reads),
+        variableComponents(db, remainingDays, daysInMonth, reads),
       ],
     ),
   };
@@ -1386,6 +1436,7 @@ function currentMonthForecast(db: AppDatabase, today: string, reads: ForecastRea
       eomNetWorthCents: latestNetWorth + committedNetCents + parts.committedAgentsNet + parts.committedAgentsCostNet,
     },
     components,
+    spendPaceNote: paceNote(reads.spendPace),
     unbankedIncome: unbankedIncomeTotals(unbanked),
     outsideCash: outsideCashOf(db, parts),
     agentsIncome: { netCents: parts.agentsNet, committedNetCents: parts.committedAgentsNet },

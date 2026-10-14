@@ -20,6 +20,7 @@ import {
   predictBudgets,
   predictCategory,
 } from "./category-forecast";
+import { importedThrough } from "./imported-through-fixture";
 
 const TODAY = "2026-07-08"; // target = August 2026; trailing = Apr/May/Jun 2026
 
@@ -44,6 +45,12 @@ describe("predictCategory / predictBudgetableCategories", () => {
     seedDatabase(bundle.db);
     const chase = bundle.db.select().from(institutions).where(eq(institutions.name, "Chase")).get()!;
     cardId = createAccount(bundle.db, { institutionId: chase.id, name: "Card", type: "credit" });
+    /*
+     * ⚖️ …read into the running month, so the trend reads the calendar's three (his decision 71, 2026-10-13: an average
+     * uses only months every account you spend from is read to the end of — `paceMonths`). A Card whose newest row is
+     * Jun 10 has read June for ten days, and its three months slide back to Mar–May.
+     */
+    importedThrough(bundle.db, TODAY);
   });
 
   afterEach(() => {

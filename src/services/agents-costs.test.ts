@@ -506,12 +506,16 @@ describe("the agent's trailing costs are not his pace either", () => {
   test("⛔ the forecast's pace Spending leaves the agent's fee out, and its EOM net worth keeps it", () => {
     goldFee("2026-07-01");
     goldFee("2026-08-01");
+    // ⚖️ every account read into October (decision 71), so the pace reads Jul–Sep, the calendar's three
+    importedThrough(bundle.db, TODAY);
     const paired = forecastCurrentMonth(bundle.db, TODAY);
     const pairedNov = forecastForMonth(bundle.db, "2026-11", TODAY)!;
     unpair();
     const unpaired = forecastCurrentMonth(bundle.db, TODAY);
     // the agent's three fees gone altogether: the Fees line his own rows draw
     bundle.db.delete(transactions).where(eq(transactions.accountId, agentic)).run();
+    // …and Agentic read into October again, or its emptied account would date the pace back to Jun–Aug (decision 71)
+    importedThrough(bundle.db, TODAY);
     const without = forecastCurrentMonth(bundle.db, TODAY);
 
     const fees = (f: typeof paired) => f.components.find((c) => c.label === "Fees")?.cents;

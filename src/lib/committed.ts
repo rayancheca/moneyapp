@@ -787,6 +787,27 @@ export function guideWindowWords(window: {
 }
 
 /**
+ * What /recurring's month forecast says of its spending pace when the frontier slid it back — "Spending's pace is
+ * averaged over 3 complete months, May 2026 to Jul 2026. Aug 2026 and Sep 2026 are left out: Aug 12 is the last day
+ * every account you spend from has been imported through." Null when it leaves nothing out.
+ *
+ * ⚖️ His decision 71 (2026-10-13) covers the pace's three months as it covers the dashboard's six (`paceMonths`). Its
+ * math table reads "3-mo avg" beside an October, and a reader takes that for Jul–Sep; so where they are not, the card
+ * names them and why, in `baselineSpan`'s and the runway's words (`unreadMonthsSentence`). ⚠️ "Spending's": the income
+ * pace still averages the calendar's months.
+ */
+export function spendPaceNote(window: {
+  months: number;
+  fromMonth: string;
+  toMonth: string;
+  unread: UnreadMonths | null;
+}): string | null {
+  const span = baselineSpan(window);
+  const unread = unreadMonthsSentence(window.unread);
+  return span === null || unread === null ? null : `Spending's pace is averaged over ${span}. ${unread}`;
+}
+
+/**
  * The car's up-front money a spending average left out (`SpendBaseline.upfrontCarCents`, §6A 51), as a noun phrase —
  * or null when it left none out.
  *
