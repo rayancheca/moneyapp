@@ -506,7 +506,8 @@ test("a budget row opens its settings in place, and says what rollover does", as
   await utilities.getByRole("button", { name: "Details for the Utilities budget" }).click();
   await expect(utilities.getByText(/Banked/)).toBeVisible();
   // ⚖️ decision 67: May and June are read whole, so nothing is held back — and the panel says why a period no
-  // statement has covered could not have banked — on the accounts the rule waits on, and no wider (`ROLLOVER_WAITS`)
+  // statement has covered could not have banked — on Utilities' own accounts, the ones its carry waits on, and no
+  // wider (`rolloverWaitsSentence`)
   await expect(utilities.getByText(/a missing statement on one of them cannot bank itself as savings/)).toBeVisible();
   await expect(utilities.getByText(/so nothing rolls over from/)).toHaveCount(0);
   await expect(

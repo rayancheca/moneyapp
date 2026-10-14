@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { ROLLOVER_WAITS, rolloverHeldBackSentence } from "./rollover-held-back";
+import { rolloverHeldBackSentence, rolloverWaitsSentence } from "./rollover-held-back";
 
 /*
  * ⚖️ Decision 67 (2026-10-13): a closed period not read whole banks nothing until its statements land. The panel names
@@ -58,10 +58,49 @@ describe("rolloverHeldBackSentence — what a rolling budget is waiting on", () 
    * from, so a statement missing on an account it has never been spent from is not waited for (review of 73a743d).
    * The sentence says the rule's own reach, and no further — `budgets.test.ts` pins the gap it leaves.
    */
-  test("the rule it stands on is said once, and says why — no further than the rule reaches", () => {
-    expect(ROLLOVER_WAITS).toBe(
+  test("on its own accounts, it says so, and says why — no further than the rule reaches", () => {
+    expect(rolloverWaitsSentence({ whose: "category", ancestor: null })).toBe(
       "A period adds nothing until the accounts this category has lately been spent from are imported through its " +
         "last day, so a missing statement on one of them cannot bank itself as savings.",
+    );
+  });
+});
+
+/*
+ * 🔴 …and it said that of EVERY rolling budget, while the carry asks the day its category page asks (`categoryReachFor`):
+ * a category with no account of its own reads its nearest ancestor's, else the ledger's, and one spent only from cash
+ * wallets reads through today. Measured on a copy of his ledger 2026-10-13 (review of 46b6e4b): 7 of his expense
+ * categories without a budget fall back — Water/Gas and Mobile to Utilities, Hotels to Travel, Medical to Health, Card
+ * Annual Fees and Interest Charges to Fees, Gifts & Donations to the ledger's Sep 24 — and a $100 rolling Gifts &
+ * Donations budget from Jul 1 held September back under a sentence about accounts Gifts had never been spent from.
+ */
+describe("rolloverWaitsSentence — whose day the carry waits on, as it asked it", () => {
+  test("on an ancestor's accounts, it names the ancestor", () => {
+    expect(rolloverWaitsSentence({ whose: "category", ancestor: "Utilities" })).toBe(
+      "With no account of its own to wait on, a period of this category adds nothing until the accounts Utilities has " +
+        "lately been spent from are imported through its last day, so a missing statement on one of them cannot bank " +
+        "itself as savings.",
+    );
+  });
+
+  test("on the ledger's day, it says that — and promises nothing of a missing statement the day does not wait for", () => {
+    const sentence = rolloverWaitsSentence({ whose: "ledger", ancestor: null });
+    expect(sentence).toBe(
+      "With no account of its own to wait on, a period of this category adds nothing until the ledger is imported " +
+        "through its last day.",
+    );
+    // `ledgerReaches` is the newest day ANY account reaches: a statement missing on another account does not hold it
+    expect(sentence).not.toContain("missing statement");
+  });
+
+  test("⚖️ spent only from cash wallets — its own or its ancestor's — a closed period waits for no statement", () => {
+    expect(rolloverWaitsSentence({ whose: "cash-only", ancestor: null })).toBe(
+      "This category is spent only from cash wallets, so a closed period waits for no statement — none will ever " +
+        "cover it.",
+    );
+    expect(rolloverWaitsSentence({ whose: "cash-only", ancestor: "Travel" })).toBe(
+      "With no account of its own to wait on, this category is read as Travel is, spent only from cash wallets, so a " +
+        "closed period waits for no statement — none will ever cover it.",
     );
   });
 });

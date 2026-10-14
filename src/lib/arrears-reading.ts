@@ -100,7 +100,7 @@ export const NO_STATEMENT_YET = noStatementHasCovered("it");
  * closed period's plan less what was FOUND in it, so a period no statement had covered banked all of it. On his ledger
  * copy 2026-10-12 Cash & ATM banked $130.00 and Fees $15.00 from a September with no row and no day read, Travel
  * $70.00 from one read through Sep 2. ⚖️ Decision 67 (2026-10-13): such a period banks nothing until its statements
- * land — and the clause is said by that rule, its own cause (`lib/rollover-held-back::ROLLOVER_WAITS`), not here.
+ * land — and the clause is said by that rule, its own cause (`lib/rollover-held-back::rolloverWaitsSentence`), not here.
  */
 export const ROLLOVER_SUBTRACTS =
   `Bills that came due are subtracted whether they are ${NOT_POSTED} or ${noStatementHasCovered("them")}.`;
