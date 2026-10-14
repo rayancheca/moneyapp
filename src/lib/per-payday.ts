@@ -120,16 +120,17 @@ export interface ReadableRow {
   postedOn: string;
   amountCents: number;
   /**
-   * Linked to the pay but no row of its pay day — his SPENDING: an unfiled debit, or a row filed under a spending
-   * category (`isPayDayRow`, services/analytics; flagged by `asPayRows`). ⚖️ Settlement never reads it, so no reading
-   * nets it into its day's money or takes it for a deposit: it is drawn as the money it is, held to no week, and a
-   * credit of it paid no payday (orchestrator's default 2026-10-14, his call open). Absent, the row is its pay day's.
+   * Linked to the pay but no row of its pay days (`payDayRows`, services/analytics; flagged by `asPayRows`): his
+   * SPENDING — an unfiled debit, or a row filed under a spending category (orchestrator's default 2026-10-14, his call
+   * open) — or money on a day no row of it is filed as his pay, a credit left unfiled or filed as a transfer. ⚖️
+   * Settlement never reads it, so no reading nets it into its day's money or takes it for a deposit: it is drawn as
+   * the money it is, held to no week, and a credit of it paid no payday. Absent, the row is its pay day's.
    */
-  spending?: boolean;
+  offPayDay?: boolean;
 }
 
-/** Whether a row is its pay day's — every row but his spending linked to it (`ReadableRow.spending`). */
-export const onPayDay = (r: Pick<ReadableRow, "spending">): boolean => r.spending !== true;
+/** Whether a row is its pay day's — every row but the ones settlement never read (`ReadableRow.offPayDay`). */
+export const onPayDay = (r: Pick<ReadableRow, "offPayDay">): boolean => r.offPayDay !== true;
 
 /**
  * What a deposit paid PER PAYDAY, given how many paydays its money paid on its
@@ -224,8 +225,9 @@ function firstPaydayByDeposit(portions: readonly SettlementPortion[]): ReadonlyM
  * payroll returned the same day, whose day banked nothing (decision 75): no portion names it, so it reads toward no
  * payday. ⚖️ A day that banked is read by its net (`dayPerPayday`): money out the same day is netted into its
  * deposits' figure, and is itself still drawn as the money out it is — held to no week (`expectedCents`). ⛔ Only its
- * pay day's rows (`onPayDay`): his spending linked to the pay is in no day's money, as settlement never read it — a
- * debit of it is drawn as money out, a credit as money toward no payday, each held to no week.
+ * pay days' rows (`onPayDay`): a row linked to the pay off them — his spending, or money on a day no row of it is filed
+ * as his pay — is in no day's money, as settlement never read it: a debit of it is drawn as money out, a credit as
+ * money toward no payday, each held to no week.
  */
 export function paydayReadings(
   rows: readonly ReadableRow[],
@@ -253,7 +255,7 @@ export function paydayReadings(
           // no payday's pay, so no week's rate is what it is held to (decision 75) — its era is its own day's
           expectedCents: null,
           ratePeriod: ratePeriodOf(schedule, r.postedOn),
-          // money in that is his spending paid no payday — settlement never read it
+          // money in off its pay days paid no payday — settlement never read it
           towardNoPayday: r.amountCents > 0,
         },
       ]),

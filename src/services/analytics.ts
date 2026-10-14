@@ -479,12 +479,16 @@ export function isIncome(
   agentsCash: ReadonlySet<string>,
   txn: Pick<AnalyticsTxn, "accountId" | "categoryId" | "amountCents">,
 ): boolean {
-  return (
-    txn.categoryId !== null &&
-    txn.amountCents > 0 &&
-    idx.topLevelOf(txn.categoryId).kind === "income" &&
-    !isAgentsIncomeCategoryRow(idx, agentsCash, txn)
-  );
+  return txn.amountCents > 0 && isFiledUnderIncome(idx, txn) && !isAgentsIncomeCategoryRow(idx, agentsCash, txn);
+}
+
+/**
+ * Whether a row is filed under an income-kind category, either sign — `isIncome` before it asks the sign or whose
+ * account. The row that makes a day a pay day (`payDayRows`): settlement grades any income series, the agent's too, so
+ * a day is asked of its filing alone, and `hisIncomeRows` reads it of his rows only.
+ */
+function isFiledUnderIncome(idx: CategoryIndex, txn: Pick<AnalyticsTxn, "categoryId">): boolean {
+  return txn.categoryId !== null && idx.topLevelOf(txn.categoryId).kind === "income";
 }
 
 /**
@@ -505,12 +509,36 @@ export const incomeSeriesOfRender = cache(function incomeSeriesOfRender(db: AppD
 });
 
 /**
- * Whether a row linked to a pay series is a row of its PAY DAY — one no figure counts as spending: filed under Income
- * (either sign), filed as a transfer, or an unfiled credit; never an unfiled debit nor a row filed under a spending
- * category (`kindBucket` — his spending, or on the agent's cash the agent's costs). THE definition of a pay day's rows
- * for every reader of one: settlement (`paydaySettlement`) and everything that draws or counts what it paid — the
- * calendar's and the series page's per-payday readings, the posted average, Earned vs banked — and every figure that
- * says Income (`hisIncomeRows`), so a day the calendar draws paid is a day Income counts, at the same net.
+ * A pay series' PAY DAYS, read off the rows linked to it — the rows of each day that holds one filed under an income
+ * category (`isFiledUnderIncome`, either sign), less any that is SPENDING (`isPayDayRow`). THE definition of a pay
+ * day's rows for every reader of one: settlement (`paydaySettlement`) and everything that draws or counts what it paid
+ * — the calendar's and the series page's per-payday readings, the posted average, Earned vs banked — and every figure
+ * that says Income (`hisIncomeRows`, and in SQL the links under them, `hisPayDaysSql`), so a day the calendar draws
+ * paid is a day Income counts, at the same net. `rows` are one series' (any days, any order); the order is kept.
+ *
+ * ⚖️ A day is a pay day only where he filed one of its rows as his pay — a payroll, or its money going back on a later
+ * day, which Earned vs banked's banked figure still nets: money linked to his pay on a day with none — a credit left
+ * unfiled (detection's descriptor match links a row without filing it, `absorbIntoLiveSeries`) or re-filed as a
+ * transfer, which keeps its link (only `recurring-links` unlinks) — is the review queue's or a transfer's, and pays no
+ * payday until he files it as his pay. 🔴 Settlement paid a payday with it while every Income figure left it
+ * out: on a copy of his ledger read on 2026-10-13, an Oct 8 $1,141.92 linked to It America unfiled — or filed as
+ * Internal Transfer — was drawn paid on the calendar and banked on Earned vs banked, while /budgets read $0.00 in so far
+ * + $3,425.76 still expected + $1,141.92 passed against five paydays at $5,709.60, and "Income recorded" $0.00 (review
+ * of 8fc0b01; hypothetical: every one of the 131 rows linked to his pay is a credit filed under Income).
+ */
+export function payDayRows<T extends Pick<AnalyticsTxn, "postedOn" | "categoryId" | "amountCents">>(
+  idx: CategoryIndex,
+  /** the rows linked to ONE series */
+  rows: readonly T[],
+): T[] {
+  const payDays = new Set(rows.filter((r) => isFiledUnderIncome(idx, r)).map((r) => r.postedOn));
+  return rows.filter((r) => payDays.has(r.postedOn) && isPayDayRow(idx, r));
+}
+
+/**
+ * Whether a row linked to a pay series can be a row of its pay day (`payDayRows`' row half) — one no figure counts as
+ * spending: filed under Income (either sign), filed as a transfer, or an unfiled credit; never an unfiled debit nor a
+ * row filed under a spending category (`kindBucket` — his spending, or on the agent's cash the agent's costs).
  *
  * ⚖️ Orchestrator's default (2026-10-14, his call open): an UNFILED debit linked to his pay on its payroll's day is his
  * Uncategorized spending until he files it — the day still banked its payroll, settlement pays its payday, Income
@@ -522,7 +550,7 @@ export const incomeSeriesOfRender = cache(function incomeSeriesOfRender(db: AppD
  * counted the payroll — $3,425.76 + $1,141.92 still expected + $1,141.92 passed against four paydays at $4,567.68
  * (review of f1903f6; hypothetical: no money out is linked to his pay, a copy of his ledger 2026-10-13).
  */
-export function isPayDayRow(idx: CategoryIndex, txn: Pick<AnalyticsTxn, "categoryId" | "amountCents">): boolean {
+function isPayDayRow(idx: CategoryIndex, txn: Pick<AnalyticsTxn, "categoryId" | "amountCents">): boolean {
   return kindBucket(idx, txn) === null;
 }
 
@@ -531,7 +559,7 @@ export interface IncomeRow {
   postedOn: string;
   /** money in: the row's amount, or what the pay day banked, net — never $0.00 or below */
   amountCents: number;
-  /** the (sub)category it is counted under — a pay day's is its largest row of his Income (then the lowest id) */
+  /** the (sub)category it is counted under — a pay day's is its largest row filed as his pay (then the lowest id) */
   categoryId: string;
   /** the ledger rows behind it — the ones its link opens: the row, or every row the day's net was taken over */
   rows: readonly AnalyticsTxn[];
@@ -545,10 +573,10 @@ export interface IncomeRow {
  *
  * ⚖️ His decision 75 (2026-10-13): a day whose rows linked to his pay net to $0.00 BANKED NOTHING, and a day partly
  * returned banked its net — read by `daysThatBanked`, the rule settlement spends a day by, so Income counts exactly
- * the days the calendar draws paid. A pay series' day is its rows that day settlement reads too (`isPayDayRow`), off
- * the agent's cash — his Income, either sign, a transfer's filing, an unfiled credit — and it is his Income only where
- * one of its rows is (`isIncome`): an unfiled credit alone on its day stays the review queue's, a return alone on a
- * later day is no same-day return and banks nothing. ⛔ Never a row that is his SPENDING: that one is in Spent, so
+ * the days the calendar draws paid. A pay series' day is its rows that day settlement reads too (`payDayRows`), off
+ * the agent's cash — his Income, either sign, a transfer's filing, an unfiled credit — on a day one of them is his
+ * Income (`isIncome`): an unfiled credit alone on its day stays the review queue's, a return alone on a later day is
+ * no same-day return and banks nothing. ⛔ Never a row that is his SPENDING: that one is in Spent, so
  * Net already takes it off, and netted here too it would come off twice — an unfiled $1,141.92 return beside its
  * payroll read Income $2,283.84, Spent $1,141.92, Net $1,141.92 against the $2,283.84 the bank netted.
  * 🔴 Only "in so far" netted, and only rows filed under Income: /spending read $3,425.76 beside $2,283.84 in so far for
@@ -565,25 +593,27 @@ export function hisIncomeRows(
   txns: readonly AnalyticsTxn[],
 ): IncomeRow[] {
   const out: IncomeRow[] = [];
-  const payDays = new Map<string, readonly AnalyticsTxn[]>();
+  // his rows linked to a pay series, by series and day — each read as its day (`payDayRows`), never alone
+  const linkedDays = new Map<string, readonly AnalyticsTxn[]>();
   for (const txn of txns) {
     const series = txn.recurringSeriesId;
-    const onPayDay =
-      series !== null && incomeSeries.has(series) && !agentsCash.has(txn.accountId) && isPayDayRow(idx, txn);
-    if (onPayDay) {
+    if (series !== null && incomeSeries.has(series) && !agentsCash.has(txn.accountId)) {
       const key = `${series}|${txn.postedOn}`;
-      payDays.set(key, [...(payDays.get(key) ?? []), txn]);
+      linkedDays.set(key, [...(linkedDays.get(key) ?? []), txn]);
     } else if (isIncome(idx, agentsCash, txn)) {
       out.push({ postedOn: txn.postedOn, amountCents: txn.amountCents, categoryId: txn.categoryId!, rows: [txn] });
     }
   }
-  for (const rows of payDays.values()) {
-    const filed = rows
-      .filter((r) => isIncome(idx, agentsCash, r))
+  for (const linked of linkedDays.values()) {
+    const rows = payDayRows(idx, linked);
+    // the day's largest row filed as his pay — a payroll, but money going back where no payroll of the day is filed
+    const [largest] = rows
+      .filter((r) => isFiledUnderIncome(idx, r))
       .sort((a, b) => b.amountCents - a.amountCents || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
     const [banked] = daysThatBanked(rows);
-    if (filed.length === 0 || banked === undefined) continue;
-    out.push({ postedOn: banked.postedOn, amountCents: banked.amountCents, categoryId: filed[0]!.categoryId!, rows });
+    // no pay day (no row of it filed as his pay), or one that banked nothing (decision 75)
+    if (largest === undefined || banked === undefined) continue;
+    out.push({ postedOn: banked.postedOn, amountCents: banked.amountCents, categoryId: largest.categoryId!, rows });
   }
   return out;
 }

@@ -120,7 +120,16 @@ function addSeries(o: {
 }
 
 let seq = 0;
-function posted(accountId: string, seriesId: string, postedOn: string, amountCents: number): void {
+/** His pay landing — filed under Salary, as every row linked to his pay is (a pay day is one filed as his pay). */
+const paid = (accountId: string, postedOn: string): void =>
+  posted(accountId, PAY, postedOn, 114_192, categoryId("Salary"));
+function posted(
+  accountId: string,
+  seriesId: string,
+  postedOn: string,
+  amountCents: number,
+  filedAs: string | null = null,
+): void {
   seq += 1;
   bundle.db
     .insert(transactions)
@@ -131,6 +140,7 @@ function posted(accountId: string, seriesId: string, postedOn: string, amountCen
       amountCents,
       rawDescription: `ROW ${seq}`,
       normalizedDescription: `ROW ${seq}`,
+      categoryId: filedAs,
       recurringSeriesId: seriesId,
       status: "active",
       needsReview: false,
@@ -212,8 +222,8 @@ beforeEach(() => {
   // a commitment registered by hand, never billed; and his pay — neither can lapse
   addSeries({ id: GYM, name: "Gym", kind: "bill", amountCents: -10_000, lastMatchedOn: null, nextExpectedOn: "2026-10-22" });
   addSeries({ id: PAY, name: "Weekly pay", kind: "income", amountCents: 114_192, lastMatchedOn: "2026-06-04", nextExpectedOn: "2026-06-11" });
-  posted(WF, PAY, "2026-05-28", 114_192);
-  posted(WF, PAY, "2026-06-04", 114_192);
+  paid(WF, "2026-05-28");
+  paid(WF, "2026-06-04");
 
   for (const name of ["Housing", "Transport", "Utilities"]) {
     createBudget(bundle.db, { categoryId: categoryId(name), period: "monthly", amountCents: 300_000, startsOn: "2026-01-01" });
@@ -660,8 +670,8 @@ describe("an account no statement will ever come for does not hold the lapse bac
    */
   test("a pay landing on an archived account: its paydays are read only as far as its statements reached", () => {
     const OCT_29 = "2026-10-29";
-    posted(WF, PAY, "2026-09-17", 114_192);
-    posted(WF, PAY, "2026-09-24", 114_192);
+    paid(WF, "2026-09-17");
+    paid(WF, "2026-09-24");
     bundle.db.update(recurringSeries).set({ lastMatchedOn: "2026-09-24" }).where(eq(recurringSeries.id, PAY)).run();
     updateAccount(bundle.db, WF, { isActive: false });
 

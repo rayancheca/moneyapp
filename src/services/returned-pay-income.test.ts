@@ -396,4 +396,35 @@ describe("ONE definition of a pay day's rows — settlement and every Income fig
     expect(legs()).toEqual([WEEK * 4, WEEK * 4]);
     incomeLinksAddUp();
   });
+
+  /*
+   * ⚖️ …and a DAY is a pay day only where one of its rows is filed as his pay — for settlement as for Income. Money
+   * linked to his pay on a day with none — a credit left unfiled (detection's descriptor match links a row without
+   * filing it) or one re-filed as a transfer, which keeps its link — is the review queue's or a transfer's: it pays no
+   * payday, and no figure counts it as Income. 🔴 Settlement paid Sep 17 with it while every Income figure left it out
+   * — "in so far" $2,283.84 + $1,141.92 still expected against four paydays at $4,567.68, Sep 17 in no leg (review of
+   * 8fc0b01; hypothetical: every row linked to his pay is a credit filed under Income, a copy of his ledger 2026-10-13).
+   */
+  test.each([
+    ["left unfiled", (): string | null => null],
+    ["filed as a transfer", internalTransfer],
+  ])("a credit %s alone on Sep 17 is no pay day: Sep 17 is unpaid, and in no Income figure", (_, filedAs) => {
+    payRow("2026-09-17", WEEK, filedAs());
+    expect(sep17Paid()).toBe(false);
+    expect(incomeEverywhere()).toEqual(everywhere(WEEK * 2));
+    expect(legs()).toEqual([WEEK * 4, WEEK * 4]);
+    incomeLinksAddUp();
+  });
+
+  // a row filed as his pay either sign makes the day his pay's — and Income counts what settlement paid, under it
+  test("a transfer's $1,141.92 with $500.00 back filed under Salary the same day reads as $641.92 of Salary", () => {
+    payRow("2026-09-17", WEEK, internalTransfer());
+    payRow("2026-09-17", -50_000);
+    const day = { paid: sep17Paid(), income: incomeEverywhere(), legs: legs() };
+    expect(day.income).toEqual(everywhere(WEEK * 3 - 50_000));
+    incomeLinksAddUp();
+    bundle.db.delete(transactions).where(eq(transactions.postedOn, "2026-09-17")).run();
+    payRow("2026-09-17", WEEK - 50_000);
+    expect(day).toEqual({ paid: sep17Paid(), income: incomeEverywhere(), legs: legs() });
+  });
 });

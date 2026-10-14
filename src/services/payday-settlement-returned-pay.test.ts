@@ -595,6 +595,50 @@ describe("money linked to his pay that is his spending is no row of its pay day"
 });
 
 /*
+ * ⚖️ …AND A DAY IS A PAY DAY ONLY WHERE ONE OF ITS ROWS IS FILED AS HIS PAY (`payDayRows`), as every Income figure
+ * reads it (`hisIncomeRows`): a credit linked to his pay on a day with none — left unfiled, as detection's descriptor
+ * match links a row, or re-filed as a transfer, which keeps its link — is the review queue's or a transfer's, and pays
+ * no payday until he files it as his pay. 🔴 Settlement paid Sep 17 with it: the calendar drew Sep 17 paid and Earned
+ * vs banked banked it, while "in so far" and every Income figure left it out — Sep 17 was in no leg of /budgets (review
+ * of 8fc0b01; hypothetical: every row linked to his pay is a credit filed under Income, a copy of his ledger
+ * 2026-10-13).
+ */
+describe("a credit linked to his pay on a day no row is filed as his pay is no pay day", () => {
+  const internalTransferId = (): string => categoryId("Internal Transfer", "Transfers");
+
+  test.each([
+    ["left unfiled", (): string | null => null],
+    ["filed as a transfer", internalTransferId],
+  ])("a week's money %s on Sep 17 pays no payday — the calendar, the card and the average agree", (_, filedAs) => {
+    payRow("2026-09-17", WEEK, filedAs());
+    expect(settled()).toEqual(["2026-09-03", "2026-09-10"]);
+    const payday = entriesOn("2026-09-17").filter((e) => e.transactionId === null);
+    expect(payday.map((e) => [e.state, e.unsettledReason])).toEqual([["unsettled", "unbanked"]]);
+    // the credit is drawn where it landed, toward no payday, and the day's Settled holds nothing of his pay
+    const credit = entriesOn("2026-09-17").find((e) => e.transactionId !== null)!;
+    expect([credit.towardNoPayday, credit.expectedAmountCents]).toEqual([true, null]);
+    expect([payLine().bankedCents, payLine().lastBankedOn]).toEqual([WEEK * 2, "2026-09-10"]);
+    const s = bundle.db.select().from(recurringSeries).where(eq(recurringSeries.id, PAY)).get()!;
+    const evidence = postedAveragesBySeries(bundle.db, [s], TODAY).get(PAY)!.perPayday!;
+    expect([evidence.samples.length, evidence.noPaydayOfTheirOwn, evidence.moneyOut]).toEqual([2, 1, 0]);
+  });
+
+  test("filed under Salary, the same credit pays Sep 17", () => {
+    payRow("2026-09-17", WEEK);
+    expect(settled()).toEqual(["2026-09-03", "2026-09-10", "2026-09-17"]);
+  });
+
+  // settlement never read the day, so the popover names its rows as the money they are — not as a day netting to $0.00
+  test("an unfiled credit and a transfer's return the same day are money toward no payday and money out", () => {
+    payRow("2026-09-17", WEEK, null);
+    payRow("2026-09-17", -WEEK, internalTransferId());
+    const s = bundle.db.select().from(recurringSeries).where(eq(recurringSeries.id, PAY)).get()!;
+    const evidence = postedAveragesBySeries(bundle.db, [s], TODAY).get(PAY)!.perPayday!;
+    expect([evidence.noPaydayOfTheirOwn, evidence.moneyOut, evidence.netted]).toEqual([1, 1, []]);
+  });
+});
+
+/*
  * ⛔ THE UNIT IS THE DAY (`daysThatBanked`): a day's deposits are the one deposit settlement walks, as the readings
  * always took them (`lib/per-payday`) — and so the money pools as his decision of 2026-09-28 says it must: how his
  * payer happens to split a transfer is not a fact about which weeks he was paid for. 🔴 Walked row by row, one week

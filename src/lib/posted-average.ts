@@ -150,9 +150,10 @@ export interface PerPaydayEvidence {
  * day was a "-$1,141.92" deposit: two weeks at $1,141.92 averaged $380.64 on the page, the All tab and the popover,
  * "from -$1,141.92 to $1,141.92" (review of 6c59cdb, hypothetical: no money out is linked to his pay). ⚖️ Money out
  * on a day that BANKED is part of that day's money, though (decision 75, `daysThatBanked`): a sample is its day's net,
- * and counts the money out in it (`PaydaySample.returns`). ⛔ A pay day's rows only (`onPayDay`): his spending linked
- * to the pay is in no day's money — settlement never read it — and is named as the money it is: a debit `moneyOut`, a
- * credit money toward no payday (`noPaydayOfTheirOwn`).
+ * and counts the money out in it (`PaydaySample.returns`). ⛔ Its pay days' rows only (`onPayDay`): a row linked to
+ * the pay off them — his spending, or money on a day no row of it is filed as his pay — is in no day's money
+ * (settlement never read it), and is named as the money it is: a debit `moneyOut`, a credit money toward no payday
+ * (`noPaydayOfTheirOwn`).
  */
 export function perPaydayEvidence(
   rows: readonly ReadableRow[],
