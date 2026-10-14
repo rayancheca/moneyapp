@@ -49,6 +49,18 @@ export function parseAmountToCents(input: string): number {
   return negative && cents !== 0 ? -cents : cents;
 }
 
+/**
+ * A figure computed to a fraction of a cent — a mean — to whole cents, HALF AWAY FROM ZERO: the rule
+ * `parseAmountToCents` reads a bank's third digit by, so a mean of -231,220.5 cents is -$2,312.21 as "-2312.205" is.
+ * Never -0.
+ *
+ * 🔴 `Math.round` rounds a half UP — toward zero for money out: his rent's four payments average -231,220.5 cents,
+ * and its page, the All tab and the popover printed "posted avg -$2,312.20" (posted-average review, 2026-10-12).
+ */
+export function roundToCents(value: number): number {
+  return Math.sign(value) * Math.round(Math.abs(value)) + 0;
+}
+
 export function assertValidCents(cents: number): void {
   if (!Number.isSafeInteger(cents)) {
     throw new RangeError(`Invalid cents value: ${cents}`);

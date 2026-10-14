@@ -1,5 +1,6 @@
 import type { SeriesKind, SeriesStatus } from "@/db/schema/recurring";
 import { compareDates } from "./dates";
+import { roundToCents } from "./money";
 import { spreadSampleCents, type PaydayReading, type ReadableRow } from "./per-payday";
 import { currentRatePeriod, ratePeriodOf, type RateSchedule } from "./series-kind";
 
@@ -27,7 +28,7 @@ import { currentRatePeriod, ratePeriodOf, type RateSchedule } from "./series-kin
  *
  * 🔴 …and the same of a bill, 2026-10-12: the rent's page and the All tab printed "posted avg -$1,849.76 ± $583.58"
  * under "-$2,109.00", though every month he paid MORE — Jun 16's one payment, posted by his card as -$1,100.00
- * and -$1,334.80, counted as two charges. Per payment it is -$2,312.20 ± $85.27.
+ * and -$1,334.80, counted as two charges. Per payment it is -$2,312.21 ± $85.27.
  */
 export interface PostedAverage {
   /** the samples' mean, to the cent — null with no sample */
@@ -72,9 +73,12 @@ export function postedAverage(
         : rows.map((r) => r.amountCents);
   if (samples.length === 0) return { avgCents: null, stddevCents: null };
   const mean = samples.reduce((a, c) => a + c, 0) / samples.length;
-  if (samples.length < 2) return { avgCents: Math.round(mean), stddevCents: null };
+  // ⚖️ half away from zero, as every money figure (`roundToCents`): 🔴 `Math.round` printed the rent's -$2,312.205 as
+  // "-$2,312.20" (posted-average review, 2026-10-12)
+  const avgCents = roundToCents(mean);
+  if (samples.length < 2) return { avgCents, stddevCents: null };
   const variance = samples.reduce((a, c) => a + (c - mean) ** 2, 0) / (samples.length - 1);
-  return { avgCents: Math.round(mean), stddevCents: Math.round(Math.sqrt(variance)) };
+  return { avgCents, stddevCents: Math.round(Math.sqrt(variance)) };
 }
 
 /**

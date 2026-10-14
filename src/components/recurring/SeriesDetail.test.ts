@@ -297,9 +297,9 @@ describe("SeriesDetail — the rent's posted avg is per payment, and names what 
     return stat.replace(/<[^>]+>/g, "").replace(/^>Per charge/, "");
   };
 
-  test("the rent: posted avg -$2,312.20 ± $85.27 · its payments carry Rent utilities & fees too", () => {
+  test("the rent: posted avg -$2,312.21 ± $85.27 · its payments carry Rent utilities & fees too", () => {
     expect(perChargeOf(rent.rentId)).toContain(
-      "-$2,109.00posted avg -$2,312.20 ± $85.27 · its payments carry Rent utilities & fees too",
+      "-$2,109.00posted avg -$2,312.21 ± $85.27 · its payments carry Rent utilities & fees too",
     );
   });
 
