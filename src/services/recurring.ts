@@ -28,7 +28,7 @@ import { isOneCharge } from "@/lib/one-charge";
 import { parseAmountHistory, rateOn, seriesAmountCents } from "@/lib/series-kind";
 import { outsidePortfolioCashAccountIds } from "./accounts";
 import { isAgentsSeries } from "./analytics";
-import { billingCarriers, withBillingCarriers } from "./billing-carriers";
+import { billingCarriers, withBillingCarriers, type DueDays } from "./billing-carriers";
 import { silenceMeasuredThroughBySeries } from "./cash-earnings";
 /*
  * ⚠️ A cycle, on purpose: settlement walks the occurrences `projectOccurrences`
@@ -1840,21 +1840,40 @@ export function projectOccurrences(
   return occurrences;
 }
 
+/** What a series' due days are stepped from: its effective schedule's step and anchor (`toProjectable`). */
+type DueDaySchedule = Pick<ProjectableSeries, "cadence" | "intervalDaysAvg" | "nextExpectedOn" | "anchorDay">;
+
 /**
  * The due day after `day` on a series' schedule — `projectOccurrences`' next step from its anchor, by index, its end
- * disregarded: where a LATE payment of `day` stops being late and starts paying the next one early (`paymentFor`).
- * Null for a series with no schedule.
+ * disregarded: where a LATE payment of `day` stops being late and starts paying the next one (`paymentFor`). Null for
+ * a series with no schedule.
  *
  * ⛔ Its end is disregarded because a bill's LAST due day can be paid late too — a lease ending Oct 10 whose Oct 1
  * posts Oct 12 was paid; with no step after it, nothing would ever pay it late.
  */
-export function nextDueDayAfter(
-  series: Pick<ProjectableSeries, "cadence" | "intervalDaysAvg" | "nextExpectedOn" | "anchorDay">,
-  day: string,
-): string | null {
+export function nextDueDayAfter(series: DueDaySchedule, day: string): string | null {
   if (!series.nextExpectedOn) return null;
   const plan = stepPlan(series.cadence, series.intervalDaysAvg, series.anchorDay ?? null);
   return stepFrom(series.nextExpectedOn, plan, signedStepsToReach(series.nextExpectedOn, plan, addDays(day, 1)));
+}
+
+/**
+ * The due day before `day` on a series' schedule — the step before the first on or after it, by index from its
+ * anchor, which may lie behind the anchor: where a payment more than its grace EARLY for `day` starts (`paymentFor`,
+ * ⚖️ his decision 73, 2026-10-13). Null for a series with no schedule.
+ *
+ * ⛔ Not floored at the anchor, as `nextDueDayAfter` is not: his FPL is anchored on Sep 8 (his date), and the payment
+ * that pays its Sep 8 early is read off Aug 8, paid early by Jul 28, itself read off Jul 8, paid by Jul 10.
+ */
+export function dueDayBefore(series: DueDaySchedule, day: string): string | null {
+  if (!series.nextExpectedOn) return null;
+  const plan = stepPlan(series.cadence, series.intervalDaysAvg, series.anchorDay ?? null);
+  return stepFrom(series.nextExpectedOn, plan, signedStepsToReach(series.nextExpectedOn, plan, day) - 1);
+}
+
+/** A series' due days either side of one, as every grader of a bill's day steps them (`paymentFor`). */
+export function dueDaysOf(series: DueDaySchedule): DueDays {
+  return { after: (day) => nextDueDayAfter(series, day), before: (day) => dueDayBefore(series, day) };
 }
 
 /**

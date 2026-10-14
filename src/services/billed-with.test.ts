@@ -520,7 +520,7 @@ describe("a merge of the carrier — the link follows the rent to the series it 
        * mark naming that payment is the proof now, and a lapsed series would draw none.
        */
       arrears: false,
-      december: { carrier: "Flamingo South Beach", postedOn: "2026-12-02" },
+      december: { carrier: "Flamingo South Beach", postedOn: "2026-12-02", early: false },
       card: true,
       evidence: "active",
       january: true,
@@ -704,7 +704,7 @@ describe("settlement follows the carrier — paid once the rent's payment for th
     expect(owed()).toMatchObject({ arrears: [[UTIL, 18221]], budgets: [UTIL], page: -18221, forecast: true });
     link();
     expect(owed()).toEqual({ arrears: [], budgets: [], runway: null, page: null, forecast: false, calendar: "paid" });
-    expect(onDay("2026-10", "2026-10-01", UTIL)!.paidWith).toEqual({ carrier: "the rent", postedOn: "2026-10-02" });
+    expect(onDay("2026-10", "2026-10-01", UTIL)!.paidWith).toEqual({ carrier: "the rent", postedOn: "2026-10-02", early: false });
   });
 
   test("its day is paid by the rent's own test — the rent's grace, never a shorter one of its own", () => {
@@ -714,7 +714,7 @@ describe("settlement follows the carrier — paid once the rent's payment for th
     link();
     const late = arrearsThisMonth(bundle.db, new Set([RENT, UTIL]), TODAY);
     expect(late.series).toEqual([]);
-    expect(onDay("2026-10", "2026-10-01", UTIL)!.paidWith).toEqual({ carrier: "the rent", postedOn: "2026-10-05" });
+    expect(onDay("2026-10", "2026-10-01", UTIL)!.paidWith).toEqual({ carrier: "the rent", postedOn: "2026-10-05", early: false });
   });
 
   test("⛔ the money is unchanged: November still projects $2,109.00 + $182.21; October counts the rent's payment once", () => {
@@ -793,8 +793,8 @@ describe("settlement follows the carrier — paid once the rent's payment for th
       }));
     const paidBySep30 = [
       // ⛔ settling $0.00 on October's grid: the payment is September's row, counted there, once
-      { state: "paid", paidWith: { carrier: null, postedOn: "2026-09-30" }, settledCents: 0 },
-      { state: "paid", paidWith: { carrier: "the rent", postedOn: "2026-09-30" }, settledCents: 0 },
+      { state: "paid", paidWith: { carrier: null, postedOn: "2026-09-30", early: false }, settledCents: 0 },
+      { state: "paid", paidWith: { carrier: "the rent", postedOn: "2026-09-30", early: false }, settledCents: 0 },
     ];
     // the day it posted, the day after, and with the rent's account read past Oct 1 and its 3 days' grace
     expect(oct1("2026-09-30")).toEqual(paidBySep30);

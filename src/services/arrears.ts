@@ -9,7 +9,7 @@ import { billPaymentsBySeries, paymentFor, withBillingCarriers } from "./billing
 import { checkedThroughBySeries, silenceMeasuredThroughBySeries } from "./cash-earnings";
 import { dueDayGraces, dueDayReadings } from "./observation-frontier";
 import { paydayProjectable, paydaySettlementsBySeries } from "./payday-settlement";
-import { hasStoppedForecasting, nextDueDayAfter, projectOccurrences, toProjectable } from "./recurring";
+import { dueDaysOf, hasStoppedForecasting, projectOccurrences, toProjectable } from "./recurring";
 
 /**
  * ARREARS — bills that came due inside a window and that no posting covers.
@@ -127,8 +127,8 @@ export function overdueForSeries(
   if (live.length === 0) return { totalCents: 0, series: [] };
 
   /*
-   * Postings linked to these series, widened by the largest tolerance so a bill that landed a few days either side of
-   * its due date still counts as paid — the reading every reader that looks ahead asks too (`billPaymentsBySeries`).
+   * Every posting linked to these series, so a bill that landed a few days either side of its due date still counts as
+   * paid — the reading every reader that looks ahead and the calendar ask too (`billPaymentsBySeries`).
    *
    * ⚖️ A series billed inside another's payment is paid by its carrier's payments too, each by the carrier's own test
    * (`carrierPaymentsBySeries`, implied by §6A 59, 2026-10-08). 🔴 Graded on its own postings — it has none, ever — its
@@ -138,17 +138,21 @@ export function overdueForSeries(
    * ⚖️ …with NO END: a payment past a day's grace pays it late, until the next due day's grace opens (`paymentFor`),
    * and that can be past `through` and its tolerance — the arrears' walk read only as far as the ledger has read
    * (`arrearsReadCents`) must see the late payment the whole walk saw. No posting is dated past today.
+   *
+   * ⚖️ …and NO START: one more than its grace early pays a day once the day before it is paid by another (his decision
+   * 73, 2026-10-13), read back through the series' history — FPL's Jul 28 pays its Aug 8.
    */
-  const paymentsBySeries = billPaymentsBySeries(db, live, periodStart, null);
+  const paymentsBySeries = billPaymentsBySeries(db, live);
 
   const series: BudgetTailSeries[] = [];
   let totalCents = 0;
   for (const s of live) {
     const payments = paymentsBySeries.get(s.id) ?? [];
     const projectable = toProjectable(s);
+    const dueDays = dueDaysOf(projectable);
     const occ = projectOccurrences(projectable, periodStart, through)
       .filter((o) => o.amountCents < 0)
-      .filter((o) => paymentFor(payments, o.date, nextDueDayAfter(projectable, o.date)) === undefined);
+      .filter((o) => paymentFor(payments, o.date, dueDays) === undefined);
     if (occ.length === 0) continue;
     const amountCents = occ.reduce((sum, o) => sum - o.amountCents, 0);
     totalCents += amountCents;
