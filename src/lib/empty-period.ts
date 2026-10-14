@@ -59,8 +59,13 @@ export interface EmptyPeriodReason {
 
 export function emptyPeriodReason(input: EmptyPeriodInput): EmptyPeriodReason {
   const { from, to, today, ledgerOpens, ledgerReaches } = input;
-  if (ledgerOpens === null || ledgerReaches === null) return { kind: "no-ledger", uncoveredDays: 0 };
+  /*
+   * ⚖️ The future is asked FIRST: a window that has not begun holds nothing YET, whatever the ledger holds — never "not
+   * imported". 🔴 Asked after the ledger, an empty ledger's November read "Nothing imported yet … Import a statement to
+   * start the ledger" under a category headline's dash, of a month no import could have reached (review of b2c9db7).
+   */
   if (compareDates(from, today) > 0) return { kind: "future", uncoveredDays: 0 };
+  if (ledgerOpens === null || ledgerReaches === null) return { kind: "no-ledger", uncoveredDays: 0 };
 
   /*
    * ⛔ Clipped at today. A month still running is not "uncovered" for the days
@@ -100,10 +105,15 @@ export const A_LOWER_BOUND = "a lower bound rather than a measurement";
  *  - `zero` — every elapsed day was read and nothing posted: $0.00 is the measurement;
  *  - `lower-bound` — the import stops (or the records open) inside it: $0.00 stands, called what the empty state
  *    below it calls it (`A_LOWER_BOUND`);
- *  - `dash` — not one elapsed day was read: past the import, before the records, an empty ledger, or a window that
- *    has not begun. The dashboard's pace tile's rule: "an em dash, not a $0.00: when not one elapsed day of the month
- *    is imported, 'you have spent nothing' is a claim about a month nobody has looked at" — and the trend's, whose
- *    bar for the same month is no bar (`unreachedKind`).
+ *  - `dash` — no figure can be given. Either not one elapsed day was read — past the import, before the records, an
+ *    empty ledger: the dashboard's pace tile's rule, "an em dash, not a $0.00: when not one elapsed day of the month is
+ *    imported, 'you have spent nothing' is a claim about a month nobody has looked at", and the trend's, whose bar for
+ *    the same month is no bar (`unreachedKind`) — or the window has not begun, and holds nothing YET.
+ *
+ * ⚖️ A month that has not begun is dashed too, in its own words: "November 2026 has not happened yet" — nothing yet,
+ * never "not imported" (review of b2c9db7, 2026-10-12, which took it in beside the three kinds it was asked to dash).
+ * The dash is /spending's for the same month: its cash-flow table prints "—" there and says "a month that … has not
+ * happened yet" (`unreachedDashNote`). A $0.00 would be a figure for a month nobody could have spent in yet.
  *
  * 🔴 `/categories/<Housing>?period=2026-10` headlined "SPENT · OCTOBER 2026  $0.00  0 transactions" directly above its
  * own "October 2026 has not been imported yet … spending in Housing is imported through Wed, Aug 12, 2026". Measured on
@@ -140,15 +150,26 @@ export function emptyFigure(reason: EmptyPeriodReason): EmptyFigure {
  *
  * `emptyPeriodReason` already sorted a window into these worlds, with one caller.
  *
- * ⛔ The future is asked FIRST. `emptyPeriodReason` answers "no-ledger" before
- * it looks at the calendar, so forwarding its kind would call a day that has not
- * happened "not imported yet" on an empty ledger — the precedence the heatmap's
- * label already pinned.
+ * ⛔ The future is asked FIRST — by `emptyPeriodReason` itself now, so forwarding its kind never calls a day that has
+ * not happened "not imported yet" on an empty ledger: the precedence the heatmap's label pinned, and that this
+ * function alone used to keep (review of b2c9db7, 2026-10-12).
  */
 export function unreachedKind(input: EmptyPeriodInput): UnreachedKind | null {
-  if (compareDates(input.from, input.today) > 0) return "future";
   const { kind } = emptyPeriodReason(input);
   return kind === "measured" || kind === "partly-covered" ? null : kind;
+}
+
+/** A window past the import, as the predicate of a sentence — one phrase for every surface that says it. */
+const HAS_NOT_BEEN_IMPORTED = "has not been imported yet";
+
+/**
+ * "October 2026 has not been imported yet" — what a window nobody has imported is called wherever its figure is
+ * withheld: the empty state's heading (`emptyPeriodCopy`), so the category headline under its dash, and the
+ * dashboard's pace tile under its own "—". 🔴 The tile said "October 2026 is not imported yet" one click from the
+ * category headline's "October 2026 has not been imported yet" — one fact in two wordings (review of b2c9db7).
+ */
+export function notImportedTitle(label: string): string {
+  return `${label} ${HAS_NOT_BEEN_IMPORTED}`;
 }
 
 /**
@@ -172,7 +193,7 @@ export const UNREACHED_PHRASE: Readonly<Record<UnreachedKind, string>> = {
  */
 const UNREACHED_PREDICATES: readonly { kinds: readonly UnreachedKind[]; one: string; many: string }[] = [
   { kinds: ["before-records"], one: "is before your records begin", many: "are before your records begin" },
-  { kinds: ["after-records", "no-ledger"], one: "has not been imported yet", many: "have not been imported yet" },
+  { kinds: ["after-records", "no-ledger"], one: HAS_NOT_BEEN_IMPORTED, many: "have not been imported yet" },
   { kinds: ["future"], one: "has not happened yet", many: "have not happened yet" },
 ];
 
@@ -295,7 +316,7 @@ export function emptyPeriodCopy(
      */
     case "after-records":
       return {
-        title: `${label} has not been imported yet`,
+        title: notImportedTitle(label),
         description:
           `Nothing has been imported for ${days(reason.uncoveredDays)} of it${through ? `; ${whose} is imported through ${through}` : ""}. ` +
           "That is a window nobody has looked at, not one in which nothing happened — import the statements that cover it." +

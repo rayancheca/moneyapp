@@ -28,6 +28,9 @@ interface CategoryHeadlineProps {
  * `/categories/<Housing>?period=2026-10` headlined "SPENT · OCTOBER 2026  $0.00  0 transactions" directly above its own
  * "October 2026 has not been imported yet … spending in Housing is imported through Wed, Aug 12, 2026".
  *
+ * ⚖️ …and a month that has not begun is dashed too, under "November 2026 has not happened yet": it holds nothing YET,
+ * and its words say so — never "not imported" (`emptyFigure`; review of b2c9db7, 2026-10-12).
+ *
  * The quiet line under the dash is the empty state's own heading, so the headline and the cards below it say one
  * thing in one set of words. ⛔ No proof is offered beside a dash: the popover proves a rendered figure, and its
  * empty-total panel says "this zero" of a zero the dash refuses to print.

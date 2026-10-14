@@ -2,7 +2,9 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { and, eq, isNull } from "drizzle-orm";
-import { afterEach, beforeEach, describe, expect, test } from "vitest";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { createDatabase, type DbBundle } from "@/db/client";
 import { seedDatabase } from "@/db/seed";
 import { accounts } from "@/db/schema/accounts";
@@ -16,8 +18,9 @@ import { budgetVerdict } from "@/lib/budget-verdict";
 import { periodBounds } from "@/lib/dates";
 import { formatDayLong } from "@/lib/format-date";
 import { dedupeHash } from "@/lib/hash";
+import { CategoryBudgetCard } from "@/components/categories/CategoryBudgetCard";
 import { createAccount } from "./accounts";
-import { budgetPaceStatuses, categoryReachContext, categoryReachFor, createBudget } from "./budgets";
+import { budgetPaceStatuses, categoryReachContext, categoryReachFor, createBudget, setBudgetRollover } from "./budgets";
 import { createCashWallet } from "./cash-wallets";
 import { checkedThrough } from "./checked-days-fixture";
 import { addManualTransaction } from "./manual-transactions";
@@ -706,6 +709,10 @@ describe("⚖️ §6A 49 — a category page asks its own imported-through day",
     // no carLedger(): not one row anywhere
     const copy = emptyCopy("Transport", "2026-10-01", "2026-10-31", "October 2026");
     expect([copy.figure, copy.title]).toEqual(["dash", "Nothing imported yet"]);
+    // ⚖️ …while a month that has not begun holds nothing yet: its dash says so, never "not imported"
+    const november = emptyCopy("Transport", "2026-11-01", "2026-11-30", "November 2026");
+    expect([november.figure, november.title]).toEqual(["dash", "November 2026 has not happened yet"]);
+    expect(november.description).not.toMatch(/import/i);
   });
 
   /*
@@ -736,6 +743,8 @@ describe("⚖️ §6A 49 — a category page asks its own imported-through day",
       // one rule: the card's reading IS the row's, word for word
       expect(ref.verdict, `${categoryPath} @ ${refDate}`).toEqual(verdict);
       expect(ref.coverageSentence, `${categoryPath} @ ${refDate}`).toBe(verdict.withheld ? budgetCoverageSentence(row) : null);
+      // …and its colour is the row's pace, the one /budgets' headline wears (never `alert`'s 80% line)
+      expect(ref.pace, `${categoryPath} @ ${refDate}`).toBe(row.pace);
       return ref;
     };
 
@@ -763,6 +772,59 @@ describe("⚖️ §6A 49 — a category page asks its own imported-through day",
       verdict: { headline: "On track · 12% used", withheld: false },
       coverageSentence: null,
     });
+  });
+
+  /*
+   * 🔴 NO TEST HAD A PARTLY READ WINDOW REACH THE CARD (review of e37997b): its component tests hand it a coverage
+   * sentence typed by hand, so a wrong day count would have printed unseen. Fees on Aug 20: its account read through
+   * Aug 12, so 8 of the window's 20 elapsed days are not — the card says the row's 8, and ⚖️ decision 72's line under
+   * the headline over it, the proof of the same window's total, says the same 8 in the same words.
+   */
+  test("a month read in part: the card counts the days the headline over it counts, in the same words", () => {
+    vi.stubEnv("MONEYAPP_FAKE_TODAY", "2026-08-20");
+    try {
+      carLedger();
+      createBudget(bundle.db, { categoryId: catId("Fees"), period: "monthly", amountCents: 10_000, startsOn: "2026-01-01" });
+      const ref = categoryBudgetRef(bundle.db, catId("Fees"), "2026-08-20")!;
+      const card = renderToStaticMarkup(createElement(CategoryBudgetCard, { budget: ref }))
+        .replace(/<[^>]+>/g, " ")
+        .replace(/\s+/g, " ")
+        .trim();
+      const line = "spending imported through Aug 12 · 8 days of this period unaccounted";
+      expect(card).toBe(
+        `Budget Awaiting statements monthly budget · grading Aug 1 – Aug 31 ${line} $12.00 of $100.00 $88.00 left Budgets →`,
+      );
+      const total = provenanceFor(bundle.db, { kind: "categorySpend", categoryId: catId("Fees"), from: "2026-08-01", to: "2026-08-31" })!;
+      expect(total.partlyRead).toEqual({ uncoveredDays: 8, line });
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  /*
+   * ⚡ The page has already read the category's day — the frontier, the wallets, the accounts awaiting statements, the
+   * ledger's two ends (`categoryReachContext`, `ledgerOpens`) — for its headline and its trend. 🔴 The card asked every
+   * one of them again, twice: once for the carry and once for the row (review of e37997b, "+23 ms per category page").
+   * It reads the page's: handed a frontier that reads every account through Oct 31, October is a measurement.
+   */
+  test("the card reads the day the page hands it, never a second read of its own", () => {
+    carLedger();
+    const id = createBudget(bundle.db, { categoryId: catId("Transport"), period: "monthly", amountCents: 100_000, startsOn: "2026-01-01" });
+    setBudgetRollover(bundle.db, id, { enabled: true });
+    const page = { ...categoryReachContext(bundle.db), opens: ledgerOpens(bundle.db) };
+    // what the page read, handed in: the same card as reading it again
+    expect(categoryBudgetRef(bundle.db, catId("Transport"), OCT_7, page)).toEqual(categoryBudgetRef(bundle.db, catId("Transport"), OCT_7));
+    expect(categoryBudgetRef(bundle.db, catId("Transport"), OCT_7)!.verdict.withheld).toBe(true);
+
+    const readThroughOct31 = {
+      ...page,
+      frontier: { byAccount: new Map([...page.frontier.byAccount.keys()].map((account) => [account, "2026-10-31"])) },
+    };
+    const ref = categoryBudgetRef(bundle.db, catId("Transport"), OCT_7, readThroughOct31)!;
+    expect(ref.verdict.withheld).toBe(false);
+    expect(ref.coverageSentence).toBeNull();
+    // …and September, read whole by that day, banks into the carry: the carry was asked the page's day too
+    expect(ref.rolloverCents).toBeGreaterThan(0);
   });
 
   /*

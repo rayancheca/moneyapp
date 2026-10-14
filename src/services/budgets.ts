@@ -235,7 +235,7 @@ export interface BudgetStatus {
   /** unspent plan banked from CLOSED periods read whole (⚖️ decision 67); 0 whenever rollover is off */
   rolloverCents: number;
   /** ⚖️ decision 67: the closed periods that banked nothing because a day of them is not read yet; empty when off */
-  rolloverHeldBack: PeriodBounds[];
+  rolloverHeldBack: readonly PeriodBounds[];
   /** amountCents + rolloverCents — the line this period is actually graded against */
   availableCents: number;
   remainingCents: number;
@@ -270,7 +270,7 @@ export interface RolloverCarry {
   /** unspent plan banked from the CLOSED periods every day of which has been read */
   cents: number;
   /** the closed periods that banked nothing because a day of them is not read yet, oldest first */
-  heldBack: PeriodBounds[];
+  heldBack: readonly PeriodBounds[];
 }
 
 /**
@@ -410,19 +410,37 @@ export function carryInto(
   return { cents: balance, heldBack };
 }
 
-const NOTHING_CARRIED: RolloverCarry = { cents: 0, heldBack: [] };
+/**
+ * What a budget that does not roll over carries: nothing — in a list of its OWN. 🔴 One module-level object was handed
+ * to every such budget, so all of them shared one `heldBack` array, and a reader writing into one row's list would
+ * have written into every other's and every later load's (review of 73a743d). Built per budget, and read-only besides.
+ */
+function nothingCarried(): RolloverCarry {
+  return { cents: 0, heldBack: [] };
+}
 
 /**
  * Actual-vs-budget for every active budget, evaluated in refDate's period. `reads` are the carry's (`carryReads`),
  * asked once and only when a budget rolls over — `budgetPaceStatuses` hands in the ones it already holds.
+ *
+ * `only.categoryId` builds that category's budget alone — the row the whole list holds, "also counts toward its
+ * parent" included (every active budget is still read for that). ⚡ `/categories/<id>` reads one row
+ * (`budgetPaceStatusFor`), and building all of them walked every rolling budget's carry to find it: nine of his
+ * twelve, about 100 ms per category page on his ledger copy 2026-10-13.
  */
-export function budgetStatuses(db: AppDatabase, refDate: string = todayIso(), reads?: CarryReads): BudgetStatus[] {
+export function budgetStatuses(
+  db: AppDatabase,
+  refDate: string = todayIso(),
+  reads?: CarryReads,
+  only?: { categoryId: string },
+): BudgetStatus[] {
   const idx = loadCategoryIndex(db);
   const rows = db.select().from(budgets).where(eq(budgets.isActive, true)).all();
   const budgetedCategoryIds = new Set(rows.map((r) => r.categoryId));
   let carryReadsOnce = reads;
 
   return rows
+    .filter((b) => only === undefined || b.categoryId === only.categoryId)
     .map((b): BudgetStatus => {
       // A budget grades only the days it has actually existed. createBudget
       // stamps startsOn = today, so an unclamped period would judge a budget
@@ -442,7 +460,7 @@ export function budgetStatuses(db: AppDatabase, refDate: string = todayIso(), re
       // before the column existed.
       const carry = b.rolloverEnabled
         ? carryInto(db, b, period.start, refDate, (carryReadsOnce ??= carryReads(db)))
-        : NOTHING_CARRIED;
+        : nothingCarried();
       const rolloverCents = carry.cents;
       const availableCents = b.amountCents + rolloverCents;
       const node = idx.byId.get(b.categoryId);
@@ -1685,11 +1703,12 @@ interface BudgetPaceReads extends CarryReads {
   upfront: UpfrontCarRule | null;
 }
 
-function budgetPaceReads(db: AppDatabase): BudgetPaceReads {
+function budgetPaceReads(db: AppDatabase, carry: CarryReads = carryReads(db)): BudgetPaceReads {
   const notDrawn = seriesIdsNotDrawnAsRecurring(db);
   return {
-    // ⛔ the reads `/categories/[id]` asks its day with, so the row can ask the same one (`borrowedReach`)
-    ...carryReads(db),
+    // ⛔ the reads `/categories/[id]` asks its day with, so the row can ask the same one (`borrowedReach`) — the
+    // page's own, where it hands them in (`budgetPaceStatusFor`)
+    ...carry,
     notDrawn,
     upfront: upfrontCarRule(loadCategoryIndex(db), outsidePortfolioCashAccountIds(db), notDrawn),
   };
@@ -1784,11 +1803,29 @@ export function categoryWindowReading(
  * budgetStatuses enriched with pace, projection, and the expected tail — the
  * data behind the §8 bars. Kept separate from the lean budgetStatuses so a
  * caller pays for the per-row projection + tail only on the rows it draws:
- * /budgets on every row, `/categories/[id]` on its own one (`budgetPaceStatusOf`).
+ * /budgets on every row, `/categories/[id]` on its own one (`budgetPaceStatusFor`).
  */
 export function budgetPaceStatuses(db: AppDatabase, refDate: string = todayIso()): BudgetPaceStatus[] {
   const reads = budgetPaceReads(db);
   return budgetStatuses(db, refDate, reads).map((s) => budgetPaceStatusOf(db, s, refDate, reads));
+}
+
+/**
+ * ONE category's /budgets row, or null when it has no active budget — built alone (`budgetStatuses`' `only`) on the
+ * reads its page already made (`carry`: the page's `categoryReachContext` and `ledgerOpens`), asked once for the
+ * carry and the row both. ⚡ 🔴 `categoryBudgetRef` built every budget's row to find this one, and asked the page's
+ * reads again for the carry and again for the row (review of e37997b): about 110 ms per category page on his ledger
+ * copy 2026-10-13.
+ */
+export function budgetPaceStatusFor(
+  db: AppDatabase,
+  categoryId: string,
+  refDate: string,
+  carry?: CarryReads,
+): BudgetPaceStatus | null {
+  const reads = budgetPaceReads(db, carry);
+  const [status] = budgetStatuses(db, refDate, reads, { categoryId });
+  return status === undefined ? null : budgetPaceStatusOf(db, status, refDate, reads);
 }
 
 /**

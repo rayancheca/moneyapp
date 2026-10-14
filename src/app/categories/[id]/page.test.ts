@@ -129,4 +129,10 @@ describe("the budget card is drawn from its /budgets row's reading", () => {
     expect(page).not.toMatch(/budget\.alert ===/);
     expect(page).not.toContain("text-positive");
   });
+
+  // ⚡ the day its headline and trend were read on — `categoryBudgetRef` asked every one of those reads again, twice
+  test("the card is handed the reads the page already made, and the ledger's first day is read once", () => {
+    expect(page).toMatch(/categoryBudgetRef\(db, id, today, \{ \.\.\.reachCtx, opens \}\)/);
+    expect(page.match(/ledgerOpens\(db\)/g)).toHaveLength(1);
+  });
 });

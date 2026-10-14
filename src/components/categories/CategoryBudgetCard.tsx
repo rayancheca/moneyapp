@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { PACE_TONE } from "@/components/budgets/pace-tone";
 import { Money } from "@/components/ui/Money";
 import { SurfaceCard } from "@/components/ui/SurfaceCard";
 import { formatDayShort } from "@/lib/format-date";
@@ -11,17 +12,19 @@ interface CategoryBudgetCardProps {
 }
 
 /**
- * The colour of "left" or "over" — and none at all while the row's verdict is withheld.
+ * The colour of "left" or "over" — the row's verdict's, and none at all while that verdict is withheld.
  *
  * ⛔ /budgets prints its "Left" in no colour beside "Awaiting statements" or "Cash only", and this card is the same row
  * and window. 🔴 It read `alert` alone, which never asks how much of the window was imported: green "$2,291.21 left"
  * over an October nobody had imported, on his ledger copy 2026-10-12. A withheld verdict is never `over` (past the
  * line on partial data is graded — `budgetVerdict`), so what is left is a figure that can only fall, never a verdict.
+ *
+ * ⛔ …and a graded one is coloured by the PACE /budgets headlines the row with (`PACE_TONE`), not by `alert`'s 80% line.
+ * 🔴 A measured row on course to finish over read "Off pace · 30% used" in amber there and a green "$1,603.85 left"
+ * here; one 85% spent and on course to land under, amber here beside /budgets' green "On track" (review of e37997b).
  */
 function leftTone(budget: CategoryBudgetRef): string | undefined {
-  if (budget.verdict.withheld) return undefined;
-  if (budget.alert === "over") return "text-negative";
-  return budget.alert === "warn80" ? "text-warning" : "text-positive";
+  return budget.verdict.withheld ? undefined : PACE_TONE[budget.pace].text;
 }
 
 /**

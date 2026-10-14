@@ -18,25 +18,13 @@ import { budgetVerdict, type BudgetVerdict } from "@/lib/budget-verdict";
 import { formatCents } from "@/lib/money";
 import { ONE_CHARGE_WORD } from "@/lib/one-charge";
 import type { BudgetGuide } from "@/services/budget-guide";
-import type { BudgetPace, BudgetPaceStatus } from "@/services/budgets";
+import type { BudgetPaceStatus } from "@/services/budgets";
 import { DisclosureChevron, DisclosureRegion, useDisclosure } from "@/components/ui/Disclosure";
 import { BudgetAmountEditor, PERIOD_WORD } from "./BudgetAmountEditor";
 import { BudgetDetails } from "./BudgetDetails";
+import { PACE_TONE } from "./pace-tone";
 import { BudgetRolloverToggle } from "./BudgetRolloverToggle";
 import { budgetDeactivateLines } from "./deactivate-radius";
-
-/**
- * Pace → the bar fill and the label tone. Green→amber→red by projected pace.
- *
- * Colours only. The words live in `budgetVerdict`, with the definition that
- * explains them — a label here and a definition there is exactly the split that
- * let a tooltip describe a mark the row did not draw.
- */
-const PACE: Record<BudgetPace, { fill: string; text: string }> = {
-  under: { fill: "bg-positive", text: "text-positive" },
-  "at-risk": { fill: "bg-warning", text: "text-warning" },
-  over: { fill: "bg-negative", text: "text-negative" },
-};
 
 function clampPct(value: number): number {
   return Math.min(100, Math.max(0, value));
@@ -95,7 +83,7 @@ export function BudgetRow({ status, guide, spentProvenance, planProvenance }: Bu
   // immediately. Left inside the toggle, the panel would read the stale server
   // prop until router.refresh() landed and show the wrong half of its copy.
   const [rolloverEnabled, setRolloverEnabled] = useState(budget.rolloverEnabled);
-  const tone = PACE[status.pace];
+  const tone = PACE_TONE[status.pace];
   const pctDisplay = Math.round(status.pct * 100);
 
   // The headline, what it means, and whether the bar is still to scale — all

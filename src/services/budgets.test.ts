@@ -12,6 +12,7 @@ import { transactions } from "@/db/schema/transactions";
 import { budgetCoverageSentence } from "@/lib/budget-coverage";
 import { budgetVerdict } from "@/lib/budget-verdict";
 import { budgetSectionNotes } from "@/lib/section-notes";
+import type { PeriodBounds } from "@/lib/dates";
 import { dedupeHash } from "@/lib/hash";
 import { levelledMonthlyCents } from "@/lib/income-basis";
 import { recurringSeries } from "@/db/schema/recurring";
@@ -2685,6 +2686,46 @@ describe("⚖️ decision 67 — a closed period with a day not yet read banks n
     spend("2026-07-15", -1, "Shopping", other); // …while the ledger reaches Jul 15 on another account
 
     expect(carried("Food > Coffee")).toEqual({ cents: 500_00, availableCents: 1_000_00, heldBack: [JUNE] });
+  });
+
+  /*
+   * 🔴 ONE LIST FOR EVERY BUDGET THAT DOES NOT ROLL OVER. They were all handed the same `heldBack` array (a module-level
+   * `NOTHING_CARRIED`), so a reader that wrote into one row's list wrote into every other's — and into every later
+   * load's: a "September 2026 is not fully imported" line would have stood under budgets that bank nothing at all
+   * (review of 73a743d). Latent: no caller writes into it today.
+   */
+  test("a budget that does not roll over holds back a list of its own — no other row's, and no later load's", () => {
+    createBudget(bundle.db, { categoryId: catId("Food"), period: "monthly", amountCents: 500_00, startsOn: "2026-05-01" });
+    createBudget(bundle.db, { categoryId: catId("Shopping"), period: "monthly", amountCents: 500_00, startsOn: "2026-05-01" });
+    const [food, shopping] = budgetStatuses(bundle.db, "2026-07-15");
+    expect(food!.rolloverHeldBack).toEqual([]);
+    expect(food!.rolloverHeldBack).not.toBe(shopping!.rolloverHeldBack);
+
+    try {
+      (food!.rolloverHeldBack as PeriodBounds[]).push(JUNE);
+    } catch {
+      // a list nobody may write into is as good as one of its own
+    }
+    expect(shopping!.rolloverHeldBack).toEqual([]);
+    expect(budgetStatuses(bundle.db, "2026-07-15").map((s) => s.rolloverHeldBack)).toEqual([[], []]);
+  });
+
+  /*
+   * ⛔ `/categories/<id>` builds ONE row (`categoryBudgetRef`), and building all of them to find it walked every rolling
+   * budget's carry — nine of his twelve, about 100 ms on his ledger copy 2026-10-13 — per category page. The row asked
+   * for is the row the whole page would build, "also counts toward its parent" and all.
+   */
+  test("asked for one category, it builds that budget's row alone — the row the whole page builds", () => {
+    rollingBudget("Food", "2026-05-01");
+    createBudget(bundle.db, { categoryId: catId("Food > Coffee"), period: "monthly", amountCents: 50_00, startsOn: "2026-05-01" });
+    createBudget(bundle.db, { categoryId: catId("Shopping"), period: "monthly", amountCents: 500_00, startsOn: "2026-05-01" });
+    spend("2026-05-10", -100_00, "Food");
+    const all = budgetStatuses(bundle.db, "2026-07-15");
+    for (const path of ["Food", "Food > Coffee", "Shopping"]) {
+      const one = budgetStatuses(bundle.db, "2026-07-15", undefined, { categoryId: catId(path) });
+      expect(one, path).toEqual([all.find((s) => s.categoryPath === path)]);
+    }
+    expect(all.find((s) => s.categoryPath === "Food > Coffee")!.isDescendantOfBudgeted).toBe(true);
   });
 
   test("carryInto names the weeks it held back", () => {
