@@ -62,7 +62,7 @@ describe("isOpeningStatement", () => {
 });
 
 /**
- * What a period that printed no balances IS — three kinds, and every reader names one by this: the period line on a
+ * What a period that printed no balances IS — four kinds, and every reader names one by this: the period line on a
  * row's and a day's sheet, the period's own sheet, and /imports' footer.
  *
  * 🔴 The review of 601f155, on a copy of data/e2e.db (2026-10-12): an OFX download declares its days and records the
@@ -83,9 +83,23 @@ describe("balanceLessKind", () => {
 
   test("🔴 a file that recorded the account's balance — whatever read it — is not one that carries none", () => {
     expect(of("ofx-generic", "2024-09-30")).toBe("balance_recorded");
-    expect(of("ofx-generic", null)).toBe("no_balance");
     expect(of("chase-spending-report-pdf", null)).toBe("no_balance");
     expect(of(null, "2024-09-30")).toBe("balance_recorded");
+  });
+
+  /*
+   * 🔴 …and a download the ledger keeps no balance of was the kind a Spending Report is. 74f25fb told the two apart in
+   * /imports' footer by reading the parser beside this rule, so the footer said "9 imported downloads left the ledger
+   * no balance of their own" while every sheet that reads this kind still said of the same files "coverage declared,
+   * but this file carries no balances to check against" — each printed a LEDGERBAL its quarter's CSV re-recorded
+   * (measured on a copy of data/e2e.db 2026-10-14, Chase8721_Activity_2026-04-01_2026-06-30.QFX among them). The kind
+   * tells them apart now, for every reader.
+   */
+  test("🔴 a download the ledger keeps no balance of is its own kind — never a report's", () => {
+    expect(of("ofx-generic", null)).toBe("download_no_balance");
+    for (const report of ["chase-spending-report-pdf", "rocket-money-csv", "chase-deposit-csv", null]) {
+      expect(of(report, null)).toBe("no_balance");
+    }
   });
 
   test("an account's opening statement stays a statement, though its file recorded the close", () => {

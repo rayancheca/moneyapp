@@ -586,6 +586,26 @@ describe("provenanceFor — an account's opening statement", () => {
   });
 });
 
+/** The period line of a download the ledger keeps no balance of on the account (`download_no_balance`). */
+const DOWNLOAD_LINE =
+  "coverage declared — this download left the ledger no balance of its own on the account and printed no opening " +
+  "one, so the period itself reconciles nothing";
+
+/** The e2e fixture's shape: Chase Savings' Q3 2024 QFX, its Sep 30 LEDGERBAL re-recorded by the quarter's CSV. */
+function savingsQ3(): { savings: string; period: string; txn: string } {
+  const savings = addAccount("sav", "Chase Savings", "savings");
+  const qfx = addFile("qfx", "Chase8721_Activity_2024-07-01_2024-09-30.QFX", "ofx-generic");
+  const csv = addFile("csv", "Chase8721_Activity_2024-07-01_2024-09-30.CSV", "chase-deposit-csv");
+  const period = addPeriod("p-qfx", savings, qfx, "2024-07-01", "2024-09-30", "not_applicable", {
+    beginning: null,
+    ending: null,
+  });
+  addAnchor(savings, "2024-09-30", "ofx_ledger", csv);
+  addDays(savings, [{ day: "2024-09-30", basis: "anchored" }]);
+  const txn = addTxn(savings, "2024-09-30", { importFileId: qfx });
+  return { savings, period, txn };
+}
+
 /* ── a download that recorded a balance but no opening one ────────────── */
 
 /**
@@ -677,31 +697,119 @@ describe("provenanceFor — a download that recorded a balance but no opening on
     addDays(freedom, [{ day: "2024-07-02", basis: "derived_unverified" }]);
     const txn = addTxn(freedom, "2024-07-02", { importFileId: file });
 
-    expect(periodLine(provenanceFor(bundle.db, { kind: "transaction", id: txn })!)).toEqual([REPORT_LINE]);
-    expect(provenanceFor(bundle.db, { kind: "statementPeriod", id: period })!.headline).toMatch(/carries no balances/);
+    // a download still, and one the ledger keeps no balance of on the account (`download_no_balance`)
+    expect(periodLine(provenanceFor(bundle.db, { kind: "transaction", id: txn })!)).toEqual([DOWNLOAD_LINE]);
+    const sheet = provenanceFor(bundle.db, { kind: "statementPeriod", id: period })!.headline;
+    expect(sheet).toContain("left the ledger no balance of its own on Chase Freedom Unlimited");
+    expect(sheet).not.toMatch(/recorded|carries no balances/);
   });
 
   /**
    * ⛔ ONE rule with the row's own headline (`rowHeadline`, S31), which has always read a file's balance from the
-   * anchors it owns: whatever the sheet says the file recorded, its period line says too.
-   *
-   * ⚠️ The ledger keeps ONE `ofx_ledger` balance per account and day, owned by the file that wrote it last — the
-   * fixture's Chase Savings QFX for Q3 2024 printed a LEDGERBAL its quarter's CSV re-recorded, and both lines read
-   * "carries no balances" of it. Measured on the e2e copy: 9 of its 27 downloads. Left in the queue (no record of
-   * a balance a file printed survives another file's taking it over).
+   * anchors it owns: whatever the sheet says the file recorded, its period line says too — for a balance another file
+   * took over that day, the next block.
    */
   test("the period line and the row's headline read one rule, for a balance another file took over that day", () => {
-    const savings = addAccount("sav", "Chase Savings", "savings");
-    const qfx = addFile("qfx", "Chase8721_Activity_2024-07-01_2024-09-30.QFX", "ofx-generic");
-    const csv = addFile("csv", "Chase8721_Activity_2024-07-01_2024-09-30.CSV", "chase-deposit-csv");
-    addPeriod("p-qfx", savings, qfx, "2024-07-01", "2024-09-30", "not_applicable", { beginning: null, ending: null });
-    addAnchor(savings, "2024-09-30", "ofx_ledger", csv);
-    addDays(savings, [{ day: "2024-09-30", basis: "anchored" }]);
-    const txn = addTxn(savings, "2024-09-30", { importFileId: qfx });
+    const { txn } = savingsQ3();
 
     const p = provenanceFor(bundle.db, { kind: "transaction", id: txn })!;
-    expect(p.headline).toContain("carries no balances of its own");
-    expect(periodLine(p)).toEqual([REPORT_LINE]);
+    expect(p.headline).not.toContain("which recorded Chase Savings's balance");
+    expect(periodLine(p)).toEqual([DOWNLOAD_LINE]);
+  });
+});
+
+/* ── a download the ledger keeps no balance of ────────────────────────── */
+
+/**
+ * The ledger keeps ONE `ofx_ledger` balance per account and day, owned by the file that wrote it last (⚖️ anchor
+ * ownership as shipped, handoff 2026-10-13 §6A): a QFX download whose LEDGERBAL its quarter's CSV re-recorded owns no
+ * balance on the account, though it printed one.
+ *
+ * 🔴 74f25fb stopped /imports' footer calling these "a spending report, an export without a closing figure" — "9
+ * imported downloads left the ledger no balance of their own and printed no opening one, …" — by reading the parser
+ * beside `balanceLessKind`, and left every sheet on the kind, which still named them as files that carry none.
+ * Measured on a copy of data/e2e.db 2026-10-14: Chase8721_Activity_2026-04-01_2026-06-30.QFX's period sheet read "This
+ * file declares which days it covers but carries no balances, so nothing in it can be checked against a total."; the
+ * period line on its Apr 2 row's sheet and on Chase Savings' Apr 2 balance sheet, "coverage declared, but this file
+ * carries no balances to check against"; the row's own headline, "That file carries no balances of its own, but Chase
+ * Savings's chain closes across this day." The file holds a <LEDGERBAL>. Not reachable on his ledger (it holds no OFX
+ * or QFX file, measured on a copy 2026-10-14); it is the day he imports a Chase QFX beside the same quarter's CSV.
+ */
+describe("provenanceFor — a download the ledger keeps no balance of", () => {
+  const REPORT_LINE = "coverage declared, but this file carries no balances to check against";
+  const periodLine = (p: { sources: { kind: string; detail?: string }[] }) =>
+    p.sources.filter((s) => s.kind === "period").map((s) => s.detail);
+
+  test("🔴 a row's sheet: the headline and the period line name a download, never a file that carries no balances", () => {
+    const { txn } = savingsQ3();
+
+    const p = provenanceFor(bundle.db, { kind: "transaction", id: txn })!;
+    expect(p.headline).toBe(
+      "This row came from Chase8721_Activity_2024-07-01_2024-09-30.QFX, which left the ledger no balance of its own on " +
+        "Chase Savings — but Chase Savings's balance on this day was recorded by " +
+        "Chase8721_Activity_2024-07-01_2024-09-30.CSV, so the total it sits in is checked.",
+    );
+    expect(periodLine(p)).toEqual([DOWNLOAD_LINE]);
+  });
+
+  test("…on a day nothing checks, too", () => {
+    const savings = addAccount("sav", "Chase Savings", "savings");
+    const qfx = addFile("qfx", "Chase8721_Activity_2024-07-01_2024-09-30.QFX", "ofx-generic");
+    addPeriod("p-qfx", savings, qfx, "2024-07-01", "2024-09-30", "not_applicable", { beginning: null, ending: null });
+    const txn = addTxn(savings, "2024-08-15", { importFileId: qfx });
+
+    const p = provenanceFor(bundle.db, { kind: "transaction", id: txn })!;
+    expect(p.headline).toBe(
+      "This row came from Chase8721_Activity_2024-07-01_2024-09-30.QFX — which left the ledger no balance of its own " +
+        "on Chase Savings, so nothing checks the total it sits in.",
+    );
+    expect(periodLine(p)).toEqual([DOWNLOAD_LINE]);
+  });
+
+  test("…and the account's balance on a day the download covers", () => {
+    const { savings } = savingsQ3();
+
+    const p = provenanceFor(bundle.db, { kind: "accountBalance", accountId: savings, day: "2024-09-30" })!;
+    expect(periodLine(p)).toEqual([DOWNLOAD_LINE]);
+  });
+
+  test("…and the period's own sheet (latent: /imports opens one only for a period that printed balances)", () => {
+    const { period } = savingsQ3();
+
+    const p = provenanceFor(bundle.db, { kind: "statementPeriod", id: period })!;
+    expect(p.verdict).toBe("unverified");
+    expect(p.headline).toBe(
+      "This download declares which days it covers but left the ledger no balance of its own on Chase Savings and " +
+        "printed no opening one, so the period itself reconciles nothing.",
+    );
+  });
+
+  test("the footer on /imports and the sheets make the same claims of it", () => {
+    const { period, txn } = savingsQ3();
+    const [footer] = balanceLessNotes({ ...NO_COUNTS, downloadDocuments: 1 });
+    const periodSheet = provenanceFor(bundle.db, { kind: "statementPeriod", id: period })!.headline;
+    const rowSheet = provenanceFor(bundle.db, { kind: "transaction", id: txn })!.headline;
+    for (const claim of ["download", "left the ledger no balance of", "printed no opening one", "reconcile"]) {
+      for (const words of [footer, periodSheet, DOWNLOAD_LINE]) expect(words).toContain(claim);
+    }
+    for (const words of [footer, periodSheet, rowSheet, DOWNLOAD_LINE]) {
+      expect(words).not.toMatch(/carries no balances|carried no balance|report|export/);
+    }
+  });
+
+  test("a report beside it keeps its words — the kind reads the parser, not the state", () => {
+    const sapphire = addAccount("s", "Chase Sapphire", "credit");
+    const file = addFile("f2", "Spending Report PDF (1).pdf", "chase-spending-report-pdf");
+    const period = addPeriod("p-r", sapphire, file, "2026-01-01", "2026-07-10", "not_applicable", {
+      beginning: null,
+      ending: null,
+    });
+    const txn = addTxn(sapphire, "2026-03-01", { importFileId: file });
+
+    const row = provenanceFor(bundle.db, { kind: "transaction", id: txn })!;
+    expect(row.headline).toContain("carries no balances");
+    expect(periodLine(row)).toEqual([REPORT_LINE]);
+    expect(provenanceFor(bundle.db, { kind: "statementPeriod", id: period })!.headline).toMatch(/carries no balances/);
   });
 });
 

@@ -3,8 +3,8 @@ export interface BalanceLessCounts {
   /** documents that recorded no balance for the account they declare, no OFX download among them: a Spending Report,
    *  a balance-less export */
   readonly reportDocuments: number;
-  /** OFX downloads the ledger keeps no balance of on the account they declare (`ofxProfile`): a LEDGERBAL another
-   *  file re-recorded that day, or none printed — the ledger cannot tell which */
+  /** OFX downloads the ledger keeps no balance of on the account they declare (`download_no_balance`): a LEDGERBAL
+   *  another file re-recorded that day, or none printed — the ledger cannot tell which */
   readonly downloadDocuments: number;
   /** documents that recorded the account's balance but no opening one: an OFX download's LEDGERBAL */
   readonly recordedBalanceDocuments: number;
@@ -38,7 +38,7 @@ export interface BalanceLessCounts {
  * here — no opening one, so they reconcile nothing; the sheet's period line makes the same claims of it (provenance.ts
  * `periodDetail`). The other nine printed a LEDGERBAL their quarter's CSV re-recorded, and the ledger keeps the last
  * writer's: each is named as a download the ledger keeps no balance of (`downloadDocuments`), never as a report or a
- * file that carried none.
+ * file that carried none — and the sheets make the same claims of it (provenance.ts `periodDetail`, `rowHeadline`).
  */
 export function balanceLessNotes(counts: BalanceLessCounts): string[] {
   return [reportNote(counts), downloadNote(counts), recordedBalanceNote(counts), openingNote(counts)].filter(

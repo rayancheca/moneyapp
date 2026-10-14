@@ -3,6 +3,7 @@ import { alias } from "drizzle-orm/sqlite-core";
 import type { AppDatabase } from "@/db/client";
 import { importFiles, statementPeriods, type ReconciliationState } from "@/db/schema/imports";
 import type { StatementPeriodRef } from "@/lib/statement-holes";
+import { ofxProfile } from "./import/profiles/ofx-profile";
 
 /** What `countsAsStatement` reads of a period: its state, and the parser that read its file (null: none recorded). */
 export interface PeriodKind {
@@ -100,8 +101,9 @@ export interface BalanceLessFacts extends PeriodKind {
 
 /**
  * What a period that printed no balances IS: an account's opening statement (`isOpeningStatement`), a file that
- * recorded the account's balance but no opening one — an OFX download's LEDGERBAL — or one that recorded none, a
- * Spending Report or a balance-less export. Null for a period that printed balances.
+ * recorded the account's balance but no opening one — an OFX download's LEDGERBAL — an OFX download the ledger keeps
+ * no balance of on the account (`isOfxDownload`), or a file that recorded none, a Spending Report or a balance-less
+ * export. Null for a period that printed balances.
  *
  * ⛔ Every reader that names one asks this — the period line on a row's and a day's sheet, the period's own sheet
  * (provenance.ts) and /imports' footer (`statementEvidence`) — so no page calls a file that recorded a balance one that
@@ -111,13 +113,30 @@ export interface BalanceLessFacts extends PeriodKind {
  * review of it, on a copy of data/e2e.db (2026-10-12), found 18 of the fixture's 27 OFX downloads reading "this file
  * carries no balances to check against" under the balance that same file recorded. ⚠️ The opening statement is asked
  * first: Agentic's June PDF recorded its close too, and it is still the account's first statement.
+ *
+ * 🔴 …and 74f25fb told the other nine from a report in the footer alone, by reading the parser beside this rule: "9
+ * imported downloads left the ledger no balance of their own" over sheets that read this kind and still said of the
+ * same files "this file carries no balances" (a copy of data/e2e.db, 2026-10-14; each printed a LEDGERBAL its
+ * quarter's CSV re-recorded). `download_no_balance` is that reading, here, for every reader.
  */
-export type BalanceLessKind = "opening_statement" | "balance_recorded" | "no_balance";
+export type BalanceLessKind = "opening_statement" | "balance_recorded" | "download_no_balance" | "no_balance";
 
 export function balanceLessKind(period: BalanceLessFacts): BalanceLessKind | null {
   if (carriesBalances(period.reconciliation)) return null;
   if (isOpeningStatement(period)) return "opening_statement";
-  return period.recordedOn === null ? "no_balance" : "balance_recorded";
+  if (period.recordedOn !== null) return "balance_recorded";
+  return isOfxDownload(period.parserProfile) ? "download_no_balance" : "no_balance";
+}
+
+/**
+ * Whether an OFX parser read the file (`ofxProfile`) — a bank's download, which can print the account's balance
+ * (LEDGERBAL). One that owns no balance on an account (`fileRecordedBalanceOn`) is named by what the ledger keeps of it
+ * — "left the ledger no balance of its own" — never as a file that carries none, which it may well have printed: the
+ * ledger keeps one `ofx_ledger` balance per account and day, the last writer's (⚖️ anchor ownership as shipped), and
+ * cannot tell a re-recorded LEDGERBAL from none printed. A row's headline asks it too (provenance.ts `rowHeadline`).
+ */
+export function isOfxDownload(parserProfile: string | null): boolean {
+  return parserProfile === ofxProfile.id;
 }
 
 /**
