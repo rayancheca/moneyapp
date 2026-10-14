@@ -747,13 +747,13 @@ describe("BudgetDetails — what rollover subtracts, in his words", () => {
     expect(panelText()).toContain(
       "Banked $0.00 from closed periods. July 2026 is not fully imported, so nothing rolls over from it yet.",
     );
-    expect(panelText()).toContain("so a missing statement cannot bank itself as savings.");
+    expect(panelText()).toContain("so a missing statement on one of them cannot bank itself as savings.");
 
     foodRow("2026-08-01", -500); // July's statement lands: the Card is read past Jul 31
     expect(statusFor("Food").rolloverCents).toBe(3_000);
     expect(panelText()).toContain("Banked $30.00 from closed periods. A period that came in under plan");
     expect(panelText()).not.toContain("so nothing rolls over");
-    expect(panelText()).toContain("so a missing statement cannot bank itself as savings.");
+    expect(panelText()).toContain("so a missing statement on one of them cannot bank itself as savings.");
   });
 });
 

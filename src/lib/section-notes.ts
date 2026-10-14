@@ -146,6 +146,16 @@ export function budgetSectionNotes(input: BudgetNoteInput): SectionNote[] {
       NOT_POSTED,
       bills === 1 ? "it" : "them",
     );
+    /*
+     * ⚖️ §6A 64: a row not one elapsed day of whose window is read prints "Left —", so there is no room left on it to
+     * look smaller than it is. 🔴 On his ledger copy 2026-10-13 this said "so the room left is smaller than it looks"
+     * over Housing and Utilities, both printing "Left —" (review of 6f217a7). ⛔ The rows' own test (`spendUnread`).
+     */
+    const dashed = overdue.filter((r) => spendUnread(r)).length;
+    const committed =
+      dashed === overdue.length
+        ? `That money is committed out of ${overdue.length === 1 ? "its plan" : "their plans"}.`
+        : `That money is committed, so the room left is smaller than it looks${dashed > 0 ? " where it is shown" : ""}.`;
     notes.push({
       id: "budgets-overdue",
       body:
@@ -160,8 +170,7 @@ export function budgetSectionNotes(input: BudgetNoteInput): SectionNote[] {
          * arrears at all. Both boundaries are right; only this sentence was
          * wrong. See `services/budgets.ts::budgetTail`.
          */
-        `${formatCents(total)} due by today${said} — ${where}. That money is committed, so ` +
-        `the room left is smaller than it looks.`,
+        `${formatCents(total)} due by today${said} — ${where}. ${committed}`,
     });
   }
 

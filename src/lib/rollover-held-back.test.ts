@@ -52,10 +52,16 @@ describe("rolloverHeldBackSentence — what a rolling budget is waiting on", () 
     );
   });
 
-  test("the rule it stands on is said once, and says why", () => {
+  /*
+   * 🔴 "…, so a missing statement cannot bank itself as savings" was flat, and the rule it stands on has a documented
+   * gap (`services/budgets::categoryCoverage`): a period is read on the accounts the category has lately been spent
+   * from, so a statement missing on an account it has never been spent from is not waited for (review of 73a743d).
+   * The sentence says the rule's own reach, and no further — `budgets.test.ts` pins the gap it leaves.
+   */
+  test("the rule it stands on is said once, and says why — no further than the rule reaches", () => {
     expect(ROLLOVER_WAITS).toBe(
-      "A period not yet fully imported adds nothing until its statements land, " +
-        "so a missing statement cannot bank itself as savings.",
+      "A period adds nothing until the accounts this category has lately been spent from are imported through its " +
+        "last day, so a missing statement on one of them cannot bank itself as savings.",
     );
   });
 });

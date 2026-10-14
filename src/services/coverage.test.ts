@@ -2,6 +2,8 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { eq } from "drizzle-orm";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { createDatabase, type DbBundle } from "@/db/client";
 import { seedDatabase } from "@/db/seed";
@@ -13,11 +15,13 @@ import { transactions } from "@/db/schema/transactions";
 import { BALANCE_BASES } from "@/db/schema/balances";
 import { ACCOUNT_TYPES } from "@/db/schema/accounts";
 import { beforeFirstBalance } from "@/lib/coverage-detail";
+import { CoveragePanel } from "@/components/imports/CoveragePanel";
 import { addManualAnchor } from "./anchors";
 import { createCashWallet } from "./cash-wallets";
 import { accountCoverage, balanceDayIsExact, basisIsChecked, footingThrough } from "./coverage";
 import { rebuildAccount } from "./derivation";
 import { addManualTransaction } from "./manual-transactions";
+import { trustCard } from "./trust-card";
 
 /**
  * Coverage grading exists because the two questions "is this account's money
@@ -1003,6 +1007,40 @@ describe("a statement with no rows checks the account through it", () => {
     rebuildAccount(bundle.db, id, REBUILT_ON);
 
     expect(at(id)).toMatchObject({ grade: "manual", verifiedThrough: null, lastManualUpdate: "2026-07-31" });
+  });
+
+  /*
+   * 🔴 The grade moved and only the due-day reader was tested on it (review of cf0bbdf): every other reader of
+   * `accountCoverage` prints the grade too — /imports' coverage row, net worth's proof and the dashboard's trust card,
+   * which reads that proof's words. A quiet card was "Counted" there, "you are the statement", as though he had typed
+   * a balance he never typed. Latent on his ledger copy 2026-10-13: no account there has a statement and no row.
+   */
+  test("…and every reader of the grade says so: /imports' row, net worth's proof, the trust card", () => {
+    const quiet = addAccount("a-quiet-card", "Quiet Card", "credit");
+    anchorAt(quiet, "2026-06-30", "statement", 0);
+    anchorAt(quiet, "2026-07-31", "statement", 0);
+    rebuildAccount(bundle.db, quiet, REBUILT_ON);
+    const typed = addAccount("a-typed-only", "Drawer", "checking");
+    anchorAt(typed, "2026-07-31", "manual", 10_000);
+    rebuildAccount(bundle.db, typed, REBUILT_ON);
+
+    const panel = renderToStaticMarkup(
+      createElement(CoveragePanel, {
+        coverage: accountCoverage(bundle.db, REBUILT_ON),
+        pricedFromHoldingsIds: [],
+        heldCounts: new Map(),
+      }),
+    )
+      .replace(/<[^>]+>/g, " ")
+      .replace(/\s+/g, " ");
+    expect(panel).toMatch(/Quiet Card Verified /);
+    expect(panel).toMatch(/Drawer Counted /);
+
+    const card = trustCard(bundle.db, REBUILT_ON)!;
+    const line = (accountId: string) => card.groups.flatMap((g) => g.accounts).find((a) => a.accountId === accountId)!;
+    expect(line(quiet)).toMatchObject({ grade: "verified", verdict: "derived", detail: "adds up through Jul 31, 2026" });
+    expect(line(typed)).toMatchObject({ grade: "manual", detail: "you last counted it on Jul 31, 2026" });
+    expect(card.accountsAddUp).toBe(1);
   });
 });
 

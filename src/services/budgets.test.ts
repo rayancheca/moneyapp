@@ -12,6 +12,7 @@ import { transactions } from "@/db/schema/transactions";
 import { budgetCoverageSentence } from "@/lib/budget-coverage";
 import { budgetVerdict } from "@/lib/budget-verdict";
 import { budgetSectionNotes } from "@/lib/section-notes";
+import { ROLLOVER_WAITS } from "@/lib/rollover-held-back";
 import type { PeriodBounds } from "@/lib/dates";
 import { dedupeHash } from "@/lib/hash";
 import { levelledMonthlyCents } from "@/lib/income-basis";
@@ -2686,6 +2687,28 @@ describe("⚖️ decision 67 — a closed period with a day not yet read banks n
     spend("2026-07-15", -1, "Shopping", other); // …while the ledger reaches Jul 15 on another account
 
     expect(carried("Food > Coffee")).toEqual({ cents: 500_00, availableCents: 1_000_00, heldBack: [JUNE] });
+  });
+
+  /*
+   * ⚠️ THE GAP THE PANEL'S SENTENCE STOPS SHORT OF. A period is read on the accounts the category has lately been spent
+   * from (`categoryCoverage`, its documented gap: "a FIRST charge on an account the category was never spent from in
+   * the window is not waited for"). The panel said flatly "a missing statement cannot bank itself as savings"; a June
+   * statement missing on a card Food was never spent from is not waited for, and June banks. Pinned so the sentence
+   * (`ROLLOVER_WAITS`) and the rule move together.
+   */
+  test("⚠️ it waits on the accounts the category has lately been spent from — the panel's words, and no wider", () => {
+    const chase = bundle.db.select().from(institutions).where(eq(institutions.name, "Chase")).get()!;
+    const other = createAccount(bundle.db, { institutionId: chase.id, name: "Other", type: "credit" });
+    ledgerOpensJan2();
+    spend("2026-05-31", -1, "Shopping", other); // Other is imported through May 31: its June statement has not come
+    rollingBudget("Food", "2026-06-01");
+    spend("2026-06-30", -50_00, "Food"); // Food's card is read through Jun 30
+
+    expect(carried("Food")).toEqual({ cents: 450_00, availableCents: 950_00, heldBack: [] });
+    expect(ROLLOVER_WAITS).toContain("the accounts this category has lately been spent from");
+    // …while a missing statement on an account Food IS spent from holds June back
+    spend("2026-05-20", -10_00, "Food", other);
+    expect(carried("Food")).toEqual({ cents: 0, availableCents: 500_00, heldBack: [JUNE] });
   });
 
   /*

@@ -103,7 +103,7 @@ export const NO_STATEMENT_YET = noStatementHasCovered("it");
  * land — and the clause is said by that rule, its own cause (`lib/rollover-held-back::ROLLOVER_WAITS`), not here.
  */
 export const ROLLOVER_SUBTRACTS =
-  `Bills that came due are subtracted whether they are not posted or ${noStatementHasCovered("them")}.`;
+  `Bills that came due are subtracted whether they are ${NOT_POSTED} or ${noStatementHasCovered("them")}.`;
 
 /**
  * ⚖️ The words for an unread half no statement keeps unread (`inGraceCents`) — in the words the bill's page already

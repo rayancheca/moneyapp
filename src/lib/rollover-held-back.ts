@@ -13,10 +13,16 @@ import { formatDayShortIn } from "./format-date";
  *
  * ⛔ The rule is said once (`ROLLOVER_WAITS`), by its own cause: it is the carry's hold, not the arrears' subtraction
  * (`lib/arrears-reading::ROLLOVER_SUBTRACTS`), that keeps a missing statement out of the carry.
+ *
+ * ⚠️ …and no further than it reaches. A period is read as its category page reads it (`categoryReachFor`): on the
+ * accounts the category has lately been spent from, and `categoryCoverage`'s documented gap is that "a FIRST charge on
+ * an account the category was never spent from in the window is not waited for". 🔴 The sentence ended flatly "…, so
+ * a missing statement cannot bank itself as savings" — false of a statement missing on such an account, whose June
+ * banks (review of 73a743d; pinned in `budgets.test.ts`). It names the accounts it waits on now.
  */
 export const ROLLOVER_WAITS =
-  "A period not yet fully imported adds nothing until its statements land, " +
-  "so a missing statement cannot bank itself as savings.";
+  "A period adds nothing until the accounts this category has lately been spent from are imported through its " +
+  "last day, so a missing statement on one of them cannot bank itself as savings.";
 
 const PERIOD_NOUN: Record<BudgetPeriodKind, string> = {
   daily: "days",
