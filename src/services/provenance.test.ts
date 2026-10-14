@@ -17,7 +17,7 @@ import { institutions } from "@/db/schema/institutions";
 import { transactions } from "@/db/schema/transactions";
 import { transactionSplits } from "@/db/schema/transaction-splits";
 import { provenanceTriggerName, type PresentedVerdict } from "@/lib/provenance-verdict";
-import { balanceLessNotes } from "@/lib/statement-evidence-notes";
+import { balanceLessNotes, type BalanceLessCounts } from "@/lib/statement-evidence-notes";
 import { addManualAnchor } from "./anchors";
 import { createCashWallet } from "./cash-wallets";
 import { addManualTransaction } from "./manual-transactions";
@@ -35,6 +35,15 @@ let bundle: DbBundle;
 let institutionId: string;
 
 const TODAY = "2026-08-05";
+
+/** /imports' footer counts with nothing in them — each test names the one it reads (`balanceLessNotes`) */
+const NO_COUNTS: BalanceLessCounts = {
+  reportDocuments: 0,
+  downloadDocuments: 0,
+  recordedBalanceDocuments: 0,
+  openingStatements: 0,
+  firstStatements: 0,
+};
 
 beforeEach(() => {
   dir = fs.mkdtempSync(path.join(os.tmpdir(), "moneyapp-provenance-"));
@@ -522,11 +531,42 @@ describe("provenanceFor — an account's opening statement", () => {
   });
 
   test("the footer on /imports and the sheet make the same claims of it", () => {
-    const [footer] = balanceLessNotes({ reportDocuments: 0, recordedBalanceDocuments: 0, openingStatements: 1 });
+    const [footer] = balanceLessNotes({ ...NO_COUNTS, openingStatements: 1, firstStatements: 1 });
     for (const claim of ["first", "printed no opening balance", "nothing in it could have failed"]) {
       expect(footer).toContain(claim);
       expect(OPENING_LINE).toContain(claim);
     }
+  });
+
+  /*
+   * 🔴 "The account's first statement" was said of every period the Robinhood parser left without an opening, and
+   * nothing checked it — the parser knows only that the section printed `N/A`. Both of his are their accounts' first
+   * (measured on a copy of his ledger 2026-10-13), so nothing he sees moves; a later statement that printed `N/A` is
+   * a statement still, and its line and sheet say only that — as the footer does (`firstOnAccount`).
+   */
+  test("🔴 a statement that printed no opening after the account's first is never called its first", () => {
+    const agentic = addAccount("ag", "Robinhood Agentic", "checking");
+    const july = addFile("f-jul", "rh-2026-07.pdf", "robinhood-brokerage-statement-pdf");
+    addPeriod("p-jul", agentic, july, "2026-07-01", "2026-07-31", "reconciled");
+    const august = addFile("f-aug", "rh-2026-08.pdf", "robinhood-brokerage-statement-pdf");
+    const period = addPeriod("p-aug", agentic, august, "2026-08-01", "2026-08-31", "not_applicable", {
+      beginning: null,
+      ending: null,
+    });
+    addDays(agentic, [{ day: "2026-08-05", basis: "derived_unverified", cents: 2664 }]);
+    const txn = addTxn(agentic, "2026-08-05", { importFileId: august, cents: 2664 });
+
+    const line = "a statement — it printed no opening balance, so nothing in it could have failed";
+    expect(periodLine(provenanceFor(bundle.db, { kind: "transaction", id: txn })!)).toEqual([line]);
+    expect(
+      periodLine(provenanceFor(bundle.db, { kind: "accountBalance", accountId: agentic, day: "2026-08-05" })!),
+    ).toEqual([line]);
+    expect(provenanceFor(bundle.db, { kind: "statementPeriod", id: period })!.headline).toBe(
+      "This is a statement of Robinhood Agentic's — it printed no opening balance, so nothing in it could have " +
+        "failed.",
+    );
+    const [footer] = balanceLessNotes({ ...NO_COUNTS, openingStatements: 1, firstStatements: 0 });
+    for (const words of [line, footer]) expect(words).not.toMatch(/first|report|carries no balances/);
   });
 
   test("a spending report's period still carries no balances — the line reads the file's kind, not the state", () => {
@@ -619,7 +659,7 @@ describe("provenanceFor — a download that recorded a balance but no opening on
   });
 
   test("the footer on /imports and the sheet make the same claims of it", () => {
-    const [footer] = balanceLessNotes({ reportDocuments: 0, recordedBalanceDocuments: 1, openingStatements: 0 });
+    const [footer] = balanceLessNotes({ ...NO_COUNTS, recordedBalanceDocuments: 1 });
     for (const claim of ["recorded", "balance", "no opening one", "reconcile"]) {
       expect(footer).toContain(claim);
       expect(RECORDED_LINE).toContain(claim);

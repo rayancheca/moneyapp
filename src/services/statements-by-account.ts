@@ -1,4 +1,5 @@
-import { asc, eq } from "drizzle-orm";
+import { and, asc, eq, exists, lt, not, sql, type SQL, type SQLWrapper } from "drizzle-orm";
+import { alias } from "drizzle-orm/sqlite-core";
 import type { AppDatabase } from "@/db/client";
 import { importFiles, statementPeriods, type ReconciliationState } from "@/db/schema/imports";
 import type { StatementPeriodRef } from "@/lib/statement-holes";
@@ -117,6 +118,40 @@ export function balanceLessKind(period: BalanceLessFacts): BalanceLessKind | nul
   if (carriesBalances(period.reconciliation)) return null;
   if (isOpeningStatement(period)) return "opening_statement";
   return period.recordedOn === null ? "no_balance" : "balance_recorded";
+}
+
+/**
+ * Whether no period of the account starts before this one — what lets a page call an opening statement "the
+ * account's first". ONE rule for /imports' footer (`statementEvidence`), the period line on a row's and a day's sheet
+ * and the period's own sheet (provenance.ts).
+ *
+ * 🔴 Every reader said it of every opening statement, and nothing checked it: the parser knows only that the section
+ * printed `N/A` for its opening, which Robinhood prints on an account's first statement — measured twice (Robinhood
+ * Cash, Dec 2023; Robinhood Agentic, Jun 2026: no period of either account starts before them, his ledger copy
+ * 2026-10-13), never promised. A later `N/A` is a statement still (`countsAsStatement`), and is called one.
+ *
+ * ⚠️ ANY period, not only statements: an earlier report on the account makes this false of its first statement too.
+ * The cost is a page saying "a statement" where "its first" was true — never "its first" where it is not.
+ */
+export function firstOnAccount(db: AppDatabase, period: { accountId: string; periodStart: string }): boolean {
+  return earlierPeriod(db, period).limit(1).get() === undefined;
+}
+
+/** `firstOnAccount` as a column of a query over `statement_periods`, correlated on the row's own account and start. */
+export function firstOnAccountSql(
+  db: AppDatabase,
+  row: { accountId: SQLWrapper; periodStart: SQLWrapper },
+): SQL<boolean> {
+  return sql<boolean>`${not(exists(earlierPeriod(db, row)))}`.mapWith(Boolean);
+}
+
+function earlierPeriod(db: AppDatabase, row: { accountId: SQLWrapper | string; periodStart: SQLWrapper | string }) {
+  // aliased, so the row's own `statement_periods` is never the one this asks about by accident
+  const earlier = alias(statementPeriods, "earlier_period");
+  return db
+    .select({ one: sql`1` })
+    .from(earlier)
+    .where(and(eq(earlier.accountId, row.accountId), lt(earlier.periodStart, row.periodStart)));
 }
 
 /** Every account's statements (`countsAsStatement`), oldest first — the rows both statement panels read. */

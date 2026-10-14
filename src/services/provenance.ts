@@ -54,7 +54,7 @@ import { postedAsWord, type Occurrence, type PaydaySample, type PerPaydayEvidenc
 import { rateOn, seriesAmountCents } from "@/lib/series-kind";
 import { postedAveragesBySeries } from "./posted-average";
 import { effectiveSeries, MIN_OCCURRENCES } from "./recurring";
-import { balanceLessKind, type BalanceLessFacts } from "./statements-by-account";
+import { balanceLessKind, firstOnAccount, firstOnAccountSql, type BalanceLessFacts } from "./statements-by-account";
 import { fileRecordedBalanceOn, fileRecordedBalanceOnSql } from "./file-recorded-balance";
 
 /**
@@ -502,6 +502,14 @@ const OPENING_STATEMENT_WHY = "it printed no opening balance, so nothing in it c
  */
 const NO_OPENING_TO_RECONCILE = "but no opening one, so the period itself reconciles nothing";
 
+/** What a period's line reads: `balanceLessKind`'s facts, and whether it is its account's first (`firstOnAccount`). */
+type PeriodLineFacts = BalanceLessFacts & { readonly firstOnAccount: boolean };
+
+/** An opening statement, as its line names it — "the account's first" only where `firstOnAccount` says so. */
+function openingStatementNoun(first: boolean): string {
+  return first ? "the account's first statement" : "a statement";
+}
+
 /**
  * What a statement period concluded, as its line on a sheet reads.
  *
@@ -510,8 +518,10 @@ const NO_OPENING_TO_RECONCILE = "but no opening one, so the period itself reconc
  * and its file recorded Agentic's closing. Measured on a copy of his ledger 2026-10-12: the sheet of Agentic's
  * +$26.64 on Jun 5 read "…which recorded Robinhood Agentic's balance on Jun 30, 2026 — but …" over "2026-06-01 →
  * 2026-06-30 | coverage declared, but this file carries no balances to check against", while /imports' footer counted
- * it "an account's first". Every day of Agentic's June and Robinhood Cash's Dec 2023 read the same on its balance
- * sheet (latent there: /accounts asks for the newest day).
+ * it "an account's first". So did the balance sheet of every day of Agentic's June from the 4th, and of Robinhood
+ * Cash's Dec 2023 from the 5th — the day before each account's first row; the days before those derive no balance
+ * ("Nothing is derived … yet") and show no period line at all, measured on his ledger copy 2026-10-13 (latent there:
+ * /accounts asks for the newest day).
  *
  * 🔴 …and that fix read the PARSER, so every other balance-less period still read the state: an OFX download records
  * the account's balance (LEDGERBAL) and declares its days, and its line said it carries none. The review of 601f155,
@@ -520,10 +530,13 @@ const NO_OPENING_TO_RECONCILE = "but no opening one, so the period itself reconc
  * every row replayed onto a recorded balance; a row's sheet from it read "…which recorded Chase Freedom Unlimited's
  * balance on Sep 30, 2024" over the same line — 18 of the fixture's 27 balance-less periods. The line now reads what
  * the file recorded, by the row headline's rule (`balanceLessKind`, `fileRecordedBalanceOn`).
+ *
+ * ⛔ "The account's first" only where no earlier period of the account precedes it (`firstOnAccount`), the footer's
+ * rule: the parser knows only that the statement printed `N/A` for its opening.
  */
-function periodDetail(p: BalanceLessFacts): string {
+function periodDetail(p: PeriodLineFacts): string {
   const kind = balanceLessKind(p);
-  if (kind === "opening_statement") return `the account's first statement — ${OPENING_STATEMENT_WHY}`;
+  if (kind === "opening_statement") return `${openingStatementNoun(p.firstOnAccount)} — ${OPENING_STATEMENT_WHY}`;
   if (kind === "balance_recorded" && p.recordedOn !== null) {
     return `coverage declared, and this file recorded the account's balance on ${readableDay(p.recordedOn)} — ${NO_OPENING_TO_RECONCILE}`;
   }
@@ -600,7 +613,14 @@ function transactionProvenance(db: AppDatabase, id: string): Provenance | null {
     });
   }
   if (period) {
-    sources.push(periodSource({ ...period, parserProfile: file?.parserProfile ?? null, recordedOn: fileAnchorOn }));
+    sources.push(
+      periodSource({
+        ...period,
+        parserProfile: file?.parserProfile ?? null,
+        recordedOn: fileAnchorOn,
+        firstOnAccount: firstOnAccount(db, period),
+      }),
+    );
   }
 
   /**
@@ -899,6 +919,7 @@ function periodsCovering(db: AppDatabase, accountId: string, day: string) {
       reconciliation: statementPeriods.reconciliation,
       parserProfile: importFiles.parserProfile,
       recordedOn: fileRecordedBalanceOnSql(db, statementPeriods),
+      firstOnAccount: firstOnAccountSql(db, statementPeriods),
     })
     .from(statementPeriods)
     // a left join, as `statementsByAccount`'s: a period is never dropped for want of its file row
@@ -914,7 +935,7 @@ function periodsCovering(db: AppDatabase, accountId: string, day: string) {
     .all();
 }
 
-function periodSource(p: BalanceLessFacts & { periodStart: string; periodEnd: string }): ProvenanceSource {
+function periodSource(p: PeriodLineFacts & { periodStart: string; periodEnd: string }): ProvenanceSource {
   return {
     kind: "period",
     label: `${p.periodStart} → ${p.periodEnd}`,
@@ -1229,7 +1250,8 @@ function statementPeriodProvenance(db: AppDatabase, id: string): Provenance | nu
       : period.reconciliation === "value_anchor"
         ? `This is an investment statement: it records what ${name} was worth, and any difference is absorbed as market movement. There is no arithmetic here that could fail.`
         : kind === "opening_statement"
-          ? `This is ${name}'s first statement — ${OPENING_STATEMENT_WHY}.`
+          ? // "first" by the period line's rule (`firstOnAccount`)
+            `This is ${firstOnAccount(db, period) ? `${name}'s first statement` : `a statement of ${name}'s`} — ${OPENING_STATEMENT_WHY}.`
           : kind === "balance_recorded" && recordedOn !== null
             ? `This file declares which days it covers and recorded ${name}'s balance on ${readableDay(recordedOn)} — ${NO_OPENING_TO_RECONCILE}.`
             : `This file declares which days it covers but carries no balances, so nothing in it can be checked against a total.`;
