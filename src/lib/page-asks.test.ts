@@ -328,6 +328,45 @@ describe("createPageAsks: a link followed while a press is being written", () =>
   });
 });
 
+/**
+ * What asks for its URL only once its own action answers (the benchmark pick) has no ask a move could drop: 🔴 answered
+ * after a link or a Back, it asked anew and went back to the page he had left (review of 10852ef, 2026-10-14).
+ */
+describe("createPageAsks: the page's moves under its asks", () => {
+  test("nothing since the mark: null — an asked URL's navigation and its commit are no move", () => {
+    const asks = createPageAsks();
+    const mark = asks.moveMark();
+    expect(asks.movedSince(mark)).toBeNull();
+    asks.ask("/h?range=1M", {}); // a range pill
+    asks.departing("/h?range=1M", "push");
+    asks.committed("/h?range=1M");
+    expect(asks.movedSince(mark)).toBeNull();
+  });
+
+  test("a link nobody asked for — with nothing asked too — is a link's move", () => {
+    const asks = createPageAsks();
+    const mark = asks.moveMark();
+    asks.departing("/budgets", "push"); // the sidebar's, nothing asked
+    expect(asks.movedSince(mark)).toBe("link");
+    const later = asks.moveMark();
+    asks.ask("/h?range=1M", {});
+    asks.departing("/h/b", "replace"); // foreign to the ask
+    expect(asks.movedSince(later)).toBe("link");
+  });
+
+  test("Back/Forward is a traverse; the newest move since the mark is the one it names", () => {
+    const asks = createPageAsks();
+    const mark = asks.moveMark();
+    asks.moved();
+    expect(asks.movedSince(mark)).toBe("traverse");
+    asks.departing("/budgets", "push");
+    expect(asks.movedSince(mark)).toBe("link"); // Back, then a link: he is on the link's page
+    asks.moved();
+    expect(asks.movedSince(mark)).toBe("traverse");
+    expect(asks.movedSince(asks.moveMark())).toBeNull();
+  });
+});
+
 describe("createPageAsks: the ask a link dropped, until anything is drawn", () => {
   const WHERE: ViewSpec = [{ key: "where", options: ["list", "relief"] }];
   const where = (over: Partial<PressTarget> = {}): PressTarget => ({
