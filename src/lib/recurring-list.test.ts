@@ -3,6 +3,7 @@ import {
   isListedSeries,
   namedSeriesOf,
   SERIES_LIST_PARAM,
+  seriesBehindHref,
   seriesFilterSentence,
   seriesListed,
   seriesListHref,
@@ -36,6 +37,20 @@ describe("seriesListHref ↔ namedSeriesOf — the All tab narrowed to the serie
     expect(namedSeriesOf(` ${PAY} ,<script>, ${TUTORING}`)).toEqual(new Set([PAY, TUTORING]));
     expect(namedSeriesOf("<script>alert(1)</script>")).toBeNull();
     expect(namedSeriesOf("x".repeat(65))).toBeNull();
+  });
+});
+
+/*
+ * ONE rule for a link over a figure summed from series — the earn row's, the car card's, the subscriptions card's. 🔴
+ * The two cards' header links opened a bare `/recurring` (review of the dashboard links, 2026-10-13).
+ */
+describe("seriesBehindHref — where a figure summed from series is checked", () => {
+  test("one series: its own page", () => {
+    expect(seriesBehindHref([PAY])).toBe(`/recurring/${PAY}`);
+  });
+
+  test("more than one: the All tab narrowed to exactly them", () => {
+    expect(seriesBehindHref([PAY, TUTORING])).toBe(seriesListHref([PAY, TUTORING]));
   });
 });
 

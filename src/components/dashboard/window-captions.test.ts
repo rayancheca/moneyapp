@@ -67,6 +67,8 @@ describe("the window captions beside the runway card", () => {
       fromMonth: "2022-09",
       toMonth: "2022-09",
       unread: null,
+      // the card's link to the series it lists (`seriesHref`) — a Link refuses an undefined href
+      seriesHref: "/recurring?tab=all",
       today: "2022-10-15",
     }) as unknown as SubscriptionsCardData;
 

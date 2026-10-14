@@ -102,6 +102,7 @@ export function SubscriptionsCard({ data }: { data: SubscriptionsCardData }) {
     fromMonth,
     toMonth,
     unread,
+    seriesHref,
   } = data;
   // null when the ledger holds no complete month — see `baselineSpan`
   const span = baselineSpan({ months, fromMonth, toMonth });
@@ -112,8 +113,9 @@ export function SubscriptionsCard({ data }: { data: SubscriptionsCardData }) {
     <SurfaceCard>
       <div className="flex items-baseline justify-between gap-3">
         <h3 className="text-xs font-medium uppercase tracking-[0.12em] text-ink-faint">Subscriptions</h3>
+        {/* exactly the series the card lists (`seriesHref`) — 🔴 a bare /recurring, review of the dashboard links */}
         <Link
-          href="/recurring"
+          href={seriesHref}
           className="text-xs text-ink-muted transition-colors duration-(--duration-fast) hover:text-ink"
         >
           Recurring →

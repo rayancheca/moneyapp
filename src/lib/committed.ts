@@ -660,13 +660,14 @@ export function heaviestMonth(occurrences: readonly CommittedOccurrence[]): Heav
  * figure. On the owner's ledger 2026-09-15 this and `endingLead` name the same
  * line, the premium, through Jan 11, 2027.
  *
- * `others` counts every OTHER line that stops inside the horizon, for
+ * `others` counts every OTHER commitment that stops inside the horizon, for
  * `endingOthersClause`.
  *
- * ⚠️ A ONE-CHARGE line (§6A 56) is one of them — it stops on its day — though `endingLead` counts it nowhere, because
- * it lowers no rate. On a copy of his ledger 2026-10-13 the car card says "…, and one other does too" of the Nov 11
- * balance beside a runway sentence that no longer does: two counts of two questions, by design. Whether the car card
- * should leave a one charge out of its count too is his call, asked 2026-10-13.
+ * ⚖️ …and a ONE-CHARGE line (§6A 56) is no commitment that stops: a charge due once is over on its day, as the runway's
+ * count (`endingLead`) has read it since ebf628b — it lowers no rate. Left out of `others` too (§6A 56 read on
+ * 2026-10-14, no new question). 🔴 On a copy of his ledger 2026-10-13 the car card said "…, and one other does too" of
+ * the Nov 11 balance beside the runway's same sentence of Car insurance alone. It still LEADS when it is billed in the
+ * heaviest month: the decision leaves the figures as they were, so that month's figure holds it and stops with it.
  */
 export function heaviestMonthEnding(
   book: { lines: readonly CommittedLine[] },
@@ -679,7 +680,7 @@ export function heaviestMonthEnding(
   // stable: lines arrive largest first, so a tie on the day names the larger
   const lead = ending.filter((l) => billed.has(l.seriesId)).sort((a, b) => compareDates(a.endsOn, b.endsOn))[0];
   if (lead === undefined) return null;
-  return { lead, endsOn: lead.endsOn, others: ending.length - 1 };
+  return { lead, endsOn: lead.endsOn, others: ending.filter((l) => l !== lead && !l.oneCharge).length };
 }
 
 /**
@@ -872,9 +873,17 @@ export function upfrontCarLeftOut(cents: number): string | null {
   if (cents === 0) return null;
   return cents > 0
     ? `the ${formatCents(cents)} paid up front for the car, which the car card spreads over the lease`
-    : `the ${formatCents(-cents)} refunded of the money paid up front for the car, which the car card takes off what ` +
+    : `the ${formatCents(-cents)} ${UPFRONT_REFUNDED} for the car, which the car card takes off what ` +
         "it spreads over the lease";
 }
+
+/**
+ * A NET refund of the car's up-front money, in ONE phrase: the caption's noun (`upfrontCarLeftOut`) and the spend row's
+ * term (`spendArithmeticCaption`). 🔴 The term read "+ $1,100.00 up-front refund" over the caption's "the $1,100.00
+ * refunded of the money paid up front for the car" — one amount, two spellings, on one card (review of decision 61's
+ * caption).
+ */
+const UPFRONT_REFUNDED = "refunded of the money paid up front";
 
 /** The operands of a spending average, as the pages they come from print them — `spendArithmeticCaption`. */
 export interface SpendArithmetic {
@@ -901,7 +910,8 @@ export interface SpendArithmetic {
  * its up-front money — so the reader can find every one, and the sum divides to the row (`runwayCard`'s tests).
  * A term that is zero is dropped; SPENT never is, or the sentence would open on a minus. A NET refund of the up-front
  * money is ADDED: "back" holds it and the average does not (`isUpfrontCarRow`, either sign), so it is named as the
- * refund it is — never "− -$" (`upfrontCarLeftOut`'s 🔴). Null with no complete month: there is nothing to divide.
+ * refund it is, in the caption's words (`UPFRONT_REFUNDED`) — never "− -$" (`upfrontCarLeftOut`'s 🔴). Null with no
+ * complete month: there is nothing to divide.
  */
 export function spendArithmeticCaption(a: SpendArithmetic): string | null {
   const { spentCents, refundsCents, upfrontCarCents, months } = a;
@@ -909,7 +919,8 @@ export function spendArithmeticCaption(a: SpendArithmetic): string | null {
   const terms = [`${formatCents(spentCents)} spent`];
   if (refundsCents !== 0) terms.push(`− ${formatCents(refundsCents)} back`);
   if (upfrontCarCents > 0) terms.push(`− ${formatCents(upfrontCarCents)} up front`);
-  if (upfrontCarCents < 0) terms.push(`+ ${formatCents(-upfrontCarCents)} up-front refund`);
+  // the caption's own words for it (`UPFRONT_REFUNDED`)
+  if (upfrontCarCents < 0) terms.push(`+ ${formatCents(-upfrontCarCents)} ${UPFRONT_REFUNDED}`);
   return `${terms.join(" ")}, over ${monthCount(months)}`;
 }
 

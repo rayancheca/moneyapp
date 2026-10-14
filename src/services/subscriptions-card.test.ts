@@ -12,8 +12,9 @@ import { transactionSplits } from "@/db/schema/transaction-splits";
 import { transactions } from "@/db/schema/transactions";
 import { seedDatabase } from "@/db/seed";
 import { addDays } from "@/lib/dates";
+import { namedSeriesOf, SERIES_LIST_PARAM, seriesListed, seriesListHref } from "@/lib/recurring-list";
 import { importedThrough } from "./imported-through-fixture";
-import { upcomingOccurrences } from "./recurring";
+import { listSeries, upcomingOccurrences } from "./recurring";
 import { subscriptionsCard } from "./subscriptions-card";
 
 /**
@@ -497,6 +498,43 @@ describe("subscriptionsCard — a one-charge series is a one-off, not a monthly 
     expect(c.oneOffs).toEqual([]);
     expect(c.endedCount).toBe(1);
     expect(c.liveMonthlyCents).toBe(5000);
+  });
+});
+
+/*
+ * The drill-down contract: a link opens exactly the rows behind its number. 🔴 The card's "Recurring →" opened a bare
+ * `/recurring` over figures summed from the series it lists — on his ledger copy 2026-10-13 its 13 (12 live, the Nov 11
+ * balance) inside the Upcoming tab's every series, his pay among them (review of the dashboard links, 2026-10-13). It
+ * names them, as the earn row names its schedules (`seriesBehindHref`), and the All tab lists exactly those.
+ */
+describe("subscriptionsCard — its link opens exactly the series it lists", () => {
+  test("live, one-off and lapsed, and nothing the card leaves out", () => {
+    const live = addSeries({ name: "Breezeline", kind: "bill", amountCents: -5000, lastMatchedOn: FRESH });
+    const lapsed = addSeries({ name: "Dead sub", amountCents: -799, lastMatchedOn: LAPSED });
+    const once = addSeries({
+      name: "Nov 11 balance",
+      kind: "bill",
+      amountCents: -7274,
+      lastMatchedOn: null,
+      userNextExpectedOn: "2026-11-11",
+      userEndsOn: "2026-11-11",
+    });
+    // on the All tab, and in no figure of the card's
+    addSeries({ name: "Salary", kind: "income", amountCents: 200000 });
+    addSeries({ name: "Card autopay", kind: "transfer", amountCents: -50000 });
+    addSeries({ name: "Gone gym", amountCents: -4000, status: "ended" });
+
+    const href = card()!.seriesHref;
+
+    expect(href).toBe(seriesListHref([live, once, lapsed]));
+    const param = new URL(href, "http://x").searchParams.get(SERIES_LIST_PARAM);
+    const listed = seriesListed(listSeries(bundle.db, TODAY), namedSeriesOf(param));
+    expect(listed.rows.map((s) => s.name).sort()).toEqual(["Breezeline", "Dead sub", "Nov 11 balance"]);
+  });
+
+  test("one series opens its own page, as the earn row's one schedule does", () => {
+    const only = addSeries({ name: "Breezeline", kind: "bill", amountCents: -5000, lastMatchedOn: FRESH });
+    expect(card()!.seriesHref).toBe(`/recurring/${only}`);
   });
 });
 

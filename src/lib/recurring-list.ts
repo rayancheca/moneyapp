@@ -23,6 +23,17 @@ export function seriesListHref(ids: readonly string[]): string {
   return ids.length === 0 ? ALL_SERIES_HREF : `${ALL_SERIES_HREF}&${SERIES_LIST_PARAM}=${ids.join(",")}`;
 }
 
+/**
+ * Where a figure summed from series is checked: one series opens its own page, more than one the All tab narrowed to
+ * exactly them (`seriesListHref`). ⛔ ONE rule for every such link — the earn row's schedules (`incomeBasisHref`), the
+ * car card's lines and the subscriptions card's series. 🔴 Both cards' header links opened a bare `/recurring` over
+ * figures summed from their series — on his ledger copy 2026-10-13 the Upcoming tab's every series, his pay among them
+ * (review of the dashboard links).
+ */
+export function seriesBehindHref(ids: readonly string[]): string {
+  return ids.length === 1 ? `/recurring/${ids[0]}` : seriesListHref(ids);
+}
+
 /** The series a `?series=` value names, or null when it names none — the whole tab. */
 export function namedSeriesOf(value: string | null): ReadonlySet<string> | null {
   if (value === null) return null;
@@ -69,8 +80,9 @@ export function seriesListed<T extends { id: string; status: string }>(
 }
 
 /**
- * The line over a narrowed All tab. Every link that narrows it today stands under a figure (`incomeBasisHref`'s
- * schedules), so the line names the figure rather than a filter. ⛔ Never "Showing 0 of 14" over an empty tab.
+ * The line over a narrowed All tab. Every link that narrows it today stands over a figure (`seriesBehindHref`: the
+ * earn row's schedules, the car and subscriptions cards' series), so the line names the figure rather than a filter.
+ * ⛔ Never "Showing 0 of 14" over an empty tab.
  */
 export function seriesFilterSentence({ shown, of }: SeriesNarrowing): string {
   return shown === 0
