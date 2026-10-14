@@ -1673,8 +1673,9 @@ export function scheduleHasEnded(s: SeriesOverrides, today: string): boolean {
 
 /**
  * The day a schedule its end has closed RAN OUT (`scheduleHasEnded`): its last date on or before its end, on the
- * anchor's rhythm as the walk steps it — null while a date is still to come, or while that last date is (an anchor
- * typed past its end whose rhythm's last day has not come).
+ * anchor's rhythm as the walk steps it, never before its last charge (`lastMatchedOn`) nor past its end — null while
+ * a date is still to come, or while that last date is (an anchor typed past its end whose rhythm's last day has not
+ * come).
  *
  * ⛔ The end badge's day once the schedule is over (`seriesEndBadge`): not the end itself, which can fall between two
  * due days. 🔴 Car insurance ending Jan 5, 2027 holds Dec 11 and nothing after; from Dec 12 its page read "Ends Jan 5,
@@ -1686,14 +1687,30 @@ export function scheduleHasEnded(s: SeriesOverrides, today: string): boolean {
  * 🔴 Stepping only forward, that anchor "held no date": a reset to detected after Dec 11 posted (anchor Jan 11, end Jan
  * 5) read "Ends Jan 5, 2027" beside "Its schedule has ended" again, and "Ended Jan 5, 2027" from Jan 6 where the
  * unposted shape read "Ended Dec 11, 2026" (review of 7a3c702, on a copy of his ledger set up so).
+ *
+ * ⛔ …and never before its LAST CHARGE, nor past its end. The walk back lands on the last posting only when detection's
+ * anchor sits one step after a posting on or before the end, and two shapes break that. 🔴 posted_on is the SETTLE day
+ * (his Aug 11 premium is in the ledger as Aug 12): a last premium due on the end can post after it, and with Dec 11 and
+ * Jan 12 linked to Car insurance, detection's anchor Feb 12 and his real Jan 11 end, the walk stepped past Jan 12 to
+ * "Ended Dec 12, 2026" — a day nothing posted (review of b350ceb, a copy of his ledger asked Jan 13 and Feb 1). 🔴 A
+ * day-stepped anchor is the last posting plus the MEDIAN gap while the walk steps the AVERAGE: biweekly, last Dec 4,
+ * median 14, average 14.6, end Dec 10 — the walk landed on Dec 3, the day before the charge. A charge after the end is
+ * the end's own: "Ended Jan 11, 2027", as 7a3c702 read it and as his typed anchor does.
  */
-export function scheduleRanOutOn(s: SeriesOverrides, today: string): string | null {
+export function scheduleRanOutOn(
+  s: SeriesOverrides & { lastMatchedOn: string | null },
+  today: string,
+): string | null {
   if (!scheduleHasEnded(s, today)) return null;
   const eff = effectiveSchedule(s);
   // `scheduleHasEnded` holds only with a next day and an end (`rollForwardNextExpected`'s two nulls)
   const plan = stepPlan(eff.cadence, eff.intervalDaysAvg, eff.anchorDay);
   const anchor = eff.nextExpectedOn!;
-  const last = stepFrom(anchor, plan, signedStepsToReach(anchor, plan, addDays(eff.userEndsOn!, 1)) - 1);
+  const end = eff.userEndsOn!;
+  const walked = stepFrom(anchor, plan, signedStepsToReach(anchor, plan, addDays(end, 1)) - 1);
+  const charged = s.lastMatchedOn;
+  const last =
+    charged !== null && compareDates(charged, walked) > 0 ? (compareDates(charged, end) > 0 ? end : charged) : walked;
   // a day still to come has not run out: only an anchor TYPED past its end lands here (detection's follows a posting)
   return compareDates(last, today) > 0 ? null : last;
 }

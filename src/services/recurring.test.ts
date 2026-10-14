@@ -737,14 +737,15 @@ describe("annualizedCentsOf — no year ahead of a series whose end has passed",
  */
 describe("scheduleRanOutOn — the day a closed schedule ran out", () => {
   const row = {
-    cadence: "monthly" as "weekly" | "monthly",
+    cadence: "monthly" as "weekly" | "biweekly" | "monthly",
     userCadence: null,
-    intervalDaysAvg: null,
+    intervalDaysAvg: null as number | null,
     nextExpectedOn: "2026-09-11",
     userNextExpectedOn: null as string | null,
     nextExpectedAmountCents: -35758,
     userAmountCents: null,
     userEndsOn: null as string | null,
+    lastMatchedOn: null as string | null,
   };
 
   test("its last date on or before the end — null while one is to come, or with no end", () => {
@@ -770,7 +771,7 @@ describe("scheduleRanOutOn — the day a closed schedule ran out", () => {
    * "Ended Dec 11, 2026". The day it ran out is the anchor's rhythm stepped BACK to the end.
    */
   test("detection's anchor, a step past the end once the last charge posted: the day it ran out, stepped back", () => {
-    const detected = { ...row, nextExpectedOn: "2027-01-11", userEndsOn: "2027-01-05" };
+    const detected = { ...row, nextExpectedOn: "2027-01-11", lastMatchedOn: "2026-12-11", userEndsOn: "2027-01-05" };
     for (const day of ["2026-12-12", "2027-01-05", "2027-01-06", "2027-03-01"]) {
       expect(scheduleRanOutOn(detected, day), day).toBe("2026-12-11");
     }
@@ -785,6 +786,40 @@ describe("scheduleRanOutOn — the day a closed schedule ran out", () => {
     // typed Feb 11 on a Jan 5 end, asked Oct 13: the rhythm's Dec 11 has not come — no day it RAN OUT
     const typedPast = { ...row, userNextExpectedOn: "2027-02-11", userEndsOn: "2027-01-05" };
     expect(scheduleRanOutOn(typedPast, "2026-10-13")).toBeNull();
+  });
+
+  /*
+   * 🔴 Review of b350ceb: the walk back rested on detection's anchor sitting one step after a posting ON OR BEFORE the
+   * end, and two shapes break it. posted_on is the SETTLE day — his Aug 11 premium is in the ledger as Aug 12 — so the
+   * last premium, due on the end, can post after it: Dec 11 and Jan 12 linked to Car insurance, detection's anchor
+   * Feb 12 (`stepFrom(Jan 12, monthly, 1)`), his real Jan 11 end, and the walk stepped past Jan 12 to "Ended Dec 12,
+   * 2026", a day nothing posted (a copy of his ledger set up so, asked Jan 12, Jan 13 and Feb 1; 7a3c702 read "Ended
+   * Jan 11").
+   * And a day-stepped anchor is the last posting plus the MEDIAN gap where the walk steps the AVERAGE: the day before
+   * the last charge.
+   */
+  test("never before its last charge, never past its end: a last premium settled after the end reads the end", () => {
+    const settledLate = { ...row, nextExpectedOn: "2027-02-12", lastMatchedOn: "2027-01-12", userEndsOn: "2027-01-11" };
+    for (const day of ["2027-01-12", "2027-01-13", "2027-02-01"]) {
+      expect(scheduleRanOutOn(settledLate, day), day).toBe("2027-01-11");
+    }
+    // the same postings with his typed anchor read the same day — the badge "Ended Jan 11, 2027" either way
+    expect(scheduleRanOutOn({ ...settledLate, userNextExpectedOn: "2026-12-11" }, "2027-01-13")).toBe("2027-01-11");
+  });
+
+  test("…and a day-stepped anchor a median past its last charge ran out on that charge, not the day before", () => {
+    // biweekly, last Dec 4, median gap 14 → detection's anchor Dec 18; average 14.6 → the walk steps 15: back to Dec 3
+    const biweekly = {
+      ...row,
+      cadence: "biweekly" as const,
+      intervalDaysAvg: 14.6,
+      nextExpectedOn: "2026-12-18",
+      lastMatchedOn: "2026-12-04",
+      userEndsOn: "2026-12-10",
+    };
+    expect(scheduleRanOutOn(biweekly, "2026-12-20")).toBe("2026-12-04");
+    // a charge long before the walk's last day changes nothing: the rhythm's own day stands
+    expect(scheduleRanOutOn({ ...biweekly, lastMatchedOn: "2026-10-01" }, "2026-12-20")).toBe("2026-12-03");
   });
 });
 

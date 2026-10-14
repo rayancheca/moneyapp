@@ -215,6 +215,29 @@ describe("SeriesDetail — a schedule of one charge reads once, on its own page"
   );
 
   /*
+   * 🔴 Review of b350ceb — his real Jan 11 end, and his real settle lag (the Aug 11 premium is in the ledger as Aug
+   * 12): the last premium posts Jan 12, reset to detected its anchor is Feb 12, and the walk back stepped past it to
+   * "Ended Dec 12, 2026" — a day nothing posted, under a Jan 12 charge (a copy of his ledger set up so, asked Jan 13
+   * and Feb 1). The day it ran out is never before its last charge nor past its end: Jan 11, as his typed anchor reads.
+   */
+  test.each(["2027-01-13", "2027-02-01"])(
+    "%s, its last premium settled the day after the end: 'Ended Jan 11, 2027', never a day before that charge",
+    (today) => {
+      his.charge("2026-12-11", -35758, his.insuranceId);
+      his.charge("2027-01-12", -35758, his.insuranceId);
+      bundle.db
+        .update(recurringSeries)
+        .set({ userNextExpectedOn: null, nextExpectedOn: "2027-02-12", lastMatchedOn: "2027-01-12" })
+        .where(eq(recurringSeries.id, his.insuranceId))
+        .run();
+      const text = words(pageOn(his.insuranceId, today));
+      expect(text).toContain("Its schedule has ended");
+      expect(text).toContain("Ended Jan 11, 2027");
+      expect(text).not.toContain("Ended Dec 12, 2026");
+    },
+  );
+
+  /*
    * ⚖️ §6A 56 (2026-10-08): ONE charge reads once, wherever its schedule is spelled — the End dialog's too. 🔴 Review of
    * 7a3c702: on his ledger copy 2026-10-13 the balance's dialog read "Upcoming charges off the calendar: every charge
    * from Nov 11, 2026 to Nov 11, 2026", a span of one day, one click from "charges once on Nov 11".
