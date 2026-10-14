@@ -2562,10 +2562,17 @@ function merchantSpendProvenance(
     .filter((r) => isHisExpenseRow(idx, agentsCash, r));
 
   /*
-   * ⚖️ Decision 72 does not grade this one yet. Its window is no period a reader picked — it is the merchant's own
-   * first and last visit (`merchant-insights`), shown on no other surface — and no rule names a merchant's read day.
-   * ❓ His call (measured on his ledger copy 2026-10-13: 12 of 254 merchant pages with a proof have a last visit past
-   * the earliest import day of the accounts they were paid from — Flamingo South Beach, Sep 2 against Aug 12).
+   * ❓ HIS CALL, OPEN (review of 2fce458, the handoff's §6A): decision 72 does not grade this one. Its window is no
+   * period a reader picked — it is the merchant's own first and last visit (`merchant-insights`) — and no rule names a
+   * merchant's read day. Either (a) read it by the earliest import day of the accounts it was paid from, as a category's
+   * is (`categoryCoverage`), or (b) leave it out: it ends on a row the ledger has read. Measured on his ledger copy
+   * 2026-10-13: under (a) 12 of 254 merchant pages with a proof turn "partly read". Flamingo South Beach ("the largest
+   * of your 254 regular merchants, at $9,248.82 · adds up", Jun 16 – Sep 2) would read "spending imported through Aug
+   * 12 · 21 days of this period unaccounted": Chase Checking paid ONE rent (Jul 8), the two since posted on Wells Fargo,
+   * read through Sep 24 — the reading his decision 62 turned down for the rent's due days. In 8 of the 12 the account
+   * holding the day back last paid that merchant 10 months ago or more (DoorDash: Chase Checking, Nov 2023). Read by
+   * the accounts its last two payments used (62's reading of a bill) none of the 12 move. Pinned as shipped until he
+   * answers (provenance.test, "a merchant's own window is not graded").
    */
   return summedRowsProvenance(db, rows, label ?? merchant.canonicalName, from, to);
 }

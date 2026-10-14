@@ -14,6 +14,7 @@ import { holdings, priceCache } from "@/db/schema/holdings";
 import { recurringSeries } from "@/db/schema/recurring";
 import { importFiles, statementPeriods } from "@/db/schema/imports";
 import { institutions } from "@/db/schema/institutions";
+import { merchants } from "@/db/schema/merchants";
 import { transactions } from "@/db/schema/transactions";
 import { transactionSplits } from "@/db/schema/transaction-splits";
 import { provenanceTriggerName, type PresentedVerdict } from "@/lib/provenance-verdict";
@@ -3755,5 +3756,39 @@ describe("⚖️ decision 72 — a total over days its accounts have not been im
     const p = provenanceFor(bundle.db, { kind: "categorySpend", categoryId: pay, ...JULY })!;
     expect(p.verdict).toBe("derived");
     expect(p.partlyRead).toBeUndefined();
+  });
+
+  /*
+   * ❓ HIS CALL, OPEN (review of 2fce458, the handoff's §6A): a merchant's own window — its first visit to its last
+   * (`merchant-insights`) — is not graded. Either it is read by the earliest import day of the accounts it was paid
+   * from, as a category's is (`categoryCoverage`), or it is left out: it ends on a row the ledger has read. Pinned as
+   * shipped until he answers, in the shape of his rent (Flamingo South Beach on his ledger copy 2026-10-13: one payment
+   * on Chase Checking, imported through Aug 12, the two since on Wells Fargo, read through Sep 24), where the category
+   * over the same days IS partly read.
+   */
+  test("❓ a merchant's own window is not graded — the category over the same days is", () => {
+    const checking = addAccount("a", "Chase Checking", "checking");
+    const wells = addAccount("b", "Wells Fargo", "checking");
+    const file = addFile("f1", "july.pdf", "chase-checking-statement-pdf");
+    addDays(checking, [{ day: "2026-07-01", basis: "anchored" }, { day: "2026-07-20", basis: "derived" }]);
+    addDays(wells, [{ day: "2026-07-01", basis: "anchored" }, { day: "2026-07-31", basis: "derived" }]);
+    bundle.db.insert(merchants).values({ id: "m-rent", canonicalName: "Fixture Landlord", createdAt: now(), updatedAt: now() }).run();
+    for (const [acct, day] of [[checking, "2026-07-10"], [wells, "2026-07-25"], [wells, "2026-07-31"]] as const) {
+      const id = addTxn(acct, day, { importFileId: file });
+      categorize(id, food);
+      bundle.db.run(sql`UPDATE transactions SET merchant_id = 'm-rent' WHERE id = ${id}`);
+    }
+    // Chase Checking is read through Jul 20 by a row of its own elsewhere
+    categorize(addTxn(checking, "2026-07-20", { importFileId: file }), food);
+    const window = { from: "2026-07-10", to: "2026-07-31" };
+
+    const rent = provenanceFor(bundle.db, { kind: "merchantSpend", merchantId: "m-rent", ...window })!;
+    expect(rent.verdict).toBe("derived");
+    expect(rent.partlyRead).toBeUndefined();
+    expect(rent.headline).toMatch(/^This total is the sum of 3 rows from 1 document\./);
+    expect(foodTotal(window).partlyRead).toEqual({
+      uncoveredDays: 11,
+      line: "spending imported through Jul 20 · 11 days of this period unaccounted",
+    });
   });
 });
