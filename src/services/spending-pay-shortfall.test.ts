@@ -133,6 +133,16 @@ describe("/spending — a window whose read paydays were not banked inside it", 
     ]);
   });
 
+  test("a window ending on the day the lump landed: that day's payday is read and its deposit banked inside", () => {
+    // 🔴 found in review 2026-10-13: the last day could fall out of the window with every test green — then this read
+    // "Aug 6 – 27 … $1,000.00 (Aug 27) was paid by the deposit of Thu, Sep 3, 2026", a deposit inside its own window
+    coverThrough("2026-09-12");
+    expect(notesFor("2026-08-01", "2026-09-03").map((n) => n.body)).toEqual([
+      "Cash job (weekly pay)'s paydays over Aug 6 – Sep 3, 2026 came to $5,000.00, of which $2,000.00 was banked " +
+        "inside the window and $3,000.00 never reached a bank.",
+    ]);
+  });
+
   test("a shortfall no deposit ever paid", () => {
     coverThrough("2026-09-12");
     expect(notesFor("2026-08-01", "2026-08-21").map((n) => n.body)).toEqual([

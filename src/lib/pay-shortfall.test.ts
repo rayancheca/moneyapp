@@ -153,3 +153,57 @@ describe("payShortfall — a window's read paydays against the settlement", () =
     expect(s.neverBankedCents).toBe(PAYROLL - 110_000);
   });
 });
+
+/**
+ * 🔴 Found in review 2026-10-13: `inWindow`'s last day could read `< 0` with every test green — no payday, deposit or
+ * left-over money in any of them sat on a window's last day, and a month ends on a payday or a deposit day as often as
+ * on any other. The window is inclusive at both ends (`PayShortfallWindow`), as /spending's `range.to` is.
+ */
+describe("payShortfall — the window's LAST day is inside it", () => {
+  const cashWeeks = (from: string, to: string): PaydayOccurrence[] =>
+    thursdays(from, to).map((date) => ({ date, amountCents: CASH }));
+  const window = (from: string, to: string) => ({ from, to, today: TODAY, checkedThrough: CHECKED });
+
+  test("a payday on the last day (Thu Apr 30) is read, and its own deposit that day banked it inside", () => {
+    const s = payShortfall(
+      walked(cashWeeks("2026-04-02", "2026-05-07"), [{ postedOn: "2026-04-30", amountCents: CASH }]),
+      window("2026-04-01", "2026-04-30"),
+    );
+    expect(s).toEqual({
+      readPaydays: 5,
+      firstReadOn: "2026-04-02",
+      lastReadOn: "2026-04-30",
+      readCents: 5 * CASH,
+      bankedInsideCents: CASH,
+      paidOutside: [],
+      neverBankedCents: 4 * CASH,
+      unlookedPaydays: 0,
+      towardNoPayday: [],
+    });
+  });
+
+  test("a deposit on the last day (Fri Jul 31) banked Thursday's pay inside — never 'paid by the deposit of'", () => {
+    const s = payShortfall(
+      walked(cashWeeks("2026-07-02", "2026-08-06"), [{ postedOn: "2026-07-31", amountCents: CASH }]),
+      window("2026-07-01", "2026-07-31"),
+    );
+    // Fri Jul 31 anchors Thu Jul 30, one day inside its tolerance; Aug 6 is past its reach
+    expect(s.lastReadOn).toBe("2026-07-30");
+    expect(s.bankedInsideCents).toBe(CASH);
+    expect(s.paidOutside).toEqual([]);
+    expect(s.neverBankedCents).toBe(4 * CASH);
+  });
+
+  test("money on the last day that paid no payday is named toward no payday", () => {
+    // June's shape a month later: Thu Jul 30 pays its own week, and Fri Jul 31's $400.00 finds that week settled
+    const s = payShortfall(
+      walked(cashWeeks("2026-07-02", "2026-08-06"), [
+        { postedOn: "2026-07-30", amountCents: CASH },
+        { postedOn: "2026-07-31", amountCents: 40_000 },
+      ]),
+      window("2026-07-01", "2026-07-31"),
+    );
+    expect(s.bankedInsideCents).toBe(CASH);
+    expect(s.towardNoPayday).toEqual([{ depositOn: "2026-07-31", cents: 40_000 }]);
+  });
+});
