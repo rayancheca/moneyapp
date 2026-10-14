@@ -2,6 +2,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import Database from "better-sqlite3";
+import { sql } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { createDatabase, type AppDatabase, type DbBundle } from "./client";
 import {
@@ -16,6 +17,7 @@ import {
   resolveSnapshotPath,
   restoreFromSnapshot,
   withPreMutationSnapshot,
+  withPreMutationTransaction,
 } from "./backup";
 
 let dir: string;
@@ -314,6 +316,87 @@ describe("withPreMutationSnapshot", () => {
     expect(ran).toBe(true);
     expect(fs.existsSync(path.join(process.cwd(), "backups"))).toBe(false);
     memory.sqlite.close();
+  });
+});
+
+/*
+ * 🔴 Review of 474e757 (2026-10-12): a merge refused by its reading inside its own transaction kept the restore point it
+ * had taken, and the oldest of the twelve kept was pruned for it. A write that may refuse inside its transaction takes
+ * its restore point through this: a rolled-back write takes it back, and only a committed one prunes.
+ */
+describe("withPreMutationTransaction", () => {
+  let appDir: string;
+  let bundle: DbBundle;
+  const backups = () => path.join(appDir, "data", "backups");
+  const archive = () => (fs.existsSync(backups()) ? fs.readdirSync(backups()).filter((f) => f.startsWith("pre-")).sort() : []);
+  const twelve = Array.from({ length: 12 }, (_, i) => `pre-2026-01-${String(i + 1).padStart(2, "0")}T090000-older.db`);
+  const count = () => (bundle.sqlite.prepare("SELECT COUNT(*) c FROM t").get() as { c: number }).c;
+
+  beforeEach(() => {
+    appDir = fs.mkdtempSync(path.join(os.tmpdir(), "moneyapp-pretransaction-"));
+    bundle = createDatabase(path.join(appDir, "data", "moneyapp.db"));
+    bundle.sqlite.exec("CREATE TABLE t (v TEXT)");
+    bundle.sqlite.prepare("INSERT INTO t (v) VALUES ('before')").run();
+    fs.mkdirSync(backups(), { recursive: true });
+    for (const name of twelve) fs.writeFileSync(path.join(backups(), name), "");
+  });
+
+  afterEach(() => {
+    bundle.sqlite.close();
+    fs.rmSync(appDir, { recursive: true, force: true });
+  });
+
+  test("a write that commits: its restore point holds the prior state, and the oldest is pruned only then", () => {
+    const returned = withPreMutationTransaction(bundle.db, "merge-series", (tx) => {
+      expect(archive()).toHaveLength(13); // taken before the write, nothing pruned yet
+      tx.run(sql`DELETE FROM t`);
+      return "written";
+    });
+
+    expect(returned).toBe("written");
+    expect(count()).toBe(0);
+    const kept = archive();
+    expect(kept.slice(0, 11)).toEqual(twelve.slice(1));
+    const snapshot = new Database(path.join(backups(), kept[11]!), { readonly: true });
+    expect((snapshot.prepare("SELECT COUNT(*) c FROM t").get() as { c: number }).c).toBe(1);
+    snapshot.close();
+  });
+
+  test("a write that refuses inside its transaction rolls back, and the backups folder is as it was", () => {
+    expect(() =>
+      withPreMutationTransaction(bundle.db, "merge-series", (tx) => {
+        tx.run(sql`DELETE FROM t`);
+        throw new Error("Nothing was merged");
+      }),
+    ).toThrow("Nothing was merged");
+
+    expect(count()).toBe(1);
+    expect(archive()).toEqual(twelve);
+  });
+
+  test("a restore point that cannot be written refuses before the write runs", () => {
+    fs.rmSync(backups(), { recursive: true });
+    fs.writeFileSync(backups(), "not a directory");
+    let ran = false;
+
+    expect(() =>
+      withPreMutationTransaction(bundle.db, "merge-series", () => {
+        ran = true;
+      }),
+    ).toThrow(/nothing was changed/);
+    expect(ran).toBe(false);
+  });
+
+  test("an in-memory database has no file to protect: the write runs, refused or not, with no folder touched", () => {
+    const memory = createDatabase(":memory:");
+    expect(withPreMutationTransaction(memory.db, "merge-series", () => "written")).toBe("written");
+    expect(() =>
+      withPreMutationTransaction(memory.db, "merge-series", () => {
+        throw new Error("refused");
+      }),
+    ).toThrow("refused");
+    memory.sqlite.close();
+    expect(archive()).toEqual(twelve);
   });
 });
 

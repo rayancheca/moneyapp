@@ -7,7 +7,7 @@ import { categories } from "@/db/schema/categories";
 import { merchantAliases, merchants } from "@/db/schema/merchants";
 import { appSettings } from "@/db/schema/settings";
 import { transactions } from "@/db/schema/transactions";
-import { formatCategoryPath } from "@/lib/category-path";
+import { formatCategoryPath, parseCategoryPath } from "@/lib/category-path";
 import { isPrintableName } from "@/lib/printable-name";
 import { notUserOwned } from "./merchants";
 
@@ -328,7 +328,8 @@ export async function classifyPendingMerchants(
 }
 
 function resolveCategoryPath(db: AppDatabase, path: string): string | null {
-  const [parentName, subName] = path.split(" > ").map((s) => s.trim());
+  const read = parseCategoryPath(path);
+  const [parentName, subName] = [read.parentName.trim(), read.childName?.trim()];
   if (!parentName) return null;
   const parent = db
     .select({ id: categories.id })

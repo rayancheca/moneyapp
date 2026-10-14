@@ -17,6 +17,7 @@ import {
   type TransactionStatus,
 } from "@/db/schema/transactions";
 import { migrateSplits, splitCountsByTxn } from "../transaction-splits";
+import { parseCategoryPath } from "@/lib/category-path";
 import { addDays } from "@/lib/dates";
 import { descriptionScore } from "@/lib/description-score";
 import { assignOccurrenceIndexes, dedupeHash, fileSha256, type DuplicatePairSide } from "@/lib/hash";
@@ -1184,11 +1185,11 @@ export function resolveAccount(db: AppDatabase, hint: AccountHint): string {
 }
 
 function categoryIdForPath(db: AppDatabase, pathStr: string): string | null {
-  const [parentName, subName] = pathStr.split(" > ");
+  const { parentName, childName: subName } = parseCategoryPath(pathStr);
   const parent = db
     .select({ id: categories.id })
     .from(categories)
-    .where(and(eq(categories.name, parentName!), isNull(categories.parentId)))
+    .where(and(eq(categories.name, parentName), isNull(categories.parentId)))
     .get();
   if (!parent) return null;
   if (!subName) return parent.id;

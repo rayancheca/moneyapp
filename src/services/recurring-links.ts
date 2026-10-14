@@ -1,5 +1,5 @@
 import { and, eq, inArray, isNull, lte, type SQL } from "drizzle-orm";
-import { withPreMutationSnapshot } from "@/db/backup";
+import { withPreMutationTransaction } from "@/db/backup";
 import type { AppDatabase } from "@/db/client";
 import type { CategoryKind } from "@/db/schema/categories";
 import { recurringSeries, type Cadence, type SeriesKind } from "@/db/schema/recurring";
@@ -469,37 +469,31 @@ export function mergeSeries(
   shown?: ShownFiling | null,
 ): MergeResult {
   if (sourceId === targetId) throw new Error("Cannot merge a series into itself");
-  // ⛔ Every refusal BEFORE the restore point: a refused merge writes nothing — a spare restore point would push his
-  // oldest out of the twelve kept. Read again inside the write below, the one reading the merge writes by.
+  // ⛔ A refused merge writes nothing — a spare restore point would push his oldest out of the twelve kept. Refused here
+  // before the restore point is taken; read again inside the write below, the one reading the merge writes by, where a
+  // refusal (a write landed while the restore point was taken) rolls back and takes the restore point back with it.
   readMerge(db, sourceId, targetId, shown);
   const ctx = loadRecomputeCtx(db);
-  let relinked = 0;
-  let finalTarget = targetId;
-  let filed: HandFiling | null = null;
   // A merge has no inverse: the source ends, its mergedIntoId is permanent, and
   // detection forward-maps its identity so it can never be resurrected.
-  withPreMutationSnapshot(db, "merge-series", () => {
-    db.transaction((tx) => {
-      const read = readMerge(tx, sourceId, targetId, shown);
-      finalTarget = read.finalTarget;
-      writeFiling(tx, read.planned?.plan ?? null);
-      filed = read.planned?.filing ?? null;
+  return withPreMutationTransaction(db, "merge-series", (tx) => {
+    const read = readMerge(tx, sourceId, targetId, shown);
+    const finalTarget = read.finalTarget;
+    writeFiling(tx, read.planned?.plan ?? null);
 
-      const res = tx
-        .update(transactions)
-        .set({ recurringSeriesId: finalTarget, seriesLinkSource: "user" })
-        .where(movedByMerge([sourceId]))
-        .run();
-      relinked = res.changes;
+    const res = tx
+      .update(transactions)
+      .set({ recurringSeriesId: finalTarget, seriesLinkSource: "user" })
+      .where(movedByMerge([sourceId]))
+      .run();
 
-      tx.update(recurringSeries)
-        .set({ status: "ended", mergedIntoId: finalTarget })
-        .where(eq(recurringSeries.id, sourceId))
-        .run();
-      recomputeSeriesStats(tx, finalTarget, today, ctx);
-    });
+    tx.update(recurringSeries)
+      .set({ status: "ended", mergedIntoId: finalTarget })
+      .where(eq(recurringSeries.id, sourceId))
+      .run();
+    recomputeSeriesStats(tx, finalTarget, today, ctx);
+    return { relinked: res.changes, targetId: finalTarget, filed: read.planned?.filing ?? null };
   });
-  return { relinked, targetId: finalTarget, filed };
 }
 
 export interface CreateSeriesResult {

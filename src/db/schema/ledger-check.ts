@@ -62,8 +62,9 @@ export const ledgerWitnessMarks = sqliteTable("ledger_witness_marks", {
  * ⛔ That is ALL it trims: a no-break, ideographic or zero-width space, a control character or the braille blank
  * passes it. The app's writer refuses those too (`reasonSaysNothing`: every Unicode whitespace, invisible, format and
  * control character, and U+2800), and a control character, a line or paragraph separator or a bidi control among a
- * reason's words (`reasonCarriesControl`). Migration 0024 is applied to the real ledger, so it is never edited: a wider
- * CHECK would take a new migration, rebuilding the table.
+ * reason's words (`reasonCarriesControl`) — but for a reason stored already, from before that guard, which an open line
+ * alike takes exactly (`reasonCarriedAlready`). Migration 0024 is applied to the real ledger, so it is never edited:
+ * a wider CHECK would take a new migration, rebuilding the table.
  */
 export const leftOutAcknowledgements = sqliteTable(
   "left_out_acknowledgements",

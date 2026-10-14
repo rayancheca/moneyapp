@@ -67,6 +67,24 @@ describe("ledger-check — lines left out by a re-read", () => {
   });
 
   /*
+   * ⛔ A reason carrying a control character or a bidi control is refused by name before the step says or writes a
+   * thing — the command line names the refusal (`carriedRefusal`, lib/witness-floor.test.ts) — unless the mark's lines
+   * alike carry that reason stored already, from before the guard (`reasonCarriedAlready`). 🔴 Refused before the
+   * ledger was read, such a reason could never be given again, and a mark partly acknowledged with it failed for good
+   * (review of 3872004).
+   */
+  test("⛔ a reason carrying what a guard refuses is refused first, exit 2 — unless its lines alike carry it stored", () => {
+    const step = script.slice(script.indexOf('if (MODE.mode === "acknowledge") {'));
+    const refuse = step.indexOf("if (MODE.carriedRefusal !== null && !reasonCarriedAlready(leftOut, MODE.tokens, MODE.reason)) {");
+    const said = step.indexOf("console.log(`\\nACKNOWLEDGE LINES LEFT OUT");
+    expect(refuse).toBeGreaterThan(0);
+    expect(said).toBeGreaterThan(refuse);
+    const refusal = step.slice(refuse, said);
+    expect(refusal).toContain("console.error(`REFUSED: ${MODE.carriedRefusal}`);");
+    expect(refusal).toContain("process.exit(2);");
+  });
+
+  /*
    * 🔴 Another --reason for a line acknowledged already was dropped, exit 0: "nothing to acknowledge", and the session's
    * words stored nowhere. The rule finds it (`planAcknowledging`'s `reasonsKept`) and words the refusal with the reason
    * stored (`reasonChangeRefusal`, lib/left-out-acknowledgement.test.ts); the script refuses, exit 2, before it says

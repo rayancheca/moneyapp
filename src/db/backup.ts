@@ -246,6 +246,15 @@ export function preMutationSnapshot(
   now: Date = new Date(),
   retention: RetentionPolicy = DEFAULT_RETENTION,
 ): PreMutationSnapshotResult {
+  const target = writeRestorePoint(sqlite, backupsDir, label, now);
+  return { status: "created", path: target, pruned: prune(backupsDir, retention, now) };
+}
+
+/**
+ * The restore point's file, written, its path returned — and nothing pruned: `preMutationSnapshot` prunes right after,
+ * `withPreMutationTransaction` only once its write commits.
+ */
+function writeRestorePoint(sqlite: Database.Database, backupsDir: string, label: string, now: Date): string {
   // VACUUM cannot run inside a transaction, and a snapshot taken mid-write
   // would not be the pre-mutation state anyway. Loud, because a caller that
   // hits this has put the safety net in the wrong place.
@@ -271,7 +280,7 @@ export function preMutationSnapshot(
   } finally {
     fs.rmSync(tmpPath, { force: true });
   }
-  return { status: "created", path: target, pruned: prune(backupsDir, retention, now) };
+  return target;
 }
 
 /**
@@ -297,11 +306,51 @@ export function withPreMutationSnapshot<T>(db: AppDatabase, label: string, mutat
 }
 
 /**
+ * Snapshots the database, THEN runs `write` as ONE transaction — for a write that may still refuse inside it: a merge
+ * reads what it files again there, the reading it writes by (`mergeSeries`). A transaction that throws is rolled back,
+ * so the ledger is then exactly what the restore point holds: the restore point is taken back, and the pruning that
+ * makes room for it waits for the commit — a refused write leaves the backups folder as it found it.
+ *
+ * 🔴 Review of 474e757 (2026-10-12): a merge refused by that second reading kept the restore point it had taken, and
+ * his oldest of the twelve kept was pruned for it, though the merge said a refused one writes nothing.
+ */
+export function withPreMutationTransaction<T>(
+  db: AppDatabase,
+  label: string,
+  write: (tx: Parameters<Parameters<AppDatabase["transaction"]>[0]>[0]) => T,
+): T {
+  const point = restorePointFor(db, label, { prunes: false });
+  let written: T;
+  try {
+    written = db.transaction((tx) => write(tx));
+  } catch (error: unknown) {
+    if (point.path !== null) discardRestorePoint(point.path);
+    throw error;
+  }
+  if (point.path !== null) prune(path.dirname(point.path), DEFAULT_RETENTION, new Date());
+  return written;
+}
+
+/** A restore point of a write that rolled back — it holds the ledger as it still is. */
+function discardRestorePoint(file: string): void {
+  try {
+    fs.rmSync(file, { force: true });
+  } catch {
+    // it stays, a spare one; the write's own refusal is still what reaches him, never this
+  }
+}
+
+/**
  * The restore point `withPreMutationSnapshot` takes, handed back — for a write
  * that must put the ledger back ITSELF when its own after-check fails
  * (scripts/reread-unrecorded-files.ts restores from `path`). A skip says why.
  */
 export function takeRestorePoint(db: AppDatabase, label: string): PreMutationSnapshotResult {
+  return restorePointFor(db, label, { prunes: true });
+}
+
+/** `takeRestorePoint`, pruning or not: `withPreMutationTransaction` prunes only once its write commits. */
+function restorePointFor(db: AppDatabase, label: string, { prunes }: { prunes: boolean }): PreMutationSnapshotResult {
   const sqlite = driverHandle(db);
   if (sqlite === null) {
     throw new Error(
@@ -309,7 +358,7 @@ export function takeRestorePoint(db: AppDatabase, label: string): PreMutationSna
     );
   }
   try {
-    return snapshotBeforeMutation(sqlite, label);
+    return snapshotBeforeMutation(sqlite, label, prunes);
   } catch (error: unknown) {
     // Say the outcome, not just the cause: the action was REFUSED, not
     // half-applied, so the user knows retrying is safe.
@@ -331,6 +380,7 @@ export function manualSnapshot(sqlite: Database.Database): PreMutationSnapshotRe
 function snapshotBeforeMutation(
   sqlite: Database.Database,
   label: string,
+  prunes = true,
 ): PreMutationSnapshotResult {
   // An in-memory database has no file anyone could restore from.
   if (sqlite.memory) {
@@ -343,7 +393,8 @@ function snapshotBeforeMutation(
   if (process.env.MONEYAPP_SKIP_BACKUP === "1" && !isRealDatabase(sqlite)) {
     return { status: "skipped", path: null, reason: "disabled", pruned: [] };
   }
-  return preMutationSnapshot(sqlite, backupsDirFor(sqlite), label);
+  if (prunes) return preMutationSnapshot(sqlite, backupsDirFor(sqlite), label);
+  return { status: "created", path: writeRestorePoint(sqlite, backupsDirFor(sqlite), label, new Date()), pruned: [] };
 }
 
 /* ------------------------------------------------------------------ *

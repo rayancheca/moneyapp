@@ -7,6 +7,7 @@ import {
   confirmingStep,
   leftOutToken,
   planAcknowledging,
+  reasonCarriedAlready,
   reasonChangeRefusal,
   unmatchedAcknowledgementNotice,
   type AcknowledgeableLine,
@@ -827,6 +828,48 @@ describe("confirmingStep — what a dry run ends with: the run that confirms it"
       expect(confirmed.reasonsKept).toEqual([]);
       expect(confirmed.open.map((l) => l.rowId)).toEqual(["row-c"]);
     }
+  });
+});
+
+/*
+ * ⚖️ §6A 30: lines alike take one reason — an open one takes the one they carry, exactly — and this step never changes a
+ * stored one. 🔴 Review of 3872004 (2026-10-12): a reason stored before a guard refused what it carries — a bidi control
+ * before 3872004, an escape or a bell before 34e97eb — could never be given again: the dry run named it, exactly, and the
+ * command line refused it, so a mark partly acknowledged with it failed ledger-check for good. A reason its lines alike
+ * carry is taken as stored now, and is no new one to judge; the same characters in a reason no line alike carries are
+ * refused as ever. His ledger stores none (0 acknowledgements, measured on his copy 2026-10-13).
+ */
+describe("a reason stored before a guard refused what it carries", () => {
+  const OVERRIDE = "July statement, ‮page 1: the opening deposit, reversed";
+  const stored = { on: "2026-10-06", reason: OVERRIDE };
+  const lines = [line({ acknowledged: stored }), line({ rowId: "row-twin" })];
+  const mark = leftOutToken(line());
+
+  test("the run its dry run names acknowledges the open line alike — with that reason, exactly as stored", () => {
+    const dryRun = planAcknowledging(lines, [mark], { on: "2026-10-13", reason: null });
+    expect(dryRun.reasonsStored).toEqual(new Map([[mark, [OVERRIDE]]]));
+    const args = [`--acknowledge-left-out=${mark}`, `--reason=${OVERRIDE}`, "--confirm"];
+    expect(confirmingStep([mark], dryRun, null)).toEqual([
+      `Only once each line is read on its statement: the same command with --reason='${OVERRIDE}' --confirm`,
+    ]);
+
+    const mode = ledgerCheckMode(args);
+    if (mode.mode !== "acknowledge" || !mode.confirm) throw new Error("not a --confirm");
+    expect(mode.carriedRefusal).not.toBeNull();
+    expect(reasonCarriedAlready(lines, mode.tokens, mode.reason)).toBe(true);
+    const plan = planAcknowledging(lines, mode.tokens, { on: "2026-10-13", reason: mode.reason });
+    expect([plan.unmatched, plan.reasonsKept]).toEqual([[], []]);
+    expect(acknowledgementWrites(plan.open, { on: "2026-10-13", reason: mode.reason }).map((w) => w.reason)).toEqual([
+      OVERRIDE,
+    ]);
+  });
+
+  test("⛔ the same characters in a reason no line alike carries are a new reason — refused as ever", () => {
+    expect(reasonCarriedAlready(lines, [mark], "July statement, ‮page 2")).toBe(false);
+    // a reason another mark's lines carry is not this mark's
+    expect(reasonCarriedAlready(lines, ["0b1c2d3e4f"], OVERRIDE)).toBe(false);
+    expect(reasonCarriedAlready([line({ rowId: "row-twin" })], [mark], OVERRIDE)).toBe(false);
+    expect(reasonCarriedAlready(lines, [mark], null)).toBe(false);
   });
 });
 
