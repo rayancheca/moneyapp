@@ -18,6 +18,7 @@ import { carrierWord } from "@/lib/billed-with";
 import { ONE_CHARGE_WORD } from "@/lib/one-charge";
 import type { PerPayday } from "@/lib/per-payday";
 import { projectedEvidence, SERIES_EVIDENCE_LABEL, seriesEvidenceTone, seriesPostingWords } from "@/lib/series-evidence";
+import { notLookedForDeposits } from "@/lib/unbanked-income";
 import type { Cadence, SeriesKind, SeriesStatus } from "@/db/schema/recurring";
 import type { ForecastComponent } from "@/services/forecast";
 import type { SeriesOccurrence, SeriesStaleness } from "@/services/recurring";
@@ -568,9 +569,12 @@ export function upcomingEvidenceWord(e: {
  * yet" (`NO_STATEMENT_YET`): the day is read to each account's last CHECKED statement balance (`dueDayReadings`), so
  * "no import" was false of a day the imported rows had passed.
  *
- * …and of a PAYDAY after the day its pay's accounts are checked through (`paydayIsRead`), where every pay sentence
- * says "the ledger has not looked for its deposit". "Not banked yet" is said only of a day someone looked at. 🔴 It
- * was said of every passed payday: his Oct 1 and Oct 8 (ledger copy, 2026-10-12), after Sep 24.
+ * A PAYDAY after the day its pay's accounts are checked through (`paydayIsRead`) has its own reason, in every pay
+ * sentence's words: "the ledger has not looked for its deposit" (`not_looked_for`, `notLookedForDeposits`). "Not banked
+ * yet" is said only of a day someone looked at. 🔴 It was said of every passed payday: his Oct 1 and Oct 8 (ledger
+ * copy, 2026-10-12), after Sep 24. 🔴 …then a bill's "no statement has covered it yet" — beside a pay sentence naming
+ * the account nobody has checked, and of pay landing in an archived account or a cash wallet, a statement no upload
+ * will bring (review of the 10-12 batch).
  *
  * …and of a day whose accounts are read through today — an archived card, a cash wallet — still inside its days to
  * post, the arrears' words for the same money (`DAYS_TO_POST_NOT_OVER`). 🔴 It read "no import has covered it yet" of
@@ -578,6 +582,7 @@ export function upcomingEvidenceWord(e: {
  */
 const UNSETTLED_REASON_WORD: Record<UnsettledReason, string> = {
   not_imported: NO_STATEMENT_YET,
+  not_looked_for: notLookedForDeposits(1),
   in_grace: DAYS_TO_POST_NOT_OVER,
   unbanked: "not banked yet",
   schedule_unproven: "too few charges to grade yet",

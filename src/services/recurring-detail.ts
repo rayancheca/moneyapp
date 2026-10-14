@@ -1,6 +1,6 @@
 import { and, desc, eq, isNull, lte, ne, or, sql } from "drizzle-orm";
 import { neverPosted, seriesCanBeReshaped, type SeriesEvidence } from "@/lib/series-evidence";
-import type { UnbankedIncomeReading } from "@/lib/unbanked-income";
+import type { PassedPaydaysReading } from "@/lib/unbanked-income";
 import type { BillingCarrier } from "@/lib/billed-with";
 import type { CarriedGrace } from "@/lib/occurrence-verdict";
 import type { AppDatabase } from "@/db/client";
@@ -118,7 +118,7 @@ export interface UnbankedPayday {
 }
 
 /** A pay series' passed paydays this month, as the forecast's note reads them (`SeriesDetail.unbankedPaydays`). */
-export interface UnbankedPaydays extends UnbankedIncomeReading {
+export interface UnbankedPaydays extends PassedPaydaysReading {
   totalCents: number;
   /** in date order; their amounts sum to `totalCents` */
   paydays: readonly UnbankedPayday[];
@@ -358,11 +358,13 @@ function unbankedPaydaysOf(
   const unbanked = unbankedIncomeThisMonth(db, new Set([s.id]), today);
   const passed = unbanked.series[0];
   if (passed === undefined) return null;
-  const { totalCents, occurrenceCount, checkedOccurrenceCount, frontier } = unbankedIncomeTotals(unbanked);
+  const { totalCents, occurrenceCount, checkedOccurrenceCount, pastGraceOccurrenceCount, frontier } =
+    unbankedIncomeTotals(unbanked);
   return {
     totalCents,
     occurrenceCount,
     checkedOccurrenceCount,
+    pastGraceOccurrenceCount,
     frontier,
     paydays: passed.occurrenceDates.map((date, i) => ({ date, amountCents: passed.occurrenceCents[i]! })),
   };

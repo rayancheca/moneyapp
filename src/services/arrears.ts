@@ -61,6 +61,14 @@ export interface UnbankedIncomeSeries extends BudgetTailSeries {
   checkedOccurrenceCount: number;
   checkedCents: number;
   /**
+   * Of those, the paydays whose DAYS TO LAND are checked too — the series' `toleranceDays` after it, the reach
+   * settlement's anchor clause gives a deposit: no deposit can still answer one on a day the ledger has not read. The
+   * forecast's note and the pay series' own page warn of these alone (`PassedPaydaysReading`). 🔴 They warned of
+   * every checked payday: a Thursday checked through Friday read "Cash pay that never reaches a bank", in warning
+   * colour, of a payroll that could still land on Sunday (review of cfb76fb).
+   */
+  pastGraceOccurrenceCount: number;
+  /**
    * Each passed payday's date, in order, beside `occurrenceCents` — what the pay series' own page lists, one row a
    * payday. 🔴 Its page named none of Oct 1 or Oct 8 beside a forecast naming both (a copy of his ledger, 2026-10-12).
    */
@@ -452,18 +460,22 @@ export function unbankedIncomeForSeries(
    * ⛔ The frontier is `cashEarningsReadings`' rule, not a second one: the same
    * `checkedThroughBySeries` (`landingAccountsBySeries` and `earliestVerified`
    * over every account's checked record, archived ones to their last statement),
-   * so /spending and these two surfaces cannot disagree about which paydays were
-   * read. A payday ON the frontier day was read. Coverage is only read when a
-   * payday is actually unmet, so the common month costs nothing extra.
+   * so /spending and the surfaces reading this — /budgets, the forecast's note
+   * and the pay series' own page (`unbankedIncomeThisMonth`) — cannot disagree
+   * about which paydays were read. A payday ON the frontier day was read.
+   * Coverage is only read when a payday is actually unmet, so the common month
+   * costs nothing extra.
    *
    * ⛔ …nor can the calendar: a payday is checked by `paydayIsRead`, the predicate that decides its "not banked yet"
-   * against "no statement has covered it yet" (`settledVerdict`).
+   * against "the ledger has not looked for its deposit" (`settledVerdict`, `not_looked_for`).
    */
   const checkedOf = checkedThroughBySeries(db, today);
 
   const series = unmet.map(({ s, occ }): UnbankedIncomeSeries => {
     const checkedThrough = checkedOf(s.id);
     const checked = occ.filter((o) => paydayIsRead(o.date, checkedThrough));
+    // ⚖️ …and its days to land, the warning's alone (`pastGraceOccurrenceCount`): the split names no grace
+    const pastGrace = checked.filter((o) => paydayIsRead(addDays(o.date, s.toleranceDays), checkedThrough));
     return {
       id: s.id,
       name: s.name,
@@ -476,6 +488,7 @@ export function unbankedIncomeForSeries(
       checkedThrough,
       checkedOccurrenceCount: checked.length,
       checkedCents: checked.reduce((sum, o) => sum + o.amountCents, 0),
+      pastGraceOccurrenceCount: pastGrace.length,
       occurrenceDates: occ.map((o) => o.date),
     };
   });
@@ -505,6 +518,8 @@ export interface UnbankedIncomeTotals {
   occurrenceCount: number;
   /** of those, the paydays on days the ledger has checked every landing account through */
   checkedOccurrenceCount: number;
+  /** of those, the paydays checked through their days to land too — the warning's (`pastGraceOccurrenceCount`) */
+  pastGraceOccurrenceCount: number;
   /**
    * How far the accounts the pay lands in were checked, across every series
    * (`sharedFrontier`): the one day they share, `per-schedule` when they were
@@ -521,6 +536,7 @@ export function unbankedIncomeTotals(u: UnbankedIncome): UnbankedIncomeTotals {
     totalCents: u.totalCents,
     occurrenceCount: u.series.reduce((n, s) => n + s.occurrenceCount, 0),
     checkedOccurrenceCount: u.series.reduce((n, s) => n + s.checkedOccurrenceCount, 0),
+    pastGraceOccurrenceCount: u.series.reduce((n, s) => n + s.pastGraceOccurrenceCount, 0),
     frontier: sharedFrontier(u.series.map((s) => s.checkedThrough)),
     names: u.series.map((s) => s.name),
   };

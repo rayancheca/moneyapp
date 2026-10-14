@@ -281,8 +281,9 @@ const frontierReading = cache(function frontierReading(db: AppDatabase, today: s
  * `landingAccountsBySeries` and every account's checked record, archived ones included — or null when one of them has
  * no checked record, or when the series names no account and nothing linked to it says where it lands.
  *
- * ⛔ ONE frontier for every sentence about whether the ledger has LOOKED: the passed paydays (/budgets, /recurring),
- * the dashboard's income card and /spending's note. 🔴 The pay sentence said "the ledger has not looked for its
+ * ⛔ ONE frontier for every sentence about whether the ledger has LOOKED: the passed paydays (/budgets, the forecast on
+ * /recurring, the pay series' own page), the calendar's payday marks (`paydayIsRead`), the dashboard's income card and
+ * /spending's note. 🔴 The pay sentence said "the ledger has not looked for its
  * deposit" of Oct 1 while the forecast beside it, measuring to today, said "all of it running late" (his ledger,
  * 2026-10-08) — so on every account a statement is still coming for, a series' silence is measured to this same day
  * (`silenceMeasuredThroughBySeries`).

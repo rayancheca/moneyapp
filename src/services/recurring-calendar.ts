@@ -839,7 +839,9 @@ export function recurringCalendar(
   // month that ends on or after today: a wholly-future month has no past
   // occurrence to grade, so it needs no coverage query at all.
   // late and lapsed only on days the ledger has checked (`seriesEvidence`, §6A 57) — the gate and a future entry's words
-  const checkedThrough = silenceMeasuredThroughBySeries(db, today);
+  // — on the day a series' SILENCE is measured to, an account no statement is coming for read through today: never the
+  // payday frontier below (`paydaysCheckedOf`), which stops where such an account's record does
+  const silenceThroughOf = silenceMeasuredThroughBySeries(db, today);
   const needsFrontier = compareDates(monthStart, today) < 0;
   // …and a past bill missed only once its day AND its grace are read (`dueDayIsRead`, ⚖️ his decision 60, 2026-10-08)
   // on the day its chip measures to (his decision 62, 2026-10-12): the accounts it posts to now, each to its checked
@@ -868,7 +870,7 @@ export function recurringCalendar(
   const paymentsBySeries = billPaymentsBySeries(db, forecastRows);
 
   for (const s of forecastRows) {
-    if (hasStoppedForecasting(s, today, checkedThrough(s.id))) continue;
+    if (hasStoppedForecasting(s, today, silenceThroughOf(s.id))) continue;
     /*
      * ⚖️ A pay series' paydays from its FIRST PAYDAY — the one its settlement walked from (`paydayProjectable`, §6A 55
      * step B), the one Earned vs banked counts from. 🔴 Projected from the stored anchor, his June drew no payday at
@@ -886,7 +888,7 @@ export function recurringCalendar(
     // A lapsed money-out series was skipped above and money in never lapses, so
     // "running-late" is exactly "stale on checked days, having charged before" —
     // past tolerance only after its accounts' checked day is awaiting statements, and says nothing.
-    const evidence = seriesEvidence(s, today, checkedThrough(s.id));
+    const evidence = seriesEvidence(s, today, silenceThroughOf(s.id));
     const isStale = evidence === "running-late";
     const neverBilled = evidence === "never-billed";
     // ⚖️ paid inside another series' payment — whose postings its evidence is (§6A 59)
@@ -989,8 +991,8 @@ export function recurringCalendar(
               dueDay: readingOf
                 ? readingOf(s.id)
                 : { observedThrough: null, graceDays: s.toleranceDays, readsToToday: false },
-              // the passed paydays' frontier (`unbankedIncomeForSeries`): "no statement has covered it yet" exactly
-              // where the forecast, /budgets and the dashboard say "the ledger has not looked for its deposit"
+              // the passed paydays' frontier (`unbankedIncomeForSeries`): "the ledger has not looked for its deposit"
+              // (`not_looked_for`) exactly where the forecast, his pay's page, /budgets and the dashboard say it
               paydaysCheckedThrough: paydaysCheckedOf ? paydaysCheckedOf(s.id) : null,
             },
             // ⚖️ a day billed inside another's payment is the carrier's day, measured by the carrier's charges — never

@@ -20,7 +20,7 @@ import { recurringCalendar, type CalendarEntry } from "./recurring-calendar";
 
 // the server action pulls in next/cache and the database client
 vi.mock("@/app/recurring/actions", () => ({ loadRecurringMonthAction: vi.fn() }));
-const { RecurringCalendar } = await import("@/components/recurring/RecurringCalendar");
+const { DaySheetBody, RecurringCalendar } = await import("@/components/recurring/RecurringCalendar");
 
 /**
  * 🔴 VISIBLE on a copy of his ledger 2026-10-12: /recurring?tab=calendar drew the Oct 1 and Oct 8 paydays of "It
@@ -139,9 +139,9 @@ function unsettledPaydays(): string[] {
 }
 
 describe("a payday the ledger has not looked for says so on the calendar — as every pay sentence does", () => {
-  test("Oct 1 and Oct 8 fall after Wells Fargo's Sep 24: no statement has covered them yet", () => {
+  test("Oct 1 and Oct 8 fall after Wells Fargo's Sep 24: the ledger has not looked for their deposits", () => {
     const october = unsettledPaydays().filter((d) => d.startsWith("2026-10"));
-    expect(october).toEqual(["2026-10-01 not_imported", "2026-10-08 not_imported"]);
+    expect(october).toEqual(["2026-10-01 not_looked_for", "2026-10-08 not_looked_for"]);
   });
 
   test("the weeks on or before Sep 24 stay not banked yet — Aug 13 and Aug 20 too, after Chase's Aug 12", () => {
@@ -153,12 +153,12 @@ describe("a payday the ledger has not looked for says so on the calendar — as 
 
   /*
    * ⛔ ONE READING: the calendar's "not banked yet" marks are exactly the paydays the forecast and /budgets count as
-   * checked (`checkedOccurrenceCount`), and its "no statement has covered it yet" marks the ones they say nobody has
-   * looked for.
+   * checked (`checkedOccurrenceCount`), and its "the ledger has not looked for its deposit" marks the ones they say
+   * nobody has looked for.
    *
    * 🔴 With Wells Fargo open the two frontiers are the same day, so a calendar reading its paydays against the day a
-   * series' SILENCE is measured to (`silenceMeasuredThroughBySeries`, which `recurringCalendar` binds to a local named
-   * `checkedThrough` a few lines above its payday frontier) passed every test (review of 7fc67d5). They part on a
+   * series' SILENCE is measured to (`silenceMeasuredThroughBySeries`, which `recurringCalendar` binds to
+   * `silenceThroughOf` a few lines above its payday frontier, `paydaysCheckedOf`) passed every test (review of 7fc67d5). They part on a
    * landing account no statement is coming for (`accountsAwaitingStatements`), archived or a cash wallet: its silence
    * is read through today, while the days the ledger has looked at stop where its record does
    * (`checkedThroughBySeries`, review of 82d75d7). Under that swap Oct 1 and Oct 8 read "not banked yet" beside a
@@ -184,11 +184,11 @@ describe("a payday the ledger has not looked for says so on the calendar — as 
       const passed = unbankedIncomeForSeries(bundle.db, new Set([PAY]), "2026-06-01", TODAY).series[0]!;
       const marks = unsettledPaydays();
       expect(marks.filter((d) => d.startsWith("2026-10"))).toEqual([
-        "2026-10-01 not_imported",
-        "2026-10-08 not_imported",
+        "2026-10-01 not_looked_for",
+        "2026-10-08 not_looked_for",
       ]);
       expect(marks.filter((d) => d.endsWith(" unbanked"))).toHaveLength(passed.checkedOccurrenceCount);
-      expect(marks.filter((d) => d.endsWith(" not_imported"))).toHaveLength(
+      expect(marks.filter((d) => d.endsWith(" not_looked_for"))).toHaveLength(
         passed.occurrenceCount - passed.checkedOccurrenceCount,
       );
       expect(passed.occurrenceCount - passed.checkedOccurrenceCount).toBe(2);
@@ -198,20 +198,60 @@ describe("a payday the ledger has not looked for says so on the calendar — as 
   test("THE BOUNDARY: a payday ON the day its accounts are checked through was looked for", () => {
     checkedThrough(WF, "2026-09-25", "2026-10-01");
     const october = unsettledPaydays().filter((d) => d.startsWith("2026-10"));
-    expect(october).toEqual(["2026-10-01 unbanked", "2026-10-08 not_imported"]);
+    expect(october).toEqual(["2026-10-01 unbanked", "2026-10-08 not_looked_for"]);
     const passed = unbankedIncomeForSeries(bundle.db, new Set([PAY]), "2026-10-01", TODAY).series[0]!;
     expect([passed.occurrenceCount, passed.checkedOccurrenceCount]).toEqual([2, 1]);
   });
 
-  test("the day cell's name says it, as the Day Sheet does", () => {
+  /*
+   * ⚖️ In the pay sentences' words (`notLookedForDeposits`, his decision 65's for pay), whatever the frontier: a day
+   * (Sep 24), or an account the pay could land in with no checked record at all, where the pay sentence says "the
+   * ledger has not checked every account that pay could land in". 🔴 Both read "no import has covered it yet", then "no
+   * statement has covered it yet" — a bill's words, and the only ones beside his pay that say a statement is coming.
+   */
+  function october1(): { cell: string; sheet: string } {
     const month = recurringCalendar(bundle.db, "2026-10", TODAY);
-    const html = renderToStaticMarkup(createElement(RecurringCalendar, { initialMonth: month, today: TODAY })).replace(
-      /&#x27;/g,
-      "'",
+    const decode = (html: string): string => html.replace(/&#x27;/g, "'");
+    const cell = decode(renderToStaticMarkup(createElement(RecurringCalendar, { initialMonth: month, today: TODAY })));
+    const sheet = decode(renderToStaticMarkup(createElement(DaySheetBody, { entries: month.entriesByDay["2026-10-01"]! })));
+    return { cell, sheet: sheet.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ") };
+  }
+
+  test("the day cell's name says it — and so does the Day Sheet the cell opens, read off the sheet itself", () => {
+    const { cell, sheet } = october1();
+    expect(cell).toContain(
+      'aria-label="Oct 1, 2026 — 1 item: It America LLC (weekly pay) not yet known (the ledger has not looked for its deposit) $1,141.92"',
     );
-    expect(html).toContain(
-      'aria-label="Oct 1, 2026 — 1 item: It America LLC (weekly pay) not yet known (no statement has covered it yet) $1,141.92"',
-    );
-    expect(html).not.toContain("not banked yet");
+    expect(sheet).toContain("not yet known — the ledger has not looked for its deposit");
+    for (const html of [cell, sheet]) {
+      expect(html).not.toContain("not banked yet");
+      expect(html).not.toContain("no statement has covered");
+    }
+  });
+
+  test("an account the pay could land in with no checked record: the same words, never a statement's", () => {
+    bundle.db.delete(dailyBalances).where(eq(dailyBalances.accountId, WF)).run();
+    expect(checkedThroughBySeries(bundle.db, TODAY)(PAY)).toBeNull();
+    const { cell, sheet } = october1();
+    expect(sheet).toContain("not yet known — the ledger has not looked for its deposit");
+    expect(cell).not.toContain("no statement has covered");
+  });
+
+  /*
+   * ⚖️ …and where NO statement is coming — the pay lands in an archived account or a cash wallet — the words promise
+   * none: no "yet". 🔴 "no statement has covered it yet" there waits for an upload /imports will never ask for.
+   */
+  test.each([
+    { landing: "archived", archived: true, wallet: false },
+    { landing: "a cash wallet", archived: false, wallet: true },
+  ])("Wells Fargo $landing: no word of a statement still to come", ({ archived, wallet }) => {
+    bundle.db.update(accounts).set({ isActive: !archived }).where(eq(accounts.id, WF)).run();
+    if (wallet) {
+      const cash = bundle.db.insert(institutions).values({ name: CASH_INSTITUTION_NAME }).returning().get();
+      bundle.db.update(accounts).set({ institutionId: cash.id }).where(eq(accounts.id, WF)).run();
+    }
+    const { cell, sheet } = october1();
+    expect(sheet).toContain("not yet known — the ledger has not looked for its deposit");
+    for (const html of [cell, sheet]) expect(html).not.toMatch(/statement has covered|imported yet|import has covered/);
   });
 });

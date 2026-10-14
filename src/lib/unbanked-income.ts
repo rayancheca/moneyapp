@@ -45,7 +45,8 @@ export const NOT_CHECKED = "the ledger has not checked every account that pay co
 
 /**
  * What the quiet of a payday after `LAST_CHECKED_DAY` waits for — "the ledger has not looked for its deposit", or
- * "…their deposits" of several: the forecast's note, /budgets, the dashboard and /spending's cash-earnings note.
+ * "…their deposits" of several: the forecast's note, the pay series' own page, /budgets, the dashboard, /spending's
+ * cash-earnings note — and of one payday, the calendar's reason (`not_looked_for`).
  *
  * ⚖️ His decision 65 (2026-10-12): the words name what the quiet waits for — a checked statement balance, not an
  * import. 🔴 /spending's note listed "or it has not been imported yet" among the explanations of paydays past the
@@ -120,8 +121,9 @@ function everyOneFalls(paydays: number): string {
  * named only when every schedule shares it (`sharedFrontier`); otherwise the
  * sentence says the day differs by schedule rather than picking one.
  *
- * One home for both surfaces, so /budgets and /recurring cannot word the same
- * two paydays differently.
+ * One home for every surface that names them — /budgets, the forecast on
+ * /recurring and the pay series' own page (`passedPaydaysWords`) — so none can
+ * word the same two paydays differently.
  */
 export function unbankedIncomeFrontierClause(
   r: UnbankedIncomeReading,
@@ -151,10 +153,21 @@ export function unbankedIncomeFrontierClause(
 
 /**
  * What /budgets says after the passed paydays when every one fell on a day the ledger has checked — the frontier
- * clause has nothing to add — and what the pay series' own page says then too.
+ * clause has nothing to add. /budgets' alone: the pay series' own page says the forecast's sentence then
+ * (`PassedPaydaysWords.notProjected`), as its doc always claimed. 🔴 It printed this one (review of cfb76fb).
  */
 export const IMPORTS_NOT_EARNINGS =
   "That is evidence about what has been imported, not about whether the money was earned.";
+
+/** What the forecast's note and a pay series' own page read of this month's passed paydays: the split, and its warning. */
+export interface PassedPaydaysReading extends UnbankedIncomeReading {
+  /**
+   * Of the checked paydays, those whose DAYS TO LAND are checked too — the series' own tolerance after the payday, the
+   * reach settlement's anchor clause gives a deposit (`UnbankedIncomeSeries.pastGraceOccurrenceCount`): no deposit can
+   * still answer them on a day the ledger has not read. Only these are a warning.
+   */
+  pastGraceOccurrenceCount: number;
+}
 
 /** How the forecast's note and a pay series' own page word the paydays that passed this month with no deposit. */
 export interface PassedPaydaysWords {
@@ -164,8 +177,26 @@ export interface PassedPaydaysWords {
   passed: string;
   /** the paydays nobody has looked for (`unbankedIncomeFrontierClause`), or null when the ledger checked them all */
   unread: string | null;
-  /** some payday fell on a day the ledger has checked and no deposit met it — the note's warning tone */
+  /**
+   * Why none of it is projected: "Pay that never reaches a bank cannot be projected as arriving" — the forecast's
+   * sentence, and the pay page's when the clause has nothing to say. No full stop: the note runs on from it.
+   */
+  notProjected: string;
+  /** some payday was checked through its days to land and no deposit met it — the note's warning tone */
   warning: boolean;
+}
+
+/**
+ * What the paydays not projected are called, by what the ledger has read of them.
+ *
+ * ⚖️ "Pay", never "Cash pay": an app label, and since Aug 27, 2026 his pay is payroll by ACH into Wells Fargo
+ * (decision 55). 🔴 The forecast said "Cash pay that never reaches a bank" of every checked payday with no deposit.
+ * ⚖️ …and "never reaches a bank" only of a payday checked through its days to land (`pastGraceOccurrenceCount`). 🔴 A
+ * Thursday checked through Friday read it, in warning colour, of a payroll that could still land on Sunday.
+ */
+function notProjectedSubject(r: PassedPaydaysReading): string {
+  if (r.pastGraceOccurrenceCount > 0) return "Pay that never reaches a bank";
+  return r.checkedOccurrenceCount === 0 ? "Pay the ledger has not looked for" : "Pay not banked yet";
 }
 
 /**
@@ -175,12 +206,13 @@ export interface PassedPaydaysWords {
  * ⛔ One home for the words. 🔴 The pay series' page said nothing of Oct 1 or Oct 8 while the forecast named both (a
  * copy of his ledger, 2026-10-12); it says it now in these words, so the two cannot word the same Thursdays apart.
  */
-export function passedPaydaysWords(r: UnbankedIncomeReading, formatDay: (iso: string) => string): PassedPaydaysWords {
+export function passedPaydaysWords(r: PassedPaydaysReading, formatDay: (iso: string) => string): PassedPaydaysWords {
   const unread = unbankedIncomeFrontierClause(r, formatDay);
   return {
     count: r.occurrenceCount === 1 ? "1 payday" : `${r.occurrenceCount} paydays`,
     passed: unread === null ? "already passed this month with no deposit imported" : "already passed this month",
     unread,
-    warning: r.checkedOccurrenceCount > 0,
+    notProjected: `${notProjectedSubject(r)} cannot be projected as arriving`,
+    warning: r.pastGraceOccurrenceCount > 0,
   };
 }

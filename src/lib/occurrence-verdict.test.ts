@@ -148,7 +148,7 @@ describe("settledVerdict", () => {
     // …and read once those days are over, as any day: missed
     expect(settledVerdict("bill", "2026-10-05", throughToday(3), true)).toEqual({ state: "missed", reason: null });
     // …and the cautious reasons come first wherever they apply — a payday is graded by the pay's own frontier
-    expect(settledVerdict("income", "2026-10-06", throughToday(3), true).reason).toBe("not_imported");
+    expect(settledVerdict("income", "2026-10-06", throughToday(3), true).reason).toBe("not_looked_for");
   });
 
   test("a bill on the frontier day itself is not yet known — its grace has not been imported", () => {
@@ -188,18 +188,23 @@ describe("settledVerdict", () => {
    * said they "fall after Sep 24, the last day every account that pay lands in has been checked through — so the
    * ledger has not looked for their deposits". "Not banked yet" claims someone looked.
    */
-  test("a payday after the day its accounts are checked through: no statement has covered it yet", () => {
+  /*
+   * ⚖️ Its own reason, not a bill's (`not_looked_for`): the pay sentences' words, "the ledger has not looked for its
+   * deposit". 🔴 It shared `not_imported` with the bills and read "no statement has covered it yet" — of pay landing
+   * where no statement is coming too (an archived account, a cash wallet).
+   */
+  test("a payday after the day its accounts are checked through: the ledger has not looked for its deposit", () => {
     expect(settledVerdict("income", "2026-10-01", pay("2026-09-24"), true)).toEqual({
       state: "unsettled",
-      reason: "not_imported",
+      reason: "not_looked_for",
     });
     // …and with no checked record at all, nothing has looked
-    expect(settledVerdict("income", "2026-08-20", pay(null), true).reason).toBe("not_imported");
+    expect(settledVerdict("income", "2026-08-20", pay(null), true).reason).toBe("not_looked_for");
   });
 
   test("THE BOUNDARY: a payday on or before the day its accounts are checked through is not banked yet", () => {
     expect(settledVerdict("income", "2026-09-24", pay("2026-09-24"), true).reason).toBe("unbanked");
-    expect(settledVerdict("income", "2026-09-25", pay("2026-09-24"), true).reason).toBe("not_imported");
+    expect(settledVerdict("income", "2026-09-25", pay("2026-09-24"), true).reason).toBe("not_looked_for");
     expect(settledVerdict("income", "2026-06-11", pay("2026-09-24"), true).reason).toBe("unbanked");
   });
 
@@ -211,7 +216,7 @@ describe("settledVerdict", () => {
   test("a payday is graded by its pay's frontier, whatever the bills' reading says", () => {
     expect(settledVerdict("income", "2026-08-13", pay("2026-09-24", read("2026-08-12")), true).reason).toBe("unbanked");
     expect(settledVerdict("income", "2026-10-01", pay("2026-09-24", read("2026-12-31", 0)), true).reason).toBe(
-      "not_imported",
+      "not_looked_for",
     );
   });
 
