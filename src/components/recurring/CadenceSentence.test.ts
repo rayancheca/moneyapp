@@ -133,3 +133,48 @@ describe("CadenceSentence — a series the forecast has let go is described in t
     }
   });
 });
+
+/*
+ * 🔴 His pay's page read "deposits weekly on Thursdays, about $1,141.92 from Wells Fargo Everyday Checking." — pay does
+ * not come FROM the account it lands in (a copy of his ledger, 2026-10-13). The account clause says which way the money
+ * moves through it: into it for pay, out of it for a bill — and a transfer series, which is one leg of a move between
+ * his own accounts, by its own sign.
+ */
+describe("CadenceSentence — the account clause says which way the money moves through it", () => {
+  const pay = {
+    kind: "income",
+    cadence: "weekly",
+    nextExpectedOn: "2026-10-15",
+    amountCents: 114_192,
+    userAmountCents: 114_192,
+    detectedCadence: "weekly",
+    accountName: "Wells Fargo Everyday Checking",
+  } as const satisfies Partial<SentenceProps>;
+
+  test("his pay lands INTO Wells Fargo — present tense, as his ledger copy reads it on 2026-10-13", () => {
+    expect(render("confirmed", "active", pay).text).toBe(
+      "deposits weekly on Thursdays, about $1,141.92 into Wells Fargo Everyday Checking.",
+    );
+  });
+
+  test("…and still into it once the pay is over, deposited or never", () => {
+    expect(render("ended", "active", pay).text).toBe("deposited weekly, about $1,141.92 into Wells Fargo Everyday Checking.");
+    expect(render("ended", "active", { ...pay, neverPosted: true }).text).toBe(
+      "was expected weekly, about $1,141.92 into Wells Fargo Everyday Checking.",
+    );
+  });
+
+  test("a bill still leaves FROM its account", () => {
+    expect(render("detected", "running-late").text).toBe("charges monthly around the 5th, about $4.99 from Chase Sapphire.");
+  });
+
+  test("a transfer goes by its leg's sign: the autopay out of checking, the card's payment into the card", () => {
+    const autopay = { kind: "transfer", nextExpectedOn: "2026-10-24", accountName: "Chase Checking" } as const;
+    expect(render("detected", "active", { ...autopay, amountCents: -99_302 }).text).toBe(
+      "moves monthly around the 24th, about $993.02 from Chase Checking.",
+    );
+    expect(render("detected", "active", { ...autopay, amountCents: 99_302, accountName: "Chase Sapphire" }).text).toBe(
+      "moves monthly around the 24th, about $993.02 into Chase Sapphire.",
+    );
+  });
+});

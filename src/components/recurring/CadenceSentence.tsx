@@ -7,7 +7,7 @@ import { Popover, usePopover } from "@/components/ui/Popover";
 import { toast } from "@/components/ui/Toast";
 import { formatCents, parseAmountToCents } from "@/lib/money";
 import { ONE_CHARGE_WORD } from "@/lib/one-charge";
-import { CADENCE_LABEL, schedulePhrase, seriesVerb } from "./labels";
+import { CADENCE_LABEL, schedulePhrase, seriesAccountWord, seriesVerb } from "./labels";
 import { seriesIsProjected, type SeriesEvidence, type SeriesStatusForCopy } from "@/lib/series-evidence";
 
 interface CadenceSentenceProps {
@@ -163,7 +163,14 @@ export function CadenceSentence(props: CadenceSentenceProps) {
           />
         </>
       ) : null}
-      {accountName ? <> from <span className="font-medium text-ink">{accountName}</span></> : null}.
+      {/* "into" the account his pay lands in, "from" the one a bill leaves (`seriesAccountWord`) */}
+      {accountName ? (
+        <>
+          {` ${seriesAccountWord(kind, amountCents)} `}
+          <span className="font-medium text-ink">{accountName}</span>
+        </>
+      ) : null}
+      .
     </div>
   );
 }

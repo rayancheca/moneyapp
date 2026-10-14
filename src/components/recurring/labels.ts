@@ -179,6 +179,20 @@ export function seriesVerb(kind: SeriesKind, over: false | { posted: boolean } =
   return words.present;
 }
 
+/**
+ * The word the cadence sentence puts before its account: "into" the account money lands in, "from" the one it leaves.
+ *
+ * 🔴 It was "from" for every kind, and his pay's page read "deposits weekly on Thursdays, about $1,141.92 from Wells
+ * Fargo Everyday Checking." — the account that pay lands IN (a copy of his ledger, 2026-10-13). A bill, a subscription
+ * and any other payment leave from their account. A transfer series is ONE leg of a move between his own accounts —
+ * the autopay out of checking, or the card's own payment into the card (`classifyKind`) — so its amount's sign says
+ * which (`seriesAmountCents`: net-worth-signed). With no amount to read a sign from, the kind decides.
+ */
+export function seriesAccountWord(kind: SeriesKind, amountCents: number | null): "into" | "from" {
+  if (kind === "income") return "into";
+  return kind === "transfer" && amountCents !== null && amountCents > 0 ? "into" : "from";
+}
+
 /* ── staleness disclosure ──────────────────────────────────────────────────
    A stale series is still projected — see services/recurring.ts::upcomingOccurrences
    for why exclusion would be the dishonest option. These render the doubt. */

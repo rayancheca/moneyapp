@@ -65,6 +65,14 @@ export interface CommittedOccurrence {
   /** the day the series stops, or null when it runs on past this horizon */
   endsOn: string | null;
   /**
+   * The series' whole schedule is ONE charge (`oneChargeDays`, services/recurring) — ⚖️ owner decision 2026-10-08
+   * (§6A 56): no monthly cost, its own single payment. Absent means it is not.
+   *
+   * ⛔ Carried, never inferred from the occurrences: one payment ending on its own day is also the LAST payment of a
+   * schedule that held more (`heaviestMonth`'s ⚠️), and only the series' charges tell the two apart.
+   */
+  oneCharge?: boolean;
+  /**
    * ARREARS ONLY: of this payment's magnitude, the part that fell due on days no
    * checked statement has reached for the accounts the series bills on — money that may
    * well have posted where nobody has looked. Absent means all of it: the
@@ -132,12 +140,18 @@ export interface CommittedLine {
    * belongs.
    */
   endsInHorizon: boolean;
+  /** the series' whole schedule is one charge (`CommittedOccurrence.oneCharge`, ⚖️ §6A 56) */
+  oneCharge: boolean;
   /** what ONE payment costs, as a positive magnitude */
   perOccurrenceCents: number;
   /**
    * What this line would contribute per month if it ran the WHOLE horizon —
    * its cadence annualised, which is the basis the subscriptions card publishes.
    * Equal to `perMonthCents` (to rounding) for every line that does run it.
+   *
+   * ⚖️ A ONE-CHARGE line (§6A 56) has no cadence to level by — the subscriptions card files it a one-off, out of its
+   * monthly figure — and its whole schedule is the one payment this horizon holds, so it runs it: this is its rate.
+   * Still `endsInHorizon` (it stops on its day, and the car card counts it among what stops), never short.
    */
   levelledPerMonthCents: number;
   /**
@@ -226,6 +240,7 @@ interface Accumulator {
   neverPosted: boolean;
   cadence: Cadence;
   endsOn: string | null;
+  oneCharge: boolean;
 }
 
 /**
@@ -288,6 +303,7 @@ export function committedOutflows(input: CommittedInput): CommittedOutflows {
       neverPosted: o.lastMatchedOn === null,
       cadence: o.cadence,
       endsOn: o.endsOn,
+      oneCharge: o.oneCharge ?? false,
     };
     bySeries.set(o.seriesId, {
       ...acc,
@@ -312,7 +328,13 @@ export function committedOutflows(input: CommittedInput): CommittedOutflows {
        * occurrences at all, so it is guarded rather than divided by zero.
        */
       const perOccurrenceCents = a.occurrences === 0 ? 0 : Math.round(a.totalCents / a.occurrences);
-      const levelledPerMonthCents = levelledMonthlyCents(perOccurrenceCents, a.cadence);
+      /*
+       * ⚖️ §6A 56: a one charge is its own single payment — levelled to a month of its stored cadence it is short of
+       * the eleven it never had. 🔴 His runway card read "…, and one other does too — … $364.66 a month lower for the
+       * two of them" (a copy of his ledger, 2026-10-13): $66.68 of it the Nov 11 balance, $72.74 "levelled" against
+       * the $6.06 its one payment adds.
+       */
+      const levelledPerMonthCents = a.oneCharge ? perMonthCents : levelledMonthlyCents(perOccurrenceCents, a.cadence);
       const endsInHorizon = endsInsideHorizon(a.endsOn, input.to);
       return {
         seriesId: a.seriesId,
@@ -326,6 +348,7 @@ export function committedOutflows(input: CommittedInput): CommittedOutflows {
         cadence: a.cadence,
         endsOn: a.endsOn,
         endsInHorizon,
+        oneCharge: a.oneCharge,
         perOccurrenceCents,
         levelledPerMonthCents,
         // gated on the CAUSE, and floored: an ending series whose remaining
@@ -451,6 +474,9 @@ export function arrearsReadingOf(book: ArrearsBook): ArrearsReading {
  * one ends inside the horizon, the named one carries only its own shortfall and
  * the rest are counted out loud.
  *
+ * ⚖️ A ONE-CHARGE line (§6A 56) ends inside the horizon and lowers nothing — its one payment is all its schedule
+ * holds — so it is neither the lead nor one of the others counted (`endingLead`).
+ *
  * Null when nothing ends — silence, never "nothing shrank it", which is the
  * measured-zero rule the rest of this file follows.
  */
@@ -467,8 +493,24 @@ export function shrinkCaption(book: {
     `${lead.name} stops inside that window — evidenced through ${dayWindowLabel(endsOn, endsOn)}, with no renewal ` +
     `in the ledger${endingOthersClause(others)} — so it is billed ${times} rather than throughout, and counts ` +
     `${formatCents(lead.perMonthCents)} a month here against the ${formatCents(lead.perOccurrenceCents)} ` +
-    `it charges. The rate above is ${formatCents(book.shortfallPerMonthCents)} a month lower for it.`
+    `it charges. The rate above is ${formatCents(book.shortfallPerMonthCents)} a month lower ` +
+    `${endingShortfallFor(others)}.`
   );
+}
+
+/**
+ * Whose shortfall the book's figure is — "for it", "for the two of them", "for all 3 of them": the lead and the
+ * others `endingOthersClause` counted, since `shortfallPerMonthCents` sums every ending line's.
+ *
+ * 🔴 It was "for it" whatever ended: his runway card read "…and one other does too … The rate above is $364.66 a
+ * month lower for it." — $297.98 of it Car insurance's and $66.68 the Nov 11 balance's (a copy of his ledger,
+ * 2026-10-13), the whole difference credited to the one it names.
+ *
+ * ⚖️ …and the balance was never one of them: it is ONE charge (§6A 56), its own single payment, short of nothing
+ * (`CommittedLine.levelledPerMonthCents`). His card reads "…$297.98 a month lower for it." — Car insurance's own.
+ */
+export function endingShortfallFor(others: number): string {
+  return others === 0 ? "for it" : others === 1 ? "for the two of them" : `for all ${others + 1} of them`;
 }
 
 /** The commitment a book names as ending, and how many others end beside it. */
@@ -620,6 +662,11 @@ export function heaviestMonth(occurrences: readonly CommittedOccurrence[]): Heav
  *
  * `others` counts every OTHER line that stops inside the horizon, for
  * `endingOthersClause`.
+ *
+ * ⚠️ A ONE-CHARGE line (§6A 56) is one of them — it stops on its day — though `endingLead` counts it nowhere, because
+ * it lowers no rate. On a copy of his ledger 2026-10-13 the car card says "…, and one other does too" of the Nov 11
+ * balance beside a runway sentence that no longer does: two counts of two questions, by design. Whether the car card
+ * should leave a one charge out of its count too is his call, asked 2026-10-13.
  */
 export function heaviestMonthEnding(
   book: { lines: readonly CommittedLine[] },

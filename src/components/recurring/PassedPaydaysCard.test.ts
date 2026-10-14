@@ -47,7 +47,7 @@ describe("PassedPaydaysCard — the pay page names what the forecast names, in i
     expect(r.heading).toBe("2 paydays worth $2,283.84 already passed this month");
     expect(r.headingClass).not.toContain("text-warning");
     expect(r.body).toBe(
-      "They all fall after Thu, Sep 24, 2026, the last day every account that pay lands in has been checked through " +
+      "Both fall after Thu, Sep 24, 2026, the last day every account that pay lands in has been checked through " +
         "— so the ledger has not looked for their deposits.",
     );
     // the forecast's own clause, not a copy of it

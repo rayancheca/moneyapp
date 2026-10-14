@@ -8,6 +8,7 @@ import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { CarCostCard } from "@/components/dashboard/CarCostCard";
 import { createDatabase, type DbBundle } from "@/db/client";
 import { seedDatabase } from "@/db/seed";
+import { shrinkCaption } from "@/lib/committed";
 import { addCalendarMonths, addDays, daysInMonthOf, monthKey } from "@/lib/dates";
 import { parsePeriodParams, resolvePeriod } from "@/lib/period";
 import { namedSeriesOf, SERIES_LIST_PARAM, seriesListed } from "@/lib/recurring-list";
@@ -1416,6 +1417,36 @@ describe("carCard", () => {
     expect(c.evidenceCaption).toContain("Jan 11, 2027");
     expect(c.evidenceCaption).toContain("one other does too");
     expect(c.evidenceCaption).not.toContain("Nov 11, 2026");
+  });
+
+  /*
+   * ⚖️ §6A 56 on both cards of his dashboard (a copy of his ledger, 2026-10-13). The runway's sentence counts the lines
+   * that lower its RATE, and the balance — one charge, its own single payment — lowers nothing: 🔴 it read "…, and one
+   * other does too — … $364.66 a month lower for the two of them". The car card's sentence counts the lines that STOP
+   * inside its horizon, which the balance still does on Nov 11; its figures are the decision's "unchanged".
+   */
+  test("the runway's rate sentence names Car insurance alone; the car card's figures and sentence do not move", () => {
+    ownersCar();
+    expect(shrinkCaption(committedBook(bundle.db, "2026-10-13"))).toBe(
+      "Car insurance stops inside that window — evidenced through Jan 11, 2027, with no renewal in the ledger — " +
+        "so it is billed 2 times rather than throughout, and counts $59.60 a month here against the $357.58 it " +
+        "charges. The rate above is $297.98 a month lower for it.",
+    );
+    const c = carCard(bundle.db, "2026-10-13")!;
+    expect([c.cost.committedCents, c.cost.monthlyCents, c.cost.evidencedThrough]).toEqual([
+      12 * 69504 + 2 * 35758 + 7274,
+      69504 + 35758,
+      "2027-01-11",
+    ]);
+    expect(c.evidenceCaption).toBe(
+      "Car insurance stops inside the next 12 months — evidenced through Jan 11, 2027, with no renewal in the " +
+        "ledger, and one other does too — so the monthly figure above stops being what you pay after that date.",
+    );
+    // the car's own book reads the balance by the runway's rule
+    expect(c.book.lines.find((l) => l.name.startsWith("Car insurance — Nov 11"))).toMatchObject({
+      oneCharge: true,
+      shortfallPerMonthCents: 0,
+    });
   });
 
   /* A lease that outlives the horizon does not stop the monthly figure inside
