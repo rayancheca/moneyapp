@@ -138,30 +138,26 @@ describe("a benchmark pick — persisted by its own action, then drawn", () => {
 
   /**
    * 🔴 ab13868 bounded a view press queued behind a save of Back's view that hangs; the benchmark pick, whose own
-   * action Next queues behind that save the same way, waited on it without a bound (review of ab13868, 2026-10-13):
-   * the pick was never drawn, and the picker stayed disabled. Bounded as a press is (`pressWriteLanding`): cut short,
-   * it goes to the symbol he picked, which its URL carries — at its own BACK_SAVE_WAIT_MS and then the URL writer's
-   * (`setParam` waits on Back's saves too) — and once its action is answered, again.
+   * action Next queues behind that save the same way, waited on it without a bound (review of ab13868, 2026-10-13).
+   * Bounded as a press is (`pressWriteLanding`), it holds no navigation past BACK_SAVE_WAIT_MS (the link tests below)
+   * — and is drawn once its action has kept the symbol, never before: 🔴 drawn at its bound (0acc9b5), a URL carried a
+   * symbol the server had neither priced nor kept (review of 10852ef, 2026-10-14).
    */
-  test("picked while Back's save hangs, it is drawn by its bound — and drawn again once its action lands", async () => {
+  test("picked while Back's save hangs, nothing is drawn before its action keeps the symbol — then it is", async () => {
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     const page = await backWithItsSaveHeld();
     drawn().picker.pick("QQQ");
     await idle();
     expect(page.pending).toEqual([BACK_SAVE]); // its own action, queued behind Back's save
+    const before = page.navigations.length;
 
-    await vi.advanceTimersByTimeAsync(BACK_SAVE_WAIT_MS - 1);
+    await vi.advanceTimersByTimeAsync(2 * BACK_SAVE_WAIT_MS);
     await idle();
-    expect(page.pending).toEqual([BACK_SAVE]); // never before Back's save could have landed
-    await vi.advanceTimersByTimeAsync(BACK_SAVE_WAIT_MS + 1);
-    await idle();
-    await page.serve("render");
-    expect(page.url).toBe("/investments?range=1Y&bench=QQQ");
-    // its URL carries no view, so the saved one draws — his Return, until Back's save lands, as under a range pill
-    expect(drawn().rsc).toMatchObject({ bench: "QQQ", view: { view: "returns" } });
-    expect(drawn().picker.isPending).toBe(false);
-    // Back's save, still held, and the pick's own action behind it: sent, landing whenever the server answers
-    expect(page.pending).toEqual([BACK_SAVE, { kind: "write", label: 'benchmark {"symbol":"QQQ"}' }]);
+    expect(page.navigations.slice(before)).toEqual([]);
+    expect(page.pending).toEqual([BACK_SAVE]);
+    expect(page.url).toBe("/investments?range=1Y");
+    // still "fetching…": its action is queued behind Back's save, and the router's state waits on it
+    expect(drawn().picker.isPending).toBe(true);
 
     await page.serve("write"); // Back's save, late
     await page.serve("write"); // and the pick's, behind it
@@ -169,14 +165,17 @@ describe("a benchmark pick — persisted by its own action, then drawn", () => {
     expect(page.persisted).toMatchObject({ benchmark: { symbol: "QQQ" }, investments: { view: "value" } });
     expect(page.url).toBe("/investments?range=1Y&bench=QQQ");
     expect(drawn().rsc).toMatchObject({ bench: "QQQ", view: { view: "value" } }); // the view Back showed
-    expect(drawn().picker.error).toBeNull();
+    expect(drawn().picker).toMatchObject({ isPending: false, error: null });
   });
 
   /**
    * ⛔ The pick waits inside its transition, and React holds every navigation made meanwhile until that settles: with
    * Back's save hung, a link he followed after a pick was never drawn — the press's own lesson (measured 2026-10-13).
+   * ⚖️ Owner 2026-10-05: and once the pick is answered he stays where the link took him. 🔴 It went to the symbol at
+   * its bound and again once answered, each time to a URL it asked for anew, always the newest: off his link's view to
+   * /investments?range=1Y&bench=QQQ at 10 s, with the server still hung (review of 10852ef, 2026-10-14).
    */
-  test("a link followed while a pick waits on Back's hung save is drawn by BACK_SAVE_WAIT_MS", async () => {
+  test("a link followed while a pick waits on Back's hung save is drawn by BACK_SAVE_WAIT_MS — and stays", async () => {
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     const page = await backWithItsSaveHeld();
     drawn().picker.pick("QQQ");
@@ -184,26 +183,124 @@ describe("a benchmark pick — persisted by its own action, then drawn", () => {
     page.router.push("/investments?view=returns&unit=percent"); // a link that carries a view
     await idle();
     await page.serve("render");
+    const at = page.navigations.length;
     await vi.advanceTimersByTimeAsync(BACK_SAVE_WAIT_MS);
     await idle();
 
     expect(page.url).toBe("/investments?view=returns&unit=percent");
     expect(drawn().rsc.view).toMatchObject({ view: "returns", unit: "percent" });
+
+    await vi.advanceTimersByTimeAsync(2 * BACK_SAVE_WAIT_MS);
+    await idle();
+    await page.settle(); // Back's save, late, and the pick's action behind it
+    expect(page.navigations.slice(at)).toEqual([]);
+    expect(page.url).toBe("/investments?view=returns&unit=percent");
+    // kept, and the page he is on drawn with it
+    expect(page.persisted.benchmark).toMatchObject({ symbol: "QQQ" });
+    expect(drawn().rsc).toMatchObject({ bench: "QQQ", view: { view: "returns", unit: "percent" } });
   });
 
-  test("cut short, a symbol its action then refuses says why, and nothing is kept", async () => {
+  /** 🔴 Answered after he left by a link to another page: he was taken back to /investments (review of 10852ef). */
+  test("a link to another page after a pick let go: once it is kept he stays there", async () => {
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
-    refusals.ZZZZ = "No price history found for ZZZZ";
     const page = await backWithItsSaveHeld();
-    drawn().picker.pick("ZZZZ");
+    drawn().picker.pick("QQQ");
     await idle();
     await vi.advanceTimersByTimeAsync(2 * BACK_SAVE_WAIT_MS);
     await idle();
+    // 0acc9b5 drew QQQ here, at its bound (the review's P1); nothing does now
+    while (page.pending.some((work) => work.kind === "render")) await page.serve("render");
+    page.router.push("/budgets"); // the sidebar's
+    await idle();
     await page.serve("render");
+    const at = page.navigations.length;
+
+    while (page.pending.some((work) => work.kind === "write")) await page.serve("write"); // Back's save; the pick's
+    await page.settle();
+    expect(page.navigations.slice(at)).toEqual([]);
+    expect(page.url).toBe("/budgets");
+    expect(page.persisted.benchmark).toMatchObject({ symbol: "QQQ" });
+  });
+
+  /**
+   * ⚖️ Owner 2026-10-05: Back/Forward shows the page he went to; he is not dragged anywhere. 🔴 A pick answered after
+   * Forward asked for a URL anew and went there: the isNewest guard of a URL writer cannot stop an ask made after the
+   * move (review of 10852ef, 2026-10-14).
+   */
+  test("Forward after a pick let go: once it is kept nothing is drawn — he stays on the page he went to", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const page = await backWithItsSaveHeld();
+    drawn().picker.pick("QQQ");
+    await idle();
+    await vi.advanceTimersByTimeAsync(BACK_SAVE_WAIT_MS + 1); // let go at its bound
+    await idle();
+    page.forward(); // to his Return
+    await idle();
+    const at = page.navigations.length;
+
+    await vi.advanceTimersByTimeAsync(2 * BACK_SAVE_WAIT_MS);
+    await idle();
+    const served: string[] = [];
+    while (page.pending.length > 0) served.push((await page.serve()).kind);
+    expect(served).not.toContain("render"); // the page Forward showed, as it showed it — not even drawn again
+    expect(page.navigations.slice(at)).toEqual([]);
+    expect(page.url).toBe("/investments?range=1Y&view=returns");
+    expect(page.persisted.benchmark).toMatchObject({ symbol: "QQQ" });
+  });
+
+  test("the control: a range pressed while its action fetches is no move — the pick is drawn on it", async () => {
+    const page = await open("/investments?range=1Y");
+    drawn().picker.pick("QQQ");
+    await idle();
+    drawn().api.setParam("range", "1M"); // a URL writer, as the range pill is: it asks for its URL first
+    await idle();
+    await page.settle();
+    expect(page.url).toBe("/investments?range=1M&bench=QQQ");
+    expect(drawn().rsc.bench).toBe("QQQ");
+  });
+
+  /**
+   * With nothing in flight it waits on its action inside its transition, so a link followed meanwhile commits once it
+   * is answered: 🔴 the pick then went to /investments?range=1Y&bench=QQQ — the page he had left (before 0acc9b5 too).
+   * The link's page was drawn before the symbol was kept, so it is drawn again where he is.
+   */
+  test("with nothing in flight, a link followed while its action fetches: he stays there, drawn with it", async () => {
+    const page = await open("/investments?range=1Y");
+    drawn().picker.pick("QQQ");
+    await idle();
+    page.router.push("/investments"); // the sidebar's link
+    await idle();
+    await page.serve("render"); // drawn before the symbol is kept
+    const at = page.navigations.length;
+
+    await page.settle(); // its action keeps QQQ
+    expect(page.navigations.slice(at)).toEqual([]);
+    expect(page.url).toBe("/investments");
+    expect(page.persisted.benchmark).toMatchObject({ symbol: "QQQ" });
+    expect(drawn().rsc.bench).toBe("QQQ");
+  });
+
+  /**
+   * 🔴 Cut short, the pick went to the symbol he typed and closed the custom box before its action answered; refused,
+   * the URL, the select and the chart stayed on ZZZZ while the alert said it has no history, a reload offered to
+   * fetch its closes, and his typed text was gone (review of 10852ef, 2026-10-14). A refused pick changes nothing.
+   */
+  test("let go, a symbol its action then refuses says why, and nothing is kept or drawn", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    refusals.ZZZZ = "No price history found for ZZZZ";
+    const page = await backWithItsSaveHeld();
+    const kept = vi.fn();
+    drawn().picker.pick("ZZZZ", kept);
+    await idle();
+    await vi.advanceTimersByTimeAsync(2 * BACK_SAVE_WAIT_MS);
+    await idle();
     expect(drawn().picker.error).toBeNull();
 
     await page.settle();
     expect(drawn().picker.error).toBe("No price history found for ZZZZ");
     expect(page.persisted.benchmark).toBeUndefined();
+    expect(page.url).toBe("/investments?range=1Y");
+    expect(drawn().rsc.bench).toBe("SPY");
+    expect(kept).not.toHaveBeenCalled(); // the custom box stays open, his text in it
   });
 });

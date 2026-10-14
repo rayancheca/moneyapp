@@ -296,6 +296,9 @@ export function backSave(
 /** How a navigation enters the browser's history. */
 export type HistoryKind = "push" | "replace";
 
+/** What moved the page under its asks (`PageAsks.movedSince`): a Back/Forward, or a link nobody asked for. */
+export type PageMove = "traverse" | "link";
+
 /**
  * Where a press navigates once its write has landed, and how (`PageAsks.landing`) — and where a URL
  * writer that writes nothing goes (`useUrlWriter`).
@@ -362,6 +365,20 @@ export interface PageAsks {
   /** Back/Forward: the page moved under the ask, whatever URL it lands on */
   moved(): void;
   /**
+   * A mark of the page's moves under its asks so far — each Back/Forward, and each push or replace nobody asked for (a
+   * link: `isForeign` to the ask, or any with nothing asked) — for `movedSince`.
+   */
+  moveMark(): number;
+  /**
+   * The newest move since `mark` (`moveMark`); null when the page has not moved under its asks since. For what asks
+   * for its URL only once its own action answers — the benchmark pick, which must not ask for a symbol the server may
+   * yet refuse — and so holds no ask a move could drop (a press holds one, and `landing` reads what dropped it).
+   * ⚖️ Owner 2026-10-05: answered after Back he is not dragged anywhere; after a link, he stays where it took him.
+   * 🔴 Answered late, the pick asked anew — always the newest, past every guard — and took him back to the page he
+   * had left (review of 10852ef, 2026-10-14).
+   */
+  movedSince(mark: number): PageMove | null;
+  /**
    * The Back/Forward whose page is on screen, numbered from the first: from the commit its URL
    * landed in (`committed`) until he next navigates — a press, a link (their navigation's
    * start) or another Back. Null before any, and from then on: a first load, a link and a
@@ -415,6 +432,9 @@ export function createPageAsks(): PageAsks {
   let traversing = false;
   let landings = 0;
   let back: number | null = null;
+  // the page's moves under its asks (a Back/Forward, a link nobody asked for): how many, and the newest
+  let moves = 0;
+  let newestMove: PageMove = "link";
   // every URL a press or URL writer asked for, in one spelling: the view keys his presses had
   // asked for when it was (every one was saved by its press), and the ones it kept from the URL it
   // built on that his presses had put there
@@ -450,6 +470,11 @@ export function createPageAsks(): PageAsks {
       // a push or replace — a press's, a link's: whatever it draws is not Back's page
       traversing = false;
       back = null;
+      // every press and URL writer asks before it navigates: with nothing asked, or to a URL not asked, it is a link
+      if (current === null || isForeign(current, href)) {
+        moves += 1;
+        newestMove = "link";
+      }
       // an asked URL leaves the ask be; with nothing asked, only a link since one dropped it counts
       if (current === null ? overtaken === null : !isForeign(current, href)) return;
       // kept only while a commit will end it: ⛔ a link to the URL on screen (the sidebar's, to the
@@ -475,7 +500,11 @@ export function createPageAsks(): PageAsks {
       overtaken = null;
       dropped = null;
       traversing = true;
+      moves += 1;
+      newestMove = "traverse";
     },
+    moveMark: () => moves,
+    movedSince: (mark) => (moves === mark ? null : newestMove),
     backLanding: () => back,
     backSave: (spec, state, carry = []) => backSave(spec, state, shown, hisOn(shown), carry),
     backSaveSent(save) {
