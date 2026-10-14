@@ -89,10 +89,12 @@ export interface PaydaySample {
   cents: number;
   /** the paydays its money paid on its own: 1 for a week */
   paydays: number;
-  /** what its day's deposits came to — the row itself when it stood alone */
+  /** what its day's rows came to, net (decision 75) — the row itself when it stood alone */
   dayCents: number;
   /** the deposits that made it: 1 for a deposit alone on its day */
   deposits: number;
+  /** the rows of money out netted into it — a payroll partly returned the same day: 0 for a day of deposits alone */
+  returns: number;
 }
 
 /**
@@ -118,7 +120,10 @@ export interface PerPaydayEvidence {
    * (`PaydayReading.expectedCents`) — or part of one of the era in force now
    */
   noPaydayOfTheirOwn: number;
-  /** tagged rows of money out, on a day that did not net to $0.00 — no deposit, so no payday's pay, of any era */
+  /**
+   * tagged rows of money out, on a day that did not net to $0.00 — no deposit, so no payday's pay, of any era — and
+   * not netted into a day that is a sample (`PaydaySample.returns`, decision 75)
+   */
   moneyOut: number;
   /**
    * The days whose tagged rows net to $0.00, oldest first (`nettedToNothing`, the rule a bill's payments are read by):
@@ -143,7 +148,9 @@ export interface PerPaydayEvidence {
  * ⛔ And before any of it, a day whose rows net to $0.00 paid nothing (`nettedToNothing` — ONE rule, a bill's and his
  * pay's), and money out is no deposit (`moneyOut`): neither is a sample, nor any era's. 🔴 A payroll returned the same
  * day was a "-$1,141.92" deposit: two weeks at $1,141.92 averaged $380.64 on the page, the All tab and the popover,
- * "from -$1,141.92 to $1,141.92" (review of 6c59cdb, hypothetical: no money out is linked to his pay).
+ * "from -$1,141.92 to $1,141.92" (review of 6c59cdb, hypothetical: no money out is linked to his pay). ⚖️ Money out
+ * on a day that BANKED is part of that day's money, though (decision 75, `daysThatBanked`): a sample is its day's net,
+ * and counts the money out in it (`PaydaySample.returns`).
  */
 export function perPaydayEvidence(
   rows: readonly ReadableRow[],
@@ -155,25 +162,29 @@ export function perPaydayEvidence(
   const netted = nettedToNothing(rows);
   const paidNothing = new Set(netted.map((o) => o.postedOn));
   const counted = rows.filter((r) => !paidNothing.has(r.postedOn));
-  // a day's deposits, read together where settlement saw them as one (`PerPayday.deposits`)
-  const days = new Map<string, { cents: number; deposits: number }>();
-  for (const r of counted.filter((row) => row.amountCents > 0)) {
-    const day = days.get(r.postedOn);
-    days.set(r.postedOn, { cents: (day?.cents ?? 0) + r.amountCents, deposits: (day?.deposits ?? 0) + 1 });
+  /*
+   * A day's rows, read together where settlement saw them as one (`PerPayday.deposits`) — by their NET, money out too
+   * (`PerPayday.returns`, decision 75): a day that banked is what settlement spent (`daysThatBanked`).
+   */
+  const days = new Map<string, { cents: number; deposits: number; returns: number }>();
+  for (const r of counted) {
+    const day = days.get(r.postedOn) ?? { cents: 0, deposits: 0, returns: 0 };
+    const isDeposit = r.amountCents > 0;
+    days.set(r.postedOn, {
+      cents: day.cents + r.amountCents,
+      deposits: day.deposits + (isDeposit ? 1 : 0),
+      returns: day.returns + (isDeposit ? 0 : 1),
+    });
   }
   const samples: PaydaySample[] = [];
   let earlier = 0;
   let later = 0;
-  let moneyOut = 0;
   for (const r of counted) {
     const reading = readings.get(r.id);
     // money that paid no payday is no era's (`noPaydayOfTheirOwn`, below)
     if (reading?.towardNoPayday === true) continue;
-    // …and money out is no deposit: no payday's pay, of any era
-    if (r.amountCents <= 0) {
-      moneyOut += 1;
-      continue;
-    }
+    // …and money out is no deposit: no payday's pay, of any era — counted below, in its day's sample or on its own
+    if (r.amountCents <= 0) continue;
     // a row with no reading is held on its own day, as `expectedCentsOf` holds it
     const era = reading?.ratePeriod ?? ratePeriodOf(schedule, r.postedOn);
     if (era < now) earlier += 1;
@@ -182,11 +193,18 @@ export function perPaydayEvidence(
     const cents = spreadSampleCents(r.amountCents, reading);
     if (cents === null) continue;
     const per = reading?.perPayday ?? null;
-    const day = per?.deposits === undefined ? { cents: r.amountCents, deposits: 1 } : days.get(r.postedOn)!;
-    const { cents: dayCents, deposits } = day;
-    samples.push({ postedOn: r.postedOn, cents, paydays: per?.paydays ?? 1, dayCents, deposits });
+    // a figure read per payday is its DAY's (`dayPerPayday`); a row read as the one amount it is stood alone
+    const day = per === null ? { cents: r.amountCents, deposits: 1, returns: 0 } : days.get(r.postedOn)!;
+    const { deposits, returns } = day;
+    samples.push({ postedOn: r.postedOn, cents, paydays: per?.paydays ?? 1, dayCents: day.cents, deposits, returns });
   }
-  const sampled = samples.reduce((n, s) => n + s.deposits, 0);
+  /*
+   * ⚖️ Money out netted into a day that paid a payday is in that day's sample (`PaydaySample.returns`): the sample is
+   * the day's net, so it is counted there, never "of money out, paying no payday" beside it. Any other is money out.
+   */
+  const returned = samples.reduce((n, s) => n + s.returns, 0);
+  const moneyOut = counted.filter((r) => r.amountCents <= 0).length - returned;
+  const sampled = samples.reduce((n, s) => n + s.deposits + s.returns, 0);
   return {
     samples: samples.sort((a, b) => compareDates(a.postedOn, b.postedOn)),
     earlier,

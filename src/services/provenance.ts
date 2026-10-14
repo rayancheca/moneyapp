@@ -1850,12 +1850,18 @@ function depositsWords(count: number, its = "its"): string {
   return count === 1 ? `${its} one deposit` : `${its} ${count} deposits`;
 }
 
-/** "Sep 23's $4,567.68 paid 4 paydays" — each deposit day read as more than one week's pay, or as several deposits */
+/**
+ * "Sep 23's $4,567.68 paid 4 paydays" — each deposit day read as more than one week's pay, or as several deposits, or
+ * net of money out the same day: "Sep 17's $641.92 net of a return paid one payday" (`PaydaySample.returns`, decision
+ * 75), so a figure no row holds says what it is.
+ */
 function paidSeveralWords(samples: readonly PaydaySample[], today: string): string {
   return samples
-    .filter((s) => s.paydays > 1 || s.deposits > 1)
+    .filter((s) => s.paydays > 1 || s.deposits > 1 || s.returns > 0)
     .map((s) => {
-      const what = s.deposits > 1 ? `${s.deposits} deposits, ${formatCents(s.dayCents)},` : formatCents(s.dayCents);
+      const net = s.returns === 0 ? "" : ` net of ${s.returns === 1 ? "a return" : `${s.returns} returns`}`;
+      const day = `${formatCents(s.dayCents)}${net}`;
+      const what = s.deposits > 1 ? `${s.deposits} deposits, ${day},` : day;
       const paid = s.paydays === 1 ? "one payday" : `${s.paydays} paydays`;
       return `${formatDayShortIn(s.postedOn, today)}'s ${what} paid ${paid}`;
     })
@@ -2028,7 +2034,7 @@ function paydaysSeen(evidence: PerPaydayEvidence): number {
  */
 function oneRowEachPayday(evidence: PerPaydayEvidence): boolean {
   const { samples, noPaydayOfTheirOwn, moneyOut, netted } = evidence;
-  const alone = samples.every((s) => s.deposits === 1 && s.paydays === 1);
+  const alone = samples.every((s) => s.deposits === 1 && s.returns === 0 && s.paydays === 1);
   return alone && noPaydayOfTheirOwn === 0 && moneyOut === 0 && netted.length === 0 && !rateLeavesOut(evidence);
 }
 

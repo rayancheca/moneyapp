@@ -390,8 +390,8 @@ describe("perPaydayEvidence — his pay, what the average is of", () => {
     const readings = paydayReadings(HIS_ROWS, portions, HIS);
     expect(perPaydayEvidence(HIS_ROWS, readings, HIS, TODAY)).toEqual({
       samples: [
-        { postedOn: "2026-09-23", cents: WEEK, paydays: 4, dayCents: WEEK * 4, deposits: 1 },
-        { postedOn: "2026-09-24", cents: WEEK, paydays: 1, dayCents: WEEK, deposits: 1 },
+        { postedOn: "2026-09-23", cents: WEEK, paydays: 4, dayCents: WEEK * 4, deposits: 1, returns: 0 },
+        { postedOn: "2026-09-24", cents: WEEK, paydays: 1, dayCents: WEEK, deposits: 1, returns: 0 },
       ],
       earlier: 1,
       later: 0,
@@ -467,7 +467,9 @@ describe("perPaydayEvidence — his pay, what the average is of", () => {
     }));
     const e = perPaydayEvidence(rows, paydayReadings(rows, portions, FLAT), FLAT, TODAY);
     expect(e).toEqual({
-      samples: [{ postedOn: "2026-09-24", cents: WEEK, paydays: 5, dayCents: WEEK * 5, deposits: 2 }],
+      samples: [
+        { postedOn: "2026-09-24", cents: WEEK, paydays: 5, dayCents: WEEK * 5, deposits: 2, returns: 0 },
+      ],
       earlier: 0,
       later: 0,
       noPaydayOfTheirOwn: 0,
@@ -499,8 +501,8 @@ describe("perPaydayEvidence — his pay, what the average is of", () => {
     const readings = paydayReadings(rows, portions, FLAT);
     expect(perPaydayEvidence(rows, readings, FLAT, TODAY)).toEqual({
       samples: [
-        { postedOn: "2026-09-10", cents: WEEK, paydays: 1, dayCents: WEEK, deposits: 1 },
-        { postedOn: "2026-09-24", cents: WEEK, paydays: 1, dayCents: WEEK, deposits: 1 },
+        { postedOn: "2026-09-10", cents: WEEK, paydays: 1, dayCents: WEEK, deposits: 1, returns: 0 },
+        { postedOn: "2026-09-24", cents: WEEK, paydays: 1, dayCents: WEEK, deposits: 1, returns: 0 },
       ],
       earlier: 0,
       later: 0,
@@ -509,6 +511,37 @@ describe("perPaydayEvidence — his pay, what the average is of", () => {
       netted: [{ postedOn: "2026-09-17", amountCents: 0, postings: 2 }],
     });
     expect(postedAverage(rows, payday(readings), FLAT, TODAY)).toEqual({ avgCents: WEEK, stddevCents: 0 });
+  });
+
+  /*
+   * ⚖️ …BUT ON A DAY THAT BANKED, money out is part of the day's money (decision 75): settlement spent $1,141.92 in
+   * and $500.00 back on Sep 17 as one deposit of $641.92, so the day's sample is $641.92 and counts the return — never
+   * "of money out, paying no payday" beside a $1,141.92 sample. 🔴 The sample was the gross $1,141.92 (review of
+   * b0219f5).
+   */
+  test("a week partly returned the same day is one sample of the day's net, the return counted in it", () => {
+    const rows = [
+      { id: "sep10", postedOn: "2026-09-10", amountCents: WEEK },
+      { id: "sep17", postedOn: "2026-09-17", amountCents: WEEK },
+      { id: "sep17back", postedOn: "2026-09-17", amountCents: -50_000 },
+    ];
+    const portions = [
+      { paydayOn: "2026-09-10", depositOn: "2026-09-10", cents: WEEK },
+      { paydayOn: "2026-09-17", depositOn: "2026-09-17", cents: WEEK - 50_000 },
+    ];
+    const readings = paydayReadings(rows, portions, FLAT);
+    expect(perPaydayEvidence(rows, readings, FLAT, TODAY)).toEqual({
+      samples: [
+        { postedOn: "2026-09-10", cents: WEEK, paydays: 1, dayCents: WEEK, deposits: 1, returns: 0 },
+        { postedOn: "2026-09-17", cents: WEEK - 50_000, paydays: 1, dayCents: WEEK - 50_000, deposits: 1, returns: 1 },
+      ],
+      earlier: 0,
+      later: 0,
+      noPaydayOfTheirOwn: 0,
+      moneyOut: 0,
+      netted: [],
+    });
+    expect(postedAverage(rows, payday(readings), FLAT, TODAY).avgCents).toBe(WEEK - 25_000);
   });
 
   /* ⛔ ONE READING: the average is the mean of exactly these samples, whatever the rows. */

@@ -320,6 +320,39 @@ describe("paydayReadings — what is read as the one amount it is", () => {
     expect(spreadSampleCents(-5_000, readings.get("clawback"))).toBeNull();
   });
 
+  /*
+   * ⚖️ A DAY THAT BANKED IS READ AT ITS NET (decision 75): settlement spent $1,141.92 in and $500.00 back the same day
+   * as one deposit of $641.92, so the deposit is held to the week as $641.92 — as a deposit of $641.92 alone would be —
+   * and a lump with money back is its net over the paydays it paid. 🔴 The gross was divided by the paydays the net
+   * paid: the week read $1,141.92, a payday paid in full, and the lump $4,567.68 ÷ 3 = $1,522.56 (review of b0219f5).
+   */
+  test("money out the same day is netted into the day's figure; the return itself is the money out it is", () => {
+    const week = paydayReadings(
+      [
+        { id: "in", postedOn: "2026-09-17", amountCents: WEEK },
+        { id: "back", postedOn: "2026-09-17", amountCents: -50_000 },
+      ],
+      [{ paydayOn: "2026-09-17", depositOn: "2026-09-17", cents: WEEK - 50_000 }],
+      FLAT,
+    );
+    expect(week.get("in")).toEqual({
+      ...reads(true, WEEK, false, 0),
+      perPayday: { paydays: 1, cents: WEEK - 50_000, returns: 1 },
+    });
+    expect(comparableCents(WEEK, week.get("in"))).toBe(WEEK - 50_000);
+    expect(week.get("back")).toEqual(reads(false, WEEK, false, 0));
+
+    const lump = paydayReadings(
+      [
+        { id: "in", postedOn: "2026-09-23", amountCents: WEEK * 4 },
+        { id: "back", postedOn: "2026-09-23", amountCents: -50_000 },
+      ],
+      ["2026-09-24", "2026-09-17", "2026-09-10"].map((paydayOn) => ({ paydayOn, depositOn: "2026-09-23", cents: WEEK })),
+      FLAT,
+    );
+    expect(lump.get("in")?.perPayday).toEqual({ paydays: 3, cents: Math.round((WEEK * 4 - 50_000) / 3), returns: 1 });
+  });
+
   test("a row with no reading at all — a bill — is the amount it is", () => {
     expect(comparableCents(-200_000, undefined)).toBe(-200_000);
     expect(spreadSampleCents(-200_000, undefined)).toBe(-200_000);

@@ -44,6 +44,11 @@ export interface PerPayday {
    * deposit alone on its day.
    */
   deposits?: number;
+  /**
+   * Set when the row's DAY held money out too — a payroll partly returned the same day: the figure is the day's NET
+   * read per payday, and this many rows of money out were netted into it. Absent for a day of deposits alone.
+   */
+  returns?: number;
 }
 
 export interface PaydayReading {
@@ -51,7 +56,8 @@ export interface PaydayReading {
    * Set when the row's money paid TWO OR MORE paydays on its own — a lump, held
    * to the expectation at `cents` a payday — or when its day held other deposits
    * and the day's money paid any payday on its own. Null for a row read as the
-   * one amount it is.
+   * one amount it is. ⚖️ …or money out netted into the day's figure (`returns`,
+   * decision 75): the day is read at its net.
    */
   perPayday: PerPayday | null;
   /**
@@ -156,11 +162,30 @@ export function paydaysPaidAloneByDeposit(portions: readonly SettlementPortion[]
  * amount it is below that. With others, the day's money is the figure from ONE
  * payday up — one week sent as two transfers is that payday's pay, not two short
  * weeks — and with none of its own, each deposit is the amount it is.
+ *
+ * ⚖️ THE DAY'S NET, money out too (his decision 75, 2026-10-13): settlement spends a day's rows by their net
+ * (`daysThatBanked`), so a day's money is what it divides — from ONE payday up when money out was netted into it, as a
+ * deposit of that net alone would read. $1,141.92 in and $500.00 back the same day is one payday at $641.92; a lump of
+ * $4,567.68 with $500.00 back paid three paydays and is $4,067.68 ÷ 3. 🔴 The gross was divided by the paydays the net
+ * paid: that lump read $1,522.56 a payday — "rose by $380.64" — and the week $1,141.92, a payday paid in full beside
+ * Earned vs banked's $641.92 (review of b0219f5, hypothetical: no money out is linked to his pay).
  */
-function dayPerPayday(deposits: readonly ReadableRow[], paydays: number): PerPayday | null {
-  const dayCents = deposits.reduce((sum, d) => sum + d.amountCents, 0);
-  if (deposits.length === 1) return paydays > 1 ? { paydays, cents: amountPerPayday(dayCents, paydays) } : null;
-  return paydays > 0 ? { paydays, cents: amountPerPayday(dayCents, paydays), deposits: deposits.length } : null;
+function dayPerPayday(
+  deposits: readonly ReadableRow[],
+  returns: readonly ReadableRow[],
+  paydays: number,
+): PerPayday | null {
+  const dayCents = [...deposits, ...returns].reduce((sum, d) => sum + d.amountCents, 0);
+  if (deposits.length === 1 && returns.length === 0) {
+    return paydays > 1 ? { paydays, cents: amountPerPayday(dayCents, paydays) } : null;
+  }
+  if (paydays === 0) return null;
+  return {
+    paydays,
+    cents: amountPerPayday(dayCents, paydays),
+    ...(deposits.length > 1 ? { deposits: deposits.length } : {}),
+    ...(returns.length > 0 ? { returns: returns.length } : {}),
+  };
 }
 
 /** Per deposit day, the first (oldest) payday its money went into. */
@@ -180,7 +205,8 @@ function firstPaydayByDeposit(portions: readonly SettlementPortion[]): ReadonlyM
  * Read as the one amount it is: money out (settlement spends a day's net, never a row of money out), no sample of
  * what a payday pays, and a day's deposits whose money paid no payday on its own (`dayPerPayday`) — among them a
  * payroll returned the same day, whose day banked nothing (decision 75): no portion names it, so it reads toward no
- * payday.
+ * payday. ⚖️ A day that banked is read by its net (`dayPerPayday`): money out the same day is netted into its
+ * deposits' figure, and is itself still drawn as the money out it is.
  */
 export function paydayReadings(
   rows: readonly ReadableRow[],
@@ -190,8 +216,11 @@ export function paydayReadings(
   const alone = paydaysPaidAloneByDeposit(portions);
   const firstPayday = firstPaydayByDeposit(portions);
   const depositsByDay = new Map<string, readonly ReadableRow[]>();
+  // …and each day's money out, netted into its deposits' figure (decision 75)
+  const returnsByDay = new Map<string, readonly ReadableRow[]>();
   for (const r of rows) {
-    if (r.amountCents > 0) depositsByDay.set(r.postedOn, [...(depositsByDay.get(r.postedOn) ?? []), r]);
+    const byDay = r.amountCents > 0 ? depositsByDay : returnsByDay;
+    byDay.set(r.postedOn, [...(byDay.get(r.postedOn) ?? []), r]);
   }
 
   const out = new Map<string, PaydayReading>(
@@ -215,7 +244,7 @@ export function paydayReadings(
     // money that paid no payday is held to no week's rate — it answers none
     const expectedCents = towardNoPayday ? null : rateOn(schedule, paid);
     const ratePeriod = ratePeriodOf(schedule, paid ?? day);
-    const perPayday = dayPerPayday(deposits, paydays);
+    const perPayday = dayPerPayday(deposits, returnsByDay.get(day) ?? [], paydays);
     if (perPayday === null) {
       // a sample only of a payday it paid on its own — never of a part of one, nor of no payday at all
       const isPaydaySample = paydays === 1;

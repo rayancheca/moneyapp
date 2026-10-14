@@ -473,9 +473,22 @@ export function isIncome(
   agentsCash: ReadonlySet<string>,
   txn: Pick<AnalyticsTxn, "accountId" | "categoryId" | "amountCents">,
 ): boolean {
+  return txn.amountCents > 0 && isHisIncomeCategoryRow(idx, agentsCash, txn);
+}
+
+/**
+ * Whether a row is in one of HIS income categories, EITHER SIGN: an income-kind category, off the agent's cash
+ * (`isAgentsIncomeCategoryRow`). `isIncome` without its sign — the rows a pay series' DAY is netted over where a figure
+ * counts what came in (`incomeTotalCents`): ⚖️ a payroll and its same-day return are one day's money, and a day that
+ * banked nothing is no income (his decision 75, 2026-10-13, `daysThatBanked`).
+ */
+export function isHisIncomeCategoryRow(
+  idx: CategoryIndex,
+  agentsCash: ReadonlySet<string>,
+  txn: Pick<AnalyticsTxn, "accountId" | "categoryId">,
+): boolean {
   return (
     txn.categoryId !== null &&
-    txn.amountCents > 0 &&
     idx.topLevelOf(txn.categoryId).kind === "income" &&
     !isAgentsIncomeCategoryRow(idx, agentsCash, txn)
   );

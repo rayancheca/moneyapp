@@ -94,6 +94,10 @@ import { signedStepsToReach, stepFrom, stepPlan } from "./recurring-step";
  * returned the same day paid its payday on the calendar beside a posted average that said the day paid nothing.
  * ⚠️ Two deposits on one day are one deposit too — the unit the readings already took (`lib/per-payday`) — so one
  * week sent as two transfers that day pays its payday in full, where a short first transfer used to answer it alone.
+ * That is the money pooling as (A) says it must ("the split must not change the answer", above), and it is what makes
+ * the walk deterministic: 🔴 row by row, $500.00 and $1,141.92 on Sep 17 paid Sep 17 short and Sep 10 in full when the
+ * $500.00 was stored first, and Sep 17 in full with Sep 10 passed unpaid the other way round (measured at b995ce2).
+ * Pinned in `services/payday-settlement-returned-pay.test.ts`.
  *
  * ⚠️ ONE CONSEQUENCE WORTH STATING. Where a series' tolerance is wide enough to
  * reach two of its own occurrences, one deposit used to meet both. It no longer

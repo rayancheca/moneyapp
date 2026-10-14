@@ -22,6 +22,7 @@ import {
   activeTxnsInRange,
   categorySpending,
   isAgentsIncomeSeries,
+  isHisIncomeCategoryRow,
   isIncome,
   loadCategoryIndex,
   offAgentsCash,
@@ -49,6 +50,7 @@ import {
 } from "./arrears";
 import type { UnbankedFrontier } from "@/lib/unbanked-income";
 import { portionsAcross } from "@/lib/payday-settlement";
+import { daysThatBanked } from "@/lib/posted-average";
 import { paydayProjectable, paydaySettlementsBySeries, stillToCome, stillToComeReader } from "./payday-settlement";
 import { checkedThroughBySeries, silenceMeasuredThroughBySeries } from "./cash-earnings";
 import { effectiveSeries, hasStoppedForecasting, oneChargeDays, projectOccurrences, toProjectable } from "./recurring";
@@ -733,19 +735,44 @@ export function budgetOneOffCents(
  * owner decided (2026-09-28) that the agent's dividends and interest are not his
  * income, "$X in so far" — and the income basis it floors — would have gone on
  * counting them. One classifier, and the agent's rule comes with it.
+ *
+ * ⚖️ …AND A PAY SERIES' DAY IS ITS NET, as settlement spends it (his decision 75, 2026-10-13, `daysThatBanked`): his
+ * income rows linked to a pay series count by their day — a payroll and its same-day return banked nothing and are in
+ * no figure of what came in, a partial return the same day leaves the day its net. Every other income row counts as it
+ * always has, money in only; money out on another day than its payroll's is no same-day return and changes nothing.
+ * 🔴 Row by row, money in only, the returned payroll stayed in "in so far" while the third leg named its payday
+ * unpaid: on the review's fixture September read $3,425.76 in so far + $1,141.92 still expected + $1,141.92 passed
+ * against four paydays at $4,567.68, and the dashboard's "Income recorded in Sep 2026" said $3,425.76 beside Earned
+ * vs banked's two weeks (review of b0219f5; hypothetical: no money out is linked to his pay, a copy of his ledger
+ * 2026-10-13).
  */
 function incomeTotalCents(db: AppDatabase, agentsCash: ReadonlySet<string>, from: string, to: string): number {
   if (compareDates(from, to) > 0) return 0;
   const idx = loadCategoryIndex(db);
+  const paySeries = new Set(
+    db
+      .select({ id: recurringSeries.id })
+      .from(recurringSeries)
+      .where(eq(recurringSeries.kind, "income"))
+      .all()
+      .map((s) => s.id),
+  );
   let cents = 0;
+  const payRows = new Map<string, AnalyticsTxn[]>();
   for (const txn of activeTxnsInRange(db, from, to)) {
-    if (isIncome(idx, agentsCash, txn)) cents += txn.amountCents;
+    const series = txn.recurringSeriesId;
+    if (series !== null && paySeries.has(series) && isHisIncomeCategoryRow(idx, agentsCash, txn)) {
+      payRows.set(series, [...(payRows.get(series) ?? []), txn]);
+    } else if (isIncome(idx, agentsCash, txn)) {
+      cents += txn.amountCents;
+    }
   }
+  for (const rows of payRows.values()) cents += daysThatBanked(rows).reduce((sum, d) => sum + d.amountCents, 0);
   return cents;
 }
 
 export interface IncomeExpectation {
-  /** money already in, inside [start, today] */
+  /** money already in, inside [start, today] — a pay series' days by their net, as settlement spends them (decision 75) */
   postedCents: number;
   /**
    * ⚖️ §6A 68 (2026-10-13): NOT ONE day of this window has been checked in the accounts any live pay series lands in
