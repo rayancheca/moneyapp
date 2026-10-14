@@ -3,6 +3,7 @@ import { monthKey } from "./dates";
 import { BUDGET_JARGON } from "./jargon";
 import { formatCents } from "./money";
 import { resolvePeriod, withPeriod, type ResolvedPeriod } from "./period";
+import { seriesListHref } from "./recurring-list";
 
 /**
  * Which income figure a monthly budget should be graded against.
@@ -240,20 +241,22 @@ export interface IncomeBasisHrefInput {
 /**
  * Where the reader checks the income figure — chosen by the basis, because each one has a different thing behind it.
  *
- * - `levelled`  a RATE from the pay schedule(s): one schedule opens its own page, more than one the list of every
- *               schedule (`/recurring?tab=all`), where each prints its cadence and amount beside the others.
+ * - `levelled`  a RATE from the pay schedule(s): one schedule opens its own page, more than one the All tab narrowed
+ *               to exactly them (`seriesListHref`), where each prints its cadence and amount beside the others.
  * - `banked`    money that landed in the window, and `calendar` that money plus the pay still due in it: both are
  *               the window's, so `/spending` for exactly that window — named, never a bare `/spending` leaning on
  *               the page's default, the shape `spendingHref` was built to retire.
  *
  * 🔴 Measured on his ledger copy 2026-10-12: "What you earn a month $4,948.32", levelled from the confirmed It America
  * LLC weekly pay, linked to a bare `/spending` — October, which reads "not imported yet": a month of deposits for a
- * figure that is no month's deposits at all.
+ * figure that is no month's deposits at all. 🔴 …and more than one schedule opened a bare `/recurring?tab=all`:
+ * every series the ledger lists — bills, and schedules that stopped paying — beside the ones summed (review,
+ * 2026-10-12).
  */
 export function incomeBasisHref({ kind, levelledSeriesIds, window }: IncomeBasisHrefInput): string {
   if (kind !== "levelled") return withPeriod("/spending", window);
-  // a levelled figure has at least one series behind it (`levelledCents > 0`); the list stands in if none was named
-  return levelledSeriesIds.length === 1 ? `/recurring/${levelledSeriesIds[0]}` : "/recurring?tab=all";
+  // a levelled figure has at least one series behind it (`levelledCents > 0`); naming none is the whole tab
+  return levelledSeriesIds.length === 1 ? `/recurring/${levelledSeriesIds[0]}` : seriesListHref(levelledSeriesIds);
 }
 
 /** Where a surface's monthly income figure is checked, and the page it opens in a word. */

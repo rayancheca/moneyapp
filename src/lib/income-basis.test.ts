@@ -292,9 +292,14 @@ describe("incomeBasisHref — where the income figure is checked", () => {
     );
   });
 
-  test("a rate summed from more than one schedule opens the list of every schedule", () => {
+  /*
+   * 🔴 It opened a bare `/recurring?tab=all` — every series the ledger lists, the bills among them and any schedule
+   * that stopped paying, beside the ones the rate is summed from (review of the dashboard links, 2026-10-12). Latent on
+   * his ledger copy 2026-10-13 (one schedule), where that list holds 14 series, 13 of them bills and subscriptions.
+   */
+  test("a rate summed from more than one schedule opens the list of exactly those schedules", () => {
     expect(incomeBasisHref({ kind: "levelled", levelledSeriesIds: [PAY, "side-gig"], window: october })).toBe(
-      "/recurring?tab=all",
+      `/recurring?tab=all&series=${PAY},side-gig`,
     );
   });
 
@@ -321,7 +326,7 @@ describe("monthIncomeLink — the month's income figure, and where it is checked
   test("a levelled rate: its schedule, called a schedule", () => {
     expect(link("levelled", [PAY], "2026-10-01")).toEqual({ href: `/recurring/${PAY}`, label: "Schedule" });
     const two = link("levelled", [PAY, "side-gig"], "2026-10-01");
-    expect(two).toEqual({ href: "/recurring?tab=all", label: "Schedule" });
+    expect(two).toEqual({ href: `/recurring?tab=all&series=${PAY},side-gig`, label: "Schedule" });
   });
 
   // ⛔ "Schedule →" over /spending would name a page it does not open

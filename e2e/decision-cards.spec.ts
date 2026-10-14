@@ -139,6 +139,26 @@ test.describe("dashboard decision cards", () => {
       "href",
       "/spending?from=2026-01-01&to=2026-06-30",
     );
+
+    /*
+     * …and the earn row: a rate levelled from the fixture's one pay schedule opens that schedule's page
+     * (`incomeBasisHref`) — the page the Upcoming strip's Paycheck chip opens — and so does Earned vs banked's
+     * "Schedule →" (`monthIncomeLink`, one link for both). 🔴 It was a bare `/spending` (on his ledger copy 2026-10-12,
+     * October, "not imported yet"), and only unit tests pinned it (review, 2026-10-12). Measured on a copy of the e2e
+     * ledger 2026-10-13 at 2026-07-08: levelled from Paycheck alone.
+     */
+    const paycheckHref = await page
+      .locator("section[aria-labelledby='upcoming-heading']")
+      .getByRole("link", { name: /Paycheck/ })
+      .first()
+      .getAttribute("href");
+    expect(paycheckHref).toMatch(/^\/recurring\/[0-9a-f-]{36}$/);
+    await expect(card.getByRole("link", { name: "What you earn a month" })).toHaveAttribute("href", paycheckHref!);
+    const earned = page
+      .locator("section:has(#decisions-heading) section")
+      .filter({ has: page.getByRole("heading", { level: 3, name: "Earned vs banked" }) })
+      .first();
+    await expect(earned.getByRole("link", { name: "Schedule →" })).toHaveAttribute("href", paycheckHref!);
   });
 
   /**

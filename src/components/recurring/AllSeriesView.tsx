@@ -4,6 +4,7 @@ import { Money } from "@/components/ui/Money";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { SERIES_EVIDENCE_LABEL, seriesEvidenceNote, suggestionNote, type SeriesEvidence } from "@/lib/series-evidence";
 import { billedWithPhrase, carriesPhrase } from "@/lib/billed-with";
+import { ALL_SERIES_HREF, isListedSeries, seriesFilterSentence, type SeriesNarrowing } from "@/lib/recurring-list";
 import type { ArrearsReading } from "@/lib/arrears-reading";
 import type { SeriesView } from "@/services/recurring";
 import { cadenceLabel, KIND_LABEL, annualizedEndNote, futureDateLabel, overdueNote } from "./labels";
@@ -45,10 +46,13 @@ function noteOf(evidence: SeriesEvidence, rows: readonly SeriesView[]): string {
  */
 export function AllSeriesView({
   series,
+  narrowed = null,
   overdueBySeries,
   today,
 }: {
   series: SeriesView[];
+  /** how much of the tab a link narrowed it to (`seriesListed`) — null, or left out, when nothing did */
+  narrowed?: SeriesNarrowing | null;
   overdueBySeries: OverdueBySeries;
   /** so a Next date outside this year names its year — see `futureDateLabel` */
   today: string;
@@ -62,7 +66,9 @@ export function AllSeriesView({
   const lapsed = confirmed.filter((s) => s.evidence === "lapsed");
   const scheduleEnded = confirmed.filter((s) => s.evidence === "schedule-ended");
 
-  if (series.filter((s) => s.status !== "dismissed" && s.status !== "ended").length === 0) {
+  // ⛔ a link's narrowing that left nothing listed says so — never "No active series" over a ledger of fourteen
+  if (narrowed !== null && narrowed.shown === 0) return <NarrowedNote narrowed={narrowed} />;
+  if (series.filter(isListedSeries).length === 0) {
     return (
       <EmptyState
         title="No active series"
@@ -73,6 +79,7 @@ export function AllSeriesView({
 
   return (
     <div className="space-y-8">
+      {narrowed !== null ? <NarrowedNote narrowed={narrowed} /> : null}
       {suggestions.length > 0 ? (
         <section aria-labelledby="rec-suggestions">
           <div className="mb-2 flex flex-wrap items-baseline justify-between gap-x-3">
@@ -97,7 +104,14 @@ export function AllSeriesView({
         </section>
       ) : null}
 
-      <SeriesSection title="Active" note={noteOf("active", active)} series={active} overdueBySeries={overdueBySeries} today={today} />
+      {/* Unnarrowed, Active stands even when empty: it is where a confirmed suggestion goes. 🔴 Narrowed to his pay
+          schedules with none of them active, it printed "Active — charged within their cadence · 0 · No active series
+          yet — confirm a suggestion above" over two rows of pay: a bill's word, and no suggestion above (review of
+          a9384a7; measured on his ledger copy 2026-10-13, which holds 8 active series). A narrowed tab prints only
+          the sections its rows fill. */}
+      {narrowed === null || active.length > 0 ? (
+        <SeriesSection title="Active" note={noteOf("active", active)} series={active} overdueBySeries={overdueBySeries} today={today} />
+      ) : null}
       {/* 🔴 His pay and Rocket Money sat under Running late for charges due after the last day their accounts had
           been checked through (2026-10-08). Their own section, beside Active and never muted: nothing is known to
           be wrong — the ledger has not looked yet. */}
@@ -120,6 +134,22 @@ export function AllSeriesView({
         <SeriesSection title={SERIES_EVIDENCE_LABEL["schedule-ended"]} note={noteOf("schedule-ended", scheduleEnded)} series={scheduleEnded} overdueBySeries={overdueBySeries} today={today} muted />
       ) : null}
     </div>
+  );
+}
+
+/**
+ * The line over a tab a link narrowed to the series behind its figure (`seriesListed`), and the way to the rest.
+ * 🔴 A rate summed from more than one pay schedule opened every series the ledger lists (review, 2026-10-12);
+ * narrowed without a word, two rows under the badge's "All 14" would say nothing of the other twelve.
+ */
+function NarrowedNote({ narrowed }: { narrowed: SeriesNarrowing }) {
+  return (
+    <p className="text-xs text-ink-muted">
+      {seriesFilterSentence(narrowed)}{" "}
+      <Link href={ALL_SERIES_HREF} className="font-medium text-accent hover:underline">
+        {`Show all ${narrowed.of}`}
+      </Link>
+    </p>
   );
 }
 

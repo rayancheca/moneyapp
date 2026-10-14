@@ -7,6 +7,7 @@ import { createDatabase, type DbBundle } from "@/db/client";
 import { seedDatabase } from "@/db/seed";
 import { addCalendarMonths, addDays, daysInMonthOf, monthKey } from "@/lib/dates";
 import { parsePeriodParams, resolvePeriod } from "@/lib/period";
+import { namedSeriesOf, SERIES_LIST_PARAM, seriesListed } from "@/lib/recurring-list";
 import { dailyBalances } from "@/db/schema/balances";
 import { importFiles, statementPeriods } from "@/db/schema/imports";
 import { categories } from "@/db/schema/categories";
@@ -19,6 +20,7 @@ import { createAccount, updateAccount } from "./accounts";
 import { checkedThrough } from "./checked-days-fixture";
 import { baselineWindow, carCard, committedBook, runwayCard, spendBaseline, SPEND_BASELINE_MONTHS } from "./committed";
 import { forecastCurrentMonth } from "./forecast";
+import { listSeries } from "./recurring";
 import { cashFlowByPeriod } from "./spending";
 
 /**
@@ -745,12 +747,32 @@ describe("runwayCard", () => {
       expect(card.incomeHref).toBe(`/recurring/${salary}`);
     });
 
-    test("levelled from two schedules: the list of every schedule", () => {
+    /*
+     * ⛔ The drill-down contract, followed: the link opened as `/recurring?tab=all` reads it — exactly the schedules the
+     * rate sums. 🔴 It was a bare `/recurring?tab=all`: every series the ledger lists, the rent and a schedule that
+     * stopped paying among them (review of the dashboard links, 2026-10-12).
+     */
+    test("levelled from two schedules: exactly those two — no bill, no schedule outside the rate", () => {
       addSeries({ name: "Salary", kind: "income", nextExpectedOn: "2026-09-01", amountCents: 200000 });
       addSeries({ name: "Tutoring", kind: "income", nextExpectedOn: "2026-09-03", amountCents: 30000 });
+      addSeries({
+        name: "Old job",
+        kind: "income",
+        nextExpectedOn: "2026-07-01",
+        amountCents: 150000,
+        userEndsOn: "2026-07-31",
+      });
+      addSeries({ name: "Rent", kind: "bill", nextExpectedOn: "2026-09-01", amountCents: -180000 });
       const card = runwayCard(bundle.db, TODAY);
       expect(card.runway.assumptions.find((a) => a.id === "income")!.cents).toBe(230000);
-      expect(card.incomeHref).toBe("/recurring?tab=all");
+
+      const url = new URL(card.incomeHref, "http://moneyapp.test");
+      expect(`${url.pathname}?tab=${url.searchParams.get("tab")}`).toBe("/recurring?tab=all");
+      const named = namedSeriesOf(url.searchParams.get(SERIES_LIST_PARAM));
+      const opened = seriesListed(listSeries(bundle.db, TODAY), named);
+      expect(opened.rows.map((s) => s.name).sort()).toEqual(["Salary", "Tutoring"]);
+      // …and says so, of the tab's four
+      expect(opened.narrowed).toEqual({ shown: 2, of: 4 });
     });
 
     // the set is the one the RATE sums: a schedule that stopped levels to nothing and is not behind the figure
