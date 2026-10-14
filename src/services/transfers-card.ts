@@ -275,12 +275,14 @@ function transferGroupIds(db: AppDatabase, from: string, to: string): Map<string
  * constant rather than picking one keeps two cards on the same screen from
  * quoting different windows for the same ledger.
  *
- * Returns null when the ledger cannot answer, which is two refusals rather than
- * two zeroes:
+ * Returns null when the ledger cannot answer, which is three refusals rather than
+ * three zeroes:
  *
  *  - there is no `Transfers` taxonomy, so no row can be one — and
  *    `transferCategoryResolver` would THROW on the missing category path rather
  *    than answer, so this guard has to come before it;
+ *  - the window holds no complete month read in full (Eating out's and Fees'
+ *    refusal), so there are no months to total over;
  *  - nothing DEPARTED in the window. That covers both "no own-account transfer
  *    rows at all" and "rows, but every one of them is an arrival"; an explicit
  *    empty-rows guard was written first and deleted, because it could never
@@ -307,6 +309,14 @@ export function transfersCard(
    * young ledger put two different windows in two captions on one dashboard.
    */
   const window = baselineWindow(db, today, months);
+  /*
+   * ⛔ ZERO MONTHS IS NOT A WINDOW — Eating out's and Fees' guard. `baselineWindow` falls back to the CURRENT month for
+   * its bounds when it holds no complete one. 🔴 Review of 69f51c1: once the frontier could empty it (his decision 71,
+   * 2026-10-13), this card read "$200.00 left one account for another, Aug 2026" over the running month and then said
+   * "Jun 2026 and Jul 2026 are left out: Jun 12 is the last day every account you spend from has been imported through"
+   * of the two complete months it would not count — a young ledger whose card statement closes mid-month.
+   */
+  if (window.months < 1) return null;
   const { fromMonth, toMonth, from } = window;
   // the calendar owns month lengths, not this module
   const to = periodBounds(`${toMonth}-01`, "monthly").end;

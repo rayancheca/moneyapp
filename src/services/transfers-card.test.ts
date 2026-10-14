@@ -260,6 +260,23 @@ describe("a window the frontier has cut", () => {
     transfer(A, B, "2026-06-04", 500_00, "g1");
     expect(cardOrThrow().unreadNote).toBeNull();
   });
+
+  /**
+   * 🔴 Review of 69f51c1: a window the frontier EMPTIED is `baselineWindow`'s current-month fallback, and this card read
+   * it — "$200.00 left one account for another, Aug 2026" over the half-finished running month, then "Jun 2026 and Jul
+   * 2026 are left out: Jun 12 is the last day every account you spend from has been imported through" of the two complete
+   * months it would not count. Eating out and Fees refuse a window of no month (`window.months < 1`); so does this card.
+   */
+  test("a window the frontier emptied is no card, never the running month under a note about the complete ones", () => {
+    bundle.db.delete(transactions).run();
+    // the ledger opens on Jun 1, the Card is read only to Jun 12 — with no habit yet, every account dates the frontier
+    leg(A, "2026-06-01", -1, "");
+    leg(CARD, "2026-06-12", -1, "");
+    transfer(A, B, "2026-06-04", 500_00, "g1");
+    transfer(A, B, "2026-07-04", 300_00, "g2");
+    transfer(A, B, "2026-08-20", 200_00, "g3");
+    expect(card()).toBeNull();
+  });
 });
 
 describe("the null paths — a card of zeroes is worse than no card", () => {
