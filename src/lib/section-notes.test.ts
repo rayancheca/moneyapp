@@ -811,7 +811,13 @@ describe("cashEarningsSectionNotes", () => {
    * "the other one".
    */
   test("one payday after the frontier is 'the other payday', never 'the other 1 payday'", () => {
-    const [note] = notes({ ...checked, impliedCents: 418_800, unbankedCents: 418_800, periodsCovered: 4, checkedPeriodsCovered: 3 });
+    const [note] = notes({
+      ...checked,
+      impliedCents: 418_800,
+      unbankedCents: 418_800,
+      periodsCovered: 4,
+      checkedPeriodsCovered: 3,
+    });
     expect(note!.body).toContain(
       "none of it reached an account through 2026-08-12; the other payday falls after that, the last day every account " +
         "that pay lands in has been checked through.",

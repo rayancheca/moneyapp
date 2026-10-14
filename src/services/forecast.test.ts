@@ -402,7 +402,14 @@ describe("forecastCurrentMonth", () => {
      * unpaid would then be reported as a payday — with a NEGATIVE total, in a
      * sentence that reads "1 payday worth -$2,109.00 already passed".
      */
-    expect(f.unbankedIncome).toEqual({ totalCents: 0, occurrenceCount: 0, checkedOccurrenceCount: 0, pastGraceOccurrenceCount: 0, frontier: { kind: "unchecked" }, names: [] });
+    expect(f.unbankedIncome).toEqual({
+      totalCents: 0,
+      occurrenceCount: 0,
+      checkedOccurrenceCount: 0,
+      pastGraceOccurrenceCount: 0,
+      frontier: { kind: "unchecked" },
+      names: [],
+    });
   });
 
   /*
@@ -486,7 +493,14 @@ describe("forecastCurrentMonth", () => {
       status: "confirmed",
     });
     const f = forecastCurrentMonth(bundle.db, TODAY);
-    expect(f.unbankedIncome).toEqual({ totalCents: 0, occurrenceCount: 0, checkedOccurrenceCount: 0, pastGraceOccurrenceCount: 0, frontier: { kind: "unchecked" }, names: [] });
+    expect(f.unbankedIncome).toEqual({
+      totalCents: 0,
+      occurrenceCount: 0,
+      checkedOccurrenceCount: 0,
+      pastGraceOccurrenceCount: 0,
+      frontier: { kind: "unchecked" },
+      names: [],
+    });
   });
 
   test("a bill that came due AND posted is not projected on top of what it cost", () => {

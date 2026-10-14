@@ -62,7 +62,12 @@ describe("PassedPaydaysCard — the pay page names what the forecast names, in i
    * whose own was "Cash pay that never reaches a bank …", false of his payroll (review of cfb76fb).
    */
   test("every payday checked through its days to land: the forecast's words and its warning tone", () => {
-    const passed = { ...october, checkedOccurrenceCount: 2, pastGraceOccurrenceCount: 2, frontier: { kind: "day", through: "2026-10-11" } } as const;
+    const passed: Passed = {
+      ...october,
+      checkedOccurrenceCount: 2,
+      pastGraceOccurrenceCount: 2,
+      frontier: { kind: "day", through: "2026-10-11" },
+    };
     const r = render(passed);
     expect(r.heading).toBe("2 paydays worth $2,283.84 already passed this month with no deposit imported");
     expect(r.headingClass).toContain("text-warning");

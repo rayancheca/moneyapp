@@ -158,9 +158,9 @@ describe("a payday the ledger has not looked for says so on the calendar — as 
    *
    * 🔴 With Wells Fargo open the two frontiers are the same day, so a calendar reading its paydays against the day a
    * series' SILENCE is measured to (`silenceMeasuredThroughBySeries`, which `recurringCalendar` binds to
-   * `silenceThroughOf` a few lines above its payday frontier, `paydaysCheckedOf`) passed every test (review of 7fc67d5). They part on a
-   * landing account no statement is coming for (`accountsAwaitingStatements`), archived or a cash wallet: its silence
-   * is read through today, while the days the ledger has looked at stop where its record does
+   * `silenceThroughOf` a few lines above its payday frontier, `paydaysCheckedOf`) passed every test (review of
+   * 7fc67d5). They part on a landing account no statement is coming for (`accountsAwaitingStatements`), archived or a
+   * cash wallet: its silence is read through today, while the days the ledger has looked at stop where its record does
    * (`checkedThroughBySeries`, review of 82d75d7). Under that swap Oct 1 and Oct 8 read "not banked yet" beside a
    * forecast note and /budgets saying "the ledger has not looked for their deposits"; swapped in the note's count
    * instead, the split fails here.
@@ -212,8 +212,9 @@ describe("a payday the ledger has not looked for says so on the calendar — as 
   function october1(): { cell: string; sheet: string } {
     const month = recurringCalendar(bundle.db, "2026-10", TODAY);
     const decode = (html: string): string => html.replace(/&#x27;/g, "'");
-    const cell = decode(renderToStaticMarkup(createElement(RecurringCalendar, { initialMonth: month, today: TODAY })));
-    const sheet = decode(renderToStaticMarkup(createElement(DaySheetBody, { entries: month.entriesByDay["2026-10-01"]! })));
+    const render = (node: Parameters<typeof renderToStaticMarkup>[0]): string => decode(renderToStaticMarkup(node));
+    const cell = render(createElement(RecurringCalendar, { initialMonth: month, today: TODAY }));
+    const sheet = render(createElement(DaySheetBody, { entries: month.entriesByDay["2026-10-01"]! }));
     return { cell, sheet: sheet.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ") };
   }
 
