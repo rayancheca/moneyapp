@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
 import { cashEarnings, type PaySeries } from "./cash-earnings";
-import { payShortfall, type PayShortfallWindow, type WindowEarnings } from "./pay-shortfall";
+import { payShortfall, type PayShortfall, type PayShortfallWindow, type WindowEarnings } from "./pay-shortfall";
 import { settlePaydaysBackwards, type AttributedDeposit, type PaydayOccurrence } from "./payday-settlement";
 
 /**
@@ -369,6 +369,82 @@ describe("payShortfall — money that crossed the window line is the other windo
     expect(s.paidAhead).toEqual([{ depositOn: "2026-10-14", paydays: ["2026-10-15"], cents: PAYROLL }]);
     expect(s.paidAcross).toEqual([]);
     expect(s.neverBankedCents).toBe(1_111_700 - PAYROLL);
+  });
+});
+
+/**
+ * 🔴 Review of 3dc6527 (MEDIUM): money was taken out of a window's own for ANY passed payday outside it — but a passed
+ * payday after the checked day is read by no window (`paidOutside` names only read ones) and by no Earned vs banked,
+ * which nets that deposit. His ledger copy with Wed Sep 30's $1,141.92 imported past the statement (Wells Fargo still
+ * checked through Thu Sep 24 — a Rocket Money CSV leaves exactly this): June + Q3 + Q4 read $11,117.00 never reached
+ * a bank beside YTD's and the dashboard's $9,975.08. ⛔ Money crosses the window line only into a payday another window
+ * READS — the mirror of that window's `paidOutside` — so every portion is counted by one window or by none.
+ */
+describe("payShortfall — the frontier between Wednesday's deposit and the Thursday it pays", () => {
+  const IMPORTED = [...HIS_DEPOSITS, { postedOn: "2026-09-30", amountCents: PAYROLL }];
+  const imported = (from: string, to: string) =>
+    shortfallOf(HIS_PAYDAYS, IMPORTED, { from, to, today: TODAY, checkedThrough: CHECKED });
+  /**
+   * What a window says, signed: what no deposit made up, less its own money beyond its read paydays — the surplus a
+   * window over it nets (decision 55). The shortfall clamps at zero; this is what adds up.
+   */
+  const net = (s: PayShortfall): number => s.neverBankedCents - s.noPaydayBeyondCents - s.otherBeyondCents;
+  const sum = (cuts: readonly (readonly [string, string])[]): number =>
+    cuts.reduce((total, [from, to]) => total + net(imported(from, to)), 0);
+  // Earned vs banked on that copy: "$9,975.08 of it never reached a bank; the other $2,283.84 is for paydays after …"
+  const DASHBOARD = 1_111_700 - PAYROLL;
+
+  test("Oct 1 has passed but is not read: Q3 keeps Sep 30's money, nets it, and names no payday it paid", () => {
+    const q3 = imported("2026-07-01", "2026-09-30");
+    expect(q3.paidAcross).toEqual([]);
+    // 🔴 it read $8,376.00 and "another $1,141.92 … paid Oct 1's payday early", which no window or dashboard counts
+    expect(q3.neverBankedCents).toBe(8 * CASH - PAYROLL);
+    expect(q3.bankedInsideCents).toBe(6 * PAYROLL);
+    // September holds it as money beyond its read paydays — the surplus its note names paying Oct 1 early
+    const september = imported("2026-09-01", "2026-09-30");
+    expect(september.paidAhead).toEqual([{ depositOn: "2026-09-30", paydays: ["2026-10-01"], cents: PAYROLL }]);
+    expect(net(september)).toBe(-PAYROLL);
+  });
+
+  test("the windows the year is cut into add up to it, and the year is Earned vs banked's figure", () => {
+    expect(net(imported("2026-01-01", TODAY))).toBe(DASHBOARD);
+    expect(
+      sum([
+        ["2026-01-01", "2026-06-30"],
+        ["2026-07-01", "2026-09-30"],
+        ["2026-10-01", TODAY],
+      ]),
+    ).toBe(DASHBOARD);
+    expect(
+      sum([
+        ["2026-01-01", "2026-06-30"],
+        ["2026-07-01", "2026-07-31"],
+        ["2026-08-01", "2026-08-31"],
+        ["2026-09-01", "2026-09-30"],
+        ["2026-10-01", TODAY],
+      ]),
+    ).toBe(DASHBOARD);
+    // a cut between the Wednesday and its Thursday, and one on the checked day itself
+    expect(
+      sum([
+        ["2026-01-01", "2026-09-24"],
+        ["2026-09-25", "2026-09-30"],
+        ["2026-10-01", TODAY],
+      ]),
+    ).toBe(DASHBOARD);
+  });
+
+  test("…and once a statement reads Oct 1, the same money crosses into October, which names it paid early", () => {
+    const read = (from: string, to: string) =>
+      shortfallOf(HIS_PAYDAYS, IMPORTED, { from, to, today: TODAY, checkedThrough: "2026-10-01" });
+    expect(read("2026-07-01", "2026-09-30").paidAcross).toEqual([
+      { depositOn: "2026-09-30", paydays: ["2026-10-01"], cents: PAYROLL, early: true },
+    ]);
+    expect(read("2026-10-01", "2026-10-31").paidOutside).toEqual([
+      { depositOn: "2026-09-30", paydays: ["2026-10-01"], cents: PAYROLL, early: true },
+    ]);
+    const year = net(read("2026-01-01", TODAY));
+    expect(net(read("2026-01-01", "2026-09-30")) + net(read("2026-10-01", TODAY))).toBe(year);
   });
 });
 

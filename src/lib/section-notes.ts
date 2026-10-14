@@ -719,12 +719,14 @@ const paydaysOf = (parts: readonly { paydays: readonly string[] }[]): string[] =
  * decision 65's words (`notLookedForDeposits`), never as unbanked — and a period with no read payday says nothing:
  * the forecast and /budgets already name the quiet it waits on.
  *
- * ⛔ THE PERIOD'S OWN MONEY. Money banked inside it that paid a passed payday OUTSIDE it is the other period's — that
+ * ⛔ THE PERIOD'S OWN MONEY. Money banked inside it that paid a READ payday OUTSIDE it is the other period's — that
  * period's note names it paying its payday — so it neither makes up a payday here nor goes unnamed: after the split,
  * "another $X banked inside the window, from the deposit of …, paid Oct 1's payday early" (decisions 29/32's word) or
  * "paid Sep 24's payday". 🔴 Review of 2a415d5: netted here as well, September (Wed Sep 30 paying Thu Oct 1, Sep 17
  * never banked) said nothing while October named the same $1,141.92 paid early, and his Q3 stopped adding up to its
- * months — "$7,234.08 never reached a bank" beside July's $5,235.00 and August's $3,141.00.
+ * months — "$7,234.08 never reached a bank" beside July's $5,235.00 and August's $3,141.00. ⛔ A payday no period
+ * reads — past `LAST_CHECKED_DAY` — is counted by none, so its money stays netted here, as Earned vs banked nets it
+ * (review of 3dc6527: September read "$1,141.92 never reached a bank" where the year and the dashboard did not).
  *
  * ⛔ EACH DEPOSIT WITH THE MONEY IT PUT IN (`pay-shortfall`'s "NO SECOND ALLOCATION"). When outside money paid more
  * than the net shortfall — money inside paid no payday, and had no unpaid payday to net — the outside deposits keep

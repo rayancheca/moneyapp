@@ -31,10 +31,21 @@ import {
  * names it paying its own payday, so netting it here too counted it twice. 🔴 Review of 2a415d5: with Wed Sep 30
  * paying Thu Oct 1 and Sep 17 never banked, September printed nothing while October named the $1,141.92 paid early;
  * on his ledger copy with the next Wells Fargo statement simulated, Q3 read "$7,234.08 never reached a bank" beside
- * July's $5,235.00 and August's $3,141.00, and June + Q3 came to $9,975.08 beside YTD's $11,117.00. ⛔ Only a PASSED
- * payday outside the window: some other window counts it. A payday no window has counted yet (Wednesday's money for
- * tomorrow's Thursday) stays netted, as Earned vs banked nets it — so ALL and YTD, outside which none of his passed
- * paydays lies, read the dashboard's figure to the cent.
+ * July's $5,235.00 and August's $3,141.00, and June + Q3 came to $9,975.08 beside YTD's $11,117.00.
+ *
+ * ⛔ …AND ONLY INTO A READ PAYDAY: the mirror of the other window's `paidOutside`, which names money from outside it
+ * paying its READ paydays and no others — so every portion is counted by exactly one window, or by none. A payday no
+ * window reads — not yet passed (Wednesday's money for tomorrow's Thursday), or passed but after the checked day —
+ * keeps its money netted here, as Earned vs banked nets it. Then the windows a period is cut into add up to it SIGNED
+ * (what no deposit made up, less the money beyond the read paydays, which a window over them nets), and ALL and YTD
+ * read the dashboard's figure to the cent. Unsigned they need not: a month's surplus is its quarter's netting — on the
+ * copy below, Q3's $7,234.08 is July's $5,235.00 and August's $3,141.00 less the $1,141.92 September's note names
+ * paying Oct 1 early. 🔴 Review of 3dc6527: crossing into any PASSED payday took Wed Sep 30's money for Thu Oct 1 out
+ * of September and Q3 while Wells Fargo was checked through Sep 24 — and no window counts Oct 1, nor does the
+ * dashboard, which nets that deposit. On his ledger copy with Sep 30 imported past the statement, June + Q3 + Q4 read
+ * $11,117.00 never reached a bank beside YTD's and the dashboard's $9,975.08; checked through Wed Sep 30 with Sep 17
+ * never banked, September read "$1,141.92 never reached a bank" while the window over it, the year and the dashboard
+ * ("all of it is for paydays after Sep 30") said nothing of it.
  *
  * ⛔ NO SECOND ALLOCATION of who paid what. Which deposit outside the window paid which payday inside it — and which
  * deposit inside it paid a later payday early — is the settlement's `portions`, sorted by `portionsAcross`' one
@@ -92,7 +103,7 @@ export interface PaidAhead {
   cents: number;
 }
 
-/** The money from one deposit day inside the window that paid a PASSED payday outside it — another window's. */
+/** The money from one deposit day inside the window that paid a READ payday outside it — another window's. */
 export interface PaidAcross extends PaidAhead {
   /** the payday is after the window — "paid early" (§6A 29); otherwise before it began */
   early: boolean;
@@ -124,8 +135,9 @@ export interface PayShortfall {
   /** the shortfall less that money, never below zero — what no deposit, inside the window or out, made up */
   neverBankedCents: number;
   /**
-   * The money deposits INSIDE the window put into passed paydays OUTSIDE it, per side (before it, then after it) and
-   * deposit day, oldest first — counted by the window whose payday it paid, so never against this one's.
+   * The money deposits INSIDE the window put into READ paydays OUTSIDE it, per side (before it, then after it) and
+   * deposit day, oldest first — counted by the window whose payday it paid, so never against this one's. Money for a
+   * payday no window reads is not in it: it stays this window's own, netted (`otherBeyondCents` when it is beyond).
    */
   paidAcross: readonly PaidAcross[];
   /**
@@ -171,8 +183,9 @@ export function payShortfall(s: SettlementWalked, w: PayShortfallWindow, e: Wind
     early: compareDates(p.depositOn, w.from) < 0,
   }));
   const paidAhead = byDepositDay(paidForAnotherWindow.filter((p) => compareDates(p.paydayOn, w.from) >= 0));
-  // ⛔ another window's money: a PASSED payday outside this one, which that window counts — never one not yet due
-  const crossed = paidForAnotherWindow.filter((p) => passed(p.paydayOn));
+  // ⛔ another window's money: a READ payday outside this one, which that window's `paidOutside` names — never one
+  // not yet due, nor one past the checked day, which no window counts and Earned vs banked nets
+  const crossed = paidForAnotherWindow.filter((p) => passed(p.paydayOn) && checked(p.paydayOn));
   const paidAcross = [
     ...byDepositDay(crossed.filter((p) => compareDates(p.paydayOn, w.from) < 0)).map((p) => ({ ...p, early: false })),
     ...byDepositDay(crossed.filter((p) => compareDates(p.paydayOn, w.to) > 0)).map((p) => ({ ...p, early: true })),
