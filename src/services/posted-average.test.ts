@@ -424,8 +424,9 @@ describe("the posted average of a bill with a rate history — the payments at t
     const p = surfaces().popover;
     expect(p.headline).toContain(
       "Its 2 payments at the rate in force since Aug 1, 2026 were 2 different amounts, from -$2,291.21 to " +
-        "-$2,237.11 — so any single figure for it is an average, not a repeat. Its 2 payments before Aug 1, 2026 were " +
-        "at an earlier rate, and are not counted.",
+        "-$2,237.11 — so any single figure for it is an average, not a repeat. That is 2 payments — below the 3 this " +
+        "app requires before calling a repeat a pattern, so it is an anecdote rather than a statistic. Its 2 " +
+        "payments before Aug 1, 2026 were at an earlier rate, and are not counted.",
     );
     expect(p.headline).not.toContain("posted as 2");
     const cents = (s: string): number => Math.round(Number(s.replace(/[$,]/g, "")) * 100);
@@ -476,8 +477,9 @@ describe("the posted average of a bill with a rate history — the payments at t
     expect(s.page).toEqual([-229_121, null]);
     expect(s.allTab).toBe(-229_121);
     expect(s.popover.headline).toContain(
-      "Its one payment at the rate in force since Sep 1, 2026 was -$2,291.21, on Sep 2, 2026. Its 3 payments before " +
-        "Sep 1, 2026 were at an earlier rate, and are not counted.",
+      "Its one payment at the rate in force since Sep 1, 2026 was -$2,291.21, on Sep 2, 2026. That is one payment — " +
+        "below the 3 this app requires before calling a repeat a pattern, so it is an anecdote rather than a " +
+        "statistic. Its 3 payments before Sep 1, 2026 were at an earlier rate, and are not counted.",
     );
   });
 

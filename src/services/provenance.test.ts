@@ -2269,28 +2269,37 @@ describe("provenanceFor — a recurring series' amount, with a rate history (§6
   }
   const popover = (id: string) => provenanceFor(bundle.db, { kind: "recurringSeries", id, today: TODAY_ERA })!;
 
-  test("one payment at the new rate is an anecdote, however many came before the change", () => {
+  /*
+   * ⛔ "That is one payment" right after the payment it counts — as the words read with no rate change — and the badge
+   * in his words, "at today's rate" (`atTodaysRate`). 🔴 After the sentence about the payments BEFORE the change,
+   * "That is one payment at the rate in force now" read as of them, and the badge said "at the new rate" (review of
+   * the posted average's rate era, 2026-10-12): not his phrase, and with a raise recorded ahead the newest rate is not
+   * the one in force.
+   */
+  test("one payment at today's rate is an anecdote, however many came before the change", () => {
     const p = popover(raisedSubscription([["2026-06-15", NEW_RATE]]));
     expect(p.verdict).toBe("unverified");
-    expect(p.badgeWord).toBe("seen once at the new rate");
+    expect(p.badgeWord).toBe("seen once at today's rate");
     expect(p.headline).toContain(
-      "Its one payment at the rate in force since Jun 1, 2026 was -$19.59, on Jun 15, 2026. Its 5 payments before " +
-        "Jun 1, 2026 were at an earlier rate, and are not counted. That is one payment at the rate in force now — " +
+      "Its one payment at the rate in force since Jun 1, 2026 was -$19.59, on Jun 15, 2026. That is one payment — " +
         "below the 3 this app requires before calling a repeat a pattern, so it is an anecdote rather than a " +
-        "statistic.",
+        "statistic. Its 5 payments before Jun 1, 2026 were at an earlier rate, and are not counted.",
     );
   });
 
-  test("two identical payments at the new rate are still not a pattern", () => {
+  test("two identical payments at today's rate are still not a pattern", () => {
     const p = popover(raisedSubscription([["2026-06-15", NEW_RATE], ["2026-07-15", NEW_RATE]]));
     expect(p.verdict).toBe("unverified");
-    expect(p.badgeWord).toBe("seen 2 times at the new rate");
-    expect(p.headline).toContain("Its 2 payments at the rate in force since Jun 1, 2026 were -$19.59, exactly.");
-    expect(p.headline).toContain("That is 2 payments at the rate in force now — below the 3 this app requires");
+    expect(p.badgeWord).toBe("seen 2 times at today's rate");
+    expect(p.headline).toContain(
+      "Its 2 payments at the rate in force since Jun 1, 2026 were -$19.59, exactly. That is 2 payments — below the 3 " +
+        "this app requires",
+    );
+    expect(p.headline).not.toContain("new rate");
   });
 
   /* ⛔ graded on the new rate's amounts alone: the old rate's -$16.86 is not a disagreement */
-  test("three identical payments at the new rate add up, though the rate before was another", () => {
+  test("three identical payments at today's rate add up, though the rate before was another", () => {
     const newRate = [["2026-06-15", NEW_RATE], ["2026-07-15", NEW_RATE], ["2026-08-15", NEW_RATE]] as const;
     const p = popover(raisedSubscription(newRate));
     expect(p.verdict).toBe("derived");
@@ -2306,13 +2315,13 @@ describe("provenanceFor — a recurring series' amount, with a rate history (§6
    * mean of its 18 rows — beside "Its 6 payments at the rate in force since Feb 25, 2025 were -$19.59, exactly." and
    * "posted avg -$19.59" (review of 442de07, a copy of his ledger, 2026-10-12).
    */
-  test("three identical payments at the new rate do not add up to a forecast none of them paid", () => {
+  test("three identical payments at today's rate do not add up to a forecast none of them paid", () => {
     // detection's mean of the eight rows, at both rates: -$17.88
     const forecast = Math.round((OLD_DAYS.length * OLD_RATE + 3 * NEW_RATE) / (OLD_DAYS.length + 3));
     const newRate = [["2026-06-15", NEW_RATE], ["2026-07-15", NEW_RATE], ["2026-08-15", NEW_RATE]] as const;
     const p = popover(raisedSubscription(newRate, OLD_DAYS, forecast));
     expect(p.verdict).toBe("unverified");
-    expect(p.badgeWord).toBe("paid -$19.59 at the new rate");
+    expect(p.badgeWord).toBe("paid -$19.59 at today's rate");
     expect(p.headline).toContain(
       "Its 3 payments at the rate in force since Jun 1, 2026 were -$19.59, exactly. Its 5 payments before Jun 1, " +
         "2026 were at an earlier rate, and are not counted. None of the 3 paid the -$17.88 forecast here.",
@@ -2329,14 +2338,15 @@ describe("provenanceFor — a recurring series' amount, with a rate history (§6
    * ⛔ Fewer than 3 rows in all: the words count the one payment at the new rate, as the badge and the average do —
    * never "Only 2 tagged postings have ever landed" beside an average of one of them.
    */
-  test("one payment either side of the change: the badge and the words count the one at the new rate", () => {
+  test("one payment either side of the change: the badge and the words count the one at today's rate", () => {
     const p = popover(raisedSubscription([["2026-06-15", NEW_RATE]], ["2026-05-15"]));
     expect(p.verdict).toBe("unverified");
-    expect(p.badgeWord).toBe("seen once at the new rate");
+    expect(p.badgeWord).toBe("seen once at today's rate");
     expect(p.headline).not.toContain("Only 2 tagged postings");
     expect(p.headline).toContain(
-      "Its one payment at the rate in force since Jun 1, 2026 was -$19.59, on Jun 15, 2026. Its one payment before " +
-        "Jun 1, 2026 was at an earlier rate, and is not counted. That is one payment at the rate in force now",
+      "Its one payment at the rate in force since Jun 1, 2026 was -$19.59, on Jun 15, 2026. That is one payment — " +
+        "below the 3 this app requires before calling a repeat a pattern, so it is an anecdote rather than a " +
+        "statistic. Its one payment before Jun 1, 2026 was at an earlier rate, and is not counted.",
     );
   });
 

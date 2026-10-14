@@ -608,9 +608,13 @@ describe("a raise recorded in his history: the popover either side of its first 
     // set through Sep 30, so nothing disagrees (🔴 held to the raise not in force yet: "which is not what you set")
     expect(seriesDetail(bundle.db, PAY, TODAY).postedAvgCents).toBe(WEEK);
     expect(p.headline).not.toContain("⚠️");
-    // …and on Oct 1 the raise is in force, and Sep 30's $1,200.00 is its one payday paid
-    expect(provenanceFor(bundle.db, { kind: "recurringSeries", id: PAY, today: "2026-10-01" })!.headline).toContain(
-      "Per payday, its one deposit at the rate in force since Oct 1, 2026 paid $1,200.00.",
+    // …and on Oct 1 the raise is in force, and Sep 30's $1,200.00 is its one payday paid — an anecdote, said right
+    // after it, of the rate the sentence just named: never "at the rate in force now" again, nor after June's deposits
+    const onOct1 = provenanceFor(bundle.db, { kind: "recurringSeries", id: PAY, today: "2026-10-01" })!;
+    expect(onOct1.headline).toContain(
+      "Per payday, its one deposit at the rate in force since Oct 1, 2026 paid $1,200.00. That is one payday — " +
+        "below the 3 this app requires before calling a repeat a pattern, so it is an anecdote rather than a " +
+        "statistic. Its 3 deposits before Oct 1, 2026 were at an earlier rate",
     );
   });
 });
@@ -639,9 +643,11 @@ test("a raise recorded ahead of a first week: the gate counts paydays at today's
       `paid at it yet. ${later}`,
   );
   deposit("2026-09-24", WEEK);
+  // ⛔ "That is one payday" right after the payday it counts, never after the deposit left out (as a bill's words)
   expect(said().headline).toContain(
-    `Per payday, its one deposit since Sep 24, 2026 paid $1,141.92. ${later} That is one payday at the rate in force ` +
-      "now — below the 3",
+    "Per payday, its one deposit since Sep 24, 2026 paid $1,141.92. That is one payday at the rate in force now — " +
+      "below the 3 this app requires before calling a repeat a pattern, so it is an anecdote rather than a " +
+      `statistic. ${later}`,
   );
 });
 
@@ -710,8 +716,9 @@ describe("a pay series with no rate history: the gate counts paydays, as with on
     deposit("2026-09-11", 40_000);
     const p = said();
     expect(p.headline).toContain(
-      "Per payday, its one deposit since Sep 10, 2026 paid $1,141.92. Its one other deposit paid no payday on its " +
-        "own, and is not counted. That is one payday — below the 3",
+      "Per payday, its one deposit since Sep 10, 2026 paid $1,141.92. That is one payday — below the 3 this app " +
+        "requires before calling a repeat a pattern, so it is an anecdote rather than a statistic. Its one other " +
+        "deposit paid no payday on its own, and is not counted.",
     );
     expect([p.verdict, p.badgeWord]).toEqual(["unverified", "seen once"]);
   });
@@ -732,8 +739,9 @@ describe("a pay series with no rate history: the gate counts paydays, as with on
     expect(listSeries(bundle.db, TODAY).find((s) => s.id === PAY)!.postedAvgCents).toBe(WEEK);
     const p = said();
     expect(p.headline).toContain(
-      "Per payday, its one deposit since Sep 10, 2026 paid $1,141.92. Nothing stayed paid on Sep 17: its 2 tagged " +
-        "postings net to $0.00, and are not counted. That is one payday — below the 3",
+      "Per payday, its one deposit since Sep 10, 2026 paid $1,141.92. That is one payday — below the 3 this app " +
+        "requires before calling a repeat a pattern, so it is an anecdote rather than a statistic. Nothing stayed " +
+        "paid on Sep 17: its 2 tagged postings net to $0.00, and are not counted.",
     );
     expect(p.headline).not.toMatch(/-\$1,141\.92|different amounts|\$380\.64/);
     expect([p.verdict, p.badgeWord]).toEqual(["unverified", "seen once"]);
@@ -754,8 +762,9 @@ describe("a pay series with no rate history: the gate counts paydays, as with on
     expect(seriesDetail(bundle.db, PAY, TODAY).postedAvgCents).toBe(WEEK);
     const p = said();
     expect(p.headline).toContain(
-      "Per payday, its 2 deposits since Sep 10, 2026 paid $1,141.92, exactly. Its one tagged posting of money out " +
-        "paid no payday, and is not counted. That is 2 paydays — below the 3",
+      "Per payday, its 2 deposits since Sep 10, 2026 paid $1,141.92, exactly. That is 2 paydays — below the 3 this " +
+        "app requires before calling a repeat a pattern, so it is an anecdote rather than a statistic. Its one " +
+        "tagged posting of money out paid no payday, and is not counted.",
     );
     expect([p.verdict, p.badgeWord]).toEqual(["unverified", "seen 2 times"]);
     expect(p.sources.find((s) => s.kind === "period")).toMatchObject({
