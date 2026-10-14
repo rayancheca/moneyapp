@@ -160,7 +160,10 @@ describe("budgetSectionNotes", () => {
         row({ categoryPath: "Storage", overdueCents: 4_500, overdueInGraceCents: 4_500, overdueBills: 1 }),
       ],
     }).find((n) => n.id === "budgets-overdue")!.body;
-    expect(body).toContain("3 bills totalling $2,336.21 due by today and the days a payment has to post are not over yet");
+    // 🔴 of three bills it said "the days a payment has to post" (review of 384917c) — "them", as its statement words do
+    expect(body).toContain(
+      "3 bills totalling $2,336.21 due by today and the days their payments have to post are not over yet — 2 budgets:",
+    );
   });
 
   test("counts under-measured rows, exempting `over` the same way the row does", () => {

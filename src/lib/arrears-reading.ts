@@ -130,6 +130,16 @@ export function unreadWaitsOnDaysToPost(split: ArrearsSplit): boolean {
 export type ArrearsPronoun = "it" | "them";
 
 /**
+ * `DAYS_TO_POST_NOT_OVER` of one bill ("it"); of several ("them"), "the days their payments have to post are not over
+ * yet" — as "no statement has covered them yet" is said of them. 🔴 /budgets' page note said the one-bill words of
+ * several: "3 bills totalling $2,336.21 due by today and the days a payment has to post are not over yet" (review of
+ * 384917c).
+ */
+function daysToPostNotOver(pronoun: ArrearsPronoun): string {
+  return pronoun === "it" ? DAYS_TO_POST_NOT_OVER : "the days their payments have to post are not over yet";
+}
+
+/**
  * A mixed split in the runway's voice: "$R <notPosted>, and no statement has covered the other $U yet" — or, when it
  * waits on no statement, "…, and the days a payment has to post for the other $U are not over yet".
  */
@@ -156,7 +166,7 @@ export function arrearsClause(
   const split = arrearsSplit(reading);
   if (split.kind === "read") return notPosted;
   if (split.kind === "unread") {
-    if (unreadWaitsOnDaysToPost(split)) return DAYS_TO_POST_NOT_OVER;
+    if (unreadWaitsOnDaysToPost(split)) return daysToPostNotOver(pronoun);
     return noStatementHasCovered(pronoun);
   }
   return splitClause(split, notPosted);
