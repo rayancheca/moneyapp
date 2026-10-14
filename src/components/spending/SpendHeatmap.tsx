@@ -6,7 +6,9 @@ import { useRouter } from "next/navigation";
 import { CalendarGrid } from "@/components/ui/CalendarGrid";
 import { Sheet } from "@/components/ui/Sheet";
 import { UNREACHED_PHRASE, unreachedKind, type UnreachedKind } from "@/lib/empty-period";
+import { importedThroughFact } from "@/lib/budget-coverage";
 import { compactDayAmount } from "@/lib/calendar-day-weight";
+import { compareDates } from "@/lib/dates";
 import { formatCents } from "@/lib/money";
 import { formatDayLong, formatDayShort, formatMonthYear } from "@/lib/format-date";
 import { loadSpendHeatmap } from "@/app/spending/actions";
@@ -44,6 +46,13 @@ interface HeatDayFrontier {
   ledgerOpens: string | null;
   /** `ledgerReaches(db)` — the day the ledger is imported through: its newest row or non-investment statement end */
   ledgerReaches: string | null;
+  /**
+   * `spendingReadThrough(db)` — the day EVERY account he spends from is imported through, the day the period's proof
+   * on the same page counts its unaccounted days from (⚖️ decision 72); null when no statement could move it (a ledger
+   * of cash wallets alone). REQUIRED for the reason `ledgerOpens` is: a day past it that holds no row is unaccounted,
+   * and without it that day reads as a measured zero (`heatDayUnaccounted`).
+   */
+  spendingReadThrough: string | null;
 }
 
 /**
@@ -57,6 +66,23 @@ interface HeatDayFrontier {
 function heatDayUnreached({ iso, day, today, ledgerOpens, ledgerReaches }: HeatDayFrontier): UnreachedKind | null {
   const holdsRows = day !== null && (day.spentCents > 0 || day.incomeCents > 0 || day.refundedCents > 0);
   return holdsRows ? null : unreachedKind({ from: iso, to: iso, today, ledgerOpens, ledgerReaches });
+}
+
+/**
+ * "spending imported through Aug 12" when the day holds no spending or income and is past the day every account he
+ * spends from is read through — a day the ledger reached for SOME account, so neither unreached nor a measured zero —
+ * or null when it is neither. Asked after `heatDayUnreached`: a day nobody has imported at all says that instead.
+ *
+ * ⚖️ His decision 72 (2026-10-13): one window reads one way everywhere. 🔴 Measured on his ledger copy 2026-10-13
+ * (review of 06c6bf3): `/spending` for September printed "spending imported through Aug 12 · 30 days of this period
+ * unaccounted" under Where it went, and this heatmap, asked against `ledgerReaches` alone (Sep 24), opened Sep 13 …
+ * Sep 22 on "No spending or income on this day." — Venture X stops Sep 12 and Wells Fargo resumes Sep 23, while Chase
+ * Sapphire and Chase Checking are imported through Aug 12. The day is the proof's, and so are the words.
+ */
+function heatDayUnaccounted({ iso, day, spendingReadThrough }: HeatDayFrontier): string | null {
+  if (day !== null && (day.spentCents > 0 || day.incomeCents > 0)) return null;
+  if (spendingReadThrough === null || compareDates(iso, spendingReadThrough) <= 0) return null;
+  return importedThroughFact(spendingReadThrough, iso);
 }
 
 /**
@@ -83,6 +109,15 @@ export function heatDaySheetSentence(input: HeatDayFrontier): string | null {
       break;
   }
   const refunded = day?.refundedCents ?? 0;
+  // ⚖️ decision 72: a day read for some accounts and not every one is no measured zero — see `heatDayUnaccounted`
+  const unaccounted = heatDayUnaccounted(input);
+  if (unaccounted !== null) {
+    const found = refunded > 0 ? `Only a refund of ${formatCents(refunded)} has` : "Nothing has";
+    return (
+      `${found} been found for this day so far — ${unaccounted}, and not every account you spend from has been read ` +
+      "for it. That is not the same as nothing happening."
+    );
+  }
   return refunded > 0
     ? `No spending or income on this day — ${formatCents(refunded)} came back as a refund.`
     : // the same population the cell's own label names — not the ledger's
@@ -102,6 +137,7 @@ export function heatCellLabel({
   today,
   ledgerOpens,
   ledgerReaches,
+  spendingReadThrough,
 }: HeatDayFrontier & {
   /** the month the payload is FOR — a cell outside it was never queried */
   monthKey: string;
@@ -142,7 +178,8 @@ export function heatCellLabel({
    * same. This component was handed `ledgerReaches` and never `ledgerOpens`.
    * `unreachedKind` asks both ends, future first, and the sheet asks it too.
    */
-  const unreached = heatDayUnreached({ iso, day: d, today, ledgerOpens, ledgerReaches });
+  const frontier: HeatDayFrontier = { iso, day: d, today, ledgerOpens, ledgerReaches, spendingReadThrough };
+  const unreached = heatDayUnreached(frontier);
   if (unreached !== null) return `${day}: ${UNREACHED_PHRASE[unreached]}`;
   /*
    * 🔴 A DAY WHOSE ONLY ROW IS A RETURN IS NOT AN EMPTY DAY. The service skips
@@ -154,6 +191,13 @@ export function heatCellLabel({
   if (d && d.spentCents === 0 && d.incomeCents === 0 && d.refundedCents > 0) {
     return `${day}: ${formatCents(d.refundedCents)} refunded`;
   }
+  /*
+   * ⚖️ …AND A DAY READ FOR SOME ACCOUNTS AND NOT EVERY ONE IS NO MEASURED ZERO (decision 72, 2026-10-13). On his
+   * ledger copy Sep 13 … Sep 22 read "no spending or income" under a card calling all of September unaccounted — the
+   * ledger had reached them through Venture X and Wells Fargo, and not through the cards the rest is spent from.
+   */
+  const unaccounted = heatDayUnaccounted(frontier);
+  if (unaccounted !== null) return `${day}: nothing found so far — ${unaccounted}`;
   /*
    * ⛔ "no activity" IS AN ASSERTION ABOUT THE WHOLE LEDGER, and this chart
    * counts three things: expense-kind outflows, income-kind positives, and
@@ -197,9 +241,11 @@ interface SpendHeatmapProps {
    * and neither moves.
    */
   ledgerReaches: string | null;
+  /** `spendingReadThrough(db)` — the day every account he spends from is imported through; see `HeatDayFrontier` */
+  spendingReadThrough: string | null;
 }
 
-export function SpendHeatmap({ initial, today, ledgerOpens, ledgerReaches }: SpendHeatmapProps) {
+export function SpendHeatmap({ initial, today, ledgerOpens, ledgerReaches, spendingReadThrough }: SpendHeatmapProps) {
   const router = useRouter();
   const [openDay, setOpenDay] = useState<string | null>(null);
   /*
@@ -224,6 +270,7 @@ export function SpendHeatmap({ initial, today, ledgerOpens, ledgerReaches }: Spe
       today,
       ledgerOpens,
       ledgerReaches,
+      spendingReadThrough,
     });
   }
 
@@ -295,6 +342,7 @@ export function SpendHeatmap({ initial, today, ledgerOpens, ledgerReaches }: Spe
             today={today}
             ledgerOpens={ledgerOpens}
             ledgerReaches={ledgerReaches}
+            spendingReadThrough={spendingReadThrough}
           />
         )}
       </Sheet>

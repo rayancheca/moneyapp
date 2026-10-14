@@ -23,6 +23,7 @@ import { addManualAnchor } from "./anchors";
 import { budgetPaceStatuses } from "./budgets";
 import { createCashWallet } from "./cash-wallets";
 import { addManualTransaction } from "./manual-transactions";
+import { spendingReadThrough } from "./movers-card";
 import { provenanceFor, weakestVerdict, type ProvenanceVerdict } from "./provenance";
 
 /**
@@ -3685,6 +3686,25 @@ describe("⚖️ decision 72 — a total over days its accounts have not been im
       expect(p.partlyRead).toBeUndefined();
       expect(p.headline).toMatch(/window nobody has looked at/);
     }
+  });
+
+  /*
+   * ⛔ One day for the page. /spending hands its heatmap the day this proof counts from (`spendingReadThrough`), so a
+   * card calling a day unaccounted and a day sheet calling it a measured zero cannot both be on it — 🔴 they were, on
+   * his ledger copy 2026-10-13 (review of 06c6bf3): "30 days of this period unaccounted" under Where it went, and "No
+   * spending or income on this day." on Sep 13 … Sep 22, read against the ledger's newest row.
+   */
+  test("the day all spending is read through is the day the proof counts from", () => {
+    cardThrough("2026-07-30");
+    expect(spendingReadThrough(bundle.db, "2026-10-13")).toBe("2026-07-30");
+    expect(allSpend().partlyRead?.line).toBe("spending imported through Jul 30 · 1 day of this period unaccounted");
+  });
+
+  test("…and there is none on a ledger of cash wallets alone, where no statement could ever move it", () => {
+    const wallet = createCashWallet(bundle.db, { name: "Cash on Hand", openingOn: "2026-07-01", openingBalanceCents: 50_000 });
+    addManualTransaction(bundle.db, { accountId: wallet, postedOn: "2026-07-10", amountCents: -1_000, description: "Lunch", categoryId: food });
+    expect(spendingReadThrough(bundle.db, "2026-10-13")).toBeNull();
+    expect(spendingReadThrough(createDatabase(":memory:").db, "2026-10-13")).toBeNull();
   });
 
   test("a row that does not add up, or has no basis, still outranks a window read in part", () => {

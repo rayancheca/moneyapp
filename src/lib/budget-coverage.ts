@@ -167,8 +167,12 @@ export function budgetCoverageSentence(input: BudgetCoverageInput): string {
   return `${budgetCoverageFact(input)} · ${unaccountedDays(input.uncoveredDays)}`;
 }
 
-/** "spending imported through Sep 2" — a named day, as the row names it; a day outside the period's year carries it */
-function importedThroughFact(on: string, periodStart: string): string {
+/**
+ * "spending imported through Sep 2" — a named day, as the row names it; a day outside the period's year carries it.
+ * ⚖️ Exported for decision 72's one-day windows: /spending's heatmap names the day a day past it is read through in
+ * these words, the words under Where it went on the same page (`SpendHeatmap`'s `heatDayUnaccounted`).
+ */
+export function importedThroughFact(on: string, periodStart: string): string {
   return `spending imported through ${formatDayShortIn(on, periodStart)}`;
 }
 

@@ -17,11 +17,10 @@ import { isStaleClose } from "@/lib/holding-price-age";
 import { formatCents } from "@/lib/money";
 import { budgetCoverageSentence, readThroughSentence, spentOnlyFromCashWallets } from "@/lib/budget-coverage";
 import { A_LOWER_BOUND, daysNotImportedYet, emptyPeriodReason } from "@/lib/empty-period";
-import { ledgerOpens, ledgerReaches, observationFrontier } from "./observation-frontier";
-import { accountsAwaitingStatements } from "./cash-wallet-rule";
+import { ledgerOpens, ledgerReaches } from "./observation-frontier";
 import { outsidePortfolioCashAccountIds, ownPortfolioAccountIds } from "./accounts";
 import { categoryReachFor, categoryWindowReading } from "./budgets";
-import { spendingCoverageThrough } from "./movers-card";
+import { spendingReadThrough } from "./movers-card";
 import {
   activeTxnsInRange,
   isHisExpenseRow,
@@ -2504,12 +2503,12 @@ function categoryPartlyRead(db: AppDatabase, categoryId: string, from: string, t
  * has an import day — an empty ledger, or one of cash wallets alone — the day `spendingCoverageThrough` falls back to
  * is a wallet's newest typed row, which no import will ever move. Nothing is graded partly read then: "partly read"
  * forever would be a claim no statement could correct.
+ *
+ * ⛔ Asked through `spendingReadThrough`, the day /spending's heatmap reads its days against too — one day for the page.
  */
 function allSpendPartlyRead(db: AppDatabase, from: string, to: string): PartlyRead | null {
   const today = todayIso();
-  const { byAccount } = observationFrontier(db);
-  if (![...accountsAwaitingStatements(db)].some((id) => byAccount.has(id))) return null;
-  const through = spendingCoverageThrough(db, today);
+  const through = spendingReadThrough(db, today);
   if (through === null) return null;
   const n = daysNotImportedYet({ from, to, today, ledgerOpens: ledgerOpens(db), ledgerReaches: through });
   return n === 0 ? null : { uncoveredDays: n, line: readThroughSentence(through, n, { start: from }) };

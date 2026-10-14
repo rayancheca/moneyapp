@@ -5,6 +5,7 @@ import { Icon } from "@/components/shell/Icon";
 import { Popover, usePopover } from "@/components/ui/Popover";
 import {
   VERDICT_PRESENTATION,
+  checkedThroughLead,
   provenancePanelName,
   provenanceTriggerName,
   verdictToneClass,
@@ -129,9 +130,10 @@ export function ProvenancePopover({ label, provenance, placement = "bottom-start
 
           <p className="text-[13px] leading-relaxed text-ink-muted">{provenance.headline}</p>
 
+          {/* ⚖️ decision 72: over a window read only in part the date is its rows', and says so (`checkedThroughLead`) */}
           {provenance.checkedThrough && (
             <p className="text-[13px] text-ink-faint">
-              Checked through <span className="figures text-ink">{provenance.checkedThrough}</span>.
+              {checkedThroughLead(provenance)} <span className="figures text-ink">{provenance.checkedThrough}</span>.
             </p>
           )}
 

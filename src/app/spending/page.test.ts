@@ -153,4 +153,16 @@ describe("a period read only in part says so under Where it went, in the proof's
     expect(source).toMatch(/\{spendProvenance\?\.partlyRead && \(\s*<p [^>]*>\{spendProvenance\.partlyRead\.line\}<\/p>/);
     expect(source).not.toMatch(/\breadThroughSentence\(|\bbudgetCoverageSentence\(|\bdaysNotImportedYet\(/);
   });
+
+  /*
+   * 🔴 …and the heatmap a few cards up called those days measured zeroes. On his ledger copy 2026-10-13 (review of
+   * 06c6bf3) Sep 13 … Sep 22 opened on "No spending or income on this day." under "30 days of this period unaccounted":
+   * the heatmap was handed `ledgerReaches` (Sep 24) and nothing else. It is handed the proof's day too — the function
+   * the proof reads (`spendingReadThrough`), never `spendingCoverageThrough` asked a second way here.
+   */
+  test("the heatmap is handed the day the proof counts from", () => {
+    expect(source).toMatch(/<SpendHeatmap[^/]*\bspendingReadThrough=\{readThrough\}/);
+    expect(source).toMatch(/const readThrough = spendingReadThrough\(db, today\);/);
+    expect(source).not.toMatch(/\bspendingCoverageThrough\(/);
+  });
 });

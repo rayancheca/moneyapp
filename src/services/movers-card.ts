@@ -457,6 +457,23 @@ export function spendingCoverageThrough(db: AppDatabase, today: string = todayIs
 }
 
 /**
+ * ⚖️ His decision 72 (2026-10-13): the day a window of ALL his spending is read through — `spendingCoverageThrough` —
+ * or null when no statement could ever move it: no account a statement is still coming for has an import day (an
+ * empty ledger, or one of cash wallets alone), so the day `spendingCoverageThrough` falls back to is a wallet's newest
+ * typed row. "Partly read" forever would be a claim no statement could correct (the /budgets rule, 2026-09-15).
+ *
+ * ⛔ One day for /spending: the period's proof counts its unaccounted days from it (`provenance::allSpendPartlyRead`),
+ * and the heatmap on the same page reads its days against it (`SpendHeatmap`). 🔴 The heatmap was asked against the
+ * ledger's newest row alone — on his ledger copy 2026-10-13 (review of 06c6bf3) Sep 13 … Sep 22 read "No spending or
+ * income on this day." under "30 days of this period unaccounted".
+ */
+export function spendingReadThrough(db: AppDatabase, today: string = todayIso()): string | null {
+  const { byAccount } = observationFrontier(db);
+  if (![...accountsAwaitingStatements(db)].some((id) => byAccount.has(id))) return null;
+  return spendingCoverageThrough(db, today);
+}
+
+/**
  * What changed this month — or rather, in the newest month that can be said to
  * have happened.
  *

@@ -178,6 +178,21 @@ export const PART_ENTERED = {
   name: "part of it was entered by hand",
 } as const;
 
+/**
+ * The words before a proof's date (`Provenance.checkedThrough`) in its panel.
+ *
+ * ⚖️ His decision 72 (2026-10-13): a total over a window read only in part says, in its panel, which day the window is
+ * read through. 🔴 …and the date under that sentence still read as the total's. Measured on his ledger copy 2026-10-13
+ * (review of 06c6bf3): Food's September panel read "It is read only in part: spending imported through Aug 12 · 30
+ * days of this period unaccounted" above "Checked through 2026-09-13." — two days for how far one total is known, the
+ * later one the day the "adds up" complaint had quoted. The date is its ROWS': the first account that CONTRIBUTED a row
+ * to stop being checked (`footingBounds`), and the 25 Venture X rows do add up through Sep 13. Over a window read in
+ * part the words say whose it is; the window's own day is the sentence above it.
+ */
+export function checkedThroughLead(proof: { partlyRead?: object }): string {
+  return proof.partlyRead === undefined ? "Checked through" : "Its rows are checked through";
+}
+
 /** The panel's accessible name — through the same rule, so the button and its dialog name one claim. */
 export function provenancePanelName(label: string): string {
   return `What ${embeddedLabel(label)} is standing on`;

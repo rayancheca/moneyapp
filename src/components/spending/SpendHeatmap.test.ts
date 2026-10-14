@@ -20,6 +20,8 @@ const cell = (iso: string, day: HeatDay | null = null, over: Partial<Parameters<
     today: TODAY,
     ledgerOpens: OPENS,
     ledgerReaches: REACHES,
+    // every account he spends from is read as far as the ledger reaches, unless a test says otherwise
+    spendingReadThrough: REACHES,
     ...over,
   });
 
@@ -169,7 +171,14 @@ describe("heatCellLabel — the days before the records begin", () => {
     const reaches = { ledgerReaches: "2026-09-12" };
     expect(cell("2026-09-12", heat(5_000, 0, 1), reaches)).toBe("Sep 12: $50.00 spent across 1 transaction");
     expect(
-      heatDaySheetSentence({ iso: "2026-09-12", day: heat(5_000, 0, 1), today: TODAY, ledgerOpens: OPENS, ...reaches }),
+      heatDaySheetSentence({
+        iso: "2026-09-12",
+        day: heat(5_000, 0, 1),
+        today: TODAY,
+        ledgerOpens: OPENS,
+        spendingReadThrough: "2026-09-12",
+        ...reaches,
+      }),
     ).toBeNull();
   });
 });
@@ -181,7 +190,7 @@ describe("heatCellLabel — the days before the records begin", () => {
  */
 describe("heatDaySheetSentence — the sheet lands in the cell's world", () => {
   const sheet = (iso: string, day: HeatDay | null = null) =>
-    heatDaySheetSentence({ iso, day, today: TODAY, ledgerOpens: OPENS, ledgerReaches: REACHES });
+    heatDaySheetSentence({ iso, day, today: TODAY, ledgerOpens: OPENS, ledgerReaches: REACHES, spendingReadThrough: REACHES });
 
   test("a day before the records begin says so in the sheet too", () => {
     expect(sheet("2026-08-02")).toBe(
@@ -209,5 +218,64 @@ describe("heatDaySheetSentence — the sheet lands in the cell's world", () => {
     expect(sheet("2026-08-04", heat(0, 0, 0, 1_800))).toBe(
       "No spending or income on this day — $18.00 came back as a refund.",
     );
+  });
+});
+
+/**
+ * ⚖️ His decision 72 (2026-10-13): a total over days its accounts have not been imported through is "partly read", and
+ * one window reads one way everywhere. 🔴 Measured on his ledger copy 2026-10-13 (review of 06c6bf3): `/spending` for
+ * September printed "spending imported through Aug 12 · 30 days of this period unaccounted" under Where it went, while
+ * its heatmap — asked against `ledgerReaches`, Sep 24, the newest row anywhere — opened Sep 13 … Sep 22 on "No spending
+ * or income on this day.": Venture X stops Sep 12, Wells Fargo resumes Sep 23, and Chase Sapphire and Chase Checking,
+ * which he spends from too, are imported through Aug 12. A measured zero over days a card on the same page calls
+ * unaccounted. The day those days are read against is the proof's (`spendingReadThrough`).
+ */
+describe("a day past the day all his spending is read through is unaccounted, not empty", () => {
+  const READ = "2026-08-12";
+  const august = { monthKey: "2026-08", monthName: "August 2026", spendingReadThrough: READ };
+  const sheet = (iso: string, day: HeatDay | null = null) =>
+    heatDaySheetSentence({ iso, day, today: TODAY, ledgerOpens: OPENS, ledgerReaches: REACHES, spendingReadThrough: READ });
+  const UNREAD = "spending imported through Aug 12, and not every account you spend from has been read for it.";
+
+  test("the day it is read through is a measurement", () => {
+    expect(cell("2026-08-12", null, august)).toBe("Aug 12: no spending or income");
+    expect(sheet("2026-08-12")).toBe("No spending or income on this day.");
+  });
+
+  test("the next day, read for some accounts and not every one, names the day all of them are read through", () => {
+    expect(cell("2026-08-13", null, august)).toBe("Aug 13: nothing found so far — spending imported through Aug 12");
+    expect(sheet("2026-08-13")).toBe(
+      `Nothing has been found for this day so far — ${UNREAD} That is not the same as nothing happening.`,
+    );
+  });
+
+  test("the ledger's own last day is unaccounted too, and the day after it is not imported at all", () => {
+    expect(cell("2026-08-31", null, august)).toBe("Aug 31: nothing found so far — spending imported through Aug 12");
+    expect(cell("2026-09-04", null, { spendingReadThrough: READ })).toBe("Sep 4: not imported yet");
+    expect(sheet("2026-09-04")).toMatch(/^Nothing has been imported for this day yet/);
+  });
+
+  test("a day holding money still reports it", () => {
+    expect(cell("2026-08-20", heat(12_50, 0, 2), august)).toBe("Aug 20: $12.50 spent across 2 transactions");
+    expect(sheet("2026-08-20", heat(12_50, 0, 2))).toBeNull();
+  });
+
+  test("a refund found on such a day is named, and so is the day the rest is read through", () => {
+    expect(cell("2026-08-20", heat(0, 0, 0, 1_800), august)).toBe("Aug 20: $18.00 refunded");
+    expect(sheet("2026-08-20", heat(0, 0, 0, 1_800))).toBe(
+      `Only a refund of $18.00 has been found for this day so far — ${UNREAD} That is not the same as nothing happening.`,
+    );
+  });
+
+  test("a read day in another year is printed with its year", () => {
+    const january = { monthKey: "2027-01", monthName: "January 2027", today: "2027-01-20", ledgerReaches: "2027-01-10" };
+    expect(cell("2027-01-05", null, { ...january, spendingReadThrough: "2026-12-30" })).toBe(
+      "Jan 5: nothing found so far — spending imported through Dec 30, 2026",
+    );
+  });
+
+  /* ⚖️ a ledger of cash wallets alone has no day a statement could move — the proof grades nothing partly read there */
+  test("with no day to read against, an empty day the ledger reaches is a measurement, as before", () => {
+    expect(cell("2026-08-20", null, { ...august, spendingReadThrough: null })).toBe("Aug 20: no spending or income");
   });
 });

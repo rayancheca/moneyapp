@@ -25,6 +25,7 @@ import { spendingSankey } from "@/services/sankey";
 import { predictBudgetableCategories } from "@/services/category-forecast";
 import { readSettings } from "@/services/settings";
 import { ledgerOpens, ledgerReaches } from "@/services/observation-frontier";
+import { spendingReadThrough } from "@/services/movers-card";
 import { spendingInsights } from "@/services/spending-insights";
 import {
   cashFlowByPeriod,
@@ -327,6 +328,8 @@ export default async function SpendingPage({
   // both ends of the ledger, read once: the empty state and the heatmap ask them
   const opens = ledgerOpens(db);
   const reaches = ledgerReaches(db);
+  // ⚖️ decision 72: the day the period's proof counts its unaccounted days from — the heatmap's days are read against it
+  const readThrough = spendingReadThrough(db, today);
   const emptyCopy = hasActivity
     ? null
     : spendingEmptyCopy(db, range, {
@@ -401,6 +404,7 @@ export default async function SpendingPage({
                 today={today}
                 ledgerOpens={opens}
                 ledgerReaches={reaches}
+                spendingReadThrough={readThrough}
               />
             </SurfaceCard>
             <SurfaceCard className="lg:col-span-2">
