@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { eq } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
-import { createDatabase, type DbBundle } from "@/db/client";
+import { createDatabase, type AppDatabase, type DbBundle } from "@/db/client";
 import { recurringSeries } from "@/db/schema/recurring";
 import { transactions } from "@/db/schema/transactions";
 import { seedDatabase } from "@/db/seed";
@@ -13,9 +13,9 @@ import { seedHisCarSeries, type OneChargeLedger } from "./one-charge-fixture";
 const between = vi.hoisted(() => ({ write: undefined as (() => void) | undefined }));
 vi.mock("@/db/backup", async (actual) => ({
   ...(await actual<typeof import("@/db/backup")>()),
-  withPreMutationSnapshot: <T>(_db: unknown, _label: string, mutate: () => T): T => {
+  withPreMutationTransaction: <T>(db: AppDatabase, _label: string, write: (tx: never) => T): T => {
     between.write?.();
-    return mutate();
+    return db.transaction((tx) => write(tx as never));
   },
 }));
 

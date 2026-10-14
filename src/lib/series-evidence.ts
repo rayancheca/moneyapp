@@ -197,7 +197,8 @@ export function seriesRowLabel(
 
 /**
  * What a series calls what it posts, by kind: what stops when it goes quiet, the one and the many of what it posts —
- * the rows the "Nothing expected" card lists — and its past tense, the evidence notes' verb and `seriesVerb`'s.
+ * the rows the "Nothing expected" card lists — and its present and past tense, the cadence sentence's verb
+ * (`seriesVerb`) and the evidence notes'.
  *
  * 🔴 It said "a bill" and "charges" of every kind: of a lapsed transfer, of an `other` series — which may be money in,
  * a monthly credit (`forecast.ts`) — and, ended or dismissed, of pay. On his ledger copy 2026-10-12 "Its charges
@@ -207,27 +208,33 @@ export function seriesRowLabel(
  * ⚠️ Pay never lapses (`lapsedSeriesShouldStopForecasting`), so its `stops` is said only if that rule changes.
  *
  * ⛔ ONE table for every sentence on the page that names what a series posts — the card, the End dialog's lines and
- * reassurance (`end-radius`), the page's "Per deposit" (`SeriesDetail`), the cadence sentence's past tense
+ * reassurance (`end-radius`), the page's "Per deposit" (`SeriesDetail`), the cadence sentence's verb in both tenses
  * (`seriesVerb`), the All tab's section notes (`seriesEvidenceNote`, `lapsedSectionNote`). 🔴 The card learned it and
  * the End dialog on the same page did not: on his ledger copy 2026-10-12 STOCK LENDING (COKE)'s card read "Its
  * deposits below stay in the ledger." over a dialog saying "the charges stay in your ledger". 🔴 …and two branches
  * wrote it twice the same day: a second split (`postingOf`) called an `other` series' postings "charges" beside this
  * table's "payments" — its page would have read "Per charge" over "Its payments below stay in the ledger" (merged
- * 2026-10-13). ⚠️ `seriesVerb`'s PRESENT tense still says "charges" of an `other` series — not settled here.
+ * 2026-10-13).
+ *
+ * ⛔ …and the cadence sentence's PRESENT tense too (`present`, `seriesVerb`): "pays monthly around the 8th" of an
+ * `other` series, as its past is "paid". 🔴 It kept a split of its own after the past moved here — "charges" of every
+ * kind but pay and transfers — so an `other` series' page read "charges monthly" over "Per payment" (review of the
+ * 10-12/13 batches; no `other` series on his ledger copy 2026-10-13, so it was never on his screen).
  */
 interface SeriesPostingWords {
   readonly stops: string;
   readonly posting: string;
   readonly postings: string;
+  readonly present: string;
   readonly past: string;
 }
 
 const SCHEDULE_REASON_WORDS: Record<SeriesKind, SeriesPostingWords> = {
-  bill: { stops: "a bill", posting: "charge", postings: "charges", past: "charged" },
-  subscription: { stops: "a bill", posting: "charge", postings: "charges", past: "charged" },
-  income: { stops: "pay", posting: "deposit", postings: "deposits", past: "deposited" },
-  transfer: { stops: "a transfer", posting: "transfer", postings: "transfers", past: "moved" },
-  other: { stops: "a recurring payment", posting: "payment", postings: "payments", past: "paid" },
+  bill: { stops: "a bill", posting: "charge", postings: "charges", present: "charges", past: "charged" },
+  subscription: { stops: "a bill", posting: "charge", postings: "charges", present: "charges", past: "charged" },
+  income: { stops: "pay", posting: "deposit", postings: "deposits", present: "deposits", past: "deposited" },
+  transfer: { stops: "a transfer", posting: "transfer", postings: "transfers", present: "moves", past: "moved" },
+  other: { stops: "a recurring payment", posting: "payment", postings: "payments", present: "pays", past: "paid" },
 };
 
 export function seriesPostingWords(kind: SeriesKind): SeriesPostingWords {

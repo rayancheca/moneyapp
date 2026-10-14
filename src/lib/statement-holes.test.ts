@@ -1,7 +1,16 @@
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, test } from "vitest";
+import { StatementGapsPanel } from "@/components/imports/StatementGapsPanel";
 import { addCalendarMonths, addDays } from "./dates";
 import { statementCadence, type StatementCadence } from "./statement-cadence";
-import { MAX_CLOSES_PER_HOLE, statementHoles, type StatementPeriodRef } from "./statement-holes";
+import {
+  MAX_CLOSES_PER_HOLE,
+  holeTotals,
+  statementHoles,
+  type StatementHole,
+  type StatementPeriodRef,
+} from "./statement-holes";
 
 const monthly = (day: number): StatementCadence => ({
   rhythm: { kind: "day-of-month", day },
@@ -249,6 +258,19 @@ describe("the cycle a hole was on, read from the hole itself", () => {
   const holesOf = (periods: readonly StatementPeriodRef[]) =>
     statementHoles(periods, statementCadence(periods.map((p) => p.end)));
 
+  /**
+   * Missing statements' header over Discover's row alone, as /imports renders it (`StatementGapsPanel`) — its
+   * two figures summed from the holes by the service's rule (`holeTotals`).
+   */
+  const headerOf = (holes: StatementHole[]): string => {
+    const row = { accountId: "discover", accountName: "Discover", site: null, holes, withheld: [] };
+    const markup = renderToStaticMarkup(
+      createElement(StatementGapsPanel, { gaps: [{ ...row, ...holeTotals(holes) }] }),
+    );
+    const header = markup.match(/<h2[^>]*>Statements you do not have<\/h2><p[^>]*>(.*?)<\/p>/)?.[1];
+    return header === undefined ? "(no header)" : header.replace(/<!-- -->/g, "");
+  };
+
   test("Discover's four holes are five statements, on every month the Capital One cycle takes the window", () => {
     expect(holesOf(DISCOVER_PERIODS)).toEqual([
       { from: "2024-08-19", to: "2024-09-18", days: 31, closes: 1 },
@@ -342,6 +364,8 @@ describe("the cycle a hole was on, read from the hole itself", () => {
     const holes = holesOf(periods);
     expect(holes.at(-1)).toEqual({ from: "2026-12-14", to: "2027-01-09", days: 27, closes: 1 });
     expect(holes.map((h) => h.closes)).toEqual([1, 1, 1, 2, 1]);
+    // the header, as the panel prints it — it read "5 statements · 179 days uncovered" for six
+    expect(headerOf(holes)).toBe("6 statements · 179 days uncovered");
   });
 
   /*
@@ -364,9 +388,8 @@ describe("the cycle a hole was on, read from the hole itself", () => {
     expect(statementCadence(periods.map((p) => p.end)).rhythm).toEqual({ kind: "day-of-month", day: 9 });
     const holes = holesOf(periods);
     expect(holes.at(-1)).toEqual({ from: "2026-12-14", to: "2027-02-09", days: 58, closes: 2 });
-    // the header: 7 statements · 210 days
     expect(holes.map((h) => h.closes)).toEqual([1, 1, 1, 2, 2]);
-    expect(holes.reduce((n, h) => n + h.days, 0)).toBe(210);
+    expect(headerOf(holes)).toBe("7 statements · 210 days uncovered");
   });
 
   /*
@@ -386,6 +409,24 @@ describe("the cycle a hole was on, read from the hole itself", () => {
       days: 104,
       closes: 3,
     });
+  });
+
+  /*
+   * ⚠️ …and a step a day further out is the close BEFORE `to`. The test above holds half a cycle from below — a
+   * step fifteen days before `to` goes with it — and nothing held it from above: moved anywhere up to 25 days,
+   * every hole test stayed green (the review, 2026-10-12). A card moving its close from the 17th to the 2nd, a day
+   * earlier in the month than Discover's move, walks on the 17th: Jul 17 sits sixteen days before Aug 2 and fifteen
+   * after Jul 2, so it is Jul 2's step, and the hole holds two statements.
+   */
+  test("a step sixteen days before the close ending a hole is the close before it — half a cycle, from above", () => {
+    const periods: StatementPeriodRef[] = [
+      { start: "2025-05-18", end: "2025-06-17" },
+      // Jul 2 and Aug 2 never imported, on the cycle the card moved to
+      { start: "2025-08-03", end: "2025-09-02" },
+    ];
+    expect(statementHoles(periods, monthly(2))).toEqual([
+      { from: "2025-06-18", to: "2025-08-02", days: 46, closes: 2 },
+    ]);
   });
 
   test("a hole that ends at an EARLY close counts it beside the one before it", () => {

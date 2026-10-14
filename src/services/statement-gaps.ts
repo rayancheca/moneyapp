@@ -6,7 +6,7 @@ import { institutions } from "@/db/schema/institutions";
 import { diffDays } from "@/lib/dates";
 import { withheldSectionsOf } from "@/lib/import-file-label";
 import { statementCadence } from "@/lib/statement-cadence";
-import { statementHoles, type StatementHole } from "@/lib/statement-holes";
+import { holeTotals, statementHoles, type StatementHole } from "@/lib/statement-holes";
 import { statementSiteFor, type StatementSite } from "@/lib/statement-sites";
 import { ACCOUNT_ORDER } from "./account-order";
 import { accountsAwaitingStatements } from "./cash-wallet-rule";
@@ -127,16 +127,12 @@ export function statementGaps(db: AppDatabase): AccountStatementGaps[] {
     const holes = issued.length < 2 ? [] : statementHoles(issued, statementCadence(issued.map((p) => p.end)));
     if (holes.length === 0 && withheld.length === 0) continue;
 
-    const counted = holes.map((h) => h.closes).filter((c): c is number => c !== null);
     out.push({
       accountId: account.id,
       accountName: account.name,
       site: holes.length > 0 ? statementSiteFor(account) : null,
       holes,
-      // null rather than 0 when nothing could be counted: "0 statements
-      // missing" beside a 60-day hole is a contradiction on its own line
-      missingCloses: counted.length === 0 ? null : counted.reduce((a, b) => a + b, 0),
-      missingDays: holes.reduce((sum, h) => sum + h.days, 0),
+      ...holeTotals(holes),
       withheld,
     });
   }

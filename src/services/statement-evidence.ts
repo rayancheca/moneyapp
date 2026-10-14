@@ -4,7 +4,7 @@ import { accounts } from "@/db/schema/accounts";
 import { importFiles, statementPeriods, type ReconciliationState } from "@/db/schema/imports";
 import type { BalanceLessCounts } from "@/lib/statement-evidence-notes";
 import { fileRecordedBalanceOnSql } from "./file-recorded-balance";
-import { balanceLessKind, carriesBalances, type BalanceLessKind } from "./statements-by-account";
+import { balanceLessKind, carriesBalances, firstOnAccountSql, type BalanceLessKind } from "./statements-by-account";
 
 /** One `statement_periods` row as /imports lists it. */
 export interface ImportsPeriod {
@@ -21,6 +21,8 @@ export interface ImportsPeriod {
   /** the newest balance its file recorded for the account (`fileRecordedBalanceOn`) — what tells a download from a
    *  report */
   readonly recordedOn: string | null;
+  /** no period of its account starts before it (`firstOnAccount`) — what lets the footer say "an account's first" */
+  readonly firstOnAccount: boolean;
 }
 
 export interface StatementEvidence {
@@ -50,11 +52,23 @@ export interface StatementEvidence {
  * 18 owning the balance each recorded on its account. Not reachable on his ledger today (its three own none, measured
  * on the copy); it is the day he imports a Chase QFX download.
  *
+ * 🔴 …and the other nine still read "carried no balance to check — a spending report, an export without a closing
+ * figure": each printed a LEDGERBAL on its last day that its quarter's CSV re-recorded, and the ledger keeps one
+ * `ofx_ledger` balance per account and day, the last writer's (⚖️ anchor ownership as shipped, handoff 2026-10-13
+ * §6A). A period an OFX parser read whose file owns no balance on the account (`download_no_balance`) is counted as a
+ * DOWNLOAD, named by what the ledger keeps of it — never as a report, nor as one that printed none.
+ *
+ * 🔴 …and that split read the parser HERE, beside `balanceLessKind`, so the sheets that read the kind still called
+ * the same nine "this file carries no balances" (a copy of data/e2e.db, 2026-10-14: Chase8721_Activity_2026-04-01_
+ * 2026-06-30.QFX's period sheet, and the period line on its rows' and Chase Savings' days' sheets). The kind tells a
+ * download from a report now, and this counts kinds.
+ *
  * ⚠️ Reports and downloads are counted as DOCUMENTS, the word the footer uses: one OFX download can print two
  * accounts with no balance, two periods of one file — and one that recorded a balance on one account and none on the
  * other is named in both sentences, each true of one of them. Opening statements are counted as statements —
  * Agentic's came out of a PDF that also printed Robinhood Cash's and the brokerage book's balances, so it is a
- * statement without balances inside a document that had them.
+ * statement without balances inside a document that had them — and those no earlier period of their account precedes
+ * (`firstOnAccount`) as their account's first.
  */
 export function statementEvidence(db: AppDatabase): StatementEvidence {
   const periods: ImportsPeriod[] = db
@@ -69,6 +83,7 @@ export function statementEvidence(db: AppDatabase): StatementEvidence {
       marketChangeCents: statementPeriods.marketChangeCents,
       parserProfile: importFiles.parserProfile,
       recordedOn: fileRecordedBalanceOnSql(db, statementPeriods),
+      firstOnAccount: firstOnAccountSql(db, statementPeriods),
     })
     .from(statementPeriods)
     .innerJoin(accounts, eq(statementPeriods.accountId, accounts.id))
@@ -78,16 +93,19 @@ export function statementEvidence(db: AppDatabase): StatementEvidence {
     .all();
 
   const evidence = periods.filter((p) => carriesBalances(p.reconciliation));
-  // one reading with the transaction and balance sheets' period line (`balanceLessKind`)
+  // one reading with the period line on a row's and a day's sheet and the period's own sheet (`balanceLessKind`)
   const ofKind = (kind: BalanceLessKind) => periods.filter((p) => balanceLessKind(p) === kind);
   const documents = (kind: BalanceLessKind) => new Set(ofKind(kind).map((p) => p.importFileId)).size;
+  const opening = ofKind("opening_statement");
   return {
     periods,
     evidence,
     balanceLess: {
       reportDocuments: documents("no_balance"),
+      downloadDocuments: documents("download_no_balance"),
       recordedBalanceDocuments: documents("balance_recorded"),
-      openingStatements: ofKind("opening_statement").length,
+      openingStatements: opening.length,
+      firstStatements: opening.filter((p) => p.firstOnAccount).length,
     },
   };
 }

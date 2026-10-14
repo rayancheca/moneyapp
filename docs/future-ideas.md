@@ -1473,8 +1473,10 @@ disk** (only per-instance, wiped `/tmp`). The archive today is local-fs only —
 `data/statements/_unfiled/<sha16>-<name>`) → `relocateArchive()` into the per-account folder
 resolved by `accountsFolder()` (1 acct → `accountSlug`, >1 at one bank → `<institution>-combined`, >1
 at two banks or more → ONE folder whose name lists every bank, alphabetical —
-`robinhood-and-sofi-combined` (since 2026-10-08; it went to the folder of whichever account the
-statement printed first) — no account → stays in `_unfiled/`, never a guessed bank's folder) →
+`robinhood-and-sofi-combined` (since 2026-10-08; before, it went to the `<institution>-combined`
+folder of the bank of whichever account the read named first — `robinhood-combined/` or
+`sofi-combined/` for the same two banks) — no account → stays in `_unfiled/`, never a guessed
+bank's folder) →
 `importFiles.storagePath` persisted.
 **Good news from the audit: `storage_path` is WRITE-ONLY** — no route/page ever reads the bytes
 back (no download route exists), so there is no "serve to browser" path to rewire; only the

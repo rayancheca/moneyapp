@@ -23,8 +23,8 @@
 
 import type { Cadence } from "@/db/schema/recurring";
 import { arrearsTail, HAS_NOT_POSTED, type ArrearsReading } from "@/lib/arrears-reading";
-import { addCalendarMonths, compareDates, daysInMonthOf, monthKey, withDayOfMonth } from "@/lib/dates";
-import { monthWindowLabel } from "@/lib/format-date";
+import { addCalendarMonths, compareDates, daysInMonthOf, monthKey, periodBounds, withDayOfMonth } from "@/lib/dates";
+import { formatDayShortIn, formatMonthYear, monthWindowLabel } from "@/lib/format-date";
 import { dayWindowLabel } from "@/lib/period";
 import { levelledMonthlyCents, OCCURRENCES_PER_YEAR } from "@/lib/income-basis";
 import { formatCents } from "@/lib/money";
@@ -64,6 +64,14 @@ export interface CommittedOccurrence {
   cadence: Cadence;
   /** the day the series stops, or null when it runs on past this horizon */
   endsOn: string | null;
+  /**
+   * The series' whole schedule is ONE charge (`oneChargeDays`, services/recurring) — ⚖️ owner decision 2026-10-08
+   * (§6A 56): no monthly cost, its own single payment. Absent means it is not.
+   *
+   * ⛔ Carried, never inferred from the occurrences: one payment ending on its own day is also the LAST payment of a
+   * schedule that held more (`heaviestMonth`'s ⚠️), and only the series' charges tell the two apart.
+   */
+  oneCharge?: boolean;
   /**
    * ARREARS ONLY: of this payment's magnitude, the part that fell due on days no
    * checked statement has reached for the accounts the series bills on — money that may
@@ -132,12 +140,18 @@ export interface CommittedLine {
    * belongs.
    */
   endsInHorizon: boolean;
+  /** the series' whole schedule is one charge (`CommittedOccurrence.oneCharge`, ⚖️ §6A 56) */
+  oneCharge: boolean;
   /** what ONE payment costs, as a positive magnitude */
   perOccurrenceCents: number;
   /**
    * What this line would contribute per month if it ran the WHOLE horizon —
    * its cadence annualised, which is the basis the subscriptions card publishes.
    * Equal to `perMonthCents` (to rounding) for every line that does run it.
+   *
+   * ⚖️ A ONE-CHARGE line (§6A 56) has no cadence to level by — the subscriptions card files it a one-off, out of its
+   * monthly figure — and its whole schedule is the one payment this horizon holds, so it runs it: this is its rate.
+   * Still `endsInHorizon` (it stops on its day, and the car card counts it among what stops), never short.
    */
   levelledPerMonthCents: number;
   /**
@@ -226,6 +240,7 @@ interface Accumulator {
   neverPosted: boolean;
   cadence: Cadence;
   endsOn: string | null;
+  oneCharge: boolean;
 }
 
 /**
@@ -288,6 +303,7 @@ export function committedOutflows(input: CommittedInput): CommittedOutflows {
       neverPosted: o.lastMatchedOn === null,
       cadence: o.cadence,
       endsOn: o.endsOn,
+      oneCharge: o.oneCharge ?? false,
     };
     bySeries.set(o.seriesId, {
       ...acc,
@@ -312,7 +328,13 @@ export function committedOutflows(input: CommittedInput): CommittedOutflows {
        * occurrences at all, so it is guarded rather than divided by zero.
        */
       const perOccurrenceCents = a.occurrences === 0 ? 0 : Math.round(a.totalCents / a.occurrences);
-      const levelledPerMonthCents = levelledMonthlyCents(perOccurrenceCents, a.cadence);
+      /*
+       * ⚖️ §6A 56: a one charge is its own single payment — levelled to a month of its stored cadence it is short of
+       * the eleven it never had. 🔴 His runway card read "…, and one other does too — … $364.66 a month lower for the
+       * two of them" (a copy of his ledger, 2026-10-13): $66.68 of it the Nov 11 balance, $72.74 "levelled" against
+       * the $6.06 its one payment adds.
+       */
+      const levelledPerMonthCents = a.oneCharge ? perMonthCents : levelledMonthlyCents(perOccurrenceCents, a.cadence);
       const endsInHorizon = endsInsideHorizon(a.endsOn, input.to);
       return {
         seriesId: a.seriesId,
@@ -326,6 +348,7 @@ export function committedOutflows(input: CommittedInput): CommittedOutflows {
         cadence: a.cadence,
         endsOn: a.endsOn,
         endsInHorizon,
+        oneCharge: a.oneCharge,
         perOccurrenceCents,
         levelledPerMonthCents,
         // gated on the CAUSE, and floored: an ending series whose remaining
@@ -451,6 +474,9 @@ export function arrearsReadingOf(book: ArrearsBook): ArrearsReading {
  * one ends inside the horizon, the named one carries only its own shortfall and
  * the rest are counted out loud.
  *
+ * ⚖️ A ONE-CHARGE line (§6A 56) ends inside the horizon and lowers nothing — its one payment is all its schedule
+ * holds — so it is neither the lead nor one of the others counted (`endingLead`).
+ *
  * Null when nothing ends — silence, never "nothing shrank it", which is the
  * measured-zero rule the rest of this file follows.
  */
@@ -467,8 +493,24 @@ export function shrinkCaption(book: {
     `${lead.name} stops inside that window — evidenced through ${dayWindowLabel(endsOn, endsOn)}, with no renewal ` +
     `in the ledger${endingOthersClause(others)} — so it is billed ${times} rather than throughout, and counts ` +
     `${formatCents(lead.perMonthCents)} a month here against the ${formatCents(lead.perOccurrenceCents)} ` +
-    `it charges. The rate above is ${formatCents(book.shortfallPerMonthCents)} a month lower for it.`
+    `it charges. The rate above is ${formatCents(book.shortfallPerMonthCents)} a month lower ` +
+    `${endingShortfallFor(others)}.`
   );
+}
+
+/**
+ * Whose shortfall the book's figure is — "for it", "for the two of them", "for all 3 of them": the lead and the
+ * others `endingOthersClause` counted, since `shortfallPerMonthCents` sums every ending line's.
+ *
+ * 🔴 It was "for it" whatever ended: his runway card read "…and one other does too … The rate above is $364.66 a
+ * month lower for it." — $297.98 of it Car insurance's and $66.68 the Nov 11 balance's (a copy of his ledger,
+ * 2026-10-13), the whole difference credited to the one it names.
+ *
+ * ⚖️ …and the balance was never one of them: it is ONE charge (§6A 56), its own single payment, short of nothing
+ * (`CommittedLine.levelledPerMonthCents`). His card reads "…$297.98 a month lower for it." — Car insurance's own.
+ */
+export function endingShortfallFor(others: number): string {
+  return others === 0 ? "for it" : others === 1 ? "for the two of them" : `for all ${others + 1} of them`;
 }
 
 /** The commitment a book names as ending, and how many others end beside it. */
@@ -620,6 +662,11 @@ export function heaviestMonth(occurrences: readonly CommittedOccurrence[]): Heav
  *
  * `others` counts every OTHER line that stops inside the horizon, for
  * `endingOthersClause`.
+ *
+ * ⚠️ A ONE-CHARGE line (§6A 56) is one of them — it stops on its day — though `endingLead` counts it nowhere, because
+ * it lowers no rate. On a copy of his ledger 2026-10-13 the car card says "…, and one other does too" of the Nov 11
+ * balance beside a runway sentence that no longer does: two counts of two questions, by design. Whether the car card
+ * should leave a one charge out of its count too is his call, asked 2026-10-13.
  */
 export function heaviestMonthEnding(
   book: { lines: readonly CommittedLine[] },
@@ -659,14 +706,152 @@ export function baselineCaption(window: {
    * of those months would be a caption that lies by omission.
    */
   upfrontCarCents?: number;
+  /** the complete months the window leaves out unread (`BaselineWindow.unread`, decision 71) — said, never silent */
+  unread?: UnreadMonths | null;
 }): string {
   const span = baselineSpan(window);
+  const unread = unreadMonthsSentence(window.unread ?? null);
+  const why = unread === null ? "" : ` ${unread}`;
   if (span === null) {
-    return "No complete month has been imported yet, so there is no spending average to stand on.";
+    return `${emptyWindowOpening(window.unread ?? null)}, so there is no spending average to stand on.${why}`;
   }
   const leftOut = upfrontCarLeftOut(window.upfrontCarCents ?? 0);
   const clause = leftOut === null ? "" : `, leaving out ${leftOut}`;
-  return `Spending averaged over ${span}${clause}. This month is still running and is not counted.`;
+  return `Spending averaged over ${span}${clause}.${why} This month is still running and is not counted.`;
+}
+
+/**
+ * What the car card's share is set against — "not what the last six months measured." — its baseline, which is
+ * `baselineWindow`'s.
+ *
+ * 🔴 Once the frontier slid that window back (his decision 71, 2026-10-13) they were not the last six months: measured on
+ * his ledger copy that day, Feb 2026 to Jul 2026 beside an October. So a cut window is named by its months, with the
+ * runway caption's reason (`unreadMonthsSentence`), and an uncut one reads exactly as it always did.
+ */
+export function measuredMonthsClause(window: {
+  months: number;
+  fromMonth: string;
+  toMonth: string;
+  unread?: UnreadMonths | null;
+}): string {
+  const unread = unreadMonthsSentence(window.unread ?? null);
+  if (unread === null) return "not what the last six months measured.";
+  const span = baselineSpan(window);
+  return span === null
+    ? `not anything measured: ${NONE_READ_IN_FULL}. ${unread}`
+    : `not what the ${span}, measured. ${unread}`;
+}
+
+/** What a window the frontier emptied is (decision 71): complete months were imported, none of them read in full. */
+const NONE_READ_IN_FULL = "no month has been read in full yet";
+
+/**
+ * How a caption over `baselineWindow` opens when the window holds no month — "No complete month has been imported
+ * yet", or, when the frontier emptied it, "No month has been read in full yet".
+ *
+ * 🔴 Review of cf8f8dc: the runway and Subscriptions captions kept "No complete month has been imported yet" over a
+ * window the frontier emptied and then named, in the next sentence, the complete months it left out — imported whole on
+ * one account, read only part of the way on another — beside the car card's "no month has been read in full yet" over
+ * the same window. A young ledger reaches it: with no habit yet every account dates the frontier, so one account last
+ * imported before the first whole month ends empties the window. ⛔ ONE PHRASE for all three (`NONE_READ_IN_FULL`).
+ */
+export function emptyWindowOpening(unread: UnreadMonths | null): string {
+  const phrase = unreadMonthsSentence(unread) === null ? "no complete month has been imported yet" : NONE_READ_IN_FULL;
+  return `${phrase[0]!.toUpperCase()}${phrase.slice(1)}`;
+}
+
+/**
+ * The complete months a spending window leaves out because not every account you spend from has been read through
+ * their last day — `BaselineWindow.unread` — and the day that leaves them out.
+ */
+export interface UnreadMonths {
+  /** 'YYYY-MM', oldest first: complete calendar months after the window and before the running one */
+  months: string[];
+  /** `spendingCoverageThrough` — the last day every account you spend from has been imported through */
+  through: string;
+}
+
+/**
+ * The last calendar month `through` reads to its END: its own month when it is that month's last day, else the month
+ * before — `baselineWindow`'s end under his decision 71.
+ *
+ * ⚖️ His decision 71 (2026-10-13, asked as an either/or): an average uses only months EVERY account he spends from has
+ * been read through to the end of. A month read to its 12th is not a twelfth of a measurement, it is none — the days
+ * after it are days nobody has looked at, not days on which nothing was spent.
+ */
+export function lastFullyReadMonth(through: string): string {
+  const own = monthKey(through);
+  return periodBounds(through, "monthly").end === through ? own : monthKey(addCalendarMonths(`${own}-01`, -1));
+}
+
+/**
+ * Why a spending window stops before the last complete month — "Aug 2026 and Sep 2026 are left out: Aug 12 is the last
+ * day every account you spend from has been imported through." Null when it leaves nothing out.
+ *
+ * ⛔ ONE SENTENCE for every caption that names `baselineWindow` — the runway's, Eating out's, Subscriptions', the fees
+ * and transfers cards' — in the words /spending's What-moved and the year summary already use for the same day
+ * (`spendingCoverageThrough`), so the dashboard and those pages name one frontier one way.
+ *
+ * ⚠️ The day carries its year only when it is not the first left-out month's: the frontier falls inside that month or
+ * before it (a stub month the window never counted), and the months beside it carry theirs.
+ */
+export function unreadMonthsSentence(unread: UnreadMonths | null): string | null {
+  if (unread === null || unread.months.length === 0) return null;
+  const { months, through } = unread;
+  const first = months[0]!;
+  const last = months[months.length - 1]!;
+  const named =
+    months.length === 1
+      ? `${formatMonthYear(`${first}-01`)} is`
+      : months.length === 2
+        ? `${formatMonthYear(`${first}-01`)} and ${formatMonthYear(`${last}-01`)} are`
+        : `${monthWindowLabel(first, last)} are`;
+  return `${named} left out: ${formatDayShortIn(through, `${first}-01`)} is the last day every account you spend from has been imported through.`;
+}
+
+/**
+ * What /budgets' inline editor says of its guide's window — "6-mo avg ≈ $X", and under it, when the frontier slid the
+ * window back, its months and why: "Averaged over 6 complete months, Feb 2026 to Jul 2026. Aug 2026 and Sep 2026 are
+ * left out: Aug 12 is the last day every account you spend from has been imported through." Null when the window holds
+ * no month: there is no guide to name.
+ *
+ * ⚖️ His decision 71 (2026-10-13) covers the guide as it covers the dashboard: it averages `baselineWindow`
+ * (`budget-guide.ts`). Read as "the last six months", a window slid back to Feb–Jul beside an October would be the
+ * dashboard caption's lie by omission, so it says what Eating out's caption says — `baselineSpan` and the runway's
+ * sentence (`unreadMonthsSentence`). ⛔ The lead counts the window's OWN months: a young ledger's floor makes them
+ * fewer than six, and "6-mo avg" over three would be a count the figure was not divided by.
+ */
+export function guideWindowWords(window: {
+  months: number;
+  fromMonth: string;
+  toMonth: string;
+  unread: UnreadMonths | null;
+}): { lead: string; note: string | null } | null {
+  const span = baselineSpan(window);
+  if (span === null) return null;
+  const unread = unreadMonthsSentence(window.unread);
+  return { lead: `${window.months}-mo avg`, note: unread === null ? null : `Averaged over ${span}. ${unread}` };
+}
+
+/**
+ * What /recurring's month forecast says of its spending pace when the frontier slid it back — "Spending's pace is
+ * averaged over 3 complete months, May 2026 to Jul 2026. Aug 2026 and Sep 2026 are left out: Aug 12 is the last day
+ * every account you spend from has been imported through." Null when it leaves nothing out.
+ *
+ * ⚖️ His decision 71 (2026-10-13) covers the pace's three months as it covers the dashboard's six (`paceMonths`). Its
+ * math table reads "3-mo avg" beside an October, and a reader takes that for Jul–Sep; so where they are not, the card
+ * names them and why, in `baselineSpan`'s and the runway's words (`unreadMonthsSentence`). ⚠️ "Spending's": the income
+ * pace still averages the calendar's months.
+ */
+export function spendPaceNote(window: {
+  months: number;
+  fromMonth: string;
+  toMonth: string;
+  unread: UnreadMonths | null;
+}): string | null {
+  const span = baselineSpan(window);
+  const unread = unreadMonthsSentence(window.unread);
+  return span === null || unread === null ? null : `Spending's pace is averaged over ${span}. ${unread}`;
 }
 
 /**

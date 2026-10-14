@@ -48,19 +48,20 @@ describe("balanceListWords — the list's words follow the rule that offers the 
    * counted it", and its remove dialog said it "verifies nothing and plays no part in its curve" (§6A 58).
    */
   /*
-   * 🔴 …and its empty list waited on a balance it will never read: "No balances yet — Robinhood Crypto is priced from
-   * its holdings." under a header printing the value its holdings price (the e2e fixture's Robinhood Crypto: no balance
-   * in its list, two holding events). A book's list is the edge of its life, and its next statement brings one.
+   * 🔴 5cd1c19 dropped "yet" from its empty list — "No balances — Robinhood Crypto is priced from its holdings." —
+   * on the claim that the list waits on no balance. Its CURVE reads none; its LIST holds them: each statement writes
+   * its value there and each price refresh a live reading (`refreshPrices`). Measured on his ledger copy 2026-10-13:
+   * Robinhood Brokerage lists 26 statement values and 24 live readings, Robinhood Crypto 19 and 24. An empty list
+   * there waits on its next one, as a book's does.
    */
-  test("an account priced from its holdings takes no balance he counts, and its empty list waits on none", () => {
+  test("an account priced from its holdings takes no balance he counts, and its empty list waits on its next", () => {
     const words = balanceListWords(priced);
 
     expect(words.takesCount).toBe(false);
-    expect(words.empty).toBe("No balances — Robinhood Brokerage is priced from its holdings.");
+    expect(words.empty).toBe("No balances yet — Robinhood Brokerage is priced from its holdings.");
     // the header's line shows only while the curve has no day at all, and there a value is still to come
     expect(words.noBalanceYet).toBe("No balance yet — Robinhood Brokerage is priced from its holdings.");
     for (const line of [words.empty, words.noBalanceYet]) expect(line).not.toMatch(/count|add one|below/i);
-    expect(words.empty).not.toMatch(/yet/);
   });
 
   test("the heading names every kind the list holds, on every account", () => {

@@ -1,7 +1,8 @@
 import type { AppDatabase } from "@/db/client";
 import { addCalendarMonths, monthKey, periodBounds, todayIso } from "@/lib/dates";
-import { monthCount } from "@/lib/committed";
+import { monthCount, unreadMonthsSentence } from "@/lib/committed";
 import { formatMonthYear, monthWindowLabel } from "@/lib/format-date";
+import { largestLead } from "@/lib/largest-lead";
 import { ledgerHref } from "@/lib/ledger-href";
 import { formatCents } from "@/lib/money";
 import { resolvePeriod, withPeriod } from "@/lib/period";
@@ -514,6 +515,16 @@ export function feesCard(db: AppDatabase, today: string = todayIso()): FeesCard 
     ]
       .filter((p) => p !== null)
       .join(" and ");
+  /*
+   * The sentence naming the largest of the charges `rowsPhrase` counted — both halves say it in these words.
+   * 🔴 "Since Dec 2022, 1 charge is filed on Fees itself …, and it is not in the all-time figures. The largest is
+   * $0.15" on the dashboard (a copy of his ledger, 2026-10-13): one charge has no largest. Alone, it is "it"; beside
+   * a credit, "it" would read as both rows, so it is "the charge" — the words every such sentence opens with
+   * (`largestLead`).
+   */
+  const largestPhrase = (charges: number, credits: number, largest: (typeof rows)[number]): string =>
+    `${largestLead(charges, credits > 0 ? "charge" : undefined)} ${formatCents(-largest.amountCents)} — ` +
+    `“${largest.rawDescription}”.`;
   const largestUnfiled = largestOf(unfiledRows);
   const recentCharges = unfiledRows.filter((t) => t.amountCents < 0).length;
   const recentCredits = unfiledRows.filter((t) => t.amountCents > 0).length;
@@ -521,7 +532,7 @@ export function feesCard(db: AppDatabase, today: string = todayIso()): FeesCard 
   const recentUnfiledNote =
     largestUnfiled === undefined
       ? null
-      : `${rowsPhrase(recentCharges, recentCredits)} ${recentOne ? "is" : "are"} filed on Fees itself rather than as a kind of fee, so the ledger has not said what ${recentOne ? "it is" : "they are"}. The largest ${recentCredits > 0 ? "charge " : ""}is ${formatCents(-largestUnfiled.amountCents)} — “${largestUnfiled.rawDescription}”.`;
+      : `${rowsPhrase(recentCharges, recentCredits)} ${recentOne ? "is" : "are"} filed on Fees itself rather than as a kind of fee, so the ledger has not said what ${recentOne ? "it is" : "they are"}. ${largestPhrase(recentCharges, recentCredits, largestUnfiled)}`;
   /*
    * 🔴 THE ALL-TIME HALF LEFT ROWS OUT AND SAID NOTHING. The sentence above
    * reads the RECENT window only, but the all-time figures exclude parent rows
@@ -563,7 +574,7 @@ export function feesCard(db: AppDatabase, today: string = todayIso()): FeesCard 
     : recentUnfiledNote !== null
       ? `Since ${allTimeLabel}, ${rowsPhrase(n, c)} ${amountPhrase} ${allTimeOne ? "is" : "are"} filed there, and none of it is in the all-time figures either.`
       : `Since ${allTimeLabel}, ${rowsPhrase(n, c)} ${allTimeOne ? "is" : "are"} filed on Fees itself rather than as a kind of fee, and ${allTimeOne ? "it is" : "they are"} not in the all-time figures.` +
-        (largestEver === undefined ? "" : ` The largest ${c > 0 ? "charge " : ""}is ${formatCents(-largestEver.amountCents)} — “${largestEver.rawDescription}”.`);
+        (largestEver === undefined ? "" : ` ${largestPhrase(n, c, largestEver)}`);
   const unfiledNote = [recentUnfiledNote, allTimeUnfiledNote].filter((s) => s !== null).join(" ") || null;
 
   /*
@@ -637,9 +648,18 @@ export function feesCard(db: AppDatabase, today: string = todayIso()): FeesCard 
    */
   const comparable = recent.direction !== "level" && allTime.direction !== "level";
   const reversed = comparable && recent.direction !== allTime.direction;
+  /*
+   * ⚖️ His decision 71 (2026-10-13): the window holds only months every account he spends from has been read through to
+   * the end of, so it can stop before the last complete month — and then says why, in the runway's sentence
+   * (`unreadMonthsSentence`). 🔴 …and stops being "the last" months: measured on his ledger copy that day, Feb–Jul.
+   */
+  const unreadNote = unreadMonthsSentence(window.unread);
+  const leftOut = unreadNote === null ? "" : ` ${unreadNote}`;
   const allTimeLead =
     basis === "allTime"
-      ? `Nothing at all has been charged or paid in the last ${monthCount(months, "complete")}.`
+      ? unreadNote === null
+        ? `Nothing at all has been charged or paid in the last ${monthCount(months, "complete")}.`
+        : `Nothing at all has been charged or paid over the ${monthCount(months, "complete")} ${windowLabel}.${leftOut}`
       : !comparable
         ? // ⛔ a window that came out exactly level runs neither the same way nor
           // the other way, and claiming either would be the card asserting a
@@ -652,7 +672,7 @@ export function feesCard(db: AppDatabase, today: string = todayIso()): FeesCard 
   const summary =
     basis === "allTime"
       ? `${allTimeLead} From ${formatMonthYear(firstOn)} the ledger holds ${formatCents(allTime.paidCents)} of fees against ${formatCents(allTime.earnedCents)} of interest, so ${standingClause(allTime)}.`
-      : `${formatCents(recent.paidCents)} went out in fees over the ${monthCount(months, "complete")} ${windowLabel}, across every account, against ${formatCents(recent.earnedCents)} of interest back. ${allTimeLead} from ${formatMonthYear(firstOn)} the ledger holds ${formatCents(allTime.earnedCents)} of interest against ${formatCents(allTime.paidCents)} of fees, so ${standingClause(allTime)}.`;
+      : `${formatCents(recent.paidCents)} went out in fees over the ${monthCount(months, "complete")} ${windowLabel}, across every account, against ${formatCents(recent.earnedCents)} of interest back.${leftOut} ${allTimeLead} from ${formatMonthYear(firstOn)} the ledger holds ${formatCents(allTime.earnedCents)} of interest against ${formatCents(allTime.paidCents)} of fees, so ${standingClause(allTime)}.`;
 
   return {
     basis,

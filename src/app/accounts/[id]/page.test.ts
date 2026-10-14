@@ -202,7 +202,7 @@ describe("/accounts/[id] — what the balance list's words are given", () => {
     expect(pageWords(book).empty).toBe(
       "No balances yet — Robinhood Agentic Brokerage holds only what its statements prove.",
     );
-    expect(pageWords(priced).empty).toBe("No balances — Robinhood Crypto is priced from its holdings.");
+    expect(pageWords(priced).empty).toBe("No balances yet — Robinhood Crypto is priced from its holdings.");
     expect(pageWords(bare).empty).toBe("No balances counted yet.");
     for (const id of [checking, book, priced, bare]) expect(pageWords(id).takesCount).toBe(takesACount(id));
     expect([checking, book, priced, bare].map(takesACount)).toEqual([true, false, false, true]);

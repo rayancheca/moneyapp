@@ -1,3 +1,4 @@
+import { emptyPeriodReason } from "./empty-period";
 import { formatDayShortIn } from "./format-date";
 
 /**
@@ -140,7 +141,7 @@ export function spendUnread(
  */
 export function budgetCoverageFact(input: Omit<BudgetCoverageInput, "uncoveredDays">): string {
   const day = (iso: string): string => formatDayShortIn(iso, input.bounds.start);
-  if (input.importedThroughOn !== null) return `spending imported through ${day(input.importedThroughOn)}`;
+  if (input.importedThroughOn !== null) return importedThroughFact(input.importedThroughOn, input.bounds.start);
   if (spentOnlyFromCashWallets(input)) {
     return `spent only from ${input.spentFromWallets === 1 ? "a cash wallet" : "cash wallets"} since ${day(input.spentFromSince)}`;
   }
@@ -164,6 +165,73 @@ export function budgetCoverageSentence(input: BudgetCoverageInput): string {
   if (spentOnlyFromCashWallets(input)) {
     return `${budgetCoverageFact(input)} — no statement will ever cover ${input.spentFromWallets === 1 ? "it" : "them"}`;
   }
-  const n = input.uncoveredDays;
-  return `${budgetCoverageFact(input)} · ${n} ${n === 1 ? "day" : "days"} of this period unaccounted`;
+  return `${budgetCoverageFact(input)} · ${unaccountedDays(input.uncoveredDays)}`;
+}
+
+/**
+ * "spending imported through Sep 2" — a named day, as the row names it; a day outside the period's year carries it.
+ * ⚖️ Exported for decision 72's one-day windows: /spending's heatmap names the day a day past it is read through in
+ * these words, the words under Where it went on the same page (`SpendHeatmap`'s `heatDayUnaccounted`).
+ */
+export function importedThroughFact(on: string, periodStart: string): string {
+  return `spending imported through ${formatDayShortIn(on, periodStart)}`;
+}
+
+/**
+ * ⚖️ Decisions 64 + 72 for a window of ALL his spending that is no total of its own — one cash-flow bucket, one heatmap
+ * day: "spending imported through Aug 12" where the window holds NO spending row and not one of its elapsed days is read
+ * by `readThrough` (`movers-card::spendingReadThrough`, the day every account he spends from is imported through — the
+ * day the period's proof on the same page counts its unaccounted days from), or null where its Spent is a figure.
+ *
+ * §6A 64's dash, asked of the window and the day /budgets asks it of (`emptyPeriodReason`, clipped at today), past the
+ * day only: a window the ledger has not reached at all, or that has not happened, says THAT (`unreachedKind`), and a
+ * window with one day read is a lower bound with its figure. ⚖️ A ledger of cash wallets alone has no day a statement
+ * could move (2026-09-15), so `readThrough` is null there and nothing waits.
+ *
+ * 🔴 Measured on his ledger copy 2026-10-13 (review of 2fce458): `/spending?period=2026-09`, all spending read through
+ * Aug 12 and the ledger through Sep 24, tabled Sep 13 … Sep 22 "$0.00 $0.00 $0.00" and Sep 23 "Spent $0.00" beside its
+ * $4,567.68 of pay, while the heatmap on the same page called those days "nothing found so far" — one card moved, one
+ * did not. ⛔ One test for the table, the chart's hover, the heatmap's cells and its day sheet.
+ */
+export function spendingNotFoundFact(input: {
+  from: string;
+  to: string;
+  today: string;
+  ledgerOpens: string | null;
+  /** `spendingReadThrough(db)` — null where no statement could move it (a ledger of cash wallets alone) */
+  readThrough: string | null;
+  /** the window's gross spending — a row found keeps the figure */
+  spentCents: number;
+}): string | null {
+  const { from, to, today, ledgerOpens, readThrough, spentCents } = input;
+  if (spentCents !== 0 || readThrough === null) return null;
+  const reason = emptyPeriodReason({ from, to, today, ledgerOpens, ledgerReaches: readThrough });
+  return reason.kind === "after-records" ? importedThroughFact(readThrough, from) : null;
+}
+
+/**
+ * "nothing found so far — spending imported through Aug 12" — what a day with no spending found past that day says in
+ * place of "$0.00": the heatmap's cell, the cash-flow chart's hover, the line under a day sheet's "—".
+ */
+export function nothingFoundSoFar(fact: string): string {
+  return `nothing found so far — ${fact}`;
+}
+
+/** "13 days of this period unaccounted" — scoped to the PERIOD, never to the gap since the import (see the top) */
+function unaccountedDays(n: number): string {
+  return `${n} ${n === 1 ? "day" : "days"} of this period unaccounted`;
+}
+
+/**
+ * "spending imported through Aug 12 · 30 days of this period unaccounted" — the row's sentence for a window read through
+ * a NAMED day, for a total that has the day and none of a category's facts.
+ *
+ * ⚖️ His decision 72 (2026-10-13): a total over a window some of whose days are past its own read frontier reads
+ * "partly read", with /budgets' line under its figure. /spending's total is read through `spendingCoverageThrough` —
+ * the day every account he spends from has been imported through — and spent from no one category, so it asks for the
+ * line here. ⛔ The row's own clauses (`importedThroughFact`, `unaccountedDays`), so the two cannot word one window two
+ * ways: `budgetCoverageSentence` of a row with that day reads exactly this.
+ */
+export function readThroughSentence(on: string, uncoveredDays: number, bounds: { start: string }): string {
+  return `${importedThroughFact(on, bounds.start)} · ${unaccountedDays(uncoveredDays)}`;
 }

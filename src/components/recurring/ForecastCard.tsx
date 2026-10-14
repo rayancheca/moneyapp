@@ -263,6 +263,10 @@ function PaceRow({ forecast: f }: { forecast: MonthForecast }) {
         <PaceStat label="EOM cash" cents={f.projectedEomCashCents} />
         <PaceStat label="EOM net worth" cents={f.projectedEomNetWorthCents} />
       </dl>
+      {/* ⚖️ which months "your recent pace" is, when the frontier slid them back (his decision 71) */}
+      {f.spendPaceNote !== null && (
+        <p className="mt-3 text-[11px] leading-relaxed text-ink-faint">{f.spendPaceNote}</p>
+      )}
     </div>
   );
 }

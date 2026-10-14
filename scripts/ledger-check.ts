@@ -92,6 +92,7 @@ import {
   confirmingStep,
   leftOutToken,
   planAcknowledging,
+  reasonCarriedAlready,
   reasonChangeRefusal,
   unmatchedAcknowledgementNotice,
 } from "@/lib/left-out-acknowledgement";
@@ -526,9 +527,17 @@ console.log(`rate histories: ${storedRateHistoryCount(db)} stored · ${rateHisto
  * ⛔ This step never changes a stored reason: 🔴 another `--reason` for a line acknowledged already was dropped — "nothing
  * to acknowledge", exit 0 — so it refuses the whole write too, saying the reason stored (`reasonChangeRefusal`). Nor
  * does it give lines alike two: 🔴 a mark PARTLY acknowledged stored another `--reason` for its open line without a word
- * of the one stored; it is `reasonsKept` too now, and refused here the same way.
+ * of the one stored; it is `reasonsKept` too now, and refused here the same way. ⛔ A reason carrying a control
+ * character or a bidi control is refused by name before this step says or writes a thing (`carriedRefusal`) — but
+ * for one the mark's lines alike carry stored already: an open line takes it, exactly (`reasonCarriedAlready`).
+ * 🔴 Refused before the ledger was read, a reason stored before its guard could never be given again, and its mark
+ * failed for good.
  */
 if (MODE.mode === "acknowledge") {
+  if (MODE.carriedRefusal !== null && !reasonCarriedAlready(leftOut, MODE.tokens, MODE.reason)) {
+    console.error(`REFUSED: ${MODE.carriedRefusal}`);
+    process.exit(2);
+  }
   const acknowledging = { on: todayIso(), reason: MODE.reason };
   const plan = planAcknowledging(leftOut, MODE.tokens, acknowledging);
   console.log(`\nACKNOWLEDGE LINES LEFT OUT — ${DB_PATH}${isRealDatabasePath(DB_PATH) ? " (the real ledger)" : ""}`);

@@ -7,8 +7,8 @@ import { createDatabase, type DbBundle } from "@/db/client";
 import { seedDatabase } from "@/db/seed";
 import { merchants } from "@/db/schema/merchants";
 import { recurringSeries } from "@/db/schema/recurring";
-import { staleComponentEntries } from "@/components/recurring/labels";
-import { committedBillsNamed } from "@/lib/committed";
+import { staleComponentEntries, staleOccurrenceEntries, stalenessSentence } from "@/components/recurring/labels";
+import { committedBillsNamed, shrinkCaption } from "@/lib/committed";
 import { noScheduleReason, projectedEvidence, seriesIsProjected } from "@/lib/series-evidence";
 import { budgetTail } from "./budgets";
 import { seriesInCategory } from "./category-detail";
@@ -23,6 +23,7 @@ import {
   projectOccurrences,
   rollForwardNextExpected,
   toProjectable,
+  upcomingOccurrences,
 } from "./recurring";
 import { seriesDetail, setSeriesOverrides } from "./recurring-detail";
 import { attachTransactions } from "./recurring-links";
@@ -241,11 +242,68 @@ describe("every cadence printer reads it", () => {
     });
   });
 
+  /*
+   * 🔴 VISIBLE on his ledger copy 2026-10-13: /recurring's Upcoming footer (and November's forecast footer, and the
+   * "never billed" chip's tooltip on both) read "Car insurance — Nov 11 balance after the $1,000 early payment —
+   * expected about every 30 days, but nothing has ever matched it", one tab from the All tab's "once · Nov 11".
+   */
+  test("the staleness footers — Upcoming's and the forecast's — say once on Nov 11, never about every 30 days", () => {
+    const footers = [
+      staleOccurrenceEntries(upcomingOccurrences(bundle.db, TODAY, 35)),
+      staleComponentEntries(forecastForMonth(bundle.db, "2026-11", TODAY)!.components),
+    ];
+    for (const entries of footers) {
+      const balance = entries.find((e) => e.key === balanceId || e.name.startsWith("Car insurance — Nov 11"))!;
+      expect(stalenessSentence(balance.staleness)).toBe(
+        "expected once on Nov 11, 2026, but nothing has ever matched it — still projected, on the schedule alone",
+      );
+    }
+    // Car insurance, a monthly bill in its last months, keeps its rhythm: its December line's staleness is no one charge
+    const december = forecastForMonth(bundle.db, "2026-12", TODAY)!.components;
+    const insurance = december.find((c) => c.label === "Car insurance")!.staleness!;
+    expect(insurance.oneChargeOn).toBeNull();
+    expect(stalenessSentence({ ...insurance, lastMatchedOn: null, daysSinceLastMatch: null })).toContain(
+      "expected about every 30 days",
+    );
+  });
+
   test("the forecast's math table, came due and not posted", () => {
     const late = forecastCurrentMonth(bundle.db, "2026-11-20");
     const line = late.components.find((c) => c.label.startsWith("Car insurance — Nov 11"))!;
     // "once" in the cadence slot; no statement reaches Nov 11 on this fixture, so the runway's unread words follow
     expect(line.detail).toBe("1 × -$72.74 (once), came due Nov 11 and no statement has covered it yet");
+  });
+});
+
+/*
+ * ⚖️ §6A 56 — and the runway figure unchanged. 🔴 The committed book levelled the balance as a monthly bill cut short,
+ * so his runway card read "…, and one other does too — … The rate above is $364.66 a month lower for the two of them."
+ * (a copy of his ledger, 2026-10-13): $66.68 of it the balance's "missing" months. One charge is its own payment.
+ */
+describe("the runway's rate sentence reads it as its own single payment (committedBook)", () => {
+  test("Car insurance alone stops the rate short, by its own $297.98 — the balance's $72.74 still in the rate", () => {
+    const book = committedBook(bundle.db, "2026-10-13");
+    expect(shrinkCaption(book)).toBe(
+      "Car insurance stops inside that window — evidenced through Jan 11, 2027, with no renewal in the ledger — " +
+        "so it is billed 2 times rather than throughout, and counts $59.60 a month here against the $357.58 it " +
+        "charges. The rate above is $297.98 a month lower for it.",
+    );
+    expect(book.lines.find((l) => l.seriesId === balanceId)).toMatchObject({
+      oneCharge: true,
+      occurrences: 1,
+      totalCents: 7274,
+      shortfallPerMonthCents: 0,
+    });
+    expect(book.lines.find((l) => l.seriesId === insuranceId)!.oneCharge).toBe(false);
+    expect(book.totalCents).toBe(2 * 35758 + 7274);
+  });
+
+  test("…and from Nov 12, owed and nothing of it to come, the line that carries its arrears is one charge too", () => {
+    expect(committedBook(bundle.db, "2026-11-12").lines.find((l) => l.seriesId === balanceId)).toMatchObject({
+      oneCharge: true,
+      occurrences: 0,
+      overdueCents: 7274,
+    });
   });
 });
 

@@ -19,6 +19,7 @@ const base: SeriesEndInput = {
   overdueOn: null,
   overdueCount: 0,
   nextChargeOn: "2026-10-01",
+  oneChargeOn: null,
   endsOn: null,
   linkedCount: 4,
 };
@@ -300,6 +301,7 @@ describe("seriesEndHeadline", () => {
           annualizedCents: null,
           overdue: null,
           nextExpected: [],
+          oneChargeOn: null,
           endsOn: null,
           linkedTxns: linked(n) as never[],
         };
@@ -348,6 +350,23 @@ describe("seriesEndLines — worded by kind", () => {
     }
     // ⛔ an `other` series' are its payments — it may be money in (`seriesPostingWords`, merged 2026-10-13)
     expect(value({ ...base, kind: "other" }, "Upcoming payments off the calendar")).toBe("every payment from Oct 1, 2026 on");
+  });
+
+  /*
+   * ⚖️ §6A 56 (2026-10-08): a schedule of ONE charge reads once — "charges once on Nov 11" on its page. 🔴 Review of
+   * 7a3c702: the Nov 11 balance's End dialog read "every charge from Nov 11, 2026 to Nov 11, 2026" (his ledger copy,
+   * 2026-10-13). Its one day, in the page's words; a schedule of two or more still names its span.
+   */
+  test("a schedule of one charge: 'once on Nov 11, 2026', never a span from a day to itself", () => {
+    const day = "2026-11-11";
+    const once: SeriesEndInput = { ...base, nextChargeOn: day, endsOn: day, oneChargeOn: day };
+    expect(value(once, "Upcoming charges off the calendar")).toBe("once on Nov 11, 2026");
+    expect(value({ ...once, kind: "income" }, "Upcoming deposits off the calendar")).toBe("once on Nov 11, 2026");
+    // past its one day nothing is scheduled, as of any series
+    expect(value({ ...once, nextChargeOn: null }, "Upcoming charges off the calendar")).toBe("none scheduled");
+    expect(value({ ...once, oneChargeOn: null }, "Upcoming charges off the calendar")).toBe(
+      "every charge from Nov 11, 2026 to Nov 11, 2026",
+    );
   });
 
   test("Nothing is deleted — the deposits of his pay stay in the ledger, the charges of a bill", () => {

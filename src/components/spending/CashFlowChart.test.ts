@@ -89,6 +89,7 @@ describe("CashFlowChart's tooltip — a bucket the ledger has not reached", () =
     refundsCents: 0,
     netCents: 0,
     unreached: null,
+    spendingUnaccounted: null,
     ...over,
   });
   const tooltip = (b: CashFlowBucket, ghostCents: number | null = null): string =>
@@ -114,5 +115,25 @@ describe("CashFlowChart's tooltip — a bucket the ledger has not reached", () =
   test("the prior period's bucket is still given beside an unreached one", () => {
     const text = tooltip(bucket("2026-09-13", "13", { unreached: "after-records" }), 3_451);
     expect(text).toContain("Prior period, this point$34.51");
+  });
+
+  /*
+   * ⚖️ Decisions 64 + 72. 🔴 On his ledger copy 2026-10-13 (review of 2fce458) `/spending?period=2026-09`'s default chart
+   * hovered Sep 15 "Income $0.00 · Spent $0.00 · Net $0.00" and Sep 23 "Spent $0.00" beside its $4,567.68, under a
+   * heatmap whose cells for the same days read "nothing found so far — spending imported through Aug 12".
+   */
+  test("a day past the day all his spending is read through, with nothing found, says that in the heatmap's words", () => {
+    const text = tooltip(bucket("2026-09-15", "15", { spendingUnaccounted: "spending imported through Aug 12" }), 3_451);
+    expect(text).toBe("15nothing found so far — spending imported through Aug 12Prior period, this point$34.51");
+  });
+
+  test("…and with its pay found, prints the pay and a dash under Spent and Net, and says why", () => {
+    const pay = { incomeCents: 456_768, netCents: 456_768, spendingUnaccounted: "spending imported through Aug 12" };
+    const text = tooltip(bucket("2026-09-23", "23", pay));
+    expect(text).toContain("Income$4,567.68");
+    expect(text).toContain("Spent—");
+    expect(text).toContain("Net—");
+    expect(text).toContain("nothing found so far — spending imported through Aug 12");
+    expect(text).not.toContain("$0.00");
   });
 });

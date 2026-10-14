@@ -23,6 +23,7 @@ import {
   type ReversalIds,
   type ReversalState,
 } from "./checking-115-reversal";
+import { importedThrough } from "@/services/imported-through-fixture";
 import { DbTargetRefusal } from "./db-target";
 
 /**
@@ -104,6 +105,9 @@ beforeEach(() => {
   insert({ id: "sapphire-paid", accountId: sapphire, amountCents: 11_500, raw: "PAYMENT — Chase ····3522", group: "paid", source: "transfer_detect" });
   insert({ id: "sent", accountId: checking, amountCents: -11_500, raw: REAL_IDS.sentDescription });
   insert({ id: "cancelled", accountId: checking, amountCents: 11_500, raw: REAL_IDS.cancelledDescription });
+  // ⚖️ decision 71: the card averages months read in full — read both accounts into the card's running month, so its
+  // window is the one this test means (Mar – Aug 2026), not one slid back past the Mar 2 rows
+  importedThrough(bundle.db, ids.cardDay);
 });
 
 afterEach(() => {

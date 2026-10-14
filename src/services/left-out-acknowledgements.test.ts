@@ -4,6 +4,7 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { preMutationSnapshot } from "@/db/backup";
 import { createDatabase, type DbBundle } from "@/db/client";
+import { leftOutAcknowledgements } from "@/db/schema/ledger-check";
 import { readLeftOutAcknowledgements, writeLeftOutAcknowledgements } from "./left-out-acknowledgements";
 
 let dir: string;
@@ -224,6 +225,26 @@ describe("the acknowledgements a ledger keeps (`left_out_acknowledgements`)", ()
       expect(changes()).toBe(before);
     }
     expect(readLeftOutAcknowledgements(bundle.db)).toEqual([]);
+  });
+
+  /*
+   * ⚖️ §6A 30: lines alike take one reason, an open one the one they carry, exactly. 🔴 Review of 3872004: a reason
+   * stored before a guard refused a bidi control (or, before 34e97eb, a control character) could never be written again
+   * for its line alike left open since — refused here, and that mark failed ledger-check for good. A reason the ledger
+   * stores already is taken as stored; the command line lets one through only for the lines alike that carry it.
+   */
+  test("a reason stored before its guard is taken as stored — the same characters in a new one refused as ever", () => {
+    const override = "July statement, ‮page 1: the opening deposit, reversed";
+    // stored as the writer took it before 3872004 — the table's own CHECK trims ASCII whitespace only
+    bundle.db.insert(leftOutAcknowledgements).values({ ...OPENING, reason: override }).run();
+
+    writeLeftOutAcknowledgements(bundle.db, [{ ...OPENING, reason: override }]);
+
+    expect(readLeftOutAcknowledgements(bundle.db).map((a) => a.reason)).toEqual([override, override]);
+    expect(() => writeLeftOutAcknowledgements(bundle.db, [{ ...OPENING, reason: "July statement, ‮page 2" }])).toThrow(
+      "carries a bidi control, U+202E, that every surface would print raw — nothing was written",
+    );
+    expect(readLeftOutAcknowledgements(bundle.db)).toHaveLength(2);
   });
 
   test("what the session read, an invisible character in it or not, is a reason — stored as given", () => {

@@ -83,9 +83,10 @@ export function CardsOwedCard({ data }: { data: CardsOwedCardData }) {
               {c.note && <span className="block text-[11px] text-ink-faint">{c.note}</span>}
             </dt>
             <dd className="shrink-0">
-              {/* three states, not two. A card with no recorded balance is not a
-                  card you owe nothing on, and rendering it as $0.00 would fold
-                  a hole into the total silently. */}
+              {/* three states, not two. A card with no balance of any kind is not
+                  a card you owe nothing on, and rendering it as $0.00 would fold
+                  a hole into the total silently — its proof line says "no balance
+                  — not in this total" ("recorded" is a statement's, §6A 50). */}
               {c.owedCents === null ? (
                 <span className="text-[11px] text-ink-faint">not in the total</span>
               ) : c.owedCents < 0 ? (

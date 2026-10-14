@@ -65,6 +65,29 @@ describe("the merge confirmation, as rendered (§6A 54)", () => {
   test("the choice under it is still Cancel or Merge in", () => {
     expect(confirmation({ ...base, filing: null }).buttons).toEqual(["Cancel", "Merge in"]);
   });
+
+  /*
+   * ⛔ What moves is what the CANDIDATE posts, in the page's own words for it (`seriesPostingWords`) — the "Nothing
+   * expected" card's, the End dialog's, "Per deposit". 🔴 It said "Its charges move here" whatever was picked: on his
+   * ledger copy 2026-10-13 every series page but his pay's offers "It America LLC (weekly pay)" to merge in, and
+   * picking it read "Its charges move here" of his weekly payroll deposits.
+   */
+  test("names what the candidate posts — his pay's deposits, a transfer's transfers, `other`'s payments", () => {
+    const pay = { id: "p", name: "It America LLC (weekly pay)", kind: "income", filing: null } as const;
+    expect(confirmation(pay).question).toBe(
+      "Merge It America LLC (weekly pay) into this series? Its deposits move here and it ends.",
+    );
+    expect(confirmation({ ...pay, name: "Savings sweep", kind: "transfer" }).question).toContain(
+      "Its transfers move here and it ends.",
+    );
+    expect(confirmation({ ...pay, name: "Card credit", kind: "other" }).question).toContain(
+      "Its payments move here and it ends.",
+    );
+    // a bill's and a subscription's read as he has always read them
+    expect(confirmation({ ...pay, name: "HBO Max", kind: "subscription" }).question).toContain(
+      "Its charges move here and it ends.",
+    );
+  });
 });
 
 /**

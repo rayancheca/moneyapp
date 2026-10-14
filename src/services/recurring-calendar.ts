@@ -1,11 +1,11 @@
-import { and, eq, gte, inArray, isNotNull, sql } from "drizzle-orm";
+import { and, eq, gte, inArray, isNotNull, lte, sql } from "drizzle-orm";
 import type { AppDatabase } from "@/db/client";
 import { categories } from "@/db/schema/categories";
 import { recurringSeries, type SeriesKind } from "@/db/schema/recurring";
 import { transactions } from "@/db/schema/transactions";
 import { daysInMonthOf } from "@/lib/calendar-math";
 import { isCategoryHueName, type CategoryHueName } from "@/lib/category-palette";
-import { addDays, compareDates, diffDays, monthKey, periodBounds, todayIso } from "@/lib/dates";
+import { compareDates, diffDays, monthKey, periodBounds, todayIso } from "@/lib/dates";
 import { flowEntryOf, monthFlow, type MonthFlow, type MonthFlowEntry } from "@/lib/month-flow";
 import { hasArrived, portionsAcross, type SettlementPortion } from "@/lib/payday-settlement";
 import {
@@ -27,7 +27,16 @@ import {
 } from "@/lib/occurrence-verdict";
 import { outsidePortfolioCashAccountIds } from "./accounts";
 import { isAgentsSeries, loadCategoryIndex } from "./analytics";
-import { carrierPaymentsBySeries, paymentFor, withBillingCarriers, type Payment } from "./billing-carriers";
+import {
+  billPaymentsBySeries,
+  onTimePayment,
+  paymentFor,
+  paysEarly,
+  paysOnTime,
+  withBillingCarriers,
+  type BillPayment,
+  type DueDays,
+} from "./billing-carriers";
 import { checkedThroughBySeries, silenceMeasuredThroughBySeries } from "./cash-earnings";
 import { dueDayReadings } from "./observation-frontier";
 import {
@@ -37,10 +46,10 @@ import {
   readsPerPayday,
 } from "./payday-settlement";
 import {
+  dueDaysOf,
   effectiveSeries,
   hasStoppedForecasting,
   MIN_OCCURRENCES,
-  nextDueDayAfter,
   populationStddev,
   projectOccurrences,
   seriesEvidence,
@@ -252,8 +261,12 @@ export interface CalendarEntry {
    * `carrier` is null where the payment is the series' OWN, landed in another month — the rent paid Sep 30 for Oct 1:
    * nothing posted on October's grid either, and the arrears' test pays the day with it (`paymentFor`), so it is named
    * the same way, "paid by its payment of Sep 30, 2026".
+   *
+   * ⚖️ `early` where the payment posted MORE than its grace before the day, the day before it already paid (his
+   * decision 73, 2026-10-13, `paysEarly`): FPL's Aug 8 "paid early by its payment of Jul 28, 2026" — its Jul 28 row
+   * drawn in July, 11 days ahead of a 3-day grace. A payment within its grace, the rent's Sep 30 for Oct 1, is on time.
    */
-  paidWith: { readonly carrier: string | null; readonly postedOn: string } | null;
+  paidWith: { readonly carrier: string | null; readonly postedOn: string; readonly early: boolean } | null;
   /**
    * The series' category hue, for the mark drawn beside it.
    *
@@ -682,23 +695,29 @@ export function recurringCalendar(
   const insideMonth = (day: string): boolean =>
     compareDates(day, monthStart) >= 0 && compareDates(day, monthEnd) <= 0;
   /**
-   * The payment this grid NAMES for a bill's occurrence: one it draws itself — a posting inside the month within its
-   * grace — else the arrears' nearest (`paymentFor`), in another month. Paid or not is `paymentFor`'s answer either way.
+   * The payment this grid NAMES for a bill's occurrence: the arrears' own (`paymentFor`), over the same payments — but
+   * one ON TIME may be any of the payments within the day's grace, none of which pays another day, so of those the one
+   * it draws itself first: its own posting inside the month, then its own, then its carrier's inside the month. Paid or
+   * not, and by a payment early or late, is `paymentFor`'s answer either way.
    *
    * 🔴 The arrears' nearest alone drew one occurrence twice (review of the 2026-10-08 batch): the rent paid in halves
    * either side of the edge — Sep 30 and Oct 2, each a day from Oct 1 — names the earlier of two as near, so October
    * drew Oct 1 "paid (paid by its payment of Sep 30, 2026)" at $2,109.00 beside the Oct 2 row that stood for it too.
+   *
+   * ⛔ Only among the payments on time: an early or late one is the walk's to name (⚖️ decision 73, 2026-10-13). Asked
+   * of the month's postings alone first, as it was, the walk names a payment of this month that pays the NEXT day early
+   * — FPL's Sep 28 for Oct 8, Sep 8 paid early by Aug 28 — as Sep 8's, late, beside an October naming it for Oct 8.
    */
-  const paymentNamedFor = <P extends Payment>(
-    payments: readonly P[],
-    dueOn: string,
-    nextDueOn: string | null,
-  ): P | undefined =>
-    paymentFor(
-      payments.filter((p) => insideMonth(p.postedOn)),
-      dueOn,
-      nextDueOn,
-    ) ?? paymentFor(payments, dueOn, nextDueOn);
+  const paymentNamedFor = (payments: readonly BillPayment[], dueOn: string, dueDays: DueDays): BillPayment | undefined => {
+    const paid = paymentFor(payments, dueOn, dueDays);
+    if (paid === undefined || !paysOnTime(paid, dueOn)) return paid;
+    return (
+      onTimePayment(payments.filter((p) => !p.carried && insideMonth(p.postedOn)), dueOn) ??
+      onTimePayment(payments.filter((p) => !p.carried), dueOn) ??
+      onTimePayment(payments.filter((p) => insideMonth(p.postedOn)), dueOn) ??
+      paid
+    );
+  };
   /** per series, per deposit day: this month's money that paid ANOTHER month's paydays, still to charge to a row */
   const owedElsewhere = new Map<string, Map<string, SettlementPortion[]>>();
   /** per series, per payday in this month: the money ANOTHER month's deposits put into it */
@@ -713,25 +732,9 @@ export function recurringCalendar(
     paidFromElsewhere.set(seriesId, paid);
   }
 
-  // 1) posted charges tagged to a drawable series, inside the month
+  // 1) posted charges tagged to a drawable series, inside the month — what pays a bill's day is step 2's to read
   const postedDatesBySeries = new Map<string, string[]>();
-  /*
-   * ⚖️ …and every posting that may PAY one of its bills: the month widened by the widest tolerance either side, as the
-   * arrears read it (`overdueForSeries`) — each judged by its own series' tolerance (`paymentFor`). Only the month's
-   * own are drawn.
-   *
-   * 🔴 Read inside the month alone, one Oct 1 had two answers (review of 1a1b753). What is billed inside the rent is paid
-   * by the rent's postings either side of the edge (`carrierPaymentsBySeries`); the rent's own Oct 1 saw October's
-   * only. On a linked copy of his ledger with a rent payment posted Sep 30, October drew the rent "upcoming" (Sep 30),
-   * "not yet known" (Oct 2) and a red ✕ "missed" (Oct 9, read through Oct 4) beside "Rent utilities & fees paid (paid
-   * with the rent's payment of Sep 30)" — while the rent's page and the runway, reading the arrears, owed nothing.
-   *
-   * ⚖️ …and with NO END, as the arrears read it: a payment past a day's grace pays it late until the next due day's
-   * grace opens (`paymentFor`), so the month's last rent may be paid in the next one — drawn there, named here.
-   */
-  const paymentsBySeries = new Map<string, { postedOn: string; toleranceDays: number }[]>();
   if (historyRows.length > 0) {
-    const widest = Math.max(0, ...historyRows.map((s) => s.toleranceDays));
     const posted = db
       .select({
         id: transactions.id,
@@ -744,7 +747,8 @@ export function recurringCalendar(
         and(
           eq(transactions.status, "active"),
           isNotNull(transactions.recurringSeriesId),
-          gte(transactions.postedOn, addDays(monthStart, -widest)),
+          gte(transactions.postedOn, monthStart),
+          lte(transactions.postedOn, monthEnd),
         ),
       )
       .all();
@@ -753,11 +757,6 @@ export function recurringCalendar(
       const s = p.seriesId ? seriesById.get(p.seriesId) : undefined;
       // tagged to a DISMISSED series — the owner said not recurring — or to the agent's income, which is not his
       if (!s) continue;
-      const payments = paymentsBySeries.get(s.id) ?? [];
-      payments.push({ postedOn: p.postedOn, toleranceDays: s.toleranceDays });
-      paymentsBySeries.set(s.id, payments);
-      // drawn on another month's grid, where it landed
-      if (!insideMonth(p.postedOn)) continue;
       /*
        * ⛔ NOTHING AFTER TODAY HAS ARRIVED, on a pay series settlement speaks
        * about — settlement's own boundary (`hasArrived`), so a row it did not
@@ -850,9 +849,23 @@ export function recurringCalendar(
   // every pay sentence names, where the pay lands NOW — never the bills' reading, which takes every account it ever
   // landed in
   const paydaysCheckedOf = needsFrontier ? checkedThroughBySeries(db, today) : null;
-  // what pays each series billed inside another: its carrier's payments (§6A 59) — nothing is asked without a link —
-  // read with no end, as step 1 reads its own: a carrier's payment past its grace pays the day it is late for
-  const carried = carrierPaymentsBySeries(db, forecastRows, monthStart, null);
+  /*
+   * ⚖️ …and every posting that may PAY one of its bills, as the arrears read them (`billPaymentsBySeries`): its own and,
+   * billed inside another, its carrier's (§6A 59) — each judged by its own series' tolerance (`paymentFor`). Only the
+   * month's own are drawn (step 1).
+   *
+   * 🔴 Read inside the month alone, one Oct 1 had two answers (review of 1a1b753). What is billed inside the rent is paid
+   * by the rent's postings either side of the edge (`carrierPaymentsBySeries`); the rent's own Oct 1 saw October's
+   * only. On a linked copy of his ledger with a rent payment posted Sep 30, October drew the rent "upcoming" (Sep 30),
+   * "not yet known" (Oct 2) and a red ✕ "missed" (Oct 9, read through Oct 4) beside "Rent utilities & fees paid (paid
+   * with the rent's payment of Sep 30)" — while the rent's page and the runway, reading the arrears, owed nothing.
+   *
+   * ⚖️ …with NO END, as the arrears read them: a payment past a day's grace pays it late until the next due day's grace
+   * opens (`paymentFor`), so the month's last rent may be paid in the next one — drawn there, named here. ⚖️ …and NO
+   * START: one more than its grace early pays a day once the day before it is paid by another (his decision 73,
+   * 2026-10-13), read back through the series' history — FPL's Jul 28, drawn in July, pays August's Aug 8.
+   */
+  const paymentsBySeries = billPaymentsBySeries(db, forecastRows);
 
   for (const s of forecastRows) {
     if (hasStoppedForecasting(s, today, checkedThrough(s.id))) continue;
@@ -864,9 +877,9 @@ export function recurringCalendar(
     const projectable = paydayProjectable(s, settlements.get(s.id), today);
     const occurrences = projectOccurrences(projectable, monthStart, monthEnd);
     const postedDates = postedDatesBySeries.get(s.id) ?? [];
-    // the arrears' test of a covering posting (`paymentFor`), over the postings the arrears read — the month's and its
-    // edges' (step 1)
-    const ownPayments = paymentsBySeries.get(s.id) ?? [];
+    // the arrears' test of a covering posting (`paymentFor`), over the postings the arrears read, on its own due days
+    const payments = paymentsBySeries.get(s.id) ?? [];
+    const dueDays = dueDaysOf(projectable);
     const confidence = forecastConfidence(s);
     // ONE evidence word, the one the All tab files the series under: a series
     // that never charged is "never billed", not stale (see `CalendarEntry.isStale`).
@@ -938,31 +951,26 @@ export function recurringCalendar(
         // a bill, or money settlement does not speak about: a posting within
         // the series' tolerance is this occurrence, drawn on the day it landed —
         // one on this grid before one in another month (`paymentNamedFor`) —
-        // or, none on time, the one it is late for, before the next due day's
-        // grace opens (`paymentFor`): the rent paid Oct 5 is its Oct 1, drawn once
-        const nextDueOn = nextDueDayAfter(projectable, o.date);
-        const ownPaid = paymentNamedFor(ownPayments, o.date, nextDueOn);
-        if (ownPaid !== undefined && insideMonth(ownPaid.postedOn)) continue;
+        // or, none on time, the one that pays it early or late (`paymentFor`):
+        // the rent paid Oct 5 is its Oct 1, drawn once
+        const paid = paymentNamedFor(payments, o.date, dueDays);
+        if (paid !== undefined && !paid.carried && insideMonth(paid.postedOn)) continue;
         /*
          * ⚖️ …which may be in ANOTHER month, the rent paid Sep 30 for Oct 1: drawn paid on its own day, naming the day
          * it landed (`paidWith`, no carrier) and settling $0.00 here — its money is on that month's row, counted there,
          * once. 🔴 Graded on October's postings alone it was "upcoming", then "missed", beside arrears that owed
-         * nothing (step 1).
-         */
-        if (ownPaid !== undefined) {
-          pushPaidElsewhere(s, o, { carrier: null, postedOn: ownPaid.postedOn });
-          continue;
-        }
-        /*
+         * nothing. ⚖️ …and one more than its grace early says so (`paysEarly`, decision 73): FPL's Aug 8, "paid early
+         * by its payment of Jul 28, 2026".
+         *
          * ⚖️ …and one billed inside another's payment is paid by its carrier's payment for that period — the arrears'
          * own test (`carrierPaymentsBySeries`, implied by §6A 59, 2026-10-08). Drawn paid on its own day, naming the
          * payment (`paidWith`), and settling $0.00 here: its money is on the carrier's row, counted there, once. The
          * payment named is the one the carrier's own occurrence is drawn by (`paymentNamedFor`): beside a rent paid in
          * halves either side of the edge, the half on this grid.
          */
-        const carrierPaid = paymentNamedFor(carried.get(s.id) ?? [], o.date, nextDueOn);
-        if (carrierPaid !== undefined && s.billedWith !== null) {
-          pushPaidElsewhere(s, o, { carrier: carrierWord(s.billedWith.name), postedOn: carrierPaid.postedOn });
+        if (paid !== undefined) {
+          const carrier = paid.carried && s.billedWith !== null ? carrierWord(s.billedWith.name) : null;
+          pushPaidElsewhere(s, o, { carrier, postedOn: paid.postedOn, early: paysEarly(paid, o.date) });
           continue;
         }
       }

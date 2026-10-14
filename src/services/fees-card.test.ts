@@ -10,6 +10,7 @@ import { institutions } from "@/db/schema/institutions";
 import { transactions } from "@/db/schema/transactions";
 import { seedDatabase } from "@/db/seed";
 import { feesCard } from "./fees-card";
+import { importedThrough } from "./imported-through-fixture";
 
 /**
  * The card's job is to hold two windows and two SIGNS apart without letting
@@ -121,6 +122,8 @@ beforeEach(() => {
       updatedAt: new Date().toISOString(),
     })
     .run();
+  // ⚖️ …and read into the running month (decision 71), so every complete month is read to its end
+  importedThrough(bundle.db, TODAY);
 });
 
 afterEach(() => {
@@ -464,7 +467,7 @@ describe("feesCard", () => {
     // SHOWN: the money is on the card, at its real amount
     expect(unfiled.cents).toBe(30_369);
     expect(card.unfiledNote).toContain("2 charges are filed on Fees itself");
-    expect(card.unfiledNote).toContain("$302.00");
+    expect(card.unfiledNote).toContain("The largest is $302.00");
     expect(card.unfiledNote).toContain("Direct Payment NYS DTF PIT Tax Paymnt");
     // NOT COUNTED: only the $10.00 genuine fee reaches the bank-fee total
     expect(card.recent.paidCents).toBe(1_000);
@@ -502,8 +505,21 @@ describe("feesCard", () => {
       expect(card.unfiledNote).toContain("$0.15");
       expect(card.unfiledNote).toContain(card.allTimeFromLabel);
       expect(card.unfiledNote).toContain("not in the all-time figures");
+      // 🔴 "The largest is $0.15" of the ONE charge filed there (the dashboard, a copy of his ledger, 2026-10-13)
+      expect(card.unfiledNote).toContain("it is not in the all-time figures. It is $0.15 — “FOREIGN EXCHANGE RATE ADJUSTMENT FEE”.");
+      expect(card.unfiledNote).not.toContain("largest");
     },
   );
+
+  test("two unfiled charges outside the recent window still name the largest", () => {
+    fee("2026-07-02", 1000);
+    addTxn("2026-01-31", -15, topId("Fees"), "FOREIGN EXCHANGE RATE ADJUSTMENT FEE");
+    addTxn("2025-11-03", -516, topId("Fees"), "CANADA IMMIGRATION");
+
+    const note = feesCard(bundle.db, TODAY)!.unfiledNote!;
+    expect(note).toContain("2 charges are filed on Fees itself");
+    expect(note).toContain("they are not in the all-time figures. The largest is $5.16 — “CANADA IMMIGRATION”.");
+  });
 
   test.each(["2026-02-01", "2026-07-31"])(
     "an unfiled row ON the recent window's edge (%s) is told once, in the recent sentence, in the singular",
@@ -516,6 +532,9 @@ describe("feesCard", () => {
       expect(note).toContain("what it is");
       expect(note).not.toContain("what they are");
       expect(note).not.toContain("all-time");
+      // one charge has no largest
+      expect(note).toContain("It is $0.15 — “FOREIGN EXCHANGE RATE ADJUSTMENT FEE”.");
+      expect(note).not.toContain("largest");
     },
   );
 
@@ -573,7 +592,9 @@ describe("feesCard", () => {
 
     const note = feesCard(bundle.db, TODAY)!.unfiledNote!;
     expect(note).toContain("1 charge and 1 credit are filed on Fees itself");
-    expect(note).toContain("The largest charge is $5.00");
+    // ONE charge beside the credit: "the charge", never "the largest charge" — and not "it", which reads as both rows
+    expect(note).toContain("The charge is $5.00 — “WIRE FEE”.");
+    expect(note).not.toContain("largest");
   });
 
   test("a bucket with nothing in it is an absence, not a row reading $0.00", () => {
@@ -795,6 +816,63 @@ describe("a window the ledger has shortened", () => {
     fee("2026-08-10", 1200); // this month — outside the window
 
     expect(feesCard(bundle.db, TODAY)!.summary).toContain("in the last 2 complete months");
+  });
+
+  /**
+   * ⚖️ His decision 71 (2026-10-13): the window holds only months every account he spends from has been read through
+   * to the end of. 🔴 Measured on his ledger copy that day the card read "$163.45 went out in fees over the 6 complete
+   * months Apr 2026 to Sep 2026" while Chase Checking was read only through Aug 12 — $313.45 over Feb–Jul, the months
+   * read in full. A card that spends every month is read only through Jul 10, so July leaves the window — and the
+   * summary says why, in /spending's words, beside the months it names.
+   */
+  describe("a window the frontier has cut", () => {
+    const laggingCardThrough = (through: string): void => {
+      const institutionId = bundle.db.select().from(institutions).all()[0]!.id;
+      bundle.db.insert(accounts).values({ id: "acct-card", institutionId, name: "Card", type: "credit" }).run();
+      const days = ["2026-01-05", "2026-02-05", "2026-03-05", "2026-04-05", "2026-05-05", "2026-06-05", through];
+      for (const [i, day] of days.entries()) {
+        bundle.db
+          .insert(transactions)
+          .values({ accountId: "acct-card", postedOn: day, amountCents: -2500, rawDescription: `CARD ${i}`, normalizedDescription: `CARD ${i}`, categoryId: null, dedupeHash: `card-${i}` })
+          .run();
+      }
+    };
+
+    test("the summary names the months it left out, and why", () => {
+      laggingCardThrough("2026-07-10");
+      fee("2026-06-10", 1200);
+      fee("2026-07-02", 5000); // July is not read to its end on the card — out of the window
+
+      const card = feesCard(bundle.db, TODAY)!;
+      expect([card.months, card.fromMonth, card.toMonth]).toEqual([6, "2026-01", "2026-06"]);
+      expect(card.recent.paidCents).toBe(1200);
+      expect(card.summary).toContain(
+        "$12.00 went out in fees over the 6 complete months Jan 2026 to Jun 2026, across every account, against $0.00 " +
+          "of interest back. Jul 2026 is left out: Jul 10 is the last day every account you spend from has been " +
+          "imported through. All time",
+      );
+      expect(card.headlineNoun).toContain("over the 6 months to Jun 2026");
+    });
+
+    /** ⛔ "the last 6 complete months" is false of a window the frontier slid back: they are not the last six */
+    test("an empty cut window names its months rather than calling them the last ones", () => {
+      laggingCardThrough("2026-07-10");
+      fee("2024-01-05", 10_000);
+      fee("2026-07-02", 5000);
+
+      const card = feesCard(bundle.db, TODAY)!;
+      expect(card.basis).toBe("allTime");
+      expect(card.summary).toContain(
+        "Nothing at all has been charged or paid over the 6 complete months Jan 2026 to Jun 2026. Jul 2026 is left " +
+          "out: Jul 10 is the last day every account you spend from has been imported through. From Jan 2024",
+      );
+      expect(card.summary).not.toContain("in the last 6 complete months");
+    });
+
+    test("an uncut window says nothing new", () => {
+      fee("2026-07-02", 5000);
+      expect(feesCard(bundle.db, TODAY)!.summary).not.toContain("left out");
+    });
   });
 
   /* ⛔ ZERO MONTHS IS NOT A WINDOW: the "recent" half would be this month's

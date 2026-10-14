@@ -33,6 +33,7 @@ import { dashboardData } from "./dashboard";
 import { netWorthSeries, rebuildAccount } from "./derivation";
 import { feesCard } from "./fees-card";
 import { forecastCurrentMonth, forecastForMonth } from "./forecast";
+import { importedThrough } from "./imported-through-fixture";
 import { incomeCard } from "./income-card";
 import { ledgerOpens, ledgerReaches } from "./observation-frontier";
 import { periodActivity } from "./period-activity";
@@ -742,6 +743,8 @@ describe("the agent's income is no row of his on an income category's own page",
     expect([interest.received, interest.txnCount, opened(interest.panel.href)]).toEqual([0, 0, []]);
 
     post(wellsFargo, "2026-09-01", -1_500, "Fees > ATM Fees", "Non-Wells Fargo ATM Transaction Fee");
+    // ⚖️ every account read into October (decision 71), so September is read to its end and is the card's window
+    importedThrough(bundle.db, TODAY);
     const card = feesCard(bundle.db, TODAY)!;
     expect([card.recent.earnedCents, card.allTime.earnedCents, card.recent.netCents]).toEqual([0, 0, -1_500]);
   });
@@ -796,6 +799,8 @@ describe("the agent's interest is no interest the banks paid him", () => {
   test("⛔ the Fees card's interest half is his alone, and its link opens exactly it", () => {
     // a fee of his to set the interest against — the words his Wells Fargo statements print, the review's $15.00
     post(wellsFargo, "2026-09-01", -1_500, "Fees > ATM Fees", "Non-Wells Fargo ATM Transaction Fee");
+    // ⚖️ every account read into October (decision 71), so September is read to its end and is the card's window
+    importedThrough(bundle.db, TODAY);
     const card = feesCard(bundle.db, TODAY)!;
     expect([card.recent.from, card.recent.to, card.months]).toEqual([SEPT.from, SEPT.to, 1]);
     expect([card.recent.earnedCents, card.recent.earnedCredits, card.allTime.earnedCents]).toEqual([0, 0, 0]);

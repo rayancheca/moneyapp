@@ -4,6 +4,7 @@
  * Named rather than inlined because a path is only unambiguous while a category name cannot contain it —
  * `FORBIDDEN_NAME_CHARS` in `services/category-edit` is what makes that impossible, and `section-notes.test.ts`
  * asserts the two agree, so changing the separator here fails the build rather than silently reopening the ambiguity.
+ * Every reader splits a path on it too (`parseCategoryPath`), so a path printed here is read back on the same one.
  */
 export const PATH_SEPARATOR = " > ";
 
@@ -22,4 +23,18 @@ export const PATH_SEPARATOR = " > ";
  */
 export function formatCategoryPath(parentName: string | null | undefined, name: string): string {
   return parentName === null || parentName === undefined ? name : `${parentName}${PATH_SEPARATOR}${name}`;
+}
+
+/**
+ * ⛔ The ONE reader of a category path — `formatCategoryPath` backwards: "Parent > Child" reads as its parent's name and
+ * its child's, a top-level name as itself with no child. Each caller keeps its own lookup and its own fallback for a
+ * name it cannot find (a throw, null); only the splitting is shared.
+ *
+ * 🔴 Review of 474e757 (2026-10-12): five lookups split on a literal " > " — the seed's merchant map, the categorizer's
+ * and the transfer resolver's Transfers categories, the import's bank buckets, the Claude categorizer's answers — so the
+ * separator's promise above did not reach them. `category-path.test.ts` fails on a sixth.
+ */
+export function parseCategoryPath(path: string): { parentName: string; childName: string | undefined } {
+  const [parentName = "", childName] = path.split(PATH_SEPARATOR);
+  return { parentName, childName };
 }

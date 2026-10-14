@@ -32,7 +32,6 @@ import {
 } from "./analytics";
 import {
   isUpfrontCarRow,
-  readUpfrontCarRule,
   upfrontCarRule,
   type UpfrontCarCandidate,
   type UpfrontCarRule,
@@ -1419,13 +1418,24 @@ export interface CategoryCoverage {
 }
 
 /**
- * Where the window of accounts a category was spent from opens (`categoryCoverage`): the inline editor's guide window,
- * `GUIDANCE_MONTHS` full months before `refDate`'s month, or `periodStart` when that is earlier. Every window starting
- * inside the guide window asks the same accounts, and so reads through the same day — what `carryInto` asks once.
+ * How many full calendar months before `refDate`'s month `spentFromSinceFor` looks back for the accounts a category is
+ * spent from.
+ *
+ * ⚠️ It was the inline editor's guide window, and is no longer: since his decision 71 (2026-10-13) the guide averages
+ * only months every account he spends from has been read through to the end of, and slides back behind that day
+ * (`budget-guide.ts`). Which accounts a category is spent from is a question of recency, not an average — a charge on
+ * an unread month still says the account is spent from — so this stays the calendar's six.
+ */
+const SPENT_FROM_MONTHS = 6;
+
+/**
+ * Where the window of accounts a category was spent from opens (`categoryCoverage`): `SPENT_FROM_MONTHS` full months
+ * before `refDate`'s month, or `periodStart` when that is earlier. Every window starting inside those months asks the
+ * same accounts, and so reads through the same day — what `carryInto` asks once.
  */
 function spentFromSinceFor(periodStart: string, refDate: string): string {
-  // always GUIDANCE_MONTHS windows, oldest first
-  const windowStart = trailingFullMonths(refDate, GUIDANCE_MONTHS)[0]!.start;
+  // always SPENT_FROM_MONTHS windows, oldest first
+  const windowStart = trailingFullMonths(refDate, SPENT_FROM_MONTHS)[0]!.start;
   return compareDates(periodStart, windowStart) < 0 ? periodStart : windowStart;
 }
 
@@ -1465,10 +1475,10 @@ function spentFromSinceFor(periodStart: string, refDate: string): string {
  * would clamp Travel and Health, which are never spent from Chase Checking, to
  * its Aug 12.
  *
- * ⚠️ The window is what keeps a dormant account from vetoing forever. It is the
- * inline editor's guide window (`GUIDANCE_MONTHS` full months before today's
- * month, `budgetGuidanceCents`) — the same subtree history the page already
- * reads — opened at the period's own start when that is earlier, so an annual
+ * ⚠️ The window is what keeps a dormant account from vetoing forever. It is
+ * `SPENT_FROM_MONTHS` full months before today's month — the calendar's six,
+ * which the editor's guide read until decision 71 slid it behind the frontier —
+ * opened at the period's own start when that is earlier, so an annual
  * budget keeps every account spent from inside the year it grades. An account
  * whose last charge in this category falls before it no longer holds the row
  * back (SoFi Checking's one Mar 9 Cash & ATM row stops counting in October).
@@ -1719,6 +1729,57 @@ function borrowedReach(
   };
 }
 
+/** How far one category's window is READ — the coverage half of a /budgets row (`BudgetPaceStatus`). */
+export interface CategoryWindowReading extends CategoryCoverage {
+  /** the page's day where the category has none of its own and is not cash only (`borrowedReach`); null otherwise */
+  borrowedDay: BorrowedDay | null;
+  /** elapsed days of the window past the day it is read through (`BudgetPaceStatus.uncoveredDays`) */
+  uncoveredDays: number;
+  /** not one elapsed day of it read by that day (`BudgetPaceStatus.noDayRead`) */
+  noDayRead: boolean;
+}
+
+/**
+ * The day a category's window `[start, end]` is read through, and how many of its elapsed days lie past it — what a
+ * /budgets row's coverage line is written from (`lib/budget-coverage::budgetCoverageSentence`).
+ *
+ * ⛔ One reading for the row and for the total its category page headlines over the same window (⚖️ decision 72,
+ * 2026-10-13, `provenance::categorySpendProvenance`): the page's chip reads "partly read" over exactly the days the row
+ * calls unaccounted, and prints the row's line under its figure. Two readings would be two days for one window.
+ *
+ * The uncovered stretch is measured against the graded window only: a frontier before the window opens leaves the
+ * WHOLE elapsed window uncovered, and one on or past today leaves none. ⛔ The count is `daysNotImportedYet`, the
+ * dashboard tile's and /spending's, not a third copy of the clamp — only the frontier it is given is this category's.
+ * A category spent only from cash wallets keeps every elapsed day here and says why instead
+ * (`spentOnlyFromCashWallets`): a caller grading a figure by the count asks that first.
+ */
+export function categoryWindowReading(
+  db: AppDatabase,
+  categoryId: string,
+  window: { start: string; end: string },
+  refDate: string,
+  reads: CarryReads = carryReads(db),
+): CategoryWindowReading {
+  const coverage = categoryCoverage(db, categoryId, window.start, refDate, reads.frontier, reads.wallets, reads.awaiting);
+  // ⚖️ no day of its own: the page's, so the card under its headline counts what the headline counts (`borrowedReach`)
+  const borrowed = borrowedReach(db, categoryId, coverage, window.start, refDate, reads);
+  const asked: EmptyPeriodInput = {
+    from: window.start,
+    to: window.end,
+    today: refDate,
+    ledgerOpens: reads.opens,
+    ledgerReaches: borrowed === null ? coverage.importedThroughOn : borrowed.through,
+  };
+  return {
+    ...coverage,
+    borrowedDay: borrowed?.day ?? null,
+    uncoveredDays: daysNotImportedYet(asked),
+    // ⚖️ §6A 64: the headline's dash (`emptyFigure`) over the window and day the count above was taken on, never a
+    // second reading of either
+    noDayRead: emptyFigure(emptyPeriodReason(asked)) === "dash",
+  };
+}
+
 /**
  * budgetStatuses enriched with pace, projection, and the expected tail — the
  * data behind the §8 bars. Kept separate from the lean budgetStatuses so a
@@ -1743,7 +1804,7 @@ export function budgetPaceStatusOf(
   refDate: string,
   reads: BudgetPaceReads = budgetPaceReads(db),
 ): BudgetPaceStatus {
-  const { notDrawn, upfront, frontier, opens, wallets, awaiting } = reads;
+  const { notDrawn, upfront } = reads;
   const { start, end } = s.bounds;
   // budgetStatuses evaluates the period CONTAINING refDate, start-clamped to
   // startsOn, so pace is measured over the budget's OWN life inside the period
@@ -1816,34 +1877,13 @@ export function budgetPaceStatusOf(
   // back; the row prints no $0.00 beside a spend below it (`BudgetRow`), as it prints none equal to the spend. Latent
   // on his live budgets.
   const projectedCents = Math.max(0, s.spentCents, forecast);
-  // the uncovered stretch is measured against the graded window only: a
-  // frontier before the window opens leaves the WHOLE elapsed window
-  // uncovered, and one on or past today leaves none. ⛔ The count is
-  // `daysNotImportedYet`, the dashboard tile's and /spending's, not a third
-  // copy of the clamp — only the frontier it is given is this category's.
-  const coverage = categoryCoverage(db, s.budget.categoryId, start, refDate, frontier, wallets, awaiting);
-  // ⚖️ no day of its own: the page's, so the card under its headline counts what the headline counts (`borrowedReach`)
-  const borrowed = borrowedReach(db, s.budget.categoryId, coverage, start, refDate, reads);
-  const window: EmptyPeriodInput = {
-    from: start,
-    to: end,
-    today: refDate,
-    ledgerOpens: opens,
-    ledgerReaches: borrowed === null ? coverage.importedThroughOn : borrowed.through,
-  };
-  const uncoveredDays = daysNotImportedYet(window);
   return {
     ...s,
     overdueCents: overdue.totalCents,
     overdueUnreadCents: overdue.series.reduce((sum, o) => sum + o.unreadCents, 0),
     overdueInGraceCents: overdue.series.reduce((sum, o) => sum + o.inGraceCents, 0),
     overdue: overdue.series,
-    ...coverage,
-    borrowedDay: borrowed?.day ?? null,
-    uncoveredDays,
-    // ⚖️ §6A 64: the headline's dash (`emptyFigure`) over the window and day the count above was taken on, never a
-    // second reading of either
-    noDayRead: emptyFigure(emptyPeriodReason(window)) === "dash",
+    ...categoryWindowReading(db, s.budget.categoryId, s.bounds, refDate, reads),
     totalDays,
     elapsedDays,
     elapsedFraction: elapsedDays / totalDays,
@@ -1855,41 +1895,4 @@ export function budgetPaceStatusOf(
     pace: computePace(s.spentCents, projectedCents, s.availableCents),
     tail: tail.series,
   };
-}
-
-const GUIDANCE_MONTHS = 6;
-
-/**
- * A trailing spend guide for the inline editor (ux-overhaul §8): the last 6 full
- * calendar months of subtree spend expressed at the budget PERIOD's length via a
- * daily rate, so the figure is directly comparable to a daily/weekly/monthly/
- * annual amount alike. Net refunds never push it below zero. This is what kills
- * deactivate-and-recreate — the user adjusts a live number against real history.
- */
-export function budgetGuidanceCents(
-  db: AppDatabase,
-  categoryId: string,
-  period: BudgetPeriodKind,
-  refDate: string = todayIso(),
-): number {
-  // trailingFullMonths always returns GUIDANCE_MONTHS non-empty windows, so the
-  // day total is a fixed, strictly-positive divisor (≈181) — no zero guard.
-  const windows = trailingFullMonths(refDate, GUIDANCE_MONTHS);
-  /*
-   * ⚖️ The car's up-front money is no guide to a month (owner decision 2026-10-07, §6A 51). 🔴 On his ledger the Car
-   * guide read $1,093.91 a month, most of it the $6,100 down payment and deposit ÷ 6 — a budget set from it would
-   * plan for a down payment every month. The rows `categorySpending` sums, less the card's own up-front set.
-   */
-  const upfront = readUpfrontCarRule(db);
-  let totalSpent = 0;
-  let totalDays = 0;
-  for (const w of windows) {
-    totalSpent += spendingTransactions(db, { categoryId, from: w.start, to: w.end })
-      .filter((t) => !isUpfrontCarRow(upfront, t))
-      .reduce((sum, t) => sum - t.amountCents, 0);
-    totalDays += diffDays(w.start, w.end) + 1;
-  }
-  const bounds = periodBounds(refDate, period);
-  const periodDays = diffDays(bounds.start, bounds.end) + 1;
-  return Math.max(0, Math.round((totalSpent / totalDays) * periodDays));
 }

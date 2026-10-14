@@ -19,7 +19,9 @@ import { formatCentsSigned } from "./money";
  * exactly as given. A later run never changes it: another `--reason` for a line acknowledged already is refused, and
  * so is one for a line alike one — lines alike share a mark, and one reason: an open line takes the one its lines alike
  * carry, and the dry run names it. A reason of only whitespace and invisible characters says nothing, and is refused
- * (`reasonSaysNothing`); so is one carrying a control character among its words (`reasonCarriesControl`).
+ * (`reasonSaysNothing`); so is one carrying, among its words, a control character, a line or paragraph separator
+ * (U+2028, U+2029) or a bidi control — an embedding, override or isolate (`reasonCarriesControl`) — but for one its
+ * lines alike carry stored already, from before that guard: taken as stored (`reasonCarriedAlready`).
  *
  * ⛔ An acknowledgement must never hide a line it was not given for:
  *
@@ -158,6 +160,9 @@ const NEVER_AMONG_WORDS: readonly { readonly is: RegExp; readonly called: string
  * U+2066–2069 — passed both guards, to be stored and printed with the words after it reordered: an override reverses
  * them. The bidi MARKS (U+200E, U+200F, U+061C) are not refused among words: each is one invisible character of a
  * direction, and opens no run.
+ *
+ * ⛔ A reason its lines alike carry stored already is taken as stored, never refused by this again: see
+ * `reasonCarriedAlready`.
  */
 export function reasonCarriesControl(reason: string): string | null {
   for (const char of reason) {
@@ -167,6 +172,27 @@ export function reasonCarriesControl(reason: string): string | null {
     return `carries ${never.called}, U+${code}, that every surface would print raw`;
   }
   return null;
+}
+
+/**
+ * Whether `reason` is one the lines the marks name carry stored already, exactly — taken as stored, then, not judged
+ * again by what it carries (`reasonCarriesControl`): the command line names that refusal (`ledgerCheckMode`'s
+ * `carriedRefusal`), and ledger-check makes it only for a reason this is false of.
+ *
+ * ⚖️ §6A 30: lines alike take one reason — an open line the one its lines alike carry, exactly — and this step never
+ * changes a stored one. 🔴 Review of 3872004 (2026-10-12): a reason stored before a guard refused what it carries — a
+ * bidi control before 3872004, an escape or a bell before 34e97eb — could never be given again, so a mark partly
+ * acknowledged with it failed ledger-check for good. None is stored on his ledger (0 acknowledgements, his copy of
+ * 2026-10-13). A line or paragraph separator never reached the table through the command line, which has made every
+ * run of whitespace one space since reasons were first stored (266be8e).
+ */
+export function reasonCarriedAlready(
+  lines: readonly AcknowledgeableLine[],
+  tokens: readonly string[],
+  reason: string | null,
+): boolean {
+  if (reason === null) return false;
+  return lines.some((line) => line.acknowledged?.reason === reason && tokens.includes(leftOutToken(line)));
 }
 
 /** What an acknowledgement of `line` is keyed by: its first printer's printing of it. */

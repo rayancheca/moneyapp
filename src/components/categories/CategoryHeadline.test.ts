@@ -94,4 +94,30 @@ describe("CategoryHeadline — a figure only where someone has looked", () => {
     );
     expect(text(render({ flowCents: 69_504, txnCount: 1 }))).toBe(`Spent · ${OCTOBER} $695.04 1 transaction`);
   });
+
+  /*
+   * ⚖️ His decision 72 (2026-10-13): a total over days its accounts have not been imported through keeps its figure,
+   * its chip reads "partly read", and /budgets' line for those days sits under it. 🔴 Measured on his ledger copy
+   * 2026-10-13: Food's September headlined "adds up · $160.72 · 25 transactions" and said nothing of the Aug 12 its
+   * budget card, on the same page, names.
+   */
+  test("⚖️ a total read only in part prints its figure, its count, and /budgets' line for the days unread", () => {
+    const line = "spending imported through Aug 12 · 30 days of this period unaccounted";
+    const partly: Provenance = {
+      verdict: "partly_read",
+      headline:
+        "This total is the sum of 25 rows from 1 document. A total is only as proven as its weakest row. " +
+        `It is read only in part: ${line}, so this total is a lower bound rather than a measurement.`,
+      sources: [],
+      checkedThrough: "2026-09-13",
+      inputs: [],
+      partlyRead: { uncoveredDays: 30, line },
+    };
+    const html = render({ periodLabel: "Sep 1 – 30, 2026", flowCents: 16_072, txnCount: 25, provenance: partly });
+    expect(text(html)).toBe(`Spent · Sep 1 – 30, 2026 $160.72 25 transactions ${line}`);
+    expect(html).toContain('aria-label="How this spent total is known — it is partly read: not every account behind it');
+    // a window read in full prints no line
+    const full: Provenance = { ...partly, verdict: "derived", partlyRead: undefined };
+    expect(text(render({ flowCents: 16_072, txnCount: 25, provenance: full }))).toBe(`Spent · ${OCTOBER} $160.72 25 transactions`);
+  });
 });

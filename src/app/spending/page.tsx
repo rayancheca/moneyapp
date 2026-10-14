@@ -25,6 +25,7 @@ import { spendingSankey } from "@/services/sankey";
 import { predictBudgetableCategories } from "@/services/category-forecast";
 import { readSettings } from "@/services/settings";
 import { ledgerOpens, ledgerReaches } from "@/services/observation-frontier";
+import { spendingReadThrough } from "@/services/movers-card";
 import { spendingInsights } from "@/services/spending-insights";
 import {
   cashFlowByPeriod,
@@ -327,6 +328,9 @@ export default async function SpendingPage({
   // both ends of the ledger, read once: the empty state and the heatmap ask them
   const opens = ledgerOpens(db);
   const reaches = ledgerReaches(db);
+  // ⚖️ decision 72: the day the period's proof counts its unaccounted days from — the heatmap's days are read against
+  // it, and an empty window is asked against it (decision 64: no day read and no row is no measured zero)
+  const readThrough = spendingReadThrough(db, today);
   const emptyCopy = hasActivity
     ? null
     : spendingEmptyCopy(db, range, {
@@ -334,6 +338,7 @@ export default async function SpendingPage({
         label: period.label,
         ledgerOpens: opens,
         ledgerReaches: reaches,
+        spendingReadThrough: readThrough,
         formatDay: formatDayLong,
       });
 
@@ -401,6 +406,7 @@ export default async function SpendingPage({
                 today={today}
                 ledgerOpens={opens}
                 ledgerReaches={reaches}
+                spendingReadThrough={readThrough}
               />
             </SurfaceCard>
             <SurfaceCard className="lg:col-span-2">
@@ -445,6 +451,12 @@ export default async function SpendingPage({
               </h2>
               <span className="text-xs text-ink-faint">tap a category to open its page</span>
             </div>
+            {/* ⚖️ decision 72 (2026-10-13): the days the chip calls partly read, in /budgets' words. 🔴 On his ledger
+                copy 2026-10-13 September's chip read "adds up" over a month every account he spends from was
+                imported through Aug 12 — the day What moved, above, names. */}
+            {spendProvenance?.partlyRead && (
+              <p className="mb-2 text-xs text-ink-faint">{spendProvenance.partlyRead.line}</p>
+            )}
             {/* three lenses on one set of rows: the ranked list this card has
                 always shown (default), the spatial relief, and every figure as
                 a table. The lens lives in the URL and persists per surface. */}

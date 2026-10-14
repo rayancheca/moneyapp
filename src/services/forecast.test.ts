@@ -14,6 +14,7 @@ import { transactions, type TransactionStatus } from "@/db/schema/transactions";
 import { dedupeHash } from "@/lib/hash";
 import { createAccount } from "./accounts";
 import { checkedThrough } from "./checked-days-fixture";
+import { importedThrough } from "./imported-through-fixture";
 import { forecastCurrentMonth, forecastForMonth, trailingFullMonths } from "./forecast";
 import { seriesIdsNotDrawnAsRecurring } from "./recurring-link";
 
@@ -95,6 +96,15 @@ describe("forecastCurrentMonth", () => {
         dedupeHash: dedupeHash({ accountId, postedOn, amountCents, rawDescription, occurrenceIndex: 0 }),
       })
       .run();
+  }
+
+  /**
+   * ⚖️ Every account read into the running month, so the pace averages the calendar's three (his decision 71,
+   * 2026-10-13: an average uses only months every account you spend from is read to the end of — `paceMonths`). A
+   * fixture whose newest row is Jun 10 has read June for ten days, and its pace slides back a month.
+   */
+  function readIntoJuly(): void {
+    importedThrough(bundle.db, TODAY);
   }
 
   function insertSeries(input: {
@@ -256,6 +266,7 @@ describe("forecastCurrentMonth", () => {
   });
 
   test("a row filed on the system Uncategorized category is uncategorized spending in the variable leg", () => {
+    readIntoJuly();
     // 🔴 owner decision 2026-09-03: the system category IS the NULL bucket, so
     // its outflows pace like any uncategorized outflow instead of vanishing
     insertTxn(cardId, "2026-06-10", -30_000, { categoryName: "Uncategorized" });
@@ -283,6 +294,7 @@ describe("forecastCurrentMonth", () => {
   });
 
   test("variable components carry no staleness — no series stands behind them", () => {
+    readIntoJuly();
     for (const month of ["2026-04", "2026-05", "2026-06"]) {
       insertTxn(cardId, `${month}-10`, -30000, { categoryName: "Groceries" });
     }
@@ -619,6 +631,7 @@ describe("forecastCurrentMonth", () => {
   });
 
   test("variable: trailing 3-month average with trend, scaled by remaining days", () => {
+    readIntoJuly();
     insertTxn(cardId, "2026-04-10", -30000, { categoryName: "Groceries" });
     insertTxn(cardId, "2026-05-10", -40000, { categoryName: "Groceries" });
     insertTxn(cardId, "2026-06-10", -50000, { categoryName: "Groceries" });
@@ -631,6 +644,7 @@ describe("forecastCurrentMonth", () => {
   });
 
   test("variable excludes recurring-tagged transactions", () => {
+    readIntoJuly();
     const seriesId = insertSeries({
       name: "Meal kit",
       kind: "subscription",
@@ -651,6 +665,7 @@ describe("forecastCurrentMonth", () => {
   });
 
   test("variable never projects below zero (trend clamp)", () => {
+    readIntoJuly();
     insertTxn(cardId, "2026-04-05", -60000, { categoryName: "Entertainment" });
     // May and June: nothing → avg 20000, trend −30000 → clamped to 0
     const f = forecastCurrentMonth(bundle.db, TODAY);
@@ -659,6 +674,7 @@ describe("forecastCurrentMonth", () => {
   });
 
   test("uncategorized negatives form an explicit bucket; positives are excluded", () => {
+    readIntoJuly();
     insertTxn(cardId, "2026-06-20", -5000, {});
     insertTxn(checkingId, "2026-06-21", 7000, {}); // review queue's problem, not income
     const f = forecastCurrentMonth(bundle.db, TODAY);
@@ -669,6 +685,7 @@ describe("forecastCurrentMonth", () => {
   });
 
   test("a capped trend names what the cap is worth, so the row's arithmetic closes", () => {
+    readIntoJuly();
     // 🔴 The live shape, 2026-09-10: `Car` read "3-mo avg $2,033.33 + trend
     // $0.00 (slope $3,050.00, capped at one typical month)" over months of
     // [$0, $0, $6,100.00]. Every clause true; a reader capping the slope at the
@@ -685,6 +702,7 @@ describe("forecastCurrentMonth", () => {
   });
 
   test("an uncapped trend is printed bare — no cap clause where nothing was capped", () => {
+    readIntoJuly();
     // rising and inside the cap: [0, 5000, 10000] → median $50.00, slope $50.00
     insertTxn(cardId, "2026-05-10", -5000, {});
     insertTxn(cardId, "2026-06-20", -10000, {});
@@ -696,6 +714,7 @@ describe("forecastCurrentMonth", () => {
   });
 
   test("subcategory spending rolls up to one top-level component", () => {
+    readIntoJuly();
     insertTxn(cardId, "2026-06-03", -10000, { categoryName: "Groceries" });
     insertTxn(cardId, "2026-06-04", -20000, { categoryName: "Dining" });
     const f = forecastCurrentMonth(bundle.db, TODAY);
@@ -706,6 +725,7 @@ describe("forecastCurrentMonth", () => {
   });
 
   test("current-month, non-active, and non-expense transactions never enter variable", () => {
+    readIntoJuly();
     insertTxn(cardId, "2026-07-02", -70000, { categoryName: "Groceries" }); // current month
     insertTxn(cardId, "2026-06-09", -88800, { categoryName: "Groceries", status: "quarantined" });
     insertTxn(checkingId, "2026-06-12", -20000, { categoryName: "Internal Transfer" });
@@ -715,6 +735,7 @@ describe("forecastCurrentMonth", () => {
   });
 
   test("components sum exactly to the displayed projections", () => {
+    readIntoJuly();
     insertSeries({
       name: "Payroll",
       kind: "income",

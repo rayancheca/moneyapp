@@ -70,6 +70,8 @@ export function CategoryHeadline({
             {txnCount} {txnCount === 1 ? "transaction" : "transactions"}
             {empty?.figure === "lower-bound" && ` — ${A_LOWER_BOUND}`}
           </div>
+          {/* ⚖️ decision 72: the days the chip calls partly read, as its /budgets row prints them — words and tone */}
+          {provenance?.partlyRead && <div className="text-xs text-ink-faint">{provenance.partlyRead.line}</div>}
         </>
       )}
     </div>

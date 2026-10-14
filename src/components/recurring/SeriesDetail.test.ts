@@ -149,6 +149,111 @@ describe("SeriesDetail — a schedule of one charge reads once, on its own page"
     expect(text).toContain("Ended Jan 11, 2027");
     expect(text).toContain("Its charges below stay in the ledger.");
   });
+
+  /*
+   * ⛔ ONE TENSE FOR ONE FACT. An end that falls between two due days closes the schedule at the last day before it:
+   * Car insurance ending Jan 5, 2027 holds Dec 11 and nothing after. From Dec 12 the card says "Its schedule has ended
+   * — every date it holds has come"; the badge beside it read "Ends Jan 5, 2027", in the future tense (review of the
+   * 10-12/13 batches). Its past tense names the day the schedule ran out — "Ended Jan 5" would be a day still to come
+   * — and keeps naming it after the end day, so the badge never changes its date on Jan 6.
+   */
+  test.each(["2026-12-12", "2027-01-05", "2027-01-20"])(
+    "%s, an end between two due days: 'Ended Dec 11, 2026' beside 'Its schedule has ended' — never 'Ends'",
+    (today) => {
+      bundle.db
+        .update(recurringSeries)
+        .set({ userEndsOn: "2027-01-05" })
+        .where(eq(recurringSeries.id, his.insuranceId))
+        .run();
+      const html = pageOn(his.insuranceId, today);
+      const text = words(html);
+      expect(text).toContain("Its schedule has ended");
+      expect(text).toContain("Ended Dec 11, 2026");
+      expect(text).not.toContain("Ends Jan 5, 2027");
+      expect(text).not.toContain("Ended Jan 5, 2027");
+      expect(html).not.toMatch(/text-warning[^>]*>Ended/);
+    },
+  );
+
+  test("…while a date is still to come the end is ahead of it, in the future tense: 'Ends Jan 5, 2027'", () => {
+    bundle.db
+      .update(recurringSeries)
+      .set({ userEndsOn: "2027-01-05" })
+      .where(eq(recurringSeries.id, his.insuranceId))
+      .run();
+    const text = words(pageOn(his.insuranceId, "2026-12-11"));
+    expect(text).toContain("Ends Jan 5, 2027");
+    expect(text).not.toContain("Its schedule has ended");
+  });
+
+  /*
+   * 🔴 Review of 7a3c702 — the same end with the date DETECTION stores: reset to detected after Dec 11 posted, the
+   * anchor is a step past it, Jan 11 (`stepFrom(last.postedOn, plan, 1)`), past the Jan 5 end. On a copy of his ledger
+   * set up so, the page read "Ends Jan 5, 2027" beside "Its schedule has ended" on Dec 12 and Jan 5, and "Ended Jan 5,
+   * 2027" from Jan 6. The tests above typed the anchor, so none had asked.
+   */
+  test.each(["2026-12-12", "2027-01-05", "2027-01-06"])(
+    "%s, detection's anchor a step past the end: 'Ended Dec 11, 2026', as with a typed one",
+    (today) => {
+      his.charge("2026-12-11", -35758, his.insuranceId);
+      bundle.db
+        .update(recurringSeries)
+        .set({
+          userNextExpectedOn: null,
+          nextExpectedOn: "2027-01-11",
+          lastMatchedOn: "2026-12-11",
+          userEndsOn: "2027-01-05",
+        })
+        .where(eq(recurringSeries.id, his.insuranceId))
+        .run();
+      const text = words(pageOn(his.insuranceId, today));
+      expect(text).toContain("Its schedule has ended");
+      expect(text).toContain("Ended Dec 11, 2026");
+      expect(text).not.toContain("Ends Jan 5, 2027");
+      expect(text).not.toContain("Ended Jan 5, 2027");
+    },
+  );
+
+  /*
+   * 🔴 Review of b350ceb — his real Jan 11 end, and his real settle lag (the Aug 11 premium is in the ledger as Aug
+   * 12): the last premium posts Jan 12, reset to detected its anchor is Feb 12, and the walk back stepped past it to
+   * "Ended Dec 12, 2026" — a day nothing posted, under a Jan 12 charge (a copy of his ledger set up so, asked Jan 13
+   * and Feb 1). The day it ran out is never before its last charge nor past its end: Jan 11, as his typed anchor reads.
+   */
+  test.each(["2027-01-13", "2027-02-01"])(
+    "%s, its last premium settled the day after the end: 'Ended Jan 11, 2027', never a day before that charge",
+    (today) => {
+      his.charge("2026-12-11", -35758, his.insuranceId);
+      his.charge("2027-01-12", -35758, his.insuranceId);
+      bundle.db
+        .update(recurringSeries)
+        .set({ userNextExpectedOn: null, nextExpectedOn: "2027-02-12", lastMatchedOn: "2027-01-12" })
+        .where(eq(recurringSeries.id, his.insuranceId))
+        .run();
+      const text = words(pageOn(his.insuranceId, today));
+      expect(text).toContain("Its schedule has ended");
+      expect(text).toContain("Ended Jan 11, 2027");
+      expect(text).not.toContain("Ended Dec 12, 2026");
+    },
+  );
+
+  /*
+   * ⚖️ §6A 56 (2026-10-08): ONE charge reads once, wherever its schedule is spelled — the End dialog's too. 🔴 Review of
+   * 7a3c702: on his ledger copy 2026-10-13 the balance's dialog read "Upcoming charges off the calendar: every charge
+   * from Nov 11, 2026 to Nov 11, 2026", a span of one day, one click from "charges once on Nov 11".
+   */
+  test("the balance's End dialog: its one charge 'once on Nov 11, 2026', never a span from a day to itself", () => {
+    const said = seriesEndLines(seriesEndInput(seriesDetail(bundle.db, his.balanceId, TODAY)), formatCents).map(
+      (l) => `${l.label}: ${l.value}`,
+    );
+    expect(said).toContain("Upcoming charges off the calendar: once on Nov 11, 2026");
+    expect(said.join(" · ")).not.toContain("every charge");
+    // Car insurance, two charges left, still names its span
+    const insurance = seriesEndLines(seriesEndInput(seriesDetail(bundle.db, his.insuranceId, TODAY)), formatCents);
+    expect(insurance.map((l) => `${l.label}: ${l.value}`)).toContain(
+      "Upcoming charges off the calendar: every charge from Dec 11, 2026 to Jan 11, 2027",
+    );
+  });
 });
 
 /*

@@ -88,7 +88,7 @@ function statusFor(name: string): BudgetPaceStatus {
 
 function render(status: BudgetPaceStatus): string {
   return renderToStaticMarkup(
-    createElement(BudgetRow, { status, guidanceCents: 0, spentProvenance: null, planProvenance: null }),
+    createElement(BudgetRow, { status, guide: null, spentProvenance: null, planProvenance: null }),
   );
 }
 
@@ -224,6 +224,131 @@ describe("BudgetRow — what it draws beside the verdict", () => {
     expect(spoken).toMatch(/on track/);
     expect(spoken).not.toMatch(/projected -/);
   });
+
+  /**
+   * 🔴 The row and its spoken sentence chose the projection apart: a1cec5f made the row print one only where it says
+   * more than the spend and more than zero, and the spoken sentence still read "on track — projected $0.00" over the
+   * month a refund took below zero (review of a1cec5f, 2026-10-13) — and "projected $10.00" beside a spend of $10.00
+   * the row prints alone. Where the row prints no "Projected ≈", the spoken row says none.
+   */
+  test("the spoken row says a projection only where the row prints one — not $0.00 below a refund", () => {
+    const chase = bundle.db.select().from(institutions).where(eq(institutions.name, "Chase")).get()!;
+    const card = createAccount(bundle.db, { institutionId: chase.id, name: "Card", type: "credit" });
+    for (const [postedOn, amountCents] of [
+      ["2026-08-05", 5_000],
+      ["2026-08-11", -1_000],
+    ] as const) {
+      const rawDescription = `SPEND ${postedOn}`;
+      bundle.db
+        .insert(transactions)
+        .values({
+          accountId: card,
+          postedOn,
+          amountCents,
+          rawDescription,
+          normalizedDescription: rawDescription,
+          categoryId: catId("Food"),
+          dedupeHash: dedupeHash({ accountId: card, postedOn, amountCents, rawDescription, occurrenceIndex: 0 }),
+        })
+        .run();
+    }
+    createBudget(bundle.db, { categoryId: catId("Food"), period: "monthly", amountCents: 3_000, startsOn: "2026-08-01" });
+
+    const s = statusFor("Food");
+    expect(s.pace).toBe("under");
+    expect(s.projectedCents).toBe(0); // the floor the row does not print
+    const html = render(s);
+    expect(html).not.toContain("Projected");
+    const spoken = /aria-valuetext="([^"]*)"/.exec(html)?.[1] ?? "";
+    expect(spoken).not.toMatch(/projected/);
+    expect(spoken).toMatch(/\. on track\.$/);
+  });
+
+  test("…nor one equal to the spend: a month of one bill, posted, with nothing more to come", () => {
+    const chase = bundle.db.select().from(institutions).where(eq(institutions.name, "Chase")).get()!;
+    const card = createAccount(bundle.db, { institutionId: chase.id, name: "Card", type: "credit" });
+    const bill = bundle.db
+      .insert(recurringSeries)
+      .values({
+        name: "Meal plan",
+        kind: "bill",
+        cadence: "monthly",
+        intervalDaysAvg: 30,
+        amountCentsAvg: -1_000,
+        nextExpectedOn: "2026-09-05",
+        nextExpectedAmountCents: -1_000,
+        status: "confirmed",
+        lastMatchedOn: "2026-08-05",
+        userCategoryId: catId("Food"),
+      })
+      .returning({ id: recurringSeries.id })
+      .get().id;
+    for (const [postedOn, amountCents, category, seriesId] of [
+      ["2026-08-05", -1_000, "Food", bill],
+      ["2026-08-11", -500, "Shopping", null], // the card read through today
+    ] as const) {
+      const rawDescription = `SPEND ${postedOn} ${category}`;
+      bundle.db
+        .insert(transactions)
+        .values({
+          accountId: card,
+          postedOn,
+          amountCents,
+          rawDescription,
+          normalizedDescription: rawDescription,
+          categoryId: catId(category),
+          recurringSeriesId: seriesId,
+          dedupeHash: dedupeHash({ accountId: card, postedOn, amountCents, rawDescription, occurrenceIndex: 0 }),
+        })
+        .run();
+    }
+    createBudget(bundle.db, { categoryId: catId("Food"), period: "monthly", amountCents: 3_000, startsOn: "2026-08-01" });
+
+    const s = statusFor("Food");
+    // a covered, graded row whose projection is its spend — the case the row prints no projection for
+    expect(s.uncoveredDays).toBe(0);
+    expect(s.pace).toBe("under");
+    expect(s.spentCents).toBe(1_000);
+    expect(s.projectedCents).toBe(1_000);
+    const html = render(s);
+    expect(html).toContain("On track");
+    expect(html).not.toContain("Projected");
+    const spoken = /aria-valuetext="([^"]*)"/.exec(html)?.[1] ?? "";
+    expect(spoken).not.toMatch(/projected/);
+    expect(spoken).toMatch(/\. on track\.$/);
+  });
+
+  test("the control: a projection the row prints is spoken, the same figure", () => {
+    const chase = bundle.db.select().from(institutions).where(eq(institutions.name, "Chase")).get()!;
+    const card = createAccount(bundle.db, { institutionId: chase.id, name: "Card", type: "credit" });
+    for (const [postedOn, amountCents] of [
+      ["2026-08-05", -2_000],
+      ["2026-08-11", -100],
+    ] as const) {
+      const rawDescription = `SPEND ${postedOn}`;
+      bundle.db
+        .insert(transactions)
+        .values({
+          accountId: card,
+          postedOn,
+          amountCents,
+          rawDescription,
+          normalizedDescription: rawDescription,
+          categoryId: catId("Food"),
+          dedupeHash: dedupeHash({ accountId: card, postedOn, amountCents, rawDescription, occurrenceIndex: 0 }),
+        })
+        .run();
+    }
+    createBudget(bundle.db, { categoryId: catId("Food"), period: "monthly", amountCents: 3_000, startsOn: "2026-08-01" });
+
+    const s = statusFor("Food");
+    expect(s.pace).toBe("at-risk");
+    const html = render(s);
+    const printed = /Projected ≈ <\/span><span[^>]*>([^<]*)</.exec(html.replace(/<!-- -->/g, ""))?.[1];
+    expect(printed).toMatch(/^\$[\d,]+\.\d\d$/);
+    const spoken = /aria-valuetext="([^"]*)"/.exec(html)?.[1] ?? "";
+    expect(spoken).toContain(`off pace — projected ${printed}, over budget.`);
+  });
 });
 
 /*
@@ -300,7 +425,7 @@ describe("BudgetRow — ⚖️ §6A 64, a window not one day of which has been r
       label: s.categoryPath,
     });
     const html = renderToStaticMarkup(
-      createElement(BudgetRow, { status: s, guidanceCents: 0, spentProvenance: spentProof, planProvenance: null }),
+      createElement(BudgetRow, { status: s, guide: null, spentProvenance: spentProof, planProvenance: null }),
     );
     expect(figures(html)).toMatch(/^Spent — Budget \$300\.00 Left —/);
     expect(html).not.toContain("$0.00");
@@ -629,5 +754,47 @@ describe("BudgetDetails — what rollover subtracts, in his words", () => {
     expect(panelText()).toContain("Banked $30.00 from closed periods. A period that came in under plan");
     expect(panelText()).not.toContain("so nothing rolls over");
     expect(panelText()).toContain("so a missing statement cannot bank itself as savings.");
+  });
+});
+
+/*
+ * ⚖️ His decision 71 (2026-10-13): the editor's guide averages the dashboard's window, and a window the frontier slid
+ * back names its months and says why (`budgetGuides`). This pins that the editor prints what it is handed: the lead
+ * beside the figure, and the note under it only when there is one.
+ */
+describe("BudgetRow — the inline editor's guide", () => {
+  afterEach(() => {
+    popovers.forceOpen = false;
+  });
+
+  function editorText(guide: Parameters<typeof BudgetRow>[0]["guide"]): string {
+    createBudget(bundle.db, { categoryId: catId("Food"), period: "monthly", amountCents: 60_000, startsOn: "2026-08-01" });
+    popovers.forceOpen = true;
+    return renderToStaticMarkup(
+      createElement(BudgetRow, { status: statusFor("Food"), guide, spentProvenance: null, planProvenance: null }),
+    )
+      .replace(/<[^>]+>/g, " ")
+      .replace(/\s+/g, " ");
+  }
+
+  test("a guide the frontier slid back prints its lead, its figure, and why", () => {
+    const note =
+      "Averaged over 6 complete months, Feb 2026 to Jul 2026. Aug 2026 and Sep 2026 are left out: Aug 12 is the last " +
+      "day every account you spend from has been imported through.";
+    const text = editorText({ cents: 221_650, lead: "6-mo avg", note });
+    expect(text).toContain("6-mo avg ≈ $2,216.50");
+    expect(text).toContain(note);
+  });
+
+  test("an uncut guide prints no note", () => {
+    const text = editorText({ cents: 74_169, lead: "6-mo avg", note: null });
+    expect(text).toContain("6-mo avg ≈ $741.69");
+    expect(text).not.toContain("left out");
+  });
+
+  test("no guide prints nothing", () => {
+    const text = editorText(null);
+    expect(text).not.toContain("avg ≈");
+    expect(text).not.toContain("left out");
   });
 });

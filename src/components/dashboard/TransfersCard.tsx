@@ -101,6 +101,8 @@ export function TransfersCard({ data }: { data: TransfersCardData }) {
       </dl>
 
       <div className="mt-4 space-y-1.5 border-t border-line pt-3 text-[11px] leading-relaxed text-ink-faint">
+        {/* ⚖️ why the months in the headline stop short, when they do — the runway caption's sentence (decision 71) */}
+        {data.unreadNote && <p>{data.unreadNote}</p>}
         {/* the unpaired money is the point of the card, so it is the one clause
             that can wear the warning tone — and only when there is some */}
         <p className={proof.unpairedCount > 0 ? "text-warning" : undefined}>{proof.sentence}</p>

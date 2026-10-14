@@ -16,6 +16,8 @@
  * layout modules, so the visual baselines stay put.
  */
 
+import { largestLead } from "./largest-lead";
+
 export interface DeviationInput {
   key: string;
   label: string;
@@ -275,7 +277,8 @@ export function deviationDescription(
     // 🔴 "1 categories moved against the previous period: 1 up, 0 down."
     `${layout.movedCount} categor${layout.movedCount === 1 ? "y" : "ies"} moved in ${windows.current} against ${windows.previous}: ` +
     `${layout.upCount} up, ${layout.downCount} down.${shown} ` +
-    `The largest move is ${biggest.label}, ${biggest.isIncrease ? "up" : "down"} ` +
+    // 🔴 "1 category moved …: 1 up, 0 down. The largest move is …" — one move has no largest
+    `${largestLead(layout.movedCount, "move")} ${biggest.label}, ${biggest.isIncrease ? "up" : "down"} ` +
     `${fmt(Math.abs(biggest.deltaCents))}.`
   );
 }

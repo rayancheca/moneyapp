@@ -2,23 +2,30 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { eq } from "drizzle-orm";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
+import { CarCostCard } from "@/components/dashboard/CarCostCard";
 import { createDatabase, type DbBundle } from "@/db/client";
 import { seedDatabase } from "@/db/seed";
+import { shrinkCaption } from "@/lib/committed";
 import { addCalendarMonths, addDays, daysInMonthOf, monthKey } from "@/lib/dates";
 import { parsePeriodParams, resolvePeriod } from "@/lib/period";
+import { namedSeriesOf, SERIES_LIST_PARAM, seriesListed } from "@/lib/recurring-list";
 import { dailyBalances } from "@/db/schema/balances";
 import { importFiles, statementPeriods } from "@/db/schema/imports";
 import { categories } from "@/db/schema/categories";
 import { institutions } from "@/db/schema/institutions";
 import { recurringSeries } from "@/db/schema/recurring";
 import { transactions } from "@/db/schema/transactions";
+import { baselineCaption } from "@/lib/committed";
 import { dedupeHash } from "@/lib/hash";
 import { normalizeDescription } from "@/lib/normalize";
 import { createAccount, updateAccount } from "./accounts";
 import { checkedThrough } from "./checked-days-fixture";
 import { baselineWindow, carCard, committedBook, runwayCard, spendBaseline, SPEND_BASELINE_MONTHS } from "./committed";
 import { forecastCurrentMonth } from "./forecast";
+import { listSeries } from "./recurring";
 import { cashFlowByPeriod } from "./spending";
 
 /**
@@ -69,6 +76,14 @@ function insertTxn(opts: {
     })
     .returning({ id: transactions.id })
     .get().id;
+}
+
+/**
+ * ⚖️ The import reaches into the running month (decision 71, 2026-10-13): every complete month a fixture holds is read
+ * to its end, so a test about the window's FLOOR tests only the floor. A row in August is in no window.
+ */
+function readIntoAugust(): void {
+  insertTxn({ postedOn: "2026-08-05", amountCents: -100, rawDescription: "SUPERMARKET" });
 }
 
 function setBalance(accountId: string, day: string, balanceCents: number): void {
@@ -193,6 +208,7 @@ describe("spendBaseline", () => {
     bundle.db.delete(transactions).run();
     insertTxn({ postedOn: "2026-06-01", amountCents: -300000, rawDescription: "SUPERMARKET" });
     insertTxn({ postedOn: "2026-07-10", amountCents: -300000, rawDescription: "SUPERMARKET" });
+    readIntoAugust();
 
     const b = spendBaseline(bundle.db, TODAY);
     // June and July are the only complete months inside the ledger
@@ -224,6 +240,7 @@ describe("spendBaseline", () => {
     bundle.db.delete(transactions).run();
     insertTxn({ postedOn: "2026-06-25", amountCents: -10000, rawDescription: "SUPERMARKET" }); // 6 days
     insertTxn({ postedOn: "2026-07-10", amountCents: -300000, rawDescription: "SUPERMARKET" });
+    readIntoAugust();
 
     const b = spendBaseline(bundle.db, TODAY);
     // June is a six-day stub; July is the only complete month the ledger holds
@@ -237,6 +254,7 @@ describe("spendBaseline", () => {
     bundle.db.delete(transactions).run();
     insertTxn({ postedOn: "2026-06-01", amountCents: -10000, rawDescription: "SUPERMARKET" });
     insertTxn({ postedOn: "2026-07-10", amountCents: -300000, rawDescription: "SUPERMARKET" });
+    readIntoAugust();
 
     const b = spendBaseline(bundle.db, TODAY);
     expect(b.months).toBe(2);
@@ -251,6 +269,7 @@ describe("spendBaseline", () => {
     // the average down
     insertTxn({ postedOn: "2026-02-01", amountCents: -300000, rawDescription: "SUPERMARKET" });
     insertTxn({ postedOn: "2026-07-10", amountCents: -300000, rawDescription: "SUPERMARKET" });
+    readIntoAugust();
 
     const b = spendBaseline(bundle.db, TODAY);
     expect(b.months).toBe(SPEND_BASELINE_MONTHS);
@@ -745,12 +764,32 @@ describe("runwayCard", () => {
       expect(card.incomeHref).toBe(`/recurring/${salary}`);
     });
 
-    test("levelled from two schedules: the list of every schedule", () => {
+    /*
+     * ⛔ The drill-down contract, followed: the link opened as `/recurring?tab=all` reads it — exactly the schedules the
+     * rate sums. 🔴 It was a bare `/recurring?tab=all`: every series the ledger lists, the rent and a schedule that
+     * stopped paying among them (review of the dashboard links, 2026-10-12).
+     */
+    test("levelled from two schedules: exactly those two — no bill, no schedule outside the rate", () => {
       addSeries({ name: "Salary", kind: "income", nextExpectedOn: "2026-09-01", amountCents: 200000 });
       addSeries({ name: "Tutoring", kind: "income", nextExpectedOn: "2026-09-03", amountCents: 30000 });
+      addSeries({
+        name: "Old job",
+        kind: "income",
+        nextExpectedOn: "2026-07-01",
+        amountCents: 150000,
+        userEndsOn: "2026-07-31",
+      });
+      addSeries({ name: "Rent", kind: "bill", nextExpectedOn: "2026-09-01", amountCents: -180000 });
       const card = runwayCard(bundle.db, TODAY);
       expect(card.runway.assumptions.find((a) => a.id === "income")!.cents).toBe(230000);
-      expect(card.incomeHref).toBe("/recurring?tab=all");
+
+      const url = new URL(card.incomeHref, "http://moneyapp.test");
+      expect(`${url.pathname}?tab=${url.searchParams.get("tab")}`).toBe("/recurring?tab=all");
+      const named = namedSeriesOf(url.searchParams.get(SERIES_LIST_PARAM));
+      const opened = seriesListed(listSeries(bundle.db, TODAY), named);
+      expect(opened.rows.map((s) => s.name).sort()).toEqual(["Salary", "Tutoring"]);
+      // …and says so, of the tab's four
+      expect(opened.narrowed).toEqual({ shown: 2, of: 4 });
     });
 
     // the set is the one the RATE sums: a schedule that stopped levels to nothing and is not behind the figure
@@ -1380,6 +1419,36 @@ describe("carCard", () => {
     expect(c.evidenceCaption).not.toContain("Nov 11, 2026");
   });
 
+  /*
+   * ⚖️ §6A 56 on both cards of his dashboard (a copy of his ledger, 2026-10-13). The runway's sentence counts the lines
+   * that lower its RATE, and the balance — one charge, its own single payment — lowers nothing: 🔴 it read "…, and one
+   * other does too — … $364.66 a month lower for the two of them". The car card's sentence counts the lines that STOP
+   * inside its horizon, which the balance still does on Nov 11; its figures are the decision's "unchanged".
+   */
+  test("the runway's rate sentence names Car insurance alone; the car card's figures and sentence do not move", () => {
+    ownersCar();
+    expect(shrinkCaption(committedBook(bundle.db, "2026-10-13"))).toBe(
+      "Car insurance stops inside that window — evidenced through Jan 11, 2027, with no renewal in the ledger — " +
+        "so it is billed 2 times rather than throughout, and counts $59.60 a month here against the $357.58 it " +
+        "charges. The rate above is $297.98 a month lower for it.",
+    );
+    const c = carCard(bundle.db, "2026-10-13")!;
+    expect([c.cost.committedCents, c.cost.monthlyCents, c.cost.evidencedThrough]).toEqual([
+      12 * 69504 + 2 * 35758 + 7274,
+      69504 + 35758,
+      "2027-01-11",
+    ]);
+    expect(c.evidenceCaption).toBe(
+      "Car insurance stops inside the next 12 months — evidenced through Jan 11, 2027, with no renewal in the " +
+        "ledger, and one other does too — so the monthly figure above stops being what you pay after that date.",
+    );
+    // the car's own book reads the balance by the runway's rule
+    expect(c.book.lines.find((l) => l.name.startsWith("Car insurance — Nov 11"))).toMatchObject({
+      oneCharge: true,
+      shortfallPerMonthCents: 0,
+    });
+  });
+
   /* A lease that outlives the horizon does not stop the monthly figure inside
      it — the card printed its 2028 end date under the word "Insurance". */
   test("an end date past the horizon is not a date the monthly figure stops being true", () => {
@@ -1445,6 +1514,7 @@ describe("baselineWindow — one window for every card that quotes one", () => {
   test("a ledger younger than the window gets what it can prove", () => {
     bundle.db.delete(transactions).run();
     insertTxn({ postedOn: "2026-05-01", amountCents: -1000, rawDescription: "SUPERMARKET" });
+    readIntoAugust();
     const w = baselineWindow(bundle.db, TODAY);
     expect(w.months).toBe(3); // May, June, July
     expect(w.fromMonth).toBe("2026-05");
@@ -1452,7 +1522,8 @@ describe("baselineWindow — one window for every card that quotes one", () => {
   });
 
   test("the last month's real length is the window's end, February included", () => {
-    // today in March: the window closes at the end of February
+    // today in March: the window closes at the end of February — the import reaching into March 2028 (decision 71)
+    insertTxn({ postedOn: "2028-03-10", amountCents: -100, rawDescription: "SUPERMARKET" });
     expect(baselineWindow(bundle.db, "2026-03-15").to).toBe("2026-02-28");
     expect(baselineWindow(bundle.db, "2028-03-15").to).toBe("2028-02-29");
   });
@@ -1472,5 +1543,154 @@ describe("baselineWindow — one window for every card that quotes one", () => {
       expect(b.fromMonth, today).toBe(w.fromMonth);
       expect(b.toMonth, today).toBe(w.toMonth);
     }
+  });
+});
+
+/*
+ * ⚖️ His decision 71 (2026-10-13, asked as an either/or, the recommended option): an AVERAGE uses only months EVERY
+ * account he spends from has been read through to the end of — the frontier /spending's What-moved and the year summary
+ * already name (`spendingCoverageThrough`). 🔴 Measured on his ledger copy that day: the runway, Eating out,
+ * Subscriptions and Fees averaged "6 complete months, Apr 2026 to Sep 2026" while Chase Checking was read only through
+ * Aug 12 and Chase Sapphire through Sep 2 — September's $5,417.30 held no Chase spending at all, beside a year summary
+ * and a /spending page that stop at Aug 12 for exactly that reason.
+ *
+ * Here the Card is a live spender — $100 on the 1st of every month from January — read only through `through`, while
+ * Checking runs on to Aug 5: the Card's last day is the day every account you spend from has been imported through.
+ */
+describe("baselineWindow — only months every account you spend from has been read to the end of (decision 71)", () => {
+  function cardReadThrough(through: string, opensMonth = "2026-01"): void {
+    for (let m = opensMonth; `${m}-01` <= through; m = monthKey(addCalendarMonths(`${m}-01`, 1))) {
+      insertTxn({ accountId: cardId, postedOn: `${m}-01`, amountCents: -10000, rawDescription: "CORNER SHOP" });
+    }
+    if (!through.endsWith("-01")) {
+      insertTxn({ accountId: cardId, postedOn: through, amountCents: -10000, rawDescription: "CORNER SHOP" });
+    }
+  }
+
+  test("a month an account you spend from is read only part of the way through is left out, and the window slides back", () => {
+    cardReadThrough("2026-07-12");
+    const w = baselineWindow(bundle.db, TODAY);
+    expect(w.keys).toEqual(["2026-01", "2026-02", "2026-03", "2026-04", "2026-05", "2026-06"]);
+    expect(w).toMatchObject({ months: 6, from: "2026-01-01", to: "2026-06-30", fromMonth: "2026-01", toMonth: "2026-06" });
+    expect(w.unread).toEqual({ months: ["2026-07"], through: "2026-07-12" });
+
+    // Checking's $8,000 in Feb–Jun and the Card's $100 in each of Jan–Jun, over six months — July's rows are out
+    const b = spendBaseline(bundle.db, TODAY);
+    expect(b).toMatchObject({ months: 6, fromMonth: "2026-01", toMonth: "2026-06" });
+    expect(b.monthlyCents).toBe(Math.round((800000 * 5 + 10000 * 6) / 6));
+    expect(b.unread).toEqual(w.unread);
+  });
+
+  test("an account read through a month's own last day reads that month", () => {
+    cardReadThrough("2026-07-31");
+    const w = baselineWindow(bundle.db, TODAY);
+    expect(w).toMatchObject({ months: 6, fromMonth: "2026-02", toMonth: "2026-07", unread: null });
+  });
+
+  test("a day inside the running month leaves the window as the calendar has it", () => {
+    cardReadThrough("2026-08-10");
+    expect(baselineWindow(bundle.db, TODAY)).toMatchObject({ months: 6, fromMonth: "2026-02", toMonth: "2026-07", unread: null });
+  });
+
+  test("no account you spend from at all is the calendar's window", () => {
+    // rows on the brokerage alone: the ledger opens, and no account bears an import frontier
+    bundle.db.delete(transactions).run();
+    for (const m of ["2026-01", "2026-02", "2026-03", "2026-04", "2026-05", "2026-06", "2026-07", "2026-08"]) {
+      insertTxn({ accountId: brokerageId, postedOn: `${m}-01`, amountCents: -1000, rawDescription: "FUND FEE" });
+    }
+    expect(baselineWindow(bundle.db, TODAY)).toMatchObject({ months: 6, fromMonth: "2026-02", toMonth: "2026-07", unread: null });
+  });
+
+  test("a young ledger keeps its floor: the window is the fully read months it has, never the months before it", () => {
+    bundle.db.delete(transactions).run();
+    for (const m of ["2026-04", "2026-05", "2026-06", "2026-07"]) {
+      insertTxn({ postedOn: `${m}-01`, amountCents: -800000, rawDescription: "SUPERMARKET" });
+    }
+    insertTxn({ postedOn: "2026-08-05", amountCents: -100000, rawDescription: "SUPERMARKET" });
+    cardReadThrough("2026-07-12", "2026-04");
+    const w = baselineWindow(bundle.db, TODAY);
+    expect(w).toMatchObject({ months: 3, fromMonth: "2026-04", toMonth: "2026-06" });
+    expect(w.unread).toEqual({ months: ["2026-07"], through: "2026-07-12" });
+  });
+
+  /** ⛔ a month nobody has read in full is not a measurement — and an empty window must not borrow the running month */
+  test("a frontier before every whole month leaves no window, and says which months it could not use", () => {
+    bundle.db.delete(transactions).run();
+    insertTxn({ postedOn: "2026-06-01", amountCents: -800000, rawDescription: "SUPERMARKET" });
+    insertTxn({ postedOn: "2026-07-01", amountCents: -800000, rawDescription: "SUPERMARKET" });
+    insertTxn({ postedOn: "2026-08-05", amountCents: -100000, rawDescription: "SUPERMARKET" });
+    cardReadThrough("2026-06-12", "2026-06");
+    const w = baselineWindow(bundle.db, TODAY);
+    expect(w.months).toBe(0);
+    expect(w.keys).toEqual([]);
+    expect(w.unread).toEqual({ months: ["2026-06", "2026-07"], through: "2026-06-12" });
+    expect(spendBaseline(bundle.db, TODAY)).toMatchObject({ months: 0, monthlyCents: 0 });
+    // 🔴 review of cf8f8dc: the runway read "No complete month has been imported yet … Jun 2026 and Jul 2026 are left
+    // out" — June and July WERE imported whole on Checking; the Card is read only to Jun 12
+    expect(baselineCaption(runwayCard(bundle.db, TODAY).spend)).toBe(
+      "No month has been read in full yet, so there is no spending average to stand on. Jun 2026 and Jul 2026 are " +
+        "left out: Jun 12 is the last day every account you spend from has been imported through.",
+    );
+    // 🔴 review of 69f51c1: …and one line above it the card said "Nothing has been spent in the months counted below.
+    // This fills in once a month of spending is imported" — of $16,000 imported
+    expect(runwayCard(bundle.db, TODAY).runway.explanation).toBe(
+      "No month has been read in full yet, so there is no rate to measure a runway against. This fills in once a " +
+        "month of spending is read in full.",
+    );
+  });
+
+  /** ⛔ the floor's stub month was never a month to leave out: the caption names only months the ledger covers whole */
+  test("a stub month the ledger never counted is not one the frontier left out", () => {
+    bundle.db.delete(transactions).run();
+    insertTxn({ postedOn: "2026-06-05", amountCents: -800000, rawDescription: "SUPERMARKET" }); // a stub: June is no month
+    insertTxn({ postedOn: "2026-07-01", amountCents: -800000, rawDescription: "SUPERMARKET" });
+    insertTxn({ postedOn: "2026-08-05", amountCents: -100000, rawDescription: "SUPERMARKET" });
+    // no habit yet on a ledger this young, so every account dates it: the Card's Jun 12
+    insertTxn({ accountId: cardId, postedOn: "2026-06-12", amountCents: -10000, rawDescription: "CORNER SHOP" });
+    const w = baselineWindow(bundle.db, TODAY);
+    expect(w.months).toBe(0);
+    expect(w.unread).toEqual({ months: ["2026-07"], through: "2026-06-12" });
+  });
+
+  /** ONE WINDOW: the runway's figure, its link and its arithmetic all read the months the caption names */
+  test("the runway's spend row, its /spending link and its arithmetic all move with the window", () => {
+    cardReadThrough("2026-07-12");
+    const r = runwayCard(bundle.db, TODAY);
+    expect(r.spend).toMatchObject({ months: 6, fromMonth: "2026-01", toMonth: "2026-06" });
+    expect(r.spendingHref).toBe("/spending?from=2026-01-01&to=2026-06-30");
+    const totals = cashFlowByPeriod(
+      bundle.db,
+      resolvePeriod(parsePeriodParams({ from: "2026-01-01", to: "2026-06-30" }), TODAY),
+      TODAY,
+    ).totals;
+    expect(totals.spentCents).toBe(800000 * 5 + 10000 * 6);
+    expect(r.spendArithmetic).toBe("$40,600.00 spent, over 6 months");
+    expect(r.runway.assumptions.find((a) => a.id === "spend")?.cents).toBe(r.spend.monthlyCents);
+    // …and the caption under it says why July is not among them
+    expect(baselineCaption(r.spend)).toBe(
+      "Spending averaged over 6 complete months, Jan 2026 to Jun 2026. Jul 2026 is left out: Jul 12 is the last day " +
+        "every account you spend from has been imported through. This month is still running and is not counted.",
+    );
+  });
+
+  /**
+   * 🔴 The car card removes the car spending the baseline HOLDS. It read the calendar's months from today, so a car
+   * charge in a month the window leaves out was taken off a baseline that never held it.
+   */
+  test("car spending in a month the window leaves out is not taken off the baseline", () => {
+    cardReadThrough("2026-07-12");
+    const carId = createCarCategory();
+    const lease = addSeries({ name: "Car lease", kind: "bill", nextExpectedOn: "2026-09-05", amountCents: -60000, userCategoryId: carId });
+    insertTxn({ postedOn: "2026-07-05", amountCents: -60000, rawDescription: "CAR PAYMENT", categoryId: carId, recurringSeriesId: lease });
+    const c = carCard(bundle.db, TODAY)!;
+    expect(c.baseline).toMatchObject({ months: 6, fromMonth: "2026-01", toMonth: "2026-06" });
+    expect(c.baseline.monthlyCents).toBe(spendBaseline(bundle.db, TODAY).monthlyCents);
+    // …and the card no longer calls them "the last six months": they are not
+    const card = renderToStaticMarkup(createElement(CarCostCard, { data: c })).replace(/<[^>]+>/g, "").replace(/\s+/g, " ");
+    expect(card).toContain(
+      "not what the 6 complete months, Jan 2026 to Jun 2026, measured. Jul 2026 is left out: Jul 12 is the last day " +
+        "every account you spend from has been imported through.",
+    );
+    expect(card).not.toContain("the last six months");
   });
 });

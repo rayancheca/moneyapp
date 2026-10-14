@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
 import { DAYS_TO_POST_NOT_OVER, NO_STATEMENT_YET } from "@/lib/arrears-reading";
-import { projectedEvidence, seriesEvidenceTone, type SeriesEvidence } from "@/lib/series-evidence";
+import { projectedEvidence, seriesEvidenceTone, seriesPostingWords, type SeriesEvidence } from "@/lib/series-evidence";
 import type { ForecastComponent } from "@/services/forecast";
 import type { SeriesOccurrence, SeriesStaleness } from "@/services/recurring";
 import {
@@ -22,6 +22,8 @@ import {
   overdueNote,
   perPaydayWord,
   postedSpreadReading,
+  seriesEndBadge,
+  seriesAccountWord,
   seriesVerb,
   futureDateLabel,
   attachedToastTitle,
@@ -233,6 +235,40 @@ describe("stalenessSentence", () => {
     // stale at 13 days against 12.5 — rounding printed "13 days, past the 13-day tolerance"
     const sentence = stalenessSentence(staleness({ daysSinceLastMatch: 13, toleranceDays: 12.5 }));
     expect(sentence).toContain("13 days, past the 12-day tolerance");
+  });
+
+  /*
+   * ⚖️ Since §6A 57 (owner, 2026-10-08) late is counted on READ days (`seriesStaleness`): a late import makes a series
+   * "Awaiting statements", never running late — the reason fcdd51b re-documented `LAPSED_MISS_LIMIT` by. What keeps a
+   * late series projected now is that a statement read without a match does not yet prove it stopped: paid from
+   * another account, or posted under a description not linked to it, reads the same. 🔴 The sentence still said
+   * "a late import looks exactly like a cancelled series" — of a series whose days had been read.
+   */
+  test("running late gives the read-day reason it is still projected — never import lag", () => {
+    const sentence = stalenessSentence(staleness());
+    expect(sentence).not.toMatch(/import/);
+    expect(sentence).toContain(
+      "Still projected: statements read without a match are not yet proof it stopped — one paid from another " +
+        "account, or posted under a description not linked to it, reads the same — so this says which numbers rest " +
+        "on old evidence rather than dropping them.",
+    );
+  });
+
+  /*
+   * ⚖️ §6A 56 (2026-10-08): a schedule of ONE charge is "once · Nov 11" wherever a cadence prints. 🔴 Visible on his
+   * ledger copy 2026-10-13: Upcoming's footer read "Car insurance — Nov 11 balance … — expected about every 30 days".
+   */
+  test("a one-charge series is expected once, on its day — its rhythm is no rhythm, whatever the stored step", () => {
+    const never = staleness({ lastMatchedOn: null, daysSinceLastMatch: null, stepDays: 30, oneChargeOn: "2026-11-11" });
+    expect(stalenessSentence(never)).toBe(
+      "expected once on Nov 11, 2026, but nothing has ever matched it — still projected, on the schedule alone",
+    );
+    expect(stalenessSentence({ ...never, lastMatchedOn: "2026-06-16", daysSinceLastMatch: 22 })).toMatch(
+      /^expected once on Nov 11, 2026, but nothing has matched since Jun 16, 2026/,
+    );
+    // not one charge, or not asked: its step, as ever
+    expect(stalenessSentence({ ...never, oneChargeOn: null })).toMatch(/^expected about every 30 days/);
+    expect(stalenessSentence({ ...never, oneChargeOn: undefined })).toMatch(/^expected about every 30 days/);
   });
 
   test("a fractional detected interval renders as a whole number of days", () => {
@@ -744,6 +780,28 @@ describe("postedSpreadReading", () => {
   });
 });
 
+/*
+ * 🔴 His pay's page read "deposits weekly on Thursdays, about $1,141.92 from Wells Fargo Everyday Checking." (a copy of
+ * his ledger, 2026-10-13). The word before the account says which way the money moves through it.
+ */
+describe("seriesAccountWord — into the account money lands in, from the one it leaves", () => {
+  test("pay lands into its account; a bill, a subscription and any other payment leave from theirs", () => {
+    expect(seriesAccountWord("income", 114_192)).toBe("into");
+    for (const kind of ["bill", "subscription", "other"] as const) expect(seriesAccountWord(kind, -499), kind).toBe("from");
+  });
+
+  test("a transfer is one leg of a move between his accounts, and its sign says which", () => {
+    expect(seriesAccountWord("transfer", -99_302)).toBe("from");
+    expect(seriesAccountWord("transfer", 99_302)).toBe("into");
+  });
+
+  test("with no amount to read a sign from, the kind decides — pay into, everything else from", () => {
+    expect(seriesAccountWord("income", null)).toBe("into");
+    expect(seriesAccountWord("transfer", null)).toBe("from");
+    expect(seriesAccountWord("bill", null)).toBe("from");
+  });
+});
+
 describe("seriesVerb — a series that is over is described in the past", () => {
   test("a running series is present tense, by kind", () => {
     expect(seriesVerb("bill")).toBe("charges");
@@ -772,6 +830,22 @@ describe("seriesVerb — a series that is over is described in the past", () => 
 
   test("the default is present, so no caller silently changes tense", () => {
     expect(seriesVerb("bill", false)).toBe(seriesVerb("bill"));
+  });
+
+  /*
+   * ⚖️ An `other` series' postings are PAYMENTS — it may be money in, a monthly credit (`seriesPostingWords`, the merge
+   * choice of 6cae7c5): "Per payment", "Its payments below stay in the ledger", "paid monthly" once over. 🔴 Its present
+   * tense still said "charges monthly around the 8th" on the same page — the one verb that table did not give.
+   */
+  test("an `other` series pays and paid — present and past from the one posting-words table, for every kind", () => {
+    expect(seriesVerb("other")).toBe("pays");
+    expect(seriesVerb("other", { posted: true })).toBe("paid");
+    // a bill's and a subscription's words are as he has always read them
+    expect(seriesVerb("subscription")).toBe("charges");
+    for (const kind of ["bill", "subscription", "income", "transfer", "other"] as const) {
+      expect(seriesVerb(kind), kind).toBe(seriesPostingWords(kind).present);
+      expect(seriesVerb(kind, { posted: true }), kind).toBe(seriesPostingWords(kind).past);
+    }
   });
 });
 
@@ -835,7 +909,7 @@ describe("annualizedCaveat — a year is qualified only when the series stops in
   test("the table's short form says the same thing on the same days", () => {
     expect(annualizedEndNote("2027-01-11", TODAY)).toBe("ends Jan 11, 2027");
     expect(annualizedEndNote("2026-11-11", TODAY)).toBe("ends Nov 11, 2026");
-    expect(annualizedEndNote("2026-08-01", TODAY)).toBe("ended Aug 1, 2026");
+    expect(annualizedEndNote("2026-08-01", TODAY)).toBeNull();
     for (const endsOn of [null, "2028-08-15", "2027-09-11", "2027-09-10", "2026-08-01", "2027-01-11"]) {
       expect(annualizedEndNote(endsOn, TODAY) === null, String(endsOn)).toBe(annualizedCaveat(endsOn, TODAY) === null);
     }
@@ -850,21 +924,25 @@ describe("annualizedCaveat — a year is qualified only when the series stops in
    * 🔴 A WINDOW HAS TWO ENDS. The first version checked only the far one, so a
    * series that had already stopped read "stops on Aug 1, 2026, inside them" of
    * a window beginning Sep 11 — and this test pinned that as correct. It does
-   * not stop inside those twelve months; it stopped before them, and the
-   * annualized figure over them is a fiction rather than a partial year.
+   * not stop inside those twelve months; it stopped before them.
+   *
+   * ⛔ …and since 0af5689 such a series HAS no annualized figure to qualify: `annualizedCentsOf` is null for every end
+   * before today (the proof is in recurring.test.ts), and both printers print the qualifier only under a figure. The
+   * "a year this series no longer bills — it stopped on …" sentence written for it could never render, and its comment
+   * said Car insurance would reach it on 2027-01-12 — that day its row reads "—". Silence, not a dead sentence.
    */
-  test("a series that has ALREADY stopped gets the STRONGER sentence, not the same one", () => {
-    expect(annualizedCaveat("2026-08-01", TODAY)).toBe(
-      "a year this series no longer bills — it stopped on Aug 1, 2026",
-    );
-    expect(annualizedCaveat("2026-08-01", TODAY)).not.toContain("inside them");
+  test("a series that has ALREADY stopped is not qualified — it has no year ahead, and no figure to qualify", () => {
+    for (const endsOn of ["2026-08-01", "2026-09-10"]) {
+      expect(annualizedCaveat(endsOn, TODAY), endsOn).toBeNull();
+      expect(annualizedEndNote(endsOn, TODAY), endsOn).toBeNull();
+    }
   });
 
   test("the near end is TODAY, and a series ending today still has a year to say something about", () => {
     expect(annualizedCaveat(TODAY, TODAY)).toBe(
       "the twelve months from today — this one stops on Sep 11, 2026, inside them",
     );
-    expect(annualizedCaveat("2026-09-10", TODAY)).toContain("no longer bills");
+    expect(annualizedEndNote(TODAY, TODAY)).toBe("ends Sep 11, 2026");
   });
 });
 
@@ -873,6 +951,28 @@ describe("annualizedCaveat — a year is qualified only when the series stops in
  * the confirmation says so before he presses — a merge has no undo button. Nothing to file → the sentence he has
  * always read, unchanged.
  */
+/*
+ * ⛔ One tense for one fact: the badge says "Ended" exactly when the card says "Its schedule has ended", with the day
+ * the schedule ran out. 🔴 An end between two due days read "Ends Jan 5, 2027" beside "Its schedule has ended".
+ */
+describe("seriesEndBadge — the end in the tense of the schedule", () => {
+  test("a date still to come: the end ahead, in the future tense", () => {
+    expect(seriesEndBadge("2027-01-11", null, "2026-10-13")).toBe("Ends Jan 11, 2027");
+  });
+
+  test("ran out: Ended, on the day it ran out — never the end day still to come", () => {
+    expect(seriesEndBadge("2027-01-05", "2026-12-11", "2026-12-12")).toBe("Ended Dec 11, 2026");
+    // …and the same day after the end has passed: no jump to the end on Jan 6
+    expect(seriesEndBadge("2027-01-05", "2026-12-11", "2027-01-20")).toBe("Ended Dec 11, 2026");
+    // the Nov 11 balance, its end its one day: as it has read since 0af5689
+    expect(seriesEndBadge("2026-11-11", "2026-11-11", "2026-11-12")).toBe("Ended Nov 11, 2026");
+  });
+
+  test("no day it ran out (no date to step from): the end day's own tense", () => {
+    expect(seriesEndBadge("2027-01-05", null, "2027-01-06")).toBe("Ended Jan 5, 2027");
+  });
+});
+
 describe("merge sentences (§6A 54)", () => {
   const filing = { categoryId: "c1", categoryPath: "Car > Lease", count: 2 };
 

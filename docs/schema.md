@@ -581,6 +581,9 @@ a reason carrying among its words a control character, a line or paragraph separ
 U+2029) or a bidi control — an embedding, override or isolate, U+202A–202E and U+2066–2069 —
 which every surface would print raw (`reasonCarriesControl`); the command line collapses every
 run of whitespace to one space first, so a tab, a line break or a separator there is a space.
+Neither refuses that way a reason stored already, from before the guard: the open line of a mark
+partly acknowledged takes the reason its lines alike carry, exactly — the command line lets it
+through for those lines alike only, the writer for a reason the table holds (`reasonCarriedAlready`).
 Migration 0024 is applied to the real ledger and never edited: a wider CHECK would take a new
 migration rebuilding the table.
 It is what the session read on the statement, in its words: an entry without a reason is a check

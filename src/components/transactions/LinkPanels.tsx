@@ -177,6 +177,85 @@ export function TransferLinkPanel({
   );
 }
 
+/** What a press on the sheet's series panel does to the panel once it lands — the panel's own state, handed in. */
+export interface SeriesPanelAfter {
+  /** the row is linked to `seriesId` now: the panel shows it */
+  readonly linked: (seriesId: string, name: string) => void;
+  /** the panel closes */
+  readonly close: () => void;
+  /** the panel closes and forgets what it read — an undo landed */
+  readonly reset: () => void;
+  readonly onChanged: () => void;
+}
+
+/*
+ * The sheet's two series presses, made here rather than inside `SeriesLinkPanel` so their toasts are tested where they
+ * are raised (LinkPanels.test.ts), as the series page's are where `AttachPanel` raises them (`pressAttach`).
+ * 🔴 Review of 474e757 (2026-10-12): both toasts named what they filed, and no test read either.
+ */
+
+/** "Attach" on a candidate: its undo toast names what attaching filed (§6A 47), in the merge toast's own clause. */
+export function pressSheetAttach(txnId: string, seriesId: string, name: string, after: SeriesPanelAfter): Promise<void> {
+  return attachToSeriesAction({ seriesId, transactionIds: [txnId] })
+    .then((r) => {
+      if (!r.ok) {
+        toast({ title: r.error, tone: "negative" });
+        return;
+      }
+      if (r.data.attached === 0) {
+        toast({ title: "Couldn’t attach — the transaction is no longer active", tone: "negative" });
+        return;
+      }
+      after.linked(seriesId, name);
+      offerUndoToast(filedToastTitle(`Attached to ${name}`, r.data), r.data.undo, () => {
+        after.reset();
+        after.onChanged();
+      });
+      after.onChanged();
+    })
+    .catch(() => {
+      toast({ title: NETWORK_ERROR, tone: "negative" });
+    });
+}
+
+/**
+ * The "Make recurring" quick action: promote THIS row into a confirmed series (or join the identity's existing live
+ * series) — joining files the row as attaching does (§6A 47), and its toast says so in the same clause. Undo is
+ * mode-aware: a created series is deleted outright; a join applies its lossless patch — the link AND the category
+ * joining may have filed, which a detach would leave.
+ */
+export function pressMakeRecurring(txnId: string, after: SeriesPanelAfter): Promise<void> {
+  return createSeriesFromTxnAction({ transactionId: txnId })
+    .then((r) => {
+      if (!r.ok) {
+        toast({ title: r.error, tone: "negative" });
+        return;
+      }
+      const { mode, seriesId, name, undo } = r.data;
+      after.linked(seriesId, name);
+      after.close();
+      toast({
+        title: filedToastTitle(mode === "created" ? `Marked "${name}" as recurring` : `Attached to ${name}`, r.data),
+        action: {
+          label: "Undo",
+          onAction: () =>
+            void (mode === "created" ? undoCreateSeriesAction({ seriesId, undo }) : undoAction(undo)).then((res) => {
+              if (!res.ok) {
+                toast({ title: res.error, tone: "negative" });
+                return;
+              }
+              after.reset();
+              after.onChanged();
+            }),
+        },
+      });
+      after.onChanged();
+    })
+    .catch(() => {
+      toast({ title: NETWORK_ERROR, tone: "negative" });
+    });
+}
+
 export function SeriesLinkPanel({
   txnId,
   hasSeriesLink,
@@ -214,74 +293,27 @@ export function SeriesLinkPanel({
     }
   }
 
+  const after: SeriesPanelAfter = {
+    // a candidate is detected/confirmed only, a created series confirmed, a joined one the identity's live series
+    linked: (seriesId, name) => setPanel({ linked: { id: seriesId, name, drawsAsRecurring: true }, candidates: [] }),
+    close: () => setOpen(false),
+    reset: () => {
+      setPanel(null);
+      setOpen(false);
+    },
+    onChanged,
+  };
+
   function attach(seriesId: string, name: string): void {
     if (busy) return;
     setBusy(true);
-    void attachToSeriesAction({ seriesId, transactionIds: [txnId] })
-      .then((r) => {
-        if (!r.ok) {
-          toast({ title: r.error, tone: "negative" });
-          return;
-        }
-        if (r.data.attached === 0) {
-          toast({ title: "Couldn’t attach — the transaction is no longer active", tone: "negative" });
-          return;
-        }
-        // candidates are detected/confirmed only — a live series
-        setPanel({ linked: { id: seriesId, name, drawsAsRecurring: true }, candidates: [] });
-        // names what attaching filed (§6A 47), in the merge toast's own clause
-        offerUndoToast(filedToastTitle(`Attached to ${name}`, r.data), r.data.undo, () => {
-          setPanel(null);
-          setOpen(false);
-          onChanged();
-        });
-        onChanged();
-      })
-      .catch(() => toast({ title: NETWORK_ERROR, tone: "negative" }))
-      .finally(() => setBusy(false));
+    void pressSheetAttach(txnId, seriesId, name, after).finally(() => setBusy(false));
   }
 
-  /** The "Make recurring" quick action: promote THIS row into a confirmed series
-   *  (or join the identity's existing live series). Undo is mode-aware: a created
-   *  series is deleted outright; a join applies its lossless patch — the link AND
-   *  the category joining may have filed (§6A 47), which a detach would leave. */
   function makeRecurring(): void {
     if (busy) return;
     setBusy(true);
-    void createSeriesFromTxnAction({ transactionId: txnId })
-      .then((r) => {
-        if (!r.ok) {
-          toast({ title: r.error, tone: "negative" });
-          return;
-        }
-        const { mode, seriesId, name, undo } = r.data;
-        // a created series is confirmed; a joined one is the identity's live series
-        setPanel({ linked: { id: seriesId, name, drawsAsRecurring: true }, candidates: [] });
-        setOpen(false);
-        toast({
-          // joining a live series files the row as attaching does (§6A 47) — and says so in the same clause
-          title: filedToastTitle(mode === "created" ? `Marked "${name}" as recurring` : `Attached to ${name}`, r.data),
-          action: {
-            label: "Undo",
-            onAction: () =>
-              void (mode === "created"
-                ? undoCreateSeriesAction({ seriesId, undo })
-                : undoAction(undo)
-              ).then((res) => {
-                if (!res.ok) {
-                  toast({ title: res.error, tone: "negative" });
-                  return;
-                }
-                setPanel(null);
-                setOpen(false);
-                onChanged();
-              }),
-          },
-        });
-        onChanged();
-      })
-      .catch(() => toast({ title: NETWORK_ERROR, tone: "negative" }))
-      .finally(() => setBusy(false));
+    void pressMakeRecurring(txnId, after).finally(() => setBusy(false));
   }
 
   function detach(name: string): void {

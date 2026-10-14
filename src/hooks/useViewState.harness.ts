@@ -83,7 +83,7 @@ export interface HarnessPage<P> {
 }
 
 type Action<P> =
-  | { type: "server-action"; surface: string; state: ViewState; resolve(value: unknown): void }
+  | { type: "server-action"; surface: string; state: ViewState; answer: unknown; resolve(value: unknown): void }
   | { type: "navigate"; url: string; history: "push" | "replace" }
   | { type: "restore"; to: RouterState<P> }
   | { type: "refresh" };
@@ -126,13 +126,21 @@ function useRouterState(): RouterState<unknown> {
   return state;
 }
 
+/**
+ * A server action the page calls: it writes `state` to the server's `surface` and answers `answer`, queued in the
+ * router like every other — so it waits behind a save of Back's view the server is holding.
+ */
+export function heldServerAction(surface: string, state: ViewState, answer: unknown): Promise<unknown> {
+  return new Promise((resolve) => {
+    // a server action dispatches into the router queue, in a transition (server-action reducer)
+    startTransition(() => world().dispatch({ type: "server-action", surface, state, answer, resolve }));
+  });
+}
+
 /** `@/app/settings/actions`, as the page sees it */
 export const settingsActions = {
   saveViewPreferenceAction: (surface: string, state: ViewState): Promise<unknown> =>
-    new Promise((resolve) => {
-      // a server action dispatches into the router queue, in a transition (server-action reducer)
-      startTransition(() => world().dispatch({ type: "server-action", surface, state, resolve }));
-    }),
+    heldServerAction(surface, state, { ok: true }),
 };
 
 export class World<P> {
@@ -258,9 +266,11 @@ export class World<P> {
   private async reduce(state: RouterState<P>, action: Action<P>): Promise<RouterState<P>> {
     if (action.type === "server-action") {
       await this.hold({ kind: "write", label: `${action.surface} ${JSON.stringify(action.state)}` });
-      this.persisted[action.surface] = { ...this.persisted[action.surface], ...action.state };
-      this.writes.push({ surface: action.surface, state: action.state });
-      action.resolve({ ok: true });
+      // a refused action writes nothing
+      const refused = (action.answer as { ok?: boolean }).ok === false;
+      if (!refused) this.persisted[action.surface] = { ...this.persisted[action.surface], ...action.state };
+      if (!refused) this.writes.push({ surface: action.surface, state: action.state });
+      action.resolve(action.answer);
       return state;
     }
     if (action.type === "navigate" || action.type === "refresh") {

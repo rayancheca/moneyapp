@@ -14,9 +14,10 @@ import { Popover, usePopover } from "@/components/ui/Popover";
 import { arrearsAlarms, arrearsTail, HAS_NOT_POSTED, NOT_POSTED } from "@/lib/arrears-reading";
 import { formatDayShort } from "@/lib/format-date";
 import { budgetCoverageSentence } from "@/lib/budget-coverage";
-import { budgetVerdict } from "@/lib/budget-verdict";
+import { budgetVerdict, type BudgetVerdict } from "@/lib/budget-verdict";
 import { formatCents } from "@/lib/money";
 import { ONE_CHARGE_WORD } from "@/lib/one-charge";
+import type { BudgetGuide } from "@/services/budget-guide";
 import type { BudgetPace, BudgetPaceStatus } from "@/services/budgets";
 import { DisclosureChevron, DisclosureRegion, useDisclosure } from "@/components/ui/Disclosure";
 import { BudgetAmountEditor, PERIOD_WORD } from "./BudgetAmountEditor";
@@ -41,16 +42,31 @@ function clampPct(value: number): number {
   return Math.min(100, Math.max(0, value));
 }
 
-function paceSentence(status: BudgetPaceStatus): string {
-  const projected = `projected ${formatCents(status.projectedCents)}`;
+/**
+ * The projection the row prints beside its figures, or null — the one choice the "Projected ≈" figure and the
+ * spoken sentence both read. The verdict decides, not `pace` alone: a "Cash only" row is under or at-risk and still
+ * offers no reading of where it is heading — nor does a dashed one (§6A 64), whose projection stands on its $0.00,
+ * nor ⚖️ one read in part (decision 69), whose projection stands on floors. And only a projection that says more
+ * than the spend so far: never one equal to it, nor the $0.00 floor beside a month a refund took below zero
+ * (`budgetPaceStatusOf`). 🔴 Chosen apart, the spoken sentence read "on track — projected $0.00" where the row
+ * printed no projection (review of a1cec5f, 2026-10-13), and "projected $10.00" beside a spend of $10.00 alone.
+ */
+function printedProjectionCents(status: BudgetPaceStatus, verdict: BudgetVerdict): number | null {
+  const saysMore = status.projectedCents > Math.max(0, status.spentCents);
+  return verdict.showsProjection && saysMore ? status.projectedCents : null;
+}
+
+function paceSentence(status: BudgetPaceStatus, projectedCents: number | null): string {
+  const projected = projectedCents === null ? "" : ` — projected ${formatCents(projectedCents)}`;
   if (status.pace === "over") return `over budget by ${formatCents(-status.remainingCents)}`;
-  if (status.pace === "at-risk") return `off pace — ${projected}, over budget`;
-  return `on track — ${projected}`;
+  if (status.pace === "at-risk") return projectedCents === null ? "off pace" : `off pace${projected}, over budget`;
+  return `on track${projected}`;
 }
 
 interface BudgetRowProps {
   status: BudgetPaceStatus;
-  guidanceCents: number;
+  /** the inline editor's spend guide (`budgetGuides`) — null when there is none to print */
+  guide: BudgetGuide | null;
   /** what the SPENT figure is standing on — null while none can be computed */
   spentProvenance: Provenance | null;
   /**
@@ -73,7 +89,7 @@ interface BudgetRowProps {
  * The headline and the definition beside it both come from `budgetVerdict`, so
  * the words and their explanation are chosen by one branch.
  */
-export function BudgetRow({ status, guidanceCents, spentProvenance, planProvenance }: BudgetRowProps) {
+export function BudgetRow({ status, guide, spentProvenance, planProvenance }: BudgetRowProps) {
   const { budget, tail } = status;
   // Lifted out of BudgetRolloverToggle so the details panel reacts to the toggle
   // immediately. Left inside the toggle, the panel would read the stale server
@@ -136,7 +152,8 @@ export function BudgetRow({ status, guidanceCents, spentProvenance, planProvenan
   const spentClause = unread
     ? `no day of this period imported yet, so neither spent nor left is shown against ${available}${rolledOver}`
     : `${formatCents(status.spentCents)} of ${available}${rolledOver} (${pctDisplay}% of budget)`;
-  const reading = undermeasured ? budgetCoverageSentence(status) : paceSentence(status);
+  const projectedCents = printedProjectionCents(status, verdict);
+  const reading = undermeasured ? budgetCoverageSentence(status) : paceSentence(status, projectedCents);
   const valueText = `${status.categoryPath}: ${spentClause}. ${elapsedSentence}. ${reading}.${
     status.expectedTailCents > 0
       ? ` ${formatCents(status.expectedTailCents)} in recurring still expected this period.`
@@ -353,18 +370,11 @@ export function BudgetRow({ status, guidanceCents, spentProvenance, planProvenan
               />
             )}
           </span>
-          {/* the verdict decides, not `pace` alone: a "Cash only" row is under or
-              at-risk and still offers no reading of where it is heading — nor
-              does a dashed one (§6A 64), whose projection stands on its $0.00,
-              nor ⚖️ one read in part (decision 69), whose projection stands on
-              floors. Only a
-              projection that says more than the spend so far: never one equal to
-              it, nor the $0.00 floor beside a month a refund took below zero
-              (`budgetPaceStatusOf`) */}
-          {verdict.showsProjection && status.projectedCents > Math.max(0, status.spentCents) && (
+          {/* the one projection the spoken sentence reads too (`printedProjectionCents`) */}
+          {projectedCents !== null && (
             <span>
               <span className="text-ink-faint">Projected ≈ </span>
-              <Money cents={status.projectedCents} className={status.pace === "at-risk" ? "text-warning" : undefined} />
+              <Money cents={projectedCents} className={status.pace === "at-risk" ? "text-warning" : undefined} />
             </span>
           )}
         </div>
@@ -380,7 +390,7 @@ export function BudgetRow({ status, guidanceCents, spentProvenance, planProvenan
           <BudgetAmountEditor
             budgetId={budget.id}
             amountCents={budget.amountCents}
-            guidanceCents={guidanceCents}
+            guide={guide}
             period={budget.period}
             categoryPath={status.categoryPath}
           />

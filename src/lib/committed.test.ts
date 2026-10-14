@@ -1,5 +1,6 @@
 import { describe, expect, test } from "vitest";
 import type { Cadence } from "@/db/schema/recurring";
+import { formatCents } from "@/lib/money";
 import {
   arrearsSentence,
   baselineCaption,
@@ -8,12 +9,17 @@ import {
   monthCount,
   endingLead,
   endingOthersClause,
+  endingShortfallFor,
   heaviestMonth,
   heaviestMonthEnding,
   COMMITTED_ORIGIN_LABEL,
+  guideWindowWords,
+  lastFullyReadMonth,
+  measuredMonthsClause,
   monthHorizon,
   shrinkCaption,
   spendArithmeticCaption,
+  unreadMonthsSentence,
   upfrontCarLeftOut,
   withinMonthHorizon,
   committedOutflows,
@@ -47,8 +53,8 @@ function occ(
   amountCents: number,
   dates: readonly string[],
   lastMatchedOn: string | null,
-  /** the series' own cadence and end day — what a FULL horizon would have billed */
-  over: { cadence?: Cadence; endsOn?: string | null } = {},
+  /** the series' own cadence, end day and one-charge reading — what a FULL horizon would have billed */
+  over: { cadence?: Cadence; endsOn?: string | null; oneCharge?: boolean } = {},
 ): CommittedOccurrence[] {
   return dates.map((date) => ({
     seriesId: seriesIdOf(name),
@@ -59,6 +65,7 @@ function occ(
     isStale: lastMatchedOn === null,
     cadence: over.cadence ?? "monthly",
     endsOn: over.endsOn ?? null,
+    ...(over.oneCharge === undefined ? {} : { oneCharge: over.oneCharge }),
   }));
 }
 
@@ -429,6 +436,161 @@ describe("baselineCaption", () => {
   });
 });
 
+/**
+ * ⚖️ His decision 71 (2026-10-13, asked as an either/or): an average uses only months every account he spends from has
+ * been read through to the END of. 🔴 Measured on his ledger copy that day: the runway averaged "6 complete months, Apr
+ * 2026 to Sep 2026" while Chase Checking was read only through Aug 12 — September's $5,417.30 held no Chase spending at
+ * all, beside a year summary and a /spending page that stop at Aug 12 for exactly that reason.
+ */
+describe("lastFullyReadMonth — the month a day of coverage reads to its end", () => {
+  test("a day inside a month reads the month before it; a month's own last day reads that month", () => {
+    expect(lastFullyReadMonth("2026-08-12")).toBe("2026-07");
+    expect(lastFullyReadMonth("2026-08-31")).toBe("2026-08");
+    expect(lastFullyReadMonth("2026-08-30")).toBe("2026-07");
+    expect(lastFullyReadMonth("2026-03-01")).toBe("2026-02");
+    // the calendar owns February, leap years included
+    expect(lastFullyReadMonth("2028-02-29")).toBe("2028-02");
+    expect(lastFullyReadMonth("2026-02-28")).toBe("2026-02");
+    expect(lastFullyReadMonth("2026-01-15")).toBe("2025-12");
+  });
+});
+
+describe("unreadMonthsSentence — why an average stops before the last complete month", () => {
+  test("names the months it leaves out and the day that leaves them out, in /spending's words", () => {
+    expect(unreadMonthsSentence({ months: ["2026-08", "2026-09"], through: "2026-08-12" })).toBe(
+      "Aug 2026 and Sep 2026 are left out: Aug 12 is the last day every account you spend from has been imported " +
+        "through.",
+    );
+    expect(unreadMonthsSentence({ months: ["2026-09"], through: "2026-09-29" })).toBe(
+      "Sep 2026 is left out: Sep 29 is the last day every account you spend from has been imported through.",
+    );
+    // three or more are one run of months, named by its two ends
+    expect(unreadMonthsSentence({ months: ["2026-07", "2026-08", "2026-09"], through: "2026-07-04" })).toBe(
+      "Jul 2026 to Sep 2026 are left out: Jul 4 is the last day every account you spend from has been imported through.",
+    );
+  });
+
+  test("the day carries its year when it is not the first left-out month's", () => {
+    // a ledger whose stub month was never a whole one: the day sits before the months it explains
+    expect(unreadMonthsSentence({ months: ["2026-01"], through: "2025-12-20" })).toBe(
+      "Jan 2026 is left out: Dec 20, 2025 is the last day every account you spend from has been imported through.",
+    );
+  });
+
+  test("nothing left out is no sentence", () => {
+    expect(unreadMonthsSentence(null)).toBeNull();
+    expect(unreadMonthsSentence({ months: [], through: "2026-08-12" })).toBeNull();
+  });
+
+  /** the runway's caption, under "What you spend a month" — the reason sits beside the window it explains */
+  test("the runway's caption says why the later months are not in its window", () => {
+    const unread = { months: ["2026-08", "2026-09"], through: "2026-08-12" };
+    expect(baselineCaption({ months: 6, fromMonth: "2026-02", toMonth: "2026-07", upfrontCarCents: 0, unread })).toBe(
+      "Spending averaged over 6 complete months, Feb 2026 to Jul 2026. Aug 2026 and Sep 2026 are left out: Aug 12 is " +
+        "the last day every account you spend from has been imported through. This month is still running and is not " +
+        "counted.",
+    );
+    // …after the up-front money it left out, when the window still holds some
+    expect(
+      baselineCaption({
+        months: 6,
+        fromMonth: "2026-03",
+        toMonth: "2026-08",
+        upfrontCarCents: 610_000,
+        unread: { months: ["2026-09"], through: "2026-09-02" },
+      }),
+    ).toBe(
+      "Spending averaged over 6 complete months, Mar 2026 to Aug 2026, leaving out the $6,100.00 paid up front for the " +
+        "car, which the car card spreads over the lease. Sep 2026 is left out: Sep 2 is the last day every account you " +
+        "spend from has been imported through. This month is still running and is not counted.",
+    );
+  });
+
+  /**
+   * ⛔ a window the frontier emptied is not "nothing imported": complete months were, just not in full. 🔴 Review of
+   * cf8f8dc: this caption read "No complete month has been imported yet … Aug 2026 and Sep 2026 are left out", its
+   * second sentence naming the complete months its first said were never imported, beside the car card's "no month has
+   * been read in full yet" over the same window.
+   */
+  test("a window the frontier emptied says which months it could not use", () => {
+    const c = baselineCaption({
+      months: 0,
+      fromMonth: "2026-10",
+      toMonth: "2026-10",
+      unread: { months: ["2026-08", "2026-09"], through: "2026-08-12" },
+    });
+    expect(c).toBe(
+      "No month has been read in full yet, so there is no spending average to stand on. Aug 2026 and Sep 2026 are " +
+        "left out: Aug 12 is the last day every account you spend from has been imported through.",
+    );
+    expect(c).not.toContain("imported yet");
+  });
+});
+
+/**
+ * The car card sets its share against "what the last six months measured" — its baseline, `baselineWindow`'s. 🔴 Once
+ * the frontier slid that window back (decision 71), they were not the last six: on his ledger copy 2026-10-13, Feb 2026
+ * to Jul 2026.
+ */
+/**
+ * ⚖️ His decision 71 (2026-10-13) holds for the budget editor's "6-mo avg ≈" as for the dashboard: it averages the
+ * dashboard's window (`budget-guide.ts`). 🔴 Review of cf8f8dc, measured on his ledger copy that day: Food's guide read
+ * $1,517.03 over Apr–Sep — less than the dashboard's Eating out alone ($1,963.24 a month over Feb–Jul), which is part
+ * of Food — beside a row printing "Spent — · Left —" for the same unread days.
+ */
+describe("guideWindowWords — what the budget editor's guide says of its window", () => {
+  test("an uncut window reads as it always did", () => {
+    expect(guideWindowWords({ months: 6, fromMonth: "2026-04", toMonth: "2026-09", unread: null })).toEqual({
+      lead: "6-mo avg",
+      note: null,
+    });
+  });
+
+  test("a window the frontier slid back names its months and says why the later ones are out", () => {
+    const unread = { months: ["2026-08", "2026-09"], through: "2026-08-12" };
+    expect(guideWindowWords({ months: 6, fromMonth: "2026-02", toMonth: "2026-07", unread })).toEqual({
+      lead: "6-mo avg",
+      note:
+        "Averaged over 6 complete months, Feb 2026 to Jul 2026. Aug 2026 and Sep 2026 are left out: Aug 12 is the " +
+        "last day every account you spend from has been imported through.",
+    });
+  });
+
+  /** ⛔ the lead counts the window's own months: a young ledger's three are not "6-mo" (the floor, `baselineWindow`) */
+  test("a young ledger's guide counts the months it has", () => {
+    expect(guideWindowWords({ months: 3, fromMonth: "2026-05", toMonth: "2026-07", unread: null })).toEqual({
+      lead: "3-mo avg",
+      note: null,
+    });
+  });
+
+  test("an empty window has no guide to name", () => {
+    const unread = { months: ["2026-06", "2026-07"], through: "2026-06-12" };
+    expect(guideWindowWords({ months: 0, fromMonth: "2026-08", toMonth: "2026-08", unread })).toBeNull();
+    expect(guideWindowWords({ months: 0, fromMonth: "2026-08", toMonth: "2026-08", unread: null })).toBeNull();
+  });
+});
+
+describe("measuredMonthsClause — the months the car card's share is set against", () => {
+  test("an uncut window is the last six months, as it always read", () => {
+    expect(measuredMonthsClause({ months: 6, fromMonth: "2026-04", toMonth: "2026-09", unread: null })).toBe(
+      "not what the last six months measured.",
+    );
+  });
+
+  test("a cut window names its months and says why the later ones are out", () => {
+    const unread = { months: ["2026-08", "2026-09"], through: "2026-08-12" };
+    expect(measuredMonthsClause({ months: 6, fromMonth: "2026-02", toMonth: "2026-07", unread })).toBe(
+      "not what the 6 complete months, Feb 2026 to Jul 2026, measured. Aug 2026 and Sep 2026 are left out: Aug 12 is " +
+        "the last day every account you spend from has been imported through.",
+    );
+    expect(measuredMonthsClause({ months: 0, fromMonth: "2026-10", toMonth: "2026-10", unread })).toBe(
+      "not anything measured: no month has been read in full yet. Aug 2026 and Sep 2026 are left out: Aug 12 is the " +
+        "last day every account you spend from has been imported through.",
+    );
+  });
+});
+
 describe("upfrontCarLeftOut — one phrase for the up-front money an average left out", () => {
   test("a payment, a refund, and nothing", () => {
     expect(upfrontCarLeftOut(610_000)).toBe(
@@ -711,6 +873,8 @@ describe("shrinkCaption", () => {
     expect(caption).toContain("$301.24"); // its contribution to the rate
     expect(caption).toContain("$361.49"); // what it actually charges
     expect(caption).toContain("$60.25"); // how much lower the rate is for it
+    // one series stops, and the whole difference is its own
+    expect(caption).toContain("The rate above is $60.25 a month lower for it.");
   });
 
   /* A commitment with one payment left is billed "once", not "1 times" — the
@@ -742,6 +906,11 @@ describe("shrinkCaption", () => {
     expect(book.shortfallPerMonthCents).toBeGreaterThan(
       book.lines.find((l) => l.name === "Car insurance")!.shortfallPerMonthCents,
     );
+    /* 🔴 …and then it credited the lead with the whole difference anyway: "The rate above is $364.66 a month lower for
+       it." on his runway card — $297.98 of it Car insurance's, $66.68 the Nov 11 balance's (a copy of his ledger,
+       2026-10-13). The figure is the book's, so the words are too. */
+    expect(caption).toContain(`The rate above is ${formatCents(book.shortfallPerMonthCents)} a month lower for the two of them.`);
+    expect(caption).not.toContain("lower for it");
   });
 
   test("three or more ending series are counted in the plural", () => {
@@ -754,6 +923,70 @@ describe("shrinkCaption", () => {
       ],
     });
     expect(shrinkCaption(book)!).toContain("2 others");
+    expect(shrinkCaption(book)!).toContain("a month lower for all 3 of them.");
+  });
+});
+
+/*
+ * ⚖️ Owner decision 2026-10-08 (§6A 56): the one-time Nov 11 car-insurance balance ($72.74) is ONE CHARGE — no monthly
+ * cost — and the runway's figure is unchanged. 🔴 The book levelled it as a monthly bill cut short anyway: his runway
+ * card read "Car insurance stops inside that window — …, and one other does too — … The rate above is $364.66 a month
+ * lower for the two of them." — $66.68 of it the balance's, $72.74 "levelled" against the $6.06 its one payment adds
+ * (a copy of his ledger, 2026-10-13). A single payment the horizon holds whole is not short of anything.
+ *
+ * ⛔ The book cannot see it from the occurrences: one payment ending on its day is also the LAST payment of a premium
+ * paid ahead (`heaviestMonth`'s ⚠️). The series says which (`oneChargeDays`), and the occurrence carries it.
+ */
+describe("a ONE-CHARGE line — its own single payment, never short", () => {
+  const HIS = { from: "2026-10-13", to: "2027-10-13", months: 12, overdue: [] };
+  const premium = occ("Car insurance", -35758, ["2026-12-11", "2027-01-11"], "2026-09-03", { endsOn: "2027-01-11" });
+  const balance = (oneCharge: boolean): CommittedOccurrence[] =>
+    occ("Nov 11 balance", -7274, ["2026-11-11"], null, { endsOn: "2026-11-11", oneCharge });
+
+  test("it adds its payment to the rate and nothing to the shortfall — his runway's sentence, 2026-10-13", () => {
+    const book = committedOutflows({ ...HIS, occurrences: [...premium, ...balance(true)] });
+    const line = book.lines.find((l) => l.name === "Nov 11 balance")!;
+    // still inside the rate, at its one payment over the twelve months — decision 56 leaves the runway figure alone
+    expect(line).toMatchObject({
+      oneCharge: true,
+      occurrences: 1,
+      totalCents: 7274,
+      perMonthCents: 606,
+      endsInHorizon: true,
+    });
+    // levelled to its own single payment, not to a month of a monthly bill
+    expect(line.levelledPerMonthCents).toBe(line.perMonthCents);
+    expect(line.shortfallPerMonthCents).toBe(0);
+    expect(book.perMonthCents).toBe(Math.round((2 * 35758 + 7274) / 12));
+    expect(book.shortfallPerMonthCents).toBe(29798);
+    expect(shrinkCaption(book)).toBe(
+      "Car insurance stops inside that window — evidenced through Jan 11, 2027, with no renewal in the ledger — " +
+        "so it is billed 2 times rather than throughout, and counts $59.60 a month here against the $357.58 it " +
+        "charges. The rate above is $297.98 a month lower for it.",
+    );
+    expect(endingLead(book)).toMatchObject({ endsOn: "2027-01-11", others: 0 });
+  });
+
+  test("…while the same payment, the last of a schedule that held more, is a monthly bill cut short", () => {
+    const book = committedOutflows({ ...HIS, occurrences: [...premium, ...balance(false)] });
+    const line = book.lines.find((l) => l.name === "Nov 11 balance")!;
+    expect(line.oneCharge).toBe(false);
+    expect(line.shortfallPerMonthCents).toBe(7274 - 606);
+    expect(shrinkCaption(book)).toContain("The rate above is $364.66 a month lower for the two of them.");
+    // the rate is the same book either way
+    const asOneCharge = committedOutflows({ ...HIS, occurrences: [...premium, ...balance(true)] });
+    expect(book.perMonthCents).toBe(asOneCharge.perMonthCents);
+  });
+
+  test("a one charge alone in the book shrinks nothing — no sentence", () => {
+    const book = committedOutflows({ ...HIS, occurrences: balance(true) });
+    expect(book.shortfallPerMonthCents).toBe(0);
+    expect(endingLead(book)).toBeNull();
+    expect(shrinkCaption(book)).toBeNull();
+  });
+
+  test("an occurrence that says nothing is not one charge", () => {
+    expect(committedOutflows({ ...HIS, occurrences: premium }).lines[0]!.oneCharge).toBe(false);
   });
 });
 
@@ -787,6 +1020,12 @@ describe("endingLead", () => {
     expect(endingOthersClause(0)).toBe("");
     expect(endingOthersClause(1)).toBe(", and one other does too");
     expect(endingOthersClause(2)).toBe(", and 2 others do too");
+  });
+
+  test("…and the shortfall is said to be all of theirs, the lead's and the others' together", () => {
+    expect(endingShortfallFor(0)).toBe("for it");
+    expect(endingShortfallFor(1)).toBe("for the two of them");
+    expect(endingShortfallFor(2)).toBe("for all 3 of them");
   });
 });
 

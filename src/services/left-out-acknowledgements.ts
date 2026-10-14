@@ -33,7 +33,10 @@ export function readLeftOutAcknowledgements(db: AppDatabase): LeftOutAcknowledge
  * ⛔ Nor one carrying a control character, a line or paragraph separator (U+2028, U+2029) or a bidi control anywhere,
  * words beside it or not — it would be stored, and printed raw with the line wherever it is printed: a stored reason is
  * on one line, its words in the order given. Refused by name, ALL of them, before anything is written
- * (`reasonCarriesControl`).
+ * (`reasonCarriesControl`). ⛔ But for a reason the ledger stores already, from before that guard: ⚖️ §6A 30, an open
+ * line takes the reason its lines alike carry, exactly — taken as stored. 🔴 Review of 3872004: refused here, a mark
+ * partly acknowledged with such a reason failed ledger-check for good. The command line lets one through only for the
+ * lines alike that carry it (`reasonCarriedAlready`).
  */
 export function writeLeftOutAcknowledgements(db: AppDatabase, writes: readonly LeftOutAcknowledgementWrite[]): void {
   if (writes.length === 0) return;
@@ -44,7 +47,11 @@ export function writeLeftOutAcknowledgements(db: AppDatabase, writes: readonly L
         `${blank.printedOn} says nothing — nothing was written`,
     );
   }
+  const stored = new Set(
+    db.select({ reason: leftOutAcknowledgements.reason }).from(leftOutAcknowledgements).all().map((r) => r.reason),
+  );
   for (const write of writes) {
+    if (stored.has(write.reason)) continue;
     const carries = reasonCarriesControl(write.reason);
     if (carries !== null) {
       throw new Error(`refused: the reason for ${write.description} on ${write.printedOn} ${carries} — nothing was written`);

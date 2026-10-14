@@ -141,3 +141,38 @@ describe("the empty state is the service's", () => {
     expect(source).not.toMatch(/\bemptyPeriodReason\(/);
   });
 });
+
+/*
+ * ⚖️ His decision 72 (2026-10-13): the period's spending over days every account he spends from has not been imported
+ * through reads "partly read", with /budgets' line under it. ⛔ The line is the PROOF's (`Provenance.partlyRead`), so
+ * the chip and the words under it cannot count two windows — the page writes no sentence of its own. Source, not
+ * render: the page reads the database.
+ */
+describe("a period read only in part says so under Where it went, in the proof's own words", () => {
+  test("the page prints the proof's line and counts no days of its own", () => {
+    expect(source).toMatch(/\{spendProvenance\?\.partlyRead && \(\s*<p [^>]*>\{spendProvenance\.partlyRead\.line\}<\/p>/);
+    expect(source).not.toMatch(/\breadThroughSentence\(|\bbudgetCoverageSentence\(|\bdaysNotImportedYet\(/);
+  });
+
+  /*
+   * 🔴 …and the heatmap a few cards up called those days measured zeroes. On his ledger copy 2026-10-13 (review of
+   * 06c6bf3) Sep 13 … Sep 22 opened on "No spending or income on this day." under "30 days of this period unaccounted":
+   * the heatmap was handed `ledgerReaches` (Sep 24) and nothing else. It is handed the proof's day too — the function
+   * the proof reads (`spendingReadThrough`), never `spendingCoverageThrough` asked a second way here.
+   */
+  test("the heatmap is handed the day the proof counts from", () => {
+    expect(source).toMatch(/<SpendHeatmap[^/]*\bspendingReadThrough=\{readThrough\}/);
+    expect(source).toMatch(/const readThrough = spendingReadThrough\(db, today\);/);
+    expect(source).not.toMatch(/\bspendingCoverageThrough\(/);
+  });
+
+  /*
+   * 🔴 …and the empty state called the same days "a measured zero": on his ledger copy 2026-10-13 (review of 2fce458)
+   * `?period=2026-09-15`, `?period=W2026-09-14` and `?from=2026-09-13&to=2026-09-22` read "This window sits inside what
+   * has been imported … a measured zero", asked against the ledger's newest row (Sep 24), while the heatmap's sheet for
+   * Sep 15 said "That is not the same as nothing happening". It is handed the page's one read of the day.
+   */
+  test("the empty state is handed that day too", () => {
+    expect(source).toMatch(/spendingEmptyCopy\(db, range, \{[^}]*\bspendingReadThrough: readThrough,/);
+  });
+});

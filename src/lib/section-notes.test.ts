@@ -14,6 +14,7 @@ import {
   type SectionNote,
 } from "./section-notes";
 import { PATH_SEPARATOR } from "./category-path";
+import type { PayShortfall } from "./pay-shortfall";
 
 const row = (over: Partial<Parameters<typeof budgetSectionNotes>[0]["rows"][number]> = {}) => ({
   categoryPath: "Food",
@@ -965,6 +966,432 @@ describe("cashEarningsSectionNotes", () => {
     });
     expect(out).toHaveLength(2);
     expect(new Set(out.map((n) => n.id)).size).toBe(2);
+  });
+
+  /*
+   * 🔴 Read on his ledger 2026-10-13: /spending September printed the surplus note (the Sep 24 deposit paid Aug 27),
+   * and August — Aug 6, 13 and 20 paid by no deposit, Aug 27 by Sep 24's — said nothing beside "INCOME $54.12"; June
+   * read Salary $1,447.00 against four paydays of $4,188.00 with no note. The unbanked note speaks only of a STALE
+   * series, and his is "Awaiting statements". These rows carry what the page measures (`payShortfall`); the figures
+   * are a copy of his ledger's, today 2026-10-13, Wells Fargo checked through Thu Sep 24.
+   */
+  describe("a window whose read paydays were not banked inside it — the shortfall note", () => {
+    const HIS = {
+      seriesName: "It America LLC (weekly pay)",
+      basis: "series-live" as const,
+      lastBankedOn: "2026-09-24",
+      periodsSinceBanked: 2,
+      checkedThrough: "2026-09-24",
+      checkedPeriodsSinceBanked: 0,
+    };
+    const AUGUST: PayShortfall = {
+      readPaydays: 4,
+      firstReadOn: "2026-08-06",
+      lastReadOn: "2026-08-27",
+      readCents: 428_292,
+      bankedInsideCents: 0,
+      noPaydayInsideCents: 0,
+      shortCents: 428_292,
+      paidOutside: [{ depositOn: "2026-09-24", paydays: ["2026-08-27"], cents: 114_192, early: false }],
+      neverBankedCents: 314_100,
+      paidAcross: [],
+      noPaydayBeyondCents: 0,
+      otherBeyondCents: 0,
+      unlookedPaydays: 0,
+      towardNoPayday: [],
+      paidAhead: [],
+    };
+    const august = (over: Partial<PayShortfall> = {}) =>
+      notes({
+        ...HIS,
+        impliedCents: 428_292,
+        bankedCents: 0,
+        unbankedCents: 428_292,
+        firstPeriodOn: "2026-08-06",
+        lastPeriodOn: "2026-08-27",
+        periodsCovered: 4,
+        checkedPeriodsCovered: 4,
+        shortfall: { ...AUGUST, ...over },
+      });
+
+    test("August: the payday a later deposit paid is named with that deposit, the rest never reached a bank", () => {
+      const out = august();
+      expect(out).toHaveLength(1);
+      expect(out[0]!.id).toBe("cash-earnings-shortfall-It America LLC (weekly pay)");
+      expect(out[0]!.body).toBe(
+        "It America LLC (weekly pay)'s paydays over Aug 6 – 27, 2026 came to $4,282.92, and none of it was banked " +
+          "inside the window: $1,141.92 (Aug 27) was paid by the deposit of 2026-09-24 and $3,141.00 never reached a " +
+          "bank.",
+      );
+    });
+
+    /*
+     * ⚖️ Decision 55: the dashboard's "never reached a bank" is the paydays less every deposit banked — net. 🔴 This
+     * read "$1,047.00 was banked inside the window and $3,141.00 never reached a bank. $400.00 from the deposit of …
+     * went toward no payday.", and ALL said $11,517.00 beside the dashboard's $11,117.00 (review of a4b0fca).
+     */
+    test("June: the $400.00 that paid no payday is inside the banked figure, and the figures add up to $4,188.00", () => {
+      const [note] = notes({
+        ...HIS,
+        impliedCents: 418_800,
+        bankedCents: 144_700,
+        unbankedCents: 274_100,
+        firstPeriodOn: "2026-06-04",
+        lastPeriodOn: "2026-06-25",
+        shortfall: {
+          ...AUGUST,
+          firstReadOn: "2026-06-04",
+          lastReadOn: "2026-06-25",
+          readCents: 418_800,
+          bankedInsideCents: 144_700,
+          noPaydayInsideCents: 40_000,
+          shortCents: 274_100,
+          paidOutside: [],
+          neverBankedCents: 274_100,
+          towardNoPayday: [{ depositOn: "2026-06-05", cents: 40_000 }],
+        },
+      });
+      expect(note!.body).toBe(
+        "It America LLC (weekly pay)'s paydays over Jun 4 – 25, 2026 came to $4,188.00, of which $1,447.00 was " +
+          "banked inside the window ($400.00 of it, from the deposit of 2026-06-05, went toward no payday) and " +
+          "$2,741.00 never reached a bank.",
+      );
+    });
+
+    test("July: no deposit paid any of it", () => {
+      const [note] = august({
+        firstReadOn: "2026-07-02",
+        lastReadOn: "2026-07-30",
+        readPaydays: 5,
+        readCents: 523_500,
+        shortCents: 523_500,
+        paidOutside: [],
+        neverBankedCents: 523_500,
+      });
+      expect(note!.body).toBe(
+        "It America LLC (weekly pay)'s paydays over Jul 2 – 30, 2026 came to $5,235.00, and none of it reached a bank.",
+      );
+    });
+
+    test("paydays after the checked day are named as not looked for (decision 65), never as unbanked", () => {
+      const [note] = august({ unlookedPaydays: 2 });
+      expect(note!.body).toContain(
+        " never reached a bank; 2 more paydays in the window fall after 2026-09-24, the last day every account that " +
+          "pay lands in has been checked through — so the ledger has not looked for their deposits.",
+      );
+      const [one] = august({ unlookedPaydays: 1 });
+      expect(one!.body).toContain(
+        "; 1 more payday in the window falls after 2026-09-24, the last day every account that pay lands in has been " +
+          "checked through — so the ledger has not looked for its deposit.",
+      );
+    });
+
+    test("a payday a deposit paid before the window began was paid early (§6A 29)", () => {
+      const [note] = august({
+        firstReadOn: "2026-10-01",
+        lastReadOn: "2026-10-08",
+        readPaydays: 2,
+        readCents: 228_384,
+        shortCents: 228_384,
+        paidOutside: [{ depositOn: "2026-09-30", paydays: ["2026-10-01"], cents: 114_192, early: true }],
+        neverBankedCents: 114_192,
+      });
+      expect(note!.body).toContain(
+        "none of it was banked inside the window: $1,141.92 (Oct 1) was paid early, by the deposit of 2026-09-30 and " +
+          "$1,141.92 never reached a bank.",
+      );
+    });
+
+    test("several paydays one deposit paid, and paydays paid by several deposits, each named", () => {
+      const [note] = august({
+        paidOutside: [
+          { depositOn: "2026-07-30", paydays: ["2026-08-06"], cents: 104_700, early: true },
+          { depositOn: "2026-09-24", paydays: ["2026-08-20", "2026-08-27"], cents: 218_892, early: false },
+        ],
+        neverBankedCents: 104_700,
+      });
+      expect(note!.body).toContain(
+        ": $1,047.00 (Aug 6) was paid early, by the deposit of 2026-07-30, $2,188.92 (Aug 20 and Aug 27) was paid by " +
+          "the deposit of 2026-09-24, and $1,047.00 never reached a bank.",
+      );
+    });
+
+    test("every read payday paid, some from outside the window: no 'never'", () => {
+      const [note] = august({ bankedInsideCents: 314_100, shortCents: 114_192, neverBankedCents: 0 });
+      expect(note!.body).toContain(
+        "came to $4,282.92, of which $3,141.00 was banked inside the window and $1,141.92 (Aug 27) was paid by the " +
+          "deposit of 2026-09-24.",
+      );
+      expect(note!.body).not.toContain("never");
+    });
+
+    test("a window banked in full inside itself says nothing new — September keeps its surplus note alone", () => {
+      const out = notes({
+        ...HIS,
+        impliedCents: 456_768,
+        bankedCents: 570_960,
+        unbankedCents: -114_192,
+        firstPeriodOn: "2026-09-03",
+        lastPeriodOn: "2026-09-24",
+        shortfall: {
+          ...AUGUST,
+          firstReadOn: "2026-09-03",
+          lastReadOn: "2026-09-24",
+          readCents: 456_768,
+          bankedInsideCents: 570_960,
+          shortCents: 0,
+          paidOutside: [],
+          neverBankedCents: 0,
+        },
+      });
+      expect(out.map((n) => n.id)).toEqual(["cash-earnings-catchup-It America LLC (weekly pay)"]);
+    });
+
+    test("a window that banked what its read paydays came to is not short, whoever paid them", () => {
+      // Oct 1 paid early by Sep 30 and Oct 8 by Oct 7, with $1,141.92 more banked inside: nothing is short, net
+      expect(
+        august({
+          readCents: 228_384,
+          bankedInsideCents: 228_384,
+          shortCents: 0,
+          paidOutside: [{ depositOn: "2026-09-30", paydays: ["2026-10-01"], cents: 114_192, early: true }],
+          neverBankedCents: 0,
+        }),
+      ).toEqual([]);
+    });
+
+    /*
+     * 🔴 Review of 2a415d5 (MEDIUM): this read "of which $1,541.92 was banked inside the window ($400.00 of it, …, went
+     * toward no payday) and $741.92 (Oct 1) was paid early, by the deposit of 2026-09-30" — a deposit that paid
+     * $1,141.92, given the net shortfall, where /budgets' fourth figure says $1,141.92 paid early.
+     */
+    test("outside money that paid MORE than the net shortfall keeps its own figure; what is left over is named", () => {
+      // Oct 1 paid early by Sep 30, Oct 8 by Oct 7, and $400.00 on Oct 9 that paid no payday: short only $741.92, net
+      const [note] = august({
+        firstReadOn: "2026-10-01",
+        lastReadOn: "2026-10-08",
+        readPaydays: 2,
+        readCents: 228_384,
+        bankedInsideCents: 114_192,
+        shortCents: 74_192,
+        paidOutside: [{ depositOn: "2026-09-30", paydays: ["2026-10-01"], cents: 114_192, early: true }],
+        neverBankedCents: 0,
+        noPaydayBeyondCents: 40_000,
+        towardNoPayday: [{ depositOn: "2026-10-09", cents: 40_000 }],
+      });
+      expect(note!.body).toBe(
+        "It America LLC (weekly pay)'s paydays over Oct 1 – 8, 2026 came to $2,283.84, of which $1,141.92 was banked " +
+          "inside the window and $1,141.92 (Oct 1) was paid early, by the deposit of 2026-09-30; another $400.00 " +
+          "banked inside the window, from the deposit of 2026-10-09, went toward no payday.",
+      );
+    });
+
+    test("money that paid no payday, split between the payday it nets and the rest: both parts named by day", () => {
+      // Aug 6 paid by Sep 24 from outside, Aug 13 by no deposit, and $1,500.00 on Aug 14 that paid no payday: it nets
+      // Aug 13's $1,047.00, and the other $453.00 has no unpaid payday left to net
+      const [note] = august({
+        firstReadOn: "2026-08-06",
+        lastReadOn: "2026-08-13",
+        readPaydays: 2,
+        readCents: 209_400,
+        bankedInsideCents: 104_700,
+        noPaydayInsideCents: 104_700,
+        shortCents: 59_400,
+        paidOutside: [{ depositOn: "2026-09-24", paydays: ["2026-08-06"], cents: 104_700, early: false }],
+        neverBankedCents: 0,
+        noPaydayBeyondCents: 45_300,
+        towardNoPayday: [{ depositOn: "2026-08-14", cents: 150_000 }],
+      });
+      expect(note!.body).toBe(
+        "It America LLC (weekly pay)'s paydays over Aug 6 – 13, 2026 came to $2,094.00, of which $1,047.00 was " +
+          "banked inside the window ($1,047.00 of it, from the deposit of 2026-08-14, went toward no payday) and " +
+          "$1,047.00 (Aug 6) was paid by the deposit of 2026-09-24; another $453.00 banked inside the window, from " +
+          "the deposit of 2026-08-14, went toward no payday.",
+      );
+    });
+
+    test("money that paid another window's payday is named after the split — late, or early (§6A 29)", () => {
+      const AHEAD = { depositOn: "2026-09-30", paydays: ["2026-10-01", "2026-10-08"], cents: 228_384, early: true };
+      const across = (early: boolean) =>
+        august({
+          readCents: 456_768,
+          bankedInsideCents: 342_576,
+          shortCents: 114_192,
+          paidOutside: [],
+          neverBankedCents: 114_192,
+          paidAcross: [
+            { depositOn: "2026-09-03", paydays: ["2026-08-27"], cents: 114_192, early: false },
+            ...(early ? [AHEAD] : []),
+          ],
+        })[0]!.body;
+      expect(across(false)).toContain(
+        "and $1,141.92 never reached a bank; another $1,141.92 banked inside the window, from the deposit of " +
+          "2026-09-03, paid Aug 27's payday.",
+      );
+      expect(across(true)).toContain(
+        "; another $3,425.76 banked inside the window paid none of them: $1,141.92, from the deposit of 2026-09-03, " +
+          "paid Aug 27's payday and $2,283.84, from the deposit of 2026-09-30, paid the paydays of Oct 1 and Oct 8 " +
+          "early.",
+      );
+    });
+
+    test("no read payday, no note — a window of unread paydays is the forecast's to name", () => {
+      const unread = { readPaydays: 0, readCents: 0, firstReadOn: null, lastReadOn: null, paidOutside: [] };
+      expect(august({ ...unread, shortCents: 0, neverBankedCents: 0, unlookedPaydays: 2 })).toEqual([]);
+    });
+
+    test("a stale series keeps the note it has — never both", () => {
+      const out = notes({
+        shortfall: { ...AUGUST, readCents: 523_000, shortCents: 523_000, neverBankedCents: 523_000, paidOutside: [] },
+      });
+      expect(out.map((n) => n.id)).toEqual(["cash-earnings-unbanked-Cash job (weekly pay)"]);
+    });
+
+    test("…but a stale series whose unbanked note holds back (too few quiet READ paydays) still names the shortfall", () => {
+      const out = notes({
+        checkedThrough: "2026-08-12",
+        periodsCovered: 5,
+        checkedPeriodsCovered: 5,
+        checkedPeriodsSinceBanked: 2,
+        shortfall: {
+          ...AUGUST,
+          readCents: 523_000,
+          bankedInsideCents: 313_600,
+          shortCents: 209_400,
+          paidOutside: [],
+          neverBankedCents: 209_400,
+        },
+      });
+      expect(out.map((n) => n.id)).toEqual(["cash-earnings-shortfall-Cash job (weekly pay)"]);
+    });
+
+    test("no confirmed schedule, no note, whatever the figures say", () => {
+      expect(august().length).toBe(1);
+      expect(notes({ ...HIS, basis: "no-series", shortfall: AUGUST })).toEqual([]);
+    });
+  });
+
+  /*
+   * 🔴 Review of a4b0fca: the surplus note called ALL of a window's surplus "earlier pay arriving late — … a backlog
+   * clearing", though with payroll landing the Wednesday before the Thursday it pays (§6A 29) September's Wed Sep 30
+   * pays Thu Oct 1 — and October's shortfall note names the same $1,141.92 "paid early, by the deposit of" Sep 30.
+   * ⚖️ Decisions 29/32 name it from the payday's side: paid early. The rows carry `payShortfall`'s `paidAhead`.
+   */
+  describe("the surplus note splits its surplus by where the money went", () => {
+    const HIS = {
+      seriesName: "It America LLC (weekly pay)",
+      basis: "series-live" as const,
+      impliedCents: 456_768,
+      lastBankedOn: "2026-09-30",
+      periodsSinceBanked: 0,
+      firstPeriodOn: "2026-09-03",
+      lastPeriodOn: "2026-09-24",
+      checkedThrough: "2026-10-10",
+      checkedPeriodsSinceBanked: 0,
+    };
+    const SETTLED: PayShortfall = {
+      readPaydays: 4,
+      firstReadOn: "2026-09-03",
+      lastReadOn: "2026-09-24",
+      readCents: 456_768,
+      bankedInsideCents: 456_768,
+      noPaydayInsideCents: 0,
+      shortCents: 0,
+      paidOutside: [],
+      neverBankedCents: 0,
+      paidAcross: [],
+      noPaydayBeyondCents: 0,
+      otherBeyondCents: 0,
+      unlookedPaydays: 0,
+      towardNoPayday: [],
+      paidAhead: [],
+    };
+    const surplus = (surplusCents: number, over: Partial<PayShortfall> = {}, row: object = {}) =>
+      notes({
+        ...HIS,
+        bankedCents: HIS.impliedCents + surplusCents,
+        unbankedCents: -surplusCents,
+        shortfall: { ...SETTLED, ...over },
+        ...row,
+      }).map((n) => n.body);
+
+    test("money that paid a later window's payday early is named so — not a backlog clearing", () => {
+      const paidAhead = [{ depositOn: "2026-09-30", paydays: ["2026-10-01"], cents: 114_192 }];
+      expect(surplus(114_192, { paidAhead })).toEqual([
+        "It America LLC (weekly pay) banked $1,141.92 more than its paydays over Sep 3 – 24, 2026 came to. $1,141.92 of " +
+          "it, from the deposit of 2026-09-30, paid Oct 1's payday early.",
+      ]);
+    });
+
+    test("part paid ahead, the rest earlier pay arriving late — the two add up to the surplus", () => {
+      // Sep 23 – Sep 23 on his ledger: the $4,567.68 lump paid Thu Sep 24, after the window, and three weeks before it
+      const body = surplus(
+        456_768,
+        { paidAhead: [{ depositOn: "2026-09-23", paydays: ["2026-09-24"], cents: 114_192 }] },
+        { impliedCents: 0, bankedCents: 456_768, firstPeriodOn: null, lastPeriodOn: null },
+      );
+      expect(body).toEqual([
+        "It America LLC (weekly pay) banked $4,567.68 more than its paydays came to. $1,141.92 of it, from the deposit " +
+          "of 2026-09-23, paid Sep 24's payday early. One deposit can bank several paydays at once, so the other " +
+          "$3,425.76 is earlier pay arriving late — read it as a backlog clearing rather than as a period that earned " +
+          "more.",
+      ]);
+    });
+
+    test("money that paid no payday is named in the calendar's words, never as earlier pay", () => {
+      // Jun 5 – Jun 5 on his ledger: the $400.00 that found Jun 4 paid and reached no other payday (§6A 55b)
+      const body = surplus(
+        40_000,
+        { towardNoPayday: [{ depositOn: "2026-06-05", cents: 40_000 }] },
+        { impliedCents: 0, bankedCents: 40_000, firstPeriodOn: null, lastPeriodOn: null },
+      );
+      expect(body).toEqual([
+        "It America LLC (weekly pay) banked $400.00 more than its paydays came to. $400.00 of it, from the deposit of " +
+          "2026-06-05, went toward no payday.",
+      ]);
+    });
+
+    /*
+     * 🔴 Review of 2a415d5: this read "banked $500.00 more than its paydays over Sep 3 – 24, 2026 came to. $500.00 of
+     * it, from the deposit of 2026-09-30, paid Oct 1's payday early." — a deposit that paid $1,141.92, and the window's
+     * own $641.92 short of its paydays never said. Taken out of the window's money (`paidAcross`), Sep 30's $1,141.92
+     * leaves a shortfall, and the shortfall note names both.
+     */
+    test("a window short of its own paydays that paid a later one early: the shortfall note alone, naming it", () => {
+      const paidAhead = [{ depositOn: "2026-09-30", paydays: ["2026-10-01"], cents: 114_192 }];
+      const out = surplus(50_000, {
+        bankedInsideCents: 392_576,
+        shortCents: 64_192,
+        neverBankedCents: 64_192,
+        paidAcross: [{ ...paidAhead[0]!, early: true }],
+        paidAhead,
+      });
+      expect(out).toEqual([
+        "It America LLC (weekly pay)'s paydays over Sep 3 – 24, 2026 came to $4,567.68, of which $3,925.76 was " +
+          "banked inside the window and $641.92 never reached a bank; another $1,141.92 banked inside the window, " +
+          "from the deposit of 2026-09-30, paid Oct 1's payday early.",
+      ]);
+    });
+
+    test("several paydays paid ahead, by several deposits, each named", () => {
+      const [body] = surplus(228_384, {
+        paidAhead: [
+          { depositOn: "2026-09-29", paydays: ["2026-10-01"], cents: 114_192 },
+          { depositOn: "2026-09-30", paydays: ["2026-10-08"], cents: 114_192 },
+        ],
+      });
+      expect(body).toContain(
+        "$2,283.84 of it, from the deposits of 2026-09-29 and 2026-09-30, paid the paydays of Oct 1 and Oct 8 early.",
+      );
+    });
+
+    test("all of it earlier pay keeps the sentence it always had", () => {
+      expect(surplus(114_192)).toEqual([
+        "It America LLC (weekly pay) banked $1,141.92 more than its paydays over Sep 3 – 24, 2026 came to. One deposit " +
+          "can bank several paydays at once, so the surplus is earlier pay arriving late — read it as a backlog " +
+          "clearing rather than as a period that earned more.",
+      ]);
+    });
   });
 });
 

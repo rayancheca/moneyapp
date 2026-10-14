@@ -311,7 +311,7 @@ describe("the page renders the block from that reading", () => {
     const w = words(SERIES);
     expect(w).toContain("2 paydays worth $2,000.00 already passed this month");
     expect(w).toContain(
-      "They all fall after Wed, Aug 12, 2026, the last day every account that pay lands in has been checked " +
+      "Both fall after Wed, Aug 12, 2026, the last day every account that pay lands in has been checked " +
         "through — so the ledger has not looked for their deposits.",
     );
     expect(w).toMatch(/Sep 3, 2026 \+\$1,000\.00 .*Sep 10, 2026 \+\$1,000\.00/);

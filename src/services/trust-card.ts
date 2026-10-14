@@ -92,8 +92,10 @@ export interface TrustAccountLine {
    */
   uncheckedRunDays: number;
   /**
-   * Rows the ledger holds for an account with no recorded balance. `0` for
-   * every account that has a balance, and for a genuinely empty one.
+   * Rows the ledger holds for an account with no balance of any kind (⚖️
+   * "recorded" is a statement's, §6A 50 — the line says "no balance",
+   * `NO_BALANCE_NOT_IN_TOTAL`). `0` for every account that has a balance, and
+   * for a genuinely empty one.
    */
   strandedRows: number;
   /** true only when `strandedRows > 0` — an absence is not a hole */

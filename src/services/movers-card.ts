@@ -1,3 +1,4 @@
+import { cache } from "react";
 import type { AppDatabase } from "@/db/client";
 import { apportionPercents } from "@/lib/apportion";
 import { addCalendarMonths, monthKey, periodBounds, todayIso } from "@/lib/dates";
@@ -71,6 +72,12 @@ import { MIN_OCCURRENCES } from "./recurring";
  * its own delta by a sixth. Two figures a reader could hear as one word, so
  * neither card says "usual" without saying which months it means, in the
  * sentence directly under the headline.
+ *
+ * ⚖️ Since his decision 71 (2026-10-13) the runway's six END at the last month
+ * every account you spend from is read through to its end (`baselineWindow`
+ * over `spendingCoverageThrough`, below), not before today: on his ledger copy
+ * that day Feb–Jul, while this card, which looks back `MAX_MONTHS_BEHIND`
+ * months, found no month it could compare and drew nothing.
  *
  * ⚠️ The price of this choice is that the card is always talking about a month
  * that has closed, so it says which month, in words, above the numbers. A card
@@ -440,8 +447,16 @@ function candidateMonths(
  * his ledger at 2026-11-20, every /budgets row had moved off Chase's Aug 12 while
  * this — and /spending, the year insights and "What changed" through it — still
  * named Aug 12, for an account no statement will ever come for.
+ *
+ * ⚡ MEMOISED FOR ONE SERVER RENDER (`react`'s `cache`, never a module-level Map — `observationFrontier`'s rule). Since
+ * his decision 71 (2026-10-13) every card that quotes `baselineWindow` asks it too — six on one dashboard render — and
+ * measured on his ledger copy that day one call costs 5.5ms once warm. A string or null, so nothing shared can be
+ * mutated; callers pass `today`, so one render's calls share one key.
  */
-export function spendingCoverageThrough(db: AppDatabase, today: string = todayIso()): string | null {
+export const spendingCoverageThrough = cache(function spendingCoverageThrough(
+  db: AppDatabase,
+  today: string = todayIso(),
+): string | null {
   const currentMonth = monthKey(today);
   const frontier = observationFrontier(db);
   const awaiting = accountsAwaitingStatements(db);
@@ -454,7 +469,32 @@ export function spendingCoverageThrough(db: AppDatabase, today: string = todayIs
       ? new Set(governing.datingSpenders)
       : accountsThatDate(frontier, frontier.byAccount.keys(), awaiting),
   );
-}
+});
+
+/**
+ * ⚖️ His decision 72 (2026-10-13): the day a window of ALL his spending is read through — `spendingCoverageThrough` —
+ * or null when no statement could ever move it: no account a statement is still coming for has an import day (an
+ * empty ledger, or one of cash wallets alone), so the day `spendingCoverageThrough` falls back to is a wallet's newest
+ * typed row. "Partly read" forever would be a claim no statement could correct (the /budgets rule, 2026-09-15).
+ *
+ * ⛔ One day for /spending: the period's proof counts its unaccounted days from it (`provenance::allSpendPartlyRead`),
+ * and the heatmap on the same page reads its days against it (`SpendHeatmap`). 🔴 The heatmap was asked against the
+ * ledger's newest row alone — on his ledger copy 2026-10-13 (review of 06c6bf3) Sep 13 … Sep 22 read "No spending or
+ * income on this day." under "30 days of this period unaccounted".
+ *
+ * ⚡ MEMOISED FOR ONE SERVER RENDER (`react`'s `cache`, as `observationFrontier` — never a module-level Map). /spending
+ * asks it for its heatmap and empty state, its period's proof, and its cash flow and the prior period's — every bucket
+ * with no spending (decisions 64 + 72). Measured on his ledger copy 2026-10-13: 6.4ms a call; the page's own read, the
+ * September and August cash flows and September's proof took 35.3ms asked outside a render, 14.7ms inside one.
+ */
+export const spendingReadThrough = cache(function spendingReadThrough(
+  db: AppDatabase,
+  today: string = todayIso(),
+): string | null {
+  const { byAccount } = observationFrontier(db);
+  if (![...accountsAwaitingStatements(db)].some((id) => byAccount.has(id))) return null;
+  return spendingCoverageThrough(db, today);
+});
 
 /**
  * What changed this month — or rather, in the newest month that can be said to

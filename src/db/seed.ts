@@ -1,5 +1,6 @@
 import { and, eq, isNull } from "drizzle-orm";
 import { resolveCategoryIdentity } from "@/lib/category-identity";
+import { parseCategoryPath } from "@/lib/category-path";
 import type { AppDatabase } from "./client";
 import { categories, type CategoryKind } from "./schema/categories";
 import { institutions } from "./schema/institutions";
@@ -155,11 +156,11 @@ function seedWithin(tx: SeedExecutor): SeedSummary {
   // Starter merchant→category map (mapping_source='seed') — the base the
   // learning layer grows from; user mappings always override.
   const categoryIdByPath = (path: string): string => {
-    const [parentName, subName] = path.split(" > ");
+    const { parentName, childName: subName } = parseCategoryPath(path);
     const parent = tx
       .select({ id: categories.id })
       .from(categories)
-      .where(and(eq(categories.name, parentName!), isNull(categories.parentId)))
+      .where(and(eq(categories.name, parentName), isNull(categories.parentId)))
       .get();
     if (!parent) throw new Error(`Seed failure: missing category ${parentName}`);
     if (!subName) return parent.id;

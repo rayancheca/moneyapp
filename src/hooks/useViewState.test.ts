@@ -1199,6 +1199,95 @@ describe("Back/Forward to a page with view pills", () => {
     expect(page.persisted.investments).toMatchObject({ view: "value" });
   });
 
+  /**
+   * 🔴 A link carries no view and goes at once — it is never held, as the writers above are — so a link followed
+   * while Back's save is being written can be drawn before it lands, from the saved view he walked away from: on
+   * /investments?range=1Y, Return, Back (Value), the sidebar's /investments drew his Return, Back's save of the Value
+   * landed, and nothing drew it again (measured in this harness 2026-10-13; review of ab13868). ⚖️ B2: it is drawn
+   * again once Back's saves land, as a writer gone at BACK_SAVE_WAIT_MS goes again then.
+   */
+  test("a link followed while Back's save is being written is drawn again once it lands: the view Back showed", async () => {
+    const page = await open(portfolioPage, "/investments?range=1Y");
+    ui.portfolio!.setView("view", "returns");
+    await page.settle();
+    page.back(); // Value, as he left it
+    await idle(); // Back's save, held
+    page.router.push("/investments"); // the sidebar's link: no view in its URL
+    await idle();
+    await page.serve("render");
+    expect(ui.portfolio!.state).toMatchObject({ view: "returns" }); // drawn before the save landed: the saved one
+
+    await page.serve("write"); // Back's save lands
+    await page.settle();
+    expect(page.persisted.investments).toMatchObject({ view: "value" });
+    expect(page.url).toBe("/investments");
+    expect(ui.portfolio!.state).toMatchObject({ view: "value" });
+    expect(page.history.map((entry) => entry.url)).toEqual(["/investments?range=1Y", "/investments"]);
+  });
+
+  test("…drawn again only while the page that link drew is on screen", async () => {
+    const page = await open(portfolioPage, "/investments?range=1Y");
+    ui.portfolio!.setView("view", "returns");
+    await page.settle();
+    page.back();
+    await idle(); // Back's save, held
+    page.router.push("/investments");
+    await idle();
+    await page.serve("render");
+    page.router.push("/investments?view=returns&unit=percent"); // a second link, before the save lands
+    await idle();
+    await page.serve("render");
+
+    await page.serve("write"); // Back's save lands
+    const renders: string[] = [];
+    while (page.pending.length > 0) renders.push((await page.serve("render")).label);
+    // the page on screen, once — the first link's is not there to draw again, and nobody is taken back to it
+    expect(renders).toEqual(["/investments?view=returns&unit=percent"]);
+    expect(page.url).toBe("/investments?view=returns&unit=percent");
+    expect(ui.portfolio!.state).toMatchObject({ view: "returns", unit: "percent", lens: "chart" });
+    expect(page.history.map((entry) => entry.url)).toEqual([
+      "/investments?range=1Y",
+      "/investments",
+      "/investments?view=returns&unit=percent",
+    ]);
+  });
+
+  /** ⛔ A writer gone at its bound goes again itself once Back's save lands, and that is a move: no second redraw. */
+  test("a range pill gone at BACK_SAVE_WAIT_MS: once Back's save lands its page is drawn once more, not twice", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const page = await open(portfolioPage, "/investments?range=1Y");
+    ui.portfolio!.setView("view", "returns");
+    await page.settle();
+    page.back();
+    await idle(); // Back's save, held
+
+    pills.range!("1M");
+    await vi.advanceTimersByTimeAsync(BACK_SAVE_WAIT_MS);
+    await idle();
+    await page.serve("render");
+    const before = page.navigations.length;
+    await page.serve("write"); // Back's save, late
+    const renders: string[] = [];
+    while (page.pending.length > 0) renders.push((await page.serve("render")).label);
+    expect(renders).toEqual(["/investments?range=1M"]);
+    expect(page.navigations.slice(before).map((nav) => nav.url)).toEqual(["/investments?range=1M"]);
+  });
+
+  test("the control: a link followed once Back's save has landed draws the view Back showed, once", async () => {
+    const page = await open(portfolioPage, "/investments?range=1Y");
+    ui.portfolio!.setView("view", "returns");
+    await page.settle();
+    page.back();
+    await idle();
+    await page.serve("write"); // Back's save, in time
+    page.router.push("/investments");
+    await idle();
+    expect(page.pending).toEqual([{ kind: "render", label: "/investments" }]);
+    await page.serve("render");
+    expect(page.pending).toEqual([]);
+    expect(ui.portfolio!.state).toMatchObject({ view: "value" });
+  });
+
   /** 🔴 The same across /spending's two cards: the lens press drew the cash card he had left. */
   test("another card's press after Back keeps the view Back showed on this one", async () => {
     const page = await open(spendingPage, "/spending");

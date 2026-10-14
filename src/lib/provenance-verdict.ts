@@ -72,6 +72,19 @@ export const VERDICT_PRESENTATION = {
     tone: "weak",
     ariaSuffix: "has nothing checking it",
   },
+  /*
+   * ⚖️ His decision 72 (2026-10-13): a TOTAL over a window some of whose days are past its own read frontier keeps its
+   * figure, and reads this instead of "adds up" — the weak tone, because a figure that has not seen every day is a
+   * lower bound however well its rows check. 🔴 Measured on his ledger copy 2026-10-13: `/categories/<Food>` for
+   * September read "adds up · $160.72 · 25 transactions" (25 Venture X rows) while Food's budget card on the same page
+   * named Aug 12 as the day its accounts are imported through. The service decides which windows (`summedRowsProof`).
+   */
+  partly_read: {
+    word: "partly read",
+    icon: "circle-alert",
+    tone: "weak",
+    ariaSuffix: "is partly read: not every account behind it has been imported through all of its days",
+  },
   unknown: {
     word: "no basis yet",
     icon: "circle-alert",
@@ -164,6 +177,21 @@ export const PART_ENTERED = {
   word: "part you entered",
   name: "part of it was entered by hand",
 } as const;
+
+/**
+ * The words before a proof's date (`Provenance.checkedThrough`) in its panel.
+ *
+ * ⚖️ His decision 72 (2026-10-13): a total over a window read only in part says, in its panel, which day the window is
+ * read through. 🔴 …and the date under that sentence still read as the total's. Measured on his ledger copy 2026-10-13
+ * (review of 06c6bf3): Food's September panel read "It is read only in part: spending imported through Aug 12 · 30
+ * days of this period unaccounted" above "Checked through 2026-09-13." — two days for how far one total is known, the
+ * later one the day the "adds up" complaint had quoted. The date is its ROWS': the first account that CONTRIBUTED a row
+ * to stop being checked (`footingBounds`), and the 25 Venture X rows do add up through Sep 13. Over a window read in
+ * part the words say whose it is; the window's own day is the sentence above it.
+ */
+export function checkedThroughLead(proof: { partlyRead?: object }): string {
+  return proof.partlyRead === undefined ? "Checked through" : "Its rows are checked through";
+}
 
 /** The panel's accessible name — through the same rule, so the button and its dialog name one claim. */
 export function provenancePanelName(label: string): string {

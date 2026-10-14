@@ -29,7 +29,7 @@ describe("UnbankedIncomeNote — /recurring names unchecked paydays as not looke
     const { html, words } = text({ ...cashJob, checkedOccurrenceCount: 0, frontier: { kind: "day", through: "2026-08-12" } });
     expect(words).toBe(
       "2 paydays worth $2,094.00 already passed this month (Cash job (weekly pay)) — not counted above, and not in EOM cash. " +
-        "They all fall after Wed, Aug 12, 2026, the last day every account that pay lands in has been checked through — so the ledger has not looked for their deposits. " +
+        "Both fall after Wed, Aug 12, 2026, the last day every account that pay lands in has been checked through — so the ledger has not looked for their deposits. " +
         "Pay the ledger has not looked for cannot be projected as arriving; the month strip below counts it, because that line is the schedule.",
     );
     expect(words).not.toMatch(/no deposit imported|never reaches a bank/);

@@ -32,6 +32,7 @@ import {
   oneChargeDays,
   projectOccurrences,
   rollForwardNextExpected,
+  scheduleRanOutOn,
   toProjectable,
   type SeriesOccurrence,
   seriesEvidence,
@@ -228,6 +229,12 @@ export interface SeriesDetail {
    * annualised figure it headlines is exactly the number that end invalidates.
    */
   endsOn: string | null;
+  /**
+   * The day its schedule RAN OUT once its end has closed it (`scheduleRanOutOn`) — its last date on or before the end,
+   * which can fall between two due days — else null. The end badge names it in the past tense, beside the card's
+   * "Its schedule has ended" (`seriesEndBadge`).
+   */
+  scheduleRanOutOn: string | null;
   /**
    * The day of its ONE charge when its whole schedule holds one (`oneChargeDays`), else null. ⚖️ Owner decision
    * 2026-10-08 (§6A 56): then the CADENCE stat reads "Once" and the sentence "charges once on Nov 11". 🔴 The Nov 11
@@ -631,6 +638,7 @@ export function seriesDetail(
     neverPosted: neverPosted(seriesStaleness(s, today, checkedThrough)),
     billedWith: s.billedWith,
     endsOn: s.userEndsOn ?? null,
+    scheduleRanOutOn: scheduleRanOutOn(s, today),
     oneChargeOn: oneChargeDays(db, [s]).get(s.id) ?? null,
     annualizedCents: annualizedCentsOf(s, today, checkedThrough),
     nextExpected,

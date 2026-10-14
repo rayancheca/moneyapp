@@ -217,6 +217,41 @@ describe("runway — nothing measured yet", () => {
     expect(runway({ ...fresh, upfrontCarCents: -10_000 }).explanation).toBe(runway(fresh).explanation);
     expect(runway(fresh).explanation).toMatch(/^Nothing has been spent in the months counted below/);
   });
+
+  /**
+   * ⚖️ His decision 71 (2026-10-13): the spend term averages only months every account he spends from has been read
+   * through to the end of. 🔴 Review of 69f51c1: when the frontier EMPTIED that window, the caption beneath opened "No
+   * month has been read in full yet" while this sentence said "Nothing has been spent in the months counted below … This
+   * fills in once a month of spending is imported" — over $16,000 of June and July already imported on Checking, with
+   * the Card read only to Jun 12. What fills it in is reading a month in full, not importing one.
+   */
+  const unread = { months: ["2026-06", "2026-07"], through: "2026-06-12" };
+
+  test("a window the frontier emptied says no month has been read in full, the caption's words", () => {
+    const r = runway({ ...fresh, spendWindow: { months: 0, unread } });
+    expect(r.kind).toBe("unknown");
+    expect(r.explanation).toBe(
+      "No month has been read in full yet, so there is no rate to measure a runway against. This fills in once a " +
+        "month of spending is read in full.",
+    );
+  });
+
+  test("months read in full with nothing spent, later ones cut: it fills in once a month is read in full", () => {
+    expect(runway({ ...fresh, spendWindow: { months: 2, unread } }).explanation).toBe(
+      "Nothing has been spent in the months counted below, so there is no rate to measure a runway against. This " +
+        "fills in once a month of spending is read in full.",
+    );
+    expect(runway({ ...fresh, upfrontCarCents: 610_000, spendWindow: { months: 2, unread } }).explanation).toBe(
+      "Apart from the $6,100.00 paid up front for the car, which the car card spreads over the lease, nothing has " +
+        "been spent in the months counted below, so there is no rate to measure a runway against. This fills in once " +
+        "a month of other spending is read in full.",
+    );
+  });
+
+  test("a window nothing cut reads exactly as before", () => {
+    expect(runway({ ...fresh, spendWindow: { months: 0, unread: null } }).explanation).toBe(runway(fresh).explanation);
+    expect(runway({ ...fresh, spendWindow: { months: 3, unread: null } }).explanation).toBe(runway(fresh).explanation);
+  });
 });
 
 describe("runway — cash that has already run out", () => {

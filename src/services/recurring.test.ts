@@ -19,6 +19,7 @@ import { categorizeAll, detectTransfers } from "./categorize";
 import {
   absorbIntoLiveSeries,
   amountsAreStable,
+  annualizedCentsOf,
   analyzeGroup,
   detectRecurringSeries,
   loadRecomputeCtx,
@@ -34,6 +35,7 @@ import {
   populationStddev,
   projectOccurrences,
   rollForwardNextExpected,
+  scheduleRanOutOn,
   seriesHasLapsed,
   seriesIsForecast,
   seriesStaleness,
@@ -672,6 +674,152 @@ describe("seriesStaleness", () => {
     // …and every row whose schedule has ended is ended, whatever its evidence — a finished schedule is not late or
     // lapsed (a new charge would not bring it back)
     expect(endedSeen).toBe(4 * 5 * 4 * 4 * 5);
+  });
+});
+
+/*
+ * ⛔ An end before today leaves NO annualized figure — so the qualifier printed under one (`annualizedCaveat`, and the
+ * All tab's `annualizedEndNote`) never speaks of a series that has already stopped: both printers print it only beside
+ * a figure. 🔴 The qualifier kept a "stopped" sentence for that case — "a year this series no longer bills — it
+ * stopped on …" — which 0af5689 made unreachable when it took the "~$0.00/yr" away, and its comment still promised Car
+ * insurance would reach it on 2027-01-12 (review of the 10-12/13 batches). This grid is the proof the branch was dead.
+ */
+describe("annualizedCentsOf — no year ahead of a series whose end has passed", () => {
+  const row = {
+    id: "s",
+    name: "Car insurance",
+    kind: "bill" as const,
+    status: "confirmed" as "detected" | "confirmed",
+    cadence: "monthly" as "weekly" | "biweekly" | "monthly" | "quarterly" | "annual",
+    userCadence: null,
+    intervalDaysAvg: null,
+    nextExpectedOn: "2026-09-11" as string | null,
+    userNextExpectedOn: null as string | null,
+    nextExpectedAmountCents: -35758,
+    userAmountCents: null,
+    userEndsOn: null as string | null,
+    userAmountHistory: null,
+    lastMatchedOn: "2026-09-01" as string | null,
+    billedWith: null,
+  };
+  const today = "2026-09-11";
+
+  test("null for every end before today, whatever its cadence, anchor, status or evidence", () => {
+    let asked = 0;
+    for (const cadence of ["weekly", "biweekly", "monthly", "quarterly", "annual"] as const) {
+      for (const nextExpectedOn of [null, "2025-01-15", "2026-08-01", "2026-09-11", "2026-12-01"]) {
+        for (const userNextExpectedOn of [null, "2026-07-20", "2027-02-01"]) {
+          for (const userEndsOn of ["2025-06-30", "2026-08-01", "2026-09-10"]) {
+            for (const status of ["detected", "confirmed"] as const) {
+              for (const lastMatchedOn of [null, "2026-09-01", "2025-01-01"]) {
+                const s = { ...row, cadence, nextExpectedOn, userNextExpectedOn, userEndsOn, status, lastMatchedOn };
+                asked += 1;
+                const label = `${cadence} · ${nextExpectedOn} · ${userNextExpectedOn} · ends ${userEndsOn}`;
+                expect(annualizedCentsOf(s, today, today), `${label} · ${status} · ${lastMatchedOn}`).toBeNull();
+              }
+            }
+          }
+        }
+      }
+    }
+    expect(asked).toBe(5 * 5 * 3 * 3 * 2 * 3);
+  });
+
+  test("…while the same series ending today or later still has one — the grid above is not vacuous", () => {
+    expect(annualizedCentsOf({ ...row, userEndsOn: today }, today, today)).toBe(35758);
+    expect(annualizedCentsOf({ ...row, userEndsOn: "2027-01-11" }, today, today)).toBe(5 * 35758);
+  });
+});
+
+/*
+ * The end badge's day once a schedule is over (`seriesEndBadge`): the last date it held, which an end between two due
+ * days does not name. 🔴 Car insurance ending Jan 5 read "Ends Jan 5, 2027" beside "Its schedule has ended".
+ */
+describe("scheduleRanOutOn — the day a closed schedule ran out", () => {
+  const row = {
+    cadence: "monthly" as "weekly" | "biweekly" | "monthly",
+    userCadence: null,
+    intervalDaysAvg: null as number | null,
+    nextExpectedOn: "2026-09-11",
+    userNextExpectedOn: null as string | null,
+    nextExpectedAmountCents: -35758,
+    userAmountCents: null,
+    userEndsOn: null as string | null,
+    lastMatchedOn: null as string | null,
+  };
+
+  test("its last date on or before the end — null while one is to come, or with no end", () => {
+    const mid = { ...row, userNextExpectedOn: "2026-12-11", userEndsOn: "2027-01-05" };
+    expect(scheduleRanOutOn(mid, "2026-12-11")).toBeNull(); // Dec 11 is still to come today
+    for (const day of ["2026-12-12", "2027-01-05", "2027-01-06", "2027-03-01"]) {
+      expect(scheduleRanOutOn(mid, day), day).toBe("2026-12-11");
+    }
+    // an end ON a due day ran out on it — the Nov 11 balance's, and Car insurance's own
+    expect(scheduleRanOutOn({ ...mid, userEndsOn: "2027-01-11" }, "2027-01-12")).toBe("2027-01-11");
+    // a weekly schedule stepped by days: Thursdays from Oct 1, ending Sunday Oct 18 → Oct 15
+    const weekly = { ...row, cadence: "weekly" as const, userNextExpectedOn: "2026-10-01", userEndsOn: "2026-10-18" };
+    expect(scheduleRanOutOn(weekly, "2026-10-16")).toBe("2026-10-15");
+    // no end: nothing to name
+    expect(scheduleRanOutOn({ ...mid, userEndsOn: null }, "2027-03-01")).toBeNull();
+  });
+
+  /*
+   * 🔴 Review of 7a3c702: detection stores its anchor one step AFTER the last posting (`stepFrom(last.postedOn, plan,
+   * 1)`), so once Dec 11 posted, Car insurance's detected anchor (a reset to detected) was Jan 11 — past a Jan 5 end —
+   * and the forward step found no date: "Ends Jan 5, 2027" came back beside "Its schedule has ended" (a copy of his
+   * ledger, asked about 2026-12-12 and 2027-01-05), and "Ended Jan 5, 2027" from Jan 6 where the unposted shape read
+   * "Ended Dec 11, 2026". The day it ran out is the anchor's rhythm stepped BACK to the end.
+   */
+  test("detection's anchor, a step past the end once the last charge posted: the day it ran out, stepped back", () => {
+    const detected = { ...row, nextExpectedOn: "2027-01-11", lastMatchedOn: "2026-12-11", userEndsOn: "2027-01-05" };
+    for (const day of ["2026-12-12", "2027-01-05", "2027-01-06", "2027-03-01"]) {
+      expect(scheduleRanOutOn(detected, day), day).toBe("2026-12-11");
+    }
+    // the same day as the unposted shape, whose anchor still holds Dec 11
+    expect(scheduleRanOutOn({ ...detected, nextExpectedOn: "2026-12-11" }, "2026-12-12")).toBe("2026-12-11");
+    // a typed anchor past its end, as it reads after its rhythm's last day has come
+    const typedPast = { ...row, userNextExpectedOn: "2027-02-11", userEndsOn: "2027-01-05" };
+    expect(scheduleRanOutOn(typedPast, "2027-03-01")).toBe("2026-12-11");
+  });
+
+  test("…but never a day still to come: a typed anchor past its end, its rhythm's last day ahead, names none", () => {
+    // typed Feb 11 on a Jan 5 end, asked Oct 13: the rhythm's Dec 11 has not come — no day it RAN OUT
+    const typedPast = { ...row, userNextExpectedOn: "2027-02-11", userEndsOn: "2027-01-05" };
+    expect(scheduleRanOutOn(typedPast, "2026-10-13")).toBeNull();
+  });
+
+  /*
+   * 🔴 Review of b350ceb: the walk back rested on detection's anchor sitting one step after a posting ON OR BEFORE the
+   * end, and two shapes break it. posted_on is the SETTLE day — his Aug 11 premium is in the ledger as Aug 12 — so the
+   * last premium, due on the end, can post after it: Dec 11 and Jan 12 linked to Car insurance, detection's anchor
+   * Feb 12 (`stepFrom(Jan 12, monthly, 1)`), his real Jan 11 end, and the walk stepped past Jan 12 to "Ended Dec 12,
+   * 2026", a day nothing posted (a copy of his ledger set up so, asked Jan 12, Jan 13 and Feb 1; 7a3c702 read "Ended
+   * Jan 11").
+   * And a day-stepped anchor is the last posting plus the MEDIAN gap where the walk steps the AVERAGE: the day before
+   * the last charge.
+   */
+  test("never before its last charge, never past its end: a last premium settled after the end reads the end", () => {
+    const settledLate = { ...row, nextExpectedOn: "2027-02-12", lastMatchedOn: "2027-01-12", userEndsOn: "2027-01-11" };
+    for (const day of ["2027-01-12", "2027-01-13", "2027-02-01"]) {
+      expect(scheduleRanOutOn(settledLate, day), day).toBe("2027-01-11");
+    }
+    // the same postings with his typed anchor read the same day — the badge "Ended Jan 11, 2027" either way
+    expect(scheduleRanOutOn({ ...settledLate, userNextExpectedOn: "2026-12-11" }, "2027-01-13")).toBe("2027-01-11");
+  });
+
+  test("…and a day-stepped anchor a median past its last charge ran out on that charge, not the day before", () => {
+    // biweekly, last Dec 4, median gap 14 → detection's anchor Dec 18; average 14.6 → the walk steps 15: back to Dec 3
+    const biweekly = {
+      ...row,
+      cadence: "biweekly" as const,
+      intervalDaysAvg: 14.6,
+      nextExpectedOn: "2026-12-18",
+      lastMatchedOn: "2026-12-04",
+      userEndsOn: "2026-12-10",
+    };
+    expect(scheduleRanOutOn(biweekly, "2026-12-20")).toBe("2026-12-04");
+    // a charge long before the walk's last day changes nothing: the rhythm's own day stands
+    expect(scheduleRanOutOn({ ...biweekly, lastMatchedOn: "2026-10-01" }, "2026-12-20")).toBe("2026-12-03");
   });
 });
 
