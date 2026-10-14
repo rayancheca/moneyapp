@@ -49,8 +49,8 @@ function occ(
   amountCents: number,
   dates: readonly string[],
   lastMatchedOn: string | null,
-  /** the series' own cadence and end day — what a FULL horizon would have billed */
-  over: { cadence?: Cadence; endsOn?: string | null } = {},
+  /** the series' own cadence, end day and one-charge reading — what a FULL horizon would have billed */
+  over: { cadence?: Cadence; endsOn?: string | null; oneCharge?: boolean } = {},
 ): CommittedOccurrence[] {
   return dates.map((date) => ({
     seriesId: seriesIdOf(name),
@@ -61,6 +61,7 @@ function occ(
     isStale: lastMatchedOn === null,
     cadence: over.cadence ?? "monthly",
     endsOn: over.endsOn ?? null,
+    ...(over.oneCharge === undefined ? {} : { oneCharge: over.oneCharge }),
   }));
 }
 
@@ -764,6 +765,69 @@ describe("shrinkCaption", () => {
     });
     expect(shrinkCaption(book)!).toContain("2 others");
     expect(shrinkCaption(book)!).toContain("a month lower for all 3 of them.");
+  });
+});
+
+/*
+ * ⚖️ Owner decision 2026-10-08 (§6A 56): the one-time Nov 11 car-insurance balance ($72.74) is ONE CHARGE — no monthly
+ * cost — and the runway's figure is unchanged. 🔴 The book levelled it as a monthly bill cut short anyway: his runway
+ * card read "Car insurance stops inside that window — …, and one other does too — … The rate above is $364.66 a month
+ * lower for the two of them." — $66.68 of it the balance's, $72.74 "levelled" against the $6.06 its one payment adds
+ * (a copy of his ledger, 2026-10-13). A single payment the horizon holds whole is not short of anything.
+ *
+ * ⛔ The book cannot see it from the occurrences: one payment ending on its day is also the LAST payment of a premium
+ * paid ahead (`heaviestMonth`'s ⚠️). The series says which (`oneChargeDays`), and the occurrence carries it.
+ */
+describe("a ONE-CHARGE line — its own single payment, never short", () => {
+  const HIS = { from: "2026-10-13", to: "2027-10-13", months: 12, overdue: [] };
+  const premium = occ("Car insurance", -35758, ["2026-12-11", "2027-01-11"], "2026-09-03", { endsOn: "2027-01-11" });
+  const balance = (oneCharge: boolean): CommittedOccurrence[] =>
+    occ("Nov 11 balance", -7274, ["2026-11-11"], null, { endsOn: "2026-11-11", oneCharge });
+
+  test("it adds its payment to the rate and nothing to the shortfall — his runway's sentence, 2026-10-13", () => {
+    const book = committedOutflows({ ...HIS, occurrences: [...premium, ...balance(true)] });
+    const line = book.lines.find((l) => l.name === "Nov 11 balance")!;
+    // still inside the rate, at its one payment over the twelve months — decision 56 leaves the runway figure alone
+    expect(line).toMatchObject({
+      oneCharge: true,
+      occurrences: 1,
+      totalCents: 7274,
+      perMonthCents: 606,
+      endsInHorizon: true,
+    });
+    // levelled to its own single payment, not to a month of a monthly bill
+    expect(line.levelledPerMonthCents).toBe(line.perMonthCents);
+    expect(line.shortfallPerMonthCents).toBe(0);
+    expect(book.perMonthCents).toBe(Math.round((2 * 35758 + 7274) / 12));
+    expect(book.shortfallPerMonthCents).toBe(29798);
+    expect(shrinkCaption(book)).toBe(
+      "Car insurance stops inside that window — evidenced through Jan 11, 2027, with no renewal in the ledger — " +
+        "so it is billed 2 times rather than throughout, and counts $59.60 a month here against the $357.58 it " +
+        "charges. The rate above is $297.98 a month lower for it.",
+    );
+    expect(endingLead(book)).toMatchObject({ endsOn: "2027-01-11", others: 0 });
+  });
+
+  test("…while the same payment, the last of a schedule that held more, is a monthly bill cut short", () => {
+    const book = committedOutflows({ ...HIS, occurrences: [...premium, ...balance(false)] });
+    const line = book.lines.find((l) => l.name === "Nov 11 balance")!;
+    expect(line.oneCharge).toBe(false);
+    expect(line.shortfallPerMonthCents).toBe(7274 - 606);
+    expect(shrinkCaption(book)).toContain("The rate above is $364.66 a month lower for the two of them.");
+    // the rate is the same book either way
+    const asOneCharge = committedOutflows({ ...HIS, occurrences: [...premium, ...balance(true)] });
+    expect(book.perMonthCents).toBe(asOneCharge.perMonthCents);
+  });
+
+  test("a one charge alone in the book shrinks nothing — no sentence", () => {
+    const book = committedOutflows({ ...HIS, occurrences: balance(true) });
+    expect(book.shortfallPerMonthCents).toBe(0);
+    expect(endingLead(book)).toBeNull();
+    expect(shrinkCaption(book)).toBeNull();
+  });
+
+  test("an occurrence that says nothing is not one charge", () => {
+    expect(committedOutflows({ ...HIS, occurrences: premium }).lines[0]!.oneCharge).toBe(false);
   });
 });
 

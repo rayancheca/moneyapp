@@ -36,7 +36,7 @@ import { incomeExpectation } from "./budgets";
 import { CAR_LEASE_TERM_MONTHS, isUpfrontCarRow, readUpfrontCarRule, upfrontCarRule } from "./car-upfront";
 import { ledgerOpens } from "./observation-frontier";
 import { silenceMeasuredThroughBySeries } from "./cash-earnings";
-import { scheduledOccurrences, seriesStaleness } from "./recurring";
+import { oneChargeDays, scheduledOccurrences, seriesStaleness } from "./recurring";
 import { seriesIdsNotDrawnAsRecurring } from "./recurring-link";
 import { cashFlowByPeriod } from "./spending";
 
@@ -235,16 +235,26 @@ function moneyOutSeriesIds(db: AppDatabase): Set<string> {
   return new Set(rows.filter((r) => kinds.has(r.kind) && !isAgentsSeries(agentsCash, r)).map((r) => r.id));
 }
 
-/** Every live series' own end day, by id — `userEndsOn`, the only one there is. */
-function endsOnBySeries(db: AppDatabase): Map<string, string | null> {
-  return new Map(
-    db
-      .select({ id: recurringSeries.id, endsOn: recurringSeries.userEndsOn })
-      .from(recurringSeries)
-      .where(inArray(recurringSeries.status, ["detected", "confirmed"]))
-      .all()
-      .map((r) => [r.id, r.endsOn ?? null] as const),
-  );
+/** What a committed book reads of a series beyond its occurrences — its own end day, and whether it is one charge. */
+type SeriesTerms = Pick<CommittedOccurrence, "endsOn" | "oneCharge">;
+
+/** A series the book has no row for: no end day, not one charge. */
+const NO_TERMS: SeriesTerms = { endsOn: null, oneCharge: false };
+
+/**
+ * Every live series' own end day and one-charge reading, by id — read once, for every leg of both books.
+ *
+ * ⚖️ The one-charge reading is `oneChargeDays`, the one every cadence printer and the subscriptions card ask (§6A 56),
+ * so the runway cannot level as monthly a series the card beside it files a one-off.
+ */
+function termsBySeries(db: AppDatabase): Map<string, SeriesTerms> {
+  const rows = db
+    .select()
+    .from(recurringSeries)
+    .where(inArray(recurringSeries.status, ["detected", "confirmed"]))
+    .all();
+  const oneCharge = oneChargeDays(db, rows);
+  return new Map(rows.map((r) => [r.id, { endsOn: r.userEndsOn ?? null, oneCharge: oneCharge.has(r.id) }] as const));
 }
 
 /**
@@ -262,7 +272,7 @@ function toCommitted(
     cadence: Cadence;
     staleness?: { lastMatchedOn: string | null; isStale: boolean };
   },
-  endsOn: string | null,
+  terms: SeriesTerms,
 ): CommittedOccurrence {
   return {
     seriesId: o.seriesId,
@@ -272,7 +282,7 @@ function toCommitted(
     lastMatchedOn: o.staleness?.lastMatchedOn ?? null,
     isStale: o.staleness?.isStale ?? false,
     cadence: o.cadence,
-    endsOn,
+    ...terms,
   };
 }
 
@@ -377,7 +387,8 @@ export function committedBook(
   const horizon = monthHorizon(today, months);
   const to = horizon.nominalEnd;
   const moneyOut = moneyOutSeriesIds(db);
-  const endsById = endsOnBySeries(db);
+  // each series' end day and one-charge reading, for both legs (`termsBySeries`)
+  const terms = termsBySeries(db);
 
   /*
    * ⛔ THE SCHEDULE, PAID OR NOT (`scheduledOccurrences`) — a rate, as above: a bill paid early is still one of the N.
@@ -389,7 +400,7 @@ export function committedBook(
     scheduledOccurrences(db, today, diffDays(today, horizon.projectThrough) + 1)
     .filter((o) => moneyOut.has(o.seriesId))
     .filter((o) => withinMonthHorizon(horizon, o.date, o.anchorDayOfMonth))
-    .map((o) => toCommitted(o, endsById.get(o.seriesId) ?? null));
+    .map((o) => toCommitted(o, terms.get(o.seriesId) ?? NO_TERMS));
 
   /*
    * Strictly BEFORE today. The forward window owns `today`, so the two abut
@@ -446,7 +457,8 @@ export function committedBook(
     // `BudgetTailSeries.cadence` is the occurrence's own, from the same
     // projection walk the forward leg reads
     cadence: s.cadence as Cadence,
-    endsOn: endsById.get(s.id) ?? null,
+    // its end day and one-charge reading — a one charge owed is still its own single payment (§6A 56)
+    ...(terms.get(s.id) ?? NO_TERMS),
     // how far the ledger has read it, and what no statement keeps unread — `arrearsThisMonth` carries both, for
     // `arrearsSentence`
     unreadCents: s.unreadCents,
@@ -608,14 +620,15 @@ export function carCard(db: AppDatabase, today: string = todayIso()): CarCard | 
   // a twelve-month horizon opened on the 29th, 30th or 31st ran a day short of
   // twelve whole months for every car bill anchored below that day.
   const horizon = monthHorizon(today, months);
-  const carEndsById = endsOnBySeries(db);
+  // ⚖️ the runway's own reading of each series (`termsBySeries`) — a one charge is one here too (§6A 56)
+  const carTerms = termsBySeries(db);
 
   // ⛔ the schedule, paid or not (`scheduledOccurrences`): the lease paid two days early is still this month's lease
   const occurrences = // +1: `windowDays` counts days and today is the first — see its docstring
     scheduledOccurrences(db, today, diffDays(today, horizon.projectThrough) + 1)
     .filter((o) => carSeries.has(o.seriesId))
     .filter((o) => withinMonthHorizon(horizon, o.date, o.anchorDayOfMonth))
-    .map((o) => toCommitted(o, carEndsById.get(o.seriesId) ?? null));
+    .map((o) => toCommitted(o, carTerms.get(o.seriesId) ?? NO_TERMS));
   const book = committedOutflows({ from: today, to, months, occurrences, overdue: [] });
 
   /*
