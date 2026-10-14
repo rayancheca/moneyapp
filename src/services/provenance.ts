@@ -170,9 +170,9 @@ export interface ProvenanceInput {
    *
    * ⛔ Published as data because it is a real distinction that was otherwise
    * expressible only as PROSE ("empty — no rows, no balance" versus "N rows but
-   * no recorded balance"), and a caller that needs it was left parsing that
-   * sentence or re-deriving the predicate. Two definitions of one idea is a
-   * defect; this is the one definition.
+   * no balance — not in this total", `NO_BALANCE_NOT_IN_TOTAL`), and a caller
+   * that needs it was left parsing that sentence or re-deriving the predicate.
+   * Two definitions of one idea is a defect; this is the one definition.
    *
    * An empty account is excluded from the verdict and counted separately in the
    * headline — see the five-bucket note in `netWorthProvenance`.
