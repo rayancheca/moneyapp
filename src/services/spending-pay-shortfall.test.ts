@@ -274,3 +274,97 @@ describe("/spending — money that paid a later window's payday early", () => {
     ]);
   });
 });
+
+/**
+ * 🔴 Review of 2a415d5 (HIGH): the window's net counted money that crossed its line twice. "Never reached a bank" was
+ * the read paydays less EVERY deposit inside the window — so money that paid ANOTHER window's payday also made up this
+ * window's own unbanked one, while the other window's note named the same money paying its payday. A month with a
+ * payday no deposit paid went silent, and the months stopped adding up to the window over both. ⛔ Money that paid
+ * another window's payday is that window's, named here by its deposit; only money that paid no payday nets the
+ * shortfall (decision 55). Weekly $1,141.92 on Thursdays, Wells Fargo checked through Sat Oct 10, today Tue Oct 13.
+ */
+describe("/spending — money that crossed the window line is counted once", () => {
+  const OCT_13 = "2026-10-13";
+  const bodies = (from: string, to: string): string[] => notesFor(from, to, OCT_13).map((n) => n.body);
+
+  beforeEach(() => {
+    bundle.db.update(recurringSeries).set({ userAmountCents: 114_192, amountCentsAvg: 114_192 }).run();
+    coverThrough("2026-10-10");
+  });
+
+  test("(A) Wed Sep 30 paid Thu Oct 1 early and Sep 17 was never banked: September says so, October agrees", () => {
+    onlyDeposits(["2026-09-02", "2026-09-09", "2026-09-23", "2026-09-30", "2026-10-07"].map((d) => [d, 114_192]));
+    expect(bodies("2026-09-01", "2026-09-30")).toEqual([
+      "Cash job (weekly pay)'s paydays over Sep 3 – 24, 2026 came to $4,567.68, of which $3,425.76 was banked " +
+        "inside the window and $1,141.92 never reached a bank; another $1,141.92 banked inside the window, from the " +
+        "deposit of Wed, Sep 30, 2026, paid Oct 1's payday early.",
+    ]);
+    expect(bodies("2026-10-01", "2026-10-31")).toEqual([
+      "Cash job (weekly pay)'s paydays over Oct 1 – 8, 2026 came to $2,283.84, of which $1,141.92 was banked inside " +
+        "the window and $1,141.92 (Oct 1) was paid early, by the deposit of Wed, Sep 30, 2026.",
+    ]);
+    // the window over both, and the dashboard: the same $1,141.92 — once
+    expect(bodies("2026-09-01", OCT_13)).toEqual([
+      "Cash job (weekly pay)'s paydays over Sep 3 – Oct 8, 2026 came to $6,851.52, of which $5,709.60 was banked " +
+        "inside the window and $1,141.92 never reached a bank.",
+    ]);
+    const card = incomeCard(bundle.db, OCT_13)!;
+    expect([card.totals.gapMagnitudeCents, card.totals.gapLabel]).toEqual([114_192, "never reached a bank"]);
+  });
+
+  test("(D) Thu Oct 1's lump paid Sep 24 late and Oct 8 was never banked: October says so, September agrees", () => {
+    onlyDeposits([
+      ["2026-09-03", 114_192],
+      ["2026-09-10", 114_192],
+      ["2026-09-17", 114_192],
+      ["2026-10-01", 228_384],
+    ]);
+    expect(bodies("2026-09-01", "2026-09-30")).toEqual([
+      "Cash job (weekly pay)'s paydays over Sep 3 – 24, 2026 came to $4,567.68, of which $3,425.76 was banked " +
+        "inside the window and $1,141.92 (Sep 24) was paid by the deposit of Thu, Oct 1, 2026.",
+    ]);
+    expect(bodies("2026-10-01", "2026-10-31")).toEqual([
+      "Cash job (weekly pay)'s paydays over Oct 1 – 8, 2026 came to $2,283.84, of which $1,141.92 was banked inside " +
+        "the window and $1,141.92 never reached a bank; another $1,141.92 banked inside the window, from the deposit " +
+        "of Thu, Oct 1, 2026, paid Sep 24's payday.",
+    ]);
+    const card = incomeCard(bundle.db, OCT_13)!;
+    expect([card.totals.gapMagnitudeCents, card.totals.gapLabel]).toEqual([114_192, "never reached a bank"]);
+  });
+
+  test("money paid each side of the window — a payday before it and one after it — each named once", () => {
+    // Sep 16 never banked: Wed Sep 23 pays Thu Sep 24 early, so Thu Sep 24's own deposit finds Sep 24 settled and
+    // walks back to Sep 17; Wed Sep 30 pays Oct 1. 🔴 Sep 24 – Sep 30 read "banked $1,141.92 more than its paydays on
+    // Sep 24, 2026 came to" — beside a payday it banked none of
+    const wednesdays = ["2026-09-02", "2026-09-09", "2026-09-23", "2026-09-30", "2026-10-07"];
+    onlyDeposits([...wednesdays, "2026-09-24"].map((d) => [d, 114_192]));
+    expect(bodies("2026-09-24", "2026-09-30")).toEqual([
+      "Cash job (weekly pay)'s paydays on Sep 24, 2026 came to $1,141.92, and none of it was banked inside the " +
+        "window: $1,141.92 (Sep 24) was paid early, by the deposit of Wed, Sep 23, 2026; another $2,283.84 banked " +
+        "inside the window paid none of them: $1,141.92, from the deposit of Thu, Sep 24, 2026, paid Sep 17's " +
+        "payday and $1,141.92, from the deposit of Wed, Sep 30, 2026, paid Oct 1's payday early.",
+    ]);
+  });
+});
+
+/**
+ * 🔴 Review of 2a415d5 (MEDIUM): when deposits outside a window paid more of its paydays than its NET shortfall —
+ * money inside it paid no payday — the note gave the outside deposit the net figure, less than it paid, and left the
+ * rest unnamed. ⛔ Each deposit is named with the money it put in (the header's "NO SECOND ALLOCATION"); money that
+ * paid no payday beyond what it could net is named after the paydays, toward no payday.
+ */
+describe("/spending — outside money that paid more than the net shortfall is named whole", () => {
+  test("Wed Sep 9 paid Thu Sep 10 early and Fri Sep 11's $400.00 paid no payday: each named with its own money", () => {
+    onlyDeposits([
+      ["2026-09-03", 100_000],
+      ["2026-09-09", 100_000],
+      ["2026-09-11", 40_000],
+    ]);
+    coverThrough("2026-09-12");
+    expect(notesFor("2026-09-10", "2026-09-13").map((n) => n.body)).toEqual([
+      "Cash job (weekly pay)'s paydays on Sep 10, 2026 came to $1,000.00, and none of it was banked inside the " +
+        "window: $1,000.00 (Sep 10) was paid early, by the deposit of Wed, Sep 9, 2026; another $400.00 banked " +
+        "inside the window, from the deposit of Fri, Sep 11, 2026, went toward no payday.",
+    ]);
+  });
+});

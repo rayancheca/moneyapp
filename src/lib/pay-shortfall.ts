@@ -27,6 +27,15 @@ import {
  * 2026-10-13) — and a window that banked its whole schedule unevenly ($950.00 one week, $1,050.00 the next) read a
  * short week as money that "never reached a bank".
  *
+ * ⛔ …LESS THE MONEY THAT PAID ANOTHER WINDOW'S PAYDAY (`paidAcross`). That money is the other window's: its note
+ * names it paying its own payday, so netting it here too counted it twice. 🔴 Review of 2a415d5: with Wed Sep 30
+ * paying Thu Oct 1 and Sep 17 never banked, September printed nothing while October named the $1,141.92 paid early;
+ * on his ledger copy with the next Wells Fargo statement simulated, Q3 read "$7,234.08 never reached a bank" beside
+ * July's $5,235.00 and August's $3,141.00, and June + Q3 came to $9,975.08 beside YTD's $11,117.00. ⛔ Only a PASSED
+ * payday outside the window: some other window counts it. A payday no window has counted yet (Wednesday's money for
+ * tomorrow's Thursday) stays netted, as Earned vs banked nets it — so ALL and YTD, outside which none of his passed
+ * paydays lies, read the dashboard's figure to the cent.
+ *
  * ⛔ NO SECOND ALLOCATION of who paid what. Which deposit outside the window paid which payday inside it — and which
  * deposit inside it paid a later payday early — is the settlement's `portions`, sorted by `portionsAcross`' one
  * spelling, so a payday this calls paid by the deposit of Sep 24 is one the calendar draws "paid by the deposit of"
@@ -83,6 +92,12 @@ export interface PaidAhead {
   cents: number;
 }
 
+/** The money from one deposit day inside the window that paid a PASSED payday outside it — another window's. */
+export interface PaidAcross extends PaidAhead {
+  /** the payday is after the window — "paid early" (§6A 29); otherwise before it began */
+  early: boolean;
+}
+
 export interface PayShortfall {
   /** the window's paydays that have passed on days the ledger has checked */
   readPaydays: number;
@@ -90,17 +105,36 @@ export interface PayShortfall {
   lastReadOn: string | null;
   /** what those paydays were worth, each at its own rate */
   readCents: number;
-  /** every deposit attributed to the series inside the window — net: money that paid no payday is in it */
-  bankedInsideCents: number;
   /**
-   * What the read paydays came to beyond that — `payGap`'s read part: the dashboard's "never reached a bank", over
-   * this window. Zero when the window banked them; then there is no shortfall to explain.
+   * Of `readCents`, what was banked inside the window toward them — net (decision 55): with `paidOutside` and
+   * `neverBankedCents` it adds up to `readCents`. Money that paid no payday is in it as far as it nets a payday no
+   * deposit paid (`noPaydayInsideCents`); money that paid another window's payday never is (`paidAcross`).
+   */
+  bankedInsideCents: number;
+  /** of `bankedInsideCents`, the money that paid no payday (`towardNoPayday`'s days) — "went toward no payday" */
+  noPaydayInsideCents: number;
+  /**
+   * What the read paydays came to beyond the window's own money — `payGap`'s read part over every deposit inside it
+   * less `paidAcross`: the dashboard's "never reached a bank", over this window. Zero when the window banked them;
+   * then there is no shortfall to explain.
    */
   shortCents: number;
   /** the money deposits OUTSIDE the window put into the read paydays, per deposit day, oldest first */
   paidOutside: readonly PaidOutside[];
   /** the shortfall less that money, never below zero — what no deposit, inside the window or out, made up */
   neverBankedCents: number;
+  /**
+   * The money deposits INSIDE the window put into passed paydays OUTSIDE it, per side (before it, then after it) and
+   * deposit day, oldest first — counted by the window whose payday it paid, so never against this one's.
+   */
+  paidAcross: readonly PaidAcross[];
+  /**
+   * The rest of the window's own money: what was banked inside it beyond `bankedInsideCents` and `paidAcross` —
+   * money that paid no payday and had no unpaid payday left to net (`noPaydayBeyondCents`), and the rest
+   * (`otherBeyondCents`: pay for a payday not yet read or not yet passed, or change over a payday's worth).
+   */
+  noPaydayBeyondCents: number;
+  otherBeyondCents: number;
   /** the window's passed paydays after the checked day that no deposit has settled — not looked for */
   unlookedPaydays: number;
   /** deposit days inside the window whose money paid no payday at all (`PaydayReading.towardNoPayday`) */
@@ -137,25 +171,49 @@ export function payShortfall(s: SettlementWalked, w: PayShortfallWindow, e: Wind
     early: compareDates(p.depositOn, w.from) < 0,
   }));
   const paidAhead = byDepositDay(paidForAnotherWindow.filter((p) => compareDates(p.paydayOn, w.from) >= 0));
+  // ⛔ another window's money: a PASSED payday outside this one, which that window counts — never one not yet due
+  const crossed = paidForAnotherWindow.filter((p) => passed(p.paydayOn));
+  const paidAcross = [
+    ...byDepositDay(crossed.filter((p) => compareDates(p.paydayOn, w.from) < 0)).map((p) => ({ ...p, early: false })),
+    ...byDepositDay(crossed.filter((p) => compareDates(p.paydayOn, w.to) > 0)).map((p) => ({ ...p, early: true })),
+  ];
+  const ownCents = e.bankedCents - centsOf(crossed);
 
-  // ⛔ the one subtraction (`payGap`): the dashboard's, over this window — what is not read is not short
-  const { readGapCents: shortCents } = payGap(e.impliedCents, e.bankedCents, e.impliedCents - e.read.cents);
-  const outsideCents = paidOutside.reduce((sum, p) => sum + p.cents, 0);
+  // ⛔ the one subtraction (`payGap`): the dashboard's, over this window's own money — what is not read is not short
+  const { readGapCents: shortCents } = payGap(e.impliedCents, ownCents, e.impliedCents - e.read.cents);
+  const outsideCents = centsOf(paidOutside);
+  const neverBankedCents = Math.max(0, shortCents - outsideCents);
+  // ⛔ the sentence's split adds up to the paydays, and every deposit outside keeps the money it put in — so when
+  // outside money paid more than the net shortfall (money inside paid no payday), the banked figure is what is left
+  const bankedInsideCents = Math.max(0, e.read.cents - outsideCents - neverBankedCents);
+
+  const noPayday = towardNoPayday(s, inWindow);
+  // what the window's money that paid its read paydays came to: what the banked figure holds beyond it was netted
+  const paidReadCents = centsOf(s.portions.filter((p) => inWindow(p.depositOn) && readDays.has(p.paydayOn)));
+  const noPaydayInsideCents = Math.min(centsOf(noPayday), Math.max(0, bankedInsideCents - paidReadCents));
+  const beyondCents = Math.max(0, ownCents - bankedInsideCents);
+  const noPaydayBeyondCents = Math.min(beyondCents, centsOf(noPayday) - noPaydayInsideCents);
 
   return {
     readPaydays: e.read.paydays,
     firstReadOn: e.read.firstOn,
     lastReadOn: e.read.lastOn,
     readCents: e.read.cents,
-    bankedInsideCents: e.bankedCents,
+    bankedInsideCents,
+    noPaydayInsideCents,
     shortCents,
     paidOutside,
-    neverBankedCents: Math.max(0, shortCents - outsideCents),
+    neverBankedCents,
+    paidAcross,
+    noPaydayBeyondCents,
+    otherBeyondCents: beyondCents - noPaydayBeyondCents,
     unlookedPaydays: due.filter((o) => !checked(o.date) && !s.settledBy.has(o.date)).length,
-    towardNoPayday: towardNoPayday(s, inWindow),
+    towardNoPayday: noPayday,
     paidAhead,
   };
 }
+
+const centsOf = (parts: readonly { cents: number }[]): number => parts.reduce((sum, p) => sum + p.cents, 0);
 
 function byDepositDay(portions: readonly SettlementPortion[]): PaidAhead[] {
   const days = new Map<string, { paydays: Set<string>; cents: number }>();
