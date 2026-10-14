@@ -12,7 +12,7 @@ import {
 const base: SeriesEndInput = {
   kind: "bill",
   drawnAsRecurringByEnding: false,
-  annualizedCents: -2_530_800,
+  annualized: { cents: -2_530_800, once: false },
   overdueCents: 0,
   overdueUnreadCents: 0,
   overdueInGraceCents: 0,
@@ -103,7 +103,7 @@ describe("seriesEndLines", () => {
   });
 
   test("the forecast line is dropped when the series carries no annual figure", () => {
-    expect(labels({ ...base, annualizedCents: null })).toEqual([
+    expect(labels({ ...base, annualized: null })).toEqual([
       "Upcoming charges off the calendar",
       "Linked transactions kept",
     ]);
@@ -111,10 +111,34 @@ describe("seriesEndLines", () => {
 
   // ⚖️ §6A 56: one charge leaves as that charge, never "/ yr" — worded by what it posts, as every line here is
   test("a schedule of one charge leaves the forecast as its one charge — or its one deposit", () => {
-    const once: SeriesEndInput = { ...base, annualizedCents: 7_274, oneChargeOn: "2026-11-11" };
+    const once: SeriesEndInput = { ...base, annualized: { cents: 7_274, once: true }, oneChargeOn: "2026-11-11" };
     expect(value(once, "Leaving the forecast")).toBe("~$72.74, its one charge");
     expect(value({ ...once, kind: "income" }, "Leaving the forecast")).toBe("~$72.74, its one deposit");
-    expect(value({ ...base, annualizedCents: 7_274 }, "Leaving the forecast")).toBe("~$72.74 / yr");
+    const year: SeriesEndInput = { ...base, annualized: { cents: 7_274, once: false } };
+    expect(value(year, "Leaving the forecast")).toBe("~$72.74 / yr");
+  });
+
+  /*
+   * ⛔ ONE GATE with the page's slot (`annualizedFigure`). The line read its form off `oneChargeOn` alone while the slot
+   * also asks for the charge's amount: with none the page prints the year, "~$715.16/yr", and the dialog said
+   * "~$715.16, its one charge" of the same figure (review of 89f235d). The form travels with the figure.
+   */
+  test("the line takes its form from the page's own figure, never a second gate", () => {
+    const page = {
+      kind: "bill" as const,
+      status: "confirmed" as const,
+      annualizedCents: 71_516,
+      nextExpectedAmountCents: null,
+      overdue: null,
+      nextExpected: [] as never[],
+      oneChargeOn: "2026-11-11",
+      endsOn: "2026-11-11",
+      linkedTxns: [] as never[],
+    };
+    expect(value(seriesEndInput(page), "Leaving the forecast")).toBe("~$715.16 / yr");
+    expect(value(seriesEndInput({ ...page, nextExpectedAmountCents: -7_274 }), "Leaving the forecast")).toBe(
+      "~$72.74, its one charge",
+    );
   });
 
   test("one linked transaction is singular", () => {
@@ -129,7 +153,12 @@ describe("seriesEndLines", () => {
    * a bill's and a subscription's are as he has always read them.
    */
   test("worded by what the series posts: pay's deposits, a transfer's transfers, an other series' payments", () => {
-    const pay: SeriesEndInput = { ...base, kind: "income", annualizedCents: 5_937_984, nextChargeOn: "2026-10-15" };
+    const pay: SeriesEndInput = {
+      ...base,
+      kind: "income",
+      annualized: { cents: 5_937_984, once: false },
+      nextChargeOn: "2026-10-15",
+    };
     expect(labels(pay)).toEqual(["Leaving the forecast", "Upcoming deposits off the calendar", "Linked transactions kept"]);
     expect(value(pay, "Upcoming deposits off the calendar")).toBe("every deposit from Oct 15, 2026 on");
     expect(value({ ...base, kind: "transfer", endsOn: "2027-06-01" }, "Upcoming transfers off the calendar")).toBe(
@@ -154,7 +183,7 @@ describe("seriesEndLines", () => {
     const notRecurring: SeriesEndInput = {
       ...base,
       drawnAsRecurringByEnding: true,
-      annualizedCents: null,
+      annualized: null,
       nextChargeOn: null,
       linkedCount: 10,
     };

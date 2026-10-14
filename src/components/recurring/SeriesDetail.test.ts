@@ -272,6 +272,30 @@ describe("SeriesDetail — a schedule of one charge reads once, on its own page"
     expect(said.join(" · ")).not.toContain("/ yr");
   });
 
+  /*
+   * 🔴 Review of 89f235d: a one charge further out than the page's preview reaches. The Nov 11 balance moved to Nov 11,
+   * 2027 on a copy of his ledger (2026-10-13): its dialog read "Leaving the forecast: ~$72.74, its one charge" over
+   * "Upcoming charges off the calendar: none scheduled" — and its page listed no "Next expected", under "charges once on
+   * Nov 11". Its one charge IS scheduled; the preview's window ran from today, three steps, and stopped short of it —
+   * of Mar 11, 2027, inside the year, as well. ⛔ It starts at the series' own next day.
+   */
+  test.each(["2027-03-11", "2027-11-11"])(
+    "a one charge on %s: its page lists it next, its dialog takes it off on its day — never 'none scheduled'",
+    (day) => {
+      bundle.db
+        .update(recurringSeries)
+        .set({ userNextExpectedOn: day, userEndsOn: day })
+        .where(eq(recurringSeries.id, his.balanceId))
+        .run();
+      const detail = seriesDetail(bundle.db, his.balanceId, TODAY);
+      expect(detail.nextExpected.map((o) => [o.date, o.amountCents])).toEqual([[day, -7274]]);
+      const said = seriesEndLines(seriesEndInput(detail), formatCents).map((l) => `${l.label}: ${l.value}`);
+      expect(said).toContain("Leaving the forecast: ~$72.74, its one charge");
+      expect(said).toContain(`Upcoming charges off the calendar: once on ${day === "2027-03-11" ? "Mar" : "Nov"} 11, 2027`);
+      expect(said.join(" · ")).not.toContain("none scheduled");
+    },
+  );
+
   test("…while Car insurance, two premiums left, keeps its year and says it stops inside it", () => {
     const text = words(page(his.insuranceId));
     expect(text).toContain("~$715.16/yr");
