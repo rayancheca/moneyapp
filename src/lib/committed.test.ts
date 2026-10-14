@@ -11,6 +11,7 @@ import {
   heaviestMonth,
   heaviestMonthEnding,
   COMMITTED_ORIGIN_LABEL,
+  guideWindowWords,
   lastFullyReadMonth,
   measuredMonthsClause,
   monthHorizon,
@@ -528,6 +529,45 @@ describe("unreadMonthsSentence — why an average stops before the last complete
  * the frontier slid that window back (decision 71), they were not the last six: on his ledger copy 2026-10-13, Feb 2026
  * to Jul 2026.
  */
+/**
+ * ⚖️ His decision 71 (2026-10-13) holds for the budget editor's "6-mo avg ≈" as for the dashboard: it averages the
+ * dashboard's window (`budget-guide.ts`). 🔴 Review of cf8f8dc, measured on his ledger copy that day: Food's guide read
+ * $1,517.03 over Apr–Sep — less than the dashboard's Eating out alone ($1,963.24 a month over Feb–Jul), which is part
+ * of Food — beside a row printing "Spent — · Left —" for the same unread days.
+ */
+describe("guideWindowWords — what the budget editor's guide says of its window", () => {
+  test("an uncut window reads as it always did", () => {
+    expect(guideWindowWords({ months: 6, fromMonth: "2026-04", toMonth: "2026-09", unread: null })).toEqual({
+      lead: "6-mo avg",
+      note: null,
+    });
+  });
+
+  test("a window the frontier slid back names its months and says why the later ones are out", () => {
+    const unread = { months: ["2026-08", "2026-09"], through: "2026-08-12" };
+    expect(guideWindowWords({ months: 6, fromMonth: "2026-02", toMonth: "2026-07", unread })).toEqual({
+      lead: "6-mo avg",
+      note:
+        "Averaged over 6 complete months, Feb 2026 to Jul 2026. Aug 2026 and Sep 2026 are left out: Aug 12 is the " +
+        "last day every account you spend from has been imported through.",
+    });
+  });
+
+  /** ⛔ the lead counts the window's own months: a young ledger's three are not "6-mo" (the floor, `baselineWindow`) */
+  test("a young ledger's guide counts the months it has", () => {
+    expect(guideWindowWords({ months: 3, fromMonth: "2026-05", toMonth: "2026-07", unread: null })).toEqual({
+      lead: "3-mo avg",
+      note: null,
+    });
+  });
+
+  test("an empty window has no guide to name", () => {
+    const unread = { months: ["2026-06", "2026-07"], through: "2026-06-12" };
+    expect(guideWindowWords({ months: 0, fromMonth: "2026-08", toMonth: "2026-08", unread })).toBeNull();
+    expect(guideWindowWords({ months: 0, fromMonth: "2026-08", toMonth: "2026-08", unread: null })).toBeNull();
+  });
+});
+
 describe("measuredMonthsClause — the months the car card's share is set against", () => {
   test("an uncut window is the last six months, as it always read", () => {
     expect(measuredMonthsClause({ months: 6, fromMonth: "2026-04", toMonth: "2026-09", unread: null })).toBe(

@@ -763,6 +763,30 @@ export function unreadMonthsSentence(unread: UnreadMonths | null): string | null
 }
 
 /**
+ * What /budgets' inline editor says of its guide's window — "6-mo avg ≈ $X", and under it, when the frontier slid the
+ * window back, its months and why: "Averaged over 6 complete months, Feb 2026 to Jul 2026. Aug 2026 and Sep 2026 are
+ * left out: Aug 12 is the last day every account you spend from has been imported through." Null when the window holds
+ * no month: there is no guide to name.
+ *
+ * ⚖️ His decision 71 (2026-10-13) covers the guide as it covers the dashboard: it averages `baselineWindow`
+ * (`budget-guide.ts`). Read as "the last six months", a window slid back to Feb–Jul beside an October would be the
+ * dashboard caption's lie by omission, so it says what Eating out's caption says — `baselineSpan` and the runway's
+ * sentence (`unreadMonthsSentence`). ⛔ The lead counts the window's OWN months: a young ledger's floor makes them
+ * fewer than six, and "6-mo avg" over three would be a count the figure was not divided by.
+ */
+export function guideWindowWords(window: {
+  months: number;
+  fromMonth: string;
+  toMonth: string;
+  unread: UnreadMonths | null;
+}): { lead: string; note: string | null } | null {
+  const span = baselineSpan(window);
+  if (span === null) return null;
+  const unread = unreadMonthsSentence(window.unread);
+  return { lead: `${window.months}-mo avg`, note: unread === null ? null : `Averaged over ${span}. ${unread}` };
+}
+
+/**
  * The car's up-front money a spending average left out (`SpendBaseline.upfrontCarCents`, §6A 51), as a noun phrase —
  * or null when it left none out.
  *

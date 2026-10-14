@@ -23,7 +23,6 @@ import { addManualTransaction } from "./manual-transactions";
 import { setSplits } from "./transaction-splits";
 import { categorySpending, recurringSeriesIdsForCategory } from "./analytics";
 import {
-  budgetGuidanceCents,
   budgetPaceStatuses,
   budgetSections,
   budgetStatuses,
@@ -1713,20 +1712,6 @@ describe("budgetOneOffCents — too big to be a rate, unless a bill already acco
     expect(
       budgetOneOffCents([row(-50_000, "live-series"), row(-20_000), row(-3_000), row(2_500)], 10_000, notDrawn, null),
     ).toBe(20_000); // small spend and a small refund are the rate
-  });
-});
-
-describe("budgetGuidanceCents — 6-month daily rate, period-agnostic", () => {
-  test("expresses trailing spend at the budget period's length; refunds clamp to 0", () => {
-    // 18,100 over 181 days (Jan–Jun 2026) = 100/day exactly
-    spend("2026-01-15", -18_100, "Food > Dining");
-    expect(budgetGuidanceCents(bundle.db, catId("Food"), "monthly", "2026-07-15")).toBe(3_100); // 100 × 31
-    expect(budgetGuidanceCents(bundle.db, catId("Food"), "weekly", "2026-07-15")).toBe(700); // 100 × 7
-    expect(budgetGuidanceCents(bundle.db, catId("Food"), "daily", "2026-07-15")).toBe(100); // 100 × 1
-
-    // a net-refund history never suggests a negative budget
-    spend("2026-02-10", 30_000, "Travel > Flights");
-    expect(budgetGuidanceCents(bundle.db, catId("Travel"), "monthly", "2026-07-15")).toBe(0);
   });
 });
 

@@ -9,11 +9,13 @@ import { Icon } from "@/components/shell/Icon";
 import { toast } from "@/components/ui/Toast";
 import { formatCents } from "@/lib/money";
 import type { BudgetPeriodKind } from "@/db/schema/budgets";
+import type { BudgetGuide } from "@/services/budget-guide";
 
 interface BudgetAmountEditorProps {
   budgetId: string;
   amountCents: number;
-  guidanceCents: number;
+  /** the spend guide (`budgetGuides`) — null when there is none to print */
+  guide: BudgetGuide | null;
   period: BudgetPeriodKind;
   categoryPath: string;
 }
@@ -36,13 +38,7 @@ function toAmountField(cents: number): string {
  * shows a 6-month spend guide and writes through updateBudgetAmountAction — no
  * more deactivate-and-recreate. The guide is one tap to adopt.
  */
-export function BudgetAmountEditor({
-  budgetId,
-  amountCents,
-  guidanceCents,
-  period,
-  categoryPath,
-}: BudgetAmountEditorProps) {
+export function BudgetAmountEditor({ budgetId, amountCents, guide, period, categoryPath }: BudgetAmountEditorProps) {
   const router = useRouter();
   const { anchorRef, open, close, triggerProps } = usePopover<HTMLButtonElement>();
   const [amount, setAmount] = useState(() => toAmountField(amountCents));
@@ -106,15 +102,15 @@ export function BudgetAmountEditor({
               className="figures w-full rounded-md border border-line bg-surface-raised px-3 py-2 text-sm transition-colors duration-(--duration-fast) hover:border-line-strong focus:border-accent"
             />
           </label>
-          {guidanceCents > 0 && (
+          {guide !== null && (
             <div className="mt-2 flex items-center justify-between gap-2 text-xs text-ink-faint">
               <span>
-                6-mo avg ≈ <span className="text-ink-muted">{formatCents(guidanceCents)}</span>
+                {guide.lead} ≈ <span className="text-ink-muted">{formatCents(guide.cents)}</span>
               </span>
               <button
                 type="button"
                 onClick={() => {
-                  setAmount(toAmountField(guidanceCents));
+                  setAmount(toAmountField(guide.cents));
                   inputRef.current?.focus();
                 }}
                 className="rounded-md border border-line px-2 py-0.5 text-ink-muted transition-colors duration-(--duration-fast) hover:border-line-strong hover:text-ink"
@@ -123,6 +119,8 @@ export function BudgetAmountEditor({
               </button>
             </div>
           )}
+          {/* ⚖️ a guide the frontier slid back names its months and says why (decision 71) — the dashboard's sentence */}
+          {guide?.note && <p className="mt-1 text-[11px] leading-relaxed text-ink-faint">{guide.note}</p>}
           <div className="mt-3 flex justify-end gap-2">
             <Button variant="ghost" size="sm" onClick={close}>
               Cancel

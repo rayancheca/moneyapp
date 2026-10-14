@@ -31,7 +31,6 @@ import {
 } from "./analytics";
 import {
   isUpfrontCarRow,
-  readUpfrontCarRule,
   upfrontCarRule,
   type UpfrontCarCandidate,
   type UpfrontCarRule,
@@ -1408,13 +1407,24 @@ export interface CategoryCoverage {
 }
 
 /**
- * Where the window of accounts a category was spent from opens (`categoryCoverage`): the inline editor's guide window,
- * `GUIDANCE_MONTHS` full months before `refDate`'s month, or `periodStart` when that is earlier. Every window starting
- * inside the guide window asks the same accounts, and so reads through the same day — what `carryInto` asks once.
+ * How many full calendar months before `refDate`'s month `spentFromSinceFor` looks back for the accounts a category is
+ * spent from.
+ *
+ * ⚠️ It was the inline editor's guide window, and is no longer: since his decision 71 (2026-10-13) the guide averages
+ * only months every account he spends from has been read through to the end of, and slides back behind that day
+ * (`budget-guide.ts`). Which accounts a category is spent from is a question of recency, not an average — a charge on
+ * an unread month still says the account is spent from — so this stays the calendar's six.
+ */
+const SPENT_FROM_MONTHS = 6;
+
+/**
+ * Where the window of accounts a category was spent from opens (`categoryCoverage`): `SPENT_FROM_MONTHS` full months
+ * before `refDate`'s month, or `periodStart` when that is earlier. Every window starting inside those months asks the
+ * same accounts, and so reads through the same day — what `carryInto` asks once.
  */
 function spentFromSinceFor(periodStart: string, refDate: string): string {
-  // always GUIDANCE_MONTHS windows, oldest first
-  const windowStart = trailingFullMonths(refDate, GUIDANCE_MONTHS)[0]!.start;
+  // always SPENT_FROM_MONTHS windows, oldest first
+  const windowStart = trailingFullMonths(refDate, SPENT_FROM_MONTHS)[0]!.start;
   return compareDates(periodStart, windowStart) < 0 ? periodStart : windowStart;
 }
 
@@ -1454,10 +1464,10 @@ function spentFromSinceFor(periodStart: string, refDate: string): string {
  * would clamp Travel and Health, which are never spent from Chase Checking, to
  * its Aug 12.
  *
- * ⚠️ The window is what keeps a dormant account from vetoing forever. It is the
- * inline editor's guide window (`GUIDANCE_MONTHS` full months before today's
- * month, `budgetGuidanceCents`) — the same subtree history the page already
- * reads — opened at the period's own start when that is earlier, so an annual
+ * ⚠️ The window is what keeps a dormant account from vetoing forever. It is
+ * `SPENT_FROM_MONTHS` full months before today's month — the calendar's six,
+ * which the editor's guide read until decision 71 slid it behind the frontier —
+ * opened at the period's own start when that is earlier, so an annual
  * budget keeps every account spent from inside the year it grades. An account
  * whose last charge in this category falls before it no longer holds the row
  * back (SoFi Checking's one Mar 9 Cash & ATM row stops counting in October).
@@ -1844,41 +1854,4 @@ export function budgetPaceStatusOf(
     pace: computePace(s.spentCents, projectedCents, s.availableCents),
     tail: tail.series,
   };
-}
-
-const GUIDANCE_MONTHS = 6;
-
-/**
- * A trailing spend guide for the inline editor (ux-overhaul §8): the last 6 full
- * calendar months of subtree spend expressed at the budget PERIOD's length via a
- * daily rate, so the figure is directly comparable to a daily/weekly/monthly/
- * annual amount alike. Net refunds never push it below zero. This is what kills
- * deactivate-and-recreate — the user adjusts a live number against real history.
- */
-export function budgetGuidanceCents(
-  db: AppDatabase,
-  categoryId: string,
-  period: BudgetPeriodKind,
-  refDate: string = todayIso(),
-): number {
-  // trailingFullMonths always returns GUIDANCE_MONTHS non-empty windows, so the
-  // day total is a fixed, strictly-positive divisor (≈181) — no zero guard.
-  const windows = trailingFullMonths(refDate, GUIDANCE_MONTHS);
-  /*
-   * ⚖️ The car's up-front money is no guide to a month (owner decision 2026-10-07, §6A 51). 🔴 On his ledger the Car
-   * guide read $1,093.91 a month, most of it the $6,100 down payment and deposit ÷ 6 — a budget set from it would
-   * plan for a down payment every month. The rows `categorySpending` sums, less the card's own up-front set.
-   */
-  const upfront = readUpfrontCarRule(db);
-  let totalSpent = 0;
-  let totalDays = 0;
-  for (const w of windows) {
-    totalSpent += spendingTransactions(db, { categoryId, from: w.start, to: w.end })
-      .filter((t) => !isUpfrontCarRow(upfront, t))
-      .reduce((sum, t) => sum - t.amountCents, 0);
-    totalDays += diffDays(w.start, w.end) + 1;
-  }
-  const bounds = periodBounds(refDate, period);
-  const periodDays = diffDays(bounds.start, bounds.end) + 1;
-  return Math.max(0, Math.round((totalSpent / totalDays) * periodDays));
 }

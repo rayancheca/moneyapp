@@ -5,8 +5,8 @@ import { periodBounds, todayIso, type PeriodBounds } from "@/lib/dates";
 import { formatDayLong, formatDayShort } from "@/lib/format-date";
 import { paidByAnotherMonthNote, paidForAnotherMonthNote } from "@/lib/paid-by-another-month";
 import { IMPORTS_NOT_EARNINGS, NO_INCOME_DAY_CHECKED, unbankedIncomeFrontierClause } from "@/lib/unbanked-income";
+import { budgetGuides } from "@/services/budget-guide";
 import {
-  budgetGuidanceCents,
   budgetPaceStatuses,
   budgetSections,
   incomeExpectation,
@@ -51,10 +51,8 @@ export default async function BudgetsPage({
   const statuses = budgetPaceStatuses(db, today);
   const categories = listBudgetableCategories(db);
 
-  // one 6-month spend guide per budget, for the inline editor
-  const guidance = new Map(
-    statuses.map((s) => [s.budget.id, budgetGuidanceCents(db, s.budget.categoryId, s.budget.period, today)]),
-  );
+  // one spend guide per budget, for the inline editor — over the dashboard's window (`budgetGuides`, decision 71)
+  const guides = budgetGuides(db, statuses.map((s) => s.budget), today);
 
   // The income term the page has never had. Scoped to MONTHLY budgets only:
   // they are the ones whose window matches a pay cycle, and mixing a daily and
@@ -365,7 +363,7 @@ export default async function BudgetsPage({
                   <BudgetRow
                     key={status.budget.id}
                     status={status}
-                    guidanceCents={guidance.get(status.budget.id) ?? 0}
+                    guide={guides.get(status.budget.id) ?? null}
                     spentProvenance={spendProvenance.get(status.budget.id) ?? null}
                     planProvenance={planProvenance.get(status.budget.id) ?? null}
                   />
