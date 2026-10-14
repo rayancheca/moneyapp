@@ -146,6 +146,24 @@ describe("…and one more than its grace EARLY pays the next due day, once the d
     ]);
   });
 
+  /*
+   * 🔴 Nothing asked a day paid by the SECOND of two in its gap (review of 844e484): read as unpaid, Aug 28 was Aug 8's
+   * late payment — which Jul 28 had already made — so it paid no due day, Sep 8 read "not posted" once Chase was read
+   * past Sep 11, and every newest 8th after it, read back through Sep 8, did the same until the next draft.
+   */
+  test("…and the next gap's one draft pays the day after: Aug 8 is paid by Jul 28, so Aug 28 pays Sep 8 early", () => {
+    expect(graded([fpl("2026-07-15"), fpl("2026-07-28"), fpl("2026-08-28")])[3]).toEqual(["2026-09-08", "2026-08-28"]);
+    // drafted every 28th from then on, each draft pays the next 8th — read back through Sep 8 to the gap of two
+    expect(graded([fpl("2026-07-15"), fpl("2026-07-28"), fpl("2026-08-28"), fpl("2026-09-28")])).toEqual([
+      ["2026-06-08", null],
+      ["2026-07-08", "2026-07-15"],
+      ["2026-08-08", "2026-07-28"],
+      ["2026-09-08", "2026-08-28"],
+      ["2026-10-08", "2026-09-28"],
+      ["2026-11-08", null],
+    ]);
+  });
+
   test("two in one gap after a day paid on time: the earlier pays the next day early, the later pays nothing", () => {
     expect(graded([fpl("2026-07-10"), fpl("2026-07-28"), fpl("2026-07-20")])).toEqual([
       ["2026-06-08", null],
