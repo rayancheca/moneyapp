@@ -54,7 +54,13 @@ import { postedAsWord, type Occurrence, type PaydaySample, type PerPaydayEvidenc
 import { rateOn, seriesAmountCents } from "@/lib/series-kind";
 import { postedAveragesBySeries } from "./posted-average";
 import { effectiveSeries, MIN_OCCURRENCES } from "./recurring";
-import { balanceLessKind, type BalanceLessFacts } from "./statements-by-account";
+import {
+  balanceLessKind,
+  firstOnAccount,
+  firstOnAccountSql,
+  isOfxDownload,
+  type BalanceLessFacts,
+} from "./statements-by-account";
 import { fileRecordedBalanceOn, fileRecordedBalanceOnSql } from "./file-recorded-balance";
 
 /**
@@ -170,9 +176,9 @@ export interface ProvenanceInput {
    *
    * ⛔ Published as data because it is a real distinction that was otherwise
    * expressible only as PROSE ("empty — no rows, no balance" versus "N rows but
-   * no recorded balance"), and a caller that needs it was left parsing that
-   * sentence or re-deriving the predicate. Two definitions of one idea is a
-   * defect; this is the one definition.
+   * no balance — not in this total", `NO_BALANCE_NOT_IN_TOTAL`), and a caller
+   * that needs it was left parsing that sentence or re-deriving the predicate.
+   * Two definitions of one idea is a defect; this is the one definition.
    *
    * An empty account is excluded from the verdict and counted separately in the
    * headline — see the five-bucket note in `netWorthProvenance`.
@@ -503,6 +509,27 @@ const OPENING_STATEMENT_WHY = "it printed no opening balance, so nothing in it c
 const NO_OPENING_TO_RECONCILE = "but no opening one, so the period itself reconciles nothing";
 
 /**
+ * What the ledger keeps of an OFX download that owns no balance on the account (`isOfxDownload`) — /imports' footer
+ * says it of one (`balanceLessNotes`), and so do a row's headline, the period line and the period's own sheet.
+ * ⛔ Never "carries no balances": it may well have printed one — Chase Savings' quarterly QFX printed a LEDGERBAL its
+ * quarter's CSV re-recorded, and the ledger keeps the last writer's (⚖️ anchor ownership as shipped).
+ */
+function keptNoBalanceOn(account: string): string {
+  return `left the ledger no balance of its own on ${account}`;
+}
+
+/** Why such a download proves nothing by its period: `NO_OPENING_TO_RECONCILE`, said of a file that kept none. */
+const DOWNLOAD_NO_OPENING = "and printed no opening one, so the period itself reconciles nothing";
+
+/** What a period's line reads: `balanceLessKind`'s facts, and whether it is its account's first (`firstOnAccount`). */
+type PeriodLineFacts = BalanceLessFacts & { readonly firstOnAccount: boolean };
+
+/** An opening statement, as its line names it — "the account's first" only where `firstOnAccount` says so. */
+function openingStatementNoun(first: boolean): string {
+  return first ? "the account's first statement" : "a statement";
+}
+
+/**
  * What a statement period concluded, as its line on a sheet reads.
  *
  * 🔴 `not_applicable` was read as "this file carries no balances" whatever the file was. Robinhood Agentic's Jun 2026
@@ -510,8 +537,10 @@ const NO_OPENING_TO_RECONCILE = "but no opening one, so the period itself reconc
  * and its file recorded Agentic's closing. Measured on a copy of his ledger 2026-10-12: the sheet of Agentic's
  * +$26.64 on Jun 5 read "…which recorded Robinhood Agentic's balance on Jun 30, 2026 — but …" over "2026-06-01 →
  * 2026-06-30 | coverage declared, but this file carries no balances to check against", while /imports' footer counted
- * it "an account's first". Every day of Agentic's June and Robinhood Cash's Dec 2023 read the same on its balance
- * sheet (latent there: /accounts asks for the newest day).
+ * it "an account's first". So did the balance sheet of every day of Agentic's June from the 4th, and of Robinhood
+ * Cash's Dec 2023 from the 5th — the day before each account's first row; the days before those derive no balance
+ * ("Nothing is derived … yet") and show no period line at all, measured on his ledger copy 2026-10-13 (latent there:
+ * /accounts asks for the newest day).
  *
  * 🔴 …and that fix read the PARSER, so every other balance-less period still read the state: an OFX download records
  * the account's balance (LEDGERBAL) and declares its days, and its line said it carries none. The review of 601f155,
@@ -520,12 +549,24 @@ const NO_OPENING_TO_RECONCILE = "but no opening one, so the period itself reconc
  * every row replayed onto a recorded balance; a row's sheet from it read "…which recorded Chase Freedom Unlimited's
  * balance on Sep 30, 2024" over the same line — 18 of the fixture's 27 balance-less periods. The line now reads what
  * the file recorded, by the row headline's rule (`balanceLessKind`, `fileRecordedBalanceOn`).
+ *
+ * ⛔ "The account's first" only where no earlier period of the account precedes it (`firstOnAccount`), the footer's
+ * rule: the parser knows only that the statement printed `N/A` for its opening.
+ *
+ * 🔴 …and a download the ledger keeps no balance of still fell through to "this file carries no balances", while the
+ * footer named it a download that "left the ledger no balance of its own" (74f25fb, by the parser, beside this rule).
+ * Measured on a copy of data/e2e.db 2026-10-14: the period line on the sheets of Chase8721_Activity_2026-04-01_
+ * 2026-06-30.QFX's Apr 2 row and of Chase Savings' Apr 2 balance — a file holding a <LEDGERBAL> its quarter's CSV
+ * re-recorded. The kind names it now (`download_no_balance`), for the footer and every sheet.
  */
-function periodDetail(p: BalanceLessFacts): string {
+function periodDetail(p: PeriodLineFacts): string {
   const kind = balanceLessKind(p);
-  if (kind === "opening_statement") return `the account's first statement — ${OPENING_STATEMENT_WHY}`;
+  if (kind === "opening_statement") return `${openingStatementNoun(p.firstOnAccount)} — ${OPENING_STATEMENT_WHY}`;
   if (kind === "balance_recorded" && p.recordedOn !== null) {
     return `coverage declared, and this file recorded the account's balance on ${readableDay(p.recordedOn)} — ${NO_OPENING_TO_RECONCILE}`;
+  }
+  if (kind === "download_no_balance") {
+    return `coverage declared — this download ${keptNoBalanceOn("the account")} ${DOWNLOAD_NO_OPENING}`;
   }
   return PERIOD_VERDICT_TEXT[p.reconciliation] ?? p.reconciliation;
 }
@@ -600,7 +641,14 @@ function transactionProvenance(db: AppDatabase, id: string): Provenance | null {
     });
   }
   if (period) {
-    sources.push(periodSource({ ...period, parserProfile: file?.parserProfile ?? null, recordedOn: fileAnchorOn }));
+    sources.push(
+      periodSource({
+        ...period,
+        parserProfile: file?.parserProfile ?? null,
+        recordedOn: fileAnchorOn,
+        firstOnAccount: firstOnAccount(db, period),
+      }),
+    );
   }
 
   /**
@@ -708,6 +756,7 @@ function transactionProvenance(db: AppDatabase, id: string): Provenance | null {
     fileAnchorOn: fileAnchorOn ?? undefined,
     anchorOfDay,
     rowFileId: txn.importFileId,
+    download: isOfxDownload(file?.parserProfile ?? null),
   });
 
   return {
@@ -759,6 +808,8 @@ interface RowHeadlineFacts {
   /** the anchor ON the row's day, when the day is anchored */
   anchorOfDay: DayAnchor | null;
   rowFileId: string;
+  /** an OFX parser read the row's file (`isOfxDownload`): one that owns no balance is never said to carry none */
+  download: boolean;
 }
 
 /**
@@ -771,13 +822,20 @@ function rowHeadline(f: RowHeadlineFacts): string {
   }
   const from = `This row came from ${f.fileName ?? "an imported file"}`;
   const ownBalance = f.fileAnchorOn ? `, which recorded ${f.accountName}'s balance on ${readableDay(f.fileAnchorOn)}` : null;
+  /*
+   * 🔴 A download that owns no balance read "carries no balances of its own" — a QFX that printed a LEDGERBAL its
+   * quarter's CSV re-recorded, while /imports' footer names it one that "left the ledger no balance of its own".
+   * Measured on a copy of data/e2e.db 2026-10-14, Chase8721_Activity_2026-04-01_2026-06-30.QFX's Apr 2 row: "That
+   * file carries no balances of its own, but Chase Savings's chain closes across this day." (`keptNoBalanceOn`)
+   */
+  const noneOfItsOwn = f.download ? keptNoBalanceOn(f.accountName) : "carries no balances of its own";
   // ⛔ "checked" is said only of a row the grade calls checked — see S19 above
   if (f.grade === "derived") {
     if (f.dayVerdict === "sourced") {
       if (f.anchorOfDay?.anchor.importFileId === f.rowFileId) {
         return `${from}, which recorded ${f.accountName}'s balance on this very day, so the total it sits in is checked.`;
       }
-      const own = ownBalance ? `${ownBalance} — and` : ", which carries no balances of its own — but";
+      const own = ownBalance ? `${ownBalance} — and` : `, which ${noneOfItsOwn} — but`;
       // ⚖️ his count is "counted" (his answer, 2026-10-05); a document's balance is "recorded"
       const by = f.anchorOfDay
         ? f.anchorOfDay.anchor.source === "manual"
@@ -788,10 +846,10 @@ function rowHeadline(f: RowHeadlineFacts): string {
     }
     return ownBalance
       ? `${from}${ownBalance}, and ${f.accountName}'s chain closes across this day.`
-      : `${from}. That file carries no balances of its own, but ${f.accountName}'s chain closes across this day.`;
+      : `${from}. That file ${noneOfItsOwn}, but ${f.accountName}'s chain closes across this day.`;
   }
   if (f.grade === "broken" && f.brokenSince !== null) {
-    return `${from}${ownBalance ?? ", which carries no balances of its own"} — but ${f.accountName}'s balance stopped adding up on ${readableDay(f.brokenSince)}, so nothing checks the total it sits in.`;
+    return `${from}${ownBalance ?? `, which ${noneOfItsOwn}`} — but ${f.accountName}'s balance stopped adding up on ${readableDay(f.brokenSince)}, so nothing checks the total it sits in.`;
   }
   /*
    * 🔴 A day only his typed balance anchors was "checked" — "…was recorded by
@@ -799,7 +857,7 @@ function rowHeadline(f: RowHeadlineFacts): string {
    * count. It is his word, and the sentence says so (see `closedChainDays`).
    */
   if (f.anchorOfDay?.anchor.source === "manual") {
-    return `${from}${ownBalance ?? ", which carries no balances of its own"} — ${f.accountName}'s balance on this day was counted by you, and nothing else confirms it, so nothing checks the total it sits in.`;
+    return `${from}${ownBalance ?? `, which ${noneOfItsOwn}`} — ${f.accountName}'s balance on this day was counted by you, and nothing else confirms it, so nothing checks the total it sits in.`;
   }
   if (f.periodBalance) {
     return `${from}, which records a value for ${f.accountName} rather than proving the rows add up.`;
@@ -813,7 +871,7 @@ function rowHeadline(f: RowHeadlineFacts): string {
   if (ownBalance && f.grade !== "market_value") {
     return `${from}${ownBalance} — but ${f.accountName}'s chain does not close across this day, so nothing checks the total it sits in.`;
   }
-  return `${from} — which carries no balances, so nothing checks the total it sits in.`;
+  return `${from} — which ${f.download ? keptNoBalanceOn(f.accountName) : "carries no balances"}, so nothing checks the total it sits in.`;
 }
 
 /** The balance a day rests on, and how a reader should hear its source named. */
@@ -899,6 +957,7 @@ function periodsCovering(db: AppDatabase, accountId: string, day: string) {
       reconciliation: statementPeriods.reconciliation,
       parserProfile: importFiles.parserProfile,
       recordedOn: fileRecordedBalanceOnSql(db, statementPeriods),
+      firstOnAccount: firstOnAccountSql(db, statementPeriods),
     })
     .from(statementPeriods)
     // a left join, as `statementsByAccount`'s: a period is never dropped for want of its file row
@@ -914,7 +973,7 @@ function periodsCovering(db: AppDatabase, accountId: string, day: string) {
     .all();
 }
 
-function periodSource(p: BalanceLessFacts & { periodStart: string; periodEnd: string }): ProvenanceSource {
+function periodSource(p: PeriodLineFacts & { periodStart: string; periodEnd: string }): ProvenanceSource {
   return {
     kind: "period",
     label: `${p.periodStart} → ${p.periodEnd}`,
@@ -1213,9 +1272,9 @@ function statementPeriodProvenance(db: AppDatabase, id: string): Provenance | nu
         ? "market_value"
         : "unverified";
 
-  // ⛔ an opening statement, or a download that recorded the account's balance, is no file without balances — the period
-  // line's rule (`periodDetail`); latent here, as /imports opens this sheet only for a period that printed balances
-  // (`statementEvidence`)
+  // ⛔ an opening statement, or a download — one that recorded the account's balance or one the ledger keeps none of —
+  // is no file without balances: the period line's rule (`periodDetail`); latent here, as /imports opens this sheet
+  // only for a period that printed balances (`statementEvidence`)
   const recordedOn = fileRecordedBalanceOn(db, period.importFileId, period.accountId);
   const kind = balanceLessKind({
     reconciliation: period.reconciliation,
@@ -1229,10 +1288,13 @@ function statementPeriodProvenance(db: AppDatabase, id: string): Provenance | nu
       : period.reconciliation === "value_anchor"
         ? `This is an investment statement: it records what ${name} was worth, and any difference is absorbed as market movement. There is no arithmetic here that could fail.`
         : kind === "opening_statement"
-          ? `This is ${name}'s first statement — ${OPENING_STATEMENT_WHY}.`
+          ? // "first" by the period line's rule (`firstOnAccount`)
+            `This is ${firstOnAccount(db, period) ? `${name}'s first statement` : `a statement of ${name}'s`} — ${OPENING_STATEMENT_WHY}.`
           : kind === "balance_recorded" && recordedOn !== null
             ? `This file declares which days it covers and recorded ${name}'s balance on ${readableDay(recordedOn)} — ${NO_OPENING_TO_RECONCILE}.`
-            : `This file declares which days it covers but carries no balances, so nothing in it can be checked against a total.`;
+            : kind === "download_no_balance"
+              ? `This download declares which days it covers but ${keptNoBalanceOn(name)} ${DOWNLOAD_NO_OPENING}.`
+              : `This file declares which days it covers but carries no balances, so nothing in it can be checked against a total.`;
 
   const sources: ProvenanceSource[] = [];
   if (file) {

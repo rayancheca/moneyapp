@@ -1,7 +1,9 @@
-import { asc, eq } from "drizzle-orm";
+import { and, asc, eq, exists, lt, not, sql, type SQL, type SQLWrapper } from "drizzle-orm";
+import { alias } from "drizzle-orm/sqlite-core";
 import type { AppDatabase } from "@/db/client";
 import { importFiles, statementPeriods, type ReconciliationState } from "@/db/schema/imports";
 import type { StatementPeriodRef } from "@/lib/statement-holes";
+import { ofxProfile } from "./import/profiles/ofx-profile";
 
 /** What `countsAsStatement` reads of a period: its state, and the parser that read its file (null: none recorded). */
 export interface PeriodKind {
@@ -99,8 +101,9 @@ export interface BalanceLessFacts extends PeriodKind {
 
 /**
  * What a period that printed no balances IS: an account's opening statement (`isOpeningStatement`), a file that
- * recorded the account's balance but no opening one — an OFX download's LEDGERBAL — or one that recorded none, a
- * Spending Report or a balance-less export. Null for a period that printed balances.
+ * recorded the account's balance but no opening one — an OFX download's LEDGERBAL — an OFX download the ledger keeps
+ * no balance of on the account (`isOfxDownload`), or a file that recorded none, a Spending Report or a balance-less
+ * export. Null for a period that printed balances.
  *
  * ⛔ Every reader that names one asks this — the period line on a row's and a day's sheet, the period's own sheet
  * (provenance.ts) and /imports' footer (`statementEvidence`) — so no page calls a file that recorded a balance one that
@@ -110,13 +113,64 @@ export interface BalanceLessFacts extends PeriodKind {
  * review of it, on a copy of data/e2e.db (2026-10-12), found 18 of the fixture's 27 OFX downloads reading "this file
  * carries no balances to check against" under the balance that same file recorded. ⚠️ The opening statement is asked
  * first: Agentic's June PDF recorded its close too, and it is still the account's first statement.
+ *
+ * 🔴 …and 74f25fb told the other nine from a report in the footer alone, by reading the parser beside this rule: "9
+ * imported downloads left the ledger no balance of their own" over sheets that read this kind and still said of the
+ * same files "this file carries no balances" (a copy of data/e2e.db, 2026-10-14; each printed a LEDGERBAL its
+ * quarter's CSV re-recorded). `download_no_balance` is that reading, here, for every reader.
  */
-export type BalanceLessKind = "opening_statement" | "balance_recorded" | "no_balance";
+export type BalanceLessKind = "opening_statement" | "balance_recorded" | "download_no_balance" | "no_balance";
 
 export function balanceLessKind(period: BalanceLessFacts): BalanceLessKind | null {
   if (carriesBalances(period.reconciliation)) return null;
   if (isOpeningStatement(period)) return "opening_statement";
-  return period.recordedOn === null ? "no_balance" : "balance_recorded";
+  if (period.recordedOn !== null) return "balance_recorded";
+  return isOfxDownload(period.parserProfile) ? "download_no_balance" : "no_balance";
+}
+
+/**
+ * Whether an OFX parser read the file (`ofxProfile`) — a bank's download, which can print the account's balance
+ * (LEDGERBAL). One that owns no balance on an account (`fileRecordedBalanceOn`) is named by what the ledger keeps of it
+ * — "left the ledger no balance of its own" — never as a file that carries none, which it may well have printed: the
+ * ledger keeps one `ofx_ledger` balance per account and day, the last writer's (⚖️ anchor ownership as shipped), and
+ * cannot tell a re-recorded LEDGERBAL from none printed. A row's headline asks it too (provenance.ts `rowHeadline`).
+ */
+export function isOfxDownload(parserProfile: string | null): boolean {
+  return parserProfile === ofxProfile.id;
+}
+
+/**
+ * Whether no period of the account starts before this one — what lets a page call an opening statement "the
+ * account's first". ONE rule for /imports' footer (`statementEvidence`), the period line on a row's and a day's sheet
+ * and the period's own sheet (provenance.ts).
+ *
+ * 🔴 Every reader said it of every opening statement, and nothing checked it: the parser knows only that the section
+ * printed `N/A` for its opening, which Robinhood prints on an account's first statement — measured twice (Robinhood
+ * Cash, Dec 2023; Robinhood Agentic, Jun 2026: no period of either account starts before them, his ledger copy
+ * 2026-10-13), never promised. A later `N/A` is a statement still (`countsAsStatement`), and is called one.
+ *
+ * ⚠️ ANY period, not only statements: an earlier report on the account makes this false of its first statement too.
+ * The cost is a page saying "a statement" where "its first" was true — never "its first" where it is not.
+ */
+export function firstOnAccount(db: AppDatabase, period: { accountId: string; periodStart: string }): boolean {
+  return earlierPeriod(db, period).limit(1).get() === undefined;
+}
+
+/** `firstOnAccount` as a column of a query over `statement_periods`, correlated on the row's own account and start. */
+export function firstOnAccountSql(
+  db: AppDatabase,
+  row: { accountId: SQLWrapper; periodStart: SQLWrapper },
+): SQL<boolean> {
+  return sql<boolean>`${not(exists(earlierPeriod(db, row)))}`.mapWith(Boolean);
+}
+
+function earlierPeriod(db: AppDatabase, row: { accountId: SQLWrapper | string; periodStart: SQLWrapper | string }) {
+  // aliased, so the row's own `statement_periods` is never the one this asks about by accident
+  const earlier = alias(statementPeriods, "earlier_period");
+  return db
+    .select({ one: sql`1` })
+    .from(earlier)
+    .where(and(eq(earlier.accountId, row.accountId), lt(earlier.periodStart, row.periodStart)));
 }
 
 /** Every account's statements (`countsAsStatement`), oldest first — the rows both statement panels read. */

@@ -100,6 +100,23 @@ export function statementHoles(
 }
 
 /**
+ * An account's holes summed as Missing statements prints them: its statements — null where no hole
+ * could be counted, since "0 statements" beside a 60-day hole contradicts itself on one line — and
+ * its days. ONE rule for the row's figures (`statementGaps`) and the tests that read the panel's
+ * header off them.
+ */
+export function holeTotals(holes: readonly StatementHole[]): {
+  missingCloses: number | null;
+  missingDays: number;
+} {
+  const counted = holes.map((h) => h.closes).filter((c): c is number => c !== null);
+  return {
+    missingCloses: counted.length === 0 ? null : counted.reduce((a, b) => a + b, 0),
+    missingDays: holes.reduce((sum, h) => sum + h.days, 0),
+  };
+}
+
+/**
  * Half a monthly cycle. A step of a hole's walk is a close of its own only when it lands MORE than this
  * before `to` (`closesWithin`): a walk that sits off the real closes puts one step about a month before `to`
  * and the next about on it, and half a cycle each way is as far off as it may sit and still tell the two

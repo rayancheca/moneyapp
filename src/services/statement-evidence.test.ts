@@ -76,9 +76,10 @@ afterEach(() => {
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
-/** His ledger's shape, 2026-10-12: one Robinhood PDF that opened Agentic — recording its Jun 30 close — beside two
- *  sections with balances, a Spending Report, a balance-less export, and an OFX download whose two accounts both
- *  printed none. */
+/** His ledger's kinds, 2026-10-12 — one Robinhood PDF that opened Agentic, recording its Jun 30 close, beside two
+ *  sections with balances; a Spending Report; a balance-less export — and one kind his ledger does not have (it holds
+ *  no OFX or QFX file, measured on a copy 2026-10-13): an OFX download whose two accounts both printed none, the e2e
+ *  fixture's kind. */
 function hisShape() {
   const agentic = makeAccount("Robinhood Agentic");
   const cash = makeAccount("Robinhood Cash");
@@ -138,11 +139,15 @@ describe("statementEvidence — what /imports' \"What the statements proved\" li
     hisShape();
     const { periods, evidence, balanceLess } = statementEvidence(bundle.db);
     expect(balanceLess).toEqual({
-      // the Spending Report, the Rocket Money export and the OFX download — ONE document, though it printed two accounts
-      reportDocuments: 3,
+      // the Spending Report and the Rocket Money export
+      reportDocuments: 2,
+      // the OFX download — ONE document, though it printed two accounts
+      downloadDocuments: 1,
       recordedBalanceDocuments: 0,
       // Agentic's June section, though the PDF it came out of printed balances for two other accounts and its own close
       openingStatements: 1,
+      // …and no period of Agentic's starts before it
+      firstStatements: 1,
     });
     // ⚠️ documents, not periods: five periods are left out of the list, the OFX's two among them
     expect(periods.length - evidence.length).toBe(5);
@@ -153,9 +158,30 @@ describe("statementEvidence — what /imports' \"What the statements proved\" li
     addPeriod(newFile("a.pdf", "chase-checking-statement-pdf"), account, "2026-08-01", "2026-08-31", "reconciled");
     expect(statementEvidence(bundle.db).balanceLess).toEqual({
       reportDocuments: 0,
+      downloadDocuments: 0,
       recordedBalanceDocuments: 0,
       openingStatements: 0,
+      firstStatements: 0,
     });
+  });
+
+  /*
+   * 🔴 The footer said every opening statement was "an account's first", and nothing checked it: the parser knows only
+   * that its section printed `N/A` for its opening. Both of his are (Robinhood Cash's Dec 2023, Agentic's Jun 2026 —
+   * no period of either account starts before them, measured on a copy of his ledger 2026-10-13); a Robinhood
+   * statement that printed `N/A` later in an account's life is still a statement, and the footer calls it one.
+   */
+  test("an opening statement is counted its account's first only when no period of the account starts before it", () => {
+    const cash = makeAccount("Robinhood Cash");
+    const agentic = makeAccount("Robinhood Agentic");
+    const rh = (name: string) => newFile(name, "robinhood-brokerage-statement-pdf");
+    addPeriod(rh("rh-2023-12.pdf"), cash, "2023-12-01", "2023-12-31", "not_applicable");
+    addPeriod(rh("rh-2024-01.pdf"), cash, "2024-01-01", "2024-01-31", "reconciled");
+    // Agentic's July printed balances; its August printed `N/A` for its opening
+    addPeriod(rh("rh-2026-07.pdf"), agentic, "2026-07-01", "2026-07-31", "reconciled");
+    addPeriod(rh("rh-2026-08.pdf"), agentic, "2026-08-01", "2026-08-31", "not_applicable");
+
+    expect(statementEvidence(bundle.db).balanceLess).toMatchObject({ openingStatements: 2, firstStatements: 1 });
   });
 });
 
@@ -175,8 +201,32 @@ describe("statementEvidence — a download that recorded a balance but no openin
 
     expect(statementEvidence(bundle.db).balanceLess).toEqual({
       reportDocuments: 0,
+      downloadDocuments: 0,
       recordedBalanceDocuments: 1,
       openingStatements: 0,
+      firstStatements: 0,
+    });
+  });
+
+  /*
+   * 🔴 …and a download whose LEDGERBAL another file re-recorded was "a spending report, an export without a closing
+   * figure": the ledger keeps one `ofx_ledger` balance per account and day, the last writer's (⚖️ anchor ownership as
+   * shipped). Measured on a copy of data/e2e.db 2026-10-13: 9 of its 27 QFX downloads, each a Chase Savings quarter's,
+   * its last day re-recorded by the same quarter's CSV. It is a download, and counted as one.
+   */
+  test("🔴 a download whose balance another file re-recorded is a download, never a report", () => {
+    const savings = makeAccount("Chase Savings");
+    const qfx = newFile("Chase8721_Activity_2024-07-01_2024-09-30.QFX", "ofx-generic");
+    addPeriod(qfx, savings, "2024-07-01", "2024-09-30", "not_applicable");
+    const csv = newFile("Chase8721_Activity_2024-07-01_2024-09-30.CSV", "chase-deposit-csv");
+    addAnchor(csv, savings, "2024-09-30", "ofx_ledger");
+
+    expect(statementEvidence(bundle.db).balanceLess).toEqual({
+      reportDocuments: 0,
+      downloadDocuments: 1,
+      recordedBalanceDocuments: 0,
+      openingStatements: 0,
+      firstStatements: 0,
     });
   });
 
@@ -193,9 +243,13 @@ describe("statementEvidence — a download that recorded a balance but no openin
     addAnchor(csv, savings, "2024-06-30", KEPT_OPENING_SOURCE);
 
     expect(statementEvidence(bundle.db).balanceLess).toEqual({
-      reportDocuments: 2,
+      // the CSV: no balance of its own, and no OFX parser read it
+      reportDocuments: 1,
+      // the QFX: none of its own on the account it declares
+      downloadDocuments: 1,
       recordedBalanceDocuments: 0,
       openingStatements: 0,
+      firstStatements: 0,
     });
   });
 
@@ -208,9 +262,11 @@ describe("statementEvidence — a download that recorded a balance but no openin
     addAnchor(download, checking, "2024-09-30", "ofx_ledger");
 
     expect(statementEvidence(bundle.db).balanceLess).toEqual({
-      reportDocuments: 1,
+      reportDocuments: 0,
+      downloadDocuments: 1,
       recordedBalanceDocuments: 1,
       openingStatements: 0,
+      firstStatements: 0,
     });
   });
 });

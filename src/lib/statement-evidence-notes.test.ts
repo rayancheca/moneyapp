@@ -1,29 +1,63 @@
 import { describe, expect, test } from "vitest";
-import { balanceLessNotes } from "./statement-evidence-notes";
+import { balanceLessNotes, type BalanceLessCounts } from "./statement-evidence-notes";
 
 /**
  * The footer under /imports' "What the statements proved": what each period it leaves out IS. The counts come from
  * `statementEvidence` (services/statement-evidence.test.ts), split by `balanceLessKind` — the statement schedule's own
- * rule for an opening statement, and the ledger's balances for a file that recorded one.
+ * rule for an opening statement, and the ledger's balances for a file that recorded one — and by what read the file.
  */
+const NONE: BalanceLessCounts = {
+  reportDocuments: 0,
+  downloadDocuments: 0,
+  recordedBalanceDocuments: 0,
+  openingStatements: 0,
+  firstStatements: 0,
+};
+
 describe("balanceLessNotes", () => {
-  test("his ledger, 2026-10-12: three documents that are no statement, two opening statements the schedule counts", () => {
-    expect(balanceLessNotes({ reportDocuments: 3, recordedBalanceDocuments: 0, openingStatements: 2 })).toEqual([
+  test("his ledger, 2026-10-13: three documents no statement at all, two statements each its account's first", () => {
+    expect(balanceLessNotes({ ...NONE, reportDocuments: 3, openingStatements: 2, firstStatements: 2 })).toEqual([
       "3 imported documents carried no balance to check — a spending report, an export without a closing figure — and " +
         "are neither a period above nor in the counts.",
-      "2 statements were each an account's first and printed no opening balance — the statement schedule counts them, " +
-        "but nothing in them could have failed, so they are neither a period above nor in the counts.",
+      "2 statements were each an account's first and printed no opening balance, so nothing in them could have " +
+        "failed — they are neither a period above nor in the counts.",
     ]);
   });
 
   test("🔴 an opening statement is never called a spending report or an export", () => {
-    const [only, ...rest] = balanceLessNotes({ reportDocuments: 0, recordedBalanceDocuments: 0, openingStatements: 1 });
+    const [only, ...rest] = balanceLessNotes({ ...NONE, openingStatements: 1, firstStatements: 1 });
     expect(rest).toEqual([]);
     expect(only).toBe(
-      "1 statement was an account's first and printed no opening balance — the statement schedule counts it, but " +
-        "nothing in it could have failed, so it is neither a period above nor in the counts.",
+      "1 statement was an account's first and printed no opening balance, so nothing in it could have failed — it " +
+        "is neither a period above nor in the counts.",
     );
     expect(only).not.toMatch(/spending report|export|document/);
+  });
+
+  /**
+   * 🔴 The note said "the statement schedule counts them", and nothing checked it: measured on a copy of his ledger,
+   * 2026-10-13, Robinhood Cash's schedule row reads its last 12 closes (Sep 2025 → Aug 2026), and its opening
+   * statement — Dec 2023 — is not among them. Nor did anything check "an account's first": the parser knows only that
+   * the statement printed `N/A` for its opening. It says "first" now only of statements no earlier period of their
+   * account precedes (`firstOnAccount`), and names the schedule not at all.
+   */
+  test("🔴 \"an account's first\" only of statements that are, and the schedule never", () => {
+    for (const counts of [
+      { ...NONE, openingStatements: 2, firstStatements: 2 },
+      { ...NONE, openingStatements: 1, firstStatements: 1 },
+    ]) {
+      expect(balanceLessNotes(counts).join(" ")).not.toMatch(/schedule/);
+    }
+    expect(balanceLessNotes({ ...NONE, openingStatements: 2, firstStatements: 1 })).toEqual([
+      "2 statements printed no opening balance, so nothing in them could have failed — they are neither a period " +
+        "above nor in the counts.",
+    ]);
+    const [one] = balanceLessNotes({ ...NONE, openingStatements: 1, firstStatements: 0 });
+    expect(one).toBe(
+      "1 statement printed no opening balance, so nothing in it could have failed — it is neither a period above nor " +
+        "in the counts.",
+    );
+    expect(one).not.toMatch(/first|schedule/);
   });
 
   /**
@@ -33,13 +67,11 @@ describe("balanceLessNotes", () => {
    * why it still proves nothing here: no opening one, so its days reconcile nothing.
    */
   test("🔴 a document that recorded a balance is never called an export without a closing figure", () => {
-    expect(balanceLessNotes({ reportDocuments: 9, recordedBalanceDocuments: 18, openingStatements: 0 })).toEqual([
-      "9 imported documents carried no balance to check — a spending report, an export without a closing figure — and " +
-        "are neither a period above nor in the counts.",
+    expect(balanceLessNotes({ ...NONE, recordedBalanceDocuments: 18 })).toEqual([
       "18 imported documents recorded a balance but no opening one, so the days they declare reconcile nothing — they " +
         "are neither a period above nor in the counts.",
     ]);
-    const [only] = balanceLessNotes({ reportDocuments: 0, recordedBalanceDocuments: 1, openingStatements: 0 });
+    const [only] = balanceLessNotes({ ...NONE, recordedBalanceDocuments: 1 });
     expect(only).toBe(
       "1 imported document recorded a balance but no opening one, so the days it declares reconcile nothing — it is " +
         "neither a period above nor in the counts.",
@@ -47,14 +79,37 @@ describe("balanceLessNotes", () => {
     expect(only).not.toMatch(/carried no balance|without a closing figure|spending report/);
   });
 
+  /**
+   * 🔴 …and the other nine still read "carried no balance to check — a spending report, an export without a closing
+   * figure". Each printed a LEDGERBAL on its last day (Chase Savings' quarterly QFX, Sep 30, 2024 on), and its
+   * quarter's CSV re-recorded that day — the ledger keeps one `ofx_ledger` balance per account and day, the last
+   * writer's, so the download owns none (⚖️ anchor ownership as shipped, handoff 2026-10-13 §6A). Measured on a copy of
+   * data/e2e.db 2026-10-13. A download is named as one, by what the ledger keeps of it — never as a report, and never
+   * as a file that carried no balance, which it may well have printed.
+   */
+  test("🔴 a download the ledger keeps no balance of is never called a report, nor one that carried none", () => {
+    expect(balanceLessNotes({ ...NONE, downloadDocuments: 9, recordedBalanceDocuments: 18 })).toEqual([
+      "9 imported downloads left the ledger no balance of their own and printed no opening one, so the days they " +
+        "declare reconcile nothing — they are neither a period above nor in the counts.",
+      "18 imported documents recorded a balance but no opening one, so the days they declare reconcile nothing — they " +
+        "are neither a period above nor in the counts.",
+    ]);
+    const [only] = balanceLessNotes({ ...NONE, downloadDocuments: 1 });
+    expect(only).toBe(
+      "1 imported download left the ledger no balance of its own and printed no opening one, so the days it declares " +
+        "reconcile nothing — it is neither a period above nor in the counts.",
+    );
+    expect(only).not.toMatch(/carried no balance|without a closing figure|spending report|export/);
+  });
+
   test("one document, singular", () => {
-    expect(balanceLessNotes({ reportDocuments: 1, recordedBalanceDocuments: 0, openingStatements: 0 })).toEqual([
+    expect(balanceLessNotes({ ...NONE, reportDocuments: 1 })).toEqual([
       "1 imported document carried no balance to check — a spending report, an export without a closing figure — and " +
         "is neither a period above nor in the counts.",
     ]);
   });
 
   test("nothing left out, nothing said", () => {
-    expect(balanceLessNotes({ reportDocuments: 0, recordedBalanceDocuments: 0, openingStatements: 0 })).toEqual([]);
+    expect(balanceLessNotes(NONE)).toEqual([]);
   });
 });

@@ -42,7 +42,8 @@ export type ManualAnchorInput = z.infer<typeof manualAnchorInputSchema>;
 export interface CountRefusal {
   /**
    * Which rule refuses: a brokerage book, whose statements write the balances it is valued by, or an account priced
-   * from its holdings, whose curve never reads a balance at all — so an empty list there waits on none.
+   * from its holdings, whose curve never reads a balance at all — though its list still holds its statements' values
+   * and its live readings, so an empty list there waits on its next one too (`balanceListWords`).
    */
   kind: "book" | "pricedFromHoldings";
   /** what the account is — the account page says it where "Add a balance you counted" would be */
