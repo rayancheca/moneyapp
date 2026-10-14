@@ -5,7 +5,7 @@ import { recurringSeries } from "@/db/schema/recurring";
 import { transactions } from "@/db/schema/transactions";
 import { compareDates, todayIso } from "@/lib/dates";
 import { cashEarnings, type CashEarnings, type PaySeries } from "@/lib/cash-earnings";
-import { payShortfall, type PayShortfall } from "@/lib/pay-shortfall";
+import { payShortfall, type PayShortfall, type WindowEarnings } from "@/lib/pay-shortfall";
 import { firstPaydayOn } from "@/lib/payday-settlement";
 import { stepPlan, walkDayOfMonth } from "@/lib/recurring-step";
 import { outsidePortfolioCashAccountIds } from "./accounts";
@@ -67,12 +67,14 @@ export interface CashEarningsReading extends CashEarnings {
   /** of `periodsSinceBanked`, the ones on or before `checkedThrough` (0 when it is null) */
   checkedPeriodsSinceBanked?: number;
   /**
-   * The window's READ paydays against the series' settlement (`payShortfall`): what deposits inside the window banked
-   * of them, what deposits outside it paid, and what no deposit paid — /spending's shortfall note. Present only with
+   * The window's pay against the series' settlement (`payShortfall`) — /spending's shortfall note and the split of its
+   * surplus note: what the READ paydays came to beyond what was banked inside the window, what deposits outside it
+   * paid of them, what no deposit made up, and the window's money that paid a later payday early. Present only with
    * `withChecked`, since "read" is that frontier's word.
    *
-   * ⛔ The settlement's own paydays and money (`paydaySettlement`), so the note names Aug 27 paid by the deposit of
-   * Sep 24 exactly where the calendar draws it — never a second walk of this reading's schedule.
+   * ⛔ The figures are this reading's own — `payGap` over its implied and banked, read as of the checked day, the
+   * dashboard's subtraction — and who paid what is the settlement's (`paydaySettlement`), so the note names Aug 27 paid
+   * by the deposit of Sep 24 exactly where the calendar draws it — never a second walk of this reading's schedule.
    */
   shortfall?: PayShortfall;
 }
@@ -455,8 +457,15 @@ export function cashEarningsReadings(
       continue;
     }
     const checkedThrough = checkedOf(s.id);
-    const shortfall = payShortfall(paydaySettlement(db, s.id, today), { from, to, today, checkedThrough });
+    // ⛔ the window's figures are this reading's — Earned vs banked's — and only who paid what is the settlement's
+    const shortfallOf = (read: WindowEarnings["read"]): PayShortfall =>
+      payShortfall(
+        paydaySettlement(db, s.id, today),
+        { from, to, today, checkedThrough },
+        { impliedCents: reading.impliedCents, bankedCents: reading.bankedCents, read },
+      );
     if (checkedThrough === null) {
+      const shortfall = shortfallOf({ paydays: 0, cents: 0, firstOn: null, lastOn: null });
       readings.push({ ...reading, checkedThrough, checkedPeriodsCovered: 0, checkedPeriodsSinceBanked: 0, shortfall });
       continue;
     }
@@ -472,6 +481,12 @@ export function cashEarningsReadings(
       to: compareDates(to, checkedThrough) < 0 ? to : checkedThrough,
       today: checkedThrough,
       todayIsComplete: compareDates(checkedThrough, today) < 0,
+    });
+    const shortfall = shortfallOf({
+      paydays: asChecked.periodsCovered,
+      cents: asChecked.impliedCents,
+      firstOn: asChecked.firstPeriodOn,
+      lastOn: asChecked.lastPeriodOn,
     });
     readings.push({
       ...reading,

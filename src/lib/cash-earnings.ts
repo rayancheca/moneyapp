@@ -347,3 +347,36 @@ export function cashEarnings({
     periodsSinceBanked,
   };
 }
+
+/** Earned vs banked's difference, and the part of it the ledger has looked for. */
+export interface PayGap {
+  /** implied − banked. POSITIVE means pay that did not reach a bank inside the window; negative, a surplus */
+  gapCents: number;
+  /**
+   * Of a POSITIVE gap, the part that is pay for paydays after the day every account it lands in is checked through —
+   * money the ledger has not looked for. Zero when the gap is not positive.
+   */
+  unreadGapCents: number;
+  /** …and the rest of it, pay for READ paydays that no deposit inside the window banked. Zero unless positive. */
+  readGapCents: number;
+}
+
+/**
+ * ⛔ THE ONE SUBTRACTION behind "never reached a bank" — the dashboard's Earned vs banked (`income-card`) and
+ * /spending's shortfall note (`payShortfall`) both read it here, so the two cannot drift.
+ *
+ * ⚖️ Decision 55 (approved with its measured figures): the dashboard's "$11,117.00 of it never reached a bank" is what
+ * the paydays imply less EVERY attributed deposit inside the window — net, so money banked inside it that paid no
+ * payday (his Fri Jun 5 $400.00, §6A 55b) reduces it. 🔴 /spending ALL and YTD said "$11,517.00 never reached a bank"
+ * of the same nineteen paydays (review of a4b0fca, his ledger copy 2026-10-13): a second definition, built from the
+ * settlement's unpaid weeks, $400.00 from the one he approved.
+ *
+ * `unreadImpliedCents` is what the schedule implies past the checked day — every payday when nothing is checked —
+ * and the unread part is capped at the gap: a deposit can bank an unread payday, never the other way round.
+ */
+export function payGap(impliedCents: number, bankedCents: number, unreadImpliedCents: number): PayGap {
+  const gapCents = impliedCents - bankedCents;
+  if (gapCents <= 0) return { gapCents, unreadGapCents: 0, readGapCents: 0 };
+  const unreadGapCents = Math.min(gapCents, Math.max(0, unreadImpliedCents));
+  return { gapCents, unreadGapCents, readGapCents: gapCents - unreadGapCents };
+}

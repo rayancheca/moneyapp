@@ -1,6 +1,7 @@
 import { describe, expect, test } from "vitest";
 import {
   cashEarnings,
+  payGap,
   STALE_PERIODS,
   type CashEarningsInput,
   type PaySeries,
@@ -448,5 +449,38 @@ describe("cashEarnings — the invariant", () => {
     const r = read({ from: "2026-06-30", to: "2026-06-01" });
     expect(r.periodsCovered).toBe(0);
     expect(r.bankedCents).toBe(0);
+  });
+});
+
+/**
+ * Earned vs banked's one subtraction — the dashboard's card and /spending's shortfall note both read it, so the two
+ * cannot say two figures of one window. ⚖️ Decision 55: his ledger copy 2026-10-13, nineteen paydays implying
+ * $20,557.44, $7,156.60 banked (the Jun 5 $400.00 that paid no payday among it), $2,283.84 of it past the checked day.
+ */
+describe("payGap", () => {
+  test("his ledger: $11,117.00 of it never reached a bank, the other $2,283.84 not looked for", () => {
+    expect(payGap(2_055_744, 715_660, 228_384)).toEqual({
+      gapCents: 1_340_084,
+      unreadGapCents: 228_384,
+      readGapCents: 1_111_700,
+    });
+  });
+
+  test("money banked that paid no payday nets it — the figure is money, not weeks", () => {
+    // four $1,047.00 weeks, $1,047.00 + $400.00 banked: $2,741.00, where the settlement's unpaid weeks are $3,141.00
+    expect(payGap(418_800, 144_700, 0).readGapCents).toBe(274_100);
+  });
+
+  test("the unread part is capped at the gap: a deposit can bank an unread payday", () => {
+    expect(payGap(300_000, 250_000, 100_000)).toEqual({ gapCents: 50_000, unreadGapCents: 50_000, readGapCents: 0 });
+  });
+
+  test("no gap, or a surplus, has no unread and no read part", () => {
+    expect(payGap(200_000, 200_000, 100_000)).toEqual({ gapCents: 0, unreadGapCents: 0, readGapCents: 0 });
+    expect(payGap(200_000, 220_000, 100_000)).toEqual({ gapCents: -20_000, unreadGapCents: 0, readGapCents: 0 });
+  });
+
+  test("a negative unread figure is none", () => {
+    expect(payGap(200_000, 100_000, -5_000)).toEqual({ gapCents: 100_000, unreadGapCents: 0, readGapCents: 100_000 });
   });
 });
