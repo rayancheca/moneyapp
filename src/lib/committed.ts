@@ -130,6 +130,12 @@ export interface CommittedLine {
   /** the day the series stops, or null */
   endsOn: string | null;
   /**
+   * The day of its LAST payment inside the horizon, or null when it has none there (arrears only). Of a ONE-CHARGE line
+   * (§6A 56) the day of that charge, which `endsOn` need not be: a schedule is one charge with its end anywhere before
+   * the step after it (`isOneCharge`) — and the car card says "charges once on <day>" of it (`heaviestMonthEnding`).
+   */
+  lastPaymentOn: string | null;
+  /**
    * The series stops BEFORE the horizon closes, so it is billed across only
    * part of the window the rate is divided over.
    *
@@ -240,6 +246,7 @@ interface Accumulator {
   neverPosted: boolean;
   cadence: Cadence;
   endsOn: string | null;
+  lastPaymentOn: string | null;
   oneCharge: boolean;
 }
 
@@ -303,6 +310,7 @@ export function committedOutflows(input: CommittedInput): CommittedOutflows {
       neverPosted: o.lastMatchedOn === null,
       cadence: o.cadence,
       endsOn: o.endsOn,
+      lastPaymentOn: null,
       oneCharge: o.oneCharge ?? false,
     };
     bySeries.set(o.seriesId, {
@@ -310,6 +318,10 @@ export function committedOutflows(input: CommittedInput): CommittedOutflows {
       // ⛔ arrears fall OUTSIDE the horizon, so they raise neither the count
       // nor the total the per-month figure is divided from
       occurrences: acc.occurrences + (isArrears ? 0 : 1),
+      lastPaymentOn:
+        isArrears || (acc.lastPaymentOn !== null && compareDates(acc.lastPaymentOn, o.date) >= 0)
+          ? acc.lastPaymentOn
+          : o.date,
       totalCents: acc.totalCents + (isArrears ? 0 : magnitude),
       overdueCents: acc.overdueCents + (isArrears ? magnitude : 0),
     });
@@ -347,6 +359,7 @@ export function committedOutflows(input: CommittedInput): CommittedOutflows {
         neverPosted: a.neverPosted,
         cadence: a.cadence,
         endsOn: a.endsOn,
+        lastPaymentOn: a.lastPaymentOn,
         endsInHorizon,
         oneCharge: a.oneCharge,
         perOccurrenceCents,
@@ -516,9 +529,12 @@ export function endingShortfallFor(others: number): string {
 /** The commitment a book names as ending, and how many others end beside it. */
 export interface EndingLead {
   lead: CommittedLine;
-  /** the lead's end day — never null, because only an ending line can lead */
+  /**
+   * the lead's end day — never null, because only an ending line can lead. Of a one-charge lead (`heaviestMonthEnding`
+   * alone names one) the day it charges.
+   */
   endsOn: string;
-  /** the other lines that also stop inside the horizon, counted, not named */
+  /** the other COMMITMENTS that also stop inside the horizon, counted, not named — a one charge is none (§6A 56) */
   others: number;
 }
 
@@ -608,6 +624,8 @@ function monthContributionCents(bucket: MonthBucket): number {
  * to its last payment (one payment, ending on it), which DOES bill that month,
  * so there is nothing in a book to drop it by. Disclosed rather than guessed
  * around; its test pins the two books to one answer.
+ * ⚖️ A book carries it now (`oneCharge`, §6A 56), and the decision leaves this figure as it was: the sentence under it
+ * says the charge instead (`heaviestMonthEnding`, `carEvidenceCaption`).
  *
  * The LAST month that reaches the most is the one kept, because the sentence
  * that dates this figure asks when it stops being what he pays — see
@@ -666,21 +684,31 @@ export function heaviestMonth(occurrences: readonly CommittedOccurrence[]): Heav
  * ⚖️ …and a ONE-CHARGE line (§6A 56) is no commitment that stops: a charge due once is over on its day, as the runway's
  * count (`endingLead`) has read it since ebf628b — it lowers no rate. Left out of `others` too (§6A 56 read on
  * 2026-10-14, no new question). 🔴 On a copy of his ledger 2026-10-13 the car card said "…, and one other does too" of
- * the Nov 11 balance beside the runway's same sentence of Car insurance alone. It still LEADS when it is billed in the
- * heaviest month: the decision leaves the figures as they were, so that month's figure holds it and stops with it.
+ * the Nov 11 balance beside the runway's same sentence of Car insurance alone.
+ *
+ * ⚖️ …while one billed IN the heaviest month still dates the figure, by the day it CHARGES (`lastPaymentOn`): the
+ * decision leaves the figures as they were, so that month's figure holds it, and is not what he pays after that day.
+ * ⛔ Never as a commitment that stops — `carEvidenceCaption` says it as the one charge it is. 🔴 Review of 89f235d: with
+ * Car insurance ended, or its anchor typed past its end, his car card read "Car insurance — Nov 11 balance … stops
+ * inside the next 12 months — evidenced through Nov 11, 2026, with no renewal in the ledger" over November's $767.78
+ * (copies of his ledger 2026-10-13). ⚠️ AND NOT LEFT OUT OF THE LEAD: dated by the next commitment instead, a book with a
+ * one charge on a premium's Dec 11 dates December's $1,125.36 "after Jan 11, 2027" — a January that bills $1,052.62.
  */
 export function heaviestMonthEnding(
   book: { lines: readonly CommittedLine[] },
   heaviest: HeaviestMonth,
 ): EndingLead | null {
-  const ending = book.lines.filter(
-    (l): l is CommittedLine & { endsOn: string } => l.endsInHorizon && l.endsOn !== null,
-  );
+  // the day each line stops the figure: a commitment's end inside the horizon, a one charge's own day (§6A 56)
+  const stops = book.lines.flatMap((line) => {
+    const day = line.oneCharge ? line.lastPaymentOn : line.endsInHorizon ? line.endsOn : null;
+    return day === null ? [] : [{ line, day }];
+  });
   const billed = new Set(heaviest.seriesIds);
   // stable: lines arrive largest first, so a tie on the day names the larger
-  const lead = ending.filter((l) => billed.has(l.seriesId)).sort((a, b) => compareDates(a.endsOn, b.endsOn))[0];
-  if (lead === undefined) return null;
-  return { lead, endsOn: lead.endsOn, others: ending.filter((l) => l !== lead && !l.oneCharge).length };
+  const first = stops.filter((s) => billed.has(s.line.seriesId)).sort((a, b) => compareDates(a.day, b.day))[0];
+  if (first === undefined) return null;
+  const others = stops.filter((s) => s !== first && !s.line.oneCharge).length;
+  return { lead: first.line, endsOn: first.day, others };
 }
 
 /**

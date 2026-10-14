@@ -13,6 +13,7 @@
  */
 
 import { endingOthersClause, type EndingLead } from "@/lib/committed";
+import { ONE_CHARGE_WORD } from "@/lib/one-charge";
 import { dayWindowLabel } from "@/lib/period";
 
 export interface CarCostInput {
@@ -139,12 +140,32 @@ export function carCost(input: CarCostInput): CarCost {
  * the count is spelled as the runway spells it. Null when nothing billed in the
  * monthly figure stops inside the horizon — an end date past it, or a line that
  * bills outside the heaviest month, does not stop that figure.
+ *
+ * ⚖️ A ONE CHARGE that dates the figure (§6A 56, `heaviestMonthEnding`) is said as the charge it is — "charges once on
+ * Nov 11, 2026", its own page's words — and the commitments that do stop are counted in a sentence of their own, never
+ * as "others" of it. 🔴 With Car insurance ended it read "Car insurance — Nov 11 balance … stops inside the next 12
+ * months — evidenced through Nov 11, 2026, with no renewal in the ledger" beside a runway naming nothing (copies of his
+ * ledger 2026-10-13, review of 89f235d).
  */
 export function carEvidenceCaption(ending: EndingLead | null, months: number): string | null {
   if (ending === null) return null;
+  const day = dayWindowLabel(ending.endsOn, ending.endsOn);
+  if (ending.lead.oneCharge) {
+    return (
+      `${ending.lead.name} charges ${ONE_CHARGE_WORD} on ${day} — the monthly figure above holds that charge, so it ` +
+      `stops being what you pay after that date.${commitmentsStopping(ending.others, months)}`
+    );
+  }
   return (
     `${ending.lead.name} stops inside the next ${months} months — evidenced through ` +
-    `${dayWindowLabel(ending.endsOn, ending.endsOn)}, with no renewal in the ledger${endingOthersClause(ending.others)} — ` +
+    `${day}, with no renewal in the ledger${endingOthersClause(ending.others)} — ` +
     `so the monthly figure above stops being what you pay after that date.`
   );
+}
+
+/** " One commitment stops inside the next 12 months, with no renewal in the ledger." — beside a one charge, none of them */
+function commitmentsStopping(count: number, months: number): string {
+  if (count === 0) return "";
+  const which = count === 1 ? "One commitment stops" : `${count} commitments stop`;
+  return ` ${which} inside the next ${months} months, with no renewal in the ledger.`;
 }

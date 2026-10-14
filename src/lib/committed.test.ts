@@ -1188,6 +1188,20 @@ describe("heaviestMonthEnding", () => {
     expect([ending.lead.name, ending.endsOn, ending.others]).toEqual(["Aug 11 balance", "2027-08-11", 1]);
   });
 
+  /*
+   * …by the day it CHARGES. A schedule is one charge with its end anywhere before the step after it (`isOneCharge`), so
+   * its end can fall after its day, and the car card says "charges once on <day>" of it, as its own page's "charges once
+   * on Nov 11" does — never a day nothing is charged (review of 89f235d: the sentence is worded as the charge).
+   */
+  test("a one charge dates the figure by its own day, not by an end typed after it", () => {
+    const occurrences = [
+      ...occ("Car lease", -69504, LEASE_YEAR.map((m) => `${m}-15`), null, { endsOn: "2028-08-15" }),
+      ...occ("Nov 11 balance", -7274, ["2026-11-11"], null, { endsOn: "2026-11-20", oneCharge: true }),
+    ];
+    const ending = endingOf(occurrences)!;
+    expect([ending.lead.name, ending.endsOn, ending.others]).toEqual(["Nov 11 balance", "2026-11-11", 0]);
+  });
+
   /* the balance stops inside the horizon, but in a month lighter than the
      lease and a premium that runs on — so the figure does not stop with it;
      `endingLead` would have named it */

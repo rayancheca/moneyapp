@@ -1454,6 +1454,29 @@ describe("carCard", () => {
   });
 
   /*
+   * ⚖️ §6A 56 — and when the balance IS in the month the figure is. 🔴 With Car insurance ended, or its anchor typed
+   * past its end (the two states ask (1) of 2026-10-14 builds), the car card read "Car insurance — Nov 11 balance after
+   * the $1,000 early payment stops inside the next 12 months — evidenced through Nov 11, 2026, with no renewal in the
+   * ledger — …" over November's $767.78, beside a runway that names nothing (copies of his ledger 2026-10-13, review of
+   * 89f235d). The figure is the decision's "unchanged", and it holds the charge: the sentence dates it by the charge,
+   * worded as the one charge it is.
+   */
+  test.each([
+    ["ended", { status: "ended" as const }],
+    ["its anchor typed past its end", { userNextExpectedOn: "2027-02-11" }],
+  ])("Car insurance %s: the balance dates November's figure as one charge — no commitment 'stops'", (_, set) => {
+    ownersCar();
+    bundle.db.update(recurringSeries).set(set).where(eq(recurringSeries.name, "Car insurance")).run();
+    expect(shrinkCaption(committedBook(bundle.db, "2026-10-13"))).toBeNull();
+    const c = carCard(bundle.db, "2026-10-13")!;
+    expect([c.cost.monthlyCents, c.cost.evidencedThrough]).toEqual([69504 + 7274, "2026-11-11"]);
+    expect(c.evidenceCaption).toBe(
+      "Car insurance — Nov 11 balance after the $1,000 early payment charges once on Nov 11, 2026 — the monthly " +
+        "figure above holds that charge, so it stops being what you pay after that date.",
+    );
+  });
+
+  /*
    * The drill-down contract: a link opens exactly the rows behind its number. 🔴 The card's "Commitments →" opened a
    * bare `/recurring` — the Upcoming tab, every series' dates, the rent and his pay among them — over figures summed
    * from its three car lines (his ledger copy 2026-10-13; review of the dashboard links). It names its lines, as the

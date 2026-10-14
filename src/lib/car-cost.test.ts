@@ -159,8 +159,24 @@ describe("carEvidenceCaption", () => {
       ),
       12,
     );
-  const line = (name: string, cents: number, dates: string[], endsOn: string | null): CommittedOccurrence[] =>
-    dates.map((date) => ({ seriesId: name, name, date, amountCents: cents, lastMatchedOn: null, isStale: true, cadence: "monthly", endsOn }));
+  const line = (
+    name: string,
+    cents: number,
+    dates: string[],
+    endsOn: string | null,
+    oneCharge?: boolean,
+  ): CommittedOccurrence[] =>
+    dates.map((date) => ({
+      seriesId: name,
+      name,
+      date,
+      amountCents: cents,
+      lastMatchedOn: null,
+      isStale: true,
+      cadence: "monthly",
+      endsOn,
+      ...(oneCharge === undefined ? {} : { oneCharge }),
+    }));
 
   test("nothing ending inside the horizon is silence", () => {
     expect(carEvidenceCaption(null, 12)).toBeNull();
@@ -192,6 +208,46 @@ describe("carEvidenceCaption", () => {
     ]);
     expect(text).toBe(
       "Car insurance stops inside the next 12 months — evidenced through Nov 11, 2026, with no renewal in the ledger, and one other does too — so the monthly figure above stops being what you pay after that date.",
+    );
+  });
+
+  const LEASE = ["2026-09-15", "2026-10-15", "2026-11-15", "2026-12-15", "2027-01-15", "2027-02-15", "2027-03-15"];
+
+  /*
+   * ⚖️ §6A 56 (2026-10-08): a one-time charge reads as ONE CHARGE, and a charge due once is no commitment that stops —
+   * the runway's sentence has left it out since ebf628b. 🔴 With Car insurance ended (or its anchor typed past its
+   * end), his car card read "Car insurance — Nov 11 balance after the $1,000 early payment stops inside the next 12
+   * months — evidenced through Nov 11, 2026, with no renewal in the ledger — so the monthly figure above stops being
+   * what you pay after that date." beside a runway that names nothing (copies of his ledger 2026-10-13; review of
+   * 89f235d). The card's figure is the decision's "unchanged" — November's, which holds the charge — so the charge
+   * still dates it, said as the one charge it is.
+   */
+  test("a one charge in the month the figure is: dated as that charge, never 'stops … with no renewal'", () => {
+    const text = caption([
+      ...line("Car lease", -69504, LEASE, "2028-08-15"),
+      ...line("Nov 11 balance", -7274, ["2026-11-11"], "2026-11-11", true),
+    ]);
+    expect(text).toBe(
+      "Nov 11 balance charges once on Nov 11, 2026 — the monthly figure above holds that charge, so it stops being " +
+        "what you pay after that date.",
+    );
+  });
+
+  /*
+   * …and the commitments that DO stop are counted, never as "others" of a charge that is none. A review built it
+   * (89f235d): lease, a premium due Dec 11 and Jan 11, and a one charge on Dec 11 — December is the figure, and the card
+   * read "Dec 11 balance stops … with no renewal in the ledger, and one other does too" beside a runway naming Car
+   * insurance alone.
+   */
+  test("…with a commitment that stops too, it counts the commitment in its own sentence", () => {
+    const text = caption([
+      ...line("Car lease", -69504, LEASE, "2028-08-15"),
+      ...line("Car insurance", -35758, ["2026-12-11", "2027-01-11"], "2027-01-11"),
+      ...line("Dec 11 balance", -7274, ["2026-12-11"], "2026-12-11", true),
+    ]);
+    expect(text).toBe(
+      "Dec 11 balance charges once on Dec 11, 2026 — the monthly figure above holds that charge, so it stops being " +
+        "what you pay after that date. One commitment stops inside the next 12 months, with no renewal in the ledger.",
     );
   });
 });
