@@ -1572,6 +1572,12 @@ describe("baselineWindow — only months every account you spend from has been r
     expect(w.keys).toEqual([]);
     expect(w.unread).toEqual({ months: ["2026-06", "2026-07"], through: "2026-06-12" });
     expect(spendBaseline(bundle.db, TODAY)).toMatchObject({ months: 0, monthlyCents: 0 });
+    // 🔴 review of cf8f8dc: the runway read "No complete month has been imported yet … Jun 2026 and Jul 2026 are left
+    // out" — June and July WERE imported whole on Checking; the Card is read only to Jun 12
+    expect(baselineCaption(runwayCard(bundle.db, TODAY).spend)).toBe(
+      "No month has been read in full yet, so there is no spending average to stand on. Jun 2026 and Jul 2026 are " +
+        "left out: Jun 12 is the last day every account you spend from has been imported through.",
+    );
   });
 
   /** ⛔ the floor's stub month was never a month to leave out: the caption names only months the ledger covers whole */

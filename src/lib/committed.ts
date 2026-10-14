@@ -666,7 +666,7 @@ export function baselineCaption(window: {
   const unread = unreadMonthsSentence(window.unread ?? null);
   const why = unread === null ? "" : ` ${unread}`;
   if (span === null) {
-    return `No complete month has been imported yet, so there is no spending average to stand on.${why}`;
+    return `${emptyWindowOpening(window.unread ?? null)}, so there is no spending average to stand on.${why}`;
   }
   const leftOut = upfrontCarLeftOut(window.upfrontCarCents ?? 0);
   const clause = leftOut === null ? "" : `, leaving out ${leftOut}`;
@@ -691,8 +691,26 @@ export function measuredMonthsClause(window: {
   if (unread === null) return "not what the last six months measured.";
   const span = baselineSpan(window);
   return span === null
-    ? `not anything measured: no month has been read in full yet. ${unread}`
+    ? `not anything measured: ${NONE_READ_IN_FULL}. ${unread}`
     : `not what the ${span}, measured. ${unread}`;
+}
+
+/** What a window the frontier emptied is (decision 71): complete months were imported, none of them read in full. */
+const NONE_READ_IN_FULL = "no month has been read in full yet";
+
+/**
+ * How a caption over `baselineWindow` opens when the window holds no month — "No complete month has been imported
+ * yet", or, when the frontier emptied it, "No month has been read in full yet".
+ *
+ * 🔴 Review of cf8f8dc: the runway and Subscriptions captions kept "No complete month has been imported yet" over a
+ * window the frontier emptied and then named, in the next sentence, the complete months it left out — imported whole on
+ * one account, read only part of the way on another — beside the car card's "no month has been read in full yet" over
+ * the same window. A young ledger reaches it: with no habit yet every account dates the frontier, so one account last
+ * imported before the first whole month ends empties the window. ⛔ ONE PHRASE for all three (`NONE_READ_IN_FULL`).
+ */
+export function emptyWindowOpening(unread: UnreadMonths | null): string {
+  const phrase = unreadMonthsSentence(unread) === null ? "no complete month has been imported yet" : NONE_READ_IN_FULL;
+  return `${phrase[0]!.toUpperCase()}${phrase.slice(1)}`;
 }
 
 /**

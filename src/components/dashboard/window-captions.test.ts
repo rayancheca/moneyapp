@@ -179,11 +179,15 @@ describe("the window captions beside the runway card", () => {
       "over 6 complete months, Feb 2026 to Jul 2026, refunds netted off. That is a total, not a rate — a bill that " +
         `started or ended inside the window did not charge for all of it. ${why}`,
     );
-    // …and a window the frontier emptied says it too, beside "nothing totalled"
+    // …and a window the frontier emptied says it too, beside "nothing totalled" — in the car card's words: complete
+    // months WERE imported, just not read in full (🔴 review of cf8f8dc: "No complete month has been imported yet")
     const empty = text(
       renderToStaticMarkup(createElement(SubscriptionsCard, { data: { ...subscriptions(0), unread } })),
     );
-    expect(empty).toContain(`nothing here has been totalled from the charges themselves. ${why}`);
+    expect(empty).toContain(
+      `No month has been read in full yet, so nothing here has been totalled from the charges themselves. ${why}`,
+    );
+    expect(empty).not.toContain("imported yet");
   });
 
   /** the transfers card names the window in its headline, and prints the same reason under its figures */

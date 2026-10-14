@@ -502,19 +502,24 @@ describe("unreadMonthsSentence — why an average stops before the last complete
     );
   });
 
-  /** ⛔ a window the frontier emptied is not "nothing imported": complete months were, just not in full */
+  /**
+   * ⛔ a window the frontier emptied is not "nothing imported": complete months were, just not in full. 🔴 Review of
+   * cf8f8dc: this caption read "No complete month has been imported yet … Aug 2026 and Sep 2026 are left out", its
+   * second sentence naming the complete months its first said were never imported, beside the car card's "no month has
+   * been read in full yet" over the same window.
+   */
   test("a window the frontier emptied says which months it could not use", () => {
-    expect(
-      baselineCaption({
-        months: 0,
-        fromMonth: "2026-10",
-        toMonth: "2026-10",
-        unread: { months: ["2026-08", "2026-09"], through: "2026-08-12" },
-      }),
-    ).toBe(
-      "No complete month has been imported yet, so there is no spending average to stand on. Aug 2026 and Sep 2026 " +
-        "are left out: Aug 12 is the last day every account you spend from has been imported through.",
+    const c = baselineCaption({
+      months: 0,
+      fromMonth: "2026-10",
+      toMonth: "2026-10",
+      unread: { months: ["2026-08", "2026-09"], through: "2026-08-12" },
+    });
+    expect(c).toBe(
+      "No month has been read in full yet, so there is no spending average to stand on. Aug 2026 and Sep 2026 are " +
+        "left out: Aug 12 is the last day every account you spend from has been imported through.",
     );
+    expect(c).not.toContain("imported yet");
   });
 });
 
