@@ -2353,6 +2353,37 @@ describe("provenanceFor — a recurring series' amount, with a rate history (§6
       expect(p.headline).not.toContain("below the 3");
     }
   });
+
+  /*
+   * ⚖️ Payments left out at two different earlier rates name each rate, oldest first, with how many paid it.
+   * 🔴 Every one read "at an earlier rate": a history of -$15.49 through Mar 31 and -$16.86 through May 31 said "Its 4
+   * payments before Jun 1, 2026 were at an earlier rate" — one rate, of payments held to two (review of the
+   * pay-and-avg branch; hypothetical, his Netflix's own two price rises).
+   */
+  test("payments left out at two earlier rates name each one — the headline and the evidence line", () => {
+    const s = raisedSubscription([["2026-06-15", NEW_RATE]], ["2026-03-15", "2026-04-15", "2026-05-15"]);
+    const acct = `card-${s}`;
+    tagToSeries(addTxn(acct, "2026-02-15", { cents: -1549 }), s);
+    bundle.db.run(
+      sql`UPDATE transactions SET amount_cents = -1549 WHERE posted_on = '2026-03-15' AND account_id = ${acct}`,
+    );
+    bundle.db.run(
+      sql`UPDATE recurring_series SET user_amount_history = ${JSON.stringify([
+        { throughOn: "2026-03-31", amountCents: -1549 },
+        { throughOn: "2026-05-31", amountCents: OLD_RATE },
+      ])} WHERE id = ${s}`,
+    );
+    const p = popover(s);
+    expect(p.headline).toContain(
+      "Its 4 payments before Jun 1, 2026 were at 2 earlier rates (2 at -$15.49, 2 at -$16.86), and are not counted.",
+    );
+    expect(p.sources.find((x) => x.kind === "period")!.detail).toContain(
+      "· 4 before it, at 2 earlier rates (2 at -$15.49, 2 at -$16.86)",
+    );
+    // …and with nothing at the rate in force since, the line counts them all, by rate
+    const none = popover(raisedSubscription([], ["2026-04-15", "2026-05-15"]));
+    expect(none.headline).toContain("Its 2 payments before Jun 1, 2026 were at an earlier rate, and nothing has posted");
+  });
 });
 
 /* ── all spending in a window ─────────────────────────────────────────── */

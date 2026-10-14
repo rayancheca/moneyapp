@@ -53,7 +53,7 @@ import { PART_ENTERED, VERDICT_PRESENTATION } from "@/lib/provenance-verdict";
 import { billedWithEvidence, carriesPhrase } from "@/lib/billed-with";
 import { billingCarriers } from "./billing-carriers";
 import { postedAsWord, type Occurrence, type PaydaySample, type PerPaydayEvidence } from "@/lib/posted-average";
-import { rateOn, seriesAmountCents } from "@/lib/series-kind";
+import { rateOn, ratePeriodOf, seriesAmountCents, type RateSchedule } from "@/lib/series-kind";
 import { postedAveragesBySeries } from "./posted-average";
 import { effectiveSeries, MIN_OCCURRENCES } from "./recurring";
 import {
@@ -1802,6 +1802,8 @@ interface AtTodaysRate {
   era: string;
   /** the payments before it — at least one */
   earlier: number;
+  /** the rate they were at: "an earlier rate", or each of several named (`earlierRateWords`) */
+  rate: string;
   /** the payments since it, oldest first: what the average averages (`SeriesPostedAverage.occurrences`) */
   payments: readonly Occurrence[];
   /** "Sep 2's posted as 2" — those of `payments` the bank posted as several rows; empty when none was */
@@ -1823,10 +1825,39 @@ const BELOW_A_PATTERN =
   `below the ${MIN_OCCURRENCES} this app requires before calling a repeat a pattern, ` +
   "so it is an anecdote rather than a statistic";
 
-/** "Its 4 payments before Aug 1, 2026 were at an earlier rate" */
-function earlierWords({ era, earlier }: Pick<AtTodaysRate, "era" | "earlier">): string {
+/** One earlier rate the rows left out were held to, and how many of them it held (`earlierRatesOf`). */
+interface EarlierRate {
+  readonly cents: number;
+  readonly count: number;
+}
+
+/**
+ * ⚖️ The earlier rates the rows left out of the average were held to — each its own era's rate (§6A 55, §6A 63), oldest
+ * first, one per amount, with how many rows it held. A bill's payments and a pay series' deposits alike.
+ */
+function earlierRatesOf(eras: readonly number[], schedule: Pick<RateSchedule, "amountHistory">): EarlierRate[] {
+  const byCents = new Map<number, number>();
+  for (const era of [...eras].sort((a, b) => a - b)) {
+    const cents = schedule.amountHistory?.[era]?.amountCents;
+    if (cents !== undefined) byCents.set(cents, (byCents.get(cents) ?? 0) + 1);
+  }
+  return [...byCents].map(([cents, count]) => ({ cents, count }));
+}
+
+/**
+ * "an earlier rate" — or, of rows held to several, each rate named: "2 earlier rates (1 at $1,000.00, 2 at
+ * $1,047.00)". 🔴 Every one read "an earlier rate": deposits held to $1,000.00 and to $1,047.00 were "at an earlier
+ * rate", one rate of two (review of the pay-and-avg branch, hypothetical — his pay's history has one earlier rate).
+ */
+function earlierRateWords(rates: readonly EarlierRate[]): string {
+  if (rates.length < 2) return "an earlier rate";
+  return `${rates.length} earlier rates (${rates.map((r) => `${r.count} at ${formatCents(r.cents)}`).join(", ")})`;
+}
+
+/** "Its 4 payments before Aug 1, 2026 were at an earlier rate" — `rate` naming each, of several (`earlierRateWords`) */
+function earlierWords({ era, earlier, rate }: Pick<AtTodaysRate, "era" | "earlier" | "rate">): string {
   const its = earlier === 1 ? "Its one payment" : `Its ${earlier} payments`;
-  return `${its} before ${readableDay(era)} ${earlier === 1 ? "was" : "were"} at an earlier rate`;
+  return `${its} before ${readableDay(era)} ${earlier === 1 ? "was" : "were"} at ${rate}`;
 }
 
 /**
@@ -1837,8 +1868,8 @@ function earlierWords({ era, earlier }: Pick<AtTodaysRate, "era" | "earlier">): 
  * rate"): the gate counts them, not the rows before the change. Latent on his ledger, 2026-10-12: only his pay has a
  * history, and pay is not read per payment.
  */
-function observedAtTodaysRate({ era, earlier, payments, split, distinct }: AtTodaysRate): string {
-  const before = earlierWords({ era, earlier });
+function observedAtTodaysRate({ era, earlier, rate, payments, split, distinct }: AtTodaysRate): string {
+  const before = earlierWords({ era, earlier, rate });
   if (payments.length === 0)
     return `${before}, and nothing has posted at the rate in force since — so there is no average of it yet.`;
   const k = payments.length;
@@ -1869,20 +1900,22 @@ function eraDetail(input: {
   era: string;
   earlier: number;
   earlierSplit: string;
+  /** "an earlier rate", or each of several named (`earlierRateWords`) */
+  rate: string;
   k: number;
   split: string;
   amounts: string;
   today: string;
 }): string {
-  const { era, earlier, earlierSplit, k, split, amounts, today } = input;
+  const { era, earlier, earlierSplit, rate, k, split, amounts, today } = input;
   const day = formatDayShortIn(era, today);
   const was = earlierSplit === "" ? "" : ` (${earlierSplit})`;
   if (k === 0)
     return earlier === 1
-      ? `one payment${was}, before ${day}, at an earlier rate`
-      : `${earlier} payments${was}, all before ${day}, at an earlier rate`;
+      ? `one payment${was}, before ${day}, at ${rate}`
+      : `${earlier} payments${was}, all before ${day}, at ${rate}`;
   const since = `${k === 1 ? "one payment" : `${k} payments`} at the rate in force since ${day}`;
-  return `${since}${split === "" ? "" : ` (${split})`}: ${amounts} · ${earlier} before it${was}, at an earlier rate`;
+  return `${since}${split === "" ? "" : ` (${split})`}: ${amounts} · ${earlier} before it${was}, at ${rate}`;
 }
 
 /** "Jun 16's posted as 2" — each of `payments` the bank posted as several rows (`postedAsWord`); "" when none was */
@@ -1971,14 +2004,19 @@ function towardLaterWords(later: number, next: string | null, day: (d: string) =
  * rate …", "Its one deposit toward a payday from Oct 1, 2026 is at a later rate, not in force yet …" (`next`, the
  * first day of that rate), "Its one other deposit paid no payday on its own …" and "Its one tagged posting of money
  * out paid no payday …" — each as `perPaydayEvidence` sorts it, so the words, the calendar and the Amount history give
- * a row one description.
+ * a row one description. `earlierRate` names the rate the first were at — each of several (`earlierRateWords`).
  */
-function leftOutOfPaydaysWords(evidence: PerPaydayEvidence, era: string | null, next: string | null): string[] {
+function leftOutOfPaydaysWords(
+  evidence: PerPaydayEvidence,
+  era: string | null,
+  next: string | null,
+  earlierRate: string,
+): string[] {
   const { samples, earlier, later, noPaydayOfTheirOwn: ownless, moneyOut } = evidence;
   const out: string[] = [];
   if (earlier > 0) {
     const before = era === null ? "" : ` before ${readableDay(era)}`;
-    const rate = era === null ? "another rate" : "an earlier rate";
+    const rate = era === null ? "another rate" : earlierRate;
     const were = earlier === 1 ? "was" : "were";
     out.push(`${depositsWords(earlier, "Its")}${before} ${were} at ${rate}, ${notCounted(earlier)}`);
   }
@@ -2004,10 +2042,10 @@ function leftOutOfPaydaysWords(evidence: PerPaydayEvidence, era: string | null, 
  * ⚖️ The headline's sentence for a pay series read per payday (§6A 55): it counts and ranges what its average is of —
  * what each deposit paid PER PAYDAY, at the rate in force now (`PerPaydayEvidence`) — names a lump by the paydays it
  * paid, and says which tagged rows are left out and why. Gated as the bills are, on what is counted: the PAYDAYS the
- * deposits at the rate in force now paid (`paydaysSeen`) — a lump of four weeks is four paydays at the rate, though one
- * sample of it, and one week sent as three transfers is one payday — with a rate change or without one. With none — a
- * raise begun, its first week's statement not imported yet — it says there is no average at it yet, as the page and
- * the All tab print none.
+ * deposit DAYS whose money at the rate in force now paid paydays on their own (`seen`, the samples the average takes) —
+ * a lump of four weeks is one, and one week sent as three transfers is one — with a rate change or without one. With
+ * none — a raise begun, its first week's statement not imported yet — it says there is no average at it yet, as the
+ * page and the All tab print none.
  *
  * 🔴 It described the rows as they posted: his pay's popover read "Its 4 tagged postings since Jun 4, 2026 were 4
  * different amounts, from $400.00 to $4,567.68 — so any single figure for it is an average, not a repeat." beside an
@@ -2017,23 +2055,25 @@ function observedPerPayday(input: {
   evidence: PerPaydayEvidence;
   era: string | null;
   next: string | null;
+  /** the rate the deposits before `era` were at (`earlierRateWords`) */
+  earlierRate: string;
   seen: number;
   n: number;
   today: string;
 }): string {
-  const { evidence, era, next, seen, n, today } = input;
+  const { evidence, era, next, earlierRate, seen, n, today } = input;
   const { samples } = evidence;
-  const leftOut = leftOutOfPaydaysWords(evidence, era, next).map((s) => ` ${s}`).join("");
+  const leftOut = leftOutOfPaydaysWords(evidence, era, next, earlierRate).map((s) => ` ${s}`).join("");
   // …and the days that paid nothing, in a bill's words (`nettedWords`): "Nothing stayed paid on Sep 17: …"
   const left = `${leftOut}${nettedWords(evidence.netted, today)}`;
   const now = rateLeavesOut(evidence) ? " at the rate in force now" : "";
-  // every row its own payday: "Only 2 tagged postings", as it always read; else the paydays the gate counted
+  // every row its own payday: "Only 2 tagged postings", as it always read; else the deposit days the gate counted
   const thin =
     seen >= MIN_OCCURRENCES
       ? ""
       : oneRowEachPayday(evidence)
         ? ` Only ${n} tagged ${n === 1 ? "posting has" : "postings have"} ever landed — ${BELOW_A_PATTERN}.`
-        : ` That is ${seen === 1 ? "one payday" : `${seen} paydays`}${now} — ${BELOW_A_PATTERN}.`;
+        : ` That is ${seen === 1 ? "one deposit day" : `${seen} deposit days`}${now} — ${BELOW_A_PATTERN}.`;
   if (samples.length === 0) {
     const at = atTheRateWords(evidence, era, readableDay);
     const average = `there is no average of what a payday paid${at === "" ? "" : " at it yet"}`;
@@ -2061,11 +2101,17 @@ function observedPerPayday(input: {
  * and his /recurring/<pay> page failed to render from a raise's first day until a deposit at it was imported (review
  * of 78c21ee: a raise from Oct 1, on Oct 2, nothing imported since Sep 24).
  */
-function perPaydayDetail(evidence: PerPaydayEvidence, era: string | null, next: string | null, today: string): string {
+function perPaydayDetail(
+  evidence: PerPaydayEvidence,
+  era: string | null,
+  next: string | null,
+  earlierRate: string,
+  today: string,
+): string {
   const { samples, earlier, later, noPaydayOfTheirOwn: ownless, moneyOut, netted } = evidence;
   const day = (d: string): string => formatDayShortIn(d, today);
   const rest = [
-    earlier > 0 ? `${earlier} ${era === null ? "at another rate" : "before it, at an earlier rate"}` : null,
+    earlier > 0 ? `${earlier} ${era === null ? "at another rate" : `before it, at ${earlierRate}`}` : null,
     later > 0 ? `${later} ${towardLaterWords(later, next, day)}, at a later rate not in force yet` : null,
     ownless > 0 ? `${ownless} paid no payday on ${ownless === 1 ? "its" : "their"} own` : null,
     moneyOut > 0 ? `${moneyOut} of money out, paying no payday` : null,
@@ -2104,18 +2150,6 @@ function atTheRateWords(evidence: PerPaydayEvidence, era: string | null, day: (d
  */
 function rateLeavesOut(evidence: PerPaydayEvidence): boolean {
   return evidence.earlier + evidence.later > 0;
-}
-
-/**
- * ⚖️ What a pay series' anecdote gate counts (§6A 55; one count, above `seen`): the PAYDAYS its deposits at the rate
- * in force now paid on their own — what the average stands on, with a rate change or without one. A lump of four weeks
- * is four; one week sent as three same-day transfers is one. 🔴 Gated on its ROWS while no rate change left a deposit
- * out, a detected pay series whose one week came as three transfers read "derived", no badge and no anecdote, beside
- * "Per payday, its 3 deposits since Sep 17, 2026 (Sep 17's 3 deposits, $1,141.92, paid one payday) paid $1,141.92."
- * — and given a history, "seen once at the new rate" of the same payday (review of b3f90b7, hypothetical).
- */
-function paydaysSeen(evidence: PerPaydayEvidence): number {
-  return evidence.samples.reduce((sum, s) => sum + s.paydays, 0);
 }
 
 /**
@@ -2182,7 +2216,9 @@ function recurringSeriesProvenance(db: AppDatabase, id: string, today: string): 
    * rate change, three rows of two -$50.00 payments read "adds up" beside "All 2 payments … were -$50.00, exactly",
    * and three rows of ONE "paid -$25.00 each time" (at 7904ee2). Detection (`analyzeGroup`) and the calendar's proven
    * band (`scheduleIsProven`) still count rows against the same bar, for the cadence the rows prove; a pay series
-   * counts the paydays its deposits paid (§6A 55, `paydaysSeen`), with a rate change or without one.
+   * counts its samples (§6A 55): the deposit DAYS whose money paid paydays on its own, with a rate change or without
+   * one — the bar the badge's "seen N times" means. 🔴 Counted by the paydays they paid, a week and a three-week lump
+   * were four, and a detected pay series read "derived", no badge and no anecdote, on two deposits (review of 6c59cdb).
    */
   const posted = postedAveragesBySeries(db, [series], today).get(id)!;
   const n = postings.length;
@@ -2206,9 +2242,13 @@ function recurringSeriesProvenance(db: AppDatabase, id: string, today: string): 
   const earlier = paydays === null ? before.length : paydays.earlier;
   // the day that rate began — null when no payment is left out, which every series whose rate never changed is
   const era = earlier > 0 ? posted.rateSince : null;
-  // what the anecdote gate counts (one count, above) — the payments the average averages, or for pay the PAYDAYS its
-  // deposits paid at the rate in force now (`paydaysSeen`): a lump of four weeks is four paydays, one sample
-  const seen = paydays === null ? k : paydaysSeen(paydays);
+  // …and the rate they were at, each of several named (`earlierRateWords`): their own eras' rates
+  const schedule = effectiveSeries(series);
+  const earlierEras = paydays === null ? before.map((o) => ratePeriodOf(schedule, o.postedOn)) : paydays.earlierEras;
+  const earlierRate = earlierRateWords(earlierRatesOf(earlierEras, schedule));
+  // what the anecdote gate counts (one count, above) — the samples the average averages: a bill's payments, or for
+  // pay the deposit DAYS that paid paydays at the rate in force now — a lump of four weeks is one
+  const seen = k;
   // …and the first day of a rate recorded ahead, which a deposit paid early can pay (`PerPaydayEvidence.later`)
   const next = posted.nextRateSince;
   // "Jun 16's posted as 2" — each payment the bank posted as several rows; empty when every row is a payment
@@ -2263,8 +2303,12 @@ function recurringSeriesProvenance(db: AppDatabase, id: string, today: string): 
       // rate it is of
       detail:
         paydays !== null
-          ? perPaydayDetail(paydays, era, next, today)
-          : `${era === null ? counted : eraDetail({ era, earlier, earlierSplit, k, split, amounts, today })}${nothing}`,
+          ? perPaydayDetail(paydays, era, next, earlierRate, today)
+          : `${
+              era === null
+                ? counted
+                : eraDetail({ era, earlier, earlierSplit, rate: earlierRate, k, split, amounts, today })
+            }${nothing}`,
       // the first document's day, counted or not
       on: postings.map((p) => p.postedOn).sort()[0],
     });
@@ -2331,12 +2375,14 @@ function recurringSeriesProvenance(db: AppDatabase, id: string, today: string): 
         "Nothing tagged to it has ever posted, so there is no evidence behind it at all."
       );
     // ⚖️ a pay series, per payday (§6A 55): what the average is of, the rows it leaves out, and the gate on them
-    if (paydays !== null) return observedPerPayday({ evidence: paydays, era, next, seen, n, today });
+    if (paydays !== null) return observedPerPayday({ evidence: paydays, era, next, earlierRate, seen, n, today });
     // ⛔ …and after the payments, the rows that paid nothing — so the words account for every tagged row
     const nothing = nettedWords(netted, today);
     // ⚖️ before the rows' gate: with an `era` the words count what the badge and the average count (§6A 63) — never
     // "Only 2 tagged postings have ever landed" beside an average of the one at the rate in force now
-    if (era !== null) return `${observedAtTodaysRate({ era, earlier, payments, split, distinct })}${nothing}`;
+    if (era !== null) {
+      return `${observedAtTodaysRate({ era, earlier, rate: earlierRate, payments, split, distinct })}${nothing}`;
+    }
     // every row its own payment: "Only 2 tagged postings", as it always read
     if (oneRowEach && n < MIN_OCCURRENCES)
       return `Only ${n} tagged ${n === 1 ? "posting has" : "postings have"} ever landed — ${BELOW_A_PATTERN}.`;

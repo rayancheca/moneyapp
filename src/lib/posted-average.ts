@@ -111,6 +111,12 @@ export interface PerPaydayEvidence {
   /** tagged rows that paid paydays of an EARLIER rate era — each held to its own time's rate, and not averaged */
   earlier: number;
   /**
+   * The rate era of each of those rows (`ratePeriodOf`'s index), oldest first: which earlier rate each was held to,
+   * so the words can name every rate when there were several. 🔴 Counted alone, deposits at $1,000.00 and $1,047.00
+   * read "at an earlier rate" (review of the pay-and-avg branch).
+   */
+  earlierEras: readonly number[];
+  /**
    * tagged rows that paid paydays of a LATER rate era — a raise recorded ahead, whose first week's pay landed while
    * the old rate is in force — held to that rate, and not averaged until it is in force
    */
@@ -177,7 +183,7 @@ export function perPaydayEvidence(
     });
   }
   const samples: PaydaySample[] = [];
-  let earlier = 0;
+  const earlierEras: number[] = [];
   let later = 0;
   for (const r of counted) {
     const reading = readings.get(r.id);
@@ -187,7 +193,7 @@ export function perPaydayEvidence(
     if (r.amountCents <= 0) continue;
     // a row with no reading is held on its own day, as `expectedCentsOf` holds it
     const era = reading?.ratePeriod ?? ratePeriodOf(schedule, r.postedOn);
-    if (era < now) earlier += 1;
+    if (era < now) earlierEras.push(era);
     if (era > now) later += 1;
     if (era !== now) continue;
     const cents = spreadSampleCents(r.amountCents, reading);
@@ -205,9 +211,11 @@ export function perPaydayEvidence(
   const returned = samples.reduce((n, s) => n + s.returns, 0);
   const moneyOut = counted.filter((r) => r.amountCents <= 0).length - returned;
   const sampled = samples.reduce((n, s) => n + s.deposits + s.returns, 0);
+  const earlier = earlierEras.length;
   return {
     samples: samples.sort((a, b) => compareDates(a.postedOn, b.postedOn)),
     earlier,
+    earlierEras: earlierEras.sort((a, b) => a - b),
     later,
     noPaydayOfTheirOwn: counted.length - earlier - later - moneyOut - sampled,
     moneyOut,
