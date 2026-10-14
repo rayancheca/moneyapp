@@ -1,6 +1,7 @@
 import type { BlastRadiusLine } from "@/components/ui/blast-radius";
 import type { SeriesKind } from "@/db/schema/recurring";
 import { arrearsClause, NOT_POSTED } from "@/lib/arrears-reading";
+import { ONE_CHARGE_WORD } from "@/lib/one-charge";
 import {
   seriesDrawsAsRecurring,
   seriesIsProjected,
@@ -74,6 +75,12 @@ export interface SeriesEndInput {
   overdueCount: number;
   /** the next occurrence's day, or null when nothing more is projected */
   nextChargeOn: string | null;
+  /**
+   * The day of its ONE charge when its whole schedule holds one (`SeriesDetail.oneChargeOn`), else null. ⚖️ §6A 56
+   * (2026-10-08): it is upcoming "once on Nov 11, 2026", as its page's "charges once on Nov 11" — 🔴 not "every charge
+   * from Nov 11, 2026 to Nov 11, 2026" (review of 7a3c702, the balance's dialog on his ledger copy 2026-10-13).
+   */
+  oneChargeOn: string | null;
   /** last day the series can occur; null = open-ended */
   endsOn: string | null;
   linkedCount: number;
@@ -92,7 +99,10 @@ function endDrawsAsRecurring(status: SeriesStatusForCopy, linkedCount: number): 
 
 /** The page's own data as the dialog's input — every field from the figure the page itself prints. */
 export function seriesEndInput(
-  data: Pick<SeriesDetail, "kind" | "status" | "annualizedCents" | "overdue" | "nextExpected" | "endsOn" | "linkedTxns">,
+  data: Pick<
+    SeriesDetail,
+    "kind" | "status" | "annualizedCents" | "overdue" | "nextExpected" | "oneChargeOn" | "endsOn" | "linkedTxns"
+  >,
 ): SeriesEndInput {
   return {
     kind: data.kind,
@@ -104,6 +114,7 @@ export function seriesEndInput(
     overdueOn: data.overdue?.date ?? null,
     overdueCount: data.overdue?.occurrenceCount ?? 0,
     nextChargeOn: data.nextExpected[0]?.date ?? null,
+    oneChargeOn: data.oneChargeOn,
     endsOn: data.endsOn,
     linkedCount: data.linkedTxns.length,
   };
@@ -182,9 +193,10 @@ export function seriesEndReassurance(kind: SeriesKind): string {
   );
 }
 
-/** The upcoming clause — a span, never a count off a capped preview. */
+/** The upcoming clause — a span, never a count off a capped preview; a schedule of one charge, its day (§6A 56). */
 function upcomingValue(input: SeriesEndInput): string {
   if (input.nextChargeOn === null) return "none scheduled";
+  if (input.oneChargeOn !== null) return `${ONE_CHARGE_WORD} on ${longDate(input.oneChargeOn)}`;
   const every = `every ${seriesPostingWords(input.kind).posting} from ${longDate(input.nextChargeOn)}`;
   return input.endsOn === null ? `${every} on` : `${every} to ${longDate(input.endsOn)}`;
 }

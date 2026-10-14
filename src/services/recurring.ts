@@ -1165,6 +1165,17 @@ export interface SeriesStaleness {
   checkedDaysSinceLastMatch: number | null;
   /** the effective step: user cadence → nominal, else the detected average gap */
   stepDays: number;
+  /**
+   * The day of its ONE charge when its whole schedule holds one (`oneChargeDays`), null when it does not — undefined
+   * when the caller did not ask. ⚖️ §6A 56 (2026-10-08): such a series is "once · Nov 11" wherever a cadence prints, and
+   * its staleness sentence says "expected once on Nov 11, 2026", never `stepDays`' "about every 30 days".
+   *
+   * ⛔ Asked by every reader whose staleness is DISCLOSED — the forecast's two legs and Upcoming (`forecastWalk`), the
+   * chip's tooltip and the footers'. 🔴 It was not carried, and on his ledger copy 2026-10-13 /recurring's Upcoming
+   * footer read "Car insurance — Nov 11 balance … — expected about every 30 days", a tab from the All tab's
+   * "once · Nov 11".
+   */
+  oneChargeOn?: string | null;
   /** step × INACTIVE_MISS_LIMIT + cadence grace — past this the evidence is late */
   toleranceDays: number;
   /**
@@ -1426,6 +1437,8 @@ export function seriesStaleness(
   s: SeriesOverrides & EvidenceSource,
   today: string = todayIso(),
   checkedThrough?: string | null,
+  // its one charge's day, from `oneChargeDays` — a reader that discloses staleness passes it (`oneChargeOn`)
+  oneChargeOn?: string | null,
 ): SeriesStaleness {
   // Deliberately NOT stepPlan(): this measures how old the EVIDENCE is, which
   // is a span of days whatever calendar the series bills on. The projection's
@@ -1465,6 +1478,7 @@ export function seriesStaleness(
     daysSinceLastMatch,
     checkedDaysSinceLastMatch,
     stepDays,
+    ...(oneChargeOn === undefined ? {} : { oneChargeOn }),
     toleranceDays,
     isStale: lateOnCheckedDays,
     checkedThrough,
@@ -1655,6 +1669,50 @@ export function rollForwardNextExpected(eff: EffectiveSchedule, today: string = 
 export function scheduleHasEnded(s: SeriesOverrides, today: string): boolean {
   const schedule = effectiveSchedule(s);
   return schedule.nextExpectedOn !== null && rollForwardNextExpected(schedule, today) === null;
+}
+
+/**
+ * The day a schedule its end has closed RAN OUT (`scheduleHasEnded`): its last date on or before its end, on the
+ * anchor's rhythm as the walk steps it, never before its last charge (`lastMatchedOn`) nor past its end — null while
+ * a date is still to come, or while that last date is (an anchor typed past its end whose rhythm's last day has not
+ * come).
+ *
+ * ⛔ The end badge's day once the schedule is over (`seriesEndBadge`): not the end itself, which can fall between two
+ * due days. 🔴 Car insurance ending Jan 5, 2027 holds Dec 11 and nothing after; from Dec 12 its page read "Ends Jan 5,
+ * 2027" in the future tense beside "Its schedule has ended — every date it holds has come" (review of the 10-12/13
+ * batches; no end on his ledger copy 2026-10-13 falls between due days — each is a due day itself).
+ *
+ * ⛔ Stepped BACK as well as forward (`signedStepsToReach`): detection stores its anchor one step AFTER the last posting
+ * (`stepFrom(last.postedOn, plan, 1)`), so once a schedule's last charge posts its detected anchor sits past its end.
+ * 🔴 Stepping only forward, that anchor "held no date": a reset to detected after Dec 11 posted (anchor Jan 11, end Jan
+ * 5) read "Ends Jan 5, 2027" beside "Its schedule has ended" again, and "Ended Jan 5, 2027" from Jan 6 where the
+ * unposted shape read "Ended Dec 11, 2026" (review of 7a3c702, on a copy of his ledger set up so).
+ *
+ * ⛔ …and never before its LAST CHARGE, nor past its end. The walk back lands on the last posting only when detection's
+ * anchor sits one step after a posting on or before the end, and two shapes break that. 🔴 posted_on is the SETTLE day
+ * (his Aug 11 premium is in the ledger as Aug 12): a last premium due on the end can post after it, and with Dec 11 and
+ * Jan 12 linked to Car insurance, detection's anchor Feb 12 and his real Jan 11 end, the walk stepped past Jan 12 to
+ * "Ended Dec 12, 2026" — a day nothing posted (review of b350ceb, a copy of his ledger asked Jan 13 and Feb 1). 🔴 A
+ * day-stepped anchor is the last posting plus the MEDIAN gap while the walk steps the AVERAGE: biweekly, last Dec 4,
+ * median 14, average 14.6, end Dec 10 — the walk landed on Dec 3, the day before the charge. A charge after the end is
+ * the end's own: "Ended Jan 11, 2027", as 7a3c702 read it and as his typed anchor does.
+ */
+export function scheduleRanOutOn(
+  s: SeriesOverrides & { lastMatchedOn: string | null },
+  today: string,
+): string | null {
+  if (!scheduleHasEnded(s, today)) return null;
+  const eff = effectiveSchedule(s);
+  // `scheduleHasEnded` holds only with a next day and an end (`rollForwardNextExpected`'s two nulls)
+  const plan = stepPlan(eff.cadence, eff.intervalDaysAvg, eff.anchorDay);
+  const anchor = eff.nextExpectedOn!;
+  const end = eff.userEndsOn!;
+  const walked = stepFrom(anchor, plan, signedStepsToReach(anchor, plan, addDays(end, 1)) - 1);
+  const charged = s.lastMatchedOn;
+  const last =
+    charged !== null && compareDates(charged, walked) > 0 ? (compareDates(charged, end) > 0 ? end : charged) : walked;
+  // a day still to come has not run out: only an anchor TYPED past its end lands here (detection's follows a posting)
+  return compareDates(last, today) > 0 ? null : last;
 }
 
 /**
@@ -1892,6 +1950,8 @@ function forecastWalk(db: AppDatabase, today: string, windowDays: number) {
 
   // today is day ONE of the window — see `upcomingOccurrences`' rent-twice measurement
   const to = addDays(today, windowDays - 1);
+  // a one-charge series' staleness says "once on Nov 11", as its cadence does (`SeriesStaleness.oneChargeOn`)
+  const oneCharge = oneChargeDays(db, live);
   return live
     // A series whose evidence has run out is not a forecast. UBER *ONE last
     // charged 2025-05-25 and was still listed as a bill due next week, wearing
@@ -1904,7 +1964,11 @@ function forecastWalk(db: AppDatabase, today: string, windowDays: number) {
     .filter((s) => !isAgentsSeries(agentsCash, s))
     .map((s) => ({
       series: s,
-      projected: projectOccurrences(toProjectable(s, seriesStaleness(s, today, checkedThrough(s.id))), today, to),
+      projected: projectOccurrences(
+        toProjectable(s, seriesStaleness(s, today, checkedThrough(s.id), oneCharge.get(s.id) ?? null)),
+        today,
+        to,
+      ),
     }));
 }
 

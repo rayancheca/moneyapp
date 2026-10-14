@@ -17,7 +17,6 @@ import { renameSeriesAction, setSeriesStatusAction } from "@/app/recurring/actio
 import { isTableLens, LENS_DIMENSION, LENS_LABELS } from "@/components/charts/chart-lens";
 import { ViewSwitcher } from "@/components/ui/ViewSwitcher";
 import { useViewState } from "@/hooks/useViewState";
-import { compareDates } from "@/lib/dates";
 import { formatDayShortIn } from "@/lib/format-date";
 import { formatCents } from "@/lib/money";
 import type { Provenance } from "@/services/provenance";
@@ -41,7 +40,15 @@ import { AmountHistoryChart } from "./AmountHistoryChart";
 import { CadenceSentence } from "./CadenceSentence";
 import { PassedPaydaysCard } from "./PassedPaydaysCard";
 import { AttachPanel, LinkedTransactions, MergeControl } from "./SeriesMembership";
-import { annualizedCaveat, cadenceLabel, KIND_LABEL, longDate, postedSpreadReading, STATUS_LABEL } from "./labels";
+import {
+  annualizedCaveat,
+  cadenceLabel,
+  KIND_LABEL,
+  longDate,
+  postedSpreadReading,
+  seriesEndBadge,
+  STATUS_LABEL,
+} from "./labels";
 
 const KIND_ICON: Record<SeriesKind, IconName> = {
   income: "banknote",
@@ -207,11 +214,12 @@ export function SeriesDetail({
                 ways, two inches apart */}
             {/* ⛔ …and in the tense of its day, worn in the evidence's tone once its schedule has ended — the All
                 tab's "Ended", the subscriptions card's "already ended". 🔴 "Ends Nov 11, 2026" in amber, a month past
-                that day (review of 0af5689, his ledger copy asked about 2026-12-12). */}
+                that day (review of 0af5689, his ledger copy asked about 2026-12-12). ⛔ The tense is the card's
+                fact, the day the schedule ran out (`seriesEndBadge`): 🔴 an end between two due days read "Ends
+                Jan 5, 2027" beside "Its schedule has ended" (review of the 10-12/13 batches). */}
             {data.endsOn !== null ? (
               <Badge tone={data.evidence === "schedule-ended" ? seriesEvidenceTone(data.evidence) : "warning"}>
-                {compareDates(data.endsOn, today) < 0 ? SERIES_EVIDENCE_LABEL["schedule-ended"] : "Ends"}{" "}
-                {longDate(data.endsOn)}
+                {seriesEndBadge(data.endsOn, data.scheduleRanOutOn, today)}
               </Badge>
             ) : null}
             {data.merchant ? (
