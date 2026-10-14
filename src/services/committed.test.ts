@@ -1578,6 +1578,12 @@ describe("baselineWindow — only months every account you spend from has been r
       "No month has been read in full yet, so there is no spending average to stand on. Jun 2026 and Jul 2026 are " +
         "left out: Jun 12 is the last day every account you spend from has been imported through.",
     );
+    // 🔴 review of 69f51c1: …and one line above it the card said "Nothing has been spent in the months counted below.
+    // This fills in once a month of spending is imported" — of $16,000 imported
+    expect(runwayCard(bundle.db, TODAY).runway.explanation).toBe(
+      "No month has been read in full yet, so there is no rate to measure a runway against. This fills in once a " +
+        "month of spending is read in full.",
+    );
   });
 
   /** ⛔ the floor's stub month was never a month to leave out: the caption names only months the ledger covers whole */

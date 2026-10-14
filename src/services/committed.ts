@@ -604,6 +604,8 @@ export function runwayCard(db: AppDatabase, today: string = todayIso()): RunwayC
       monthlySpendCents: spend.monthlyCents,
       // …and what the spend term left out, so a withheld verdict cannot say nothing was spent (§6A 51)
       upfrontCarCents: spend.upfrontCarCents,
+      // …and the months it left out unread, so it cannot say "imported" of a month only reading fills in (decision 71)
+      spendWindow: { months: spend.months, unread: spend.unread },
     }),
     committed: committedBook(db, today),
     spend,
