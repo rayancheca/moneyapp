@@ -783,6 +783,8 @@ export function recurringCalendar(
        * ("rose by …"), compare a week with its own era. And money that paid no
        * payday at all is not graded: it answers no week (`towardNoPayday`), so
        * the reading holds it to nothing — the series page reads the same null.
+       * Nor is money out (decision 75): it is no payday's pay — the same day,
+       * its deposit is graded at the day's net — so it is drawn as it is.
        */
       const reading = readings.get(s.id)?.get(p.id);
       const expected = expectedCentsOf(reading, effectiveSeries(s), p.postedOn);

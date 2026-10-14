@@ -902,13 +902,18 @@ export function seriesEndBadge(endsOn: string, ranOutOn: string | null, today: s
  * ⛔ A day of several deposits is read per payday as ONE (`lib/per-payday`), and
  * the words say whose money the figure is — "5 paydays at $1,141.92 each, with
  * the day's other deposit" — or a $4,567.68 lump would read as five weeks' pay.
+ *
+ * ⚖️ …and a day read at its NET (`PerPayday.returns`, decision 75) says so — "1 payday at $641.92, net of the day's
+ * return" — or a $1,141.92 deposit would stand beside $641.92 with nothing to say why.
  */
 export function perPaydayWord(p: PerPayday): string {
   const each =
     p.paydays === 1 ? `1 payday at ${formatCents(p.cents)}` : `${p.paydays} paydays at ${formatCents(p.cents)} each`;
   const others = (p.deposits ?? 1) - 1;
-  if (others < 1) return each;
-  return `${each}, with the day's ${others === 1 ? "other deposit" : `${others} other deposits`}`;
+  const returns = p.returns ?? 0;
+  const withOthers = others < 1 ? "" : `, with the day's ${others === 1 ? "other deposit" : `${others} other deposits`}`;
+  const net = returns < 1 ? "" : `, net of the day's ${returns === 1 ? "return" : `${returns} returns`}`;
+  return `${each}${withOthers}${net}`;
 }
 
 /**

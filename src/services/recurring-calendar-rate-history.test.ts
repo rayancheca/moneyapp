@@ -764,6 +764,31 @@ describe("a pay series with no rate history: the gate counts paydays, as with on
     });
   });
 
+  /*
+   * ⚖️ …and returned IN PART the same day, the day banked its net (decision 75): one payday at $641.92, the return
+   * counted in it and named beside the figure no row holds. 🔴 The day was sampled at its gross $1,141.92 — "paid
+   * $1,141.92, exactly" — while the return beside it read "of money out paid no payday, and is not counted" (review of
+   * b0219f5, hypothetical: no money out is linked to his pay).
+   */
+  test("a week $500.00 of which came back the same day: one payday at the day's $641.92", () => {
+    deposit("2026-09-10", WEEK);
+    deposit("2026-09-17", WEEK);
+    deposit("2026-09-17", -50_000);
+    expect(seriesDetail(bundle.db, PAY, TODAY).postedAvgCents).toBe(WEEK - 25_000);
+    const p = said();
+    expect(p.headline).toContain(
+      "Per payday, its 2 deposits since Sep 10, 2026 (Sep 17's $641.92 net of a return paid one payday) paid 2 " +
+        "different amounts",
+    );
+    expect(p.headline).not.toMatch(/money out|not counted/);
+    expect(p.sources.find((s) => s.kind === "period")).toMatchObject({
+      label: "3 tagged postings in the ledger",
+      detail:
+        "2 deposits (Sep 17's $641.92 net of a return paid one payday): 2 different amounts a payday, $641.92 to " +
+        "$1,141.92",
+    });
+  });
+
   /* every row its own payday: the rows ARE the paydays, and the words read as they always did */
   test("two weeks, one deposit each: 'Only 2 tagged postings have ever landed', as it always read", () => {
     deposit("2026-09-10", WEEK);

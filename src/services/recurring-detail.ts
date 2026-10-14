@@ -74,7 +74,8 @@ export interface AmountHistoryPoint {
    * What this row is held to (`rateOn`): the rate of the payday a pay row's money paid (`PaydayReading`), else the
    * series' rate on the row's own day. ⚖️ Each against its own time's rate (owner decision 2026-10-08, §6A 55): his
    * cash weeks at $1,047.00, his payroll weeks at $1,141.92. 🔴 One expectation for all time read his Jun 4 cash
-   * week "vs expected -$94.92". Null when the series has no rate — and for money that paid no payday, held to none.
+   * week "vs expected -$94.92". Null when the series has no rate — and for money that paid no payday, held to none,
+   * and for money out on his pay, no payday's pay (decision 75). 🔴 $500.00 back read "vs expected -$641.92".
    */
   expectedCents: number | null;
   /**

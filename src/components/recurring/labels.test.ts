@@ -1013,6 +1013,17 @@ describe("perPaydayWord — a lump, and a day of several deposits", () => {
       "1 payday at $1,141.92, with the day's other deposit",
     );
   });
+
+  /*
+   * ⚖️ A day read at its NET (decision 75) says so: $1,141.92 in and $500.00 back the same day is one payday at
+   * $641.92, and the deposit's own $1,141.92 stands beside it — the words say why.
+   */
+  test("a day with money back the same day names it", () => {
+    expect(perPaydayWord({ paydays: 1, cents: 64192, returns: 1 })).toBe("1 payday at $641.92, net of the day's return");
+    expect(perPaydayWord({ paydays: 3, cents: 135589, deposits: 2, returns: 2 })).toBe(
+      "3 paydays at $1,355.89 each, with the day's other deposit, net of the day's 2 returns",
+    );
+  });
 });
 
 /*

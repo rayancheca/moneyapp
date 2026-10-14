@@ -6,6 +6,7 @@ import { recurringSeries, type SeriesKind } from "@/db/schema/recurring";
 import { transactions } from "@/db/schema/transactions";
 import type { AttributionBandKey } from "@/lib/attribution";
 import { addDays, monthKey, periodBounds, todayIso } from "@/lib/dates";
+import { daysThatBanked } from "@/lib/posted-average";
 import { seriesAmountCents, seriesIsIncomeOrSpending } from "@/lib/series-kind";
 import { outsidePortfolioCashAccountIds } from "./accounts";
 import { seriesCategoryIds } from "./series-category";
@@ -36,7 +37,10 @@ import { activeSplitsInRange } from "./transaction-splits";
  *   never subtracted from it. Investment-account dividends/interest appear by
  *   construction — they are income-kind transactions, not market movement —
  *   EXCEPT on the agent's cash account, whose income is not his (owner decision
- *   2026-09-28; `isIncome`).
+ *   2026-09-28; `isIncome`). EXCEPT, too, his PAY: the rows linked to an income
+ *   series are read by the day, so a payroll returned the same day is in no
+ *   figure and one partly returned counts its net (his decision 75, 2026-10-13;
+ *   `hisIncomeRows`).
  *
  * 🔴 S21, measured 2026-09-15: this header still said system-kind was excluded
  * from spending and that only NULL formed the Uncategorized bucket — three
@@ -456,8 +460,10 @@ export function isHisExpenseRow(
 
 /**
  * Whether a row is Income — money HE received: a positive amount in an income-kind category, on an account whose
- * money is his. The one classifier behind every figure that says "Income": /spending's card, its chart, heatmap and
- * Sankey, /budgets' "$X in so far", the dashboard's period panel, the forecast's pace row.
+ * money is his. The row half of every figure that says "Income" — /spending's card, its chart, heatmap and Sankey,
+ * /budgets' "$X in so far", the dashboard's "Income recorded" and period panel — each of which reads it through
+ * `hisIncomeRows`, his pay by the day (decision 75); and the forecast's pace row, whose rows a live pay series never
+ * owns (`nonRecurringAllocations`).
  *
  * ⚖️ Owner decision 2026-09-28 (§6A 27): what the AGENT'S account is paid — a dividend its shares pay, interest on
  * its uninvested cash — is not his income. `agentsCash` is `outsidePortfolioCashAccountIds` (services/accounts), the
@@ -479,6 +485,88 @@ export function isIncome(
     idx.topLevelOf(txn.categoryId).kind === "income" &&
     !isAgentsIncomeCategoryRow(idx, agentsCash, txn)
   );
+}
+
+/**
+ * Every INCOME series, read once per server render (`agentsCashOfRender`'s reason) — the series whose linked rows a
+ * day is read by (`hisIncomeRows`), and the series settlement settles (`paydaySettlement` takes any income series).
+ * The agent's are among them and its rows never count: a day is his pay's only where it holds his Income
+ * (`isIncome`), never on the agent's cash.
+ */
+export const incomeSeriesOfRender = cache(function incomeSeriesOfRender(db: AppDatabase): ReadonlySet<string> {
+  return new Set(
+    db
+      .select({ id: recurringSeries.id })
+      .from(recurringSeries)
+      .where(eq(recurringSeries.kind, "income"))
+      .all()
+      .map((s) => s.id),
+  );
+});
+
+/** One figure of his Income: a row of it (`isIncome`), or one DAY of his pay read by its net (`hisIncomeRows`). */
+export interface IncomeRow {
+  postedOn: string;
+  /** money in: the row's amount, or what the pay day banked, net — never $0.00 or below */
+  amountCents: number;
+  /** the (sub)category it is counted under — a pay day's is its largest row of his Income (then the lowest id) */
+  categoryId: string;
+  /** the ledger rows behind it — the ones its link opens: the row, or every row the day's net was taken over */
+  rows: readonly AnalyticsTxn[];
+}
+
+/**
+ * HIS INCOME in a window's rows — the one reader behind every figure that says "Income": `isIncome`'s rows, with his
+ * PAY read by the DAY. /spending's card and Net, the cash-flow chart, the heatmap, the Sankey, /budgets' "$X in so
+ * far" (so the dashboard's "Income recorded"), the dashboard's period panel and analytics' per-month split all sum
+ * this; the links under them open its `rows` (`filterConditions`' `income` scope and `flow=in`).
+ *
+ * ⚖️ His decision 75 (2026-10-13): a day whose rows linked to his pay net to $0.00 BANKED NOTHING, and a day partly
+ * returned banked its net — read by `daysThatBanked`, the rule settlement spends a day by, so Income counts exactly
+ * the days the calendar draws paid. A pay series' day is every row linked to it that day that no other figure counts
+ * — his Income, either sign, a transfer's filing, an unfiled credit — and it is his Income only where one of its rows
+ * is (`isIncome`): an unfiled credit alone on its day stays the review queue's, a return alone on a later day is no
+ * same-day return and banks nothing. ⛔ Never a row that is his SPENDING (`spendingBucket`): that one is in Spent, so
+ * Net already takes it off, and netted here too it would come off twice — an unfiled $1,141.92 return beside its
+ * payroll read Income $2,283.84, Spent $1,141.92, Net $1,141.92 against the $2,283.84 the bank netted.
+ * 🔴 Only "in so far" netted, and only rows filed under Income: /spending read $3,425.76 beside $2,283.84 in so far for
+ * a payroll returned the same day, and a return the bank filed as a transfer was netted by settlement and nowhere else
+ * — "in so far" $3,425.76 + $1,141.92 still expected + Sep 17's $1,141.92 passed against four paydays at $4,567.68
+ * (review of 54d77ad; hypothetical: every row linked to his pay is money in filed under Income, a copy of his ledger
+ * 2026-10-13).
+ */
+export function hisIncomeRows(
+  idx: CategoryIndex,
+  agentsCash: ReadonlySet<string>,
+  /** `incomeSeriesOfRender` */
+  incomeSeries: ReadonlySet<string>,
+  txns: readonly AnalyticsTxn[],
+): IncomeRow[] {
+  const out: IncomeRow[] = [];
+  const payDays = new Map<string, readonly AnalyticsTxn[]>();
+  for (const txn of txns) {
+    const series = txn.recurringSeriesId;
+    const onPayDay =
+      series !== null &&
+      incomeSeries.has(series) &&
+      !agentsCash.has(txn.accountId) &&
+      spendingBucket(idx, agentsCash, txn) === null;
+    if (onPayDay) {
+      const key = `${series}|${txn.postedOn}`;
+      payDays.set(key, [...(payDays.get(key) ?? []), txn]);
+    } else if (isIncome(idx, agentsCash, txn)) {
+      out.push({ postedOn: txn.postedOn, amountCents: txn.amountCents, categoryId: txn.categoryId!, rows: [txn] });
+    }
+  }
+  for (const rows of payDays.values()) {
+    const filed = rows
+      .filter((r) => isIncome(idx, agentsCash, r))
+      .sort((a, b) => b.amountCents - a.amountCents || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+    const [banked] = daysThatBanked(rows);
+    if (filed.length === 0 || banked === undefined) continue;
+    out.push({ postedOn: banked.postedOn, amountCents: banked.amountCents, categoryId: filed[0]!.categoryId!, rows });
+  }
+  return out;
 }
 
 /**
@@ -825,25 +913,27 @@ export interface IncomeCell {
   txnCount: number;
 }
 
-/** Per-month income split by Income subcategory — `isIncome`'s rows, so never the agent's. */
+/**
+ * Per-month income split by Income subcategory — `hisIncomeRows`, so never the agent's, and his pay by the day
+ * (decision 75). `txnCount` is the rows each cell's figure stands for: a pay day partly returned is two.
+ */
 export function incomeByMonth(db: AppDatabase, opts: MonthsWindow): IncomeCell[] {
   const { from, to } = windowBounds(opts);
   const idx = loadCategoryIndex(db);
   const agentsCash = outsidePortfolioCashAccountIds(db);
   const cells = new Map<string, IncomeCell>();
 
-  for (const txn of activeTxnsInRange(db, from, to)) {
-    if (!isIncome(idx, agentsCash, txn)) continue;
-    const node = idx.byId.get(txn.categoryId!)!;
-    const month = monthKey(txn.postedOn);
+  for (const row of hisIncomeRows(idx, agentsCash, incomeSeriesOfRender(db), activeTxnsInRange(db, from, to))) {
+    const node = idx.byId.get(row.categoryId)!;
+    const month = monthKey(row.postedOn);
     const key = `${month}|${node.id}`;
     const cell =
       cells.get(key) ??
       ({ month, categoryId: node.id, categoryName: node.name, incomeCents: 0, txnCount: 0 } satisfies IncomeCell);
     cells.set(key, {
       ...cell,
-      incomeCents: cell.incomeCents + txn.amountCents,
-      txnCount: cell.txnCount + 1,
+      incomeCents: cell.incomeCents + row.amountCents,
+      txnCount: cell.txnCount + row.rows.length,
     });
   }
 
@@ -1000,15 +1090,21 @@ export function hrefCategoryId(db: AppDatabase, categoryId: string | null): stri
   return loadCategoryIndex(db).uncategorizedIds.has(categoryId) ? null : categoryId;
 }
 
-/** The exact transactions behind an income cell (positive txns in the subtree). */
+/**
+ * The exact transactions behind an income cell (`incomeByMonth`): the rows of `hisIncomeRows` counted in the subtree —
+ * his money in, and a pay day's every row (decision 75). 🔴 It was every positive row in the subtree — the agent's too
+ * (§6A 27), and a returned payroll's deposit under a cell that no longer counted it (no page reads it; its test does).
+ */
 export function incomeTransactions(
   db: AppDatabase,
   filter: { categoryId: string; from: string; to: string },
 ): AnalyticsTxn[] {
-  const subtree = new Set(loadCategoryIndex(db).subtreeIds(filter.categoryId));
-  return activeTxnsInRange(db, filter.from, filter.to).filter(
-    (r) => r.amountCents > 0 && r.categoryId !== null && subtree.has(r.categoryId),
-  );
+  const idx = loadCategoryIndex(db);
+  const subtree = new Set(idx.subtreeIds(filter.categoryId));
+  const rows = activeTxnsInRange(db, filter.from, filter.to);
+  return hisIncomeRows(idx, agentsCashOfRender(db), incomeSeriesOfRender(db), rows)
+    .filter((r) => subtree.has(r.categoryId))
+    .flatMap((r) => r.rows);
 }
 
 /**

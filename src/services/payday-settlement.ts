@@ -1,4 +1,4 @@
-import { and, eq, gt, inArray } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import type { AppDatabase } from "@/db/client";
 import { recurringSeries, type SeriesKind, type SeriesStatus } from "@/db/schema/recurring";
 import { transactions } from "@/db/schema/transactions";
@@ -31,7 +31,7 @@ import {
  *
  * `lib/payday-settlement` owns the rule itself and says why. This supplies the
  * two inputs it needs and nothing else: every occurrence the ledger DRAWS for a
- * pay series, and every deposit attributed to it.
+ * pay series, and every row attributed to it — money out too, since a day is read by its net (decision 75).
  *
  * ⛔ THE UNIVERSE IS NOT THE CALLER'S WINDOW, and it cannot be. A deposit in
  * September pays down paydays in August, so a September window that projected
@@ -65,17 +65,17 @@ export function paydaySettlement(db: AppDatabase, seriesId: string, today: strin
   const s = db.select().from(recurringSeries).where(eq(recurringSeries.id, seriesId)).get();
   if (!s || s.kind !== "income") return unsettled();
 
-  const deposits = db
+  const rows = db
     .select({ postedOn: transactions.postedOn, amountCents: transactions.amountCents })
     .from(transactions)
-    .where(
-      and(
-        eq(transactions.status, "active"),
-        eq(transactions.recurringSeriesId, seriesId),
-        // money IN only: a clawback or a returned payment is not a payday
-        gt(transactions.amountCents, 0),
-      ),
-    )
+    /*
+     * ⚖️ Every row linked to it, money out too, because a DAY's rows are read by their net (`daysThatBanked`, his
+     * decision 75, 2026-10-13): a payroll and its same-day return banked nothing and pay no payday, and a partial
+     * return leaves the day its net. A clawback alone on its day is still no payday — it banked nothing.
+     * 🔴 "Money IN only: a clawback or a returned payment is not a payday" kept the deposit and dropped its return,
+     * so a payroll returned the same day still paid its payday.
+     */
+    .where(and(eq(transactions.status, "active"), eq(transactions.recurringSeriesId, seriesId)))
     .all()
     /*
      * ⛔ Nothing after today has arrived, whatever the row says. A deposit
@@ -84,15 +84,16 @@ export function paydaySettlement(db: AppDatabase, seriesId: string, today: strin
      * draws deposits beside this answer, cuts them on the same day.
      */
     .filter((d) => hasArrived(d.postedOn, today));
-  if (deposits.length === 0) return unsettled();
+  // no pay sent: nothing opens the walk (`firstPaydayOn` — a payroll returned the same day still opens it, unbanked)
+  if (!rows.some((r) => r.amountCents > 0)) return unsettled();
 
   /*
    * The walk opens on the series' first payday — its effective anchor's rhythm walked back to the first deposit — and
    * reaches `today + toleranceDays`. Money has arrived, so there is a first payday. Walking back it draws the past and
    * the paydays that money has reached (`walkBackBound`), the ones every past reader draws beside it.
    */
-  const firstOn = firstPaydayOn(effectiveSeries(s), s.toleranceDays, deposits, today);
-  const walkBackBefore = walkBackBound(deposits, s.toleranceDays, today);
+  const firstOn = firstPaydayOn(effectiveSeries(s), s.toleranceDays, rows, today);
+  const walkBackBefore = walkBackBound(rows, s.toleranceDays, today);
   const projectable = paydayProjectable(s, { firstPaydayOn: firstOn, walkBackBefore }, today);
   const occurrences = projectOccurrences(projectable, firstOn ?? today, addDays(today, s.toleranceDays)).filter(
     (o) => o.amountCents > 0,
@@ -101,7 +102,7 @@ export function paydaySettlement(db: AppDatabase, seriesId: string, today: strin
   // ⚖️ the eras of his rate history (§6A 55a): money pays only the paydays priced in its own era
   const settlement = settlePaydaysBackwards({
     occurrences,
-    deposits,
+    deposits: rows,
     toleranceDays: s.toleranceDays,
     periodOf: (day) => ratePeriodOf(projectable, day),
   });
