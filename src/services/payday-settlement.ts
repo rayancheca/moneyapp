@@ -15,6 +15,7 @@ import {
   type PaydaySettlement,
 } from "@/lib/payday-settlement";
 import { paydayReadings, type PaydayReading } from "@/lib/per-payday";
+import { daysThatBanked } from "@/lib/posted-average";
 import { ratePeriodOf } from "@/lib/series-kind";
 import { billPaymentsBySeries, paymentFor } from "./billing-carriers";
 import {
@@ -113,7 +114,12 @@ export function paydaySettlement(db: AppDatabase, seriesId: string, today: strin
     firstPaydayOn: firstOn,
     walkBackBefore,
     paydays: occurrences.map((o) => ({ date: o.date, amountCents: o.amountCents })),
-    deposits,
+    /*
+     * ⚖️ The money that BANKED, a day at a time (`daysThatBanked`, his decision 75): the day's net, never a row. 🔴 Read
+     * as the linked rows, a payroll returned the same day — a day that banked nothing — read to /spending's shortfall
+     * note as a deposit "toward no payday".
+     */
+    deposits: daysThatBanked(rows).map((d) => ({ postedOn: d.postedOn, amountCents: d.amountCents })),
   };
 }
 
