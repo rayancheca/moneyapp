@@ -457,7 +457,7 @@ describe("RecurringCalendar — a day paid inside another's payment", () => {
     state: "paid",
     amountCents: -18221,
     settledCents: 0,
-    paidWith: { carrier: "the rent", postedOn: "2026-09-02" },
+    paidWith: { carrier: "the rent", postedOn: "2026-09-02", early: false },
   });
   const rent = entry({
     seriesId: "rent",
@@ -504,9 +504,9 @@ describe("RecurringCalendar — a day paid inside another's payment", () => {
         state: "paid",
         amountCents: -210900,
         settledCents: 0,
-        paidWith: { carrier: null, postedOn: "2026-09-30" },
+        paidWith: { carrier: null, postedOn: "2026-09-30", early: false },
       }),
-      { ...util, paidWith: { carrier: "the rent", postedOn: "2026-09-30" } },
+      { ...util, paidWith: { carrier: "the rent", postedOn: "2026-09-30", early: false } },
     ];
     const october = { ...month, monthKey: "2026-10", entriesByDay: { "2026-10-01": oct1 }, postedNetCents: 0 };
     const html = decode(renderToStaticMarkup(createElement(RecurringCalendar, { initialMonth: october, today: "2026-10-09" })));
@@ -517,6 +517,35 @@ describe("RecurringCalendar — a day paid inside another's payment", () => {
     expect(html).not.toContain("missed");
     const sheet = decode(renderToStaticMarkup(createElement(DaySheetBody, { entries: oct1 })));
     expect(sheet).toContain("paid — paid by its payment of Sep 30, 2026");
+  });
+
+  /*
+   * ⚖️ His decision 73 (2026-10-13): a payment more than its grace ahead of a day, the day before it paid, pays it
+   * EARLY — FPL's Jul 28 −$56.22 its Aug 8 (3 days' grace; Jul 8 paid Jul 10). Drawn on August's grid, nothing posted
+   * there, so the word `paid` says whose payment and that it came early. The entries are what the service returns
+   * (paid-early-next-due-day.test pins it).
+   */
+  test("a day paid EARLY names the payment and says early — its own, and what its carrier's carries", () => {
+    const aug8 = [
+      entry({
+        seriesId: "fpl",
+        name: "FPL (electricity)",
+        state: "paid",
+        amountCents: -5887,
+        settledCents: 0,
+        paidWith: { carrier: null, postedOn: "2026-07-28", early: true },
+      }),
+      { ...util, paidWith: { carrier: "the rent", postedOn: "2026-07-28", early: true } },
+    ];
+    const august = { ...month, monthKey: "2026-08", entriesByDay: { "2026-08-08": aug8 }, postedNetCents: 0 };
+    const html = decode(renderToStaticMarkup(createElement(RecurringCalendar, { initialMonth: august, today: "2026-08-20" })));
+    expect(html).toContain(
+      `aria-label="Aug 8, 2026 — 2 items: FPL (electricity) paid (paid early by its payment of Jul 28, 2026) -$58.87; ` +
+        `Rent utilities & fees paid (paid early with the rent's payment of Jul 28, 2026) -$182.21"`,
+    );
+    const sheet = decode(renderToStaticMarkup(createElement(DaySheetBody, { entries: aug8 })));
+    expect(sheet).toContain("paid — paid early by its payment of Jul 28, 2026");
+    expect(sheet).toContain("paid — paid early with the rent's payment of Jul 28, 2026");
   });
 });
 

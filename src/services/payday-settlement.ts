@@ -16,11 +16,14 @@ import { paydayReadings, type PaydayReading } from "@/lib/per-payday";
 import { ratePeriodOf } from "@/lib/series-kind";
 import { billPaymentsBySeries, paymentFor } from "./billing-carriers";
 import {
+  dueDayBefore,
+  effectiveSchedule,
   effectiveSeries,
   projectOccurrences,
   rollForwardNextExpected,
   toProjectable,
   type ProjectionOverrides,
+  type SeriesOverrides,
 } from "./recurring";
 
 /**
@@ -169,9 +172,10 @@ export function settledPaydaysForSeries(db: AppDatabase, seriesId: string, today
  * payday it covers (Wed Sep 30's deposit pays Thu Oct 1) is in the bank
  * already. Listing that payday ahead counts the money twice.
  *
- * ⚖️ …nor is a bill's day a payment has already paid — its own within its grace, or, billed inside another, its
- * carrier's (§6A 59): the test the arrears and the calendar grade the same day by (`paymentFor` over
- * `billPaymentsBySeries`). The rent paid Sep 30 has paid its Oct 1 and the $182.21 inside it; that money has left.
+ * ⚖️ …nor is a bill's day a payment has already paid — its own within its grace or, the day before it paid, more than
+ * its grace early (his decision 73, 2026-10-13), or, billed inside another, its carrier's (§6A 59): the test the arrears
+ * and the calendar grade the same day by (`paymentFor` over `billPaymentsBySeries`). The rent paid Sep 30 has paid its
+ * Oct 1 and the $182.21 inside it; that money has left.
  * 🔴 "Money out is never paid down", this said (review of 50020a2): on a linked copy of his ledger with a rent payment
  * posted Sep 30, the calendar drew both Oct 1s paid while October's forecast card still projected them — committed
  * net $2,134.63 under a grid whose Expected read $4,425.84, exactly $2,291.21 apart — and the Upcoming tab, the
@@ -240,8 +244,11 @@ export function nextStillToCome(
 /** Whether a series' occurrence on a date is still to come — `stillToComeReader`'s answer, asked per date. */
 export type StillToCome = (seriesId: string, date: string) => boolean;
 
-/** What `stillToComeReader` reads of a series: its kind, and for a bill its grace and the carrier it is billed with. */
-export interface StillToComeSeries {
+/**
+ * What `stillToComeReader` reads of a series: its kind, and for a bill its grace, the carrier it is billed with and its
+ * schedule — the due day before each, which an early payment is read back from (`paymentFor`).
+ */
+export interface StillToComeSeries extends SeriesOverrides {
   id: string;
   kind: SeriesKind;
   toleranceDays: number;
@@ -258,11 +265,13 @@ export interface StillToComeSeries {
  *
  * ⚖️ A pay series' paydays are settlement's: a deposit pays down the paydays behind it (his decision of 2026-09-28),
  * and a row merely near a payday paid nothing settlement did not spend on it — the calendar's order too. Every other
- * series' day is paid by a payment within its grace (`paymentFor`), its own or its carrier's, as the arrears and the
- * calendar grade it.
+ * series' day is paid by a payment within its grace, or one more than its grace early once the day before it is paid
+ * (`paymentFor`, ⚖️ his decision 73, 2026-10-13), its own or its carrier's, as the arrears and the calendar grade it.
+ * FPL's Sep 28 draft pays its Oct 8: from Sep 28 on, Oct 8 is not still to come.
  *
- * ⛔ Asked of days from today on — every caller walks forward from today — so the payments are read from today less
- * the widest grace, with no end: a payment can pay a day only within its grace of it.
+ * ⛔ Asked of days from today on — every caller walks forward from today — so nothing late is asked: a payment past
+ * the grace of a day from today on would post after today, and no import has brought one. Every payment is read, as
+ * every grader reads them (`billPaymentsBySeries`): an early one is read back through the series' history.
  */
 export function stillToComeReader(
   db: AppDatabase,
@@ -272,17 +281,20 @@ export function stillToComeReader(
   const settled = new Map(
     series.filter((s) => s.kind === "income").map((s) => [s.id, settledPaydaysForSeries(db, s.id, today)] as const),
   );
-  const payments = billPaymentsBySeries(
-    db,
-    series.filter((s) => s.kind !== "income"),
-    today,
-    null,
+  const bills = series.filter((s) => s.kind !== "income");
+  const payments = billPaymentsBySeries(db, bills);
+  // nothing late asked (above); the day before each, as its schedule steps it, for one paid early
+  const dueDays = new Map(
+    bills.map((s) => {
+      const schedule = effectiveSchedule(s);
+      return [s.id, { after: () => null, before: (day: string) => dueDayBefore(schedule, day) }] as const;
+    }),
   );
   return (seriesId, date) => {
     const paydays = settled.get(seriesId);
     if (paydays !== undefined) return !paydays.has(date);
-    // nothing late asked (`paymentFor`): a payment past the grace of a day from today on would post after today
-    return paymentFor(payments.get(seriesId) ?? [], date, null) === undefined;
+    const days = dueDays.get(seriesId);
+    return days === undefined || paymentFor(payments.get(seriesId) ?? [], date, days) === undefined;
   };
 }
 

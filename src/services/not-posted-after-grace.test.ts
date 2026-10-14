@@ -137,6 +137,16 @@ function importedThrough(day: string): void {
   checkedThrough(bundle.db, "acct", day);
 }
 
+/**
+ * The rent's Sep 1 left unpaid — its Sep 2 row gone, June's (Jun 2) in its place so three payments still hold the rent
+ * to its date (`scheduleIsProven`): a payment more than its grace before Oct 1 is then Sep 1's, late, never Oct 1's,
+ * early (`paymentFor`, ⚖️ his decision 73, 2026-10-13).
+ */
+function unpaySep1(): void {
+  bundle.db.delete(transactions).where(eq(transactions.id, "t-sep")).run();
+  bundle.db.insert(transactions).values(row("t-jun", "2026-06-02", -228570, RENT, "FLAMINGO SOUTH BEACH")).run();
+}
+
 /** What every surface that says a bill came due says of these series' Oct 1, at TODAY. */
 function surfaces(ids: readonly string[] = [RENT, UTIL], [dueOn, dueWord] = ["2026-10-01", "Oct 1"]) {
   const calendar = recurringCalendar(bundle.db, "2026-10", TODAY).entriesByDay[dueOn] ?? [];
@@ -314,9 +324,12 @@ describe("the grace is the bill's — and, for one billed with the rent, the ren
    * 🔴 …and its page claimed a window its payments are not judged by (review of 5557162): with the utilities' 5 days
    * lent to it, a rent paid four days off Oct 1 read "Already due, and not posted … the imports, which reach 5 days past
    * it, hold no posting within 5 days of it" beside its own row. That row was Oct 5, which now pays Oct 1 late (below);
-   * Sep 27, four days EARLY, outside its own 3, pays it nothing — and the page says so within its own 3 days.
+   * Sep 27, four days EARLY, outside its own 3, pays Oct 1 early once Sep 1 is paid (his decision 73, 2026-10-13) — so
+   * here Sep 1 is not (no Sep 2 row): Sep 27 is Sep 1's, late, Oct 1 is not posted, and the page says so within its own
+   * 3 days. June's rent, paid Jun 2, keeps three payments to hold the rent to its date (`scheduleIsProven`).
    */
   test("a rent paid four days early is not posted, and its page says so within its own 3 days — not 5", () => {
+    unpaySep1();
     bundle.db.update(recurringSeries).set({ toleranceDays: 5 }).where(eq(recurringSeries.id, UTIL)).run();
     bundle.db.insert(transactions).values(row("t-sep27", "2026-09-27", -229121, RENT, "FLAMINGO SOUTH BEACH")).run();
     importedThrough("2026-10-07");
@@ -334,9 +347,12 @@ describe("the grace is the bill's — and, for one billed with the rent, the ren
    * 🔴 THE MIRROR, ON WHAT IT CARRIES (review of 44eb3e7): with the rent's 5 days lent to the utilities, whose own are
    * 3, a posting of their own four days off Oct 1 pays them nothing — and their page read "the imports, which reach 5
    * days past it, hold no posting within 5 days of it" beside it. A bill billed inside another's payment is paid within
-   * two windows, each payment by its own series' tolerance (`paymentFor`): its page names each.
+   * two windows, each payment by its own series' tolerance (`paymentFor`): its page names each. ⚖️ Four days early it
+   * pays Oct 1 early once Sep 1 is paid (his decision 73, 2026-10-13), so here Sep 1 is not: their own Sep 27 is
+   * Sep 1's, late.
    */
   test("what the rent carries, paid on its own four days early, names both windows: its own 3, the rent's 5", () => {
+    unpaySep1();
     bundle.db.update(recurringSeries).set({ toleranceDays: 5 }).where(eq(recurringSeries.id, RENT)).run();
     bundle.db.insert(transactions).values(row("t-u-sep27", "2026-09-27", -18221, UTIL, "FLAMINGO UTILITIES")).run();
     bundle.db.update(recurringSeries).set({ lastMatchedOn: "2026-09-27" }).where(eq(recurringSeries.id, UTIL)).run();
@@ -380,7 +396,7 @@ describe("the grace is the bill's — and, for one billed with the rent, the ren
     const october = recurringCalendar(bundle.db, "2026-10", TODAY);
     // the Oct 5 row is the rent's Oct 1; the utilities are paid with it
     expect(october.entriesByDay["2026-10-01"]!.map((e) => [e.seriesId, e.state, e.paidWith])).toEqual([
-      [UTIL, "paid", { carrier: "the rent", postedOn: "2026-10-05" }],
+      [UTIL, "paid", { carrier: "the rent", postedOn: "2026-10-05", early: false }],
     ]);
     expect(october.entriesByDay["2026-10-05"]!.map((e) => [e.seriesId, e.transactionId])).toEqual([[RENT, "t-oct5"]]);
     expect(october.missedCount).toBe(0);
