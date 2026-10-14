@@ -1,7 +1,10 @@
+import fs from "node:fs";
+import path from "node:path";
 import { describe, expect, test } from "vitest";
 import {
   PART_ENTERED,
   VERDICT_PRESENTATION,
+  checkedThroughLead,
   embeddedLabel,
   provenancePanelName,
   provenanceTriggerName,
@@ -20,7 +23,22 @@ describe("VERDICT_PRESENTATION", () => {
    */
   test("covers every verdict the service can return", () => {
     expect([...ALL].sort()).toEqual(
-      ["broken", "counted", "derived", "manual", "market_value", "sourced", "unknown", "unverified"].sort(),
+      ["broken", "counted", "derived", "manual", "market_value", "partly_read", "sourced", "unknown", "unverified"].sort(),
+    );
+  });
+
+  /*
+   * ⚖️ His decision 72 (2026-10-13): a total over a window some of whose days are past its own read frontier keeps its
+   * figure, and its chip reads "partly read" — amber, the weak tone — instead of "adds up". 🔴 Measured on his ledger
+   * copy 2026-10-13: `/categories/<Food>` for September read "adds up · $160.72" over a month Food's own budget card, on
+   * the same page, calls imported through Aug 12.
+   */
+  test('⚖️ a total over days its accounts have not been imported through reads "partly read", in the weak tone', () => {
+    expect(VERDICT_PRESENTATION.partly_read.word).toBe("partly read");
+    expect(VERDICT_PRESENTATION.partly_read.tone).toBe("weak");
+    expect(VERDICT_PRESENTATION.partly_read.icon).toBe(VERDICT_PRESENTATION.unverified.icon);
+    expect(provenanceTriggerName("this spent total", "partly_read")).toBe(
+      "How this spent total is known — it is partly read: not every account behind it has been imported through all of its days",
     );
   });
 
@@ -167,5 +185,34 @@ describe("the popover's accessible names", () => {
       expect(provenanceTriggerName(SENTENCE, v)).not.toMatch(/\. is known/);
     }
     expect(provenancePanelName(SENTENCE)).not.toMatch(/\. is standing on/);
+  });
+});
+
+/*
+ * ⚖️ His decision 72 (2026-10-13): a total over a window read only in part reads "partly read", and its panel says which
+ * day the window is read through. 🔴 Measured on his ledger copy 2026-10-13 (review of 06c6bf3): Food's September panel
+ * read "…It is read only in part: spending imported through Aug 12 · 30 days of this period unaccounted…" and, under
+ * it, "Checked through 2026-09-13." — two days for how far one total is known, the later one the day the complaint about
+ * "adds up" had quoted. The date is its ROWS' (the 25 Venture X rows add up through Sep 13); the words now say so.
+ */
+describe("checkedThroughLead — whose date the panel prints", () => {
+  test("⚖️ over a window read only in part, the date is its rows', in so many words", () => {
+    const partlyRead = { uncoveredDays: 30, line: "spending imported through Aug 12 · 30 days of this period unaccounted" };
+    expect(checkedThroughLead({ partlyRead })).toBe("Its rows are checked through");
+  });
+
+  test("a total read in full, and any other proof, keeps its words", () => {
+    expect(checkedThroughLead({})).toBe("Checked through");
+    expect(checkedThroughLead({ partlyRead: undefined })).toBe("Checked through");
+  });
+
+  /*
+   * ⛔ The panel is the one place a proof's date is printed, and it is a client component a static render cannot open
+   * (`Popover` mounts nothing until it is), so its source is read: it prints the lead, never words of its own.
+   */
+  test("the panel prints the date after the lead, never after words of its own", () => {
+    const source = fs.readFileSync(path.join(process.cwd(), "src/components/ui/ProvenancePopover.tsx"), "utf8");
+    expect(source).toMatch(/\{checkedThroughLead\(provenance\)\}\s*<span className="figures text-ink">\{provenance\.checkedThrough\}/);
+    expect(source).not.toMatch(/>\s*Checked through\s*</);
   });
 });

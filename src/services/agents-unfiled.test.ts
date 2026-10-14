@@ -31,6 +31,7 @@ import { dashboardData } from "./dashboard";
 import { netWorthSeries, rebuildAccount } from "./derivation";
 import { forecastCurrentMonth } from "./forecast";
 import { importedThrough } from "./imported-through-fixture";
+import { spendingReadThrough } from "./movers-card";
 import { ledgerOpens, ledgerReaches } from "./observation-frontier";
 import { periodActivity } from "./period-activity";
 import { printOnOneStatement } from "./printed-statement-fixture";
@@ -175,6 +176,7 @@ function emptyState(range: { from: string; to: string }, label = "the day") {
     label,
     ledgerOpens: ledgerOpens(bundle.db),
     ledgerReaches: ledgerReaches(bundle.db),
+    spendingReadThrough: spendingReadThrough(bundle.db, TODAY),
     formatDay: (iso) => iso,
   });
 }
@@ -289,8 +291,16 @@ describe("the agent's unfiled money out is not his spending", () => {
    */
   test("⛔ a partly-imported week holding only the agent's money says no spending or income, and that the agent's is left out", () => {
     post(agentic, "2026-09-28", -AGENTS_ACH, null, "ACH Withdrawal");
+    /*
+     * ⚖️ …and HIS account is read that far too, by a transfer — no spending or income of his. The page asks the week
+     * against the day every account he spends from is imported through (decisions 64 + 72, `spendingReadThrough`):
+     * with Wells Fargo stopping Sep 24, not one day of the week is read for his spending, and it is the empty state's
+     * "has not been imported yet" world — the agent's row alone reads no day of his.
+     */
+    post(wellsFargo, "2026-09-28", -1_000, "Transfers > Internal Transfer", "Transfer to Robinhood Agentic");
     const week = { from: "2026-09-28", to: "2026-10-04" };
     expect(ledgerReaches(bundle.db)).toBe("2026-09-28");
+    expect(spendingReadThrough(bundle.db, TODAY)).toBe("2026-09-28");
     expect(periodTotals(bundle.db, week)).toMatchObject({ spentCents: 0, earnedCents: 0, refundsCents: 0 });
     expect(honestyBuckets(bundle.db, week).uncategorized.txnCount).toBe(0);
     expect(agentsMoneyRowCount(bundle.db, week)).toBe(1);

@@ -14,6 +14,7 @@ import {
   YAxis,
 } from "recharts";
 import { categoryHueVar, isCategoryHueName } from "@/lib/category-palette";
+import { nothingFoundSoFar } from "@/lib/budget-coverage";
 import { UNREACHED_PHRASE } from "@/lib/empty-period";
 import { formatCents, formatCentsSigned } from "@/lib/money";
 import { cashFlowSegmentHref, ledgerHref, OTHER_SERIES_KEY, UNCATEGORIZED_SERIES_KEY } from "@/lib/ledger-href";
@@ -78,22 +79,33 @@ interface CashFlowChartProps {
  *
  * ⛔ The prior period's bucket stays beside an unreached one: it is a fact about
  * that period (owner decision E1a), the same rule the table's prior column keeps.
+ *
+ * ⚖️ …and a bucket past the day every account he spends from is imported through, holding no spending, prints no Spent
+ * and no Net (decisions 64 + 72, `CashFlowBucket.spendingUnaccounted`): what was found, and the heatmap cell's words for
+ * the rest. 🔴 On his ledger copy 2026-10-13 (review of 2fce458) Sep 15 hovered "Income $0.00 · Spent $0.00 · Net
+ * $0.00" and Sep 23 "Spent $0.00" beside its $4,567.68, under heatmap cells reading "nothing found so far".
  */
 export function CashFlowBucketTooltip({ bucket: b, ghostCents }: { bucket: CashFlowBucket; ghostCents: number | null }) {
+  const notFound = b.spendingUnaccounted;
+  const foundNothing = notFound !== null && b.incomeCents === 0 && b.refundsCents === 0;
   return (
     <div className="rounded-md border border-line bg-surface-raised px-3 py-2 text-xs shadow-sm">
       <div className="text-ink-faint">{b.label}</div>
       {b.unreached !== null ? (
         <div className="mt-1 text-ink-muted first-letter:uppercase">{UNREACHED_PHRASE[b.unreached]}</div>
+      ) : foundNothing ? (
+        <div className="mt-1 text-ink-muted first-letter:uppercase">{nothingFoundSoFar(notFound)}</div>
       ) : (
         <>
           <div className="mt-1 flex items-center justify-between gap-4">
             <span className="text-positive">Income</span>
-            <span className="figures">{formatCents(b.incomeCents)}</span>
+            <span className="figures">
+              {notFound !== null && b.incomeCents === 0 ? "—" : formatCents(b.incomeCents)}
+            </span>
           </div>
           <div className="flex items-center justify-between gap-4">
             <span className="text-negative">Spent</span>
-            <span className="figures">{formatCents(b.spendingCents)}</span>
+            <span className="figures">{notFound !== null ? "—" : formatCents(b.spendingCents)}</span>
           </div>
           {/* a refund is money in and never nets "Spent" down, so without
               this line Income − Spent does not make the Net below it */}
@@ -105,8 +117,11 @@ export function CashFlowBucketTooltip({ bucket: b, ghostCents }: { bucket: CashF
           )}
           <div className="mt-1 flex items-center justify-between gap-4 border-t border-line pt-1 font-medium">
             <span>Net</span>
-            <span className="figures">{formatCentsSigned(b.netCents)}</span>
+            <span className="figures">{notFound !== null ? "—" : formatCentsSigned(b.netCents)}</span>
           </div>
+          {notFound !== null && (
+            <div className="mt-1 text-ink-muted first-letter:uppercase">{nothingFoundSoFar(notFound)}</div>
+          )}
         </>
       )}
       {ghostCents !== null && (

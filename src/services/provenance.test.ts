@@ -14,13 +14,17 @@ import { holdings, priceCache } from "@/db/schema/holdings";
 import { recurringSeries } from "@/db/schema/recurring";
 import { importFiles, statementPeriods } from "@/db/schema/imports";
 import { institutions } from "@/db/schema/institutions";
+import { merchants } from "@/db/schema/merchants";
 import { transactions } from "@/db/schema/transactions";
 import { transactionSplits } from "@/db/schema/transaction-splits";
 import { provenanceTriggerName, type PresentedVerdict } from "@/lib/provenance-verdict";
 import { balanceLessNotes, type BalanceLessCounts } from "@/lib/statement-evidence-notes";
+import { budgetCoverageSentence } from "@/lib/budget-coverage";
 import { addManualAnchor } from "./anchors";
+import { budgetPaceStatuses } from "./budgets";
 import { createCashWallet } from "./cash-wallets";
 import { addManualTransaction } from "./manual-transactions";
+import { spendingReadThrough } from "./movers-card";
 import { provenanceFor, weakestVerdict, type ProvenanceVerdict } from "./provenance";
 
 /**
@@ -181,6 +185,21 @@ function addAnchor(accountId: string, day: string, source: string, importFileId?
       updatedAt: now(),
     })
     .run();
+}
+
+/**
+ * ⚖️ His decision 72 (2026-10-13): a total over days its accounts have not been imported through reads "partly read".
+ * A test asking what a total's ROWS say reads its window in full: a statement closing on `day` carries the account's
+ * import that far (`observationFrontier`). No balances — it checks nothing, so it moves no row's grade; the rows' own
+ * documents are the only ones a total names. Rows on investment accounts, which no import dates, are read through the
+ * LEDGER's day (`categoryReachFor`), so a checking account of the test's own carries it.
+ */
+function readThrough(accountId: string, day: string): void {
+  const file = addFile(`read-${accountId}-${day}`, `read-${accountId}.pdf`, "chase-checking-statement-pdf");
+  addPeriod(`read-${accountId}-${day}`, accountId, file, `${day.slice(0, 8)}01`, day, "not_applicable", {
+    beginning: null,
+    ending: null,
+  });
 }
 
 /* ── the verdict lattice ──────────────────────────────────────────────── */
@@ -1509,6 +1528,7 @@ describe("provenanceFor — a category total", () => {
       { day: "2026-07-15", basis: "derived" },
     ]);
     for (const day of ["2026-07-10", "2026-07-15"]) categorize(addTxn(acct, day, { importFileId: file }), cat);
+    readThrough(acct, "2026-07-31");
 
     const p = provenanceFor(bundle.db, { kind: "categorySpend", categoryId: cat, from: "2026-07-01", to: "2026-07-31" })!;
     expect(p.headline).toMatch(/sum of 2 rows from 1 document/);
@@ -1617,6 +1637,8 @@ describe("provenanceFor — a category total", () => {
     addDays(chase, [{ day: "2026-07-01", basis: "anchored" }, { day: "2026-07-15", basis: "derived" }]);
     addDays(coh, [{ day: "2026-07-10", basis: "anchored" }]);
     categorize(addTxn(coh, "2026-07-11"), cat);
+    readThrough(coh, "2026-07-31");
+    readThrough(chase, "2026-07-31");
     const total = () =>
       provenanceFor(bundle.db, { kind: "categorySpend", categoryId: cat, from: "2026-07-01", to: "2026-07-31" })!;
 
@@ -1710,6 +1732,7 @@ describe("provenanceFor — a category total", () => {
     ]);
     categorize(addTxn(acct, "2026-07-10", { importFileId: file }), cat);
     categorize(addTxn(acct, "2026-07-20", { importFileId: file }), cat);
+    readThrough(acct, "2026-07-31");
 
     const p = provenanceFor(bundle.db, { kind: "categorySpend", categoryId: cat, from: "2026-07-01", to: "2026-07-31" })!;
     expect(p.verdict).toBe("unverified");
@@ -1746,6 +1769,8 @@ describe("provenanceFor — a category total", () => {
       { day: "2026-08-21", basis: "derived" },
     ]);
     categorize(addTxn(sofi, "2026-08-21"), cat);
+    readThrough(coh, "2026-08-31");
+    readThrough(sofi, "2026-08-31");
 
     const p = provenanceFor(bundle.db, { kind: "categorySpend", categoryId: cat, from: "2026-08-01", to: "2026-08-31" })!;
     expect(p.checkedThrough).toBe("2026-08-10");
@@ -1775,6 +1800,7 @@ describe("provenanceFor — a category total", () => {
       { day: "2026-08-11", basis: "derived_unverified" },
     ]);
     categorize(addTxn(coh, "2026-08-11"), cat);
+    readThrough(coh, "2026-08-31");
 
     const p = provenanceFor(bundle.db, { kind: "categorySpend", categoryId: cat, from: "2026-08-01", to: "2026-08-31" })!;
     const netWorth = provenanceFor(bundle.db, { kind: "netWorth", day: "2026-09-16" })!;
@@ -1807,6 +1833,7 @@ describe("provenanceFor — a category total", () => {
       for (let i = 0; i < 1_000; i += 1) categorize(addTxn(acct, "2026-07-10", { importFileId: file }), cat);
     })();
     categorize(addTxn(acct, "2026-07-20", { importFileId: file }), cat);
+    readThrough(acct, "2026-07-31");
 
     const p = provenanceFor(bundle.db, { kind: "categorySpend", categoryId: cat, from: "2026-07-01", to: "2026-07-31" })!;
     expect(p.badgeWord).toBe("1,000 of 1,001 checked");
@@ -2371,6 +2398,7 @@ describe("provenanceFor — all spending in a window", () => {
     addDays(acct, [{ day: "2026-07-01", basis: "anchored" }, { day: "2026-07-20", basis: "derived" }]);
     categorize(addTxn(acct, "2026-07-10", { importFileId: file }), food);
     categorize(addTxn(acct, "2026-07-11", { importFileId: file }), rent);
+    readThrough(acct, WINDOW.to);
 
     const p = provenanceFor(bundle.db, { kind: "allSpend", ...WINDOW })!;
     expect(p.headline).toMatch(/sum of 2 rows from 1 document/);
@@ -2484,6 +2512,7 @@ describe("provenanceFor — all spending in a window", () => {
     ]);
     categorize(addTxn(acct, "2026-07-10", { importFileId: file }), food);
     categorize(addTxn(acct, "2026-07-20", { importFileId: file }), food);
+    readThrough(acct, WINDOW.to);
 
     const p = provenanceFor(bundle.db, { kind: "allSpend", ...WINDOW })!;
     expect(p.verdict).toBe("unverified");
@@ -2668,6 +2697,7 @@ describe("provenanceFor — all spending, compared against another window", () =
     const cat = addKindedCategory("c-food", "Fixture Food", "expense");
     const file = addFile("f1", "both.pdf", "chase-checking-statement-pdf");
     addDays(acct, [{ day: "2026-06-01", basis: "anchored" }, { day: "2026-07-31", basis: "derived" }]);
+    readThrough(acct, JUL.to);
     return { acct, cat, file };
   }
 
@@ -2696,6 +2726,7 @@ describe("provenanceFor — all spending, compared against another window", () =
     const coh = addAccount("b", "Cash on Hand", "cash");
     addDays(coh, [{ day: "2026-07-10", basis: "anchored" }]);
     categorize(addTxn(coh, "2026-07-11"), cat);
+    readThrough(coh, JUL.to);
     categorize(addTxn(acct, "2026-07-10", { importFileId: file }), cat);
     categorize(addTxn(acct, "2026-06-10", { importFileId: file }), cat);
 
@@ -2724,6 +2755,7 @@ describe("provenanceFor — all spending, compared against another window", () =
     categorize(addTxn(acct, "2026-06-10", { importFileId: file }), cat);
     categorize(addTxn(acct, "2026-06-20", { importFileId: file }), cat);
     categorize(addTxn(acct, "2026-07-20", { importFileId: file }), cat);
+    readThrough(acct, JUL.to);
 
     const p = provenanceFor(bundle.db, {
       kind: "allSpend",
@@ -2761,6 +2793,8 @@ describe("provenanceFor — all spending, compared against another window", () =
     addDays(shaky, [{ day: "2026-06-01", basis: "anchored" }, { day: "2026-06-15", basis: "derived_unverified" }]);
     categorize(addTxn(shaky, "2026-06-20", { importFileId: file }), cat);
     categorize(addTxn(solid, "2026-07-10", { importFileId: file }), cat);
+    readThrough(solid, JUL.to);
+    readThrough(shaky, JUL.to);
 
     const p = provenanceFor(bundle.db, {
       kind: "allSpend",
@@ -2833,6 +2867,7 @@ describe("provenanceFor — all spending, compared against another window", () =
       { day: "2026-08-11", basis: "derived_unverified" },
     ]);
     categorize(addTxn(coh, "2026-08-11"), cat);
+    readThrough(coh, "2026-08-31");
     const compared = () =>
       provenanceFor(bundle.db, {
         kind: "allSpend",
@@ -2856,6 +2891,7 @@ describe("provenanceFor — all spending, compared against another window", () =
       { day: "2026-08-21", basis: "derived" },
     ]);
     categorize(addTxn(sofi, "2026-07-10", { importFileId: file }), cat);
+    readThrough(sofi, "2026-08-31");
 
     const beside = compared();
     expect(beside.checkedThrough).toBe("2026-08-10");
@@ -2972,6 +3008,9 @@ describe("provenanceFor — market value that no holding prices", () => {
   const name = (label: string, p: { verdict: ProvenanceVerdict; badgeWord?: string }): string =>
     provenanceTriggerName(label, p.verdict as PresentedVerdict, p.badgeWord);
 
+  /** no import dates an investment account, so a total over one is read through the ledger's day (`readThrough`) */
+  const readLedgerThrough = (day: string): void => readThrough(addAccount("ledger", "Chase Checking", "checking"), day);
+
   test("net worth names each account by what values it, and counts them apart", () => {
     heldAccount("held", "Brokerage");
     // a balance he typed on an account holdings price is no held count (his ledger's are all on such accounts)
@@ -3059,6 +3098,7 @@ describe("provenanceFor — market value that no holding prices", () => {
     const cat = addCategory("c-buys", "Fixture Buys");
     const file = addFile("f1", "b.pdf", "robinhood-brokerage-statement-pdf");
     categorize(addTxn(held, "2026-07-10", { importFileId: file }), cat);
+    readLedgerThrough("2026-07-31");
 
     const p = provenanceFor(bundle.db, { kind: "categorySpend", categoryId: cat, from: "2026-07-01", to: "2026-07-31" })!;
     expect(p.verdict).toBe("market_value");
@@ -3076,6 +3116,7 @@ describe("provenanceFor — market value that no holding prices", () => {
     categorize(addTxn(held, "2026-07-10", { importFileId: file }), cat);
     categorize(addTxn(priced, "2026-07-10", { importFileId: file }), cat);
     categorize(addTxn(priced, "2026-07-10", { importFileId: file }), cat);
+    readLedgerThrough("2026-07-31");
 
     const p = provenanceFor(bundle.db, { kind: "categorySpend", categoryId: cat, from: "2026-07-01", to: "2026-07-31" })!;
     expect(p.headline).toContain(
@@ -3089,6 +3130,7 @@ describe("provenanceFor — market value that no holding prices", () => {
     const cat = addCategory("c-buys", "Fixture Buys");
     const file = addFile("f1", "b.pdf", "robinhood-brokerage-statement-pdf");
     categorize(addTxn(priced, "2026-07-10", { importFileId: file }), cat);
+    readLedgerThrough("2026-07-31");
 
     const p = provenanceFor(bundle.db, { kind: "categorySpend", categoryId: cat, from: "2026-07-01", to: "2026-07-31" })!;
     expect(p.headline).toContain("1 is priced from holdings rather than checked by arithmetic");
@@ -3700,5 +3742,292 @@ describe("provenanceFor — a balance he typed checks nothing", () => {
       expect(p.checkedThrough).toBe("2026-08-03");
       expect(p.headline.endsWith(BROKEN_NOTE), p.headline).toBe(true);
     }
+  });
+});
+
+/* ── a total over days its accounts have not been imported through ────── */
+
+/*
+ * ⚖️ His decision 72 (2026-10-13, either/or, the recommended answer): a TOTAL over a window some of whose days are past
+ * its own read frontier keeps its figure, and its chip reads "partly read" instead of "adds up", with /budgets' coverage
+ * line under the figure. 🔴 Measured on his ledger copy 2026-10-13: `/categories/<Food>` for September printed "SPENT ·
+ * SEP 1 – 30, 2026 · adds up · $160.72 · 25 transactions" (25 Venture X rows) while Food's budget card on the same page
+ * named Aug 12 as the day its accounts are imported through; `/spending` for September chipped "adds up … 43 rows from
+ * 3 documents" beside its own What moved naming Aug 12 as the last day every account he spends from was imported
+ * through. ⛔ The frontier is the one each page already names: a category's own (`categoryReachFor`, its budget row's),
+ * all spending's `spendingCoverageThrough`.
+ */
+describe("⚖️ decision 72 — a total over days its accounts have not been imported through is partly read", () => {
+  const JULY = { from: "2026-07-01", to: "2026-07-31" } as const;
+  let fakeToday: string | undefined;
+  let food: string;
+
+  beforeEach(() => {
+    fakeToday = process.env.MONEYAPP_FAKE_TODAY;
+    process.env.MONEYAPP_FAKE_TODAY = "2026-10-13";
+    food = addKindedCategory("c-food", "Fixture Food", "expense");
+  });
+
+  afterEach(() => {
+    if (fakeToday === undefined) delete process.env.MONEYAPP_FAKE_TODAY;
+    else process.env.MONEYAPP_FAKE_TODAY = fakeToday;
+  });
+
+  /** a card imported through `through` — Food on the 10th and on that day, its chain checked to it */
+  function cardThrough(through: string, categoryId = food): string {
+    const acct = addAccount("a", "Chase Checking", "checking");
+    const file = addFile("f1", "july.pdf", "chase-checking-statement-pdf");
+    addDays(acct, [{ day: "2026-07-01", basis: "anchored" }, { day: through, basis: "derived" }]);
+    for (const day of ["2026-07-10", through]) categorize(addTxn(acct, day, { importFileId: file }), categoryId);
+    return acct;
+  }
+
+  const foodTotal = (window: { from: string; to: string } = JULY) =>
+    provenanceFor(bundle.db, { kind: "categorySpend", categoryId: food, ...window })!;
+  const allSpend = (window: { from: string; to: string } = JULY) =>
+    provenanceFor(bundle.db, { kind: "allSpend", ...window, label: "July 2026" })!;
+
+  test("a window read through its last day adds up, as it always has", () => {
+    cardThrough("2026-07-31");
+    for (const p of [foodTotal(), allSpend()]) {
+      expect(p.verdict).toBe("derived");
+      expect(p.partlyRead).toBeUndefined();
+      expect(p.headline).not.toMatch(/read only in part/);
+    }
+  });
+
+  test("one day short of its end it is partly read — 1 day unaccounted, in /budgets' words", () => {
+    cardThrough("2026-07-30");
+    const line = "spending imported through Jul 30 · 1 day of this period unaccounted";
+    for (const p of [foodTotal(), allSpend()]) {
+      expect(p.verdict).toBe("partly_read");
+      expect(p.badgeWord).toBeUndefined();
+      expect(p.partlyRead).toEqual({ uncoveredDays: 1, line });
+      expect(p.headline).toBe(
+        "This total is the sum of 2 rows from 1 document. A total is only as proven as its weakest row. " +
+          `It is read only in part: ${line}, so this total is a lower bound rather than a measurement.`,
+      );
+    }
+    expect(provenanceTriggerName("this spent total", foodTotal().verdict as PresentedVerdict)).toBe(
+      "How this spent total is known — it is partly read: not every account behind it has been imported through all of its days",
+    );
+  });
+
+  test("a running month counts only the days that have happened", () => {
+    process.env.MONEYAPP_FAKE_TODAY = "2026-07-20";
+    cardThrough("2026-07-20");
+    expect(foodTotal().verdict).toBe("derived");
+    expect(allSpend().verdict).toBe("derived");
+  });
+
+  test("…and a running month read two days short of today leaves 2 days, never the 13 still to come", () => {
+    process.env.MONEYAPP_FAKE_TODAY = "2026-07-20";
+    cardThrough("2026-07-18");
+    for (const p of [foodTotal(), allSpend()]) {
+      expect(p.partlyRead).toEqual({ uncoveredDays: 2, line: "spending imported through Jul 18 · 2 days of this period unaccounted" });
+    }
+  });
+
+  /*
+   * ⛔ One rule with the row: the category page's headline and the /budgets row over the same window count the same
+   * days against the same day, and print the same line — the row's own sentence (`budgetCoverageSentence`).
+   */
+  test("the proof counts the days its /budgets row counts, and prints that row's line", () => {
+    process.env.MONEYAPP_FAKE_TODAY = "2026-07-20";
+    addBudget("b1", food, { startsOn: "2026-07-01" });
+    cardThrough("2026-07-18");
+    const [row] = budgetPaceStatuses(bundle.db, "2026-07-20");
+    const p = foodTotal({ from: row!.bounds.start, to: row!.bounds.end });
+    expect(row!.uncoveredDays).toBe(2);
+    expect(p.partlyRead).toEqual({ uncoveredDays: row!.uncoveredDays, line: budgetCoverageSentence(row!) });
+  });
+
+  /*
+   * ⚖️ CASH WALLETS ARE LEFT OUT (owner decision 2026-09-15, the /budgets rule): no import will ever read a wallet's
+   * day, so a window spent only from one is as read as it will ever be — "partly read" forever would be a claim no
+   * statement could ever correct.
+   */
+  test("a category spent only from a cash wallet is never partly read", () => {
+    const wallet = createCashWallet(bundle.db, { name: "Cash on Hand", openingOn: "2026-07-01", openingBalanceCents: 50_000 });
+    addManualTransaction(bundle.db, { accountId: wallet, postedOn: "2026-07-10", amountCents: -1_000, description: "Lunch", categoryId: food });
+    const p = foodTotal();
+    expect(p.verdict).toBe("manual");
+    expect(p.partlyRead).toBeUndefined();
+  });
+
+  test("…and a wallet's newer row never vouches for a card it was spent beside", () => {
+    cardThrough("2026-07-20");
+    const wallet = createCashWallet(bundle.db, { name: "Cash on Hand", openingOn: "2026-07-01", openingBalanceCents: 50_000 });
+    addManualTransaction(bundle.db, { accountId: wallet, postedOn: "2026-07-31", amountCents: -1_000, description: "Lunch", categoryId: food });
+    const p = foodTotal();
+    // the weakest part is the window, so the badge says that rather than "part you entered"
+    expect(p.verdict).toBe("partly_read");
+    expect(p.badgeWord).toBeUndefined();
+    expect(p.badgeName).toBeUndefined();
+    expect(p.partlyRead).toEqual({ uncoveredDays: 11, line: "spending imported through Jul 20 · 11 days of this period unaccounted" });
+  });
+
+  /*
+   * ⚖️ …and all spending follows it: with no account a statement is still coming for, the only day to name is a
+   * wallet's newest typed row (`spendingCoverageThrough` falls back to every account with a day), which no import will
+   * ever move.
+   */
+  test("all spending on a ledger of cash wallets alone is never partly read", () => {
+    const wallet = createCashWallet(bundle.db, { name: "Cash on Hand", openingOn: "2026-07-01", openingBalanceCents: 50_000 });
+    addManualTransaction(bundle.db, { accountId: wallet, postedOn: "2026-07-10", amountCents: -1_000, description: "Lunch", categoryId: food });
+    const p = allSpend();
+    expect(p.verdict).toBe("manual");
+    expect(p.partlyRead).toBeUndefined();
+  });
+
+  test("a window read in part says so over rows nothing checks — its headline still counts them", () => {
+    const acct = addAccount("a", "Robinhood Cash", "checking");
+    const file = addFile("f1", "july.pdf", "chase-checking-statement-pdf");
+    addDays(acct, [
+      { day: "2026-07-01", basis: "anchored" },
+      { day: "2026-07-10", basis: "derived" },
+      { day: "2026-07-20", basis: "derived_unverified" },
+    ]);
+    for (const day of ["2026-07-10", "2026-07-20"]) categorize(addTxn(acct, day, { importFileId: file }), food);
+    const p = foodTotal();
+    expect(p.verdict).toBe("partly_read");
+    // the fraction is a fact about rows, and the rows are not the weakest part
+    expect(p.badgeWord).toBeUndefined();
+    expect(p.headline).toMatch(/^This total is the sum of 2 rows from 1 document, 1 has nothing checking it\./);
+    expect(p.partlyRead?.uncoveredDays).toBe(11);
+  });
+
+  test("⛔ a window with no read day and no row is still the empty proof — never partly read (§6A 64)", () => {
+    cardThrough("2026-07-31");
+    const september = { from: "2026-09-01", to: "2026-09-30" };
+    for (const p of [foodTotal(september), allSpend(september)]) {
+      expect(p.verdict).toBe("unknown");
+      expect(p.partlyRead).toBeUndefined();
+      expect(p.headline).toMatch(/window nobody has looked at/);
+    }
+  });
+
+  /*
+   * ⛔ One day for the page. /spending hands its heatmap the day this proof counts from (`spendingReadThrough`), so a
+   * card calling a day unaccounted and a day sheet calling it a measured zero cannot both be on it — 🔴 they were, on
+   * his ledger copy 2026-10-13 (review of 06c6bf3): "30 days of this period unaccounted" under Where it went, and "No
+   * spending or income on this day." on Sep 13 … Sep 22, read against the ledger's newest row.
+   */
+  test("the day all spending is read through is the day the proof counts from", () => {
+    cardThrough("2026-07-30");
+    expect(spendingReadThrough(bundle.db, "2026-10-13")).toBe("2026-07-30");
+    expect(allSpend().partlyRead?.line).toBe("spending imported through Jul 30 · 1 day of this period unaccounted");
+  });
+
+  /*
+   * ⛔ …and an EMPTY window is asked against it too. The empty branch asked the ledger's newest day, so a window with no
+   * row and not one day read by all spending's day read "zero rather than unproven" — 🔴 on his ledger copy 2026-10-13
+   * (review of 2fce458) `/spending` over Sep 13 – 22: "No rows in Sep 13 – 22, 2026 … so this total is zero rather than
+   * unproven", the ledger reaching Sep 24 on Wells Fargo while every card he spends from stops by Sep 12. The empty
+   * state under it is asked against the same day (`spendingEmptyCopy`), and §6A 64 calls that window a dash.
+   */
+  test("an empty window past that day is no measured zero — the empty proof is asked against it", () => {
+    cardThrough("2026-07-20");
+    readThrough(addAccount("b", "Wells Fargo", "checking"), "2026-07-31");
+    expect(spendingReadThrough(bundle.db, "2026-10-13")).toBe("2026-07-20");
+    const p = allSpend({ from: "2026-07-22", to: "2026-07-25" });
+    expect(p.verdict).toBe("unknown");
+    expect(p.headline).toBe(
+      "Nothing has been imported for 4 days between Jul 22, 2026 and Jul 25, 2026, so this zero is a window nobody has " +
+        "looked at rather than a measurement.",
+    );
+    // a window it has read keeps its measured zero
+    expect(allSpend({ from: "2026-07-11", to: "2026-07-19" }).headline).toMatch(/so this total is zero rather than unproven\.$/);
+  });
+
+  test("…and there is none on a ledger of cash wallets alone, where no statement could ever move it", () => {
+    const wallet = createCashWallet(bundle.db, { name: "Cash on Hand", openingOn: "2026-07-01", openingBalanceCents: 50_000 });
+    addManualTransaction(bundle.db, { accountId: wallet, postedOn: "2026-07-10", amountCents: -1_000, description: "Lunch", categoryId: food });
+    expect(spendingReadThrough(bundle.db, "2026-10-13")).toBeNull();
+    expect(spendingReadThrough(createDatabase(":memory:").db, "2026-10-13")).toBeNull();
+  });
+
+  test("a row that does not add up, or has no basis, still outranks a window read in part", () => {
+    expect(weakestVerdict(["derived", "partly_read"])).toBe("partly_read");
+    expect(weakestVerdict(["unverified", "partly_read"])).toBe("partly_read");
+    expect(weakestVerdict(["manual", "partly_read"])).toBe("partly_read");
+    expect(weakestVerdict(["broken", "partly_read"])).toBe("broken");
+    expect(weakestVerdict(["unknown", "partly_read"])).toBe("unknown");
+  });
+
+  test("a comparison stands on both windows, so one read in part makes the whole claim partly read", () => {
+    cardThrough("2026-07-30");
+    const p = provenanceFor(bundle.db, {
+      kind: "allSpend",
+      ...JULY,
+      label: "Jul 2026",
+      against: { from: "2026-06-01", to: "2026-06-30", label: "Jun 2026" },
+    })!;
+    expect(p.verdict).toBe("partly_read");
+    expect(p.inputs.map((i) => i.verdict)).toEqual(["partly_read", "unknown"]);
+    expect(p.partlyRead).toEqual({ uncoveredDays: 1, line: "spending imported through Jul 30 · 1 day of this period unaccounted" });
+    // a change is no lower bound: the sentence names which half is read in part, in /budgets' words
+    expect(p.headline).toMatch(/ Jul 2026 is read only in part: spending imported through Jul 30 · 1 day of this period unaccounted\.$/);
+
+    // …and when the half read in part is the one compared against, that half is the one named
+    const back = provenanceFor(bundle.db, {
+      kind: "allSpend",
+      from: "2026-06-01",
+      to: "2026-06-30",
+      label: "Jun 2026",
+      against: { ...JULY, label: "Jul 2026" },
+    })!;
+    expect(back.verdict).toBe("partly_read");
+    expect(back.inputs.map((i) => i.verdict)).toEqual(["unknown", "partly_read"]);
+    expect(back.headline).toMatch(/ Jul 2026 is read only in part: spending imported through Jul 30 · 1 day of this period unaccounted\.$/);
+  });
+
+  /*
+   * The task's scope is a SPEND total, and the line is /budgets' — "spending imported through …" — which no Received
+   * or Net page could print. ❓ Whether an income page's total reads "partly read" too is his call (handoff).
+   */
+  test("an income category's Received total is not graded by spending's words", () => {
+    const pay = addKindedCategory("c-pay", "Fixture Salary", "income");
+    const acct = addAccount("a", "Chase Checking", "checking");
+    const file = addFile("f1", "july.pdf", "chase-checking-statement-pdf");
+    addDays(acct, [{ day: "2026-07-01", basis: "anchored" }, { day: "2026-07-20", basis: "derived" }]);
+    for (const day of ["2026-07-10", "2026-07-20"]) categorize(addTxn(acct, day, { importFileId: file, cents: 5_000 }), pay);
+    const p = provenanceFor(bundle.db, { kind: "categorySpend", categoryId: pay, ...JULY })!;
+    expect(p.verdict).toBe("derived");
+    expect(p.partlyRead).toBeUndefined();
+  });
+
+  /*
+   * ❓ HIS CALL, OPEN (review of 2fce458, the handoff's §6A): a merchant's own window — its first visit to its last
+   * (`merchant-insights`) — is not graded. Either it is read by the earliest import day of the accounts it was paid
+   * from, as a category's is (`categoryCoverage`), or it is left out: it ends on a row the ledger has read. Pinned as
+   * shipped until he answers, in the shape of his rent (Flamingo South Beach on his ledger copy 2026-10-13: one payment
+   * on Chase Checking, imported through Aug 12, the two since on Wells Fargo, read through Sep 24), where the category
+   * over the same days IS partly read.
+   */
+  test("❓ a merchant's own window is not graded — the category over the same days is", () => {
+    const checking = addAccount("a", "Chase Checking", "checking");
+    const wells = addAccount("b", "Wells Fargo", "checking");
+    const file = addFile("f1", "july.pdf", "chase-checking-statement-pdf");
+    addDays(checking, [{ day: "2026-07-01", basis: "anchored" }, { day: "2026-07-20", basis: "derived" }]);
+    addDays(wells, [{ day: "2026-07-01", basis: "anchored" }, { day: "2026-07-31", basis: "derived" }]);
+    bundle.db.insert(merchants).values({ id: "m-rent", canonicalName: "Fixture Landlord", createdAt: now(), updatedAt: now() }).run();
+    for (const [acct, day] of [[checking, "2026-07-10"], [wells, "2026-07-25"], [wells, "2026-07-31"]] as const) {
+      const id = addTxn(acct, day, { importFileId: file });
+      categorize(id, food);
+      bundle.db.run(sql`UPDATE transactions SET merchant_id = 'm-rent' WHERE id = ${id}`);
+    }
+    // Chase Checking is read through Jul 20 by a row of its own elsewhere
+    categorize(addTxn(checking, "2026-07-20", { importFileId: file }), food);
+    const window = { from: "2026-07-10", to: "2026-07-31" };
+
+    const rent = provenanceFor(bundle.db, { kind: "merchantSpend", merchantId: "m-rent", ...window })!;
+    expect(rent.verdict).toBe("derived");
+    expect(rent.partlyRead).toBeUndefined();
+    expect(rent.headline).toMatch(/^This total is the sum of 3 rows from 1 document\./);
+    expect(foodTotal(window).partlyRead).toEqual({
+      uncoveredDays: 11,
+      line: "spending imported through Jul 20 · 11 days of this period unaccounted",
+    });
   });
 });

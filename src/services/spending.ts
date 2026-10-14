@@ -11,6 +11,7 @@ import { humanizeDescriptionKey, strippedDescriptionKey } from "@/lib/descriptio
 // topMerchants groups on — activeTxnsInRange doesn't select that column
 import { normalizeDescription } from "@/lib/normalize";
 import { comparePeriods, type PeriodComparison } from "@/lib/compared-windows";
+import { spendingNotFoundFact } from "@/lib/budget-coverage";
 import {
   daysNotImportedYet,
   emptyFigure,
@@ -41,7 +42,7 @@ import {
 import { categoryEmptyPeriodCopy } from "@/lib/category-reach";
 import { categoryReachFor, type CategoryReachContext } from "./budgets";
 import { isUpfrontCarRow, upfrontCarRule } from "./car-upfront";
-import { spendingCoverageThrough } from "./movers-card";
+import { spendingCoverageThrough, spendingReadThrough } from "./movers-card";
 import { ledgerOpens, ledgerReaches } from "./observation-frontier";
 import { seriesIdsNotDrawnAsRecurring } from "./recurring-link";
 import { activeSplitsInRange } from "./transaction-splits";
@@ -155,6 +156,20 @@ export interface CashFlowBucket {
    * either prints changes.
    */
   unreached: UnreachedKind | null;
+  /**
+   * ⚖️ Decisions 64 + 72: "spending imported through Aug 12" where the bucket holds no spending row and not one of its
+   * elapsed days is read by the day every account he spends from is imported through (`spendingReadThrough`, the day
+   * the period's proof and the heatmap on the same page read against) — its Spent and its Net are no measurement, and
+   * print "—" with this; null where they are, and always null where `unreached` is set (`spendingNotFoundFact`).
+   *
+   * 🔴 Measured on his ledger copy 2026-10-13 (review of 2fce458): `/spending?period=2026-09` tabled Sep 6 and Sep 13 …
+   * Sep 22 "$0.00 $0.00 $0.00" and hovered them "Income $0.00 · Spent $0.00 · Net $0.00", and Sep 9, 23 and 24 "Spent
+   * $0.00" beside their income — asked against the ledger's newest row (Sep 24) — under a heatmap calling the same days
+   * "nothing found so far — spending imported through Aug 12".
+   *
+   * ⛔ ADDITIVE, for the reason `unreached` is: the figures stay, and no total, pace or running line moves.
+   */
+  spendingUnaccounted: string | null;
 }
 
 export interface PaceInfo {
@@ -223,7 +238,7 @@ export function cashFlowByPeriod(db: AppDatabase, period: ResolvedPeriod, today:
   const rows = activeTxnsInRange(db, period.from, period.to);
 
   // coverage is decided once the rows are classified — see the return below
-  const shells: Omit<CashFlowBucket, "unreached">[] = buckets.map((b) => ({
+  const shells: Omit<CashFlowBucket, "unreached" | "spendingUnaccounted">[] = buckets.map((b) => ({
     key: b.key,
     label: b.label,
     from: b.from,
@@ -339,11 +354,24 @@ export function cashFlowByPeriod(db: AppDatabase, period: ResolvedPeriod, today:
   const opens = ledgerOpens(db);
   const reaches = ledgerReaches(db);
   const holdsRows = new Set(classified.map((c) => c.bucket));
-  const reached: CashFlowBucket[] = shells.map((s, i) => ({
-    ...s,
-    unreached: holdsRows.has(i)
+  const unreached = shells.map((s, i) =>
+    holdsRows.has(i)
       ? null
       : unreachedKind({ from: s.from, to: s.to, today, ledgerOpens: opens, ledgerReaches: reaches }),
+  );
+  /*
+   * ⚖️ …and whether a reached bucket's Spent is one (decisions 64 + 72, `spendingNotFoundFact`). ⚡ All spending's day
+   * is asked only where a reached bucket holds no spending: a window whose empty days are all unreached never asks it
+   * (the dashboard's running month on his ledger copy 2026-10-13, every elapsed day of it past the newest row).
+   */
+  const spendless = (i: number): boolean => unreached[i] === null && shells[i]!.spendingCents === 0;
+  const readThrough = shells.some((_, i) => spendless(i)) ? spendingReadThrough(db, today) : null;
+  const reached: CashFlowBucket[] = shells.map((s, i) => ({
+    ...s,
+    unreached: unreached[i] ?? null,
+    spendingUnaccounted: spendless(i)
+      ? spendingNotFoundFact({ from: s.from, to: s.to, today, ledgerOpens: opens, readThrough, spentCents: 0 })
+      : null,
   }));
 
   return { buckets: reached, incomeSeries, spendingSeries, totals, pace };
@@ -1045,13 +1073,34 @@ function emptyReasonFor(range: DateRange, opts: EmptyCopyOpts) {
 export function spendingEmptyCopy(
   db: AppDatabase,
   range: DateRange,
-  opts: EmptyCopyOpts,
+  opts: SpendingEmptyCopyOpts,
 ): { title: string; description: string } {
-  return emptyPeriodCopy(emptyReasonFor(range, opts), opts.label, opts.ledgerReaches, opts.formatDay, {
+  // ⚖️ all spending's day where there is one, named as spending's; the ledger's where none (cash wallets alone)
+  const asked = { ...opts, ledgerReaches: opts.spendingReadThrough ?? opts.ledgerReaches };
+  return emptyPeriodCopy(emptyReasonFor(range, asked), opts.label, asked.ledgerReaches, opts.formatDay, {
+    ...(opts.spendingReadThrough === null ? {} : { importedThroughSubject: "spending" }),
     uncategorizedBucket: true,
     ledgerOpens: opts.ledgerOpens,
     agentsMoney: agentsMoneyRowCount(db, range) > 0,
   });
+}
+
+/**
+ * /spending's: the window is ALL his spending, so it is asked against the day every account he spends from is imported
+ * through — the day the period's proof, its heatmap and its cash flow on the same page read against.
+ *
+ * ⚖️ Decisions 64 + 72. 🔴 Asked against the ledger's newest row alone, `/spending?period=2026-09-15`,
+ * `?period=W2026-09-14` and `?from=2026-09-13&to=2026-09-22` — no row, not one day read through Aug 12 — read "a
+ * measured zero rather than an unread window" on his ledger copy 2026-10-13 (review of 2fce458), while the heatmap's
+ * sheet for Sep 15 said "That is not the same as nothing happening". `/categories/<id>` already asks its category's own
+ * day (`categoryEmptyCopy`, §6A 49), in these words.
+ */
+interface SpendingEmptyCopyOpts extends EmptyCopyOpts {
+  /**
+   * `spendingReadThrough(db)` — REQUIRED, handed in from the page's one read of it (⚡ the agent-money render test counts
+   * every read an empty state makes); null on a ledger of cash wallets alone, where the ledger's day stands
+   */
+  spendingReadThrough: string | null;
 }
 
 /**

@@ -1718,6 +1718,57 @@ function borrowedReach(
   };
 }
 
+/** How far one category's window is READ — the coverage half of a /budgets row (`BudgetPaceStatus`). */
+export interface CategoryWindowReading extends CategoryCoverage {
+  /** the page's day where the category has none of its own and is not cash only (`borrowedReach`); null otherwise */
+  borrowedDay: BorrowedDay | null;
+  /** elapsed days of the window past the day it is read through (`BudgetPaceStatus.uncoveredDays`) */
+  uncoveredDays: number;
+  /** not one elapsed day of it read by that day (`BudgetPaceStatus.noDayRead`) */
+  noDayRead: boolean;
+}
+
+/**
+ * The day a category's window `[start, end]` is read through, and how many of its elapsed days lie past it — what a
+ * /budgets row's coverage line is written from (`lib/budget-coverage::budgetCoverageSentence`).
+ *
+ * ⛔ One reading for the row and for the total its category page headlines over the same window (⚖️ decision 72,
+ * 2026-10-13, `provenance::categorySpendProvenance`): the page's chip reads "partly read" over exactly the days the row
+ * calls unaccounted, and prints the row's line under its figure. Two readings would be two days for one window.
+ *
+ * The uncovered stretch is measured against the graded window only: a frontier before the window opens leaves the
+ * WHOLE elapsed window uncovered, and one on or past today leaves none. ⛔ The count is `daysNotImportedYet`, the
+ * dashboard tile's and /spending's, not a third copy of the clamp — only the frontier it is given is this category's.
+ * A category spent only from cash wallets keeps every elapsed day here and says why instead
+ * (`spentOnlyFromCashWallets`): a caller grading a figure by the count asks that first.
+ */
+export function categoryWindowReading(
+  db: AppDatabase,
+  categoryId: string,
+  window: { start: string; end: string },
+  refDate: string,
+  reads: CarryReads = carryReads(db),
+): CategoryWindowReading {
+  const coverage = categoryCoverage(db, categoryId, window.start, refDate, reads.frontier, reads.wallets, reads.awaiting);
+  // ⚖️ no day of its own: the page's, so the card under its headline counts what the headline counts (`borrowedReach`)
+  const borrowed = borrowedReach(db, categoryId, coverage, window.start, refDate, reads);
+  const asked: EmptyPeriodInput = {
+    from: window.start,
+    to: window.end,
+    today: refDate,
+    ledgerOpens: reads.opens,
+    ledgerReaches: borrowed === null ? coverage.importedThroughOn : borrowed.through,
+  };
+  return {
+    ...coverage,
+    borrowedDay: borrowed?.day ?? null,
+    uncoveredDays: daysNotImportedYet(asked),
+    // ⚖️ §6A 64: the headline's dash (`emptyFigure`) over the window and day the count above was taken on, never a
+    // second reading of either
+    noDayRead: emptyFigure(emptyPeriodReason(asked)) === "dash",
+  };
+}
+
 /**
  * budgetStatuses enriched with pace, projection, and the expected tail — the
  * data behind the §8 bars. Kept separate from the lean budgetStatuses so a
@@ -1742,7 +1793,7 @@ export function budgetPaceStatusOf(
   refDate: string,
   reads: BudgetPaceReads = budgetPaceReads(db),
 ): BudgetPaceStatus {
-  const { notDrawn, upfront, frontier, opens, wallets, awaiting } = reads;
+  const { notDrawn, upfront } = reads;
   const { start, end } = s.bounds;
   // budgetStatuses evaluates the period CONTAINING refDate, start-clamped to
   // startsOn, so pace is measured over the budget's OWN life inside the period
@@ -1815,34 +1866,13 @@ export function budgetPaceStatusOf(
   // back; the row prints no $0.00 beside a spend below it (`BudgetRow`), as it prints none equal to the spend. Latent
   // on his live budgets.
   const projectedCents = Math.max(0, s.spentCents, forecast);
-  // the uncovered stretch is measured against the graded window only: a
-  // frontier before the window opens leaves the WHOLE elapsed window
-  // uncovered, and one on or past today leaves none. ⛔ The count is
-  // `daysNotImportedYet`, the dashboard tile's and /spending's, not a third
-  // copy of the clamp — only the frontier it is given is this category's.
-  const coverage = categoryCoverage(db, s.budget.categoryId, start, refDate, frontier, wallets, awaiting);
-  // ⚖️ no day of its own: the page's, so the card under its headline counts what the headline counts (`borrowedReach`)
-  const borrowed = borrowedReach(db, s.budget.categoryId, coverage, start, refDate, reads);
-  const window: EmptyPeriodInput = {
-    from: start,
-    to: end,
-    today: refDate,
-    ledgerOpens: opens,
-    ledgerReaches: borrowed === null ? coverage.importedThroughOn : borrowed.through,
-  };
-  const uncoveredDays = daysNotImportedYet(window);
   return {
     ...s,
     overdueCents: overdue.totalCents,
     overdueUnreadCents: overdue.series.reduce((sum, o) => sum + o.unreadCents, 0),
     overdueInGraceCents: overdue.series.reduce((sum, o) => sum + o.inGraceCents, 0),
     overdue: overdue.series,
-    ...coverage,
-    borrowedDay: borrowed?.day ?? null,
-    uncoveredDays,
-    // ⚖️ §6A 64: the headline's dash (`emptyFigure`) over the window and day the count above was taken on, never a
-    // second reading of either
-    noDayRead: emptyFigure(emptyPeriodReason(window)) === "dash",
+    ...categoryWindowReading(db, s.budget.categoryId, s.bounds, refDate, reads),
     totalDays,
     elapsedDays,
     elapsedFraction: elapsedDays / totalDays,

@@ -83,13 +83,29 @@ export function CashFlowView({
    * ⛔ The ROW stays and only its own four figures dash (owner decision E1a): the
    * prior-period column is a fact about the prior period, and dropping Sep 15–30
    * would drop its real figures with it.
+   *
+   * ⚖️ …AND A BUCKET PAST THE DAY EVERY ACCOUNT HE SPENDS FROM IS IMPORTED THROUGH, HOLDING NO SPENDING, keeps only
+   * what was found in it (decisions 64 + 72, `CashFlowBucket.spendingUnaccounted`): its Spent and its Net, and any
+   * zero beside them, are "—". 🔴 On his ledger copy 2026-10-13 (review of 2fce458) `?period=2026-09&cash=table` read
+   * Sep 15 "$0.00 $0.00 $0.00" and Sep 23 "$4,567.68 $0.00 +$4,567.68" under a heatmap calling both days unaccounted.
    */
-  const figure = (r: CashRow, node: ReactNode): ReactNode =>
-    r.unreached === null ? node : <span className="text-ink-faint">—</span>;
-  const dashNote = unreachedDashNote(
-    rows.flatMap((r) => (r.unreached === null ? [] : [r.unreached])),
-    (rows[0]?.key.length ?? 10) === 7 ? "month" : "day",
-  );
+  const dash = <span className="text-ink-faint">—</span>;
+  const figure = (r: CashRow, node: ReactNode, found = false): ReactNode =>
+    r.unreached !== null || (r.spendingUnaccounted !== null && !found) ? dash : node;
+  const noun = (rows[0]?.key.length ?? 10) === 7 ? "month" : "day";
+  const notFound = rows.find((r) => r.unreached === null && r.spendingUnaccounted !== null)?.spendingUnaccounted ?? null;
+  const dashNotes = [
+    unreachedDashNote(
+      rows.flatMap((r) => (r.unreached === null ? [] : [r.unreached])),
+      noun,
+    ),
+    // the heatmap's day sheet's words for the same day (`SpendHeatmap::heatDaySheetSentence`)
+    notFound === null
+      ? null
+      : `A dash is not a zero where nothing has been found so far — ${notFound}, and not every account you spend from ` +
+        `has been read for that ${noun}.`,
+  ].filter((n): n is string => n !== null);
+  const dashNote = dashNotes.length === 0 ? null : dashNotes.join(" ");
 
   const columns: Column<CashRow>[] = [
     { key: "label", header: "Period", render: (r) => r.label },
@@ -98,7 +114,7 @@ export function CashFlowView({
       // S22: every positive income-kind row — /summary alone says "Earned", and means less
       header: "Income",
       align: "right",
-      render: (r) => figure(r, <span className="text-positive">{formatCents(r.incomeCents)}</span>),
+      render: (r) => figure(r, <span className="text-positive">{formatCents(r.incomeCents)}</span>, r.incomeCents !== 0),
     },
     {
       key: "spent",
@@ -112,7 +128,8 @@ export function CashFlowView({
             key: "refunded",
             header: "Refunded",
             align: "right" as const,
-            render: (r: CashRow) => figure(r, <span className="text-positive">{formatCents(r.refundsCents)}</span>),
+            render: (r: CashRow) =>
+              figure(r, <span className="text-positive">{formatCents(r.refundsCents)}</span>, r.refundsCents !== 0),
           },
         ]
       : []),

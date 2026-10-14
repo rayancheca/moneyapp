@@ -13,6 +13,8 @@ import { parseFilters } from "@/components/transactions/query";
 import { dedupeHash } from "@/lib/hash";
 import { resolvePeriod } from "@/lib/period";
 import { createAccount } from "./accounts";
+import { createCashWallet } from "./cash-wallets";
+import { addManualTransaction } from "./manual-transactions";
 import { setSplits } from "./transaction-splits";
 import { countMatching } from "./transactions-query";
 import {
@@ -23,6 +25,7 @@ import {
   ledgerFirstDay,
   periodComparison,
   periodTotals,
+  spendingEmptyCopy,
   spendingProjection,
   topMerchants,
 } from "./spending";
@@ -310,6 +313,88 @@ describe("cashFlowByPeriod — which buckets the ledger has reached", () => {
       ["2026-11", "future"],
       ["2026-12", "future"],
     ]);
+  });
+});
+
+/*
+ * ⚖️ Decisions 64 + 72: a bucket past the day EVERY account he spends from is imported through (`spendingReadThrough`)
+ * that holds no spending row is no measured zero — its Spent says why instead (`lib/budget-coverage::
+ * spendingNotFoundFact`). 🔴 Measured on his ledger copy 2026-10-13 (review of 2fce458): `/spending?period=2026-09`
+ * read Sep 6 and Sep 13 … Sep 22 back with spent 0, income 0 and `unreached` null — asked against the ledger's newest
+ * row (Sep 24), not Aug 12 — so the table printed "$0.00 $0.00 $0.00" and the chart's hover "Income $0.00 · Spent
+ * $0.00 · Net $0.00", and Sep 9, 23 and 24 "Spent $0.00" beside their income, under a heatmap calling the same days
+ * "nothing found so far — spending imported through Aug 12".
+ */
+describe("cashFlowByPeriod — a bucket past the day all his spending is read through", () => {
+  /** checking is imported through Jul 3, the card through Jul 7: all spending is read through Jul 3 */
+  function twoAccountsReadApart(): void {
+    insertTxn({ accountId: checkingId, postedOn: "2026-07-01", amountCents: -1_000, category: "Food > Dining" });
+    insertTxn({ accountId: checkingId, postedOn: "2026-07-03", amountCents: -2_000, category: "Food > Groceries" });
+    insertTxn({ postedOn: "2026-07-02", amountCents: -500, category: "Food > Dining" });
+    insertTxn({ postedOn: "2026-07-06", amountCents: 50_000, category: "Income > Salary" });
+    insertTxn({ postedOn: "2026-07-07", amountCents: -3_000, category: "Food > Dining" });
+  }
+
+  test("an empty day and an income-only day past it name the day; a day read, or holding spending, does not", () => {
+    twoAccountsReadApart();
+    const cf = cashFlowByPeriod(bundle.db, JULY, TODAY);
+    const notFound = Object.fromEntries(cf.buckets.map((b) => [b.key.slice(8), b.spendingUnaccounted]));
+    expect(notFound["03"]).toBeNull(); // the day it is read through
+    expect(notFound["04"]).toBe("spending imported through Jul 3");
+    expect(notFound["05"]).toBe("spending imported through Jul 3");
+    expect(notFound["06"]).toBe("spending imported through Jul 3"); // its income is found; its spending is not
+    expect(notFound["07"]).toBeNull(); // the card's spending is found, and keeps its figure
+    // a day the ledger has not reached, or that has not happened, says that instead — never both
+    expect(cf.buckets.find((b) => b.key === "2026-07-08")).toMatchObject({ unreached: "after-records", spendingUnaccounted: null });
+    expect(cf.buckets.find((b) => b.key === "2026-07-09")).toMatchObject({ unreached: "future", spendingUnaccounted: null });
+  });
+
+  /* ⛔ ADDITIVE, as `unreached` is: the pace tile and the graph's running totals read the figures */
+  test("the figures behind it stay what they were, so no total moves", () => {
+    twoAccountsReadApart();
+    const cf = cashFlowByPeriod(bundle.db, JULY, TODAY);
+    const jul6 = cf.buckets.find((b) => b.key === "2026-07-06")!;
+    expect([jul6.incomeCents, jul6.spendingCents, jul6.netCents]).toEqual([50_000, 0, 50_000]);
+    expect(cf.totals).toEqual(periodTotals(bundle.db, JULY));
+  });
+
+  /*
+   * ⚖️ …and the empty state over such a window is decision 64's world, not "a measured zero". 🔴 Measured on his ledger
+   * copy 2026-10-13 (review of 2fce458): `/spending?period=2026-09-15`, `?period=W2026-09-14` and `?from=2026-09-13&
+   * to=2026-09-22` — no row, not one day read through Aug 12 — read "This window sits inside what has been imported, so
+   * it holds no spending and no income — a measured zero rather than an unread window", while the heatmap's sheet for
+   * Sep 15 said "That is not the same as nothing happening". The window is asked against spending's day, named as
+   * spending's — the way `/categories/<id>` asks its category's (`categoryEmptyCopy`, §6A 49).
+   */
+  test("an empty window past it is asked against that day, named as spending's — never a measured zero", () => {
+    twoAccountsReadApart();
+    const copy = (spendingReadThrough: string | null) =>
+      spendingEmptyCopy(bundle.db, { from: "2026-07-04", to: "2026-07-05" }, {
+        today: TODAY,
+        label: "Jul 4 – 5, 2026",
+        ledgerOpens: "2026-07-01",
+        ledgerReaches: "2026-07-07",
+        spendingReadThrough,
+        formatDay: (iso) => iso,
+      });
+    expect(copy("2026-07-03")).toEqual({
+      title: "Jul 4 – 5, 2026 has not been imported yet",
+      description:
+        "Nothing has been imported for 2 days of it; spending is imported through 2026-07-03. That is a window nobody has " +
+        "looked at, not one in which nothing happened — import the statements that cover it.",
+    });
+    // ⚖️ a ledger of cash wallets alone has no such day: the ledger's stands, as it always has
+    expect(copy(null).title).toBe("No spending or income in this period");
+  });
+
+  /* ⚖️ a ledger of cash wallets alone has no day a statement could move (2026-09-15): an empty day is measured, as before */
+  test("on a ledger of cash wallets alone nothing waits for a statement", () => {
+    const wallet = createCashWallet(bundle.db, { name: "Cash on Hand", openingOn: "2026-07-01", openingBalanceCents: 50_000 });
+    const lunch = { accountId: wallet, amountCents: -1_000, description: "Lunch", categoryId: catId("Food > Dining") };
+    addManualTransaction(bundle.db, { ...lunch, postedOn: "2026-07-01" });
+    addManualTransaction(bundle.db, { ...lunch, postedOn: "2026-07-05" });
+    const cf = cashFlowByPeriod(bundle.db, JULY, TODAY);
+    expect(cf.buckets.find((b) => b.key === "2026-07-03")).toMatchObject({ unreached: null, spendingUnaccounted: null });
   });
 });
 

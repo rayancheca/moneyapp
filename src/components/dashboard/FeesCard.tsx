@@ -124,6 +124,13 @@ export function FeesCard({ data }: { data: FeesCardData }) {
               {data.paidProvenance && (
                 <ProvenancePopover label="the fees you paid" provenance={data.paidProvenance} />
               )}
+              {/* ⚖️ decision 72 (2026-10-13): the days the chip calls partly read, in /budgets' words — the proof's own
+                  line, on a row of its own, as the fee rows above print their notes. 🔴 On his ledger copy 2026-10-13
+                  this row wore "partly read" and named no day: "…Aug 12 · 49 days of this period unaccounted" was in
+                  the proof and nowhere on the card. A span, for the reason on this `<dt>`. */}
+              {data.paidProvenance?.partlyRead && (
+                <span className="basis-full text-[11px] text-ink-faint">{data.paidProvenance.partlyRead.line}</span>
+              )}
             </dt>
             <dd className="shrink-0">
               <Money cents={recent.paidCents} className="font-semibold" />

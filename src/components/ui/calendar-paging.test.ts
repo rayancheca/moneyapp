@@ -81,6 +81,7 @@ const HEATMAP: Caller = {
       today: TODAY,
       ledgerOpens: "2024-07-01",
       ledgerReaches: TODAY,
+      spendingReadThrough: TODAY,
     }),
   load: vi.mocked(spendingActions.loadSpendHeatmap),
   askedFor: (args) => args[0] as string,
