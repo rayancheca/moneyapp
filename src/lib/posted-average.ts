@@ -277,6 +277,16 @@ export function daysThatBanked(rows: readonly Pick<ReadableRow, "postedOn" | "am
   return occurrencesOf(rows).filter((o) => o.amountCents > 0);
 }
 
+/**
+ * The days whose rows net BELOW $0.00, oldest first — money going back out on a day of its own: a payroll returned on a
+ * later day, a clawback. `daysThatBanked`' other side, so every day that is not a same-day nothing is one or the other.
+ * ⚖️ His decision 75: such a day banked nothing and pays no payday — the deposit's own day pays as it always has — so
+ * it is named where a window's money is counted (`payShortfall`'s `wentBackOut`), never taken off a paid payday.
+ */
+export function daysThatWentBackOut(rows: readonly Pick<ReadableRow, "postedOn" | "amountCents">[]): Occurrence[] {
+  return occurrencesOf(rows).filter((o) => o.amountCents < 0);
+}
+
 /** A day's rows summed, one per day, oldest first — what `occurrencesOf` and `nettedToNothing` divide between them. */
 function daysOf(rows: readonly Pick<ReadableRow, "postedOn" | "amountCents">[]): Occurrence[] {
   const byDay = new Map<string, Occurrence>();
