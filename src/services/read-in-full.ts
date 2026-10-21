@@ -41,7 +41,7 @@ export interface AveragesEnd {
  * Chase Checking was read only through Aug 12, beside a /budgets guide that left Aug and Sep out for exactly that.
  */
 export function averagesEndAt(db: AppDatabase, today: string = todayIso()): AveragesEnd {
-  const lastComplete = monthKey(addCalendarMonths(`${monthKey(today)}-01`, -1));
+  const lastComplete = lastCompleteMonth(today);
   const through = spendingCoverageThrough(db, today);
   const fullyRead = through === null ? lastComplete : lastFullyReadMonth(through);
   // 'YYYY-MM' compares as text: never the running month, however far into it the accounts are read
@@ -53,4 +53,63 @@ export function averagesEndAt(db: AppDatabase, today: string = todayIso()): Aver
     if (floor !== null && m >= floor) left.push(m);
   }
   return { month, unread: through === null || left.length === 0 ? null : { months: left, through } };
+}
+
+/** The months an average of whole months reads today (`averagedMonths`). */
+export interface AveragedMonths {
+  /** 'YYYY-MM', oldest first — fewer than asked where the ledger is young, and none where it covers no whole month */
+  keys: string[];
+  /** `AveragesEnd.unread` */
+  unread: UnreadMonths | null;
+}
+
+/**
+ * The `count` calendar months an AVERAGE of whole months reads today: they end at `averagesEndAt`'s month, and none of
+ * them is before the ledger's first whole month (`firstWholeMonth`).
+ *
+ * ⛔ ONE RULE FOR EVERY AVERAGE, ITS FLOOR TOO. `baselineWindow` (the dashboard's six, /budgets' guide) and `paceMonths`
+ * (/recurring's three, /spending's and Predict budgets' three) read their months here, and the income pace its floor
+ * (`incomeAveragedMonths`). A month before the ledger began
+ * is not a month of nothing, it is no measurement at all (`baselineWindow` holds the 🔴 that found it), and the window
+ * keeps its length by sliding back, so where the ledger is young it shortens rather than reach before the floor.
+ *
+ * 🔴 Review of 6d11c4d: the floor lived in `baselineWindow` alone, and `paceMonths` slid back behind the frontier past
+ * it. On a ledger opening Jun 1 with one account read only to Jun 12, at 2026-08-27 /recurring paced spending over
+ * Mar–May — three months before the first record — and read "Spending $0.00 … EOM cash $322.58" at the pace, under a
+ * note naming those months, beside a runway saying "No month has been read in full yet".
+ */
+export function averagedMonths(db: AppDatabase, today: string, count: number): AveragedMonths {
+  const end = averagesEndAt(db, today);
+  return { keys: flooredMonths(db, end.month, count), unread: end.unread };
+}
+
+/**
+ * The `count` calendar months the INCOME pace averages today: the calendar's last complete ones, and — like every
+ * average (`averagedMonths`) — none before the ledger's first whole month.
+ *
+ * ⚖️ His decision 71 (2026-10-13) cuts SPENDING's averages at the day every account he spends from is read to; the
+ * income pace keeps the calendar's months. That exempts it from the frontier, never from the floor. 🔴 Review of
+ * 06a5d3e: `variableIncomeComponents` averaged the calendar's three with no floor, and on a ledger opening Jun 1
+ * banking $3,000.00 of Salary each month, at 2026-08-27 /recurring's math read "Salary | avg of last 3 periods, present
+ * 2/3 mo, × 5/31 days | +$322.58" — May, before the first record, averaged as a month of no pay; the two months the
+ * ledger has say $483.87.
+ */
+export function incomeAveragedMonths(db: AppDatabase, today: string, count: number): string[] {
+  return flooredMonths(db, lastCompleteMonth(today), count);
+}
+
+/** 'YYYY-MM': the calendar month before the one `today` is in — the last one an average could read in full. */
+function lastCompleteMonth(today: string): string {
+  return monthKey(addCalendarMonths(`${monthKey(today)}-01`, -1));
+}
+
+/** The `count` calendar months ending with `lastMonth` ('YYYY-MM'), oldest first, none before `firstWholeMonth`. */
+function flooredMonths(db: AppDatabase, lastMonth: string, count: number): string[] {
+  const floor = firstWholeMonth(db);
+  const keys: string[] = [];
+  for (let i = count - 1; i >= 0; i--) {
+    const key = monthKey(addCalendarMonths(`${lastMonth}-01`, -i));
+    if (floor !== null && key >= floor) keys.push(key);
+  }
+  return keys;
 }

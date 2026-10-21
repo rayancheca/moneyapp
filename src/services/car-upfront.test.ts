@@ -21,7 +21,7 @@ import { createCashWallet } from "./cash-wallets";
 import { predictBudgets, predictCategory } from "./category-forecast";
 import { carCard, runwayCard, spendBaseline } from "./committed";
 import { forecastCurrentMonth, forecastForMonth, type MonthForecast } from "./forecast";
-import { importedThrough } from "./imported-through-fixture";
+import { importedThrough, ledgerOpenedOn } from "./imported-through-fixture";
 import { addManualTransaction } from "./manual-transactions";
 import { cashFlowByPeriod, spendingProjection } from "./spending";
 
@@ -182,6 +182,16 @@ function removeRows(ids: readonly string[]): void {
   for (const id of ids) bundle.db.delete(transactions).where(eq(transactions.id, id)).run();
 }
 
+/**
+ * July read whole: the ledger opens Jun 30, not on the control bucket's Jul 5, so a pace reads the calendar's Jul–Sep
+ * and a test's arithmetic is over those three. No average reads a month before the ledger's first whole month
+ * (`paceMonths`' floor, review of 6d11c4d): on the fixture as it stands the pace reads Aug–Sep, the window the card's
+ * baseline floors to ("the car card's figures do not move").
+ */
+function julyWhole(): void {
+  ledgerOpenedOn(bundle.db, "2026-06-30");
+}
+
 describe("the pace leaves out the car's up-front money (owner decision 2026-10-07, §6A 48)", () => {
   /**
    * 🔴 Measured before the fix on this fixture, the same line as his ledger: "Car  3-mo avg $2,033.33 + trend $0.00,
@@ -189,6 +199,7 @@ describe("the pace leaves out the car's up-front money (owner decision 2026-10-0
    * every month.
    */
   test("/recurring's month forecast projects no Car pace from the down payment", () => {
+    julyWhole();
     postTheUpfrontMoney();
     const f = forecastCurrentMonth(bundle.db, TODAY);
 
@@ -295,6 +306,7 @@ describe("one rule: what the card calls up front is exactly what the pace leaves
    * the pace; the Groceries part beside it stays in Groceries' pace, on the forecast and on /spending alike.
    */
   test("a split purchase: its Car part leaves the pace, its Groceries part stays", () => {
+    julyWhole();
     // before the lease starts — after it, a Car part is ordinary spending (§6A 52, below)
     const mixed = insertTxn({ postedOn: "2026-09-05", amountCents: -9_000, categoryId: groceriesId });
     split(mixed, [
@@ -327,6 +339,7 @@ describe("one rule: what the card calls up front is exactly what the pace leaves
    * alone, keeps it. The decision is about his up-front money, and only his.
    */
   test("a Car row on the agent's cash is not his up-front money, and the agent's pace keeps it", () => {
+    julyWhole();
     const rh = bundle.db.select().from(institutions).where(eq(institutions.name, "Robinhood")).get()!;
     const agentic = createAccount(bundle.db, { institutionId: rh.id, name: "Robinhood Agentic", type: "checking", last4: "9651" });
     const book = createAccount(bundle.db, { institutionId: rh.id, name: "Robinhood Agentic Brokerage", type: "investment", subtype: "brokerage" });
@@ -344,6 +357,7 @@ describe("one rule: what the card calls up front is exactly what the pace leaves
 
   /** A "Car" that is not top-level is not the car — the card's own resolution — and its spend stays pace. */
   test("without a top-level Car the pace is untouched, even beside a sub-category named Car", () => {
+    julyWhole();
     // a fresh ledger shape: no top-level Car at all, and a Transport > Car
     bundle.db.update(recurringSeries).set({ userCategoryId: null }).run();
     bundle.db.update(transactions).set({ categoryId: groceriesId }).where(eq(transactions.categoryId, carInsuranceId)).run();
@@ -369,6 +383,7 @@ describe("paid up front means BEFORE the lease starts (owner decision 2026-10-07
    * first repair would have been amortised over 24 months and left out of every pace.
    */
   test("a Car repair after the lease starts is ordinary spending, not up front", () => {
+    julyWhole();
     postTheUpfrontMoney();
     insertTxn({ postedOn: "2026-09-20", amountCents: -30_000, categoryId: carId });
 
@@ -395,6 +410,7 @@ describe("paid up front means BEFORE the lease starts (owner decision 2026-10-07
   });
 
   test("the boundary: the day before the lease starts is up front, the day it starts is not", () => {
+    julyWhole();
     insertTxn({ postedOn: "2026-09-10", amountCents: -1_000, categoryId: carId });
     insertTxn({ postedOn: "2026-09-11", amountCents: -2_000, categoryId: carId });
 
@@ -405,6 +421,7 @@ describe("paid up front means BEFORE the lease starts (owner decision 2026-10-07
 
   /** A wash club the owner dismissed, charged after the lease starts, is a habit like any other. */
   test("a dismissed series' Car row after the lease starts is in the pace", () => {
+    julyWhole();
     const club = addSeries({ name: "Car wash club", nextExpectedOn: "2026-10-20", amountCents: -2_500, userCategoryId: carId, status: "dismissed" });
     insertTxn({ postedOn: "2026-09-20", amountCents: -2_500, categoryId: carId, recurringSeriesId: club });
 

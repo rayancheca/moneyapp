@@ -20,6 +20,8 @@
  * is exactly one trailing-average engine in the codebase.
  */
 
+import { monthCount } from "./committed";
+import { monthWindowLabel } from "./format-date";
 import { projectTrailingAverage } from "./projection";
 
 /** A per-income-bucket trailing history (one entry per full trailing month, oldest → newest). */
@@ -51,6 +53,41 @@ export interface OngoingIncomeEstimate {
 
 /** Default presence gate: income must appear in ≥ 2 of the trailing months to be "ongoing". */
 export const MIN_INCOME_MONTHS_PRESENT = 2;
+
+/**
+ * Whether an income pace over `months` trailing months can project anything at all: no bucket comes in
+ * `MIN_INCOME_MONTHS_PRESENT` of fewer months than that, so over them every income pace is $0.00 BY CONSTRUCTION, never
+ * by measurement — and a pace of no measurement is withheld, never printed as a pace of nothing.
+ *
+ * ⛔ ONE PREDICATE for /recurring's band (`incomePaceWithheld`) and the pace row's sentence saying why
+ * (`incomePaceNote`). 🔴 Review of 0795a2a: the band held Money in's pace back only where it had NO month, and on a
+ * ledger opening Jul 1, at 2026-08-27 it read "Money in · Scheduled $2,000.00 (1 line) · Recent pace $0.00 (0 lines)",
+ * drawn 100% scheduled, beside Money out's "Recent pace $64.52 (1 line)" over the same one July.
+ */
+export function incomePaceMeasurable(months: number): boolean {
+  return months >= MIN_INCOME_MONTHS_PRESENT;
+}
+
+/**
+ * What /recurring's pace row says where the income pace has too few months to measure (`incomePaceMeasurable`) —
+ * "Money in has no recent pace yet: a kind of income counts toward it once it has come in 2 complete months, so a
+ * one-off never does. Jul 2026 is the only complete month imported so far." — the months named where there are any.
+ * Null where the pace has its months.
+ *
+ * ⚖️ Spending's one month IS averaged (it projects every bucket; you will keep buying groceries) and income's is not:
+ * the presence gate is what keeps a tax refund or a deposit's return from extrapolating as pay. So on one young ledger
+ * Money out can have a pace where Money in has none, and the band's "—" needs its own reason.
+ */
+export function incomePaceNote(monthKeys: readonly string[]): string | null {
+  if (incomePaceMeasurable(monthKeys.length)) return null;
+  const gate =
+    "Money in has no recent pace yet: a kind of income counts toward it once it has come in " +
+    `${monthCount(MIN_INCOME_MONTHS_PRESENT, "complete")}, so a one-off never does.`;
+  if (monthKeys.length === 0) return gate;
+  const months = monthWindowLabel(monthKeys[0]!, monthKeys.at(-1)!);
+  const only = monthKeys.length === 1 ? "is the only complete month" : "are the only complete months";
+  return `${gate} ${months} ${only} imported so far.`;
+}
 
 /**
  * Which income buckets represent ONGOING earnings, and how much per month. A

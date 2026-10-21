@@ -2,6 +2,7 @@ import { Money } from "@/components/ui/Money";
 import { SurfaceCard } from "@/components/ui/SurfaceCard";
 import { forecastSplit } from "@/lib/forecast-split";
 import { formatDayLong } from "@/lib/format-date";
+import { incomePaceMeasurable } from "@/lib/income-forecast";
 import { projectedEvidence } from "@/lib/series-evidence";
 import { passedPaydaysWords } from "@/lib/unbanked-income";
 import type { MonthForecast } from "@/services/forecast";
@@ -229,6 +230,31 @@ function Stat({ label, cents, flow = false }: { label: string; cents: number; fl
 }
 
 /**
+ * No month since the ledger's first whole one is read in full (`MonthForecast.spendPaceMonths`), so there is no
+ * spending pace — the ONE predicate the pace row and the composition band above it both hold their pace back by.
+ */
+function spendPaceWithheld(f: MonthForecast): boolean {
+  return f.spendPaceMonths === 0;
+}
+
+/**
+ * The income pace has fewer months than its presence gate needs (`MonthForecast.incomePaceMonths`,
+ * `incomePaceMeasurable`), so there is no income pace — the band's Money in side holds its pace back by it, and the
+ * pace row says why (`MonthForecast.incomePaceNote`). ⚖️ It can hold where spending's does not: one month is a spending
+ * average (every bucket projects) and no income one (a kind of income must come in two). 🔴 Review of 0795a2a: it held
+ * at 0 months alone, and a ledger opening Jul 1 read "Money in · Recent pace $0.00 (0 lines)" at 2026-08-27.
+ */
+function incomePaceWithheld(f: MonthForecast): boolean {
+  return !incomePaceMeasurable(f.incomePaceMonths);
+}
+
+/** The pace row's sentences: which months spending's pace averaged and why (`spendPaceNote`), then Money in's. */
+function paceNotes(f: MonthForecast): string | null {
+  const notes = [f.spendPaceNote, f.incomePaceNote].filter((n): n is string => n !== null);
+  return notes.length === 0 ? null : notes.join(" ");
+}
+
+/**
  * The trailing pace, on its own row and never folded into the headline.
  *
  * ⛔ This row is the honesty half of the owner's instruction. He asked for the
@@ -247,15 +273,33 @@ function Stat({ label, cents, flow = false }: { label: string; cents: number; fl
  * and `OutsideCashNote` prints each share that is not zero.
  */
 function PaceRow({ forecast: f }: { forecast: MonthForecast }) {
+  const heading = (
+    <h3 className="text-[11px] font-medium uppercase tracking-[0.1em] text-ink-faint">
+      If you also spend at your recent pace
+    </h3>
+  );
+  /*
+   * ⛔ A PACE OF NO MONTH IS NOT A PACE OF NOTHING. Where no month since the ledger's first whole one is read in full
+   * (`MonthForecast.spendPaceMonths`), every figure on this row but Income would be the headline's spending passed off
+   * as the pace — so none prints, and the row says why in the runway caption's words. 🔴 Review of 6d11c4d: on a young
+   * ledger it read "Spending $0.00 … EOM cash $322.58" over three months before the first record. Where Money in has
+   * no pace either, its sentence follows (`incomePaceNote`): the band above reads "—" on both sides.
+   */
+  if (spendPaceWithheld(f)) {
+    return (
+      <div className="mt-5 rounded-md border border-line bg-surface px-4 py-3">
+        {heading}
+        <p className="mt-2 text-xs leading-relaxed text-ink-faint">{paceNotes(f)}</p>
+      </div>
+    );
+  }
   const paceIncome = f.projectedIncomeCents - f.committed.incomeCents;
   const paceSpend = f.projectedSpendCents - f.committed.spendCents;
   if (paceIncome === 0 && paceSpend === 0) return null;
 
   return (
     <div className="mt-5 rounded-md border border-line bg-surface px-4 py-3">
-      <h3 className="text-[11px] font-medium uppercase tracking-[0.1em] text-ink-faint">
-        If you also spend at your recent pace
-      </h3>
+      {heading}
       <dl className="mt-2 grid grid-cols-2 gap-x-6 gap-y-3 md:grid-cols-5">
         <PaceStat label="Income" cents={f.projectedIncomeCents} flow />
         <PaceStat label="Spending" cents={f.projectedSpendCents} flow />
@@ -263,9 +307,10 @@ function PaceRow({ forecast: f }: { forecast: MonthForecast }) {
         <PaceStat label="EOM cash" cents={f.projectedEomCashCents} />
         <PaceStat label="EOM net worth" cents={f.projectedEomNetWorthCents} />
       </dl>
-      {/* ⚖️ which months "your recent pace" is, when the frontier slid them back (his decision 71) */}
-      {f.spendPaceNote !== null && (
-        <p className="mt-3 text-[11px] leading-relaxed text-ink-faint">{f.spendPaceNote}</p>
+      {/* ⚖️ which months "your recent pace" is, when the frontier slid them back (his decision 71) — and why Income
+          holds no pace where Money in has too few months for one: its figure is then the schedule alone */}
+      {paceNotes(f) !== null && (
+        <p className="mt-3 text-[11px] leading-relaxed text-ink-faint">{paceNotes(f)}</p>
       )}
     </div>
   );
@@ -382,7 +427,11 @@ export function ForecastCard({ forecast: f }: ForecastCardProps) {
 
       <AgentsCostsNote agents={f.agentsCosts} />
 
-      <ForecastComposition split={split} />
+      <ForecastComposition
+        split={split}
+        incomePaceWithheld={incomePaceWithheld(f)}
+        spendPaceWithheld={spendPaceWithheld(f)}
+      />
 
       <PaceRow forecast={f} />
 

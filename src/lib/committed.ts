@@ -710,11 +710,9 @@ export function baselineCaption(window: {
   unread?: UnreadMonths | null;
 }): string {
   const span = baselineSpan(window);
+  if (span === null) return emptyWindowCaption(window.unread ?? null);
   const unread = unreadMonthsSentence(window.unread ?? null);
   const why = unread === null ? "" : ` ${unread}`;
-  if (span === null) {
-    return `${emptyWindowOpening(window.unread ?? null)}, so there is no spending average to stand on.${why}`;
-  }
   const leftOut = upfrontCarLeftOut(window.upfrontCarCents ?? 0);
   const clause = leftOut === null ? "" : `, leaving out ${leftOut}`;
   return `Spending averaged over ${span}${clause}.${why} This month is still running and is not counted.`;
@@ -758,6 +756,21 @@ const NONE_READ_IN_FULL = "no month has been read in full yet";
 export function emptyWindowOpening(unread: UnreadMonths | null): string {
   const phrase = unreadMonthsSentence(unread) === null ? "no complete month has been imported yet" : NONE_READ_IN_FULL;
   return `${phrase[0]!.toUpperCase()}${phrase.slice(1)}`;
+}
+
+/**
+ * What a spending average says when it holds no month — "No month has been read in full yet, so there is no spending
+ * average to stand on. Jun 2026 and Jul 2026 are left out: Jun 12 is the last day every account you spend from has
+ * been imported through." — or "No complete month has been imported yet, so …" where nothing was left out.
+ *
+ * ⛔ ONE SENTENCE for the runway's caption (`baselineCaption`) and /recurring's pace row (`spendPaceNote`): both read
+ * their months by one rule (`averagedMonths`), so on one ledger and one day they hold no month together. 🔴 Review of
+ * 6d11c4d: the pace row read "Spending $0.00" over three months before the ledger's first record where the runway on
+ * the same young ledger said no month had been read in full.
+ */
+export function emptyWindowCaption(unread: UnreadMonths | null): string {
+  const why = unreadMonthsSentence(unread);
+  return `${emptyWindowOpening(unread)}, so there is no spending average to stand on.${why === null ? "" : ` ${why}`}`;
 }
 
 /**
@@ -842,6 +855,9 @@ export function guideWindowWords(window: {
  * math table reads "3-mo avg" beside an October, and a reader takes that for Jul–Sep; so where they are not, the card
  * names them and why, in `baselineSpan`'s and the runway's words (`unreadMonthsSentence`). ⚠️ "Spending's": the income
  * pace still averages the calendar's months.
+ *
+ * ⛔ AND A PACE OF NO MONTH IS NOT A PACE OF NOTHING. Where the floor leaves the window no month (`averagedMonths`), the
+ * card holds the pace row's figures back and says so in the runway caption's sentence (`emptyWindowCaption`).
  */
 export function spendPaceNote(window: {
   months: number;
@@ -850,8 +866,9 @@ export function spendPaceNote(window: {
   unread: UnreadMonths | null;
 }): string | null {
   const span = baselineSpan(window);
+  if (span === null) return emptyWindowCaption(window.unread);
   const unread = unreadMonthsSentence(window.unread);
-  return span === null || unread === null ? null : `Spending's pace is averaged over ${span}. ${unread}`;
+  return unread === null ? null : `Spending's pace is averaged over ${span}. ${unread}`;
 }
 
 /**

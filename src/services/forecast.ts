@@ -5,7 +5,7 @@ import { transactions } from "@/db/schema/transactions";
 import { arrearsTail, HAS_NOT_POSTED } from "@/lib/arrears-reading";
 import { addCalendarMonths, addDays, compareDates, diffDays, monthKey, periodBounds, todayIso } from "@/lib/dates";
 import { forecastSplit } from "@/lib/forecast-split";
-import { projectOngoingIncome, projectOngoingNetIncome } from "@/lib/income-forecast";
+import { incomePaceNote, projectOngoingIncome, projectOngoingNetIncome } from "@/lib/income-forecast";
 import { trailingPace } from "@/lib/projection";
 import { formatDayShortIn } from "@/lib/format-date";
 import { spendPaceNote, type UnreadMonths } from "@/lib/committed";
@@ -48,7 +48,7 @@ import { silenceMeasuredThroughBySeries } from "./cash-earnings";
 import { stillToCome, stillToComeReader } from "./payday-settlement";
 import { activeSplitsInRange } from "./transaction-splits";
 import { linkIsNotRecurring, seriesIdsNotDrawnAsRecurring } from "./recurring-link";
-import { averagesEndAt } from "./read-in-full";
+import { averagedMonths, incomeAveragedMonths } from "./read-in-full";
 
 /**
  * Current-month forecast (master-plan Phase 6) — every number traceable:
@@ -114,6 +114,8 @@ interface ForecastReads {
   checkedThrough: (seriesId: string) => string | null;
   /** `paceMonths` — the months the spending pace averages, behind the frontier (his decision 71) */
   spendPace: PaceMonths;
+  /** `incomePaceMonths` — the calendar's months the income pace averages, floored as every average is */
+  incomePace: MonthWindow[];
 }
 
 /**
@@ -325,9 +327,32 @@ export interface MonthForecast {
    * Which months the spending pace averaged, and why the later ones are left out, when the frontier cut them
    * (`paceMonths`, his decision 71, 2026-10-13) — "Spending's pace is averaged over 3 complete months, May 2026 to Jul
    * 2026. Aug 2026 and Sep 2026 are left out: Aug 12 is the last day every account you spend from has been imported
-   * through." Null when it reads the calendar's last three: "3-mo avg" then means what it says.
+   * through." Null when it reads the calendar's last three: "3-mo avg" then means what it says. Where it read no month
+   * at all, the runway caption's sentence (`emptyWindowCaption`) — "No month has been read in full yet, so there is no
+   * spending average to stand on. …"
    */
   spendPaceNote: string | null;
+  /**
+   * How many months the spending pace averaged (`paceMonths`): three, fewer where the ledger is young, and 0 where it
+   * covers no whole month read in full — then there is NO pace, and the card holds back every figure the pace row
+   * would print. 🔴 Review of 6d11c4d: a pace of no month read "Spending $0.00" and a month-end cash with no spending.
+   */
+  spendPaceMonths: number;
+  /**
+   * How many months the INCOME pace averaged (`incomePaceMonths`): the calendar's last three, fewer where the ledger is
+   * young, and 0 where it covers no whole month. Under the presence gate's two (`incomePaceMeasurable`) there is no
+   * income pace — no kind of income can come in two of one month — and the card's band holds Money in's pace back as
+   * it does Money out's. 🔴 Review of f1a0180: with no count to read, the band could not tell "no month" from "$0" and
+   * printed "Money in · Recent pace $0.00 (0 lines)", drawn 100% scheduled. 🔴 Review of 0795a2a: it then held back 0
+   * months alone, and one month read the same "$0.00 (0 lines)" beside Money out's one-month "$64.52 (1 line)".
+   */
+  incomePaceMonths: number;
+  /**
+   * Why Money in has no recent pace, where it has too few months for one (`incomePaceNote`): "Money in has no recent
+   * pace yet: a kind of income counts toward it once it has come in 2 complete months, so a one-off never does. Jul
+   * 2026 is the only complete month imported so far." Null where the income pace has its months.
+   */
+  incomePaceNote: string | null;
   /**
    * Paydays that already passed this month with nothing banked against them —
    * REPORTED, never projected.
@@ -449,11 +474,14 @@ export function trailingFullMonths(today: string, count: number): MonthWindow[] 
 /** The `count` full calendar months ending with `lastMonth` ('YYYY-MM'), oldest first. */
 function monthsEndingAt(lastMonth: string, count: number): MonthWindow[] {
   const windows: MonthWindow[] = [];
-  for (let i = count - 1; i >= 0; i--) {
-    const bounds = periodBounds(addCalendarMonths(`${lastMonth}-01`, -i), "monthly");
-    windows.push({ start: bounds.start, end: bounds.end, key: monthKey(bounds.start) });
-  }
+  for (let i = count - 1; i >= 0; i--) windows.push(monthWindowOf(monthKey(addCalendarMonths(`${lastMonth}-01`, -i))));
   return windows;
+}
+
+/** One calendar month ('YYYY-MM') as a window. */
+function monthWindowOf(key: string): MonthWindow {
+  const bounds = periodBounds(`${key}-01`, "monthly");
+  return { start: bounds.start, end: bounds.end, key };
 }
 
 /** The months a spending pace averages today (`paceMonths`), and the complete months after them it leaves out. */
@@ -475,18 +503,35 @@ export interface PaceMonths {
  * trend -$176.57", about $1,000 more of October's last 19 days — and /spending's "November 2026 ≈ $466.84" stood on the
  * same three months.
  *
- * ⚠️ No floor, unlike `baselineWindow`: a month before the ledger opens reads as a month of nothing, as it always did
- * here. And spending's alone: the income pace still averages the calendar's months — the frontier is the day every
- * account he SPENDS from is read to.
+ * ⛔ …AND NEVER BEFORE THE LEDGER'S FIRST WHOLE MONTH — `baselineWindow`'s floor, read from the one rule both windows
+ * share (`averagedMonths`), so where the ledger is young the months are fewer than `count`, or none. 🔴 Review of
+ * 6d11c4d: this slid back with no floor, as the calendar's three never had one, and on a ledger opening Jun 1 with one
+ * account read only to Jun 12 it paced spending at 2026-08-27 over Mar–May, before the first record: "Spending $0.00"
+ * at the pace and a month-end cash with no spending in it, where its parent commit had read −$80.65. A pace of no
+ * month is withheld, never a pace of nothing (`MonthForecast.spendPaceMonths`).
+ *
+ * ⚠️ Spending's alone: the income pace still averages the calendar's months — the frontier is the day every account he
+ * SPENDS from is read to — though never before the floor (`incomePaceMonths`).
  */
 export function paceMonths(db: AppDatabase, today: string, count: number = TRAILING_FULL_MONTHS): PaceMonths {
-  const end = averagesEndAt(db, today);
-  return { windows: monthsEndingAt(end.month, count), unread: end.unread };
+  const { keys, unread } = averagedMonths(db, today, count);
+  return { windows: keys.map(monthWindowOf), unread };
+}
+
+/**
+ * The `count` full months the INCOME pace averages (`variableIncomeComponents`): the calendar's last ones, not cut by
+ * the spending frontier (his decision 71), and none before the ledger's first whole month (`incomeAveragedMonths`) —
+ * fewer where the ledger is young, none where it covers no whole month, and then there is no income pace.
+ */
+export function incomePaceMonths(db: AppDatabase, today: string, count: number = TRAILING_FULL_MONTHS): MonthWindow[] {
+  return incomeAveragedMonths(db, today, count).map(monthWindowOf);
 }
 
 /** `MonthForecast.spendPaceNote` of a pace's months. */
 function paceNote({ windows, unread }: PaceMonths): string | null {
-  return spendPaceNote({ months: windows.length, fromMonth: windows[0]!.key, toMonth: windows.at(-1)!.key, unread });
+  // no month is no range: `spendPaceNote` reads neither end of an empty window (`baselineSpan`)
+  const [fromMonth, toMonth] = [windows[0]?.key ?? "", windows.at(-1)?.key ?? ""];
+  return spendPaceNote({ months: windows.length, fromMonth, toMonth, unread });
 }
 
 const CADENCE_LABEL: Record<string, string> = {
@@ -841,6 +886,10 @@ function variableComponents(
 ): ForecastLeg {
   // ⚖️ the months every account you spend from is read to the end of (`paceMonths`, his decision 71)
   const windows = spendPace.windows;
+  // ⛔ no month read in full since the ledger's first whole month: no pace, never a pace of nothing (`spendPaceMonths`)
+  if (windows.length === 0) {
+    return { components: [], cashCents: 0, outsideAccountIds: new Set(), agentsCents: 0, agentsCostCents: 0 };
+  }
   const rangeStart = windows[0]!.start;
   const rangeEnd = windows.at(-1)!.end;
 
@@ -939,7 +988,8 @@ function variableComponents(
       label,
       kind: "variable",
       cents: -projected,
-      detail: `3-mo avg ${formatCents(Math.round(pace.averageCents))} + trend ${trendNote}, × ${remainingDays}/${daysInMonth} days`,
+      // the months the average was divided by: fewer than three where the ledger is young (`paceMonths`' floor)
+      detail: `${windows.length}-mo avg ${formatCents(Math.round(pace.averageCents))} + trend ${trendNote}, × ${remainingDays}/${daysInMonth} days`,
     });
   }
 
@@ -966,7 +1016,8 @@ function variableComponents(
  * VARIABLE INCOME — the fix for a near-zero "projected income" when income is
  * real but IRREGULAR (a cash job, tutoring) rather than a detected series. Per
  * income subcategory, the trailing average of the last 3 FULL months of ONGOING
- * income, scaled by remaining days. Mirrors variableComponents (spending) but
+ * income (fewer on a young ledger, `incomePaceMonths`' floor), scaled by
+ * remaining days. Mirrors variableComponents (spending) but
  * with income honesty (see lib/income-forecast.ts): a bucket must appear in ≥2
  * trailing months (one-off refunds/aid never extrapolate) and there is NO upward
  * trend nudge. Rows a series drawn as recurring owns are excluded
@@ -996,9 +1047,13 @@ function variableIncomeComponents(
   today: string,
   remainingDays: number,
   daysInMonth: number,
-  { notDrawn, outside, agentsCash }: ForecastReads,
+  { notDrawn, outside, agentsCash, incomePace }: ForecastReads,
 ): ForecastLeg {
-  const windows = trailingFullMonths(today, TRAILING_FULL_MONTHS);
+  // the calendar's months, floored (`incomePaceMonths`): May before a ledger opening Jun 1 is no month of $0 pay
+  const windows = incomePace;
+  if (windows.length === 0) {
+    return { components: [], cashCents: 0, outsideAccountIds: new Set(), agentsCents: 0, agentsCostCents: 0 };
+  }
   const rangeStart = windows[0]!.start;
   const rangeEnd = windows.at(-1)!.end;
 
@@ -1250,6 +1305,7 @@ function forecastReads(db: AppDatabase, today: string): ForecastReads {
     checkedThrough: silenceMeasuredThroughBySeries(db, today),
     // once for the chain: every month of it paces spending over the same months, and the frontier is not cheap
     spendPace: paceMonths(db, today),
+    incomePace: incomePaceMonths(db, today),
   };
 }
 
@@ -1333,6 +1389,9 @@ export function forecastForMonth(
     },
     components: parts.components,
     spendPaceNote: paceNote(reads.spendPace),
+    spendPaceMonths: reads.spendPace.windows.length,
+    incomePaceMonths: reads.incomePace.length,
+    incomePaceNote: incomePaceNote(reads.incomePace.map((w) => w.key)),
     /*
      * A FUTURE month has no past inside it — every one of its paydays is still
      * to come, so there is nothing that has passed unbanked. Stated rather than
@@ -1438,6 +1497,9 @@ function currentMonthForecast(db: AppDatabase, today: string, reads: ForecastRea
     },
     components,
     spendPaceNote: paceNote(reads.spendPace),
+    spendPaceMonths: reads.spendPace.windows.length,
+    incomePaceMonths: reads.incomePace.length,
+    incomePaceNote: incomePaceNote(reads.incomePace.map((w) => w.key)),
     unbankedIncome: unbankedIncomeTotals(unbanked),
     outsideCash: outsideCashOf(db, parts),
     agentsIncome: { netCents: parts.agentsNet, committedNetCents: parts.committedAgentsNet },
