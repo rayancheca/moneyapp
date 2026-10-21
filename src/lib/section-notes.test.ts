@@ -1014,6 +1014,8 @@ describe("cashEarningsSectionNotes", () => {
       shortCents: 428_292,
       paidOutside: [{ depositOn: "2026-09-24", paydays: ["2026-08-27"], cents: 114_192, early: false }],
       neverBankedCents: 314_100,
+      notBankedYetCents: 0,
+      notBankedYetPaydays: [],
       paidAcross: [],
       noPaydayBeyondCents: 0,
       otherBeyondCents: 0,
@@ -1319,6 +1321,8 @@ describe("cashEarningsSectionNotes", () => {
       shortCents: 0,
       paidOutside: [],
       neverBankedCents: 0,
+      notBankedYetCents: 0,
+      notBankedYetPaydays: [],
       paidAcross: [],
       noPaydayBeyondCents: 0,
       otherBeyondCents: 0,
@@ -1326,7 +1330,7 @@ describe("cashEarningsSectionNotes", () => {
       towardNoPayday: [],
       paidAhead: [],
     };
-    const surplus = (surplusCents: number, over: Partial<PayShortfall> = {}, row: object = {}) =>
+    const surplus =(surplusCents: number, over: Partial<PayShortfall> = {}, row: object = {}) =>
       notes({
         ...HIS,
         bankedCents: HIS.impliedCents + surplusCents,

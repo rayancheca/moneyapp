@@ -752,8 +752,10 @@ function payShortfallNote(
       `${formatCents(p.cents)} (${AND_LIST.format(p.paydays.map(payday))}) was paid ${p.early ? "early, " : ""}by ` +
       `the ${depositsOf([p.depositOn], formatDay)}`,
   );
+  // ⚖️ "never" only past a payday's days to land (`unbankedSplit`); inside them, the forecast's "not banked yet"
+  const notYet = s.notBankedYetCents > 0 ? [`${formatCents(s.notBankedYetCents)} is not banked yet`] : [];
   const never = s.neverBankedCents > 0 ? [`${formatCents(s.neverBankedCents)} never reached a bank`] : [];
-  const rest = [...outside, ...never];
+  const rest = [...outside, ...notYet, ...never];
 
   const noPaydayFrom = depositsOf(s.towardNoPayday.map((d) => d.depositOn), formatDay);
   const noPayday =
@@ -767,18 +769,29 @@ function payShortfallNote(
   const split =
     s.bankedInsideCents > 0
       ? `, of which ${AND_LIST.format([banked, ...rest])}`
-      : outside.length === 0
+      : outside.length === 0 && notYet.length === 0
         ? ", and none of it reached a bank"
-        : `, and none of it was banked inside the window: ${AND_LIST.format(rest)}`;
+        : outside.length === 0 && never.length === 0
+          ? ", and none of it is banked yet"
+          : `, and none of it was banked inside the window: ${AND_LIST.format(rest)}`;
 
+  // why it is not banked yet, beside the claim: the days its deposits have to land run past the checked day
+  const days = s.notBankedYetPaydays;
+  const toLand =
+    days.length === 1
+      ? `${payday(days[0]!)}'s days to land`
+      : `the days to land of ${AND_LIST.format(days.map(payday))}`;
+  const grace =
+    days.length > 0 && checkedThrough ? `; ${toLand} run past ${formatDay(checkedThrough)}, ${LAST_CHECKED_DAY}` : "";
   const n = s.unlookedPaydays;
   const unlooked =
     n > 0 && checkedThrough
       ? `; ${n} more ${n === 1 ? "payday in the window falls" : "paydays in the window fall"} after ` +
-        `${formatDay(checkedThrough)}, ${LAST_CHECKED_DAY} — so ${notLookedForDeposits(n)}`
+        // the day is named in full once
+        `${formatDay(checkedThrough)}${grace === "" ? `, ${LAST_CHECKED_DAY}` : ""} — so ${notLookedForDeposits(n)}`
       : "";
 
-  return `${lead}${split}${beyondPhrase(s, payday, noPaydayFrom, formatDay)}${unlooked}.`;
+  return `${lead}${split}${grace}${beyondPhrase(s, payday, noPaydayFrom, formatDay)}${unlooked}.`;
 }
 
 /**

@@ -269,8 +269,8 @@ export function dueDayIsRead(dueOn: string, reading: DueDayReading): boolean {
  * WHETHER THE LEDGER HAS LOOKED FOR A PAYDAY'S DEPOSIT: `checkedThrough` is the last day every account the pay lands
  * in NOW has been checked through (`checkedThroughBySeries`, the day every pay sentence names — `LAST_CHECKED_DAY`), or
  * null when one of them has no checked record. A payday ON that day was looked for: a deposit dated on it is in the
- * records. No grace in the split — the pay's sentences give none; only the warning waits out a payday's days to land
- * (`UnbankedIncomeSeries.pastGraceOccurrenceCount`).
+ * records. No grace in the split — the pay's sentences give none; only "never reached a bank" waits out a payday's
+ * days to land (`paydayLandingIsRead`).
  *
  * ⛔ THE ONE PREDICATE for whether a passed payday was looked for: the calendar's "not banked yet" against "the ledger
  * has not looked for its deposit" (`settledVerdict`, `not_looked_for`), and the checked half of the passed paydays
@@ -283,6 +283,21 @@ export function dueDayIsRead(dueOn: string, reading: DueDayReading): boolean {
  */
 export function paydayIsRead(paydayOn: string, checkedThrough: string | null): boolean {
   return checkedThrough !== null && compareDates(paydayOn, checkedThrough) <= 0;
+}
+
+/**
+ * WHETHER THE LEDGER HAS CHECKED A PAYDAY THROUGH ITS DAYS TO LAND — its series' own `toleranceDays` after it, the
+ * reach the settlement's anchor clause gives a deposit: no deposit can still answer it on a day the ledger has not
+ * read.
+ *
+ * ⛔ THE ONE PREDICATE behind "never reached a bank" against "not banked yet", for a payday no deposit settled: the
+ * forecast's note and the pay series' own page (`pastGraceOccurrenceCount`), the dashboard's Earned vs banked and
+ * /spending's shortfall note (`paydaysNotBankedYet`). 🔴 Review of 878c3d5: it reached the first two alone — Thu Sep 3
+ * checked through Sat Sep 5 read "Pay not banked yet" on the forecast, and "$1,000.00 of it never reached a bank" on
+ * the dashboard and "none of it reached a bank" on /spending, while a deposit on Sun Sep 6 would still have paid it.
+ */
+export function paydayLandingIsRead(paydayOn: string, toleranceDays: number, checkedThrough: string | null): boolean {
+  return paydayIsRead(addDays(paydayOn, toleranceDays), checkedThrough);
 }
 
 /** How far the ledger has read the days one series' past occurrences are graded on — each direction by its own rule. */

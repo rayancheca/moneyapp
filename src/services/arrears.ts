@@ -3,7 +3,13 @@ import type { AppDatabase } from "@/db/client";
 import { recurringSeries } from "@/db/schema/recurring";
 import type { ArrearsReading } from "@/lib/arrears-reading";
 import { addDays, compareDates, periodBounds } from "@/lib/dates";
-import { lastDueDayRead, paydayIsRead, type CarriedGrace, type DueDayReading } from "@/lib/occurrence-verdict";
+import {
+  lastDueDayRead,
+  paydayIsRead,
+  paydayLandingIsRead,
+  type CarriedGrace,
+  type DueDayReading,
+} from "@/lib/occurrence-verdict";
 import { sharedFrontier, type UnbankedFrontier } from "@/lib/unbanked-income";
 import { billPaymentsBySeries, paymentFor, withBillingCarriers } from "./billing-carriers";
 import { checkedThroughBySeries, silenceMeasuredThroughBySeries } from "./cash-earnings";
@@ -474,8 +480,9 @@ export function unbankedIncomeForSeries(
   const series = unmet.map(({ s, occ }): UnbankedIncomeSeries => {
     const checkedThrough = checkedOf(s.id);
     const checked = occ.filter((o) => paydayIsRead(o.date, checkedThrough));
-    // ⚖️ …and its days to land, the warning's alone (`pastGraceOccurrenceCount`): the split names no grace
-    const pastGrace = checked.filter((o) => paydayIsRead(addDays(o.date, s.toleranceDays), checkedThrough));
+    // ⚖️ …and its days to land (`paydayLandingIsRead`), the warning's — and every "never reached a bank"'s: the
+    // dashboard and /spending read the same predicate (`paydaysNotBankedYet`). The split names no grace
+    const pastGrace = checked.filter((o) => paydayLandingIsRead(o.date, s.toleranceDays, checkedThrough));
     return {
       id: s.id,
       name: s.name,

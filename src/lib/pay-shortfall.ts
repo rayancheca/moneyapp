@@ -1,5 +1,6 @@
-import { payGap } from "./cash-earnings";
+import { payGap, unbankedSplit } from "./cash-earnings";
 import { compareDates } from "./dates";
+import { paydayIsRead, paydayLandingIsRead } from "./occurrence-verdict";
 import {
   portionsAcross,
   type AttributedDeposit,
@@ -55,6 +56,10 @@ import {
  * ⛔ READ means passed AND on or before the day every account the pay lands in is checked through — `cashEarnings`'
  * own as-of-the-frontier reading: a payday dated today has passed only once a deposit lands today. A payday after the
  * checked day is never short; the note names it as not looked for (decision 65) when no deposit has settled it.
+ *
+ * ⚖️ …and "never reached a bank" only of a read payday checked through its DAYS TO LAND (`paydayLandingIsRead`): one
+ * still inside them that no deposit settled is "not banked yet" (`paydaysNotBankedYet`, `unbankedSplit`), the words
+ * the forecast's note and Earned vs banked say it in.
  */
 
 /** A settlement, and what it walked: the paydays it drew and the deposits that had arrived. */
@@ -70,6 +75,8 @@ export interface PayShortfallWindow {
   today: string;
   /** the last day every account the pay lands in has been checked through (`checkedThroughBySeries`), or null */
   checkedThrough: string | null;
+  /** the series' days to land (`toleranceDays`): how long after a payday its deposit can still answer it */
+  toleranceDays: number;
 }
 
 /**
@@ -132,8 +139,18 @@ export interface PayShortfall {
   shortCents: number;
   /** the money deposits OUTSIDE the window put into the read paydays, per deposit day, oldest first */
   paidOutside: readonly PaidOutside[];
-  /** the shortfall less that money, never below zero — what no deposit, inside the window or out, made up */
+  /**
+   * What no deposit, inside the window or out, made up — the shortfall less that money, never below zero — for paydays
+   * checked through their days to land: "never reached a bank".
+   */
   neverBankedCents: number;
+  /**
+   * …and the rest of it, for read paydays no deposit settled that are still inside their days to land
+   * (`paydaysNotBankedYet`, `unbankedSplit`): "not banked yet". With `neverBankedCents`, what no deposit made up.
+   */
+  notBankedYetCents: number;
+  /** those paydays, oldest first — none when `notBankedYetCents` is zero */
+  notBankedYetPaydays: readonly string[];
   /**
    * The money deposits INSIDE the window put into READ paydays OUTSIDE it, per side (before it, then after it) and
    * deposit day, oldest first — counted by the window whose payday it paid, so never against this one's. Money for a
@@ -158,14 +175,58 @@ export interface PayShortfall {
   paidAhead: readonly PaidAhead[];
 }
 
+/** `cashEarnings`' rule: a payday has passed by `today` — one dated today only once a deposit has landed today. */
+function passedBy(s: Pick<SettlementWalked, "deposits">, today: string): (day: string) => boolean {
+  const paidToday = s.deposits.some((d) => d.postedOn === today);
+  return (day) => compareDates(day, today) < 0 || (day === today && paidToday);
+}
+
+/** The window's passed paydays (`passedBy`). */
+function duePaydays(s: Pick<SettlementWalked, "paydays" | "deposits">, w: PayShortfallWindow): PaydayOccurrence[] {
+  const passed = passedBy(s, w.today);
+  return s.paydays.filter(
+    (o) => compareDates(o.date, w.from) >= 0 && compareDates(o.date, w.to) <= 0 && passed(o.date),
+  );
+}
+
+/** The paydays a window's checked pay is "not banked yet" for, and what they come to. */
+export interface NotBankedYet {
+  /** oldest first */
+  paydays: readonly string[];
+  cents: number;
+}
+
+/**
+ * The window's passed paydays no deposit settled that were checked on their day (`paydayIsRead`) but not through their
+ * days to land (`paydayLandingIsRead`) — a deposit can still answer them on a day the ledger has not read. The
+ * forecast's checked paydays short of its warning (`pastGraceOccurrenceCount`), over any window: what Earned vs banked
+ * and /spending's shortfall note call "not banked yet" (`unbankedSplit`), never "never reached a bank".
+ *
+ * ⛔ Settled is the settlement's answer (`settledBy`), never a date match: a deposit that paid the payday has come, and
+ * its payday stays checked. Measured on his ledger copy 2026-10-21, Wells Fargo checked through Thu Sep 24, whose
+ * payday its own deposit paid: read instead as a frontier moved back by the days to land (Sep 21), Earned vs banked's
+ * "$11,117.00 of it never reached a bank" (decision 55's figure) became $9,975.08, and "the other $3,425.76 is for
+ * paydays after Sep 24" became $4,567.68 — Sep 24's paid $1,141.92 among it.
+ */
+export function paydaysNotBankedYet(
+  s: Pick<SettlementWalked, "paydays" | "deposits" | "settledBy">,
+  w: PayShortfallWindow,
+): NotBankedYet {
+  const pending = duePaydays(s, w)
+    .filter((o) => !s.settledBy.has(o.date))
+    .filter((o) => paydayIsRead(o.date, w.checkedThrough))
+    .filter((o) => !paydayLandingIsRead(o.date, w.toleranceDays, w.checkedThrough))
+    .sort((a, b) => compareDates(a.date, b.date));
+  return { paydays: pending.map((o) => o.date), cents: pending.reduce((sum, o) => sum + o.amountCents, 0) };
+}
+
 export function payShortfall(s: SettlementWalked, w: PayShortfallWindow, e: WindowEarnings): PayShortfall {
   const inWindow = (day: string): boolean => compareDates(day, w.from) >= 0 && compareDates(day, w.to) <= 0;
   // `cashEarnings`' rule: today's payday is earned only once a deposit has landed today
-  const paidToday = s.deposits.some((d) => d.postedOn === w.today);
-  const passed = (day: string): boolean => compareDates(day, w.today) < 0 || (day === w.today && paidToday);
-  const checked = (day: string): boolean => w.checkedThrough !== null && compareDates(day, w.checkedThrough) <= 0;
+  const passed = passedBy(s, w.today);
+  const checked = (day: string): boolean => paydayIsRead(day, w.checkedThrough);
 
-  const due = s.paydays.filter((o) => inWindow(o.date) && passed(o.date));
+  const due = duePaydays(s, w);
   const readDays = new Set(due.filter((o) => checked(o.date)).map((o) => o.date));
   const dueDays = new Set(due.map((o) => o.date));
 
@@ -195,10 +256,13 @@ export function payShortfall(s: SettlementWalked, w: PayShortfallWindow, e: Wind
   // ⛔ the one subtraction (`payGap`): the dashboard's, over this window's own money — what is not read is not short
   const { readGapCents: shortCents } = payGap(e.impliedCents, ownCents, e.impliedCents - e.read.cents);
   const outsideCents = centsOf(paidOutside);
-  const neverBankedCents = Math.max(0, shortCents - outsideCents);
+  const unmadeUpCents = Math.max(0, shortCents - outsideCents);
+  // ⛔ the one split (`unbankedSplit`): "never reached a bank" only of paydays checked through their days to land
+  const notBankedYet = paydaysNotBankedYet(s, w);
+  const { notBankedYetCents, neverCents: neverBankedCents } = unbankedSplit(unmadeUpCents, notBankedYet.cents);
   // ⛔ the sentence's split adds up to the paydays, and every deposit outside keeps the money it put in — so when
   // outside money paid more than the net shortfall (money inside paid no payday), the banked figure is what is left
-  const bankedInsideCents = Math.max(0, e.read.cents - outsideCents - neverBankedCents);
+  const bankedInsideCents = Math.max(0, e.read.cents - outsideCents - unmadeUpCents);
 
   const noPayday = towardNoPayday(s, inWindow);
   // what the window's money that paid its read paydays came to: what the banked figure holds beyond it was netted
@@ -217,6 +281,8 @@ export function payShortfall(s: SettlementWalked, w: PayShortfallWindow, e: Wind
     shortCents,
     paidOutside,
     neverBankedCents,
+    notBankedYetCents,
+    notBankedYetPaydays: notBankedYetCents > 0 ? notBankedYet.paydays : [],
     paidAcross,
     noPaydayBeyondCents,
     otherBeyondCents: beyondCents - noPaydayBeyondCents,

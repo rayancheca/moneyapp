@@ -52,6 +52,11 @@ export interface CashEarningsReading extends CashEarnings {
   seriesId: string;
   seriesName: string;
   /**
+   * The series' days to land (`toleranceDays`): a payday checked on its day but not through these, that no deposit
+   * settled, is "not banked yet" — never "never reached a bank" (`paydaysNotBankedYet`, `unbankedSplit`).
+   */
+  toleranceDays: number;
+  /**
    * The last day every account this pay lands in now (`landingAccountsBySeries`) has been read through —
    * `checkedThroughBySeries` — or null when one of them has no checked record. Present only when the caller asked
    * (`withChecked`).
@@ -451,6 +456,7 @@ export function cashEarningsReadings(
     const reading: CashEarningsReading = {
       seriesId: s.id,
       seriesName: s.name,
+      toleranceDays: s.toleranceDays,
       ...cashEarnings({ series: pay, banked, from, to, today, todayIsComplete }),
     };
     if (checkedOf === null) {
@@ -462,7 +468,7 @@ export function cashEarningsReadings(
     const shortfallOf = (read: WindowEarnings["read"]): PayShortfall =>
       payShortfall(
         paydaySettlement(db, s.id, today),
-        { from, to, today, checkedThrough },
+        { from, to, today, checkedThrough, toleranceDays: s.toleranceDays },
         { impliedCents: reading.impliedCents, bankedCents: reading.bankedCents, read },
       );
     if (checkedThrough === null) {

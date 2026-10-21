@@ -384,3 +384,28 @@ export function payGap(impliedCents: number, bankedCents: number, unreadImpliedC
   const unreadGapCents = Math.min(gapCents, Math.max(0, unreadImpliedCents));
   return { gapCents, unreadGapCents, readGapCents: gapCents - unreadGapCents };
 }
+
+/** Pay for checked paydays that no deposit made up, as the words say it. */
+export interface UnbankedSplit {
+  /** for paydays no deposit settled whose days to land are not all checked yet (`paydayLandingIsRead`) */
+  notBankedYetCents: number;
+  /** the rest — checked through their days to land: "never reached a bank" */
+  neverCents: number;
+}
+
+/**
+ * ⛔ THE ONE SPLIT of checked pay no deposit made up — the dashboard's Earned vs banked (`income-card`, over `payGap`'s
+ * read part) and /spending's shortfall note (`payShortfall`, over what no deposit inside the window or out made up).
+ *
+ * ⚖️ "Never reached a bank" only of a payday the ledger has checked through its days to land; one still inside them
+ * that no deposit settled is "not banked yet", the forecast's words (`notProjectedSubject`). `inGraceCents` is what
+ * those paydays come to, capped at the money no deposit made up — which is theirs first, as `payGap` gives the unread
+ * part first: no deposit settled them, so none of the netted money (decision 55) can be said to have paid them.
+ * 🔴 Review of 878c3d5: Thu Sep 3 checked through Sat Sep 5 read "Pay not banked yet" on the forecast and "$1,000.00
+ * of it never reached a bank" on the dashboard.
+ */
+export function unbankedSplit(unbankedCents: number, inGraceCents: number): UnbankedSplit {
+  const unbanked = Math.max(0, unbankedCents);
+  const notBankedYetCents = Math.min(unbanked, Math.max(0, inGraceCents));
+  return { notBankedYetCents, neverCents: unbanked - notBankedYetCents };
+}

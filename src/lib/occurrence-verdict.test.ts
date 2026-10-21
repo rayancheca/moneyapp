@@ -5,6 +5,7 @@ import {
   forecastConfidence,
   lastDueDayRead,
   paydayIsRead,
+  paydayLandingIsRead,
   settledVerdict,
   type ConfidenceInput,
   type DueDayReading,
@@ -97,6 +98,29 @@ describe("paydayIsRead — the one predicate for a passed payday", () => {
 
   test("an account the pay lands in with no checked record: nothing was looked for", () => {
     expect(paydayIsRead("2026-06-11", null)).toBe(false);
+  });
+});
+
+/**
+ * Whether the ledger has checked a payday through its DAYS TO LAND — its series' own tolerance after it: the one
+ * predicate behind "never reached a bank" against "not banked yet" (review of 878c3d5).
+ */
+describe("paydayLandingIsRead — a payday checked through its days to land", () => {
+  test("THE BOUNDARY: Thu Sep 3 with 3 days to land is read through Sun Sep 6, not Sat Sep 5", () => {
+    expect(paydayLandingIsRead("2026-09-03", 3, "2026-09-06")).toBe(true);
+    expect(paydayLandingIsRead("2026-09-03", 3, "2026-09-05")).toBe(false);
+    // checked on its own day is not through its days to land
+    expect(paydayIsRead("2026-09-03", "2026-09-05")).toBe(true);
+  });
+
+  test("by its own series' tolerance: 5 days wait 5, and none is the payday itself", () => {
+    expect(paydayLandingIsRead("2026-09-03", 5, "2026-09-07")).toBe(false);
+    expect(paydayLandingIsRead("2026-09-03", 5, "2026-09-08")).toBe(true);
+    expect(paydayLandingIsRead("2026-09-03", 0, "2026-09-03")).toBe(true);
+  });
+
+  test("an account the pay lands in with no checked record: nothing was read", () => {
+    expect(paydayLandingIsRead("2026-06-11", 3, null)).toBe(false);
   });
 });
 
