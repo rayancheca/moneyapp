@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { eq } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { createDatabase, type DbBundle } from "@/db/client";
 import { accounts } from "@/db/schema/accounts";
@@ -17,10 +18,11 @@ import { recurringCalendar } from "./recurring-calendar";
 
 /**
  * ⚖️ His decision 76 (2026-10-14, his answer, refines 73): THE NEARER DUE DAY WINS — a payment between two due days
- * pays the one it lies nearer, a tie the earlier. It pays the later day early only when nothing paid that day on time;
- * otherwise it is the earlier day's, late — or pays nothing, if that day is already paid. On every grader of a bill's
- * day: the arrears (the runway's "came due … not posted", /budgets' "expected by now", the bill's "Already due"), the
- * calendar, and every reader that looks ahead (the forecast, Upcoming, the dashboard strip, "Next expected").
+ * pays the one it lies nearer, a tie the earlier. One nearer the later day pays it early only when nothing paid that
+ * day on time; otherwise it is the earlier day's, late — or pays nothing, if that day is already paid. One nearer the
+ * earlier day pays nothing once that day is paid (⚠️ open, his call — below). On every grader of a bill's day: the
+ * arrears (the runway's "came due … not posted", /budgets' "expected by now", the bill's "Already due"), the calendar,
+ * and every reader that looks ahead (the forecast, Upcoming, the dashboard strip, "Next expected").
  *
  * 🔴 Measured on his ledger copy 2026-10-13: the Car lease, due the 15th (3 days' grace), posted Sep 2 −$695.04 — and
  * decision 73 read it as Aug 15's LATE payment (Aug 15 was unpaid, so it kept the payment), leaving Sep 15 unpaid; a
@@ -219,7 +221,7 @@ describe("FPL with ONLY Jul 28 — nearer Aug 8, it pays Aug 8 even with Jul 8 u
   });
 });
 
-describe("nearer a day already paid ON TIME by another payment: the other day, if that one is unpaid", () => {
+describe("nearer the LATER day, paid ON TIME by another: the earlier day's, late — if that one is unpaid", () => {
   test("FPL's Jul 28 with Aug 8 paid on Aug 8 — it pays Jul 8, late: July owes nothing", () => {
     seriesWith(FPL, "FPL (electricity)", -5887, "2026-07-08", ["2026-07-28", -5622], ["2026-08-08", -5887]);
     checkedThrough(bundle.db, "acct", "2026-08-19");
@@ -242,7 +244,17 @@ describe("nearer a day already paid ON TIME by another payment: the other day, i
     // Sep 8 is not paid early by it: Jul 28 is in no gap of Sep 8's
     expect(unpaid("2026-09", "2026-09-08", "2026-09-13")).toEqual([FPL]);
   });
+});
 
+/*
+ * ⚠️ OPEN — his call (review of f8b5320..eb48365, 2026-10-21): what a payment LEFT OVER pays — one nearer a day that
+ * another payment already pays. His answer to 76 says "unless the nearer one is already paid on time" and no more. As
+ * built it pays NOTHING (`paymentFor`): the split rent below keeps its Nov 1 coming, and each other shape here owes a
+ * month although it was paid. "Then the other day, if that one is unpaid" pays every one of them — and Nov 1 early
+ * with Oct 9. One decision, pinned both ways: either answer flips this whole block. On his ledger copy 2026-10-21 no
+ * posting is left over (13 live bills probed), and Wells Fargo — the lease's account — is read through Sep 24 only.
+ */
+describe("⚠️ a payment LEFT OVER — nearer a day another payment already pays — pays nothing (open, his call)", () => {
   /*
    * ⚖️ The split October (measured on a what-if copy of his ledger with these two rows, read Oct 13): Oct 9 lies nearer
    * Oct 1, which Oct 1's $2,000.00 paid on time — so it pays NOTHING, and Nov 1 is still coming. 🔴 Under decision 73
@@ -267,6 +279,45 @@ describe("nearer a day already paid ON TIME by another payment: the other day, i
       "Flamingo South Beach (rent)",
     );
     expect(owed(TODAY)).toEqual([]);
+  });
+
+  /*
+   * The same shape a week after an on-time 15th: Oct 22 lies nearer Oct 15 (7 days to 24), which Oct 15 paid on time.
+   * Nov 15 is owed with nothing unread — the runway's and /budgets' "has not posted" — drawn missed, and from Oct 22
+   * Upcoming still lists it: the $695.04 that left that day is counted again in the forecast.
+   */
+  test("a lease prepaid a week after an on-time Oct 15 (Oct 22) leaves Nov 15 owed, missed, and still coming", () => {
+    seriesWith(LEASE, "Car lease", -69504, "2026-10-15", ["2026-10-15", -69504], ["2026-10-22", -69504]);
+    expect(coming("2026-10-23", LEASE)).toEqual(["2026-11-15", "2026-12-15"]);
+    checkedThrough(bundle.db, "acct", "2026-11-19");
+    const november = arrearsThisMonth(bundle.db, new Set([LEASE]), "2026-11-20").series;
+    expect(november.map((s) => [s.nextDate, s.amountCents, s.unreadCents])).toEqual([["2026-11-15", 69504, 0]]);
+    expect(unpaid("2026-11", "2026-11-15", "2026-11-20")).toEqual([LEASE]);
+  });
+
+  /*
+   * After a day paid EARLY: the lease paid "around the 1st" — Sep 2 pays Sep 15 (13 days to 18), and Sep 30 lies 15
+   * days either side, the tie, Sep 15's: paid already, so Sep 30 pays nothing and Oct 15 is owed. 76 was asked so that
+   * paying around the 1st would not read every 15th a month behind; which day of a month's turn the web pay lands on
+   * decides it (below). Not a regression: 73 owed Oct 15 for this shape too.
+   */
+  test("a lease paid Sep 2 then Sep 30 owes Oct 15 — nothing unread, missed, still coming on Sep 30", () => {
+    seriesWith(LEASE, "Car lease", -69504, "2026-09-15", ["2026-09-02", -69504], ["2026-09-30", -69504]);
+    expect(coming("2026-09-30", LEASE)[0]).toBe("2026-10-15");
+    checkedThrough(bundle.db, "acct", "2026-10-20");
+    const october = arrearsThisMonth(bundle.db, new Set([LEASE]), "2026-10-21").series;
+    expect(october.map((s) => [s.nextDate, s.amountCents, s.unreadCents])).toEqual([["2026-10-15", 69504, 0]]);
+    expect(unpaid("2026-10", "2026-10-15", "2026-10-21")).toEqual([LEASE]);
+  });
+
+  test("…and the month's length decides: after Sep 2 + Oct 1, Oct 30 leaves Nov 15 owed where Oct 31 pays it", () => {
+    seriesWith(LEASE, "Car lease", -69504, "2026-09-15", ["2026-09-02", -69504], ["2026-10-01", -69504]);
+    pay("t-lease-oct30", LEASE, "2026-10-30", -69504);
+    // Oct 30: 15 days after Oct 15 (paid early by Oct 1), 16 before Nov 15
+    expect(coming("2026-10-30", LEASE)[0]).toBe("2026-11-15");
+    bundle.db.update(transactions).set({ postedOn: "2026-10-31" }).where(eq(transactions.id, "t-lease-oct30")).run();
+    // Oct 31: 16 days after Oct 15, 15 before Nov 15 — nearer it
+    expect(coming("2026-10-31", LEASE)[0]).toBe("2026-12-15");
   });
 });
 

@@ -121,12 +121,20 @@ export interface DueDays {
  *
  * ⚖️ …else EARLY or LATE by THE NEARER DUE DAY, his decision 76 (2026-10-14, his answer, refines 73): a payment between
  * two due days — past the earlier's tolerance and short of the later's (`DueDays.before`, `DueDays.after`) — pays the
- * one it lies NEARER, a tie the earlier (`liesNearerTheLater`). It pays the later day EARLY only when nothing paid that
- * day on time; otherwise it is the earlier day's, LATE — or pays nothing, if that day is already paid. Of several for
- * one day, the earliest, asked early before late. The grace is the days a payment has to post before anything may say
- * "not posted" (his decision 60, 2026-10-08); a payment past them is still a day's. The cost he accepted: one nearer
- * the next day pays it even when the day before is unpaid — FPL paid only Jul 28 owes Jul 8 where it owed Aug 8, one
- * month owed either way.
+ * one it lies NEARER, a tie the earlier (`liesNearerTheLater`). One nearer the later day pays it EARLY only when
+ * nothing paid that day on time; otherwise it is the earlier day's, LATE — or pays nothing, if that day is already
+ * paid. One nearer the earlier day is that day's, LATE — or pays nothing, once that day is paid: never the later day
+ * early. The redirect runs ONE WAY. Of several for one day, the earliest, asked early before late. The grace is the
+ * days a payment has to post before anything may say "not posted" (his decision 60, 2026-10-08); a payment past them
+ * is still a day's. The cost he accepted: one nearer the next day pays it even when the day before is unpaid — FPL
+ * paid only Jul 28 owes Jul 8 where it owed Aug 8, one month owed either way.
+ *
+ * ⚠️ OPEN — his call (review of f8b5320..eb48365, 2026-10-21): what a payment LEFT OVER pays — one nearer a day another
+ * payment already pays. His answer says "unless the nearer one is already paid on time" and no more; as built, nothing.
+ * So a rent split Oct 1 −$2,000.00 + Oct 9 −$291.21 keeps Nov 1 coming — and a lease prepaid a week after an on-time
+ * Oct 15 (Oct 22) owes Nov 15, "has not posted", and one paid Sep 2 then Sep 30 (the tie: Sep 15's, paid early by Sep
+ * 2) owes Oct 15; Oct 31 would pay Nov 15 where Oct 30 does not. "Then the other day, if unpaid" pays all three, and
+ * Nov 1 early with Oct 9. Pinned as built in nearer-due-day.test.ts; nothing on his ledger is left over (2026-10-21).
  *
  * 🔴 Late paid nothing (review of 44eb3e7): the rent paid Oct 5, four days past its Oct 1 and its 3 days, was drawn
  * beside a red ✕ on Oct 1, the runway said "A further $2,291.21 came due earlier this month and never posted.", and
@@ -156,7 +164,8 @@ export function paymentFor<P extends Payment>(payments: readonly P[], dueOn: str
   if (onTime !== undefined) return onTime;
   const before = dueDays.before(dueOn);
   if (before !== null) {
-    // early: nearer this day than the one before — nothing paid this day on time (above)
+    // early: nearer this day than the one before — nothing paid this day on time (above); never one nearer the day
+    // before, even when that day is paid (⚠️ open, above)
     const early = paymentDaysBetween(payments, before, dueOn).find((p) => liesNearerTheLater(p, before, dueOn));
     if (early !== undefined) return early;
   }

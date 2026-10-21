@@ -343,6 +343,26 @@ describe("the nearer due day wins (decision 76)", () => {
   });
 
   /*
+   * ⚠️ OPEN — his call (review of f8b5320..eb48365, 2026-10-21): a payment LEFT OVER — nearer a day another payment
+   * already pays — pays nothing as built, which is what keeps the split rent's Nov 1 above. The redirect runs one way
+   * only (nearer the LATER day, paid on time: the earlier's, late). "Then the other day, if unpaid" would pay each day
+   * below — and Nov 1 above, early, with Oct 9. One decision: either answer flips this test and the one above.
+   */
+  test("⚠️ left over, it pays nothing: a prepay a week after an on-time Oct 15, and Sep 30 after an early Sep 2", () => {
+    const LEASE = monthlyOn("2026-10-15");
+    // Oct 22: 7 days after Oct 15, paid on time, 24 before Nov 15
+    expect(graded([pay("2026-10-15"), pay("2026-10-22")], LEASE, ["2026-10-15", "2026-11-15"])).toEqual([
+      ["2026-10-15", "2026-10-15"],
+      ["2026-11-15", null],
+    ]);
+    // Sep 30: 15 days either side — the tie, Sep 15's, which Sep 2 paid early
+    expect(graded([pay("2026-09-02"), pay("2026-09-30")], LEASE, ["2026-09-15", "2026-10-15"])).toEqual([
+      ["2026-09-15", "2026-09-02"],
+      ["2026-10-15", null],
+    ]);
+  });
+
+  /*
    * The review's shape (of 844e484): his June rent in two halves a day apart, then rents past their grace. Each late
    * rent pays its own month. ⚠️ The second half, Jun 17, is nearer Jul 1 and pays it early — a known gap neither 73
    * nor 76 catches (only rows within a few days as one payment, or a floor on an early payment's amount, would); and
