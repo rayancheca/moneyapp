@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import { getDb } from "@/db/client";
 import { spendUnread } from "@/lib/budget-coverage";
 import { periodBounds, todayIso, type PeriodBounds } from "@/lib/dates";
-import { formatDayLong, formatDayShort } from "@/lib/format-date";
+import { formatDayLong, formatDayShort, formatMonthYear } from "@/lib/format-date";
 import { paidByAnotherMonthNote, paidForAnotherMonthNote } from "@/lib/paid-by-another-month";
 import { IMPORTS_NOT_EARNINGS, unbankedIncomeFrontierClause } from "@/lib/unbanked-income";
 import { budgetGuides } from "@/services/budget-guide";
@@ -23,7 +23,7 @@ import { PredictBudgets } from "@/components/budgets/PredictBudgets";
 import { budgetInsights } from "@/services/budget-insights";
 import { provenanceFor } from "@/services/provenance";
 import { BudgetRow } from "@/components/budgets/BudgetRow";
-import { IncomeSoFar } from "@/components/budgets/IncomeSoFar";
+import { IncomeSoFar, IncomeSoFarNote } from "@/components/budgets/IncomeSoFar";
 import { InsightList } from "@/components/insights/InsightList";
 import { ErrorBanner, errorParam } from "@/components/ui/ErrorBanner";
 import { SectionNotes } from "@/components/insights/SectionNotes";
@@ -97,6 +97,12 @@ export default async function BudgetsPage({
   // reasoning, and `basis.monthNote` states the calendar month underneath so
   // nothing is hidden by the levelling.
   const leftToAllocateCents = income.basis.cents - monthlyBudgetedCents;
+  // the header's income clause — and, under it, why "in so far" prints a dash when it does
+  const showsIncome =
+    income.expectedCents > 0 ||
+    income.postedCents > 0 ||
+    income.passedUnpaidCents > 0 ||
+    income.paidByAnotherMonthCents > 0;
 
   // measured guidance: what the page as a whole knows and no single row states
   const notes = budgetSectionNotes({
@@ -234,10 +240,7 @@ export default async function BudgetsPage({
                 — {income.basis.overAllocatedClause}
               </>
             )}
-            {(income.expectedCents > 0 ||
-              income.postedCents > 0 ||
-              income.passedUnpaidCents > 0 ||
-              income.paidByAnotherMonthCents > 0) && (
+            {showsIncome && (
               <>
                 {" · "}
                 {/* ⚖️ §6A 68: "— in so far" while not one day of the month is checked where the pay lands */}
@@ -250,6 +253,11 @@ export default async function BudgetsPage({
               </>
             )}
           </p>
+          {/* ⚖️ §6A 68: why "in so far" prints "—", a line of its own — the dashboard's note under its dash, word for
+              word. 🔴 Spoken beside the dash, it sat inside the sentence: "— in so far, what has come in so far is
+              not shown, since no day of this month has been checked yet …; $2,283.84 still expected" (his ledger
+              copy 2026-10-21, read as the page's text). */}
+          {showsIncome && <IncomeSoFarNote noIncomeDayRead={income.noIncomeDayRead} month={formatMonthYear(today)} />}
           {/* The calendar month, named rather than deleted. Levelling makes the
               figure above hold still; this says what the month it is describing
               actually pays, and by how much the two differ. Authored in

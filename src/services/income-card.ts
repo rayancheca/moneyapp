@@ -408,7 +408,7 @@ function paydaysLabelFor(paydays: number, firstOn: string | null, lastOn: string
  * about how he banks.
  */
 function verdictFor(line: Omit<IncomePayLine, "verdict">): string {
-  const { lastBankedOn, silentPeriods, checkedSilentPeriods, checkedThrough, unreadDays } = line;
+  const { lastBankedOn, silentPeriods, checkedSilentPeriods, checkedThrough } = line;
 
   if (lastBankedOn === null) {
     return "No deposit has been attributed to this schedule on or before today, so there is nothing to date the silence from.";
@@ -416,37 +416,45 @@ function verdictFor(line: Omit<IncomePayLine, "verdict">): string {
 
   const passed = `${silentPeriods} ${paydayWord(silentPeriods)} ${silentPeriods === 1 ? "has" : "have"} passed`;
   const since = `${passed} since ${formatDayShort(lastBankedOn)} with no deposit`;
+  // which of the silent paydays the ledger has looked for, in the forecast's words — null when it looked for them all
+  const unread = unbankedIncomeFrontierClause(
+    {
+      occurrenceCount: silentPeriods,
+      checkedOccurrenceCount: checkedSilentPeriods,
+      frontier: checkedThrough === null ? { kind: "unchecked" } : { kind: "day", through: checkedThrough },
+    },
+    formatDayShort,
+  );
+  // "with no deposit" is the clause's to say, and only of the days it checked
+  const notAllLooked =
+    unread === null ? null : `${passed} since the last deposit on ${formatDayShort(lastBankedOn)}. ${unread}`;
 
   if (line.basis === "series-live") {
     if (silentPeriods === 0) {
       return `Pay is arriving: the last deposit landed on ${formatDayShort(lastBankedOn)}.`;
     }
-    const unread = unbankedIncomeFrontierClause(
-      {
-        occurrenceCount: silentPeriods,
-        checkedOccurrenceCount: checkedSilentPeriods,
-        frontier: checkedThrough === null ? { kind: "unchecked" } : { kind: "day", through: checkedThrough },
-      },
-      formatDayShort,
+    return (
+      notAllLooked ??
+      `${since} — a schedule is called stale only after ${STALE_PERIODS} quiet periods, so this is not a warning yet.`
     );
-    if (unread !== null) {
-      // "with no deposit" is the clause's to say, and only of the days it checked
-      return `${passed} since the last deposit on ${formatDayShort(lastBankedOn)}. ${unread}`;
-    }
-    return `${since} — a schedule is called stale only after ${STALE_PERIODS} quiet periods, so this is not a warning yet.`;
   }
 
   if (checkedThrough === null) {
     return `${since}, and no day of that silence rests on a checked record — the ledger cannot say whether the pay arrived.`;
   }
 
-  if (checkedSilentPeriods >= STALE_PERIODS) {
-    const checked = staleChecked(checkedSilentPeriods, line.checkedSilentNotBankedYet, checkedThrough);
-    return `${since}. ${checked}. Whether it was earned is a different question, and this card cannot answer it.`;
-  }
+  /*
+   * ⚖️ Short of the bar on the days the ledger has read, a stale schedule's silence says what a live one's does — the
+   * sentence /budgets' passed paydays and the forecast say of the same paydays (`unbankedIncomeFrontierClause`).
+   * 🔴 It had its own: "3 paydays have passed since Sep 24 with no deposit, but only 0 of them fall on days the records
+   * cover. The other 3 sit inside the 27 days past Sep 24, …" — his ledger copy 2026-10-21, Wells Fargo checked through
+   * Sep 24, while /budgets said of the same Oct 1, 8 and 15 "They all fall after Thu, Sep 24, 2026, … — so the ledger
+   * has not looked for their deposits"; and "with no deposit" of days nobody had read.
+   */
+  if (checkedSilentPeriods < STALE_PERIODS && notAllLooked !== null) return notAllLooked;
 
-  const unlooked = silentPeriods - checkedSilentPeriods;
-  return `${since}, but only ${checkedSilentPeriods} of them fall on days the records cover. The other ${unlooked} sit inside the ${unreadDays ?? 0} days past ${formatDayShort(checkedThrough)}, ${LAST_CHECKED_DAY}, so the ledger has not looked.`;
+  const checked = staleChecked(checkedSilentPeriods, line.checkedSilentNotBankedYet, checkedThrough);
+  return `${since}. ${checked}. Whether it was earned is a different question, and this card cannot answer it.`;
 }
 
 /**

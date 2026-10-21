@@ -96,32 +96,20 @@ export function payNotBankedYet(
   return `${daysToLandRunPast(paydays, checkedThrough, formatPayday, formatDay)} — so ${whose} pay is not banked yet`;
 }
 
-/** Where §6A 68 looks for a checked day — one phrase for the spoken line and the income card's note. */
-const IN_ACCOUNTS_PAY_LANDS_IN = "in the accounts that pay lands in";
-
 /**
- * ⚖️ §6A 68 (2026-10-13): what /budgets' header SAYS where it prints "— in so far" — not one day of the month checked
- * where the pay lands (`IncomeExpectation.noIncomeDayRead`). A screen reader given the bare dash hears nothing, or "em
- * dash", where the figure was; the spoken line says why there is none, as a budget row's does under §6A 64. The
- * dashboard's "Income recorded in <month>" row speaks it too, where it prints the same dash.
- */
-export const NO_INCOME_DAY_CHECKED = `no day of this month checked yet ${IN_ACCOUNTS_PAY_LANDS_IN}, so nothing is shown`;
-
-/**
- * ⚖️ §6A 68: what /budgets' header says aloud in place of "— in so far," — one clause of the sentence the figures
- * after it end ("…; $3,425.76 still expected from It America LLC"). 🔴 It spoke `NO_INCOME_DAY_CHECKED` with "in so
- * far," glued on: "no day of this month checked yet in the accounts that pay lands in, so nothing is shown in so far,
- * $3,425.76 still expected" — two sentences run together (review of 9652477; his ledger copy 2026-10-13).
- */
-export const IN_SO_FAR_UNCHECKED_SPOKEN =
-  `what has come in so far is not shown, since no day of this month has been checked yet ${IN_ACCOUNTS_PAY_LANDS_IN};`;
-
-/**
- * ⚖️ §6A 68's second reader (2026-10-13): the note under Earned vs banked's "Income recorded in Oct 2026 —", in place
- * of "an empty month is what an unimported month looks like…" — which says nothing of whether anyone has looked.
+ * ⚖️ §6A 68 (2026-10-13): why a month's income prints "—" — not one day of it checked where the pay lands
+ * (`IncomeExpectation.noIncomeDayRead`). The line under the dash on both surfaces that print one: Earned vs banked's
+ * "Income recorded in Oct 2026 —", in place of "an empty month is what an unimported month looks like…" (which says
+ * nothing of whether anyone has looked), and /budgets' "— in so far" (`IncomeSoFarNote`).
+ *
+ * ⛔ The only words for it — no spoken stand-in beside the dash. 🔴 Each surface also spoke a reason in the dash's
+ * place, and his ledger copy 2026-10-21 read it twice on the dashboard ("Income recorded in Oct 2026 — no day of this
+ * month checked yet in the accounts that pay lands in, so nothing is shown" over this note) and spliced into /budgets'
+ * figures ("— in so far, what has come in so far is not shown, since …; $2,283.84 still expected") — to a screen
+ * reader and in the page's text alike.
  */
 export function noIncomeDayCheckedNote(month: string): string {
-  return `Not one day of ${month} has been checked ${IN_ACCOUNTS_PAY_LANDS_IN}, so nothing is shown.`;
+  return `Not one day of ${month} has been checked in the accounts that pay lands in, so nothing is shown.`;
 }
 
 /**
