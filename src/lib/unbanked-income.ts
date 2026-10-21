@@ -67,6 +67,15 @@ const IN_ACCOUNTS_PAY_LANDS_IN = "in the accounts that pay lands in";
 export const NO_INCOME_DAY_CHECKED = `no day of this month checked yet ${IN_ACCOUNTS_PAY_LANDS_IN}, so nothing is shown`;
 
 /**
+ * ⚖️ §6A 68: what /budgets' header says aloud in place of "— in so far," — one clause of the sentence the figures
+ * after it end ("…; $3,425.76 still expected from It America LLC"). 🔴 It spoke `NO_INCOME_DAY_CHECKED` with "in so
+ * far," glued on: "no day of this month checked yet in the accounts that pay lands in, so nothing is shown in so far,
+ * $3,425.76 still expected" — two sentences run together (review of 9652477; his ledger copy 2026-10-13).
+ */
+export const IN_SO_FAR_UNCHECKED_SPOKEN =
+  `what has come in so far is not shown, since no day of this month has been checked yet ${IN_ACCOUNTS_PAY_LANDS_IN};`;
+
+/**
  * ⚖️ §6A 68's second reader (2026-10-13): the note under Earned vs banked's "Income recorded in Oct 2026 —", in place
  * of "an empty month is what an unimported month looks like…" — which says nothing of whether anyone has looked.
  */

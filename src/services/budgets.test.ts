@@ -12,6 +12,8 @@ import { transactions } from "@/db/schema/transactions";
 import { budgetCoverageSentence } from "@/lib/budget-coverage";
 import { budgetVerdict } from "@/lib/budget-verdict";
 import { budgetSectionNotes } from "@/lib/section-notes";
+import { rolloverWaitsSentence } from "@/lib/rollover-held-back";
+import type { PeriodBounds } from "@/lib/dates";
 import { dedupeHash } from "@/lib/hash";
 import { levelledMonthlyCents } from "@/lib/income-basis";
 import { recurringSeries } from "@/db/schema/recurring";
@@ -2605,7 +2607,11 @@ describe("rollover", () => {
       rolloverStartsOn: null,
       rolloverCapCents: null,
     };
-    expect(carryInto(bundle.db, budget, "2026-06-15", "2026-06-15")).toEqual({ cents: 160_00, heldBack: [] });
+    expect(carryInto(bundle.db, budget, "2026-06-15", "2026-06-15")).toEqual({
+      cents: 160_00,
+      heldBack: [],
+      readOn: { whose: "category", ancestor: null },
+    });
   });
 });
 
@@ -2627,6 +2633,13 @@ describe("⚖️ decision 67 — a closed period with a day not yet read banks n
     const s = budgetStatuses(bundle.db, refDate).find((r) => r.categoryPath === categoryPath);
     if (!s) throw new Error(`no ${categoryPath} budget status`);
     return { cents: s.rolloverCents, availableCents: s.availableCents, heldBack: s.rolloverHeldBack };
+  }
+
+  /** whose day the carry asked its closed periods against — what the panel's rule sentence is built from */
+  function readOn(categoryPath: string, refDate = "2026-07-15") {
+    const s = budgetStatuses(bundle.db, refDate).find((r) => r.categoryPath === categoryPath);
+    if (!s) throw new Error(`no ${categoryPath} budget status`);
+    return s.rolloverReadOn;
   }
 
   const JUNE = { start: "2026-06-01", end: "2026-06-30" };
@@ -2674,6 +2687,8 @@ describe("⚖️ decision 67 — a closed period with a day not yet read banks n
     rollingBudget("Food", "2026-05-01");
 
     expect(carried("Food")).toEqual({ cents: 900_00, availableCents: 1_400_00, heldBack: [] });
+    // …and the panel says it waits for no statement, never "until the accounts … are imported" (review of 46b6e4b)
+    expect(readOn("Food")).toEqual({ whose: "cash-only", ancestor: null });
   });
 
   test("a category with no account of its own waits on its page's day — its parent's, never the ledger's", () => {
@@ -2686,6 +2701,133 @@ describe("⚖️ decision 67 — a closed period with a day not yet read banks n
     spend("2026-07-15", -1, "Shopping", other); // …while the ledger reaches Jul 15 on another account
 
     expect(carried("Food > Coffee")).toEqual({ cents: 500_00, availableCents: 1_000_00, heldBack: [JUNE] });
+    // 🔴 its panel said "the accounts this category has lately been spent from" — Coffee has none (review of 46b6e4b)
+    expect(readOn("Food > Coffee")).toEqual({ whose: "category", ancestor: "Food" });
+  });
+
+  /*
+   * 🔴 THE CASH-ONLY PARENT HAD NO TEST. The walk names the ancestor whose day it found, whatever kind that day is — a
+   * cash-only parent's too — and the panel then says "…this category is read as Food is, spent only from cash
+   * wallets". Dropping the name there (`ancestor: … || whose === "cash-only" ? null`) passed every test (review of
+   * 9249ae7), and turned Coffee's panel into "This category is spent only from cash wallets" — false of a category with
+   * no wallet row of its own. Latent: on his ledger copy 2026-10-21 none of his 57 expense categories reads a cash-only
+   * day, its own or a parent's.
+   */
+  test("a subcategory whose parent is spent only from cash is read as its parent is — named, and banked", () => {
+    const wallet = createCashWallet(bundle.db, { name: "Cash on Hand", openingOn: "2026-04-01", openingBalanceCents: 100_000 });
+    for (const [postedOn, amountCents] of [["2026-04-15", -10_00], ["2026-05-10", -100_00]] as const) {
+      const description = "CASH";
+      addManualTransaction(bundle.db, { accountId: wallet, postedOn, amountCents, description, categoryId: catId("Food") });
+    }
+    rollingBudget("Food > Coffee", "2026-05-01"); // Coffee has no row of its own, on any account
+
+    // read through today as Food is, so May and June bank whole — no statement is coming to wait for
+    expect(carried("Food > Coffee")).toEqual({ cents: 1_000_00, availableCents: 1_500_00, heldBack: [] });
+    expect(readOn("Food > Coffee")).toEqual({ whose: "cash-only", ancestor: "Food" });
+    expect(rolloverWaitsSentence(readOn("Food > Coffee")!)).toBe(
+      "With no account of its own to wait on, this category is read as Food is, spent only from cash wallets, so a " +
+        "closed period waits for no statement — none will ever cover it.",
+    );
+  });
+
+  /*
+   * 🔴 A category with no account of its own and no ancestor with a day waits on the LEDGER's — the newest day any
+   * account reaches (`ledgerReaches`). Measured on a copy of his ledger 2026-10-13 (review of 46b6e4b): a $100 rolling
+   * Gifts & Donations budget from Jul 1 banked July and August and held September back on the ledger's Sep 24, under a
+   * sentence about the accounts Gifts "has lately been spent from" — it has none. ⚠️ And that day waits for no one
+   * account: a statement missing on a lagging account does not hold the period, so the sentence promises nothing of it.
+   */
+  test("with no account of its own and no ancestor to ask, it waits on the ledger's day — and on no one account", () => {
+    const chase = bundle.db.select().from(institutions).where(eq(institutions.name, "Chase")).get()!;
+    const other = createAccount(bundle.db, { institutionId: chase.id, name: "Other", type: "credit" });
+    ledgerOpensJan2();
+    rollingBudget("Gifts & Donations", "2026-05-01");
+    spend("2026-05-31", -1, "Shopping", other); // Other is imported through May 31: its June statement has not come
+    spend("2026-06-20", -1, "Shopping"); // the ledger reaches Jun 20 on the card
+
+    expect(carried("Gifts & Donations")).toEqual({ cents: 500_00, availableCents: 1_000_00, heldBack: [JUNE] });
+    expect(readOn("Gifts & Donations")).toEqual({ whose: "ledger", ancestor: null });
+
+    spend("2026-06-30", -1, "Shopping"); // the card reaches Jun 30 — Other still stops May 31, and June banks
+    expect(carried("Gifts & Donations")).toEqual({ cents: 1_000_00, availableCents: 1_500_00, heldBack: [] });
+    expect(rolloverWaitsSentence(readOn("Gifts & Donations")!)).not.toContain("missing statement");
+  });
+
+  test("with no closed period walked yet, it names the day the period now running will be asked against", () => {
+    ledgerOpensJan2();
+    spend("2026-06-20", -50_00, "Food");
+    rollingBudget("Food > Coffee", "2026-07-01");
+
+    expect(carried("Food > Coffee")).toEqual({ cents: 0, availableCents: 500_00, heldBack: [] });
+    expect(readOn("Food > Coffee")).toEqual({ whose: "category", ancestor: "Food" });
+  });
+
+  test("a budget that does not roll over waits on nothing, and says nothing", () => {
+    createBudget(bundle.db, { categoryId: catId("Food"), period: "monthly", amountCents: 500_00, startsOn: "2026-05-01" });
+    expect(readOn("Food")).toBeNull();
+  });
+
+  /*
+   * ⚠️ THE GAP THE PANEL'S SENTENCE STOPS SHORT OF. A period is read on the accounts the category has lately been spent
+   * from (`categoryCoverage`, its documented gap: "a FIRST charge on an account the category was never spent from in
+   * the window is not waited for"). The panel said flatly "a missing statement cannot bank itself as savings"; a June
+   * statement missing on a card Food was never spent from is not waited for, and June banks. Pinned so the sentence
+   * (`rolloverWaitsSentence`, asked of whose day the carry read — its own accounts here) and the rule move together.
+   */
+  test("⚠️ it waits on the accounts the category has lately been spent from — the panel's words, and no wider", () => {
+    const chase = bundle.db.select().from(institutions).where(eq(institutions.name, "Chase")).get()!;
+    const other = createAccount(bundle.db, { institutionId: chase.id, name: "Other", type: "credit" });
+    ledgerOpensJan2();
+    spend("2026-05-31", -1, "Shopping", other); // Other is imported through May 31: its June statement has not come
+    rollingBudget("Food", "2026-06-01");
+    spend("2026-06-30", -50_00, "Food"); // Food's card is read through Jun 30
+
+    expect(carried("Food")).toEqual({ cents: 450_00, availableCents: 950_00, heldBack: [] });
+    expect(readOn("Food")).toEqual({ whose: "category", ancestor: null });
+    expect(rolloverWaitsSentence(readOn("Food")!)).toContain("the accounts this category has lately been spent from");
+    // …while a missing statement on an account Food IS spent from holds June back
+    spend("2026-05-20", -10_00, "Food", other);
+    expect(carried("Food")).toEqual({ cents: 0, availableCents: 500_00, heldBack: [JUNE] });
+  });
+
+  /*
+   * 🔴 ONE LIST FOR EVERY BUDGET THAT DOES NOT ROLL OVER. They were all handed the same `heldBack` array (a module-level
+   * `NOTHING_CARRIED`), so a reader that wrote into one row's list wrote into every other's — and into every later
+   * load's: a "September 2026 is not fully imported" line would have stood under budgets that bank nothing at all
+   * (review of 73a743d). Latent: no caller writes into it today.
+   */
+  test("a budget that does not roll over holds back a list of its own — no other row's, and no later load's", () => {
+    createBudget(bundle.db, { categoryId: catId("Food"), period: "monthly", amountCents: 500_00, startsOn: "2026-05-01" });
+    createBudget(bundle.db, { categoryId: catId("Shopping"), period: "monthly", amountCents: 500_00, startsOn: "2026-05-01" });
+    const [food, shopping] = budgetStatuses(bundle.db, "2026-07-15");
+    expect(food!.rolloverHeldBack).toEqual([]);
+    expect(food!.rolloverHeldBack).not.toBe(shopping!.rolloverHeldBack);
+
+    try {
+      (food!.rolloverHeldBack as PeriodBounds[]).push(JUNE);
+    } catch {
+      // a list nobody may write into is as good as one of its own
+    }
+    expect(shopping!.rolloverHeldBack).toEqual([]);
+    expect(budgetStatuses(bundle.db, "2026-07-15").map((s) => s.rolloverHeldBack)).toEqual([[], []]);
+  });
+
+  /*
+   * ⛔ `/categories/<id>` builds ONE row (`categoryBudgetRef`), and building all of them to find it walked every rolling
+   * budget's carry — nine of his twelve, about 100 ms on his ledger copy 2026-10-13 — per category page. The row asked
+   * for is the row the whole page would build, "also counts toward its parent" and all.
+   */
+  test("asked for one category, it builds that budget's row alone — the row the whole page builds", () => {
+    rollingBudget("Food", "2026-05-01");
+    createBudget(bundle.db, { categoryId: catId("Food > Coffee"), period: "monthly", amountCents: 50_00, startsOn: "2026-05-01" });
+    createBudget(bundle.db, { categoryId: catId("Shopping"), period: "monthly", amountCents: 500_00, startsOn: "2026-05-01" });
+    spend("2026-05-10", -100_00, "Food");
+    const all = budgetStatuses(bundle.db, "2026-07-15");
+    for (const path of ["Food", "Food > Coffee", "Shopping"]) {
+      const one = budgetStatuses(bundle.db, "2026-07-15", undefined, { categoryId: catId(path) });
+      expect(one, path).toEqual([all.find((s) => s.categoryPath === path)]);
+    }
+    expect(all.find((s) => s.categoryPath === "Food > Coffee")!.isDescendantOfBudgeted).toBe(true);
   });
 
   test("carryInto names the weeks it held back", () => {
@@ -2704,6 +2846,7 @@ describe("⚖️ decision 67 — a closed period with a day not yet read banks n
     expect(carryInto(bundle.db, budget, "2026-06-15", "2026-06-15")).toEqual({
       cents: 460_00,
       heldBack: [{ start: "2026-06-08", end: "2026-06-14" }],
+      readOn: { whose: "category", ancestor: null },
     });
   });
 });

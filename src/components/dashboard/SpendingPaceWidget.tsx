@@ -1,6 +1,7 @@
 import Link from "next/link";
 import type { SpendingPace } from "@/services/dashboard";
 import { formatCents } from "@/lib/money";
+import { notImportedTitle } from "@/lib/empty-period";
 import { notImportedYet } from "@/lib/pace-readout";
 import { paceGeometry, PACE_VH, PACE_VW } from "@/lib/pace-geometry";
 
@@ -69,7 +70,9 @@ export function SpendingPaceWidget({ pace }: { pace: SpendingPace }) {
                 measured they stand, marked as the bounds they are. */}
             {free === null ? (
               <div className="mt-0.5 text-[11px] text-ink-muted">
-                {pace.monthLabel} is not imported yet
+                {/* the empty state's heading for the same month — the category headline's under its dash, word for
+                    word. 🔴 "October 2026 is not imported yet" here, "has not been imported yet" there (review of b2c9db7) */}
+                {notImportedTitle(pace.monthLabel)}
               </div>
             ) : (
               <>

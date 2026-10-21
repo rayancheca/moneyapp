@@ -733,7 +733,7 @@ export function alreadyDueWords(
     const onTheDay = one ? "its day" : n === 2 ? "both" : "all of them";
     const reach = graceDays === 0 ? onTheDay : `${days(graceDays)} past ${one ? "it" : "each"}`;
     return {
-      heading: "Already due, and not posted",
+      heading: `Already due, and ${NOT_POSTED}`,
       body: `${lead}, and the statements reach ${reach} with no posting ${within}. ${counted}`,
       warning,
     };

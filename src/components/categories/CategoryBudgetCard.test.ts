@@ -31,6 +31,7 @@ const HOUSING = {
   period: "monthly",
   bounds: { start: "2026-10-01", end: "2026-10-31" },
   alert: "none",
+  pace: "under",
   href: "/budgets",
 } as const;
 
@@ -129,12 +130,45 @@ describe("CategoryBudgetCard — /budgets' reading of the same row and window", 
     expect(html).not.toContain("Awaiting statements");
   });
 
+  /*
+   * 🔴 ONE ROW, TWO VERDICTS. The card coloured its "left" from `alert` (spent against 80% of the line) while /budgets
+   * headlines the same row by its PACE: a measured row on course to finish over — "Off pace · 30% used" in amber there —
+   * read a green "$1,603.85 left" here, and one 85% spent but on course to land under read amber here beside /budgets'
+   * green "On track". The colour is the row's verdict now (`pace`, `PACE_TONE`), the one /budgets' headline wears.
+   */
+  test("a measured row is coloured by the pace /budgets headlines it with, not by how much is spent", () => {
+    const offPace: CategoryBudgetRef = {
+      ...HOUSING,
+      spentCents: 68_736,
+      remainingCents: 160_385,
+      alert: "none",
+      pace: "at-risk",
+      verdict: budgetVerdict({ ...ROW, pace: "at-risk", pct: 0.3, uncoveredDays: 0 }),
+      coverageSentence: null,
+    };
+    expect(offPace.verdict.headline).toBe("Off pace · 30% used");
+    expect(classOf(render(offPace), "$1,603.85 left")).toContain("text-warning");
+
+    const onTrack: CategoryBudgetRef = {
+      ...HOUSING,
+      spentCents: 194_753,
+      remainingCents: 34_368,
+      alert: "warn80",
+      pace: "under",
+      verdict: budgetVerdict({ ...ROW, pace: "under", pct: 0.85, uncoveredDays: 0 }),
+      coverageSentence: null,
+    };
+    expect(onTrack.verdict.headline).toBe("On track · 85% used");
+    expect(classOf(render(onTrack), "$343.68 left")).toContain("text-positive");
+  });
+
   test("past the line on partial data is graded, as /budgets grades it", () => {
     const over: CategoryBudgetRef = {
       ...HOUSING,
       spentCents: 247_000,
       remainingCents: -17_879,
       alert: "over",
+      pace: "over",
       verdict: budgetVerdict({ ...ROW, pace: "over", pct: 1.08, uncoveredDays: 12 }),
       coverageSentence: null,
     };

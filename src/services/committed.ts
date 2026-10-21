@@ -448,8 +448,9 @@ export function committedBook(
    * version of this comment was wrong about why that is tolerable. It said
    * budgets "cannot see the difference" because it ADDS the two
    * (`expectedTailCents = tail + overdue`). Its ARITHMETIC cannot; its PROSE
-   * can: `budgetSectionNotes` prints "One bill totalling $X came due this
-   * period and no import has covered it yet" straight off `overdueCents`. So
+   * can: `budgetSectionNotes` printed "One bill totalling $X came due this
+   * period and no import has covered it yet" straight off `overdueCents` (it
+   * says "due by today and no statement has covered it yet" now). So
    * on the 1st of every month — reproduced on 2026-09-01 and 2026-10-01 — the
    * dashboard reports no arrears while /budgets says $2,291.21 came due, over
    * the same rent, from the same ledger, on the same day.

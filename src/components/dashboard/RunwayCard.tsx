@@ -248,7 +248,7 @@ export function RunwayCard({ data }: { data: RunwayCardData }) {
               inside it: the rate covers [today, today + 12 months) and this
               money came due before today. Folding it in is what published
               $2,284.75 a month for a $2,109.00 bill.
-              ⛔ "Never posted" only of days the ledger has read — the sentence
+              ⛔ "Has not posted" only of days the ledger has read — the sentence
               is `lib/committed`'s `arrearsSentence`, where a test reaches each
               branch.
               🔴 …and red only for them. On a copy of his ledger 2026-10-08 this

@@ -64,6 +64,7 @@ import { paydayIsRead } from "@/lib/occurrence-verdict";
 import { spentOnlyFromCashWallets, type BorrowedDay } from "@/lib/budget-coverage";
 import { formatCategoryPath } from "@/lib/category-path";
 import { categoryReach, type CategoryReach } from "@/lib/category-reach";
+import type { RolloverReadOn } from "@/lib/rollover-held-back";
 import {
   accountsThatDate,
   frontierForSeries,
@@ -235,7 +236,9 @@ export interface BudgetStatus {
   /** unspent plan banked from CLOSED periods read whole (⚖️ decision 67); 0 whenever rollover is off */
   rolloverCents: number;
   /** ⚖️ decision 67: the closed periods that banked nothing because a day of them is not read yet; empty when off */
-  rolloverHeldBack: PeriodBounds[];
+  rolloverHeldBack: readonly PeriodBounds[];
+  /** whose day the carry read those periods through (`RolloverCarry.readOn`) — the panel's rule; null when off */
+  rolloverReadOn: RolloverReadOn | null;
   /** amountCents + rolloverCents — the line this period is actually graded against */
   availableCents: number;
   remainingCents: number;
@@ -270,7 +273,13 @@ export interface RolloverCarry {
   /** unspent plan banked from the CLOSED periods every day of which has been read */
   cents: number;
   /** the closed periods that banked nothing because a day of them is not read yet, oldest first */
-  heldBack: PeriodBounds[];
+  heldBack: readonly PeriodBounds[];
+  /**
+   * Whose day the newest closed period was read through — or, none closed yet, the day the period now running is asked
+   * against — as `categoryReachFor` found it: what the panel's rule says it waits on (`rolloverWaitsSentence`). Null
+   * for a budget that does not roll over, which waits on nothing.
+   */
+  readOn: RolloverReadOn | null;
 }
 
 /**
@@ -335,6 +344,13 @@ export function carryReads(db: AppDatabase): CarryReads {
  *   at. ⚖️ A category spent only from cash wallets by its own rule (2026-09-15):
  *   its page reads it through today, so it banks — no statement is coming to wait
  *   for. Nothing is stored, so the carry arrives on the load after the statement.
+ *   Whose day it asked is returned (`readOn`), so the panel's rule names THAT day
+ *   (`lib/rollover-held-back::rolloverWaitsSentence`) — 🔴 it named the category's
+ *   own accounts under every budget, Gifts & Donations' among them, which has none
+ *   and waits on the ledger's (review of 46b6e4b). ⚠️ A period older than the six
+ *   months asks a WIDER accounts window (`spentFromSinceFor`), which can find the
+ *   category's own accounts where the recent one found none; `readOn` is the newest
+ *   period's — the one the panel's "lately" speaks for.
  *
  * Derived at read time and never stored: the 2026-08-03 import back-filled
  * $623.58 of spend into an already-closed July, so a stored balance would have
@@ -359,15 +375,18 @@ export function carryInto(
   // a period the budget only partly owned is skipped whole, never prorated
   let cursor = compareDates(first.start, from) < 0 ? addDays(first.end, 1) : first.start;
   // the day a window is read through depends on its start only through the accounts window it opens
-  const reachedThrough = new Map<string, string | null>();
-  const readWhole = (p: PeriodBounds): boolean => {
-    const since = spentFromSinceFor(p.start, today);
-    let through = reachedThrough.get(since);
-    if (through === undefined) {
-      // asked from `since`, which opens the same accounts window `p.start` does (`spentFromSinceFor`)
-      through = categoryReachFor(db, budget.categoryId, since, today, reads).through;
-      reachedThrough.set(since, through);
+  const reached = new Map<string, CategoryReachWalk>();
+  const reachFrom = (start: string): CategoryReachWalk => {
+    const since = spentFromSinceFor(start, today);
+    let walk = reached.get(since);
+    if (walk === undefined) {
+      // asked from `since`, which opens the same accounts window `start` does (`spentFromSinceFor`)
+      walk = categoryReachWalk(db, budget.categoryId, since, today, reads);
+      reached.set(since, walk);
     }
+    return walk;
+  };
+  const readWhole = (p: PeriodBounds, through: string | null): boolean => {
     // every day of it read: none past that day, none before the ledger opens
     const window = { from: p.start, to: p.end, today, ledgerOpens: reads.opens, ledgerReaches: through };
     return emptyPeriodReason(window).kind === "measured";
@@ -375,6 +394,7 @@ export function carryInto(
 
   let balance = 0;
   const heldBack: PeriodBounds[] = [];
+  let newest: CategoryReachWalk | null = null;
   while (compareDates(cursor, currentPeriodStart) < 0) {
     const p = periodBounds(cursor, budget.period);
     /*
@@ -393,8 +413,9 @@ export function carryInto(
      */
     if (compareDates(p.end, currentPeriodStart) >= 0) break;
     cursor = addDays(p.end, 1);
+    newest = reachFrom(p.start);
     // ⚖️ decision 67: a day of it not read yet, so it banks nothing until its statements land
-    if (!readWhole(p)) {
+    if (!readWhole(p, newest.reach.through)) {
       heldBack.push(p);
       continue;
     }
@@ -407,22 +428,42 @@ export function carryInto(
     balance = Math.max(0, balance + budget.amountCents - spent - overdue);
     if (budget.rolloverCapCents !== null) balance = Math.min(balance, budget.rolloverCapCents);
   }
-  return { cents: balance, heldBack };
+  // ⛔ whose day it waited on, as it asked it — the period now running's where none has closed (review of 46b6e4b)
+  const { reach, ancestor } = newest ?? reachFrom(currentPeriodStart);
+  return { cents: balance, heldBack, readOn: { whose: reach.whose, ancestor } };
 }
 
-const NOTHING_CARRIED: RolloverCarry = { cents: 0, heldBack: [] };
+/**
+ * What a budget that does not roll over carries: nothing — in a list of its OWN. 🔴 One module-level object was handed
+ * to every such budget, so all of them shared one `heldBack` array, and a reader writing into one row's list would
+ * have written into every other's and every later load's (review of 73a743d). Built per budget, and read-only besides.
+ */
+function nothingCarried(): RolloverCarry {
+  return { cents: 0, heldBack: [], readOn: null };
+}
 
 /**
  * Actual-vs-budget for every active budget, evaluated in refDate's period. `reads` are the carry's (`carryReads`),
  * asked once and only when a budget rolls over — `budgetPaceStatuses` hands in the ones it already holds.
+ *
+ * `only.categoryId` builds that category's budget alone — the row the whole list holds, "also counts toward its
+ * parent" included (every active budget is still read for that). ⚡ `/categories/<id>` reads one row
+ * (`budgetPaceStatusFor`), and building all of them walked every rolling budget's carry to find it: nine of his
+ * twelve, about 100 ms per category page on his ledger copy 2026-10-13.
  */
-export function budgetStatuses(db: AppDatabase, refDate: string = todayIso(), reads?: CarryReads): BudgetStatus[] {
+export function budgetStatuses(
+  db: AppDatabase,
+  refDate: string = todayIso(),
+  reads?: CarryReads,
+  only?: { categoryId: string },
+): BudgetStatus[] {
   const idx = loadCategoryIndex(db);
   const rows = db.select().from(budgets).where(eq(budgets.isActive, true)).all();
   const budgetedCategoryIds = new Set(rows.map((r) => r.categoryId));
   let carryReadsOnce = reads;
 
   return rows
+    .filter((b) => only === undefined || b.categoryId === only.categoryId)
     .map((b): BudgetStatus => {
       // A budget grades only the days it has actually existed. createBudget
       // stamps startsOn = today, so an unclamped period would judge a budget
@@ -442,7 +483,7 @@ export function budgetStatuses(db: AppDatabase, refDate: string = todayIso(), re
       // before the column existed.
       const carry = b.rolloverEnabled
         ? carryInto(db, b, period.start, refDate, (carryReadsOnce ??= carryReads(db)))
-        : NOTHING_CARRIED;
+        : nothingCarried();
       const rolloverCents = carry.cents;
       const availableCents = b.amountCents + rolloverCents;
       const node = idx.byId.get(b.categoryId);
@@ -480,6 +521,7 @@ export function budgetStatuses(db: AppDatabase, refDate: string = todayIso(), re
         txnCount,
         rolloverCents,
         rolloverHeldBack: carry.heldBack,
+        rolloverReadOn: carry.readOn,
         availableCents,
         // Every "how am I doing" figure grades against AVAILABLE, not plan: with
         // rollover on, the owner has said the carry is part of the line. Splitting
@@ -1621,6 +1663,26 @@ export function categoryReachFor(
   today: string,
   ctx: CategoryReachContext = categoryReachContext(db),
 ): CategoryReach {
+  return categoryReachWalk(db, categoryId, periodStart, today, ctx).reach;
+}
+
+/** `categoryReachFor`'s day, and the ANCESTOR it was found on — null where it is the category's own or the ledger's */
+interface CategoryReachWalk {
+  reach: CategoryReach;
+  ancestor: string | null;
+}
+
+/**
+ * `categoryReachFor`'s walk, saying whose day it found — what a rolling budget's panel names (`carryInto`'s `readOn`).
+ * ⛔ The one walk: `categoryReachFor` is this, less the ancestor's name.
+ */
+function categoryReachWalk(
+  db: AppDatabase,
+  categoryId: string,
+  periodStart: string,
+  today: string,
+  ctx: CategoryReachContext,
+): CategoryReachWalk {
   const reachOf = (id: string) => {
     const row = db
       .select({ name: categories.name, kind: categories.kind, parentId: categories.parentId })
@@ -1640,7 +1702,8 @@ export function categoryReachFor(
     if (parent === null) break;
     next = parent;
   }
-  return next.reach.whose === "ledger" ? own.reach : next.reach;
+  if (next.reach.whose === "ledger") return { reach: own.reach, ancestor: null };
+  return { reach: next.reach, ancestor: next === own ? null : next.reach.owner.name };
 }
 
 export interface BudgetPaceStatus extends BudgetStatus, CategoryCoverage {
@@ -1704,11 +1767,12 @@ interface BudgetPaceReads extends CarryReads {
   upfront: UpfrontCarRule | null;
 }
 
-function budgetPaceReads(db: AppDatabase): BudgetPaceReads {
+function budgetPaceReads(db: AppDatabase, carry: CarryReads = carryReads(db)): BudgetPaceReads {
   const notDrawn = seriesIdsNotDrawnAsRecurring(db);
   return {
-    // ⛔ the reads `/categories/[id]` asks its day with, so the row can ask the same one (`borrowedReach`)
-    ...carryReads(db),
+    // ⛔ the reads `/categories/[id]` asks its day with, so the row can ask the same one (`borrowedReach`) — the
+    // page's own, where it hands them in (`budgetPaceStatusFor`)
+    ...carry,
     notDrawn,
     upfront: upfrontCarRule(loadCategoryIndex(db), outsidePortfolioCashAccountIds(db), notDrawn),
   };
@@ -1803,11 +1867,29 @@ export function categoryWindowReading(
  * budgetStatuses enriched with pace, projection, and the expected tail — the
  * data behind the §8 bars. Kept separate from the lean budgetStatuses so a
  * caller pays for the per-row projection + tail only on the rows it draws:
- * /budgets on every row, `/categories/[id]` on its own one (`budgetPaceStatusOf`).
+ * /budgets on every row, `/categories/[id]` on its own one (`budgetPaceStatusFor`).
  */
 export function budgetPaceStatuses(db: AppDatabase, refDate: string = todayIso()): BudgetPaceStatus[] {
   const reads = budgetPaceReads(db);
   return budgetStatuses(db, refDate, reads).map((s) => budgetPaceStatusOf(db, s, refDate, reads));
+}
+
+/**
+ * ONE category's /budgets row, or null when it has no active budget — built alone (`budgetStatuses`' `only`) on the
+ * reads its page already made (`carry`: the page's `categoryReachContext` and `ledgerOpens`), asked once for the
+ * carry and the row both. ⚡ 🔴 `categoryBudgetRef` built every budget's row to find this one, and asked the page's
+ * reads again for the carry and again for the row (review of e37997b): about 110 ms per category page on his ledger
+ * copy 2026-10-13.
+ */
+export function budgetPaceStatusFor(
+  db: AppDatabase,
+  categoryId: string,
+  refDate: string,
+  carry?: CarryReads,
+): BudgetPaceStatus | null {
+  const reads = budgetPaceReads(db, carry);
+  const [status] = budgetStatuses(db, refDate, reads, { categoryId });
+  return status === undefined ? null : budgetPaceStatusOf(db, status, refDate, reads);
 }
 
 /**

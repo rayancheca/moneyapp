@@ -130,6 +130,19 @@ describe("emptyPeriodReason", () => {
     expect(reason({ ledgerOpens: null, ledgerReaches: null }).kind).toBe("no-ledger");
   });
 
+  /*
+   * ⚖️ A window that has not begun holds nothing YET — it is never "not imported", whatever the ledger holds. 🔴 This
+   * answered "no-ledger" first, so on a ledger with nothing in it a category page's November read "— Nothing imported
+   * yet … Import a statement to start the ledger" over a month no import could ever have reached (review of b2c9db7,
+   * whose dash took the future in). `unreachedKind` had asked the future first for that reason; now every reader does.
+   */
+  test("⚖️ a window that has not started is the future even on an empty ledger — nothing yet, not unimported", () => {
+    expect(reason({ from: "2026-10-01", to: "2026-10-31", ledgerOpens: null, ledgerReaches: null })).toEqual({
+      kind: "future",
+      uncoveredDays: 0,
+    });
+  });
+
   /* The boundary: the newest row falls on the window's first day. One day is
      covered, so it is partly covered and not "after the records". */
   test("the newest row landing on the window's first day covers exactly that day", () => {

@@ -43,7 +43,10 @@ export type CoverageGrade =
   | "broken"
   /** investment: value is marked to market and reconciliation cannot fail */
   | "market_value"
-  /** no transactions ever — the owner is the statement */
+  /**
+   * no transactions ever and no statement closing a chain — nothing but a balance he typed: the owner is the statement.
+   * ⚠️ A statement with no rows closes its own chain and is `verified` through its close (cf0bbdf, his decision 65).
+   */
   | "manual"
   /** no derived cache yet (new or never imported) */
   | "unknown";

@@ -121,7 +121,8 @@ export default async function CategoryPage({
    * months, so a bar cannot call a month "$0.00" that the month's own page calls not imported.
    */
   const reachCtx = categoryReachContext(db);
-  const trend = categoryMonthlyTrend(db, id, TREND_MONTHS, trendAnchor, reachCtx.ledgerReaches, ledgerOpens(db), today, reachCtx).map((p) => ({ ...p, spentCents: sign * p.spentCents }));
+  const opens = ledgerOpens(db);
+  const trend = categoryMonthlyTrend(db, id, TREND_MONTHS, trendAnchor, reachCtx.ledgerReaches, opens, today, reachCtx).map((p) => ({ ...p, spentCents: sign * p.spentCents }));
 
   /*
    * PHASE III-B. Where this category sits, through the SAME builder /spending
@@ -158,7 +159,7 @@ export default async function CategoryPage({
       ? categoryEmptyCopy(db, id, range, {
           today,
           label: period.label,
-          ledgerOpens: ledgerOpens(db),
+          ledgerOpens: opens,
           formatDay: formatDayLong,
           reachCtx,
         })
@@ -181,7 +182,8 @@ export default async function CategoryPage({
   const insights = categoryInsights(db, id, today);
   const subcats = categorySubcategorySplit(db, id, range);
   const series = seriesInCategory(db, id, today);
-  const budget = categoryBudgetRef(db, id, today);
+  // ⚡ the day the headline and the trend were read on — the card asked every one of these reads again, twice
+  const budget = categoryBudgetRef(db, id, today, { ...reachCtx, opens });
   // merchants are only meaningful for expense categories — transfer/investment
   // rows are not merchant purchases (spending-analytics exclusion law)
   const merchants = isExpense ? topMerchants(db, range, 8, { categoryId: id }) : null;
@@ -230,7 +232,8 @@ export default async function CategoryPage({
             </p>
           </div>
         </div>
-        {/* ⛔ a dash, not $0.00, where its own empty state below says nobody has looked (`CategoryHeadline`) */}
+        {/* ⛔ a dash, not $0.00, where its own empty state below says nobody has looked — or that the month has not
+            happened yet (`CategoryHeadline`) */}
         <CategoryHeadline
           flowLabel={flowLabel}
           periodLabel={period.label}

@@ -18,7 +18,7 @@ import {
   recurringSeriesIdsForCategory,
   type DateRange,
 } from "./analytics";
-import { budgetPaceStatusOf, budgetStatuses, categoryReachFor, type CategoryReachContext } from "./budgets";
+import { budgetPaceStatusFor, categoryReachFor, type BudgetPace, type CarryReads, type CategoryReachContext } from "./budgets";
 import { arrearsReadingOfSeries, arrearsThisMonth } from "./arrears";
 import { listSeries } from "./recurring";
 
@@ -419,6 +419,14 @@ export interface CategoryBudgetRef {
   bounds: { start: string; end: string };
   alert: "none" | "warn80" | "over";
   /**
+   * The row's pace — what its /budgets headline is coloured by ("Off pace" in amber), and so the card's "left".
+   *
+   * 🔴 The card coloured "left" from `alert` (spent against 80% of the line) while /budgets headlines the row by its
+   * pace: a measured row on course to finish over read "Off pace · 30% used" in amber there and a green "$X left" here
+   * (review of e37997b). One verdict, one colour (`PACE_TONE`).
+   */
+  pace: BudgetPace;
+  /**
    * The row's reading on /budgets, word for word (`budgetVerdict` over the row's own `budgetPaceStatusOf`).
    *
    * 🔴 The card printed `alert` alone, which never asks how much of the window was imported: on his ledger copy
@@ -433,13 +441,21 @@ export interface CategoryBudgetRef {
   href: string;
 }
 
-/** The active budget targeting THIS exact category, evaluated at refDate. */
-export function categoryBudgetRef(db: AppDatabase, categoryId: string, refDate: string): CategoryBudgetRef | null {
-  const status = budgetStatuses(db, refDate).find((s) => s.budget.categoryId === categoryId);
+/**
+ * The active budget targeting THIS exact category, evaluated at refDate. `pageReads` are the reads its page already
+ * made — the category's day (`categoryReachContext`) and the ledger's first (`ledgerOpens`) — so the card asks none of
+ * them again; read here when omitted.
+ */
+export function categoryBudgetRef(
+  db: AppDatabase,
+  categoryId: string,
+  refDate: string,
+  pageReads?: CarryReads,
+): CategoryBudgetRef | null {
+  // ⛔ the row /budgets draws, built by the code that draws it — this one row alone, on the page's reads
+  const status = budgetPaceStatusFor(db, categoryId, refDate, pageReads);
   if (!status) return null;
-  // ⛔ the row /budgets draws, built by the code that draws it — one row's projection and coverage, not all of them
-  const pace = budgetPaceStatusOf(db, status, refDate);
-  const verdict = budgetVerdict(pace);
+  const verdict = budgetVerdict(status);
   return {
     amountCents: status.budget.amountCents,
     rolloverCents: status.rolloverCents,
@@ -449,8 +465,9 @@ export function categoryBudgetRef(db: AppDatabase, categoryId: string, refDate: 
     period: status.budget.period,
     bounds: { start: status.bounds.start, end: status.bounds.end },
     alert: status.alert,
+    pace: status.pace,
     verdict,
-    coverageSentence: verdict.withheld ? budgetCoverageSentence(pace) : null,
+    coverageSentence: verdict.withheld ? budgetCoverageSentence(status) : null,
     href: "/budgets",
   };
 }

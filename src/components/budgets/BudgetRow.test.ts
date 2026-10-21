@@ -12,6 +12,7 @@ import { institutions } from "@/db/schema/institutions";
 import { recurringSeries } from "@/db/schema/recurring";
 import { transactions } from "@/db/schema/transactions";
 import { dedupeHash } from "@/lib/hash";
+import { ROLLOVER_BANKS, ROLLOVER_HOLDS } from "@/lib/rollover-held-back";
 import { createAccount } from "@/services/accounts";
 import { budgetPaceStatuses, createBudget, setBudgetRollover, type BudgetPaceStatus } from "@/services/budgets";
 import { createCashWallet } from "@/services/cash-wallets";
@@ -747,13 +748,59 @@ describe("BudgetDetails — what rollover subtracts, in his words", () => {
     expect(panelText()).toContain(
       "Banked $0.00 from closed periods. July 2026 is not fully imported, so nothing rolls over from it yet.",
     );
-    expect(panelText()).toContain("so a missing statement cannot bank itself as savings.");
+    expect(panelText()).toContain("so a missing statement on one of them cannot bank itself as savings.");
+    /*
+     * 🔴 …and the plan's proof on the same row said its own words, from before decision 67: "this plan plus
+     * whatever you underspent in closed periods" — over July's $30.00 plan, nothing read of it, $0.00 carried
+     * (review of 9249ae7). ⛔ One rule, two readers: the proof says what the panel says.
+     */
+    const plan = provenanceFor(bundle.db, { kind: "budgetPlan", id, label: "Food" })!;
+    expect(plan.headline).not.toContain("whatever you underspent");
+    expect(plan.headline).toContain(`${ROLLOVER_BANKS} ${ROLLOVER_HOLDS}`);
+    expect(panelText()).toContain(ROLLOVER_BANKS);
 
     foodRow("2026-08-01", -500); // July's statement lands: the Card is read past Jul 31
     expect(statusFor("Food").rolloverCents).toBe(3_000);
     expect(panelText()).toContain("Banked $30.00 from closed periods. A period that came in under plan");
     expect(panelText()).not.toContain("so nothing rolls over");
-    expect(panelText()).toContain("so a missing statement cannot bank itself as savings.");
+    expect(panelText()).toContain("so a missing statement on one of them cannot bank itself as savings.");
+  });
+
+  /*
+   * 🔴 Review of 46b6e4b: the panel said "the accounts this category has lately been spent from" under EVERY rolling
+   * budget, while the carry asks its category page's day (`categoryReachFor`) — a category with no account of its own
+   * waits on its nearest ancestor's accounts. The panel names whose day the carry asked, as it asked it.
+   */
+  test("a subcategory with no account of its own names the parent whose accounts its carry waits on", () => {
+    const chase = bundle.db.select().from(institutions).where(eq(institutions.name, "Chase")).get()!;
+    const card = createAccount(bundle.db, { institutionId: chase.id, name: "Card", type: "credit" });
+    const row = { accountId: card, postedOn: "2026-07-20", amountCents: -1_000, rawDescription: "GROCER" };
+    bundle.db
+      .insert(transactions)
+      .values({
+        ...row,
+        normalizedDescription: row.rawDescription,
+        categoryId: catId("Food"),
+        dedupeHash: dedupeHash({ ...row, occurrenceIndex: 0 }),
+      })
+      .run();
+    const coffee = bundle.db
+      .select()
+      .from(categories)
+      .where(and(eq(categories.name, "Coffee"), eq(categories.parentId, catId("Food"))))
+      .get()!;
+    const id = createBudget(bundle.db, { categoryId: coffee.id, period: "monthly", amountCents: 3_000, startsOn: "2026-07-01" });
+    setBudgetRollover(bundle.db, id, { enabled: true });
+
+    const text = renderToStaticMarkup(createElement(BudgetDetails, { status: statusFor("Coffee"), rolloverEnabled: true }))
+      .replace(/<[^>]+>/g, "")
+      .replace(/\s+/g, " ");
+    expect(text).toContain(
+      "With no account of its own to wait on, a period of this category adds nothing until the accounts Food has " +
+        "lately been spent from are imported through its last day, so a missing statement on one of them cannot bank " +
+        "itself as savings.",
+    );
+    expect(text).not.toContain("the accounts this category has lately been spent from");
   });
 });
 

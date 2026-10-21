@@ -150,6 +150,31 @@ describe("budgetSectionNotes", () => {
   });
 
   /*
+   * ⚖️ §6A 64: a row not one elapsed day of whose window is read prints "Left —" — there is no room left on it to look
+   * smaller than it is. 🔴 On his ledger copy 2026-10-13 the note read "That money is committed, so the room left is
+   * smaller than it looks." over Housing and Utilities, both printing "Left —" (review of 6f217a7). The rows' own test
+   * (`spendUnread`): over rows that print no "left" the money is said to come out of the plan they do print.
+   */
+  test("over rows that print \"Left —\", the money comes out of their plans — no room left is spoken of", () => {
+    const body = (rows: Parameters<typeof row>[0][]) =>
+      budgetSectionNotes({ rows: rows.map(row) }).find((n) => n.id === "budgets-overdue")!.body;
+    const unread = { noDayRead: true, txnCount: 0, uncoveredDays: 13 };
+    const housing = { categoryPath: "Housing", overdueCents: 229_121, overdueBills: 2 };
+    const utilities = { categoryPath: "Utilities", overdueCents: 10_887, overdueBills: 2 };
+    expect(body([{ ...housing, ...unread }, { ...utilities, ...unread }])).toBe(
+      "4 bills totalling $2,400.08 due by today and no statement has covered them yet — 2 budgets: Housing, " +
+        "Utilities. That money is committed out of their plans.",
+    );
+    expect(body([{ ...housing, ...unread }])).toMatch(/— 1 budget: Housing\. That money is committed out of its plan\.$/);
+    // one row prints what is left, one does not: the room left is spoken of where it is shown
+    expect(body([{ ...housing, ...unread }, utilities])).toMatch(
+      /Utilities\. That money is committed, so the room left is smaller than it looks where it is shown\.$/,
+    );
+    // ⚖️ a row with a row found in it keeps its figures as floors (§6A 64), and its "left" with them
+    expect(body([{ ...housing, ...unread, txnCount: 1 }])).toMatch(/so the room left is smaller than it looks\.$/);
+  });
+
+  /*
    * 🔴 …and "no import has covered them yet" of bills on accounts read through today — an archived card, a cash wallet
    * — whose days to post are not over (review of the 2026-10-08 batch): no import will ever come. Summed as the rest.
    */
