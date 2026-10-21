@@ -1,10 +1,12 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { and, eq, isNull } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { E2E_FAKE_TODAY, seededRecurringValues } from "../../e2e/seed-helpers";
 import { createDatabase, type DbBundle } from "../../src/db/client";
 import { accounts } from "../../src/db/schema/accounts";
+import { categories } from "../../src/db/schema/categories";
 import { institutions } from "../../src/db/schema/institutions";
 import { recurringSeries } from "../../src/db/schema/recurring";
 import { transactions } from "../../src/db/schema/transactions";
@@ -63,6 +65,21 @@ beforeAll(() => {
     .txns.get("chase-checking")!
     .filter((t) => t.rawDescription.startsWith(ACME));
   depositDays = deposits.map((t) => t.postedOn).sort(compareDates);
+  /*
+   * ⚖️ Filed as the seed files them — Income > Salary, by its merchant rule (`seed-merchants`: "Acme Corp (payroll)") —
+   * since a day is a pay day only where one of its rows is filed as his pay (`payDayRows`, decision 75). 🔴 Inserted
+   * unfiled they were the review queue's: settlement paid none of the 49 paydays the e2e seed's Salary rows pay.
+   */
+  const income = bundle.db
+    .select()
+    .from(categories)
+    .where(and(eq(categories.name, "Income"), isNull(categories.parentId)))
+    .get()!;
+  const salary = bundle.db
+    .select()
+    .from(categories)
+    .where(and(eq(categories.name, "Salary"), eq(categories.parentId, income.id)))
+    .get()!;
   deposits.forEach((t, i) =>
     bundle.db
       .insert(transactions)
@@ -73,6 +90,7 @@ beforeAll(() => {
         amountCents: t.amountCents,
         rawDescription: t.rawDescription,
         normalizedDescription: t.rawDescription,
+        categoryId: salary.id,
         recurringSeriesId: seriesId,
         status: "active",
         needsReview: false,
