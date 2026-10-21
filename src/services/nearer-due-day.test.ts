@@ -17,13 +17,14 @@ import { upcomingOccurrences } from "./recurring";
 import { recurringCalendar } from "./recurring-calendar";
 
 /**
- * ⚖️ His decision 76 (2026-10-14, his answer, refines 73): THE NEARER DUE DAY WINS — a payment between two due days
- * pays the one it lies nearer, a tie the earlier. One nearer the later day pays it early only when nothing paid that
- * day on time; otherwise it is the earlier day's, late — or pays nothing, if that day is already paid. One nearer the
- * earlier day pays nothing once that day is paid (⚖️ two defaults built, not asked, 2026-10-21 — (a) that day paid on
- * time, (b) paid early — below). On every grader of a bill's day: the arrears (the runway's "came due … not posted",
- * /budgets' "expected by now", the bill's "Already due"), the calendar, and every reader that looks ahead (the
- * forecast, Upcoming, the dashboard strip, "Next expected").
+ * ⚖️ His decision 76 (2026-10-14, his answer, refines 73): THE NEARER DUE DAY WINS — the option he chose, word for
+ * word: "A payment between two due days pays the one it's nearer to (a tie goes to the earlier one), unless the nearer
+ * one is already paid on time." What a payment LEFT OVER then pays, his answer does not say; three defaults built, not
+ * asked (2026-10-21, below — `paymentFor`): (a) nearer the EARLIER day, paid on time by another, it pays nothing; (b)
+ * nearer a day paid EARLY by another, nothing too; (c) nearer the LATER day, paid on time by another, it is the earlier
+ * day's, late — or nothing, once that day is paid. On every grader of a bill's day: the arrears (the runway's "came
+ * due … not posted", /budgets' "expected by now", the bill's "Already due"), the calendar, and every reader that looks
+ * ahead (the forecast, Upcoming, the dashboard strip, "Next expected").
  *
  * 🔴 Measured on his ledger copy 2026-10-13: the Car lease, due the 15th (3 days' grace), posted Sep 2 −$695.04 — and
  * decision 73 read it as Aug 15's LATE payment (Aug 15 was unpaid, so it kept the payment), leaving Sep 15 unpaid; a
@@ -222,7 +223,17 @@ describe("FPL with ONLY Jul 28 — nearer Aug 8, it pays Aug 8 even with Jul 8 u
   });
 });
 
-describe("nearer the LATER day, paid ON TIME by another: the earlier day's, late — if that one is unpaid", () => {
+/*
+ * ⚖️ Default (c), built, not asked (2026-10-21 — he said no more questions): nearer the LATER day, which another
+ * payment paid ON TIME, a payment is the EARLIER day's, late — the LATE default (2026-10-12) still reading it once his
+ * "unless" rules the later day out, as 73 read it too — or pays nothing, once that day is paid. His answer says no
+ * more; this came with the build (f8b5320), not with his words. It pays only a day behind the payment, so nothing
+ * still to come moves. Measured on a what-if copy of his ledger 2026-10-21: his September rent moved from Sep 2 to Sep
+ * 20 (−$2,291.21) pays Oct 1 early alone; beside an on-time Oct 1 rent it is Sep 1's, late, and September draws the
+ * utilities paid with it, where paying nothing leaves Sep 1's rent and utilities missed. Paying nothing would flip
+ * this block's first test and billing-carriers.test.ts' (c) pin, and leave (a)'s and (b)'s green.
+ */
+describe("⚖️ (c) nearer the LATER day, paid ON TIME by another: the earlier's, late (default built, not asked)", () => {
   test("FPL's Jul 28 with Aug 8 paid on Aug 8 — it pays Jul 8, late: July owes nothing", () => {
     seriesWith(FPL, "FPL (electricity)", -5887, "2026-07-08", ["2026-07-28", -5622], ["2026-08-08", -5887]);
     checkedThrough(bundle.db, "acct", "2026-08-19");
@@ -248,17 +259,17 @@ describe("nearer the LATER day, paid ON TIME by another: the earlier day's, late
 });
 
 /*
- * ⚖️ Two defaults built, not asked (2026-10-21 — he said no more questions): what a payment LEFT OVER pays — one
- * nearer a day that another payment already pays. NOTHING (`paymentFor`). The option he chose for 76 says, word for
- * word, "unless the nearer one is already paid on time", and no more: silent on what that payment pays then. Two
- * shapes: (a) the nearer day paid ON TIME — this block; (b) the nearer day paid EARLY — the next block, which his
- * words do not reach. Paying the other day instead would flip one shape's pins (each names its default) and leave the
- * other's green. Measured on what-if copies of his ledger 2026-10-21: the split rent and the Oct 22 prepay below read
- * as pinned. On the ledger itself no live bill's posting is left over (9 with postings of their own) and no day
- * moves; the lease, on Wells Fargo (read through Sep 24), has posted once — Sep 2 −$695.04 — and owes Oct 15
- * $695.04, all unread.
+ * ⚖️ Two more defaults built, not asked (2026-10-21 — he said no more questions): what a payment LEFT OVER pays — one
+ * nearer a day that another payment already pays — when (c), above, does not redirect it: NOTHING (`paymentFor`). The
+ * option he chose for 76 says, word for word, "unless the nearer one is already paid on time", and no more: silent on
+ * what that payment pays then. Two shapes: (a) nearer the EARLIER day, paid ON TIME — this block; (b) nearer a day
+ * paid EARLY — the next block, which his words do not reach. Paying the other day instead would flip one shape's pins
+ * (each names its default) and leave the other's, and (c)'s, green. Measured on what-if copies of his ledger
+ * 2026-10-21: the split rent and the Oct 22 prepay below read as pinned. On the ledger itself no live bill's posting
+ * is left over or redirected (9 with postings of their own) and no day moves; the lease, on Wells Fargo (read through
+ * Sep 24), has posted once — Sep 2 −$695.04 — and owes Oct 15 $695.04, all unread.
  */
-describe("⚖️ (a) nearer a day another payment paid ON TIME, a payment pays nothing (default built, not asked)", () => {
+describe("⚖️ (a) nearer the EARLIER day, paid ON TIME by another: it pays nothing (default built, not asked)", () => {
   /*
    * ⚖️ The split October (measured on a what-if copy of his ledger with these two rows, read Oct 13, and again Oct 21
    * with that day's statements read — November keeps its −$2,109.00 rent and −$182.21 utilities): Oct 9 lies nearer
@@ -306,10 +317,10 @@ describe("⚖️ (a) nearer a day another payment paid ON TIME, a payment pays n
 
 /*
  * ⚖️ Default (b), built, not asked (2026-10-21), apart from (a): nearer a day another payment paid EARLY. His words do
- * not reach it (that day is not paid on time), so changing (a) leaves this block green; only changing (b) flips it —
- * and with it billing-carriers.test.ts' known gap, where paying the other day would carry each late rent after a stray
- * early half to the month after its own. Measured on what-if copies of his ledger 2026-10-21: Sep 30 leaves Oct 15
- * owed ($695.04, all unread there), and after Oct 1, Oct 30 leaves Nov 15 coming where Oct 31 pays it.
+ * not reach it (that day is not paid on time), so changing (a) or (c) leaves this block green; only changing (b) flips
+ * it — and with it billing-carriers.test.ts' known gap, where paying the other day would carry each late rent after a
+ * stray early half to the month after its own. Measured on what-if copies of his ledger 2026-10-21: Sep 30 leaves Oct
+ * 15 owed ($695.04, all unread there), and after Oct 1, Oct 30 leaves Nov 15 coming where Oct 31 pays it.
  */
 describe("⚖️ (b) nearer a day another payment paid EARLY, a payment pays nothing (default built, not asked)", () => {
   /*
