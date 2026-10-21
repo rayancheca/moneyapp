@@ -129,23 +129,30 @@ export interface DueDays {
  * is still a day's. The cost he accepted: one nearer the next day pays it even when the day before is unpaid — FPL
  * paid only Jul 28 owes Jul 8 where it owed Aug 8, one month owed either way.
  *
- * ⚠️ OPEN — TWO calls of his (reviews of f8b5320..eb48365 and of 7e36835, 2026-10-21): what a payment LEFT OVER pays
- * — one nearer a day another payment already pays. As built, nothing. His words for 76 are "unless that one is already
- * paid on time; then the other", and they answer one shape of the two:
- * (a) the nearer day paid ON TIME — his words pay the other day early. 🔴 As built takes back decision 73 here: a lease
- *     prepaid Oct 22, a week after an on-time Oct 15, paid Nov 15 early under 73 (run against 7aca8e5's paymentFor)
- *     and as built owes it, "has not posted", still in Upcoming after the $695.04 left. What as built keeps: a rent
- *     split Oct 1 −$2,000.00 + Oct 9 −$291.21 pays no Nov 1 early with $291.21 — 73's 🔴 (below), which he saw 76
- *     fix — and FPL's Jul 12 (Jul 8 paid Jul 10) no Aug 8.
- * (b) the nearer day paid EARLY — his words do not reach it, so whatever he answers to (a) it stays owed: a lease paid
- *     Sep 2 then Sep 30 (the 15/15 tie, Sep 15's, which Sep 2 paid early) owes Oct 15, as 73 did; after Sep 2 + Oct 1,
- *     Oct 30 owes Nov 15 where Oct 31 pays it — a web pay around the 1st landing on a 30th, a Feb 28, or a Mar 1
- *     outside a leap year. "Then the other" here runs on: after the known gap's stray half (Jun 17 paying Jul 1 early,
- *     below) the review's late rents Jul 8, Aug 5, Sep 6, Oct 7 would each pay the month AFTER their own, and Nov 1
- *     leave Upcoming with Oct 7.
- * Each shape's pins say which call they are (nearer-due-day.test.ts, billing-carriers.test.ts): an answer to one flips
- * its own pins and leaves the other's green. On his ledger copy 2026-10-21 no posting is left over (11 live series with
- * postings) and neither answer moves a day: the lease has posted once, Sep 2 −$695.04, and owes Oct 15 all unread.
+ * What a payment LEFT OVER pays — one nearer a day another payment already pays — his answer does not say. The option
+ * he chose for 76 reads, word for word: "A payment between two due days pays the one it's nearer to (a tie goes to the
+ * earlier one), unless the nearer one is already paid on time." It stops there: silent on what that payment pays then,
+ * and on a nearer day paid EARLY. Its examples were Sep 2 → Sep 15, an Oct 1 payment → Oct 15, FPL's 28th drafts →
+ * the next 8th and Car insurance's Sep 3 → Sep 11, none of them left over. As built it pays NOTHING, both ways:
+ * (a) ⚖️ default built, not asked (2026-10-21) — the nearer day paid ON TIME by another: it pays nothing. A lease paid
+ *     on time Oct 15, then $695.04 more Oct 22, still has Nov 15 coming on Oct 23, in November's forecast at −$695.04
+ *     — counted again — and "has not posted" once read past it, drawn missed. 🔴 This takes back decision 73 for that
+ *     shape: run against 7aca8e5's paymentFor, Oct 22 paid Nov 15 early. What it keeps: a rent split Oct 1 −$2,000.00
+ *     + Oct 9 −$291.21 keeps Nov 1 coming, with November's −$2,109.00 rent and −$182.21 utilities (73 paid it early
+ *     with the $291.21 — its 🔴, below), and FPL's Jul 12 (Jul 8 paid Jul 10) pays no Aug 8. Paying the other day
+ *     early instead would read the split's $291.21 as November paid and silently drop Nov 1's $2,291.21 from
+ *     Upcoming and the forecast; this default's error shows on screen instead, and lasts one month.
+ * (b) ⚖️ default built, not asked (2026-10-21) — the nearer day paid EARLY by another: it pays nothing too. A lease
+ *     paid Sep 2 (Sep 15's, early) then Sep 30 — the 15/15 tie, Sep 15's — owes Oct 15 $695.04, as 73 did; after Sep
+ *     2 + Oct 1, Oct 30 leaves Nov 15 coming where Oct 31 pays it. For a bill due the 15th, a pay on the 30th, a Feb
+ *     28 or a Mar 1 outside a leap year lands this way; one on the 31st or the 1st does not. Paying the other day here
+ *     would run on: after the known gap's stray half (Jun 17 paying Jul 1 early, below) the late rents Jul 8, Aug 5,
+ *     Sep 6, Oct 7 would each pay the month AFTER their own, and Nov 1 leave Upcoming with Oct 7.
+ * He said no more questions (2026-10-21), so neither was asked. Each pin names its default (nearer-due-day.test.ts,
+ * billing-carriers.test.ts). Measured on what-if copies of his ledger 2026-10-21, with that day's four statements
+ * read: the split, the Oct 22 prepay, Sep 30, and Oct 30 against Oct 31 each read as above. Sep 30's Oct 15 is all
+ * unread there, because Wells Fargo is read through Sep 24. On the ledger itself no live bill's posting is left over
+ * (9 with postings of their own) and no day moves: the lease has posted once, Sep 2 −$695.04.
  *
  * 🔴 Late paid nothing (review of 44eb3e7): the rent paid Oct 5, four days past its Oct 1 and its 3 days, was drawn
  * beside a red ✕ on Oct 1, the runway said "A further $2,291.21 came due earlier this month and never posted.", and
@@ -176,7 +183,7 @@ export function paymentFor<P extends Payment>(payments: readonly P[], dueOn: str
   const before = dueDays.before(dueOn);
   if (before !== null) {
     // early: nearer this day than the one before — nothing paid this day on time (above); never one nearer the day
-    // before, whether that day was paid on time or early (⚠️ open, his calls (a) and (b), above)
+    // before, whether that day was paid on time or early (⚖️ defaults (a) and (b), built, not asked — above)
     const early = paymentDaysBetween(payments, before, dueOn).find((p) => liesNearerTheLater(p, before, dueOn));
     if (early !== undefined) return early;
   }
