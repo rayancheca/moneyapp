@@ -10,7 +10,7 @@ import { formatDayShortIn } from "./format-date";
 import { depositsOf } from "./paid-by-another-month";
 import type { PayShortfall } from "./pay-shortfall";
 import { TOWARD_NO_PAYDAY } from "./per-payday";
-import { LAST_CHECKED_DAY, notLookedForDeposits } from "./unbanked-income";
+import { daysToLandRunPast, LAST_CHECKED_DAY, notLookedForDeposits, payNotBankedYet } from "./unbanked-income";
 
 /**
  * A section note is AUTHORED COPY selected by a MEASURED predicate, with every
@@ -646,10 +646,25 @@ export function cashEarningsSectionNotes(input: CashEarningsNoteInput): SectionN
        * e2e fixture's Chase Total Checking is checked through Jun 30 with rows imported to Jul 4.
        */
       const unlooked = through === null ? r.periodsSinceBanked : r.periodsSinceBanked - readSilence;
-      const explanations =
-        measuredRead && (through === null || readSilence < r.periodsSinceBanked)
-          ? `that money was held as cash, spent as cash, the schedule has ended, or ${notLookedForDeposits(unlooked)}`
-          : "that money was held as cash, spent as cash, or the schedule has ended";
+      /*
+       * ⚖️ …and a payday the ledger checked on its day but not through its days to land is not banked yet
+       * (`paydaysNotBankedYet`), in the words of Earned vs banked's verdict (`payNotBankedYet`). 🔴 Review of 4b98f77's
+       * follow-up: weekly pay through Aug 6, Chase read through Sat Sep 5 — September listed cash, ended and not looked
+       * for of Thu Sep 3, while the dashboard said Sep 3's pay is not banked yet.
+       */
+      const inGrace = r.shortfall?.notBankedYetPaydays ?? [];
+      const payday = (iso: string): string => formatDayShortIn(iso, r.lastPeriodOn ?? iso);
+      const explanations = OR_LIST.format([
+        "that money was held as cash",
+        "spent as cash",
+        "the schedule has ended",
+        ...(measuredRead && (through === null || readSilence < r.periodsSinceBanked)
+          ? [notLookedForDeposits(unlooked)]
+          : []),
+        ...(inGrace.length > 0 && r.checkedThrough
+          ? [payNotBankedYet(inGrace, r.checkedThrough, payday, input.formatDay)]
+          : []),
+      ]);
       notes.push({
         id: `cash-earnings-unbanked-${r.seriesName}`,
         body:
@@ -696,6 +711,8 @@ export function cashEarningsSectionNotes(input: CashEarningsNoteInput): SectionN
 
 /** "A and B", "A, B, and C" — the platform's list, as /budgets' fourth figure joins its deposits. */
 const AND_LIST = new Intl.ListFormat("en", { style: "long", type: "conjunction" });
+/** "A, B, or C" — what a stale schedule's quiet can mean. */
+const OR_LIST = new Intl.ListFormat("en", { style: "long", type: "disjunction" });
 
 const centsOf = (parts: readonly { cents: number }[]): number => parts.reduce((sum, p) => sum + p.cents, 0);
 
@@ -775,14 +792,11 @@ function payShortfallNote(
           ? ", and none of it is banked yet"
           : `, and none of it was banked inside the window: ${AND_LIST.format(rest)}`;
 
-  // why it is not banked yet, beside the claim: the days its deposits have to land run past the checked day
+  // why it is not banked yet, beside the claim: the days its deposits have to land run past the checked day — the
+  // stale verdict's words on Earned vs banked (`daysToLandRunPast`)
   const days = s.notBankedYetPaydays;
-  const toLand =
-    days.length === 1
-      ? `${payday(days[0]!)}'s days to land`
-      : `the days to land of ${AND_LIST.format(days.map(payday))}`;
   const grace =
-    days.length > 0 && checkedThrough ? `; ${toLand} run past ${formatDay(checkedThrough)}, ${LAST_CHECKED_DAY}` : "";
+    days.length > 0 && checkedThrough ? `; ${daysToLandRunPast(days, checkedThrough, payday, formatDay)}` : "";
   const n = s.unlookedPaydays;
   const unlooked =
     n > 0 && checkedThrough

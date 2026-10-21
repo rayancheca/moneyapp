@@ -56,6 +56,46 @@ export function notLookedForDeposits(paydays: number): string {
   return paydays === 1 ? "the ledger has not looked for its deposit" : "the ledger has not looked for their deposits";
 }
 
+/** "A and B", "A, B, and C" — the platform's list, as /spending's notes join their paydays. */
+const AND_LIST = new Intl.ListFormat("en", { style: "long", type: "conjunction" });
+
+/**
+ * Why a checked payday no deposit settled is not banked yet (`paydaysNotBankedYet`): "Sep 3's days to land run past
+ * Sat, Sep 5, 2026, the last day every account that pay lands in has been checked through", or "the days to land of
+ * Aug 27 and Sep 3 run past …" of several — /spending's shortfall note, and (`payNotBankedYet`) Earned vs banked's
+ * stale verdict and /spending's note for a stale schedule, each with its own day format.
+ *
+ * ⛔ One sentence for all three. 🔴 Review of 4b98f77: the verdict said "4 of them fall on days the records already
+ * cover, through Sep 5 — so the pay did not reach a bank" of Sep 3 one line under "$1,000.00 … — so it is not banked
+ * yet".
+ */
+export function daysToLandRunPast(
+  paydays: readonly string[],
+  checkedThrough: string,
+  formatPayday: (iso: string) => string,
+  formatDay: (iso: string) => string,
+): string {
+  const toLand =
+    paydays.length === 1
+      ? `${formatPayday(paydays[0]!)}'s days to land`
+      : `the days to land of ${AND_LIST.format(paydays.map(formatPayday))}`;
+  return `${toLand} run past ${formatDay(checkedThrough)}, ${LAST_CHECKED_DAY}`;
+}
+
+/**
+ * The same, as a verdict: "Sep 3's days to land run past …, the last day … — so its pay is not banked yet" — what a
+ * stale schedule's quiet says of a checked payday still inside its days to land, on Earned vs banked and on /spending.
+ */
+export function payNotBankedYet(
+  paydays: readonly string[],
+  checkedThrough: string,
+  formatPayday: (iso: string) => string,
+  formatDay: (iso: string) => string,
+): string {
+  const whose = paydays.length === 1 ? "its" : "their";
+  return `${daysToLandRunPast(paydays, checkedThrough, formatPayday, formatDay)} — so ${whose} pay is not banked yet`;
+}
+
 /** Where §6A 68 looks for a checked day — one phrase for the spoken line and the income card's note. */
 const IN_ACCOUNTS_PAY_LANDS_IN = "in the accounts that pay lands in";
 
