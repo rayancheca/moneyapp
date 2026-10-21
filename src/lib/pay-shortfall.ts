@@ -1,5 +1,5 @@
 import { payGap, unbankedSplit } from "./cash-earnings";
-import { compareDates } from "./dates";
+import { addDays, compareDates } from "./dates";
 import { paydayIsRead, paydayLandingIsRead } from "./occurrence-verdict";
 import {
   portionsAcross,
@@ -218,6 +218,38 @@ export function paydaysNotBankedYet(
     .filter((o) => !paydayLandingIsRead(o.date, w.toleranceDays, w.checkedThrough))
     .sort((a, b) => compareDates(a.date, b.date));
   return { paydays: pending.map((o) => o.date), cents: pending.reduce((sum, o) => sum + o.amountCents, 0) };
+}
+
+/** Where a schedule's silence is read: its last deposit, today, and how far its pay has been checked and may land. */
+export interface ScheduleSilence {
+  /** the last day that banked money (`CashEarnings.lastBankedOn`), or null when none has */
+  lastBankedOn: string | null;
+  today: string;
+  checkedThrough: string | null;
+  toleranceDays: number;
+}
+
+/**
+ * Of a schedule's SILENCE, the paydays not banked yet (`paydaysNotBankedYet`), oldest first: what a stale schedule's
+ * quiet says of the checked paydays still inside their days to land — Earned vs banked's verdict
+ * (`checkedSilentNotBankedYet`) and /spending's note for a stale schedule, both schedule-wide sentences.
+ *
+ * ⛔ THE SILENCE'S paydays, never a window's: strictly after the last deposit through today, as `cashEarnings` counts
+ * `periodsSinceBanked` and `checkedSilence` caps it — an unpaid payday before the last deposit is the difference's
+ * not-banked-yet part, never the silence's. None when nothing has banked: there is no "since" to count from, and the
+ * verdict says so instead. 🔴 Review of c02a4b0: /spending's note took them from the WINDOW's shortfall, so August
+ * (no Sep 3 in it) printed the same schedule-wide sentence without Sep 3's reason, and a window holding Aug 13 — unpaid
+ * before Fri Aug 14's deposit — named it where the verdict named Aug 20, Aug 27 and Sep 3.
+ */
+export function silentPaydaysNotBankedYet(
+  s: Pick<SettlementWalked, "paydays" | "deposits" | "settledBy">,
+  silence: ScheduleSilence,
+): readonly string[] {
+  const { lastBankedOn, today, checkedThrough, toleranceDays } = silence;
+  if (lastBankedOn === null) return [];
+  // a payday unchecked on its day is never one (`paydayIsRead`) — nor, with nothing checked, is any
+  const from = addDays(lastBankedOn, 1);
+  return paydaysNotBankedYet(s, { from, to: today, today, checkedThrough, toleranceDays }).paydays;
 }
 
 export function payShortfall(s: SettlementWalked, w: PayShortfallWindow, e: WindowEarnings): PayShortfall {

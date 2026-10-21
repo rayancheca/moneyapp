@@ -5,7 +5,12 @@ import { recurringSeries } from "@/db/schema/recurring";
 import { transactions } from "@/db/schema/transactions";
 import { compareDates, todayIso } from "@/lib/dates";
 import { cashEarnings, type CashEarnings, type PaySeries } from "@/lib/cash-earnings";
-import { payShortfall, type PayShortfall, type WindowEarnings } from "@/lib/pay-shortfall";
+import {
+  payShortfall,
+  silentPaydaysNotBankedYet,
+  type PayShortfall,
+  type WindowEarnings,
+} from "@/lib/pay-shortfall";
 import { firstPaydayOn } from "@/lib/payday-settlement";
 import { stepPlan, walkDayOfMonth } from "@/lib/recurring-step";
 import { outsidePortfolioCashAccountIds } from "./accounts";
@@ -71,6 +76,13 @@ export interface CashEarningsReading extends CashEarnings {
   checkedPeriodsCovered?: number;
   /** of `periodsSinceBanked`, the ones on or before `checkedThrough` (0 when it is null) */
   checkedPeriodsSinceBanked?: number;
+  /**
+   * Of the silence, the paydays not banked yet (`silentPaydaysNotBankedYet`), oldest first — schedule-wide like
+   * `periodsSinceBanked`, never the window's (`shortfall.notBankedYetPaydays`): what /spending's note for a stale
+   * schedule names, as Earned vs banked's verdict does (`IncomePayLine.checkedSilentNotBankedYet`). Present only with
+   * `withChecked`.
+   */
+  checkedSilentNotBankedYet?: readonly string[];
   /**
    * The window's pay against the series' settlement (`payShortfall`) — /spending's shortfall note and the split of its
    * surplus note: what the READ paydays came to beyond what was banked inside the window, what deposits outside it
@@ -464,16 +476,31 @@ export function cashEarningsReadings(
       continue;
     }
     const checkedThrough = checkedOf(s.id);
+    const settlement = paydaySettlement(db, s.id, today);
     // ⛔ the window's figures are this reading's — Earned vs banked's — and only who paid what is the settlement's
     const shortfallOf = (read: WindowEarnings["read"]): PayShortfall =>
       payShortfall(
-        paydaySettlement(db, s.id, today),
+        settlement,
         { from, to, today, checkedThrough, toleranceDays: s.toleranceDays },
         { impliedCents: reading.impliedCents, bankedCents: reading.bankedCents, read },
       );
+    // ⛔ the silence's, whatever the window — the verdict's own call (`silentPaydaysNotBankedYet`)
+    const checkedSilentNotBankedYet = silentPaydaysNotBankedYet(settlement, {
+      lastBankedOn: reading.lastBankedOn,
+      today,
+      checkedThrough,
+      toleranceDays: s.toleranceDays,
+    });
     if (checkedThrough === null) {
       const shortfall = shortfallOf({ paydays: 0, cents: 0, firstOn: null, lastOn: null });
-      readings.push({ ...reading, checkedThrough, checkedPeriodsCovered: 0, checkedPeriodsSinceBanked: 0, shortfall });
+      readings.push({
+        ...reading,
+        checkedThrough,
+        checkedPeriodsCovered: 0,
+        checkedPeriodsSinceBanked: 0,
+        checkedSilentNotBankedYet,
+        shortfall,
+      });
       continue;
     }
     /*
@@ -505,6 +532,7 @@ export function cashEarningsReadings(
         reading.lastBankedOn,
         checkedThrough,
       ),
+      checkedSilentNotBankedYet,
       shortfall,
     });
   }

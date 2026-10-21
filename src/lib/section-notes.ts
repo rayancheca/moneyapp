@@ -501,6 +501,12 @@ export interface CashEarningsNoteInput {
     checkedPeriodsCovered?: number;
     checkedPeriodsSinceBanked?: number;
     /**
+     * Of the silence, the checked paydays still inside their days to land (`silentPaydaysNotBankedYet`) —
+     * schedule-wide, whatever the window: what the note for a stale schedule names "not banked yet". Absent or empty,
+     * it names none.
+     */
+    checkedSilentNotBankedYet?: readonly string[];
+    /**
      * The window's READ paydays against the settlement (`payShortfall`) — what the shortfall note prints. Absent
      * means the caller did not measure it, and no such note is written.
      */
@@ -651,8 +657,12 @@ export function cashEarningsSectionNotes(input: CashEarningsNoteInput): SectionN
        * (`paydaysNotBankedYet`), in the words of Earned vs banked's verdict (`payNotBankedYet`). 🔴 Review of 4b98f77's
        * follow-up: weekly pay through Aug 6, Chase read through Sat Sep 5 — September listed cash, ended and not looked
        * for of Thu Sep 3, while the dashboard said Sep 3's pay is not banked yet.
+       * ⛔ The SILENCE's paydays (`checkedSilentNotBankedYet`), as the sentence they finish is schedule-wide — never the
+       * window's (`shortfall.notBankedYetPaydays`). 🔴 Review of c02a4b0: on the reviewer's state August, which holds no
+       * Sep 3, left its reason out of the very sentence September printed with it; and with Fri Aug 14's deposit after
+       * an unpaid Aug 13, a window holding Aug 13 named it where the verdict names Aug 20, Aug 27 and Sep 3.
        */
-      const inGrace = r.shortfall?.notBankedYetPaydays ?? [];
+      const inGrace = r.checkedSilentNotBankedYet ?? [];
       const payday = (iso: string): string => formatDayShortIn(iso, r.lastPeriodOn ?? iso);
       const explanations = OR_LIST.format([
         "that money was held as cash",

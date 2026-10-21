@@ -131,14 +131,32 @@ afterEach(() => {
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
+/** /spending's notes over a window, as its page reads them. */
+function spending(from: string, to: string): string[] {
+  return cashEarningsSectionNotes({
+    rows: cashEarningsReadings(bundle.db, { from, to, today: TODAY, withChecked: true }),
+    formatDay: formatDayLong,
+  }).map((n) => n.body);
+}
+
+/** The windows a stale schedule's note prints in on these fixtures: August, September, Q3 and the year. */
+const STALE_WINDOWS = [
+  ["2026-08-01", "2026-08-31"],
+  ["2026-09-01", "2026-09-30"],
+  ["2026-07-01", "2026-09-30"],
+  ["2026-01-01", "2026-12-31"],
+] as const;
+
+/** The schedule-wide sentence of a window's note for a stale schedule — from "Across the whole schedule" on. */
+function staleSentence(from: string, to: string): string {
+  const notes = spending(from, to).filter((body) => body.includes("Across the whole schedule"));
+  expect(notes).toHaveLength(1);
+  return notes[0]!.slice(notes[0]!.indexOf("Across the whole schedule"));
+}
+
 /** What each surface says of the same paydays. */
 function surfaces() {
   const f = forecastCurrentMonth(bundle.db, TODAY).unbankedIncome;
-  const spending = (from: string, to: string): string[] =>
-    cashEarningsSectionNotes({
-      rows: cashEarningsReadings(bundle.db, { from, to, today: TODAY, withChecked: true }),
-      formatDay: formatDayLong,
-    }).map((n) => n.body);
   return {
     forecast: passedPaydaysWords(f, formatDayLong).notProjected,
     dashboard: incomeCard(bundle.db, TODAY)!.totals.gapLabel,
@@ -263,6 +281,66 @@ describe("a payday checked on its day but not through its days to land never 'ne
         `${CHECKED_DAY} — so its pay is not banked yet. The income figures on this page count deposits, so they ` +
         "cannot tell you which.",
     ]);
+  });
+
+  /*
+   * ⛔ …over the SILENCE, as the verdict counts it (`silentPaydaysNotBankedYet`), never over the window: the sentence
+   * is schedule-wide ("Across the whole schedule … since the last deposit"), so every window that prints it prints it
+   * the same. 🔴 Review of c02a4b0: it took its payday from the window's shortfall, and August — which holds no Sep 3 —
+   * listed cash, ended and not looked for alone, while September, Q3 and the year named Sep 3. On his ledger copy
+   * 2026-10-21 with Wells Fargo checked through Fri Oct 16 and no October deposit, June, July, August and Q3 left
+   * Oct 15 out the same way.
+   */
+  test("/spending's stale sentence is the same in every window that prints it — August names Sep 3 too", () => {
+    paidThrough("2026-08-06");
+    readThrough("2026-09-05");
+
+    const sentence =
+      "Across the whole schedule, 5 expected paydays have passed since the last deposit on Thu, Aug 6, 2026, and 4 " +
+      "of them fall on days the records cover, through Sat, Sep 5, 2026 — that money was held as cash, spent as " +
+      "cash, the schedule has ended, the ledger has not looked for its deposit, or Sep 3's days to land run past " +
+      `Sat, Sep 5, 2026, ${CHECKED_DAY} — so its pay is not banked yet. The income figures on this page count ` +
+      "deposits, so they cannot tell you which.";
+    expect(spending("2026-08-01", "2026-08-31")).toEqual([
+      "It America LLC (weekly pay) implies $4,000.00 of earnings over Aug 6 – 27, 2026 and only $1,000.00 reached " +
+        `an account. ${sentence}`,
+    ]);
+    for (const [from, to] of STALE_WINDOWS) expect(staleSentence(from, to)).toBe(sentence);
+  });
+
+  // ⛔ …and never a payday before the silence: Aug 13, unpaid before Fri Aug 14's $500.00, is the window's, not its
+  test("/spending's stale sentence names the verdict's paydays — Aug 20, Aug 27 and Sep 3, never Aug 13", () => {
+    deposit("2026-08-14", 50_000);
+    const verdict = raisedFromAug13(28);
+
+    expect(verdict).toContain("the days to land of Aug 20, Aug 27, and Sep 3 run past Sep 5,");
+    const sentence =
+      "Across the whole schedule, 4 expected paydays have passed since the last deposit on Fri, Aug 14, 2026, and 3 " +
+      "of them fall on days the records cover, through Sat, Sep 5, 2026 — that money was held as cash, spent as " +
+      "cash, the schedule has ended, the ledger has not looked for its deposit, or the days to land of Aug 20, " +
+      `Aug 27, and Sep 3 run past Sat, Sep 5, 2026, ${CHECKED_DAY} — so their pay is not banked yet. The income ` +
+      "figures on this page count deposits, so they cannot tell you which.";
+    for (const [from, to] of STALE_WINDOWS) expect(staleSentence(from, to)).toBe(sentence);
+  });
+
+  // ⛔ A date window has two ends: the silence opens the day AFTER the last deposit. $500.00 on Thu Aug 13 itself pays
+  // Sep 10 early (the newest payday it reaches), so Aug 13 stays unpaid — and is still not one of the silence's
+  test("a payday on the last deposit's own day is not the silence's, on the verdict or on /spending", () => {
+    deposit("2026-08-13", 50_000);
+    const verdict = raisedFromAug13(28);
+
+    expect(verdict).toBe(
+      "4 paydays have passed since Aug 13 with no deposit. 3 of them fall on days the records already cover, through " +
+        `Sep 5, but the days to land of Aug 20, Aug 27, and Sep 3 run past Sep 5, ${CHECKED_DAY} — so their pay is ` +
+        `not banked yet. ${NOT_ANSWERED}`,
+    );
+    for (const [from, to] of STALE_WINDOWS) {
+      expect(staleSentence(from, to)).toContain(
+        "since the last deposit on Thu, Aug 13, 2026, and 3 of them fall on days the records cover, through Sat, " +
+          "Sep 5, 2026 — that money was held as cash, spent as cash, the schedule has ended, the ledger has not " +
+          "looked for its deposit, or the days to land of Aug 20, Aug 27, and Sep 3 run past Sat, Sep 5, 2026,",
+      );
+    }
   });
 
   // ⛔ …and checked through Sun Sep 6, Sep 3's last day to land, the verdict is the one it always was
