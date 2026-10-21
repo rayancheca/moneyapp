@@ -40,7 +40,11 @@ import { linkIsNotRecurring, seriesIdsNotDrawnAsRecurring } from "./recurring-li
  * gathers occurrences, trailing history, and the seasonal prior, then composes.
  */
 
-/** Trailing complete months of discretionary history that feed the trend — read in full (`paceMonths`, decision 71). */
+/**
+ * Trailing complete months of discretionary history that feed the trend — read in full (`paceMonths`, decision 71), and
+ * never before the ledger's first whole month, so fewer where it is young: "avg of last 2 periods", or "no prior
+ * periods" and no prediction at all, never three months of nothing before the first record (review of 6d11c4d).
+ */
 export const PREDICT_TRAILING_MONTHS = 3;
 
 /** A predicted budget under this earns no budget (noise), cents. */

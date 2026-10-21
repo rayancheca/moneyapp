@@ -30,7 +30,7 @@ import { categoryFlowLabel, categoryFlowSign } from "./category-detail";
 import { dashboardData } from "./dashboard";
 import { netWorthSeries, rebuildAccount } from "./derivation";
 import { forecastCurrentMonth } from "./forecast";
-import { importedThrough } from "./imported-through-fixture";
+import { importedThrough, ledgerOpenedOn } from "./imported-through-fixture";
 import { spendingReadThrough } from "./movers-card";
 import { ledgerOpens, ledgerReaches } from "./observation-frontier";
 import { periodActivity } from "./period-activity";
@@ -535,7 +535,9 @@ describe("the agent's trailing unfiled money out is not his pace", () => {
       post(wellsFargo, `${month}-10`, -HIS_UNFILED, null, "ATM Withdrawal");
       agentsUnfiled(month);
     }
-    // ⚖️ every account read into October (decision 71), so the pace reads Jul–Sep, the calendar's three
+    // ⚖️ every account read into October (decision 71), so the pace reads Jul–Sep, the calendar's three — and the
+    // ledger open before July, so July is a whole month of it (`paceMonths`' floor, review of 6d11c4d)
+    ledgerOpenedOn(bundle.db, "2026-06-30");
     importedThrough(bundle.db, TODAY);
     const paired = forecastCurrentMonth(bundle.db, TODAY);
     unpair();

@@ -12,9 +12,11 @@ import { categories } from "@/db/schema/categories";
 import { institutions } from "@/db/schema/institutions";
 import { transactions } from "@/db/schema/transactions";
 import { dedupeHash } from "@/lib/hash";
+import { baselineCaption } from "@/lib/committed";
 import { createAccount } from "./accounts";
 import { predictCategory } from "./category-forecast";
-import { forecastCurrentMonth, forecastForMonth, paceMonths } from "./forecast";
+import { spendBaseline } from "./committed";
+import { forecastCurrentMonth, forecastForMonth, paceMonths, type MonthForecast } from "./forecast";
 
 /*
  * ⚖️ His decision 71 (2026-10-13, asked as an either/or, the recommended option): an AVERAGE uses only months EVERY
@@ -58,9 +60,13 @@ afterEach(() => {
 });
 
 function groceries(accountId: string, postedOn: string, amountCents: number): void {
+  filed(accountId, postedOn, amountCents, "Groceries");
+}
+
+function filed(accountId: string, postedOn: string, amountCents: number, category: string): void {
   seq += 1;
   const rawDescription = `FIXTURE ${seq}`;
-  const categoryId = bundle.db.select().from(categories).where(eq(categories.name, "Groceries")).get()!.id;
+  const categoryId = bundle.db.select().from(categories).where(eq(categories.name, category)).get()!.id;
   bundle.db
     .insert(transactions)
     .values({
@@ -149,6 +155,8 @@ describe("the spending pace averages only months every account you spend from is
   });
 
   test("no account you spend from at all is the calendar's three months", () => {
+    // the ledger opens in March, so its first whole month (April) floors none of them
+    groceries(brokerageId, "2026-03-03", -1000);
     groceries(brokerageId, "2026-05-03", -1000);
     expect(paceMonths(bundle.db, TODAY)).toEqual({
       windows: [
@@ -157,6 +165,107 @@ describe("the spending pace averages only months every account you spend from is
         { start: "2026-06-01", end: "2026-06-30", key: "2026-06" },
       ],
       unread: null,
+    });
+  });
+});
+
+/*
+ * 🔴 Review of 6d11c4d: `paceMonths` slid its three months back behind the frontier with no floor, so on a young ledger
+ * they could slide ENTIRELY before its first record. Measured with this fixture's shape at 2026-08-27 (the ledger opens
+ * Jun 1; Checking spends $400.00 on Groceries and banks $3,000.00 of Salary in each of Jun, Jul and Aug; the Card is
+ * read only to Jun 12, where it spent $100.00): /recurring read "Income +$322.58 Spending $0.00 Net +$322.58 EOM cash
+ * $322.58 … Spending's pace is averaged over 3 complete months, Mar 2026 to May 2026. Jun 2026 and Jul 2026 are left
+ * out: Jun 12 is …" — three months before the first record, a month-end cash with no spending in it — beside a runway
+ * saying "No month has been read in full yet". Its parent commit read the same ledger's Spending at the pace as
+ * −$80.65, with no note.
+ */
+const YOUNG_TODAY = "2026-08-27"; // August: 31 days, 5 remaining including today
+
+/** The ledger opens Jun 1: Checking spends $400.00 on Groceries on the 1st and banks $3,000.00 of Salary on the 2nd. */
+function youngLedger(): void {
+  for (const m of ["2026-06", "2026-07", "2026-08"]) {
+    groceries(checkingId, `${m}-01`, -40000);
+    filed(checkingId, `${m}-02`, 300000, "Salary");
+  }
+}
+
+/** The card's text, tags dropped. */
+function cardText(f: MonthForecast): string {
+  return renderToStaticMarkup(createElement(ForecastCard, { forecast: f }))
+    .replace(/<[^>]+>/g, " ")
+    .replace(/&#x27;/g, "'")
+    .replace(/\s+/g, " ");
+}
+
+describe("…and never from before the ledger's first whole month (`baselineWindow`'s floor)", () => {
+  const unreadNote =
+    "No month has been read in full yet, so there is no spending average to stand on. Jun 2026 and Jul 2026 are " +
+    "left out: Jun 12 is the last day every account you spend from has been imported through.";
+
+  test("a frontier before the first whole month leaves the pace no month, never three before the first record", () => {
+    youngLedger();
+    groceries(cardId, "2026-06-12", -10000);
+    expect(paceMonths(bundle.db, YOUNG_TODAY)).toEqual({
+      windows: [],
+      unread: { months: ["2026-06", "2026-07"], through: "2026-06-12" },
+    });
+
+    const f = forecastCurrentMonth(bundle.db, YOUNG_TODAY);
+    expect(food(f)).toBeUndefined();
+    expect(f.spendPaceMonths).toBe(0);
+    expect(f.spendPaceNote).toBe(unreadNote);
+    // ⛔ the dashboard's caption over the same window, word for word
+    expect(baselineCaption(spendBaseline(bundle.db, YOUNG_TODAY))).toBe(unreadNote);
+    expect(forecastForMonth(bundle.db, "2026-09", YOUNG_TODAY)!.spendPaceNote).toBe(unreadNote);
+  });
+
+  test("the card holds the pace row's figures back and says why — never Spending $0.00 and its EOM cash", () => {
+    youngLedger();
+    groceries(cardId, "2026-06-12", -10000);
+    const card = cardText(forecastCurrentMonth(bundle.db, YOUNG_TODAY));
+    const pace = card.slice(card.indexOf("If you also spend"), card.indexOf("Show the math")).trim();
+    expect(pace).toBe(`If you also spend at your recent pace ${unreadNote}`);
+  });
+
+  test("a ledger younger than one whole month says no complete month has been imported, as the runway does", () => {
+    groceries(checkingId, "2026-08-05", -40000);
+    filed(checkingId, "2026-08-06", 300000, "Salary");
+    const f = forecastCurrentMonth(bundle.db, YOUNG_TODAY);
+    expect(paceMonths(bundle.db, YOUNG_TODAY)).toEqual({ windows: [], unread: null });
+    expect(f.spendPaceNote).toBe(
+      "No complete month has been imported yet, so there is no spending average to stand on.",
+    );
+    expect(f.spendPaceNote).toBe(baselineCaption(spendBaseline(bundle.db, YOUNG_TODAY)));
+  });
+
+  test("the category forecast reads no month either: nothing stands on months before the first record", () => {
+    youngLedger();
+    groceries(cardId, "2026-06-12", -10000);
+    const p = predictCategory(bundle.db, categoryIdOf("Food"), "Food", YOUNG_TODAY);
+    expect(p.forecast.parts.find((x) => x.key === "discretionary")).toMatchObject({
+      cents: 0,
+      basis: "no prior periods",
+    });
+  });
+
+  test("a floor that shortens the window averages the months the ledger has: two as two, not three with a zero", () => {
+    youngLedger();
+    expect(paceMonths(bundle.db, YOUNG_TODAY)).toEqual({
+      windows: [
+        { start: "2026-06-01", end: "2026-06-30", key: "2026-06" },
+        { start: "2026-07-01", end: "2026-07-31", key: "2026-07" },
+      ],
+      unread: null,
+    });
+    // never "3-mo avg $266.67 + trend $200.00": May, before the ledger opened, is not a month of nothing
+    const f = forecastCurrentMonth(bundle.db, YOUNG_TODAY);
+    expect(food(f)?.detail).toBe("2-mo avg $400.00 + trend $0.00, × 5/31 days");
+    expect(f.spendPaceMonths).toBe(2);
+    expect(f.spendPaceNote).toBeNull();
+    const p = predictCategory(bundle.db, categoryIdOf("Food"), "Food", YOUNG_TODAY);
+    expect(p.forecast.parts.find((x) => x.key === "discretionary")).toMatchObject({
+      cents: 40000,
+      basis: "avg of last 2 periods",
     });
   });
 });

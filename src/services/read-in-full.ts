@@ -54,3 +54,36 @@ export function averagesEndAt(db: AppDatabase, today: string = todayIso()): Aver
   }
   return { month, unread: through === null || left.length === 0 ? null : { months: left, through } };
 }
+
+/** The months an average of whole months reads today (`averagedMonths`). */
+export interface AveragedMonths {
+  /** 'YYYY-MM', oldest first — fewer than asked where the ledger is young, and none where it covers no whole month */
+  keys: string[];
+  /** `AveragesEnd.unread` */
+  unread: UnreadMonths | null;
+}
+
+/**
+ * The `count` calendar months an AVERAGE of whole months reads today: they end at `averagesEndAt`'s month, and none of
+ * them is before the ledger's first whole month (`firstWholeMonth`).
+ *
+ * ⛔ ONE RULE FOR EVERY AVERAGE, ITS FLOOR TOO. `baselineWindow` (the dashboard's six, /budgets' guide) and `paceMonths`
+ * (/recurring's three, /spending's and Predict budgets' three) read their months here. A month before the ledger began
+ * is not a month of nothing, it is no measurement at all (`baselineWindow` holds the 🔴 that found it), and the window
+ * keeps its length by sliding back, so where the ledger is young it shortens rather than reach before the floor.
+ *
+ * 🔴 Review of 6d11c4d: the floor lived in `baselineWindow` alone, and `paceMonths` slid back behind the frontier past
+ * it. On a ledger opening Jun 1 with one account read only to Jun 12, at 2026-08-27 /recurring paced spending over
+ * Mar–May — three months before the first record — and read "Spending $0.00 … EOM cash $322.58" at the pace, under a
+ * note naming those months, beside a runway saying "No month has been read in full yet".
+ */
+export function averagedMonths(db: AppDatabase, today: string, count: number): AveragedMonths {
+  const end = averagesEndAt(db, today);
+  const floor = firstWholeMonth(db);
+  const keys: string[] = [];
+  for (let i = count - 1; i >= 0; i--) {
+    const key = monthKey(addCalendarMonths(`${end.month}-01`, -i));
+    if (floor !== null && key >= floor) keys.push(key);
+  }
+  return { keys, unread: end.unread };
+}

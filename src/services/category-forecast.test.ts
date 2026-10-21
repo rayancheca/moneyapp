@@ -20,7 +20,7 @@ import {
   predictBudgets,
   predictCategory,
 } from "./category-forecast";
-import { importedThrough } from "./imported-through-fixture";
+import { importedThrough, ledgerOpenedOn } from "./imported-through-fixture";
 
 const TODAY = "2026-07-08"; // target = August 2026; trailing = Apr/May/Jun 2026
 
@@ -49,7 +49,12 @@ describe("predictCategory / predictBudgetableCategories", () => {
      * ⚖️ …read into the running month, so the trend reads the calendar's three (his decision 71, 2026-10-13: an average
      * uses only months every account you spend from is read to the end of — `paceMonths`). A Card whose newest row is
      * Jun 10 has read June for ten days, and its three months slide back to Mar–May.
+     *
+     * …and opened before April, so a trailing month with no row is a month he spent nothing in: no average reads a
+     * month before the ledger's first whole month (`paceMonths`' floor, review of 6d11c4d). Too late for a seasonal
+     * anchor.
      */
+    ledgerOpenedOn(bundle.db, "2026-03-01");
     importedThrough(bundle.db, TODAY);
   });
 
