@@ -18,7 +18,12 @@ describe("paceReadout", () => {
 
   test("a window read only in part reads as the lower bound it is, and says why in /budgets' words", () => {
     expect(
-      paceReadout({ projectedCents: 306_654, actualToDateCents: 143_105, partlyRead: { uncoveredDays: 2, line: LINE } }),
+      paceReadout({
+        projectedCents: 306_654,
+        actualToDateCents: 143_105,
+        partlyRead: { uncoveredDays: 2, line: LINE },
+        spendingUnaccounted: null,
+      }),
     ).toEqual({
       projected: "at least $3,066.54",
       soFar: "at least $1,431.05 so far",
@@ -27,9 +32,38 @@ describe("paceReadout", () => {
   });
 
   test("a window read in full keeps its estimate mark and says nothing more", () => {
-    expect(paceReadout({ projectedCents: 306_654, actualToDateCents: 143_105, partlyRead: null })).toEqual({
+    expect(
+      paceReadout({ projectedCents: 306_654, actualToDateCents: 143_105, partlyRead: null, spendingUnaccounted: null }),
+    ).toEqual({
       projected: "~$3,066.54",
       soFar: "$1,431.05 so far",
+      partlyRead: null,
+    });
+  });
+
+  test("a window with no pace projects nothing", () => {
+    const words = paceReadout({ projectedCents: null, actualToDateCents: 0, partlyRead: null, spendingUnaccounted: null });
+    expect(words.projected).toBeNull();
+  });
+
+  /*
+   * ⚖️ Decision 64 (2026-10-12): no spending found and not one elapsed day read by spending's day is no "$0.00". 🔴 Review
+   * of 1042f71 (today 2026-07-08, checking read through Jun 20, payroll found on Jul 3): the dashboard tile dashed "Free
+   * to spend — nothing found so far — spending imported through Jun 20" while this readout, the tile's twin, printed "On
+   * pace for at least $0.00 … at least $0.00 so far · spending imported through Jun 20 · 8 days of this period
+   * unaccounted". The dash's words stand in for both figures; the fact names the day, so no count repeats it.
+   */
+  test("a window with no spending found past spending's day prints the tile's words in place of both figures", () => {
+    expect(
+      paceReadout({
+        projectedCents: 0,
+        actualToDateCents: 0,
+        partlyRead: { uncoveredDays: 8, line: "spending imported through Jun 20 · 8 days of this period unaccounted" },
+        spendingUnaccounted: "spending imported through Jun 20",
+      }),
+    ).toEqual({
+      projected: null,
+      soFar: "nothing found so far — spending imported through Jun 20",
       partlyRead: null,
     });
   });

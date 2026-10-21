@@ -102,6 +102,8 @@ export interface SpendingPace {
    * ⚖️ Decision 64: "spending imported through Aug 12" where the month holds no spending and not one elapsed day is read
    * by that day — /spending's Spent card prints "—" with these words (`CashFlow.spendingUnaccounted`), and so does the
    * tile. Null otherwise — and where no account has read one elapsed day at all, whose dash is "not imported yet".
+   * ⛔ /spending's cash-flow readout, the tile's twin, prints them in place of its figures (`paceReadout`): 🔴 review of
+   * 1042f71, the tile dashed beside a readout of "On pace for at least $0.00 … at least $0.00 so far".
    */
   spendingNotFound: string | null;
   points: PacePoint[];
