@@ -4153,6 +4153,11 @@ describe("⚖️ decision 72 — a total over days its accounts have not been im
    * on his ledger copy 2026-10-13: "Breezeline is 100.0% of what you spent on Utilities over Aug 10 – Sep 10, 2026 · adds
    * up" — Breezeline paid from Venture X, read through Sep 13; Utilities spent from Chase Checking too, through Aug 12.
    * ⛔ The whole is no lower bound of the part's total, so its sentence says only which total is read in part.
+   *
+   * 🔴 …and its line under the share named no one (review of fdcebdc, finding 3): on his ledger copy 2026-10-21
+   * "Breezeline is 100.0% of what you spent on Utilities over Aug 10 – Oct 10, 2026" printed "spending imported through
+   * Aug 12 · 59 days of this period unaccounted" under a merchant whose own total adds up — Utilities' day, said only
+   * in the popover. ⛔ It names the category, in the borrowed clause's words (`namedFor`).
    */
   test("a share of a category inherits that category total's grade over the same days", () => {
     const checking = addAccount("a", "Chase Checking", "checking");
@@ -4164,7 +4169,7 @@ describe("⚖️ decision 72 — a total over days its accounts have not been im
     for (const day of ["2026-07-10", "2026-07-25"]) atMerchant(addTxn(venture, day, { importFileId: file }), "m-isp", food);
     categorize(addTxn(checking, "2026-07-20", { importFileId: file }), food);
     const window = { from: "2026-07-10", to: "2026-07-25" };
-    const line = "spending imported through Jul 20 · 5 days of this period unaccounted";
+    const line = "spending in Fixture Food imported through Jul 20 · 5 days of this period unaccounted";
 
     // its own total is read in full — Venture X through its last visit
     const own = merchantTotal("m-isp", window);
@@ -4173,11 +4178,15 @@ describe("⚖️ decision 72 — a total over days its accounts have not been im
 
     const share = merchantTotal("m-isp", window, food);
     expect(share.verdict).toBe("partly_read");
-    expect(share.partlyRead).toEqual(foodTotal(window).partlyRead);
+    // the category's own page over the same days: the same day and count, in its own (unnamed) words
+    expect(foodTotal(window).partlyRead).toEqual({
+      uncoveredDays: 5,
+      line: "spending imported through Jul 20 · 5 days of this period unaccounted",
+    });
     expect(share.partlyRead).toEqual({ uncoveredDays: 5, line });
     expect(share.headline).toBe(
       "This total is the sum of 2 rows from 1 document. A total is only as proven as its weakest row. " +
-        `What it is a share of — Fixture Food over the same days — is read only in part: ${line}.`,
+        `The total it is a share of, over the same days, is read only in part: ${line}.`,
     );
     expect(share.headline).not.toMatch(/lower bound/);
   });
@@ -4199,7 +4208,33 @@ describe("⚖️ decision 72 — a total over days its accounts have not been im
       line: "spending imported through Jul 15 · 16 days of this period unaccounted",
     });
     expect(share.headline).toMatch(
-      / It is read only in part: spending imported through Jul 15 · 16 days of this period unaccounted, so this total is a lower bound rather than a measurement\. What it is a share of — Fixture Food over the same days — is read only in part: spending imported through Jul 20 · 11 days of this period unaccounted\.$/,
+      / It is read only in part: spending imported through Jul 15 · 16 days of this period unaccounted, so this total is a lower bound rather than a measurement\. The total it is a share of, over the same days, is read only in part: spending in Fixture Food imported through Jul 20 · 11 days of this period unaccounted\.$/,
     );
+  });
+
+  /*
+   * 🔴 Review of fdcebdc, finding 3: the merchant's own line and its share's line are two readings of ONE window, and
+   * the share's named no one. Measured on his ledger copy 2026-10-21, 11 of 26 merchant pages printed two different
+   * days under adjacent sentences: IKEA (Oct 27, 2025 – Oct 12, 2026) "spending imported through Oct 2, 2026 · 10 days"
+   * under its rank and "spending imported through Jul 31, 2026 · 73 days" under its share of Housing. ⛔ Where the
+   * share's line is the category's, it names the category; the merchant's own line under its own sentence stays
+   * /budgets' line, as a category page's does.
+   */
+  test("…and with the whole's day the earlier, the share's line names the category and the rank's stays its own", () => {
+    rentPaidFromTwoAccounts();
+    // Food spent from a card read only through Jul 15 — a row of its own, not the landlord's
+    const card = addAccount("c", "Chase Sapphire", "credit");
+    addDays(card, [{ day: "2026-07-01", basis: "anchored" }, { day: "2026-07-15", basis: "derived" }]);
+    categorize(addTxn(card, "2026-07-15", { importFileId: "f1" }), food);
+    const window = { from: "2026-07-10", to: "2026-07-31" };
+
+    expect(merchantTotal("m-rent", window).partlyRead).toEqual({
+      uncoveredDays: 11,
+      line: "spending imported through Jul 20 · 11 days of this period unaccounted",
+    });
+    expect(merchantTotal("m-rent", window, food).partlyRead).toEqual({
+      uncoveredDays: 16,
+      line: "spending in Fixture Food imported through Jul 15 · 16 days of this period unaccounted",
+    });
   });
 });

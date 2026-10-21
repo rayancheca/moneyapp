@@ -279,6 +279,56 @@ describe("a category with no import day of its own names the day its page counts
 });
 
 /*
+ * ⚖️ Decision 72 under a sentence whose subject is NOT the category (review of fdcebdc, finding 3): a merchant page's
+ * share sentence prints the line of the category it is a share of. 🔴 Measured on his ledger copy 2026-10-21: IKEA's
+ * rank read "spending imported through Oct 2, 2026 · 10 days of this period unaccounted" and, one line down over the
+ * same Oct 27, 2025 – Oct 12, 2026, its share of Housing "spending imported through Jul 31, 2026 · 73 days of this
+ * period unaccounted" — two days for one window, and neither said the second was Housing's. ⛔ The borrowed clause's
+ * own words ("spending in Fees imported through …"): one builder names a category's day wherever it is not the line's
+ * own subject.
+ */
+describe("a category's line under another subject's sentence names the category (`namedFor`)", () => {
+  test("its own day, in the borrowed clause's words — and the first word still follows what it counts", () => {
+    expect(budgetCoverageSentence(input({ namedFor: "Housing" }))).toBe(
+      "spending in Housing imported through Sep 2 · 13 days of this period unaccounted",
+    );
+    expect(budgetCoverageFact(input({ namedFor: "Salary", counted: "income" }))).toBe(
+      "income in Salary imported through Sep 2",
+    );
+  });
+
+  test("with no day of its own, 'this category' is the category, and the day it borrows names whose it is", () => {
+    const travel = {
+      whose: "ancestor" as const,
+      name: "Travel",
+      coverage: { importedThroughOn: "2026-08-12", spentFromSince: "2026-04-01", spentFromAccounts: 1, spentFromWallets: 0 },
+    };
+    const dormant = { importedThroughOn: null, spentFromAccounts: 0, spentFromSince: "2026-04-01", uncoveredDays: 7 };
+    expect(budgetCoverageSentence(input({ ...dormant, namedFor: "Hotels", borrowedDay: travel }))).toBe(
+      "nothing imported for Hotels since Apr 1 · spending in Travel imported through Aug 12 · 7 days of this period unaccounted",
+    );
+    const noDay = { importedThroughOn: null, spentFromAccounts: 1 };
+    expect(budgetCoverageFact(input({ ...noDay, namedFor: "Dividends", counted: "income" }))).toBe(
+      "Dividends received only into accounts with no import date since Mar 1",
+    );
+    const cash = { importedThroughOn: null, spentFromAccounts: 0, spentFromWallets: 1 };
+    expect(budgetCoverageFact(input({ ...cash, namedFor: "Tips" }))).toBe("Tips spent only from a cash wallet since Mar 1");
+  });
+
+  test("a borrowed ancestor is named by the same rule — the clause and the named line are one builder", () => {
+    const coverage = { importedThroughOn: null, spentFromSince: "2026-04-01", spentFromAccounts: 0, spentFromWallets: 1 };
+    const gifts = { whose: "ancestor" as const, name: "Gifts & Donations", coverage };
+    const dormant = { importedThroughOn: null, spentFromAccounts: 0, spentFromSince: "2026-04-01" };
+    // the ancestor's clause is exactly its own fact, named
+    const named = budgetCoverageFact(input({ ...coverage, namedFor: "Gifts & Donations" }));
+    expect(named).toBe("Gifts & Donations spent only from a cash wallet since Apr 1");
+    expect(budgetCoverageFact(input({ ...dormant, borrowedDay: gifts }))).toBe(
+      `nothing imported for this category since Apr 1 · ${named}`,
+    );
+  });
+});
+
+/*
  * ⚖️ Decisions 64 + 72 for a window of ALL his spending that is no total — one cash-flow bucket, one heatmap day: where it
  * holds no spending row and not one of its elapsed days is read by the day every account he spends from is imported
  * through, its Spent is "—", and this is why. 🔴 Measured on his ledger copy 2026-10-13 (review of 2fce458):

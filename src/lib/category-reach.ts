@@ -89,8 +89,17 @@ export function categoryEmptyPeriodCopy(
   opts: { ledgerOpens?: string | null; agentsMoney?: boolean } = {},
 ): { title: string; description: string } {
   if (reach.whose === "cash-only" && reason.kind === "measured") {
-    // "spent only from a cash wallet since Apr 1 — no statement will ever cover it", the row's own sentence
-    const cash = budgetCoverageSentence({ ...reach.coverage, uncoveredDays: 0, bounds: { start: window.from } });
+    /*
+     * "spent only from a cash wallet since Apr 1 — no statement will ever cover it", the row's own sentence, its verb
+     * the page's own flow (`countedFlow`). 🔴 Review of fdcebdc, finding 4: asked without it, an income category
+     * received only into a wallet read "Tutoring is spent only from a cash wallet since Apr 1".
+     */
+    const cash = budgetCoverageSentence({
+      ...reach.coverage,
+      uncoveredDays: 0,
+      bounds: { start: window.from },
+      counted: countedFlow(reach.owner.kind),
+    });
     return {
       title: `Nothing recorded for ${window.label}`,
       description:

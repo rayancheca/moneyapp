@@ -439,9 +439,10 @@ describe("⚖️ decision 72 — each sentence is graded by the total it stands 
     const out = merchantInsights(bundle.db, "m-1", TODAY)!;
     const share = out.insights.find((i) => i.text.includes("% of what you spent on Utilities"))!;
     const rank = out.insights.find((i) => i.text.includes("regular merchants"))!;
+    // 🔴 review of fdcebdc, finding 3: the line under a sentence led by the merchant names the category whose day it is
     expect(share.provenance.partlyRead).toEqual({
       uncoveredDays: 5,
-      line: "spending imported through Jul 20 · 5 days of this period unaccounted",
+      line: "spending in Utilities imported through Jul 20 · 5 days of this period unaccounted",
     });
     expect(rank.provenance.partlyRead).toBeUndefined();
   });
