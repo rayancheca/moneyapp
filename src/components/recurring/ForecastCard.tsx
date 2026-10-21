@@ -237,6 +237,15 @@ function spendPaceWithheld(f: MonthForecast): boolean {
 }
 
 /**
+ * The ledger covers no whole month (`MonthForecast.incomePaceMonths`), so there is no income pace — the band's Money in
+ * side holds its pace back by it. It never holds where spending's does not: the income pace's months end at the
+ * calendar's last complete one, never earlier than spending's, over the same floor (`incomeAveragedMonths`).
+ */
+function incomePaceWithheld(f: MonthForecast): boolean {
+  return f.incomePaceMonths === 0;
+}
+
+/**
  * The trailing pace, on its own row and never folded into the headline.
  *
  * ⛔ This row is the honesty half of the owner's instruction. He asked for the
@@ -407,7 +416,11 @@ export function ForecastCard({ forecast: f }: ForecastCardProps) {
 
       <AgentsCostsNote agents={f.agentsCosts} />
 
-      <ForecastComposition split={split} spendPaceWithheld={spendPaceWithheld(f)} />
+      <ForecastComposition
+        split={split}
+        incomePaceWithheld={incomePaceWithheld(f)}
+        spendPaceWithheld={spendPaceWithheld(f)}
+      />
 
       <PaceRow forecast={f} />
 

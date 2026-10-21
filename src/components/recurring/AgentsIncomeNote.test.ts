@@ -131,6 +131,7 @@ const october = (agentsIncome: MonthForecast["agentsIncome"]): MonthForecast => 
     components: [],
     spendPaceNote: null,
     spendPaceMonths: 3,
+    incomePaceMonths: 3,
     unbankedIncome: { totalCents: 0, occurrenceCount: 0, checkedOccurrenceCount: 0, frontier: { kind: "unchecked" }, names: [] },
     outsideCash: { netCents: 0, committedNetCents: 0, accountNames: [] },
     agentsIncome,

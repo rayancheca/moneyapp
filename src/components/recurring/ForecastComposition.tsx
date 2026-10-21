@@ -108,7 +108,7 @@ function Side({
 }: {
   spec: SideSpec;
   side: ForecastSplitSide;
-  /** no month was read in full to average this side's pace over (`ForecastComposition`'s `spendPaceWithheld`) */
+  /** no month to average this side's pace over (`ForecastComposition`'s `incomePaceWithheld`/`spendPaceWithheld`) */
   paceWithheld?: boolean;
 }) {
   const parts = staleParts(side);
@@ -185,9 +185,12 @@ function Side({
 
 export function ForecastComposition({
   split,
+  incomePaceWithheld = false,
   spendPaceWithheld = false,
 }: {
   split: ForecastSplit;
+  /** The ledger covers no whole month, so there is no income pace at all — the card's predicate for it. */
+  incomePaceWithheld?: boolean;
   /**
    * No month since the ledger's first whole one is read in full, so there is no spending pace at all — the card's
    * one predicate for it (`spendPaceWithheld`), which holds the pace row back too.
@@ -207,12 +210,15 @@ export function ForecastComposition({
    * back the row alone, and on a young ledger whose one card was read only to Jun 12 this band read "Money out ·
    * Committed $1,500.00 (1 line) · Recent pace $0.00 (0 lines)", drawn 100% committed, directly above the row's
    * sentence saying there is no spending average to stand on.
-   * ⚖️ Money in's pace prints: the income pace is not cut by the spending frontier (his decision 71, 2026-10-13) and
-   * is measured over its own floored months (`incomePaceMonths`), as "Show the math" prints it below.
+   * ⚖️ Money in's pace prints wherever it has a month: the income pace is not cut by the spending frontier (his
+   * decision 71, 2026-10-13) and is measured over its own floored months (`incomePaceMonths`), as "Show the math"
+   * prints it below. Where the ledger covers no whole month it has none, and reads "—" for the same reason Money out
+   * does. 🔴 Review of f1a0180: on a ledger opening Aug 5 this band read "Money in · Scheduled $2,000.00 (1 line) ·
+   * Recent pace $0.00 (0 lines)", drawn 100% scheduled, beside Money out's "Recent pace —" — one cause, two treatments.
    */
   return (
     <div className="mt-6 grid gap-5 border-t border-line pt-5 md:grid-cols-2 md:gap-8">
-      <Side spec={MONEY_IN} side={split.income} />
+      <Side spec={MONEY_IN} side={split.income} paceWithheld={incomePaceWithheld} />
       <Side spec={MONEY_OUT} side={split.spending} paceWithheld={spendPaceWithheld} />
     </div>
   );

@@ -339,6 +339,13 @@ export interface MonthForecast {
    */
   spendPaceMonths: number;
   /**
+   * How many months the INCOME pace averaged (`incomePaceMonths`): the calendar's last three, fewer where the ledger is
+   * young, and 0 where it covers no whole month — then there is no income pace either, and the card's band holds Money
+   * in's pace back as it does Money out's. 🔴 Review of f1a0180: with no count to read, the band could not tell "no
+   * month" from "$0" and printed "Money in · Recent pace $0.00 (0 lines)", drawn 100% scheduled.
+   */
+  incomePaceMonths: number;
+  /**
    * Paydays that already passed this month with nothing banked against them —
    * REPORTED, never projected.
    *
@@ -1375,6 +1382,7 @@ export function forecastForMonth(
     components: parts.components,
     spendPaceNote: paceNote(reads.spendPace),
     spendPaceMonths: reads.spendPace.windows.length,
+    incomePaceMonths: reads.incomePace.length,
     /*
      * A FUTURE month has no past inside it — every one of its paydays is still
      * to come, so there is nothing that has passed unbanked. Stated rather than
@@ -1481,6 +1489,7 @@ function currentMonthForecast(db: AppDatabase, today: string, reads: ForecastRea
     components,
     spendPaceNote: paceNote(reads.spendPace),
     spendPaceMonths: reads.spendPace.windows.length,
+    incomePaceMonths: reads.incomePace.length,
     unbankedIncome: unbankedIncomeTotals(unbanked),
     outsideCash: outsideCashOf(db, parts),
     agentsIncome: { netCents: parts.agentsNet, committedNetCents: parts.committedAgentsNet },

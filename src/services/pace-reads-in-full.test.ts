@@ -190,6 +190,25 @@ function youngLedger(): void {
   }
 }
 
+/** A confirmed monthly series on Checking, next due `due`, last matched a month before. */
+function confirmedMonthly(name: string, kind: "bill" | "income", cents: number, due: string): void {
+  bundle.db
+    .insert(recurringSeries)
+    .values({
+      name,
+      kind,
+      cadence: "monthly",
+      intervalDaysAvg: 30,
+      nextExpectedOn: due,
+      nextExpectedAmountCents: cents,
+      status: "confirmed",
+      toleranceDays: 3,
+      lastMatchedOn: `2026-07-${due.slice(8)}`,
+      accountId: checkingId,
+    })
+    .run();
+}
+
 /** The card's text, tags dropped. */
 function cardText(f: MonthForecast): string {
   return renderToStaticMarkup(createElement(ForecastCard, { forecast: f }))
@@ -237,21 +256,7 @@ describe("…and never from before the ledger's first whole month (`baselineWind
   test('the band holds the spending pace back too: never "Recent pace $0.00" over the sentence saying there is none', () => {
     youngLedger();
     groceries(cardId, "2026-06-12", -10000);
-    bundle.db
-      .insert(recurringSeries)
-      .values({
-        name: "Rent",
-        kind: "bill",
-        cadence: "monthly",
-        intervalDaysAvg: 30,
-        nextExpectedOn: "2026-08-30",
-        nextExpectedAmountCents: -150000,
-        status: "confirmed",
-        toleranceDays: 3,
-        lastMatchedOn: "2026-07-30",
-        accountId: checkingId,
-      })
-      .run();
+    confirmedMonthly("Rent", "bill", -150000, "2026-08-30");
     const f = forecastCurrentMonth(bundle.db, YOUNG_TODAY);
     const card = cardText(f);
     const band = (from: string, to: string) => card.slice(card.indexOf(from), card.indexOf(to)).trim();
@@ -341,6 +346,38 @@ describe("…and never from before the ledger's first whole month (`baselineWind
     expect(forecastForMonth(bundle.db, "2026-09", YOUNG_TODAY)!.components.filter((c) => c.kind === "variable")).toEqual(
       [],
     );
+  });
+
+  /*
+   * 🔴 Review of f1a0180: the band withheld Money OUT's pace alone. On a ledger opening Aug 5 there is no whole month
+   * to average either side over, and Money in still read "Scheduled $2,000.00 (1 line) Recent pace $0.00 (0 lines)",
+   * its bar drawn 100% scheduled, beside Money out's "Recent pace —" — one cause, two treatments. An income pace of no
+   * month is no more a pace of nothing than a spending one.
+   */
+  test('the band holds the income pace back where it has no month: "Recent pace —" on both sides, no bar drawn', () => {
+    groceries(checkingId, "2026-08-05", -40000);
+    filed(checkingId, "2026-08-06", 300000, "Salary");
+    filed(checkingId, "2026-08-20", 300000, "Salary");
+    confirmedMonthly("Pay", "income", 200000, "2026-08-29");
+    confirmedMonthly("Rent", "bill", -150000, "2026-08-30");
+
+    for (const f of [forecastCurrentMonth(bundle.db, YOUNG_TODAY), forecastForMonth(bundle.db, "2026-09", YOUNG_TODAY)!]) {
+      const card = cardText(f);
+      const band = (from: string, to: string) => card.slice(card.indexOf(from), card.indexOf(to)).trim();
+      expect(band("Money in", "Money out")).toBe("Money in Scheduled $2,000.00 (1 line) Recent pace —");
+      expect(band("Money out", "If you also spend")).toBe("Money out Committed $1,500.00 (1 line) Recent pace —");
+      // …and neither bar draws a share: "100% scheduled" would say no other money is coming
+      const html = renderToStaticMarkup(createElement(ForecastCard, { forecast: f }));
+      expect(html.slice(html.indexOf("Money in"), html.indexOf("If you also spend"))).not.toContain("width:");
+      expect(f.incomePaceMonths).toBe(0);
+    }
+  });
+
+  test("the income pace's month count is the months it averaged: two on a ledger opening Jun 1", () => {
+    youngLedger();
+    groceries(cardId, "2026-06-12", -10000);
+    expect(forecastCurrentMonth(bundle.db, YOUNG_TODAY).incomePaceMonths).toBe(2);
+    expect(forecastForMonth(bundle.db, "2026-09", YOUNG_TODAY)!.incomePaceMonths).toBe(2);
   });
 });
 
