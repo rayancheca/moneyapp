@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { and, eq, isNull } from "drizzle-orm";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterAll, beforeAll, describe, expect, test, vi } from "vitest";
@@ -8,6 +9,7 @@ import { E2E_FAKE_TODAY, seededRecurringValues } from "../../e2e/seed-helpers";
 import { createDatabase, type DbBundle } from "../../src/db/client";
 import { accounts } from "../../src/db/schema/accounts";
 import { dailyBalances } from "../../src/db/schema/balances";
+import { categories } from "../../src/db/schema/categories";
 import { institutions } from "../../src/db/schema/institutions";
 import { recurringSeries } from "../../src/db/schema/recurring";
 import { transactions } from "../../src/db/schema/transactions";
@@ -40,8 +42,9 @@ const { PassedPaydaysCard } = await import("../../src/components/recurring/Passe
  * year's cash-earnings note said it in no test at all — and two of them in no screenshot (review of 8ef2fc5).
  *
  * ⛔ The fixture is rebuilt from the seed's own Paycheck row (`seededRecurringValues`) and the simulator's own ACME
- * deposits, as e2e-paycheck-anchor.test.ts builds it, with Chase Total Checking checked through Jun 30. Every string
- * below was measured from the same services on a scratch e2e seed (`seedE2eDatabase`) on 2026-10-14.
+ * deposits, filed under Salary, as e2e-paycheck-anchor.test.ts builds it, with Chase Total Checking checked through
+ * Jun 30. Every string below was measured from the same services on a scratch e2e seed (`seedE2eDatabase`) on
+ * 2026-10-14, and again on the integration on 2026-10-21.
  */
 const ACME = "ACME CORP PAYROLL";
 const CHECKING = "e2e-chase-checking";
@@ -84,6 +87,24 @@ beforeAll(() => {
     .run();
   const paycheck = seededRecurringValues().find((r) => r.name === "Paycheck")!;
   bundle.db.insert(recurringSeries).values({ ...paycheck, id: SERIES }).run();
+  /*
+   * ⚖️ Filed as the seed files them — Income > Salary, by its merchant rule (`seed-merchants`: "Acme Corp (payroll)") —
+   * as e2e-paycheck-anchor.test.ts files them (82f6a3a): a day is a pay day only where one of its rows is filed as his
+   * pay (`payDayRows`, 1bbd393, decision 75). 🔴 Inserted unfiled, on the integration they were the review queue's:
+   * settlement paid no payday and drew none, so every surface below read no Jul 3 at all — the forecast's frontier
+   * "unchecked", 0 paydays, $0.00. Measured on a scratch e2e seed (`seedE2eDatabase`) 2026-10-21 on the integration:
+   * all 49 Paycheck rows are Salary, and every string below reads as asserted — the fixture was wrong, not the app.
+   */
+  const income = bundle.db
+    .select()
+    .from(categories)
+    .where(and(eq(categories.name, "Income"), isNull(categories.parentId)))
+    .get()!;
+  const salary = bundle.db
+    .select()
+    .from(categories)
+    .where(and(eq(categories.name, "Salary"), eq(categories.parentId, income.id)))
+    .get()!;
   runSimulation()
     .txns.get("chase-checking")!
     .filter((t) => t.rawDescription.startsWith(ACME))
@@ -97,6 +118,7 @@ beforeAll(() => {
           amountCents: t.amountCents,
           rawDescription: t.rawDescription,
           normalizedDescription: t.rawDescription,
+          categoryId: salary.id,
           recurringSeriesId: SERIES,
           status: "active",
           needsReview: false,
