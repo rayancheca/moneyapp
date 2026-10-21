@@ -82,10 +82,32 @@ describe("CategoryHeadline — a figure only where someone has looked", () => {
   });
 
   test("a window imported only in part keeps its $0.00, called the lower bound the page below calls it", () => {
-    const partly = { title: `No spending or income in the part of ${OCTOBER} that has been imported`, figure: "lower-bound" as const };
+    const partly = {
+      title: `No spending or income in the part of ${OCTOBER} that has been imported`,
+      figure: "lower-bound" as const,
+      zeroIs: "a lower bound rather than a measurement",
+    };
     expect(text(render({ empty: partly }))).toBe(
       `Spent · ${OCTOBER} $0.00 0 transactions — a lower bound rather than a measurement`,
     );
+  });
+
+  /*
+   * ⚖️ …and a Net's is called what the sentence under it and its proof call it (`categoryEmptyCopy`'s `zeroIs`, decision
+   * 72's `partReadTotal`). 🔴 Review of b356d57, his ledger copy 2026-10-21: `/categories/<Buys>?period=2026-09` — a Net
+   * of 1,917 negative rows to 80 positive — headlined "$0.00 0 transactions — a lower bound rather than a measurement",
+   * while the days still to import push it below $0.00.
+   */
+  test("…and a Net's $0.00 read in part is neither a measurement nor a bound, in the words the page below uses", () => {
+    const zeroIs = "neither a measurement nor a bound: the days still to import can move it either way";
+    const partly = {
+      title: `No spending or income in the part of ${OCTOBER} that has been imported`,
+      figure: "lower-bound" as const,
+      zeroIs,
+    };
+    const html = text(render({ flowLabel: "Net", empty: partly }));
+    expect(html).toBe(`Net · ${OCTOBER} $0.00 0 transactions — ${zeroIs}`);
+    expect(html).not.toMatch(/lower bound/);
   });
 
   test("a window holding rows prints its figure, as it always has", () => {

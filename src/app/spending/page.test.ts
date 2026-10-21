@@ -192,9 +192,30 @@ describe("a window whose spending has not been found says so on every card", () 
     expect(source).not.toMatch(/\bspendingNotFoundFact\(/);
   });
 
+  /*
+   * 🔴 Review of b356d57, a second copy of his ledger with a $1,141.92 pay on Oct 16: `?period=2026-10-16` dashed Spent
+   * and Net while Honesty check still ticked "No uncategorized spending and no excluded rows this period." — a fifth
+   * card claiming an absence over the same window.
+   */
   test("every card that would claim an absence of spending is handed the sentence", () => {
-    for (const card of ["TopMerchantsCard", "LargestPurchases", "SpendingCategoriesTable", "WhereItWentPanel"]) {
+    const cards = [
+      "TopMerchantsCard",
+      "LargestPurchases",
+      "SpendingCategoriesTable",
+      "WhereItWentPanel",
+      "HonestyBucketsCard",
+    ];
+    for (const card of cards) {
       expect(source, card).toMatch(new RegExp(`<${card}[^>]*\\bemptyText=\\{notFoundText\\}`));
     }
+  });
+
+  /*
+   * …and the Sankey lens draws no "Net saved" over it: its graph is asked of the same day and rule (`spendingSankey`'s
+   * `today` → `spendingNotFoundFact`) and comes back empty with the fact, which the chart prints. 🔴 Same copy, same
+   * window: "Salary $1,141.92 → Money in → Net saved $1,141.92" under "Spent — · Net —".
+   */
+  test("the Sankey is asked with today, so a window with no spending found draws no Net saved", () => {
+    expect(source).toMatch(/spendingSankey\(db, range, today\)/);
   });
 });

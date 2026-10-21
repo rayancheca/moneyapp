@@ -23,6 +23,20 @@ describe("HonestyBucketsCard", () => {
     expect(html).not.toMatch(/Everything this period/);
   });
 
+  /*
+   * ⚖️ Decisions 64 + 72: over a window whose spending has not been found, "no uncategorized spending" is no check — it
+   * says what every other /spending card says there, with no green tick. 🔴 Review of b356d57, a second copy of his
+   * ledger with a $1,141.92 pay on Oct 16: `/spending?period=2026-10-16` printed the tick and "No uncategorized spending
+   * and no excluded rows this period." under "Spent — · nothing found so far — spending imported through Aug 12".
+   */
+  test("where spending has not been found, it says so in place of the check", () => {
+    const notFound = "Nothing found so far — spending imported through Aug 12.";
+    const html = renderToStaticMarkup(createElement(HonestyBucketsCard, { data: empty, emptyText: notFound }));
+    expect(html).toContain(notFound);
+    expect(html).not.toContain("No uncategorized spending");
+    expect(html).not.toContain("text-positive");
+  });
+
   test("a bucket with rows is listed instead", () => {
     const html = renderToStaticMarkup(
       createElement(HonestyBucketsCard, { data: { ...empty, uncategorized: { ...empty.uncategorized, spentCents: 3_000, txnCount: 1 } } }),

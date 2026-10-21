@@ -23,7 +23,7 @@ import {
   spentOnlyFromCashWallets,
   type CountedFlow,
 } from "@/lib/budget-coverage";
-import { A_LOWER_BOUND, daysNotImportedYet, emptyPeriodReason } from "@/lib/empty-period";
+import { daysNotImportedYet, emptyPeriodReason } from "@/lib/empty-period";
 import { ledgerOpens, ledgerReaches } from "./observation-frontier";
 import { outsidePortfolioCashAccountIds, ownPortfolioAccountIds } from "./accounts";
 import { carryReads, categoryReachFor, categoryWindowReading, coverageOfAccounts, spentFromSinceFor } from "./budgets";
@@ -2552,8 +2552,16 @@ function categorySpendProvenance(
    * above "…has not been imported yet … spending in Fees is imported through Wed, Aug 12, 2026".
    */
   const subject = label ?? category.name;
+  /*
+   * ⚖️ …and a Net's proof calls it no lower bound (`partReadTotal`), empty or not: its rows are of both signs. 🔴 Asked
+   * without it, an EMPTY Net window still said "so this zero is a lower bound rather than a measurement" — on his ledger
+   * copy 2026-10-21 (review of b356d57) `/categories/<Buys>` for September, 1,917 negative rows to 80 positive, read
+   * through Sep 9, whose days still to import push it below $0.00; 7 empty Net windows of 2026 said it.
+   */
+  const counted = countedFlow(kind);
   if (rows.length === 0) {
-    return summedRowsProvenance(db, rows, subject, from, to, categoryReachFor(db, categoryId, from, todayIso()).through);
+    const reach = categoryReachFor(db, categoryId, from, todayIso()).through;
+    return summedRowsProvenance(db, rows, subject, from, to, reach, undefined, undefined, counted);
   }
   /*
    * ⚖️ Decision 72 grades EVERY category's total (ruled implied 2026-10-14: one window reads one way everywhere) — a
@@ -2562,10 +2570,7 @@ function categorySpendProvenance(
    * Savings, which Salary landed in this spring, is read through Jul 31. Over 2026's months, 2026 to date and all time,
    * the totals with rows that turn "partly read": income 24 of 65, transfer 24 of 65, rewards 5 of 13, investment 8 of
    * 32, Uncategorized 3 of 4; spending's 147 of 381 do not move.
-   *
-   * ⚖️ …and a Net's proof calls it no lower bound (`partReadTotal`): its rows are of both signs.
    */
-  const counted = countedFlow(kind);
   const unread = categoryPartlyRead(db, categoryId, from, to, counted);
   return summedRowsProvenance(db, rows, subject, from, to, undefined, unread, undefined, counted);
 }
@@ -3102,7 +3107,8 @@ function summedRowsProof(
      * 🔴 …AND A WINDOW THE IMPORT STOPS INSIDE HAS BEEN LOOKED AT, IN PART. It was "a window nobody has looked at" under
      * a headline `/categories/<id>` calls a lower bound, over cards saying "No spending or income in the part of … that
      * has been imported … so this is a lower bound rather than a measurement" — 113 empty category-months on his ledger
-     * copy 2026-10-12. One phrase for the three (`A_LOWER_BOUND`).
+     * copy 2026-10-12. One phrase for the three, by what the total counts (`partReadTotal`): a Net's zero is no lower
+     * bound (review of b356d57, 2026-10-21), and its page's sentence and headline say so too (`categoryEmptyCopy`).
      */
     const days = `${reason.uncoveredDays} ${reason.uncoveredDays === 1 ? "day" : "days"}`;
     const unread = `Nothing has been imported for ${days} between ${window}`;
@@ -3112,7 +3118,7 @@ function summedRowsProof(
         reason.kind === "measured"
           ? `No rows in ${subject} between ${window}, so this total is zero rather than unproven.`
           : reason.kind === "partly-covered"
-            ? `${unread}, so this zero is ${A_LOWER_BOUND}.`
+            ? `${unread}, so this zero is ${partReadTotal(counted)}.`
             : `${unread}, so this zero is a window nobody has looked at rather than a measurement.`,
       sources: [],
       checkedThrough: null,

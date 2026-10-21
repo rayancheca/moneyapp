@@ -1720,6 +1720,26 @@ describe("provenanceFor — a category total", () => {
     expect(p.verdict).toBe("unknown");
   });
 
+  /*
+   * ⚖️ …and an empty NET window is no lower bound either: what is counted makes the zero what it is (`partReadTotal`,
+   * decision 72), as it does a total with rows. 🔴 Review of b356d57, his ledger copy 2026-10-21: `/categories/<Buys>`
+   * for September — 1,917 negative rows to 80 positive, read through Sep 9 — said "Nothing has been imported for 21
+   * days between Sep 1, 2026 and Sep 30, 2026, so this zero is a lower bound rather than a measurement", and the days
+   * still to import push it below $0.00. The empty branch was asked without `counted`.
+   */
+  test("…while an empty Net window the import stops inside is neither a measurement nor a bound", () => {
+    const acct = addAccount("a", "Chase Checking", "checking");
+    const buys = addKindedCategory("c-buys", "Fixture Buys", "investment");
+    addTxn(acct, "2019-03-01");
+    addTxn(acct, "2019-09-30");
+    const p = provenanceFor(bundle.db, { kind: "categorySpend", categoryId: buys, from: "2019-09-15", to: "2019-10-15" })!;
+    expect(p.headline).toBe(
+      "Nothing has been imported for 15 days between Sep 15, 2019 and Oct 15, 2019, so this zero is neither a " +
+        "measurement nor a bound: the days still to import can move it either way.",
+    );
+    expect(p.verdict).toBe("unknown");
+  });
+
   /** A row past its account's `verifiedThrough` is not covered by it. */
   test("a row after the chain stops being checked drags the total", () => {
     const acct = addAccount("a", "Robinhood Cash", "checking");

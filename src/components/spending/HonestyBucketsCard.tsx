@@ -7,10 +7,16 @@ import type { HonestyBuckets } from "@/services/spending";
  * The honesty buckets (ux-overhaul-plan §5.4): Uncategorized spending and
  * Excluded rows never vanish from the report — they stay explicit and clickable,
  * so the period's numbers always account for every dollar.
+ *
+ * ⚖️ Decisions 64 + 72: over a window whose spending has not been found (`CashFlow.spendingUnaccounted`), "no
+ * uncategorized spending" is no check — `emptyText` is said instead, with no tick. 🔴 Review of b356d57, a second copy
+ * of his ledger with a $1,141.92 pay on Oct 16: `/spending?period=2026-10-16` ticked "No uncategorized spending and no
+ * excluded rows this period." under "Spent — · nothing found so far — spending imported through Aug 12".
  */
-export function HonestyBucketsCard({ data }: { data: HonestyBuckets }) {
+export function HonestyBucketsCard({ data, emptyText }: { data: HonestyBuckets; emptyText?: string }) {
   const { uncategorized, excluded } = data;
   if (uncategorized.txnCount === 0 && excluded.txnCount === 0) {
+    if (emptyText !== undefined) return <p className="text-sm text-ink-muted">{emptyText}</p>;
     return (
       <p className="flex items-center gap-2 text-sm text-ink-muted">
         <Icon name="circle-check" className="size-4 text-positive" />

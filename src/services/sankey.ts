@@ -1,5 +1,6 @@
 import type { AppDatabase } from "@/db/client";
 import { categories } from "@/db/schema/categories";
+import { spendingNotFoundFact } from "@/lib/budget-coverage";
 import { categoryHueVar, isCategoryHueName } from "@/lib/category-palette";
 import { ledgerHref } from "@/lib/ledger-href";
 import type { SankeyGraph, SankeyLinkInput, SankeyNodeInput } from "@/lib/sankey-layout";
@@ -12,6 +13,8 @@ import {
   spendingBucket,
   type DateRange,
 } from "./analytics";
+import { spendingReadThrough } from "./movers-card";
+import { ledgerOpens } from "./observation-frontier";
 
 /**
  * The money-flow Sankey feed for a date range (dashboard hero + /spending view).
@@ -62,7 +65,31 @@ function byValueThenName(a: [string, Bucket], b: [string, Bucket]): number {
   return b[1].cents - a[1].cents || a[1].name.localeCompare(b[1].name);
 }
 
-export function spendingSankey(db: AppDatabase, range: DateRange): SankeyGraph {
+/**
+ * The flow, and why it draws none where its spending has not been found.
+ *
+ * ⚖️ Decisions 64 + 72: a window holding money in and NO spending row, not one elapsed day of it read by the day every
+ * account he spends from is imported through (`spendingReadThrough`), has no "Net saved" — that leaf is Spent's
+ * arithmetic, and Spent is no measurement there. The graph comes back empty with the window's `spendingNotFoundFact`
+ * ("spending imported through Aug 12"), the fact /spending's stat cards, table and heatmap print, and the chart says
+ * it (`SankeyChart`). 🔴 Review of b356d57, on a second copy of his ledger with one plausible row added — a $1,141.92
+ * pay on Oct 16, the day after Venture X's Oct 14 import, spending read through Aug 12: `/spending?period=2026-10-16`
+ * carded "Spent — · Net —" over "Salary $1,141.92 → Money in → Net saved $1,141.92", and the dashboard's Flow 1W (Oct
+ * 15 – 21) drew the same. No day window of his own copy holds it on 2026-10-21 (Jul 1 – Oct 21 swept); his next Wells
+ * Fargo statement makes one if it lands before the card statements.
+ */
+export interface SpendingSankey extends SankeyGraph {
+  /** the window's `spendingNotFoundFact` where the graph is empty for it; null where the graph is the flow */
+  spendingUnaccounted: string | null;
+}
+
+/**
+ * `today` asks whether the window's spending has been found (`SpendingSankey`) — every page passes it (`/spending`,
+ * the dashboard's Flow, pinned in their page tests). ⛔ Omitted, the graph is drawn from the rows alone: a fixture
+ * asking its shape. ⚡ The day is asked only where the window holds money in and no spending row
+ * (`spendingReadThrough` is memoised for the render); /spending's cash flow asks the same window by the same rule.
+ */
+export function spendingSankey(db: AppDatabase, range: DateRange, today?: string): SpendingSankey {
   const idx = loadCategoryIndex(db);
   // 🔴 the agent's dividend flowed "Dividends → Money in" as his until 2026-09-28 (`isIncome`), and its fees out of
   // his money until 2026-10-02 (`spendingBucket`)
@@ -109,7 +136,20 @@ export function spendingSankey(db: AppDatabase, range: DateRange): SankeyGraph {
   const net = earned + refunds - spent;
 
   // Nothing flowed → an empty graph; the renderer shows its own empty state.
-  if (earned + refunds === 0 && spent === 0) return { nodes: [], links: [] };
+  if (earned + refunds === 0 && spent === 0) return { nodes: [], links: [], spendingUnaccounted: null };
+  // …and money in with no spending found past the day all of it is read through draws no Net saved (see the type)
+  const notFound =
+    spent !== 0 || today === undefined
+      ? null
+      : spendingNotFoundFact({
+          from: range.from,
+          to: range.to,
+          today,
+          ledgerOpens: ledgerOpens(db),
+          readThrough: spendingReadThrough(db, today),
+          spentCents: spent,
+        });
+  if (notFound !== null) return { nodes: [], links: [], spendingUnaccounted: notFound };
 
   const nodes: SankeyNodeInput[] = [
     { id: HUB_ID, label: "Money in", column: COL_HUB, color: "var(--ink-muted)", meta: { kind: "hub" } },
@@ -180,5 +220,5 @@ export function spendingSankey(db: AppDatabase, range: DateRange): SankeyGraph {
     links.push({ source: HUB_ID, target: "saved", valueCents: net });
   }
 
-  return { nodes, links };
+  return { nodes, links, spendingUnaccounted: null };
 }

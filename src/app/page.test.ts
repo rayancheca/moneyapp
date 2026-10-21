@@ -53,3 +53,15 @@ describe("the dashboard's tracks can shrink", () => {
     expect(activity).toContain("*:min-w-0");
   });
 });
+
+/*
+ * ⚖️ Decisions 64 + 72: the Flow mode's range pills ask the same rule /spending's Sankey asks — a range holding money
+ * in and no spending found, every elapsed day of it past the day all his spending is read through, draws no "Net
+ * saved" (`spendingSankey`'s `today`). 🔴 Review of b356d57, a second copy of his ledger with a $1,141.92 pay on Oct 16:
+ * the 1W pill (Oct 15 – 21) drew "Salary → Money in → Net saved $1,141.92". Source, not render.
+ */
+describe("the dashboard's Flow asks whether its range's spending has been found", () => {
+  test("every range's Sankey is asked with today", () => {
+    expect(source).toMatch(/spendingSankey\(db, \{ from: rangeAggregateStartDay\(r, today\) \?\? EARLIEST_DAY, to: today \}, today\)/);
+  });
+});

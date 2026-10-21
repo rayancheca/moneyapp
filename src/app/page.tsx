@@ -12,11 +12,10 @@ import {
 import { formatCents } from "@/lib/money";
 import { dashboardData } from "@/services/dashboard";
 import { dashboardChartData } from "@/services/dashboard-series";
-import { spendingSankey } from "@/services/sankey";
+import { spendingSankey, type SpendingSankey } from "@/services/sankey";
 import { netWorthAttribution, type NetWorthAttribution } from "@/services/attribution";
 import { provenanceFor } from "@/services/provenance";
 import { CHART_RANGES, rangeAggregateStartDay, rangeStartDay, type ChartRange } from "@/lib/chart-range";
-import type { SankeyGraph } from "@/lib/sankey-layout";
 import { resolveViewState } from "@/lib/view-state";
 import type { DeckCard } from "@/components/dashboard/CardDeck";
 import { DecisionCards } from "@/components/dashboard/DecisionCards";
@@ -188,8 +187,8 @@ export default async function DashboardPage({
   // "1 month" flow span thirty-ONE days and count the owner's rent twice.
   const sankeyByRange = isSankey
     ? (Object.fromEntries(
-        CHART_RANGES.map((r) => [r, spendingSankey(db, { from: rangeAggregateStartDay(r, today) ?? EARLIEST_DAY, to: today })]),
-      ) as Record<ChartRange, SankeyGraph>)
+        CHART_RANGES.map((r) => [r, spendingSankey(db, { from: rangeAggregateStartDay(r, today) ?? EARLIEST_DAY, to: today }, today)]),
+      ) as Record<ChartRange, SpendingSankey>)
     : null;
   /*
    * The bridge, one decomposition per range pill, precomputed for the same

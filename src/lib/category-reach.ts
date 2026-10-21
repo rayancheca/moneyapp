@@ -2,6 +2,7 @@ import type { CategoryKind } from "@/db/schema/categories";
 import {
   budgetCoverageSentence,
   countedFlow,
+  partReadTotal,
   spentOnlyFromCashWallets,
   type BudgetCoverageInput,
 } from "./budget-coverage";
@@ -80,6 +81,12 @@ function reachSubject(owner: CategoryReachOwner): string {
  * ⚖️ `agentsMoney` is said on EVERY branch that can hold the agent's rows (owner decisions 2026-09-28 → 2026-10-06),
  * the cash-only one included: the agent's account is never a wallet, so its rows sit in a window a wallet says
  * nothing about.
+ *
+ * ⚖️ …and a zero over a window imported only in part is what the page counts makes it (`zeroIs`, decision 72's
+ * `partReadTotal`): a Spent or Received zero a lower bound, a Net's neither — handed back, so the headline over this
+ * sentence prints the same words (`CategoryHeadline`). 🔴 Review of b356d57, his ledger copy 2026-10-21: 7 empty Net
+ * windows of 2026 called their $0.00 "a lower bound" here, in the headline and in the proof — `/categories/<Buys>?
+ * period=2026-09`, 1,917 negative rows to 80 positive, among them, whose days still to import push it below $0.00.
  */
 export function categoryEmptyPeriodCopy(
   reason: EmptyPeriodReason,
@@ -87,7 +94,8 @@ export function categoryEmptyPeriodCopy(
   reach: CategoryReach,
   formatDay: (iso: string) => string,
   opts: { ledgerOpens?: string | null; agentsMoney?: boolean } = {},
-): { title: string; description: string } {
+): { title: string; description: string; zeroIs: string } {
+  const zeroIs = partReadTotal(countedFlow(reach.owner.kind));
   if (reach.whose === "cash-only" && reason.kind === "measured") {
     /*
      * "spent only from a cash wallet since Apr 1 — no statement will ever cover it", the row's own sentence, its verb
@@ -105,11 +113,14 @@ export function categoryEmptyPeriodCopy(
       description:
         `${reach.owner.name} is ${cash}. Nothing was typed in for this period, so there is no import to wait for.` +
         (opts.agentsMoney ? AGENTS_MONEY_LEFT_OUT : ""),
+      zeroIs,
     };
   }
-  return emptyPeriodCopy(reason, window.label, reach.through, formatDay, {
+  const copy = emptyPeriodCopy(reason, window.label, reach.through, formatDay, {
     ledgerOpens: opts.ledgerOpens,
     agentsMoney: opts.agentsMoney,
+    zeroIs,
     ...(reach.whose === "category" ? { importedThroughSubject: reachSubject(reach.owner) } : {}),
   });
+  return { ...copy, zeroIs };
 }

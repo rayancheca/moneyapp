@@ -97,7 +97,8 @@ export default async function SpendingPage({
    */
   const comparison = periodComparison(db, period, today);
   const projection = spendingProjection(db, period, today, cashFlow.pace, cashFlow.totals.spentCents, comparison);
-  const sankey = spendingSankey(db, range);
+  // ⚖️ decisions 64 + 72: asked with today, a window whose spending has not been found draws no Net saved
+  const sankey = spendingSankey(db, range, today);
   const merchants = topMerchants(db, range);
 
   /*
@@ -339,6 +340,8 @@ export default async function SpendingPage({
    * 2026-10-13: `/spending?period=2026-09-23` read "Spent $0.00 · Savings rate 100%" and "No merchant spending in this
    * period." beside its own table row "$4,567.68 — —". Latent on his copy 2026-10-21: no window past Aug 12 holds
    * income without spending found, now the card statements reach October.
+   * 🔴 …and two cards were left out (review of b356d57): Honesty check ticked "No uncategorized spending", and the
+   * Sankey lens drew "Net saved" (`spendingSankey`, asked of the same day by the same rule, now draws none).
    */
   const notFoundText =
     cashFlow.spendingUnaccounted === null ? undefined : nothingFoundSoFarSentence(cashFlow.spendingUnaccounted);
@@ -513,7 +516,7 @@ export default async function SpendingPage({
             </SurfaceCard>
             <SurfaceCard>
               <h2 className="mb-3 text-sm font-medium">Honesty check</h2>
-              <HonestyBucketsCard data={honesty} />
+              <HonestyBucketsCard data={honesty} emptyText={notFoundText} />
             </SurfaceCard>
           </div>
         </div>

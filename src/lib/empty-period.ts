@@ -92,6 +92,8 @@ export type UnreachedKind = Exclude<EmptyPeriodKind, "measured" | "partly-covere
 /**
  * What a window imported only in part holds when nothing was found in it — the empty state's words and the headline's
  * and the proof's over it (`emptyFigure`, `provenance::summedRowsProof`), so the three cannot call one zero two things.
+ * A Spent or Received zero's: a Net's is neither a measurement nor a bound (`budget-coverage::partReadTotal`, which the
+ * three ask by what the total counts).
  */
 export const A_LOWER_BOUND = "a lower bound rather than a measurement";
 
@@ -99,7 +101,7 @@ export const A_LOWER_BOUND = "a lower bound rather than a measurement";
  * What a headline figure prints over a window in which NOT ONE ROW was found:
  *  - `zero` — every elapsed day was read and nothing posted: $0.00 is the measurement;
  *  - `lower-bound` — the import stops (or the records open) inside it: $0.00 stands, called what the empty state
- *    below it calls it (`A_LOWER_BOUND`);
+ *    below it calls it (`A_LOWER_BOUND`; a Net's, which is no lower bound, `partReadTotal`'s other words);
  *  - `dash` — not one elapsed day was read: past the import, before the records, an empty ledger, or a window that
  *    has not begun. The dashboard's pace tile's rule: "an em dash, not a $0.00: when not one elapsed day of the month
  *    is imported, 'you have spent nothing' is a claim about a month nobody has looked at" — and the trend's, whose
@@ -268,6 +270,12 @@ export function emptyPeriodCopy(
      * (`agentsMoneyRowCount`)
      */
     agentsMoney?: boolean;
+    /**
+     * what a zero over a window imported only in part IS, by what it counts (`budget-coverage::partReadTotal`) — a
+     * Spent or Received zero `A_LOWER_BOUND` (the default: `/spending`'s), a Net's neither, which a category page hands
+     * in (`category-reach::categoryEmptyPeriodCopy`)
+     */
+    zeroIs?: string;
   } = {},
 ): { title: string; description: string } {
   const through = ledgerReaches === null ? null : formatDay(ledgerReaches);
@@ -337,7 +345,7 @@ export function emptyPeriodCopy(
         description:
           `${days(reason.uncoveredDays)} of it ${reason.uncoveredDays === 1 ? "has" : "have"} not been imported` +
           // ", and": each cause ends on a date with its year ("Aug 25, 2022, and …")
-          `${causes.length > 0 ? ` — ${causes.join(", and ")}` : ""}, so this is ${A_LOWER_BOUND}.` +
+          `${causes.length > 0 ? ` — ${causes.join(", and ")}` : ""}, so this is ${opts.zeroIs ?? A_LOWER_BOUND}.` +
           (opts.agentsMoney ? AGENTS_MONEY_LEFT_OUT : ""),
       };
     }

@@ -8,10 +8,10 @@ import { formatCents, formatCentsSigned } from "@/lib/money";
 import { DataTable, type Column } from "@/components/ui/DataTable";
 import { ViewSwitcher } from "@/components/ui/ViewSwitcher";
 import { SankeyChart } from "@/components/charts/SankeyChart";
-import type { SankeyGraph } from "@/lib/sankey-layout";
 import { CashFlowChart } from "./CashFlowChart";
 import { CashFlowGraph } from "./CashFlowGraph";
 import { CASH_VIEW_LABELS, CASH_VIEW_SPEC, SPENDING_SURFACE } from "./spending-view-spec";
+import type { SpendingSankey } from "@/services/sankey";
 import type { CashFlow, CashFlowBucket, SpendingProjection } from "@/services/spending";
 
 /**
@@ -23,8 +23,11 @@ import type { CashFlow, CashFlowBucket, SpendingProjection } from "@/services/sp
 interface CashFlowViewProps {
   cashFlow: CashFlow;
   projection: SpendingProjection | null;
-  /** money-flow graph for the same period — the Sankey lens */
-  sankey: SankeyGraph;
+  /**
+   * money-flow graph for the same period — the Sankey lens; empty, with the window's fact, where its spending has not
+   * been found (decisions 64 + 72, `spendingSankey`), which the lens says
+   */
+  sankey: SpendingSankey;
   /** the RSC-resolved active view (URL > persisted > default) */
   viewState: ViewState;
   /** URL params to preserve across a view switch (the period) */

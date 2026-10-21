@@ -1183,6 +1183,11 @@ export interface CategoryEmptyCopy {
   title: string;
   description: string;
   figure: EmptyFigure;
+  /**
+   * what its $0.00 is where the import stops inside the window (`figure` "lower-bound") — the sentence's own words, by
+   * what the page counts (`partReadTotal`): "a lower bound rather than a measurement", or a Net's "neither …"
+   */
+  zeroIs: string;
 }
 
 /** `/categories/<id>`'s: the day is the category's own, so it hands in the reads that ask it — never a ledger day */

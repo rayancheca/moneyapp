@@ -6,11 +6,11 @@ import { SankeyChart } from "@/components/charts/SankeyChart";
 import { NetWorthBridge } from "@/components/charts/NetWorthBridge";
 import { CATEGORY_HUE_NAMES, categoryHueVar } from "@/lib/category-palette";
 import { DAILY_SERIES_RANGES, rangeLabel, type ChartRange } from "@/lib/chart-range";
-import type { SankeyGraph } from "@/lib/sankey-layout";
 import type { ViewState } from "@/lib/view-state";
 import { DASHBOARD_CHART_DIMENSION, DASHBOARD_SURFACE, DASHBOARD_VIEW_SPEC } from "./dashboard-view-spec";
 import type { NetWorthPoint } from "@/services/derivation";
 import type { DashboardAccountOption, DashboardChartData } from "@/services/dashboard-series";
+import type { SpendingSankey } from "@/services/sankey";
 import type { NetWorthAttribution } from "@/services/attribution";
 import { useViewState } from "@/hooks/useViewState";
 import { ChartFocus } from "@/components/charts/ChartFocus";
@@ -18,7 +18,7 @@ import { NetWorthTerrain } from "@/components/charts/NetWorthTerrain";
 import { DashboardModePanel } from "./DashboardModePanel";
 import { NetWorthChartPanel } from "./NetWorthChartPanel";
 
-const EMPTY_GRAPH: SankeyGraph = { nodes: [], links: [] };
+const EMPTY_GRAPH: SpendingSankey = { nodes: [], links: [], spendingUnaccounted: null };
 
 /**
  * The hero chart's view modes (pass-17 ask C): a ViewSwitcher flips the single
@@ -62,7 +62,7 @@ interface DashboardChartSectionProps {
    *  modes where the RSC returns no selection */
   acctsParam: string;
   /** money-flow graphs precomputed per range pill; present only in sankey mode */
-  sankeyByRange: Record<ChartRange, SankeyGraph> | null;
+  sankeyByRange: Record<ChartRange, SpendingSankey> | null;
   /** one net-worth decomposition per range pill; present only in bridge mode */
   bridgeByRange: Record<ChartRange, NetWorthAttribution> | null;
   today: string;
