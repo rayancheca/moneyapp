@@ -70,10 +70,10 @@ const listOf = (ids: readonly string[]): SQL => sql`(${sql.join(ids.map((id) => 
  * figure that reads it opens the rows behind that figure: the Income card's (`income`), Net's (`cashflow`), the
  * Sankey's sources and the cash-flow chart's income segments (`category=<income>&flow=in`).
  *
- * A pay day is a day's rows linked to one income series that no figure of Spent counts (`spendingBucket`), off the
- * agent's cash; it is Income where one of them is his Income (`isIncome`) and the day netted to money in
- * (`daysThatBanked`) — every one of its rows behind that figure, the money back too, and under the category of its
- * largest row of his Income (then the lowest id). 🔴 The links opened money in row by row: under an Income card that
+ * A pay day is a day's rows linked to one income series that no figure of Spent counts, off the agent's cash, where one
+ * of them is filed as his pay, either sign (`payDayRows`, settlement's too); it is Income where the day netted to money
+ * in (`daysThatBanked`) — every one of its rows behind that figure, the money back too, and under the category of its
+ * largest row filed as his pay (then the lowest id). 🔴 The links opened money in row by row: under an Income card that
  * counts no payroll returned the same day, its deposit; under a day partly returned, the deposit without the money
  * back (review of 54d77ad).
  */
@@ -83,19 +83,19 @@ function hisPayDaysSql(allCategories: readonly CategoryRef[], agentsCash: readon
   const system = listOf(allCategories.filter((c) => c.kind === "system").map((c) => c.id));
   const agents = listOf(agentsCash);
   const incomeSeries = sql`(SELECT rs.id FROM recurring_series rs WHERE rs.kind = 'income')`;
-  /** his and in no figure of Spent: off the agent's cash, neither an expense row nor an unfiled outflow */
+  /** `payDayRows`' row half, off the agent's cash: neither an expense row nor an unfiled outflow */
   const foldable = (r: RowColumns): SQL =>
     sql`(${r.accountId} NOT IN ${agents} AND NOT ((${r.categoryId} IS NOT NULL AND ${r.categoryId} IN ${expense}) OR ((${r.categoryId} IS NULL OR ${r.categoryId} IN ${system}) AND ${r.amountCents} < 0)))`;
-  /** `isIncome` */
-  const isHisIncome = (r: RowColumns): SQL =>
-    sql`(${r.amountCents} > 0 AND ${r.categoryId} IS NOT NULL AND ${r.categoryId} IN ${income} AND ${r.accountId} NOT IN ${agents})`;
+  /** filed as his pay, either sign — `payDayRows`' day half, off the agent's cash */
+  const isHisPay = (r: RowColumns): SQL =>
+    sql`(${r.categoryId} IS NOT NULL AND ${r.categoryId} IN ${income} AND ${r.accountId} NOT IN ${agents})`;
   const n = aliasRow("n");
   const d = aliasRow("d");
   /** the (series, day) pairs whose Income is their net — `filedIn` narrows them to days counted under those ids */
   const bankedPayDays = (filedIn?: readonly string[]): SQL => {
-    const dayCategory = sql`(SELECT ${d.categoryId} FROM transactions d WHERE ${d.status} = 'active' AND ${d.recurringSeriesId} = ${n.recurringSeriesId} AND ${d.postedOn} = ${n.postedOn} AND ${isHisIncome(d)} ORDER BY ${d.amountCents} DESC, ${d.id} LIMIT 1)`;
+    const dayCategory = sql`(SELECT ${d.categoryId} FROM transactions d WHERE ${d.status} = 'active' AND ${d.recurringSeriesId} = ${n.recurringSeriesId} AND ${d.postedOn} = ${n.postedOn} AND ${isHisPay(d)} ORDER BY ${d.amountCents} DESC, ${d.id} LIMIT 1)`;
     const filed = filedIn === undefined ? sql`` : sql` AND ${dayCategory} IN ${listOf(filedIn)}`;
-    return sql`(SELECT ${n.recurringSeriesId}, ${n.postedOn} FROM transactions n WHERE ${n.status} = 'active' AND ${n.recurringSeriesId} IN ${incomeSeries} AND ${foldable(n)} GROUP BY ${n.recurringSeriesId}, ${n.postedOn} HAVING SUM(${n.amountCents}) > 0 AND SUM(CASE WHEN ${isHisIncome(n)} THEN 1 ELSE 0 END) > 0${filed})`;
+    return sql`(SELECT ${n.recurringSeriesId}, ${n.postedOn} FROM transactions n WHERE ${n.status} = 'active' AND ${n.recurringSeriesId} IN ${incomeSeries} AND ${foldable(n)} GROUP BY ${n.recurringSeriesId}, ${n.postedOn} HAVING SUM(${n.amountCents}) > 0 AND SUM(CASE WHEN ${isHisPay(n)} THEN 1 ELSE 0 END) > 0${filed})`;
   };
   return {
     /** the row is linked to an income series — read by its day, never alone (a row of his Income always is) */

@@ -46,22 +46,23 @@ const PAY = "series-it-america";
 const WEEK = 114_192;
 const now = (): string => new Date().toISOString();
 
-function salaryId(): string {
-  const income = bundle.db
+function categoryId(name: string, parent: string): string {
+  const top = bundle.db
     .select()
     .from(categories)
-    .where(and(eq(categories.name, "Income"), isNull(categories.parentId)))
+    .where(and(eq(categories.name, parent), isNull(categories.parentId)))
     .get()!;
   return bundle.db
     .select()
     .from(categories)
-    .where(and(eq(categories.name, "Salary"), eq(categories.parentId, income.id)))
+    .where(and(eq(categories.name, name), eq(categories.parentId, top.id)))
     .get()!.id;
 }
+const salaryId = (): string => categoryId("Salary", "Income");
 
 let seq = 0;
-/** A row linked to his pay — a deposit, or (negative) the money of one going back out. */
-function payRow(postedOn: string, amountCents: number): void {
+/** A row linked to his pay — a deposit, or (negative) the money of one going back out — filed where it is filed. */
+function payRow(postedOn: string, amountCents: number, filedAs: string | null = salaryId()): void {
   seq += 1;
   bundle.db
     .insert(transactions)
@@ -72,7 +73,7 @@ function payRow(postedOn: string, amountCents: number): void {
       amountCents,
       rawDescription: amountCents > 0 ? "It America LLC Payroll" : "Return It America LLC Payroll",
       normalizedDescription: amountCents > 0 ? "IT AMERICA LLC PAYROLL" : "RETURN IT AMERICA LLC PAYROLL",
-      categoryId: salaryId(),
+      categoryId: filedAs,
       recurringSeriesId: PAY,
       seriesLinkSource: "user",
       status: "active",
@@ -335,8 +336,10 @@ describe("a payroll returned the day before its payday reaches no payday", () =>
 /*
  * A RETURN ON A LATER DAY is not a same-day return: the payroll's own day banked its $1,141.92 and paid Sep 17, as it
  * always has. The return's day nets below $0.00 — money out alone — and banks nothing: it pays no payday and is no
- * pay arriving, so the card's last banked day is the payroll's, not the return's. Earned vs banked's banked figure is
- * what reached a bank, net, and still takes the return off (unchanged).
+ * pay arriving, so the card's last banked day is the payroll's, not the return's — and nor does it take anything off
+ * what reached a bank (`daysThatBanked`, decision 75): the card banks the three weeks the calendar draws paid.
+ * 🔴 The banked figure summed every row: it took the return off, two weeks banked against three paydays paid — a
+ * week "never reached a bank" that settlement, the calendar and every Income figure count as banked (review of d75).
  */
 describe("a payroll returned on a LATER day is not a same-day return", () => {
   beforeEach(() => {
@@ -350,9 +353,9 @@ describe("a payroll returned on a LATER day is not a same-day return", () => {
     expect(unbankedIncomeForSeries(bundle.db, new Set([PAY]), "2026-09-01", TODAY).totalCents).toBe(0);
   });
 
-  test("the banked figure nets the return, as it always has; the last pay that banked is Sep 17's", () => {
+  test("the banked figure is the three weeks settlement paid; the last pay that banked is Sep 17's", () => {
     const line = payLine();
-    expect([line.paydays, line.bankedCents]).toEqual([3, WEEK * 2]);
+    expect([line.paydays, line.impliedCents, line.bankedCents, line.gapCents]).toEqual([3, WEEK * 3, WEEK * 3, 0]);
     // 🔴 it was Sep 18, the return's own day: money going out was read as pay arriving
     expect([line.lastBankedOn, line.silentPeriods]).toEqual(["2026-09-17", 0]);
   });
@@ -487,17 +490,19 @@ describe("a partial return the same day reads, everywhere, as one deposit of the
  * clawback on a day of its own "fell by $1,091.92"; and a payroll returned whole read green only while the measured
  * spread was empty, amber under a cached one (review of bbf17cb, hypothetical: no money out is linked to his pay).
  */
-describe("money out linked to his pay is held to no week", () => {
-  const graded = (day: string, cents: number) => {
-    const row = entriesOn(day).find((e) => e.transactionId !== null && e.amountCents === cents)!;
-    return [row.state, row.expectedAmountCents];
-  };
-  const heldTo = (day: string, cents: number) =>
-    seriesDetail(bundle.db, PAY, TODAY).amountHistory.find((p) => p.date === day && p.amountCents === cents)!
-      .expectedCents;
-  const payNotices = () =>
-    (noticesCard(bundle.db, TODAY)?.notices ?? []).map((n) => n.text).filter((t) => t.includes("It America LLC"));
+/** How the calendar draws a row of his pay on a day — its state, and what it is held to */
+const graded = (day: string, cents: number) => {
+  const row = entriesOn(day).find((e) => e.transactionId !== null && e.amountCents === cents)!;
+  return [row.state, row.expectedAmountCents];
+};
+/** …and what the series page's Amount history holds it to */
+const heldTo = (day: string, cents: number) =>
+  seriesDetail(bundle.db, PAY, TODAY).amountHistory.find((p) => p.date === day && p.amountCents === cents)!
+    .expectedCents;
+const payNotices = () =>
+  (noticesCard(bundle.db, TODAY)?.notices ?? []).map((n) => n.text).filter((t) => t.includes("It America LLC"));
 
+describe("money out linked to his pay is held to no week", () => {
   test("$500.00 back the same day: the return is ungraded, and the one notice is the day's — $500.00 short", () => {
     rePost("2026-09-17", [-50_000, WEEK]);
     expect(graded("2026-09-17", -50_000)).toEqual(["paid", null]);
@@ -520,6 +525,118 @@ describe("money out linked to his pay is held to no week", () => {
     expect(graded("2026-09-18", -5_000)).toEqual(["paid", null]);
     expect(heldTo("2026-09-18", -5_000)).toBeNull();
     expect(payNotices()).toEqual([]);
+  });
+});
+
+/*
+ * ⚖️ ONE DEFINITION OF A PAY DAY'S ROWS (`isPayDayRow`), for settlement and every reader that draws or counts what it
+ * paid — the calendar's grading of the deposit, the posted average, Earned vs banked, /budgets' legs: a row linked to
+ * his pay that is his SPENDING — an unfiled debit, or one filed under a spending category — is no row of its day.
+ * ⚖️ Orchestrator's default (2026-10-14, his call open): it is his Uncategorized spending until he files it, so the day
+ * banked its payroll — and filed under Income or as a transfer it nets (decision 75, the tests above).
+ * 🔴 Settlement and every reader beside it read EVERY linked row: an unfiled $1,141.92 back beside Sep 17's payroll
+ * left Sep 17 unbanked on the calendar and the card while "in so far" counted the payroll (review of f1903f6;
+ * hypothetical: no money out is linked to his pay).
+ */
+describe("money linked to his pay that is his spending is no row of its pay day", () => {
+  const bankFeesId = (): string => categoryId("Bank Fees", "Fees");
+  /** what the posted average and the popover's words make of his pay's rows (`perPaydayEvidence`) */
+  const evidenceOf = (today = TODAY) => {
+    const s = bundle.db.select().from(recurringSeries).where(eq(recurringSeries.id, PAY)).get()!;
+    return postedAveragesBySeries(bundle.db, [s], today).get(PAY)!.perPayday!;
+  };
+
+  test.each([
+    ["unfiled", (): string | null => null],
+    ["filed under a spending category", bankFeesId],
+  ])("%s, the week's pay back on Sep 17 leaves every reader reading the day's payroll", (_, filedAs) => {
+    rePost("2026-09-17", [WEEK]);
+    const deposit = () =>
+      seriesDetail(bundle.db, PAY, TODAY).amountHistory.find((p) => p.date === "2026-09-17" && p.amountCents === WEEK);
+    const payroll = { ...readingOfDay("2026-09-17", TODAY), history: deposit() };
+    payRow("2026-09-17", -WEEK, filedAs());
+    // the calendar's Settled is the flow of every mark it draws — the debit's too, which left
+    expect({ ...readingOfDay("2026-09-17", TODAY), history: deposit() }).toEqual({ ...payroll, settledThatDay: 0 });
+    // the debit is drawn as the money out it is, held to no week, and the popover names it as that
+    expect(graded("2026-09-17", -WEEK)).toEqual(["paid", null]);
+    expect(heldTo("2026-09-17", -WEEK)).toBeNull();
+    const evidence = evidenceOf();
+    expect([evidence.moneyOut, evidence.noPaydayOfTheirOwn, evidence.netted]).toEqual([1, 0, []]);
+    expect(payNotices()).toEqual([]);
+  });
+
+  test("an unfiled $500.00 out on a lump's day leaves the lump whole — four weeks at $1,141.92", () => {
+    bundle.db.delete(transactions).run();
+    const read = "2026-09-28";
+    rePost("2026-09-23", [WEEK * 4]);
+    const lump = readingOfDay("2026-09-23", read);
+    payRow("2026-09-23", -50_000, null);
+    expect(readingOfDay("2026-09-23", read)).toEqual({ ...lump, settledThatDay: lump.settledThatDay - 50_000 });
+    expect(evidenceOf(read).samples.map((s) => [s.dayCents, s.returns])).toEqual([[WEEK * 4, 0]]);
+  });
+
+  test("beside a payroll returned whole the same day, it is named as money out — the day as netting to $0.00", () => {
+    rePost("2026-09-17", [WEEK, -WEEK]);
+    const returned = readingOfDay("2026-09-17", TODAY);
+    payRow("2026-09-17", -5_000, null);
+    expect(readingOfDay("2026-09-17", TODAY)).toEqual({ ...returned, settledThatDay: -5_000 });
+    const evidence = evidenceOf();
+    expect([evidence.moneyOut, evidence.netted.map((o) => [o.postedOn, o.postings])]).toEqual([
+      1,
+      [["2026-09-17", 2]],
+    ]);
+  });
+
+  test("a refund filed under a spending category, linked to his pay, pays no payday — it is no pay", () => {
+    bundle.db.delete(transactions).where(eq(transactions.postedOn, "2026-09-10")).run();
+    payRow("2026-09-10", WEEK, bankFeesId());
+    expect(settled()).toEqual(["2026-09-03"]);
+    expect(entriesOn("2026-09-10").find((e) => e.transactionId !== null)?.towardNoPayday).toBe(true);
+    expect([payLine().bankedCents, payLine().lastBankedOn]).toEqual([WEEK, "2026-09-03"]);
+  });
+});
+
+/*
+ * ⚖️ …AND A DAY IS A PAY DAY ONLY WHERE ONE OF ITS ROWS IS FILED AS HIS PAY (`payDayRows`), as every Income figure
+ * reads it (`hisIncomeRows`): a credit linked to his pay on a day with none — left unfiled, as detection's descriptor
+ * match links a row, or re-filed as a transfer, which keeps its link — is the review queue's or a transfer's, and pays
+ * no payday until he files it as his pay. 🔴 Settlement paid Sep 17 with it: the calendar drew Sep 17 paid and Earned
+ * vs banked banked it, while "in so far" and every Income figure left it out — Sep 17 was in no leg of /budgets (review
+ * of 8fc0b01; hypothetical: every row linked to his pay is a credit filed under Income, a copy of his ledger
+ * 2026-10-13).
+ */
+describe("a credit linked to his pay on a day no row is filed as his pay is no pay day", () => {
+  const internalTransferId = (): string => categoryId("Internal Transfer", "Transfers");
+
+  test.each([
+    ["left unfiled", (): string | null => null],
+    ["filed as a transfer", internalTransferId],
+  ])("a week's money %s on Sep 17 pays no payday — the calendar, the card and the average agree", (_, filedAs) => {
+    payRow("2026-09-17", WEEK, filedAs());
+    expect(settled()).toEqual(["2026-09-03", "2026-09-10"]);
+    const payday = entriesOn("2026-09-17").filter((e) => e.transactionId === null);
+    expect(payday.map((e) => [e.state, e.unsettledReason])).toEqual([["unsettled", "unbanked"]]);
+    // the credit is drawn where it landed, toward no payday, and the day's Settled holds nothing of his pay
+    const credit = entriesOn("2026-09-17").find((e) => e.transactionId !== null)!;
+    expect([credit.towardNoPayday, credit.expectedAmountCents]).toEqual([true, null]);
+    expect([payLine().bankedCents, payLine().lastBankedOn]).toEqual([WEEK * 2, "2026-09-10"]);
+    const s = bundle.db.select().from(recurringSeries).where(eq(recurringSeries.id, PAY)).get()!;
+    const evidence = postedAveragesBySeries(bundle.db, [s], TODAY).get(PAY)!.perPayday!;
+    expect([evidence.samples.length, evidence.noPaydayOfTheirOwn, evidence.moneyOut]).toEqual([2, 1, 0]);
+  });
+
+  test("filed under Salary, the same credit pays Sep 17", () => {
+    payRow("2026-09-17", WEEK);
+    expect(settled()).toEqual(["2026-09-03", "2026-09-10", "2026-09-17"]);
+  });
+
+  // settlement never read the day, so the popover names its rows as the money they are — not as a day netting to $0.00
+  test("an unfiled credit and a transfer's return the same day are money toward no payday and money out", () => {
+    payRow("2026-09-17", WEEK, null);
+    payRow("2026-09-17", -WEEK, internalTransferId());
+    const s = bundle.db.select().from(recurringSeries).where(eq(recurringSeries.id, PAY)).get()!;
+    const evidence = postedAveragesBySeries(bundle.db, [s], TODAY).get(PAY)!.perPayday!;
+    expect([evidence.noPaydayOfTheirOwn, evidence.moneyOut, evidence.netted]).toEqual([1, 1, []]);
   });
 });
 

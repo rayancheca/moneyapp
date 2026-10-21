@@ -16,6 +16,7 @@ import { formatDayLong } from "@/lib/format-date";
 import { cashEarningsSectionNotes } from "@/lib/section-notes";
 import { cashEarningsReadings } from "./cash-earnings";
 import { incomeCard } from "./income-card";
+import { paydaySettlement } from "./payday-settlement";
 
 /**
  * /spending's pay notes, composed as the page composes them — `cashEarningsReadings(…, withChecked)` into
@@ -430,6 +431,30 @@ describe("/spending — outside money that paid more than the net shortfall is n
       "Cash job (weekly pay)'s paydays on Sep 10, 2026 came to $1,000.00, and none of it was banked inside the " +
         "window: $1,000.00 (Sep 10) was paid early, by the deposit of Wed, Sep 9, 2026; another $400.00 banked " +
         "inside the window, from the deposit of Fri, Sep 11, 2026, went toward no payday.",
+    ]);
+  });
+});
+
+/**
+ * ⚖️ Decision 75 on the note: settlement hands its readers the money that BANKED, a day at a time (its `deposits`,
+ * `daysThatBanked`) — never the rows linked to the pay. A payroll returned the same day banked nothing, so it is no
+ * deposit of the note's, toward a payday or toward none. 🔴 The guard (e1172ab) had no test: read as the rows, the note
+ * said "…$1,000.00 of it, from the deposit of Thu, Sep 10, 2026, went toward no payday." of a payroll that went back
+ * out the day it landed, and every test passed (review of e1172ab; hypothetical: no money out is linked to his pay).
+ */
+describe("/spending — a payroll returned the same day is no deposit of the note's", () => {
+  test("Sep 10's $1,000.00 back out the same day: the note names Sep 3's money alone", () => {
+    deposit("t-sep10", "2026-09-10", 100_000);
+    deposit("t-sep10-back", "2026-09-10", -100_000);
+    coverThrough("2026-09-12");
+    expect(paydaySettlement(bundle.db, SERIES, "2026-09-10").deposits).toEqual([
+      { postedOn: "2026-07-30", amountCents: 100_000 },
+      { postedOn: "2026-09-03", amountCents: 200_000 },
+    ]);
+    expect(notesFor("2026-09-01", "2026-09-10", "2026-09-10").map((n) => n.body)).toEqual([
+      "Cash job (weekly pay) banked $1,000.00 more than its paydays on Sep 3, 2026 came to. One deposit can bank " +
+        "several paydays at once, so the surplus is earlier pay arriving late — read it as a backlog clearing rather " +
+        "than as a period that earned more.",
     ]);
   });
 });

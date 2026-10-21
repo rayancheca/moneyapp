@@ -427,6 +427,72 @@ describe("cashEarnings — banked, and the gap between", () => {
   });
 });
 
+/*
+ * ⚖️ WHAT REACHED A BANK IS THE DAYS THAT BANKED (`daysThatBanked`, his decision 75, 2026-10-13) — the rule settlement
+ * pays a payday by, every Income figure counts by and `lastBankedOn` already read: a day's rows by their net, money in
+ * only. A payroll returned the same day banked its net; money going back on a LATER day is no same-day return — its
+ * payroll's day banked, and the return's own day, netting below $0.00, banks nothing and takes nothing off.
+ * 🔴 `bankedCents` summed every row in the window: with a Salary-filed -$1,141.92 on Sep 25, the day after Sep 24's
+ * payroll, settlement still paid Sep 24 and September's Income stayed $6,177.88, yet Earned vs banked's September fell
+ * from $5,709.60 to $4,567.68 and the dashboard's card read $12,258.92 "never reached a bank", not $11,117.00 — for a
+ * payday the calendar drew paid (review of d75; hypothetical: no money out is linked to his pay, measured on his
+ * ledger copy 2026-10-21).
+ */
+describe("cashEarnings — banked is the days that banked", () => {
+  test("a return on a LATER day takes nothing off: the payroll's day banked, and so did the week", () => {
+    const r = read({
+      banked: [
+        { postedOn: "2026-06-04", amountCents: 104_600 },
+        { postedOn: "2026-06-11", amountCents: 104_600 },
+        { postedOn: "2026-06-12", amountCents: -104_600 },
+      ],
+    });
+    expect([r.bankedCents, r.lastBankedOn]).toEqual([209_200, "2026-06-11"]);
+    expect(r.unbankedCents).toBe(r.impliedCents - 209_200);
+  });
+
+  test("…nor off a window it falls in when its payroll fell before it", () => {
+    const r = read({
+      banked: [
+        { postedOn: "2026-05-28", amountCents: 104_600 },
+        { postedOn: "2026-06-01", amountCents: -104_600 },
+        { postedOn: "2026-06-04", amountCents: 104_600 },
+      ],
+    });
+    expect(r.bankedCents).toBe(104_600);
+  });
+
+  test("a return the SAME day nets its day: a partial return banked the net, a whole one nothing", () => {
+    const partial = read({
+      banked: [
+        { postedOn: "2026-06-04", amountCents: 104_600 },
+        { postedOn: "2026-06-11", amountCents: 104_600 },
+        { postedOn: "2026-06-11", amountCents: -50_000 },
+      ],
+    });
+    expect([partial.bankedCents, partial.lastBankedOn]).toEqual([159_200, "2026-06-11"]);
+    const whole = read({
+      banked: [
+        { postedOn: "2026-06-04", amountCents: 104_600 },
+        { postedOn: "2026-06-11", amountCents: 104_600 },
+        { postedOn: "2026-06-11", amountCents: -104_600 },
+      ],
+    });
+    expect([whole.bankedCents, whole.lastBankedOn]).toEqual([104_600, "2026-06-04"]);
+  });
+
+  test("with no schedule confirmed too — what landed is read by the same days", () => {
+    const r = read({
+      series: null,
+      banked: [
+        { postedOn: "2026-06-04", amountCents: 104_600 },
+        { postedOn: "2026-06-05", amountCents: -104_600 },
+      ],
+    });
+    expect([r.bankedCents, r.lastBankedOn]).toEqual([104_600, "2026-06-04"]);
+  });
+});
+
 describe("cashEarnings — the invariant", () => {
   test("implied always equals banked plus the gap", () => {
     // The one arithmetic promise the caller may rely on. Stated as a test so a

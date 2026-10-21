@@ -23,7 +23,7 @@ import { arrearsThisMonth, unbankedIncomeThisMonth, unbankedIncomeTotals } from 
 import { billingCarriers } from "./billing-carriers";
 import { silenceMeasuredThroughBySeries } from "./cash-earnings";
 import { incomeCardSeriesIds } from "./income-card";
-import { paydaySettlement, readsPerPayday, stillToCome, stillToComeReader } from "./payday-settlement";
+import { asPayRows, paydaySettlement, readsPerPayday, stillToCome, stillToComeReader } from "./payday-settlement";
 import { postedAveragesBySeries } from "./posted-average";
 import {
   annualizedCentsOf,
@@ -429,6 +429,7 @@ export function seriesDetail(
       description: sql<string>`coalesce(nullif(${transactions.normalizedDescription}, ''), ${transactions.rawDescription})`,
       linkSource: transactions.seriesLinkSource,
       accountName: accounts.name,
+      categoryId: transactions.categoryId,
     })
     .from(transactions)
     .innerJoin(accounts, eq(transactions.accountId, accounts.id))
@@ -459,9 +460,10 @@ export function seriesDetail(
     linkSource: t.linkSource,
   }));
   const eff = effectiveSeries(s);
-  // the calendar's reading of a pay series' rows, behind the calendar's own gate
+  // the calendar's reading of a pay series' rows, behind the calendar's own gate — his spending linked to it read as
+  // the money it is, never in its day's (`asPayRows`)
   const readings = readsPerPayday(s)
-    ? paydayReadings(linked, paydaySettlement(db, s.id, today).portions, eff)
+    ? paydayReadings(asPayRows(loadCategoryIndex(db), linked), paydaySettlement(db, s.id, today).portions, eff)
     : new Map<string, PaydayReading>();
   /*
    * What posted, averaged, and its sample standard deviation — the reading `listSeries` publishes to the All tab and

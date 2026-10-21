@@ -9,7 +9,7 @@ import { payShortfall, type PayShortfall, type WindowEarnings } from "@/lib/pay-
 import { firstPaydayOn } from "@/lib/payday-settlement";
 import { stepPlan, walkDayOfMonth } from "@/lib/recurring-step";
 import { outsidePortfolioCashAccountIds } from "./accounts";
-import { isAgentsIncomeSeries } from "./analytics";
+import { isAgentsIncomeSeries, loadCategoryIndex, payDayRows } from "./analytics";
 import { billingCarriers } from "./billing-carriers";
 import { accountsAwaitingStatements, silenceReadThrough } from "./cash-wallet-rule";
 import { accountCoverage, archivedAccountCoverage } from "./coverage";
@@ -391,11 +391,13 @@ export function cashEarningsReadings(
 
   if (series.length === 0) return [];
 
+  const idx = loadCategoryIndex(db);
   const linked = db
     .select({
       seriesId: transactions.recurringSeriesId,
       postedOn: transactions.postedOn,
       amountCents: transactions.amountCents,
+      categoryId: transactions.categoryId,
     })
     .from(transactions)
     .where(and(isNotNull(transactions.recurringSeriesId), eq(transactions.status, "active")))
@@ -406,9 +408,17 @@ export function cashEarningsReadings(
   const checkedOf = withChecked ? checkedThroughBySeries(db, today) : null;
 
   for (const s of series) {
-    const banked = linked
-      .filter((r) => r.seriesId === s.id)
-      .map((r) => ({ postedOn: r.postedOn, amountCents: r.amountCents }));
+    /*
+     * ⚖️ Its pay days' rows only (`payDayRows`) — the rows settlement spends and every Income figure reads: his
+     * spending linked to his pay is in Spent, never in what his pay banked (orchestrator's default 2026-10-14, his call
+     * open), and money on a day no row of it is filed as his pay is the review queue's or a transfer's. 🔴 Read with
+     * the rest, an unfiled $1,141.92 back beside Sep 17's payroll banked nothing that day here while "Income recorded"
+     * counted the payroll; and an unfiled $1,141.92 alone banked here while no Income figure counted it.
+     */
+    const banked = payDayRows(idx, linked.filter((r) => r.seriesId === s.id)).map((r) => ({
+      postedOn: r.postedOn,
+      amountCents: r.amountCents,
+    }));
 
     /*
      * THE schedule every projection of this series walks (`effectiveSeries`): the owner's cadence, date and amount

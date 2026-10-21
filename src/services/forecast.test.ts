@@ -568,7 +568,8 @@ describe("forecastCurrentMonth", () => {
       nextExpectedAmountCents: 300000,
       status: "confirmed",
     });
-    insertTxn(cardId, "2026-07-01", 300000, { recurringSeriesId: id });
+    // filed as his pay, as every row linked to it is: a day is a pay day where one of its rows is (`payDayRows`)
+    insertTxn(cardId, "2026-07-01", 300000, { recurringSeriesId: id, categoryName: "Salary" });
     const f = forecastCurrentMonth(bundle.db, TODAY);
     expect(f.unbankedIncome.totalCents).toBe(0);
     expect(f.unbankedIncome.occurrenceCount).toBe(0);

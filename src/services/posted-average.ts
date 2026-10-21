@@ -16,8 +16,9 @@ import {
   type PostedReading,
 } from "@/lib/posted-average";
 import { currentRateSince, nextRateSince } from "@/lib/series-kind";
+import { loadCategoryIndex } from "./analytics";
 import { carriedNamesBySeries } from "./billing-carriers";
-import { paydaySettlement, readsPerPayday } from "./payday-settlement";
+import { asPayRows, paydaySettlement, readsPerPayday } from "./payday-settlement";
 import { effectiveSeries } from "./recurring";
 
 /** A series' posted average, and what its payments carry. */
@@ -87,13 +88,14 @@ export function postedAveragesBySeries(
   const out = new Map<string, SeriesPostedAverage>();
   if (series.length === 0) return out;
 
-  const rowsBySeries = new Map<string, ReadableRow[]>();
+  const rowsBySeries = new Map<string, (ReadableRow & { categoryId: string | null })[]>();
   for (const r of db
     .select({
       id: transactions.id,
       seriesId: transactions.recurringSeriesId,
       postedOn: transactions.postedOn,
       amountCents: transactions.amountCents,
+      categoryId: transactions.categoryId,
     })
     .from(transactions)
     .where(and(eq(transactions.status, "active"), inArray(transactions.recurringSeriesId, series.map((s) => s.id))))
@@ -105,10 +107,13 @@ export function postedAveragesBySeries(
   }
 
   const carried = carriedNamesBySeries(db);
+  const idx = loadCategoryIndex(db);
   for (const s of series) {
-    const rows = rowsBySeries.get(s.id) ?? [];
+    const byPayday = readsPerPayday(s);
+    // a pay series' rows as the calendar reads them: his spending linked to it is no row of its day (`asPayRows`)
+    const rows = byPayday ? asPayRows(idx, rowsBySeries.get(s.id) ?? []) : (rowsBySeries.get(s.id) ?? []);
     const schedule = effectiveSeries(s);
-    const reading: PostedReading = readsPerPayday(s)
+    const reading: PostedReading = byPayday
       ? { per: "payday", readings: paydayReadings(rows, paydaySettlement(db, s.id, today).portions, schedule) }
       : readsPerOccurrence(s)
         ? { per: "occurrence" }

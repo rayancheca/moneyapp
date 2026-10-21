@@ -1,13 +1,14 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { eq } from "drizzle-orm";
+import { and, eq, isNull } from "drizzle-orm";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { createDatabase, type DbBundle } from "@/db/client";
 import { accounts } from "@/db/schema/accounts";
 import { dailyBalances } from "@/db/schema/balances";
+import { categories } from "@/db/schema/categories";
 import { institutions } from "@/db/schema/institutions";
 import { recurringSeries } from "@/db/schema/recurring";
 import { transactions } from "@/db/schema/transactions";
@@ -60,6 +61,20 @@ function addAccount(id: string): void {
     .run();
 }
 
+/** Salary, under Income — where his pay is filed (a pay day is one with a row filed as his pay) */
+function salaryId(): string {
+  const income = bundle.db
+    .select()
+    .from(categories)
+    .where(and(eq(categories.name, "Income"), isNull(categories.parentId)))
+    .get()!;
+  return bundle.db
+    .select()
+    .from(categories)
+    .where(and(eq(categories.name, "Salary"), eq(categories.parentId, income.id)))
+    .get()!.id;
+}
+
 let seq = 0;
 function deposit(accountId: string, postedOn: string, amountCents: number): void {
   seq += 1;
@@ -72,6 +87,7 @@ function deposit(accountId: string, postedOn: string, amountCents: number): void
       amountCents,
       rawDescription: `ROW ${seq}`,
       normalizedDescription: `ROW ${seq}`,
+      categoryId: salaryId(),
       recurringSeriesId: PAY,
       status: "active",
       needsReview: false,
