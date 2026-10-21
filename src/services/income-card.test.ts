@@ -365,6 +365,12 @@ describe("incomeCard", () => {
     const line = incomeCard(bundle.db, TODAY)!.pay[0]!;
     expect(line.checkedSilentPeriods).toBe(3);
     expect(line.verdict).toContain("the pay did not reach a bank");
+    // ⚖️ the bar counts paydays checked on their day; of those, only the ones checked through their days to land are
+    // said not to have reached a bank — Jul 23's run past the checked Jul 23 (review of 4b98f77)
+    expect(line.verdict).toContain(
+      "2 of them, and their days to land, fall on days the records already cover, through Jul 23 — so the pay did " +
+        "not reach a bank; Jul 23's days to land run past Jul 23,",
+    );
   });
 
   /**

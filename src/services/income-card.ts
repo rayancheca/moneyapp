@@ -1,14 +1,20 @@
 import type { AppDatabase } from "@/db/client";
-import { payGap, STALE_PERIODS, type CashEarningsBasis } from "@/lib/cash-earnings";
+import { payGap, STALE_PERIODS, unbankedSplit, type CashEarningsBasis } from "@/lib/cash-earnings";
 import { addCalendarMonths, diffDays, monthKey, periodBounds, todayIso } from "@/lib/dates";
 import { formatDayLong, formatDayShort, formatMonthYear } from "@/lib/format-date";
 import { monthIncomeLink, type IncomeLink } from "@/lib/income-basis";
 import { formatCents } from "@/lib/money";
-import { wentBackOutPhrase, type WentBackOut } from "@/lib/pay-shortfall";
+import {
+  paydaysNotBankedYet,
+  silentPaydaysNotBankedYet,
+  wentBackOutPhrase,
+  type WentBackOut,
+} from "@/lib/pay-shortfall";
 import {
   LAST_CHECKED_DAY,
   NOT_CHECKED,
   noIncomeDayCheckedNote,
+  payNotBankedYet,
   sharedFrontier,
   unbankedIncomeFrontierClause,
   type UnbankedFrontier,
@@ -16,6 +22,7 @@ import {
 import { incomeExpectation } from "./budgets";
 import { cashEarningsReadings, checkedSilence, type CashEarningsReading } from "./cash-earnings";
 import { SPEND_BASELINE_MONTHS } from "./committed";
+import { paydaySettlement } from "./payday-settlement";
 
 /**
  * Am I actually being paid, and how much of it ever reaches a bank?
@@ -128,10 +135,22 @@ interface Gap {
    */
   unreadGapCents: number;
   /**
+   * Of a POSITIVE difference, the part for checked paydays no deposit settled whose days to land are not all checked
+   * yet (`paydaysNotBankedYet`, `unbankedSplit`) — "not banked yet", the forecast's words, never "never reached a
+   * bank". Zero when the difference is not positive. Part of `gapMagnitudeCents`, never added to it.
+   */
+  notBankedYetCents: number;
+  /**
    * the clause that follows the magnitude, e.g. "never reached a bank" — and after it, the money that went back out on
    * a day of its own, in /spending's words (`withMoneyOut`)
    */
   gapLabel: string;
+}
+
+/** What a gap's not-banked-yet part comes to, and how far the accounts its paydays' pay lands in were checked. */
+interface InGrace {
+  cents: number;
+  frontier: UnbankedFrontier;
 }
 
 /**
@@ -149,16 +168,32 @@ function gapOf(
   bankedCents: number,
   unreadImpliedCents: number,
   frontier: UnbankedFrontier,
+  inGrace: InGrace,
   wentBackOut: readonly WentBackOut[],
 ): Gap {
   // ⛔ the one subtraction, shared with /spending's shortfall note (`payGap`)
   const { gapCents, unreadGapCents, readGapCents } = payGap(impliedCents, bankedCents, unreadImpliedCents);
+  // ⛔ …and the one split of its read part (`unbankedSplit`): "never reached a bank" only past the days to land
+  const { notBankedYetCents, neverCents } = unbankedSplit(readGapCents, inGrace.cents);
   return {
     gapCents,
     gapMagnitudeCents: gapCents === 0 ? 0 : Math.abs(gapCents),
     unreadGapCents,
-    gapLabel: withMoneyOut(gapLabelFor(gapCents, unreadGapCents, readGapCents, frontier), wentBackOut),
+    notBankedYetCents,
+    gapLabel: withMoneyOut(
+      notBankedYetCents > 0
+        ? inGraceGapLabel(neverCents, { ...inGrace, cents: notBankedYetCents }, unreadGapCents, frontier)
+        : gapLabelFor(gapCents, unreadGapCents, neverCents, frontier),
+      wentBackOut,
+    ),
   };
+}
+
+/** "after Sep 24, the last day every account that pay lands in has been checked through", or by schedule. */
+function afterFrontier(frontier: Exclude<UnbankedFrontier, { kind: "unchecked" }>): string {
+  return frontier.kind === "day"
+    ? `after ${formatDayShort(frontier.through)}, ${LAST_CHECKED_DAY}`
+    : "after the last day the accounts their pay lands in have been checked through, which differs by schedule";
 }
 
 /**
@@ -187,13 +222,52 @@ function gapLabelFor(gapCents: number, unreadGapCents: number, readCents: number
       ? `${NOT_CHECKED}, so it cannot say whether any of it reached a bank.`
       : `${formatCents(readCents)} of it never reached a bank; for the other ${formatCents(unreadGapCents)}, ${NOT_CHECKED}.`;
   }
-  const after =
-    frontier.kind === "day"
-      ? `after ${formatDayShort(frontier.through)}, ${LAST_CHECKED_DAY}`
-      : "after the last day the accounts their pay lands in have been checked through, which differs by schedule";
+  const after = afterFrontier(frontier);
   return readCents === 0
     ? `all of it is for paydays ${after} — so the ledger has not looked for it.`
     : `${formatCents(readCents)} of it never reached a bank; the other ${formatCents(unreadGapCents)} is for paydays ${after} — so the ledger has not looked for it.`;
+}
+
+/**
+ * The difference with a part NOT BANKED YET: pay for checked paydays no deposit settled whose days to land run past the
+ * checked day (`paydaysNotBankedYet`) — in the forecast's words, beside what never reached a bank and what the ledger
+ * has not looked for, each its own part. ⚖️ "Never reached a bank" only of a payday checked through its days to land
+ * (`paydayLandingIsRead`). 🔴 Review of 878c3d5: weekly pay through Aug 27, Chase read through Sat Sep 5, the forecast
+ * called Thu Sep 3 "Pay not banked yet" while this card said "$1,000.00 of it never reached a bank" of it.
+ */
+function inGraceGapLabel(
+  neverCents: number,
+  notYet: InGrace,
+  unreadGapCents: number,
+  unreadFrontier: UnbankedFrontier,
+): string {
+  const past =
+    notYet.frontier.kind === "day"
+      ? `${formatDayShort(notYet.frontier.through)}, ${LAST_CHECKED_DAY}`
+      : "the last day the accounts their pay lands in have been checked through, which differs by schedule";
+  const parts = neverCents > 0 ? [`${formatCents(neverCents)} of it never reached a bank`] : [];
+  // "$X" after a figure, "$X of it" opening the clause, and "all of it" when it is the whole difference
+  const lead =
+    parts.length > 0
+      ? formatCents(notYet.cents)
+      : unreadGapCents > 0
+        ? `${formatCents(notYet.cents)} of it`
+        : "all of it";
+  parts.push(`${lead} is for paydays whose days to land run past ${past} — so it is not banked yet`);
+  if (unreadGapCents > 0) {
+    const other = `the other ${formatCents(unreadGapCents)}`;
+    const sameDay =
+      unreadFrontier.kind === "day" &&
+      notYet.frontier.kind === "day" &&
+      unreadFrontier.through === notYet.frontier.through;
+    parts.push(
+      unreadFrontier.kind === "unchecked"
+        ? `for ${other}, ${NOT_CHECKED}`
+        : `${other} is for paydays ${sameDay ? "after that day" : afterFrontier(unreadFrontier)} — so the ledger has ` +
+            "not looked for it",
+    );
+  }
+  return `${parts.join("; ")}.`;
 }
 
 export interface IncomePayLine extends Gap {
@@ -223,6 +297,12 @@ export interface IncomePayLine extends Gap {
   silentPeriods: number;
   /** of those, the ones that fell on days the records already cover */
   checkedSilentPeriods: number;
+  /**
+   * Of those, the paydays no deposit settled whose days to land run past `checkedThrough`
+   * (`silentPaydaysNotBankedYet`), oldest first: "not banked yet", never counted among the pay that "did not reach a
+   * bank" — the paydays /spending's note for a stale schedule names (`CashEarningsReading.checkedSilentNotBankedYet`).
+   */
+  checkedSilentNotBankedYet: readonly string[];
   /** earliest day the accounts this pay lands in stop being checked */
   checkedThrough: string | null;
   /** days between `checkedThrough` and today — the stretch nobody has imported */
@@ -366,11 +446,37 @@ function verdictFor(line: Omit<IncomePayLine, "verdict">): string {
   }
 
   if (checkedSilentPeriods >= STALE_PERIODS) {
-    return `${since}. ${checkedSilentPeriods} of them fall on days the records already cover, through ${formatDayShort(checkedThrough)} — so the pay did not reach a bank. Whether it was earned is a different question, and this card cannot answer it.`;
+    const checked = staleChecked(checkedSilentPeriods, line.checkedSilentNotBankedYet, checkedThrough);
+    return `${since}. ${checked}. Whether it was earned is a different question, and this card cannot answer it.`;
   }
 
   const unlooked = silentPeriods - checkedSilentPeriods;
   return `${since}, but only ${checkedSilentPeriods} of them fall on days the records cover. The other ${unlooked} sit inside the ${unreadDays ?? 0} days past ${formatDayShort(checkedThrough)}, ${LAST_CHECKED_DAY}, so the ledger has not looked.`;
+}
+
+/**
+ * What a stale schedule's checked silence says: "did not reach a bank" of the paydays checked through their days to
+ * land, and "not banked yet" of those still inside them (`checkedSilentNotBankedYet`) — the difference line's split
+ * (`unbankedSplit`), in the words /spending's note for a stale schedule says it in (`payNotBankedYet`).
+ *
+ * ⚖️ "Did not reach a bank" only of a payday checked through its days to land (`paydayLandingIsRead`). 🔴 Review of
+ * 4b98f77: weekly pay through Aug 6, Chase read through Sat Sep 5, today Sep 15 — this said "4 of them fall on days the
+ * records already cover, through Sep 5 — so the pay did not reach a bank" one line under "$3,000.00 of it never
+ * reached a bank; $1,000.00 is for paydays whose days to land run past Sep 5 … — so it is not banked yet" of Thu Sep 3.
+ * On his ledger copy 2026-10-21 with Wells Fargo checked through Fri Oct 16 and no October deposit, it would have said
+ * "3 of them … did not reach a bank" of Oct 1, 8 and 15, beside "$1,141.92 is for paydays whose days to land run past
+ * Oct 16 … — so it is not banked yet".
+ */
+function staleChecked(checked: number, notBankedYet: readonly string[], checkedThrough: string): string {
+  const covered = `on days the records already cover, through ${formatDayShort(checkedThrough)}`;
+  const didNot = "so the pay did not reach a bank";
+  if (notBankedYet.length === 0) return `${checked} of them fall ${covered} — ${didNot}`;
+
+  const why = payNotBankedYet(notBankedYet, checkedThrough, formatDayShort, formatDayShort);
+  const past = checked - notBankedYet.length;
+  if (past === 0) return `${checked} of them fall ${covered}, but ${why}`;
+  const them = past === 1 ? "1 of them, and its days to land, falls" : `${past} of them, and their days to land, fall`;
+  return `${them} ${covered} — ${didNot}; ${why}`;
 }
 
 /** The first day the card measures from: the spend baseline's months back from this month's 1st. */
@@ -426,6 +532,21 @@ export function incomeCard(db: AppDatabase, today: string = todayIso()): IncomeC
     const asChecked = checkedThrough === null ? undefined : readingAsOf(checkedThrough, r.seriesId);
     // what the schedule implies past the frontier: every payday when nothing is checked
     const unreadImpliedCents = r.impliedCents - (asChecked?.impliedCents ?? 0);
+    const frontier: UnbankedFrontier =
+      checkedThrough === null ? { kind: "unchecked" } : { kind: "day", through: checkedThrough };
+    // ⚖️ …and of the checked paydays, those no deposit settled still inside their days to land: not banked yet — over
+    // the window for the difference, and over the silence for the verdict, which counts from the last deposit
+    const settlement = checkedThrough === null ? null : paydaySettlement(db, r.seriesId, today);
+    const inGraceCents =
+      settlement === null || checkedThrough === null
+        ? 0
+        : paydaysNotBankedYet(settlement, {
+            from: windowFrom,
+            to: today,
+            today,
+            checkedThrough,
+            toleranceDays: r.toleranceDays,
+          }).cents;
 
     const base = {
       seriesId: r.seriesId,
@@ -445,13 +566,24 @@ export function incomeCard(db: AppDatabase, today: string = todayIso()): IncomeC
         r.lastBankedOn,
         checkedThrough,
       ),
+      // ⛔ the silence's, as /spending's stale note reads it (`silentPaydaysNotBankedYet`) — never the window's
+      checkedSilentNotBankedYet:
+        settlement === null
+          ? []
+          : silentPaydaysNotBankedYet(settlement, {
+              lastBankedOn: r.lastBankedOn,
+              today,
+              checkedThrough,
+              toleranceDays: r.toleranceDays,
+            }),
       checkedThrough,
       unreadDays: checkedThrough === null ? null : diffDays(checkedThrough, today),
       ...gapOf(
         r.impliedCents,
         r.bankedCents,
         unreadImpliedCents,
-        checkedThrough === null ? { kind: "unchecked" } : { kind: "day", through: checkedThrough },
+        frontier,
+        { cents: inGraceCents, frontier },
         r.wentBackOut ?? [],
       ),
     };
@@ -460,8 +592,9 @@ export function incomeCard(db: AppDatabase, today: string = todayIso()): IncomeC
 
   const impliedCents = pay.reduce((s, l) => s + l.impliedCents, 0);
   const bankedCents = pay.reduce((s, l) => s + l.bankedCents, 0);
-  // the lines' own unread parts, against the one day they share when they share one
+  // the lines' own unread and not-banked-yet parts, each against the one day its lines share when they share one
   const unread = pay.filter((l) => l.unreadGapCents > 0);
+  const inGrace = pay.filter((l) => l.notBankedYetCents > 0);
   const totals = {
     impliedCents,
     bankedCents,
@@ -470,6 +603,10 @@ export function incomeCard(db: AppDatabase, today: string = todayIso()): IncomeC
       bankedCents,
       unread.reduce((s, l) => s + l.unreadGapCents, 0),
       sharedFrontier(unread.map((l) => l.checkedThrough)),
+      {
+        cents: inGrace.reduce((s, l) => s + l.notBankedYetCents, 0),
+        frontier: sharedFrontier(inGrace.map((l) => l.checkedThrough)),
+      },
       pay.flatMap((l) => l.wentBackOut),
     ),
   };

@@ -833,6 +833,26 @@ describe("cashEarningsSectionNotes", () => {
     expect(note!.body).not.toContain("nothing has imported");
   });
 
+  /*
+   * 🔴 One left after the frontier read "the other 1 payday falls after that" — the template's count printed bare
+   * (review of 8ef2fc5, the spending-year note). One is "the other payday", as `unbankedIncomeFrontierClause` says
+   * "the other one".
+   */
+  test("one payday after the frontier is 'the other payday', never 'the other 1 payday'", () => {
+    const [note] = notes({
+      ...checked,
+      impliedCents: 418_800,
+      unbankedCents: 418_800,
+      periodsCovered: 4,
+      checkedPeriodsCovered: 3,
+    });
+    expect(note!.body).toContain(
+      "none of it reached an account through 2026-08-12; the other payday falls after that, the last day every account " +
+        "that pay lands in has been checked through.",
+    );
+    expect(note!.body).not.toContain("the other 1 ");
+  });
+
   test("the 'only' branch is scoped too — never a bare total over unread paydays", () => {
     const [note] = notes({
       ...checked,
@@ -1022,6 +1042,8 @@ describe("cashEarningsSectionNotes", () => {
       shortCents: 428_292,
       paidOutside: [{ depositOn: "2026-09-24", paydays: ["2026-08-27"], cents: 114_192, early: false }],
       neverBankedCents: 314_100,
+      notBankedYetCents: 0,
+      notBankedYetPaydays: [],
       paidAcross: [],
       noPaydayBeyondCents: 0,
       otherBeyondCents: 0,
@@ -1491,6 +1513,8 @@ describe("cashEarningsSectionNotes", () => {
       shortCents: 0,
       paidOutside: [],
       neverBankedCents: 0,
+      notBankedYetCents: 0,
+      notBankedYetPaydays: [],
       paidAcross: [],
       noPaydayBeyondCents: 0,
       otherBeyondCents: 0,

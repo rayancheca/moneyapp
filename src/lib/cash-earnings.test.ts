@@ -3,6 +3,7 @@ import {
   cashEarnings,
   payGap,
   STALE_PERIODS,
+  unbankedSplit,
   type CashEarningsInput,
   type PaySeries,
 } from "./cash-earnings";
@@ -548,5 +549,25 @@ describe("payGap", () => {
 
   test("a negative unread figure is none", () => {
     expect(payGap(200_000, 100_000, -5_000)).toEqual({ gapCents: 100_000, unreadGapCents: 0, readGapCents: 100_000 });
+  });
+});
+
+/**
+ * The one split of checked pay no deposit made up — "not banked yet" for unsettled paydays still inside their days to
+ * land, "never reached a bank" for the rest (review of 878c3d5).
+ */
+describe("unbankedSplit", () => {
+  test("the paydays inside their days to land are not banked yet; the rest never reached a bank", () => {
+    expect(unbankedSplit(260_000 + 100_000, 100_000)).toEqual({ notBankedYetCents: 100_000, neverCents: 260_000 });
+  });
+
+  test("capped at what no deposit made up: netted money leaves less to split", () => {
+    expect(unbankedSplit(60_000, 100_000)).toEqual({ notBankedYetCents: 60_000, neverCents: 0 });
+  });
+
+  test("nothing inside its days to land leaves every cent never banked — and nothing unbanked splits nothing", () => {
+    expect(unbankedSplit(1_111_700, 0)).toEqual({ notBankedYetCents: 0, neverCents: 1_111_700 });
+    expect(unbankedSplit(0, 100_000)).toEqual({ notBankedYetCents: 0, neverCents: 0 });
+    expect(unbankedSplit(-5_000, 100_000)).toEqual({ notBankedYetCents: 0, neverCents: 0 });
   });
 });

@@ -445,14 +445,46 @@ describe("the posted average — his series page, the All tab and the popover re
     );
     expect(p.headline).not.toContain("an average, not a repeat");
     expect(p.headline).not.toContain("$400.00 to $4,567.68");
-    // five paydays at the rate in force — no anecdote
-    expect(p.headline).not.toContain("anecdote");
+    // ⚖️ five paydays at the rate in force, but two deposit days — what the average averages: an anecdote, said
+    // beside the amount he set (🔴 counted by paydays, the lump made it five and the words said nothing)
+    expect(p.headline).toContain(
+      "That is 2 deposit days at the rate in force now — below the 3 this app requires before calling a repeat a " +
+        "pattern, so it is an anecdote rather than a statistic.",
+    );
     expect(p.sources.find((s) => s.kind === "period")).toMatchObject({
       label: "4 tagged postings in the ledger",
       detail:
         "2 deposits at the rate in force since Aug 27 (Sep 23's $4,567.68 paid 4 paydays): every one of them " +
         "$1,141.92 a payday · 1 before it, at an earlier rate · 1 paid no payday on its own",
     });
+  });
+
+  /*
+   * ⚖️ Deposits left out at two different earlier rates name each rate, oldest first, with how many paid it — each
+   * held to its own time's rate, as the calendar and the Amount history hold it. 🔴 Every one read "at an earlier
+   * rate": a history of $1,000.00 through Jun 30 and $1,047.00 through Aug 26 said "Its 3 deposits before Aug 27, 2026
+   * were at an earlier rate" — one rate, of deposits held to two (review of the pay-and-avg branch; hypothetical, his
+   * history has one earlier rate).
+   */
+  test("deposits left out at two earlier rates name each one — the headline and the evidence line", () => {
+    addPaySeries("2026-07-23");
+    bundle.db
+      .update(recurringSeries)
+      .set({ userAmountHistory: [{ throughOn: "2026-06-30", amountCents: 100_000 }, ...HISTORY] })
+      .where(eq(recurringSeries.id, PAY))
+      .run();
+    deposit("2026-06-04", 100_000);
+    deposit("2026-07-09", CASH);
+    deposit("2026-07-16", CASH);
+    deposit("2026-09-24", WEEK);
+    const p = provenanceFor(bundle.db, { kind: "recurringSeries", id: PAY, today: TODAY })!;
+    expect(p.headline).toContain(
+      "Its 3 deposits before Aug 27, 2026 were at 2 earlier rates (1 at $1,000.00, 2 at $1,047.00), and are not " +
+        "counted.",
+    );
+    expect(p.sources.find((s) => s.kind === "period")!.detail).toContain(
+      "· 3 before it, at 2 earlier rates (1 at $1,000.00, 2 at $1,047.00)",
+    );
   });
 
   /*
@@ -562,15 +594,15 @@ describe("a raise recorded in his history: the popover either side of its first 
     const p = provenanceFor(bundle.db, { kind: "recurringSeries", id: PAY, today: TODAY })!;
     expect(p.headline).toContain(
       "No deposit at the rate in force since Oct 1, 2026 has paid a payday on its own, so there is no average of " +
-        "what a payday paid at it yet. Its 3 deposits before Oct 1, 2026 were at an earlier rate, and are not " +
-        "counted. Its one other deposit paid no payday on its own, and is not counted.",
+        "what a payday paid at it yet. Its 3 deposits before Oct 1, 2026 were at 2 earlier rates (1 at $1,047.00, " +
+        "2 at $1,141.92), and are not counted. Its one other deposit paid no payday on its own, and is not counted.",
     );
     expect(p.headline).not.toContain("not what you set");
     expect(period(TODAY)).toMatchObject({
       label: "4 tagged postings in the ledger",
       detail:
-        "no deposit at the rate in force since Oct 1 paid a payday on its own · 3 before it, at an earlier rate · " +
-        "1 paid no payday on its own",
+        "no deposit at the rate in force since Oct 1 paid a payday on its own · 3 before it, at 2 earlier rates (1 at " +
+        "$1,047.00, 2 at $1,141.92) · 1 paid no payday on its own",
     });
     expect(p.badgeWord).toBeUndefined();
     // …and the page's other readers of it
@@ -640,20 +672,21 @@ test("a raise recorded ahead of a first week: the gate counts paydays at today's
   );
   deposit("2026-09-24", WEEK);
   expect(said().headline).toContain(
-    `Per payday, its one deposit since Sep 24, 2026 paid $1,141.92. ${later} That is one payday at the rate in force ` +
-      "now — below the 3",
+    `Per payday, its one deposit since Sep 24, 2026 paid $1,141.92. ${later} That is one deposit day at the rate ` +
+      "in force now — below the 3",
   );
 });
 
 /**
- * ⛔ ONE COUNT WITH NO RATE HISTORY TOO: a pay series' anecdote gate counts the paydays its deposits paid, as it does
- * once a rate change leaves a deposit out — never its rows. 🔴 Gated on its rows, a detected pay series (forecast
+ * ⛔ ONE COUNT WITH NO RATE HISTORY TOO: a pay series' anecdote gate counts the deposit DAYS whose money paid paydays
+ * on their own — what its average averages — as it does once a rate change leaves a deposit out; never its rows, nor
+ * the paydays a lump paid. 🔴 Gated on its rows, a detected pay series (forecast
  * $1,141.92, no amount of his, no history) whose one week came as three same-day transfers read "derived", no badge
  * and no anecdote, beside "Per payday, its 3 deposits since Sep 17, 2026 (Sep 17's 3 deposits, $1,141.92, paid one
  * payday) paid $1,141.92." — one payday graded as three; given a history, the same payday read "seen once at the new
  * rate" (review of b3f90b7, hypothetical: his pay has a history).
  */
-describe("a pay series with no rate history: the gate counts paydays, as with one", () => {
+describe("a pay series with no rate history: the gate counts deposit days, as with one", () => {
   const TODAY = "2026-09-20";
   beforeEach(() => {
     addPaySeries("2026-09-24");
@@ -672,7 +705,7 @@ describe("a pay series with no rate history: the gate counts paydays, as with on
     const p = said();
     expect(p.headline).toContain(
       "Per payday, its 3 deposits since Sep 17, 2026 (Sep 17's 3 deposits, $1,141.92, paid one payday) paid " +
-        "$1,141.92. That is one payday — below the 3 this app requires before calling a repeat a pattern",
+        "$1,141.92. That is one deposit day — below the 3 this app requires before calling a repeat a pattern",
     );
     expect(p.headline).not.toContain("tagged postings have ever landed");
     expect([p.verdict, p.badgeWord]).toEqual(["unverified", "seen once"]);
@@ -687,21 +720,28 @@ describe("a pay series with no rate history: the gate counts paydays, as with on
     deposit("2026-09-17", 40_000);
     deposit("2026-09-17", 10_000);
     const p = said();
-    expect(p.headline).toContain("paid $1,000.00. That is one payday — below the 3");
+    expect(p.headline).toContain("paid $1,000.00. That is one deposit day — below the 3");
     expect(p.headline).not.toContain("forecast here");
     expect([p.verdict, p.badgeWord]).toEqual(["unverified", "seen once"]);
   });
 
-  /* …and a lump is the paydays it paid on its own, as with a history: a week and a three-week lump are four */
-  test("a week, then a three-week lump, at the forecast: four paydays, past the gate — as with a history", () => {
+  /*
+   * ⚖️ …and a lump is ONE deposit day, however many paydays it paid: the average takes it once (`postedAverage`'s
+   * samples), so the gate does. 🔴 Counted by the paydays it paid, a week and a three-week lump were four — a detected
+   * series past the 3 on two deposits, "derived", no badge and no anecdote (review of 6c59cdb).
+   */
+  test("a week, then a three-week lump, at the forecast: two deposit days — an anecdote, 'seen 2 times'", () => {
     deposit("2026-08-27", WEEK);
     deposit("2026-09-17", WEEK * 3);
     const p = said();
     expect(p.headline).toContain(
-      "Per payday, its 2 deposits since Aug 27, 2026 (Sep 17's $3,425.76 paid 3 paydays) paid $1,141.92, exactly.",
+      "Per payday, its 2 deposits since Aug 27, 2026 (Sep 17's $3,425.76 paid 3 paydays) paid $1,141.92, exactly. " +
+        "That is 2 deposit days — below the 3 this app requires before calling a repeat a pattern",
     );
-    expect(p.headline).not.toContain("anecdote");
-    expect([p.verdict, p.badgeWord]).toEqual(["derived", undefined]);
+    expect([p.verdict, p.badgeWord]).toEqual(["unverified", "seen 2 times"]);
+    // …and a third deposit day reaches the gate: it adds up
+    deposit("2026-08-20", WEEK);
+    expect([said().verdict, said().badgeWord]).toEqual(["derived", undefined]);
   });
 
   /* …and money that paid no payday of its own is no payday seen: one week and a $400.00 the day after are one */
@@ -711,7 +751,7 @@ describe("a pay series with no rate history: the gate counts paydays, as with on
     const p = said();
     expect(p.headline).toContain(
       "Per payday, its one deposit since Sep 10, 2026 paid $1,141.92. Its one other deposit paid no payday on its " +
-        "own, and is not counted. That is one payday — below the 3",
+        "own, and is not counted. That is one deposit day — below the 3",
     );
     expect([p.verdict, p.badgeWord]).toEqual(["unverified", "seen once"]);
   });
@@ -733,7 +773,7 @@ describe("a pay series with no rate history: the gate counts paydays, as with on
     const p = said();
     expect(p.headline).toContain(
       "Per payday, its one deposit since Sep 10, 2026 paid $1,141.92. Nothing stayed paid on Sep 17: its 2 tagged " +
-        "postings net to $0.00, and are not counted. That is one payday — below the 3",
+        "postings net to $0.00, and are not counted. That is one deposit day — below the 3",
     );
     expect(p.headline).not.toMatch(/-\$1,141\.92|different amounts|\$380\.64/);
     expect([p.verdict, p.badgeWord]).toEqual(["unverified", "seen once"]);
@@ -755,7 +795,7 @@ describe("a pay series with no rate history: the gate counts paydays, as with on
     const p = said();
     expect(p.headline).toContain(
       "Per payday, its 2 deposits since Sep 10, 2026 paid $1,141.92, exactly. Its one tagged posting of money out " +
-        "paid no payday, and is not counted. That is 2 paydays — below the 3",
+        "paid no payday, and is not counted. That is 2 deposit days — below the 3",
     );
     expect([p.verdict, p.badgeWord]).toEqual(["unverified", "seen 2 times"]);
     expect(p.sources.find((s) => s.kind === "period")).toMatchObject({

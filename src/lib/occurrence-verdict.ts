@@ -36,11 +36,15 @@ import { addDays, compareDates } from "./dates";
 
 /** A past occurrence that never posted, and why we cannot call it missed. */
 export type UnsettledReason =
-  /**
-   * the ledger has not been shown this day for the account(s) this bills on — or, for a payday, has not checked the
-   * accounts its pay lands in through it (`paydayIsRead`)
-   */
+  /** money OUT: the ledger has not been shown this day, and its grace, for the account(s) this bills on */
   | "not_imported"
+  /**
+   * money IN: a payday after the last day every account its pay lands in has been checked through, or with one of
+   * them never checked (`paydayIsRead`) — nobody has looked for its deposit. ⚖️ Its own reason, in the pay sentences'
+   * words (`notLookedForDeposits`), never a bill's: 🔴 it shared `not_imported` and read "no statement has covered it
+   * yet" beside pay landing in an archived account or a cash wallet, which no statement will ever cover.
+   */
+  | "not_looked_for"
   /**
    * money OUT, on accounts read through today (`DueDayReading.readsToToday`) — archived, a cash wallet, or checked to
    * the day: no statement keeps it unread, only the days a payment has to post, still to come. ⚖️ Not a new verdict: the
@@ -274,12 +278,13 @@ export function dueDayIsRead(dueOn: string, reading: DueDayReading): boolean {
  * WHETHER THE LEDGER HAS LOOKED FOR A PAYDAY'S DEPOSIT: `checkedThrough` is the last day every account the pay lands
  * in NOW has been checked through (`checkedThroughBySeries`, the day every pay sentence names — `LAST_CHECKED_DAY`), or
  * null when one of them has no checked record. A payday ON that day was looked for: a deposit dated on it is in the
- * records. No grace — the pay's sentences give none.
+ * records. No grace in the split — the pay's sentences give none; only "never reached a bank" waits out a payday's
+ * days to land (`paydayLandingIsRead`).
  *
- * ⛔ THE ONE PREDICATE for whether a passed payday was looked for: the calendar's "not banked yet" against "no
- * statement has covered it yet" (`settledVerdict`), and the checked half of the passed paydays
- * (`unbankedIncomeForSeries`) that the forecast's note, /budgets and the dashboard say "the ledger has not looked for
- * their deposits" through.
+ * ⛔ THE ONE PREDICATE for whether a passed payday was looked for: the calendar's "not banked yet" against "the ledger
+ * has not looked for its deposit" (`settledVerdict`, `not_looked_for`), and the checked half of the passed paydays
+ * (`unbankedIncomeForSeries`) that the forecast's note, the pay series' own page, /budgets and the dashboard say "the
+ * ledger has not looked for their deposits" through.
  *
  * ⛔ Never the bills' reading (`dueDayReadings`), though both read where a series lands NOW (`landingAccountsBySeries`):
  * that one waits a grace the pay's sentences do not give, and reads an account no statement is coming for (archived, a
@@ -291,6 +296,21 @@ export function dueDayIsRead(dueOn: string, reading: DueDayReading): boolean {
  */
 export function paydayIsRead(paydayOn: string, checkedThrough: string | null): boolean {
   return checkedThrough !== null && compareDates(paydayOn, checkedThrough) <= 0;
+}
+
+/**
+ * WHETHER THE LEDGER HAS CHECKED A PAYDAY THROUGH ITS DAYS TO LAND — its series' own `toleranceDays` after it, the
+ * reach the settlement's anchor clause gives a deposit: no deposit can still answer it on a day the ledger has not
+ * read.
+ *
+ * ⛔ THE ONE PREDICATE behind "never reached a bank" against "not banked yet", for a payday no deposit settled: the
+ * forecast's note and the pay series' own page (`pastGraceOccurrenceCount`), the dashboard's Earned vs banked and
+ * /spending's shortfall note (`paydaysNotBankedYet`). 🔴 Review of 878c3d5: it reached the first two alone — Thu Sep 3
+ * checked through Sat Sep 5 read "Pay not banked yet" on the forecast, and "$1,000.00 of it never reached a bank" on
+ * the dashboard and "none of it reached a bank" on /spending, while a deposit on Sun Sep 6 would still have paid it.
+ */
+export function paydayLandingIsRead(paydayOn: string, toleranceDays: number, checkedThrough: string | null): boolean {
+  return paydayIsRead(addDays(paydayOn, toleranceDays), checkedThrough);
 }
 
 /** How far the ledger has read the days one series' past occurrences are graded on — each direction by its own rule. */
@@ -313,7 +333,8 @@ export interface OccurrenceReading {
  * (`paydayIsRead` over `reading.paydaysCheckedThrough`). 🔴 It answered "unbanked" of every passed payday before
  * asking. Measured on his ledger copy 2026-10-12: the calendar drew Oct 1 and Oct 8 "not yet known (not banked yet)"
  * while the dashboard, the forecast and /budgets said they "fall after Sep 24, the last day every account that pay
- * lands in has been checked through — so the ledger has not looked for their deposits".
+ * lands in has been checked through — so the ledger has not looked for their deposits". ⚖️ The calendar says it in
+ * those words (`not_looked_for`), never a bill's "no statement has covered it yet".
  *
  * The state and its reason are returned from ONE call on purpose. `budgetVerdict`
  * established the rule after a headline and its own definition drifted apart on
@@ -332,7 +353,7 @@ export function settledVerdict(
   // or "we are unsure when this is due".
   if (!absenceIsEvidence(kind)) {
     const looked = paydayIsRead(occurrenceDate, reading.paydaysCheckedThrough);
-    return { state: "unsettled", reason: looked ? "unbanked" : "not_imported" };
+    return { state: "unsettled", reason: looked ? "unbanked" : "not_looked_for" };
   }
   if (!dueDayIsRead(occurrenceDate, reading.dueDay)) {
     return { state: "unsettled", reason: reading.dueDay.readsToToday ? "in_grace" : "not_imported" };

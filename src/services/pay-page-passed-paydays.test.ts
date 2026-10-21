@@ -189,6 +189,7 @@ function othersRead() {
       totalCents: f.totalCents,
       occurrenceCount: f.occurrenceCount,
       checkedOccurrenceCount: f.checkedOccurrenceCount,
+      pastGraceOccurrenceCount: f.pastGraceOccurrenceCount,
       frontier: f.frontier,
     },
     budgets: {
@@ -208,6 +209,7 @@ describe("a pay series' own page lists the paydays that passed this month with n
       totalCents: 200_000,
       occurrenceCount: 2,
       checkedOccurrenceCount: 0,
+      pastGraceOccurrenceCount: 0,
       frontier: { kind: "day", through: "2026-08-12" },
       paydays: [
         { date: "2026-09-03", amountCents: 100_000 },
@@ -217,7 +219,33 @@ describe("a pay series' own page lists the paydays that passed this month with n
     const { paydays: _paydays, ...reading } = passed!;
     const others = othersRead();
     expect(reading).toEqual(others.forecast);
-    expect(reading).toEqual(others.budgets);
+    // /budgets prints no warning, so it reads the split alone
+    const { pastGraceOccurrenceCount: _grace, ...split } = reading;
+    expect(split).toEqual(others.budgets);
+  });
+
+  /*
+   * ⚖️ The warning waits out a payday's days to land: its series' tolerance after it, the reach settlement's anchor
+   * clause gives a deposit (`pastGraceOccurrenceCount`). 🔴 The checked split ignored it, so Sep 3 checked through Sep
+   * 3 alone drew the forecast's note and his pay's page in warning colour ("Cash pay that never reaches a bank") while
+   * a deposit on Sep 4, 5 or 6 would still pay it. ⛔ A date window has two ends: Sep 6, three days on, is the last.
+   */
+  test("a payday checked on its day but not through its days to land is no warning — the forecast reads the same", () => {
+    readThrough(CHASE, "2026-06-01", "2026-09-05");
+    expect(page(SERIES).unbankedPaydays).toMatchObject({ checkedOccurrenceCount: 1, pastGraceOccurrenceCount: 0 });
+    expect(othersRead().forecast).toMatchObject({ checkedOccurrenceCount: 1, pastGraceOccurrenceCount: 0 });
+
+    readThrough(CHASE, "2026-09-06", "2026-09-06");
+    expect(page(SERIES).unbankedPaydays).toMatchObject({ checkedOccurrenceCount: 1, pastGraceOccurrenceCount: 1 });
+    expect(othersRead().forecast).toMatchObject({ checkedOccurrenceCount: 1, pastGraceOccurrenceCount: 1 });
+  });
+
+  test("…by its OWN series' tolerance: a schedule given 5 days waits 5", () => {
+    bundle.db.update(recurringSeries).set({ toleranceDays: 5 }).where(eq(recurringSeries.id, SERIES)).run();
+    readThrough(CHASE, "2026-06-01", "2026-09-07");
+    expect(page(SERIES).unbankedPaydays).toMatchObject({ checkedOccurrenceCount: 1, pastGraceOccurrenceCount: 0 });
+    readThrough(CHASE, "2026-09-08", "2026-09-08");
+    expect(page(SERIES).unbankedPaydays).toMatchObject({ checkedOccurrenceCount: 1, pastGraceOccurrenceCount: 1 });
   });
 
   /* ⛔ A date window has two ends, and so does "checked": a payday ON the frontier day was looked for. */
@@ -227,6 +255,7 @@ describe("a pay series' own page lists the paydays that passed this month with n
     expect(passed).toMatchObject({
       occurrenceCount: 2,
       checkedOccurrenceCount: 1,
+      pastGraceOccurrenceCount: 0,
       frontier: { kind: "day", through: "2026-09-03" },
     });
     const { paydays: _paydays, ...reading } = passed;

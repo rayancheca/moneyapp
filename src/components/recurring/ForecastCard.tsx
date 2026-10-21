@@ -24,7 +24,8 @@ interface ForecastCardProps {
  * named as not looked for (`unbankedIncomeFrontierClause`), as /spending names
  * them.
  *
- * ⛔ In `passedPaydaysWords`, the words the pay series' own page heads its list of the same paydays with.
+ * ⛔ In `passedPaydaysWords`, the words the pay series' own page heads its list of the same paydays with — the
+ * warning (a payday checked through its days to land) and "Pay that never reaches a bank" too, never "Cash pay".
  */
 export function UnbankedIncomeNote({ unbanked: u }: { unbanked: MonthForecast["unbankedIncome"] }) {
   const w = passedPaydaysWords(u, formatDayLong);
@@ -33,8 +34,7 @@ export function UnbankedIncomeNote({ unbanked: u }: { unbanked: MonthForecast["u
     <p className={`mt-1 text-xs ${w.warning ? "text-warning" : "text-ink-faint"}`}>
       {w.count} worth <Money cents={u.totalCents} /> {w.passed}
       {names} — not counted above, and not in EOM cash. {w.unread === null ? "" : `${w.unread} `}
-      {w.warning ? "Cash pay that never reaches a bank" : "Pay the ledger has not looked for"}{" "}
-      cannot be projected as arriving; the month strip below counts it, because that line is the schedule.
+      {w.notProjected}; the month strip below counts it, because that line is the schedule.
     </p>
   );
 }

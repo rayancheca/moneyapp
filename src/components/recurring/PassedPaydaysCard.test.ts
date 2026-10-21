@@ -2,7 +2,7 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, test } from "vitest";
 import { formatDayLong } from "@/lib/format-date";
-import { IMPORTS_NOT_EARNINGS, unbankedIncomeFrontierClause } from "@/lib/unbanked-income";
+import { IMPORTS_NOT_EARNINGS, passedPaydaysWords, unbankedIncomeFrontierClause } from "@/lib/unbanked-income";
 import type { SeriesDetail } from "@/services/recurring-detail";
 import { PassedPaydaysCard } from "./PassedPaydaysCard";
 
@@ -28,6 +28,7 @@ const october: Passed = {
   totalCents: 228_384,
   occurrenceCount: 2,
   checkedOccurrenceCount: 0,
+  pastGraceOccurrenceCount: 0,
   frontier: { kind: "day", through: "2026-09-24" },
   paydays: [
     { date: "2026-10-01", amountCents: 114_192 },
@@ -55,19 +56,44 @@ describe("PassedPaydaysCard — the pay page names what the forecast names, in i
     expect(r.rows).toEqual(["Oct 1, 2026 +$1,141.92", "Oct 8, 2026 +$1,141.92"]);
   });
 
-  test("every payday on a checked day: the forecast's 'with no deposit imported', in its warning tone", () => {
-    const r = render({ ...october, checkedOccurrenceCount: 2, frontier: { kind: "day", through: "2026-10-11" } });
+  /*
+   * ⛔ The forecast's body too, not /budgets' closing sentence. 🔴 It printed /budgets' "That is evidence about what
+   * has been imported, not about whether the money was earned." under a doc saying the words were the forecast's —
+   * whose own was "Cash pay that never reaches a bank …", false of his payroll (review of cfb76fb).
+   */
+  test("every payday checked through its days to land: the forecast's words and its warning tone", () => {
+    const passed: Passed = {
+      ...october,
+      checkedOccurrenceCount: 2,
+      pastGraceOccurrenceCount: 2,
+      frontier: { kind: "day", through: "2026-10-11" },
+    };
+    const r = render(passed);
     expect(r.heading).toBe("2 paydays worth $2,283.84 already passed this month with no deposit imported");
     expect(r.headingClass).toContain("text-warning");
-    expect(r.body).toBe(IMPORTS_NOT_EARNINGS);
+    expect(r.body).toBe("Pay that never reaches a bank cannot be projected as arriving.");
+    expect(r.body).toBe(`${passedPaydaysWords(passed, formatDayLong).notProjected}.`);
+    expect(r.body).not.toBe(IMPORTS_NOT_EARNINGS);
+  });
+
+  test("checked on their days, inside their days to land: quiet, and no 'never reaches a bank'", () => {
+    const r = render({ ...october, checkedOccurrenceCount: 2, frontier: { kind: "day", through: "2026-10-09" } });
+    expect(r.heading).toBe("2 paydays worth $2,283.84 already passed this month with no deposit imported");
+    expect(r.headingClass).not.toContain("text-warning");
+    expect(r.body).toBe("Pay not banked yet cannot be projected as arriving.");
   });
 
   test("a month straddling the frontier: the clause splits them, and the checked one keeps the warning", () => {
-    const r = render({ ...october, checkedOccurrenceCount: 1, frontier: { kind: "day", through: "2026-10-01" } });
+    const r = render({
+      ...october,
+      checkedOccurrenceCount: 1,
+      pastGraceOccurrenceCount: 1,
+      frontier: { kind: "day", through: "2026-10-04" },
+    });
     expect(r.heading).toBe("2 paydays worth $2,283.84 already passed this month");
     expect(r.headingClass).toContain("text-warning");
     expect(r.body).toBe(
-      "1 falls on a day already checked, with no deposit; the other one falls after Thu, Oct 1, 2026, the last day " +
+      "1 falls on a day already checked, with no deposit; the other one falls after Sun, Oct 4, 2026, the last day " +
         "every account that pay lands in has been checked through.",
     );
   });
@@ -77,6 +103,7 @@ describe("PassedPaydaysCard — the pay page names what the forecast names, in i
       totalCents: 114_192,
       occurrenceCount: 1,
       checkedOccurrenceCount: 0,
+      pastGraceOccurrenceCount: 0,
       frontier: { kind: "unchecked" },
       paydays: [{ date: "2026-10-01", amountCents: 114_192 }],
     });

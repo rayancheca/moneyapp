@@ -514,7 +514,8 @@ describe("firstPaydayOn", () => {
     expect(firstPaydayOn(his, 3, [paid("2026-06-08", WEEK)], TODAY)).toBe("2026-06-11");
   });
 
-  test("the e2e fixture's shape: deposits a week off the anchor's rhythm open on the anchor's rhythm", () => {
+  // the e2e fixture's shape until 8ef2fc5 (anchored Jul 10; on its deposits' own Jul 17 since)
+  test("the e2e fixture's old shape: deposits a week off the anchor's rhythm open on the anchor's rhythm", () => {
     const paycheck = { ...his, cadence: "biweekly" as const, intervalDaysAvg: 14, nextExpectedOn: "2026-07-10" };
     expect(firstPaydayOn(paycheck, 3, [paid("2024-07-05", 294_319), paid("2024-07-19", 294_319)], "2026-07-08")).toBe(
       "2024-07-12",

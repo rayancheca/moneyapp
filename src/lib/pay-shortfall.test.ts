@@ -54,12 +54,18 @@ const HIS_DEPOSITS: AttributedDeposit[] = [
  * The window as the service reads it: the settlement walked over the paydays and the money that had ARRIVED, and
  * `cashEarnings` over the window and again as of the checked day — Earned vs banked's readings.
  */
-function shortfallOf(paydays: PaydayOccurrence[], deposits: AttributedDeposit[], w: PayShortfallWindow) {
+function shortfallOf(
+  paydays: PaydayOccurrence[],
+  deposits: AttributedDeposit[],
+  window: Omit<PayShortfallWindow, "toleranceDays">,
+) {
+  // the days to land the settlement walks with are the window's too, as the service passes the series' own
+  const w: PayShortfallWindow = { ...window, toleranceDays: 3 };
   const arrived = deposits.filter((d) => d.postedOn <= w.today);
   const s = settlePaydaysBackwards({
     occurrences: paydays,
     deposits: arrived,
-    toleranceDays: 3,
+    toleranceDays: w.toleranceDays,
     periodOf: (day) => (day < PAYROLL_FROM ? 0 : 1),
   });
   const twoEras = paydays.some((o) => o.amountCents !== paydays[0]!.amountCents);
@@ -120,6 +126,8 @@ describe("payShortfall — a window's read paydays against what it banked, and t
       shortCents: 3 * CASH + PAYROLL,
       paidOutside: [{ depositOn: "2026-09-24", paydays: ["2026-08-27"], cents: PAYROLL, early: false }],
       neverBankedCents: 3 * CASH,
+      notBankedYetCents: 0,
+      notBankedYetPaydays: [],
       paidAcross: [],
       noPaydayBeyondCents: 0,
       otherBeyondCents: 0,
@@ -348,7 +356,8 @@ describe("payShortfall — money that crossed the window line is the other windo
       ] as const) {
         const outside = s.paidOutside.reduce((sum, p) => sum + p.cents, 0);
         const across = s.paidAcross.reduce((sum, p) => sum + p.cents, 0);
-        expect(s.bankedInsideCents + outside + s.neverBankedCents, `${from} – ${to}`).toBe(s.readCents);
+        const unbanked = s.notBankedYetCents + s.neverBankedCents;
+        expect(s.bankedInsideCents + outside + unbanked, `${from} – ${to}`).toBe(s.readCents);
         expect(s.bankedInsideCents + across + s.noPaydayBeyondCents + s.otherBeyondCents, `${from} – ${to}`).toBe(
           bankedIn(deposits, from, to),
         );
@@ -490,6 +499,8 @@ describe("payShortfall — the window's LAST day is inside it", () => {
       shortCents: 4 * CASH,
       paidOutside: [],
       neverBankedCents: 4 * CASH,
+      notBankedYetCents: 0,
+      notBankedYetPaydays: [],
       paidAcross: [],
       noPaydayBeyondCents: 0,
       otherBeyondCents: 0,
@@ -562,7 +573,8 @@ function expectItAddsUp(s: PayShortfall, deposits: readonly AttributedDeposit[],
   const banked = deposits
     .filter((d) => d.postedOn >= from && d.postedOn <= to && d.postedOn <= TODAY)
     .reduce((sum, d) => sum + d.amountCents, 0);
-  expect(s.bankedInsideCents + outside + s.neverBankedCents, `${from} – ${to}: the split`).toBe(s.readCents);
+  const split = s.bankedInsideCents + outside + s.notBankedYetCents + s.neverBankedCents;
+  expect(split, `${from} – ${to}: the split`).toBe(s.readCents);
   expect(s.bankedInsideCents + across + s.noPaydayBeyondCents + s.otherBeyondCents - out, `${from} – ${to}`).toBe(
     banked,
   );
@@ -825,5 +837,46 @@ describe("payShortfall — money for a payday no window counts, named with the p
       { depositOn: "2026-10-07", paydays: ["2026-10-08"], cents: PAYROLL, early: true },
     ]);
     expect(window.paidUncounted).toEqual([]);
+  });
+});
+
+/**
+ * ⚖️ "Never reached a bank" only of a read payday checked through its DAYS TO LAND (`paydayLandingIsRead`,
+ * `unbankedSplit`): one no deposit settled that is still inside them is "not banked yet", as the forecast's note calls
+ * it. 🔴 Review of 878c3d5: the forecast said "Pay not banked yet" of Thu Sep 3 checked through Sat Sep 5, and /spending
+ * "none of it reached a bank". His shape, with the next Wells Fargo statement simulated to close the day after a
+ * Thursday whose payroll is late: Thu Oct 1's days to land run to Sun Oct 4.
+ */
+describe("payShortfall — a read payday still inside its days to land is not banked yet", () => {
+  const year = (checkedThrough: string) => his("2026-01-01", TODAY, checkedThrough);
+
+  test("his Thu Sep 24, on the checked day and settled by the Sep 23 lump, moves nothing (decision 55)", () => {
+    expect(year(CHECKED)).toMatchObject({ notBankedYetCents: 0, notBankedYetPaydays: [], neverBankedCents: 1_111_700 });
+  });
+
+  test("checked through Fri Oct 2: Oct 1 is not banked yet, and what never reached a bank does not move", () => {
+    expect(year("2026-10-02")).toMatchObject({
+      notBankedYetCents: PAYROLL,
+      notBankedYetPaydays: ["2026-10-01"],
+      neverBankedCents: 1_111_700,
+    });
+  });
+
+  // ⛔ A date window has two ends: Sat Oct 3 still waits, Sun Oct 4 — three days on — is the last day to land
+  test("Sat Oct 3 still waits; checked through Sun Oct 4, Oct 1 never reached a bank", () => {
+    expect(year("2026-10-03")).toMatchObject({ notBankedYetCents: PAYROLL, neverBankedCents: 1_111_700 });
+    expect(year("2026-10-04")).toMatchObject({
+      notBankedYetCents: 0,
+      notBankedYetPaydays: [],
+      neverBankedCents: 1_111_700 + PAYROLL,
+    });
+  });
+
+  test("the split adds up to what the read paydays came to, either way", () => {
+    for (const checkedThrough of ["2026-10-02", "2026-10-04"]) {
+      const s = year(checkedThrough);
+      const outside = s.paidOutside.reduce((sum, p) => sum + p.cents, 0);
+      expect(s.bankedInsideCents + outside + s.notBankedYetCents + s.neverBankedCents).toBe(s.readCents);
+    }
   });
 });

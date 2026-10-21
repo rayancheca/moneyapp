@@ -10,7 +10,7 @@ import { formatDayShortIn } from "./format-date";
 import { depositsOf } from "./paid-by-another-month";
 import { wentBackOutPhrase, type PayShortfall } from "./pay-shortfall";
 import { TOWARD_NO_PAYDAY } from "./per-payday";
-import { LAST_CHECKED_DAY, notLookedForDeposits } from "./unbanked-income";
+import { daysToLandRunPast, LAST_CHECKED_DAY, notLookedForDeposits, payNotBankedYet } from "./unbanked-income";
 
 /**
  * A section note is AUTHORED COPY selected by a MEASURED predicate, with every
@@ -510,6 +510,12 @@ export interface CashEarningsNoteInput {
     checkedPeriodsCovered?: number;
     checkedPeriodsSinceBanked?: number;
     /**
+     * Of the silence, the checked paydays still inside their days to land (`silentPaydaysNotBankedYet`) —
+     * schedule-wide, whatever the window: what the note for a stale schedule names "not banked yet". Absent or empty,
+     * it names none.
+     */
+    checkedSilentNotBankedYet?: readonly string[];
+    /**
      * The window's READ paydays against the settlement (`payShortfall`) — what the shortfall note prints. Absent
      * means the caller did not measure it, and no such note is written.
      */
@@ -635,7 +641,10 @@ export function cashEarningsSectionNotes(input: CashEarningsNoteInput): SectionN
           ? ` — and the account it lands in has not been checked, so the ledger cannot say whether any of it arrived.`
           : readCovered === 0
             ? `, all of it after ${through}, ${LAST_CHECKED_DAY} — so the ledger has not looked for it.`
-            : ` and ${reached} through ${through}; the other ${unread} ${unread === 1 ? "payday falls" : "paydays fall"} after that, ${LAST_CHECKED_DAY}.`;
+            : // "the other payday" of one — 🔴 "the other 1 payday falls after that" (review of 8ef2fc5)
+              ` and ${reached} through ${through}; ` +
+              `${unread === 1 ? "the other payday falls" : `the other ${unread} paydays fall`} after that, ` +
+              `${LAST_CHECKED_DAY}.`;
 
       const readPart =
         measuredRead && through !== null && readSilence < r.periodsSinceBanked
@@ -654,10 +663,29 @@ export function cashEarningsSectionNotes(input: CashEarningsNoteInput): SectionN
        * e2e fixture's Chase Total Checking is checked through Jun 30 with rows imported to Jul 4.
        */
       const unlooked = through === null ? r.periodsSinceBanked : r.periodsSinceBanked - readSilence;
-      const explanations =
-        measuredRead && (through === null || readSilence < r.periodsSinceBanked)
-          ? `that money was held as cash, spent as cash, the schedule has ended, or ${notLookedForDeposits(unlooked)}`
-          : "that money was held as cash, spent as cash, or the schedule has ended";
+      /*
+       * ⚖️ …and a payday the ledger checked on its day but not through its days to land is not banked yet
+       * (`paydaysNotBankedYet`), in the words of Earned vs banked's verdict (`payNotBankedYet`). 🔴 Review of 4b98f77's
+       * follow-up: weekly pay through Aug 6, Chase read through Sat Sep 5 — September listed cash, ended and not looked
+       * for of Thu Sep 3, while the dashboard said Sep 3's pay is not banked yet.
+       * ⛔ The SILENCE's paydays (`checkedSilentNotBankedYet`), as the sentence they finish is schedule-wide — never the
+       * window's (`shortfall.notBankedYetPaydays`). 🔴 Review of c02a4b0: on the reviewer's state August, which holds no
+       * Sep 3, left its reason out of the very sentence September printed with it; and with Fri Aug 14's deposit after
+       * an unpaid Aug 13, a window holding Aug 13 named it where the verdict names Aug 20, Aug 27 and Sep 3.
+       */
+      const inGrace = r.checkedSilentNotBankedYet ?? [];
+      const payday = (iso: string): string => formatDayShortIn(iso, r.lastPeriodOn ?? iso);
+      const explanations = OR_LIST.format([
+        "that money was held as cash",
+        "spent as cash",
+        "the schedule has ended",
+        ...(measuredRead && (through === null || readSilence < r.periodsSinceBanked)
+          ? [notLookedForDeposits(unlooked)]
+          : []),
+        ...(inGrace.length > 0 && r.checkedThrough
+          ? [payNotBankedYet(inGrace, r.checkedThrough, payday, input.formatDay)]
+          : []),
+      ]);
       notes.push({
         id: `cash-earnings-unbanked-${r.seriesName}`,
         body:
@@ -707,6 +735,8 @@ export function cashEarningsSectionNotes(input: CashEarningsNoteInput): SectionN
 
 /** "A and B", "A, B, and C" — the platform's list, as /budgets' fourth figure joins its deposits. */
 const AND_LIST = new Intl.ListFormat("en", { style: "long", type: "conjunction" });
+/** "A, B, or C" — what a stale schedule's quiet can mean. */
+const OR_LIST = new Intl.ListFormat("en", { style: "long", type: "disjunction" });
 
 const centsOf = (parts: readonly { cents: number }[]): number => parts.reduce((sum, p) => sum + p.cents, 0);
 
@@ -782,8 +812,10 @@ function payShortfallNote(
       `${formatCents(p.cents)} (${AND_LIST.format(p.paydays.map(payday))}) was paid ${p.early ? "early, " : ""}by ` +
       `the ${depositsOf([p.depositOn], formatDay)}`,
   );
+  // ⚖️ "never" only past a payday's days to land (`unbankedSplit`); inside them, the forecast's "not banked yet"
+  const notYet = s.notBankedYetCents > 0 ? [`${formatCents(s.notBankedYetCents)} is not banked yet`] : [];
   const never = s.neverBankedCents > 0 ? [`${formatCents(s.neverBankedCents)} never reached a bank`] : [];
-  const rest = [...outside, ...never];
+  const rest = [...outside, ...notYet, ...never];
 
   const noPaydayFrom = depositsOf(s.towardNoPayday.map((d) => d.depositOn), formatDay);
   const noPayday =
@@ -799,10 +831,17 @@ function payShortfallNote(
       ? rest.length === 0
         ? `, and all of it was banked inside the window${noPayday}`
         : `, of which ${AND_LIST.format([banked, ...rest])}`
-      : outside.length === 0
+      : outside.length === 0 && notYet.length === 0
         ? ", and none of it reached a bank"
-        : `, and none of it was banked inside the window: ${AND_LIST.format(rest)}`;
+        : outside.length === 0 && never.length === 0
+          ? ", and none of it is banked yet"
+          : `, and none of it was banked inside the window: ${AND_LIST.format(rest)}`;
 
+  // why it is not banked yet, beside the claim: the days its deposits have to land run past the checked day — the
+  // stale verdict's words on Earned vs banked (`daysToLandRunPast`)
+  const days = s.notBankedYetPaydays;
+  const grace =
+    days.length > 0 && checkedThrough ? `; ${daysToLandRunPast(days, checkedThrough, payday, formatDay)}` : "";
   const parts = beyondParts(s, payday, noPaydayFrom, formatDay, " went toward none of these paydays");
   const beyond =
     parts.length === 0
@@ -812,9 +851,10 @@ function payShortfallNote(
         : `; another ${formatCents(centsOf(parts))} banked inside the window paid none of them: ` +
           AND_LIST.format(parts.map((p) => `${formatCents(p.cents)}${p.words}`));
   const back = s.wentBackOut.length === 0 ? "" : `; ${wentBackOutPhrase(s.wentBackOut, formatDay)}`;
-  const unlooked = unlookedPhrase(s.unlookedPaydays, checkedThrough, formatDay, "more ");
+  // the checked day is named in full once: `grace` named it
+  const unlooked = unlookedPhrase(s.unlookedPaydays, checkedThrough, formatDay, "more ", grace === "");
 
-  return { kind: "shortfall", body: `${lead}${split}${beyond}${back}${unlooked}.` };
+  return { kind: "shortfall", body: `${lead}${split}${grace}${beyond}${back}${unlooked}.` };
 }
 
 /** One period's pay note beside its figures: the shortfall note, or — no payday read — the note on its money. */
@@ -861,11 +901,12 @@ function unlookedPhrase(
   checkedThrough: string | null | undefined,
   formatDay: (iso: string) => string,
   more: "more " | "",
+  namesDay = true,
 ): string {
   if (n <= 0 || !checkedThrough) return "";
   return (
     `; ${n} ${more}${n === 1 ? "payday in the window falls" : "paydays in the window fall"} after ` +
-    `${formatDay(checkedThrough)}, ${LAST_CHECKED_DAY} — so ${notLookedForDeposits(n)}`
+    `${formatDay(checkedThrough)}${namesDay ? `, ${LAST_CHECKED_DAY}` : ""} — so ${notLookedForDeposits(n)}`
   );
 }
 
