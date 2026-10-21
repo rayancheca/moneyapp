@@ -520,10 +520,10 @@ describe("RecurringCalendar — a day paid inside another's payment", () => {
   });
 
   /*
-   * ⚖️ His decision 73 (2026-10-13): a payment more than its grace ahead of a day, the day before it paid, pays it
-   * EARLY — FPL's Jul 28 −$56.22 its Aug 8 (3 days' grace; Jul 8 paid Jul 10). Drawn on August's grid, nothing posted
-   * there, so the word `paid` says whose payment and that it came early. The entries are what the service returns
-   * (paid-early-next-due-day.test pins it).
+   * ⚖️ His decisions 73 and 76: a payment more than its grace ahead of a day, nearer it than the day before, pays it
+   * EARLY — FPL's Jul 28 −$56.22 its Aug 8 (3 days' grace; 11 days before it, 20 after Jul 8). Drawn on August's grid,
+   * nothing posted there, so the word `paid` says whose payment and that it came early. The entries are what the
+   * service returns (paid-early-next-due-day.test pins it).
    */
   test("a day paid EARLY names the payment and says early — its own, and what its carrier's carries", () => {
     const aug8 = [

@@ -121,7 +121,11 @@ describe("an unread half no statement is keeping unread — its days to post", (
   test("all of the unread waits on its days to post: says so — for one bill or several — and stays quiet", () => {
     const reading = { owedCents: 4500, unreadCents: 4500, inGraceCents: 4500 };
     expect(arrearsTail(reading, HAS_NOT_POSTED)).toBe(` and ${DAYS_TO_POST_NOT_OVER}`);
-    expect(arrearsClause(reading, "not posted", "them")).toBe("the days a payment has to post are not over yet");
+    expect(arrearsClause(reading, "not posted")).toBe("the days a payment has to post are not over yet");
+    // 🔴 of several bills (/budgets' page note) it said the one-bill words (review of 384917c): "them", as "no statement
+    // has covered them yet" does
+    expect(arrearsClause(reading, "not posted", "them")).toBe("the days their payments have to post are not over yet");
+    expect(arrearsTail(reading, NOT_POSTED, "them")).toBe(" and the days their payments have to post are not over yet");
     expect(arrearsAlarms(reading)).toBe(false);
   });
 

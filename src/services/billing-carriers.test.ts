@@ -49,11 +49,11 @@ describe("paymentFor — the payment that pays a due day", () => {
  * 3 — paid no due day at all, so its Oct 1 was drawn a red ✕ beside the Oct 5 row, the runway said it "never posted",
  * and /budgets counted the $2,291.21 twice: in what was spent, and in what came due. His July rent posted Jul 8.
  *
- * A payment past a day's grace is still the payment of the day it is LATE for — until the next due day's own grace
- * opens, where it is that day's, on time. The grace stays the days a payment has to post before anything may say "not
- * posted" (his decision 60); it never made a late payment nobody's.
+ * A payment past a day's grace is still the payment of the day it is LATE for — while it lies nearer that day than the
+ * next (⚖️ his decision 76, 2026-10-14, below). The grace stays the days a payment has to post before anything may say
+ * "not posted" (his decision 60); it never made a late payment nobody's.
  */
-describe("…and a payment past the day's grace pays it late, until the next due day's grace opens", () => {
+describe("…and a payment past the day's grace pays it late, while it lies nearer it than the next due day", () => {
   const rent = (postedOn: string) => ({ postedOn, toleranceDays: 3 });
   const RENT = monthlyOn("2026-09-01");
 
@@ -62,8 +62,12 @@ describe("…and a payment past the day's grace pays it late, until the next due
     expect(paymentFor([rent("2026-10-05")], "2026-10-01", RENT)).toEqual(rent("2026-10-05"));
   });
 
-  test("Jul 28 still pays Jul 1; Jul 29 is inside Aug 1's 3 days — Aug 1's, on time, and never Jul 1's too", () => {
-    expect(paymentFor([rent("2026-07-28")], "2026-07-01", RENT)).toEqual(rent("2026-07-28"));
+  test("Jul 16 — 15 days after Jul 1, 16 before Aug 1 — pays Jul 1; Jul 17, nearer Aug 1, pays it early", () => {
+    expect(paymentFor([rent("2026-07-16")], "2026-07-01", RENT)).toEqual(rent("2026-07-16"));
+    expect(paymentFor([rent("2026-07-16")], "2026-08-01", RENT)).toBeUndefined();
+    expect(paymentFor([rent("2026-07-17")], "2026-07-01", RENT)).toBeUndefined();
+    expect(paymentFor([rent("2026-07-17")], "2026-08-01", RENT)).toEqual(rent("2026-07-17"));
+    // …and Jul 29, inside Aug 1's 3 days, is Aug 1's on time
     expect(paymentFor([rent("2026-07-29")], "2026-07-01", RENT)).toBeUndefined();
     expect(paymentFor([rent("2026-07-29")], "2026-08-01", RENT)).toEqual(rent("2026-07-29"));
   });
@@ -74,27 +78,32 @@ describe("…and a payment past the day's grace pays it late, until the next due
     expect(paymentFor([rent("2026-07-09"), rent("2026-07-06")], "2026-07-01", RENT)).toEqual(rent("2026-07-06"));
   });
 
-  test("a payment BEFORE the day's grace is never late for it: Jun 27, four days early, pays no Jul 1", () => {
-    // nothing paid Jun 1, so it is Jun 1's, late (below) — it pays Jul 1 early only once Jun 1 is paid by another
-    expect(paymentFor([rent("2026-06-27")], "2026-07-01", RENT)).toBeUndefined();
-    expect(paymentFor([rent("2026-06-27")], "2026-06-01", RENT)).toEqual(rent("2026-06-27"));
+  test("a payment BEFORE the day's grace is never late for it: Jun 27, four days early, pays Jul 1 early", () => {
+    // nearer Jul 1 than Jun 1, it pays Jul 1 even with Jun 1 unpaid — the cost he accepted (decision 76)
+    expect(paymentFor([rent("2026-06-27")], "2026-07-01", RENT)).toEqual(rent("2026-06-27"));
+    expect(paymentFor([rent("2026-06-27")], "2026-06-01", RENT)).toBeUndefined();
   });
 
-  test("each payment's late days end where the next due day's grace opens by its OWN tolerance", () => {
-    // the rent's own 3 days: Jul 27 is late for Jul 1; held to an annual fee's 14, it would be Aug 1's, on time
-    expect(paymentFor([rent("2026-07-27")], "2026-07-01", RENT)).toEqual(rent("2026-07-27"));
-    expect(paymentFor([{ postedOn: "2026-07-27", toleranceDays: 14 }], "2026-07-01", RENT)).toBeUndefined();
+  test("each payment is held to its OWN tolerance: Jul 27 pays Aug 1 early at the rent's 3, on time at 14", () => {
+    expect(paymentFor([rent("2026-07-27")], "2026-08-01", RENT)).toEqual(rent("2026-07-27"));
+    expect(paysEarly(rent("2026-07-27"), "2026-08-01")).toBe(true);
+    const fee = { postedOn: "2026-07-27", toleranceDays: 14 };
+    expect(paymentFor([fee], "2026-08-01", RENT)).toEqual(fee);
+    expect(paysEarly(fee, "2026-08-01")).toBe(false);
+    expect(paymentFor([rent("2026-07-27")], "2026-07-01", RENT)).toBeUndefined();
   });
 });
 
 /*
- * ⚖️ His decision 73 (2026-10-13, either/or, recommended): a payment that posts MORE than its grace days EARLY, when the
- * due day before it is already paid, PAYS THE NEXT DUE DAY EARLY. 🔴 FPL (electricity) is due the 8th (his number, 3
+ * ⚖️ His decision 73 (2026-10-13): a payment that posts MORE than its grace days EARLY pays the next due day early —
+ * refined by his decision 76 (2026-10-14, his answer): THE NEARER DUE DAY WINS. A payment between two due days pays the
+ * one it lies nearer, a tie the earlier; it pays the later early only when nothing paid that day on time, otherwise it
+ * is the earlier's, late — or pays nothing, that day already paid. 🔴 FPL (electricity) is due the 8th (his number, 3
  * days' grace), and his Chase Checking holds Jul 10 −$14.21 (Jul 8's, on time) and Jul 28 −$56.22, 11 days before Aug 8:
  * Jul 28 paid no due day at all — and if FPL drafts around the 28th, every statement's newest 8th would read "not
  * posted" until the following one.
  */
-describe("…and one more than its grace EARLY pays the next due day, once the day before it is paid (decision 73)", () => {
+describe("…and one more than its grace EARLY pays the next due day, when it lies nearer it (decisions 73, 76)", () => {
   const fpl = (postedOn: string): Payment => ({ postedOn, toleranceDays: 3 });
   const FPL = monthlyOn("2026-07-08");
   const days = ["2026-06-08", "2026-07-08", "2026-08-08", "2026-09-08", "2026-10-08", "2026-11-08"];
@@ -124,11 +133,15 @@ describe("…and one more than its grace EARLY pays the next due day, once the d
     ]);
   });
 
-  test("the day before UNPAID: the late rule keeps the payment for it — Jul 28 pays Jul 8 late, never Aug 8 too", () => {
+  /*
+   * ⚖️ The cost he accepted (decision 76): nearer Aug 8, Jul 28 pays it even with Jul 8 unpaid — one month owed either
+   * way. 🔴 Under decision 73 the late rule kept it for Jul 8, and the Car lease's Sep 2 −$695.04 read as Aug 15's.
+   */
+  test("the day before UNPAID: Jul 28, nearer Aug 8, pays it early, and Jul 8 is the month owed", () => {
     expect(graded([fpl("2026-07-28")])).toEqual([
       ["2026-06-08", null],
-      ["2026-07-08", "2026-07-28"],
-      ["2026-08-08", null],
+      ["2026-07-08", null],
+      ["2026-08-08", "2026-07-28"],
       ["2026-09-08", null],
       ["2026-10-08", null],
       ["2026-11-08", null],
@@ -164,14 +177,21 @@ describe("…and one more than its grace EARLY pays the next due day, once the d
     ]);
   });
 
-  test("two in one gap after a day paid on time: the earlier pays the next day early, the later pays nothing", () => {
+  test("two in one gap after a day paid on time: the one nearer the next day pays it, nearer Jul 8 nothing", () => {
+    // Jul 20 is 12 days after Jul 8 and 19 before Aug 8 — Jul 8's, already paid on Jul 10
     expect(graded([fpl("2026-07-10"), fpl("2026-07-28"), fpl("2026-07-20")])).toEqual([
       ["2026-06-08", null],
       ["2026-07-08", "2026-07-10"],
-      ["2026-08-08", "2026-07-20"],
+      ["2026-08-08", "2026-07-28"],
       ["2026-09-08", null],
       ["2026-10-08", null],
       ["2026-11-08", null],
+    ]);
+    // both nearer Aug 8 (Jul 24 is 16 after, 15 before): the earlier pays it, the later nothing — one day, one payment
+    expect(graded([fpl("2026-07-10"), fpl("2026-07-28"), fpl("2026-07-24")]).slice(1, 4)).toEqual([
+      ["2026-07-08", "2026-07-10"],
+      ["2026-08-08", "2026-07-24"],
+      ["2026-09-08", null],
     ]);
   });
 
@@ -180,8 +200,13 @@ describe("…and one more than its grace EARLY pays the next due day, once the d
     expect(paysEarly(fpl("2026-08-04"), "2026-08-08")).toBe(true);
     expect(paymentFor([fpl("2026-07-10"), fpl("2026-08-05")], "2026-08-08", FPL)).toEqual(fpl("2026-08-05"));
     expect(paysEarly(fpl("2026-08-05"), "2026-08-08")).toBe(false);
-    // …and Jul 12, a day past Jul 8's grace with Jul 8 paid on Jul 10, is Aug 8's — paid early, 27 days ahead
-    expect(paymentFor([fpl("2026-07-10"), fpl("2026-07-12")], "2026-08-08", FPL)).toEqual(fpl("2026-07-12"));
+    // …and Jul 12, a day past Jul 8's grace, is nearer Jul 8 — paid on Jul 10 — so it pays nothing: no Aug 8 early
+    // (🔴 decision 73 read it as Aug 8's, 27 days ahead: the shape of a rent split Oct 1 + Oct 9 paying Nov 1 —
+    // ⚠️ shape (a) of his open call, "the nearer due day wins" below: "then the other" pays Aug 8 with it again)
+    expect(graded([fpl("2026-07-10"), fpl("2026-07-12")]).slice(1, 3)).toEqual([
+      ["2026-07-08", "2026-07-10"],
+      ["2026-08-08", null],
+    ]);
   });
 
   test("a day paid on time keeps its own payment: one before it in its gap pays nothing more", () => {
@@ -229,11 +254,146 @@ describe("…and one more than its grace EARLY pays the next due day, once the d
       ["2026-07-15", "2026-07-28", "2026-08-20", "2026-08-28"],
       ["2026-06-20", "2026-07-15", "2026-07-28", "2026-09-01", "2026-09-30"],
       ["2026-07-08", "2026-07-20", "2026-07-21", "2026-08-15", "2026-09-07"],
+      // nearer a day paid on time, so the day before's (decision 76)
+      ["2026-07-28", "2026-08-08"],
+      ["2026-07-12", "2026-07-30", "2026-08-08", "2026-08-25", "2026-09-08"],
+      ["2026-06-30", "2026-07-24", "2026-07-28", "2026-08-08", "2026-09-26", "2026-10-08"],
     ];
     for (const shape of shapes) {
       const payments = shape.map(fpl);
       const paid = days.map((d) => paymentFor(payments, d, FPL)).filter((p) => p !== undefined);
       expect(new Set(paid).size).toBe(paid.length);
     }
+  });
+});
+
+/*
+ * ⚖️ His decision 76 (2026-10-14, his answer, refines 73): THE NEARER DUE DAY WINS — measured with the reviewer's
+ * prototype on his ledger copy 2026-10-13, every shape below is one he was shown.
+ */
+describe("the nearer due day wins (decision 76)", () => {
+  const pay = (postedOn: string): Payment => ({ postedOn, toleranceDays: 3 });
+  /** each due day of `days` and the day of the payment that pays it, or null */
+  const graded = (payments: readonly Payment[], due: DueDays, days: readonly string[]) =>
+    days.map((d) => [d, paymentFor(payments, d, due)?.postedOn ?? null] as const);
+
+  // 🔴 decision 73 read the Sep 2 −$695.04 as Aug 15's late payment (Aug 15 unpaid) and left Sep 15 unpaid
+  test("the Car lease, due the 15th: Sep 2 pays Sep 15 early, Aug 15 owed; an Oct 1 web pay pays Oct 15", () => {
+    const LEASE = monthlyOn("2026-10-15");
+    const days = ["2026-08-15", "2026-09-15", "2026-10-15", "2026-11-15"];
+    expect(graded([pay("2026-09-02")], LEASE, days)).toEqual([
+      ["2026-08-15", null],
+      ["2026-09-15", "2026-09-02"],
+      ["2026-10-15", null],
+      ["2026-11-15", null],
+    ]);
+    expect(graded([pay("2026-09-02"), pay("2026-10-01")], LEASE, days)).toEqual([
+      ["2026-08-15", null],
+      ["2026-09-15", "2026-09-02"],
+      ["2026-10-15", "2026-10-01"],
+      ["2026-11-15", null],
+    ]);
+  });
+
+  test("a payment past the next day's grace window is never the day before's: Sep 19 is Sep 15's, late", () => {
+    const LEASE = monthlyOn("2026-10-15");
+    // Sep 18 is Sep 15's on time, Sep 19 — past its 3 — late; neither reaches back to Aug 15
+    for (const day of ["2026-09-18", "2026-09-19"]) {
+      expect(graded([pay(day)], LEASE, ["2026-08-15", "2026-09-15", "2026-10-15"])).toEqual([
+        ["2026-08-15", null],
+        ["2026-09-15", day],
+        ["2026-10-15", null],
+      ]);
+    }
+  });
+
+  test("an exact tie is the earlier day's: his Jun 16 rent, 15 days after Jun 1 and 15 before Jul 1", () => {
+    const RENT = monthlyOn("2026-09-01");
+    const days = ["2026-06-01", "2026-07-01", "2026-08-01"];
+    expect(graded([pay("2026-06-16")], RENT, days)).toEqual([
+      ["2026-06-01", "2026-06-16"],
+      ["2026-07-01", null],
+      ["2026-08-01", null],
+    ]);
+    // a day later it is nearer Jul 1
+    expect(graded([pay("2026-06-17")], RENT, days)).toEqual([
+      ["2026-06-01", null],
+      ["2026-07-01", "2026-06-17"],
+      ["2026-08-01", null],
+    ]);
+  });
+
+  test("nearer a day paid ON TIME by another: the other day, late — Jul 28 pays Jul 8 when Aug 8 is paid", () => {
+    const FPL = monthlyOn("2026-07-08");
+    expect(graded([pay("2026-07-28"), pay("2026-08-08")], FPL, ["2026-07-08", "2026-08-08", "2026-09-08"])).toEqual([
+      ["2026-07-08", "2026-07-28"],
+      ["2026-08-08", "2026-08-08"],
+      ["2026-09-08", null],
+    ]);
+  });
+
+  // 🔴 decision 73 paid Nov 1 early with Oct 9 (Oct 1 paid by then): Nov 1 left Upcoming and the November forecast
+  // ⚠️ shape (a) of his open call (below): "then the other" pays Nov 1 early with Oct 9 again
+  test("…and nearer the day before, paid on time, it pays nothing: a rent split Oct 1 + Oct 9 leaves Nov 1", () => {
+    const RENT = monthlyOn("2026-09-01");
+    const split = [pay("2026-09-02"), pay("2026-10-01"), pay("2026-10-09")];
+    expect(graded(split, RENT, ["2026-09-01", "2026-10-01", "2026-11-01"])).toEqual([
+      ["2026-09-01", "2026-09-02"],
+      ["2026-10-01", "2026-10-01"],
+      ["2026-11-01", null],
+    ]);
+  });
+
+  /*
+   * ⚠️ OPEN — his call (a) (reviews of f8b5320..eb48365 and of 7e36835, 2026-10-21): a payment LEFT OVER, nearer a
+   * day another paid ON TIME, pays nothing as built — which is what keeps the split rent's Nov 1 above. His words for
+   * 76, "unless that one is already paid on time; then the other", pay the other day early: answered so, this test,
+   * the split rent's above and the Aug 4 test's Jul 12 flip together (and nearer-due-day.test.ts' (a) pins), while
+   * the (b) test below stays green. 🔴 As built takes back decision 73 here: run against 7aca8e5's paymentFor, Oct 22
+   * paid Nov 15 early (Oct 15 was paid by then).
+   */
+  test("⚠️ (a) nearer a day paid ON TIME, it pays nothing: a lease prepaid a week after an on-time Oct 15", () => {
+    const LEASE = monthlyOn("2026-10-15");
+    // Oct 22: 7 days after Oct 15, paid on time, 24 before Nov 15
+    expect(graded([pay("2026-10-15"), pay("2026-10-22")], LEASE, ["2026-10-15", "2026-11-15"])).toEqual([
+      ["2026-10-15", "2026-10-15"],
+      ["2026-11-15", null],
+    ]);
+  });
+
+  /*
+   * ⚠️ OPEN — his call (b), apart from (a): nearer a day another paid EARLY, it pays nothing as built. His words do
+   * not reach it — Sep 15 is paid early, not on time — so answering (a) "then the other" leaves this test green; only
+   * an answer to (b) flips it, and the known gap's below with it. Not a regression: 73 owed Oct 15 for this shape too.
+   */
+  test("⚠️ (b) nearer a day paid EARLY, it pays nothing: Sep 30 after an early Sep 2 leaves Oct 15 owed", () => {
+    const LEASE = monthlyOn("2026-10-15");
+    // Sep 30: 15 days either side — the tie, Sep 15's, which Sep 2 paid early
+    expect(graded([pay("2026-09-02"), pay("2026-09-30")], LEASE, ["2026-09-15", "2026-10-15"])).toEqual([
+      ["2026-09-15", "2026-09-02"],
+      ["2026-10-15", null],
+    ]);
+  });
+
+  /*
+   * The review's shape (of 844e484): his June rent in two halves a day apart, then rents past their grace. Each late
+   * rent pays its own month. ⚠️ The second half, Jun 17, is nearer Jul 1 and pays it early — a known gap neither 73
+   * nor 76 catches (only rows within a few days as one payment, or a floor on an early payment's amount, would); and
+   * Jul 8, nearer Jul 1, finds it paid and pays nothing. ⚠️ Shape (b) of his open call (above): Jul 1 is paid EARLY,
+   * and "then the other" there would pay Aug 1 with Jul 8, Sep 1 with Aug 5, Oct 1 with Sep 6 and Nov 1 with Oct 7 —
+   * every late rent a month ahead of its own, Nov 1 gone from Upcoming.
+   */
+  test("late rents each pay their own month; two halves a day apart pay two months — the known gap", () => {
+    const RENT = monthlyOn("2026-09-01");
+    const rows = ["2026-06-16", "2026-06-17", "2026-07-08", "2026-08-05", "2026-09-06", "2026-10-07"].map(pay);
+    const days = ["2026-06-01", "2026-07-01", "2026-08-01", "2026-09-01", "2026-10-01", "2026-11-01"];
+    expect(graded(rows, RENT, days)).toEqual([
+      ["2026-06-01", "2026-06-16"],
+      ["2026-07-01", "2026-06-17"],
+      ["2026-08-01", "2026-08-05"],
+      ["2026-09-01", "2026-09-06"],
+      ["2026-10-01", "2026-10-07"],
+      ["2026-11-01", null],
+    ]);
   });
 });

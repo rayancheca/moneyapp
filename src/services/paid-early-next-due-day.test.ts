@@ -17,10 +17,11 @@ import { recurringCalendar } from "./recurring-calendar";
 import { seriesDetail } from "./recurring-detail";
 
 /**
- * ⚖️ His decision 73 (2026-10-13, either/or, recommended): a payment that posts MORE than its grace days EARLY, when the
- * due day before it is already paid, PAYS THE NEXT DUE DAY EARLY — on every grader of a bill's day: the arrears (the
- * runway's "came due … not posted", /budgets' "expected by now", the bill's "Already due"), the calendar, and every
- * reader that looks ahead (the forecast, Upcoming, the dashboard strip, the bill's "Next expected").
+ * ⚖️ His decision 73 (2026-10-13, either/or, recommended): a payment that posts MORE than its grace days EARLY PAYS THE
+ * NEXT DUE DAY EARLY — when it lies nearer that day than the one before (his decision 76, 2026-10-14, which replaced
+ * 73's "once the day before is paid by another"; `nearer-due-day.test.ts`) — on every grader of a bill's day: the
+ * arrears (the runway's "came due … not posted", /budgets' "expected by now", the bill's "Already due"), the calendar,
+ * and every reader that looks ahead (the forecast, Upcoming, the dashboard strip, the bill's "Next expected").
  *
  * 🔴 Measured on his ledger copy 2026-10-13: FPL (electricity), due the 8th (his number, 3 days' grace), on Chase
  * Checking — Jul 10 −$14.21 (Jul 8's, on time) and Jul 28 −$56.22, 11 days before Aug 8. Jul 28 paid no due day; drafted
@@ -119,7 +120,7 @@ const marks = (key: string, day: string, today: string) =>
 const owed = (today: string) =>
   arrearsThisMonth(bundle.db, new Set([FPL, RENT, UTIL]), today).series.map((s) => [s.id, s.nextDate, s.amountCents]);
 
-describe("FPL's Jul 28 −$56.22 pays Aug 8 early — Jul 8 was paid by Jul 10", () => {
+describe("FPL's Jul 28 −$56.22 pays Aug 8 early — nearer it than Jul 8, which Jul 10 paid", () => {
   beforeEach(() => fplWith(["2026-07-10", -1421], ["2026-07-28", -5622]));
 
   test("August draws Aug 8 paid, naming the payment of Jul 28 — early — and settling $0.00 there", () => {
@@ -181,14 +182,23 @@ describe("drafted every 28th, each draft pays the next 8th — the newest 8th is
   });
 });
 
-describe("the day before UNPAID — the late rule keeps the payment for it, unchanged", () => {
+/*
+ * ⚖️ …nearer Aug 8 it pays Aug 8 even with the day before UNPAID — his decision 76 (2026-10-14), the cost he accepted:
+ * one month owed either way. 🔴 Under decision 73 the late rule kept it for Jul 8 and Aug 8 was owed.
+ */
+describe("the day before UNPAID — Jul 28, nearer Aug 8, pays it, and Jul 8 is the month owed (decision 76)", () => {
   beforeEach(() => fplWith(["2026-07-28", -5622]));
 
-  test("Jul 28 pays Jul 8 late (its row stands for it), so Aug 8 is still owed", () => {
+  test("July draws a Jul 8 mark beside the Jul 28 row, and August draws Aug 8 paid early by it", () => {
     checkedThrough(bundle.db, "acct", "2026-08-19");
-    expect(Object.keys(recurringCalendar(bundle.db, "2026-07", "2026-08-20").entriesByDay)).toEqual(["2026-07-28"]);
-    expect(owed("2026-08-20")).toEqual([[FPL, "2026-08-08", 5887]]);
-    expect(marks("2026-08", "2026-08-08", "2026-08-20").map(([, state]) => state)).not.toContain("paid");
+    expect(Object.keys(recurringCalendar(bundle.db, "2026-07", "2026-08-20").entriesByDay).sort()).toEqual([
+      "2026-07-08",
+      "2026-07-28",
+    ]);
+    expect(owed("2026-08-20")).toEqual([]);
+    expect(marks("2026-08", "2026-08-08", "2026-08-20")).toEqual([
+      [FPL, "paid", { carrier: null, postedOn: "2026-07-28", early: true }],
+    ]);
   });
 });
 
@@ -225,7 +235,7 @@ describe("the carrier path: the utilities paid with the rent's payments, as befo
     expect(owed(TODAY)).toEqual([]);
   });
 
-  test("a rent paid Sep 20 — Sep 1 already paid — pays Oct 1 early, and what it carries with it", () => {
+  test("a rent paid Sep 20 — nearer Oct 1 than Sep 1 — pays Oct 1 early, and what it carries with it", () => {
     pay("t-rent-early", RENT, "2026-09-20", -229121);
     const TODAY = "2026-10-09";
     checkedThrough(bundle.db, "acct", "2026-10-08");

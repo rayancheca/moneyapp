@@ -82,6 +82,21 @@ describe("dueDayIsRead — the one predicate (§6A 60)", () => {
     expect(lastDueDayRead(read("2026-10-02"))).toBe("2026-09-29");
     expect(lastDueDayRead(read("2026-10-02", 0))).toBe("2026-10-02");
   });
+
+  /*
+   * 🔴 Read through TODAY, the last day a payment may post was read before it was over (review of 384917c): an
+   * archived card at Oct 4 drew Oct 1's ✕ with its 3 days' last still running. Today is not read — a charge can still
+   * post on it, as the "running late" chip measures (`seriesStaleness`) — so such accounts are read through the day
+   * before: due + grace is read the day after it, as on any checked day.
+   */
+  test("read through today: today is not over — due + grace = today is not read; the day after, it is", () => {
+    expect(dueDayIsRead("2026-10-01", read("2026-10-04", 3, true))).toBe(false);
+    expect(dueDayIsRead("2026-10-01", read("2026-10-05", 3, true))).toBe(true);
+    expect(lastDueDayRead(read("2026-10-05", 3, true))).toBe("2026-10-01");
+    // no grace: a bill due today waits for tomorrow
+    expect(dueDayIsRead("2026-10-08", read("2026-10-08", 0, true))).toBe(false);
+    expect(dueDayIsRead("2026-10-07", read("2026-10-08", 0, true))).toBe(true);
+  });
 });
 
 /*
@@ -145,8 +160,13 @@ describe("settledVerdict", () => {
       state: "unsettled",
       reason: "in_grace",
     });
+    // …and on today, the last of them: not over until tomorrow (review of 384917c)
+    expect(settledVerdict("bill", "2026-10-05", throughToday(3), true)).toEqual({
+      state: "unsettled",
+      reason: "in_grace",
+    });
     // …and read once those days are over, as any day: missed
-    expect(settledVerdict("bill", "2026-10-05", throughToday(3), true)).toEqual({ state: "missed", reason: null });
+    expect(settledVerdict("bill", "2026-10-04", throughToday(3), true)).toEqual({ state: "missed", reason: null });
     // …and the cautious reasons come first wherever they apply — a payday is graded by the pay's own frontier
     expect(settledVerdict("income", "2026-10-06", throughToday(3), true).reason).toBe("not_imported");
   });

@@ -64,7 +64,7 @@ import { seriesCategoryIds } from "./series-category";
  *                               deposit: what it paid per payday, `lib/per-payday`)
  *   - upcoming        blue •  — an expected occurrence on/after today, unposted
  *   - missed          red ✕   — expected before today, unposted, day AND its grace
- *                               imported (`dueDayIsRead`, ⚖️ §6A 60)
+ *                               checked through, the last over (`dueDayIsRead`, ⚖️ §6A 60, 62)
  *   - unsettled       grey ?  — expected before today, unposted, and the ledger
  *                               cannot yet say (see `occurrence-verdict`)
  *
@@ -262,9 +262,9 @@ export interface CalendarEntry {
    * nothing posted on October's grid either, and the arrears' test pays the day with it (`paymentFor`), so it is named
    * the same way, "paid by its payment of Sep 30, 2026".
    *
-   * ⚖️ `early` where the payment posted MORE than its grace before the day, the day before it already paid (his
-   * decision 73, 2026-10-13, `paysEarly`): FPL's Aug 8 "paid early by its payment of Jul 28, 2026" — its Jul 28 row
-   * drawn in July, 11 days ahead of a 3-day grace. A payment within its grace, the rent's Sep 30 for Oct 1, is on time.
+   * ⚖️ `early` where the payment posted MORE than its grace before the day, nearer it than the day before (his
+   * decisions 73 and 76, `paysEarly`): FPL's Aug 8 "paid early by its payment of Jul 28, 2026" — its Jul 28 row drawn
+   * in July, 11 days ahead of a 3-day grace. A payment within its grace, the rent's Sep 30 for Oct 1, is on time.
    */
   paidWith: { readonly carrier: string | null; readonly postedOn: string; readonly early: boolean } | null;
   /**
@@ -314,7 +314,7 @@ export interface RecurringCalendarMonth {
   postedNetCents: number;
   /** net-worth-signed sum of future (upcoming) expected charges, transfers' left out (`flowEntryOf`) */
   upcomingNetCents: number;
-  /** count of missed expected occurrences — days the ledger HAS been shown, with their grace (`dueDayIsRead`) */
+  /** count of missed expected occurrences — days the ledger HAS checked, with their grace (`dueDayIsRead`) */
   missedCount: number;
   /** count of past occurrences the ledger cannot yet speak to */
   unsettledCount: number;
@@ -704,9 +704,9 @@ export function recurringCalendar(
    * either side of the edge — Sep 30 and Oct 2, each a day from Oct 1 — names the earlier of two as near, so October
    * drew Oct 1 "paid (paid by its payment of Sep 30, 2026)" at $2,109.00 beside the Oct 2 row that stood for it too.
    *
-   * ⛔ Only among the payments on time: an early or late one is the walk's to name (⚖️ decision 73, 2026-10-13). Asked
-   * of the month's postings alone first, as it was, the walk names a payment of this month that pays the NEXT day early
-   * — FPL's Sep 28 for Oct 8, Sep 8 paid early by Aug 28 — as Sep 8's, late, beside an October naming it for Oct 8.
+   * ⛔ Only among the payments on time: an early or late one is the walk's to name (⚖️ decisions 73 and 76). Asked of
+   * the month's postings alone first, as it was, the walk names a payment of this month that pays the NEXT day early —
+   * FPL's Sep 28 for Oct 8, Sep 8 paid early by Aug 28 — as Sep 8's, late, beside an October naming it for Oct 8.
    */
   const paymentNamedFor = (payments: readonly BillPayment[], dueOn: string, dueDays: DueDays): BillPayment | undefined => {
     const paid = paymentFor(payments, dueOn, dueDays);
@@ -843,11 +843,12 @@ export function recurringCalendar(
   const needsFrontier = compareDates(monthStart, today) < 0;
   // …and a past bill missed only once its day AND its grace are read (`dueDayIsRead`, ⚖️ his decision 60, 2026-10-08)
   // on the day its chip measures to (his decision 62, 2026-10-12): the accounts it posts to now, each to its checked
-  // balance, one no statement is coming for through today — so a bill filed late there is never "not imported yet" here
+  // balance, one no statement is coming for through today (today itself once it is over, `lastDueDayRead`) — so a bill
+  // filed late there is never "not imported yet" here
   const readingOf = needsFrontier ? dueDayReadings(db, today) : null;
   // …and a passed payday "not banked yet" only once the ledger has looked for its deposit (`paydayIsRead`): the day
-  // every pay sentence names, where the pay lands NOW — never the bills' reading, which takes every account it ever
-  // landed in
+  // every pay sentence names, where the pay lands NOW, each account to its checked record — never the bills' reading,
+  // which waits a grace and reads an account no statement is coming for through today
   const paydaysCheckedOf = needsFrontier ? checkedThroughBySeries(db, today) : null;
   /*
    * ⚖️ …and every posting that may PAY one of its bills, as the arrears read them (`billPaymentsBySeries`): its own and,
@@ -860,10 +861,10 @@ export function recurringCalendar(
    * "not yet known" (Oct 2) and a red ✕ "missed" (Oct 9, read through Oct 4) beside "Rent utilities & fees paid (paid
    * with the rent's payment of Sep 30)" — while the rent's page and the runway, reading the arrears, owed nothing.
    *
-   * ⚖️ …with NO END, as the arrears read them: a payment past a day's grace pays it late until the next due day's grace
-   * opens (`paymentFor`), so the month's last rent may be paid in the next one — drawn there, named here. ⚖️ …and NO
-   * START: one more than its grace early pays a day once the day before it is paid by another (his decision 73,
-   * 2026-10-13), read back through the series' history — FPL's Jul 28, drawn in July, pays August's Aug 8.
+   * ⚖️ …with NO END, as the arrears read them: a payment past a day's grace pays it late while it lies nearer it than
+   * the next due day (`paymentFor`, his decision 76, 2026-10-14), so the month's last rent may be paid in the next one
+   * — drawn there, named here. ⚖️ …and NO START: one more than its grace early pays a day it lies nearer than the day
+   * before (his decisions 73 and 76) — FPL's Jul 28, drawn in July, pays August's Aug 8.
    */
   const paymentsBySeries = billPaymentsBySeries(db, forecastRows);
 

@@ -131,9 +131,11 @@ const POSTING_DAYS_THAT_SAY_WHERE = 2;
  * payment days are where it has landed; while they differ a charge could sit in either. 🔴 "A named account replaces
  * the history" read a bill naming one account and paying from another only where it does not pay: on a copy of his
  * ledger 2026-10-12 the dismissed PURA VIDA BAY ROAD MIAMI BEACH names Venture X, read through Sep 13, and paid its
- * last two (Jul 19, Jul 21) on Chase Sapphire, read through Sep 2 — Venture X alone could call it late, lapse it and
- * draw its ✕ on days no Sapphire statement had read. It alone reads a different day (Sep 13 → Sep 2); the pay, the
- * rent, its utilities and every live bill read the same day as before.
+ * last two (Jul 19, Jul 21) on Chase Sapphire, read through Sep 2 — Venture X alone could badge its page "Running late"
+ * or "Lapsed" on days no Sapphire statement had read. (Dismissed, it reaches no calendar and no arrears, so no ✕ and no
+ * "not posted": measured on his ledger copy 2026-10-13, its page reads "Lapsed" and Jul–Oct draw it on no day.) It
+ * alone reads a different day (Sep 13 → Sep 2); the pay, the rent, its utilities and every live bill read the same day
+ * as before.
  *
  * ⛔ ONE rule for every caller — the dashboard's income card, /spending's note
  * (`cashEarningsReadings`), the passed-payday sentence on /budgets and

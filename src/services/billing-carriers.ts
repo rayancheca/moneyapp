@@ -98,8 +98,8 @@ export interface Payment {
 
 /**
  * A bill's due days either side of one — its schedule's steps from its anchor, its end and its anchor disregarded
- * (`dueDaysOf`): where a payment past one day's grace stops being late for it, and how far back one more than a day's
- * grace early may lie. Every grader of a bill's day passes the series' own, so each reads the same days.
+ * (`dueDaysOf`): the days a payment between two of them is measured against, to pay the one it lies nearer (⚖️ his
+ * decision 76, `paymentFor`). Every grader of a bill's day passes the series' own, so each reads the same days.
  */
 export interface DueDays {
   /** the due day after `day`, or null — which asks nothing late (`stillToComeReader`) */
@@ -119,41 +119,77 @@ export interface DueDays {
  * October drew its Oct 1 "missed" beside the utilities "paid with the rent's payment of Sep 30", and the arrears owed
  * neither.
  *
- * ⚖️ …LATE, the earliest posted past a day's tolerance and before the next due day's own tolerance opens
- * (`DueDays.after`), when nothing pays the day on time or early. The grace is the days a payment has to post before
- * anything may say "not posted" (his decision 60, 2026-10-08); a payment that comes after them is still the payment of
- * that day. 🔴 It paid nothing (review of 44eb3e7): the rent paid Oct 5, four days past its Oct 1 and its 3 days, was
- * drawn beside a red ✕ on Oct 1, the runway said "A further $2,291.21 came due earlier this month and never posted.",
- * and /budgets counted it in what was spent AND in what came due — $4,599.86 projected for one month's rent. His July
- * rent posted Jul 8, and his own next date (Sep 1) holds the rent's walk, so an import never moves a late day off it.
+ * ⚖️ …else EARLY or LATE by THE NEARER DUE DAY, his decision 76 (2026-10-14, his answer, refines 73): a payment between
+ * two due days — past the earlier's tolerance and short of the later's (`DueDays.before`, `DueDays.after`) — pays the
+ * one it lies NEARER, a tie the earlier (`liesNearerTheLater`). One nearer the later day pays it EARLY only when
+ * nothing paid that day on time; otherwise it is the earlier day's, LATE — or pays nothing, if that day is already
+ * paid. One nearer the earlier day is that day's, LATE — or pays nothing, once that day is paid: never the later day
+ * early. The redirect runs ONE WAY. Of several for one day, the earliest, asked early before late. The grace is the
+ * days a payment has to post before anything may say "not posted" (his decision 60, 2026-10-08); a payment past them
+ * is still a day's. The cost he accepted: one nearer the next day pays it even when the day before is unpaid — FPL
+ * paid only Jul 28 owes Jul 8 where it owed Aug 8, one month owed either way.
  *
- * ⚖️ …EARLY, his decision 73 (2026-10-13, either/or, recommended): a payment that posts MORE than its grace days before
- * the day, after the day before it (`DueDays.before`) and its grace, when that day is already paid by ANOTHER payment
- * (`paidByThen`), PAYS THE DAY EARLY — the earliest such the day before did not take. Asked before late: a payment
- * comes before the days after it, so drafted every 28th each draft pays the next 8th, and the newest 8th is paid by the
- * newest draft. When the day before is unpaid, the late rule keeps that payment for it, as before. 🔴 Measured on his
- * ledger copy 2026-10-13: FPL (electricity), due the 8th with 3 days' grace, posted Jul 10 −$14.21 (Jul 8's, on time)
- * and Jul 28 −$56.22, 11 days before Aug 8 — and Jul 28 paid no due day. No surface asks his Aug 8 (his own next date,
- * Sep 8, opens FPL's walk), but with a draft around every 28th the next Chase statement would have read Sep 8 paid late
- * by Sep 28 and Oct 8 "not posted" — every statement's newest 8th, until the following one. Car insurance's $1,000.00
- * of Sep 3 pays its Sep 11 the same way (before his Dec 11, so asked by none either).
+ * ⚠️ OPEN — TWO calls of his (reviews of f8b5320..eb48365 and of 7e36835, 2026-10-21): what a payment LEFT OVER pays
+ * — one nearer a day another payment already pays. As built, nothing. His words for 76 are "unless that one is already
+ * paid on time; then the other", and they answer one shape of the two:
+ * (a) the nearer day paid ON TIME — his words pay the other day early. 🔴 As built takes back decision 73 here: a lease
+ *     prepaid Oct 22, a week after an on-time Oct 15, paid Nov 15 early under 73 (run against 7aca8e5's paymentFor)
+ *     and as built owes it, "has not posted", still in Upcoming after the $695.04 left. What as built keeps: a rent
+ *     split Oct 1 −$2,000.00 + Oct 9 −$291.21 pays no Nov 1 early with $291.21 — 73's 🔴 (below), which he saw 76
+ *     fix — and FPL's Jul 12 (Jul 8 paid Jul 10) no Aug 8.
+ * (b) the nearer day paid EARLY — his words do not reach it, so whatever he answers to (a) it stays owed: a lease paid
+ *     Sep 2 then Sep 30 (the 15/15 tie, Sep 15's, which Sep 2 paid early) owes Oct 15, as 73 did; after Sep 2 + Oct 1,
+ *     Oct 30 owes Nov 15 where Oct 31 pays it — a web pay around the 1st landing on a 30th, a Feb 28, or a Mar 1
+ *     outside a leap year. "Then the other" here runs on: after the known gap's stray half (Jun 17 paying Jul 1 early,
+ *     below) the review's late rents Jul 8, Aug 5, Sep 6, Oct 7 would each pay the month AFTER their own, and Nov 1
+ *     leave Upcoming with Oct 7.
+ * Each shape's pins say which call they are (nearer-due-day.test.ts, billing-carriers.test.ts): an answer to one flips
+ * its own pins and leaves the other's green. On his ledger copy 2026-10-21 no posting is left over (11 live series with
+ * postings) and neither answer moves a day: the lease has posted once, Sep 2 −$695.04, and owes Oct 15 all unread.
  *
- * ⛔ ONE PAYMENT PAYS ONE DUE DAY: on time it is in no other day's reach; early, the day before took the first of its
- * gap late only when nothing else paid it, and this day takes the next; late, it is in the next day's gap only, ahead
- * of what that day may take early. And rows of one day are ONE payment — his card posted Jun 16's rent as two
- * (`occurrencesOf`) — or the second half of one payment would pay the next month early.
+ * 🔴 Late paid nothing (review of 44eb3e7): the rent paid Oct 5, four days past its Oct 1 and its 3 days, was drawn
+ * beside a red ✕ on Oct 1, the runway said "A further $2,291.21 came due earlier this month and never posted.", and
+ * /budgets counted it in what was spent AND in what came due — $4,599.86 projected for one month's rent. His July rent
+ * posted Jul 8, nearer Jul 1 than Aug 1. 🔴 Early paid nothing (until his decision 73, 2026-10-13): FPL, due the 8th
+ * with 3 days' grace, posted Jul 10 −$14.21 (Jul 8's, on time) and Jul 28 −$56.22, 11 days before Aug 8 — and with a
+ * draft around every 28th, every statement's newest 8th would have read "not posted" until the following one.
+ *
+ * 🔴 Decision 73 paid a day early only once the day before was paid by ANOTHER payment (review of 844e484, measured on
+ * his ledger copy 2026-10-13): the Car lease's Sep 2 −$695.04, 13 days before Sep 15, read as Aug 15's late payment
+ * and left Sep 15 unpaid — a web pay around every 1st would read as the month before's, and every newest 15th "not
+ * posted" once Wells Fargo is read past it; and a rent split Oct 1 −$2,000.00 + Oct 9 −$291.21 paid Nov 1 early with
+ * October's second half, so Nov 1 left Upcoming and the November forecast. Nearer, Sep 2 pays Sep 15, an Oct 1 web pay
+ * Oct 15, Oct 9 nothing (Oct 1 is paid on time) — and FPL's draft on every 28th still pays each next 8th, Car
+ * insurance's $1,000.00 of Sep 3 its Sep 11. His lease is anchored on Oct 15 (his date): no surface asks its Aug 15.
+ *
+ * ⛔ ONE PAYMENT PAYS ONE DUE DAY: on time it is in no gap; between two days it is asked for by one of them only — the
+ * later early, or the earlier late — and a day takes one. Rows of one day are ONE payment: his card posted Jun 16's
+ * rent as two (`occurrencesOf`). ⚠️ Two halves a day apart are two payments — Jun 16 + Jun 17 pay Jun 1 (the tie) and
+ * Jul 1 (nearer it): a known gap neither 73 nor 76 catches.
+ *
+ * ⛔ Nothing is read back: a day's payment lies between the days either side of it, and whether the next is paid on
+ * time — so no reader needs more than the postings one due day either side of its window (`billPaymentsBySeries`).
  */
 export function paymentFor<P extends Payment>(payments: readonly P[], dueOn: string, dueDays: DueDays): P | undefined {
   const onTime = onTimePayment(payments, dueOn);
   if (onTime !== undefined) return onTime;
   const before = dueDays.before(dueOn);
   if (before !== null) {
-    // the day before took the first of these late, unless another payment had paid it by then
-    const early = paymentDaysBetween(payments, before, dueOn)[paidByThen(payments, before, dueDays) ? 0 : 1];
+    // early: nearer this day than the one before — nothing paid this day on time (above); never one nearer the day
+    // before, whether that day was paid on time or early (⚠️ open, his calls (a) and (b), above)
+    const early = paymentDaysBetween(payments, before, dueOn).find((p) => liesNearerTheLater(p, before, dueOn));
     if (early !== undefined) return early;
   }
   const after = dueDays.after(dueOn);
-  return after === null ? undefined : paymentDaysBetween(payments, dueOn, after)[0];
+  if (after === null) return undefined;
+  // late: nearer this day than the next — or nearer the next, when another payment paid that one on time
+  const afterOnTime = onTimePayment(payments, after) !== undefined;
+  return paymentDaysBetween(payments, dueOn, after).find((p) => afterOnTime || !liesNearerTheLater(p, dueOn, after));
+}
+
+/** Whether a payment between two due days lies nearer the later — a tie is the earlier's (⚖️ decision 76). */
+function liesNearerTheLater(payment: Payment, earlier: string, later: string): boolean {
+  return diffDays(payment.postedOn, later) < diffDays(earlier, payment.postedOn);
 }
 
 /** Whether a payment of a due day is EARLY (`paymentFor`): more than its own tolerance before the day. */
@@ -187,27 +223,6 @@ function paymentDaysBetween<P extends Payment>(payments: readonly P[], from: str
     .filter((p) => diffDays(from, p.postedOn) > p.toleranceDays && diffDays(p.postedOn, to) > p.toleranceDays)
     .sort((a, b) => compareDates(a.postedOn, b.postedOn));
   return between.filter((p, i) => i === 0 || between[i - 1]!.postedOn !== p.postedOn);
-}
-
-/**
- * Whether `day` is paid ON TIME or EARLY — so that it takes no payment after its grace, late. Early when the day before
- * it was paid by then and one payment lies between them, or when two do (the day before takes the first late); so the
- * answer is read back through days with exactly one between, to a day that settles it.
- *
- * ⛔ It ends: every day read back has a payment of its own between it and the next, and no payment is between two
- * pairs of days — so at most one day per payment. The count bounds a schedule that would not step back.
- */
-function paidByThen(payments: readonly Payment[], day: string, dueDays: DueDays): boolean {
-  let d = day;
-  for (let read = 0; read <= payments.length; read++) {
-    if (onTimePayment(payments, d) !== undefined) return true;
-    const before = dueDays.before(d);
-    if (before === null) return false;
-    const between = paymentDaysBetween(payments, before, d).length;
-    if (between !== 1) return between > 1;
-    d = before;
-  }
-  return false;
 }
 
 /**
@@ -284,11 +299,10 @@ function postingsBySeries(
  * postings and names a carrier's (`paidWith`, `BillPayment.carried`) — the same list, so the three cannot grade one
  * Oct 1 apart.
  *
- * ⛔ EVERY posting, never a window's: a payment pays a day early only once the day before it is paid by another
- * (`paymentFor`, ⚖️ his decision 73, 2026-10-13), which is read back as far as the payments go. Each reader read from
- * its own window's start less the widest grace until then, and with a draft every 28th his FPL's Oct 8 is paid early
- * by Sep 28 only because Sep 8 was by Aug 28, Aug 8 by Jul 28 and Jul 8 by Jul 10 — a reader of October alone would
- * have said "not posted" beside a calendar of the year saying "paid".
+ * ⛔ EVERY posting, never a window's: a day's payment may lie as far back as the due day before it, and a late one asks
+ * whether the day after is paid on time (`paymentFor`, ⚖️ his decision 76, 2026-10-14) — a cycle either side of any
+ * window. Each reader read from its own window's start less the widest grace until then, and FPL's Aug 8, paid early
+ * by Jul 28, would read "not posted" to a reader of August from Jul 29 beside a calendar of the year saying "paid".
  *
  * 🔴 The readers that look ahead never asked (review of 50020a2): with the rent paid Sep 30, the calendar drew its Oct
  * 1 paid while the forecast card, the Upcoming tab, the dashboard strip and the rent's page still listed it coming.

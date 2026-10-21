@@ -135,12 +135,13 @@ export function overdueForSeries(
    * $182.21 came due every 1st and "has not posted" beside the rent's payment that paid it. Its amount is untouched:
    * still owed at its own $182.21 when the rent has not paid, and owed nowhere when it has.
    *
-   * ⚖️ …with NO END: a payment past a day's grace pays it late, until the next due day's grace opens (`paymentFor`),
-   * and that can be past `through` and its tolerance — the arrears' walk read only as far as the ledger has read
-   * (`arrearsReadCents`) must see the late payment the whole walk saw. No posting is dated past today.
+   * ⚖️ …with NO END: a payment past a day's grace pays it late while it lies nearer it than the next due day
+   * (`paymentFor`, ⚖️ his decision 76, 2026-10-14), and that can be past `through` and its tolerance — the arrears'
+   * walk read only as far as the ledger has read (`arrearsReadCents`) must see the late payment the whole walk saw. No
+   * posting is dated past today.
    *
-   * ⚖️ …and NO START: one more than its grace early pays a day once the day before it is paid by another (his decision
-   * 73, 2026-10-13), read back through the series' history — FPL's Jul 28 pays its Aug 8.
+   * ⚖️ …and NO START: one more than its grace early pays a day it lies nearer than the day before (his decisions 73 and
+   * 76), as far back as that day — FPL's Jul 28 pays its Aug 8, the Car lease's Sep 2 its Sep 15.
    */
   const paymentsBySeries = billPaymentsBySeries(db, live);
 
@@ -179,7 +180,7 @@ export interface ArrearsSeries extends BudgetTailSeries {
    */
   unreadCents: number;
   /**
-   * Of `unreadCents`, the part NO IMPORT keeps unread: the series' accounts are read through today
+   * Of `unreadCents`, the part NO STATEMENT keeps unread: the series' accounts are read through today
    * (`DueDayReading.readsToToday` — archived, a cash wallet, or checked to the day), so it waits only for its days to
    * post — all of `unreadCents` then, or none. What every arrears surface says in its own words
    * (`ArrearsReading.inGraceCents`), never "no statement has covered it yet".
@@ -302,15 +303,17 @@ export function arrearsReadingOfSeries(s: ArrearsSeries): ArrearsReading {
  * §6A 59), so its Oct 1 is "not posted" exactly when the rent's is and quiet exactly when the rent's is — never one of
  * each.
  *
- * ⚖️ A due day is read once its accounts are imported through the day PLUS its grace — the `toleranceDays` a covering
- * posting may still land within (`overdueForSeries`, `paymentFor`) — his decision 60 (2026-10-08), here and in the
- * calendar's ✕ together (`dueDayIsRead`). 🔴 It was read on the day ITSELF, so "not posted" vouched for days after it no
- * import had reached: the e2e fixture's Meal Kit (due Jul 5, its card imported through Jul 5) was "never posted" on the
- * runway while a payment on Jul 6–8 would still have paid it. Pinned at the boundary by not-posted-after-grace.test.ts
- * (imported through due + grace − 1: quiet; through due + grace: not posted) on every surface.
+ * ⚖️ A due day is read once its accounts are CHECKED through the day PLUS its grace (his decision 65, 2026-10-12: each
+ * to its last statement balance) — the `toleranceDays` a covering posting may still land within (`overdueForSeries`,
+ * `paymentFor`) — his decision 60 (2026-10-08), here and in the calendar's ✕ together (`dueDayIsRead`). 🔴 It was read
+ * on the day ITSELF, so "not posted" vouched for days after it no import had reached: the e2e fixture's Meal Kit (due
+ * Jul 5, its card imported through Jul 5) was "never posted" on the runway while a payment on Jul 6–8 would still have
+ * paid it. Pinned at the boundary by not-posted-after-grace.test.ts (checked through due + grace − 1: quiet; through
+ * due + grace: not posted) on every surface.
  *
  * ⚖️ …and an account no statement will come for — archived, or a cash wallet — is read through today, the calendar's
- * frontier for the same reason (`silenceReadThrough`): its bills' silence is measured there (2026-10-08). 🔴 Read
+ * frontier for the same reason (`silenceReadThrough`): its bills' silence is measured there (2026-10-08) — today itself
+ * read once it is over (`lastDueDayRead`), a payment still able to post on it. 🔴 Read
  * to an archived card's last import (review of e00e6b8), Venture X's Breezeline was "running late" on /recurring and
  * its Nov 8 still "no import has covered it yet" here, at 2026-11-20 — an import /imports never asks for.
  *
