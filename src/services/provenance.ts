@@ -19,7 +19,6 @@ import {
   budgetCoverageSentence,
   countedFlow,
   partReadTotal,
-  readThroughSentence,
   spentOnlyFromCashWallets,
   type CountedFlow,
 } from "@/lib/budget-coverage";
@@ -27,7 +26,7 @@ import { daysNotImportedYet, emptyPeriodReason } from "@/lib/empty-period";
 import { ledgerOpens, ledgerReaches } from "./observation-frontier";
 import { outsidePortfolioCashAccountIds, ownPortfolioAccountIds } from "./accounts";
 import { carryReads, categoryReachFor, categoryWindowReading, coverageOfAccounts, spentFromSinceFor } from "./budgets";
-import { spendingReadThrough } from "./movers-card";
+import { allSpendPartlyRead, spendingReadThrough } from "./movers-card";
 import {
   activeTxnsInRange,
   isHisExpenseRow,
@@ -333,6 +332,13 @@ export type FigureRef =
        * badge is attached to.
        */
       against?: { from: string; to: string; label?: string };
+      /**
+       * The day its elapsed days are counted to and its spending's read day is asked on (decision 72,
+       * `allSpendPartlyRead`) — the caller's own `today`, as the dashboard's pace tile hands its own; omitted, today.
+       * ⚠️ That and no more: an EMPTY window's own sentence still counts to today (`summedRowsProof`), as every
+       * proof's coverage is the ledger as it stands now.
+       */
+      today?: string;
     }
   /**
    * A budget's PLAN amount — the one figure in this app that is a decision
@@ -2666,26 +2672,6 @@ function wholeReadInPartSentence(whole: PartlyRead): string {
 }
 
 /**
- * ⚖️ Decision 72 for ALL spending: read through `spendingCoverageThrough` — the last day every account he spends from
- * has been imported through, the day /spending's What moved and the dashboard's "What changed" already name. 🔴
- * Measured on his ledger copy 2026-10-13: `/spending` for September chipped "adds up … 43 rows from 3 documents" beside
- * its own What moved naming Aug 12.
- *
- * ⚖️ CASH WALLETS ARE LEFT OUT (2026-09-15, the /budgets rule): with no account a statement is still coming for that
- * has an import day — an empty ledger, or one of cash wallets alone — the day `spendingCoverageThrough` falls back to
- * is a wallet's newest typed row, which no import will ever move. Nothing is graded partly read then: "partly read"
- * forever would be a claim no statement could correct.
- *
- * ⛔ Asked through `spendingReadThrough`, the day /spending's heatmap reads its days against too — one day for the page.
- * The caller reads it once (`allSpendProvenance`): an EMPTY window is asked against it as well.
- */
-function allSpendPartlyRead(db: AppDatabase, through: string | null, from: string, to: string): PartlyRead | null {
-  if (through === null) return null;
-  const n = daysNotImportedYet({ from, to, today: todayIso(), ledgerOpens: ledgerOpens(db), ledgerReaches: through });
-  return n === 0 ? null : { uncoveredDays: n, line: readThroughSentence(through, n, { start: from }) };
-}
-
-/**
  * What a proof says of a window read only in part — the sentence after its rows', in /budgets' words — and what that
  * makes the total, by what it counts (`partReadTotal`): a Net is no lower bound.
  */
@@ -2895,6 +2881,7 @@ function allSpendProvenance(
   to: string,
   label: string | undefined,
   against: { from: string; to: string; label?: string } | undefined,
+  today: string,
 ): Provenance {
   const rows = allSpendRows(db, from, to);
   const subject = label ?? "your spending";
@@ -2905,14 +2892,14 @@ function allSpendProvenance(
    * 2fce458) Sep 13 – 22 — no row, the ledger reaching Sep 24 on Wells Fargo, every card he spends from stopping by Sep
    * 12 — read "so this total is zero rather than unproven", where /spending's empty state now reads a window not read.
    */
-  const through = spendingReadThrough(db, todayIso());
+  const through = spendingReadThrough(db, today);
   const reaches = through ?? undefined;
-  const unread = allSpendPartlyRead(db, through, from, to);
+  const unread = allSpendPartlyRead(db, from, to, today, through);
   if (!against) return summedRowsProvenance(db, rows, subject, from, to, reaches, unread);
 
   const priorRows = allSpendRows(db, against.from, against.to);
   const priorSubject = against.label ?? "the window it is compared against";
-  const priorUnread = allSpendPartlyRead(db, through, against.from, against.to);
+  const priorUnread = allSpendPartlyRead(db, against.from, against.to, today, through);
   // ⚖️ decision 72: a comparison stands on both windows, so either read in part makes the claim partly read
   const eitherUnread = unread ?? priorUnread;
 
@@ -3447,7 +3434,7 @@ export function provenanceFor(db: AppDatabase, ref: FigureRef): Provenance | nul
     case "recurringSeries":
       return recurringSeriesProvenance(db, ref.id, ref.today ?? todayIso());
     case "allSpend":
-      return allSpendProvenance(db, ref.from, ref.to, ref.label, ref.against);
+      return allSpendProvenance(db, ref.from, ref.to, ref.label, ref.against, ref.today ?? todayIso());
     case "budgetPlan":
       return budgetPlanProvenance(db, ref.id, ref.label);
   }

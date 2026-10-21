@@ -243,6 +243,10 @@ export function unreachedDashNote(kinds: Iterable<UnreachedKind>, bucketNoun: "d
  * (`services/budgets`), not the whole ledger's. The clamp is shared; the
  * population is the caller's. Fed the ledger-wide day, Fees would read 2 days
  * where its account leaves 15 (measured 2026-09-15).
+ *
+ * ⚖️ …and since decision 72 the tile and the readout hand it ALL spending's day
+ * (`movers-card::allSpendPartlyRead`): fed the ledger-wide day, on his ledger
+ * copy 2026-10-21 both read 7 days of October where /spending's proof read 21.
  */
 export function daysNotImportedYet(input: EmptyPeriodInput): number {
   const { from, to, today } = input;

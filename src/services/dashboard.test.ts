@@ -14,6 +14,7 @@ import { createAccount } from "./accounts";
 import { addManualAnchor } from "./anchors";
 import { dashboardData } from "./dashboard";
 import { rebuildAccount } from "./derivation";
+import { provenanceFor } from "./provenance";
 import { addDays } from "@/lib/dates";
 import { formatDayShort } from "@/lib/format-date";
 import { priceCache } from "@/db/schema/holdings";
@@ -61,11 +62,11 @@ function seedSeries(opts: {
     .get().id;
 }
 
-function spend(desc: string, postedOn: string, amountCents: number) {
+function spend(desc: string, postedOn: string, amountCents: number, accountId: string = checking) {
   bundle.db
     .insert(transactions)
     .values({
-      accountId: checking,
+      accountId,
       postedOn,
       amountCents,
       rawDescription: desc,
@@ -302,7 +303,7 @@ describe("dashboardData: spending pace", () => {
     ]);
     // the undrawn days past Jul 4 are the four the text counts; Jul 1 is not
     // counted there, because it is not "not imported yet" (`daysNotImportedYet`)
-    expect(pace!.uncoveredDays).toBe(4);
+    expect(pace!.partlyRead?.uncoveredDays).toBe(4);
     // the figures beside it do not move
     expect(pace!.actualToDateCents).toBe(110_00);
   });
@@ -320,7 +321,7 @@ describe("dashboardData: spending pace", () => {
     // the newest row here is 2026-07-02 against a today of the 8th, so six of
     // the eight elapsed days are unimported — the figure still stands, because
     // part of the window IS measured, and the widget says how much is not
-    expect(pace!.uncoveredDays).toBe(6);
+    expect(pace!.partlyRead?.uncoveredDays).toBe(6);
   });
 
   /*
@@ -350,7 +351,7 @@ describe("dashboardData: spending pace", () => {
       spend("Groceries", "2026-07-02", -80_00);
       // newest active row is 2026-07-02; today is the 8th
       const { pace } = dashboardData(bundle.db, TODAY);
-      expect(pace!.uncoveredDays).toBe(6);
+      expect(pace!.partlyRead?.uncoveredDays).toBe(6);
       // …and the figure still stands, because part of the window IS measured
       expect(pace!.freeToSpendCents).not.toBeNull();
       expect(pace!.actualToDateCents).toBe(80_00);
@@ -360,7 +361,7 @@ describe("dashboardData: spending pace", () => {
       // every row is in a PREVIOUS month: July is entirely unimported
       spend("Groceries", "2026-06-20", -80_00);
       const { pace } = dashboardData(bundle.db, TODAY);
-      expect(pace!.uncoveredDays).toBe(8); // all eight elapsed days of July
+      expect(pace!.partlyRead?.uncoveredDays).toBe(8); // all eight elapsed days of July
       /*
        * ⛔ null, not 0. "$0.00 spent, so you have $X free" is a claim about a
        * month nobody has looked at. The em dash is the same refusal
@@ -416,14 +417,103 @@ describe("dashboardData: spending pace", () => {
 
       const { pace } = dashboardData(bundle.db, TODAY);
       // Jul 6, 7 and 8 — not Jul 3, 4 and 5, which the statement covers
-      expect(pace!.uncoveredDays).toBe(3);
+      expect(pace!.partlyRead?.uncoveredDays).toBe(3);
     });
 
     test("an import that reaches today leaves nothing uncovered", () => {
       spend("Groceries", TODAY, -80_00);
       const { pace } = dashboardData(bundle.db, TODAY);
-      expect(pace!.uncoveredDays).toBe(0);
+      expect(pace!.partlyRead).toBeNull();
       expect(pace!.freeToSpendCents).not.toBeNull();
+    });
+  });
+
+  /*
+   * ⚖️ His decision 72 (2026-10-13): a total over days not every account is read for is "partly read", with /budgets'
+   * line under it. 🔴 Measured on his ledger copy 2026-10-21: the tile read "at least $1,603.00 spent · 7 days of
+   * October 2026 not imported yet" — Oct 15–21, the days NO account has read (Venture X reaches Oct 14) — with no chip,
+   * while /spending, one click away, read "partly read" and "spending imported through Aug 12 · 21 days of this period
+   * unaccounted": Chase Checking and Wells Fargo have read no day of October. The tile now counts by /spending's proof.
+   */
+  describe("a month not every account he spends from has read", () => {
+    function closeStatement(accountId: string, periodStart: string, periodEnd: string): void {
+      const instId = bundle.db.select().from(institutions).where(eq(institutions.name, "Chase")).get()!.id;
+      const now = new Date().toISOString();
+      const id = `${accountId}-${periodEnd}`;
+      bundle.db
+        .insert(importFiles)
+        .values({
+          id,
+          fileName: `${periodEnd}-statement.pdf`,
+          fileSha256: `sha-${id}`,
+          format: "pdf",
+          institutionId: instId,
+          parserVersion: 1,
+          status: "parsed",
+          storagePath: `/tmp/${id}.pdf`,
+          importedAt: now,
+          createdAt: now,
+          updatedAt: now,
+        })
+        .run();
+      bundle.db
+        .insert(statementPeriods)
+        .values({
+          id: `period-${id}`,
+          importFileId: id,
+          accountId,
+          periodStart,
+          periodEnd,
+          reconciliation: "reconciled",
+          createdAt: now,
+          updatedAt: now,
+        })
+        .run();
+    }
+
+    function card(): string {
+      const instId = bundle.db.select().from(institutions).where(eq(institutions.name, "Chase")).get()!.id;
+      return createAccount(bundle.db, { institutionId: instId, name: "Venture X", type: "credit" });
+    }
+
+    test("counts the days /spending counts, wears its chip, and keeps the figures it found as lower bounds", () => {
+      spend("Rent", "2026-06-20", -900_00); // checking: read through Jun 20, no day of July
+      const venture = card();
+      spend("Groceries", "2026-07-03", -25_00, venture);
+      spend("Coffee", TODAY, -5_00, venture); // the card reaches today, so no day is unread by EVERY account
+
+      const { pace } = dashboardData(bundle.db, TODAY);
+      // every elapsed day of July: checking has read none of them
+      expect(pace!.partlyRead).toEqual({
+        uncoveredDays: 8,
+        line: "spending imported through Jun 20 · 8 days of this period unaccounted",
+      });
+      expect(pace!.provenance.verdict).toBe("partly_read");
+      // ⛔ one proof for one window: /spending's own, asked of the same month on the same day — its line is the tile's
+      const july = { from: "2026-07-01", to: "2026-07-31", label: "July 2026", today: TODAY };
+      expect(provenanceFor(bundle.db, { kind: "allSpend", ...july })).toEqual(pace!.provenance);
+      expect(pace!.provenance.partlyRead).toEqual(pace!.partlyRead);
+      // $30.00 was found, so the figures stand — as the lower bounds the chip says they are
+      expect(pace!.actualToDateCents).toBe(30_00);
+      expect(pace!.freeToSpendCents).not.toBeNull();
+      expect(pace!.spendingNotFound).toBeNull();
+    });
+
+    /*
+     * ⚖️ Decision 64 (2026-10-12), asked of the window /spending's Spent card asks it of
+     * (`CashFlow.spendingUnaccounted`): no spending found and not one elapsed day read by the day every account he
+     * spends from is read through is no "$0.00 spent". The card's statement reads Jul 1–5, so the ledger reaches Jul 5
+     * and the old count (3 days) let "≈ $X free to spend" stand over a July checking has not been read for at all.
+     */
+    test("no spending found past that day is a dash, in /spending's words", () => {
+      spend("Rent", "2026-06-20", -900_00);
+      const venture = card();
+      spend("Groceries", "2026-06-10", -25_00, venture);
+      closeStatement(venture, "2026-06-06", "2026-07-05");
+
+      const { pace } = dashboardData(bundle.db, TODAY);
+      expect(pace!.freeToSpendCents).toBeNull();
+      expect(pace!.spendingNotFound).toBe("spending imported through Jun 20");
     });
   });
 });

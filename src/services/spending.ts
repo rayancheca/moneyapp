@@ -13,7 +13,6 @@ import { normalizeDescription } from "@/lib/normalize";
 import { comparePeriods, type PeriodComparison } from "@/lib/compared-windows";
 import { spendingNotFoundFact } from "@/lib/budget-coverage";
 import {
-  daysNotImportedYet,
   emptyFigure,
   emptyPeriodCopy,
   emptyPeriodReason,
@@ -43,8 +42,9 @@ import {
 import { categoryEmptyPeriodCopy } from "@/lib/category-reach";
 import { categoryReachFor, type CategoryReachContext } from "./budgets";
 import { isUpfrontCarRow, upfrontCarRule } from "./car-upfront";
-import { spendingCoverageThrough, spendingReadThrough } from "./movers-card";
+import { allSpendPartlyRead, spendingCoverageThrough, spendingReadThrough } from "./movers-card";
 import { ledgerOpens, ledgerReaches } from "./observation-frontier";
+import type { PartlyRead } from "./provenance";
 import { seriesIdsNotDrawnAsRecurring } from "./recurring-link";
 import { activeSplitsInRange } from "./transaction-splits";
 
@@ -452,11 +452,12 @@ export interface SpendingProjection {
   /** 0..1 pace confidence — low ⇒ render fainter + say so; null unless in progress */
   paceConfidence: number | null;
   /**
-   * Elapsed days of the period no import reaches (`daysNotImportedYet`, the
-   * dashboard tile's arithmetic). Above zero, the pace and its to-date figure are
-   * LOWER BOUNDS and the readout says "at least". Null unless in progress.
+   * ⚖️ Decision 72: the period's elapsed days past the day every account he spends from is imported through, and the
+   * line for them — the period proof's own (`allSpendPartlyRead`), the line under "Where it went" on the same page and
+   * under the dashboard tile that links here. Present, the pace and its to-date figure are LOWER BOUNDS and the readout
+   * says "at least" and why. Null unless in progress, or read in full.
    */
-  paceUncoveredDays: number | null;
+  pacePartlyRead: PartlyRead | null;
   /** the comparable prior period — the "last {period}" total + per-bucket ghost; null when it had no spend */
   prior: {
     label: string;
@@ -504,7 +505,7 @@ export function spendingProjection(
   let projectedSpendCents: number | null = null;
   let paceBasis: string | null = null;
   let paceConfidence: number | null = null;
-  let paceUncoveredDays: number | null = null;
+  let pacePartlyRead: PartlyRead | null = null;
   // pace only means something for an in-progress period (a past period is done —
   // its "projection" would just be its actual, so we don't fabricate one).
   if (period.isCurrent && currentPace) {
@@ -522,13 +523,7 @@ export function spendingProjection(
     projectedSpendCents = proj.expectedTotalCents;
     paceBasis = proj.basis;
     paceConfidence = proj.confidence;
-    paceUncoveredDays = daysNotImportedYet({
-      from: period.from,
-      to: period.to,
-      today,
-      ledgerOpens: ledgerOpens(db),
-      ledgerReaches: ledgerReaches(db),
-    });
+    pacePartlyRead = allSpendPartlyRead(db, period.from, period.to, today);
   }
 
   /*
@@ -556,7 +551,7 @@ export function spendingProjection(
     }
   }
 
-  return { projectedSpendCents, paceBasis, paceConfidence, paceUncoveredDays, prior };
+  return { projectedSpendCents, paceBasis, paceConfidence, pacePartlyRead, prior };
 }
 
 /**

@@ -65,8 +65,6 @@ interface CashFlowChartProps {
   data: CashFlow;
   /** the estimate companion (North Star #2): pace + prior-period ghost. */
   projection?: SpendingProjection | null;
-  /** what the unimported days are "of" (`paceWindowName`) — "2 days of September 2026 not imported yet" */
-  paceWindowName: string | null;
 }
 
 /**
@@ -136,7 +134,7 @@ export function CashFlowBucketTooltip({ bucket: b, ghostCents }: { bucket: CashF
   );
 }
 
-export function CashFlowChart({ data, projection, paceWindowName }: CashFlowChartProps) {
+export function CashFlowChart({ data, projection }: CashFlowChartProps) {
   const router = useRouter();
   const { buckets, incomeSeries, spendingSeries, pace } = data;
 
@@ -200,8 +198,7 @@ export function CashFlowChart({ data, projection, paceWindowName }: CashFlowChar
   const words = paceReadout({
     projectedCents: projected ?? 0,
     actualToDateCents: pace?.actualToDateCents ?? 0,
-    uncoveredDays: projection?.paceUncoveredDays ?? 0,
-    windowName: paceWindowName,
+    partlyRead: projection?.pacePartlyRead ?? null,
   });
   /*
    * 🔴 The basis carried the not-imported clause as well, and the basis is ALSO
@@ -234,8 +231,8 @@ export function CashFlowChart({ data, projection, paceWindowName }: CashFlowChar
   if (pace) {
     readoutParts.push(<span className="text-ink-faint">{words.soFar}</span>);
   }
-  if (pace && words.notImported) {
-    readoutParts.push(<span className="text-ink-faint">{words.notImported}</span>);
+  if (pace && words.partlyRead) {
+    readoutParts.push(<span className="text-ink-faint">{words.partlyRead}</span>);
   }
   if (projection?.prior) {
     readoutParts.push(
