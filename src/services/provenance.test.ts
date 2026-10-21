@@ -2357,7 +2357,11 @@ describe("provenanceFor — a recurring series' amount, with a rate history (§6
 
 /* ── all spending in a window ─────────────────────────────────────────── */
 
-function addKindedCategory(id: string, name: string, kind: "expense" | "income" | "transfer"): string {
+function addKindedCategory(
+  id: string,
+  name: string,
+  kind: "expense" | "income" | "transfer" | "investment" | "rewards",
+): string {
   bundle.db
     .insert(categories)
     .values({ id, name, parentId: null, kind, sortOrder: 0, createdAt: now(), updatedAt: now() })
@@ -4017,11 +4021,36 @@ describe("⚖️ decision 72 — a total over days its accounts have not been im
     categorize(addTxn(acct, "2026-07-10", { importFileId: file, cents: -5_000 }), moves);
     categorize(addTxn(acct, "2026-07-20", { importFileId: file, cents: 5_000 }), moves);
     const p = provenanceFor(bundle.db, { kind: "categorySpend", categoryId: moves, ...JULY })!;
+    const line = "activity imported through Jul 20 · 11 days of this period unaccounted";
     expect(p.verdict).toBe("partly_read");
-    expect(p.partlyRead).toEqual({
-      uncoveredDays: 11,
-      line: "activity imported through Jul 20 · 11 days of this period unaccounted",
-    });
+    expect(p.partlyRead).toEqual({ uncoveredDays: 11, line });
+    /*
+     * 🔴 …and a Net is no lower bound: a sum of both signs, so the days still to import can move it either way.
+     * Measured on his ledger copy 2026-10-21: /categories/<Credit Card Payment> for September, +$3,411.58 — three
+     * card-side receipts whose paying legs are on accounts not read that far — said "so this total is a lower bound
+     * rather than a measurement"; each leg still to import moves it toward $0.00. 43 Net windows said it.
+     */
+    expect(p.headline).toMatch(
+      new RegExp(
+        ` It is read only in part: ${line}, so this total is neither a measurement nor a bound: the days still to ` +
+          "import can move it either way\\.$",
+      ),
+    );
+    expect(p.headline).not.toMatch(/lower bound/);
+  });
+
+  test("…as every Net is — an investment's, rewards' — while a Received total stays a lower bound", () => {
+    const acct = addAccount("a", "Chase Checking", "checking");
+    const file = addFile("f1", "july.pdf", "chase-checking-statement-pdf");
+    addDays(acct, [{ day: "2026-07-01", basis: "anchored" }, { day: "2026-07-20", basis: "derived" }]);
+    const headlineOf = (id: string, kind: "investment" | "rewards" | "income"): string => {
+      const cat = addKindedCategory(id, `Fixture ${kind}`, kind);
+      categorize(addTxn(acct, "2026-07-10", { importFileId: file, cents: 5_000 }), cat);
+      return provenanceFor(bundle.db, { kind: "categorySpend", categoryId: cat, ...JULY })!.headline;
+    };
+    expect(headlineOf("c-inv", "investment")).toMatch(/, so this total is neither a measurement nor a bound: .*either way\.$/);
+    expect(headlineOf("c-rew", "rewards")).toMatch(/, so this total is neither a measurement nor a bound: .*either way\.$/);
+    expect(headlineOf("c-pay", "income")).toMatch(/, so this total is a lower bound rather than a measurement\.$/);
   });
 
   /** his rent's shape on his ledger copy 2026-10-13 (Flamingo South Beach): one payment on Chase Checking, imported

@@ -176,3 +176,25 @@ describe("a period read only in part says so under Where it went, in the proof's
     expect(source).toMatch(/spendingEmptyCopy\(db, range, \{[^}]*\bspendingReadThrough: readThrough,/);
   });
 });
+
+/*
+ * ⚖️ Decisions 64 + 72: a window with activity whose Spent is no measurement — no spending row, not one elapsed day read
+ * by the day every account he spends from is imported through — prints "—" for Spent, Net and the savings rate, and no
+ * card claims an absence of spending over it. 🔴 Review of 516d6fc, his ledger copy 2026-10-13: `?period=2026-09-23`
+ * carded "Spent $0.00 · Net +$4,567.68 · Savings rate 100%" and Top merchants said "No merchant spending in this
+ * period." over its own table row "$4,567.68 — —". ⛔ The window's fact is the cash flow's (`CashFlow.
+ * spendingUnaccounted`, asked by the buckets' rule) — the page asks no day of its own for it. Source, not render.
+ */
+describe("a window whose spending has not been found says so on every card", () => {
+  test("the stat cards are handed the cash flow's own fact", () => {
+    expect(source).toMatch(/<SpendingStatCards[^/]*\bspendingUnaccounted=\{cashFlow\.spendingUnaccounted\}/);
+    expect(source).toMatch(/nothingFoundSoFarSentence\(cashFlow\.spendingUnaccounted\)/);
+    expect(source).not.toMatch(/\bspendingNotFoundFact\(/);
+  });
+
+  test("every card that would claim an absence of spending is handed the sentence", () => {
+    for (const card of ["TopMerchantsCard", "LargestPurchases", "SpendingCategoriesTable", "WhereItWentPanel"]) {
+      expect(source, card).toMatch(new RegExp(`<${card}[^>]*\\bemptyText=\\{notFoundText\\}`));
+    }
+  });
+});

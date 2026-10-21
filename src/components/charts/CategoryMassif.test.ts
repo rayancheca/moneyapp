@@ -402,8 +402,25 @@ describe("a relief with nothing to draw still states the change the Table prints
     );
   });
 
+  /*
+   * ⚖️ Decisions 64 + 72: where the window's Spent is no measurement /spending hands the relief and the Table lens its
+   * sentence for that, and it is the whole of what they say. 🔴 Review of 516d6fc: "No categorized spending" over days
+   * no account he spends from was read for, beside a cash-flow table printing "—" for them.
+   */
+  test("the page's not-found sentence, when handed one, is the whole empty state — no absence, no change", () => {
+    const notFound = "Nothing found so far — spending imported through Aug 12.";
+    expect(massifEmptyState(computeMassifLayout([], OPTIONS), "Sep 23, 2026", null, notFound)).toBe(notFound);
+    expect(massifEmptyState(computeMassifLayout([food], OPTIONS), "Aug 8, 2026", "Aug 7, 2026", notFound)).toBe(notFound);
+    // a block to draw is a figure, and keeps it
+    const fees = { id: "fees", label: "Fees", hue: null, spentCents: 486, priorCents: 0, txnCount: 1 };
+    expect(massifEmptyState(computeMassifLayout([fees], OPTIONS), "Aug 8, 2026", null, notFound)).toBeNull();
+    expect(source).toMatch(/emptyState=\{emptyText \?\? "No categorized spending in this period\."\}/);
+  });
+
   test("the relief returns that empty state, asked of the layout", () => {
-    expect(source).toMatch(/const empty = massifEmptyState\(layout, periodLabel, priorLabel\);\s*if \(empty !== null\)/);
+    expect(source).toMatch(
+      /const empty = massifEmptyState\(layout, periodLabel, priorLabel, emptyText\);\s*if \(empty !== null\)/,
+    );
     expect(source).not.toMatch(/if \(rows\.length === 0\)/);
     expect(source).not.toMatch(/if \(layout\.blocks\.length === 0\)/);
   });

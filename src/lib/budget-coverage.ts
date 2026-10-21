@@ -1,5 +1,5 @@
 import type { CategoryKind } from "@/db/schema/categories";
-import { emptyPeriodReason } from "./empty-period";
+import { A_LOWER_BOUND, emptyPeriodReason } from "./empty-period";
 import { formatDayShortIn } from "./format-date";
 
 /**
@@ -76,6 +76,23 @@ export type CountedFlow = "spending" | "income" | "activity";
  */
 export function countedFlow(kind: CategoryKind): CountedFlow {
   return kind === "expense" ? "spending" : kind === "income" ? "income" : "activity";
+}
+
+/**
+ * What a total over a window read only in part IS, by what it counts: a Spent or a Received total is the lower bound
+ * the empty state calls a zero (`A_LOWER_BOUND`), and a NET — "activity": a transfer, an investment, rewards,
+ * Uncategorized — is neither, because it is a sum of both signs and the days still to import can move it either way.
+ *
+ * 🔴 Measured on his ledger copy 2026-10-21 (review of fdcebdc): `/categories/<Credit Card Payment>` for September,
+ * +$3,411.58 — three card-side receipts whose paying legs are on accounts not read that far — said "so this total is a
+ * lower bound rather than a measurement", and each leg still to import moves it toward $0.00; Internal Transfer's
+ * -$2,000.00 (two out-legs whose in-legs are unread) moves the other way. 43 Net windows said it: transfer 26,
+ * investment 8, rewards 5, Uncategorized 4.
+ */
+export function partReadTotal(counted: CountedFlow): string {
+  return counted === "activity"
+    ? "neither a measurement nor a bound: the days still to import can move it either way"
+    : A_LOWER_BOUND;
 }
 
 /**
@@ -258,6 +275,15 @@ export function spendingNotFoundFact(input: {
  */
 export function nothingFoundSoFar(fact: string): string {
   return `nothing found so far — ${fact}`;
+}
+
+/**
+ * "Nothing found so far — spending imported through Aug 12." — the same words as a card's whole empty sentence, where
+ * a /spending card would otherwise claim an absence over the window ("No merchant spending in this period.").
+ */
+export function nothingFoundSoFarSentence(fact: string): string {
+  const words = nothingFoundSoFar(fact);
+  return `${words.charAt(0).toUpperCase()}${words.slice(1)}.`;
 }
 
 /** "13 days of this period unaccounted" — scoped to the PERIOD, never to the gap since the import (see the top) */

@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { getDb } from "@/db/client";
 import { categories } from "@/db/schema/categories";
+import { nothingFoundSoFarSentence } from "@/lib/budget-coverage";
 import { todayIso } from "@/lib/dates";
 import { formatDayLong } from "@/lib/format-date";
 import { cashEarningsSectionNotes } from "@/lib/section-notes";
@@ -331,6 +332,16 @@ export default async function SpendingPage({
   // ⚖️ decision 72: the day the period's proof counts its unaccounted days from — the heatmap's days are read against
   // it, and an empty window is asked against it (decision 64: no day read and no row is no measured zero)
   const readThrough = spendingReadThrough(db, today);
+  /*
+   * ⚖️ Decisions 64 + 72: a window with activity whose Spent is no measurement — no spending row, not one elapsed day
+   * read by `readThrough` (`CashFlow.spendingUnaccounted`). The stat cards dash Spent, Net and the savings rate, and
+   * every card that would claim an absence of spending says this instead. 🔴 Review of 516d6fc, his ledger copy
+   * 2026-10-13: `/spending?period=2026-09-23` read "Spent $0.00 · Savings rate 100%" and "No merchant spending in this
+   * period." beside its own table row "$4,567.68 — —". Latent on his copy 2026-10-21: no window past Aug 12 holds
+   * income without spending found, now the card statements reach October.
+   */
+  const notFoundText =
+    cashFlow.spendingUnaccounted === null ? undefined : nothingFoundSoFarSentence(cashFlow.spendingUnaccounted);
   const emptyCopy = hasActivity
     ? null
     : spendingEmptyCopy(db, range, {
@@ -364,7 +375,11 @@ export default async function SpendingPage({
         </>
       ) : (
         <div className="space-y-6">
-          <SpendingStatCards totals={cashFlow.totals} range={range} />
+          <SpendingStatCards
+            totals={cashFlow.totals}
+            range={range}
+            spendingUnaccounted={cashFlow.spendingUnaccounted}
+          />
 
           {/* Mounted UNDER the stat cards, not above them: the note qualifies a
               figure the reader has already seen, and a caveat printed before its
@@ -411,7 +426,7 @@ export default async function SpendingPage({
             </SurfaceCard>
             <SurfaceCard className="lg:col-span-2">
               <h2 className="mb-3 text-sm font-medium">Top merchants</h2>
-              <TopMerchantsCard data={merchants} />
+              <TopMerchantsCard data={merchants} emptyText={notFoundText} />
             </SurfaceCard>
           </div>
 
@@ -468,12 +483,14 @@ export default async function SpendingPage({
               priorLabel={wholePriorLabel}
               viewState={whereView}
               baseParams={whereBaseParams}
+              emptyText={notFoundText}
             >
               <SpendingCategoriesTable
                 rows={categoryRows}
                 periodQuery={query}
                 priorLabel={wholePriorLabel}
                 forecastMonthLabel={forecastMonthLabel}
+                emptyText={notFoundText}
               />
             </WhereItWentPanel>
           </SurfaceCard>
@@ -492,7 +509,7 @@ export default async function SpendingPage({
                   Zelle to a person and a NYS tax payment. The figures are
                   exactly right; the noun was not. */}
               <h2 className="mb-3 text-sm font-medium">Largest spending</h2>
-              <LargestPurchases rows={largest} />
+              <LargestPurchases rows={largest} emptyText={notFoundText} />
             </SurfaceCard>
             <SurfaceCard>
               <h2 className="mb-3 text-sm font-medium">Honesty check</h2>

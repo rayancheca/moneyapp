@@ -34,6 +34,7 @@ const flow = (buckets: CashFlowBucket[]): CashFlow => {
     spendingSeries: [],
     totals: { earnedCents, spentCents, refundsCents: 0, netCents: earnedCents - spentCents, savingsRatePct: null },
     pace: null,
+    spendingUnaccounted: null,
   };
 };
 

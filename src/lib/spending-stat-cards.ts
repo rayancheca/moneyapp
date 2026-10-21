@@ -1,3 +1,4 @@
+import { nothingFoundSoFar } from "@/lib/budget-coverage";
 import { formatCents } from "@/lib/money";
 import { ledgerHref } from "@/lib/ledger-href";
 import type { DateRange } from "@/services/analytics";
@@ -34,15 +35,34 @@ export interface SpendingStatCardSpec {
   mobileFull?: boolean;
 }
 
+/** a card whose figure is no measurement (decisions 64 + 72): the em dash, in the faint tone */
+const DASH = { text: "—", muted: true } as const;
+
+/** why Net and the savings rate wait, for a screen reader — Spent's own card says whose day it is */
+const UNTIL_SPENDING_IS_FOUND = "until spending is found";
+
 /** aria-friendly "N dollars" (matches the existing StatCard phrasing) */
 function dollars(cents: number): string {
   return `${cents / 100} dollars`;
 }
 
-export function spendingStatCards(totals: PeriodTotals, range: DateRange): SpendingStatCardSpec[] {
+/**
+ * ⚖️ Decisions 64 + 72: `spendingUnaccounted` is the window's `CashFlow.spendingUnaccounted` — "spending imported
+ * through Aug 12" where it holds no spending row and not one of its elapsed days is read by the day every account he
+ * spends from is imported through. Spent prints "—" with it, and so do Net and the savings rate, which are Spent's
+ * arithmetic; what was found (Income, Refunds) keeps its figure, and every card keeps its link. 🔴 Review of 516d6fc,
+ * his ledger copy 2026-10-13: `/spending?period=2026-09-23` read "Spent $0.00 · Net +$4,567.68 · Savings rate 100%"
+ * over its own table row "$4,567.68 — —".
+ */
+export function spendingStatCards(
+  totals: PeriodTotals,
+  range: DateRange,
+  spendingUnaccounted: string | null = null,
+): SpendingStatCardSpec[] {
   const { earnedCents, spentCents, refundsCents, netCents, savingsRatePct } = totals;
   const showRefunds = refundsCents > 0;
   const cards: SpendingStatCardSpec[] = [];
+  const notFound = spendingUnaccounted === null ? null : nothingFoundSoFar(spendingUnaccounted);
 
   /*
    * 🔴 S22 — "Earned" NAMED A POPULATION IT DID NOT HOLD. `earnedCents` is every
@@ -68,13 +88,25 @@ export function spendingStatCards(totals: PeriodTotals, range: DateRange): Spend
     ariaLabel: `Income this period. ${dollars(earnedCents)}. View income transactions.`,
   });
 
-  cards.push({
-    key: "spent",
-    label: "Spent",
-    cents: spentCents,
-    href: ledgerHref({ category: "spending", from: range.from, to: range.to, flow: "out" }),
-    ariaLabel: `Spent this period, gross. ${dollars(spentCents)}. View spending transactions.`,
-  });
+  const spentHref = ledgerHref({ category: "spending", from: range.from, to: range.to, flow: "out" });
+  cards.push(
+    notFound === null
+      ? {
+          key: "spent",
+          label: "Spent",
+          cents: spentCents,
+          href: spentHref,
+          ariaLabel: `Spent this period, gross. ${dollars(spentCents)}. View spending transactions.`,
+        }
+      : {
+          key: "spent",
+          label: "Spent",
+          ...DASH,
+          delta: notFound,
+          href: spentHref,
+          ariaLabel: `Spent this period: ${notFound}. View spending transactions.`,
+        },
+  );
 
   if (showRefunds) {
     cards.push({
@@ -92,8 +124,8 @@ export function spendingStatCards(totals: PeriodTotals, range: DateRange): Spend
   cards.push({
     key: "net",
     label: "Net",
-    cents: netCents,
-    flow: true,
+    // ⚖️ no Spent, no Net: the figure is Spent's arithmetic (decisions 64 + 72)
+    ...(notFound === null ? { cents: netCents, flow: true } : DASH),
     // with Refunds on screen the arithmetic is visible; name it for clarity
     delta: showRefunds ? "income + refunds − spent" : undefined,
     /*
@@ -106,7 +138,10 @@ export function spendingStatCards(totals: PeriodTotals, range: DateRange): Spend
      * this figure is over.
      */
     href: ledgerHref({ category: "cashflow", from: range.from, to: range.to }),
-    ariaLabel: `Net this period. ${netCents < 0 ? "negative " : ""}${dollars(Math.abs(netCents))}. View the income and spending behind it.`,
+    ariaLabel:
+      notFound === null
+        ? `Net this period. ${netCents < 0 ? "negative " : ""}${dollars(Math.abs(netCents))}. View the income and spending behind it.`
+        : `Net this period: no figure ${UNTIL_SPENDING_IS_FOUND}. View the income and spending behind it.`,
   });
 
   /*
@@ -132,23 +167,30 @@ export function spendingStatCards(totals: PeriodTotals, range: DateRange): Spend
    * here was wrong, only unreadable. The base is named with the word the sibling
    * card uses for the same figure — "Income" since S22, when "Earned" turned out
    * to hold financial aid and reimbursements that /summary says were not earned.
+   *
+   * ⚖️ …and a rate over a Spent nobody has found is no figure (decisions 64 + 72): "—", the base still named.
    */
+  const waits = notFound !== null && savingsRatePct !== null;
   cards.push({
     key: "savings",
     label: "Savings rate",
-    text: savingsRatePct === null ? "—" : `${savingsRatePct}%`,
-    muted: savingsRatePct === null,
+    text: savingsRatePct === null || waits ? "—" : `${savingsRatePct}%`,
+    muted: savingsRatePct === null || waits,
     delta:
       savingsRatePct === null
         ? "no income yet"
-        : `${netCents >= 0 ? "kept" : "overspent"} · of ${formatCents(earnedCents)} income`,
+        : waits
+          ? `of ${formatCents(earnedCents)} income`
+          : `${netCents >= 0 ? "kept" : "overspent"} · of ${formatCents(earnedCents)} income`,
     // the same population as Net — this rate is net ÷ income, and both terms
     // come from these rows
     href: ledgerHref({ category: "cashflow", from: range.from, to: range.to }),
     ariaLabel:
       savingsRatePct === null
         ? "Savings rate unavailable without income."
-        : `Savings rate ${savingsRatePct} percent, of ${dollars(earnedCents)} of income.`,
+        : waits
+          ? `Savings rate unavailable ${UNTIL_SPENDING_IS_FOUND}, of ${dollars(earnedCents)} of income.`
+          : `Savings rate ${savingsRatePct} percent, of ${dollars(earnedCents)} of income.`,
   });
 
   return cards;

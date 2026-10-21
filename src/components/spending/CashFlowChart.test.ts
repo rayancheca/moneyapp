@@ -26,6 +26,7 @@ const SEPTEMBER: CashFlow = {
     projectedCents: 306_654,
     avgPerBucketCents: 10_222,
   },
+  spendingUnaccounted: null,
 };
 const PROJECTION: SpendingProjection = {
   projectedSpendCents: 306_654,

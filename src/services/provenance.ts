@@ -18,6 +18,7 @@ import { formatCents } from "@/lib/money";
 import {
   budgetCoverageSentence,
   countedFlow,
+  partReadTotal,
   readThroughSentence,
   spentOnlyFromCashWallets,
   type CountedFlow,
@@ -124,7 +125,8 @@ export type ProvenanceVerdict =
   | "unverified"
   /**
    * a TOTAL over a window some of whose elapsed days are past its own read frontier — ⚖️ his decision 72 (2026-10-13):
-   * it keeps its figure, a lower bound however well its rows check (`summedRowsProof`)
+   * it keeps its figure, a lower bound (a Net: one the unread days can move either way, `partReadTotal`) however well
+   * its rows check (`summedRowsProof`)
    */
   | "partly_read"
   /** the owner entered this by hand — a row, a holding, an amount; he is the source */
@@ -2560,9 +2562,12 @@ function categorySpendProvenance(
    * Savings, which Salary landed in this spring, is read through Jul 31. Over 2026's months, 2026 to date and all time,
    * the totals with rows that turn "partly read": income 24 of 65, transfer 24 of 65, rewards 5 of 13, investment 8 of
    * 32, Uncategorized 3 of 4; spending's 147 of 381 do not move.
+   *
+   * ⚖️ …and a Net's proof calls it no lower bound (`partReadTotal`): its rows are of both signs.
    */
-  const unread = categoryPartlyRead(db, categoryId, from, to, countedFlow(kind));
-  return summedRowsProvenance(db, rows, subject, from, to, undefined, unread);
+  const counted = countedFlow(kind);
+  const unread = categoryPartlyRead(db, categoryId, from, to, counted);
+  return summedRowsProvenance(db, rows, subject, from, to, undefined, unread, undefined, counted);
 }
 
 /**
@@ -2678,9 +2683,12 @@ function allSpendPartlyRead(db: AppDatabase, through: string | null, from: strin
   return n === 0 ? null : { uncoveredDays: n, line: readThroughSentence(through, n, { start: from }) };
 }
 
-/** What a proof says of a window read only in part — the sentence after its rows', in /budgets' words. */
-function partlyReadSentence(unread: PartlyRead): string {
-  return ` It is read only in part: ${unread.line}, so this total is ${A_LOWER_BOUND}.`;
+/**
+ * What a proof says of a window read only in part — the sentence after its rows', in /budgets' words — and what that
+ * makes the total, by what it counts (`partReadTotal`): a Net is no lower bound.
+ */
+function partlyReadSentence(unread: PartlyRead, counted: CountedFlow): string {
+  return ` It is read only in part: ${unread.line}, so this total is ${partReadTotal(counted)}.`;
 }
 
 /**
@@ -3015,8 +3023,10 @@ function summedRowsProvenance(
   unread?: PartlyRead | null,
   /** the total this one is a share of, read in part — `summedRowsProof`'s */
   whole?: WholeReadInPart | null,
+  /** what the total counts — `summedRowsProof`'s */
+  counted?: CountedFlow,
 ): Provenance {
-  return summedRowsProof(db, rows, subject, from, to, reaches, unread, whole).provenance;
+  return summedRowsProof(db, rows, subject, from, to, reaches, unread, whole, counted).provenance;
 }
 
 /**
@@ -3050,6 +3060,11 @@ function summedRowsProof(
    * absent or null: no share, or a whole read in full.
    */
   whole?: WholeReadInPart | null,
+  /**
+   * What the total counts (`countedFlow`) — what its window read in part makes it (`partReadTotal`): a Spent or
+   * Received total a lower bound, a Net one the days still to import can move either way. Absent, spending.
+   */
+  counted: CountedFlow = "spending",
 ): { provenance: Provenance; dateNote: string } {
   if (rows.length === 0) {
     /*
@@ -3251,7 +3266,7 @@ function summedRowsProof(
     badgeName: partEntered ? PART_ENTERED.name : undefined,
     headline:
       `This total is the sum of ${parts.join(", ")}. A total is only as proven as its weakest row.${footing.note}` +
-      (unreadWindow === null ? "" : partlyReadSentence(unreadWindow)) +
+      (unreadWindow === null ? "" : partlyReadSentence(unreadWindow, counted)) +
       (wholeUnread === null ? "" : wholeReadInPartSentence(wholeUnread)),
     sources,
     checkedThrough: footing.through,

@@ -144,7 +144,14 @@ describe("CashFlowGraph — a line with one point read still shows that point", 
   });
 
   const linesOf = (buckets: CashFlowBucket[]) => {
-    const data: CashFlow = { buckets, incomeSeries: [], spendingSeries: [], totals: {} as CashFlow["totals"], pace: null };
+    const data: CashFlow = {
+      buckets,
+      incomeSeries: [],
+      spendingSeries: [],
+      totals: {} as CashFlow["totals"],
+      pace: null,
+      spendingUnaccounted: null,
+    };
     return linesIn(CashFlowGraph({ data, projection: null }));
   };
 

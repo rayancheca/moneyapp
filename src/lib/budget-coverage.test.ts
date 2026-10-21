@@ -4,12 +4,15 @@ import {
   budgetCoverageSentence,
   countedFlow,
   nothingFoundSoFar,
+  nothingFoundSoFarSentence,
+  partReadTotal,
   readThroughSentence,
   spendingNotFoundFact,
   spendUnread,
   spentOnlyFromCashWallets,
   type BudgetCoverageInput,
 } from "./budget-coverage";
+import { A_LOWER_BOUND } from "./empty-period";
 
 const input = (over: Partial<BudgetCoverageInput> = {}): BudgetCoverageInput => ({
   importedThroughOn: "2026-09-02",
@@ -324,5 +327,27 @@ describe("spendingNotFoundFact — a window past the day all his spending is rea
 
   test("the words a cell, a tooltip or a sheet prints for it", () => {
     expect(nothingFoundSoFar("spending imported through Aug 12")).toBe("nothing found so far — spending imported through Aug 12");
+    // …and a /spending card's whole empty sentence, in the same words
+    expect(nothingFoundSoFarSentence("spending imported through Aug 12")).toBe(
+      "Nothing found so far — spending imported through Aug 12.",
+    );
+  });
+});
+
+/*
+ * ⚖️ What a total read only in part is, by what it counts (review of fdcebdc, his ledger copy 2026-10-21): a Spent or
+ * Received total can only gain from the days still to import; a Net — 43 of his windows — can move either way.
+ */
+describe("partReadTotal", () => {
+  test("spending and income are lower bounds — the empty state's own words for a zero", () => {
+    expect(partReadTotal("spending")).toBe(A_LOWER_BOUND);
+    expect(partReadTotal("income")).toBe(A_LOWER_BOUND);
+  });
+
+  test("a Net is neither a measurement nor a bound", () => {
+    expect(partReadTotal("activity")).toBe(
+      "neither a measurement nor a bound: the days still to import can move it either way",
+    );
+    expect(partReadTotal("activity")).not.toMatch(/lower bound/);
   });
 });

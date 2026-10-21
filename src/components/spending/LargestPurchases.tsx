@@ -24,12 +24,21 @@ export interface LargestPurchaseRow {
   ledgerHref: string;
 }
 
-export function LargestPurchases({ rows }: { rows: LargestPurchaseRow[] }) {
+export function LargestPurchases({
+  rows,
+  emptyText,
+}: {
+  rows: LargestPurchaseRow[];
+  /** said in place of "Nothing was spent in this period." where that is no measurement (decisions 64 + 72) */
+  emptyText?: string;
+}) {
   const [openId, setOpenId] = useState<string | null>(null);
   const open = rows.find((r) => r.id === openId) ?? null;
 
   // the same noun as the heading — see /spending/page.tsx
-  if (rows.length === 0) return <p className="text-sm text-ink-muted">Nothing was spent in this period.</p>;
+  if (rows.length === 0) {
+    return <p className="text-sm text-ink-muted">{emptyText ?? "Nothing was spent in this period."}</p>;
+  }
 
   return (
     <>
