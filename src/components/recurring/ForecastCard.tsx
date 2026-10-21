@@ -284,18 +284,25 @@ function PaceRow({ forecast: f }: { forecast: MonthForecast }) {
    * as the pace — so none prints, and the row says why in the runway caption's words. 🔴 Review of 6d11c4d: on a young
    * ledger it read "Spending $0.00 … EOM cash $322.58" over three months before the first record. Where Money in has
    * no pace either, its sentence follows (`incomePaceNote`): the band above reads "—" on both sides.
+   *
+   * ⛔ …AND A PACE OF $0.00 ON BOTH SIDES PRINTS NO FIGURE, BUT KEEPS ITS SENTENCES. Its figures would be the headline's
+   * over again, so the row once went missing whole — and with it the only words saying why Money in's pace reads "—".
+   * 🔴 Review of a7b1504: over one complete month Money in's pace is $0.00 by construction, and on a ledger opening
+   * Jul 1 whose July holds no spending, at 2026-08-27 the band read "Money in · Recent pace —" beside Money out's
+   * "Recent pace $0.00 (0 lines)", with no sentence anywhere on the card.
    */
-  if (spendPaceWithheld(f)) {
+  const paceIncome = f.projectedIncomeCents - f.committed.incomeCents;
+  const paceSpend = f.projectedSpendCents - f.committed.spendCents;
+  if (spendPaceWithheld(f) || (paceIncome === 0 && paceSpend === 0)) {
+    const notes = paceNotes(f);
+    if (notes === null) return null;
     return (
       <div className="mt-5 rounded-md border border-line bg-surface px-4 py-3">
         {heading}
-        <p className="mt-2 text-xs leading-relaxed text-ink-faint">{paceNotes(f)}</p>
+        <p className="mt-2 text-xs leading-relaxed text-ink-faint">{notes}</p>
       </div>
     );
   }
-  const paceIncome = f.projectedIncomeCents - f.committed.incomeCents;
-  const paceSpend = f.projectedSpendCents - f.committed.spendCents;
-  if (paceIncome === 0 && paceSpend === 0) return null;
 
   return (
     <div className="mt-5 rounded-md border border-line bg-surface px-4 py-3">

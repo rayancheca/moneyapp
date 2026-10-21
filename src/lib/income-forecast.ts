@@ -20,7 +20,7 @@
  * is exactly one trailing-average engine in the codebase.
  */
 
-import { monthCount } from "./committed";
+import { frontierDay, monthCount, type UnreadMonths } from "./committed";
 import { monthWindowLabel } from "./format-date";
 import { projectTrailingAverage } from "./projection";
 
@@ -77,8 +77,16 @@ export function incomePaceMeasurable(months: number): boolean {
  * ⚖️ Spending's one month IS averaged (it projects every bucket; you will keep buying groceries) and income's is not:
  * the presence gate is what keeps a tax refund or a deposit's return from extrapolating as pay. So on one young ledger
  * Money out can have a pace where Money in has none, and the band's "—" needs its own reason.
+ *
+ * ⚖️ His decision 71 (2026-10-13) cuts SPENDING's months at the day every account he spends from is read to, and not
+ * Money in's. So where that day left Money in's months out of spending's (`spendUnread`, the spending pace's
+ * `UnreadMonths`), they are named as Money in's, beside the day — "Jul 12 cuts spending's months, not Money in's, and
+ * Jul 2026 is the only complete month Money in has so far." 🔴 Review of a7b1504: on a ledger opening Jul 1 whose Card
+ * was read only to Jul 12, at 2026-08-27 the row read "Jul 2026 is left out: Jul 12 is the last day every account you
+ * spend from has been imported through." and, one sentence later, "Jul 2026 is the only complete month imported so
+ * far." — read to its 12th, then imported whole.
  */
-export function incomePaceNote(monthKeys: readonly string[]): string | null {
+export function incomePaceNote(monthKeys: readonly string[], spendUnread: UnreadMonths | null): string | null {
   if (incomePaceMeasurable(monthKeys.length)) return null;
   const gate =
     "Money in has no recent pace yet: a kind of income counts toward it once it has come in " +
@@ -86,7 +94,10 @@ export function incomePaceNote(monthKeys: readonly string[]): string | null {
   if (monthKeys.length === 0) return gate;
   const months = monthWindowLabel(monthKeys[0]!, monthKeys.at(-1)!);
   const only = monthKeys.length === 1 ? "is the only complete month" : "are the only complete months";
-  return `${gate} ${months} ${only} imported so far.`;
+  const cut = spendUnread !== null && monthKeys.some((key) => spendUnread.months.includes(key));
+  if (!cut) return `${gate} ${months} ${only} imported so far.`;
+  const whose = `${frontierDay(spendUnread)} cuts spending's months, not Money in's`;
+  return `${gate} ${whose}, and ${months} ${only} Money in has so far.`;
 }
 
 /**

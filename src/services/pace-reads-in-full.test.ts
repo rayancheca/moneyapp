@@ -432,6 +432,64 @@ describe("…and never from before the ledger's first whole month (`baselineWind
     }
   });
 
+  /*
+   * 🔴 Review of a7b1504: the frontier cut July from spending's months and not from Money in's (decision 71 exempts
+   * income), and the row named the one month both ways, one sentence apart: "Jul 2026 is left out: Jul 12 is the last
+   * day every account you spend from has been imported through. Money in has no recent pace yet: … Jul 2026 is the only
+   * complete month imported so far." Each sentence now says whose month it is.
+   */
+  test("a month the frontier left out of spending's pace is named as Money in's, never as imported whole", () => {
+    for (const m of ["2026-07", "2026-08"]) {
+      groceries(checkingId, `${m}-01`, -40000);
+      filed(checkingId, `${m}-02`, 300000, "Salary");
+    }
+    groceries(cardId, "2026-07-12", -10000);
+    confirmedMonthly("Rent", "bill", -150000, "2026-08-30");
+    const spending =
+      "No month has been read in full yet, so there is no spending average to stand on. Jul 2026 is left out: Jul 12 " +
+      "is the last day every account you spend from has been imported through.";
+    const income =
+      `${NO_INCOME_PACE} Jul 12 cuts spending's months, not Money in's, and Jul 2026 is the only complete month ` +
+      "Money in has so far.";
+
+    for (const f of [forecastCurrentMonth(bundle.db, YOUNG_TODAY), forecastForMonth(bundle.db, "2026-09", YOUNG_TODAY)!]) {
+      expect([f.spendPaceMonths, f.incomePaceMonths]).toEqual([0, 1]);
+      expect(f.incomePaceNote).toBe(income);
+      const card = cardText(f);
+      expect(card.slice(card.indexOf("If you also spend"), card.indexOf("Show the math")).trim()).toBe(
+        `If you also spend at your recent pace ${spending} ${income}`,
+      );
+      expect(card).not.toContain("imported so far");
+    }
+  });
+
+  /*
+   * 🔴 Review of a7b1504: the pace row went missing where both its paces came to $0.00 — a rule older than its notes —
+   * and over one complete month Money in's is $0.00 by construction. On a ledger opening Jul 1 whose July holds no
+   * spending, at 2026-08-27 the band read "Money in · Scheduled $2,000.00 (1 line) · Recent pace —" beside Money out's
+   * "Recent pace $0.00 (0 lines)", and no sentence anywhere on the card said why Money in had none.
+   */
+  test("a measured $0.00 spending pace beside a withheld income one still says why Money in reads —", () => {
+    filed(checkingId, "2026-07-01", 300000, "Salary");
+    filed(checkingId, "2026-08-01", 300000, "Salary");
+    groceries(checkingId, "2026-08-03", -40000);
+    confirmedMonthly("Pay", "income", 200000, "2026-08-29");
+    confirmedMonthly("Rent", "bill", -150000, "2026-08-30");
+    const why = `${NO_INCOME_PACE} Jul 2026 is the only complete month imported so far.`;
+
+    for (const f of [forecastCurrentMonth(bundle.db, YOUNG_TODAY), forecastForMonth(bundle.db, "2026-09", YOUNG_TODAY)!]) {
+      expect([f.spendPaceMonths, f.incomePaceMonths]).toEqual([1, 1]);
+      const card = cardText(f);
+      const band = (from: string, to: string) => card.slice(card.indexOf(from), card.indexOf(to)).trim();
+      expect(band("Money in", "Money out")).toBe("Money in Scheduled $2,000.00 (1 line) Recent pace —");
+      expect(band("Money out", "If you also spend")).toBe(
+        "Money out Committed $1,500.00 (1 line) Recent pace $0.00 (0 lines)",
+      );
+      // the row's figures would be the headline's, so none prints — but its sentence does
+      expect(band("If you also spend", "Show the math")).toBe(`If you also spend at your recent pace ${why}`);
+    }
+  });
+
   test("the income pace's month count is the months it averaged: two on a ledger opening Jun 1", () => {
     youngLedger();
     groceries(cardId, "2026-06-12", -10000);

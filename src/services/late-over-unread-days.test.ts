@@ -277,7 +277,10 @@ describe("running late is said only of days the ledger has checked — every sur
   test("the forecast card's MONEY IN/OUT band, as the card renders it", () => {
     const html = renderToStaticMarkup(createElement(ForecastCard, { forecast: forecastCurrentMonth(bundle.db, TODAY) }));
     const band = bandLabels(html);
-    expect([...band.keys()]).toEqual(["Money in", "Money out"]);
+    // the band's two sides, then the pace row: both its paces come to $0.00 here, so it prints no figure, but it still
+    // names the one month spending's $0.00 averaged (review of a7b1504: the row once went missing with its sentences)
+    expect([...band.keys()]).toEqual(["Money in", "Money out", "If you also spend at your recent pace"]);
+    expect(band.get("If you also spend at your recent pace")).toContain("averaged over 1 complete month, Jul 2026.");
     // the pay is awaiting statements: nothing on the MONEY IN side is late
     expect(band.get("Money in")).toBeNull();
     // Streaming truly missed on Venture X's checked days; Rocket Money and the Utility's arrears are awaiting

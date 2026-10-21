@@ -350,7 +350,9 @@ export interface MonthForecast {
   /**
    * Why Money in has no recent pace, where it has too few months for one (`incomePaceNote`): "Money in has no recent
    * pace yet: a kind of income counts toward it once it has come in 2 complete months, so a one-off never does. Jul
-   * 2026 is the only complete month imported so far." Null where the income pace has its months.
+   * 2026 is the only complete month imported so far." — or, where spending's frontier left that month out, "Jul 12 cuts
+   * spending's months, not Money in's, and Jul 2026 is the only complete month Money in has so far." Null where the
+   * income pace has its months.
    */
   incomePaceNote: string | null;
   /**
@@ -532,6 +534,21 @@ function paceNote({ windows, unread }: PaceMonths): string | null {
   // no month is no range: `spendPaceNote` reads neither end of an empty window (`baselineSpan`)
   const [fromMonth, toMonth] = [windows[0]?.key ?? "", windows.at(-1)?.key ?? ""];
   return spendPaceNote({ months: windows.length, fromMonth, toMonth, unread });
+}
+
+type PaceFields = Pick<MonthForecast, "spendPaceNote" | "spendPaceMonths" | "incomePaceMonths" | "incomePaceNote">;
+
+/**
+ * What both month forecasts say of their two paces' months, from the chain's one read of them. Money in's sentence is
+ * handed spending's left-out months: where they cut one of Money in's, it says whose month that is (`incomePaceNote`).
+ */
+function paceFields({ spendPace, incomePace }: ForecastReads): PaceFields {
+  return {
+    spendPaceNote: paceNote(spendPace),
+    spendPaceMonths: spendPace.windows.length,
+    incomePaceMonths: incomePace.length,
+    incomePaceNote: incomePaceNote(incomePace.map((w) => w.key), spendPace.unread),
+  };
 }
 
 const CADENCE_LABEL: Record<string, string> = {
@@ -1388,10 +1405,7 @@ export function forecastForMonth(
         netWorthCents + chained.committedNet + chained.committedAgentsNet + chained.committedAgentsCostNet,
     },
     components: parts.components,
-    spendPaceNote: paceNote(reads.spendPace),
-    spendPaceMonths: reads.spendPace.windows.length,
-    incomePaceMonths: reads.incomePace.length,
-    incomePaceNote: incomePaceNote(reads.incomePace.map((w) => w.key)),
+    ...paceFields(reads),
     /*
      * A FUTURE month has no past inside it — every one of its paydays is still
      * to come, so there is nothing that has passed unbanked. Stated rather than
@@ -1496,10 +1510,7 @@ function currentMonthForecast(db: AppDatabase, today: string, reads: ForecastRea
       eomNetWorthCents: latestNetWorth + committedNetCents + parts.committedAgentsNet + parts.committedAgentsCostNet,
     },
     components,
-    spendPaceNote: paceNote(reads.spendPace),
-    spendPaceMonths: reads.spendPace.windows.length,
-    incomePaceMonths: reads.incomePace.length,
-    incomePaceNote: incomePaceNote(reads.incomePace.map((w) => w.key)),
+    ...paceFields(reads),
     unbankedIncome: unbankedIncomeTotals(unbanked),
     outsideCash: outsideCashOf(db, parts),
     agentsIncome: { netCents: parts.agentsNet, committedNetCents: parts.committedAgentsNet },

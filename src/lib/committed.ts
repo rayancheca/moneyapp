@@ -834,12 +834,11 @@ export function lastFullyReadMonth(through: string): string {
  * and transfers cards' — in the words /spending's What-moved and the year summary already use for the same day
  * (`spendingCoverageThrough`), so the dashboard and those pages name one frontier one way.
  *
- * ⚠️ The day carries its year only when it is not the first left-out month's: the frontier falls inside that month or
- * before it (a stub month the window never counted), and the months beside it carry theirs.
+ * ⚠️ The day carries its year only when it is not the first left-out month's (`frontierDay`).
  */
 export function unreadMonthsSentence(unread: UnreadMonths | null): string | null {
   if (unread === null || unread.months.length === 0) return null;
-  const { months, through } = unread;
+  const { months } = unread;
   const first = months[0]!;
   const last = months[months.length - 1]!;
   const named =
@@ -848,7 +847,19 @@ export function unreadMonthsSentence(unread: UnreadMonths | null): string | null
       : months.length === 2
         ? `${formatMonthYear(`${first}-01`)} and ${formatMonthYear(`${last}-01`)} are`
         : `${monthWindowLabel(first, last)} are`;
-  return `${named} left out: ${formatDayShortIn(through, `${first}-01`)} is the last day every account you spend from has been imported through.`;
+  return `${named} left out: ${frontierDay(unread)} is the last day every account you spend from has been imported through.`;
+}
+
+/**
+ * The day that left a spending window's months out (`UnreadMonths.through`), as every sentence naming it spells it —
+ * "Aug 12". ⛔ ONE SPELLING for the sentence that leaves the months out (`unreadMonthsSentence`) and Money in's saying
+ * the day cuts spending's months and not its own (`incomePaceNote`): they sit side by side on /recurring's pace row.
+ *
+ * ⚠️ It carries its year only when it is not the first left-out month's: the frontier falls inside that month or
+ * before it (a stub month the window never counted), and the months beside it carry theirs.
+ */
+export function frontierDay(unread: UnreadMonths): string {
+  return formatDayShortIn(unread.through, `${unread.months[0]!}-01`);
 }
 
 /**
