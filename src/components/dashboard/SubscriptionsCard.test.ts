@@ -51,7 +51,21 @@ const data = (
   fromMonth: "2026-04",
   toMonth: "2026-09",
   unread: null,
+  seriesHref: "/recurring?tab=all&series=a,b",
   today: "2026-10-08",
+});
+
+/*
+ * The drill-down contract: the card's link opens exactly the series it lists (`SubscriptionsCard.seriesHref`, tested
+ * against the ledger in subscriptions-card.test.ts). 🔴 It was a bare `/recurring` (review of the dashboard links).
+ */
+describe("SubscriptionsCard — its link is the one the service names", () => {
+  test("'Recurring →' opens the card's own series", () => {
+    const html = renderToStaticMarkup(createElement(SubscriptionsCard, { data: data([line({ seriesId: "a", name: "A" })]) }));
+    expect(/<a[^>]*href="([^"]*)"[^>]*>Recurring →<\/a>/.exec(html)?.[1]?.replaceAll("&amp;", "&")).toBe(
+      "/recurring?tab=all&series=a,b",
+    );
+  });
 });
 
 const text = (d: SubscriptionsCardData): string =>

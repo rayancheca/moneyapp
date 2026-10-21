@@ -655,8 +655,20 @@ describe("spendArithmeticCaption — the sum under the spend row", () => {
    */
   test("a net up-front refund is added back, as a refund", () => {
     const c = sum(4_800_000, 110_000, -110_000, 6);
-    expect(c).toBe("$48,000.00 spent − $1,100.00 back + $1,100.00 up-front refund, over 6 months");
+    expect(c).toBe("$48,000.00 spent − $1,100.00 back + $1,100.00 refunded of the money paid up front, over 6 months");
     expect(c).not.toContain("-$");
+  });
+
+  /*
+   * ⛔ ONE PHRASE for one amount on one card. 🔴 Over a net refund of the deposit the spend row's sum read "+ $1,100.00
+   * up-front refund", and the runway card's caption below it "leaving out the $1,100.00 refunded of the money paid up
+   * front for the car" (`upfrontCarLeftOut`) — the same $1,100.00 in two spellings (review of decision 61's caption;
+   * latent on his ledger copy 2026-10-13, whose window holds no up-front money).
+   */
+  test("the refund is named in the caption's own words", () => {
+    const term = /\+ \$1,100\.00 ([^,]+), over/.exec(sum(4_800_000, 110_000, -110_000, 6) ?? "")?.[1];
+    expect(term).toBeDefined();
+    expect(upfrontCarLeftOut(-110_000)).toContain(`the $1,100.00 ${term!} for the car`);
   });
 
   test("one month is singular", () => {
@@ -1143,6 +1155,51 @@ describe("heaviestMonthEnding", () => {
     const ending = endingOf(occurrences)!;
     expect([ending.lead.name, ending.endsOn, ending.others]).toEqual(["Car insurance", "2027-01-11", 1]);
     expect(endingLead(committedOutflows({ ...TWELVE, occurrences }))!.lead.name).toBe("Car insurance");
+  });
+
+  /*
+   * ⚖️ §6A 56 (read 2026-10-14, no new question): the balance is ONE charge, and a charge due once is no commitment that
+   * stops — the runway's count has left it out since ebf628b. 🔴 On his ledger copy 2026-10-13 the car card still said
+   * "…, and one other does too" of it, beside the runway's same sentence of Car insurance alone.
+   */
+  test("…read as the one charge it is, the balance is counted by neither sentence", () => {
+    const occurrences = [
+      ...occ("Car lease", -69504, LEASE_YEAR.map((m) => `${m}-15`), null, { endsOn: "2028-08-15" }),
+      ...occ("Car insurance", -35758, ["2026-12-11", "2027-01-11"], "2026-08-12", { endsOn: "2027-01-11" }),
+      ...occ("Nov 11 balance", -7274, ["2026-11-11"], null, { endsOn: "2026-11-11", oneCharge: true }),
+    ];
+    const ending = endingOf(occurrences)!;
+    expect([ending.lead.name, ending.endsOn, ending.others]).toEqual(["Car insurance", "2027-01-11", 0]);
+    expect(ending.others).toBe(endingLead(committedOutflows({ ...TWELVE, occurrences }))!.others);
+  });
+
+  /*
+   * …while one charge billed IN the heaviest month is in that figure (§6A 56 leaves the car card's figures as they
+   * were), so the figure stops being what he pays after its day: it still dates the sentence. The others it counts
+   * are the commitments that stop — here a gym ending in May.
+   */
+  test("one charge in the heaviest month still dates the figure — the others it counts are commitments", () => {
+    const occurrences = [
+      ...occ("Car lease", -69504, LEASE_YEAR.map((m) => `${m}-15`), null),
+      ...occ("Gym", -1000, LEASE_YEAR.slice(0, 9).map((m) => `${m}-15`), null, { endsOn: "2027-05-15" }),
+      ...occ("Aug 11 balance", -7274, ["2027-08-11"], null, { endsOn: "2027-08-11", oneCharge: true }),
+    ];
+    const ending = endingOf(occurrences)!;
+    expect([ending.lead.name, ending.endsOn, ending.others]).toEqual(["Aug 11 balance", "2027-08-11", 1]);
+  });
+
+  /*
+   * …by the day it CHARGES. A schedule is one charge with its end anywhere before the step after it (`isOneCharge`), so
+   * its end can fall after its day, and the car card says "charges once on <day>" of it, as its own page's "charges once
+   * on Nov 11" does — never a day nothing is charged (review of 89f235d: the sentence is worded as the charge).
+   */
+  test("a one charge dates the figure by its own day, not by an end typed after it", () => {
+    const occurrences = [
+      ...occ("Car lease", -69504, LEASE_YEAR.map((m) => `${m}-15`), null, { endsOn: "2028-08-15" }),
+      ...occ("Nov 11 balance", -7274, ["2026-11-11"], null, { endsOn: "2026-11-20", oneCharge: true }),
+    ];
+    const ending = endingOf(occurrences)!;
+    expect([ending.lead.name, ending.endsOn, ending.others]).toEqual(["Nov 11 balance", "2026-11-11", 0]);
   });
 
   /* the balance stops inside the horizon, but in a month lighter than the

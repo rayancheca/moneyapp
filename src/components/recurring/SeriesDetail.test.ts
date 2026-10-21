@@ -254,6 +254,86 @@ describe("SeriesDetail — a schedule of one charge reads once, on its own page"
       "Upcoming charges off the calendar: every charge from Dec 11, 2026 to Jan 11, 2027",
     );
   });
+
+  /*
+   * ⚖️ §6A 56: and its figure is its one charge, never a year of it. 🔴 On his ledger copy 2026-10-13 the balance's
+   * page read "Annualized ~$72.74/yr — the twelve months from today — this one stops on Nov 11, 2026, inside them" and
+   * its End dialog "Leaving the forecast: ~$72.74 / yr", one line under "once on Nov 11, 2026".
+   */
+  test("the balance's figure is its one charge: 'once · $72.74' on the page, 'its one charge' in the dialog", () => {
+    const text = words(page(his.balanceId));
+    expect(text).toContain("once · $72.74");
+    expect(text).not.toContain("$72.74/yr");
+    expect(text).not.toContain("this one stops on Nov 11, 2026");
+    const said = seriesEndLines(seriesEndInput(seriesDetail(bundle.db, his.balanceId, TODAY)), formatCents).map(
+      (l) => `${l.label}: ${l.value}`,
+    );
+    expect(said).toContain("Leaving the forecast: ~$72.74, its one charge");
+    expect(said.join(" · ")).not.toContain("/ yr");
+  });
+
+  /*
+   * 🔴 Review of 89f235d: a one charge further out than the page's preview reaches. The Nov 11 balance moved to Nov 11,
+   * 2027 on a copy of his ledger (2026-10-13): its dialog read "Leaving the forecast: ~$72.74, its one charge" over
+   * "Upcoming charges off the calendar: none scheduled" — and its page listed no "Next expected", under "charges once on
+   * Nov 11". Its one charge IS scheduled; the preview's window ran from today, three steps, and stopped short of it —
+   * of Mar 11, 2027, inside the year, as well. ⛔ It starts at the series' own next day.
+   */
+  test.each(["2027-03-11", "2027-11-11"])(
+    "a one charge on %s: its page lists it next, its dialog takes it off on its day — never 'none scheduled'",
+    (day) => {
+      bundle.db
+        .update(recurringSeries)
+        .set({ userNextExpectedOn: day, userEndsOn: day })
+        .where(eq(recurringSeries.id, his.balanceId))
+        .run();
+      const detail = seriesDetail(bundle.db, his.balanceId, TODAY);
+      expect(detail.nextExpected.map((o) => [o.date, o.amountCents])).toEqual([[day, -7274]]);
+      const said = seriesEndLines(seriesEndInput(detail), formatCents).map((l) => `${l.label}: ${l.value}`);
+      expect(said).toContain("Leaving the forecast: ~$72.74, its one charge");
+      expect(said).toContain(`Upcoming charges off the calendar: once on ${day === "2027-03-11" ? "Mar" : "Nov"} 11, 2027`);
+      expect(said.join(" · ")).not.toContain("none scheduled");
+    },
+  );
+
+  test("…while Car insurance, two premiums left, keeps its year and says it stops inside it", () => {
+    const text = words(page(his.insuranceId));
+    expect(text).toContain("~$715.16/yr");
+    expect(text).toContain("the twelve months from today — this one stops on Jan 11, 2027, inside them");
+    const said = seriesEndLines(seriesEndInput(seriesDetail(bundle.db, his.insuranceId, TODAY)), formatCents);
+    expect(said.map((l) => `${l.label}: ${l.value}`)).toContain("Leaving the forecast: ~$715.16 / yr");
+  });
+
+  /*
+   * 🔴 Ended — or said not recurring — with its end still ahead, Car insurance's page read "Ended · Bill · Ends Jan 11,
+   * 2027" in amber, and "Dismissed · Bill · Ends Jan 11, 2027": a schedule's end ahead of a series nothing expects any
+   * more (his ledger copy 2026-10-13, Car insurance set ended, then dismissed). Its status says it; the end badge goes.
+   */
+  test.each(["ended", "dismissed"] as const)("%s with its end ahead: the status badge alone, no 'Ends' badge", (status) => {
+    bundle.db.update(recurringSeries).set({ status }).where(eq(recurringSeries.id, his.insuranceId)).run();
+    const html = page(his.insuranceId);
+    const text = words(html);
+    expect(text).toContain(status === "ended" ? "Ended" : "Dismissed");
+    expect(text).not.toContain("Jan 11, 2027");
+    expect(html).not.toMatch(/text-warning[^>]*>Ends/);
+  });
+
+  /*
+   * ⛔ ONE FACT, ONE TENSE — an anchor typed past its end. 🔴 Car insurance typed to Feb 11 on its Jan 11 end read "Ends
+   * Jan 11, 2027" beside "Its schedule has ended" (his ledger copy 2026-10-13): its schedule holds no date, and the
+   * rhythm's last day before the end, Dec 11, has not come, so it ran out on no day yet.
+   */
+  test("an anchor typed past its end: 'Ended before Jan 11, 2027' beside 'Its schedule has ended'", () => {
+    bundle.db
+      .update(recurringSeries)
+      .set({ userNextExpectedOn: "2027-02-11" })
+      .where(eq(recurringSeries.id, his.insuranceId))
+      .run();
+    const text = words(pageOn(his.insuranceId, "2026-10-13"));
+    expect(text).toContain("Its schedule has ended");
+    expect(text).toContain("Ended before Jan 11, 2027");
+    expect(text).not.toContain("Ends Jan 11, 2027");
+  });
 });
 
 /*

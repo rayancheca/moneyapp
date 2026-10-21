@@ -3,7 +3,7 @@ import { monthKey } from "./dates";
 import { BUDGET_JARGON } from "./jargon";
 import { formatCents } from "./money";
 import { resolvePeriod, withPeriod, type ResolvedPeriod } from "./period";
-import { seriesListHref } from "./recurring-list";
+import { seriesBehindHref } from "./recurring-list";
 
 /**
  * Which income figure a monthly budget should be graded against.
@@ -256,7 +256,7 @@ export interface IncomeBasisHrefInput {
 export function incomeBasisHref({ kind, levelledSeriesIds, window }: IncomeBasisHrefInput): string {
   if (kind !== "levelled") return withPeriod("/spending", window);
   // a levelled figure has at least one series behind it (`levelledCents > 0`); naming none is the whole tab
-  return levelledSeriesIds.length === 1 ? `/recurring/${levelledSeriesIds[0]}` : seriesListHref(levelledSeriesIds);
+  return seriesBehindHref(levelledSeriesIds);
 }
 
 /** Where a surface's monthly income figure is checked, and the page it opens in a word. */

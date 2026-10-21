@@ -7,7 +7,7 @@ import { billedWithPhrase, carriesPhrase } from "@/lib/billed-with";
 import { ALL_SERIES_HREF, isListedSeries, seriesFilterSentence, type SeriesNarrowing } from "@/lib/recurring-list";
 import type { ArrearsReading } from "@/lib/arrears-reading";
 import type { SeriesView } from "@/services/recurring";
-import { cadenceLabel, KIND_LABEL, annualizedEndNote, futureDateLabel, overdueNote } from "./labels";
+import { cadenceLabel, KIND_LABEL, annualizedEndNote, annualizedFigure, futureDateLabel, overdueNote } from "./labels";
 
 /**
  * What each series already owes this month and nothing has covered — keyed by
@@ -109,8 +109,17 @@ export function AllSeriesView({
           yet — confirm a suggestion above" over two rows of pay: a bill's word, and no suggestion above (review of
           a9384a7; measured on his ledger copy 2026-10-13, which holds 8 active series). A narrowed tab prints only
           the sections its rows fill. */}
+      {/* ⛔ …and it points at a suggestion only when there is one above. 🔴 With none it still said "No active series
+          yet — confirm a suggestion above." (review of 4c1b032; latent on his ledger copy 2026-10-13, 8 active). */}
       {narrowed === null || active.length > 0 ? (
-        <SeriesSection title="Active" note={noteOf("active", active)} series={active} overdueBySeries={overdueBySeries} today={today} />
+        <SeriesSection
+          title="Active"
+          note={noteOf("active", active)}
+          series={active}
+          overdueBySeries={overdueBySeries}
+          today={today}
+          empty={suggestions.length > 0 ? "No active series yet — confirm a suggestion above." : "No active series yet."}
+        />
       ) : null}
       {/* 🔴 His pay and Rocket Money sat under Running late for charges due after the last day their accounts had
           been checked through (2026-10-08). Their own section, beside Active and never muted: nothing is known to
@@ -228,6 +237,7 @@ function SeriesSection({
   overdueBySeries,
   today,
   muted,
+  empty = "None.",
 }: {
   title: string;
   note: string;
@@ -235,6 +245,8 @@ function SeriesSection({
   overdueBySeries: OverdueBySeries;
   today: string;
   muted?: boolean;
+  /** what an empty section says — only Active stands empty (above) */
+  empty?: string;
 }) {
   // an id may not contain a space, and "Running late" does
   const id = `rec-${title.toLowerCase().replace(/\s+/g, "-")}`;
@@ -249,7 +261,7 @@ function SeriesSection({
       </div>
       {series.length === 0 ? (
         <p className="rounded-(--radius-card) border border-dashed border-line px-4 py-3 text-xs text-ink-faint">
-          {title === "Active" ? "No active series yet — confirm a suggestion above." : "None."}
+          {empty}
         </p>
       ) : (
         // `contain-paint` on top of `overflow-x-auto`: six columns give this
@@ -296,6 +308,9 @@ function SeriesRow({
 }) {
   // ⚖️ what is billed inside its payments (§6A 59): money its posted average holds — the series page's words
   const carried = carriesPhrase(s.carries);
+  // a year at today's amounts, or its one charge (§6A 56), and when a year stops inside it — only under a year
+  const yearFigure = annualizedFigure(s);
+  const endNote = yearFigure === null || yearFigure.once ? null : annualizedEndNote(s.endsOn, today);
   return (
     <tr className="border-b border-line last:border-b-0">
       <th scope="row" className="px-4 py-3 text-left font-medium">
@@ -353,16 +368,20 @@ function SeriesRow({
         {overdue && <OverdueNote overdue={overdue} />}
       </td>
       <td className="px-3 py-3 text-right text-ink-muted">
-        {s.annualizedCents !== null ? (
+        {yearFigure !== null ? (
           <>
-            <span className="figures">~<Money cents={s.annualizedCents} />/yr</span>
+            {/* ⚖️ §6A 56: one charge reads that charge, "once · $72.74" — the series page's slot (`annualizedFigure`) */}
+            <span className="figures">
+              {yearFigure.lead}
+              <Money cents={yearFigure.cents} />
+              {yearFigure.tail}
+            </span>
             {/* 🔴 "Monthly · -$357.58 · ~$715.16/yr" with nothing saying why —
                 measured 2026-09-15. The series page qualifies the same figure
                 with `annualizedCaveat`; `annualizedEndNote` is its short form,
-                on the SAME gate, so the two cannot disagree about a year. */}
-            {annualizedEndNote(s.endsOn, today) !== null && (
-              <span className="figures block text-[10px] text-ink-faint">{annualizedEndNote(s.endsOn, today)}</span>
-            )}
+                on the SAME gate, so the two cannot disagree about a year — and
+                one charge is no year, so neither qualifies it. */}
+            {endNote !== null && <span className="figures block text-[10px] text-ink-faint">{endNote}</span>}
           </>
         ) : (
           <span className="text-ink-faint">—</span>

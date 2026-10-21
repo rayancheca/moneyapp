@@ -9,7 +9,7 @@ import {
   type SeriesStatusForCopy,
 } from "@/lib/series-evidence";
 import type { SeriesDetail } from "@/services/recurring-detail";
-import { longDate } from "./labels";
+import { annualizedFigure, longDate } from "./labels";
 
 /**
  * What ending a series actually costs — the lines under "End this series".
@@ -62,8 +62,12 @@ export interface SeriesEndInput {
    * linked to it. See `endDrawsAsRecurring`.
    */
   drawnAsRecurringByEnding: boolean;
-  /** a year at today's amounts, or null when the series cannot carry one */
-  annualizedCents: number | null;
+  /**
+   * The page's Annualized figure (`annualizedFigure`): a year at today's amounts, or — `once` — the one charge of a
+   * schedule of one; null when the series carries none. ⛔ The line's form is the figure's own `once`, ONE gate with the
+   * page's slot — 🔴 it asked `oneChargeOn` alone, which the slot does not (review of 89f235d).
+   */
+  annualized: { cents: number; once: boolean } | null;
   /** arrears magnitude — 0 when nothing is late; disjoint from the tail below */
   overdueCents: number;
   /** of `overdueCents`, the part on days no checked statement has reached (`ArrearsReading.unreadCents`) */
@@ -101,13 +105,23 @@ function endDrawsAsRecurring(status: SeriesStatusForCopy, linkedCount: number): 
 export function seriesEndInput(
   data: Pick<
     SeriesDetail,
-    "kind" | "status" | "annualizedCents" | "overdue" | "nextExpected" | "oneChargeOn" | "endsOn" | "linkedTxns"
+    | "kind"
+    | "status"
+    | "annualizedCents"
+    | "nextExpectedAmountCents"
+    | "overdue"
+    | "nextExpected"
+    | "oneChargeOn"
+    | "endsOn"
+    | "linkedTxns"
   >,
 ): SeriesEndInput {
+  const figure = annualizedFigure(data);
   return {
     kind: data.kind,
     drawnAsRecurringByEnding: endDrawsAsRecurring(data.status, data.linkedTxns.length),
-    annualizedCents: data.annualizedCents,
+    // the page's own Annualized figure — its one charge, of a schedule of one (§6A 56) — and the form it prints in
+    annualized: figure === null ? null : { cents: figure.cents, once: figure.once },
     overdueCents: Math.abs(data.overdue?.amountCents ?? 0),
     overdueUnreadCents: data.overdue?.unreadCents ?? 0,
     overdueInGraceCents: data.overdue?.inGraceCents ?? 0,
@@ -216,11 +230,15 @@ export function seriesEndLines(
     inGraceCents: input.overdueInGraceCents,
   };
   return [
-    ...(input.annualizedCents !== null
+    ...(input.annualized !== null
       ? [
           {
             label: "Leaving the forecast",
-            value: `~${formatCents(input.annualizedCents)} / yr`,
+            // ⚖️ §6A 56: one charge leaves as that charge — 🔴 "~$72.74 / yr" under "once on Nov 11, 2026" (his
+            // ledger copy, 2026-10-13). The form is the page's figure's own (`annualized.once`), one gate with its slot.
+            value: input.annualized.once
+              ? `~${formatCents(input.annualized.cents)}, its one ${seriesPostingWords(input.kind).posting}`
+              : `~${formatCents(input.annualized.cents)} / yr`,
             irreversible: true,
           },
         ]

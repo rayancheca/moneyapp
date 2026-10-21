@@ -22,6 +22,7 @@ import {
 } from "@/lib/dates";
 import { monthIncomeLink } from "@/lib/income-basis";
 import { resolvePeriod, withPeriod } from "@/lib/period";
+import { seriesBehindHref } from "@/lib/recurring-list";
 import { runway, type Runway } from "@/lib/runway";
 import { cashPosition, outsidePortfolioCashAccountIds } from "./accounts";
 import {
@@ -621,6 +622,11 @@ export interface CarCard {
   evidenceCaption: string | null;
   /** the spend baseline the share is measured against, car spend removed */
   baseline: SpendBaseline;
+  /**
+   * Where the card's figures are checked: exactly its lines, through the earn row's rule (`seriesBehindHref`). 🔴
+   * "Commitments →" opened a bare `/recurring` over figures summed from them (review of the dashboard links).
+   */
+  seriesHref: string;
   today: string;
 }
 
@@ -784,6 +790,8 @@ export function carCard(db: AppDatabase, today: string = todayIso()): CarCard | 
     book,
     evidenceCaption: carEvidenceCaption(ending, months),
     baseline: { ...baseline, monthlyCents: baselineMonthlySpendCents },
+    // the drill-down contract: a link opens exactly the rows behind its number — the lines the card lists and sums
+    seriesHref: seriesBehindHref(book.lines.map((l) => l.seriesId)),
     today,
   };
 }

@@ -11,7 +11,7 @@ import { seedDatabase } from "@/db/seed";
 import { shrinkCaption } from "@/lib/committed";
 import { addCalendarMonths, addDays, daysInMonthOf, monthKey } from "@/lib/dates";
 import { parsePeriodParams, resolvePeriod } from "@/lib/period";
-import { namedSeriesOf, SERIES_LIST_PARAM, seriesListed } from "@/lib/recurring-list";
+import { namedSeriesOf, SERIES_LIST_PARAM, seriesListed, seriesListHref } from "@/lib/recurring-list";
 import { dailyBalances } from "@/db/schema/balances";
 import { importFiles, statementPeriods } from "@/db/schema/imports";
 import { categories } from "@/db/schema/categories";
@@ -1415,17 +1415,21 @@ describe("carCard", () => {
     expect(c.cost.evidencedThrough).toBe("2027-01-11");
     expect(c.evidenceCaption).toContain("Car insurance stops inside");
     expect(c.evidenceCaption).toContain("Jan 11, 2027");
-    expect(c.evidenceCaption).toContain("one other does too");
+    // ⚖️ the balance is one charge (§6A 56), counted as stopping by neither card — see the test below
+    expect(c.evidenceCaption).not.toContain("does too");
     expect(c.evidenceCaption).not.toContain("Nov 11, 2026");
   });
 
   /*
    * ⚖️ §6A 56 on both cards of his dashboard (a copy of his ledger, 2026-10-13). The runway's sentence counts the lines
    * that lower its RATE, and the balance — one charge, its own single payment — lowers nothing: 🔴 it read "…, and one
-   * other does too — … $364.66 a month lower for the two of them". The car card's sentence counts the lines that STOP
-   * inside its horizon, which the balance still does on Nov 11; its figures are the decision's "unchanged".
+   * other does too — … $364.66 a month lower for the two of them". Its figures are the decision's "unchanged".
+   *
+   * ⚖️ …and the car card's sentence leaves it out of its count too (§6A 56 read on 2026-10-14, no new question): a
+   * charge due once is no commitment that "stops". 🔴 Both cards on his dashboard printed the same-shaped sentence of
+   * Car insurance, the runway's alone and the car card's "…, and one other does too" — the Nov 11 balance.
    */
-  test("the runway's rate sentence names Car insurance alone; the car card's figures and sentence do not move", () => {
+  test("both cards' sentences name Car insurance alone — the car card's figures do not move", () => {
     ownersCar();
     expect(shrinkCaption(committedBook(bundle.db, "2026-10-13"))).toBe(
       "Car insurance stops inside that window — evidenced through Jan 11, 2027, with no renewal in the ledger — " +
@@ -1440,13 +1444,61 @@ describe("carCard", () => {
     ]);
     expect(c.evidenceCaption).toBe(
       "Car insurance stops inside the next 12 months — evidenced through Jan 11, 2027, with no renewal in the " +
-        "ledger, and one other does too — so the monthly figure above stops being what you pay after that date.",
+        "ledger — so the monthly figure above stops being what you pay after that date.",
     );
     // the car's own book reads the balance by the runway's rule
     expect(c.book.lines.find((l) => l.name.startsWith("Car insurance — Nov 11"))).toMatchObject({
       oneCharge: true,
       shortfallPerMonthCents: 0,
     });
+  });
+
+  /*
+   * ⚖️ §6A 56 — and when the balance IS in the month the figure is. 🔴 With Car insurance ended, or its anchor typed
+   * past its end (the two states ask (1) of 2026-10-14 builds), the car card read "Car insurance — Nov 11 balance after
+   * the $1,000 early payment stops inside the next 12 months — evidenced through Nov 11, 2026, with no renewal in the
+   * ledger — …" over November's $767.78, beside a runway that names nothing (copies of his ledger 2026-10-13, review of
+   * 89f235d). The figure is the decision's "unchanged", and it holds the charge: the sentence dates it by the charge,
+   * worded as the one charge it is.
+   */
+  test.each([
+    ["ended", { status: "ended" as const }],
+    ["its anchor typed past its end", { userNextExpectedOn: "2027-02-11" }],
+  ])("Car insurance %s: the balance dates November's figure as one charge — no commitment 'stops'", (_, set) => {
+    ownersCar();
+    bundle.db.update(recurringSeries).set(set).where(eq(recurringSeries.name, "Car insurance")).run();
+    expect(shrinkCaption(committedBook(bundle.db, "2026-10-13"))).toBeNull();
+    const c = carCard(bundle.db, "2026-10-13")!;
+    expect([c.cost.monthlyCents, c.cost.evidencedThrough]).toEqual([69504 + 7274, "2026-11-11"]);
+    expect(c.evidenceCaption).toBe(
+      "Car insurance — Nov 11 balance after the $1,000 early payment charges once on Nov 11, 2026 — the monthly " +
+        "figure above holds that charge, so it stops being what you pay after that date.",
+    );
+  });
+
+  /*
+   * The drill-down contract: a link opens exactly the rows behind its number. 🔴 The card's "Commitments →" opened a
+   * bare `/recurring` — the Upcoming tab, every series' dates, the rent and his pay among them — over figures summed
+   * from its three car lines (his ledger copy 2026-10-13; review of the dashboard links). It names its lines, as the
+   * earn row names its schedules (`seriesBehindHref`).
+   */
+  test("its link opens the All tab narrowed to exactly its lines — no rent, no pay", () => {
+    ownersCar();
+    addSeries({ name: "Rent", kind: "bill", nextExpectedOn: "2026-11-01", amountCents: -210900 });
+    addSeries({ name: "Salary", kind: "income", nextExpectedOn: "2026-10-16", amountCents: 114192 });
+    const c = carCard(bundle.db, "2026-10-13")!;
+    expect(c.seriesHref).toBe(seriesListHref(c.book.lines.map((l) => l.seriesId)));
+
+    const html = renderToStaticMarkup(createElement(CarCostCard, { data: c }));
+    const link = /<a[^>]*href="([^"]*)"[^>]*>Commitments →<\/a>/.exec(html)?.[1]?.replaceAll("&amp;", "&");
+    expect(link).toBe(c.seriesHref);
+    const url = new URL(link!, "http://moneyapp.test");
+    const opened = seriesListed(listSeries(bundle.db, "2026-10-13"), namedSeriesOf(url.searchParams.get(SERIES_LIST_PARAM)));
+    expect(opened.rows.map((s) => s.name).sort()).toEqual([
+      "Car insurance",
+      "Car insurance — Nov 11 balance after the $1,000 early payment",
+      "Car lease",
+    ]);
   });
 
   /* A lease that outlives the horizon does not stop the monthly figure inside

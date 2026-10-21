@@ -246,18 +246,17 @@ describe("seriesDetail", () => {
 
   test("a commitment dated further out than the count itself is still listed", () => {
     /*
-     * The window is `count + 1` steps, not `count`. Every anchor at or before
-     * today needs only `count` — the first occurrence lands inside one step, so
-     * three of them land inside three. The extra step is for the OTHER anchor: a
-     * user-set date further out than the count. 2026-10-20 is three months and
-     * twelve days past TODAY, so a three-month window would list nothing at all
-     * for a commitment the user entered by hand — the car lease's exact shape,
-     * signed in advance of its first charge.
+     * The window is `count + 1` steps, not `count`: from an anchor at or before today the first occurrence lands up to
+     * one step out. A user-set date further out — 2026-10-20 is three months and twelve days past TODAY, the car
+     * lease's exact shape, signed in advance of its first charge — is where the steps are counted FROM (`windowFrom`),
+     * so it lists its next three as any series does. 🔴 Counted from today, four steps reached Oct 20 alone, and a one
+     * charge four steps out was listed nowhere: "Upcoming charges off the calendar: none scheduled" in its End dialog
+     * (review of 89f235d, the Nov 11 balance moved to Nov 11, 2027 on a copy of his ledger 2026-10-13).
      */
     const id = netflix().id;
     setSeriesOverrides(bundle.db, id, { userNextExpectedOn: "2026-10-20" });
     const d = seriesDetail(bundle.db, id, TODAY);
-    expect(d.nextExpected.map((o) => o.date)).toEqual(["2026-10-20"]);
+    expect(d.nextExpected.map((o) => o.date)).toEqual(["2026-10-20", "2026-11-20", "2026-12-20"]);
   });
 
   test("effective values follow user overrides; merge candidates exclude self", () => {

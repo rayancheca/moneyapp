@@ -246,6 +246,23 @@ describe("AllSeriesView — a schedule of one charge reads Once in the cadence s
     expect(card).not.toContain("Monthly");
   });
 
+  /*
+   * ⚖️ §6A 56 in the Annualized column too: its one charge, never a year of it. 🔴 His ledger copy 2026-10-13: "Once |
+   * -$72.74 | Nov 11 | ~$72.74/yr ends Nov 11, 2026" — a year, and when it stops inside it, of a charge due once.
+   */
+  test("the balance's Annualized cell is its one charge, 'once · $72.74' — Car insurance keeps its year", () => {
+    const html = page();
+    const cellsOf = (name: string): string => {
+      const at = html.indexOf(`>${name}</a>`);
+      return html.slice(at, html.indexOf("</tr>", at)).replace(/<[^>]+>/g, "|");
+    };
+    expect(cellsOf(BALANCE)).toContain("once · |$72.74|");
+    expect(cellsOf(BALANCE)).not.toContain("/yr");
+    expect(cellsOf(BALANCE)).not.toContain("ends Nov 11, 2026");
+    expect(cellsOf("Car insurance")).toContain("~|$715.16|/yr");
+    expect(cellsOf("Car insurance")).toContain("ends Jan 11, 2027");
+  });
+
   /* 🔴 From Nov 12 its one day has passed, and its row read "~$0.00/yr" (a copy of his ledger, 2026-10-12). */
   test("from Nov 12, its day passed, its row prints no year ahead of it", () => {
     const html = decode(
@@ -529,6 +546,18 @@ describe("AllSeriesView — narrowed by a link, it says what it shows and how to
     });
     expect(html).toContain('id="rec-active"');
     expect(text(html)).toContain("No active series yet — confirm a suggestion above.");
+  });
+
+  /*
+   * 🔴 …and with no suggestion above it said the same: "No active series yet — confirm a suggestion above." over a tab
+   * with nothing to confirm (review of 4c1b032, pre-existing since cf37bb3). Latent on his ledger copy 2026-10-13: 8
+   * active series, 1 suggestion. It says what is true: none is active yet.
+   */
+  test("unnarrowed, an empty Active with no suggestion above points at none", () => {
+    const html = render({ series: [{ ...fixture[0]!, evidence: "awaiting-statements" as const }] });
+    expect(html).toContain('id="rec-active"');
+    expect(text(html)).toContain("No active series yet.");
+    expect(text(html)).not.toContain("suggestion");
   });
 
   test("narrowed, an Active section that holds a schedule is still printed, in pay words", () => {

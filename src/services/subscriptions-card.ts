@@ -8,6 +8,7 @@ import { addCalendarMonths, compareDates, diffDays, monthKey, todayIso } from "@
 import { formatDayShortIn } from "@/lib/format-date";
 import { levelledMonthlyCents } from "@/lib/income-basis";
 import { oneChargePhrase } from "@/lib/one-charge";
+import { seriesBehindHref } from "@/lib/recurring-list";
 import { wholeToleranceDays } from "@/lib/recurring-step";
 import { outsidePortfolioCashAccountIds } from "./accounts";
 import { activeTxnsInRange, isAgentsSeries } from "./analytics";
@@ -238,6 +239,11 @@ export interface SubscriptionsCard {
    * his decision 71, 2026-10-13) — named after the total it bounds (`unreadMonthsSentence`).
    */
   unread: UnreadMonths | null;
+  /**
+   * Where the card's figures are checked: exactly the series it lists — live, one-off and lapsed — through the earn
+   * row's rule (`seriesBehindHref`). 🔴 "Recurring →" opened a bare `/recurring` (review of the dashboard links).
+   */
+  seriesHref: string;
   today: string;
 }
 
@@ -507,6 +513,8 @@ export function subscriptionsCard(
     fromMonth,
     toMonth,
     unread: window.unread,
+    // the drill-down contract: a link opens exactly the rows behind its number — every row the card lists, in its order
+    seriesHref: seriesBehindHref([...live, ...oneOffs, ...lapsed].map((l) => l.seriesId)),
     today,
   };
 }

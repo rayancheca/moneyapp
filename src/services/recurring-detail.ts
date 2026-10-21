@@ -14,7 +14,7 @@ import {
   type SeriesStatus,
 } from "@/db/schema/recurring";
 import { transactions } from "@/db/schema/transactions";
-import { addDays, isValidIsoDate, todayIso } from "@/lib/dates";
+import { addDays, compareDates, isValidIsoDate, todayIso } from "@/lib/dates";
 import { expectedCentsOf, paydayReadings, type PaydayReading, type PerPayday } from "@/lib/per-payday";
 import { stepFrom, stepPlan } from "@/lib/recurring-step";
 import { outsidePortfolioCashAccountIds } from "./accounts";
@@ -544,6 +544,14 @@ export function seriesDetail(
   // ⛔ …and less a bill's day a payment has already paid — the same reading, and the same reach: a payment pays a day
   // only within its grace of it. 🔴 With the rent paid Sep 30 the rent's page listed Oct 1, Nov 1 and Dec 1 next, and
   // its End dialog read "every charge from Oct 1, 2026 on", beside a calendar drawing Oct 1 paid (review of 50020a2).
+  // ⛔ …and the steps are counted from the series' OWN next day when that is later than today: "the first can land up
+  // to one whole step out" is untrue of a one charge (§6A 56) or an anchor typed further ahead. 🔴 Review of 89f235d:
+  // the Nov 11 balance moved to Nov 11, 2027 (a copy of his ledger, 2026-10-13) listed nothing next, and its End dialog
+  // read "Upcoming charges off the calendar: none scheduled" under "Leaving the forecast: ~$72.74, its one charge" — as
+  // one on Mar 11, 2027, inside the year, did too. A longer window only adds days after the ones it held, so a series
+  // whose next day is near keeps every day it listed.
+  const windowFrom =
+    eff.nextExpectedOn !== null && compareDates(eff.nextExpectedOn, today) > 0 ? eff.nextExpectedOn : today;
   const nextExpected = projects
     ? stillToCome(
         stillToComeReader(db, [s], today),
@@ -552,7 +560,7 @@ export function seriesDetail(
           toProjectable(s),
           today,
           addDays(
-            stepFrom(today, stepPlan(eff.cadence, eff.intervalDaysAvg), NEXT_EXPECTED_COUNT + 1),
+            stepFrom(windowFrom, stepPlan(eff.cadence, eff.intervalDaysAvg), NEXT_EXPECTED_COUNT + 1),
             s.toleranceDays,
           ),
         ),

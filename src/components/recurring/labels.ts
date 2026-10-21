@@ -898,14 +898,45 @@ export function annualizedEndNote(endsOn: string | null, today: string): string 
  * the day is the one it ran out — and stays that day after the end has passed, never jumping to the end on Jan 6.
  * Where the two are one day (the Nov 11 balance, Car insurance's Jan 11) it reads as it did.
  *
- * ⚠️ No day it ran out — no date to step from, or an anchor TYPED past its end whose rhythm's last day is still ahead
- * (`scheduleRanOutOn`; a detected anchor past its end ran out on its last charge, or on the end when that charge
- * settled after it): the end day's tense.
+ * ⚠️ No day it ran out and no date to step from: the end day's tense.
+ *
+ * ⛔ …and an anchor TYPED past its end, whose rhythm's last day before the end is still ahead (`scheduleRanOutOn`; a
+ * detected anchor past its end ran out on its last charge, or on the end when that charge settled after it), holds no
+ * date: the card says "Its schedule has ended" (`scheduleEnded`, the evidence's `schedule-ended`). 🔴 The badge took
+ * the end day's tense and read "Ends Jan 11, 2027" beside it (review of the late-lapse batch; his ledger copy
+ * 2026-10-13, Car insurance's anchor typed Feb 11). It ended, before the end it names: "Ended before Jan 11, 2027".
  */
-export function seriesEndBadge(endsOn: string, ranOutOn: string | null, today: string): string {
+export function seriesEndBadge(endsOn: string, ranOutOn: string | null, today: string, scheduleEnded: boolean): string {
   const ended = SERIES_EVIDENCE_LABEL["schedule-ended"];
   if (ranOutOn !== null) return `${ended} ${longDate(ranOutOn)}`;
-  return `${compareDates(endsOn, today) < 0 ? ended : "Ends"} ${longDate(endsOn)}`;
+  if (compareDates(endsOn, today) < 0) return `${ended} ${longDate(endsOn)}`;
+  return `${scheduleEnded ? `${ended} before` : "Ends"} ${longDate(endsOn)}`;
+}
+
+/**
+ * What the Annualized slot prints around its figure — "~$715.16/yr", a year at today's amounts (`annualizedCentsOf`) —
+ * and, for a schedule of ONE charge (`oneChargeOn`), that charge: "once · $72.74". Null when the series carries no
+ * year: the slot's "—".
+ *
+ * ⚖️ Owner decision 2026-10-08 (§6A 56): one charge reads as one charge wherever a cadence prints. 🔴 The Nov 11
+ * balance read "Annualized ~$72.74/yr — the twelve months from today — this one stops on Nov 11, 2026, inside them"
+ * on its page, "~$72.74/yr ends Nov 11, 2026" on the All tab and "Leaving the forecast ~$72.74 / yr" in its End dialog,
+ * beside "Once" (his ledger copy, 2026-10-13). ⛔ `once` is the ONE gate for a year's qualifiers (`annualizedCaveat`,
+ * `annualizedEndNote`): they print only under a year. The End dialog's line is this figure (`seriesEndInput`).
+ *
+ * The charge itself, never the year's sum: a one charge more than a year out projects nothing inside the year, and
+ * "once · $0.00" would be false of it.
+ */
+export function annualizedFigure(s: {
+  annualizedCents: number | null;
+  oneChargeOn: string | null;
+  nextExpectedAmountCents: number | null;
+}): { lead: string; cents: number; tail: string; once: boolean } | null {
+  if (s.annualizedCents === null) return null;
+  if (s.oneChargeOn === null || s.nextExpectedAmountCents === null) {
+    return { lead: "~", cents: s.annualizedCents, tail: "/yr", once: false };
+  }
+  return { lead: `${ONE_CHARGE_WORD} · `, cents: Math.abs(s.nextExpectedAmountCents), tail: "", once: true };
 }
 
 /**

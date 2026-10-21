@@ -25,8 +25,9 @@ export function CarCostCard({ data }: { data: CarCardData }) {
     <SurfaceCard>
       <div className="flex items-baseline justify-between gap-3">
         <h3 className="text-xs font-medium uppercase tracking-[0.12em] text-ink-faint">The car</h3>
+        {/* exactly the lines below (`seriesHref`) — 🔴 a bare /recurring, review of the dashboard links */}
         <Link
-          href="/recurring"
+          href={data.seriesHref}
           className="text-xs text-ink-muted transition-colors duration-(--duration-fast) hover:text-ink"
         >
           Commitments →
