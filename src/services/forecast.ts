@@ -5,7 +5,7 @@ import { transactions } from "@/db/schema/transactions";
 import { arrearsTail, HAS_NOT_POSTED } from "@/lib/arrears-reading";
 import { addCalendarMonths, addDays, compareDates, diffDays, monthKey, periodBounds, todayIso } from "@/lib/dates";
 import { forecastSplit } from "@/lib/forecast-split";
-import { projectOngoingIncome, projectOngoingNetIncome } from "@/lib/income-forecast";
+import { incomePaceNote, projectOngoingIncome, projectOngoingNetIncome } from "@/lib/income-forecast";
 import { trailingPace } from "@/lib/projection";
 import { formatDayShortIn } from "@/lib/format-date";
 import { spendPaceNote, type UnreadMonths } from "@/lib/committed";
@@ -340,11 +340,19 @@ export interface MonthForecast {
   spendPaceMonths: number;
   /**
    * How many months the INCOME pace averaged (`incomePaceMonths`): the calendar's last three, fewer where the ledger is
-   * young, and 0 where it covers no whole month — then there is no income pace either, and the card's band holds Money
-   * in's pace back as it does Money out's. 🔴 Review of f1a0180: with no count to read, the band could not tell "no
-   * month" from "$0" and printed "Money in · Recent pace $0.00 (0 lines)", drawn 100% scheduled.
+   * young, and 0 where it covers no whole month. Under the presence gate's two (`incomePaceMeasurable`) there is no
+   * income pace — no kind of income can come in two of one month — and the card's band holds Money in's pace back as
+   * it does Money out's. 🔴 Review of f1a0180: with no count to read, the band could not tell "no month" from "$0" and
+   * printed "Money in · Recent pace $0.00 (0 lines)", drawn 100% scheduled. 🔴 Review of 0795a2a: it then held back 0
+   * months alone, and one month read the same "$0.00 (0 lines)" beside Money out's one-month "$64.52 (1 line)".
    */
   incomePaceMonths: number;
+  /**
+   * Why Money in has no recent pace, where it has too few months for one (`incomePaceNote`): "Money in has no recent
+   * pace yet: a kind of income counts toward it once it has come in 2 complete months, so a one-off never does. Jul
+   * 2026 is the only complete month imported so far." Null where the income pace has its months.
+   */
+  incomePaceNote: string | null;
   /**
    * Paydays that already passed this month with nothing banked against them —
    * REPORTED, never projected.
@@ -1383,6 +1391,7 @@ export function forecastForMonth(
     spendPaceNote: paceNote(reads.spendPace),
     spendPaceMonths: reads.spendPace.windows.length,
     incomePaceMonths: reads.incomePace.length,
+    incomePaceNote: incomePaceNote(reads.incomePace.map((w) => w.key)),
     /*
      * A FUTURE month has no past inside it — every one of its paydays is still
      * to come, so there is nothing that has passed unbanked. Stated rather than
@@ -1490,6 +1499,7 @@ function currentMonthForecast(db: AppDatabase, today: string, reads: ForecastRea
     spendPaceNote: paceNote(reads.spendPace),
     spendPaceMonths: reads.spendPace.windows.length,
     incomePaceMonths: reads.incomePace.length,
+    incomePaceNote: incomePaceNote(reads.incomePace.map((w) => w.key)),
     unbankedIncome: unbankedIncomeTotals(unbanked),
     outsideCash: outsideCashOf(db, parts),
     agentsIncome: { netCents: parts.agentsNet, committedNetCents: parts.committedAgentsNet },

@@ -1,5 +1,11 @@
 import { describe, expect, test } from "vitest";
-import { MIN_INCOME_MONTHS_PRESENT, projectOngoingIncome, projectOngoingNetIncome } from "./income-forecast";
+import {
+  incomePaceMeasurable,
+  incomePaceNote,
+  MIN_INCOME_MONTHS_PRESENT,
+  projectOngoingIncome,
+  projectOngoingNetIncome,
+} from "./income-forecast";
 
 describe("projectOngoingIncome", () => {
   test("projects a bucket present in ≥2 trailing months at its trailing mean", () => {
@@ -101,5 +107,27 @@ describe("projectOngoingNetIncome — a net bucket that can come to money out", 
     for (const totals of [[100, 100, 100], [0, 200000, 400000], [-100, -100, 400], [400, 400, -800], [0, 0, 0]]) {
       expect(net(totals), totals.join()).toEqual(projectOngoingIncome([{ label: "Interest", monthlyTotalsCents: totals }]));
     }
+  });
+});
+
+/*
+ * 🔴 Review of 0795a2a: /recurring's band withheld Money in's pace over 0 months alone, and over one it printed
+ * "Recent pace $0.00 (0 lines)" — a $0.00 the gate makes, since no bucket can come in two of one month.
+ */
+describe("incomePaceMeasurable / incomePaceNote — an income pace needs the gate's months", () => {
+  test("a pace over fewer months than the presence gate needs measures nothing; the gate's two do", () => {
+    expect([0, 1, 2, 3].map(incomePaceMeasurable)).toEqual([false, false, true, true]);
+    // …because over one month no bucket can pass: $3,000.00 of Salary in it is still no ongoing income
+    expect(projectOngoingIncome([{ label: "Salary", monthlyTotalsCents: [300000] }])).toEqual([]);
+  });
+
+  test("the sentence names the month there is, and is null where the pace has its months", () => {
+    const gate =
+      "Money in has no recent pace yet: a kind of income counts toward it once it has come in 2 complete months, so " +
+      "a one-off never does.";
+    expect(incomePaceNote([])).toBe(gate);
+    expect(incomePaceNote(["2026-07"])).toBe(`${gate} Jul 2026 is the only complete month imported so far.`);
+    expect(incomePaceNote(["2026-06", "2026-07"])).toBeNull();
+    expect(incomePaceNote(["2026-05", "2026-06", "2026-07"])).toBeNull();
   });
 });

@@ -182,6 +182,11 @@ describe("the spending pace averages only months every account you spend from is
  */
 const YOUNG_TODAY = "2026-08-27"; // August: 31 days, 5 remaining including today
 
+/** What the pace row says where the income pace has fewer months than its presence gate needs (`incomePaceNote`). */
+const NO_INCOME_PACE =
+  "Money in has no recent pace yet: a kind of income counts toward it once it has come in 2 complete months, so a " +
+  "one-off never does.";
+
 /** The ledger opens Jun 1: Checking spends $400.00 on Groceries on the 1st and banks $3,000.00 of Salary on the 2nd. */
 function youngLedger(): void {
   for (const m of ["2026-06", "2026-07", "2026-08"]) {
@@ -370,6 +375,60 @@ describe("…and never from before the ledger's first whole month (`baselineWind
       const html = renderToStaticMarkup(createElement(ForecastCard, { forecast: f }));
       expect(html.slice(html.indexOf("Money in"), html.indexOf("If you also spend"))).not.toContain("width:");
       expect(f.incomePaceMonths).toBe(0);
+    }
+  });
+
+  test("…and the pace row says why Money in has none, after the spending sentence it shares a cause with", () => {
+    groceries(checkingId, "2026-08-05", -40000);
+    filed(checkingId, "2026-08-06", 300000, "Salary");
+    filed(checkingId, "2026-08-20", 300000, "Salary");
+    confirmedMonthly("Rent", "bill", -150000, "2026-08-30");
+    const card = cardText(forecastCurrentMonth(bundle.db, YOUNG_TODAY));
+    expect(card.slice(card.indexOf("If you also spend"), card.indexOf("Show the math")).trim()).toBe(
+      "If you also spend at your recent pace No complete month has been imported yet, so there is no spending " +
+        `average to stand on. ${NO_INCOME_PACE}`,
+    );
+  });
+
+  /*
+   * 🔴 Review of 0795a2a: the band withheld Money in's pace only where it had NO month, and an income pace needs two —
+   * a kind of income counts as ongoing once it has come in `MIN_INCOME_MONTHS_PRESENT` of the months averaged, so over
+   * one month every income pace is $0.00 by construction. On a ledger opening Jul 1 (Groceries $400.00 on the 1st and
+   * Salary $3,000.00 on the 2nd of Jul and Aug), at 2026-08-27 Money in read "Scheduled $2,000.00 (1 line) Recent pace
+   * $0.00 (0 lines)", drawn 100% scheduled, beside Money out's "Recent pace $64.52 (1 line)" over the same July: a
+   * $0.00 its one month cannot measure, not one it did.
+   */
+  test('one complete month is no income pace either: Money in reads "Recent pace —" and the pace row says why', () => {
+    for (const m of ["2026-07", "2026-08"]) {
+      groceries(checkingId, `${m}-01`, -40000);
+      filed(checkingId, `${m}-02`, 300000, "Salary");
+    }
+    confirmedMonthly("Pay", "income", 200000, "2026-08-29");
+    confirmedMonthly("Rent", "bill", -150000, "2026-08-30");
+    const why = `${NO_INCOME_PACE} Jul 2026 is the only complete month imported so far.`;
+
+    const months: [MonthForecast, string][] = [
+      [forecastCurrentMonth(bundle.db, YOUNG_TODAY), "$64.52"],
+      [forecastForMonth(bundle.db, "2026-09", YOUNG_TODAY)!, "$400.00"],
+    ];
+    for (const [f, spendPace] of months) {
+      const card = cardText(f);
+      const band = (from: string, to: string) => card.slice(card.indexOf(from), card.indexOf(to)).trim();
+      expect(band("Money in", "Money out")).toBe("Money in Scheduled $2,000.00 (1 line) Recent pace —");
+      expect(f.incomePaceMonths).toBe(1);
+      expect(f.incomePaceNote).toBe(why);
+      // ⚖️ spending's one month is a measurement — spending projects every bucket — so Money out's pace still prints
+      expect(band("Money out", "If you also spend")).toBe(
+        `Money out Committed $1,500.00 (1 line) Recent pace ${spendPace} (1 line)`,
+      );
+      // the Money in bar draws no share ("100% scheduled" would say no other money is coming); Money out's still does
+      const html = renderToStaticMarkup(createElement(ForecastCard, { forecast: f }));
+      expect(html.slice(html.indexOf("Money in"), html.indexOf("Money out"))).not.toContain("width:");
+      expect(html.slice(html.indexOf("Money out"), html.indexOf("If you also spend"))).toContain("width:");
+      // the pace row prints its figures — its Income is the scheduled $2,000.00 alone — and says why
+      const pace = band("If you also spend", "Show the math");
+      expect(pace).toContain("Income +$2,000.00");
+      expect(pace.endsWith(why)).toBe(true);
     }
   });
 

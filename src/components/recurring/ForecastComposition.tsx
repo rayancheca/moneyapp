@@ -189,7 +189,10 @@ export function ForecastComposition({
   spendPaceWithheld = false,
 }: {
   split: ForecastSplit;
-  /** The ledger covers no whole month, so there is no income pace at all — the card's predicate for it. */
+  /**
+   * The income pace has fewer months than its presence gate needs, so there is no income pace at all — the card's
+   * predicate for it (`incomePaceWithheld`), whose reason the pace row prints.
+   */
   incomePaceWithheld?: boolean;
   /**
    * No month since the ledger's first whole one is read in full, so there is no spending pace at all — the card's
@@ -210,11 +213,13 @@ export function ForecastComposition({
    * back the row alone, and on a young ledger whose one card was read only to Jun 12 this band read "Money out ·
    * Committed $1,500.00 (1 line) · Recent pace $0.00 (0 lines)", drawn 100% committed, directly above the row's
    * sentence saying there is no spending average to stand on.
-   * ⚖️ Money in's pace prints wherever it has a month: the income pace is not cut by the spending frontier (his
-   * decision 71, 2026-10-13) and is measured over its own floored months (`incomePaceMonths`), as "Show the math"
-   * prints it below. Where the ledger covers no whole month it has none, and reads "—" for the same reason Money out
-   * does. 🔴 Review of f1a0180: on a ledger opening Aug 5 this band read "Money in · Scheduled $2,000.00 (1 line) ·
-   * Recent pace $0.00 (0 lines)", drawn 100% scheduled, beside Money out's "Recent pace —" — one cause, two treatments.
+   * ⚖️ Money in's pace prints wherever it has the months to measure: the income pace is not cut by the spending
+   * frontier (his decision 71, 2026-10-13) and is measured over its own floored months (`incomePaceMonths`), as "Show
+   * the math" prints it below. With fewer than its presence gate's two (`incomePaceMeasurable`) it has none, and reads
+   * "—" as Money out does. 🔴 Review of f1a0180: on a ledger opening Aug 5 this band read "Money in · Scheduled
+   * $2,000.00 (1 line) · Recent pace $0.00 (0 lines)", drawn 100% scheduled, beside Money out's "Recent pace —" — one
+   * cause, two treatments. 🔴 Review of 0795a2a: on one opening Jul 1 it read the same over its one July, a $0.00 no
+   * kind of income could avoid, beside Money out's "Recent pace $64.52 (1 line)".
    */
   return (
     <div className="mt-6 grid gap-5 border-t border-line pt-5 md:grid-cols-2 md:gap-8">
