@@ -79,7 +79,10 @@ export interface PayShortfallWindow {
 export interface WindowEarnings {
   /** every passed payday inside the window, each at its own rate */
   impliedCents: number;
-  /** every deposit attributed to the series inside the window — money that paid no payday too */
+  /**
+   * every deposit attributed to the series inside the window — money that paid no payday too — read by the DAY that
+   * banked (`daysThatBanked`), as the settlement's `deposits` are: its portions are taken off it (`paidAcross`)
+   */
   bankedCents: number;
   /** of those paydays, the READ ones: on or before the checked day (none when nothing is checked) */
   read: { paydays: number; cents: number; firstOn: string | null; lastOn: string | null };

@@ -517,14 +517,15 @@ export const incomeSeriesOfRender = cache(function incomeSeriesOfRender(db: AppD
  * paid is a day Income counts, at the same net. `rows` are one series' (any days, any order); the order is kept.
  *
  * ⚖️ A day is a pay day only where he filed one of its rows as his pay — a payroll, or its money going back on a later
- * day, which Earned vs banked's banked figure still nets: money linked to his pay on a day with none — a credit left
- * unfiled (detection's descriptor match links a row without filing it, `absorbIntoLiveSeries`) or re-filed as a
- * transfer, which keeps its link (only `recurring-links` unlinks) — is the review queue's or a transfer's, and pays no
- * payday until he files it as his pay. 🔴 Settlement paid a payday with it while every Income figure left it
- * out: on a copy of his ledger read on 2026-10-13, an Oct 8 $1,141.92 linked to It America unfiled — or filed as
- * Internal Transfer — was drawn paid on the calendar and banked on Earned vs banked, while /budgets read $0.00 in so far
- * + $3,425.76 still expected + $1,141.92 passed against five paydays at $5,709.60, and "Income recorded" $0.00 (review
- * of 8fc0b01; hypothetical: every one of the 131 rows linked to his pay is a credit filed under Income).
+ * day, which nets below $0.00 and banks nothing for every reader (`daysThatBanked`): money linked to his pay on a day
+ * with none — a credit left unfiled (detection's descriptor match links a row without filing it,
+ * `absorbIntoLiveSeries`) or re-filed as a transfer, which keeps its link (only `recurring-links` unlinks) — is the
+ * review queue's or a transfer's, and pays no payday until he files it as his pay. 🔴 Settlement paid a payday with it
+ * while every Income figure left it out: on a copy of his ledger read on 2026-10-13, an Oct 8 $1,141.92 linked to It
+ * America unfiled — or filed as Internal Transfer — was drawn paid on the calendar and banked on Earned vs banked, while
+ * /budgets read $0.00 in so far + $3,425.76 still expected + $1,141.92 passed against five paydays at $5,709.60, and
+ * "Income recorded" $0.00 (review of 8fc0b01; hypothetical: every one of the 131 rows linked to his pay is a credit
+ * filed under Income).
  */
 export function payDayRows<T extends Pick<AnalyticsTxn, "postedOn" | "categoryId" | "amountCents">>(
   idx: CategoryIndex,

@@ -111,9 +111,9 @@ export interface CashEarningsInput {
    * instead would count his mother's cash as wages, which is precisely the
    * mistake the 2026-07-21 rows were rescued from.
    *
-   * Money out too — a return or a clawback is negative, and `bankedCents` is what reached a bank, net. ⚖️ But only a
-   * DAY that nets to money in banked anything (`daysThatBanked`, his decision 75, 2026-10-13): a payroll and its
-   * same-day return pay no payday today and are no pay arriving.
+   * Money out too — a return or a clawback is negative. ⚖️ But only a DAY that nets to money in banked anything
+   * (`daysThatBanked`, his decision 75, 2026-10-13), and `bankedCents` is those days' nets: a payroll and its same-day
+   * return pay no payday today and are no pay arriving, and money out on a day of its own takes nothing off.
    */
   banked: readonly { postedOn: string; amountCents: number }[];
   /** window, inclusive at both ends */
@@ -139,7 +139,7 @@ export interface CashEarnings {
   basis: CashEarningsBasis;
   /** what the confirmed schedule implies was earned inside the window */
   impliedCents: number;
-  /** what actually reached a bank inside the window */
+  /** what actually reached a bank inside the window — the days that banked there, each its net (`daysThatBanked`) */
   bankedCents: number;
   /**
    * `impliedCents − bankedCents`. Positive means earned-but-not-banked;
@@ -285,10 +285,19 @@ export function cashEarnings({
   const earnedThrough = paidToday || todayIsComplete ? today : addDays(today, -1);
   const scheduleEnd = earlierOf(to, earnedThrough);
 
-  const inWindow = banked.filter(
-    (b) => compareDates(b.postedOn, from) >= 0 && compareDates(b.postedOn, end) <= 0,
-  );
-  const bankedCents = inWindow.reduce((sum, b) => sum + b.amountCents, 0);
+  /*
+   * ⚖️ What reached a bank is the DAYS THAT BANKED inside the window, each its net (`daysThatBanked`, his decision 75,
+   * 2026-10-13) — the days settlement pays a payday by and every Income figure counts: a payroll returned the same day
+   * banked its net, and money going back on a LATER day — a day netting below $0.00 — banks nothing and takes nothing
+   * off. 🔴 Every row in the window was summed: with a Salary-filed -$1,141.92 on Sep 25, the day after Sep 24's
+   * payroll, settlement still paid Sep 24 and September's Income stayed $6,177.88 while this banked $4,567.68 of
+   * September, not $5,709.60 — /spending's September note read $1,141.92 never reached a bank, and the dashboard's card
+   * $12,258.92, not $11,117.00, for a payday the calendar drew paid (review of d75; hypothetical: no money out is linked
+   * to his pay, measured on his ledger copy 2026-10-21).
+   */
+  const bankedCents = bankedDays
+    .filter((d) => compareDates(d.postedOn, from) >= 0 && compareDates(d.postedOn, end) <= 0)
+    .reduce((sum, d) => sum + d.amountCents, 0);
 
   // `lastBankedOn` answers "when did pay last arrive", which is a question about
   // the series rather than about the window — a June window must still know
@@ -372,9 +381,10 @@ export interface PayGap {
  *
  * ⚖️ Decision 55 (approved with its measured figures): the dashboard's "$11,117.00 of it never reached a bank" is what
  * the paydays imply less EVERY attributed deposit inside the window — net, so money banked inside it that paid no
- * payday (his Fri Jun 5 $400.00, §6A 55b) reduces it. 🔴 /spending ALL and YTD said "$11,517.00 never reached a bank"
- * of the same nineteen paydays (review of a4b0fca, his ledger copy 2026-10-13): a second definition, built from the
- * settlement's unpaid weeks, $400.00 from the one he approved.
+ * payday (his Fri Jun 5 $400.00, §6A 55b) reduces it. A deposit is a day that banked (`daysThatBanked`, decision 75).
+ * 🔴 /spending ALL and YTD said "$11,517.00 never reached a bank" of the same nineteen paydays (review of a4b0fca, his
+ * ledger copy 2026-10-13): a second definition, built from the settlement's unpaid weeks, $400.00 from the one he
+ * approved.
  *
  * `unreadImpliedCents` is what the schedule implies past the checked day — every payday when nothing is checked —
  * and the unread part is capped at the gap: a deposit can bank an unread payday, never the other way round.

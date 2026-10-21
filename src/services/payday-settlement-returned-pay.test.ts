@@ -336,8 +336,10 @@ describe("a payroll returned the day before its payday reaches no payday", () =>
 /*
  * A RETURN ON A LATER DAY is not a same-day return: the payroll's own day banked its $1,141.92 and paid Sep 17, as it
  * always has. The return's day nets below $0.00 — money out alone — and banks nothing: it pays no payday and is no
- * pay arriving, so the card's last banked day is the payroll's, not the return's. Earned vs banked's banked figure is
- * what reached a bank, net, and still takes the return off (unchanged).
+ * pay arriving, so the card's last banked day is the payroll's, not the return's — and nor does it take anything off
+ * what reached a bank (`daysThatBanked`, decision 75): the card banks the three weeks the calendar draws paid.
+ * 🔴 The banked figure summed every row: it took the return off, two weeks banked against three paydays paid — a
+ * week "never reached a bank" that settlement, the calendar and every Income figure count as banked (review of d75).
  */
 describe("a payroll returned on a LATER day is not a same-day return", () => {
   beforeEach(() => {
@@ -351,9 +353,9 @@ describe("a payroll returned on a LATER day is not a same-day return", () => {
     expect(unbankedIncomeForSeries(bundle.db, new Set([PAY]), "2026-09-01", TODAY).totalCents).toBe(0);
   });
 
-  test("the banked figure nets the return, as it always has; the last pay that banked is Sep 17's", () => {
+  test("the banked figure is the three weeks settlement paid; the last pay that banked is Sep 17's", () => {
     const line = payLine();
-    expect([line.paydays, line.bankedCents]).toEqual([3, WEEK * 2]);
+    expect([line.paydays, line.impliedCents, line.bankedCents, line.gapCents]).toEqual([3, WEEK * 3, WEEK * 3, 0]);
     // 🔴 it was Sep 18, the return's own day: money going out was read as pay arriving
     expect([line.lastBankedOn, line.silentPeriods]).toEqual(["2026-09-17", 0]);
   });

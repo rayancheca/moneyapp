@@ -17,6 +17,7 @@ import { cashFlowSegmentHref, ledgerHref } from "@/lib/ledger-href";
 import { resolvePeriod } from "@/lib/period";
 import { incomeByMonth, incomeTransactions } from "./analytics";
 import { incomeExpectation } from "./budgets";
+import { cashEarningsReadings } from "./cash-earnings";
 import { incomeCard } from "./income-card";
 import { paydaySettlement } from "./payday-settlement";
 import { periodActivity } from "./period-activity";
@@ -334,8 +335,10 @@ describe("a day's money linked to his pay is his pay's, filed or not, when the d
 /*
  * A RETURN ON A LATER DAY is no same-day return (decision 75): the payroll's own day banked $1,141.92 and paid Sep 17,
  * and the return's day nets below $0.00 and banks nothing — so every Income figure counts Sep 17, as settlement does,
- * and they still give one answer. (Net does not take that return off — out of decision 75's reach; Earned vs banked's
- * banked figure, what reached a bank net, does.)
+ * and they still give one answer — Earned vs banked's banked figure and /spending's shortfall note too, which read the
+ * same days (`daysThatBanked`). (Net does not take that return off — out of decision 75's reach.)
+ * 🔴 Earned vs banked summed every row: it banked two weeks of September against the three Income counted, and the
+ * note said $1,141.92 "never reached a bank" for Sep 17, a payday the calendar drew paid (review of d75).
  */
 describe("a payroll returned on a LATER day is not a same-day return", () => {
   test("every Income figure counts Sep 17's payroll, as settlement pays it", () => {
@@ -343,6 +346,14 @@ describe("a payroll returned on a LATER day is not a same-day return", () => {
     payRow("2026-09-18", -WEEK);
     expect(incomeEverywhere()).toEqual(everywhere(WEEK * 3));
     incomeLinksAddUp();
+  });
+
+  test("…and so do Earned vs banked and /spending's note: three weeks banked, none short", () => {
+    payRow("2026-09-17", WEEK);
+    payRow("2026-09-18", -WEEK);
+    const [reading] = cashEarningsReadings(bundle.db, { ...SEPT, today: TODAY, withChecked: true });
+    const line = incomeCard(bundle.db, TODAY)!.pay.find((l) => l.seriesId === PAY)!;
+    expect([reading!.bankedCents, reading!.shortfall!.shortCents, line.bankedCents]).toEqual([WEEK * 3, 0, WEEK * 3]);
   });
 });
 
