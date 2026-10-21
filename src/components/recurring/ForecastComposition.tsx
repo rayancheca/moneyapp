@@ -90,7 +90,27 @@ function Part({
   );
 }
 
-function Side({ spec, side }: { spec: SideSpec; side: ForecastSplitSide }) {
+/** The pace part of a side whose pace stands on no month: its label and a dash, never "$0.00 (0 lines)". */
+function WithheldPart({ swatch, label }: { swatch: string; label: string }) {
+  return (
+    <span className="inline-flex items-baseline gap-1.5">
+      <span aria-hidden="true" className={`h-2 w-2 shrink-0 translate-y-[-1px] rounded-[2px] ${swatch}`} />
+      <span className="text-ink-muted">{label}</span>
+      <span className="text-ink-faint">—</span>
+    </span>
+  );
+}
+
+function Side({
+  spec,
+  side,
+  paceWithheld = false,
+}: {
+  spec: SideSpec;
+  side: ForecastSplitSide;
+  /** no month was read in full to average this side's pace over (`ForecastComposition`'s `spendPaceWithheld`) */
+  paceWithheld?: boolean;
+}) {
   const parts = staleParts(side);
   return (
     <div>
@@ -125,10 +145,12 @@ function Side({ spec, side }: { spec: SideSpec; side: ForecastSplitSide }) {
         empty track. `fixedShare === null` is exactly that state, and it is why
         the split reports null there instead of zero — "nothing is projected"
         and "none of what is projected is committed" would otherwise render
-        identically.
+        identically. A withheld pace is the same state for the same reason: with
+        one half unknown, "100% committed" would say nothing discretionary is
+        coming.
       */}
       <div aria-hidden="true" className="mt-2 flex h-1.5 overflow-hidden rounded-full bg-line">
-        {side.fixedShare !== null && (
+        {side.fixedShare !== null && !paceWithheld && (
           <>
             <span
               className={spec.fixedFill}
@@ -146,18 +168,32 @@ function Side({ spec, side }: { spec: SideSpec; side: ForecastSplitSide }) {
           cents={side.fixedCents}
           count={side.fixedCount}
         />
-        <Part
-          swatch={spec.variableFill}
-          label={spec.variableLabel}
-          cents={side.variableCents}
-          count={side.variableCount}
-        />
+        {paceWithheld ? (
+          <WithheldPart swatch={spec.variableFill} label={spec.variableLabel} />
+        ) : (
+          <Part
+            swatch={spec.variableFill}
+            label={spec.variableLabel}
+            cents={side.variableCents}
+            count={side.variableCount}
+          />
+        )}
       </p>
     </div>
   );
 }
 
-export function ForecastComposition({ split }: { split: ForecastSplit }) {
+export function ForecastComposition({
+  split,
+  spendPaceWithheld = false,
+}: {
+  split: ForecastSplit;
+  /**
+   * No month since the ledger's first whole one is read in full, so there is no spending pace at all — the card's
+   * one predicate for it (`spendPaceWithheld`), which holds the pace row back too.
+   */
+  spendPaceWithheld?: boolean;
+}) {
   /*
    * A month with nothing projected at all gets no band. Two empty tracks and
    * four "$0.00 (0 lines)" labels would be a composition of nothing, presented
@@ -165,10 +201,19 @@ export function ForecastComposition({ split }: { split: ForecastSplit }) {
    */
   if (split.income.fixedShare === null && split.spending.fixedShare === null) return null;
 
+  /*
+   * ⛔ A PACE OF NO MONTH IS NOT A PACE OF NOTHING, here as on the pace row beneath. Money out's "Recent pace" is the
+   * spending pace that row withholds, so it reads "—" and its bar draws no share. 🔴 Review of 06a5d3e: the fix held
+   * back the row alone, and on a young ledger whose one card was read only to Jun 12 this band read "Money out ·
+   * Committed $1,500.00 (1 line) · Recent pace $0.00 (0 lines)", drawn 100% committed, directly above the row's
+   * sentence saying there is no spending average to stand on.
+   * ⚖️ Money in's pace prints: the income pace is not cut by the spending frontier (his decision 71, 2026-10-13) and
+   * is measured over its own floored months (`incomePaceMonths`), as "Show the math" prints it below.
+   */
   return (
     <div className="mt-6 grid gap-5 border-t border-line pt-5 md:grid-cols-2 md:gap-8">
       <Side spec={MONEY_IN} side={split.income} />
-      <Side spec={MONEY_OUT} side={split.spending} />
+      <Side spec={MONEY_OUT} side={split.spending} paceWithheld={spendPaceWithheld} />
     </div>
   );
 }

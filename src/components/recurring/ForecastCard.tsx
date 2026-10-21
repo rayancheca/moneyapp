@@ -229,6 +229,14 @@ function Stat({ label, cents, flow = false }: { label: string; cents: number; fl
 }
 
 /**
+ * No month since the ledger's first whole one is read in full (`MonthForecast.spendPaceMonths`), so there is no
+ * spending pace — the ONE predicate the pace row and the composition band above it both hold their pace back by.
+ */
+function spendPaceWithheld(f: MonthForecast): boolean {
+  return f.spendPaceMonths === 0;
+}
+
+/**
  * The trailing pace, on its own row and never folded into the headline.
  *
  * ⛔ This row is the honesty half of the owner's instruction. He asked for the
@@ -258,7 +266,7 @@ function PaceRow({ forecast: f }: { forecast: MonthForecast }) {
    * as the pace — so none prints, and the row says why in the runway caption's words. 🔴 Review of 6d11c4d: on a young
    * ledger it read "Spending $0.00 … EOM cash $322.58" over three months before the first record.
    */
-  if (f.spendPaceMonths === 0) {
+  if (spendPaceWithheld(f)) {
     return (
       <div className="mt-5 rounded-md border border-line bg-surface px-4 py-3">
         {heading}
@@ -399,7 +407,7 @@ export function ForecastCard({ forecast: f }: ForecastCardProps) {
 
       <AgentsCostsNote agents={f.agentsCosts} />
 
-      <ForecastComposition split={split} />
+      <ForecastComposition split={split} spendPaceWithheld={spendPaceWithheld(f)} />
 
       <PaceRow forecast={f} />
 

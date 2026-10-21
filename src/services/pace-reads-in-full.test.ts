@@ -10,6 +10,7 @@ import { createDatabase, type DbBundle } from "@/db/client";
 import { seedDatabase } from "@/db/seed";
 import { categories } from "@/db/schema/categories";
 import { institutions } from "@/db/schema/institutions";
+import { recurringSeries } from "@/db/schema/recurring";
 import { transactions } from "@/db/schema/transactions";
 import { dedupeHash } from "@/lib/hash";
 import { baselineCaption } from "@/lib/committed";
@@ -227,6 +228,43 @@ describe("…and never from before the ledger's first whole month (`baselineWind
     expect(pace).toBe(`If you also spend at your recent pace ${unreadNote}`);
   });
 
+  /*
+   * 🔴 Review of 06a5d3e: the fix held back the pace ROW alone, and the composition band directly above it read the
+   * same empty pace the old way: "Money out · Committed $1,500.00 (1 line) · Recent pace $0.00 (0 lines)", its bar
+   * drawn 100% committed, over the row's sentence saying there is no spending average to stand on. A part of no month
+   * is not a part of nothing: the band says "—" there and draws no share it cannot know.
+   */
+  test('the band holds the spending pace back too: never "Recent pace $0.00" over the sentence saying there is none', () => {
+    youngLedger();
+    groceries(cardId, "2026-06-12", -10000);
+    bundle.db
+      .insert(recurringSeries)
+      .values({
+        name: "Rent",
+        kind: "bill",
+        cadence: "monthly",
+        intervalDaysAvg: 30,
+        nextExpectedOn: "2026-08-30",
+        nextExpectedAmountCents: -150000,
+        status: "confirmed",
+        toleranceDays: 3,
+        lastMatchedOn: "2026-07-30",
+        accountId: checkingId,
+      })
+      .run();
+    const f = forecastCurrentMonth(bundle.db, YOUNG_TODAY);
+    const card = cardText(f);
+    const band = (from: string, to: string) => card.slice(card.indexOf(from), card.indexOf(to)).trim();
+    expect(band("Money out", "If you also spend")).toBe("Money out Committed $1,500.00 (1 line) Recent pace —");
+    // ⚖️ the income pace is measured (decision 71 exempts it from the frontier), so its part prints, as in the math
+    expect(band("Money in", "Money out")).toBe("Money in Scheduled $0.00 (0 lines) Recent pace $483.87 (1 line)");
+
+    // …and the Money out bar draws no share: 100% committed would say nothing discretionary is coming
+    const html = renderToStaticMarkup(createElement(ForecastCard, { forecast: f }));
+    const outHtml = html.slice(html.indexOf("Money out"), html.indexOf("If you also spend"));
+    expect(outHtml).not.toContain("width:");
+  });
+
   test("a ledger younger than one whole month says no complete month has been imported, as the runway does", () => {
     groceries(checkingId, "2026-08-05", -40000);
     filed(checkingId, "2026-08-06", 300000, "Salary");
@@ -267,6 +305,42 @@ describe("…and never from before the ledger's first whole month (`baselineWind
       cents: 40000,
       basis: "avg of last 2 periods",
     });
+  });
+
+  /*
+   * 🔴 Review of 06a5d3e: decision 71 exempts the income pace from the FRONTIER (it is the day every account he spends
+   * from is read to), never from the FLOOR. `variableIncomeComponents` still averaged the calendar's three months with
+   * none, and on this ledger at 2026-08-27 the card's math read "Salary | avg of last 3 periods, present 2/3 mo, × 5/31
+   * days | +$322.58" — May, before the ledger opened, averaged as a month of no pay: a third of the pace gone, and the
+   * band's "Money in · Recent pace $322.58" and the components' net with it.
+   */
+  test("the income pace floors at the first whole month too: Salary over Jun–Jul as two, never May as $0", () => {
+    youngLedger();
+    groceries(cardId, "2026-06-12", -10000);
+    const salary = (f: MonthForecast) => f.components.find((c) => c.label === "Salary");
+
+    // the calendar's Jun–Jul (Aug is the running month), not cut by the Card's Jun 12: $3,000.00 each
+    expect(salary(forecastCurrentMonth(bundle.db, YOUNG_TODAY))).toMatchObject({
+      kind: "variable",
+      cents: Math.round((300000 * 5) / 31),
+      detail: "avg of last 2 periods, present 2/2 mo, × 5/31 days",
+    });
+    // a later month's forecast reads the same two
+    expect(salary(forecastForMonth(bundle.db, "2026-09", YOUNG_TODAY)!)).toMatchObject({
+      cents: 300000,
+      detail: "avg of last 2 periods, present 2/2 mo, × 30/30 days",
+    });
+  });
+
+  test("a ledger younger than one whole month projects no income pace, never one over months before it", () => {
+    groceries(checkingId, "2026-08-05", -40000);
+    filed(checkingId, "2026-08-06", 300000, "Salary");
+    filed(checkingId, "2026-08-20", 300000, "Salary");
+    const f = forecastCurrentMonth(bundle.db, YOUNG_TODAY);
+    expect(f.components.filter((c) => c.kind === "variable")).toEqual([]);
+    expect(forecastForMonth(bundle.db, "2026-09", YOUNG_TODAY)!.components.filter((c) => c.kind === "variable")).toEqual(
+      [],
+    );
   });
 });
 

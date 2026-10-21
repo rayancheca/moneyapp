@@ -41,7 +41,7 @@ export interface AveragesEnd {
  * Chase Checking was read only through Aug 12, beside a /budgets guide that left Aug and Sep out for exactly that.
  */
 export function averagesEndAt(db: AppDatabase, today: string = todayIso()): AveragesEnd {
-  const lastComplete = monthKey(addCalendarMonths(`${monthKey(today)}-01`, -1));
+  const lastComplete = lastCompleteMonth(today);
   const through = spendingCoverageThrough(db, today);
   const fullyRead = through === null ? lastComplete : lastFullyReadMonth(through);
   // 'YYYY-MM' compares as text: never the running month, however far into it the accounts are read
@@ -68,7 +68,8 @@ export interface AveragedMonths {
  * them is before the ledger's first whole month (`firstWholeMonth`).
  *
  * ⛔ ONE RULE FOR EVERY AVERAGE, ITS FLOOR TOO. `baselineWindow` (the dashboard's six, /budgets' guide) and `paceMonths`
- * (/recurring's three, /spending's and Predict budgets' three) read their months here. A month before the ledger began
+ * (/recurring's three, /spending's and Predict budgets' three) read their months here, and the income pace its floor
+ * (`incomeAveragedMonths`). A month before the ledger began
  * is not a month of nothing, it is no measurement at all (`baselineWindow` holds the 🔴 that found it), and the window
  * keeps its length by sliding back, so where the ledger is young it shortens rather than reach before the floor.
  *
@@ -79,11 +80,36 @@ export interface AveragedMonths {
  */
 export function averagedMonths(db: AppDatabase, today: string, count: number): AveragedMonths {
   const end = averagesEndAt(db, today);
+  return { keys: flooredMonths(db, end.month, count), unread: end.unread };
+}
+
+/**
+ * The `count` calendar months the INCOME pace averages today: the calendar's last complete ones, and — like every
+ * average (`averagedMonths`) — none before the ledger's first whole month.
+ *
+ * ⚖️ His decision 71 (2026-10-13) cuts SPENDING's averages at the day every account he spends from is read to; the
+ * income pace keeps the calendar's months. That exempts it from the frontier, never from the floor. 🔴 Review of
+ * 06a5d3e: `variableIncomeComponents` averaged the calendar's three with no floor, and on a ledger opening Jun 1
+ * banking $3,000.00 of Salary each month, at 2026-08-27 /recurring's math read "Salary | avg of last 3 periods, present
+ * 2/3 mo, × 5/31 days | +$322.58" — May, before the first record, averaged as a month of no pay; the two months the
+ * ledger has say $483.87.
+ */
+export function incomeAveragedMonths(db: AppDatabase, today: string, count: number): string[] {
+  return flooredMonths(db, lastCompleteMonth(today), count);
+}
+
+/** 'YYYY-MM': the calendar month before the one `today` is in — the last one an average could read in full. */
+function lastCompleteMonth(today: string): string {
+  return monthKey(addCalendarMonths(`${monthKey(today)}-01`, -1));
+}
+
+/** The `count` calendar months ending with `lastMonth` ('YYYY-MM'), oldest first, none before `firstWholeMonth`. */
+function flooredMonths(db: AppDatabase, lastMonth: string, count: number): string[] {
   const floor = firstWholeMonth(db);
   const keys: string[] = [];
   for (let i = count - 1; i >= 0; i--) {
-    const key = monthKey(addCalendarMonths(`${end.month}-01`, -i));
+    const key = monthKey(addCalendarMonths(`${lastMonth}-01`, -i));
     if (floor !== null && key >= floor) keys.push(key);
   }
-  return { keys, unread: end.unread };
+  return keys;
 }

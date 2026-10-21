@@ -105,7 +105,9 @@ describe("forecastCurrentMonth", () => {
    *
    * …and opened before April, so a trailing month with no row is a month of the ledger he spent nothing in. A month
    * before the ledger's first whole month is no measurement at all, and no average reads it (`paceMonths`' floor —
-   * review of 6d11c4d): a fixture whose first row is Jun 10 has no whole month before July, and no pace.
+   * review of 6d11c4d): a fixture whose first row is Jun 10 has no whole month before July, and no pace. The income
+   * pace keeps the calendar's months but the same floor (`incomePaceMonths`, review of 06a5d3e): its "Apr 0, May
+   * $2,000.00, Jun $4,000.00" is three months of the ledger only once it opens before April.
    */
   function readIntoJuly(): void {
     ledgerOpenedOn(bundle.db, "2026-03-01");
@@ -1037,6 +1039,7 @@ describe("forecastCurrentMonth", () => {
   });
 
   test("variable income: categorized income present in ≥2 trailing months projects forward", () => {
+    readIntoJuly();
     insertTxn(checkingId, "2026-05-15", 200000, { categoryName: "Salary" });
     insertTxn(checkingId, "2026-06-15", 400000, { categoryName: "Salary" });
     const f = forecastCurrentMonth(bundle.db, TODAY);
@@ -1047,6 +1050,7 @@ describe("forecastCurrentMonth", () => {
   });
 
   test("variable income: a one-off (single trailing month) is NOT projected forward", () => {
+    readIntoJuly();
     insertTxn(checkingId, "2026-05-15", 200000, { categoryName: "Salary" });
     insertTxn(checkingId, "2026-06-15", 400000, { categoryName: "Salary" });
     // a single Dividends payout in June — one month → gated out, must not extrapolate
@@ -1057,6 +1061,7 @@ describe("forecastCurrentMonth", () => {
   });
 
   test("variable income: event-driven income (refunds/other income) never projects even when it clusters", () => {
+    readIntoJuly();
     // refunds AND misc "Other Income" land in TWO trailing months (passes the presence
     // gate) but are one-off windfalls/gifts/settlements that must not extrapolate.
     insertTxn(checkingId, "2026-05-10", 150000, { categoryName: "Refunds & Reimbursements" });
@@ -1070,6 +1075,7 @@ describe("forecastCurrentMonth", () => {
   });
 
   test("variable income: a negative row in an income category never corrupts a bucket", () => {
+    readIntoJuly();
     insertTxn(checkingId, "2026-05-15", 200000, { categoryName: "Salary" });
     insertTxn(checkingId, "2026-06-15", 400000, { categoryName: "Salary" });
     // a refund-reversal (negative amount) posted to Salary must be SKIPPED, not netted:
@@ -1080,6 +1086,7 @@ describe("forecastCurrentMonth", () => {
   });
 
   test("variable income: a positive row in an EXPENSE category is not projected as income", () => {
+    readIntoJuly();
     // a grocery refund (positive amount in an expense category) present in ≥2 months
     // must never become "income" — it only reduces spend in variableComponents.
     insertTxn(checkingId, "2026-05-10", 30000, { categoryName: "Groceries" });
@@ -1090,6 +1097,7 @@ describe("forecastCurrentMonth", () => {
   });
 
   test("variable income: a bucket that scales to under a cent is dropped, not shown as $0", () => {
+    readIntoJuly();
     // tiny interest (avg ~7¢/mo) on the last day of the month → 7 × 1/31 rounds to 0
     insertTxn(checkingId, "2026-05-10", 10, { categoryName: "Interest" });
     insertTxn(checkingId, "2026-06-10", 10, { categoryName: "Interest" });
@@ -1098,6 +1106,7 @@ describe("forecastCurrentMonth", () => {
   });
 
   test("variable income: series-linked income rows don't double-count the fixed series", () => {
+    readIntoJuly();
     const seriesId = insertSeries({
       name: "Cash job",
       kind: "income",
@@ -1166,6 +1175,7 @@ describe("forecastCurrentMonth", () => {
   });
 
   test("variable income: a deposit linked to a DISMISSED series is ongoing income like any other", () => {
+    readIntoJuly();
     const dismissed = insertSeries({
       name: "Tutoring",
       kind: "income",

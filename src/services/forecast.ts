@@ -48,7 +48,7 @@ import { silenceMeasuredThroughBySeries } from "./cash-earnings";
 import { stillToCome, stillToComeReader } from "./payday-settlement";
 import { activeSplitsInRange } from "./transaction-splits";
 import { linkIsNotRecurring, seriesIdsNotDrawnAsRecurring } from "./recurring-link";
-import { averagedMonths } from "./read-in-full";
+import { averagedMonths, incomeAveragedMonths } from "./read-in-full";
 
 /**
  * Current-month forecast (master-plan Phase 6) — every number traceable:
@@ -114,6 +114,8 @@ interface ForecastReads {
   checkedThrough: (seriesId: string) => string | null;
   /** `paceMonths` — the months the spending pace averages, behind the frontier (his decision 71) */
   spendPace: PaceMonths;
+  /** `incomePaceMonths` — the calendar's months the income pace averages, floored as every average is */
+  incomePace: MonthWindow[];
 }
 
 /**
@@ -494,11 +496,20 @@ export interface PaceMonths {
  * month is withheld, never a pace of nothing (`MonthForecast.spendPaceMonths`).
  *
  * ⚠️ Spending's alone: the income pace still averages the calendar's months — the frontier is the day every account he
- * SPENDS from is read to.
+ * SPENDS from is read to — though never before the floor (`incomePaceMonths`).
  */
 export function paceMonths(db: AppDatabase, today: string, count: number = TRAILING_FULL_MONTHS): PaceMonths {
   const { keys, unread } = averagedMonths(db, today, count);
   return { windows: keys.map(monthWindowOf), unread };
+}
+
+/**
+ * The `count` full months the INCOME pace averages (`variableIncomeComponents`): the calendar's last ones, not cut by
+ * the spending frontier (his decision 71), and none before the ledger's first whole month (`incomeAveragedMonths`) —
+ * fewer where the ledger is young, none where it covers no whole month, and then there is no income pace.
+ */
+export function incomePaceMonths(db: AppDatabase, today: string, count: number = TRAILING_FULL_MONTHS): MonthWindow[] {
+  return incomeAveragedMonths(db, today, count).map(monthWindowOf);
 }
 
 /** `MonthForecast.spendPaceNote` of a pace's months. */
@@ -990,7 +1001,8 @@ function variableComponents(
  * VARIABLE INCOME — the fix for a near-zero "projected income" when income is
  * real but IRREGULAR (a cash job, tutoring) rather than a detected series. Per
  * income subcategory, the trailing average of the last 3 FULL months of ONGOING
- * income, scaled by remaining days. Mirrors variableComponents (spending) but
+ * income (fewer on a young ledger, `incomePaceMonths`' floor), scaled by
+ * remaining days. Mirrors variableComponents (spending) but
  * with income honesty (see lib/income-forecast.ts): a bucket must appear in ≥2
  * trailing months (one-off refunds/aid never extrapolate) and there is NO upward
  * trend nudge. Rows a series drawn as recurring owns are excluded
@@ -1020,9 +1032,13 @@ function variableIncomeComponents(
   today: string,
   remainingDays: number,
   daysInMonth: number,
-  { notDrawn, outside, agentsCash }: ForecastReads,
+  { notDrawn, outside, agentsCash, incomePace }: ForecastReads,
 ): ForecastLeg {
-  const windows = trailingFullMonths(today, TRAILING_FULL_MONTHS);
+  // the calendar's months, floored (`incomePaceMonths`): May before a ledger opening Jun 1 is no month of $0 pay
+  const windows = incomePace;
+  if (windows.length === 0) {
+    return { components: [], cashCents: 0, outsideAccountIds: new Set(), agentsCents: 0, agentsCostCents: 0 };
+  }
   const rangeStart = windows[0]!.start;
   const rangeEnd = windows.at(-1)!.end;
 
@@ -1274,6 +1290,7 @@ function forecastReads(db: AppDatabase, today: string): ForecastReads {
     checkedThrough: silenceMeasuredThroughBySeries(db, today),
     // once for the chain: every month of it paces spending over the same months, and the frontier is not cheap
     spendPace: paceMonths(db, today),
+    incomePace: incomePaceMonths(db, today),
   };
 }
 
