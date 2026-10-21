@@ -15,7 +15,7 @@ import {
   type PaydaySettlement,
 } from "@/lib/payday-settlement";
 import { paydayReadings, type PaydayReading } from "@/lib/per-payday";
-import { daysThatBanked } from "@/lib/posted-average";
+import { daysThatBanked, daysThatWentBackOut } from "@/lib/posted-average";
 import { ratePeriodOf } from "@/lib/series-kind";
 import { billPaymentsBySeries, paymentFor } from "./billing-carriers";
 import {
@@ -120,6 +120,10 @@ export function paydaySettlement(db: AppDatabase, seriesId: string, today: strin
      * note as a deposit "toward no payday".
      */
     deposits: daysThatBanked(rows).map((d) => ({ postedOn: d.postedOn, amountCents: d.amountCents })),
+    // …and the days money went back OUT on, a day of its own (decision 75): they paid no payday, and a window that
+    // counts its money names them (`payShortfall`) — 🔴 netted unnamed, a return two days after its payroll took the
+    // payday the payroll paid back off /spending's note, and a window with no read payday read "came to $0.00"
+    wentBackOut: daysThatWentBackOut(rows).map((d) => ({ postedOn: d.postedOn, amountCents: d.amountCents })),
   };
 }
 
@@ -145,6 +149,8 @@ export interface SeriesPaydaySettlement extends PaydaySettlement {
    */
   paydays: readonly PaydayOccurrence[];
   deposits: readonly AttributedDeposit[];
+  /** the days whose rows netted below $0.00 (`daysThatWentBackOut`) — signed, so negative — oldest first */
+  wentBackOut: readonly AttributedDeposit[];
 }
 
 const unsettled = (): SeriesPaydaySettlement => ({
@@ -153,6 +159,7 @@ const unsettled = (): SeriesPaydaySettlement => ({
   walkBackBefore: null,
   paydays: [],
   deposits: [],
+  wentBackOut: [],
 });
 
 /**
