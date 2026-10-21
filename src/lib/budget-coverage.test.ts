@@ -2,13 +2,17 @@ import { describe, expect, test } from "vitest";
 import {
   budgetCoverageFact,
   budgetCoverageSentence,
+  countedFlow,
   nothingFoundSoFar,
+  nothingFoundSoFarSentence,
+  partReadTotal,
   readThroughSentence,
   spendingNotFoundFact,
   spendUnread,
   spentOnlyFromCashWallets,
   type BudgetCoverageInput,
 } from "./budget-coverage";
+import { A_LOWER_BOUND } from "./empty-period";
 
 const input = (over: Partial<BudgetCoverageInput> = {}): BudgetCoverageInput => ({
   importedThroughOn: "2026-09-02",
@@ -150,6 +154,57 @@ describe("readThroughSentence — /budgets' line for a window read through a nam
 });
 
 /*
+ * ⚖️ Decision 72 on a Received or Net page (ruled implied 2026-10-14): its total is graded by its category's own day as
+ * a Spent total is, and the line's first word follows what the page counts — the noun its empty state already uses
+ * ("income in Salary is imported through …"). ⛔ One builder: the line, the borrowed clause and the empty state ask
+ * `countedFlow`.
+ */
+describe("the first word follows what is counted", () => {
+  const line = (noun: string): string => `${noun} imported through Sep 2 · 13 days of this period unaccounted`;
+
+  test("a Received page's line says income, a Net page's activity; a Spent page's is unchanged", () => {
+    expect(countedFlow("expense")).toBe("spending");
+    expect(countedFlow("income")).toBe("income");
+    for (const kind of ["transfer", "rewards", "investment", "system"] as const) {
+      expect(countedFlow(kind)).toBe("activity");
+    }
+    expect(budgetCoverageSentence(input({ counted: "income" }))).toBe(line("income"));
+    expect(budgetCoverageSentence(input({ counted: "activity" }))).toBe(line("activity"));
+    expect(budgetCoverageSentence(input())).toBe(line("spending"));
+  });
+
+  test("…and so does an ancestor's day it borrows — a subtree is one kind", () => {
+    const coverage = { importedThroughOn: "2026-09-24", spentFromSince: "2026-04-01", spentFromAccounts: 1, spentFromWallets: 0 };
+    const income = { whose: "ancestor" as const, name: "Income", coverage };
+    const dormant = { importedThroughOn: null, spentFromAccounts: 0, spentFromSince: "2026-04-01", counted: "income" as const };
+    expect(budgetCoverageSentence(input({ ...dormant, borrowedDay: income }))).toBe(
+      "nothing imported for this category since Apr 1 · income in Income imported through Sep 24 · " +
+        "13 days of this period unaccounted",
+    );
+    const cash = { ...income, coverage: { ...coverage, importedThroughOn: null, spentFromAccounts: 0, spentFromWallets: 1 } };
+    expect(budgetCoverageFact(input({ ...dormant, borrowedDay: cash }))).toBe(
+      "nothing imported for this category since Apr 1 · Income received only into a cash wallet since Apr 1",
+    );
+  });
+
+  /*
+   * 🔴 Measured on the pristine e2e fixture (today 2026-07-08): `/categories/<Dividends>` for 2026 to date, its rows on
+   * a brokerage account no import dates, would have read "spent only from accounts with no import date since Jan 1 ·
+   * income in Income imported through Jul 5 · 3 days of this period unaccounted" — spending's verb on a Received page.
+   */
+  test("…and so does the verb, wherever its accounts have no day of their own", () => {
+    const noDay = { importedThroughOn: null, spentFromAccounts: 1 };
+    const since = "accounts with no import date since Mar 1";
+    expect(budgetCoverageFact(input({ ...noDay, counted: "income" }))).toBe(`received only into ${since}`);
+    expect(budgetCoverageFact(input({ ...noDay, counted: "activity" }))).toBe(`moved only through ${since}`);
+    expect(budgetCoverageFact(input(noDay))).toBe(`spent only from ${since}`);
+    const cash = { importedThroughOn: null, spentFromAccounts: 0, spentFromWallets: 1 };
+    expect(budgetCoverageFact(input({ ...cash, counted: "income" }))).toBe("received only into a cash wallet since Mar 1");
+    expect(budgetCoverageFact(input(cash))).toBe("spent only from a cash wallet since Mar 1");
+  });
+});
+
+/*
  * 🔴 A BUDGET ON A CATEGORY WITH NO ACCOUNT OF ITS OWN COUNTED EVERY ELAPSED DAY, WHILE ITS PAGE ASKED AN ANCESTOR.
  * Measured on a copy of his ledger copy 2026-10-12, with a monthly budget made on Travel › Hotels (3 rows ever, none
  * since March): at 2026-09-02 `/categories/<Hotels>` headlined a measured $0.00 ("This window sits inside what has been
@@ -224,6 +279,56 @@ describe("a category with no import day of its own names the day its page counts
 });
 
 /*
+ * ⚖️ Decision 72 under a sentence whose subject is NOT the category (review of fdcebdc, finding 3): a merchant page's
+ * share sentence prints the line of the category it is a share of. 🔴 Measured on his ledger copy 2026-10-21: IKEA's
+ * rank read "spending imported through Oct 2, 2026 · 10 days of this period unaccounted" and, one line down over the
+ * same Oct 27, 2025 – Oct 12, 2026, its share of Housing "spending imported through Jul 31, 2026 · 73 days of this
+ * period unaccounted" — two days for one window, and neither said the second was Housing's. ⛔ The borrowed clause's
+ * own words ("spending in Fees imported through …"): one builder names a category's day wherever it is not the line's
+ * own subject.
+ */
+describe("a category's line under another subject's sentence names the category (`namedFor`)", () => {
+  test("its own day, in the borrowed clause's words — and the first word still follows what it counts", () => {
+    expect(budgetCoverageSentence(input({ namedFor: "Housing" }))).toBe(
+      "spending in Housing imported through Sep 2 · 13 days of this period unaccounted",
+    );
+    expect(budgetCoverageFact(input({ namedFor: "Salary", counted: "income" }))).toBe(
+      "income in Salary imported through Sep 2",
+    );
+  });
+
+  test("with no day of its own, 'this category' is the category, and the day it borrows names whose it is", () => {
+    const travel = {
+      whose: "ancestor" as const,
+      name: "Travel",
+      coverage: { importedThroughOn: "2026-08-12", spentFromSince: "2026-04-01", spentFromAccounts: 1, spentFromWallets: 0 },
+    };
+    const dormant = { importedThroughOn: null, spentFromAccounts: 0, spentFromSince: "2026-04-01", uncoveredDays: 7 };
+    expect(budgetCoverageSentence(input({ ...dormant, namedFor: "Hotels", borrowedDay: travel }))).toBe(
+      "nothing imported for Hotels since Apr 1 · spending in Travel imported through Aug 12 · 7 days of this period unaccounted",
+    );
+    const noDay = { importedThroughOn: null, spentFromAccounts: 1 };
+    expect(budgetCoverageFact(input({ ...noDay, namedFor: "Dividends", counted: "income" }))).toBe(
+      "Dividends received only into accounts with no import date since Mar 1",
+    );
+    const cash = { importedThroughOn: null, spentFromAccounts: 0, spentFromWallets: 1 };
+    expect(budgetCoverageFact(input({ ...cash, namedFor: "Tips" }))).toBe("Tips spent only from a cash wallet since Mar 1");
+  });
+
+  test("a borrowed ancestor is named by the same rule — the clause and the named line are one builder", () => {
+    const coverage = { importedThroughOn: null, spentFromSince: "2026-04-01", spentFromAccounts: 0, spentFromWallets: 1 };
+    const gifts = { whose: "ancestor" as const, name: "Gifts & Donations", coverage };
+    const dormant = { importedThroughOn: null, spentFromAccounts: 0, spentFromSince: "2026-04-01" };
+    // the ancestor's clause is exactly its own fact, named
+    const named = budgetCoverageFact(input({ ...coverage, namedFor: "Gifts & Donations" }));
+    expect(named).toBe("Gifts & Donations spent only from a cash wallet since Apr 1");
+    expect(budgetCoverageFact(input({ ...dormant, borrowedDay: gifts }))).toBe(
+      `nothing imported for this category since Apr 1 · ${named}`,
+    );
+  });
+});
+
+/*
  * ⚖️ Decisions 64 + 72 for a window of ALL his spending that is no total — one cash-flow bucket, one heatmap day: where it
  * holds no spending row and not one of its elapsed days is read by the day every account he spends from is imported
  * through, its Spent is "—", and this is why. 🔴 Measured on his ledger copy 2026-10-13 (review of 2fce458):
@@ -272,5 +377,27 @@ describe("spendingNotFoundFact — a window past the day all his spending is rea
 
   test("the words a cell, a tooltip or a sheet prints for it", () => {
     expect(nothingFoundSoFar("spending imported through Aug 12")).toBe("nothing found so far — spending imported through Aug 12");
+    // …and a /spending card's whole empty sentence, in the same words
+    expect(nothingFoundSoFarSentence("spending imported through Aug 12")).toBe(
+      "Nothing found so far — spending imported through Aug 12.",
+    );
+  });
+});
+
+/*
+ * ⚖️ What a total read only in part is, by what it counts (review of fdcebdc, his ledger copy 2026-10-21): a Spent or
+ * Received total can only gain from the days still to import; a Net — 43 of his windows — can move either way.
+ */
+describe("partReadTotal", () => {
+  test("spending and income are lower bounds — the empty state's own words for a zero", () => {
+    expect(partReadTotal("spending")).toBe(A_LOWER_BOUND);
+    expect(partReadTotal("income")).toBe(A_LOWER_BOUND);
+  });
+
+  test("a Net is neither a measurement nor a bound", () => {
+    expect(partReadTotal("activity")).toBe(
+      "neither a measurement nor a bound: the days still to import can move it either way",
+    );
+    expect(partReadTotal("activity")).not.toMatch(/lower bound/);
   });
 });

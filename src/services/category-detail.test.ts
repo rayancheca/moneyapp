@@ -700,6 +700,37 @@ describe("⚖️ §6A 49 — a category page asks its own imported-through day",
     const partly = emptyCopy("Fees", "2026-08-06", "2026-08-20", "Aug 6 – 20, 2026");
     expect(partly.figure).toBe("lower-bound");
     expect(partly.description).toMatch(/so this is a lower bound rather than a measurement\./);
+    expect(partly.zeroIs).toBe("a lower bound rather than a measurement");
+  });
+
+  /*
+   * ⚖️ …and a NET window read in part is neither (decision 72's `partReadTotal`): a sum of both signs, so the days still
+   * to import can move it either way — said once, by the builder the sentence and the headline over it both read
+   * (`zeroIs`), in the words its proof uses. 🔴 Review of b356d57, his ledger copy 2026-10-21: 7 empty Net windows of
+   * 2026 called their $0.00 "a lower bound" in all three places — Buys for September (1,917 negative rows to 80
+   * positive, read through Sep 9) and Loans for August among them, whose unread days push them below $0.00.
+   */
+  test("an empty Net window read in part is neither a measurement nor a bound, in its sentence and headline", () => {
+    carLedger();
+    // Internal Transfer moves money on the checking account, imported through Aug 12
+    const transfer = "Transfers > Internal Transfer";
+    insertTxn({ postedOn: "2026-07-20", amountCents: -50_000, category: transfer, accountId: checkingId });
+    const neither = "neither a measurement nor a bound: the days still to import can move it either way";
+    const partly = emptyCopy(transfer, "2026-08-06", "2026-08-20", "Aug 6 – 20, 2026");
+    expect(partly.figure).toBe("lower-bound");
+    expect(partly.zeroIs).toBe(neither);
+    expect(partly.description).toBe(
+      `8 days of it have not been imported — activity in Internal Transfer is imported through Wed, Aug 12, 2026, so this ` +
+        `is ${neither}.`,
+    );
+    // the same window's proof says the same of its zero
+    const proof = provenanceFor(bundle.db, {
+      kind: "categorySpend",
+      categoryId: catId(transfer),
+      from: "2026-08-06",
+      to: "2026-08-20",
+    })!;
+    expect(proof.headline).toMatch(new RegExp(`, so this zero is ${neither}\\.$`));
   });
 
   test("an empty ledger has looked at nothing: a dash", () => {

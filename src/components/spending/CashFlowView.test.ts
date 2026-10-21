@@ -1,7 +1,7 @@
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, test, vi } from "vitest";
-import type { SankeyGraph } from "@/lib/sankey-layout";
+import type { SpendingSankey } from "@/services/sankey";
 import type { CashFlow, CashFlowBucket } from "@/services/spending";
 import { CashFlowView } from "./CashFlowView";
 
@@ -34,10 +34,11 @@ const flow = (buckets: CashFlowBucket[]): CashFlow => {
     spendingSeries: [],
     totals: { earnedCents, spentCents, refundsCents: 0, netCents: earnedCents - spentCents, savingsRatePct: null },
     pace: null,
+    spendingUnaccounted: null,
   };
 };
 
-const NO_SANKEY: SankeyGraph = { nodes: [], links: [] };
+const NO_SANKEY: SpendingSankey = { nodes: [], links: [], spendingUnaccounted: null };
 
 function renderTable(cashFlow: CashFlow, periodLabel: string): string {
   return renderToStaticMarkup(
@@ -191,5 +192,39 @@ describe("CashFlowView's table — a day past the day all his spending is read t
     const september = bucket("2026-09", "Sep", { incomeCents: 100, netCents: 100, spendingUnaccounted: FACT });
     const html = renderTable(flow([september]), "2026");
     expect(textOf(html)).toContain("has been read for that month.");
+  });
+});
+
+/*
+ * ⚖️ Decisions 64 + 72: the Sankey lens over a window whose spending has not been found draws no "Net saved" — the
+ * graph comes back empty with the window's fact (`spendingSankey`), and the lens says it in the words every other card
+ * on /spending prints. 🔴 Review of b356d57, a second copy of his ledger with a $1,141.92 pay on Oct 16:
+ * `/spending?period=2026-10-16&cash=sankey` drew "Salary → Money in → Net saved $1,141.92" under "Spent — · Net —".
+ */
+describe("CashFlowView's Sankey lens — a window whose spending has not been found", () => {
+  const renderSankey = (sankey: SpendingSankey): string =>
+    textOf(
+      renderToStaticMarkup(
+        createElement(CashFlowView, {
+          cashFlow: flow([bucket("2026-10-16", "16", { incomeCents: 114_192, netCents: 114_192 })]),
+          projection: null,
+          sankey,
+          viewState: { cash: "sankey" },
+          baseParams: {},
+          periodLabel: "Oct 16, 2026",
+          paceWindowName: "Oct 16, 2026",
+        }),
+      ),
+    );
+
+  test("says nothing has been found so far, naming the day, where an empty flow would claim there was none", () => {
+    const html = renderSankey({ ...NO_SANKEY, spendingUnaccounted: "spending imported through Aug 12" });
+    expect(html).toContain("Nothing found so far — spending imported through Aug 12.");
+    expect(html).not.toContain("No money flow");
+    expect(html).not.toContain("Net saved");
+  });
+
+  test("a window with no flow at all keeps its own words", () => {
+    expect(renderSankey(NO_SANKEY)).toContain("No money flow to chart in this period.");
   });
 });

@@ -40,7 +40,14 @@ export function InsightList({ data, heading = "What the ledger says" }: { data: 
         {data.insights.map((insight) => (
           <li key={insight.id} className="flex items-start gap-2 text-sm text-ink">
             <Icon name="sparkles" className="mt-0.5 size-3.5 shrink-0 text-ink-faint" aria-hidden />
-            <span>{insight.text}</span>
+            {/* ⚖️ decision 72: a sentence over a window read only in part carries /budgets' line under it, as every
+                such total does — the proof's own line, so the two cannot name two days (`Provenance.partlyRead`) */}
+            <span>
+              {insight.text}
+              {insight.provenance.partlyRead && (
+                <span className="mt-0.5 block text-xs text-ink-faint">{insight.provenance.partlyRead.line}</span>
+              )}
+            </span>
             <ProvenancePopover label={insight.text} provenance={insight.provenance} />
           </li>
         ))}

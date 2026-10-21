@@ -1433,7 +1433,7 @@ const SPENT_FROM_MONTHS = 6;
  * before `refDate`'s month, or `periodStart` when that is earlier. Every window starting inside those months asks the
  * same accounts, and so reads through the same day — what `carryInto` asks once.
  */
-function spentFromSinceFor(periodStart: string, refDate: string): string {
+export function spentFromSinceFor(periodStart: string, refDate: string): string {
   // always SPENT_FROM_MONTHS windows, oldest first
   const windowStart = trailingFullMonths(refDate, SPENT_FROM_MONTHS)[0]!.start;
   return compareDates(periodStart, windowStart) < 0 ? periodStart : windowStart;
@@ -1554,6 +1554,25 @@ export function categoryCoverage(
   const spentFrom = new Set(
     spendingTransactions(db, { categoryId, from: spentFromSince, to: refDate }).map((t) => t.accountId),
   );
+  return coverageOfAccounts(spentFrom, spentFromSince, frontier, wallets, awaiting);
+}
+
+/**
+ * `categoryCoverage`'s rule asked of accounts already found — the accounts a figure's rows were spent from over
+ * `[spentFromSince, refDate]` (`spentFromSinceFor`): the earliest import day among them, wallets and archived accounts
+ * left out as the row leaves them.
+ *
+ * ⚖️ Implied by his decision 72 (ruled by the orchestrator 2026-10-14): a merchant's own window is read by the accounts
+ * it was paid from, by this rule (`provenance::merchantPartlyRead`). ⛔ This function, never a copy: a second copy is a second day for the
+ * same accounts, and the merchant and the category over the same days would read two.
+ */
+export function coverageOfAccounts(
+  spentFrom: ReadonlySet<string>,
+  spentFromSince: string,
+  frontier: ObservationFrontier,
+  wallets: ReadonlySet<string>,
+  awaiting: ReadonlySet<string>,
+): CategoryCoverage {
   // ⚖️ a wallet is counted on its own and never dates the row
   const imported = new Set([...spentFrom].filter((id) => !wallets.has(id)));
   return {

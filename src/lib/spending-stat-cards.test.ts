@@ -154,4 +154,42 @@ describe("spendingStatCards", () => {
     expect(savings.muted).toBe(true);
     expect(savings.delta).toBe("no income yet");
   });
+
+  /*
+   * ⚖️ Decisions 64 + 72: a window holding no spending row, not one of whose elapsed days is read by the day every
+   * account he spends from is imported through, has no Spent — the cash-flow table, the chart's hover and the heatmap
+   * on the same page print "—" for it (`CashFlow.spendingUnaccounted`). 🔴 Measured on his ledger copy 2026-10-13
+   * (review of 516d6fc): `/spending?period=2026-09-23` read "Income $4,567.68 · Spent $0.00 · Net +$4,567.68 · Savings
+   * rate 100%" over a table row "$4,567.68 — —" and a heatmap calling the day "nothing found so far — spending
+   * imported through Aug 12". Latent on his copy 2026-10-21 (the card statements reach Oct): 0 of 81 day and week
+   * windows past Aug 12 hold income with no spending found.
+   */
+  it("dashes Spent, Net and the savings rate where no spending has been found past the day it is read through", () => {
+    const fact = "spending imported through Aug 12";
+    const cards = spendingStatCards(
+      totals({ earnedCents: 456_768, spentCents: 0, refundsCents: 0, netCents: 456_768, savingsRatePct: 100 }),
+      RANGE,
+      fact,
+    );
+    const by = (key: string) => cards.find((c) => c.key === key)!;
+    // what was found keeps its figure
+    expect(by("earned").cents).toBe(456_768);
+    for (const key of ["spent", "net", "savings"]) {
+      expect(by(key), key).toMatchObject({ text: "—", muted: true });
+      expect(by(key).cents, key).toBeUndefined();
+    }
+    expect(by("spent").delta).toBe("nothing found so far — spending imported through Aug 12");
+    expect(by("spent").ariaLabel).toBe(
+      "Spent this period: nothing found so far — spending imported through Aug 12. View spending transactions.",
+    );
+    expect(by("net").ariaLabel).toBe("Net this period: no figure until spending is found. View the income and spending behind it.");
+    // ⚖️ the base is still named (owner decision 2026-09-04) — the rate is what waits
+    expect(by("savings").delta).toBe("of $4,567.68 income");
+    expect(by("savings").ariaLabel).toBe("Savings rate unavailable until spending is found, of 4567.68 dollars of income.");
+    for (const c of cards) expect(`${c.label} ${c.text ?? ""} ${c.delta ?? ""}`, c.key).not.toMatch(/\$0\.00|100%/);
+    // the links are the same lists: a dash still opens the rows behind it
+    expect(cards.map((c) => c.href)).toEqual(spendingStatCards(totals(), RANGE).map((c) => c.href));
+    // …and a window where spending was found, or a day was read, prints its figures as it always has
+    expect(spendingStatCards(totals(), RANGE, null)).toEqual(spendingStatCards(totals(), RANGE));
+  });
 });

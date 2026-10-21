@@ -85,7 +85,7 @@ function faceSums(graph: SankeyGraph) {
 
 describe("spendingSankey — balance & structure", () => {
   test("empty range → empty graph", () => {
-    expect(spendingSankey(bundle.db, RANGE)).toEqual({ nodes: [], links: [] });
+    expect(spendingSankey(bundle.db, RANGE)).toEqual({ nodes: [], links: [], spendingUnaccounted: null });
   });
 
   test("income > spend: sources feed a hub that feeds categories + a 'Net saved' leaf, and it conserves", () => {
@@ -223,5 +223,48 @@ describe("spendingSankey — balance & structure", () => {
       expect(n.y1).toBeLessThanOrEqual(320 + 1e-6);
     }
     expect(layout.columns).toBe(3);
+  });
+});
+
+/*
+ * ⚖️ Decisions 64 + 72: a window holding money in and NO spending row, not one elapsed day of it read by the day every
+ * account he spends from is imported through (`spendingReadThrough`), draws no flow: its "Net saved" is Spent's
+ * arithmetic, and Spent is no measurement there. It says why instead — the window's `spendingNotFoundFact`, the one
+ * /spending's stat cards, table and heatmap print. 🔴 Review of b356d57, on a second copy of his ledger with one
+ * plausible row added (a $1,141.92 pay on Oct 16, the day after Venture X's Oct 14 import; spending read through Aug
+ * 12): `/spending?period=2026-10-16` carded "Spent — · Net —" over a Sankey of "Salary $1,141.92 → Money in → Net saved
+ * $1,141.92", and the dashboard's Flow 1W drew the same. No day window of his own copy holds it on 2026-10-21; his next
+ * Wells Fargo statement makes one if it lands before the card statements.
+ */
+describe("spendingSankey — a window whose spending has not been found", () => {
+  const TODAY = "2026-07-08";
+
+  /** checking is imported through Jul 3, the card through Jul 7: all spending is read through Jul 3 */
+  function twoAccountsReadApart(): void {
+    insertTxn({ accountId: checkingId, postedOn: "2026-07-01", amountCents: -1_000, category: "Food > Dining" });
+    insertTxn({ accountId: checkingId, postedOn: "2026-07-03", amountCents: -2_000, category: "Food > Groceries" });
+    insertTxn({ postedOn: "2026-07-02", amountCents: -500, category: "Food > Dining" });
+    insertTxn({ postedOn: "2026-07-06", amountCents: 50_000, category: "Income > Salary" });
+    insertTxn({ postedOn: "2026-07-07", amountCents: -3_000, category: "Food > Dining" });
+  }
+
+  test("pay past that day with no spending found draws no Net saved — the graph is empty and names the day", () => {
+    twoAccountsReadApart();
+    for (const range of [{ from: "2026-07-06", to: "2026-07-06" }, { from: "2026-07-04", to: "2026-07-06" }]) {
+      expect(spendingSankey(bundle.db, range, TODAY), JSON.stringify(range)).toEqual({
+        nodes: [],
+        links: [],
+        spendingUnaccounted: "spending imported through Jul 3",
+      });
+    }
+  });
+
+  test("a window whose spending is found keeps its flow and its Net saved", () => {
+    twoAccountsReadApart();
+    const g = spendingSankey(bundle.db, { from: "2026-07-06", to: "2026-07-07" }, TODAY);
+    expect(g.spendingUnaccounted).toBeNull();
+    expect(g.links.find((l) => l.target === "saved")!.valueCents).toBe(50_000 - 3_000);
+    // …and so does one with a day read through it: Jul 1 – 6 holds the checking account's rows
+    expect(spendingSankey(bundle.db, { from: "2026-07-01", to: "2026-07-06" }, TODAY).spendingUnaccounted).toBeNull();
   });
 });

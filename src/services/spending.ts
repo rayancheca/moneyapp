@@ -199,6 +199,18 @@ export interface CashFlow {
   totals: PeriodTotals;
   /** present only for the in-progress period */
   pace: PaceInfo | null;
+  /**
+   * ⚖️ Decisions 64 + 72: the WINDOW's `CashFlowBucket.spendingUnaccounted` — "spending imported through Aug 12" where
+   * the whole period holds no spending row and not one of its elapsed days is read by the day every account he spends
+   * from is imported through; null where its Spent is a figure. Its stat cards print "—" for Spent, Net and the savings
+   * rate with it, and its empty cards say it (`spending-stat-cards`, `/spending`).
+   *
+   * 🔴 Review of 516d6fc, his ledger copy 2026-10-13: `/spending?period=2026-09-23` carded "Spent $0.00 · Net
+   * +$4,567.68 · Savings rate 100%" over its own table row "$4,567.68 — —", and Top merchants said "No merchant
+   * spending in this period." ⛔ Asked of the day and the rule the buckets ask (`spendingNotFoundFact`), in one place.
+   * ADDITIVE, as the bucket's is: `totals` is unchanged.
+   */
+  spendingUnaccounted: string | null;
 }
 
 function categoryColors(db: AppDatabase): Map<string, string | null> {
@@ -381,8 +393,17 @@ export function cashFlowByPeriod(db: AppDatabase, period: ResolvedPeriod, today:
       ? spendingNotFoundFact({ from: s.from, to: s.to, today, ledgerOpens: opens, readThrough, spentCents: 0 })
       : null,
   }));
+  // …and the window's own Spent, by the same rule and day: with no spending in it, every reached bucket asked the day
+  const spendingUnaccounted = spendingNotFoundFact({
+    from: period.from,
+    to: period.to,
+    today,
+    ledgerOpens: opens,
+    readThrough,
+    spentCents,
+  });
 
-  return { buckets: reached, incomeSeries, spendingSeries, totals, pace };
+  return { buckets: reached, incomeSeries, spendingSeries, totals, pace, spendingUnaccounted };
 }
 
 function computePace(
@@ -1162,6 +1183,11 @@ export interface CategoryEmptyCopy {
   title: string;
   description: string;
   figure: EmptyFigure;
+  /**
+   * what its $0.00 is where the import stops inside the window (`figure` "lower-bound") — the sentence's own words, by
+   * what the page counts (`partReadTotal`): "a lower bound rather than a measurement", or a Net's "neither …"
+   */
+  zeroIs: string;
 }
 
 /** `/categories/<id>`'s: the day is the category's own, so it hands in the reads that ask it — never a ledger day */

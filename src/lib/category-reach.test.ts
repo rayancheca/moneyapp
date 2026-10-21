@@ -123,6 +123,24 @@ describe("categoryEmptyPeriodCopy — the page's sentence names whose day it is"
     expect(copy.description).not.toMatch(/imported through|not been imported/);
   });
 
+  /*
+   * 🔴 Review of fdcebdc, finding 4: `countedFlow` named the line, its borrowed clause and the empty state's subject, but
+   * not the cash-only sentence, so an income category received only into a wallet read "Tutoring is spent only from a
+   * cash wallet since Apr 1". Latent on his ledger copy 2026-10-21 (no category is received or moved only through Cash
+   * on Hand); reachable the day cash pay is recorded into Cash on Hand alone.
+   */
+  test("⚖️ cash only names what the page counts — received into a wallet on a Received page, moved through one on a Net page", () => {
+    const cash = facts({ importedThroughOn: null, spentFromAccounts: 0, spentFromWallets: 1 });
+    expect(copyFor(cash, OCTOBER, "October 2026", "income", "Tutoring").description).toBe(
+      "Tutoring is received only into a cash wallet since Apr 1 — no statement will ever cover it. " +
+        "Nothing was typed in for this period, so there is no import to wait for.",
+    );
+    expect(copyFor(cash, OCTOBER, "October 2026", "transfer", "Transfers").description).toMatch(
+      /^Transfers is moved only through a cash wallet since Apr 1 — no statement will ever cover it\. /,
+    );
+    expect(copyFor(cash).description).toMatch(/^Car is spent only from a cash wallet since Apr 1/);
+  });
+
   test("cash only still says a period has not happened when it has not", () => {
     const cash = facts({ importedThroughOn: null, spentFromAccounts: 0, spentFromWallets: 1 });
     expect(copyFor(cash, { from: "2026-11-01", to: "2026-11-30" }, "November 2026").title).toBe(

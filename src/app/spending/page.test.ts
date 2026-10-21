@@ -176,3 +176,46 @@ describe("a period read only in part says so under Where it went, in the proof's
     expect(source).toMatch(/spendingEmptyCopy\(db, range, \{[^}]*\bspendingReadThrough: readThrough,/);
   });
 });
+
+/*
+ * ⚖️ Decisions 64 + 72: a window with activity whose Spent is no measurement — no spending row, not one elapsed day read
+ * by the day every account he spends from is imported through — prints "—" for Spent, Net and the savings rate, and no
+ * card claims an absence of spending over it. 🔴 Review of 516d6fc, his ledger copy 2026-10-13: `?period=2026-09-23`
+ * carded "Spent $0.00 · Net +$4,567.68 · Savings rate 100%" and Top merchants said "No merchant spending in this
+ * period." over its own table row "$4,567.68 — —". ⛔ The window's fact is the cash flow's (`CashFlow.
+ * spendingUnaccounted`, asked by the buckets' rule) — the page asks no day of its own for it. Source, not render.
+ */
+describe("a window whose spending has not been found says so on every card", () => {
+  test("the stat cards are handed the cash flow's own fact", () => {
+    expect(source).toMatch(/<SpendingStatCards[^/]*\bspendingUnaccounted=\{cashFlow\.spendingUnaccounted\}/);
+    expect(source).toMatch(/nothingFoundSoFarSentence\(cashFlow\.spendingUnaccounted\)/);
+    expect(source).not.toMatch(/\bspendingNotFoundFact\(/);
+  });
+
+  /*
+   * 🔴 Review of b356d57, a second copy of his ledger with a $1,141.92 pay on Oct 16: `?period=2026-10-16` dashed Spent
+   * and Net while Honesty check still ticked "No uncategorized spending and no excluded rows this period." — a fifth
+   * card claiming an absence over the same window.
+   */
+  test("every card that would claim an absence of spending is handed the sentence", () => {
+    const cards = [
+      "TopMerchantsCard",
+      "LargestPurchases",
+      "SpendingCategoriesTable",
+      "WhereItWentPanel",
+      "HonestyBucketsCard",
+    ];
+    for (const card of cards) {
+      expect(source, card).toMatch(new RegExp(`<${card}[^>]*\\bemptyText=\\{notFoundText\\}`));
+    }
+  });
+
+  /*
+   * …and the Sankey lens draws no "Net saved" over it: its graph is asked of the same day and rule (`spendingSankey`'s
+   * `today` → `spendingNotFoundFact`) and comes back empty with the fact, which the chart prints. 🔴 Same copy, same
+   * window: "Salary $1,141.92 → Money in → Net saved $1,141.92" under "Spent — · Net —".
+   */
+  test("the Sankey is asked with today, so a window with no spending found draws no Net saved", () => {
+    expect(source).toMatch(/spendingSankey\(db, range, today\)/);
+  });
+});

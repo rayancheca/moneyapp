@@ -12,8 +12,17 @@ import type { PeriodTotals } from "@/services/spending";
  * category credits, so Net reads as Income + Refunds − Spent right on the row.
  * The card set + aria live in the pure `spendingStatCards` helper.
  */
-export function SpendingStatCards({ totals, range }: { totals: PeriodTotals; range: DateRange }) {
-  const cards = spendingStatCards(totals, range);
+export function SpendingStatCards({
+  totals,
+  range,
+  spendingUnaccounted,
+}: {
+  totals: PeriodTotals;
+  range: DateRange;
+  /** `CashFlow.spendingUnaccounted` — Spent, Net and the savings rate print "—" with it (decisions 64 + 72) */
+  spendingUnaccounted: string | null;
+}) {
+  const cards = spendingStatCards(totals, range, spendingUnaccounted);
   const cols = cards.length >= 5 ? "lg:grid-cols-5" : "lg:grid-cols-4";
   return (
     <div className={`grid grid-cols-2 gap-3 ${cols}`}>

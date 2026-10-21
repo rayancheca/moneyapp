@@ -349,6 +349,22 @@ describe("cashFlowByPeriod — a bucket past the day all his spending is read th
     expect(cf.buckets.find((b) => b.key === "2026-07-09")).toMatchObject({ unreached: "future", spendingUnaccounted: null });
   });
 
+  /*
+   * ⚖️ …and the WINDOW's own Spent is asked the same way, of the same day (`spendingNotFoundFact`): its stat cards
+   * dash Spent, Net and the savings rate with it. 🔴 Review of 516d6fc, his ledger copy 2026-10-13:
+   * `/spending?period=2026-09-23` carded "Spent $0.00 · Net +$4,567.68 · Savings rate 100%" over its own table row
+   * "$4,567.68 — —".
+   */
+  test("a window past it holding income and no spending names the day for the window too; one with spending does not", () => {
+    twoAccountsReadApart();
+    const windowFact = (period: Parameters<typeof resolvePeriod>[0]) =>
+      cashFlowByPeriod(bundle.db, resolvePeriod(period, TODAY), TODAY).spendingUnaccounted;
+    expect(windowFact({ period: "2026-07-06" })).toBe("spending imported through Jul 3");
+    expect(windowFact({ from: "2026-07-04", to: "2026-07-06" })).toBe("spending imported through Jul 3");
+    expect(windowFact({ period: "2026-07" })).toBeNull(); // spending found: the figure stands
+    expect(windowFact({ from: "2026-07-06", to: "2026-07-07" })).toBeNull(); // the card's Jul 7 row is found
+  });
+
   /* ⛔ ADDITIVE, as `unreached` is: the pace tile and the graph's running totals read the figures */
   test("the figures behind it stay what they were, so no total moves", () => {
     twoAccountsReadApart();

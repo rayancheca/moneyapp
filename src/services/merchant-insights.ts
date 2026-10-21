@@ -190,7 +190,25 @@ export function merchantInsightInput(
       const label = dayWindowLabel(profile.firstSeen, profile.lastSeen);
       const span = profile.firstSeen === profile.lastSeen ? `on ${label}` : `over ${label}`;
       facts.push(shareFact("f3", summary.name, merchantCents / categoryTotal, `what you spent on ${dominant.name} ${span}`));
-      candidates.push({ claimId: "share_of_whole", a: "f3", prove });
+      /*
+       * ⚖️ Decision 72 (ruled implied 2026-10-14): a share of the category's total over this window inherits that
+       * total's grade — partly read wherever `/categories/<dominant>` over the same days is (`shareOf`). 🔴 Proved
+       * with the merchant's total alone, on his ledger copy 2026-10-13 "Breezeline is 100.0% of what you spent on
+       * Utilities over Aug 10 – Sep 10, 2026" read "adds up" while Utilities is read through Aug 12 — 20 of 251
+       * share sentences.
+       */
+      candidates.push({
+        claimId: "share_of_whole",
+        a: "f3",
+        prove: () =>
+          provenanceFor(db, {
+            kind: "merchantSpend",
+            merchantId,
+            from: profile.firstSeen!,
+            to: profile.lastSeen!,
+            shareOf: dominant.categoryId,
+          }),
+      });
     }
   }
 

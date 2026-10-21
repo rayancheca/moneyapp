@@ -75,8 +75,11 @@ export function SpendingCategoriesTable({
   forecastMonthLabel = null,
   periodQuery,
   priorLabel,
+  emptyText,
 }: {
   rows: CategoryTableRow[];
+  /** said in place of "No spending in this period." where that is no measurement (decisions 64 + 72) */
+  emptyText?: string;
   /**
    * The window every row's change was measured against, or null when there is
    * none. ⛔ Required: the line a phone reads a $0.00 row's fall from names it.
@@ -109,7 +112,7 @@ export function SpendingCategoriesTable({
     });
   }
 
-  if (rows.length === 0) return <p className="text-sm text-ink-muted">No spending in this period.</p>;
+  if (rows.length === 0) return <p className="text-sm text-ink-muted">{emptyText ?? "No spending in this period."}</p>;
 
   // the Table's test, read from the one name the page asks the comparison for
   const compares = priorLabel !== null;

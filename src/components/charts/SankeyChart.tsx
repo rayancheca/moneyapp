@@ -1,5 +1,6 @@
 "use client";
 
+import { nothingFoundSoFarSentence } from "@/lib/budget-coverage";
 import { renderPercent } from "@/lib/insight-facts";
 import { useRouter } from "next/navigation";
 import {
@@ -47,7 +48,11 @@ const LINK_REST = 0.42;
 const LINK_HOT = 0.8;
 
 interface SankeyChartProps {
-  graph: SankeyGraph;
+  /**
+   * the flow — and, where it is empty because the window's spending has not been found, that window's fact
+   * (`services/sankey::SpendingSankey`), which the empty state says in place of `emptyLabel`
+   */
+  graph: SankeyGraph & { spendingUnaccounted?: string | null };
   /** Tailwind height for the measured canvas (default h-[22rem]); focus mode passes a taller one */
   heightClass?: string;
   /** value formatter (default formatCents) */
@@ -306,8 +311,19 @@ export function SankeyChart({
     [ariaLabel, formatValue, layout.nodes, totalFlow],
   );
 
+  /*
+   * ⚖️ Decisions 64 + 72: a flow left empty because its window's spending has not been found says THAT, in the words
+   * every other /spending card prints there, never "No money flow" — the window's pay did flow. 🔴 Review of b356d57:
+   * a $1,141.92 pay on Oct 16 past spending's Aug 12 drew "Salary → Money in → Net saved $1,141.92" on /spending and
+   * the dashboard's Flow 1W (`spendingSankey`).
+   */
   if (graph.nodes.length === 0) {
-    return <p className="py-8 text-center text-sm text-ink-muted">{emptyLabel}</p>;
+    const notFound = graph.spendingUnaccounted ?? null;
+    return (
+      <p className="py-8 text-center text-sm text-ink-muted">
+        {notFound === null ? emptyLabel : nothingFoundSoFarSentence(notFound)}
+      </p>
+    );
   }
 
   const isConnected = (linkSource: string, linkTarget: string) =>

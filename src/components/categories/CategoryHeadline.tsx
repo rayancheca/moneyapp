@@ -1,4 +1,4 @@
-import { A_LOWER_BOUND, type EmptyFigure } from "@/lib/empty-period";
+import type { EmptyFigure } from "@/lib/empty-period";
 import { Money } from "@/components/ui/Money";
 import { ProvenancePopover } from "@/components/ui/ProvenancePopover";
 import type { Provenance } from "@/services/provenance";
@@ -12,10 +12,13 @@ interface CategoryHeadlineProps {
   flowCents: number;
   txnCount: number;
   /**
-   * the page's empty window (`categoryEmptyCopy`) — its heading and the world it is written in — or null when the
-   * window holds rows
+   * the page's empty window (`categoryEmptyCopy`) — its heading and the world it is written in, and, where the import
+   * stops inside it, what its $0.00 is (`zeroIs`) — or null when the window holds rows
    */
-  empty: { title: string; figure: EmptyFigure } | null;
+  empty:
+    | { title: string; figure: Exclude<EmptyFigure, "lower-bound"> }
+    | { title: string; figure: "lower-bound"; zeroIs: string }
+    | null;
   /** what backs the total — "the proof of the rows underneath it" */
   provenance: Provenance | null;
 }
@@ -32,8 +35,11 @@ interface CategoryHeadlineProps {
  * thing in one set of words. ⛔ No proof is offered beside a dash: the popover proves a rendered figure, and its
  * empty-total panel says "this zero" of a zero the dash refuses to print.
  *
- * A window imported only in part keeps its $0.00 and is called the lower bound the cards below call it
- * (`A_LOWER_BOUND`); a measured zero, and every window holding rows, print their figure as they always have.
+ * A window imported only in part keeps its $0.00 and is called what the cards below call it (`zeroIs`): a lower bound,
+ * or — a Net's, a sum of both signs — neither a measurement nor a bound (decision 72's `partReadTotal`). 🔴 Review of
+ * b356d57, his ledger copy 2026-10-21: `/categories/<Buys>?period=2026-09` headlined "$0.00 0 transactions — a lower
+ * bound rather than a measurement" over a Net the days still to import push below $0.00. A measured zero, and every
+ * window holding rows, print their figure as they always have.
  */
 export function CategoryHeadline({
   flowLabel,
@@ -68,7 +74,7 @@ export function CategoryHeadline({
           <Money cents={flowCents} className="figures text-2xl font-semibold" />
           <div className="text-xs text-ink-faint">
             {txnCount} {txnCount === 1 ? "transaction" : "transactions"}
-            {empty?.figure === "lower-bound" && ` — ${A_LOWER_BOUND}`}
+            {empty?.figure === "lower-bound" && ` — ${empty.zeroIs}`}
           </div>
           {/* ⚖️ decision 72: the days the chip calls partly read, as its /budgets row prints them — words and tone */}
           {provenance?.partlyRead && <div className="text-xs text-ink-faint">{provenance.partlyRead.line}</div>}

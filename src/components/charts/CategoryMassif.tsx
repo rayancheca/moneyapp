@@ -94,6 +94,11 @@ interface WhereItWentPanelProps {
    * reading "$0.00 · 0 transactions".
    */
   periodQuery: string;
+  /**
+   * ⚖️ Decisions 64 + 72: said by the relief and the Table lens in place of "No categorized spending in this period."
+   * where the window's Spent is no measurement (`CashFlow.spendingUnaccounted`) — the List lens is handed it by the page
+   */
+  emptyText?: string;
   /** the ranked list this card has always shown — the default lens */
   children: ReactNode;
 }
@@ -106,6 +111,7 @@ export function WhereItWentPanel({
   viewState,
   baseParams,
   periodQuery,
+  emptyText,
   children,
 }: WhereItWentPanelProps) {
   const { state, setView } = useViewState({
@@ -140,9 +146,16 @@ export function WhereItWentPanel({
              is linkable and remembered rather than lost on reload */
           viewpoint={state[MASSIF_VIEW_DIMENSION.key] ?? "quarter"}
           onSelectViewpoint={(v) => setView(MASSIF_VIEW_DIMENSION.key, v)}
+          emptyText={emptyText}
         />
       ) : active === "table" ? (
-        <MassifTable rows={rows} periodLabel={periodLabel} priorLabel={priorLabel} periodQuery={periodQuery} />
+        <MassifTable
+          rows={rows}
+          periodLabel={periodLabel}
+          priorLabel={priorLabel}
+          periodQuery={periodQuery}
+          emptyText={emptyText}
+        />
       ) : (
         children
       )}
@@ -166,6 +179,8 @@ interface CategoryMassifProps {
   onSelectViewpoint: (value: string) => void;
   /** the window these blocks were measured over — every block links with it */
   periodQuery: string;
+  /** `WhereItWentPanelProps.emptyText` */
+  emptyText?: string;
 }
 
 const DEFAULT_WIDTH = 720;
@@ -203,6 +218,7 @@ export function CategoryMassif({
   viewpoint: viewpointValue,
   onSelectViewpoint,
   periodQuery,
+  emptyText,
 }: CategoryMassifProps) {
   const router = useRouter();
   const reducedMotion = usePrefersReducedMotion();
@@ -259,7 +275,7 @@ export function CategoryMassif({
   // this period is a row here and draws nothing, so rows alone would open an
   // empty plate — and a plate with nothing to draw still owes the change the
   // Table lens prints for those same rows (`massifEmptyState`)
-  const empty = massifEmptyState(layout, periodLabel, priorLabel);
+  const empty = massifEmptyState(layout, periodLabel, priorLabel, emptyText);
   if (empty !== null) {
     return <p className="text-sm text-ink-muted">{empty}</p>;
   }
@@ -627,12 +643,15 @@ function MassifTable({
   periodLabel,
   priorLabel,
   periodQuery,
+  emptyText,
 }: {
   rows: readonly WhereItWentRow[];
   periodLabel: string;
   priorLabel: string | null;
   /** the window these rows were measured over — every row links with it */
   periodQuery: string;
+  /** `WhereItWentPanelProps.emptyText` */
+  emptyText?: string;
 }) {
   // the relief's widths divide this same author over these same rows (`computeMassifLayout`)
   const shareBase = spendingShareBase(rows);
@@ -720,7 +739,7 @@ function MassifTable({
       rowKey={(r) => r.categoryId}
       rowHref={(r) => `/categories/${r.categoryId}?${periodQuery}`}
       caption={massifTableCaption(periodLabel, priorLabel)}
-      emptyState="No categorized spending in this period."
+      emptyState={emptyText ?? "No categorized spending in this period."}
     />
   );
 }
@@ -819,13 +838,19 @@ export function massifAbsentNote(
  *
  * ⛔ Asked of the BLOCKS, not of the inputs: a compared category with no entries
  * is an input and draws nothing.
+ *
+ * ⚖️ Decisions 64 + 72: where the window's Spent is no measurement the page's sentence for that (`emptyText`) is the
+ * whole of it — "no categorized spending", or a change against the prior window, would each be a claim about days no
+ * account he spends from has been read for.
  */
 export function massifEmptyState(
   layout: Pick<MassifLayout, "blocks" | "absent" | "totalDeltaCents">,
   periodLabel: string,
   priorLabel: string | null,
+  emptyText?: string,
 ): string | null {
   if (layout.blocks.length > 0) return null;
+  if (emptyText !== undefined) return emptyText;
   if (priorLabel === null || layout.absent.length === 0 || layout.totalDeltaCents === null) {
     return "No categorized spending in this period.";
   }
