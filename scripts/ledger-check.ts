@@ -215,6 +215,10 @@ const BASELINE: LedgerBaseline = {
       // price Robinhood printed), the same kind as every entry above
       { on: "2026-07-31", offByCents: 4_006 },
       { on: "2026-08-31", offByCents: 2_811 },
+      // 2026-10-21: September's statement has no trades and the book holds its
+      // 14.203959 ETH exactly; Coinbase's close $2,683.93 against Robinhood's
+      // printed $38,097.79 ($2,682.20) — the price mark alone
+      { on: "2026-09-30", offByCents: 2_464 },
     ],
   },
 };
