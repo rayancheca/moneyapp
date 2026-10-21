@@ -15,11 +15,17 @@ import { transactions } from "@/db/schema/transactions";
 import { addDays, diffDays, todayIso } from "@/lib/dates";
 import { isStaleClose } from "@/lib/holding-price-age";
 import { formatCents } from "@/lib/money";
-import { budgetCoverageSentence, readThroughSentence, spentOnlyFromCashWallets } from "@/lib/budget-coverage";
+import {
+  budgetCoverageSentence,
+  countedFlow,
+  readThroughSentence,
+  spentOnlyFromCashWallets,
+  type CountedFlow,
+} from "@/lib/budget-coverage";
 import { A_LOWER_BOUND, daysNotImportedYet, emptyPeriodReason } from "@/lib/empty-period";
 import { ledgerOpens, ledgerReaches } from "./observation-frontier";
 import { outsidePortfolioCashAccountIds, ownPortfolioAccountIds } from "./accounts";
-import { categoryReachFor, categoryWindowReading } from "./budgets";
+import { carryReads, categoryReachFor, categoryWindowReading, coverageOfAccounts, spentFromSinceFor } from "./budgets";
 import { spendingReadThrough } from "./movers-card";
 import {
   activeTxnsInRange,
@@ -265,7 +271,19 @@ export type FigureRef =
    * `categorySpend` — a different set of rows, and therefore a different answer
    * to "how many rows is this, and which documents carry them?"
    */
-  | { kind: "merchantSpend"; merchantId: string; from: string; to: string; label?: string }
+  | {
+      kind: "merchantSpend";
+      merchantId: string;
+      from: string;
+      to: string;
+      label?: string;
+      /**
+       * The category whose total over the SAME window this spend is a share of — a merchant page's "is 80.9% of
+       * what you spent on Housing over …". ⚖️ Decision 72: the share inherits that total's grade
+       * (`merchantSpendProvenance`).
+       */
+      shareOf?: string;
+    }
   /**
    * Every ACTIVE row on one account — the figure behind "N transactions landed
    * in X since it opened". Same grading as `categorySpend` and `merchantSpend`,
@@ -2536,10 +2554,14 @@ function categorySpendProvenance(
     return summedRowsProvenance(db, rows, subject, from, to, categoryReachFor(db, categoryId, from, todayIso()).through);
   }
   /*
-   * ⚖️ Decision 72 grades a SPEND total: the line under it is /budgets' ("spending imported through …"), which no
-   * Received or Net page could print. ❓ Whether an income or transfer page's total reads "partly read" is his call.
+   * ⚖️ Decision 72 grades EVERY category's total (ruled implied 2026-10-14: one window reads one way everywhere) — a
+   * Received or Net page's as a Spent page's, by its own day, its line naming what it counts (`countedFlow`). 🔴 Graded
+   * only for spending, on his ledger copy 2026-10-13 `/categories/<Salary>` for September chipped "adds up" while SoFi
+   * Savings, which Salary landed in this spring, is read through Jul 31. Over 2026's months, 2026 to date and all time,
+   * the totals with rows that turn "partly read": income 24 of 65, transfer 24 of 65, rewards 5 of 13, investment 8 of
+   * 32, Uncategorized 3 of 4; spending's 147 of 381 do not move.
    */
-  const unread = kind === "expense" ? categoryPartlyRead(db, categoryId, from, to) : null;
+  const unread = categoryPartlyRead(db, categoryId, from, to, countedFlow(kind));
   return summedRowsProvenance(db, rows, subject, from, to, undefined, unread);
 }
 
@@ -2554,11 +2576,86 @@ function categorySpendProvenance(
  * Clipped at today, as /budgets clips: a running month counts only its elapsed days (`daysNotImportedYet`).
  * ⚖️ A category spent ONLY from cash wallets is as read as it will ever be (2026-09-15) — no statement is coming, so it
  * is never partly read; a wallet beside a card is left out of the day, and the card's day stands (`categoryCoverage`).
+ * The line's first word is what the page counts (`counted`): "income imported through Jul 31" on a Received page.
  */
-function categoryPartlyRead(db: AppDatabase, categoryId: string, from: string, to: string): PartlyRead | null {
+function categoryPartlyRead(
+  db: AppDatabase,
+  categoryId: string,
+  from: string,
+  to: string,
+  counted: CountedFlow,
+): PartlyRead | null {
   const reading = categoryWindowReading(db, categoryId, { start: from, end: to }, todayIso());
   if (spentOnlyFromCashWallets(reading) || reading.uncoveredDays === 0) return null;
-  return { uncoveredDays: reading.uncoveredDays, line: budgetCoverageSentence({ ...reading, bounds: { start: from } }) };
+  return {
+    uncoveredDays: reading.uncoveredDays,
+    line: budgetCoverageSentence({ ...reading, bounds: { start: from }, counted }),
+  };
+}
+
+/**
+ * ⚖️ Decision 72 for a merchant's own window — ruled implied 2026-10-14, option (a) of the either/or measured in
+ * 6e6c3da: read by the EARLIEST import day of the accounts it was paid from, a category's rule (`coverageOfAccounts`,
+ * over `categoryCoverage`'s window of accounts: `spentFromSinceFor`), and worded as a /budgets row words it. 🔴 Measured
+ * on his ledger copy 2026-10-13: "Flamingo South Beach is the largest of your 254 regular merchants, at $9,248.82 ·
+ * adds up" over Jun 16 – Sep 2, while Chase Checking, which paid its July rent, is imported through Aug 12.
+ *
+ * The accounts are those of the rows its total is summed from — his expense rows there, either sign
+ * (`isHisExpenseRow`, the profile's own rule) — as a category's are its `spendingTransactions`' rows.
+ * ⚖️ CASH WALLETS ARE LEFT OUT (2026-09-15): a merchant paid only from one is never partly read, and one paid from a
+ * wallet beside a card follows the card. With no account of its own that has a day (accounts no import dates) there is
+ * no day to read it by; its window ends on its own last row, which the ledger has read, so it is left as read.
+ */
+function merchantPartlyRead(db: AppDatabase, merchantId: string, from: string, to: string): PartlyRead | null {
+  const today = todayIso();
+  const reads = carryReads(db);
+  const spentFromSince = spentFromSinceFor(from, today);
+  const idx = loadCategoryIndex(db);
+  const agentsCash = outsidePortfolioCashAccountIds(db);
+  const paidFrom = new Set(
+    db
+      .select({ accountId: transactions.accountId, categoryId: transactions.categoryId })
+      .from(transactions)
+      .where(
+        and(
+          eq(transactions.merchantId, merchantId),
+          eq(transactions.status, "active"),
+          gte(transactions.postedOn, spentFromSince),
+          lte(transactions.postedOn, today),
+        ),
+      )
+      .all()
+      .filter((r) => isHisExpenseRow(idx, agentsCash, r))
+      .map((r) => r.accountId),
+  );
+  const coverage = coverageOfAccounts(paidFrom, spentFromSince, reads.frontier, reads.wallets, reads.awaiting);
+  // paid only from wallets, or only from accounts no import dates: no day to read it by
+  if (coverage.importedThroughOn === null) return null;
+  const uncoveredDays = daysNotImportedYet({
+    from,
+    to,
+    today,
+    ledgerOpens: reads.opens,
+    ledgerReaches: coverage.importedThroughOn,
+  });
+  if (uncoveredDays === 0) return null;
+  return { uncoveredDays, line: budgetCoverageSentence({ ...coverage, uncoveredDays, bounds: { start: from } }) };
+}
+
+/**
+ * ⚖️ Decision 72: the total a share is taken of, read only in part — the category whose total over the same window a
+ * merchant's spend is a share of (`merchantSpend`'s `shareOf`), graded as its own page grades it.
+ */
+interface WholeReadInPart {
+  /** the category, by the name the share sentence prints ("what you spent on Housing") */
+  name: string;
+  unread: PartlyRead;
+}
+
+/** " What it is a share of — Housing over the same days — is read only in part: <line>." — no lower bound: a share
+ *  of a whole read in part can move either way once its days are read */
+function wholeReadInPartSentence(whole: WholeReadInPart): string {
+  return ` What it is a share of — ${whole.name} over the same days — is read only in part: ${whole.unread.line}.`;
 }
 
 /**
@@ -2602,6 +2699,7 @@ function merchantSpendProvenance(
   from: string,
   to: string,
   label: string | undefined,
+  shareOf: string | undefined,
 ): Provenance | null {
   const merchant = db.select().from(merchants).where(eq(merchants.id, merchantId)).get();
   if (!merchant) return null;
@@ -2629,19 +2727,37 @@ function merchantSpendProvenance(
     .filter((r) => isHisExpenseRow(idx, agentsCash, r));
 
   /*
-   * ❓ HIS CALL, OPEN (review of 2fce458, the handoff's §6A): decision 72 does not grade this one. Its window is no
-   * period a reader picked — it is the merchant's own first and last visit (`merchant-insights`) — and no rule names a
-   * merchant's read day. Either (a) read it by the earliest import day of the accounts it was paid from, as a category's
-   * is (`categoryCoverage`), or (b) leave it out: it ends on a row the ledger has read. Measured on his ledger copy
-   * 2026-10-13: under (a) 12 of 254 merchant pages with a proof turn "partly read". Flamingo South Beach ("the largest
-   * of your 254 regular merchants, at $9,248.82 · adds up", Jun 16 – Sep 2) would read "spending imported through Aug
-   * 12 · 21 days of this period unaccounted": Chase Checking paid ONE rent (Jul 8), the two since posted on Wells Fargo,
-   * read through Sep 24 — the reading his decision 62 turned down for the rent's due days. In 8 of the 12 the account
-   * holding the day back last paid that merchant 10 months ago or more (DoorDash: Chase Checking, Nov 2023). Read by
-   * the accounts its last two payments used (62's reading of a bill) none of the 12 move. Pinned as shipped until he
-   * answers (provenance.test, "a merchant's own window is not graded").
+   * ⚖️ Decision 72 grades a merchant's own window (ruled implied 2026-10-14 — option (a) of the either/or in 6e6c3da):
+   * read by the earliest import day of the accounts it was paid from, as a category's is (`merchantPartlyRead`).
+   * Measured on his ledger copy 2026-10-13: 12 of 254 merchant pages' totals turn "partly read" — Flamingo South Beach,
+   * Jun 16 – Sep 2, "spending imported through Aug 12 · 21 days of this period unaccounted". In 8 of the 12 the account
+   * holding the day back last paid that merchant 10 months ago or more (DoorDash: Chase Checking, Nov 2023) — the
+   * category's window of accounts opens at the window's own start, and a merchant's window is its whole history.
+   *
+   * ⚖️ …and a SHARE of a category inherits that category total's grade over the same window (`shareOf`): its whole is
+   * the category's, graded on the category's own page. 🔴 "Breezeline is 100.0% of what you spent on Utilities over
+   * Aug 10 – Sep 10, 2026 · adds up" while Utilities — spent from Chase Checking too — is read through Aug 12. The line
+   * under it names the earlier of the two days: the more of the window unread (`widerUnread`).
    */
-  return summedRowsProvenance(db, rows, label ?? merchant.canonicalName, from, to);
+  const own = merchantPartlyRead(db, merchantId, from, to);
+  const whole = shareOf === undefined ? null : shareWholeReadInPart(db, shareOf, from, to);
+  return summedRowsProvenance(db, rows, label ?? merchant.canonicalName, from, to, undefined, own, whole);
+}
+
+/** The category a share is taken of, over the share's window, where its own page would call it partly read. */
+function shareWholeReadInPart(db: AppDatabase, categoryId: string, from: string, to: string): WholeReadInPart | null {
+  const category = db.select({ name: categories.name }).from(categories).where(eq(categories.id, categoryId)).get();
+  if (!category) return null;
+  const counted = countedFlow(loadCategoryIndex(db).topLevelOf(categoryId).kind);
+  const unread = categoryPartlyRead(db, categoryId, from, to, counted);
+  return unread === null ? null : { name: category.name, unread };
+}
+
+/** Of two readings of ONE window, the one that leaves more of it unread — the earlier day; the whole's on a tie. */
+function widerUnread(own: PartlyRead | null, whole: PartlyRead | null): PartlyRead | null {
+  if (own === null) return whole;
+  if (whole === null) return own;
+  return own.uncoveredDays > whole.uncoveredDays ? own : whole;
 }
 
 /**
@@ -2897,8 +3013,10 @@ function summedRowsProvenance(
   reaches?: string | null,
   /** the window's days its own day has not read — `summedRowsProof`'s */
   unread?: PartlyRead | null,
+  /** the total this one is a share of, read in part — `summedRowsProof`'s */
+  whole?: WholeReadInPart | null,
 ): Provenance {
-  return summedRowsProof(db, rows, subject, from, to, reaches, unread).provenance;
+  return summedRowsProof(db, rows, subject, from, to, reaches, unread, whole).provenance;
 }
 
 /**
@@ -2922,9 +3040,16 @@ function summedRowsProof(
   /**
    * ⚖️ decision 72: the window's elapsed days past the day its own population is read through, and /budgets' line for
    * them — the caller's, because whose day it is (a category's, all spending's) is the caller's
-   * (`categoryPartlyRead`, `allSpendPartlyRead`). Absent or null: read in full, or a total with no window of its own.
+   * (`categoryPartlyRead`, `allSpendPartlyRead`, `merchantPartlyRead`). Absent or null: read in full, or a total with
+   * no window of its own.
    */
   unread?: PartlyRead | null,
+  /**
+   * ⚖️ decision 72: the total this figure is a SHARE of, over the same window, where that total is read only in part —
+   * a merchant page's "80.9% of what you spent on Housing" (`merchantSpend`'s `shareOf`). The share inherits its grade;
+   * absent or null: no share, or a whole read in full.
+   */
+  whole?: WholeReadInPart | null,
 ): { provenance: Provenance; dateNote: string } {
   if (rows.length === 0) {
     /*
@@ -3033,7 +3158,10 @@ function summedRowsProof(
    * weakest part. Only a break or a row with no basis at all outranks it (`VERDICT_RANK`).
    */
   const unreadWindow = unread ?? null;
-  const verdict = weakestVerdict(unreadWindow === null ? verdicts : [...verdicts, "partly_read"]);
+  const wholeUnread = whole ?? null;
+  // ⚖️ …and a share is no better read than the whole it is a share of
+  const lineUnder = widerUnread(unreadWindow, wholeUnread?.unread ?? null);
+  const verdict = weakestVerdict(lineUnder === null ? verdicts : [...verdicts, "partly_read"]);
 
   const fileIds = [...new Set(rows.map((r) => r.importFileId).filter((f): f is string => f !== null))];
   const files =
@@ -3123,11 +3251,12 @@ function summedRowsProof(
     badgeName: partEntered ? PART_ENTERED.name : undefined,
     headline:
       `This total is the sum of ${parts.join(", ")}. A total is only as proven as its weakest row.${footing.note}` +
-      (unreadWindow === null ? "" : partlyReadSentence(unreadWindow)),
+      (unreadWindow === null ? "" : partlyReadSentence(unreadWindow)) +
+      (wholeUnread === null ? "" : wholeReadInPartSentence(wholeUnread)),
     sources,
     checkedThrough: footing.through,
     inputs: [],
-    ...(unreadWindow === null ? {} : { partlyRead: unreadWindow }),
+    ...(lineUnder === null ? {} : { partlyRead: lineUnder }),
   };
   return { provenance, dateNote: footing.note };
 }
@@ -3272,7 +3401,7 @@ export function provenanceFor(db: AppDatabase, ref: FigureRef): Provenance | nul
     case "categorySpend":
       return categorySpendProvenance(db, ref.categoryId, ref.from, ref.to, ref.label);
     case "merchantSpend":
-      return merchantSpendProvenance(db, ref.merchantId, ref.from, ref.to, ref.label);
+      return merchantSpendProvenance(db, ref.merchantId, ref.from, ref.to, ref.label, ref.shareOf);
     case "accountRows":
       return accountRowsProvenance(db, ref.accountId, ref.label);
     case "holding":

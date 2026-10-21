@@ -1,5 +1,10 @@
 import type { CategoryKind } from "@/db/schema/categories";
-import { budgetCoverageSentence, spentOnlyFromCashWallets, type BudgetCoverageInput } from "./budget-coverage";
+import {
+  budgetCoverageSentence,
+  countedFlow,
+  spentOnlyFromCashWallets,
+  type BudgetCoverageInput,
+} from "./budget-coverage";
 import { AGENTS_MONEY_LEFT_OUT, emptyPeriodCopy, type EmptyPeriodReason } from "./empty-period";
 
 /**
@@ -58,10 +63,12 @@ export function categoryReach(
   return { whose: "ledger", through: ledgerReaches, coverage, owner };
 }
 
-/** "spending in Car" — the owner's own flow (`categoryFlowLabel`): Spent, Received, or a Net of anything else */
+/**
+ * "spending in Car" — the owner's own flow (`categoryFlowLabel`): Spent, Received, or a Net of anything else. ⛔ The
+ * noun the line under the page's figure names its day by too (`countedFlow`, decision 72).
+ */
 function reachSubject(owner: CategoryReachOwner): string {
-  const noun = owner.kind === "expense" ? "spending" : owner.kind === "income" ? "income" : "activity";
-  return `${noun} in ${owner.name}`;
+  return `${countedFlow(owner.kind)} in ${owner.name}`;
 }
 
 /**
