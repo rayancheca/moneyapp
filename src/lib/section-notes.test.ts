@@ -1001,9 +1001,10 @@ describe("cashEarningsSectionNotes", () => {
       towardNoPayday: [],
       paidAhead: [],
       paidUnread: [],
+      paidUncounted: [],
       wentBackOut: [],
     };
-    const august = (over: Partial<PayShortfall> = {}) =>
+    const august =(over: Partial<PayShortfall> = {}) =>
       notes({
         ...HIS,
         impliedCents: 428_292,
@@ -1308,6 +1309,35 @@ describe("cashEarningsSectionNotes", () => {
       );
     });
 
+    test("no read payday, money for a payday no window reads: named with it — early unless before the window", () => {
+      // 🔴 Review of f6da264: "…$1,141.92 banked inside the window went toward no payday on or before 2026-09-24" of
+      // money the settlement says paid Thu Oct 15 early (his ledger copy 2026-10-21, on payroll Wednesdays)
+      const october = {
+        ...UNREAD,
+        shortCents: 0,
+        neverBankedCents: 0,
+        otherBeyondCents: 3 * 114_192 + 35_808,
+        paidUnread: [{ depositOn: "2026-10-07", paydays: ["2026-10-08"], cents: 114_192 }],
+        paidUncounted: [
+          { depositOn: "2026-10-07", paydays: ["2026-10-01"], cents: 114_192, early: false },
+          { depositOn: "2026-10-14", paydays: ["2026-10-15"], cents: 114_192, early: true },
+        ],
+      };
+      expect(august(october).map((n) => n.body)).toEqual([
+        "Of It America LLC (weekly pay)'s pay, $2,283.84 banked inside the window, from the deposit of 2026-10-07, " +
+          "paid the paydays of Oct 1 and Oct 8, $1,141.92 banked inside the window, from the deposit of 2026-10-14, " +
+          "paid Oct 15's payday early, and $358.08 banked inside the window went toward no payday on or before " +
+          "2026-09-24.",
+      ]);
+      // each part capped at what is left of the money beyond the read paydays, in that order — and none for change
+      const [capped] = august({ ...october, otherBeyondCents: 250_000 });
+      expect(capped!.body).toBe(
+        "Of It America LLC (weekly pay)'s pay, $2,283.84 banked inside the window, from the deposit of 2026-10-07, " +
+          "paid the paydays of Oct 1 and Oct 8 and $216.16 banked inside the window, from the deposit of 2026-10-14, " +
+          "paid Oct 15's payday early.",
+      );
+    });
+
     test("a read payday a deposit inside paid, then money out on a day of its own: the payday stays banked", () => {
       // his Sep 21 – 27 with $1,141.92 back out on Fri Sep 25: Sep 23's lump paid Sep 24, as the calendar draws it
       const [note] = august({
@@ -1439,9 +1469,10 @@ describe("cashEarningsSectionNotes", () => {
       towardNoPayday: [],
       paidAhead: [],
       paidUnread: [],
+      paidUncounted: [],
       wentBackOut: [],
     };
-    const surplus = (surplusCents: number, over: Partial<PayShortfall> = {}, row: object = {}) =>
+    const surplus =(surplusCents: number, over: Partial<PayShortfall> = {}, row: object = {}) =>
       notes({
         ...HIS,
         bankedCents: HIS.impliedCents + surplusCents,

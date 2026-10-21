@@ -865,10 +865,17 @@ function unlookedPhrase(
 }
 
 /**
- * The period's money the split does not hold: what paid another period's payday (`paidAcross`), what paid one of its
- * own past the checked day (`paidUnread`), and what paid none of these paydays — so the banked figure, with these, is
- * every deposit inside the period, as the page's income counts it. A part of the money beyond the read paydays is
- * capped at what is left of it, so the parts add up; `restWords` names what no payday took. Empty when there is none.
+ * The period's money the split does not hold: what paid another period's payday (`paidAcross`), what paid a payday no
+ * period reads — one of its own past the checked day (`paidUnread`), one before it past the checked day, or one not
+ * yet passed or after it, paid early (`paidUncounted`, the surplus note's words) — and what paid none of these
+ * paydays — so the banked figure, with these, is every deposit inside the period, as the page's income counts it. A
+ * part of the money beyond the read paydays is capped at what is left of it, so the parts add up; `restWords` names
+ * what no payday took — change over a payday's worth. Empty when there is none.
+ *
+ * 🔴 Review of f6da264: money for a payday no period reads that was not one of the period's own passed ones fell into
+ * `restWords`. On his ledger copy 2026-10-21 with Wed Sep 30 and Wed Oct 7 imported past the Sep 24 statement, on Wed
+ * Oct 7, October and Q4 read "Of It America LLC (weekly pay)'s pay, $1,141.92 banked inside the window went toward no
+ * payday on or before Thu, Sep 24, 2026" while the week of Oct 5 – 11 said it "paid Oct 8's payday early".
  */
 function beyondParts(
   s: PayShortfall,
@@ -877,9 +884,20 @@ function beyondParts(
   formatDay: (iso: string) => string,
   restWords: string,
 ): { cents: number; words: string }[] {
-  const unreadCents = Math.min(s.otherBeyondCents, centsOf(s.paidUnread));
-  const restCents = s.otherBeyondCents - unreadCents;
-  const unreadFrom = depositsOf(s.paidUnread.map((p) => p.depositOn), formatDay);
+  // the money beyond the read paydays, by the paydays it paid: before the period or its own, then early
+  const own = [
+    { portions: [...s.paidUncounted.filter((p) => !p.early), ...s.paidUnread], early: false },
+    { portions: s.paidUncounted.filter((p) => p.early), early: true },
+  ].reduce(
+    (acc, g) => {
+      const cents = Math.min(acc.leftCents, centsOf(g.portions));
+      if (cents <= 0) return acc;
+      const from = depositsOf([...new Set(g.portions.map((p) => p.depositOn))].sort(compareDates), formatDay);
+      const words = `, from the ${from}, paid ${paydaysNamed(paydaysOf(g.portions), payday)}${g.early ? " early" : ""}`;
+      return { leftCents: acc.leftCents - cents, parts: [...acc.parts, { cents, words }] };
+    },
+    { leftCents: s.otherBeyondCents, parts: [] as { cents: number; words: string }[] },
+  );
   return [
     ...s.paidAcross.map((p) => ({
       cents: p.cents,
@@ -887,18 +905,11 @@ function beyondParts(
         `, from the ${depositsOf([p.depositOn], formatDay)}, paid ${paydaysNamed(p.paydays, payday)}` +
         (p.early ? " early" : ""),
     })),
-    ...(unreadCents > 0
-      ? [
-          {
-            cents: unreadCents,
-            words: `, from the ${unreadFrom}, paid ${paydaysNamed(paydaysOf(s.paidUnread), payday)}`,
-          },
-        ]
-      : []),
+    ...own.parts,
     ...(s.noPaydayBeyondCents > 0
       ? [{ cents: s.noPaydayBeyondCents, words: `, from the ${noPaydayFrom}, went ${TOWARD_NO_PAYDAY}` }]
       : []),
-    ...(restCents > 0 ? [{ cents: restCents, words: restWords }] : []),
+    ...(own.leftCents > 0 ? [{ cents: own.leftCents, words: restWords }] : []),
   ];
 }
 

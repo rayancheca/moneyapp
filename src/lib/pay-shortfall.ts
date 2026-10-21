@@ -64,7 +64,10 @@ import {
  * checked day is never short; the note names it as not looked for (decision 65) when no deposit has settled it — and
  * the window's money that paid it (`paidUnread`), which a window over this one nets, is named too. 🔴 Review of
  * 36f212f: his ledger copy with Wed Oct 7 imported past the Sep 24 statement netted Oct 7's $1,141.92 into the year's
- * $8,833.16, and October, whose own Thu Oct 8 it paid, said nothing.
+ * $8,833.16, and October, whose own Thu Oct 8 it paid, said nothing. ⛔ So is the money for a payday OUTSIDE the
+ * window's passed ones that no window reads (`paidUncounted`), with the payday the settlement says it paid — "early"
+ * when that payday is not before the window. 🔴 Review of f6da264: on that copy, on Wed Oct 7, October and Q4 said
+ * Oct 7's $1,141.92 "went toward no payday on or before Thu, Sep 24, 2026" while the week said it paid Oct 8 early.
  */
 
 /** A settlement, and what it walked: the paydays it drew and the deposits that had arrived. */
@@ -157,7 +160,8 @@ export interface PayShortfall {
   /**
    * The rest of the window's own money: what was banked inside it beyond `bankedInsideCents` and `paidAcross` —
    * money that paid no payday and had no unpaid payday left to net (`noPaydayBeyondCents`), and the rest
-   * (`otherBeyondCents`: pay for a payday not yet read or not yet passed, or change over a payday's worth).
+   * (`otherBeyondCents`: pay for a payday not yet read or not yet passed — `paidUnread`, `paidUncounted` — or change
+   * over a payday's worth).
    */
   noPaydayBeyondCents: number;
   otherBeyondCents: number;
@@ -176,6 +180,15 @@ export interface PayShortfall {
    * `otherBeyondCents` as far as it is beyond the read paydays.
    */
   paidUnread: readonly PaidAhead[];
+  /**
+   * The money deposits INSIDE the window put into paydays OUTSIDE its passed ones that no window reads — not yet
+   * passed (Wednesday's money for tomorrow's Thursday), or passed but after the checked day, before the window or
+   * after it — per side (before it, then from its first day on) and deposit day, oldest first. `paidAcross`' other
+   * half: no window counts these paydays, so the money stays this window's own, netted as Earned vs banked nets it, and
+   * part of `otherBeyondCents` as far as it is beyond the read paydays. `early` when the payday is on or after the
+   * window's first day — after the deposit, the surplus note's "paid early" (§6A 29); otherwise paid late.
+   */
+  paidUncounted: readonly PaidAcross[];
   /**
    * ⚖️ Money that went back out on a day of its own inside the window and that the window's money paying none of its
    * read paydays could not take (decision 75: the deposit's day pays as it always has) — per day, whole, oldest first.
@@ -211,10 +224,18 @@ export function payShortfall(s: SettlementWalked, w: PayShortfallWindow, e: Wind
   const paidAhead = byDepositDay(paidForAnotherWindow.filter((p) => compareDates(p.paydayOn, w.from) >= 0));
   // ⛔ another window's money: a READ payday outside this one, which that window's `paidOutside` names — never one
   // not yet due, nor one past the checked day, which no window counts and Earned vs banked nets
-  const crossed = paidForAnotherWindow.filter((p) => passed(p.paydayOn) && checked(p.paydayOn));
+  const read = (p: SettlementPortion): boolean => passed(p.paydayOn) && checked(p.paydayOn);
+  const crossed = paidForAnotherWindow.filter(read);
   const paidAcross = [
     ...byDepositDay(crossed.filter((p) => compareDates(p.paydayOn, w.from) < 0)).map((p) => ({ ...p, early: false })),
     ...byDepositDay(crossed.filter((p) => compareDates(p.paydayOn, w.to) > 0)).map((p) => ({ ...p, early: true })),
+  ];
+  // …and the rest of it, for a payday no window reads: the window's own money still, named with the payday it paid
+  const uncounted = paidForAnotherWindow.filter((p) => !read(p));
+  const beforeWindow = (p: SettlementPortion): boolean => compareDates(p.paydayOn, w.from) < 0;
+  const paidUncounted = [
+    ...byDepositDay(uncounted.filter(beforeWindow)).map((p) => ({ ...p, early: false })),
+    ...byDepositDay(uncounted.filter((p) => !beforeWindow(p))).map((p) => ({ ...p, early: true })),
   ];
   // what the window's money that paid its read paydays came to: what the banked figure holds beyond it was netted
   const paidReadCents = centsOf(s.portions.filter((p) => inWindow(p.depositOn) && readDays.has(p.paydayOn)));
@@ -257,6 +278,7 @@ export function payShortfall(s: SettlementWalked, w: PayShortfallWindow, e: Wind
     paidUnread: byDepositDay(
       s.portions.filter((p) => inWindow(p.depositOn) && dueDays.has(p.paydayOn) && !readDays.has(p.paydayOn)),
     ),
+    paidUncounted,
     wentBackOut,
   };
 }
@@ -275,6 +297,12 @@ const centsOf = (parts: readonly { cents: number }[]): number => parts.reduce((s
  * the return on Fri Sep 25, Sep 21 – 27 read "came to $1,141.92, and none of it reached a bank" of Sep 24, which the
  * calendar draws paid by Sep 23's deposit inside that week (review of 36f212f; latent — no money out is linked to his
  * pay on his copy 2026-10-21).
+ *
+ * ⏳ HIS CALL, ASKED 2026-10-21 (review of f6da264): the dashboard's Earned vs banked still nets a day it names here.
+ * On his ledger copy with $1,141.92 of pay back out on Fri Sep 25, the dashboard reads "$12,258.92 of it never
+ * reached a bank" while YTD and ALL read "$7,156.60 was banked … and $11,117.00 never reached a bank; $1,141.92 went
+ * back out on Fri, Sep 25, 2026" — one signed total, two printed figures. Either the dashboard names the day as this
+ * does, or this nets it as the dashboard does and Sep 21 – 27 reads Sep 24 unbanked beside the deposit that paid it.
  */
 function moneyOut(
   days: readonly AttributedDeposit[],

@@ -120,6 +120,7 @@ describe("payShortfall — a window's read paydays against what it banked, and t
       towardNoPayday: [],
       paidAhead: [],
       paidUnread: [],
+      paidUncounted: [],
       wentBackOut: [],
     });
   });
@@ -487,6 +488,7 @@ describe("payShortfall — the window's LAST day is inside it", () => {
       towardNoPayday: [],
       paidAhead: [],
       paidUnread: [],
+      paidUncounted: [],
       wentBackOut: [],
     });
   });
@@ -731,5 +733,64 @@ describe("payShortfall — a window whose own unread payday holds money the year
       [],
       0,
     ]);
+  });
+});
+
+/**
+ * 🔴 Review of f6da264 (MEDIUM): money a window's deposit put into a payday no window reads, other than one of the
+ * window's own passed ones — the Thursday after a payroll Wednesday, not yet passed, or a passed payday before the
+ * window that the ledger has not read — had no name of its own: the note called it money that "went toward no payday
+ * on or before Thu, Sep 24, 2026", while the settlement, the calendar and the week's surplus note say it paid that
+ * payday early. Measured on his ledger copy 2026-10-21 with Wed Sep 30 and Wed Oct 7 imported past the Sep 24
+ * statement, on Wed Oct 7: /spending October and Q4.
+ */
+describe("payShortfall — money for a payday no window counts, named with the payday it paid", () => {
+  const IMPORTED = [
+    ...HIS_DEPOSITS,
+    ...["2026-09-30", "2026-10-07"].map((postedOn) => ({ postedOn, amountCents: PAYROLL })),
+  ];
+
+  test("on Wed Oct 7, Oct 7's money paid Thu Oct 8, not yet passed: paid early — never one of October's own", () => {
+    const october = shortfallOf(HIS_PAYDAYS, IMPORTED, {
+      from: "2026-10-01",
+      to: "2026-10-31",
+      today: "2026-10-07",
+      checkedThrough: CHECKED,
+    });
+    expect(october.readPaydays).toBe(0);
+    expect(october.paidUnread).toEqual([]);
+    expect(october.paidUncounted).toEqual([
+      { depositOn: "2026-10-07", paydays: ["2026-10-08"], cents: PAYROLL, early: true },
+    ]);
+    expect(october.otherBeyondCents).toBe(PAYROLL);
+  });
+
+  test("a lump that walked back before the window, to a payday the ledger has not read: paid, not early", () => {
+    // no Sep 30: Wed Oct 7's two weeks pay its own Oct 8 and walk back to Oct 1 — before Oct 5 – 18, past Sep 24
+    const deposits = [...HIS_DEPOSITS, { postedOn: "2026-10-07", amountCents: 2 * PAYROLL }];
+    const window = shortfallOf(HIS_PAYDAYS, deposits, {
+      from: "2026-10-05",
+      to: "2026-10-18",
+      today: "2026-10-20",
+      checkedThrough: CHECKED,
+    });
+    expect(window.paidUnread).toEqual([{ depositOn: "2026-10-07", paydays: ["2026-10-08"], cents: PAYROLL }]);
+    expect(window.paidUncounted).toEqual([
+      { depositOn: "2026-10-07", paydays: ["2026-10-01"], cents: PAYROLL, early: false },
+    ]);
+  });
+
+  test("money for a READ payday outside the window is the other window's — named across it, never uncounted", () => {
+    // checked through Sat Oct 10: Oct 8 is read, so Oct 7's money crosses into the window that reads it
+    const window = shortfallOf(HIS_PAYDAYS, IMPORTED, {
+      from: "2026-10-01",
+      to: "2026-10-07",
+      today: TODAY,
+      checkedThrough: "2026-10-10",
+    });
+    expect(window.paidAcross).toEqual([
+      { depositOn: "2026-10-07", paydays: ["2026-10-08"], cents: PAYROLL, early: true },
+    ]);
+    expect(window.paidUncounted).toEqual([]);
   });
 });
