@@ -3,6 +3,7 @@ import { cashEarnings, type PaySeries } from "./cash-earnings";
 import { formatDayLong } from "./format-date";
 import {
   payShortfall,
+  silentPaydaysNotBankedYet,
   wentBackOutPhrase,
   type PayShortfall,
   type PayShortfallWindow,
@@ -878,5 +879,52 @@ describe("payShortfall — a read payday still inside its days to land is not ba
       const outside = s.paidOutside.reduce((sum, p) => sum + p.cents, 0);
       expect(s.bankedInsideCents + outside + s.notBankedYetCents + s.neverBankedCents).toBe(s.readCents);
     }
+  });
+});
+
+/**
+ * A stale schedule's SILENCE, read for its not-banked-yet paydays (`silentPaydaysNotBankedYet`): strictly after the day
+ * it opens on — the last day that banked, or with none, the schedule's first payday — the day `cashEarnings` counts
+ * `periodsSinceBanked` from (`silenceFrom`), so /spending's sentence names no payday it does not count, and leaves out
+ * none it does. 🔴 Review of 147f167 (MEDIUM): with nothing ever banked it named none — "there is no 'since' to count
+ * from" — while the sentence counted the silence from the first payday, and the guard had no test.
+ */
+describe("silentPaydaysNotBankedYet — the silence opens where cashEarnings opens it", () => {
+  const weekly = (from: string, to: string): PaydayOccurrence[] =>
+    thursdays(from, to).map((date) => ({ date, amountCents: 100_000 }));
+  const nothingSettled = (paydays: PaydayOccurrence[]) => ({ paydays, deposits: [], settledBy: new Map() });
+  const at = { today: "2026-09-15", checkedThrough: "2026-09-05", toleranceDays: 3 };
+
+  test("never banked: Sep 3, checked on its day and not through its days to land, is the silence's", () => {
+    const paydays = weekly("2026-06-04", "2026-09-17");
+    const silence = { lastBankedOn: null, startedOn: "2026-06-04", ...at };
+    expect(silentPaydaysNotBankedYet(nothingSettled(paydays), silence)).toEqual(["2026-09-03"]);
+  });
+
+  // ⛔ A date window has two ends: the silence opens the day AFTER its first payday, as `periodsSinceBanked` counts it
+  test("…never its first payday, which the sentence's count leaves out too", () => {
+    const paydays = weekly("2026-09-03", "2026-09-17");
+    const silence = { lastBankedOn: null, startedOn: "2026-09-03", ...at };
+    expect(silentPaydaysNotBankedYet(nothingSettled(paydays), silence)).toEqual([]);
+    // the sentence's "N expected paydays have passed": Sep 10 alone
+    const series: PaySeries = {
+      cadence: "weekly",
+      intervalDaysAvg: 7,
+      anchorDay: null,
+      amountCents: 100_000,
+      amountHistory: null,
+      startedOn: "2026-09-03",
+      endedOn: null,
+    };
+    const reading = cashEarnings({ series, banked: [], from: "2026-09-01", to: "2026-09-30", today: at.today });
+    expect([reading.lastBankedOn, reading.periodsSinceBanked]).toEqual([null, 1]);
+  });
+
+  test("with a last deposit, from the day after it — the first payday no longer opens it", () => {
+    const paydays = weekly("2026-06-04", "2026-09-17");
+    const silence = { lastBankedOn: "2026-09-03", startedOn: "2026-06-04", ...at };
+    expect(silentPaydaysNotBankedYet(nothingSettled(paydays), silence)).toEqual([]);
+    const before = { ...silence, lastBankedOn: "2026-09-02" };
+    expect(silentPaydaysNotBankedYet(nothingSettled(paydays), before)).toEqual(["2026-09-03"]);
   });
 });

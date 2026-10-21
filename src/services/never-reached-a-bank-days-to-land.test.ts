@@ -343,6 +343,30 @@ describe("a payday checked on its day but not through its days to land never 'ne
     }
   });
 
+  /*
+   * ⛔ …and with nothing ever banked, the silence opens on the schedule's first payday (`silenceFrom`), as the
+   * sentence counts it — "no deposit has ever been attributed to it". 🔴 Review of 147f167 (MEDIUM): the only payroll
+   * a $1,000.00 on Thu Jun 4 returned the same day (decision 75: it banked nothing, and opens the schedule), the
+   * silence's not-banked-yet paydays were none — "there is no 'since' to count from" — so every window's sentence
+   * left Sep 3 out, while the window's shortfall and Earned vs banked's difference named Sep 3's pay not banked yet.
+   */
+  test("never banked: the stale sentence names Sep 3 not banked yet in every window, as the dashboard does", () => {
+    deposit("2026-06-04");
+    deposit("2026-06-04", -100_000);
+    readThrough("2026-09-05");
+
+    const sentence =
+      "Across the whole schedule, 14 expected paydays have passed and no deposit has ever been attributed to it, and " +
+      "13 of them fall on days the records cover, through Sat, Sep 5, 2026 — that money was held as cash, spent as " +
+      "cash, the schedule has ended, the ledger has not looked for its deposit, or Sep 3's days to land run past " +
+      `Sat, Sep 5, 2026, ${CHECKED_DAY} — so its pay is not banked yet. The income figures on this page count ` +
+      "deposits, so they cannot tell you which.";
+    for (const [from, to] of STALE_WINDOWS) expect(staleSentence(from, to)).toBe(sentence);
+    expect(incomeCard(bundle.db, TODAY)!.totals.gapLabel).toContain(
+      `; $1,000.00 is for paydays whose days to land run past Sep 5, ${CHECKED_DAY} — so it is not banked yet;`,
+    );
+  });
+
   // ⛔ …and checked through Sun Sep 6, Sep 3's last day to land, the verdict is the one it always was
   test("checked through Sep 6, the stale verdict counts all 4 checked paydays as not having reached a bank", () => {
     paidThrough("2026-08-06");

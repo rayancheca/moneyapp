@@ -348,8 +348,11 @@ export function cashEarnings({
    * to 06-11 and subtracting one then deletes a genuinely missed payday.
    * Measured 2026-08-21 — the honest answer is eleven, the subtraction said ten.
    */
-  const silenceFrom = lastBankedOn ?? series.startedOn;
-  const periodsSinceBanked = occurrencesBetween(series, addDays(silenceFrom, 1), earnedThrough).count;
+  const periodsSinceBanked = occurrencesBetween(
+    series,
+    addDays(silenceFrom(lastBankedOn, series.startedOn), 1),
+    earnedThrough,
+  ).count;
 
   return {
     basis: periodsSinceBanked >= STALE_PERIODS ? "series-stale" : "series-live",
@@ -362,6 +365,17 @@ export function cashEarnings({
     lastBankedOn,
     periodsSinceBanked,
   };
+}
+
+/**
+ * THE day a schedule's silence opens on — its paydays are the ones STRICTLY AFTER it (see `cashEarnings`): the last day
+ * that banked, or with none, the schedule's first payday (`startedOn`). ⛔ One rule for the sentence's count
+ * (`periodsSinceBanked`) and the paydays it names not banked yet (`silentPaydaysNotBankedYet`). 🔴 Review of 147f167
+ * (MEDIUM): the second read no silence at all when nothing had banked, so /spending's stale sentence counted 14 paydays
+ * from Thu Jun 4 and named none of them not banked yet, while the dashboard named Sep 3's.
+ */
+export function silenceFrom(lastBankedOn: string | null, startedOn: string): string {
+  return lastBankedOn ?? startedOn;
 }
 
 /** Earned vs banked's difference, and the part of it the ledger has looked for. */

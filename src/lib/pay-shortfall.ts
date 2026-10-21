@@ -1,4 +1,4 @@
-import { payGap, unbankedSplit } from "./cash-earnings";
+import { payGap, silenceFrom, unbankedSplit } from "./cash-earnings";
 import { addDays, compareDates } from "./dates";
 import { formatCents } from "./money";
 import { paydayIsRead, paydayLandingIsRead } from "./occurrence-verdict";
@@ -285,10 +285,12 @@ export function paydaysNotBankedYet(
   return { paydays: pending.map((o) => o.date), cents: pending.reduce((sum, o) => sum + o.amountCents, 0) };
 }
 
-/** Where a schedule's silence is read: its last deposit, today, and how far its pay has been checked and may land. */
+/** Where a schedule's silence is read: where it opens, today, and how far its pay has been checked and may land. */
 export interface ScheduleSilence {
   /** the last day that banked money (`CashEarnings.lastBankedOn`), or null when none has */
   lastBankedOn: string | null;
+  /** the schedule's first payday (`PaySeries.startedOn`): where the silence opens when nothing has banked */
+  startedOn: string;
   today: string;
   checkedThrough: string | null;
   toleranceDays: number;
@@ -299,21 +301,27 @@ export interface ScheduleSilence {
  * quiet says of the checked paydays still inside their days to land — Earned vs banked's verdict
  * (`checkedSilentNotBankedYet`) and /spending's note for a stale schedule, both schedule-wide sentences.
  *
- * ⛔ THE SILENCE'S paydays, never a window's: strictly after the last deposit through today, as `cashEarnings` counts
- * `periodsSinceBanked` and `checkedSilence` caps it — an unpaid payday before the last deposit is the difference's
- * not-banked-yet part, never the silence's. None when nothing has banked: there is no "since" to count from, and the
- * verdict says so instead. 🔴 Review of c02a4b0: /spending's note took them from the WINDOW's shortfall, so August
- * (no Sep 3 in it) printed the same schedule-wide sentence without Sep 3's reason, and a window holding Aug 13 — unpaid
- * before Fri Aug 14's deposit — named it where the verdict named Aug 20, Aug 27 and Sep 3.
+ * ⛔ THE SILENCE'S paydays, never a window's: strictly after the day it opens on (`silenceFrom`) through today, as
+ * `cashEarnings` counts `periodsSinceBanked` and `checkedSilence` caps it — an unpaid payday before the last deposit is
+ * the difference's not-banked-yet part, never the silence's. 🔴 Review of c02a4b0: /spending's note took them from the
+ * WINDOW's shortfall, so August (no Sep 3 in it) printed the same schedule-wide sentence without Sep 3's reason, and a
+ * window holding Aug 13 — unpaid before Fri Aug 14's deposit — named it where the verdict named Aug 20, Aug 27 and
+ * Sep 3.
+ *
+ * ⛔ …and with nothing banked, from the schedule's first payday, where the sentence counts it from ("no deposit has
+ * ever been attributed to it"). Earned vs banked's verdict prints its no-deposit sentence then and names none. 🔴
+ * Review of 147f167 (MEDIUM): it returned none — "there is no 'since' to count from" — so with the only payroll a
+ * $1,000.00 on Thu Jun 4 returned the same day (decision 75), Chase read through Sat Sep 5 and today Sep 15, every
+ * /spending window read "14 expected paydays have passed … or the ledger has not looked for its deposit" and left out
+ * Sep 3, which the window's shortfall and the dashboard's difference both called not banked yet.
  */
 export function silentPaydaysNotBankedYet(
   s: Pick<SettlementWalked, "paydays" | "deposits" | "settledBy">,
   silence: ScheduleSilence,
 ): readonly string[] {
-  const { lastBankedOn, today, checkedThrough, toleranceDays } = silence;
-  if (lastBankedOn === null) return [];
+  const { lastBankedOn, startedOn, today, checkedThrough, toleranceDays } = silence;
   // a payday unchecked on its day is never one (`paydayIsRead`) — nor, with nothing checked, is any
-  const from = addDays(lastBankedOn, 1);
+  const from = addDays(silenceFrom(lastBankedOn, startedOn), 1);
   return paydaysNotBankedYet(s, { from, to: today, today, checkedThrough, toleranceDays }).paydays;
 }
 

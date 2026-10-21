@@ -4,12 +4,7 @@ import { addCalendarMonths, diffDays, monthKey, periodBounds, todayIso } from "@
 import { formatDayLong, formatDayShort, formatMonthYear } from "@/lib/format-date";
 import { monthIncomeLink, type IncomeLink } from "@/lib/income-basis";
 import { formatCents } from "@/lib/money";
-import {
-  paydaysNotBankedYet,
-  silentPaydaysNotBankedYet,
-  wentBackOutPhrase,
-  type WentBackOut,
-} from "@/lib/pay-shortfall";
+import { paydaysNotBankedYet, wentBackOutPhrase, type WentBackOut } from "@/lib/pay-shortfall";
 import {
   LAST_CHECKED_DAY,
   NOT_CHECKED,
@@ -535,7 +530,7 @@ export function incomeCard(db: AppDatabase, today: string = todayIso()): IncomeC
     const frontier: UnbankedFrontier =
       checkedThrough === null ? { kind: "unchecked" } : { kind: "day", through: checkedThrough };
     // ⚖️ …and of the checked paydays, those no deposit settled still inside their days to land: not banked yet — over
-    // the window for the difference, and over the silence for the verdict, which counts from the last deposit
+    // the window for the difference, and over the silence for the verdict (the reading's `checkedSilentNotBankedYet`)
     const settlement = checkedThrough === null ? null : paydaySettlement(db, r.seriesId, today);
     const inGraceCents =
       settlement === null || checkedThrough === null
@@ -566,16 +561,8 @@ export function incomeCard(db: AppDatabase, today: string = todayIso()): IncomeC
         r.lastBankedOn,
         checkedThrough,
       ),
-      // ⛔ the silence's, as /spending's stale note reads it (`silentPaydaysNotBankedYet`) — never the window's
-      checkedSilentNotBankedYet:
-        settlement === null
-          ? []
-          : silentPaydaysNotBankedYet(settlement, {
-              lastBankedOn: r.lastBankedOn,
-              today,
-              checkedThrough,
-              toleranceDays: r.toleranceDays,
-            }),
+      // ⛔ the silence's — /spending's stale note's own reading (`silentPaydaysNotBankedYet`), never a second one
+      checkedSilentNotBankedYet: r.checkedSilentNotBankedYet ?? [],
       checkedThrough,
       unreadDays: checkedThrough === null ? null : diffDays(checkedThrough, today),
       ...gapOf(

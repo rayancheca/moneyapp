@@ -522,6 +522,7 @@ export function cashEarningsReadings(
     // ⛔ the silence's, whatever the window — the verdict's own call (`silentPaydaysNotBankedYet`)
     const checkedSilentNotBankedYet = silentPaydaysNotBankedYet(settlement, {
       lastBankedOn: reading.lastBankedOn,
+      startedOn,
       today,
       checkedThrough,
       toleranceDays: s.toleranceDays,
