@@ -1,9 +1,10 @@
 import type { AppDatabase } from "@/db/client";
 import { payGap, STALE_PERIODS, type CashEarningsBasis } from "@/lib/cash-earnings";
 import { addCalendarMonths, diffDays, monthKey, periodBounds, todayIso } from "@/lib/dates";
-import { formatDayShort, formatMonthYear } from "@/lib/format-date";
+import { formatDayLong, formatDayShort, formatMonthYear } from "@/lib/format-date";
 import { monthIncomeLink, type IncomeLink } from "@/lib/income-basis";
 import { formatCents } from "@/lib/money";
+import { wentBackOutPhrase, type WentBackOut } from "@/lib/pay-shortfall";
 import {
   LAST_CHECKED_DAY,
   NOT_CHECKED,
@@ -13,12 +14,7 @@ import {
   type UnbankedFrontier,
 } from "@/lib/unbanked-income";
 import { incomeExpectation } from "./budgets";
-import {
-  cashEarningsReadings,
-  checkedSilence,
-  checkedThroughBySeries,
-  type CashEarningsReading,
-} from "./cash-earnings";
+import { cashEarningsReadings, checkedSilence, type CashEarningsReading } from "./cash-earnings";
 import { SPEND_BASELINE_MONTHS } from "./committed";
 
 /**
@@ -131,7 +127,10 @@ interface Gap {
    * to it.
    */
   unreadGapCents: number;
-  /** the clause that follows the magnitude, e.g. "never reached a bank" */
+  /**
+   * the clause that follows the magnitude, e.g. "never reached a bank" — and after it, the money that went back out on
+   * a day of its own, in /spending's words (`withMoneyOut`)
+   */
   gapLabel: string;
 }
 
@@ -150,6 +149,7 @@ function gapOf(
   bankedCents: number,
   unreadImpliedCents: number,
   frontier: UnbankedFrontier,
+  wentBackOut: readonly WentBackOut[],
 ): Gap {
   // ⛔ the one subtraction, shared with /spending's shortfall note (`payGap`)
   const { gapCents, unreadGapCents, readGapCents } = payGap(impliedCents, bankedCents, unreadImpliedCents);
@@ -157,8 +157,24 @@ function gapOf(
     gapCents,
     gapMagnitudeCents: gapCents === 0 ? 0 : Math.abs(gapCents),
     unreadGapCents,
-    gapLabel: gapLabelFor(gapCents, unreadGapCents, readGapCents, frontier),
+    gapLabel: withMoneyOut(gapLabelFor(gapCents, unreadGapCents, readGapCents, frontier), wentBackOut),
   };
+}
+
+/**
+ * ⚖️ DEFAULT (A), BUILT, NOT ASKED (2026-10-21): money that went back out on a day of its own is named on the card as
+ * /spending names it — "$1,141.92 went back out on Fri, Sep 25, 2026" (`wentBackOutPhrase`, the same days by the same
+ * rule, `moneyOutOfWindow`) — AFTER the difference and its split, never as a part of it: the banked figure never held
+ * that money, so the difference does not either, and the payday its deposit paid stays paid (decision 75), as the
+ * calendar draws it. 🔴 The card never named it: on his ledger copy 2026-10-21 with a hypothetical $1,141.92 of pay
+ * back out on Fri Sep 25 it read only "$11,117.00 of it never reached a bank; the other $3,425.76 is for paydays after
+ * Sep 24 …", while /spending YTD (bde27f3) read "…$11,117.00 never reached a bank; $1,141.92 went back out on Fri, Sep
+ * 25, 2026".
+ */
+function withMoneyOut(label: string, wentBackOut: readonly WentBackOut[]): string {
+  if (wentBackOut.length === 0) return label;
+  const back = wentBackOutPhrase(wentBackOut, formatDayLong);
+  return label.endsWith(".") ? `${label.slice(0, -1)}; ${back}.` : `${label}; ${back}`;
 }
 
 function gapLabelFor(gapCents: number, unreadGapCents: number, readCents: number, frontier: UnbankedFrontier): string {
@@ -193,8 +209,13 @@ export interface IncomePayLine extends Gap {
    * named the window over it said something false about both.
    */
   paydaysLabel: string;
-  /** what reached a bank inside the window, attributed deposits only */
+  /**
+   * what reached a bank inside the window, attributed deposits only — its days that banked, less the money out on a
+   * day of its own the rule nets (`moneyOutOfWindow`), the figure /spending reads of the same window
+   */
   bankedCents: number;
+  /** the money out on days of their own the rule names, each day whole, oldest first — named in `gapLabel` */
+  wentBackOut: readonly WentBackOut[];
   /** `cashEarnings`' own word for which world these numbers live in */
   basis: CashEarningsBasis;
   lastBankedOn: string | null;
@@ -368,12 +389,11 @@ export function incomeCardSeriesIds(db: AppDatabase, today: string = todayIso())
 export function incomeCard(db: AppDatabase, today: string = todayIso()): IncomeCard | null {
   const windowFrom = cardWindowFrom(today);
 
-  const readings = cashEarningsReadings(db, { from: windowFrom, to: today, today });
+  // ⛔ with the frontier: the banked figure, and the money out it names, are the one rule's (`moneyOutOfWindow`)
+  const readings = cashEarningsReadings(db, { from: windowFrom, to: today, today, withChecked: true });
   // No confirmed income series with evidence behind it: there is no schedule to
   // reconcile against, and a card of zeroes is worse than no card.
   if (readings.length === 0) return null;
-
-  const checkedOf = checkedThroughBySeries(db, today);
 
   /*
    * One reading per distinct cut-off, memoised. Two series banking into the
@@ -401,7 +421,7 @@ export function incomeCard(db: AppDatabase, today: string = todayIso()): IncomeC
      * single unverified account collapses the whole thing to null, which is the
      * honest answer rather than a convenient one.
      */
-    const checkedThrough = checkedOf(r.seriesId);
+    const checkedThrough = r.checkedThrough ?? null;
 
     const asChecked = checkedThrough === null ? undefined : readingAsOf(checkedThrough, r.seriesId);
     // what the schedule implies past the frontier: every payday when nothing is checked
@@ -414,6 +434,7 @@ export function incomeCard(db: AppDatabase, today: string = todayIso()): IncomeC
       paydays: r.periodsCovered,
       paydaysLabel: paydaysLabelFor(r.periodsCovered, r.firstPeriodOn, r.lastPeriodOn),
       bankedCents: r.bankedCents,
+      wentBackOut: r.wentBackOut ?? [],
       basis: r.basis,
       lastBankedOn: r.lastBankedOn,
       silentPeriods: r.periodsSinceBanked,
@@ -431,6 +452,7 @@ export function incomeCard(db: AppDatabase, today: string = todayIso()): IncomeC
         r.bankedCents,
         unreadImpliedCents,
         checkedThrough === null ? { kind: "unchecked" } : { kind: "day", through: checkedThrough },
+        r.wentBackOut ?? [],
       ),
     };
     return { ...base, verdict: verdictFor(base) };
@@ -448,6 +470,7 @@ export function incomeCard(db: AppDatabase, today: string = todayIso()): IncomeC
       bankedCents,
       unread.reduce((s, l) => s + l.unreadGapCents, 0),
       sharedFrontier(unread.map((l) => l.checkedThrough)),
+      pay.flatMap((l) => l.wentBackOut),
     ),
   };
   const bankedSharePct = impliedCents <= 0 ? null : Math.round((bankedCents / impliedCents) * 100);

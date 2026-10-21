@@ -1031,6 +1031,7 @@ describe("cashEarningsSectionNotes", () => {
       paidUnread: [],
       paidUncounted: [],
       wentBackOut: [],
+      bankedCents: 0,
     };
     const august =(over: Partial<PayShortfall> = {}) =>
       notes({
@@ -1499,13 +1500,14 @@ describe("cashEarningsSectionNotes", () => {
       paidUnread: [],
       paidUncounted: [],
       wentBackOut: [],
+      bankedCents: 456_768,
     };
     const surplus =(surplusCents: number, over: Partial<PayShortfall> = {}, row: object = {}) =>
       notes({
         ...HIS,
         bankedCents: HIS.impliedCents + surplusCents,
         unbankedCents: -surplusCents,
-        shortfall: { ...SETTLED, ...over },
+        shortfall: { ...SETTLED, bankedCents: HIS.impliedCents + surplusCents, ...over },
         ...row,
       }).map((n) => n.body);
 

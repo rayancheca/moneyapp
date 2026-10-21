@@ -5,7 +5,7 @@ import { recurringSeries } from "@/db/schema/recurring";
 import { transactions } from "@/db/schema/transactions";
 import { compareDates, todayIso } from "@/lib/dates";
 import { cashEarnings, type CashEarnings, type PaySeries } from "@/lib/cash-earnings";
-import { payShortfall, type PayShortfall, type WindowEarnings } from "@/lib/pay-shortfall";
+import { payShortfall, type PayShortfall, type WentBackOut, type WindowEarnings } from "@/lib/pay-shortfall";
 import { firstPaydayOn } from "@/lib/payday-settlement";
 import { stepPlan, walkDayOfMonth } from "@/lib/recurring-step";
 import { outsidePortfolioCashAccountIds } from "./accounts";
@@ -77,6 +77,14 @@ export interface CashEarningsReading extends CashEarnings {
    * by the deposit of Sep 24 exactly where the calendar draws it — never a second walk of this reading's schedule.
    */
   shortfall?: PayShortfall;
+  /**
+   * ⚖️ The money that went back out on a day of its own inside the window, each day whole, that the window's money
+   * paying no read payday could not net — the one rule (`moneyOutOfWindow`, decision 75) — and, with it, this reading's
+   * `bankedCents` and `unbankedCents` are that rule's: the days that banked less the money out it netted. Present only
+   * with `withChecked`, since "read" is that frontier's word — and every reader that PRINTS a banked figure asks with
+   * it: Earned vs banked's card and /spending's notes.
+   */
+  wentBackOut?: readonly WentBackOut[];
 }
 
 export interface CashEarningsWindow {
@@ -87,8 +95,10 @@ export interface CashEarningsWindow {
   todayIsComplete?: boolean;
   /**
    * Also measure each reading against how far its landing accounts have been
-   * read. Off by default: it reads every account's coverage, and the dashboard
-   * card that calls this several times computes its own frontier once.
+   * read — and so read its banked figure by the rule for money out on a day of
+   * its own (`wentBackOut`), which needs that frontier. Off by default: it reads
+   * every account's coverage and walks the settlement, and the dashboard card's
+   * as-of readings, which print no banked figure, do without.
    */
   withChecked?: boolean;
 }
@@ -476,9 +486,27 @@ export function cashEarningsReadings(
         { from, to, today, checkedThrough },
         { impliedCents: reading.impliedCents, bankedCents: reading.bankedCents, read },
       );
+    /*
+     * ⛔ ONE reading of the rule for money out on a day of its own (`moneyOutOfWindow`): the shortfall's — so the card's
+     * banked figure, /spending's surplus and stale notes and its shortfall note read one figure, and name one day.
+     * 🔴 The card took nothing off for a later day's money out and named none, while /spending netted it or named it
+     * (merge of d75-banked and the shortfall branch, 2026-10-21).
+     */
+    const ruled = (shortfall: PayShortfall) => ({
+      bankedCents: shortfall.bankedCents,
+      unbankedCents: reading.impliedCents - shortfall.bankedCents,
+      wentBackOut: shortfall.wentBackOut,
+      shortfall,
+    });
     if (checkedThrough === null) {
       const shortfall = shortfallOf({ paydays: 0, cents: 0, firstOn: null, lastOn: null });
-      readings.push({ ...reading, checkedThrough, checkedPeriodsCovered: 0, checkedPeriodsSinceBanked: 0, shortfall });
+      readings.push({
+        ...reading,
+        checkedThrough,
+        checkedPeriodsCovered: 0,
+        checkedPeriodsSinceBanked: 0,
+        ...ruled(shortfall),
+      });
       continue;
     }
     /*
@@ -510,7 +538,7 @@ export function cashEarningsReadings(
         reading.lastBankedOn,
         checkedThrough,
       ),
-      shortfall,
+      ...ruled(shortfall),
     });
   }
 

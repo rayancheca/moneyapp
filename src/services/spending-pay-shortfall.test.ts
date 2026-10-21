@@ -495,7 +495,10 @@ describe("/spending — money out on a day of its own, and a window whose payday
         "2026, the last day every account that pay lands in has been checked through — so the ledger has not looked " +
         "for its deposit.",
     ]);
-    expect(incomeCard(bundle.db, OCT_13)!.totals.gapLabel).toMatch(/^\$1,141\.92 of it never reached a bank; /);
+    // ⛔ …and the dashboard reads the one rule (`moneyOutOfWindow`): the year nets it, so the card names no day either
+    const card = incomeCard(bundle.db, OCT_13)!;
+    expect(card.totals.gapLabel).toMatch(/^\$1,141\.92 of it never reached a bank; /);
+    expect(card.pay.map((l) => l.wentBackOut)).toEqual([[]]);
   });
 
   test("a payroll returned two days after the payday it paid: the payday stays banked, the money out is named", () => {
@@ -507,6 +510,35 @@ describe("/spending — money out on a day of its own, and a window whose payday
       "Cash job (weekly pay)'s paydays on Sep 24, 2026 came to $1,141.92, and all of it was banked inside the " +
         "window; $1,141.92 went back out on Fri, Sep 25, 2026.",
     ]);
+  });
+
+  /*
+   * ⚖️ DEFAULT (A), BUILT, NOT ASKED (2026-10-21): Earned vs banked names a later-day return as /spending does, on its
+   * day — and both read one rule (`moneyOutOfWindow`), so they agree with the calendar on which paydays were paid.
+   * 🔴 On his ledger copy 2026-10-21 with a hypothetical $1,141.92 of pay back out on Fri Sep 25, YTD (bde27f3) named it
+   * beside "$11,117.00 never reached a bank" while the card said only "$11,117.00 of it never reached a bank; the other
+   * $3,425.76 is for paydays after Sep 24 …" — the money out on no page of the dashboard.
+   */
+  test("…and Earned vs banked names it in the same words, the year's and the card's figures one", () => {
+    const wednesdays = ["2026-09-02", "2026-09-09", "2026-09-16", "2026-09-23"];
+    onlyDeposits([...wednesdays.map((d) => [d, 114_192] as const), ["2026-09-25", -114_192]]);
+    coverThrough("2026-09-26");
+    const card = incomeCard(bundle.db, "2026-09-28")!;
+    expect(card.pay.map((l) => l.wentBackOut)).toEqual([[{ postedOn: "2026-09-25", cents: 114_192 }]]);
+    // four Wednesdays banked the four Thursdays — Sep 24 paid by Sep 23, as the calendar draws it — and none taken back
+    expect([card.totals.impliedCents, card.totals.bankedCents, card.totals.gapLabel]).toEqual([
+      4 * 114_192,
+      4 * 114_192,
+      "exactly what this window implies you earned; $1,141.92 went back out on Fri, Sep 25, 2026",
+    ]);
+    // …the figure /spending reads of the same window, by the same rule
+    const [reading] = cashEarningsReadings(bundle.db, {
+      from: card.windowFrom,
+      to: card.today,
+      today: card.today,
+      withChecked: true,
+    });
+    expect([reading!.bankedCents, reading!.wentBackOut]).toEqual([card.totals.bankedCents, card.pay[0]!.wentBackOut]);
   });
 
   test("Wed Oct 7 imported past the statement pays Oct 8: October and Q4 name it, and the quarters add up", () => {

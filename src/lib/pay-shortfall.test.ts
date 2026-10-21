@@ -1,6 +1,13 @@
 import { describe, expect, test } from "vitest";
 import { cashEarnings, type PaySeries } from "./cash-earnings";
-import { payShortfall, type PayShortfall, type PayShortfallWindow, type WindowEarnings } from "./pay-shortfall";
+import { formatDayLong } from "./format-date";
+import {
+  payShortfall,
+  wentBackOutPhrase,
+  type PayShortfall,
+  type PayShortfallWindow,
+  type WindowEarnings,
+} from "./pay-shortfall";
 import { settlePaydaysBackwards, type AttributedDeposit, type PaydayOccurrence } from "./payday-settlement";
 import { daysThatBanked, daysThatWentBackOut } from "./posted-average";
 
@@ -122,6 +129,8 @@ describe("payShortfall — a window's read paydays against what it banked, and t
       paidUnread: [],
       paidUncounted: [],
       wentBackOut: [],
+      // August banked nothing: Sep 24's deposit is September's money
+      bankedCents: 0,
     });
   });
 
@@ -490,6 +499,7 @@ describe("payShortfall — the window's LAST day is inside it", () => {
       paidUnread: [],
       paidUncounted: [],
       wentBackOut: [],
+      bankedCents: CASH,
     });
   });
 
@@ -541,7 +551,10 @@ describe("payShortfall — the window's LAST day is inside it", () => {
 const signed = (s: PayShortfall): number =>
   s.neverBankedCents - s.noPaydayBeyondCents - s.otherBeyondCents + s.wentBackOut.reduce((sum, d) => sum + d.cents, 0);
 
-/** Every figure of a window adds up — to its read paydays, and to the money banked inside it, net (`cashEarnings`'). */
+/**
+ * Every figure of a window adds up — to its read paydays, and to the money banked inside it, net: every row, money out
+ * too. ⛔ The one rule's banked figure (`moneyOutOfWindow`, Earned vs banked's) is that too, with the days it names.
+ */
 function expectItAddsUp(s: PayShortfall, deposits: readonly AttributedDeposit[], from: string, to: string): void {
   const outside = s.paidOutside.reduce((sum, p) => sum + p.cents, 0);
   const across = s.paidAcross.reduce((sum, p) => sum + p.cents, 0);
@@ -553,6 +566,7 @@ function expectItAddsUp(s: PayShortfall, deposits: readonly AttributedDeposit[],
   expect(s.bankedInsideCents + across + s.noPaydayBeyondCents + s.otherBeyondCents - out, `${from} – ${to}`).toBe(
     banked,
   );
+  expect(s.bankedCents - out, `${from} – ${to}: the card's banked figure`).toBe(banked);
 }
 
 /**
@@ -585,6 +599,9 @@ describe("payShortfall — money that went back out on a day of its own", () => 
     const year = oct2("2026-01-01", TODAY);
     expect(year.wentBackOut).toEqual([]);
     expect(year.neverBankedCents).toBe(1_111_700);
+    // ⛔ the card's banked figure, by the same rule: Sep 30's money is back out, so Jun 4 – Sep 24's $7,156.60
+    // (🔴 $8,298.52 on the merge of d75-banked: a later day's money out took nothing off there, so it read $9,975.08)
+    expect(year.bankedCents).toBe(CASH + 40_000 + 5 * PAYROLL);
     // June, Q3 — which nets Sep 30's money — and Q4, which names the money that went back out
     const cuts = [
       ["2026-01-01", "2026-06-30"],
@@ -625,6 +642,9 @@ describe("payShortfall — money that went back out on a day of its own", () => 
     expect(year.wentBackOut).toEqual([{ postedOn: "2026-09-25", cents: PAYROLL }]);
     expect(year.neverBankedCents).toBe(1_111_700);
     expect(signed(year)).toBe(1_111_700 + PAYROLL);
+    // ⚖️ the card banks the days that banked — Sep 24 stays paid — and names the day beside it (default (A), 2026-10-21)
+    expect(year.bankedCents).toBe(CASH + 40_000 + 5 * PAYROLL);
+    expect(wentBackOutPhrase(year.wentBackOut, formatDayLong)).toBe("$1,141.92 went back out on Fri, Sep 25, 2026");
   });
 
   test("a return that money paying no read payday covers is netted against it, a day at a time — never split", () => {
@@ -670,6 +690,19 @@ describe("payShortfall — money that went back out on a day of its own", () => 
         if (s.readPaydays === 0) expect(s.shortCents, `${from} – ${to}`).toBe(0);
       }
     }
+  });
+});
+
+describe("wentBackOutPhrase — the one spelling of money out on a day of its own", () => {
+  test("every day once, oldest first, with the money of them all — two pay series out on one day name it once", () => {
+    const days = [
+      { postedOn: "2026-10-02", cents: PAYROLL },
+      { postedOn: "2026-09-25", cents: 50_000 },
+      { postedOn: "2026-10-02", cents: 100 },
+    ];
+    expect(wentBackOutPhrase(days, formatDayLong)).toBe(
+      "$1,642.92 went back out on Fri, Sep 25, 2026 and Fri, Oct 2, 2026",
+    );
   });
 });
 

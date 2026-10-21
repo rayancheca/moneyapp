@@ -8,7 +8,7 @@ import { STALE_PERIODS, type CashEarningsBasis } from "./cash-earnings";
 import { compareDates } from "./dates";
 import { formatDayShortIn } from "./format-date";
 import { depositsOf } from "./paid-by-another-month";
-import type { PayShortfall } from "./pay-shortfall";
+import { wentBackOutPhrase, type PayShortfall } from "./pay-shortfall";
 import { TOWARD_NO_PAYDAY } from "./per-payday";
 import { LAST_CHECKED_DAY, notLookedForDeposits } from "./unbanked-income";
 
@@ -753,8 +753,9 @@ const paydaysOf = (parts: readonly { paydays: readonly string[] }[]): string[] =
  * $7,234.08, and no month or quarter named Oct 7's $1,141.92, which paid Thu Oct 8.
  *
  * ⚖️ MONEY OUT ON A DAY OF ITS OWN (his decision 75): "went back out on" its day, after the split — never netted away
- * from a payday a deposit paid, which stays banked as the calendar draws it (`payShortfall`'s `wentBackOut`). 🔴 With
- * Sep 23's lump and $1,141.92 back out on Fri Sep 25, Sep 21 – 27 read Sep 24 "none of it reached a bank".
+ * from a payday a deposit paid, which stays banked as the calendar draws it (`payShortfall`'s `wentBackOut`, by the one
+ * rule Earned vs banked reads, and in its words: `wentBackOutPhrase`). 🔴 With Sep 23's lump and $1,141.92 back out on
+ * Fri Sep 25, Sep 21 – 27 read Sep 24 "none of it reached a bank".
  *
  * ⛔ EACH DEPOSIT WITH THE MONEY IT PUT IN (`pay-shortfall`'s "NO SECOND ALLOCATION"). When outside money paid more
  * than the net shortfall — money inside paid no payday, and had no unpaid payday to net — the outside deposits keep
@@ -810,7 +811,7 @@ function payShortfallNote(
         ? `; another ${formatCents(parts[0]!.cents)} banked inside the window${parts[0]!.words}`
         : `; another ${formatCents(centsOf(parts))} banked inside the window paid none of them: ` +
           AND_LIST.format(parts.map((p) => `${formatCents(p.cents)}${p.words}`));
-  const back = s.wentBackOut.length === 0 ? "" : `; ${wentBackOutPhrase(s, formatDay)}`;
+  const back = s.wentBackOut.length === 0 ? "" : `; ${wentBackOutPhrase(s.wentBackOut, formatDay)}`;
   const unlooked = unlookedPhrase(s.unlookedPaydays, checkedThrough, formatDay, "more ");
 
   return { kind: "shortfall", body: `${lead}${split}${beyond}${back}${unlooked}.` };
@@ -848,16 +849,11 @@ function unreadPaydaysNote(
     ...beyondParts(s, payday, noPaydayFrom, formatDay, restWords).map(
       (p) => `${formatCents(p.cents)} banked inside the window${p.words}`,
     ),
-    ...(s.wentBackOut.length === 0 ? [] : [wentBackOutPhrase(s, formatDay)]),
+    ...(s.wentBackOut.length === 0 ? [] : [wentBackOutPhrase(s.wentBackOut, formatDay)]),
   ];
   const unlooked = unlookedPhrase(s.unlookedPaydays, checkedThrough, formatDay, "");
   return { kind: "unread", body: `Of ${seriesName}'s pay, ${AND_LIST.format(parts)}${unlooked}.` };
 }
-
-/** "$1,141.92 went back out on Fri, Oct 2, 2026" — money out on days of its own (decision 75), each day whole. */
-const wentBackOutPhrase = (s: PayShortfall, formatDay: (iso: string) => string): string =>
-  `${formatCents(centsOf(s.wentBackOut))} went back out on ` +
-  AND_LIST.format(s.wentBackOut.map((d) => formatDay(d.postedOn)));
 
 /** The period's passed paydays past the checked day that no deposit settled — decision 65's words. Empty when none. */
 function unlookedPhrase(

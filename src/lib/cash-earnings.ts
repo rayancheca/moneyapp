@@ -289,11 +289,13 @@ export function cashEarnings({
    * ⚖️ What reached a bank is the DAYS THAT BANKED inside the window, each its net (`daysThatBanked`, his decision 75,
    * 2026-10-13) — the days settlement pays a payday by and every Income figure counts: a payroll returned the same day
    * banked its net, and money going back on a LATER day — a day netting below $0.00 — banks nothing and takes nothing
-   * off. 🔴 Every row in the window was summed: with a Salary-filed -$1,141.92 on Sep 25, the day after Sep 24's
-   * payroll, settlement still paid Sep 24 and September's Income stayed $6,177.88 while this banked $4,567.68 of
-   * September, not $5,709.60 — /spending's September note read $1,141.92 never reached a bank, and the dashboard's card
-   * $12,258.92, not $11,117.00, for a payday the calendar drew paid (review of d75; hypothetical: no money out is linked
-   * to his pay, measured on his ledger copy 2026-10-21).
+   * off here. ⛔ A reading that knows its frontier reads it on by the one rule (`moneyOutOfWindow`,
+   * `cashEarningsReadings` with `withChecked`): it nets money that paid no read payday, and is named on its day where it
+   * cannot — never taken off a paid payday. 🔴 Every row in the window was summed: with a Salary-filed -$1,141.92 on
+   * Sep 25, the day after Sep 24's payroll, settlement still paid Sep 24 and September's Income stayed $6,177.88 while
+   * this banked $4,567.68 of September, not $5,709.60 — /spending's September note read $1,141.92 never reached a
+   * bank, and the dashboard's card $12,258.92, not $11,117.00, for a payday the calendar drew paid (review of d75;
+   * hypothetical: no money out is linked to his pay, measured on his ledger copy 2026-10-21).
    */
   const bankedCents = bankedDays
     .filter((d) => compareDates(d.postedOn, from) >= 0 && compareDates(d.postedOn, end) <= 0)

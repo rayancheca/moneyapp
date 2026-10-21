@@ -1,5 +1,6 @@
 import { payGap } from "./cash-earnings";
 import { compareDates } from "./dates";
+import { formatCents } from "./money";
 import {
   portionsAcross,
   type AttributedDeposit,
@@ -53,11 +54,12 @@ import {
  * Sep 24, and /budgets' fourth figure and its mirror count. Pure, so the boundaries are tested here.
  *
  * ⚖️ …SO MONEY OUT ON A DAY OF ITS OWN NEVER TAKES A PAID PAYDAY BACK (his decision 75: "a day of its own that banked
- * nothing, and the deposit's day pays as it always has"). It nets the window's money that paid none of its read
- * paydays, a whole day at a time, as Earned vs banked nets it; a day that money cannot cover is named, whole, beside
- * the split (`wentBackOut`). So the window's own money is never below what paid its read paydays, and a window with no
- * read payday is short nothing. 🔴 Review of 36f212f (`moneyOut`): netted unnamed, October read "paydays came to
- * $0.00, and none of it reached a bank" and Sep 21 – 27 read Sep 24 unbanked beside the deposit that paid it.
+ * nothing, and the deposit's day pays as it always has"). It nets the window's money that paid no read payday, a whole
+ * day at a time; a day that money cannot cover is named, whole, beside the split (`wentBackOut`) — the one rule
+ * (`moneyOutOfWindow`) Earned vs banked reads too. So the window's own money is never below what paid its read
+ * paydays, and a window with no read payday is short nothing. 🔴 Review of 36f212f: netted unnamed, October read
+ * "paydays came to $0.00, and none of it reached a bank" and Sep 21 – 27 read Sep 24 unbanked beside the deposit that
+ * paid it.
  *
  * ⛔ READ means passed AND on or before the day every account the pay lands in is checked through — `cashEarnings`'
  * own as-of-the-frontier reading: a payday dated today has passed only once a deposit lands today. A payday after the
@@ -97,7 +99,8 @@ export interface WindowEarnings {
   impliedCents: number;
   /**
    * every deposit attributed to the series inside the window — money that paid no payday too — read by the DAY that
-   * banked (`daysThatBanked`), as the settlement's `deposits` are: its portions are taken off it (`paidAcross`)
+   * banked (`daysThatBanked`), as the settlement's `deposits` are: its portions are taken off it (`paidAcross`), and the
+   * money out on a day of its own it can net (`moneyOutOfWindow`). ⛔ `cashEarnings`' own figure, before that rule.
    */
   bankedCents: number;
   /** of those paydays, the READ ones: on or before the checked day (none when nothing is checked) */
@@ -193,19 +196,45 @@ export interface PayShortfall {
    */
   paidUncounted: readonly PaidAcross[];
   /**
-   * ⚖️ Money that went back out on a day of its own inside the window and that the window's money paying none of its
-   * read paydays could not take (decision 75: the deposit's day pays as it always has) — per day, whole, oldest first.
+   * ⚖️ Money that went back out on a day of its own inside the window and that the window's money paying no read
+   * payday could not take (decision 75: the deposit's day pays as it always has) — per day, whole, oldest first.
    * Never taken off the banked figure: with it, the window's parts add up to what it banked, net.
    */
-  wentBackOut: readonly { postedOn: string; cents: number }[];
+  wentBackOut: readonly WentBackOut[];
+  /**
+   * What the window banked by the one rule (`moneyOutOfWindow`): its days that banked, less the money out it netted —
+   * Earned vs banked's figure, and every banked figure /spending prints of the window. Less `wentBackOut`, it is every
+   * row inside the window, net.
+   */
+  bankedCents: number;
 }
 
-export function payShortfall(s: SettlementWalked, w: PayShortfallWindow, e: WindowEarnings): PayShortfall {
+/** A day money went back out on, a day of its own (decision 75): the day's net, as money out — positive. */
+export interface WentBackOut {
+  postedOn: string;
+  cents: number;
+}
+
+/** A window's banked figure by the one rule for money out on a day of its own, and the days it names. */
+export interface WindowMoneyOut {
+  /** the window's days that banked, less the money out on days of their own that it netted */
+  bankedCents: number;
+  /** the days of money out it could not net, each whole, oldest first */
+  wentBackOut: readonly WentBackOut[];
+}
+
+/** The window's days as every reading here takes them: inside it, passed (`cashEarnings`' rule) and checked. */
+function windowDays(s: SettlementWalked, w: PayShortfallWindow) {
   const inWindow = (day: string): boolean => compareDates(day, w.from) >= 0 && compareDates(day, w.to) <= 0;
   // `cashEarnings`' rule: today's payday is earned only once a deposit has landed today
   const paidToday = s.deposits.some((d) => d.postedOn === w.today);
   const passed = (day: string): boolean => compareDates(day, w.today) < 0 || (day === w.today && paidToday);
   const checked = (day: string): boolean => w.checkedThrough !== null && compareDates(day, w.checkedThrough) <= 0;
+  return { inWindow, passed, checked };
+}
+
+export function payShortfall(s: SettlementWalked, w: PayShortfallWindow, e: WindowEarnings): PayShortfall {
+  const { inWindow, passed, checked } = windowDays(s, w);
 
   const due = s.paydays.filter((o) => inWindow(o.date) && passed(o.date));
   const readDays = new Set(due.filter((o) => checked(o.date)).map((o) => o.date));
@@ -242,11 +271,9 @@ export function payShortfall(s: SettlementWalked, w: PayShortfallWindow, e: Wind
   ];
   // what the window's money that paid its read paydays came to: what the banked figure holds beyond it was netted
   const paidReadCents = centsOf(s.portions.filter((p) => inWindow(p.depositOn) && readDays.has(p.paydayOn)));
-  const { ownCents, wentBackOut } = moneyOut(
-    s.wentBackOut.filter((d) => inWindow(d.postedOn)),
-    e.bankedCents - centsOf(crossed),
-    paidReadCents,
-  );
+  // ⛔ the one rule for money out on a day of its own — Earned vs banked's figure — then less another window's money
+  const back = moneyOutOfWindow(s, w, e.bankedCents);
+  const ownCents = back.bankedCents - centsOf(crossed);
 
   // ⛔ the one subtraction (`payGap`): the dashboard's, over this window's own money — what is not read is not short,
   // and the window's own money is never below what paid its read paydays, so a window with none read is short nothing
@@ -282,7 +309,8 @@ export function payShortfall(s: SettlementWalked, w: PayShortfallWindow, e: Wind
       s.portions.filter((p) => inWindow(p.depositOn) && dueDays.has(p.paydayOn) && !readDays.has(p.paydayOn)),
     ),
     paidUncounted,
-    wentBackOut,
+    wentBackOut: back.wentBackOut,
+    bankedCents: back.bankedCents,
   };
 }
 
@@ -290,39 +318,58 @@ const centsOf = (parts: readonly { cents: number }[]): number => parts.reduce((s
 
 /**
  * ⚖️ MONEY OUT ON A DAY OF ITS OWN (his decision 75: "a day of its own that banked nothing, and the deposit's day
- * pays as it always has") against the window's own money. It nets the money that paid none of the window's read
- * paydays — the payroll a statement has not yet placed, returned before it does, or change — a day at a time while
- * that money covers the day, as Earned vs banked nets it; a day it cannot cover is named WHOLE (`wentBackOut`) and
- * never taken off a payday a deposit paid. So the window's own money is never below what paid its read paydays.
+ * pays as it always has") against a window's banked figure — THE ONE RULE: Earned vs banked's card and every /spending
+ * note read it (`cashEarningsReadings`, `payShortfall`). `bankedCents` is the window's days that banked
+ * (`daysThatBanked`, `cashEarnings`' own figure), which a later day's money out never touched. The money out nets the
+ * window's money that paid NO READ payday, inside the window or out — the payroll a statement has not yet placed,
+ * returned before it does; money toward no payday; change — a whole day at a time, oldest first, while that money
+ * covers the day; a day it cannot cover is named WHOLE (`wentBackOut`) and never taken off a payday a deposit paid. So
+ * the calendar, the card and /spending agree on which paydays were paid, and the money out is named with its day.
  *
- * 🔴 Netted unnamed, as the dashboard's banked figure nets it: on his ledger copy (checked through Thu Sep 24) with Wed
- * Sep 30's $1,141.92 returned on Fri Oct 2, October read "paydays came to $0.00, and none of it reached a bank"; with
- * the return on Fri Sep 25, Sep 21 – 27 read "came to $1,141.92, and none of it reached a bank" of Sep 24, which the
- * calendar draws paid by Sep 23's deposit inside that week (review of 36f212f; latent — no money out is linked to his
- * pay on his copy 2026-10-21).
+ * 🔴 Two rules, one each side of the merge (2026-10-21): Earned vs banked's banked figure took nothing off for a later
+ * day's money out and named none (d75-banked, 82f6a3a), while /spending netted it against that figure as if it had —
+ * so it netted every return, named none, and the year read $9,975.08 never reached a bank, not $11,117.00, with Wed
+ * Sep 30's payroll back out on Fri Oct 2 (his ledger copy 2026-10-21, checked through Thu Sep 24; on it, October and
+ * Q4 printed no note at all). Before that, netted unnamed: October read "paydays came to $0.00, and none of it reached
+ * a bank", and Sep 21 – 27 read Sep 24 unbanked beside the deposit that paid it (review of 36f212f).
  *
- * ⏳ HIS CALL, ASKED 2026-10-21 (review of f6da264): the dashboard's Earned vs banked still nets a day it names here.
- * On his ledger copy with $1,141.92 of pay back out on Fri Sep 25, the dashboard reads "$12,258.92 of it never
- * reached a bank" while YTD and ALL read "$7,156.60 was banked … and $11,117.00 never reached a bank; $1,141.92 went
- * back out on Fri, Sep 25, 2026" — one signed total, two printed figures. Either the dashboard names the day as this
- * does, or this nets it as the dashboard does and Sep 21 – 27 reads Sep 24 unbanked beside the deposit that paid it.
+ * ⚖️ DEFAULT (A), BUILT, NOT ASKED (2026-10-21; he said "no more questions"): the card names a later-day return as
+ * /spending does, on its day (`wentBackOutPhrase`). Measured on his ledger copy 2026-10-21 with a hypothetical
+ * $1,141.92 of pay back out on Fri Sep 25: the card read only "$11,117.00 of it never reached a bank; the other
+ * $3,425.76 is for paydays after Sep 24 …" and /spending named the day nowhere; now both name "$1,141.92 went back out
+ * on Fri, Sep 25, 2026", the card banks $7,156.60, and the calendar keeps Sep 24 paid by the deposit of Wed, Sep 23.
+ * Latent: no money out is linked to his pay on that copy.
  */
-function moneyOut(
-  days: readonly AttributedDeposit[],
-  netOwnCents: number,
-  paidReadCents: number,
-): { ownCents: number; wentBackOut: { postedOn: string; cents: number }[] } {
-  const outCents = -days.reduce((sum, d) => sum + d.amountCents, 0);
-  const freeCents = Math.max(0, netOwnCents + outCents - paidReadCents);
-  const { leftCents, named } = days.reduce(
-    (acc, d) =>
-      -d.amountCents <= acc.leftCents
-        ? { leftCents: acc.leftCents + d.amountCents, named: acc.named }
-        : { leftCents: acc.leftCents, named: [...acc.named, { postedOn: d.postedOn, cents: -d.amountCents }] },
-    { leftCents: freeCents, named: [] as { postedOn: string; cents: number }[] },
+export function moneyOutOfWindow(s: SettlementWalked, w: PayShortfallWindow, bankedCents: number): WindowMoneyOut {
+  const { inWindow, passed, checked } = windowDays(s, w);
+  // the window's money that paid a READ payday, wherever that payday falls: money out never takes it back
+  const paidReadCents = centsOf(
+    s.portions.filter((p) => inWindow(p.depositOn) && passed(p.paydayOn) && checked(p.paydayOn)),
   );
-  // the money out it netted is what it took of the free money; what it named is the window's own still
-  return { ownCents: netOwnCents + outCents - (freeCents - leftCents), wentBackOut: named };
+  const freeCents = Math.max(0, bankedCents - paidReadCents);
+  const { leftCents, named } = s.wentBackOut
+    .filter((d) => inWindow(d.postedOn))
+    .reduce(
+      (acc, d) =>
+        -d.amountCents <= acc.leftCents
+          ? { leftCents: acc.leftCents + d.amountCents, named: acc.named }
+          : { leftCents: acc.leftCents, named: [...acc.named, { postedOn: d.postedOn, cents: -d.amountCents }] },
+      { leftCents: freeCents, named: [] as WentBackOut[] },
+    );
+  // what it netted is what it took of that money; a day it named is no part of the figure, which never held it
+  return { bankedCents: bankedCents - (freeCents - leftCents), wentBackOut: named };
+}
+
+/** "A and B", "A, B, and C" — the platform's list. */
+const AND_LIST = new Intl.ListFormat("en", { style: "long", type: "conjunction" });
+
+/**
+ * "$1,141.92 went back out on Fri, Oct 2, 2026" — the days `moneyOutOfWindow` names, each whole, oldest first, every
+ * day once: the one spelling /spending's notes and Earned vs banked print.
+ */
+export function wentBackOutPhrase(days: readonly WentBackOut[], formatDay: (iso: string) => string): string {
+  const on = [...new Set(days.map((d) => d.postedOn))].sort(compareDates);
+  return `${formatCents(centsOf(days))} went back out on ${AND_LIST.format(on.map(formatDay))}`;
 }
 
 function byDepositDay(portions: readonly SettlementPortion[]): PaidAhead[] {
