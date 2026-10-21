@@ -54,6 +54,7 @@ import { billedWithEvidence, carriesPhrase } from "@/lib/billed-with";
 import { billingCarriers } from "./billing-carriers";
 import { postedAsWord, type Occurrence, type PaydaySample, type PerPaydayEvidence } from "@/lib/posted-average";
 import { rateOn, seriesAmountCents } from "@/lib/series-kind";
+import { ROLLOVER_BANKS, ROLLOVER_HOLDS } from "@/lib/rollover-held-back";
 import { postedAveragesBySeries } from "./posted-average";
 import { effectiveSeries, MIN_OCCURRENCES } from "./recurring";
 import {
@@ -3195,6 +3196,13 @@ const PLAN_PER: Record<BudgetPeriodKind, string> = {
  * the carry would mean recomputing `budgetStatuses` here, and a proof that
  * quietly re-derives its subject's neighbour is how two definitions of one
  * number get born.
+ *
+ * ⚖️ …and the words are the row panel's (`lib/rollover-held-back::ROLLOVER_BANKS`,
+ * `ROLLOVER_HOLDS`), so a rule change moves both. 🔴 Its own words outlived
+ * decision 67 (2026-10-13): "this plan plus whatever you underspent in closed
+ * periods" (10cd4f7). On his ledger copy 2026-10-21 Cash & ATM, Fees and
+ * Transport came in $130.00, $15.00 and $85.99 under plan in a September not
+ * fully imported, and carried $0.00 under it.
  */
 function budgetPlanProvenance(db: AppDatabase, id: string, label: string | undefined): Provenance | null {
   const budget = db.select().from(budgets).where(eq(budgets.id, id)).get();
@@ -3220,14 +3228,17 @@ function budgetPlanProvenance(db: AppDatabase, id: string, label: string | undef
     sources.push({
       kind: "period",
       label: "rollover is on",
-      detail: "unspent plan from closed periods is added to this one, and that carry is computed from your ledger",
+      detail:
+        "a closed period's leftover is added to this one — none from a period not fully imported — and that carry is " +
+        "computed from your ledger",
     });
   }
 
   const started = `It has been running since ${readableDay(budget.startsOn)}`;
   const ended = budget.endsOn ? `, and it stops after ${readableDay(budget.endsOn)}` : "";
   const carry = budget.rolloverEnabled
-    ? " Rollover is on, so what this period is graded against is this plan plus whatever you underspent in closed periods — that carry is measured from your ledger and is not part of what you chose."
+    ? " Rollover is on, so what this period is graded against is this plan plus a carry from closed periods — that " +
+      `carry is measured from your ledger and is not part of what you chose. ${ROLLOVER_BANKS} ${ROLLOVER_HOLDS}`
     : "";
 
   return {

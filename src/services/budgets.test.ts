@@ -2705,6 +2705,31 @@ describe("⚖️ decision 67 — a closed period with a day not yet read banks n
   });
 
   /*
+   * 🔴 THE CASH-ONLY PARENT HAD NO TEST. The walk names the ancestor whose day it found, whatever kind that day is — a
+   * cash-only parent's too — and the panel then says "…this category is read as Food is, spent only from cash
+   * wallets". Dropping the name there (`ancestor: … || whose === "cash-only" ? null`) passed every test (review of
+   * 9249ae7), and turned Coffee's panel into "This category is spent only from cash wallets" — false of a category with
+   * no wallet row of its own. Latent: on his ledger copy 2026-10-21 none of his 57 expense categories reads a cash-only
+   * day, its own or a parent's.
+   */
+  test("a subcategory whose parent is spent only from cash is read as its parent is — named, and banked", () => {
+    const wallet = createCashWallet(bundle.db, { name: "Cash on Hand", openingOn: "2026-04-01", openingBalanceCents: 100_000 });
+    for (const [postedOn, amountCents] of [["2026-04-15", -10_00], ["2026-05-10", -100_00]] as const) {
+      const description = "CASH";
+      addManualTransaction(bundle.db, { accountId: wallet, postedOn, amountCents, description, categoryId: catId("Food") });
+    }
+    rollingBudget("Food > Coffee", "2026-05-01"); // Coffee has no row of its own, on any account
+
+    // read through today as Food is, so May and June bank whole — no statement is coming to wait for
+    expect(carried("Food > Coffee")).toEqual({ cents: 1_000_00, availableCents: 1_500_00, heldBack: [] });
+    expect(readOn("Food > Coffee")).toEqual({ whose: "cash-only", ancestor: "Food" });
+    expect(rolloverWaitsSentence(readOn("Food > Coffee")!)).toBe(
+      "With no account of its own to wait on, this category is read as Food is, spent only from cash wallets, so a " +
+        "closed period waits for no statement — none will ever cover it.",
+    );
+  });
+
+  /*
    * 🔴 A category with no account of its own and no ancestor with a day waits on the LEDGER's — the newest day any
    * account reaches (`ledgerReaches`). Measured on a copy of his ledger 2026-10-13 (review of 46b6e4b): a $100 rolling
    * Gifts & Donations budget from Jul 1 banked July and August and held September back on the ledger's Sep 24, under a

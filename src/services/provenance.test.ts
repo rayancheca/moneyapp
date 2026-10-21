@@ -2647,6 +2647,34 @@ describe("provenanceFor — a budget's plan", () => {
     expect(p.verdict).toBe("manual");
   });
 
+  /*
+   * ⚖️ OWNER DECISION 2026-10-13 (decision 67): a closed period not fully imported banks nothing until its statements
+   * land, and the bills that came due in a period are subtracted before it banks. 🔴 This proof still said what the
+   * carry was before both — "this plan plus whatever you underspent in closed periods", and "unspent plan from closed
+   * periods is added to this one" (10cd4f7, Aug 27). On his ledger copy 2026-10-21 Transport's popover said it over a
+   * $227.95 plan with $141.96 spent in September and $0.00 carried, while the panel on the same row said "September
+   * 2026 is not fully imported, so nothing rolls over from it yet" (review of 9249ae7). The rule is the panel's own
+   * words, so the two cannot drift again.
+   */
+  test("rollover's rule is the panel's: a period not fully imported adds nothing, and bills that came due are subtracted", () => {
+    const cat = addCategory("c-food", "Fixture Food");
+    addBudget("b1", cat, { rolloverEnabled: true });
+
+    const p = provenanceFor(bundle.db, { kind: "budgetPlan", id: "b1" })!;
+    expect(p.headline).not.toMatch(/whatever you underspent/);
+    expect(p.headline).toContain(
+      "A period that came in under plan adds its leftover; one that went over adds nothing, and overspend is never " +
+        "carried as a debt. Bills that came due are subtracted whether they are not posted or no statement has " +
+        "covered them yet. A closed period that is not fully imported adds nothing until its statements land.",
+    );
+    const rollover = p.sources.find((s) => s.label === "rollover is on")!;
+    expect(rollover.detail).not.toMatch(/unspent plan from closed periods is added/);
+    expect(rollover.detail).toBe(
+      "a closed period's leftover is added to this one — none from a period not fully imported — and that carry is " +
+        "computed from your ledger",
+    );
+  });
+
   test("with rollover off nothing is said about a carry", () => {
     const cat = addCategory("c-house", "Fixture Housing");
     addBudget("b1", cat);

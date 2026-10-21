@@ -9,8 +9,8 @@ export type BudgetPeriodKind = (typeof BUDGET_PERIODS)[number];
 /**
  * Rollover is OPT-IN per budget and OFF by default: with rolloverEnabled false
  * leftover/overrun is displayed informationally only, exactly as before. With it
- * on, unspent plan from CLOSED periods accumulates into a carry the budget is
- * then graded against (services/budgets.ts `carryInto`).
+ * on, unspent plan from CLOSED periods read whole (⚖️ decision 67) accumulates
+ * into a carry the budget is then graded against (services/budgets.ts `carryInto`).
  *
  * Child spend rolls into a parent's budget by design; alerts fire independently
  * per budget row; aggregates exclude descendant-budgeted overlap (schema.md

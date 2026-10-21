@@ -8,11 +8,10 @@ import { InlineEditableText } from "@/components/ui/InlineEditableText";
 import { Money } from "@/components/ui/Money";
 import { toast } from "@/components/ui/Toast";
 import { BUDGET_PERIODS, type BudgetPeriodKind } from "@/db/schema/budgets";
-import { ROLLOVER_SUBTRACTS } from "@/lib/arrears-reading";
 import { budgetCoverageFact } from "@/lib/budget-coverage";
 import { formatDayShort } from "@/lib/format-date";
 import { formatCents, parseAmountToCents } from "@/lib/money";
-import { rolloverHeldBackSentence, rolloverWaitsSentence } from "@/lib/rollover-held-back";
+import { ROLLOVER_BANKS, rolloverHeldBackSentence, rolloverWaitsSentence } from "@/lib/rollover-held-back";
 import type { BudgetPaceStatus } from "@/services/budgets";
 import { PERIOD_WORD } from "./BudgetAmountEditor";
 
@@ -157,8 +156,7 @@ export function BudgetDetails({ status, rolloverEnabled }: BudgetDetailsProps) {
               sentence true */}
           <p className="text-ink-faint">
             Banked <Money cents={status.rolloverCents} /> from closed periods.
-            {heldBack && ` ${heldBack}`} A period that came in under plan adds its leftover; one that
-            went over adds nothing, and overspend is never carried as a debt. {ROLLOVER_SUBTRACTS}
+            {heldBack && ` ${heldBack}`} {ROLLOVER_BANKS}
             {waits && ` ${waits}`}
           </p>
         </div>

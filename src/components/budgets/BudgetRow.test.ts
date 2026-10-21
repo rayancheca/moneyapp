@@ -12,6 +12,7 @@ import { institutions } from "@/db/schema/institutions";
 import { recurringSeries } from "@/db/schema/recurring";
 import { transactions } from "@/db/schema/transactions";
 import { dedupeHash } from "@/lib/hash";
+import { ROLLOVER_BANKS, ROLLOVER_HOLDS } from "@/lib/rollover-held-back";
 import { createAccount } from "@/services/accounts";
 import { budgetPaceStatuses, createBudget, setBudgetRollover, type BudgetPaceStatus } from "@/services/budgets";
 import { createCashWallet } from "@/services/cash-wallets";
@@ -748,6 +749,15 @@ describe("BudgetDetails — what rollover subtracts, in his words", () => {
       "Banked $0.00 from closed periods. July 2026 is not fully imported, so nothing rolls over from it yet.",
     );
     expect(panelText()).toContain("so a missing statement on one of them cannot bank itself as savings.");
+    /*
+     * 🔴 …and the plan's proof on the same row said its own words, from before decision 67: "this plan plus
+     * whatever you underspent in closed periods" — over July's $30.00 plan, nothing read of it, $0.00 carried
+     * (review of 9249ae7). ⛔ One rule, two readers: the proof says what the panel says.
+     */
+    const plan = provenanceFor(bundle.db, { kind: "budgetPlan", id, label: "Food" })!;
+    expect(plan.headline).not.toContain("whatever you underspent");
+    expect(plan.headline).toContain(`${ROLLOVER_BANKS} ${ROLLOVER_HOLDS}`);
+    expect(panelText()).toContain(ROLLOVER_BANKS);
 
     foodRow("2026-08-01", -500); // July's statement lands: the Card is read past Jul 31
     expect(statusFor("Food").rolloverCents).toBe(3_000);

@@ -1,4 +1,5 @@
 import type { BudgetPeriodKind } from "@/db/schema/budgets";
+import { ROLLOVER_SUBTRACTS } from "./arrears-reading";
 import { monthLabel } from "./calendar-math";
 import type { CategoryReach } from "./category-reach";
 import type { PeriodBounds } from "./dates";
@@ -32,6 +33,29 @@ export interface RolloverReadOn {
   whose: CategoryReach["whose"];
   ancestor: string | null;
 }
+
+/**
+ * What a closed period banks — said by BOTH readers of the carry's rule: the rolling row's panel (`BudgetDetails`) and
+ * its plan's proof (`services/provenance::budgetPlanProvenance`). One string, so neither can say what the carry does
+ * not do.
+ *
+ * 🔴 The plan's proof said its own words, and kept them past decision 67: "this plan plus whatever you underspent in
+ * closed periods" (10cd4f7, Aug 27). On his ledger copy 2026-10-21 Transport's popover said it over $85.99 left of
+ * September's $227.95 plan and $0.00 carried, beside a panel saying "September 2026 is not fully imported, so nothing
+ * rolls over from it yet" (review of 9249ae7).
+ */
+export const ROLLOVER_BANKS =
+  "A period that came in under plan adds its leftover; one that went over adds nothing, and overspend is never " +
+  `carried as a debt. ${ROLLOVER_SUBTRACTS}`;
+
+/**
+ * ⚖️ Decision 67, said of no one budget's day — the plan's proof's, which reads no carry (it would mean recomputing
+ * `budgetStatuses`). The panel says the same rule of whose day its carry asked (`rolloverWaitsSentence`), and names the
+ * periods it holds (`rolloverHeldBackSentence`, "…is not fully imported, so nothing rolls over from it yet").
+ * ⚠️ True of a cash-only category too: its page reads it through today, so only a day before the ledger opens — one an
+ * older statement would bring in — holds a closed period of it.
+ */
+export const ROLLOVER_HOLDS = "A closed period that is not fully imported adds nothing until its statements land.";
 
 /** a category spent from no account in the window, or only from ones with no import day (priced investment accounts) */
 const NO_ACCOUNT_OF_ITS_OWN = "With no account of its own to wait on,";
