@@ -142,6 +142,10 @@ export type BorrowedDay =
  * through …", "the ledger is imported through …"); an ancestor spent only from cash in its own row's. Null on an
  * empty ledger, which has no day to name. ⛔ An ancestor's clause is its own fact, named (`namedFor`): one rule
  * for naming a category's day wherever the line is not its own.
+ *
+ * ⚠️ a9b07a2 called these words unchanged; they are for the two ancestors `categoryReachFor`'s walk borrows (an import
+ * day, or cash only). One with neither — never borrowed, since the walk passes it by — read "Fees nothing imported for
+ * this category since Apr 1" before it and "nothing imported for Fees since Apr 1" since (review of a9b07a2).
  */
 function borrowedDayClause(
   borrowed: BorrowedDay,
@@ -307,7 +311,15 @@ export function nothingFoundSoFarSentence(fact: string): string {
   return `${words.charAt(0).toUpperCase()}${words.slice(1)}.`;
 }
 
-/** "13 days of this period unaccounted" — scoped to the PERIOD, never to the gap since the import (see the top) */
+/**
+ * "13 days of this period unaccounted" — scoped to the PERIOD, never to the gap since the import (see the top).
+ *
+ * ⚖️ default built, not asked (2026-10-21): "of this period" everywhere decision 72 prints the line — a merchant's span
+ * and a comparison's halves included — though the decision's note quotes it "of this window" (handoff 2026-10-14
+ * §6B). The decision is "/budgets' line under it", and /budgets has read "of this period" since 2026-09-02; one window
+ * read one way everywhere is one builder, so the other wording would be either a second line or a change to every
+ * /budgets row he reads.
+ */
 function unaccountedDays(n: number): string {
   return `${n} ${n === 1 ? "day" : "days"} of this period unaccounted`;
 }

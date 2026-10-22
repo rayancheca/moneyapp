@@ -1631,8 +1631,10 @@ export function categoryCoverage(
  * left out as the row leaves them.
  *
  * ⚖️ Implied by his decision 72 (ruled by the orchestrator 2026-10-14): a merchant's own window is read by the accounts
- * it was paid from, by this rule (`provenance::merchantPartlyRead`). ⛔ This function, never a copy: a second copy is a second day for the
- * same accounts, and the merchant and the category over the same days would read two.
+ * it was paid from, by this rule (`provenance::merchantPartlyRead`). ⛔ This function, never a copy: a second copy is a
+ * second day for the same accounts. ⚠️ One rule is not one day: a merchant and its category over the same days read the
+ * same day only where they were paid from the same accounts — on his ledger copy 2026-10-21 IKEA reads "imported through
+ * Oct 2, 2026" over Oct 27, 2025 – Oct 12, 2026, and Housing over those days "Jul 31, 2026" (its share's line names it).
  */
 export function coverageOfAccounts(
   spentFrom: ReadonlySet<string>,

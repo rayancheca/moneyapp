@@ -2986,9 +2986,16 @@ function allSpendProvenance(
   );
 
   const count = (n: number): string => `${grouped(n)} ${n === 1 ? "row" : "rows"}`;
-  // the window whose line it is, named — a change is no lower bound, so the sentence says only which half is read in part
-  const unreadNote =
-    eitherUnread === null ? "" : ` ${unread !== null ? subject : priorSubject} is read only in part: ${eitherUnread.line}.`;
+  /*
+   * the window whose line it is, named — a change is no lower bound, so the sentence says only which half is read in
+   * part. 🔴 …and with BOTH read in part it named the first alone, leaving one of the two sets of documents the claim
+   * stands on unsaid (handoff 2026-10-14 §6B). Each half now carries its own line.
+   */
+  const halves = [
+    { name: subject, unread },
+    { name: priorSubject, unread: priorUnread },
+  ].flatMap((h) => (h.unread === null ? [] : [`${h.name} is read only in part: ${h.unread.line}`]));
+  const unreadNote = halves.length === 0 ? "" : ` ${halves.join("; ")}.`;
   return {
     verdict: combined.verdict,
     badgeWord: combined.badgeWord,

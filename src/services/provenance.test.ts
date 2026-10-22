@@ -4066,6 +4066,30 @@ describe("⚖️ decision 72 — a total over days its accounts have not been im
   });
 
   /*
+   * 🔴 Both halves read in part named only the first: "Jul 2026 is read only in part: … 11 days …", and the window it
+   * is compared against — 5 of whose days are past the same day — went unsaid, so the sentence answered for one of the
+   * two sets of documents the claim stands on (handoff 2026-10-14 §6B). Latent on his ledger copy 2026-10-21: the one
+   * comparison the app renders, /summary/[year]'s, measures both years through the day every account he spends from
+   * is read through, so neither half is read in part (2025 and 2026 both checked).
+   */
+  test("…and when BOTH halves are read in part, the sentence names both, each with its own line", () => {
+    cardThrough("2026-07-20");
+    const p = provenanceFor(bundle.db, {
+      kind: "allSpend",
+      ...JULY,
+      label: "Jul 2026",
+      against: { from: "2026-07-15", to: "2026-07-25", label: "Jul 15 – 25" },
+    })!;
+    expect(p.verdict).toBe("partly_read");
+    expect(p.inputs.map((i) => i.verdict)).toEqual(["partly_read", "partly_read"]);
+    expect(p.headline).toMatch(
+      / Jul 2026 is read only in part: spending imported through Jul 20 · 11 days of this period unaccounted; Jul 15 – 25 is read only in part: spending imported through Jul 20 · 5 days of this period unaccounted\.$/,
+    );
+    // the line under the figure is the page's own window's — the comparison's subject
+    expect(p.partlyRead).toEqual({ uncoveredDays: 11, line: "spending imported through Jul 20 · 11 days of this period unaccounted" });
+  });
+
+  /*
    * ⚖️ Decision 72 reaches the Received and Net pages (ruled implied 2026-10-14: one window reads one way everywhere).
    * An income or transfer category's total is read by the category's OWN day — the accounts its rows landed in
    * (`categoryCoverage`) — and its line's first word is what the page counts, as its empty state already words it
@@ -4164,9 +4188,15 @@ describe("⚖️ decision 72 — a total over days its accounts have not been im
   /*
    * ⚖️ Decision 72 reaches a merchant's own window (ruled implied 2026-10-14 — option (a) of the either/or in 6e6c3da):
    * its first visit to its last, read by the EARLIEST import day of the accounts it was paid from — a category's rule
-   * (`categoryCoverage`), so the merchant and the category over the same days read the same day. 🔴
-   * Measured on his ledger copy 2026-10-13: "Flamingo South Beach is the largest of your 254 regular merchants, at
-   * $9,248.82 · adds up" over Jun 16 – Sep 2, while Chase Checking, which paid its July rent, is read through Aug 12.
+   * (`categoryCoverage`) asked of the MERCHANT's accounts. 🔴 Measured on his ledger copy 2026-10-13: "Flamingo South
+   * Beach is the largest of your 254 regular merchants, at $9,248.82 · adds up" over Jun 16 – Sep 2, while Chase
+   * Checking, which paid its July rent, is read through Aug 12.
+   *
+   * ⚠️ One rule, not one day: the merchant and its category over the same days read the same day only where both were
+   * paid from the same accounts, as here. 🔴 This comment said they always do (handoff 2026-10-14 §6B). On his ledger
+   * copy 2026-10-21 IKEA's rank reads "spending imported through Oct 2, 2026" and its share of Housing, over the same Oct
+   * 27, 2025 – Oct 12, 2026, "spending in Housing imported through Jul 31, 2026" — which is why a share's line names
+   * its category (`namedFor`).
    */
   test("a merchant's own window is read by the earliest import day of the accounts it was paid from", () => {
     const { checking } = rentPaidFromTwoAccounts();
@@ -4186,7 +4216,7 @@ describe("⚖️ decision 72 — a total over days its accounts have not been im
       "This total is the sum of 3 rows from 1 document. A total is only as proven as its weakest row. " +
         `It is read only in part: ${line}, so this total is a lower bound rather than a measurement.`,
     );
-    // one rule: the category over the same days reads the same day and prints the same line
+    // one rule: the category over the same days, spent from these same accounts, reads the same day and the same line
     expect(foodTotal(window).partlyRead).toEqual(rent.partlyRead);
 
     // once every account it was paid from is read through its last visit, it adds up as it always has

@@ -326,6 +326,28 @@ describe("a category's line under another subject's sentence names the category 
       `nothing imported for this category since Apr 1 · ${named}`,
     );
   });
+
+  /*
+   * 🔴 a9b07a2 said the borrowed clause's words were unchanged. They were for an ancestor with an import day or cash only
+   * — the only two `categoryReachFor`'s walk ever borrows — but not for an ancestor with neither: "Fees nothing imported
+   * for this category since Apr 1" became "nothing imported for Fees since Apr 1", and no test pinned either (review of
+   * a9b07a2). The walk passes such an ancestor by, so no page prints it; the words are pinned so a caller that hands one
+   * in reads the named fact, never the old run-on.
+   */
+  test("an ancestor with no day of its own reads as its own named fact, never '<name> nothing imported for this category'", () => {
+    const fees = (spentFromAccounts: number) => ({
+      whose: "ancestor" as const,
+      name: "Fees",
+      coverage: { importedThroughOn: null, spentFromSince: "2026-04-01", spentFromAccounts, spentFromWallets: 0 },
+    });
+    const dormant = { importedThroughOn: null, spentFromAccounts: 0, spentFromSince: "2026-04-01" };
+    expect(budgetCoverageFact(input({ ...dormant, borrowedDay: fees(0) }))).toBe(
+      "nothing imported for this category since Apr 1 · nothing imported for Fees since Apr 1",
+    );
+    expect(budgetCoverageFact(input({ ...dormant, borrowedDay: fees(1) }))).toBe(
+      "nothing imported for this category since Apr 1 · Fees spent only from accounts with no import date since Apr 1",
+    );
+  });
 });
 
 /*
