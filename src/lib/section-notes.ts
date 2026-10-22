@@ -12,6 +12,7 @@ import type { PaidAcross, PaidOutside, PayShortfall } from "./pay-shortfall";
 import { wentBackOutPhrase, windowOwnCents } from "./pay-window-money";
 import { TOWARD_NO_PAYDAY } from "./per-payday";
 import {
+  ACCOUNT_NOT_READ,
   daysToLandRunPast,
   LAST_CHECKED_DAY,
   notLookedForDeposits,
@@ -603,7 +604,7 @@ function surplusLead(seriesName: string, surplusCents: number, firstOn: string |
  * ⛔ It never adds the gap to anything. The figure it names is not money the
  * ledger has found; it is the arithmetic distance between a confirmed schedule
  * and the deposits that actually landed, and `lib/cash-earnings` is explicit
- * that at least three innocent explanations fit. So the note states all three
+ * that at least four innocent explanations fit. So the note states them all
  * rather than picking one — the reader knows which is true and the app does not.
  *
  * Four notes, and each is deliberately narrow:
@@ -757,9 +758,17 @@ export function cashEarningsSectionNotes(input: CashEarningsNoteInput): SectionN
        * an unpaid Aug 13, a window holding Aug 13 named it where the verdict names Aug 20, Aug 27 and Sep 3.
        */
       const inGrace = r.checkedSilentNotBankedYet ?? [];
+      /*
+       * ⚖️ …and payroll landing in an account the ledger does not read, in the card's caveat's order and words
+       * (`ACCOUNT_NOT_READ`) — default built, not asked (2026-10-21): his pay is payroll by ACH since Aug 27 (decision
+       * 55). 🔴 Review of 619ceb4 (MEDIUM): on his ledger copy 2026-10-21 with a Salary-filed −$1,141.92 on Fri Sep 25
+       * and Wells Fargo derived through Fri Oct 16, on Oct 23, October, Q4 and YTD explained four payroll weeks as cash
+       * or an ended schedule, while the card beside them named payroll landing in an account the ledger does not read.
+       */
       const explanations = OR_LIST.format([
         "that money was held as cash",
         "spent as cash",
+        `paid into ${ACCOUNT_NOT_READ}`,
         "the schedule has ended",
         ...(measuredRead && (through === null || readSilence < r.periodsSinceBanked)
           ? [notLookedForDeposits(unlooked)]
@@ -921,10 +930,7 @@ function payShortfallNote(
   // ⛔ the days the parenthesis named are named once: the rest of their money is "the same deposit's" (review of the
   // shortfall batch: "from the deposits of A and B" twice, for money no day is told apart in)
   const restFrom = noPayday === "" ? noPaydayFrom : s.towardNoPayday.length === 1 ? "same deposit" : "same deposits";
-  const another = anotherBankedInside(
-    beyondParts(s, payday, restFrom, formatDay, " went toward none of these paydays"),
-    "paid none of them",
-  );
+  const another = anotherBankedInside(beyondParts(s, payday, restFrom, formatDay), "paid none of them");
   const beyond = another === "" ? "" : `; ${another}`;
   const back = s.wentBackOut.length === 0 ? "" : `; ${wentBackOutPhrase(s.wentBackOut, formatDay)}`;
   // the checked day is named in full once: `grace` named it
@@ -978,7 +984,7 @@ function unreadPaydaysNote(
   const payday = (iso: string): string => formatDayShortIn(iso, iso);
   const noPaydayFrom = depositsOf(s.towardNoPayday.map((d) => d.depositOn), formatDay);
   const parts = [
-    ...beyondParts(s, payday, noPaydayFrom, formatDay, ` ${MORE_THAN_ITS_PAYDAYS}`).map(
+    ...beyondParts(s, payday, noPaydayFrom, formatDay).map(
       (p) => `${formatCents(p.cents)} banked inside the window${p.words}`,
     ),
     ...(s.wentBackOut.length === 0 ? [] : [wentBackOutPhrase(s.wentBackOut, formatDay)]),
@@ -1007,20 +1013,23 @@ function unlookedPhrase(
  * period reads — one of its own past the checked day (`paidUnread`), one before it past the checked day, or one not
  * yet passed or after it, paid early (`paidUncounted`, the surplus note's words) — and what paid none of these
  * paydays — so the banked figure, with these, is every deposit inside the period, as the page's income counts it. A
- * part of the money beyond the read paydays is capped at what is left of it, so the parts add up; `restWords` names
- * what no payday took — change over a payday's worth. Empty when there is none.
+ * part of the money beyond the read paydays is capped at what is left of it, so the parts add up; what no payday took
+ * — change over a payday's worth — is `MORE_THAN_ITS_PAYDAYS`. Empty when there is none.
  *
  * 🔴 Review of f6da264: money for a payday no period reads that was not one of the period's own passed ones fell into
- * `restWords`. On his ledger copy 2026-10-21 with Wed Sep 30 and Wed Oct 7 imported past the Sep 24 statement, on Wed
+ * the rest. On his ledger copy 2026-10-21 with Wed Sep 30 and Wed Oct 7 imported past the Sep 24 statement, on Wed
  * Oct 7, October and Q4 read "Of It America LLC (weekly pay)'s pay, $1,141.92 banked inside the window went toward no
  * payday on or before Thu, Sep 24, 2026" while the week of Oct 5 – 11 said it "paid Oct 8's payday early".
+ * ⛔ The rest's words are no caller's to choose: 🔴 review of 619ceb4 (MEDIUM) — the shortfall note kept its own, so on
+ * his ledger copy with Wed Sep 30 +$1,141.92 and Wed Oct 7 +$1,500.00 and Wells Fargo derived through Oct 14, on Oct 14,
+ * October read "another $358.08 banked inside the window went toward none of these paydays" while the week of Oct 5 –
+ * 11 said the same $358.08 "was more than the paydays its deposits paid came to".
  */
 function beyondParts(
   s: PayShortfall,
   payday: (iso: string) => string,
   noPaydayFrom: string,
   formatDay: (iso: string) => string,
-  restWords: string,
 ): { cents: number; words: string }[] {
   // the money beyond the read paydays, by the paydays it paid: before the period or its own, then early
   const own = [
@@ -1042,7 +1051,7 @@ function beyondParts(
     ...(s.noPaydayBeyondCents > 0
       ? [{ cents: s.noPaydayBeyondCents, words: `, from the ${noPaydayFrom}, went ${TOWARD_NO_PAYDAY}` }]
       : []),
-    ...(own.leftCents > 0 ? [{ cents: own.leftCents, words: restWords }] : []),
+    ...(own.leftCents > 0 ? [{ cents: own.leftCents, words: ` ${MORE_THAN_ITS_PAYDAYS}` }] : []),
   ];
 }
 
@@ -1136,11 +1145,12 @@ function surplusSplit(
 
 /**
  * ⚖️ CHANGE OVER A PAYDAY'S WORTH — money a deposit that paid paydays brought beyond them (`PayShortfall`'s
- * `otherBeyondCents` once the paydays it paid are named) — in one sentence on every period: the surplus note's and the
- * note of a period with no read payday. Default built, not asked (2026-10-21). 🔴 On his ledger copy with Wed Oct 7
- * +$1,500.00 imported, on Oct 14, October said its $358.08 "went toward no payday on or before Thu, Sep 24, 2026" — the
- * calendar's words for a deposit that paid no payday, of one the calendar draws paying Oct 8 — and the week of Oct 5 –
- * 11 called the same $358.08 "earlier pay arriving late — … a backlog clearing", though it paid no earlier payday
- * (review of the shortfall batch).
+ * `otherBeyondCents` once the paydays it paid are named) — in one sentence on every period: the surplus note's, the
+ * shortfall note's and the note of a period with no read payday (`beyondParts`). Default built, not asked (2026-10-21).
+ * 🔴 On his ledger copy with Wed Oct 7 +$1,500.00 imported, on Oct 14, October said its $358.08 "went toward no payday
+ * on or before Thu, Sep 24, 2026" — the calendar's words for a deposit that paid no payday, of one the calendar draws
+ * paying Oct 8 — and the week of Oct 5 – 11 called the same $358.08 "earlier pay arriving late — … a backlog
+ * clearing", though it paid no earlier payday (review of the shortfall batch); read through Oct 14 with Wed Sep 30 in
+ * too, October's shortfall note said it "went toward none of these paydays" (review of 619ceb4).
  */
 const MORE_THAN_ITS_PAYDAYS = "was more than the paydays its deposits paid came to";

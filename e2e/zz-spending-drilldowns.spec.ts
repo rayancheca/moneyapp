@@ -196,8 +196,8 @@ test("cash-earnings note scopes July's passed payday to what has been imported",
    * a CHECKED day, with Chase Total Checking's rows imported to Jul 4 (measured on a fresh scratch seed 2026-10-13).
    */
   await expect(note).toContainText(
-    "— that money was held as cash, spent as cash, the schedule has ended, or the ledger has not looked for its " +
-      "deposit.",
+    "— that money was held as cash, spent as cash, paid into an account the ledger does not read, the schedule has " +
+      "ended, or the ledger has not looked for its deposit.",
   );
   await expect(note).not.toContainText("imported");
 });

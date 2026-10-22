@@ -6,6 +6,7 @@ import { monthIncomeLink, type IncomeLink } from "@/lib/income-basis";
 import { formatCents } from "@/lib/money";
 import { paydaysNotBankedYet, wentBackOutPhrase, type WentBackOut } from "@/lib/pay-shortfall";
 import {
+  ACCOUNT_NOT_READ,
   LAST_CHECKED_DAY,
   NOT_CHECKED,
   noIncomeDayCheckedNote,
@@ -373,7 +374,7 @@ export interface IncomeCard {
 /**
  * What a positive difference must never be read as saying.
  *
- * Three innocent explanations, straight out of `lib/cash-earnings`, and this
+ * Four innocent explanations, straight out of `lib/cash-earnings`, and this
  * module cannot distinguish between them. Printing the gap without printing
  * this is how "you are owed $11,117.00" gets read off a subtraction.
  */
@@ -385,7 +386,9 @@ export interface IncomeCard {
  * pay-words batch).
  */
 const CAVEAT =
-  "A difference is not money the app has found. Pay taken in cash can sit undeposited or be spent without ever touching a bank, payroll can land in an account the ledger does not read, or the arrangement can have quietly ended — nothing here can tell those apart.";
+  "A difference is not money the app has found. Pay taken in cash can sit undeposited or be spent without ever " +
+  `touching a bank, payroll can land in ${ACCOUNT_NOT_READ}, or the arrangement can have quietly ended — nothing ` +
+  "here can tell those apart.";
 
 const paydayWord = (n: number): string => (n === 1 ? "payday" : "paydays");
 

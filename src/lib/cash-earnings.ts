@@ -25,15 +25,17 @@ import { rateOn } from "./series-kind";
  *
  * ⛔ What it must never be read as saying. A positive `unbankedCents` is NOT a
  * claim that the money exists somewhere. It is the arithmetic difference between
- * two known quantities, and it has at least three innocent explanations that
+ * two known quantities, and it has at least four innocent explanations that
  * this module cannot distinguish between:
  *
  *   - the cash is held, undeposited (the `Cash on Hand` float);
  *   - the cash was spent directly, never touching a bank;
+ *   - payroll landed in an account the ledger does not read (`ACCOUNT_NOT_READ`
+ *     — his pay is payroll by ACH since Aug 27, 2026, decision 55);
  *   - the series has quietly ended and the schedule is now fiction.
  *
  * `basis` exists so a caller cannot show the number without showing which of
- * those is in play, and `series-stale` exists to make the third one loud. This
+ * those is in play, and `series-stale` exists to make the last one loud. This
  * is the same doctrine as `budgetVerdict`: the reading and the meaning of the
  * reading come out of one call, so they cannot drift apart.
  *

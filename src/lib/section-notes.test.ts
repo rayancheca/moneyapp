@@ -15,8 +15,9 @@ import {
 } from "./section-notes";
 import { PATH_SEPARATOR } from "./category-path";
 import type { PayShortfall } from "./pay-shortfall";
+import { ACCOUNT_NOT_READ } from "./unbanked-income";
 
-const row = (over: Partial<Parameters<typeof budgetSectionNotes>[0]["rows"][number]> = {}) => ({
+const row =(over: Partial<Parameters<typeof budgetSectionNotes>[0]["rows"][number]> = {}) => ({
   categoryPath: "Food",
   overdueCents: 0,
   overdueBills: 0,
@@ -722,7 +723,7 @@ describe("cashEarningsSectionNotes", () => {
   const notes = (over: Partial<CashEarningsNoteInput["rows"][number]> = {}) =>
     cashEarningsSectionNotes({ rows: [row(over)], formatDay });
 
-  test("a silent schedule names the gap, the silence, and all three readings", () => {
+  test("a silent schedule names the gap, the silence, and every reading", () => {
     // The live ledger's own July: $5,230.00 implied, nothing banked, eleven
     // paydays since 2026-06-05.
     const [note] = notes();
@@ -736,10 +737,27 @@ describe("cashEarningsSectionNotes", () => {
     // reader merges the two
     expect(note!.body).toContain("Across the whole schedule");
     expect(note!.body).toContain("2026-06-05");
-    // all three explanations, because the module genuinely cannot choose
+    // every explanation, because the module genuinely cannot choose
     expect(note!.body).toContain("held as cash");
     expect(note!.body).toContain("spent as cash");
     expect(note!.body).toContain("ended");
+  });
+
+  /*
+   * ⚖️ Default built, not asked (2026-10-21) — the card's caveat's (059d8aa): his pay has been payroll by ACH since
+   * Aug 27 (decision 55), and payroll landing in an account the ledger does not read is as quiet as pay never paid.
+   * 🔴 Review of 619ceb4 (MEDIUM): on his ledger copy 2026-10-21 with a Salary-filed −$1,141.92 on Fri Sep 25 and
+   * Wells Fargo derived through Fri Oct 16, on Oct 23, October, Q4 and YTD explained four payroll weeks as "that money
+   * was held as cash, spent as cash, the schedule has ended, …" while the card beside them named payroll landing in an
+   * account the ledger does not read.
+   */
+  test("the silence names pay landing in an account the ledger does not read, in the card's words", () => {
+    const [note] = notes();
+    expect(note!.body).toContain(
+      `— that money was held as cash, spent as cash, paid into ${ACCOUNT_NOT_READ}, or the schedule has ended. The ` +
+        "income figures",
+    );
+    expect(ACCOUNT_NOT_READ).toBe("an account the ledger does not read");
   });
 
   test("a period that banked SOME of it names the part that landed", () => {
@@ -892,8 +910,8 @@ describe("cashEarningsSectionNotes", () => {
   test("paydays past the checked day are ones the ledger has not looked for, never 'not imported'", () => {
     const [note] = notes({ ...checked, periodsSinceBanked: 14 });
     expect(note!.body).toContain(
-      "— that money was held as cash, spent as cash, the schedule has ended, or the ledger has not looked for their " +
-        "deposits. The income figures",
+      "— that money was held as cash, spent as cash, paid into an account the ledger does not read, the schedule has " +
+        "ended, or the ledger has not looked for their deposits. The income figures",
     );
     expect(note!.body).not.toContain("imported");
   });

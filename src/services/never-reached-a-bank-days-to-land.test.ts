@@ -281,8 +281,9 @@ describe("a payday checked on its day but not through its days to land never 'ne
       "It America LLC (weekly pay) implies $2,000.00 of earnings over Sep 3 – 10, 2026 and none of it reached an " +
         `account through Sat, Sep 5, 2026; the other payday falls after that, ${CHECKED_DAY}. Across the whole ` +
         "schedule, 5 expected paydays have passed since the last deposit on Thu, Aug 6, 2026, and 4 of them fall on " +
-        "days the records cover, through Sat, Sep 5, 2026 — that money was held as cash, spent as cash, the schedule " +
-        "has ended, the ledger has not looked for its deposit, or Sep 3's days to land run past Sat, Sep 5, 2026, " +
+        "days the records cover, through Sat, Sep 5, 2026 — that money was held as cash, spent as cash, paid into an " +
+        "account the ledger does not read, the schedule has ended, the ledger has not looked for its deposit, or Sep " +
+        "3's days to land run past Sat, Sep 5, 2026, " +
         `${CHECKED_DAY} — so its pay is not banked yet. The income figures on this page count deposits, so they ` +
         "cannot tell you which.",
     ]);
@@ -303,7 +304,8 @@ describe("a payday checked on its day but not through its days to land never 'ne
     const sentence =
       "Across the whole schedule, 5 expected paydays have passed since the last deposit on Thu, Aug 6, 2026, and 4 " +
       "of them fall on days the records cover, through Sat, Sep 5, 2026 — that money was held as cash, spent as " +
-      "cash, the schedule has ended, the ledger has not looked for its deposit, or Sep 3's days to land run past " +
+      "cash, paid into an account the ledger does not read, the schedule has ended, the ledger has not looked for its " +
+      "deposit, or Sep 3's days to land run past " +
       `Sat, Sep 5, 2026, ${CHECKED_DAY} — so its pay is not banked yet. The income figures on this page count ` +
       "deposits, so they cannot tell you which.";
     expect(spending("2026-08-01", "2026-08-31")).toEqual([
@@ -324,8 +326,8 @@ describe("a payday checked on its day but not through its days to land never 'ne
     expect(verdict).toContain("the days to land of Aug 20, Aug 27, and Sep 3 run past Sep 5,");
     const sentence =
       "Across the whole schedule, 3 expected paydays have passed since the last deposit on Fri, Aug 14, 2026 (not " +
-      "counting Sep 10, which was paid early) — that money was held as cash, spent as cash, the schedule has ended, " +
-      "or the days to land of Aug 20, Aug 27, and " +
+      "counting Sep 10, which was paid early) — that money was held as cash, spent as cash, paid into an account the " +
+      "ledger does not read, the schedule has ended, or the days to land of Aug 20, Aug 27, and " +
       `Sep 3 run past Sat, Sep 5, 2026, ${CHECKED_DAY} — so their pay is not banked yet. The income figures on this ` +
       "page count deposits, so they cannot tell you which.";
     for (const [from, to] of STALE_WINDOWS) expect(staleSentence(from, to)).toBe(sentence);
@@ -347,8 +349,8 @@ describe("a payday checked on its day but not through its days to land never 'ne
     for (const [from, to] of STALE_WINDOWS) {
       expect(staleSentence(from, to)).toContain(
         "since the last deposit on Thu, Aug 13, 2026 (not counting Sep 10, which was paid early) — that money was " +
-          "held as cash, spent as cash, the schedule has ended, or the days to land of Aug 20, Aug 27, and Sep 3 run " +
-          "past Sat, Sep 5, 2026,",
+          "held as cash, spent as cash, paid into an account the ledger does not read, the schedule has ended, or the " +
+          "days to land of Aug 20, Aug 27, and Sep 3 run past Sat, Sep 5, 2026,",
       );
     }
   });
@@ -368,7 +370,8 @@ describe("a payday checked on its day but not through its days to land never 'ne
     const sentence =
       "Across the whole schedule, 15 expected paydays have passed and nothing attributed to it has ever banked, and " +
       "14 of them fall on days the records cover, through Sat, Sep 5, 2026 — that money was held as cash, spent as " +
-      "cash, the schedule has ended, the ledger has not looked for its deposit, or Sep 3's days to land run past " +
+      "cash, paid into an account the ledger does not read, the schedule has ended, the ledger has not looked for its " +
+      "deposit, or Sep 3's days to land run past " +
       `Sat, Sep 5, 2026, ${CHECKED_DAY} — so its pay is not banked yet. The income figures on this page count ` +
       "deposits, so they cannot tell you which.";
     for (const [from, to] of STALE_WINDOWS) expect(staleSentence(from, to)).toBe(sentence);

@@ -44,6 +44,16 @@ export const LAST_CHECKED_DAY = "the last day every account that pay lands in ha
 export const NOT_CHECKED = "the ledger has not checked every account that pay could land in";
 
 /**
+ * Where pay can land that no frontier speaks for — one of the explanations of an unbanked difference, in the dashboard
+ * card's caveat ("payroll can land in …") and /spending's note for a stale schedule ("paid into …").
+ *
+ * ⚖️ Default built, not asked (2026-10-21): since Aug 27, 2026 his pay is payroll by ACH (decision 55), and a payroll
+ * moved to an account the ledger does not read is as quiet as pay never paid. 🔴 Review of 619ceb4 (MEDIUM): the card
+ * named it while /spending's note beside it, of the same silence, listed only cash and an ended schedule.
+ */
+export const ACCOUNT_NOT_READ = "an account the ledger does not read";
+
+/**
  * What the quiet of a payday after `LAST_CHECKED_DAY` waits for — "the ledger has not looked for its deposit", or
  * "…their deposits" of several: the forecast's note, the pay series' own page, /budgets, the dashboard, /spending's
  * cash-earnings note — and of one payday, the calendar's reason (`not_looked_for`).
