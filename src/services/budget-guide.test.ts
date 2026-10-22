@@ -181,8 +181,26 @@ describe("the budget guide averages only months every account you spend from is 
     expect(budgetGuidanceCents(bundle.db, catId("Food"), "monthly", TODAY)).toBe(0);
   });
 
-  test("a category with nothing spent over the window has no guide", () => {
+  /**
+   * 🔴 Review of cbee36b, on his ledger copy 2026-10-13: Car spent nothing over Feb–Jul — the car came in September,
+   * after them — and its editor went from "6-mo avg ≈ $347.71" to nothing at all, beside eleven editors saying Aug and
+   * Sep are left out: the one sentence saying why it has no figure went with the figure. Over a window the frontier
+   * cut, $0.00 is what those months measured, and it prints with its reason.
+   */
+  test("a category with nothing spent over a window the frontier cut reads $0.00, and says why", () => {
     ledger("2026-07-12");
+    expect(guideOf("Travel")).toEqual({
+      cents: 0,
+      lead: "6-mo avg",
+      note:
+        "Averaged over 6 complete months, Jan 2026 to Jun 2026. Jul 2026 is left out: Jul 12 is the last day every " +
+        "account you spend from has been imported through.",
+    });
+  });
+
+  /** …and where it cut nothing, a guide of nothing is no guide, as it always was */
+  test("a category with nothing spent over an uncut window has no guide", () => {
+    ledger("2026-07-31");
     expect(guideOf("Travel")).toBeNull();
   });
 });

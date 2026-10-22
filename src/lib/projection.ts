@@ -260,13 +260,28 @@ export function projectPace(input: PaceInput): Projection {
  * ⚠️ `Math.abs` on the cap is load-bearing. A bucket whose refunds outweigh its
  * spend has a NEGATIVE median, and a negative cap turns `Math.min(lim, t)` into
  * a rule that FORCES the trend negative rather than bounding it.
+ *
+ * ## ⛔ THE RISE NEEDS THE BACKTEST'S THREE MONTHS (`TREND_BACKTEST_MONTHS`)
+ *
+ * ⚖️ Default, not asked (2026-10-22). Every window in the table above held
+ * three months, where `(newest − oldest) / 2` is the slope per month. Since the
+ * averages floor at the ledger's first whole month (decision 71's window) a
+ * young ledger reaches two, and there it is half the month's change, under a
+ * median cap it can never reach — so any rise made the pace its NEWEST MONTH.
+ * 🔴 Review of 06a5d3e: Jun $200.00, Jul $600.00 read "2-mo avg $400.00 +
+ * trend $200.00", $600.00 a month, the one-big-month defect the cap exists for.
+ * Below three months a rise earns no nudge (`riseTooThin`, said in the visible
+ * math); a FALL still falls, since that half is the floor's, which needs no
+ * backtest: a stopped category projects nothing over two months as over three.
  */
+export const TREND_BACKTEST_MONTHS = 3;
+
 export interface TrailingPace {
   /** mean of the window */
   averageCents: number;
   /** `(newest − oldest) / 2`, before the cap */
   rawTrendCents: number;
-  /** the nudge actually applied — a RISING `rawTrendCents` capped at `typicalCents` */
+  /** the nudge actually applied — a RISING `rawTrendCents` capped at `typicalCents`, or none (`riseTooThin`) */
   trendCents: number;
   /** the median of the window: what one ordinary period looks like */
   typicalCents: number;
@@ -283,6 +298,8 @@ export interface TrailingPace {
   expectedExactCents: number;
   /** the cap bound: the slope was rising and bigger than one ordinary period */
   trendWasCapped: boolean;
+  /** the slope was rising over fewer than `TREND_BACKTEST_MONTHS` periods, and earned no nudge */
+  riseTooThin: boolean;
 }
 
 /** Median of a copy — never sorts the caller's array. */
@@ -301,9 +318,11 @@ export function trailingPace(
   const averageCents = mean(totals);
   const typicalCents = median(totals);
   const rawTrendCents = applyTrend && n >= 2 ? (totals[n - 1]! - totals[0]!) / 2 : 0;
+  // a rise only over the months it was backtested on (`TREND_BACKTEST_MONTHS`); a fall over any
+  const riseTooThin = n < TREND_BACKTEST_MONTHS && rawTrendCents > 0;
   // upward only — the zero floor below already bounds a falling series, and
   // capping that direction too would keep a stopped category alive
-  const trendCents = Math.min(Math.abs(typicalCents), rawTrendCents);
+  const trendCents = riseTooThin ? 0 : Math.min(Math.abs(typicalCents), rawTrendCents);
   return {
     averageCents,
     rawTrendCents,
@@ -311,7 +330,8 @@ export function trailingPace(
     typicalCents,
     expectedCents: Math.max(0, Math.round(averageCents + trendCents)),
     expectedExactCents: Math.max(0, averageCents + trendCents),
-    trendWasCapped: trendCents !== rawTrendCents,
+    trendWasCapped: !riseTooThin && trendCents !== rawTrendCents,
+    riseTooThin,
   };
 }
 

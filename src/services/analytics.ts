@@ -992,48 +992,13 @@ export function incomeByMonth(db: AppDatabase, opts: MonthsWindow): IncomeCell[]
   );
 }
 
-// ── Trends (MoM + trailing 3-month) ──────────────────────────────────
-
-export interface CategoryTrend {
-  categoryId: string | null;
-  categoryName: string;
-  currentMonthCents: number;
-  previousMonthCents: number;
-  /** current − previous; positive = spending increased */
-  momDeltaCents: number;
-  /** mean of the 3 completed months before the current one, rounded */
-  trailing3moAvgCents: number;
-}
-
-export function categoryTrends(db: AppDatabase, opts: { refDate?: string } = {}): CategoryTrend[] {
-  const refDate = opts.refDate ?? todayIso();
-  const keys = monthKeysBack(refDate, 4); // [m−3, m−2, m−1, current]
-  const cells = monthlySpending(db, { months: 4, refDate });
-
-  const byCategory = new Map<string, { name: string; byMonth: Map<string, number> }>();
-  for (const cell of cells) {
-    const key = cell.categoryId ?? "∅";
-    const entry = byCategory.get(key) ?? { name: cell.categoryName, byMonth: new Map<string, number>() };
-    entry.byMonth.set(cell.month, cell.spentCents);
-    byCategory.set(key, entry);
-  }
-
-  return [...byCategory.entries()]
-    .map(([key, { name, byMonth }]) => {
-      const at = (i: number) => byMonth.get(keys[i]!) ?? 0;
-      const current = at(3);
-      const previous = at(2);
-      return {
-        categoryId: key === "∅" ? null : key,
-        categoryName: name,
-        currentMonthCents: current,
-        previousMonthCents: previous,
-        momDeltaCents: current - previous,
-        trailing3moAvgCents: Math.round((at(0) + at(1) + at(2)) / 3),
-      };
-    })
-    .sort((a, b) => b.currentMonthCents - a.currentMonthCents || a.categoryName.localeCompare(b.categoryName));
-}
+/*
+ * ⛔ No `categoryTrends` here any more (removed 2026-10-22). It averaged the calendar's three months before today's
+ * with no frontier — the one trailing spending average left that his decision 71 (2026-10-13: an average uses only
+ * months every account he spends from is read through to the end of) never reached — and nothing on screen called it:
+ * tests alone, and movers-card.ts saying why it is not that. 🔴 Review of 6d11c4d: a latent second reader, so any new
+ * caller would have averaged partly read months. An average of whole months reads `averagedMonths` (read-in-full.ts).
+ */
 
 // ── Exact-reconciliation siblings ────────────────────────────────────
 

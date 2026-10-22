@@ -136,18 +136,22 @@ describe("incomePaceMeasurable / incomePaceNote — an income pace needs the gat
    * 🔴 Review of a7b1504: on a ledger opening Jul 1 whose Card was read only to Jul 12, at 2026-08-27 the pace row read
    * "… Jul 2026 is left out: Jul 12 is the last day every account you spend from has been imported through. Money in
    * has no recent pace yet: … Jul 2026 is the only complete month imported so far." — July read only to its 12th, then
-   * imported whole, one sentence apart. Decision 71 cuts SPENDING's months at that day and not Money in's, so the month
-   * is named as Money in's, beside the day that cut spending's (`frontierDay`, the spending sentence's own spelling).
+   * imported whole, one sentence apart. Decision 71 leaves SPENDING's months out at that day and not Money in's, so
+   * the month is named as Money in's, in the spending sentence's own words — "left out".
+   *
+   * 🔴 Review of 694d525: it said "Jul 12 cuts spending's months, not Money in's", a verb no other sentence about the
+   * frontier uses: every one says "left out", "read in full" or "imported through". The day is the sentence before's.
    */
   test("a month spending's frontier left out is named as Money in's, never as imported whole", () => {
     const unread = { months: ["2026-07"], through: "2026-07-12" };
     expect(incomePaceNote(["2026-07"], unread)).toBe(
-      `${gate} Jul 12 cuts spending's months, not Money in's, and Jul 2026 is the only complete month Money in has ` +
+      `${gate} Jul 2026 is left out of spending's pace, not Money in's, and is the only complete month Money in has ` +
         "so far.",
     );
-    // the day carries its year where the spending sentence's does: a frontier in the stub month before the floor
-    expect(incomePaceNote(["2026-01"], { months: ["2026-01"], through: "2025-12-20" })).toContain(
-      "Dec 20, 2025 cuts spending's months",
+    // the day is named once, by the spending sentence it follows (`unreadMonthsSentence`)
+    expect(incomePaceNote(["2026-01"], { months: ["2026-01"], through: "2025-12-20" })).toBe(
+      `${gate} Jan 2026 is left out of spending's pace, not Money in's, and is the only complete month Money in has ` +
+        "so far.",
     );
     // a frontier that left out none of Money in's months changes nothing
     expect(incomePaceNote(["2026-07"], { months: ["2026-08"], through: "2026-08-12" })).toBe(

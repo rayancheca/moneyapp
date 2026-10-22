@@ -12,6 +12,7 @@ import {
   projectTrailingAverage,
   sumOccurrencesInWindow,
   trailingPace,
+  TREND_BACKTEST_MONTHS,
 } from "./projection";
 
 // Money literals use _ separators: 120_000 = $1,200.00 (integer cents everywhere).
@@ -236,6 +237,32 @@ describe("trailingPace", () => {
     expect(trailingPace([]).expectedCents).toBe(0);
     expect(trailingPace([7_000]).rawTrendCents).toBe(0);
     expect(trailingPace([7_000]).expectedCents).toBe(7_000);
+  });
+
+  /**
+   * ⚖️ Default, not asked (2026-10-22). 🔴 Review of 06a5d3e: the floor made a two-month pace reachable, and over two
+   * months `(newest − oldest) / 2` is half the month's change, under a median cap it can never reach — so any rise made
+   * the pace its newest month: Jun $200.00, Jul $600.00 read "2-mo avg $400.00 + trend $200.00", $600.00 a month.
+   */
+  test("a rise over fewer months than the backtest's three earns no nudge; a fall still falls", () => {
+    const rising = trailingPace([20_000, 60_000]);
+    expect(rising.rawTrendCents).toBe(20_000);
+    expect(rising.trendCents).toBe(0);
+    expect(rising.riseTooThin).toBe(true);
+    expect(rising.trendWasCapped).toBe(false);
+    expect(rising.expectedCents).toBe(40_000);
+    // one month of spend in two is no more a monthly rate than one in three is
+    expect(trailingPace([0, 5_000]).expectedCents).toBe(2_500);
+
+    // a stopped category still projects nothing: the floor's half of the rule never needed the backtest
+    const stopped = trailingPace([60_000, 0]);
+    expect(stopped.trendCents).toBe(-30_000);
+    expect(stopped.riseTooThin).toBe(false);
+    expect(stopped.expectedCents).toBe(0);
+
+    // …and three months read as they always did
+    expect(trailingPace([30_000, 40_000, 50_000])).toMatchObject({ trendCents: 10_000, riseTooThin: false });
+    expect(TREND_BACKTEST_MONTHS).toBe(3);
   });
 
   test("does not reorder the caller's window", () => {

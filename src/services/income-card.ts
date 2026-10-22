@@ -85,9 +85,12 @@ import { paydaySettlement } from "./payday-settlement";
  *
  * `SPEND_BASELINE_MONTHS` is imported rather than re-picked — the runway and
  * eating-out cards publish "6 complete months" on the same screen and a second
- * window for the same ledger is a contradiction the reader has to resolve. But
- * those cards stop at the last COMPLETE month, because a partial month
- * understates a rate. This one runs to `today`, because the current month's
+ * window LENGTH for the same ledger is a contradiction the reader has to
+ * resolve. But those cards stop at the last month every account you spend from
+ * is read through to its end (`baselineWindow`, his decision 71), because a
+ * partial month understates a rate — on his ledger copy at 2026-10-13 the runway
+ * read "Feb 2026 to Jul 2026" beside this card's "Measured from Apr 2026 to
+ * today" (review of cbee36b). This one runs to `today`, because the current month's
  * silence is the very thing the card exists to explain and stopping a month
  * short would hide it. Nothing is overstated by doing so: `cashEarnings` clamps
  * its own end to `today` and never counts a payday that has not happened.

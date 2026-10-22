@@ -753,7 +753,11 @@ export function baselineCaption(window: {
  *
  * 🔴 Once the frontier slid that window back (his decision 71, 2026-10-13) they were not the last six months: measured on
  * his ledger copy that day, Feb 2026 to Jul 2026 beside an October. So a cut window is named by its months, with the
- * runway caption's reason (`unreadMonthsSentence`), and an uncut one reads exactly as it always did.
+ * runway caption's reason (`unreadMonthsSentence`), and an uncut one of six reads exactly as it always did.
+ *
+ * 🔴 …and nor where the FLOOR shortened it (review of cbee36b): a young ledger's window holds the months it covers in
+ * full, with no frontier cutting anything (`baselineWindow`), and read "the last six months" over three of them — or
+ * over none. Named by its months too, and an empty one in the runway caption's opening (`emptyWindowOpening`).
  */
 export function measuredMonthsClause(window: {
   months: number;
@@ -762,11 +766,13 @@ export function measuredMonthsClause(window: {
   unread?: UnreadMonths | null;
 }): string {
   const unread = unreadMonthsSentence(window.unread ?? null);
-  if (unread === null) return "not what the last six months measured.";
+  // the sentence's own six: true only of a window that holds six months and ends at the last complete one
+  if (unread === null && window.months === 6) return "not what the last six months measured.";
+  const why = unread === null ? "" : ` ${unread}`;
   const span = baselineSpan(window);
-  return span === null
-    ? `not anything measured: ${NONE_READ_IN_FULL}. ${unread}`
-    : `not what the ${span}, measured. ${unread}`;
+  if (span !== null) return `not what the ${span}, measured.${why}`;
+  const opening = emptyWindowOpening(window.unread ?? null);
+  return `not anything measured: ${opening[0]!.toLowerCase()}${opening.slice(1)}.${why}`;
 }
 
 /** What a window the frontier emptied is (decision 71): complete months were imported, none of them read in full. */
@@ -851,14 +857,14 @@ export function unreadMonthsSentence(unread: UnreadMonths | null): string | null
 }
 
 /**
- * The day that left a spending window's months out (`UnreadMonths.through`), as every sentence naming it spells it —
- * "Aug 12". ⛔ ONE SPELLING for the sentence that leaves the months out (`unreadMonthsSentence`) and Money in's saying
- * the day cuts spending's months and not its own (`incomePaceNote`): they sit side by side on /recurring's pace row.
+ * The day that left a spending window's months out (`UnreadMonths.through`), as the sentence naming it spells it —
+ * "Aug 12" (`unreadMonthsSentence`). Money in's sentence beside it on /recurring's pace row names no day of its own
+ * (`incomePaceNote`): it follows this one.
  *
  * ⚠️ It carries its year only when it is not the first left-out month's: the frontier falls inside that month or
  * before it (a stub month the window never counted), and the months beside it carry theirs.
  */
-export function frontierDay(unread: UnreadMonths): string {
+function frontierDay(unread: UnreadMonths): string {
   return formatDayShortIn(unread.through, `${unread.months[0]!}-01`);
 }
 

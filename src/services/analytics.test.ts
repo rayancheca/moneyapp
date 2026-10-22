@@ -15,7 +15,6 @@ import {
   activeTxnsInRange,
   categoryBreakdown,
   categorySpending,
-  categoryTrends,
   hrefCategoryId,
   ledgerHref,
   incomeByMonth,
@@ -284,37 +283,6 @@ describe("incomeByMonth", () => {
   test("rewards never count as income", () => {
     insertTxn({ postedOn: "2026-07-01", amountCents: 2_500, category: "Rewards > Cash Back" });
     expect(incomeByMonth(bundle.db, { months: 1, refDate: REF })).toEqual([]);
-  });
-});
-
-describe("categoryTrends", () => {
-  test("MoM delta and trailing 3-month average against a fixed oracle", () => {
-    // Food: Apr 3000, May 6000, Jun 9000, Jul(current) 1200
-    insertTxn({ postedOn: "2026-04-10", amountCents: -3_000, category: "Food > Dining" });
-    insertTxn({ postedOn: "2026-05-10", amountCents: -6_000, category: "Food > Groceries" });
-    insertTxn({ postedOn: "2026-06-10", amountCents: -9_000, category: "Food > Dining" });
-    insertTxn({ postedOn: "2026-07-10", amountCents: -1_200, category: "Food > Coffee" });
-
-    const trends = categoryTrends(bundle.db, { refDate: REF });
-    expect(trends).toEqual([
-      {
-        categoryId: catId("Food"),
-        categoryName: "Food",
-        currentMonthCents: 1_200,
-        previousMonthCents: 9_000,
-        momDeltaCents: -7_800,
-        trailing3moAvgCents: 6_000, // (3000+6000+9000)/3
-      },
-    ]);
-  });
-
-  test("trailing average rounds to the nearest cent", () => {
-    // Apr 0, May 50, Jun 51 → (0+50+51)/3 = 33.67 → 34
-    insertTxn({ postedOn: "2026-05-10", amountCents: -50, category: "Food > Dining" });
-    insertTxn({ postedOn: "2026-06-10", amountCents: -51, category: "Food > Dining" });
-    const [food] = categoryTrends(bundle.db, { refDate: REF });
-    expect(food?.trailing3moAvgCents).toBe(34);
-    expect(food?.momDeltaCents).toBe(-51); // Jul 0 − Jun 51
   });
 });
 

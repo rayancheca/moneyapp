@@ -13,7 +13,10 @@ import { baselineWindow, type BaselineWindow } from "./committed";
 
 /** What the inline budget editor prints under the amount: "6-mo avg ≈ $X", one tap to adopt. */
 export interface BudgetGuide {
-  /** the guide at the budget period's length — never zero (a guide of nothing is no guide, and is not printed) */
+  /**
+   * the guide at the budget period's length — zero only over a window the frontier cut (`note` says why; there is
+   * nothing to adopt), never otherwise: over an uncut window a guide of nothing is no guide, and is not printed
+   */
   cents: number;
   /** "6-mo avg" — the window's own month count (`guideWindowWords`) */
   lead: string;
@@ -64,7 +67,13 @@ export function budgetGuidanceCents(
 
 /**
  * One guide per budget, for /budgets' inline editors — null where there is none to print: no month to average, or
- * nothing spent over it. The window is taken ONCE, and the figure and the words that name it read the same one.
+ * nothing spent over a window the frontier cut nothing from. The window is taken ONCE, and the figure and the words that
+ * name it read the same one.
+ *
+ * ⛔ A WINDOW THE FRONTIER CUT KEEPS ITS WORDS OVER $0.00. 🔴 Review of cbee36b, measured on his ledger copy at
+ * 2026-10-13: Car spent nothing over Feb–Jul — the car came in September — and its editor went from "6-mo avg ≈
+ * $347.71" to nothing at all, beside eleven editors saying Aug and Sep are left out: the sentence saying why Car has no
+ * figure went with the figure. Over the months read in full $0.00 is a measurement, and it prints with its reason.
  */
 export function budgetGuides(
   db: AppDatabase,
@@ -75,8 +84,9 @@ export function budgetGuides(
   const words = guideWindowWords(window);
   return new Map(
     budgets.map((b) => {
-      const cents = words === null ? 0 : budgetGuidanceCents(db, b.categoryId, b.period, refDate, window);
-      return [b.id, words !== null && cents > 0 ? { cents, ...words } : null];
+      if (words === null) return [b.id, null];
+      const cents = budgetGuidanceCents(db, b.categoryId, b.period, refDate, window);
+      return [b.id, cents > 0 || words.note !== null ? { cents, ...words } : null];
     }),
   );
 }

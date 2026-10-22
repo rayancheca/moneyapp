@@ -831,6 +831,19 @@ describe("BudgetRow — the inline editor's guide", () => {
     const text = editorText({ cents: 221_650, lead: "6-mo avg", note });
     expect(text).toContain("6-mo avg ≈ $2,216.50");
     expect(text).toContain(note);
+    expect(text).toContain(" Use ");
+  });
+
+  /** 🔴 Review of cbee36b: Car's editor said nothing at all over the cut window that held none of its spending */
+  test("a $0.00 guide over a cut window prints its figure and why, and offers nothing to use", () => {
+    const note =
+      "Averaged over 6 complete months, Feb 2026 to Jul 2026. Aug 2026 and Sep 2026 are left out: Aug 12 is the last " +
+      "day every account you spend from has been imported through.";
+    const text = editorText({ cents: 0, lead: "6-mo avg", note });
+    expect(text).toContain("6-mo avg ≈ $0.00");
+    expect(text).toContain(note);
+    // a budget of nothing is no budget to adopt in one tap
+    expect(text).not.toContain(" Use ");
   });
 
   test("an uncut guide prints no note", () => {
