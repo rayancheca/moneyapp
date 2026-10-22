@@ -162,6 +162,8 @@ describe("groupDayChange — an institution's heading", () => {
       asOf: MON,
       vsDay: SUN,
       heading: { label: "Last close", interval: "Sep 14 vs Sep 13" },
+      // on the days both accounts cover — what the group's term says, where a child's own day differs
+      onDaysAllCover: true,
     });
   });
 

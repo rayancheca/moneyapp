@@ -56,6 +56,16 @@ describe("unsettledReasonWord", () => {
   });
 
   /*
+   * 🔴 His June–August cash weeks read "not yet known (not banked yet)" on the calendar, beside the dashboard's
+   * "$11,117.00 of it never reached a bank" for the same paydays (reading the app, 2026-10-14; his ledger copy
+   * 2026-10-21): checked through their days to land, no deposit can still answer them. The dashboard's words
+   * (`unbankedSplit`).
+   */
+  test("a payday checked through its days to land never reached a bank — the dashboard's words", () => {
+    expect(unsettledReasonWord("never_banked")).toBe("never reached a bank");
+  });
+
+  /*
    * 🔴 Since a due day is read only with its grace (§6A 60, `dueDayIsRead`), `not_imported` is also the reason of a
    * day an import HAS reached short of its grace: the e2e fixture's Meal Kit, due Jul 5 on a card imported through
    * Jul 5, read "not yet known (not imported yet)" of an imported day. ⚖️ His decision 60 (2026-10-08): until the day
@@ -806,6 +816,17 @@ describe("seriesAccountWord — into the account money lands in, from the one it
   test("a transfer is one leg of a move between his accounts, and its sign says which", () => {
     expect(seriesAccountWord("transfer", -99_302)).toBe("from");
     expect(seriesAccountWord("transfer", 99_302)).toBe("into");
+  });
+
+  /*
+   * 🔴 An `other` series that pays money IN — the agent's credits are one (`agents-credit-by-category.test.ts`) — read
+   * "pays monthly, about $26.64 from Robinhood Agentic" of money landing in it (review of ebf628b; latent, his ledger
+   * holds no `other` series). Its sign says which, as a transfer's does.
+   */
+  test("an `other` series is money either way, and its sign says which", () => {
+    expect(seriesAccountWord("other", 2_664)).toBe("into");
+    expect(seriesAccountWord("other", -2_664)).toBe("from");
+    expect(seriesAccountWord("other", null)).toBe("from");
   });
 
   test("with no amount to read a sign from, the kind decides — pay into, everything else from", () => {

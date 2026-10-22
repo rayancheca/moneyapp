@@ -3,6 +3,7 @@ import { neverPosted, seriesCanBeReshaped, type SeriesEvidence } from "@/lib/ser
 import type { PassedPaydaysReading } from "@/lib/unbanked-income";
 import type { BillingCarrier } from "@/lib/billed-with";
 import type { CarriedGrace } from "@/lib/occurrence-verdict";
+import type { Occurrence } from "@/lib/posted-average";
 import type { AppDatabase } from "@/db/client";
 import { accounts } from "@/db/schema/accounts";
 import { categories } from "@/db/schema/categories";
@@ -197,6 +198,8 @@ export interface SeriesDetail {
   postedAvgCents: number | null;
   /** ⚖️ the series billed inside its payments (§6A 59) — named on its posted avg line (`carriesPhrase`) */
   carries: readonly string[];
+  /** ⚖️ DEFAULT, NOT ASKED (2026-10-22): payments that covered more than one charge (`postedAvgNotes`) */
+  paidAhead: readonly Occurrence[];
   intervalDaysAvg: number | null;
   toleranceDays: number;
   confidence: number | null;
@@ -638,6 +641,7 @@ export function seriesDetail(
     postedStddevCents: posted.stddevCents,
     postedAvgCents: posted.avgCents,
     carries: posted.carries,
+    paidAhead: posted.paidAhead,
     intervalDaysAvg: s.intervalDaysAvg,
     toleranceDays: s.toleranceDays,
     confidence: s.confidence,

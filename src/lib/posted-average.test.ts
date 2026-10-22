@@ -4,9 +4,12 @@ import {
   atTodaysRate,
   nettedToNothing,
   occurrencesOf,
+  paidAhead,
+  paidAheadPhrase,
   perPaydayEvidence,
   postedAsWord,
   postedAverage,
+  postedAvgNotes,
   readsPerOccurrence,
 } from "./posted-average";
 import type { RateSchedule } from "./series-kind";
@@ -581,5 +584,50 @@ describe("perPaydayEvidence — his pay, what the average is of", () => {
     const mean = samples.reduce((sum, s) => sum + s.cents, 0) / samples.length;
     expect(postedAverage(rows, payday(readings), HIS, TODAY).avgCents).toBe(Math.round(mean));
     expect(samples).toHaveLength(4);
+  });
+});
+
+/*
+ * ⚖️ DEFAULT, BUILT, NOT ASKED (2026-10-22; he said "no more questions") — the owner call the 2026-10-14 handoff §4
+ * raised. 🔴 His Car insurance read "posted avg -$678.79 ± $454.26" under the -$357.58 he set, and the popover "⚠️ The
+ * ledger's own average of what actually posted is -$678.79, which is not what you set" — of Aug 12's -$357.58 and Sep
+ * 3's -$1,000.00, which paid two premiums and part of a third early (his ledger copy 2026-10-21). Sep 3 is 2.80× the
+ * rate; every other payment of his 26 non-pay series is 0.24–1.15× (the rent's Jun 16 the highest). A payment of at
+ * least twice the rate covered more than one charge, and the average is said to hold one — the figure is kept.
+ */
+describe("paidAhead — the payments that covered more than one charge, said beside the average holding them", () => {
+  const at = (postedOn: string, amountCents: number) => ({ postedOn, amountCents, postings: 1 });
+  const RATE = -35_758;
+
+  test("at twice the rate or more, a payment covered more than one charge; below, it did not", () => {
+    // 2 × -$357.58 is -$715.16: a cent short of it is not ahead, exactly it is
+    const paid = [at("2026-08-12", RATE), at("2026-09-03", -100_000), at("2026-10-11", -71_515)];
+    paid.push(at("2026-11-11", -71_516));
+    expect(paidAhead(paid, RATE).map((o) => o.postedOn)).toEqual(["2026-09-03", "2026-11-11"]);
+  });
+
+  test("money the other way is no payment of it, and with no rate nothing is measured", () => {
+    expect(paidAhead([at("2026-09-03", 100_000)], RATE)).toEqual([]);
+    expect(paidAhead([at("2026-09-03", -100_000)], null)).toEqual([]);
+    expect(paidAhead([at("2026-09-03", -100_000)], 0)).toEqual([]);
+  });
+
+  test("its words name the payment, the money and the cadence's period", () => {
+    expect(paidAheadPhrase([at("2026-09-03", -100_000)], "monthly", TODAY)).toBe(
+      "Sep 3's -$1,000.00 covered more than one month",
+    );
+    expect(paidAheadPhrase([at("2026-09-03", -100_000), at("2025-12-02", -90_000)], "quarterly", TODAY)).toBe(
+      "Sep 3's -$1,000.00 and Dec 2, 2025's -$900.00 each covered more than one quarter",
+    );
+    expect(paidAheadPhrase([], "monthly", TODAY)).toBeNull();
+  });
+
+  test("beside what its payments carry, one list of notes — the rent's first", () => {
+    const avg = { carries: ["Rent utilities & fees"], paidAhead: [at("2026-09-03", -100_000)] };
+    expect(postedAvgNotes(avg, "monthly", TODAY)).toEqual([
+      "its payments carry Rent utilities & fees too",
+      "Sep 3's -$1,000.00 covered more than one month",
+    ]);
+    expect(postedAvgNotes({ carries: [], paidAhead: [] }, "monthly", TODAY)).toEqual([]);
   });
 });

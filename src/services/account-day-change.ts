@@ -21,6 +21,12 @@ export interface AccountDayChange {
   vsDay: string | null;
   /** `dayChangeLabel` over those days, or `closesDayChange` over the closes the move is made of */
   heading: DayChangeLabel;
+  /**
+   * The days were the ones EVERY account of a group covers (`groupDayChange`'s combined series, more than one
+   * account) — so they can be older than a child's own, and its term says so (`sharedDayChangeTerm`). Absent: one
+   * account's own days, or a group measured on its holdings' closes.
+   */
+  onDaysAllCover?: boolean;
 }
 
 interface AccountRef {
@@ -88,7 +94,8 @@ export function groupDayChange(
     };
   }
   const change = seriesDayChange(combined);
-  return { ...change, heading: dayChangeLabel(change.asOf, change.vsDay, today, formatDay) };
+  const heading = dayChangeLabel(change.asOf, change.vsDay, today, formatDay);
+  return { ...change, heading, ...(accounts.length > 1 ? { onDaysAllCover: true } : {}) };
 }
 
 /**

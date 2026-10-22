@@ -418,6 +418,46 @@ describe("SeriesDetail — the rent's posted avg is per payment, and names what 
 });
 
 /*
+ * ⚖️ DEFAULT, BUILT, NOT ASKED (2026-10-22): a payment of twice the rate or more covered more than one charge, said
+ * beside the average holding it (`postedAvgNotes`). 🔴 His Car insurance's Per charge read "posted avg -$678.79 ±
+ * $454.26" under -$357.58, nothing saying Sep 3's -$1,000.00 paid ahead (his ledger copy 2026-10-21).
+ */
+describe("SeriesDetail — a payment that covered more than one charge is named beside the average", () => {
+  const TODAY = "2026-10-21";
+  let dir: string;
+  let bundle: DbBundle;
+  let car: OneChargeLedger;
+
+  beforeEach(() => {
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), "moneyapp-series-detail-ahead-"));
+    bundle = createDatabase(path.join(dir, "t.db"));
+    seedDatabase(bundle.db);
+    car = seedHisCarSeries(bundle.db);
+  });
+
+  afterEach(() => {
+    bundle.sqlite.close();
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  test("Car insurance: posted avg -$678.79 ± $454.26 · Sep 3's -$1,000.00 covered more than one month", () => {
+    const html = decode(
+      renderToStaticMarkup(
+        createElement(SeriesDetail, {
+          data: seriesDetail(bundle.db, car.insuranceId, TODAY)!,
+          today: TODAY,
+          viewState: resolveViewState(RECURRING_SERIES_VIEW_SPEC, {}, undefined),
+          basePath: `/recurring/${car.insuranceId}`,
+        }),
+      ),
+    );
+    const at = html.indexOf(">Per charge<");
+    const stat = html.slice(at, html.indexOf("</dd>", at)).replace(/<[^>]+>/g, "");
+    expect(stat).toContain("-$357.58posted avg -$678.79 ± $454.26 · Sep 3's -$1,000.00 covered more than one month");
+  });
+});
+
+/*
  * The merge preview (§6A 54 — each candidate and what merging it would file) is read only for a page that renders the
  * merge control: a live series, the one predicate the page and `seriesDetail` both ask (`seriesCanBeReshaped`).
  * 🔴 Every series page computed it, the ended and dismissed pages included, where the control is hidden (review of

@@ -7,6 +7,7 @@ import {
   atTodaysRate,
   nettedToNothing,
   occurrencesOf,
+  paidAhead,
   perPaydayEvidence,
   postedAverage,
   readsPerOccurrence,
@@ -15,7 +16,7 @@ import {
   type PostedAverage,
   type PostedReading,
 } from "@/lib/posted-average";
-import { currentRateSince, nextRateSince } from "@/lib/series-kind";
+import { currentRateSince, nextRateSince, rateOn } from "@/lib/series-kind";
 import { loadCategoryIndex } from "./analytics";
 import { carriedNamesBySeries } from "./billing-carriers";
 import { asPayRows, paydaySettlement, readsPerPayday } from "./payday-settlement";
@@ -28,6 +29,13 @@ export interface SeriesPostedAverage extends PostedAverage {
    * it prints (`carriesPhrase`). Empty for a series that carries nothing.
    */
   carries: readonly string[];
+  /**
+   * ⚖️ DEFAULT, BUILT, NOT ASKED (2026-10-22): of the payments the average is of (`occurrences`), those of at least twice
+   * the rate in force (`paidAhead`) — each covered more than one charge, named beside the average wherever it prints
+   * (`postedAvgNotes`). Empty for a series read per payday or as posted, and for one with none. His Car insurance's Sep
+   * 3 -$1,000.00, alone on his ledger copy 2026-10-21.
+   */
+  paidAhead: readonly Occurrence[];
   /**
    * What each payment paid, oldest first (`occurrencesOf`) — the samples of the average, when the series reads per
    * occurrence (`readsPerOccurrence`): ⚖️ the payments at the rate in force now (`atTodaysRate`, §6A 63), every one
@@ -119,11 +127,14 @@ export function postedAveragesBySeries(
         ? { per: "occurrence" }
         : { per: "row" };
     const every = reading.per === "occurrence" ? occurrencesOf(rows) : null;
+    // ⚖️ the payments the average is of — `postedAverage` reads them by this same rule (§6A 63)
+    const counted = every === null ? null : atTodaysRate(every, schedule, today);
     out.set(s.id, {
       ...postedAverage(rows, reading, schedule, today),
       carries: carried.get(s.id) ?? [],
-      // ⚖️ the payments the average is of — `postedAverage` reads them by this same rule (§6A 63)
-      occurrences: every === null ? null : atTodaysRate(every, schedule, today),
+      // …held to the rate in force, as the popover holds the average (`rateOn`)
+      paidAhead: counted === null ? [] : paidAhead(counted, rateOn(schedule, today)),
+      occurrences: counted,
       everyOccurrence: every,
       netted: reading.per === "occurrence" ? nettedToNothing(rows) : null,
       // ⚖️ …and a pay series' paydays — `postedAverage` reads them by this same rule (§6A 55)

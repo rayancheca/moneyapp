@@ -26,6 +26,7 @@ import {
 } from "@/lib/recurring-step";
 import { roundToCents } from "@/lib/money";
 import { isOneCharge } from "@/lib/one-charge";
+import type { Occurrence } from "@/lib/posted-average";
 import { parseAmountHistory, rateOn, seriesAmountCents } from "@/lib/series-kind";
 import { outsidePortfolioCashAccountIds } from "./accounts";
 import { isAgentsSeries } from "./analytics";
@@ -933,6 +934,8 @@ export interface SeriesView {
   postedAvgCents: number | null;
   /** ⚖️ the series billed inside its payments (§6A 59) — named beside "posted avg" (`carriesPhrase`); empty for none */
   carries: readonly string[];
+  /** ⚖️ DEFAULT, NOT ASKED (2026-10-22): payments that covered more than one charge (`postedAvgNotes`) */
+  paidAhead: readonly Occurrence[];
 }
 
 /** the span an "annualized" figure covers — twelve months from today */
@@ -1100,6 +1103,7 @@ export function listSeries(db: AppDatabase, today: string = todayIso()): SeriesV
         matchedCount: countBySeries.get(s.id) ?? 0,
         postedAvgCents: posted.get(s.id)?.avgCents ?? null,
         carries: posted.get(s.id)?.carries ?? [],
+        paidAhead: posted.get(s.id)?.paidAhead ?? [],
         isActive: isSeriesActive(s, today),
         evidence: seriesEvidence(s, today, checkedThrough(s.id)),
         annualizedCents: annualizedCentsOf(s, today, checkedThrough(s.id)),

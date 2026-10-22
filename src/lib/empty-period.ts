@@ -60,7 +60,8 @@ export interface EmptyPeriodReason {
 export function emptyPeriodReason(input: EmptyPeriodInput): EmptyPeriodReason {
   const { from, to, today, ledgerOpens, ledgerReaches } = input;
   /*
-   * ⚖️ The future is asked FIRST: a window that has not begun holds nothing YET, whatever the ledger holds — never "not
+   * ⚖️ DEFAULT, BUILT, NOT ASKED (2026-10-12; he said "no more questions" 2026-10-21) — never his decision: the future
+   * is asked FIRST: a window that has not begun holds nothing YET, whatever the ledger holds — never "not
    * imported". 🔴 Asked after the ledger, an empty ledger's November read "Nothing imported yet … Import a statement to
    * start the ledger" under a category headline's dash, of a month no import could have reached (review of b2c9db7).
    */
@@ -112,8 +113,10 @@ export const A_LOWER_BOUND = "a lower bound rather than a measurement";
  *    imported, 'you have spent nothing' is a claim about a month nobody has looked at", and the trend's, whose bar for
  *    the same month is no bar (`unreachedKind`) — or the window has not begun, and holds nothing YET.
  *
- * ⚖️ A month that has not begun is dashed too, in its own words: "November 2026 has not happened yet" — nothing yet,
- * never "not imported" (review of b2c9db7, 2026-10-12, which took it in beside the three kinds it was asked to dash).
+ * ⚖️ DEFAULT, BUILT, NOT ASKED (2026-10-12; he said "no more questions" 2026-10-21): a month that has not begun is
+ * dashed too, in its own words: "November 2026 has not happened yet" — nothing yet, never "not imported" (review of
+ * b2c9db7, 2026-10-12, which took it in beside the three kinds it was asked to dash). 🔴 It was marked as his decision;
+ * none of his answers rules on it (review of 9249ae7).
  * The dash is /spending's for the same month: its cash-flow table prints "—" there and says "a month that … has not
  * happened yet" (`unreachedDashNote`). A $0.00 would be a figure for a month nobody could have spent in yet.
  *

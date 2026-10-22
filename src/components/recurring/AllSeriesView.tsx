@@ -3,7 +3,8 @@ import { confirmSeriesAction, dismissSeriesAction } from "@/app/recurring/action
 import { Money } from "@/components/ui/Money";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { SERIES_EVIDENCE_LABEL, seriesEvidenceNote, suggestionNote, type SeriesEvidence } from "@/lib/series-evidence";
-import { billedWithPhrase, carriesPhrase } from "@/lib/billed-with";
+import { billedWithPhrase } from "@/lib/billed-with";
+import { postedAvgNotes } from "@/lib/posted-average";
 import { ALL_SERIES_HREF, isListedSeries, seriesFilterSentence, type SeriesNarrowing } from "@/lib/recurring-list";
 import type { ArrearsReading } from "@/lib/arrears-reading";
 import type { SeriesView } from "@/services/recurring";
@@ -306,8 +307,9 @@ function SeriesRow({
   overdue: OverdueEntry | null;
   today: string;
 }) {
-  // ⚖️ what is billed inside its payments (§6A 59): money its posted average holds — the series page's words
-  const carried = carriesPhrase(s.carries);
+  // ⚖️ what is billed inside its payments (§6A 59), and a payment that covered more than one charge (default, not asked,
+  // 2026-10-22): what its posted average holds — the series page's words, one list (`postedAvgNotes`)
+  const avgNotes = postedAvgNotes(s, s.cadence, today);
   // a year at today's amounts, or its one charge (§6A 56), and when a year stops inside it — only under a year
   const yearFigure = annualizedFigure(s);
   const endNote = yearFigure === null || yearFigure.once ? null : annualizedEndNote(s.endsOn, today);
@@ -345,7 +347,7 @@ function SeriesRow({
             {s.postedAvgCents !== null && s.postedAvgCents !== s.nextExpectedAmountCents ? (
               <span className="figures block text-[10px] text-ink-faint">
                 posted avg <Money cents={s.postedAvgCents} flow />
-                {carried !== null ? ` · ${carried}` : ""}
+                {avgNotes.map((n) => ` · ${n}`).join("")}
               </span>
             ) : null}
           </>

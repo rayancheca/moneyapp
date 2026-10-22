@@ -1,7 +1,8 @@
 import type { BudgetPeriodKind } from "@/db/schema/budgets";
 import { ROLLOVER_SUBTRACTS } from "./arrears-reading";
 import { monthLabel } from "./calendar-math";
-import type { CategoryReach } from "./category-reach";
+import { budgetCoverageFact } from "./budget-coverage";
+import type { CategoryCoverageFacts, CategoryReach } from "./category-reach";
 import type { PeriodBounds } from "./dates";
 import { formatDayShortIn } from "./format-date";
 
@@ -32,6 +33,12 @@ import { formatDayShortIn } from "./format-date";
 export interface RolloverReadOn {
   whose: CategoryReach["whose"];
   ancestor: string | null;
+  /**
+   * Of a cash-only day only, the facts the row's Grading line is worded from (`budgetCoverageFact`, the ancestor's where
+   * the day is borrowed): how many wallets, and since when — so the panel says "a cash wallet since Apr 1" as the row
+   * beside it does. Absent on every other day.
+   */
+  cash?: Pick<CategoryCoverageFacts, "spentFromSince" | "spentFromWallets">;
 }
 
 /**
@@ -57,14 +64,44 @@ export const ROLLOVER_BANKS =
  */
 export const ROLLOVER_HOLDS = "A closed period that is not fully imported adds nothing until its statements land.";
 
+/**
+ * The Roll over button's hover — the setting, said with decision 67's hold, the third reader of the rule beside the
+ * panel and the plan's proof. 🔴 It hovered "Unspent budget carries into the next period" on every rolling row, over
+ * Cash & ATM, Fees and Transport's $0.00 carried from a September not fully imported (his ledger copy 2026-10-21; review
+ * of 44d0104).
+ */
+export function rolloverToggleTitle(on: boolean): string {
+  return on
+    ? "Unspent budget carries into the next period once that period is fully imported"
+    : "Unspent budget is forgotten at the end of each period";
+}
+
+/** …and its toast, of the category it was turned on or off for, in the hover's words */
+export function rolloverToggleToast(categoryPath: string, on: boolean): string {
+  return on
+    ? `${categoryPath} now carries forward what a fully imported period leaves unspent`
+    : `${categoryPath} resets each period`;
+}
+
 /** a category spent from no account in the window, or only from ones with no import day (priced investment accounts) */
 const NO_ACCOUNT_OF_ITS_OWN = "With no account of its own to wait on,";
-const NO_STATEMENT = "so a closed period waits for no statement — none will ever cover it.";
+/**
+ * A cash-only day is read through today, so only a day before the ledger opens — one an older statement would bring
+ * in — holds a closed period back (`ROLLOVER_HOLDS`'s ⚠️). 🔴 It said "— none will ever cover it." under "April 2026 is
+ * not fully imported, so nothing rolls over from it yet" of a budget opening before the ledger's first row (review of
+ * 44d0104).
+ */
+const NO_STATEMENT = "a closed period waits for no statement";
+const BEFORE_THE_RECORDS = "only a day before your records begin holds one back";
 const ONE_OF_THEM = "so a missing statement on one of them cannot bank itself as savings.";
 
-/** "the accounts Utilities has lately been spent from are imported through its last day" */
-function accountsImported(whose: string): string {
-  return `the accounts ${whose} has lately been spent from are imported through its last day`;
+/**
+ * "the accounts Utilities has lately been spent from are imported through that period's last day" — 🔴 "through its
+ * last day" after "the accounts Utilities…" read as Utilities' last day (review of 9249ae7). `its` only where the
+ * sentence's subject is the period ("A period adds nothing until…").
+ */
+function accountsImported(whose: string, lastDay: "its" | "that period's"): string {
+  return `the accounts ${whose} has lately been spent from are imported through ${lastDay} last day`;
 }
 
 /**
@@ -83,20 +120,29 @@ function accountsImported(whose: string): string {
  *  - the LEDGER's day (`ledgerReaches`): the newest day ANY account reaches — ⛔ so nothing is promised of a missing
  *    statement, which that day does not wait for.
  *  - ⚖️ spent only from cash wallets (2026-09-15), its own or the ancestor's: read through today — no statement is
- *    coming, as the row says ("— no statement will ever cover it").
+ *    coming, as the row says ("— no statement will ever cover it"), and only the days before the ledger opens can hold
+ *    a period back. In the row's own words (`budgetCoverageFact`): "spent only from a cash wallet since Apr 1" — 🔴 it
+ *    said "cash wallets" of his one wallet, with no window, and the ancestor's version read as a broken clause
+ *    ("…read as Travel is, spent only from cash wallets, so…"; review of 9249ae7).
+ *
+ * `reference` is the graded window's first day: a day outside its year carries the year, as on the row.
  */
-export function rolloverWaitsSentence(readOn: RolloverReadOn): string {
+export function rolloverWaitsSentence(readOn: RolloverReadOn, reference: string): string {
   const { whose, ancestor } = readOn;
   if (whose === "cash-only") {
+    const facts = { importedThroughOn: null, spentFromAccounts: 0, bounds: { start: reference } };
+    const cash = readOn.cash ?? { spentFromSince: reference, spentFromWallets: 1 };
+    const spent = budgetCoverageFact({ ...facts, ...cash, namedFor: ancestor ?? undefined });
     return ancestor === null
-      ? `This category is spent only from cash wallets, ${NO_STATEMENT}`
-      : `${NO_ACCOUNT_OF_ITS_OWN} this category is read as ${ancestor} is, spent only from cash wallets, ${NO_STATEMENT}`;
+      ? `This category has been ${spent}, so ${NO_STATEMENT} — ${BEFORE_THE_RECORDS}.`
+      : `${NO_ACCOUNT_OF_ITS_OWN} this category is read as ${ancestor} is — ${spent} — so ${NO_STATEMENT}; ` +
+          `${BEFORE_THE_RECORDS}.`;
   }
   const ofThisCategory = `${NO_ACCOUNT_OF_ITS_OWN} a period of this category adds nothing until`;
-  if (whose === "ledger") return `${ofThisCategory} the ledger is imported through its last day.`;
+  if (whose === "ledger") return `${ofThisCategory} the ledger is imported through that period's last day.`;
   return ancestor === null
-    ? `A period adds nothing until ${accountsImported("this category")}, ${ONE_OF_THEM}`
-    : `${ofThisCategory} ${accountsImported(ancestor)}, ${ONE_OF_THEM}`;
+    ? `A period adds nothing until ${accountsImported("this category", "its")}, ${ONE_OF_THEM}`
+    : `${ofThisCategory} ${accountsImported(ancestor, "that period's")}, ${ONE_OF_THEM}`;
 }
 
 const PERIOD_NOUN: Record<BudgetPeriodKind, string> = {

@@ -6,26 +6,24 @@ const source = fs.readFileSync(path.join(process.cwd(), "src/app/recurring/page.
 
 /**
  * 🔴 A monthly income rate summed from more than one pay schedule linked to a bare `/recurring?tab=all` — every series
- * the ledger lists, bills among them (review of the dashboard links, 2026-10-12). The link names its schedules
- * (`seriesListHref`) and the rows are cut in `lib/recurring-list` (`seriesListed`, tested there and, followed from the
- * runway's own link, in `committed.test.ts`); this gate keeps the page reading the param through that helper and
- * handing the view its rows untouched. Source, not render: the page is an async server component that reads the
- * database.
+ * the ledger lists, bills among them (review of the dashboard links, 2026-10-12). The rows are cut and the badge counted
+ * in ONE call (`lib/recurring-list::allTabOf`, pinned there by behaviour, and followed from the runway's own link in
+ * `committed.test.ts`); this gate only keeps the page making that call and no second one of its parts. Source, not
+ * render: the page is an async server component that reads the database.
+ *
+ * 🔴 It matched the page's literal text — `const listed = seriesListed(series, namedSeriesOf(…));` — so a reflow or a
+ * renamed local failed it with nothing changed (review of the dashboard links). It asks only which helpers are called.
  */
-describe("/recurring's All tab reads the series a link named, through the one helper", () => {
-  test("the param is read by namedSeriesOf and cut by seriesListed", () => {
-    expect(source).toMatch(
-      /const listed = seriesListed\(series, namedSeriesOf\(firstParam\(raw\[SERIES_LIST_PARAM\]\)\)\);/,
-    );
+describe("/recurring's All tab is built by the one helper", () => {
+  test("the page calls allTabOf once, and none of the rules it is made of on its own", () => {
+    expect(source.match(/\ballTabOf\(/g)).toHaveLength(1);
+    expect(source).not.toMatch(/\b(seriesListed|namedSeriesOf|isListedSeries)\b/);
   });
 
-  test("the view is handed the helper's rows and its narrowing, and no other list", () => {
-    expect(source).toMatch(/<AllSeriesView\s+series=\{listed\.rows\}\s+narrowed=\{listed\.narrowed\}\s/);
+  test("the view is handed the helper's rows and narrowing, and the badge its count", () => {
     expect(source.match(/<AllSeriesView\b/g)).toHaveLength(1);
-  });
-
-  // ⛔ "2 of 14" counts the 14 the badge beside it prints: one population rule for both
-  test("the All badge counts the tab's population by the rule the narrowing counts by", () => {
-    expect(source).toMatch(/all: series\.filter\(isListedSeries\)\.length,/);
+    expect(source).toMatch(/series=\{\s*allTab\.rows\s*\}/);
+    expect(source).toMatch(/narrowed=\{\s*allTab\.narrowed\s*\}/);
+    expect(source).toMatch(/all:\s*allTab\.badge\b/);
   });
 });

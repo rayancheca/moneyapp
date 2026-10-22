@@ -227,9 +227,11 @@ describe("⚖️ decision 75 — a payroll returned the same day banked nothing"
     expect(s.unallocatedCents).toBe(0);
   });
 
-  test("the calendar keeps Sep 17 unbanked — not banked yet, on a day Wells Fargo is read through", () => {
+  // read through Sep 24, past its days to land: it never reached a bank — the dashboard's words (`paydayLandingIsRead`)
+  test("the calendar keeps Sep 17 unpaid — it never reached a bank, on a day Wells Fargo is read through", () => {
     const payday = entriesOn("2026-09-17").filter((e) => e.transactionId === null);
-    expect(payday.map((e) => [e.state, e.unsettledReason, e.amountCents])).toEqual([["unsettled", "unbanked", WEEK]]);
+    const drawn = payday.map((e) => [e.state, e.unsettledReason, e.amountCents]);
+    expect(drawn).toEqual([["unsettled", "never_banked", WEEK]]);
     // the deposit is drawn where it landed, paying no payday: it answers no week, so no week grades it
     const deposit = entriesOn("2026-09-17").find((e) => e.transactionId !== null && e.amountCents === WEEK)!;
     expect([deposit.towardNoPayday, deposit.expectedAmountCents]).toEqual([true, null]);
@@ -629,7 +631,7 @@ describe("a credit linked to his pay on a day no row is filed as his pay is no p
     payRow("2026-09-17", WEEK, filedAs());
     expect(settled()).toEqual(["2026-09-03", "2026-09-10"]);
     const payday = entriesOn("2026-09-17").filter((e) => e.transactionId === null);
-    expect(payday.map((e) => [e.state, e.unsettledReason])).toEqual([["unsettled", "unbanked"]]);
+    expect(payday.map((e) => [e.state, e.unsettledReason])).toEqual([["unsettled", "never_banked"]]);
     // the credit is drawn where it landed, toward no payday, and the day's Settled holds nothing of his pay
     const credit = entriesOn("2026-09-17").find((e) => e.transactionId !== null)!;
     expect([credit.towardNoPayday, credit.expectedAmountCents]).toEqual([true, null]);

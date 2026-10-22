@@ -794,11 +794,14 @@ describe("BudgetDetails — what rollover subtracts, in his words", () => {
 
     const text = renderToStaticMarkup(createElement(BudgetDetails, { status: statusFor("Coffee"), rolloverEnabled: true }))
       .replace(/<[^>]+>/g, "")
+      .replace(/&#x27;/g, "'")
       .replace(/\s+/g, " ");
+    // …through THAT PERIOD's last day: 🔴 "through its last day" after "the accounts Food …" read as Food's (review of
+    // 9249ae7)
     expect(text).toContain(
       "With no account of its own to wait on, a period of this category adds nothing until the accounts Food has " +
-        "lately been spent from are imported through its last day, so a missing statement on one of them cannot bank " +
-        "itself as savings.",
+        "lately been spent from are imported through that period's last day, so a missing statement on one of them " +
+        "cannot bank itself as savings.",
     );
     expect(text).not.toContain("the accounts this category has lately been spent from");
   });

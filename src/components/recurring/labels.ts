@@ -184,14 +184,17 @@ export function seriesVerb(kind: SeriesKind, over: false | { posted: boolean } =
  * The word the cadence sentence puts before its account: "into" the account money lands in, "from" the one it leaves.
  *
  * 🔴 It was "from" for every kind, and his pay's page read "deposits weekly on Thursdays, about $1,141.92 from Wells
- * Fargo Everyday Checking." — the account that pay lands IN (a copy of his ledger, 2026-10-13). A bill, a subscription
- * and any other payment leave from their account. A transfer series is ONE leg of a move between his own accounts —
- * the autopay out of checking, or the card's own payment into the card (`classifyKind`) — so its amount's sign says
- * which (`seriesAmountCents`: net-worth-signed). With no amount to read a sign from, the kind decides.
+ * Fargo Everyday Checking." — the account that pay lands IN (a copy of his ledger, 2026-10-13). A bill and a
+ * subscription leave from their account. A transfer series is ONE leg of a move between his own accounts — the autopay
+ * out of checking, or the card's own payment into the card (`classifyKind`) — and an `other` series pays either way
+ * (the agent's credits are money in), so their amount's sign says which (`seriesAmountCents`: net-worth-signed). 🔴 An
+ * `other` credit read "from" the account it lands in (review of ebf628b; latent — his ledger holds no `other` series).
+ * With no amount to read a sign from, the kind decides.
  */
 export function seriesAccountWord(kind: SeriesKind, amountCents: number | null): "into" | "from" {
   if (kind === "income") return "into";
-  return kind === "transfer" && amountCents !== null && amountCents > 0 ? "into" : "from";
+  const signed = kind === "transfer" || kind === "other";
+  return signed && amountCents !== null && amountCents > 0 ? "into" : "from";
 }
 
 /* ── staleness disclosure ──────────────────────────────────────────────────
@@ -585,6 +588,8 @@ const UNSETTLED_REASON_WORD: Record<UnsettledReason, string> = {
   not_looked_for: notLookedForDeposits(1),
   in_grace: DAYS_TO_POST_NOT_OVER,
   unbanked: "not banked yet",
+  // 🔴 his checked cash weeks read "not banked yet" beside the dashboard's "never reached a bank" (reading the app)
+  never_banked: "never reached a bank",
   schedule_unproven: "too few charges to grade yet",
 };
 

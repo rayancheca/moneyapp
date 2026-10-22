@@ -5,7 +5,7 @@ import { dailyBalances } from "@/db/schema/balances";
 import { holdings } from "@/db/schema/holdings";
 import { institutions } from "@/db/schema/institutions";
 import { compareDates, todayIso } from "@/lib/dates";
-import { dayChangePhrase } from "@/lib/day-change-label";
+import { dayChangePhrase, sharedDayChangeTerm } from "@/lib/day-change-label";
 import { formatDayShort } from "@/lib/format-date";
 import { accountDayChange, groupDayChange } from "./account-day-change";
 import { ACCOUNT_ORDER } from "./account-order";
@@ -304,13 +304,15 @@ export function institutionGroups(
     );
 
     const change = groupDayChange(db, group.accounts, combined, today, formatDayShort);
+    // 🔴 measured on the days every child covers, its day can be weeks older than a child's — said where it is
+    const childDays = group.accounts.map((c) => c.dayChangeAsOf);
     return {
       ...group,
       totalCents,
       dayChangeCents: change.cents,
       dayChangeAsOf: change.asOf,
       dayChangeVsDay: change.vsDay,
-      dayChangeTerm: dayChangePhrase(change.heading),
+      dayChangeTerm: sharedDayChangeTerm(dayChangePhrase(change.heading), change, childDays),
       asOf,
       oldestAsOf: oldest !== null && oldest !== asOf ? oldest : null,
       spark: combined.slice(-SPARK_WINDOW_DAYS),

@@ -463,11 +463,16 @@ salary is visible to merchant-grouped recurring detection (review finding).
 `id · category_id · period (daily|weekly|monthly|annual) · amount_cents · starts_on · ends_on? · is_active · rollover_enabled · rollover_starts_on? · rollover_cap_cents?` — UNIQUE(category_id, period) among active.
 
 **Rollover is opt-in per budget, off by default** (migration 0012). Off, leftover/overrun is
-displayed informationally, unchanged. On, unspent plan from CLOSED periods accumulates
+displayed informationally, unchanged. On, unspent plan from CLOSED periods read whole accumulates
 (`carryInto`) and pct/alert/pace/remaining grade against `amount_cents + carry`. The carry is
 floored at zero (a deficit is never carried), skips a partial first period, never looks back past
 `starts_on` (`rollover_starts_on` may only move it LATER), subtracts each period's overdue bills,
 and is derived at read time — never stored, because imports back-fill closed periods.
+⚖️ Decision 67 (2026-10-13): a closed period with ANY day not yet read — past the day its category
+page asks the window against (`categoryReachFor`: its own accounts, an ancestor's, else the
+ledger's; a cash-only category reads through today), or before the ledger's first row — banks
+NOTHING until its statements land, and is named in `heldBack`; the carry arrives on the load
+after the statement.
 Totals and the expected-income comparison stay on the plan amount: a carry is money an earlier
 period brought in. **Overlap semantics**: child spend
 rolls into a parent's budget by design; alerts fire independently per budget row; any

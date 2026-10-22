@@ -44,6 +44,7 @@ function series(over: Partial<SeriesView> & Pick<SeriesView, "id" | "name" | "st
     oneChargeOn: null,
     billedWith: null,
     carries: [],
+    paidAhead: [],
     ...over,
   } as SeriesView;
 }
@@ -453,6 +454,18 @@ describe("AllSeriesView — the rent's posted avg is per payment, and names what
   test("the utilities, which post nothing of their own, print no average and carry nothing", () => {
     expect(amountCellOf("Rent utilities & fees")).toBe("-$182.21");
   });
+
+  /*
+   * ⚖️ DEFAULT, BUILT, NOT ASKED (2026-10-22): a payment of twice the rate or more covered more than one charge, said
+   * beside the average holding it (`postedAvgNotes`) — 🔴 his row read "posted avg -$678.79" under -$357.58 with nothing
+   * to say Sep 3's -$1,000.00 paid ahead (his ledger copy 2026-10-21).
+   */
+  test("Car insurance: -$357.58, posted avg -$678.79 · Sep 3's -$1,000.00 covered more than one month", () => {
+    seedHisCarSeries(bundle.db);
+    expect(amountCellOf("Car insurance")).toBe(
+      "-$357.58posted avg -$678.79 · Sep 3's -$1,000.00 covered more than one month",
+    );
+  });
 });
 
 /**
@@ -504,16 +517,16 @@ describe("AllSeriesView — narrowed by a link, it says what it shows and how to
 
   test("the line over the rows, and a link to every series", () => {
     const html = render({ series: fixture, narrowed: { shown: 2, of: 14 } });
-    expect(text(html)).toContain("Showing 2 of 14 series — the ones behind the figure you followed. Show all 14");
+    expect(text(html)).toContain("Showing 2 of 14 series — the ones behind the link you followed. Show all 14");
     expect(html).toMatch(/<a[^>]*href="\/recurring\?tab=all"[^>]*>Show all 14<\/a>/);
     // above the rows it describes
-    expect(html.indexOf("the figure you followed")).toBeLessThan(html.indexOf("Salary"));
+    expect(html.indexOf("the link you followed")).toBeLessThan(html.indexOf("Salary"));
     expect(text(html)).toContain("Tutoring");
   });
 
   test("unnarrowed, nothing is said", () => {
-    expect(text(render({ series: fixture }))).not.toContain("the figure you followed");
-    expect(text(render({ series: fixture, narrowed: null }))).not.toContain("the figure you followed");
+    expect(text(render({ series: fixture }))).not.toContain("the link you followed");
+    expect(text(render({ series: fixture, narrowed: null }))).not.toContain("the link you followed");
   });
 
   /*
@@ -571,7 +584,7 @@ describe("AllSeriesView — narrowed by a link, it says what it shows and how to
   // ⛔ never "No active series" — "Run Detect now" — over a ledger of fourteen
   test("none of the named series still listed: the line and the link, and no empty state", () => {
     const html = render({ series: [], narrowed: { shown: 0, of: 14 } });
-    expect(text(html)).toContain("None of the series behind the figure you followed is listed any more. Show all 14");
+    expect(text(html)).toContain("None of the series behind the link you followed is listed any more. Show all 14");
     expect(text(html)).not.toContain("No active series");
   });
 });

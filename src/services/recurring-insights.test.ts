@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { eq } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { createDatabase, type DbBundle } from "@/db/client";
 import { dailyBalances } from "@/db/schema/balances";
@@ -325,6 +326,27 @@ describe("what gets no strip at all", () => {
     addSeries({ name: "Internet", amountCents: -5_000 });
 
     expect(recurringInsights(bundle.db, only, TODAY)).toBeNull();
+  });
+
+  /*
+   * ⚖️ DEFAULT, BUILT, NOT ASKED (2026-10-22; he said "no more questions"), from §6A 56: a schedule of ONE charge reads
+   * as that charge, never a year of it. 🔴 The Nov 11 balance's own page ranked it "the 12th largest of your 13
+   * scheduled commitments, by what they cost in a year, at $72.74" beside its Annualized "once · $72.74" (review of
+   * 89f235d; his ledger copy 2026-10-21, insights on). Its own page ranks nothing; the others still count its charge,
+   * which falls inside the year they are ranked by.
+   */
+  test("a schedule of one charge gets no strip of its own, and still counts in the others' year", () => {
+    const rent = addSeries({ name: "Rent", amountCents: -100_000 });
+    addSeries({ name: "Internet", amountCents: -5_000 });
+    const balance = addSeries({ name: "Nov 11 balance", amountCents: -7_274, lastMatchedOn: null });
+    bundle.db
+      .update(recurringSeries)
+      .set({ userNextExpectedOn: "2026-11-11", userEndsOn: "2026-11-11" })
+      .where(eq(recurringSeries.id, balance))
+      .run();
+
+    expect(recurringInsights(bundle.db, balance, TODAY)).toBeNull();
+    expect(texts(rent)[0]).toContain("Rent is the largest of your 3 scheduled commitments");
   });
 
   test("a series with no expected amount cannot be ranked", () => {

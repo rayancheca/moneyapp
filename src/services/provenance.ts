@@ -56,9 +56,15 @@ import {
   type ReplayAnchor,
 } from "./derivation";
 import { PART_ENTERED, VERDICT_PRESENTATION } from "@/lib/provenance-verdict";
-import { billedWithEvidence, carriesPhrase } from "@/lib/billed-with";
+import { billedWithEvidence } from "@/lib/billed-with";
 import { billingCarriers } from "./billing-carriers";
-import { postedAsWord, type Occurrence, type PaydaySample, type PerPaydayEvidence } from "@/lib/posted-average";
+import {
+  postedAsWord,
+  postedAvgNotes,
+  type Occurrence,
+  type PaydaySample,
+  type PerPaydayEvidence,
+} from "@/lib/posted-average";
 import { rateOn, ratePeriodOf, seriesAmountCents, type RateSchedule } from "@/lib/series-kind";
 import { ROLLOVER_BANKS, ROLLOVER_HOLDS } from "@/lib/rollover-held-back";
 import { postedAveragesBySeries } from "./posted-average";
@@ -1852,6 +1858,15 @@ const BELOW_A_PATTERN =
   `below the ${MIN_OCCURRENCES} this app requires before calling a repeat a pattern, ` +
   "so it is an anecdote rather than a statistic";
 
+/**
+ * "at today's rate" — the rate in force now, where nothing dates it: ONE name, the badge's and the headline's. Dated, it
+ * is "at the rate in force since Oct 1, 2026", which names the day it began. 🔴 Two names for one rate: the badge said
+ * "seen once at today's rate" while the headline said "That is one deposit day at the rate in force now" and "No deposit
+ * at the rate in force now has paid a payday" (review of a295e0a). ⚖️ DEFAULT, BUILT, NOT ASKED (2026-10-22; he said
+ * "no more questions"): "today's rate" is not his quote — the orchestrator's suggestion, kept because the badge is short.
+ */
+const AT_TODAYS_RATE = "at today's rate";
+
 /** One earlier rate the rows left out were held to, and how many of them it held (`earlierRatesOf`). */
 interface EarlierRate {
   readonly cents: number;
@@ -2106,8 +2121,8 @@ function observedPerPayday(input: {
   const leftOut = leftOutOfPaydaysWords(evidence, era, next, earlierRate).map((s) => ` ${s}`).join("");
   // …and the days that paid nothing, in a bill's words (`nettedWords`): "Nothing stayed paid on Sep 17: …"
   const left = `${leftOut}${nettedWords(evidence.netted, today)}`;
-  // "at the rate in force now" where a rate change leaves a deposit out and the sentence before did not name the rate
-  const now = era === null && rateLeavesOut(evidence) ? " at the rate in force now" : "";
+  // "at today's rate" where a rate change leaves a deposit out and the sentence before did not name the rate
+  const now = era === null && rateLeavesOut(evidence) ? ` ${AT_TODAYS_RATE}` : "";
   // every row its own payday: "Only 2 tagged postings", as it always read; else the deposit days the gate counted
   const thin =
     seen >= MIN_OCCURRENCES
@@ -2178,12 +2193,12 @@ function perPaydayDetail(
 
 /**
  * " at the rate in force since Oct 1, 2026" — where a pay series with no sample says no deposit paid a payday: at
- * the rate in force now, once a rate change leaves a deposit out (`rateLeavesOut`), dated when one came before it;
- * "" with no change, when no deposit at all has paid one on its own.
+ * today's rate (`AT_TODAYS_RATE`), once a rate change leaves a deposit out (`rateLeavesOut`), dated when one came
+ * before it; "" with no change, when no deposit at all has paid one on its own.
  */
 function atTheRateWords(evidence: PerPaydayEvidence, era: string | null, day: (d: string) => string): string {
   if (era !== null) return ` at the rate in force since ${day(era)}`;
-  return rateLeavesOut(evidence) ? " at the rate in force now" : "";
+  return rateLeavesOut(evidence) ? ` ${AT_TODAYS_RATE}` : "";
 }
 
 /**
@@ -2376,11 +2391,12 @@ function recurringSeriesProvenance(db: AppDatabase, id: string, today: string): 
           : "unverified";
 
   /*
-   * ⚖️ …and with a rate change, the rate it counts in his words: "at today's rate" (`atTodaysRate`). 🔴 It said "at the
-   * new rate" — not his phrase, and with a raise recorded ahead the newest rate is not the one counted (review of the
-   * posted average's rate era, 2026-10-12).
+   * …and with a rate change, the rate it counts, in the one name the headline uses too (`AT_TODAYS_RATE`,
+   * `atTodaysRate`). 🔴 It said "at the new rate", and with a raise recorded ahead the newest rate is not the one
+   * counted (review of the posted average's rate era, 2026-10-12). ⚠️ An earlier version of this note called "today's
+   * rate" his words; it is not (review of a295e0a).
    */
-  const atToday = era === null ? null : "at today's rate";
+  const atToday = era === null ? null : AT_TODAYS_RATE;
   /**
    * ⛔ `unverified` presents as "nothing checks it", and that is FALSE of both
    * populations it lands on here. Rent seen three times at three different
@@ -2484,14 +2500,16 @@ function recurringSeriesProvenance(db: AppDatabase, id: string, today: string): 
    * ledger's own average of what actually posted is $1,789.15, which is not what you set." of his $1,141.92 — a cash
    * week, $400.00, a four-week lump and a week (a copy of his ledger, 2026-10-08).
    */
-  const { avgCents: postedAvgCents, carries } = posted;
+  const { avgCents: postedAvgCents } = posted;
   /*
    * ⚖️ …and names what is billed inside its payments (§6A 59) — the money that makes the two differ, in the words the
-   * series page and the All tab print beside the same figure (`carriesPhrase`). 🔴 His rent's read "⚠️ … is
+   * series page and the All tab print beside the same figure (`postedAvgNotes`). 🔴 His rent's read "⚠️ … is
    * -$2,312.20, which is not what you set." of a $2,109.00 that never carried the $182.21 utilities (2026-10-12).
+   * ⚖️ DEFAULT, BUILT, NOT ASKED (2026-10-22): …and a payment that covered more than one charge (`paidAhead`). 🔴 His
+   * Car insurance's read "… is -$678.79, which is not what you set." of Sep 3's -$1,000.00 beside his -$357.58.
    */
-  const carried = carriesPhrase(carries);
-  const why = carried !== null ? ` — ${carried}` : "";
+  const notes = postedAvgNotes(posted, effectiveSeries(series).cadence, today);
+  const why = notes.length > 0 ? ` — ${notes.join("; ")}` : "";
   /*
    * ⚖️ …held to the rate he set for TODAY (`rateOn`), the rate that average is of (§6A 55, §6A 63) — named when a rate
    * is recorded after it, since the amount on screen is then that later one: "which is not the $1,141.92 you set

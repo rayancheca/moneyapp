@@ -160,11 +160,16 @@ describe("a payday the ledger has not looked for says so on the calendar — as 
     expect(october).toEqual(["2026-10-01 not_looked_for", "2026-10-08 not_looked_for"]);
   });
 
-  test("the weeks on or before Sep 24 stay not banked yet — Aug 13 and Aug 20 too, after Chase's Aug 12", () => {
+  /*
+   * …and the weeks on or before it were looked for — Aug 13 and Aug 20 too, after Chase's Aug 12. 🔴 Every one read
+   * "not banked yet", however long ago: his cash weeks beside the dashboard's "never reached a bank" for the same
+   * paydays (reading the app, 2026-10-14). Checked through its days to land, a payday never reached a bank.
+   */
+  test("the weeks on or before Sep 24 were looked for — Aug 13 and Aug 20 never reached a bank", () => {
     const before = unsettledPaydays().filter((d) => compareDates(d.slice(0, 10), "2026-09-24") <= 0);
-    expect(before).toContain("2026-08-13 unbanked");
-    expect(before).toContain("2026-08-20 unbanked");
-    for (const d of before) expect(d).toMatch(/ unbanked$/);
+    expect(before).toContain("2026-08-13 never_banked");
+    expect(before).toContain("2026-08-20 never_banked");
+    for (const d of before) expect(d).toMatch(/ (unbanked|never_banked)$/);
   });
 
   /*
@@ -203,7 +208,9 @@ describe("a payday the ledger has not looked for says so on the calendar — as 
         "2026-10-01 not_looked_for",
         "2026-10-08 not_looked_for",
       ]);
-      expect(marks.filter((d) => d.endsWith(" unbanked"))).toHaveLength(passed.checkedOccurrenceCount);
+      // looked for: not banked yet, or — through its days to land — never reached a bank, as the note counts its warning
+      expect(marks.filter((d) => / (unbanked|never_banked)$/.test(d))).toHaveLength(passed.checkedOccurrenceCount);
+      expect(marks.filter((d) => d.endsWith(" never_banked"))).toHaveLength(passed.pastGraceOccurrenceCount);
       expect(marks.filter((d) => d.endsWith(" not_looked_for"))).toHaveLength(
         passed.occurrenceCount - passed.checkedOccurrenceCount,
       );

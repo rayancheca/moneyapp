@@ -1,5 +1,6 @@
 import { describe, expect, test } from "vitest";
 import {
+  allTabOf,
   isListedSeries,
   namedSeriesOf,
   SERIES_LIST_PARAM,
@@ -86,17 +87,51 @@ describe("seriesListed — what the All tab lists, and how much of it a link lef
   });
 });
 
+/*
+ * 🔴 /recurring's wiring was pinned by matching the page's SOURCE TEXT (`page.test.ts`): a reflow or a renamed local
+ * broke it with nothing changed (review of the dashboard links, 2026-10-12). The page now makes ONE call, and what the
+ * call returns is pinned here by behaviour — the param read, the rows cut and the badge counted by one rule.
+ */
+describe("allTabOf — the All tab the page hands its view, from the `?series=` value it was given", () => {
+  const rows = [
+    { id: PAY, name: "Salary", status: "confirmed" },
+    { id: TUTORING, name: "Tutoring", status: "detected" },
+    { id: "rent", name: "Rent", status: "confirmed" },
+    { id: "coke", name: "STOCK LENDING (COKE)", status: "dismissed" },
+  ] as const;
+
+  test("no param: every row, nothing narrowed, the badge the tab's population", () => {
+    expect(allTabOf(rows, null)).toEqual({ rows, narrowed: null, badge: 3 });
+  });
+
+  test("a param: the rows it names, read by namedSeriesOf, and the badge beside 'of' the same count", () => {
+    const tab = allTabOf(rows, `${TUTORING},${PAY}`);
+    expect(tab.rows.map((s) => s.name)).toEqual(["Salary", "Tutoring"]);
+    expect(tab.narrowed).toEqual({ shown: 2, of: 3 });
+    expect(tab.badge).toBe(tab.narrowed!.of);
+  });
+
+  test("a mangled param narrows nothing", () => {
+    expect(allTabOf(rows, "<script>").narrowed).toBeNull();
+  });
+});
+
+/*
+ * 🔴 "the ones behind the figure you followed" — said after the car card's "Commitments →" and the subscriptions
+ * card's "Recurring →", header links over a whole card (review of 89f235d, his ledger copy 2026-10-13: "Showing 3 of 14
+ * series — the ones behind the figure you followed."). Every narrowing link is a link; not every one stands on a figure.
+ */
 describe("seriesFilterSentence — the line over a narrowed All tab", () => {
   test("says how many of the tab's series are on screen, and which", () => {
     expect(seriesFilterSentence({ shown: 2, of: 14 })).toBe(
-      "Showing 2 of 14 series — the ones behind the figure you followed.",
+      "Showing 2 of 14 series — the ones behind the link you followed.",
     );
   });
 
   // ⛔ never "Showing 0 of 14" over an empty tab that then reads "No active series"
   test("none of them still listed says so", () => {
     expect(seriesFilterSentence({ shown: 0, of: 14 })).toBe(
-      "None of the series behind the figure you followed is listed any more.",
+      "None of the series behind the link you followed is listed any more.",
     );
   });
 });

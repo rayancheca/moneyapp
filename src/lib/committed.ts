@@ -223,6 +223,14 @@ export interface CommittedOutflows {
    * series — car insurance, evidenced through 2027-01-11 with no renewal in the
    * ledger, billed five times out of twelve. He asked this card to say so, so
    * the figure is computed here rather than left for a reader to subtract.
+   *
+   * ⚠️ NO LONGER THE WHOLE DIFFERENCE, TO THE CENT. A ONE-CHARGE line (§6A 56) is short of nothing here, so it is no
+   * part of this figure — but the RATE keeps its one payment (the decision's "runway unchanged") while the subscriptions
+   * card takes it out of its monthly total. Measured on his ledger copy 2026-10-21: rate $3,452.25 + this $297.98 =
+   * $3,750.23 beside the card's $3,744.18 — the $6.05 left over is the Nov 11 balance's $72.74 over the rate's twelve
+   * months ($6.06, a cent of rounding apart; review of ebf628b). The caption never quotes the other card, so nothing he
+   * reads disagrees. ⚖️ DEFAULT, NOT ASKED (2026-10-22; he said "no more questions"): left unsaid on the card — a
+   * clause for $6.06 a month would outweigh the money; the other way is a sentence naming the one charge's share.
    */
   shortfallPerMonthCents: number;
   /** largest commitment first */
@@ -488,7 +496,9 @@ export function arrearsReadingOf(book: ArrearsBook): ArrearsReading {
  * the rest are counted out loud.
  *
  * ⚖️ A ONE-CHARGE line (§6A 56) ends inside the horizon and lowers nothing — its one payment is all its schedule
- * holds — so it is neither the lead nor one of the others counted (`endingLead`).
+ * holds — so it is neither the lead nor one of the others counted (`endingLead`). ⚠️ So the sentence explains the gap
+ * between the two cards all but the one charge's own share of the rate, which the subscriptions card leaves out: $6.05
+ * on his ledger copy 2026-10-21 (`CommittedOutflows.shortfallPerMonthCents`).
  *
  * Null when nothing ends — silence, never "nothing shrank it", which is the
  * measured-zero rule the rest of this file follows.
@@ -536,6 +546,12 @@ export interface EndingLead {
   endsOn: string;
   /** the other COMMITMENTS that also stop inside the horizon, counted, not named — a one charge is none (§6A 56) */
   others: number;
+  /**
+   * …and named, each with the day it stops, earliest first — `heaviestMonthEnding`'s alone, for the car card's sentence
+   * beside a one-charge lead (`carEvidenceCaption`). 🔴 It counted them, "One commitment stops inside the next 12
+   * months", naming neither Car insurance nor its Jan 11 that the runway beside it names (review of 5b19be6).
+   */
+  othersStopping?: readonly { name: string; on: string }[];
 }
 
 /**
@@ -620,12 +636,14 @@ function monthContributionCents(bucket: MonthBucket): number {
  * owner's ledger because the balance falls in NOVEMBER, a month the premium
  * does not bill. Had it fallen on Dec 11 it would be summed in beside the
  * premium and print $1,125.36 again — a review demonstrated exactly that on
- * 2026-09-15. Its occurrences are indistinguishable from a premium paid ahead
+ * 2026-09-15. Its occurrences were indistinguishable from a premium paid ahead
  * to its last payment (one payment, ending on it), which DOES bill that month,
- * so there is nothing in a book to drop it by. Disclosed rather than guessed
+ * so there was nothing in a book to drop it by. Disclosed rather than guessed
  * around; its test pins the two books to one answer.
- * ⚖️ A book carries it now (`oneCharge`, §6A 56), and the decision leaves this figure as it was: the sentence under it
- * says the charge instead (`heaviestMonthEnding`, `carEvidenceCaption`).
+ * ⚖️ A book carries it now (`CommittedOccurrence.oneCharge`, §6A 56) — so this figure COULD drop it, and does not: the
+ * decision leaves the figure as it was (the car card's "unchanged"), and the sentence under it says the charge instead
+ * (`heaviestMonthEnding`, `carEvidenceCaption`). 🔴 This warning still said there was nothing to drop it by after
+ * ebf628b put the reading on every occurrence (review of ebf628b).
  *
  * The LAST month that reaches the most is the one kept, because the sentence
  * that dates this figure asks when it stops being what he pays — see
@@ -707,8 +725,11 @@ export function heaviestMonthEnding(
   // stable: lines arrive largest first, so a tie on the day names the larger
   const first = stops.filter((s) => billed.has(s.line.seriesId)).sort((a, b) => compareDates(a.day, b.day))[0];
   if (first === undefined) return null;
-  const others = stops.filter((s) => s !== first && !s.line.oneCharge).length;
-  return { lead: first.line, endsOn: first.day, others };
+  const stopping = stops
+    .filter((s) => s !== first && !s.line.oneCharge)
+    .sort((a, b) => compareDates(a.day, b.day))
+    .map((s) => ({ name: s.line.name, on: s.day }));
+  return { lead: first.line, endsOn: first.day, others: stopping.length, othersStopping: stopping };
 }
 
 /**

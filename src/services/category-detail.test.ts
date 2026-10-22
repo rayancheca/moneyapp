@@ -740,7 +740,8 @@ describe("⚖️ §6A 49 — a category page asks its own imported-through day",
     // no carLedger(): not one row anywhere
     const copy = emptyCopy("Transport", "2026-10-01", "2026-10-31", "October 2026");
     expect([copy.figure, copy.title]).toEqual(["dash", "Nothing imported yet"]);
-    // ⚖️ …while a month that has not begun holds nothing yet: its dash says so, never "not imported"
+    // …while a month that has not begun holds nothing yet: its dash says so, never "not imported" (⚖️ DEFAULT, BUILT,
+    // NOT ASKED 2026-10-12 — never his decision)
     const november = emptyCopy("Transport", "2026-11-01", "2026-11-30", "November 2026");
     expect([november.figure, november.title]).toEqual(["dash", "November 2026 has not happened yet"]);
     expect(november.description).not.toMatch(/import/i);

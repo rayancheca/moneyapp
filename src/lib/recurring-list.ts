@@ -79,13 +79,33 @@ export function seriesListed<T extends { id: string; status: string }>(
   };
 }
 
+/** The All tab as /recurring hands it to its view, and the count its badge prints (`allTabOf`). */
+export interface AllTab<T> extends SeriesListed<T> {
+  /** the tab's population (`isListedSeries`) — what the All badge prints, and a narrowing's "of" */
+  badge: number;
+}
+
 /**
- * The line over a narrowed All tab. Every link that narrows it today stands over a figure (`seriesBehindHref`: the
- * earn row's schedules, the car and subscriptions cards' series), so the line names the figure rather than a filter.
- * ⛔ Never "Showing 0 of 14" over an empty tab.
+ * The All tab from the `?series=` value the page was given: the rows it names (`namedSeriesOf`, `seriesListed`) and
+ * the badge's count of the tab's population — ONE call, so the page cannot read the param, cut the rows or count its
+ * badge by a second rule. 🔴 That wiring was pinned by matching the page's source text (`page.test.ts`), which a
+ * reflow or a renamed local broke with nothing changed (review of the dashboard links, 2026-10-12).
+ */
+export function allTabOf<T extends { id: string; status: string }>(
+  series: readonly T[],
+  param: string | null,
+): AllTab<T> {
+  return { ...seriesListed(series, namedSeriesOf(param)), badge: series.filter(isListedSeries).length };
+}
+
+/**
+ * The line over a narrowed All tab. Every narrowing link is one he followed (`seriesBehindHref`): the earn row's
+ * figure, and the car and subscriptions cards' header links — 🔴 which stand over a whole card, not a figure, and read
+ * "the ones behind the figure you followed" (review of 89f235d, his ledger copy 2026-10-13). So the line names the
+ * link rather than a filter. ⛔ Never "Showing 0 of 14" over an empty tab.
  */
 export function seriesFilterSentence({ shown, of }: SeriesNarrowing): string {
   return shown === 0
-    ? "None of the series behind the figure you followed is listed any more."
-    : `Showing ${shown} of ${of} series — the ones behind the figure you followed.`;
+    ? "None of the series behind the link you followed is listed any more."
+    : `Showing ${shown} of ${of} series — the ones behind the link you followed.`;
 }

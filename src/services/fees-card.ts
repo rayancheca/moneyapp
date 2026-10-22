@@ -520,11 +520,13 @@ export function feesCard(db: AppDatabase, today: string = todayIso()): FeesCard 
    * 🔴 "Since Dec 2022, 1 charge is filed on Fees itself …, and it is not in the all-time figures. The largest is
    * $0.15" on the dashboard (a copy of his ledger, 2026-10-13): one charge has no largest. Alone, it is "it"; beside
    * a credit, "it" would read as both rows, so it is "the charge" — the words every such sentence opens with
-   * (`largestLead`).
+   * (`largestLead`). 🔴 …and alone it is "the charge" too: the recent half read "…so the ledger has not said what it
+   * is. It is $0.15 — …", an answer to the question it had just called unanswered (review of ebf628b).
    */
-  const largestPhrase = (charges: number, credits: number, largest: (typeof rows)[number]): string =>
-    `${largestLead(charges, credits > 0 ? "charge" : undefined)} ${formatCents(-largest.amountCents)} — ` +
-    `“${largest.rawDescription}”.`;
+  const largestPhrase = (charges: number, credits: number, largest: (typeof rows)[number]): string => {
+    const lead = largestLead(charges, charges === 1 || credits > 0 ? "charge" : undefined);
+    return `${lead} ${formatCents(-largest.amountCents)} — “${largest.rawDescription}”.`;
+  };
   const largestUnfiled = largestOf(unfiledRows);
   const recentCharges = unfiledRows.filter((t) => t.amountCents < 0).length;
   const recentCredits = unfiledRows.filter((t) => t.amountCents > 0).length;

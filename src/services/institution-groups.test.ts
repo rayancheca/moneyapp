@@ -439,6 +439,30 @@ describe("the as-of day is the day the balance was observed", () => {
     // the combined series ends where EVERY child was observed — not at the rebuild
     expect(group.spark.at(-1)!.day).toBe(addDays(TODAY, -10));
     expect(group.dayChangeAsOf).toBe(addDays(TODAY, -10));
+    /*
+     * 🔴 …and that day is older than a child's own, with nothing saying why: on his ledger copy 2026-10-21 the Robinhood
+     * row read "+$469.21 Aug 31 vs Aug 30" (Agentic stops Aug 31) over Brokerage's and Crypto's "Oct 9 vs Oct 8", and
+     * Chase "-$195.90 Aug 12 vs Aug 11" over Sapphire's "Oct 2 vs Oct 1" (reading the app, 2026-10-14). It says whose.
+     */
+    expect(group.accounts.find((c) => c.id === checking)!.dayChangeAsOf).toBe(addDays(TODAY, -6));
+    expect(group.dayChangeTerm).toMatch(/ vs .+, the last day both cover$/);
+  });
+
+  test("a group whose move falls on its children's own day says nothing more", () => {
+    const chase = institutionId("Chase");
+    const checking = createAccount(bundle.db, { institutionId: chase, name: "Chase Checking", type: "checking" });
+    const sapphire = createAccount(bundle.db, { institutionId: chase, name: "Chase Sapphire", type: "credit" });
+    for (const id of [checking, sapphire]) {
+      addStatement(id, addDays(TODAY, -40), addDays(TODAY, -12), 1_000_00);
+      addTxn(id, addDays(TODAY, -11), -10_00);
+      addTxn(id, addDays(TODAY, -10), -15_00);
+      rebuildAccount(bundle.db, id, TODAY);
+    }
+
+    const group = institutionGroups(bundle.db, TODAY).find((g) => g.institutionName === "Chase")!;
+    expect(group.dayChangeAsOf).toBe(addDays(TODAY, -10));
+    expect(group.accounts.map((c) => c.dayChangeAsOf)).toEqual([addDays(TODAY, -10), addDays(TODAY, -10)]);
+    expect(group.dayChangeTerm).not.toContain("cover");
   });
 
   test("a balance you recorded after the newest row keeps its own day", () => {

@@ -670,18 +670,20 @@ test("a raise recorded ahead of a first week: the gate counts paydays at today's
   const said = () => provenanceFor(bundle.db, { kind: "recurringSeries", id: PAY, today: TODAY })!;
   const later =
     "Its one deposit toward a payday from Oct 1, 2026 is at a later rate, not in force yet, and is not counted.";
-  // its only deposit pays the raise's first payday: nothing at the rate in force now — "now", no rate before it
+  // its only deposit pays the raise's first payday: nothing at today's rate — no rate before it to date it by.
+  // 🔴 Two names for one rate: the badge said "at today's rate", these "at the rate in force now" (review of a295e0a)
   expect(said().headline).toContain(
-    "No deposit at the rate in force now has paid a payday on its own, so there is no average of what a payday " +
-      `paid at it yet. ${later}`,
+    "No deposit at today's rate has paid a payday on its own, so there is no average of what a payday paid at it " +
+      `yet. ${later}`,
   );
   deposit("2026-09-24", WEEK);
   // ⛔ "That is one payday" right after the payday it counts, never after the deposit left out (as a bill's words)
   expect(said().headline).toContain(
-    "Per payday, its one deposit since Sep 24, 2026 paid $1,141.92. That is one deposit day at the rate in force " +
-      "now — below the 3 this app requires before calling a repeat a pattern, so it is an anecdote rather than " +
-      `a statistic. ${later}`,
+    "Per payday, its one deposit since Sep 24, 2026 paid $1,141.92. That is one deposit day at today's rate — " +
+      "below the 3 this app requires before calling a repeat a pattern, so it is an anecdote rather than a " +
+      `statistic. ${later}`,
   );
+  expect(JSON.stringify(said())).not.toContain("rate in force now");
 });
 
 /**

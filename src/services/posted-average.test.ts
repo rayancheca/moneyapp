@@ -331,6 +331,24 @@ describe("the posted average, per occurrence — his rent on the page, the All t
     expect(s.allTab).toEqual([-67_879, []]);
   });
 
+  /*
+   * ⚖️ DEFAULT, BUILT, NOT ASKED (2026-10-22; he said "no more questions"): …and its Sep 3 payment, 2.80× the -$357.58
+   * he set, covered more than one month — said wherever the average is named, the figure kept (`paidAhead`). 🔴 The
+   * popover read "⚠️ … is -$678.79, which is not what you set." and stopped (his ledger copy 2026-10-21).
+   */
+  test("Car insurance: Sep 3's -$1,000.00 covered more than one month — on all three, beside the same figure", () => {
+    const car = seedHisCarSeries(bundle.db);
+    const sep3 = [{ postedOn: "2026-09-03", amountCents: -100_000, postings: 1 }];
+    expect(seriesDetail(bundle.db, car.insuranceId, TODAY)!.paidAhead).toEqual(sep3);
+    expect(listSeries(bundle.db, TODAY).find((s) => s.id === car.insuranceId)!.paidAhead).toEqual(sep3);
+    expect(surfaces(car.insuranceId).popover).toContain(
+      "⚠️ The ledger's own average of what actually posted is -$678.79, which is not what you set — Sep 3's " +
+        "-$1,000.00 covered more than one month.",
+    );
+    // the rent's payments are 1.06–1.15× its rate: none paid ahead, and its words are what they were
+    expect(seriesDetail(bundle.db, rent.rentId, TODAY)!.paidAhead).toEqual([]);
+  });
+
   /* ⛔ No schedule, no occurrence: he said it is not recurring. CC Vending's purchases of one day are purchases. */
   test("a dismissed series reads its rows as they posted", () => {
     const { id } = bundle.db
