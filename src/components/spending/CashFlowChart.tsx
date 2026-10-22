@@ -18,7 +18,7 @@ import { nothingFoundSoFar } from "@/lib/budget-coverage";
 import { UNREACHED_PHRASE } from "@/lib/empty-period";
 import { formatCents, formatCentsSigned } from "@/lib/money";
 import { cashFlowSegmentHref, ledgerHref, OTHER_SERIES_KEY, UNCATEGORIZED_SERIES_KEY } from "@/lib/ledger-href";
-import { paceReadout } from "@/lib/pace-readout";
+import { paceReadout, typicalPaceCents } from "@/lib/pace-readout";
 import { noIncomeDayCheckedOf } from "@/lib/unbanked-income";
 import type { CashFlow, CashFlowBucket, CashFlowSeries, SpendingProjection } from "@/services/spending";
 
@@ -47,6 +47,15 @@ function formatTick(cents: number): string {
   const sign = cents < 0 ? "-" : "";
   if (dollars >= 1000) return `${sign}$${Math.round(dollars / 100) / 10}k`;
   return `${sign}$${Math.round(dollars)}`;
+}
+
+/**
+ * "Nothing found so far — …": words that open the readout, capitalised in the TEXT. 🔴 Review of 4d799b6:
+ * `first-letter:uppercase` on the <p> boxed the "O" of every "On pace for…" apart from its "n" and moved its kerning
+ * (398.90625px → 398.921875px at 12px Geist) under a commit reporting no change on his page.
+ */
+function openingCase(words: string): string {
+  return `${words.charAt(0).toUpperCase()}${words.slice(1)}`;
 }
 
 interface Row {
@@ -228,6 +237,7 @@ export function CashFlowChart({ data, projection }: CashFlowChartProps) {
    * visible part below; the basis is the method alone.
    */
   const basis = projection?.paceBasis ?? null;
+  const typicalPace = typicalPaceCents({ pace, spendingUnaccounted: data.spendingUnaccounted });
   const readoutParts: ReactNode[] = [];
   if (words.projected !== null) {
     readoutParts.push(
@@ -248,7 +258,9 @@ export function CashFlowChart({ data, projection }: CashFlowChartProps) {
     );
   }
   if (pace) {
-    readoutParts.push(<span className="text-ink-faint">{words.soFar}</span>);
+    // where nothing is paced these words open the line — decision 64's "Nothing found so far — …"
+    const soFar = readoutParts.length === 0 ? openingCase(words.soFar) : words.soFar;
+    readoutParts.push(<span className="text-ink-faint">{soFar}</span>);
   }
   if (pace && words.partlyRead) {
     readoutParts.push(<span className="text-ink-faint">{words.partlyRead}</span>);
@@ -263,9 +275,8 @@ export function CashFlowChart({ data, projection }: CashFlowChartProps) {
 
   return (
     <figure className="m-0" aria-label="Income above the axis and spending below, by period">
-      {/* first-letter: "nothing found so far — …" opens the line where no spending was found (the tooltip's idiom) */}
       {readoutParts.length > 0 && (
-        <p className="mb-2 text-xs text-ink-muted first-letter:uppercase">
+        <p className="mb-2 text-xs text-ink-muted">
           {readoutParts.map((node, i) => (
             <span key={i}>
               {i > 0 ? " · " : ""}
@@ -301,9 +312,10 @@ export function CashFlowChart({ data, projection }: CashFlowChartProps) {
               width={52}
             />
             <ReferenceLine y={0} stroke="var(--line-strong)" />
-            {pace && (
+            {/* ⚖️ decision 64: none where the readout prints no figure — its $0 is nothing found (`typicalPaceCents`) */}
+            {typicalPace !== null && (
               <ReferenceLine
-                y={-pace.avgPerBucketCents}
+                y={-typicalPace}
                 stroke="var(--warning)"
                 strokeDasharray="4 3"
                 strokeWidth={1}

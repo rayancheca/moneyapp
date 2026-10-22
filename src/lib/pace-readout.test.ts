@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { paceReadout } from "./pace-readout";
+import { paceReadout, typicalPaceCents } from "./pace-readout";
 
 /**
  * 🔴 S12. On 2026-09-14 /spending's cash-flow readout printed "On pace for
@@ -66,5 +66,27 @@ describe("paceReadout", () => {
       soFar: "nothing found so far — spending imported through Jun 20",
       partlyRead: null,
     });
+  });
+});
+
+/*
+ * ⚖️ Decision 64, the chart under the readout. 🔴 Review of 4d799b6 (twin of the e2e fixture at 2026-07-08: checking read
+ * through Jun 20, Venture X's statement through Jul 5, a Jul 3 Wells Fargo Salary row): the readout said "Nothing found
+ * so far — spending imported through Jun 20" while the chart directly under it drew its amber dashed "typical pace" at
+ * $0 — `avgPerBucketCents` is 0 there because nothing was found, not because nothing was spent.
+ */
+describe("typicalPaceCents — the chart's dashed pace line", () => {
+  const pace = { avgPerBucketCents: 10_222 };
+
+  test("is the pace per bucket where the readout prints a figure", () => {
+    expect(typicalPaceCents({ pace, spendingUnaccounted: null })).toBe(10_222);
+  });
+
+  test("is not drawn where no spending was found past spending's day — the readout prints no figure there", () => {
+    expect(typicalPaceCents({ pace: { avgPerBucketCents: 0 }, spendingUnaccounted: "spending imported through Jun 20" })).toBeNull();
+  });
+
+  test("is not drawn for a period with no pace", () => {
+    expect(typicalPaceCents({ pace: null, spendingUnaccounted: null })).toBeNull();
   });
 });

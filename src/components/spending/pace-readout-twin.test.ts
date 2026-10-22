@@ -11,6 +11,7 @@ import { importFiles, statementPeriods } from "@/db/schema/imports";
 import { institutions } from "@/db/schema/institutions";
 import { transactions } from "@/db/schema/transactions";
 import { seedDatabase } from "@/db/seed";
+import { typicalPaceCents } from "@/lib/pace-readout";
 import { resolvePeriod } from "@/lib/period";
 import { createAccount } from "@/services/accounts";
 import { dashboardData } from "@/services/dashboard";
@@ -144,11 +145,20 @@ describe("the pace tile and /spending's cash-flow readout — a running month wi
     expect(tile).not.toContain("$0.00");
 
     const text = readout();
-    expect(text).toContain(words);
+    // the same words, opening the readout's line with a capital (in the text — never `first-letter:uppercase`)
+    expect(text).toContain(`N${words.slice(1)}`);
     expect(text).not.toContain("$0.00");
     expect(text).not.toContain("On pace for");
     // the tile prints no day count beside its dash; the fact names the day, and every elapsed day is past it
     expect(text).not.toContain("unaccounted");
+
+    /*
+     * …and the chart under the readout draws no dashed pace: 🔴 review of 4d799b6, on this very window it drew the amber
+     * "typical pace" at $0 under "Nothing found so far" — $0 because nothing was found (`typicalPaceCents`).
+     */
+    const cashFlow = cashFlowByPeriod(bundle.db, resolvePeriod({}, TODAY), TODAY);
+    expect(cashFlow.pace?.avgPerBucketCents).toBe(0);
+    expect(typicalPaceCents(cashFlow)).toBeNull();
   });
 
   test("a month whose spending was found keeps the readout's figures, marked as the floors they are", () => {

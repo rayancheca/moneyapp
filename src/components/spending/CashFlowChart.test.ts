@@ -74,6 +74,26 @@ describe("CashFlowChart's pace readout", () => {
   test("the method stays on hover, without the clause the readout already shows", () => {
     expect(render()).toContain('title="pace from 14 of 30 days elapsed"');
   });
+
+  /*
+   * 🔴 Review of 4d799b6: `first-letter:uppercase` went on the readout's <p> in EVERY state, for the one that opens with
+   * "nothing found so far". ::first-letter boxes the "O" of "On pace for…" apart from the "n", which breaks their
+   * kerning: 398.90625px → 398.921875px in Chromium at 12px Geist, and every /spending baseline's readout shifted under
+   * a commit reporting "no change" on his page. ⛔ The opening word is capitalised in the TEXT, where it opens the line.
+   */
+  test("opens with a capital in its words, and leaves every other readout's letters alone", () => {
+    expect(render()).not.toContain("first-letter");
+    const nothing: CashFlow = {
+      ...SEPTEMBER,
+      totals: { ...SEPTEMBER.totals, spentCents: 0, netCents: 0 },
+      pace: { ...SEPTEMBER.pace!, actualToDateCents: 0, projectedCents: 0, avgPerBucketCents: 0 },
+      spendingUnaccounted: "spending imported through Jun 20",
+    };
+    const html = renderToStaticMarkup(createElement(CashFlowChart, { data: nothing, projection: PROJECTION }));
+    expect(html).not.toContain("first-letter");
+    expect(textOf(html)).toContain("Nothing found so far — spending imported through Jun 20");
+    expect(textOf(html)).not.toContain("$0.00");
+  });
 });
 
 /**

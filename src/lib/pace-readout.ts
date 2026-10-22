@@ -73,3 +73,21 @@ export function paceReadout(input: {
     partlyRead: input.partlyRead?.line ?? null,
   };
 }
+
+/**
+ * How far below the axis the cash-flow chart draws its dashed "typical pace" line (`PaceInfo.avgPerBucketCents`), or
+ * null where it draws none: a period with no pace, and ⚖️ decision 64's window — no spending found past spending's day
+ * (`CashFlow.spendingUnaccounted`), where the readout above it prints the tile's words in place of every figure.
+ *
+ * 🔴 Review of 4d799b6 (twin of the e2e fixture at 2026-07-08, checking read through Jun 20): the readout said "Nothing
+ * found so far — spending imported through Jun 20" while the chart under it drew the amber pace at $0 — 0 because
+ * nothing was found, not because nothing was spent. ⛔ The readout's own test (`spendingUnaccounted`), so the line and
+ * the words cannot disagree about whether there is a figure.
+ */
+export function typicalPaceCents(input: {
+  pace: { avgPerBucketCents: number } | null;
+  spendingUnaccounted: string | null;
+}): number | null {
+  if (input.pace === null || input.spendingUnaccounted !== null) return null;
+  return input.pace.avgPerBucketCents;
+}
