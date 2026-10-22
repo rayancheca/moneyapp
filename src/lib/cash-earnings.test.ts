@@ -320,10 +320,17 @@ describe("cashEarnings — banked, and the gap between", () => {
     expect(r.lastBankedOn).toBe("2026-06-04");
   });
 
-  test("with a series and no deposits at all, silence is counted from the start", () => {
+  /*
+   * ⛔ From the start INCLUSIVE: nothing banked the first payday either (`silenceFrom`). 🔴 Review of c3b30fe: counted
+   * strictly after it, a schedule that never banked said "14 expected paydays have passed" under its own "implies
+   * $15,000.00 … over Jun 4 – Sep 10, and none of it reached an account", and the card counted 15.
+   */
+  test("with a series and no deposits at all, silence is counted from the start — the first payday among it", () => {
     const r = read({ to: "2026-06-30", today: "2026-06-30" });
     expect(r.lastBankedOn).toBeNull();
-    expect(r.periodsSinceBanked).toBe(3);
+    // Jun 4, 11, 18 and 25: every payday the reading implies, none banked
+    expect(r.periodsCovered).toBe(4);
+    expect(r.periodsSinceBanked).toBe(4);
     expect(r.basis).toBe("series-stale");
   });
 
@@ -372,8 +379,8 @@ describe("cashEarnings — banked, and the gap between", () => {
     expect(r.periodsCovered).toBe(3);
     expect(r.lastPeriodOn).toBe("2026-06-18");
     expect(r.impliedCents).toBe(3 * 104_600);
-    // silence runs from the start: the 11th and the 18th have passed, the 25th has not
-    expect(r.periodsSinceBanked).toBe(2);
+    // silence runs from the start: the 4th, the 11th and the 18th have passed, the 25th has not
+    expect(r.periodsSinceBanked).toBe(3);
   });
 
   test("a deposit dated today makes today's payday earned, banked and not silent", () => {
@@ -396,7 +403,7 @@ describe("cashEarnings — banked, and the gap between", () => {
     const r = read({ to: "2026-06-30", today: "2026-06-25", todayIsComplete: true });
     expect(r.periodsCovered).toBe(4);
     expect(r.lastPeriodOn).toBe("2026-06-25");
-    expect(r.periodsSinceBanked).toBe(3);
+    expect(r.periodsSinceBanked).toBe(4);
   });
 
   test("silence is counted from the SERIES start, not from the window start", () => {
@@ -404,7 +411,8 @@ describe("cashEarnings — banked, and the gap between", () => {
     // June and has never once paid, counting silence from the window start says
     // "3 missed paydays" — a number about August. The truth is twelve, and the
     // difference is the whole reason the reading exists: the question is how
-    // long this schedule has been silent, not how long this month has.
+    // long this schedule has been silent, not how long this month has. Thirteen:
+    // Jun 4 through Aug 27, the first payday among them — nothing banked it.
     const r = read({
       banked: [],
       from: "2026-08-01",
@@ -412,8 +420,28 @@ describe("cashEarnings — banked, and the gap between", () => {
       today: "2026-08-31",
     });
     expect(r.lastBankedOn).toBeNull();
-    expect(r.periodsSinceBanked).toBe(12);
+    expect(r.periodsSinceBanked).toBe(13);
     expect(r.basis).toBe("series-stale");
+  });
+
+  /*
+   * ⚖️ A payday a deposit PAID — early or late, the settlement's `settledBy` — is not silent: the calendar draws it
+   * paid. 🔴 Review of 27ca437: Earned vs banked said "1 falls on a day already checked, with no deposit" of Thu Oct 1,
+   * which the deposit of Wed Sep 30 paid early, as the calendar and /spending said (his ledger copy 2026-10-21 with a
+   * Sep 30 payroll inserted, Wells Fargo derived through Oct 2).
+   */
+  test("a payday a deposit paid early is not one of the silence's", () => {
+    const banked = [{ postedOn: "2026-06-17", amountCents: 104_600 }];
+    const asked = { banked, to: "2026-07-31", today: "2026-07-10" };
+    // after Wed Jun 17: Jun 18, which it paid early, then Jun 25, Jul 2 and Jul 9
+    expect(read(asked).periodsSinceBanked).toBe(4);
+    const r = read({ ...asked, settledPaydays: new Set(["2026-06-18"]) });
+    expect(r.periodsSinceBanked).toBe(3);
+    expect(r.basis).toBe("series-stale");
+    // …and with it every payday since, nothing is silent: pay is arriving
+    const ahead = read({ ...asked, settledPaydays: new Set(["2026-06-18", "2026-06-25", "2026-07-02", "2026-07-09"]) });
+    expect(ahead.periodsSinceBanked).toBe(0);
+    expect(ahead.basis).toBe("series-live");
   });
 
   test("unordered deposits give the same answer as sorted ones", () => {

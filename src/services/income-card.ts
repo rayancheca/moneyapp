@@ -15,7 +15,7 @@ import {
   type UnbankedFrontier,
 } from "@/lib/unbanked-income";
 import { incomeExpectation } from "./budgets";
-import { cashEarningsReadings, checkedSilence, type CashEarningsReading } from "./cash-earnings";
+import { cashEarningsReadings, type CashEarningsReading } from "./cash-earnings";
 import { SPEND_BASELINE_MONTHS } from "./committed";
 import { paydaySettlement } from "./payday-settlement";
 
@@ -288,7 +288,7 @@ export interface IncomePayLine extends Gap {
   /** `cashEarnings`' own word for which world these numbers live in */
   basis: CashEarningsBasis;
   lastBankedOn: string | null;
-  /** pay periods since the last attributed deposit, counted to today */
+  /** pay periods since the last attributed deposit, counted to today — none a deposit paid (`periodsSinceBanked`) */
   silentPeriods: number;
   /** of those, the ones that fell on days the records already cover */
   checkedSilentPeriods: number;
@@ -562,13 +562,12 @@ export function incomeCard(db: AppDatabase, today: string = todayIso()): IncomeC
       basis: r.basis,
       lastBankedOn: r.lastBankedOn,
       silentPeriods: r.periodsSinceBanked,
-      // never more than the silence itself — `checkedSilence`
-      checkedSilentPeriods: checkedSilence(
-        asChecked?.periodsSinceBanked ?? 0,
-        r.periodsSinceBanked,
-        r.lastBankedOn,
-        checkedThrough,
-      ),
+      /*
+       * ⛔ The reading's own (`checkedSilence` over its as-of reading): the silence it counts, none a deposit paid. 🔴
+       * Review of 27ca437: read off this card's as-of reading, which asks without the settlement, it counted Thu Oct 1
+       * — paid early by Wed Sep 30's payroll — as "1 falls on a day already checked, with no deposit".
+       */
+      checkedSilentPeriods: r.checkedPeriodsSinceBanked ?? 0,
       // ⛔ the silence's — /spending's stale note's own reading (`silentPaydaysNotBankedYet`), never a second one
       checkedSilentNotBankedYet: r.checkedSilentNotBankedYet ?? [],
       checkedThrough,

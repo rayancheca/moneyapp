@@ -1017,6 +1017,75 @@ describe("cashEarningsSectionNotes", () => {
   });
 
   /*
+   * ⚖️ DEFAULT (A), built 2026-10-21: a stale schedule's note names money out on a day of its own as the card and the
+   * shortfall note do — "went back out on <day>" (`wentBackOutPhrase`) — in every shape its claim takes. 🔴 Review of
+   * 27ca437 (MEDIUM): it printed the one rule's banked figure and never the day, and its `continue` skipped the
+   * shortfall note, the only other path that named it.
+   */
+  describe("a stale schedule's note names money that went back out, whatever its claim", () => {
+    const OUT: PayShortfall = {
+      readPaydays: 0,
+      firstReadOn: null,
+      lastReadOn: null,
+      readCents: 0,
+      bankedInsideCents: 0,
+      noPaydayInsideCents: 0,
+      shortCents: 0,
+      paidOutside: [],
+      neverBankedCents: 0,
+      notBankedYetCents: 0,
+      notBankedYetPaydays: [],
+      paidAcross: [],
+      noPaydayBeyondCents: 0,
+      otherBeyondCents: 0,
+      unlookedPaydays: 0,
+      towardNoPayday: [],
+      paidAhead: [],
+      paidUnread: [],
+      paidUncounted: [],
+      wentBackOut: [{ postedOn: "2026-07-03", cents: 114_192 }],
+      bankedCents: 0,
+    };
+    const BACK = "$1,141.92 went back out on 2026-07-03";
+    const lead = (over: Partial<CashEarningsNoteInput["rows"][number]>): string => {
+      const body = notes({ shortfall: OUT, ...over })[0]!.body;
+      return body.slice(0, body.indexOf(" Across the whole schedule"));
+    };
+
+    test("read in full: after what reached an account", () => {
+      expect(lead({ bankedCents: 144_700 })).toBe(
+        `Cash job (weekly pay) implies $5,230.00 of earnings over Jul 2 – 30, 2026 and only $1,447.00 reached an ` +
+          `account; ${BACK}.`,
+      );
+    });
+
+    test("read in part: after what reached an account through the checked day, before the paydays past it", () => {
+      expect(lead({ ...checked, periodsCovered: 5, checkedPeriodsCovered: 3 })).toContain(
+        `none of it reached an account through 2026-08-12; ${BACK}; the other 2 paydays fall after that,`,
+      );
+    });
+
+    test("none read: after 'the ledger has not looked for it'", () => {
+      expect(lead({ ...checked, checkedPeriodsCovered: 0 })).toContain(
+        `all of it after 2026-08-12, the last day every account that pay lands in has been checked through — so the ` +
+          `ledger has not looked for it; ${BACK}.`,
+      );
+    });
+
+    test("the account it lands in unchecked: after 'whether any of it arrived'", () => {
+      expect(lead({ ...checked, checkedThrough: null })).toContain(
+        `so the ledger cannot say whether any of it arrived; ${BACK}.`,
+      );
+    });
+
+    test("no money out: the claim is the one it always was", () => {
+      expect(lead({ shortfall: { ...OUT, wentBackOut: [] } })).toBe(
+        "Cash job (weekly pay) implies $5,230.00 of earnings over Jul 2 – 30, 2026 and none of it reached an account.",
+      );
+    });
+  });
+
+  /*
    * 🔴 Read on his ledger 2026-10-13: /spending September printed the surplus note (the Sep 24 deposit paid Aug 27),
    * and August — Aug 6, 13 and 20 paid by no deposit, Aug 27 by Sep 24's — said nothing beside "INCOME $54.12"; June
    * read Salary $1,447.00 against four paydays of $4,188.00 with no note. The unbanked note speaks only of a STALE

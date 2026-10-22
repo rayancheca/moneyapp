@@ -635,14 +635,26 @@ export function cashEarningsSectionNotes(input: CashEarningsNoteInput): SectionN
       const covered = r.periodsCovered ?? 0;
       const readCovered = r.checkedPeriodsCovered ?? 0;
       const unread = covered - readCovered;
+      /*
+       * ⚖️ DEFAULT (A), BUILT, NOT ASKED (2026-10-21): money out on a day of its own that the figure above leaves out is
+       * named on its day (`wentBackOutPhrase`), as Earned vs banked and the shortfall note name it — never netted away
+       * unnamed. 🔴 Review of 27ca437 (MEDIUM): this branch's `continue` skips the shortfall note, the only other
+       * /spending path that named it, so on his ledger copy 2026-10-21 with a Salary-filed −$1,141.92 on Fri Sep 25
+       * and Wells Fargo read through Oct 16, YTD read "only $7,156.60 reached an account" and no Sep 25, while the card
+       * read "…; $1,141.92 went back out on Fri, Sep 25, 2026."
+       */
+      // the one rule's days (`moneyOutOfWindow`) — the reading's `bankedCents` above is that rule's figure
+      const out = r.shortfall?.wentBackOut ?? [];
+      const back = out.length === 0 ? "" : `; ${wentBackOutPhrase(out, input.formatDay)}`;
       const claim = !measuredRead || (through !== null && unread <= 0)
-        ? ` and ${reached}.`
+        ? ` and ${reached}${back}.`
         : through === null
-          ? ` — and the account it lands in has not been checked, so the ledger cannot say whether any of it arrived.`
+          ? ` — and the account it lands in has not been checked, so the ledger cannot say whether any of it ` +
+            `arrived${back}.`
           : readCovered === 0
-            ? `, all of it after ${through}, ${LAST_CHECKED_DAY} — so the ledger has not looked for it.`
+            ? `, all of it after ${through}, ${LAST_CHECKED_DAY} — so the ledger has not looked for it${back}.`
             : // "the other payday" of one — 🔴 "the other 1 payday falls after that" (review of 8ef2fc5)
-              ` and ${reached} through ${through}; ` +
+              ` and ${reached} through ${through}${back}; ` +
               `${unread === 1 ? "the other payday falls" : `the other ${unread} paydays fall`} after that, ` +
               `${LAST_CHECKED_DAY}.`;
 

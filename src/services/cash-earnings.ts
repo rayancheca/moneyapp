@@ -488,18 +488,24 @@ export function cashEarningsReadings(
       endedOn: eff.userEndsOn,
     };
 
+    /*
+     * ⚖️ Who paid what, when the reading names a silence (`withChecked`): a payday a deposit paid — early or late — is
+     * no part of it (`settledPaydays`), as the calendar draws it paid. 🔴 Review of 27ca437: Earned vs banked said "1
+     * falls on a day already checked, with no deposit" of Thu Oct 1, which Wed Sep 30's payroll paid early.
+     */
+    const settlement = checkedOf === null ? null : paydaySettlement(db, s.id, today);
+    const settledPaydays = new Set(settlement?.settledBy.keys() ?? []);
     const reading: CashEarningsReading = {
       seriesId: s.id,
       seriesName: s.name,
       toleranceDays: s.toleranceDays,
-      ...cashEarnings({ series: pay, banked, from, to, today, todayIsComplete }),
+      ...cashEarnings({ series: pay, banked, from, to, today, todayIsComplete, settledPaydays }),
     };
-    if (checkedOf === null) {
+    if (checkedOf === null || settlement === null) {
       readings.push(reading);
       continue;
     }
     const checkedThrough = checkedOf(s.id);
-    const settlement = paydaySettlement(db, s.id, today);
     // ⛔ the window's figures are this reading's — Earned vs banked's — and only who paid what is the settlement's
     const shortfallOf = (read: WindowEarnings["read"]): PayShortfall =>
       payShortfall(
@@ -542,7 +548,7 @@ export function cashEarningsReadings(
     /*
      * The same schedule, read AS OF the frontier: a day the records have read
      * through is complete, so a payday dated on it is checked — unless the
-     * frontier IS the running day, where a deposit may still post.
+     * frontier IS the running day, where a deposit may still post. ⛔ Its silence is the same one's: none a deposit paid.
      */
     const asChecked = cashEarnings({
       series: pay,
@@ -551,6 +557,7 @@ export function cashEarningsReadings(
       to: compareDates(to, checkedThrough) < 0 ? to : checkedThrough,
       today: checkedThrough,
       todayIsComplete: compareDates(checkedThrough, today) < 0,
+      settledPaydays,
     });
     const shortfall = shortfallOf({
       paydays: asChecked.periodsCovered,
