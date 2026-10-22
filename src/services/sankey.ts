@@ -78,6 +78,13 @@ function byValueThenName(a: [string, Bucket], b: [string, Bucket]): number {
  * carded "Spent — · Net —" over "Salary $1,141.92 → Money in → Net saved $1,141.92", and the dashboard's Flow 1W (Oct
  * 15 – 21) drew the same. No day window of his own copy holds it on 2026-10-21 (Jul 1 – Oct 21 swept); his next Wells
  * Fargo statement makes one if it lands before the card statements.
+ *
+ * ⛔ Both rules below are asked of a window where NOTHING flowed too: no row at all over days nobody has read is not a
+ * window "with no money flow", and the empty graph carries both facts. Only a window read on both sides that found
+ * nothing — or one the ledger has not reached — keeps the surface's own empty words. 🔴 Measured on his ledger copy
+ * 2026-10-21 (review of e953d70): the dashboard's Flow 1D (Oct 21) and 1W (Oct 15 – 21) printed "No money flow in this
+ * range." under that page's Income card, "Not one day of Oct 2026 has been checked in the accounts that pay lands in";
+ * the nothing-flowed return ran before either rule was asked.
  */
 export interface SpendingSankey extends SankeyGraph {
   /** the window's `spendingNotFoundFact` where the graph is empty for it; null where the graph is the flow */
@@ -91,7 +98,7 @@ export interface SpendingSankey extends SankeyGraph {
    * in $1,603.00" over an Income the page dashes. 🔴 On his ledger copy 2026-10-21 Oct 1 – 31 drew "From outside this
    * period $1,603.00" and Sep 26 – Oct 10 "Refunds $15.16 · From outside this period $2,042.17", Wells Fargo checked
    * through Sep 24, beside a Net card, table and hover printing "—" (review of 6cb97ea). False where the graph is the
-   * flow, and where nothing flowed at all (the surface's own empty words).
+   * flow, and where nothing flowed over days that are read (the surface's own empty words).
    */
   incomeUnread: boolean;
 }
@@ -99,8 +106,8 @@ export interface SpendingSankey extends SankeyGraph {
 /**
  * `today` asks whether the window's spending has been found (`SpendingSankey`) — every page passes it (`/spending`,
  * the dashboard's Flow, pinned in their page tests). ⛔ Omitted, the graph is drawn from the rows alone: a fixture
- * asking its shape. ⚡ The day is asked only where the window holds money in and no spending row
- * (`spendingReadThrough` is memoised for the render); /spending's cash flow asks the same window by the same rule.
+ * asking its shape. ⚡ The day is asked only where the window holds no spending row (`spendingReadThrough` is memoised
+ * for the render); /spending's cash flow asks the same window by the same rule.
  */
 export function spendingSankey(db: AppDatabase, range: DateRange, today?: string): SpendingSankey {
   const idx = loadCategoryIndex(db);
@@ -148,11 +155,8 @@ export function spendingSankey(db: AppDatabase, range: DateRange, today?: string
 
   const net = earned + refunds - spent;
 
-  // Nothing flowed → an empty graph; the renderer shows its own empty state.
-  if (earned + refunds === 0 && spent === 0) {
-    return { nodes: [], links: [], spendingUnaccounted: null, incomeUnread: false };
-  }
-  // …and money in with no spending found past the day all of it is read through draws no Net saved (see the type)
+  // No spending found past the day all of it is read through draws no Net saved (see the type) — asked before
+  // "nothing flowed": no row at all past that day is a window nobody has looked at, not one in which nothing happened
   const notFound =
     spent !== 0 || today === undefined
       ? null
@@ -164,13 +168,17 @@ export function spendingSankey(db: AppDatabase, range: DateRange, today?: string
           readThrough: spendingReadThrough(db, today),
           spentCents: spent,
         });
-  // …and spending with no income found and not one day checked where the pay lands draws no plug (see the type).
+  // …and no income found with not one day checked where the pay lands draws no plug (see the type), asked the same.
   // ⚡ the schedules and the pay's frontier are read only where the window found no income
   const incomeUnread =
     today !== undefined &&
     earned === 0 &&
     noIncomeDayReadOf(db, today, hisLiveIncomeSeries(db, agentsCash))(range.from, earned);
   if (notFound !== null || incomeUnread) return { nodes: [], links: [], spendingUnaccounted: notFound, incomeUnread };
+  // Nothing flowed over days that are read → an empty graph; the renderer shows the surface's own empty words.
+  if (earned + refunds === 0 && spent === 0) {
+    return { nodes: [], links: [], spendingUnaccounted: null, incomeUnread: false };
+  }
 
   const nodes: SankeyNodeInput[] = [
     { id: HUB_ID, label: "Money in", column: COL_HUB, color: "var(--ink-muted)", meta: { kind: "hub" } },

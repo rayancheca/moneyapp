@@ -385,3 +385,85 @@ describe("spendingSankey — a window whose income nobody has looked for", () =>
     }
   });
 });
+
+/*
+ * ⚖️ Decisions 64 + 72 and §6A 68 where NOTHING flowed: a window holding no row at all, past the day his spending is
+ * read through and with not one day checked where his pay lands, is a window nobody has looked at — both rules answer
+ * it as they answer a window holding one side only, and the empty graph carries both facts. Only a window that IS read
+ * and found nothing keeps the surface's own words. 🔴 Measured on his ledger copy 2026-10-21 (review of e953d70): the
+ * dashboard's Flow 1D (Oct 21) and 1W (Oct 15 – 21) printed "No money flow in this range." — spending read through Aug
+ * 12, Wells Fargo checked through Sep 24 — on the page whose Income card reads "Not one day of Oct 2026 has been
+ * checked in the accounts that pay lands in", while /spending called the same days "a window nobody has looked at, not
+ * one in which nothing happened". The nothing-flowed return ran before either rule was asked.
+ */
+describe("spendingSankey — a window where nothing was found", () => {
+  const TODAY = "2026-07-08";
+
+  /** checking — where the pay lands — is imported and checked through Jul 3; the card through Jul 7 */
+  function readThroughJul3(): void {
+    bundle.db
+      .insert(recurringSeries)
+      .values({
+        name: "It America LLC (weekly pay)",
+        kind: "income",
+        cadence: "weekly",
+        intervalDaysAvg: 7,
+        amountCentsAvg: 114_192,
+        nextExpectedOn: "2026-07-02",
+        nextExpectedAmountCents: 114_192,
+        status: "confirmed",
+        lastMatchedOn: "2026-06-25",
+        accountId: checkingId,
+      })
+      .run();
+    insertTxn({ accountId: checkingId, postedOn: "2026-07-01", amountCents: -1_000, category: "Food > Dining" });
+    insertTxn({ accountId: checkingId, postedOn: "2026-07-03", amountCents: -2_000, category: "Food > Groceries" });
+    insertTxn({ postedOn: "2026-07-02", amountCents: -500, category: "Food > Dining" });
+    insertTxn({ postedOn: "2026-07-07", amountCents: -3_000, category: "Food > Dining" });
+    checkedThrough(bundle.db, checkingId, "2026-07-03");
+  }
+
+  test("no row, no spending day read, no pay day checked: the empty graph names both, not 'no money flow'", () => {
+    readThroughJul3();
+    for (const range of [{ from: "2026-07-06", to: "2026-07-06" }, { from: "2026-07-04", to: "2026-07-06" }]) {
+      expect(spendingSankey(bundle.db, range, TODAY), JSON.stringify(range)).toEqual({
+        nodes: [],
+        links: [],
+        spendingUnaccounted: "spending imported through Jul 3",
+        incomeUnread: true,
+      });
+    }
+  });
+
+  test("with no live pay schedule only spending's day is named", () => {
+    readThroughJul3();
+    bundle.db.update(recurringSeries).set({ status: "ended" }).run();
+    expect(spendingSankey(bundle.db, { from: "2026-07-04", to: "2026-07-06" }, TODAY)).toEqual({
+      nodes: [],
+      links: [],
+      spendingUnaccounted: "spending imported through Jul 3",
+      incomeUnread: false,
+    });
+  });
+
+  test("a window read that found nothing — or one the ledger has not reached — keeps the surface's words", () => {
+    readThroughJul3();
+    const quiet = { nodes: [], links: [], spendingUnaccounted: null, incomeUnread: false };
+    // checking imported and checked through Jul 5: Jul 4 is read on both sides and holds no row — a measured zero
+    insertTxn({ accountId: checkingId, postedOn: "2026-07-05", amountCents: -4_000, category: "Food > Dining" });
+    checkedThrough(bundle.db, checkingId, "2026-07-05");
+    expect(spendingSankey(bundle.db, { from: "2026-07-04", to: "2026-07-04" }, TODAY)).toEqual(quiet);
+    // before the ledger opens: nothing there to wait for
+    expect(spendingSankey(bundle.db, { from: "2026-06-01", to: "2026-06-30" }, TODAY)).toEqual(quiet);
+  });
+
+  // ⛔ the one rule: /spending's own reading of the same window (`CashFlow`), never a second one
+  test("an empty window reads exactly as /spending's cash flow reads it", () => {
+    readThroughJul3();
+    const period = resolvePeriod({ from: "2026-07-04", to: "2026-07-06" }, TODAY);
+    const flow = cashFlowByPeriod(bundle.db, period, TODAY);
+    const g = spendingSankey(bundle.db, { from: period.from, to: period.to }, TODAY);
+    expect([g.spendingUnaccounted, g.incomeUnread]).toEqual([flow.spendingUnaccounted, flow.incomeUnread]);
+    expect(flow.incomeUnread).toBe(true);
+  });
+});

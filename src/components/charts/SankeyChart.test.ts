@@ -223,9 +223,10 @@ describe("sankeyShareCell — the table lens", () => {
 /**
  * ⚖️ What an EMPTY flow says (`SpendingSankey`): its window's spending not found (decisions 64 + 72), or its income
  * nobody has looked for (§6A 68) — each in the words its stat card prints there — and the surface's own empty label
- * only where nothing flowed. 🔴 On his ledger copy 2026-10-21 `/spending?cash=sankey` drew October as "From outside this
- * period $1,603.00" beside an Income card reading "Not one day of October 2026 has been checked in the accounts that
- * pay lands in, so nothing is shown."
+ * only where nothing flowed over days that are read. 🔴 On his ledger copy 2026-10-21 `/spending?cash=sankey` drew
+ * October as "From outside this period $1,603.00" beside an Income card reading "Not one day of October 2026 has been
+ * checked in the accounts that pay lands in, so nothing is shown." 🔴 …and the dashboard's Flow 1D and 1W, where
+ * nothing flowed at all, printed "No money flow in this range." over the same unread days (review of e953d70).
  */
 describe("sankeyEmptyCopy — why a flow is empty", () => {
   const empty: SankeyEmptyFacts & SankeyGraph = { nodes: [], links: [] };
@@ -250,9 +251,14 @@ describe("sankeyEmptyCopy — why a flow is empty", () => {
       "Nothing found so far — spending imported through Jul 3. Not one day of Jul 6, 2026 has been checked in the " +
         "accounts that pay lands in, so nothing is shown.",
     );
+    // the dashboard's Flow 1W on his ledger copy 2026-10-21 (Oct 15 – 21, nothing found): its pills name no period
+    expect(copy({ ...empty, spendingUnaccounted: "spending imported through Aug 12", incomeUnread: true })).toBe(
+      "Nothing found so far — spending imported through Aug 12. Not one day of this period has been checked in the " +
+        "accounts that pay lands in, so nothing is shown.",
+    );
   });
 
-  test("a window where nothing flowed keeps the surface's own words", () => {
+  test("a window read on both sides that found nothing keeps the surface's own words", () => {
     expect(copy(empty)).toBe("No money flow in this period.");
     expect(copy({ ...empty, spendingUnaccounted: null, incomeUnread: false })).toBe("No money flow in this period.");
   });

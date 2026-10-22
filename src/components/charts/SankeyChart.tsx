@@ -155,6 +155,10 @@ export interface SankeyEmptyFacts {
  * own dash (`noIncomeDayCheckedNote`) — of the surface's period, or "this period" where it names none (the dashboard's
  * Flow ranges). 🔴 On his ledger copy 2026-10-21 `/spending?cash=sankey` drew October "From outside this period
  * $1,603.00" beside that card's "Not one day of October 2026 has been checked in the accounts that pay lands in".
+ *
+ * `emptyLabel` is said only where nothing flowed over days that are read: a window with no row at all past both days
+ * carries both facts (`SpendingSankey`). 🔴 Review of e953d70, his ledger copy 2026-10-21: the dashboard's Flow 1D and
+ * 1W printed "No money flow in this range." over Oct 15 – 21, past every account's import (Venture X's reaches Oct 14).
  */
 export function sankeyEmptyCopy(graph: SankeyEmptyFacts, emptyLabel: string, periodLabel?: string): string {
   const said = [
