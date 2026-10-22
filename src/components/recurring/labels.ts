@@ -340,12 +340,14 @@ export function stalenessSentence(s: SeriesStaleness): string {
    * is still projected is what fcdd51b re-documented `LAPSED_MISS_LIMIT` by: a read statement without the posting does
    * not yet prove the series stopped. 🔴 It said "a late import looks exactly like a cancelled series" — the reason the
    * read days had already retired, over a series whose days had been read (review of the 10-12/13 batches).
+   * …in words true of a deposit as of a charge: "posted to another account". 🔴 "One paid from another account" was
+   * said of a pay series running late too (review of the late-lapse batch, 2026-10-14).
    */
   return (
     `${expects}, but nothing has matched since ${longDate(s.lastMatchedOn)} — ${s.daysSinceLastMatch} days, past ` +
     `the ${wholeToleranceDays(s.toleranceDays)}-day tolerance. Still projected: statements read without a match are ` +
-    `not yet proof it stopped — one paid from another account, or posted under a description not linked to it, reads ` +
-    `the same — so this says which numbers rest on old evidence rather than dropping them.`
+    `not yet proof it stopped — one posted to another account, or under a description not linked to it, reads the ` +
+    `same — so this says which numbers rest on old evidence rather than dropping them.`
   );
 }
 

@@ -299,19 +299,21 @@ describe("⚖️ (a) nearer the EARLIER day, paid ON TIME by another: it pays no
 
   /*
    * The same shape a week after an on-time 15th: Oct 22 lies nearer Oct 15 (7 days to 24), which Oct 15 paid on time.
-   * Nov 15 is owed with nothing unread — the runway's and /budgets' "has not posted" — drawn missed, and from Oct 22
-   * Upcoming still lists it: the $695.04 that left that day is counted again in the forecast. 🔴 As built takes back
+   * Nov 15 is owed with nothing unread — the runway's and /budgets' "has not posted" — drawn "?" (not yet known: two
+   * postings prove no schedule, `scheduleIsProven`; ✕ missed once three do), and from Oct 22 Upcoming still lists it:
+   * the $695.04 that left that day is counted again in the forecast. 🔴 As built takes back
    * decision 73 here, which he approved: run against 7aca8e5's paymentFor, Oct 22 paid Nov 15 early (Oct 15 paid by
    * then) and coming("2026-10-23") was ["2026-12-15"]. The split rent above is the same rule: paying the other day
    * early would pay both.
    */
-  test("a lease prepaid a week after an on-time Oct 15 (Oct 22) leaves Nov 15 owed, missed, and still coming", () => {
+  test("a lease prepaid a week after an on-time Oct 15 (Oct 22) leaves Nov 15 owed, drawn ?, and still coming", () => {
     seriesWith(LEASE, "Car lease", -69504, "2026-10-15", ["2026-10-15", -69504], ["2026-10-22", -69504]);
     expect(coming("2026-10-23", LEASE)).toEqual(["2026-11-15", "2026-12-15"]);
     checkedThrough(bundle.db, "acct", "2026-11-19");
     const november = arrearsThisMonth(bundle.db, new Set([LEASE]), "2026-11-20").series;
     expect(november.map((s) => [s.nextDate, s.amountCents, s.unreadCents])).toEqual([["2026-11-15", 69504, 0]]);
-    expect(unpaid("2026-11", "2026-11-15", "2026-11-20")).toEqual([LEASE]);
+    // "?", not ✕: two postings prove no schedule — the state is the read's, never the payment's (`unpaid`)
+    expect(marks("2026-11", "2026-11-15", "2026-11-20")).toEqual([[LEASE, "unsettled", null]]);
   });
 });
 
@@ -327,17 +329,18 @@ describe("⚖️ (b) nearer a day another payment paid EARLY, a payment pays not
    * After a day paid EARLY: the lease paid "around the 1st" — Sep 2 pays Sep 15 (13 days to 18), and Sep 30 lies 15
    * days either side, the tie, Sep 15's: paid already, so Sep 30 pays nothing and Oct 15 is owed. 76 was asked so that
    * paying around the 1st would not read every 15th a month behind; which day of a month's turn the web pay lands on
-   * decides it (below): for a bill due the 15th, a pay on the 30th — or Feb 28, or Mar 1 outside a leap year — is the
-   * 15th before's, the tie or nearer it; one on the 31st or the 1st is the next's. Not a regression: 73 owed Oct 15 for
-   * this shape too.
+   * decides it (below): for a bill due the 15th, a pay on the 30th — or Feb 28 or 29, or Mar 1 outside a leap year — is
+   * the 15th before's, the tie or nearer it; one on the 31st or the 1st is the next's (billing-carriers.test.ts pins
+   * February's). Not a regression: 73 owed Oct 15 for this shape too. Drawn "?" (not yet known), not ✕: two postings
+   * prove no schedule (`scheduleIsProven`).
    */
-  test("a lease paid Sep 2 then Sep 30 owes Oct 15 — nothing unread, missed, still coming on Sep 30", () => {
+  test("a lease paid Sep 2 then Sep 30 owes Oct 15 — nothing unread, drawn ?, still coming on Sep 30", () => {
     seriesWith(LEASE, "Car lease", -69504, "2026-09-15", ["2026-09-02", -69504], ["2026-09-30", -69504]);
     expect(coming("2026-09-30", LEASE)[0]).toBe("2026-10-15");
     checkedThrough(bundle.db, "acct", "2026-10-20");
     const october = arrearsThisMonth(bundle.db, new Set([LEASE]), "2026-10-21").series;
     expect(october.map((s) => [s.nextDate, s.amountCents, s.unreadCents])).toEqual([["2026-10-15", 69504, 0]]);
-    expect(unpaid("2026-10", "2026-10-15", "2026-10-21")).toEqual([LEASE]);
+    expect(marks("2026-10", "2026-10-15", "2026-10-21")).toEqual([[LEASE, "unsettled", null]]);
   });
 
   test("…and the month's length decides: after Sep 2 + Oct 1, Oct 30 leaves Nov 15 owed where Oct 31 pays it", () => {

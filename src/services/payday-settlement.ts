@@ -317,7 +317,7 @@ export interface StillToComeSeries extends SeriesOverrides {
  * and a row merely near a payday paid nothing settlement did not spend on it — the calendar's order too. Every other
  * series' day is paid by a payment within its grace, or one more than its grace early that lies nearer it than the day
  * before (`paymentFor`, ⚖️ his decision 76, 2026-10-14), its own or its carrier's, as the arrears and the calendar
- * grade it. FPL's Sep 28 draft pays its Oct 8: from Sep 28 on, Oct 8 is not still to come.
+ * grade it. FPL's Jul 28 pays its Aug 8: from Jul 28 on, Aug 8 is not still to come.
  *
  * ⛔ Asked of days from today on — every caller walks forward from today — so nothing late is asked: a payment past
  * the grace of a day from today on would post after today, and no import has brought one. Every payment is read, as

@@ -253,17 +253,22 @@ describe("stalenessSentence", () => {
   /*
    * ⚖️ Since §6A 57 (owner, 2026-10-08) late is counted on READ days (`seriesStaleness`): a late import makes a series
    * "Awaiting statements", never running late — the reason fcdd51b re-documented `LAPSED_MISS_LIMIT` by. What keeps a
-   * late series projected now is that a statement read without a match does not yet prove it stopped: paid from
-   * another account, or posted under a description not linked to it, reads the same. 🔴 The sentence still said
-   * "a late import looks exactly like a cancelled series" — of a series whose days had been read.
+   * late series projected now is that a statement read without a match does not yet prove it stopped: one posted to
+   * another account, or under a description not linked to it, reads the same. 🔴 The sentence still said "a late
+   * import looks exactly like a cancelled series" — of a series whose days had been read.
+   *
+   * …in words true of a deposit as of a charge, as its siblings' "nothing has matched since" (below): the sentence
+   * carries no sign, and the forecast's money-in band discloses a pay series running late with it. 🔴 It said "one paid
+   * from another account" — of a payroll deposit too (review of the late-lapse batch, 2026-10-14).
    */
   test("running late gives the read-day reason it is still projected — never import lag", () => {
     const sentence = stalenessSentence(staleness());
     expect(sentence).not.toMatch(/import/);
+    expect(sentence).not.toMatch(/paid from/);
     expect(sentence).toContain(
-      "Still projected: statements read without a match are not yet proof it stopped — one paid from another " +
-        "account, or posted under a description not linked to it, reads the same — so this says which numbers rest " +
-        "on old evidence rather than dropping them.",
+      "Still projected: statements read without a match are not yet proof it stopped — one posted to another " +
+        "account, or under a description not linked to it, reads the same — so this says which numbers rest on old " +
+        "evidence rather than dropping them.",
     );
   });
 
