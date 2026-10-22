@@ -349,6 +349,42 @@ describe("the posted average, per occurrence — his rent on the page, the All t
     expect(seriesDetail(bundle.db, rent.rentId, TODAY)!.paidAhead).toEqual([]);
   });
 
+  /*
+   * ⚖️ DEFAULT, BUILT, NOT ASKED (2026-10-22): …only of a bill or subscription that otherwise paid its rate. 🔴 At
+   * 0c5c893 FPL, with one -$125.00 summer bill beside its -$14.21 and -$56.22 under the -$58.87 he set, read "Aug 27's
+   * -$125.00 covered more than one month" on the All tab and the Per charge line — one high bill, one month; a card
+   * payoff's large statement would have read the same (review of 0c5c893 on a copy of his ledger 2026-10-21, that row
+   * added).
+   */
+  test("a bill whose amounts vary, and a transfer, paid nothing ahead — on all three", () => {
+    type Rows = readonly (readonly [string, number])[];
+    const seed = (name: string, kind: "bill" | "transfer", rate: number, rows: Rows) => {
+      const { id } = bundle.db
+        .insert(recurringSeries)
+        .values({ name, kind, cadence: "monthly", status: "confirmed", toleranceDays: 3, userAmountCents: rate })
+        .returning({ id: recurringSeries.id })
+        .get();
+      for (const [day, c] of rows) rent.charge(day, c, id);
+      return id;
+    };
+    const fpl = seed("FPL (electricity)", "bill", -5_887, [
+      ["2026-07-10", -1_421],
+      ["2026-07-28", -5_622],
+      ["2026-08-27", -12_500],
+    ]);
+    const payoff = seed("Card payoff", "transfer", -35_758, [
+      ["2026-08-12", -35_758],
+      ["2026-09-03", -100_000],
+    ]);
+    for (const id of [fpl, payoff]) {
+      expect(seriesDetail(bundle.db, id, TODAY)!.paidAhead).toEqual([]);
+      expect(listSeries(bundle.db, TODAY).find((s) => s.id === id)!.paidAhead).toEqual([]);
+      const { popover } = surfaces(id);
+      expect(popover).toContain("which is not what you set");
+      expect(popover).not.toContain("covered more than one");
+    }
+  });
+
   /* ⛔ No schedule, no occurrence: he said it is not recurring. CC Vending's purchases of one day are purchases. */
   test("a dismissed series reads its rows as they posted", () => {
     const { id } = bundle.db

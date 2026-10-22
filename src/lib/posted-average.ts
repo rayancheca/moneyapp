@@ -353,17 +353,40 @@ export function postedAsWord(o: Pick<Occurrence, "postings">): string | null {
  * 2.80× its rate; every other payment of his 26 non-pay series is 0.24–1.15× (the rent's Jun 16, which carries the
  * utilities), so any multiple between 1.16 and 2.79 marks Sep 3 alone. The alternative — leave it out of the average
  * — was not built: it changes the figure, and that is his to decide.
+ *
+ * ⚖️ DEFAULT, BUILT, NOT ASKED (2026-10-22): …and only of a bill or subscription (`PAYS_AHEAD`) whose OTHER payments
+ * were its rate, to `AT_THE_RATE_CENTS` — a size alone cannot tell an early payment from one large bill. 🔴 With the
+ * multiple alone, FPL's -$14.21 and -$56.22 under the -$58.87 he set, and one -$125.00 summer bill beside them, read
+ * "Aug 27's -$125.00 covered more than one month" — one high bill, one month; a card payoff's large statement would
+ * have read the same (review of 0c5c893, a copy of his ledger 2026-10-21 with that row added). Car insurance's Aug 12
+ * -$357.58 is its rate to the cent: Sep 3 is still named. The other wording — the size alone ("2.8× the rate") — was
+ * not built: it would print beside every large bill, and the default asked for names what Sep 3 paid.
  */
 export const PAID_AHEAD_MULTIPLE = 2;
 
-/** The payments of `occurrences` that covered more than one charge — `PAID_AHEAD_MULTIPLE` × `rateCents` or more. */
-export function paidAhead(occurrences: readonly Occurrence[], rateCents: number | null): Occurrence[] {
-  if (rateCents === null || rateCents === 0) return [];
-  return occurrences.filter(
-    (o) =>
-      Math.sign(o.amountCents) === Math.sign(rateCents) &&
-      Math.abs(o.amountCents) >= PAID_AHEAD_MULTIPLE * Math.abs(rateCents),
-  );
+/** the kinds whose payments are charges that can be paid ahead — not a transfer, income or other money */
+const PAYS_AHEAD: ReadonlySet<SeriesKind> = new Set(["bill", "subscription"]);
+
+/** how far a payment may be from the rate and still be it: an instalment plan rounds one premium by a cent */
+const AT_THE_RATE_CENTS = 1;
+
+/**
+ * The payments of `occurrences` that covered more than one charge — `PAID_AHEAD_MULTIPLE` × `rateCents` or more — of a
+ * bill or subscription whose other payments (one at least) were `rateCents`, within `AT_THE_RATE_CENTS`.
+ */
+export function paidAhead(
+  occurrences: readonly Occurrence[],
+  rateCents: number | null,
+  kind: SeriesKind,
+): Occurrence[] {
+  if (rateCents === null || rateCents === 0 || !PAYS_AHEAD.has(kind)) return [];
+  const isAhead = (o: Occurrence): boolean =>
+    Math.sign(o.amountCents) === Math.sign(rateCents) &&
+    Math.abs(o.amountCents) >= PAID_AHEAD_MULTIPLE * Math.abs(rateCents);
+  const ahead = occurrences.filter(isAhead);
+  const rest = occurrences.filter((o) => !isAhead(o));
+  const paidItsRate = rest.length > 0 && rest.every((o) => Math.abs(o.amountCents - rateCents) <= AT_THE_RATE_CENTS);
+  return paidItsRate ? ahead : [];
 }
 
 /** the period one charge of a cadence covers — "more than one month" */

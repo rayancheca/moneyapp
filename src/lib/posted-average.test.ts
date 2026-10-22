@@ -598,18 +598,48 @@ describe("perPaydayEvidence — his pay, what the average is of", () => {
 describe("paidAhead — the payments that covered more than one charge, said beside the average holding them", () => {
   const at = (postedOn: string, amountCents: number) => ({ postedOn, amountCents, postings: 1 });
   const RATE = -35_758;
+  const AUG_12 = at("2026-08-12", RATE);
 
   test("at twice the rate or more, a payment covered more than one charge; below, it did not", () => {
-    // 2 × -$357.58 is -$715.16: a cent short of it is not ahead, exactly it is
-    const paid = [at("2026-08-12", RATE), at("2026-09-03", -100_000), at("2026-10-11", -71_515)];
-    paid.push(at("2026-11-11", -71_516));
-    expect(paidAhead(paid, RATE).map((o) => o.postedOn)).toEqual(["2026-09-03", "2026-11-11"]);
+    // 2 × -$357.58 is -$715.16: exactly it is ahead…
+    const paid = [AUG_12, at("2026-09-03", -100_000), at("2026-11-11", -71_516)];
+    expect(paidAhead(paid, RATE, "bill").map((o) => o.postedOn)).toEqual(["2026-09-03", "2026-11-11"]);
+    // …a cent short of it is not
+    expect(paidAhead([AUG_12, at("2026-10-11", -71_515)], RATE, "bill")).toEqual([]);
   });
 
   test("money the other way is no payment of it, and with no rate nothing is measured", () => {
-    expect(paidAhead([at("2026-09-03", 100_000)], RATE)).toEqual([]);
-    expect(paidAhead([at("2026-09-03", -100_000)], null)).toEqual([]);
-    expect(paidAhead([at("2026-09-03", -100_000)], 0)).toEqual([]);
+    expect(paidAhead([AUG_12, at("2026-09-03", 100_000)], RATE, "bill")).toEqual([]);
+    expect(paidAhead([AUG_12, at("2026-09-03", -100_000)], null, "bill")).toEqual([]);
+    expect(paidAhead([AUG_12, at("2026-09-03", -100_000)], 0, "bill")).toEqual([]);
+  });
+
+  /*
+   * ⚖️ …and only of a bill or subscription that otherwise paid its rate. 🔴 At 0c5c893 any payment of twice the rate
+   * was ahead: FPL's -$14.21 and -$56.22 under the -$58.87 he set, with one -$125.00 summer bill beside them, read
+   * "Aug 27's -$125.00 covered more than one month" — one high bill, one month (review of 0c5c893, a copy of his
+   * ledger 2026-10-21 with that row added).
+   */
+  test("a bill whose amounts vary paid nothing ahead: FPL's -$125.00 summer bill is one month's", () => {
+    const fpl = [at("2026-07-10", -1_421), at("2026-07-28", -5_622), at("2026-08-27", -12_500)];
+    expect(paidAhead(fpl, -5_887, "bill")).toEqual([]);
+  });
+
+  test("its other payments are the rate, to the cent an instalment plan rounds by — and there is one", () => {
+    const sep3 = at("2026-09-03", -100_000);
+    expect(paidAhead([AUG_12, sep3, at("2026-12-11", RATE - 1)], RATE, "bill")).toEqual([sep3]);
+    expect(paidAhead([AUG_12, sep3, at("2026-12-11", RATE + 1)], RATE, "bill")).toEqual([sep3]);
+    expect(paidAhead([AUG_12, sep3, at("2026-12-11", RATE - 2)], RATE, "bill")).toEqual([]);
+    // with no payment of the rate beside it, nothing shows the rate was what it paid
+    expect(paidAhead([sep3], RATE, "bill")).toEqual([]);
+  });
+
+  test("a subscription pays ahead as a bill does; a transfer, income or other series is no charge to pay ahead", () => {
+    const sep3 = at("2026-09-03", -100_000);
+    expect(paidAhead([AUG_12, sep3], RATE, "subscription")).toEqual([sep3]);
+    for (const kind of ["transfer", "income", "other"] as const) {
+      expect(paidAhead([AUG_12, sep3], RATE, kind)).toEqual([]);
+    }
   });
 
   test("its words name the payment, the money and the cadence's period", () => {
