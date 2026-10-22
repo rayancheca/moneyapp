@@ -60,8 +60,24 @@ const RENT_ROWS = rowsOf([
  * row by row, his rent averaged -$1,849.76 ± $583.58 under "-$2,109.00" though every month he paid more.
  */
 describe("postedAverage — a series read per occurrence", () => {
-  test("his rent: Jun 16's two rows are one payment — -$2,312.20 ± $85.27 over four", () => {
-    expect(postedAverage(RENT_ROWS, PER_OCCURRENCE, FLAT, TODAY)).toEqual({ avgCents: -231_220, stddevCents: 8_527 });
+  /*
+   * ⚖️ …its mean, -231,220.5 cents, rounded half away from zero (`roundToCents`, the parser's rule). 🔴 Rounded by
+   * `Math.round` — a half up, toward zero for money out — it printed -$2,312.20 (posted-average review, 2026-10-12).
+   */
+  test("his rent: Jun 16's two rows are one payment — -$2,312.21 ± $85.27 over four", () => {
+    expect(postedAverage(RENT_ROWS, PER_OCCURRENCE, FLAT, TODAY)).toEqual({ avgCents: -231_221, stddevCents: 8_527 });
+  });
+
+  test("a half-cent mean rounds away from zero either side: money in up, money out down", () => {
+    const of = (cents: readonly number[]) =>
+      postedAverage(
+        rowsOf(cents.map((c, i) => [`2026-0${i + 1}-01`, c] as const)),
+        PER_OCCURRENCE,
+        FLAT,
+        TODAY,
+      ).avgCents;
+    expect(of([-100, -101])).toBe(-101);
+    expect(of([100, 101])).toBe(101);
   });
 
   /* Car insurance: Aug 12's $357.58 and Sep 3's $1,000.00 early payment are an occurrence each */
@@ -125,7 +141,7 @@ describe("postedAverage — a series read per occurrence, with a rate history", 
     const raisedLongAgo = { ...RAISED_AUG_1, amountHistory: [{ throughOn: "2025-12-31", amountCents: -200_000 }] };
     for (const schedule of [raisedLongAgo, FLAT]) {
       expect(postedAverage(RENT_ROWS, PER_OCCURRENCE, schedule, TODAY)).toEqual({
-        avgCents: -231_220,
+        avgCents: -231_221,
         stddevCents: 8_527,
       });
       expect(atTodaysRate(occurrencesOf(RENT_ROWS), schedule, TODAY)).toEqual(occurrencesOf(RENT_ROWS));
@@ -166,7 +182,7 @@ describe("postedAverage — a series read per occurrence, with a rate history", 
       amountHistory: [{ throughOn: "2026-10-31", amountCents: -210_900 }],
     };
     expect(postedAverage(RENT_ROWS, PER_OCCURRENCE, raisedNov1, TODAY)).toEqual({
-      avgCents: -231_220,
+      avgCents: -231_221,
       stddevCents: 8_527,
     });
     expect(atTodaysRate(occurrencesOf(RENT_ROWS), raisedNov1, TODAY)).toEqual(occurrencesOf(RENT_ROWS));
@@ -248,8 +264,8 @@ describe("occurrencesOf — a day that nets to $0.00 is no payment", () => {
     expect(nettedToNothing(REVERSED)).toEqual([{ postedOn: "2026-07-20", amountCents: 0, postings: 2 }]);
   });
 
-  test("…so the average is the four payments' — -$2,312.20 ± $85.27, not -$1,849.76 over five", () => {
-    expect(postedAverage(REVERSED, PER_OCCURRENCE, FLAT, TODAY)).toEqual({ avgCents: -231_220, stddevCents: 8_527 });
+  test("…so the average is the four payments' — -$2,312.21 ± $85.27, not -$1,849.76 over five", () => {
+    expect(postedAverage(REVERSED, PER_OCCURRENCE, FLAT, TODAY)).toEqual({ avgCents: -231_221, stddevCents: 8_527 });
   });
 
   test("a charge partly reversed the same day is the payment it nets to", () => {

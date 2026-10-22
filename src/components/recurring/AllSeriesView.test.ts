@@ -444,9 +444,9 @@ describe("AllSeriesView — the rent's posted avg is per payment, and names what
     return cell.replace(/<[^>]+>/g, "");
   };
 
-  test("the rent: -$2,109.00, posted avg -$2,312.20 · its payments carry Rent utilities & fees too", () => {
+  test("the rent: -$2,109.00, posted avg -$2,312.21 · its payments carry Rent utilities & fees too", () => {
     expect(amountCellOf("Flamingo South Beach (rent)")).toBe(
-      "-$2,109.00posted avg -$2,312.20 · its payments carry Rent utilities & fees too",
+      "-$2,109.00posted avg -$2,312.21 · its payments carry Rent utilities & fees too",
     );
   });
 

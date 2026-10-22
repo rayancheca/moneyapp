@@ -1881,6 +1881,22 @@ function earlierRateWords(rates: readonly EarlierRate[]): string {
   return `${rates.length} earlier rates (${rates.map((r) => `${r.count} at ${formatCents(r.cents)}`).join(", ")})`;
 }
 
+/**
+ * " That is 2 payments — below the 3 …" — the anecdote gate's sentence over what the words count (`seen`): ONE
+ * sentence for a bill's payments and a pay series' deposit days, with a rate change or without one — "" at the 3 or more.
+ * `at` qualifies the count only where the sentence before it did not name the rate: " at the rate in force now".
+ *
+ * ⛔ Said RIGHT AFTER the sentence that counts them, before any about the rows left out — "That" is what it follows.
+ * 🔴 After them, a bill read "… Its 5 payments before Jun 1, 2026 were at an earlier rate, and are not counted. That is
+ * one payment at the rate in force now — below the 3 …" (review of the posted average's rate era, 2026-10-12), and a
+ * pay series, the same sentence's second reader, "… Its one other deposit paid no payday on its own, and is not
+ * counted. That is one payday — below the 3 …" (at 7aca8e5, hypothetical: his pay is past the 3).
+ */
+function anecdoteWords(count: number, unit: "payment" | "deposit day", at = ""): string {
+  if (count >= MIN_OCCURRENCES) return "";
+  return ` That is ${count === 1 ? `one ${unit}` : `${count} ${unit}s`}${at} — ${BELOW_A_PATTERN}.`;
+}
+
 /** "Its 4 payments before Aug 1, 2026 were at an earlier rate" — `rate` naming each, of several (`earlierRateWords`) */
 function earlierWords({ era, earlier, rate }: Pick<AtTodaysRate, "era" | "earlier" | "rate">): string {
   const its = earlier === 1 ? "Its one payment" : `Its ${earlier} payments`;
@@ -1891,9 +1907,9 @@ function earlierWords({ era, earlier, rate }: Pick<AtTodaysRate, "era" | "earlie
  * ⚖️ The headline's sentence for a bill with payments either side of a rate change (owner decision 2026-10-12, §6A
  * 63): it counts and ranges the payments its average is of — those at the rate in force now — and says that the ones
  * before are left out, and why. With none since, it says there is no average yet, as the page and the All tab print
- * none. With fewer than `MIN_OCCURRENCES` since, it says they are an anecdote, as its badge does ("seen once at the new
- * rate"): the gate counts them, not the rows before the change. Latent on his ledger, 2026-10-12: only his pay has a
- * history, and pay is not read per payment.
+ * none. With fewer than `MIN_OCCURRENCES` since, it says they are an anecdote, as its badge does ("seen once at
+ * today's rate"): the gate counts them, not the rows before the change — said right after them (`anecdoteWords`).
+ * Latent on his ledger, 2026-10-12: only his pay has a history, and pay is not read per payment.
  */
 function observedAtTodaysRate({ era, earlier, rate, payments, split, distinct }: AtTodaysRate): string {
   const before = earlierWords({ era, earlier, rate });
@@ -1909,12 +1925,9 @@ function observedAtTodaysRate({ era, earlier, rate, payments, split, distinct }:
       : distinct.size === 1
         ? `were ${formatCents([...distinct][0]!)}, exactly`
         : `were ${differentAmountsWords(distinct)}`;
-  // the anecdote gate on what is counted (`seen`): "That is one payment at the rate in force now — below the 3 …"
-  const thin =
-    k < MIN_OCCURRENCES
-      ? ` That is ${k === 1 ? "one payment" : `${k} payments`} at the rate in force now — ${BELOW_A_PATTERN}.`
-      : "";
-  return `${counted}${posted} ${what}. ${before}, and ${earlier === 1 ? "is" : "are"} not counted.${thin}`;
+  // the anecdote gate on what is counted (`seen`), of the payments just named: "That is one payment — below the 3 …"
+  const thin = anecdoteWords(k, "payment");
+  return `${counted}${posted} ${what}.${thin} ${before}, and ${earlier === 1 ? "is" : "are"} not counted.`;
 }
 
 /**
@@ -2093,14 +2106,15 @@ function observedPerPayday(input: {
   const leftOut = leftOutOfPaydaysWords(evidence, era, next, earlierRate).map((s) => ` ${s}`).join("");
   // …and the days that paid nothing, in a bill's words (`nettedWords`): "Nothing stayed paid on Sep 17: …"
   const left = `${leftOut}${nettedWords(evidence.netted, today)}`;
-  const now = rateLeavesOut(evidence) ? " at the rate in force now" : "";
+  // "at the rate in force now" where a rate change leaves a deposit out and the sentence before did not name the rate
+  const now = era === null && rateLeavesOut(evidence) ? " at the rate in force now" : "";
   // every row its own payday: "Only 2 tagged postings", as it always read; else the deposit days the gate counted
   const thin =
     seen >= MIN_OCCURRENCES
       ? ""
       : oneRowEachPayday(evidence)
         ? ` Only ${n} tagged ${n === 1 ? "posting has" : "postings have"} ever landed — ${BELOW_A_PATTERN}.`
-        : ` That is ${seen === 1 ? "one deposit day" : `${seen} deposit days`}${now} — ${BELOW_A_PATTERN}.`;
+        : anecdoteWords(seen, "deposit day", now);
   if (samples.length === 0) {
     const at = atTheRateWords(evidence, era, readableDay);
     const average = `there is no average of what a payday paid${at === "" ? "" : " at it yet"}`;
@@ -2116,7 +2130,8 @@ function observedPerPayday(input: {
       ? `paid ${differentAmountsWords(distinct)}`
       : `paid ${formatCents([...distinct][0]!)}${samples.length === 1 ? "" : ", exactly"}`;
   const counted = `Per payday, ${depositsWords(deposits)} ${since}${several === "" ? "" : ` (${several})`} ${what}.`;
-  return `${counted}${left}${thin}`;
+  // ⛔ the gate's sentence right after the paydays it counts, before the rows left out (`anecdoteWords`)
+  return `${counted}${thin}${left}`;
 }
 
 /**
@@ -2360,6 +2375,12 @@ function recurringSeriesProvenance(db: AppDatabase, id: string, today: string): 
           ? "derived"
           : "unverified";
 
+  /*
+   * ⚖️ …and with a rate change, the rate it counts in his words: "at today's rate" (`atTodaysRate`). 🔴 It said "at the
+   * new rate" — not his phrase, and with a raise recorded ahead the newest rate is not the one counted (review of the
+   * posted average's rate era, 2026-10-12).
+   */
+  const atToday = era === null ? null : "at today's rate";
   /**
    * ⛔ `unverified` presents as "nothing checks it", and that is FALSE of both
    * populations it lands on here. Rent seen three times at three different
@@ -2378,12 +2399,12 @@ function recurringSeriesProvenance(db: AppDatabase, id: string, today: string): 
       seen === 0
       ? undefined
       : seen < MIN_OCCURRENCES
-        ? `seen ${seen === 1 ? "once" : `${seen} times`}${era === null ? "" : " at the new rate"}`
+        ? `seen ${seen === 1 ? "once" : `${seen} times`}${atToday === null ? "" : ` ${atToday}`}`
         : distinct.size > 1
           ? `${distinct.size} different amounts`
-          : // checked by documents that agree, on another amount: "paid -$19.59 at the new rate"
+          : // checked by documents that agree, on another amount: "paid -$19.59 at today's rate"
             offFigure
-            ? `paid ${formatCents(agreed!)} ${era === null ? "each time" : "at the new rate"}`
+            ? `paid ${formatCents(agreed!)} ${atToday ?? "each time"}`
             : undefined;
 
   /*
@@ -2415,8 +2436,7 @@ function recurringSeriesProvenance(db: AppDatabase, id: string, today: string): 
       return `Only ${n} tagged ${n === 1 ? "posting has" : "postings have"} ever landed — ${BELOW_A_PATTERN}.`;
     if (k === 0) return `No payment of it has posted.${nothing}`;
     // ⛔ the gate on what is counted (`seen`, one count): "That is 2 payments — below the 3 …", as with a rate change
-    const thin =
-      k < MIN_OCCURRENCES ? ` That is ${k === 1 ? "one payment" : `${k} payments`} — ${BELOW_A_PATTERN}.` : "";
+    const thin = anecdoteWords(k, "payment");
     if (k === 1) {
       const only = payments[0]!;
       const paid = formatCents(only.amountCents);
