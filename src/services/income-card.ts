@@ -9,6 +9,7 @@ import {
   LAST_CHECKED_DAY,
   NOT_CHECKED,
   noIncomeDayCheckedNote,
+  paidEarlyAside,
   payNotBankedYet,
   sharedFrontier,
   unbankedIncomeFrontierClause,
@@ -290,6 +291,8 @@ export interface IncomePayLine extends Gap {
   lastBankedOn: string | null;
   /** pay periods since the last attributed deposit, counted to today — none a deposit paid (`periodsSinceBanked`) */
   silentPeriods: number;
+  /** …and the paydays since it a deposit paid early, which that count leaves out (`silencePaidEarly`), oldest first */
+  silencePaidEarly: readonly string[];
   /** of those, the ones that fell on days the records already cover */
   checkedSilentPeriods: number;
   /**
@@ -425,9 +428,12 @@ function verdictFor(line: Omit<IncomePayLine, "verdict">): string {
     },
     formatDayShort,
   );
-  // "with no deposit" is the clause's to say, and only of the days it checked
+  // "with no deposit" is the clause's to say, and only of the days it checked — and the paydays the count leaves out
+  // are named, as /spending's stale note names them (`paidEarlyAside`; review of 337baa7: "2 paydays have passed
+  // since the last deposit on Sep 30" with Oct 1, which Sep 30 paid early, 8 and 15 passed)
+  const aside = paidEarlyAside(line.silencePaidEarly, formatDayShort);
   const notAllLooked =
-    unread === null ? null : `${passed} since the last deposit on ${formatDayShort(lastBankedOn)}. ${unread}`;
+    unread === null ? null : `${passed} since the last deposit on ${formatDayShort(lastBankedOn)}${aside}. ${unread}`;
 
   if (line.basis === "series-live") {
     if (silentPeriods === 0) {
@@ -562,6 +568,7 @@ export function incomeCard(db: AppDatabase, today: string = todayIso()): IncomeC
       basis: r.basis,
       lastBankedOn: r.lastBankedOn,
       silentPeriods: r.periodsSinceBanked,
+      silencePaidEarly: r.silencePaidEarly,
       /*
        * ⛔ The reading's own (`checkedSilence` over its as-of reading): the silence it counts, none a deposit paid. 🔴
        * Review of 27ca437: read off this card's as-of reading, which asks without the settlement, it counted Thu Oct 1

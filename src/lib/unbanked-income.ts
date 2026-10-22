@@ -97,6 +97,24 @@ export function payNotBankedYet(
 }
 
 /**
+ * " (not counting Oct 1, which was paid early)" — after "N paydays have passed since the last deposit on …", the
+ * silence's paydays a deposit paid (`CashEarnings.silencePaidEarly`), which N leaves out; empty when there are none.
+ * Earned vs banked's verdict and /spending's note for a stale schedule, each with its own day format.
+ *
+ * ⚖️ The count is the paydays no deposit paid (default built, not asked, 2026-10-21), and "early" is the word /budgets
+ * and /spending give a payday paid before it (decisions 29/32). ⛔ Never "with no deposit" in its place: of a payday
+ * past the checked day that is a claim about a day nobody has read (27ca437's V2). 🔴 Review of 337baa7 (MEDIUM): with
+ * Wed Sep 30's payroll paying Thu Oct 1 early, the card read "2 paydays have passed since the last deposit on Sep 30"
+ * with Oct 1, 8 and 15 passed, and /spending "4 expected paydays have passed since the last deposit on Wed, Sep 30,
+ * 2026" with five Thursdays passed (his ledger copy 2026-10-21, the Sep 30 row inserted).
+ */
+export function paidEarlyAside(paydays: readonly string[], formatPayday: (iso: string) => string): string {
+  if (paydays.length === 0) return "";
+  const which = paydays.length === 1 ? "which was" : "which were";
+  return ` (not counting ${AND_LIST.format(paydays.map(formatPayday))}, ${which} paid early)`;
+}
+
+/**
  * ⚖️ §6A 68 (2026-10-13): why a month's income prints "—" — not one day of it checked where the pay lands
  * (`IncomeExpectation.noIncomeDayRead`). The line under the dash on both surfaces that print one: Earned vs banked's
  * "Income recorded in Oct 2026 —", in place of "an empty month is what an unimported month looks like…" (which says

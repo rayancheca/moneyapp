@@ -444,6 +444,21 @@ describe("cashEarnings — banked, and the gap between", () => {
     expect(ahead.basis).toBe("series-live");
   });
 
+  /*
+   * ⛔ …and the paydays it leaves out are named, so a sentence counting "N paydays … since the last deposit" can say
+   * which it did not count (`paidEarlyAside`). 🔴 Review of 337baa7 (MEDIUM): the count dropped Thu Oct 1 and the card
+   * still read "2 paydays have passed since the last deposit on Sep 30" with Oct 1, 8 and 15 all passed.
+   */
+  test("the silence's paydays a deposit paid are named, oldest first — none when nothing settled", () => {
+    const banked = [{ postedOn: "2026-06-17", amountCents: 104_600 }];
+    const asked = { banked, to: "2026-07-31", today: "2026-07-10" };
+    expect(read(asked).silencePaidEarly).toEqual([]);
+    // a payday before the silence opens (Jun 11, before Jun 17's deposit) is never one of them
+    const r = read({ ...asked, settledPaydays: new Set(["2026-06-25", "2026-06-18", "2026-06-11"]) });
+    expect(r.silencePaidEarly).toEqual(["2026-06-18", "2026-06-25"]);
+    expect(r.periodsSinceBanked).toBe(2);
+  });
+
   test("unordered deposits give the same answer as sorted ones", () => {
     const rows = [
       { postedOn: "2026-06-18", amountCents: 104_600 },

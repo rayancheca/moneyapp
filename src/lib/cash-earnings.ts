@@ -172,6 +172,12 @@ export interface CashEarnings {
    * nothing banked — through the last one passed, less those a deposit paid (`settledPaydays`)
    */
   periodsSinceBanked: number;
+  /**
+   * …and those it left out: the silence's paydays a deposit paid, oldest first — EARLY, every one, as each falls after
+   * the last day that banked and nothing after today has arrived. A sentence counting the silence "since the last
+   * deposit" names them (`paidEarlyAside`). Empty when no settlement was given.
+   */
+  silencePaidEarly: readonly string[];
 }
 
 const EMPTY: CashEarnings = {
@@ -184,6 +190,7 @@ const EMPTY: CashEarnings = {
   lastPeriodOn: null,
   lastBankedOn: null,
   periodsSinceBanked: 0,
+  silencePaidEarly: [],
 };
 
 /** The earlier of two dates. */
@@ -379,10 +386,13 @@ export function cashEarnings({
    * one /budgets' "already passed" counts. 🔴 Review of 27ca437: with Wed Sep 30's
    * payroll paying Thu Oct 1 early and Wells Fargo read through Oct 2, Earned vs
    * banked said "1 falls on a day already checked, with no deposit" of Oct 1
-   * (his ledger copy 2026-10-21, the Sep 30 row inserted).
+   * (his ledger copy 2026-10-21, the Sep 30 row inserted). ⛔ The ones it leaves
+   * out are named (`silencePaidEarly`): 🔴 review of 337baa7 — the card then read
+   * "2 paydays have passed since the last deposit on Sep 30" with three passed.
    */
-  const periodsSinceBanked = occurrenceDaysBetween(series, silenceFrom(lastBankedOn, series.startedOn), earnedThrough)
-    .filter((day) => !settledPaydays.has(day)).length;
+  const silent = occurrenceDaysBetween(series, silenceFrom(lastBankedOn, series.startedOn), earnedThrough);
+  const silencePaidEarly = silent.filter((day) => settledPaydays.has(day));
+  const periodsSinceBanked = silent.length - silencePaidEarly.length;
 
   return {
     basis: periodsSinceBanked >= STALE_PERIODS ? "series-stale" : "series-live",
@@ -394,6 +404,7 @@ export function cashEarnings({
     lastPeriodOn: covered.lastOn,
     lastBankedOn,
     periodsSinceBanked,
+    silencePaidEarly,
   };
 }
 

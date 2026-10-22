@@ -1059,9 +1059,16 @@ describe("cashEarningsSectionNotes", () => {
       );
     });
 
-    test("read in part: after what reached an account through the checked day, before the paydays past it", () => {
+    /*
+     * ⛔ After the paydays past the checked day, so "after that" is the checked day. 🔴 Review of 337baa7 (MEDIUM): put
+     * between the two, it read "…reached an account through Fri, Oct 16, 2026; $1,141.92 went back out on Fri, Sep 25,
+     * 2026; the other payday falls after that, the last day every account that pay lands in has been checked through"
+     * — Sep 25 read as the checked day (his ledger copy 2026-10-21, the Sep 25 return inserted, today Oct 23).
+     */
+    test("read in part: after the paydays past the checked day, which 'after that' still names", () => {
       expect(lead({ ...checked, periodsCovered: 5, checkedPeriodsCovered: 3 })).toContain(
-        `none of it reached an account through 2026-08-12; ${BACK}; the other 2 paydays fall after that,`,
+        `none of it reached an account through 2026-08-12; the other 2 paydays fall after that, the last day every ` +
+          `account that pay lands in has been checked through; ${BACK}.`,
       );
     });
 
@@ -1081,6 +1088,72 @@ describe("cashEarningsSectionNotes", () => {
     test("no money out: the claim is the one it always was", () => {
       expect(lead({ shortfall: { ...OUT, wentBackOut: [] } })).toBe(
         "Cash job (weekly pay) implies $5,230.00 of earnings over Jul 2 – 30, 2026 and none of it reached an account.",
+      );
+    });
+
+    /*
+     * ⛔ …and the pay deposits OUTSIDE the window put into its read paydays (`paidOutside`), in the shortfall note's
+     * words — the money that reached an account is then the window's own, "inside the window". 🔴 Review of 337baa7
+     * (MEDIUM, pre-existing): with Wed Sep 30's payroll paying Thu Oct 1 early, Wells Fargo read through Oct 23 and
+     * today Oct 30, October read "implies $5,709.60 of earnings over Oct 1 – 29, 2026 and none of it reached an account
+     * through Fri, Oct 23, 2026" while the calendar drew Oct 1 paid by the deposit of Sep 30 — and the live schedule's
+     * shortfall note named it "paid early, by the deposit of Wed, Sep 30, 2026" (his ledger copy 2026-10-21, the Sep 30
+     * row inserted).
+     */
+    describe("…and what deposits outside the window paid of its read paydays", () => {
+      const EARLY = { depositOn: "2026-07-01", paydays: ["2026-07-02"], cents: 104_600, early: true };
+      const PAID = "$1,046.00 (Jul 2) was paid early, by the deposit of 2026-07-01";
+
+      test("read in full: none of it reached an account inside the window, and who paid the rest", () => {
+        expect(lead({ shortfall: { ...OUT, paidOutside: [EARLY], wentBackOut: [] } })).toBe(
+          "Cash job (weekly pay) implies $5,230.00 of earnings over Jul 2 – 30, 2026 and none of it reached an account " +
+            `inside the window; ${PAID}.`,
+        );
+      });
+
+      test("read in part: after the paydays past the checked day, before the money that went back out", () => {
+        expect(
+          lead({ ...checked, bankedCents: 104_600, checkedPeriodsCovered: 3, shortfall: { ...OUT, paidOutside: [EARLY] } }),
+        ).toContain(
+          "only $1,046.00 reached an account inside the window through 2026-08-12; the other 2 paydays fall after " +
+            `that, the last day every account that pay lands in has been checked through; ${PAID}; ${BACK}.`,
+        );
+      });
+
+      test("paid late, by a deposit after the window, is 'paid by', never 'early'", () => {
+        const late = { ...EARLY, depositOn: "2026-08-03", paydays: ["2026-07-30"], early: false };
+        expect(lead({ shortfall: { ...OUT, paidOutside: [late], wentBackOut: [] } })).toContain(
+          "none of it reached an account inside the window; $1,046.00 (Jul 30) was paid by the deposit of 2026-08-03.",
+        );
+      });
+    });
+  });
+
+  /*
+   * ⛔ THE SILENCE IS THE PAYDAYS NO DEPOSIT PAID (`periodsSinceBanked`), so a sentence counting them "since the last
+   * deposit" says which it left out (`paidEarlyAside`). 🔴 Review of 337baa7 (MEDIUM): with Wed Sep 30's payroll paying
+   * Thu Oct 1 early, Wells Fargo read through Oct 23 and today Oct 30, /spending October read "Across the whole
+   * schedule, 4 expected paydays have passed since the last deposit on Wed, Sep 30, 2026" — five Thursdays had (his
+   * ledger copy 2026-10-21, the Sep 30 row inserted).
+   */
+  describe("a stale schedule's silence names the paydays a deposit paid early, which it does not count", () => {
+    test("one: '(not counting Jun 11, which was paid early)'", () => {
+      expect(notes({ silencePaidEarly: ["2026-06-11"] })[0]!.body).toContain(
+        "Across the whole schedule, 11 expected paydays have passed since the last deposit on 2026-06-05 (not " +
+          "counting Jun 11, which was paid early) — ",
+      );
+    });
+
+    test("several, before the part the records cover", () => {
+      expect(notes({ ...checked, silencePaidEarly: ["2026-06-11", "2026-06-18"] })[0]!.body).toContain(
+        "11 expected paydays have passed since the last deposit on 2026-06-05 (not counting Jun 11 and Jun 18, which " +
+          "were paid early), and 9 of them fall on days the records cover, through 2026-08-12 — ",
+      );
+    });
+
+    test("none: the sentence it always was", () => {
+      expect(notes({ silencePaidEarly: [] })[0]!.body).toContain(
+        "11 expected paydays have passed since the last deposit on 2026-06-05 — ",
       );
     });
   });

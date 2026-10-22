@@ -311,15 +311,17 @@ describe("a payday checked on its day but not through its days to land never 'ne
 
   // ⛔ …and never a payday before the silence: Aug 13, unpaid before Fri Aug 14's $500.00, is the window's, not its.
   // ⚖️ Nor Sep 10, which that $500.00 paid early (the newest payday its 28 days reach — the calendar draws it paid):
-  // three silent paydays, every one checked, so nothing is "not looked for"
+  // three silent paydays, every one checked, so nothing is "not looked for" — and Sep 10 named as the one it does not
+  // count, with four passed since Aug 14 (review of 337baa7, MEDIUM)
   test("/spending's stale sentence names the verdict's paydays — Aug 20, Aug 27 and Sep 3, never Aug 13", () => {
     deposit("2026-08-14", 50_000);
     const verdict = raisedFromAug13(28);
 
     expect(verdict).toContain("the days to land of Aug 20, Aug 27, and Sep 3 run past Sep 5,");
     const sentence =
-      "Across the whole schedule, 3 expected paydays have passed since the last deposit on Fri, Aug 14, 2026 — that " +
-      "money was held as cash, spent as cash, the schedule has ended, or the days to land of Aug 20, Aug 27, and " +
+      "Across the whole schedule, 3 expected paydays have passed since the last deposit on Fri, Aug 14, 2026 (not " +
+      "counting Sep 10, which was paid early) — that money was held as cash, spent as cash, the schedule has ended, " +
+      "or the days to land of Aug 20, Aug 27, and " +
       `Sep 3 run past Sat, Sep 5, 2026, ${CHECKED_DAY} — so their pay is not banked yet. The income figures on this ` +
       "page count deposits, so they cannot tell you which.";
     for (const [from, to] of STALE_WINDOWS) expect(staleSentence(from, to)).toBe(sentence);
@@ -339,8 +341,9 @@ describe("a payday checked on its day but not through its days to land never 'ne
     );
     for (const [from, to] of STALE_WINDOWS) {
       expect(staleSentence(from, to)).toContain(
-        "since the last deposit on Thu, Aug 13, 2026 — that money was held as cash, spent as cash, the schedule has " +
-          "ended, or the days to land of Aug 20, Aug 27, and Sep 3 run past Sat, Sep 5, 2026,",
+        "since the last deposit on Thu, Aug 13, 2026 (not counting Sep 10, which was paid early) — that money was " +
+          "held as cash, spent as cash, the schedule has ended, or the days to land of Aug 20, Aug 27, and Sep 3 run " +
+          "past Sat, Sep 5, 2026,",
       );
     }
   });
@@ -510,9 +513,11 @@ describe("the silence the verdict and /spending's stale note count, and the mone
     expect(paydaySettlement(bundle.db, SERIES, TODAY).settledBy.get("2026-08-27")).toBe("2026-08-26");
     const line = incomeCard(bundle.db, TODAY)!.pay[0]!;
     expect(line.silentPeriods).toBe(2);
+    // ⛔ …nor does it say "2 paydays have passed since the last deposit" with Aug 27, Sep 3 and Sep 10 all passed
+    // (review of 337baa7, MEDIUM): it names the one it does not count
     expect(line.verdict).toBe(
-      `2 paydays have passed since the last deposit on Aug 26. Both fall after Aug 28, ${CHECKED_DAY} — so the ` +
-        "ledger has not looked for their deposits.",
+      "2 paydays have passed since the last deposit on Aug 26 (not counting Aug 27, which was paid early). Both fall " +
+        `after Aug 28, ${CHECKED_DAY} — so the ledger has not looked for their deposits.`,
     );
     // …as /spending says it, of a window holding Aug 27 and not its deposit
     expect(spending("2026-08-27", "2026-09-02").join(" ")).toContain(
@@ -534,9 +539,30 @@ describe("the silence the verdict and /spending's stale note count, and the mone
     );
     for (const [from, to] of STALE_WINDOWS) {
       expect(staleSentence(from, to)).toContain(
-        "Across the whole schedule, 5 expected paydays have passed since the last deposit on Wed, Aug 5, 2026 — ",
+        "Across the whole schedule, 5 expected paydays have passed since the last deposit on Wed, Aug 5, 2026 (not " +
+          "counting Aug 6, which was paid early) — ",
       );
     }
+  });
+
+  /*
+   * ⛔ …and its note never says "none of it reached an account" of a read payday a deposit outside the window paid —
+   * it names that money as the live schedule's shortfall note does. 🔴 Review of 337baa7 (MEDIUM, pre-existing): with
+   * Wed Sep 30's payroll paying Thu Oct 1, Wells Fargo read through Oct 23 and today Oct 30, /spending October read
+   * "none of it reached an account through Fri, Oct 23, 2026" of Oct 1, which the calendar drew paid by Sep 30.
+   */
+  test("stale: a window opening on Aug 6 names Wed Aug 5's deposit paying it early, as the calendar draws it", () => {
+    paidThrough("2026-07-30");
+    deposit("2026-08-05");
+    readThrough("2026-09-12");
+
+    expect(paydaySettlement(bundle.db, SERIES, TODAY).settledBy.get("2026-08-06")).toBe("2026-08-05");
+    const [note] = spending("2026-08-06", "2026-08-31");
+    expect(note).toBe(
+      "It America LLC (weekly pay) implies $4,000.00 of earnings over Aug 6 – 27, 2026 and none of it reached an " +
+        "account inside the window; $1,000.00 (Aug 6) was paid early, by the deposit of Wed, Aug 5, 2026. " +
+        staleSentence("2026-08-06", "2026-08-31"),
+    );
   });
 
   /*
@@ -561,8 +587,9 @@ describe("the silence the verdict and /spending's stale note count, and the mone
       ["2026-07-01", "2026-09-30"],
       ["2026-01-01", "2026-12-31"],
     ] as const) {
+      // ⛔ after "the other payday falls after that, …", which names the checked day — never Aug 7 (review of 337baa7)
       expect(spending(from, to).join(" ")).toContain(
-        `reached an account through Sat, Sep 5, 2026; ${back}; the other payday falls after that,`,
+        `reached an account through Sat, Sep 5, 2026; the other payday falls after that, ${CHECKED_DAY}; ${back}.`,
       );
     }
     // a window without Aug 7 has no money out to name

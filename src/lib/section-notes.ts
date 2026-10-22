@@ -8,9 +8,15 @@ import { STALE_PERIODS, type CashEarningsBasis } from "./cash-earnings";
 import { compareDates } from "./dates";
 import { formatDayShortIn } from "./format-date";
 import { depositsOf } from "./paid-by-another-month";
-import { wentBackOutPhrase, type PayShortfall } from "./pay-shortfall";
+import { wentBackOutPhrase, type PaidOutside, type PayShortfall } from "./pay-shortfall";
 import { TOWARD_NO_PAYDAY } from "./per-payday";
-import { daysToLandRunPast, LAST_CHECKED_DAY, notLookedForDeposits, payNotBankedYet } from "./unbanked-income";
+import {
+  daysToLandRunPast,
+  LAST_CHECKED_DAY,
+  notLookedForDeposits,
+  paidEarlyAside,
+  payNotBankedYet,
+} from "./unbanked-income";
 
 /**
  * A section note is AUTHORED COPY selected by a MEASURED predicate, with every
@@ -492,6 +498,8 @@ export interface CashEarningsNoteInput {
     bankedCents: number;
     unbankedCents: number;
     periodsSinceBanked: number;
+    /** the silence's paydays a deposit paid early, which `periodsSinceBanked` leaves out — absent or empty: none */
+    silencePaidEarly?: readonly string[];
     lastBankedOn: string | null;
     /**
      * The first and last payday the implied figure actually counted —
@@ -631,7 +639,22 @@ export function cashEarningsSectionNotes(input: CashEarningsNoteInput): SectionN
        * — it holds four.
        */
       const through = r.checkedThrough ? input.formatDay(r.checkedThrough) : null;
-      const reached = r.bankedCents === 0 ? "none of it reached an account" : `only ${formatCents(r.bankedCents)} reached an account`;
+      const payday = (iso: string): string => formatDayShortIn(iso, r.lastPeriodOn ?? iso);
+      /*
+       * ⛔ What deposits OUTSIDE the window paid of its read paydays (`paidOutside`), in the shortfall note's words
+       * (`paidOutsidePhrases`) — and the money that "reached an account" is then the window's own, "inside the window".
+       * 🔴 Review of 337baa7 (MEDIUM, pre-existing): with Wed Sep 30's payroll paying Thu Oct 1 early, Wells Fargo read
+       * through Oct 23 and today Oct 30, October read "implies $5,709.60 of earnings over Oct 1 – 29, 2026 and none of
+       * it reached an account through Fri, Oct 23, 2026" of the Oct 1 the calendar drew paid by the deposit of Sep 30,
+       * and the live schedule's shortfall note names "paid early, by the deposit of Wed, Sep 30, 2026" (his ledger copy
+       * 2026-10-21, the Sep 30 row inserted).
+       */
+      const outside = paidOutsidePhrases(r.shortfall?.paidOutside ?? [], payday, input.formatDay);
+      const inside = outside.length === 0 ? "" : " inside the window";
+      const reached =
+        r.bankedCents === 0
+          ? `none of it reached an account${inside}`
+          : `only ${formatCents(r.bankedCents)} reached an account${inside}`;
       const covered = r.periodsCovered ?? 0;
       const readCovered = r.checkedPeriodsCovered ?? 0;
       const unread = covered - readCovered;
@@ -645,18 +668,25 @@ export function cashEarningsSectionNotes(input: CashEarningsNoteInput): SectionN
        */
       // the one rule's days (`moneyOutOfWindow`) — the reading's `bankedCents` above is that rule's figure
       const out = r.shortfall?.wentBackOut ?? [];
-      const back = out.length === 0 ? "" : `; ${wentBackOutPhrase(out, input.formatDay)}`;
+      /*
+       * ⛔ Both after the claim, last, as the card names its money out last — never between "through <day>" and "the
+       * other payday falls after that". 🔴 Review of 337baa7 (MEDIUM): there, on his ledger copy 2026-10-21 with the
+       * Sep 25 return and Wells Fargo read through Oct 16, YTD read "…through Fri, Oct 16, 2026; $1,141.92 went back
+       * out on Fri, Sep 25, 2026; the other payday falls after that, the last day …" — Sep 25 read as the checked day.
+       */
+      const named = [...outside, ...(out.length === 0 ? [] : [wentBackOutPhrase(out, input.formatDay)])];
+      const after = named.map((words) => `; ${words}`).join("");
       const claim = !measuredRead || (through !== null && unread <= 0)
-        ? ` and ${reached}${back}.`
+        ? ` and ${reached}${after}.`
         : through === null
           ? ` — and the account it lands in has not been checked, so the ledger cannot say whether any of it ` +
-            `arrived${back}.`
+            `arrived${after}.`
           : readCovered === 0
-            ? `, all of it after ${through}, ${LAST_CHECKED_DAY} — so the ledger has not looked for it${back}.`
+            ? `, all of it after ${through}, ${LAST_CHECKED_DAY} — so the ledger has not looked for it${after}.`
             : // "the other payday" of one — 🔴 "the other 1 payday falls after that" (review of 8ef2fc5)
-              ` and ${reached} through ${through}${back}; ` +
+              ` and ${reached} through ${through}; ` +
               `${unread === 1 ? "the other payday falls" : `the other ${unread} paydays fall`} after that, ` +
-              `${LAST_CHECKED_DAY}.`;
+              `${LAST_CHECKED_DAY}${after}.`;
 
       const readPart =
         measuredRead && through !== null && readSilence < r.periodsSinceBanked
@@ -666,8 +696,9 @@ export function cashEarningsSectionNotes(input: CashEarningsNoteInput): SectionN
         r.lastBankedOn === null
           ? `Across the whole schedule, ${r.periodsSinceBanked} expected paydays have passed and ` +
             `no deposit has ever been attributed to it${readPart}`
-          : `Across the whole schedule, ${r.periodsSinceBanked} expected paydays have passed ` +
-            `since the last deposit on ${input.formatDay(r.lastBankedOn)}${readPart}`;
+          : // …less the paydays a deposit paid early, named (`paidEarlyAside`), as the card names them
+            `Across the whole schedule, ${r.periodsSinceBanked} expected paydays have passed since the last deposit ` +
+            `on ${input.formatDay(r.lastBankedOn)}${paidEarlyAside(r.silencePaidEarly ?? [], payday)}${readPart}`;
       // a list of explanations is only complete when the ledger looked at every payday it counts
       /*
        * ⚖️ …and the one it adds says what the quiet waits for (his decision 65, 2026-10-12), in the forecast's words
@@ -686,7 +717,6 @@ export function cashEarningsSectionNotes(input: CashEarningsNoteInput): SectionN
        * an unpaid Aug 13, a window holding Aug 13 named it where the verdict names Aug 20, Aug 27 and Sep 3.
        */
       const inGrace = r.checkedSilentNotBankedYet ?? [];
-      const payday = (iso: string): string => formatDayShortIn(iso, r.lastPeriodOn ?? iso);
       const explanations = OR_LIST.format([
         "that money was held as cash",
         "spent as cash",
@@ -819,11 +849,7 @@ function payShortfallNote(
 
   // the paydays inside the span the lead names, so the span's year is theirs
   const payday = (iso: string): string => formatDayShortIn(iso, s.lastReadOn ?? iso);
-  const outside = s.paidOutside.map(
-    (p) =>
-      `${formatCents(p.cents)} (${AND_LIST.format(p.paydays.map(payday))}) was paid ${p.early ? "early, " : ""}by ` +
-      `the ${depositsOf([p.depositOn], formatDay)}`,
-  );
+  const outside = paidOutsidePhrases(s.paidOutside, payday, formatDay);
   // ⚖️ "never" only past a payday's days to land (`unbankedSplit`); inside them, the forecast's "not banked yet"
   const notYet = s.notBankedYetCents > 0 ? [`${formatCents(s.notBankedYetCents)} is not banked yet`] : [];
   const never = s.neverBankedCents > 0 ? [`${formatCents(s.neverBankedCents)} never reached a bank`] : [];
@@ -867,6 +893,23 @@ function payShortfallNote(
   const unlooked = unlookedPhrase(s.unlookedPaydays, checkedThrough, formatDay, "more ", grace === "");
 
   return { kind: "shortfall", body: `${lead}${split}${grace}${beyond}${back}${unlooked}.` };
+}
+
+/**
+ * "$1,141.92 (Oct 1) was paid early, by the deposit of Wed, Sep 30, 2026" — what each deposit day OUTSIDE a period put
+ * into its read paydays (`PayShortfall.paidOutside`), "early" when it landed before the period (§6A 29). ⛔ One spelling
+ * for the shortfall note and the note for a stale schedule (review of 337baa7).
+ */
+function paidOutsidePhrases(
+  parts: readonly PaidOutside[],
+  payday: (iso: string) => string,
+  formatDay: (iso: string) => string,
+): string[] {
+  return parts.map(
+    (p) =>
+      `${formatCents(p.cents)} (${AND_LIST.format(p.paydays.map(payday))}) was paid ${p.early ? "early, " : ""}by ` +
+      `the ${depositsOf([p.depositOn], formatDay)}`,
+  );
 }
 
 /** One period's pay note beside its figures: the shortfall note, or — no payday read — the note on its money. */
