@@ -322,8 +322,15 @@ describe("incomeCard", () => {
     // Jun 11 … Aug 6 fall at or before Aug 12; Aug 13 and Aug 20 do not
     expect(line.silentPeriods).toBe(11);
     expect(line.checkedSilentPeriods).toBe(9);
-    expect(line.verdict).toContain("the pay did not reach a bank");
-    expect(line.verdict).not.toContain("has not looked");
+    // ⛔ "did not reach a bank" of the nine the records cover, and the two after Aug 12 named as not looked for — never
+    // "with no deposit" of them. 🔴 It read "11 paydays have passed since Jun 4 with no deposit. 9 of them fall on
+    // days the records already cover, through Aug 12 — so the pay did not reach a bank." (review of 0c9bc8d)
+    expect(line.verdict).toBe(
+      "11 paydays have passed since the last deposit on Jun 4. 9 of them fall on days the records already cover, " +
+        "through Aug 12 — so the pay did not reach a bank; the other 2 fall after Aug 12, the last day every account " +
+        "that pay lands in has been checked through — so the ledger has not looked for their deposits. Whether it " +
+        "was earned is a different question, and this card cannot answer it.",
+    );
   });
 
   test("a silence inside the unimported tail is reported as the ledger not having looked", () => {
@@ -668,6 +675,21 @@ describe("incomeCard", () => {
     addTxn(PAY_START, 100_000);
 
     expect(incomeCard(bundle.db, TODAY)!.caveat).toContain("not money the app has found");
+  });
+
+  /*
+   * ⚖️ Default built, not asked (2026-10-21): "Pay", never "Cash pay" — an app label, and since Aug 27, 2026 his pay is
+   * payroll by ACH into Wells Fargo (decision 55), the forecast's rule (`unbanked-income`). 🔴 The caveat under Earned vs
+   * banked still said "Cash pay can sit undeposited" beside his payroll (review of 878c3d5's batch).
+   */
+  test("the caveat is true of payroll as of cash: it says 'Cash pay' of neither", () => {
+    addSeries();
+    addTxn(PAY_START, 100_000);
+
+    const { caveat } = incomeCard(bundle.db, TODAY)!;
+    expect(caveat).not.toMatch(/Cash pay/);
+    expect(caveat).toContain("payroll can land in an account the ledger does not read");
+    expect(caveat).toContain("nothing here can tell those apart");
   });
 
   test("a ledger with no confirmed income series returns null rather than a card of zeroes", () => {

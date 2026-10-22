@@ -2,6 +2,8 @@ import { describe, expect, test } from "vitest";
 import { paydayReadings, type PaydayReading } from "./per-payday";
 import {
   atTodaysRate,
+  daysThatBanked,
+  daysThatWentBackOut,
   nettedToNothing,
   occurrencesOf,
   perPaydayEvidence,
@@ -263,6 +265,48 @@ describe("occurrencesOf — a day that nets to $0.00 is no payment", () => {
 
   test("a series whose every day paid something has nothing netted", () => {
     expect(nettedToNothing(RENT_ROWS)).toEqual([]);
+  });
+});
+
+/**
+ * ⚖️ His decision 75: a pay series' days are read by their net — a day that BANKED (`daysThatBanked`), a day money went
+ * back OUT on (`daysThatWentBackOut`: a payroll returned on a later day, a clawback, a return larger than the day's
+ * pay), or a day that netted to nothing (`nettedToNothing`). Every day is exactly one of the three.
+ */
+describe("daysThatWentBackOut — the days a pay series' money went back out on, a day of its own", () => {
+  const PAY_DAYS = rowsOf([
+    ["2026-09-24", WEEK],
+    ["2026-09-25", -WEEK],
+    ["2026-09-26", 10_000],
+    ["2026-09-26", -30_000],
+    ["2026-09-27", WEEK],
+    ["2026-09-27", -WEEK],
+    ["2026-09-28", -5_000],
+    ["2026-09-28", -5_000],
+    ["2026-09-29", WEEK],
+    ["2026-09-29", -50_000],
+  ]);
+
+  test("each day whose rows net below $0.00, by its net, oldest first — a partial same-day return is not one", () => {
+    expect(daysThatWentBackOut(PAY_DAYS)).toEqual([
+      { postedOn: "2026-09-25", amountCents: -WEEK, postings: 1 },
+      { postedOn: "2026-09-26", amountCents: -20_000, postings: 2 },
+      { postedOn: "2026-09-28", amountCents: -10_000, postings: 2 },
+    ]);
+  });
+
+  test("…so every day is one of three: banked, back out, or netted to nothing", () => {
+    expect(daysThatBanked(PAY_DAYS).map((d) => [d.postedOn, d.amountCents])).toEqual([
+      ["2026-09-24", WEEK],
+      ["2026-09-29", WEEK - 50_000],
+    ]);
+    expect(nettedToNothing(PAY_DAYS).map((d) => d.postedOn)).toEqual(["2026-09-27"]);
+    const days = [...daysThatBanked(PAY_DAYS), ...daysThatWentBackOut(PAY_DAYS), ...nettedToNothing(PAY_DAYS)];
+    expect(days.map((d) => d.postedOn).sort()).toEqual([...new Set(PAY_DAYS.map((r) => r.postedOn))].sort());
+  });
+
+  test("a series no money left has no such day", () => {
+    expect(daysThatWentBackOut(HIS_ROWS)).toEqual([]);
   });
 });
 

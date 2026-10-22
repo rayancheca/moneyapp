@@ -472,6 +472,26 @@ describe("payShortfall — the frontier between Wednesday's deposit and the Thur
     const year = net(read("2026-01-01", TODAY));
     expect(net(read("2026-01-01", "2026-09-30")) + net(read("2026-10-01", TODAY))).toBe(year);
   });
+
+  /*
+   * ⛔ CROSSED means PASSED and checked: a payday dated today has passed only once a deposit lands today
+   * (`cashEarnings`' rule), so on Thu Oct 1, read through Oct 1 with nothing yet landed that day, Oct 1 is no window's
+   * read payday — Wed Sep 30's money for it stays September's own, paid early. 🔴 Unpinned: `read` without `passed`
+   * left every test green (review of the shortfall batch).
+   */
+  test("on Thu Oct 1 itself, read through it and nothing landed yet: Oct 1 is not passed, so nothing crosses", () => {
+    const onOct1 = (from: string, to: string) =>
+      shortfallOf(HIS_PAYDAYS, IMPORTED, { from, to, today: "2026-10-01", checkedThrough: "2026-10-01" });
+    const september = onOct1("2026-09-01", "2026-09-30");
+    // only Sep 24's money for Aug 27, a read payday of August's, crosses
+    expect(september.paidAcross).toEqual([
+      { depositOn: "2026-09-24", paydays: ["2026-08-27"], cents: PAYROLL, early: false },
+    ]);
+    expect(september.paidUncounted).toEqual([
+      { depositOn: "2026-09-30", paydays: ["2026-10-01"], cents: PAYROLL, early: true },
+    ]);
+    expect(onOct1("2026-10-01", "2026-10-31").readPaydays).toBe(0);
+  });
 });
 
 /**
@@ -673,6 +693,34 @@ describe("payShortfall — money that went back out on a day of its own", () => 
     expect(at(40_000).neverBankedCents).toBe(274_100 + 40_000);
     expect(at(50_000).wentBackOut).toEqual([{ postedOn: "2026-06-12", cents: 50_000 }]);
     expect(at(50_000).neverBankedCents).toBe(274_100);
+  });
+
+  /*
+   * ⛔ OLDEST FIRST, as the money left: each day is netted while what is left of the money that paid no read payday
+   * covers it, and a day it cannot cover is named whole while a later, smaller one is still netted. 🔴 Unpinned — the
+   * days sorted largest first left every test passing (review of the shortfall batch).
+   */
+  test("the days are netted oldest first: a smaller earlier day is netted, and the later one it leaves short named", () => {
+    const june = (out: readonly [string, number][]) =>
+      shortfallOf(
+        HIS_PAYDAYS,
+        [...HIS_DEPOSITS, ...out.map(([postedOn, cents]) => ({ postedOn, amountCents: -cents }))],
+        { from: "2026-06-01", to: "2026-06-30", today: TODAY, checkedThrough: CHECKED },
+      );
+    // Jun 5's $400.00: $100.00 back on Jun 12 is netted, and the $300.00 left cannot cover Jun 19's $350.00
+    const smallFirst = june([
+      ["2026-06-12", 10_000],
+      ["2026-06-19", 35_000],
+    ]);
+    expect(smallFirst.wentBackOut).toEqual([{ postedOn: "2026-06-19", cents: 35_000 }]);
+    expect(smallFirst.bankedCents).toBe(CASH + 40_000 - 10_000);
+    // $500.00 back on Jun 12 is more than all of it, so it is named — and Jun 19's $100.00 is still netted
+    const largeFirst = june([
+      ["2026-06-12", 50_000],
+      ["2026-06-19", 10_000],
+    ]);
+    expect(largeFirst.wentBackOut).toEqual([{ postedOn: "2026-06-12", cents: 50_000 }]);
+    expect(largeFirst.bankedCents).toBe(CASH + 40_000 - 10_000);
   });
 
   test("every window's figures add up, with the money that went back out among the window's own", () => {

@@ -25,15 +25,17 @@ import { rateOn } from "./series-kind";
  *
  * ⛔ What it must never be read as saying. A positive `unbankedCents` is NOT a
  * claim that the money exists somewhere. It is the arithmetic difference between
- * two known quantities, and it has at least three innocent explanations that
+ * two known quantities, and it has at least four innocent explanations that
  * this module cannot distinguish between:
  *
  *   - the cash is held, undeposited (the `Cash on Hand` float);
  *   - the cash was spent directly, never touching a bank;
+ *   - payroll landed in an account the ledger does not read (`ACCOUNT_NOT_READ`
+ *     — his pay is payroll by ACH since Aug 27, 2026, decision 55);
  *   - the series has quietly ended and the schedule is now fiction.
  *
  * `basis` exists so a caller cannot show the number without showing which of
- * those is in play, and `series-stale` exists to make the third one loud. This
+ * those is in play, and `series-stale` exists to make the last one loud. This
  * is the same doctrine as `budgetVerdict`: the reading and the meaning of the
  * reading come out of one call, so they cannot drift apart.
  *
@@ -474,6 +476,13 @@ export interface UnbankedSplit {
  * part first: no deposit settled them, so none of the netted money (decision 55) can be said to have paid them.
  * 🔴 Review of 878c3d5: Thu Sep 3 checked through Sat Sep 5 read "Pay not banked yet" on the forecast and "$1,000.00
  * of it never reached a bank" on the dashboard.
+ *
+ * ⚖️ …past its days to land, "never reached a bank" of a PAYROLL-era payday too, though a later deposit can still pay
+ * it (settlement walks back, as Sep 23's $4,567.68 paid Sep 3, 10 and 17) — default built, not asked (2026-10-21; he
+ * said "no more questions"): decision 55's words, said as of the checked records and re-read on every load, so the
+ * deposit that pays one moves it out of the figure the day it is imported. "Not banked yet" for every payday of an era
+ * still paid would never say "never" of a payroll week months unpaid. Measured on his ledger copy 2026-10-21: no
+ * payroll-era payday is unpaid through the checked Thu Sep 24 — the $11,117.00 is eleven cash weeks less June's $400.00.
  */
 export function unbankedSplit(unbankedCents: number, inGraceCents: number): UnbankedSplit {
   const unbanked = Math.max(0, unbankedCents);

@@ -102,6 +102,19 @@ describe("no client bundle reaches the database or the filesystem", () => {
    * reuse the list's words would have failed `next build` as 0b8d2af did. Its import is type-only since 51054df; this
    * walks every module there, so the next one is caught where it is written, not where it is first imported.
    */
+  /*
+   * Bundle WEIGHT, not a build failure: /spending's pay notes are words over the settlement's answer, so the settlement
+   * itself stays on the server. 🔴 b59ceb2 made section-notes value-import `wentBackOutPhrase` from lib/pay-shortfall,
+   * which brought lib/payday-settlement and lib/occurrence-verdict into CategoryRow's client graph (review of the
+   * pay-chain batch). What it shares lives in lib/pay-window-money.
+   */
+  it("the pay notes' words (section-notes, which CategoryRow imports) reach no settlement code", () => {
+    expect(clientRoots(REAL_TREE)).toContain("src/components/categories/CategoryRow.tsx");
+    const settlement = { files: ["src/lib/pay-shortfall.ts", "src/lib/payday-settlement.ts"], packages: [] };
+    const leaks = findClientBundleLeaks(REAL_TREE, ["src/lib/section-notes.ts"], settlement);
+    expect(leaks.map(formatLeak)).toEqual([]);
+  });
+
   it("on this tree, no module under src/components reaches a forbidden module, client or not", () => {
     const modules = sourceFiles("src/components");
     expect(modules).toContain("src/components/accounts/balance-list-words.ts");

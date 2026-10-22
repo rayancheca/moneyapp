@@ -210,9 +210,9 @@ export function spendingSankey(db: AppDatabase, range: DateRange, today?: string
      *
      * The app knows better and says so two cards up: "Cash job (weekly pay)
      * implies $5,235.00 of earnings in this period and none of it reached an
-     * account", and the runway card's own doctrine — "Cash pay can sit
-     * undeposited, be spent without ever touching a bank, or the arrangement can
-     * have quietly ended — nothing here can tell those three apart."
+     * account", and the income card's own doctrine — "Pay taken in cash can sit
+     * undeposited or be spent without ever touching a bank, … or the arrangement can
+     * have quietly ended — nothing here can tell those apart."
      *
      * All this node knows is that the window spent more than its recorded income,
      * so the balancing amount came from outside it. That is what it says.

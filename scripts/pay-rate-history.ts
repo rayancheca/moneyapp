@@ -239,7 +239,7 @@ export function applyHistory(bundle: DbBundle): void {
 export interface Figures {
   /** his line's implied pay; null when the income card has no line for him */
   impliedCents: number | null;
-  /** his line's "never reached a bank" — the difference less the part after the checked frontier */
+  /** his line's "never reached a bank" — the card's own figure (`Gap.neverCents`): not unread, not banked yet */
   checkedGapCents: number | null;
   totalImpliedCents: number | null;
   totalCheckedGapCents: number | null;
@@ -253,9 +253,9 @@ function figuresOf(bundle: DbBundle, today: string): Figures {
   const month = periodBounds(today, "monthly");
   return {
     impliedCents: line?.impliedCents ?? null,
-    checkedGapCents: line === undefined ? null : line.gapCents - line.unreadGapCents,
+    checkedGapCents: line === undefined ? null : line.neverCents,
     totalImpliedCents: card?.totals.impliedCents ?? null,
-    totalCheckedGapCents: card === null ? null : card.totals.gapCents - card.totals.unreadGapCents,
+    totalCheckedGapCents: card === null ? null : card.totals.neverCents,
     basisCents: incomeExpectation(bundle.db, month.start, month.end, today).basis.cents,
   };
 }

@@ -44,6 +44,16 @@ export const LAST_CHECKED_DAY = "the last day every account that pay lands in ha
 export const NOT_CHECKED = "the ledger has not checked every account that pay could land in";
 
 /**
+ * Where pay can land that no frontier speaks for — one of the explanations of an unbanked difference, in the dashboard
+ * card's caveat ("payroll can land in …") and /spending's note for a stale schedule ("paid into …").
+ *
+ * ⚖️ Default built, not asked (2026-10-21): since Aug 27, 2026 his pay is payroll by ACH (decision 55), and a payroll
+ * moved to an account the ledger does not read is as quiet as pay never paid. 🔴 Review of 619ceb4 (MEDIUM): the card
+ * named it while /spending's note beside it, of the same silence, listed only cash and an ended schedule.
+ */
+export const ACCOUNT_NOT_READ = "an account the ledger does not read";
+
+/**
  * What the quiet of a payday after `LAST_CHECKED_DAY` waits for — "the ledger has not looked for its deposit", or
  * "…their deposits" of several: the forecast's note, the pay series' own page, /budgets, the dashboard, /spending's
  * cash-earnings note — and of one payday, the calendar's reason (`not_looked_for`).
@@ -68,6 +78,12 @@ const AND_LIST = new Intl.ListFormat("en", { style: "long", type: "conjunction" 
  * ⛔ One sentence for all three. 🔴 Review of 4b98f77: the verdict said "4 of them fall on days the records already
  * cover, through Sep 5 — so the pay did not reach a bank" of Sep 3 one line under "$1,000.00 … — so it is not banked
  * yet".
+ *
+ * ⚖️ "Days to land" — default built, not asked (2026-10-21; he said "no more questions"): no decision of his chose
+ * the phrase (review of c02a4b0). Kept over the bills' "the days a payment has to post are not over yet"
+ * (`DAYS_TO_POST_NOT_OVER`, the same idea for a due day) because every pay sentence's verb is "lands" — the clause it
+ * runs into is `LAST_CHECKED_DAY`, "every account that pay lands in" — and "days to post" would put two verbs for one
+ * deposit in one sentence. The series page's "the N-day tolerance" is the same number.
  */
 export function daysToLandRunPast(
   paydays: readonly string[],
@@ -180,6 +196,14 @@ function everyOneFalls(paydays: number): string {
 }
 
 /**
+ * "the other one falls", "the other 3 fall" — the passed paydays after the ones a sentence has just named on checked
+ * days: the clause below and Earned vs banked's stale verdict, one spelling (review of 0c9bc8d).
+ */
+export function theOtherFall(paydays: number): string {
+  return paydays === 1 ? "the other one falls" : `the other ${paydays} fall`;
+}
+
+/**
  * The sentence naming the passed paydays nobody has looked for yet — or null
  * when every one of them fell on a day the ledger has checked, so the surface's
  * own "with no deposit" sentence is already true.
@@ -224,7 +248,7 @@ export function unbankedIncomeFrontierClause(
       ? `after ${formatDay(r.frontier.through)}, ${LAST_CHECKED_DAY}`
       : `after the last day the accounts ${unread === 1 ? "its" : "their"} pay lands in have been checked through, which differs by schedule`;
   if (checkedPart === null) return `${everyOneFalls(unread)} ${after} — so ${notLookedForDeposits(unread)}.`;
-  return `${checkedPart}; ${other} ${unread === 1 ? "falls" : "fall"} ${after}.`;
+  return `${checkedPart}; ${theOtherFall(unread)} ${after}.`;
 }
 
 /**
@@ -271,8 +295,15 @@ export interface PassedPaydaysWords {
  * Thursday checked through Friday read it, in warning colour, of a payroll that could still land on Sunday.
  */
 function notProjectedSubject(r: PassedPaydaysReading): string {
-  if (r.pastGraceOccurrenceCount > 0) return "Pay that never reaches a bank";
-  return r.checkedOccurrenceCount === 0 ? "Pay the ledger has not looked for" : "Pay not banked yet";
+  const unlooked = "Pay the ledger has not looked for";
+  if (r.checkedOccurrenceCount === 0) return unlooked;
+  const checked = r.pastGraceOccurrenceCount > 0 ? "Pay that never reaches a bank" : "Pay not banked yet";
+  /*
+   * ⚖️ Default built, not asked (2026-10-21): with paydays after the checked day among them, the subject names those
+   * too, in its own words for them. 🔴 "Pay not banked yet cannot be projected as arriving" closed a note whose other
+   * two paydays fall after the checked day — a claim about days nobody has read (review of the pay-words batch).
+   */
+  return r.checkedOccurrenceCount < r.occurrenceCount ? `${checked}, and ${unlooked.toLowerCase()},` : checked;
 }
 
 /**

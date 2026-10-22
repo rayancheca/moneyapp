@@ -1,5 +1,6 @@
 import { describe, expect, test } from "vitest";
 import { DAYS_TO_POST_NOT_OVER, NO_STATEMENT_YET } from "@/lib/arrears-reading";
+import { RECURRING_JARGON } from "@/lib/jargon";
 import { projectedEvidence, seriesEvidenceTone, seriesPostingWords, type SeriesEvidence } from "@/lib/series-evidence";
 import { notLookedForDeposits } from "@/lib/unbanked-income";
 import type { ForecastComponent } from "@/services/forecast";
@@ -87,6 +88,20 @@ describe("unsettledReasonWord", () => {
   test("the payday reason is the pay sentences' words — no statement promised", () => {
     expect(unsettledReasonWord("not_looked_for")).toBe(notLookedForDeposits(1));
     expect(unsettledReasonWord("not_looked_for")).toBe("the ledger has not looked for its deposit");
+  });
+
+  /*
+   * The legend's "Not yet known" defines the grey "?" every reason above draws, so it names each of them. 🔴 It named
+   * a statement, the days to post, undeposited cash and too few charges — not a payday after the checked day, whose
+   * reason reads "the ledger has not looked for its deposit" (review of the pay-words batch).
+   */
+  test("the legend's 'Not yet known' says each reason in the reasons' own words", () => {
+    const tip = RECURRING_JARGON.notYetKnown;
+    expect(tip).toContain("covered by a statement yet"); // not_imported
+    expect(tip).toContain("a payment may still post on"); // in_grace
+    expect(tip).toContain(`for pay, it may be that ${notLookedForDeposits(1)}`); // not_looked_for
+    expect(tip).toContain("cash you were handed and have not deposited"); // unbanked
+    expect(tip).toContain("charged enough times yet"); // schedule_unproven
   });
 });
 

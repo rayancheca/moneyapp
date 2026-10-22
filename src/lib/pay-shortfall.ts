@@ -1,7 +1,7 @@
 import { payGap, silenceFrom, unbankedSplit } from "./cash-earnings";
 import { compareDates } from "./dates";
-import { formatCents } from "./money";
 import { paydayIsRead, paydayLandingIsRead } from "./occurrence-verdict";
+import { windowOwnCents, type WentBackOut } from "./pay-window-money";
 import {
   portionsAcross,
   type AttributedDeposit,
@@ -132,9 +132,16 @@ export interface PaidAhead {
   cents: number;
 }
 
-/** The money from one deposit day inside the window that paid a READ payday outside it — another window's. */
+/**
+ * The money from one deposit day inside the window that paid a payday outside its read ones: a READ payday outside it —
+ * another window's (`paidAcross`) — or one no window reads (`paidUncounted`).
+ */
 export interface PaidAcross extends PaidAhead {
-  /** the payday is after the window — "paid early" (§6A 29); otherwise before it began */
+  /**
+   * "Paid early" (§6A 29): for `paidAcross`, the payday is after the window; for `paidUncounted`, it is on or after the
+   * window's first day — after the deposit, so a payday INSIDE the window not yet passed is one too (Wed Oct 7's money
+   * for Thu Oct 8, read on Oct 7). Otherwise the payday is before the window began.
+   */
   early: boolean;
 }
 
@@ -226,11 +233,8 @@ export interface PayShortfall {
   bankedCents: number;
 }
 
-/** A day money went back out on, a day of its own (decision 75): the day's net, as money out — positive. */
-export interface WentBackOut {
-  postedOn: string;
-  cents: number;
-}
+// the words /spending's notes need of a window's money live apart from the settlement (`lib/pay-window-money`)
+export { wentBackOutPhrase, windowOwnCents, type WentBackOut } from "./pay-window-money";
 
 /** A window's banked figure by the one rule for money out on a day of its own, and the days it names. */
 export interface WindowMoneyOut {
@@ -309,7 +313,7 @@ export interface ScheduleSilence {
  * the verdict named Aug 20, Aug 27 and Sep 3.
  *
  * ⛔ …and with nothing banked, from the schedule's first payday, that one among them, where the sentence counts it from
- * ("no deposit has ever been attributed to it"). Earned vs banked's verdict prints its no-deposit sentence then. 🔴
+ * ("nothing attributed to it has ever banked"). Earned vs banked's verdict prints its no-deposit sentence then. 🔴
  * Review of 147f167 (MEDIUM): it returned none — "there is no 'since' to count from" — so with the only payroll a
  * $1,000.00 on Thu Jun 4 returned the same day (decision 75), Chase read through Sat Sep 5 and today Sep 15, every
  * /spending window read "14 expected paydays have passed … or the ledger has not looked for its deposit" and left out
@@ -374,7 +378,7 @@ export function payShortfall(s: SettlementWalked, w: PayShortfallWindow, e: Wind
   const paidReadCents = centsOf(s.portions.filter((p) => inWindow(p.depositOn) && readDays.has(p.paydayOn)));
   // ⛔ the one rule for money out on a day of its own — Earned vs banked's figure — then less another window's money
   const back = moneyOutOfWindow(s, w, e.bankedCents);
-  const ownCents = back.bankedCents - centsOf(crossed);
+  const ownCents = windowOwnCents(back.bankedCents, paidAcross);
 
   // ⛔ the one subtraction (`payGap`): the dashboard's, over this window's own money — what is not read is not short,
   // and the window's own money is never below what paid its read paydays, so a window with none read is short nothing
@@ -464,18 +468,6 @@ export function moneyOutOfWindow(s: SettlementWalked, w: PayShortfallWindow, ban
     );
   // what it netted is what it took of that money; a day it named is no part of the figure, which never held it
   return { bankedCents: bankedCents - (freeCents - leftCents), wentBackOut: named };
-}
-
-/** "A and B", "A, B, and C" — the platform's list. */
-const AND_LIST = new Intl.ListFormat("en", { style: "long", type: "conjunction" });
-
-/**
- * "$1,141.92 went back out on Fri, Oct 2, 2026" — the days `moneyOutOfWindow` names, each whole, oldest first, every
- * day once: the one spelling /spending's notes and Earned vs banked print.
- */
-export function wentBackOutPhrase(days: readonly WentBackOut[], formatDay: (iso: string) => string): string {
-  const on = [...new Set(days.map((d) => d.postedOn))].sort(compareDates);
-  return `${formatCents(centsOf(days))} went back out on ${AND_LIST.format(on.map(formatDay))}`;
 }
 
 function byDepositDay(portions: readonly SettlementPortion[]): PaidAhead[] {

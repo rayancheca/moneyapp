@@ -203,6 +203,15 @@ describe("the e2e fixture's Jul 3 payday, after Chase Total Checking's Jun 30 �
       "$8,829.57 of it never reached a bank; the other $2,943.19 is for paydays after Jun 30, the last day every " +
         "account that pay lands in has been checked through — so the ledger has not looked for it.",
     );
+    // …and the verdict under it names Jul 3 the same way. 🔴 It read "4 paydays have passed since May 8 with no
+    // deposit. 3 of them fall on days the records already cover, through Jun 30 — so the pay did not reach a bank."
+    // — Jul 3 never named, and "with no deposit" of a day nobody had read (review of 0c9bc8d)
+    expect(pay.verdict).toBe(
+      "4 paydays have passed since the last deposit on May 8. 3 of them fall on days the records already cover, " +
+        "through Jun 30 — so the pay did not reach a bank; the other one falls after Jun 30, the last day every " +
+        "account that pay lands in has been checked through — so the ledger has not looked for its deposit. Whether " +
+        "it was earned is a different question, and this card cannot answer it.",
+    );
   });
 
   test("/spending's cash-earnings notes — July's, and the year's 'the other payday'", () => {

@@ -464,9 +464,11 @@ export function seriesDetail(
   const eff = effectiveSeries(s);
   // the calendar's reading of a pay series' rows, behind the calendar's own gate — his spending linked to it read as
   // the money it is, never in its day's (`asPayRows`)
-  const readings = readsPerPayday(s)
-    ? paydayReadings(asPayRows(loadCategoryIndex(db), linked), paydaySettlement(db, s.id, today).portions, eff)
-    : new Map<string, PaydayReading>();
+  const idx = readsPerPayday(s) ? loadCategoryIndex(db) : null;
+  const readings =
+    idx !== null
+      ? paydayReadings(asPayRows(idx, linked), paydaySettlement(db, s.id, today, idx).portions, eff)
+      : new Map<string, PaydayReading>();
   /*
    * What posted, averaged, and its sample standard deviation — the reading `listSeries` publishes to the All tab and
    * the popover names (`postedAveragesBySeries`): a pay series' is what a payday paid at the rate in force now, a
