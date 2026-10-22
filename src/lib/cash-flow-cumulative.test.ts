@@ -4,6 +4,7 @@ import {
   ghostRowLabel,
   isLonePoint,
   plottedRunningTotals,
+  runningIncomeUnread,
   type CashCumulativeInput,
 } from "./cash-flow-cumulative";
 import type { UnreachedKind } from "./empty-period";
@@ -142,7 +143,11 @@ describe("cashFlowCumulative", () => {
  */
 describe("plottedRunningTotals — a line is drawn only through buckets the ledger has read", () => {
   const withKinds = (kinds: readonly (UnreachedKind | null)[]) => {
-    const buckets = kinds.map((unreached, i) => ({ ...bucket(`d${i + 1}`, 0, 1_000 * (i + 1)), unreached }));
+    const buckets = kinds.map((unreached, i) => ({
+      ...bucket(`d${i + 1}`, 0, 1_000 * (i + 1)),
+      unreached,
+      incomeUnread: false,
+    }));
     return { buckets, points: cashFlowCumulative(buckets, [500, 500, 500, 500], 2_000) };
   };
 
@@ -184,6 +189,59 @@ describe("plottedRunningTotals — a line is drawn only through buckets the ledg
 });
 
 /**
+ * ⚖️ §6A 68 on the graph lens: a running Income through a point is no measurement while no income has been found
+ * through it and not one of its days is checked where his pay lands — every reached bucket up to it `incomeUnread`. Its
+ * Income and its Net (Income's arithmetic) carry nothing to draw; Spent and the refunds are what was found, and stay.
+ * 🔴 On his ledger copy 2026-10-21 `/spending?cash=graph` drew October's Income line flat at $0 and its Net at
+ * −$1,603.00 through Oct 14, Wells Fargo checked through Sep 24 — the figures the cards, the table and the hover dash.
+ */
+describe("runningIncomeUnread / plottedRunningTotals — a running Income nobody has looked for", () => {
+  const day = (
+    key: string,
+    incomeCents: number,
+    spendingCents: number,
+    incomeUnread: boolean,
+    unreached: UnreachedKind | null = null,
+  ) => ({ ...bucket(key, incomeCents, spendingCents), unreached, incomeUnread });
+
+  test("October on his copy: every day unread, so no point carries a running Income or Net — Spent runs on", () => {
+    const october = [day("01", 0, 21_661, true), day("02", 0, 19_758, true), day("14", 0, 4_819, true)];
+    const plotted = plottedRunningTotals(cashFlowCumulative(october, null, 0), october);
+    expect(plotted.map((p) => p.earnedCum)).toEqual([null, null, null]);
+    expect(plotted.map((p) => p.netCum)).toEqual([null, null, null]);
+    expect(plotted.map((p) => p.spentCum)).toEqual([21_661, 41_419, 46_238]);
+    expect([...runningIncomeUnread(october)]).toEqual(["01", "02", "14"]);
+  });
+
+  test("a day read, or income found, makes every running total from it a figure — a lower bound past it", () => {
+    // September on his copy: pay found Sep 24, Sep 25 – 30 unread — the total through Sep 30 holds what was found
+    const september = [day("23", 456_768, 3_440, false), day("24", 114_192, 25_261, false), day("25", 0, 5_863, true)];
+    expect(runningIncomeUnread(september).size).toBe(0);
+    expect(plottedRunningTotals(cashFlowCumulative(september, null, 0), september).map((p) => p.earnedCum)).toEqual([
+      456_768, 570_960, 570_960,
+    ]);
+    // …and a day checked with nothing in it is a measured $0.00, from which every later point is a figure
+    const checked = [day("01", 0, 1_000, false), day("02", 0, 1_000, true)];
+    expect(runningIncomeUnread(checked).size).toBe(0);
+  });
+
+  test("the run ends at the first bucket that is a figure; buckets before the records neither start nor end it", () => {
+    const window = [
+      day("01", 0, 0, false, "before-records"),
+      day("02", 0, 1_000, true),
+      day("03", 50_000, 1_000, false),
+      day("04", 0, 1_000, true),
+      day("05", 0, 0, false, "after-records"),
+    ];
+    expect([...runningIncomeUnread(window)]).toEqual(["02"]);
+    const plotted = plottedRunningTotals(cashFlowCumulative(window, null, 0), window);
+    expect(plotted.map((p) => p.earnedCum)).toEqual([null, null, 50_000, 50_000, null]);
+    expect(plotted.map((p) => p.netCum)).toEqual([null, null, 48_000, 47_000, null]);
+    expect(plotted.map((p) => p.refundsCum)).toEqual([null, 0, 0, 0, null]);
+  });
+});
+
+/**
  * 🔴 ONE BUCKET READ, NO LINE AT ALL. `plottedRunningTotals` ends each line at
  * the frontier, and each of the graph's lines is drawn with no dots — so a window
  * with exactly one bucket read drew axes and a legend naming three lines with
@@ -199,9 +257,9 @@ describe("isLonePoint — a drawn point no segment reaches", () => {
 
   // the SHAPE of the fixture's `?period=2026-Q3`; the cents are constructed
   const quarter = [
-    { ...bucket("2026-07", 100_000, 40_000), unreached: null },
-    { ...bucket("2026-08", 0, 0), unreached: "future" as const },
-    { ...bucket("2026-09", 0, 0), unreached: "future" as const },
+    { ...bucket("2026-07", 100_000, 40_000), unreached: null, incomeUnread: false },
+    { ...bucket("2026-08", 0, 0), unreached: "future" as const, incomeUnread: false },
+    { ...bucket("2026-09", 0, 0), unreached: "future" as const, incomeUnread: false },
   ];
 
   test("one month read of three: each of the period's own lines is that one point", () => {

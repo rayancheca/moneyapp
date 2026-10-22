@@ -29,6 +29,7 @@ const OCTOBER: SpendingPace = {
   partlyRead: { uncoveredDays: 13, line: "spending imported through Sep 24 · 13 days of this period unaccounted" },
   provenance: UNREAD_PROOF,
   spendingNotFound: null,
+  waitsForIncome: false,
   points: [],
   freeToSpendCents: null,
   href: "/spending",
@@ -112,6 +113,24 @@ describe("SpendingPaceWidget — a month not every account has read (decision 72
     expect(text(html)).toContain("Free to spend — nothing found so far — spending imported through Aug 12");
     expect(html).not.toContain("not been imported");
     expect(html).not.toContain("<button");
+  });
+
+  /*
+   * ⚖️ §6A 68 — no Income, no Free to spend (`SpendingPace.waitsForIncome`): the figure waits, in the words /spending's
+   * savings-rate card prints for the same wait, and what was spent stands under it with its chip and line. 🔴 On his
+   * ledger copy 2026-10-21 the tile read "≈ −$2,839.14" beside the dashboard's own Income card reading "—".
+   */
+  test("a month whose income nobody has looked for waits for it — and keeps what it found", () => {
+    const html = render({ ...PARTLY_READ, freeToSpendCents: null, waitsForIncome: true });
+    expect(text(html)).toContain(
+      `Free to spend — until income is found at least $1,603.00 spent · at least $2,366.33 projected ${LINE}`,
+    );
+    expect(html).not.toContain("≈");
+    expect(html).not.toContain("not imported yet");
+    expect(html).not.toContain("nothing found so far");
+    // the proof proves the spending figures still printed, so it stays on the heading
+    expect(text(html)).toContain("partly read");
+    expect(html).toContain("<button");
   });
 });
 

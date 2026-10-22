@@ -26,7 +26,7 @@ interface CashFlowViewProps {
   projection: SpendingProjection | null;
   /**
    * money-flow graph for the same period — the Sankey lens; empty, with the window's fact, where its spending has not
-   * been found (decisions 64 + 72, `spendingSankey`), which the lens says
+   * been found (decisions 64 + 72, `spendingSankey`) or its income nobody has looked for (§6A 68), which the lens says
    */
   sankey: SpendingSankey;
   /** the RSC-resolved active view (URL > persisted > default) */
@@ -195,6 +195,7 @@ export function CashFlowView({
       ) : active === "sankey" ? (
         <SankeyChart
           graph={sankey}
+          periodLabel={periodLabel}
           ariaLabel={`Money flow for ${periodLabel}`}
           emptyLabel="No money flow to chart in this period."
         />

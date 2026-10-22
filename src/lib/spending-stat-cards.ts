@@ -60,9 +60,10 @@ const PARTLY_READ = "partly read";
 
 /**
  * Why Net and the savings rate wait, for a screen reader — Spent's and Income's own cards say why each is a dash:
- * "until spending is found", "until income is found", or both.
+ * "until spending is found", "until income is found", or both. ⚖️ §6A 68: the dashboard's Free to spend, Income's
+ * arithmetic too, waits in the same words (`SpendingPaceWidget`).
  */
-function untilFound(spending: boolean, income: boolean): string {
+export function untilFound(spending: boolean, income: boolean): string {
   return `until ${spending && income ? "spending and income are" : spending ? "spending is" : "income is"} found`;
 }
 

@@ -18,7 +18,7 @@ import { NetWorthTerrain } from "@/components/charts/NetWorthTerrain";
 import { DashboardModePanel } from "./DashboardModePanel";
 import { NetWorthChartPanel } from "./NetWorthChartPanel";
 
-const EMPTY_GRAPH: SpendingSankey = { nodes: [], links: [], spendingUnaccounted: null };
+const EMPTY_GRAPH: SpendingSankey = { nodes: [], links: [], spendingUnaccounted: null, incomeUnread: false };
 
 /**
  * The hero chart's view modes (pass-17 ask C): a ViewSwitcher flips the single

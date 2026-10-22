@@ -143,6 +143,15 @@ export function noIncomeDayCheckedOf(bucket: "day" | "month"): string {
 }
 
 /**
+ * ⚖️ §6A 68 for a RUNNING total on /spending's graph lens (`runningIncomeUnread`): "not one day through 14 has been
+ * checked in the accounts that pay lands in" — the note above, said of the days a "Through 14" hover sums. 🔴 His ledger
+ * copy 2026-10-21: the hover read "Through 14 · Income $0.00 · Net −$1,603.00" over days Wells Fargo had not reached.
+ */
+export function noIncomeDayCheckedThrough(label: string): string {
+  return `not one day through ${label} has been checked in the accounts that pay lands in`;
+}
+
+/**
  * The one day several schedules' landing accounts were checked through — each
  * schedule's own `earliestVerified` — when they share one.
  *

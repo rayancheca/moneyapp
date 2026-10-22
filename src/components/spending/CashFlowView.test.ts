@@ -40,7 +40,7 @@ const flow = (buckets: CashFlowBucket[]): CashFlow => {
   };
 };
 
-const NO_SANKEY: SpendingSankey = { nodes: [], links: [], spendingUnaccounted: null };
+const NO_SANKEY: SpendingSankey = { nodes: [], links: [], spendingUnaccounted: null, incomeUnread: false };
 
 function renderTable(cashFlow: CashFlow, periodLabel: string): string {
   return renderToStaticMarkup(

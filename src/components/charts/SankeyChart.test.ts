@@ -1,6 +1,9 @@
 import { describe, expect, test } from "vitest";
 import { formatCents } from "@/lib/money";
+import type { SankeyGraph } from "@/lib/sankey-layout";
 import {
+  type SankeyEmptyFacts,
+  sankeyEmptyCopy,
   sankeyFrameNote,
   sankeyLinkSide,
   sankeyNodeLabel,
@@ -214,5 +217,43 @@ describe("sankeyShareCell — the table lens", () => {
   test("each row names its leg, so the column cannot be read as one 100%", () => {
     expect(sankeyShareCell(1_018_790, "in", () => "98.4%")).toBe("98.4% in");
     expect(sankeyShareCell(276_379, "out", () => "26.7%")).toBe("26.7% out");
+  });
+});
+
+/**
+ * ⚖️ What an EMPTY flow says (`SpendingSankey`): its window's spending not found (decisions 64 + 72), or its income
+ * nobody has looked for (§6A 68) — each in the words its stat card prints there — and the surface's own empty label
+ * only where nothing flowed. 🔴 On his ledger copy 2026-10-21 `/spending?cash=sankey` drew October as "From outside this
+ * period $1,603.00" beside an Income card reading "Not one day of October 2026 has been checked in the accounts that
+ * pay lands in, so nothing is shown."
+ */
+describe("sankeyEmptyCopy — why a flow is empty", () => {
+  const empty: SankeyEmptyFacts & SankeyGraph = { nodes: [], links: [] };
+  const copy = (graph: Parameters<typeof sankeyEmptyCopy>[0], periodLabel?: string) =>
+    sankeyEmptyCopy(graph, "No money flow in this period.", periodLabel);
+
+  test("income nobody has looked for says so, of the page's period — or of 'this period' where none is named", () => {
+    expect(copy({ ...empty, incomeUnread: true }, "October 2026")).toBe(
+      "Not one day of October 2026 has been checked in the accounts that pay lands in, so nothing is shown.",
+    );
+    expect(copy({ ...empty, incomeUnread: true })).toBe(
+      "Not one day of this period has been checked in the accounts that pay lands in, so nothing is shown.",
+    );
+  });
+
+  test("spending not found says that, and both are said where both hold", () => {
+    const notFound = "spending imported through Jul 3";
+    expect(copy({ ...empty, spendingUnaccounted: notFound })).toBe(
+      "Nothing found so far — spending imported through Jul 3.",
+    );
+    expect(copy({ ...empty, spendingUnaccounted: notFound, incomeUnread: true }, "Jul 6, 2026")).toBe(
+      "Nothing found so far — spending imported through Jul 3. Not one day of Jul 6, 2026 has been checked in the " +
+        "accounts that pay lands in, so nothing is shown.",
+    );
+  });
+
+  test("a window where nothing flowed keeps the surface's own words", () => {
+    expect(copy(empty)).toBe("No money flow in this period.");
+    expect(copy({ ...empty, spendingUnaccounted: null, incomeUnread: false })).toBe("No money flow in this period.");
   });
 });

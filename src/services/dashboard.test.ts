@@ -10,9 +10,12 @@ import { importFiles, statementPeriods } from "@/db/schema/imports";
 import { institutions } from "@/db/schema/institutions";
 import { recurringSeries, type Cadence, type SeriesKind } from "@/db/schema/recurring";
 import { transactions } from "@/db/schema/transactions";
+import { resolvePeriod } from "@/lib/period";
 import { createAccount } from "./accounts";
 import { addManualAnchor } from "./anchors";
+import { checkedThrough as checkedThroughFixture } from "./checked-days-fixture";
 import { dashboardData } from "./dashboard";
+import { cashFlowByPeriod } from "./spending";
 import { rebuildAccount } from "./derivation";
 import { provenanceFor } from "./provenance";
 import { addDays } from "@/lib/dates";
@@ -336,8 +339,12 @@ describe("dashboardData: spending pace", () => {
   test("free-to-spend = full-month income minus spend-so-far and upcoming fixed bills", () => {
     spend("Groceries", "2026-07-02", -80_00);
     // one biweekly paycheck stream (07-10, 07-24 within the month) + one fixed bill
-    seedSeries({ name: "Payroll", kind: "income", cadence: "biweekly", nextExpectedOn: "2026-07-10", amountCents: 2000_00, lastMatchedOn: "2026-06-26", intervalDaysAvg: 14 });
+    const pay = seedSeries({ name: "Payroll", kind: "income", cadence: "biweekly", nextExpectedOn: "2026-07-10", amountCents: 2000_00, lastMatchedOn: "2026-06-26", intervalDaysAvg: 14 });
     seedSeries({ name: "Rent", kind: "bill", cadence: "monthly", nextExpectedOn: "2026-07-12", amountCents: -1500_00, lastMatchedOn: "2026-06-12", intervalDaysAvg: 30 });
+    // ⚖️ §6A 68: the pay lands in checking, checked through Jul 2 — so July's $0.00 posted is a term. A schedule naming no
+    // account lands nowhere the ledger has looked, and the figure waits for income ("a month whose income …" below)
+    bundle.db.update(recurringSeries).set({ accountId: checking }).where(eq(recurringSeries.id, pay)).run();
+    checkedThroughFixture(bundle.db, checking, "2026-07-02");
 
     const { pace } = dashboardData(bundle.db, TODAY);
     // income: 2 × 2000 remaining; spend so far: 80; upcoming fixed bill: 1500
@@ -556,6 +563,64 @@ describe("dashboardData: spending pace", () => {
       const { pace } = dashboardData(bundle.db, TODAY);
       expect(pace!.freeToSpendCents).not.toBeNull();
       expect(pace!.provenance?.verdict).toBe("partly_read");
+    });
+  });
+
+  /*
+   * ⚖️ §6A 68 — no Income, no Free to spend: the figure is `earned + fixed income still due − spent − fixed bills still
+   * due`, and a month's posted income nobody has looked for (`CashFlow.incomeUnread`, the rule the dashboard's own Income
+   * card dashes by) is no term to add. The spending figures under it were found, and stand. 🔴 On his ledger copy
+   * 2026-10-21 the tile read "Free to spend ≈ −$2,839.14" — $0.00 + $2,283.84 − $1,603.00 − $3,519.98 — beside an Income
+   * card reading "—", Wells Fargo checked through Sep 24; the three paydays Oct 1, 8 and 15 ($3,425.76) were in neither
+   * leg, and with them banked it reads +$586.62 (review of 6cb97ea).
+   */
+  describe("a month whose income nobody has looked for", () => {
+    /** his pay lands in an account of its own (his Wells Fargo), checked through `checkedThrough`; he spends from Chase */
+    function payLandsInChecking(checkedThrough: string): void {
+      const pay = seedSeries({ name: "Payroll", kind: "income", cadence: "biweekly", nextExpectedOn: "2026-07-10", amountCents: 2000_00, lastMatchedOn: "2026-06-26", intervalDaysAvg: 14 });
+      const instId = bundle.db.select().from(institutions).where(eq(institutions.name, "Chase")).get()!.id;
+      const wells = createAccount(bundle.db, { institutionId: instId, name: "Wells Fargo", type: "checking" });
+      bundle.db.update(recurringSeries).set({ accountId: wells }).where(eq(recurringSeries.id, pay)).run();
+      checkedThroughFixture(bundle.db, wells, checkedThrough);
+    }
+
+    test("Free to spend waits for income; what was spent, its proof and its line stand", () => {
+      spend("Groceries", "2026-07-02", -80_00);
+      payLandsInChecking("2026-06-30");
+      const { pace } = dashboardData(bundle.db, TODAY);
+      expect(pace!.freeToSpendCents).toBeNull();
+      expect(pace!.waitsForIncome).toBe(true);
+      expect(pace!.spendingNotFound).toBeNull();
+      expect(pace!.actualToDateCents).toBe(80_00);
+      expect(pace!.provenance).not.toBeNull();
+    });
+
+    test("one day of the month checked where the pay lands makes its $0.00 a term: the figure stands", () => {
+      spend("Groceries", "2026-07-02", -80_00);
+      payLandsInChecking("2026-07-01");
+      const { pace } = dashboardData(bundle.db, TODAY);
+      expect(pace!.waitsForIncome).toBe(false);
+      expect(pace!.freeToSpendCents).toBe(4000_00 - 80_00);
+    });
+
+    // ⛔ the one rule: /spending's reading of the same month, never a second one
+    test("the tile waits exactly where /spending's Income card dashes", () => {
+      spend("Groceries", "2026-07-02", -80_00);
+      payLandsInChecking("2026-06-30");
+      const july = resolvePeriod({}, TODAY);
+      const { incomeUnread } = cashFlowByPeriod(bundle.db, july, TODAY);
+      expect(incomeUnread).toBe(true);
+      expect(dashboardData(bundle.db, TODAY).pace!.waitsForIncome).toBe(incomeUnread);
+    });
+
+    // …and where the month's spending is no figure either, the tile says spending's words, as it did
+    test("a month whose spending is not found either keeps spending's dash and words", () => {
+      spend("Groceries", "2026-06-20", -80_00);
+      payLandsInChecking("2026-06-30");
+      const { pace } = dashboardData(bundle.db, TODAY);
+      expect(pace!.freeToSpendCents).toBeNull();
+      expect(pace!.waitsForIncome).toBe(false);
+      expect(pace!.provenance).toBeNull();
     });
   });
 });

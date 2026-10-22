@@ -4,6 +4,7 @@ import { ProvenancePopover } from "@/components/ui/ProvenancePopover";
 import { nothingFoundSoFar } from "@/lib/budget-coverage";
 import { formatCents } from "@/lib/money";
 import { notImportedTitle } from "@/lib/empty-period";
+import { untilFound } from "@/lib/spending-stat-cards";
 import { paceGeometry, PACE_VH, PACE_VW } from "@/lib/pace-geometry";
 
 /**
@@ -23,6 +24,8 @@ export function SpendingPaceWidget({ pace }: { pace: SpendingPace }) {
     projectedCents: pace.projectedCents,
   });
   const free = pace.freeToSpendCents;
+  // ⚖️ §6A 68: Free to spend waits for an Income nobody has looked for; what was spent was found, and stands under it
+  const spendingShown = free !== null || pace.waitsForIncome;
 
   return (
     <section aria-labelledby="pace-heading" className="space-y-3">
@@ -32,8 +35,9 @@ export function SpendingPaceWidget({ pace }: { pace: SpendingPace }) {
           {/* ⚖️ decision 72 (2026-10-13): /spending's proof of the month, its chip and all — "partly read" over days not
               every account he spends from has read. On the heading, never inside the card's link: a button in an <a>
               is axe `nested-interactive`, the reason /spending mounts its own on a heading. No proof beside the dash
-              (`CategoryHeadline`'s rule): the popover proves a rendered figure — and the service builds none there. */}
-          {free !== null && pace.provenance !== null && (
+              (`CategoryHeadline`'s rule): the popover proves a rendered figure — and the service builds none there.
+              Beside a Free to spend waiting for income it proves the spending figures still printed under it. */}
+          {spendingShown && pace.provenance !== null && (
             <ProvenancePopover label="this month's spending" provenance={pace.provenance} />
           )}
         </h2>
@@ -72,11 +76,17 @@ export function SpendingPaceWidget({ pace }: { pace: SpendingPace }) {
                 {formatCents(Math.abs(free))}
               </div>
             )}
+            {/* ⚖️ §6A 68: a figure waiting for income says so, in /spending's savings-rate words for the same wait
+                (`untilFound`), and the spending figures follow. 🔴 His ledger copy 2026-10-21: "≈ −$2,839.14" beside
+                the dashboard's own Income card reading "—". */}
+            {pace.waitsForIncome && (
+              <div className="mt-0.5 text-[11px] text-ink-muted">{untilFound(false, true)}</div>
+            )}
             {/* With NOTHING measured the figures are not lower bounds worth
                 printing — "at least $0.00" is true of every month there has
                 ever been. The reason replaces them; with part of the window
                 measured they stand, marked as the bounds they are. */}
-            {free === null ? (
+            {!spendingShown ? (
               <div className="mt-0.5 text-[11px] text-ink-muted">
                 {/* the empty state's heading for the same month — the category headline's under its dash, word for
                     word. 🔴 "October 2026 is not imported yet" here, "has not been imported yet" there (review of

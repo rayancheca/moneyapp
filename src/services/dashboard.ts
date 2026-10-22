@@ -107,6 +107,13 @@ export interface SpendingPace {
    * 1042f71, the tile dashed beside a readout of "On pace for at least $0.00 … at least $0.00 so far".
    */
   spendingNotFound: string | null;
+  /**
+   * ⚖️ §6A 68: Free to spend is null because the month's Income is no measurement (`CashFlow.incomeUnread`) — its
+   * spending figures, line and proof stand, and the tile says what the figure waits for, in /spending's savings-rate
+   * words ("until income is found"). False wherever the month's spending is no figure either: that dash says spending's
+   * words, as it always has.
+   */
+  waitsForIncome: boolean;
   points: PacePoint[];
   /** income (actual + expected) minus spend-so-far and upcoming fixed bills */
   /**
@@ -341,11 +348,21 @@ function spendingPace(db: AppDatabase, today: string): SpendingPace | null {
   const spendingNotFound = cashFlow.spendingUnaccounted;
   const withheld = noDayRead || spendingNotFound !== null;
   /*
+   * ⚖️ §6A 68 — no Income, no Free to spend: the month's posted income is its first term, and where no income was found
+   * and not one day of the month is checked where his pay lands (`CashFlow.incomeUnread` — the rule the dashboard's own
+   * Income card dashes by, `incomeExpectation`) it is no measurement. The figure waits; what was spent stands under it.
+   * 🔴 On his ledger copy 2026-10-21 the tile read "≈ −$2,839.14" ($0.00 + $2,283.84 − $1,603.00 − $3,519.98) beside
+   * that card's "—", Wells Fargo checked through Sep 24: Oct 1, 8 and 15's $3,425.76 were in neither leg, and banked
+   * they make it +$586.62 (review of 6cb97ea). Spending's dash outranks it — its words say why the spent line is gone.
+   */
+  const waitsForIncome = !withheld && cashFlow.incomeUnread;
+  /*
    * ⛔ The proof proves a rendered figure, so it is built only beside one (`SpendingPace.provenance`). 🔴 It was built on
    * every render — 18.4 ms against 419 ms for all of `dashboardData` on his ledger copy (review of the pace card, batch
    * 4/5) — where the tile withholds the figure and mounts no chip too. ⚠️ `partlyRead` above is no copy of its count to
    * remove: an empty window's proof carries none (`Provenance.partlyRead`), while "at least $0.00 spent" over a month
-   * read in part still needs the line.
+   * read in part still needs the line. ⚠️ A Free to spend that waits for income still renders what was spent: the proof
+   * stands beside that.
    */
   const provenance = withheld
     ? null
@@ -359,7 +376,8 @@ function spendingPace(db: AppDatabase, today: string): SpendingPace | null {
     partlyRead,
     provenance,
     spendingNotFound,
-    freeToSpendCents: withheld ? null : freeToSpendCents,
+    waitsForIncome,
+    freeToSpendCents: withheld || waitsForIncome ? null : freeToSpendCents,
     href: "/spending",
   };
 }

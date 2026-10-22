@@ -5,6 +5,7 @@ import { categoryHueVar, isCategoryHueName } from "@/lib/category-palette";
 import { ledgerHref } from "@/lib/ledger-href";
 import type { SankeyGraph, SankeyLinkInput, SankeyNodeInput } from "@/lib/sankey-layout";
 import { outsidePortfolioCashAccountIds } from "./accounts";
+import { hisLiveIncomeSeries, noIncomeDayReadOf } from "./budgets";
 import {
   activeTxnsInRange,
   hisIncomeRows,
@@ -81,6 +82,18 @@ function byValueThenName(a: [string, Bucket], b: [string, Bucket]): number {
 export interface SpendingSankey extends SankeyGraph {
   /** the window's `spendingNotFoundFact` where the graph is empty for it; null where the graph is the flow */
   spendingUnaccounted: string | null;
+  /**
+   * ⚖️ §6A 68: the window holds no income row and not one of its days is checked in the accounts his pay lands in
+   * (`noIncomeDayReadOf` — /spending's `CashFlow.incomeUnread`, the dashboard's and /budgets' reading), so the graph is
+   * empty for it: the "From outside this period" plug is −Net, Income's arithmetic, and so is "Net saved". The chart
+   * says why in the Income card's words (`sankeyEmptyCopy`). ⚖️ default built, not asked (2026-10-21): decision 64's
+   * treatment of the mirror case above, not a plug relabelled to keep the categories — its hub would still read "Money
+   * in $1,603.00" over an Income the page dashes. 🔴 On his ledger copy 2026-10-21 Oct 1 – 31 drew "From outside this
+   * period $1,603.00" and Sep 26 – Oct 10 "Refunds $15.16 · From outside this period $2,042.17", Wells Fargo checked
+   * through Sep 24, beside a Net card, table and hover printing "—" (review of 6cb97ea). False where the graph is the
+   * flow, and where nothing flowed at all (the surface's own empty words).
+   */
+  incomeUnread: boolean;
 }
 
 /**
@@ -136,7 +149,9 @@ export function spendingSankey(db: AppDatabase, range: DateRange, today?: string
   const net = earned + refunds - spent;
 
   // Nothing flowed → an empty graph; the renderer shows its own empty state.
-  if (earned + refunds === 0 && spent === 0) return { nodes: [], links: [], spendingUnaccounted: null };
+  if (earned + refunds === 0 && spent === 0) {
+    return { nodes: [], links: [], spendingUnaccounted: null, incomeUnread: false };
+  }
   // …and money in with no spending found past the day all of it is read through draws no Net saved (see the type)
   const notFound =
     spent !== 0 || today === undefined
@@ -149,7 +164,13 @@ export function spendingSankey(db: AppDatabase, range: DateRange, today?: string
           readThrough: spendingReadThrough(db, today),
           spentCents: spent,
         });
-  if (notFound !== null) return { nodes: [], links: [], spendingUnaccounted: notFound };
+  // …and spending with no income found and not one day checked where the pay lands draws no plug (see the type).
+  // ⚡ the schedules and the pay's frontier are read only where the window found no income
+  const incomeUnread =
+    today !== undefined &&
+    earned === 0 &&
+    noIncomeDayReadOf(db, today, hisLiveIncomeSeries(db, agentsCash))(range.from, earned);
+  if (notFound !== null || incomeUnread) return { nodes: [], links: [], spendingUnaccounted: notFound, incomeUnread };
 
   const nodes: SankeyNodeInput[] = [
     { id: HUB_ID, label: "Money in", column: COL_HUB, color: "var(--ink-muted)", meta: { kind: "hub" } },
@@ -220,5 +241,5 @@ export function spendingSankey(db: AppDatabase, range: DateRange, today?: string
     links.push({ source: HUB_ID, target: "saved", valueCents: net });
   }
 
-  return { nodes, links, spendingUnaccounted: null };
+  return { nodes, links, spendingUnaccounted: null, incomeUnread: false };
 }

@@ -135,17 +135,55 @@ export type PlottedRunningTotal = Omit<CashCumulativePoint, "earnedCum" | "refun
  * pinned ghost and every figure beside the graph read exactly what they read.
  * Matched by KEY: the kinds come from the service's buckets, the points from the
  * arithmetic, and position is not a contract between them.
+ *
+ * ⚖️ §6A 68: …and a point whose running Income is no measurement (`runningIncomeUnread`) carries no Income and no Net
+ * to draw — Net is Income's arithmetic. Spent and the refunds were found, and run on. 🔴 On his ledger copy 2026-10-21
+ * `?cash=graph` drew October's Income flat at $0 and its Net down to −$1,603.00 through Oct 14, beside cards, a table and
+ * a chart hover dashing both (5a6d9b0); `?period=2026-Q4` drew the same at Oct.
  */
 export function plottedRunningTotals(
   points: readonly CashCumulativePoint[],
-  buckets: readonly { key: string; unreached: UnreachedKind | null }[],
+  buckets: readonly RunningTotalBucket[],
 ): PlottedRunningTotal[] {
   const unreachedByKey = new Map(buckets.map((b) => [b.key, b.unreached]));
+  const incomeUnread = runningIncomeUnread(buckets);
   return points.map((p) =>
-    (unreachedByKey.get(p.key) ?? null) === null
-      ? p
-      : { ...p, earnedCum: null, refundsCum: null, spentCum: null, netCum: null },
+    (unreachedByKey.get(p.key) ?? null) !== null
+      ? { ...p, earnedCum: null, refundsCum: null, spentCum: null, netCum: null }
+      : incomeUnread.has(p.key)
+        ? { ...p, earnedCum: null, netCum: null }
+        : p,
   );
+}
+
+/** what a running total needs to know of its bucket beyond the arithmetic — the service's `CashFlowBucket` carries both */
+export interface RunningTotalBucket {
+  key: string;
+  unreached: UnreachedKind | null;
+  /** ⚖️ §6A 68: no income found in the bucket and not one of its days checked where his pay lands */
+  incomeUnread: boolean;
+}
+
+/**
+ * The keys of the points whose running Income is NO MEASUREMENT (§6A 68): no income found through the point and not one
+ * of its days checked where his pay lands — every reached bucket up to it `incomeUnread`. The run ends at the first
+ * reached bucket that is a figure (income found, or a day checked): from there the running total holds money found or
+ * days read, and past the pay's frontier it is a lower bound, as Spent's is past spending's (decision 72) — kept.
+ * Buckets the ledger has not reached carry no figure either way and neither start nor end the run. Walked in the
+ * service's calendar order: a running total is a question of what came BEFORE a point.
+ *
+ * ⛔ THE ONE RULE for a running Income: the graph's lines (`plottedRunningTotals`) and its hover (`RunningTotalTooltip`)
+ * both read it, so a line never runs where the hover dashes. The window's own rule is `CashFlow.incomeUnread`, the
+ * bucket's `CashFlowBucket.incomeUnread` — both `noIncomeDayReadOf`, the dashboard's and /budgets' reading.
+ */
+export function runningIncomeUnread(buckets: readonly RunningTotalBucket[]): ReadonlySet<string> {
+  const keys = new Set<string>();
+  for (const b of buckets) {
+    if (b.unreached !== null) continue;
+    if (!b.incomeUnread) break;
+    keys.add(b.key);
+  }
+  return keys;
 }
 
 /**

@@ -97,7 +97,8 @@ export default async function SpendingPage({
    */
   const comparison = periodComparison(db, period, today);
   const projection = spendingProjection(db, period, today, cashFlow.pace, cashFlow.totals.spentCents, comparison);
-  // ⚖️ decisions 64 + 72: asked with today, a window whose spending has not been found draws no Net saved
+  // ⚖️ decisions 64 + 72: asked with today, a window whose spending has not been found draws no Net saved — and §6A 68,
+  // one whose income nobody has looked for draws no "From outside this period" (`SpendingSankey.incomeUnread`)
   const sankey = spendingSankey(db, range, today);
   const merchants = topMerchants(db, range);
 

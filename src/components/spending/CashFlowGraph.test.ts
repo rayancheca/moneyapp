@@ -1,8 +1,8 @@
 import { createElement, isValidElement, type ReactElement, type ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { Line, type DotItemDotProps } from "recharts";
+import { Line, LineChart, type DotItemDotProps } from "recharts";
 import { describe, expect, test } from "vitest";
-import type { CashCumulativePoint } from "@/lib/cash-flow-cumulative";
+import type { CashCumulativePoint, PlottedRunningTotal } from "@/lib/cash-flow-cumulative";
 import type { UnreachedKind } from "@/lib/empty-period";
 import type { CashFlow, CashFlowBucket } from "@/services/spending";
 import { CashFlowGraph, RunningTotalTooltip } from "./CashFlowGraph";
@@ -31,11 +31,53 @@ const point = (key: string, label: string): CashCumulativePoint => ({
   ghostWhole: false,
 });
 
-function render(p: CashCumulativePoint, unreached: Parameters<typeof RunningTotalTooltip>[0]["unreached"]): string {
+function render(
+  p: CashCumulativePoint,
+  unreached: Parameters<typeof RunningTotalTooltip>[0]["unreached"],
+  incomeUnread = false,
+): string {
   return textOf(
-    renderToStaticMarkup(createElement(RunningTotalTooltip, { point: p, unreached, hasRefunds: false, priorLabel: null })),
+    renderToStaticMarkup(
+      createElement(RunningTotalTooltip, { point: p, unreached, incomeUnread, hasRefunds: false, priorLabel: null }),
+    ),
   );
 }
+
+/**
+ * ⚖️ §6A 68 on the graph lens: through a point no income has been found by and not one of whose days is checked where
+ * his pay lands (`runningIncomeUnread`), the running Income is no measurement — and Net, its arithmetic, with it. 🔴 On
+ * his ledger copy 2026-10-21 `/spending?cash=graph` hovered Oct 14 "Through 14 · Income $0.00 · Spent $1,603.00 · Net
+ * −$1,603.00" (`cashFlowByPeriod` → `cashFlowCumulative`), Wells Fargo checked through Sep 24, beside cards, a table and
+ * a chart hover printing "—" for both; `?period=2026-Q4` said the same "Through Oct".
+ */
+describe("CashFlowGraph's tooltip — a running Income nobody has looked for", () => {
+  const oct14: CashCumulativePoint = {
+    key: "2026-10-14",
+    label: "14",
+    earnedCum: 0,
+    refundsCum: 0,
+    spentCum: 160_300,
+    netCum: -160_300,
+    ghostCum: null,
+    ghostWhole: false,
+  };
+
+  test("dashes Income and Net, keeps Spent, and says why in the dashboard's words", () => {
+    const text = render(oct14, null, true);
+    expect(text).toContain("Through 14");
+    expect(text).toContain("$1,603.00");
+    expect(text).not.toContain("$0.00");
+    expect(text).not.toMatch(/[−-]\$1,603\.00/);
+    expect(text.match(/—/g)).toHaveLength(2);
+    expect(text).toContain("not one day through 14 has been checked in the accounts that pay lands in");
+  });
+
+  test("a running Income that is a figure prints it, as before", () => {
+    const text = render(oct14, null, false);
+    expect(text).toContain("$0.00");
+    expect(text).not.toContain("pay lands in");
+  });
+});
 
 describe("CashFlowGraph's tooltip — a running total is only as far as the ledger reads", () => {
   test("the newest imported day states its running totals", () => {
@@ -80,6 +122,7 @@ describe("CashFlowGraph's tooltip — a running total is only as far as the ledg
       createElement(RunningTotalTooltip, {
         point: { ...point("2026-09-13", "13"), ghostCum: 993_587 },
         unreached: "after-records",
+        incomeUnread: false,
         hasRefunds: false,
         priorLabel: "August 2026",
       }),
@@ -105,6 +148,20 @@ describe("CashFlowGraph — a line with one point read still shows that point", 
     if (Array.isArray(node)) return node.flatMap(linesIn);
     if (!isValidElement<LineProps>(node)) return [];
     return node.type === Line ? [node] : linesIn(node.props.children);
+  }
+
+  /** the points the chart is handed (`LineChart`'s data) — what each line draws */
+  function chartDataIn(node: ReactNode): PlottedRunningTotal[] {
+    const found: PlottedRunningTotal[][] = [];
+    const walk = (n: ReactNode): void => {
+      if (Array.isArray(n)) return n.forEach(walk);
+      if (!isValidElement<{ data?: PlottedRunningTotal[]; children?: ReactNode }>(n)) return;
+      if (n.type === LineChart) found.push(n.props.data!);
+      walk(n.props.children);
+    };
+    walk(node);
+    expect(found).toHaveLength(1);
+    return found[0]!;
   }
 
   /** what a line's `dot` draws at one point, given the props recharts passes it */
@@ -180,6 +237,35 @@ describe("CashFlowGraph — a line with one point read still shows that point", 
     expect(markup).toContain('cx="40"');
     expect(markup).toContain('cy="20"');
     expect(markup).toContain(`fill="${spent.props.stroke}"`);
+  });
+
+  /* ⚖️ §6A 68: the lines draw what the tooltip prints — no running Income or Net through days nobody has looked at */
+  test("a window whose income nobody has looked for draws Spent alone, and its caption says why", () => {
+    const unread = (key: string, spendingCents: number): CashFlowBucket => ({
+      ...monthBucket(key, 0, spendingCents, null),
+      incomeUnread: true,
+    });
+    const october = [unread("2026-10-01", 21_661), unread("2026-10-02", 19_758)];
+    const data: CashFlow = {
+      buckets: october,
+      incomeSeries: [],
+      spendingSeries: [],
+      totals: {} as CashFlow["totals"],
+      pace: null,
+      spendingUnaccounted: null,
+      incomeUnread: true,
+    };
+    const tree = CashFlowGraph({ data, projection: null });
+    const plotted = chartDataIn(tree);
+    expect(plotted.map((p) => [p.earnedCum, p.netCum])).toEqual([[null, null], [null, null]]);
+    expect(plotted.map((p) => p.spentCum)).toEqual([21_661, 41_419]);
+    const caption = (d: CashFlow) =>
+      textOf(renderToStaticMarkup(createElement(CashFlowGraph, { data: d, projection: null })));
+    expect(caption(data)).toContain(
+      "Income and Net are not drawn while not one day has been checked in the accounts that pay lands in.",
+    );
+    // a window read as before carries no such caption
+    expect(caption({ ...data, buckets: quarter, incomeUnread: false })).not.toContain("pay lands in");
   });
 
   test("a line with a segment to draw carries no marks", () => {

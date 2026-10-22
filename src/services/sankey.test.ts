@@ -7,11 +7,15 @@ import { createDatabase, type DbBundle } from "@/db/client";
 import { seedDatabase } from "@/db/seed";
 import { categories } from "@/db/schema/categories";
 import { institutions } from "@/db/schema/institutions";
+import { recurringSeries } from "@/db/schema/recurring";
 import { transactions } from "@/db/schema/transactions";
 import { dedupeHash } from "@/lib/hash";
+import { resolvePeriod } from "@/lib/period";
 import { computeSankeyLayout, type SankeyGraph } from "@/lib/sankey-layout";
 import { createAccount } from "./accounts";
+import { checkedThrough } from "./checked-days-fixture";
 import { spendingSankey } from "./sankey";
+import { cashFlowByPeriod } from "./spending";
 
 const RANGE = { from: "2026-07-01", to: "2026-07-31" };
 
@@ -85,7 +89,12 @@ function faceSums(graph: SankeyGraph) {
 
 describe("spendingSankey — balance & structure", () => {
   test("empty range → empty graph", () => {
-    expect(spendingSankey(bundle.db, RANGE)).toEqual({ nodes: [], links: [], spendingUnaccounted: null });
+    expect(spendingSankey(bundle.db, RANGE)).toEqual({
+      nodes: [],
+      links: [],
+      spendingUnaccounted: null,
+      incomeUnread: false,
+    });
   });
 
   test("income > spend: sources feed a hub that feeds categories + a 'Net saved' leaf, and it conserves", () => {
@@ -255,6 +264,7 @@ describe("spendingSankey — a window whose spending has not been found", () => 
         nodes: [],
         links: [],
         spendingUnaccounted: "spending imported through Jul 3",
+        incomeUnread: false,
       });
     }
   });
@@ -284,6 +294,7 @@ describe("spendingSankey — a window whose spending has not been found", () => 
       nodes: [],
       links: [],
       spendingUnaccounted: "spending imported through Jul 3",
+      incomeUnread: false,
     });
     // the read day is a day read: its window's zero is a measurement, and the pay and the refund flow to Net saved
     const g = spendingSankey(bundle.db, { from: "2026-07-03", to: "2026-07-06" }, TODAY);
@@ -293,5 +304,84 @@ describe("spendingSankey — a window whose spending has not been found", () => 
     expect(spendingSankey(bundle.db, { from: "2026-07-04", to: "2026-07-06" }, TODAY).spendingUnaccounted).toBe(
       "spending imported through Jul 3",
     );
+  });
+});
+
+/*
+ * ⚖️ §6A 68 on the Sankey lens: a window holding spending and NO income row, not one of its days checked in the
+ * accounts his pay lands in (`noIncomeDayReadOf`), draws no flow: its "From outside this period" plug is −Net, Income's
+ * arithmetic, and Income is no measurement there. It says why instead (`incomeUnread`). ⚖️ default built, not asked
+ * (2026-10-21): decision 64's treatment of the mirror case, in this same function. 🔴 On his ledger copy 2026-10-21
+ * `spendingSankey(Oct 1 – 31)` drew "From outside this period $1,603.00" and Sep 26 – Oct 10 "Refunds $15.16 · From
+ * outside this period $2,042.17" — Wells Fargo, where It America LLC's pay lands, checked through Sep 24 — beside a Net
+ * card, table and hover printing "—" for the same windows.
+ */
+describe("spendingSankey — a window whose income nobody has looked for", () => {
+  const TODAY = "2026-07-08";
+
+  /** his weekly pay lands in checking; the card holds the spending and a refund */
+  function payInChecking(): void {
+    bundle.db
+      .insert(recurringSeries)
+      .values({
+        name: "It America LLC (weekly pay)",
+        kind: "income",
+        cadence: "weekly",
+        intervalDaysAvg: 7,
+        amountCentsAvg: 114_192,
+        nextExpectedOn: "2026-07-02",
+        nextExpectedAmountCents: 114_192,
+        status: "confirmed",
+        lastMatchedOn: "2026-06-25",
+        accountId: checkingId,
+      })
+      .run();
+    insertTxn({ postedOn: "2026-07-01", amountCents: -21_661, category: "Food > Dining" });
+    insertTxn({ postedOn: "2026-07-02", amountCents: 1_516, category: "Food > Dining" }); // a refund
+    insertTxn({ postedOn: "2026-07-07", amountCents: -19_758, category: "Food > Groceries" });
+  }
+
+  test("spending with no day checked where the pay lands draws no plug — the graph is empty and says so", () => {
+    payInChecking();
+    checkedThrough(bundle.db, checkingId, "2026-06-30");
+    for (const range of [RANGE, { from: "2026-07-02", to: "2026-07-07" }]) {
+      expect(spendingSankey(bundle.db, range, TODAY), JSON.stringify(range)).toEqual({
+        nodes: [],
+        links: [],
+        spendingUnaccounted: null,
+        incomeUnread: true,
+      });
+    }
+  });
+
+  test("one day checked makes its $0.00 a measurement: the flow and its plug stand", () => {
+    payInChecking();
+    checkedThrough(bundle.db, checkingId, "2026-07-01");
+    const g = spendingSankey(bundle.db, RANGE, TODAY);
+    expect(g.incomeUnread).toBe(false);
+    expect(g.links.find((l) => l.source === "drawdown")!.valueCents).toBe(21_661 + 19_758 - 1_516);
+    // …and so does a window that opens past the checked day but holds income found
+    insertTxn({ accountId: checkingId, postedOn: "2026-07-03", amountCents: 114_192, category: "Income > Salary" });
+    expect(spendingSankey(bundle.db, { from: "2026-07-02", to: "2026-07-07" }, TODAY).incomeUnread).toBe(false);
+  });
+
+  test("with no live pay schedule there is nothing to wait for: the plug stands, as it always has", () => {
+    payInChecking();
+    bundle.db.update(recurringSeries).set({ status: "ended" }).run();
+    const g = spendingSankey(bundle.db, RANGE, TODAY);
+    expect(g.incomeUnread).toBe(false);
+    expect(g.nodes.some((n) => n.id === "drawdown")).toBe(true);
+  });
+
+  // ⛔ the one rule: /spending's own reading of the same window (`CashFlow.incomeUnread`), never a second one
+  test("a window reads exactly as /spending's cash flow reads it", () => {
+    payInChecking();
+    for (const through of ["2026-06-30", "2026-07-01"]) {
+      checkedThrough(bundle.db, checkingId, through);
+      const period = resolvePeriod({ period: "2026-07" }, TODAY);
+      expect(spendingSankey(bundle.db, RANGE, TODAY).incomeUnread, through).toBe(
+        cashFlowByPeriod(bundle.db, period, TODAY).incomeUnread,
+      );
+    }
   });
 });

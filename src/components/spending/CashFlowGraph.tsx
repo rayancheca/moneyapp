@@ -17,10 +17,12 @@ import {
   ghostRowLabel,
   isLonePoint,
   plottedRunningTotals,
+  runningIncomeUnread,
   type CashCumulativePoint,
 } from "@/lib/cash-flow-cumulative";
 import { UNREACHED_PHRASE, type UnreachedKind } from "@/lib/empty-period";
 import { formatCents, formatCentsSigned } from "@/lib/money";
+import { noIncomeDayCheckedThrough } from "@/lib/unbanked-income";
 import type { CashFlow, SpendingProjection } from "@/services/spending";
 
 /**
@@ -60,18 +62,26 @@ interface CashFlowGraphProps {
  *
  * ⛔ The prior period's figure stays: it is a fact about that period (owner
  * decision E1a).
+ *
+ * ⚖️ §6A 68: …and through a point no income has been found by and not one of whose days is checked where his pay lands
+ * (`runningIncomeUnread`, the lines' own rule), Income and Net print "—" and the hover says why — the table's and the
+ * chart hover's dash for the same days (5a6d9b0). 🔴 On his ledger copy 2026-10-21 Oct 14 hovered "Through 14 · Income
+ * $0.00 · Spent $1,603.00 · Net −$1,603.00", Wells Fargo checked through Sep 24.
  */
 export function RunningTotalTooltip({
   point: row,
   unreached,
+  incomeUnread,
   hasRefunds,
   priorLabel,
 }: {
   point: CashCumulativePoint;
   unreached: UnreachedKind | null;
+  incomeUnread: boolean;
   hasRefunds: boolean;
   priorLabel: string | null;
 }) {
+  const dash = <span className="text-ink-faint">—</span>;
   return (
     <div className="rounded-md border border-line bg-surface-raised px-3 py-2 text-xs shadow-sm">
       {unreached !== null ? (
@@ -84,7 +94,7 @@ export function RunningTotalTooltip({
           <div className="text-ink-faint">Through {row.label}</div>
           <div className="mt-1 flex items-center justify-between gap-4">
             <span className="text-positive">Income</span>
-            <span className="figures">{formatCents(row.earnedCum)}</span>
+            <span className="figures">{incomeUnread ? dash : formatCents(row.earnedCum)}</span>
           </div>
           <div className="flex items-center justify-between gap-4">
             <span className="text-negative">Spent</span>
@@ -98,8 +108,11 @@ export function RunningTotalTooltip({
           )}
           <div className="mt-1 flex items-center justify-between gap-4 border-t border-line pt-1 font-medium">
             <span>Net</span>
-            <span className="figures">{formatCentsSigned(row.netCum)}</span>
+            <span className="figures">{incomeUnread ? dash : formatCentsSigned(row.netCum)}</span>
           </div>
+          {incomeUnread && (
+            <div className="mt-1 text-ink-muted first-letter:uppercase">{noIncomeDayCheckedThrough(row.label)}</div>
+          )}
         </>
       )}
       {row.ghostCum !== null && (
@@ -150,6 +163,8 @@ export function CashFlowGraph({ data, projection }: CashFlowGraphProps) {
   const plotted = plottedRunningTotals(rows, buckets);
   const labelByKey = new Map(rows.map((r) => [r.key, r.label]));
   const unreachedByKey = new Map(buckets.map((b) => [b.key, b.unreached]));
+  // ⚖️ §6A 68: the points the lines leave without Income and Net — the hover's dash reads the same set
+  const incomeUnread = runningIncomeUnread(buckets);
 
   return (
     <figure className="m-0" aria-label="Running totals for the period — cumulative income, spending, and net">
@@ -191,6 +206,7 @@ export function CashFlowGraph({ data, projection }: CashFlowGraphProps) {
                   <RunningTotalTooltip
                     point={row}
                     unreached={unreachedByKey.get(row.key) ?? null}
+                    incomeUnread={incomeUnread.has(row.key)}
                     hasRefunds={hasRefunds}
                     priorLabel={priorLabel}
                   />
@@ -257,6 +273,13 @@ export function CashFlowGraph({ data, projection }: CashFlowGraphProps) {
           <span className="flex items-center gap-1.5">
             <span aria-hidden className="inline-block h-0 w-3 border-t border-dashed border-ink-faint" />
             Spent in {priorLabel}, running total
+          </span>
+        )}
+        {/* ⚖️ §6A 68: a legend naming two lines the graph leaves undrawn says why, as the table lens says it under its
+            dashes. 🔴 His ledger copy 2026-10-21: October's lens names Income and Net over no line of either. */}
+        {incomeUnread.size > 0 && (
+          <span className="basis-full text-ink-faint">
+            Income and Net are not drawn while not one day has been checked in the accounts that pay lands in.
           </span>
         )}
       </figcaption>

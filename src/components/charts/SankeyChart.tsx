@@ -2,6 +2,7 @@
 
 import { nothingFoundSoFarSentence } from "@/lib/budget-coverage";
 import { renderPercent } from "@/lib/insight-facts";
+import { noIncomeDayCheckedNote } from "@/lib/unbanked-income";
 import { useRouter } from "next/navigation";
 import {
   useId,
@@ -49,10 +50,13 @@ const LINK_HOT = 0.8;
 
 interface SankeyChartProps {
   /**
-   * the flow — and, where it is empty because the window's spending has not been found, that window's fact
-   * (`services/sankey::SpendingSankey`), which the empty state says in place of `emptyLabel`
+   * the flow — and, where it is empty because the window's spending has not been found or its income nobody has looked
+   * for, that window's facts (`services/sankey::SpendingSankey`), which the empty state says in place of `emptyLabel`
+   * (`sankeyEmptyCopy`)
    */
-  graph: SankeyGraph & { spendingUnaccounted?: string | null };
+  graph: SankeyEmptyFacts & SankeyGraph;
+  /** the window the surface names ("October 2026"), for the empty state's Income sentence; "this period" without one */
+  periodLabel?: string;
   /** Tailwind height for the measured canvas (default h-[22rem]); focus mode passes a taller one */
   heightClass?: string;
   /** value formatter (default formatCents) */
@@ -131,6 +135,33 @@ export function sankeyFrameNote(
     `Categories here are what was charged. The ${formatValue(refund.valueCents)} that came back ` +
     `is its own source rather than a subtraction, so these run above the netted figures elsewhere.`
   );
+}
+
+/** what an empty flow knows of why it is empty (`services/sankey::SpendingSankey`) — both absent on a bare graph */
+export interface SankeyEmptyFacts {
+  spendingUnaccounted?: string | null;
+  incomeUnread?: boolean;
+}
+
+/**
+ * What an EMPTY flow says.
+ *
+ * ⚖️ Decisions 64 + 72: a flow left empty because its window's spending has not been found says THAT, in the words
+ * every other /spending card prints there, never "No money flow" — the window's pay did flow. 🔴 Review of b356d57:
+ * a $1,141.92 pay on Oct 16 past spending's Aug 12 drew "Salary → Money in → Net saved $1,141.92" on /spending and
+ * the dashboard's Flow 1W (`spendingSankey`).
+ *
+ * ⚖️ §6A 68: …and one left empty because its income nobody has looked for says that, in the Income card's words for its
+ * own dash (`noIncomeDayCheckedNote`) — of the surface's period, or "this period" where it names none (the dashboard's
+ * Flow ranges). 🔴 On his ledger copy 2026-10-21 `/spending?cash=sankey` drew October "From outside this period
+ * $1,603.00" beside that card's "Not one day of October 2026 has been checked in the accounts that pay lands in".
+ */
+export function sankeyEmptyCopy(graph: SankeyEmptyFacts, emptyLabel: string, periodLabel?: string): string {
+  const said = [
+    graph.spendingUnaccounted ? nothingFoundSoFarSentence(graph.spendingUnaccounted) : null,
+    graph.incomeUnread ? noIncomeDayCheckedNote(periodLabel ?? "this period") : null,
+  ].filter((s): s is string => s !== null);
+  return said.length === 0 ? emptyLabel : said.join(" ");
 }
 
 /** Which leg of the hub a share is a share of — see `sankeyNodeLabel`. */
@@ -255,6 +286,7 @@ export function SankeyChart({
   formatValue = formatCents,
   ariaLabel = "Money-flow diagram",
   emptyLabel = "No money flow in this period.",
+  periodLabel,
   lens,
   onSelectLens,
 }: SankeyChartProps) {
@@ -311,19 +343,9 @@ export function SankeyChart({
     [ariaLabel, formatValue, layout.nodes, totalFlow],
   );
 
-  /*
-   * ⚖️ Decisions 64 + 72: a flow left empty because its window's spending has not been found says THAT, in the words
-   * every other /spending card prints there, never "No money flow" — the window's pay did flow. 🔴 Review of b356d57:
-   * a $1,141.92 pay on Oct 16 past spending's Aug 12 drew "Salary → Money in → Net saved $1,141.92" on /spending and
-   * the dashboard's Flow 1W (`spendingSankey`).
-   */
+  // an empty flow says why (`sankeyEmptyCopy`)
   if (graph.nodes.length === 0) {
-    const notFound = graph.spendingUnaccounted ?? null;
-    return (
-      <p className="py-8 text-center text-sm text-ink-muted">
-        {notFound === null ? emptyLabel : nothingFoundSoFarSentence(notFound)}
-      </p>
-    );
+    return <p className="py-8 text-center text-sm text-ink-muted">{sankeyEmptyCopy(graph, emptyLabel, periodLabel)}</p>;
   }
 
   const isConnected = (linkSource: string, linkTarget: string) =>
