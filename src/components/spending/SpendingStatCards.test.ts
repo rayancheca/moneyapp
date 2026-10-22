@@ -17,7 +17,9 @@ const totals: PeriodTotals = {
   savingsRatePct: null,
 };
 
-function render(over: { incomeUnread?: string | null; partlyRead?: { uncoveredDays: number; line: string } | null } = {}) {
+type Unread = { uncoveredDays: number; line: string } | null;
+
+function render(over: { incomeUnread?: string | null; partlyRead?: Unread; incomePartlyRead?: Unread } = {}) {
   return renderToStaticMarkup(
     createElement(SpendingStatCards, {
       totals,
@@ -25,6 +27,7 @@ function render(over: { incomeUnread?: string | null; partlyRead?: { uncoveredDa
       spendingUnaccounted: null,
       incomeUnread: NOTE,
       partlyRead: { uncoveredDays: 21, line: LINE },
+      incomePartlyRead: null,
       ...over,
     }),
   );
@@ -60,6 +63,20 @@ describe("SpendingStatCards — what the cards say of days nobody has read", () 
     expect(income).toContain("—");
     expect(income).toContain(NOTE);
     expect(income).not.toContain("$0.00");
+  });
+
+  // ⚖️ decision 72, extended to income totals: Income read in part wears the chip too, with its own line under it
+  test("Income read only in part wears the chip, with income's line under its figure", () => {
+    const line = "income imported through Jul 31 · 30 days of this period unaccounted";
+    const html = render({
+      incomeUnread: null,
+      partlyRead: null,
+      incomePartlyRead: { uncoveredDays: 30, line },
+    });
+    const income = card(html, "income");
+    expect(income).toMatch(/<span aria-hidden="true" class="[^"]*text-warning[^"]*">.*partly read<\/span><\/span>/);
+    expect(income).toContain(line);
+    expect(card(html, "spending")).not.toContain("partly read");
   });
 
   test("a window read in full, with income checked, wears nothing new", () => {

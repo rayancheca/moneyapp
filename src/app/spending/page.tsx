@@ -55,7 +55,7 @@ import { PeriodSelector } from "@/components/spending/PeriodSelector";
 import { SpendHeatmap } from "@/components/spending/SpendHeatmap";
 import { SpendingCategoriesTable } from "@/components/spending/SpendingCategoriesTable";
 import { ProvenancePopover } from "@/components/ui/ProvenancePopover";
-import { provenanceFor } from "@/services/provenance";
+import { allIncomePartlyRead, provenanceFor } from "@/services/provenance";
 import { SpendingStatCards } from "@/components/spending/SpendingStatCards";
 import { TopMerchantsCard } from "@/components/spending/TopMerchantsCard";
 
@@ -311,6 +311,13 @@ export default async function SpendingPage({
     to: range.to,
     label: period.label,
   });
+  /*
+   * ⚖️ Decision 72, extended to income totals: the Income card's window read by the accounts his income landed in —
+   * `/categories/<Income>`'s reading of the same days, never a second one. Asked only where the card prints a figure (a
+   * dash wears no chip). 🔴 His ledger copy 2026-10-21 (review of 827e9a5): `?period=2026-09` carded "Income $6,177.88"
+   * bare beside four cards wearing "partly read".
+   */
+  const incomePartlyRead = cashFlow.incomeUnread ? null : allIncomePartlyRead(db, range.from, range.to);
 
   const hasActivity =
     cashFlow.totals.spentCents !== 0 ||
@@ -381,13 +388,15 @@ export default async function SpendingPage({
         <div className="space-y-6">
           {/* ⚖️ §6A 68 + decision 72, one rule on every caller (2026-10-21): Income is the dashboard's dash where no day
               is checked where the pay lands, under its words; Spent wears the chip Where it went wears, from the same
-              proof. 🔴 His ledger copy 2026-10-21 carded October "INCOME $0.00 · SPENT $1,603.00" under both. */}
+              proof, and Income the one /categories/<Income> wears. 🔴 His ledger copy 2026-10-21 carded October
+              "INCOME $0.00 · SPENT $1,603.00" under both. */}
           <SpendingStatCards
             totals={cashFlow.totals}
             range={range}
             spendingUnaccounted={cashFlow.spendingUnaccounted}
             incomeUnread={cashFlow.incomeUnread ? noIncomeDayCheckedNote(period.label) : null}
             partlyRead={spendProvenance?.partlyRead ?? null}
+            incomePartlyRead={incomePartlyRead}
           />
 
           {/* Mounted UNDER the stat cards, not above them: the note qualifies a

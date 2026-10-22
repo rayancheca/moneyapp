@@ -20,6 +20,7 @@ export function SpendingStatCards({
   spendingUnaccounted,
   incomeUnread,
   partlyRead,
+  incomePartlyRead,
 }: {
   totals: PeriodTotals;
   range: DateRange;
@@ -29,8 +30,10 @@ export function SpendingStatCards({
   incomeUnread: string | null;
   /** decision 72: the period proof's days read only in part (`Provenance.partlyRead`) — the chip, and Spent's line */
   partlyRead: PartlyRead | null;
+  /** decision 72: `/categories/<Income>`'s reading of the window (`allIncomePartlyRead`) — Income's chip and line */
+  incomePartlyRead: PartlyRead | null;
 }) {
-  const cards = spendingStatCards(totals, range, spendingUnaccounted, { incomeUnread, partlyRead });
+  const cards = spendingStatCards(totals, range, spendingUnaccounted, { incomeUnread, partlyRead, incomePartlyRead });
   const cols = cards.length >= 5 ? "lg:grid-cols-5" : "lg:grid-cols-4";
   return (
     <div className={`grid grid-cols-2 gap-3 ${cols}`}>

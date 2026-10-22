@@ -35,8 +35,9 @@ export interface SpendingStatCardSpec {
   /** span both columns on the 2-col mobile grid so the card isn't a lonely orphan */
   mobileFull?: boolean;
   /**
-   * ⚖️ Decision 72: the figure is a total over days not every account he spends from is read for — the card wears the
-   * "partly read" chip (`VERDICT_PRESENTATION.partly_read`). Absent on a window read in full, and on a dash.
+   * ⚖️ Decision 72: the figure is a total over days some account behind it has not been read for — one he spends from,
+   * or one his income landed in — and the card wears the "partly read" chip (`VERDICT_PRESENTATION.partly_read`).
+   * Absent on a window read in full, and on a dash.
    */
   partlyRead?: boolean;
 }
@@ -50,6 +51,11 @@ export interface SpendingStatCardFacts {
   incomeUnread?: string | null;
   /** ⚖️ Decision 72: the period proof's days read only in part and their line (`Provenance.partlyRead`, Where it went's) */
   partlyRead?: PartlyRead | null;
+  /**
+   * ⚖️ Decision 72, extended to income totals: the days of the window the accounts his income landed in are not read
+   * for, and their line — `/categories/<Income>`'s reading of the same days (`provenance::allIncomePartlyRead`)
+   */
+  incomePartlyRead?: PartlyRead | null;
 }
 
 /** a card whose figure is no measurement (decisions 64 + 72): the em dash, in the faint tone */
@@ -87,6 +93,12 @@ function dollars(cents: number): string {
  * $1,603.00 · NET -$1,603.00 · SAVINGS RATE — no income yet" — under a dashboard printing "—" for October's income,
  * and over its own "Where it went" reading "partly read · spending imported through Aug 12 · 21 days of this period
  * unaccounted".
+ *
+ * ⚖️ Decision 72, extended to income totals (ruled implied 2026-10-14): `facts.incomePartlyRead` marks Income, with its
+ * own line under it, and Net and the savings rate — Income's arithmetic as much as Spent's. 🔴 His ledger copy
+ * 2026-10-21 (review of 827e9a5): `?period=2026-09` carded "Income $6,177.88" bare beside four cards wearing the chip,
+ * while `/categories/<Income>` for the same days read "income imported through Jul 31 · 30 days of this period
+ * unaccounted"; Net's chip read spending's proof alone.
  */
 export function spendingStatCards(
   totals: PeriodTotals,
@@ -106,6 +118,11 @@ export function spendingStatCards(
   const partly = facts.partlyRead ?? null;
   const chip = partly === null ? {} : { partlyRead: true };
   const partlySpoken = partly === null ? "" : `, ${PARTLY_READ}`;
+  // …on Income, by the accounts his income landed in; and on Net and the rate by either — they are the arithmetic of both
+  const incomePartly = facts.incomePartlyRead ?? null;
+  const eitherPartly = partly ?? incomePartly;
+  const netChip = eitherPartly === null ? {} : { partlyRead: true };
+  const netSpoken = eitherPartly === null ? "" : `, ${PARTLY_READ}`;
 
   /*
    * 🔴 S22 — "Earned" NAMED A POPULATION IT DID NOT HOLD. `earnedCents` is every
@@ -133,8 +150,12 @@ export function spendingStatCards(
           key: "earned",
           label: "Income",
           cents: earnedCents,
+          // ⚖️ decision 72: `/categories/<Income>`'s line for the days the chip calls partly read, under its figure
+          ...(incomePartly === null ? {} : { partlyRead: true, delta: incomePartly.line }),
           href: incomeHref,
-          ariaLabel: `Income this period. ${dollars(earnedCents)}. View income transactions.`,
+          ariaLabel:
+            `Income this period. ${dollars(earnedCents)}` +
+            `${incomePartly === null ? "" : `, ${PARTLY_READ}: ${incomePartly.line}`}. View income transactions.`,
         }
       : {
           key: "earned",
@@ -189,8 +210,8 @@ export function spendingStatCards(
     key: "net",
     label: "Net",
     // ⚖️ no Spent or no Income, no Net: the figure is their arithmetic (decisions 64 + 72, §6A 68) — and over days
-    // Spent is read only in part, it is read only in part too
-    ...(arithmeticWaits ? DASH : { cents: netCents, flow: true, ...chip }),
+    // Spent or Income is read only in part, it is read only in part too
+    ...(arithmeticWaits ? DASH : { cents: netCents, flow: true, ...netChip }),
     // with Refunds on screen the arithmetic is visible; name it for clarity
     delta: showRefunds ? "income + refunds − spent" : undefined,
     /*
@@ -205,7 +226,7 @@ export function spendingStatCards(
     href: ledgerHref({ category: "cashflow", from: range.from, to: range.to }),
     ariaLabel: arithmeticWaits
       ? `Net this period: no figure ${waitsFor}. View the income and spending behind it.`
-      : `Net this period. ${netCents < 0 ? "negative " : ""}${dollars(Math.abs(netCents))}${partlySpoken}. ` +
+      : `Net this period. ${netCents < 0 ? "negative " : ""}${dollars(Math.abs(netCents))}${netSpoken}. ` +
         "View the income and spending behind it.",
   });
 
@@ -254,7 +275,7 @@ export function spendingStatCards(
           : waits
             ? `of ${formatCents(earnedCents)} income`
             : `${netCents >= 0 ? "kept" : "overspent"} · of ${formatCents(earnedCents)} income`,
-    ...(rateFigure ? chip : {}),
+    ...(rateFigure ? netChip : {}),
     // the same population as Net — this rate is net ÷ income, and both terms
     // come from these rows
     href: ledgerHref({ category: "cashflow", from: range.from, to: range.to }),
@@ -265,7 +286,7 @@ export function spendingStatCards(
           ? "Savings rate unavailable without income."
           : waits
             ? `Savings rate unavailable ${waitsFor}, of ${dollars(earnedCents)} of income.`
-            : `Savings rate ${savingsRatePct} percent, of ${dollars(earnedCents)} of income${partlySpoken}.`,
+            : `Savings rate ${savingsRatePct} percent, of ${dollars(earnedCents)} of income${netSpoken}.`,
   });
 
   return cards;

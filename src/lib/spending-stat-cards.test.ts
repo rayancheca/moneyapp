@@ -287,4 +287,53 @@ describe("spendingStatCards", () => {
     );
     expect(cards.filter((c) => c.partlyRead).map((c) => c.key)).toEqual(["spent"]);
   });
+
+  /*
+   * ⚖️ Decision 72, extended to income totals (ruled implied 2026-10-14): Income is a total over a window too, read by
+   * the accounts his income landed in — the Income category page's reading of the same days (`allIncomePartlyRead`) —
+   * and Net and the savings rate are its arithmetic as much as Spent's. 🔴 Measured on his ledger copy 2026-10-21
+   * (review of 827e9a5): `/spending?period=2026-09` carded "Income $6,177.88" bare beside Spent, Refunds, Net and the
+   * rate wearing "partly read", while `/categories/<Income>` for the same days read "partly read · income imported
+   * through Jul 31 · 30 days of this period unaccounted".
+   */
+  it("marks Income partly read by its own reading, with its line under it, and Net and the rate with it", () => {
+    const incomePartlyRead = { uncoveredDays: 30, line: "income imported through Jul 31 · 30 days of this period unaccounted" };
+    const september = totals({
+      earnedCents: 617_788,
+      spentCents: 862_388,
+      refundsCents: 1_568,
+      netCents: -243_032,
+      savingsRatePct: -39.3,
+    });
+    const cards = spendingStatCards(september, RANGE, null, { incomePartlyRead });
+    const by = (key: string) => cards.find((c) => c.key === key)!;
+    expect(cards.filter((c) => c.partlyRead).map((c) => c.key)).toEqual(["earned", "net", "savings"]);
+    // ⛔ Spent and Refunds are read where he spends, not by income's day
+    expect(by("spent").delta).toBeUndefined();
+    expect(by("earned").cents).toBe(617_788);
+    expect(by("earned").delta).toBe(incomePartlyRead.line);
+    expect(by("earned").ariaLabel).toBe(
+      `Income this period. 6177.88 dollars, partly read: ${incomePartlyRead.line}. View income transactions.`,
+    );
+    expect(by("net").ariaLabel).toBe(
+      "Net this period. negative 2430.32 dollars, partly read. View the income and spending behind it.",
+    );
+    expect(by("savings").ariaLabel).toBe("Savings rate -39.3 percent, of 6177.88 dollars of income, partly read.");
+
+    // both read in part: every figure wears it, and each line sits under its own card
+    const spendingPartlyRead = { uncoveredDays: 30, line: "spending imported through Aug 12 · 30 days of this period unaccounted" };
+    const both = spendingStatCards(september, RANGE, null, { incomePartlyRead, partlyRead: spendingPartlyRead });
+    expect(both.filter((c) => c.partlyRead).map((c) => c.key)).toEqual(["earned", "spent", "refunds", "net", "savings"]);
+    expect(both.find((c) => c.key === "earned")!.delta).toBe(incomePartlyRead.line);
+    expect(both.find((c) => c.key === "spent")!.delta).toBe(spendingPartlyRead.line);
+
+    // …a dash wears none, and a window read in full wears nothing new
+    const october = totals({ earnedCents: 0, spentCents: 160_300, netCents: -160_300, savingsRatePct: null });
+    const dashed = spendingStatCards(october, RANGE, null, {
+      incomePartlyRead,
+      incomeUnread: "Not one day of October 2026 has been checked in the accounts that pay lands in, so nothing is shown.",
+    });
+    expect(dashed.filter((c) => c.partlyRead)).toEqual([]);
+    expect(spendingStatCards(september, RANGE, null, { incomePartlyRead: null })).toEqual(spendingStatCards(september, RANGE));
+  });
 });

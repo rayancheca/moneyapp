@@ -240,4 +240,15 @@ describe("the stat cards read the window the way the rest of the app does", () =
     expect(source).toMatch(/<SpendingStatCards[^/]*\bpartlyRead=\{spendProvenance\?\.partlyRead \?\? null\}/);
     expect(source).toMatch(/spendProvenance\?\.partlyRead && \(/);
   });
+
+  /*
+   * ⚖️ …and Income by the Income category page's reading of the same days (decision 72, extended to income totals).
+   * 🔴 His ledger copy 2026-10-21 (review of 827e9a5): `?period=2026-09` carded "Income $6,177.88" bare beside four cards
+   * wearing "partly read", under `/categories/<Income>`'s "income imported through Jul 31 · 30 days of this period
+   * unaccounted".
+   */
+  test("Income is handed the reading /categories/<Income> grades the same days by", () => {
+    expect(source).toMatch(/<SpendingStatCards[^/]*\bincomePartlyRead=\{incomePartlyRead\}/);
+    expect(source).toMatch(/const incomePartlyRead = cashFlow\.incomeUnread \? null : allIncomePartlyRead\(db, range\.from, range\.to\);/);
+  });
 });

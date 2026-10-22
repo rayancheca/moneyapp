@@ -33,6 +33,7 @@ import {
   loadCategoryIndex,
   offAgentsCash,
   spendingBucket,
+  spendingTransactions,
   uncategorizedWhere,
 } from "./analytics";
 import { handTypedDays, keptOpeningOf } from "./anchor-winners";
@@ -2657,6 +2658,32 @@ function categoryPartlyRead(
     uncoveredDays: reading.uncoveredDays,
     line: budgetCoverageSentence({ ...reading, bounds: { start: from }, counted, namedFor }),
   };
+}
+
+/**
+ * ⚖️ Decision 72 for HIS INCOME over a window — /spending's Income card, the total `?category=income` opens: every
+ * income category's rows, which is `/categories/<Income>`'s total over the same days, read as that page reads it
+ * (`categoryPartlyRead`, in income's words: "income imported through Jul 31"). Ruled implied 2026-10-14 for every income
+ * total (one window reads one way everywhere). Each top-level income category is read by its own day and the widest
+ * reading stands — the earliest day among the accounts his income landed in; his ledger has one, "Income".
+ *
+ * Null for a window read in full, and for one holding no income row: an empty window's proof says what it is, a lower
+ * bound, and wears no chip (`summedRowsProof`) — the rows are the ones its page's headline sums (`spendingTransactions`).
+ * ⛔ Not the pay's frontier (`noIncomeDayReadOf`): that says whether anyone has LOOKED where the pay lands — the dash,
+ * §6A 68 — and this how much of a total found is read. 🔴 Measured on his ledger copy 2026-10-21 (review of 827e9a5):
+ * `/spending?period=2026-09` carded "Income $6,177.88" bare beside Spent, Refunds, Net and the rate wearing "partly
+ * read", while `/categories/<Income>` read "partly read · income imported through Jul 31 · 30 days of this period
+ * unaccounted" — SoFi, which his interest and this spring's pay landed in, read through Jul 31.
+ */
+export function allIncomePartlyRead(db: AppDatabase, from: string, to: string): PartlyRead | null {
+  const roots = [...loadCategoryIndex(db).byId.values()].filter((c) => c.parentId === null && c.kind === "income");
+  return roots.reduce<PartlyRead | null>(
+    (widest, root) =>
+      spendingTransactions(db, { categoryId: root.id, from, to }).length === 0
+        ? widest
+        : widerUnread(widest, categoryPartlyRead(db, root.id, from, to, "income")),
+    null,
+  );
 }
 
 /**

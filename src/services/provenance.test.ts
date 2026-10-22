@@ -25,7 +25,7 @@ import { budgetPaceStatuses } from "./budgets";
 import { createCashWallet } from "./cash-wallets";
 import { addManualTransaction } from "./manual-transactions";
 import { spendingReadThrough } from "./movers-card";
-import { provenanceFor, weakestVerdict, type ProvenanceVerdict } from "./provenance";
+import { allIncomePartlyRead, provenanceFor, weakestVerdict, type ProvenanceVerdict } from "./provenance";
 
 /**
  * The service exists to answer "prove it" for a rendered figure, and its most
@@ -4114,6 +4114,51 @@ describe("⚖️ decision 72 — a total over days its accounts have not been im
     readThrough(acct, "2026-07-31");
     expect(received().verdict).toBe("derived");
     expect(received().partlyRead).toBeUndefined();
+  });
+
+  /*
+   * ⚖️ …and /spending's Income card is the same total: his Income over a window is every income category's rows
+   * (`?category=income` opens the kind), so it reads as `/categories/<Income>` reads the same days — one reading for the
+   * card and the page. 🔴 Measured on his ledger copy 2026-10-21 (review of 827e9a5): `/spending?period=2026-09` carded
+   * "Income $6,177.88" bare beside four cards wearing "partly read", while `/categories/<Income>` read "partly read ·
+   * income imported through Jul 31 · 30 days of this period unaccounted".
+   */
+  test("his Income over a window is read as the Income category's page reads it, by the accounts it landed in", () => {
+    const pay = addKindedCategory("c-pay", "Fixture Salary", "income");
+    const checking = addAccount("a", "Chase Checking", "checking");
+    const file = addFile("f1", "july.pdf", "chase-checking-statement-pdf");
+    addDays(checking, [{ day: "2026-07-01", basis: "anchored" }, { day: "2026-07-20", basis: "derived" }]);
+    for (const day of ["2026-07-10", "2026-07-20"]) categorize(addTxn(checking, day, { importFileId: file, cents: 5_000 }), pay);
+    const received = (window: { from: string; to: string } = JULY) =>
+      provenanceFor(bundle.db, { kind: "categorySpend", categoryId: pay, ...window })!;
+    const line = "income imported through Jul 20 · 11 days of this period unaccounted";
+    expect(allIncomePartlyRead(bundle.db, JULY.from, JULY.to)).toEqual({ uncoveredDays: 11, line });
+    expect(allIncomePartlyRead(bundle.db, JULY.from, JULY.to)).toEqual(received().partlyRead);
+
+    // every income category counts, and the earliest day among the accounts it landed in stands: interest in a second
+    // account read further than Chase Checking leaves the total as it was…
+    const interest = bundle.db.select().from(categories).all().find((c) => c.name === "Interest" && c.kind === "income")!;
+    const savings = addAccount("b", "SoFi Savings", "savings");
+    readThrough(savings, "2026-07-25");
+    categorize(addTxn(savings, "2026-07-05", { importFileId: file, cents: 14 }), interest.id);
+    expect(allIncomePartlyRead(bundle.db, JULY.from, JULY.to)).toEqual({ uncoveredDays: 11, line });
+    // …and in one read through Jul 15, holds it back to that day
+    const sofiChecking = addAccount("c", "SoFi Checking", "checking");
+    readThrough(sofiChecking, "2026-07-15");
+    categorize(addTxn(sofiChecking, "2026-07-06", { importFileId: file, cents: 1 }), interest.id);
+    expect(allIncomePartlyRead(bundle.db, JULY.from, JULY.to)).toEqual({
+      uncoveredDays: 16,
+      line: "income imported through Jul 15 · 16 days of this period unaccounted",
+    });
+
+    // ⛔ a window holding no income row is no chip: its page's proof says what an empty window is, a lower bound
+    const empty = { from: "2026-07-21", to: "2026-07-31" };
+    expect(received(empty).partlyRead).toBeUndefined();
+    expect(allIncomePartlyRead(bundle.db, empty.from, empty.to)).toBeNull();
+
+    // read through its last day, it is read in full
+    for (const acct of [checking, savings, sofiChecking]) readThrough(acct, "2026-07-31");
+    expect(allIncomePartlyRead(bundle.db, JULY.from, JULY.to)).toBeNull();
   });
 
   test("a transfer category's Net total is graded the same way, and names what it counts", () => {
