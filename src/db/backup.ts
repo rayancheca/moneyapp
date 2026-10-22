@@ -308,11 +308,19 @@ export function withPreMutationSnapshot<T>(db: AppDatabase, label: string, mutat
 /**
  * Snapshots the database, THEN runs `write` as ONE transaction — for a write that may still refuse inside it: a merge
  * reads what it files again there, the reading it writes by (`mergeSeries`). A transaction that throws is rolled back,
- * so the ledger is then exactly what the restore point holds: the restore point is taken back, and the pruning that
+ * so nothing of the write landed and the restore point has nothing to undo: it is taken back, and the pruning that
  * makes room for it waits for the commit — a refused write leaves the backups folder as it found it.
+ *
+ * ⚠️ Not "the ledger is exactly what the restore point holds": the refusal this exists for is a write ANOTHER process
+ * landed while the restore point was taken (another tab, a script), and that write is in the ledger and not in the
+ * restore point. Taking the restore point back loses nothing: it was this write's, and this write is not there.
  *
  * 🔴 Review of 474e757 (2026-10-12): a merge refused by that second reading kept the restore point it had taken, and
  * his oldest of the twelve kept was pruned for it, though the merge said a refused one writes nothing.
+ *
+ * 🔴 Review of fcfe798 (2026-10-13): a prune that failed after the commit threw out of a write already in his ledger,
+ * so the merge he had made was reported failed, and a retry would merge again. Once committed, the write is returned;
+ * a prune that fails says so in the server log and keeps one spare restore point, which the next one's prune takes.
  */
 export function withPreMutationTransaction<T>(
   db: AppDatabase,
@@ -327,8 +335,17 @@ export function withPreMutationTransaction<T>(
     if (point.path !== null) discardRestorePoint(point.path);
     throw error;
   }
-  if (point.path !== null) prune(path.dirname(point.path), DEFAULT_RETENTION, new Date());
+  if (point.path !== null) pruneAfterCommit(point.path, label);
   return written;
+}
+
+/** The prune a committed write's restore point waits for — never a reason to report that write failed. */
+function pruneAfterCommit(file: string, label: string): void {
+  try {
+    prune(path.dirname(file), DEFAULT_RETENTION, new Date());
+  } catch (error: unknown) {
+    console.error(`[backup] the ${label} was written; pruning the restore points after it failed — one spare kept`, error);
+  }
 }
 
 /** A restore point of a write that rolled back — it holds the ledger as it still is. */

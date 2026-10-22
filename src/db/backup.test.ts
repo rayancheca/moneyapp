@@ -374,6 +374,29 @@ describe("withPreMutationTransaction", () => {
     expect(archive()).toEqual(twelve);
   });
 
+  /*
+   * 🔴 Review of fcfe798 (2026-10-13): the prune waited for the commit, and a prune that then failed — the folder
+   * unreadable for a moment — threw out of a write already committed: the merge was in his ledger, and the page said it
+   * failed, so a retry would merge again what was merged. The write is what happened; the prune is housekeeping.
+   */
+  test("a write that commits and then cannot prune: it is returned as written — the spare restore point kept", () => {
+    const said = vi.spyOn(console, "error").mockImplementation(() => {});
+    const returned = withPreMutationTransaction(bundle.db, "merge-series", (tx) => {
+      tx.run(sql`DELETE FROM t`);
+      // the next read of the folder is the prune's, once the write has committed
+      vi.spyOn(fs, "readdirSync").mockImplementationOnce(() => {
+        throw new Error("EACCES: permission denied, scandir");
+      });
+      return "written";
+    });
+
+    expect(returned).toBe("written");
+    expect(count()).toBe(0);
+    expect(archive()).toHaveLength(13); // nothing pruned: the next restore point's prune takes the oldest two
+    expect(said).toHaveBeenCalledWith(expect.stringMatching(/^\[backup\] .*merge-series.* written/), expect.any(Error));
+    vi.restoreAllMocks();
+  });
+
   test("a restore point that cannot be written refuses before the write runs", () => {
     fs.rmSync(backups(), { recursive: true });
     fs.writeFileSync(backups(), "not a directory");

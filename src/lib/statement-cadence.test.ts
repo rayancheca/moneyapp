@@ -513,6 +513,22 @@ describe("a cycle that moved", () => {
   });
 
   /*
+   * ⚠️ What `movedCycle`'s docstring now says, pinned (review of 4effbce's docstring, 2026-10-14: it said a first
+   * close folds in "only" nearer the new day). The rule asks that of a first close the run must LEAVE OUT to agree;
+   * one the whole run agrees with joins as near the old day as the new — Aug 5 is three off the 2nd and three off the
+   * 8th — so long as it sits off the old day by more than the old closes' tolerance (one day here).
+   */
+  test("a first close as near the old day as the new joins the run when the whole run agrees with it", () => {
+    const c = statementCadence([...TEN_ON_THE_SECOND, "2026-08-05", "2026-09-08", "2026-10-08"]);
+    expect(c.rhythm).toEqual({ kind: "day-of-month", day: 8 });
+    expect(c.closes).toBe(3);
+    // Aug 5 is in the run: its three days of spread are the new cycle's wander, plus the slack
+    expect(c.toleranceDays).toBe(CYCLE_AGREEMENT_DAYS + 1);
+    // the window holds the last RECENT_CLOSES: nine of the ten on the 2nd
+    expect(c.movedFrom).toEqual({ day: 2, closes: 9 });
+  });
+
+  /*
    * ⛔ THE END OF THE MOVE: the older closes must still be a rhythm on their own — MIN_CLOSES of them — or
    * there is nothing to have moved FROM. Pinned at the two months it decides, with the months to come
    * closing on the 9th as Capital One's do so far. A second reader found both bounds unpinned on

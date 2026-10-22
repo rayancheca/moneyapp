@@ -144,6 +144,7 @@ describe("statementEvidence — what /imports' \"What the statements proved\" li
       // the OFX download — ONE document, though it printed two accounts
       downloadDocuments: 1,
       recordedBalanceDocuments: 0,
+      recordedBalanceDownloads: 0,
       // Agentic's June section, though the PDF it came out of printed balances for two other accounts and its own close
       openingStatements: 1,
       // …and no period of Agentic's starts before it
@@ -160,6 +161,7 @@ describe("statementEvidence — what /imports' \"What the statements proved\" li
       reportDocuments: 0,
       downloadDocuments: 0,
       recordedBalanceDocuments: 0,
+      recordedBalanceDownloads: 0,
       openingStatements: 0,
       firstStatements: 0,
     });
@@ -203,6 +205,7 @@ describe("statementEvidence — a download that recorded a balance but no openin
       reportDocuments: 0,
       downloadDocuments: 0,
       recordedBalanceDocuments: 1,
+      recordedBalanceDownloads: 1,
       openingStatements: 0,
       firstStatements: 0,
     });
@@ -225,6 +228,7 @@ describe("statementEvidence — a download that recorded a balance but no openin
       reportDocuments: 0,
       downloadDocuments: 1,
       recordedBalanceDocuments: 0,
+      recordedBalanceDownloads: 0,
       openingStatements: 0,
       firstStatements: 0,
     });
@@ -248,6 +252,7 @@ describe("statementEvidence — a download that recorded a balance but no openin
       // the QFX: none of its own on the account it declares
       downloadDocuments: 1,
       recordedBalanceDocuments: 0,
+      recordedBalanceDownloads: 0,
       openingStatements: 0,
       firstStatements: 0,
     });
@@ -265,8 +270,31 @@ describe("statementEvidence — a download that recorded a balance but no openin
       reportDocuments: 0,
       downloadDocuments: 1,
       recordedBalanceDocuments: 1,
+      recordedBalanceDownloads: 1,
       openingStatements: 0,
       firstStatements: 0,
+    });
+  });
+
+  /*
+   * 🔴 Review of 74f25fb (2026-10-14): two sentences side by side called the same kind of file "downloads" and
+   * "documents" — on a copy of data/e2e.db, 9 QFX downloads "left the ledger no balance" and 18 more QFX downloads
+   * "recorded a balance". A file that recorded one is a download where an OFX parser read it (`isOfxDownload`), and
+   * counted as one; any other — a bank export with a running balance — stays a document.
+   */
+  test("a file that recorded a balance is counted a download only where an OFX parser read it", () => {
+    const freedom = makeAccount("Chase Freedom Unlimited");
+    const savings = makeAccount("Chase Savings");
+    const qfx = newFile("Chase1111_Activity_2024-07-01_2024-09-30.QFX", "ofx-generic");
+    addPeriod(qfx, freedom, "2024-07-01", "2024-09-30", "not_applicable");
+    addAnchor(qfx, freedom, "2024-09-30", "ofx_ledger");
+    const csv = newFile("Chase8721_Activity_2024-07-01_2024-09-30.CSV", "chase-deposit-csv");
+    addPeriod(csv, savings, "2024-07-01", "2024-09-30", "not_applicable");
+    addAnchor(csv, savings, "2024-09-30", "ofx_ledger");
+
+    expect(statementEvidence(bundle.db).balanceLess).toMatchObject({
+      recordedBalanceDocuments: 2,
+      recordedBalanceDownloads: 1,
     });
   });
 });

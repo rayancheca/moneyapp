@@ -70,9 +70,9 @@ export const OPENING_STATEMENT_PROFILES: ReadonlySet<string> = new Set(["robinho
 /**
  * Whether a period printed balances — something to reconcile or to price. This is what /imports' "What the
  * statements proved" list and its three tiles count, and it is NOT `countsAsStatement`: an opening statement arrived
- * on the cycle (the panels count it), but with no opening printed nothing in it could have failed. The page reads both
- * through `statementEvidence` (services/statement-evidence.ts), whose footer names what each left-out is
- * (`balanceLessKind`, below).
+ * on the cycle (the panels' rule takes its close), but with no opening printed its period reconciles nothing. The
+ * page reads both through `statementEvidence` (services/statement-evidence.ts), whose footer names what each left-out
+ * is (`balanceLessKind`, below).
  */
 export function carriesBalances(reconciliation: ReconciliationState): boolean {
   return reconciliation !== "not_applicable";
@@ -81,7 +81,7 @@ export function carriesBalances(reconciliation: ReconciliationState): boolean {
 /**
  * A statement that printed no balances to check — an account's OPENING statement (`countsAsStatement`, above): every
  * reader that says what a balance-less period IS asks this (through `balanceLessKind`, below), never the state alone,
- * so a page cannot call one a file that "carries no balances" while the schedule counts it.
+ * so a page cannot call one a file that "carries no balances" while the schedule's rule takes its close.
  *
  * 🔴 Two readers of one fact. /imports' footer named Robinhood Agentic's Jun 2026 opening statement "an account's
  * first" (`statementEvidence`), while the sheet of the one row on his ledger from its file still read "coverage
@@ -107,7 +107,7 @@ export interface BalanceLessFacts extends PeriodKind {
  *
  * ⛔ Every reader that names one asks this — the period line on a row's and a day's sheet, the period's own sheet
  * (provenance.ts) and /imports' footer (`statementEvidence`) — so no page calls a file that recorded a balance one that
- * "carries no balances", nor a statement the schedule counts a report.
+ * "carries no balances", nor a statement by the schedule's rule (`countsAsStatement`) a report.
  *
  * 🔴 601f155 read the opening statement off the parser and left every other balance-less period to the state: the
  * review of it, on a copy of data/e2e.db (2026-10-12), found 18 of the fixture's 27 OFX downloads reading "this file

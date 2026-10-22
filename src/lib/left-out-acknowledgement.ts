@@ -145,8 +145,10 @@ const NEVER_AMONG_WORDS: readonly { readonly is: RegExp; readonly called: string
 /**
  * What a reason carrying a control character (`Cc`), a line or paragraph separator (`Zl`, `Zp`) or a bidi control
  * anywhere is refused with, the first it carries named — "carries a control character, U+001B, that every surface
- * would print raw" — or null when it carries none: ONE phrasing for the command line (`ledgerCheckMode`) and the
- * table's one writer (`writeLeftOutAcknowledgements`), which both refuse it.
+ * would print raw" — or null when it carries none: ONE phrasing for the command line, which names the refusal
+ * (`ledgerCheckMode`'s `carriedRefusal`) for ledger-check to make once it has read which reasons the mark's lines
+ * carry, and for the table's one writer (`writeLeftOutAcknowledgements`), which makes it too. 🔴 Review of 7601578
+ * (2026-10-13): this said both refuse it, after the command line had stopped refusing before the ledger was read.
  *
  * 🔴 Only a reason of NOTHING but control characters was refused (`reasonSaysNothing`): one with words beside an escape,
  * a bell or a C1 control said something, so it was stored — and printed raw with the line wherever it is printed, an
@@ -162,7 +164,7 @@ const NEVER_AMONG_WORDS: readonly { readonly is: RegExp; readonly called: string
  * direction, and opens no run.
  *
  * ⛔ A reason its lines alike carry stored already is taken as stored, never refused by this again: see
- * `reasonCarriedAlready`.
+ * `reasonCarriedAlready`, and the writer's own scope — a reason stored for a line keyed as the one written.
  */
 export function reasonCarriesControl(reason: string): string | null {
   for (const char of reason) {

@@ -45,6 +45,7 @@ const NO_COUNTS: BalanceLessCounts = {
   reportDocuments: 0,
   downloadDocuments: 0,
   recordedBalanceDocuments: 0,
+  recordedBalanceDownloads: 0,
   openingStatements: 0,
   firstStatements: 0,
 };
@@ -575,17 +576,22 @@ describe("provenanceFor — an account's opening statement", () => {
     addDays(agentic, [{ day: "2026-08-05", basis: "derived_unverified", cents: 2664 }]);
     const txn = addTxn(agentic, "2026-08-05", { importFileId: august, cents: 2664 });
 
-    const line = "a statement — it printed no opening balance, so nothing in it could have failed";
+    // 🔴 Review of 74f25fb (2026-10-14): it said "so nothing in it could have failed", false with July's balance before
+    // it — the chain replays onto its close from there (`NO_OPENING_TO_RECONCILE`'s reason)
+    const line = "a statement — it printed no opening balance, so the period itself reconciles nothing";
     expect(periodLine(provenanceFor(bundle.db, { kind: "transaction", id: txn })!)).toEqual([line]);
     expect(
       periodLine(provenanceFor(bundle.db, { kind: "accountBalance", accountId: agentic, day: "2026-08-05" })!),
     ).toEqual([line]);
     expect(provenanceFor(bundle.db, { kind: "statementPeriod", id: period })!.headline).toBe(
-      "This is a statement of Robinhood Agentic's — it printed no opening balance, so nothing in it could have " +
-        "failed.",
+      "This is a statement of Robinhood Agentic's — it printed no opening balance, so the period itself reconciles " +
+        "nothing.",
     );
     const [footer] = balanceLessNotes({ ...NO_COUNTS, openingStatements: 1, firstStatements: 0 });
-    for (const words of [line, footer]) expect(words).not.toMatch(/first|report|carries no balances/);
+    for (const words of [line, footer]) {
+      expect(words).not.toMatch(/first|report|carries no balances|could have failed/);
+      expect(words).toMatch(/printed no opening balance, so .* reconciles? nothing/);
+    }
   });
 
   test("a spending report's period still carries no balances — the line reads the file's kind, not the state", () => {

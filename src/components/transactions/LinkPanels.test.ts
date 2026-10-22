@@ -18,7 +18,8 @@ vi.mock("@/components/ui/Toast", async (actual) => ({ ...(await actual<object>()
 vi.mock("./undo-toast", () => ({ offerUndoToast: vi.fn() }));
 
 const { pressMakeRecurring, pressSheetAttach } = await import("./LinkPanels");
-const { attachToSeriesAction, createSeriesFromTxnAction } = await import("@/app/recurring/actions");
+const { attachToSeriesAction, createSeriesFromTxnAction, undoCreateSeriesAction } = await import("@/app/recurring/actions");
+const { undoAction } = await import("@/app/transactions/actions");
 const { toast } = await import("@/components/ui/Toast");
 const { offerUndoToast } = await import("./undo-toast");
 
@@ -29,6 +30,8 @@ const after = { linked: vi.fn(), close: vi.fn(), reset: vi.fn(), onChanged: vi.f
 beforeEach(() => {
   vi.mocked(toast).mockClear();
   vi.mocked(offerUndoToast).mockClear();
+  vi.mocked(undoCreateSeriesAction).mockClear();
+  vi.mocked(undoAction).mockClear();
   for (const fn of Object.values(after)) fn.mockClear();
 });
 
@@ -106,5 +109,51 @@ describe("the transaction sheet's Make recurring, as SeriesLinkPanel makes it", 
     await pressMakeRecurring("t1", after);
 
     expect(vi.mocked(toast).mock.calls[0]![0].title).toBe('Marked "FPL" as recurring');
+  });
+
+  /*
+   * 🔴 Review of 0e18e5b (2026-10-13): the toast's Undo was never pressed where the sheet raises it — which undo it
+   * calls is chosen by `mode`, and a series created (undone by ending it) or a live series joined (undone by putting
+   * the rows' links back) could have swapped undos with every test green.
+   */
+  const undoOf = async (mode: "created" | "attached") => {
+    vi.mocked(createSeriesFromTxnAction).mockResolvedValue({ ok: true, data: { ...made, mode, filed: null } });
+    await pressMakeRecurring("t1", after);
+    return vi.mocked(toast).mock.calls[0]![0].action!.onAction;
+  };
+
+  test("its Undo, a series created: the series' creation is undone, and the panel put back", async () => {
+    vi.mocked(undoCreateSeriesAction).mockResolvedValue({ ok: true, data: { unlinked: 1 } });
+    const undoIt = await undoOf("created");
+
+    undoIt();
+
+    await vi.waitFor(() => expect(after.reset).toHaveBeenCalledOnce());
+    expect(undoCreateSeriesAction).toHaveBeenLastCalledWith({ seriesId: "s1", undo });
+    expect(undoAction).not.toHaveBeenCalled();
+    expect(after.onChanged).toHaveBeenCalledTimes(2);
+  });
+
+  test("its Undo, a live series joined: the rows' links are put back — the series he joined stays", async () => {
+    vi.mocked(undoAction).mockResolvedValue({ ok: true, data: { restored: 1, ruleDeleted: false } });
+    const undoIt = await undoOf("attached");
+
+    undoIt();
+
+    await vi.waitFor(() => expect(after.reset).toHaveBeenCalledOnce());
+    expect(undoAction).toHaveBeenLastCalledWith(undo);
+    expect(undoCreateSeriesAction).not.toHaveBeenCalled();
+    expect(after.onChanged).toHaveBeenCalledTimes(2);
+  });
+
+  test("an Undo refused says why, and leaves the panel as the press left it", async () => {
+    vi.mocked(undoCreateSeriesAction).mockResolvedValue({ ok: false, error: "Nothing to undo" });
+    const undoIt = await undoOf("created");
+
+    undoIt();
+
+    await vi.waitFor(() => expect(toast).toHaveBeenLastCalledWith({ title: "Nothing to undo", tone: "negative" }));
+    expect(after.reset).not.toHaveBeenCalled();
+    expect(after.onChanged).toHaveBeenCalledOnce();
   });
 });

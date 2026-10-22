@@ -4,7 +4,13 @@ import { accounts } from "@/db/schema/accounts";
 import { importFiles, statementPeriods, type ReconciliationState } from "@/db/schema/imports";
 import type { BalanceLessCounts } from "@/lib/statement-evidence-notes";
 import { fileRecordedBalanceOnSql } from "./file-recorded-balance";
-import { balanceLessKind, carriesBalances, firstOnAccountSql, type BalanceLessKind } from "./statements-by-account";
+import {
+  balanceLessKind,
+  carriesBalances,
+  firstOnAccountSql,
+  isOfxDownload,
+  type BalanceLessKind,
+} from "./statements-by-account";
 
 /** One `statement_periods` row as /imports lists it. */
 export interface ImportsPeriod {
@@ -37,15 +43,17 @@ export interface StatementEvidence {
 /**
  * What /imports' "What the statements proved" reads of `statement_periods`: the periods that printed balances, and —
  * for its footer — what each period it leaves out IS (`balanceLessKind`): by the rule the statement schedule and
- * Statements you do not have read (`countsAsStatement`), so the page cannot call a statement the schedule counts
- * anything but a statement, and by what its file recorded (`fileRecordedBalanceOn`), so it cannot call a download that
- * recorded a balance "an export without a closing figure".
+ * Statements you do not have read take closes by (`countsAsStatement`), so the page cannot call a statement by that
+ * rule anything but a statement, and by what its file recorded (`fileRecordedBalanceOn`), so it cannot call a download
+ * that recorded a balance "an export without a closing figure".
  *
  * 🔴 Measured on a copy of his ledger, 2026-10-12: the footer counted `periods.length - evidence.length` and called
  * all five "a spending report, an export without a closing figure" — two Chase Spending Reports and a Rocket Money
- * export, yes, but also Robinhood Cash's opening statement (Dec 2023) and Robinhood Agentic's (Jun 2026), both on
- * the schedule above it as statements. It now reads "3 imported documents …" and "2 statements were each an
- * account's first …" (`balanceLessNotes`, lib/statement-evidence-notes.ts).
+ * export, yes, but also Robinhood Cash's opening statement (Dec 2023) and Robinhood Agentic's (Jun 2026), both
+ * statements by the schedule's rule. It now reads "3 imported documents …" and "2 statements were each an account's
+ * first …" (`balanceLessNotes`, lib/statement-evidence-notes.ts). ⚠️ The rule, not the row: on his ledger copy
+ * 2026-10-21 Agentic's schedule row reads its 3 closes from Jun 30, and Cash's its last 12 of 33 — Dec 2023 not
+ * among them.
  *
  * 🔴 …and the split still read the rest off the state. The review of 601f155, on a copy of data/e2e.db: "27 imported
  * documents carried no balance to check — a spending report, an export without a closing figure" of 27 OFX downloads,
@@ -95,7 +103,8 @@ export function statementEvidence(db: AppDatabase): StatementEvidence {
   const evidence = periods.filter((p) => carriesBalances(p.reconciliation));
   // one reading with the period line on a row's and a day's sheet and the period's own sheet (`balanceLessKind`)
   const ofKind = (kind: BalanceLessKind) => periods.filter((p) => balanceLessKind(p) === kind);
-  const documents = (kind: BalanceLessKind) => new Set(ofKind(kind).map((p) => p.importFileId)).size;
+  const filesOf = (of: readonly ImportsPeriod[]) => new Set(of.map((p) => p.importFileId)).size;
+  const documents = (kind: BalanceLessKind) => filesOf(ofKind(kind));
   const opening = ofKind("opening_statement");
   return {
     periods,
@@ -104,6 +113,7 @@ export function statementEvidence(db: AppDatabase): StatementEvidence {
       reportDocuments: documents("no_balance"),
       downloadDocuments: documents("download_no_balance"),
       recordedBalanceDocuments: documents("balance_recorded"),
+      recordedBalanceDownloads: filesOf(ofKind("balance_recorded").filter((p) => isOfxDownload(p.parserProfile))),
       openingStatements: opening.length,
       firstStatements: opening.filter((p) => p.firstOnAccount).length,
     },

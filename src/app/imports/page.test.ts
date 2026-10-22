@@ -64,10 +64,10 @@ describe("/imports — a line a re-read left out, under the read", () => {
 
 /**
  * 🔴 The footer under "What the statements proved" called all five of his balance-less periods "a spending report, an
- * export without a closing figure" (copy of his ledger, 2026-10-12) — two were Robinhood opening statements the
- * statement schedule above it counts as statements. Which periods the list holds and what the footer says of the rest
- * are pinned in services/statement-evidence.test.ts and lib/statement-evidence-notes.test.ts; this pins that the page
- * asks them, and filters nothing of its own.
+ * export without a closing figure" (copy of his ledger, 2026-10-12) — two were Robinhood opening statements, statements
+ * by the statement schedule's rule (`countsAsStatement`). Which periods the list holds and what the footer says of
+ * the rest are pinned in services/statement-evidence.test.ts and lib/statement-evidence-notes.test.ts; this pins that
+ * the page asks them, and filters nothing of its own.
  */
 describe("/imports — what the statements proved, and what its footer names", () => {
   test("the list, its counts and its footer are read from `statementEvidence`", () => {
