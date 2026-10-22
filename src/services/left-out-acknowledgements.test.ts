@@ -247,6 +247,36 @@ describe("the acknowledgements a ledger keeps (`left_out_acknowledgements`)", ()
     expect(readLeftOutAcknowledgements(bundle.db)).toHaveLength(2);
   });
 
+  /*
+   * 🔴 Review of 7601578 (2026-10-13): the writer let through any reason the TABLE held, whichever line carried it,
+   * while the command line lets one through only for the lines alike that carry it (`reasonCarriedAlready`) — so a
+   * caller other than ledger-check could store an override on a line it was never given for. A reason is taken as
+   * stored only for a line keyed as the one that carries it: its account, day, money, printed words and printer.
+   */
+  test("⛔ a reason another line carries is not this line's — refused by name, nothing written", () => {
+    const override = "July statement, ‮page 1: the opening deposit, reversed";
+    bundle.db.insert(leftOutAcknowledgements).values({ ...OPENING, reason: override }).run();
+    const other = { ...OPENING, printedOn: "2026-07-28", printedWords: "WFB OPENING DEPOSIT REVERSAL" };
+
+    expect(() => writeLeftOutAcknowledgements(bundle.db, [{ ...OPENING, reason: override }, { ...other, reason: override }])).toThrow(
+      "refused: the reason for WFB Opening Deposit From Card on 2026-07-28 carries a bidi control, U+202E, that every " +
+        "surface would print raw — nothing was written",
+    );
+    // each field of the key, alone, makes another line
+    const unlikeBy = {
+      accountId: "01a03a43-ab5d-7000-a3d4-e4d2c112e2b9",
+      printedOn: "2026-07-29",
+      amountCents: 2501,
+      printedWords: "WFB OPENING DEPOSIT FROM CARD 2",
+      printerSha256: "2f".repeat(32),
+    };
+    for (const [key, value] of Object.entries(unlikeBy)) {
+      const unlike = { ...OPENING, [key]: value, reason: override };
+      expect(() => writeLeftOutAcknowledgements(bundle.db, [unlike]), key).toThrow("carries a bidi control, U+202E");
+    }
+    expect(readLeftOutAcknowledgements(bundle.db)).toHaveLength(1);
+  });
+
   test("what the session read, an invisible character in it or not, is a reason — stored as given", () => {
     writeLeftOutAcknowledgements(bundle.db, [{ ...OPENING, reason: `​${OPENING.reason} ` }]);
     expect(readLeftOutAcknowledgements(bundle.db).map((a) => a.reason)).toEqual([`​${OPENING.reason} `]);

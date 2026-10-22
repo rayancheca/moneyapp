@@ -36,7 +36,12 @@ export function readLeftOutAcknowledgements(db: AppDatabase): LeftOutAcknowledge
  * (`reasonCarriesControl`). ⛔ But for a reason the ledger stores already, from before that guard: ⚖️ §6A 30, an open
  * line takes the reason its lines alike carry, exactly — taken as stored. 🔴 Review of 3872004: refused here, a mark
  * partly acknowledged with such a reason failed ledger-check for good. The command line lets one through only for the
- * lines alike that carry it (`reasonCarriedAlready`).
+ * lines alike that carry it (`reasonCarriedAlready`), and so does this: only for a line keyed as one that carries it
+ * stored — its account, day, money, printed words and printer, what its mark is the hash of (`leftOutToken`). 🔴 Review
+ * of 7601578 (2026-10-13): any reason the table held was let through, whichever line carried it. ⚠️ A line alike
+ * acknowledged under ANOTHER of its printers' keys (`acknowledgementsOf` matches by any printer) is one this cannot
+ * see, so its reason is refused here as a new one is — by name, nothing written: the safe side. None is stored on his
+ * ledger (0 acknowledgements, his copy of 2026-10-21).
  */
 export function writeLeftOutAcknowledgements(db: AppDatabase, writes: readonly LeftOutAcknowledgementWrite[]): void {
   if (writes.length === 0) return;
@@ -47,11 +52,9 @@ export function writeLeftOutAcknowledgements(db: AppDatabase, writes: readonly L
         `${blank.printedOn} says nothing — nothing was written`,
     );
   }
-  const stored = new Set(
-    db.select({ reason: leftOutAcknowledgements.reason }).from(leftOutAcknowledgements).all().map((r) => r.reason),
-  );
+  const stored = new Set(db.select().from(leftOutAcknowledgements).all().map(carriedOnItsLine));
   for (const write of writes) {
-    if (stored.has(write.reason)) continue;
+    if (stored.has(carriedOnItsLine(write))) continue;
     const carries = reasonCarriesControl(write.reason);
     if (carries !== null) {
       throw new Error(`refused: the reason for ${write.description} on ${write.printedOn} ${carries} — nothing was written`);
@@ -60,4 +63,9 @@ export function writeLeftOutAcknowledgements(db: AppDatabase, writes: readonly L
   db.transaction((tx) => {
     for (const write of writes) tx.insert(leftOutAcknowledgements).values({ ...write }).run();
   });
+}
+
+/** A reason with what its line is keyed by — the lines alike of one mark share it; JSON, so no words forge a field. */
+function carriedOnItsLine(a: Omit<LeftOutAcknowledgementWrite, "description" | "acknowledgedOn">): string {
+  return JSON.stringify([a.accountId, a.printedOn, a.amountCents, a.printedWords, a.printerSha256, a.reason]);
 }
