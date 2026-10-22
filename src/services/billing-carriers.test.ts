@@ -97,11 +97,11 @@ describe("…and a payment past the day's grace pays it late, while it lies near
 /*
  * ⚖️ His decision 73 (2026-10-13): a payment that posts MORE than its grace days EARLY pays the next due day early —
  * refined by his decision 76 (2026-10-14, his answer): THE NEARER DUE DAY WINS. A payment between two due days pays the
- * one it lies nearer, a tie the earlier; it pays the later early only when nothing paid that day on time, otherwise it
- * is the earlier's, late — or pays nothing, that day already paid. 🔴 FPL (electricity) is due the 8th (his number, 3
- * days' grace), and his Chase Checking holds Jul 10 −$14.21 (Jul 8's, on time) and Jul 28 −$56.22, 11 days before Aug 8:
- * Jul 28 paid no due day at all — and if FPL drafts around the 28th, every statement's newest 8th would read "not
- * posted" until the following one.
+ * one it lies nearer, a tie the earlier; it pays the later early only when nothing paid that day on time (his
+ * "unless"). Otherwise it is the earlier's, late — or pays nothing, that day already paid: ⚖️ default (c), built, not
+ * asked (below). 🔴 FPL (electricity) is due the 8th (his number, 3 days' grace), and his Chase Checking holds Jul 10
+ * −$14.21 (Jul 8's, on time) and Jul 28 −$56.22, 11 days before Aug 8: Jul 28 paid no due day at all — and if FPL
+ * drafts around the 28th, every statement's newest 8th would read "not posted" until the following one.
  */
 describe("…and one more than its grace EARLY pays the next due day, when it lies nearer it (decisions 73, 76)", () => {
   const fpl = (postedOn: string): Payment => ({ postedOn, toleranceDays: 3 });
@@ -202,7 +202,7 @@ describe("…and one more than its grace EARLY pays the next due day, when it li
     expect(paysEarly(fpl("2026-08-05"), "2026-08-08")).toBe(false);
     // …and Jul 12, a day past Jul 8's grace, is nearer Jul 8 — paid on Jul 10 — so it pays nothing: no Aug 8 early
     // (🔴 decision 73 read it as Aug 8's, 27 days ahead: the shape of a rent split Oct 1 + Oct 9 paying Nov 1 —
-    // ⚠️ shape (a) of his open call, "the nearer due day wins" below: "then the other" pays Aug 8 with it again)
+    // ⚖️ default (a), built, not asked — "the nearer due day wins" below: the other day would be Aug 8 again)
     expect(graded([fpl("2026-07-10"), fpl("2026-07-12")]).slice(1, 3)).toEqual([
       ["2026-07-08", "2026-07-10"],
       ["2026-08-08", null],
@@ -254,7 +254,7 @@ describe("…and one more than its grace EARLY pays the next due day, when it li
       ["2026-07-15", "2026-07-28", "2026-08-20", "2026-08-28"],
       ["2026-06-20", "2026-07-15", "2026-07-28", "2026-09-01", "2026-09-30"],
       ["2026-07-08", "2026-07-20", "2026-07-21", "2026-08-15", "2026-09-07"],
-      // nearer a day paid on time, so the day before's (decision 76)
+      // nearer the next day, paid on time, so the day before's (⚖️ default (c), built, not asked)
       ["2026-07-28", "2026-08-08"],
       ["2026-07-12", "2026-07-30", "2026-08-08", "2026-08-25", "2026-09-08"],
       ["2026-06-30", "2026-07-24", "2026-07-28", "2026-08-08", "2026-09-26", "2026-10-08"],
@@ -268,8 +268,13 @@ describe("…and one more than its grace EARLY pays the next due day, when it li
 });
 
 /*
- * ⚖️ His decision 76 (2026-10-14, his answer, refines 73): THE NEARER DUE DAY WINS — measured with the reviewer's
- * prototype on his ledger copy 2026-10-13, every shape below is one he was shown.
+ * ⚖️ His decision 76 (2026-10-14, his answer, refines 73): THE NEARER DUE DAY WINS — the option he chose, word for
+ * word: "A payment between two due days pays the one it's nearer to (a tie goes to the earlier one), unless the nearer
+ * one is already paid on time." Of the shapes below he was shown the Car lease's only (Sep 2 pays Sep 15, an Oct 1
+ * payment Oct 15), and the tie's rule. The split rent and the late rents are the review's of 844e484; Sep 19 and Jul 28
+ * paying Jul 8 are the build's own (f8b5320, from its brief); the Oct 22 prepay and Sep 30 are the reviews' of
+ * f8b5320..eb48365 and 7e36835. What his words leave unsaid — what a payment LEFT OVER pays — is pinned as three ⚖️
+ * defaults built, not asked (2026-10-21): (a), (b) and (c) (`paymentFor`).
  */
 describe("the nearer due day wins (decision 76)", () => {
   const pay = (postedOn: string): Payment => ({ postedOn, toleranceDays: 3 });
@@ -323,7 +328,13 @@ describe("the nearer due day wins (decision 76)", () => {
     ]);
   });
 
-  test("nearer a day paid ON TIME by another: the other day, late — Jul 28 pays Jul 8 when Aug 8 is paid", () => {
+  /*
+   * ⚖️ Default (c), built, not asked (2026-10-21): nearer the LATER day, which another payment paid ON TIME, a
+   * payment is the EARLIER day's, late — the LATE default (2026-10-12) still reading it once his "unless" rules Aug 8
+   * out, as 73 read it too. His answer says no more. Paying nothing instead would flip this test and
+   * nearer-due-day.test.ts' (c) pins, and leave (a)'s and (b)'s green.
+   */
+  test("⚖️ (c) nearer the LATER day, paid ON TIME by another: the earlier day's, late — Jul 28 pays Jul 8", () => {
     const FPL = monthlyOn("2026-07-08");
     expect(graded([pay("2026-07-28"), pay("2026-08-08")], FPL, ["2026-07-08", "2026-08-08", "2026-09-08"])).toEqual([
       ["2026-07-08", "2026-07-28"],
@@ -333,7 +344,7 @@ describe("the nearer due day wins (decision 76)", () => {
   });
 
   // 🔴 decision 73 paid Nov 1 early with Oct 9 (Oct 1 paid by then): Nov 1 left Upcoming and the November forecast
-  // ⚠️ shape (a) of his open call (below): "then the other" pays Nov 1 early with Oct 9 again
+  // ⚖️ default (a), built, not asked (below): paying the other day would pay Nov 1 early with Oct 9 again
   test("…and nearer the day before, paid on time, it pays nothing: a rent split Oct 1 + Oct 9 leaves Nov 1", () => {
     const RENT = monthlyOn("2026-09-01");
     const split = [pay("2026-09-02"), pay("2026-10-01"), pay("2026-10-09")];
@@ -345,14 +356,14 @@ describe("the nearer due day wins (decision 76)", () => {
   });
 
   /*
-   * ⚠️ OPEN — his call (a) (reviews of f8b5320..eb48365 and of 7e36835, 2026-10-21): a payment LEFT OVER, nearer a
-   * day another paid ON TIME, pays nothing as built — which is what keeps the split rent's Nov 1 above. His words for
-   * 76, "unless that one is already paid on time; then the other", pay the other day early: answered so, this test,
-   * the split rent's above and the Aug 4 test's Jul 12 flip together (and nearer-due-day.test.ts' (a) pins), while
-   * the (b) test below stays green. 🔴 As built takes back decision 73 here: run against 7aca8e5's paymentFor, Oct 22
-   * paid Nov 15 early (Oct 15 was paid by then).
+   * ⚖️ Default (a), built, not asked (2026-10-21 — he said no more questions): a payment LEFT OVER, nearer the
+   * EARLIER day, which another paid ON TIME, pays nothing — never the later day early — which is what keeps the split
+   * rent's Nov 1 above. His answer, "unless the nearer one is already paid on time", says no more. Paying the other
+   * day early would flip this test, the split rent's above and the Aug 4 test's Jul 12 together (and
+   * nearer-due-day.test.ts' (a) pins), and leave the (b) and (c) tests green. 🔴 This takes back decision 73 here: run
+   * against 7aca8e5's paymentFor, Oct 22 paid Nov 15 early (Oct 15 was paid by then).
    */
-  test("⚠️ (a) nearer a day paid ON TIME, it pays nothing: a lease prepaid a week after an on-time Oct 15", () => {
+  test("⚖️ (a) nearer the EARLIER day, paid ON TIME, it pays nothing: a lease prepaid after an on-time Oct 15", () => {
     const LEASE = monthlyOn("2026-10-15");
     // Oct 22: 7 days after Oct 15, paid on time, 24 before Nov 15
     expect(graded([pay("2026-10-15"), pay("2026-10-22")], LEASE, ["2026-10-15", "2026-11-15"])).toEqual([
@@ -362,11 +373,11 @@ describe("the nearer due day wins (decision 76)", () => {
   });
 
   /*
-   * ⚠️ OPEN — his call (b), apart from (a): nearer a day another paid EARLY, it pays nothing as built. His words do
-   * not reach it — Sep 15 is paid early, not on time — so answering (a) "then the other" leaves this test green; only
-   * an answer to (b) flips it, and the known gap's below with it. Not a regression: 73 owed Oct 15 for this shape too.
+   * ⚖️ Default (b), built, not asked (2026-10-21), apart from (a): nearer a day another paid EARLY, it pays nothing.
+   * His answer does not reach it — Sep 15 is paid early, not on time — so changing (a) or (c) leaves this test green;
+   * only changing (b) flips it, and the known gap's below with it. Not a regression: 73 owed Oct 15 here too.
    */
-  test("⚠️ (b) nearer a day paid EARLY, it pays nothing: Sep 30 after an early Sep 2 leaves Oct 15 owed", () => {
+  test("⚖️ (b) nearer a day paid EARLY, it pays nothing: Sep 30 after an early Sep 2 leaves Oct 15 owed", () => {
     const LEASE = monthlyOn("2026-10-15");
     // Sep 30: 15 days either side — the tie, Sep 15's, which Sep 2 paid early
     expect(graded([pay("2026-09-02"), pay("2026-09-30")], LEASE, ["2026-09-15", "2026-10-15"])).toEqual([
@@ -375,13 +386,24 @@ describe("the nearer due day wins (decision 76)", () => {
     ]);
   });
 
+  // ⚖️ (b)'s other side: nearer the LATER day, paid EARLY by another — Oct 5, after Oct 1 paid Oct 15 — it pays no
+  // Sep 15 late either: (c) asks only whether the later day was paid ON TIME
+  test("⚖️ (b) …and nearer the LATER day, paid EARLY by another, it pays nothing: Oct 1 + Oct 5 owe Sep 15", () => {
+    const LEASE = monthlyOn("2026-10-15");
+    expect(graded([pay("2026-10-01"), pay("2026-10-05")], LEASE, ["2026-09-15", "2026-10-15", "2026-11-15"])).toEqual([
+      ["2026-09-15", null],
+      ["2026-10-15", "2026-10-01"],
+      ["2026-11-15", null],
+    ]);
+  });
+
   /*
    * The review's shape (of 844e484): his June rent in two halves a day apart, then rents past their grace. Each late
    * rent pays its own month. ⚠️ The second half, Jun 17, is nearer Jul 1 and pays it early — a known gap neither 73
    * nor 76 catches (only rows within a few days as one payment, or a floor on an early payment's amount, would); and
-   * Jul 8, nearer Jul 1, finds it paid and pays nothing. ⚠️ Shape (b) of his open call (above): Jul 1 is paid EARLY,
-   * and "then the other" there would pay Aug 1 with Jul 8, Sep 1 with Aug 5, Oct 1 with Sep 6 and Nov 1 with Oct 7 —
-   * every late rent a month ahead of its own, Nov 1 gone from Upcoming.
+   * Jul 8, nearer Jul 1, finds it paid and pays nothing. ⚖️ Default (b), built, not asked (above): Jul 1 is paid
+   * EARLY, and paying the other day there would pay Aug 1 with Jul 8, Sep 1 with Aug 5, Oct 1 with Sep 6 and Nov 1
+   * with Oct 7 — every late rent a month ahead of its own, Nov 1 gone from Upcoming.
    */
   test("late rents each pay their own month; two halves a day apart pay two months — the known gap", () => {
     const RENT = monthlyOn("2026-09-01");
