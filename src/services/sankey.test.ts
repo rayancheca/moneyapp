@@ -267,4 +267,31 @@ describe("spendingSankey — a window whose spending has not been found", () => 
     // …and so does one with a day read through it: Jul 1 – 6 holds the checking account's rows
     expect(spendingSankey(bundle.db, { from: "2026-07-01", to: "2026-07-06" }, TODAY).spendingUnaccounted).toBeNull();
   });
+
+  /*
+   * Review of 927976a (nit): the tests above never reached money in made only of REFUNDS — earned 0, refunds > 0, spent
+   * 0, which the guard routes the same way — nor a window that OPENS on the read day with no spending row in it. Here
+   * checking's newest row, Jul 3, is pay, so the read day holds no spending.
+   */
+  test("money back alone past that day draws no Net saved either; a window opening ON that day keeps its flow", () => {
+    insertTxn({ accountId: checkingId, postedOn: "2026-07-01", amountCents: -1_000, category: "Food > Dining" });
+    insertTxn({ accountId: checkingId, postedOn: "2026-07-03", amountCents: 20_000, category: "Income > Salary" });
+    insertTxn({ postedOn: "2026-07-02", amountCents: -500, category: "Food > Dining" });
+    insertTxn({ postedOn: "2026-07-06", amountCents: 1_500, category: "Food > Dining" }); // a refund
+    insertTxn({ postedOn: "2026-07-07", amountCents: -3_000, category: "Food > Dining" });
+
+    expect(spendingSankey(bundle.db, { from: "2026-07-06", to: "2026-07-06" }, TODAY)).toEqual({
+      nodes: [],
+      links: [],
+      spendingUnaccounted: "spending imported through Jul 3",
+    });
+    // the read day is a day read: its window's zero is a measurement, and the pay and the refund flow to Net saved
+    const g = spendingSankey(bundle.db, { from: "2026-07-03", to: "2026-07-06" }, TODAY);
+    expect(g.spendingUnaccounted).toBeNull();
+    expect(g.links.find((l) => l.target === "saved")!.valueCents).toBe(20_000 + 1_500);
+    // one day past it is not
+    expect(spendingSankey(bundle.db, { from: "2026-07-04", to: "2026-07-06" }, TODAY).spendingUnaccounted).toBe(
+      "spending imported through Jul 3",
+    );
+  });
 });
