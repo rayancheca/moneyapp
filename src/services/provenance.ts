@@ -552,14 +552,23 @@ const PERIOD_VERDICT_TEXT: Record<string, string> = {
   not_applicable: "coverage declared, but this file carries no balances to check against",
 };
 
-/** Why an account's opening statement proves nothing — /imports' footer says it of one (`balanceLessNotes`). */
-const OPENING_STATEMENT_WHY = "it printed no opening balance, so nothing in it could have failed";
+/**
+ * Why a statement that printed no opening proves nothing — /imports' footer says it of one (`balanceLessNotes`): the
+ * account's first has no balance before it, so nothing in it could have failed; a later one has, and the chain
+ * replays onto its close from there, so only its period reconciles nothing (`NO_OPENING_TO_RECONCILE`'s reason).
+ * 🔴 Review of 74f25fb (2026-10-14): a later one read "nothing in it could have failed" too.
+ */
+function openingStatementWhy(first: boolean): string {
+  return first
+    ? "it printed no opening balance, so nothing in it could have failed"
+    : "it printed no opening balance, so the period itself reconciles nothing";
+}
 
 /**
  * Why a file that recorded the account's balance, but no opening one, proves nothing by its period — /imports' footer
- * says it of one (`balanceLessNotes`). ⛔ Not `OPENING_STATEMENT_WHY`: a download's balance can fail — the chain
- * replays onto it from the balance before — so "nothing in it could have failed" would be false of it; its period
- * alone reconciles nothing.
+ * says it of one (`balanceLessNotes`). ⛔ Not what an account's first statement says (`openingStatementWhy`): a
+ * download's balance can fail — the chain replays onto it from the balance before — so "nothing in it could have
+ * failed" would be false of it; its period alone reconciles nothing. So of a later statement that printed no opening.
  */
 const NO_OPENING_TO_RECONCILE = "but no opening one, so the period itself reconciles nothing";
 
@@ -582,6 +591,11 @@ type PeriodLineFacts = BalanceLessFacts & { readonly firstOnAccount: boolean };
 /** An opening statement, as its line names it — "the account's first" only where `firstOnAccount` says so. */
 function openingStatementNoun(first: boolean): string {
   return first ? "the account's first statement" : "a statement";
+}
+
+/** The period's own sheet's headline for an opening statement — the period line's words, the account named. */
+function openingStatementHeadline(name: string, first: boolean): string {
+  return `This is ${first ? `${name}'s first statement` : `a statement of ${name}'s`} — ${openingStatementWhy(first)}.`;
 }
 
 /**
@@ -616,7 +630,9 @@ function openingStatementNoun(first: boolean): string {
  */
 function periodDetail(p: PeriodLineFacts): string {
   const kind = balanceLessKind(p);
-  if (kind === "opening_statement") return `${openingStatementNoun(p.firstOnAccount)} — ${OPENING_STATEMENT_WHY}`;
+  if (kind === "opening_statement") {
+    return `${openingStatementNoun(p.firstOnAccount)} — ${openingStatementWhy(p.firstOnAccount)}`;
+  }
   if (kind === "balance_recorded" && p.recordedOn !== null) {
     return `coverage declared, and this file recorded the account's balance on ${readableDay(p.recordedOn)} — ${NO_OPENING_TO_RECONCILE}`;
   }
@@ -1344,7 +1360,7 @@ function statementPeriodProvenance(db: AppDatabase, id: string): Provenance | nu
         ? `This is an investment statement: it records what ${name} was worth, and any difference is absorbed as market movement. There is no arithmetic here that could fail.`
         : kind === "opening_statement"
           ? // "first" by the period line's rule (`firstOnAccount`)
-            `This is ${firstOnAccount(db, period) ? `${name}'s first statement` : `a statement of ${name}'s`} — ${OPENING_STATEMENT_WHY}.`
+            openingStatementHeadline(name, firstOnAccount(db, period))
           : kind === "balance_recorded" && recordedOn !== null
             ? `This file declares which days it covers and recorded ${name}'s balance on ${readableDay(recordedOn)} — ${NO_OPENING_TO_RECONCILE}.`
             : kind === "download_no_balance"

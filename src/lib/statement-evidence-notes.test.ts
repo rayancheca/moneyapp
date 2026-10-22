@@ -10,6 +10,7 @@ const NONE: BalanceLessCounts = {
   reportDocuments: 0,
   downloadDocuments: 0,
   recordedBalanceDocuments: 0,
+  recordedBalanceDownloads: 0,
   openingStatements: 0,
   firstStatements: 0,
 };
@@ -49,15 +50,31 @@ describe("balanceLessNotes", () => {
       expect(balanceLessNotes(counts).join(" ")).not.toMatch(/schedule/);
     }
     expect(balanceLessNotes({ ...NONE, openingStatements: 2, firstStatements: 1 })).toEqual([
-      "2 statements printed no opening balance, so nothing in them could have failed — they are neither a period " +
-        "above nor in the counts.",
+      "2 statements printed no opening balance, so the days they declare reconcile nothing — they are neither a " +
+        "period above nor in the counts.",
     ]);
     const [one] = balanceLessNotes({ ...NONE, openingStatements: 1, firstStatements: 0 });
     expect(one).toBe(
-      "1 statement printed no opening balance, so nothing in it could have failed — it is neither a period above nor " +
-        "in the counts.",
+      "1 statement printed no opening balance, so the days it declares reconcile nothing — it is neither a period " +
+        "above nor in the counts.",
     );
     expect(one).not.toMatch(/first|schedule/);
+  });
+
+  /**
+   * 🔴 Review of 74f25fb (2026-10-14): a later statement that printed no opening kept "so nothing in it could have
+   * failed" — false once a balance comes before it, as provenance.ts says of a download (`NO_OPENING_TO_RECONCILE`):
+   * the chain replays onto its close from the balance before, and can miss it. Only an account's first has no balance
+   * before it; the rest say what is true of every one counted — the days they declare reconcile nothing.
+   */
+  test("🔴 \"nothing could have failed\" only of statements that are each their account's first", () => {
+    expect(balanceLessNotes({ ...NONE, openingStatements: 2, firstStatements: 2 })[0]).toMatch(/could have failed/);
+    for (const counts of [
+      { ...NONE, openingStatements: 2, firstStatements: 1 },
+      { ...NONE, openingStatements: 1, firstStatements: 0 },
+    ]) {
+      expect(balanceLessNotes(counts)[0]).not.toMatch(/could have failed/);
+    }
   });
 
   /**
@@ -88,18 +105,41 @@ describe("balanceLessNotes", () => {
    * as a file that carried no balance, which it may well have printed.
    */
   test("🔴 a download the ledger keeps no balance of is never called a report, nor one that carried none", () => {
-    expect(balanceLessNotes({ ...NONE, downloadDocuments: 9, recordedBalanceDocuments: 18 })).toEqual([
-      "9 imported downloads left the ledger no balance of their own and printed no opening one, so the days they " +
-        "declare reconcile nothing — they are neither a period above nor in the counts.",
-      "18 imported documents recorded a balance but no opening one, so the days they declare reconcile nothing — they " +
-        "are neither a period above nor in the counts.",
+    expect(
+      balanceLessNotes({ ...NONE, downloadDocuments: 9, recordedBalanceDocuments: 18, recordedBalanceDownloads: 18 }),
+    ).toEqual([
+      "9 imported downloads left the ledger no balance of their own on an account they declare and printed no " +
+        "opening one, so their days reconcile nothing — they are neither a period above nor in the counts.",
+      "18 imported downloads recorded a balance but no opening one, so the days they declare reconcile nothing — " +
+        "they are neither a period above nor in the counts.",
     ]);
     const [only] = balanceLessNotes({ ...NONE, downloadDocuments: 1 });
     expect(only).toBe(
-      "1 imported download left the ledger no balance of its own and printed no opening one, so the days it declares " +
-        "reconcile nothing — it is neither a period above nor in the counts.",
+      "1 imported download left the ledger no balance of its own on an account it declares and printed no opening " +
+        "one, so its days reconcile nothing — it is neither a period above nor in the counts.",
     );
     expect(only).not.toMatch(/carried no balance|without a closing figure|spending report|export/);
+  });
+
+  /**
+   * 🔴 Review of 74f25fb (2026-10-14): "left the ledger no balance of its own" was false of a download printing two
+   * accounts that recorded a balance on one — named in this sentence for the other (`statementEvidence`) — so it says
+   * which: on an account it declares. And the sentence beside it called the same kind of file a "document": a file
+   * that recorded a balance is a download where an OFX parser read every one counted, and a document otherwise.
+   */
+  test("🔴 one download, two accounts, a balance on one: both sentences true of it, and both call it a download", () => {
+    expect(
+      balanceLessNotes({ ...NONE, downloadDocuments: 1, recordedBalanceDocuments: 1, recordedBalanceDownloads: 1 }),
+    ).toEqual([
+      "1 imported download left the ledger no balance of its own on an account it declares and printed no opening " +
+        "one, so its days reconcile nothing — it is neither a period above nor in the counts.",
+      "1 imported download recorded a balance but no opening one, so the days it declares reconcile nothing — it is " +
+        "neither a period above nor in the counts.",
+    ]);
+    // a bank export with a running balance among them: what every one counted shares
+    expect(balanceLessNotes({ ...NONE, recordedBalanceDocuments: 2, recordedBalanceDownloads: 1 })[0]).toMatch(
+      /^2 imported documents recorded a balance/,
+    );
   });
 
   test("one document, singular", () => {

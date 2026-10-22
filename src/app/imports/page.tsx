@@ -157,11 +157,11 @@ export default async function ImportsPage({
    * out loud below instead, and the list is what the tiles are: periods that
    * printed balances (`carriesBalances`). NOT the statement panels' rule — a
    * Robinhood opening statement is a statement there, but it printed no opening,
-   * so nothing in it could have failed and it proved nothing here.
+   * so its period reconciles nothing and it proved nothing here.
    *
    * 🔴 …and the footer then called it "a spending report, an export without a closing figure": measured on a copy of
-   * his ledger 2026-10-12, "5 imported documents" were three such documents and two Robinhood opening statements the
-   * schedule above counts. `statementEvidence` reads the list and splits the rest by the schedule's own rule — and,
+   * his ledger 2026-10-12, "5 imported documents" were three such documents and two Robinhood opening statements, both
+   * statements by the schedule's rule. `statementEvidence` reads the list and splits the rest by that rule — and,
    * since the review of 601f155 (e2e copy: 18 OFX downloads owning their LEDGERBAL read "an export without a closing
    * figure"), by what each file recorded, the sheets' rule (`balanceLessKind`).
    */
