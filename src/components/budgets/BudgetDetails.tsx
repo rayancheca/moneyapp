@@ -50,7 +50,7 @@ export function BudgetDetails({ status, rolloverEnabled }: BudgetDetailsProps) {
   // named in the budget's own period, the one its carry walked — not a period picked here and not yet saved
   const heldBack = rolloverHeldBackSentence(status.rolloverHeldBack, budget.period, status.bounds.start);
   // whose day the carry waited on, as it asked it; null only while a toggle just switched on waits for its reload
-  const waits = status.rolloverReadOn && rolloverWaitsSentence(status.rolloverReadOn);
+  const waits = status.rolloverReadOn && rolloverWaitsSentence(status.rolloverReadOn, status.bounds.start);
 
   function changePeriod(next: BudgetPeriodKind): void {
     const previous = period;

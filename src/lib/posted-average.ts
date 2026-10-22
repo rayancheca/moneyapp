@@ -1,5 +1,8 @@
-import type { SeriesKind, SeriesStatus } from "@/db/schema/recurring";
+import type { Cadence, SeriesKind, SeriesStatus } from "@/db/schema/recurring";
+import { carriesPhrase } from "./billed-with";
 import { compareDates } from "./dates";
+import { formatDayShortIn } from "./format-date";
+import { formatCents, roundToCents } from "./money";
 import { onPayDay, spreadSampleCents, type PaydayReading, type ReadableRow } from "./per-payday";
 import { currentRatePeriod, ratePeriodOf, type RateSchedule } from "./series-kind";
 
@@ -27,7 +30,7 @@ import { currentRatePeriod, ratePeriodOf, type RateSchedule } from "./series-kin
  *
  * 🔴 …and the same of a bill, 2026-10-12: the rent's page and the All tab printed "posted avg -$1,849.76 ± $583.58"
  * under "-$2,109.00", though every month he paid MORE — Jun 16's one payment, posted by his card as -$1,100.00
- * and -$1,334.80, counted as two charges. Per payment it is -$2,312.20 ± $85.27.
+ * and -$1,334.80, counted as two charges. Per payment it is -$2,312.21 ± $85.27.
  */
 export interface PostedAverage {
   /** the samples' mean, to the cent — null with no sample */
@@ -72,9 +75,12 @@ export function postedAverage(
         : rows.map((r) => r.amountCents);
   if (samples.length === 0) return { avgCents: null, stddevCents: null };
   const mean = samples.reduce((a, c) => a + c, 0) / samples.length;
-  if (samples.length < 2) return { avgCents: Math.round(mean), stddevCents: null };
+  // ⚖️ half away from zero, as every money figure (`roundToCents`): 🔴 `Math.round` printed the rent's -$2,312.205 as
+  // "-$2,312.20" (posted-average review, 2026-10-12)
+  const avgCents = roundToCents(mean);
+  if (samples.length < 2) return { avgCents, stddevCents: null };
   const variance = samples.reduce((a, c) => a + (c - mean) ** 2, 0) / (samples.length - 1);
-  return { avgCents: Math.round(mean), stddevCents: Math.round(Math.sqrt(variance)) };
+  return { avgCents, stddevCents: Math.round(Math.sqrt(variance)) };
 }
 
 /**
@@ -336,4 +342,99 @@ export function atTodaysRate(
  */
 export function postedAsWord(o: Pick<Occurrence, "postings">): string | null {
   return o.postings > 1 ? `posted as ${o.postings}` : null;
+}
+
+/**
+ * ⚖️ DEFAULT, BUILT, NOT ASKED (2026-10-22; he said "no more questions") — the owner call the 2026-10-14 handoff §4
+ * raised: a payment of at least `PAID_AHEAD_MULTIPLE` times the rate it is held to covered more than one charge, and
+ * the average holding it SAYS so, beside the figure it keeps. 🔴 His Car insurance read "posted avg -$678.79 ±
+ * $454.26" under the -$357.58 he set, and its popover "⚠️ … -$678.79, which is not what you set", with nothing to say
+ * Sep 3's -$1,000.00 paid two premiums and part of a third early (his ledger copy 2026-10-21). Measured there: Sep 3 is
+ * 2.80× its rate; every other payment of his 26 non-pay series is 0.24–1.15× (the rent's Jun 16, which carries the
+ * utilities), so any multiple between 1.16 and 2.79 marks Sep 3 alone. The alternative — leave it out of the average
+ * — was not built: it changes the figure, and that is his to decide.
+ *
+ * ⚖️ DEFAULT, BUILT, NOT ASKED (2026-10-22): …and only of a bill or subscription (`PAYS_AHEAD`) whose OTHER payments
+ * were its rate, to `AT_THE_RATE_CENTS` — a size alone cannot tell an early payment from one large bill. 🔴 With the
+ * multiple alone, FPL's -$14.21 and -$56.22 under the -$58.87 he set, and one -$125.00 summer bill beside them, read
+ * "Aug 27's -$125.00 covered more than one month" — one high bill, one month; a card payoff's large statement would
+ * have read the same (review of 0c5c893, a copy of his ledger 2026-10-21 with that row added). Car insurance's Aug 12
+ * -$357.58 is its rate to the cent: Sep 3 is still named. The other wording — the size alone ("2.8× the rate") — was
+ * not built: it would print beside every large bill, and the default asked for names what Sep 3 paid.
+ *
+ * ⚖️ DEFAULT, BUILT, NOT ASKED (2026-10-22): …ONE other payment of the rate at least, and NONE above it — a payment
+ * below the rate, or money back, is what a payment ahead leaves, never a sign its amounts vary. 🔴 Read as "every
+ * other payment is the rate", Sep 3's -$1,000.00 left -$72.74 for Nov 11, and with that row on the series the page,
+ * the All tab and the popover read "posted avg -$476.77" with nothing beside it — the figure Sep 3 inflates,
+ * unexplained, the defect this note was built to end; a +$12.50 credit on Oct 2 read "-$448.36", as silent (review
+ * of cdec7cb, a copy of his ledger 2026-10-21 with that row added, today 2026-11-15). FPL still names nothing: none of
+ * its payments is the -$58.87 he set. A bill whose amounts vary around a rate set from one of them has one above it.
+ */
+export const PAID_AHEAD_MULTIPLE = 2;
+
+/** the kinds whose payments are charges that can be paid ahead — not a transfer, income or other money */
+const PAYS_AHEAD: ReadonlySet<SeriesKind> = new Set(["bill", "subscription"]);
+
+/** how far a payment may be from the rate and still be it: an instalment plan rounds one premium by a cent */
+const AT_THE_RATE_CENTS = 1;
+
+/**
+ * The payments of `occurrences` that covered more than one charge — `PAID_AHEAD_MULTIPLE` × `rateCents` or more — of a
+ * bill or subscription one of whose other payments was `rateCents` and none more, within `AT_THE_RATE_CENTS`.
+ */
+export function paidAhead(
+  occurrences: readonly Occurrence[],
+  rateCents: number | null,
+  kind: SeriesKind,
+): Occurrence[] {
+  if (rateCents === null || rateCents === 0 || !PAYS_AHEAD.has(kind)) return [];
+  const rate = Math.abs(rateCents);
+  // a payment read the way the rate runs: money back reads below zero
+  const paid = (o: Occurrence): number => Math.sign(rateCents) * o.amountCents;
+  const isAhead = (o: Occurrence): boolean => paid(o) >= PAID_AHEAD_MULTIPLE * rate;
+  const rest = occurrences.filter((o) => !isAhead(o));
+  const oneAtTheRate = rest.some((o) => Math.abs(paid(o) - rate) <= AT_THE_RATE_CENTS);
+  const noneAbove = rest.every((o) => paid(o) - rate <= AT_THE_RATE_CENTS);
+  return oneAtTheRate && noneAbove ? occurrences.filter(isAhead) : [];
+}
+
+/** the period one charge of a cadence covers — "more than one month" */
+const CHARGE_PERIOD: Record<Cadence, string> = {
+  weekly: "week",
+  biweekly: "fortnight",
+  semimonthly: "half-month",
+  monthly: "month",
+  quarterly: "quarter",
+  annual: "year",
+};
+
+/**
+ * "Sep 3's -$1,000.00 covered more than one month" — said beside the posted average holding it (`postedAvgNotes`); null
+ * for none. A day outside `today`'s year carries the year.
+ */
+export function paidAheadPhrase(
+  paid: readonly Pick<Occurrence, "postedOn" | "amountCents">[],
+  cadence: Cadence,
+  today: string,
+): string | null {
+  if (paid.length === 0) return null;
+  const each = paid.map((o) => `${formatDayShortIn(o.postedOn, today)}'s ${formatCents(o.amountCents)}`);
+  const named = each.length < 3 ? each.join(" and ") : `${each.slice(0, -1).join(", ")} and ${each.at(-1)}`;
+  return `${named}${paid.length === 1 ? "" : " each"} covered more than one ${CHARGE_PERIOD[cadence]}`;
+}
+
+/**
+ * What is said beside a posted average, in order — what its payments carry (`carriesPhrase`, §6A 59), then the
+ * payments that covered more than one charge (`paidAheadPhrase`). ⛔ ONE list for the three surfaces that print the
+ * average — the series page's Per charge and the All tab (" · "), and the popover's warning (" — "), so none can name
+ * one and not the other.
+ */
+export function postedAvgNotes(
+  avg: { carries: readonly string[]; paidAhead: readonly Pick<Occurrence, "postedOn" | "amountCents">[] },
+  cadence: Cadence,
+  today: string,
+): string[] {
+  return [carriesPhrase(avg.carries), paidAheadPhrase(avg.paidAhead, cadence, today)].filter(
+    (n): n is string => n !== null,
+  );
 }

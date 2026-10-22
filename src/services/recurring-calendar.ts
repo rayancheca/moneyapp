@@ -997,6 +997,8 @@ export function recurringCalendar(
               // the passed paydays' frontier (`unbankedIncomeForSeries`): "the ledger has not looked for its deposit"
               // (`not_looked_for`) exactly where the forecast, his pay's page, /budgets and the dashboard say it
               paydaysCheckedThrough: paydaysCheckedOf ? paydaysCheckedOf(s.id) : null,
+              // …and its days to land: "never reached a bank" exactly where Earned vs banked says it (`unbankedSplit`)
+              paydayLandingDays: s.toleranceDays,
             },
             // ⚖️ a day billed inside another's payment is the carrier's day, measured by the carrier's charges — never
             // "missed" alone beside a rent whose own date is too thinly charged to grade (§6A 59)

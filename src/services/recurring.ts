@@ -24,7 +24,9 @@ import {
   stepsToReach,
   walkDayOfMonth,
 } from "@/lib/recurring-step";
+import { roundToCents } from "@/lib/money";
 import { isOneCharge } from "@/lib/one-charge";
+import type { Occurrence } from "@/lib/posted-average";
 import { parseAmountHistory, rateOn, seriesAmountCents } from "@/lib/series-kind";
 import { outsidePortfolioCashAccountIds } from "./accounts";
 import { isAgentsSeries } from "./analytics";
@@ -241,6 +243,13 @@ export function analyzeGroup(txns: readonly AnalyzableTxn[]): GroupStats | null 
 
   const amounts = sorted.map((t) => t.amountCents);
   const mean = amounts.reduce((a, b) => a + b, 0) / amounts.length;
+  /*
+   * ⚖️ …in whole cents, half away from zero (`roundToCents`) — as the posted average of these same rows rounds, so
+   * the two agree where nothing else parts them. 🔴 Rounded half up here and away from zero there, the e2e fixture's
+   * Con Edison (detected by "Detect now", -10,862.5 cents a bill) read "-$108.62" over "posted avg -$108.63" (a copy
+   * of data/e2e.db, 2026-10-14).
+   */
+  const meanCents = roundToCents(mean);
   const stddev = populationStddev(amounts);
   const allIdentical = amounts.every((a) => a === amounts[0]);
   // stability: population stddev/|mean| ≤ 0.2, OR all amounts identical
@@ -263,7 +272,7 @@ export function analyzeGroup(txns: readonly AnalyzableTxn[]): GroupStats | null 
     cadence,
     medianGapDays: medianGap,
     intervalDaysAvg,
-    amountCentsAvg: Math.round(mean),
+    amountCentsAvg: meanCents,
     amountCentsStddev: Math.round(stddev * 100) / 100,
     toleranceDays,
     confidence,
@@ -275,7 +284,7 @@ export function analyzeGroup(txns: readonly AnalyzableTxn[]): GroupStats | null 
     nextExpectedOn: plan.calendarMonths
       ? stepFrom(last.postedOn, plan, 1)
       : addDays(last.postedOn, Math.round(medianGap)),
-    nextExpectedAmountCents: Math.round(mean),
+    nextExpectedAmountCents: meanCents,
     lastMatchedOn: last.postedOn,
     anchorDay,
   };
@@ -925,6 +934,8 @@ export interface SeriesView {
   postedAvgCents: number | null;
   /** ⚖️ the series billed inside its payments (§6A 59) — named beside "posted avg" (`carriesPhrase`); empty for none */
   carries: readonly string[];
+  /** ⚖️ DEFAULT, NOT ASKED (2026-10-22): payments that covered more than one charge (`postedAvgNotes`) */
+  paidAhead: readonly Occurrence[];
 }
 
 /** the span an "annualized" figure covers — twelve months from today */
@@ -1092,6 +1103,7 @@ export function listSeries(db: AppDatabase, today: string = todayIso()): SeriesV
         matchedCount: countBySeries.get(s.id) ?? 0,
         postedAvgCents: posted.get(s.id)?.avgCents ?? null,
         carries: posted.get(s.id)?.carries ?? [],
+        paidAhead: posted.get(s.id)?.paidAhead ?? [],
         isActive: isSeriesActive(s, today),
         evidence: seriesEvidence(s, today, checkedThrough(s.id)),
         annualizedCents: annualizedCentsOf(s, today, checkedThrough(s.id)),

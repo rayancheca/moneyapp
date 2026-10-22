@@ -73,6 +73,26 @@ export function dayChangePhrase({ label, interval }: DayChangeLabel): string {
   return interval ?? label.toLowerCase();
 }
 
+/**
+ * A group's day-change term, and — where its move was measured on the days EVERY child covers (`onDaysAllCover`) and
+ * that day is not a child's own — whose day it is: "Aug 31 vs Aug 30, the last day all 4 cover".
+ *
+ * 🔴 On his ledger copy 2026-10-21 the dashboard's Robinhood row read "+$469.21 Aug 31 vs Aug 30" — Agentic stops Aug
+ * 31 — over cards each as of its own day (Brokerage and Crypto "Oct 9 vs Oct 8"), and Chase "-$195.90 Aug 12 vs Aug
+ * 11" over Sapphire's "Oct 2 vs Oct 1", with nothing saying why the group's day was older (reading the app,
+ * 2026-10-14). The days are the right ones — a missing account would masquerade as a balance drop — and now say so.
+ */
+export function sharedDayChangeTerm(
+  term: string,
+  change: { asOf: string | null; onDaysAllCover?: boolean },
+  childDays: readonly (string | null)[],
+): string {
+  if (change.onDaysAllCover !== true || change.asOf === null) return term;
+  if (!childDays.some((d) => d !== null && d !== change.asOf)) return term;
+  const who = childDays.length === 2 ? "both" : `all ${childDays.length}`;
+  return `${term}, the last day ${who} cover`;
+}
+
 /** The two closes a per-holding day move is measured between. */
 export interface ClosePair {
   /** the newest close's day */

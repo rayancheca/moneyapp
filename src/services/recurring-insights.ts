@@ -160,6 +160,14 @@ export function recurringInsightInput(
 
   const annualized = self.annualizedCents!;
   if (annualized <= 0) return null;
+  /*
+   * ⚖️ DEFAULT, BUILT, NOT ASKED (2026-10-22; he said "no more questions"), from §6A 56 — one charge reads as that
+   * charge, never a year of it (`annualizedFigure`): a schedule of ONE charge is ranked on no page of its own. 🔴 The Nov
+   * 11 balance's page read "…is the 12th largest of your 13 scheduled commitments, by what they cost in a year, at
+   * $72.74" beside its Annualized "once · $72.74" (review of 89f235d; his ledger copy 2026-10-21). ⛔ It stays in the
+   * others' set: its charge falls inside the year they are ranked by, as the runway's rate keeps it.
+   */
+  if (self.oneChargeOn !== null) return null;
 
   /*
    * Ties broken by name so the rank is stable across renders — two commitments

@@ -430,7 +430,10 @@ export function carryInto(
   }
   // ⛔ whose day it waited on, as it asked it — the period now running's where none has closed (review of 46b6e4b)
   const { reach, ancestor } = newest ?? reachFrom(currentPeriodStart);
-  return { cents: balance, heldBack, readOn: { whose: reach.whose, ancestor } };
+  // …and of a cash-only day, the facts its row's Grading line is worded from, so the panel says it in those words
+  const { spentFromSince, spentFromWallets } = reach.coverage;
+  const cash = reach.whose === "cash-only" ? { cash: { spentFromSince, spentFromWallets } } : {};
+  return { cents: balance, heldBack, readOn: { whose: reach.whose, ancestor, ...cash } };
 }
 
 /**

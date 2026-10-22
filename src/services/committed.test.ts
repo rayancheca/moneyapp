@@ -1472,7 +1472,7 @@ describe("carCard", () => {
     expect([c.cost.monthlyCents, c.cost.evidencedThrough]).toEqual([69504 + 7274, "2026-11-11"]);
     expect(c.evidenceCaption).toBe(
       "Car insurance — Nov 11 balance after the $1,000 early payment charges once on Nov 11, 2026 — the monthly " +
-        "figure above holds that charge, so it stops being what you pay after that date.",
+        "figure above is what November 2026 bills with that charge in it, not what a month without it costs.",
     );
   });
 

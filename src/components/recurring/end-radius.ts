@@ -65,7 +65,9 @@ export interface SeriesEndInput {
   /**
    * The page's Annualized figure (`annualizedFigure`): a year at today's amounts, or — `once` — the one charge of a
    * schedule of one; null when the series carries none. ⛔ The line's form is the figure's own `once`, ONE gate with the
-   * page's slot — 🔴 it asked `oneChargeOn` alone, which the slot does not (review of 89f235d).
+   * page's slot — it asked `oneChargeOn` alone, which the slot does not (review of 89f235d). ⚠️ The two never disagreed
+   * on a real page — `annualizedCentsOf` has no figure without the amount the slot also asks for (review of d54c28e) —
+   * so this keeps them from drifting; it fixed nothing he could see.
    */
   annualized: { cents: number; once: boolean } | null;
   /** arrears magnitude — 0 when nothing is late; disjoint from the tail below */

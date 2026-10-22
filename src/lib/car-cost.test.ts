@@ -227,9 +227,11 @@ describe("carEvidenceCaption", () => {
       ...line("Car lease", -69504, LEASE, "2028-08-15"),
       ...line("Nov 11 balance", -7274, ["2026-11-11"], "2026-11-11", true),
     ]);
+    // 🔴 "…holds that charge, so it stops being what you pay after that date" — and before it: a month without the
+    // charge bills the lease alone (review of 5b19be6). It says which month the figure is.
     expect(text).toBe(
-      "Nov 11 balance charges once on Nov 11, 2026 — the monthly figure above holds that charge, so it stops being " +
-        "what you pay after that date.",
+      "Nov 11 balance charges once on Nov 11, 2026 — the monthly figure above is what November 2026 bills with that " +
+        "charge in it, not what a month without it costs.",
     );
   });
 
@@ -245,9 +247,24 @@ describe("carEvidenceCaption", () => {
       ...line("Car insurance", -35758, ["2026-12-11", "2027-01-11"], "2027-01-11"),
       ...line("Dec 11 balance", -7274, ["2026-12-11"], "2026-12-11", true),
     ]);
+    // 🔴 "One commitment stops …" named neither Car insurance nor its Jan 11 — the runway names both (review of 5b19be6)
     expect(text).toBe(
-      "Dec 11 balance charges once on Dec 11, 2026 — the monthly figure above holds that charge, so it stops being " +
-        "what you pay after that date. One commitment stops inside the next 12 months, with no renewal in the ledger.",
+      "Dec 11 balance charges once on Dec 11, 2026 — the monthly figure above is what December 2026 bills with that " +
+        "charge in it, not what a month without it costs. Car insurance stops inside the next 12 months — evidenced " +
+        "through Jan 11, 2027, with no renewal in the ledger.",
+    );
+  });
+
+  // 🔴 The plural had no test: a typo in it passed the suite (review of 5b19be6)
+  test("…with two commitments that stop, it names both, the earlier first", () => {
+    const text = caption([
+      ...line("Car lease", -69504, LEASE.slice(0, 6), "2027-02-15"),
+      ...line("Car insurance", -35758, ["2026-12-11", "2027-01-11"], "2027-01-11"),
+      ...line("Dec 11 balance", -7274, ["2026-12-11"], "2026-12-11", true),
+    ]);
+    expect(text).toContain(
+      "not what a month without it costs. Car insurance and Car lease stop inside the next 12 months — evidenced " +
+        "through Jan 11, 2027 and Feb 15, 2027, with no renewal in the ledger.",
     );
   });
 });

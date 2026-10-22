@@ -119,9 +119,12 @@ describe("seriesEndLines", () => {
   });
 
   /*
-   * ⛔ ONE GATE with the page's slot (`annualizedFigure`). The line read its form off `oneChargeOn` alone while the slot
-   * also asks for the charge's amount: with none the page prints the year, "~$715.16/yr", and the dialog said
-   * "~$715.16, its one charge" of the same figure (review of 89f235d). The form travels with the figure.
+   * ⛔ ONE GATE with the page's slot (`annualizedFigure`): the line's form travels with the figure. The line read its
+   * form off `oneChargeOn` alone while the slot also asks for the charge's amount (review of 89f235d).
+   * ⚠️ A PIN, NOT A REPRODUCED DEFECT: no real page reaches the first case — `annualizedCentsOf` returns no figure
+   * without an amount, and the page's amount is the same effective one (`toProjectable`), so the two gates agreed on
+   * every ledger (review of d54c28e). It keeps them from drifting, nothing more. `upcomingValue`'s `oneChargeOn` gate
+   * splits from it only on the same unreachable input.
    */
   test("the line takes its form from the page's own figure, never a second gate", () => {
     const page = {

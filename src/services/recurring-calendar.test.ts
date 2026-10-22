@@ -524,9 +524,11 @@ describe("recurringCalendar", () => {
     expect(unpaid.length).toBeGreaterThan(0);
     for (const e of unpaid) {
       expect(e.state).not.toBe("missed");
-      if (e.state === "unsettled") expect(e.unsettledReason).toBe("unbanked");
+      // looked for, through its days to land or not yet (`paydayLandingIsRead`) — never a bill's words
+      if (e.state === "unsettled") expect(["unbanked", "never_banked"]).toContain(e.unsettledReason);
     }
-    expect(unpaid.some((e) => e.unsettledReason === "unbanked")).toBe(true);
+    // Jul 10, read nine days past: no deposit can still answer it — it never reached a bank, as the dashboard says
+    expect(unpaid.some((e) => e.unsettledReason === "never_banked")).toBe(true);
   });
 
   test("an ENDED series keeps its history and loses its forecast", () => {

@@ -51,8 +51,16 @@ export type UnsettledReason =
    * same quiet "?" as `not_imported`, in the words of what it waits for.
    */
   | "in_grace"
-  /** money IN, on a day the ledger HAS looked: its absence from the ledger is never proof it did not happen */
+  /**
+   * money IN, on a day the ledger HAS looked but not through its days to land (`paydayLandingIsRead`): a deposit can
+   * still answer it — "not banked yet". Its absence from the ledger is never proof it did not happen.
+   */
   | "unbanked"
+  /**
+   * money IN, checked through its days to land: no deposit can still answer it — it "never reached a bank", the
+   * dashboard's words for the same payday (`unbankedSplit`). Still not `missed`: cash he was handed is no bank's to see.
+   */
+  | "never_banked"
   /** too few postings to know when this is due — the date itself is a guess */
   | "schedule_unproven";
 
@@ -319,6 +327,8 @@ export interface OccurrenceReading {
   dueDay: DueDayReading;
   /** money IN: the last day every account its pay lands in now is checked through (`checkedThroughBySeries`) */
   paydaysCheckedThrough: string | null;
+  /** money IN: its days to land — the series' own tolerance after a payday (`paydayLandingIsRead`) */
+  paydayLandingDays: number;
 }
 
 /**
@@ -353,7 +363,14 @@ export function settledVerdict(
   // or "we are unsure when this is due".
   if (!absenceIsEvidence(kind)) {
     const looked = paydayIsRead(occurrenceDate, reading.paydaysCheckedThrough);
-    return { state: "unsettled", reason: looked ? "unbanked" : "not_looked_for" };
+    if (!looked) return { state: "unsettled", reason: "not_looked_for" };
+    /*
+     * 🔴 …and once looked, "not banked yet" of every checked payday, however long ago: his June–August cash weeks read
+     * "not yet known (not banked yet)" beside the dashboard's "never reached a bank" for the same paydays (reading the
+     * app, 2026-10-14). The dashboard's own split (`paydayLandingIsRead`, `unbankedSplit`).
+     */
+    const landed = paydayLandingIsRead(occurrenceDate, reading.paydayLandingDays, reading.paydaysCheckedThrough);
+    return { state: "unsettled", reason: landed ? "never_banked" : "unbanked" };
   }
   if (!dueDayIsRead(occurrenceDate, reading.dueDay)) {
     return { state: "unsettled", reason: reading.dueDay.readsToToday ? "in_grace" : "not_imported" };

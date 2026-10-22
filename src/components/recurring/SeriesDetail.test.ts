@@ -377,9 +377,9 @@ describe("SeriesDetail — the rent's posted avg is per payment, and names what 
     return stat.replace(/<[^>]+>/g, "").replace(/^>Per charge/, "");
   };
 
-  test("the rent: posted avg -$2,312.20 ± $85.27 · its payments carry Rent utilities & fees too", () => {
+  test("the rent: posted avg -$2,312.21 ± $85.27 · its payments carry Rent utilities & fees too", () => {
     expect(perChargeOf(rent.rentId)).toContain(
-      "-$2,109.00posted avg -$2,312.20 ± $85.27 · its payments carry Rent utilities & fees too",
+      "-$2,109.00posted avg -$2,312.21 ± $85.27 · its payments carry Rent utilities & fees too",
     );
   });
 
@@ -414,6 +414,46 @@ describe("SeriesDetail — the rent's posted avg is per payment, and names what 
     expect(table).not.toContain("-$1,100.00");
     expect(table).not.toContain("-$1,334.80");
     expect(table).toContain("Sep 2, 2026 -$2,291.21 +$182.21");
+  });
+});
+
+/*
+ * ⚖️ DEFAULT, BUILT, NOT ASKED (2026-10-22): a payment of twice the rate or more covered more than one charge, said
+ * beside the average holding it (`postedAvgNotes`). 🔴 His Car insurance's Per charge read "posted avg -$678.79 ±
+ * $454.26" under -$357.58, nothing saying Sep 3's -$1,000.00 paid ahead (his ledger copy 2026-10-21).
+ */
+describe("SeriesDetail — a payment that covered more than one charge is named beside the average", () => {
+  const TODAY = "2026-10-21";
+  let dir: string;
+  let bundle: DbBundle;
+  let car: OneChargeLedger;
+
+  beforeEach(() => {
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), "moneyapp-series-detail-ahead-"));
+    bundle = createDatabase(path.join(dir, "t.db"));
+    seedDatabase(bundle.db);
+    car = seedHisCarSeries(bundle.db);
+  });
+
+  afterEach(() => {
+    bundle.sqlite.close();
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  test("Car insurance: posted avg -$678.79 ± $454.26 · Sep 3's -$1,000.00 covered more than one month", () => {
+    const html = decode(
+      renderToStaticMarkup(
+        createElement(SeriesDetail, {
+          data: seriesDetail(bundle.db, car.insuranceId, TODAY)!,
+          today: TODAY,
+          viewState: resolveViewState(RECURRING_SERIES_VIEW_SPEC, {}, undefined),
+          basePath: `/recurring/${car.insuranceId}`,
+        }),
+      ),
+    );
+    const at = html.indexOf(">Per charge<");
+    const stat = html.slice(at, html.indexOf("</dd>", at)).replace(/<[^>]+>/g, "");
+    expect(stat).toContain("-$357.58posted avg -$678.79 ± $454.26 · Sep 3's -$1,000.00 covered more than one month");
   });
 });
 

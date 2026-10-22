@@ -12,6 +12,7 @@
  * evidence runs out is published rather than assumed past.
  */
 
+import { monthLabel } from "@/lib/calendar-math";
 import { endingOthersClause, type EndingLead } from "@/lib/committed";
 import { ONE_CHARGE_WORD } from "@/lib/one-charge";
 import { dayWindowLabel } from "@/lib/period";
@@ -150,10 +151,17 @@ export function carCost(input: CarCostInput): CarCost {
 export function carEvidenceCaption(ending: EndingLead | null, months: number): string | null {
   if (ending === null) return null;
   const day = dayWindowLabel(ending.endsOn, ending.endsOn);
+  /*
+   * 🔴 "…the monthly figure above holds that charge, so it stops being what you pay after that date" implied it was
+   * what he paid BEFORE it: with Car insurance ended and the balance on Dec 11, the card read $767.78 over a November
+   * that bills the lease alone, $695.04 (a copy of his ledger 2026-10-21; review of 5b19be6). The figure is the month
+   * the charge falls in (`heaviestMonth`, which `heaviestMonthEnding` dates), and it says that month.
+   */
   if (ending.lead.oneCharge) {
     return (
-      `${ending.lead.name} charges ${ONE_CHARGE_WORD} on ${day} — the monthly figure above holds that charge, so it ` +
-      `stops being what you pay after that date.${commitmentsStopping(ending.others, months)}`
+      `${ending.lead.name} charges ${ONE_CHARGE_WORD} on ${day} — the monthly figure above is what ` +
+      `${monthLabel(ending.endsOn.slice(0, 7))} bills with that charge in it, not what a month without it costs.` +
+      commitmentsStopping(ending.othersStopping ?? [], months)
     );
   }
   return (
@@ -163,9 +171,19 @@ export function carEvidenceCaption(ending: EndingLead | null, months: number): s
   );
 }
 
-/** " One commitment stops inside the next 12 months, with no renewal in the ledger." — beside a one charge, none of them */
-function commitmentsStopping(count: number, months: number): string {
-  if (count === 0) return "";
-  const which = count === 1 ? "One commitment stops" : `${count} commitments stop`;
-  return ` ${which} inside the next ${months} months, with no renewal in the ledger.`;
+/**
+ * " Car insurance stops inside the next 12 months — evidenced through Jan 11, 2027, with no renewal in the ledger." —
+ * the commitments that stop beside a one charge, none of them it, each named with its day, in the dated sentence's
+ * words. 🔴 It counted them ("One commitment stops …"), naming neither the commitment nor its day (review of 5b19be6).
+ */
+function commitmentsStopping(stopping: readonly { name: string; on: string }[], months: number): string {
+  if (stopping.length === 0) return "";
+  const names = LIST.format(stopping.map((s) => s.name));
+  const days = LIST.format(stopping.map((s) => dayWindowLabel(s.on, s.on)));
+  const stop = stopping.length === 1 ? "stops" : "stop";
+  const evidenced = `evidenced through ${days}, with no renewal in the ledger`;
+  return ` ${names} ${stop} inside the next ${months} months — ${evidenced}.`;
 }
+
+/** "A and B", "A, B, and C" */
+const LIST = new Intl.ListFormat("en", { style: "long", type: "conjunction" });

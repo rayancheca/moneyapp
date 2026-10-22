@@ -39,15 +39,17 @@ const read = (observedThrough: string | null, graceDays = 3, readsToToday = fals
 const bill = (observedThrough: string | null, graceDays = 3): OccurrenceReading => ({
   dueDay: read(observedThrough, graceDays),
   paydaysCheckedThrough: null,
+  paydayLandingDays: 0,
 });
 
 /**
  * A pay series' reading: the accounts its pay lands in now checked through `checkedThrough` — and, by default, a bills'
  * reading that has read nothing, so a verdict that graded a payday by it would show.
  */
-const pay = (checkedThrough: string | null, dueDay: DueDayReading = read(null)): OccurrenceReading => ({
+const pay = (checkedThrough: string | null, dueDay: DueDayReading = read(null), landingDays = 3): OccurrenceReading => ({
   dueDay,
   paydaysCheckedThrough: checkedThrough,
+  paydayLandingDays: landingDays,
 });
 
 /*
@@ -141,7 +143,11 @@ describe("paydayLandingIsRead — a payday checked through its days to land", ()
 
 describe("settledVerdict", () => {
   test("a bill is graded by its due day's reading, whatever the pay's frontier says", () => {
-    const reading: OccurrenceReading = { dueDay: read("2026-08-12"), paydaysCheckedThrough: "2026-12-31" };
+    const reading: OccurrenceReading = {
+      dueDay: read("2026-08-12"),
+      paydaysCheckedThrough: "2026-12-31",
+      paydayLandingDays: 3,
+    };
     expect(settledVerdict("bill", "2026-08-20", reading, true).reason).toBe("not_imported");
   });
 
@@ -179,6 +185,7 @@ describe("settledVerdict", () => {
     const throughToday = (graceDays: number): OccurrenceReading => ({
       dueDay: read("2026-10-08", graceDays, true),
       paydaysCheckedThrough: null,
+      paydayLandingDays: 0,
     });
     expect(settledVerdict("bill", "2026-10-06", throughToday(3), true)).toEqual({
       state: "unsettled",
@@ -222,7 +229,22 @@ describe("settledVerdict", () => {
     // deposited.
     expect(settledVerdict("income", "2026-08-06", pay("2026-12-31"), true)).toEqual({
       state: "unsettled",
-      reason: "unbanked",
+      reason: "never_banked",
+    });
+  });
+
+  /*
+   * 🔴 "Not banked yet" was said of every checked payday, however long ago: his June–August cash weeks read "not yet
+   * known (not banked yet)" on the calendar beside the dashboard's "never reached a bank" for the same paydays (reading
+   * the app, 2026-10-14). ⛔ THE ONE PREDICATE the dashboard splits them by (`paydayLandingIsRead`, `unbankedSplit`):
+   * checked through its days to land, no deposit can still answer it — it never reached a bank; checked on its day but
+   * not through them, not yet. Still never `missed`: cash he was handed is no bank's to see.
+   */
+  test("THE BOUNDARY: through its days to land it never reached a bank; on its day but short of them, not yet", () => {
+    expect(settledVerdict("income", "2026-09-03", pay("2026-09-05"), true).reason).toBe("unbanked");
+    expect(settledVerdict("income", "2026-09-03", pay("2026-09-06"), true)).toEqual({
+      state: "unsettled",
+      reason: "never_banked",
     });
   });
 
@@ -249,7 +271,7 @@ describe("settledVerdict", () => {
   test("THE BOUNDARY: a payday on or before the day its accounts are checked through is not banked yet", () => {
     expect(settledVerdict("income", "2026-09-24", pay("2026-09-24"), true).reason).toBe("unbanked");
     expect(settledVerdict("income", "2026-09-25", pay("2026-09-24"), true).reason).toBe("not_looked_for");
-    expect(settledVerdict("income", "2026-06-11", pay("2026-09-24"), true).reason).toBe("unbanked");
+    expect(settledVerdict("income", "2026-06-11", pay("2026-09-24"), true).reason).toBe("never_banked");
   });
 
   /*
@@ -258,7 +280,9 @@ describe("settledVerdict", () => {
    * checked through Wells Fargo's Sep 24; and a bills' reading far ahead must not vouch for a payday nobody checked.
    */
   test("a payday is graded by its pay's frontier, whatever the bills' reading says", () => {
-    expect(settledVerdict("income", "2026-08-13", pay("2026-09-24", read("2026-08-12")), true).reason).toBe("unbanked");
+    expect(settledVerdict("income", "2026-08-13", pay("2026-09-24", read("2026-08-12")), true).reason).toBe(
+      "never_banked",
+    );
     expect(settledVerdict("income", "2026-10-01", pay("2026-09-24", read("2026-12-31", 0)), true).reason).toBe(
       "not_looked_for",
     );

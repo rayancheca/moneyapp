@@ -505,8 +505,11 @@ describe("feesCard", () => {
       expect(card.unfiledNote).toContain("$0.15");
       expect(card.unfiledNote).toContain(card.allTimeFromLabel);
       expect(card.unfiledNote).toContain("not in the all-time figures");
-      // 🔴 "The largest is $0.15" of the ONE charge filed there (the dashboard, a copy of his ledger, 2026-10-13)
-      expect(card.unfiledNote).toContain("it is not in the all-time figures. It is $0.15 — “FOREIGN EXCHANGE RATE ADJUSTMENT FEE”.");
+      // 🔴 "The largest is $0.15" of the ONE charge filed there (the dashboard, a copy of his ledger, 2026-10-13); one
+      // charge alone is "the charge", as the recent half must say it (below)
+      expect(card.unfiledNote).toContain(
+        "it is not in the all-time figures. The charge is $0.15 — “FOREIGN EXCHANGE RATE ADJUSTMENT FEE”.",
+      );
       expect(card.unfiledNote).not.toContain("largest");
     },
   );
@@ -532,8 +535,10 @@ describe("feesCard", () => {
       expect(note).toContain("what it is");
       expect(note).not.toContain("what they are");
       expect(note).not.toContain("all-time");
-      // one charge has no largest
-      expect(note).toContain("It is $0.15 — “FOREIGN EXCHANGE RATE ADJUSTMENT FEE”.");
+      // one charge has no largest — 🔴 and "It is $0.15" read as the answer to "the ledger has not said what it is"
+      // (review of ebf628b): one charge alone is "the charge", in both halves (`largestPhrase`)
+      expect(note).toContain("has not said what it is. The charge is $0.15 — “FOREIGN EXCHANGE RATE ADJUSTMENT FEE”.");
+      expect(note).not.toContain("It is $0.15");
       expect(note).not.toContain("largest");
     },
   );

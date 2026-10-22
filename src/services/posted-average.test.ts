@@ -19,7 +19,7 @@ import { seedHisRent, type RentLedger } from "./rent-fixture";
  *
  * 🔴 Read on his ledger 2026-10-12: the rent's page and the All tab printed "posted avg -$1,849.76 ± $583.58" under
  * "-$2,109.00", though every month he paid MORE — Jun 16's one payment, posted by the card as -$1,100.00 and -$1,334.80,
- * counted as two samples. Per payment: -$2,434.80, -$2,285.70, -$2,237.11, -$2,291.21 — -$2,312.20 ± $85.27.
+ * counted as two samples. Per payment: -$2,434.80, -$2,285.70, -$2,237.11, -$2,291.21 — -$2,312.21 ± $85.27.
  */
 describe("the posted average, per occurrence — his rent on the page, the All tab and the popover", () => {
   const TODAY = "2026-10-12";
@@ -49,11 +49,11 @@ describe("the posted average, per occurrence — his rent on the page, the All t
     };
   };
 
-  test("Jun 16's two rows are one payment: -$2,312.20 ± $85.27 on all three", () => {
+  test("Jun 16's two rows are one payment: -$2,312.21 ± $85.27 on all three", () => {
     const s = surfaces(rent.rentId);
-    expect(s.page.slice(0, 2)).toEqual([-231_220, 8_527]);
-    expect(s.allTab[0]).toBe(-231_220);
-    expect(s.popover).toContain("average of what actually posted is -$2,312.20, which is not what you set");
+    expect(s.page.slice(0, 2)).toEqual([-231_221, 8_527]);
+    expect(s.allTab[0]).toBe(-231_221);
+    expect(s.popover).toContain("average of what actually posted is -$2,312.21, which is not what you set");
     expect(s.popover).not.toContain("-$1,849.76");
   });
 
@@ -63,7 +63,7 @@ describe("the posted average, per occurrence — his rent on the page, the All t
     expect(s.page[2]).toEqual(["Rent utilities & fees"]);
     expect(s.allTab[1]).toEqual(["Rent utilities & fees"]);
     expect(s.popover).toContain(
-      "is -$2,312.20, which is not what you set — its payments carry Rent utilities & fees too.",
+      "is -$2,312.21, which is not what you set — its payments carry Rent utilities & fees too.",
     );
   });
 
@@ -212,8 +212,8 @@ describe("the posted average, per occurrence — his rent on the page, the All t
     rent.charge("2026-07-20", -5_000, rent.rentId);
     rent.charge("2026-07-20", 5_000, rent.rentId);
     const s = surfaces(rent.rentId);
-    expect(s.page.slice(0, 2)).toEqual([-231_220, 8_527]);
-    expect(s.allTab[0]).toBe(-231_220);
+    expect(s.page.slice(0, 2)).toEqual([-231_221, 8_527]);
+    expect(s.allTab[0]).toBe(-231_221);
     expect(seriesDetail(bundle.db, rent.rentId, TODAY)!.amountHistory.map((h) => h.date)).toEqual([
       "2026-06-16",
       "2026-07-08",
@@ -320,7 +320,7 @@ describe("the posted average, per occurrence — his rent on the page, the All t
       .run();
     const s = surfaces(rent.rentId);
     expect([s.page[2], s.allTab[1]]).toEqual([[], []]);
-    expect(s.popover).toContain("is -$2,312.20, which is not what you set.");
+    expect(s.popover).toContain("is -$2,312.21, which is not what you set.");
   });
 
   /* Aug 12's $357.58 and Sep 3's $1,000.00 early payment are one occurrence each: it reads exactly as before. */
@@ -329,6 +329,88 @@ describe("the posted average, per occurrence — his rent on the page, the All t
     const s = surfaces(car.insuranceId);
     expect(s.page).toEqual([-67_879, 45_426, []]);
     expect(s.allTab).toEqual([-67_879, []]);
+  });
+
+  /*
+   * ⚖️ DEFAULT, BUILT, NOT ASKED (2026-10-22; he said "no more questions"): …and its Sep 3 payment, 2.80× the -$357.58
+   * he set, covered more than one month — said wherever the average is named, the figure kept (`paidAhead`). 🔴 The
+   * popover read "⚠️ … is -$678.79, which is not what you set." and stopped (his ledger copy 2026-10-21).
+   */
+  test("Car insurance: Sep 3's -$1,000.00 covered more than one month — on all three, beside the same figure", () => {
+    const car = seedHisCarSeries(bundle.db);
+    const sep3 = [{ postedOn: "2026-09-03", amountCents: -100_000, postings: 1 }];
+    expect(seriesDetail(bundle.db, car.insuranceId, TODAY)!.paidAhead).toEqual(sep3);
+    expect(listSeries(bundle.db, TODAY).find((s) => s.id === car.insuranceId)!.paidAhead).toEqual(sep3);
+    expect(surfaces(car.insuranceId).popover).toContain(
+      "⚠️ The ledger's own average of what actually posted is -$678.79, which is not what you set — Sep 3's " +
+        "-$1,000.00 covered more than one month.",
+    );
+    // the rent's payments are 1.06–1.15× its rate: none paid ahead, and its words are what they were
+    expect(seriesDetail(bundle.db, rent.rentId, TODAY)!.paidAhead).toEqual([]);
+  });
+
+  /*
+   * ⚖️ DEFAULT, BUILT, NOT ASKED (2026-10-22): …beside a payment of the rate, a payment below it or money back hides
+   * nothing. 🔴 At cdec7cb every other payment had to be the rate: with the -$72.74 Sep 3 left for Nov 11 linked to
+   * the series, the page and the All tab read "posted avg -$476.77" with no note, and the popover "⚠️ … is -$476.77,
+   * which is not what you set." — the figure Sep 3 inflates, unexplained; a +$12.50 credit on Oct 2 read "-$448.36",
+   * as silent (review of cdec7cb, a copy of his ledger 2026-10-21 with that row added, today 2026-11-15).
+   */
+  const sep3Named = (id: string, today: string, avg: string) => {
+    const sep3 = [{ postedOn: "2026-09-03", amountCents: -100_000, postings: 1 }];
+    expect(seriesDetail(bundle.db, id, today)!.paidAhead).toEqual(sep3);
+    expect(listSeries(bundle.db, today).find((s) => s.id === id)!.paidAhead).toEqual(sep3);
+    expect(provenanceFor(bundle.db, { kind: "recurringSeries", id, today })!.headline).toContain(
+      `is ${avg}, which is not what you set — Sep 3's -$1,000.00 covered more than one month.`,
+    );
+  };
+
+  test("Car insurance: the -$72.74 Sep 3 left for Nov 11 leaves Sep 3 named — on all three", () => {
+    const car = seedHisCarSeries(bundle.db);
+    car.charge("2026-11-11", -7_274, car.insuranceId);
+    sep3Named(car.insuranceId, "2026-11-15", "-$476.77");
+  });
+
+  test("Car insurance: a +$12.50 credit back leaves Sep 3 named — on all three", () => {
+    const car = seedHisCarSeries(bundle.db);
+    car.charge("2026-10-02", 1_250, car.insuranceId);
+    sep3Named(car.insuranceId, TODAY, "-$448.36");
+  });
+
+  /*
+   * ⚖️ DEFAULT, BUILT, NOT ASKED (2026-10-22): …only of a bill or subscription that otherwise paid its rate. 🔴 At
+   * 0c5c893 FPL, with one -$125.00 summer bill beside its -$14.21 and -$56.22 under the -$58.87 he set, read "Aug 27's
+   * -$125.00 covered more than one month" on the All tab and the Per charge line — one high bill, one month; a card
+   * payoff's large statement would have read the same (review of 0c5c893 on a copy of his ledger 2026-10-21, that row
+   * added).
+   */
+  test("a bill whose amounts vary, and a transfer, paid nothing ahead — on all three", () => {
+    type Rows = readonly (readonly [string, number])[];
+    const seed = (name: string, kind: "bill" | "transfer", rate: number, rows: Rows) => {
+      const { id } = bundle.db
+        .insert(recurringSeries)
+        .values({ name, kind, cadence: "monthly", status: "confirmed", toleranceDays: 3, userAmountCents: rate })
+        .returning({ id: recurringSeries.id })
+        .get();
+      for (const [day, c] of rows) rent.charge(day, c, id);
+      return id;
+    };
+    const fpl = seed("FPL (electricity)", "bill", -5_887, [
+      ["2026-07-10", -1_421],
+      ["2026-07-28", -5_622],
+      ["2026-08-27", -12_500],
+    ]);
+    const payoff = seed("Card payoff", "transfer", -35_758, [
+      ["2026-08-12", -35_758],
+      ["2026-09-03", -100_000],
+    ]);
+    for (const id of [fpl, payoff]) {
+      expect(seriesDetail(bundle.db, id, TODAY)!.paidAhead).toEqual([]);
+      expect(listSeries(bundle.db, TODAY).find((s) => s.id === id)!.paidAhead).toEqual([]);
+      const { popover } = surfaces(id);
+      expect(popover).toContain("which is not what you set");
+      expect(popover).not.toContain("covered more than one");
+    }
   });
 
   /* ⛔ No schedule, no occurrence: he said it is not recurring. CC Vending's purchases of one day are purchases. */
@@ -406,13 +488,13 @@ describe("the posted average of a bill with a rate history — the payments at t
     return { page: [d.postedAvgCents, d.postedStddevCents], allTab: row.postedAvgCents, popover: p, detail: d };
   };
 
-  test("raised Aug 1: Aug 4's and Sep 2's payments — -$2,264.16 ± $38.25 on all three, not -$2,312.20", () => {
+  test("raised Aug 1: Aug 4's and Sep 2's payments — -$2,264.16 ± $38.25 on all three, not -$2,312.21", () => {
     raise("2026-07-31");
     const s = surfaces();
     expect(s.page).toEqual([-226_416, 3_825]);
     expect(s.allTab).toBe(-226_416);
     expect(s.popover.headline).toContain("average of what actually posted is -$2,264.16, which is not what you set");
-    expect(s.popover.headline).not.toContain("-$2,312.20");
+    expect(s.popover.headline).not.toContain("-$2,312.21");
   });
 
   /*
@@ -424,8 +506,9 @@ describe("the posted average of a bill with a rate history — the payments at t
     const p = surfaces().popover;
     expect(p.headline).toContain(
       "Its 2 payments at the rate in force since Aug 1, 2026 were 2 different amounts, from -$2,291.21 to " +
-        "-$2,237.11 — so any single figure for it is an average, not a repeat. Its 2 payments before Aug 1, 2026 were " +
-        "at an earlier rate, and are not counted.",
+        "-$2,237.11 — so any single figure for it is an average, not a repeat. That is 2 payments — below the 3 this " +
+        "app requires before calling a repeat a pattern, so it is an anecdote rather than a statistic. Its 2 " +
+        "payments before Aug 1, 2026 were at an earlier rate, and are not counted.",
     );
     expect(p.headline).not.toContain("posted as 2");
     const cents = (s: string): number => Math.round(Number(s.replace(/[$,]/g, "")) * 100);
@@ -476,8 +559,9 @@ describe("the posted average of a bill with a rate history — the payments at t
     expect(s.page).toEqual([-229_121, null]);
     expect(s.allTab).toBe(-229_121);
     expect(s.popover.headline).toContain(
-      "Its one payment at the rate in force since Sep 1, 2026 was -$2,291.21, on Sep 2, 2026. Its 3 payments before " +
-        "Sep 1, 2026 were at an earlier rate, and are not counted.",
+      "Its one payment at the rate in force since Sep 1, 2026 was -$2,291.21, on Sep 2, 2026. That is one payment — " +
+        "below the 3 this app requires before calling a repeat a pattern, so it is an anecdote rather than a " +
+        "statistic. Its 3 payments before Sep 1, 2026 were at an earlier rate, and are not counted.",
     );
   });
 
@@ -520,22 +604,22 @@ describe("the posted average of a bill with a rate history — the payments at t
    * earlier rate, and nothing has posted at the rate in force since" — beside an Amount history drawing all four
    * against -$2,109.00, the rate `rateOn` reads for Oct 12.
    */
-  test("recorded Oct 12, raised from Nov 1: his four payments still count — -$2,312.20 on all three", () => {
+  test("recorded Oct 12, raised from Nov 1: his four payments still count — -$2,312.21 on all three", () => {
     bundle.db
       .update(recurringSeries)
       .set({ userAmountCents: -230_000, userAmountHistory: [{ throughOn: "2026-10-31", amountCents: -210_900 }] })
       .where(eq(recurringSeries.id, rent.rentId))
       .run();
     const s = surfaces();
-    expect(s.page).toEqual([-231_220, 8_527]);
-    expect(s.allTab).toBe(-231_220);
+    expect(s.page).toEqual([-231_221, 8_527]);
+    expect(s.allTab).toBe(-231_221);
     /*
      * ⛔ …held to the rate he set for TODAY, the rate it is the average of — and named, since it is not the -$2,300.00
      * on screen. 🔴 Held to the -$2,300.00 not in force yet, an average AT -$2,300.00 would have read "which is not
      * what you set" beside it, and one at -$2,109.00 the same (review of 6c59cdb, hypothetical).
      */
     expect(s.popover.headline).toContain(
-      "average of what actually posted is -$2,312.20, which is not the -$2,109.00 you set through Oct 31, 2026 — its " +
+      "average of what actually posted is -$2,312.21, which is not the -$2,109.00 you set through Oct 31, 2026 — its " +
         "payments carry Rent utilities & fees too.",
     );
     expect(s.popover.headline).toContain("Its 4 payments since Jun 16, 2026 (5 tagged postings: Jun 16's posted as 2)");

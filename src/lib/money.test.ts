@@ -5,6 +5,7 @@ import {
   formatCents,
   formatCentsSigned,
   parseAmountToCents,
+  roundToCents,
   sumCents,
 } from "./money";
 
@@ -65,6 +66,31 @@ describe("parseAmountToCents", () => {
 
   test("rejects amounts that overflow safe integer cents", () => {
     expect(() => parseAmountToCents("99999999999999999999")).toThrow(MoneyParseError);
+  });
+});
+
+/**
+ * ⚖️ A figure computed to a fraction of a cent — a mean — rounds by the parser's rule: half away from zero, on either
+ * side of it. 🔴 `Math.round` rounds a half UP, toward zero for money out: his rent's four payments average
+ * -231,220.5 cents, and the series page, the All tab and the popover printed "-$2,312.20" — where -$1.005 read off a
+ * statement is -$1.01 (posted-average review, 2026-10-12).
+ */
+describe("roundToCents", () => {
+  test.each([
+    [-231_220.5, -231_221],
+    [231_220.5, 231_221],
+    [-2.5, -3],
+    [2.5, 3],
+    [-100.4999, -100],
+    [100.5001, 101],
+    [-7, -7],
+  ])("rounds %d -> %d, half away from zero", (value, expected) => {
+    expect(roundToCents(value)).toBe(expected);
+  });
+
+  test("never returns negative zero", () => {
+    expect(Object.is(roundToCents(-0.4), 0)).toBe(true);
+    expect(Object.is(roundToCents(-0), 0)).toBe(true);
   });
 });
 

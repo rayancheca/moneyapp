@@ -2658,6 +2658,8 @@ describe("⚖️ decision 67 — a closed period with a day not yet read banks n
     return s.rolloverReadOn;
   }
 
+  /** the graded window the panels below are read in — `carried`'s and `readOn`'s Jul 15 — where a day carries its year */
+  const GRADED = "2026-07-01";
   const JUNE = { start: "2026-06-01", end: "2026-06-30" };
   const MAY = { start: "2026-05-01", end: "2026-05-31" };
   /** the ledger's first row, long before any budget below opens — so only the import's far end is in question */
@@ -2703,8 +2705,35 @@ describe("⚖️ decision 67 — a closed period with a day not yet read banks n
     rollingBudget("Food", "2026-05-01");
 
     expect(carried("Food")).toEqual({ cents: 900_00, availableCents: 1_400_00, heldBack: [] });
-    // …and the panel says it waits for no statement, never "until the accounts … are imported" (review of 46b6e4b)
-    expect(readOn("Food")).toEqual({ whose: "cash-only", ancestor: null });
+    // …and the panel says it waits for no statement, never "until the accounts … are imported" (review of 46b6e4b),
+    // with the facts the row's Grading line is worded from (`budgetCoverageFact`): one wallet, since its window opens
+    expect(readOn("Food")).toEqual({
+      whose: "cash-only",
+      ancestor: null,
+      cash: { spentFromSince: expect.any(String), spentFromWallets: 1 },
+    });
+  });
+
+  /*
+   * 🔴 THE PANEL CONTRADICTED ITSELF (review of 44d0104): a cash-only Food whose rolling budget opens Apr 1, before the
+   * ledger's first row (Apr 15), holds April back — "April 2026 is not fully imported, so nothing rolls over from it
+   * yet." — and then said "…a closed period waits for no statement — none will ever cover it." An older statement could
+   * bring Apr 1–14 in. It names that one case instead. Latent: none of his 57 expense categories reads cash-only
+   * (his ledger copy 2026-10-21), and his rolling budgets carry from Sep 1.
+   */
+  test("cash only, a period before the records begin is held back — and the panel says that is what holds it", () => {
+    const wallet = createCashWallet(bundle.db, { name: "Cash on Hand", openingOn: "2026-04-01", openingBalanceCents: 100_000 });
+    for (const [postedOn, amountCents] of [["2026-04-15", -10_00], ["2026-05-10", -100_00]] as const) {
+      const description = "CASH";
+      addManualTransaction(bundle.db, { accountId: wallet, postedOn, amountCents, description, categoryId: catId("Food") });
+    }
+    rollingBudget("Food", "2026-04-01");
+
+    const april = { start: "2026-04-01", end: "2026-04-30" };
+    expect(carried("Food").heldBack).toEqual([april]);
+    const panel = rolloverWaitsSentence(readOn("Food")!, GRADED);
+    expect(panel).toContain("only a day before your records begin holds one back");
+    expect(panel).not.toContain("none will ever cover it");
   });
 
   test("a category with no account of its own waits on its page's day — its parent's, never the ledger's", () => {
@@ -2739,11 +2768,12 @@ describe("⚖️ decision 67 — a closed period with a day not yet read banks n
 
     // read through today as Food is, so May and June bank whole — no statement is coming to wait for
     expect(carried("Food > Coffee")).toEqual({ cents: 1_000_00, availableCents: 1_500_00, heldBack: [] });
-    expect(readOn("Food > Coffee")).toEqual({ whose: "cash-only", ancestor: "Food" });
-    expect(rolloverWaitsSentence(readOn("Food > Coffee")!)).toBe(
-      "With no account of its own to wait on, this category is read as Food is, spent only from cash wallets, so a " +
-        "closed period waits for no statement — none will ever cover it.",
-    );
+    expect(readOn("Food > Coffee")).toMatchObject({ whose: "cash-only", ancestor: "Food" });
+    const panel = rolloverWaitsSentence(readOn("Food > Coffee")!, GRADED);
+    expect(panel).toMatch(/^With no account of its own to wait on, this category is read as Food is — Food spent only /);
+    // the row's words, its one wallet and since when (`budgetCoverageFact`), never "cash wallets" with no window
+    expect(panel).toMatch(/ — Food spent only from a cash wallet since [A-Z][a-z]{2} \d{1,2} — /);
+    expect(panel).toMatch(/ — so a closed period waits for no statement; only a day before your records begin /);
   });
 
   /*
@@ -2766,7 +2796,7 @@ describe("⚖️ decision 67 — a closed period with a day not yet read banks n
 
     spend("2026-06-30", -1, "Shopping"); // the card reaches Jun 30 — Other still stops May 31, and June banks
     expect(carried("Gifts & Donations")).toEqual({ cents: 1_000_00, availableCents: 1_500_00, heldBack: [] });
-    expect(rolloverWaitsSentence(readOn("Gifts & Donations")!)).not.toContain("missing statement");
+    expect(rolloverWaitsSentence(readOn("Gifts & Donations")!, GRADED)).not.toContain("missing statement");
   });
 
   test("with no closed period walked yet, it names the day the period now running will be asked against", () => {
@@ -2800,7 +2830,8 @@ describe("⚖️ decision 67 — a closed period with a day not yet read banks n
 
     expect(carried("Food")).toEqual({ cents: 450_00, availableCents: 950_00, heldBack: [] });
     expect(readOn("Food")).toEqual({ whose: "category", ancestor: null });
-    expect(rolloverWaitsSentence(readOn("Food")!)).toContain("the accounts this category has lately been spent from");
+    const own = rolloverWaitsSentence(readOn("Food")!, GRADED);
+    expect(own).toContain("the accounts this category has lately been spent from");
     // …while a missing statement on an account Food IS spent from holds June back
     spend("2026-05-20", -10_00, "Food", other);
     expect(carried("Food")).toEqual({ cents: 0, availableCents: 500_00, heldBack: [JUNE] });

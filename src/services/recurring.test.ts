@@ -14,6 +14,7 @@ import { seriesIsProjected } from "@/lib/series-evidence";
 import type { EvidenceSource } from "@/lib/billed-with";
 import { addDays } from "@/lib/dates";
 import { normalizeDescription } from "@/lib/normalize";
+import { postedAverage } from "@/lib/posted-average";
 import { createAccount } from "./accounts";
 import { categorizeAll, detectTransfers } from "./categorize";
 import {
@@ -195,6 +196,27 @@ describe("analyzeGroup", () => {
     ]);
     expect(stats!.anchorDay).toBeNull();
     expect(stats!.nextExpectedOn).toBe("2026-04-08");
+  });
+
+  /*
+   * ⚖️ A forecast of rows averaging half a cent rounds half away from zero (`roundToCents`), as the posted average of
+   * the same rows does — the All tab and the series page print "posted avg" only where the two differ. 🔴 Rounded by
+   * `Math.round` here and away from zero there, the e2e fixture's Con Edison (detected, -10,862.5 cents a bill) read
+   * "-$108.62" over "posted avg -$108.63": one mean of one set of rows, two figures a cent apart (a copy of
+   * data/e2e.db after "Detect now", 2026-10-14).
+   */
+  test("a half-cent mean: the forecast rounds away from zero, as the posted average of its rows does", () => {
+    const rows = [
+      txn("a", "2026-01-08", -1000),
+      txn("b", "2026-02-08", -1000),
+      txn("c", "2026-03-08", -1000),
+      txn("d", "2026-04-08", -1002),
+    ];
+    const stats = analyzeGroup(rows)!;
+    expect(stats.amountCentsAvg).toBe(-1001);
+    expect(stats.nextExpectedAmountCents).toBe(-1001);
+    const posted = postedAverage(rows, { per: "occurrence" }, { amountHistory: null }, TODAY);
+    expect(posted.avgCents).toBe(stats.nextExpectedAmountCents);
   });
 
   test("unstable amounts (stddev/|mean| > 0.2) are rejected", () => {

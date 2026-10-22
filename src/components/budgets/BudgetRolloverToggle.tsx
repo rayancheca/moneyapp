@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { setBudgetRolloverAction } from "@/app/budgets/actions";
 import { Icon } from "@/components/shell/Icon";
 import { toast } from "@/components/ui/Toast";
+import { rolloverToggleTitle, rolloverToggleToast } from "@/lib/rollover-held-back";
 
 interface BudgetRolloverToggleProps {
   budgetId: string;
@@ -46,11 +47,8 @@ export function BudgetRolloverToggle({
         toast({ title: result.error, tone: "negative" });
         return;
       }
-      toast({
-        title: next
-          ? `${categoryPath} now carries unspent budget forward`
-          : `${categoryPath} resets each period`,
-      });
+      // ⚖️ the setting with decision 67's hold, in the words its hover says (`rolloverToggleToast`)
+      toast({ title: rolloverToggleToast(categoryPath, next) });
       router.refresh();
     });
   };
@@ -61,11 +59,7 @@ export function BudgetRolloverToggle({
       onClick={toggle}
       disabled={pending}
       aria-pressed={on}
-      title={
-        on
-          ? "Unspent budget carries into the next period"
-          : "Unspent budget is forgotten at the end of each period"
-      }
+      title={rolloverToggleTitle(on)}
       className={`inline-flex items-center gap-1 whitespace-nowrap rounded-md px-1.5 py-0.5 text-xs transition-colors duration-(--duration-fast) hover:bg-surface-sunken focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:opacity-60 ${
         on ? "text-accent" : "text-ink-faint hover:text-ink"
       }`}

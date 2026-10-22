@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import { z } from "zod";
 import { getDb } from "@/db/client";
 import { monthKey, todayIso } from "@/lib/dates";
-import { isListedSeries, namedSeriesOf, SERIES_LIST_PARAM, seriesListed } from "@/lib/recurring-list";
+import { allTabOf, SERIES_LIST_PARAM } from "@/lib/recurring-list";
 import { arrearsReadingOfSeries, arrearsThisMonth } from "@/services/arrears";
 import { forecastCurrentMonth } from "@/services/forecast";
 import { listSeries, upcomingOccurrences } from "@/services/recurring";
@@ -79,17 +79,18 @@ export default async function RecurringPage({
     ),
   );
 
-  const counts: Record<RecurringTab, number> = {
-    upcoming: upcoming.length,
-    all: series.filter(isListedSeries).length,
-    calendar: calendarMonth.entryCount,
-  };
-  const hasSeries = series.length > 0;
   /*
    * The All tab, narrowed to the series a link named (`?series=`, `seriesListHref`) — the schedules a monthly income
    * rate is summed from. 🔴 That link opened every series the ledger lists, bills among them (review, 2026-10-12).
+   * ⛔ Its badge is counted by the same call, so "2 of 14" counts the 14 the badge beside it prints (`allTabOf`).
    */
-  const listed = seriesListed(series, namedSeriesOf(firstParam(raw[SERIES_LIST_PARAM])));
+  const allTab = allTabOf(series, firstParam(raw[SERIES_LIST_PARAM]));
+  const counts: Record<RecurringTab, number> = {
+    upcoming: upcoming.length,
+    all: allTab.badge,
+    calendar: calendarMonth.entryCount,
+  };
+  const hasSeries = series.length > 0;
 
   return (
     <>
@@ -147,8 +148,8 @@ export default async function RecurringPage({
                 <UpcomingList occurrences={upcoming} />
               ) : (
                 <AllSeriesView
-                  series={listed.rows}
-                  narrowed={listed.narrowed}
+                  series={allTab.rows}
+                  narrowed={allTab.narrowed}
                   overdueBySeries={overdueBySeries}
                   today={today}
                 />
