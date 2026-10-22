@@ -9,9 +9,11 @@ import {
   LAST_CHECKED_DAY,
   NOT_CHECKED,
   noIncomeDayCheckedNote,
+  notLookedForDeposits,
   paidEarlyAside,
   payNotBankedYet,
   sharedFrontier,
+  theOtherFall,
   unbankedIncomeFrontierClause,
   type UnbankedFrontier,
 } from "@/lib/unbanked-income";
@@ -432,8 +434,8 @@ function verdictFor(line: Omit<IncomePayLine, "verdict">): string {
   // are named, as /spending's stale note names them (`paidEarlyAside`; review of 337baa7: "2 paydays have passed
   // since the last deposit on Sep 30" with Oct 1, which Sep 30 paid early, 8 and 15 passed)
   const aside = paidEarlyAside(line.silencePaidEarly, formatDayShort);
-  const notAllLooked =
-    unread === null ? null : `${passed} since the last deposit on ${formatDayShort(lastBankedOn)}${aside}. ${unread}`;
+  const sinceLast = `${passed} since the last deposit on ${formatDayShort(lastBankedOn)}${aside}`;
+  const notAllLooked = unread === null ? null : `${sinceLast}. ${unread}`;
 
   if (line.basis === "series-live") {
     if (silentPeriods === 0) {
@@ -459,8 +461,21 @@ function verdictFor(line: Omit<IncomePayLine, "verdict">): string {
    */
   if (checkedSilentPeriods < STALE_PERIODS && notAllLooked !== null) return notAllLooked;
 
-  const checked = staleChecked(checkedSilentPeriods, line.checkedSilentNotBankedYet, checkedThrough);
-  return `${since}. ${checked}. Whether it was earned is a different question, and this card cannot answer it.`;
+  /*
+   * ⛔ At or over the bar, every payday of the silence is named, and "with no deposit" only of a silence the ledger
+   * checked to its end: past the checked day it is a claim about days nobody has read (27ca437's V2), so the lead is
+   * the one below the bar's — "since the last deposit on …", with the paydays its count leaves out (`paidEarlyAside`)
+   * — and the paydays after the checked day close the breakdown, not looked for. 🔴 Review of 0c9bc8d (MEDIUM, there
+   * before 337baa7): on his ledger copy 2026-10-21 with a Salary-filed −$1,141.92 on Fri Sep 25, Wells Fargo read
+   * through Fri Oct 16 and today Oct 23, it read "4 paydays have passed since Sep 24 with no deposit. 2 of them, and
+   * their days to land, fall on days the records already cover, through Oct 16 — so the pay did not reach a bank;
+   * Oct 15's days to land run past Oct 16, … — so its pay is not banked yet." — Oct 22 never named, beside the label's
+   * "the other $1,141.92 is for paydays after that day — so the ledger has not looked for it".
+   */
+  const unlooked = silentPeriods - checkedSilentPeriods;
+  const lead = unlooked > 0 ? sinceLast : `${since}${aside}`;
+  const checked = staleChecked(checkedSilentPeriods, line.checkedSilentNotBankedYet, checkedThrough, unlooked);
+  return `${lead}. ${checked}. Whether it was earned is a different question, and this card cannot answer it.`;
 }
 
 /**
@@ -475,17 +490,32 @@ function verdictFor(line: Omit<IncomePayLine, "verdict">): string {
  * On his ledger copy 2026-10-21 with Wells Fargo checked through Fri Oct 16 and no October deposit, it would have said
  * "3 of them … did not reach a bank" of Oct 1, 8 and 15, beside "$1,141.92 is for paydays whose days to land run past
  * Oct 16 … — so it is not banked yet".
+ *
+ * ⛔ …and the silence's paydays after the checked day (`unlooked`) last, in the forecast's words — "the other one falls
+ * after Oct 16 — so the ledger has not looked for its deposit" (`theOtherFall`, `notLookedForDeposits`), the checked day
+ * named in full once — so the breakdown adds up to the count before it (review of 0c9bc8d).
  */
-function staleChecked(checked: number, notBankedYet: readonly string[], checkedThrough: string): string {
+function staleChecked(
+  checked: number,
+  notBankedYet: readonly string[],
+  checkedThrough: string,
+  unlooked: number,
+): string {
   const covered = `on days the records already cover, through ${formatDayShort(checkedThrough)}`;
   const didNot = "so the pay did not reach a bank";
-  if (notBankedYet.length === 0) return `${checked} of them fall ${covered} — ${didNot}`;
+  const after = (dayNamed: boolean): string =>
+    unlooked <= 0
+      ? ""
+      : `; ${theOtherFall(unlooked)} after ${formatDayShort(checkedThrough)}` +
+        `${dayNamed ? "" : `, ${LAST_CHECKED_DAY}`} — so ${notLookedForDeposits(unlooked)}`;
+  if (notBankedYet.length === 0) return `${checked} of them fall ${covered} — ${didNot}${after(false)}`;
 
+  // `why` names the checked day in full
   const why = payNotBankedYet(notBankedYet, checkedThrough, formatDayShort, formatDayShort);
   const past = checked - notBankedYet.length;
-  if (past === 0) return `${checked} of them fall ${covered}, but ${why}`;
+  if (past === 0) return `${checked} of them fall ${covered}, but ${why}${after(true)}`;
   const them = past === 1 ? "1 of them, and its days to land, falls" : `${past} of them, and their days to land, fall`;
-  return `${them} ${covered} — ${didNot}; ${why}`;
+  return `${them} ${covered} — ${didNot}; ${why}${after(true)}`;
 }
 
 /** The first day the card measures from: the spend baseline's months back from this month's 1st. */

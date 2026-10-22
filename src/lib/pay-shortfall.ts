@@ -374,7 +374,7 @@ export function payShortfall(s: SettlementWalked, w: PayShortfallWindow, e: Wind
   const paidReadCents = centsOf(s.portions.filter((p) => inWindow(p.depositOn) && readDays.has(p.paydayOn)));
   // ⛔ the one rule for money out on a day of its own — Earned vs banked's figure — then less another window's money
   const back = moneyOutOfWindow(s, w, e.bankedCents);
-  const ownCents = back.bankedCents - centsOf(crossed);
+  const ownCents = windowOwnCents(back.bankedCents, paidAcross);
 
   // ⛔ the one subtraction (`payGap`): the dashboard's, over this window's own money — what is not read is not short,
   // and the window's own money is never below what paid its read paydays, so a window with none read is short nothing
@@ -421,6 +421,19 @@ export function payShortfall(s: SettlementWalked, w: PayShortfallWindow, e: Wind
 }
 
 const centsOf = (parts: readonly { cents: number }[]): number => parts.reduce((sum, p) => sum + p.cents, 0);
+
+/**
+ * The window's OWN money: what it banked by the one rule (`moneyOutOfWindow`, `PayShortfall.bankedCents`) less what
+ * paid another window's read payday (`paidAcross`) — that money is the other window's, named there paying its payday.
+ * What the shortfall's subtraction reads (`payGap`), and what /spending's note for a stale schedule says "reached an
+ * account" of the window's earnings. ⛔ One figure for both. 🔴 Review of 0c9bc8d (MEDIUM): the stale note read the
+ * banked figure whole — on his ledger copy 2026-10-21 with Wed Sep 30's payroll paying Thu Oct 1, Wells Fargo read
+ * through Fri Oct 23 and today Oct 30, Q3 said "only $6,851.52 reached an account" of $14,085.60, Sep 30's $1,141.92
+ * among it, while Q4 named that deposit paying Oct 1 early and the live Q3 note said $8,376.00 never reached a bank.
+ */
+export function windowOwnCents(bankedCents: number, paidAcross: readonly { cents: number }[]): number {
+  return bankedCents - centsOf(paidAcross);
+}
 
 /**
  * ⚖️ MONEY OUT ON A DAY OF ITS OWN (his decision 75: "a day of its own that banked nothing, and the deposit's day

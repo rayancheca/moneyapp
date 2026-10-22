@@ -159,6 +159,14 @@ function everyOneFalls(paydays: number): string {
 }
 
 /**
+ * "the other one falls", "the other 3 fall" — the passed paydays after the ones a sentence has just named on checked
+ * days: the clause below and Earned vs banked's stale verdict, one spelling (review of 0c9bc8d).
+ */
+export function theOtherFall(paydays: number): string {
+  return paydays === 1 ? "the other one falls" : `the other ${paydays} fall`;
+}
+
+/**
  * The sentence naming the passed paydays nobody has looked for yet — or null
  * when every one of them fell on a day the ledger has checked, so the surface's
  * own "with no deposit" sentence is already true.
@@ -203,7 +211,7 @@ export function unbankedIncomeFrontierClause(
       ? `after ${formatDay(r.frontier.through)}, ${LAST_CHECKED_DAY}`
       : `after the last day the accounts ${unread === 1 ? "its" : "their"} pay lands in have been checked through, which differs by schedule`;
   if (checkedPart === null) return `${everyOneFalls(unread)} ${after} — so ${notLookedForDeposits(unread)}.`;
-  return `${checkedPart}; ${other} ${unread === 1 ? "falls" : "fall"} ${after}.`;
+  return `${checkedPart}; ${theOtherFall(unread)} ${after}.`;
 }
 
 /**

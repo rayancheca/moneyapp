@@ -1127,6 +1127,61 @@ describe("cashEarningsSectionNotes", () => {
         );
       });
     });
+
+    /*
+     * ⛔ …and the money inside the window that paid ANOTHER window's read payday (`paidAcross`) is that window's: it is
+     * not what "reached an account" of this one's earnings, and it is named after the claim, in the shortfall note's
+     * words — "another $X banked inside the window, from the deposit of …, paid Oct 1's payday early". 🔴 Review of
+     * 0c9bc8d (MEDIUM): on his ledger copy 2026-10-21 with Wed Sep 30's payroll paying Thu Oct 1, Wells Fargo read
+     * through Oct 23 and today Oct 30, Q3 read "implies $14,085.60 of earnings over Jul 2 – Sep 24, 2026 and only
+     * $6,851.52 reached an account" — Sep 30's $1,141.92 among it — while Q4 on the same page named that deposit paying
+     * Oct 1 early: one deposit on both sides, and a $7,234.08 shortfall to read where the card says $8,376.00.
+     */
+    describe("…and what its deposits paid of another window's paydays", () => {
+      const AHEAD = { depositOn: "2026-07-29", paydays: ["2026-08-06"], cents: 104_600, early: true };
+      const ANOTHER = "another $1,046.00 banked inside the window, from the deposit of 2026-07-29, paid Aug 6's payday early";
+
+      test("read in full: what reached an account is the window's own, and the rest is named", () => {
+        expect(lead({ bankedCents: 209_200, shortfall: { ...OUT, paidAcross: [AHEAD], wentBackOut: [] } })).toBe(
+          "Cash job (weekly pay) implies $5,230.00 of earnings over Jul 2 – 30, 2026 and only $1,046.00 reached an " +
+            `account inside the window; ${ANOTHER}.`,
+        );
+      });
+
+      test("all of it paid another window's payday: none of it reached an account", () => {
+        expect(lead({ bankedCents: 104_600, shortfall: { ...OUT, paidAcross: [AHEAD], wentBackOut: [] } })).toBe(
+          "Cash job (weekly pay) implies $5,230.00 of earnings over Jul 2 – 30, 2026 and none of it reached an " +
+            `account inside the window; ${ANOTHER}.`,
+        );
+      });
+
+      // ⛔ the shortfall note's order: who paid its paydays from outside, then its money that paid another's, then out
+      test("read in part: after the paydays past the checked day, between money from outside and money out", () => {
+        const paidIn = { depositOn: "2026-07-01", paydays: ["2026-07-02"], cents: 104_600, early: true };
+        expect(
+          lead({
+            ...checked,
+            bankedCents: 313_800,
+            checkedPeriodsCovered: 3,
+            shortfall: { ...OUT, paidOutside: [paidIn], paidAcross: [AHEAD] },
+          }),
+        ).toContain(
+          "only $2,092.00 reached an account inside the window through 2026-08-12; the other 2 paydays fall after " +
+            "that, the last day every account that pay lands in has been checked through; $1,046.00 (Jul 2) was paid " +
+            `early, by the deposit of 2026-07-01; ${ANOTHER}; ${BACK}.`,
+        );
+      });
+
+      test("several deposits: each with the payday it paid, late or early", () => {
+        const late = { depositOn: "2026-07-03", paydays: ["2026-06-25"], cents: 104_600, early: false };
+        expect(lead({ bankedCents: 313_800, shortfall: { ...OUT, paidAcross: [late, AHEAD], wentBackOut: [] } })).toBe(
+          "Cash job (weekly pay) implies $5,230.00 of earnings over Jul 2 – 30, 2026 and only $1,046.00 reached an " +
+            "account inside the window; another $2,092.00 banked inside the window paid paydays outside it: " +
+            "$1,046.00, from the deposit of 2026-07-03, paid Jun 25's payday and $1,046.00, from the deposit of " +
+            "2026-07-29, paid Aug 6's payday early.",
+        );
+      });
+    });
   });
 
   /*
