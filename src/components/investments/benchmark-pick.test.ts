@@ -9,7 +9,8 @@ import { PORTFOLIO_VIEW_SPEC } from "./investments-view-spec";
 const refusals = vi.hoisted((): Record<string, string> => ({}));
 vi.mock("next/navigation", async () => (await import("@/hooks/useViewState.harness")).nextNavigation);
 vi.mock("@/app/settings/actions", async () => (await import("@/hooks/useViewState.harness")).settingsActions);
-// the pick's own action, queued in the router like every server action — behind a save of Back's view
+// the pick's own action, queued in the router like every server action — behind a save of Back's view — and, as
+// setBenchmarkAction does once it keeps a symbol, revalidating /investments (a refusal returns before it)
 vi.mock("@/app/investments/actions", async () => {
   const { heldServerAction } = await import("@/hooks/useViewState.harness");
   return {
@@ -18,6 +19,7 @@ vi.mock("@/app/investments/actions", async () => {
         "benchmark",
         { symbol },
         refusals[symbol] === undefined ? { ok: true, data: { symbol } } : { ok: false, error: refusals[symbol] },
+        refusals[symbol] === undefined,
       ),
   };
 });
@@ -225,7 +227,10 @@ describe("a benchmark pick — persisted by its own action, then drawn", () => {
   /**
    * ⚖️ Owner 2026-10-05: Back/Forward shows the page he went to; he is not dragged anywhere. 🔴 A pick answered after
    * Forward asked for a URL anew and went there: the isNewest guard of a URL writer cannot stop an ask made after the
-   * move (review of 10852ef, 2026-10-14).
+   * move (review of 10852ef, 2026-10-14). Queued behind Back's save, the pick's action runs AFTER Forward and is kept:
+   * Next's reducer redraws the page from its response, but into the state the action was dispatched with, and the
+   * restore's own state came after it — so React shows the page as Forward drew it (measured with the harness modelling
+   * revalidation, 2026-10-22; the in-flight case, which Next refreshes, is the test below).
    */
   test("Forward after a pick let go: once it is kept nothing is drawn — he stays on the page he went to", async () => {
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
@@ -246,6 +251,36 @@ describe("a benchmark pick — persisted by its own action, then drawn", () => {
     expect(page.navigations.slice(at)).toEqual([]);
     expect(page.url).toBe("/investments?range=1Y&view=returns");
     expect(page.persisted.benchmark).toMatchObject({ symbol: "QQQ" });
+    expect(drawn().rsc).toMatchObject({ bench: "SPY", view: { view: "returns" } });
+  });
+
+  /**
+   * Back while the pick's action is IN FLIGHT discards it, and an action that revalidates and is discarded has Next
+   * refresh the page once it completes (app-router-instance.js `needsRefresh`): the page Back showed is drawn again in
+   * place, with the symbol kept — never a navigation, so he is not dragged. 🔴 Review of b37a250: the harness modelled
+   * no revalidation, so it read this page as never drawn again.
+   */
+  test("Back while its action is in flight: once it is kept, the page Back showed is drawn again in place, with it", async () => {
+    const page = await open("/investments?range=1Y");
+    drawn().api.setParam("range", "1M");
+    await page.settle();
+    drawn().picker.pick("QQQ");
+    await idle();
+    expect(page.pending).toEqual([{ kind: "write", label: 'benchmark {"symbol":"QQQ"}' }]);
+    page.back(); // to 1Y, the pick's action still in flight
+    await idle();
+    const at = page.navigations.length;
+
+    const served: string[] = [];
+    while (page.pending.length > 0) {
+      const work = await page.serve();
+      served.push(`${work.kind} ${work.kind === "render" ? work.label : ""}`.trim());
+    }
+    expect(served.filter((s) => s.startsWith("render"))).toEqual(["render /investments?range=1Y"]);
+    expect(page.navigations.slice(at)).toEqual([]);
+    expect(page.url).toBe("/investments?range=1Y");
+    expect(page.persisted.benchmark).toMatchObject({ symbol: "QQQ" });
+    expect(drawn().rsc.bench).toBe("QQQ");
   });
 
   test("the control: a range pressed while its action fetches is no move — the pick is drawn on it", async () => {
@@ -262,9 +297,11 @@ describe("a benchmark pick — persisted by its own action, then drawn", () => {
   /**
    * With nothing in flight it waits on its action inside its transition, so a link followed meanwhile commits once it
    * is answered: 🔴 the pick then went to /investments?range=1Y&bench=QQQ — the page he had left (before 0acc9b5 too).
-   * The link's page was drawn before the symbol was kept, so it is drawn again where he is.
+   * The link's page was drawn before the symbol was kept, so it is drawn again where he is — by Next: the link
+   * discarded an action that revalidates, and Next refreshes the page once it completes. 🔴 Review of b37a250: the pick
+   * asked for a `router.refresh()` of its own on top, one more server render of the page he is on.
    */
-  test("with nothing in flight, a link followed while its action fetches: he stays there, drawn with it", async () => {
+  test("with nothing in flight, a link followed while its action fetches: he stays there, drawn with it once", async () => {
     const page = await open("/investments?range=1Y");
     drawn().picker.pick("QQQ");
     await idle();
@@ -273,7 +310,10 @@ describe("a benchmark pick — persisted by its own action, then drawn", () => {
     await page.serve("render"); // drawn before the symbol is kept
     const at = page.navigations.length;
 
-    await page.settle(); // its action keeps QQQ
+    await page.serve("write"); // its action keeps QQQ
+    const renders: string[] = [];
+    while (page.pending.length > 0) renders.push((await page.serve("render")).label);
+    expect(renders).toEqual(["/investments"]);
     expect(page.navigations.slice(at)).toEqual([]);
     expect(page.url).toBe("/investments");
     expect(page.persisted.benchmark).toMatchObject({ symbol: "QQQ" });

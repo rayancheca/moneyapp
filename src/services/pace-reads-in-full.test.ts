@@ -318,6 +318,28 @@ describe("…and never from before the ledger's first whole month (`baselineWind
   });
 
   /*
+   * ⚖️ Default, not asked (2026-10-22): the upward nudge was backtested over three months (`trailingPace`), and the
+   * floor made two reachable. 🔴 Review of 06a5d3e: over two months `(newest − oldest) / 2` is half the month's change,
+   * under a median cap it never reaches, so a rise made the pace its newest month — Jun $200.00, Jul $600.00 read
+   * "2-mo avg $400.00 + trend $200.00", $600.00 a month, and the category forecast the same.
+   */
+  test("a two-month pace that rose is its average: the nudge needs the backtest's three months, and says so", () => {
+    groceries(checkingId, "2026-06-01", -20000);
+    groceries(checkingId, "2026-07-01", -60000);
+    groceries(checkingId, "2026-08-01", -40000);
+    const f = forecastCurrentMonth(bundle.db, YOUNG_TODAY);
+    expect(food(f)?.detail).toBe(
+      "2-mo avg $400.00 + trend $0.00 (the $200.00 slope is not counted: a rise needs 3 months), × 5/31 days",
+    );
+    expect(food(f)?.cents).toBe(-Math.round((40000 * 5) / 31));
+    const p = predictCategory(bundle.db, categoryIdOf("Food"), "Food", YOUNG_TODAY);
+    expect(p.forecast.parts.find((x) => x.key === "discretionary")).toMatchObject({
+      cents: 40000,
+      basis: "avg of last 2 periods",
+    });
+  });
+
+  /*
    * 🔴 Review of 06a5d3e: decision 71 exempts the income pace from the FRONTIER (it is the day every account he spends
    * from is read to), never from the FLOOR. `variableIncomeComponents` still averaged the calendar's three months with
    * none, and on this ledger at 2026-08-27 the card's math read "Salary | avg of last 3 periods, present 2/3 mo, × 5/31
@@ -449,7 +471,7 @@ describe("…and never from before the ledger's first whole month (`baselineWind
       "No month has been read in full yet, so there is no spending average to stand on. Jul 2026 is left out: Jul 12 " +
       "is the last day every account you spend from has been imported through.";
     const income =
-      `${NO_INCOME_PACE} Jul 12 cuts spending's months, not Money in's, and Jul 2026 is the only complete month ` +
+      `${NO_INCOME_PACE} Jul 2026 is left out of spending's pace, not Money in's, and is the only complete month ` +
       "Money in has so far.";
 
     for (const f of [forecastCurrentMonth(bundle.db, YOUNG_TODAY), forecastForMonth(bundle.db, "2026-09", YOUNG_TODAY)!]) {
@@ -487,6 +509,23 @@ describe("…and never from before the ledger's first whole month (`baselineWind
       );
       // the row's figures would be the headline's, so none prints — but its sentence does
       expect(band("If you also spend", "Show the math")).toBe(`If you also spend at your recent pace ${why}`);
+    }
+  });
+
+  /**
+   * A brand-new ledger: no month to average either side over. 🔴 Review of 06a5d3e: the row, once missing there (both
+   * its figures $0.00), now says why it has none — as 06a5d3e meant — and nothing pinned it on the card: its test read
+   * `spendPaceNote` alone. It is the sentence pair a ledger opening Aug 5 prints, word for word.
+   */
+  test("a brand-new empty ledger's pace row says there is no average yet, on both sides, and prints no figure", () => {
+    for (const f of [forecastCurrentMonth(bundle.db, YOUNG_TODAY), forecastForMonth(bundle.db, "2026-09", YOUNG_TODAY)!]) {
+      expect([f.spendPaceMonths, f.incomePaceMonths]).toEqual([0, 0]);
+      const card = cardText(f);
+      const row = card.slice(card.indexOf("If you also spend"));
+      const why =
+        `No complete month has been imported yet, so there is no spending average to stand on. ${NO_INCOME_PACE}`;
+      expect(row.startsWith(`If you also spend at your recent pace ${why}`)).toBe(true);
+      expect(row).not.toContain("EOM cash");
     }
   });
 

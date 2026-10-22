@@ -528,11 +528,6 @@ describe("unreadMonthsSentence — why an average stops before the last complete
 });
 
 /**
- * The car card sets its share against "what the last six months measured" — its baseline, `baselineWindow`'s. 🔴 Once
- * the frontier slid that window back (decision 71), they were not the last six: on his ledger copy 2026-10-13, Feb 2026
- * to Jul 2026.
- */
-/**
  * ⚖️ His decision 71 (2026-10-13) holds for the budget editor's "6-mo avg ≈" as for the dashboard: it averages the
  * dashboard's window (`budget-guide.ts`). 🔴 Review of cf8f8dc, measured on his ledger copy that day: Food's guide read
  * $1,517.03 over Apr–Sep — less than the dashboard's Eating out alone ($1,963.24 a month over Feb–Jul), which is part
@@ -571,6 +566,11 @@ describe("guideWindowWords — what the budget editor's guide says of its window
   });
 });
 
+/**
+ * The car card sets its share against "what the last six months measured" — its baseline, `baselineWindow`'s. 🔴 Once
+ * the frontier slid that window back (decision 71), they were not the last six: on his ledger copy 2026-10-13, Feb 2026
+ * to Jul 2026.
+ */
 describe("measuredMonthsClause — the months the car card's share is set against", () => {
   test("an uncut window is the last six months, as it always read", () => {
     expect(measuredMonthsClause({ months: 6, fromMonth: "2026-04", toMonth: "2026-09", unread: null })).toBe(
@@ -587,6 +587,22 @@ describe("measuredMonthsClause — the months the car card's share is set agains
     expect(measuredMonthsClause({ months: 0, fromMonth: "2026-10", toMonth: "2026-10", unread })).toBe(
       "not anything measured: no month has been read in full yet. Aug 2026 and Sep 2026 are left out: Aug 12 is the " +
         "last day every account you spend from has been imported through.",
+    );
+  });
+
+  /**
+   * 🔴 Review of cbee36b: "the last six months" held wherever the frontier cut nothing — and on a young ledger the
+   * floor shortens the window with no frontier at all (`baselineWindow`): three months read as six, and none as six.
+   */
+  test("a window the floor shortened names its months; one it emptied says no month was imported", () => {
+    expect(measuredMonthsClause({ months: 3, fromMonth: "2026-05", toMonth: "2026-07", unread: null })).toBe(
+      "not what the 3 complete months, May 2026 to Jul 2026, measured.",
+    );
+    expect(measuredMonthsClause({ months: 1, fromMonth: "2026-07", toMonth: "2026-07", unread: null })).toBe(
+      "not what the 1 complete month, Jul 2026, measured.",
+    );
+    expect(measuredMonthsClause({ months: 0, fromMonth: "2026-08", toMonth: "2026-08", unread: null })).toBe(
+      "not anything measured: no complete month has been imported yet.",
     );
   });
 });

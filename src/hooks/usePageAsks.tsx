@@ -34,6 +34,7 @@ export function PageAsksProvider({ children }: { children: ReactNode }) {
         asks.moved();
         return;
       }
+      const mark = asks.moveMark();
       asks.departing(url, kind);
       // ⚖️ B2: a link carries no view and goes at once, never held as a URL writer is (`navigateAfterBackSaves`),
       // so followed while a save of Back's view is being written its page can draw the saved view he walked away
@@ -41,6 +42,11 @@ export function PageAsksProvider({ children }: { children: ReactNode }) {
       // save landed nothing drew the Value (review of ab13868, measured 2026-10-13). Drawn again once they land, as
       // a writer gone at BACK_SAVE_WAIT_MS goes again then — the page on screen, re-rendered where he is, and only
       // while nothing has moved since (a writer gone at its bound goes again itself, and that is a move).
+      // ⛔ A LINK'S ALONE — a navigation that moved the page under its asks (`movedSince`). A press or URL writer going
+      // to its asked URL at BACK_SAVE_WAIT_MS goes again itself once what it waits on lands. 🔴 Review of b37a250: a
+      // press waits on its own write, which Next queues behind Back's save, so this fired first and the page was
+      // rendered twice — the refresh, then the press going again.
+      if (asks.movedSince(mark) === null) return;
       const landing = asks.backSavesLanding();
       if (landing === null) return;
       const at = starts;

@@ -1,7 +1,6 @@
 "use client";
 
 import { useCallback, useState, useTransition } from "react";
-import { useRouter } from "next/navigation";
 import { BENCHMARK_PRESETS, NO_BENCHMARK, isBenchmarkOff, normalizeBenchmarkSymbol } from "@/lib/benchmark-symbol";
 import { pressWriteLanding } from "@/lib/page-asks";
 import { setBenchmarkAction } from "@/app/investments/actions";
@@ -61,12 +60,14 @@ type Kept = ActionResult<{ symbol: string }>;
  * ⚖️ Owner 2026-10-05: answered after he left by a link or by Back, it builds no URL on the page he left
  * (`movedSince`). 🔴 It asked for a URL anew whenever it answered — always the newest, past every guard — and went
  * there: QQQ, the sidebar's /budgets, and once Back's save landed he was back on /investments?range=1Y&bench=QQQ
- * (review of 10852ef; the pick before 0acc9b5 did it too). After a link the page he is on is drawn again, where he is —
- * drawn before the symbol was kept, it read the one before (PageAsksProvider redraws a link's page for Back's saves
- * the same way); after Back, nothing: Back shows the page he went back to.
+ * (review of 10852ef; the pick before 0acc9b5 did it too). After a move the pick draws nothing at all: the action
+ * revalidates /investments, so a move that DISCARDED it (one made while it was in flight) has Next refresh the page once
+ * it completes (`heldServerAction` models it), and a link followed while Back's save hung is drawn again by
+ * PageAsksProvider once that lands, behind the action in Next's queue. 🔴 After a link the pick asked for a
+ * `router.refresh()` of its own, a second server render of that page on top of Next's; and the harness, modelling no
+ * revalidation, read a page Back showed while the action was in flight as never drawn again (review of b37a250).
  */
 export function useBenchmarkPick(onPicked: (symbol: string) => void): BenchmarkPick {
-  const router = useRouter();
   const asks = usePageAsks();
   const [isPending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
@@ -87,16 +88,15 @@ export function useBenchmarkPick(onPicked: (symbol: string) => void): BenchmarkP
             return;
           }
           onKept?.();
-          const moved = asks?.movedSince(mark) ?? null;
-          if (moved === null) onPicked(result.data.symbol);
-          else if (moved === "link") router.refresh();
+          // after a move Next draws the page he is on again itself: the action revalidates /investments
+          if ((asks?.movedSince(mark) ?? null) === null) onPicked(result.data.symbol);
         };
         await (asks === null ? kept : pressWriteLanding(asks, kept, () => void kept.then(answered)));
         // cut short: nothing is drawn before the action has kept the symbol — `again` goes once it answers
         if (answer.result !== undefined) answered(answer.result);
       });
     },
-    [asks, onPicked, router],
+    [asks, onPicked],
   );
 
   return { pick, isPending, error, setError };

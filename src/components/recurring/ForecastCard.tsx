@@ -231,7 +231,9 @@ function Stat({ label, cents, flow = false }: { label: string; cents: number; fl
 
 /**
  * No month since the ledger's first whole one is read in full (`MonthForecast.spendPaceMonths`), so there is no
- * spending pace — the ONE predicate the pace row and the composition band above it both hold their pace back by.
+ * spending pace — the ONE predicate the composition band above holds Money out's pace back by, and the pace row holds
+ * its figures back by. ⚠️ Not the row's only reason: it holds them back too where both paces come to $0.00, its figures
+ * then the headline's over again (`PaceRow`) — a measured $0.00 the band still prints.
  */
 function spendPaceWithheld(f: MonthForecast): boolean {
   return f.spendPaceMonths === 0;

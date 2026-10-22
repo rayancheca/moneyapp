@@ -35,8 +35,10 @@ function toAmountField(cents: number): string {
 
 /**
  * Inline budget-amount edit (ux-overhaul §8): a popover on the amount that
- * shows a 6-month spend guide and writes through updateBudgetAmountAction — no
- * more deactivate-and-recreate. The guide is one tap to adopt.
+ * shows a spend guide over the dashboard's window — six months read in full,
+ * fewer on a young ledger (`budgetGuides`, decision 71) — and writes through
+ * updateBudgetAmountAction — no more deactivate-and-recreate. The guide is one
+ * tap to adopt.
  */
 export function BudgetAmountEditor({ budgetId, amountCents, guide, period, categoryPath }: BudgetAmountEditorProps) {
   const router = useRouter();
@@ -107,16 +109,19 @@ export function BudgetAmountEditor({ budgetId, amountCents, guide, period, categ
               <span>
                 {guide.lead} ≈ <span className="text-ink-muted">{formatCents(guide.cents)}</span>
               </span>
-              <button
-                type="button"
-                onClick={() => {
-                  setAmount(toAmountField(guide.cents));
-                  inputRef.current?.focus();
-                }}
-                className="rounded-md border border-line px-2 py-0.5 text-ink-muted transition-colors duration-(--duration-fast) hover:border-line-strong hover:text-ink"
-              >
-                Use
-              </button>
+              {/* $0.00 prints only over a cut window, to carry its reason: a budget of nothing is none to adopt */}
+              {guide.cents > 0 && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setAmount(toAmountField(guide.cents));
+                    inputRef.current?.focus();
+                  }}
+                  className="rounded-md border border-line px-2 py-0.5 text-ink-muted transition-colors duration-(--duration-fast) hover:border-line-strong hover:text-ink"
+                >
+                  Use
+                </button>
+              )}
             </div>
           )}
           {/* ⚖️ a guide the frontier slid back names its months and says why (decision 71) — the dashboard's sentence */}

@@ -27,8 +27,9 @@ import { MIN_OCCURRENCES } from "./recurring";
  *
  * ## ⛔ Why this is NOT `categoryTrends`
  *
- * `categoryTrends` (analytics.ts) is the closest thing already in the tree and
- * it answers a subtly different question: raw month-over-month movement,
+ * `categoryTrends` (analytics.ts, removed 2026-10-22: nothing on screen called
+ * it, and its 3-month mean read partly read months) was the closest thing then
+ * in the tree, and it answered a subtly different question: raw month-over-month movement,
  * **including the running month**, against a trailing 3-month mean. That is the
  * right shape for a table on /spending, where the reader is looking at a grid of
  * months and can see for themselves that the last bar is half-built. It is the
@@ -68,9 +69,10 @@ import { MIN_OCCURRENCES } from "./recurring";
  * comparison rather than to an average — and the window LENGTH is imported from
  * it rather than re-picked.
  *
- * ⚠️ Not the same six months, though, and it cannot be: the runway averages the
- * six complete months before TODAY (Feb–Jul here, $8,093 a month) while this
- * averages the six before the COMPARED month (Jan–Jun, $7,188), because a month
+ * ⚠️ Not the same six months, though, and it cannot be: the runway averages six
+ * months ENDING at the compared one — since decision 71 the last month every
+ * account you spend from is read through to its end, below (Feb–Jul here, $8,093
+ * a month) — while this averages the six BEFORE it (Jan–Jun, $7,188), because a month
  * cannot sit inside the baseline it is being measured against — it would damp
  * its own delta by a sixth. Two figures a reader could hear as one word, so
  * neither card says "usual" without saying which months it means, in the

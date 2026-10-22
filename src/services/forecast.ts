@@ -6,7 +6,7 @@ import { arrearsTail, HAS_NOT_POSTED } from "@/lib/arrears-reading";
 import { addCalendarMonths, addDays, compareDates, diffDays, monthKey, periodBounds, todayIso } from "@/lib/dates";
 import { forecastSplit } from "@/lib/forecast-split";
 import { incomePaceNote, projectOngoingIncome, projectOngoingNetIncome } from "@/lib/income-forecast";
-import { trailingPace } from "@/lib/projection";
+import { trailingPace, TREND_BACKTEST_MONTHS } from "@/lib/projection";
 import { formatDayShortIn } from "@/lib/format-date";
 import { spendPaceNote, type UnreadMonths } from "@/lib/committed";
 import { formatCents } from "@/lib/money";
@@ -998,9 +998,14 @@ function variableComponents(
      * leading number is the one the clause is about, and the sentence now says
      * so instead of leaving the reader to guess which figure it meant.
      */
+    const raw = formatCents(Math.round(pace.rawTrendCents));
+    // ⚖️ default, not asked (2026-10-22): a rise needs the backtest's three months (`TREND_BACKTEST_MONTHS`), and a
+    // $0.00 beside a rise the reader can see would be a figure they cannot reproduce — so it says why
     const trendNote = pace.trendWasCapped
-      ? `${formatCents(Math.round(pace.trendCents))} (one typical month, which the ${formatCents(Math.round(pace.rawTrendCents))} slope was capped to)`
-      : formatCents(Math.round(pace.trendCents));
+      ? `${formatCents(Math.round(pace.trendCents))} (one typical month, which the ${raw} slope was capped to)`
+      : pace.riseTooThin
+        ? `${formatCents(0)} (the ${raw} slope is not counted: a rise needs ${TREND_BACKTEST_MONTHS} months)`
+        : formatCents(Math.round(pace.trendCents));
     components.push({
       label,
       kind: "variable",
@@ -1061,12 +1066,12 @@ const EVENT_DRIVEN_INCOME = new Set([
 
 function variableIncomeComponents(
   db: AppDatabase,
-  today: string,
   remainingDays: number,
   daysInMonth: number,
   { notDrawn, outside, agentsCash, incomePace }: ForecastReads,
 ): ForecastLeg {
-  // the calendar's months, floored (`incomePaceMonths`): May before a ledger opening Jun 1 is no month of $0 pay
+  // the calendar's months, floored (`incomePaceMonths`): May before a ledger opening Jun 1 is no month of $0 pay — read
+  // once for the chain (`forecastReads`), so its window is the chain's today, as spending's is (`variableComponents`)
   const windows = incomePace;
   if (windows.length === 0) {
     return { components: [], cashCents: 0, outsideAccountIds: new Set(), agentsCents: 0, agentsCostCents: 0 };
@@ -1203,7 +1208,7 @@ function futureMonthParts(db: AppDatabase, today: string, key: string, reads: Fo
       [fixedComponents(db, today, monthStart, monthEnd, reads)],
       [
         // the whole month remains, so the trailing pace applies in full
-        variableIncomeComponents(db, today, daysInMonth, daysInMonth, reads),
+        variableIncomeComponents(db, daysInMonth, daysInMonth, reads),
         variableComponents(db, daysInMonth, daysInMonth, reads),
       ],
     ),
@@ -1447,7 +1452,7 @@ function currentMonthParts(db: AppDatabase, today: string, reads: ForecastReads)
         fixedComponents(db, today, today, monthEnd, reads),
       ],
       [
-        variableIncomeComponents(db, today, remainingDays, daysInMonth, reads),
+        variableIncomeComponents(db, remainingDays, daysInMonth, reads),
         variableComponents(db, remainingDays, daysInMonth, reads),
       ],
     ),
