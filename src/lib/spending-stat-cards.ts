@@ -2,6 +2,7 @@ import { nothingFoundSoFar } from "@/lib/budget-coverage";
 import { formatCents } from "@/lib/money";
 import { ledgerHref } from "@/lib/ledger-href";
 import type { DateRange } from "@/services/analytics";
+import type { PartlyRead } from "@/services/provenance";
 import type { PeriodTotals } from "@/services/spending";
 
 /**
@@ -33,13 +34,37 @@ export interface SpendingStatCardSpec {
   ariaLabel: string;
   /** span both columns on the 2-col mobile grid so the card isn't a lonely orphan */
   mobileFull?: boolean;
+  /**
+   * ⚖️ Decision 72: the figure is a total over days not every account he spends from is read for — the card wears the
+   * "partly read" chip (`VERDICT_PRESENTATION.partly_read`). Absent on a window read in full, and on a dash.
+   */
+  partlyRead?: boolean;
+}
+
+/** What the page knows of the window beyond its totals — each null where its figures are a measurement. */
+export interface SpendingStatCardFacts {
+  /**
+   * ⚖️ §6A 68: the dashboard's words under its Income dash, for this window (`noIncomeDayCheckedNote`) — where no
+   * income was found and not one of its days is checked where the pay lands (`CashFlow.incomeUnread`)
+   */
+  incomeUnread?: string | null;
+  /** ⚖️ Decision 72: the period proof's days read only in part and their line (`Provenance.partlyRead`, Where it went's) */
+  partlyRead?: PartlyRead | null;
 }
 
 /** a card whose figure is no measurement (decisions 64 + 72): the em dash, in the faint tone */
 const DASH = { text: "—", muted: true } as const;
 
-/** why Net and the savings rate wait, for a screen reader — Spent's own card says whose day it is */
-const UNTIL_SPENDING_IS_FOUND = "until spending is found";
+/** decision 72's chip word, inside a screen reader's sentence (the card's whole content is its aria-label) */
+const PARTLY_READ = "partly read";
+
+/**
+ * Why Net and the savings rate wait, for a screen reader — Spent's and Income's own cards say why each is a dash:
+ * "until spending is found", "until income is found", or both.
+ */
+function untilFound(spending: boolean, income: boolean): string {
+  return `until ${spending && income ? "spending and income are" : spending ? "spending is" : "income is"} found`;
+}
 
 /** aria-friendly "N dollars" (matches the existing StatCard phrasing) */
 function dollars(cents: number): string {
@@ -53,16 +78,33 @@ function dollars(cents: number): string {
  * arithmetic; what was found (Income, Refunds) keeps its figure, and every card keeps its link. 🔴 Review of 516d6fc,
  * his ledger copy 2026-10-13: `/spending?period=2026-09-23` read "Spent $0.00 · Net +$4,567.68 · Savings rate 100%"
  * over its own table row "$4,567.68 — —".
+ *
+ * ⚖️ §6A 68, the one rule on every caller (2026-10-21): `facts.incomeUnread` dashes Income under the dashboard's words
+ * for its own dash, and Net and the savings rate with it — they are Income's arithmetic too. ⚖️ Decision 72:
+ * `facts.partlyRead` marks Spent, Refunds, Net and the savings rate "partly read" where each prints a figure, with the
+ * period proof's line under Spent. 🔴 His ledger copy 2026-10-21: `/spending` carded October "INCOME $0.00 · SPENT
+ * $1,603.00 · NET -$1,603.00 · SAVINGS RATE — no income yet" — under a dashboard printing "—" for October's income,
+ * and over its own "Where it went" reading "partly read · spending imported through Aug 12 · 21 days of this period
+ * unaccounted".
  */
 export function spendingStatCards(
   totals: PeriodTotals,
   range: DateRange,
   spendingUnaccounted: string | null = null,
+  facts: SpendingStatCardFacts = {},
 ): SpendingStatCardSpec[] {
   const { earnedCents, spentCents, refundsCents, netCents, savingsRatePct } = totals;
   const showRefunds = refundsCents > 0;
   const cards: SpendingStatCardSpec[] = [];
   const notFound = spendingUnaccounted === null ? null : nothingFoundSoFar(spendingUnaccounted);
+  const incomeUnread = facts.incomeUnread ?? null;
+  // ⚖️ no Spent or no Income, no Net and no rate: both are their arithmetic (decisions 64 + 72, §6A 68)
+  const arithmeticWaits = notFound !== null || incomeUnread !== null;
+  const waitsFor = untilFound(notFound !== null, incomeUnread !== null);
+  // ⚖️ decision 72: the chip, on a figure the spending accounts have read only in part — never on a dash
+  const partly = facts.partlyRead ?? null;
+  const chip = partly === null ? {} : { partlyRead: true };
+  const partlySpoken = partly === null ? "" : `, ${PARTLY_READ}`;
 
   /*
    * 🔴 S22 — "Earned" NAMED A POPULATION IT DID NOT HOLD. `earnedCents` is every
@@ -79,14 +121,29 @@ export function spendingStatCards(
    * cash-flow chart/table/graph and the dashboard bridge — while /summary keeps
    * its narrow "Earned". Only words moved: the figure, the savings-rate base and
    * every href are unchanged. The `key` stays "earned" (never printed).
+   *
+   * ⚖️ …and an Income nobody has looked for is no figure (§6A 68): "—", with the dashboard's note for its own dash as
+   * the line under it — word for word, the one sentence for it (`noIncomeDayCheckedNote`).
    */
-  cards.push({
-    key: "earned",
-    label: "Income",
-    cents: earnedCents,
-    href: ledgerHref({ category: "income", from: range.from, to: range.to }),
-    ariaLabel: `Income this period. ${dollars(earnedCents)}. View income transactions.`,
-  });
+  const incomeHref = ledgerHref({ category: "income", from: range.from, to: range.to });
+  cards.push(
+    incomeUnread === null
+      ? {
+          key: "earned",
+          label: "Income",
+          cents: earnedCents,
+          href: incomeHref,
+          ariaLabel: `Income this period. ${dollars(earnedCents)}. View income transactions.`,
+        }
+      : {
+          key: "earned",
+          label: "Income",
+          ...DASH,
+          delta: incomeUnread,
+          href: incomeHref,
+          ariaLabel: `Income this period: no figure. ${incomeUnread} View income transactions.`,
+        },
+  );
 
   const spentHref = ledgerHref({ category: "spending", from: range.from, to: range.to, flow: "out" });
   cards.push(
@@ -95,8 +152,12 @@ export function spendingStatCards(
           key: "spent",
           label: "Spent",
           cents: spentCents,
+          // ⚖️ decision 72: /budgets' line for the days the chip calls partly read, under the figure it grades
+          ...(partly === null ? {} : { partlyRead: true, delta: partly.line }),
           href: spentHref,
-          ariaLabel: `Spent this period, gross. ${dollars(spentCents)}. View spending transactions.`,
+          ariaLabel:
+            `Spent this period, gross. ${dollars(spentCents)}` +
+            `${partly === null ? "" : `, ${PARTLY_READ}: ${partly.line}`}. View spending transactions.`,
         }
       : {
           key: "spent",
@@ -115,8 +176,10 @@ export function spendingStatCards(
       cents: refundsCents,
       flow: true,
       delta: "money back",
+      // ⚖️ read from the accounts Spent is read from (decision 72)
+      ...chip,
       href: ledgerHref({ category: "spending", from: range.from, to: range.to, flow: "in" }),
-      ariaLabel: `Refunds this period. ${dollars(refundsCents)} back. View refund transactions.`,
+      ariaLabel: `Refunds this period. ${dollars(refundsCents)} back${partlySpoken}. View refund transactions.`,
       mobileFull: true,
     });
   }
@@ -124,8 +187,9 @@ export function spendingStatCards(
   cards.push({
     key: "net",
     label: "Net",
-    // ⚖️ no Spent, no Net: the figure is Spent's arithmetic (decisions 64 + 72)
-    ...(notFound === null ? { cents: netCents, flow: true } : DASH),
+    // ⚖️ no Spent or no Income, no Net: the figure is their arithmetic (decisions 64 + 72, §6A 68) — and over days
+    // Spent is read only in part, it is read only in part too
+    ...(arithmeticWaits ? DASH : { cents: netCents, flow: true, ...chip }),
     // with Refunds on screen the arithmetic is visible; name it for clarity
     delta: showRefunds ? "income + refunds − spent" : undefined,
     /*
@@ -138,10 +202,10 @@ export function spendingStatCards(
      * this figure is over.
      */
     href: ledgerHref({ category: "cashflow", from: range.from, to: range.to }),
-    ariaLabel:
-      notFound === null
-        ? `Net this period. ${netCents < 0 ? "negative " : ""}${dollars(Math.abs(netCents))}. View the income and spending behind it.`
-        : `Net this period: no figure ${UNTIL_SPENDING_IS_FOUND}. View the income and spending behind it.`,
+    ariaLabel: arithmeticWaits
+      ? `Net this period: no figure ${waitsFor}. View the income and spending behind it.`
+      : `Net this period. ${netCents < 0 ? "negative " : ""}${dollars(Math.abs(netCents))}${partlySpoken}. ` +
+        "View the income and spending behind it.",
   });
 
   /*
@@ -169,28 +233,38 @@ export function spendingStatCards(
    * to hold financial aid and reimbursements that /summary says were not earned.
    *
    * ⚖️ …and a rate over a Spent nobody has found is no figure (decisions 64 + 72): "—", the base still named.
+   *
+   * ⚖️ …and over an Income nobody has looked for (§6A 68) there is no base to name, and "no income yet" would be a
+   * claim about days no statement has read: the rate says what it waits for instead. (Such a window found no income,
+   * so it has no rate to print: `savingsRatePct` is null.)
    */
   const waits = notFound !== null && savingsRatePct !== null;
+  const rateFigure = savingsRatePct !== null && !waits;
   cards.push({
     key: "savings",
     label: "Savings rate",
-    text: savingsRatePct === null || waits ? "—" : `${savingsRatePct}%`,
-    muted: savingsRatePct === null || waits,
+    text: rateFigure ? `${savingsRatePct}%` : "—",
+    muted: !rateFigure,
     delta:
-      savingsRatePct === null
-        ? "no income yet"
-        : waits
-          ? `of ${formatCents(earnedCents)} income`
-          : `${netCents >= 0 ? "kept" : "overspent"} · of ${formatCents(earnedCents)} income`,
+      incomeUnread !== null
+        ? waitsFor
+        : savingsRatePct === null
+          ? "no income yet"
+          : waits
+            ? `of ${formatCents(earnedCents)} income`
+            : `${netCents >= 0 ? "kept" : "overspent"} · of ${formatCents(earnedCents)} income`,
+    ...(rateFigure ? chip : {}),
     // the same population as Net — this rate is net ÷ income, and both terms
     // come from these rows
     href: ledgerHref({ category: "cashflow", from: range.from, to: range.to }),
     ariaLabel:
-      savingsRatePct === null
-        ? "Savings rate unavailable without income."
-        : waits
-          ? `Savings rate unavailable ${UNTIL_SPENDING_IS_FOUND}, of ${dollars(earnedCents)} of income.`
-          : `Savings rate ${savingsRatePct} percent, of ${dollars(earnedCents)} of income.`,
+      incomeUnread !== null
+        ? `Savings rate unavailable ${waitsFor}.`
+        : savingsRatePct === null
+          ? "Savings rate unavailable without income."
+          : waits
+            ? `Savings rate unavailable ${waitsFor}, of ${dollars(earnedCents)} of income.`
+            : `Savings rate ${savingsRatePct} percent, of ${dollars(earnedCents)} of income${partlySpoken}.`,
   });
 
   return cards;

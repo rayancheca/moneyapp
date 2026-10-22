@@ -27,6 +27,7 @@ const SEPTEMBER: CashFlow = {
     avgPerBucketCents: 10_222,
   },
   spendingUnaccounted: null,
+  incomeUnread: false,
 };
 const PROJECTION: SpendingProjection = {
   projectedSpendCents: 306_654,
@@ -96,6 +97,7 @@ describe("CashFlowChart's tooltip — a bucket the ledger has not reached", () =
     netCents: 0,
     unreached: null,
     spendingUnaccounted: null,
+    incomeUnread: false,
     ...over,
   });
   const tooltip = (b: CashFlowBucket, ghostCents: number | null = null): string =>
@@ -141,5 +143,51 @@ describe("CashFlowChart's tooltip — a bucket the ledger has not reached", () =
     expect(text).toContain("Net—");
     expect(text).toContain("nothing found so far — spending imported through Aug 12");
     expect(text).not.toContain("$0.00");
+  });
+});
+
+/*
+ * ⚖️ §6A 68 on /spending's buckets (2026-10-21): a bucket with no income found, not one of whose days is checked where
+ * his pay lands, has no Income and no Net (`CashFlowBucket.incomeUnread`, the dashboard's rule). 🔴 On his ledger copy
+ * 2026-10-21 `/spending` hovered Oct 14 "Income $0.00 · Spent $48.19 · Net -$48.19", Wells Fargo — where his pay lands —
+ * checked through Sep 24, under a dashboard printing "—" for October's income.
+ */
+describe("CashFlowChart's tooltip — a bucket no day of which is checked where the pay lands", () => {
+  const bucket = (key: string, over: Partial<CashFlowBucket> = {}): CashFlowBucket => ({
+    key,
+    label: key.length === 7 ? "Oct" : key.slice(8),
+    from: key.length === 7 ? `${key}-01` : key,
+    to: key.length === 7 ? `${key}-31` : key,
+    income: {},
+    spending: {},
+    incomeCents: 0,
+    spendingCents: 0,
+    refundsCents: 0,
+    netCents: 0,
+    unreached: null,
+    spendingUnaccounted: null,
+    incomeUnread: false,
+    ...over,
+  });
+  const tooltip = (b: CashFlowBucket): string =>
+    textOf(renderToStaticMarkup(createElement(CashFlowBucketTooltip, { bucket: b, ghostCents: null })));
+
+  test("prints its spending, and a dash under Income and Net, and says why", () => {
+    const text = tooltip(bucket("2026-10-14", { spendingCents: 4_819, netCents: -4_819, incomeUnread: true }));
+    expect(text).toContain("Income—");
+    expect(text).toContain("Spent$48.19");
+    expect(text).toContain("Net—");
+    expect(text).toContain("the day has not been checked in the accounts that pay lands in");
+    expect(text).not.toContain("$0.00");
+    // a month says it of the month
+    const october = tooltip(bucket("2026-10", { spendingCents: 160_300, netCents: -160_300, incomeUnread: true }));
+    expect(october).toContain("not one day of the month has been checked in the accounts that pay lands in");
+  });
+
+  test("with no spending found either, it says both", () => {
+    const text = tooltip(bucket("2026-10-04", { spendingUnaccounted: "spending imported through Aug 12", incomeUnread: true }));
+    expect(text).toBe(
+      "04nothing found so far — spending imported through Aug 12the day has not been checked in the accounts that pay lands in",
+    );
   });
 });

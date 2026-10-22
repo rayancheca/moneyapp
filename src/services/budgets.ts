@@ -908,8 +908,57 @@ export interface IncomeExpectation {
   series: { id: string; name: string; amountCents: number }[];
 }
 
+/** a recurring series as read — `hisLiveIncomeSeries`' rows */
+type RecurringSeriesRow = typeof recurringSeries.$inferSelect;
+
 /** How far ahead a series must still be paying to earn its annualised rate. */
 const BASIS_HORIZON_MONTHS = 12;
+
+/**
+ * ⚖️ His live income series — detected or confirmed, never the agent's (`isAgentsIncomeSeries`, owner decision
+ * 2026-09-28). 🔴 `incomeExpectation`'s posted leg had learned whose income is whose and its other legs had not. On a
+ * fixture with the agent's month-end interest detected on its cash account, "$X in so far" left the $0.04 out while
+ * "$Y still expected" counted it, the month note read "6 paydays" for October's five Thursdays, and the basis the
+ * runway and the income card read rose by it. Every leg there walks this one list, and so does `noIncomeDayReadOf`.
+ */
+export function hisLiveIncomeSeries(db: AppDatabase, agentsCash: ReadonlySet<string>): RecurringSeriesRow[] {
+  return db
+    .select()
+    .from(recurringSeries)
+    .where(and(eq(recurringSeries.kind, "income"), inArray(recurringSeries.status, ["detected", "confirmed"])))
+    .all()
+    .filter((s) => !isAgentsIncomeSeries(agentsCash, s));
+}
+
+/**
+ * ⚖️ §6A 68 (2026-10-13): whether a window's Income is NO measurement — nothing found in it, and NOT ONE of its days
+ * checked in the accounts any of his live pay series lands in (`checkedThroughBySeries`, the frontier the passed
+ * paydays' sentence names). Asked of the window's first day: a frontier that has reached it has read at least that day
+ * (`paydayIsRead`), one that has not has read none. 🔴 Measured on his ledger copy 2026-10-12: "$0.00 in so far,
+ * $3,425.76 still expected" over an October with Wells Fargo, where It America LLC's pay lands, checked through Sep 24
+ * — a zero nobody had looked for.
+ *
+ * ⛔ THE ONE RULE for an Income dash: /budgets' "— in so far" and the dashboard's "Income recorded in Oct 2026 —" (both
+ * through `incomeExpectation`), and /spending's Income card and cash-flow buckets (`cashFlowByPeriod`, 2026-10-21). 🔴
+ * /spending asked none, and on his ledger copy 2026-10-21 carded October "INCOME $0.00 · NET -$1,603.00" under that
+ * dashboard's dash. ⛔ Money found keeps its figure (§6A 64's rule for a row found), and with no live pay schedule
+ * there are no accounts the pay lands in to wait for — a $0.00 stands, as it always has.
+ *
+ * A reader for one `today`, asked per window: ⚡ the frontier is read once, and only when a window found nothing.
+ */
+export function noIncomeDayReadOf(
+  db: AppDatabase,
+  today: string,
+  live: readonly RecurringSeriesRow[],
+): (start: string, foundCents: number) => boolean {
+  let checkedOf: ((seriesId: string) => string | null) | null = null;
+  return (start, foundCents) => {
+    if (foundCents !== 0 || live.length === 0) return false;
+    checkedOf ??= checkedThroughBySeries(db, today);
+    const read = checkedOf;
+    return live.every((s) => !paydayIsRead(start, read(s.id)));
+  };
+}
 
 /**
  * What this period is expected to bring IN — the term `/budgets` has never had.
@@ -964,24 +1013,8 @@ export function incomeExpectation(
   const agentsCash = outsidePortfolioCashAccountIds(db);
   const postedCents = incomeTotalCents(db, agentsCash, start, postedThrough);
 
-  /*
-   * ⚖️ His live income series — not the agent's (`isAgentsIncomeSeries`, owner decision 2026-09-28). 🔴 The posted
-   * leg above had learned whose income is whose and these had not. On a fixture with the agent's month-end interest
-   * detected on its cash account, "$X in so far" left the $0.04 out while "$Y still expected" counted it, the month
-   * note read "6 paydays" for October's five Thursdays, and the basis the runway and the income card read rose by
-   * it. Every leg below — expected, scheduled, passed-unpaid and the levelled basis — walks this one list.
-   */
-  const live = db
-    .select()
-    .from(recurringSeries)
-    .where(
-      and(
-        eq(recurringSeries.kind, "income"),
-        inArray(recurringSeries.status, ["detected", "confirmed"]),
-      ),
-    )
-    .all()
-    .filter((s) => !isAgentsIncomeSeries(agentsCash, s));
+  // ⚖️ his live income series, never the agent's — every leg below walks this one list (`hisLiveIncomeSeries`)
+  const live = hisLiveIncomeSeries(db, agentsCash);
 
   /*
    * ⛔ THE FORWARD LEG OPENS ON `today`, and today's occurrence leaves it only
@@ -1097,15 +1130,8 @@ export function incomeExpectation(
   const passed = unbankedIncomeTotals(unbanked);
   const passedUnpaidCents = passed.totalCents;
   const passedUnpaidOccurrences = passed.occurrenceCount;
-  /*
-   * ⚖️ §6A 68 (2026-10-13): whether ANY day of this window has been checked where the pay lands — the third leg's own
-   * frontier (`checkedThroughBySeries`), asked of the window's first day: one that has reached the 1st has read at
-   * least that day (`paydayIsRead`), one that has not has read none. 🔴 Measured on his ledger copy 2026-10-12: "$0.00
-   * in so far, $3,425.76 still expected" over an October with Wells Fargo, where It America LLC's pay lands, checked
-   * through Sep 24 — a zero nobody had looked for. ⚡ Asked only when nothing posted: money in keeps its figure anyway.
-   */
-  const checkedOf = postedCents === 0 ? checkedThroughBySeries(db, today) : null;
-  const noIncomeDayRead = checkedOf !== null && live.every((s) => !paydayIsRead(start, checkedOf(s.id)));
+  // ⚖️ §6A 68 (2026-10-13): whether ANY day of this window has been checked where the pay lands (`noIncomeDayReadOf`)
+  const noIncomeDayRead = noIncomeDayReadOf(db, today, live)(start, postedCents);
   /*
    * The annualised rate every live series pays, summed.
    *

@@ -19,6 +19,7 @@ import { UNREACHED_PHRASE } from "@/lib/empty-period";
 import { formatCents, formatCentsSigned } from "@/lib/money";
 import { cashFlowSegmentHref, ledgerHref, OTHER_SERIES_KEY, UNCATEGORIZED_SERIES_KEY } from "@/lib/ledger-href";
 import { paceReadout } from "@/lib/pace-readout";
+import { noIncomeDayCheckedOf } from "@/lib/unbanked-income";
 import type { CashFlow, CashFlowBucket, CashFlowSeries, SpendingProjection } from "@/services/spending";
 
 /**
@@ -82,23 +83,34 @@ interface CashFlowChartProps {
  * and no Net (decisions 64 + 72, `CashFlowBucket.spendingUnaccounted`): what was found, and the heatmap cell's words for
  * the rest. 🔴 On his ledger copy 2026-10-13 (review of 2fce458) Sep 15 hovered "Income $0.00 · Spent $0.00 · Net
  * $0.00" and Sep 23 "Spent $0.00" beside its $4,567.68, under heatmap cells reading "nothing found so far".
+ *
+ * ⚖️ §6A 68 (2026-10-21): …and a bucket with no income found, not one of whose days is checked where his pay lands
+ * (`CashFlowBucket.incomeUnread`, the dashboard's rule), prints no Income and no Net, and says why. 🔴 On his ledger
+ * copy 2026-10-21 Oct 14 hovered "Income $0.00 · Spent $48.19 · Net -$48.19", Wells Fargo checked through Sep 24.
  */
 export function CashFlowBucketTooltip({ bucket: b, ghostCents }: { bucket: CashFlowBucket; ghostCents: number | null }) {
   const notFound = b.spendingUnaccounted;
   const foundNothing = notFound !== null && b.incomeCents === 0 && b.refundsCents === 0;
+  const incomeUnread = b.incomeUnread ? noIncomeDayCheckedOf(b.key.length === 7 ? "month" : "day") : null;
+  const incomeLine = incomeUnread !== null && (
+    <div className="mt-1 text-ink-muted first-letter:uppercase">{incomeUnread}</div>
+  );
   return (
     <div className="rounded-md border border-line bg-surface-raised px-3 py-2 text-xs shadow-sm">
       <div className="text-ink-faint">{b.label}</div>
       {b.unreached !== null ? (
         <div className="mt-1 text-ink-muted first-letter:uppercase">{UNREACHED_PHRASE[b.unreached]}</div>
       ) : foundNothing ? (
-        <div className="mt-1 text-ink-muted first-letter:uppercase">{nothingFoundSoFar(notFound)}</div>
+        <>
+          <div className="mt-1 text-ink-muted first-letter:uppercase">{nothingFoundSoFar(notFound)}</div>
+          {incomeLine}
+        </>
       ) : (
         <>
           <div className="mt-1 flex items-center justify-between gap-4">
             <span className="text-positive">Income</span>
             <span className="figures">
-              {notFound !== null && b.incomeCents === 0 ? "—" : formatCents(b.incomeCents)}
+              {incomeUnread !== null || (notFound !== null && b.incomeCents === 0) ? "—" : formatCents(b.incomeCents)}
             </span>
           </div>
           <div className="flex items-center justify-between gap-4">
@@ -115,11 +127,14 @@ export function CashFlowBucketTooltip({ bucket: b, ghostCents }: { bucket: CashF
           )}
           <div className="mt-1 flex items-center justify-between gap-4 border-t border-line pt-1 font-medium">
             <span>Net</span>
-            <span className="figures">{notFound !== null ? "—" : formatCentsSigned(b.netCents)}</span>
+            <span className="figures">
+              {notFound !== null || incomeUnread !== null ? "—" : formatCentsSigned(b.netCents)}
+            </span>
           </div>
           {notFound !== null && (
             <div className="mt-1 text-ink-muted first-letter:uppercase">{nothingFoundSoFar(notFound)}</div>
           )}
+          {incomeLine}
         </>
       )}
       {ghostCents !== null && (

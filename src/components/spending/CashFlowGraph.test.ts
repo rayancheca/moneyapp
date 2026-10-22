@@ -141,6 +141,7 @@ describe("CashFlowGraph — a line with one point read still shows that point", 
     netCents: incomeCents - spendingCents,
     unreached,
     spendingUnaccounted: null,
+    incomeUnread: false,
   });
 
   const linesOf = (buckets: CashFlowBucket[]) => {
@@ -151,6 +152,7 @@ describe("CashFlowGraph — a line with one point read still shows that point", 
       totals: {} as CashFlow["totals"],
       pace: null,
       spendingUnaccounted: null,
+      incomeUnread: false,
     };
     return linesIn(CashFlowGraph({ data, projection: null }));
   };

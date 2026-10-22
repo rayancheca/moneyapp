@@ -1414,6 +1414,22 @@ describe("incomeExpectation — §6A 68: no income day of the month checked", ()
     checkedThrough(bundle.db, savings, "2026-06-05");
     expect(month("2026-06-12").noIncomeDayRead).toBe(false);
   });
+
+  /*
+   * ⚖️ /spending asks this rule of every window since 2026-10-21 (`noIncomeDayReadOf`), and a ledger with no live pay
+   * schedule has no "accounts that pay lands in" to wait for. 🔴 Asked as `live.every(...)`, it was vacuously true
+   * there: every window with no income would have read "Not one day of … has been checked in the accounts that pay lands
+   * in". Invisible before /spending asked it — /budgets prints the clause only with income expected or posted, and the
+   * dashboard's card only with a confirmed schedule.
+   */
+  test("with no live pay schedule there is nothing to wait for — a month with nothing posted keeps its $0.00", () => {
+    checkedThrough(bundle.db, checkingId, "2026-05-28");
+    expect(month("2026-06-12")).toMatchObject({ postedCents: 0, noIncomeDayRead: false });
+    // an ended or dismissed schedule is not live either
+    const ended = weeklyPay();
+    bundle.db.update(recurringSeries).set({ status: "ended" }).where(eq(recurringSeries.id, ended)).run();
+    expect(month("2026-06-12").noIncomeDayRead).toBe(false);
+  });
 });
 
 describe("budgetOverdue — the bill that came due and never arrived", () => {

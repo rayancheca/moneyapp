@@ -3,6 +3,7 @@
 import { type ReactNode } from "react";
 import { useViewState } from "@/hooks/useViewState";
 import { unreachedDashNote } from "@/lib/empty-period";
+import { noIncomeDayCheckedOf } from "@/lib/unbanked-income";
 import { type ViewState } from "@/lib/view-state";
 import { formatCents, formatCentsSigned } from "@/lib/money";
 import { DataTable, type Column } from "@/components/ui/DataTable";
@@ -92,6 +93,13 @@ export function CashFlowView({
   const dash = <span className="text-ink-faint">—</span>;
   const figure = (r: CashRow, node: ReactNode, found = false): ReactNode =>
     r.unreached !== null || (r.spendingUnaccounted !== null && !found) ? dash : node;
+  /*
+   * ⚖️ §6A 68 (2026-10-21): …and a bucket with no income found, not one of whose days is checked where his pay lands
+   * (`CashFlowBucket.incomeUnread`, the dashboard's rule), has no Income and no Net. 🔴 On his ledger copy 2026-10-21
+   * `?cash=table` read Oct 1 … Oct 14 "Income $0.00", Wells Fargo checked through Sep 24.
+   */
+  const incomeFigure = (r: CashRow, node: ReactNode, found = false): ReactNode =>
+    r.incomeUnread ? dash : figure(r, node, found);
   const noun = (rows[0]?.key.length ?? 10) === 7 ? "month" : "day";
   const notFound = rows.find((r) => r.unreached === null && r.spendingUnaccounted !== null)?.spendingUnaccounted ?? null;
   const dashNotes = [
@@ -104,6 +112,7 @@ export function CashFlowView({
       ? null
       : `A dash is not a zero where nothing has been found so far — ${notFound}, and not every account you spend from ` +
         `has been read for that ${noun}.`,
+    rows.some((r) => r.incomeUnread) ? `A dash under Income is not a zero where ${noIncomeDayCheckedOf(noun)}.` : null,
   ].filter((n): n is string => n !== null);
   const dashNote = dashNotes.length === 0 ? null : dashNotes.join(" ");
 
@@ -114,7 +123,7 @@ export function CashFlowView({
       // S22: every positive income-kind row — /summary alone says "Earned", and means less
       header: "Income",
       align: "right",
-      render: (r) => figure(r, <span className="text-positive">{formatCents(r.incomeCents)}</span>, r.incomeCents !== 0),
+      render: (r) => incomeFigure(r, <span className="text-positive">{formatCents(r.incomeCents)}</span>, r.incomeCents !== 0),
     },
     {
       key: "spent",
@@ -133,7 +142,7 @@ export function CashFlowView({
           },
         ]
       : []),
-    { key: "net", header: "Net", align: "right", render: (r) => figure(r, formatCentsSigned(r.netCents)) },
+    { key: "net", header: "Net", align: "right", render: (r) => incomeFigure(r, formatCentsSigned(r.netCents)) },
     ...(hasGhost
       ? [
           {

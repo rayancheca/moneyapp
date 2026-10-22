@@ -8,12 +8,15 @@ import { seedDatabase } from "@/db/seed";
 import { categories } from "@/db/schema/categories";
 import { institutions } from "@/db/schema/institutions";
 import { merchants } from "@/db/schema/merchants";
+import { recurringSeries } from "@/db/schema/recurring";
 import { transactions, type TransactionStatus } from "@/db/schema/transactions";
 import { parseFilters } from "@/components/transactions/query";
 import { dedupeHash } from "@/lib/hash";
 import { resolvePeriod } from "@/lib/period";
 import { createAccount } from "./accounts";
+import { incomeExpectation } from "./budgets";
 import { createCashWallet } from "./cash-wallets";
+import { checkedThrough } from "./checked-days-fixture";
 import { addManualTransaction } from "./manual-transactions";
 import { provenanceFor } from "./provenance";
 import { setSplits } from "./transaction-splits";
@@ -412,6 +415,82 @@ describe("cashFlowByPeriod — a bucket past the day all his spending is read th
     addManualTransaction(bundle.db, { ...lunch, postedOn: "2026-07-05" });
     const cf = cashFlowByPeriod(bundle.db, JULY, TODAY);
     expect(cf.buckets.find((b) => b.key === "2026-07-03")).toMatchObject({ unreached: null, spendingUnaccounted: null });
+  });
+});
+
+/*
+ * ⚖️ §6A 68 on /spending (2026-10-21): a window with no income found, not one of whose days has been checked in the
+ * accounts his pay lands in, has no Income — the dashboard's "Income recorded in Oct 2026" and /budgets' "in so far"
+ * print "—" for it by the same rule (`noIncomeDayReadOf`). 🔴 Measured on his ledger copy 2026-10-21: `/spending`
+ * carded October "INCOME $0.00 · NET -$1,603.00" — Wells Fargo, where It America LLC's pay lands, checked through Sep
+ * 24 — under a dashboard reading "Not one day of Oct 2026 has been checked in the accounts that pay lands in".
+ */
+describe("cashFlowByPeriod — income over days not one of which is checked where the pay lands", () => {
+  /** his weekly pay, landing in Checking; the card holds the spending */
+  function payInChecking(): string {
+    const id = bundle.db
+      .insert(recurringSeries)
+      .values({
+        name: "It America LLC (weekly pay)",
+        kind: "income",
+        cadence: "weekly",
+        intervalDaysAvg: 7,
+        amountCentsAvg: 114_192,
+        nextExpectedOn: "2026-07-02",
+        nextExpectedAmountCents: 114_192,
+        status: "confirmed",
+        lastMatchedOn: "2026-06-25",
+        accountId: checkingId,
+      })
+      .returning({ id: recurringSeries.id })
+      .get().id;
+    insertTxn({ postedOn: "2026-07-01", amountCents: -1_000, category: "Food > Dining" });
+    insertTxn({ postedOn: "2026-07-07", amountCents: -3_000, category: "Food > Dining" });
+    return id;
+  }
+
+  test("a window with no income and no day checked where the pay lands has no Income; one day checked is a $0.00", () => {
+    payInChecking();
+    checkedThrough(bundle.db, checkingId, "2026-06-30");
+    expect(cashFlowByPeriod(bundle.db, JULY, TODAY).incomeUnread).toBe(true);
+    checkedThrough(bundle.db, checkingId, "2026-07-01");
+    expect(cashFlowByPeriod(bundle.db, JULY, TODAY).incomeUnread).toBe(false);
+  });
+
+  test("each bucket asks it of its own days: a day checked, or holding income, is a figure", () => {
+    payInChecking();
+    insertTxn({ accountId: checkingId, postedOn: "2026-07-06", amountCents: 50_000, category: "Income > Salary" });
+    checkedThrough(bundle.db, checkingId, "2026-07-03");
+    const cf = cashFlowByPeriod(bundle.db, JULY, TODAY);
+    const unread = Object.fromEntries(cf.buckets.map((b) => [b.key.slice(8), b.incomeUnread]));
+    expect([unread["01"], unread["03"]]).toEqual([false, false]); // checked: a measured $0.00
+    expect([unread["04"], unread["05"], unread["07"]]).toEqual([true, true, true]);
+    expect(unread["06"]).toBe(false); // income found keeps its figure
+    // a day the ledger has not reached, or that has not happened, says that instead
+    expect(cf.buckets.find((b) => b.key === "2026-07-09")).toMatchObject({ unreached: "future", incomeUnread: false });
+    // the window holds income: a figure, whatever the days around it
+    expect(cf.incomeUnread).toBe(false);
+  });
+
+  test("with no live pay schedule there is nothing to wait for, and the figures stay what they were", () => {
+    const pay = payInChecking();
+    bundle.db.update(recurringSeries).set({ status: "ended" }).where(eq(recurringSeries.id, pay)).run();
+    const cf = cashFlowByPeriod(bundle.db, JULY, TODAY);
+    expect(cf.incomeUnread).toBe(false);
+    expect(cf.buckets.every((b) => !b.incomeUnread)).toBe(true);
+    // ⛔ ADDITIVE, as `unreached` is: no total moves
+    expect(cf.totals).toEqual(periodTotals(bundle.db, JULY));
+  });
+
+  // ⛔ the one rule: the dashboard's and /budgets' reading of the same month (`incomeExpectation`), never a second one
+  test("a month reads exactly as the dashboard and /budgets read it", () => {
+    payInChecking();
+    for (const through of ["2026-06-30", "2026-07-02"]) {
+      checkedThrough(bundle.db, checkingId, through);
+      expect(cashFlowByPeriod(bundle.db, JULY, TODAY).incomeUnread, through).toBe(
+        incomeExpectation(bundle.db, JULY.from, JULY.to, TODAY).noIncomeDayRead,
+      );
+    }
   });
 });
 

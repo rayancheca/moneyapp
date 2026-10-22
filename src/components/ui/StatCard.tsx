@@ -11,6 +11,8 @@ interface StatCardProps {
   ariaLabel?: string;
   /** extra classes on the outer element (e.g. a grid-span for mobile layout) */
   className?: string;
+  /** an annotation beside the label — a `VerdictChip`, never a control (the card may be one link) */
+  chip?: React.ReactNode;
   /**
    * The one figure a set of stats is actually about, marked the way a ledger
    * marks a total: a 2px --ink-display rule across the top edge. Opt-in and
@@ -29,11 +31,12 @@ interface StatCardProps {
  */
 const CARD = `rounded-(--radius-card) border border-line bg-surface-raised p-4 ${PRESS.rule}`;
 
-function StatBody({ label, value, delta }: Pick<StatCardProps, "label" | "value" | "delta">) {
+function StatBody({ label, value, delta, chip }: Pick<StatCardProps, "label" | "value" | "delta" | "chip">) {
   return (
     <>
       <span className="block text-[11px] font-medium uppercase tracking-[0.12em] text-ink-faint">
         {label}
+        {chip}
       </span>
       {/* set in display ink and tightened — a printed numeral, not a UI label
           that happens to contain digits */}
@@ -53,13 +56,14 @@ export function StatCard({
   ariaLabel,
   className,
   emphasis,
+  chip,
 }: StatCardProps) {
   const keyed = emphasis === "key" ? RULE_STRONG : "";
 
   if (!href) {
     return (
       <section aria-label={ariaLabel} className={`${CARD} ${keyed} ${className ?? ""}`.trim()}>
-        <StatBody label={label} value={value} delta={delta} />
+        <StatBody label={label} value={value} delta={delta} chip={chip} />
       </section>
     );
   }
@@ -77,7 +81,7 @@ export function StatCard({
       >
         <Icon name="arrow-up-right" className="size-3 text-ink-faint" />
       </span>
-      <StatBody label={label} value={value} delta={delta} />
+      <StatBody label={label} value={value} delta={delta} chip={chip} />
     </Link>
   );
 }

@@ -1,7 +1,9 @@
 import { StatCard } from "@/components/ui/StatCard";
 import { Money } from "@/components/ui/Money";
+import { VerdictChip } from "@/components/ui/VerdictChip";
 import { spendingStatCards } from "@/lib/spending-stat-cards";
 import type { DateRange } from "@/services/analytics";
+import type { PartlyRead } from "@/services/provenance";
 import type { PeriodTotals } from "@/services/spending";
 
 /**
@@ -16,13 +18,19 @@ export function SpendingStatCards({
   totals,
   range,
   spendingUnaccounted,
+  incomeUnread,
+  partlyRead,
 }: {
   totals: PeriodTotals;
   range: DateRange;
   /** `CashFlow.spendingUnaccounted` — Spent, Net and the savings rate print "—" with it (decisions 64 + 72) */
   spendingUnaccounted: string | null;
+  /** §6A 68: the dashboard's note under its Income dash, for this window — Income, Net and the rate print "—" with it */
+  incomeUnread: string | null;
+  /** decision 72: the period proof's days read only in part (`Provenance.partlyRead`) — the chip, and Spent's line */
+  partlyRead: PartlyRead | null;
 }) {
-  const cards = spendingStatCards(totals, range, spendingUnaccounted);
+  const cards = spendingStatCards(totals, range, spendingUnaccounted, { incomeUnread, partlyRead });
   const cols = cards.length >= 5 ? "lg:grid-cols-5" : "lg:grid-cols-4";
   return (
     <div className={`grid grid-cols-2 gap-3 ${cols}`}>
@@ -44,6 +52,7 @@ export function SpendingStatCards({
           delta={card.delta}
           href={card.href}
           ariaLabel={card.ariaLabel}
+          chip={card.partlyRead ? <VerdictChip verdict="partly_read" /> : undefined}
           className={card.mobileFull ? "col-span-2 lg:col-span-1" : undefined}
         />
       ))}

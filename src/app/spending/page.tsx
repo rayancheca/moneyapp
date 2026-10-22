@@ -5,6 +5,7 @@ import { nothingFoundSoFarSentence } from "@/lib/budget-coverage";
 import { todayIso } from "@/lib/dates";
 import { formatDayLong } from "@/lib/format-date";
 import { cashEarningsSectionNotes } from "@/lib/section-notes";
+import { noIncomeDayCheckedNote } from "@/lib/unbanked-income";
 import { comparedCategories } from "@/lib/compared-categories";
 import { whereItWentRows } from "@/lib/where-it-went-rows";
 import { deviationRowsFrom } from "@/lib/deviation-layout";
@@ -377,10 +378,15 @@ export default async function SpendingPage({
         </>
       ) : (
         <div className="space-y-6">
+          {/* ⚖️ §6A 68 + decision 72, one rule on every caller (2026-10-21): Income is the dashboard's dash where no day
+              is checked where the pay lands, under its words; Spent wears the chip Where it went wears, from the same
+              proof. 🔴 His ledger copy 2026-10-21 carded October "INCOME $0.00 · SPENT $1,603.00" under both. */}
           <SpendingStatCards
             totals={cashFlow.totals}
             range={range}
             spendingUnaccounted={cashFlow.spendingUnaccounted}
+            incomeUnread={cashFlow.incomeUnread ? noIncomeDayCheckedNote(period.label) : null}
+            partlyRead={spendProvenance?.partlyRead ?? null}
           />
 
           {/* Mounted UNDER the stat cards, not above them: the note qualifies a

@@ -219,3 +219,25 @@ describe("a window whose spending has not been found says so on every card", () 
     expect(source).toMatch(/spendingSankey\(db, range, today\)/);
   });
 });
+
+/*
+ * ⚖️ §6A 68 and decision 72 on the stat cards, one rule on every caller (2026-10-21). 🔴 Measured on his ledger copy
+ * 2026-10-21: `/spending` carded October "INCOME $0.00 · SPENT $1,603.00 · NET -$1,603.00" — the dashboard printing
+ * "—" for October's income ("Not one day of Oct 2026 has been checked in the accounts that pay lands in"), and "Where it
+ * went" on this page "partly read · spending imported through Aug 12 · 21 days of this period unaccounted". Source,
+ * not render: the page is an async server component.
+ */
+describe("the stat cards read the window the way the rest of the app does", () => {
+  // ⛔ the cash flow's own reading (`noIncomeDayReadOf`, the dashboard's and /budgets' rule) under the dashboard's words
+  test("Income is handed the cash flow's reading and the dashboard's note for its dash", () => {
+    expect(source).toMatch(
+      /<SpendingStatCards[^/]*\bincomeUnread=\{cashFlow\.incomeUnread \? noIncomeDayCheckedNote\(period\.label\) : null\}/,
+    );
+  });
+
+  // ⛔ the very object "Where it went"'s chip and line are drawn from — one count of the window's unread days
+  test("Spent is handed the period proof that Where it went wears", () => {
+    expect(source).toMatch(/<SpendingStatCards[^/]*\bpartlyRead=\{spendProvenance\?\.partlyRead \?\? null\}/);
+    expect(source).toMatch(/spendProvenance\?\.partlyRead && \(/);
+  });
+});

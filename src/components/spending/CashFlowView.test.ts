@@ -22,6 +22,7 @@ const bucket = (key: string, label: string, over: Partial<CashFlowBucket> = {}):
   netCents: 0,
   unreached: null,
   spendingUnaccounted: null,
+  incomeUnread: false,
   ...over,
 });
 
@@ -35,6 +36,7 @@ const flow = (buckets: CashFlowBucket[]): CashFlow => {
     totals: { earnedCents, spentCents, refundsCents: 0, netCents: earnedCents - spentCents, savingsRatePct: null },
     pace: null,
     spendingUnaccounted: null,
+    incomeUnread: false,
   };
 };
 
@@ -224,5 +226,37 @@ describe("CashFlowView's Sankey lens — a window whose spending has not been fo
 
   test("a window with no flow at all keeps its own words", () => {
     expect(renderSankey(NO_SANKEY)).toContain("No money flow to chart in this period.");
+  });
+});
+
+/*
+ * ⚖️ §6A 68 on /spending's buckets (2026-10-21): a bucket with no income found, not one of whose days is checked where
+ * his pay lands, prints "—" under Income and Net (`CashFlowBucket.incomeUnread`, the dashboard's rule). 🔴 On his ledger
+ * copy 2026-10-21 `/spending?cash=table` read Oct 1 … Oct 14 "Income $0.00" and `?period=2026` its October row "$0.00
+ * $1,603.00 -$1,603.00", Wells Fargo checked through Sep 24.
+ */
+describe("CashFlowView's table — a bucket no day of which is checked where the pay lands", () => {
+  test("dashes Income and Net, keeps Spent, and says why", () => {
+    const html = renderTable(
+      flow([
+        bucket("2026-09-24", "24", { incomeCents: 114_192, spendingCents: 25_261, netCents: 88_931 }),
+        bucket("2026-10-14", "14", { spendingCents: 4_819, netCents: -4_819, incomeUnread: true }),
+      ]),
+      "October 2026",
+    );
+    expect(rowCells(html, "14")).toEqual(["14", "—", "$48.19", "—"]);
+    expect(rowCells(html, "24")).toEqual(["24", "$1,141.92", "$252.61", "+$889.31"]);
+    const note = "A dash under Income is not a zero where the day has not been checked in the accounts that pay lands in.";
+    expect(textOf(/<caption[^>]*>(.*?)<\/caption>/.exec(html)![1]!)).toContain(note);
+    expect(html).toMatch(new RegExp(`<p aria-hidden="true"[^>]*>[^<]*${note.replace(/\./g, "\\.")}</p>`));
+  });
+
+  test("a year's month says it of the month", () => {
+    const october = bucket("2026-10", "Oct", { spendingCents: 160_300, netCents: -160_300, incomeUnread: true });
+    const html = renderTable(flow([{ ...october, from: "2026-10-01", to: "2026-10-31" }]), "2026");
+    expect(rowCells(html, "Oct")).toEqual(["Oct", "—", "$1,603.00", "—"]);
+    expect(textOf(html)).toContain(
+      "A dash under Income is not a zero where not one day of the month has been checked in the accounts that pay lands in.",
+    );
   });
 });

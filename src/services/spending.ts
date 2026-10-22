@@ -40,7 +40,7 @@ import {
   type DateRange,
 } from "./analytics";
 import { categoryEmptyPeriodCopy } from "@/lib/category-reach";
-import { categoryReachFor, type CategoryReachContext } from "./budgets";
+import { categoryReachFor, hisLiveIncomeSeries, noIncomeDayReadOf, type CategoryReachContext } from "./budgets";
 import { isUpfrontCarRow, upfrontCarRule } from "./car-upfront";
 import { allSpendPartlyRead, spendingCoverageThrough, spendingReadThrough } from "./movers-card";
 import { ledgerOpens, ledgerReaches } from "./observation-frontier";
@@ -174,6 +174,16 @@ export interface CashFlowBucket {
    * ⛔ ADDITIVE, for the reason `unreached` is: the figures stay, and no total, pace or running line moves.
    */
   spendingUnaccounted: string | null;
+  /**
+   * ⚖️ §6A 68 (2026-10-13), on /spending since 2026-10-21: no income found in the bucket and not one of its days
+   * checked in the accounts his pay lands in (`noIncomeDayReadOf` — the rule the dashboard's "Income recorded" and
+   * /budgets' "— in so far" dash by). Its Income and its Net are no measurement and print "—" with it; always false
+   * where `unreached` is set. 🔴 On his ledger copy 2026-10-21 `/spending?cash=table` read Oct 1 … Oct 14 "Income
+   * $0.00" and `?period=2026` its October row the same, Wells Fargo checked through Sep 24.
+   *
+   * ⛔ ADDITIVE, for the reason `unreached` is: the figures stay.
+   */
+  incomeUnread: boolean;
 }
 
 export interface PaceInfo {
@@ -211,6 +221,13 @@ export interface CashFlow {
    * ADDITIVE, as the bucket's is: `totals` is unchanged.
    */
   spendingUnaccounted: string | null;
+  /**
+   * ⚖️ §6A 68: the WINDOW's `CashFlowBucket.incomeUnread` — no income found in the period and not one of its days
+   * checked where his pay lands. Its stat cards print "—" for Income, Net and the savings rate with it, under the
+   * dashboard's words for the dash (`noIncomeDayCheckedNote`). 🔴 His ledger copy 2026-10-21: `/spending` carded October
+   * "INCOME $0.00 · NET -$1,603.00" while the dashboard printed "—" for the same month. ADDITIVE: `totals` is unchanged.
+   */
+  incomeUnread: boolean;
 }
 
 function categoryColors(db: AppDatabase): Map<string, string | null> {
@@ -254,7 +271,7 @@ export function cashFlowByPeriod(db: AppDatabase, period: ResolvedPeriod, today:
   const rows = activeTxnsInRange(db, period.from, period.to);
 
   // coverage is decided once the rows are classified — see the return below
-  const shells: Omit<CashFlowBucket, "unreached" | "spendingUnaccounted">[] = buckets.map((b) => ({
+  const shells: Omit<CashFlowBucket, "unreached" | "spendingUnaccounted" | "incomeUnread">[] = buckets.map((b) => ({
     key: b.key,
     label: b.label,
     from: b.from,
@@ -386,12 +403,18 @@ export function cashFlowByPeriod(db: AppDatabase, period: ResolvedPeriod, today:
    */
   const spendless = (i: number): boolean => unreached[i] === null && shells[i]!.spendingCents === 0;
   const readThrough = shells.some((_, i) => spendless(i)) ? spendingReadThrough(db, today) : null;
+  /*
+   * ⚖️ …and whether its Income is one (§6A 68, `noIncomeDayReadOf`): the dashboard's and /budgets' rule, asked of each
+   * reached bucket and of the window. ⚡ The pay's frontier is read only where one found no income.
+   */
+  const noIncomeDayRead = noIncomeDayReadOf(db, today, hisLiveIncomeSeries(db, agentsCash));
   const reached: CashFlowBucket[] = shells.map((s, i) => ({
     ...s,
     unreached: unreached[i] ?? null,
     spendingUnaccounted: spendless(i)
       ? spendingNotFoundFact({ from: s.from, to: s.to, today, ledgerOpens: opens, readThrough, spentCents: 0 })
       : null,
+    incomeUnread: unreached[i] === null && noIncomeDayRead(s.from, s.incomeCents),
   }));
   // …and the window's own Spent, by the same rule and day: with no spending in it, every reached bucket asked the day
   const spendingUnaccounted = spendingNotFoundFact({
@@ -402,8 +425,10 @@ export function cashFlowByPeriod(db: AppDatabase, period: ResolvedPeriod, today:
     readThrough,
     spentCents,
   });
+  // …and the window's own Income, by the same rule and the same reading
+  const incomeUnread = noIncomeDayRead(period.from, earnedCents);
 
-  return { buckets: reached, incomeSeries, spendingSeries, totals, pace, spendingUnaccounted };
+  return { buckets: reached, incomeSeries, spendingSeries, totals, pace, spendingUnaccounted, incomeUnread };
 }
 
 function computePace(

@@ -131,6 +131,18 @@ export function noIncomeDayCheckedNote(month: string): string {
 }
 
 /**
+ * ⚖️ §6A 68 for ONE cash-flow bucket on /spending (2026-10-21, `CashFlowBucket.incomeUnread`): "the day has not been
+ * checked in the accounts that pay lands in", or for a month "not one day of the month has been checked …" — the note
+ * above, said of a bucket whose label names no month ("14", "Oct"). /spending's table says it under its dashes, its
+ * chart's hover under the bucket's. 🔴 His ledger copy 2026-10-21: both printed "Income $0.00" for Oct 1 … Oct 14.
+ */
+export function noIncomeDayCheckedOf(bucket: "day" | "month"): string {
+  return bucket === "day"
+    ? "the day has not been checked in the accounts that pay lands in"
+    : "not one day of the month has been checked in the accounts that pay lands in";
+}
+
+/**
  * The one day several schedules' landing accounts were checked through — each
  * schedule's own `earliestVerified` — when they share one.
  *

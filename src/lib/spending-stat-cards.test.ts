@@ -192,4 +192,99 @@ describe("spendingStatCards", () => {
     // …and a window where spending was found, or a day was read, prints its figures as it always has
     expect(spendingStatCards(totals(), RANGE, null)).toEqual(spendingStatCards(totals(), RANGE));
   });
+
+  /*
+   * ⚖️ §6A 68 (2026-10-13), one rule on every caller: a window with no income found, not one of whose days is checked
+   * where his pay lands, has no Income — the dashboard's "Income recorded in Oct 2026" and /budgets' "in so far" print
+   * "—" for it (`CashFlow.incomeUnread`, asked by `noIncomeDayReadOf`). 🔴 Measured on his ledger copy 2026-10-21:
+   * `/spending` carded October "INCOME $0.00 · SPENT $1,603.00 · NET -$1,603.00 · SAVINGS RATE — no income yet", Wells
+   * Fargo checked through Sep 24.
+   */
+  it("dashes Income, Net and the savings rate where no day is checked where the pay lands, under the dashboard's words", () => {
+    const note = "Not one day of October 2026 has been checked in the accounts that pay lands in, so nothing is shown.";
+    const october = totals({ earnedCents: 0, spentCents: 160_300, refundsCents: 0, netCents: -160_300, savingsRatePct: null });
+    const cards = spendingStatCards(october, RANGE, null, { incomeUnread: note });
+    const by = (key: string) => cards.find((c) => c.key === key)!;
+    for (const key of ["earned", "net", "savings"]) {
+      expect(by(key), key).toMatchObject({ text: "—", muted: true });
+      expect(by(key).cents, key).toBeUndefined();
+    }
+    expect(by("earned").delta).toBe(note);
+    expect(by("earned").ariaLabel).toBe(`Income this period: no figure. ${note} View income transactions.`);
+    expect(by("net").ariaLabel).toBe("Net this period: no figure until income is found. View the income and spending behind it.");
+    expect(by("savings").delta).toBe("until income is found");
+    expect(by("savings").ariaLabel).toBe("Savings rate unavailable until income is found.");
+    // what was found keeps its figure
+    expect(by("spent").cents).toBe(160_300);
+    for (const c of cards) {
+      expect(`${c.label} ${c.text ?? ""} ${c.delta ?? ""} ${c.ariaLabel}`, c.key).not.toMatch(/\$0\.00|no income yet|\b0 dollars/);
+    }
+    // the links are the same lists
+    expect(cards.map((c) => c.href)).toEqual(spendingStatCards(october, RANGE).map((c) => c.href));
+    // …and Income found, or a day checked, prints as it always has
+    expect(spendingStatCards(totals(), RANGE, null, { incomeUnread: null })).toEqual(spendingStatCards(totals(), RANGE));
+  });
+
+  it("with neither Spent nor Income found, Net and the rate wait for both", () => {
+    const cards = spendingStatCards(totals({ earnedCents: 0, spentCents: 0, netCents: 0, savingsRatePct: null }), RANGE, "spending imported through Aug 12", {
+      incomeUnread: "Not one day of October 2026 has been checked in the accounts that pay lands in, so nothing is shown.",
+    });
+    const by = (key: string) => cards.find((c) => c.key === key)!;
+    expect(by("net").ariaLabel).toBe(
+      "Net this period: no figure until spending and income are found. View the income and spending behind it.",
+    );
+    expect(by("savings").delta).toBe("until spending and income are found");
+  });
+
+  /*
+   * ⚖️ Decision 72 (2026-10-13): a total over days not every account he spends from is read for keeps its figure and
+   * wears "partly read", with /budgets' line under it — the period proof's own (`Provenance.partlyRead`, the chip "Where
+   * it went" wears on the same page). Net and the savings rate are Spent's arithmetic over the same days, and Refunds is
+   * read from the same accounts: each wears it where it prints a figure; the line sits once, under Spent. 🔴 Measured on
+   * his ledger copy 2026-10-21: `/spending` carded October "SPENT $1,603.00" bare over "Where it went · partly read ·
+   * spending imported through Aug 12 · 21 days of this period unaccounted".
+   */
+  it("marks the spending figures partly read, with the period proof's line under Spent", () => {
+    const partlyRead = { uncoveredDays: 21, line: "spending imported through Aug 12 · 21 days of this period unaccounted" };
+    const september = totals({
+      earnedCents: 617_788,
+      spentCents: 862_388,
+      refundsCents: 1_568,
+      netCents: -243_032,
+      savingsRatePct: -39.3,
+    });
+    const cards = spendingStatCards(september, RANGE, null, { partlyRead });
+    const by = (key: string) => cards.find((c) => c.key === key)!;
+    for (const key of ["spent", "refunds", "net", "savings"]) expect(by(key).partlyRead, key).toBe(true);
+    // ⛔ Income is read where the pay lands, not by spending's day
+    expect(by("earned").partlyRead).toBeUndefined();
+    // the figures stand
+    const figures = [by("spent").cents, by("refunds").cents, by("net").cents, by("savings").text];
+    expect(figures).toEqual([862_388, 1_568, -243_032, "-39.3%"]);
+    expect(by("spent").delta).toBe(partlyRead.line);
+    expect(by("spent").ariaLabel).toBe(
+      `Spent this period, gross. 8623.88 dollars, partly read: ${partlyRead.line}. View spending transactions.`,
+    );
+    expect(by("refunds").ariaLabel).toBe("Refunds this period. 15.68 dollars back, partly read. View refund transactions.");
+    expect(by("net").ariaLabel).toBe(
+      "Net this period. negative 2430.32 dollars, partly read. View the income and spending behind it.",
+    );
+    expect(by("savings").ariaLabel).toBe("Savings rate -39.3 percent, of 6177.88 dollars of income, partly read.");
+    // a window read in full wears nothing new
+    expect(spendingStatCards(september, RANGE, null, { partlyRead: null })).toEqual(spendingStatCards(september, RANGE));
+  });
+
+  it("a dash wears no chip: there is no figure to call partly read", () => {
+    const partlyRead = { uncoveredDays: 21, line: "spending imported through Aug 12 · 21 days of this period unaccounted" };
+    const cards = spendingStatCards(
+      totals({ earnedCents: 0, spentCents: 160_300, netCents: -160_300, savingsRatePct: null }),
+      RANGE,
+      null,
+      {
+        partlyRead,
+        incomeUnread: "Not one day of October 2026 has been checked in the accounts that pay lands in, so nothing is shown.",
+      },
+    );
+    expect(cards.filter((c) => c.partlyRead).map((c) => c.key)).toEqual(["spent"]);
+  });
 });
