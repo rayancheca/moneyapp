@@ -8,7 +8,6 @@ import { cashEarningsSectionNotes } from "@/lib/section-notes";
 import { comparedCategories } from "@/lib/compared-categories";
 import { whereItWentRows } from "@/lib/where-it-went-rows";
 import { deviationRowsFrom } from "@/lib/deviation-layout";
-import { paceWindowName } from "@/lib/pace-readout";
 import { spendingShareBase } from "@/lib/insight-facts";
 import {
   heatmapInitialMonth,
@@ -403,7 +402,6 @@ export default async function SpendingPage({
               viewState={cashView}
               baseParams={baseParams}
               periodLabel={period.label}
-              paceWindowName={paceWindowName(period)}
             />
           </SurfaceCard>
 

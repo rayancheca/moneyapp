@@ -32,7 +32,7 @@ const PROJECTION: SpendingProjection = {
   projectedSpendCents: 306_654,
   paceBasis: "pace from 14 of 30 days elapsed",
   paceConfidence: 0.65,
-  paceUncoveredDays: 2,
+  pacePartlyRead: { uncoveredDays: 2, line: "spending imported through Sep 12 · 2 days of this period unaccounted" },
   prior: null,
 };
 
@@ -42,7 +42,7 @@ const occurrences = (text: string, phrase: string): number => text.split(phrase)
 
 function render(): string {
   return renderToStaticMarkup(
-    createElement(CashFlowChart, { data: SEPTEMBER, projection: PROJECTION, paceWindowName: "September 2026" }),
+    createElement(CashFlowChart, { data: SEPTEMBER, projection: PROJECTION }),
   );
 }
 
@@ -53,13 +53,18 @@ describe("CashFlowChart's pace readout", () => {
    * screen reader heard it twice: "On pace for at least $3,066.54 — pace from 14
    * of 30 days elapsed; 2 days of September 2026 not imported yet spent this
    * period · at least $1,431.05 so far · 2 days of September 2026 not imported yet".
+   *
+   * ⚖️ The clause is the period proof's line now (decision 72) — the words "Where it went" prints under its chip.
    */
-  test("says the unimported days once, to the eye and to a screen reader alike", () => {
+  test("says the unaccounted days once, to the eye and to a screen reader alike", () => {
     const html = render();
     const text = textOf(html);
-    expect(occurrences(text, "not imported yet")).toBe(1);
+    expect(occurrences(text, "unaccounted")).toBe(1);
     expect(text).toContain("On pace for at least $3,066.54 — pace from 14 of 30 days elapsed spent this period");
-    expect(text).toContain("at least $1,431.05 so far · 2 days of September 2026 not imported yet");
+    expect(text).toContain(
+      "at least $1,431.05 so far · spending imported through Sep 12 · 2 days of this period unaccounted",
+    );
+    expect(text).not.toContain("not imported yet");
 
     const srOnly = /<span class="sr-only">(.*?)<\/span>/.exec(html)?.[1];
     expect(srOnly === undefined ? null : textOf(srOnly)).toBe(" — pace from 14 of 30 days elapsed");

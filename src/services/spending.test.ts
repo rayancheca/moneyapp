@@ -15,6 +15,7 @@ import { resolvePeriod } from "@/lib/period";
 import { createAccount } from "./accounts";
 import { createCashWallet } from "./cash-wallets";
 import { addManualTransaction } from "./manual-transactions";
+import { provenanceFor } from "./provenance";
 import { setSplits } from "./transaction-splits";
 import { countMatching } from "./transactions-query";
 import {
@@ -768,22 +769,48 @@ describe("spendingProjection", () => {
 
     const flow = cashFlowByPeriod(bundle.db, JULY, TODAY);
     const proj = spendingProjection(bundle.db, JULY, TODAY, flow.pace, flow.totals.spentCents);
-    expect(proj.paceUncoveredDays).toBe(3); // Jul 6, 7 and 8
+    // Jul 6, 7 and 8
+    expect(proj.pacePartlyRead).toEqual({
+      uncoveredDays: 3,
+      line: "spending imported through Jul 5 · 3 days of this period unaccounted",
+    });
     expect(proj.projectedSpendCents).toBe(116_250); // the same pace as above
     expect(proj.paceBasis).toBe("pace from 8 of 31 days elapsed");
+  });
+
+  /*
+   * ⚖️ His decision 72 (2026-10-13), and the readout's days are the period proof's. 🔴 Measured on his ledger copy
+   * 2026-10-21: `/spending` for October read "at least $1,603.00 so far · 7 days of October 2026 not imported yet" —
+   * the days NO account has read — above "Where it went"'s "spending imported through Aug 12 · 21 days of this period
+   * unaccounted": two counts of one month on one page, and the dashboard tile that links here printed the first.
+   */
+  test("the readout's days are counted from the day every account he spends from is read through", () => {
+    insertTxn({ accountId: checkingId, postedOn: "2026-06-20", amountCents: -90_000, category: "Food > Dining" });
+    insertTxn({ postedOn: "2026-07-03", amountCents: -2_500, category: "Food > Groceries" });
+    shownOn(TODAY); // the card reaches today: no elapsed day is unread by EVERY account
+
+    const flow = cashFlowByPeriod(bundle.db, JULY, TODAY);
+    const proj = spendingProjection(bundle.db, JULY, TODAY, flow.pace, flow.totals.spentCents);
+    expect(proj.pacePartlyRead).toEqual({
+      uncoveredDays: 8,
+      line: "spending imported through Jun 20 · 8 days of this period unaccounted",
+    });
+    // ⛔ one rule: the period's own proof, the line under "Where it went" on the same page
+    const proof = provenanceFor(bundle.db, { kind: "allSpend", from: JULY.from, to: JULY.to, today: TODAY });
+    expect(proj.pacePartlyRead).toEqual(proof!.partlyRead);
   });
 
   test("a row ON today leaves no elapsed day unimported", () => {
     insertTxn({ postedOn: "2026-07-05", amountCents: -20_000, category: "Food > Groceries" });
     shownOn(TODAY);
     const flow = cashFlowByPeriod(bundle.db, JULY, TODAY);
-    expect(spendingProjection(bundle.db, JULY, TODAY, flow.pace, flow.totals.spentCents).paceUncoveredDays).toBe(0);
+    expect(spendingProjection(bundle.db, JULY, TODAY, flow.pace, flow.totals.spentCents).pacePartlyRead).toBeNull();
   });
 
   test("a finished period has no pace, so no unimported days to count", () => {
     insertTxn({ postedOn: "2026-06-10", amountCents: -12_000, category: "Food > Dining" });
     const flow = cashFlowByPeriod(bundle.db, JUNE, TODAY);
-    expect(spendingProjection(bundle.db, JUNE, TODAY, flow.pace, flow.totals.spentCents).paceUncoveredDays).toBeNull();
+    expect(spendingProjection(bundle.db, JUNE, TODAY, flow.pace, flow.totals.spentCents).pacePartlyRead).toBeNull();
   });
 
   test("a whole period's prior is drawn as a ghost, day under day", () => {

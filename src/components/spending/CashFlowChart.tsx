@@ -65,8 +65,6 @@ interface CashFlowChartProps {
   data: CashFlow;
   /** the estimate companion (North Star #2): pace + prior-period ghost. */
   projection?: SpendingProjection | null;
-  /** what the unimported days are "of" (`paceWindowName`) — "2 days of September 2026 not imported yet" */
-  paceWindowName: string | null;
 }
 
 /**
@@ -136,7 +134,7 @@ export function CashFlowBucketTooltip({ bucket: b, ghostCents }: { bucket: CashF
   );
 }
 
-export function CashFlowChart({ data, projection, paceWindowName }: CashFlowChartProps) {
+export function CashFlowChart({ data, projection }: CashFlowChartProps) {
   const router = useRouter();
   const { buckets, incomeSeries, spendingSeries, pace } = data;
 
@@ -190,18 +188,21 @@ export function CashFlowChart({ data, projection, paceWindowName }: CashFlowChar
 
   // The honest projection readout: "on pace for ~$Y · $X so far · $Z last period".
   // A low-confidence pace (early in the period) reads muted and says so.
-  const projected = projection?.projectedSpendCents ?? null;
   const lowConfidence = projection?.paceConfidence != null && projection.paceConfidence < 0.5;
   /*
    * 🔴 S12. "On pace for ~$3,066.54 · $1,431.05 so far" over a September two of
    * whose elapsed days nobody had imported, beside a dashboard tile saying "at
    * least" of the same figures. `paceReadout` is those words for both states.
+   *
+   * ⚖️ …and for decision 64's: no spending found past spending's day reads the tile's words under its dash, not "at
+   * least $0.00" (`data.spendingUnaccounted`, the field the tile dashes by). 🔴 Review of 1042f71: the tile dashed and
+   * this readout, on the page it links to, printed "On pace for at least $0.00 … at least $0.00 so far".
    */
   const words = paceReadout({
-    projectedCents: projected ?? 0,
+    projectedCents: projection?.projectedSpendCents ?? null,
     actualToDateCents: pace?.actualToDateCents ?? 0,
-    uncoveredDays: projection?.paceUncoveredDays ?? 0,
-    windowName: paceWindowName,
+    partlyRead: projection?.pacePartlyRead ?? null,
+    spendingUnaccounted: data.spendingUnaccounted,
   });
   /*
    * 🔴 The basis carried the not-imported clause as well, and the basis is ALSO
@@ -213,7 +214,7 @@ export function CashFlowChart({ data, projection, paceWindowName }: CashFlowChar
    */
   const basis = projection?.paceBasis ?? null;
   const readoutParts: ReactNode[] = [];
-  if (projected !== null) {
+  if (words.projected !== null) {
     readoutParts.push(
       <>
         On pace for{" "}
@@ -234,8 +235,8 @@ export function CashFlowChart({ data, projection, paceWindowName }: CashFlowChar
   if (pace) {
     readoutParts.push(<span className="text-ink-faint">{words.soFar}</span>);
   }
-  if (pace && words.notImported) {
-    readoutParts.push(<span className="text-ink-faint">{words.notImported}</span>);
+  if (pace && words.partlyRead) {
+    readoutParts.push(<span className="text-ink-faint">{words.partlyRead}</span>);
   }
   if (projection?.prior) {
     readoutParts.push(
@@ -247,8 +248,9 @@ export function CashFlowChart({ data, projection, paceWindowName }: CashFlowChar
 
   return (
     <figure className="m-0" aria-label="Income above the axis and spending below, by period">
+      {/* first-letter: "nothing found so far — …" opens the line where no spending was found (the tooltip's idiom) */}
       {readoutParts.length > 0 && (
-        <p className="mb-2 text-xs text-ink-muted">
+        <p className="mb-2 text-xs text-ink-muted first-letter:uppercase">
           {readoutParts.map((node, i) => (
             <span key={i}>
               {i > 0 ? " · " : ""}

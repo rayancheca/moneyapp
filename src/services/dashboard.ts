@@ -10,8 +10,10 @@ import { resolvePeriod } from "@/lib/period";
 import { listAccounts } from "./accounts";
 import { bridgedNetWorthSeries, type BridgedNetWorthPoint } from "./in-flight";
 import { forecastCurrentMonth } from "./forecast";
+import { allSpendPartlyRead } from "./movers-card";
 import { ledgerOpens, ledgerReaches } from "./observation-frontier";
 import { holdingRows, portfolioDayChange, portfolioOverview, portfolioSeries, topMovers } from "./portfolio";
+import { provenanceFor, type PartlyRead, type Provenance } from "./provenance";
 import { upcomingOccurrences } from "./recurring";
 import { statementPulls, type AccountStatementPull } from "./statement-pulls";
 import { needsReviewCount, uncategorizedCount } from "./review-count";
@@ -86,11 +88,24 @@ export interface SpendingPace {
   actualToDateCents: number;
   projectedCents: number;
   /**
-   * Elapsed days of this month the ledger holds no import for. >0 means
-   * `actualToDateCents` and `projectedCents` are LOWER BOUNDS, not
-   * measurements — the same rule /budgets grades by, applied to the same days.
+   * ⚖️ Decision 72: the elapsed days of this month past the day every account he spends from is imported through, and
+   * /budgets' line for them (`allSpendPartlyRead` — /spending's count and line for the same month); null when it is
+   * read in full. Present, `actualToDateCents` and `projectedCents` are LOWER BOUNDS, not measurements.
    */
-  uncoveredDays: number;
+  partlyRead: PartlyRead | null;
+  /**
+   * /spending's proof of the month's spending (`allSpend`, asked on `today`) — the chip beside the figures, reading
+   * "partly read" where `partlyRead` is present and the month holds rows. Never offered beside the dash.
+   */
+  provenance: Provenance;
+  /**
+   * ⚖️ Decision 64: "spending imported through Aug 12" where the month holds no spending and not one elapsed day is read
+   * by that day — /spending's Spent card prints "—" with these words (`CashFlow.spendingUnaccounted`), and so does the
+   * tile. Null otherwise — and where no account has read one elapsed day at all, whose dash is "not imported yet".
+   * ⛔ /spending's cash-flow readout, the tile's twin, prints them in place of its figures (`paceReadout`): 🔴 review of
+   * 1042f71, the tile dashed beside a readout of "On pace for at least $0.00 … at least $0.00 so far".
+   */
+  spendingNotFound: string | null;
   points: PacePoint[];
   /** income (actual + expected) minus spend-so-far and upcoming fixed bills */
   /**
@@ -290,26 +305,47 @@ function spendingPace(db: AppDatabase, today: string): SpendingPace | null {
    * past today leaves none. Two surfaces grading the same days must not grade
    * them two ways.
    */
-  // ⛔ …and that one arithmetic is `daysNotImportedYet` now, which /spending's
-  // cash-flow readout reads too. Until 2026-09-14 this tile held it inline and
-  // was the only one of the two surfaces that said "at least".
-  const uncoveredDays = daysNotImportedYet({
+  // ⛔ …and that one arithmetic is `daysNotImportedYet` now. Until 2026-09-14
+  // this tile held it inline and was the only one of the two surfaces that
+  // said "at least".
+  const elapsedDays = diffDays(period.from, today) + 1;
+  // not one elapsed day read by ANY account — an empty ledger too: there is no figure, only an assumption
+  const noDayRead =
+    daysNotImportedYet({
+      from: period.from,
+      to: period.to,
+      today,
+      ledgerOpens: ledgerOpens(db),
+      ledgerReaches: ledgerReaches(db),
+    }) >= elapsedDays;
+  /*
+   * ⚖️ His decision 72 (2026-10-13): the days the figures are lower bounds over are the ones not EVERY account he spends
+   * from has read — /spending's count and line for the month (`allSpendPartlyRead`), and its proof is the chip. 🔴
+   * Measured on his ledger copy 2026-10-21: counted against the ledger's newest day (Venture X, Oct 14) the tile read
+   * "at least $1,603.00 spent · 7 days of October 2026 not imported yet" with no chip, while /spending, one click away,
+   * read "partly read · spending imported through Aug 12 · 21 days of this period unaccounted".
+   */
+  const partlyRead = allSpendPartlyRead(db, period.from, period.to, today);
+  const provenance = provenanceFor(db, {
+    kind: "allSpend",
     from: period.from,
     to: period.to,
+    label: period.label,
     today,
-    ledgerOpens: ledgerOpens(db),
-    ledgerReaches: ledgerReaches(db),
-  });
-  const elapsedDays = diffDays(period.from, today) + 1;
+  })!;
+  // ⚖️ decision 64: no spending found and no elapsed day read by that day is no "$0.00 spent" — /spending's Spent card's
+  // dash, asked of the same window by the same rule (`spendingNotFoundFact`)
+  const spendingNotFound = cashFlow.spendingUnaccounted;
 
   return {
     monthLabel: period.label,
     actualToDateCents: cashFlow.pace.actualToDateCents,
     projectedCents: cashFlow.pace.projectedCents,
     points,
-    uncoveredDays,
-    // not one elapsed day measured: there is no figure, only an assumption
-    freeToSpendCents: uncoveredDays >= elapsedDays ? null : freeToSpendCents,
+    partlyRead,
+    provenance,
+    spendingNotFound,
+    freeToSpendCents: noDayRead || spendingNotFound !== null ? null : freeToSpendCents,
     href: "/spending",
   };
 }

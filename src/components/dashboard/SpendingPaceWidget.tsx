@@ -1,8 +1,9 @@
 import Link from "next/link";
 import type { SpendingPace } from "@/services/dashboard";
+import { ProvenancePopover } from "@/components/ui/ProvenancePopover";
+import { nothingFoundSoFar } from "@/lib/budget-coverage";
 import { formatCents } from "@/lib/money";
 import { notImportedTitle } from "@/lib/empty-period";
-import { notImportedYet } from "@/lib/pace-readout";
 import { paceGeometry, PACE_VH, PACE_VW } from "@/lib/pace-geometry";
 
 /**
@@ -28,6 +29,11 @@ export function SpendingPaceWidget({ pace }: { pace: SpendingPace }) {
       <div className="flex items-baseline justify-between gap-3">
         <h2 id="pace-heading" className="text-sm font-medium">
           Spending pace <span className="text-ink-faint">· {pace.monthLabel}</span>
+          {/* ⚖️ decision 72 (2026-10-13): /spending's proof of the month, its chip and all — "partly read" over days not
+              every account he spends from has read. On the heading, never inside the card's link: a button in an <a>
+              is axe `nested-interactive`, the reason /spending mounts its own on a heading. No proof beside the dash
+              (`CategoryHeadline`'s rule): the popover proves a rendered figure. */}
+          {free !== null && <ProvenancePopover label="this month's spending" provenance={pace.provenance} />}
         </h2>
         <Link
           href={pace.href}
@@ -71,23 +77,26 @@ export function SpendingPaceWidget({ pace }: { pace: SpendingPace }) {
             {free === null ? (
               <div className="mt-0.5 text-[11px] text-ink-muted">
                 {/* the empty state's heading for the same month — the category headline's under its dash, word for
-                    word. 🔴 "October 2026 is not imported yet" here, "has not been imported yet" there (review of b2c9db7) */}
-                {notImportedTitle(pace.monthLabel)}
+                    word. 🔴 "October 2026 is not imported yet" here, "has not been imported yet" there (review of
+                    b2c9db7). ⚖️ Decision 64: where some account has read days and no spending was found past the day
+                    all of them are read through, /spending's Spent card's words for its own dash. */}
+                {pace.spendingNotFound === null
+                  ? notImportedTitle(pace.monthLabel)
+                  : nothingFoundSoFar(pace.spendingNotFound)}
               </div>
             ) : (
               <>
                 <div className="mt-0.5 text-[11px] text-ink-muted">
-                  {pace.uncoveredDays > 0 && "at least "}
+                  {pace.partlyRead && "at least "}
                   {formatCents(pace.actualToDateCents)} spent ·{" "}
-                  {pace.uncoveredDays > 0 && "at least "}
+                  {pace.partlyRead && "at least "}
                   {formatCents(pace.projectedCents)} projected
                 </div>
-                {pace.uncoveredDays > 0 && (
-                  <div className="mt-0.5 text-[11px] text-ink-faint">
-                    {/* the phrase /spending's readout prints over the same days */}
-                    {notImportedYet(pace.uncoveredDays, pace.monthLabel)}
-                  </div>
-                )}
+                {/* ⚖️ decision 72: the days the chip calls partly read, in /budgets' words — the line /spending prints
+                    under "Where it went" and in its cash-flow readout for the same month. 🔴 On his ledger copy
+                    2026-10-21 this read "7 days of October 2026 not imported yet" — the days NO account had read — where
+                    /spending read "spending imported through Aug 12 · 21 days of this period unaccounted". */}
+                {pace.partlyRead && <div className="mt-0.5 text-[11px] text-ink-faint">{pace.partlyRead.line}</div>}
               </>
             )}
           </div>

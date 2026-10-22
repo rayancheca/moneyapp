@@ -1,7 +1,9 @@
 import { cache } from "react";
 import type { AppDatabase } from "@/db/client";
 import { apportionPercents } from "@/lib/apportion";
+import { readThroughSentence } from "@/lib/budget-coverage";
 import { addCalendarMonths, monthKey, periodBounds, todayIso } from "@/lib/dates";
+import { daysNotImportedYet } from "@/lib/empty-period";
 import { formatDayShort, formatMonthYear, monthWindowLabel } from "@/lib/format-date";
 import { resolvePeriod, withPeriod } from "@/lib/period";
 import { formatCents } from "@/lib/money";
@@ -16,6 +18,7 @@ import {
   observationFrontier,
   type ObservationFrontier,
 } from "./observation-frontier";
+import type { PartlyRead } from "./provenance";
 import { MIN_OCCURRENCES } from "./recurring";
 
 /**
@@ -495,6 +498,36 @@ export const spendingReadThrough = cache(function spendingReadThrough(
   if (![...accountsAwaitingStatements(db)].some((id) => byAccount.has(id))) return null;
   return spendingCoverageThrough(db, today);
 });
+
+/**
+ * ⚖️ His decision 72 (2026-10-13) for a window of ALL his spending: its elapsed days past `spendingReadThrough` and
+ * /budgets' line for them ("spending imported through Aug 12 · 21 days of this period unaccounted"), or null where it
+ * is read in full. 🔴 Measured on his ledger copy 2026-10-13: `/spending` for September chipped "adds up … 43 rows from
+ * 3 documents" beside its own What moved naming Aug 12.
+ *
+ * ⚖️ CASH WALLETS ARE LEFT OUT (2026-09-15, the /budgets rule): with no account a statement is still coming for that
+ * has an import day — an empty ledger, or one of cash wallets alone — `spendingReadThrough` is null, and nothing is
+ * graded partly read: "partly read" forever would be a claim no statement could correct.
+ *
+ * ⛔ ONE COUNT FOR A WINDOW OF ALL SPENDING, wherever it is printed: /spending's period proof and its chip
+ * (`provenance::allSpendProvenance`), the cash-flow readout's "at least" on the same page (`spendingProjection`), and
+ * the dashboard's pace tile that links there and wears that proof as its chip (`dashboard::spendingPace`). 🔴 Measured
+ * on his ledger copy 2026-10-21: the tile and the readout counted the days NO account had read — "7 days of October 2026
+ * not imported yet", Venture X reaching Oct 14 — beside the proof's "21 days of this period unaccounted", Chase Checking
+ * (Aug 12) and Wells Fargo (Sep 24) having read no day of October.
+ */
+export function allSpendPartlyRead(
+  db: AppDatabase,
+  from: string,
+  to: string,
+  today: string = todayIso(),
+  // a caller that grades an empty window by the same day reads it once and hands it in (`allSpendProvenance`)
+  through: string | null = spendingReadThrough(db, today),
+): PartlyRead | null {
+  if (through === null) return null;
+  const n = daysNotImportedYet({ from, to, today, ledgerOpens: ledgerOpens(db), ledgerReaches: through });
+  return n === 0 ? null : { uncoveredDays: n, line: readThroughSentence(through, n, { start: from }) };
+}
 
 /**
  * What changed this month — or rather, in the newest month that can be said to

@@ -49,7 +49,6 @@ function renderTable(cashFlow: CashFlow, periodLabel: string): string {
       viewState: { cash: "table" },
       baseParams: {},
       periodLabel,
-      paceWindowName: periodLabel,
     }),
   );
 }
@@ -212,7 +211,6 @@ describe("CashFlowView's Sankey lens — a window whose spending has not been fo
           viewState: { cash: "sankey" },
           baseParams: {},
           periodLabel: "Oct 16, 2026",
-          paceWindowName: "Oct 16, 2026",
         }),
       ),
     );
