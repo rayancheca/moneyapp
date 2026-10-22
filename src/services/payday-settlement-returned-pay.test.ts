@@ -359,6 +359,20 @@ describe("a payroll returned on a LATER day is not a same-day return", () => {
     // 🔴 it was Sep 18, the return's own day: money going out was read as pay arriving
     expect([line.lastBankedOn, line.silentPeriods]).toEqual(["2026-09-17", 0]);
   });
+
+  /*
+   * ⚖️ …and the card names the money out on its day, in /spending's words (`wentBackOutPhrase`) — default (A), built,
+   * not asked (2026-10-21). 🔴 It said "exactly what this window implies you earned" and nothing of the $1,141.92 that
+   * left on Sep 18, while /spending's note named it: one ledger, two accounts of where that week's pay went.
+   */
+  test("…and the card names the money that went back out, on its day, beside the difference it never joins", () => {
+    const line = payLine();
+    expect(line.wentBackOut).toEqual([{ postedOn: "2026-09-18", cents: WEEK }]);
+    expect(line.gapLabel).toBe(
+      "exactly what this window implies you earned; $1,141.92 went back out on Fri, Sep 18, 2026",
+    );
+    expect(incomeCard(bundle.db, TODAY)!.totals.gapLabel).toBe(line.gapLabel);
+  });
 });
 
 /*

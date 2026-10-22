@@ -354,6 +354,11 @@ describe("a payroll returned on a LATER day is not a same-day return", () => {
     const [reading] = cashEarningsReadings(bundle.db, { ...SEPT, today: TODAY, withChecked: true });
     const line = incomeCard(bundle.db, TODAY)!.pay.find((l) => l.seriesId === PAY)!;
     expect([reading!.bankedCents, reading!.shortfall!.shortCents, line.bankedCents]).toEqual([WEEK * 3, 0, WEEK * 3]);
+    // ⚖️ …and both name the money out on its day, one rule (`moneyOutOfWindow`; default (A), built 2026-10-21)
+    expect([reading!.wentBackOut, line.wentBackOut]).toEqual([
+      [{ postedOn: "2026-09-18", cents: WEEK }],
+      [{ postedOn: "2026-09-18", cents: WEEK }],
+    ]);
   });
 });
 

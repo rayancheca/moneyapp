@@ -132,6 +132,13 @@ export interface CashEarningsInput {
    * and missed, so it counts as passed. Default false.
    */
   todayIsComplete?: boolean;
+  /**
+   * The paydays a deposit PAID — the settlement's `settledBy`, early or late — which are never silent: the calendar
+   * draws them paid (`periodsSinceBanked`). Absent, none is known to be, and every payday since the last day that
+   * banked counts: a reading that names no silence may ask without the settlement (`cashEarningsReadings` passes it
+   * whenever it walks one).
+   */
+  settledPaydays?: ReadonlySet<string>;
 }
 
 export interface CashEarnings {
@@ -160,8 +167,17 @@ export interface CashEarnings {
   lastPeriodOn: string | null;
   /** the most recent day at or before `today` whose attributed rows banked money (`daysThatBanked`), or null */
   lastBankedOn: string | null;
-  /** whole pay periods since `lastBankedOn`, or since the series started */
+  /**
+   * THE SILENCE: whole pay periods from `silenceFrom` — after `lastBankedOn`, or from the series' first payday when
+   * nothing banked — through the last one passed, less those a deposit paid (`settledPaydays`)
+   */
   periodsSinceBanked: number;
+  /**
+   * …and those it left out: the silence's paydays a deposit paid, oldest first — EARLY, every one, as each falls after
+   * the last day that banked and nothing after today has arrived. A sentence counting the silence "since the last
+   * deposit" names them (`paidEarlyAside`). Empty when no settlement was given.
+   */
+  silencePaidEarly: readonly string[];
 }
 
 const EMPTY: CashEarnings = {
@@ -174,6 +190,7 @@ const EMPTY: CashEarnings = {
   lastPeriodOn: null,
   lastBankedOn: null,
   periodsSinceBanked: 0,
+  silencePaidEarly: [],
 };
 
 /** The earlier of two dates. */
@@ -198,6 +215,24 @@ interface CoveredPeriods {
   lastOn: string | null;
 }
 
+/** The series' walk inside `[from, to]`: its plan and the first and last step that land there (`last < first`: none). */
+function stepsInside(series: PaySeries, from: string, to: string) {
+  const plan = stepPlan(series.cadence, series.intervalDaysAvg, series.anchorDay);
+  const first = stepsToReach(series.startedOn, plan, from);
+  // `stepsToReach` lands on or AFTER `to`; when it overshoots, the last
+  // occurrence inside the window is the step before it.
+  const reach = stepsToReach(series.startedOn, plan, to);
+  const last = compareDates(stepFrom(series.startedOn, plan, reach), to) <= 0 ? reach : reach - 1;
+  return { plan, first, last };
+}
+
+/** The series' own occurrence DATES in `[from, to]`, oldest first — the steps `occurrencesBetween` counts. */
+function occurrenceDaysBetween(series: PaySeries, from: string, to: string): string[] {
+  if (compareDates(from, to) > 0) return [];
+  const { plan, first, last } = stepsInside(series, from, to);
+  return Array.from({ length: Math.max(0, last - first + 1) }, (_, i) => stepFrom(series.startedOn, plan, first + i));
+}
+
 function occurrencesBetween(series: PaySeries, from: string, to: string): CoveredPeriods {
   // Belt and braces, and named as such: the `Math.max(0, …)` below already
   // returns 0 for an inverted window, because `stepsToReach` is monotonic in its
@@ -205,12 +240,7 @@ function occurrencesBetween(series: PaySeries, from: string, to: string): Covere
   // This states the precondition at the boundary rather than leaving a caller
   // error to be absorbed silently three lines further down.
   if (compareDates(from, to) > 0) return { count: 0, cents: 0, firstOn: null, lastOn: null };
-  const plan = stepPlan(series.cadence, series.intervalDaysAvg, series.anchorDay);
-  const first = stepsToReach(series.startedOn, plan, from);
-  // `stepsToReach` lands on or AFTER `to`; when it overshoots, the last
-  // occurrence inside the window is the step before it.
-  const reach = stepsToReach(series.startedOn, plan, to);
-  const last = compareDates(stepFrom(series.startedOn, plan, reach), to) <= 0 ? reach : reach - 1;
+  const { plan, first, last } = stepsInside(series, from, to);
   const count = Math.max(0, last - first + 1);
   /*
    * The DATES of the endpoints, not just how many there are, because the count
@@ -245,6 +275,7 @@ export function cashEarnings({
   to,
   today,
   todayIsComplete = false,
+  settledPaydays = new Set<string>(),
 }: CashEarningsInput): CashEarnings {
   /*
    * Nothing after today is earned or banked yet, whatever the window says. This
@@ -289,11 +320,13 @@ export function cashEarnings({
    * ⚖️ What reached a bank is the DAYS THAT BANKED inside the window, each its net (`daysThatBanked`, his decision 75,
    * 2026-10-13) — the days settlement pays a payday by and every Income figure counts: a payroll returned the same day
    * banked its net, and money going back on a LATER day — a day netting below $0.00 — banks nothing and takes nothing
-   * off. 🔴 Every row in the window was summed: with a Salary-filed -$1,141.92 on Sep 25, the day after Sep 24's
-   * payroll, settlement still paid Sep 24 and September's Income stayed $6,177.88 while this banked $4,567.68 of
-   * September, not $5,709.60 — /spending's September note read $1,141.92 never reached a bank, and the dashboard's card
-   * $12,258.92, not $11,117.00, for a payday the calendar drew paid (review of d75; hypothetical: no money out is linked
-   * to his pay, measured on his ledger copy 2026-10-21).
+   * off here. ⛔ A reading that knows its frontier reads it on by the one rule (`moneyOutOfWindow`,
+   * `cashEarningsReadings` with `withChecked`): it nets money that paid no read payday, and is named on its day where it
+   * cannot — never taken off a paid payday. 🔴 Every row in the window was summed: with a Salary-filed -$1,141.92 on
+   * Sep 25, the day after Sep 24's payroll, settlement still paid Sep 24 and September's Income stayed $6,177.88 while
+   * this banked $4,567.68 of September, not $5,709.60 — /spending's September note read $1,141.92 never reached a
+   * bank, and the dashboard's card $12,258.92, not $11,117.00, for a payday the calendar drew paid (review of d75;
+   * hypothetical: no money out is linked to his pay, measured on his ledger copy 2026-10-21).
    */
   const bankedCents = bankedDays
     .filter((d) => compareDates(d.postedOn, from) >= 0 && compareDates(d.postedOn, end) <= 0)
@@ -339,15 +372,27 @@ export function cashEarnings({
    * deposit when there is one and from the series' start when there is not, so
    * a series that has never paid is stale rather than invisible.
    *
-   * STRICTLY AFTER `silenceFrom`, via `addDays(…, 1)` — not the window from it
-   * minus one. The two agree only when the deposit landed exactly on a payday,
-   * and on the real ledger it did not: the last attributed deposit posted
-   * 2026-06-05 while the schedule pays on Thursdays, so the walk already skips
-   * to 06-11 and subtracting one then deletes a genuinely missed payday.
-   * Measured 2026-08-21 — the honest answer is eleven, the subtraction said ten.
+   * STRICTLY AFTER the last deposit (`silenceFrom` is the day after it) — not
+   * the window from it minus one. The two agree only when the deposit landed
+   * exactly on a payday, and on the real ledger it did not: the last attributed
+   * deposit posted 2026-06-05 while the schedule pays on Thursdays, so the walk
+   * already skips to 06-11 and subtracting one then deletes a genuinely missed
+   * payday. Measured 2026-08-21 — the honest answer is eleven, the subtraction
+   * said ten.
+   *
+   * ⚖️ …and a MISSED payday: one a deposit paid — early or late, the settlement's
+   * `settledBy` — is no part of it, as the calendar draws it paid. ⚖️ Default
+   * built, not asked (2026-10-21): the count is the paydays no deposit paid, the
+   * one /budgets' "already passed" counts. 🔴 Review of 27ca437: with Wed Sep 30's
+   * payroll paying Thu Oct 1 early and Wells Fargo read through Oct 2, Earned vs
+   * banked said "1 falls on a day already checked, with no deposit" of Oct 1
+   * (his ledger copy 2026-10-21, the Sep 30 row inserted). ⛔ The ones it leaves
+   * out are named (`silencePaidEarly`): 🔴 review of 337baa7 — the card then read
+   * "2 paydays have passed since the last deposit on Sep 30" with three passed.
    */
-  const silenceFrom = lastBankedOn ?? series.startedOn;
-  const periodsSinceBanked = occurrencesBetween(series, addDays(silenceFrom, 1), earnedThrough).count;
+  const silent = occurrenceDaysBetween(series, silenceFrom(lastBankedOn, series.startedOn), earnedThrough);
+  const silencePaidEarly = silent.filter((day) => settledPaydays.has(day));
+  const periodsSinceBanked = silent.length - silencePaidEarly.length;
 
   return {
     basis: periodsSinceBanked >= STALE_PERIODS ? "series-stale" : "series-live",
@@ -359,7 +404,22 @@ export function cashEarnings({
     lastPeriodOn: covered.lastOn,
     lastBankedOn,
     periodsSinceBanked,
+    silencePaidEarly,
   };
+}
+
+/**
+ * THE FIRST DAY of a schedule's silence — its paydays are those ON OR AFTER it (see `cashEarnings`): the day after the
+ * last day that banked, or with none, the schedule's first payday itself (`startedOn`), which nothing banked either.
+ * ⛔ One rule for the sentence's count (`periodsSinceBanked`) and the paydays it names not banked yet
+ * (`silentPaydaysNotBankedYet`). 🔴 Review of 147f167 (MEDIUM): the second read no silence at all when nothing had
+ * banked, so /spending's stale sentence named none of its paydays not banked yet, while the dashboard named Sep 3's.
+ * 🔴 Review of c3b30fe (MEDIUM): both read strictly after the first payday too, so with a Thu Jun 4 payroll returned the
+ * same day one /spending note counted "$15,000.00 … over Jun 4 – Sep 10" and then "14 expected paydays have passed",
+ * while the card counted 15.
+ */
+export function silenceFrom(lastBankedOn: string | null, startedOn: string): string {
+  return lastBankedOn === null ? startedOn : addDays(lastBankedOn, 1);
 }
 
 /** Earned vs banked's difference, and the part of it the ledger has looked for. */
@@ -394,4 +454,29 @@ export function payGap(impliedCents: number, bankedCents: number, unreadImpliedC
   if (gapCents <= 0) return { gapCents, unreadGapCents: 0, readGapCents: 0 };
   const unreadGapCents = Math.min(gapCents, Math.max(0, unreadImpliedCents));
   return { gapCents, unreadGapCents, readGapCents: gapCents - unreadGapCents };
+}
+
+/** Pay for checked paydays that no deposit made up, as the words say it. */
+export interface UnbankedSplit {
+  /** for paydays no deposit settled whose days to land are not all checked yet (`paydayLandingIsRead`) */
+  notBankedYetCents: number;
+  /** the rest — checked through their days to land: "never reached a bank" */
+  neverCents: number;
+}
+
+/**
+ * ⛔ THE ONE SPLIT of checked pay no deposit made up — the dashboard's Earned vs banked (`income-card`, over `payGap`'s
+ * read part) and /spending's shortfall note (`payShortfall`, over what no deposit inside the window or out made up).
+ *
+ * ⚖️ "Never reached a bank" only of a payday the ledger has checked through its days to land; one still inside them
+ * that no deposit settled is "not banked yet", the forecast's words (`notProjectedSubject`). `inGraceCents` is what
+ * those paydays come to, capped at the money no deposit made up — which is theirs first, as `payGap` gives the unread
+ * part first: no deposit settled them, so none of the netted money (decision 55) can be said to have paid them.
+ * 🔴 Review of 878c3d5: Thu Sep 3 checked through Sat Sep 5 read "Pay not banked yet" on the forecast and "$1,000.00
+ * of it never reached a bank" on the dashboard.
+ */
+export function unbankedSplit(unbankedCents: number, inGraceCents: number): UnbankedSplit {
+  const unbanked = Math.max(0, unbankedCents);
+  const notBankedYetCents = Math.min(unbanked, Math.max(0, inGraceCents));
+  return { notBankedYetCents, neverCents: unbanked - notBankedYetCents };
 }

@@ -50,8 +50,10 @@ test("the upcoming list places every monthly series on its own day of month", as
    *
    * ⚠️ Aug 7 was a payday of the old Jul 10 anchor, a week off Paycheck's own
    * deposits. On the deposits' Fridays (Jul 17) the third payday is Aug 14 and
-   * no row stands on the window's far edge, so that edge is pinned where it can
-   * be: recurring.test.ts, "the last day of an N-day window is day N-1".
+   * no row stands on this window's far edge — so the edge is pinned on the
+   * dashboard's 14-day strip below, the same `upcomingOccurrences`, where Car
+   * Lease's Jul 22 is day FIFTEEN (and recurring.test.ts, "the last day of an
+   * N-day window is day N-1").
    *
    * ⚠️ Car Insurance sits on the 26th and not the 24th deliberately: on the 24th
    * it shared a day with a payday of the old anchor, and this test's own premise
@@ -75,6 +77,24 @@ test("the upcoming list places every monthly series on its own day of month", as
   const mealKit = schedule.find((row) => row.includes("Meal Kit"));
   expect(mealKit).toBeDefined();
   expect(mealKit!.startsWith("Aug 5")).toBe(true);
+});
+
+/**
+ * ⛔ THE WINDOW'S FAR EDGE, where a row can stand on it. The check above lost its edge row when Paycheck moved onto
+ * its deposits' Fridays (8ef2fc5): with nothing on Aug 6 or Aug 7, a 31-day window lists the same eight rows, and an
+ * off-by-one at the far end — `today + windowDays` where it must be `today + windowDays - 1`, the defect that once
+ * listed his rent twice — passes it. The dashboard's strip reads the same `upcomingOccurrences` over 14 days: from
+ * E2E_FAKE_TODAY = 2026-07-08, day fourteen is Jul 21 and Car Lease's Jul 22 is day FIFTEEN — measured on a scratch
+ * e2e seed (2026-10-14): 14 days list four rows, 15 days list Car Lease too.
+ */
+test("the dashboard's 14-day strip ends on day fourteen: Car Lease's Jul 22 is day fifteen", async ({ page }) => {
+  await page.goto("/");
+  const strip = page.locator('section[aria-labelledby="upcoming-heading"]');
+  await expect(strip.getByRole("heading", { name: "Upcoming · next 14 days" })).toBeVisible();
+  const chips = (await strip.locator("li").allInnerTexts()).map((t) => t.replace(/\s+/g, " ").trim());
+  const dates = chips.map((chip) => /^([A-Z][a-z]{2} \d{1,2})/.exec(chip)?.[1] ?? chip);
+  expect(dates).toEqual(["Jul 9", "Jul 16", "Jul 17", "Jul 20"]);
+  expect(chips.some((chip) => chip.includes("Car Lease"))).toBe(false);
 });
 
 /**

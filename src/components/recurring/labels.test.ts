@@ -1,6 +1,7 @@
 import { describe, expect, test } from "vitest";
 import { DAYS_TO_POST_NOT_OVER, NO_STATEMENT_YET } from "@/lib/arrears-reading";
 import { projectedEvidence, seriesEvidenceTone, seriesPostingWords, type SeriesEvidence } from "@/lib/series-evidence";
+import { notLookedForDeposits } from "@/lib/unbanked-income";
 import type { ForecastComponent } from "@/services/forecast";
 import type { SeriesOccurrence, SeriesStaleness } from "@/services/recurring";
 import {
@@ -75,6 +76,17 @@ describe("unsettledReasonWord", () => {
   test("the grace reason says its days to post are not over — the arrears' words, never 'no import'", () => {
     expect(unsettledReasonWord("in_grace")).toBe(DAYS_TO_POST_NOT_OVER);
     expect(unsettledReasonWord("in_grace")).toBe("the days a payment has to post are not over yet");
+  });
+
+  /*
+   * ⚖️ A payday nobody has looked for, in every pay sentence's words (`notLookedForDeposits`) — the forecast's note,
+   * /budgets, the dashboard and /spending say "the ledger has not looked for its deposit". 🔴 It read a bill's words,
+   * "no statement has covered it yet": of pay landing where no statement is coming (archived, a cash wallet) a promise
+   * of one, and beside a pay sentence naming an account with no checked record, a statement it does not name.
+   */
+  test("the payday reason is the pay sentences' words — no statement promised", () => {
+    expect(unsettledReasonWord("not_looked_for")).toBe(notLookedForDeposits(1));
+    expect(unsettledReasonWord("not_looked_for")).toBe("the ledger has not looked for its deposit");
   });
 });
 

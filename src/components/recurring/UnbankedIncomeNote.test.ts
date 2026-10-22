@@ -22,11 +22,16 @@ const cashJob = { totalCents: 209_400, occurrenceCount: 2, names: ["Cash job (we
  * passed this month with no deposit imported (Cash job (weekly pay)) … Cash pay
  * that never reaches a bank cannot be projected as arriving" of Sep 3 and Sep
  * 10, while the account that pay lands in had been checked through Aug 12
- * (measured 2026-09-15).
+ * (measured 2026-09-15). (Its "Cash pay" is "Pay" since 2026-10-14: payroll too.)
  */
 describe("UnbankedIncomeNote — /recurring names unchecked paydays as not looked for, not unbanked", () => {
   test("every payday after the frontier: no 'never reaches a bank', and no warning tone", () => {
-    const { html, words } = text({ ...cashJob, checkedOccurrenceCount: 0, frontier: { kind: "day", through: "2026-08-12" } });
+    const { html, words } = text({
+      ...cashJob,
+      checkedOccurrenceCount: 0,
+      pastGraceOccurrenceCount: 0,
+      frontier: { kind: "day", through: "2026-08-12" },
+    });
     expect(words).toBe(
       "2 paydays worth $2,094.00 already passed this month (Cash job (weekly pay)) — not counted above, and not in EOM cash. " +
         "Both fall after Wed, Aug 12, 2026, the last day every account that pay lands in has been checked through — so the ledger has not looked for their deposits. " +
@@ -36,13 +41,42 @@ describe("UnbankedIncomeNote — /recurring names unchecked paydays as not looke
     expect(html).not.toContain("text-warning");
   });
 
-  test("every payday on a checked day: the sentence it always printed, in warning tone", () => {
-    const { html, words } = text({ ...cashJob, checkedOccurrenceCount: 2, frontier: { kind: "day", through: "2026-09-14" } });
+  /*
+   * ⚖️ "Pay", not "Cash pay": an app label, and since Aug 27 his pay is payroll by ACH into Wells Fargo (decision 55).
+   * 🔴 The note called every checked payday with no deposit "Cash pay that never reaches a bank" — of a payroll too.
+   */
+  test("every payday checked through its days to land: 'Pay that never reaches a bank', in warning tone", () => {
+    const { html, words } = text({
+      ...cashJob,
+      checkedOccurrenceCount: 2,
+      pastGraceOccurrenceCount: 2,
+      frontier: { kind: "day", through: "2026-09-14" },
+    });
     expect(words).toBe(
       "2 paydays worth $2,094.00 already passed this month with no deposit imported (Cash job (weekly pay)) — not counted above, and not in EOM cash. " +
-        "Cash pay that never reaches a bank cannot be projected as arriving; the month strip below counts it, because that line is the schedule.",
+        "Pay that never reaches a bank cannot be projected as arriving; the month strip below counts it, because that line is the schedule.",
     );
+    expect(words).not.toContain("Cash pay");
     expect(html).toContain("text-warning");
+  });
+
+  /*
+   * ⚖️ A payday whose day is checked but not the days after it its deposit may still land on (its series' tolerance,
+   * settlement's anchor clause) is no warning: a payroll a day late answers it. 🔴 The split ignored the tolerance, and
+   * a Thursday checked through Friday read "Cash pay that never reaches a bank", in warning tone, of pay due Sunday.
+   */
+  test("checked on their days but inside their days to land: quiet, and never 'never reaches a bank'", () => {
+    const { html, words } = text({
+      ...cashJob,
+      checkedOccurrenceCount: 2,
+      pastGraceOccurrenceCount: 0,
+      frontier: { kind: "day", through: "2026-09-11" },
+    });
+    expect(words).toBe(
+      "2 paydays worth $2,094.00 already passed this month with no deposit imported (Cash job (weekly pay)) — not counted above, and not in EOM cash. " +
+        "Pay not banked yet cannot be projected as arriving; the month strip below counts it, because that line is the schedule.",
+    );
+    expect(html).not.toContain("text-warning");
   });
 
   test("a window straddling the frontier keeps the warning for the checked payday and names the rest", () => {
@@ -51,10 +85,11 @@ describe("UnbankedIncomeNote — /recurring names unchecked paydays as not looke
       occurrenceCount: 3,
       names: ["Cash job (weekly pay)"],
       checkedOccurrenceCount: 1,
+      pastGraceOccurrenceCount: 1,
       frontier: { kind: "day", through: "2026-08-12" },
     });
     expect(words).toContain(
-      "1 falls on a day already checked, with no deposit; the other 2 fall after Wed, Aug 12, 2026, the last day every account that pay lands in has been checked through. Cash pay that never reaches a bank",
+      "1 falls on a day already checked, with no deposit; the other 2 fall after Wed, Aug 12, 2026, the last day every account that pay lands in has been checked through. Pay that never reaches a bank",
     );
     expect(words).not.toContain("with no deposit imported");
     expect(html).toContain("text-warning");
@@ -66,6 +101,7 @@ describe("UnbankedIncomeNote — /recurring names unchecked paydays as not looke
       occurrenceCount: 4,
       names: ["Cash job (weekly pay)", "Tutoring"],
       checkedOccurrenceCount: 1,
+      pastGraceOccurrenceCount: 1,
       frontier: { kind: "per-schedule" },
     });
     expect(words).toContain(

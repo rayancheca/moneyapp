@@ -15,7 +15,6 @@ import { recurringSeries } from "@/db/schema/recurring";
 import { transactions } from "@/db/schema/transactions";
 import { seedDatabase } from "@/db/seed";
 import { addDays, periodBounds } from "@/lib/dates";
-import { NO_INCOME_DAY_CHECKED } from "@/lib/unbanked-income";
 import { incomeExpectation } from "./budgets";
 import { runwayCard } from "./committed";
 import { incomeCard } from "./income-card";
@@ -340,14 +339,41 @@ describe("incomeCard", () => {
     expect(line.unreadDays).toBe(48);
     expect(line.silentPeriods).toBe(7);
     expect(line.checkedSilentPeriods).toBe(1);
-    expect(line.verdict).toContain("has not looked");
     expect(line.verdict).not.toContain("did not reach a bank");
     // 🔴 Jul 9 is the day the records are CHECKED through, not the last day
     // imported — "that nothing has imported yet" said the second of the first
-    expect(line.verdict).toContain(
-      "The other 6 sit inside the 48 days past Jul 9, the last day every account that pay lands in has been checked through, so the ledger has not looked.",
+    // ⚖️ …in the live schedule's words, /budgets' and the forecast's (`unbankedIncomeFrontierClause`): "with no
+    // deposit" only of the payday checked. 🔴 It said "7 paydays have passed since Jul 2 with no deposit, but only 1 of
+    // them fall on days the records cover. The other 6 sit inside …" — a deposit denied on days nobody had read.
+    expect(line.verdict).toBe(
+      "7 paydays have passed since the last deposit on Jul 2. 1 falls on a day already checked, with no deposit; the " +
+        "other 6 fall after Jul 9, the last day every account that pay lands in has been checked through.",
     );
     expect(line.verdict).not.toContain("imported");
+  });
+
+  /*
+   * 🔴 Earned vs banked on a copy of his ledger 2026-10-21 — Wells Fargo, where It America LLC's payroll lands, checked
+   * through Sep 24, the day of its last deposit: "3 paydays have passed since Sep 24 with no deposit, but only 0 of
+   * them fall on days the records cover. The other 3 sit inside the 27 days past Sep 24, …". /budgets' header said of
+   * the same Oct 1, 8 and 15: "They all fall after Thu, Sep 24, 2026, … — so the ledger has not looked for their
+   * deposits."
+   */
+  test("a stale silence the ledger has read none of: never 'only 0' — what /budgets says of the same paydays", () => {
+    addSeries();
+    for (let day = PAY_START; day <= "2026-07-30"; day = addDays(day, 7)) addTxn(day, 100_000);
+    coverThrough(CHASE, "2026-06-01", "2026-07-30");
+
+    const line = incomeCard(bundle.db, TODAY)!.pay[0]!;
+    expect(line.basis).toBe("series-stale");
+    expect(line.silentPeriods).toBe(3);
+    expect(line.checkedSilentPeriods).toBe(0);
+    expect(line.verdict).toBe(
+      "3 paydays have passed since the last deposit on Jul 30. They all fall after Jul 30, the last day every " +
+        "account that pay lands in has been checked through — so the ledger has not looked for their deposits.",
+    );
+    expect(line.verdict).not.toContain("only 0");
+    expect(line.verdict).not.toContain("with no deposit");
   });
 
   /**
@@ -365,6 +391,12 @@ describe("incomeCard", () => {
     const line = incomeCard(bundle.db, TODAY)!.pay[0]!;
     expect(line.checkedSilentPeriods).toBe(3);
     expect(line.verdict).toContain("the pay did not reach a bank");
+    // ⚖️ the bar counts paydays checked on their day; of those, only the ones checked through their days to land are
+    // said not to have reached a bank — Jul 23's run past the checked Jul 23 (review of 4b98f77)
+    expect(line.verdict).toContain(
+      "2 of them, and their days to land, fall on days the records already cover, through Jul 23 — so the pay did " +
+        "not reach a bank; Jul 23's days to land run past Jul 23,",
+    );
   });
 
   /**
@@ -827,16 +859,33 @@ describe("Income recorded — §6A 68: no day of the month checked where the pay
   });
 
   describe("the card", () => {
-    test("no day read: the row reads 'Income recorded in Aug 2026 —', and says why aloud — never $0.00", () => {
+    test("no day read: the row reads 'Income recorded in Aug 2026 —' — never $0.00", () => {
       addSeries();
       addTxn(PAY_START, 100_000);
       coverThrough(CHASE, "2026-06-01", "2026-07-31");
 
       const row = recordedRow(incomeCard(bundle.db, TODAY)!);
       expect(row.visible).toBe("Income recorded in Aug 2026 —");
-      expect(row.spoken).toBe(`Income recorded in Aug 2026 ${NO_INCOME_DAY_CHECKED}`);
-      expect(row.spoken).not.toContain("—");
+      expect(row.spoken).toBe(row.visible);
       expect(row.visible).not.toContain("$0.00");
+    });
+
+    /*
+     * 🔴 His ledger copy 2026-10-21, as a screen reader and the page's text read it: "Income recorded in Oct 2026 — no
+     * day of this month checked yet in the accounts that pay lands in, so nothing is shown" and, the next line, "Not
+     * one day of Oct 2026 has been checked in the accounts that pay lands in, so nothing is shown." The note under the
+     * dash says it, once, to every reader.
+     */
+    test("…and why is said once, by the note under the dash — to the eye, a screen reader and the page's text", () => {
+      addSeries();
+      addTxn(PAY_START, 100_000);
+      coverThrough(CHASE, "2026-06-01", "2026-07-31");
+
+      const card = incomeCard(bundle.db, TODAY)!;
+      const text = renderToStaticMarkup(createElement(IncomeCard, { data: card })).replace(/<[^>]+>/g, " ");
+      expect(text).toContain(card.postedNote);
+      expect(text.split("in the accounts that pay lands in")).toHaveLength(2);
+      expect(text.split("nothing is shown")).toHaveLength(2);
     });
 
     test("a day of the month checked: the row prints its $0.00", () => {

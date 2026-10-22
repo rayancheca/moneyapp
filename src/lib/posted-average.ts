@@ -111,6 +111,12 @@ export interface PerPaydayEvidence {
   /** tagged rows that paid paydays of an EARLIER rate era — each held to its own time's rate, and not averaged */
   earlier: number;
   /**
+   * The rate era of each of those rows (`ratePeriodOf`'s index), oldest first: which earlier rate each was held to,
+   * so the words can name every rate when there were several. 🔴 Counted alone, deposits at $1,000.00 and $1,047.00
+   * read "at an earlier rate" (review of the pay-and-avg branch).
+   */
+  earlierEras: readonly number[];
+  /**
    * tagged rows that paid paydays of a LATER rate era — a raise recorded ahead, whose first week's pay landed while
    * the old rate is in force — held to that rate, and not averaged until it is in force
    */
@@ -180,7 +186,7 @@ export function perPaydayEvidence(
     });
   }
   const samples: PaydaySample[] = [];
-  let earlier = 0;
+  const earlierEras: number[] = [];
   let later = 0;
   for (const r of counted) {
     const reading = readings.get(r.id);
@@ -190,7 +196,7 @@ export function perPaydayEvidence(
     if (r.amountCents <= 0) continue;
     // a row with no reading is held on its own day, as `expectedCentsOf` holds it
     const era = reading?.ratePeriod ?? ratePeriodOf(schedule, r.postedOn);
-    if (era < now) earlier += 1;
+    if (era < now) earlierEras.push(era);
     if (era > now) later += 1;
     if (era !== now) continue;
     const cents = spreadSampleCents(r.amountCents, reading);
@@ -208,9 +214,11 @@ export function perPaydayEvidence(
   const returned = samples.reduce((n, s) => n + s.returns, 0);
   const moneyOut = counted.filter((r) => r.amountCents <= 0).length - returned;
   const sampled = samples.reduce((n, s) => n + s.deposits + s.returns, 0);
+  const earlier = earlierEras.length;
   return {
     samples: samples.sort((a, b) => compareDates(a.postedOn, b.postedOn)),
     earlier,
+    earlierEras: earlierEras.sort((a, b) => a - b),
     later,
     noPaydayOfTheirOwn: counted.length - earlier - later - moneyOut - sampled,
     moneyOut,
@@ -275,6 +283,16 @@ export function nettedToNothing(rows: readonly Pick<ReadableRow, "postedOn" | "a
  */
 export function daysThatBanked(rows: readonly Pick<ReadableRow, "postedOn" | "amountCents">[]): Occurrence[] {
   return occurrencesOf(rows).filter((o) => o.amountCents > 0);
+}
+
+/**
+ * The days whose rows net BELOW $0.00, oldest first — money going back out on a day of its own: a payroll returned on a
+ * later day, a clawback. `daysThatBanked`' other side, so every day that is not a same-day nothing is one or the other.
+ * ⚖️ His decision 75: such a day banked nothing and pays no payday — the deposit's own day pays as it always has — so
+ * it is named where a window's money is counted (`payShortfall`'s `wentBackOut`), never taken off a paid payday.
+ */
+export function daysThatWentBackOut(rows: readonly Pick<ReadableRow, "postedOn" | "amountCents">[]): Occurrence[] {
+  return occurrencesOf(rows).filter((o) => o.amountCents < 0);
 }
 
 /** A day's rows summed, one per day, oldest first — what `occurrencesOf` and `nettedToNothing` divide between them. */

@@ -5,7 +5,13 @@ import { recurringSeries } from "@/db/schema/recurring";
 import { transactions } from "@/db/schema/transactions";
 import { compareDates, todayIso } from "@/lib/dates";
 import { cashEarnings, type CashEarnings, type PaySeries } from "@/lib/cash-earnings";
-import { payShortfall, type PayShortfall, type WindowEarnings } from "@/lib/pay-shortfall";
+import {
+  payShortfall,
+  silentPaydaysNotBankedYet,
+  type PayShortfall,
+  type WentBackOut,
+  type WindowEarnings,
+} from "@/lib/pay-shortfall";
 import { firstPaydayOn } from "@/lib/payday-settlement";
 import { stepPlan, walkDayOfMonth } from "@/lib/recurring-step";
 import { outsidePortfolioCashAccountIds } from "./accounts";
@@ -52,6 +58,11 @@ export interface CashEarningsReading extends CashEarnings {
   seriesId: string;
   seriesName: string;
   /**
+   * The series' days to land (`toleranceDays`): a payday checked on its day but not through these, that no deposit
+   * settled, is "not banked yet" — never "never reached a bank" (`paydaysNotBankedYet`, `unbankedSplit`).
+   */
+  toleranceDays: number;
+  /**
    * The last day every account this pay lands in now (`landingAccountsBySeries`) has been read through —
    * `checkedThroughBySeries` — or null when one of them has no checked record. Present only when the caller asked
    * (`withChecked`).
@@ -67,6 +78,13 @@ export interface CashEarningsReading extends CashEarnings {
   /** of `periodsSinceBanked`, the ones on or before `checkedThrough` (0 when it is null) */
   checkedPeriodsSinceBanked?: number;
   /**
+   * Of the silence, the paydays not banked yet (`silentPaydaysNotBankedYet`), oldest first — schedule-wide like
+   * `periodsSinceBanked`, never the window's (`shortfall.notBankedYetPaydays`): what /spending's note for a stale
+   * schedule names, as Earned vs banked's verdict does (`IncomePayLine.checkedSilentNotBankedYet`). Present only with
+   * `withChecked`.
+   */
+  checkedSilentNotBankedYet?: readonly string[];
+  /**
    * The window's pay against the series' settlement (`payShortfall`) — /spending's shortfall note and the split of its
    * surplus note: what the READ paydays came to beyond what was banked inside the window, what deposits outside it
    * paid of them, what no deposit made up, and the window's money that paid a later payday early. Present only with
@@ -77,6 +95,14 @@ export interface CashEarningsReading extends CashEarnings {
    * by the deposit of Sep 24 exactly where the calendar draws it — never a second walk of this reading's schedule.
    */
   shortfall?: PayShortfall;
+  /**
+   * ⚖️ The money that went back out on a day of its own inside the window, each day whole, that the window's money
+   * paying no read payday could not net — the one rule (`moneyOutOfWindow`, decision 75) — and, with it, this reading's
+   * `bankedCents` and `unbankedCents` are that rule's: the days that banked less the money out it netted. Present only
+   * with `withChecked`, since "read" is that frontier's word — and every reader that PRINTS a banked figure asks with
+   * it: Earned vs banked's card and /spending's notes.
+   */
+  wentBackOut?: readonly WentBackOut[];
 }
 
 export interface CashEarningsWindow {
@@ -87,8 +113,10 @@ export interface CashEarningsWindow {
   todayIsComplete?: boolean;
   /**
    * Also measure each reading against how far its landing accounts have been
-   * read. Off by default: it reads every account's coverage, and the dashboard
-   * card that calls this several times computes its own frontier once.
+   * read — and so read its banked figure by the rule for money out on a day of
+   * its own (`wentBackOut`), which needs that frontier. Off by default: it reads
+   * every account's coverage and walks the settlement, and the dashboard card's
+   * as-of readings, which print no banked figure, do without.
    */
   withChecked?: boolean;
 }
@@ -283,8 +311,9 @@ const frontierReading = cache(function frontierReading(db: AppDatabase, today: s
  * `landingAccountsBySeries` and every account's checked record, archived ones included — or null when one of them has
  * no checked record, or when the series names no account and nothing linked to it says where it lands.
  *
- * ⛔ ONE frontier for every sentence about whether the ledger has LOOKED: the passed paydays (/budgets, /recurring),
- * the dashboard's income card and /spending's note. 🔴 The pay sentence said "the ledger has not looked for its
+ * ⛔ ONE frontier for every sentence about whether the ledger has LOOKED: the passed paydays (/budgets, the forecast on
+ * /recurring, the pay series' own page), the calendar's payday marks (`paydayIsRead`), the dashboard's income card and
+ * /spending's note. 🔴 The pay sentence said "the ledger has not looked for its
  * deposit" of Oct 1 while the forecast beside it, measuring to today, said "all of it running late" (his ledger,
  * 2026-10-08) — so on every account a statement is still coming for, a series' silence is measured to this same day
  * (`silenceMeasuredThroughBySeries`).
@@ -439,10 +468,10 @@ export function cashEarningsReadings(
      * the recurring calendar and /budgets open on. A schedule with no evidence at all has no life to bound, so it
      * implies nothing rather than implying everything since the epoch.
      *
-     * 🔴 It was the first deposit's own date, walked by the deposits' rhythm. On the e2e fixture Paycheck's deposits
-     * fall on the other Fridays of its biweekly anchor: this card counted "14 paydays, Jan 2 – Jul 3" while the
-     * calendar drew Jan 9 … Jun 26 and the settlement walked only from Jul 10. On his ledger the card counted his cash
-     * weeks from Jun 4 and no other page drew one before Jul 23.
+     * 🔴 It was the first deposit's own date, walked by the deposits' rhythm. On the e2e fixture, whose Paycheck was
+     * then anchored Fri Jul 10 — a week off its deposits' Fridays (their own Jul 17 since 8ef2fc5) — this card counted
+     * "14 paydays, Jan 2 – Jul 3" while the calendar drew Jan 9 … Jun 26 and the settlement walked only from Jul 10. On
+     * his ledger the card counted his cash weeks from Jun 4 and no other page drew one before Jul 23.
      */
     const startedOn = firstPaydayOn(eff, s.toleranceDays, banked, today);
     if (startedOn === null) continue;
@@ -459,12 +488,20 @@ export function cashEarningsReadings(
       endedOn: eff.userEndsOn,
     };
 
+    /*
+     * ⚖️ Who paid what, when the reading names a silence (`withChecked`): a payday a deposit paid — early or late — is
+     * no part of it (`settledPaydays`), as the calendar draws it paid. 🔴 Review of 27ca437: Earned vs banked said "1
+     * falls on a day already checked, with no deposit" of Thu Oct 1, which Wed Sep 30's payroll paid early.
+     */
+    const settlement = checkedOf === null ? null : paydaySettlement(db, s.id, today);
+    const settledPaydays = new Set(settlement?.settledBy.keys() ?? []);
     const reading: CashEarningsReading = {
       seriesId: s.id,
       seriesName: s.name,
-      ...cashEarnings({ series: pay, banked, from, to, today, todayIsComplete }),
+      toleranceDays: s.toleranceDays,
+      ...cashEarnings({ series: pay, banked, from, to, today, todayIsComplete, settledPaydays }),
     };
-    if (checkedOf === null) {
+    if (checkedOf === null || settlement === null) {
       readings.push(reading);
       continue;
     }
@@ -472,19 +509,46 @@ export function cashEarningsReadings(
     // ⛔ the window's figures are this reading's — Earned vs banked's — and only who paid what is the settlement's
     const shortfallOf = (read: WindowEarnings["read"]): PayShortfall =>
       payShortfall(
-        paydaySettlement(db, s.id, today),
-        { from, to, today, checkedThrough },
+        settlement,
+        { from, to, today, checkedThrough, toleranceDays: s.toleranceDays },
         { impliedCents: reading.impliedCents, bankedCents: reading.bankedCents, read },
       );
+    /*
+     * ⛔ ONE reading of the rule for money out on a day of its own (`moneyOutOfWindow`): the shortfall's — so the card's
+     * banked figure, /spending's surplus and stale notes and its shortfall note read one figure, and name one day.
+     * 🔴 The card took nothing off for a later day's money out and named none, while /spending netted it or named it
+     * (merge of d75-banked and the shortfall branch, 2026-10-21).
+     */
+    const ruled = (shortfall: PayShortfall) => ({
+      bankedCents: shortfall.bankedCents,
+      unbankedCents: reading.impliedCents - shortfall.bankedCents,
+      wentBackOut: shortfall.wentBackOut,
+      shortfall,
+    });
+    // ⛔ the silence's, whatever the window — the verdict's own call (`silentPaydaysNotBankedYet`)
+    const checkedSilentNotBankedYet = silentPaydaysNotBankedYet(settlement, {
+      lastBankedOn: reading.lastBankedOn,
+      startedOn,
+      today,
+      checkedThrough,
+      toleranceDays: s.toleranceDays,
+    });
     if (checkedThrough === null) {
       const shortfall = shortfallOf({ paydays: 0, cents: 0, firstOn: null, lastOn: null });
-      readings.push({ ...reading, checkedThrough, checkedPeriodsCovered: 0, checkedPeriodsSinceBanked: 0, shortfall });
+      readings.push({
+        ...reading,
+        checkedThrough,
+        checkedPeriodsCovered: 0,
+        checkedPeriodsSinceBanked: 0,
+        checkedSilentNotBankedYet,
+        ...ruled(shortfall),
+      });
       continue;
     }
     /*
      * The same schedule, read AS OF the frontier: a day the records have read
      * through is complete, so a payday dated on it is checked — unless the
-     * frontier IS the running day, where a deposit may still post.
+     * frontier IS the running day, where a deposit may still post. ⛔ Its silence is the same one's: none a deposit paid.
      */
     const asChecked = cashEarnings({
       series: pay,
@@ -493,6 +557,7 @@ export function cashEarningsReadings(
       to: compareDates(to, checkedThrough) < 0 ? to : checkedThrough,
       today: checkedThrough,
       todayIsComplete: compareDates(checkedThrough, today) < 0,
+      settledPaydays,
     });
     const shortfall = shortfallOf({
       paydays: asChecked.periodsCovered,
@@ -510,7 +575,8 @@ export function cashEarningsReadings(
         reading.lastBankedOn,
         checkedThrough,
       ),
-      shortfall,
+      checkedSilentNotBankedYet,
+      ...ruled(shortfall),
     });
   }
 
