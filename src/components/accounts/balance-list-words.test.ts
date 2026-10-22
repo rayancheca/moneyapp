@@ -9,9 +9,9 @@ describe("balanceListWords — the list's words follow the rule that offers the 
   // `countRefusal`'s answers — services/anchors.test.ts pins which account gets which
   const checking = null;
   // a brokerage book: the import makes it, values it from what its statements prove, and takes no typed balance
-  const book = { kind: "book", why: "Robinhood Agentic Brokerage holds only what its statements prove" } as const;
+  const book = { why: "Robinhood Agentic Brokerage holds only what its statements prove" } as const;
   // ⚖️ §6A 58: an account priced from its holdings takes no balance he counts either
-  const priced = { kind: "pricedFromHoldings", why: "Robinhood Brokerage is priced from its holdings" } as const;
+  const priced = { why: "Robinhood Brokerage is priced from its holdings" } as const;
 
   test("an account that takes a balance he counts is invited to add one, in his words (§6A 50)", () => {
     expect(balanceListWords(checking)).toEqual({

@@ -456,7 +456,6 @@ describe("countRefusal — a count is refused where the rebuild never reads one 
     const refusal =
       "Robinhood Brokerage is priced from its holdings — a balance you counted there would play no part in its curve";
     expect(countRefusal(bundle.db, row(brokerage))).toEqual({
-      kind: "pricedFromHoldings",
       why: "Robinhood Brokerage is priced from its holdings",
       message: refusal,
     });
@@ -490,7 +489,6 @@ describe("countRefusal — a count is refused where the rebuild never reads one 
 
     expect(countRefusal(bundle.db, row(cash))).toBeNull();
     expect(countRefusal(bundle.db, row(book))).toEqual({
-      kind: "book",
       why: "Robinhood Agentic Brokerage holds only what its statements prove",
       message:
         "Robinhood Agentic Brokerage holds only what its statements prove — a balance you counted here would outlive them",
