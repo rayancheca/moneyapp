@@ -31,9 +31,10 @@ export interface SeriesPostedAverage extends PostedAverage {
   carries: readonly string[];
   /**
    * ⚖️ DEFAULT, BUILT, NOT ASKED (2026-10-22): of the payments the average is of (`occurrences`), those of at least twice
-   * the rate in force, of a bill or subscription whose other payments were that rate (`paidAhead`) — each covered more
-   * than one charge, named beside the average wherever it prints (`postedAvgNotes`). Empty for a series read per payday
-   * or as posted, and for one with none. His Car insurance's Sep 3 -$1,000.00, alone on his ledger copy 2026-10-21.
+   * the rate in force, of a bill or subscription one of whose other payments was that rate and none more (`paidAhead`)
+   * — each covered more than one charge, named beside the average wherever it prints (`postedAvgNotes`). Empty for a
+   * series read per payday or as posted, and for one with none. His Car insurance's Sep 3 -$1,000.00, alone on his
+   * ledger copy 2026-10-21.
    */
   paidAhead: readonly Occurrence[];
   /**

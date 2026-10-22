@@ -361,6 +361,14 @@ export function postedAsWord(o: Pick<Occurrence, "postings">): string | null {
  * have read the same (review of 0c5c893, a copy of his ledger 2026-10-21 with that row added). Car insurance's Aug 12
  * -$357.58 is its rate to the cent: Sep 3 is still named. The other wording — the size alone ("2.8× the rate") — was
  * not built: it would print beside every large bill, and the default asked for names what Sep 3 paid.
+ *
+ * ⚖️ DEFAULT, BUILT, NOT ASKED (2026-10-22): …ONE other payment of the rate at least, and NONE above it — a payment
+ * below the rate, or money back, is what a payment ahead leaves, never a sign its amounts vary. 🔴 Read as "every
+ * other payment is the rate", Sep 3's -$1,000.00 left -$72.74 for Nov 11, and with that row on the series the page,
+ * the All tab and the popover read "posted avg -$476.77" with nothing beside it — the figure Sep 3 inflates,
+ * unexplained, the defect this note was built to end; a +$12.50 credit on Oct 2 read "-$448.36", as silent (review
+ * of cdec7cb, a copy of his ledger 2026-10-21 with that row added, today 2026-11-15). FPL still names nothing: none of
+ * its payments is the -$58.87 he set. A bill whose amounts vary around a rate set from one of them has one above it.
  */
 export const PAID_AHEAD_MULTIPLE = 2;
 
@@ -372,7 +380,7 @@ const AT_THE_RATE_CENTS = 1;
 
 /**
  * The payments of `occurrences` that covered more than one charge — `PAID_AHEAD_MULTIPLE` × `rateCents` or more — of a
- * bill or subscription whose other payments (one at least) were `rateCents`, within `AT_THE_RATE_CENTS`.
+ * bill or subscription one of whose other payments was `rateCents` and none more, within `AT_THE_RATE_CENTS`.
  */
 export function paidAhead(
   occurrences: readonly Occurrence[],
@@ -380,13 +388,14 @@ export function paidAhead(
   kind: SeriesKind,
 ): Occurrence[] {
   if (rateCents === null || rateCents === 0 || !PAYS_AHEAD.has(kind)) return [];
-  const isAhead = (o: Occurrence): boolean =>
-    Math.sign(o.amountCents) === Math.sign(rateCents) &&
-    Math.abs(o.amountCents) >= PAID_AHEAD_MULTIPLE * Math.abs(rateCents);
-  const ahead = occurrences.filter(isAhead);
+  const rate = Math.abs(rateCents);
+  // a payment read the way the rate runs: money back reads below zero
+  const paid = (o: Occurrence): number => Math.sign(rateCents) * o.amountCents;
+  const isAhead = (o: Occurrence): boolean => paid(o) >= PAID_AHEAD_MULTIPLE * rate;
   const rest = occurrences.filter((o) => !isAhead(o));
-  const paidItsRate = rest.length > 0 && rest.every((o) => Math.abs(o.amountCents - rateCents) <= AT_THE_RATE_CENTS);
-  return paidItsRate ? ahead : [];
+  const oneAtTheRate = rest.some((o) => Math.abs(paid(o) - rate) <= AT_THE_RATE_CENTS);
+  const noneAbove = rest.every((o) => paid(o) - rate <= AT_THE_RATE_CENTS);
+  return oneAtTheRate && noneAbove ? occurrences.filter(isAhead) : [];
 }
 
 /** the period one charge of a cadence covers — "more than one month" */

@@ -625,13 +625,35 @@ describe("paidAhead — the payments that covered more than one charge, said bes
     expect(paidAhead(fpl, -5_887, "bill")).toEqual([]);
   });
 
-  test("its other payments are the rate, to the cent an instalment plan rounds by — and there is one", () => {
+  test("one of its other payments is the rate, to the cent an instalment plan rounds by — and none is above it", () => {
     const sep3 = at("2026-09-03", -100_000);
     expect(paidAhead([AUG_12, sep3, at("2026-12-11", RATE - 1)], RATE, "bill")).toEqual([sep3]);
     expect(paidAhead([AUG_12, sep3, at("2026-12-11", RATE + 1)], RATE, "bill")).toEqual([sep3]);
+    // two cents more than the rate is above it
     expect(paidAhead([AUG_12, sep3, at("2026-12-11", RATE - 2)], RATE, "bill")).toEqual([]);
     // with no payment of the rate beside it, nothing shows the rate was what it paid
     expect(paidAhead([sep3], RATE, "bill")).toEqual([]);
+  });
+
+  /*
+   * ⚖️ DEFAULT, BUILT, NOT ASKED (2026-10-22): …a payment BELOW the rate, or money back, is what a payment ahead leaves,
+   * and hides nothing. 🔴 At cdec7cb every other payment had to be the rate: Sep 3's -$1,000.00 left -$72.74 for Nov 11,
+   * and with that row on the series all three surfaces read "posted avg -$476.77" — the figure Sep 3 inflates — with
+   * nothing beside it; a +$12.50 credit on Oct 2 read "-$448.36", the same silence (review of cdec7cb, a copy of his
+   * ledger 2026-10-21 with that row added, today 2026-11-15).
+   */
+  test("a remainder below the rate, or money back, leaves the payment ahead named; one above the rate does not", () => {
+    const sep3 = at("2026-09-03", -100_000);
+    expect(paidAhead([AUG_12, sep3, at("2026-11-11", -7_274)], RATE, "bill")).toEqual([sep3]);
+    expect(paidAhead([AUG_12, sep3, at("2026-10-02", 1_250)], RATE, "bill")).toEqual([sep3]);
+    expect(paidAhead([AUG_12, sep3, at("2026-12-11", RATE + 2)], RATE, "bill")).toEqual([sep3]);
+    // …but one above the rate says its amounts vary, and the -$1,000.00 may be one large bill: 1.5× beside it…
+    expect(paidAhead([AUG_12, sep3, at("2026-10-11", -53_637)], RATE, "bill")).toEqual([]);
+    // …and a bill whose amounts vary around a rate he set from one of them still paid nothing ahead
+    const fpl = [-5_887, -1_421, -7_200, -12_500].map((c, i) => at(`2026-0${6 + i}-10`, c));
+    expect(paidAhead(fpl, -5_887, "bill")).toEqual([]);
+    // …and the remainder alone shows no rate was what it paid
+    expect(paidAhead([sep3, at("2026-11-11", -7_274)], RATE, "bill")).toEqual([]);
   });
 
   test("a subscription pays ahead as a bill does; a transfer, income or other series is no charge to pay ahead", () => {

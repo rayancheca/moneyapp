@@ -350,6 +350,34 @@ describe("the posted average, per occurrence — his rent on the page, the All t
   });
 
   /*
+   * ⚖️ DEFAULT, BUILT, NOT ASKED (2026-10-22): …beside a payment of the rate, a payment below it or money back hides
+   * nothing. 🔴 At cdec7cb every other payment had to be the rate: with the -$72.74 Sep 3 left for Nov 11 linked to
+   * the series, the page and the All tab read "posted avg -$476.77" with no note, and the popover "⚠️ … is -$476.77,
+   * which is not what you set." — the figure Sep 3 inflates, unexplained; a +$12.50 credit on Oct 2 read "-$448.36",
+   * as silent (review of cdec7cb, a copy of his ledger 2026-10-21 with that row added, today 2026-11-15).
+   */
+  const sep3Named = (id: string, today: string, avg: string) => {
+    const sep3 = [{ postedOn: "2026-09-03", amountCents: -100_000, postings: 1 }];
+    expect(seriesDetail(bundle.db, id, today)!.paidAhead).toEqual(sep3);
+    expect(listSeries(bundle.db, today).find((s) => s.id === id)!.paidAhead).toEqual(sep3);
+    expect(provenanceFor(bundle.db, { kind: "recurringSeries", id, today })!.headline).toContain(
+      `is ${avg}, which is not what you set — Sep 3's -$1,000.00 covered more than one month.`,
+    );
+  };
+
+  test("Car insurance: the -$72.74 Sep 3 left for Nov 11 leaves Sep 3 named — on all three", () => {
+    const car = seedHisCarSeries(bundle.db);
+    car.charge("2026-11-11", -7_274, car.insuranceId);
+    sep3Named(car.insuranceId, "2026-11-15", "-$476.77");
+  });
+
+  test("Car insurance: a +$12.50 credit back leaves Sep 3 named — on all three", () => {
+    const car = seedHisCarSeries(bundle.db);
+    car.charge("2026-10-02", 1_250, car.insuranceId);
+    sep3Named(car.insuranceId, TODAY, "-$448.36");
+  });
+
+  /*
    * ⚖️ DEFAULT, BUILT, NOT ASKED (2026-10-22): …only of a bill or subscription that otherwise paid its rate. 🔴 At
    * 0c5c893 FPL, with one -$125.00 summer bill beside its -$14.21 and -$56.22 under the -$58.87 he set, read "Aug 27's
    * -$125.00 covered more than one month" on the All tab and the Per charge line — one high bill, one month; a card
