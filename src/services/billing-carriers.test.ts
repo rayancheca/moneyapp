@@ -49,11 +49,12 @@ describe("paymentFor — the payment that pays a due day", () => {
  * 3 — paid no due day at all, so its Oct 1 was drawn a red ✕ beside the Oct 5 row, the runway said it "never posted",
  * and /budgets counted the $2,291.21 twice: in what was spent, and in what came due. His July rent posted Jul 8.
  *
- * A payment past a day's grace is still the payment of the day it is LATE for — while it lies nearer that day than the
- * next (⚖️ his decision 76, 2026-10-14, below). The grace stays the days a payment has to post before anything may say
- * "not posted" (his decision 60); it never made a late payment nobody's.
+ * A payment past a day's grace is still the payment of the day it is LATE for — when it lies nearer that day than the
+ * next (⚖️ his decision 76, 2026-10-14, below), or nearer the next when another payment paid that one on time (⚖️
+ * default (c), built, not asked — below). The grace stays the days a payment has to post before anything may say "not
+ * posted" (his decision 60); it never made a late payment nobody's.
  */
-describe("…and a payment past the day's grace pays it late, while it lies nearer it than the next due day", () => {
+describe("…and a payment past the day's grace pays it late — nearer it than the next due day, or (c) below", () => {
   const rent = (postedOn: string) => ({ postedOn, toleranceDays: 3 });
   const RENT = monthlyOn("2026-09-01");
 
@@ -100,8 +101,9 @@ describe("…and a payment past the day's grace pays it late, while it lies near
  * one it lies nearer, a tie the earlier; it pays the later early only when nothing paid that day on time (his
  * "unless"). Otherwise it is the earlier's, late — or pays nothing, that day already paid: ⚖️ default (c), built, not
  * asked (below). 🔴 FPL (electricity) is due the 8th (his number, 3 days' grace), and his Chase Checking holds Jul 10
- * −$14.21 (Jul 8's, on time) and Jul 28 −$56.22, 11 days before Aug 8: Jul 28 paid no due day at all — and if FPL
- * drafts around the 28th, every statement's newest 8th would read "not posted" until the following one.
+ * −$14.21 (Jul 8's, on time) and Jul 28 −$56.22, 11 days before Aug 8: Jul 28 paid no due day at all. Those two are
+ * every FPL posting on his ledger (his copy, 2026-10-21); the drafts on the 28th of later months below are a what-if,
+ * a bill drafted so — which would have read every statement's newest 8th "not posted" until the following one.
  */
 describe("…and one more than its grace EARLY pays the next due day, when it lies nearer it (decisions 73, 76)", () => {
   const fpl = (postedOn: string): Payment => ({ postedOn, toleranceDays: 3 });
@@ -122,7 +124,7 @@ describe("…and one more than its grace EARLY pays the next due day, when it li
     ]);
   });
 
-  test("drafted every 28th, each draft pays the next 8th — the newest 8th is paid by the newest draft", () => {
+  test("a what-if drafted every 28th: each draft pays the next 8th — the newest 8th by the newest draft", () => {
     expect(graded([fpl("2026-07-10"), fpl("2026-07-28"), fpl("2026-08-28"), fpl("2026-09-28")])).toEqual([
       ["2026-06-08", null],
       ["2026-07-08", "2026-07-10"],
@@ -160,13 +162,14 @@ describe("…and one more than its grace EARLY pays the next due day, when it li
   });
 
   /*
-   * 🔴 Nothing asked a day paid by the SECOND of two in its gap (review of 844e484): read as unpaid, Aug 28 was Aug 8's
-   * late payment — which Jul 28 had already made — so it paid no due day, Sep 8 read "not posted" once Chase was read
-   * past Sep 11, and every newest 8th after it, read back through Sep 8, did the same until the next draft.
+   * 🔴 Under decision 73 nothing asked a day paid by the SECOND of two in its gap (review of 844e484, on this what-if):
+   * read as unpaid, Aug 28 was Aug 8's late payment — which Jul 28 had already made — so it paid no due day, and Sep 8
+   * read "not posted" once Chase was read past Sep 11; 73 read each later 8th back through Sep 8, so every newest 8th
+   * after it did the same until the next draft. Nearer, nothing is read back (`paymentFor`): Aug 28 lies nearer Sep 8.
    */
   test("…and the next gap's one draft pays the day after: Aug 8 is paid by Jul 28, so Aug 28 pays Sep 8 early", () => {
     expect(graded([fpl("2026-07-15"), fpl("2026-07-28"), fpl("2026-08-28")])[3]).toEqual(["2026-09-08", "2026-08-28"]);
-    // drafted every 28th from then on, each draft pays the next 8th — read back through Sep 8 to the gap of two
+    // drafted every 28th from then on, each draft pays the next 8th — each lies nearer it, whatever the gap of two did
     expect(graded([fpl("2026-07-15"), fpl("2026-07-28"), fpl("2026-08-28"), fpl("2026-09-28")])).toEqual([
       ["2026-06-08", null],
       ["2026-07-08", "2026-07-15"],
@@ -383,6 +386,30 @@ describe("the nearer due day wins (decision 76)", () => {
     expect(graded([pay("2026-09-02"), pay("2026-09-30")], LEASE, ["2026-09-15", "2026-10-15"])).toEqual([
       ["2026-09-15", "2026-09-02"],
       ["2026-10-15", null],
+    ]);
+  });
+
+  /*
+   * ⚖️ (b) at February's turn, for a bill due the 15th after an early Feb 15: a Feb 28, a Feb 29, or a Mar 1 outside a
+   * leap year is Feb 15's — nearer it, or the tie — so it pays nothing and Mar 15 stays owed; a leap year's Mar 1 is
+   * nearer Mar 15 and pays it. (A what-if: his lease has posted once, Sep 2.)
+   */
+  test("⚖️ (b) …at February's turn: a leap year's Feb 29 is Feb 15's, and so is Mar 1 outside one", () => {
+    const LEAP = monthlyOn("2028-01-15");
+    // 2028: Feb 15 → Mar 15 is 29 days — Feb 29 is 14 after Feb 15, 15 before Mar 15; Mar 1 is 15 after, 14 before
+    expect(graded([pay("2028-02-02"), pay("2028-02-29")], LEAP, ["2028-02-15", "2028-03-15"])).toEqual([
+      ["2028-02-15", "2028-02-02"],
+      ["2028-03-15", null],
+    ]);
+    expect(graded([pay("2028-02-02"), pay("2028-03-01")], LEAP, ["2028-02-15", "2028-03-15"])).toEqual([
+      ["2028-02-15", "2028-02-02"],
+      ["2028-03-15", "2028-03-01"],
+    ]);
+    // 2027: Feb 15 → Mar 15 is 28 days — Mar 1 is 14 either side, the tie: Feb 15's
+    const COMMON = monthlyOn("2027-01-15");
+    expect(graded([pay("2027-02-02"), pay("2027-03-01")], COMMON, ["2027-02-15", "2027-03-15"])).toEqual([
+      ["2027-02-15", "2027-02-02"],
+      ["2027-03-15", null],
     ]);
   });
 

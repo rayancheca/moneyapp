@@ -1171,9 +1171,10 @@ export interface SeriesStaleness {
    * its staleness sentence says "expected once on Nov 11, 2026", never `stepDays`' "about every 30 days".
    *
    * ⛔ Asked by every reader whose staleness is DISCLOSED — the forecast's two legs and Upcoming (`forecastWalk`), the
-   * chip's tooltip and the footers'. 🔴 It was not carried, and on his ledger copy 2026-10-13 /recurring's Upcoming
-   * footer read "Car insurance — Nov 11 balance … — expected about every 30 days", a tab from the All tab's
-   * "once · Nov 11".
+   * chip's tooltip and the footers'. The came-due leg's is carried though nothing discloses it: come due, a one charge's
+   * only date is behind it and its schedule has ended (`staleIsDisclosed`). 🔴 It was not carried, and on his ledger
+   * copy 2026-10-13 /recurring's Upcoming footer read "Car insurance — Nov 11 balance … — expected about every 30
+   * days", a tab from the All tab's "once · Nov 11".
    */
   oneChargeOn?: string | null;
   /** step × INACTIVE_MISS_LIMIT + cadence grace — past this the evidence is late */

@@ -706,7 +706,8 @@ export function recurringCalendar(
    *
    * ⛔ Only among the payments on time: an early or late one is the walk's to name (⚖️ decisions 73 and 76). Asked of
    * the month's postings alone first, as it was, the walk names a payment of this month that pays the NEXT day early —
-   * FPL's Sep 28 for Oct 8, Sep 8 paid early by Aug 28 — as Sep 8's, late, beside an October naming it for Oct 8.
+   * a bill due the 8th drafted Sep 28 for Oct 8, Sep 8 paid early by Aug 28 (a what-if: his FPL has posted only Jul 10
+   * and Jul 28) — as Sep 8's, late, beside an October naming it for Oct 8.
    */
   const paymentNamedFor = (payments: readonly BillPayment[], dueOn: string, dueDays: DueDays): BillPayment | undefined => {
     const paid = paymentFor(payments, dueOn, dueDays);
@@ -863,9 +864,10 @@ export function recurringCalendar(
    * "not yet known" (Oct 2) and a red ✕ "missed" (Oct 9, read through Oct 4) beside "Rent utilities & fees paid (paid
    * with the rent's payment of Sep 30)" — while the rent's page and the runway, reading the arrears, owed nothing.
    *
-   * ⚖️ …with NO END, as the arrears read them: a payment past a day's grace pays it late while it lies nearer it than
-   * the next due day (`paymentFor`, his decision 76, 2026-10-14), so the month's last rent may be paid in the next one
-   * — drawn there, named here. ⚖️ …and NO START: one more than its grace early pays a day it lies nearer than the day
+   * ⚖️ …with NO END, as the arrears read them: a payment past a day's grace pays it late when it lies nearer it than
+   * the next due day (`paymentFor`, his decision 76, 2026-10-14), or nearer the next when another payment paid that
+   * one on time (⚖️ default (c), built, not asked); so the month's last rent may be paid in the next one — drawn
+   * there, named here. ⚖️ …and NO START: one more than its grace early pays a day it lies nearer than the day
    * before (his decisions 73 and 76) — FPL's Jul 28, drawn in July, pays August's Aug 8.
    */
   const paymentsBySeries = billPaymentsBySeries(db, forecastRows);

@@ -272,6 +272,14 @@ describe("every cadence printer reads it", () => {
     const line = late.components.find((c) => c.label.startsWith("Car insurance — Nov 11"))!;
     // "once" in the cadence slot; no statement reaches Nov 11 on this fixture, so the runway's unread words follow
     expect(line.detail).toBe("1 × -$72.74 (once), came due Nov 11 and no statement has covered it yet");
+    /*
+     * …and its staleness carries the one reading too — the came-due leg's own pass (`arrearsComponents`), unpinned
+     * until now (review of the late-lapse batch). Come due, a one charge's only date is behind it, so its schedule has
+     * ended and no chip or footer discloses its staleness (`staleIsDisclosed`): nothing on screen reads this today, and
+     * the pin keeps the leg saying what the forward leg says should one ever do.
+     */
+    expect(line.staleness?.oneChargeOn).toBe("2026-11-11");
+    expect(staleComponentEntries([line])).toEqual([]);
   });
 });
 

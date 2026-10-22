@@ -24,10 +24,11 @@ import { seriesDetail } from "./recurring-detail";
  * and every reader that looks ahead (the forecast, Upcoming, the dashboard strip, the bill's "Next expected").
  *
  * 🔴 Measured on his ledger copy 2026-10-13: FPL (electricity), due the 8th (his number, 3 days' grace), on Chase
- * Checking — Jul 10 −$14.21 (Jul 8's, on time) and Jul 28 −$56.22, 11 days before Aug 8. Jul 28 paid no due day; drafted
- * around the 28th, every statement's newest 8th would read "not posted" until the following one. His FPL is anchored on
- * Sep 8 (his date), so no grader asks his Aug 8 and nothing on his ledger moves today; the fixture anchors it on Jul 8,
- * detection's way, so July and August are graded.
+ * Checking — Jul 10 −$14.21 (Jul 8's, on time) and Jul 28 −$56.22, 11 days before Aug 8. Jul 28 paid no due day. Those
+ * two are every FPL posting on his ledger (his copy, 2026-10-21): a bill drafted around every 28th (a what-if, below)
+ * would have read each statement's newest 8th "not posted" until the following one. His FPL is anchored on Sep 8 (his
+ * date, still so on his copy 2026-10-21), so no grader asks his Aug 8 and nothing on his ledger moves today; the
+ * fixture anchors it on Jul 8, detection's way, so July and August are graded.
  */
 
 let dir: string;
@@ -164,7 +165,8 @@ describe("FPL's Jul 28 −$56.22 pays Aug 8 early — nearer it than Jul 8, whic
   });
 });
 
-describe("drafted every 28th, each draft pays the next 8th — the newest 8th is paid by the newest draft", () => {
+// A what-if: his FPL has posted only Jul 10 and Jul 28 — the Aug 28 and Sep 28 drafts and their amounts are made up
+describe("a what-if drafted every 28th: each draft pays the next 8th — the newest 8th by the newest draft", () => {
   beforeEach(() =>
     fplWith(["2026-07-10", -1421], ["2026-07-28", -5622], ["2026-08-28", -5887], ["2026-09-28", -6012]),
   );

@@ -149,8 +149,9 @@ export function overdueForSeries(
    * $182.21 came due every 1st and "has not posted" beside the rent's payment that paid it. Its amount is untouched:
    * still owed at its own $182.21 when the rent has not paid, and owed nowhere when it has.
    *
-   * ⚖️ …with NO END: a payment past a day's grace pays it late while it lies nearer it than the next due day
-   * (`paymentFor`, ⚖️ his decision 76, 2026-10-14), and that can be past `through` and its tolerance — the arrears'
+   * ⚖️ …with NO END: a payment past a day's grace pays it late when it lies nearer it than the next due day
+   * (`paymentFor`, ⚖️ his decision 76, 2026-10-14), or nearer the next when another payment paid that one on time
+   * (⚖️ default (c), built, not asked); and that can be past `through` and its tolerance — the arrears'
    * walk read only as far as the ledger has read (`arrearsReadCents`) must see the late payment the whole walk saw. No
    * posting is dated past today.
    *

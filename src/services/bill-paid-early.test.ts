@@ -354,8 +354,9 @@ describe("a payment pays a bill only within ITS series' grace — a wider one el
   });
 
   /*
-   * ⚖️ …and after the day: a payment past a day's grace pays the day it is LATE for, while it lies nearer it than the
-   * next due day (`paymentFor`, decision 76) — by its own series' days too. 🔴 This test pinned the rent paid Oct 6 as
+   * ⚖️ …and after the day: a payment past a day's grace pays the day it is LATE for when it lies nearer it than the
+   * next due day (`paymentFor`, decision 76), or nearer the next when another payment paid that one on time (⚖️
+   * default (c), built, not asked) — by its own series' days too. 🔴 This test pinned the rent paid Oct 6 as
    * owing its Oct 1 beside the Oct 6 row (review of 44eb3e7): the $2,291.21 counted in what was spent and in what came
    * due.
    */
