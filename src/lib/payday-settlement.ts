@@ -176,8 +176,10 @@ export interface PaydayRhythm {
  * anchor clause), so the first payday it can have been for is the first one in that reach. And only BACK — an anchor
  * already before the first deposit is itself the first payday, as the settlement has always drawn it.
  *
- * ⚠️ ONLY BACK HAS A PRICE, and so does forward — an owner's call, queued 2026-10-13 (review of §6A 55, "never walks
- * forward"). Kept: a first paycheck that is a LUMP pays back to the anchor — a job anchored Sep 3 whose first deposit
+ * ⚠️ ONLY BACK HAS A PRICE, and so does forward — queued as an owner's call 2026-10-13 (review of §6A 55, "never walks
+ * forward"); ⚖️ default built, not asked (2026-10-21; he said "no more questions"): ONLY BACK, as built. Re-measured
+ * on his ledger copy 2026-10-21: his anchor is still Thu Jul 23, after his first deposit (Thu Jun 4), so the walk runs
+ * back to Jun 4 and the forward question does not arise. Kept: a first paycheck that is a LUMP pays back to the anchor — a job anchored Sep 3 whose first deposit
  * is four weeks on Sep 17 has Sep 3, 10 and 17 paid (`settledPaydaysForSeries`, "a first deposit that is a lump pays
  * back to the anchor"); walked forward to Sep 14, the lump paid Sep 17 alone and 25 tests broke, Sep 23's $4,567.68
  * reading "rose by $3,425.76" again wherever no earlier deposit opened the walk. Paid: an anchor dated long before the

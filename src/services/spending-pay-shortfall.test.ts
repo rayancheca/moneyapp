@@ -643,6 +643,26 @@ describe("/spending — money that paid a payday no window has read is named wit
     ]);
   });
 
+  /*
+   * ⚖️ Default built, not asked (2026-10-21): change over a payday's worth is said as what it is, in one sentence on
+   * every window — "was more than the paydays its deposits paid came to". 🔴 On his ledger copy with Wed Oct 7
+   * +$1,500.00 imported, on Oct 14, October said its $358.08 "went toward no payday on or before Thu, Sep 24, 2026"
+   * and the week of Oct 5 – 11 called the same money "earlier pay arriving late — … a backlog clearing"; it paid no
+   * earlier payday, and the calendar draws the deposit paying Oct 8 (review of the shortfall batch).
+   */
+  test("Wed Oct 7's $1,500.00 pays Oct 8 with $358.08 over: October and the week say the same of the $358.08", () => {
+    onlyDeposits([...WEDNESDAYS.map((d) => [d, 114_192] as const), ["2026-10-07", 150_000]]);
+    const over = "$358.08 banked inside the window was more than the paydays its deposits paid came to";
+    expect(bodies("2026-10-01", "2026-10-31", "2026-10-14")).toEqual([
+      "Of Cash job (weekly pay)'s pay, $1,141.92 banked inside the window, from the deposit of Wed, Oct 7, 2026, " +
+        `paid Oct 8's payday and ${over}.`,
+    ]);
+    expect(bodies("2026-10-05", "2026-10-11", "2026-10-14")).toEqual([
+      "Cash job (weekly pay) banked $358.08 more than its payday on Oct 8, 2026 came to. $358.08 of it was more " +
+        "than the paydays its deposits paid came to.",
+    ]);
+  });
+
   test("a lump that walked back before the window to an unread payday: paid with its own payday, never early", () => {
     // no Sep 30: Wed Oct 7's two weeks pay Oct 8 and walk back to Oct 1; Oct 15 is past the checked day, unbanked
     onlyDeposits([

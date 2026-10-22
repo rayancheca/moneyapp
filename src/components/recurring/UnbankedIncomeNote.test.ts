@@ -95,6 +95,31 @@ describe("UnbankedIncomeNote — /recurring names unchecked paydays as not looke
     expect(html).toContain("text-warning");
   });
 
+  /*
+   * ⚖️ Default built, not asked (2026-10-21): the closing subject names the paydays nobody has looked for too, in the
+   * forecast's own words for them. 🔴 It named only the checked ones — "Pay not banked yet cannot be projected as
+   * arriving" of two paydays after the checked day beside one inside its days to land (review of the pay-words batch).
+   */
+  test("straddling the frontier, the closing subject covers the paydays nobody has looked for too", () => {
+    const straddle = {
+      totalCents: 314_100,
+      occurrenceCount: 3,
+      names: ["Cash job (weekly pay)"],
+      checkedOccurrenceCount: 1,
+      frontier: { kind: "day" as const, through: "2026-08-12" },
+    };
+    expect(text({ ...straddle, pastGraceOccurrenceCount: 1 }).words).toContain(
+      "Pay that never reaches a bank, and pay the ledger has not looked for, cannot be projected as arriving;",
+    );
+    expect(text({ ...straddle, pastGraceOccurrenceCount: 0 }).words).toContain(
+      "Pay not banked yet, and pay the ledger has not looked for, cannot be projected as arriving;",
+    );
+    // …and with every payday checked, or none, the one subject it always had
+    expect(text({ ...straddle, checkedOccurrenceCount: 3, pastGraceOccurrenceCount: 0 }).words).toContain(
+      "Pay not banked yet cannot be projected as arriving;",
+    );
+  });
+
   test("two schedules checked through different days: the note names no day for either", () => {
     const { words } = text({
       totalCents: 400_000,

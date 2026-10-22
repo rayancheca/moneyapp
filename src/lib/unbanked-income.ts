@@ -68,6 +68,12 @@ const AND_LIST = new Intl.ListFormat("en", { style: "long", type: "conjunction" 
  * ⛔ One sentence for all three. 🔴 Review of 4b98f77: the verdict said "4 of them fall on days the records already
  * cover, through Sep 5 — so the pay did not reach a bank" of Sep 3 one line under "$1,000.00 … — so it is not banked
  * yet".
+ *
+ * ⚖️ "Days to land" — default built, not asked (2026-10-21; he said "no more questions"): no decision of his chose
+ * the phrase (review of c02a4b0). Kept over the bills' "the days a payment has to post are not over yet"
+ * (`DAYS_TO_POST_NOT_OVER`, the same idea for a due day) because every pay sentence's verb is "lands" — the clause it
+ * runs into is `LAST_CHECKED_DAY`, "every account that pay lands in" — and "days to post" would put two verbs for one
+ * deposit in one sentence. The series page's "the N-day tolerance" is the same number.
  */
 export function daysToLandRunPast(
   paydays: readonly string[],
@@ -258,8 +264,15 @@ export interface PassedPaydaysWords {
  * Thursday checked through Friday read it, in warning colour, of a payroll that could still land on Sunday.
  */
 function notProjectedSubject(r: PassedPaydaysReading): string {
-  if (r.pastGraceOccurrenceCount > 0) return "Pay that never reaches a bank";
-  return r.checkedOccurrenceCount === 0 ? "Pay the ledger has not looked for" : "Pay not banked yet";
+  const unlooked = "Pay the ledger has not looked for";
+  if (r.checkedOccurrenceCount === 0) return unlooked;
+  const checked = r.pastGraceOccurrenceCount > 0 ? "Pay that never reaches a bank" : "Pay not banked yet";
+  /*
+   * ⚖️ Default built, not asked (2026-10-21): with paydays after the checked day among them, the subject names those
+   * too, in its own words for them. 🔴 "Pay not banked yet cannot be projected as arriving" closed a note whose other
+   * two paydays fall after the checked day — a claim about days nobody has read (review of the pay-words batch).
+   */
+  return r.checkedOccurrenceCount < r.occurrenceCount ? `${checked}, and ${unlooked.toLowerCase()},` : checked;
 }
 
 /**

@@ -8,13 +8,8 @@ import { STALE_PERIODS, type CashEarningsBasis } from "./cash-earnings";
 import { compareDates } from "./dates";
 import { formatDayShortIn } from "./format-date";
 import { depositsOf } from "./paid-by-another-month";
-import {
-  wentBackOutPhrase,
-  windowOwnCents,
-  type PaidAcross,
-  type PaidOutside,
-  type PayShortfall,
-} from "./pay-shortfall";
+import type { PaidAcross, PaidOutside, PayShortfall } from "./pay-shortfall";
+import { wentBackOutPhrase, windowOwnCents } from "./pay-window-money";
 import { TOWARD_NO_PAYDAY } from "./per-payday";
 import {
   daysToLandRunPast,
@@ -653,7 +648,7 @@ export function cashEarningsSectionNotes(input: CashEarningsNoteInput): SectionN
 
     if (r.basis === "series-stale" && r.unbankedCents > 0 && silentEnough) {
       // The never-paid branch is a different SENTENCE, not a different noun
-      // phrase: "paydays have passed since no deposit has ever been attributed"
+      // phrase: "paydays have passed since nothing attributed to it has ever banked"
       // is what slotting it into the same template produced, and it is not
       // English. A schedule with no evidence at all has no "since" to name.
       /*
@@ -740,7 +735,7 @@ export function cashEarningsSectionNotes(input: CashEarningsNoteInput): SectionN
       const silence =
         r.lastBankedOn === null
           ? `Across the whole schedule, ${r.periodsSinceBanked} expected paydays have passed and ` +
-            `no deposit has ever been attributed to it${readPart}`
+            `nothing attributed to it has ever banked${readPart}`
           : // …less the paydays a deposit paid early, named (`paidEarlyAside`), as the card names them
             `Across the whole schedule, ${r.periodsSinceBanked} expected paydays have passed since the last deposit ` +
             `on ${input.formatDay(r.lastBankedOn)}${paidEarlyAside(r.silencePaidEarly ?? [], payday)}${readPart}`;
@@ -982,9 +977,8 @@ function unreadPaydaysNote(
   if (!checkedThrough || (!holds && s.wentBackOut.length === 0)) return null;
   const payday = (iso: string): string => formatDayShortIn(iso, iso);
   const noPaydayFrom = depositsOf(s.towardNoPayday.map((d) => d.depositOn), formatDay);
-  const restWords = ` went toward no payday on or before ${formatDay(checkedThrough)}`;
   const parts = [
-    ...beyondParts(s, payday, noPaydayFrom, formatDay, restWords).map(
+    ...beyondParts(s, payday, noPaydayFrom, formatDay, ` ${MORE_THAN_ITS_PAYDAYS}`).map(
       (p) => `${formatCents(p.cents)} banked inside the window${p.words}`,
     ),
     ...(s.wentBackOut.length === 0 ? [] : [wentBackOutPhrase(s.wentBackOut, formatDay)]),
@@ -1116,7 +1110,14 @@ function surplusSplit(
 
   const aheadCents = Math.min(surplusCents, centsOf(s.paidAhead));
   const noPaydayCents = Math.min(surplusCents - aheadCents, centsOf(s.towardNoPayday));
-  const restCents = surplusCents - aheadCents - noPaydayCents;
+  // ⚖️ of the rest, only money that paid a payday BEFORE the period is earlier pay arriving late — read or not
+  // (`paidAcross`, `paidUncounted`); what is left is change over the paydays its deposits paid (default built, not
+  // asked, 2026-10-21)
+  const lateCents = Math.min(
+    surplusCents - aheadCents - noPaydayCents,
+    centsOf([...s.paidAcross, ...s.paidUncounted].filter((p) => !p.early)),
+  );
+  const restCents = surplusCents - aheadCents - noPaydayCents - lateCents;
 
   // named as the shortfall note names a payday, in the year of the period's own paydays
   const payday = (iso: string): string => formatDayShortIn(iso, lastPeriodOn ?? iso);
@@ -1129,5 +1130,17 @@ function surplusSplit(
     noPaydayCents > 0
       ? ` ${formatCents(noPaydayCents)} of it, from the ${noPaydayFrom}, went ${TOWARD_NO_PAYDAY}.`
       : "";
-  return `${ahead}${noPayday}${restCents > 0 ? backlog(restCents) : ""}`;
+  const over = restCents > 0 ? ` ${formatCents(restCents)} of it ${MORE_THAN_ITS_PAYDAYS}.` : "";
+  return `${ahead}${noPayday}${over}${lateCents > 0 ? backlog(lateCents) : ""}`;
 }
+
+/**
+ * ⚖️ CHANGE OVER A PAYDAY'S WORTH — money a deposit that paid paydays brought beyond them (`PayShortfall`'s
+ * `otherBeyondCents` once the paydays it paid are named) — in one sentence on every period: the surplus note's and the
+ * note of a period with no read payday. Default built, not asked (2026-10-21). 🔴 On his ledger copy with Wed Oct 7
+ * +$1,500.00 imported, on Oct 14, October said its $358.08 "went toward no payday on or before Thu, Sep 24, 2026" — the
+ * calendar's words for a deposit that paid no payday, of one the calendar draws paying Oct 8 — and the week of Oct 5 –
+ * 11 called the same $358.08 "earlier pay arriving late — … a backlog clearing", though it paid no earlier payday
+ * (review of the shortfall batch).
+ */
+const MORE_THAN_ITS_PAYDAYS = "was more than the paydays its deposits paid came to";

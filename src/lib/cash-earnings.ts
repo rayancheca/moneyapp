@@ -474,6 +474,13 @@ export interface UnbankedSplit {
  * part first: no deposit settled them, so none of the netted money (decision 55) can be said to have paid them.
  * 🔴 Review of 878c3d5: Thu Sep 3 checked through Sat Sep 5 read "Pay not banked yet" on the forecast and "$1,000.00
  * of it never reached a bank" on the dashboard.
+ *
+ * ⚖️ …past its days to land, "never reached a bank" of a PAYROLL-era payday too, though a later deposit can still pay
+ * it (settlement walks back, as Sep 23's $4,567.68 paid Sep 3, 10 and 17) — default built, not asked (2026-10-21; he
+ * said "no more questions"): decision 55's words, said as of the checked records and re-read on every load, so the
+ * deposit that pays one moves it out of the figure the day it is imported. "Not banked yet" for every payday of an era
+ * still paid would never say "never" of a payroll week months unpaid. Measured on his ledger copy 2026-10-21: no
+ * payroll-era payday is unpaid through the checked Thu Sep 24 — the $11,117.00 is eleven cash weeks less June's $400.00.
  */
 export function unbankedSplit(unbankedCents: number, inGraceCents: number): UnbankedSplit {
   const unbanked = Math.max(0, unbankedCents);

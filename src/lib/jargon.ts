@@ -291,8 +291,10 @@ export const RECURRING_JARGON = {
    * says "no statement has covered it yet" (`NO_STATEMENT_YET`). 🔴 This said the day "may not be imported yet" — false
    * of a day a rows-only import has passed while its statements stop short (review of cf0bbdf).
    */
+  // one clause per reason a mark is unsettled (`UnsettledReason`, in `unsettledReasonWord`'s words). 🔴 A payday after
+  // the checked day — "the ledger has not looked for its deposit" — had none (review of the pay-words batch).
   notYetKnown:
-    "Nothing turned up, but the ledger cannot say whether it should have — the day, or the few days after it a payment may still post on, may not be covered by a statement yet, the money may be cash you were handed and have not deposited, or this bill may not have charged enough times yet for the app to grade it. None of those is evidence that a payment failed.",
+    "Nothing turned up, but the ledger cannot say whether it should have — the day, or the few days after it a payment may still post on, may not be covered by a statement yet; for pay, it may be that the ledger has not looked for its deposit, or the money may be cash you were handed and have not deposited; or this bill may not have charged enough times yet for the app to grade it. None of those is evidence that a payment failed.",
   upcoming: "Expected on or after today, so nothing has had the chance to happen yet.",
   scheduled:
     "You told the app this amount or this date, which makes it the firmest kind of claim here — firmer than a bill with years of history behind it.",

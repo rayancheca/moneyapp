@@ -430,8 +430,10 @@ function paydaysLabelFor(paydays: number, firstOn: string | null, lastOn: string
 function verdictFor(line: Omit<IncomePayLine, "verdict">): string {
   const { lastBankedOn, silentPeriods, checkedSilentPeriods, checkedThrough } = line;
 
+  // ⛔ "banked", decision 75's word: a payroll attributed and returned the same day banked nothing, and it WAS
+  // attributed. 🔴 "No deposit has been attributed to this schedule" was said of one (review of the pay-chain batch).
   if (lastBankedOn === null) {
-    return "No deposit has been attributed to this schedule on or before today, so there is nothing to date the silence from.";
+    return "Nothing attributed to this schedule has banked on or before today, so there is nothing to date the silence from.";
   }
 
   const passed = `${silentPeriods} ${paydayWord(silentPeriods)} ${silentPeriods === 1 ? "has" : "have"} passed`;

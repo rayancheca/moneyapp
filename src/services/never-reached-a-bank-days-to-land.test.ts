@@ -172,7 +172,10 @@ describe("a payday checked on its day but not through its days to land never 'ne
     readThrough("2026-09-05");
     const s = surfaces();
 
-    expect(s.forecast).toBe("Pay not banked yet cannot be projected as arriving");
+    // Sep 10 falls after the checked day: the subject names it as the dashboard does (default built, 2026-10-21)
+    expect(s.forecast).toBe(
+      "Pay not banked yet, and pay the ledger has not looked for, cannot be projected as arriving",
+    );
     expect(s.dashboard).toBe(
       `$1,000.00 of it is for paydays whose days to land run past Sep 5, ${CHECKED_DAY} — so it is not banked ` +
         "yet; the other $1,000.00 is for paydays after that day — so the ledger has not looked for it.",
@@ -197,7 +200,9 @@ describe("a payday checked on its day but not through its days to land never 'ne
     readThrough("2026-09-06");
     const s = surfaces();
 
-    expect(s.forecast).toBe("Pay that never reaches a bank cannot be projected as arriving");
+    expect(s.forecast).toBe(
+      "Pay that never reaches a bank, and pay the ledger has not looked for, cannot be projected as arriving",
+    );
     expect(s.dashboard).toBe(
       `$1,000.00 of it never reached a bank; the other $1,000.00 is for paydays after Sep 6, ${CHECKED_DAY} — so ` +
         "the ledger has not looked for it.",
@@ -350,7 +355,7 @@ describe("a payday checked on its day but not through its days to land never 'ne
 
   /*
    * ⛔ …and with nothing ever banked, the silence opens on the schedule's first payday (`silenceFrom`), as the
-   * sentence counts it — "no deposit has ever been attributed to it". 🔴 Review of 147f167 (MEDIUM): the only payroll
+   * sentence counts it — "nothing attributed to it has ever banked". 🔴 Review of 147f167 (MEDIUM): the only payroll
    * a $1,000.00 on Thu Jun 4 returned the same day (decision 75: it banked nothing, and opens the schedule), the
    * silence's not-banked-yet paydays were none — "there is no 'since' to count from" — so every window's sentence
    * left Sep 3 out, while the window's shortfall and Earned vs banked's difference named Sep 3's pay not banked yet.
@@ -361,7 +366,7 @@ describe("a payday checked on its day but not through its days to land never 'ne
     readThrough("2026-09-05");
 
     const sentence =
-      "Across the whole schedule, 15 expected paydays have passed and no deposit has ever been attributed to it, and " +
+      "Across the whole schedule, 15 expected paydays have passed and nothing attributed to it has ever banked, and " +
       "14 of them fall on days the records cover, through Sat, Sep 5, 2026 — that money was held as cash, spent as " +
       "cash, the schedule has ended, the ledger has not looked for its deposit, or Sep 3's days to land run past " +
       `Sat, Sep 5, 2026, ${CHECKED_DAY} — so its pay is not banked yet. The income figures on this page count ` +
@@ -490,13 +495,18 @@ describe("the silence the verdict and /spending's stale note count, and the mone
     readThrough("2026-09-05");
 
     expect(incomeCard(bundle.db, TODAY)!.pay[0]!.paydaysLabel).toBe("15 paydays, Jun 4 – Sep 10");
+    // ⛔ a payroll attributed and returned the same day banked nothing (decision 75) — but it WAS attributed. 🔴 Both
+    // surfaces said no deposit had ever been attributed (review of the pay-chain batch)
+    expect(incomeCard(bundle.db, TODAY)!.pay[0]!.verdict).toBe(
+      "Nothing attributed to this schedule has banked on or before today, so there is nothing to date the silence from.",
+    );
     const [ytd] = spending("2026-01-01", "2026-12-31");
     expect(ytd).toContain(
       "implies $15,000.00 of earnings over Jun 4 – Sep 10, 2026 and none of it reached an account through Sat, Sep 5, " +
         "2026; the other payday falls after that,",
     );
     expect(ytd).toContain(
-      "Across the whole schedule, 15 expected paydays have passed and no deposit has ever been attributed to it, and " +
+      "Across the whole schedule, 15 expected paydays have passed and nothing attributed to it has ever banked, and " +
         "14 of them fall on days the records cover, through Sat, Sep 5, 2026 —",
     );
   });

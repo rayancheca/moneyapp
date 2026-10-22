@@ -754,7 +754,7 @@ describe("cashEarningsSectionNotes", () => {
 
   test("a schedule that has never paid says so instead of naming a date", () => {
     const [note] = notes({ lastBankedOn: null, periodsSinceBanked: 4 });
-    expect(note!.body).toContain("no deposit has ever");
+    expect(note!.body).toContain("nothing attributed to it has ever banked");
     expect(note!.body).not.toContain("since");
   });
 
@@ -1614,8 +1614,8 @@ describe("cashEarningsSectionNotes", () => {
       expect(august(october).map((n) => n.body)).toEqual([
         "Of It America LLC (weekly pay)'s pay, $2,283.84 banked inside the window, from the deposit of 2026-10-07, " +
           "paid the paydays of Oct 1 and Oct 8, $1,141.92 banked inside the window, from the deposit of 2026-10-14, " +
-          "paid Oct 15's payday early, and $358.08 banked inside the window went toward no payday on or before " +
-          "2026-09-24.",
+          "paid Oct 15's payday early, and $358.08 banked inside the window was more than the paydays its deposits " +
+          "paid came to.",
       ]);
       // each part capped at what is left of the money beyond the read paydays, in that order — and none for change
       const [capped] = august({ ...october, otherBeyondCents: 250_000 });
@@ -1784,7 +1784,17 @@ describe("cashEarningsSectionNotes", () => {
       // Sep 23 – Sep 23 on his ledger: the $4,567.68 lump paid Thu Sep 24, after the window, and three weeks before it
       const body = surplus(
         456_768,
-        { paidAhead: [{ depositOn: "2026-09-23", paydays: ["2026-09-24"], cents: 114_192 }] },
+        {
+          paidAhead: [{ depositOn: "2026-09-23", paydays: ["2026-09-24"], cents: 114_192 }],
+          paidAcross: [
+            {
+              depositOn: "2026-09-23",
+              paydays: ["2026-09-03", "2026-09-10", "2026-09-17"],
+              cents: 3 * 114_192,
+              early: false,
+            },
+          ],
+        },
         { impliedCents: 0, bankedCents: 456_768, firstPeriodOn: null, lastPeriodOn: null },
       );
       expect(body).toEqual([
@@ -1843,10 +1853,33 @@ describe("cashEarningsSectionNotes", () => {
     });
 
     test("all of it earlier pay keeps the sentence it always had", () => {
-      expect(surplus(114_192)).toEqual([
+      // his September: Sep 24's deposit paid Aug 27, a payday before the window
+      const late = [{ depositOn: "2026-09-24", paydays: ["2026-08-27"], cents: 114_192, early: false }];
+      expect(surplus(114_192, { paidAcross: late })).toEqual([
         "It America LLC (weekly pay) banked $1,141.92 more than its paydays over Sep 3 – 24, 2026 came to. One deposit " +
           "can bank several paydays at once, so the surplus is earlier pay arriving late — read it as a backlog " +
           "clearing rather than as a period that earned more.",
+      ]);
+    });
+
+    /*
+     * ⚖️ Default built, not asked (2026-10-21): money that paid no payday before the period is no earlier pay — change
+     * over the paydays its deposits paid is said as that (`MORE_THAN_ITS_PAYDAYS`), as a period with no read payday
+     * says it. 🔴 Wed Oct 7's $1,500.00 paying Oct 8: the week called its $358.08 "earlier pay arriving late" while
+     * October said it "went toward no payday on or before" the checked day (review of the shortfall batch).
+     */
+    test("change over the paydays a deposit paid is said as that, never as earlier pay", () => {
+      expect(surplus(35_808, {}, { firstPeriodOn: "2026-10-08", lastPeriodOn: "2026-10-08" })).toEqual([
+        "It America LLC (weekly pay) banked $358.08 more than its payday on Oct 8, 2026 came to. $358.08 of it was " +
+          "more than the paydays its deposits paid came to.",
+      ]);
+      // …and beside earlier pay, each part with its own words — they add up to the surplus
+      const late = [{ depositOn: "2026-09-24", paydays: ["2026-08-27"], cents: 114_192, early: false }];
+      expect(surplus(150_000, { paidAcross: late })).toEqual([
+        "It America LLC (weekly pay) banked $1,500.00 more than its paydays over Sep 3 – 24, 2026 came to. $358.08 of " +
+          "it was more than the paydays its deposits paid came to. One deposit can bank several paydays at once, so " +
+          "the other $1,141.92 is earlier pay arriving late — read it as a backlog clearing rather than as a period " +
+          "that earned more.",
       ]);
     });
   });

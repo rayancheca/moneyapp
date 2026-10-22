@@ -1,7 +1,7 @@
 import { payGap, silenceFrom, unbankedSplit } from "./cash-earnings";
 import { compareDates } from "./dates";
-import { formatCents } from "./money";
 import { paydayIsRead, paydayLandingIsRead } from "./occurrence-verdict";
+import { windowOwnCents, type WentBackOut } from "./pay-window-money";
 import {
   portionsAcross,
   type AttributedDeposit,
@@ -233,11 +233,8 @@ export interface PayShortfall {
   bankedCents: number;
 }
 
-/** A day money went back out on, a day of its own (decision 75): the day's net, as money out — positive. */
-export interface WentBackOut {
-  postedOn: string;
-  cents: number;
-}
+// the words /spending's notes need of a window's money live apart from the settlement (`lib/pay-window-money`)
+export { wentBackOutPhrase, windowOwnCents, type WentBackOut } from "./pay-window-money";
 
 /** A window's banked figure by the one rule for money out on a day of its own, and the days it names. */
 export interface WindowMoneyOut {
@@ -316,7 +313,7 @@ export interface ScheduleSilence {
  * the verdict named Aug 20, Aug 27 and Sep 3.
  *
  * ⛔ …and with nothing banked, from the schedule's first payday, that one among them, where the sentence counts it from
- * ("no deposit has ever been attributed to it"). Earned vs banked's verdict prints its no-deposit sentence then. 🔴
+ * ("nothing attributed to it has ever banked"). Earned vs banked's verdict prints its no-deposit sentence then. 🔴
  * Review of 147f167 (MEDIUM): it returned none — "there is no 'since' to count from" — so with the only payroll a
  * $1,000.00 on Thu Jun 4 returned the same day (decision 75), Chase read through Sat Sep 5 and today Sep 15, every
  * /spending window read "14 expected paydays have passed … or the ledger has not looked for its deposit" and left out
@@ -430,19 +427,6 @@ export function payShortfall(s: SettlementWalked, w: PayShortfallWindow, e: Wind
 const centsOf = (parts: readonly { cents: number }[]): number => parts.reduce((sum, p) => sum + p.cents, 0);
 
 /**
- * The window's OWN money: what it banked by the one rule (`moneyOutOfWindow`, `PayShortfall.bankedCents`) less what
- * paid another window's read payday (`paidAcross`) — that money is the other window's, named there paying its payday.
- * What the shortfall's subtraction reads (`payGap`), and what /spending's note for a stale schedule says "reached an
- * account" of the window's earnings. ⛔ One figure for both. 🔴 Review of 0c9bc8d (MEDIUM): the stale note read the
- * banked figure whole — on his ledger copy 2026-10-21 with Wed Sep 30's payroll paying Thu Oct 1, Wells Fargo read
- * through Fri Oct 23 and today Oct 30, Q3 said "only $6,851.52 reached an account" of $14,085.60, Sep 30's $1,141.92
- * among it, while Q4 named that deposit paying Oct 1 early and the live Q3 note said $8,376.00 never reached a bank.
- */
-export function windowOwnCents(bankedCents: number, paidAcross: readonly { cents: number }[]): number {
-  return bankedCents - centsOf(paidAcross);
-}
-
-/**
  * ⚖️ MONEY OUT ON A DAY OF ITS OWN (his decision 75: "a day of its own that banked nothing, and the deposit's day
  * pays as it always has") against a window's banked figure — THE ONE RULE: Earned vs banked's card and every /spending
  * note read it (`cashEarningsReadings`, `payShortfall`). `bankedCents` is the window's days that banked
@@ -484,18 +468,6 @@ export function moneyOutOfWindow(s: SettlementWalked, w: PayShortfallWindow, ban
     );
   // what it netted is what it took of that money; a day it named is no part of the figure, which never held it
   return { bankedCents: bankedCents - (freeCents - leftCents), wentBackOut: named };
-}
-
-/** "A and B", "A, B, and C" — the platform's list. */
-const AND_LIST = new Intl.ListFormat("en", { style: "long", type: "conjunction" });
-
-/**
- * "$1,141.92 went back out on Fri, Oct 2, 2026" — the days `moneyOutOfWindow` names, each whole, oldest first, every
- * day once: the one spelling /spending's notes and Earned vs banked print.
- */
-export function wentBackOutPhrase(days: readonly WentBackOut[], formatDay: (iso: string) => string): string {
-  const on = [...new Set(days.map((d) => d.postedOn))].sort(compareDates);
-  return `${formatCents(centsOf(days))} went back out on ${AND_LIST.format(on.map(formatDay))}`;
 }
 
 function byDepositDay(portions: readonly SettlementPortion[]): PaidAhead[] {
