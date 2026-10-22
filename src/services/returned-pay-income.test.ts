@@ -13,6 +13,7 @@ import { recurringSeries } from "@/db/schema/recurring";
 import { transactions } from "@/db/schema/transactions";
 import { seedDatabase } from "@/db/seed";
 import { addDays } from "@/lib/dates";
+import { CATEGORY_KIND_JARGON } from "@/lib/jargon";
 import { cashFlowSegmentHref, ledgerHref } from "@/lib/ledger-href";
 import { resolvePeriod } from "@/lib/period";
 import { incomeByMonth, incomeTransactions } from "./analytics";
@@ -260,6 +261,22 @@ describe("⚖️ decision 75 on every Income figure — a payroll returned the s
     payRow("2026-09-17", -WEEK);
     expect(incomeEverywhere()).toEqual(everywhere(WEEK * 2));
     incomeLinksAddUp();
+  });
+
+  /*
+   * /categories' Income heading says what the rule above does to the figure. 🔴 It said money leaving an income category
+   * "is left out of that figure rather than subtracted from it" — of a same-day return linked to his pay, which every
+   * Income figure nets (review of the d75 batch, jargon.ts; latent: no money out is linked to his pay).
+   */
+  test("…and the Income kind's definition says so: a same-day return comes off, a later one is left out", () => {
+    payRow("2026-09-17", WEEK);
+    payRow("2026-09-17", -50_000);
+    payRow("2026-09-18", -20_000);
+    expect(periodTotals(bundle.db, SEPT).earnedCents).toBe(WEEK * 3 - 50_000);
+    expect(CATEGORY_KIND_JARGON.income).toMatch(/same day/);
+    expect(CATEGORY_KIND_JARGON.income).toMatch(/pay going back out the same day it came in/);
+    // the last clause is the open "Received" owner call's — untouched
+    expect(CATEGORY_KIND_JARGON.income).toMatch(/the category's own total still nets both/);
   });
 });
 

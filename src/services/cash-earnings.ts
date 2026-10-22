@@ -493,7 +493,7 @@ export function cashEarningsReadings(
      * no part of it (`settledPaydays`), as the calendar draws it paid. 🔴 Review of 27ca437: Earned vs banked said "1
      * falls on a day already checked, with no deposit" of Thu Oct 1, which Wed Sep 30's payroll paid early.
      */
-    const settlement = checkedOf === null ? null : paydaySettlement(db, s.id, today);
+    const settlement = checkedOf === null ? null : paydaySettlement(db, s.id, today, idx);
     const settledPaydays = new Set(settlement?.settledBy.keys() ?? []);
     const reading: CashEarningsReading = {
       seriesId: s.id,

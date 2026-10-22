@@ -84,10 +84,12 @@ export const CATEGORY_KIND_JARGON: Record<string, string> = {
   // 🔴 Until 2026-10-05 this said the unfiled money counted "whichever account it leaves".
   expense:
     "Counted as spending, together with money out that has no category yet. Nothing the agent's own account pays is counted, in one of these categories or not filed yet: it is the agent's, not yours. Purchases and refunds net against each other in a category's total, so returning something reduces it instead of adding to it.",
-  // isIncome keeps positive rows only, and none on the agent's cash account (owner decision 2026-09-28);
-  // categorySpending (the category's own page) nets both signs
+  // isIncome keeps positive rows only, and none on the agent's cash account (owner decision 2026-09-28); a pay
+  // series' day is read by its net (hisIncomeRows, his decision 75: a payroll returned the same day banked nothing);
+  // categorySpending (the category's own page) nets both signs. 🔴 "is left out of that figure rather than subtracted
+  // from it" was said of a same-day return every Income figure nets (review of the d75 batch).
   income:
-    "Money arriving here is income — except on the agent's own account, where it is the agent's and not yours. Money leaving one of these categories is left out of that figure rather than subtracted from it, though the category's own total still nets both.",
+    "Money arriving here is income — except on the agent's own account, where it is the agent's and not yours. Money leaving one of these categories is left out of that figure rather than subtracted from it — unless it is pay going back out the same day it came in, which leaves that day's income at what stayed — though the category's own total still nets both.",
   rewards:
     "Cash back and statement credits. Kept out of spending totals, so a credit never reads as income or as money spent.",
   investment:

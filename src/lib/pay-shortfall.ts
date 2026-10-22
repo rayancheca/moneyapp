@@ -132,9 +132,16 @@ export interface PaidAhead {
   cents: number;
 }
 
-/** The money from one deposit day inside the window that paid a READ payday outside it — another window's. */
+/**
+ * The money from one deposit day inside the window that paid a payday outside its read ones: a READ payday outside it —
+ * another window's (`paidAcross`) — or one no window reads (`paidUncounted`).
+ */
 export interface PaidAcross extends PaidAhead {
-  /** the payday is after the window — "paid early" (§6A 29); otherwise before it began */
+  /**
+   * "Paid early" (§6A 29): for `paidAcross`, the payday is after the window; for `paidUncounted`, it is on or after the
+   * window's first day — after the deposit, so a payday INSIDE the window not yet passed is one too (Wed Oct 7's money
+   * for Thu Oct 8, read on Oct 7). Otherwise the payday is before the window began.
+   */
   early: boolean;
 }
 

@@ -677,6 +677,21 @@ describe("incomeCard", () => {
     expect(incomeCard(bundle.db, TODAY)!.caveat).toContain("not money the app has found");
   });
 
+  /*
+   * ⚖️ Default built, not asked (2026-10-21): "Pay", never "Cash pay" — an app label, and since Aug 27, 2026 his pay is
+   * payroll by ACH into Wells Fargo (decision 55), the forecast's rule (`unbanked-income`). 🔴 The caveat under Earned vs
+   * banked still said "Cash pay can sit undeposited" beside his payroll (review of 878c3d5's batch).
+   */
+  test("the caveat is true of payroll as of cash: it says 'Cash pay' of neither", () => {
+    addSeries();
+    addTxn(PAY_START, 100_000);
+
+    const { caveat } = incomeCard(bundle.db, TODAY)!;
+    expect(caveat).not.toMatch(/Cash pay/);
+    expect(caveat).toContain("payroll can land in an account the ledger does not read");
+    expect(caveat).toContain("nothing here can tell those apart");
+  });
+
   test("a ledger with no confirmed income series returns null rather than a card of zeroes", () => {
     expect(incomeCard(bundle.db, TODAY)).toBeNull();
   });

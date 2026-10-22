@@ -167,8 +167,9 @@ export function AmountHistoryChart({ points, expectedCents, asTable = false }: A
     [points],
   );
   // every point held to the rate now: one dashed line, as before any rate had a history — a point held to nothing
-  // (money that paid no payday) is no second expectation
-  const oneExpectation = data.every((d) => d.towardNoPayday || d.expectedCents === expectedCents);
+  // (money that paid no payday, or money out: decision 75) is no second expectation. 🔴 Only money toward no payday
+  // was excused, so a payroll returned on a later day drew a single-rate history as the step chart of a rate change.
+  const oneExpectation = data.every((d) => d.expectedCents === null || d.expectedCents === expectedCents);
 
   // newest first — the "show me the numbers" reading order (the caption says so)
   const rows = useMemo(() => data.map((d, i) => ({ ...d, key: `${d.date}#${i}` })).reverse(), [data]);

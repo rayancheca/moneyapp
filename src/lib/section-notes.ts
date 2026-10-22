@@ -577,6 +577,27 @@ function impliedSpanPhrase(firstOn: string | null, lastOn: string | null): strin
 }
 
 /**
+ * "its paydays over Jul 2 – 30, 2026", "its payday on Sep 24, 2026" — the paydays a pay note's lead counts, by the span
+ * `impliedSpanPhrase` names: a one-day span is one payday (a series has one payday a day). 🔴 "its paydays on Sep 24,
+ * 2026" was said of one (review of the shortfall batch).
+ */
+function paydaysOverSpan(firstOn: string | null, lastOn: string | null): string {
+  return `${firstOn !== null && firstOn === lastOn ? "payday" : "paydays"}${impliedSpanPhrase(firstOn, lastOn)}`;
+}
+
+/**
+ * The surplus note's lead: "banked $X more than its paydays over … came to." — and, in a window where none of its
+ * paydays has passed, what it banked alone: there are no paydays to have come to anything. 🔴 Jun 5 – Jun 5 and Sep 23 –
+ * Sep 23 on his ledger copy read "banked $400.00 more than its paydays came to" of windows holding no payday at all
+ * (review of the shortfall batch).
+ */
+function surplusLead(seriesName: string, surplusCents: number, firstOn: string | null, lastOn: string | null): string {
+  const banked = `${seriesName} banked ${formatCents(surplusCents)}`;
+  if (firstOn === null) return `${banked} in a window where none of its paydays has passed.`;
+  return `${banked} more than its ${paydaysOverSpan(firstOn, lastOn)} came to.`;
+}
+
+/**
  * What an income figure on this page cannot see, when the pay arrives as cash.
  *
  * The page's income total is a record of DEPOSITS. For a cash job that makes it
@@ -788,8 +809,7 @@ export function cashEarningsSectionNotes(input: CashEarningsNoteInput): SectionN
       notes.push({
         id: `cash-earnings-catchup-${r.seriesName}`,
         body:
-          `${r.seriesName} banked ${formatCents(-r.unbankedCents)} more than its paydays` +
-          `${impliedSpanPhrase(r.firstPeriodOn, r.lastPeriodOn)} came to.` +
+          surplusLead(r.seriesName, -r.unbankedCents, r.firstPeriodOn, r.lastPeriodOn) +
           surplusSplit(-r.unbankedCents, r.shortfall, r.lastPeriodOn, input.formatDay),
       });
     }
@@ -886,8 +906,7 @@ function payShortfallNote(
       : "";
   const banked = `${formatCents(s.bankedInsideCents)} was banked inside the window${noPayday}`;
 
-  const span = impliedSpanPhrase(s.firstReadOn, s.lastReadOn);
-  const lead = `${seriesName}'s paydays${span} came to ${formatCents(s.readCents)}`;
+  const lead = `${seriesName}'s ${paydaysOverSpan(s.firstReadOn, s.lastReadOn)} came to ${formatCents(s.readCents)}`;
   const split =
     s.bankedInsideCents > 0
       ? rest.length === 0
@@ -904,8 +923,11 @@ function payShortfallNote(
   const days = s.notBankedYetPaydays;
   const grace =
     days.length > 0 && checkedThrough ? `; ${daysToLandRunPast(days, checkedThrough, payday, formatDay)}` : "";
+  // ⛔ the days the parenthesis named are named once: the rest of their money is "the same deposit's" (review of the
+  // shortfall batch: "from the deposits of A and B" twice, for money no day is told apart in)
+  const restFrom = noPayday === "" ? noPaydayFrom : s.towardNoPayday.length === 1 ? "same deposit" : "same deposits";
   const another = anotherBankedInside(
-    beyondParts(s, payday, noPaydayFrom, formatDay, " went toward none of these paydays"),
+    beyondParts(s, payday, restFrom, formatDay, " went toward none of these paydays"),
     "paid none of them",
   );
   const beyond = another === "" ? "" : `; ${another}`;

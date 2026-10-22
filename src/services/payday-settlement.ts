@@ -66,7 +66,17 @@ import {
  * tolerance window nothing is settled, so a deposit never pre-pays a week it
  * could not reach.
  */
-export function paydaySettlement(db: AppDatabase, seriesId: string, today: string): SeriesPaydaySettlement {
+/**
+ * `idx` is the category index its pay days' rows are read by (`payDayRows`): a caller settling several series loads it
+ * once (`paydaySettlementsBySeries`, `stillToComeReader`). 🔴 Loaded per call, every series of a batch re-read the
+ * categories table (review of the d75 batch).
+ */
+export function paydaySettlement(
+  db: AppDatabase,
+  seriesId: string,
+  today: string,
+  idx: CategoryIndex = loadCategoryIndex(db),
+): SeriesPaydaySettlement {
   const s = db.select().from(recurringSeries).where(eq(recurringSeries.id, seriesId)).get();
   if (!s || s.kind !== "income") return unsettled();
 
@@ -101,7 +111,7 @@ export function paydaySettlement(db: AppDatabase, seriesId: string, today: strin
    * unfiled $1,141.92 back beside Sep 17's payroll left Sep 17 unpaid while "in so far" counted the payroll, and an
    * unfiled $1,141.92 alone on Sep 17 paid it while no Income figure counted it (reviews of f1903f6 and 8fc0b01).
    */
-  const rows = payDayRows(loadCategoryIndex(db), linked);
+  const rows = payDayRows(idx, linked);
   // no pay sent: nothing opens the walk (`firstPaydayOn` — a payroll returned the same day still opens it, unbanked)
   if (!rows.some((r) => r.amountCents > 0)) return unsettled();
 
@@ -210,8 +220,13 @@ export function paydayProjectable(
  * outside of, and a payday dropped from one window without being added to
  * another is named by nothing. See `lib/payday-settlement`'s `settledBy`.
  */
-export function settledPaydaysForSeries(db: AppDatabase, seriesId: string, today: string): ReadonlyMap<string, string> {
-  return paydaySettlement(db, seriesId, today).settledBy;
+export function settledPaydaysForSeries(
+  db: AppDatabase,
+  seriesId: string,
+  today: string,
+  idx?: CategoryIndex,
+): ReadonlyMap<string, string> {
+  return paydaySettlement(db, seriesId, today, idx).settledBy;
 }
 
 /**
@@ -328,9 +343,9 @@ export function stillToComeReader(
   series: readonly StillToComeSeries[],
   today: string,
 ): StillToCome {
-  const settled = new Map(
-    series.filter((s) => s.kind === "income").map((s) => [s.id, settledPaydaysForSeries(db, s.id, today)] as const),
-  );
+  const income = series.filter((s) => s.kind === "income");
+  const idx = income.length === 0 ? undefined : loadCategoryIndex(db);
+  const settled = new Map(income.map((s) => [s.id, settledPaydaysForSeries(db, s.id, today, idx)] as const));
   const bills = series.filter((s) => s.kind !== "income");
   const payments = billPaymentsBySeries(db, bills);
   // nothing late asked (above); the day before each, as its schedule steps it, for one paid early
@@ -366,7 +381,9 @@ export function paydaySettlementsBySeries(
   today: string,
 ): Map<string, SeriesPaydaySettlement> {
   const out = new Map<string, SeriesPaydaySettlement>();
-  for (const id of seriesIds) out.set(id, paydaySettlement(db, id, today));
+  if (seriesIds.length === 0) return out;
+  const idx = loadCategoryIndex(db);
+  for (const id of seriesIds) out.set(id, paydaySettlement(db, id, today, idx));
   return out;
 }
 

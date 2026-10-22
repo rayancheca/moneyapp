@@ -178,7 +178,7 @@ describe("a payday checked on its day but not through its days to land never 'ne
         "yet; the other $1,000.00 is for paydays after that day — so the ledger has not looked for it.",
     );
     expect(s.september).toEqual([
-      "It America LLC (weekly pay)'s paydays on Sep 3, 2026 came to $1,000.00, and none of it is banked yet; " +
+      "It America LLC (weekly pay)'s payday on Sep 3, 2026 came to $1,000.00, and none of it is banked yet; " +
         `Sep 3's days to land run past Sat, Sep 5, 2026, ${CHECKED_DAY}; 1 more payday in the window falls after ` +
         "Sat, Sep 5, 2026 — so the ledger has not looked for its deposit.",
     ]);
@@ -203,7 +203,7 @@ describe("a payday checked on its day but not through its days to land never 'ne
         "the ledger has not looked for it.",
     );
     expect(s.september).toEqual([
-      "It America LLC (weekly pay)'s paydays on Sep 3, 2026 came to $1,000.00, and none of it reached a bank; 1 " +
+      "It America LLC (weekly pay)'s payday on Sep 3, 2026 came to $1,000.00, and none of it reached a bank; 1 " +
         `more payday in the window falls after Sun, Sep 6, 2026, ${CHECKED_DAY} — so the ledger has not looked for ` +
         "its deposit.",
     ]);

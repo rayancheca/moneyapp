@@ -139,6 +139,13 @@ interface Gap {
    */
   notBankedYetCents: number;
   /**
+   * …and the rest of the checked part: what "never reached a bank" says of — the difference less `unreadGapCents`
+   * and `notBankedYetCents` (`unbankedSplit`). Zero when the difference is not positive. ⛔ The card's own figure, for
+   * every reader that reports it (the rate-history write's guard): 🔴 re-derived as the difference less the unread part
+   * alone, a payday inside its days to land was counted in it (review of c02a4b0).
+   */
+  neverCents: number;
+  /**
    * the clause that follows the magnitude, e.g. "never reached a bank" — and after it, the money that went back out on
    * a day of its own, in /spending's words (`withMoneyOut`)
    */
@@ -178,6 +185,7 @@ function gapOf(
     gapMagnitudeCents: gapCents === 0 ? 0 : Math.abs(gapCents),
     unreadGapCents,
     notBankedYetCents,
+    neverCents,
     gapLabel: withMoneyOut(
       notBankedYetCents > 0
         ? inGraceGapLabel(neverCents, { ...inGrace, cents: notBankedYetCents }, unreadGapCents, frontier)
@@ -369,8 +377,15 @@ export interface IncomeCard {
  * module cannot distinguish between them. Printing the gap without printing
  * this is how "you are owed $11,117.00" gets read off a subtraction.
  */
+/*
+ * ⚖️ Default built, not asked (2026-10-21): "Pay", never "Cash pay" — since Aug 27, 2026 his pay is payroll by ACH
+ * into Wells Fargo (decision 55), so the explanations are true of a payroll too: one landing in an account the ledger
+ * does not read looks exactly like one never paid. 🔴 "Cash pay can sit undeposited, be spent without ever touching a
+ * bank, or …" sat under his payroll's difference — the forecast had already stopped saying "Cash pay" (review of the
+ * pay-words batch).
+ */
 const CAVEAT =
-  "A difference is not money the app has found. Cash pay can sit undeposited, be spent without ever touching a bank, or the arrangement can have quietly ended — nothing here can tell those three apart.";
+  "A difference is not money the app has found. Pay taken in cash can sit undeposited or be spent without ever touching a bank, payroll can land in an account the ledger does not read, or the arrangement can have quietly ended — nothing here can tell those apart.";
 
 const paydayWord = (n: number): string => (n === 1 ? "payday" : "paydays");
 

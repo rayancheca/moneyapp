@@ -13,6 +13,7 @@ import { transactions } from "@/db/schema/transactions";
 import { seedDatabase } from "@/db/seed";
 import { addDays } from "@/lib/dates";
 import { parseAmountHistoryText } from "@/lib/series-kind";
+import { incomeCard } from "@/services/income-card";
 import { rateHistoryRefusals, storedRateHistoryCount } from "@/services/rate-history-check";
 import {
   BASIS_CENTS,
@@ -186,6 +187,25 @@ describe("the plan", () => {
     expect(plan()).toEqual({ kind: "plan" });
     applyHistory(bundle);
     expect(plan()).toEqual({ kind: "applied" });
+  });
+
+  /*
+   * ⛔ The guard's "never reached a bank" is the card's: the read difference less what is NOT BANKED YET too
+   * (`unbankedSplit`). 🔴 It was the difference less only the unread part, so a payday inside its days to land was
+   * counted in it — the script reported a figure the card does not print (review of c02a4b0; latent on his copy).
+   */
+  test("its 'never reached a bank' is the card's: a checked payday inside its days to land is not in it", () => {
+    // Wells Fargo read through Fri Oct 2: Thu Oct 1 is checked on its day, and its days to land run to Sun Oct 4
+    for (let day = "2026-09-25"; day <= "2026-10-02"; day = addDays(day, 1)) {
+      bundle.db.insert(dailyBalances).values({ accountId: WELLS, day, balanceCents: 100_000, basis: "derived" }).run();
+    }
+    const today = "2026-10-05";
+    const line = incomeCard(bundle.db, today)!.pay.find((l) => l.seriesId === PAY.id)!;
+    expect(line.notBankedYetCents).toBe(114_192);
+    const { figures } = captureState(bundle, today);
+    expect(figures.checkedGapCents).toBe(line.neverCents);
+    expect(figures.checkedGapCents).toBe(line.gapCents - line.unreadGapCents - line.notBankedYetCents);
+    expect(figures.totalCheckedGapCents).toBe(figures.checkedGapCents);
   });
 
   test("rehearsed: Earned vs banked falls by exactly the twelve weeks, the basis holds, every guard passes", () => {

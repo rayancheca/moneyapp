@@ -132,6 +132,22 @@ describe("AmountHistoryChart — a deposit whose money paid no payday, in the ta
     expect(html).toContain("against the expected $1,141.92");
     expect(rowIn(html, "Sep 18, 2026")).toContain("toward no payday");
   });
+
+  /*
+   * ⚖️ …nor is MONEY OUT, held to no week (decision 75, `PaydayReading.expectedCents`): a payroll returned on a later
+   * day keeps a single-rate history the one bar chart and caption it was. 🔴 Only a row toward no payday was excused,
+   * so a return turned a single-rate history into the step chart of a rate that changed (review of the d75 batch;
+   * latent: no money out is linked to his pay).
+   */
+  test("at one rate, money out on a day of its own leaves the caption naming the one expected amount", () => {
+    const html = render([
+      { date: "2026-09-17", amountCents: WEEK, perPayday: null, expectedCents: WEEK, towardNoPayday: false },
+      { date: "2026-09-18", amountCents: -WEEK, perPayday: null, expectedCents: null, towardNoPayday: false },
+      { date: "2026-09-24", amountCents: WEEK, perPayday: null, expectedCents: WEEK, towardNoPayday: false },
+    ]);
+    expect(html).toContain("against the expected $1,141.92");
+    expect(rowIn(html, "Sep 18, 2026")).toContain("-$1,141.92");
+  });
 });
 
 /**

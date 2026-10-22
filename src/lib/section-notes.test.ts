@@ -985,9 +985,12 @@ describe("cashEarningsSectionNotes", () => {
     expect(note!.body).toContain("implies $5,230.00 of earnings over Jul 2 – 30, 2026 and");
   });
 
-  test("says nothing about a span when no payday was covered", () => {
-    // An invented window beats nothing only if it is true. With no covered
-    // payday there is no span to name, and the sentence stands without one.
+  /*
+   * An invented window beats nothing only if it is true. With no covered payday there is no span to name — and no
+   * paydays to have "came to" anything. 🔴 Jun 5 – Jun 5 and Sep 23 – Sep 23 on his ledger read "banked $400.00 more
+   * than its paydays came to" of windows holding no payday at all (review of the shortfall batch).
+   */
+  test("says nothing about a span when no payday was covered — nor of paydays it has none of", () => {
     const [note] = notes({
       basis: "series-live",
       impliedCents: 0,
@@ -996,7 +999,8 @@ describe("cashEarningsSectionNotes", () => {
       firstPeriodOn: null,
       lastPeriodOn: null,
     });
-    expect(note!.body).toContain("banked $9,000.00 more than its paydays came to.");
+    expect(note!.body).toContain("banked $9,000.00 in a window where none of its paydays has passed.");
+    expect(note!.body).not.toContain("more than its paydays");
   });
 
   test("the catch-up note names its span too", () => {
@@ -1252,7 +1256,7 @@ describe("cashEarningsSectionNotes", () => {
       wentBackOut: [],
       bankedCents: 0,
     };
-    const august =(over: Partial<PayShortfall> = {}) =>
+    const august = (over: Partial<PayShortfall> = {}) =>
       notes({
         ...HIS,
         impliedCents: 428_292,
@@ -1437,10 +1441,15 @@ describe("cashEarningsSectionNotes", () => {
       );
     });
 
-    test("money that paid no payday, split between the payday it nets and the rest: both parts named by day", () => {
+    /*
+     * ⛔ Each deposit day named once: the part after the split says "the same deposit" of the days the banked figure's
+     * parenthesis named. 🔴 Both parts named every day — "from the deposits of A and B" twice (review of the shortfall
+     * batch): the money is not divided between the days, so the second naming said nothing new.
+     */
+    test("money that paid no payday, split between the payday it nets and the rest: its days named once", () => {
       // Aug 6 paid by Sep 24 from outside, Aug 13 by no deposit, and $1,500.00 on Aug 14 that paid no payday: it nets
       // Aug 13's $1,047.00, and the other $453.00 has no unpaid payday left to net
-      const [note] = august({
+      const split = {
         firstReadOn: "2026-08-06",
         lastReadOn: "2026-08-13",
         readPaydays: 2,
@@ -1452,13 +1461,44 @@ describe("cashEarningsSectionNotes", () => {
         neverBankedCents: 0,
         noPaydayBeyondCents: 45_300,
         towardNoPayday: [{ depositOn: "2026-08-14", cents: 150_000 }],
-      });
+      };
+      const [note] = august(split);
       expect(note!.body).toBe(
         "It America LLC (weekly pay)'s paydays over Aug 6 – 13, 2026 came to $2,094.00, of which $1,047.00 was " +
           "banked inside the window ($1,047.00 of it, from the deposit of 2026-08-14, went toward no payday) and " +
           "$1,047.00 (Aug 6) was paid by the deposit of 2026-09-24; another $453.00 banked inside the window, from " +
-          "the deposit of 2026-08-14, went toward no payday.",
+          "the same deposit, went toward no payday.",
       );
+      // …and of two days, each once
+      const [two] = august({
+        ...split,
+        towardNoPayday: [
+          { depositOn: "2026-08-14", cents: 100_000 },
+          { depositOn: "2026-08-15", cents: 50_000 },
+        ],
+      });
+      expect(two!.body.match(/2026-08-14/g)).toHaveLength(1);
+      expect(two!.body).toContain(
+        "($1,047.00 of it, from the deposits of 2026-08-14 and 2026-08-15, went toward no payday)",
+      );
+      expect(two!.body).toContain("another $453.00 banked inside the window, from the same deposits, went toward");
+    });
+
+    test("money that paid no payday and nets no payday is named by its days, once, after the split", () => {
+      const [note] = august({
+        firstReadOn: "2026-08-06",
+        lastReadOn: "2026-08-06",
+        readPaydays: 1,
+        readCents: 104_700,
+        bankedInsideCents: 0,
+        noPaydayInsideCents: 0,
+        shortCents: 0,
+        paidOutside: [{ depositOn: "2026-09-24", paydays: ["2026-08-06"], cents: 104_700, early: false }],
+        neverBankedCents: 0,
+        noPaydayBeyondCents: 45_300,
+        towardNoPayday: [{ depositOn: "2026-08-14", cents: 45_300 }],
+      });
+      expect(note!.body).toContain("another $453.00 banked inside the window, from the deposit of 2026-08-14, went");
     });
 
     test("money that paid another window's payday is named after the split — late, or early (§6A 29)", () => {
@@ -1610,7 +1650,7 @@ describe("cashEarningsSectionNotes", () => {
       });
       // 🔴 it read "came to $1,141.92, and none of it reached a bank" — the return netted away the payday it paid
       expect(note!.body).toBe(
-        "It America LLC (weekly pay)'s paydays on Sep 24, 2026 came to $1,141.92, and all of it was banked inside " +
+        "It America LLC (weekly pay)'s payday on Sep 24, 2026 came to $1,141.92, and all of it was banked inside " +
           "the window; another $4,567.68 banked inside the window paid none of them: $3,425.76, from the deposit of " +
           "2026-09-23, paid the paydays of Sep 3, Sep 10, and Sep 17 and $1,141.92, from the deposit of 2026-09-24, " +
           "paid Aug 27's payday; $1,141.92 went back out on 2026-09-25.",
@@ -1643,7 +1683,7 @@ describe("cashEarningsSectionNotes", () => {
         },
       });
       expect(out.map((n) => n.body)).toEqual([
-        "It America LLC (weekly pay)'s paydays on Oct 1, 2026 came to $1,141.92, and none of it was banked inside " +
+        "It America LLC (weekly pay)'s payday on Oct 1, 2026 came to $1,141.92, and none of it was banked inside " +
           "the window: $1,141.92 (Oct 1) was paid early, by the deposit of 2026-09-30; another $1,141.92 banked " +
           "inside the window, from the deposit of 2026-10-07, paid Oct 8's payday; 1 more payday in the window falls " +
           "after 2026-10-01, the last day every account that pay lands in has been checked through — so the ledger " +
@@ -1723,7 +1763,7 @@ describe("cashEarningsSectionNotes", () => {
       wentBackOut: [],
       bankedCents: 456_768,
     };
-    const surplus =(surplusCents: number, over: Partial<PayShortfall> = {}, row: object = {}) =>
+    const surplus = (surplusCents: number, over: Partial<PayShortfall> = {}, row: object = {}) =>
       notes({
         ...HIS,
         bankedCents: HIS.impliedCents + surplusCents,
@@ -1748,10 +1788,10 @@ describe("cashEarningsSectionNotes", () => {
         { impliedCents: 0, bankedCents: 456_768, firstPeriodOn: null, lastPeriodOn: null },
       );
       expect(body).toEqual([
-        "It America LLC (weekly pay) banked $4,567.68 more than its paydays came to. $1,141.92 of it, from the deposit " +
-          "of 2026-09-23, paid Sep 24's payday early. One deposit can bank several paydays at once, so the other " +
-          "$3,425.76 is earlier pay arriving late — read it as a backlog clearing rather than as a period that earned " +
-          "more.",
+        "It America LLC (weekly pay) banked $4,567.68 in a window where none of its paydays has passed. $1,141.92 of " +
+          "it, from the deposit of 2026-09-23, paid Sep 24's payday early. One deposit can bank several paydays at " +
+          "once, so the other $3,425.76 is earlier pay arriving late — read it as a backlog clearing rather than as a " +
+          "period that earned more.",
       ]);
     });
 
@@ -1763,8 +1803,8 @@ describe("cashEarningsSectionNotes", () => {
         { impliedCents: 0, bankedCents: 40_000, firstPeriodOn: null, lastPeriodOn: null },
       );
       expect(body).toEqual([
-        "It America LLC (weekly pay) banked $400.00 more than its paydays came to. $400.00 of it, from the deposit of " +
-          "2026-06-05, went toward no payday.",
+        "It America LLC (weekly pay) banked $400.00 in a window where none of its paydays has passed. $400.00 of it, " +
+          "from the deposit of 2026-06-05, went toward no payday.",
       ]);
     });
 
