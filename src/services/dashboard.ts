@@ -95,9 +95,10 @@ export interface SpendingPace {
   partlyRead: PartlyRead | null;
   /**
    * /spending's proof of the month's spending (`allSpend`, asked on `today`) — the chip beside the figures, reading
-   * "partly read" where `partlyRead` is present and the month holds rows. Never offered beside the dash.
+   * "partly read" where `partlyRead` is present and the month holds rows. Null beside the dash (`freeToSpendCents`
+   * null): never offered there, so never built there.
    */
-  provenance: Provenance;
+  provenance: Provenance | null;
   /**
    * ⚖️ Decision 64: "spending imported through Aug 12" where the month holds no spending and not one elapsed day is read
    * by that day — /spending's Spent card prints "—" with these words (`CashFlow.spendingUnaccounted`), and so does the
@@ -268,6 +269,15 @@ function spendingPace(db: AppDatabase, today: string): SpendingPace | null {
    * then `plottedRunningTotals` — so the two cannot stop on different days, and
    * a day before the records begin is left undrawn as well.
    *
+   * ⚠️ That frontier is the newest day ANY account reached (`ledgerReaches`); the
+   * line under the tile counts from the day EVERY account he spends from reached
+   * (`partlyRead`, decision 72). With one account they are one day; with more, the
+   * staircase runs past the day the text counts from, over days whose figures
+   * are lower bounds. 🔴 This said the undrawn days were the ones the text counts
+   * (review of the pace card, batch 4/5). On his ledger copy 2026-10-21 it draws
+   * Oct 1–14 (Venture X) to $1,603.00 under "spending imported through Aug 12 ·
+   * 21 days of this period unaccounted" — as /spending's graph lens does.
+   *
    * ⛔ …AND NEVER PAST TODAY. The graph draws a bucket holding a row as a figure
    * even when it is dated after today (data wins, `holdsRows`), which would put
    * a step of this "so far" line — and the marker where measuring stops — on a
@@ -326,16 +336,20 @@ function spendingPace(db: AppDatabase, today: string): SpendingPace | null {
    * read "partly read · spending imported through Aug 12 · 21 days of this period unaccounted".
    */
   const partlyRead = allSpendPartlyRead(db, period.from, period.to, today);
-  const provenance = provenanceFor(db, {
-    kind: "allSpend",
-    from: period.from,
-    to: period.to,
-    label: period.label,
-    today,
-  })!;
   // ⚖️ decision 64: no spending found and no elapsed day read by that day is no "$0.00 spent" — /spending's Spent card's
   // dash, asked of the same window by the same rule (`spendingNotFoundFact`)
   const spendingNotFound = cashFlow.spendingUnaccounted;
+  const withheld = noDayRead || spendingNotFound !== null;
+  /*
+   * ⛔ The proof proves a rendered figure, so it is built only beside one (`SpendingPace.provenance`). 🔴 It was built on
+   * every render — 18.4 ms against 419 ms for all of `dashboardData` on his ledger copy (review of the pace card, batch
+   * 4/5) — where the tile withholds the figure and mounts no chip too. ⚠️ `partlyRead` above is no copy of its count to
+   * remove: an empty window's proof carries none (`Provenance.partlyRead`), while "at least $0.00 spent" over a month
+   * read in part still needs the line.
+   */
+  const provenance = withheld
+    ? null
+    : provenanceFor(db, { kind: "allSpend", from: period.from, to: period.to, label: period.label, today })!;
 
   return {
     monthLabel: period.label,
@@ -345,7 +359,7 @@ function spendingPace(db: AppDatabase, today: string): SpendingPace | null {
     partlyRead,
     provenance,
     spendingNotFound,
-    freeToSpendCents: noDayRead || spendingNotFound !== null ? null : freeToSpendCents,
+    freeToSpendCents: withheld ? null : freeToSpendCents,
     href: "/spending",
   };
 }

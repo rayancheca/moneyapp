@@ -301,11 +301,36 @@ describe("dashboardData: spending pace", () => {
     expect(pace!.points.slice(0, 9).map((p) => p.actualCents)).toEqual([
       null, 80_00, 80_00, 110_00, null, null, null, null, null,
     ]);
-    // the undrawn days past Jul 4 are the four the text counts; Jul 1 is not
-    // counted there, because it is not "not imported yet" (`daysNotImportedYet`)
+    // with ONE account the undrawn days past Jul 4 are the four the text counts; Jul 1 is not counted there, because it
+    // is not "not imported yet" (`daysNotImportedYet`) — with two, see the next test
     expect(pace!.partlyRead?.uncoveredDays).toBe(4);
     // the figures beside it do not move
     expect(pace!.actualToDateCents).toBe(110_00);
+  });
+
+  /*
+   * ⚠️ …and with MORE THAN ONE ACCOUNT the staircase and the text stop on different days, by design. The line is drawn
+   * through the newest day ANY account reached (`ledgerReaches`, /spending's graph lens: `plottedRunningTotals`); the
+   * text counts from the day EVERY account he spends from reached (`spendingReadThrough`, decision 72), and its figures
+   * are lower bounds. 🔴 The test above claimed "the undrawn days are the ones the text counts", true only of one account
+   * (review of the pace card, batch 4/5). On his ledger copy 2026-10-21 the tile draws Oct 1–14 (Venture X, Oct 14),
+   * the "measuring stops" marker on Oct 14 at $1,603.00, under "spending imported through Aug 12 · 21 days of this period
+   * unaccounted" — Chase Checking read through Aug 12.
+   */
+  test("with two accounts the staircase runs to the newer one's day; the text counts from the older one's", () => {
+    const instId = bundle.db.select().from(institutions).where(eq(institutions.name, "Chase")).get()!.id;
+    const card = createAccount(bundle.db, { institutionId: instId, name: "Venture X", type: "credit" });
+    spend("Groceries", "2026-07-02", -80_00);
+    spend("Gas", "2026-07-05", -30_00, card);
+    const { pace } = dashboardData(bundle.db, TODAY);
+    expect(pace!.points.slice(0, 9).map((p) => p.actualCents)).toEqual([
+      null, 80_00, 80_00, 80_00, 110_00, null, null, null, null,
+    ]);
+    // drawn through Jul 5, counted from Jul 2: Jul 3 – 5 are drawn AND unaccounted
+    expect(pace!.partlyRead).toEqual({
+      uncoveredDays: 6,
+      line: "spending imported through Jul 2 · 6 days of this period unaccounted",
+    });
   });
 
   test("free-to-spend = full-month income minus spend-so-far and upcoming fixed bills", () => {
@@ -488,11 +513,11 @@ describe("dashboardData: spending pace", () => {
         uncoveredDays: 8,
         line: "spending imported through Jun 20 · 8 days of this period unaccounted",
       });
-      expect(pace!.provenance.verdict).toBe("partly_read");
+      expect(pace!.provenance?.verdict).toBe("partly_read");
       // ⛔ one proof for one window: /spending's own, asked of the same month on the same day — its line is the tile's
       const july = { from: "2026-07-01", to: "2026-07-31", label: "July 2026", today: TODAY };
       expect(provenanceFor(bundle.db, { kind: "allSpend", ...july })).toEqual(pace!.provenance);
-      expect(pace!.provenance.partlyRead).toEqual(pace!.partlyRead);
+      expect(pace!.provenance?.partlyRead).toEqual(pace!.partlyRead);
       // $30.00 was found, so the figures stand — as the lower bounds the chip says they are
       expect(pace!.actualToDateCents).toBe(30_00);
       expect(pace!.freeToSpendCents).not.toBeNull();
@@ -514,6 +539,23 @@ describe("dashboardData: spending pace", () => {
       const { pace } = dashboardData(bundle.db, TODAY);
       expect(pace!.freeToSpendCents).toBeNull();
       expect(pace!.spendingNotFound).toBe("spending imported through Jun 20");
+      // no proof is built beside the dash — the tile mounts none there (see the next test)
+      expect(pace!.provenance).toBeNull();
+    });
+
+    /*
+     * ⛔ The month's proof proves a rendered figure, so it is built only beside one. 🔴 It was built on every render —
+     * 18.4 ms a proof against 419 ms for the whole dashboard on his ledger copy (review of the pace card, batch 4/5) —
+     * even where the figure is withheld and the tile never mounts its chip. Latent on his copy 2026-10-21: October's
+     * figure stands ($1,603.00 found), so the proof is still built there.
+     */
+    test("the month's proof is built beside a figure, never beside the dash", () => {
+      spend("Groceries", "2026-06-20", -80_00); // July is entirely unimported
+      expect(dashboardData(bundle.db, TODAY).pace!.provenance).toBeNull();
+      spend("Coffee", "2026-07-02", -5_00);
+      const { pace } = dashboardData(bundle.db, TODAY);
+      expect(pace!.freeToSpendCents).not.toBeNull();
+      expect(pace!.provenance?.verdict).toBe("partly_read");
     });
   });
 });

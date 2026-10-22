@@ -32,8 +32,10 @@ export function SpendingPaceWidget({ pace }: { pace: SpendingPace }) {
           {/* ⚖️ decision 72 (2026-10-13): /spending's proof of the month, its chip and all — "partly read" over days not
               every account he spends from has read. On the heading, never inside the card's link: a button in an <a>
               is axe `nested-interactive`, the reason /spending mounts its own on a heading. No proof beside the dash
-              (`CategoryHeadline`'s rule): the popover proves a rendered figure. */}
-          {free !== null && <ProvenancePopover label="this month's spending" provenance={pace.provenance} />}
+              (`CategoryHeadline`'s rule): the popover proves a rendered figure — and the service builds none there. */}
+          {free !== null && pace.provenance !== null && (
+            <ProvenancePopover label="this month's spending" provenance={pace.provenance} />
+          )}
         </h2>
         <Link
           href={pace.href}
