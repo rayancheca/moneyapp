@@ -27,7 +27,8 @@ import type { ViewState } from "@/lib/view-state";
  *   and a restore (Back/Forward) resolves with a bare setState — outside any transition. Every
  *   push, replace and Back/Forward calls the app's own `onRouterTransitionStart` first, as Next
  *   does with src/instrumentation-client.ts. `refresh` re-renders the URL on screen, queued,
- *   and announces nothing.
+ *   and announces nothing. A server action that revalidates (`heldServerAction`) redraws the
+ *   URL it ran on when kept, and — discarded — refreshes once nothing is pending.
  * - The page: layout-router.js's InnerLayoutRouter reads its segment through
  *   `useDeferredValue(cacheNode.rsc)`, keyed by the segment without its query. So a restore,
  *   being urgent, commits the URL FIRST with the page from before it still drawn, and draws
@@ -83,7 +84,17 @@ export interface HarnessPage<P> {
 }
 
 type Action<P> =
-  | { type: "server-action"; surface: string; state: ViewState; answer: unknown; resolve(value: unknown): void }
+  | {
+      type: "server-action";
+      surface: string;
+      state: ViewState;
+      answer: unknown;
+      /** the action calls `revalidatePath` (server-action-reducer.js `revalidationKind`) */
+      revalidates: boolean;
+      /** set once it has: what the queue reads of a discarded action (app-router-instance.js `didRevalidate`) */
+      didRevalidate?: boolean;
+      resolve(value: unknown): void;
+    }
   | { type: "navigate"; url: string; history: "push" | "replace" }
   | { type: "restore"; to: RouterState<P> }
   | { type: "refresh" };
@@ -129,11 +140,25 @@ function useRouterState(): RouterState<unknown> {
 /**
  * A server action the page calls: it writes `state` to the server's `surface` and answers `answer`, queued in the
  * router like every other — so it waits behind a save of Back's view the server is holding.
+ *
+ * `revalidates`: the action calls `revalidatePath` (setBenchmarkAction does, once it keeps a symbol; the view save
+ * never does). Next 16.2.10 then draws the page again itself: KEPT, its reducer re-renders the URL the action ran on
+ * from the render its own response carries (server-action-reducer.js, `FreshnessPolicy.RefreshAll` — no request of
+ * its own), into the state the action was dispatched with, so React shows it only where no later state replaced that
+ * one (a navigation after it, a restore); DISCARDED by a navigation, the queue dispatches a refresh once the action
+ * completes and nothing is pending (app-router-instance.js `needsRefresh`). 🔴 Review of b37a250: modelling neither,
+ * the harness let a picker's own `router.refresh()` after a link pass for the only redraw, where in the app it was a
+ * second render on top of Next's.
  */
-export function heldServerAction(surface: string, state: ViewState, answer: unknown): Promise<unknown> {
+export function heldServerAction(
+  surface: string,
+  state: ViewState,
+  answer: unknown,
+  revalidates: boolean = false,
+): Promise<unknown> {
   return new Promise((resolve) => {
     // a server action dispatches into the router queue, in a transition (server-action reducer)
-    startTransition(() => world().dispatch({ type: "server-action", surface, state, answer, resolve }));
+    startTransition(() => world().dispatch({ type: "server-action", surface, state, answer, revalidates, resolve }));
   });
 }
 
@@ -153,7 +178,13 @@ export class World<P> {
   readonly history: RouterState<P>[];
   private at = 0;
   private readonly inbox: { work: ServerWork; serve(): void }[] = [];
-  private readonly queue: { state: RouterState<P>; pending: QueuedAction<P> | null; last: QueuedAction<P> | null };
+  private readonly queue: {
+    state: RouterState<P>;
+    pending: QueuedAction<P> | null;
+    last: QueuedAction<P> | null;
+    /** a discarded action revalidated: refresh once nothing is pending */
+    needsRefresh: boolean;
+  };
   private setState: ((value: RouterState<P> | Promise<RouterState<P>>) => void) | null = null;
   private root: Root | null = null;
 
@@ -177,7 +208,7 @@ export class World<P> {
     this.persisted = structuredClone(persisted);
     const initial = { url, rsc: page.server(new URL(url, "http://x"), this.persisted) };
     this.history = [initial];
-    this.queue = { state: initial, pending: null, last: null };
+    this.queue = { state: initial, pending: null, last: null, needsRefresh: false };
   }
 
   /** the URL on screen */
@@ -271,7 +302,10 @@ export class World<P> {
       if (!refused) this.persisted[action.surface] = { ...this.persisted[action.surface], ...action.state };
       if (!refused) this.writes.push({ surface: action.surface, state: action.state });
       action.resolve(action.answer);
-      return state;
+      if (!action.revalidates) return state;
+      // revalidated: the URL it ran on, drawn afresh from what the server now holds (its response carries the render)
+      action.didRevalidate = true;
+      return { url: state.url, rsc: this.page.server(new URL(state.url, "http://x"), this.persisted) };
     }
     if (action.type === "navigate" || action.type === "refresh") {
       const href = action.type === "navigate" ? action.url : state.url;
@@ -284,7 +318,8 @@ export class World<P> {
 
   /** the router's committed state moved: keep the history the way Next's HistoryUpdater does */
   private commitHistory(action: Action<P>, next: RouterState<P>): void {
-    if (action.type === "refresh") this.history[this.at] = next;
+    const redrawn = action.type === "refresh" || (action.type === "server-action" && action.didRevalidate === true);
+    if (redrawn) this.history[this.at] = next;
     if (action.type !== "navigate") return;
     if (action.history === "push" && next.url !== this.url) {
       this.history.splice(this.at + 1, Infinity, next);
@@ -299,6 +334,10 @@ export class World<P> {
     if (this.queue.pending !== null) {
       this.queue.pending = this.queue.pending.next;
       if (this.queue.pending !== null) this.runAction(this.queue.pending);
+    } else if (this.queue.needsRefresh) {
+      // a discarded action that revalidated completes after the navigation that discarded it: refresh the page
+      this.queue.needsRefresh = false;
+      startTransition(() => this.dispatch({ type: "refresh" }));
     }
   }
 
@@ -307,6 +346,7 @@ export class World<P> {
     this.queue.pending = action;
     const handleResult = (nextState: RouterState<P>): void => {
       if (action.discarded) {
+        if (action.payload.type === "server-action" && action.payload.didRevalidate) this.queue.needsRefresh = true;
         this.runRemainingActions();
         return;
       }

@@ -1273,6 +1273,35 @@ describe("Back/Forward to a page with view pills", () => {
     expect(page.navigations.slice(before).map((nav) => nav.url)).toEqual(["/investments?range=1M"]);
   });
 
+  /**
+   * …and a view PRESS gone at its bound goes again itself once its own write lands — which Next queues behind Back's
+   * save, so after it lands. 🔴 Review of b37a250 (harness probe Q1): the provider's redraw, meant for a link, fired for
+   * the press's navigation too, and the page was rendered twice: the provider's refresh, then the press going again.
+   */
+  test("a view press gone at BACK_SAVE_WAIT_MS: once Back's save and its write land, drawn once more, not twice", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const page = await open(portfolioPage, "/investments?range=1Y");
+    ui.portfolio!.setView("view", "returns");
+    await page.settle();
+    page.back();
+    await idle(); // Back's save, held
+
+    ui.portfolio!.setView("unit", "percent");
+    await idle();
+    await vi.advanceTimersByTimeAsync(BACK_SAVE_WAIT_MS);
+    await idle();
+    await page.serve("render");
+    expect(page.url).toBe("/investments?range=1Y&unit=percent");
+    const before = page.navigations.length;
+    await page.serve("write"); // Back's save, late
+    await page.serve("write"); // and the press's own, behind it
+    const renders: string[] = [];
+    while (page.pending.length > 0) renders.push((await page.serve("render")).label);
+    expect(renders).toEqual(["/investments?range=1Y&unit=percent"]);
+    expect(page.navigations.slice(before).map((nav) => nav.url)).toEqual(["/investments?range=1Y&unit=percent"]);
+    expect(ui.portfolio!.state).toMatchObject({ unit: "percent" });
+  });
+
   test("the control: a link followed once Back's save has landed draws the view Back showed, once", async () => {
     const page = await open(portfolioPage, "/investments?range=1Y");
     ui.portfolio!.setView("view", "returns");
