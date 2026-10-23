@@ -700,6 +700,50 @@ describe("paidAhead — the payments that covered more than one charge, said bes
     expect(paidAhead([sep3, at("2026-11-11", -7_274)], RATE, "bill")).toEqual([]);
   });
 
+  /*
+   * ⚖️ default built, not asked (2026-10-23): …a remainder is what a payment ahead LEFT — a payment below the rate, or
+   * money back, is one only when it posts after the payment ahead; one before it says the amounts vary. 🔴 At b6aa5dc
+   * every payment below the rate was a remainder wherever it fell: FPL's -$14.21 Jul 10 and -$56.22 Jul 28, then
+   * -$58.87 Aug 28 at the rate he set and a -$125.00 Sep 28 bill, read "Sep 28's -$125.00 covered more than one month"
+   * on the All tab, the series page and the popover — a bill whose rate is its highest amount has none above it
+   * (review of b6aa5dc; measured on his ledger copy 2026-10-23 with those two rows linked).
+   */
+  test("a payment below the rate, or money back, BEFORE the payment ahead: FPL and Breezeline name nothing", () => {
+    const fpl = [
+      at("2026-07-10", -1_421),
+      at("2026-07-28", -5_622),
+      at("2026-08-28", -5_887),
+      at("2026-09-28", -12_500),
+    ];
+    expect(paidAhead(fpl, -5_887, "bill")).toEqual([]);
+    // Breezeline's prorated -$40.32 first bill, four at its $50.00 rate, then a charge of twice it
+    const months = ["07", "08", "09", "10"].map((m) => at(`2026-${m}-10`, -5_000));
+    expect(paidAhead([at("2026-06-20", -4_032), ...months, at("2026-11-10", -10_000)], -5_000, "bill")).toEqual([]);
+    // …and money back before it — but a payment a cent short of the rate before it is the rate, as an instalment rounds
+    const sep3 = at("2026-09-03", -100_000);
+    expect(paidAhead([AUG_12, at("2026-08-20", 1_250), sep3], RATE, "bill")).toEqual([]);
+    expect(paidAhead([at("2026-08-12", RATE + 1), sep3], RATE, "bill")).toEqual([sep3]);
+    // Car insurance's Nov 11 remainder, and a credit after it, post after Sep 3: it is still named
+    expect(paidAhead([AUG_12, sep3, at("2026-11-11", -7_274), at("2026-12-02", 1_250)], RATE, "bill")).toEqual([sep3]);
+  });
+
+  test("…after the FIRST payment ahead: a remainder between two leaves both named", () => {
+    const [sep3, jan11] = [at("2026-09-03", -100_000), at("2027-01-11", 2 * RATE)];
+    expect(paidAhead([AUG_12, sep3, at("2026-11-11", -7_274), jan11], RATE, "bill")).toEqual([sep3, jan11]);
+  });
+
+  /*
+   * ⚖️ default built, not asked (2026-10-23): a late catch-up — two charges paid at once after a missed month — is
+   * named as well, and truly: it covered the month it missed and its own. Its words say only that ("covered more than
+   * one month"), never "ahead" or "early" — no surface reads this rule another way. Latent on his ledger copy
+   * 2026-10-23: Car insurance's Sep 3 is the one payment of twice a rate, and he paid it before Sep 11 was due.
+   */
+  test("a late catch-up after a missed month covered more than one month — all its words say", () => {
+    const oct12 = at("2026-10-12", 2 * RATE); // Sep 11's premium unpaid, then two in one payment
+    expect(paidAhead([AUG_12, oct12], RATE, "bill")).toEqual([oct12]);
+    expect(paidAheadPhrase([oct12], "monthly", TODAY)).toBe("Oct 12's -$715.16 covered more than one month");
+  });
+
   test("a subscription pays ahead as a bill does; a transfer, income or other series is no charge to pay ahead", () => {
     const sep3 = at("2026-09-03", -100_000);
     expect(paidAhead([AUG_12, sep3], RATE, "subscription")).toEqual([sep3]);

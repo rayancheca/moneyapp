@@ -34,7 +34,9 @@ export interface SeriesPostedAverage extends PostedAverage {
    * the rate in force, of a bill or subscription one of whose other payments was that rate and none more (`paidAhead`)
    * — each covered more than one charge, named beside the average wherever it prints (`postedAvgNotes`). Empty for a
    * series read per payday or as posted, and for one with none. His Car insurance's Sep 3 -$1,000.00, alone on his
-   * ledger copy 2026-10-21.
+   * ledger copy 2026-10-21. ⚖️ default built, not asked (2026-10-23): …and none less, nor money back, before the first
+   * of them — FPL's July bills keep a later one of twice the -$58.87 he set unnamed; Sep 3 is still alone named on his
+   * ledger copy 2026-10-23.
    */
   paidAhead: readonly Occurrence[];
   /**

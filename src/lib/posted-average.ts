@@ -363,12 +363,25 @@ export function postedAsWord(o: Pick<Occurrence, "postings">): string | null {
  * not built: it would print beside every large bill, and the default asked for names what Sep 3 paid.
  *
  * ⚖️ DEFAULT, BUILT, NOT ASKED (2026-10-22): …ONE other payment of the rate at least, and NONE above it — a payment
- * below the rate, or money back, is what a payment ahead leaves, never a sign its amounts vary. 🔴 Read as "every
- * other payment is the rate", Sep 3's -$1,000.00 left -$72.74 for Nov 11, and with that row on the series the page,
- * the All tab and the popover read "posted avg -$476.77" with nothing beside it — the figure Sep 3 inflates,
- * unexplained, the defect this note was built to end; a +$12.50 credit on Oct 2 read "-$448.36", as silent (review
- * of cdec7cb, a copy of his ledger 2026-10-21 with that row added, today 2026-11-15). FPL still names nothing: none of
- * its payments is the -$58.87 he set. A bill whose amounts vary around a rate set from one of them has one above it.
+ * below the rate, or money back, is what a payment ahead leaves, never a sign its amounts vary (⚠️ only when it posts
+ * after one: 2026-10-23, below). 🔴 Read as "every other payment is the rate", Sep 3's -$1,000.00 left -$72.74 for
+ * Nov 11, and with that row on the series the page, the All tab and the popover read "posted avg -$476.77" with
+ * nothing beside it — the figure Sep 3 inflates, unexplained, the defect this note was built to end; a +$12.50 credit
+ * on Oct 2 read "-$448.36", as silent (review of cdec7cb, a copy of his ledger 2026-10-21 with that row added, today
+ * 2026-11-15). FPL still names nothing: none of its payments is the -$58.87 he set.
+ *
+ * ⚖️ default built, not asked (2026-10-23): …and a payment below the rate, or money back, is what a payment ahead
+ * LEFT only when it posts after one — after the first, so a remainder between two leaves both named; one before it
+ * says the amounts vary, and nothing is named. 🔴 At b6aa5dc any payment below the rate was a remainder wherever it
+ * fell, and a bill whose rate is its HIGHEST amount has none above it: FPL's -$14.21 Jul 10 and -$56.22 Jul 28, with
+ * -$58.87 Aug 28 at the rate he set and a -$125.00 Sep 28 bill linked, read "Sep 28's -$125.00 covered more than one
+ * month" on the All tab, the series page and the popover (review of b6aa5dc; measured on his ledger copy 2026-10-23
+ * with those two rows linked). Breezeline's -$40.32 prorated first bill, before four at its $50.00 rate, now keeps a
+ * later charge of $100.00 unnamed (a -$100.00 Oct 22 added there read "Oct 22's -$100.00 covered more than one month").
+ * Car insurance's Nov 11 remainder, and any credit after Sep 3, post after it: Sep 3 is still named. A late catch-up —
+ * two charges paid at once after a missed month — is named too, and truly: it covered the month it missed and its own,
+ * and the words say no more than that ("covered more than one month"). Nothing calls it early or ahead: the calendar
+ * pays its own due day with it, and the day it missed stays unpaid — one payment pays one due day (`paymentFor`).
  */
 export const PAID_AHEAD_MULTIPLE = 2;
 
@@ -380,7 +393,8 @@ const AT_THE_RATE_CENTS = 1;
 
 /**
  * The payments of `occurrences` that covered more than one charge — `PAID_AHEAD_MULTIPLE` × `rateCents` or more — of a
- * bill or subscription one of whose other payments was `rateCents` and none more, within `AT_THE_RATE_CENTS`.
+ * bill or subscription one of whose other payments was `rateCents` and none more, within `AT_THE_RATE_CENTS`, and none
+ * less, nor money back, before the first of them.
  */
 export function paidAhead(
   occurrences: readonly Occurrence[],
@@ -392,10 +406,15 @@ export function paidAhead(
   // a payment read the way the rate runs: money back reads below zero
   const paid = (o: Occurrence): number => Math.sign(rateCents) * o.amountCents;
   const isAhead = (o: Occurrence): boolean => paid(o) >= PAID_AHEAD_MULTIPLE * rate;
+  const ahead = occurrences.filter(isAhead);
+  if (ahead.length === 0) return [];
   const rest = occurrences.filter((o) => !isAhead(o));
   const oneAtTheRate = rest.some((o) => Math.abs(paid(o) - rate) <= AT_THE_RATE_CENTS);
   const noneAbove = rest.every((o) => paid(o) - rate <= AT_THE_RATE_CENTS);
-  return oneAtTheRate && noneAbove ? occurrences.filter(isAhead) : [];
+  // ⚖️ (2026-10-23) …and a payment below it, or money back, is what one LEFT: it posts after the first of them
+  const firstOn = ahead.map((o) => o.postedOn).reduce((a, b) => (compareDates(a, b) <= 0 ? a : b));
+  const leftByOne = rest.every((o) => rate - paid(o) <= AT_THE_RATE_CENTS || compareDates(o.postedOn, firstOn) > 0);
+  return oneAtTheRate && noneAbove && leftByOne ? ahead : [];
 }
 
 /** the period one charge of a cadence covers — "more than one month" */
