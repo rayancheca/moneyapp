@@ -126,10 +126,12 @@ describe("incomePaceMeasurable / incomePaceNote — an income pace needs the gat
     "a one-off never does.";
 
   test("the sentence names the month there is, and is null where the pace has its months", () => {
-    expect(incomePaceNote([], null)).toBe(gate);
-    expect(incomePaceNote(["2026-07"], null)).toBe(`${gate} Jul 2026 is the only complete month imported so far.`);
-    expect(incomePaceNote(["2026-06", "2026-07"], null)).toBeNull();
-    expect(incomePaceNote(["2026-05", "2026-06", "2026-07"], null)).toBeNull();
+    expect(incomePaceNote([], null, null)).toBe(gate);
+    expect(incomePaceNote(["2026-07"], null, null)).toBe(
+      `${gate} Jul 2026 is the only complete month imported so far.`,
+    );
+    expect(incomePaceNote(["2026-06", "2026-07"], null, null)).toBeNull();
+    expect(incomePaceNote(["2026-05", "2026-06", "2026-07"], null, null)).toBeNull();
   });
 
   /*
@@ -144,19 +146,62 @@ describe("incomePaceMeasurable / incomePaceNote — an income pace needs the gat
    */
   test("a month spending's frontier left out is named as Money in's, never as imported whole", () => {
     const unread = { months: ["2026-07"], through: "2026-07-12" };
-    expect(incomePaceNote(["2026-07"], unread)).toBe(
+    expect(incomePaceNote(["2026-07"], unread, null)).toBe(
       `${gate} Jul 2026 is left out of spending's pace, not Money in's, and is the only complete month Money in has ` +
         "so far.",
     );
     // the day is named once, by the spending sentence it follows (`unreadMonthsSentence`)
-    expect(incomePaceNote(["2026-01"], { months: ["2026-01"], through: "2025-12-20" })).toBe(
+    expect(incomePaceNote(["2026-01"], { months: ["2026-01"], through: "2025-12-20" }, null)).toBe(
       `${gate} Jan 2026 is left out of spending's pace, not Money in's, and is the only complete month Money in has ` +
         "so far.",
     );
     // a frontier that left out none of Money in's months changes nothing
-    expect(incomePaceNote(["2026-07"], { months: ["2026-08"], through: "2026-08-12" })).toBe(
+    expect(incomePaceNote(["2026-07"], { months: ["2026-08"], through: "2026-08-12" }, null)).toBe(
       `${gate} Jul 2026 is the only complete month imported so far.`,
     );
-    expect(incomePaceNote(["2026-06", "2026-07"], unread)).toBeNull();
+    expect(incomePaceNote(["2026-06", "2026-07"], unread, null)).toBeNull();
+  });
+
+  /*
+   * ⚖️ Default built, not asked (2026-10-23) — his decision 71 carried to the income pace: its months end at the last
+   * one every account its own rows land in is read through to the end of (`incomePaceMonths`). Where that day slid them
+   * back, the row names Money in's months and why, in the spending sentence's own words ("left out", "imported
+   * through"), as `spendPaceNote` names spending's — and names those accounts. 🔴 Measured on his ledger copy at
+   * 2026-10-21 (batch 6): the pace averaged Jul–Sep with Robinhood Cash read to Sep 9, and nothing on the card said so.
+   */
+  test("Money in's own frontier names its months and the day that left the later ones out", () => {
+    const sep = { months: ["2026-09"], through: "2026-09-09", accounts: ["Robinhood Cash"] };
+    expect(incomePaceNote(["2026-06", "2026-07", "2026-08"], null, sep)).toBe(
+      "Money in's pace is averaged over 3 complete months, Jun 2026 to Aug 2026. Sep 2026 is left out: Sep 9 is the " +
+        "last day Robinhood Cash has been imported through.",
+    );
+    // two months measure as two, and say which
+    expect(incomePaceNote(["2026-07", "2026-08"], null, sep)).toBe(
+      "Money in's pace is averaged over 2 complete months, Jul 2026 to Aug 2026. Sep 2026 is left out: Sep 9 is the " +
+        "last day Robinhood Cash has been imported through.",
+    );
+    // spending's sentence names its own day: a spending frontier beside Money in's is no word of this one
+    const spend = { months: ["2026-08", "2026-09"], through: "2026-08-12" };
+    expect(incomePaceNote(["2026-06", "2026-07", "2026-08"], spend, sep)).toBe(
+      incomePaceNote(["2026-06", "2026-07", "2026-08"], null, sep),
+    );
+  });
+
+  test("too few months says why in both halves: the gate's, then the day that left Money in's later ones out", () => {
+    const julAug = { months: ["2026-06", "2026-07"], through: "2026-06-12", accounts: ["Checking"] };
+    expect(incomePaceNote([], null, julAug)).toBe(
+      `${gate} Jun 2026 and Jul 2026 are left out: Jun 12 is the last day Checking has been imported through.`,
+    );
+    // never "imported so far" beside a month read only to its 12th
+    const jul = { months: ["2026-07"], through: "2026-07-12", accounts: ["Checking"] };
+    expect(incomePaceNote(["2026-06"], null, jul)).toBe(
+      `${gate} Jun 2026 is the only complete month Money in has so far. Jul 2026 is left out: Jul 12 is the last day ` +
+        "Checking has been imported through.",
+    );
+    // …and where spending's frontier left Money in's one month out too, both say whose
+    expect(incomePaceNote(["2026-06"], { months: ["2026-06", "2026-07"], through: "2026-06-03" }, jul)).toBe(
+      `${gate} Jun 2026 is left out of spending's pace, not Money in's, and is the only complete month Money in has ` +
+        "so far. Jul 2026 is left out: Jul 12 is the last day Checking has been imported through.",
+    );
   });
 });

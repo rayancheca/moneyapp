@@ -214,12 +214,13 @@ export function ForecastComposition({
    * Committed $1,500.00 (1 line) · Recent pace $0.00 (0 lines)", drawn 100% committed, directly above the row's
    * sentence saying there is no spending average to stand on.
    * ⚖️ Money in's pace prints wherever it has the months to measure: the income pace is not cut by the spending
-   * frontier (his decision 71, 2026-10-13) and is measured over its own floored months (`incomePaceMonths`), as "Show
-   * the math" prints it below. With fewer than its presence gate's two (`incomePaceMeasurable`) it has none, and reads
-   * "—" as Money out does. 🔴 Review of f1a0180: on a ledger opening Aug 5 this band read "Money in · Scheduled
-   * $2,000.00 (1 line) · Recent pace $0.00 (0 lines)", drawn 100% scheduled, beside Money out's "Recent pace —" — one
-   * cause, two treatments. 🔴 Review of 0795a2a: on one opening Jul 1 it read the same over its one July, a $0.00 no
-   * kind of income could avoid, beside Money out's "Recent pace $64.52 (1 line)".
+   * frontier but by its own — the last month every account its own rows land in is read to the end of (his decision 71
+   * carried to it, default built 2026-10-23) — and is measured over those floored months (`incomePaceMonths`), as "Show
+   * the math" prints it below and the pace row names. With fewer than its presence gate's two (`incomePaceMeasurable`)
+   * it has none, and reads "—" as Money out does. 🔴 Review of f1a0180: on a ledger opening Aug 5 this band read "Money
+   * in · Scheduled $2,000.00 (1 line) · Recent pace $0.00 (0 lines)", drawn 100% scheduled, beside Money out's "Recent
+   * pace —" — one cause, two treatments. 🔴 Review of 0795a2a: on one opening Jul 1 it read the same over its one July,
+   * a $0.00 no kind of income could avoid, beside Money out's "Recent pace $64.52 (1 line)".
    */
   return (
     <div className="mt-6 grid gap-5 border-t border-line pt-5 md:grid-cols-2 md:gap-8">

@@ -476,6 +476,10 @@ describe("the agent's trailing income is not his pace either", () => {
     // the agent's month-end interest in each trailing month — Sep 30 is the fixture's own; no series is detected
     post(agentic, "2026-07-31", 4, "Income > Interest", "Interest Payment");
     post(agentic, "2026-08-31", 4, "Income > Interest", "Interest Payment");
+    // ⚖️ every account read into October (decision 71, carried to the income pace — default built 2026-10-23), so the
+    // income pace reads Aug–Sep, the agent's with his: a September his Robinhood Cash has read only to the 9th is no
+    // month of either (`incomePaceMonths`)
+    importedThrough(bundle.db, TODAY);
     const paired = forecastCurrentMonth(bundle.db, TODAY);
     const pairedNov = forecastForMonth(bundle.db, "2026-11", TODAY)!;
     bundle.db.update(accounts).set({ cashAccountId: null }).where(eq(accounts.id, book)).run();

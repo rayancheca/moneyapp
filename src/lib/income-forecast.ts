@@ -20,7 +20,13 @@
  * is exactly one trailing-average engine in the codebase.
  */
 
-import { monthCount, type UnreadMonths } from "./committed";
+import {
+  baselineSpan,
+  incomeUnreadMonthsSentence,
+  monthCount,
+  type IncomeUnreadMonths,
+  type UnreadMonths,
+} from "./committed";
 import { monthWindowLabel } from "./format-date";
 import { projectTrailingAverage } from "./projection";
 
@@ -69,38 +75,67 @@ export function incomePaceMeasurable(months: number): boolean {
 }
 
 /**
- * What /recurring's pace row says where the income pace has too few months to measure (`incomePaceMeasurable`) —
+ * What /recurring's pace row says of Money in's months: which months the income pace averaged and why the later ones
+ * are left out, where its own day slid them back (`incomeUnread`) — "Money in's pace is averaged over 3 complete
+ * months, Jun 2026 to Aug 2026. Sep 2026 is left out: Sep 9 is the last day Robinhood Cash has been imported through."
+ * — and where it has too few months to measure (`incomePaceMeasurable`), why there is no pace:
  * "Money in has no recent pace yet: a kind of income counts toward it once it has come in 2 complete months, so a
  * one-off never does. Jul 2026 is the only complete month imported so far." — the months named where there are any.
- * Null where the pace has its months.
+ * Null where the pace has the calendar's months: "avg of last 3 periods" then means what it says.
  *
  * ⚖️ Spending's one month IS averaged (it projects every bucket; you will keep buying groceries) and income's is not:
  * the presence gate is what keeps a tax refund or a deposit's return from extrapolating as pay. So on one young ledger
  * Money out can have a pace where Money in has none, and the band's "—" needs its own reason.
  *
- * ⚖️ His decision 71 (2026-10-13) leaves SPENDING's months out at the day every account he spends from is read to, and
- * not Money in's. So where that day left Money in's months out of spending's (`spendUnread`, the spending pace's
- * `UnreadMonths`), they are named as Money in's — "Jul 2026 is left out of spending's pace, not Money in's, and is the
- * only complete month Money in has so far." 🔴 Review of a7b1504: on a ledger opening Jul 1 whose Card was read only to
- * Jul 12, at 2026-08-27 the row read "Jul 2026 is left out: Jul 12 is the last day every account you spend from has
- * been imported through." and, one sentence later, "Jul 2026 is the only complete month imported so far." — read to its
- * 12th, then imported whole.
+ * ⚖️ Default built, not asked (2026-10-23) — his decision 71 (2026-10-13), "a month read to its 12th is not a twelfth
+ * of a measurement", carried to the income pace (batch 6's option A): its months end at the last one every account its
+ * own rows land in is read through to the end of (`incomePaceMonths`), and this names them as `spendPaceNote` names
+ * spending's — and names those accounts (`IncomeUnreadMonths`), which are not every account his income lands in: a
+ * live series' pay projects by its schedule. 🔴 Measured on his ledger copy (batch 6, at 2026-10-21): every Dividends
+ * and Interest row the pace reads lands on Robinhood Cash, read to Sep 9, and the pace averaged the calendar's Jul–Sep
+ * with nothing on the card saying so — read in full, Jun–Aug, the rest of October $11.49 → $18.02 and November $32.38
+ * → $50.79.
+ *
+ * ⚖️ SPENDING's day is not Money in's: the accounts he spends from are not the ones his income lands in. So where
+ * spending's day left Money in's months out of spending's alone (`spendUnread`, the spending pace's `UnreadMonths`),
+ * they are named as Money in's — "Jul 2026 is left out of spending's pace, not Money in's, and is the only complete
+ * month Money in has so far." 🔴 Review of a7b1504: on a ledger opening Jul 1 whose Card was read only to Jul 12, at
+ * 2026-08-27 the row read "Jul 2026 is left out: Jul 12 is the last day every account you spend from has been imported
+ * through." and, one sentence later, "Jul 2026 is the only complete month imported so far." — read to its 12th, then
+ * imported whole. ⛔ …and never "imported so far" beside months Money in's own day left out: a month read to its 12th
+ * is no more imported whole for Money in than for spending.
  *
  * ⛔ In the spending sentence's own words. 🔴 Review of 694d525: it read "Jul 12 cuts spending's months, not Money
  * in's", a verb no other sentence about the frontier uses — every one says "left out", "read in full" or "imported
- * through". The day is named once, by the spending sentence this one follows (`unreadMonthsSentence`).
+ * through". Spending's day is named once, by the spending sentence this one follows (`unreadMonthsSentence`), and
+ * Money in's by its own (`incomeUnreadMonthsSentence`), the same sentence of its own accounts, named.
  */
-export function incomePaceNote(monthKeys: readonly string[], spendUnread: UnreadMonths | null): string | null {
-  if (incomePaceMeasurable(monthKeys.length)) return null;
+export function incomePaceNote(
+  monthKeys: readonly string[],
+  spendUnread: UnreadMonths | null,
+  incomeUnread: IncomeUnreadMonths | null,
+): string | null {
+  const leftOut = incomeUnreadMonthsSentence(incomeUnread);
+  if (incomePaceMeasurable(monthKeys.length)) {
+    if (leftOut === null) return null;
+    const span = baselineSpan({ months: monthKeys.length, fromMonth: monthKeys[0]!, toMonth: monthKeys.at(-1)! });
+    return `Money in's pace is averaged over ${span}. ${leftOut}`;
+  }
   const gate =
     "Money in has no recent pace yet: a kind of income counts toward it once it has come in " +
     `${monthCount(MIN_INCOME_MONTHS_PRESENT, "complete")}, so a one-off never does.`;
-  if (monthKeys.length === 0) return gate;
+  const why = leftOut === null ? "" : ` ${leftOut}`;
+  if (monthKeys.length === 0) return `${gate}${why}`;
   const months = monthWindowLabel(monthKeys[0]!, monthKeys.at(-1)!);
   const [is, only] = monthKeys.length === 1 ? ["is", "the only complete month"] : ["are", "the only complete months"];
   const cut = spendUnread !== null && monthKeys.some((key) => spendUnread.months.includes(key));
-  if (!cut) return `${gate} ${months} ${is} ${only} imported so far.`;
-  return `${gate} ${months} ${is} left out of spending's pace, not Money in's, and ${is} ${only} Money in has so far.`;
+  if (cut) {
+    const whose = `${months} ${is} left out of spending's pace, not Money in's, and ${is} ${only} Money in has so far.`;
+    return `${gate} ${whose}${why}`;
+  }
+  return leftOut === null
+    ? `${gate} ${months} ${is} ${only} imported so far.`
+    : `${gate} ${months} ${is} ${only} Money in has so far.${why}`;
 }
 
 /**

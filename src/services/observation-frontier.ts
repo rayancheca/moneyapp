@@ -359,8 +359,21 @@ export function accountsThatDate(
   awaiting: ReadonlySet<string>,
 ): ReadonlySet<string> {
   const all = new Set(accountIds);
-  const awaited = new Set([...all].filter((id) => awaiting.has(id) && frontier.byAccount.has(id)));
+  const awaited = awaitedAmong(frontier, all, awaiting);
   return awaited.size > 0 ? awaited : all;
+}
+
+/**
+ * Of `accountIds`, those a statement is still coming for (`accountsAwaitingStatements`) that have an import frontier —
+ * `accountsThatDate`'s first choice, and the income pace's only one (`Habit.whenNoneIsAwaited`, movers-card): where
+ * none of its earners is one, nothing dates Money in's months and the calendar's stand (default built 2026-10-23).
+ */
+export function awaitedAmong(
+  frontier: ObservationFrontier,
+  accountIds: Iterable<string>,
+  awaiting: ReadonlySet<string>,
+): ReadonlySet<string> {
+  return new Set([...accountIds].filter((id) => awaiting.has(id) && frontier.byAccount.has(id)));
 }
 
 /**
