@@ -219,6 +219,14 @@ export interface CashFlow {
    * +$4,567.68 · Savings rate 100%" over its own table row "$4,567.68 — —", and Top merchants said "No merchant
    * spending in this period." ⛔ Asked of the day and the rule the buckets ask (`spendingNotFoundFact`), in one place.
    * ADDITIVE, as the bucket's is: `totals` is unchanged.
+   *
+   * ⚠️ Null, too, where no bucket of the window is reached (`unreached` on every one — past every account's newest row,
+   * before the records, not begun): the day is never asked there (⚡ `cashFlowByPeriod`). It holds no money, so
+   * /spending prints its empty state over it (`spendingEmptyCopy`, which names spending's day itself), and the
+   * dashboard tile reads the null as its "not imported yet" (`SpendingPace.spendingNotFound`). 🔴 The Sankey's "one
+   * rule" pin took this field for /spending's reading of an empty window, so it could not hold the window past the
+   * ledger's newest row — where the graph names spending's day as the empty state does (second reader of a1c67f0,
+   * round 2, 2026-10-23).
    */
   spendingUnaccounted: string | null;
   /**

@@ -9,13 +9,18 @@ import { categories } from "@/db/schema/categories";
 import { institutions } from "@/db/schema/institutions";
 import { recurringSeries } from "@/db/schema/recurring";
 import { transactions } from "@/db/schema/transactions";
+import { importedThroughFact } from "@/lib/budget-coverage";
+import { notImportedTitle } from "@/lib/empty-period";
+import { formatDayLong } from "@/lib/format-date";
 import { dedupeHash } from "@/lib/hash";
 import { resolvePeriod } from "@/lib/period";
 import { computeSankeyLayout, type SankeyGraph } from "@/lib/sankey-layout";
 import { createAccount } from "./accounts";
 import { checkedThrough } from "./checked-days-fixture";
+import { spendingReadThrough } from "./movers-card";
+import { ledgerOpens, ledgerReaches } from "./observation-frontier";
 import { spendingSankey } from "./sankey";
-import { cashFlowByPeriod } from "./spending";
+import { cashFlowByPeriod, spendingEmptyCopy } from "./spending";
 
 const RANGE = { from: "2026-07-01", to: "2026-07-31" };
 
@@ -446,7 +451,9 @@ describe("spendingSankey — a window where nothing was found", () => {
     });
   });
 
-  test("a window read that found nothing — or one the ledger has not reached — keeps the surface's words", () => {
+  // 🔴 "or one the ledger has not reached" named this window until 2026-10-23 — read as past `ledgerReaches`, the one
+  // window that does NOT keep them (below)
+  test("a window read that found nothing — or one before the ledger opens — keeps the surface's words", () => {
     readThroughJul3();
     const quiet = { nodes: [], links: [], spendingUnaccounted: null, incomeUnread: false };
     // checking imported and checked through Jul 5: Jul 4 is read on both sides and holds no row — a measured zero
@@ -457,13 +464,105 @@ describe("spendingSankey — a window where nothing was found", () => {
     expect(spendingSankey(bundle.db, { from: "2026-06-01", to: "2026-06-30" }, TODAY)).toEqual(quiet);
   });
 
-  // ⛔ the one rule: /spending's own reading of the same window (`CashFlow`), never a second one
-  test("an empty window reads exactly as /spending's cash flow reads it", () => {
+  /*
+   * ⛔ …and the window the guard was written for: one past every account's newest row (`ledgerReaches`) — what his
+   * dashboard's Flow 1D and 1W hold whenever a week passes with no statement. 🔴 Second reader of a1c67f0 (round 2):
+   * every window above ends on or before the card's Jul 7, so dropping the guard there — `notFound` skipped where
+   * `range.from > ledgerReaches(db)` — passed all 192 tests of sankey, SankeyChart and src/app. Measured on his ledger
+   * copy 2026-10-23 (newest row Oct 14, spending read through Aug 12): Flow 1D (Oct 23) and 1W (Oct 17 – 23) read
+   * "Nothing found so far — spending imported through Aug 12. Not one day of this period has been checked in the
+   * accounts that pay lands in, so nothing is shown."; under that mutation, the second sentence alone.
+   */
+  test("one past every account's newest row, the empty graph still names spending's day", () => {
     readThroughJul3();
-    const period = resolvePeriod({ from: "2026-07-04", to: "2026-07-06" }, TODAY);
-    const flow = cashFlowByPeriod(bundle.db, period, TODAY);
-    const g = spendingSankey(bundle.db, { from: period.from, to: period.to }, TODAY);
-    expect([g.spendingUnaccounted, g.incomeUnread]).toEqual([flow.spendingUnaccounted, flow.incomeUnread]);
-    expect(flow.incomeUnread).toBe(true);
+    // two days on and nothing imported since: the card's Jul 7 is every account's newest row
+    const later = "2026-07-10";
+    expect(ledgerReaches(bundle.db)).toBe("2026-07-07");
+    for (const range of [{ from: later, to: later }, { from: "2026-07-08", to: later }]) {
+      expect(spendingSankey(bundle.db, range, later), JSON.stringify(range)).toEqual({
+        nodes: [],
+        links: [],
+        spendingUnaccounted: "spending imported through Jul 3",
+        incomeUnread: true,
+      });
+    }
+  });
+
+  /**
+   * What /spending prints of an EMPTY window's spending, in the graph's words: the day its empty state names as all
+   * spending's over a window nobody has looked at — the page's own call (`spendingEmptyCopy`, with its one read of that
+   * day and its formatter) — or null where it names none.
+   */
+  function emptyStateNamesSpendingDay(range: { from: string; to: string }): string | null {
+    const label = resolvePeriod(range, TODAY).label;
+    const through = spendingReadThrough(bundle.db, TODAY);
+    const { title, description } = spendingEmptyCopy(bundle.db, range, {
+      today: TODAY,
+      label,
+      ledgerOpens: ledgerOpens(bundle.db),
+      ledgerReaches: ledgerReaches(bundle.db),
+      spendingReadThrough: through,
+      formatDay: formatDayLong,
+    });
+    const names =
+      through !== null &&
+      title === notImportedTitle(label) &&
+      description.includes(`spending is imported through ${formatDayLong(through)}`);
+    return names ? importedThroughFact(through, range.from) : null;
+  }
+
+  /*
+   * ⛔ The one rule: /spending's own reading of the same window, never a second one — the reading it PRINTS. Over a
+   * window holding nothing that is its empty state ("Jul 8, 2026 has not been imported yet — … spending is imported
+   * through Fri, Jul 3, 2026. That is a window nobody has looked at …"), and the graph names its day. Its cash flow
+   * (`CashFlow.spendingUnaccounted`, what its cards print where a window holds money) agrees where it reaches a bucket
+   * of the window; past every account's newest row it reaches none, asks no day and reads null — the dashboard tile's
+   * "not imported yet" world (`SpendingPace.spendingNotFound`), never printed over an empty window. 🔴 This pin compared
+   * against `CashFlow` over Jul 4 – 6 alone: extended to Jul 8 it failed against the right graph, and held only with
+   * the guard dropped (second reader of a1c67f0, round 2). Income is the cash flow's everywhere
+   * (`CashFlow.incomeUnread`, `noIncomeDayReadOf`, asked of every window, reached or not).
+   */
+  test("an empty window reads exactly as /spending reads it", () => {
+    readThroughJul3();
+    const read = (range: { from: string; to: string }) => {
+      const flow = cashFlowByPeriod(bundle.db, resolvePeriod(range, TODAY), TODAY);
+      // no money in it: /spending prints its empty state, not its cards
+      expect([flow.totals.spentCents, flow.totals.earnedCents], JSON.stringify(range)).toEqual([0, 0]);
+      const g = spendingSankey(bundle.db, range, TODAY);
+      return {
+        graph: [g.spendingUnaccounted, g.incomeUnread],
+        page: [emptyStateNamesSpendingDay(range), flow.incomeUnread],
+        cashFlow: [flow.buckets.some((b) => b.unreached === null), flow.spendingUnaccounted],
+      };
+    };
+    const readings = [
+      { from: "2026-07-04", to: "2026-07-06" }, // inside the ledger, past spending's day
+      { from: "2026-07-08", to: "2026-07-08" }, // one past every account's newest row
+      { from: "2026-07-08", to: "2026-07-14" }, // …and a week running on past today
+      { from: "2026-06-01", to: "2026-06-30" }, // before the ledger opens
+    ].map(read);
+    expect(readings.map((r) => r.graph)).toEqual(readings.map((r) => r.page));
+    // ⚠️ not vacuous: the page names spending's day over every window past it, and over June none
+    expect(readings.map((r) => r.page)).toEqual([
+      ["spending imported through Jul 3", true],
+      ["spending imported through Jul 3", true],
+      ["spending imported through Jul 3", true],
+      [null, false],
+    ]);
+    // …and why the cash flow alone was no arbiter: [reaches a bucket, its fact]
+    expect(readings.map((r) => r.cashFlow)).toEqual([
+      [true, "spending imported through Jul 3"],
+      [false, null],
+      [false, null],
+      [false, null],
+    ]);
+    // a window read on both sides that found nothing names no day: checking imported and checked through Jul 5
+    insertTxn({ accountId: checkingId, postedOn: "2026-07-05", amountCents: -4_000, category: "Food > Dining" });
+    checkedThrough(bundle.db, checkingId, "2026-07-05");
+    const quiet = read({ from: "2026-07-04", to: "2026-07-04" });
+    expect([quiet.graph, quiet.page]).toEqual([
+      [null, false],
+      [null, false],
+    ]);
   });
 });

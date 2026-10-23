@@ -81,10 +81,18 @@ function byValueThenName(a: [string, Bucket], b: [string, Bucket]): number {
  *
  * ⛔ Both rules below are asked of a window where NOTHING flowed too: no row at all over days nobody has read is not a
  * window "with no money flow", and the empty graph carries both facts. Only a window read on both sides that found
- * nothing — or one the ledger has not reached — keeps the surface's own empty words. 🔴 Measured on his ledger copy
+ * nothing — or one before the ledger opens — keeps the surface's own empty words. 🔴 Measured on his ledger copy
  * 2026-10-21 (review of e953d70): the dashboard's Flow 1D (Oct 21) and 1W (Oct 15 – 21) printed "No money flow in this
  * range." under that page's Income card, "Not one day of Oct 2026 has been checked in the accounts that pay lands in";
  * the nothing-flowed return ran before either rule was asked.
+ *
+ * ⚠️ A window past every account's newest row (`ledgerReaches`) is the one this was written for — not one that keeps
+ * the surface's words: /spending's empty state names spending's day over it ("… spending is imported through Wed, Aug
+ * 12, 2026. That is a window nobody has looked at …", `spendingEmptyCopy`), and so does the graph. 🔴 This read "or one
+ * the ledger has not reached" until 2026-10-23, and no test held such a window (second reader of a1c67f0, round 2).
+ * Measured on his ledger copy 2026-10-23, newest row Oct 14: the dashboard's Flow 1D (Oct 23) and 1W (Oct 17 – 23)
+ * read "Nothing found so far — spending imported through Aug 12. Not one day of this period has been checked in the
+ * accounts that pay lands in, so nothing is shown."
  */
 export interface SpendingSankey extends SankeyGraph {
   /** the window's `spendingNotFoundFact` where the graph is empty for it; null where the graph is the flow */
@@ -107,7 +115,9 @@ export interface SpendingSankey extends SankeyGraph {
  * `today` asks whether the window's spending has been found (`SpendingSankey`) — every page passes it (`/spending`,
  * the dashboard's Flow, pinned in their page tests). ⛔ Omitted, the graph is drawn from the rows alone: a fixture
  * asking its shape. ⚡ The day is asked only where the window holds no spending row (`spendingReadThrough` is memoised
- * for the render); /spending's cash flow asks the same window by the same rule.
+ * for the render). /spending asks the same window by the same rule and day: its empty state over a window holding
+ * nothing (`spendingEmptyCopy`), its cash flow over one holding money (`CashFlow.spendingUnaccounted`) — which reaches
+ * no bucket past every account's newest row, asks no day there, and is not what the page prints over such a window.
  */
 export function spendingSankey(db: AppDatabase, range: DateRange, today?: string): SpendingSankey {
   const idx = loadCategoryIndex(db);
