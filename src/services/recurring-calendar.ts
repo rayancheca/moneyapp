@@ -886,7 +886,7 @@ export function recurringCalendar(
     const postedDates = postedDatesBySeries.get(s.id) ?? [];
     // the arrears' test of a covering posting (`paymentFor`), over the postings the arrears read, on its own due days
     const payments = paymentsBySeries.get(s.id) ?? [];
-    const dueDays = dueDaysOf(projectable);
+    const dueDays = dueDaysOf(projectable, s);
     const confidence = forecastConfidence(s);
     // ONE evidence word, the one the All tab files the series under: a series
     // that never charged is "never billed", not stale (see `CalendarEntry.isStale`).

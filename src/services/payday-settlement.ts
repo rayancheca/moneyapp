@@ -20,7 +20,7 @@ import { ratePeriodOf } from "@/lib/series-kind";
 import { loadCategoryIndex, payDayRows, type AnalyticsTxn, type CategoryIndex } from "./analytics";
 import { billPaymentsBySeries, paymentFor } from "./billing-carriers";
 import {
-  dueDayBefore,
+  dueDaysOf,
   effectiveSchedule,
   effectiveSeries,
   projectOccurrences,
@@ -339,8 +339,10 @@ export interface StillToComeSeries extends SeriesOverrides {
  * every grader reads them (`billPaymentsBySeries`): an early one lies as far back as the day before. ⚖️ …and so does a
  * catch-up, LATE for the day before (`paymentFor`'s, default built, not asked, 2026-10-23), which reads this day as
  * the one after it: Sep 19's -$715.16 for a premium due the 11th, Sep 11 missed, pays Oct 11 — on Sep 25 Upcoming and
- * October's forecast no longer count it. ⚖️ …only once the day behind ITS day is paid, read as the calendar reads it:
- * with Aug 11 missed too, Sep 19 pays Aug 11 and Sep 11, and Oct 11 is still to come (2026-10-23).
+ * October's forecast no longer count it. ⚖️ …only once the day behind ITS day is settled, read as the calendar reads
+ * it: with Aug 11 missed too, Sep 19 pays Aug 11 and Sep 11, and Oct 11 is still to come; with Aug 11 paid early by
+ * Jul 20's -$715.16, Sep 20's pays Oct 11; and started Aug 11 by his date, Aug 20's pays Sep 11 — the day before his
+ * date is no charge (2026-10-23).
  */
 export function stillToComeReader(
   db: AppDatabase,
@@ -352,12 +354,10 @@ export function stillToComeReader(
   const settled = new Map(income.map((s) => [s.id, settledPaydaysForSeries(db, s.id, today, idx)] as const));
   const bills = series.filter((s) => s.kind !== "income");
   const payments = billPaymentsBySeries(db, bills);
-  // nothing late asked (above); the day before each, as its schedule steps it, for one paid early
+  // its days as every grader steps them (`dueDaysOf`) — the day before each, for one paid early, and the day its
+  // schedule opens — with nothing late asked (above)
   const dueDays = new Map(
-    bills.map((s) => {
-      const schedule = effectiveSchedule(s);
-      return [s.id, { after: () => null, before: (day: string) => dueDayBefore(schedule, day) }] as const;
-    }),
+    bills.map((s) => [s.id, { ...dueDaysOf(effectiveSchedule(s), s), after: () => null }] as const),
   );
   return (seriesId, date) => {
     const paydays = settled.get(seriesId);

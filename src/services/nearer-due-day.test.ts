@@ -599,6 +599,107 @@ describe("⚖️ a late catch-up — two premiums in one payment after a missed 
     expect(listSeries(bundle.db, TODAY).find((s) => s.id === PREMIUM)?.nextExpectedOn).toBe("2026-11-11");
     expect(seriesDetail(bundle.db, PREMIUM, TODAY)!.nextExpected.map((o) => o.date)[0]).toBe("2026-11-11");
   });
+
+  /*
+   * ⚖️ default built, not asked (2026-10-23) — …and of two late payments of two in a row, each pays its own day and the
+   * next: a day the one before paid early is paid. 🔴 At 8348349 the second paid its own day alone (review of 8348349;
+   * his ledger copy 2026-10-23 with this premium added on Venture X, read through Oct 14, anchored Oct 11 — the step
+   * detection lays down after Sep 20 — or Jul 11, both reading the same): on Sep 25 Upcoming listed Oct 11 and
+   * October's forecast held -$357.58; on Oct 23 October drew Oct 11 missed, the arrears owed $357.58, the runway read
+   * "A further $3,877.56 came due earlier this month: $357.58 has not posted, and no statement has covered the other
+   * $3,519.98 yet." and the series page showed Oct 11 overdue beside "Jul 20's -$715.16 and Sep 20's -$715.16 each
+   * covered more than one month" — five charges paid, four days.
+   */
+  test("Jul 20 and Sep 20, each late with two premiums: Sep 20 pays Oct 11 early — nothing owed, none coming", () => {
+    const rows: [string, number][] = [
+      ["2026-06-11", -35758],
+      ["2026-07-20", -71516],
+      ["2026-09-20", -71516],
+    ];
+    seriesWith(PREMIUM, "Premium (what-if)", -35758, "2026-10-11", ...rows);
+    checkedThrough(bundle.db, "acct", "2026-10-22");
+    for (const anchor of ["2026-10-11", "2026-07-11"]) {
+      bundle.db.update(recurringSeries).set({ nextExpectedOn: anchor }).where(eq(recurringSeries.id, PREMIUM)).run();
+      expect(marks("2026-10", "2026-10-11", TODAY)).toEqual([
+        [PREMIUM, "paid", { carrier: null, postedOn: "2026-09-20", early: true }],
+      ]);
+      expect(owedPremium(TODAY)).toEqual([]);
+      expect(arrearsSentence(committedBook(bundle.db, TODAY))).toBeNull();
+      const page = seriesDetail(bundle.db, PREMIUM, TODAY)!;
+      expect(page.overdue).toBeNull();
+      expect(page.paidAhead.map((o) => o.postedOn)).toEqual(["2026-07-20", "2026-09-20"]);
+      // on Sep 25, Oct 11 is no longer coming: Upcoming and October's forecast read Sep 20 as its payment
+      expect(coming("2026-09-25", PREMIUM)).toEqual(["2026-11-11"]);
+      expect(premiumIn("2026-10", "2026-09-25")).toEqual([]);
+    }
+    // …anchored Jul 11, August draws its Aug 11 paid early by Jul 20, the first one's second day
+    expect(marks("2026-08", "2026-08-11", TODAY)).toEqual([
+      [PREMIUM, "paid", { carrier: null, postedOn: "2026-07-20", early: true }],
+    ]);
+  });
+
+  /*
+   * ⚖️ default built, not asked (2026-10-23) — …and a schedule that opens on a late payment of two spends its second
+   * charge on the day after: a day before the schedule opens — before his date, or before detection's anchor and every
+   * payment of it — is no charge. 🔴 At 8348349 it paid the day before it, Jul 11, which no surface shows (review of
+   * 8348349; his ledger copy 2026-10-23, this premium on Venture X started Aug 11 by his date, Aug 20 -$715.16 then Oct
+   * 11 -$357.58): September drew Sep 11 unsettled; on Sep 25 the arrears owed it $357.58, the runway read "A further
+   * $522.45 came due earlier this month: $357.58 has not posted, and no statement has covered the other $164.87 yet.",
+   * September's forecast held -$357.58, and the page showed it overdue beside "Aug 20's -$715.16 covered more than one
+   * month" — and so with Jun 11 -$357.58 paid before his date too.
+   */
+  test("started Aug 11 by his date, Aug 20's two premiums pay Aug 11 and Sep 11 — Sep 25 owes nothing", () => {
+    const started = { ...bill(PREMIUM, "Premium (what-if)", -35758, "2026-11-11"), userNextExpectedOn: "2026-08-11" };
+    bundle.db.insert(recurringSeries).values({ ...started, lastMatchedOn: "2026-10-11" }).run();
+    // Oct 11's row, at the rate, is what names Aug 20 as covering more than one month (`paidAhead`) — read on Sep 25
+    // as the review read it
+    pay(`t-${PREMIUM}-aug20`, PREMIUM, "2026-08-20", -71516);
+    pay(`t-${PREMIUM}-oct11`, PREMIUM, "2026-10-11", -35758);
+    checkedThrough(bundle.db, "acct", "2026-10-22");
+    const SEP25 = "2026-09-25";
+    expect(marks("2026-09", "2026-09-11", SEP25)).toEqual([
+      [PREMIUM, "paid", { carrier: null, postedOn: "2026-08-20", early: true }],
+    ]);
+    expect(owedPremium(SEP25)).toEqual([]);
+    expect(arrearsSentence(committedBook(bundle.db, SEP25))).toBeNull();
+    expect(premiumIn("2026-09", SEP25)).toEqual([]);
+    const page = seriesDetail(bundle.db, PREMIUM, SEP25)!;
+    expect(page.overdue).toBeNull();
+    expect(page.paidAhead.map((o) => o.postedOn)).toEqual(["2026-08-20"]);
+    // …and July draws nothing: no surface asks a day before his date
+    expect(marks("2026-07", "2026-07-11", TODAY)).toEqual([]);
+    // on Oct 23, September still draws Sep 11 paid by Aug 20; Oct 11 posted on its day, nothing is owed, Nov 11 next
+    expect(marks("2026-09", "2026-09-11", TODAY)).toEqual([
+      [PREMIUM, "paid", { carrier: null, postedOn: "2026-08-20", early: true }],
+    ]);
+    expect(owedPremium(TODAY)).toEqual([]);
+    expect(coming(TODAY, PREMIUM)).toEqual(["2026-11-11", "2026-12-11"]);
+    // …and with Jun 11 paid before his date it reads the same: his date is the schedule, July no charge of it
+    pay(`t-${PREMIUM}-jun11`, PREMIUM, "2026-06-11", -35758);
+    expect(marks("2026-09", "2026-09-11", SEP25)).toEqual([
+      [PREMIUM, "paid", { carrier: null, postedOn: "2026-08-20", early: true }],
+    ]);
+    expect(owedPremium(SEP25)).toEqual([]);
+    expect(seriesDetail(bundle.db, PREMIUM, SEP25)!.overdue).toBeNull();
+  });
+
+  /*
+   * ⚖️ default built, not asked (2026-10-23) — …and ON TIME for its own day, the day behind paid, a payment of two pays
+   * no day after it: it is not read ahead, so nothing still to come leaves Upcoming or the forecast. 🔴 Nothing pinned
+   * it (review of 8348349): read as "late or on time", every test passed, and Aug 11 paid, then -$715.16 on Sep 12
+   * drew Oct 11 "paid early by Sep 12" and took it out of Upcoming and October's forecast on Sep 25.
+   */
+  test("Sep 12, on time with two premiums after a paid Aug 11: it pays no Oct 11 — still to come, then owed", () => {
+    const paid: [string, number][] = ["2026-06-11", "2026-07-11", "2026-08-11"].map((d) => [d, -35758]);
+    seriesWith(PREMIUM, "Premium (what-if)", -35758, "2026-10-11", ...paid, ["2026-09-12", -71516]);
+    checkedThrough(bundle.db, "acct", "2026-10-22");
+    // on Sep 25 Oct 11 is still to come: Upcoming and October's forecast count it
+    expect(coming("2026-09-25", PREMIUM)).toEqual(["2026-10-11", "2026-11-11"]);
+    expect(premiumIn("2026-10", "2026-09-25")).toEqual([-35758]);
+    // …and on Oct 23, never posted, it is owed — drawn unpaid, on the arrears
+    expect(unpaid("2026-10", "2026-10-11", TODAY)).toEqual([PREMIUM]);
+    expect(owedPremium(TODAY)).toEqual([["2026-10-11", 35758, 0]]);
+  });
 });
 
 /*
