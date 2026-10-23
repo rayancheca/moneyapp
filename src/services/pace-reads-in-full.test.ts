@@ -342,7 +342,7 @@ describe("…and never from before the ledger's first whole month (`baselineWind
 
   /*
    * 🔴 Review of 06a5d3e: decision 71's spending FRONTIER (the day every account he spends from is read to) is not the
-   * income pace's — its own is every account his income lands in (default built 2026-10-23) — but the FLOOR is every
+   * income pace's — its own is every account its own rows land in (default built 2026-10-23) — but the FLOOR is every
    * average's. `variableIncomeComponents` still averaged the calendar's three months with
    * none, and on this ledger at 2026-08-27 the card's math read "Salary | avg of last 3 periods, present 2/3 mo, × 5/31
    * days | +$322.58" — May, before the ledger opened, averaged as a month of no pay: a third of the pace gone, and the

@@ -214,7 +214,7 @@ export function ForecastComposition({
    * Committed $1,500.00 (1 line) · Recent pace $0.00 (0 lines)", drawn 100% committed, directly above the row's
    * sentence saying there is no spending average to stand on.
    * ⚖️ Money in's pace prints wherever it has the months to measure: the income pace is not cut by the spending
-   * frontier but by its own — the last month every account his income lands in is read to the end of (his decision 71
+   * frontier but by its own — the last month every account its own rows land in is read to the end of (his decision 71
    * carried to it, default built 2026-10-23) — and is measured over those floored months (`incomePaceMonths`), as "Show
    * the math" prints it below and the pace row names. With fewer than its presence gate's two (`incomePaceMeasurable`)
    * it has none, and reads "—" as Money out does. 🔴 Review of f1a0180: on a ledger opening Aug 5 this band read "Money

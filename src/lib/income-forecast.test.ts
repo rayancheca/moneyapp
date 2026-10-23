@@ -164,21 +164,21 @@ describe("incomePaceMeasurable / incomePaceNote — an income pace needs the gat
 
   /*
    * ⚖️ Default built, not asked (2026-10-23) — his decision 71 carried to the income pace: its months end at the last
-   * one every account his income lands in is read through to the end of (`incomePaceMonths`). Where that day slid them
+   * one every account its own rows land in is read through to the end of (`incomePaceMonths`). Where that day slid them
    * back, the row names Money in's months and why, in the spending sentence's own words ("left out", "imported
-   * through"), as `spendPaceNote` names spending's. 🔴 Measured on his ledger copy at 2026-10-21 (batch 6): the pace
-   * averaged Jul–Sep with Robinhood Cash read to Sep 9, and nothing on the card said so.
+   * through"), as `spendPaceNote` names spending's — and names those accounts. 🔴 Measured on his ledger copy at
+   * 2026-10-21 (batch 6): the pace averaged Jul–Sep with Robinhood Cash read to Sep 9, and nothing on the card said so.
    */
   test("Money in's own frontier names its months and the day that left the later ones out", () => {
-    const sep = { months: ["2026-09"], through: "2026-09-09" };
+    const sep = { months: ["2026-09"], through: "2026-09-09", accounts: ["Robinhood Cash"] };
     expect(incomePaceNote(["2026-06", "2026-07", "2026-08"], null, sep)).toBe(
       "Money in's pace is averaged over 3 complete months, Jun 2026 to Aug 2026. Sep 2026 is left out: Sep 9 is the " +
-        "last day every account your income lands in has been imported through.",
+        "last day Robinhood Cash has been imported through.",
     );
     // two months measure as two, and say which
     expect(incomePaceNote(["2026-07", "2026-08"], null, sep)).toBe(
       "Money in's pace is averaged over 2 complete months, Jul 2026 to Aug 2026. Sep 2026 is left out: Sep 9 is the " +
-        "last day every account your income lands in has been imported through.",
+        "last day Robinhood Cash has been imported through.",
     );
     // spending's sentence names its own day: a spending frontier beside Money in's is no word of this one
     const spend = { months: ["2026-08", "2026-09"], through: "2026-08-12" };
@@ -188,22 +188,20 @@ describe("incomePaceMeasurable / incomePaceNote — an income pace needs the gat
   });
 
   test("too few months says why in both halves: the gate's, then the day that left Money in's later ones out", () => {
-    const julAug = { months: ["2026-06", "2026-07"], through: "2026-06-12" };
+    const julAug = { months: ["2026-06", "2026-07"], through: "2026-06-12", accounts: ["Checking"] };
     expect(incomePaceNote([], null, julAug)).toBe(
-      `${gate} Jun 2026 and Jul 2026 are left out: Jun 12 is the last day every account your income lands in has ` +
-        "been imported through.",
+      `${gate} Jun 2026 and Jul 2026 are left out: Jun 12 is the last day Checking has been imported through.`,
     );
     // never "imported so far" beside a month read only to its 12th
-    const jul = { months: ["2026-07"], through: "2026-07-12" };
+    const jul = { months: ["2026-07"], through: "2026-07-12", accounts: ["Checking"] };
     expect(incomePaceNote(["2026-06"], null, jul)).toBe(
       `${gate} Jun 2026 is the only complete month Money in has so far. Jul 2026 is left out: Jul 12 is the last day ` +
-        "every account your income lands in has been imported through.",
+        "Checking has been imported through.",
     );
     // …and where spending's frontier left Money in's one month out too, both say whose
     expect(incomePaceNote(["2026-06"], { months: ["2026-06", "2026-07"], through: "2026-06-03" }, jul)).toBe(
       `${gate} Jun 2026 is left out of spending's pace, not Money in's, and is the only complete month Money in has ` +
-        "so far. Jul 2026 is left out: Jul 12 is the last day every account your income lands in has been imported " +
-        "through.",
+        "so far. Jul 2026 is left out: Jul 12 is the last day Checking has been imported through.",
     );
   });
 });

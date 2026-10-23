@@ -14,6 +14,7 @@ import { recurringSeries } from "@/db/schema/recurring";
 import { transactions } from "@/db/schema/transactions";
 import { dedupeHash } from "@/lib/hash";
 import { createAccount } from "./accounts";
+import { checkedThrough } from "./checked-days-fixture";
 import { forecastCurrentMonth, forecastForMonth, incomePaceMonths, type MonthForecast } from "./forecast";
 import { ledgerOpenedOn } from "./imported-through-fixture";
 
@@ -108,9 +109,16 @@ function cardText(f: MonthForecast): string {
     .replace(/\s+/g, " ");
 }
 
+/*
+ * 🔴 Review of af84411 (MEDIUM): the day was named "the last day every account your income lands in has been imported
+ * through" while it is read off the accounts the PACE reads — never the payroll's, which a live series projects by its
+ * schedule. With Robinhood Cash shown through Oct 9 and Wells Fargo (his pay) read to Sep 24, at 2026-11-10 one card
+ * read "Oct 9 is the last day every account your income lands in has been imported through" two lines under "It falls
+ * after Thu, Sep 24, 2026, the last day every account that pay lands in has been checked through". So it names them.
+ */
 const JUN_TO_AUG =
   "Money in's pace is averaged over 3 complete months, Jun 2026 to Aug 2026. Sep 2026 is left out: Sep 9 is the last " +
-  "day every account your income lands in has been imported through.";
+  "day Brokerage Cash has been imported through.";
 
 describe("the income pace averages only months every account its income lands in is read to its end", () => {
   test("Brokerage Cash read to Sep 9 leaves September out: Jun–Aug, never the calendar's Jul–Sep", () => {
@@ -121,7 +129,7 @@ describe("the income pace averages only months every account its income lands in
         { start: "2026-07-01", end: "2026-07-31", key: "2026-07" },
         { start: "2026-08-01", end: "2026-08-31", key: "2026-08" },
       ],
-      unread: { months: ["2026-09"], through: "2026-09-09" },
+      unread: { months: ["2026-09"], through: "2026-09-09", accounts: ["Brokerage Cash"] },
     });
 
     // $30.00 a month read in full — never Jul–Sep's (30.00 + 30.00 + 0.07) / 3, nine days of it $5.81
@@ -165,7 +173,11 @@ describe("the income pace averages only months every account its income lands in
     for (const m of ["2026-03", "2026-04", "2026-05"]) row(savingsId, `${m}-28`, 200, "Interest");
     readThrough(savingsId, "2026-07-31");
 
-    expect(incomePaceMonths(bundle.db, TODAY).unread).toEqual({ months: ["2026-09"], through: "2026-09-09" });
+    expect(incomePaceMonths(bundle.db, TODAY).unread).toEqual({
+      months: ["2026-09"],
+      through: "2026-09-09",
+      accounts: ["Brokerage Cash"],
+    });
     const f = forecastCurrentMonth(bundle.db, TODAY);
     expect(f.incomePaceNote).toBe(JUN_TO_AUG);
     // Jun–Aug held no Interest: May's is no part of the pace
@@ -178,15 +190,17 @@ describe("the income pace averages only months every account its income lands in
     for (const m of MONTHS) row(savingsId, `${m}-03`, 500, "Interest");
     readThrough(savingsId, "2026-08-12");
 
-    expect(incomePaceMonths(bundle.db, TODAY)).toMatchObject({
-      unread: { months: ["2026-08", "2026-09"], through: "2026-08-12" },
+    expect(incomePaceMonths(bundle.db, TODAY).unread).toEqual({
+      months: ["2026-08", "2026-09"],
+      through: "2026-08-12",
+      accounts: ["Brokerage Cash", "Savings"],
     });
     const f = forecastCurrentMonth(bundle.db, TODAY);
     expect(line(f, "Interest")).toMatchObject({ cents: Math.round((500 * 9) / 31) });
     expect(line(f, "Dividends")).toMatchObject({ cents: Math.round((3000 * 9) / 31) });
     expect(f.incomePaceNote).toBe(
       "Money in's pace is averaged over 3 complete months, May 2026 to Jul 2026. Aug 2026 and Sep 2026 are left out: " +
-        "Aug 12 is the last day every account your income lands in has been imported through.",
+        "Aug 12 is the last day both Brokerage Cash and Savings have been imported through.",
     );
   });
 
@@ -238,7 +252,12 @@ describe("the income pace averages only months every account its income lands in
       .run();
     readThrough(payId, "2026-08-12");
 
-    expect(incomePaceMonths(bundle.db, TODAY).unread).toEqual({ months: ["2026-09"], through: "2026-09-09" });
+    expect(incomePaceMonths(bundle.db, TODAY).unread).toEqual({
+      months: ["2026-09"],
+      through: "2026-09-09",
+      accounts: ["Brokerage Cash"],
+    });
+    // …and the row names the account it reads, never the one the pay lands in
     expect(forecastCurrentMonth(bundle.db, TODAY).incomePaceNote).toBe(JUN_TO_AUG);
   });
 
@@ -278,12 +297,11 @@ describe("…where the ledger is young", () => {
     const f = forecastCurrentMonth(bundle.db, YOUNG_TODAY);
     expect(incomePaceMonths(bundle.db, YOUNG_TODAY)).toEqual({
       windows: [],
-      unread: { months: ["2026-06", "2026-07"], through: "2026-06-12" },
+      unread: { months: ["2026-06", "2026-07"], through: "2026-06-12", accounts: ["Checking"] },
     });
     expect(f.incomePaceMonths).toBe(0);
     expect(f.incomePaceNote).toBe(
-      `${gate} Jun 2026 and Jul 2026 are left out: Jun 12 is the last day every account your income lands in has ` +
-        "been imported through.",
+      `${gate} Jun 2026 and Jul 2026 are left out: Jun 12 is the last day Checking has been imported through.`,
     );
   });
 
@@ -300,8 +318,198 @@ describe("…where the ledger is young", () => {
       expect(f.incomePaceMonths).toBe(1);
       expect(f.incomePaceNote).toBe(
         `${gate} Jun 2026 is the only complete month Money in has so far. Jul 2026 is left out: Jul 12 is the last ` +
-          "day every account your income lands in has been imported through.",
+          "day Checking has been imported through.",
       );
     }
+  });
+});
+
+/*
+ * 🔴 Review of af84411 (MEDIUM): an earner was judged by months nobody had read. Its habit — the presence gate's two of
+ * the pace's three months — was asked of the three calendar months before each candidate month whatever its own import
+ * day, so a month no statement had covered counted as a month it earned nothing in: an earner three months behind
+ * stopped holding Money in's months back and its unread months were averaged as $0, and before any habit an earner
+ * that stayed stale aged out of the rows the habit loads. Each account's habit is judged over the months it has been
+ * read for (`ownLastMonth`), and it holds the months back until a statement says otherwise.
+ */
+describe("an earner is judged over the months it has been read for, never over months no import has read", () => {
+  /** Savings: $50.00 of Interest on the 28th of Jan–Jul, read to Jul 31; Brokerage Cash: $30.00 a month, to Oct 31 */
+  function staleSavings(): void {
+    ledgerOpenedOn(bundle.db, "2026-01-01");
+    for (const m of [...MONTHS, "2026-09", "2026-10", "2026-11"]) row(checkingId, `${m}-05`, -10000, "Groceries");
+    readThrough(checkingId, "2026-11-20");
+    const savingsId = account("Savings", "savings");
+    for (const m of MONTHS.slice(0, 7)) row(savingsId, `${m}-28`, 5000, "Interest");
+    readThrough(savingsId, "2026-07-31");
+    for (const m of [...MONTHS, "2026-09", "2026-10"]) row(cashId, `${m}-15`, 3000, "Dividends");
+    readThrough(cashId, "2026-10-31");
+  }
+
+  const MAY_TO_JUL = [
+    { start: "2026-05-01", end: "2026-05-31", key: "2026-05" },
+    { start: "2026-06-01", end: "2026-06-30", key: "2026-06" },
+    { start: "2026-07-01", end: "2026-07-31", key: "2026-07" },
+  ];
+
+  test("Savings read through Jul 31 holds Money in's months to May–Jul", () => {
+    staleSavings();
+    expect(incomePaceMonths(bundle.db, TODAY)).toEqual({
+      windows: MAY_TO_JUL,
+      unread: { months: ["2026-08", "2026-09"], through: "2026-07-31", accounts: ["Brokerage Cash", "Savings"] },
+    });
+  });
+
+  test("a month on, with nothing imported, it still does: its Aug–Oct are unread, never months of no Interest", () => {
+    staleSavings();
+    const NOV_TODAY = "2026-11-23"; // November: 30 days, 8 remaining including today
+    expect(incomePaceMonths(bundle.db, NOV_TODAY)).toEqual({
+      windows: MAY_TO_JUL,
+      unread: {
+        months: ["2026-08", "2026-09", "2026-10"],
+        through: "2026-07-31",
+        accounts: ["Brokerage Cash", "Savings"],
+      },
+    });
+    const f = forecastCurrentMonth(bundle.db, NOV_TODAY);
+    expect(line(f, "Interest")).toMatchObject({
+      cents: Math.round((5000 * 8) / 30),
+      detail: "avg of last 3 periods, present 3/3 mo, × 8/30 days",
+    });
+    expect(line(f, "Dividends")).toMatchObject({ cents: Math.round((3000 * 8) / 30) });
+    expect(f.incomePaceNote).toBe(
+      "Money in's pace is averaged over 3 complete months, May 2026 to Jul 2026. Aug 2026 to Oct 2026 are left out: " +
+        "Jul 31 is the last day both Brokerage Cash and Savings have been imported through.",
+    );
+  });
+
+  /*
+   * His ledger's shape, only today moved: no Robinhood import after Sep 9. 🔴 Measured on his ledger copy (2026-10-23,
+   * today moved): at 2027-02-23 Jun–Aug and "Sep 2026 to Jan 2027 are left out: Sep 9 …"; at 2027-03-23 the calendar's
+   * Dec–Feb, no sentence, and no Dividends or Interest line — Robinhood Cash's rows had aged out of the span the habit
+   * loads, so its unread months read as months of nothing.
+   */
+  test("an earner that stays stale never ages out: Brokerage Cash's Sep 9 still dates the months in March", () => {
+    ledger();
+    const MARCH = "2027-03-23"; // March: 31 days, 9 remaining including today
+    expect(incomePaceMonths(bundle.db, MARCH)).toEqual({
+      windows: [
+        { start: "2026-06-01", end: "2026-06-30", key: "2026-06" },
+        { start: "2026-07-01", end: "2026-07-31", key: "2026-07" },
+        { start: "2026-08-01", end: "2026-08-31", key: "2026-08" },
+      ],
+      unread: {
+        months: ["2026-09", "2026-10", "2026-11", "2026-12", "2027-01", "2027-02"],
+        through: "2026-09-09",
+        accounts: ["Brokerage Cash"],
+      },
+    });
+    const f = forecastCurrentMonth(bundle.db, MARCH);
+    expect(line(f, "Dividends")).toMatchObject({ cents: Math.round((3000 * 9) / 31) });
+    expect(f.incomePaceNote).toBe(
+      "Money in's pace is averaged over 3 complete months, Jun 2026 to Aug 2026. Sep 2026 to Feb 2027 are left out: " +
+        "Sep 9 is the last day Brokerage Cash has been imported through.",
+    );
+  });
+
+  /*
+   * ⛔ The gate's TWO of the pace's three months, and a row in a month read only partly counts: it came in that month.
+   * Interest in Jun and Aug, none in Jul, read through Aug 20 — habitual, so its Aug 20 holds the months to May–Jul.
+   * (Asked for three of three, or over two months, it would be dormant, and an August read to its 20th averaged whole.)
+   */
+  test("an earner in two of its three months, read short, holds them back", () => {
+    ledger();
+    const savingsId = account("Savings", "savings");
+    row(savingsId, "2026-06-10", 500, "Interest");
+    row(savingsId, "2026-08-10", 500, "Interest");
+    readThrough(savingsId, "2026-08-20");
+    expect(incomePaceMonths(bundle.db, TODAY)).toEqual({
+      windows: MAY_TO_JUL,
+      unread: { months: ["2026-08", "2026-09"], through: "2026-08-20", accounts: ["Brokerage Cash", "Savings"] },
+    });
+  });
+
+  /*
+   * Before any habit (a young ledger), the accounts the pace's rows came in on date the months — those still coming in
+   * when last read: a row in the pace's three months up to their own last one. 🔴 It was every account with a row in
+   * the span the habit loads, measured back from TODAY, so a stale earner aged out of it.
+   */
+  test("before any habit, an earner that stays stale still dates them, and one read for months since does not", () => {
+    ledgerOpenedOn(bundle.db, "2026-06-01");
+    for (const m of ["2026-06", "2026-07", "2026-08", "2026-09", "2026-10", "2026-11", "2026-12", "2027-01"]) {
+      row(checkingId, `${m}-05`, -10000, "Groceries");
+    }
+    readThrough(checkingId, "2027-01-20");
+    readThrough(cashId, "2027-01-20");
+    const savingsId = account("Savings", "savings");
+    row(savingsId, "2026-06-28", 5000, "Interest");
+    readThrough(savingsId, "2026-07-31");
+    // paid once in June too, and read through Dec 31 since: three whole months with nothing, it is not still earning
+    const oldId = account("Old Savings", "savings");
+    row(oldId, "2026-06-03", 700, "Interest");
+    readThrough(oldId, "2026-12-31");
+
+    const JANUARY = "2027-01-23";
+    expect(incomePaceMonths(bundle.db, JANUARY)).toEqual({
+      windows: [
+        { start: "2026-06-01", end: "2026-06-30", key: "2026-06" },
+        { start: "2026-07-01", end: "2026-07-31", key: "2026-07" },
+      ],
+      unread: {
+        months: ["2026-08", "2026-09", "2026-10", "2026-11", "2026-12"],
+        through: "2026-07-31",
+        accounts: ["Savings"],
+      },
+    });
+    expect(forecastCurrentMonth(bundle.db, JANUARY).incomePaceNote).toBe(
+      "Money in's pace is averaged over 2 complete months, Jun 2026 to Jul 2026. Aug 2026 to Dec 2026 are left out: " +
+        "Jul 31 is the last day Savings has been imported through.",
+    );
+  });
+});
+
+/*
+ * 🔴 Review of af84411 (MEDIUM), the card the reviewer read on a copy of his ledger with one probe row: Robinhood Cash
+ * shown through Oct 9 (a September statement whose rows run nine days past its end, as August's ran to Sep 9) and Wells
+ * Fargo, where his weekly pay lands, read to Sep 24. At 2026-11-10 the same card said "It falls after Thu, Sep 24,
+ * 2026, the last day every account that pay lands in has been checked through" and "Oct 9 is the last day every
+ * account your income lands in has been imported through" — the second false, and the first's contradiction.
+ */
+describe("the pace row names the accounts Money in's pace reads, beside the passed payday's own day", () => {
+  test("Brokerage Cash is named, never every account the income lands in", () => {
+    ledger();
+    readThrough(cashId, "2026-10-09");
+    const payId = account("Pay Checking", "checking");
+    const series = bundle.db
+      .insert(recurringSeries)
+      .values({
+        name: "It America LLC (weekly pay)",
+        kind: "income",
+        cadence: "weekly",
+        userCadence: "weekly",
+        intervalDaysAvg: 7,
+        nextExpectedOn: "2026-10-01",
+        nextExpectedAmountCents: 114192,
+        amountCentsAvg: 114192,
+        status: "confirmed",
+        toleranceDays: 3,
+        lastMatchedOn: "2026-09-24",
+        accountId: payId,
+      })
+      .returning({ id: recurringSeries.id })
+      .get().id;
+    for (const day of ["2026-09-10", "2026-09-17", "2026-09-24"]) row(payId, day, 114192, "Salary");
+    bundle.db.update(transactions).set({ recurringSeriesId: series }).where(eq(transactions.accountId, payId)).run();
+    checkedThrough(bundle.db, payId, "2026-09-24", "2026-06-01");
+
+    const f = forecastCurrentMonth(bundle.db, "2026-11-10");
+    expect(f.incomePaceNote).toBe(
+      "Money in's pace is averaged over 3 complete months, Jul 2026 to Sep 2026. Oct 2026 is left out: Oct 9 is the " +
+        "last day Brokerage Cash has been imported through.",
+    );
+    const card = cardText(f);
+    expect(card).toContain(
+      "It falls after Thu, Sep 24, 2026, the last day every account that pay lands in has been checked through",
+    );
+    expect(card).not.toContain("every account your income lands in");
   });
 });

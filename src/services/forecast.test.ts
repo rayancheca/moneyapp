@@ -106,7 +106,7 @@ describe("forecastCurrentMonth", () => {
    * …and opened before April, so a trailing month with no row is a month of the ledger he spent nothing in. A month
    * before the ledger's first whole month is no measurement at all, and no average reads it (`paceMonths`' floor —
    * review of 6d11c4d): a fixture whose first row is Jun 10 has no whole month before July, and no pace. The income
-   * pace has its own frontier — every account its income lands in, read into July here too (default built 2026-10-23)
+   * pace has its own frontier — every account its own rows land in, read into July here too (default built 2026-10-23)
    * — and the same floor (`incomePaceMonths`, review of 06a5d3e): its "Apr 0, May $2,000.00, Jun $4,000.00" is three
    * months of the ledger only once it opens before April.
    */

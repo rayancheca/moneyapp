@@ -484,21 +484,33 @@ describe("unreadMonthsSentence — why an average stops before the last complete
   });
 
   /*
-   * ⚖️ Default built, not asked (2026-10-23): the income pace's months end at the last one every account his income
-   * lands in is read to the end of (`incomePaceMonths`), and say so in this sentence's words, its accounts named as
-   * whose they are. 🔴 Measured on his ledger copy at 2026-10-23: Robinhood Cash, where every Dividends and Interest row
-   * the pace reads lands, is read to Sep 9 — never a day every account he SPENDS from is read to (Aug 12).
+   * ⚖️ Default built, not asked (2026-10-23): the income pace's months end at the last one every account its own rows
+   * land in is read to the end of (`incomePaceMonths`), and say so in this sentence's words, those accounts NAMED.
+   * 🔴 Measured on his ledger copy at 2026-10-23: Robinhood Cash, where every Dividends and Interest row the pace reads
+   * lands, is read to Sep 9 — never a day every account he SPENDS from is read to (Aug 12). 🔴 Review of af84411: it
+   * said "every account your income lands in" of a day that leaves out the account his pay lands in (a live series
+   * projects the pay by its schedule): with Robinhood Cash shown to Oct 9 and Wells Fargo to Sep 24, false.
    */
-  test("Money in's sentence is the same sentence, of the accounts his income lands in", () => {
-    expect(incomeUnreadMonthsSentence({ months: ["2026-09"], through: "2026-09-09" })).toBe(
-      "Sep 2026 is left out: Sep 9 is the last day every account your income lands in has been imported through.",
+  test("Money in's sentence is the same sentence, naming the accounts its pace reads", () => {
+    const one = { months: ["2026-09"], through: "2026-09-09", accounts: ["Robinhood Cash"] };
+    expect(incomeUnreadMonthsSentence(one)).toBe(
+      "Sep 2026 is left out: Sep 9 is the last day Robinhood Cash has been imported through.",
     );
-    expect(incomeUnreadMonthsSentence({ months: ["2026-01"], through: "2025-12-20" })).toBe(
-      "Jan 2026 is left out: Dec 20, 2025 is the last day every account your income lands in has been imported " +
+    const two = { months: ["2026-01"], through: "2025-12-20", accounts: ["Brokerage Cash", "Savings"] };
+    expect(incomeUnreadMonthsSentence(two)).toBe(
+      "Jan 2026 is left out: Dec 20, 2025 is the last day both Brokerage Cash and Savings have been imported through.",
+    );
+    const three = { months: ["2026-08", "2026-09"], through: "2026-08-12", accounts: ["Cash", "Savings", "Trust"] };
+    expect(incomeUnreadMonthsSentence(three)).toBe(
+      "Aug 2026 and Sep 2026 are left out: Aug 12 is the last day all of Cash, Savings, and Trust have been imported " +
         "through.",
     );
+    // no name to give (never built so: every day is some named account's) — the accounts are still the pace's own
+    expect(incomeUnreadMonthsSentence({ months: ["2026-09"], through: "2026-09-09", accounts: [] })).toBe(
+      "Sep 2026 is left out: Sep 9 is the last day every account Money in's pace reads has been imported through.",
+    );
     expect(incomeUnreadMonthsSentence(null)).toBeNull();
-    expect(incomeUnreadMonthsSentence({ months: [], through: "2026-09-09" })).toBeNull();
+    expect(incomeUnreadMonthsSentence({ months: [], through: "2026-09-09", accounts: ["Robinhood Cash"] })).toBeNull();
   });
 
   /** the runway's caption, under "What you spend a month" — the reason sits beside the window it explains */

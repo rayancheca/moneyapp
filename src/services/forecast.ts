@@ -13,7 +13,7 @@ import {
 } from "@/lib/income-forecast";
 import { trailingPace, TREND_BACKTEST_MONTHS } from "@/lib/projection";
 import { formatDayShortIn } from "@/lib/format-date";
-import { spendPaceNote, type UnreadMonths } from "@/lib/committed";
+import { spendPaceNote, type IncomeUnreadMonths, type UnreadMonths } from "@/lib/committed";
 import { formatCents } from "@/lib/money";
 import { ONE_CHARGE_WORD } from "@/lib/one-charge";
 import { seriesIsIncomeOrSpending } from "@/lib/series-kind";
@@ -54,7 +54,7 @@ import { silenceMeasuredThroughBySeries } from "./cash-earnings";
 import { stillToCome, stillToComeReader } from "./payday-settlement";
 import { activeSplitsInRange } from "./transaction-splits";
 import { linkIsNotRecurring, seriesIdsNotDrawnAsRecurring } from "./recurring-link";
-import { habitualCoverageThrough, type Habit } from "./movers-card";
+import { habitualCoverage, type Habit, type HabitualCoverage } from "./movers-card";
 import { averagedMonths, averagedMonthsThrough } from "./read-in-full";
 
 /**
@@ -122,10 +122,10 @@ interface ForecastReads {
   /** `paceMonths` — the months the spending pace averages, behind the frontier (his decision 71) */
   spendPace: PaceMonths;
   /**
-   * `incomePaceMonths` — the months the income pace averages, behind its own frontier (every account his income lands
-   * in, default built 2026-10-23) and floored as every average is
+   * `incomePaceMonths` — the months the income pace averages, behind its own frontier (every account its own rows land
+   * in, default built 2026-10-23, those accounts named) and floored as every average is
    */
-  incomePace: PaceMonths;
+  incomePace: IncomePaceMonths;
 }
 
 /**
@@ -349,8 +349,8 @@ export interface MonthForecast {
    */
   spendPaceMonths: number;
   /**
-   * How many months the INCOME pace averaged (`incomePaceMonths`): three — ending at the last month every account his
-   * income lands in is read to the end of — fewer where the ledger is young, and 0 where it covers no whole month read
+   * How many months the INCOME pace averaged (`incomePaceMonths`): three — ending at the last month every account its
+   * own rows land in is read to the end of — fewer where the ledger is young, and 0 where it covers no whole month read
    * in full. Under the presence gate's two (`incomePaceMeasurable`) there is no income pace — no kind of income can
    * come in two of one month — and the card's band holds Money in's pace back as
    * it does Money out's. 🔴 Review of f1a0180: with no count to read, the band could not tell "no month" from "$0" and
@@ -361,12 +361,12 @@ export interface MonthForecast {
   /**
    * Which months Money in's pace averaged and why the later ones are left out, where its own frontier slid them back
    * (`incomePaceNote`, default built 2026-10-23) — "Money in's pace is averaged over 3 complete months, Jun 2026 to Aug
-   * 2026. Sep 2026 is left out: Sep 9 is the last day every account your income lands in has been imported through."
-   * — and why it has no recent pace, where it has too few months for one: "Money in has no recent pace yet: a kind of
-   * income counts toward it once it has come in 2 complete months, so a one-off never does. Jul 2026 is the only
-   * complete month imported so far." — or, where spending's frontier alone left that month out, "Jul 2026 is left out
-   * of spending's pace, not Money in's, and is the only complete month Money in has so far." Null where the income
-   * pace reads the calendar's last three.
+   * 2026. Sep 2026 is left out: Sep 9 is the last day Robinhood Cash has been imported through." — the accounts its own
+   * rows land in, named (`IncomeUnreadMonths`) — and why it has no recent pace, where it has too few months for one:
+   * "Money in has no recent pace yet: a kind of income counts toward it once it has come in 2 complete months, so a
+   * one-off never does. Jul 2026 is the only complete month imported so far." — or, where spending's frontier alone
+   * left that month out, "Jul 2026 is left out of spending's pace, not Money in's, and is the only complete month Money
+   * in has so far." Null where the income pace reads the calendar's last three.
    */
   incomePaceNote: string | null;
   /**
@@ -526,7 +526,7 @@ export interface PaceMonths {
  * at the pace and a month-end cash with no spending in it, where its parent commit had read −$80.65. A pace of no
  * month is withheld, never a pace of nothing (`MonthForecast.spendPaceMonths`).
  *
- * ⚠️ Spending's day alone: the income pace ends at its own — every account his income lands in (`incomePaceMonths`),
+ * ⚠️ Spending's day alone: the income pace ends at its own — every account its own rows land in (`incomePaceMonths`),
  * which is not every account he SPENDS from — by the same rule and floor (`averagedMonthsThrough`).
  */
 export function paceMonths(db: AppDatabase, today: string, count: number = TRAILING_FULL_MONTHS): PaceMonths {
@@ -536,10 +536,10 @@ export function paceMonths(db: AppDatabase, today: string, count: number = TRAIL
 
 /**
  * The `count` full months the INCOME pace averages (`variableIncomeComponents`) — his own pace and the agent's — and
- * the complete months after them it leaves out: they end at the last month every account his income lands in has been
- * read through to the end of (`incomeCoverageThrough`), slide back rather than shrink, and none is before the ledger's
- * first whole month (`averagedMonthsThrough`) — fewer where the ledger is young, none where it covers no whole month
- * read in full, and then there is no income pace.
+ * the complete months after them it leaves out, naming the accounts they wait for: they end at the last month every
+ * account the pace's own rows land in has been read through to the end of (`incomeCoverage`), slide back rather than
+ * shrink, and none is before the ledger's first whole month (`averagedMonthsThrough`) — fewer where the ledger is
+ * young, none where it covers no whole month read in full, and then there is no income pace.
  *
  * ⚖️ Default built, not asked (2026-10-23) — his decision 71 (2026-10-13), "a month read to its 12th is not a twelfth
  * of a measurement", carried to the income pace: batch 6's option (A), recommended there, built because he said "no
@@ -560,17 +560,32 @@ export function incomePaceMonths(
   today: string,
   count: number = TRAILING_FULL_MONTHS,
   notDrawn: ReadonlySet<string> = seriesIdsNotDrawnAsRecurring(db),
-): PaceMonths {
-  const { keys, unread } = averagedMonthsThrough(db, today, count, incomeCoverageThrough(db, today, notDrawn));
-  return { windows: keys.map(monthWindowOf), unread };
+): IncomePaceMonths {
+  const coverage = incomeCoverage(db, today, notDrawn);
+  const { keys, unread } = averagedMonthsThrough(db, today, count, coverage.through);
+  if (unread === null) return { windows: keys.map(monthWindowOf), unread: null };
+  // in the app's order (`listAccountOptions`), as the card's other notes list accounts (`outsideCashOf`)
+  const accounts = listAccountOptions(db)
+    .filter((a) => coverage.accountIds.has(a.id))
+    .map((a) => a.name);
+  return { windows: keys.map(monthWindowOf), unread: { ...unread, accounts } };
+}
+
+/** `incomePaceMonths`: the income pace's months, its left-out ones naming the accounts they wait for. */
+export interface IncomePaceMonths {
+  /** oldest → newest */
+  windows: MonthWindow[];
+  /** `AveragesEnd.unread` of the income pace's own day, and whose day it is — null when it leaves nothing out */
+  unread: IncomeUnreadMonths | null;
 }
 
 /**
- * The last day every account the income pace's OWN rows come in on habitually has been imported through
- * (`habitualCoverageThrough`) — the income analogue of `spendingCoverageThrough`, its live spenders the accounts his
+ * The last day every account the income pace's OWN rows come in on habitually has been imported through, and those
+ * accounts (`habitualCoverage`) — the income analogue of `spendingCoverageThrough`, its live spenders the accounts his
  * ongoing income lands in: the pace's rows (`hisIncomePaceRows`) in the presence gate's two of the pace's three months
- * before the month asked (`MIN_INCOME_MONTHS_PRESENT` of `TRAILING_FULL_MONTHS`). Null with no such row at all: there
- * is no frontier, and the calendar's months stand.
+ * before the month asked (`MIN_INCOME_MONTHS_PRESENT` of `TRAILING_FULL_MONTHS`), or of the three it was last read for
+ * where its imports stop short of those (`ownLastMonth`). Null with no such row at all: there is no frontier, and the
+ * calendar's months stand.
  *
  * ⚖️ Default built, not asked (2026-10-23). The pace's own rows, not every income row: a payday a live series owns
  * projects by its schedule (FIXED), never by the pace, and a refund or a gift is not pace (`EVENT_DRIVEN_INCOME`) — so
@@ -578,16 +593,33 @@ export function incomePaceMonths(
  * on his ledger copy at 2026-10-23, SoFi Savings — Interest in Mar, Apr and May, nothing since, read through Jul 31 —
  * is live by spending's six-month habit and would hold Money in's months back to May–Jul; by this one it is dormant,
  * and Robinhood Cash's Sep 9 dates them: Jun–Aug. Until any account holds the habit (a young ledger), every account the
- * pace's rows came in on dates it — never an account that only spends, which could not hold his pay back.
+ * pace's rows came in on and still coming in when last read dates it (`stillComingIn`) — never an account that only
+ * spends, which could not hold his pay back.
+ *
+ * ⛔ Each account judged over the months it has been read for. 🔴 Review of af84411 (MEDIUM): it was judged over the
+ * calendar's months before each candidate, so an earner read short had its unread months counted as months it earned
+ * nothing in — read through Jul 31 and paid every month, at 2026-11-23 it no longer dated anything and its Aug–Oct were
+ * averaged as $0 — and on his ledger copy, today moved to 2027-03-23, Robinhood Cash's rows aged out of the habit's
+ * span and the pace read the calendar's Dec–Feb, its Dividends and Interest gone. Neither reachable on his ledger at
+ * 2026-10-23: Robinhood Cash is his one live earner, and it is judged over Jun–Aug either way.
+ *
+ * ⚖️ Default built, not asked (2026-10-23): dated by the earners of the newest complete month, never an older month
+ * other accounts read through (`Habit.governedBy`). 🔴 Review of af84411: with Interest in Jun and Aug, none in Jul,
+ * on an account read to Aug 20, and Dividends read to Sep 9 elsewhere, August — judged by May–Jul, where the Interest
+ * came once — was "imported" by the dividends alone and governed, and the Interest's August, read to its 20th, was
+ * averaged whole (Jun–Aug). It holds them to May–Jul. Identical on his ledger copy at 2026-10-23: Robinhood Cash earns
+ * in every one of either month's three, and SoFi Savings in neither.
  */
-function incomeCoverageThrough(db: AppDatabase, today: string, notDrawn: ReadonlySet<string>): string | null {
+function incomeCoverage(db: AppDatabase, today: string, notDrawn: ReadonlySet<string>): HabitualCoverage {
   // built at call time, as spending's is (`Habit`)
   const habit: Habit = {
     months: TRAILING_FULL_MONTHS,
     minMonths: MIN_INCOME_MONTHS_PRESENT,
     beforeAHabit: "its own accounts",
+    judgedOver: "its own months",
+    governedBy: "the newest month",
   };
-  return habitualCoverageThrough(db, today, habit, (from, to) => {
+  return habitualCoverage(db, today, habit, (from, to) => {
     const byAccount = new Map<string, Map<string, number>>();
     for (const t of hisIncomePaceRows(db, from, to, notDrawn)) {
       const perMonth = byAccount.get(t.accountId) ?? new Map<string, number>();
@@ -1182,7 +1214,7 @@ function variableIncomeComponents(
   daysInMonth: number,
   { notDrawn, outside, agentsCash, incomePace }: ForecastReads,
 ): ForecastLeg {
-  // the months every account his income lands in is read to the end of, floored (`incomePaceMonths`): a September read
+  // the months every account its own rows land in is read to the end of, floored (`incomePaceMonths`): a September read
   // to its 9th is no month of $0.07 dividends, and May before a ledger opening Jun 1 no month of $0 pay — read once for
   // the chain (`forecastReads`), so its window is the chain's today, as spending's is (`variableComponents`)
   const windows = incomePace.windows;
