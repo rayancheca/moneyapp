@@ -445,4 +445,37 @@ describe("the nearer due day wins (decision 76)", () => {
       ["2026-11-01", null],
     ]);
   });
+
+  /*
+   * ⚠️ …and its twin: one payment of TWO charges pays one due day (review of 2f827fc, 2026-10-23). A premium due the
+   * 11th, Sep 11 missed, then one payment of two premiums: it pays the day it lies nearer, and the other day it paid
+   * stays unpaid — nearer-due-day.test.ts pins the calendar and the arrears. Paying both reads an amount, which
+   * `paymentFor` never does: his call (decision 76), not built. Latent: no bill of his has a catch-up.
+   */
+  test("a late catch-up of two premiums pays the one day it lies nearer — the known gap's twin", () => {
+    const PREMIUM = monthlyOn("2026-09-11");
+    const days = ["2026-08-11", "2026-09-11", "2026-10-11", "2026-11-11"];
+    const rows = (catchUp: string) => ["2026-06-11", "2026-07-11", "2026-08-11", catchUp].map(pay);
+    // Sep 19, 8 days after Sep 11: Sep 11's, late — Oct 11 unpaid; Aug 11 is its own each time
+    expect(graded(rows("2026-09-19"), PREMIUM, days)).toEqual([
+      ["2026-08-11", "2026-08-11"],
+      ["2026-09-11", "2026-09-19"],
+      ["2026-10-11", null],
+      ["2026-11-11", null],
+    ]);
+    // Sep 28, 13 days before Oct 11: Oct 11's, early — Sep 11 unpaid
+    expect(graded(rows("2026-09-28"), PREMIUM, days)).toEqual([
+      ["2026-08-11", "2026-08-11"],
+      ["2026-09-11", null],
+      ["2026-10-11", "2026-09-28"],
+      ["2026-11-11", null],
+    ]);
+    // Oct 12, inside Oct 11's grace: Oct 11's, on time — Sep 11 unpaid
+    expect(graded(rows("2026-10-12"), PREMIUM, days)).toEqual([
+      ["2026-08-11", "2026-08-11"],
+      ["2026-09-11", null],
+      ["2026-10-11", "2026-10-12"],
+      ["2026-11-11", null],
+    ]);
+  });
 });

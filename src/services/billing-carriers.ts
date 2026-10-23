@@ -188,7 +188,12 @@ export interface DueDays {
  * ⛔ ONE PAYMENT PAYS ONE DUE DAY: on time it is in no gap; between two days it is asked for by one of them only — the
  * later early, or the earlier late — and a day takes one. Rows of one day are ONE payment: his card posted Jun 16's
  * rent as two (`occurrencesOf`). ⚠️ Two halves a day apart are two payments — Jun 16 + Jun 17 pay Jun 1 (the tie) and
- * Jul 1 (nearer it): a known gap neither 73 nor 76 catches.
+ * Jul 1 (nearer it): a known gap neither 73 nor 76 catches. ⚠️ …and its twin: one payment of TWO charges pays one day.
+ * A late catch-up pays the day it lies nearer, and the other day it paid stays unpaid — a premium due the 11th, Sep 11
+ * missed, then -$715.16: Sep 19 pays Sep 11 late and leaves Oct 11 owed, Sep 28 pays Oct 11 early and leaves Sep 11
+ * owed, Oct 12 pays Oct 11 on time and leaves Sep 11 drawn missed, while its posted average says it "covered more than
+ * one month" (`paidAhead`; review of 2f827fc, 2026-10-23, nearer-due-day.test.ts). Paying both reads an amount, which
+ * nothing here does, past his "pays the one it's nearer to": his call, not built.
  *
  * ⛔ Nothing is read back: a day's payment lies between the days either side of it, and whether the next is paid on
  * time — so no reader needs more than the postings one due day either side of its window (`billPaymentsBySeries`).

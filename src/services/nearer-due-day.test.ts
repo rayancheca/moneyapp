@@ -10,11 +10,14 @@ import { institutions } from "@/db/schema/institutions";
 import { recurringSeries } from "@/db/schema/recurring";
 import { transactions } from "@/db/schema/transactions";
 import { seedDatabase } from "@/db/seed";
+import { arrearsSentence } from "@/lib/committed";
 import { arrearsThisMonth } from "./arrears";
 import { checkedThrough } from "./checked-days-fixture";
+import { committedBook } from "./committed";
 import { forecastForMonth } from "./forecast";
 import { upcomingOccurrences } from "./recurring";
 import { recurringCalendar } from "./recurring-calendar";
+import { seriesDetail } from "./recurring-detail";
 
 /**
  * ⚖️ His decision 76 (2026-10-14, his answer, refines 73): THE NEARER DUE DAY WINS — the option he chose, word for
@@ -454,5 +457,72 @@ describe("the e2e Meal Kit's real miss is still a miss", () => {
     checkedThrough(bundle.db, "acct", "2026-07-08");
     expect(owed("2026-07-09")).toEqual([[MEAL, "2026-07-05", 12500]]);
     expect(unpaid("2026-07", "2026-07-05", "2026-07-09")).toEqual([MEAL]);
+  });
+});
+
+/*
+ * ⚠️ A LATE CATCH-UP PAYS ONE DUE DAY — a known gap, the twin of billing-carriers.test.ts' two halves a day apart
+ * (review of 2f827fc, 2026-10-23). A premium of -$357.58 due the 11th, paid Jun 11, Jul 11 and Aug 11, Sep 11 missed,
+ * then ONE -$715.16 that holds Sep 11's and Oct 11's: one payment pays one due day (`paymentFor`, ⚖️ his decision 76,
+ * "pays the one it's nearer to"), so wherever it posts, one day it paid is drawn unpaid — while the series page, the
+ * All tab and the popover say, truly, that it "covered more than one month" (`paidAhead`). 🔴 2f827fc said the
+ * calendar pays its own due day with it, the day it missed stays unpaid, and nothing calls it early: so for Oct 12
+ * alone. Measured on his ledger copy 2026-10-23 with this premium added on Venture X (read through Oct 14): Sep 28 —
+ * Oct 11 "paid early by its payment of Sep 28, 2026", Sep 11 missed and owed $357.58 on Sep 30, two days after it
+ * was paid; Sep 19 — Sep 11 paid late, Oct 11 missed, and the runway "A further $3,877.56 came due earlier this
+ * month: $357.58 has not posted, …" beside "Sep 19's -$715.16 covered more than one month". Paying both days reads
+ * an amount, which `paymentFor` never does, past his words: his call, not built. Latent: no bill of his has a
+ * catch-up — Car insurance's Sep 3 -$1,000.00 posted before Sep 11 was due, and his own date starts it at Dec 11.
+ */
+describe("⚠️ a late catch-up — two premiums in one payment after a missed month — pays one due day (known gap)", () => {
+  const PREMIUM = "premium";
+  const TODAY = "2026-10-23";
+  const owedPremium = (today: string) =>
+    arrearsThisMonth(bundle.db, new Set([PREMIUM]), today).series.map((s) => [
+      s.nextDate,
+      s.amountCents,
+      s.unreadCents,
+    ]);
+  /** paid Jun 11, Jul 11 and Aug 11, Sep 11 missed, then -$715.16 on `on` — its account read through Oct 22 */
+  const catchUpOn = (on: string): void => {
+    const paid: [string, number][] = ["2026-06-11", "2026-07-11", "2026-08-11"].map((d) => [d, -35758]);
+    seriesWith(PREMIUM, "Premium (what-if)", -35758, "2026-09-11", ...paid, [on, -71516]);
+    checkedThrough(bundle.db, "acct", "2026-10-22");
+  };
+
+  test("Sep 28, nearer Oct 11: it pays Oct 11 EARLY, and Sep 11 is drawn missed — owed $357.58 on Sep 30", () => {
+    catchUpOn("2026-09-28");
+    expect(marks("2026-10", "2026-10-11", TODAY)).toEqual([
+      [PREMIUM, "paid", { carrier: null, postedOn: "2026-09-28", early: true }],
+    ]);
+    expect(unpaid("2026-09", "2026-09-11", TODAY)).toEqual([PREMIUM]);
+    expect(owedPremium("2026-09-30")).toEqual([["2026-09-11", 35758, 0]]);
+    expect(owedPremium(TODAY)).toEqual([]);
+  });
+
+  test("Sep 19, nearer Sep 11: it pays Sep 11 late, and Oct 11 is drawn missed — owed beside its own note", () => {
+    catchUpOn("2026-09-19");
+    // the Sep 19 row stands for Sep 11, a different amount
+    expect(marks("2026-09", "2026-09-11", TODAY)).toEqual([]);
+    expect(marks("2026-09", "2026-09-19", TODAY)).toEqual([[PREMIUM, "paid_different", null]]);
+    expect(unpaid("2026-10", "2026-10-11", TODAY)).toEqual([PREMIUM]);
+    expect(owedPremium(TODAY)).toEqual([["2026-10-11", 35758, 0]]);
+    expect(arrearsSentence(committedBook(bundle.db, TODAY))).toBe(
+      "A further $357.58 came due earlier this month and has not posted.",
+    );
+    // …on the page that says it covered more than one month
+    const page = seriesDetail(bundle.db, PREMIUM, TODAY)!;
+    expect([page.overdue?.date, page.overdue?.amountCents]).toEqual(["2026-10-11", -35758]);
+    expect(page.paidAhead.map((o) => [o.postedOn, o.amountCents])).toEqual([["2026-09-19", -71516]]);
+  });
+
+  test("Oct 12, inside Oct 11's grace — 2f827fc's one case: Oct 11 paid on time, Sep 11 drawn missed", () => {
+    catchUpOn("2026-10-12");
+    expect(marks("2026-10", "2026-10-11", TODAY)).toEqual([]);
+    expect(unpaid("2026-10", "2026-10-11", TODAY)).toEqual([]);
+    // owed on Sep 30, truly — the payment came Oct 12 — and still drawn missed once it has
+    expect(owedPremium("2026-09-30")).toEqual([["2026-09-11", 35758, 0]]);
+    expect(unpaid("2026-09", "2026-09-11", TODAY)).toEqual([PREMIUM]);
+    expect(owedPremium(TODAY)).toEqual([]);
   });
 });

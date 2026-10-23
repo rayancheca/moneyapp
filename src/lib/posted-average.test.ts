@@ -734,14 +734,23 @@ describe("paidAhead — the payments that covered more than one charge, said bes
 
   /*
    * ⚖️ default built, not asked (2026-10-23): a late catch-up — two charges paid at once after a missed month — is
-   * named as well, and truly: it covered the month it missed and its own. Its words say only that ("covered more than
-   * one month"), never "ahead" or "early" — no surface reads this rule another way. Latent on his ledger copy
-   * 2026-10-23: Car insurance's Sep 3 is the one payment of twice a rate, and he paid it before Sep 11 was due.
+   * named as well, and truly, whenever it posts: it covered the month it missed and its own, and its words say only
+   * that ("covered more than one month"), never "ahead" or "early". ⚠️ The calendar and the arrears pay ONE due day
+   * with it and leave the other unpaid — Sep 28 pays Oct 11 "early", Sep 19 leaves Oct 11 owed: the known gap
+   * nearer-due-day.test.ts pins (🔴 2f827fc said here that no surface reads it another way; review of 2f827fc).
+   * Latent on his ledger copy 2026-10-23: Car insurance's Sep 3 is the one payment of twice a rate, paid before Sep 11.
    */
-  test("a late catch-up after a missed month covered more than one month — all its words say", () => {
-    const oct12 = at("2026-10-12", 2 * RATE); // Sep 11's premium unpaid, then two in one payment
-    expect(paidAhead([AUG_12, oct12], RATE, "bill")).toEqual([oct12]);
-    expect(paidAheadPhrase([oct12], "monthly", TODAY)).toBe("Oct 12's -$715.16 covered more than one month");
+  test("a late catch-up after a missed month covered more than one month, whenever it posts — its words say", () => {
+    const said = [
+      ["2026-09-19", "Sep 19"],
+      ["2026-09-28", "Sep 28"],
+      ["2026-10-12", "Oct 12"],
+    ] as const;
+    for (const [day, label] of said) {
+      const catchUp = at(day, 2 * RATE); // Sep 11's premium unpaid, then two in one payment
+      expect(paidAhead([AUG_12, catchUp], RATE, "bill")).toEqual([catchUp]);
+      expect(paidAheadPhrase([catchUp], "monthly", TODAY)).toBe(`${label}'s -$715.16 covered more than one month`);
+    }
   });
 
   test("a subscription pays ahead as a bill does; a transfer, income or other series is no charge to pay ahead", () => {

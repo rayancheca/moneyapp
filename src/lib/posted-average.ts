@@ -380,8 +380,16 @@ export function postedAsWord(o: Pick<Occurrence, "postings">): string | null {
  * later charge of $100.00 unnamed (a -$100.00 Oct 22 added there read "Oct 22's -$100.00 covered more than one month").
  * Car insurance's Nov 11 remainder, and any credit after Sep 3, post after it: Sep 3 is still named. A late catch-up —
  * two charges paid at once after a missed month — is named too, and truly: it covered the month it missed and its own,
- * and the words say no more than that ("covered more than one month"). Nothing calls it early or ahead: the calendar
- * pays its own due day with it, and the day it missed stays unpaid — one payment pays one due day (`paymentFor`).
+ * and the words say no more than that ("covered more than one month"), whenever it posts. ⚠️ The calendar and the
+ * arrears read it as ONE due day's payment (`paymentFor`, ⚖️ his decision 76): the day it lies nearer — the missed one
+ * late, or its own early or on time — and the other day it paid is drawn unpaid, owed while its month runs. 🔴 2f827fc
+ * said here that nothing calls it early and that the calendar pays its own day with it, the missed one left unpaid:
+ * so for one timing in three (review of 2f827fc). Measured on his ledger copy 2026-10-23 with a -$357.58 premium due
+ * the 11th added, Sep 11 missed, then one -$715.16: Oct 12 pays Oct 11 on time and leaves Sep 11 missed; Sep 28 draws
+ * Oct 11 "paid early by its payment of Sep 28, 2026" and Sep 11 missed, owed $357.58 on Sep 30; Sep 19 pays Sep 11
+ * late and leaves Oct 11 missed — the runway's "$357.58 has not posted" on Oct 23 beside "Sep 19's -$715.16 covered
+ * more than one month". A known gap, pinned (nearer-due-day.test.ts); paying both days is his call. Latent: no bill of
+ * his has one — Car insurance's Sep 3 posted before Sep 11 was due, and his own date starts its schedule at Dec 11.
  */
 export const PAID_AHEAD_MULTIPLE = 2;
 
