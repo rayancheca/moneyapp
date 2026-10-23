@@ -336,7 +336,10 @@ export interface StillToComeSeries extends SeriesOverrides {
  *
  * ⛔ Asked of days from today on — every caller walks forward from today — so nothing late is asked: a payment past
  * the grace of a day from today on would post after today, and no import has brought one. Every payment is read, as
- * every grader reads them (`billPaymentsBySeries`): an early one lies as far back as the day before.
+ * every grader reads them (`billPaymentsBySeries`): an early one lies as far back as the day before. ⚖️ …and so does a
+ * catch-up, LATE for the day before (`paymentFor`'s, default built, not asked, 2026-10-23), which reads this day as
+ * the one after it: Sep 19's -$715.16 for a premium due the 11th, Sep 11 missed, pays Oct 11 — on Sep 25 Upcoming and
+ * October's forecast no longer count it.
  */
 export function stillToComeReader(
   db: AppDatabase,

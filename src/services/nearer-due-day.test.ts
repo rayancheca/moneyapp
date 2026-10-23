@@ -461,20 +461,20 @@ describe("the e2e Meal Kit's real miss is still a miss", () => {
 });
 
 /*
- * ⚠️ A LATE CATCH-UP PAYS ONE DUE DAY — a known gap, the twin of billing-carriers.test.ts' two halves a day apart
- * (review of 2f827fc, 2026-10-23). A premium of -$357.58 due the 11th, paid Jun 11, Jul 11 and Aug 11, Sep 11 missed,
- * then ONE -$715.16 that holds Sep 11's and Oct 11's: one payment pays one due day (`paymentFor`, ⚖️ his decision 76,
- * "pays the one it's nearer to"), so wherever it posts, one day it paid is drawn unpaid — while the series page, the
- * All tab and the popover say, truly, that it "covered more than one month" (`paidAhead`). 🔴 2f827fc said the
- * calendar pays its own due day with it, the day it missed stays unpaid, and nothing calls it early: so for Oct 12
- * alone. Measured on his ledger copy 2026-10-23 with this premium added on Venture X (read through Oct 14): Sep 28 —
- * Oct 11 "paid early by its payment of Sep 28, 2026", Sep 11 missed and owed $357.58 on Sep 30, two days after it
- * was paid; Sep 19 — Sep 11 paid late, Oct 11 missed, and the runway "A further $3,877.56 came due earlier this
- * month: $357.58 has not posted, …" beside "Sep 19's -$715.16 covered more than one month". Paying both days reads
- * an amount, which `paymentFor` never does, past his words: his call, not built. Latent: no bill of his has a
- * catch-up — Car insurance's Sep 3 -$1,000.00 posted before Sep 11 was due, and his own date starts it at Dec 11.
+ * ⚖️ default built, not asked (2026-10-23) — A LATE CATCH-UP PAYS BOTH DUE DAYS IT COVERED: a premium of -$357.58 due
+ * the 11th, paid Jun 11, Jul 11 and Aug 11, Sep 11 missed, then ONE -$715.16 that holds Sep 11's and Oct 11's — the
+ * payment its posted average names, "covered more than one month" (`paidAheadDays`) — pays the day it lies nearer
+ * (⚖️ his decision 76) and the unpaid day on its other side (`paymentFor`'s catch-up), on every grader: the calendar,
+ * the arrears (the runway, the bill's "Already due"), and the readers that look ahead (Upcoming, the forecast). 🔴 At
+ * 66daebd one payment paid one due day, and wherever it posted one day it paid was drawn unpaid (review of 66daebd).
+ * Measured on his ledger copy 2026-10-23 with this premium added on Venture X (read through Oct 14): Sep 19 left Oct 11
+ * missed, the runway reading "A further $3,877.56 came due earlier this month: $357.58 has not posted, and no
+ * statement has covered the other $3,519.98 yet." and the series page "Already due, and not posted" beside "posted avg
+ * -$446.98 · Sep 19's -$715.16 covered more than one month"; Sep 28 drew Sep 11 missed and owed it $357.58 on Sep 30,
+ * two days after it was paid; Oct 12 drew Sep 11 missed. Latent: no bill of his has a catch-up — Car insurance's Sep 3
+ * -$1,000.00 posted before Sep 11 was due, and his own date starts its schedule at Dec 11.
  */
-describe("⚠️ a late catch-up — two premiums in one payment after a missed month — pays one due day (known gap)", () => {
+describe("⚖️ a late catch-up — two premiums in one payment after a missed month — pays both due days", () => {
   const PREMIUM = "premium";
   const TODAY = "2026-10-23";
   const owedPremium = (today: string) =>
@@ -483,46 +483,61 @@ describe("⚠️ a late catch-up — two premiums in one payment after a missed 
       s.amountCents,
       s.unreadCents,
     ]);
-  /** paid Jun 11, Jul 11 and Aug 11, Sep 11 missed, then -$715.16 on `on` — its account read through Oct 22 */
-  const catchUpOn = (on: string): void => {
+  /** paid Jun 11, Jul 11 and Aug 11, Sep 11 missed — its account read through Oct 22 */
+  const missedSep11 = (): void => {
     const paid: [string, number][] = ["2026-06-11", "2026-07-11", "2026-08-11"].map((d) => [d, -35758]);
-    seriesWith(PREMIUM, "Premium (what-if)", -35758, "2026-09-11", ...paid, [on, -71516]);
+    seriesWith(PREMIUM, "Premium (what-if)", -35758, "2026-09-11", ...paid);
     checkedThrough(bundle.db, "acct", "2026-10-22");
   };
+  /** …then -$715.16 on `on` */
+  const catchUpOn = (on: string): void => {
+    missedSep11();
+    pay(`t-${PREMIUM}-${on}`, PREMIUM, on, -71516);
+  };
 
-  test("Sep 28, nearer Oct 11: it pays Oct 11 EARLY, and Sep 11 is drawn missed — owed $357.58 on Sep 30", () => {
+  test("Sep 28, nearer Oct 11: it pays Oct 11 early AND Sep 11 late — nothing owed on Sep 30", () => {
     catchUpOn("2026-09-28");
     expect(marks("2026-10", "2026-10-11", TODAY)).toEqual([
       [PREMIUM, "paid", { carrier: null, postedOn: "2026-09-28", early: true }],
     ]);
-    expect(unpaid("2026-09", "2026-09-11", TODAY)).toEqual([PREMIUM]);
-    expect(owedPremium("2026-09-30")).toEqual([["2026-09-11", 35758, 0]]);
+    // the Sep 28 row stands for Sep 11 in September, a different amount
+    expect(marks("2026-09", "2026-09-11", TODAY)).toEqual([]);
+    expect(marks("2026-09", "2026-09-28", TODAY)).toEqual([[PREMIUM, "paid_different", null]]);
+    expect(owedPremium("2026-09-30")).toEqual([]);
     expect(owedPremium(TODAY)).toEqual([]);
   });
 
-  test("Sep 19, nearer Sep 11: it pays Sep 11 late, and Oct 11 is drawn missed — owed beside its own note", () => {
+  test("Sep 19, nearer Sep 11: it pays Sep 11 late AND Oct 11 early — no runway sentence, nothing already due", () => {
     catchUpOn("2026-09-19");
-    // the Sep 19 row stands for Sep 11, a different amount
     expect(marks("2026-09", "2026-09-11", TODAY)).toEqual([]);
     expect(marks("2026-09", "2026-09-19", TODAY)).toEqual([[PREMIUM, "paid_different", null]]);
-    expect(unpaid("2026-10", "2026-10-11", TODAY)).toEqual([PREMIUM]);
-    expect(owedPremium(TODAY)).toEqual([["2026-10-11", 35758, 0]]);
-    expect(arrearsSentence(committedBook(bundle.db, TODAY))).toBe(
-      "A further $357.58 came due earlier this month and has not posted.",
-    );
+    expect(marks("2026-10", "2026-10-11", TODAY)).toEqual([
+      [PREMIUM, "paid", { carrier: null, postedOn: "2026-09-19", early: true }],
+    ]);
+    expect(owedPremium(TODAY)).toEqual([]);
+    expect(arrearsSentence(committedBook(bundle.db, TODAY))).toBeNull();
     // …on the page that says it covered more than one month
     const page = seriesDetail(bundle.db, PREMIUM, TODAY)!;
-    expect([page.overdue?.date, page.overdue?.amountCents]).toEqual(["2026-10-11", -35758]);
+    expect(page.overdue).toBeNull();
     expect(page.paidAhead.map((o) => [o.postedOn, o.amountCents])).toEqual([["2026-09-19", -71516]]);
+    // …and on Sep 25 Oct 11 is no longer coming: Upcoming and October's forecast read Sep 19 as its payment
+    expect(coming("2026-09-25", PREMIUM)).toEqual(["2026-11-11"]);
+    expect(forecastForMonth(bundle.db, "2026-10", "2026-09-25")!.components.map((c) => c.label)).not.toContain(
+      "Premium (what-if)",
+    );
   });
 
-  test("Oct 12, inside Oct 11's grace — 2f827fc's one case: Oct 11 paid on time, Sep 11 drawn missed", () => {
-    catchUpOn("2026-10-12");
+  test("Oct 12, inside Oct 11's grace: it pays Oct 11 on time AND Sep 11 late — owed on Sep 30, before it came", () => {
+    missedSep11();
+    expect(owedPremium("2026-09-30")).toEqual([["2026-09-11", 35758, 0]]);
+    pay(`t-${PREMIUM}-oct12`, PREMIUM, "2026-10-12", -71516);
     expect(marks("2026-10", "2026-10-11", TODAY)).toEqual([]);
     expect(unpaid("2026-10", "2026-10-11", TODAY)).toEqual([]);
-    // owed on Sep 30, truly — the payment came Oct 12 — and still drawn missed once it has
-    expect(owedPremium("2026-09-30")).toEqual([["2026-09-11", 35758, 0]]);
-    expect(unpaid("2026-09", "2026-09-11", TODAY)).toEqual([PREMIUM]);
+    expect(marks("2026-09", "2026-09-11", TODAY)).toEqual([
+      [PREMIUM, "paid", { carrier: null, postedOn: "2026-10-12", early: false }],
+    ]);
     expect(owedPremium(TODAY)).toEqual([]);
+    // …and Nov 11, a day still to come, is no day it paid
+    expect(coming(TODAY, PREMIUM)[0]).toBe("2026-11-11");
   });
 });

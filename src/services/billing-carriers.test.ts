@@ -447,35 +447,91 @@ describe("the nearer due day wins (decision 76)", () => {
   });
 
   /*
-   * ⚠️ …and its twin: one payment of TWO charges pays one due day (review of 2f827fc, 2026-10-23). A premium due the
-   * 11th, Sep 11 missed, then one payment of two premiums: it pays the day it lies nearer, and the other day it paid
-   * stays unpaid — nearer-due-day.test.ts pins the calendar and the arrears. Paying both reads an amount, which
-   * `paymentFor` never does: his call (decision 76), not built. Latent: no bill of his has a catch-up.
+   * ⚖️ default built, not asked (2026-10-23) — THE CATCH-UP: a payment that covered more than one charge (its posted
+   * average names it, `paidAheadDays`; `Payment.coveredMore`) pays the unpaid due day on its OTHER side too. A premium
+   * due the 11th, Sep 11 missed, then one payment of two premiums: between the two days it pays the one it lies nearer
+   * (decision 76) and then the other; on time for Oct 11, Oct 11 and the missed Sep 11, late — never Nov 11, a day
+   * still to come. 🔴 At 66daebd it paid one day and left the other unpaid, the twin of the two halves above (review
+   * of 66daebd, 2026-10-23; nearer-due-day.test.ts pins what each surface read). Latent: no bill of his has one.
    */
-  test("a late catch-up of two premiums pays the one day it lies nearer — the known gap's twin", () => {
+  describe("⚖️ the catch-up — a payment of two charges pays the unpaid day on its other side", () => {
     const PREMIUM = monthlyOn("2026-09-11");
     const days = ["2026-08-11", "2026-09-11", "2026-10-11", "2026-11-11"];
-    const rows = (catchUp: string) => ["2026-06-11", "2026-07-11", "2026-08-11", catchUp].map(pay);
-    // Sep 19, 8 days after Sep 11: Sep 11's, late — Oct 11 unpaid; Aug 11 is its own each time
-    expect(graded(rows("2026-09-19"), PREMIUM, days)).toEqual([
-      ["2026-08-11", "2026-08-11"],
-      ["2026-09-11", "2026-09-19"],
-      ["2026-10-11", null],
-      ["2026-11-11", null],
-    ]);
-    // Sep 28, 13 days before Oct 11: Oct 11's, early — Sep 11 unpaid
-    expect(graded(rows("2026-09-28"), PREMIUM, days)).toEqual([
-      ["2026-08-11", "2026-08-11"],
-      ["2026-09-11", null],
-      ["2026-10-11", "2026-09-28"],
-      ["2026-11-11", null],
-    ]);
-    // Oct 12, inside Oct 11's grace: Oct 11's, on time — Sep 11 unpaid
-    expect(graded(rows("2026-10-12"), PREMIUM, days)).toEqual([
-      ["2026-08-11", "2026-08-11"],
-      ["2026-09-11", null],
-      ["2026-10-11", "2026-10-12"],
-      ["2026-11-11", null],
-    ]);
+    const twice = (postedOn: string): Payment => ({ ...pay(postedOn), coveredMore: true });
+    const rows = (catchUp: Payment) => [...["2026-06-11", "2026-07-11", "2026-08-11"].map(pay), catchUp];
+
+    test("Sep 19, Sep 28 or Oct 12: the missed Sep 11 and its own Oct 11, whichever it lies nearer", () => {
+      // Sep 19, 8 days after Sep 11: Sep 11's, late — and Oct 11's, early
+      expect(graded(rows(twice("2026-09-19")), PREMIUM, days)).toEqual([
+        ["2026-08-11", "2026-08-11"],
+        ["2026-09-11", "2026-09-19"],
+        ["2026-10-11", "2026-09-19"],
+        ["2026-11-11", null],
+      ]);
+      // Sep 28, 13 days before Oct 11: Oct 11's, early — and Sep 11's, late
+      expect(graded(rows(twice("2026-09-28")), PREMIUM, days)).toEqual([
+        ["2026-08-11", "2026-08-11"],
+        ["2026-09-11", "2026-09-28"],
+        ["2026-10-11", "2026-09-28"],
+        ["2026-11-11", null],
+      ]);
+      // Oct 12, inside Oct 11's grace: Oct 11's, on time — and Sep 11's, late; Nov 11 is still to come
+      expect(graded(rows(twice("2026-10-12")), PREMIUM, days)).toEqual([
+        ["2026-08-11", "2026-08-11"],
+        ["2026-09-11", "2026-10-12"],
+        ["2026-10-11", "2026-10-12"],
+        ["2026-11-11", null],
+      ]);
+    });
+
+    test("…only a payment that covered more than one charge: one of a single charge still pays one day", () => {
+      expect(graded(rows(pay("2026-09-19")), PREMIUM, days).map(([, p]) => p)).toEqual([
+        "2026-08-11",
+        "2026-09-19",
+        null,
+        null,
+      ]);
+      expect(graded(rows(pay("2026-09-28")), PREMIUM, days).map(([, p]) => p)).toEqual([
+        "2026-08-11",
+        null,
+        "2026-09-28",
+        null,
+      ]);
+      expect(graded(rows(pay("2026-10-12")), PREMIUM, days).map(([, p]) => p)).toEqual([
+        "2026-08-11",
+        null,
+        "2026-10-12",
+        null,
+      ]);
+    });
+
+    test("…only the unpaid day on its OTHER side: Car insurance's Sep 3, Aug 11 paid, pays no Oct 11", () => {
+      // his shape: Aug 12 on time for Aug 11, then Sep 3's -$1,000.00, 8 days before Sep 11 — Sep 11's, early
+      expect(graded([pay("2026-08-12"), twice("2026-09-03")], PREMIUM, days.slice(0, 3))).toEqual([
+        ["2026-08-11", "2026-08-12"],
+        ["2026-09-11", "2026-09-03"],
+        ["2026-10-11", null],
+      ]);
+      // …with Aug 11 missed it is a catch-up of Aug 11, late
+      expect(graded([twice("2026-09-03")], PREMIUM, days.slice(0, 3)).map(([, p]) => p)).toEqual([
+        "2026-09-03",
+        "2026-09-03",
+        null,
+      ]);
+      // Aug 11 AND Sep 11 missed: Sep 19 pays Sep 11 late and Oct 11 — the day on its other side, never Aug 11
+      expect(graded([...["2026-06-11", "2026-07-11"].map(pay), twice("2026-09-19")], PREMIUM, days)).toEqual([
+        ["2026-08-11", null],
+        ["2026-09-11", "2026-09-19"],
+        ["2026-10-11", "2026-09-19"],
+        ["2026-11-11", null],
+      ]);
+    });
+
+    // `stillToComeReader` asks no day after one (nothing late is asked of a day from today on)
+    test("…and asked with no day after it, Oct 11 is still Sep 19's — as the readers that look ahead ask", () => {
+      const ahead: DueDays = { after: () => null, before: PREMIUM.before };
+      expect(paymentFor(rows(twice("2026-09-19")), "2026-10-11", ahead)?.postedOn).toBe("2026-09-19");
+      expect(paymentFor(rows(pay("2026-09-19")), "2026-10-11", ahead)).toBeUndefined();
+    });
   });
 });

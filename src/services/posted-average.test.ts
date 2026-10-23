@@ -441,6 +441,28 @@ describe("the posted average, per occurrence — his rent on the page, the All t
     namesNothing(breezeline, "2026-11-15");
   });
 
+  /*
+   * ⚖️ default built, not asked (2026-10-23): …and one after it only when it is the remainder that payment implies.
+   * 🔴 At 66daebd a bill varying AFTER its one high month was named: a what-if on Venture X at a -$60.00 rate set from
+   * its Jun 8 bill, then Jul 8 -$130.00, Aug 8 -$55.00, Sep 8 -$40.00 and Oct 8 -$58.00, read "posted avg -$68.60 ·
+   * Jul 8's -$130.00 covered more than one month" on the All tab and the series page, and so did the popover (review
+   * of 66daebd; measured on his ledger copy 2026-10-23, that bill added). Car insurance's -$72.74 is what Sep 3 left
+   * (above); a -$50.00 there is not, and names nothing either.
+   */
+  test("a bill varying after its one high month paid nothing ahead — nor Sep 3 beside a -$50.00 — on all three", () => {
+    const varying = seed("What-if bill", "bill", -6_000, [
+      ["2026-06-08", -6_000],
+      ["2026-07-08", -13_000],
+      ["2026-08-08", -5_500],
+      ["2026-09-08", -4_000],
+      ["2026-10-08", -5_800],
+    ]);
+    namesNothing(varying, TODAY);
+    const car = seedHisCarSeries(bundle.db);
+    car.charge("2026-11-11", -5_000, car.insuranceId);
+    namesNothing(car.insuranceId, "2026-11-15");
+  });
+
   /* ⛔ No schedule, no occurrence: he said it is not recurring. CC Vending's purchases of one day are purchases. */
   test("a dismissed series reads its rows as they posted", () => {
     const { id } = bundle.db
