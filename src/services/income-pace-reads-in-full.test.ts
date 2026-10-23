@@ -333,13 +333,19 @@ describe("…where the ledger is young", () => {
  * read for (`ownLastMonth`), and it holds the months back until a statement says otherwise.
  */
 describe("an earner is judged over the months it has been read for, never over months no import has read", () => {
-  /** Savings: $50.00 of Interest on the 28th of Jan–Jul, read to Jul 31; Brokerage Cash: $30.00 a month, to Oct 31 */
-  function staleSavings(): void {
+  const NOV_TODAY = "2026-11-23"; // November: 30 days, 8 remaining including today
+  const JANUARY = "2027-01-23";
+
+  /**
+   * Savings: $50.00 of Interest on the 28th of `earns` (Jan–Jul unless given), read to Jul 31; Brokerage Cash: $30.00 a
+   * month, to Oct 31
+   */
+  function staleSavings(earns: readonly string[] = MONTHS.slice(0, 7)): void {
     ledgerOpenedOn(bundle.db, "2026-01-01");
     for (const m of [...MONTHS, "2026-09", "2026-10", "2026-11"]) row(checkingId, `${m}-05`, -10000, "Groceries");
     readThrough(checkingId, "2026-11-20");
     const savingsId = account("Savings", "savings");
-    for (const m of MONTHS.slice(0, 7)) row(savingsId, `${m}-28`, 5000, "Interest");
+    for (const m of earns) row(savingsId, `${m}-28`, 5000, "Interest");
     readThrough(savingsId, "2026-07-31");
     for (const m of [...MONTHS, "2026-09", "2026-10"]) row(cashId, `${m}-15`, 3000, "Dividends");
     readThrough(cashId, "2026-10-31");
@@ -361,7 +367,6 @@ describe("an earner is judged over the months it has been read for, never over m
 
   test("a month on, with nothing imported, it still does: its Aug–Oct are unread, never months of no Interest", () => {
     staleSavings();
-    const NOV_TODAY = "2026-11-23"; // November: 30 days, 8 remaining including today
     expect(incomePaceMonths(bundle.db, NOV_TODAY)).toEqual({
       windows: MAY_TO_JUL,
       unread: {
@@ -380,6 +385,32 @@ describe("an earner is judged over the months it has been read for, never over m
       "Money in's pace is averaged over 3 complete months, May 2026 to Jul 2026. Aug 2026 to Oct 2026 are left out: " +
         "Jul 31 is the last day both Brokerage Cash and Savings have been imported through.",
     );
+  });
+
+  /*
+   * ⛔ Its OWN three months: the three ending at its own last one, never a month later. 🔴 Review of ee969b2 (MEDIUM,
+   * mutation-checked): a month later — Jun–Aug for an account read through Jul 31 — all 290 targeted tests passed, an
+   * earner paid every month being habitual over either. Interest in May and Jun, none in Jul, read through Jul 31:
+   * over its May–Jul it earns in two and holds Money in's months there; over Jun–Aug, once, it went dormant, and Money
+   * in's months were the calendar's Aug–Oct with no Interest line — Savings' three unread months averaged as $0, review
+   * of af84411's MEDIUM over again. On his ledger copy, today moved to 2027-03-23 with no import, the shift left no
+   * earner habitual and read May–Jul behind SoFi's Jul 31: $13.26 for Mar 23–31, where it reads Jun–Aug, $14.74.
+   */
+  test("over its own three months, never a month later: Interest in May and Jun, read to Jul 31, holds them", () => {
+    staleSavings(["2026-05", "2026-06"]);
+    expect(incomePaceMonths(bundle.db, NOV_TODAY)).toEqual({
+      windows: MAY_TO_JUL,
+      unread: {
+        months: ["2026-08", "2026-09", "2026-10"],
+        through: "2026-07-31",
+        accounts: ["Brokerage Cash", "Savings"],
+      },
+    });
+    // May–Jul's mean to the cent, then eight days of it — the engine's order
+    expect(line(forecastCurrentMonth(bundle.db, NOV_TODAY), "Interest")).toMatchObject({
+      cents: Math.round((Math.round((5000 + 5000) / 3) * 8) / 30),
+      detail: "avg of last 3 periods, present 2/3 mo, × 8/30 days",
+    });
   });
 
   /*
@@ -428,6 +459,57 @@ describe("an earner is judged over the months it has been read for, never over m
     });
   });
 
+  /** His ledger's shape, and Savings: Interest on May 28 and Jul 28, nothing yet in an August read to its 20th. */
+  function savingsReadShortWithNoRow(): void {
+    ledger();
+    const savingsId = account("Savings", "savings");
+    row(savingsId, "2026-05-28", 500, "Interest");
+    row(savingsId, "2026-07-28", 500, "Interest");
+    readThrough(savingsId, "2026-08-20");
+  }
+
+  const AUG_20 = { through: "2026-08-20", accounts: ["Brokerage Cash", "Savings"] };
+
+  /*
+   * ⛔ …and its own last month is the last it was read to the END of, unless a row came in a later one: an August read
+   * to its 20th with nothing in it yet is no month of no Interest. 🔴 Review of ee969b2 (MEDIUM, mutation-checked):
+   * with the import day's own month as its last, all 290 targeted tests passed — the one partly read month in them held
+   * a row. Interest in May and Jul, read to Aug 20: over its May–Jul it earns in two and holds Money in's months there;
+   * over Jun–Aug, once, it went dormant — Jun–Aug, "Sep 2026 is left out: Sep 9 is the last day Brokerage Cash has
+   * been imported through.", no Interest line (present 1/3), and the August Savings was read only to its 20th averaged
+   * whole.
+   */
+  test("a month read to its 20th with no row in it is not its own: Interest in May and Jul holds them back", () => {
+    savingsReadShortWithNoRow();
+    expect(incomePaceMonths(bundle.db, TODAY)).toEqual({
+      windows: MAY_TO_JUL,
+      unread: { months: ["2026-08", "2026-09"], ...AUG_20 },
+    });
+    const f = forecastCurrentMonth(bundle.db, TODAY);
+    expect(line(f, "Interest")).toMatchObject({
+      cents: Math.round((Math.round((500 + 500) / 3) * 9) / 31),
+      detail: "avg of last 3 periods, present 2/3 mo, × 9/31 days",
+    });
+    expect(f.incomePaceNote).toBe(
+      "Money in's pace is averaged over 3 complete months, May 2026 to Jul 2026. Aug 2026 and Sep 2026 are left out: " +
+        "Aug 20 is the last day both Brokerage Cash and Savings have been imported through.",
+    );
+  });
+
+  /*
+   * ⛔ …and its rows load back to the first of those months (`habitRowsFrom`): its last fully read month's three, never
+   * its import day's. 🔴 Review of ee969b2 (mutation-checked): loaded from the import day's month's three, all 290
+   * targeted tests passed. A month on with nothing imported the candidates load Jun–Nov, so May's Interest is there
+   * only for Savings' own May–Jul; without it Savings earned once, went dormant, and Money in's months were Jun–Aug.
+   */
+  test("a month on, its May row before the span the candidates load still counts toward its own May–Jul", () => {
+    savingsReadShortWithNoRow();
+    expect(incomePaceMonths(bundle.db, NOV_TODAY)).toEqual({
+      windows: MAY_TO_JUL,
+      unread: { months: ["2026-08", "2026-09", "2026-10"], ...AUG_20 },
+    });
+  });
+
   /*
    * Before any habit (a young ledger), the accounts the pace's rows came in on date the months — those still coming in
    * when last read: a row in the pace's three months up to their own last one. 🔴 It was every account with a row in
@@ -448,7 +530,6 @@ describe("an earner is judged over the months it has been read for, never over m
     row(oldId, "2026-06-03", 700, "Interest");
     readThrough(oldId, "2026-12-31");
 
-    const JANUARY = "2027-01-23";
     expect(incomePaceMonths(bundle.db, JANUARY)).toEqual({
       windows: [
         { start: "2026-06-01", end: "2026-06-30", key: "2026-06" },
@@ -464,6 +545,41 @@ describe("an earner is judged over the months it has been read for, never over m
       "Money in's pace is averaged over 2 complete months, Jun 2026 to Jul 2026. Aug 2026 to Dec 2026 are left out: " +
         "Jul 31 is the last day Savings has been imported through.",
     );
+  });
+
+  /*
+   * ⛔ Still coming in is a row in ANY of the three months up to its own last, the oldest included. 🔴 Review of ee969b2
+   * (mutation-checked): asked for a row after the oldest, all 290 targeted tests passed; asked over four months, so did
+   * they. Interest once, on Jun 28: read through Aug 31, June is the oldest of its own Jun–Aug and it still dates Money
+   * in's months; read through Sep 30 — Jul, Aug and Sep with nothing — it is not still earning, and the calendar's
+   * months stand.
+   */
+  test("before any habit, a row in the oldest of its own three months is still coming in; a month on it is not", () => {
+    ledgerOpenedOn(bundle.db, "2026-06-01");
+    for (const m of ["2026-06", "2026-07", "2026-08", "2026-09", "2026-10", "2026-11", "2026-12", "2027-01"]) {
+      row(checkingId, `${m}-05`, -10000, "Groceries");
+    }
+    readThrough(checkingId, "2027-01-20");
+    const savingsId = account("Savings", "savings");
+    row(savingsId, "2026-06-28", 5000, "Interest");
+    readThrough(savingsId, "2026-08-31");
+
+    expect(incomePaceMonths(bundle.db, JANUARY)).toEqual({
+      windows: [
+        { start: "2026-06-01", end: "2026-06-30", key: "2026-06" },
+        { start: "2026-07-01", end: "2026-07-31", key: "2026-07" },
+        { start: "2026-08-01", end: "2026-08-31", key: "2026-08" },
+      ],
+      unread: {
+        months: ["2026-09", "2026-10", "2026-11", "2026-12"],
+        through: "2026-08-31",
+        accounts: ["Savings"],
+      },
+    });
+
+    readThrough(savingsId, "2026-09-30");
+    expect(incomePaceMonths(bundle.db, JANUARY)).toMatchObject({ unread: null });
+    expect(incomePaceMonths(bundle.db, JANUARY).windows.map((w) => w.key)).toEqual(["2026-10", "2026-11", "2026-12"]);
   });
 });
 
