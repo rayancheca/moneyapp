@@ -266,7 +266,8 @@ describe("…and never from before the ledger's first whole month (`baselineWind
     const card = cardText(f);
     const band = (from: string, to: string) => card.slice(card.indexOf(from), card.indexOf(to)).trim();
     expect(band("Money out", "If you also spend")).toBe("Money out Committed $1,500.00 (1 line) Recent pace —");
-    // ⚖️ the income pace is measured (decision 71 exempts it from the frontier), so its part prints, as in the math
+    // ⚖️ the income pace is measured — its own frontier is Checking's, where the pay lands, read into August (default
+    // built 2026-10-23); the Card never paid him — so its part prints, as in the math
     expect(band("Money in", "Money out")).toBe("Money in Scheduled $0.00 (0 lines) Recent pace $483.87 (1 line)");
 
     // …and the Money out bar draws no share: 100% committed would say nothing discretionary is coming
@@ -340,8 +341,9 @@ describe("…and never from before the ledger's first whole month (`baselineWind
   });
 
   /*
-   * 🔴 Review of 06a5d3e: decision 71 exempts the income pace from the FRONTIER (it is the day every account he spends
-   * from is read to), never from the FLOOR. `variableIncomeComponents` still averaged the calendar's three months with
+   * 🔴 Review of 06a5d3e: decision 71's spending FRONTIER (the day every account he spends from is read to) is not the
+   * income pace's — its own is every account his income lands in (default built 2026-10-23) — but the FLOOR is every
+   * average's. `variableIncomeComponents` still averaged the calendar's three months with
    * none, and on this ledger at 2026-08-27 the card's math read "Salary | avg of last 3 periods, present 2/3 mo, × 5/31
    * days | +$322.58" — May, before the ledger opened, averaged as a month of no pay: a third of the pace gone, and the
    * band's "Money in · Recent pace $322.58" and the components' net with it.
@@ -351,7 +353,8 @@ describe("…and never from before the ledger's first whole month (`baselineWind
     groceries(cardId, "2026-06-12", -10000);
     const salary = (f: MonthForecast) => f.components.find((c) => c.label === "Salary");
 
-    // the calendar's Jun–Jul (Aug is the running month), not cut by the Card's Jun 12: $3,000.00 each
+    // Jun–Jul (Aug is the running month): Checking, where the pay lands, is read into August, and the Card's Jun 12
+    // cuts no month of Money in's — it never paid him: $3,000.00 each
     expect(salary(forecastCurrentMonth(bundle.db, YOUNG_TODAY))).toMatchObject({
       kind: "variable",
       cents: Math.round((300000 * 5) / 31),
@@ -455,8 +458,9 @@ describe("…and never from before the ledger's first whole month (`baselineWind
   });
 
   /*
-   * 🔴 Review of a7b1504: the frontier cut July from spending's months and not from Money in's (decision 71 exempts
-   * income), and the row named the one month both ways, one sentence apart: "Jul 2026 is left out: Jul 12 is the last
+   * 🔴 Review of a7b1504: the frontier cut July from spending's months and not from Money in's (the Card never paid
+   * him; Money in's own day is Checking's), and the row named the one month both ways, one sentence apart: "Jul 2026 is
+   * left out: Jul 12 is the last
    * day every account you spend from has been imported through. Money in has no recent pace yet: … Jul 2026 is the only
    * complete month imported so far." Each sentence now says whose month it is.
    */

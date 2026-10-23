@@ -250,7 +250,10 @@ function incomePaceWithheld(f: MonthForecast): boolean {
   return !incomePaceMeasurable(f.incomePaceMonths);
 }
 
-/** The pace row's sentences: which months spending's pace averaged and why (`spendPaceNote`), then Money in's. */
+/**
+ * The pace row's sentences: which months spending's pace averaged and why (`spendPaceNote`), then Money in's — its own
+ * months and the day that left the later ones out, or why it has no pace (`incomePaceNote`).
+ */
 function paceNotes(f: MonthForecast): string | null {
   const notes = [f.spendPaceNote, f.incomePaceNote].filter((n): n is string => n !== null);
   return notes.length === 0 ? null : notes.join(" ");
@@ -316,8 +319,9 @@ function PaceRow({ forecast: f }: { forecast: MonthForecast }) {
         <PaceStat label="EOM cash" cents={f.projectedEomCashCents} />
         <PaceStat label="EOM net worth" cents={f.projectedEomNetWorthCents} />
       </dl>
-      {/* ⚖️ which months "your recent pace" is, when the frontier slid them back (his decision 71) — and why Income
-          holds no pace where Money in has too few months for one: its figure is then the schedule alone */}
+      {/* ⚖️ which months "your recent pace" is, when a frontier slid them back (his decision 71) — spending's, then
+          Money in's own (default built 2026-10-23) — and why Income holds no pace where Money in has too few months
+          for one: its figure is then the schedule alone */}
       {paceNotes(f) !== null && (
         <p className="mt-3 text-[11px] leading-relaxed text-ink-faint">{paceNotes(f)}</p>
       )}

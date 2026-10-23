@@ -14,6 +14,7 @@ import {
   heaviestMonthEnding,
   COMMITTED_ORIGIN_LABEL,
   guideWindowWords,
+  incomeUnreadMonthsSentence,
   lastFullyReadMonth,
   measuredMonthsClause,
   monthHorizon,
@@ -480,6 +481,24 @@ describe("unreadMonthsSentence — why an average stops before the last complete
   test("nothing left out is no sentence", () => {
     expect(unreadMonthsSentence(null)).toBeNull();
     expect(unreadMonthsSentence({ months: [], through: "2026-08-12" })).toBeNull();
+  });
+
+  /*
+   * ⚖️ Default built, not asked (2026-10-23): the income pace's months end at the last one every account his income
+   * lands in is read to the end of (`incomePaceMonths`), and say so in this sentence's words, its accounts named as
+   * whose they are. 🔴 Measured on his ledger copy at 2026-10-23: Robinhood Cash, where every Dividends and Interest row
+   * the pace reads lands, is read to Sep 9 — never a day every account he SPENDS from is read to (Aug 12).
+   */
+  test("Money in's sentence is the same sentence, of the accounts his income lands in", () => {
+    expect(incomeUnreadMonthsSentence({ months: ["2026-09"], through: "2026-09-09" })).toBe(
+      "Sep 2026 is left out: Sep 9 is the last day every account your income lands in has been imported through.",
+    );
+    expect(incomeUnreadMonthsSentence({ months: ["2026-01"], through: "2025-12-20" })).toBe(
+      "Jan 2026 is left out: Dec 20, 2025 is the last day every account your income lands in has been imported " +
+        "through.",
+    );
+    expect(incomeUnreadMonthsSentence(null)).toBeNull();
+    expect(incomeUnreadMonthsSentence({ months: [], through: "2026-09-09" })).toBeNull();
   });
 
   /** the runway's caption, under "What you spend a month" — the reason sits beside the window it explains */

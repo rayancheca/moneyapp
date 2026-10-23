@@ -836,7 +836,11 @@ export function emptyWindowCaption(unread: UnreadMonths | null): string {
 export interface UnreadMonths {
   /** 'YYYY-MM', oldest first: complete calendar months after the window and before the running one */
   months: string[];
-  /** `spendingCoverageThrough` — the last day every account you spend from has been imported through */
+  /**
+   * The day that leaves them out: for a spending window `spendingCoverageThrough` — the last day every account you
+   * spend from has been imported through — and for the income pace's `incomeCoverageThrough`, the last day every
+   * account your income lands in has been (`incomeUnreadMonthsSentence` names it so)
+   */
   through: string;
 }
 
@@ -864,6 +868,24 @@ export function lastFullyReadMonth(through: string): string {
  * ⚠️ The day carries its year only when it is not the first left-out month's (`frontierDay`).
  */
 export function unreadMonthsSentence(unread: UnreadMonths | null): string | null {
+  return leftOutSentence(unread, "every account you spend from");
+}
+
+/**
+ * Why the INCOME pace stops before the last complete month — "Sep 2026 is left out: Sep 9 is the last day every account
+ * your income lands in has been imported through." Null when it leaves nothing out.
+ *
+ * ⚖️ Default built, not asked (2026-10-23): his decision 71 carried to the income pace (`incomePaceMonths`), whose day
+ * is the accounts his income lands in (`incomeCoverageThrough`), not the ones he spends from. ⛔ ONE SENTENCE with
+ * spending's (`unreadMonthsSentence`), its accounts named as whose they are: /recurring's pace row prints the two side
+ * by side, and two spellings of one rule are how two figures' words drift.
+ */
+export function incomeUnreadMonthsSentence(unread: UnreadMonths | null): string | null {
+  return leftOutSentence(unread, "every account your income lands in");
+}
+
+/** The sentence both name a window's left-out months in, of `accounts` — whose import day `unread.through` is. */
+function leftOutSentence(unread: UnreadMonths | null, accounts: string): string | null {
   if (unread === null || unread.months.length === 0) return null;
   const { months } = unread;
   const first = months[0]!;
@@ -874,13 +896,13 @@ export function unreadMonthsSentence(unread: UnreadMonths | null): string | null
       : months.length === 2
         ? `${formatMonthYear(`${first}-01`)} and ${formatMonthYear(`${last}-01`)} are`
         : `${monthWindowLabel(first, last)} are`;
-  return `${named} left out: ${frontierDay(unread)} is the last day every account you spend from has been imported through.`;
+  return `${named} left out: ${frontierDay(unread)} is the last day ${accounts} has been imported through.`;
 }
 
 /**
- * The day that left a spending window's months out (`UnreadMonths.through`), as the sentence naming it spells it —
- * "Aug 12" (`unreadMonthsSentence`). Money in's sentence beside it on /recurring's pace row names no day of its own
- * (`incomePaceNote`): it follows this one.
+ * The day that left a window's months out (`UnreadMonths.through`), as the sentence naming it spells it — "Aug 12"
+ * (`unreadMonthsSentence`, `incomeUnreadMonthsSentence`). Where spending's frontier left one of Money in's months out
+ * of spending's pace alone, Money in's sentence names no day for it (`incomePaceNote`): it follows spending's.
  *
  * ⚠️ It carries its year only when it is not the first left-out month's: the frontier falls inside that month or
  * before it (a stub month the window never counted), and the months beside it carry theirs.
@@ -921,7 +943,8 @@ export function guideWindowWords(window: {
  * ⚖️ His decision 71 (2026-10-13) covers the pace's three months as it covers the dashboard's six (`paceMonths`). Its
  * math table reads "3-mo avg" beside an October, and a reader takes that for Jul–Sep; so where they are not, the card
  * names them and why, in `baselineSpan`'s and the runway's words (`unreadMonthsSentence`). ⚠️ "Spending's": the income
- * pace still averages the calendar's months.
+ * pace ends at its own day — every account his income lands in (`incomePaceMonths`, default built 2026-10-23) — and
+ * names its months in a sentence of its own (`incomePaceNote`).
  *
  * ⛔ AND A PACE OF NO MONTH IS NOT A PACE OF NOTHING. Where the floor leaves the window no month (`averagedMonths`), the
  * card holds the pace row's figures back and says so in the runway caption's sentence (`emptyWindowCaption`).

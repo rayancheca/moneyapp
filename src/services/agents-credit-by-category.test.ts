@@ -18,6 +18,7 @@ import { addManualAnchor } from "./anchors";
 import { netWorthAttribution } from "./attribution";
 import { netWorthSeries, rebuildAccount } from "./derivation";
 import { forecastCurrentMonth, forecastForMonth } from "./forecast";
+import { importedThrough } from "./imported-through-fixture";
 import { printOnOneStatement } from "./printed-statement-fixture";
 
 /**
@@ -510,6 +511,11 @@ describe("§6A 45 — the pace of the agent's income nets its clawbacks, as the 
   const PAID = 400;
   const CLAWBACK = -300;
   const MONTHS = ["07", "08", "09"] as const;
+
+  // ⚖️ every account read into October (decision 71, carried to the income pace — default built 2026-10-23), so the
+  // income pace reads the calendar's months, the agent's with his: a September his Wells Fargo has read only to the
+  // 24th is no month of either (`incomePaceMonths`)
+  beforeEach(() => importedThrough(bundle.db, TODAY));
 
   const rebuilt = () => {
     for (const a of bundle.db.select({ id: accounts.id }).from(accounts).all()) rebuildAccount(bundle.db, a.id);

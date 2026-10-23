@@ -341,10 +341,13 @@ function accountGrid(db: AppDatabase, from: string, to: string): Map<string, Map
   return byAccount;
 }
 
-/** What the card loads: wide enough for the furthest-back candidate's whole baseline. */
-function loadedSpan(currentMonth: string): { from: string; to: string; months: number } {
-  const oldestMonth = monthKey(addCalendarMonths(`${currentMonth}-01`, -(MAX_MONTHS_BEHIND + SPEND_BASELINE_MONTHS)));
-  return { from: `${oldestMonth}-01`, to: lastDayOf(currentMonth), months: MAX_MONTHS_BEHIND + SPEND_BASELINE_MONTHS + 1 };
+/** What the card loads: wide enough for the furthest-back candidate's whole baseline (a habit's months, `Habit`). */
+function loadedSpan(
+  currentMonth: string,
+  baselineMonths: number = SPEND_BASELINE_MONTHS,
+): { from: string; to: string; months: number } {
+  const oldestMonth = monthKey(addCalendarMonths(`${currentMonth}-01`, -(MAX_MONTHS_BEHIND + baselineMonths)));
+  return { from: `${oldestMonth}-01`, to: lastDayOf(currentMonth), months: MAX_MONTHS_BEHIND + baselineMonths + 1 };
 }
 
 /**
@@ -363,9 +366,46 @@ export function liveSpendersOver(
   baselineKeys: readonly string[],
   frontier: ObservationFrontier,
 ): string[] {
+  return habitualAccountsOver(byAccount, baselineKeys, frontier, MIN_OCCURRENCES);
+}
+
+/**
+ * How a figure tells the accounts its rows come in on HABITUALLY from a dormant one (`habitualCoverageThrough`): its
+ * rows in at least `minMonths` of the `months` complete months before the month asked about.
+ */
+export interface Habit {
+  /** how many complete months before a candidate month an account's habit is judged over */
+  months: number;
+  /** how many of those months must hold its rows */
+  minMonths: number;
+  /**
+   * Who dates the day while no account holds the habit yet — a ledger too young for one: EVERY account (spending's: any
+   * of them might be spent from) or only those the rows came in on (the income pace's: a card that never paid him
+   * cannot hold his pay back)
+   */
+  beforeAHabit: "every account" | "its own accounts";
+}
+
+/**
+ * Spending's habit — the card's live spenders: spending in `MIN_OCCURRENCES` of the `SPEND_BASELINE_MONTHS` before the
+ * compared month. ⚠️ A function, never a module constant: both numbers are imported along an import cycle
+ * (`./committed` → budgets → forecast → read-in-full → here), and a constant built from them at load could read one
+ * before its module had set it.
+ */
+function spendingHabit(): Habit {
+  return { months: SPEND_BASELINE_MONTHS, minMonths: MIN_OCCURRENCES, beforeAHabit: "every account" };
+}
+
+/** `liveSpendersOver` for any habit: the accounts with rows in at least `minMonths` of `keys`, bearing a frontier. */
+function habitualAccountsOver(
+  byAccount: ReadonlyMap<string, ReadonlyMap<string, number>>,
+  keys: readonly string[],
+  frontier: ObservationFrontier,
+  minMonths: number,
+): string[] {
   return (
     [...byAccount.entries()]
-      .filter(([, perMonth]) => baselineKeys.filter((k) => (perMonth.get(k) ?? 0) !== 0).length >= MIN_OCCURRENCES)
+      .filter(([, perMonth]) => keys.filter((k) => (perMonth.get(k) ?? 0) !== 0).length >= minMonths)
       .map(([accountId]) => accountId)
       /*
        * An account with no frontier at all is an INVESTMENT account, which
@@ -395,22 +435,26 @@ interface CandidateMonth {
   imported: boolean;
 }
 
-/** The months within `MAX_MONTHS_BEHIND`, newest first. */
+/**
+ * The months within `MAX_MONTHS_BEHIND`, newest first. ⚠️ Spending's names (`liveSpenders`, `datingSpenders`) for any
+ * habit's accounts: the income pace's are the accounts its rows come in on (`habitualCoverageThrough`).
+ */
 function candidateMonths(
   byAccount: ReadonlyMap<string, ReadonlyMap<string, number>>,
   frontier: ObservationFrontier,
   currentMonth: string,
   // `accountsAwaitingStatements`
   awaiting: ReadonlySet<string>,
+  habit: Habit = spendingHabit(),
 ): CandidateMonth[] {
   const out: CandidateMonth[] = [];
   for (let offset = 1; offset <= MAX_MONTHS_BEHIND; offset += 1) {
     const month = monthKey(addCalendarMonths(`${currentMonth}-01`, -offset));
     const baselineKeys: string[] = [];
-    for (let i = SPEND_BASELINE_MONTHS; i >= 1; i -= 1) {
+    for (let i = habit.months; i >= 1; i -= 1) {
       baselineKeys.push(monthKey(addCalendarMonths(`${month}-01`, -i)));
     }
-    const live = liveSpendersOver(byAccount, baselineKeys, frontier);
+    const live = habitualAccountsOver(byAccount, baselineKeys, frontier, habit.minMonths);
     const dating = [...accountsThatDate(frontier, live, awaiting)];
     const closes = lastDayOf(month);
     const imported =
@@ -462,19 +506,42 @@ export const spendingCoverageThrough = cache(function spendingCoverageThrough(
   db: AppDatabase,
   today: string = todayIso(),
 ): string | null {
+  return habitualCoverageThrough(db, today, spendingHabit(), (from, to) => accountGrid(db, from, to));
+});
+
+/**
+ * `spendingCoverageThrough`'s rule asked of ANY figure's rows (`rowsOver`: accountId → month → cents, over the span
+ * the habit needs): the last day every account they come in on HABITUALLY (`Habit`) and a statement is still coming
+ * for (`accountsThatDate`) has been imported through. The candidate months, the governing one, the accounts that date
+ * it and the earliest of their days are spending's, unchanged — only which rows, and how many months make a habit.
+ *
+ * ⚖️ Default built, not asked (2026-10-23): his decision 71 carried to the income pace (`incomeCoverageThrough`, in
+ * forecast), whose habit is its own — the presence gate's two of the pace's three months before the month asked
+ * (`MIN_INCOME_MONTHS_PRESENT`, `TRAILING_FULL_MONTHS`). 🔴 Measured on his ledger copy at 2026-10-23: by spending's
+ * six-month habit, SoFi Savings — Interest in Mar, Apr and May, nothing since, read through Jul 31 — is live, and
+ * would hold Money in's months back to May–Jul behind its Jul 31; by the income pace's own it is dormant, and Robinhood
+ * Cash's Sep 9 dates them: Jun–Aug.
+ */
+export function habitualCoverageThrough(
+  db: AppDatabase,
+  today: string,
+  habit: Habit,
+  rowsOver: (from: string, to: string) => ReadonlyMap<string, ReadonlyMap<string, number>>,
+): string | null {
   const currentMonth = monthKey(today);
   const frontier = observationFrontier(db);
   const awaiting = accountsAwaitingStatements(db);
-  const span = loadedSpan(currentMonth);
-  const candidates = candidateMonths(accountGrid(db, span.from, span.to), frontier, currentMonth, awaiting);
+  const span = loadedSpan(currentMonth, habit.months);
+  const byAccount = rowsOver(span.from, span.to);
+  const candidates = candidateMonths(byAccount, frontier, currentMonth, awaiting, habit);
   const governing = candidates.find((c) => c.imported) ?? candidates[0];
-  return frontierForSeries(
-    frontier,
-    governing !== undefined && governing.liveSpenders.length > 0
-      ? new Set(governing.datingSpenders)
-      : accountsThatDate(frontier, frontier.byAccount.keys(), awaiting),
-  );
-});
+  if (governing !== undefined && governing.liveSpenders.length > 0) {
+    return frontierForSeries(frontier, new Set(governing.datingSpenders));
+  }
+  // no habit to tell a dormant account from a live one: none of them may be assumed current
+  const untilHabitual = habit.beforeAHabit === "every account" ? frontier.byAccount.keys() : byAccount.keys();
+  return frontierForSeries(frontier, accountsThatDate(frontier, untilHabitual, awaiting));
+}
 
 /**
  * ⚖️ His decision 72 (2026-10-13): the day a window of ALL his spending is read through — `spendingCoverageThrough` —
