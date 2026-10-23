@@ -50,7 +50,7 @@ export function averagesEndAt(db: AppDatabase, today: string = todayIso()): Aver
 
 /**
  * `averagesEndAt` for any figure's frontier — the day every account its own rows come in on is read to (`through`;
- * null where it has none, and the calendar's last complete month stands): the INCOME pace's, `incomeCoverageThrough`.
+ * null where it has none, and the calendar's last complete month stands): the INCOME pace's, `incomeCoverage`'s.
  * ⛔ One end, one floor, one left-out list for every average: only whose day differs.
  */
 export function averagesEndThrough(db: AppDatabase, today: string, through: string | null): AveragesEnd {

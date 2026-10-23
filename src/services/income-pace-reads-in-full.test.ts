@@ -13,10 +13,12 @@ import { institutions } from "@/db/schema/institutions";
 import { recurringSeries } from "@/db/schema/recurring";
 import { transactions } from "@/db/schema/transactions";
 import { dedupeHash } from "@/lib/hash";
-import { createAccount } from "./accounts";
+import { createAccount, updateAccount } from "./accounts";
+import { createCashWallet } from "./cash-wallets";
 import { checkedThrough } from "./checked-days-fixture";
 import { forecastCurrentMonth, forecastForMonth, incomePaceMonths, type MonthForecast } from "./forecast";
 import { ledgerOpenedOn } from "./imported-through-fixture";
+import { spendingCoverageThrough } from "./movers-card";
 
 /*
  * ⚖️ Default built, not asked (2026-10-23) — his decision 71 (2026-10-13) carried to the INCOME pace, option (A) of
@@ -627,5 +629,104 @@ describe("the pace row names the accounts Money in's pace reads, beside the pass
       "It falls after Thu, Sep 24, 2026, the last day every account that pay lands in has been checked through",
     );
     expect(card).not.toContain("every account your income lands in");
+  });
+});
+
+/*
+ * ⚖️ Default built, not asked (2026-10-23): only an account a statement is still coming for dates Money in's months
+ * (`accountsAwaitingStatements` — not archived, not a cash wallet); where none of its earners is one, the calendar's
+ * months stand and no note prints. An archived account is never imported again, and a wallet holds what he typed into
+ * it: a month with nothing on either is a month nothing came in, never one waiting on a statement. 🔴 Review of 0747432
+ * (MEDIUM), on a copy of his ledger with Robinhood Cash archived: Money in's months stayed Jun–Aug at every day asked,
+ * 2026-10-23 … 2028-06-23 — "Sep 2026 to May 2028 are left out: Sep 9 is the last day Robinhood Cash has been imported
+ * through." — and its Dividends $12.12–$13.19 and Interest $1.43–$1.55 were projected every month from the closed
+ * account. With none awaited, `accountsThatDate` falls back to every one of them: spending's rule, kept for spending.
+ */
+describe("an earner no statement is coming for never holds Money in's months back", () => {
+  const DEC_TODAY = "2026-12-23"; // December: 31 days, 9 remaining including today
+  const JUN = { start: "2026-06-01", end: "2026-06-30", key: "2026-06" };
+  const JUL = { start: "2026-07-01", end: "2026-07-31", key: "2026-07" };
+  const AUG = { start: "2026-08-01", end: "2026-08-31", key: "2026-08" };
+  const SEP = { start: "2026-09-01", end: "2026-09-30", key: "2026-09" };
+  const JUL_TO_SEP = [JUL, AUG, SEP];
+  const SEP_TO_NOV = [
+    SEP,
+    { start: "2026-10-01", end: "2026-10-31", key: "2026-10" },
+    { start: "2026-11-01", end: "2026-11-30", key: "2026-11" },
+  ];
+
+  test("an archived earner dates nothing: the calendar's months, no note, and its income ages out with them", () => {
+    ledger();
+    updateAccount(bundle.db, cashId, { isActive: false });
+
+    expect(incomePaceMonths(bundle.db, TODAY)).toEqual({ windows: JUL_TO_SEP, unread: null });
+    const f = forecastCurrentMonth(bundle.db, TODAY);
+    // Jul–Sep's mean to the cent, then nine days of it — the engine's order
+    expect(line(f, "Dividends")).toMatchObject({ cents: Math.round((Math.round((3000 + 3000 + 7) / 3) * 9) / 31) });
+    expect(f.incomePaceNote).toBeNull();
+    expect(cardText(f)).not.toContain("Brokerage Cash has been imported through");
+
+    // two months on, with nothing imported: Sep–Nov hold September's $0.07 alone (present 1/3), so no Dividends line
+    expect(incomePaceMonths(bundle.db, DEC_TODAY)).toEqual({ windows: SEP_TO_NOV, unread: null });
+    const december = forecastCurrentMonth(bundle.db, DEC_TODAY);
+    expect(line(december, "Dividends")).toBeUndefined();
+    expect(december.incomePaceNote).toBeNull();
+  });
+
+  /*
+   * 🔴 The review's second case: Salary typed into a wallet on Jun 25, Jul 25 and Aug 25 and nothing else earning,
+   * Checking read to Dec 20 — at 2026-12-23 "Aug 2026 to Nov 2026 are left out: Aug 25 is the last day Cash on Hand has
+   * been imported through.", "imported through" of an account nothing is imported into.
+   */
+  test("a cash wallet dates nothing: what he typed into it is all there is, never 'imported through'", () => {
+    ledgerOpenedOn(bundle.db, "2026-01-01");
+    for (const m of [...MONTHS, "2026-09", "2026-10", "2026-11", "2026-12"]) {
+      row(checkingId, `${m}-05`, -10000, "Groceries");
+    }
+    readThrough(checkingId, "2026-12-20");
+    const walletId = createCashWallet(bundle.db, { name: "Cash on Hand", openingOn: "2026-06-01" });
+    for (const day of ["2026-06-25", "2026-07-25", "2026-08-25"]) row(walletId, day, 50000, "Salary");
+
+    expect(incomePaceMonths(bundle.db, DEC_TODAY)).toEqual({ windows: SEP_TO_NOV, unread: null });
+    const f = forecastCurrentMonth(bundle.db, DEC_TODAY);
+    // Sep–Nov: nothing typed in, so no Salary at the pace
+    expect(line(f, "Salary")).toBeUndefined();
+    expect(f.incomePaceNote).toBeNull();
+    expect(cardText(f)).not.toContain("Cash on Hand has been imported through");
+  });
+
+  /*
+   * …and before any habit (`stillComingIn`), the same: an account that paid once, still coming in when last read, dates
+   * nothing once it is archived. Live, its Aug 10 holds the months to Jun–Jul, "Aug 2026 and Sep 2026 are left out".
+   */
+  test("before any habit, an archived earner still coming in when last read dates nothing either", () => {
+    ledgerOpenedOn(bundle.db, "2026-06-01");
+    for (const m of ["2026-06", "2026-07", "2026-08", "2026-09", "2026-10"]) {
+      row(checkingId, `${m}-05`, -10000, "Groceries");
+    }
+    readThrough(checkingId, "2026-10-20");
+    const oldId = account("Old Savings", "savings");
+    row(oldId, "2026-08-10", 700, "Interest");
+
+    expect(incomePaceMonths(bundle.db, TODAY)).toEqual({
+      windows: [JUN, JUL],
+      unread: { months: ["2026-08", "2026-09"], through: "2026-08-10", accounts: ["Old Savings"] },
+    });
+
+    updateAccount(bundle.db, oldId, { isActive: false });
+    expect(incomePaceMonths(bundle.db, TODAY)).toEqual({ windows: JUL_TO_SEP, unread: null });
+    expect(forecastCurrentMonth(bundle.db, TODAY).incomePaceNote).toBeNull();
+  });
+
+  /*
+   * ⛔ Spending's day is unchanged: with no account he spends from left to read, an archived one's own last day still
+   * dates it (`accountsThatDate`, /budgets' rule) — "it still says something true where nothing else could".
+   */
+  test("spending's day still falls back to an archived account's own last day; Money in's does not", () => {
+    ledger();
+    updateAccount(bundle.db, checkingId, { isActive: false });
+    updateAccount(bundle.db, cashId, { isActive: false });
+    expect(spendingCoverageThrough(bundle.db, TODAY)).toBe("2026-10-20");
+    expect(incomePaceMonths(bundle.db, TODAY)).toEqual({ windows: JUL_TO_SEP, unread: null });
   });
 });

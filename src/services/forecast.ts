@@ -1,3 +1,4 @@
+import { cache } from "react";
 import { and, eq, gte, inArray, lte } from "drizzle-orm";
 import type { AppDatabase } from "@/db/client";
 import { recurringSeries } from "@/db/schema/recurring";
@@ -537,7 +538,8 @@ export function paceMonths(db: AppDatabase, today: string, count: number = TRAIL
 /**
  * The `count` full months the INCOME pace averages (`variableIncomeComponents`) — his own pace and the agent's — and
  * the complete months after them it leaves out, naming the accounts they wait for: they end at the last month every
- * account the pace's own rows land in has been read through to the end of (`incomeCoverage`), slide back rather than
+ * account the pace's own rows land in has been read through to the end of (`incomeCoverage`: those they come in on
+ * habitually that a statement is still coming for — the calendar's months where none is), slide back rather than
  * shrink, and none is before the ledger's first whole month (`averagedMonthsThrough`) — fewer where the ledger is
  * young, none where it covers no whole month read in full, and then there is no income pace.
  *
@@ -594,7 +596,17 @@ export interface IncomePaceMonths {
  * is live by spending's six-month habit and would hold Money in's months back to May–Jul; by this one it is dormant,
  * and Robinhood Cash's Sep 9 dates them: Jun–Aug. Until any account holds the habit (a young ledger), every account the
  * pace's rows came in on and still coming in when last read dates it (`stillComingIn`) — never an account that only
- * spends, which could not hold his pay back.
+ * spends, which could not hold back his income at the pace.
+ *
+ * ⚖️ Default built, not asked (2026-10-23): only an account a statement is still coming for dates them
+ * (`Habit.whenNoneIsAwaited`) — where none of its earners is one, the calendar's months stand and no note prints. An
+ * archived account is never imported again and a wallet holds what he typed into it: a month with nothing on either is
+ * a month nothing came in, never one a statement could still fill. 🔴 Review of 0747432 (MEDIUM): on a copy of his
+ * ledger with Robinhood Cash archived, Money in's months stayed Jun–Aug at every day asked, 2026-10-23 … 2028-06-23 —
+ * there "Sep 2026 to May 2028 are left out: Sep 9 is the last day Robinhood Cash has been imported through." — and
+ * Dividends $12.12–$13.19 and Interest $1.43–$1.55 were projected every month from a closed account. Now, as at
+ * aa0bd72c: Jul–Sep at 2026-10-23, $9.40 for Oct 23–31 (Dividends $7.95, Interest $1.45); Aug–Oct at 2026-11-23,
+ * Dividends $4.74; no Money in pace from 2026-12-23. Latent on his ledger as it is: Robinhood Cash is active.
  *
  * ⛔ Each account judged over the months it has been read for. 🔴 Review of af84411 (MEDIUM): it was judged over the
  * calendar's months before each candidate, so an earner read short had its unread months counted as months it earned
@@ -608,14 +620,32 @@ export interface IncomePaceMonths {
  * on an account read to Aug 20, and Dividends read to Sep 9 elsewhere, August — judged by May–Jul, where the Interest
  * came once — was "imported" by the dividends alone and governed, and the Interest's August, read to its 20th, was
  * averaged whole (Jun–Aug). It holds them to May–Jul. Identical on his ledger copy at 2026-10-23: Robinhood Cash earns
- * in every one of either month's three, and SoFi Savings in neither.
+ * in every one of either month's three, and SoFi Savings in one of its own May–Jul — $0.10 of Interest on May 31 —
+ * below the gate's two.
+ *
+ * ⚡ MEMOISED FOR ONE SERVER RENDER (`react`'s `cache`, never a module-level Map), as `spendingCoverageThrough` is.
+ * `cache` keys on identity, and each forecast reads its own set of what is not drawn as recurring — once a chain
+ * (`forecastReads`, pinned) — so it is keyed on that set's ids, as `buildPortfolioFor` keys its scope: two forecasts in
+ * one render share one read. Measured on his ledger copy at 2026-10-23, one read costs 4.86ms once warm (spending's
+ * day 4.41ms). ⛔ Read-only: the set of accounts it returns is every caller's in the render.
  */
 function incomeCoverage(db: AppDatabase, today: string, notDrawn: ReadonlySet<string>): HabitualCoverage {
+  return incomeCoverageOfRender(db, today, [...notDrawn].sort().join(","));
+}
+
+/** `incomeCoverage`, memoised for the render on the ids of what is not drawn as recurring, sorted and joined. */
+const incomeCoverageOfRender = cache(function incomeCoverageOfRender(
+  db: AppDatabase,
+  today: string,
+  notDrawnIds: string,
+): HabitualCoverage {
+  const notDrawn = new Set(notDrawnIds === "" ? [] : notDrawnIds.split(","));
   // built at call time, as spending's is (`Habit`)
   const habit: Habit = {
     months: TRAILING_FULL_MONTHS,
     minMonths: MIN_INCOME_MONTHS_PRESENT,
     beforeAHabit: "its own accounts",
+    whenNoneIsAwaited: "none of them",
     judgedOver: "its own months",
     governedBy: "the newest month",
   };
@@ -629,7 +659,7 @@ function incomeCoverage(db: AppDatabase, today: string, notDrawn: ReadonlySet<st
     }
     return byAccount;
   });
-}
+});
 
 /** `MonthForecast.spendPaceNote` of a pace's months. */
 function paceNote({ windows, unread }: PaceMonths): string | null {
@@ -1144,9 +1174,10 @@ function variableComponents(
 /**
  * VARIABLE INCOME — the fix for a near-zero "projected income" when income is
  * real but IRREGULAR (a cash job, tutoring) rather than a detected series. Per
- * income subcategory, the trailing average of the last 3 FULL months of ONGOING
- * income every account it lands in is read through (`incomePaceMonths`, default
- * built 2026-10-23; fewer on a young ledger, its floor), scaled by
+ * income subcategory, the trailing average of ONGOING income over the last 3 FULL
+ * months read through by every account its own rows come in on habitually that a
+ * statement is still coming for (`incomePaceMonths`, default built 2026-10-23;
+ * the calendar's where none is; fewer on a young ledger, its floor), scaled by
  * remaining days. Mirrors variableComponents (spending) but
  * with income honesty (see lib/income-forecast.ts): a bucket must appear in ≥2
  * trailing months (one-off refunds/aid never extrapolate) and there is NO upward
@@ -1193,8 +1224,8 @@ function hisIncomePaceBucket(
 
 /**
  * The rows his income pace averages over [from, to] — the ones `variableIncomeComponents` buckets as his — and so the
- * accounts its frontier is read from (`incomeCoverageThrough`). ⛔ One selection for both: a day read off rows the pace
- * does not average (a payday a live series projects, a refund) would hold its months back for money it never counts.
+ * accounts its frontier is read from (`incomeCoverage`). ⛔ One selection for both: a day read off rows the pace does
+ * not average (a payday a live series projects, a refund) would hold its months back for money it never counts.
  */
 function hisIncomePaceRows(
   db: AppDatabase,

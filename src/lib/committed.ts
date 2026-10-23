@@ -838,15 +838,18 @@ export interface UnreadMonths {
   months: string[];
   /**
    * The day that leaves them out: for a spending window `spendingCoverageThrough` — the last day every account you
-   * spend from has been imported through — and for the income pace's `incomeCoverage`, the last day every account its
-   * own rows land in has been (`IncomeUnreadMonths` names them)
+   * spend from has been imported through — and for the income pace's `incomeCoverage`, the last day every account that
+   * dates it has been: those its own rows come in on habitually that a statement is still coming for
+   * (`IncomeUnreadMonths` names them)
    */
   through: string;
 }
 
 /**
- * The INCOME pace's left-out months (`incomePaceMonths`), and the accounts whose import day `through` is: the ones its
- * own rows land in that date it (`incomeCoverage`), by name, in the app's order (`ACCOUNT_ORDER`).
+ * The INCOME pace's left-out months (`incomePaceMonths`), and the accounts that date them: EVERY account that dates the
+ * pace's day (`incomeCoverage`), by name, in the app's order (`ACCOUNT_ORDER`). `through` is the earliest of their
+ * import days — the last day ALL of them have been imported through ("both A and B have",
+ * `incomeUnreadMonthsSentence`), not each one's own.
  *
  * ⛔ Named, never "every account your income lands in". 🔴 Review of af84411 (MEDIUM): the day leaves out the accounts
  * a live series' pay lands in — the schedule projects that pay, never the pace — so on a copy of his ledger with
@@ -855,6 +858,7 @@ export interface UnreadMonths {
  * Thu, Sep 24, 2026, the last day every account that pay lands in has been checked through".
  */
 export interface IncomeUnreadMonths extends UnreadMonths {
+  /** every account that dates the income pace's day — `through` is the earliest one's */
   accounts: string[];
 }
 
