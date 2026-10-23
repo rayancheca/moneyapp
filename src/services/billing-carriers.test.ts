@@ -459,6 +459,8 @@ describe("the nearer due day wins (decision 76)", () => {
     const days = ["2026-08-11", "2026-09-11", "2026-10-11", "2026-11-11"];
     const twice = (postedOn: string): Payment => ({ ...pay(postedOn), coveredMore: true });
     const rows = (catchUp: Payment) => [...["2026-06-11", "2026-07-11", "2026-08-11"].map(pay), catchUp];
+    /** …with Aug 11 missed too */
+    const augMissed = (catchUp: Payment) => [...["2026-06-11", "2026-07-11"].map(pay), catchUp];
 
     test("Sep 19, Sep 28 or Oct 12: the missed Sep 11 and its own Oct 11, whichever it lies nearer", () => {
       // Sep 19, 8 days after Sep 11: Sep 11's, late — and Oct 11's, early
@@ -518,13 +520,54 @@ describe("the nearer due day wins (decision 76)", () => {
         "2026-09-03",
         null,
       ]);
-      // Aug 11 AND Sep 11 missed: Sep 19 pays Sep 11 late and Oct 11 — the day on its other side, never Aug 11
-      expect(graded([...["2026-06-11", "2026-07-11"].map(pay), twice("2026-09-19")], PREMIUM, days)).toEqual([
-        ["2026-08-11", null],
+    });
+
+    /*
+     * ⚖️ default built, not asked (2026-10-23) — late for its own day, its second charge pays the UNPAID DAY BEHIND
+     * first: a day ahead only once the day before its own is paid. 🔴 At 67b3b79 a late one always paid the day after,
+     * early, whatever lay behind (review of 67b3b79; his ledger copy 2026-10-23 with this premium added on Venture X):
+     * Aug 11 and Sep 11 missed, Sep 19 dropped Oct 11 from Upcoming and October's forecast on Sep 25 and left August ✕;
+     * Sep 11 and Oct 11 missed, Oct 20 drew Nov 11 "paid early by its payment of Oct 20, 2026" and left Sep 11 ✕.
+     */
+    test("…after TWO missed charges, a late one pays both of them — never a day still to come", () => {
+      // Aug 11 AND Sep 11 missed: Sep 19 pays Sep 11 late, its own, and Aug 11 behind it — never Oct 11
+      expect(graded(augMissed(twice("2026-09-19")), PREMIUM, days)).toEqual([
+        ["2026-08-11", "2026-09-19"],
         ["2026-09-11", "2026-09-19"],
-        ["2026-10-11", "2026-09-19"],
+        ["2026-10-11", null],
         ["2026-11-11", null],
       ]);
+      // Sep 11 AND Oct 11 missed: Oct 20 pays Oct 11 late, its own, and Sep 11 behind it — never Nov 11
+      expect(graded(rows(twice("2026-10-20")), PREMIUM, days)).toEqual([
+        ["2026-08-11", "2026-08-11"],
+        ["2026-09-11", "2026-10-20"],
+        ["2026-10-11", "2026-10-20"],
+        ["2026-11-11", null],
+      ]);
+      // with no day behind its own to read, none is paid: it pays no day ahead either
+      const noneBehind: DueDays = { after: PREMIUM.after, before: (d) => (d === "2026-10-11" ? "2026-09-11" : null) };
+      expect(paymentFor([twice("2026-09-19")], "2026-09-11", noneBehind)?.postedOn).toBe("2026-09-19");
+      expect(paymentFor([twice("2026-09-19")], "2026-10-11", noneBehind)).toBeUndefined();
+      // ⚠️ the known gap: only the day behind its own is asked — Aug 11 missed, Sep 11 paid, Oct 11 missed, and Oct 20
+      // still pays Nov 11 early beside an unpaid Aug 11
+      const gap = [...["2026-06-11", "2026-07-11", "2026-09-11"].map(pay), twice("2026-10-20")];
+      expect(graded(gap, PREMIUM, days).map(([, p]) => p)).toEqual([null, "2026-09-11", "2026-10-20", "2026-10-20"]);
+    });
+
+    test("…two due days at most, one of a single charge one — whatever the shape", () => {
+      const year = ["2026-05-11", ...days, "2026-12-11", "2027-01-11"];
+      const shapes: Payment[][] = [
+        [twice("2026-09-19")],
+        [pay("2026-06-11"), twice("2026-08-20"), twice("2026-09-19")],
+        [twice("2026-07-20"), pay("2026-08-11"), twice("2026-10-20")],
+        [pay("2026-06-11"), twice("2026-09-28"), twice("2026-10-20")],
+        [twice("2026-06-20"), twice("2026-07-20"), twice("2026-08-20"), pay("2026-10-11")],
+        [pay("2026-07-11"), twice("2026-08-03"), pay("2026-09-11"), twice("2026-10-12"), pay("2026-11-30")],
+      ];
+      for (const shape of shapes) {
+        const paid = year.map((d) => paymentFor(shape, d, PREMIUM)).filter((p) => p !== undefined);
+        for (const p of shape) expect(paid.filter((q) => q === p).length).toBeLessThanOrEqual(p.coveredMore ? 2 : 1);
+      }
     });
 
     // `stillToComeReader` asks no day after one (nothing late is asked of a day from today on)
@@ -532,6 +575,14 @@ describe("the nearer due day wins (decision 76)", () => {
       const ahead: DueDays = { after: () => null, before: PREMIUM.before };
       expect(paymentFor(rows(twice("2026-09-19")), "2026-10-11", ahead)?.postedOn).toBe("2026-09-19");
       expect(paymentFor(rows(pay("2026-09-19")), "2026-10-11", ahead)).toBeUndefined();
+      // …and still to come where the day behind its own is unpaid: Aug 11 missed, or Sep 11 missed before Oct 20
+      expect(paymentFor(augMissed(twice("2026-09-19")), "2026-10-11", ahead)).toBeUndefined();
+      expect(paymentFor(rows(twice("2026-10-20")), "2026-11-11", ahead)).toBeUndefined();
+      // …the day behind read as the calendar reads it, its own late payment too: Aug 20 pays Aug 11, so Oct 11 is paid
+      const lateAug = [...["2026-06-11", "2026-07-11", "2026-08-20"].map(pay), twice("2026-09-19")];
+      const lateAugPaid = ["2026-08-20", "2026-09-19", "2026-09-19", null];
+      expect(graded(lateAug, PREMIUM, days).map(([, p]) => p)).toEqual(lateAugPaid);
+      expect(paymentFor(lateAug, "2026-10-11", ahead)?.postedOn).toBe("2026-09-19");
     });
   });
 });

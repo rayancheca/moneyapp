@@ -38,7 +38,8 @@ export interface SeriesPostedAverage extends PostedAverage {
    * of them — FPL's July bills keep a later one of twice the -$58.87 he set unnamed; Sep 3 is still alone named on his
    * ledger copy 2026-10-23. ⚖️ default built, not asked (2026-10-23): …and none less after it but the remainder one
    * implies — a bill varying after its one high month names nothing. ⛔ The payments every grader of a bill's day
-   * reads as paying two due days (`paidAheadDays`, `paymentFor`'s catch-up): this rule, never a copy of it.
+   * reads as paying two due days (`paidAheadDays`, `paymentFor`'s catch-up): this rule, never a copy of it (pinned,
+   * nearer-due-day.test.ts).
    */
   paidAhead: readonly Occurrence[];
   /**

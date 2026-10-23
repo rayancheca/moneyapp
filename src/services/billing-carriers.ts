@@ -198,22 +198,35 @@ export interface DueDays {
  *
  * ⚖️ …but ONE PAYMENT OF TWO CHARGES PAYS TWO DAYS — default built, not asked (2026-10-23): one its posted average
  * names as covering more than one charge (`Payment.coveredMore`, `paidAheadDays`: `paidAhead`'s one rule) pays the day
- * the rules above give it, and then the UNPAID due day on its other side (`catchUpPayment`) — the day before one it
- * pays early or on time, late; the day after one it pays late, early. A premium due the 11th, Sep 11 missed, then one
- * -$715.16: Sep 19 pays Sep 11 late and Oct 11 early (on Sep 25, Oct 11 is no longer coming), Sep 28 Oct 11 early and
- * Sep 11 late, Oct 12 Oct 11 on time and Sep 11 late. Never a third day, and never the day after one it pays early or
- * on time: a payment AHEAD of its own day is not read, so it takes no day still to come out of Upcoming or the
- * forecast — Car insurance's Sep 3 -$1,000.00 pays Sep 11 early and no Oct 11 (his own date starts its schedule at Dec
- * 11, so neither is asked). 🔴 At 66daebd one payment paid one day, and the other day a catch-up paid was drawn unpaid
- * beside "covered more than one month": Sep 19 left Oct 11 owed — the runway's "A further $3,877.56 came due earlier
- * this month: $357.58 has not posted, …" and the series page's "Already due, and not posted" — and with Sep 28 the
- * arrears owed Sep 11 $357.58 on Sep 30 (review of 66daebd; his ledger copy 2026-10-23 with that premium added on
- * Venture X). His decision 76's cost, "one month owed either way", is a payment of one charge's; a payment of two owes
- * none, and his words are silent on it, as on (a)–(c). Latent: no bill of his has a catch-up.
+ * the rules above give it, and then ONE more (`catchUpPayment`): the due day BEHIND that one, late, when nothing of its
+ * own paid it, whatever the payment's timing there; else — LATE for its own day, the day behind it paid — the day
+ * after, early. A premium due the 11th, Sep 11 missed, then one -$715.16: Sep 19 pays Sep 11 late and Oct 11 early (on
+ * Sep 25, Oct 11 is no longer coming), Sep 28 Oct 11 early and Sep 11 late, Oct 12 Oct 11 on time and Sep 11 late.
+ * Never a third day, and never the day after one it pays early or on time: a payment AHEAD of its own day is not read,
+ * so it takes no day still to come out of Upcoming or the forecast — Car insurance's Sep 3 -$1,000.00 pays Sep 11
+ * early and no Oct 11 (his own date starts its schedule at Dec 11, so neither is asked). 🔴 At 66daebd one payment paid
+ * one day, and the other day a catch-up paid was drawn unpaid beside "covered more than one month": Sep 19 left Oct 11
+ * owed — the runway's "A further $3,877.56 came due earlier this month: $357.58 has not posted, …" and the series
+ * page's "Already due, and not posted" — and with Sep 28 the arrears owed Sep 11 $357.58 on Sep 30 (review of 66daebd;
+ * his ledger copy 2026-10-23 with that premium added on Venture X). 🔴 At 67b3b79 a late one paid the day after
+ * whatever lay behind its own day, so after TWO missed charges it paid one of them and a day still to come (review of
+ * 67b3b79, the same copy): Aug 11 and Sep 11 missed, Sep 19 took Oct 11 out of Upcoming and October's forecast on Sep
+ * 25, and on Oct 23 the runway read only "A further $3,519.98 came due earlier this month and no statement has covered
+ * it yet." — his own bills — beside August's ✕; Sep 11 and Oct 11 missed, Oct 20 drew Nov 11 "paid early by its
+ * payment of Oct 20, 2026", took it out of Upcoming and November's forecast, named Dec 11 next on the All tab and the
+ * page, and left Sep 11 ✕. Now Sep 19 pays Aug 11 and Sep 11, and Oct 20 Sep 11 and Oct 11: a biller puts a payment of
+ * two against the two arrears, and an error that shows — a day still listed — beats one that hides, as (a) holds.
+ * ⚠️ The day behind its own is the only one asked — a known gap: with Aug 11 missed, Sep 11 paid and Oct 11 missed,
+ * Oct 20 still pays Nov 11 early (at 66daebd Nov 11 was still coming). Looking further back reads a bill's whole past,
+ * where an unread statement or a payment left over reads as a charge owed, and would keep a catch-up after ONE missed
+ * charge from paying the day it paid ahead. His decision 76's cost, "one month owed either way", is a payment of one
+ * charge's; a payment of two owes none, and his words are silent on it, as on (a)–(c). Latent: no bill of his has a
+ * catch-up.
  *
  * ⛔ Nothing is read back: a day's payment lies between the days either side of it — a catch-up, between the day
- * either side and the one past it — and whether the day after is paid on time; so no reader needs more than the
- * postings two due days either side of its window (`billPaymentsBySeries` reads every one).
+ * either side and the one past it, and the day behind one it pays late is asked of its own days (`dayBeforeIsPaid`) —
+ * and whether the day after is paid on time; so no reader needs more than the postings three due days behind its
+ * window and two ahead (`billPaymentsBySeries` reads every one).
  */
 export function paymentFor<P extends Payment>(payments: readonly P[], dueOn: string, dueDays: DueDays): P | undefined {
   return nearerDaysPayment(payments, dueOn, dueDays) ?? catchUpPayment(payments, dueOn, dueDays);
@@ -240,22 +253,39 @@ function nearerDaysPayment<P extends Payment>(payments: readonly P[], dueOn: str
 
 /**
  * ⚖️ default built, not asked (2026-10-23): the payment of two charges that pays an unpaid due day from the day either
- * side of it (`paymentFor`) — the day before's, LATE, lying between it and this day; or the day after's, EARLY or ON
- * TIME, past this day's grace. Each read by its own days alone, so no payment pays a third.
+ * side of it (`paymentFor`) — the day before's, LATE, lying between it and this day, once the day behind THAT one is
+ * paid by its own (`dayBeforeIsPaid`), else it paid that one; or the day after's, whatever its timing there, this day
+ * being the unpaid one behind it. Each read by its own days alone, so no payment pays a third.
  */
 function catchUpPayment<P extends Payment>(payments: readonly P[], dueOn: string, dueDays: DueDays): P | undefined {
   const before = dueDays.before(dueOn);
   if (before !== null) {
     // the day after the day before is this one — `stillToComeReader` asks no day after a day from today on
-    const lateDays: DueDays = { ...dueDays, after: (day) => (day === before ? dueOn : dueDays.after(day)) };
-    const paidBefore = nearerDaysPayment(payments, before, lateDays);
-    if (paidBefore?.coveredMore === true && paysLate(paidBefore, before)) return paidBefore;
+    const paidBefore = nearerDaysPayment(payments, before, withDayAfter(dueDays, before, dueOn));
+    const late = paidBefore?.coveredMore === true && paysLate(paidBefore, before);
+    if (late && dayBeforeIsPaid(payments, before, dueDays)) return paidBefore;
   }
   const after = dueDays.after(dueOn);
   if (after === null) return undefined;
-  // early or on time for the day after, it lies past this day's grace: inside it, it would have paid this day on time
+  // early, on time or late for the day after, it lies past this day's grace — inside it, it would have paid this day
+  // on time — and this day is the one behind it: late there, it pays this day before any day still to come
   const paidAfter = nearerDaysPayment(payments, after, dueDays);
-  return paidAfter?.coveredMore === true && !paysLate(paidAfter, after) ? paidAfter : undefined;
+  return paidAfter?.coveredMore === true ? paidAfter : undefined;
+}
+
+/**
+ * Whether the due day before `day` is paid by its own days (`nearerDaysPayment`) — read with `day` the one after it,
+ * as the calendar steps them, though a reader that looks ahead asks no day after any (`stillToComeReader`). ⛔ Its own
+ * days only, never `paymentFor`: a catch-up paying it is the very payment asking, and would pay a third day.
+ */
+function dayBeforeIsPaid(payments: readonly Payment[], day: string, dueDays: DueDays): boolean {
+  const behind = dueDays.before(day);
+  return behind !== null && nearerDaysPayment(payments, behind, withDayAfter(dueDays, behind, day)) !== undefined;
+}
+
+/** `dueDays` with `next` the due day after `day` — the step a reader that asks no day after still takes here. */
+function withDayAfter(dueDays: DueDays, day: string, next: string): DueDays {
+  return { ...dueDays, after: (d) => (d === day ? next : dueDays.after(d)) };
 }
 
 /** Whether a payment posted more than its own tolerance AFTER a due day — late for it, were it its payment. */
@@ -384,7 +414,10 @@ function postingsBySeries(
  * ⚖️ default built, not asked (2026-10-23): per series, the days whose payment covered more than one charge — the
  * ones its posted average names (`paidAheadDays`, read as the average reads its rows: per occurrence, every active
  * row, each era at its own rate), so a grader pays a second day only with a payment the page says covered more than
- * one (`paymentFor`'s catch-up). Car insurance's Sep 3 alone on his ledger copy 2026-10-23.
+ * one (`paymentFor`'s catch-up). Car insurance's Sep 3 alone on his ledger copy 2026-10-23. 🔴 Nothing pinned that a
+ * grader reads THIS, not the bare multiple (review of 67b3b79): read as |amount| ≥ 2 × |rate|, every unit test passed,
+ * and a what-if FPL on Venture X (the -$58.87 he set; Jul 10 -$14.21, Jul 28 -$56.22, Sep 28 -$125.00) drew Sep 8 paid
+ * by Sep 28 beside an average naming nothing. nearer-due-day.test.ts pins Sep 8 owed, and these days as paidAhead's.
  */
 function coveredMoreDays(
   db: AppDatabase,
@@ -425,7 +458,8 @@ function coveredMoreDays(
  *
  * ⛔ EVERY posting, never a window's: a day's payment may lie as far back as the due day before it (`paymentFor`, ⚖️ his
  * decision 76, 2026-10-14), and a late one asks whether the day after is paid on time (⚖️ default (c), built, not
- * asked) — a cycle either side of any window, two for a catch-up's; and whether a payment covered more than one charge
+ * asked) — a cycle either side of any window, for a catch-up's two ahead and three behind (the day behind the one it
+ * pays late is read of its own days, `dayBeforeIsPaid`); and whether a payment covered more than one charge
  * is read off all of its series' (`coveredMoreDays`). Each reader read from its own window's start less the widest
  * grace until then, and FPL's Aug 8, paid early by Jul 28, would read "not posted" to a reader of August from Jul 29
  * beside a calendar of the year saying "paid".
