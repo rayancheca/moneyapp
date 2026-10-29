@@ -1,4 +1,4 @@
-import { MATCHED_TO_THE_CENT_BY, unattachedRowsWords } from "@/lib/unattached-match";
+import { countedDepositWords, MATCHED_TO_THE_CENT_BY, unattachedRowsWords } from "@/lib/unattached-match";
 import type { Metadata } from "next";
 import { getDb } from "@/db/client";
 import { spendUnread } from "@/lib/budget-coverage";
@@ -78,10 +78,12 @@ export default async function BudgetsPage({
   );
   // ⛔ "with no deposit against them" only where no row matches one unattached (`lib/unattached-match`): the rows named
   const passedMatched = income.passedUnpaidUnattached;
+  const passedThem = income.passedUnpaidOccurrences === 1 ? "it" : "them";
+  // ⚖️ …"and filed as income" once one of them is attached and filed nowhere (`countedDepositWords`)
   const passedNoDeposit =
     passedMatched.length === 0
-      ? `with no deposit against ${income.passedUnpaidOccurrences === 1 ? "it" : "them"}`
-      : `with no deposit attached to ${income.passedUnpaidOccurrences === 1 ? "it" : "them"}, ` +
+      ? `with no deposit against ${passedThem}`
+      : `with no deposit ${countedDepositWords(passedMatched, passedThem)}, ` +
         `${MATCHED_TO_THE_CENT_BY} ${unattachedRowsWords(passedMatched, formatDayShort)}`;
   // the fourth leg: paydays this month that another month's money paid — null when none
   const paidElsewhere = paidByAnotherMonthNote(

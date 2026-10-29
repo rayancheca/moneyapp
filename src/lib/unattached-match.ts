@@ -20,13 +20,26 @@ import { formatCents } from "@/lib/money";
  *
  * The match: an ACTIVE row with no series link (and no transfer pairing it to his own money — a leg of a transfer is
  * attached, to the other leg) on the series' account (`services/unattached-match`), dated within the series' own
- * `toleranceDays` of the day, whose amount equals that day's expected amount TO THE CENT, sign and all.
+ * `toleranceDays` of the day, whose amount equals that day's expected amount TO THE CENT, sign and all — or, for a pay
+ * series, a row attached to it that its settlement never reads (`UnattachedRow.notFiledAsIncome`).
  */
 export interface UnattachedRow {
   readonly id: string;
   readonly postedOn: string;
   /** net-worth signed, as the ledger stores it */
   readonly amountCents: number;
+  /**
+   * ATTACHED to the pay series, on a day no row of it is filed as his pay (`payDayRows`): an import's link files
+   * nothing (`absorbIntoLiveSeries`), and settlement counts no unfiled credit — so the row is there, attached, and
+   * counted as nothing. Said as what it is, "attached to it but not filed as income", never "not attached to it".
+   * Absent on a row with no series link.
+   *
+   * 🔴 Review of de31d22 (HIGH): with the import's link of b53989c, the trial import of the Oct 26 statement into his
+   * pre-import copy attached the four +$1,141.92 payroll rows, filed none — and every surface said the pay "did not
+   * reach a bank" again, since the rule skipped any row with a series link. ⚖️ Default built, not asked (2026-10-29):
+   * named, never counted; whether the import should FILE it is his call.
+   */
+  readonly notFiledAsIncome?: boolean;
 }
 
 /** A payday or due day a surface is about to call missed, with what the series expected on it (net-worth signed). */
@@ -84,27 +97,135 @@ export function unattachedCents(matches: readonly UnattachedMatch[]): number {
 
 const AND_LIST = new Intl.ListFormat("en", { style: "long", type: "conjunction" });
 
+/** What a row is that the series does not count: never attached, or attached and filed as no income. */
+const NOT_ATTACHED = { one: "that is not attached to it", many: "that are not attached to it" };
+const NOT_FILED = {
+  one: "that is attached to it but not filed as income",
+  many: "that are attached to it but not filed as income",
+};
+
+/** One kind of row by its own day and amount (one amount named once), oldest first. */
+function rowsOfOneKind(
+  byDay: readonly UnattachedMatch[],
+  formatDay: (iso: string) => string,
+  kind: { one: string; many: string },
+): string {
+  const amounts = new Set(byDay.map((m) => Math.abs(m.row.amountCents)));
+  const days = byDay.map((m) => formatDay(m.row.postedOn));
+  if (byDay.length === 1) {
+    return `a row of ${formatCents(Math.abs(byDay[0]!.row.amountCents))} on ${days[0]} ${kind.one}`;
+  }
+  const named =
+    amounts.size === 1
+      ? `${formatCents([...amounts][0]!)} on ${AND_LIST.format(days)}`
+      : AND_LIST.format(byDay.map((m, i) => `${formatCents(Math.abs(m.row.amountCents))} on ${days[i]}`));
+  return `rows of ${named} ${kind.many}`;
+}
+
 /**
  * "a row of $695.04 on Oct 15 that is not attached to it", "rows of $1,141.92 on Oct 1, Oct 8, Oct 15, and Oct 22 that
  * are not attached to it" — the rows by their own day and amount (one amount named once), in the day format of the
  * sentence they finish. Every surface that would have claimed absence says this instead (`MATCHED_TO_THE_CENT_BY`).
+ * ⚖️ A row attached to the pay and filed as no income is said as that (`UnattachedRow.notFiledAsIncome`) — "that is
+ * attached to it but not filed as income" — the unattached first when there are both.
  */
 export function unattachedRowsWords(
   matches: readonly UnattachedMatch[],
   formatDay: (iso: string) => string,
 ): string {
   const byDay = [...matches].sort((a, b) => compareDates(a.row.postedOn, b.row.postedOn));
-  const amounts = new Set(byDay.map((m) => Math.abs(m.row.amountCents)));
-  const days = byDay.map((m) => formatDay(m.row.postedOn));
-  if (byDay.length === 1) {
-    return `a row of ${formatCents(Math.abs(byDay[0]!.row.amountCents))} on ${days[0]} that is not attached to it`;
-  }
-  const named =
-    amounts.size === 1
-      ? `${formatCents([...amounts][0]!)} on ${AND_LIST.format(days)}`
-      : AND_LIST.format(byDay.map((m, i) => `${formatCents(Math.abs(m.row.amountCents))} on ${days[i]}`));
-  return `rows of ${named} that are not attached to it`;
+  const unattached = byDay.filter((m) => m.row.notFiledAsIncome !== true);
+  const notFiled = byDay.filter((m) => m.row.notFiledAsIncome === true);
+  return [
+    ...(unattached.length === 0 ? [] : [rowsOfOneKind(unattached, formatDay, NOT_ATTACHED)]),
+    ...(notFiled.length === 0 ? [] : [rowsOfOneKind(notFiled, formatDay, NOT_FILED)]),
+  ].join(", and ");
 }
 
 /** "matched to the cent by" — the lead of every sentence that names the rows (`unattachedRowsWords`). */
 export const MATCHED_TO_THE_CENT_BY = "matched to the cent by";
+
+/** Whether one of the rows is attached and filed as no income (`UnattachedRow.notFiledAsIncome`). */
+const anyNotFiled = (matches: readonly UnattachedMatch[]): boolean =>
+  matches.some((m) => m.row.notFiledAsIncome === true);
+
+/**
+ * What a deposit needs to count toward the schedule, where a surface naming the rows would have said "with no deposit":
+ * "attached to {it}" — and once one of them is attached and filed as no income, "attached to {it} and filed as income".
+ * ⛔ True of every payday the rows answer: no deposit both attached and filed has paid it. 🔴 "With no deposit attached
+ * to this schedule" was false beside the payroll rows the next import attaches, unfiled (review of de31d22).
+ */
+export function countedDepositWords(matches: readonly UnattachedMatch[], it: string): string {
+  return anyNotFiled(matches) ? `attached to ${it} and filed as income` : `attached to ${it}`;
+}
+
+/**
+ * What the rows are not, after a surface has named them: "not attached to {it}", "not filed as income" — or, some of
+ * each, "not attached to {it} or not filed as income" — the reason none of them is counted.
+ */
+export function notCountedWords(matches: readonly UnattachedMatch[], it: string): string {
+  if (!anyNotFiled(matches)) return `not attached to ${it}`;
+  return matches.every((m) => m.row.notFiledAsIncome === true)
+    ? "not filed as income"
+    : `not attached to ${it} or not filed as income`;
+}
+
+/** A "never reached a bank" figure, and what of it the rows the one rule matched answer. */
+export interface NeverSplit {
+  readonly cents: number;
+  /** of `cents`, the rows' money — never more than the figure (a net shortfall can be less than a payday) */
+  readonly matchedCents: number;
+  /** the rows `matchedCents` is — none when it is zero */
+  readonly matched: readonly UnattachedMatch[];
+}
+
+/**
+ * ⛔ ONE SPLIT of a "never reached a bank" figure by the rows the one rule matched to its paydays — Earned vs banked's
+ * difference (`gapOf`) and /spending's shortfall note (`payShortfallNote`). The rows pay nothing: the figure is
+ * unchanged, and only the claim that their money did not arrive is withdrawn. Capped at the figure, so the parts add
+ * up to it: a window whose net shortfall is $941.92 holds no $1,141.92 the rows answer.
+ */
+export function neverSplit(neverCents: number, matched: readonly UnattachedMatch[]): NeverSplit {
+  const matchedCents = Math.max(0, Math.min(neverCents, unattachedCents(matched)));
+  return { cents: neverCents, matchedCents, matched: matchedCents === 0 ? [] : matched };
+}
+
+/**
+ * The split said as clauses: "$X of it never reached a bank" (`ofIt`; "$X never reached a bank" in a note's list), or
+ * `bare` "never reached a bank" when it is the whole difference — and of what the rows answer, "$Y is matched to the
+ * cent by rows of $1,141.92 on Oct 1, … that are not attached to it", or "all of it is …" (bare) when they answer every
+ * cent. Empty for no figure. 🔴 His ledger copy 2026-10-29 (before his filing): the difference read "never reached a
+ * bank" over $4,567.68 of October paydays whose four payroll rows sat on Wells Fargo, unattached; and /spending's note
+ * "none of it reached a bank" beside the card naming them (review of de31d22).
+ */
+export function neverClauses(
+  never: NeverSplit,
+  formatDay: (iso: string) => string,
+  form: { ofIt: boolean; bare: boolean },
+): string[] {
+  if (never.cents <= 0) return [];
+  const amount = (cents: number): string => (form.ofIt ? `${formatCents(cents)} of it` : formatCents(cents));
+  /*
+   * ⛔ Capped — the rows hold more than the figure, money that paid no payday netted into it — the figure is named as
+   * their paydays', and the rows as matching THOSE: "$941.92 is for the payday of Oct 22, which a row of $1,141.92 on
+   * Oct 22 that is not attached to it matches to the cent", never "$941.92 is matched to the cent by a row of
+   * $1,141.92". Measured on a copy of his ledger with Oct 1, 8 and 15 filed and Oct 22 unattached, read Nov 2: the
+   * $200.00 of Oct 15 that went toward no payday is netted into October's figure.
+   */
+  const capped = never.matchedCents < unattachedCents(never.matched);
+  const paydays = [...new Set(never.matched.map((m) => m.date))].sort(compareDates).map(formatDay);
+  const rows = capped
+    ? `for the ${paydays.length === 1 ? "payday" : "paydays"} of ${AND_LIST.format(paydays)}, which ` +
+      `${unattachedRowsWords(never.matched, formatDay)} ${never.matched.length === 1 ? "matches" : "match"} to the cent`
+    : `${MATCHED_TO_THE_CENT_BY} ${unattachedRowsWords(never.matched, formatDay)}`;
+  if (never.matchedCents === 0) {
+    return [form.bare ? "never reached a bank" : `${amount(never.cents)} never reached a bank`];
+  }
+  if (never.matchedCents === never.cents) {
+    return [form.bare ? `all of it is ${rows}` : `${amount(never.cents)} is ${rows}`];
+  }
+  return [
+    `${amount(never.cents - never.matchedCents)} never reached a bank`,
+    `${formatCents(never.matchedCents)} is ${rows}`,
+  ];
+}

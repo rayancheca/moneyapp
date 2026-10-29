@@ -10,7 +10,7 @@ import { institutions } from "@/db/schema/institutions";
 import { recurringSeries } from "@/db/schema/recurring";
 import { transactions } from "@/db/schema/transactions";
 import { seedDatabase } from "@/db/seed";
-import { alreadyDueWords } from "@/components/recurring/labels";
+import { alreadyDueWords, unsettledWords } from "@/components/recurring/labels";
 import { arrearsClause, NOT_POSTED, overdueReading } from "@/lib/arrears-reading";
 import { arrearsSentence } from "@/lib/committed";
 import { formatDayLong, formatDayShort } from "@/lib/format-date";
@@ -22,6 +22,7 @@ import { checkedThrough } from "./checked-days-fixture";
 import { committedBook } from "./committed";
 import { forecastCurrentMonth } from "./forecast";
 import { incomeCard } from "./income-card";
+import { recurringCalendar } from "./recurring-calendar";
 import { seriesDetail } from "./recurring-detail";
 import { unattachedMatchesBySeries } from "./unattached-match";
 
@@ -316,5 +317,196 @@ describe("the pay: no surface says his October paydays did not reach a bank besi
       "— 3 of them are matched to the cent by rows of $1,141.92 on Oct 1, Oct 8, and Oct 15 that are not attached to " +
         "it, and for the other 1 the pay did not reach a bank",
     );
+  });
+});
+
+/*
+ * ⛔ The calendar asks the one rule too (`settledVerdict`, `asksForUnattachedMatch`). 🔴 Review of de31d22 (HIGH): it
+ * never did — his ledger copy (2026-10-29, after the Oct 26 import, before his filing) drew Oct 1, 8, 15 and 22 "not yet
+ * known — never reached a bank $1,141.92" beside the forecast card's "Pay matched to the cent by rows of $1,141.92 …",
+ * and, with Breezeline's Oct 10 −$50.00 unlinked, a red ✕ on Oct 8 beside /recurring's "Oct 8 — matched to the cent by
+ * a row of $50.00 on Oct 10 that is not attached to it".
+ */
+describe("the calendar: no ✕ and no 'never reached a bank' beside a row matching the day to the cent — and none paid", () => {
+  const october = () => recurringCalendar(bundle.db, "2026-10", TODAY);
+  /** the series' expected mark on the day — the one carrying no posting of its own */
+  const markOn = (day: string, seriesId: string) =>
+    october().entriesByDay[day]?.find((e) => e.seriesId === seriesId && e.transactionId === null);
+
+  test("without the rows: each payday never reached a bank, and the lease's Oct 15 is missed", () => {
+    for (const day of PAYDAYS) expect(markOn(day, PAY)).toMatchObject({ state: "unsettled", unsettledReason: "never_banked" });
+    expect(markOn("2026-10-15", LEASE)).toMatchObject({ state: "missed", unsettledReason: null });
+  });
+
+  test("with them: each mark names its row and stays not yet known — never paid, never missed", () => {
+    importUnattached();
+    for (const day of PAYDAYS) {
+      const mark = markOn(day, PAY)!;
+      expect(mark).toMatchObject({ state: "unsettled", unsettledReason: "matched_unattached", settledCents: null });
+      expect(unsettledWords(mark)).toBe(
+        `matched to the cent by a row of $1,141.92 on ${formatDayShort(day)} that is not attached to it`,
+      );
+    }
+    const lease = markOn("2026-10-15", LEASE)!;
+    expect(lease).toMatchObject({ state: "unsettled", unsettledReason: "matched_unattached" });
+    expect(unsettledWords(lease)).toBe("matched to the cent by a row of $695.04 on Oct 15 that is not attached to it");
+    const month = october();
+    expect(month.missedCount).toBe(0);
+    // nothing they hold is settled: the month's Settled figure is what it was without them
+    expect(month.postedNetCents).toBe(0);
+  });
+
+  test("a cent off, or past the lease's own three days, is no match: the ✕ stays", () => {
+    row("2026-10-15", -69_503);
+    row("2026-10-19", -69_504);
+    expect(markOn("2026-10-15", LEASE)).toMatchObject({ state: "missed", unsettledReason: null });
+  });
+});
+
+/*
+ * 🔴 Review of de31d22 (HIGH): with b53989c's link, the next Wells Fargo import ATTACHES his four payroll rows — linked
+ * `detected`, category NULL, as an import's link files nothing (`recurring-links`) — and settlement counts no unfiled
+ * credit (`payDayRows`), while the one rule skipped every row with a series link. Trial import of the Oct 26 statement
+ * into the pre-import copy at de31d22: "4 paydays have passed since Sep 24 with no deposit. … — so the pay did not reach
+ * a bank", the difference "never reached a bank", /spending "none of it reached an account", the forecast "Pay that never
+ * reaches a bank", and the calendar Oct 1, 8, 15 and 22 "never reached a bank". ⚖️ Default built, not asked
+ * (2026-10-29): such a row is named — attached, not filed as income — and still counted as nothing; whether the import
+ * should FILE it is his call.
+ */
+describe("an import's link that files nothing: his payroll rows attached and unfiled are named, never called absent", () => {
+  /** The October rows the next statement brings in, as the import links them: attached by detection, filed nowhere. */
+  function importLinkedUnfiled(paydays: readonly string[] = PAYDAYS): void {
+    for (const day of paydays) {
+      const id = row(day, 114_192, { seriesId: PAY });
+      bundle.db.update(transactions).set({ seriesLinkSource: "detected" }).where(eq(transactions.id, id)).run();
+    }
+  }
+  const spendingNote = () =>
+    cashEarningsSectionNotes({
+      rows: cashEarningsReadings(bundle.db, { from: "2026-10-01", to: "2026-10-31", today: TODAY, withChecked: true }),
+      formatDay: formatDayLong,
+    })
+      .map((n) => n.body)
+      .join(" ");
+  const rows = "rows of $1,141.92 on Oct 1, Oct 8, Oct 15, and Oct 22 that are attached to it but not filed as income";
+
+  test("the predicate takes a row attached to the pay and filed nowhere — never one its settlement counts, nor a bill's", () => {
+    importLinkedUnfiled();
+    const got = unattachedMatchesBySeries(bundle.db, new Map([[PAY, payDays()]]), TODAY).get(PAY) ?? [];
+    expect(got.map((m) => [m.row.postedOn, m.row.notFiledAsIncome])).toEqual(PAYDAYS.map((d) => [d, true]));
+    // filed under Income on its day, it is a deposit settlement reads: it pays a payday, and no surface names it
+    bundle.db
+      .update(transactions)
+      .set({ categoryId: categoryId("Salary", "Income") })
+      .where(and(eq(transactions.postedOn, "2026-10-22"), eq(transactions.recurringSeriesId, PAY)))
+      .run();
+    const filed = unattachedMatchesBySeries(bundle.db, new Map([[PAY, payDays()]]), TODAY).get(PAY) ?? [];
+    expect(filed.map((m) => m.row.postedOn)).not.toContain("2026-10-22");
+    // a bill's linked row is a payment of it, whatever its filing
+    row("2026-10-15", -69_504, { seriesId: LEASE });
+    expect(
+      unattachedMatchesBySeries(bundle.db, new Map([[LEASE, [{ date: "2026-10-15", amountCents: -69_504 }]]]), TODAY).get(
+        LEASE,
+      ),
+    ).toBeUndefined();
+  });
+
+  test("every surface names the rows as attached and not filed as income, and counts none of them", () => {
+    importLinkedUnfiled();
+    const card = incomeCard(bundle.db, TODAY)!;
+    const line = card.pay[0]!;
+    expect(line.verdict).toBe(
+      "4 paydays have passed since Sep 24 with no deposit attached to this schedule and filed as income. 4 of them fall " +
+        `on days the records already cover, through Oct 26 — they are matched to the cent by ${rows}. Whether it was ` +
+        "earned is a different question, and this card cannot answer it.",
+    );
+    expect(line.bankedCents).toBe(4 * 114_192);
+    expect(line.gapLabel).toContain(`is matched to the cent by ${rows}`);
+    expect(line.gapLabel).not.toContain("never reached a bank");
+    expect(card.postedNote).toBe(
+      "No income at all has been recorded in Oct 2026, though the rows the lines above name match its paydays to the " +
+        "cent — they are not filed as income, so none of them is counted.",
+    );
+    const note = spendingNote();
+    expect(note).toContain(
+      `and none of it reached an account attached to it and filed as income; $4,567.68 is matched to the cent by ${rows}.`,
+    );
+    expect(note).toContain("that money sits in the rows named above, not filed as income, was held as cash");
+    expect(note).not.toContain("none of it reached an account.");
+    const words = passedPaydaysWords(forecastCurrentMonth(bundle.db, TODAY).unbankedIncome, formatDayShort);
+    expect(words.notProjected).toBe(`Pay matched to the cent by ${rows} cannot be projected as arriving`);
+    expect(words.passed).toBe("already passed this month with no deposit attached to it and filed as income");
+    const budgets = incomeExpectation(bundle.db, "2026-10-01", "2026-10-31", TODAY);
+    expect(budgets.passedUnpaidCents).toBe(4 * 114_192);
+    expect(budgets.passedUnpaidUnattached.map((m) => m.date)).toEqual(PAYDAYS);
+    const october = recurringCalendar(bundle.db, "2026-10", TODAY);
+    for (const day of PAYDAYS) {
+      const mark = october.entriesByDay[day]!.find((e) => e.seriesId === PAY && e.transactionId === null)!;
+      expect(mark.state).toBe("unsettled");
+      expect(unsettledWords(mark)).toBe(
+        `matched to the cent by a row of $1,141.92 on ${formatDayShort(day)} that is attached to it but not filed as income`,
+      );
+    }
+  });
+});
+
+/*
+ * 🔴 Review of de31d22 (MEDIUM): /spending's shortfall note never read the matched paydays — on the pre-filing copy read
+ * with today 2026-10-13 it said "It America LLC (weekly pay)'s paydays over Oct 1 – 8, 2026 came to $2,283.84, and none
+ * of it reached a bank." while the dashboard named the rows; with Oct 1, 8 and 15 filed, Oct 22 unattached and today
+ * Nov 2, "…$941.92 never reached a bank" beside the card's "$1,141.92 is matched to the cent by a row of $1,141.92 on
+ * Oct 22". ⛔ The difference's one split (`neverSplit`, `neverClauses`), shared with Earned vs banked.
+ */
+describe("/spending's shortfall note names the rows the one rule matched, as the card's difference does", () => {
+  const notes = (today: string) =>
+    cashEarningsSectionNotes({
+      rows: cashEarningsReadings(bundle.db, { from: "2026-10-01", to: "2026-10-31", today, withChecked: true }),
+      formatDay: formatDayLong,
+    }).map((n) => n.body);
+
+  test("a live schedule's October, Oct 1 and Oct 8 matched: all of it is the rows' — never 'none of it reached a bank'", () => {
+    const today = "2026-10-13";
+    expect(notes(today).join(" ")).toContain("came to $2,283.84, and none of it reached a bank.");
+    importUnattached(PAYDAYS.slice(0, 2), false);
+    const note = notes(today).join(" ");
+    expect(note).toContain(
+      "It America LLC (weekly pay)'s paydays over Oct 1 – 8, 2026 came to $2,283.84, and all of it is matched to the " +
+        "cent by rows of $1,141.92 on Oct 1 and Oct 8 that are not attached to it.",
+    );
+    expect(note).not.toContain("reached a bank");
+  });
+
+  test("three filed, Oct 22 unattached: the banked part, and the row for the rest — the card's frontier clause too", () => {
+    const today = "2026-11-02";
+    const salary = categoryId("Salary", "Income");
+    for (const day of PAYDAYS.slice(0, 3)) row(day, 114_192, { seriesId: PAY, categoryId: salary });
+    expect(notes(today).join(" ")).toContain(
+      "of which $3,425.76 was banked inside the window and $1,141.92 never reached a bank",
+    );
+    importUnattached(PAYDAYS.slice(3), false);
+    const note = notes(today).join(" ");
+    expect(note).toContain(
+      "of which $3,425.76 was banked inside the window and $1,141.92 is matched to the cent by a row of $1,141.92 on " +
+        "Oct 22 that is not attached to it",
+    );
+    expect(note).not.toContain("never reached a bank");
+    const verdict = incomeCard(bundle.db, today)!.pay[0]!.verdict;
+    expect(verdict).toContain("1 falls on a day already checked, with no deposit attached to it;");
+  });
+
+  // his own shape: the off-cycle +$200.00 of Oct 15, filed Salary, paid no payday and is netted into October's figure
+  test("…and with money toward no payday netted in, the figure is the payday's — the row matches the payday", () => {
+    const today = "2026-11-02";
+    const salary = categoryId("Salary", "Income");
+    for (const day of PAYDAYS.slice(0, 3)) row(day, 114_192, { seriesId: PAY, categoryId: salary });
+    row("2026-10-15", 20_000, { seriesId: PAY, categoryId: salary });
+    expect(notes(today).join(" ")).toContain("and $941.92 never reached a bank");
+    importUnattached(PAYDAYS.slice(3), false);
+    const note = notes(today).join(" ");
+    expect(note).toContain(
+      "and $941.92 is for the payday of Oct 22, which a row of $1,141.92 on Oct 22 that is not attached to it matches " +
+        "to the cent",
+    );
+    expect(note).not.toContain("never reached a bank");
   });
 });

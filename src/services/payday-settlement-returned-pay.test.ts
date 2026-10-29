@@ -631,7 +631,13 @@ describe("a credit linked to his pay on a day no row is filed as his pay is no p
     payRow("2026-09-17", WEEK, filedAs());
     expect(settled()).toEqual(["2026-09-03", "2026-09-10"]);
     const payday = entriesOn("2026-09-17").filter((e) => e.transactionId === null);
-    expect(payday.map((e) => [e.state, e.unsettledReason])).toEqual([["unsettled", "never_banked"]]);
+    /*
+     * ⚖️ …and named by it, not called absent (`notFiledAsIncome`, default built, not asked 2026-10-29): the credit
+     * attached to his pay matches the payday to the cent. 🔴 This pinned "never reached a bank" beside it — the words
+     * the next Wells Fargo import would have printed of its four attached, unfiled payroll rows (review of de31d22).
+     */
+    expect(payday.map((e) => [e.state, e.unsettledReason])).toEqual([["unsettled", "matched_unattached"]]);
+    expect(payday[0]!.unattached?.row).toMatchObject({ postedOn: "2026-09-17", amountCents: WEEK, notFiledAsIncome: true });
     // the credit is drawn where it landed, toward no payday, and the day's Settled holds nothing of his pay
     const credit = entriesOn("2026-09-17").find((e) => e.transactionId !== null)!;
     expect([credit.towardNoPayday, credit.expectedAmountCents]).toEqual([true, null]);

@@ -1,5 +1,5 @@
 import { formatDayShort } from "@/lib/format-date";
-import { unattachedRowsWords } from "@/lib/unattached-match";
+import { MATCHED_TO_THE_CENT_BY, unattachedRowsWords, type UnattachedMatch } from "@/lib/unattached-match";
 import {
   arrearsAlarms,
   arrearsClause,
@@ -586,6 +586,9 @@ export function upcomingEvidenceWord(e: {
  * …and of a day whose accounts are read through today — an archived card, a cash wallet — still inside its days to
  * post, the arrears' words for the same money (`DAYS_TO_POST_NOT_OVER`). 🔴 It read "no import has covered it yet" of
  * an import that will never come (review of the 2026-10-08 batch).
+ *
+ * …and of a day a row matches to the cent, sitting unattached, the row itself (`unsettledWords`, every other surface's
+ * words for it).
  */
 const UNSETTLED_REASON_WORD: Record<UnsettledReason, string> = {
   not_imported: NO_STATEMENT_YET,
@@ -595,10 +598,31 @@ const UNSETTLED_REASON_WORD: Record<UnsettledReason, string> = {
   // 🔴 his checked cash weeks read "not banked yet" beside the dashboard's "never reached a bank" (reading the app)
   never_banked: "never reached a bank",
   schedule_unproven: "too few charges to grade yet",
+  // the lead alone: a mark carries its row, and is said by it (`unsettledWords`)
+  matched_unattached: MATCHED_TO_THE_CENT_BY,
 };
 
 export function unsettledReasonWord(reason: UnsettledReason): string {
   return UNSETTLED_REASON_WORD[reason];
+}
+
+/**
+ * What a "not yet known" mark says after its state: its reason's words (`unsettledReasonWord`) — and for a mark the one
+ * rule matched (`matched_unattached`), its row by day and amount, in every other surface's words: "matched to the cent
+ * by a row of $1,141.92 on Oct 1 that is not attached to it". One reading for the cell's aria-label and the Day Sheet.
+ * 🔴 Review of de31d22 (HIGH): on his ledger copy (2026-10-29, after the Oct 26 import and before his filing) the
+ * calendar said "not yet known — never reached a bank $1,141.92" of Oct 1, 8, 15 and 22 beside the forecast card
+ * naming the four payroll rows. Null for a mark with no reason — one that is not "not yet known".
+ */
+export function unsettledWords(e: {
+  unsettledReason: UnsettledReason | null;
+  unattached: UnattachedMatch | null;
+}): string | null {
+  if (e.unsettledReason === null) return null;
+  if (e.unsettledReason === "matched_unattached" && e.unattached !== null) {
+    return `${MATCHED_TO_THE_CENT_BY} ${unattachedRowsWords([e.unattached], formatDayShort)}`;
+  }
+  return unsettledReasonWord(e.unsettledReason);
 }
 
 /**

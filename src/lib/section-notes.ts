@@ -1,8 +1,13 @@
 import { arrearsTail, NOT_POSTED } from "./arrears-reading";
 import {
+  countedDepositWords,
   MATCHED_TO_THE_CENT_BY,
+  neverClauses,
+  neverSplit,
+  notCountedWords,
   unattachedCents,
   unattachedRowsWords,
+  type NeverSplit,
   type UnattachedMatch,
 } from "@/lib/unattached-match";
 import { spendUnread, spentOnlyFromCashWallets, type BudgetCoverageInput } from "./budget-coverage";
@@ -714,7 +719,8 @@ export function cashEarningsSectionNotes(input: CashEarningsNoteInput): SectionN
           compareDates(m.date, r.firstPeriodOn) >= 0 &&
           compareDates(m.date, r.lastPeriodOn) <= 0,
       );
-      const attached = matched.length === 0 ? "" : " attached to it";
+      // ⚖️ …"and filed as income" once one of them is attached and filed nowhere (`countedDepositWords`)
+      const attached = matched.length === 0 ? "" : ` ${countedDepositWords(matched, "it")}`;
       const matchedPart =
         matched.length === 0
           ? ""
@@ -800,7 +806,9 @@ export function cashEarningsSectionNotes(input: CashEarningsNoteInput): SectionN
        */
       const explanations = OR_LIST.format([
         // ⛔ the rows the claim named are the first place that money may be, while they stay unattached
-        ...(matched.length === 0 ? [] : ["that money sits in the rows named above, not attached to the schedule"]),
+        ...(matched.length === 0
+          ? []
+          : [`that money sits in the rows named above, ${notCountedWords(matched, "the schedule")}`]),
         matched.length === 0 ? "that money was held as cash" : "was held as cash",
         "spent as cash",
         `paid into ${ACCOUNT_NOT_READ}`,
@@ -828,7 +836,15 @@ export function cashEarningsSectionNotes(input: CashEarningsNoteInput): SectionN
     const shortfall =
       r.shortfall === undefined
         ? null
-        : payShortfallNote(r.seriesName, r.shortfall, r.checkedThrough, input.formatDay, surplusSpeaks);
+        : payShortfallNote(
+            r.seriesName,
+            r.shortfall,
+            r.checkedThrough,
+            input.formatDay,
+            surplusSpeaks,
+            // ⛔ the paydays the one rule matched (`unattachedPaydays`): named, never "never reached a bank"
+            r.unattachedPaydays ?? [],
+          );
 
     /*
      * ⛔ The surplus note only where the shortfall note is silent. Both measure one window's money, but the shortfall
@@ -917,6 +933,12 @@ const paydaysOf = (parts: readonly { paydays: readonly string[] }[]): string[] =
  * their own figures and that money is named after the split, toward no payday. 🔴 Review of 2a415d5: Aug 14 – Sep 23
  * on his ledger copy read "$1,047.00 (Aug 27) was paid by the deposit of Thu, Sep 24, 2026" — Aug 27 is a $1,141.92
  * payday the Sep 24 deposit paid whole, and Aug 20's $1,047.00 that no deposit paid went unnamed.
+ *
+ * ⛔ …AND NEVER "NEVER" OF WHAT A ROW THE ONE RULE MATCHED ANSWERS (`unattached`, the reading's `unattachedPaydays`):
+ * the card's split of the same figure (`neverSplit`, `neverClauses`) — the rows named by day and amount, still counted
+ * as nothing. 🔴 Review of de31d22 (MEDIUM): on his pre-filing copy read with today 2026-10-13, October said "came to
+ * $2,283.84, and none of it reached a bank" while Earned vs banked named the Oct 1 and Oct 8 rows; with Oct 1, 8 and 15
+ * filed, Oct 22 unattached and today Nov 2, "…$941.92 never reached a bank" beside the card's Oct 22 row.
  */
 function payShortfallNote(
   seriesName: string,
@@ -924,6 +946,7 @@ function payShortfallNote(
   checkedThrough: string | null | undefined,
   formatDay: (iso: string) => string,
   surplusSpeaks: boolean,
+  unattached: readonly UnattachedMatch[],
 ): PayNote | null {
   // the money beyond the read paydays a period over this one nets — the surplus note names it when it speaks
   const holds = !surplusSpeaks && s.noPaydayBeyondCents + s.otherBeyondCents > 0;
@@ -935,7 +958,9 @@ function payShortfallNote(
   const outside = paidOutsidePhrases(s.paidOutside, payday, formatDay);
   // ⚖️ "never" only past a payday's days to land (`unbankedSplit`); inside them, the forecast's "not banked yet"
   const notYet = s.notBankedYetCents > 0 ? [`${formatCents(s.notBankedYetCents)} is not banked yet`] : [];
-  const never = s.neverBankedCents > 0 ? [`${formatCents(s.neverBankedCents)} never reached a bank`] : [];
+  // ⛔ …and of it, what the rows the one rule matched to the window's read paydays answer (`neverSplit`)
+  const neverPart = neverSplit(s.neverBankedCents, unattachedAmong(unattached, s.firstReadOn, s.lastReadOn));
+  const never = neverClauses(neverPart, payday, { ofIt: false, bare: false });
   const rest = [...outside, ...notYet, ...never];
 
   const noPaydayFrom = depositsOf(s.towardNoPayday.map((d) => d.depositOn), formatDay);
@@ -952,7 +977,7 @@ function payShortfallNote(
         ? `, and all of it was banked inside the window${noPayday}`
         : `, of which ${AND_LIST.format([banked, ...rest])}`
       : outside.length === 0 && notYet.length === 0
-        ? ", and none of it reached a bank"
+        ? noneBankedSplit(neverPart, rest, payday)
         : outside.length === 0 && never.length === 0
           ? ", and none of it is banked yet"
           : `, and none of it was banked inside the window: ${AND_LIST.format(rest)}`;
@@ -972,6 +997,27 @@ function payShortfallNote(
   const unlooked = unlookedPhrase(s.unlookedPaydays, checkedThrough, formatDay, "more ", grace === "");
 
   return { kind: "shortfall", body: `${lead}${split}${grace}${beyond}${back}${unlooked}.` };
+}
+
+/**
+ * A shortfall with nothing banked inside the window, nothing from outside it and nothing still inside its days to land:
+ * "and none of it reached a bank" — or, where rows the one rule matched answer it (`neverSplit`), "and all of it is
+ * matched to the cent by rows of …", or both parts, each named.
+ */
+function noneBankedSplit(never: NeverSplit, rest: readonly string[], payday: (iso: string) => string): string {
+  if (never.matchedCents === 0) return ", and none of it reached a bank";
+  if (never.matchedCents === never.cents) return `, and ${neverClauses(never, payday, { ofIt: false, bare: true })[0]}`;
+  return `, and none of it was banked inside the window: ${AND_LIST.format(rest)}`;
+}
+
+/** Of the rows the one rule matched over a schedule's life, those for paydays inside `[from, to]` — a window's read ones. */
+function unattachedAmong(
+  matches: readonly UnattachedMatch[],
+  from: string | null,
+  to: string | null,
+): readonly UnattachedMatch[] {
+  if (from === null || to === null) return [];
+  return matches.filter((m) => compareDates(m.date, from) >= 0 && compareDates(m.date, to) <= 0);
 }
 
 /**

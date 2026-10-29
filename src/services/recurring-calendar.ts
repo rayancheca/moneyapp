@@ -18,13 +18,17 @@ import {
 import { RECURRING_HISTORY_STATUSES } from "@/lib/series-evidence";
 import { billedWithPhrase, carrierWord } from "@/lib/billed-with";
 import {
+  asksForUnattachedMatch,
   forecastConfidence,
   settledVerdict,
   STATE_ATTENTION_ORDER,
   type ForecastConfidence,
+  type OccurrenceReading,
   type OccurrenceState,
+  type ScheduleProven,
   type UnsettledReason,
 } from "@/lib/occurrence-verdict";
+import type { ExpectedDay, UnattachedMatch } from "@/lib/unattached-match";
 import { outsidePortfolioCashAccountIds } from "./accounts";
 import { isAgentsSeries, loadCategoryIndex } from "./analytics";
 import {
@@ -55,6 +59,7 @@ import {
   seriesEvidence,
 } from "./recurring";
 import { seriesCategoryIds } from "./series-category";
+import { unattachedMatchesBySeries } from "./unattached-match";
 
 /**
  * Recurring calendar month (ux-overhaul-plan §4.1.3). One month of the
@@ -66,7 +71,8 @@ import { seriesCategoryIds } from "./series-category";
  *   - missed          red ✕   — expected before today, unposted, day AND its grace
  *                               checked through, the last over (`dueDayIsRead`, ⚖️ §6A 60, 62)
  *   - unsettled       grey ?  — expected before today, unposted, and the ledger
- *                               cannot yet say (see `occurrence-verdict`)
+ *                               cannot yet say (see `occurrence-verdict`) — or a row
+ *                               matches it to the cent unattached, named (`unattached`)
  *
  * ## Which series contribute, and to WHAT
  *
@@ -197,6 +203,12 @@ export interface CalendarEntry {
    * so a cell can never print a verdict beside the wrong explanation.
    */
   unsettledReason: UnsettledReason | null;
+  /**
+   * The row the one rule matched to this day to the cent, sitting unattached (`services/unattached-match`) — non-null
+   * exactly when `unsettledReason` is "matched_unattached", out of the same `settledVerdict` call. Named by its day and
+   * amount (`unsettledWords`), and never paid: the mark settles nothing (`settledCents` null).
+   */
+  unattached: UnattachedMatch | null;
   /**
    * How firmly this forecast is asserted. Non-null exactly when `state` is
    * "upcoming" — a settled day needs no confidence, it has an outcome.
@@ -655,12 +667,41 @@ export function recurringCalendar(
       towardNoPayday: false,
       settledCents: 0,
       unsettledReason: null,
+      unattached: null,
       confidence: null,
       isStale: false,
       neverBilled: false,
       billedWith: null,
       paidWith,
       hue: hues.get(s.id) ?? null,
+    });
+  /**
+   * An expected occurrence no posting paid, drawn at its own amount and settling nothing: upcoming, with who said it and
+   * what its evidence says; or past, with its verdict and the row that verdict names (`settledVerdict`).
+   */
+  const pushExpected = (
+    s: { id: string; name: string; kind: SeriesKind },
+    o: { date: string; amountCents: number },
+    graded: Pick<
+      CalendarEntry,
+      "state" | "unsettledReason" | "unattached" | "confidence" | "isStale" | "neverBilled" | "billedWith"
+    >,
+  ): void =>
+    pushEntry(o.date, {
+      seriesId: s.id,
+      name: s.name,
+      kind: s.kind,
+      amountCents: o.amountCents,
+      expectedAmountCents: o.amountCents,
+      transactionId: null,
+      settledByDepositsOn: [],
+      settlesPaydaysOn: [],
+      perPayday: null,
+      towardNoPayday: false,
+      settledCents: null,
+      paidWith: null,
+      hue: hues.get(s.id) ?? null,
+      ...graded,
     });
 
   /*
@@ -808,6 +849,7 @@ export function recurringCalendar(
         towardNoPayday: reading?.towardNoPayday ?? false,
         settledCents: p.amountCents - elsewhere.cents,
         unsettledReason: null,
+        unattached: null,
         confidence: null,
         isStale: false,
         neverBilled: false,
@@ -871,6 +913,13 @@ export function recurringCalendar(
    * before (his decisions 73 and 76) — FPL's Jul 28, drawn in July, pays August's Aug 8.
    */
   const paymentsBySeries = billPaymentsBySeries(db, forecastRows);
+  /** the past occurrences no posting paid, each with how far the ledger has read its day — graded below, at once */
+  const past: {
+    s: (typeof forecastRows)[number];
+    o: { date: string; amountCents: number };
+    reading: OccurrenceReading;
+    proven: ScheduleProven;
+  }[] = [];
 
   for (const s of forecastRows) {
     if (hasStoppedForecasting(s, today, silenceThroughOf(s.id))) continue;
@@ -942,6 +991,7 @@ export function recurringCalendar(
             towardNoPayday: false,
             settledCents: paidFromElsewhere.get(s.id)?.get(o.date) ?? 0,
             unsettledReason: null,
+            unattached: null,
             confidence: null,
             isStale: false,
             neverBilled: false,
@@ -980,53 +1030,70 @@ export function recurringCalendar(
         }
       }
 
-      const isFuture = compareDates(o.date, today) >= 0;
-      // The state and its reason are one decision, taken once. Splitting them
-      // is how `budgetVerdict` came to print a headline beside a definition that
-      // contradicted it.
-      const verdict = isFuture
-        ? null
-        : settledVerdict(
-            s.kind,
-            o.date,
-            {
-              // ⚖️ the arrears' reading of the same day (`dueDayReadings`): a ✕ exactly where they say "not posted"
-              dueDay: readingOf
-                ? readingOf(s.id)
-                : { observedThrough: null, graceDays: s.toleranceDays, readsToToday: false },
-              // the passed paydays' frontier (`unbankedIncomeForSeries`): "the ledger has not looked for its deposit"
-              // (`not_looked_for`) exactly where the forecast, his pay's page, /budgets and the dashboard say it
-              paydaysCheckedThrough: paydaysCheckedOf ? paydaysCheckedOf(s.id) : null,
-              // …and its days to land: "never reached a bank" exactly where Earned vs banked says it (`unbankedSplit`)
-              paydayLandingDays: s.toleranceDays,
-            },
-            // ⚖️ a day billed inside another's payment is the carrier's day, measured by the carrier's charges — never
-            // "missed" alone beside a rent whose own date is too thinly charged to grade (§6A 59)
-            scheduleIsProven(postingCounts.get(s.billedWith?.id ?? s.id) ?? 0),
-          );
-
-      pushEntry(o.date, {
-        seriesId: s.id,
-        name: s.name,
-        kind: s.kind,
-        state: verdict?.state ?? "upcoming",
-        amountCents: o.amountCents,
-        expectedAmountCents: o.amountCents,
-        transactionId: null,
-        settledByDepositsOn: [],
-        settlesPaydaysOn: [],
-        perPayday: null,
-        towardNoPayday: false,
-        settledCents: null,
-        unsettledReason: verdict?.reason ?? null,
-        confidence: isFuture ? confidence : null,
-        isStale: isFuture && isStale,
-        neverBilled: isFuture && neverBilled,
-        billedWith: isFuture ? billedWith : null,
-        paidWith: null,
-        hue: hues.get(s.id) ?? null,
+      if (compareDates(o.date, today) >= 0) {
+        pushExpected(s, o, {
+          state: "upcoming",
+          unsettledReason: null,
+          unattached: null,
+          confidence,
+          isStale,
+          neverBilled,
+          billedWith,
+        });
+        continue;
+      }
+      past.push({
+        s,
+        o,
+        reading: {
+          // ⚖️ the arrears' reading of the same day (`dueDayReadings`): a ✕ exactly where they say "not posted"
+          dueDay: readingOf ? readingOf(s.id) : { observedThrough: null, graceDays: s.toleranceDays, readsToToday: false },
+          // the passed paydays' frontier (`unbankedIncomeForSeries`): "the ledger has not looked for its deposit"
+          // (`not_looked_for`) exactly where the forecast, his pay's page, /budgets and the dashboard say it
+          paydaysCheckedThrough: paydaysCheckedOf ? paydaysCheckedOf(s.id) : null,
+          // …and its days to land: "never reached a bank" exactly where Earned vs banked says it (`unbankedSplit`)
+          paydayLandingDays: s.toleranceDays,
+        },
+        // ⚖️ a day billed inside another's payment is the carrier's day, measured by the carrier's charges — never
+        // "missed" alone beside a rent whose own date is too thinly charged to grade (§6A 59)
+        proven: scheduleIsProven(postingCounts.get(s.billedWith?.id ?? s.id) ?? 0),
       });
     }
+  }
+
+  /*
+   * ⛔ …and before a past mark says what did not arrive, THE ONE RULE (`services/unattached-match`): a row matching its
+   * day to the cent, sitting unattached, makes it "not yet known" and named — never a red ✕, never "never reached a
+   * bank", and never paid. Asked of exactly the days every other surface asks it of (`asksForUnattachedMatch`), so one
+   * row answers the same day here as on the runway, the forecast and Earned vs banked.
+   *
+   * 🔴 Review of de31d22 (HIGH): the calendar never asked. On his ledger copy (2026-10-29, after the Oct 26 import and
+   * before his filing) it drew Oct 1, 8, 15 and 22 "not yet known — never reached a bank $1,141.92" while the forecast
+   * card on the same page said "Pay matched to the cent by rows of $1,141.92 on Thu, Oct 1, 2026, …"; with Breezeline's
+   * Oct 10 −$50.00 unlinked, a red ✕ "missed" on Oct 8 beside the Next column's "Oct 8 — matched to the cent by a row of
+   * $50.00 on Oct 10 that is not attached to it".
+   */
+  const asked = new Map<string, ExpectedDay[]>();
+  for (const { s, o, reading } of past) {
+    if (!asksForUnattachedMatch(s.kind, o.date, reading)) continue;
+    asked.set(s.id, [...(asked.get(s.id) ?? []), { date: o.date, amountCents: o.amountCents }]);
+  }
+  const unattachedOf = unattachedMatchesBySeries(db, asked, today);
+  for (const { s, o, reading, proven } of past) {
+    const match = unattachedOf.get(s.id)?.find((m) => m.date === o.date) ?? null;
+    // The state and its reason are one decision, taken once. Splitting them
+    // is how `budgetVerdict` came to print a headline beside a definition that
+    // contradicted it.
+    const verdict = settledVerdict(s.kind, o.date, reading, proven, match);
+    pushExpected(s, o, {
+      state: verdict.state,
+      unsettledReason: verdict.reason,
+      unattached: verdict.unattached ?? null,
+      confidence: null,
+      isStale: false,
+      neverBilled: false,
+      billedWith: null,
+    });
   }
 
   let entryCount = 0;

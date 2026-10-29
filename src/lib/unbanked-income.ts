@@ -1,4 +1,9 @@
-import { MATCHED_TO_THE_CENT_BY, unattachedRowsWords, type UnattachedMatch } from "@/lib/unattached-match";
+import {
+  countedDepositWords,
+  MATCHED_TO_THE_CENT_BY,
+  unattachedRowsWords,
+  type UnattachedMatch,
+} from "@/lib/unattached-match";
 /**
  * How far the accounts the passed paydays' pay lands in have been checked.
  *
@@ -239,8 +244,10 @@ export function unbankedIncomeFrontierClause(
   if (unread <= 0) return null;
 
   const checked = r.checkedOccurrenceCount;
-  // ⛔ "with no deposit" only where no row matches one unattached (`lib/unattached-match`)
-  const noDeposit = (r.unattached ?? []).length === 0 ? "with no deposit" : "with no deposit attached to it";
+  // ⛔ "with no deposit" only where no row matches one unattached (`lib/unattached-match`) — and "…and filed as income"
+  // once one of them is attached and filed nowhere (`countedDepositWords`)
+  const matched = r.unattached ?? [];
+  const noDeposit = matched.length === 0 ? "with no deposit" : `with no deposit ${countedDepositWords(matched, "it")}`;
   const checkedPart =
     checked === 0 ? null : `${checked} ${checked === 1 ? "falls on a day" : "fall on days"} already checked, ${noDeposit}`;
   const other = unread === 1 ? "the other one" : `the other ${unread}`;
@@ -344,7 +351,7 @@ export function passedPaydaysWords(r: PassedPaydaysReading, formatDay: (iso: str
         ? "already passed this month"
         : (r.unattached ?? []).length === 0
           ? "already passed this month with no deposit imported"
-          : "already passed this month with no deposit attached to it",
+          : `already passed this month with no deposit ${countedDepositWords(r.unattached ?? [], "it")}`,
     unread,
     notProjected: `${notProjectedSubject(r, formatDay)} cannot be projected as arriving`,
     warning: r.pastGraceOccurrenceCount > 0,
