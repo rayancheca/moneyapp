@@ -1,6 +1,6 @@
 import { createElement, isValidElement, type ReactElement, type ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { Line, LineChart, type DotItemDotProps } from "recharts";
+import { Line, LineChart, Tooltip, type DotItemDotProps } from "recharts";
 import { describe, expect, test } from "vitest";
 import type { CashCumulativePoint, PlottedRunningTotal } from "@/lib/cash-flow-cumulative";
 import type { UnreachedKind } from "@/lib/empty-period";
@@ -34,7 +34,7 @@ const point = (key: string, label: string): CashCumulativePoint => ({
 function render(
   p: CashCumulativePoint,
   unreached: Parameters<typeof RunningTotalTooltip>[0]["unreached"],
-  incomeUnread = false,
+  incomeUnread: Parameters<typeof RunningTotalTooltip>[0]["incomeUnread"] = null,
 ): string {
   return textOf(
     renderToStaticMarkup(
@@ -62,18 +62,41 @@ describe("CashFlowGraph's tooltip — a running Income nobody has looked for", (
     ghostWhole: false,
   };
 
-  test("dashes Income and Net, keeps Spent, and says why in the dashboard's words", () => {
-    const text = render(oct14, null, true);
+  test("dashes Income and Net, keeps Spent, and says why of the days it sums", () => {
+    const text = render(oct14, null, { from: "2026-10-01", to: "2026-10-14" });
     expect(text).toContain("Through 14");
     expect(text).toContain("$1,603.00");
     expect(text).not.toContain("$0.00");
     expect(text).not.toMatch(/[−-]\$1,603\.00/);
     expect(text.match(/—/g)).toHaveLength(2);
-    expect(text).toContain("not one day through 14 has been checked in the accounts that pay lands in");
+    expect(text).toContain("not one day of Oct 1 – 14, 2026 has been checked in the accounts that pay lands in");
+  });
+
+  /*
+   * ⚖️ …named by the days it sums, never by its bucket's axis label (2026-10-29). 🔴 His ledger copy 2026-10-29:
+   * `?from=2026-09-26&to=2026-12-31` hovered "not one day through Sep 26–30 has been checked …" and "… through Oct …",
+   * `?period=2026-Q4` "… through Oct …", and `?from=2026-09-25&to=2027-03-31` "… through Sep 25–30 '26 …".
+   */
+  test("a month's point, or a clipped one, names the days from the run's first through its own last", () => {
+    const oct: CashCumulativePoint = { ...oct14, key: "2026-10", label: "Oct" };
+    const text = render(oct, null, { from: "2026-09-26", to: "2026-10-31" });
+    expect(text).toContain("Through Oct");
+    expect(text).toContain("not one day of Sep 26 – Oct 31, 2026 has been checked in the accounts that pay lands in");
+    expect(text).not.toMatch(/through Oct has/);
+    const sep = { ...oct14, key: "2026-09", label: "Sep 26–30" };
+    const clipped = render(sep, null, { from: "2026-09-26", to: "2026-09-30" });
+    expect(clipped).toContain("not one day of Sep 26 – 30, 2026 has been checked in the accounts that pay lands in");
+    expect(clipped).not.toContain("through Sep 26–30");
+  });
+
+  test("a point summing one day says that day has not been checked, as the table says of it", () => {
+    const text = render({ ...oct14, key: "2026-10-01", label: "1" }, null, { from: "2026-10-01", to: "2026-10-01" });
+    expect(text).toContain("Oct 1, 2026 has not been checked in the accounts that pay lands in");
+    expect(text).not.toContain("not one day");
   });
 
   test("a running Income that is a figure prints it, as before", () => {
-    const text = render(oct14, null, false);
+    const text = render(oct14, null, null);
     expect(text).toContain("$0.00");
     expect(text).not.toContain("pay lands in");
   });
@@ -122,7 +145,7 @@ describe("CashFlowGraph's tooltip — a running total is only as far as the ledg
       createElement(RunningTotalTooltip, {
         point: { ...point("2026-09-13", "13"), ghostCum: 993_587 },
         unreached: "after-records",
-        incomeUnread: false,
+        incomeUnread: null,
         hasRefunds: false,
         priorLabel: "August 2026",
       }),
@@ -275,5 +298,89 @@ describe("CashFlowGraph — a line with one point read still shows that point", 
       monthBucket("2026-08", 0, 0, "future"),
     ]);
     for (const line of lines) for (const i of [0, 1, 2]) expect(dotAt(line, i)).toBe("<svg></svg>");
+  });
+});
+
+/*
+ * ⚖️ §6A 68: the graph hands each hover the days its running Income sums (`runningIncomeUnreadDays`, the lines' own
+ * rule), so a month's point and a clipped one read as cleanly as a day's (2026-10-29). His ledger copy 2026-10-29,
+ * `?from=2026-09-26&to=2026-12-31` (`cashFlowByPeriod`), Wells Fargo checked through Sep 24.
+ */
+describe("CashFlowGraph — each hover is handed the days its running Income sums", () => {
+  type HoverContent = (props: { active: boolean; payload: unknown[]; label: string }) => ReactNode;
+
+  /** what hovering the point keyed `label` renders — the chart's own <Tooltip> content, read off the element tree */
+  function hoverOf(node: ReactNode): (label: string) => string {
+    const found: HoverContent[] = [];
+    const walk = (n: ReactNode): void => {
+      if (Array.isArray(n)) return n.forEach(walk);
+      if (!isValidElement<{ content?: HoverContent; children?: ReactNode }>(n)) return;
+      if (n.type === Tooltip && n.props.content !== undefined) found.push(n.props.content);
+      walk(n.props.children);
+    };
+    walk(node);
+    expect(found).toHaveLength(1);
+    return (label) =>
+      textOf(renderToStaticMarkup(createElement("div", null, found[0]!({ active: true, payload: [{}], label }))));
+  }
+
+  const month = (
+    key: string,
+    from: string,
+    to: string,
+    label: string,
+    over: Partial<CashFlowBucket>,
+  ): CashFlowBucket => ({
+    key,
+    label,
+    from,
+    to,
+    income: {},
+    spending: {},
+    incomeCents: 0,
+    spendingCents: 0,
+    refundsCents: 0,
+    netCents: 0,
+    unreached: null,
+    spendingUnaccounted: null,
+    incomeUnread: false,
+    ...over,
+  });
+
+  test("his copy's Sep 26 – Dec 31: the clipped September and October name their days, not their axis labels", () => {
+    const buckets = [
+      month("2026-09", "2026-09-26", "2026-09-30", "Sep 26–30", {
+        spendingCents: 124_150,
+        refundsCents: 1_516,
+        netCents: -122_634,
+        incomeUnread: true,
+      }),
+      month("2026-10", "2026-10-01", "2026-10-31", "Oct", {
+        spendingCents: 160_300,
+        netCents: -160_300,
+        incomeUnread: true,
+      }),
+      month("2026-11", "2026-11-01", "2026-11-30", "Nov", { unreached: "future" }),
+      month("2026-12", "2026-12-01", "2026-12-31", "Dec", { unreached: "future" }),
+    ];
+    const data: CashFlow = {
+      buckets,
+      incomeSeries: [],
+      spendingSeries: [],
+      totals: {} as CashFlow["totals"],
+      pace: null,
+      spendingUnaccounted: null,
+      incomeUnread: true,
+    };
+    const hover = hoverOf(CashFlowGraph({ data, projection: null }));
+    expect(hover("2026-09")).toContain(
+      "not one day of Sep 26 – 30, 2026 has been checked in the accounts that pay lands in",
+    );
+    expect(hover("2026-10")).toContain(
+      "not one day of Sep 26 – Oct 31, 2026 has been checked in the accounts that pay lands in",
+    );
+    for (const key of ["2026-09", "2026-10"]) expect(hover(key)).not.toMatch(/through (Sep 26–30|Oct) has/);
+    // a month not reached says its own world, and no running total
+    expect(hover("2026-11")).toContain("has not happened yet");
   });
 });

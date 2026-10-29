@@ -232,8 +232,9 @@ export interface CashFlow {
   /**
    * ⚖️ §6A 68: the WINDOW's `CashFlowBucket.incomeUnread` — no income found in the period and not one of its days
    * checked where his pay lands. Its stat cards print "—" for Income, Net and the savings rate with it, under the
-   * dashboard's words for the dash (`noIncomeDayCheckedNote`). 🔴 His ledger copy 2026-10-21: `/spending` carded October
-   * "INCOME $0.00 · NET -$1,603.00" while the dashboard printed "—" for the same month. ADDITIVE: `totals` is unchanged.
+   * dashboard's words for the dash, of the window (`noIncomeDayCheckedWindowNote`). 🔴 His ledger copy 2026-10-21:
+   * `/spending` carded October "INCOME $0.00 · NET -$1,603.00" while the dashboard printed "—" for the same month.
+   * ADDITIVE: `totals` is unchanged.
    */
   incomeUnread: boolean;
 }

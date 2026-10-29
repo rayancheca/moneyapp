@@ -45,8 +45,9 @@ export interface SpendingStatCardSpec {
 /** What the page knows of the window beyond its totals — each null where its figures are a measurement. */
 export interface SpendingStatCardFacts {
   /**
-   * ⚖️ §6A 68: the dashboard's words under its Income dash, for this window (`noIncomeDayCheckedNote`) — where no
-   * income was found and not one of its days is checked where the pay lands (`CashFlow.incomeUnread`)
+   * ⚖️ §6A 68: the dashboard's words under its Income dash, for this window (`noIncomeDayCheckedWindowNote` — of one
+   * day, "the day has not been checked", 2026-10-29) — where no income was found and not one of its days is checked
+   * where the pay lands (`CashFlow.incomeUnread`)
    */
   incomeUnread?: string | null;
   /** ⚖️ Decision 72: the period proof's days read only in part and their line (`Provenance.partlyRead`, Where it went's) */
@@ -141,7 +142,8 @@ export function spendingStatCards(
    * every href are unchanged. The `key` stays "earned" (never printed).
    *
    * ⚖️ …and an Income nobody has looked for is no figure (§6A 68): "—", with the dashboard's note for its own dash as
-   * the line under it — word for word, the one sentence for it (`noIncomeDayCheckedNote`).
+   * the line under it — word for word, the one sentence for it, said of the page's window
+   * (`noIncomeDayCheckedWindowNote`).
    */
   const incomeHref = ledgerHref({ category: "income", from: range.from, to: range.to });
   cards.push(
