@@ -1432,6 +1432,131 @@ describe("incomeExpectation — §6A 68: no income day of the month checked", ()
   });
 });
 
+/*
+ * 🔴 "COUNTED IN NEITHER FIGURE ABOVE" OF A DEPOSIT "IN SO FAR" COUNTS (review of 5c1c4903, MEDIUM — the dashboard's
+ * tile, and this header's sentence by the same two readings). The passed paydays are settlement's, which reads only
+ * rows ATTACHED to the pay (`lib/payday-settlement`); "in so far" counts every row filed under Income (`hisIncomeRows`).
+ * Jun 11's deposit filed Income › Salary from the review queue and attached to nothing is in both.
+ */
+describe("incomeExpectation — Income in so far that no pay schedule is attached to", () => {
+  let checkingId: string;
+  let pay: string;
+
+  beforeEach(() => {
+    const chase = bundle.db.select().from(institutions).where(eq(institutions.name, "Chase")).get()!;
+    checkingId = createAccount(bundle.db, { institutionId: chase.id, name: "Checking", type: "checking" });
+    pay = createSeries({
+      name: "It America LLC (weekly pay)",
+      nextExpectedOn: "2026-06-04",
+      nextExpectedAmountCents: 114_192,
+      kind: "income",
+      cadence: "weekly",
+      intervalDaysAvg: 7,
+    });
+    bundle.db.update(recurringSeries).set({ accountId: checkingId }).where(eq(recurringSeries.id, pay)).run();
+    // Jun 4's payroll, attached; Jun 11's and its three days to land checked
+    credit(checkingId, "2026-06-04", 114_192, "Income > Salary", pay);
+    checkedThrough(bundle.db, checkingId, "2026-06-15");
+  });
+
+  /** a credit on `accountId`, filed under `categoryPath`, attached to `seriesId` or to nothing */
+  function credit(accountId: string, postedOn: string, cents: number, categoryPath: string, seriesId?: string): void {
+    seq += 1;
+    const rawDescription = `CREDIT ${seq}`;
+    bundle.db
+      .insert(transactions)
+      .values({
+        accountId,
+        postedOn,
+        amountCents: cents,
+        rawDescription,
+        normalizedDescription: rawDescription,
+        categoryId: catId(categoryPath),
+        recurringSeriesId: seriesId ?? null,
+        dedupeHash: dedupeHash({ accountId, postedOn, amountCents: cents, rawDescription, occurrenceIndex: 0 }),
+      })
+      .run();
+  }
+
+  const month = () => incomeExpectation(bundle.db, "2026-06-01", "2026-06-30", "2026-06-16");
+
+  test("a deposit filed as Income where the pay lands, attached to nothing, is named as in so far", () => {
+    credit(checkingId, "2026-06-11", 114_192, "Income > Salary");
+    const got = month();
+    // in so far counts Jun 11's deposit, while settlement — attached rows only — leaves Jun 11 passed unpaid
+    expect(got.postedCents).toBe(2 * 114_192);
+    expect([got.passedUnpaidOccurrences, got.passedUnpaidCents]).toEqual([1, 114_192]);
+    expect(got.postedUnattachedCents).toBe(114_192);
+  });
+
+  test("Income attached to nothing where the pay does not land is not, filed as his pay is or not", () => {
+    const chase = bundle.db.select().from(institutions).where(eq(institutions.name, "Chase")).get()!;
+    const savings = createAccount(bundle.db, { institutionId: chase.id, name: "Savings", type: "savings" });
+    credit(savings, "2026-06-11", 114_192, "Income > Salary");
+    const got = month();
+    expect(got.postedCents).toBe(2 * 114_192);
+    expect(got.passedUnpaidCents).toBe(114_192);
+    expect(got.postedUnattachedCents).toBe(0);
+  });
+
+  // ⚖️ …nor where it lands filed as no pay of his is filed: his Sep 4 reimbursement from It America LLC (2026-09-28)
+  test("Income attached to nothing where the pay lands, filed as a reimbursement, is not", () => {
+    credit(checkingId, "2026-06-05", 46_820, "Income > Refunds & Reimbursements");
+    const got = month();
+    expect(got.postedCents).toBe(114_192 + 46_820);
+    expect(got.passedUnpaidCents).toBe(114_192);
+    expect(got.postedUnattachedCents).toBe(0);
+  });
+
+  // ⛔ …and with two schedules, one schedule's account and the other's filing make it neither one's pay
+  test("Income where one schedule lands, filed as another's pay is filed, is neither's", () => {
+    const chase = bundle.db.select().from(institutions).where(eq(institutions.name, "Chase")).get()!;
+    const savings = createAccount(bundle.db, { institutionId: chase.id, name: "Savings", type: "savings" });
+    const tutoring = createSeries({
+      name: "Tutoring (weekly pay)",
+      nextExpectedOn: "2026-06-03",
+      nextExpectedAmountCents: 30_000,
+      kind: "income",
+      cadence: "weekly",
+      intervalDaysAvg: 7,
+    });
+    bundle.db.update(recurringSeries).set({ accountId: savings }).where(eq(recurringSeries.id, tutoring)).run();
+    credit(savings, "2026-06-03", 30_000, "Income > Other Income", tutoring);
+    // Savings is where Tutoring lands; Salary is how It America's pay is filed
+    credit(savings, "2026-06-11", 114_192, "Income > Salary");
+    const got = month();
+    expect(got.passedUnpaidCents).toBeGreaterThan(0);
+    expect(got.postedUnattachedCents).toBe(0);
+  });
+
+  // ⚖️ …while a schedule that has not paid yet is filed where he put it (`user_category_id`, the bridge's override)
+  test("a schedule filed by hand before its first deposit reads its filing", () => {
+    const fresh = createSeries({
+      name: "Tutoring (weekly pay)",
+      nextExpectedOn: "2026-06-03",
+      nextExpectedAmountCents: 30_000,
+      kind: "income",
+      cadence: "weekly",
+      intervalDaysAvg: 7,
+      lastMatchedOn: null,
+    });
+    bundle.db
+      .update(recurringSeries)
+      .set({ accountId: checkingId, userCategoryId: catId("Income > Other Income") })
+      .where(eq(recurringSeries.id, fresh))
+      .run();
+    credit(checkingId, "2026-06-10", 30_000, "Income > Other Income");
+    const got = month();
+    expect(got.passedUnpaidCents).toBeGreaterThan(0);
+    expect(got.postedUnattachedCents).toBe(30_000);
+  });
+
+  test("Income attached to the pay is the pay's, and no payday passed unpaid", () => {
+    credit(checkingId, "2026-06-11", 114_192, "Income > Salary", pay);
+    expect(month()).toMatchObject({ postedCents: 2 * 114_192, passedUnpaidCents: 0, postedUnattachedCents: 0 });
+  });
+});
+
 describe("budgetOverdue — the bill that came due and never arrived", () => {
   test("an expected occurrence with no posting is overdue; a posted one is not", () => {
     const rent = createSeries({

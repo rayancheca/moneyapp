@@ -358,7 +358,10 @@ export function passedPaydaysWords(r: PassedPaydaysReading, formatDay: (iso: str
   };
 }
 
-/** A line naming the passed paydays a figure leaves out, and whether it wears the warning's tone (`warning`). */
+/**
+ * A line naming the passed paydays a figure leaves out — said to be out of it only where its rows bear that out
+ * (`passedPaydaysLeftOut`) — and whether it wears the warning's tone (`warning`).
+ */
 export interface PaydaysLeftOut {
   text: string;
   warning: boolean;
@@ -375,14 +378,24 @@ export interface PaydaysLeftOut {
  * and it never becomes one"), so the figure keeps what it measured — decision 72's rule for a total over days not every
  * account is read for. 🔴 Free to spend left Jul 9's $1,000 out of both legs on Jul 10 and said nothing (review of
  * a5ce8b15).
+ *
+ * ⛔ "— not in Free to spend" only where the figure's posted rows bear it out: where its posted Income holds money no
+ * pay schedule is attached to in an account that pay lands in (`postedMayHoldThem`,
+ * `unattachedIncomeWherePayLandsCents`), the paydays are named and nothing is said of the figure. 🔴 The paydays are
+ * settlement's, which reads only attached rows, and the posted leg counts every row filed under Income: Jul 9's $1,000
+ * filed Income › Salary and attached to nothing read "— not in Free to spend" under the $4,920.00 the attached case
+ * shows (review of 5c1c4903, MEDIUM).
  */
 export function passedPaydaysLeftOut(
   passed: PassedPaydaysReading & { totalCents: number },
   figure: string,
   formatDay: (iso: string) => string,
+  /** the figure's posted Income holds money no pay schedule is attached to where that pay lands */
+  postedMayHoldThem: boolean,
 ): PaydaysLeftOut | null {
   if (passed.totalCents <= 0) return null;
   const w = passedPaydaysWords(passed, formatDay);
-  const lead = `${w.count} worth ${formatCents(passed.totalCents)} ${w.passed} — not in ${figure}.`;
+  const notIn = postedMayHoldThem ? "" : ` — not in ${figure}`;
+  const lead = `${w.count} worth ${formatCents(passed.totalCents)} ${w.passed}${notIn}.`;
   return { text: `${lead} ${w.unread ?? `${w.notProjected}.`}`, warning: w.warning };
 }

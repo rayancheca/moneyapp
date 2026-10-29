@@ -236,10 +236,16 @@ describe("the e2e fixture's Jul 3 payday, after Chase Total Checking's Jun 30 �
    * ⚖️ Default built, not asked (2026-10-29): the dashboard's pace tile names the payday Free to spend has in
    * neither leg (`SpendingPace.paydaysLeftOut`), in the forecast's words — the checked day as the income card above
    * writes it. Its figure stands only over a July with spending and income found, as the seed's is (rows to Jul 4,
-   * the weekly ATM cash filed as Salary): one of each on Jul 2 for this test, removed after it. Measured on a scratch
-   * e2e seed (`seedE2eDatabase`) 2026-10-29: "Free to spend ≈ $1,928.38" over this same line.
+   * the weekly ATM cash filed as Salary): one of each on Jul 2 for this test, removed after it.
+   *
+   * ⛔ …and that ATM cash is filed under Income, attached to no schedule, in Chase Total Checking — where Paycheck
+   * lands — so Free to spend's posted leg holds money the ledger cannot tell from Jul 3's pay
+   * (`unattachedIncomeWherePayLandsCents`): the tile names Jul 3 and says nothing of the figure. 🔴 It said "— not in
+   * Free to spend" over a posted leg settlement never read (review of 5c1c4903). Measured on a scratch e2e seed
+   * (`seedE2eDatabase`) 2026-10-29: "Free to spend ≈ $1,928.38" over this same line — the seed's Jul 2 ATM CASH
+   * DEPOSIT is $1,262.00, Salary, attached to nothing (this test's stand-in: $1,150.00).
    */
-  test("the dashboard's pace tile: the payday Free to spend leaves out", () => {
+  test("the dashboard's pace tile: the payday passed with no deposit, named under the figure", () => {
     const at = "2026-07-02T12:00:00.000Z";
     // Salary, as the ACME deposits are filed
     const salary = bundle.db.select().from(transactions).where(eq(transactions.id, "acme-0")).get()!.categoryId;
@@ -269,9 +275,8 @@ describe("the e2e fixture's Jul 3 payday, after Chase Total Checking's Jun 30 �
       expect(pace.freeToSpendCents).not.toBeNull();
       expect(pace.paydaysLeftOut).toEqual({
         text:
-          "1 payday worth $2,943.19 already passed this month — not in Free to spend. It falls after Jun 30, the " +
-          "last day every account that pay lands in has been checked through — so the ledger has not looked for its " +
-          "deposit.",
+          "1 payday worth $2,943.19 already passed this month. It falls after Jun 30, the last day every account " +
+          "that pay lands in has been checked through — so the ledger has not looked for its deposit.",
         warning: false,
       });
     } finally {

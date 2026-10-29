@@ -287,14 +287,20 @@ export default async function BudgetsPage({
               2026-09-15). It is said now only when every passed payday fell on
               a day the ledger has checked; otherwise `passedUnread` names the
               rest as not looked for, in /spending's words. */}
+          {/* ⛔ …and "counted in neither figure above" only where "in so far" holds
+              no Income that no pay schedule is attached to where the pay lands
+              (`postedUnattachedCents`): settlement never read that money, and it
+              may be their pay. 🔴 Review of 5c1c4903 (MEDIUM): Jul 9's $1,000
+              filed Income › Salary and attached to nothing read "$2,000.00 in so
+              far" over the same payday "counted in neither figure above". */}
           {income.passedUnpaidCents > 0 && (
             <p className="mt-1 text-xs text-ink-faint">
               {income.passedUnpaidOccurrences === 1 ? "1 payday" : `${income.passedUnpaidOccurrences} paydays`}{" "}
               worth <Money cents={income.passedUnpaidCents} /> already passed this month
               {passedUnread === null && (
                 <> with no deposit against {income.passedUnpaidOccurrences === 1 ? "it" : "them"}</>
-              )}{" "}
-              — counted in neither figure above.{" "}
+              )}
+              {income.postedUnattachedCents > 0 ? "." : " — counted in neither figure above."}{" "}
               {passedUnread ?? IMPORTS_NOT_EARNINGS}
             </p>
           )}

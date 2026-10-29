@@ -13,6 +13,7 @@ import { transactions } from "@/db/schema/transactions";
 import { resolvePeriod } from "@/lib/period";
 import { createAccount } from "./accounts";
 import { addManualAnchor } from "./anchors";
+import { bulkApply } from "./bulk-edit";
 import { checkedThrough as checkedThroughFixture } from "./checked-days-fixture";
 import { dashboardData } from "./dashboard";
 import { cashFlowByPeriod } from "./spending";
@@ -652,7 +653,7 @@ describe("dashboardData: spending pace", () => {
      * through `checkedThrough`; he spends $80 from Chase. (Not into Chase: its anchor on Jul 8 checks it through
      * Jul 8.)
      */
-    function weeklyPayFoundJul2(checkedThrough: string): void {
+    function weeklyPayFoundJul2(checkedThrough: string): { pay: string; wells: string } {
       const pay = seedSeries({ name: "Payroll", kind: "income", cadence: "weekly", nextExpectedOn: "2026-07-09", amountCents: 1000_00, lastMatchedOn: "2026-07-02", intervalDaysAvg: 7 });
       const instId = bundle.db.select().from(institutions).where(eq(institutions.name, "Chase")).get()!.id;
       const wells = createAccount(bundle.db, { institutionId: instId, name: "Wells Fargo", type: "checking" });
@@ -673,6 +674,26 @@ describe("dashboardData: spending pace", () => {
         .run();
       checkedThroughFixture(bundle.db, wells, checkedThrough);
       spend("Groceries", "2026-07-02", -80_00);
+      return { pay, wells };
+    }
+
+    /** an unfiled credit, then filed Income › `category` from the review queue — the category picker's write */
+    function filedFromTheReviewQueue(accountId: string, postedOn: string, amountCents: number, category: string): string {
+      const id = bundle.db
+        .insert(transactions)
+        .values({
+          accountId,
+          postedOn,
+          amountCents,
+          rawDescription: `CREDIT ${postedOn}`,
+          normalizedDescription: `CREDIT ${postedOn}`,
+          dedupeHash: `credit-${accountId}-${postedOn}`,
+        })
+        .returning({ id: transactions.id })
+        .get().id;
+      const categoryId = bundle.db.select().from(categories).where(eq(categories.name, category)).get()!.id;
+      bulkApply(bundle.db, [id], { categoryId });
+      return id;
     }
 
     test("Free to spend names the payday it has in neither leg, in the forecast's words", () => {
@@ -750,6 +771,54 @@ describe("dashboardData: spending pace", () => {
           "that never reaches a bank cannot be projected as arriving.",
         warning: true,
       });
+    });
+
+    /*
+     * 🔴 THE LINE READ ONE SET OF ROWS AND THE FIGURE ANOTHER (review of 5c1c4903, MEDIUM). The paydays it names are
+     * settlement's, which reads only rows ATTACHED to the pay (attributed deposits only, `lib/payday-settlement`); the
+     * figure's posted leg counts every row filed under Income (`hisIncomeRows`). Jul 9's $1,000 filed Income › Salary
+     * from the review queue and attached to nothing: Free to spend read $4,920.00 — the attached case's figure, the
+     * deposit in its posted leg — over "1 payday worth $1,000.00 already passed this month with no deposit imported —
+     * not in Free to spend. …", in the warning's tone.
+     */
+    test("a deposit filed as Income where the pay lands, attached to no schedule, is never called left out", () => {
+      const { pay, wells } = weeklyPayFoundJul2("2026-07-13");
+      const jul9 = filedFromTheReviewQueue(wells, "2026-07-09", 1000_00, "Salary");
+      const pace = dashboardData(bundle.db, "2026-07-14").pace!;
+      // its posted leg holds Jul 9's deposit: Jul 2 and Jul 9 + Jul 16, 23 and 30 to come − $80
+      expect(pace.freeToSpendCents).toBe(2 * 1000_00 + 3 * 1000_00 - 80_00);
+      // …so the payday is named in the forecast's words, and nothing is said of the figure
+      expect(pace.paydaysLeftOut).toEqual({
+        text:
+          "1 payday worth $1,000.00 already passed this month with no deposit imported. Pay that never reaches a bank " +
+          "cannot be projected as arriving.",
+        warning: true,
+      });
+      // attached, it is the same figure, and no payday passed with no deposit
+      bundle.db.update(transactions).set({ recurringSeriesId: pay }).where(eq(transactions.id, jul9)).run();
+      const attached = dashboardData(bundle.db, "2026-07-14").pace!;
+      expect(attached.freeToSpendCents).toBe(pace.freeToSpendCents);
+      expect(attached.paydaysLeftOut).toBeNull();
+    });
+
+    /*
+     * ⛔ …and Income attached to nothing that cannot be its pay leaves the claim standing: in an account the pay does
+     * not land in, or filed as no pay of his is filed — his filing is his word for what the money is. ⚖️ His Sep 4
+     * $468.20 from It America LLC on Wells Fargo, filed under Refunds & Reimbursements, is "them paying them back for
+     * claude subscription" (his words, 2026-09-28), not pay.
+     */
+    test.each([
+      ["filed as his pay is, in an account the pay does not land in", "checking", "Salary"],
+      ["filed as no pay of his is filed, where the pay lands", "wells", "Refunds & Reimbursements"],
+    ])("Income attached to no schedule %s leaves the payday called left out", (_, where, category) => {
+      const { wells } = weeklyPayFoundJul2("2026-07-13");
+      filedFromTheReviewQueue(where === "wells" ? wells : checking, "2026-07-09", 1000_00, category);
+      const pace = dashboardData(bundle.db, "2026-07-14").pace!;
+      expect(pace.freeToSpendCents).toBe(2 * 1000_00 + 3 * 1000_00 - 80_00);
+      expect(pace.paydaysLeftOut?.text).toBe(
+        "1 payday worth $1,000.00 already passed this month with no deposit imported — not in Free to spend. Pay " +
+          "that never reaches a bank cannot be projected as arriving.",
+      );
     });
   });
 });
