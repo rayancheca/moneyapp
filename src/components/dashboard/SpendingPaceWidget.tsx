@@ -91,7 +91,9 @@ export function SpendingPaceWidget({ pace }: { pace: SpendingPace }) {
                 {/* the empty state's heading for the same month — the category headline's under its dash, word for
                     word. 🔴 "October 2026 is not imported yet" here, "has not been imported yet" there (review of
                     b2c9db7). ⚖️ Decision 64: where some account has read days and no spending was found past the day
-                    all of them are read through, /spending's Spent card's words for its own dash. */}
+                    all of them are read through, /spending's Spent card's words for its own dash. The dashboard's
+                    Flow says those words over a range NO account has read too — the clause of the empty state whose
+                    heading this prints, not a second reading (`CashFlow.spendingUnaccounted`, 2026-10-29). */}
                 {pace.spendingNotFound === null
                   ? notImportedTitle(pace.monthLabel)
                   : nothingFoundSoFar(pace.spendingNotFound)}
@@ -162,6 +164,19 @@ export function SpendingPaceWidget({ pace }: { pace: SpendingPace }) {
             </svg>
           )}
         </div>
+        {/* ⚖️ default built, not asked (2026-10-29): this month's paydays Free to spend has in neither leg, in the
+            forecast's words and warning tone (`SpendingPace.paydaysLeftOut`) — full width, under the figures it
+            qualifies, "not in Free to spend" only where its posted rows bear that out. 🔴 Review of a5ce8b15: Jul 9's
+            $1,000 left both legs on Jul 10 with nothing said. */}
+        {pace.paydaysLeftOut && (
+          <p
+            className={`mt-2 max-w-prose text-[11px] leading-relaxed ${
+              pace.paydaysLeftOut.warning ? "text-warning" : "text-ink-faint"
+            }`}
+          >
+            {pace.paydaysLeftOut.text}
+          </p>
+        )}
       </Link>
     </section>
   );

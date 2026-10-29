@@ -55,8 +55,12 @@ interface SankeyChartProps {
    * (`sankeyEmptyCopy`)
    */
   graph: SankeyEmptyFacts & SankeyGraph;
-  /** the window the surface names ("October 2026"), for the empty state's Income sentence; "this period" without one */
-  periodLabel?: string;
+  /**
+   * the surface's words for a flow left empty because its window's income nobody has looked for — /spending's Income
+   * card's sentence for the page's window (`noIncomeDayCheckedWindowNote`), the dashboard's for "this range"; "this
+   * period"'s without one (`sankeyEmptyCopy`)
+   */
+  incomeUnreadNote?: string;
   /** Tailwind height for the measured canvas (default h-[22rem]); focus mode passes a taller one */
   heightClass?: string;
   /** value formatter (default formatCents) */
@@ -151,19 +155,26 @@ export interface SankeyEmptyFacts {
  * a $1,141.92 pay on Oct 16 past spending's Aug 12 drew "Salary → Money in → Net saved $1,141.92" on /spending and
  * the dashboard's Flow 1W (`spendingSankey`).
  *
- * ⚖️ §6A 68: …and one left empty because its income nobody has looked for says that, in the Income card's words for its
- * own dash (`noIncomeDayCheckedNote`) — of the surface's period, or "this period" where it names none (the dashboard's
- * Flow ranges). 🔴 On his ledger copy 2026-10-21 `/spending?cash=sankey` drew October "From outside this period
- * $1,603.00" beside that card's "Not one day of October 2026 has been checked in the accounts that pay lands in".
+ * ⚖️ §6A 68: …and one left empty because its income nobody has looked for says that, in the surface's own sentence for
+ * its window (`incomeUnreadNote`): /spending's Income card's (`noIncomeDayCheckedWindowNote`), the dashboard's Flow's of
+ * "this range", "this period"'s where a surface hands none. 🔴 On his ledger copy 2026-10-21 `/spending?cash=sankey`
+ * drew October "From outside this period $1,603.00" beside that card's "Not one day of October 2026 has been checked in
+ * the accounts that pay lands in". 🔴 …and it rebuilt the card's sentence from a label (2026-10-29): of one day it read
+ * "Not one day of Sep 25, 2026 …" over a table saying "the day has not been checked", and the dashboard's Flow 1W and 1M
+ * said "Not one day of this period …" under pills whose own empty words are "No money flow in this range." (his copy).
  *
  * `emptyLabel` is said only where nothing flowed over days that are read: a window with no row at all past both days
- * carries both facts (`SpendingSankey`). 🔴 Review of e953d70, his ledger copy 2026-10-21: the dashboard's Flow 1D and
- * 1W printed "No money flow in this range." over Oct 15 – 21, past every account's import (Venture X's reaches Oct 14).
+ * carries both facts (`SpendingSankey`). 🔴 Review of e953d70, his ledger copy 2026-10-21: the dashboard's Flow 1W
+ * printed "No money flow in this range." over Oct 15 – 21, past every account's import (Venture X's reaches Oct 14).
  */
-export function sankeyEmptyCopy(graph: SankeyEmptyFacts, emptyLabel: string, periodLabel?: string): string {
+export function sankeyEmptyCopy(
+  graph: SankeyEmptyFacts,
+  emptyLabel: string,
+  incomeUnreadNote: string = noIncomeDayCheckedNote("this period"),
+): string {
   const said = [
     graph.spendingUnaccounted ? nothingFoundSoFarSentence(graph.spendingUnaccounted) : null,
-    graph.incomeUnread ? noIncomeDayCheckedNote(periodLabel ?? "this period") : null,
+    graph.incomeUnread ? incomeUnreadNote : null,
   ].filter((s): s is string => s !== null);
   return said.length === 0 ? emptyLabel : said.join(" ");
 }
@@ -290,7 +301,7 @@ export function SankeyChart({
   formatValue = formatCents,
   ariaLabel = "Money-flow diagram",
   emptyLabel = "No money flow in this period.",
-  periodLabel,
+  incomeUnreadNote,
   lens,
   onSelectLens,
 }: SankeyChartProps) {
@@ -349,7 +360,9 @@ export function SankeyChart({
 
   // an empty flow says why (`sankeyEmptyCopy`)
   if (graph.nodes.length === 0) {
-    return <p className="py-8 text-center text-sm text-ink-muted">{sankeyEmptyCopy(graph, emptyLabel, periodLabel)}</p>;
+    return (
+      <p className="py-8 text-center text-sm text-ink-muted">{sankeyEmptyCopy(graph, emptyLabel, incomeUnreadNote)}</p>
+    );
   }
 
   const isConnected = (linkSource: string, linkTarget: string) =>

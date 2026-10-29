@@ -1,3 +1,5 @@
+import { formatCents } from "./money";
+
 /**
  * How far the accounts the passed paydays' pay lands in have been checked.
  *
@@ -156,7 +158,7 @@ export function paidEarlyAside(paydays: readonly string[], formatPayday: (iso: s
  * reader and in the page's text alike.
  */
 export function noIncomeDayCheckedNote(month: string): string {
-  return `Not one day of ${month} has been checked in the accounts that pay lands in, so nothing is shown.`;
+  return lineUnderTheDash(notCheckedIn(month, false));
 }
 
 /**
@@ -166,18 +168,50 @@ export function noIncomeDayCheckedNote(month: string): string {
  * chart's hover under the bucket's. 🔴 His ledger copy 2026-10-21: both printed "Income $0.00" for Oct 1 … Oct 14.
  */
 export function noIncomeDayCheckedOf(bucket: "day" | "month"): string {
-  return bucket === "day"
-    ? "the day has not been checked in the accounts that pay lands in"
-    : "not one day of the month has been checked in the accounts that pay lands in";
+  return notCheckedIn(`the ${bucket}`, bucket === "day");
+}
+
+/** A window a §6A 68 sentence is said of: its two ends, and the words that name it ("Q4 2026", "Oct 1 – 14, 2026"). */
+export interface NamedWindow {
+  from: string;
+  to: string;
+  label: string;
 }
 
 /**
- * ⚖️ §6A 68 for a RUNNING total on /spending's graph lens (`runningIncomeUnread`): "not one day through 14 has been
- * checked in the accounts that pay lands in" — the note above, said of the days a "Through 14" hover sums. 🔴 His ledger
- * copy 2026-10-21: the hover read "Through 14 · Income $0.00 · Net −$1,603.00" over days Wells Fargo had not reached.
+ * ⚖️ §6A 68 of ANY window (2026-10-29): "not one day of Q4 2026 has been checked in the accounts that pay lands in" —
+ * and of a window ONE day long "Sep 25, 2026 has not been checked …", the table's words for one day
+ * (`noIncomeDayCheckedOf`) with the day named. /spending's graph hovers it of the days a running total sums
+ * (`runningIncomeUnreadDays`): "not one day of Oct 1 – 14, 2026 …". 🔴 The hover built it from the point's axis label
+ * until 2026-10-29 ("not one day through 14 …"), which read only for a day: his ledger copy hovered "… through Sep
+ * 26–30 …" and "… through Oct …" over `?from=2026-09-26&to=2026-12-31`, "… through Oct '26 …" over a window of years.
  */
-export function noIncomeDayCheckedThrough(label: string): string {
-  return `not one day through ${label} has been checked in the accounts that pay lands in`;
+export function noIncomeDayCheckedIn(window: NamedWindow): string {
+  return notCheckedIn(window.label, window.from === window.to);
+}
+
+/**
+ * …as the line under a window's dash — the month note above, of any window (2026-10-29). /spending's Income card and its
+ * Sankey lens are handed this one sentence for the page's period. 🔴 His ledger copy 2026-10-29: `?period=2026-09-25`
+ * (and Sep 27, Oct 14) carded "Not one day of Sep 25, 2026 has been checked in the accounts that pay lands in, so
+ * nothing is shown." — the Sankey lens the same — over a table saying "the day has not been checked …" of that day.
+ */
+export function noIncomeDayCheckedWindowNote(window: NamedWindow): string {
+  return lineUnderTheDash(noIncomeDayCheckedIn(window));
+}
+
+/**
+ * ⛔ ONE wording for one window, every surface: a window one day long "has not been checked", a longer one "not one day
+ * of" it. Decided here alone — the month note, a bucket's words and a window's are each said through it.
+ */
+function notCheckedIn(label: string, oneDay: boolean): string {
+  return oneDay
+    ? `${label} has not been checked in the accounts that pay lands in`
+    : `not one day of ${label} has been checked in the accounts that pay lands in`;
+}
+
+function lineUnderTheDash(clause: string): string {
+  return `${clause.charAt(0).toUpperCase()}${clause.slice(1)}, so nothing is shown.`;
 }
 
 /**
@@ -335,4 +369,46 @@ export function passedPaydaysWords(r: PassedPaydaysReading, formatDay: (iso: str
     notProjected: `${notProjectedSubject(r)} cannot be projected as arriving`,
     warning: r.pastGraceOccurrenceCount > 0,
   };
+}
+
+/**
+ * A line naming the passed paydays a figure leaves out — said to be out of it only where its rows bear that out
+ * (`passedPaydaysLeftOut`) — and whether it wears the warning's tone (`warning`).
+ */
+export interface PaydaysLeftOut {
+  text: string;
+  warning: boolean;
+}
+
+/**
+ * The passed paydays a figure built on the forecast holds in NEITHER of its income legs — posted income holds no
+ * deposit for them, and the forecast's fixed income opens on today — named under it in the forecast's words for the
+ * same paydays (`passedPaydaysWords`), laid out as the pay series' own page heads its list (`PassedPaydaysCard`):
+ * "1 payday worth $1,141.92 already passed this month — not in Free to spend. It falls after Oct 26, the last day …
+ * — so the ledger has not looked for its deposit." Null when no payday passed unbanked.
+ *
+ * ⚖️ Named, never counted: passed pay is reported, never projected (`unbankedIncomeForSeries`, "NOT a forecast leg,
+ * and it never becomes one"), so the figure keeps what it measured — decision 72's rule for a total over days not every
+ * account is read for. 🔴 Free to spend left Jul 9's $1,000 out of both legs on Jul 10 and said nothing (review of
+ * a5ce8b15).
+ *
+ * ⛔ "— not in Free to spend" only where the figure's posted rows bear it out: where its posted Income holds money no
+ * pay schedule is attached to in an account that pay lands in (`postedMayHoldThem`,
+ * `unattachedIncomeWherePayLandsCents`), the paydays are named and nothing is said of the figure. 🔴 The paydays are
+ * settlement's, which reads only attached rows, and the posted leg counts every row filed under Income: Jul 9's $1,000
+ * filed Income › Salary and attached to nothing read "— not in Free to spend" under the $4,920.00 the attached case
+ * shows (review of 5c1c4903, MEDIUM).
+ */
+export function passedPaydaysLeftOut(
+  passed: PassedPaydaysReading & { totalCents: number },
+  figure: string,
+  formatDay: (iso: string) => string,
+  /** the figure's posted Income holds money no pay schedule is attached to where that pay lands */
+  postedMayHoldThem: boolean,
+): PaydaysLeftOut | null {
+  if (passed.totalCents <= 0) return null;
+  const w = passedPaydaysWords(passed, formatDay);
+  const notIn = postedMayHoldThem ? "" : ` — not in ${figure}`;
+  const lead = `${w.count} worth ${formatCents(passed.totalCents)} ${w.passed}${notIn}.`;
+  return { text: `${lead} ${w.unread ?? `${w.notProjected}.`}`, warning: w.warning };
 }

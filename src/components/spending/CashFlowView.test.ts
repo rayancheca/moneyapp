@@ -42,6 +42,10 @@ const flow = (buckets: CashFlowBucket[]): CashFlow => {
 
 const NO_SANKEY: SpendingSankey = { nodes: [], links: [], spendingUnaccounted: null, incomeUnread: false };
 
+/** the page's sentence for a window whose income nobody has looked for (`noIncomeDayCheckedWindowNote`) */
+const NOT_CHECKED_OCTOBER =
+  "Not one day of October 2026 has been checked in the accounts that pay lands in, so nothing is shown.";
+
 function renderTable(cashFlow: CashFlow, periodLabel: string): string {
   return renderToStaticMarkup(
     createElement(CashFlowView, {
@@ -51,6 +55,7 @@ function renderTable(cashFlow: CashFlow, periodLabel: string): string {
       viewState: { cash: "table" },
       baseParams: {},
       periodLabel,
+      incomeUnreadNote: NOT_CHECKED_OCTOBER,
     }),
   );
 }
@@ -203,7 +208,7 @@ describe("CashFlowView's table — a day past the day all his spending is read t
  * `/spending?period=2026-10-16&cash=sankey` drew "Salary → Money in → Net saved $1,141.92" under "Spent — · Net —".
  */
 describe("CashFlowView's Sankey lens — a window whose spending has not been found", () => {
-  const renderSankey = (sankey: SpendingSankey): string =>
+  const renderSankey = (sankey: SpendingSankey, incomeUnreadNote = NOT_CHECKED_OCTOBER): string =>
     textOf(
       renderToStaticMarkup(
         createElement(CashFlowView, {
@@ -213,6 +218,7 @@ describe("CashFlowView's Sankey lens — a window whose spending has not been fo
           viewState: { cash: "sankey" },
           baseParams: {},
           periodLabel: "Oct 16, 2026",
+          incomeUnreadNote,
         }),
       ),
     );
@@ -227,6 +233,18 @@ describe("CashFlowView's Sankey lens — a window whose spending has not been fo
   test("a window with no flow at all keeps its own words", () => {
     expect(renderSankey(NO_SANKEY)).toContain("No money flow to chart in this period.");
   });
+
+  /*
+   * ⚖️ §6A 68: …and over a window whose income nobody has looked for, the page's one sentence for it — the Income card's
+   * (`incomeUnreadNote`, 2026-10-29). 🔴 His ledger copy 2026-10-29: `?period=2026-09-25&cash=sankey` read "Not one day
+   * of Sep 25, 2026 has been checked in the accounts that pay lands in, so nothing is shown." of one day.
+   */
+  test("an Income nobody has looked for is said in the page's sentence for the window", () => {
+    const sep25 = "Sep 25, 2026 has not been checked in the accounts that pay lands in, so nothing is shown.";
+    const text = renderSankey({ ...NO_SANKEY, incomeUnread: true }, sep25);
+    expect(text).toContain(sep25);
+    expect(text).not.toContain("Not one day of");
+  });
 });
 
 /*
@@ -236,7 +254,12 @@ describe("CashFlowView's Sankey lens — a window whose spending has not been fo
  * $1,603.00 -$1,603.00", Wells Fargo checked through Sep 24.
  */
 describe("CashFlowView's table — a bucket no day of which is checked where the pay lands", () => {
-  test("dashes Income and Net, keeps Spent, and says why", () => {
+  /*
+   * ⚖️ …and the note names both columns it dashes (2026-10-29): Net is Income's arithmetic and dashes with it. 🔴 His
+   * ledger copy 2026-10-29: `?period=2026-09-25&cash=table` read "25 — $58.63 —" over "A dash under Income is not a
+   * zero where the day has not been checked …", which said nothing of the dash under Net.
+   */
+  test("dashes Income and Net, keeps Spent, and says why of both", () => {
     const html = renderTable(
       flow([
         bucket("2026-09-24", "24", { incomeCents: 114_192, spendingCents: 25_261, netCents: 88_931 }),
@@ -246,7 +269,8 @@ describe("CashFlowView's table — a bucket no day of which is checked where the
     );
     expect(rowCells(html, "14")).toEqual(["14", "—", "$48.19", "—"]);
     expect(rowCells(html, "24")).toEqual(["24", "$1,141.92", "$252.61", "+$889.31"]);
-    const note = "A dash under Income is not a zero where the day has not been checked in the accounts that pay lands in.";
+    const note =
+      "A dash under Income and Net is not a zero where the day has not been checked in the accounts that pay lands in.";
     expect(textOf(/<caption[^>]*>(.*?)<\/caption>/.exec(html)![1]!)).toContain(note);
     expect(html).toMatch(new RegExp(`<p aria-hidden="true"[^>]*>[^<]*${note.replace(/\./g, "\\.")}</p>`));
   });
@@ -256,7 +280,8 @@ describe("CashFlowView's table — a bucket no day of which is checked where the
     const html = renderTable(flow([{ ...october, from: "2026-10-01", to: "2026-10-31" }]), "2026");
     expect(rowCells(html, "Oct")).toEqual(["Oct", "—", "$1,603.00", "—"]);
     expect(textOf(html)).toContain(
-      "A dash under Income is not a zero where not one day of the month has been checked in the accounts that pay lands in.",
+      "A dash under Income and Net is not a zero where not one day of the month has been checked in the accounts that " +
+        "pay lands in.",
     );
   });
 });

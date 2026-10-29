@@ -302,9 +302,14 @@ export function importedThroughFact(
  * day the period's proof on the same page counts its unaccounted days from), or null where its Spent is a figure.
  *
  * §6A 64's dash, asked of the window and the day /budgets asks it of (`emptyPeriodReason`, clipped at today), past the
- * day only: a window the ledger has not reached at all, or that has not happened, says THAT (`unreachedKind`), and a
- * window with one day read is a lower bound with its figure. ⚖️ A ledger of cash wallets alone has no day a statement
- * could move (2026-09-15), so `readThrough` is null there and nothing waits.
+ * day only — that day alone, never the ledger's newest row: a window before the records, or one that has not happened,
+ * reads null and its caller says why, and a window with one day read is a lower bound with its figure. A window past
+ * every account's newest row (`ledgerReaches`) is past this day too and reads the fact: the cash flow's buckets and the
+ * heatmap's days ask `unreachedKind` first and say THAT there, and the Sankey asks this alone and names the day
+ * /spending's empty state names. 🔴 This read "a window the ledger has not reached at all … says THAT (`unreachedKind`)"
+ * until 2026-10-29, of a rule that never reads `ledgerReaches` (batch 7 review); on his ledger copy 2026-10-29 the
+ * dashboard's Flow 1W (Oct 23 – 29), past Oct 14, names "spending imported through Aug 12" through it. ⚖️ A ledger of
+ * cash wallets alone has no day a statement could move (2026-09-15), so `readThrough` is null there and nothing waits.
  *
  * 🔴 Measured on his ledger copy 2026-10-13 (review of 2fce458): `/spending?period=2026-09`, all spending read through
  * Aug 12 and the ledger through Sep 24, tabled Sep 13 … Sep 22 "$0.00 $0.00 $0.00" and Sep 23 "Spent $0.00" beside its

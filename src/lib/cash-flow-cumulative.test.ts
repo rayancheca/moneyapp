@@ -5,6 +5,7 @@ import {
   isLonePoint,
   plottedRunningTotals,
   runningIncomeUnread,
+  runningIncomeUnreadDays,
   type CashCumulativeInput,
 } from "./cash-flow-cumulative";
 import type { UnreachedKind } from "./empty-period";
@@ -238,6 +239,56 @@ describe("runningIncomeUnread / plottedRunningTotals — a running Income nobody
     expect(plotted.map((p) => p.earnedCum)).toEqual([null, null, 50_000, 50_000, null]);
     expect(plotted.map((p) => p.netCum)).toEqual([null, null, 48_000, 47_000, null]);
     expect(plotted.map((p) => p.refundsCum)).toEqual([null, 0, 0, 0, null]);
+  });
+});
+
+/**
+ * ⚖️ §6A 68: the DAYS each of those points sums — the run's first day through the point's own last — which its hover
+ * names as not checked (2026-10-29). 🔴 His ledger copy 2026-10-29: the hover named a point by its axis label,
+ * "not one day through Sep 26–30 has been checked …" and "… through Oct …" over `?from=2026-09-26&to=2026-12-31`, and
+ * "… through Oct '26 …" over `?from=2026-09-25&to=2027-03-31`.
+ */
+describe("runningIncomeUnreadDays — the days a running Income nobody has looked for sums", () => {
+  const span = (
+    key: string,
+    from: string,
+    to: string,
+    incomeUnread: boolean,
+    unreached: UnreachedKind | null = null,
+  ) => ({
+    ...bucket(key, 0, 1_000),
+    from,
+    to,
+    unreached,
+    incomeUnread,
+  });
+
+  test("his copy's Sep 26 – Dec 31: each point sums from the run's first day through its own last", () => {
+    const window = [
+      span("2026-09", "2026-09-26", "2026-09-30", true),
+      span("2026-10", "2026-10-01", "2026-10-31", true),
+      span("2026-11", "2026-11-01", "2026-11-30", false, "future"),
+      span("2026-12", "2026-12-01", "2026-12-31", false, "future"),
+    ];
+    expect([...runningIncomeUnreadDays(window)]).toEqual([
+      ["2026-09", { from: "2026-09-26", to: "2026-09-30" }],
+      ["2026-10", { from: "2026-09-26", to: "2026-10-31" }],
+    ]);
+  });
+
+  test("its points are runningIncomeUnread's, and their days start where the ledger does", () => {
+    const window = [
+      span("01", "2022-08-01", "2022-08-01", false, "before-records"),
+      span("02", "2022-08-02", "2022-08-02", true),
+      span("03", "2022-08-03", "2022-08-03", false),
+      span("04", "2022-08-04", "2022-08-04", true),
+    ];
+    expect([...runningIncomeUnreadDays(window).keys()]).toEqual([...runningIncomeUnread(window)]);
+    expect(runningIncomeUnreadDays(window).get("02")).toEqual({ from: "2022-08-02", to: "2022-08-02" });
+  });
+
+  test("a running Income that is a figure from its first point has no such days", () => {
+    expect(runningIncomeUnreadDays([span("2026-09-24", "2026-09-24", "2026-09-24", false)]).size).toBe(0);
   });
 });
 

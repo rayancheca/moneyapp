@@ -396,10 +396,10 @@ describe("spendingSankey — a window whose income nobody has looked for", () =>
  * read through and with not one day checked where his pay lands, is a window nobody has looked at — both rules answer
  * it as they answer a window holding one side only, and the empty graph carries both facts. Only a window that IS read
  * and found nothing keeps the surface's own words. 🔴 Measured on his ledger copy 2026-10-21 (review of e953d70): the
- * dashboard's Flow 1D (Oct 21) and 1W (Oct 15 – 21) printed "No money flow in this range." — spending read through Aug
- * 12, Wells Fargo checked through Sep 24 — on the page whose Income card reads "Not one day of Oct 2026 has been
- * checked in the accounts that pay lands in", while /spending called the same days "a window nobody has looked at, not
- * one in which nothing happened". The nothing-flowed return ran before either rule was asked.
+ * dashboard's Flow 1W (Oct 15 – 21) printed "No money flow in this range." — spending read through Aug 12, Wells Fargo
+ * checked through Sep 24 — on the page whose Income card reads "Not one day of Oct 2026 has been checked in the
+ * accounts that pay lands in", while /spending called the same days "a window nobody has looked at, not one in which
+ * nothing happened". The nothing-flowed return ran before either rule was asked.
  */
 describe("spendingSankey — a window where nothing was found", () => {
   const TODAY = "2026-07-08";
@@ -451,27 +451,52 @@ describe("spendingSankey — a window where nothing was found", () => {
     });
   });
 
-  // 🔴 "or one the ledger has not reached" named this window until 2026-10-23 — read as past `ledgerReaches`, the one
-  // window that does NOT keep them (below)
-  test("a window read that found nothing — or one before the ledger opens — keeps the surface's words", () => {
+  test("a window read on both sides that found nothing keeps the surface's words", () => {
     readThroughJul3();
-    const quiet = { nodes: [], links: [], spendingUnaccounted: null, incomeUnread: false };
     // checking imported and checked through Jul 5: Jul 4 is read on both sides and holds no row — a measured zero
     insertTxn({ accountId: checkingId, postedOn: "2026-07-05", amountCents: -4_000, category: "Food > Dining" });
     checkedThrough(bundle.db, checkingId, "2026-07-05");
-    expect(spendingSankey(bundle.db, { from: "2026-07-04", to: "2026-07-04" }, TODAY)).toEqual(quiet);
-    // before the ledger opens: nothing there to wait for
-    expect(spendingSankey(bundle.db, { from: "2026-06-01", to: "2026-06-30" }, TODAY)).toEqual(quiet);
+    expect(spendingSankey(bundle.db, { from: "2026-07-04", to: "2026-07-04" }, TODAY)).toEqual({
+      nodes: [],
+      links: [],
+      spendingUnaccounted: null,
+      incomeUnread: false,
+    });
+  });
+
+  /*
+   * ⚠️ …and one before the ledger opens keeps them only where his pay's account is checked past its first day.
+   * Spending's day is never named there (`before-records`, `spendingNotFoundFact`), but income is asked as it is of
+   * every window: of its first day, against the frontier of the accounts the pay lands in (`noIncomeDayReadOf`). June
+   * is quiet because checking, where the pay lands, is checked through Jul 3 — past Jun 1 — not because the ledger
+   * opens on Jul 1. 🔴 The pin over both windows named June "one the ledger has not reached" until 2026-10-23 — read as
+   * past `ledgerReaches`, the one window that does NOT keep them (below) — and then "one before the ledger opens",
+   * claiming it whole, until 2026-10-29 (batch 7 review). Holds on his ledger copy 2026-10-29: Wells Fargo is checked
+   * through Sep 24, and Jan 2020, before his Aug 25, 2022, reads `incomeUnread` false.
+   */
+  test("before the ledger opens: quiet where the pay's account is checked past it, waiting where it is not", () => {
+    readThroughJul3();
+    const june = { from: "2026-06-01", to: "2026-06-30" };
+    const empty = { nodes: [], links: [], spendingUnaccounted: null };
+    expect(spendingSankey(bundle.db, june, TODAY)).toEqual({ ...empty, incomeUnread: false });
+    // the pay lands in an account no statement has checked: no day of June is read for it
+    const chase = bundle.db.select().from(institutions).where(eq(institutions.name, "Chase")).get()!;
+    const neverChecked = createAccount(bundle.db, { institutionId: chase.id, name: "Payroll", type: "checking" });
+    bundle.db.update(recurringSeries).set({ accountId: neverChecked }).run();
+    expect(spendingSankey(bundle.db, june, TODAY)).toEqual({ ...empty, incomeUnread: true });
+    // ⛔ the one rule: /spending's cash flow reads the window the same way
+    expect(cashFlowByPeriod(bundle.db, resolvePeriod(june, TODAY), TODAY).incomeUnread).toBe(true);
   });
 
   /*
    * ⛔ …and the window the guard was written for: one past every account's newest row (`ledgerReaches`) — what his
-   * dashboard's Flow 1D and 1W hold whenever a week passes with no statement. 🔴 Second reader of a1c67f0 (round 2):
-   * every window above ends on or before the card's Jul 7, so dropping the guard there — `notFound` skipped where
+   * dashboard's Flow 1W holds whenever a week passes with no statement. 🔴 Second reader of a1c67f0 (round 2): every
+   * window above ends on or before the card's Jul 7, so dropping the guard there — `notFound` skipped where
    * `range.from > ledgerReaches(db)` — passed all 192 tests of sankey, SankeyChart and src/app. Measured on his ledger
-   * copy 2026-10-23 (newest row Oct 14, spending read through Aug 12): Flow 1D (Oct 23) and 1W (Oct 17 – 23) read
-   * "Nothing found so far — spending imported through Aug 12. Not one day of this period has been checked in the
-   * accounts that pay lands in, so nothing is shown."; under that mutation, the second sentence alone.
+   * copy 2026-10-23 (newest row Oct 14, spending read through Aug 12): Flow 1W (Oct 17 – 23) read "Nothing found so far
+   * — spending imported through Aug 12. Not one day of this period has been checked in the accounts that pay lands in,
+   * so nothing is shown."; under that mutation, the second sentence alone. (It cited a "Flow 1D" too until 2026-10-29:
+   * the dashboard draws no 1D pill.)
    */
   test("one past every account's newest row, the empty graph still names spending's day", () => {
     readThroughJul3();
@@ -512,17 +537,19 @@ describe("spendingSankey — a window where nothing was found", () => {
   }
 
   /*
-   * ⛔ The one rule: /spending's own reading of the same window, never a second one — the reading it PRINTS. Over a
-   * window holding nothing that is its empty state ("Jul 8, 2026 has not been imported yet — … spending is imported
-   * through Fri, Jul 3, 2026. That is a window nobody has looked at …"), and the graph names its day. Its cash flow
-   * (`CashFlow.spendingUnaccounted`, what its cards print where a window holds money) agrees where it reaches a bucket
-   * of the window; past every account's newest row it reaches none, asks no day and reads null — the dashboard tile's
-   * "not imported yet" world (`SpendingPace.spendingNotFound`), never printed over an empty window. 🔴 This pin compared
-   * against `CashFlow` over Jul 4 – 6 alone: extended to Jul 8 it failed against the right graph, and held only with
-   * the guard dropped (second reader of a1c67f0, round 2). Income is the cash flow's everywhere
-   * (`CashFlow.incomeUnread`, `noIncomeDayReadOf`, asked of every window, reached or not).
+   * ⛔ The one rule: /spending's own reading of the same window, never a second one. Its spending is the reading the
+   * page PRINTS over a window holding nothing — its empty state ("Jul 8, 2026 has not been imported yet — … spending is
+   * imported through Fri, Jul 3, 2026. That is a window nobody has looked at …"), and the graph names its day. Its cash
+   * flow (`CashFlow.spendingUnaccounted`, what its cards print where a window holds money) agrees where it reaches a
+   * bucket of the window; past every account's newest row it reaches none, asks no day and reads null — the dashboard
+   * tile's "not imported yet" world (`SpendingPace.spendingNotFound`), never printed over an empty window. 🔴 This pin
+   * compared against `CashFlow` over Jul 4 – 6 alone: extended to Jul 8 it failed against the right graph, and held
+   * only with the guard dropped (second reader of a1c67f0, round 2). Its income is the cash flow's reading everywhere
+   * (`CashFlow.incomeUnread`, `noIncomeDayReadOf`, asked of every window, reached or not) — the rule its Income card
+   * dashes by, printed over no empty window: the page's empty branch mounts `EmptyState` and its notes alone. 🔴 Titled
+   * "reads exactly as /spending reads it" until 2026-10-29 (batch 7 review).
    */
-  test("an empty window reads exactly as /spending reads it", () => {
+  test("an empty window reads spending as /spending's empty state does, and income as its cash flow does", () => {
     readThroughJul3();
     const read = (range: { from: string; to: string }) => {
       const flow = cashFlowByPeriod(bundle.db, resolvePeriod(range, TODAY), TODAY);

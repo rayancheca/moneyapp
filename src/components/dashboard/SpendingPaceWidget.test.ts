@@ -30,6 +30,7 @@ const OCTOBER: SpendingPace = {
   provenance: UNREAD_PROOF,
   spendingNotFound: null,
   waitsForIncome: false,
+  paydaysLeftOut: null,
   points: [],
   freeToSpendCents: null,
   href: "/spending",
@@ -131,6 +132,24 @@ describe("SpendingPaceWidget — a month not every account has read (decision 72
     // the proof proves the spending figures still printed, so it stays on the heading
     expect(text(html)).toContain("partly read");
     expect(html).toContain("<button");
+  });
+
+  /*
+   * ⚖️ Default built, not asked (2026-10-29): a payday that passed with no deposit is in neither of Free to spend's
+   * income legs, and the tile names it under the figures in the forecast's words (`SpendingPace.paydaysLeftOut`).
+   * 🔴 Review of a5ce8b15: on Jul 10 the tile read $3,920.00 without Jul 9's $1,000 and said nothing of it.
+   */
+  test("a payday Free to spend leaves out is named under the figures, in the forecast's tone", () => {
+    const LEFT_OUT =
+      "1 payday worth $1,141.92 already passed this month — not in Free to spend. It falls after Oct 26, the last " +
+      "day every account that pay lands in has been checked through — so the ledger has not looked for its deposit.";
+    const html = render({ ...PARTLY_READ, paydaysLeftOut: { text: LEFT_OUT, warning: false } });
+    expect(text(html)).toContain(`at least $2,366.33 projected ${LINE} ${LEFT_OUT}`);
+    expect(/<p class="[^"]*text-ink-faint[^"]*">1 payday worth/.test(html)).toBe(true);
+    // a payday checked through its days to land with no deposit is the forecast's warning
+    const warned = render({ ...PARTLY_READ, paydaysLeftOut: { text: LEFT_OUT, warning: true } });
+    expect(/<p class="[^"]*text-warning[^"]*">1 payday worth/.test(warned)).toBe(true);
+    expect(text(render(PARTLY_READ))).not.toContain("already passed this month");
   });
 });
 

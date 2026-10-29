@@ -1,6 +1,10 @@
 import { describe, expect, test } from "vitest";
 import { formatDayLong } from "./format-date";
 import {
+  noIncomeDayCheckedIn,
+  noIncomeDayCheckedNote,
+  noIncomeDayCheckedOf,
+  noIncomeDayCheckedWindowNote,
   sharedFrontier,
   unbankedIncomeFrontierClause,
   type UnbankedFrontier,
@@ -138,5 +142,43 @@ describe("sharedFrontier — the one day several schedules were checked through,
     expect(sharedFrontier([null, "2026-08-12"])).toEqual({ kind: "unchecked" });
     expect(sharedFrontier(["2026-08-12", "2026-09-04", null])).toEqual({ kind: "unchecked" });
     expect(sharedFrontier([])).toEqual({ kind: "unchecked" });
+  });
+});
+
+/*
+ * ⚖️ §6A 68, one wording for one window (2026-10-29): a window ONE day long says the day has not been checked — the
+ * table's and the chart hover's words for it (`noIncomeDayCheckedOf("day")`), the day named — and only a longer one
+ * says "not one day of". 🔴 His ledger copy 2026-10-29: `/spending?period=2026-09-25` carded Income "Not one day of Sep
+ * 25, 2026 has been checked in the accounts that pay lands in, so nothing is shown." — and its Sankey lens said the same
+ * — over a table reading "A dash under Income is not a zero where the day has not been checked …" of that one day.
+ */
+describe("noIncomeDayCheckedWindowNote / noIncomeDayCheckedIn — a window's words for an Income nobody has looked for", () => {
+  const sep25 = { from: "2026-09-25", to: "2026-09-25", label: "Sep 25, 2026" };
+  const october = { from: "2026-10-01", to: "2026-10-31", label: "October 2026" };
+
+  test("a window one day long says the day has not been checked, in the table's words", () => {
+    expect(noIncomeDayCheckedWindowNote(sep25)).toBe(
+      "Sep 25, 2026 has not been checked in the accounts that pay lands in, so nothing is shown.",
+    );
+    expect(noIncomeDayCheckedWindowNote(sep25)).not.toContain("Not one day of");
+    expect(noIncomeDayCheckedIn({ ...sep25, label: "the day" })).toBe(noIncomeDayCheckedOf("day"));
+  });
+
+  test("a longer window says not one day of it has been — the dashboard's month sentence, word for word", () => {
+    expect(noIncomeDayCheckedWindowNote(october)).toBe(
+      "Not one day of October 2026 has been checked in the accounts that pay lands in, so nothing is shown.",
+    );
+    expect(noIncomeDayCheckedWindowNote(october)).toBe(noIncomeDayCheckedNote("October 2026"));
+    expect(noIncomeDayCheckedIn({ ...october, label: "the month" })).toBe(noIncomeDayCheckedOf("month"));
+  });
+
+  // the days a running total sums (`/spending`'s graph hover): its clause, lower case, with no "so nothing is shown"
+  test("the days of a running total read the same way, whatever their bucket's label", () => {
+    expect(noIncomeDayCheckedIn({ from: "2026-09-26", to: "2026-10-31", label: "Sep 26 – Oct 31, 2026" })).toBe(
+      "not one day of Sep 26 – Oct 31, 2026 has been checked in the accounts that pay lands in",
+    );
+    expect(noIncomeDayCheckedIn({ from: "2026-10-01", to: "2026-10-01", label: "Oct 1, 2026" })).toBe(
+      "Oct 1, 2026 has not been checked in the accounts that pay lands in",
+    );
   });
 });

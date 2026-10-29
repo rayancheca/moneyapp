@@ -157,7 +157,8 @@ export interface CashFlowBucket {
    * and the graph's running totals read them, and a null in any of those would
    * move a number nobody asked to move. The tile's staircase and the graph's
    * lines read THIS field to stop drawing (`plottedRunningTotals`); no figure
-   * either prints changes.
+   * either prints changes. ⚖️ …and so does the chart lens's Net line, with the
+   * two fields below (`bucketNetMeasured`, 2026-10-29).
    */
   unreached: UnreachedKind | null;
   /**
@@ -222,18 +223,26 @@ export interface CashFlow {
    *
    * ⚠️ Null, too, where no bucket of the window is reached (`unreached` on every one — past every account's newest row,
    * before the records, not begun): the day is never asked there (⚡ `cashFlowByPeriod`). It holds no money, so
-   * /spending prints its empty state over it (`spendingEmptyCopy`, which names spending's day itself), and the
-   * dashboard tile reads the null as its "not imported yet" (`SpendingPace.spendingNotFound`). 🔴 The Sankey's "one
-   * rule" pin took this field for /spending's reading of an empty window, so it could not hold the window past the
-   * ledger's newest row — where the graph names spending's day as the empty state does (second reader of a1c67f0,
-   * round 2, 2026-10-23).
+   * /spending prints its empty state over it (`spendingEmptyCopy`) — which names spending's day itself past the newest
+   * row ("… spending is imported through Wed, Aug 12, 2026"), and no day before the records ("… is before your records
+   * begin") or over a window not begun ("… has not happened yet"). The dashboard tile reads the null as its "not
+   * imported yet" (`SpendingPace.spendingNotFound`): that empty state's heading for its month, where the dashboard's
+   * Flow prints the state's spending clause for its range, in the Spent card's words (`spendingSankey` asks the day).
+   * On his ledger copy 2026-10-29 replayed at 2026-11-01, no statement since: the tile "November 2026 has not been
+   * imported yet", Flow 1W (Oct 26 – Nov 1) "Nothing found so far — spending imported through Aug 12. …" — one empty
+   * state's heading and its clause, not two readings. ⚖️ default built, not asked (2026-10-29): the Flow's words stay,
+   * as batch 7 kept them. 🔴 The Sankey's "one rule" pin took this field for /spending's reading of an empty window, so
+   * it could not hold the window past the ledger's newest row — where the graph names spending's day as the empty state
+   * does (second reader of a1c67f0, round 2, 2026-10-23). 🔴 "which names spending's day itself" said it of all three
+   * worlds until 2026-10-29 (batch 7 review).
    */
   spendingUnaccounted: string | null;
   /**
    * ⚖️ §6A 68: the WINDOW's `CashFlowBucket.incomeUnread` — no income found in the period and not one of its days
    * checked where his pay lands. Its stat cards print "—" for Income, Net and the savings rate with it, under the
-   * dashboard's words for the dash (`noIncomeDayCheckedNote`). 🔴 His ledger copy 2026-10-21: `/spending` carded October
-   * "INCOME $0.00 · NET -$1,603.00" while the dashboard printed "—" for the same month. ADDITIVE: `totals` is unchanged.
+   * dashboard's words for the dash, of the window (`noIncomeDayCheckedWindowNote`). 🔴 His ledger copy 2026-10-21:
+   * `/spending` carded October "INCOME $0.00 · NET -$1,603.00" while the dashboard printed "—" for the same month.
+   * ADDITIVE: `totals` is unchanged.
    */
   incomeUnread: boolean;
 }

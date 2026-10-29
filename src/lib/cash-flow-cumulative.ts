@@ -172,9 +172,10 @@ export interface RunningTotalBucket {
  * Buckets the ledger has not reached carry no figure either way and neither start nor end the run. Walked in the
  * service's calendar order: a running total is a question of what came BEFORE a point.
  *
- * ⛔ THE ONE RULE for a running Income: the graph's lines (`plottedRunningTotals`) and its hover (`RunningTotalTooltip`)
- * both read it, so a line never runs where the hover dashes. The window's own rule is `CashFlow.incomeUnread`, the
- * bucket's `CashFlowBucket.incomeUnread` — both `noIncomeDayReadOf`, the dashboard's and /budgets' reading.
+ * ⛔ THE ONE RULE for a running Income: the graph's lines (`plottedRunningTotals`) and its hover
+ * (`RunningTotalTooltip`, through `runningIncomeUnreadDays`) both read it, so a line never runs where the hover dashes.
+ * The window's own rule is `CashFlow.incomeUnread`, the bucket's `CashFlowBucket.incomeUnread` — both
+ * `noIncomeDayReadOf`, the dashboard's and /budgets' reading.
  */
 export function runningIncomeUnread(buckets: readonly RunningTotalBucket[]): ReadonlySet<string> {
   const keys = new Set<string>();
@@ -184,6 +185,22 @@ export function runningIncomeUnread(buckets: readonly RunningTotalBucket[]): Rea
     keys.add(b.key);
   }
   return keys;
+}
+
+/**
+ * ⚖️ §6A 68: the DAYS each of `runningIncomeUnread`'s points sums — the run's first day, where the ledger starts the
+ * line, through the point's own last — which its hover names as not checked (`noIncomeDayCheckedIn`, 2026-10-29).
+ * 🔴 His ledger copy 2026-10-29: the hover named a point by its bucket's axis label instead, "not one day through Sep
+ * 26–30 has been checked …" and "… through Oct …" over `?from=2026-09-26&to=2026-12-31`, and "… through Oct '26 …"
+ * over `?from=2026-09-25&to=2027-03-31` — a sentence that read only for a day ("through 14").
+ */
+export function runningIncomeUnreadDays(
+  buckets: readonly (RunningTotalBucket & { from: string; to: string })[],
+): ReadonlyMap<string, { from: string; to: string }> {
+  const keys = runningIncomeUnread(buckets);
+  const run = buckets.filter((b) => keys.has(b.key));
+  const from = run[0]?.from;
+  return new Map(from === undefined ? [] : run.map((b) => [b.key, { from, to: b.to }]));
 }
 
 /**

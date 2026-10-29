@@ -15,12 +15,14 @@ import {
 } from "recharts";
 import { categoryHueVar, isCategoryHueName } from "@/lib/category-palette";
 import { nothingFoundSoFar } from "@/lib/budget-coverage";
+import { bucketNetMeasured } from "@/lib/cash-flow-net";
 import { UNREACHED_PHRASE } from "@/lib/empty-period";
 import { formatCents, formatCentsSigned } from "@/lib/money";
 import { cashFlowSegmentHref, ledgerHref, OTHER_SERIES_KEY, UNCATEGORIZED_SERIES_KEY } from "@/lib/ledger-href";
 import { paceReadout, typicalPaceCents } from "@/lib/pace-readout";
 import { noIncomeDayCheckedOf } from "@/lib/unbanked-income";
 import type { CashFlow, CashFlowBucket, CashFlowSeries, SpendingProjection } from "@/services/spending";
+import { lonePointDot } from "./CashFlowGraph";
 
 /**
  * The combined cash-flow chart (ux-overhaul-plan §5.2): income stacked ABOVE the
@@ -63,7 +65,8 @@ interface Row {
   label: string;
   from: string;
   to: string;
-  net: number;
+  /** the bucket's Net, null where its hover and the table give none (`bucketNetMeasured`) — the line breaks there */
+  net: number | null;
   /** last period's gross spend for this bucket, drawn below the axis (faint ghost) */
   ghost?: number | null;
   [seriesKey: string]: number | string | null | undefined;
@@ -136,9 +139,8 @@ export function CashFlowBucketTooltip({ bucket: b, ghostCents }: { bucket: CashF
           )}
           <div className="mt-1 flex items-center justify-between gap-4 border-t border-line pt-1 font-medium">
             <span>Net</span>
-            <span className="figures">
-              {notFound !== null || incomeUnread !== null ? "—" : formatCentsSigned(b.netCents)}
-            </span>
+            {/* ⛔ the Net line's and the table's rule, never a third (`bucketNetMeasured`) */}
+            <span className="figures">{bucketNetMeasured(b) ? formatCentsSigned(b.netCents) : "—"}</span>
           </div>
           {notFound !== null && (
             <div className="mt-1 text-ink-muted first-letter:uppercase">{nothingFoundSoFar(notFound)}</div>
@@ -178,8 +180,16 @@ export function CashFlowChart({ data, projection }: CashFlowChartProps) {
   const ghost = projection?.prior?.aligned ?? null;
   const hasGhost = ghost !== null && ghost.length === buckets.length;
 
+  /*
+   * ⚖️ The Net line draws a bucket's Net only where its hover and the table print one (`bucketNetMeasured`): never
+   * past the ledger's ends (S11), past spending's day with nothing found (decisions 64 + 72), or where no income was
+   * found and not one day is checked where his pay lands (§6A 68). The bars are unchanged — an absent bar draws no
+   * figure. 🔴 On his ledger copy 2026-10-29 `/spending` drew October's Net through Oct 1–14 at −$216.61 … −$48.19,
+   * none of them hovered with a Net, and on flat at $0.00 through Oct 15–31.
+   */
   const rows: Row[] = buckets.map((b, i) => {
-    const row: Row = { key: b.key, label: b.label, from: b.from, to: b.to, net: b.netCents };
+    const net = bucketNetMeasured(b) ? b.netCents : null;
+    const row: Row = { key: b.key, label: b.label, from: b.from, to: b.to, net };
     for (const s of incomeSeries) row[s.key] = b.income[s.key] ?? 0; // above axis
     for (const s of spendingSeries) row[s.key] = -(b.spending[s.key] ?? 0); // below axis
     // below the axis, and only where the prior period HAS that bucket
@@ -209,6 +219,15 @@ export function CashFlowChart({ data, projection }: CashFlowChartProps) {
 
   const ghostByKey = new Map(buckets.map((b, i) => [b.key, hasGhost ? ghost![i] : null]));
   const priorLabel = projection?.prior?.label ?? null;
+  /*
+   * ⚖️ §6A 68: a legend naming a line the chart leaves undrawn for income nobody has looked for says why — the
+   * graph lens's caption for its own (827e9a5), in the table's words under its dashes. Past the ledger's ends the
+   * line simply ends, as the graph's lines do, and a day it skips for spending is said by its hover. 🔴 His ledger
+   * copy 2026-10-29: October's chart names Net over no line at all.
+   */
+  const netUnreadNote = buckets.some((b) => b.incomeUnread)
+    ? `Net is not drawn where ${noIncomeDayCheckedOf(monthBuckets ? "month" : "day")}.`
+    : null;
 
   // The honest projection readout: "on pace for ~$Y · $X so far · $Z last period".
   // A low-confidence pace (early in the period) reads muted and says so.
@@ -397,7 +416,8 @@ export function CashFlowChart({ data, projection }: CashFlowChartProps) {
               name="Net"
               stroke="var(--accent)"
               strokeWidth={2}
-              dot={false}
+              // a Net between two the line leaves undrawn has no segment to show it (`isLonePoint`)
+              dot={lonePointDot(rows.map((r) => r.net), "var(--accent)")}
               isAnimationActive={false}
             />
           </ComposedChart>
@@ -423,6 +443,7 @@ export function CashFlowChart({ data, projection }: CashFlowChartProps) {
             Spent in {priorLabel}
           </span>
         )}
+        {netUnreadNote !== null && <span className="basis-full text-ink-faint">{netUnreadNote}</span>}
       </figcaption>
     </figure>
   );

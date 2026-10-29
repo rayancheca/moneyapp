@@ -81,18 +81,22 @@ function byValueThenName(a: [string, Bucket], b: [string, Bucket]): number {
  *
  * ⛔ Both rules below are asked of a window where NOTHING flowed too: no row at all over days nobody has read is not a
  * window "with no money flow", and the empty graph carries both facts. Only a window read on both sides that found
- * nothing — or one before the ledger opens — keeps the surface's own empty words. 🔴 Measured on his ledger copy
- * 2026-10-21 (review of e953d70): the dashboard's Flow 1D (Oct 21) and 1W (Oct 15 – 21) printed "No money flow in this
- * range." under that page's Income card, "Not one day of Oct 2026 has been checked in the accounts that pay lands in";
- * the nothing-flowed return ran before either rule was asked.
+ * nothing keeps the surface's own empty words — one before the ledger opens too, but only where his pay's account is
+ * checked past its first day: spending's day is never named there (`before-records`), and income is asked of it as of
+ * every window (`noIncomeDayReadOf`). 🔴 "— or one before the ledger opens —" claimed that window whole until
+ * 2026-10-29 (batch 7 review). On his ledger copy 2026-10-29 every window before Aug 25, 2022 keeps them: Wells Fargo
+ * is checked through Sep 24. 🔴 Measured on his ledger copy 2026-10-21 (review of e953d70): the dashboard's Flow 1W
+ * (Oct 15 – 21) printed "No money flow in this range." under that page's Income card, "Not one day of Oct 2026 has been
+ * checked in the accounts that pay lands in"; the nothing-flowed return ran before either rule was asked.
  *
  * ⚠️ A window past every account's newest row (`ledgerReaches`) is the one this was written for — not one that keeps
  * the surface's words: /spending's empty state names spending's day over it ("… spending is imported through Wed, Aug
  * 12, 2026. That is a window nobody has looked at …", `spendingEmptyCopy`), and so does the graph. 🔴 This read "or one
  * the ledger has not reached" until 2026-10-23, and no test held such a window (second reader of a1c67f0, round 2).
- * Measured on his ledger copy 2026-10-23, newest row Oct 14: the dashboard's Flow 1D (Oct 23) and 1W (Oct 17 – 23)
- * read "Nothing found so far — spending imported through Aug 12. Not one day of this period has been checked in the
- * accounts that pay lands in, so nothing is shown."
+ * Measured on his ledger copy 2026-10-23, newest row Oct 14: the dashboard's Flow 1W (Oct 17 – 23) read "Nothing found
+ * so far — spending imported through Aug 12. Not one day of this period has been checked in the accounts that pay
+ * lands in, so nothing is shown." — and on 2026-10-29, Oct 23 – 29, the same "of this range". 🔴 These lines cited a
+ * "Flow 1D" beside it until 2026-10-29: the dashboard draws no 1D pill (`DAILY_SERIES_RANGES`), and builds no 1D flow.
  */
 export interface SpendingSankey extends SankeyGraph {
   /** the window's `spendingNotFoundFact` where the graph is empty for it; null where the graph is the flow */

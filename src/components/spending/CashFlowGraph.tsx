@@ -17,12 +17,13 @@ import {
   ghostRowLabel,
   isLonePoint,
   plottedRunningTotals,
-  runningIncomeUnread,
+  runningIncomeUnreadDays,
   type CashCumulativePoint,
 } from "@/lib/cash-flow-cumulative";
 import { UNREACHED_PHRASE, type UnreachedKind } from "@/lib/empty-period";
 import { formatCents, formatCentsSigned } from "@/lib/money";
-import { noIncomeDayCheckedThrough } from "@/lib/unbanked-income";
+import { dayWindowLabel } from "@/lib/period";
+import { noIncomeDayCheckedIn } from "@/lib/unbanked-income";
 import type { CashFlow, SpendingProjection } from "@/services/spending";
 
 /**
@@ -67,6 +68,8 @@ interface CashFlowGraphProps {
  * (`runningIncomeUnread`, the lines' own rule), Income and Net print "—" and the hover says why — the table's and the
  * chart hover's dash for the same days (5a6d9b0). 🔴 On his ledger copy 2026-10-21 Oct 14 hovered "Through 14 · Income
  * $0.00 · Spent $1,603.00 · Net −$1,603.00", Wells Fargo checked through Sep 24.
+ * ⚖️ …of the days it sums (`incomeUnread`, `runningIncomeUnreadDays`), "not one day of Sep 26 – Oct 31, 2026 has been
+ * checked …", never of its axis label (2026-10-29). 🔴 His ledger copy 2026-10-29: "not one day through Sep 26–30 …".
  */
 export function RunningTotalTooltip({
   point: row,
@@ -77,11 +80,13 @@ export function RunningTotalTooltip({
 }: {
   point: CashCumulativePoint;
   unreached: UnreachedKind | null;
-  incomeUnread: boolean;
+  /** the days its running Income sums where nobody has looked (`runningIncomeUnreadDays`); null where it is a figure */
+  incomeUnread: { from: string; to: string } | null;
   hasRefunds: boolean;
   priorLabel: string | null;
 }) {
   const dash = <span className="text-ink-faint">—</span>;
+  const unread = incomeUnread !== null;
   return (
     <div className="rounded-md border border-line bg-surface-raised px-3 py-2 text-xs shadow-sm">
       {unreached !== null ? (
@@ -94,7 +99,7 @@ export function RunningTotalTooltip({
           <div className="text-ink-faint">Through {row.label}</div>
           <div className="mt-1 flex items-center justify-between gap-4">
             <span className="text-positive">Income</span>
-            <span className="figures">{incomeUnread ? dash : formatCents(row.earnedCum)}</span>
+            <span className="figures">{unread ? dash : formatCents(row.earnedCum)}</span>
           </div>
           <div className="flex items-center justify-between gap-4">
             <span className="text-negative">Spent</span>
@@ -108,10 +113,12 @@ export function RunningTotalTooltip({
           )}
           <div className="mt-1 flex items-center justify-between gap-4 border-t border-line pt-1 font-medium">
             <span>Net</span>
-            <span className="figures">{incomeUnread ? dash : formatCentsSigned(row.netCum)}</span>
+            <span className="figures">{unread ? dash : formatCentsSigned(row.netCum)}</span>
           </div>
-          {incomeUnread && (
-            <div className="mt-1 text-ink-muted first-letter:uppercase">{noIncomeDayCheckedThrough(row.label)}</div>
+          {unread && (
+            <div className="mt-1 text-ink-muted first-letter:uppercase">
+              {noIncomeDayCheckedIn({ ...incomeUnread, label: dayWindowLabel(incomeUnread.from, incomeUnread.to) })}
+            </div>
           )}
         </>
       )}
@@ -136,8 +143,11 @@ const LONE_POINT_R = 3;
  *
  * ⛔ The prior period's line keeps `dot={false}`: it carries a figure at every
  * point or at none, so it is never broken into a lone point.
+ *
+ * ⚖️ …and the chart lens's Net line, broken wherever a bucket's Net is no measurement (`bucketNetMeasured`), marks its
+ * lone points the same way — on his ledger copy 2026-10-29, Aug 31, 2026, after Aug 30's "nothing found so far".
  */
-function lonePointDot(values: readonly (number | null)[], color: string): (props: DotItemDotProps) => ReactNode {
+export function lonePointDot(values: readonly (number | null)[], color: string): (props: DotItemDotProps) => ReactNode {
   return function LonePoint({ index, cx, cy }) {
     if (!isLonePoint(values, index) || typeof cx !== "number" || typeof cy !== "number") return null;
     return <circle cx={cx} cy={cy} r={LONE_POINT_R} fill={color} />;
@@ -163,8 +173,9 @@ export function CashFlowGraph({ data, projection }: CashFlowGraphProps) {
   const plotted = plottedRunningTotals(rows, buckets);
   const labelByKey = new Map(rows.map((r) => [r.key, r.label]));
   const unreachedByKey = new Map(buckets.map((b) => [b.key, b.unreached]));
-  // ⚖️ §6A 68: the points the lines leave without Income and Net — the hover's dash reads the same set
-  const incomeUnread = runningIncomeUnread(buckets);
+  // ⚖️ §6A 68: the points the lines leave without Income and Net, each with the days it sums — the hover's dash and its
+  // sentence read the same set
+  const incomeUnread = runningIncomeUnreadDays(buckets);
 
   return (
     <figure className="m-0" aria-label="Running totals for the period — cumulative income, spending, and net">
@@ -206,7 +217,7 @@ export function CashFlowGraph({ data, projection }: CashFlowGraphProps) {
                   <RunningTotalTooltip
                     point={row}
                     unreached={unreachedByKey.get(row.key) ?? null}
-                    incomeUnread={incomeUnread.has(row.key)}
+                    incomeUnread={incomeUnread.get(row.key) ?? null}
                     hasRefunds={hasRefunds}
                     priorLabel={priorLabel}
                   />

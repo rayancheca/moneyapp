@@ -50,7 +50,7 @@ import {
 import type { UnbankedFrontier } from "@/lib/unbanked-income";
 import { portionsAcross } from "@/lib/payday-settlement";
 import { paydayProjectable, paydaySettlementsBySeries, stillToCome, stillToComeReader } from "./payday-settlement";
-import { checkedThroughBySeries, silenceMeasuredThroughBySeries } from "./cash-earnings";
+import { checkedThroughBySeries, landingAccountsBySeries, silenceMeasuredThroughBySeries } from "./cash-earnings";
 import { effectiveSeries, hasStoppedForecasting, oneChargeDays, projectOccurrences, toProjectable } from "./recurring";
 import { linkIsRecurring, rowIsRecurring, seriesIdsNotDrawnAsRecurring } from "./recurring-link";
 
@@ -894,6 +894,59 @@ function incomeTotalCents(db: AppDatabase, agentsCash: ReadonlySet<string>, from
   );
 }
 
+/**
+ * Of a window's posted Income — the rows `incomeTotalCents` sums (`hisIncomeRows`) — the money NO pay schedule is
+ * attached to that the ledger cannot tell from one of `live`'s pay: in an account that pay lands in
+ * (`landingAccountsBySeries`), filed as that pay is filed (the series↔category bridge, `recurringSeriesIdsForCategory`:
+ * a series' category is its linked rows', or the one he gave it before it paid). Income every Income figure counts and
+ * settlement never reads (attributed deposits only, `lib/payday-settlement`).
+ *
+ * ⛔ While it holds anything, a figure counting posted Income may NOT say a passed payday is in neither of its legs: it
+ * may already hold that pay. /budgets' "counted in neither figure above" and the dashboard's "not in Free to spend" are
+ * withheld on it alike; the paydays are still named, in the forecast's words. ⛔ Never subtracted from the passed pay:
+ * how much of it is pay is the very question it cannot answer.
+ *
+ * ⚖️ Filed as the pay is filed, because his filing is his word for what the money is: his Sep 4 $468.20 from It
+ * America LLC on Wells Fargo, filed under Refunds & Reimbursements, is "them paying them back for claude subscription"
+ * (his words, 2026-09-28) and withholds nothing. Read by account alone, it withheld the tile's claim on his ledger copy
+ * replayed at 2026-09-15 — "2 paydays worth $2,283.84 already passed this month with no deposit imported. …" — where
+ * "… — not in Free to spend. …" is true by his own words, and is what the tile still says there. ⚠️ Cash deposited at
+ * an ATM is filed Salary by rule (`seed`, "ATM/cash deposit → Salary") and so does withhold it, attached to nothing
+ * where the pay lands: the e2e seed's Jul 2 $1,262.00 beside its Paycheck.
+ *
+ * 🔴 Review of 5c1c4903 (MEDIUM): weekly $1,000 attached Jul 2, Jul 9's deposit filed Income › Salary from the review
+ * queue (the category picker, `bulkApply`) and attached to nothing — the dashboard read "Free to spend ≈ $4,920.00",
+ * the attached case's figure, over "1 payday worth $1,000.00 already passed this month with no deposit imported — not
+ * in Free to spend", and /budgets "$2,000.00 in so far, $3,000.00 still expected" over the same payday "counted in
+ * neither figure above".
+ */
+export function unattachedIncomeWherePayLandsCents(
+  db: AppDatabase,
+  agentsCash: ReadonlySet<string>,
+  /** his live pay series — the pay the passed paydays are for */
+  live: readonly { id: string }[],
+  from: string,
+  to: string,
+): number {
+  if (live.length === 0 || compareDates(from, to) > 0) return 0;
+  const incomeSeries = incomeSeriesOfRender(db);
+  const unattached = hisIncomeRows(loadCategoryIndex(db), agentsCash, incomeSeries, activeTxnsInRange(db, from, to))
+    // a pay day is its series' rows; a plain Income row is attached to no pay schedule
+    .filter((r) => r.rows.every((t) => t.recurringSeriesId === null || !incomeSeries.has(t.recurringSeriesId)));
+  if (unattached.length === 0) return 0;
+  const landings = landingAccountsBySeries(db);
+  const landsWhere = (r: (typeof unattached)[number], seriesId: string): boolean =>
+    r.rows.some((t) => landings.get(seriesId)?.has(t.accountId) === true);
+  const wherePayLands = unattached.filter((r) => live.some((s) => landsWhere(r, s.id)));
+  // the bridge, once per category those rows are filed under
+  const filedAs = new Map(
+    [...new Set(wherePayLands.map((r) => r.categoryId))].map((c) => [c, recurringSeriesIdsForCategory(db, c)] as const),
+  );
+  return wherePayLands
+    .filter((r) => live.some((s) => landsWhere(r, s.id) && filedAs.get(r.categoryId)?.has(s.id) === true))
+    .reduce((sum, r) => sum + r.amountCents, 0);
+}
+
 export interface IncomeExpectation {
   /** money already in, inside [start, today] — a pay series' days by their net, as settlement spends them (decision 75) */
   postedCents: number;
@@ -945,6 +998,13 @@ export interface IncomeExpectation {
   passedUnpaidCheckedOccurrences: number;
   /** how far the accounts the other passed paydays land in were checked — one day, per schedule, or not at all */
   passedUnpaidFrontier: UnbankedFrontier;
+  /**
+   * Of `postedCents`, the Income no pay schedule is attached to where his pay lands
+   * (`unattachedIncomeWherePayLandsCents`) — asked only where a payday passed unpaid, 0 otherwise. ⛔ While it holds
+   * anything the header does not call the passed paydays "counted in neither figure above": "in so far" counts money
+   * settlement never read, and it may be their pay.
+   */
+  postedUnattachedCents: number;
   /**
    * The MONEY from deposits outside the window `postedCents` covers that paid
    * paydays inside this window — the fourth leg. Settle-backwards
@@ -1228,6 +1288,9 @@ export function incomeExpectation(
   const passed = unbankedIncomeTotals(unbanked);
   const passedUnpaidCents = passed.totalCents;
   const passedUnpaidOccurrences = passed.occurrenceCount;
+  // …and what "in so far" holds that settlement never read where the pay lands — ⚡ asked only of a payday passed unpaid
+  const postedUnattachedCents =
+    passedUnpaidCents > 0 ? unattachedIncomeWherePayLandsCents(db, agentsCash, live, start, postedThrough) : 0;
   // ⚖️ §6A 68 (2026-10-13): whether ANY day of this window has been checked where the pay lands (`noIncomeDayReadOf`)
   const noIncomeDayRead = noIncomeDayReadOf(db, today, live)(start, postedCents);
   /*
@@ -1352,6 +1415,7 @@ export function incomeExpectation(
     passedUnpaidOccurrences,
     passedUnpaidCheckedOccurrences: passed.checkedOccurrenceCount,
     passedUnpaidFrontier: passed.frontier,
+    postedUnattachedCents,
     paidByAnotherMonthCents,
     paidByAnotherMonthOccurrences,
     paidByAnotherMonthDeposits: [...paidByAnotherMonthDeposits].sort(compareDates),
