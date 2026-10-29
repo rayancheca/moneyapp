@@ -5,8 +5,9 @@ import { cashFlowCumulative, plottedRunningTotals } from "@/lib/cash-flow-cumula
 import { compareDates, diffDays, todayIso } from "@/lib/dates";
 import { daysNotImportedYet } from "@/lib/empty-period";
 import { closesDayChange, dayChangePhrase, dayChangeTerm } from "@/lib/day-change-label";
-import { formatDayShort } from "@/lib/format-date";
+import { formatDayShort, formatDayShortIn } from "@/lib/format-date";
 import { resolvePeriod } from "@/lib/period";
+import { passedPaydaysLeftOut, type PaydaysLeftOut } from "@/lib/unbanked-income";
 import { listAccounts } from "./accounts";
 import { bridgedNetWorthSeries, type BridgedNetWorthPoint } from "./in-flight";
 import { forecastCurrentMonth } from "./forecast";
@@ -114,6 +115,14 @@ export interface SpendingPace {
    * words, as it always has.
    */
   waitsForIncome: boolean;
+  /**
+   * This month's paydays that passed with no deposit against them — in NEITHER of Free to spend's income legs (posted
+   * income holds no deposit for them; the forecast's fixed income opens on today) — named under the figure in the
+   * forecast's words (`passedPaydaysLeftOut` over `MonthForecast.unbankedIncome`, the paydays its own note says are
+   * "not counted above, and not in EOM cash"). Null where none passed unbanked, and beside the dash: a figure withheld
+   * leaves nothing out.
+   */
+  paydaysLeftOut: PaydaysLeftOut | null;
   points: PacePoint[];
   /** income (actual + expected) minus spend-so-far and upcoming fixed bills */
   /**
@@ -362,12 +371,27 @@ function spendingPace(db: AppDatabase, today: string): SpendingPace | null {
    * checked through Sep 24; the figure it holds back is −$3,981.06 ($0.00 + $1,141.92 − $1,603.00 − $3,519.98), Oct
    * 1, 8, 15 and 22's $4,567.68 in neither leg — +$586.62 banked. ⚠️ A live pay schedule naming no account lands
    * nowhere the ledger has read, so the figure waits in every month no income is found (this file's test gives its
-   * Payroll an account to keep it); his It America LLC schedule names Wells Fargo. ⚠️ Latent, not built: a month whose
-   * pay is found in part prints its figure, and a payday between the pay account's last checked day and today is in
-   * neither leg there — $0, with no "partly read" for income. On a temp fixture (weekly $1,000 found Jul 2, its account
-   * checked through Jul 2) the tile reads $4,920.00 on Jul 8 and $3,920.00 on Jul 10, Jul 9's pay in neither.
+   * Payroll an account to keep it); his It America LLC schedule names Wells Fargo.
+   *
+   * ⚖️ default built, not asked (2026-10-29): a month whose pay is found in part prints its figure (decision 72), and a
+   * payday that passed with no deposit — after the pay account's last checked day, or on a checked day — is in neither
+   * leg: no posted row, and the forecast's fixed income opens on today. It is NAMED under the figure, in the forecast's
+   * words (`paydaysLeftOut`) — not counted, as the forecast keeps it out of EOM cash (passed pay is reported, never
+   * projected: `unbankedIncomeForSeries`), and no dash, which §6A 68 keeps for a month not one day of which is checked.
+   * 🔴 Review of a5ce8b15 (MEDIUM): weekly $1,000 found Jul 2, its account checked through Jul 2, read $4,920.00 on Jul
+   * 8 and Jul 9 and $3,920.00 on Jul 10 — Jul 9's pay in neither leg, under only spending's partly-read line — while
+   * Earned vs banked named the same payday as not looked for. Latent on his ledger copy 2026-10-29 (the dash above,
+   * Oct 29–31). On a copy of today's trial import of his Wells Fargo statement (checked through Mon Oct 26), its rows
+   * filed as file-wells-fargo-october plans: ≈ $734.74 on Oct 29 and ≈ −$407.18 on Oct 30 and 31, Oct 29's $1,141.92
+   * in neither leg — now under "1 payday worth $1,141.92 already passed this month — not in Free to spend. It falls
+   * after Oct 26, …".
    */
   const waitsForIncome = !withheld && cashFlow.incomeUnread;
+  const figure = withheld || waitsForIncome ? null : freeToSpendCents;
+  const paydaysLeftOut =
+    figure === null
+      ? null
+      : passedPaydaysLeftOut(forecast.unbankedIncome, "Free to spend", (iso) => formatDayShortIn(iso, today));
   /*
    * ⛔ The proof proves a rendered figure, so it is built only beside one (`SpendingPace.provenance`). 🔴 It was built on
    * every render — 18.4 ms against 419 ms for all of `dashboardData` on his ledger copy (review of the pace card, batch
@@ -389,7 +413,8 @@ function spendingPace(db: AppDatabase, today: string): SpendingPace | null {
     provenance,
     spendingNotFound,
     waitsForIncome,
-    freeToSpendCents: withheld || waitsForIncome ? null : freeToSpendCents,
+    paydaysLeftOut,
+    freeToSpendCents: figure,
     href: "/spending",
   };
 }

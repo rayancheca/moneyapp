@@ -1,3 +1,5 @@
+import { formatCents } from "./money";
+
 /**
  * How far the accounts the passed paydays' pay lands in have been checked.
  *
@@ -354,4 +356,33 @@ export function passedPaydaysWords(r: PassedPaydaysReading, formatDay: (iso: str
     notProjected: `${notProjectedSubject(r)} cannot be projected as arriving`,
     warning: r.pastGraceOccurrenceCount > 0,
   };
+}
+
+/** A line naming the passed paydays a figure leaves out, and whether it wears the warning's tone (`warning`). */
+export interface PaydaysLeftOut {
+  text: string;
+  warning: boolean;
+}
+
+/**
+ * The passed paydays a figure built on the forecast holds in NEITHER of its income legs — posted income holds no
+ * deposit for them, and the forecast's fixed income opens on today — named under it in the forecast's words for the
+ * same paydays (`passedPaydaysWords`), laid out as the pay series' own page heads its list (`PassedPaydaysCard`):
+ * "1 payday worth $1,141.92 already passed this month — not in Free to spend. It falls after Oct 26, the last day …
+ * — so the ledger has not looked for its deposit." Null when no payday passed unbanked.
+ *
+ * ⚖️ Named, never counted: passed pay is reported, never projected (`unbankedIncomeForSeries`, "NOT a forecast leg,
+ * and it never becomes one"), so the figure keeps what it measured — decision 72's rule for a total over days not every
+ * account is read for. 🔴 Free to spend left Jul 9's $1,000 out of both legs on Jul 10 and said nothing (review of
+ * a5ce8b15).
+ */
+export function passedPaydaysLeftOut(
+  passed: PassedPaydaysReading & { totalCents: number },
+  figure: string,
+  formatDay: (iso: string) => string,
+): PaydaysLeftOut | null {
+  if (passed.totalCents <= 0) return null;
+  const w = passedPaydaysWords(passed, formatDay);
+  const lead = `${w.count} worth ${formatCents(passed.totalCents)} ${w.passed} — not in ${figure}.`;
+  return { text: `${lead} ${w.unread ?? `${w.notProjected}.`}`, warning: w.warning };
 }

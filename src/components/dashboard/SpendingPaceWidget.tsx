@@ -164,6 +164,18 @@ export function SpendingPaceWidget({ pace }: { pace: SpendingPace }) {
             </svg>
           )}
         </div>
+        {/* ⚖️ default built, not asked (2026-10-29): this month's paydays Free to spend has in neither leg, in the
+            forecast's words and warning tone (`SpendingPace.paydaysLeftOut`) — full width, under the figures it
+            qualifies. 🔴 Review of a5ce8b15: Jul 9's $1,000 left both legs on Jul 10 with nothing said. */}
+        {pace.paydaysLeftOut && (
+          <p
+            className={`mt-2 max-w-prose text-[11px] leading-relaxed ${
+              pace.paydaysLeftOut.warning ? "text-warning" : "text-ink-faint"
+            }`}
+          >
+            {pace.paydaysLeftOut.text}
+          </p>
+        )}
       </Link>
     </section>
   );

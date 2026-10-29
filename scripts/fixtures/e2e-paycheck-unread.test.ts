@@ -20,6 +20,7 @@ import { cashEarningsSectionNotes } from "../../src/lib/section-notes";
 import { unbankedIncomeFrontierClause } from "../../src/lib/unbanked-income";
 import { incomeExpectation } from "../../src/services/budgets";
 import { cashEarningsReadings, checkedThroughBySeries } from "../../src/services/cash-earnings";
+import { dashboardData } from "../../src/services/dashboard";
 import { forecastCurrentMonth } from "../../src/services/forecast";
 import { incomeCard } from "../../src/services/income-card";
 import { recurringCalendar } from "../../src/services/recurring-calendar";
@@ -229,5 +230,52 @@ describe("the e2e fixture's Jul 3 payday, after Chase Total Checking's Jun 30 �
         "through Tue, Jun 30, 2026; the other payday falls after that, the last day every account that pay lands in " +
         "has been checked through.",
     );
+  });
+
+  /*
+   * ⚖️ Default built, not asked (2026-10-29): the dashboard's pace tile names the payday Free to spend has in
+   * neither leg (`SpendingPace.paydaysLeftOut`), in the forecast's words — the checked day as the income card above
+   * writes it. Its figure stands only over a July with spending and income found, as the seed's is (rows to Jul 4,
+   * the weekly ATM cash filed as Salary): one of each on Jul 2 for this test, removed after it. Measured on a scratch
+   * e2e seed (`seedE2eDatabase`) 2026-10-29: "Free to spend ≈ $1,928.38" over this same line.
+   */
+  test("the dashboard's pace tile: the payday Free to spend leaves out", () => {
+    const at = "2026-07-02T12:00:00.000Z";
+    // Salary, as the ACME deposits are filed
+    const salary = bundle.db.select().from(transactions).where(eq(transactions.id, "acme-0")).get()!.categoryId;
+    const july = [
+      { id: "jul-2-atm", amountCents: 1_150_00, rawDescription: "ATM CASH DEPOSIT 07/02", categoryId: salary },
+      { id: "jul-2-coffee", amountCents: -4_50, rawDescription: "BLUE BOTTLE COFFEE", categoryId: null },
+    ];
+    for (const row of july) {
+      bundle.db
+        .insert(transactions)
+        .values({
+          ...row,
+          accountId: CHECKING,
+          postedOn: "2026-07-02",
+          normalizedDescription: row.rawDescription,
+          status: "active",
+          needsReview: false,
+          occurrenceIndex: 0,
+          dedupeHash: row.id,
+          createdAt: at,
+          updatedAt: at,
+        })
+        .run();
+    }
+    try {
+      const pace = dashboardData(bundle.db, TODAY).pace!;
+      expect(pace.freeToSpendCents).not.toBeNull();
+      expect(pace.paydaysLeftOut).toEqual({
+        text:
+          "1 payday worth $2,943.19 already passed this month — not in Free to spend. It falls after Jun 30, the " +
+          "last day every account that pay lands in has been checked through — so the ledger has not looked for its " +
+          "deposit.",
+        warning: false,
+      });
+    } finally {
+      for (const row of july) bundle.db.delete(transactions).where(eq(transactions.id, row.id)).run();
+    }
   });
 });
