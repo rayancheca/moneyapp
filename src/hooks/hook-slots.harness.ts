@@ -28,6 +28,11 @@ export function routeHooks(real: ReactModule): ReactModule {
     useRef: (init: unknown) => (host ? host.useRef(init) : real.useRef(init)),
     useCallback: (fn: () => void, deps: unknown[]) => (host ? host.useCallback(fn) : real.useCallback(fn, deps)),
     useMemo: (fn: () => unknown, deps: unknown[]) => (host ? host.useMemo(fn) : real.useMemo(fn, deps)),
+    // 🔴 the card deck reads reduced motion in one, measures its front card in another and listens for the wheel in a
+    // third; unrouted, React's own ran outside a render and every key test of the deck died on a null dispatcher —
+    // "Cannot read properties of null (reading 'useEffect')" — instead of pressing anything (2026-10-29)
+    useEffect: (fn: () => void, deps?: unknown[]) => (host ? host.useEffect() : real.useEffect(fn, deps)),
+    useLayoutEffect: (fn: () => void, deps?: unknown[]) => (host ? host.useEffect() : real.useLayoutEffect(fn, deps)),
   };
   return { ...real, ...routed } as unknown as ReactModule;
 }
@@ -77,6 +82,11 @@ export class HookSlots {
   useTransition(): [boolean, (fn: () => unknown) => void] {
     this.cursor++;
     return [false, (fn) => void fn()];
+  }
+
+  // an effect runs after a mount, and nothing stepped here is mounted: as in a static render, it never runs
+  useEffect(): void {
+    this.cursor++;
   }
 
   /**

@@ -181,7 +181,9 @@ export function CardDeck({ cards, ariaLabel }: { cards: readonly DeckCard[]; ari
     /*
      * ⛔ An arrow pressed from a link ON the front card sends that card behind, where it is `inert`, and the
      * browser drops a focus left inside an inert card to the page — where the next arrow steps nothing. The deck
-     * takes it first.
+     * takes it first. ⛔ For a STEP only, so below the `return`: taken for every key, a Tab pressed on a link
+     * lands on the deck and walks back into the front card's first control, and Tab never leaves the deck —
+     * DECK, "What Runway means", DECK, … on his ledger copy, 2026-10-29 (pinned in CardDeck.test.ts).
      */
     if (event.target !== event.currentTarget) event.currentTarget.focus({ preventScroll: true });
   };

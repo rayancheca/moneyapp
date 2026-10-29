@@ -95,6 +95,67 @@ test.describe("the card deck", () => {
     expect(await frontHeading(page)).not.toBe(first);
   });
 
+  test("an arrow pressed on a link on the front card steps, and so does the next one", async ({ page }) => {
+    /*
+     * ⛔ The step sends the card holding the focus behind, where it is `inert`, and the browser drops a focus left
+     * inside an inert card to the page — where the next arrow steps nothing. So a step hands the focus to the deck
+     * (CardDeck.tsx); the keys it leaves alone are pinned in CardDeck.test.ts.
+     */
+    await page.goto("/?cards=deck");
+    const deck = page.locator(DECK);
+    const live = page.locator(`${SECTION} p[aria-live]`);
+    await deck.scrollIntoViewIfNeeded();
+    await expect(live).toContainText("card 1 of");
+
+    await page.locator(`${DECK} > [aria-current="true"]`).getByRole("link").first().focus();
+    await page.keyboard.press("ArrowRight");
+    await expect(live).toContainText("card 2 of");
+    await expect(deck).toBeFocused();
+
+    await page.keyboard.press("ArrowRight");
+    await expect(live).toContainText("card 3 of");
+    await expect(deck).toBeFocused();
+  });
+
+  test("⛔ Tab walks the front card and then leaves the deck — never a card behind it", async ({ page }) => {
+    /*
+     * 🔴 The cards behind the front were kept out of the pointer only, and a Tab walked every link and button behind
+     * it — 16 links and 14 buttons behind Runway on his ledger copy, 2026-10-29; they are `inert` now. 🔴 And a key
+     * handler that took the focus for every key, not only a step, trapped Tab in the front card: DECK, "What Runway
+     * means", DECK, … (the review of d27f4f8f, on his ledger copy). Either one is a walk that stops somewhere other
+     * than the front card before it reaches the controls after the deck.
+     */
+    await page.goto("/?cards=deck");
+    const deck = page.locator(DECK);
+    await deck.scrollIntoViewIfNeeded();
+    await deck.focus();
+
+    const stops: { inDeck: boolean; onFront: boolean; name: string }[] = [];
+    // a bound, not a count: the front card's controls are the fixture's, and a trapped Tab never stops on its own
+    for (let press = 0; press < 80; press += 1) {
+      await page.keyboard.press("Tab");
+      const stop = await page.evaluate((deckSelector) => {
+        const el = document.activeElement;
+        const slot = el?.closest(`${deckSelector} > div`);
+        return {
+          inDeck: el !== null && (document.querySelector(deckSelector)?.contains(el) ?? false),
+          // on the front card and under nothing inert — never the deck itself, which a Tab forward has left
+          onFront: slot?.getAttribute("aria-current") === "true" && el?.closest("[inert]") === null,
+          name: (el?.getAttribute("aria-label") ?? el?.textContent ?? "").trim().slice(0, 60),
+        };
+      }, DECK);
+      stops.push(stop);
+      if (!stop.inDeck) break;
+    }
+
+    const inside = stops.filter((stop) => stop.inDeck);
+    expect(inside.length, "Tab never reached a control on the front card").toBeGreaterThan(0);
+    const offFront = inside.filter((stop) => !stop.onFront);
+    expect(offFront, "a Tab stop in the deck that is not on its front card").toEqual([]);
+    // and then out, to the first control after the deck
+    expect(stops.at(-1)).toMatchObject({ inDeck: false, name: "Previous card" });
+  });
+
   test("⚠️ dragging LEFT advances, and a short drag snaps back", async ({ page }) => {
     // backwards here is the most common way a carousel feels wrong, and it is
     // completely invisible in a screenshot
