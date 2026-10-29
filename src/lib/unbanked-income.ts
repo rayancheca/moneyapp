@@ -125,9 +125,10 @@ export function payNotBankedYet(
 }
 
 /**
- * " (not counting Oct 1, which was paid early)" — after "N paydays have passed since the last deposit on …", the
- * silence's paydays a deposit paid (`CashEarnings.silencePaidEarly`), which N leaves out; empty when there are none.
- * Earned vs banked's verdict and /spending's note for a stale schedule, each with its own day format.
+ * " (not counting Oct 1, which was paid early)" — after "N paydays have passed since the last deposit on …" (or "…
+ * since … with no deposit"), the silence's paydays a deposit paid (`CashEarnings.silencePaidEarly`), which N leaves
+ * out; empty when there are none. Earned vs banked's verdict, on every lead that prints N, and /spending's note for a
+ * stale schedule, each with its own day format.
  *
  * ⚖️ The count is the paydays no deposit paid (default built, not asked, 2026-10-21), and "early" is the word /budgets
  * and /spending give a payday paid before it (decisions 29/32). ⛔ Never "with no deposit" in its place: of a payday

@@ -17,7 +17,7 @@ import { PATH_SEPARATOR } from "./category-path";
 import type { PayShortfall } from "./pay-shortfall";
 import { ACCOUNT_NOT_READ, ACCOUNT_READ } from "./unbanked-income";
 
-const row =(over: Partial<Parameters<typeof budgetSectionNotes>[0]["rows"][number]> = {}) => ({
+const row = (over: Partial<Parameters<typeof budgetSectionNotes>[0]["rows"][number]> = {}) => ({
   categoryPath: "Food",
   overdueCents: 0,
   overdueBills: 0,

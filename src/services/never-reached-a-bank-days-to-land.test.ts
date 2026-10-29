@@ -689,6 +689,91 @@ describe("a stale verdict names every payday of its silence — one past the che
 });
 
 /**
+ * ⛔ Every form of the verdict that counts a silence from the last deposit names the paydays its count leaves out
+ * (`paidEarlyAside`), once, right after that deposit's day — the aside rides on both leads ("since <day> with no
+ * deposit" and "since the last deposit on <day>"), so no form can print the count without it.
+ *
+ * 🔴 Review of the pay-words batch (#25): 337baa7 gave it to "since the last deposit on …" and d632de3 to the stale form
+ * at the bar, and two forms of "since <day> with no deposit" still dropped it. On his ledger copy 2026-10-29 with Wed
+ * Sep 30 +$1,141.92 inserted, Wells Fargo derived through Sat Oct 17 and today Oct 19, Earned vs banked read "2 paydays
+ * have passed since Sep 30 with no deposit — a schedule is called stale only after 3 quiet periods, so this is not a
+ * warning yet." with Oct 1 (which Sep 30 paid early), 8 and 15 passed; with Wells Fargo's balances taken off and today
+ * Oct 29, "3 paydays have passed since Sep 30 with no deposit, and no day of that silence rests on a checked record —
+ * the ledger cannot say whether the pay arrived." with four Thursdays passed.
+ */
+describe("every verdict that counts the silence names the paydays its count leaves out — one aside, every form", () => {
+  // Wed Aug 26 paid Thu Aug 27 early: 2 silent paydays, live
+  const live = (): void => {
+    paidThrough("2026-08-20");
+    deposit("2026-08-26");
+  };
+  // Wed Aug 5 paid Thu Aug 6 early: 5 silent paydays, stale
+  const stale = (): void => {
+    paidThrough("2026-07-30");
+    deposit("2026-08-05");
+  };
+
+  // [the form, its deposits, the day its pay is read through (null: never), how its verdict opens]
+  test.each<[string, () => void, string | null, string]>([
+    [
+      "live, read to its end",
+      live,
+      "2026-09-14",
+      "2 paydays have passed since Aug 26 with no deposit (not counting Aug 27, which was paid early) — a schedule " +
+        "is called stale only after 3 quiet periods, so this is not a warning yet.",
+    ],
+    [
+      "live, read short of it",
+      live,
+      "2026-08-28",
+      "2 paydays have passed since the last deposit on Aug 26 (not counting Aug 27, which was paid early). Both fall " +
+        "after Aug 28,",
+    ],
+    [
+      "live, on an account nobody checks",
+      live,
+      null,
+      "2 paydays have passed since the last deposit on Aug 26 (not counting Aug 27, which was paid early). The " +
+        "ledger has not checked every account",
+    ],
+    [
+      "stale, on an account nobody checks",
+      stale,
+      null,
+      "5 paydays have passed since Aug 5 with no deposit (not counting Aug 6, which was paid early), and no day of " +
+        "that silence rests on a checked record — the ledger cannot say whether the pay arrived.",
+    ],
+    [
+      "stale, read short of the bar",
+      stale,
+      "2026-08-21",
+      "5 paydays have passed since the last deposit on Aug 5 (not counting Aug 6, which was paid early). 2 fall on " +
+        "days already checked, with no deposit; the other 3 fall after Aug 21,",
+    ],
+    [
+      "stale, read to its end",
+      stale,
+      "2026-09-12",
+      "5 paydays have passed since Aug 5 with no deposit (not counting Aug 6, which was paid early). 4 of them, and " +
+        "their days to land,",
+    ],
+    [
+      "stale, read past the bar and short of its end",
+      stale,
+      "2026-09-05",
+      "5 paydays have passed since the last deposit on Aug 5 (not counting Aug 6, which was paid early). 3 of them,",
+    ],
+  ])("%s", (_, deposits, readTo, opening) => {
+    deposits();
+    if (readTo !== null) readThrough(readTo);
+
+    const { verdict } = incomeCard(bundle.db, TODAY)!.pay[0]!;
+    expect(verdict.slice(0, opening.length)).toBe(opening);
+    expect(verdict.split("paid early")).toHaveLength(2);
+  });
+});
+
+/**
  * ⛔ A stale schedule's note on /spending counts as what "reached an account" of its window's earnings only the
  * window's OWN money: money inside it that paid another window's read payday (`paidAcross`) is that window's — its
  * note names it paying that payday — so here it is named after the claim, in the live shortfall note's words.

@@ -122,8 +122,10 @@ export function postedAveragesBySeries(
     // a pay series' rows as the calendar reads them: his spending linked to it is no row of its day (`asPayRows`)
     const rows = byPayday ? asPayRows(idx, rowsBySeries.get(s.id) ?? []) : (rowsBySeries.get(s.id) ?? []);
     const schedule = effectiveSeries(s);
+    // ⚡ settled by the batch's one category index (`idx`). 🔴 Without it each pay series re-read the categories table
+    // (review of the pay-words batch, #26)
     const reading: PostedReading = byPayday
-      ? { per: "payday", readings: paydayReadings(rows, paydaySettlement(db, s.id, today).portions, schedule) }
+      ? { per: "payday", readings: paydayReadings(rows, paydaySettlement(db, s.id, today, idx).portions, schedule) }
       : readsPerOccurrence(s)
         ? { per: "occurrence" }
         : { per: "row" };
