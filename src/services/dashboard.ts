@@ -354,6 +354,18 @@ function spendingPace(db: AppDatabase, today: string): SpendingPace | null {
    * 🔴 On his ledger copy 2026-10-21 the tile read "≈ −$2,839.14" ($0.00 + $2,283.84 − $1,603.00 − $3,519.98) beside
    * that card's "—", Wells Fargo checked through Sep 24: Oct 1, 8 and 15's $3,425.76 were in neither leg, and banked
    * they make it +$586.62 (review of 6cb97ea). Spending's dash outranks it — its words say why the spent line is gone.
+   *
+   * ⚖️ default built, not asked (2026-10-21): the dash holds from the 1st of each month until a statement covering one
+   * day of it is imported where his pay lands. Wells Fargo's statements arrive monthly (staleness is expected), so the
+   * tile's headline figure reads "—" for most of every month. Measured on his ledger copy 2026-10-29: day 29 of 31
+   * reads "— · until income is found" over "at least $1,603.00 spent · at least $1,713.55 projected", Wells Fargo
+   * checked through Sep 24; the figure it holds back is −$3,981.06 ($0.00 + $1,141.92 − $1,603.00 − $3,519.98), Oct
+   * 1, 8, 15 and 22's $4,567.68 in neither leg — +$586.62 banked. ⚠️ A live pay schedule naming no account lands
+   * nowhere the ledger has read, so the figure waits in every month no income is found (this file's test gives its
+   * Payroll an account to keep it); his It America LLC schedule names Wells Fargo. ⚠️ Latent, not built: a month whose
+   * pay is found in part prints its figure, and a payday between the pay account's last checked day and today is in
+   * neither leg there — $0, with no "partly read" for income. On a temp fixture (weekly $1,000 found Jul 2, its account
+   * checked through Jul 2) the tile reads $4,920.00 on Jul 8 and $3,920.00 on Jul 10, Jul 9's pay in neither.
    */
   const waitsForIncome = !withheld && cashFlow.incomeUnread;
   /*
