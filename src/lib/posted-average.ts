@@ -375,9 +375,10 @@ export function postedAsWord(o: Pick<Occurrence, "postings">): string | null {
  * LEFT only when it posts after one — after the first, so a remainder between two leaves both named; one before it
  * says the amounts vary, and nothing is named. 🔴 At b6aa5dc any payment below the rate was a remainder wherever it
  * fell, and a bill whose rate is its HIGHEST amount has none above it: FPL's -$14.21 Jul 10 and -$56.22 Jul 28, with
- * -$58.87 Aug 28 at the rate he set and a -$125.00 Sep 28 bill linked, read "Sep 28's -$125.00 covered more than one
- * month" on the All tab, the series page and the popover (review of b6aa5dc; measured on his ledger copy 2026-10-23
- * with those two rows linked). Breezeline's -$40.32 prorated first bill, before four at its $50.00 rate, now keeps a
+ * a -$58.87 Aug 28 at the rate he set and a -$125.00 Sep 28 bill added, read "Sep 28's -$125.00 covered more than one
+ * month" on the All tab, the series page and the popover (review of b6aa5dc; measured on a copy of his ledger
+ * 2026-10-23, those two rows ADDED as a what-if — his FPL has posted only Jul 10 and Jul 28, its Chase Checking read
+ * through Aug 12). Breezeline's -$40.32 prorated first bill, before four at its $50.00 rate, now keeps a
  * later charge of $100.00 unnamed (a -$100.00 Oct 22 added there read "Oct 22's -$100.00 covered more than one month").
  * Car insurance's Nov 11 remainder, and any credit after Sep 3, post after it: Sep 3 is still named.
  *

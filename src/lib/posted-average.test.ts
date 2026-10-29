@@ -709,7 +709,8 @@ describe("paidAhead — the payments that covered more than one charge, said bes
    * every payment below the rate was a remainder wherever it fell: FPL's -$14.21 Jul 10 and -$56.22 Jul 28, then
    * -$58.87 Aug 28 at the rate he set and a -$125.00 Sep 28 bill, read "Sep 28's -$125.00 covered more than one month"
    * on the All tab, the series page and the popover — a bill whose rate is its highest amount has none above it
-   * (review of b6aa5dc; measured on his ledger copy 2026-10-23 with those two rows linked).
+   * (review of b6aa5dc; measured on a copy of his ledger 2026-10-23, those two rows ADDED as a what-if — his FPL has
+   * posted only Jul 10 and Jul 28, its Chase Checking read through Aug 12).
    */
   test("a payment below the rate, or money back, BEFORE the payment ahead: FPL and Breezeline name nothing", () => {
     const fpl = [

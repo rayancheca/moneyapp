@@ -420,9 +420,10 @@ describe("the posted average, per occurrence — his rent on the page, the All t
   /*
    * ⚖️ default built, not asked (2026-10-23): …and a payment below the rate is what a payment ahead left only when it
    * posts after it. 🔴 At b6aa5dc FPL's -$14.21 Jul 10 and -$56.22 Jul 28, with -$58.87 Aug 28 at the rate he set and a
-   * -$125.00 Sep 28 bill linked, read "posted avg -$63.58 · Sep 28's -$125.00 covered more than one month" on the All
+   * -$125.00 Sep 28 bill added, read "posted avg -$63.58 · Sep 28's -$125.00 covered more than one month" on the All
    * tab and the series page, and the popover "average … is -$63.58, which is not what you set — Sep 28's -$125.00
-   * covered more than one month" (review of b6aa5dc; measured on his ledger copy 2026-10-23, those two rows linked).
+   * covered more than one month" (review of b6aa5dc; measured on a copy of his ledger 2026-10-23, those two rows ADDED
+   * as a what-if — his FPL has posted only Jul 10 and Jul 28, its Chase Checking read through Aug 12).
    */
   test("a bill whose rate is its highest amount paid nothing ahead: FPL and Breezeline — on all three", () => {
     const fpl = seed("FPL (electricity)", "bill", -5_887, [

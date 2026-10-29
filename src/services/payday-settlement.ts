@@ -342,7 +342,12 @@ export interface StillToComeSeries extends SeriesOverrides {
  * October's forecast no longer count it. ⚖️ …only once the day behind ITS day is settled, read as the calendar reads
  * it: with Aug 11 missed too, Sep 19 pays Aug 11 and Sep 11, and Oct 11 is still to come; with Aug 11 paid early by
  * Jul 20's -$715.16, Sep 20's pays Oct 11; and started Aug 11 by his date, Aug 20's pays Sep 11 — the day before his
- * date is no charge (2026-10-23).
+ * date is no charge (2026-10-23). ⛔ …so its days are read off the series' own row, his date as HIS (`dueDaysOf`'s
+ * second argument), as the calendar and the arrears read them. 🔴 Nothing pinned it (review of b6e11a76): read with
+ * `userNextExpectedOn: null` there, every grader test passed (the review counted 1,877), and on his ledger copy
+ * 2026-10-29 with that premium on Venture X, Jun 11 paid before his Aug 11, on Sep 1 the calendar drew Sep 11 paid
+ * early by Aug 20 while Upcoming, September's forecast, the All tab, the page and the budget tail listed it still to
+ * come (nearer-due-day.test.ts pins it).
  */
 export function stillToComeReader(
   db: AppDatabase,
@@ -355,7 +360,7 @@ export function stillToComeReader(
   const bills = series.filter((s) => s.kind !== "income");
   const payments = billPaymentsBySeries(db, bills);
   // its days as every grader steps them (`dueDaysOf`) — the day before each, for one paid early, and the day its
-  // schedule opens — with nothing late asked (above)
+  // schedule opens and whether it is his (`s`, never a bare schedule) — with nothing late asked (above)
   const dueDays = new Map(
     bills.map((s) => [s.id, { ...dueDaysOf(effectiveSchedule(s), s), after: () => null }] as const),
   );

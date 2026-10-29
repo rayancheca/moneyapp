@@ -580,7 +580,7 @@ describe("the nearer due day wins (decision 76)", () => {
      * -$715.16 — five charges, four days paid; on Sep 25 Upcoming listed Oct 11 and October's forecast held -$357.58,
      * and on Oct 23 October drew Oct 11 missed beside a page naming both as covering more than one month.
      */
-    test("…two late ones in a row each pay their own day and the next: every charge pays a day", () => {
+    test("…two late ones two due days apart each pay their own day and the next: every charge pays a day", () => {
       const elevenths = ["2026-06-11", "2026-07-11", ...days, "2026-12-11", "2027-01-11"];
       const lates = ["2026-07-20", "2026-09-20", "2026-11-20"];
       for (let n = 1; n <= lates.length; n++) {
@@ -599,6 +599,41 @@ describe("the nearer due day wins (decision 76)", () => {
         null,
       ]);
       expect(paymentFor(later, "2026-12-11", ahead)?.postedOn).toBe("2026-11-20");
+    });
+
+    /*
+     * ⚠️ …but only two due days apart — THE KNOWN GAP (review of b6e11a76): of two ADJACENT late payments of two, the
+     * later is asked first for its own late day (`nearerDaysPayment`, before the catch-up), the day the earlier one's
+     * second charge paid ahead — so that charge pays no day: five charges, four days, the last one owed; with a third,
+     * seven and five. Paying every one reads the run as one allocation, each payment pushing the next a day further
+     * ahead, a day still to come at its end — not built (an owner's call, 2026-10-29). The error shows a paid day owed,
+     * the safe direction. nearer-due-day.test.ts pins what each surface reads.
+     */
+    test("⚠️ the known gap: two ADJACENT late ones pay three days for four charges — the day after stays owed", () => {
+      const adjacent = [pay("2026-06-11"), twice("2026-07-20"), twice("2026-08-20")];
+      const five = ["2026-06-11", "2026-07-11", "2026-08-11", "2026-09-11", "2026-10-11"];
+      // anchored Sep 11 (detection's step after Aug 20) or Jul 11, the same: Aug 11 is Aug 20's late, not Jul 20's
+      for (const due of [PREMIUM, monthlyOn("2026-07-11")]) {
+        expect(graded(adjacent, due, five).map(([, p]) => p)).toEqual([
+          "2026-06-11",
+          "2026-07-20",
+          "2026-08-20",
+          "2026-08-20",
+          null,
+        ]);
+        expect(paymentFor(adjacent, "2026-10-11", { ...due, after: () => null })).toBeUndefined();
+      }
+      // …and with a third, Sep 20: seven charges, five days — Nov 11 and Dec 11 still to come
+      const three = [...adjacent, twice("2026-09-20")];
+      expect(graded(three, PREMIUM, [...five, "2026-11-11", "2026-12-11"]).map(([, p]) => p)).toEqual([
+        "2026-06-11",
+        "2026-07-20",
+        "2026-08-20",
+        "2026-09-20",
+        "2026-09-20",
+        null,
+        null,
+      ]);
     });
 
     /*
@@ -629,6 +664,34 @@ describe("the nearer due day wins (decision 76)", () => {
       expect(graded(opening, hisDate("2026-07-11"), five).map(([, p]) => p)).toEqual(caughtUp);
       // …and so, before detection's anchor, is one after a payment of it: Jun 11 paid, Jul 11 missed
       expect(graded(afterJun11, monthlyOn("2026-08-11"), five).map(([, p]) => p)).toEqual(caughtUp);
+    });
+
+    /*
+     * ⚖️ default built, not asked (2026-10-29) — …and a payment of two LATE FOR A DAY BEFORE HIS DATE pays nothing on
+     * his schedule: that day is no charge, so it has no payment to catch up from, and its second charge pays no day of
+     * his early. 🔴 At b6e11a76 the day before his date was asked as the payment's own day, the day behind it settled
+     * for lying before his date too (review of b6e11a76; his ledger copy 2026-10-29 with this premium added on Venture
+     * X, read through Oct 14): Jun 11 and Jul 11 paid, Aug 11 and Sep 11 missed, Sep 19 -$715.16, then he typed Oct 11
+     * — October drew Oct 11 "paid early by its payment of Sep 19, 2026"; on Sep 25 Upcoming listed Nov 11 alone and
+     * October's forecast left it out; on Oct 29 nothing was owed and the runway read "A further $3,519.98 came due
+     * earlier this month and no statement has covered it yet." — round 2's two-missed defect, back for his own date.
+     */
+    test("…late for a day before his date it pays none of his: typed Oct 11 after Sep 19, Oct 11 is owed", () => {
+      const lateBefore = [...["2026-06-11", "2026-07-11"].map(pay), twice("2026-09-19")];
+      const ahead = ["2026-10-11", "2026-11-11"];
+      expect(graded(lateBefore, hisDate("2026-10-11"), ahead).map(([, p]) => p)).toEqual([null, null]);
+      // …as the readers that look ahead read it: on Sep 25, Oct 11 is still to come
+      expect(paymentFor(lateBefore, "2026-10-11", { ...hisDate("2026-10-11"), after: () => null })).toBeUndefined();
+      // …as with detection's own Oct 11 and nothing typed: the day behind Sep 11, Aug 11, is a charge and unpaid
+      expect(graded(lateBefore, monthlyOn("2026-10-11"), ahead).map(([, p]) => p)).toEqual([null, null]);
+      // …and with only Sep 11 missed: his date still owes Oct 11, where detection's Oct 11 is Sep 19's second day
+      const oneMissed = [...["2026-06-11", "2026-07-11", "2026-08-11"].map(pay), twice("2026-09-19")];
+      expect(graded(oneMissed, hisDate("2026-10-11"), ahead).map(([, p]) => p)).toEqual([null, null]);
+      expect(graded(oneMissed, monthlyOn("2026-10-11"), ahead).map(([, p]) => p)).toEqual(["2026-09-19", null]);
+      // …but late for his date ITSELF it pays the day after (above), and EARLY for it, it is his date's own (decision
+      // 76): Oct 1, nearer Oct 11 than Sep 11, pays it — its second charge nothing, a payment ahead is not read ahead
+      const earlyForHis = [pay("2026-08-11"), twice("2026-10-01")];
+      expect(graded(earlyForHis, hisDate("2026-10-11"), ahead).map(([, p]) => p)).toEqual(["2026-10-01", null]);
     });
 
     /*

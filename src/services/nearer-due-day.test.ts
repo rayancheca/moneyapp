@@ -13,6 +13,7 @@ import { seedDatabase } from "@/db/seed";
 import { arrearsSentence } from "@/lib/committed";
 import { arrearsThisMonth } from "./arrears";
 import { billPaymentsBySeries } from "./billing-carriers";
+import { budgetTail } from "./budgets";
 import { checkedThrough } from "./checked-days-fixture";
 import { committedBook } from "./committed";
 import { forecastForMonth } from "./forecast";
@@ -601,14 +602,15 @@ describe("⚖️ a late catch-up — two premiums in one payment after a missed 
   });
 
   /*
-   * ⚖️ default built, not asked (2026-10-23) — …and of two late payments of two in a row, each pays its own day and the
-   * next: a day the one before paid early is paid. 🔴 At 8348349 the second paid its own day alone (review of 8348349;
-   * his ledger copy 2026-10-23 with this premium added on Venture X, read through Oct 14, anchored Oct 11 — the step
-   * detection lays down after Sep 20 — or Jul 11, both reading the same): on Sep 25 Upcoming listed Oct 11 and
-   * October's forecast held -$357.58; on Oct 23 October drew Oct 11 missed, the arrears owed $357.58, the runway read
-   * "A further $3,877.56 came due earlier this month: $357.58 has not posted, and no statement has covered the other
-   * $3,519.98 yet." and the series page showed Oct 11 overdue beside "Jul 20's -$715.16 and Sep 20's -$715.16 each
-   * covered more than one month" — five charges paid, four days.
+   * ⚖️ default built, not asked (2026-10-23) — …and of two late payments of two in a row, two due days apart, each pays
+   * its own day and the next: a day the one before paid early is paid (adjacent ones do not — the known gap, below).
+   * 🔴 At 8348349 the second paid its own day alone (review of 8348349; his ledger copy 2026-10-23 with this premium
+   * added on Venture X, read through Oct 14, anchored Oct 11 — the step detection lays down after Sep 20 — or Jul 11,
+   * both reading the same): on Sep 25 Upcoming listed Oct 11 and October's forecast held -$357.58; on Oct 23 October
+   * drew Oct 11 missed, the arrears owed $357.58, the runway read "A further $3,877.56 came due earlier this month:
+   * $357.58 has not posted, and no statement has covered the other $3,519.98 yet." and the series page showed Oct 11
+   * overdue beside "Jul 20's -$715.16 and Sep 20's -$715.16 each covered more than one month" — five charges paid,
+   * four days.
    */
   test("Jul 20 and Sep 20, each late with two premiums: Sep 20 pays Oct 11 early — nothing owed, none coming", () => {
     const rows: [string, number][] = [
@@ -681,6 +683,105 @@ describe("⚖️ a late catch-up — two premiums in one payment after a missed 
     ]);
     expect(owedPremium(SEP25)).toEqual([]);
     expect(seriesDetail(bundle.db, PREMIUM, SEP25)!.overdue).toBeNull();
+  });
+
+  /*
+   * ⛔ …and every reader that looks ahead reads his date as his (`stillToComeReader`, `dueDaysOf`'s series), as the
+   * calendar and the arrears do. 🔴 Nothing pinned it (review of b6e11a76): read there with `userNextExpectedOn: null`,
+   * every grader test passed, and on his ledger copy 2026-10-29 with this premium on Venture X — started Aug 11 by his
+   * date, Jun 11 paid before it, Aug 20 -$715.16 — on Sep 1 the calendar drew Sep 11 "paid early by its payment of Aug
+   * 20, 2026" while Upcoming listed Sep 11 and Oct 11, September's forecast held -$357.58, the All tab and the page
+   * named Sep 11 next, and /budgets' Car tail held Sep 11's $357.58: read as detection's, Jul 11 was a charge (Jun 11
+   * posted before it), unpaid, and Aug 20 paid it.
+   */
+  test("started Aug 11 by his date, Jun 11 paid before it: on Sep 1 no reader that looks ahead lists Sep 11", () => {
+    const started = { ...bill(PREMIUM, "Premium (what-if)", -35758, "2026-09-11"), userNextExpectedOn: "2026-08-11" };
+    bundle.db.insert(recurringSeries).values({ ...started, lastMatchedOn: "2026-08-20" }).run();
+    // Jun 11's row, at the rate, is what names Aug 20 as covering more than one month (`paidAhead`)
+    pay(`t-${PREMIUM}-jun11`, PREMIUM, "2026-06-11", -35758);
+    pay(`t-${PREMIUM}-aug20`, PREMIUM, "2026-08-20", -71516);
+    const SEP1 = "2026-09-01";
+    expect(marks("2026-09", "2026-09-11", SEP1)).toEqual([
+      [PREMIUM, "paid", { carrier: null, postedOn: "2026-08-20", early: true }],
+    ]);
+    expect(seriesDetail(bundle.db, PREMIUM, SEP1)!.paidAhead.map((o) => o.postedOn)).toEqual(["2026-08-20"]);
+    // Upcoming, September's forecast, the All tab's Next, the page's next charges and the budget's tail
+    expect(coming(SEP1, PREMIUM)).toEqual(["2026-10-11"]);
+    expect(premiumIn("2026-09", SEP1)).toEqual([]);
+    expect(listSeries(bundle.db, SEP1).find((s) => s.id === PREMIUM)?.nextExpectedOn).toBe("2026-10-11");
+    expect(seriesDetail(bundle.db, PREMIUM, SEP1)!.nextExpected.map((o) => o.date)[0]).toBe("2026-10-11");
+    expect(budgetTail(bundle.db, categoryId, "2026-09-30", SEP1).series.map((s) => [s.id, s.nextDate])).toEqual([]);
+  });
+
+  /*
+   * ⚖️ default built, not asked (2026-10-29) — …and a payment of two LATE FOR A DAY BEFORE HIS DATE pays nothing on his
+   * schedule: that day is no charge, so it catches nothing up and pays no day of his early (`paidAheadFromTheDayBefore`
+   * in billing-carriers). 🔴 At b6e11a76 it paid his date early (review of b6e11a76; his ledger copy 2026-10-29, this
+   * premium added on Venture X, read through Oct 14): Jun 11 and Jul 11 paid, Aug 11 and Sep 11 missed, Sep 19
+   * -$715.16, then he typed Oct 11 (the toast read "Next expected Oct 11") — October drew Oct 11 "paid early by its
+   * payment of Sep 19, 2026"; on Sep 25 Upcoming listed Nov 11 alone, October's forecast left it out, and the All tab
+   * and the page named Nov 11 next; on Oct 29 nothing was owed, /budgets' Car pace had no overdue line, and the runway
+   * read "A further $3,519.98 came due earlier this month and no statement has covered it yet." — his own bills, round
+   * 2's two-missed defect back for his own date. At 8348349 Oct 11 was still to come on Sep 25 and owed on Oct 23, as
+   * detection's own Oct 11 reads it.
+   */
+  test("he typed Oct 11 after Sep 19's two premiums, late for Sep 11: Oct 11 still comes, and is owed unposted", () => {
+    const typed = { ...bill(PREMIUM, "Premium (what-if)", -35758, "2026-10-11"), userNextExpectedOn: "2026-10-11" };
+    bundle.db.insert(recurringSeries).values({ ...typed, lastMatchedOn: "2026-09-19" }).run();
+    pay(`t-${PREMIUM}-jun11`, PREMIUM, "2026-06-11", -35758);
+    pay(`t-${PREMIUM}-jul11`, PREMIUM, "2026-07-11", -35758);
+    pay(`t-${PREMIUM}-sep19`, PREMIUM, "2026-09-19", -71516);
+    checkedThrough(bundle.db, "acct", "2026-10-22");
+    // on Sep 25 Oct 11 is still to come: Upcoming, October's forecast, the All tab's Next and the page's next charges
+    const SEP25 = "2026-09-25";
+    expect(coming(SEP25, PREMIUM)).toEqual(["2026-10-11", "2026-11-11"]);
+    expect(premiumIn("2026-10", SEP25)).toEqual([-35758]);
+    expect(listSeries(bundle.db, SEP25).find((s) => s.id === PREMIUM)?.nextExpectedOn).toBe("2026-10-11");
+    expect(seriesDetail(bundle.db, PREMIUM, SEP25)!.nextExpected.map((o) => o.date)[0]).toBe("2026-10-11");
+    // …and on Oct 23, never posted, it is owed: the calendar, the arrears, the runway and the page
+    expect(marks("2026-10", "2026-10-11", TODAY)).toEqual([[PREMIUM, "missed", null]]);
+    expect(owedPremium(TODAY)).toEqual([["2026-10-11", 35758, 0]]);
+    expect(arrearsSentence(committedBook(bundle.db, TODAY))).toBe(
+      "A further $357.58 came due earlier this month and has not posted.",
+    );
+    const page = seriesDetail(bundle.db, PREMIUM, TODAY)!;
+    expect([page.overdue?.date, page.overdue?.amountCents]).toEqual(["2026-10-11", -35758]);
+    expect(page.paidAhead.map((o) => o.postedOn)).toEqual(["2026-09-19"]);
+  });
+
+  /*
+   * ⚠️ …but only two due days apart — THE KNOWN GAP (review of b6e11a76; his ledger copy 2026-10-29 with this premium
+   * added on Venture X, read through Oct 14, anchored Sep 11 — detection's step — or Jul 11, both reading the same):
+   * of two ADJACENT late payments of two, the later is asked first for its own late day, the day the earlier one's
+   * second charge paid ahead, so that charge pays no day. Jun 11, then Jul 20 and Aug 20 each -$715.16: Jul 11 is Jul
+   * 20's, Aug 11 and Sep 11 Aug 20's, and on Oct 29 October draws Oct 11 missed, the arrears owe $357.58, the runway
+   * reads "A further $3,877.56 came due earlier this month: $357.58 has not posted, and no statement has covered the
+   * other $3,519.98 yet." and the page shows Oct 11 overdue beside "Jul 20's -$715.16 and Aug 20's -$715.16 each
+   * covered more than one month" — five charges, four days. Not built (an owner's call, 2026-10-29): it shows a paid
+   * day owed, the safe direction. Paying it reads the run as one allocation, each payment pushing the next a day ahead.
+   */
+  test("⚠️ known gap: Jul 20 and Aug 20, adjacent, each two premiums — Oct 11 is owed beside both named", () => {
+    const rows: [string, number][] = [
+      ["2026-06-11", -35758],
+      ["2026-07-20", -71516],
+      ["2026-08-20", -71516],
+    ];
+    seriesWith(PREMIUM, "Premium (what-if)", -35758, "2026-09-11", ...rows);
+    checkedThrough(bundle.db, "acct", "2026-10-22");
+    for (const anchor of ["2026-09-11", "2026-07-11"]) {
+      bundle.db.update(recurringSeries).set({ nextExpectedOn: anchor }).where(eq(recurringSeries.id, PREMIUM)).run();
+      expect(marks("2026-09", "2026-09-11", TODAY)).toEqual([
+        [PREMIUM, "paid", { carrier: null, postedOn: "2026-08-20", early: true }],
+      ]);
+      expect(marks("2026-10", "2026-10-11", TODAY)).toEqual([[PREMIUM, "missed", null]]);
+      expect(owedPremium(TODAY)).toEqual([["2026-10-11", 35758, 0]]);
+      expect(arrearsSentence(committedBook(bundle.db, TODAY))).toBe(
+        "A further $357.58 came due earlier this month and has not posted.",
+      );
+      const page = seriesDetail(bundle.db, PREMIUM, TODAY)!;
+      expect([page.overdue?.date, page.overdue?.amountCents]).toEqual(["2026-10-11", -35758]);
+      expect(page.paidAhead.map((o) => o.postedOn)).toEqual(["2026-07-20", "2026-08-20"]);
+    }
   });
 
   /*
