@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterAll, beforeAll, describe, expect, test, vi } from "vitest";
+import type { SeriesStatus } from "@/db/schema/recurring";
 
 const source = fs.readFileSync(path.join(process.cwd(), "src/app/recurring/page.tsx"), "utf8");
 
@@ -56,15 +57,21 @@ describe("/recurring's All tab is built by the one helper", () => {
  * and `all: allTab.badge`: renaming the local failed it with nothing changed, what the review above objected to (batch
  * 6 review, #22). So the page is rendered, from a ledger in a temp file, and read the way he reads it: the rows under
  * the tab strip, the line over them and the number in its All tab.
+ *
+ * 🔴 The ledger held no ENDED series, so a rule that drops only the dismissed (`status !== "dismissed"`) counted the
+ * same 3 as the tab's own (`isListedSeries`): `all:` counted that way passed this file 3/3, where the source test it
+ * replaced had failed (review of 3976191). On his ledger copy 2026-10-29 it would print 31 on his All tab for 14 — 42
+ * series: 13 confirmed, 1 suggestion, 11 dismissed and 17 ended — and "13 of 31" over the subscriptions card's link
+ * for "13 of 14". So the ledger holds an ended series too, and one link names it.
  */
 describe("/recurring's All tab, rendered: the rows a link named, the line over them and the badge's count", () => {
-  let ids: Record<"salary" | "tutoring" | "rent" | "lending", string>;
+  let ids: Record<"salary" | "tutoring" | "rent" | "lending" | "gym", string>;
 
   beforeAll(() => {
     process.env.MONEYAPP_FAKE_TODAY = "2026-10-29";
     const { db } = getDbBundle();
     seedDatabase(db);
-    const series = (name: string, kind: "income" | "bill", status: "confirmed" | "detected" | "dismissed") =>
+    const series = (name: string, kind: "income" | "bill", status: SeriesStatus) =>
       db
         .insert(recurringSeries)
         .values({ name, kind, cadence: "monthly", status })
@@ -76,6 +83,8 @@ describe("/recurring's All tab, rendered: the rows a link named, the line over t
       rent: series("Rent", "bill", "confirmed"),
       // dismissed: in no section of the tab, and not in its population
       lending: series("STOCK LENDING (COKE)", "income", "dismissed"),
+      // ended: no row either, and not counted — 17 of the 28 series his copy 2026-10-29 does not list
+      gym: series("Old gym", "bill", "ended"),
     };
   });
 
@@ -113,6 +122,16 @@ describe("/recurring's All tab, rendered: the rows a link named, the line over t
     const tab = await allTabAt(ALL_SERIES_HREF);
     expect(tab.listed).toEqual([ids.salary, ids.tutoring, ids.rent].sort());
     expect(tab.line).toBeNull();
+    expect(tab.badge).toBe(3);
+  });
+
+  // ⛔ a link followed before he ended a series still names it: no row, and not one of the "shown" either. Latent on
+  // his ledger copy 2026-10-29: neither the subscriptions card's link nor the car card's names a series the tab does
+  // not list ("13 of 14", "3 of 14"). 🔴 A "shown" counted as the rows handed over passed the two tests above.
+  test("from a link naming Rent and a series since ended: Rent alone, 'Showing 1 of 3', the same badge", async () => {
+    const tab = await allTabAt(seriesListHref([ids.rent, ids.gym]));
+    expect(tab.listed).toEqual([ids.rent]);
+    expect(tab.line).toBe("Showing 1 of 3 series — the ones behind the link you followed.");
     expect(tab.badge).toBe(3);
   });
 });
