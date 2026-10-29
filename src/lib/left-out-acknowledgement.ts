@@ -164,7 +164,7 @@ const NEVER_AMONG_WORDS: readonly { readonly is: RegExp; readonly called: string
  * direction, and opens no run.
  *
  * ⛔ A reason its lines alike carry stored already is taken as stored, never refused by this again: see
- * `reasonCarriedAlready`, and the writer's own scope — a reason stored for a line keyed as the one written.
+ * `reasonCarriedAlready`, which ledger-check's gate and the table's one writer both ask, of the same lines left out.
  */
 export function reasonCarriesControl(reason: string): string | null {
   for (const char of reason) {
@@ -179,14 +179,19 @@ export function reasonCarriesControl(reason: string): string | null {
 /**
  * Whether `reason` is one the lines the marks name carry stored already, exactly — taken as stored, then, not judged
  * again by what it carries (`reasonCarriesControl`): the command line names that refusal (`ledgerCheckMode`'s
- * `carriedRefusal`), and ledger-check makes it only for a reason this is false of.
+ * `carriedRefusal`), and ledger-check makes it only for a reason this is false of. ONE rule for its gate and the
+ * table's one writer, which asks it of each write's own mark (`tokenOfKey`) and the lines left out it reads from the
+ * ledger itself: the run a dry run names is the run `--confirm` writes.
  *
  * ⚖️ §6A 30: lines alike take one reason — an open line the one its lines alike carry, exactly — and this step never
  * changes a stored one. 🔴 Review of 3872004 (2026-10-12): a reason stored before a guard refused what it carries — a
  * bidi control before 3872004, an escape or a bell before 34e97eb — could never be given again, so a mark partly
  * acknowledged with it failed ledger-check for good. None is stored on his ledger (0 acknowledgements, his copy of
- * 2026-10-13). A line or paragraph separator never reached the table through the command line, which has made every
- * run of whitespace one space since reasons were first stored (266be8e).
+ * 2026-10-29). A line or paragraph separator never reached the table through the command line, which has made every
+ * run of whitespace one space since reasons were first stored (266be8e). 🔴 Review of 3bc3002 (2026-10-22): the writer
+ * asked its own question — a stored row keyed as the write, carrying the reason — and a line alike acknowledged
+ * under ANOTHER of its printers' keys (`acknowledgementsOf`) carries it under a key no write has: this let the reason
+ * through, the dry run named the run with it, and `--confirm` threw — that dead end again.
  */
 export function reasonCarriedAlready(
   lines: readonly AcknowledgeableLine[],
@@ -197,8 +202,11 @@ export function reasonCarriedAlready(
   return lines.some((line) => line.acknowledged?.reason === reason && tokens.includes(leftOutToken(line)));
 }
 
+/** What an acknowledgement is keyed by: its line's account, money, and the first printer's printing of it (`keyOf`). */
+type AcknowledgementKey = Omit<LeftOutAcknowledgementWrite, "description" | "acknowledgedOn" | "reason">;
+
 /** What an acknowledgement of `line` is keyed by: its first printer's printing of it. */
-function keyOf(line: KeyedLine): Omit<LeftOutAcknowledgementWrite, "description" | "acknowledgedOn" | "reason"> {
+function keyOf(line: KeyedLine): AcknowledgementKey {
   const first = line.printings[0]!;
   return {
     accountId: line.accountId,
@@ -214,7 +222,14 @@ function keyOf(line: KeyedLine): Omit<LeftOutAcknowledgementWrite, "description"
  * same line, and the same for two lines alike. Length-prefixed, like `dedupeHash`: words cannot forge a field boundary.
  */
 export function leftOutToken(line: KeyedLine): string {
-  const key = keyOf(line);
+  return tokenOfKey(keyOf(line));
+}
+
+/**
+ * The mark of the line an acknowledgement keyed by `key` is written for: a write is keyed as its line is
+ * (`acknowledgementWrites`), so its mark is that line's — how the table's one writer asks `reasonCarriedAlready` of it.
+ */
+export function tokenOfKey(key: AcknowledgementKey): string {
   const fields = [key.accountId, key.printedOn, String(key.amountCents), key.printedWords, key.printerSha256];
   return createHash("sha256")
     .update(fields.map((f) => `${f.length}:${f}`).join("\x1f"))

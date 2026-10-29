@@ -230,51 +230,28 @@ describe("the acknowledgements a ledger keeps (`left_out_acknowledgements`)", ()
   /*
    * ⚖️ §6A 30: lines alike take one reason, an open one the one they carry, exactly. 🔴 Review of 3872004: a reason
    * stored before a guard refused a bidi control (or, before 34e97eb, a control character) could never be written again
-   * for its line alike left open since — refused here, and that mark failed ledger-check for good. A reason the ledger
-   * stores already is taken as stored; the command line lets one through only for the lines alike that carry it.
+   * for its line alike left open since — refused here, and that mark failed ledger-check for good. A reason stored is
+   * taken as stored where the lines alike of the line written carry it: ledger-check's gate's question
+   * (`reasonCarriedAlready`), asked of the lines left out this reads from the ledger — pinned on real ones, keyed under
+   * either printer, in services/import/lines-left-out.test.ts. 🔴 Review of 3bc3002 (2026-10-22): it took a stored row
+   * keyed as the write instead, which a line alike acknowledged under another printer's key never is. ⛔ A row no line
+   * left out matches is carried by no line alike: its reason is refused as a new one is.
    */
-  test("a reason stored before its guard is taken as stored — the same characters in a new one refused as ever", () => {
+  test("⛔ a stored reason no line left out carries is refused as a new one is — by name, nothing written", () => {
     const override = "July statement, ‮page 1: the opening deposit, reversed";
     // stored as the writer took it before 3872004 — the table's own CHECK trims ASCII whitespace only
     bundle.db.insert(leftOutAcknowledgements).values({ ...OPENING, reason: override }).run();
+    const before = changes();
 
-    writeLeftOutAcknowledgements(bundle.db, [{ ...OPENING, reason: override }]);
-
-    expect(readLeftOutAcknowledgements(bundle.db).map((a) => a.reason)).toEqual([override, override]);
-    expect(() => writeLeftOutAcknowledgements(bundle.db, [{ ...OPENING, reason: "July statement, ‮page 2" }])).toThrow(
-      "carries a bidi control, U+202E, that every surface would print raw — nothing was written",
-    );
-    expect(readLeftOutAcknowledgements(bundle.db)).toHaveLength(2);
-  });
-
-  /*
-   * 🔴 Review of 7601578 (2026-10-13): the writer let through any reason the TABLE held, whichever line carried it,
-   * while the command line lets one through only for the lines alike that carry it (`reasonCarriedAlready`) — so a
-   * caller other than ledger-check could store an override on a line it was never given for. A reason is taken as
-   * stored only for a line keyed as the one that carries it: its account, day, money, printed words and printer.
-   */
-  test("⛔ a reason another line carries is not this line's — refused by name, nothing written", () => {
-    const override = "July statement, ‮page 1: the opening deposit, reversed";
-    bundle.db.insert(leftOutAcknowledgements).values({ ...OPENING, reason: override }).run();
-    const other = { ...OPENING, printedOn: "2026-07-28", printedWords: "WFB OPENING DEPOSIT REVERSAL" };
-
-    expect(() => writeLeftOutAcknowledgements(bundle.db, [{ ...OPENING, reason: override }, { ...other, reason: override }])).toThrow(
-      "refused: the reason for WFB Opening Deposit From Card on 2026-07-28 carries a bidi control, U+202E, that every " +
-        "surface would print raw — nothing was written",
-    );
-    // each field of the key, alone, makes another line
-    const unlikeBy = {
-      accountId: "01a03a43-ab5d-7000-a3d4-e4d2c112e2b9",
-      printedOn: "2026-07-29",
-      amountCents: 2501,
-      printedWords: "WFB OPENING DEPOSIT FROM CARD 2",
-      printerSha256: "2f".repeat(32),
-    };
-    for (const [key, value] of Object.entries(unlikeBy)) {
-      const unlike = { ...OPENING, [key]: value, reason: override };
-      expect(() => writeLeftOutAcknowledgements(bundle.db, [unlike]), key).toThrow("carries a bidi control, U+202E");
+    for (const reason of [override, "July statement, ‮page 2"]) {
+      expect(() => writeLeftOutAcknowledgements(bundle.db, [OPENING, { ...OPENING, reason }])).toThrow(
+        "refused: the reason for WFB Opening Deposit From Card on 2026-07-27 carries a bidi control, U+202E, that every " +
+          "surface would print raw — nothing was written",
+      );
     }
-    expect(readLeftOutAcknowledgements(bundle.db)).toHaveLength(1);
+
+    expect(changes()).toBe(before);
+    expect(readLeftOutAcknowledgements(bundle.db).map((a) => a.reason)).toEqual([override]);
   });
 
   test("what the session read, an invisible character in it or not, is a reason — stored as given", () => {
