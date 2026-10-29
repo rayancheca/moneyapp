@@ -329,6 +329,36 @@ describe("createPageAsks: a link followed while a press is being written", () =>
 });
 
 /**
+ * A press gone at BACK_SAVE_WAIT_MS goes again itself once its write lands, so the page it goes to now is not one
+ * PageAsksProvider draws again: 🔴 making again a link he had followed, it was rendered twice (review of 7898ee2).
+ */
+describe("createPageAsks: a press gone at BACK_SAVE_WAIT_MS", () => {
+  test("goesAgain is true while its navigation runs (`goneAtBound`), and only then", () => {
+    const asks = createPageAsks();
+    asks.ask("/h?view=returns", {});
+    asks.departing("/h/b", "push"); // a link he followed while the press waited
+    expect(asks.goesAgain()).toBe(false);
+    const during: boolean[] = [];
+    asks.goneAtBound(() => {
+      asks.departing(asks.landing()!.href, "push"); // the link made again: its start, inside the navigation
+      during.push(asks.goesAgain());
+    });
+    expect(during).toEqual([true]);
+    expect(asks.goesAgain()).toBe(false);
+  });
+
+  test("a navigation that throws leaves it false", () => {
+    const asks = createPageAsks();
+    expect(() =>
+      asks.goneAtBound(() => {
+        throw new Error("blocked");
+      }),
+    ).toThrow("blocked");
+    expect(asks.goesAgain()).toBe(false);
+  });
+});
+
+/**
  * What asks for its URL only once its own action answers (the benchmark pick) has no ask a move could drop: 🔴 answered
  * after a link or a Back, it asked anew and went back to the page he had left (review of 10852ef, 2026-10-14).
  */
@@ -660,6 +690,25 @@ describe("pressWriteLanding", () => {
     await flush();
     expect(settled).toHaveBeenCalledTimes(1);
     expect(again).not.toHaveBeenCalled(); // never cut short: it goes once, after its write
+  });
+
+  /** …so the press can say so as it goes (`goneAtBound`): it draws its page again itself, once its write lands. */
+  test("while Back's saves are being written it settles true when cut short, false when its write lands first", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    for (const outcome of ["cut short", "landed", "refused"] as const) {
+      const asks = createPageAsks();
+      asks.backSaveSent(new Promise<void>(() => {})); // hung
+      const write =
+        outcome === "cut short"
+          ? new Promise<unknown>(() => {})
+          : outcome === "landed"
+            ? Promise.resolve({ ok: true })
+            : Promise.reject(new Error("offline"));
+      const settled = vi.fn();
+      void pressWriteLanding(asks, write, () => {}).then(settled);
+      await vi.advanceTimersByTimeAsync(BACK_SAVE_WAIT_MS);
+      expect(settled, outcome).toHaveBeenCalledWith(outcome === "cut short");
+    }
   });
 
   test("a refused write settles it as a landed one does, and leaves no timer", async () => {

@@ -352,6 +352,16 @@ export interface PageAsks {
    */
   landing(): Landing | null;
   /**
+   * A press gone at BACK_SAVE_WAIT_MS (`pressWriteLanding` settled `true`) navigates through this (`go`): it goes again
+   * itself once its write lands, so while its navigation starts `goesAgain` is true, and PageAsksProvider draws nothing
+   * again for it. 🔴 Made again then, the link he had followed meanwhile is a move (`movedSince`), and the page was
+   * rendered twice once Back's save and the press's write landed: the provider's redraw, then the press going again
+   * (review of 7898ee2, batch 6).
+   */
+  goneAtBound(go: () => void): void;
+  /** true while a press gone at BACK_SAVE_WAIT_MS navigates (`goneAtBound`), and only then */
+  goesAgain(): boolean;
+  /**
    * A push or replace to `href` is starting: one nobody asked for drops the ask. Until anything
    * is drawn, `base`, `paramsOn` and the next `ask` still build on the ask it dropped: the page
    * on screen is still the one that ask was built on, and a press it holds may still be being
@@ -435,6 +445,8 @@ export function createPageAsks(): PageAsks {
   // the page's moves under its asks (a Back/Forward, a link nobody asked for): how many, and the newest
   let moves = 0;
   let newestMove: PageMove = "link";
+  // a press gone at BACK_SAVE_WAIT_MS is navigating (`goneAtBound`)
+  let atBound = false;
   // every URL a press or URL writer asked for, in one spelling: the view keys his presses had
   // asked for when it was (every one was saved by its press), and the ones it kept from the URL it
   // built on that his presses had put there
@@ -466,6 +478,15 @@ export function createPageAsks(): PageAsks {
       if (current !== null) return { href: current.href, kind: "push", scroll: false };
       return overtaken === null ? null : { ...overtaken, scroll: true };
     },
+    goneAtBound(go) {
+      atBound = true;
+      try {
+        go();
+      } finally {
+        atBound = false;
+      }
+    },
+    goesAgain: () => atBound,
     departing(href, kind) {
       // a push or replace — a press's, a link's: whatever it draws is not Back's page
       traversing = false;
@@ -563,7 +584,8 @@ export function navigateAfterBackSaves(asks: PageAsks, href: string, go: () => v
 /**
  * What a press waits on before it navigates (`useViewState`): its own `write` — and, while a save of Back's view is
  * being written, no longer than BACK_SAVE_WAIT_MS unless those land first; cut short, it calls `again` once the write
- * lands. Settles either way, a refused write too (persistence is best-effort).
+ * lands. Settles either way, a refused write too (persistence is best-effort) — while Back's saves are being written,
+ * `true` when cut short (`again` is still to come: the press goes through `goneAtBound`) and `false` when not.
  *
  * 🔴 Every URL writer that writes nothing was bounded (`navigateAfterBackSaves`), and the press made after one was
  * not: Next queues a server action behind the one in flight, so with Back's save hung the press's own write never ran
@@ -591,10 +613,10 @@ export function pressWriteLanding(asks: PageAsks, write: Promise<unknown>, again
 
 /**
  * Settles once `wanted` does — or once BACK_SAVE_WAIT_MS has passed with Back's saves (`landing`) still unlanded,
- * whichever is first. Cut short, it calls `again` once `wanted` settles: what went before it landed goes again, drawn
- * from what landed. Leaves no timer behind, and adds no tick to `wanted`'s way through.
+ * whichever is first: `true` when cut short. Cut short, it calls `again` once `wanted` settles: what went before it
+ * landed goes again, drawn from what landed. Leaves no timer behind, and adds no tick to `wanted`'s way through.
  */
-function boundedByBackSaves(wanted: Promise<void>, landing: Promise<void>, again: () => void): Promise<void> {
+function boundedByBackSaves(wanted: Promise<void>, landing: Promise<void>, again: () => void): Promise<boolean> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   let landed = false;
   void wanted.then(() => {
@@ -605,9 +627,12 @@ function boundedByBackSaves(wanted: Promise<void>, landing: Promise<void>, again
   });
   // Back's saves landed in time: nothing is hung, and only `wanted` settles it
   void landing.then(() => clearTimeout(timer));
-  const bounded = Promise.race([wanted, hung]).then(() => clearTimeout(timer));
-  void bounded.then(() => {
-    if (!landed) void wanted.then(again);
+  const bounded = Promise.race([wanted, hung]).then(() => {
+    clearTimeout(timer);
+    return !landed;
+  });
+  void bounded.then((cut) => {
+    if (cut) void wanted.then(again);
   });
   return bounded;
 }
