@@ -18,10 +18,8 @@ import { paydayReadings, type PaydayReading, type ReadableRow } from "@/lib/per-
 import { daysThatBanked, daysThatWentBackOut } from "@/lib/posted-average";
 import { ratePeriodOf } from "@/lib/series-kind";
 import { loadCategoryIndex, payDayRows, type AnalyticsTxn, type CategoryIndex } from "./analytics";
-import { billPaymentsBySeries, paymentFor } from "./billing-carriers";
+import { billDueDaysBySeries, billPaymentsBySeries, paymentFor } from "./billing-carriers";
 import {
-  dueDayBefore,
-  effectiveSchedule,
   effectiveSeries,
   projectOccurrences,
   rollForwardNextExpected,
@@ -336,7 +334,19 @@ export interface StillToComeSeries extends SeriesOverrides {
  *
  * ⛔ Asked of days from today on — every caller walks forward from today — so nothing late is asked: a payment past
  * the grace of a day from today on would post after today, and no import has brought one. Every payment is read, as
- * every grader reads them (`billPaymentsBySeries`): an early one lies as far back as the day before.
+ * every grader reads them (`billPaymentsBySeries`): an early one lies as far back as the day before. ⚖️ …and so does a
+ * catch-up, LATE for the day before (`paymentFor`'s, default built, not asked, 2026-10-23), which reads this day as
+ * the one after it: Sep 19's -$715.16 for a premium due the 11th, Sep 11 missed, pays Oct 11 — on Sep 25 Upcoming and
+ * October's forecast no longer count it. ⚖️ …only once the day behind ITS day is settled, read as the calendar reads
+ * it: with Aug 11 missed too, Sep 19 pays Aug 11 and Sep 11, and Oct 11 is still to come; with Aug 11 paid early by
+ * Jul 20's -$715.16, Sep 20's pays Oct 11; and started Aug 11 by his date, Aug 20's pays Sep 11 — the day before his
+ * date is no charge (2026-10-23). ⛔ …so its days are read off the series' own row, his date as HIS — and, billed
+ * inside another, opening where its carrier's opens (`billDueDaysBySeries`, 2026-10-29) — as the calendar and the
+ * arrears read them. 🔴 Nothing pinned it (review of b6e11a76): read with
+ * `userNextExpectedOn: null` there, every grader test passed (the review counted 1,877), and on his ledger copy
+ * 2026-10-29 with that premium on Venture X, Jun 11 paid before his Aug 11, on Sep 1 the calendar drew Sep 11 paid
+ * early by Aug 20 while Upcoming, September's forecast, the All tab, the page and the budget tail listed it still to
+ * come (nearer-due-day.test.ts pins it).
  */
 export function stillToComeReader(
   db: AppDatabase,
@@ -348,13 +358,11 @@ export function stillToComeReader(
   const settled = new Map(income.map((s) => [s.id, settledPaydaysForSeries(db, s.id, today, idx)] as const));
   const bills = series.filter((s) => s.kind !== "income");
   const payments = billPaymentsBySeries(db, bills);
-  // nothing late asked (above); the day before each, as its schedule steps it, for one paid early
-  const dueDays = new Map(
-    bills.map((s) => {
-      const schedule = effectiveSchedule(s);
-      return [s.id, { after: () => null, before: (day: string) => dueDayBefore(schedule, day) }] as const;
-    }),
-  );
+  // its days as every grader reads them (`billDueDaysBySeries`) — the day before each, for one paid early, and the day
+  // its schedule opens and whether it is his (its own row, or its carrier's for one billed inside another) — with
+  // nothing late asked (above)
+  const graded = billDueDaysBySeries(db, bills);
+  const dueDays = new Map(bills.map((s) => [s.id, { ...graded.get(s.id)!, after: () => null }] as const));
   return (seriesId, date) => {
     const paydays = settled.get(seriesId);
     if (paydays !== undefined) return !paydays.has(date);

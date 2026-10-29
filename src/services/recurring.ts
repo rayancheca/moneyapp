@@ -1888,9 +1888,18 @@ export function dueDayBefore(series: DueDaySchedule, day: string): string | null
   return stepFrom(series.nextExpectedOn, plan, signedStepsToReach(series.nextExpectedOn, plan, day) - 1);
 }
 
-/** A series' due days either side of one, as every grader of a bill's day steps them (`paymentFor`). */
-export function dueDaysOf(series: DueDaySchedule): DueDays {
-  return { after: (day) => nextDueDayAfter(series, day), before: (day) => dueDayBefore(series, day) };
+/**
+ * A series' due days either side of one, as every grader of a bill's day steps them (`paymentFor`) — and the day its
+ * schedule opens, its anchor, where a bill's projection starts, and whether that is his date (`DueDays.opensOn`).
+ * `overrides` is the series' own row: the schedule (`effectiveSchedule`) holds his date without saying it is his.
+ */
+export function dueDaysOf(series: DueDaySchedule, overrides: Pick<SeriesOverrides, "userNextExpectedOn">): DueDays {
+  return {
+    after: (day) => nextDueDayAfter(series, day),
+    before: (day) => dueDayBefore(series, day),
+    opensOn: series.nextExpectedOn,
+    opensOnHisDate: overrides.userNextExpectedOn !== null && series.nextExpectedOn !== null,
+  };
 }
 
 /**

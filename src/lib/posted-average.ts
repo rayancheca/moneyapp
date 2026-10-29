@@ -4,7 +4,7 @@ import { compareDates } from "./dates";
 import { formatDayShortIn } from "./format-date";
 import { formatCents, roundToCents } from "./money";
 import { onPayDay, spreadSampleCents, type PaydayReading, type ReadableRow } from "./per-payday";
-import { currentRatePeriod, ratePeriodOf, type RateSchedule } from "./series-kind";
+import { currentRatePeriod, rateOn, ratePeriodOf, type RateSchedule } from "./series-kind";
 
 /**
  * WHAT A SERIES' POSTINGS AVERAGED, AND THEIR SPREAD — the figure "posted avg" names and the ± it carries. ONE reading
@@ -301,6 +301,23 @@ export function daysThatWentBackOut(rows: readonly Pick<ReadableRow, "postedOn" 
   return occurrencesOf(rows).filter((o) => o.amountCents < 0);
 }
 
+/**
+ * ⚖️ The days whose rows PAID a charge of a series held to `rateCents`, oldest first: a day's rows netted
+ * (`occurrencesOf`), the net running the rate's way — the payments every grader of a bill's due days reads
+ * (`billPaymentsBySeries`). His decision 75's unit, the day, read onto a bill (default built, not asked, 2026-10-29):
+ * money back on a day of its own, or a charge and its same-day reversal, paid no charge, as a payroll returned the same
+ * day banked nothing and money going back out pays no payday (`daysThatBanked`, `daysThatWentBackOut`). With no rate to
+ * run by, every day that did not net to nothing. 🔴 Every row was a payment to every grader (review of 4d6ec2ac): a
+ * premium's +$357.58 back on Sep 28 paid Oct 11 early, and a +$357.58 credit on Sep 9 paid Sep 11 on time.
+ */
+export function daysThatPaid(
+  rows: readonly Pick<ReadableRow, "postedOn" | "amountCents">[],
+  rateCents: number | null,
+): Occurrence[] {
+  const way = Math.sign(rateCents ?? 0);
+  return occurrencesOf(rows).filter((o) => way === 0 || Math.sign(o.amountCents) === way);
+}
+
 /** A day's rows summed, one per day, oldest first — what `occurrencesOf` and `nettedToNothing` divide between them. */
 function daysOf(rows: readonly Pick<ReadableRow, "postedOn" | "amountCents">[]): Occurrence[] {
   const byDay = new Map<string, Occurrence>();
@@ -363,24 +380,113 @@ export function postedAsWord(o: Pick<Occurrence, "postings">): string | null {
  * not built: it would print beside every large bill, and the default asked for names what Sep 3 paid.
  *
  * ⚖️ DEFAULT, BUILT, NOT ASKED (2026-10-22): …ONE other payment of the rate at least, and NONE above it — a payment
- * below the rate, or money back, is what a payment ahead leaves, never a sign its amounts vary. 🔴 Read as "every
- * other payment is the rate", Sep 3's -$1,000.00 left -$72.74 for Nov 11, and with that row on the series the page,
- * the All tab and the popover read "posted avg -$476.77" with nothing beside it — the figure Sep 3 inflates,
- * unexplained, the defect this note was built to end; a +$12.50 credit on Oct 2 read "-$448.36", as silent (review
- * of cdec7cb, a copy of his ledger 2026-10-21 with that row added, today 2026-11-15). FPL still names nothing: none of
- * its payments is the -$58.87 he set. A bill whose amounts vary around a rate set from one of them has one above it.
+ * below the rate, or money back, is what a payment ahead leaves, never a sign its amounts vary (⚠️ only after one,
+ * only the remainder it implies, and money back only while it leaves two: 2026-10-23 and 2026-10-29, below). 🔴 Read
+ * as "every other payment is the rate", Sep 3's -$1,000.00 left -$72.74 for Nov 11, and with that row on the series
+ * the page, the All tab and the popover read "posted avg -$476.77" with nothing beside it — the figure Sep 3 inflates,
+ * unexplained, the defect this note was built to end; a +$12.50 credit on Oct 2 read "-$448.36", as silent (review of
+ * cdec7cb, a copy of his ledger 2026-10-21 with that row added, today 2026-11-15). FPL still names nothing: none of
+ * its payments is the -$58.87 he set.
+ *
+ * ⚖️ default built, not asked (2026-10-23): …and a payment below the rate, or money back, is what a payment ahead
+ * LEFT only when it posts after one — after the first, so a remainder between two leaves both named; one before it
+ * says the amounts vary, and nothing is named. 🔴 At b6aa5dc any payment below the rate was a remainder wherever it
+ * fell, and a bill whose rate is its HIGHEST amount has none above it: FPL's -$14.21 Jul 10 and -$56.22 Jul 28, with
+ * a -$58.87 Aug 28 at the rate he set and a -$125.00 Sep 28 bill added, read "Sep 28's -$125.00 covered more than one
+ * month" on the All tab, the series page and the popover (review of b6aa5dc; measured on a copy of his ledger
+ * 2026-10-23, those two rows ADDED as a what-if — his FPL has posted only Jul 10 and Jul 28, its Chase Checking read
+ * through Aug 12). Breezeline's -$40.32 prorated first bill, before four at its $50.00 rate, now keeps a
+ * later charge of $100.00 unnamed (a -$100.00 Oct 22 added there read "Oct 22's -$100.00 covered more than one month").
+ * Car insurance's Nov 11 remainder, and a credit after Sep 3, post after it: Sep 3 is still named — while what the
+ * credit returns leaves it two premiums (2026-10-29, below).
+ *
+ * ⚖️ default built, not asked (2026-10-23): …and a payment below the rate after one is what it left only when it is
+ * the REMAINDER it implies — the rest of the last charge it paid into, k × the rate less what it paid, k the fewest
+ * charges that hold it (`remainderOf`), to `AT_THE_RATE_CENTS`; money back after it still is. Sep 3's -$1,000.00 at
+ * -$357.58 leaves 3 × $357.58 − $1,000.00 = $72.74, Nov 11's balance; two charges exactly leave nothing. 🔴 At
+ * 2f827fc any payment below the rate after the first payment ahead was what it left, whatever its amount, so a bill
+ * whose rate is its highest normal amount, varying AFTER its one high month, was still named: a what-if bill on
+ * Venture X at a -$60.00 rate set from its Jun 8 bill, then Jul 8 -$130.00, Aug 8 -$55.00, Sep 8 -$40.00 and Oct 8
+ * -$58.00, read "posted avg -$68.60 · Jul 8's -$130.00 covered more than one month" on the All tab and the series
+ * page, and the popover "⚠️ The ledger's own average of what actually posted is -$68.60, which is not what you set —
+ * Jul 8's -$130.00 covered more than one month.", while Aug 8, Sep 8 and Oct 8 each posted a bill of its own (review
+ * of 66daebd; his ledger copy 2026-10-23, that bill added). The other tightening — no posting of its own on a due day
+ * the payment covered — reads the schedule, which nothing here does: not built.
+ *
+ * ⚖️ default built, not asked (2026-10-29): …twice the rate to the cent an instalment plan rounds one premium by
+ * (`AT_THE_RATE_CENTS`, `coversMoreThanOne`), as the rate itself is held: two premiums, one rounded down, are two.
+ * 🔴 At fc4444b2 twice the rate was asked exactly — since 67b3b79 the threshold that grades too (review of b6e11a76;
+ * his ledger copy 2026-10-29, the -$357.58 premium below, Sep 11 missed, then Sep 19 -$715.15): nothing was named,
+ * October drew Oct 11 ✕, the arrears owed $357.58, the page read "Already due, and not posted" and the runway "A
+ * further $3,877.56 came due earlier this month: $357.58 has not posted, and no statement has covered the other
+ * $3,519.98 yet." — where -$715.16 is named, pays Sep 11 and Oct 11, and leaves the runway "A further $3,519.98 came
+ * due earlier this month and no statement has covered it yet." (his own bills). Now -$715.15 reads as -$715.16 does;
+ * -$715.14 is one premium.
+ *
+ * ⚖️ default built, not asked (2026-10-29): …but money back after a payment ahead is what it RETURNED — the payment is
+ * named while what it paid, less every credit posted after it, still covers two charges (`coversMoreThanOne`).
+ * 🔴 At fc4444b2 any money back after it was what it left, whatever it returned (review of 2f827fc, inherited from
+ * b6aa5dc; his ledger copy 2026-10-29): Car insurance with Sep 3's payment returned by a +$1,000.00 on Sep 8 read
+ * "posted avg -$119.19 · Sep 3's -$1,000.00 covered more than one month" on the series page and the All tab, the
+ * popover the same; a -$6.00 subscription charged twice on Oct 5, +$6.00 back on Oct 9, "-$4.80 · Oct 5's -$12.00
+ * covered more than one month" — and every grader paid two due days with each. Car insurance's +$12.50 credit leaves
+ * $987.50: Sep 3 is still named. The cost: a large refund after one — a cancellation's, or one returning a later
+ * payment — unnames a true one too, which then pays one day: a paid day shown owed, the safe direction. ⛔ …and the
+ * money back pays none (`daysThatPaid`, 2026-10-29). 🔴 Until then it was a payment to every grader, so this held only
+ * where the credit lay nearer a day already paid (review of 4d6ec2ac; his ledger copy 2026-10-29, the premium below):
+ * +$357.58 back on Sep 28, nearer Oct 11, drew Oct 11 "paid early by its payment of Sep 28", and on Oct 29 nothing was
+ * owed. Latent: no bill or subscription of his has money back linked.
+ *
+ * A late catch-up — two charges paid at once after a missed month — is named too, and truly: it covered the month it
+ * missed and its own, and the words say no more than that ("covered more than one month"), whenever it posts. Every
+ * grader of a bill's day pays both days with it — after two missed charges IN A ROW, those two (`paymentFor`'s
+ * catch-up, ⚖️ default built, not asked, 2026-10-23, reading `paidAheadDays`; pinned in nearer-due-day.test.ts).
+ * ⚠️ Not every shape — two known gaps (`paymentFor`): after two missed with a paid one between them it pays the later
+ * and the day after it, still to come — Aug 11 missed, Sep 11 paid, Oct 11 missed, then Oct 20 -$715.16: on his
+ * ledger copy 2026-10-29 November draws Nov 11 "paid early by its payment of Oct 20", Upcoming lists Dec 11 alone and
+ * November's forecast leaves it out, beside August's ✕; and of two ADJACENT late ones the earlier pays one day, the
+ * later taking its second as its own. 🔴 At 66daebd they paid one, the day it lies nearer (his decision 76), and drew
+ * the other unpaid — on his ledger copy 2026-10-23 with a -$357.58 premium due the 11th added on Venture X, Sep 11
+ * missed, then one -$715.16: Sep 19 left Oct 11 owed, the runway reading "A further $3,877.56 came due earlier this
+ * month: $357.58 has not posted, …" and the series page "Already due, and not posted" beside "Sep 19's -$715.16
+ * covered more than one month"; Sep 28 drew Sep 11 missed and owed it $357.58 on Sep 30; Oct 12 drew Sep 11 missed.
+ * Latent: no bill of his has one — Car insurance's Sep 3 posted before Sep 11 was due, and his own date starts its
+ * schedule at Dec 11.
  */
 export const PAID_AHEAD_MULTIPLE = 2;
 
 /** the kinds whose payments are charges that can be paid ahead — not a transfer, income or other money */
 const PAYS_AHEAD: ReadonlySet<SeriesKind> = new Set(["bill", "subscription"]);
 
-/** how far a payment may be from the rate and still be it: an instalment plan rounds one premium by a cent */
+/**
+ * how far a payment may be from the rate and still be it: an instalment plan rounds one premium by a cent — and so
+ * from twice it, and still be two (`coversMoreThanOne`)
+ */
 const AT_THE_RATE_CENTS = 1;
 
 /**
- * The payments of `occurrences` that covered more than one charge — `PAID_AHEAD_MULTIPLE` × `rateCents` or more — of a
- * bill or subscription one of whose other payments was `rateCents` and none more, within `AT_THE_RATE_CENTS`.
+ * Whether `paidCents` covered more than one charge of `rate`: `PAID_AHEAD_MULTIPLE` × it, to `AT_THE_RATE_CENTS` —
+ * two premiums one of which an instalment plan rounded down are two, as one so rounded is the rate (⚖️ default built,
+ * not asked, 2026-10-29). ONE threshold, for a payment and for what it kept of money back after it (`paidAhead`).
+ */
+function coversMoreThanOne(paidCents: number, rate: number): boolean {
+  return paidCents >= PAID_AHEAD_MULTIPLE * rate - AT_THE_RATE_CENTS;
+}
+
+/**
+ * What a payment of `paidCents` leaves of the last charge of `rate` it paid into: k × `rate` less it, k the fewest
+ * charges that hold it — Sep 3's $1,000.00 at $357.58, $72.74; two charges exactly, nothing. Both read as positive.
+ */
+function remainderOf(paidCents: number, rate: number): number {
+  return Math.ceil(paidCents / rate) * rate - paidCents;
+}
+
+/**
+ * The payments of `occurrences` that covered more than one charge — `PAID_AHEAD_MULTIPLE` × `rateCents` or more, to
+ * `AT_THE_RATE_CENTS` (`coversMoreThanOne`) — of a bill or subscription one of whose other payments was `rateCents` and
+ * none more, within `AT_THE_RATE_CENTS`; any other payment, less, is the remainder one of them implies (`remainderOf`)
+ * or money back, posted after it — and each is named while what it paid, less the money back after it, still covers
+ * more than one.
  */
 export function paidAhead(
   occurrences: readonly Occurrence[],
@@ -391,11 +497,50 @@ export function paidAhead(
   const rate = Math.abs(rateCents);
   // a payment read the way the rate runs: money back reads below zero
   const paid = (o: Occurrence): number => Math.sign(rateCents) * o.amountCents;
-  const isAhead = (o: Occurrence): boolean => paid(o) >= PAID_AHEAD_MULTIPLE * rate;
+  const isAhead = (o: Occurrence): boolean => coversMoreThanOne(paid(o), rate);
+  const ahead = occurrences.filter(isAhead);
+  if (ahead.length === 0) return [];
   const rest = occurrences.filter((o) => !isAhead(o));
   const oneAtTheRate = rest.some((o) => Math.abs(paid(o) - rate) <= AT_THE_RATE_CENTS);
   const noneAbove = rest.every((o) => paid(o) - rate <= AT_THE_RATE_CENTS);
-  return oneAtTheRate && noneAbove ? occurrences.filter(isAhead) : [];
+  // ⚖️ (2026-10-23) …and one below it is what one LEFT: posted after it, money back or the remainder it implies
+  const leftBy = (o: Occurrence, by: Occurrence): boolean =>
+    compareDates(by.postedOn, o.postedOn) < 0 &&
+    (paid(o) < 0 || Math.abs(paid(o) - remainderOf(paid(by), rate)) <= AT_THE_RATE_CENTS);
+  const leftByOne = rest.every((o) => rate - paid(o) <= AT_THE_RATE_CENTS || ahead.some((by) => leftBy(o, by)));
+  if (!oneAtTheRate || !noneAbove || !leftByOne) return [];
+  // ⚖️ (2026-10-29) …and money back after one is what it RETURNED: named while what it kept still covers two
+  const kept = (by: Occurrence): number =>
+    rest.reduce((n, o) => (paid(o) < 0 && compareDates(by.postedOn, o.postedOn) < 0 ? n + paid(o) : n), paid(by));
+  return ahead.filter((by) => coversMoreThanOne(kept(by), rate));
+}
+
+/**
+ * ⚖️ default built, not asked (2026-10-23): the days of `occurrences` whose payment covered more than one charge —
+ * `paidAhead`, each rate era of `schedule` held to its own rate (`ratePeriodOf`, `rateOn`), as the posted average holds
+ * the era in force now (`SeriesPostedAverage.paidAhead`). ⛔ What every grader of a bill's due days reads as a payment
+ * of two (`BillPayment.coveredMore`, `paymentFor`'s catch-up): ONE rule, `paidAhead`'s — FPL's -$125.00 is one bill,
+ * Car insurance's Sep 3 more than one — so in the era in force now no payment pays a second day beside an average
+ * that does not name it. ⚠️ An earlier era's payment of two, held to its own rate, pays one too, and no average names
+ * it: the posted average holds today's era alone (`atTodaysRate`). 🔴 Said here as every era's (review of b6e11a76):
+ * the test's -$100.00 of Jun 10, under -$50.00 then, pays two days no page names. Latent: only his pay has a rate
+ * history, and pay is read per payday, never here.
+ */
+export function paidAheadDays(
+  occurrences: readonly Occurrence[],
+  schedule: RateSchedule,
+  kind: SeriesKind,
+): ReadonlySet<string> {
+  const byEra = new Map<number, Occurrence[]>();
+  for (const o of occurrences) {
+    const era = ratePeriodOf(schedule, o.postedOn);
+    byEra.set(era, [...(byEra.get(era) ?? []), o]);
+  }
+  return new Set(
+    [...byEra.values()].flatMap((inEra) =>
+      paidAhead(inEra, rateOn(schedule, inEra[0]!.postedOn), kind).map((o) => o.postedOn),
+    ),
+  );
 }
 
 /** the period one charge of a cadence covers — "more than one month" */

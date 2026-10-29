@@ -4,7 +4,15 @@ import { recurringSeries } from "@/db/schema/recurring";
 import { transactions } from "@/db/schema/transactions";
 import type { BillingCarrier } from "@/lib/billed-with";
 import { compareDates, diffDays } from "@/lib/dates";
-import { resolveMergeTarget } from "./recurring";
+import { daysThatPaid, occurrencesOf, paidAheadDays, readsPerOccurrence } from "@/lib/posted-average";
+import { seriesAmountCents } from "@/lib/series-kind";
+import {
+  dueDaysOf,
+  effectiveSchedule,
+  effectiveSeries,
+  resolveMergeTarget,
+  type SeriesOverrides,
+} from "./recurring";
 
 /**
  * ⚖️ Each series billed INSIDE another, and the carrier it is billed with (owner decision 2026-10-08, §6A 59) — keyed
@@ -94,18 +102,42 @@ export function withBillingCarriers<T extends { id: string }>(
 export interface Payment {
   readonly postedOn: string;
   readonly toleranceDays: number;
+  /**
+   * ⚖️ It covered more than one charge (`paidAheadDays`) — in the rate era in force now, the payment its series'
+   * posted average names; in an earlier one, a payment its own era's rate reads so, which no average names (the
+   * average holds today's era only, `atTodaysRate` — latent: only his pay has a rate history) — and so pays a second
+   * due day (`paymentFor`'s catch-up). Every grader's are read with it (`BillPayment`); absent, one charge.
+   */
+  readonly coveredMore?: boolean;
 }
 
 /**
  * A bill's due days either side of one — its schedule's steps from its anchor, its end and its anchor disregarded
  * (`dueDaysOf`): the days a payment between two of them is measured against, to pay the one it lies nearer (⚖️ his
- * decision 76, `paymentFor`). Every grader of a bill's day passes the series' own, so each reads the same days.
+ * decision 76, `paymentFor`). Every grader of a bill's day reads the series' own (`billDueDaysBySeries`), so each
+ * reads the same days.
  */
 export interface DueDays {
   /** the due day after `day`, or null — which asks nothing late (`stillToComeReader`) */
   readonly after: (day: string) => string | null;
   /** the due day before `day`, or null — which leaves nothing to pay `day` early */
   readonly before: (day: string) => string | null;
+  /**
+   * ⚖️ the day its schedule opens — its anchor, where every reader's projection of a bill starts (`projectOccurrences`)
+   * — or null with no schedule: a due day before it and before every payment is no charge, so no payment of two
+   * catches it up (`paymentFor`'s catch-up, `couldHaveCharged`; default built, not asked, 2026-10-23). Billed inside
+   * another, its CARRIER's (`billDueDaysBySeries`, 2026-10-29): the payments are the carrier's, and so is the test.
+   */
+  readonly opensOn: string | null;
+  /**
+   * ⚖️ …and whether that day is HIS (`userNextExpectedOn`): his date IS the schedule, so no day before it was a charge,
+   * whatever posted before it (default built, not asked, 2026-10-23), nor one a payment of two catches up from
+   * (`liesBeforeHisDate`, 2026-10-29). ⛔ Every grader reads it off the series' own row, the readers that look ahead
+   * too — pinned in nearer-due-day.test.ts ("…on Sep 1 no reader that looks ahead lists Sep 11") — and, billed inside
+   * another, off its carrier's (`billDueDaysBySeries`): the rent's date, not the utilities' (pinned there, "…his date
+   * on the rent").
+   */
+  readonly opensOnHisDate: boolean;
 }
 
 /**
@@ -193,10 +225,73 @@ export interface DueDays {
  * rent as two (`occurrencesOf`). ⚠️ Two halves a day apart are two payments — Jun 16 + Jun 17 pay Jun 1 (the tie) and
  * Jul 1 (nearer it): a known gap neither 73 nor 76 catches.
  *
- * ⛔ Nothing is read back: a day's payment lies between the days either side of it, and whether the next is paid on
- * time — so no reader needs more than the postings one due day either side of its window (`billPaymentsBySeries`).
+ * ⚖️ …but ONE PAYMENT OF TWO CHARGES PAYS TWO DAYS — default built, not asked (2026-10-23): one its posted average
+ * names as covering more than one charge (`Payment.coveredMore`, `paidAheadDays`: `paidAhead`'s one rule) pays the day
+ * the rules above give it, and then ONE more (`catchUpPayment`): the due day BEHIND that one, late, when it is a charge
+ * (`couldHaveCharged`) no other payment paid, whatever the payment's timing there; else — LATE for its own day, the
+ * day behind it settled (`dayBehindIsSettled`) — the day after, early. A premium due the 11th, Sep 11 missed, then one
+ * -$715.16: Sep 19 pays Sep 11 late and Oct 11 early (on Sep 25, Oct 11 is no longer coming), Sep 28 Oct 11 early and
+ * Sep 11 late, Oct 12 Oct 11 on time and Sep 11 late. Never a third day, and never the day after one it pays early or
+ * on time: a payment AHEAD of its own day is not read, so it takes no day still to come out of Upcoming or the forecast
+ * — Car insurance's Sep 3 -$1,000.00 pays Sep 11 early and no Oct 11 (his own date starts its schedule at Dec 11, so
+ * neither is asked), and after a paid Aug 11 a -$715.16 on Sep 12 pays no Oct 11. 🔴 At 66daebd one payment paid
+ * one day, and the other day a catch-up paid was drawn unpaid beside "covered more than one month": Sep 19 left Oct 11
+ * owed — the runway's "A further $3,877.56 came due earlier this month: $357.58 has not posted, …" and the series
+ * page's "Already due, and not posted" — and with Sep 28 the arrears owed Sep 11 $357.58 on Sep 30 (review of 66daebd;
+ * his ledger copy 2026-10-23 with that premium added on Venture X). 🔴 At 67b3b79 a late one paid the day after
+ * whatever lay behind its own day, so after TWO missed charges it paid one of them and a day still to come (review of
+ * 67b3b79, the same copy): Aug 11 and Sep 11 missed, Sep 19 took Oct 11 out of Upcoming and October's forecast on Sep
+ * 25, and on Oct 23 the runway read only "A further $3,519.98 came due earlier this month and no statement has covered
+ * it yet." — his own bills — beside August's ✕; Sep 11 and Oct 11 missed, Oct 20 drew Nov 11 "paid early by its
+ * payment of Oct 20, 2026", took it out of Upcoming and November's forecast, named Dec 11 next on the All tab and the
+ * page, and left Sep 11 ✕. Now Sep 19 pays Aug 11 and Sep 11, and Oct 20 Sep 11 and Oct 11: a biller puts a payment of
+ * two against the two arrears, and an error that shows — a day still listed — beats one that hides, as (a) holds.
+ * 🔴 At 8348349 the day behind counted as settled only when paid by its OWN payment (review of 8348349, the same
+ * copy): of two late payments of two in a row the second paid one day — Jun 11 paid, Jul 20 and Sep 20 each -$715.16,
+ * and on Oct 23 October drew Oct 11 missed, the runway read "A further $3,877.56 came due earlier this month: $357.58
+ * has not posted, …" and the page showed it overdue beside both named as covering more than one month — and a
+ * schedule opening on a late payment of two paid the day BEFORE it: started Aug 11 by his date, Aug 20 -$715.16 paid
+ * Jul 11, which no surface shows, and on Sep 25 the arrears owed Sep 11 $357.58 beside "Aug 20's -$715.16 covered
+ * more than one month". Now a day the payment of two before it paid early is settled, so Sep 20 pays Oct 11; and a day
+ * before the schedule opens (`DueDays.opensOn`) — before his date, whatever posted before it, or before detection's
+ * anchor and every payment of it, as before the ledger's first statement — is no charge, so Aug 20 pays Sep 11: no
+ * reader projects it, no payment was its. 🔴 At b6e11a76 a payment late for a day BEFORE his date, no charge either,
+ * still paid his date early — the day behind its own read as settled for lying there too (review of b6e11a76; his
+ * ledger copy 2026-10-29, the same premium): Jun 11 and Jul 11 paid, Sep 19 -$715.16, then he typed Oct 11 — October
+ * drew Oct 11 "paid early by its payment of Sep 19, 2026", on Sep 25 Upcoming listed Nov 11 alone and October's
+ * forecast left it out, and on Oct 29 nothing was owed. Now none catches up from a day before his date (⚖️ default
+ * built, not asked, 2026-10-29 — `paidAheadFromTheDayBefore`): Oct 11 is still to come on Sep 25 and owed once read
+ * past, as at 8348349 — and so with only Sep 11 missed (67b3b79 to b6e11a76 paid Oct 11 with Sep 19 there): his
+ * date says Oct 11 is to come. ⚠️ The day behind its own is the only one a catch-up pays — a known gap:
+ * with Aug 11 missed, Sep 11 paid and Oct 11 missed, Oct 20 still pays Nov 11 early (at 66daebd Nov 11 was still
+ * coming). Reaching further back for an unpaid day reads a bill's whole past, where an unread statement or a payment
+ * left over reads as a charge owed, and would keep a catch-up after ONE missed charge from paying the day it paid
+ * ahead; settling the day behind reads back only along a run of late payments of two, each one's second day. The cost
+ * read into his decision 76 above — one month owed either way, this note's words, not his — is a payment of one
+ * charge's; a payment of two owes none, and his words are silent on it, as on (a)–(c). Latent: no bill of his has a
+ * catch-up.
+ *
+ * ⚠️ …and a run settles only two due days apart — a known gap too (review of b6e11a76): of two ADJACENT late payments
+ * of two, the later is asked first for its own late day (`nearerDaysPayment`, before `catchUpPayment`), the day the
+ * earlier one's second charge would pay ahead, so that charge pays no day. Jun 11, then Jul 20 and Aug 20 each
+ * -$715.16: Jul 11 is Jul 20's, Aug 11 and Sep 11 Aug 20's, and Oct 11 owed beside both named as covering more than
+ * one month — five charges, four days; with Sep 20 a third, seven and five. Paying every one reads the run as one
+ * allocation, each payment pushing the next a day further ahead, onto days still to come — not built, an owner's call
+ * (2026-10-29): its error shows a paid day owed, the safe direction. Pinned in billing-carriers.test.ts and
+ * nearer-due-day.test.ts.
+ *
+ * ⛔ Nothing is read back but that run: a day's payment lies between the days either side of it — a catch-up, between
+ * the day either side and the one past it — and whether the day after is paid on time; and the day behind one a late
+ * payment of two pays is settled by its own days, or by the late payment of two before it, two due days back a link
+ * (`dayBehindIsSettled`). So no reader needs more than the postings back to the start of such a run — three due days
+ * behind its window without one — and two ahead (`billPaymentsBySeries` reads every one).
  */
 export function paymentFor<P extends Payment>(payments: readonly P[], dueOn: string, dueDays: DueDays): P | undefined {
+  return nearerDaysPayment(payments, dueOn, dueDays) ?? catchUpPayment(payments, dueOn, dueDays);
+}
+
+/** The payment of a due day by its own days — on time, else early or late by the nearer day (`paymentFor`). */
+function nearerDaysPayment<P extends Payment>(payments: readonly P[], dueOn: string, dueDays: DueDays): P | undefined {
   const onTime = onTimePayment(payments, dueOn);
   if (onTime !== undefined) return onTime;
   const before = dueDays.before(dueOn);
@@ -212,6 +307,112 @@ export function paymentFor<P extends Payment>(payments: readonly P[], dueOn: str
   // (c), built, not asked — above)
   const afterOnTime = onTimePayment(payments, after) !== undefined;
   return paymentDaysBetween(payments, dueOn, after).find((p) => afterOnTime || !liesNearerTheLater(p, dueOn, after));
+}
+
+/**
+ * ⚖️ default built, not asked (2026-10-23): the payment of two charges that pays an unpaid due day from the day either
+ * side of it (`paymentFor`) — the day before's, LATE there, once the day behind THAT one is settled
+ * (`paidAheadFromTheDayBefore`), else it paid that one; or the day after's, whatever its timing there, this day being
+ * a charge (`couldHaveCharged`) and the unpaid one behind it. Each read by its own days and the run of late payments
+ * of two before them, so no payment pays a third. ⛔ …and never the day before's when that day lies before HIS date
+ * (`liesBeforeHisDate`, 2026-10-29): no charge, so the payment catches nothing up and pays neither this day nor the one
+ * behind — he typed Oct 11 after Sep 19's -$715.16, Jun 11 and Jul 11 paid, Aug 11 and Sep 11 missed: Oct 11 is owed.
+ * 🔴 Unsaid here at fc4444b2: read as written, Sep 19 paid his Oct 11 once the day behind was settled, as at b6e11a76
+ * it did (review of b6e11a76).
+ */
+function catchUpPayment<P extends Payment>(payments: readonly P[], dueOn: string, dueDays: DueDays): P | undefined {
+  const ahead = paidAheadFromTheDayBefore(payments, dueOn, dueDays);
+  if (ahead !== undefined) return ahead;
+  const after = dueDays.after(dueOn);
+  if (after === null || !couldHaveCharged(payments, dueOn, dueDays)) return undefined;
+  // early, on time or late for the day after, it lies past this day's grace — inside it, it would have paid this day
+  // on time — and this day is the one behind it: late there, it pays this day before any day still to come
+  const paidAfter = nearerDaysPayment(payments, after, dueDays);
+  return paidAfter?.coveredMore === true ? paidAfter : undefined;
+}
+
+/**
+ * The payment of two LATE for the due day before `dueOn` that pays `dueOn` early, its second charge — once the day
+ * behind its own is settled (`dayBehindIsSettled`). ⛔ Never one on time or early there: a payment ahead of its own
+ * day is not read ahead (⚖️ default built, not asked, 2026-10-23 — `paymentFor`). ⛔ …and never one late for a day
+ * before HIS date (`liesBeforeHisDate`): that day is no charge, so the payment has nothing of his to catch up, and its
+ * second charge pays no day of his (⚖️ default built, not asked, 2026-10-29). 🔴 At b6e11a76 that day was asked as its
+ * own, and the day behind it read as settled for lying before his date too, so a payment late for the day before his
+ * date paid his date early (review of b6e11a76): Jun 11 and Jul 11 paid, Sep 19 -$715.16, then he typed Oct 11 — Oct
+ * 11 drawn "paid early by its payment of Sep 19, 2026", and out of Upcoming and October's forecast on Sep 25.
+ */
+function paidAheadFromTheDayBefore<P extends Payment>(
+  payments: readonly P[],
+  dueOn: string,
+  dueDays: DueDays,
+): P | undefined {
+  const before = dueDays.before(dueOn);
+  if (before === null || liesBeforeHisDate(before, dueDays)) return undefined;
+  // the day after the day before is this one — `stillToComeReader` asks no day after a day from today on
+  const days = withDayAfter(dueDays, before, dueOn);
+  const paidBefore = nearerDaysPayment(payments, before, days);
+  if (paidBefore?.coveredMore !== true || !paysLate(paidBefore, before)) return undefined;
+  return dayBehindIsSettled(payments, before, days) ? paidBefore : undefined;
+}
+
+/**
+ * Whether the due day behind `day` is settled for the late payment of two that pays `day` — no charge
+ * (`couldHaveCharged`), or paid by its own days or by the late payment of two before IT (`paidAheadFromTheDayBefore`),
+ * each read with the day after it as the calendar steps them, though a reader that looks ahead asks no day after any
+ * (`stillToComeReader`). ⛔ Never `paymentFor`: the catch-up from `day`'s side is the very payment asking, and would
+ * pay a third day. 🔴 Its own days alone (8348349): a day the payment of two before it paid early read as unpaid.
+ * ⛔ …and never settled from a day before his date: the his-date test is `paidAheadFromTheDayBefore`'s own, so this
+ * call asks it too. 🔴 Nothing pinned that (review of 4d6ec2ac): with the test asked only where the catch-up asks for
+ * itself, every test passed and one payment of two paid three days — on his ledger copy 2026-10-29 with a -$357.58
+ * premium on Venture X started Sep 11 by his date, Jun 11 at the rate, Aug 20 and Oct 20 each -$715.16, November drew
+ * Nov 11 "paid early by its payment of Oct 20", Upcoming listed Dec 11 alone, November's forecast left it out and the
+ * All tab and the page named Dec 11 next. Pinned in billing-carriers.test.ts and nearer-due-day.test.ts — 🔴 at first
+ * with the day two before his date unpaid, where a run read without his date stops too: read without it in this call,
+ * every test passed again (review of d7a5485c), and on the same copy with Jul 11 at the rate as well Oct 20 paid those
+ * three days once more. Pinned with it paid.
+ */
+function dayBehindIsSettled(payments: readonly Payment[], day: string, dueDays: DueDays): boolean {
+  const behind = dueDays.before(day);
+  if (behind === null || !couldHaveCharged(payments, behind, dueDays)) return true;
+  const days = withDayAfter(dueDays, behind, day);
+  return (
+    nearerDaysPayment(payments, behind, days) !== undefined ||
+    paidAheadFromTheDayBefore(payments, behind, days) !== undefined
+  );
+}
+
+/**
+ * ⚖️ default built, not asked (2026-10-23): whether a due day is one the bill could have charged — on or after the
+ * day its schedule opens (`DueDays.opensOn`); before his date, never — his date IS the schedule (`effectiveSchedule`),
+ * whatever posted before it; before detection's anchor, once a payment of it has posted. Before them no reader
+ * projects it and no payment was its: the days before his date, or before the ledger's first statement. So no payment
+ * of two catches it up, and a late one there pays the day after instead (`paymentFor`). 🔴 At 8348349 one did:
+ * started Aug 11 by his date, Aug 20 -$715.16 paid Jul 11, and Sep 11 was owed beside "Aug 20's -$715.16 covered more
+ * than one month" — and so with Jun 11 paid before his date, the other month it covered drawn nowhere.
+ */
+function couldHaveCharged(payments: readonly Payment[], day: string, dueDays: DueDays): boolean {
+  if (dueDays.opensOn !== null && compareDates(day, dueDays.opensOn) >= 0) return true;
+  if (liesBeforeHisDate(day, dueDays)) return false;
+  return payments.some((p) => compareDates(p.postedOn, day) <= 0);
+}
+
+/**
+ * ⚖️ default built, not asked (2026-10-23): whether a due day lies before HIS date (`DueDays.opensOnHisDate`) — his date
+ * IS the schedule (`effectiveSchedule`), whatever posted before it: no day before it is a charge (`couldHaveCharged`),
+ * nor one a payment of two catches up from (`paidAheadFromTheDayBefore`, 2026-10-29). ONE test for both.
+ */
+function liesBeforeHisDate(day: string, dueDays: DueDays): boolean {
+  return dueDays.opensOnHisDate && dueDays.opensOn !== null && compareDates(day, dueDays.opensOn) < 0;
+}
+
+/** `dueDays` with `next` the due day after `day` — the step a reader that asks no day after still takes here. */
+function withDayAfter(dueDays: DueDays, day: string, next: string): DueDays {
+  return { ...dueDays, after: (d) => (d === day ? next : dueDays.after(d)) };
+}
+
+/** Whether a payment posted more than its own tolerance AFTER a due day — late for it, were it its payment. */
+function paysLate(payment: Payment, dueOn: string): boolean {
+  return diffDays(dueOn, payment.postedOn) > payment.toleranceDays;
 }
 
 /** Whether a payment between two due days lies nearer the later — a tie is the earlier's (⚖️ decision 76). */
@@ -291,35 +492,128 @@ function carrierPaymentsBySeries(
   return new Map(carried.map((r) => [r.id, byCarrier.get(r.billedWith.id) ?? []] as const));
 }
 
-/** A payment of a bill (`billPaymentsBySeries`): whose it is — its carrier's (§6A 59), or the series' own. */
+/**
+ * A payment of a bill (`billPaymentsBySeries`): whose it is — its carrier's (§6A 59), or the series' own — and whether
+ * it covered more than one charge of the series that posted it, its carrier's for a carried one
+ * (`PaymentDays.coveredMore`): a carrier's payment of two pays two days of what it carries, as two of its own, on
+ * days opening where the carrier's open (`billDueDaysBySeries`; pinned in nearer-due-day.test.ts).
+ * ⚠️ His rent cannot reach it — a known gap (review of b6e11a76): its payments carry the utilities, each above its
+ * -$2,109.00 and none at it, so its average names none. On his ledger copy 2026-10-29 with -$4,582.42 added on Oct 20
+ * (October's unposted), the rent's page names only what its payments carry, November draws Nov 1 paid early by Oct 20
+ * for the rent and the utilities alike, and Oct 1 stays owed for both, $2,109.00 and $182.21 — drawn "?", Wells Fargo
+ * read through Sep 24, inside the runway's "A further $3,519.98 came due earlier this month and no statement has
+ * covered it yet." — a paid month shown owed, the safe direction. Set to what a month posts (-$2,291.21), it still
+ * names none: Jun 16's -$2,434.80 lies above it.
+ */
 export interface BillPayment extends Payment {
   readonly carried: boolean;
+  readonly coveredMore: boolean;
 }
 
-/** Every active posting of each series in `tolerance`, oldest first, each held to its series' tolerance. */
+/**
+ * Every active posting of each series in `tolerance` on a day that PAID a charge (`PaymentDays.paid`), oldest first,
+ * each held to its series' tolerance. ⛔ Money back is no payment: a day of it, or one netted to nothing, pays no due
+ * day of any grader's.
+ */
 function postingsBySeries(
   db: AppDatabase,
   tolerance: ReadonlyMap<string, number>,
   carried: boolean,
 ): Map<string, BillPayment[]> {
-  const out = new Map<string, BillPayment[]>();
-  for (const row of db
-    .select({ seriesId: transactions.recurringSeriesId, postedOn: transactions.postedOn })
+  const rows = db
+    .select({
+      seriesId: transactions.recurringSeriesId,
+      postedOn: transactions.postedOn,
+      amountCents: transactions.amountCents,
+    })
     .from(transactions)
     .where(and(eq(transactions.status, "active"), inArray(transactions.recurringSeriesId, [...tolerance.keys()])))
     .orderBy(asc(transactions.postedOn), asc(transactions.id))
-    .all()) {
+    .all();
+  const days = paymentDays(db, rows);
+  const out = new Map<string, BillPayment[]>();
+  for (const row of rows) {
     if (row.seriesId === null) continue;
-    const payment = { postedOn: row.postedOn, toleranceDays: tolerance.get(row.seriesId) ?? 0, carried };
+    const of = days.get(row.seriesId);
+    if (of === undefined || !of.paid.has(row.postedOn)) continue;
+    const payment = {
+      postedOn: row.postedOn,
+      toleranceDays: tolerance.get(row.seriesId) ?? 0,
+      carried,
+      coveredMore: of.coveredMore.has(row.postedOn),
+    };
     out.set(row.seriesId, [...(out.get(row.seriesId) ?? []), payment]);
   }
   return out;
 }
 
+/** Of a series' days, the ones that paid a charge, and of those the ones whose payment covered more than one. */
+interface PaymentDays {
+  /**
+   * ⚖️ default built, not asked (2026-10-29): the days whose rows netted the way its rate runs (`daysThatPaid`, his
+   * decision 75's unit, the day, read onto a bill) — so money back pays no due day, on time, early or late, and a
+   * charge with its same-day reversal paid nothing, as the posted average reads it (`occurrencesOf`). 🔴 Every row was
+   * a payment to every grader, with no amount or sign asked (review of 4d6ec2ac; his ledger copy 2026-10-29 with a
+   * -$357.58 premium due the 11th added on Venture X, Jun to Aug 11 paid, Sep 11 missed, Sep 19 -$715.16): +$357.58
+   * back on Sep 28, nearer Oct 11, drew Oct 11 "paid early by its payment of Sep 28" — the credit — on Oct 1 Upcoming
+   * listed Nov 11 alone and October's forecast left the premium out, and on Oct 29 nothing was owed, the runway reading
+   * "A further $3,519.98 came due earlier this month and no statement has covered it yet." (his own bills). Now Oct 11
+   * is still to come on Oct 1 and owed on Oct 29: "A further $3,877.56 came due earlier this month: $357.58 has not
+   * posted, and no statement has covered the other $3,519.98 yet." ⚠️ Money back on a day of its own is never taken off
+   * the day its payment paid, as his decision 75 reads a payroll returned on a later day: Sep 19 returned in full on
+   * Sep 28 still pays Sep 11. Latent: no bill or subscription of his has money back or a day netted to nothing linked.
+   */
+  readonly paid: ReadonlySet<string>;
+  /**
+   * ⚖️ default built, not asked (2026-10-23): the days whose payment covered more than one charge — the ones its posted
+   * average names (`paidAheadDays`, read as the average reads its rows: per occurrence, every active row, each era at
+   * its own rate), so a grader pays a second day only with a payment the page says covered more than one
+   * (`paymentFor`'s catch-up) — of the rate era in force now: an earlier era's, held to its own rate, the page names
+   * nowhere, its average holding today's era alone (`atTodaysRate`; latent, only his pay has a rate history). Car
+   * insurance's Sep 3 alone on his ledger copy 2026-10-23, and 2026-10-29. 🔴 Nothing pinned that a grader reads THIS,
+   * not the bare multiple (review of 67b3b79): read as |amount| ≥ 2 × |rate|, every unit test passed, and a what-if
+   * FPL on Venture X (the -$58.87 he set; Jul 10 -$14.21, Jul 28 -$56.22, Sep 28 -$125.00) drew Sep 8 paid by Sep 28
+   * beside an average naming nothing. nearer-due-day.test.ts pins Sep 8 owed, and these days as paidAhead's.
+   */
+  readonly coveredMore: ReadonlySet<string>;
+}
+
+/** Per series, its `PaymentDays` — read off its rows and its own row, one query for all of them. */
+function paymentDays(
+  db: AppDatabase,
+  rows: readonly { seriesId: string | null; postedOn: string; amountCents: number }[],
+): ReadonlyMap<string, PaymentDays> {
+  const bySeries = new Map<string, { postedOn: string; amountCents: number }[]>();
+  for (const r of rows) {
+    if (r.seriesId === null) continue;
+    const list = bySeries.get(r.seriesId);
+    if (list) list.push(r);
+    else bySeries.set(r.seriesId, [r]);
+  }
+  if (bySeries.size === 0) return new Map();
+  return new Map(
+    db
+      .select()
+      .from(recurringSeries)
+      .where(inArray(recurringSeries.id, [...bySeries.keys()]))
+      .all()
+      .map((s) => {
+        const own = bySeries.get(s.id) ?? [];
+        const paid = new Set(daysThatPaid(own, seriesAmountCents(s)).map((o) => o.postedOn));
+        const coveredMore = readsPerOccurrence(s)
+          ? paidAheadDays(occurrencesOf(own), effectiveSeries(s), s.kind)
+          : new Set<string>();
+        return [s.id, { paid, coveredMore }] as const;
+      }),
+  );
+}
+
 /**
  * Every payment that may PAY each series' due days: its own postings, each judged by its own tolerance, and — billed
- * inside another — its carrier's, each by the carrier's (`carrierPaymentsBySeries`). Keyed by series id; read in one
- * pass for all of them.
+ * inside another — its carrier's, each by the carrier's (`carrierPaymentsBySeries`); only those on a day that paid a
+ * charge, never money back (`PaymentDays.paid`, ⚖️ default built, not asked, 2026-10-29); each marked when it covered
+ * more than one charge (`PaymentDays.coveredMore`, ⚖️ default built, not asked, 2026-10-23). Keyed by series id; read
+ * in one pass for all of them. The days they are graded on are `billDueDaysBySeries`'.
  *
  * ⛔ What `paymentFor` is asked over by every grader that says a bill's day is paid or owed: the arrears
  * (`overdueForSeries`), every reader that looks ahead (`stillToComeReader`) and the calendar, which draws its own
@@ -328,9 +622,11 @@ function postingsBySeries(
  *
  * ⛔ EVERY posting, never a window's: a day's payment may lie as far back as the due day before it (`paymentFor`, ⚖️ his
  * decision 76, 2026-10-14), and a late one asks whether the day after is paid on time (⚖️ default (c), built, not
- * asked) — a cycle either side of any window. Each reader read from its own window's start less the widest grace until
- * then, and FPL's Aug 8, paid early by Jul 28, would read "not posted" to a reader of August from Jul 29 beside a
- * calendar of the year saying "paid".
+ * asked) — a cycle either side of any window, for a catch-up's two ahead and back along a run of late payments of two
+ * (`dayBehindIsSettled`); whether a day could have been charged is read off the first (`couldHaveCharged`); and
+ * whether a payment covered more than one charge is read off all of its series' (`PaymentDays`). Each reader read
+ * from its own window's start less the widest grace until then, and FPL's Aug 8, paid early by Jul 28, would read "not
+ * posted" to a reader of August from Jul 29 beside a calendar of the year saying "paid".
  *
  * 🔴 The readers that look ahead never asked (review of 50020a2): with the rent paid Sep 30, the calendar drew its Oct
  * 1 paid while the forecast card, the Upcoming tab, the dashboard strip and the rent's page still listed it coming.
@@ -343,4 +639,59 @@ export function billPaymentsBySeries(
   const own = postingsBySeries(db, new Map(rows.map((r) => [r.id, r.toleranceDays] as const)), false);
   const carried = carrierPaymentsBySeries(db, rows);
   return new Map(rows.map((r) => [r.id, [...(own.get(r.id) ?? []), ...(carried.get(r.id) ?? [])]] as const));
+}
+
+/**
+ * ⛔ The due days every grader of a bill's day reads it by (`paymentFor`), keyed by series id — the series' own
+ * (`dueDaysOf`: its schedule, its date as HIS), and, billed inside another, OPENING where its CARRIER's schedule opens:
+ * the carrier's date, typed by him or detection's (`DueDays.opensOn`, `DueDays.opensOnHisDate`). ⚖️ default built,
+ * not asked (2026-10-29), read off §6A 59's "by the rent's own test": it is paid by its carrier's payments
+ * (`carrierPaymentsBySeries`), so whether a day before one of them was a charge it catches up is the carrier's question
+ * — a day before the rent's date is no charge of the rent's, whatever posted before it, nor of what the rent carries.
+ * Its days either side (`DueDays.before`, `DueDays.after`) stay its own — it falls due with its carrier — and its own
+ * date still says where its projection starts. The arrears, the calendar and every reader that looks ahead
+ * (`stillToComeReader`) each read these, so none can grade the utilities' Oct 1 apart from the rent's.
+ *
+ * 🔴 Each grader read a carried series' opening off its own row (review of 4d6ec2ac): a what-if rent at -$2,291.21
+ * typed Oct 1, the utilities carried on detection's Oct 1 — his ledger's shape, the rent typed Sep 1 and the utilities
+ * detected Sep 1 — Jul 1 and Aug 2 paid, then Sep 10 -$4,582.42: October drew the rent's Oct 1 missed beside "Rent
+ * utilities & fees paid … with the rent's payment of Sep 10 (early)", the arrears owed the rent $2,291.21 and not the
+ * utilities, the runway read "A further $2,291.21 came due earlier this month and has not posted.", and on Sep 25
+ * Upcoming listed the rent's Oct 1 and Nov 1 but the utilities' Nov 1 alone. Now both Oct 1s are coming on Sep 25 and
+ * owed on Oct 23: "A further $2,473.42 came due earlier this month and has not posted." And through `couldHaveCharged`,
+ * at 32aeb3a9 too: Oct 10's two months, late for his Oct 1 itself, drew the rent's Nov 1 "paid early by Oct 10" beside
+ * the utilities' Nov 1 upcoming; now both are paid early. Pinned in nearer-due-day.test.ts. On his ledger copy
+ * 2026-10-29 with that what-if added on Wells Fargo (read through Sep 24), on Oct 29 the runway read "A further
+ * $5,811.19 came due earlier this month and no statement has covered it yet." beside what it carries drawn paid early
+ * by Sep 10; now both Oct 1s are "?" and it reads "A further $5,993.40 …". Latent on his ledger itself: his rent names
+ * no payment of two (`BillPayment`'s known gap), and nothing else is billed inside another.
+ *
+ * ⛔ The carrier's DAY as well as whether it is his. 🔴 Every pin put the rent and what it carries on one date (review
+ * of d7a5485c), so the builder keeping the carried series' own day, taking only "his" from the rent, passed every test:
+ * the rent typed Oct 1, the utilities still on detection's Sep 1 — his ledger's shape should he retype only the rent —
+ * Sep 10 paid their Oct 1 early beside the rent's "?", and the runway on that copy read "A further $5,811.19 …" again.
+ * Pinned with the two apart (nearer-due-day.test.ts, "…still on detection's Sep 1").
+ */
+export function billDueDaysBySeries(
+  db: AppDatabase,
+  rows: readonly (SeriesOverrides & { id: string; billedWith: BillingCarrier | null })[],
+): ReadonlyMap<string, DueDays> {
+  const carrierIds = [...new Set(rows.flatMap((r) => (r.billedWith === null ? [] : [r.billedWith.id])))];
+  const carriers =
+    carrierIds.length === 0
+      ? []
+      : db.select().from(recurringSeries).where(inArray(recurringSeries.id, carrierIds)).all();
+  const opening = new Map(
+    carriers.map((c) => {
+      const { opensOn, opensOnHisDate } = dueDaysOf(effectiveSchedule(c), c);
+      return [c.id, { opensOn, opensOnHisDate }] as const;
+    }),
+  );
+  return new Map(
+    rows.map((r) => {
+      const own = dueDaysOf(effectiveSchedule(r), r);
+      const carrier = r.billedWith === null ? undefined : opening.get(r.billedWith.id);
+      return [r.id, carrier === undefined ? own : { ...own, ...carrier }] as const;
+    }),
+  );
 }
