@@ -206,8 +206,10 @@ test("cash-earnings note calls June's checked paydays unbanked, and names them",
   await page.goto("/spending?period=2026-06");
   const note = page.getByLabel("What this page cannot see");
   await expect(note).toHaveCount(1);
+  // ⚖️ "an account the ledger reads" — the quiet it lists names one it does not (default built, not asked, 2026-10-29)
   await expect(note).toContainText(
-    "Paycheck implies $5,886.38 of earnings over Jun 5 – 19, 2026 and none of it reached an account.",
+    "Paycheck implies $5,886.38 of earnings over Jun 5 – 19, 2026 and none of it reached an account the ledger " +
+      "reads.",
   );
   await expect(note).not.toContainText("has been checked through");
 });

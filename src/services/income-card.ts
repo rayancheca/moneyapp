@@ -18,6 +18,7 @@ import {
   unbankedIncomeFrontierClause,
   type UnbankedFrontier,
 } from "@/lib/unbanked-income";
+import { loadCategoryIndex } from "./analytics";
 import { incomeExpectation } from "./budgets";
 import { cashEarningsReadings, type CashEarningsReading } from "./cash-earnings";
 import { SPEND_BASELINE_MONTHS } from "./committed";
@@ -443,7 +444,18 @@ function verdictFor(line: Omit<IncomePayLine, "verdict">): string {
   }
 
   const passed = `${silentPeriods} ${paydayWord(silentPeriods)} ${silentPeriods === 1 ? "has" : "have"} passed`;
-  const since = `${passed} since ${formatDayShort(lastBankedOn)} with no deposit`;
+  /*
+   * ⛔ The paydays the count leaves out are named after the deposit's day, as /spending's stale note names them
+   * (`paidEarlyAside`) — on BOTH leads, so no form of the verdict prints the count without them. 🔴 Review of 337baa7:
+   * "2 paydays have passed since the last deposit on Sep 30" with Oct 1, which Sep 30 paid early, 8 and 15 passed.
+   * 🔴 Review of the pay-words batch (#25): named on that lead and, by d632de3, on the stale form at the bar, the "with
+   * no deposit" lead still dropped them twice. On his ledger copy 2026-10-29 with Wed Sep 30 +$1,141.92 inserted, read
+   * through Oct 17 on Oct 19: "2 paydays have passed since Sep 30 with no deposit — a schedule is called stale only
+   * after 3 quiet periods, …"; with Wells Fargo unchecked on Oct 29: "3 paydays have passed since Sep 30 with no
+   * deposit, and no day of that silence rests on a checked record — …", four Thursdays passed.
+   */
+  const aside = paidEarlyAside(line.silencePaidEarly, formatDayShort);
+  const since = `${passed} since ${formatDayShort(lastBankedOn)} with no deposit${aside}`;
   // which of the silent paydays the ledger has looked for, in the forecast's words — null when it looked for them all
   const unread = unbankedIncomeFrontierClause(
     {
@@ -453,10 +465,7 @@ function verdictFor(line: Omit<IncomePayLine, "verdict">): string {
     },
     formatDayShort,
   );
-  // "with no deposit" is the clause's to say, and only of the days it checked — and the paydays the count leaves out
-  // are named, as /spending's stale note names them (`paidEarlyAside`; review of 337baa7: "2 paydays have passed
-  // since the last deposit on Sep 30" with Oct 1, which Sep 30 paid early, 8 and 15 passed)
-  const aside = paidEarlyAside(line.silencePaidEarly, formatDayShort);
+  // "with no deposit" is the clause's to say, and only of the days it checked
   const sinceLast = `${passed} since the last deposit on ${formatDayShort(lastBankedOn)}${aside}`;
   const notAllLooked = unread === null ? null : `${sinceLast}. ${unread}`;
 
@@ -496,7 +505,7 @@ function verdictFor(line: Omit<IncomePayLine, "verdict">): string {
    * "the other $1,141.92 is for paydays after that day — so the ledger has not looked for it".
    */
   const unlooked = silentPeriods - checkedSilentPeriods;
-  const lead = unlooked > 0 ? sinceLast : `${since}${aside}`;
+  const lead = unlooked > 0 ? sinceLast : since;
   const checked = staleChecked(checkedSilentPeriods, line.checkedSilentNotBankedYet, checkedThrough, unlooked);
   return `${lead}. ${checked}. Whether it was earned is a different question, and this card cannot answer it.`;
 }
@@ -581,6 +590,10 @@ export function incomeCard(db: AppDatabase, today: string = todayIso()): IncomeC
     return rows.find((r) => r.seriesId === seriesId);
   };
 
+  // ⚡ the category index the lines' settlements read their pay days by, loaded once for them all (`paydaySettlement`'s
+  // `idx`) — when a line settles at all. 🔴 Loaded per line, each pay series re-read the categories table on every load
+  // (review of the pay-words batch, #26).
+  const idx = readings.some((r) => r.checkedThrough != null) ? loadCategoryIndex(db) : undefined;
   const pay: IncomePayLine[] = readings.map((r) => {
     /*
      * The EARLIEST verifiedThrough across every account this pay has landed in.
@@ -598,7 +611,7 @@ export function incomeCard(db: AppDatabase, today: string = todayIso()): IncomeC
       checkedThrough === null ? { kind: "unchecked" } : { kind: "day", through: checkedThrough };
     // ⚖️ …and of the checked paydays, those no deposit settled still inside their days to land: not banked yet — over
     // the window for the difference, and over the silence for the verdict (the reading's `checkedSilentNotBankedYet`)
-    const settlement = checkedThrough === null ? null : paydaySettlement(db, r.seriesId, today);
+    const settlement = checkedThrough === null ? null : paydaySettlement(db, r.seriesId, today, idx);
     const inGraceCents =
       settlement === null || checkedThrough === null
         ? 0

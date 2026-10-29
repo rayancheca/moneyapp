@@ -13,6 +13,7 @@ import { wentBackOutPhrase, windowOwnCents } from "./pay-window-money";
 import { TOWARD_NO_PAYDAY } from "./per-payday";
 import {
   ACCOUNT_NOT_READ,
+  ACCOUNT_READ,
   daysToLandRunPast,
   LAST_CHECKED_DAY,
   notLookedForDeposits,
@@ -573,12 +574,20 @@ function impliedSpanPhrase(firstOn: string | null, lastOn: string | null): strin
 }
 
 /**
- * "its paydays over Jul 2 – 30, 2026", "its payday on Sep 24, 2026" — the paydays a pay note's lead counts, by the span
- * `impliedSpanPhrase` names: a one-day span is one payday (a series has one payday a day). 🔴 "its paydays on Sep 24,
- * 2026" was said of one (review of the shortfall batch).
+ * Whether a pay note's lead counts ONE payday, by the span `impliedSpanPhrase` names: a one-day span is one payday (a
+ * series has one payday a day). ⛔ One rule for the lead's noun (`paydaysOverSpan`) and every word after it that counts
+ * those paydays back (`payShortfallNote`'s "that payday" / "none of them"), so the two cannot disagree.
+ */
+function onePayday(firstOn: string | null, lastOn: string | null): boolean {
+  return firstOn !== null && firstOn === lastOn;
+}
+
+/**
+ * "its paydays over Jul 2 – 30, 2026", "its payday on Sep 24, 2026" — the paydays a pay note's lead counts
+ * (`onePayday`). 🔴 "its paydays on Sep 24, 2026" was said of one (review of the shortfall batch).
  */
 function paydaysOverSpan(firstOn: string | null, lastOn: string | null): string {
-  return `${firstOn !== null && firstOn === lastOn ? "payday" : "paydays"}${impliedSpanPhrase(firstOn, lastOn)}`;
+  return `${onePayday(firstOn, lastOn) ? "payday" : "paydays"}${impliedSpanPhrase(firstOn, lastOn)}`;
 }
 
 /**
@@ -687,10 +696,17 @@ export function cashEarningsSectionNotes(input: CashEarningsNoteInput): SectionN
       const another = anotherBankedInside(paidAcrossParts(across, payday, input.formatDay), "paid paydays outside it");
       const inside = outside.length === 0 && across.length === 0 ? "" : " inside the window";
       const ownCents = windowOwnCents(r.bankedCents, across);
+      /*
+       * ⚖️ …in the accounts the ledger reads (`ACCOUNT_READ`), as the quiet below names pay paid into one it does not
+       * (`ACCOUNT_NOT_READ`) — default built, not asked (2026-10-29). 🔴 Review of cc30142: on his ledger copy
+       * 2026-10-29 with a Salary-filed −$1,141.92 on Fri Sep 25 and Wells Fargo derived through Fri Oct 16, October
+       * read "…none of it reached an account through Fri, Oct 16, 2026; … — that money was held as cash, spent as
+       * cash, paid into an account the ledger does not read, …": money that reached no account, paid into one.
+       */
       const reached =
         ownCents <= 0
-          ? `none of it reached an account${inside}`
-          : `only ${formatCents(ownCents)} reached an account${inside}`;
+          ? `none of it reached ${ACCOUNT_READ}${inside}`
+          : `only ${formatCents(ownCents)} reached ${ACCOUNT_READ}${inside}`;
       const covered = r.periodsCovered ?? 0;
       const readCovered = r.checkedPeriodsCovered ?? 0;
       const unread = covered - readCovered;
@@ -930,7 +946,12 @@ function payShortfallNote(
   // ⛔ the days the parenthesis named are named once: the rest of their money is "the same deposit's" (review of the
   // shortfall batch: "from the deposits of A and B" twice, for money no day is told apart in)
   const restFrom = noPayday === "" ? noPaydayFrom : s.towardNoPayday.length === 1 ? "same deposit" : "same deposits";
-  const another = anotherBankedInside(beyondParts(s, payday, restFrom, formatDay), "paid none of them");
+  // what the money beyond the read paydays did not pay, counted back as the lead counts them (`onePayday`). 🔴 "paid
+  // none of them" of the one payday the lead names (review of batch 6): on his ledger copy 2026-10-29 with a
+  // Salary-filed −$1,141.92 on Fri Sep 25 and Wells Fargo derived through Fri Oct 16, Sep 21 – 27 read "…'s payday on
+  // Sep 24, 2026 came to $1,141.92, and all of it was banked inside the window; another $4,567.68 … paid none of them"
+  const notTheirs = onePayday(s.firstReadOn, s.lastReadOn) ? "did not pay that payday" : "paid none of them";
+  const another = anotherBankedInside(beyondParts(s, payday, restFrom, formatDay), notTheirs);
   const beyond = another === "" ? "" : `; ${another}`;
   const back = s.wentBackOut.length === 0 ? "" : `; ${wentBackOutPhrase(s.wentBackOut, formatDay)}`;
   // the checked day is named in full once: `grace` named it

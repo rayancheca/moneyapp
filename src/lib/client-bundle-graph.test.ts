@@ -96,13 +96,6 @@ describe("no client bundle reaches the database or the filesystem", () => {
   });
 
   /*
-   * 🔴 A MODULE UNDER src/components IS ONE IMPORT AWAY FROM A BROWSER BUNDLE, client or not. balance-list-words.ts
-   * (9d29632) imported the VALUE `takesTypedBalance` from services/anchors, which reaches db/backup → better-sqlite3:
-   * only the server page imported it, so the walk from client roots saw nothing, and the first client component to
-   * reuse the list's words would have failed `next build` as 0b8d2af did. Its import is type-only since 51054df; this
-   * walks every module there, so the next one is caught where it is written, not where it is first imported.
-   */
-  /*
    * Bundle WEIGHT, not a build failure: /spending's pay notes are words over the settlement's answer, so the settlement
    * itself stays on the server. 🔴 b59ceb2 made section-notes value-import `wentBackOutPhrase` from lib/pay-shortfall,
    * which brought lib/payday-settlement and lib/occurrence-verdict into CategoryRow's client graph (review of the
@@ -115,6 +108,13 @@ describe("no client bundle reaches the database or the filesystem", () => {
     expect(leaks.map(formatLeak)).toEqual([]);
   });
 
+  /*
+   * 🔴 A MODULE UNDER src/components IS ONE IMPORT AWAY FROM A BROWSER BUNDLE, client or not. balance-list-words.ts
+   * (9d29632) imported the VALUE `takesTypedBalance` from services/anchors, which reaches db/backup → better-sqlite3:
+   * only the server page imported it, so the walk from client roots saw nothing, and the first client component to
+   * reuse the list's words would have failed `next build` as 0b8d2af did. Its import is type-only since 51054df; this
+   * walks every module there, so the next one is caught where it is written, not where it is first imported.
+   */
   it("on this tree, no module under src/components reaches a forbidden module, client or not", () => {
     const modules = sourceFiles("src/components");
     expect(modules).toContain("src/components/accounts/balance-list-words.ts");

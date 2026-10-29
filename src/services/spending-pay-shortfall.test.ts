@@ -364,11 +364,12 @@ describe("/spending — money that crossed the window line is counted once", () 
     // Sep 24, 2026 came to" — beside a payday it banked none of
     const wednesdays = ["2026-09-02", "2026-09-09", "2026-09-23", "2026-09-30", "2026-10-07"];
     onlyDeposits([...wednesdays, "2026-09-24"].map((d) => [d, 114_192]));
+    // 🔴 …and "paid none of them" of the one payday its lead names (review of batch 6)
     expect(bodies("2026-09-24", "2026-09-30")).toEqual([
       "Cash job (weekly pay)'s payday on Sep 24, 2026 came to $1,141.92, and none of it was banked inside the " +
         "window: $1,141.92 (Sep 24) was paid early, by the deposit of Wed, Sep 23, 2026; another $2,283.84 banked " +
-        "inside the window paid none of them: $1,141.92, from the deposit of Thu, Sep 24, 2026, paid Sep 17's " +
-        "payday and $1,141.92, from the deposit of Wed, Sep 30, 2026, paid Oct 1's payday early.",
+        "inside the window did not pay that payday: $1,141.92, from the deposit of Thu, Sep 24, 2026, paid Sep " +
+        "17's payday and $1,141.92, from the deposit of Wed, Sep 30, 2026, paid Oct 1's payday early.",
     ]);
   });
 });
@@ -674,12 +675,13 @@ describe("/spending — money that paid a payday no window has read is named wit
   test("…and a window reading paydays says the same of it, never 'went toward none of these paydays'", () => {
     onlyDeposits([...WEDNESDAYS.map((d) => [d, 114_192] as const), ["2026-10-07", 150_000]]);
     const over = "was more than the paydays its deposits paid came to";
-    // Wells Fargo as it is: Sep 24 read, Oct 1 and Oct 8 past the checked day
+    // Wells Fargo as it is: Sep 24 read, Oct 1 and Oct 8 past the checked day — and of the one payday its lead names,
+    // "that payday" (🔴 "paid none of them", review of batch 6)
     expect(bodies("2026-09-24", "2026-10-23", "2026-10-14")).toEqual([
       "Cash job (weekly pay)'s payday on Sep 24, 2026 came to $1,141.92, and none of it was banked inside the " +
         "window: $1,141.92 (Sep 24) was paid early, by the deposit of Wed, Sep 23, 2026; another $2,641.92 banked " +
-        "inside the window paid none of them: $2,283.84, from the deposits of Wed, Sep 30, 2026 and Wed, Oct 7, " +
-        `2026, paid the paydays of Oct 1 and Oct 8 and $358.08 ${over}.`,
+        "inside the window did not pay that payday: $2,283.84, from the deposits of Wed, Sep 30, 2026 and Wed, Oct " +
+        `7, 2026, paid the paydays of Oct 1 and Oct 8 and $358.08 ${over}.`,
     ]);
     // …and read through Oct 14: Oct 1 and Oct 8 are October's read paydays
     coverThrough("2026-10-14", "2026-09-25");

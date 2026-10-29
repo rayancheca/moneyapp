@@ -226,8 +226,8 @@ describe("the e2e fixture's Jul 3 payday, after Chase Total Checking's Jun 30 â€
     );
     expect(note("2026-01-01", "2026-12-31")).toContain(
       "Paycheck implies $41,204.66 of earnings over Jan 2 â€“ Jul 3, 2026 and only $29,431.90 reached an account " +
-        "through Tue, Jun 30, 2026; the other payday falls after that, the last day every account that pay lands in " +
-        "has been checked through.",
+        "the ledger reads through Tue, Jun 30, 2026; the other payday falls after that, the last day every account " +
+        "that pay lands in has been checked through.",
     );
   });
 });
