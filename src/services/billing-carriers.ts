@@ -363,7 +363,10 @@ function paidAheadFromTheDayBefore<P extends Payment>(
  * itself, every test passed and one payment of two paid three days — on his ledger copy 2026-10-29 with a -$357.58
  * premium on Venture X started Sep 11 by his date, Jun 11 at the rate, Aug 20 and Oct 20 each -$715.16, November drew
  * Nov 11 "paid early by its payment of Oct 20", Upcoming listed Dec 11 alone, November's forecast left it out and the
- * All tab and the page named Dec 11 next. Pinned in billing-carriers.test.ts and nearer-due-day.test.ts.
+ * All tab and the page named Dec 11 next. Pinned in billing-carriers.test.ts and nearer-due-day.test.ts — 🔴 at first
+ * with the day two before his date unpaid, where a run read without his date stops too: read without it in this call,
+ * every test passed again (review of d7a5485c), and on the same copy with Jul 11 at the rate as well Oct 20 paid those
+ * three days once more. Pinned with it paid.
  */
 function dayBehindIsSettled(payments: readonly Payment[], day: string, dueDays: DueDays): boolean {
   const behind = dueDays.before(day);
@@ -659,6 +662,12 @@ export function billPaymentsBySeries(
  * $5,811.19 came due earlier this month and no statement has covered it yet." beside what it carries drawn paid early
  * by Sep 10; now both Oct 1s are "?" and it reads "A further $5,993.40 …". Latent on his ledger itself: his rent names
  * no payment of two (`BillPayment`'s known gap), and nothing else is billed inside another.
+ *
+ * ⛔ The carrier's DAY as well as whether it is his. 🔴 Every pin put the rent and what it carries on one date (review
+ * of d7a5485c), so the builder keeping the carried series' own day, taking only "his" from the rent, passed every test:
+ * the rent typed Oct 1, the utilities still on detection's Sep 1 — his ledger's shape should he retype only the rent —
+ * Sep 10 paid their Oct 1 early beside the rent's "?", and the runway on that copy read "A further $5,811.19 …" again.
+ * Pinned with the two apart (nearer-due-day.test.ts, "…still on detection's Sep 1").
  */
 export function billDueDaysBySeries(
   db: AppDatabase,

@@ -700,28 +700,32 @@ describe("the nearer due day wins (decision 76)", () => {
      * later one's own stays unpaid and that one's second charge pays it — never the day after. 🔴 Nothing pinned it
      * (review of 4d6ec2ac): with the test asked only where the catch-up asks for itself, every test passed, and one
      * payment of two paid three days — started Sep 11, Oct 20 paid Sep 11, Oct 11 and Nov 11; typed Oct 11, Nov 20
-     * paid Oct 11, Nov 11 and Dec 11, nothing owed on Dec 21.
+     * paid Oct 11, Nov 11 and Dec 11, nothing owed on Dec 21. 🔴 …and both left the day TWO before his date unpaid,
+     * where a run read without his date stops too — a charge to it, a payment having posted before it, and unpaid — so
+     * with the day behind read without it every test passed again (review of d7a5485c). Paid there — Jul 11 started
+     * Sep 11, Aug 11 typed Oct 11 — the payment of two late for the day before his date read as settling his date, and
+     * the next paid three: Nov 11 by Oct 20, Dec 11 by Nov 20.
      */
     test("…nor a day behind settled from a day before his date: a later payment of two pays two, never three", () => {
       const startedSep11 = [pay("2026-06-11"), twice("2026-08-20"), twice("2026-10-20")];
       const fromSep11 = ["2026-09-11", "2026-10-11", "2026-11-11", "2026-12-11"];
-      expect(graded(startedSep11, hisDate("2026-09-11"), fromSep11).map(([, p]) => p)).toEqual([
-        "2026-10-20",
-        "2026-10-20",
-        null,
-        null,
-      ]);
+      const startedPaid = ["2026-10-20", "2026-10-20", null, null];
+      expect(graded(startedSep11, hisDate("2026-09-11"), fromSep11).map(([, p]) => p)).toEqual(startedPaid);
       // …as the readers that look ahead read it: Nov 11 is still to come
       expect(paymentFor(startedSep11, "2026-11-11", { ...hisDate("2026-09-11"), after: () => null })).toBeUndefined();
+      // …and with Jul 11 paid too, the day two before his date, the same: Aug 20 is late for Aug 11, no charge of his
+      const jul11Paid = [...["2026-06-11", "2026-07-11"].map(pay), twice("2026-08-20"), twice("2026-10-20")];
+      expect(graded(jul11Paid, hisDate("2026-09-11"), fromSep11).map(([, p]) => p)).toEqual(startedPaid);
+      expect(paymentFor(jul11Paid, "2026-11-11", { ...hisDate("2026-09-11"), after: () => null })).toBeUndefined();
       // typed Oct 11 after Sep 19's two: Nov 20's two pay Oct 11 and Nov 11, and Dec 11 is still owed once past
       const typedOct11 = [...["2026-06-11", "2026-07-11"].map(pay), twice("2026-09-19"), twice("2026-11-20")];
       const fromOct11 = ["2026-10-11", "2026-11-11", "2026-12-11", "2027-01-11"];
-      expect(graded(typedOct11, hisDate("2026-10-11"), fromOct11).map(([, p]) => p)).toEqual([
-        "2026-11-20",
-        "2026-11-20",
-        null,
-        null,
-      ]);
+      const typedPaid = ["2026-11-20", "2026-11-20", null, null];
+      expect(graded(typedOct11, hisDate("2026-10-11"), fromOct11).map(([, p]) => p)).toEqual(typedPaid);
+      // …and with Aug 11 paid too, the day two before his date, the same: Sep 19 is late for Sep 11, no charge of his
+      const aug11Paid = [...["2026-06-11", "2026-07-11", "2026-08-11"].map(pay), ...typedOct11.slice(2)];
+      expect(graded(aug11Paid, hisDate("2026-10-11"), fromOct11).map(([, p]) => p)).toEqual(typedPaid);
+      expect(paymentFor(aug11Paid, "2026-12-11", { ...hisDate("2026-10-11"), after: () => null })).toBeUndefined();
     });
 
     /*
