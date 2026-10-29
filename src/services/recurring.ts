@@ -1396,7 +1396,10 @@ const INACTIVE_MISS_LIMIT = 1.5;
  *    quiet before it leaves a budget.
  *  - A read statement without the charge is not yet proof the bill stopped: paid from another account or by hand,
  *    or posted under a description the detector has not linked, it reads exactly like a missed charge, so one read
- *    miss cannot say which it was. Three in a row can.
+ *    miss cannot say which it was. Three in a row can. ⚠️ The running-late sentence gives this reason of every
+ *    series, a pay series too (`stalenessSentence`), in words true of a deposit: "one posted to another account".
+ *    No pay series reaches this bar itself — income never lapses (`lapsedSeriesShouldStopForecasting`); the bar is
+ *    money out's. 🔴 Cited for a pay series, this spoke of the bill alone (review of c65497a).
  *  - It still separates the measured data cleanly: on 2026-08-26 (counted to today then, which can only overstate a
  *    read-day count) the dead series sat at 7.5, 25.3, 26.0 and 27.6 cycles and every live one under 1.7.
  *

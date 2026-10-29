@@ -30,7 +30,9 @@ import { recurringCalendar } from "./recurring-calendar";
  * decision 73 read it as Aug 15's LATE payment (Aug 15 was unpaid, so it kept the payment), leaving Sep 15 unpaid; a
  * web pay around every 1st would read as the month before's, and the newest 15th "not posted" once Wells Fargo is read
  * past it. His lease is anchored on Oct 15 (his date), so no grader asks his Aug 15 or Sep 15 and nothing on his ledger
- * moves today; the fixtures anchor each bill where its days are graded.
+ * moves today; the fixtures anchor each bill where its days are graded. Jul 10 −$14.21 and Jul 28 −$56.22 are every
+ * FPL posting on his ledger, on Chase Checking, read only through Aug 12 (his copy, 2026-10-29): every other FPL
+ * payment below is a what-if.
  */
 
 let dir: string;
@@ -153,9 +155,10 @@ describe("the Car lease's Sep 2 −$695.04 pays Sep 15 — 13 days before it, 18
     expect(owed("2026-09-20")).toEqual([]);
   });
 
-  test("…and Aug 15 is the month owed: August draws it missed, never paid by Sep 2", () => {
+  test("…and Aug 15 is the month owed: August draws it ?, never paid by Sep 2", () => {
     checkedThrough(bundle.db, "acct", "2026-09-19");
-    expect(unpaid("2026-08", "2026-08-15", "2026-09-20")).toEqual([LEASE]);
+    // "?", not ✕: one posting proves no schedule (`scheduleIsProven`) — the state is the read's, never the payment's
+    expect(marks("2026-08", "2026-08-15", "2026-09-20")).toEqual([[LEASE, "unsettled", null]]);
     expect(owed("2026-08-25")).toEqual([[LEASE, "2026-08-15", 69504]]);
   });
 
@@ -208,9 +211,10 @@ describe("FPL, due the 8th — Jul 10 pays Jul 8 on time, Jul 28 (11 days before
 describe("FPL with ONLY Jul 28 — nearer Aug 8, it pays Aug 8 even with Jul 8 unpaid (the cost he accepted)", () => {
   beforeEach(() => seriesWith(FPL, "FPL (electricity)", -5887, "2026-07-08", ["2026-07-28", -5622]));
 
-  test("July draws Jul 8 missed beside the Jul 28 row, and owes its $58.87", () => {
+  test("July draws Jul 8 ? beside the Jul 28 row, and owes its $58.87", () => {
     checkedThrough(bundle.db, "acct", "2026-07-29");
-    expect(unpaid("2026-07", "2026-07-08", "2026-07-30")).toEqual([FPL]);
+    // "?", not ✕: one posting proves no schedule (`scheduleIsProven`)
+    expect(marks("2026-07", "2026-07-08", "2026-07-30")).toEqual([[FPL, "unsettled", null]]);
     expect(owed("2026-07-30")).toEqual([[FPL, "2026-07-08", 5887]]);
   });
 

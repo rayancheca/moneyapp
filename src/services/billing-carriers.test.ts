@@ -102,8 +102,9 @@ describe("…and a payment past the day's grace pays it late — nearer it than 
  * "unless"). Otherwise it is the earlier's, late — or pays nothing, that day already paid: ⚖️ default (c), built, not
  * asked (below). 🔴 FPL (electricity) is due the 8th (his number, 3 days' grace), and his Chase Checking holds Jul 10
  * −$14.21 (Jul 8's, on time) and Jul 28 −$56.22, 11 days before Aug 8: Jul 28 paid no due day at all. Those two are
- * every FPL posting on his ledger (his copy, 2026-10-21); the drafts on the 28th of later months below are a what-if,
- * a bill drafted so — which would have read every statement's newest 8th "not posted" until the following one.
+ * every FPL posting on his ledger, on Chase Checking, read only through Aug 12 (his copy, 2026-10-29); every other FPL
+ * payment below is a what-if — the drafts on the 28th of later months a bill drafted so, which would have read every
+ * statement's newest 8th "not posted" until the following one.
  */
 describe("…and one more than its grace EARLY pays the next due day, when it lies nearer it (decisions 73, 76)", () => {
   const fpl = (postedOn: string): Payment => ({ postedOn, toleranceDays: 3 });

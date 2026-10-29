@@ -706,8 +706,9 @@ export function recurringCalendar(
    *
    * ⛔ Only among the payments on time: an early or late one is the walk's to name (⚖️ decisions 73 and 76). Asked of
    * the month's postings alone first, as it was, the walk names a payment of this month that pays the NEXT day early —
-   * a bill due the 8th drafted Sep 28 for Oct 8, Sep 8 paid early by Aug 28 (a what-if: his FPL has posted only Jul 10
-   * and Jul 28) — as Sep 8's, late, beside an October naming it for Oct 8.
+   * a bill due the 8th drafted Sep 28 for Oct 8, Sep 8 paid early by Aug 28 (a what-if: Jul 10 and Jul 28 are every
+   * FPL posting on his ledger, on Chase Checking, read only through Aug 12) — as Sep 8's, late, beside an October
+   * naming it for Oct 8.
    */
   const paymentNamedFor = (payments: readonly BillPayment[], dueOn: string, dueDays: DueDays): BillPayment | undefined => {
     const paid = paymentFor(payments, dueOn, dueDays);
