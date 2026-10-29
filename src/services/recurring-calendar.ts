@@ -28,6 +28,7 @@ import {
 import { outsidePortfolioCashAccountIds } from "./accounts";
 import { isAgentsSeries, loadCategoryIndex } from "./analytics";
 import {
+  billDueDaysBySeries,
   billPaymentsBySeries,
   onTimePayment,
   paymentFor,
@@ -46,7 +47,6 @@ import {
   readsPerPayday,
 } from "./payday-settlement";
 import {
-  dueDaysOf,
   effectiveSeries,
   hasStoppedForecasting,
   MIN_OCCURRENCES,
@@ -873,6 +873,8 @@ export function recurringCalendar(
    * before (his decisions 73 and 76) — FPL's Jul 28, drawn in July, pays August's Aug 8.
    */
   const paymentsBySeries = billPaymentsBySeries(db, forecastRows);
+  // …on its due days as every grader reads them: billed inside another, opening where its carrier's opens
+  const dueDaysBySeries = billDueDaysBySeries(db, forecastRows);
 
   for (const s of forecastRows) {
     if (hasStoppedForecasting(s, today, silenceThroughOf(s.id))) continue;
@@ -886,7 +888,7 @@ export function recurringCalendar(
     const postedDates = postedDatesBySeries.get(s.id) ?? [];
     // the arrears' test of a covering posting (`paymentFor`), over the postings the arrears read, on its own due days
     const payments = paymentsBySeries.get(s.id) ?? [];
-    const dueDays = dueDaysOf(projectable, s);
+    const dueDays = dueDaysBySeries.get(s.id)!;
     const confidence = forecastConfidence(s);
     // ONE evidence word, the one the All tab files the series under: a series
     // that never charged is "never billed", not stale (see `CalendarEntry.isStale`).

@@ -3,6 +3,7 @@ import { paydayReadings, type PaydayReading } from "./per-payday";
 import {
   atTodaysRate,
   daysThatBanked,
+  daysThatPaid,
   daysThatWentBackOut,
   nettedToNothing,
   occurrencesOf,
@@ -327,6 +328,42 @@ describe("daysThatWentBackOut — the days a pay series' money went back out on,
 
   test("a series no money left has no such day", () => {
     expect(daysThatWentBackOut(HIS_ROWS)).toEqual([]);
+  });
+});
+
+/**
+ * ⚖️ default built, not asked (2026-10-29) — …and a BILL's days by the same unit: a day paid a charge when its rows net
+ * the way the rate runs (`daysThatPaid`), so money back on a day of its own, or a charge and its same-day reversal,
+ * pays no due day (`billPaymentsBySeries`). 🔴 Every row was a payment to every grader (review of 4d6ec2ac).
+ */
+describe("daysThatPaid — the days a bill's rows paid a charge, by their net", () => {
+  const P = -35_758;
+  const PREMIUM_DAYS = rowsOf([
+    ["2026-09-11", P],
+    ["2026-09-19", 2 * P],
+    ["2026-09-25", -P],
+    ["2026-10-11", P],
+    ["2026-10-11", -P],
+    ["2026-11-11", P],
+    ["2026-11-11", 1_250],
+  ]);
+
+  test("each day netting the rate's way: money back and a day netted to nothing are none; a partial credit is", () => {
+    expect(daysThatPaid(PREMIUM_DAYS, P).map((d) => [d.postedOn, d.amountCents])).toEqual([
+      ["2026-09-11", P],
+      ["2026-09-19", 2 * P],
+      ["2026-11-11", P + 1_250],
+    ]);
+  });
+
+  test("…the way the rate runs, whichever that is; with no rate, every day that did not net to nothing", () => {
+    expect(daysThatPaid(PREMIUM_DAYS, -P).map((d) => d.postedOn)).toEqual(["2026-09-25"]);
+    expect(daysThatPaid(PREMIUM_DAYS, null).map((d) => d.postedOn)).toEqual([
+      "2026-09-11",
+      "2026-09-19",
+      "2026-09-25",
+      "2026-11-11",
+    ]);
   });
 });
 

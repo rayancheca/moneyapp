@@ -11,11 +11,11 @@ import {
   type DueDayReading,
 } from "@/lib/occurrence-verdict";
 import { sharedFrontier, type UnbankedFrontier } from "@/lib/unbanked-income";
-import { billPaymentsBySeries, paymentFor, withBillingCarriers } from "./billing-carriers";
+import { billDueDaysBySeries, billPaymentsBySeries, paymentFor, withBillingCarriers } from "./billing-carriers";
 import { checkedThroughBySeries, silenceMeasuredThroughBySeries } from "./cash-earnings";
 import { dueDayGraces, dueDayReadings } from "./observation-frontier";
 import { paydayProjectable, paydaySettlementsBySeries } from "./payday-settlement";
-import { dueDaysOf, hasStoppedForecasting, projectOccurrences, toProjectable } from "./recurring";
+import { hasStoppedForecasting, projectOccurrences, toProjectable } from "./recurring";
 
 /**
  * ARREARS — bills that came due inside a window and that no posting covers.
@@ -159,13 +159,15 @@ export function overdueForSeries(
    * 76), as far back as that day — FPL's Jul 28 pays its Aug 8, the Car lease's Sep 2 its Sep 15.
    */
   const paymentsBySeries = billPaymentsBySeries(db, live);
+  // …on its due days as every grader reads them: billed inside another, opening where its carrier's opens
+  const dueDaysBySeries = billDueDaysBySeries(db, live);
 
   const series: BudgetTailSeries[] = [];
   let totalCents = 0;
   for (const s of live) {
     const payments = paymentsBySeries.get(s.id) ?? [];
     const projectable = toProjectable(s);
-    const dueDays = dueDaysOf(projectable, s);
+    const dueDays = dueDaysBySeries.get(s.id)!;
     const occ = projectOccurrences(projectable, periodStart, through)
       .filter((o) => o.amountCents < 0)
       .filter((o) => paymentFor(payments, o.date, dueDays) === undefined);

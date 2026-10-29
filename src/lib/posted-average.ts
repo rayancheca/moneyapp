@@ -301,6 +301,23 @@ export function daysThatWentBackOut(rows: readonly Pick<ReadableRow, "postedOn" 
   return occurrencesOf(rows).filter((o) => o.amountCents < 0);
 }
 
+/**
+ * ⚖️ The days whose rows PAID a charge of a series held to `rateCents`, oldest first: a day's rows netted
+ * (`occurrencesOf`), the net running the rate's way — the payments every grader of a bill's due days reads
+ * (`billPaymentsBySeries`). His decision 75's unit, the day, read onto a bill (default built, not asked, 2026-10-29):
+ * money back on a day of its own, or a charge and its same-day reversal, paid no charge, as a payroll returned the same
+ * day banked nothing and money going back out pays no payday (`daysThatBanked`, `daysThatWentBackOut`). With no rate to
+ * run by, every day that did not net to nothing. 🔴 Every row was a payment to every grader (review of 4d6ec2ac): a
+ * premium's +$357.58 back on Sep 28 paid Oct 11 early, and a +$357.58 credit on Sep 9 paid Sep 11 on time.
+ */
+export function daysThatPaid(
+  rows: readonly Pick<ReadableRow, "postedOn" | "amountCents">[],
+  rateCents: number | null,
+): Occurrence[] {
+  const way = Math.sign(rateCents ?? 0);
+  return occurrencesOf(rows).filter((o) => way === 0 || Math.sign(o.amountCents) === way);
+}
+
 /** A day's rows summed, one per day, oldest first — what `occurrencesOf` and `nettedToNothing` divide between them. */
 function daysOf(rows: readonly Pick<ReadableRow, "postedOn" | "amountCents">[]): Occurrence[] {
   const byDay = new Map<string, Occurrence>();
@@ -414,8 +431,11 @@ export function postedAsWord(o: Pick<Occurrence, "postings">): string | null {
  * popover the same; a -$6.00 subscription charged twice on Oct 5, +$6.00 back on Oct 9, "-$4.80 · Oct 5's -$12.00
  * covered more than one month" — and every grader paid two due days with each. Car insurance's +$12.50 credit leaves
  * $987.50: Sep 3 is still named. The cost: a large refund after one — a cancellation's, or one returning a later
- * payment — unnames a true one too, which then pays one day: a paid day shown owed, the safe direction. Latent: no
- * bill or subscription of his has money back linked.
+ * payment — unnames a true one too, which then pays one day: a paid day shown owed, the safe direction. ⛔ …and the
+ * money back pays none (`daysThatPaid`, 2026-10-29). 🔴 Until then it was a payment to every grader, so this held only
+ * where the credit lay nearer a day already paid (review of 4d6ec2ac; his ledger copy 2026-10-29, the premium below):
+ * +$357.58 back on Sep 28, nearer Oct 11, drew Oct 11 "paid early by its payment of Sep 28", and on Oct 29 nothing was
+ * owed. Latent: no bill or subscription of his has money back linked.
  *
  * A late catch-up — two charges paid at once after a missed month — is named too, and truly: it covered the month it
  * missed and its own, and the words say no more than that ("covered more than one month"), whenever it posts. Every

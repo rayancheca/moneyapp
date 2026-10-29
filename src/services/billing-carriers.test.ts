@@ -695,6 +695,36 @@ describe("the nearer due day wins (decision 76)", () => {
     });
 
     /*
+     * ⛔ …and none settles a day behind from a day before his date either (`dayBehindIsSettled` asks the same test as
+     * the catch-up's own): late for a day before his date, a payment of two pays nothing of his, so the day behind a
+     * later one's own stays unpaid and that one's second charge pays it — never the day after. 🔴 Nothing pinned it
+     * (review of 4d6ec2ac): with the test asked only where the catch-up asks for itself, every test passed, and one
+     * payment of two paid three days — started Sep 11, Oct 20 paid Sep 11, Oct 11 and Nov 11; typed Oct 11, Nov 20
+     * paid Oct 11, Nov 11 and Dec 11, nothing owed on Dec 21.
+     */
+    test("…nor a day behind settled from a day before his date: a later payment of two pays two, never three", () => {
+      const startedSep11 = [pay("2026-06-11"), twice("2026-08-20"), twice("2026-10-20")];
+      const fromSep11 = ["2026-09-11", "2026-10-11", "2026-11-11", "2026-12-11"];
+      expect(graded(startedSep11, hisDate("2026-09-11"), fromSep11).map(([, p]) => p)).toEqual([
+        "2026-10-20",
+        "2026-10-20",
+        null,
+        null,
+      ]);
+      // …as the readers that look ahead read it: Nov 11 is still to come
+      expect(paymentFor(startedSep11, "2026-11-11", { ...hisDate("2026-09-11"), after: () => null })).toBeUndefined();
+      // typed Oct 11 after Sep 19's two: Nov 20's two pay Oct 11 and Nov 11, and Dec 11 is still owed once past
+      const typedOct11 = [...["2026-06-11", "2026-07-11"].map(pay), twice("2026-09-19"), twice("2026-11-20")];
+      const fromOct11 = ["2026-10-11", "2026-11-11", "2026-12-11", "2027-01-11"];
+      expect(graded(typedOct11, hisDate("2026-10-11"), fromOct11).map(([, p]) => p)).toEqual([
+        "2026-11-20",
+        "2026-11-20",
+        null,
+        null,
+      ]);
+    });
+
+    /*
      * ⚖️ default built, not asked (2026-10-23) — on time or early for its own day, a payment of two pays no day AFTER
      * it, whatever lies behind: it is not read ahead, so it takes no day still to come out of Upcoming or the forecast.
      * 🔴 Nothing pinned it with the day behind paid (review of 8348349): read as "late or on time", every test passed,
