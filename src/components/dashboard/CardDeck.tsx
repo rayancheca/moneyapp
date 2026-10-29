@@ -50,10 +50,15 @@ import {
  * ## Accessibility
  *
  * The stack is presentation. Every card stays MOUNTED and in the document, in
- * order, so a screen reader and anything reading the page's text still get all
- * twelve — a deck that hid eleven of them would be a filter wearing a stack.
- * The deck is one tab stop that announces its position; the pips are real
- * buttons; and under `prefers-reduced-motion` nothing transitions at all.
+ * order, so anything reading the page's text still gets all twelve — a deck
+ * that unmounted eleven of them would be a filter wearing a stack. The deck is
+ * one tab stop that announces its position; the pips are real buttons; and
+ * under `prefers-reduced-motion` nothing transitions at all.
+ *
+ * ⛔ The cards BEHIND the front are `inert`, as anything covered must be (see
+ * the slot below): out of the pointer, the Tab order and a screen reader's
+ * cursor, which reads the card on screen as the eye does — every card's name
+ * is on its pip, and the grid reads all twelve at once.
  */
 
 export interface DeckCard {
@@ -173,6 +178,12 @@ export function CardDeck({ cards, ariaLabel }: { cards: readonly DeckCard[]; ari
     else if (event.key === "End") setActive(count - 1);
     else return;
     event.preventDefault();
+    /*
+     * ⛔ An arrow pressed from a link ON the front card sends that card behind, where it is `inert`, and the
+     * browser drops a focus left inside an inert card to the page — where the next arrow steps nothing. The deck
+     * takes it first.
+     */
+    if (event.target !== event.currentTarget) event.currentTarget.focus({ preventScroll: true });
   };
 
   if (count === 0) return null;
@@ -215,6 +226,17 @@ export function CardDeck({ cards, ariaLabel }: { cards: readonly DeckCard[]; ari
            * tall one ends 200px above its bottom edge and never peeks at all.
            * What shows is the bottom strip of a card-coloured sheet, which is
            * exactly what the edge of a stack looks like.
+           *
+           * 🔴 …and whatever the card held at that height: Earned vs banked's "…the arrangement can have
+           * quietly ended — nothing here can tell those apart." sat faintly in the edge of the gate's own
+           * baselines (dashboard-light-1024 and both 320s). So a card behind shows its SHEET and nothing on it:
+           * `*:*:opacity-0` hides its root's CHILDREN and never its root, because every card's root is its sheet
+           * (pinned in CardDeck.test.ts — all twelve on his ledger copy, 2026-10-29). Opacity, not `visibility`:
+           * the text is still the page's, and decision-cards.spec reads it there.
+           *
+           * ⛔ And it is `inert`: out of the pointer and out of the Tab order. 🔴 Only the pointer was kept out,
+           * and a Tab walked every link and button behind the front — 16 and 14 behind Runway on his ledger copy,
+           * 2026-10-29, each one a focus ring drawn on a card nobody could see.
            */
           const stretched = !isFront && height !== null ? height : undefined;
           return (
@@ -224,7 +246,8 @@ export function CardDeck({ cards, ariaLabel }: { cards: readonly DeckCard[]; ari
                 cardRefs.current[i] = el;
               }}
               aria-current={isFront ? "true" : undefined}
-              className={`absolute inset-x-0 top-0 *:min-w-0 ${isFront ? "" : "overflow-hidden *:h-full"}`}
+              inert={isFront ? undefined : true}
+              className={`absolute inset-x-0 top-0 *:min-w-0 ${isFront ? "" : "overflow-hidden *:h-full *:*:opacity-0"}`}
               style={{
                 height: stretched,
                 zIndex: slot.zIndex,

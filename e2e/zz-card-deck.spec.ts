@@ -128,8 +128,10 @@ test.describe("the card deck", () => {
   test("⛔ nothing is lost — every card is still in the document", async ({ page }) => {
     /*
      * A stack that unmounted eleven cards would be a filter wearing an
-     * animation: gone from the accessibility tree, gone from find-in-page, and
-     * gone from anything that reads the page. The deck is PRESENTATION.
+     * animation: gone from the document, from the grid's count, and from
+     * anything that reads the page. The deck is PRESENTATION — a card behind
+     * the front is `inert` (covered, so out of the pointer, the Tab order and a
+     * screen reader's cursor; CardDeck.tsx) and its content hidden, never gone.
      */
     await page.goto("/?cards=deck");
     const inDeck = await page.locator(`${SECTION} h3`).count();
