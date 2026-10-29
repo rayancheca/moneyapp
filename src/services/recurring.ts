@@ -25,6 +25,7 @@ import {
   walkDayOfMonth,
 } from "@/lib/recurring-step";
 import { roundToCents } from "@/lib/money";
+import { withoutAchReferences } from "@/lib/normalize";
 import { isOneCharge } from "@/lib/one-charge";
 import type { Occurrence } from "@/lib/posted-average";
 import { parseAmountHistory, rateOn, seriesAmountCents } from "@/lib/series-kind";
@@ -748,6 +749,14 @@ export function absorbIntoLiveSeries(
     return last === undefined || compareDates(postedOn, last) <= 0;
   };
 
+  /*
+   * ⛔ Each descriptor in the CURRENT normalizer's form. `normalized_description` is stored at import, so the rows a
+   * series owns keep the strings an older normalizer wrote, and the row a statement brings in now carries today's.
+   * 🔴 Compared as stored, his ledger copy (2026-10-29) linked none of the Oct 26 statement's four +$1,141.92 payroll
+   * deposits: "IT AMERICA LLC PAYROLL 9357426222928QJ KARIM CHECA,RAYAN" (Sep 24, v2, attached by him) can equal no
+   * later week. v3 takes the ACH individual ID off — and so does reading a stored v2 string through the same function
+   * (`withoutAchReferences`): exact equality still, of what the descriptor says without its per-entry ID.
+   */
   const rows = tx
     .select({
       id: transactions.id,
@@ -759,7 +768,8 @@ export function absorbIntoLiveSeries(
     })
     .from(transactions)
     .where(and(eq(transactions.status, "active"), lte(transactions.postedOn, today)))
-    .all();
+    .all()
+    .map((r) => ({ ...r, description: withoutAchReferences(r.description) }));
 
   // descriptor → every live series carrying it
   const ownersOf = new Map<string, Set<string>>();

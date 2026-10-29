@@ -47,6 +47,8 @@ function post(opts: {
   seriesId?: string | null;
   linkSource?: SeriesLinkSource | null;
   transferGroupId?: string | null;
+  /** the stored form, when an older normalizer wrote it — otherwise today's `normalizeDescription(raw)` */
+  normalized?: string;
 }): string {
   seq += 1;
   const accountId = opts.accountId ?? card;
@@ -57,7 +59,7 @@ function post(opts: {
       postedOn: opts.postedOn,
       amountCents: opts.amountCents,
       rawDescription: opts.raw,
-      normalizedDescription: normalizeDescription(opts.raw),
+      normalizedDescription: opts.normalized ?? normalizeDescription(opts.raw),
       recurringSeriesId: opts.seriesId ?? null,
       seriesLinkSource: opts.linkSource ?? (opts.seriesId ? "detected" : null),
       transferGroupId: opts.transferGroupId ?? null,
@@ -189,6 +191,65 @@ describe("linking at import — the rows an operation made active, and only thos
     // the control: the same row in scope IS linked, so the empty set did it
     linkRowsMadeActive(bundle.db, [absorbable], TODAY);
     expect(seriesOf(absorbable).recurringSeriesId).toBe(breezeline);
+  });
+});
+
+describe("his weekly pay links at import though the rows it owns were stored by normalizer v2", () => {
+  /*
+   * 🔴 Measured on his ledger copy 2026-10-29: the Wells Fargo statement of Sep 25 → Oct 26 brought four +$1,141.92
+   * deposits, "It America LLC Payroll <day> <13 digits>Qj Karim Checa,Rayan", and linking at import linked none —
+   * each normalized to a string no other row can equal, by the ACH ID inside it. Only the off-cycle +$200.00 linked:
+   * its ID field holds his name, so its string equals Sep 23's. ⛔ The rows the series owns keep the strings v2
+   * stored (nothing rewrites a row of his), so the NEXT statement links only if absorption reads them in v3's form.
+   */
+  const TODAY_OCT = "2026-10-29";
+  const ID_OF_SEP_24 = "It America LLC Payroll 260924 9357426222928Qj Karim Checa,Rayan";
+
+  function weeklyPay(): string {
+    const pay = register({
+      name: "It America LLC (weekly pay)",
+      amountCents: 114192,
+      nextOn: "2026-10-01",
+      cadence: "weekly",
+      kind: "income",
+      accountId: checking,
+    });
+    post({ postedOn: "2026-09-23", amountCents: 456768, raw: "It America LLC Payroll 260923 Rayancheca Rayan Checa", accountId: checking, seriesId: pay, linkSource: "user" });
+    post({
+      postedOn: "2026-09-24",
+      amountCents: 114192,
+      raw: ID_OF_SEP_24,
+      normalized: "IT AMERICA LLC PAYROLL 9357426222928QJ KARIM CHECA,RAYAN",
+      accountId: checking,
+      seriesId: pay,
+      linkSource: "user",
+    });
+    return pay;
+  }
+
+  test("all four weekly deposits and the off-cycle $200 link to the pay — the reimbursement does not", () => {
+    const pay = weeklyPay();
+    const weeks = [
+      ["2026-10-01", "It America LLC Payroll 261001 9303446743548Qj Karim Checa,Rayan"],
+      ["2026-10-08", "It America LLC Payroll 261008 7820845303038Qj Karim Checa,Rayan"],
+      ["2026-10-15", "It America LLC Payroll 261015 5970777473238Qj Karim Checa,Rayan"],
+      ["2026-10-22", "It America LLC Payroll 261022 9288454030138Qj Karim Checa,Rayan"],
+    ].map(([postedOn, raw]) => post({ postedOn: postedOn!, amountCents: 114192, raw: raw!, accountId: checking }));
+    const offCycle = post({ postedOn: "2026-10-15", amountCents: 20000, raw: "It America LLC Payroll 261015 Rayancheca Rayan Checa", accountId: checking });
+    // his employer paying back a subscription — another payee's words, never his pay
+    const reimbursement = post({
+      postedOn: "2026-10-20",
+      amountCents: 46820,
+      raw: "Instant Pmt From It America LLC on 10/20 Ref#20261020021000021P1Brjpc08540023001",
+      accountId: checking,
+    });
+
+    expect(linkRowsMadeActive(bundle.db, [...weeks, offCycle, reimbursement], TODAY_OCT)).toEqual({ absorbed: 5, firstPostings: 0 });
+
+    expect(weeks.map((id) => seriesOf(id).recurringSeriesId)).toEqual([pay, pay, pay, pay]);
+    expect(seriesOf(offCycle).recurringSeriesId).toBe(pay);
+    expect(seriesOf(reimbursement).recurringSeriesId).toBeNull();
+    expect(seriesRow(pay).lastMatchedOn).toBe("2026-10-22");
   });
 });
 

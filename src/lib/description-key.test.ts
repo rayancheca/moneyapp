@@ -147,6 +147,28 @@ describe("strippedDescriptionKey — retail stripping", () => {
   });
 });
 
+describe("strippedDescriptionKey — the ACH individual ID, stored before normalizer v3 or not", () => {
+  /**
+   * 🔴 The key is read from the STORED description, and his stored rows keep v2's strings (the ID inside). Measured on
+   * his ledger copy 2026-10-29, after the Oct 26 statement's import and before his filing, /spending's Top merchants
+   * named "CAPITAL ONE MOBILE PMT CA0FDA683870046 RAYAN KARIM CHECA · 1 transaction · unlinked · $1,500.00" — each
+   * payment a payee of its own. A key that kept the ID would also part a v2 row from the v3 row of the next payment.
+   */
+  test("a row stored by v2 keys as its v3 form — one payee across every payment", () => {
+    const storedByV2 = ["CAPITAL ONE MOBILE PMT CA0FDA683870046 RAYAN KARIM CHECA", "CAPITAL ONE MOBILE PMT CA05961FD73B0EF RAYAN KARIM CHECA"];
+    const writtenByV3 = "CAPITAL ONE MOBILE PMT RAYAN KARIM CHECA";
+    expect(new Set([...storedByV2, writtenByV3].map(strippedDescriptionKey))).toEqual(new Set([writtenByV3]));
+    expect(strippedDescriptionKey("IT AMERICA LLC PAYROLL 9357426222928QJ KARIM CHECA,RAYAN")).toBe(
+      strippedDescriptionKey("IT AMERICA LLC PAYROLL KARIM CHECA,RAYAN"),
+    );
+  });
+
+  test("a CUSIP is still the CUSIP rule's, and a store number glued to a city is still a name", () => {
+    expect(strippedDescriptionKey("TRANSFER 81762P102 SETTLED")).toBe("TRANSFER SETTLED");
+    expect(strippedDescriptionKey("MODERN MARKET 014042JAMAICANY")).toBe("MODERN MARKET 014042JAMAICANY");
+  });
+});
+
 describe("humanizeDescriptionKey — readable label for the snackbar", () => {
   test("ticker keys become '<SYMBOL> <activity words>' across every class", () => {
     expect(humanizeDescriptionKey("ticker:COKE:DIV")).toBe("COKE dividends");
