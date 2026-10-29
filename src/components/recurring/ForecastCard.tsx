@@ -109,12 +109,20 @@ function farSide(named: NamedReadings, isFar: (cents: number) => boolean): FarSi
  * whenever the halves differed, and on the owner's ledger (2026-09-15) no
  * commitment posts to Robinhood Cash, so every month the calendar pages to
  * printed "$0.00 in the headline and +$19.43 at your recent pace".
+ *
+ * 🔴 The reason is the accounts', never the amount's. It said "because that is
+ * money selling investments would add", and on his ledger (2026-10-23) the
+ * amount was -$3.88 — no money anything would add. Naming the accounts, it is
+ * true for either sign, in both forms (measured on his ledger copy 2026-10-29:
+ * +$0.49 to Robinhood Cash).
  */
 export function OutsideCashNote({ outside }: { outside: MonthForecast["outsideCash"] }) {
   const named = namedReadings(outside.committedNetCents, outside.netCents);
   if (named === null) return null;
-  const posts = `projected to post to ${ACCOUNT_LIST.format(outside.accountNames)} by month end`;
-  const why = "because that is money selling investments would add, not cash you can spend";
+  const accounts = ACCOUNT_LIST.format(outside.accountNames);
+  const posts = `projected to post to ${accounts} by month end`;
+  const are = outside.accountNames.length === 1 ? "is" : "are";
+  const why = `because ${accounts} ${are} what selling investments would add, not cash you can spend`;
   if (named.kind === "both") {
     return (
       <p className="mt-1 text-xs text-ink-faint">

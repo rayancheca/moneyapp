@@ -35,36 +35,54 @@ describe("OutsideCashNote — the forecast card names what its EOM cash leaves o
    */
   test("only the pace posts outside cash: one amount, under the reading it belongs to", () => {
     expect(words({ netCents: 1943, committedNetCents: 0, accountNames: ["Robinhood Cash"] })).toBe(
-      "EOM cash at your recent pace leaves out the +$19.43 projected to post to Robinhood Cash by month end, because that is money selling investments would add, not cash you can spend. " +
+      "EOM cash at your recent pace leaves out the +$19.43 projected to post to Robinhood Cash by month end, because Robinhood Cash is what selling investments would add, not cash you can spend. " +
         "EOM net worth keeps it.",
     );
   });
 
   test("only the headline posts outside cash (the pace nets it to zero): one amount, under the headline", () => {
     expect(words({ netCents: 0, committedNetCents: -1200, accountNames: ["Robinhood Brokerage"] })).toBe(
-      "EOM cash in the headline leaves out the -$12.00 projected to post to Robinhood Brokerage by month end, because that is money selling investments would add, not cash you can spend. " +
+      "EOM cash in the headline leaves out the -$12.00 projected to post to Robinhood Brokerage by month end, because Robinhood Brokerage is what selling investments would add, not cash you can spend. " +
         "EOM net worth keeps it.",
     );
   });
 
   test("both readings leave out a different amount: both, each under the reading it belongs to", () => {
     expect(words({ netCents: -387, committedNetCents: -500, accountNames: ["Robinhood Brokerage"] })).toBe(
-      "EOM cash leaves out what is projected to post to Robinhood Brokerage by month end, because that is money selling investments would add, not cash you can spend: " +
+      "EOM cash leaves out what is projected to post to Robinhood Brokerage by month end, because Robinhood Brokerage is what selling investments would add, not cash you can spend: " +
         "-$5.00 in the headline and -$3.87 at your recent pace. EOM net worth keeps it.",
     );
   });
 
   test("the same amount in both readings is said once, and every account is named", () => {
     expect(words({ netCents: -980, committedNetCents: -980, accountNames: ["Robinhood Brokerage", "Robinhood Cash"] })).toBe(
-      "EOM cash leaves out the -$9.80 projected to post to Robinhood Brokerage and Robinhood Cash by month end, because that is money selling investments would add, not cash you can spend. " +
+      "EOM cash leaves out the -$9.80 projected to post to Robinhood Brokerage and Robinhood Cash by month end, because Robinhood Brokerage and Robinhood Cash are what selling investments would add, not cash you can spend. " +
         "EOM net worth keeps it.",
+    );
+  });
+
+  /**
+   * 🔴 Read on his ledger 2026-10-23: "EOM cash at your recent pace leaves out the -$3.88 projected to post to
+   * Robinhood Cash by month end, because that is money selling investments would add" — a negative amount is no money
+   * anything would add. The reason is the accounts', true for either sign (measured on his ledger copy 2026-10-29 the
+   * card reads +$0.49, where the old words fit).
+   */
+  test("a negative amount: the reason names the accounts, not the amount, in both forms", () => {
+    expect(words({ netCents: -388, committedNetCents: 0, accountNames: ["Robinhood Cash"] })).toBe(
+      "EOM cash at your recent pace leaves out the -$3.88 projected to post to Robinhood Cash by month end, because Robinhood Cash is what selling investments would add, not cash you can spend. " +
+        "EOM net worth keeps it.",
+    );
+    expect(words({ netCents: -387, committedNetCents: -500, accountNames: ["Robinhood Brokerage", "Robinhood Cash"] })).toBe(
+      "EOM cash leaves out what is projected to post to Robinhood Brokerage and Robinhood Cash by month end, because Robinhood Brokerage and Robinhood Cash are what selling investments would add, not cash you can spend: " +
+        "-$5.00 in the headline and -$3.87 at your recent pace. EOM net worth keeps it.",
     );
   });
 
   /**
    * The invariant, over every shape a half can take — zero, `-0`, and a
    * non-zero amount of either sign: the note prints nothing exactly when both
-   * halves are zero, and otherwise never prints a zero amount, in any spelling.
+   * halves are zero, and otherwise never prints a zero amount, in any spelling,
+   * and gives the accounts' reason, never the amount's.
    */
   test("no shape of the two halves prints a zero amount, and only two zeros print no note", () => {
     const halves = [0, -0, 1943, -387];
@@ -74,6 +92,7 @@ describe("OutsideCashNote — the forecast card names what its EOM cash leaves o
         const shape = JSON.stringify({ netCents: Object.is(netCents, -0) ? "-0" : netCents, committedNetCents: Object.is(committedNetCents, -0) ? "-0" : committedNetCents });
         expect(note === "", shape).toBe(netCents === 0 && committedNetCents === 0);
         expect(note, shape).not.toMatch(/\$0\.00/);
+        if (note !== "") expect(note, shape).toContain("because Robinhood Cash is what selling investments would add");
       }
     }
   });
