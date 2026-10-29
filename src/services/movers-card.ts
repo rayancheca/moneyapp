@@ -383,7 +383,9 @@ export interface Habit {
   /**
    * Who dates the day while no account holds the habit yet — a ledger too young for one: EVERY account (spending's: any
    * of them might be spent from) or only those the rows came in on and still coming in when last read (the income
-   * pace's, `stillComingIn`: a card that never paid him cannot hold back his income at the pace)
+   * pace's, `stillComingIn`: a card that never paid him cannot hold back his income at the pace). ⚠️ An archived
+   * account or a wallet holds the habit like any other, though for the income pace it dates nothing
+   * (`whenNoneIsAwaited`).
    */
   beforeAHabit: "every account" | "its own accounts";
   /**
@@ -698,6 +700,8 @@ export function habitualCoverage(
   const candidates = candidateMonths(byAccount, frontier, currentMonth, awaiting, habit);
   const governing =
     habit.governedBy === "the compared month" ? (candidates.find((c) => c.imported) ?? candidates[0]) : candidates[0];
+  // a habit held only by accounts no statement is coming for is still one (`liveSpenders`, not `datingSpenders`): asked
+  // of the accounts still coming in instead, a dormant earner would date the income pace (`incomeCoverage`'s ⚠️)
   const dating =
     governing !== undefined && governing.liveSpenders.length > 0
       ? governing.datingSpenders

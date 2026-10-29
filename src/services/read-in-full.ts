@@ -20,7 +20,8 @@ export function firstWholeMonth(db: AppDatabase): string | null {
 export interface AveragesEnd {
   /**
    * 'YYYY-MM': the last complete calendar month, or the last one every account you spend from is read to the end of —
-   * for the income pace, every account its own rows land in (`averagesEndThrough`)
+   * for the income pace, every account its own rows come in on habitually that a statement is still coming for
+   * (`incomeCoverage`, `averagesEndThrough`)
    */
   month: string;
   /**
@@ -96,8 +97,9 @@ export function averagedMonths(db: AppDatabase, today: string, count: number): A
 
 /**
  * `averagedMonths` ending at any figure's own day (`averagesEndThrough`): the `count` months the INCOME pace averages
- * today end at the last one every account its own rows land in is read to the end of (`incomeCoverage`), slide
- * back rather than shrink, and — like every average — none is before the ledger's first whole month.
+ * today end at the last one every account its own rows come in on habitually that a statement is still coming for is
+ * read to the end of (`incomeCoverage`), slide back rather than shrink, and — like every average — none is before the
+ * ledger's first whole month.
  *
  * ⚖️ Default built, not asked (2026-10-23) — his decision 71 (2026-10-13), "a month read to its 12th is not a twelfth
  * of a measurement", carried to the income pace (batch 6's option A; he said "no more questions, follow the

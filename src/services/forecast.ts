@@ -351,19 +351,20 @@ export interface MonthForecast {
   spendPaceMonths: number;
   /**
    * How many months the INCOME pace averaged (`incomePaceMonths`): three — ending at the last month every account its
-   * own rows land in is read to the end of — fewer where the ledger is young, and 0 where it covers no whole month read
-   * in full. Under the presence gate's two (`incomePaceMeasurable`) there is no income pace — no kind of income can
-   * come in two of one month — and the card's band holds Money in's pace back as
-   * it does Money out's. 🔴 Review of f1a0180: with no count to read, the band could not tell "no month" from "$0" and
-   * printed "Money in · Recent pace $0.00 (0 lines)", drawn 100% scheduled. 🔴 Review of 0795a2a: it then held back 0
-   * months alone, and one month read the same "$0.00 (0 lines)" beside Money out's one-month "$64.52 (1 line)".
+   * own rows come in on habitually that a statement is still coming for is read to the end of — fewer where the ledger
+   * is young, and 0 where it covers no whole month read in full. Under the presence gate's two
+   * (`incomePaceMeasurable`) there is no income pace — no kind of income can come in two of one month — and the card's
+   * band holds Money in's pace back as it does Money out's. 🔴 Review of f1a0180: with no count to read, the band could
+   * not tell "no month" from "$0" and printed "Money in · Recent pace $0.00 (0 lines)", drawn 100% scheduled. 🔴 Review
+   * of 0795a2a: it then held back 0 months alone, and one month read the same "$0.00 (0 lines)" beside Money out's
+   * one-month "$64.52 (1 line)".
    */
   incomePaceMonths: number;
   /**
    * Which months Money in's pace averaged and why the later ones are left out, where its own frontier slid them back
    * (`incomePaceNote`, default built 2026-10-23) — "Money in's pace is averaged over 3 complete months, Jun 2026 to Aug
-   * 2026. Sep 2026 is left out: Sep 9 is the last day Robinhood Cash has been imported through." — the accounts its own
-   * rows land in, named (`IncomeUnreadMonths`) — and why it has no recent pace, where it has too few months for one:
+   * 2026. Sep 2026 is left out: Sep 9 is the last day Robinhood Cash has been imported through." — the accounts that
+   * date them, named (`IncomeUnreadMonths`) — and why it has no recent pace, where it has too few months for one:
    * "Money in has no recent pace yet: a kind of income counts toward it once it has come in 2 complete months, so a
    * one-off never does. Jul 2026 is the only complete month imported so far." — or, where spending's frontier alone
    * left that month out, "Jul 2026 is left out of spending's pace, not Money in's, and is the only complete month Money
@@ -527,8 +528,9 @@ export interface PaceMonths {
  * at the pace and a month-end cash with no spending in it, where its parent commit had read −$80.65. A pace of no
  * month is withheld, never a pace of nothing (`MonthForecast.spendPaceMonths`).
  *
- * ⚠️ Spending's day alone: the income pace ends at its own — every account its own rows land in (`incomePaceMonths`),
- * which is not every account he SPENDS from — by the same rule and floor (`averagedMonthsThrough`).
+ * ⚠️ Spending's day alone: the income pace ends at its own — every account its own rows come in on habitually that a
+ * statement is still coming for (`incomePaceMonths`), which is not every account he SPENDS from — by the same rule and
+ * floor (`averagedMonthsThrough`).
  */
 export function paceMonths(db: AppDatabase, today: string, count: number = TRAILING_FULL_MONTHS): PaceMonths {
   const { keys, unread } = averagedMonths(db, today, count);
@@ -538,10 +540,11 @@ export function paceMonths(db: AppDatabase, today: string, count: number = TRAIL
 /**
  * The `count` full months the INCOME pace averages (`variableIncomeComponents`) — his own pace and the agent's — and
  * the complete months after them it leaves out, naming the accounts they wait for: they end at the last month every
- * account the pace's own rows land in has been read through to the end of (`incomeCoverage`: those they come in on
- * habitually that a statement is still coming for — the calendar's months where none is), slide back rather than
- * shrink, and none is before the ledger's first whole month (`averagedMonthsThrough`) — fewer where the ledger is
- * young, none where it covers no whole month read in full, and then there is no income pace.
+ * account that dates them has been read through to the end of (`incomeCoverage`: of the accounts the pace's own rows
+ * land in, those they come in on habitually — before any account holds the habit, those still coming in when last
+ * read — that a statement is still coming for; the calendar's months where none is), slide back rather than shrink,
+ * and none is before the ledger's first whole month (`averagedMonthsThrough`) — fewer where the ledger is young, none
+ * where it covers no whole month read in full, and then there is no income pace.
  *
  * ⚖️ Default built, not asked (2026-10-23) — his decision 71 (2026-10-13), "a month read to its 12th is not a twelfth
  * of a measurement", carried to the income pace: batch 6's option (A), recommended there, built because he said "no
@@ -594,19 +597,31 @@ export interface IncomePaceMonths {
  * Wells Fargo's payroll and Chase Checking's one-offs date nothing here. Habitually, by the pace's own gate: 🔴 measured
  * on his ledger copy at 2026-10-23, SoFi Savings — Interest in Mar, Apr and May, nothing since, read through Jul 31 —
  * is live by spending's six-month habit and would hold Money in's months back to May–Jul; by this one it is dormant,
- * and Robinhood Cash's Sep 9 dates them: Jun–Aug. Until any account holds the habit (a young ledger), every account the
- * pace's rows came in on and still coming in when last read dates it (`stillComingIn`) — never an account that only
- * spends, which could not hold back his income at the pace.
+ * and Robinhood Cash's Sep 9 dates them: Jun–Aug. Until any account holds the habit (a young ledger — an archived one
+ * or a wallet holds it too, below), every account the pace's rows came in on and still coming in when last read dates
+ * it (`stillComingIn`) — never an account that only spends, which could not hold back his income at the pace.
  *
  * ⚖️ Default built, not asked (2026-10-23): only an account a statement is still coming for dates them
- * (`Habit.whenNoneIsAwaited`) — where none of its earners is one, the calendar's months stand and no note prints. An
- * archived account is never imported again and a wallet holds what he typed into it: a month with nothing on either is
- * a month nothing came in, never one a statement could still fill. 🔴 Review of 0747432 (MEDIUM): on a copy of his
- * ledger with Robinhood Cash archived, Money in's months stayed Jun–Aug at every day asked, 2026-10-23 … 2028-06-23 —
- * there "Sep 2026 to May 2028 are left out: Sep 9 is the last day Robinhood Cash has been imported through." — and
- * Dividends $12.12–$13.19 and Interest $1.43–$1.55 were projected every month from a closed account. Now, as at
- * aa0bd72c: Jul–Sep at 2026-10-23, $9.40 for Oct 23–31 (Dividends $7.95, Interest $1.45); Aug–Oct at 2026-11-23,
- * Dividends $4.74; no Money in pace from 2026-12-23. Latent on his ledger as it is: Robinhood Cash is active.
+ * (`Habit.whenNoneIsAwaited`) — where none of the accounts that would is one (its habitual earners; before any habit,
+ * those still coming in), the calendar's months stand and no note prints. An archived account is never imported again
+ * and a wallet holds what he typed into it: a month with nothing on either is a month nothing came in on it, never one
+ * its statement could still fill. 🔴 Review of 0747432 (MEDIUM): on a copy of his ledger with Robinhood Cash archived,
+ * Money in's months stayed Jun–Aug at every day asked, 2026-10-23 … 2028-06-23 — there "Sep 2026 to May 2028 are left
+ * out: Sep 9 is the last day Robinhood Cash has been imported through." — and Dividends $12.12–$13.19 and Interest
+ * $1.43–$1.55 were projected every month from a closed account. Now, as at aa0bd72c: Jul–Sep at 2026-10-23, $9.40 for
+ * Oct 23–31 (Dividends $7.95, Interest $1.45); Aug–Oct at 2026-11-23, Dividends $4.74; no Money in pace from
+ * 2026-12-23. Latent on his ledger as it is: Robinhood Cash is active.
+ *
+ * ⚠️ …but an archived earner still HOLDS the habit, so beside one an earner not yet habitual holds nothing back, as
+ * beside a live one: a successor's partly read month is averaged whole until two of the three months before the newest
+ * complete one hold its income. 🔴 Review of f0b7b87 (LOW), on a fixture at 2026-11-23 (pinned): Brokerage Cash
+ * archived, New Cash read to Oct 25 before its Oct 28 Interest — the calendar's Aug–Oct with no note, Interest "present
+ * 2/3 mo" $0.89 for Nov 23–30 where Jul–Sep read $1.33, the same beside Brokerage Cash live and read through Oct 31;
+ * New Cash alone dates them (`stillComingIn`). A month on, it does either way. ⚖️ Open, his call (2026-10-29). Asking
+ * `stillComingIn` where no habitual earner is awaited is no fix: on his ledger copy at 2026-10-29 with Robinhood Cash
+ * archived, SoFi Checking and SoFi Savings — dormant by the habit, read through Jul 31 — would date them, May–Jul for
+ * as long as SoFi goes unread, and the closed account's Dividends $40.38 and Interest $5.31 projected every month
+ * (pinned). Latent on his ledger as it is.
  *
  * ⛔ Each account judged over the months it has been read for. 🔴 Review of af84411 (MEDIUM): it was judged over the
  * calendar's months before each candidate, so an earner read short had its unread months counted as months it earned
@@ -1245,9 +1260,10 @@ function variableIncomeComponents(
   daysInMonth: number,
   { notDrawn, outside, agentsCash, incomePace }: ForecastReads,
 ): ForecastLeg {
-  // the months every account its own rows land in is read to the end of, floored (`incomePaceMonths`): a September read
-  // to its 9th is no month of $0.07 dividends, and May before a ledger opening Jun 1 no month of $0 pay — read once for
-  // the chain (`forecastReads`), so its window is the chain's today, as spending's is (`variableComponents`)
+  // the months every account its own rows come in on habitually that a statement is still coming for is read to
+  // the end of, floored (`incomePaceMonths`): a September read to its 9th is no month of $0.07 dividends, and May
+  // before a ledger opening Jun 1 no month of $0 pay — read once for the chain (`forecastReads`), so its window is the
+  // chain's today, as spending's is (`variableComponents`)
   const windows = incomePace.windows;
   if (windows.length === 0) {
     return { components: [], cashCents: 0, outsideAccountIds: new Set(), agentsCents: 0, agentsCostCents: 0 };
