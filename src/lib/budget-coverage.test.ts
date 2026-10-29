@@ -8,6 +8,7 @@ import {
   partReadTotal,
   readThroughSentence,
   spendingNotFoundFact,
+  spendIsAFloor,
   spendUnread,
   spentOnlyFromCashWallets,
   type BudgetCoverageInput,
@@ -61,6 +62,34 @@ describe("spendUnread — the one test for a row that prints no spend", () => {
     expect(spendUnread({ ...UNREAD, txnCount: 1 })).toBe(false);
     // ⚖️ no import will ever read a wallet's day — a dash would hide what was typed for good
     expect(spendUnread({ ...UNREAD, spentFromAccounts: 0, spentFromWallets: 1 })).toBe(false);
+  });
+});
+
+/*
+ * ⚖️ default built, not asked (2026-10-29): a row whose window has elapsed days past its day prints figures a statement
+ * still to come can only add to — floors — whatever its verdict, an over one included. 🔴 Measured on his ledger copy
+ * 2026-10-29: every one of his 12 monthly budgets had days of October unread (Health and Travel read through Oct 2, the
+ * other ten through Aug 12), and the 5 over budget printed their Spent and "Over by" with no line saying so. ⛔ The one
+ * test the row's verdict, its spoken sentence and the page note read.
+ */
+describe("spendIsAFloor — the one test for a row whose figures are floors", () => {
+  // Shopping on his ledger copy 2026-10-29: 8 rows found in an October its accounts are read through Aug 12 for
+  const FLOOR = { spentFromAccounts: 2, spentFromWallets: 0, uncoveredDays: 29, noDayRead: true, txnCount: 8 };
+
+  test("days unread and a figure standing on the days read: a floor", () => {
+    expect(spendIsAFloor(FLOOR)).toBe(true);
+    // a day read and nothing found: its $0.00 is a floor too
+    expect(spendIsAFloor({ ...FLOOR, noDayRead: false, txnCount: 0 })).toBe(true);
+    // a wallet beside an imported account is not cash only
+    expect(spendIsAFloor({ ...FLOOR, spentFromWallets: 1 })).toBe(true);
+  });
+
+  test("read whole, a dash, or spent only from cash: nothing is a floor", () => {
+    expect(spendIsAFloor({ ...FLOOR, uncoveredDays: 0 })).toBe(false);
+    // ⚖️ §6A 64: no day read and nothing found prints "—", and a dash floors nothing
+    expect(spendIsAFloor({ ...FLOOR, txnCount: 0 })).toBe(false);
+    // ⚖️ 2026-09-15: what was typed into a wallet is what was recorded — no statement is coming to add to it
+    expect(spendIsAFloor({ ...FLOOR, spentFromAccounts: 0, spentFromWallets: 1 })).toBe(false);
   });
 });
 

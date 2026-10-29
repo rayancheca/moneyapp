@@ -123,6 +123,8 @@ export default async function BudgetsPage({
       // ⚖️ §6A 64: …and a row that prints "—" for its spend is not called a lower bound
       noDayRead: s.noDayRead,
       txnCount: s.txnCount,
+      // ⚖️ …nor a row whose line can still rise called over by at least what it shows (2026-10-29, `lineMayRise`)
+      rolloverMayAddCents: s.rolloverMayAddCents,
     })),
   });
 

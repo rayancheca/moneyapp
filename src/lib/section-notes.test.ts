@@ -27,6 +27,7 @@ const row = (over: Partial<Parameters<typeof budgetSectionNotes>[0]["rows"][numb
   spentFromWallets: 0,
   noDayRead: false,
   txnCount: 1,
+  rolloverMayAddCents: 0,
   ...over,
   // unread unless a test says otherwise — his ledger's arrears 2026-10-08, on days no checked statement had reached
   overdueUnreadCents: over.overdueUnreadCents ?? over.overdueCents ?? 0,
@@ -362,6 +363,135 @@ describe("budgetSectionNotes", () => {
       }
     });
   });
+
+  /*
+   * ⚖️ default built, not asked (2026-10-29): an over row whose window has days unread keeps its verdict, and its rows
+   * say its figures are floors (`budgetCoverageLine`). The note keeps counting the rows whose verdict is withheld — and
+   * says the over ones are read in part too, so that count does not read as "the rest are read in full". 🔴 Measured on
+   * his ledger copy 2026-10-29: "7 of 12 budgets are grading days the ledger has not reached — 29 days each. No verdict
+   * is shown for any of them: …" beside 5 rows reading "Over budget by N%" over the same October — Health and Travel
+   * read through Oct 2 (27 days), Entertainment, Shopping and Subscriptions through Aug 12 (29).
+   */
+  describe("⚖️ over rows read in part — the count beside them does not call them read in full", () => {
+    const coverage = (rows: ReturnType<typeof row>[]) =>
+      budgetSectionNotes({ rows }).find((n) => n.id === "budgets-coverage")?.body;
+    const DASH = { uncoveredDays: 29, noDayRead: true, txnCount: 0 } as const;
+    const FLOOR = { uncoveredDays: 29, noDayRead: true, txnCount: 2 } as const;
+    const OVER = { ...FLOOR, pace: "over" } as const;
+    /** his twelve on his ledger copy 2026-10-29, in page order */
+    const HIS = [
+      row({ ...DASH, categoryPath: "Car" }),
+      row({ ...DASH, categoryPath: "Cash & ATM" }),
+      row({ ...OVER, categoryPath: "Entertainment" }),
+      row({ ...DASH, categoryPath: "Fees" }),
+      row({ ...FLOOR, categoryPath: "Food" }),
+      row({ ...OVER, categoryPath: "Health", uncoveredDays: 27, noDayRead: false }),
+      row({ ...FLOOR, categoryPath: "Housing", pace: "at-risk" }),
+      row({ ...OVER, categoryPath: "Shopping" }),
+      row({ ...OVER, categoryPath: "Subscriptions" }),
+      row({ ...FLOOR, categoryPath: "Transport", pace: "at-risk" }),
+      row({ ...OVER, categoryPath: "Travel", uncoveredDays: 27, noDayRead: false }),
+      row({ ...FLOOR, categoryPath: "Utilities" }),
+    ];
+
+    test("his twelve: the seven withheld counted and tied as before, and the five over said to be floors", () => {
+      expect(coverage(HIS)).toBe(
+        "7 of 12 budgets are grading days the ledger has not reached — 29 days each. No verdict is shown for any of " +
+          "them: 3 have not had one elapsed day imported, so no spend is shown there either, and the others' spend " +
+          "and percentages are lower bounds, not measurements. The 5 over their plans are grading such days too, so " +
+          "each is over by at least what it shows.",
+      );
+    });
+
+    test("one over row is said in the singular — the e2e fixture's Housing", () => {
+      expect(
+        coverage([
+          row({ categoryPath: "Food", uncoveredDays: 4 }),
+          row({ categoryPath: "Housing", uncoveredDays: 3, pace: "over" }),
+          row({ categoryPath: "Subscriptions", uncoveredDays: 4 }),
+          row({ categoryPath: "Utilities", uncoveredDays: 3, txnCount: 0 }),
+        ]),
+      ).toBe(
+        "3 of 4 budgets are grading days the ledger has not reached — up to 4 days on Food. Their spend and " +
+          "percentages are lower bounds, not measurements, so no verdict is shown for them. The one over its plan is " +
+          "grading such days too, so it is over by at least what it shows.",
+      );
+    });
+
+    test("an over row read whole, or cash already past the line, is not said to be grading such days", () => {
+      for (const measured of [{ uncoveredDays: 0 }, { spentFromAccounts: 0, spentFromWallets: 1 }]) {
+        const body = coverage([row({ uncoveredDays: 4 }), row({ ...OVER, ...measured })]);
+        expect(body).toBe(
+          "1 of 2 budgets are grading days the ledger has not reached — up to 4 days on Food. Their spend and " +
+            "percentages are lower bounds, not measurements, so no verdict is shown for them.",
+        );
+      }
+    });
+
+    /*
+     * ⚖️ default built, not asked (2026-10-29): with no withheld row there is no count to correct, and each over row
+     * carries its own line — the note stays what it was, absent.
+     */
+    test("over rows read in part beside no withheld row add no note of their own", () => {
+      expect(coverage([row({ ...OVER, categoryPath: "Shopping" }), row({ categoryPath: "Food" })])).toBeUndefined();
+    });
+
+    /*
+     * ⚖️ default built, not asked (2026-10-29): a rolling row whose closed period held back can still bank has a
+     * line that can still rise (`lib/rollover-held-back::lineMayRise`), so how far past it an over row is, and a
+     * withheld row's percentage, are no floors — the note says only what is true of every row it counts. 🔴 Review
+     * of 48475ec4, measured on his ledger copy 2026-10-29: Fees, $15.00 rolling with September held back at $0.00,
+     * and a $20.00 Oct 10 row on Venture X — "The 6 over their plans are grading such days too, so each is over by
+     * at least what it shows." — read $20.00 of $30.00 once Fees' accounts were read through Sep 30, nothing added.
+     */
+    describe("⚖️ a line that can still rise — a closed period still to bank", () => {
+      const RISES = { rolloverMayAddCents: 1_500 } as const;
+      const FEES = row({ ...OVER, categoryPath: "Fees", ...RISES });
+      const FOOD = row({ categoryPath: "Food", uncoveredDays: 4 });
+
+      test("his twelve with Fees over: each has spent at least what it shows, one can have more roll over", () => {
+        const withFees = HIS.map((r) => (r.categoryPath === "Fees" ? FEES : r));
+        expect(coverage(withFees)).toBe(
+          "6 of 12 budgets are grading days the ledger has not reached — 29 days each. No verdict is shown for any " +
+            "of them: 2 have not had one elapsed day imported, so no spend is shown there either, and the others' " +
+            "spend and percentages are lower bounds, not measurements. The 6 over their plans are grading such days " +
+            "too, so each has spent at least what it shows, though more can still roll over into 1 of them.",
+        );
+      });
+
+      test("one over row whose line can still rise, and every one of several", () => {
+        expect(coverage([FOOD, FEES])).toBe(
+          "1 of 2 budgets are grading days the ledger has not reached — up to 4 days on Food. Their spend and " +
+            "percentages are lower bounds, not measurements, so no verdict is shown for them. The one over its " +
+            "plan is grading such days too, so it has spent at least what it shows, though more can still roll " +
+            "over into it.",
+        );
+        expect(coverage([FOOD, FEES, { ...FEES, categoryPath: "Cash" }])).toContain(
+          ". The 2 over their plans are grading such days too, so each has spent at least what it shows, though " +
+            "more can still roll over into each of them.",
+        );
+      });
+
+      test("a withheld row whose line can still rise: its spend is a lower bound, no percentage called one", () => {
+        expect(coverage([{ ...FOOD, ...RISES }, row({ categoryPath: "Fees", uncoveredDays: 4 })])).toBe(
+          "2 of 2 budgets are grading days the ledger has not reached — 4 days each. Their spend is a lower bound, " +
+            "not a measurement, so no verdict is shown for them.",
+        );
+        const car = row({ ...DASH, categoryPath: "Car" });
+        expect(coverage([car, row({ ...FLOOR, categoryPath: "Food", ...RISES })])).toBe(
+          "2 of 2 budgets are grading days the ledger has not reached — 29 days each. No verdict is shown for any " +
+            "of them: 1 has not had one elapsed day imported, so no spend is shown there either, and the others' " +
+            "spend is a lower bound, not a measurement.",
+        );
+      });
+
+      test("a dash whose line can still rise changes nothing — it shows no spend or percentage to call one", () => {
+        // Cash & ATM's and Fees' October on his ledger copy 2026-10-29: September held back at $0.00, nothing found
+        const withDashes = HIS.map((r) => (r.noDayRead && r.txnCount === 0 ? { ...r, ...RISES } : r));
+        expect(coverage(withDashes)).toBe(coverage(HIS));
+      });
+    });
+  });
 });
 
 describe("categorySectionNotes", () => {
@@ -631,6 +761,8 @@ describe("reserved phrases", () => {
       rows: [
         row({ categoryPath: "Housing", overdueCents: 228_570 }),
         row({ categoryPath: "Food", uncoveredDays: 11 }),
+        // ⚖️ an over row read in part, whose clause sits beside its row's "Over budget by N%" (2026-10-29)
+        row({ categoryPath: "Travel", uncoveredDays: 27, pace: "over" }),
       ],
     }),
     ...categorySectionNotes({

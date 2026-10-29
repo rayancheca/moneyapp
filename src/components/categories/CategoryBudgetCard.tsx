@@ -17,7 +17,8 @@ interface CategoryBudgetCardProps {
  * ⛔ /budgets prints its "Left" in no colour beside "Awaiting statements" or "Cash only", and this card is the same row
  * and window. 🔴 It read `alert` alone, which never asks how much of the window was imported: green "$2,291.21 left"
  * over an October nobody had imported, on his ledger copy 2026-10-12. A withheld verdict is never `over` (past the
- * line on partial data is graded — `budgetVerdict`), so what is left is a figure that can only fall, never a verdict.
+ * line on partial data is graded — `budgetVerdict`), so what is left is a figure that can only fall — or, where the
+ * line can still rise (`lineMayRise`), move either way — never a verdict.
  *
  * ⛔ …and a graded one is coloured by the PACE /budgets headlines the row with (`PACE_TONE`), not by `alert`'s 80% line.
  * 🔴 A measured row on course to finish over read "Off pace · 30% used" in amber there and a green "$1,603.85 left"
@@ -32,7 +33,9 @@ function leftTone(budget: CategoryBudgetRef): string | undefined {
  *
  * While that row's verdict is withheld the card says so in the row's own words — the headline ("Awaiting statements",
  * "Cash only") and the row's coverage sentence under it — and calls nothing healthy. A measured window keeps the
- * figures and colours it always had.
+ * figures and colours it always had. ⚖️ An over row read in part keeps them too, with the row's line under the window
+ * (`budgetCoverageLine`, default built, not asked, 2026-10-29): its "over" is a floor, as /budgets says — unless its
+ * line can still rise (a closed month it rolls over from can still bank), which that line then says.
  *
  * ⛔ Not the definition /budgets puts beside that headline: every one of them ends on the bar's anatomy ("the dark mark
  * is how far through the period you are"), and this card draws no bar — a definition of a mark the reader cannot see

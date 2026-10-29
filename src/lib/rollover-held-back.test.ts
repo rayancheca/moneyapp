@@ -1,10 +1,13 @@
 import { describe, expect, test } from "vitest";
 import {
+  lineMayRise,
   rolloverHeldBackSentence,
+  rolloverMayRiseClause,
   rolloverToggleTitle,
   rolloverToggleToast,
   rolloverWaitsSentence,
   type RolloverReadOn,
+  type RolloverRiseInput,
 } from "./rollover-held-back";
 
 /** the graded window's first day — where a day outside its year would carry the year */
@@ -83,6 +86,54 @@ describe("rolloverHeldBackSentence — what a rolling budget is waiting on", () 
  * Annual Fees and Interest Charges to Fees, Gifts & Donations to the ledger's Sep 24 — and a $100 rolling Gifts &
  * Donations budget from Jul 1 held September back under a sentence about accounts Gifts had never been spent from.
  */
+/*
+ * ⚖️ default built, not asked (2026-10-29): a period held back banks once its statements land, so the line a rolling
+ * row is graded against can still rise while one of them could still bank (`services/budgets::carryInto`'s
+ * `mayAddCents`). 🔴 Review of 48475ec4, measured on a copy of his ledger 2026-10-29: Fees ($15.00, rolling, September
+ * held back with $0.00 of it found) with a $20.00 Oct 10 row on Venture X read "Over budget by 33%", and the note "…so
+ * each is over by at least what it shows" — and once Chase Checking and Robinhood Cash were read through Sep 30, $20.00
+ * of $30.00 ($15.00 rolled over), $10.00 left, with no new spending.
+ */
+describe("lineMayRise and rolloverMayRiseClause — a line that can still rise, and the words for it", () => {
+  const SEPTEMBER = { start: "2026-09-01", end: "2026-09-30" };
+  const row = (over: Partial<RolloverRiseInput> = {}): RolloverRiseInput => ({
+    rolloverMayAddCents: 1_500,
+    rolloverHeldBack: [SEPTEMBER],
+    budget: { period: "monthly" },
+    bounds: { start: "2026-10-01" },
+    ...over,
+  });
+
+  test("nothing that can still bank: the line stands where it is, and nothing is said", () => {
+    expect(lineMayRise(row({ rolloverMayAddCents: 0 }))).toBe(false);
+    expect(rolloverMayRiseClause(row({ rolloverMayAddCents: 0 }))).toBeNull();
+    // ⛔ held back and already past its plan is a period that adds nothing: Entertainment's September, $475.03 of $15.00
+    expect(rolloverMayRiseClause(row({ rolloverMayAddCents: 0, rolloverHeldBack: [SEPTEMBER] }))).toBeNull();
+    // …and a figure with no period named to wait on has nothing to name (the carry never hands one in)
+    expect(rolloverMayRiseClause(row({ rolloverHeldBack: [] }))).toBeNull();
+  });
+
+  test("his Fees' September, by its name", () => {
+    expect(lineMayRise(row())).toBe(true);
+    expect(rolloverMayRiseClause(row())).toBe("more can still roll over from September 2026 once it is fully imported");
+  });
+
+  test("two named both, more counted between the first and the last, a week by its first day", () => {
+    const august = { start: "2026-08-01", end: "2026-08-31" };
+    expect(rolloverMayRiseClause(row({ rolloverHeldBack: [august, SEPTEMBER] }))).toBe(
+      "more can still roll over from August 2026 and September 2026 once they are fully imported",
+    );
+    const held = ["07", "08", "09"].map((m) => ({ start: `2026-${m}-01`, end: `2026-${m}-28` }));
+    expect(rolloverMayRiseClause(row({ rolloverHeldBack: held }))).toBe(
+      "more can still roll over from 3 months, July 2026 to September 2026, once they are fully imported",
+    );
+    const week = { rolloverHeldBack: [{ start: "2026-09-28", end: "2026-10-04" }], bounds: { start: "2026-10-05" } };
+    expect(rolloverMayRiseClause(row({ ...week, budget: { period: "weekly" } }))).toBe(
+      "more can still roll over from the week of Sep 28 once it is fully imported",
+    );
+  });
+});
+
 /*
  * 🔴 A THIRD READER OF THE RULE, without decision 67's hold: the Roll over button hovered "Unspent budget carries into
  * the next period" and toasted "<category> now carries unspent budget forward" (review of 44d0104). On his ledger copy

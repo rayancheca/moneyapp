@@ -237,6 +237,13 @@ export interface BudgetStatus {
   rolloverCents: number;
   /** ⚖️ decision 67: the closed periods that banked nothing because a day of them is not read yet; empty when off */
   rolloverHeldBack: readonly PeriodBounds[];
+  /**
+   * The most those periods can still add to `rolloverCents` as their statements land (`RolloverCarry.mayAddCents`):
+   * the line this period is graded against can still RISE by up to this. 0 when nothing is held back, when what is held
+   * back has already spent its plan — or an older period past it takes back more than a newer one can bank — and
+   * whenever rollover is off.
+   */
+  rolloverMayAddCents: number;
   /** whose day the carry read those periods through (`RolloverCarry.readOn`) — the panel's rule; null when off */
   rolloverReadOn: RolloverReadOn | null;
   /** amountCents + rolloverCents — the line this period is actually graded against */
@@ -275,6 +282,21 @@ export interface RolloverCarry {
   /** the closed periods that banked nothing because a day of them is not read yet, oldest first */
   heldBack: readonly PeriodBounds[];
   /**
+   * The most `heldBack` can still add to `cents` as its statements land: the carry walked again over every order they
+   * can be read in (`mayStillBank`), each banked on its plan less the spend found in it SO FAR — the least it will
+   * hold, since a statement still to come can only add to what it holds — and none less a bill due in it, which may
+   * yet lapse; the most any step of those walks reaches, less `cents`, never below 0. A period already past its plan
+   * on what is found adds nothing, and a carry at its cap takes nothing more.
+   *
+   * ⚖️ default built, not asked (2026-10-29): while this is above 0 the line can still rise, so no figure past it is a
+   * floor (`lib/rollover-held-back::lineMayRise`). 🔴 Review of 48475ec4: Food, $30.00 a month rolling from Jul 1,
+   * $40.00 of August found, July held back with $0.00 of it — "over budget by at least $10.00", and on the load after
+   * July's statement $40.00 of $60.00 ($30.00 rolled over) with no Food added anywhere. 🔴 Review of 4cd38494: walked
+   * only with ALL of them banked, it missed an older one banking while a newer one past its plan waits, and it took a
+   * bill due in one as owed, which can lapse once it is read (`mayStillBank`).
+   */
+  mayAddCents: number;
+  /**
    * Whose day the newest closed period was read through — or, none closed yet, the day the period now running is asked
    * against — as `categoryReachFor` found it: what the panel's rule says it waits on (`rolloverWaitsSentence`). Null
    * for a budget that does not roll over, which waits on nothing.
@@ -300,6 +322,11 @@ export function carryReads(db: AppDatabase): CarryReads {
  *
  *     balance = clampToCap(max(0, balance + amount − spent(p) − overdue(p)))   — p read whole
  *     balance = balance                                                        — p not read whole yet
+ *
+ * What the periods held back can still add as they are read (`mayAddCents`) is the same walk taken over every order
+ * their statements can land in, each banked on its plan less the spend found in it so far (`mayStillBank`): the carry
+ * falls as their spend grows, and what is found in a period is the least it will hold — the floor every withheld row
+ * stands on. Its overdue is not: a bill due in it may yet lapse, or be paid in a later period.
  *
  * Five rules, each of which exists because the alternative asserts something the
  * ledger does not support:
@@ -356,9 +383,9 @@ export function carryReads(db: AppDatabase): CarryReads {
  * $623.58 of spend into an already-closed July, so a stored balance would have
  * been stale within 72 hours.
  *
- * Cost: one `categorySpending` + one `budgetOverdue` per closed period read, and
- * one `categoryReachFor` per distinct accounts window (`spentFromSinceFor` — every
- * period inside the last six months shares one), which grows with calendar time.
+ * Cost: one `categorySpending` per closed period walked, one `budgetOverdue` per period read whole, and one
+ * `categoryReachFor` per distinct accounts window (`spentFromSinceFor` — every period inside the last six months
+ * shares one), which grows with calendar time.
  * Deliberately exact rather than truncated to a recent window — a silently-bounded
  * lookback would report a carry that is not the sum of the periods it claims to
  * cover. `rolloverStartsOn` is the supported way to bound it.
@@ -394,6 +421,8 @@ export function carryInto(
 
   let balance = 0;
   const heldBack: PeriodBounds[] = [];
+  // every period walked, in order — what the periods held back can still bank is walked from them (`mayStillBank`)
+  const steps: CarryStep[] = [];
   let newest: CategoryReachWalk | null = null;
   while (compareDates(cursor, currentPeriodStart) < 0) {
     const p = periodBounds(cursor, budget.period);
@@ -414,19 +443,22 @@ export function carryInto(
     if (compareDates(p.end, currentPeriodStart) >= 0) break;
     cursor = addDays(p.end, 1);
     newest = reachFrom(p.start);
-    // ⚖️ decision 67: a day of it not read yet, so it banks nothing until its statements land
-    if (!readWhole(p, newest.reach.through)) {
-      heldBack.push(p);
-      continue;
-    }
     const spent = categorySpending(db, {
       categoryId: budget.categoryId,
       from: p.start,
       to: p.end,
     }).spentCents;
+    // ⚖️ decision 67: a day of it not read yet, so it banks nothing until its statements land
+    if (!readWhole(p, newest.reach.through)) {
+      heldBack.push(p);
+      // what it can still bank: its plan less what is found — never its overdue, which may lapse (`mayStillBank`)
+      steps.push({ term: budget.amountCents - spent, heldIn: spentFromSinceFor(p.start, today) });
+      continue;
+    }
     const overdue = budgetOverdue(db, budget.categoryId, p.start, p.end).totalCents;
-    balance = Math.max(0, balance + budget.amountCents - spent - overdue);
-    if (budget.rolloverCapCents !== null) balance = Math.min(balance, budget.rolloverCapCents);
+    const term = budget.amountCents - spent - overdue;
+    balance = banked(balance + term, budget.rolloverCapCents);
+    steps.push({ term, heldIn: null });
   }
   // ⛔ whose day it waited on, as it asked it — the period now running's where none has closed (review of 46b6e4b)
   const { reach, ancestor } = newest ?? reachFrom(currentPeriodStart);
@@ -436,7 +468,66 @@ export function carryInto(
     reach.whose === "cash-only"
       ? { whose: "cash-only", ancestor, cash: { spentFromSince, spentFromWallets } }
       : { whose: reach.whose, ancestor };
-  return { cents: balance, heldBack, readOn };
+  const mayAddCents = mayStillBank(steps, balance, budget.rolloverCapCents);
+  return { cents: balance, heldBack, mayAddCents, readOn };
+}
+
+/** A balance after a period's term: never below zero, never past the cap (`carryInto`'s first rule, and its cap). */
+function banked(balanceCents: number, capCents: number | null): number {
+  const floored = Math.max(0, balanceCents);
+  return capCents === null ? floored : Math.min(floored, capCents);
+}
+
+/** One closed period `carryInto` walked, for what the periods held back can still bank (`mayStillBank`). */
+interface CarryStep {
+  /** read whole: its plan less its spend and overdue, as the carry banks it; held back: its plan less what is found */
+  term: number;
+  /**
+   * held back: the accounts window its days were asked through (`spentFromSinceFor`) — the periods held back in one
+   * are read in the order that window's day reaches them; null where it was read whole
+   */
+  heldIn: string | null;
+}
+
+/**
+ * `RolloverCarry.mayAddCents`: the most the carry reaches as the periods held back are read, less `balance` — never
+ * below 0. Each is banked, once read, on its plan less the spend found in it so far: the most it can bank.
+ *
+ * ⛔ Not less its overdue. A bill due in it is judged on the days read so far, and once the period is read it may
+ * have lapsed — or be paid in a later period, whose spend then holds it. 🔴 Review of 4cd38494: Food, $500.00 rolling
+ * from Jul 1, a $450.00 Meal Kit last paid Jun 25 and cancelled — September held back at $60.00 found plus the kit
+ * overdue banked nothing on that reading, so October's $700.00 read "Over budget by 17%" and "over budget by at least
+ * $100.00"; checked through Sep 30, no kit and no Food, the series lapsed, September banked $440.00, and the row read
+ * "Awaiting statements" at $700.00 of $1,040.00.
+ *
+ * ⛔ …and at every step of the order they are read in, not only once all are. The periods held back in one accounts
+ * window — every period inside the six months `spentFromSinceFor` asks — are read as that window's day moves on, the
+ * oldest first, and a newer one still held back passes on what an older one banked until its own statement lands.
+ * 🔴 Review of 4cd38494: Food, $30.00 rolling from Jul 1 — July $0.00 found and August $60.00, both held back, walked
+ * whole to $0.00, so September's $40.00 read "over budget by at least $10.00" — and July's statement alone read
+ * $40.00 of $60.00 ($30.00 rolled over). In that order only: what an older one past its plan takes back is gone before
+ * a newer one can bank. Measured on his ledger copy 2026-10-29, at 2026-12-10 with nothing more imported: Travel —
+ * $70.00 banked from September, October held back at $288.80, November at $0.00 — banked each held back on its own,
+ * whichever left more, would have put $70.00 still to roll over where none can.
+ *
+ * ⚠️ Older than those months, a period asks a window of its own, and can be read before the newer ones, after them, or
+ * never: it is banked or passed, whichever leaves more. ⚠️ One held back for a day before the ledger opens is read as
+ * older history reaches it, newest first — yet it comes before every period read whole, so passed on it leaves the
+ * carry at $0.00, the least any order can: counted with the rest, oldest first, it can only raise this, never lower it.
+ */
+function mayStillBank(steps: readonly CarryStep[], balance: number, capCents: number | null): number {
+  // the window the newest period held back was asked through: the periods held back in it are read oldest first
+  const inOrder = steps.findLast((s) => s.heldIn !== null)?.heldIn ?? null;
+  // reached[j]: the carry with the first j of those read and the rest passed on — any other held back banked or
+  // passed, whichever leaves more. Every step is monotone in the one before, so that is the most any order reaches.
+  let reached: readonly number[] = [0];
+  for (const s of steps) {
+    const bank = (c: number): number => banked(c + s.term, capCents);
+    if (s.heldIn === null) reached = reached.map(bank);
+    else if (s.heldIn !== inOrder) reached = reached.map((c) => Math.max(c, bank(c)));
+    else reached = [...reached, bank(reached[reached.length - 1]!)];
+  }
+  return Math.max(0, Math.max(...reached) - balance);
 }
 
 /**
@@ -445,7 +536,7 @@ export function carryInto(
  * have written into every other's and every later load's (review of 73a743d). Built per budget, and read-only besides.
  */
 function nothingCarried(): RolloverCarry {
-  return { cents: 0, heldBack: [], readOn: null };
+  return { cents: 0, heldBack: [], mayAddCents: 0, readOn: null };
 }
 
 /**
@@ -527,6 +618,7 @@ export function budgetStatuses(
         txnCount,
         rolloverCents,
         rolloverHeldBack: carry.heldBack,
+        rolloverMayAddCents: carry.mayAddCents,
         rolloverReadOn: carry.readOn,
         availableCents,
         // Every "how am I doing" figure grades against AVAILABLE, not plan: with
@@ -1772,7 +1864,8 @@ export interface BudgetPaceStatus extends BudgetStatus, CategoryCoverage {
    * and says why instead (`lib/budget-coverage::spentOnlyFromCashWallets`).
    * >0 means the row's spent/pace/% figures are lower bounds, not measurements,
    * and the UI must not report a verdict — "On track" over an unimported month
-   * is the one failure mode a budgeting tool cannot afford.
+   * is the one failure mode a budgeting tool cannot afford. ⚠️ The % only while
+   * the line it divides by cannot rise (`rolloverMayAddCents`, 2026-10-29).
    */
   uncoveredDays: number;
   /**

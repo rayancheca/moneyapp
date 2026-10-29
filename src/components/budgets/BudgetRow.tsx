@@ -13,8 +13,7 @@ import { InfoTip } from "@/components/ui/InfoTip";
 import { Popover, usePopover } from "@/components/ui/Popover";
 import { arrearsAlarms, arrearsTail, HAS_NOT_POSTED, NOT_POSTED } from "@/lib/arrears-reading";
 import { formatDayShort } from "@/lib/format-date";
-import { budgetCoverageSentence } from "@/lib/budget-coverage";
-import { budgetVerdict, type BudgetVerdict } from "@/lib/budget-verdict";
+import { budgetCoverageLine, budgetVerdict, type BudgetVerdict } from "@/lib/budget-verdict";
 import { formatCents } from "@/lib/money";
 import { ONE_CHARGE_WORD } from "@/lib/one-charge";
 import type { BudgetGuide } from "@/services/budget-guide";
@@ -44,9 +43,21 @@ function printedProjectionCents(status: BudgetPaceStatus, verdict: BudgetVerdict
   return verdict.showsProjection && saysMore ? status.projectedCents : null;
 }
 
-function paceSentence(status: BudgetPaceStatus, projectedCents: number | null): string {
+/** ⚖️ "at least $343.82" where the figure is a floor (`BudgetVerdict.floors`) — the dashboard tile's mark for one */
+function spokenFigure(cents: number, floors: boolean): string {
+  return `${floors ? "at least " : ""}${formatCents(cents)}`;
+}
+
+function paceSentence(status: BudgetPaceStatus, projectedCents: number | null, verdict: BudgetVerdict): string {
   const projected = projectedCents === null ? "" : ` — projected ${formatCents(projectedCents)}`;
-  if (status.pace === "over") return `over budget by ${formatCents(-status.remainingCents)}`;
+  /*
+   * ⚖️ an over row read in part is over by at least what it shows (2026-10-29) — while its line cannot rise: where a
+   * closed period it rolls over from can still bank (`lineMayRise`) the line can come up to meet the spend, and the
+   * line beside this says so instead. 🔴 Review of 48475ec4: "over budget by at least $10.00" over a July still to bank
+   * $30.00. A graded row is never a floor.
+   */
+  const overIsAFloor = verdict.floors && !verdict.lineMayRise;
+  if (status.pace === "over") return `over budget by ${spokenFigure(-status.remainingCents, overIsAFloor)}`;
   if (status.pace === "at-risk") return projectedCents === null ? "off pace" : `off pace${projected}, over budget`;
   return `on track${projected}`;
 }
@@ -137,11 +148,21 @@ export function BudgetRow({ status, guide, spentProvenance, planProvenance }: Bu
   // assistive tech gets a strictly worse number than the sighted reader
   // ⚖️ …and, where the row prints "—" (§6A 64), no "$0.00" and no "0% of budget" for it to hear instead
   const available = formatCents(status.availableCents);
+  /*
+   * ⚖️ default built, not asked (2026-10-29): a spend that is a floor is spoken as one — "at least $343.82 of $280.00"
+   * — over or withheld alike, since the floor is the window's fact (`BudgetVerdict.floors`). 🔴 On his ledger copy
+   * 2026-10-29 Shopping's bar said "$343.82 of $280.00 (123% of budget) … over budget by $63.82" over an October read
+   * through Aug 12, as if measured.
+   */
   const spentClause = unread
     ? `no day of this period imported yet, so neither spent nor left is shown against ${available}${rolledOver}`
-    : `${formatCents(status.spentCents)} of ${available}${rolledOver} (${pctDisplay}% of budget)`;
+    : `${spokenFigure(status.spentCents, verdict.floors)} of ${available}${rolledOver} (${pctDisplay}% of budget)`;
   const projectedCents = printedProjectionCents(status, verdict);
-  const reading = undermeasured ? budgetCoverageSentence(status) : paceSentence(status, projectedCents);
+  // the line the row prints under its headline (`budgetCoverageLine`) — beside a withheld verdict, and an over one read
+  // in part (⚖️ 2026-10-29), so the spoken row says which days the verdict stands on wherever the drawn row does
+  const coverageLine = budgetCoverageLine(status);
+  const spokenVerdict = undermeasured ? null : paceSentence(status, projectedCents, verdict);
+  const reading = [spokenVerdict, coverageLine].filter((part): part is string => part !== null).join(" — ");
   const valueText = `${status.categoryPath}: ${spentClause}. ${elapsedSentence}. ${reading}.${
     status.expectedTailCents > 0
       ? ` ${formatCents(status.expectedTailCents)} in recurring still expected this period.`
@@ -228,9 +249,10 @@ export function BudgetRow({ status, guide, spentProvenance, planProvenance }: Bu
         )}
       </div>
 
-      {undermeasured && (
-        <p className="mt-2 text-xs text-ink-faint">{budgetCoverageSentence(status)}</p>
-      )}
+      {/* ⚖️ …and under an over verdict whose figures are floors (default built, not asked, 2026-10-29): the verdict
+          stands, and the line says which days its Spent and "Over by" are floors over (`budgetCoverageLine`) — and,
+          where the line itself can still rise, what can still roll over into it */}
+      {coverageLine !== null && <p className="mt-2 text-xs text-ink-faint">{coverageLine}</p>}
 
       {/* Due already and still not posted. Distinct from the forward tail on
           purpose: the tail is money the month has not reached yet, this is money

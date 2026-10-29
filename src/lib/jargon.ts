@@ -215,8 +215,18 @@ export const BUDGET_JARGON = {
   paceAtRisk: `Spending is still inside the line today, but at this rate it lands on or past the line before the period ends — the reading is about where this is heading, not where it stands. ${BAR_ANATOMY}`,
   paceOver:
     "Spending has already passed the line, and no later import can undo that — this reading is measured rather than a forecast. The bar is full and no longer to scale, and the period mark is left off because there is nothing left for it to divide.",
+  /*
+   * ⚖️ default built, not asked (2026-10-29): …and where the line can still RISE (`rollover-held-back::lineMayRise`)
+   * — a closed period this budget carries from is held back and can still bank — that sentence is false, so this one
+   * says what is true of the line as it stands. 🔴 Review of 48475ec4: Food, $30.00 rolling from Jul 1, read past its
+   * line by $10.00 under "no later import can undo that", and an import later read $40.00 of $60.00, no Food added.
+   */
+  paceOverLineMayRise:
+    "Spending has already passed the line as it stands, and this reading is measured rather than a forecast — but the line itself can still rise: a closed period is not fully imported yet, and what it leaves unspent carries into this one once its statements land. The bar is full and no longer to scale, and the period mark is left off because there is nothing left for it to divide.",
   // ⚖️ decision 69 (2026-10-13): no projection beside it and no pace colour, so no pace reading off the mark either
   paceWithheld: `Days in this window have no imported spending yet, so the amount and the percentage can only rise — they are floors rather than measurements. No reading of where it is heading is offered over them, because calling an unimported month healthy is the one error this page must not make. ${BAR_PARTS}.`,
+  // ⚖️ …and where the line can still rise (2026-10-29), the percentage taken against it is no floor, so it says so
+  paceWithheldLineMayRise: `Days in this window have no imported spending yet, so the amount can only rise — it is a floor rather than a measurement — but the percentage can move either way: the line it is taken against can still rise too, because a closed period is not fully imported yet and what it leaves unspent carries into this one once its statements land. No reading of where it is heading is offered over them, because calling an unimported month healthy is the one error this page must not make. ${BAR_PARTS}.`,
   /*
    * ⚖️ §6A 64 (2026-10-12): not one elapsed day read, so the row prints a dash for what has gone and what is left —
    * no amount, no percentage and no fill for a body to describe. It names the one mark the bar still draws.

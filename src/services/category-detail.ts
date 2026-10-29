@@ -3,8 +3,7 @@ import { seriesDrawsAsRecurring, seriesRowLabel, type SeriesEvidence } from "@/l
 import type { AppDatabase } from "@/db/client";
 import { categories, type CategoryKind } from "@/db/schema/categories";
 import type { ArrearsReading } from "@/lib/arrears-reading";
-import { budgetCoverageSentence } from "@/lib/budget-coverage";
-import { budgetVerdict, type BudgetVerdict } from "@/lib/budget-verdict";
+import { budgetCoverageLine, budgetVerdict, type BudgetVerdict } from "@/lib/budget-verdict";
 import { periodBounds } from "@/lib/dates";
 import { unreachedKind, type UnreachedKind } from "@/lib/empty-period";
 import { withOwnRow } from "@/lib/subcategory-rows";
@@ -436,7 +435,13 @@ export interface CategoryBudgetRef {
    * as the headline above it does (§6A 64, 2026-10-12) — `spentCents` and `remainingCents` stand unprinted.
    */
   verdict: BudgetVerdict;
-  /** the row's own coverage sentence (`budgetCoverageSentence`) while its verdict is withheld; null otherwise */
+  /**
+   * The line its /budgets row prints under its headline (`budgetCoverageLine`): while the verdict is withheld, and ⚖️
+   * under an over verdict whose figures are floors (default built, not asked, 2026-10-29); null otherwise. 🔴 Printed
+   * only while withheld, `/categories/<Shopping>` read "$343.82 of $280.00 · $63.82 over" with no line on his ledger
+   * copy 2026-10-29, over an October its accounts are read through Aug 12 for. ⚖️ …and what can still roll over where
+   * the line itself can still rise (`lineMayRise`), as the row says it (review of 48475ec4).
+   */
   coverageSentence: string | null;
   href: string;
 }
@@ -467,7 +472,7 @@ export function categoryBudgetRef(
     alert: status.alert,
     pace: status.pace,
     verdict,
-    coverageSentence: verdict.withheld ? budgetCoverageSentence(status) : null,
+    coverageSentence: budgetCoverageLine(status),
     href: "/budgets",
   };
 }

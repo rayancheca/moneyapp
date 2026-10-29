@@ -16,7 +16,7 @@ import { CategoryBudgetCard } from "./CategoryBudgetCard";
  * shape now: the row's withheld verdict, the row's coverage sentence, and a "left" that is not called healthy.
  */
 
-const ROW = { spentFromAccounts: 1, spentFromWallets: 0, noDayRead: false, txnCount: 1 };
+const ROW = { spentFromAccounts: 1, spentFromWallets: 0, noDayRead: false, txnCount: 1, rolloverMayAddCents: 0 };
 
 /** ⚖️ §6A 64: his October, 2026-10-12 — not one elapsed day of it read (Aug 12), and not one row found in it */
 const UNREAD = { noDayRead: true, txnCount: 0 } as const;
@@ -108,6 +108,7 @@ describe("CategoryBudgetCard — /budgets' reading of the same row and window", 
         pace: "under",
         pct: 0,
         uncoveredDays: 12,
+        rolloverMayAddCents: 0,
       }),
       coverageSentence: "spent only from a cash wallet since Apr 1 — no statement will ever cover it",
     };
@@ -162,7 +163,12 @@ describe("CategoryBudgetCard — /budgets' reading of the same row and window", 
     expect(classOf(render(onTrack), "$343.68 left")).toContain("text-positive");
   });
 
-  test("past the line on partial data is graded, as /budgets grades it", () => {
+  /*
+   * ⚖️ default built, not asked (2026-10-29): …and its figures are floors, so it carries /budgets' line under the
+   * window, as a withheld row does. 🔴 On his ledger copy 2026-10-29 `/categories/<Shopping>` read "$343.82 of $280.00 ·
+   * $63.82 over" with no line, over an October its accounts are read through Aug 12 for.
+   */
+  test("past the line on partial data is graded, as /budgets grades it — under the line /budgets prints", () => {
     const over: CategoryBudgetRef = {
       ...HOUSING,
       spentCents: 247_000,
@@ -170,10 +176,13 @@ describe("CategoryBudgetCard — /budgets' reading of the same row and window", 
       alert: "over",
       pace: "over",
       verdict: budgetVerdict({ ...ROW, pace: "over", pct: 1.08, uncoveredDays: 12 }),
-      coverageSentence: null,
+      coverageSentence: "spending imported through Aug 12 · 12 days of this period unaccounted",
     };
     const html = render(over);
-    expect(text(html)).toBe("Budget monthly budget · grading Oct 1 – Oct 31 $2,470.00 of $2,291.21 $178.79 over Budgets →");
+    expect(text(html)).toBe(
+      "Budget monthly budget · grading Oct 1 – Oct 31 spending imported through Aug 12 · 12 days of this period " +
+        "unaccounted $2,470.00 of $2,291.21 $178.79 over Budgets →",
+    );
     expect(classOf(html, "$178.79 over")).toContain("text-negative");
   });
 });
