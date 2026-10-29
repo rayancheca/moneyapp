@@ -432,8 +432,11 @@ export function carryInto(
   const { reach, ancestor } = newest ?? reachFrom(currentPeriodStart);
   // …and of a cash-only day, the facts its row's Grading line is worded from, so the panel says it in those words
   const { spentFromSince, spentFromWallets } = reach.coverage;
-  const cash = reach.whose === "cash-only" ? { cash: { spentFromSince, spentFromWallets } } : {};
-  return { cents: balance, heldBack, readOn: { whose: reach.whose, ancestor, ...cash } };
+  const readOn: RolloverReadOn =
+    reach.whose === "cash-only"
+      ? { whose: "cash-only", ancestor, cash: { spentFromSince, spentFromWallets } }
+      : { whose: reach.whose, ancestor };
+  return { cents: balance, heldBack, readOn };
 }
 
 /**

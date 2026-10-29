@@ -4,6 +4,7 @@ import {
   rolloverToggleTitle,
   rolloverToggleToast,
   rolloverWaitsSentence,
+  type RolloverReadOn,
 } from "./rollover-held-back";
 
 /** the graded window's first day — where a day outside its year would carry the year */
@@ -68,8 +69,8 @@ describe("rolloverHeldBackSentence — what a rolling budget is waiting on", () 
    */
   test("on its own accounts, it says so, and says why — no further than the rule reaches", () => {
     expect(rolloverWaitsSentence({ whose: "category", ancestor: null }, REF)).toBe(
-      "A period adds nothing until the accounts this category has lately been spent from are imported through its " +
-        "last day, so a missing statement on one of them cannot bank itself as savings.",
+      "A period adds nothing until the accounts this category has lately been spent from are imported through that " +
+        "period's last day, so a missing statement on one of them cannot bank itself as savings.",
     );
   });
 });
@@ -89,10 +90,8 @@ describe("rolloverHeldBackSentence — what a rolling budget is waiting on", () 
  * $0.00 — September is not fully imported — under that hover.
  */
 describe("the Roll over control's words — the setting, with the hold", () => {
-  test("on, it says a period carries once it is fully imported; off, that the leftover is forgotten", () => {
-    expect(rolloverToggleTitle(true)).toBe(
-      "Unspent budget carries into the next period once that period is fully imported",
-    );
+  test("on, it says what a fully imported period leaves carries over; off, that the leftover is forgotten", () => {
+    expect(rolloverToggleTitle(true)).toBe("What a fully imported period leaves unspent carries into the next period");
     expect(rolloverToggleTitle(false)).toBe("Unspent budget is forgotten at the end of each period");
   });
 
@@ -101,6 +100,19 @@ describe("the Roll over control's words — the setting, with the hold", () => {
       "Transport now carries forward what a fully imported period leaves unspent",
     );
     expect(rolloverToggleToast("Transport", false)).toBe("Transport resets each period");
+  });
+
+  /*
+   * 🔴 "…carries into the next period once that period is fully imported" (0c5c893): the nearest period to "that" is
+   * the next one, still running — read so, a carry waits for the month now open to be imported, where decision 67
+   * holds the CLOSED one. On his ledger copy 2026-10-29 it hovered over all 9 rolling rows, 7 of them holding September
+   * back (batch 6 review, #21). The toast never had it; the hover says it in the toast's phrase.
+   */
+  test("the hover and the toast name the period that leaves it as the one fully imported — in one phrase", () => {
+    const phrase = "what a fully imported period leaves unspent";
+    expect(rolloverToggleTitle(true).toLowerCase()).toContain(phrase);
+    expect(rolloverToggleToast("Transport", true)).toContain(phrase);
+    expect(rolloverToggleTitle(true)).not.toContain("that period");
   });
 });
 
@@ -123,6 +135,25 @@ describe("rolloverWaitsSentence — whose day the carry waits on, as it asked it
     );
     // `ledgerReaches` is the newest day ANY account reaches: a statement missing on another account does not hold it
     expect(sentence).not.toContain("missing statement");
+  });
+
+  /*
+   * 🔴 ONE RULE, TWO PHRASINGS (batch 6 review, #20): 0c5c893 moved an ancestor's and the ledger's day to "through that
+   * period's last day" and left the category's own on "…the accounts this category has lately been spent from are
+   * imported through its last day", where "its" reads as this category's as readily as the period's. That is the
+   * branch every one of his 9 rolling rows shows (his ledger copy 2026-10-29: each reads its own accounts).
+   */
+  test("whoever's day it is read on, it waits for that period's last day — one phrasing", () => {
+    const days: RolloverReadOn[] = [
+      { whose: "category", ancestor: null },
+      { whose: "category", ancestor: "Utilities" },
+      { whose: "ledger", ancestor: null },
+    ];
+    for (const readOn of days) {
+      const sentence = rolloverWaitsSentence(readOn, REF);
+      expect(sentence, JSON.stringify(readOn)).toContain(" imported through that period's last day");
+      expect(sentence, JSON.stringify(readOn)).not.toContain("its last day");
+    }
   });
 
   /*
@@ -149,5 +180,22 @@ describe("rolloverWaitsSentence — whose day the carry waits on, as it asked it
     expect(rolloverWaitsSentence({ whose: "cash-only", ancestor: null, cash: two }, REF)).toContain(
       "has been spent only from cash wallets since Nov 1, 2025, so",
     );
+  });
+
+  /*
+   * 🔴 IT COULD MAKE UP A WALLET AND A DAY (batch 6 review, #23): `cash` was optional, and a cash-only day without it
+   * was worded "spent only from a cash wallet since <the graded window's first day>" — one wallet, and a day no read
+   * produced (`readOn.cash ?? { spentFromSince: reference, spentFromWallets: 1 }`). Unreachable — `carryInto` always
+   * set it — and now unwritable: a cash-only day carries its row's facts, or does not compile.
+   */
+  test("⛔ a cash-only day carries the facts it is worded from — none is made up for it", () => {
+    // @ts-expect-error — a cash-only day with no wallet count and no first day of its own
+    const bare: RolloverReadOn = { whose: "cash-only", ancestor: null };
+    expect(bare).not.toHaveProperty("cash");
+    // …and one that carries them is worded from them, never from the graded window's first day
+    const cash = { spentFromSince: "2026-04-01", spentFromWallets: 2 };
+    const sentence = rolloverWaitsSentence({ whose: "cash-only", ancestor: null, cash }, REF);
+    expect(sentence).toContain("spent only from cash wallets since Apr 1,");
+    expect(sentence).not.toContain("since Oct 1");
   });
 });
