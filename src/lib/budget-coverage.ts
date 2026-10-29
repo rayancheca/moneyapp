@@ -207,7 +207,12 @@ export function spendUnread(
  *
  * ⚖️ default built, not asked (2026-10-29): whatever the row's verdict — an OVER row included. Past the line on partial
  * data is a fact more data cannot undo, and the verdict stands (`budgetVerdict`); how far past it is a floor like any
- * other. 🔴 Measured on his ledger copy 2026-10-29: all 12 of his monthly budgets had days of October unread — Health
+ * other — while the line stays where it is. ⚠️ On a rolling budget whose closed period held back can still bank, the
+ * line itself can rise (`lib/rollover-held-back::lineMayRise`), and only the spend is a floor: 🔴 review of 48475ec4,
+ * Food $30.00 rolling from Jul 1 spoke "over budget by at least $10.00" in August, and read $40.00 of $60.00 on the
+ * load after July's statement, no Food added.
+ *
+ * 🔴 Measured on his ledger copy 2026-10-29: all 12 of his monthly budgets had days of October unread — Health
  * and Travel read through Oct 2 (27 days), the other ten through Aug 12 (29) — and the 5 over budget (Entertainment
  * $38.18 of $15.00, Health $375.59 of $135.00, Shopping $343.82 of $280.00, Subscriptions $207.58 of $15.00, Travel
  * $288.80 of $140.00) printed their Spent and "Over by" with no line, as measurements, beside withheld rows whose same

@@ -439,7 +439,8 @@ export interface CategoryBudgetRef {
    * The line its /budgets row prints under its headline (`budgetCoverageLine`): while the verdict is withheld, and ⚖️
    * under an over verdict whose figures are floors (default built, not asked, 2026-10-29); null otherwise. 🔴 Printed
    * only while withheld, `/categories/<Shopping>` read "$343.82 of $280.00 · $63.82 over" with no line on his ledger
-   * copy 2026-10-29, over an October its accounts are read through Aug 12 for.
+   * copy 2026-10-29, over an October its accounts are read through Aug 12 for. ⚖️ …and what can still roll over where
+   * the line itself can still rise (`lineMayRise`), as the row says it (review of 48475ec4).
    */
   coverageSentence: string | null;
   href: string;

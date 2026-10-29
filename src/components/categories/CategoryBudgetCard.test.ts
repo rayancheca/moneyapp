@@ -16,7 +16,7 @@ import { CategoryBudgetCard } from "./CategoryBudgetCard";
  * shape now: the row's withheld verdict, the row's coverage sentence, and a "left" that is not called healthy.
  */
 
-const ROW = { spentFromAccounts: 1, spentFromWallets: 0, noDayRead: false, txnCount: 1 };
+const ROW = { spentFromAccounts: 1, spentFromWallets: 0, noDayRead: false, txnCount: 1, rolloverMayAddCents: 0 };
 
 /** ⚖️ §6A 64: his October, 2026-10-12 — not one elapsed day of it read (Aug 12), and not one row found in it */
 const UNREAD = { noDayRead: true, txnCount: 0 } as const;
@@ -108,6 +108,7 @@ describe("CategoryBudgetCard — /budgets' reading of the same row and window", 
         pace: "under",
         pct: 0,
         uncoveredDays: 12,
+        rolloverMayAddCents: 0,
       }),
       coverageSentence: "spent only from a cash wallet since Apr 1 — no statement will ever cover it",
     };

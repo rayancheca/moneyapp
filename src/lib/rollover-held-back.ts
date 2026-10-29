@@ -161,6 +161,25 @@ function periodName(p: PeriodBounds, period: BudgetPeriodKind, reference: string
 }
 
 /**
+ * "September 2026", "July 2026 and August 2026", "3 months, July 2026 to September 2026," — the periods held back
+ * (never none), named both or counted between the first and the last, days and weeks by their days ("4 days, Oct 10 –
+ * Oct 13,"). ⛔ One naming for the panel's sentence (`rolloverHeldBackSentence`) and the row's clause
+ * (`rolloverMayRiseClause`), so the two cannot name one wait two ways.
+ */
+function heldBackNamed(heldBack: readonly PeriodBounds[], period: BudgetPeriodKind, reference: string): string {
+  const first = heldBack[0]!;
+  const last = heldBack[heldBack.length - 1]!;
+  const named = (p: PeriodBounds): string => periodName(p, period, reference);
+  const span =
+    period === "monthly" || period === "annual"
+      ? `${named(first)} to ${named(last)}`
+      : `${formatDayShortIn(first.start, reference)} – ${formatDayShortIn(last.end, reference)}`;
+  if (heldBack.length === 1) return named(first);
+  if (heldBack.length === 2) return `${named(first)} and ${named(last)}`;
+  return `${heldBack.length} ${PERIOD_NOUN[period]}, ${span},`;
+}
+
+/**
  * "September 2026 is not fully imported, so nothing rolls over from it yet." — null when nothing is held back. Several
  * are named both, or counted between the first and the last ("3 months, July 2026 to September 2026, …"; days and
  * weeks by their days, "4 days, Oct 10 – Oct 13, …"). `reference` is the graded window's first day.
@@ -171,21 +190,53 @@ export function rolloverHeldBackSentence(
   reference: string,
 ): string | null {
   if (heldBack.length === 0) return null;
-  const first = heldBack[0]!;
-  const last = heldBack[heldBack.length - 1]!;
-  const one = heldBack.length === 1;
-  const named = (p: PeriodBounds): string => periodName(p, period, reference);
-  const span =
-    period === "monthly" || period === "annual"
-      ? `${named(first)} to ${named(last)}`
-      : `${formatDayShortIn(first.start, reference)} – ${formatDayShortIn(last.end, reference)}`;
-  const subject = one
-    ? named(first)
-    : heldBack.length === 2
-      ? `${named(first)} and ${named(last)}`
-      : `${heldBack.length} ${PERIOD_NOUN[period]}, ${span},`;
-  const sentence = one
-    ? `${subject} is not fully imported, so nothing rolls over from it yet.`
-    : `${subject} are not fully imported, so nothing rolls over from them yet.`;
+  const subject = heldBackNamed(heldBack, period, reference);
+  const sentence =
+    heldBack.length === 1
+      ? `${subject} is not fully imported, so nothing rolls over from it yet.`
+      : `${subject} are not fully imported, so nothing rolls over from them yet.`;
   return sentence.charAt(0).toUpperCase() + sentence.slice(1);
+}
+
+/** What a rolling row's line can still do: the carry's facts (`services/budgets::BudgetStatus`). */
+export interface RolloverRiseInput {
+  /** the most the periods held back can still add to the carry once read (`BudgetStatus.rolloverMayAddCents`) */
+  rolloverMayAddCents: number;
+  /** those periods, oldest first (`BudgetStatus.rolloverHeldBack`) */
+  rolloverHeldBack: readonly PeriodBounds[];
+  budget: { period: BudgetPeriodKind };
+  /** the graded window: a day outside its year is printed with its year */
+  bounds: { start: string };
+}
+
+/**
+ * The line this row is graded against — its plan and what has rolled over — can still RISE: a closed period held back
+ * (decision 67) can still bank once its statements land, on what is found in it so far (`services/budgets::carryInto`'s
+ * `mayAddCents`).
+ *
+ * ⚖️ default built, not asked (2026-10-29): wherever it can, nothing measured against the line is a floor — how far
+ * past it an over row is, a withheld row's percentage — and no reading says a later import cannot undo it; the over
+ * verdict itself stands (his rule: never withheld). 🔴 Review of 48475ec4: Food, $30.00 a month rolling from Jul 1,
+ * spoke "over budget by at least $10.00" in August while July, held back with $0.00 of it found, could still bank
+ * $30.00 — and on the load after July's statement read $40.00 of $60.00 ($30.00 rolled over), no Food added anywhere.
+ *
+ * ⛔ One test for the row's verdict and definition (`budgetVerdict`), its line and spoken sentence
+ * (`budgetCoverageLine`, `BudgetRow`), the category page's card and the page note (`budgetSectionNotes`).
+ */
+export function lineMayRise(row: Pick<RolloverRiseInput, "rolloverMayAddCents">): boolean {
+  return row.rolloverMayAddCents > 0;
+}
+
+/**
+ * "more can still roll over from September 2026 once it is fully imported" — what a row whose line can still rise
+ * (`lineMayRise`) says beside the readings that lean on the line standing still (`budgetCoverageLine`); null where it
+ * cannot, or no period is named to wait on. In the toggle's words — what is left unspent carries over once a period is
+ * fully imported (`rolloverToggleTitle`) — and the panel's naming of what it holds (`rolloverHeldBackSentence`).
+ * ⚠️ It names every period held back, as the panel does, though one already past its plan adds nothing.
+ */
+export function rolloverMayRiseClause(row: RolloverRiseInput): string | null {
+  const held = row.rolloverHeldBack;
+  if (!lineMayRise(row) || held.length === 0) return null;
+  const named = heldBackNamed(held, row.budget.period, row.bounds.start);
+  return `more can still roll over from ${named} once ${held.length === 1 ? "it is" : "they are"} fully imported`;
 }

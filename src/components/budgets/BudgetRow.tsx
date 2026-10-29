@@ -48,10 +48,16 @@ function spokenFigure(cents: number, floors: boolean): string {
   return `${floors ? "at least " : ""}${formatCents(cents)}`;
 }
 
-function paceSentence(status: BudgetPaceStatus, projectedCents: number | null, floors: boolean): string {
+function paceSentence(status: BudgetPaceStatus, projectedCents: number | null, verdict: BudgetVerdict): string {
   const projected = projectedCents === null ? "" : ` — projected ${formatCents(projectedCents)}`;
-  // ⚖️ an over row read in part is over by at least what it shows (2026-10-29); a graded row is never a floor
-  if (status.pace === "over") return `over budget by ${spokenFigure(-status.remainingCents, floors)}`;
+  /*
+   * ⚖️ an over row read in part is over by at least what it shows (2026-10-29) — while its line cannot rise: where a
+   * closed period it rolls over from can still bank (`lineMayRise`) the line can come up to meet the spend, and the
+   * line beside this says so instead. 🔴 Review of 48475ec4: "over budget by at least $10.00" over a July still to bank
+   * $30.00. A graded row is never a floor.
+   */
+  const overIsAFloor = verdict.floors && !verdict.lineMayRise;
+  if (status.pace === "over") return `over budget by ${spokenFigure(-status.remainingCents, overIsAFloor)}`;
   if (status.pace === "at-risk") return projectedCents === null ? "off pace" : `off pace${projected}, over budget`;
   return `on track${projected}`;
 }
@@ -155,7 +161,7 @@ export function BudgetRow({ status, guide, spentProvenance, planProvenance }: Bu
   // the line the row prints under its headline (`budgetCoverageLine`) — beside a withheld verdict, and an over one read
   // in part (⚖️ 2026-10-29), so the spoken row says which days the verdict stands on wherever the drawn row does
   const coverageLine = budgetCoverageLine(status);
-  const spokenVerdict = undermeasured ? null : paceSentence(status, projectedCents, verdict.floors);
+  const spokenVerdict = undermeasured ? null : paceSentence(status, projectedCents, verdict);
   const reading = [spokenVerdict, coverageLine].filter((part): part is string => part !== null).join(" — ");
   const valueText = `${status.categoryPath}: ${spentClause}. ${elapsedSentence}. ${reading}.${
     status.expectedTailCents > 0
@@ -244,7 +250,8 @@ export function BudgetRow({ status, guide, spentProvenance, planProvenance }: Bu
       </div>
 
       {/* ⚖️ …and under an over verdict whose figures are floors (default built, not asked, 2026-10-29): the verdict
-          stands, and the line says which days its Spent and "Over by" are floors over (`budgetCoverageLine`) */}
+          stands, and the line says which days its Spent and "Over by" are floors over (`budgetCoverageLine`) — and,
+          where the line itself can still rise, what can still roll over into it */}
       {coverageLine !== null && <p className="mt-2 text-xs text-ink-faint">{coverageLine}</p>}
 
       {/* Due already and still not posted. Distinct from the forward tail on

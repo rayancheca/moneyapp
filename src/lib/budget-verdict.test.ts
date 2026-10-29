@@ -1,5 +1,4 @@
 import { describe, expect, test } from "vitest";
-import type { BudgetCoverageInput } from "./budget-coverage";
 import { budgetCoverageLine, budgetVerdict, type BudgetVerdictInput } from "./budget-verdict";
 import { BUDGET_JARGON } from "./jargon";
 
@@ -12,6 +11,7 @@ const verdict = (over: Partial<BudgetVerdictInput> = {}) =>
     spentFromWallets: 0,
     noDayRead: false,
     txnCount: 1,
+    rolloverMayAddCents: 0,
     ...over,
   });
 
@@ -317,6 +317,60 @@ describe("budgetVerdict", () => {
       expect(verdict({ pace: "at-risk" }).floors).toBe(false);
     });
   });
+
+  /*
+   * ⚖️ default built, not asked (2026-10-29): a rolling budget's closed period held back (decision 67) banks once its
+   * statements land, so while one of them could still bank the LINE can rise — and a reading that leans on the line
+   * standing still says what it leans on instead. The over verdict stands (his rule: never withheld); its spend is
+   * still a floor; but how far past the line it is, and the percentage of a withheld row read in part, are not.
+   * 🔴 Review of 48475ec4: Food, $30.00 a month rolling from Jul 1, $40.00 of August found and July held back with
+   * $0.00 of it — "Over budget by 33%" under "no later import can undo that", and an import later "Awaiting
+   * statements" at $40.00 of $60.00.
+   */
+  describe("⚖️ a line that can still rise — a closed period it rolls over from can still bank", () => {
+    const RISES = { rolloverMayAddCents: 3_000 } as const;
+
+    test("an over row keeps its verdict and its floors, and its definition no longer says nothing can undo it", () => {
+      const v = verdict({ pace: "over", pct: 40 / 30, uncoveredDays: 11, noDayRead: true, txnCount: 2, ...RISES });
+      expect(v.headline).toBe("Over budget by 33%");
+      expect(v.withheld).toBe(false);
+      expect(v.barIsFull).toBe(true);
+      expect(v.floors).toBe(true);
+      expect(v.lineMayRise).toBe(true);
+      expect(v.explanation).toBe(BUDGET_JARGON.paceOverLineMayRise);
+      expect(v.explanation).not.toContain("no later import can undo");
+      // read whole, the over row's line can rise all the same
+      const whole = verdict({ pace: "over", pct: 1.08, ...RISES });
+      expect([whole.floors, whole.lineMayRise, whole.explanation]).toEqual([
+        false,
+        true,
+        BUDGET_JARGON.paceOverLineMayRise,
+      ]);
+    });
+
+    test("a withheld row read in part: its amount is a floor, its percentage is not", () => {
+      const v = verdict({ uncoveredDays: 3, ...RISES });
+      expect(v.headline).toBe("Awaiting statements");
+      expect([v.floors, v.lineMayRise]).toEqual([true, true]);
+      expect(v.explanation).toBe(BUDGET_JARGON.paceWithheldLineMayRise);
+      expect(v.explanation).not.toMatch(/percentage can only rise/);
+    });
+
+    test("the other readings say nothing of a line standing still, and keep the definitions they had", () => {
+      expect(verdict({ uncoveredDays: 15, ...CASH_ONLY, ...RISES }).explanation).toBe(BUDGET_JARGON.paceCashOnly);
+      expect(verdict({ ...UNREAD, ...RISES }).explanation).toBe(BUDGET_JARGON.paceUnread);
+      expect(verdict(RISES).explanation).toBe(BUDGET_JARGON.paceUnder);
+      expect(verdict({ pace: "at-risk", ...RISES }).explanation).toBe(BUDGET_JARGON.paceAtRisk);
+      // …and it is a fact about the carry, said wherever it is true
+      expect(verdict({ ...UNREAD, ...RISES }).lineMayRise).toBe(true);
+    });
+
+    test("the control: nothing that can still bank, and every reading is the one it was", () => {
+      const over = verdict({ pace: "over", pct: 40 / 30, uncoveredDays: 11, noDayRead: true, txnCount: 2 });
+      expect([over.lineMayRise, over.explanation]).toEqual([false, BUDGET_JARGON.paceOver]);
+      expect(verdict({ uncoveredDays: 3 }).explanation).toBe(BUDGET_JARGON.paceWithheld);
+    });
+  });
 });
 
 /*
@@ -326,7 +380,7 @@ describe("budgetVerdict", () => {
  */
 describe("budgetCoverageLine — the line a budget row prints under its headline", () => {
   /** a row read through Aug 12, graded over October — ten of his twelve budgets on his ledger copy 2026-10-29 */
-  type Row = BudgetVerdictInput & BudgetCoverageInput;
+  type Row = Parameters<typeof budgetCoverageLine>[0];
   const row = (over: Partial<Row> = {}): Row => ({
     pace: "under",
     pct: 0.4,
@@ -338,6 +392,9 @@ describe("budgetCoverageLine — the line a budget row prints under its headline
     importedThroughOn: "2026-08-12",
     spentFromSince: "2026-04-01",
     bounds: { start: "2026-10-01" },
+    rolloverMayAddCents: 0,
+    rolloverHeldBack: [],
+    budget: { period: "monthly" },
     ...over,
   });
   const LINE = "spending imported through Aug 12 · 29 days of this period unaccounted";
@@ -357,5 +414,29 @@ describe("budgetCoverageLine — the line a budget row prints under its headline
     expect(budgetCoverageLine(row({ uncoveredDays: 0, noDayRead: false }))).toBeNull();
     expect(budgetCoverageLine(row({ pace: "over", pct: 1.08, uncoveredDays: 0, noDayRead: false }))).toBeNull();
     expect(budgetCoverageLine(row({ pace: "over", pct: 1.3, ...cash }))).toBeNull();
+  });
+
+  /*
+   * ⚖️ default built, not asked (2026-10-29): where the line can still rise (a closed period held back can still bank),
+   * the row says so beside every reading that leans on it standing still — an over verdict and figures that are floors
+   * — on /budgets and the category page alike. 🔴 Review of 48475ec4: neither said it, and both read "over" over a line
+   * the next statement lifted past the spend.
+   */
+  test("⚖️ a line that can still rise is said beside an over verdict and beside floors — and nowhere else", () => {
+    const rises = { rolloverMayAddCents: 1_500, rolloverHeldBack: [{ start: "2026-09-01", end: "2026-09-30" }] };
+    const RISES = "more can still roll over from September 2026 once it is fully imported";
+    expect(budgetCoverageLine(row({ pace: "over", pct: 20 / 15, ...rises }))).toBe(`${LINE} · ${RISES}`);
+    expect(budgetCoverageLine(row(rises))).toBe(`${LINE} · ${RISES}`);
+    // an over row read whole, and cash already past the line, have no coverage sentence: the clause stands alone
+    const whole = { uncoveredDays: 0, noDayRead: false };
+    expect(budgetCoverageLine(row({ pace: "over", pct: 1.08, ...whole, ...rises }))).toBe(RISES);
+    const cash = { spentFromAccounts: 0, spentFromWallets: 1, importedThroughOn: null };
+    expect(budgetCoverageLine(row({ pace: "over", pct: 1.3, ...cash, ...rises }))).toBe(RISES);
+    // a dash, cash only and a graded row make no reading that leans on the line: their lines are as they were
+    expect(budgetCoverageLine(row({ txnCount: 0, ...rises }))).toBe(LINE);
+    expect(budgetCoverageLine(row({ ...cash, ...rises }))).toBe(
+      "spent only from a cash wallet since Apr 1 — no statement will ever cover it",
+    );
+    expect(budgetCoverageLine(row({ ...whole, ...rises }))).toBeNull();
   });
 });

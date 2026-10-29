@@ -12,6 +12,7 @@ import { institutions } from "@/db/schema/institutions";
 import { recurringSeries } from "@/db/schema/recurring";
 import { transactions } from "@/db/schema/transactions";
 import { dedupeHash } from "@/lib/hash";
+import { BUDGET_JARGON } from "@/lib/jargon";
 import { ROLLOVER_BANKS, ROLLOVER_HOLDS } from "@/lib/rollover-held-back";
 import { createAccount } from "@/services/accounts";
 import { budgetPaceStatuses, createBudget, setBudgetRollover, type BudgetPaceStatus } from "@/services/budgets";
@@ -604,6 +605,94 @@ describe("BudgetRow — ⚖️ an over row read in part", () => {
     expect(spoken(html)).toBe(
       `Food: at least $15.00 of $30.00 (50% of budget). 35% of this period has passed. ${LINE}.`,
     );
+  });
+
+  /*
+   * 🔴 Review of 48475ec4: a ROLLING over row read in part spoke "over budget by at least $10.00" — and July, closed
+   * and held back with $0.00 of its $30.00 found (decision 67), could still bank it: on the load after July's statement
+   * landed, with no Food added anywhere, the row read "Awaiting statements" at $40.00 of $60.00 ($30.00 rolled over).
+   * ⚖️ default built, not asked (2026-10-29): the verdict stands (his rule: an over verdict is never withheld) and its
+   * spend is still a floor, but how far past the line is not — the row says its line can still rise instead.
+   */
+  describe("…on a rolling budget whose closed month can still bank", () => {
+    /** Food $30.00 a month rolling from Jul 1: a stale card read through `staleThrough`, $40.00 of August on another */
+    function rollingFoodOver(staleThrough: string, julyFoodCents = 0): { s: BudgetPaceStatus; landJuly: () => void } {
+      const chase = bundle.db.select().from(institutions).where(eq(institutions.name, "Chase")).get()!;
+      const stale = createAccount(bundle.db, { institutionId: chase.id, name: "Stale", type: "credit" });
+      const fresh = createAccount(bundle.db, { institutionId: chase.id, name: "Fresh", type: "credit" });
+      const spend = (accountId: string, postedOn: string, cents: number, category: string): void => {
+        const rawDescription = `SPEND ${postedOn} ${category} ${cents}`;
+        const row = { accountId, postedOn, amountCents: -cents, rawDescription };
+        const dedupe = dedupeHash({ ...row, occurrenceIndex: 0 });
+        bundle.db
+          .insert(transactions)
+          .values({ ...row, normalizedDescription: rawDescription, categoryId: catId(category), dedupeHash: dedupe })
+          .run();
+      };
+      spend(stale, "2026-06-15", 1_000, "Food"); // Food is spent from the stale card…
+      spend(stale, staleThrough, 500, "Shopping"); // …which is read through this day
+      if (julyFoodCents > 0) spend(stale, "2026-07-02", julyFoodCents, "Food");
+      spend(fresh, "2026-08-02", 2_000, "Food");
+      spend(fresh, "2026-08-04", 2_000, "Food");
+      spend(fresh, TODAY, 500, "Shopping");
+      const id = createBudget(bundle.db, {
+        categoryId: catId("Food"),
+        period: "monthly",
+        amountCents: 3_000,
+        startsOn: "2026-07-01",
+      });
+      setBudgetRollover(bundle.db, id, { enabled: true });
+      return { s: statusFor("Food"), landJuly: () => spend(stale, "2026-08-01", 500, "Shopping") };
+    }
+    const RISES = "more can still roll over from July 2026 once it is fully imported";
+
+    test("the over verdict stands; its spend is a floor, its over is not — and the line says it can still rise", () => {
+      const { s, landJuly } = rollingFoodOver("2026-06-30");
+      // the conditions under which the row spoke a false floor — without them this test could not fail
+      expect([s.pace, s.uncoveredDays, s.rolloverCents]).toEqual(["over", 11, 0]);
+      expect(s.rolloverHeldBack).toEqual([{ start: "2026-07-01", end: "2026-07-31" }]);
+      expect(s.rolloverMayAddCents).toBe(3_000);
+      const line = `spending imported through Jun 30 · 11 days of this period unaccounted · ${RISES}`;
+      const html = render(s);
+      expect(html).toContain("Over budget by 33%");
+      expect(html).toContain(`<p class="mt-2 text-xs text-ink-faint">${line}</p>`);
+      expect(spoken(html)).toBe(
+        "Food: at least $40.00 of $30.00 (133% of budget). 35% of this period has passed. " +
+          `over budget by $10.00 — ${line}.`,
+      );
+      expect(html).toContain(BUDGET_JARGON.paceOverLineMayRise);
+      expect(html).not.toContain(BUDGET_JARGON.paceOver);
+
+      // …and it was right not to say more: July's statement lands, no Food is added, and the row is over no more
+      landJuly();
+      const after = statusFor("Food");
+      expect([after.pace, after.spentCents, after.availableCents]).toEqual(["at-risk", 4_000, 6_000]);
+      expect(after.rolloverMayAddCents).toBe(0);
+    });
+
+    test("the control: a held-back July already past its plan can bank nothing, so the over is a floor again", () => {
+      const { s } = rollingFoodOver("2026-07-20", 3_500); // $35.00 of July's $30.00 found by Jul 20
+      expect([s.pace, s.rolloverMayAddCents]).toEqual(["over", 0]);
+      expect(s.rolloverHeldBack).toEqual([{ start: "2026-07-01", end: "2026-07-31" }]);
+      const line = "spending imported through Jul 20 · 11 days of this period unaccounted";
+      const html = render(s);
+      expect(html).toContain(`<p class="mt-2 text-xs text-ink-faint">${line}</p>`);
+      expect(spoken(html).endsWith(`. over budget by at least $10.00 — ${line}.`)).toBe(true);
+      expect(html).toContain(BUDGET_JARGON.paceOver);
+    });
+
+    test("a withheld row read in part on the same line: its percentage is no floor, and it says why", () => {
+      const { s } = rollingFoodOver("2026-06-30");
+      const withheld = { ...s, pace: "under" as const, pct: 0.5, spentCents: 1_500, remainingCents: 1_500 };
+      const line = `spending imported through Jun 30 · 11 days of this period unaccounted · ${RISES}`;
+      const html = render(withheld);
+      expect(html).toContain("Awaiting statements");
+      expect(html).toContain(`<p class="mt-2 text-xs text-ink-faint">${line}</p>`);
+      expect(spoken(html)).toBe(
+        `Food: at least $15.00 of $30.00 (50% of budget). 35% of this period has passed. ${line}.`,
+      );
+      expect(html).toContain(BUDGET_JARGON.paceWithheldLineMayRise);
+    });
   });
 });
 

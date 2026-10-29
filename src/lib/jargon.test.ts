@@ -90,6 +90,9 @@ describe("jargon copy", () => {
         "paceAtRisk",
         "paceOver",
         "paceWithheld",
+        // ⚖️ …and the two of them whose line can still rise, a closed period still to bank (2026-10-29)
+        "paceOverLineMayRise",
+        "paceWithheldLineMayRise",
         // ⚖️ §6A 64: withheld, and not one elapsed day read — the row prints no Spent and no Left
         "paceUnread",
         "paceCashOnly",

@@ -1,5 +1,6 @@
 import { arrearsTail, NOT_POSTED } from "./arrears-reading";
 import { spendIsAFloor, spendUnread, spentOnlyFromCashWallets, type BudgetCoverageInput } from "./budget-coverage";
+import { lineMayRise } from "./rollover-held-back";
 import { formatCategoryPath } from "./category-path";
 import { isStaleClose, newestQuotedOn } from "./holding-price-age";
 import { formatCents } from "./money";
@@ -112,6 +113,8 @@ export interface BudgetNoteInput {
     /** ⚖️ §6A 64: whether the row prints a dash for its spend, by the row's own test (`spendUnread`) */
     noDayRead: boolean;
     txnCount: number;
+    /** ⚖️ …and whether its line can still rise, by the row's own test (`lineMayRise`, 2026-10-29) */
+    rolloverMayAddCents: number;
   }[];
 }
 
@@ -189,7 +192,9 @@ export function budgetSectionNotes(input: BudgetNoteInput): SectionNote[] {
   // the test is the row's own, `spentOnlyFromCashWallets`.
   // ⚖️ An over row's figures are floors all the same where its days are unread, and
   // the clause after the count says so (`overReadInPart`, default built, not asked,
-  // 2026-10-29).
+  // 2026-10-29). ⚠️ The plan, that is: on a rolling budget whose closed period can
+  // still bank, the LINE can still rise past the spend (`lineMayRise`, review of
+  // 48475ec4) — the row stays counted here as over, and the clause says so.
   const uncovered = input.rows.filter(
     (r) => r.uncoveredDays > 0 && r.pace !== "over" && !spentOnlyFromCashWallets(r),
   );
@@ -230,20 +235,28 @@ export function budgetSectionNotes(input: BudgetNoteInput): SectionNote[] {
      * bounds, not measurements" over twelve rows that print "—" for both. ⛔ The rows' own test (`spendUnread`).
      */
     const unread = uncovered.filter((r) => spendUnread(r)).length;
+    /*
+     * ⚖️ default built, not asked (2026-10-29): a row whose line can still rise (`lineMayRise`) has a percentage that
+     * is no lower bound — its spend still is — so where one of the rows shown is such a row, the note calls only their
+     * spend one; the row's own line says what can still roll over. ⛔ A dash shows neither, so it is not counted.
+     */
+    const pcts = uncovered.some((r) => !spendUnread(r) && lineMayRise(r))
+      ? "spend is a lower bound, not a measurement"
+      : "spend and percentages are lower bounds, not measurements";
     const shown =
       unread === 0
-        ? "Their spend and percentages are lower bounds, not measurements, so no verdict is shown for them."
+        ? `Their ${pcts}, so no verdict is shown for them.`
         : unread === uncovered.length
           ? "Not one elapsed day of their periods has been imported, so neither their spend nor a verdict is shown."
           : `No verdict is shown for any of them: ${unread} ${unread === 1 ? "has" : "have"} not had one elapsed ` +
-            "day imported, so no spend is shown there either, and the others' spend and percentages are lower " +
-            "bounds, not measurements.";
+            `day imported, so no spend is shown there either, and the others' ${pcts}.`;
+    const overInPart = input.rows.filter((r) => r.pace === "over" && spendIsAFloor(r));
     notes.push({
       id: "budgets-coverage",
       body:
         `${uncovered.length} of ${input.rows.length} budgets are grading days the ledger has not ` +
         `reached — ${tied ? `${days} each` : `up to ${days} on ${worst.categoryPath}`}. ${shown}` +
-        overReadInPart(input.rows.filter((r) => r.pace === "over" && spendIsAFloor(r)).length),
+        overReadInPart(overInPart.length, overInPart.filter((r) => lineMayRise(r)).length),
     });
   }
 
@@ -252,7 +265,7 @@ export function budgetSectionNotes(input: BudgetNoteInput): SectionNote[] {
 
 /**
  * " The 5 over their plans are grading such days too, so each is over by at least what it shows." — or "" where no
- * over row's figures are floors.
+ * over row's figures are floors (`n`).
  *
  * ⚖️ default built, not asked (2026-10-29): the count above keeps counting the rows whose verdict is withheld, and
  * this keeps it from reading as "the rest are read in full". 🔴 Measured on his ledger copy 2026-10-29: "7 of 12
@@ -261,12 +274,24 @@ export function budgetSectionNotes(input: BudgetNoteInput): SectionNote[] {
  * Shopping and Subscriptions through Aug 12. ⛔ The rows' own test (`spendIsAFloor`), so the clause counts exactly
  * the over rows that print their line (`budgetCoverageLine`). Said only beside that count: with no withheld row there
  * is no count to correct, and each over row carries its own line.
+ *
+ * ⚖️ …and where `rises` of them have a line that can still rise (`lineMayRise`, default built, not asked,
+ * 2026-10-29), how far past it is no floor: the clause says what is true of all `n` — each has spent at least what it
+ * shows — and how many can still have more roll over. 🔴 Review of 48475ec4, measured on his ledger copy 2026-10-29:
+ * Fees, $15.00 rolling with September held back at $0.00, and a $20.00 Oct 10 row — "The 6 over their plans are
+ * grading such days too, so each is over by at least what it shows." — read $20.00 of $30.00 once Fees' accounts
+ * were read through Sep 30, no spending added.
  */
-function overReadInPart(n: number): string {
+function overReadInPart(n: number, rises: number): string {
   if (n === 0) return "";
-  return n === 1
-    ? " The one over its plan is grading such days too, so it is over by at least what it shows."
-    : ` The ${n} over their plans are grading such days too, so each is over by at least what it shows.`;
+  const subject = n === 1 ? "The one over its plan is" : `The ${n} over their plans are`;
+  const each = n === 1 ? "it" : "each";
+  if (rises === 0) return ` ${subject} grading such days too, so ${each} is over by at least what it shows.`;
+  const into = n === 1 ? "it" : rises === n ? "each of them" : `${rises} of them`;
+  return (
+    ` ${subject} grading such days too, so ${each} has spent at least what it shows, ` +
+    `though more can still roll over into ${into}.`
+  );
 }
 
 export interface HoldingPriceNoteInput {

@@ -807,6 +807,37 @@ describe("⚖️ §6A 49 — a category page asks its own imported-through day",
   });
 
   /*
+   * ⚖️ default built, not asked (2026-10-29): a rolling row whose closed month held back can still bank has a line that
+   * can still rise, and the card says so in the row's words, under the row's verdict. 🔴 Review of 48475ec4: the card
+   * read "$X of $Y · $Z over" with the row's coverage sentence alone, while the statement still to come for that month
+   * could lift the line past the spend.
+   */
+  test("a rolling over row whose August can still bank: the card's line says more can still roll over", () => {
+    carLedger();
+    const plan = { period: "monthly", amountCents: 10_000, startsOn: "2026-01-01" } as const;
+    const id = createBudget(bundle.db, { categoryId: catId("Fees"), ...plan });
+    setBudgetRollover(bundle.db, id, { enabled: true, startsOn: "2026-08-01" });
+    // $150.00 of September on the Card (read through Sep 24); Checking, Fees' other account, stops Aug 12
+    insertTxn({ postedOn: "2026-09-10", amountCents: -15_000, category: "Fees", accountId: cardId });
+
+    const row = budgetPaceStatuses(bundle.db, "2026-09-30").find((s) => s.budget.categoryId === catId("Fees"))!;
+    // August held back — Checking stops Aug 12 — with $12.00 of its $100.00 found: it can still bank $88.00
+    expect([row.pace, row.rolloverCents, row.rolloverMayAddCents]).toEqual(["over", 0, 8_800]);
+    const ref = categoryBudgetRef(bundle.db, catId("Fees"), "2026-09-30")!;
+    const line =
+      "spending imported through Aug 12 · 30 days of this period unaccounted · more can still roll over from August " +
+      "2026 once it is fully imported";
+    expect(ref.coverageSentence).toBe(line);
+    expect(ref.coverageSentence).toBe(budgetCoverageLine(row));
+    expect(ref.verdict).toEqual(budgetVerdict(row));
+    const card = renderToStaticMarkup(createElement(CategoryBudgetCard, { budget: ref }))
+      .replace(/<[^>]+>/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+    expect(card).toContain(`${line} $150.00 of $100.00 $50.00 over`);
+  });
+
+  /*
    * 🔴 NO TEST HAD A PARTLY READ WINDOW REACH THE CARD (review of e37997b): its component tests hand it a coverage
    * sentence typed by hand, so a wrong day count would have printed unseen. Fees on Aug 20: its account read through
    * Aug 12, so 8 of the window's 20 elapsed days are not — the card says the row's 8, and ⚖️ decision 72's line under

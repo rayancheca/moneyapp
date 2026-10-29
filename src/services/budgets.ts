@@ -237,6 +237,12 @@ export interface BudgetStatus {
   rolloverCents: number;
   /** ⚖️ decision 67: the closed periods that banked nothing because a day of them is not read yet; empty when off */
   rolloverHeldBack: readonly PeriodBounds[];
+  /**
+   * The most those periods can still add to `rolloverCents` once their statements land (`RolloverCarry.mayAddCents`):
+   * the line this period is graded against can still RISE by up to this. 0 when nothing is held back, when what is held
+   * back has already spent its plan, and whenever rollover is off.
+   */
+  rolloverMayAddCents: number;
   /** whose day the carry read those periods through (`RolloverCarry.readOn`) — the panel's rule; null when off */
   rolloverReadOn: RolloverReadOn | null;
   /** amountCents + rolloverCents — the line this period is actually graded against */
@@ -275,6 +281,18 @@ export interface RolloverCarry {
   /** the closed periods that banked nothing because a day of them is not read yet, oldest first */
   heldBack: readonly PeriodBounds[];
   /**
+   * The most `heldBack` can still add to `cents` once its statements land: the carry walked again with each of them
+   * banked on the spend and overdue found in it SO FAR — the least it will hold, since a statement still to come can
+   * only add to what it holds — less `cents`, and never below 0. A period already past its plan on what is found adds
+   * nothing, and a carry at its cap takes nothing more.
+   *
+   * ⚖️ default built, not asked (2026-10-29): while this is above 0 the line can still rise, so no figure past it is a
+   * floor (`lib/rollover-held-back::lineMayRise`). 🔴 Review of 48475ec4: Food, $30.00 a month rolling from Jul 1,
+   * $40.00 of August found, July held back with $0.00 of it — "over budget by at least $10.00", and on the load after
+   * July's statement $40.00 of $60.00 ($30.00 rolled over) with no Food added anywhere.
+   */
+  mayAddCents: number;
+  /**
    * Whose day the newest closed period was read through — or, none closed yet, the day the period now running is asked
    * against — as `categoryReachFor` found it: what the panel's rule says it waits on (`rolloverWaitsSentence`). Null
    * for a budget that does not roll over, which waits on nothing.
@@ -300,6 +318,11 @@ export function carryReads(db: AppDatabase): CarryReads {
  *
  *     balance = clampToCap(max(0, balance + amount − spent(p) − overdue(p)))   — p read whole
  *     balance = balance                                                        — p not read whole yet
+ *     ceiling = clampToCap(max(0, ceiling + amount − spent(p) − overdue(p)))   — every p, on what is found so far
+ *
+ * `ceiling − balance` is what the periods held back can still add once read (`mayAddCents`, `mayStillBank`): the carry
+ * falls as their spend grows, and what is found in a period is the least it will hold — the floor every withheld row
+ * stands on.
  *
  * Five rules, each of which exists because the alternative asserts something the
  * ledger does not support:
@@ -356,9 +379,9 @@ export function carryReads(db: AppDatabase): CarryReads {
  * $623.58 of spend into an already-closed July, so a stored balance would have
  * been stale within 72 hours.
  *
- * Cost: one `categorySpending` + one `budgetOverdue` per closed period read, and
- * one `categoryReachFor` per distinct accounts window (`spentFromSinceFor` — every
- * period inside the last six months shares one), which grows with calendar time.
+ * Cost: one `categorySpending` per closed period walked, one `budgetOverdue` per period read whole — and per period
+ * held back only where it could still bank (`mayStillBank`) — and one `categoryReachFor` per distinct accounts window
+ * (`spentFromSinceFor` — every period inside the last six months shares one), which grows with calendar time.
  * Deliberately exact rather than truncated to a recent window — a silently-bounded
  * lookback would report a carry that is not the sum of the periods it claims to
  * cover. `rolloverStartsOn` is the supported way to bound it.
@@ -394,6 +417,8 @@ export function carryInto(
 
   let balance = 0;
   const heldBack: PeriodBounds[] = [];
+  // every period walked, in order — what the periods held back can still bank is walked from them (`mayStillBank`)
+  const steps: CarryStep[] = [];
   let newest: CategoryReachWalk | null = null;
   while (compareDates(cursor, currentPeriodStart) < 0) {
     const p = periodBounds(cursor, budget.period);
@@ -414,26 +439,66 @@ export function carryInto(
     if (compareDates(p.end, currentPeriodStart) >= 0) break;
     cursor = addDays(p.end, 1);
     newest = reachFrom(p.start);
-    // ⚖️ decision 67: a day of it not read yet, so it banks nothing until its statements land
-    if (!readWhole(p, newest.reach.through)) {
-      heldBack.push(p);
-      continue;
-    }
     const spent = categorySpending(db, {
       categoryId: budget.categoryId,
       from: p.start,
       to: p.end,
     }).spentCents;
+    // ⚖️ decision 67: a day of it not read yet, so it banks nothing until its statements land
+    if (!readWhole(p, newest.reach.through)) {
+      heldBack.push(p);
+      steps.push({ term: budget.amountCents - spent, held: p });
+      continue;
+    }
     const overdue = budgetOverdue(db, budget.categoryId, p.start, p.end).totalCents;
-    balance = Math.max(0, balance + budget.amountCents - spent - overdue);
-    if (budget.rolloverCapCents !== null) balance = Math.min(balance, budget.rolloverCapCents);
+    const term = budget.amountCents - spent - overdue;
+    balance = banked(balance + term, budget.rolloverCapCents);
+    steps.push({ term, held: null });
   }
   // ⛔ whose day it waited on, as it asked it — the period now running's where none has closed (review of 46b6e4b)
   const { reach, ancestor } = newest ?? reachFrom(currentPeriodStart);
   // …and of a cash-only day, the facts its row's Grading line is worded from, so the panel says it in those words
   const { spentFromSince, spentFromWallets } = reach.coverage;
   const cash = reach.whose === "cash-only" ? { cash: { spentFromSince, spentFromWallets } } : {};
-  return { cents: balance, heldBack, readOn: { whose: reach.whose, ancestor, ...cash } };
+  const overdueOf = (p: PeriodBounds): number => budgetOverdue(db, budget.categoryId, p.start, p.end).totalCents;
+  const mayAddCents = mayStillBank(steps, balance, budget.rolloverCapCents, overdueOf);
+  return { cents: balance, heldBack, mayAddCents, readOn: { whose: reach.whose, ancestor, ...cash } };
+}
+
+/** A balance after a period's term: never below zero, never past the cap (`carryInto`'s first rule, and its cap). */
+function banked(balanceCents: number, capCents: number | null): number {
+  const floored = Math.max(0, balanceCents);
+  return capCents === null ? floored : Math.min(floored, capCents);
+}
+
+/** One closed period `carryInto` walked, for what the periods held back can still bank (`mayStillBank`). */
+interface CarryStep {
+  /** read whole: its plan less its spend and overdue, as the carry banks it; held back: its plan less what is found */
+  term: number;
+  /** the period where it is held back — its overdue is not in `term` yet — and null where it was read whole */
+  held: PeriodBounds | null;
+}
+
+/**
+ * `RolloverCarry.mayAddCents`: the carry walked again with every period held back banked on what is found in it so
+ * far — its spend less the bills due in it and not posted, as the carry counts it once read — less `balance`.
+ *
+ * ⚡ Their overdue is read only where it could matter. An overdue bill only LOWERS what a period banks and every step
+ * is monotone in the one before, so a walk without theirs that comes to no more than `balance` says, exactly, that
+ * nothing held back can add to it. On his ledger copy 2026-10-29 five of his seven held-back Septembers were past
+ * their plans on spend alone (Entertainment, Food, Shopping, Subscriptions, Transport) and read no overdue at all;
+ * Cash & ATM and Fees, $0.00 found of their plans, read theirs.
+ */
+function mayStillBank(
+  steps: readonly CarryStep[],
+  balance: number,
+  capCents: number | null,
+  overdueOf: (p: PeriodBounds) => number,
+): number {
+  const walk = (heldOverdue: (p: PeriodBounds) => number): number =>
+    steps.reduce((c, s) => banked(c + s.term - (s.held === null ? 0 : heldOverdue(s.held)), capCents), 0);
+  if (walk(() => 0) <= balance) return 0;
+  return Math.max(0, walk(overdueOf) - balance);
 }
 
 /**
@@ -442,7 +507,7 @@ export function carryInto(
  * have written into every other's and every later load's (review of 73a743d). Built per budget, and read-only besides.
  */
 function nothingCarried(): RolloverCarry {
-  return { cents: 0, heldBack: [], readOn: null };
+  return { cents: 0, heldBack: [], mayAddCents: 0, readOn: null };
 }
 
 /**
@@ -524,6 +589,7 @@ export function budgetStatuses(
         txnCount,
         rolloverCents,
         rolloverHeldBack: carry.heldBack,
+        rolloverMayAddCents: carry.mayAddCents,
         rolloverReadOn: carry.readOn,
         availableCents,
         // Every "how am I doing" figure grades against AVAILABLE, not plan: with
@@ -1769,7 +1835,8 @@ export interface BudgetPaceStatus extends BudgetStatus, CategoryCoverage {
    * and says why instead (`lib/budget-coverage::spentOnlyFromCashWallets`).
    * >0 means the row's spent/pace/% figures are lower bounds, not measurements,
    * and the UI must not report a verdict — "On track" over an unimported month
-   * is the one failure mode a budgeting tool cannot afford.
+   * is the one failure mode a budgeting tool cannot afford. ⚠️ The % only while
+   * the line it divides by cannot rise (`rolloverMayAddCents`, 2026-10-29).
    */
   uncoveredDays: number;
   /**

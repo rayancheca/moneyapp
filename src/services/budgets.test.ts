@@ -2626,6 +2626,7 @@ describe("rollover", () => {
     expect(carryInto(bundle.db, budget, "2026-06-15", "2026-06-15")).toEqual({
       cents: 160_00,
       heldBack: [],
+      mayAddCents: 0,
       readOn: { whose: "category", ancestor: null },
     });
   });
@@ -2893,7 +2894,93 @@ describe("⚖️ decision 67 — a closed period with a day not yet read banks n
     expect(carryInto(bundle.db, budget, "2026-06-15", "2026-06-15")).toEqual({
       cents: 460_00,
       heldBack: [{ start: "2026-06-08", end: "2026-06-14" }],
+      // …and the week of Jun 8, $0.00 of its $500.00 found so far, can still bank all of it once it is read
+      mayAddCents: 500_00,
       readOn: { whose: "category", ancestor: null },
+    });
+  });
+
+  /*
+   * ⚖️ default built, not asked (2026-10-29): a period held back banks once its statements land, so the line it carries
+   * into can still RISE — by at most what it would bank on the spend and overdue found in it so far, which a statement
+   * still to come can only add to. 🔴 Review of 48475ec4: Food, $30.00 a month rolling from Jul 1, read "Over budget by
+   * 33%" in August and spoke "over budget by at least $10.00" while July, held back with $0.00 of its plan found, could
+   * still bank $30.00 — and did, on the load after July's statement, with no Food added anywhere.
+   */
+  describe("what the periods held back can still add to the line", () => {
+    /** `rolloverMayAddCents` — the most the line can still rise by once what is held back is read */
+    function mayAdd(categoryPath: string, refDate = "2026-07-15"): number {
+      const s = budgetStatuses(bundle.db, refDate).find((r) => r.categoryPath === categoryPath);
+      if (!s) throw new Error(`no ${categoryPath} budget status`);
+      return s.rolloverMayAddCents;
+    }
+
+    test("a period read in part can still bank its plan less what is found in it — nothing once that is spent", () => {
+      ledgerOpensJan2();
+      rollingBudget("Food", "2026-05-01");
+      spend("2026-05-10", -100_00, "Food");
+      spend("2026-06-20", -50_00, "Food"); // the card's import stops Jun 20: June held back, $50.00 of it found
+      expect(carried("Food")).toEqual({ cents: 400_00, availableCents: 900_00, heldBack: [JUNE] });
+      expect(mayAdd("Food")).toBe(450_00);
+
+      spend("2026-06-15", -500_00, "Food"); // past June's plan on what is found, and a statement can only add to it
+      expect(carried("Food").heldBack).toEqual([JUNE]);
+      expect(mayAdd("Food")).toBe(0);
+    });
+
+    test("a bill that came due in it is committed, as the carry counts it once the period is read", () => {
+      ledgerOpensJan2();
+      rollingBudget("Food", "2026-05-01");
+      spend("2026-05-10", -100_00, "Food");
+      spend("2026-06-20", -50_00, "Food");
+      const mealKit = createSeries({ name: "Meal Kit", nextExpectedOn: "2026-06-10", nextExpectedAmountCents: -200_00 });
+      bindSeries(mealKit, "Food"); // $200.00 due Jun 10, not posted: June can bank $500.00 − $50.00 − $200.00
+      expect(mayAdd("Food")).toBe(250_00);
+
+      // …and bills past June's leftover leave the line nothing to rise by: it can only fall once June is read
+      const pantry = createSeries({ name: "Pantry", nextExpectedOn: "2026-06-12", nextExpectedAmountCents: -300_00 });
+      bindSeries(pantry, "Food");
+      expect(mayAdd("Food")).toBe(0);
+    });
+
+    test("the cap bounds it: a carry already at its cap has nothing more to take", () => {
+      ledgerOpensJan2();
+      const id = rollingBudget("Food", "2026-05-01");
+      spend("2026-05-10", -100_00, "Food"); // May banks $400.00
+      spend("2026-06-20", -50_00, "Food");
+      setBudgetRollover(bundle.db, id, { enabled: true, capCents: 400_00 });
+      expect(mayAdd("Food")).toBe(0);
+      setBudgetRollover(bundle.db, id, { enabled: true, capCents: 600_00 });
+      expect(mayAdd("Food")).toBe(200_00);
+    });
+
+    test("it reaches the period now graded through every later period, as the carry does", () => {
+      rollingBudget("Food", "2026-04-01");
+      spend("2026-05-10", -100_00, "Food"); // the ledger's first row: April and May 1–9 were never imported
+      spend("2026-07-01", -1, "Shopping"); // the card is read through Jul 1, so June banks
+      expect(carried("Food")).toEqual({
+        cents: 500_00,
+        availableCents: 1_000_00,
+        heldBack: [{ start: "2026-04-01", end: "2026-04-30" }, MAY],
+      });
+      // April $500.00 and May $400.00 on what is found, June's $500.00 on top of them, as the carry adds it
+      expect(mayAdd("Food")).toBe(900_00);
+    });
+
+    test("nothing held back, or no rollover: nothing more can come", () => {
+      ledgerOpensJan2();
+      rollingBudget("Food", "2026-05-01");
+      const plan = { period: "monthly", amountCents: 500_00, startsOn: "2026-05-01" } as const;
+      createBudget(bundle.db, { categoryId: catId("Shopping"), ...plan }); // rollover off
+      // the ledger read through Jan 2 alone: Food holds May and June back, and could still bank both…
+      expect(carried("Food").heldBack).toEqual([MAY, JUNE]);
+      expect(mayAdd("Food")).toBe(1_000_00);
+      // …while a budget that does not roll over carries nothing, and has nothing to add
+      expect(mayAdd("Shopping")).toBe(0);
+
+      spend("2026-06-30", -1, "Shopping"); // read through Jun 30: May and June read whole, and banked
+      expect(carried("Food")).toEqual({ cents: 1_000_00, availableCents: 1_500_00, heldBack: [] });
+      expect(mayAdd("Food")).toBe(0);
     });
   });
 });
