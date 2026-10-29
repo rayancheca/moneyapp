@@ -645,12 +645,23 @@ describe("paidAhead — the payments that covered more than one charge, said bes
   const RATE = -35_758;
   const AUG_12 = at("2026-08-12", RATE);
 
+  /*
+   * ⚖️ default built, not asked (2026-10-29): …to the cent an instalment plan rounds one premium by
+   * (`AT_THE_RATE_CENTS`), as a payment of the rate is held to it. 🔴 At fc4444b2 twice the rate was asked exactly
+   * (review of b6e11a76; his ledger copy 2026-10-29, a -$357.58 premium due the 11th added on Venture X, Sep 11 missed,
+   * then Sep 19 -$715.15): nothing was named, October drew Oct 11 ✕, the arrears owed $357.58, the runway read "A
+   * further $3,877.56 came due earlier this month: $357.58 has not posted, and no statement has covered the other
+   * $3,519.98 yet." and the page "Already due, and not posted" — where -$715.16 pays Sep 11 and Oct 11.
+   */
   test("at twice the rate or more, a payment covered more than one charge; below, it did not", () => {
     // 2 × -$357.58 is -$715.16: exactly it is ahead…
     const paid = [AUG_12, at("2026-09-03", -100_000), at("2026-11-11", -71_516)];
     expect(paidAhead(paid, RATE, "bill").map((o) => o.postedOn)).toEqual(["2026-09-03", "2026-11-11"]);
-    // …a cent short of it is not
-    expect(paidAhead([AUG_12, at("2026-10-11", -71_515)], RATE, "bill")).toEqual([]);
+    // …and a cent short of it, two premiums one of which an instalment plan rounded down…
+    const roundedDown = at("2026-10-11", -71_515);
+    expect(paidAhead([AUG_12, roundedDown], RATE, "bill")).toEqual([roundedDown]);
+    // …but two cents short is not
+    expect(paidAhead([AUG_12, at("2026-10-11", -71_514)], RATE, "bill")).toEqual([]);
   });
 
   test("money the other way is no payment of it, and with no rate nothing is measured", () => {
@@ -668,6 +679,20 @@ describe("paidAhead — the payments that covered more than one charge, said bes
   test("a bill whose amounts vary paid nothing ahead: FPL's -$125.00 summer bill is one month's", () => {
     const fpl = [at("2026-07-10", -1_421), at("2026-07-28", -5_622), at("2026-08-27", -12_500)];
     expect(paidAhead(fpl, -5_887, "bill")).toEqual([]);
+  });
+
+  /*
+   * ⚠️ …and so is his rent — a known gap (review of b6e11a76): its payments carry the utilities (§6A 59), so each lies
+   * above its -$2,109.00 and none is it, and a payment of two months names nothing — nor, so, pays the utilities' two
+   * days (`BillPayment.coveredMore`, the carrier's). Measured on his ledger copy 2026-10-29 with -$4,582.42 added on
+   * Oct 20: the rent's page names only what its payments carry, November draws Nov 1 paid early by Oct 20 for the
+   * rent and the utilities alike, and Oct 1 stays owed for both — a paid month shown owed, the safe direction. Set to
+   * what a month posts, utilities and all (-$2,291.21), it still names none: Jun 16's -$2,434.80 lies above it.
+   */
+  test("his rent's payment of two months names nothing: its payments carry the utilities, above its rate", () => {
+    const twoMonths = [...occurrencesOf(RENT_ROWS), at("2026-10-20", -458_242)];
+    expect(paidAhead(twoMonths, -210_900, "bill")).toEqual([]);
+    expect(paidAhead(twoMonths, -229_121, "bill")).toEqual([]);
   });
 
   test("one of its other payments is the rate, to the cent an instalment plan rounds by — and none is above it", () => {
@@ -764,20 +789,62 @@ describe("paidAhead — the payments that covered more than one charge, said bes
     // two charges exactly leave nothing: a payment below the rate after a catch-up of two says the amounts vary…
     const catchUp = at("2026-09-19", 2 * RATE);
     expect(paidAhead([AUG_12, catchUp, at("2026-11-11", -30_000)], RATE, "bill")).toEqual([]);
-    // …and money back after it is still what it left
-    expect(paidAhead([AUG_12, catchUp, at("2026-10-02", 1_250)], RATE, "bill")).toEqual([catchUp]);
+    // …and money back after it is still what it left — while it leaves two (2026-10-29, below): $12.50 back after a
+    // catch-up of exactly two leaves less, after one of -$727.66 two exactly
+    expect(paidAhead([AUG_12, catchUp, at("2026-10-02", 1_250)], RATE, "bill")).toEqual([]);
+    const more = at("2026-09-19", 2 * RATE - 1_250);
+    expect(paidAhead([AUG_12, more, at("2026-10-02", 1_250)], RATE, "bill")).toEqual([more]);
+  });
+
+  /*
+   * ⚖️ default built, not asked (2026-10-29): …but money back after a payment ahead is what it RETURNED — the payment is
+   * named only while what it kept, less every credit posted after it, still covers two charges (to `AT_THE_RATE_CENTS`,
+   * as the payment itself). 🔴 At fc4444b2 any money back after it was what it left, whatever it returned (review of
+   * 2f827fc, inherited from b6aa5dc; his ledger copy 2026-10-29): his Car insurance with Sep 3's -$1,000.00 returned on
+   * Sep 8 read "posted avg -$119.19 · Sep 3's -$1,000.00 covered more than one month" on the series page and the All
+   * tab, the popover the same; a -$6.00 subscription charged twice on Oct 5, +$6.00 back on Oct 9, read "-$4.80 · Oct
+   * 5's -$12.00 covered more than one month". The cost: a large refund after it — a cancellation's, or one returning a
+   * later payment — unnames a true one too, which then pays one due day: a paid day shown owed, the safe direction.
+   */
+  test("money back after a payment ahead is what it returned: named only while what it kept covers two", () => {
+    const sep3 = at("2026-09-03", -100_000);
+    // returned in full on Sep 8, it covered nothing
+    expect(paidAhead([AUG_12, sep3, at("2026-09-08", 100_000)], RATE, "bill")).toEqual([]);
+    // Car insurance's +$12.50 credit keeps $987.50, more than two premiums: still named
+    expect(paidAhead([AUG_12, sep3, at("2026-10-02", 1_250)], RATE, "bill")).toEqual([sep3]);
+    // kept: $715.16 is two premiums, and $715.15 (one rounded down a cent); $715.14 is not
+    expect(paidAhead([AUG_12, sep3, at("2026-10-02", 28_484)], RATE, "bill")).toEqual([sep3]);
+    expect(paidAhead([AUG_12, sep3, at("2026-10-02", 28_485)], RATE, "bill")).toEqual([sep3]);
+    expect(paidAhead([AUG_12, sep3, at("2026-10-02", 28_486)], RATE, "bill")).toEqual([]);
+    // …every credit after it counts, and no payment of the rate after it is money back
+    expect(paidAhead([AUG_12, sep3, at("2026-10-02", 20_000), at("2026-11-02", 10_000)], RATE, "bill")).toEqual([]);
+    expect(paidAhead([AUG_12, sep3, at("2026-10-02", 30_000), at("2026-12-11", RATE)], RATE, "bill")).toEqual([]);
+    // …one returning a later payment too: the cost, above — but a credit before a payment ahead is none of its
+    const jan11 = at("2027-01-11", 2 * RATE);
+    expect(paidAhead([AUG_12, sep3, jan11, at("2027-01-15", -2 * RATE)], RATE, "bill")).toEqual([]);
+    expect(paidAhead([AUG_12, sep3, at("2026-10-02", 30_000), jan11], RATE, "bill")).toEqual([jan11]);
+    // a -$6.00 subscription charged twice on Oct 5 — one payment of -$12.00 — with +$6.00 back on Oct 9: one charge
+    const charges = ["07", "08", "09", "10", "10"].map((m): [string, number] => [`2026-${m}-05`, -600]);
+    const sub = occurrencesOf(rowsOf([...charges, ["2026-10-09", 600]]));
+    expect(sub.map((o) => o.amountCents)).toEqual([-600, -600, -600, -1_200, 600]);
+    expect(paidAhead(sub, -600, "subscription")).toEqual([]);
+    expect(paidAhead(sub.slice(0, -1), -600, "subscription").map((o) => o.postedOn)).toEqual(["2026-10-05"]);
   });
 
   /*
    * ⚖️ default built, not asked (2026-10-23): the payments every grader of a bill's due days reads as covering more
    * than one charge (`paymentFor`'s catch-up) — `paidAhead` itself, each rate era held to its own rate, as the average
-   * holds the era in force now: one rule, so no due day is paid twice by a payment its posted average does not name.
+   * holds the era in force now: one rule — in today's era, the payments the posted average names; in an earlier one,
+   * those its own rate names, which no average names (it holds today's era only, `atTodaysRate`): Jun 10, below.
    */
   test("paidAheadDays: the days paidAhead names, each rate era at its own rate", () => {
     const sep3 = at("2026-09-03", -100_000);
     const flat: RateSchedule = { nextExpectedAmountCents: RATE, amountHistory: null };
     expect([...paidAheadDays([AUG_12, sep3], flat, "bill")]).toEqual(["2026-09-03"]);
     expect([...paidAheadDays([AUG_12, sep3], flat, "income")]).toEqual([]);
+    // …two premiums one rounded down a cent, and not one money back returned (2026-10-29, above)
+    expect([...paidAheadDays([AUG_12, at("2026-09-19", -71_515)], flat, "bill")]).toEqual(["2026-09-19"]);
+    expect([...paidAheadDays([AUG_12, sep3, at("2026-09-08", 100_000)], flat, "bill")]).toEqual([]);
     // FPL's -$125.00 is one bill of a bill whose amounts vary: no day
     const fplDays = ["2026-07-10", "2026-07-28", "2026-08-28", "2026-09-28"];
     const fpl = [-1_421, -5_622, -5_887, -12_500].map((c, i) => at(fplDays[i]!, c));

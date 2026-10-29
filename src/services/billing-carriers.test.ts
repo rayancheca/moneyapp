@@ -546,7 +546,7 @@ describe("the nearer due day wins (decision 76)", () => {
      * Aug 11 and Sep 11 missed, Sep 19 dropped Oct 11 from Upcoming and October's forecast on Sep 25 and left August ✕;
      * Sep 11 and Oct 11 missed, Oct 20 drew Nov 11 "paid early by its payment of Oct 20, 2026" and left Sep 11 ✕.
      */
-    test("…after TWO missed charges, a late one pays both of them — never a day still to come", () => {
+    test("…after TWO missed charges in a row, a late one pays both of them — never a day still to come", () => {
       // Aug 11 AND Sep 11 missed: Sep 19 pays Sep 11 late, its own, and Aug 11 behind it — never Oct 11
       expect(graded(augMissed(twice("2026-09-19")), PREMIUM, days)).toEqual([
         ["2026-08-11", "2026-09-19"],
