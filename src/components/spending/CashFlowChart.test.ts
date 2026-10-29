@@ -1,5 +1,6 @@
-import { createElement } from "react";
+import { createElement, isValidElement, type ReactElement, type ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
+import { ComposedChart, Line, type DotItemDotProps } from "recharts";
 import { describe, expect, test, vi } from "vitest";
 import type { CashFlow, CashFlowBucket, SpendingProjection } from "@/services/spending";
 import { CashFlowBucketTooltip, CashFlowChart } from "./CashFlowChart";
@@ -209,5 +210,144 @@ describe("CashFlowChart's tooltip — a bucket no day of which is checked where 
     expect(text).toBe(
       "04nothing found so far — spending imported through Aug 12the day has not been checked in the accounts that pay lands in",
     );
+  });
+});
+
+/*
+ * ⚖️ The Net line draws a bucket's Net only where its hover and the table print one (`bucketNetMeasured`): not past the
+ * ledger's ends (S11), not where no spending was found past the day all of it is read through (decisions 64 + 72), not
+ * where no income was found and not one day is checked where his pay lands (§6A 68). 🔴 His ledger copy 2026-10-29
+ * (`cashFlowByPeriod` at today 2026-10-29; Wells Fargo checked through Sep 24, spending imported through Aug 12):
+ * `/spending` drew October's Net through Oct 1–14 at −$216.61 … −$48.19 and on flat at $0.00 through Oct 15–31, and
+ * `?period=2026-08` drew Aug 30 at $0.00 — each a bucket its hover and its table give no Net. Every figure below is that
+ * reading's.
+ */
+describe("CashFlowChart's Net line — drawn only where its hover prints a Net", () => {
+  type LineProps = { dataKey: string; stroke: string; dot: unknown };
+  type ChartRow = { key: string; net: number | null };
+
+  /** the element tree's elements of one component, in the order the chart declares them — read off the tree, no DOM */
+  function elementsOf<P>(node: ReactNode, type: unknown): ReactElement<P>[] {
+    if (Array.isArray(node)) return node.flatMap((n: ReactNode) => elementsOf<P>(n, type));
+    if (!isValidElement<{ children?: ReactNode }>(node)) return [];
+    const own = node.type === type ? [node as unknown as ReactElement<P>] : [];
+    return [...own, ...elementsOf<P>(node.props.children, type)];
+  }
+
+  const day = (key: string, over: Partial<CashFlowBucket> = {}): CashFlowBucket => ({
+    key,
+    label: key.slice(8),
+    from: key,
+    to: key,
+    income: {},
+    spending: {},
+    incomeCents: 0,
+    spendingCents: 0,
+    refundsCents: 0,
+    netCents: 0,
+    unreached: null,
+    spendingUnaccounted: null,
+    incomeUnread: false,
+    ...over,
+  });
+  const month = (key: string, over: Partial<CashFlowBucket> = {}): CashFlowBucket => ({
+    ...day(key, over),
+    label: key === "2026-10" ? "Oct" : key === "2026-11" ? "Nov" : "Dec",
+    from: `${key}-01`,
+    to: `${key}-${key === "2026-11" ? 30 : 31}`,
+  });
+  const dataOf = (buckets: CashFlowBucket[]): CashFlow => ({ ...SEPTEMBER, buckets, pace: null });
+  const chartOf = (buckets: CashFlowBucket[]): ReactNode => CashFlowChart({ data: dataOf(buckets), projection: null });
+  const netsOf = (buckets: CashFlowBucket[]): (number | null)[] => {
+    const charts = elementsOf<{ data: ChartRow[] }>(chartOf(buckets), ComposedChart);
+    expect(charts).toHaveLength(1);
+    return charts[0]!.props.data.map((r) => r.net);
+  };
+  const netLineOf = (buckets: CashFlowBucket[]): ReactElement<LineProps> =>
+    elementsOf<LineProps>(chartOf(buckets), Line).find((l) => l.props.dataKey === "net")!;
+  /** what the line's `dot` draws at one point, given the props recharts passes it */
+  function dotAt(line: ReactElement<LineProps>, index: number): string {
+    expect(typeof line.props.dot).toBe("function");
+    const props: DotItemDotProps = {
+      index,
+      cx: 40 + index * 10,
+      cy: 20,
+      points: [],
+      payload: {},
+      dataKey: "net",
+      value: null,
+    };
+    const drawn = (line.props.dot as (p: DotItemDotProps) => ReactNode)(props);
+    return renderToStaticMarkup(createElement("svg", null, drawn));
+  }
+  const hoverOf = (b: CashFlowBucket): string =>
+    textOf(renderToStaticMarkup(createElement(CashFlowBucketTooltip, { bucket: b, ghostCents: null })));
+
+  const FOUND_NOTHING = "spending imported through Aug 12";
+  const october = [
+    day("2026-10-01", { spendingCents: 21_661, netCents: -21_661, incomeUnread: true }),
+    day("2026-10-04", { spendingUnaccounted: FOUND_NOTHING, incomeUnread: true }),
+    day("2026-10-14", { spendingCents: 4_819, netCents: -4_819, incomeUnread: true }),
+    day("2026-10-15", { unreached: "after-records" }),
+    day("2026-10-30", { unreached: "future" }),
+  ];
+  const september = [
+    day("2026-09-23", { incomeCents: 456_768, spendingCents: 3_440, netCents: 453_328 }),
+    day("2026-09-24", { incomeCents: 114_192, spendingCents: 25_261, netCents: 88_931 }),
+    day("2026-09-25", { spendingCents: 5_863, netCents: -5_863, incomeUnread: true }),
+    day("2026-09-26", { spendingCents: 42_259, netCents: -42_259, incomeUnread: true }),
+  ];
+  const august = [
+    day("2026-08-28", { spendingCents: 9_412, netCents: -9_412 }),
+    day("2026-08-29", { spendingCents: 20_713, netCents: -20_713 }),
+    day("2026-08-30", { spendingUnaccounted: FOUND_NOTHING }),
+    day("2026-08-31", { incomeCents: 90, spendingCents: 33_703, netCents: -33_613 }),
+  ];
+
+  test("a bucket its hover gives no Net carries no point, and every Net it prints is drawn", () => {
+    expect(netsOf(october)).toEqual([null, null, null, null, null]);
+    expect(netsOf(september)).toEqual([453_328, 88_931, null, null]);
+    expect(netsOf(august)).toEqual([-9_412, -20_713, null, -33_613]);
+    // the day before his records begin (his first row is Aug 25, 2022) draws no $0.00 either
+    expect(netsOf([day("2022-08-24", { unreached: "before-records" })])).toEqual([null]);
+  });
+
+  // ⛔ the one rule (`bucketNetMeasured`): the line draws a point exactly where the hover prints a Net figure
+  test("the hover prints a Net figure exactly where the line draws one", () => {
+    const buckets = [day("2022-08-24", { unreached: "before-records" }), ...august, ...september, ...october];
+    const printed = buckets.map((b) => {
+      const hover = hoverOf(b);
+      return hover.includes("Net") && !hover.includes("Net—");
+    });
+    expect(printed).toEqual(netsOf(buckets).map((n) => n !== null));
+  });
+
+  test("a Net between two undrawn ones is marked, as the graph lens marks a lone point", () => {
+    // Aug 30 holds no spending past Aug 12, so Aug 31's Net is a point no segment reaches
+    const net = netLineOf(august);
+    expect([0, 1, 2, 3].map((i) => dotAt(net, i).includes("<circle"))).toEqual([false, false, false, true]);
+    expect(dotAt(net, 3)).toContain(`fill="${net.props.stroke}"`);
+  });
+
+  /* ⚖️ §6A 68: a legend naming a line left undrawn says why, as the graph lens's does — in the table's words */
+  test("a Net left undrawn for income nobody has looked for says why under the legend", () => {
+    const captionOf = (buckets: CashFlowBucket[]): string =>
+      textOf(renderToStaticMarkup(createElement(CashFlowChart, { data: dataOf(buckets), projection: null })));
+    expect(captionOf(october)).toContain(
+      "Net is not drawn where the day has not been checked in the accounts that pay lands in.",
+    );
+    // a year's or a quarter's months say it of the month — his copy's Q4 2026
+    const q4 = [
+      month("2026-10", { spendingCents: 160_300, netCents: -160_300, incomeUnread: true }),
+      month("2026-11", { unreached: "future" }),
+      month("2026-12", { unreached: "future" }),
+    ];
+    expect(captionOf(q4)).toContain(
+      "Net is not drawn where not one day of the month has been checked in the accounts that pay lands in.",
+    );
+    // past the ledger's ends the line simply ends, as the graph's do, and a day skipped for spending its hover says
+    expect(captionOf(august)).not.toContain("is not drawn");
+    const toTheFrontier = [...september.slice(0, 2), day("2026-09-27", { unreached: "after-records" })];
+    expect(captionOf(toTheFrontier)).not.toContain("is not drawn");
   });
 });

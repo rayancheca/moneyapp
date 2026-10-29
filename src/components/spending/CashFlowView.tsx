@@ -2,6 +2,7 @@
 
 import { type ReactNode } from "react";
 import { useViewState } from "@/hooks/useViewState";
+import { bucketNetMeasured } from "@/lib/cash-flow-net";
 import { unreachedDashNote } from "@/lib/empty-period";
 import { noIncomeDayCheckedOf } from "@/lib/unbanked-income";
 import { type ViewState } from "@/lib/view-state";
@@ -152,7 +153,13 @@ export function CashFlowView({
           },
         ]
       : []),
-    { key: "net", header: "Net", align: "right", render: (r) => incomeFigure(r, formatCentsSigned(r.netCents)) },
+    // ⛔ the chart's hover's and its Net line's rule, never a third (`bucketNetMeasured`)
+    {
+      key: "net",
+      header: "Net",
+      align: "right",
+      render: (r) => (bucketNetMeasured(r) ? formatCentsSigned(r.netCents) : dash),
+    },
     ...(hasGhost
       ? [
           {

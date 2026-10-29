@@ -157,7 +157,8 @@ export interface CashFlowBucket {
    * and the graph's running totals read them, and a null in any of those would
    * move a number nobody asked to move. The tile's staircase and the graph's
    * lines read THIS field to stop drawing (`plottedRunningTotals`); no figure
-   * either prints changes.
+   * either prints changes. ⚖️ …and so does the chart lens's Net line, with the
+   * two fields below (`bucketNetMeasured`, 2026-10-29).
    */
   unreached: UnreachedKind | null;
   /**

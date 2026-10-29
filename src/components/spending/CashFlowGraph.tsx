@@ -143,8 +143,11 @@ const LONE_POINT_R = 3;
  *
  * ⛔ The prior period's line keeps `dot={false}`: it carries a figure at every
  * point or at none, so it is never broken into a lone point.
+ *
+ * ⚖️ …and the chart lens's Net line, broken wherever a bucket's Net is no measurement (`bucketNetMeasured`), marks its
+ * lone points the same way — on his ledger copy 2026-10-29, Aug 31, 2026, after Aug 30's "nothing found so far".
  */
-function lonePointDot(values: readonly (number | null)[], color: string): (props: DotItemDotProps) => ReactNode {
+export function lonePointDot(values: readonly (number | null)[], color: string): (props: DotItemDotProps) => ReactNode {
   return function LonePoint({ index, cx, cy }) {
     if (!isLonePoint(values, index) || typeof cx !== "number" || typeof cy !== "number") return null;
     return <circle cx={cx} cy={cy} r={LONE_POINT_R} fill={color} />;
