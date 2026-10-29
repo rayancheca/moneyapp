@@ -1,4 +1,10 @@
-import { spendUnread, spentOnlyFromCashWallets, type BudgetCoverageInput } from "./budget-coverage";
+import {
+  budgetCoverageSentence,
+  spendIsAFloor,
+  spendUnread,
+  spentOnlyFromCashWallets,
+  type BudgetCoverageInput,
+} from "./budget-coverage";
 import { BUDGET_JARGON } from "./jargon";
 
 /**
@@ -62,6 +68,13 @@ export interface BudgetVerdict {
    * "—", the plan stands, and the bar carries no measured value (`lib/budget-coverage::spendUnread`). Always withheld.
    */
   unread: boolean;
+  /**
+   * The figures are floors (`lib/budget-coverage::spendIsAFloor`): days of the window are unread, and a statement still
+   * to come can only add to what the row prints. A fact about the window, not a reading — so true of a withheld row
+   * read in part and ⚖️ of an OVER one (default built, not asked, 2026-10-29), whose verdict stands. Either prints its
+   * coverage sentence under the headline (`budgetCoverageLine`) and speaks its spend as "at least" what it shows.
+   */
+  floors: boolean;
 }
 
 const LABEL: Record<BudgetPaceKind, string> = {
@@ -83,7 +96,8 @@ export interface BudgetVerdictInput extends Pick<BudgetCoverageInput, "spentFrom
 }
 
 export function budgetVerdict(input: BudgetVerdictInput): BudgetVerdict {
-  const { pace, pct, uncoveredDays } = input;
+  const { pace, pct } = input;
+  const floors = spendIsAFloor(input);
   if (pace === "over") {
     // The headline % must say WHAT it measures: 108% of a budget is "over BY
     // 8%", never "over budget · 108%", which reads as 108% over. Under one
@@ -97,6 +111,12 @@ export function budgetVerdict(input: BudgetVerdictInput): BudgetVerdict {
       withheld: false,
       showsProjection: false,
       unread: false,
+      /*
+       * ⚖️ default built, not asked (2026-10-29): the verdict stands over unread days, and its figures are floors all
+       * the same — the row carries the withheld row's line under it (`budgetCoverageLine`). 🔴 On his ledger copy
+       * 2026-10-29 his 5 over budgets printed no line over an October read through Aug 12 or Oct 2.
+       */
+      floors,
     };
   }
 
@@ -117,6 +137,7 @@ export function budgetVerdict(input: BudgetVerdictInput): BudgetVerdict {
       withheld: true,
       showsProjection: false,
       unread: false,
+      floors: false,
     };
   }
 
@@ -141,6 +162,7 @@ export function budgetVerdict(input: BudgetVerdictInput): BudgetVerdict {
        */
       showsProjection: false,
       unread: true,
+      floors: false,
     };
   }
 
@@ -150,9 +172,10 @@ export function budgetVerdict(input: BudgetVerdictInput): BudgetVerdict {
    * green "On track · 0% used" over an unimported month is the one failure mode
    * a budgeting tool cannot afford, so the verdict is withheld rather than
    * guessed. `over` is exempt above: already exceeding the budget on partial
-   * data is a fact more data cannot undo.
+   * data is a fact more data cannot undo — though not how far (`floors`).
+   * ⛔ The floor test itself (`spendIsAFloor`): past the two branches above it is `uncoveredDays > 0`.
    */
-  if (uncoveredDays > 0) {
+  if (floors) {
     return {
       headline: "Awaiting statements",
       explanation: BUDGET_JARGON.paceWithheld,
@@ -165,6 +188,7 @@ export function budgetVerdict(input: BudgetVerdictInput): BudgetVerdict {
        */
       showsProjection: false,
       unread: false,
+      floors: true,
     };
   }
 
@@ -175,5 +199,21 @@ export function budgetVerdict(input: BudgetVerdictInput): BudgetVerdict {
     withheld: false,
     showsProjection: true,
     unread: false,
+    floors: false,
   };
+}
+
+/**
+ * The line a budget row prints under its headline — the row's coverage sentence (`budgetCoverageSentence`) — or null:
+ * wherever the verdict is withheld, and ⚖️ wherever the figures are floors (default built, not asked, 2026-10-29), so
+ * an OVER row read in part says which days it stands on, as the withheld rows beside it do.
+ *
+ * ⛔ One rule for every surface that prints a budget row's verdict and figures: /budgets' row (`BudgetRow`) and the
+ * category page's card (`categoryBudgetRef`). 🔴 Both printed the line only while the verdict was withheld: on his
+ * ledger copy 2026-10-29 Shopping read "Over budget by 23%" over "Spent $343.82 · Budget $280.00 · Over by $63.82" on
+ * /budgets, and "$343.82 of $280.00 · $63.82 over" on its page — October read through Aug 12 on both, said on neither.
+ */
+export function budgetCoverageLine(row: BudgetVerdictInput & BudgetCoverageInput): string | null {
+  const verdict = budgetVerdict(row);
+  return verdict.withheld || verdict.floors ? budgetCoverageSentence(row) : null;
 }

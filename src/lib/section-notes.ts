@@ -1,5 +1,5 @@
 import { arrearsTail, NOT_POSTED } from "./arrears-reading";
-import { spendUnread, spentOnlyFromCashWallets, type BudgetCoverageInput } from "./budget-coverage";
+import { spendIsAFloor, spendUnread, spentOnlyFromCashWallets, type BudgetCoverageInput } from "./budget-coverage";
 import { formatCategoryPath } from "./category-path";
 import { isStaleClose, newestQuotedOn } from "./holding-price-age";
 import { formatCents } from "./money";
@@ -187,6 +187,9 @@ export function budgetSectionNotes(input: BudgetNoteInput): SectionNote[] {
   // ⚖️ So is a row spent only from cash wallets (owner, 2026-09-15): no statement
   // is coming for it, so it is not grading days the ledger has yet to reach — and
   // the test is the row's own, `spentOnlyFromCashWallets`.
+  // ⚖️ An over row's figures are floors all the same where its days are unread, and
+  // the clause after the count says so (`overReadInPart`, default built, not asked,
+  // 2026-10-29).
   const uncovered = input.rows.filter(
     (r) => r.uncoveredDays > 0 && r.pace !== "over" && !spentOnlyFromCashWallets(r),
   );
@@ -239,11 +242,31 @@ export function budgetSectionNotes(input: BudgetNoteInput): SectionNote[] {
       id: "budgets-coverage",
       body:
         `${uncovered.length} of ${input.rows.length} budgets are grading days the ledger has not ` +
-        `reached — ${tied ? `${days} each` : `up to ${days} on ${worst.categoryPath}`}. ${shown}`,
+        `reached — ${tied ? `${days} each` : `up to ${days} on ${worst.categoryPath}`}. ${shown}` +
+        overReadInPart(input.rows.filter((r) => r.pace === "over" && spendIsAFloor(r)).length),
     });
   }
 
   return notes;
+}
+
+/**
+ * " The 5 over their plans are grading such days too, so each is over by at least what it shows." — or "" where no
+ * over row's figures are floors.
+ *
+ * ⚖️ default built, not asked (2026-10-29): the count above keeps counting the rows whose verdict is withheld, and
+ * this keeps it from reading as "the rest are read in full". 🔴 Measured on his ledger copy 2026-10-29: "7 of 12
+ * budgets are grading days the ledger has not reached — 29 days each. No verdict is shown for any of them: …" beside
+ * 5 rows reading "Over budget by N%" over the same October — Health and Travel read through Oct 2, Entertainment,
+ * Shopping and Subscriptions through Aug 12. ⛔ The rows' own test (`spendIsAFloor`), so the clause counts exactly
+ * the over rows that print their line (`budgetCoverageLine`). Said only beside that count: with no withheld row there
+ * is no count to correct, and each over row carries its own line.
+ */
+function overReadInPart(n: number): string {
+  if (n === 0) return "";
+  return n === 1
+    ? " The one over its plan is grading such days too, so it is over by at least what it shows."
+    : ` The ${n} over their plans are grading such days too, so each is over by at least what it shows.`;
 }
 
 export interface HoldingPriceNoteInput {

@@ -32,7 +32,8 @@ function leftTone(budget: CategoryBudgetRef): string | undefined {
  *
  * While that row's verdict is withheld the card says so in the row's own words — the headline ("Awaiting statements",
  * "Cash only") and the row's coverage sentence under it — and calls nothing healthy. A measured window keeps the
- * figures and colours it always had.
+ * figures and colours it always had. ⚖️ An over row read in part keeps them too, with the row's line under the window
+ * (`budgetCoverageLine`, default built, not asked, 2026-10-29): its "over" is a floor, as /budgets says.
  *
  * ⛔ Not the definition /budgets puts beside that headline: every one of them ends on the bar's anatomy ("the dark mark
  * is how far through the period you are"), and this card draws no bar — a definition of a mark the reader cannot see

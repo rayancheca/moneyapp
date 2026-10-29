@@ -13,8 +13,7 @@ import { categories } from "@/db/schema/categories";
 import { institutions } from "@/db/schema/institutions";
 import { recurringSeries } from "@/db/schema/recurring";
 import { transactions, type TransactionStatus } from "@/db/schema/transactions";
-import { budgetCoverageSentence } from "@/lib/budget-coverage";
-import { budgetVerdict } from "@/lib/budget-verdict";
+import { budgetCoverageLine, budgetVerdict } from "@/lib/budget-verdict";
 import { periodBounds } from "@/lib/dates";
 import { formatDayLong } from "@/lib/format-date";
 import { dedupeHash } from "@/lib/hash";
@@ -752,8 +751,8 @@ describe("⚖️ §6A 49 — a category page asks its own imported-through day",
    * `/categories/<Housing>` headlined "— October 2026 has not been imported yet" and, one card below, "monthly budget ·
    * grading Oct 1 – Oct 31 · $0.00 of $2,291.21 · $2,291.21 left" in `text-positive` — while the same row on /budgets
    * read "Awaiting statements" over "spending imported through Aug 12 · 12 days of this period unaccounted". All 12 of
-   * his budgets read the same way. ⛔ The card carries its /budgets row's verdict (`budgetVerdict`) and sentence
-   * (`budgetCoverageSentence`), read off the one pace status /budgets builds for that row — never a second rule.
+   * his budgets read the same way. ⛔ The card carries its /budgets row's verdict (`budgetVerdict`) and line
+   * (`budgetCoverageLine`), read off the one pace status /budgets builds for that row — never a second rule.
    */
   test("the budget card reads its /budgets row's verdict and coverage sentence, from that row's own pace status", () => {
     const { walletId } = carLedger();
@@ -774,7 +773,7 @@ describe("⚖️ §6A 49 — a category page asks its own imported-through day",
       const verdict = budgetVerdict(row);
       // one rule: the card's reading IS the row's, word for word
       expect(ref.verdict, `${categoryPath} @ ${refDate}`).toEqual(verdict);
-      expect(ref.coverageSentence, `${categoryPath} @ ${refDate}`).toBe(verdict.withheld ? budgetCoverageSentence(row) : null);
+      expect(ref.coverageSentence, `${categoryPath} @ ${refDate}`).toBe(budgetCoverageLine(row));
       // …and its colour is the row's pace, the one /budgets' headline wears (never `alert`'s 80% line)
       expect(ref.pace, `${categoryPath} @ ${refDate}`).toBe(row.pace);
       return ref;
@@ -792,11 +791,12 @@ describe("⚖️ §6A 49 — a category page asks its own imported-through day",
       verdict: { headline: "Cash only", withheld: true, unread: false },
       coverageSentence: "spent only from a cash wallet since Apr 1 — no statement will ever cover it",
     });
-    // past the line on partial data is a fact more data cannot undo: graded, not withheld
+    // past the line on partial data is a fact more data cannot undo: graded, not withheld — ⚖️ and its figures are
+    // floors, so the card carries the row's line under it (default built, not asked, 2026-10-29)
     expect(both("Transport", "2026-09-30")).toMatchObject({
       alert: "over",
-      verdict: { headline: "Over budget by 19%", withheld: false },
-      coverageSentence: null,
+      verdict: { headline: "Over budget by 19%", withheld: false, floors: true },
+      coverageSentence: "spending imported through Aug 12 · 30 days of this period unaccounted",
     });
     // every elapsed day read (Fees through Aug 12, graded Aug 1 – 10): a measurement, and no coverage sentence
     expect(both("Fees", "2026-08-10")).toMatchObject({
@@ -886,7 +886,7 @@ describe("⚖️ §6A 49 — a category page asks its own imported-through day",
       const ref = categoryBudgetRef(bundle.db, catId(categoryPath), refDate)!;
       // one rule: the card is its /budgets row, word for word
       expect(ref.verdict).toEqual(budgetVerdict(row));
-      expect(ref.coverageSentence).toBe(ref.verdict.withheld ? budgetCoverageSentence(row) : null);
+      expect(ref.coverageSentence).toBe(budgetCoverageLine(row));
       // ⚖️ §6A 64 — and over a window holding no rows, the card prints a dash exactly where the headline over it does
       expect(row.txnCount).toBe(0);
       expect(ref.verdict.unread, `${categoryPath} @ ${refDate}`).toBe(copy.figure === "dash");

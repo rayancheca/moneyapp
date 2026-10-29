@@ -200,6 +200,34 @@ export function spendUnread(
 }
 
 /**
+ * The row's spend and percentage are FLOORS: elapsed days of its window are past the day it is read through, so a
+ * statement still to come can only add to them — and there is a figure to floor (not §6A 64's dash, `spendUnread`) and
+ * a statement that can come (not a row spent only from cash wallets, ⚖️ 2026-09-15, whose typed rows are what was
+ * recorded).
+ *
+ * ⚖️ default built, not asked (2026-10-29): whatever the row's verdict — an OVER row included. Past the line on partial
+ * data is a fact more data cannot undo, and the verdict stands (`budgetVerdict`); how far past it is a floor like any
+ * other. 🔴 Measured on his ledger copy 2026-10-29: all 12 of his monthly budgets had days of October unread — Health
+ * and Travel read through Oct 2 (27 days), the other ten through Aug 12 (29) — and the 5 over budget (Entertainment
+ * $38.18 of $15.00, Health $375.59 of $135.00, Shopping $343.82 of $280.00, Subscriptions $207.58 of $15.00, Travel
+ * $288.80 of $140.00) printed their Spent and "Over by" with no line, as measurements, beside withheld rows whose same
+ * unread days the page called floors.
+ *
+ * ⛔ One test for the row's verdict (`budgetVerdict`'s `floors`), its line and spoken sentence (`BudgetRow`), the
+ * category page's card and the page note (`budgetSectionNotes`).
+ */
+export function spendIsAFloor(
+  input: Pick<BudgetCoverageInput, "spentFromAccounts" | "spentFromWallets" | "uncoveredDays"> & {
+    /** not one elapsed day of the window has been read by the row's own day (`BudgetPaceStatus.noDayRead`) */
+    noDayRead: boolean;
+    /** the rows found in the window (`BudgetStatus.txnCount`) */
+    txnCount: number;
+  },
+): boolean {
+  return input.uncoveredDays > 0 && !spentOnlyFromCashWallets(input) && !spendUnread(input);
+}
+
+/**
  * "spending imported through Sep 2".
  *
  * ⚠️ When no account has an import date, three different worlds, and only one of

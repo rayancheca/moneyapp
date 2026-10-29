@@ -43,11 +43,11 @@ test("every active budget renders a pace bar, and states a verdict only where co
   }
 
   // A row states a pace verdict ONLY where the ledger covers the window. In this
-  // fixture every budget has unaccounted days, so the two non-`over` rows report
+  // fixture every budget has unaccounted days, so the three non-`over` rows report
   // coverage instead — "On track · 0% used" over an unimported stretch is the one
   // failure mode a budgeting tool cannot afford, and suppressing it is the point.
   // `over` is deliberately exempt: money already spent is measured, not inferred,
-  // so Housing still speaks.
+  // so Housing still speaks — ⚖️ over its own coverage line (2026-10-29, below).
   await expect(page.getByText(/Over budget/).first()).toBeVisible();
   /*
    * ⚠️ The QUALIFIER is asserted, not just the count. The row used to read
@@ -74,15 +74,29 @@ test("every active budget renders a pace bar, and states a verdict only where co
   await expect(page.getByText(/Off pace/)).toHaveCount(0);
 });
 
-test("a budget whose window the ledger covers DOES state its pace", async ({ page }) => {
+test("an over budget states its verdict over unread days, and says which days its figures are floors over", async ({
+  page,
+}) => {
   // the other half of the contract above: suppression must be driven by coverage,
-  // not be a blanket silence. Housing is `over` and therefore always speaks; this
-  // pins that a verdict and a coverage note are mutually exclusive per row.
+  // not be a blanket silence. Housing is `over` and therefore always speaks.
+  /*
+   * ⚖️ default built, not asked (2026-10-29): …and its Spent and "Over by" stand on Jul 1 – 5 alone, so it carries
+   * the withheld rows' line under its verdict, and its bar speaks its spend as a floor. 🔴 It printed no line — this
+   * test pinned a verdict and a coverage line as mutually exclusive — and on his ledger copy 2026-10-29 his 5 over
+   * budgets read as measurements over an October read through Aug 12 or Oct 2.
+   */
   await page.goto("/budgets");
   const housing = budgetRow(page, "Housing");
   await expect(housing).toBeVisible();
   await expect(housing.getByText(/Over budget/)).toBeVisible();
-  await expect(housing.getByText(/unaccounted/)).toHaveCount(0);
+  await expect(housing.getByText("spending imported through Jul 5 · 3 days of this period unaccounted")).toBeVisible();
+  await expect(housing.getByText("Awaiting statements")).toHaveCount(0);
+  const bar = housing.getByRole("progressbar");
+  await expect(bar).toHaveAttribute("aria-valuetext", /^Housing: at least \$2,150\.00 of \$2,000\.00 \(/);
+  await expect(bar).toHaveAttribute(
+    "aria-valuetext",
+    /\. over budget by at least \$150\.00 — spending imported through Jul 5 · 3 days of this period unaccounted\./,
+  );
 });
 
 test("the month header compares what is budgeted against expected income", async ({ page }) => {
@@ -328,6 +342,10 @@ test("the page states what it noticed across rows, measured and without a verdic
   // asserted over a window the ledger has not covered
   await expect(notes.getByText(/lower bounds/)).toBeVisible();
   await expect(notes.getByText(/On track|Off pace|projected/i)).toHaveCount(0);
+  // ⚖️ …and the count of 3 does not call Housing, over its plan on Jul 1 – 5 alone, read in full (2026-10-29)
+  await expect(
+    notes.getByText(/\. The one over its plan is grading such days too, so it is over by at least what it shows\.$/),
+  ).toBeVisible();
 });
 
 /**

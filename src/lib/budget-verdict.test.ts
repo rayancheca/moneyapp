@@ -1,5 +1,6 @@
 import { describe, expect, test } from "vitest";
-import { budgetVerdict, type BudgetVerdictInput } from "./budget-verdict";
+import type { BudgetCoverageInput } from "./budget-coverage";
+import { budgetCoverageLine, budgetVerdict, type BudgetVerdictInput } from "./budget-verdict";
 import { BUDGET_JARGON } from "./jargon";
 
 const verdict = (over: Partial<BudgetVerdictInput> = {}) =>
@@ -280,5 +281,81 @@ describe("budgetVerdict", () => {
     // at >=. They disagree at exactly 100% — where the bar has just filled.
     expect(verdict({ pace: "over", pct: 1 }).barIsFull).toBe(true);
     expect(verdict({ pace: "at-risk", pct: 0.999 }).barIsFull).toBe(false);
+  });
+
+  /*
+   * ⚖️ default built, not asked (2026-10-29): an over row whose window has days unread keeps its verdict — past the
+   * line on partial data is a fact more data cannot undo — and its figures are floors: how FAR past the line can only
+   * grow. 🔴 Measured on his ledger copy 2026-10-29: Shopping "Over budget by 23%" ($343.82 of $280.00) over an
+   * October its accounts are read through Aug 12 for, its Spent and "Over by" read as measurements beside the four
+   * withheld rows whose same 29 days were called floors.
+   */
+  describe("⚖️ an over row read in part — the verdict stands, its figures are floors", () => {
+    test("the headline, its definition and the full bar are the over row's — and its figures are floors", () => {
+      const v = verdict({ pace: "over", pct: 343.82 / 280, uncoveredDays: 29, noDayRead: true, txnCount: 8 });
+      expect(v.headline).toBe("Over budget by 23%");
+      expect(v.explanation).toBe(BUDGET_JARGON.paceOver);
+      expect(v.withheld).toBe(false);
+      expect(v.barIsFull).toBe(true);
+      expect(v.showsProjection).toBe(false);
+      expect(v.floors).toBe(true);
+    });
+
+    test("read whole, or spent only from cash, an over row's figures are measurements", () => {
+      expect(verdict({ pace: "over", pct: 1.08 }).floors).toBe(false);
+      // ⚖️ 2026-09-15: cash already past the line is what was recorded, and no statement is coming to add to it
+      expect(verdict({ pace: "over", pct: 1.3, uncoveredDays: 15, ...CASH_ONLY }).floors).toBe(false);
+    });
+
+    test("a floor is the window's fact, not the verdict's: a withheld row read in part is one too", () => {
+      expect(verdict({ uncoveredDays: 3 }).floors).toBe(true);
+      expect(verdict({ ...UNREAD, txnCount: 2 }).floors).toBe(true);
+      // ⚖️ §6A 64's dash floors nothing; a wallet waits for no statement; a window read whole is measured
+      expect(verdict(UNREAD).floors).toBe(false);
+      expect(verdict({ uncoveredDays: 15, ...CASH_ONLY }).floors).toBe(false);
+      expect(verdict({ pace: "under" }).floors).toBe(false);
+      expect(verdict({ pace: "at-risk" }).floors).toBe(false);
+    });
+  });
+});
+
+/*
+ * ⛔ One rule for every surface that prints a budget row: /budgets' row and the category page's card print the same line
+ * under the same verdict. 🔴 Both printed it only while the verdict was withheld, so an over row read in part printed
+ * none (his ledger copy 2026-10-29: Entertainment, Health, Shopping, Subscriptions and Travel, on both surfaces).
+ */
+describe("budgetCoverageLine — the line a budget row prints under its headline", () => {
+  /** a row read through Aug 12, graded over October — ten of his twelve budgets on his ledger copy 2026-10-29 */
+  type Row = BudgetVerdictInput & BudgetCoverageInput;
+  const row = (over: Partial<Row> = {}): Row => ({
+    pace: "under",
+    pct: 0.4,
+    uncoveredDays: 29,
+    spentFromAccounts: 2,
+    spentFromWallets: 0,
+    noDayRead: true,
+    txnCount: 8,
+    importedThroughOn: "2026-08-12",
+    spentFromSince: "2026-04-01",
+    bounds: { start: "2026-10-01" },
+    ...over,
+  });
+  const LINE = "spending imported through Aug 12 · 29 days of this period unaccounted";
+
+  test("a withheld row prints its coverage sentence, and so does an over row read in part", () => {
+    expect(budgetCoverageLine(row())).toBe(LINE);
+    expect(budgetCoverageLine(row({ pace: "over", pct: 343.82 / 280 }))).toBe(LINE);
+    // §6A 64's dash and a cash-only row keep the lines they print today
+    expect(budgetCoverageLine(row({ txnCount: 0 }))).toBe(LINE);
+    expect(budgetCoverageLine(row({ spentFromAccounts: 0, spentFromWallets: 1, importedThroughOn: null }))).toBe(
+      "spent only from a cash wallet since Apr 1 — no statement will ever cover it",
+    );
+  });
+
+  test("a graded row, an over row read whole, and cash already past the line print none", () => {
+    const cash = { spentFromAccounts: 0, spentFromWallets: 1, importedThroughOn: null };
+    expect(budgetCoverageLine(row({ uncoveredDays: 0, noDayRead: false }))).toBeNull();
+    expect(budgetCoverageLine(row({ pace: "over", pct: 1.08, uncoveredDays: 0, noDayRead: false }))).toBeNull();
+    expect(budgetCoverageLine(row({ pace: "over", pct: 1.3, ...cash }))).toBeNull();
   });
 });
