@@ -839,8 +839,8 @@ export interface UnreadMonths {
   /**
    * The day that leaves them out: for a spending window `spendingCoverageThrough` — the last day every account you
    * spend from has been imported through — and for the income pace's `incomeCoverage`, the last day every account that
-   * dates it has been: those its own rows come in on habitually that a statement is still coming for
-   * (`IncomeUnreadMonths` names them)
+   * dates it has been: those its own rows come in on habitually — before any account holds the habit, those still
+   * coming in when last read — that a statement is still coming for (`IncomeUnreadMonths` names them)
    */
   through: string;
 }
@@ -895,10 +895,10 @@ export function unreadMonthsSentence(unread: UnreadMonths | null): string | null
  * nothing out.
  *
  * ⚖️ Default built, not asked (2026-10-23): his decision 71 carried to the income pace (`incomePaceMonths`), whose day
- * is the accounts its own rows land in (`incomeCoverage`), not the ones he spends from — and not every account his
- * income lands in, so they are named (`IncomeUnreadMonths`). ⛔ ONE SENTENCE with spending's (`unreadMonthsSentence`),
- * only whose day it is told apart: /recurring's pace row prints the two side by side, and two spellings of one rule are
- * how two figures' words drift.
+ * is the accounts its own rows come in on habitually that a statement is still coming for (`incomeCoverage`), not the
+ * ones he spends from — and not every account his income lands in, so they are named (`IncomeUnreadMonths`). ⛔ ONE
+ * SENTENCE with spending's (`unreadMonthsSentence`), only whose day it is told apart: /recurring's pace row prints the
+ * two side by side, and two spellings of one rule are how two figures' words drift.
  */
 export function incomeUnreadMonthsSentence(unread: IncomeUnreadMonths | null): string | null {
   return leftOutSentence(unread, unread === null ? "" : accountsHave(unread.accounts));
@@ -977,8 +977,9 @@ export function guideWindowWords(window: {
  * ⚖️ His decision 71 (2026-10-13) covers the pace's three months as it covers the dashboard's six (`paceMonths`). Its
  * math table reads "3-mo avg" beside an October, and a reader takes that for Jul–Sep; so where they are not, the card
  * names them and why, in `baselineSpan`'s and the runway's words (`unreadMonthsSentence`). ⚠️ "Spending's": the income
- * pace ends at its own day — every account its own rows land in (`incomePaceMonths`, default built 2026-10-23) — and
- * names its months, and those accounts, in a sentence of its own (`incomePaceNote`).
+ * pace ends at its own day — every account its own rows come in on habitually that a statement is still coming for
+ * (`incomePaceMonths`, default built 2026-10-23) — and names its months, and those accounts, in a sentence of its own
+ * (`incomePaceNote`).
  *
  * ⛔ AND A PACE OF NO MONTH IS NOT A PACE OF NOTHING. Where the floor leaves the window no month (`averagedMonths`), the
  * card holds the pace row's figures back and says so in the runway caption's sentence (`emptyWindowCaption`).

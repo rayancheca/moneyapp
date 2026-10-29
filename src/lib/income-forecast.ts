@@ -89,12 +89,12 @@ export function incomePaceMeasurable(months: number): boolean {
  *
  * ⚖️ Default built, not asked (2026-10-23) — his decision 71 (2026-10-13), "a month read to its 12th is not a twelfth
  * of a measurement", carried to the income pace (batch 6's option A): its months end at the last one every account its
- * own rows land in is read through to the end of (`incomePaceMonths`), and this names them as `spendPaceNote` names
- * spending's — and names those accounts (`IncomeUnreadMonths`), which are not every account his income lands in: a
- * live series' pay projects by its schedule. 🔴 Measured on his ledger copy (batch 6, at 2026-10-21): every Dividends
- * and Interest row the pace reads lands on Robinhood Cash, read to Sep 9, and the pace averaged the calendar's Jul–Sep
- * with nothing on the card saying so — read in full, Jun–Aug, the rest of October $11.49 → $18.02 and November $32.38
- * → $50.79.
+ * own rows come in on habitually that a statement is still coming for is read through to the end of
+ * (`incomePaceMonths`), and this names them as `spendPaceNote` names spending's — and names those accounts
+ * (`IncomeUnreadMonths`), which are not every account his income lands in: a live series' pay projects by its
+ * schedule. 🔴 Measured on his ledger copy (batch 6, at 2026-10-21): every Dividends and Interest row the pace reads
+ * lands on Robinhood Cash, read to Sep 9, and the pace averaged the calendar's Jul–Sep with nothing on the card saying
+ * so — read in full, Jun–Aug, the rest of October $11.49 → $18.02 and November $32.38 → $50.79.
  *
  * ⚖️ SPENDING's day is not Money in's: the accounts he spends from are not the ones his income lands in. So where
  * spending's day left Money in's months out of spending's alone (`spendUnread`, the spending pace's `UnreadMonths`),

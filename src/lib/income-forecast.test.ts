@@ -164,10 +164,11 @@ describe("incomePaceMeasurable / incomePaceNote — an income pace needs the gat
 
   /*
    * ⚖️ Default built, not asked (2026-10-23) — his decision 71 carried to the income pace: its months end at the last
-   * one every account its own rows land in is read through to the end of (`incomePaceMonths`). Where that day slid them
-   * back, the row names Money in's months and why, in the spending sentence's own words ("left out", "imported
-   * through"), as `spendPaceNote` names spending's — and names those accounts. 🔴 Measured on his ledger copy at
-   * 2026-10-21 (batch 6): the pace averaged Jul–Sep with Robinhood Cash read to Sep 9, and nothing on the card said so.
+   * one every account its own rows come in on habitually that a statement is still coming for is read through to the
+   * end of (`incomePaceMonths`). Where that day slid them back, the row names Money in's months and why, in the
+   * spending sentence's own words ("left out", "imported through"), as `spendPaceNote` names spending's — and names
+   * those accounts. 🔴 Measured on his ledger copy at 2026-10-21 (batch 6): the pace averaged Jul–Sep with Robinhood
+   * Cash read to Sep 9, and nothing on the card said so.
    */
   test("Money in's own frontier names its months and the day that left the later ones out", () => {
     const sep = { months: ["2026-09"], through: "2026-09-09", accounts: ["Robinhood Cash"] };

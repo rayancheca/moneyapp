@@ -634,13 +634,14 @@ describe("the pace row names the accounts Money in's pace reads, beside the pass
 
 /*
  * ⚖️ Default built, not asked (2026-10-23): only an account a statement is still coming for dates Money in's months
- * (`accountsAwaitingStatements` — not archived, not a cash wallet); where none of its earners is one, the calendar's
- * months stand and no note prints. An archived account is never imported again, and a wallet holds what he typed into
- * it: a month with nothing on either is a month nothing came in, never one waiting on a statement. 🔴 Review of 0747432
- * (MEDIUM), on a copy of his ledger with Robinhood Cash archived: Money in's months stayed Jun–Aug at every day asked,
- * 2026-10-23 … 2028-06-23 — "Sep 2026 to May 2028 are left out: Sep 9 is the last day Robinhood Cash has been imported
- * through." — and its Dividends $12.12–$13.19 and Interest $1.43–$1.55 were projected every month from the closed
- * account. With none awaited, `accountsThatDate` falls back to every one of them: spending's rule, kept for spending.
+ * (`accountsAwaitingStatements` — not archived, not a cash wallet); where none of the earners that would date them is
+ * one (its habitual earners; before any habit, those still coming in), the calendar's months stand and no note prints.
+ * An archived account is never imported again, and a wallet holds what he typed into it: a month with nothing on either
+ * is a month nothing came in on it, never one waiting on its statement. 🔴 Review of 0747432 (MEDIUM), on a copy of
+ * his ledger with Robinhood Cash archived: Money in's months stayed Jun–Aug at every day asked, 2026-10-23 …
+ * 2028-06-23 — "Sep 2026 to May 2028 are left out: Sep 9 is the last day Robinhood Cash has been imported through." —
+ * and its Dividends $12.12–$13.19 and Interest $1.43–$1.55 were projected every month from the closed account. With
+ * none awaited, `accountsThatDate` falls back to every one of them: spending's rule, kept for spending.
  */
 describe("an earner no statement is coming for never holds Money in's months back", () => {
   const DEC_TODAY = "2026-12-23"; // December: 31 days, 9 remaining including today
@@ -719,6 +720,31 @@ describe("an earner no statement is coming for never holds Money in's months bac
   });
 
   /*
+   * ⛔ …and an archived earner's habit is still a habit: the accounts still coming in when last read (`stillComingIn`,
+   * a young ledger's) date nothing in its place. 🔴 Review of f0b7b87 (LOW), the fix that suggests itself — asked of
+   * them where no habitual earner is awaited — measured on his ledger copy at 2026-10-29 with Robinhood Cash archived:
+   * SoFi Checking ($0.01 of Interest in May) and SoFi Savings ($0.10 on May 31), dormant by the habit and read through
+   * Jul 31, dated Money in's months — May–Jul, "Aug 2026 and Sep 2026 are left out: Jul 31 is the last day both SoFi
+   * Checking and SoFi Savings have been imported through." — for as long as SoFi goes unread, and the closed account's
+   * Dividends $40.38 and Interest $5.31 were projected every month. As built: Jul–Sep with no note, and from 2026-12-29
+   * no Dividends or Interest line.
+   */
+  test("a dormant earner read short dates nothing in an archived earner's place", () => {
+    ledger();
+    updateAccount(bundle.db, cashId, { isActive: false });
+    const savingsId = account("Savings", "savings");
+    row(savingsId, "2026-05-31", 10, "Interest");
+    readThrough(savingsId, "2026-07-31");
+
+    expect(incomePaceMonths(bundle.db, TODAY)).toEqual({ windows: JUL_TO_SEP, unread: null });
+    const f = forecastCurrentMonth(bundle.db, TODAY);
+    expect(f.incomePaceNote).toBeNull();
+    // Jul–Sep hold no Interest: May's dime is no part of the pace
+    expect(line(f, "Interest")).toBeUndefined();
+    expect(incomePaceMonths(bundle.db, DEC_TODAY)).toEqual({ windows: SEP_TO_NOV, unread: null });
+  });
+
+  /*
    * ⛔ Spending's day is unchanged: with no account he spends from left to read, an archived one's own last day still
    * dates it (`accountsThatDate`, /budgets' rule) — "it still says something true where nothing else could".
    */
@@ -728,5 +754,74 @@ describe("an earner no statement is coming for never holds Money in's months bac
     updateAccount(bundle.db, cashId, { isActive: false });
     expect(spendingCoverageThrough(bundle.db, TODAY)).toBe("2026-10-20");
     expect(incomePaceMonths(bundle.db, TODAY)).toEqual({ windows: JUL_TO_SEP, unread: null });
+  });
+});
+
+/*
+ * ⚖️ As built (2026-10-23), open to his call (2026-10-29): an earner holds Money in's months back once it holds the
+ * habit — its income in two of the three months before the newest complete one — and an archived earner still holds
+ * it, so beside one a successor not yet habitual holds nothing back, exactly as beside a live one, and its partly read
+ * month is averaged whole until it is. 🔴 Review of f0b7b87 (LOW): Brokerage Cash archived, New Cash — a statement
+ * still coming for it — read to Oct 25, its Oct 28 Interest not read yet: at 2026-11-23 Money in's pace read the
+ * calendar's Aug–Oct with no note, October's Interest averaged as none ("present 2/3 mo", $0.89 for Nov 23–30, where
+ * Jul–Sep read $1.33), while New Cash alone dates them (`stillComingIn`, a young ledger's): "Oct 2026 is left out:
+ * Oct 25 is the last day New Cash has been imported through." A month on it holds the habit, and it does.
+ */
+describe("a successor holds Money in's months back once it is habitual, its predecessor archived or not", () => {
+  const NOV_TODAY = "2026-11-23"; // November: 30 days, 8 remaining including today
+  const AUG_TO_OCT = ["2026-08", "2026-09", "2026-10"];
+
+  /**
+   * Brokerage Cash: Dividends $30.00 on the 15th and Interest $5.00 on the 28th of Jan–Aug, $0.07 on Sep 9. New Cash:
+   * Dividends $30.00 on Sep 20 and Oct 20, Interest $5.00 on Sep 28, read to Oct 25.
+   */
+  function successor(): void {
+    ledgerOpenedOn(bundle.db, "2026-01-01");
+    for (const m of [...MONTHS, "2026-09", "2026-10", "2026-11"]) row(checkingId, `${m}-05`, -10000, "Groceries");
+    readThrough(checkingId, "2026-11-20");
+    for (const m of MONTHS) {
+      row(cashId, `${m}-15`, 3000, "Dividends");
+      row(cashId, `${m}-28`, 500, "Interest");
+    }
+    row(cashId, "2026-09-09", 7, "Dividends");
+    const newCashId = account("New Cash", "checking");
+    row(newCashId, "2026-09-20", 3000, "Dividends");
+    row(newCashId, "2026-09-28", 500, "Interest");
+    row(newCashId, "2026-10-20", 3000, "Dividends");
+    readThrough(newCashId, "2026-10-25");
+  }
+
+  /** The calendar's Aug–Oct at 2026-11-23, no note, and October's unread Interest averaged as none. */
+  function readsTheCalendarsMonths(): void {
+    expect(incomePaceMonths(bundle.db, NOV_TODAY)).toMatchObject({ unread: null });
+    expect(incomePaceMonths(bundle.db, NOV_TODAY).windows.map((w) => w.key)).toEqual(AUG_TO_OCT);
+    const f = forecastCurrentMonth(bundle.db, NOV_TODAY);
+    // Aug–Oct's mean to the cent, then eight days of it — the engine's order
+    expect(line(f, "Interest")).toMatchObject({
+      cents: Math.round((Math.round((500 + 500) / 3) * 8) / 30),
+      detail: "avg of last 3 periods, present 2/3 mo, × 8/30 days",
+    });
+    expect(f.incomePaceNote).toBeNull();
+  }
+
+  test("beside an archived earner it dates nothing until it holds the habit, a month on", () => {
+    successor();
+    updateAccount(bundle.db, cashId, { isActive: false });
+    readsTheCalendarsMonths();
+
+    expect(incomePaceMonths(bundle.db, "2026-12-23")).toEqual({
+      windows: [
+        { start: "2026-07-01", end: "2026-07-31", key: "2026-07" },
+        { start: "2026-08-01", end: "2026-08-31", key: "2026-08" },
+        { start: "2026-09-01", end: "2026-09-30", key: "2026-09" },
+      ],
+      unread: { months: ["2026-10", "2026-11"], through: "2026-10-25", accounts: ["New Cash"] },
+    });
+  });
+
+  test("…as beside a live earner read through Oct 31: the archived one's history changes nothing", () => {
+    successor();
+    readThrough(cashId, "2026-10-31");
+    readsTheCalendarsMonths();
   });
 });

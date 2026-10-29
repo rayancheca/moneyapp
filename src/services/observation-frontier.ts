@@ -366,7 +366,8 @@ export function accountsThatDate(
 /**
  * Of `accountIds`, those a statement is still coming for (`accountsAwaitingStatements`) that have an import frontier —
  * `accountsThatDate`'s first choice, and the income pace's only one (`Habit.whenNoneIsAwaited`, movers-card): where
- * none of its earners is one, nothing dates Money in's months and the calendar's stand (default built 2026-10-23).
+ * none of the earners that would date Money in's months is one (its habitual earners; before any habit, those still
+ * coming in), nothing dates them and the calendar's stand (default built 2026-10-23).
  */
 export function awaitedAmong(
   frontier: ObservationFrontier,
