@@ -95,6 +95,104 @@ test.describe("the card deck", () => {
     expect(await frontHeading(page)).not.toBe(first);
   });
 
+  test("an arrow pressed on a link on the front card steps, and so does the next one", async ({ page }) => {
+    /*
+     * ⛔ The step sends the card holding the focus behind, where it is `inert`, and the browser drops a focus left
+     * inside an inert card to the page — where the next arrow steps nothing. So a step hands the focus to the deck
+     * (CardDeck.tsx); the keys it leaves alone are pinned in CardDeck.test.ts.
+     *
+     * 🔴 …and only the focus was read here: a deck that kept the card brought forward inert passed, and a Tab from the
+     * deck then skipped it for "Previous card" — every card after the first dead (the review of 04c5fd30). So each
+     * step also reads which card is live: the one brought forward, and not the one sent behind.
+     */
+    await page.goto("/?cards=deck");
+    const deck = page.locator(DECK);
+    const live = page.locator(`${SECTION} p[aria-live]`);
+    const slot = (n: number) => page.locator(`${DECK} > div`).nth(n);
+    await deck.scrollIntoViewIfNeeded();
+    await expect(live).toContainText("card 1 of");
+
+    await page.locator(`${DECK} > [aria-current="true"]`).getByRole("link").first().focus();
+    await page.keyboard.press("ArrowRight");
+    await expect(live).toContainText("card 2 of");
+    await expect(deck).toBeFocused();
+    await expect(slot(1)).toHaveAttribute("aria-current", "true");
+    await expect(slot(1)).not.toHaveAttribute("inert", "");
+    await expect(slot(0)).toHaveAttribute("inert", "");
+
+    await page.keyboard.press("ArrowRight");
+    await expect(live).toContainText("card 3 of");
+    await expect(deck).toBeFocused();
+    await expect(slot(2)).not.toHaveAttribute("inert", "");
+    await expect(slot(1)).toHaveAttribute("inert", "");
+  });
+
+  test("a trackpad swipe from the front card steps, and the arrows still step after it", async ({ page }) => {
+    /*
+     * 🔴 Only an arrow key handed the focus to the deck. A horizontal wheel — a trackpad's two-finger swipe — sent the
+     * card holding it behind, where it is `inert`, and the browser dropped it to <body>: after a click on Runway's
+     * "What Runway means", one swipe and ← → stepped nothing (the review of 04c5fd30, in headless Chromium). Every
+     * step hands it over now (CardDeck's `turn`); this presses the wheel itself, through the listener the page mounts.
+     */
+    await page.goto("/?cards=deck");
+    const deck = page.locator(DECK);
+    const live = page.locator(`${SECTION} p[aria-live]`);
+    await deck.scrollIntoViewIfNeeded();
+    await expect(live).toContainText("card 1 of");
+
+    await page.locator(`${DECK} > [aria-current="true"]`).getByRole("link").first().focus();
+    const box = await visibleBox(deck, "the card deck");
+    await page.mouse.move(box.x + box.width * 0.7, box.y + 60);
+    // the deck takes one step per burst, timed on the page's own clock from 0 (CardDeck's wheel lock): wait past it
+    await page.waitForFunction(() => performance.now() > 400);
+    await page.mouse.wheel(120, 0);
+    await expect(live).toContainText("card 2 of");
+    await expect(deck).toBeFocused();
+
+    await page.keyboard.press("ArrowRight");
+    await expect(live).toContainText("card 3 of");
+    await expect(deck).toBeFocused();
+  });
+
+  test("⛔ Tab walks the front card and then leaves the deck — never a card behind it", async ({ page }) => {
+    /*
+     * 🔴 The cards behind the front were kept out of the pointer only, and a Tab walked every link and button behind
+     * it — 16 links and 14 buttons behind Runway on his ledger copy, 2026-10-29; they are `inert` now. 🔴 And a key
+     * handler that took the focus for every key, not only a step, trapped Tab in the front card: DECK, "What Runway
+     * means", DECK, … (the review of d27f4f8f, on his ledger copy). Either one is a walk that stops somewhere other
+     * than the front card before it reaches the controls after the deck.
+     */
+    await page.goto("/?cards=deck");
+    const deck = page.locator(DECK);
+    await deck.scrollIntoViewIfNeeded();
+    await deck.focus();
+
+    const stops: { inDeck: boolean; onFront: boolean; name: string }[] = [];
+    // a bound, not a count: the front card's controls are the fixture's, and a trapped Tab never stops on its own
+    for (let press = 0; press < 80; press += 1) {
+      await page.keyboard.press("Tab");
+      const stop = await page.evaluate((deckSelector) => {
+        const el = document.activeElement;
+        const slot = el?.closest(`${deckSelector} > div`);
+        return {
+          inDeck: el !== null && (document.querySelector(deckSelector)?.contains(el) ?? false),
+          // on the front card and under nothing inert — never the deck itself, which a Tab forward has left
+          onFront: slot?.getAttribute("aria-current") === "true" && el?.closest("[inert]") === null,
+          name: (el?.getAttribute("aria-label") ?? el?.textContent ?? "").trim().slice(0, 60),
+        };
+      }, DECK);
+      stops.push(stop);
+      if (!stop.inDeck) break;
+    }
+
+    const inside = stops.filter((stop) => stop.inDeck);
+    expect(inside.length, "Tab never reached a control on the front card").toBeGreaterThan(0);
+    const offFront = inside.filter((stop) => !stop.onFront);
+    expect(offFront, "a Tab stop in the deck that is not on its front card").toEqual([]);
+    // and then out, to the first control after the deck
+    expect(stops.at(-1)).toMatchObject({ inDeck: false, name: "Previous card" });
+  });
+
   test("⚠️ dragging LEFT advances, and a short drag snaps back", async ({ page }) => {
     // backwards here is the most common way a carousel feels wrong, and it is
     // completely invisible in a screenshot
@@ -128,8 +226,10 @@ test.describe("the card deck", () => {
   test("⛔ nothing is lost — every card is still in the document", async ({ page }) => {
     /*
      * A stack that unmounted eleven cards would be a filter wearing an
-     * animation: gone from the accessibility tree, gone from find-in-page, and
-     * gone from anything that reads the page. The deck is PRESENTATION.
+     * animation: gone from the document, from the grid's count, and from
+     * anything that reads the page. The deck is PRESENTATION — a card behind
+     * the front is `inert` (covered, so out of the pointer, the Tab order and a
+     * screen reader's cursor; CardDeck.tsx) and its content hidden, never gone.
      */
     await page.goto("/?cards=deck");
     const inDeck = await page.locator(`${SECTION} h3`).count();

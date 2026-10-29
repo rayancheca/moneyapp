@@ -97,8 +97,10 @@ export function deckSlot(index: number, active: number, count: number): DeckSlot
    * A parked card is pushed further down and fully transparent rather than
    * `display: none`. Two reasons, and the second is the load-bearing one:
    * unmounting would throw away every card's DOM on each step, and a hidden
-   * card is invisible to the accessibility tree AND to anything that reads the
-   * page's text. The stack is a presentation, not a filter.
+   * card is invisible to anything that reads the page's text. The stack is a
+   * presentation, not a filter. (Every card behind the front, parked or not,
+   * is `inert` — covered, so out of the pointer, the Tab order and a screen
+   * reader's cursor; see CardDeck.)
    */
   const layer = Math.min(depth, VISIBLE_DEPTH + 1);
   return {
