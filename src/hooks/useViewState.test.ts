@@ -1302,6 +1302,41 @@ describe("Back/Forward to a page with view pills", () => {
     expect(ui.portfolio!.state).toMatchObject({ unit: "percent" });
   });
 
+  /**
+   * …and so is one whose landing is the link he followed meanwhile, made again (`landing`). 🔴 Review of 7898ee2 (batch
+   * 6, harness probe, the same at 74d20c9): the guard read a press going to its asked URL alone. Made again with nothing
+   * asked, the link is a move, so the provider drew its page again once Back's save landed — and the press, its write
+   * landing after, went again: the link's page rendered twice.
+   */
+  test("a view press gone at BACK_SAVE_WAIT_MS making a link again: once both land, drawn once more, not twice", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const page = await open(portfolioPage, "/investments?range=1Y");
+    ui.portfolio!.setView("view", "returns");
+    await page.settle();
+    page.back();
+    await idle(); // Back's save, held
+
+    ui.portfolio!.setView("unit", "percent"); // its write queued behind Back's save
+    await idle();
+    page.router.push("/investments?range=3M"); // a link that carries no view
+    await idle();
+    await page.serve("render");
+    await vi.advanceTimersByTimeAsync(BACK_SAVE_WAIT_MS);
+    await idle();
+    await page.serve("render"); // the press, gone at its bound: the link made again
+    expect(page.url).toBe("/investments?range=3M");
+    const before = page.navigations.length;
+    await page.serve("write"); // Back's save, late
+    await page.serve("write"); // and the press's own
+    const renders: string[] = [];
+    while (page.pending.length > 0) renders.push((await page.serve("render")).label);
+    expect(renders).toEqual(["/investments?range=3M"]);
+    expect(page.navigations.slice(before).map((nav) => nav.url)).toEqual(["/investments?range=3M"]);
+    expect(ui.portfolio!.state).toMatchObject({ view: "value", unit: "percent" });
+    // he stays where the link took him
+    expect(page.history.map((entry) => entry.url)).toEqual(["/investments?range=1Y", "/investments?range=3M"]);
+  });
+
   test("the control: a link followed once Back's save has landed draws the view Back showed, once", async () => {
     const page = await open(portfolioPage, "/investments?range=1Y");
     ui.portfolio!.setView("view", "returns");

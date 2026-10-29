@@ -119,13 +119,17 @@ export function useViewState(opts: UseViewStateOptions): UseViewStateResult {
         // ⚖️ B2: queued behind a save of Back's view that hangs, no longer than
         // BACK_SAVE_WAIT_MS — the bound every URL writer has — and, cut short, again once
         // the write lands: a default view only the saved one draws (`pressWriteLanding`).
+        // Cut short, that settles `true` (the write's own answer is an object), and the press
+        // says so as it goes (`goneAtBound`): it draws its page again itself.
         const write = saveViewPreferenceAction(surface, next);
+        let cut = false;
         try {
-          await (asks === null ? write : pressWriteLanding(asks, write, go));
+          cut = (await (asks === null ? write : pressWriteLanding(asks, write, go))) === true;
         } catch {
           /* persistence is best-effort */
         }
-        go();
+        if (cut && asks !== null) asks.goneAtBound(go);
+        else go();
       });
     },
     [asks, pressBase, surface, spec, state, basePath, carry, router],
