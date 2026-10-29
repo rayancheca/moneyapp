@@ -6,6 +6,7 @@ import {
   dayChangeTerm,
   asOfSpanTerm,
   newestCloses,
+  sharedDayChangeTerm,
 } from "./day-change-label";
 import { formatDayShort } from "./format-date";
 
@@ -262,5 +263,44 @@ describe("dayChangePhrase — any heading, compacted to the phrase that trails a
     expect(dayChangePhrase({ label: "Today", interval: null })).toBe("today");
     expect(dayChangePhrase({ label: "Last close", interval: "Sep 14 vs Sep 11" })).toBe("Sep 14 vs Sep 11");
     expect(dayChangePhrase({ label: "Day change", interval: null })).toBe("day change");
+  });
+});
+
+/*
+ * 🔴 Only the two-child word was pinned (institution-groups.test.ts): `const who = "both"` passed every test, and his
+ * Robinhood row, four children, would read "the last day both cover" (batch 6 review, #19). Each case is one of his
+ * groups as the dashboard prints it, measured on his ledger copy 2026-10-29, its children's days in card order.
+ */
+describe("sharedDayChangeTerm — a group's move on the days every child covers says whose day it is", () => {
+  const onDaysAllCover = (asOf: string | null) => ({ asOf, onDaysAllCover: true });
+  const aug31 = onDaysAllCover("2026-08-31");
+
+  test("more than two children are counted, each one — not each distinct day", () => {
+    // Robinhood "+$469.21": Agentic stops Aug 31, Brokerage Oct 22, Cash Sep 9, Crypto Oct 22
+    const robinhood = ["2026-08-31", "2026-10-22", "2026-09-09", "2026-10-22"];
+    expect(sharedDayChangeTerm("Aug 31 vs Aug 30", aug31, robinhood)).toBe(
+      "Aug 31 vs Aug 30, the last day all 4 cover",
+    );
+    expect(sharedDayChangeTerm("Aug 31 vs Aug 30", aug31, robinhood.slice(0, 3))).toBe(
+      "Aug 31 vs Aug 30, the last day all 3 cover",
+    );
+  });
+
+  test("two children are 'both'", () => {
+    // Chase "-$195.90": Sapphire Oct 2, Checking Aug 12
+    const chase = ["2026-10-02", "2026-08-12"];
+    expect(sharedDayChangeTerm("Aug 12 vs Aug 11", onDaysAllCover("2026-08-12"), chase)).toBe(
+      "Aug 12 vs Aug 11, the last day both cover",
+    );
+  });
+
+  test("nothing more on a day that is every child's own, of one child's own days, or of no move", () => {
+    // SoFi "+$0.00": both children Jul 31
+    const sofi = ["2026-07-31", "2026-07-31"];
+    expect(sharedDayChangeTerm("Jul 31 vs Jul 30", onDaysAllCover("2026-07-31"), sofi)).toBe("Jul 31 vs Jul 30");
+    // Wells Fargo "+$1,141.92": one child, so `groupDayChange` measured its own days and set no onDaysAllCover
+    expect(sharedDayChangeTerm("Sep 24 vs Sep 23", { asOf: "2026-09-24" }, ["2026-09-24"])).toBe("Sep 24 vs Sep 23");
+    // Capital One "—": 360 Checking has no balance yet, so no day is one both cover, Venture X's Oct 14 included
+    expect(sharedDayChangeTerm("day change", onDaysAllCover(null), [null, "2026-10-14"])).toBe("day change");
   });
 });

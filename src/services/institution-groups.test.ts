@@ -448,6 +448,28 @@ describe("the as-of day is the day the balance was observed", () => {
     expect(group.dayChangeTerm).toMatch(/ vs .+, the last day both cover$/);
   });
 
+  /*
+   * 🔴 …and more than two are counted: only "both" was pinned, and `const who = "both"` passed every test (batch 6
+   * review, #19) while his Robinhood row reads "+$469.21 Aug 31 vs Aug 30, the last day all 4 cover" — Agentic stops
+   * Aug 31, Cash Sep 9, Brokerage and Crypto Oct 22 (his ledger copy 2026-10-29). Its shape: the oldest day is one
+   * child's and two children share theirs, so a count of days instead of children would say "all 3".
+   */
+  test("a group of four counts every child that covers its day, not every day — his Robinhood row's shape", () => {
+    const robinhood = institutionId("Robinhood");
+    const ownDay = { Agentic: -20, Cash: -10, Brokerage: -6, Crypto: -6 };
+    for (const [name, end] of Object.entries(ownDay)) {
+      const id = createAccount(bundle.db, { institutionId: robinhood, name: `Robinhood ${name}`, type: "checking" });
+      addTxn(id, addDays(TODAY, -40), -20_00);
+      addStatement(id, addDays(TODAY, -50), addDays(TODAY, end), 1_000_00);
+      rebuildAccount(bundle.db, id, TODAY);
+    }
+
+    const group = institutionGroups(bundle.db, TODAY).find((g) => g.institutionName === "Robinhood")!;
+    expect(new Set(group.accounts.map((c) => c.dayChangeAsOf)).size).toBe(3); // guards the guard: 4 children, 3 days
+    expect(group.dayChangeAsOf).toBe(addDays(TODAY, -20));
+    expect(group.dayChangeTerm).toMatch(/ vs .+, the last day all 4 cover$/);
+  });
+
   test("a group whose move falls on its children's own day says nothing more", () => {
     const chase = institutionId("Chase");
     const checking = createAccount(bundle.db, { institutionId: chase, name: "Chase Checking", type: "checking" });
