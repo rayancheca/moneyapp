@@ -14,7 +14,7 @@ import {
   type WindowEarnings,
 } from "@/lib/pay-shortfall";
 import { firstPaydayOn } from "@/lib/payday-settlement";
-import type { UnattachedMatch } from "@/lib/unattached-match";
+import type { ExpectedDay, UnattachedMatch } from "@/lib/unattached-match";
 import { stepPlan, walkDayOfMonth } from "@/lib/recurring-step";
 import { outsidePortfolioCashAccountIds } from "./accounts";
 import { isAgentsIncomeSeries, loadCategoryIndex, payDayRows } from "./analytics";
@@ -450,6 +450,8 @@ export function cashEarningsReadings(
 
   const readings: CashEarningsReading[] = [];
   const checkedOf = withChecked ? checkedThroughBySeries(db, today) : null;
+  // each schedule's paydays it would call never banked, asked the one rule together below
+  const neverBySeries = new Map<string, readonly ExpectedDay[]>();
 
   for (const s of series) {
     /*
@@ -559,15 +561,18 @@ export function cashEarningsReadings(
       });
       continue;
     }
-    // ⛔ the one rule, asked of every payday the schedule would call never banked (`unattachedMatchesBySeries`)
-    const never = paydaysNeverBanked(settlement, {
-      from: startedOn,
-      to: today,
-      today,
-      checkedThrough,
-      toleranceDays: s.toleranceDays,
-    });
-    const unattachedPaydays = unattachedMatchesBySeries(db, new Map([[s.id, never]]), today).get(s.id) ?? [];
+    // ⛔ the one rule, asked of every payday the schedule would call never banked (`unattachedMatchesBySeries`) — below,
+    // with every other schedule's
+    neverBySeries.set(
+      s.id,
+      paydaysNeverBanked(settlement, {
+        from: startedOn,
+        to: today,
+        today,
+        checkedThrough,
+        toleranceDays: s.toleranceDays,
+      }),
+    );
     /*
      * The same schedule, read AS OF the frontier: a day the records have read
      * through is complete, so a payday dated on it is checked — unless the
@@ -599,10 +604,19 @@ export function cashEarningsReadings(
         checkedThrough,
       ),
       checkedSilentNotBankedYet,
-      unattachedPaydays,
+      unattachedPaydays: [],
       ...ruled(shortfall),
     });
   }
 
-  return readings;
+  /*
+   * ⛔ The one rule asked ONCE, of every schedule read here (`unattachedMatchesBySeries`): one row answers one payday of
+   * one schedule. 🔴 Review of e6ad55a (MEDIUM): asked schedule by schedule, two pay schedules of one amount on one
+   * account each took the one row both could answer, and Earned vs banked named it under both lines.
+   */
+  const unattachedOf = unattachedMatchesBySeries(db, neverBySeries, today);
+  if (unattachedOf.size === 0) return readings;
+  return readings.map((r) =>
+    neverBySeries.has(r.seriesId) ? { ...r, unattachedPaydays: unattachedOf.get(r.seriesId) ?? [] } : r,
+  );
 }

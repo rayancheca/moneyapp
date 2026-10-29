@@ -1,6 +1,7 @@
 import {
   countedDepositWords,
   MATCHED_TO_THE_CENT_BY,
+  matchedOfWords,
   unattachedRowsWords,
   type UnattachedMatch,
 } from "@/lib/unattached-match";
@@ -248,8 +249,19 @@ export function unbankedIncomeFrontierClause(
   // once one of them is attached and filed nowhere (`countedDepositWords`)
   const matched = r.unattached ?? [];
   const noDeposit = matched.length === 0 ? "with no deposit" : `with no deposit ${countedDepositWords(matched, "it")}`;
+  /*
+   * ⛔ …and the rows by their day and amount (`matchedOfWords`): this clause is what his pay's page, /budgets and
+   * Earned vs banked below the stale bar print INSTEAD of the sentence naming them. 🔴 Review of e6ad55a (MEDIUM): on
+   * the pre-filing copy read Oct 31 his pay's page and /budgets said only "4 fall on days already checked, with no
+   * deposit attached to it; the other one falls after Mon, Oct 26, 2026, …", and with Oct 1, 8 and 15 filed and Oct
+   * 22's row unattached, read Nov 2, the card's verdict "1 falls on a day already checked, with no deposit attached to
+   * it; …" one line over the difference naming the row.
+   */
+  const rows = matched.length === 0 ? "" : ` — ${matchedOfWords(matched, checked, formatDay)}`;
   const checkedPart =
-    checked === 0 ? null : `${checked} ${checked === 1 ? "falls on a day" : "fall on days"} already checked, ${noDeposit}`;
+    checked === 0
+      ? null
+      : `${checked} ${checked === 1 ? "falls on a day" : "fall on days"} already checked, ${noDeposit}${rows}`;
   const other = unread === 1 ? "the other one" : `the other ${unread}`;
 
   if (r.frontier.kind === "unchecked") {
@@ -309,30 +321,42 @@ export interface PassedPaydaysWords {
  * ⚖️ …and "never reaches a bank" only of a payday checked through its days to land (`pastGraceOccurrenceCount`). 🔴 A
  * Thursday checked through Friday read it, in warning colour, of a payroll that could still land on Sunday.
  */
-function notProjectedSubject(r: PassedPaydaysReading, formatDay: (iso: string) => string): string {
+function notProjectedSubject(
+  r: PassedPaydaysReading,
+  formatDay: (iso: string) => string,
+  rowsNamed: boolean,
+): string {
   const unlooked = "Pay the ledger has not looked for";
   if (r.checkedOccurrenceCount === 0) return unlooked;
   /*
    * ⛔ "Never reaches a bank" only of the paydays no row matches to the cent unattached (`unattached`): those are pay
    * "matched to the cent by rows of … that are not attached to it" — still not projected, since nothing paid them. 🔴
    * His ledger copy 2026-10-29 (before his filing): "Pay that never reaches a bank" of Oct 1, 8, 15 and 22 beside four
-   * +$1,141.92 payroll rows on Wells Fargo, unattached.
+   * +$1,141.92 payroll rows on Wells Fargo, unattached. ⛔ …and once the frontier clause before it has named the rows
+   * (`rowsNamed`), "pay those rows match": the forecast's note prints both, and would name the rows twice.
    */
   const matched = r.unattached ?? [];
-  const rows = `pay ${MATCHED_TO_THE_CENT_BY} ${unattachedRowsWords(matched, formatDay)}`;
-  const never =
-    matched.length === 0
-      ? "Pay that never reaches a bank"
-      : matched.length >= r.pastGraceOccurrenceCount
-        ? `P${rows.slice(1)}`
-        : `Pay that never reaches a bank, and ${rows},`;
-  const checked = r.pastGraceOccurrenceCount > 0 ? never : "Pay not banked yet";
+  const rows = rowsNamed
+    ? "pay those rows match"
+    : `pay ${MATCHED_TO_THE_CENT_BY} ${unattachedRowsWords(matched, formatDay)}`;
+  const checked =
+    r.pastGraceOccurrenceCount === 0
+      ? ["Pay not banked yet"]
+      : matched.length === 0
+        ? ["Pay that never reaches a bank"]
+        : matched.length >= r.pastGraceOccurrenceCount
+          ? [`P${rows.slice(1)}`]
+          : ["Pay that never reaches a bank", rows];
   /*
    * ⚖️ Default built, not asked (2026-10-21): with paydays after the checked day among them, the subject names those
    * too, in its own words for them. 🔴 "Pay not banked yet cannot be projected as arriving" closed a note whose other
    * two paydays fall after the checked day — a claim about days nobody has read (review of the pay-words batch).
+   * ⛔ The parts joined once: "Pay that never reaches a bank, and pay matched … that is not attached to it,, and pay the
+   * ledger has not looked for, …" was the subject of some paydays matched and some unread (found fixing the review of
+   * e6ad55a).
    */
-  return r.checkedOccurrenceCount < r.occurrenceCount ? `${checked}, and ${unlooked.toLowerCase()},` : checked;
+  const parts = r.checkedOccurrenceCount < r.occurrenceCount ? [...checked, unlooked.toLowerCase()] : checked;
+  return parts.length === 1 ? parts[0]! : `${parts.join(", and ")},`;
 }
 
 /**
@@ -353,7 +377,8 @@ export function passedPaydaysWords(r: PassedPaydaysReading, formatDay: (iso: str
           ? "already passed this month with no deposit imported"
           : `already passed this month with no deposit ${countedDepositWords(r.unattached ?? [], "it")}`,
     unread,
-    notProjected: `${notProjectedSubject(r, formatDay)} cannot be projected as arriving`,
+    // the clause names the rows when there is one (`unbankedIncomeFrontierClause`)
+    notProjected: `${notProjectedSubject(r, formatDay, unread !== null)} cannot be projected as arriving`,
     warning: r.pastGraceOccurrenceCount > 0,
   };
 }

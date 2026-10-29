@@ -1,10 +1,9 @@
 import {
   countedDepositWords,
-  MATCHED_TO_THE_CENT_BY,
+  matchedOfWords,
   neverClauses,
   neverSplit,
   notCountedWords,
-  unattachedRowsWords,
   type NeverSplit,
   type UnattachedMatch,
 } from "@/lib/unattached-match";
@@ -492,8 +491,6 @@ function verdictFor(line: Omit<IncomePayLine, "verdict">): string {
   const noDeposit =
     matched.length === 0 ? "with no deposit" : `with no deposit ${countedDepositWords(matched, "this schedule")}`;
   const since = `${passed} since ${formatDayShort(lastBankedOn)} ${noDeposit}`;
-  const matchedWords = (n: number): string =>
-    `${n === 1 ? "it is" : "they are"} ${MATCHED_TO_THE_CENT_BY} ${unattachedRowsWords(matched, formatDayShort)}`;
   /*
    * which of the silent paydays the ledger has looked for, in the forecast's words — null when it looked for them all.
    * ⛔ With the rows the one rule matched, as /budgets and the forecast pass them: never "with no deposit" of a checked
@@ -521,7 +518,10 @@ function verdictFor(line: Omit<IncomePayLine, "verdict">): string {
     if (silentPeriods === 0) {
       return `Pay is arriving: the last deposit landed on ${formatDayShort(lastBankedOn)}.`;
     }
-    const rows = matched.length === 0 ? "" : `: ${matchedWords(matched.length)}`;
+    // ⛔ of the silent paydays, the ones the rows answer (`matchedOfWords`): "…with no deposit attached to this
+    // schedule: it is matched to the cent by a row of …" was said of a silence two paydays long that one row answers
+    // (found sweeping the rule's readers for the review of e6ad55a)
+    const rows = matched.length === 0 ? "" : `: ${matchedOfWords(matched, silentPeriods, formatDayShort)}`;
     return (
       notAllLooked ??
       `${since}${rows} — a schedule is called stale only after ${STALE_PERIODS} quiet periods, so this is not a warning yet.`
@@ -586,14 +586,13 @@ function staleChecked(
   const covered = `on days the records already cover, through ${formatDayShort(checkedThrough)}`;
   // ⛔ "did not reach a bank" only of the paydays no row matches unattached (`silenceUnattached`): those are named
   const pastCount = checked - notBankedYet.length;
-  const rows = `${MATCHED_TO_THE_CENT_BY} ${unattachedRowsWords(matched, formatDayShort)}`;
   const didNot =
     matched.length === 0
       ? "so the pay did not reach a bank"
-      : matched.length >= pastCount
-        ? `${pastCount === 1 ? "it is" : "they are"} ${rows}`
-        : `${matched.length} of them ${matched.length === 1 ? "is" : "are"} ${rows}, and for the other ` +
-          `${pastCount - matched.length} the pay did not reach a bank`;
+      : matchedOfWords(matched, pastCount, formatDayShort) +
+        (matched.length >= pastCount
+          ? ""
+          : `, and for the other ${pastCount - matched.length} the pay did not reach a bank`);
   const after = (dayNamed: boolean): string =>
     unlooked <= 0
       ? ""

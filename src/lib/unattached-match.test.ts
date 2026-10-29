@@ -7,6 +7,7 @@ import {
   notCountedWords,
   unattachedCents,
   unattachedMatches,
+  unattachedMatchesAcross,
   unattachedRowsWords,
   type UnattachedMatch,
   type UnattachedRow,
@@ -70,6 +71,59 @@ describe("unattachedMatches — a row matching a payday or due day to the cent, 
   it("sums the matched rows' money as a magnitude", () => {
     const matches = unattachedMatches([{ date: "2026-10-15", amountCents: -69504 }], [row("x", "2026-10-15", -69504)], 3);
     expect(unattachedCents(matches)).toBe(69504);
+  });
+});
+
+/*
+ * ⛔ ONE ROW, ONE DAY OF ONE SERIES. 🔴 Review of e6ad55a (MEDIUM): two confirmed −$15.99 monthly bills on one card,
+ * both due Oct 10, and a single −$15.99 row of Oct 10 unattached — each series matched it on its own, so the runway
+ * read "$31.98 is matched to the cent by rows of $15.99 on Oct 10 and Oct 10" and each bill's page claimed the row:
+ * the bill that really did not post lost its "not posted".
+ */
+describe("unattachedMatchesAcross — each row answers one day of one series, whichever series asks", () => {
+  const ask = (seriesId: string, dates: readonly string[], rows: readonly UnattachedRow[], toleranceDays = 3) => ({
+    seriesId,
+    days: dates.map((date) => ({ date, amountCents: -1599 })),
+    rows,
+    toleranceDays,
+  });
+  const ids = (got: ReadonlyMap<string, readonly UnattachedMatch[]>) =>
+    [...got].map(([id, ms]) => [id, ms.map((m) => `${m.date}:${m.row.id}`)]).sort();
+
+  it("two series due the same day and one row: the older takes it, its id first — and the other none", () => {
+    const only = row("x", "2026-10-10", -1599);
+    const got = unattachedMatchesAcross([ask("b", ["2026-10-10"], [only]), ask("a", ["2026-10-10"], [only])]);
+    expect(ids(got)).toEqual([["a", ["2026-10-10:x"]]]);
+  });
+
+  it("the nearer day takes it whichever series it is, and the earlier day on a tie", () => {
+    const r = row("x", "2026-10-11", -1599);
+    expect(ids(unattachedMatchesAcross([ask("a", ["2026-10-08"], [r]), ask("b", ["2026-10-10"], [r])]))).toEqual([
+      ["b", ["2026-10-10:x"]],
+    ]);
+    expect(ids(unattachedMatchesAcross([ask("a", ["2026-10-12"], [r]), ask("b", ["2026-10-10"], [r])]))).toEqual([
+      ["b", ["2026-10-10:x"]],
+    ]);
+  });
+
+  it("two rows answer the two series, one each — and each series' own tolerance bounds its own days", () => {
+    const both = [row("x", "2026-10-10", -1599), row("y", "2026-10-10", -1599)];
+    expect(ids(unattachedMatchesAcross([ask("a", ["2026-10-10"], both), ask("b", ["2026-10-10"], both)]))).toEqual([
+      ["a", ["2026-10-10:x"]],
+      ["b", ["2026-10-10:y"]],
+    ]);
+    // a row four days off is no match for a series of three days, and is one for a series of fourteen
+    const far = row("z", "2026-10-14", -1599);
+    const asks = [ask("a", ["2026-10-10"], [far]), ask("b", ["2026-10-10"], [far], 14)];
+    expect(ids(unattachedMatchesAcross(asks))).toEqual([["b", ["2026-10-10:z"]]]);
+  });
+
+  it("one series alone is `unattachedMatches`", () => {
+    const days = ["2026-10-01", "2026-10-04"].map((date) => ({ date, amountCents: 1000 }));
+    const rows = [row("only", "2026-10-03", 1000)];
+    expect(unattachedMatchesAcross([{ seriesId: "s", days, rows, toleranceDays: 3 }]).get("s")).toEqual(
+      unattachedMatches(days, rows, 3),
+    );
   });
 });
 

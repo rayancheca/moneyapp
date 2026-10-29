@@ -1,6 +1,6 @@
 import { and, inArray } from "drizzle-orm";
 import type { AppDatabase } from "@/db/client";
-import { recurringSeries } from "@/db/schema/recurring";
+import { recurringSeries, type SeriesKind } from "@/db/schema/recurring";
 import type { ArrearsReading } from "@/lib/arrears-reading";
 import { addDays, compareDates, periodBounds } from "@/lib/dates";
 import {
@@ -284,17 +284,13 @@ export function arrearsInWindow(
   const readingOf = dueDayReadings(db, today, graceOf);
   const readById = arrearsReadCents(db, late, readingOf, periodStart, through, today);
   // ⛔ the read half's due days — the ones a surface would call "has not posted" — asked the one rule for a row that
-  // matches them unattached (`unattachedMatchesBySeries`): the days on or before the last due day read
-  const readDays = new Map<string, readonly ExpectedDay[]>();
-  for (const s of late.series) {
-    const readTo = lastDueDayRead(readingOf(s.id));
-    if (readTo === null) continue;
-    const days = s.occurrenceDates
-      .map((date, i) => ({ date, amountCents: -s.occurrenceCents[i]! }))
-      .filter((d) => compareDates(d.date, readTo) <= 0);
-    readDays.set(s.id, days);
-  }
-  const unattachedOf = unattachedMatchesBySeries(db, readDays, today);
+  // matches them unattached (`unattachedMatchesBySeries`)…
+  const unattachedOf = unattachedMatchesBySeries(db, readDueDays(late, readingOf), today, {
+    // …beside every other live bill's read due days in the same window: one row answers one bill, and a bill's own page
+    // gives it to the bill the runway does (review of e6ad55a)
+    rivals: () =>
+      readDueDays(overdueForSeries(db, liveSeriesIdsBut(db, seriesIds), periodStart, through, today), readingOf),
+  });
   return {
     totalCents: late.totalCents,
     series: late.series.map((s) => {
@@ -310,6 +306,39 @@ export function arrearsInWindow(
       };
     }),
   };
+}
+
+/** Each late series' due days on or before the last one read (`lastDueDayRead`), each at its own amount, signed. */
+function readDueDays(
+  late: BudgetTail,
+  readingOf: (seriesId: string) => DueDayReading,
+): ReadonlyMap<string, readonly ExpectedDay[]> {
+  const readDays = new Map<string, readonly ExpectedDay[]>();
+  for (const s of late.series) {
+    const readTo = lastDueDayRead(readingOf(s.id));
+    if (readTo === null) continue;
+    const days = s.occurrenceDates
+      .map((date, i) => ({ date, amountCents: -s.occurrenceCents[i]! }))
+      .filter((d) => compareDates(d.date, readTo) <= 0);
+    readDays.set(s.id, days);
+  }
+  return readDays;
+}
+
+/**
+ * Every series the arrears and the income mirror could read — detected or confirmed, as both select — but these: the
+ * rivals a reader asked of some series names (`UnattachedMatchOptions.rivals`). Of `kind` only, when given.
+ */
+function liveSeriesIdsBut(db: AppDatabase, asked: ReadonlySet<string>, kind?: SeriesKind): ReadonlySet<string> {
+  return new Set(
+    db
+      .select({ id: recurringSeries.id, kind: recurringSeries.kind })
+      .from(recurringSeries)
+      .where(inArray(recurringSeries.status, ["detected", "confirmed"]))
+      .all()
+      .filter((s) => !asked.has(s.id) && (kind === undefined || s.kind === kind))
+      .map((s) => s.id),
+  );
 }
 
 /** A late series' arrears as the reading every sentence of them is said through (`lib/arrears-reading`). */
@@ -438,24 +467,87 @@ export function unbankedIncomeForSeries(
   // the walk is `[periodStart, today)`; an empty or inverted one has nothing past
   if (compareDates(periodStart, today) >= 0) return { totalCents: 0, series: [] };
 
-  const live = db
-    .select()
-    .from(recurringSeries)
-    .where(
-      and(
-        inArray(recurringSeries.id, [...seriesIds]),
-        inArray(recurringSeries.status, ["detected", "confirmed"]),
+  const read = paydaysUnmetInWindow(db, livePaySeries(db, seriesIds), periodStart, today);
+  if (read.length === 0) return { totalCents: 0, series: [] };
+  // ⛔ the paydays the warning would call never banked, asked the one rule for a row matching them unattached — beside
+  // every other live pay schedule's in the same window, so a schedule's own page gives a row to the schedule the
+  // forecast does (`rivals`, review of e6ad55a)
+  const unattachedOf = unattachedMatchesBySeries(db, pastGraceDays(read), today, {
+    rivals: () =>
+      pastGraceDays(
+        paydaysUnmetInWindow(db, livePaySeries(db, liveSeriesIdsBut(db, seriesIds, "income")), periodStart, today),
       ),
-    )
-    .all()
-    /*
-     * ⛔ No lapse filter, unlike the bills walk — and none is needed: money in
-     * never lapses (`hasStoppedForecasting`), and a pay series going quiet
-     * for three cycles is the very case this figure exists to report — dropping
-     * it here would delete the sentence exactly when it matters most.
-     */
-    .filter((r) => r.kind === "income");
-  if (live.length === 0) return { totalCents: 0, series: [] };
+  });
+
+  const series = read.map(({ s, occ, checkedThrough, checked, pastGrace }): UnbankedIncomeSeries => {
+    return {
+      id: s.id,
+      name: s.name,
+      cadence: occ[0]!.cadence,
+      nextDate: occ[0]!.date,
+      amountCents: occ.reduce((sum, o) => sum + o.amountCents, 0),
+      occurrenceCount: occ.length,
+      occurrenceCents: occ.map((o) => o.amountCents),
+      href: `/recurring/${s.id}`,
+      checkedThrough,
+      checkedOccurrenceCount: checked.length,
+      checkedCents: checked.reduce((sum, o) => sum + o.amountCents, 0),
+      pastGraceOccurrenceCount: pastGrace.length,
+      occurrenceDates: occ.map((o) => o.date),
+      unattached: unattachedOf.get(s.id) ?? [],
+    };
+  });
+  series.sort((a, b) => compareDates(a.nextDate, b.nextDate) || a.name.localeCompare(b.name));
+  return { totalCents: series.reduce((sum, x) => sum + x.amountCents, 0), series };
+}
+
+type RecurringSeriesRow = typeof recurringSeries.$inferSelect;
+
+/** These series, as the income mirror reads them: detected or confirmed, and pay. */
+function livePaySeries(db: AppDatabase, ids: ReadonlySet<string>): RecurringSeriesRow[] {
+  if (ids.size === 0) return [];
+  return (
+    db
+      .select()
+      .from(recurringSeries)
+      .where(
+        and(inArray(recurringSeries.id, [...ids]), inArray(recurringSeries.status, ["detected", "confirmed"])),
+      )
+      .all()
+      /*
+       * ⛔ No lapse filter, unlike the bills walk — and none is needed: money in
+       * never lapses (`hasStoppedForecasting`), and a pay series going quiet
+       * for three cycles is the very case this figure exists to report — dropping
+       * it here would delete the sentence exactly when it matters most.
+       */
+      .filter((r) => r.kind === "income")
+  );
+}
+
+/** A pay series' passed paydays no deposit settled in the window, and which of them the ledger has read. */
+interface UnmetPaydays {
+  s: RecurringSeriesRow;
+  occ: ReturnType<typeof projectOccurrences>;
+  checkedThrough: string | null;
+  checked: ReturnType<typeof projectOccurrences>;
+  pastGrace: ReturnType<typeof projectOccurrences>;
+}
+
+/** Each series' paydays checked through their days to land — what a surface would call never banked. */
+function pastGraceDays(read: readonly UnmetPaydays[]): ReadonlyMap<string, readonly ExpectedDay[]> {
+  return new Map(
+    read.map(({ s, pastGrace }) => [s.id, pastGrace.map((o) => ({ date: o.date, amountCents: o.amountCents }))]),
+  );
+}
+
+/** Each pay series' passed paydays in `[periodStart, today)` that no deposit settled — those with any. */
+function paydaysUnmetInWindow(
+  db: AppDatabase,
+  live: readonly RecurringSeriesRow[],
+  periodStart: string,
+  today: string,
+): UnmetPaydays[] {
+  if (live.length === 0) return [];
 
   /*
    * ⚖️ SETTLE BACKWARDS, his decision of 2026-09-28. Whether a payday was met is
@@ -486,7 +578,7 @@ export function unbankedIncomeForSeries(
       return { s, occ };
     })
     .filter(({ occ }) => occ.length > 0);
-  if (unmet.length === 0) return { totalCents: 0, series: [] };
+  if (unmet.length === 0) return [];
 
   /*
    * 🔴 THE CALENDAR IS NOT THE RECORD. A payday passed; whether anyone has
@@ -510,7 +602,7 @@ export function unbankedIncomeForSeries(
    */
   const checkedOf = checkedThroughBySeries(db, today);
 
-  const read = unmet.map(({ s, occ }) => {
+  return unmet.map(({ s, occ }) => {
     const checkedThrough = checkedOf(s.id);
     const checked = occ.filter((o) => paydayIsRead(o.date, checkedThrough));
     // ⚖️ …and its days to land (`paydayLandingIsRead`), the warning's — and every "never reached a bank"'s: the
@@ -518,33 +610,6 @@ export function unbankedIncomeForSeries(
     const pastGrace = checked.filter((o) => paydayLandingIsRead(o.date, s.toleranceDays, checkedThrough));
     return { s, occ, checkedThrough, checked, pastGrace };
   });
-  // ⛔ the paydays the warning would call never banked, asked the one rule for a row matching them unattached
-  const unattachedOf = unattachedMatchesBySeries(
-    db,
-    new Map(read.map(({ s, pastGrace }) => [s.id, pastGrace.map((o) => ({ date: o.date, amountCents: o.amountCents }))])),
-    today,
-  );
-
-  const series = read.map(({ s, occ, checkedThrough, checked, pastGrace }): UnbankedIncomeSeries => {
-    return {
-      id: s.id,
-      name: s.name,
-      cadence: occ[0]!.cadence,
-      nextDate: occ[0]!.date,
-      amountCents: occ.reduce((sum, o) => sum + o.amountCents, 0),
-      occurrenceCount: occ.length,
-      occurrenceCents: occ.map((o) => o.amountCents),
-      href: `/recurring/${s.id}`,
-      checkedThrough,
-      checkedOccurrenceCount: checked.length,
-      checkedCents: checked.reduce((sum, o) => sum + o.amountCents, 0),
-      pastGraceOccurrenceCount: pastGrace.length,
-      occurrenceDates: occ.map((o) => o.date),
-      unattached: unattachedOf.get(s.id) ?? [],
-    };
-  });
-  series.sort((a, b) => compareDates(a.nextDate, b.nextDate) || a.name.localeCompare(b.name));
-  return { totalCents: series.reduce((sum, x) => sum + x.amountCents, 0), series };
 }
 
 /**

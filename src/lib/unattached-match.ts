@@ -54,40 +54,69 @@ export interface UnattachedMatch {
   readonly row: UnattachedRow;
 }
 
+/** One series' question: the days it is about to call missed, the rows that could answer them, its own tolerance. */
+export interface SeriesAsk {
+  readonly seriesId: string;
+  readonly days: readonly ExpectedDay[];
+  readonly rows: readonly UnattachedRow[];
+  readonly toleranceDays: number;
+}
+
+/** uuidv7 ids are lowercase hex and sort by creation: the older series first (`lib/ids`) */
+const byId = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
+
 /**
- * For each day, the unattached row that matches it — at most one row a day, and each row answers one day: the day
- * nearest it takes it (the earlier day on a tie), and a day takes its nearest row (the earlier row on a tie, then the
- * lower id). Oldest day first.
+ * For each series, the unattached rows that match its days — at most one row a day, and EACH ROW ANSWERS ONE DAY OF ONE
+ * SERIES: the day nearest it takes it (the earlier day on a tie, then the older series), and a day takes its nearest
+ * row (the earlier row on a tie, then the lower id). Oldest day first; a series nothing matches is absent.
+ *
+ * 🔴 Review of e6ad55a (MEDIUM): each series was matched on its own. Two confirmed −$15.99 monthly bills on one card
+ * both due Oct 10, and a single −$15.99 row of Oct 10 unattached: both took it — the runway read "$31.98 is matched to
+ * the cent by rows of $15.99 on Oct 10 and Oct 10 that are not attached to it", and each bill's page claimed the row,
+ * so the one that really did not post lost its "not posted". ⛔ One row is one payment: it is named once, under one
+ * series, and the other still owes — the safe direction. ⚖️ Default built, not asked (2026-10-29): which of two equally
+ * near series takes it is the older one — a stable order, never a guess at which bill it paid.
  */
-export function unattachedMatches(
-  days: readonly ExpectedDay[],
-  rows: readonly UnattachedRow[],
-  toleranceDays: number,
-): readonly UnattachedMatch[] {
-  const pairs = days
-    .flatMap((day) =>
-      rows
-        .filter((r) => r.amountCents === day.amountCents)
-        .map((r) => ({ day, row: r, gap: Math.abs(diffDays(day.date, r.postedOn)) }))
-        .filter((p) => p.gap <= toleranceDays),
+export function unattachedMatchesAcross(asks: readonly SeriesAsk[]): ReadonlyMap<string, readonly UnattachedMatch[]> {
+  const pairs = asks
+    .flatMap((a) =>
+      a.days.flatMap((day) =>
+        a.rows
+          .filter((r) => r.amountCents === day.amountCents)
+          .map((r) => ({ seriesId: a.seriesId, day, row: r, gap: Math.abs(diffDays(day.date, r.postedOn)) }))
+          .filter((p) => p.gap <= a.toleranceDays),
+      ),
     )
     .sort(
       (a, b) =>
         a.gap - b.gap ||
         compareDates(a.day.date, b.day.date) ||
+        byId(a.seriesId, b.seriesId) ||
         compareDates(a.row.postedOn, b.row.postedOn) ||
         a.row.id.localeCompare(b.row.id),
     );
   const takenDays = new Set<string>();
   const takenRows = new Set<string>();
-  const matches: UnattachedMatch[] = [];
+  const bySeries = new Map<string, UnattachedMatch[]>();
   for (const p of pairs) {
-    if (takenDays.has(p.day.date) || takenRows.has(p.row.id)) continue;
-    takenDays.add(p.day.date);
+    const dayKey = `${p.seriesId} ${p.day.date}`;
+    if (takenDays.has(dayKey) || takenRows.has(p.row.id)) continue;
+    takenDays.add(dayKey);
     takenRows.add(p.row.id);
-    matches.push({ date: p.day.date, row: p.row });
+    bySeries.set(p.seriesId, [...(bySeries.get(p.seriesId) ?? []), { date: p.day.date, row: p.row }]);
   }
-  return matches.sort((a, b) => compareDates(a.date, b.date));
+  return new Map(
+    [...bySeries].map(([id, matches]) => [id, [...matches].sort((a, b) => compareDates(a.date, b.date))] as const),
+  );
+}
+
+/** For one series' days, the unattached rows that match them (`unattachedMatchesAcross`, asked of it alone). */
+export function unattachedMatches(
+  days: readonly ExpectedDay[],
+  rows: readonly UnattachedRow[],
+  toleranceDays: number,
+): readonly UnattachedMatch[] {
+  return unattachedMatchesAcross([{ seriesId: "", days, rows, toleranceDays }]).get("") ?? [];
 }
 
 /** The matched rows' money, as a positive magnitude — the part of a "never" or a "not posted" they answer. */
@@ -144,6 +173,22 @@ export function unattachedRowsWords(
 
 /** "matched to the cent by" — the lead of every sentence that names the rows (`unattachedRowsWords`). */
 export const MATCHED_TO_THE_CENT_BY = "matched to the cent by";
+
+/**
+ * Of the `of` paydays a sentence has just counted, the ones the rows answer: "it is matched to the cent by a row of …",
+ * "they are matched …" when the rows answer every one, "3 of them are matched …" when they answer some — never "they
+ * are" of paydays no row matches, the money that hides. Earned vs banked's verdict and the passed paydays' frontier
+ * clause (`unbankedIncomeFrontierClause`) say it in these words.
+ */
+export function matchedOfWords(
+  matched: readonly UnattachedMatch[],
+  of: number,
+  formatDay: (iso: string) => string,
+): string {
+  const rows = `${MATCHED_TO_THE_CENT_BY} ${unattachedRowsWords(matched, formatDay)}`;
+  if (matched.length >= of) return `${of === 1 ? "it is" : "they are"} ${rows}`;
+  return `${matched.length} of them ${matched.length === 1 ? "is" : "are"} ${rows}`;
+}
 
 /** Whether one of the rows is attached and filed as no income (`UnattachedRow.notFiledAsIncome`). */
 const anyNotFiled = (matches: readonly UnattachedMatch[]): boolean =>

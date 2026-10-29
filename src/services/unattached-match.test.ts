@@ -15,7 +15,7 @@ import { arrearsClause, NOT_POSTED, overdueReading } from "@/lib/arrears-reading
 import { arrearsSentence } from "@/lib/committed";
 import { formatDayLong, formatDayShort } from "@/lib/format-date";
 import { cashEarningsSectionNotes } from "@/lib/section-notes";
-import { passedPaydaysWords } from "@/lib/unbanked-income";
+import { passedPaydaysWords, unbankedIncomeFrontierClause } from "@/lib/unbanked-income";
 import { incomeExpectation } from "./budgets";
 import { cashEarningsReadings } from "./cash-earnings";
 import { checkedThrough } from "./checked-days-fixture";
@@ -311,6 +311,54 @@ describe("the pay: no surface says his October paydays did not reach a bank besi
     expect(budgets.passedUnpaidUnattached.map((m) => m.date)).toEqual(PAYDAYS);
   });
 
+  /*
+   * 🔴 Review of e6ad55a (MEDIUM): with a payday not looked for yet, his pay's page (`words.unread ??`) and /budgets
+   * (`passedNoDeposit` only when the clause is null) print the frontier clause alone — on the pre-filing copy read Oct
+   * 31, "4 fall on days already checked, with no deposit attached to it; the other one falls after Mon, Oct 26,
+   * 2026 …", never the rows' day or amount.
+   */
+  test("with a payday not looked for yet, read Oct 31: his pay's page, /budgets and the forecast name the rows", () => {
+    importUnattached(PAYDAYS, false);
+    const today = "2026-10-31";
+    const clause =
+      "4 fall on days already checked, with no deposit attached to it — they are matched to the cent by rows of " +
+      "$1,141.92 on Thu, Oct 1, 2026, Thu, Oct 8, 2026, Thu, Oct 15, 2026, and Thu, Oct 22, 2026 that are not " +
+      "attached to it; the other one falls after Mon, Oct 26, 2026, the last day every account that pay lands in has " +
+      "been checked through.";
+    // his pay's page prints the clause as its body (`PassedPaydaysCard`)
+    expect(passedPaydaysWords(seriesDetail(bundle.db, PAY, today).unbankedPaydays!, formatDayLong).unread).toBe(clause);
+    // /budgets prints it from its own reading of the month (src/app/budgets/page.tsx)
+    const income = incomeExpectation(bundle.db, "2026-10-01", "2026-10-31", today);
+    const budgets = unbankedIncomeFrontierClause(
+      {
+        occurrenceCount: income.passedUnpaidOccurrences,
+        checkedOccurrenceCount: income.passedUnpaidCheckedOccurrences,
+        frontier: income.passedUnpaidFrontier,
+        unattached: income.passedUnpaidUnattached,
+      },
+      formatDayLong,
+    );
+    expect(budgets).toBe(clause);
+    // the forecast's note prints the clause and its subject, which points at the rows rather than naming them twice
+    const forecast = passedPaydaysWords(forecastCurrentMonth(bundle.db, today).unbankedIncome, formatDayLong);
+    expect(forecast.unread).toBe(clause);
+    expect(forecast.notProjected).toBe(
+      "Pay those rows match, and pay the ledger has not looked for, cannot be projected as arriving",
+    );
+  });
+
+  // ⛔ of a silence two paydays long that one row answers, "1 of them is" — "it is" said the silence was the row's
+  test("one row of a two-payday silence the ledger has read: '1 of them is matched', never 'it is'", () => {
+    const salary = categoryId("Salary", "Income");
+    for (const day of PAYDAYS.slice(0, 2)) row(day, 114_192, { seriesId: PAY, categoryId: salary });
+    importUnattached(PAYDAYS.slice(2, 3), false);
+    expect(incomeCard(bundle.db, "2026-10-27")!.pay[0]!.verdict).toBe(
+      "2 paydays have passed since Oct 8 with no deposit attached to this schedule: 1 of them is matched to the cent " +
+        "by a row of $1,141.92 on Oct 15 that is not attached to it — a schedule is called stale only after 3 quiet " +
+        "periods, so this is not a warning yet.",
+    );
+  });
+
   test("three of four rows: the fourth payday is still the one that did not reach a bank", () => {
     importUnattached(PAYDAYS.slice(0, 3), false);
     expect(incomeCard(bundle.db, TODAY)!.pay[0]!.verdict).toContain(
@@ -490,8 +538,12 @@ describe("/spending's shortfall note names the rows the one rule matched, as the
         "Oct 22 that is not attached to it",
     );
     expect(note).not.toContain("never reached a bank");
-    const verdict = incomeCard(bundle.db, today)!.pay[0]!.verdict;
-    expect(verdict).toContain("1 falls on a day already checked, with no deposit attached to it;");
+    // ⛔ …and the verdict below the stale bar names the row, as the difference under it does (review of e6ad55a)
+    expect(incomeCard(bundle.db, today)!.pay[0]!.verdict).toBe(
+      "2 paydays have passed since the last deposit on Oct 15. 1 falls on a day already checked, with no deposit " +
+        "attached to it — it is matched to the cent by a row of $1,141.92 on Oct 22 that is not attached to it; the " +
+        "other one falls after Oct 26, the last day every account that pay lands in has been checked through.",
+    );
   });
 
   // his own shape: the off-cycle +$200.00 of Oct 15, filed Salary, paid no payday and is netted into October's figure
@@ -508,5 +560,158 @@ describe("/spending's shortfall note names the rows the one rule matched, as the
         "to the cent",
     );
     expect(note).not.toContain("never reached a bank");
+  });
+});
+
+/*
+ * ⛔ ONE ROW ANSWERS ONE SERIES' DAY — on every surface, whichever series a page asks about (`unattachedMatchesAcross`,
+ * and the `rivals` a reader asked of some series passes). 🔴 Review of e6ad55a (MEDIUM): with two confirmed −$15.99
+ * monthly bills on one card both due Oct 10 and a single −$15.99 row of Oct 10 unattached, the runway read "A further
+ * $727.02 came due earlier this month and $31.98 is matched to the cent by rows of $15.99 on Oct 10 and Oct 10 that are
+ * not attached to it, and $695.04 has not posted." — and each bill's page claimed the row, so the one that really did
+ * not post lost its "not posted".
+ */
+describe("two bills of one amount due one day, one row: it answers one of them, on every surface", () => {
+  // uuidv7 ids sort by creation: A is the older
+  const A = "series-stream-a";
+  const B = "series-stream-b";
+  const due = [{ date: "2026-10-10", amountCents: -1_599 }];
+  const ROW_OF_OCT_10 = "matched to the cent by a row of $15.99 on Oct 10 that is not attached to it";
+  beforeEach(() => {
+    bundle.db
+      .insert(recurringSeries)
+      .values(
+        [A, B].map((id) => ({
+          id,
+          name: id === A ? "Streaming A" : "Streaming B",
+          kind: "subscription" as const,
+          cadence: "monthly" as const,
+          intervalDaysAvg: 30,
+          accountId: CARD,
+          amountCentsAvg: -1_599,
+          toleranceDays: 3,
+          nextExpectedOn: "2026-10-10",
+          nextExpectedAmountCents: -1_599,
+          userAmountCents: -1_599,
+          anchorDay: 10,
+          lastMatchedOn: "2026-09-10",
+          status: "confirmed" as const,
+          createdAt: now(),
+          updatedAt: now(),
+        })),
+      )
+      .run();
+    // three charges each: a schedule the calendar grades (`scheduleIsProven`)
+    for (const id of [A, B]) {
+      for (const day of ["2026-07-10", "2026-08-10", "2026-09-10"]) row(day, -1_599, { accountId: CARD, seriesId: id });
+    }
+    row("2026-10-26", -450, { accountId: CARD }); // the card's rows reach its checked day
+  });
+  const pageOf = (id: string): string => {
+    const o = seriesDetail(bundle.db, id, TODAY).overdue!;
+    return alreadyDueWords(overdueReading(o), o.graceDays, o.occurrenceCount, o.carriedGrace).heading;
+  };
+  const markOn = (seriesId: string) =>
+    recurringCalendar(bundle.db, "2026-10", TODAY).entriesByDay["2026-10-10"]!.find(
+      (e) => e.seriesId === seriesId && e.transactionId === null,
+    )!;
+
+  test("asked together, the row goes to one of them — the older — and the other is matched by nothing", () => {
+    const only = row("2026-10-10", -1_599, { accountId: CARD });
+    const got = unattachedMatchesBySeries(
+      bundle.db,
+      new Map([
+        [B, due],
+        [A, due],
+      ]),
+      TODAY,
+    );
+    expect(got.get(A)?.map((m) => m.row.id)).toEqual([only]);
+    expect(got.get(B)).toBeUndefined();
+  });
+
+  // ⛔ a rival is a series the caller did NOT ask of: its reading of an asked one never adds a day the caller left out
+  test("the asked series' own days stand beside its rivals' reading of it", () => {
+    const only = row("2026-10-10", -1_599, { accountId: CARD });
+    const asked = new Map([[A, [{ date: "2026-10-13", amountCents: -1_599 }]]]);
+    const got = unattachedMatchesBySeries(bundle.db, asked, TODAY, { rivals: () => new Map([[A, due]]) });
+    expect(got.get(A)?.map((m) => [m.date, m.row.id])).toEqual([["2026-10-13", only]]);
+  });
+
+  test("the runway names it once and owes the other bill's $15.99 as not posted — the money once, never $31.98", () => {
+    const only = row("2026-10-10", -1_599, { accountId: CARD });
+    const book = committedBook(bundle.db, TODAY);
+    expect(book.overdueCents).toBe(69_504 + 2 * 1_599);
+    expect(book.overdueUnattached.map((m) => m.row.id)).toEqual([only]);
+    const runway = arrearsSentence(book)!;
+    expect(runway).toContain("$15.99 is matched to the cent by a row of $15.99 on Oct 10 that is not attached to it");
+    expect(runway).toContain("$711.03 has not posted");
+    expect(runway).not.toContain("$31.98");
+  });
+
+  test("each bill's own page, asked alone, agrees with the runway: A names the row, B has not posted", () => {
+    row("2026-10-10", -1_599, { accountId: CARD });
+    expect(pageOf(A)).toBe(`Already due, and ${ROW_OF_OCT_10}`);
+    expect(pageOf(B)).toBe("Already due, and not posted");
+    // …and the calendar: one mark named by the row, the other a ✕
+    expect(markOn(A)).toMatchObject({ state: "unsettled", unsettledReason: "matched_unattached" });
+    expect(markOn(B)).toMatchObject({ state: "missed", unsettledReason: null });
+  });
+
+  test("two rows answer the two bills, one each", () => {
+    const x = row("2026-10-10", -1_599, { accountId: CARD });
+    const y = row("2026-10-10", -1_599, { accountId: CARD });
+    expect(
+      committedBook(bundle.db, TODAY)
+        .overdueUnattached.map((m) => m.row.id)
+        .sort(),
+    ).toEqual([x, y].sort());
+    for (const id of [A, B]) expect(pageOf(id)).toBe(`Already due, and ${ROW_OF_OCT_10}`);
+  });
+});
+
+/*
+ * ⛔ …and of two pay schedules: the forecast, which reads every pay schedule, each schedule's own page, which reads only
+ * itself (`unbankedIncomeThisMonth`), and Earned vs banked's lines give one row to one payday of one schedule.
+ */
+describe("two pay schedules of one amount on one account, one row: it answers one of them, on every surface", () => {
+  const PAY2 = "series-pay2";
+  beforeEach(() => {
+    bundle.db
+      .insert(recurringSeries)
+      .values({
+        id: PAY2,
+        name: "Second job (weekly pay)",
+        kind: "income",
+        cadence: "weekly",
+        userCadence: "weekly",
+        intervalDaysAvg: 7,
+        accountId: WF,
+        amountCentsAvg: 114_192,
+        nextExpectedOn: "2026-10-01",
+        nextExpectedAmountCents: 114_192,
+        lastMatchedOn: "2026-09-24",
+        status: "confirmed",
+        createdAt: now(),
+        updatedAt: now(),
+      })
+      .run();
+    const salary = categoryId("Salary", "Income");
+    for (const day of ["2026-09-03", "2026-09-10", "2026-09-17", "2026-09-24"]) {
+      row(day, 114_192, { seriesId: PAY2, categoryId: salary });
+    }
+  });
+
+  test("the forecast, each pay page and the card's lines name it under one schedule — the older — only", () => {
+    const only = row("2026-10-01", 114_192);
+    const forecast = forecastCurrentMonth(bundle.db, TODAY).unbankedIncome.unattached ?? [];
+    expect(forecast.map((m) => m.row.id)).toEqual([only]);
+    const pageRows = (id: string): string[] =>
+      (seriesDetail(bundle.db, id, TODAY).unbankedPaydays!.unattached ?? []).map((m) => m.row.id);
+    expect(pageRows(PAY)).toEqual([only]);
+    expect(pageRows(PAY2)).toEqual([]);
+    const lines = incomeCard(bundle.db, TODAY)!.pay;
+    expect(lines.find((l) => l.seriesId === PAY)!.unattached.map((m) => m.row.id)).toEqual([only]);
+    expect(lines.find((l) => l.seriesId === PAY2)!.unattached).toEqual([]);
   });
 });

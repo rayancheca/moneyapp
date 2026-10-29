@@ -3,7 +3,13 @@ import type { AppDatabase } from "@/db/client";
 import { recurringSeries } from "@/db/schema/recurring";
 import { transactions } from "@/db/schema/transactions";
 import { addDays, compareDates } from "@/lib/dates";
-import { unattachedMatches, type ExpectedDay, type UnattachedMatch, type UnattachedRow } from "@/lib/unattached-match";
+import {
+  unattachedMatchesAcross,
+  type ExpectedDay,
+  type SeriesAsk,
+  type UnattachedMatch,
+  type UnattachedRow,
+} from "@/lib/unattached-match";
 import { loadCategoryIndex, payDayRows, type CategoryIndex } from "./analytics";
 
 /**
@@ -24,15 +30,55 @@ import { loadCategoryIndex, payDayRows, type CategoryIndex } from "./analytics";
  * ever a candidate. 🔴 Review of de31d22 (HIGH): the trial import of the Oct 26 statement into his pre-import copy
  * attached the four +$1,141.92 payroll rows unfiled, and every surface said the pay "did not reach a bank" again.
  * ⚖️ Default built, not asked (2026-10-29).
+ *
+ * ⛔ ONE ROW ANSWERS ONE DAY OF ONE SERIES: every asked series is matched at once (`unattachedMatchesAcross`) — and, for
+ * a reader asked of some series only, beside its rivals (`UnattachedMatchOptions.rivals`), so no two surfaces give one
+ * row to two bills. 🔴 Review of e6ad55a (MEDIUM): each series was matched on its own; two −$15.99 bills due Oct 10
+ * both took the one −$15.99 row of Oct 10, and the runway named it twice over $31.98.
  */
 export function unattachedMatchesBySeries(
   db: AppDatabase,
   wanted: ReadonlyMap<string, readonly ExpectedDay[]>,
   today: string,
+  { rivals }: UnattachedMatchOptions = {},
 ): ReadonlyMap<string, readonly UnattachedMatch[]> {
-  const out = new Map<string, readonly UnattachedMatch[]>();
+  // read once, and only when a pay series is asked: the filing a pay day is read by (`payDayRows`)
+  let idx: CategoryIndex | null = null;
+  const categoryIndex = (): CategoryIndex => (idx ??= loadCategoryIndex(db));
+  // ⛔ every asked series at once: one row answers one day of one series (`unattachedMatchesAcross`)
+  const asked = seriesAsks(db, wanted, today, categoryIndex);
+  const matched = unattachedMatchesAcross(asked);
+  // nothing matched, nothing a rival could take; and a caller that asked every series has no rival to ask
+  if (matched.size === 0 || rivals === undefined) return matched;
+  // the asked series' own days stand: a rival is a series the caller did not ask of
+  const rivalDays = new Map([...rivals()].filter(([id]) => !wanted.has(id)));
+  const others = seriesAsks(db, rivalDays, today, categoryIndex).filter((a) => a.rows.length > 0);
+  if (others.length === 0) return matched;
+  const contested = unattachedMatchesAcross([...asked, ...others]);
+  return new Map([...contested].filter(([id]) => wanted.has(id)));
+}
+
+export interface UnattachedMatchOptions {
+  /**
+   * Every OTHER series' days a surface of the same kind would call missed in the same window — the arrears' read due
+   * days of every live bill (`arrearsInWindow`), the passed paydays of every live pay schedule
+   * (`unbankedIncomeForSeries`) — asked only once one of the asked series has a match. A reader asked of SOME series
+   * passes it, so a row goes where it would on the surface that asks of every series: a bill's own page and the runway
+   * give it to the same bill. 🔴 Review of e6ad55a (MEDIUM): each bill's page, asking of itself alone, claimed the one
+   * −$15.99 row of Oct 10 that two bills due that day could answer.
+   */
+  readonly rivals?: () => ReadonlyMap<string, readonly ExpectedDay[]>;
+}
+
+/** Each series' question (`SeriesAsk`): its days, and the rows on where it posts that could answer them. */
+function seriesAsks(
+  db: AppDatabase,
+  wanted: ReadonlyMap<string, readonly ExpectedDay[]>,
+  today: string,
+  categoryIndex: () => CategoryIndex,
+): SeriesAsk[] {
   const ids = [...wanted.entries()].filter(([, days]) => days.length > 0).map(([id]) => id);
-  if (ids.length === 0) return out;
+  if (ids.length === 0) return [];
   const series = db
     .select({
       id: recurringSeries.id,
@@ -43,8 +89,7 @@ export function unattachedMatchesBySeries(
     .from(recurringSeries)
     .where(inArray(recurringSeries.id, ids))
     .all();
-  // read once, and only when a pay series is asked: the filing a pay day is read by (`payDayRows`)
-  let idx: CategoryIndex | null = null;
+  const asks: SeriesAsk[] = [];
   for (const s of series) {
     const days = wanted.get(s.id) ?? [];
     const accountIds = s.accountId !== null ? [s.accountId] : accountsPaidFrom(db, s.id);
@@ -76,7 +121,7 @@ export function unattachedMatchesBySeries(
       )
       .all();
     const attached = rows.filter((r) => r.seriesId !== null);
-    const counted = attached.length === 0 ? new Set<string>() : payDayRowIds(db, (idx ??= loadCategoryIndex(db)), s.id);
+    const counted = attached.length === 0 ? new Set<string>() : payDayRowIds(db, categoryIndex(), s.id);
     const candidates: UnattachedRow[] = rows
       .filter((r) => r.seriesId === null || !counted.has(r.id))
       .map((r) => ({
@@ -85,10 +130,9 @@ export function unattachedMatchesBySeries(
         amountCents: r.amountCents,
         ...(r.seriesId === null ? {} : { notFiledAsIncome: true }),
       }));
-    const matches = unattachedMatches(days, candidates, s.toleranceDays);
-    if (matches.length > 0) out.set(s.id, matches);
+    asks.push({ seriesId: s.id, days, rows: candidates, toleranceDays: s.toleranceDays });
   }
-  return out;
+  return asks;
 }
 
 /** Every account an active row linked to the series has been on — where a series with no account of its own posts. */
