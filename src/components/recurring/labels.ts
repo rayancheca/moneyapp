@@ -1,3 +1,5 @@
+import { formatDayShort } from "@/lib/format-date";
+import { unattachedRowsWords } from "@/lib/unattached-match";
 import {
   arrearsAlarms,
   arrearsClause,
@@ -737,6 +739,17 @@ export function alreadyDueWords(
       : `of its own ${ofDay(carried.ownDays, day)}, and none of ${carrierWord(carried.carrierName)}'s payments ` +
         ofDay(carried.carrierDays, day);
   const within = noPostingOf(any);
+  /*
+   * ⛔ "No posting" only where no row matches to the cent (`lib/unattached-match`): a row that does, sitting unattached,
+   * is named by its day and amount, and the bill stays owed. 🔴 His ledger copy 2026-10-29 (before his filing): the Car
+   * lease's page read "the statements reach 3 days past it with no posting within 3 days of it" beside the −$695.04
+   * "Mbfs.Com Auto Pay" of Oct 15 on Wells Fargo, unattached.
+   */
+  const heldOf = (x: string, which: string): string =>
+    split.unattachedCents === 0
+      ? `no posting ${x}`
+      : `no posting attached to this bill ${x}; they hold ${unattachedRowsWords(split.unattached, formatDayShort)}, ` +
+        `matching ${split.unattachedCents === split.readCents ? which : "some of them"} to the cent`;
   const counted = `The forecast counts ${all}, and so does this month's budget.`;
   const warning = arrearsAlarms(reading);
   // ⚖️ unread only for days to post still to come — its accounts read through today: said so, never "no statement"
@@ -745,8 +758,8 @@ export function alreadyDueWords(
     const onTheDay = one ? "its day" : n === 2 ? "both" : "all of them";
     const reach = graceDays === 0 ? onTheDay : `${days(graceDays)} past ${one ? "it" : "each"}`;
     return {
-      heading: `Already due, and ${NOT_POSTED}`,
-      body: `${lead}, and the statements reach ${reach} with no posting ${within}. ${counted}`,
+      heading: `Already due, and ${arrearsClause(reading, NOT_POSTED)}`,
+      body: `${lead}, and the statements reach ${reach} with ${heldOf(within, all)}. ${counted}`,
       warning,
     };
   }
@@ -774,7 +787,7 @@ export function alreadyDueWords(
   return {
     heading: `Already due: ${arrearsClause(reading, NOT_POSTED)}`,
     body:
-      `Inside this calendar month. Where the statements reach ${pastADueDay}, they hold no posting ${withinIt}; for ` +
+      `Inside this calendar month. Where the statements reach ${pastADueDay}, they hold ${heldOf(withinIt, "it")}; for ` +
       `the rest, ${rest}. The forecast counts all of it, and so does this month's budget.`,
     warning,
   };

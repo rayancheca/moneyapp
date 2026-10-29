@@ -1,4 +1,5 @@
 import type { BlastRadiusLine } from "@/components/ui/blast-radius";
+import type { UnattachedMatch } from "@/lib/unattached-match";
 import type { SeriesKind } from "@/db/schema/recurring";
 import { arrearsClause, NOT_POSTED } from "@/lib/arrears-reading";
 import { ONE_CHARGE_WORD } from "@/lib/one-charge";
@@ -76,6 +77,8 @@ export interface SeriesEndInput {
   overdueUnreadCents: number;
   /** of `overdueUnreadCents`, the part no statement keeps unread (`ArrearsReading.inGraceCents`) */
   overdueInGraceCents: number;
+  /** of the read part, the due days rows sitting unattached match to the cent (`ArrearsReading.unattached`) */
+  overdueUnattached?: readonly UnattachedMatch[];
   overdueOn: string | null;
   /** how many occurrences the arrears covers (the page's own "and N more") */
   overdueCount: number;
@@ -127,6 +130,7 @@ export function seriesEndInput(
     overdueCents: Math.abs(data.overdue?.amountCents ?? 0),
     overdueUnreadCents: data.overdue?.unreadCents ?? 0,
     overdueInGraceCents: data.overdue?.inGraceCents ?? 0,
+    overdueUnattached: data.overdue?.unattached ?? [],
     overdueOn: data.overdue?.date ?? null,
     overdueCount: data.overdue?.occurrenceCount ?? 0,
     nextChargeOn: data.nextExpected[0]?.date ?? null,
@@ -230,6 +234,7 @@ export function seriesEndLines(
     owedCents: input.overdueCents,
     unreadCents: input.overdueUnreadCents,
     inGraceCents: input.overdueInGraceCents,
+    unattached: input.overdueUnattached,
   };
   return [
     ...(input.annualized !== null

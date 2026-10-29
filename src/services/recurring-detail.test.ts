@@ -338,6 +338,7 @@ describe("seriesDetail", () => {
       graceDays: netflix().toleranceDays,
       // billed on its own: one window, `graceDays`
       carriedGrace: null,
+      unattached: [],
     });
     // and the forward list still opens after today, never restating it
     expect(d.nextExpected.every((o) => o.date >= TODAY)).toBe(true);
@@ -395,6 +396,7 @@ describe("seriesDetail", () => {
         inGraceCents: 0,
         graceDays: 1,
         carriedGrace: null,
+        unattached: [],
       });
     });
 

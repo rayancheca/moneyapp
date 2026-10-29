@@ -289,6 +289,24 @@ export function paydaysNotBankedYet(
   return { paydays: pending.map((o) => o.date), cents: pending.reduce((sum, o) => sum + o.amountCents, 0) };
 }
 
+/**
+ * The window's passed paydays no deposit settled that were checked through their days to land
+ * (`paydayLandingIsRead`), oldest first, each at its own amount — the paydays every surface would call "did not reach a
+ * bank" / "never reached a bank", which the one rule for an unattached match is asked about
+ * (`services/unattached-match`) before any of them says so. The complement of `paydaysNotBankedYet` among the checked.
+ */
+export function paydaysNeverBanked(
+  s: Pick<SettlementWalked, "paydays" | "deposits" | "settledBy">,
+  w: PayShortfallWindow,
+): readonly { date: string; amountCents: number }[] {
+  return duePaydays(s, w)
+    .filter((o) => !s.settledBy.has(o.date))
+    .filter((o) => paydayIsRead(o.date, w.checkedThrough))
+    .filter((o) => paydayLandingIsRead(o.date, w.toleranceDays, w.checkedThrough))
+    .sort((a, b) => compareDates(a.date, b.date))
+    .map((o) => ({ date: o.date, amountCents: o.amountCents }));
+}
+
 /** Where a schedule's silence is read: where it opens, today, and how far its pay has been checked and may land. */
 export interface ScheduleSilence {
   /** the last day that banked money (`CashEarnings.lastBankedOn`), or null when none has */

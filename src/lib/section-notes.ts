@@ -1,4 +1,10 @@
 import { arrearsTail, NOT_POSTED } from "./arrears-reading";
+import {
+  MATCHED_TO_THE_CENT_BY,
+  unattachedCents,
+  unattachedRowsWords,
+  type UnattachedMatch,
+} from "@/lib/unattached-match";
 import { spendUnread, spentOnlyFromCashWallets, type BudgetCoverageInput } from "./budget-coverage";
 import { formatCategoryPath } from "./category-path";
 import { isStaleClose, newestQuotedOn } from "./holding-price-age";
@@ -104,6 +110,8 @@ export interface BudgetNoteInput {
     overdueUnreadCents: number;
     /** of `overdueUnreadCents`, the part no statement keeps unread (`BudgetPaceStatus.overdueInGraceCents`) */
     overdueInGraceCents: number;
+    /** of the read part, the due days rows sitting unattached match to the cent (`BudgetPaceStatus.overdueUnattached`) */
+    overdueUnattached?: readonly UnattachedMatch[];
     uncoveredDays: number;
     pace: "under" | "at-risk" | "over";
     /** the row's accounts, so a cash-only row is told apart by the rule the row itself uses */
@@ -150,7 +158,7 @@ export function budgetSectionNotes(input: BudgetNoteInput): SectionNote[] {
     const unread = overdue.reduce((sum, r) => sum + r.overdueUnreadCents, 0);
     const inGrace = overdue.reduce((sum, r) => sum + r.overdueInGraceCents, 0);
     const said = arrearsTail(
-      { owedCents: total, unreadCents: unread, inGraceCents: inGrace },
+      { owedCents: total, unreadCents: unread, inGraceCents: inGrace, unattached: overdue.flatMap((r) => r.overdueUnattached ?? []) },
       NOT_POSTED,
       bills === 1 ? "it" : "them",
     );
@@ -526,6 +534,11 @@ export interface CashEarningsNoteInput {
      */
     checkedSilentNotBankedYet?: readonly string[];
     /**
+     * The schedule's paydays the one rule matched to a row sitting unattached (`CashEarningsReading.unattachedPaydays`),
+     * oldest first — the note takes its window's: never "none of it reached an account" of them, still unbanked.
+     */
+    unattachedPaydays?: readonly UnattachedMatch[];
+    /**
      * The window's READ paydays against the settlement (`payShortfall`) — what the shortfall note prints. Absent
      * means the caller did not measure it, and no such note is written.
      */
@@ -687,10 +700,30 @@ export function cashEarningsSectionNotes(input: CashEarningsNoteInput): SectionN
       const another = anotherBankedInside(paidAcrossParts(across, payday, input.formatDay), "paid paydays outside it");
       const inside = outside.length === 0 && across.length === 0 ? "" : " inside the window";
       const ownCents = windowOwnCents(r.bankedCents, across);
+      /*
+       * ⛔ …and of the window's paydays, those a row matches to the cent unattached (`unattachedPaydays`, the one
+       * rule's): "reached an account attached to it", and the rows named by day and amount — still unbanked, never
+       * "none of it reached an account". 🔴 His ledger copy 2026-10-29 (before his filing): October read "implies
+       * $4,567.68 of earnings over Oct 1 – 22, 2026 and none of it reached an account" beside four +$1,141.92 payroll
+       * rows on Wells Fargo, unattached.
+       */
+      const matched = (r.unattachedPaydays ?? []).filter(
+        (m) =>
+          r.firstPeriodOn !== null &&
+          r.lastPeriodOn !== null &&
+          compareDates(m.date, r.firstPeriodOn) >= 0 &&
+          compareDates(m.date, r.lastPeriodOn) <= 0,
+      );
+      const attached = matched.length === 0 ? "" : " attached to it";
+      const matchedPart =
+        matched.length === 0
+          ? ""
+          : `; ${formatCents(unattachedCents(matched))} is ${MATCHED_TO_THE_CENT_BY} ` +
+            unattachedRowsWords(matched, payday);
       const reached =
         ownCents <= 0
-          ? `none of it reached an account${inside}`
-          : `only ${formatCents(ownCents)} reached an account${inside}`;
+          ? `none of it reached an account${attached}${inside}${matchedPart}`
+          : `only ${formatCents(ownCents)} reached an account${attached}${inside}${matchedPart}`;
       const covered = r.periodsCovered ?? 0;
       const readCovered = r.checkedPeriodsCovered ?? 0;
       const unread = covered - readCovered;
@@ -766,7 +799,9 @@ export function cashEarningsSectionNotes(input: CashEarningsNoteInput): SectionN
        * or an ended schedule, while the card beside them named payroll landing in an account the ledger does not read.
        */
       const explanations = OR_LIST.format([
-        "that money was held as cash",
+        // ⛔ the rows the claim named are the first place that money may be, while they stay unattached
+        ...(matched.length === 0 ? [] : ["that money sits in the rows named above, not attached to the schedule"]),
+        matched.length === 0 ? "that money was held as cash" : "was held as cash",
         "spent as cash",
         `paid into ${ACCOUNT_NOT_READ}`,
         "the schedule has ended",

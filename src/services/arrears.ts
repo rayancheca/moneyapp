@@ -11,11 +11,13 @@ import {
   type DueDayReading,
 } from "@/lib/occurrence-verdict";
 import { sharedFrontier, type UnbankedFrontier } from "@/lib/unbanked-income";
+import type { ExpectedDay, UnattachedMatch } from "@/lib/unattached-match";
 import { billPaymentsBySeries, paymentFor, withBillingCarriers } from "./billing-carriers";
 import { checkedThroughBySeries, silenceMeasuredThroughBySeries } from "./cash-earnings";
 import { dueDayGraces, dueDayReadings } from "./observation-frontier";
 import { paydayProjectable, paydaySettlementsBySeries } from "./payday-settlement";
 import { dueDaysOf, hasStoppedForecasting, projectOccurrences, toProjectable } from "./recurring";
+import { unattachedMatchesBySeries } from "./unattached-match";
 
 /**
  * ARREARS — bills that came due inside a window and that no posting covers.
@@ -46,6 +48,12 @@ export interface BudgetTailSeries {
    * holds two, and a line naming "n × one amount" divided into one the series never had.
    */
   occurrenceCents: readonly number[];
+  /**
+   * Each in-window occurrence's date, in order, beside `occurrenceCents` — what the pay series' own page lists, one row
+   * a payday, and the days the rows that match them unattached are looked for on (`unattachedMatchesBySeries`). 🔴 Its
+   * page named none of Oct 1 or Oct 8 beside a forecast naming both (a copy of his ledger, 2026-10-12).
+   */
+  occurrenceDates: readonly string[];
   href: string;
 }
 
@@ -75,10 +83,10 @@ export interface UnbankedIncomeSeries extends BudgetTailSeries {
    */
   pastGraceOccurrenceCount: number;
   /**
-   * Each passed payday's date, in order, beside `occurrenceCents` — what the pay series' own page lists, one row a
-   * payday. 🔴 Its page named none of Oct 1 or Oct 8 beside a forecast naming both (a copy of his ledger, 2026-10-12).
+   * Of the paydays checked through their days to land (`pastGraceOccurrenceCount`), those a row matches to the cent
+   * that sits unattached (`unattachedMatchesBySeries`), oldest first — never "did not reach a bank", and still unbanked.
    */
-  occurrenceDates: readonly string[];
+  unattached: readonly UnattachedMatch[];
 }
 
 export interface UnbankedIncome {
@@ -180,6 +188,7 @@ export function overdueForSeries(
       amountCents,
       occurrenceCount: occ.length,
       occurrenceCents: occ.map((o) => -o.amountCents),
+      occurrenceDates: occ.map((o) => o.date),
       href: `/recurring/${s.id}`,
     });
   }
@@ -213,6 +222,13 @@ export interface ArrearsSeries extends BudgetTailSeries {
    * `dueDayGraces`). Null for a bill paid on its own, whose one window is `graceDays`.
    */
   carriedGrace: CarriedGrace | null;
+  /**
+   * Of the READ half (`amountCents` less `unreadCents`), the due days a row matches to the cent that sits unattached
+   * (`unattachedMatchesBySeries`), oldest first: still owed — linking is his act or the import's — but never "has not
+   * posted" (`lib/arrears-reading`). 🔴 The runway said "$695.04 has not posted" of the Car lease's Oct 15 beside an
+   * unattached −$695.04 "Mbfs.Com Auto Pay" of Oct 15 on Wells Fargo (his ledger copy 2026-10-29, before his filing).
+   */
+  unattached: readonly UnattachedMatch[];
 }
 
 export interface Arrears {
@@ -267,6 +283,18 @@ export function arrearsInWindow(
   const graceOf = dueDayGraces(db);
   const readingOf = dueDayReadings(db, today, graceOf);
   const readById = arrearsReadCents(db, late, readingOf, periodStart, through, today);
+  // ⛔ the read half's due days — the ones a surface would call "has not posted" — asked the one rule for a row that
+  // matches them unattached (`unattachedMatchesBySeries`): the days on or before the last due day read
+  const readDays = new Map<string, readonly ExpectedDay[]>();
+  for (const s of late.series) {
+    const readTo = lastDueDayRead(readingOf(s.id));
+    if (readTo === null) continue;
+    const days = s.occurrenceDates
+      .map((date, i) => ({ date, amountCents: -s.occurrenceCents[i]! }))
+      .filter((d) => compareDates(d.date, readTo) <= 0);
+    readDays.set(s.id, days);
+  }
+  const unattachedOf = unattachedMatchesBySeries(db, readDays, today);
   return {
     totalCents: late.totalCents,
     series: late.series.map((s) => {
@@ -278,6 +306,7 @@ export function arrearsInWindow(
         inGraceCents: reading.readsToToday ? unreadCents : 0,
         graceDays: reading.graceDays,
         carriedGrace: graceOf(s.id).carried,
+        unattached: unattachedOf.get(s.id) ?? [],
       };
     }),
   };
@@ -285,7 +314,7 @@ export function arrearsInWindow(
 
 /** A late series' arrears as the reading every sentence of them is said through (`lib/arrears-reading`). */
 export function arrearsReadingOfSeries(s: ArrearsSeries): ArrearsReading {
-  return { owedCents: s.amountCents, unreadCents: s.unreadCents, inGraceCents: s.inGraceCents };
+  return { owedCents: s.amountCents, unreadCents: s.unreadCents, inGraceCents: s.inGraceCents, unattached: s.unattached };
 }
 
 /**
@@ -481,12 +510,22 @@ export function unbankedIncomeForSeries(
    */
   const checkedOf = checkedThroughBySeries(db, today);
 
-  const series = unmet.map(({ s, occ }): UnbankedIncomeSeries => {
+  const read = unmet.map(({ s, occ }) => {
     const checkedThrough = checkedOf(s.id);
     const checked = occ.filter((o) => paydayIsRead(o.date, checkedThrough));
     // ⚖️ …and its days to land (`paydayLandingIsRead`), the warning's — and every "never reached a bank"'s: the
     // dashboard and /spending read the same predicate (`paydaysNotBankedYet`). The split names no grace
     const pastGrace = checked.filter((o) => paydayLandingIsRead(o.date, s.toleranceDays, checkedThrough));
+    return { s, occ, checkedThrough, checked, pastGrace };
+  });
+  // ⛔ the paydays the warning would call never banked, asked the one rule for a row matching them unattached
+  const unattachedOf = unattachedMatchesBySeries(
+    db,
+    new Map(read.map(({ s, pastGrace }) => [s.id, pastGrace.map((o) => ({ date: o.date, amountCents: o.amountCents }))])),
+    today,
+  );
+
+  const series = read.map(({ s, occ, checkedThrough, checked, pastGrace }): UnbankedIncomeSeries => {
     return {
       id: s.id,
       name: s.name,
@@ -501,6 +540,7 @@ export function unbankedIncomeForSeries(
       checkedCents: checked.reduce((sum, o) => sum + o.amountCents, 0),
       pastGraceOccurrenceCount: pastGrace.length,
       occurrenceDates: occ.map((o) => o.date),
+      unattached: unattachedOf.get(s.id) ?? [],
     };
   });
   series.sort((a, b) => compareDates(a.nextDate, b.nextDate) || a.name.localeCompare(b.name));
@@ -531,6 +571,8 @@ export interface UnbankedIncomeTotals {
   checkedOccurrenceCount: number;
   /** of those, the paydays checked through their days to land too — the warning's (`pastGraceOccurrenceCount`) */
   pastGraceOccurrenceCount: number;
+  /** of those, the paydays a row matches to the cent that sits unattached (`UnbankedIncomeSeries.unattached`) */
+  unattached?: readonly UnattachedMatch[];
   /**
    * How far the accounts the pay lands in were checked, across every series
    * (`sharedFrontier`): the one day they share, `per-schedule` when they were
@@ -548,6 +590,7 @@ export function unbankedIncomeTotals(u: UnbankedIncome): UnbankedIncomeTotals {
     occurrenceCount: u.series.reduce((n, s) => n + s.occurrenceCount, 0),
     checkedOccurrenceCount: u.series.reduce((n, s) => n + s.checkedOccurrenceCount, 0),
     pastGraceOccurrenceCount: u.series.reduce((n, s) => n + s.pastGraceOccurrenceCount, 0),
+    unattached: u.series.flatMap((s) => s.unattached),
     frontier: sharedFrontier(u.series.map((s) => s.checkedThrough)),
     names: u.series.map((s) => s.name),
   };

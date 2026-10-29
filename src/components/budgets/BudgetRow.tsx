@@ -123,6 +123,7 @@ export function BudgetRow({ status, guide, spentProvenance, planProvenance }: Bu
     owedCents: status.overdueCents,
     unreadCents: status.overdueUnreadCents,
     inGraceCents: status.overdueInGraceCents,
+    unattached: status.overdueUnattached,
   };
   const arrearsLine = `${formatCents(status.overdueCents)} expected by now${arrearsTail(arrears, NOT_POSTED)}`;
 
@@ -403,6 +404,7 @@ export function BudgetRow({ status, guide, spentProvenance, planProvenance }: Bu
                   overdueCents: status.overdueCents,
                   overdueUnreadCents: status.overdueUnreadCents,
                   overdueInGraceCents: status.overdueInGraceCents,
+                  overdueUnattached: status.overdueUnattached,
                   expectedTailCents: status.expectedTailCents,
                 },
                 formatCents,

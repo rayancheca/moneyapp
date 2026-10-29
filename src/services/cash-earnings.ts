@@ -6,6 +6,7 @@ import { transactions } from "@/db/schema/transactions";
 import { compareDates, todayIso } from "@/lib/dates";
 import { cashEarnings, type CashEarnings, type PaySeries } from "@/lib/cash-earnings";
 import {
+  paydaysNeverBanked,
   payShortfall,
   silentPaydaysNotBankedYet,
   type PayShortfall,
@@ -13,6 +14,7 @@ import {
   type WindowEarnings,
 } from "@/lib/pay-shortfall";
 import { firstPaydayOn } from "@/lib/payday-settlement";
+import type { UnattachedMatch } from "@/lib/unattached-match";
 import { stepPlan, walkDayOfMonth } from "@/lib/recurring-step";
 import { outsidePortfolioCashAccountIds } from "./accounts";
 import { isAgentsIncomeSeries, loadCategoryIndex, payDayRows } from "./analytics";
@@ -21,6 +23,7 @@ import { accountsAwaitingStatements, silenceReadThrough } from "./cash-wallet-ru
 import { accountCoverage, archivedAccountCoverage } from "./coverage";
 import { paydaySettlement } from "./payday-settlement";
 import { effectiveSeries } from "./recurring";
+import { unattachedMatchesBySeries } from "./unattached-match";
 
 /**
  * Earned versus banked, read off the real ledger.
@@ -84,6 +87,16 @@ export interface CashEarningsReading extends CashEarnings {
    * `withChecked`.
    */
   checkedSilentNotBankedYet?: readonly string[];
+  /**
+   * Of the schedule's passed paydays no deposit settled, checked through their days to land — those every surface
+   * would call "did not reach a bank" (`paydaysNeverBanked`) — the ones a row matches to the cent that sits
+   * unattached (`unattachedMatchesBySeries`), over the schedule's whole life, oldest first: each reader takes its own
+   * window's or its silence's. Never banked by it — still in the difference, still unpaid — and never called absent.
+   * 🔴 His ledger copy 2026-10-29 (before his filing): "so the pay did not reach a bank" and "none of it reached an
+   * account" of Oct 1, 8, 15 and 22 beside four +$1,141.92 payroll rows on Wells Fargo, unattached. Present only with
+   * `withChecked`, and empty when nothing is checked.
+   */
+  unattachedPaydays?: readonly UnattachedMatch[];
   /**
    * The window's pay against the series' settlement (`payShortfall`) — /spending's shortfall note and the split of its
    * surplus note: what the READ paydays came to beyond what was banked inside the window, what deposits outside it
@@ -541,10 +554,20 @@ export function cashEarningsReadings(
         checkedPeriodsCovered: 0,
         checkedPeriodsSinceBanked: 0,
         checkedSilentNotBankedYet,
+        unattachedPaydays: [],
         ...ruled(shortfall),
       });
       continue;
     }
+    // ⛔ the one rule, asked of every payday the schedule would call never banked (`unattachedMatchesBySeries`)
+    const never = paydaysNeverBanked(settlement, {
+      from: startedOn,
+      to: today,
+      today,
+      checkedThrough,
+      toleranceDays: s.toleranceDays,
+    });
+    const unattachedPaydays = unattachedMatchesBySeries(db, new Map([[s.id, never]]), today).get(s.id) ?? [];
     /*
      * The same schedule, read AS OF the frontier: a day the records have read
      * through is complete, so a payday dated on it is checked — unless the
@@ -576,6 +599,7 @@ export function cashEarningsReadings(
         checkedThrough,
       ),
       checkedSilentNotBankedYet,
+      unattachedPaydays,
       ...ruled(shortfall),
     });
   }

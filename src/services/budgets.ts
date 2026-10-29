@@ -1,4 +1,5 @@
 import { and, eq, gte, inArray, isNotNull, isNull, lte, notExists } from "drizzle-orm";
+import type { UnattachedMatch } from "@/lib/unattached-match";
 import { z } from "zod";
 import type { AppDatabase } from "@/db/client";
 import { budgets, BUDGET_PERIODS, type BudgetPeriodKind } from "@/db/schema/budgets";
@@ -848,6 +849,11 @@ export interface IncomeExpectation {
    * is a statement about (`unbankedIncomeTotals`).
    */
   passedUnpaidCheckedOccurrences: number;
+  /**
+   * Of those, the paydays a row matches to the cent that sits unattached (`UnbankedIncomeSeries.unattached`) — never "no
+   * deposit against them", and still passed unpaid.
+   */
+  passedUnpaidUnattached: readonly UnattachedMatch[];
   /** how far the accounts the other passed paydays land in were checked — one day, per schedule, or not at all */
   passedUnpaidFrontier: UnbankedFrontier;
   /**
@@ -1255,6 +1261,7 @@ export function incomeExpectation(
     levelledSeriesIds,
     passedUnpaidCents,
     passedUnpaidOccurrences,
+    passedUnpaidUnattached: passed.unattached ?? [],
     passedUnpaidCheckedOccurrences: passed.checkedOccurrenceCount,
     passedUnpaidFrontier: passed.frontier,
     paidByAnotherMonthCents,
@@ -1401,6 +1408,7 @@ export function budgetTail(
       amountCents,
       occurrenceCount: occ.length,
       occurrenceCents: occ.map((o) => -o.amountCents),
+      occurrenceDates: occ.map((o) => o.date),
       href: `/recurring/${s.id}`,
       oneCharge: oneCharge.has(s.id),
     });
@@ -1761,6 +1769,8 @@ export interface BudgetPaceStatus extends BudgetStatus, CategoryCoverage {
    * its days to post, never "no statement has covered it yet".
    */
   overdueInGraceCents: number;
+  /** of the read part, the due days rows sitting unattached match to the cent — never "not posted" (`ArrearsSeries`) */
+  overdueUnattached: readonly UnattachedMatch[];
   overdue: ArrearsSeries[];
   /**
    * Days of THIS window the ledger cannot speak for: the elapsed days past
@@ -2014,6 +2024,7 @@ export function budgetPaceStatusOf(
     overdueCents: overdue.totalCents,
     overdueUnreadCents: overdue.series.reduce((sum, o) => sum + o.unreadCents, 0),
     overdueInGraceCents: overdue.series.reduce((sum, o) => sum + o.inGraceCents, 0),
+    overdueUnattached: overdue.series.flatMap((o) => o.unattached),
     overdue: overdue.series,
     ...categoryWindowReading(db, s.budget.categoryId, s.bounds, refDate, reads),
     totalDays,

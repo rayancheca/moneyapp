@@ -1,3 +1,4 @@
+import { MATCHED_TO_THE_CENT_BY, unattachedRowsWords, type UnattachedMatch } from "@/lib/unattached-match";
 /**
  * How far the accounts the passed paydays' pay lands in have been checked.
  *
@@ -20,6 +21,11 @@ export interface UnbankedIncomeReading {
   checkedOccurrenceCount: number;
   /** how far the accounts the other paydays land in have been checked */
   frontier: UnbankedFrontier;
+  /**
+   * Of the checked paydays, those a row matches to the cent that sits unattached (`UnbankedIncomeSeries.unattached`):
+   * never "with no deposit" nor "never reaches a bank", and still unbanked. Absent: none.
+   */
+  unattached?: readonly UnattachedMatch[];
 }
 
 /**
@@ -233,8 +239,10 @@ export function unbankedIncomeFrontierClause(
   if (unread <= 0) return null;
 
   const checked = r.checkedOccurrenceCount;
+  // ⛔ "with no deposit" only where no row matches one unattached (`lib/unattached-match`)
+  const noDeposit = (r.unattached ?? []).length === 0 ? "with no deposit" : "with no deposit attached to it";
   const checkedPart =
-    checked === 0 ? null : `${checked} ${checked === 1 ? "falls on a day" : "fall on days"} already checked, with no deposit`;
+    checked === 0 ? null : `${checked} ${checked === 1 ? "falls on a day" : "fall on days"} already checked, ${noDeposit}`;
   const other = unread === 1 ? "the other one" : `the other ${unread}`;
 
   if (r.frontier.kind === "unchecked") {
@@ -294,10 +302,24 @@ export interface PassedPaydaysWords {
  * ⚖️ …and "never reaches a bank" only of a payday checked through its days to land (`pastGraceOccurrenceCount`). 🔴 A
  * Thursday checked through Friday read it, in warning colour, of a payroll that could still land on Sunday.
  */
-function notProjectedSubject(r: PassedPaydaysReading): string {
+function notProjectedSubject(r: PassedPaydaysReading, formatDay: (iso: string) => string): string {
   const unlooked = "Pay the ledger has not looked for";
   if (r.checkedOccurrenceCount === 0) return unlooked;
-  const checked = r.pastGraceOccurrenceCount > 0 ? "Pay that never reaches a bank" : "Pay not banked yet";
+  /*
+   * ⛔ "Never reaches a bank" only of the paydays no row matches to the cent unattached (`unattached`): those are pay
+   * "matched to the cent by rows of … that are not attached to it" — still not projected, since nothing paid them. 🔴
+   * His ledger copy 2026-10-29 (before his filing): "Pay that never reaches a bank" of Oct 1, 8, 15 and 22 beside four
+   * +$1,141.92 payroll rows on Wells Fargo, unattached.
+   */
+  const matched = r.unattached ?? [];
+  const rows = `pay ${MATCHED_TO_THE_CENT_BY} ${unattachedRowsWords(matched, formatDay)}`;
+  const never =
+    matched.length === 0
+      ? "Pay that never reaches a bank"
+      : matched.length >= r.pastGraceOccurrenceCount
+        ? `P${rows.slice(1)}`
+        : `Pay that never reaches a bank, and ${rows},`;
+  const checked = r.pastGraceOccurrenceCount > 0 ? never : "Pay not banked yet";
   /*
    * ⚖️ Default built, not asked (2026-10-21): with paydays after the checked day among them, the subject names those
    * too, in its own words for them. 🔴 "Pay not banked yet cannot be projected as arriving" closed a note whose other
@@ -317,9 +339,14 @@ export function passedPaydaysWords(r: PassedPaydaysReading, formatDay: (iso: str
   const unread = unbankedIncomeFrontierClause(r, formatDay);
   return {
     count: r.occurrenceCount === 1 ? "1 payday" : `${r.occurrenceCount} paydays`,
-    passed: unread === null ? "already passed this month with no deposit imported" : "already passed this month",
+    passed:
+      unread !== null
+        ? "already passed this month"
+        : (r.unattached ?? []).length === 0
+          ? "already passed this month with no deposit imported"
+          : "already passed this month with no deposit attached to it",
     unread,
-    notProjected: `${notProjectedSubject(r)} cannot be projected as arriving`,
+    notProjected: `${notProjectedSubject(r, formatDay)} cannot be projected as arriving`,
     warning: r.pastGraceOccurrenceCount > 0,
   };
 }

@@ -1,4 +1,5 @@
 import type { BlastRadiusLine } from "@/components/ui/blast-radius";
+import type { UnattachedMatch } from "@/lib/unattached-match";
 import { arrearsClause, NOT_POSTED } from "@/lib/arrears-reading";
 
 /**
@@ -60,6 +61,8 @@ export interface BudgetDeactivateInput {
   overdueUnreadCents: number;
   /** of `overdueUnreadCents`, the part no statement keeps unread (`BudgetPaceStatus.overdueInGraceCents`) */
   overdueInGraceCents: number;
+  /** of the read part, the due days rows sitting unattached match to the cent (`BudgetPaceStatus.overdueUnattached`) */
+  overdueUnattached?: readonly UnattachedMatch[];
   /** recurring still to come before the period closes */
   expectedTailCents: number;
 }
@@ -82,6 +85,7 @@ export function budgetDeactivateLines(
                 owedCents: input.overdueCents,
                 unreadCents: input.overdueUnreadCents,
                 inGraceCents: input.overdueInGraceCents,
+                unattached: input.overdueUnattached,
               },
               NOT_POSTED,
             )}`,
