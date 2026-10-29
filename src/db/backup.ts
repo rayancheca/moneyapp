@@ -99,12 +99,34 @@ async function snapshotOnce(
     monthlyCreated = true;
   }
 
-  const pruned = prune(backupsDir, retention, now);
+  const pruned = prune(backupsDir, retention, now, `${path.basename(dailyPath)} is in place`);
   return { status, dailyPath, monthlyCreated, pruned };
 }
 
-function prune(backupsDir: string, retention: RetentionPolicy, now: Date): string[] {
-  const entries = fs.readdirSync(backupsDir);
+/**
+ * Removes what retention no longer keeps, once something is saved: housekeeping, never the reason what was saved is
+ * reported as not saved. A folder it cannot read prunes nothing; a file it cannot remove stays and the rest is pruned;
+ * the server log says which, after `saved`. Retention is a count, so the next prune that can trims back to it.
+ *
+ * 🔴 Review of f48d413 (batch 6): f48d413 made the prune after a committed write housekeeping; under its other callers
+ * it still threw. A restore point written and then not pruned was reported "Could not save a restore point, so nothing
+ * was changed" — every un-import, gap accepted, rule applied back and guarded script refused for it — and "Back up
+ * now", a restore and the daily at boot said they failed beside what they had written. A prune stopped partway was
+ * logged "one spare kept" with files already gone, and the one file it could not remove kept every restore point
+ * behind it from being pruned, then and at every prune after. Measured on his ledger copy 2026-10-29 with the folder
+ * unreadable: un-importing Discover's October statement (4 rows) was refused beside the restore point it had saved.
+ */
+function prune(backupsDir: string, retention: RetentionPolicy, now: Date, saved: string): string[] {
+  let entries: string[];
+  try {
+    entries = fs.readdirSync(backupsDir);
+  } catch (error: unknown) {
+    console.error(
+      `[backup] ${saved}; the backups folder could not be read to prune — any spare stays until a prune can`,
+      error,
+    );
+    return [];
+  }
   const pruned: string[] = [];
   for (const [re, keep] of [
     [DAILY_RE, retention.keepDaily],
@@ -116,8 +138,15 @@ function prune(backupsDir: string, retention: RetentionPolicy, now: Date): strin
       .sort()
       .reverse(); // lexicographic date order: newest first
     for (const name of matching.slice(keep)) {
-      fs.rmSync(path.join(backupsDir, name), { force: true });
-      pruned.push(name);
+      try {
+        fs.rmSync(path.join(backupsDir, name), { force: true });
+        pruned.push(name);
+      } catch (error: unknown) {
+        console.error(
+          `[backup] ${saved}; pruning could not remove ${name} — it stays, a spare, until a prune can`,
+          error,
+        );
+      }
     }
   }
   // stale tmp files from hard crashes (unique names, so >1h old means dead)
@@ -148,6 +177,8 @@ function prune(backupsDir: string, retention: RetentionPolicy, now: Date): strin
  * These are user-initiated, retryable actions — refusing one is a nuisance,
  * running one unprotected is unrecoverable. The only silent paths are the two
  * that have nothing to protect, and both report themselves in `reason`.
+ * A snapshot that WAS written is written: the prune after it is housekeeping,
+ * and one that fails says so in the server log only (`prune`).
  * ------------------------------------------------------------------ */
 
 export interface PreMutationSnapshotResult {
@@ -247,7 +278,8 @@ export function preMutationSnapshot(
   retention: RetentionPolicy = DEFAULT_RETENTION,
 ): PreMutationSnapshotResult {
   const target = writeRestorePoint(sqlite, backupsDir, label, now);
-  return { status: "created", path: target, pruned: prune(backupsDir, retention, now) };
+  const pruned = prune(backupsDir, retention, now, `${path.basename(target)} was saved`);
+  return { status: "created", path: target, pruned };
 }
 
 /**
@@ -320,7 +352,7 @@ export function withPreMutationSnapshot<T>(db: AppDatabase, label: string, mutat
  *
  * 🔴 Review of fcfe798 (2026-10-13): a prune that failed after the commit threw out of a write already in his ledger,
  * so the merge he had made was reported failed, and a retry would merge again. Once committed, the write is returned;
- * a prune that fails says so in the server log and keeps one spare restore point, which the next one's prune takes.
+ * the prune is housekeeping (`prune`): what it could not remove stays, a spare, and the server log says so.
  */
 export function withPreMutationTransaction<T>(
   db: AppDatabase,
@@ -335,17 +367,8 @@ export function withPreMutationTransaction<T>(
     if (point.path !== null) discardRestorePoint(point.path);
     throw error;
   }
-  if (point.path !== null) pruneAfterCommit(point.path, label);
+  if (point.path !== null) prune(path.dirname(point.path), DEFAULT_RETENTION, new Date(), `the ${label} was written`);
   return written;
-}
-
-/** The prune a committed write's restore point waits for — never a reason to report that write failed. */
-function pruneAfterCommit(file: string, label: string): void {
-  try {
-    prune(path.dirname(file), DEFAULT_RETENTION, new Date());
-  } catch (error: unknown) {
-    console.error(`[backup] the ${label} was written; pruning the restore points after it failed — one spare kept`, error);
-  }
 }
 
 /** A restore point of a write that rolled back — it holds the ledger as it still is. */
