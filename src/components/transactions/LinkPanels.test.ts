@@ -15,13 +15,15 @@ vi.mock("@/app/transactions/actions", () => ({
 vi.mock("@/app/transactions/sheet-actions", () => ({ loadSeriesLinkPanel: vi.fn(), loadTransferLinkPanel: vi.fn() }));
 // the toasts a press raises, read as raised
 vi.mock("@/components/ui/Toast", async (actual) => ({ ...(await actual<object>()), toast: vi.fn() }));
-vi.mock("./undo-toast", () => ({ offerUndoToast: vi.fn() }));
+// the patch undo's toast is read as raised; the rest of the shared Undo card is real — Make recurring's card is it
+vi.mock("./undo-toast", async (actual) => ({ ...(await actual<object>()), offerUndoToast: vi.fn() }));
 
 const { pressMakeRecurring, pressSheetAttach } = await import("./LinkPanels");
 const { attachToSeriesAction, createSeriesFromTxnAction, undoCreateSeriesAction } = await import("@/app/recurring/actions");
 const { undoAction } = await import("@/app/transactions/actions");
-const { toast } = await import("@/components/ui/Toast");
-const { offerUndoToast } = await import("./undo-toast");
+const { settleToastAction, toast } = await import("@/components/ui/Toast");
+const { offerUndoToast, UNDO_FAILED } = await import("./undo-toast");
+type ToastActionResult = import("@/components/ui/Toast").ToastActionResult;
 
 const undo = { rows: [] };
 const filed = { categoryId: "c1", categoryPath: "Utilities > Electricity", count: 1 };
@@ -30,8 +32,9 @@ const after = { linked: vi.fn(), close: vi.fn(), reset: vi.fn(), onChanged: vi.f
 beforeEach(() => {
   vi.mocked(toast).mockClear();
   vi.mocked(offerUndoToast).mockClear();
-  vi.mocked(undoCreateSeriesAction).mockClear();
-  vi.mocked(undoAction).mockClear();
+  // reset, not cleared: a test's rejected undo must not answer the next test's press
+  vi.mocked(undoCreateSeriesAction).mockReset();
+  vi.mocked(undoAction).mockReset();
   for (const fn of Object.values(after)) fn.mockClear();
 });
 
@@ -121,16 +124,18 @@ describe("the transaction sheet's Make recurring, as SeriesLinkPanel makes it", 
     await pressMakeRecurring("t1", after);
     return vi.mocked(toast).mock.calls[0]![0].action!.onAction;
   };
+  // what the card does once its Undo settles — Toast's own rule, read here rather than restated
+  const cardAfter = (value: ToastActionResult) => settleToastAction({ status: "resolved", value });
 
   test("its Undo, a series created: the series' creation is undone, and the panel put back", async () => {
     vi.mocked(undoCreateSeriesAction).mockResolvedValue({ ok: true, data: { unlinked: 1 } });
     const undoIt = await undoOf("created");
 
-    undoIt();
-
-    await vi.waitFor(() => expect(after.reset).toHaveBeenCalledOnce());
+    // the card closes because the undo landed, not because it was pressed
+    expect(await undoIt()).toMatchObject({ ok: true });
     expect(undoCreateSeriesAction).toHaveBeenLastCalledWith({ seriesId: "s1", undo });
     expect(undoAction).not.toHaveBeenCalled();
+    expect(after.reset).toHaveBeenCalledOnce();
     expect(after.onChanged).toHaveBeenCalledTimes(2);
   });
 
@@ -138,22 +143,55 @@ describe("the transaction sheet's Make recurring, as SeriesLinkPanel makes it", 
     vi.mocked(undoAction).mockResolvedValue({ ok: true, data: { restored: 1, ruleDeleted: false } });
     const undoIt = await undoOf("attached");
 
-    undoIt();
-
-    await vi.waitFor(() => expect(after.reset).toHaveBeenCalledOnce());
+    expect(await undoIt()).toMatchObject({ ok: true });
     expect(undoAction).toHaveBeenLastCalledWith(undo);
     expect(undoCreateSeriesAction).not.toHaveBeenCalled();
+    expect(after.reset).toHaveBeenCalledOnce();
     expect(after.onChanged).toHaveBeenCalledTimes(2);
   });
 
-  test("an Undo refused says why, and leaves the panel as the press left it", async () => {
+  /*
+   * 🔴 Review of c3d804e (batch 6): those tests blessed a card hand-rolled as `() => void (…).then(…)`, which resolves
+   * with nothing — and Toast's `settleToastAction` dismisses a card whose action reports nothing, on the press. A
+   * refused undo tore the card down with its patch (the negative toast it raised had nothing to press), and a call
+   * that never reached the server rejected with no catch: nothing reached him at all. The card is now the shared one,
+   * which settles and RETURNS (re-read on 569b0a8, 2026-10-29).
+   */
+  test("an Undo refused keeps its card and says why on it — the panel stays as the press left it", async () => {
     vi.mocked(undoCreateSeriesAction).mockResolvedValue({ ok: false, error: "Nothing to undo" });
     const undoIt = await undoOf("created");
 
-    undoIt();
-
-    await vi.waitFor(() => expect(toast).toHaveBeenLastCalledWith({ title: "Nothing to undo", tone: "negative" }));
+    expect(cardAfter(await undoIt())).toEqual({ dismiss: false, error: "Nothing to undo" });
+    // said on the card itself (its role="alert"), not in a second toast beside it
+    expect(toast).toHaveBeenCalledOnce();
     expect(after.reset).not.toHaveBeenCalled();
     expect(after.onChanged).toHaveBeenCalledOnce();
+  });
+
+  test("an Undo that never reached the server (restarted, wifi down) says so on its card", async () => {
+    vi.mocked(undoAction).mockRejectedValue(new Error("Failed to fetch"));
+    const undoIt = await undoOf("attached");
+
+    expect(cardAfter(await undoIt())).toEqual({ dismiss: false, error: "Failed to fetch" });
+    expect(after.reset).not.toHaveBeenCalled();
+  });
+
+  test("…and with nothing readable, it says what every Undo card says: the change still stands", async () => {
+    vi.mocked(undoCreateSeriesAction).mockRejectedValue("nope");
+    const undoIt = await undoOf("created");
+
+    expect(cardAfter(await undoIt())).toEqual({ dismiss: false, error: UNDO_FAILED });
+  });
+
+  test("a failed Undo can be pressed again, with the same patch, and the second press undoes it", async () => {
+    vi.mocked(undoCreateSeriesAction)
+      .mockRejectedValueOnce(new Error("Failed to fetch"))
+      .mockResolvedValueOnce({ ok: true, data: { unlinked: 1 } });
+    const undoIt = await undoOf("created");
+
+    expect(await undoIt()).toMatchObject({ ok: false });
+    expect(await undoIt()).toMatchObject({ ok: true });
+    expect(undoCreateSeriesAction).toHaveBeenNthCalledWith(2, { seriesId: "s1", undo });
+    expect(after.reset).toHaveBeenCalledOnce();
   });
 });
