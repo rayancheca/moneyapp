@@ -200,7 +200,7 @@ export function rolloverHeldBackSentence(
 
 /** What a rolling row's line can still do: the carry's facts (`services/budgets::BudgetStatus`). */
 export interface RolloverRiseInput {
-  /** the most the periods held back can still add to the carry once read (`BudgetStatus.rolloverMayAddCents`) */
+  /** the most the periods held back can still add to the carry as they are read (`BudgetStatus.rolloverMayAddCents`) */
   rolloverMayAddCents: number;
   /** those periods, oldest first (`BudgetStatus.rolloverHeldBack`) */
   rolloverHeldBack: readonly PeriodBounds[];
@@ -211,7 +211,8 @@ export interface RolloverRiseInput {
 
 /**
  * The line this row is graded against — its plan and what has rolled over — can still RISE: a closed period held back
- * (decision 67) can still bank once its statements land, on what is found in it so far (`services/budgets::carryInto`'s
+ * (decision 67) can still bank as its statements land, at any step of the order they can land in, on its plan less the
+ * spend found in it so far — never less a bill due in it, which may yet lapse (`services/budgets::RolloverCarry`'s
  * `mayAddCents`).
  *
  * ⚖️ default built, not asked (2026-10-29): wherever it can, nothing measured against the line is a floor — how far
@@ -219,6 +220,10 @@ export interface RolloverRiseInput {
  * verdict itself stands (his rule: never withheld). 🔴 Review of 48475ec4: Food, $30.00 a month rolling from Jul 1,
  * spoke "over budget by at least $10.00" in August while July, held back with $0.00 of it found, could still bank
  * $30.00 — and on the load after July's statement read $40.00 of $60.00 ($30.00 rolled over), no Food added anywhere.
+ * 🔴 Review of 4cd38494: it answered false where the line could rise — an older period able to bank while a newer one
+ * past its plan waits; a cancelled bill's overdue held against the period it lapses in — and so let the note's "so
+ * each is over by at least what it shows", a withheld row's "the percentage can only rise" and `paceOver`'s "no later
+ * import can undo that" stand.
  *
  * ⛔ One test for the row's verdict and definition (`budgetVerdict`), its line and spoken sentence
  * (`budgetCoverageLine`, `BudgetRow`), the category page's card and the page note (`budgetSectionNotes`).
