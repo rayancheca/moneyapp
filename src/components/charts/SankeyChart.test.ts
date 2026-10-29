@@ -1,6 +1,7 @@
 import { describe, expect, test } from "vitest";
 import { formatCents } from "@/lib/money";
 import type { SankeyGraph } from "@/lib/sankey-layout";
+import { noIncomeDayCheckedNote, noIncomeDayCheckedWindowNote } from "@/lib/unbanked-income";
 import {
   type SankeyEmptyFacts,
   sankeyEmptyCopy,
@@ -230,11 +231,22 @@ describe("sankeyShareCell — the table lens", () => {
  */
 describe("sankeyEmptyCopy — why a flow is empty", () => {
   const empty: SankeyEmptyFacts & SankeyGraph = { nodes: [], links: [] };
-  const copy = (graph: Parameters<typeof sankeyEmptyCopy>[0], periodLabel?: string) =>
-    sankeyEmptyCopy(graph, "No money flow in this period.", periodLabel);
+  const copy = (graph: Parameters<typeof sankeyEmptyCopy>[0], incomeUnreadNote?: string) =>
+    sankeyEmptyCopy(graph, "No money flow in this period.", incomeUnreadNote);
 
-  test("income nobody has looked for says so, of the page's period — or of 'this period' where none is named", () => {
-    expect(copy({ ...empty, incomeUnread: true }, "October 2026")).toBe(
+  /*
+   * ⚖️ …in the surface's ONE sentence for its window (2026-10-29): /spending's Income card's, which says a one-day
+   * window's day "has not been checked" (`noIncomeDayCheckedWindowNote`), and the dashboard's for "this range". 🔴 His
+   * ledger copy 2026-10-29: `/spending?period=2026-09-25&cash=sankey` read "Not one day of Sep 25, 2026 has been
+   * checked …" of one day; the dashboard's Flow 1M (Sep 30 – Oct 29) "Not one day of this period …" under its pills'
+   * "No money flow in this range."
+   */
+  test("income nobody has looked for says the surface's sentence for its window — 'this period''s where none is", () => {
+    const sep25 = noIncomeDayCheckedWindowNote({ from: "2026-09-25", to: "2026-09-25", label: "Sep 25, 2026" });
+    expect(copy({ ...empty, incomeUnread: true }, sep25)).toBe(
+      "Sep 25, 2026 has not been checked in the accounts that pay lands in, so nothing is shown.",
+    );
+    expect(copy({ ...empty, incomeUnread: true }, noIncomeDayCheckedNote("October 2026"))).toBe(
       "Not one day of October 2026 has been checked in the accounts that pay lands in, so nothing is shown.",
     );
     expect(copy({ ...empty, incomeUnread: true })).toBe(
@@ -247,13 +259,19 @@ describe("sankeyEmptyCopy — why a flow is empty", () => {
     expect(copy({ ...empty, spendingUnaccounted: notFound })).toBe(
       "Nothing found so far — spending imported through Jul 3.",
     );
-    expect(copy({ ...empty, spendingUnaccounted: notFound, incomeUnread: true }, "Jul 6, 2026")).toBe(
-      "Nothing found so far — spending imported through Jul 3. Not one day of Jul 6, 2026 has been checked in the " +
-        "accounts that pay lands in, so nothing is shown.",
+    const jul6 = noIncomeDayCheckedWindowNote({ from: "2026-07-06", to: "2026-07-06", label: "Jul 6, 2026" });
+    expect(copy({ ...empty, spendingUnaccounted: notFound, incomeUnread: true }, jul6)).toBe(
+      "Nothing found so far — spending imported through Jul 3. Jul 6, 2026 has not been checked in the accounts that " +
+        "pay lands in, so nothing is shown.",
     );
-    // the dashboard's Flow 1W on his ledger copy 2026-10-21 (Oct 15 – 21, nothing found): its pills name no period
-    expect(copy({ ...empty, spendingUnaccounted: "spending imported through Aug 12", incomeUnread: true })).toBe(
-      "Nothing found so far — spending imported through Aug 12. Not one day of this period has been checked in the " +
+    // the dashboard's Flow 1W on his ledger copy 2026-10-29 (Oct 23 – 29, nothing found): its pills call it a range
+    expect(
+      copy(
+        { ...empty, spendingUnaccounted: "spending imported through Aug 12", incomeUnread: true },
+        noIncomeDayCheckedNote("this range"),
+      ),
+    ).toBe(
+      "Nothing found so far — spending imported through Aug 12. Not one day of this range has been checked in the " +
         "accounts that pay lands in, so nothing is shown.",
     );
   });

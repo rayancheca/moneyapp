@@ -228,11 +228,17 @@ describe("a window whose spending has not been found says so on every card", () 
  * not render: the page is an async server component.
  */
 describe("the stat cards read the window the way the rest of the app does", () => {
-  // ⛔ the cash flow's own reading (`noIncomeDayReadOf`, the dashboard's and /budgets' rule) under the dashboard's words
-  test("Income is handed the cash flow's reading and the dashboard's note for its dash", () => {
-    expect(source).toMatch(
-      /<SpendingStatCards[^/]*\bincomeUnread=\{cashFlow\.incomeUnread \? noIncomeDayCheckedNote\(period\.label\) : null\}/,
-    );
+  /*
+   * ⛔ the cash flow's own reading (`noIncomeDayReadOf`, the dashboard's and /budgets' rule) under ONE sentence for the
+   * window, which the Sankey lens is handed too (`noIncomeDayCheckedWindowNote`, 2026-10-29). 🔴 His ledger copy
+   * 2026-10-29: `?period=2026-09-25` carded Income "Not one day of Sep 25, 2026 has been checked in the accounts that
+   * pay lands in" — and the Sankey lens said it — over a table saying "the day has not been checked …" of that day.
+   */
+  test("Income is handed the cash flow's reading and the window's one sentence for its dash", () => {
+    expect(source).toMatch(/const incomeUnreadNote = noIncomeDayCheckedWindowNote\(period\);/);
+    expect(source).toMatch(/<SpendingStatCards[^/]*\bincomeUnread=\{cashFlow\.incomeUnread \? incomeUnreadNote : null\}/);
+    expect(source).toMatch(/<CashFlowView[^/]*\bincomeUnreadNote=\{incomeUnreadNote\}/);
+    expect(source).not.toMatch(/noIncomeDayCheckedNote\(period\.label\)/);
   });
 
   // ⛔ the very object "Where it went"'s chip and line are drawn from — one count of the window's unread days

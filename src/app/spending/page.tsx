@@ -5,7 +5,7 @@ import { nothingFoundSoFarSentence } from "@/lib/budget-coverage";
 import { todayIso } from "@/lib/dates";
 import { formatDayLong } from "@/lib/format-date";
 import { cashEarningsSectionNotes } from "@/lib/section-notes";
-import { noIncomeDayCheckedNote } from "@/lib/unbanked-income";
+import { noIncomeDayCheckedWindowNote } from "@/lib/unbanked-income";
 import { comparedCategories } from "@/lib/compared-categories";
 import { whereItWentRows } from "@/lib/where-it-went-rows";
 import { deviationRowsFrom } from "@/lib/deviation-layout";
@@ -353,6 +353,13 @@ export default async function SpendingPage({
    */
   const notFoundText =
     cashFlow.spendingUnaccounted === null ? undefined : nothingFoundSoFarSentence(cashFlow.spendingUnaccounted);
+  /*
+   * ⚖️ §6A 68: the window's ONE sentence for an Income nobody has looked for — the Income card's line and the Sankey
+   * lens's words alike (2026-10-29), so a one-day window's day "has not been checked", as the table says of it.
+   * 🔴 His ledger copy 2026-10-29: `?period=2026-09-25` carded "Not one day of Sep 25, 2026 has been checked in the
+   * accounts that pay lands in" — and the Sankey lens said it — over a table saying "the day has not been checked …".
+   */
+  const incomeUnreadNote = noIncomeDayCheckedWindowNote(period);
   const emptyCopy = hasActivity
     ? null
     : spendingEmptyCopy(db, range, {
@@ -394,7 +401,7 @@ export default async function SpendingPage({
             totals={cashFlow.totals}
             range={range}
             spendingUnaccounted={cashFlow.spendingUnaccounted}
-            incomeUnread={cashFlow.incomeUnread ? noIncomeDayCheckedNote(period.label) : null}
+            incomeUnread={cashFlow.incomeUnread ? incomeUnreadNote : null}
             partlyRead={spendProvenance?.partlyRead ?? null}
             incomePartlyRead={incomePartlyRead}
           />
@@ -418,6 +425,7 @@ export default async function SpendingPage({
               viewState={cashView}
               baseParams={baseParams}
               periodLabel={period.label}
+              incomeUnreadNote={incomeUnreadNote}
             />
           </SurfaceCard>
 

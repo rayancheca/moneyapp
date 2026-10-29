@@ -64,4 +64,17 @@ describe("the dashboard's Flow asks whether its range's spending has been found"
   test("every range's Sankey is asked with today", () => {
     expect(source).toMatch(/spendingSankey\(db, \{ from: rangeAggregateStartDay\(r, today\) \?\? EARLIEST_DAY, to: today \}, today\)/);
   });
+
+  /*
+   * ⚖️ §6A 68: …and a range whose income nobody has looked for is said of "this range", the noun its own empty words
+   * use (2026-10-29). 🔴 His ledger copy 2026-10-29: the Flow's 1W (Oct 23 – 29) and 1M (Sep 30 – Oct 29) read "Not one
+   * day of this period has been checked in the accounts that pay lands in", the chart's default noun, beside pills
+   * whose flow says "No money flow in this range." where nothing flowed.
+   */
+  test("its Sankey says an unread range's Income of 'this range', as it says an empty one", () => {
+    const section = fs.readFileSync(path.join(process.cwd(), "src/components/dashboard/DashboardChartSection.tsx"), "utf8");
+    const mount = /<SankeyChart\b[\s\S]*?\/>/.exec(section)?.[0] ?? "";
+    expect(mount).toContain('emptyLabel="No money flow in this range."');
+    expect(mount).toContain('incomeUnreadNote={noIncomeDayCheckedNote("this range")}');
+  });
 });

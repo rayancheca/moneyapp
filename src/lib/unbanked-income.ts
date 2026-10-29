@@ -143,7 +143,7 @@ export function paidEarlyAside(paydays: readonly string[], formatPayday: (iso: s
  * reader and in the page's text alike.
  */
 export function noIncomeDayCheckedNote(month: string): string {
-  return `Not one day of ${month} has been checked in the accounts that pay lands in, so nothing is shown.`;
+  return lineUnderTheDash(notCheckedIn(month, false));
 }
 
 /**
@@ -153,9 +153,33 @@ export function noIncomeDayCheckedNote(month: string): string {
  * chart's hover under the bucket's. 🔴 His ledger copy 2026-10-21: both printed "Income $0.00" for Oct 1 … Oct 14.
  */
 export function noIncomeDayCheckedOf(bucket: "day" | "month"): string {
-  return bucket === "day"
-    ? "the day has not been checked in the accounts that pay lands in"
-    : "not one day of the month has been checked in the accounts that pay lands in";
+  return notCheckedIn(`the ${bucket}`, bucket === "day");
+}
+
+/** A window a §6A 68 sentence is said of: its two ends, and the words that name it ("Q4 2026", "Oct 1 – 14, 2026"). */
+export interface NamedWindow {
+  from: string;
+  to: string;
+  label: string;
+}
+
+/**
+ * ⚖️ §6A 68 of ANY window (2026-10-29): "not one day of Q4 2026 has been checked in the accounts that pay lands in" —
+ * and of a window ONE day long "Sep 25, 2026 has not been checked …", the table's words for one day
+ * (`noIncomeDayCheckedOf`) with the day named.
+ */
+export function noIncomeDayCheckedIn(window: NamedWindow): string {
+  return notCheckedIn(window.label, window.from === window.to);
+}
+
+/**
+ * …as the line under a window's dash — the month note above, of any window (2026-10-29). /spending's Income card and its
+ * Sankey lens are handed this one sentence for the page's period. 🔴 His ledger copy 2026-10-29: `?period=2026-09-25`
+ * (and Sep 27, Oct 14) carded "Not one day of Sep 25, 2026 has been checked in the accounts that pay lands in, so
+ * nothing is shown." — the Sankey lens the same — over a table saying "the day has not been checked …" of that day.
+ */
+export function noIncomeDayCheckedWindowNote(window: NamedWindow): string {
+  return lineUnderTheDash(noIncomeDayCheckedIn(window));
 }
 
 /**
@@ -165,6 +189,20 @@ export function noIncomeDayCheckedOf(bucket: "day" | "month"): string {
  */
 export function noIncomeDayCheckedThrough(label: string): string {
   return `not one day through ${label} has been checked in the accounts that pay lands in`;
+}
+
+/**
+ * ⛔ ONE wording for one window, every surface: a window one day long "has not been checked", a longer one "not one day
+ * of" it. Decided here alone — the month note, a bucket's words and a window's are each said through it.
+ */
+function notCheckedIn(label: string, oneDay: boolean): string {
+  return oneDay
+    ? `${label} has not been checked in the accounts that pay lands in`
+    : `not one day of ${label} has been checked in the accounts that pay lands in`;
+}
+
+function lineUnderTheDash(clause: string): string {
+  return `${clause.charAt(0).toUpperCase()}${clause.slice(1)}, so nothing is shown.`;
 }
 
 /**

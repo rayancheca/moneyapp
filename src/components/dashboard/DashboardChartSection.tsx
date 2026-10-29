@@ -6,6 +6,7 @@ import { SankeyChart } from "@/components/charts/SankeyChart";
 import { NetWorthBridge } from "@/components/charts/NetWorthBridge";
 import { CATEGORY_HUE_NAMES, categoryHueVar } from "@/lib/category-palette";
 import { DAILY_SERIES_RANGES, rangeLabel, type ChartRange } from "@/lib/chart-range";
+import { noIncomeDayCheckedNote } from "@/lib/unbanked-income";
 import type { ViewState } from "@/lib/view-state";
 import { DASHBOARD_CHART_DIMENSION, DASHBOARD_SURFACE, DASHBOARD_VIEW_SPEC } from "./dashboard-view-spec";
 import type { NetWorthPoint } from "@/services/derivation";
@@ -210,11 +211,14 @@ export function DashboardChartSection({
                   </button>
                 ))}
               </div>
+              {/* ⚖️ §6A 68: a range whose income nobody has looked for is said of "this range", the noun its own
+                  empty words use. 🔴 His ledger copy 2026-10-29: 1W and 1M read "Not one day of this period …". */}
               <SankeyChart
                 graph={sankeyByRange?.[activeRange] ?? EMPTY_GRAPH}
                 heightClass={heightClass}
                 ariaLabel={`Money flow · ${rangeLabel(activeRange)}`}
                 emptyLabel="No money flow in this range."
+                incomeUnreadNote={noIncomeDayCheckedNote("this range")}
                 lens={state.sankeyLens ?? "flow"}
                 onSelectLens={(v) => setView("sankeyLens", v)}
               />
