@@ -164,8 +164,8 @@ export interface SankeyEmptyFacts {
  * said "Not one day of this period …" under pills whose own empty words are "No money flow in this range." (his copy).
  *
  * `emptyLabel` is said only where nothing flowed over days that are read: a window with no row at all past both days
- * carries both facts (`SpendingSankey`). 🔴 Review of e953d70, his ledger copy 2026-10-21: the dashboard's Flow 1D and
- * 1W printed "No money flow in this range." over Oct 15 – 21, past every account's import (Venture X's reaches Oct 14).
+ * carries both facts (`SpendingSankey`). 🔴 Review of e953d70, his ledger copy 2026-10-21: the dashboard's Flow 1W
+ * printed "No money flow in this range." over Oct 15 – 21, past every account's import (Venture X's reaches Oct 14).
  */
 export function sankeyEmptyCopy(
   graph: SankeyEmptyFacts,

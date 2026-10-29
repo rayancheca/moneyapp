@@ -226,8 +226,8 @@ describe("sankeyShareCell — the table lens", () => {
  * nobody has looked for (§6A 68) — each in the words its stat card prints there — and the surface's own empty label
  * only where nothing flowed over days that are read. 🔴 On his ledger copy 2026-10-21 `/spending?cash=sankey` drew
  * October as "From outside this period $1,603.00" beside an Income card reading "Not one day of October 2026 has been
- * checked in the accounts that pay lands in, so nothing is shown." 🔴 …and the dashboard's Flow 1D and 1W, where
- * nothing flowed at all, printed "No money flow in this range." over the same unread days (review of e953d70).
+ * checked in the accounts that pay lands in, so nothing is shown." 🔴 …and the dashboard's Flow 1W, where nothing
+ * flowed at all, printed "No money flow in this range." over the same unread days (review of e953d70).
  */
 describe("sankeyEmptyCopy — why a flow is empty", () => {
   const empty: SankeyEmptyFacts & SankeyGraph = { nodes: [], links: [] };

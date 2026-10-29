@@ -222,11 +222,18 @@ export interface CashFlow {
    *
    * ⚠️ Null, too, where no bucket of the window is reached (`unreached` on every one — past every account's newest row,
    * before the records, not begun): the day is never asked there (⚡ `cashFlowByPeriod`). It holds no money, so
-   * /spending prints its empty state over it (`spendingEmptyCopy`, which names spending's day itself), and the
-   * dashboard tile reads the null as its "not imported yet" (`SpendingPace.spendingNotFound`). 🔴 The Sankey's "one
-   * rule" pin took this field for /spending's reading of an empty window, so it could not hold the window past the
-   * ledger's newest row — where the graph names spending's day as the empty state does (second reader of a1c67f0,
-   * round 2, 2026-10-23).
+   * /spending prints its empty state over it (`spendingEmptyCopy`) — which names spending's day itself past the newest
+   * row ("… spending is imported through Wed, Aug 12, 2026"), and no day before the records ("… is before your records
+   * begin") or over a window not begun ("… has not happened yet"). The dashboard tile reads the null as its "not
+   * imported yet" (`SpendingPace.spendingNotFound`): that empty state's heading for its month, where the dashboard's
+   * Flow prints the state's spending clause for its range, in the Spent card's words (`spendingSankey` asks the day).
+   * On his ledger copy 2026-10-29 replayed at 2026-11-01, no statement since: the tile "November 2026 has not been
+   * imported yet", Flow 1W (Oct 26 – Nov 1) "Nothing found so far — spending imported through Aug 12. …" — one empty
+   * state's heading and its clause, not two readings. ⚖️ default built, not asked (2026-10-29): the Flow's words stay,
+   * as batch 7 kept them. 🔴 The Sankey's "one rule" pin took this field for /spending's reading of an empty window, so
+   * it could not hold the window past the ledger's newest row — where the graph names spending's day as the empty state
+   * does (second reader of a1c67f0, round 2, 2026-10-23). 🔴 "which names spending's day itself" said it of all three
+   * worlds until 2026-10-29 (batch 7 review).
    */
   spendingUnaccounted: string | null;
   /**

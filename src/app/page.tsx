@@ -15,7 +15,7 @@ import { dashboardChartData } from "@/services/dashboard-series";
 import { spendingSankey, type SpendingSankey } from "@/services/sankey";
 import { netWorthAttribution, type NetWorthAttribution } from "@/services/attribution";
 import { provenanceFor } from "@/services/provenance";
-import { CHART_RANGES, rangeAggregateStartDay, rangeStartDay, type ChartRange } from "@/lib/chart-range";
+import { DAILY_SERIES_RANGES, rangeAggregateStartDay, rangeStartDay, type ChartRange } from "@/lib/chart-range";
 import { resolveViewState } from "@/lib/view-state";
 import type { DeckCard } from "@/components/dashboard/CardDeck";
 import { DecisionCards } from "@/components/dashboard/DecisionCards";
@@ -179,16 +179,22 @@ export default async function DashboardPage({
   })();
   // Precompute the flow for each range pill so the client switches pills with no
   // round-trip (the pill is client-side ChartFocus state). Only runs in sankey
-  // mode; 5 aggregations over local SQLite is cheap for a single-user desktop
+  // mode; 6 aggregations over local SQLite is cheap for a single-user desktop
   // app — revisit (build once + slice, or a per-range server action) if hosted.
+  // ⚡ One per pill the hero DRAWS (`DAILY_SERIES_RANGES`), here and for the bridge below. 🔴 Both ran every
+  // `CHART_RANGES` entry until 2026-10-29: 1D has no pill in either and no URL reaches it (the hero's ChartFocus
+  // opens on 1Y and mirrors no `rangeParam`), so one flow and one bridge per render were built for nothing.
   // ⛔ `rangeAggregateStartDay`, NOT `rangeStartDay`. The Sankey SUMS a closed
   // [from, to]; the chart and the bridge below difference two endpoints and
   // need the extra day to hold the change across it. Sharing one day made the
   // "1 month" flow span thirty-ONE days and count the owner's rent twice.
   const sankeyByRange = isSankey
     ? (Object.fromEntries(
-        CHART_RANGES.map((r) => [r, spendingSankey(db, { from: rangeAggregateStartDay(r, today) ?? EARLIEST_DAY, to: today }, today)]),
-      ) as Record<ChartRange, SpendingSankey>)
+        DAILY_SERIES_RANGES.map((r) => [
+          r,
+          spendingSankey(db, { from: rangeAggregateStartDay(r, today) ?? EARLIEST_DAY, to: today }, today),
+        ]),
+      ) as Partial<Record<ChartRange, SpendingSankey>>)
     : null;
   /*
    * The bridge, one decomposition per range pill, precomputed for the same
@@ -203,7 +209,7 @@ export default async function DashboardPage({
   const bridgeByRange =
     chartMode === "bridge"
       ? (Object.fromEntries(
-          CHART_RANGES.map((r) => {
+          DAILY_SERIES_RANGES.map((r) => {
             const from = rangeStartDay(r, today) ?? netWorth.series[0]?.day ?? today;
             const at = (day: string): number => {
               let cents = netWorth.series[0]?.totalCents ?? 0;
@@ -215,7 +221,7 @@ export default async function DashboardPage({
             };
             return [r, netWorthAttribution(db, from, today, at(from), at(today))];
           }),
-        ) as Record<ChartRange, NetWorthAttribution>)
+        ) as Partial<Record<ChartRange, NetWorthAttribution>>)
       : null;
   // On a partial "today" the two causes read completely differently: an account
   // that had not opened yet is a fact about the calendar (neutral), a day no

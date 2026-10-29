@@ -62,10 +62,10 @@ interface DashboardChartSectionProps {
    *  it can be carried on the URL across mode switches even from non-accounts
    *  modes where the RSC returns no selection */
   acctsParam: string;
-  /** money-flow graphs precomputed per range pill; present only in sankey mode */
-  sankeyByRange: Record<ChartRange, SpendingSankey> | null;
-  /** one net-worth decomposition per range pill; present only in bridge mode */
-  bridgeByRange: Record<ChartRange, NetWorthAttribution> | null;
+  /** money-flow graphs precomputed per range pill it draws (`DAILY_SERIES_RANGES`); present only in sankey mode */
+  sankeyByRange: Partial<Record<ChartRange, SpendingSankey>> | null;
+  /** one net-worth decomposition per range pill it draws (`DAILY_SERIES_RANGES`); present only in bridge mode */
+  bridgeByRange: Partial<Record<ChartRange, NetWorthAttribution>> | null;
   today: string;
 }
 
