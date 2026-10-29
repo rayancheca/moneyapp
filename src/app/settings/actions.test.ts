@@ -147,6 +147,23 @@ describe("backUpNowAction", () => {
       true,
     );
   });
+
+  // 🔴 Review of f48d413 (batch 6): the backup written, its prune unable to read the folder — the toast said "EACCES".
+  test("a backup written and then not pruned is reported backed up, by name", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.spyOn(fs, "readdirSync").mockImplementationOnce(() => {
+      throw new Error("EACCES: permission denied, scandir");
+    });
+    try {
+      const result = await backUpNowAction();
+      expect(result.ok).toBe(true);
+      const name = result.ok === true ? result.data.name : null;
+      expect(name).toMatch(/^pre-\d{4}-\d{2}-\d{2}T\d{6}-manual-backup(-\d+)?\.db$/);
+      expect(fs.existsSync(path.join(dir, "backups", name!))).toBe(true);
+    } finally {
+      vi.restoreAllMocks();
+    }
+  });
 });
 
 describe("restoreSnapshotAction", () => {

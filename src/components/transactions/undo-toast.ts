@@ -1,6 +1,6 @@
 import { toast } from "@/components/ui/Toast";
 import { undoAction } from "@/app/transactions/actions";
-import type { UndoPatch } from "@/app/transactions/action-types";
+import type { ActionResult, UndoPatch } from "@/app/transactions/action-types";
 import { settleAction } from "@/hooks/useAction";
 
 /** What a failed undo says: the patch is still here, the change still stands. */
@@ -24,12 +24,26 @@ export function offerUndoToast(
   onUndone: () => void,
   options?: { deleteRuleId?: string },
 ): void {
+  offerUndoToastWith(title, () => undoAction(undo, options), onUndone);
+}
+
+/**
+ * The same card for an undo that is not the bare patch: "Make recurring" undoes a series it CREATED by deleting it
+ * (`undoCreateSeriesAction`). 🔴 Review of c3d804e (batch 6): that card was hand-rolled as `() => void (…).then(…)`,
+ * which resolves with nothing, so `settleToastAction` dismissed it on the press — a refused undo took its patch with
+ * it, and a rejected call (server restarted, wifi down) reached no one. One card, so no undo can drift from it again.
+ */
+export function offerUndoToastWith(
+  title: string,
+  undoIt: () => Promise<ActionResult<unknown>>,
+  onUndone: () => void,
+): void {
   toast({
     title,
     action: {
       label: "Undo",
       onAction: async () => {
-        const result = await settleAction(() => undoAction(undo, options), UNDO_FAILED);
+        const result = await settleAction(undoIt, UNDO_FAILED);
         if (result.ok) onUndone();
         return result;
       },

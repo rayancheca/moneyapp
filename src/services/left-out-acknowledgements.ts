@@ -2,11 +2,14 @@ import { asc } from "drizzle-orm";
 import type { AppDatabase } from "@/db/client";
 import { leftOutAcknowledgements } from "@/db/schema/ledger-check";
 import {
+  reasonCarriedAlready,
   reasonCarriesControl,
   reasonSaysNothing,
+  tokenOfKey,
   type LeftOutAcknowledgement,
   type LeftOutAcknowledgementWrite,
 } from "@/lib/left-out-acknowledgement";
+import { linesLeftOut } from "@/services/import/lines-left-out";
 
 /** The acknowledgements this ledger holds, the oldest first. */
 export function readLeftOutAcknowledgements(db: AppDatabase): LeftOutAcknowledgement[] {
@@ -36,12 +39,14 @@ export function readLeftOutAcknowledgements(db: AppDatabase): LeftOutAcknowledge
  * (`reasonCarriesControl`). ⛔ But for a reason the ledger stores already, from before that guard: ⚖️ §6A 30, an open
  * line takes the reason its lines alike carry, exactly — taken as stored. 🔴 Review of 3872004: refused here, a mark
  * partly acknowledged with such a reason failed ledger-check for good. The command line lets one through only for the
- * lines alike that carry it (`reasonCarriedAlready`), and so does this: only for a line keyed as one that carries it
- * stored — its account, day, money, printed words and printer, what its mark is the hash of (`leftOutToken`). 🔴 Review
- * of 7601578 (2026-10-13): any reason the table held was let through, whichever line carried it. ⚠️ A line alike
- * acknowledged under ANOTHER of its printers' keys (`acknowledgementsOf` matches by any printer) is one this cannot
- * see, so its reason is refused here as a new one is — by name, nothing written: the safe side. None is stored on his
- * ledger (0 acknowledgements, his copy of 2026-10-21).
+ * lines alike that carry it (`reasonCarriedAlready`), and so does this, asking ledger-check's gate's very question of
+ * each write's own mark (`tokenOfKey`) and the lines left out it reads from the ledger itself (`linesLeftOut`) — never
+ * a caller's word for which lines carry what. 🔴 Review of 7601578 (2026-10-13): any reason the table held was let
+ * through, whichever line carried it. 🔴 Review of 3bc3002 (2026-10-22): then only for a write keyed as a stored row
+ * carrying it — and a line alike acknowledged under ANOTHER of its printers' keys (`acknowledgementsOf` matches by any
+ * printer) carries it under a key no write has: the gate let it through, the dry run named the run with it, and this
+ * refused it, so that mark failed ledger-check for good. None is stored on his ledger (0 acknowledgements, his copy of
+ * 2026-10-29).
  */
 export function writeLeftOutAcknowledgements(db: AppDatabase, writes: readonly LeftOutAcknowledgementWrite[]): void {
   if (writes.length === 0) return;
@@ -52,9 +57,10 @@ export function writeLeftOutAcknowledgements(db: AppDatabase, writes: readonly L
         `${blank.printedOn} says nothing — nothing was written`,
     );
   }
-  const stored = new Set(db.select().from(leftOutAcknowledgements).all().map(carriedOnItsLine));
+  // the lines left out decide only a reason carrying what the guard refuses: read only when one does
+  const leftOut = writes.some((write) => reasonCarriesControl(write.reason) !== null) ? linesLeftOut(db) : [];
   for (const write of writes) {
-    if (stored.has(carriedOnItsLine(write))) continue;
+    if (reasonCarriedAlready(leftOut, [tokenOfKey(write)], write.reason)) continue;
     const carries = reasonCarriesControl(write.reason);
     if (carries !== null) {
       throw new Error(`refused: the reason for ${write.description} on ${write.printedOn} ${carries} — nothing was written`);
@@ -63,9 +69,4 @@ export function writeLeftOutAcknowledgements(db: AppDatabase, writes: readonly L
   db.transaction((tx) => {
     for (const write of writes) tx.insert(leftOutAcknowledgements).values({ ...write }).run();
   });
-}
-
-/** A reason with what its line is keyed by — the lines alike of one mark share it; JSON, so no words forge a field. */
-function carriedOnItsLine(a: Omit<LeftOutAcknowledgementWrite, "description" | "acknowledgedOn">): string {
-  return JSON.stringify([a.accountId, a.printedOn, a.amountCents, a.printedWords, a.printerSha256, a.reason]);
 }

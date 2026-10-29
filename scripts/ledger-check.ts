@@ -535,7 +535,8 @@ console.log(`rate histories: ${storedRateHistoryCount(db)} stored · ${rateHisto
  * character or a bidi control is refused by name before this step says or writes a thing (`carriedRefusal`) — but
  * for one the mark's lines alike carry stored already: an open line takes it, exactly (`reasonCarriedAlready`).
  * 🔴 Refused before the ledger was read, a reason stored before its guard could never be given again, and its mark
- * failed for good.
+ * failed for good. The table's writer asks that same question of the same lines left out, so what this lets through
+ * it writes: 🔴 it asked its own (review of 3bc3002, 2026-10-22), and threw on a run this let through.
  */
 if (MODE.mode === "acknowledge") {
   if (MODE.carriedRefusal !== null && !reasonCarriedAlready(leftOut, MODE.tokens, MODE.reason)) {

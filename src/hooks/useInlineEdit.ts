@@ -8,7 +8,7 @@ import {
   keyToIntent,
   type CommitOutcome,
 } from "@/lib/inline-edit";
-import { toast } from "@/components/ui/Toast";
+import { toast, type ToastActionResult } from "@/components/ui/Toast";
 
 export interface InlineSaveResult {
   ok: boolean;
@@ -30,6 +30,61 @@ interface UseInlineEditParams<T> {
   describe?: (value: T) => string;
 }
 
+/** What one save of an inline field reads and writes in its hook — handed in, so the save is a plain function. */
+export interface InlineSaveIO<T> {
+  readonly onSave: (value: T) => Promise<InlineSaveResult>;
+  readonly describe?: (value: T) => string;
+  readonly setDisplay: (value: T) => void;
+  readonly setPending: (pending: boolean) => void;
+  /** monotonic id per save; only the latest may mutate display/pending/toast */
+  readonly seq: { current: number };
+}
+
+/**
+ * One save of an inline field: optimistic, rolled back on failure, and on success a toast whose Undo is the same save
+ * the other way. Outside the hook so a test can press that Undo — no jsdom here, as with `useAction`'s two halves.
+ * The Undo RETURNS its save's outcome (`offerUndoToast` is the model): a refused or failed undo keeps the card — and
+ * `previous` in its closure — to be pressed again, and the card says why.
+ */
+export async function persistInlineEdit<T>(
+  io: InlineSaveIO<T>,
+  next: T,
+  previous: T,
+  undoable: boolean,
+): Promise<ToastActionResult> {
+  const seq = (io.seq.current += 1);
+  io.setDisplay(next); // optimistic
+  io.setPending(true);
+  let ok = false;
+  let errorMessage: string | undefined;
+  try {
+    const result = await io.onSave(next);
+    ok = result.ok;
+    errorMessage = result.error;
+  } catch {
+    // a thrown/rejected save (transport failure) is a failure, not a success
+    ok = false;
+  }
+  // superseded by a newer save — let that one own display/pending/toast; an Undo it overtook closes its card, the
+  // field being the newer save's now
+  if (seq !== io.seq.current) return;
+  io.setPending(false);
+  if (!ok) {
+    io.setDisplay(previous); // rollback
+    const error = errorMessage ?? "Couldn’t save that — try again";
+    // an Undo's failure is said on its own card, which stays; a save has no card to say it on
+    if (undoable) toast({ title: error, tone: "negative" });
+    return { ok: false, error };
+  }
+  if (undoable) {
+    toast({
+      title: io.describe ? io.describe(next) : "Saved",
+      action: { label: "Undo", onAction: () => persistInlineEdit(io, previous, next, false) },
+    });
+  }
+  return { ok: true };
+}
+
 /**
  * Client glue for an inline "click-to-edit" field, over the pure state machine
  * in lib/inline-edit. Owns: the editing/draft reducer, optimistic display with
@@ -37,7 +92,8 @@ interface UseInlineEditParams<T> {
  * this app sees on flaky wifi), a generation guard so a late-failing earlier
  * save can't clobber a newer one, a Toast+Undo on success, keyboard focus
  * return to the trigger, and the Enter/Escape/blur grammar. Components are thin
- * renderers of what this returns. Verified via e2e (no jsdom in this project).
+ * renderers of what this returns. Verified via e2e (no jsdom in this project);
+ * its save, `persistInlineEdit`, is a plain function with tests of its own.
  */
 export function useInlineEdit<T>({
   value,
@@ -69,35 +125,8 @@ export function useInlineEdit<T>({
   }
 
   const persist = useCallback(
-    async (next: T, previous: T, undoable: boolean): Promise<void> => {
-      const seq = (saveSeqRef.current += 1);
-      setDisplay(next); // optimistic
-      setPending(true);
-      let ok = false;
-      let errorMessage: string | undefined;
-      try {
-        const result = await onSave(next);
-        ok = result.ok;
-        errorMessage = result.error;
-      } catch {
-        // a thrown/rejected save (transport failure) is a failure, not a success
-        ok = false;
-      }
-      // superseded by a newer save — let that one own display/pending/toast
-      if (seq !== saveSeqRef.current) return;
-      setPending(false);
-      if (!ok) {
-        setDisplay(previous); // rollback
-        toast({ title: errorMessage ?? "Couldn’t save that — try again", tone: "negative" });
-        return;
-      }
-      if (undoable) {
-        toast({
-          title: describe ? describe(next) : "Saved",
-          action: { label: "Undo", onAction: () => void persist(previous, next, false) },
-        });
-      }
-    },
+    (next: T, previous: T, undoable: boolean) =>
+      persistInlineEdit({ onSave, describe, setDisplay, setPending, seq: saveSeqRef }, next, previous, undoable),
     [onSave, describe],
   );
 

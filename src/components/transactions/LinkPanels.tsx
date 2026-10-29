@@ -18,7 +18,7 @@ import {
   type TransferLinkPanelData,
 } from "@/app/transactions/sheet-actions";
 import { filedToastTitle } from "@/components/recurring/labels";
-import { offerUndoToast } from "./undo-toast";
+import { offerUndoToast, offerUndoToastWith } from "./undo-toast";
 
 /**
  * S5 "linkable" panels for the transaction sheet: pair this row with its
@@ -222,7 +222,8 @@ export function pressSheetAttach(txnId: string, seriesId: string, name: string, 
  * The "Make recurring" quick action: promote THIS row into a confirmed series (or join the identity's existing live
  * series) — joining files the row as attaching does (§6A 47), and its toast says so in the same clause. Undo is
  * mode-aware: a created series is deleted outright; a join applies its lossless patch — the link AND the category
- * joining may have filed, which a detach would leave.
+ * joining may have filed, which a detach would leave. Either way it is the shared Undo card: a refused or failed
+ * undo keeps it, says why on it, and can be pressed again.
  */
 export function pressMakeRecurring(txnId: string, after: SeriesPanelAfter): Promise<void> {
   return createSeriesFromTxnAction({ transactionId: txnId })
@@ -234,21 +235,14 @@ export function pressMakeRecurring(txnId: string, after: SeriesPanelAfter): Prom
       const { mode, seriesId, name, undo } = r.data;
       after.linked(seriesId, name);
       after.close();
-      toast({
-        title: filedToastTitle(mode === "created" ? `Marked "${name}" as recurring` : `Attached to ${name}`, r.data),
-        action: {
-          label: "Undo",
-          onAction: () =>
-            void (mode === "created" ? undoCreateSeriesAction({ seriesId, undo }) : undoAction(undo)).then((res) => {
-              if (!res.ok) {
-                toast({ title: res.error, tone: "negative" });
-                return;
-              }
-              after.reset();
-              after.onChanged();
-            }),
+      offerUndoToastWith(
+        filedToastTitle(mode === "created" ? `Marked "${name}" as recurring` : `Attached to ${name}`, r.data),
+        () => (mode === "created" ? undoCreateSeriesAction({ seriesId, undo }) : undoAction(undo)),
+        () => {
+          after.reset();
+          after.onChanged();
         },
-      });
+      );
       after.onChanged();
     })
     .catch(() => {

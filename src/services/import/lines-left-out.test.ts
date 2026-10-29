@@ -8,11 +8,19 @@ import { seedDatabase } from "@/db/seed";
 import { accounts } from "@/db/schema/accounts";
 import { duplicateCandidates } from "@/db/schema/duplicate-candidates";
 import { importFiles, statementPeriods } from "@/db/schema/imports";
+import { leftOutAcknowledgements } from "@/db/schema/ledger-check";
 import { transactions } from "@/db/schema/transactions";
 import { lineLeftOutNotice } from "@/lib/import-file-label";
-import { acknowledgementWrites, leftOutToken, planAcknowledging } from "@/lib/left-out-acknowledgement";
+import {
+  acknowledgementWrites,
+  confirmingStep,
+  leftOutToken,
+  planAcknowledging,
+  reasonCarriedAlready,
+} from "@/lib/left-out-acknowledgement";
+import { ledgerCheckMode } from "@/lib/witness-floor";
 import { readLeftOutAcknowledgements, writeLeftOutAcknowledgements } from "@/services/left-out-acknowledgements";
-import { acknowledgementsMatchingNothing, linesLeftOut } from "./lines-left-out";
+import { acknowledgementsMatchingNothing, linesLeftOut, type LineLeftOut } from "./lines-left-out";
 import { PROFILES } from "./profiles";
 import { importStatementFiles, type ImportInput } from "./service";
 import type { AccountHint, ParsedStatement, ParserProfile } from "./types";
@@ -88,6 +96,7 @@ const EXPORT_AUGUST = file("Chase4501_Activity_20260812", "earlier");
 const EXPORT_SEPTEMBER = file("Chase4501_Activity_20260901", "export");
 const TWINS = file("twins", "twins");
 const TWINS_AGAIN = file("twins (1)", "twins\n");
+const TWINS_THIRD = file("twins (2)", "twins\n\n");
 const PAYROLL = file("payroll", "payroll");
 const PAYROLL_AGAIN = file("payroll (1)", "payroll\n");
 
@@ -626,5 +635,120 @@ describe("a line left out, acknowledged", () => {
       [OPENING.postedOn, READ],
       [GROCER.postedOn, null],
     ]);
+  });
+});
+
+/*
+ * ⚖️ §6A 30: lines alike take one reason — an open one the one they carry, exactly — and a reason stored before a
+ * guard refused what it carries (a bidi control before 3872004, an escape before 34e97eb) is taken as stored:
+ * ledger-check's gate lets it through for the mark whose lines alike carry it (`reasonCarriedAlready`), and the
+ * table's one writer asks that same question of the lines left out it reads from the ledger. 🔴 Review of 3bc3002
+ * (2026-10-22): the writer took it as stored only for a write keyed as a stored row carrying it, and a line alike
+ * acknowledged under ANOTHER of its printers' keys (`acknowledgementsOf` matches by any printer) carries it under a
+ * key no write has — the gate let it through, the dry run named the run with it, and `--confirm` threw: the mark
+ * failed ledger-check for good, the dead end 7601578 closed. His ledger stores none (0 acknowledgements, 0 lines left
+ * out, measured on his copy 2026-10-29).
+ */
+describe("a reason stored before a guard refused what it carries", () => {
+  const ON = "2026-10-29";
+  const OVERRIDE = "Twins export, 06-01: ‮the opening deposit, printed twice";
+
+  /**
+   * The twins' two deposits left out, each printed by both re-downloads, the first sorting first — and one of them
+   * acknowledged with OVERRIDE keyed under `printer`'s printing of it, as the writer stored it before 3872004 (the
+   * table's own CHECK trims ASCII whitespace only). Keyed under the second's, it is the review's case.
+   */
+  async function twinsOneAcknowledgedUnder(printer: ImportInput): Promise<LineLeftOut[]> {
+    await importStatementFiles(bundle.db, [TWINS]);
+    await importStatementFiles(bundle.db, [TWINS_AGAIN]);
+    await importStatementFiles(bundle.db, [TWINS_THIRD]);
+    profile.version = 2;
+    atVersion2 = { twins: [{ accountHint: CHECKING, txns: [COFFEE] }] };
+    await importStatementFiles(bundle.db, [TWINS]);
+    const twins = linesLeftOut(bundle.db);
+    expect(twins.map((l) => [l.printedOn, l.printedBy])).toEqual([
+      [OPENING.postedOn, [TWINS_AGAIN.name, TWINS_THIRD.name]],
+      [OPENING.postedOn, [TWINS_AGAIN.name, TWINS_THIRD.name]],
+    ]);
+    const twin = twins[0]!;
+    const printing = twin.printings[twin.printedBy.indexOf(printer.name)]!;
+    bundle.db
+      .insert(leftOutAcknowledgements)
+      .values({
+        accountId: twin.accountId,
+        printedOn: printing.printedOn,
+        amountCents: twin.amountCents,
+        printedWords: printing.words,
+        printerSha256: printing.sha256,
+        description: twin.description,
+        acknowledgedOn: "2026-10-06",
+        reason: OVERRIDE,
+      })
+      .run();
+    return linesLeftOut(bundle.db);
+  }
+
+  /** the run the dry run names, made as ledger-check makes it — its gate, its plan, its write */
+  function theRunItsDryRunNames(lines: readonly LineLeftOut[]): void {
+    const mark = leftOutToken(lines[0]!);
+    const dryRun = planAcknowledging(lines, [mark], { on: ON, reason: null });
+    expect(confirmingStep([mark], dryRun, null)).toEqual([
+      `Only once each line is read on its statement: the same command with --reason='${OVERRIDE}' --confirm`,
+    ]);
+    const mode = ledgerCheckMode([`--acknowledge-left-out=${mark}`, `--reason=${OVERRIDE}`, "--confirm"]);
+    if (mode.mode !== "acknowledge" || !mode.confirm) throw new Error("not a --confirm");
+    expect(mode.carriedRefusal).not.toBeNull();
+    expect(reasonCarriedAlready(lines, mode.tokens, mode.reason)).toBe(true);
+    const plan = planAcknowledging(lines, mode.tokens, { on: ON, reason: mode.reason });
+    expect([plan.unmatched, plan.reasonsKept, plan.open.length]).toEqual([[], [], 1]);
+    writeLeftOutAcknowledgements(bundle.db, acknowledgementWrites(plan.open, { on: ON, reason: mode.reason }));
+  }
+
+  test("its open line alike takes it, exactly, keyed under their first printer's printing — the key their mark is of", async () => {
+    const lines = await twinsOneAcknowledgedUnder(TWINS_AGAIN);
+    expect(lines.map((l) => l.acknowledged?.reason ?? "open")).toEqual([OVERRIDE, "open"]);
+
+    theRunItsDryRunNames(lines);
+
+    expect(linesLeftOut(bundle.db).map((l) => l.acknowledged?.reason ?? "open")).toEqual([OVERRIDE, OVERRIDE]);
+  });
+
+  test("…and keyed under ANOTHER of their printers' printings: the run its dry run names writes, never throws", async () => {
+    const lines = await twinsOneAcknowledgedUnder(TWINS_THIRD);
+    expect(lines.map((l) => l.acknowledged?.reason ?? "open")).toEqual([OVERRIDE, "open"]);
+
+    theRunItsDryRunNames(lines);
+
+    expect(linesLeftOut(bundle.db).map((l) => l.acknowledged?.reason ?? "open")).toEqual([OVERRIDE, OVERRIDE]);
+  });
+
+  /*
+   * 🔴 Review of 7601578 (2026-10-13): the writer let through any reason the TABLE held, whichever line carried it, so
+   * a caller other than ledger-check could store an override on a line it was never given for. Taken as stored only
+   * where the lines alike of the line written carry it: a new reason with the same characters, or a write keyed as
+   * another line — any one field of the key, alone, makes another — is refused by name, nothing written.
+   */
+  test("⛔ the same characters in a new reason, or the reason on another line, refused by name — nothing written", async () => {
+    const lines = await twinsOneAcknowledgedUnder(TWINS_THIRD);
+    const open = lines.filter((l) => l.acknowledged === null);
+    const stored = readLeftOutAcknowledgements(bundle.db);
+
+    const newReason = acknowledgementWrites(open, { on: ON, reason: "Twins export, 06-01: ‮page 2" });
+    expect(() => writeLeftOutAcknowledgements(bundle.db, newReason)).toThrow(
+      `refused: the reason for ${open[0]!.description} on ${OPENING.postedOn} carries a bidi control, U+202E, that every ` +
+        "surface would print raw — nothing was written",
+    );
+    const [write] = acknowledgementWrites(open, { on: ON, reason: OVERRIDE });
+    const unlikeBy = {
+      accountId: "01a03a43-ab5d-7000-a3d4-e4d2c112e2b9",
+      printedOn: "2026-06-02",
+      amountCents: OPENING.amountCents + 1,
+      printedWords: `${write!.printedWords} 2`,
+      printerSha256: "2f".repeat(32),
+    };
+    for (const [key, value] of Object.entries(unlikeBy)) {
+      expect(() => writeLeftOutAcknowledgements(bundle.db, [{ ...write!, [key]: value }]), key).toThrow("carries a bidi control, U+202E");
+    }
+    expect(readLeftOutAcknowledgements(bundle.db)).toEqual(stored);
   });
 });

@@ -587,8 +587,9 @@ U+2029) or a bidi control — an embedding, override or isolate, U+202A–202E a
 which every surface would print raw (`reasonCarriesControl`); the command line collapses every
 run of whitespace to one space first, so a tab, a line break or a separator there is a space.
 Neither refuses that way a reason stored already, from before the guard: the open line of a mark
-partly acknowledged takes the reason its lines alike carry, exactly — the command line lets it
-through for those lines alike only, the writer for a reason the table holds (`reasonCarriedAlready`).
+partly acknowledged takes the reason its lines alike carry, exactly — both let it through for those
+lines alike only, by one rule (`reasonCarriedAlready`), the writer asking it of each write's own mark
+and the lines left out it reads from the ledger itself, under whichever printer's key they carry it.
 Migration 0024 is applied to the real ledger and never edited: a wider CHECK would take a new
 migration rebuilding the table.
 It is what the session read on the statement, in its words: an entry without a reason is a check
