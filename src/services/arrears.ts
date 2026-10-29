@@ -12,7 +12,7 @@ import {
 } from "@/lib/occurrence-verdict";
 import { sharedFrontier, type UnbankedFrontier } from "@/lib/unbanked-income";
 import { billDueDaysBySeries, billPaymentsBySeries, paymentFor, withBillingCarriers } from "./billing-carriers";
-import { checkedThroughBySeries, silenceMeasuredThroughBySeries } from "./cash-earnings";
+import { checkedThroughBySeries, silenceMeasuredThroughBySeries, silenceOnceCheckedBySeries } from "./cash-earnings";
 import { dueDayGraces, dueDayReadings } from "./observation-frontier";
 import { paydayProjectable, paydaySettlementsBySeries } from "./payday-settlement";
 import { hasStoppedForecasting, projectOccurrences, toProjectable } from "./recurring";
@@ -52,6 +52,27 @@ export interface BudgetTailSeries {
 export interface BudgetTail {
   totalCents: number;
   series: BudgetTailSeries[];
+}
+
+/** A series `overdueForSeries` found late: what it owes in the window, and whether that can still be let go. */
+export interface OverdueSeries extends BudgetTailSeries {
+  /**
+   * Its lapse is still open: the forecast holds it only because the accounts it posts to are not checked through the
+   * day of the question yet — checked through it with nothing more posted, it would be let go (`hasStoppedForecasting`,
+   * `silenceOnceCheckedBySeries`), and owed for none of the window. False of a bill that has never posted, of one on no
+   * account the ledger knows, and of one whose accounts are checked that far: what it owes is owed.
+   *
+   * What a rolling budget's closed period read whole can still bank back (`services/budgets::carryInto`, asked on the
+   * period's last day). 🔴 Review of ca938320 (round 2): a period read whole by its rows banked its bill as owed, final,
+   * while the bill's accounts were checked only through Aug 31 — once September was checked through, the bill lapsed
+   * and the line rose $440.00 under a row that had read "over budget by at least $200.00".
+   */
+  mayStillLapse: boolean;
+}
+
+/** `overdueForSeries`' answer: what came due in the window and no posting covers, series by series. */
+export interface Overdue extends BudgetTail {
+  series: OverdueSeries[];
 }
 
 export interface UnbankedIncomeSeries extends BudgetTailSeries {
@@ -116,7 +137,7 @@ export function overdueForSeries(
   periodStart: string,
   through: string,
   today: string,
-): BudgetTail {
+): Overdue {
   if (seriesIds.size === 0) return { totalCents: 0, series: [] };
   if (compareDates(periodStart, through) > 0) return { totalCents: 0, series: [] };
 
@@ -161,8 +182,11 @@ export function overdueForSeries(
   const paymentsBySeries = billPaymentsBySeries(db, live);
   // …on its due days as every grader reads them: billed inside another, opening where its carrier's opens
   const dueDaysBySeries = billDueDaysBySeries(db, live);
+  // …and, checked through today with nothing more posted, whether it would be let go after all (`mayStillLapse`) —
+  // asked only once a series is found late
+  let onceChecked: ((seriesId: string) => string | null) | null = null;
 
-  const series: BudgetTailSeries[] = [];
+  const series: OverdueSeries[] = [];
   let totalCents = 0;
   for (const s of live) {
     const payments = paymentsBySeries.get(s.id) ?? [];
@@ -174,6 +198,7 @@ export function overdueForSeries(
     if (occ.length === 0) continue;
     const amountCents = occ.reduce((sum, o) => sum - o.amountCents, 0);
     totalCents += amountCents;
+    onceChecked ??= silenceOnceCheckedBySeries(db, today);
     series.push({
       id: s.id,
       name: s.name,
@@ -183,13 +208,14 @@ export function overdueForSeries(
       occurrenceCount: occ.length,
       occurrenceCents: occ.map((o) => -o.amountCents),
       href: `/recurring/${s.id}`,
+      mayStillLapse: hasStoppedForecasting(s, today, onceChecked(s.id)),
     });
   }
   series.sort((a, b) => compareDates(a.nextDate, b.nextDate) || a.name.localeCompare(b.name));
   return { totalCents, series };
 }
 
-export interface ArrearsSeries extends BudgetTailSeries {
+export interface ArrearsSeries extends OverdueSeries {
   /**
    * Of `amountCents` (a positive magnitude, as is this), the part that fell due on days no checked statement has
    * reached for the accounts the series bills on — money that may well have posted where nobody has looked

@@ -6,7 +6,7 @@ import {
   type BudgetCoverageInput,
 } from "./budget-coverage";
 import { BUDGET_JARGON } from "./jargon";
-import { lineMayRise, rolloverMayRiseClause, type RolloverRiseInput } from "./rollover-held-back";
+import { lineRiseCause, rolloverMayRiseClause, type LineRiseCause, type RolloverRiseInput } from "./rollover-held-back";
 
 /**
  * What a budget row's headline says, and what that reading means.
@@ -93,9 +93,26 @@ const LABEL: Record<BudgetPaceKind, string> = {
   over: "Over budget",
 };
 
+/**
+ * ⚖️ default built, not asked (2026-10-29): where the line can still rise, each definition says what can still lift it
+ * (`lineRiseCause`) — a closed period held back, a bill a period read whole subtracted that may have stopped, or both.
+ * 🔴 Review of ca938320 (round 2): a September imported through Sep 30, its Meal Kit's card checked only through Aug
+ * 31, can lift the line too — and "a closed period is not fully imported yet" is false of it.
+ */
+const OVER_LINE_MAY_RISE: Record<LineRiseCause, string> = {
+  "held-back": BUDGET_JARGON.paceOverLineMayRise,
+  bill: BUDGET_JARGON.paceOverBillMayStop,
+  both: BUDGET_JARGON.paceOverHeldBackAndBill,
+};
+const WITHHELD_LINE_MAY_RISE: Record<LineRiseCause, string> = {
+  "held-back": BUDGET_JARGON.paceWithheldLineMayRise,
+  bill: BUDGET_JARGON.paceWithheldBillMayStop,
+  both: BUDGET_JARGON.paceWithheldHeldBackAndBill,
+};
+
 export interface BudgetVerdictInput
   extends Pick<BudgetCoverageInput, "spentFromAccounts" | "spentFromWallets">,
-    Pick<RolloverRiseInput, "rolloverMayAddCents"> {
+    Pick<RolloverRiseInput, "rolloverMayAddCents" | "rolloverHeldBack" | "rolloverBillMayLapse"> {
   pace: BudgetPaceKind;
   /** spent ÷ available, UNCLAMPED — 1.08 is eight percent past the line */
   pct: number;
@@ -110,7 +127,9 @@ export interface BudgetVerdictInput
 export function budgetVerdict(input: BudgetVerdictInput): BudgetVerdict {
   const { pace, pct } = input;
   const floors = spendIsAFloor(input);
-  const rises = lineMayRise(input);
+  // what can still lift the line — null where it cannot rise (`lineMayRise`)
+  const cause = lineRiseCause(input);
+  const rises = cause !== null;
   if (pace === "over") {
     // The headline % must say WHAT it measures: 108% of a budget is "over BY
     // 8%", never "over budget · 108%", which reads as 108% over. Under one
@@ -125,7 +144,7 @@ export function budgetVerdict(input: BudgetVerdictInput): BudgetVerdict {
        * definition says what is true of the line as it stands. 🔴 Review of 48475ec4: Food, $30.00 rolling from Jul 1,
        * read "Over budget by 33%" in August with July held back at $0.00 — and an import later, "Awaiting statements".
        */
-      explanation: rises ? BUDGET_JARGON.paceOverLineMayRise : BUDGET_JARGON.paceOver,
+      explanation: cause === null ? BUDGET_JARGON.paceOver : OVER_LINE_MAY_RISE[cause],
       barIsFull: true,
       withheld: false,
       showsProjection: false,
@@ -201,7 +220,7 @@ export function budgetVerdict(input: BudgetVerdictInput): BudgetVerdict {
   if (floors) {
     return {
       headline: "Awaiting statements",
-      explanation: rises ? BUDGET_JARGON.paceWithheldLineMayRise : BUDGET_JARGON.paceWithheld,
+      explanation: cause === null ? BUDGET_JARGON.paceWithheld : WITHHELD_LINE_MAY_RISE[cause],
       barIsFull: false,
       withheld: true,
       /*

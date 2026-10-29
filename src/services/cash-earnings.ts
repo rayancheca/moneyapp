@@ -375,6 +375,21 @@ export const silenceMeasuredThroughBySeries = cache(function silenceMeasuredThro
 });
 
 /**
+ * Per series, the day its silence WILL be measured to once a statement has checked every account it posts to now
+ * through `today` — `silenceMeasuredThroughBySeries` with nothing left unchecked: today, or null where it posts to no
+ * account the ledger knows, which no statement can ever check. What a lapse still open can come to: the arrears walk
+ * asks it whether a bill it owes may still be let go as its statements land (`OverdueSeries.mayStillLapse`).
+ *
+ * ⛔ The same landing accounts (`frontierReading`, memoised for the render). ⚠️ Not today for every series: a bill last
+ * seen in March with no row and no account to post to would read as about to lapse, while its silence, measured on no
+ * account, never can be (pinned in `budgets.test.ts`).
+ */
+export function silenceOnceCheckedBySeries(db: AppDatabase, today: string): (seriesId: string) => string | null {
+  const { landings } = frontierReading(db, today);
+  return (seriesId) => ((landings.get(seriesId)?.size ?? 0) > 0 ? today : null);
+}
+
+/**
  * One reading per confirmed income series — never a single aggregate.
  *
  * Summing them would produce a total whose `basis` is meaningless: one live

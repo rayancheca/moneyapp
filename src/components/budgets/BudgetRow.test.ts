@@ -694,6 +694,95 @@ describe("BudgetRow — ⚖️ an over row read in part", () => {
       expect(html).toContain(BUDGET_JARGON.paceWithheldLineMayRise);
     });
   });
+
+  /*
+   * 🔴 Review of ca938320 (round 2): a ROLLING over row whose closed July is read whole by its rows — while the card
+   * its Meal Kit posts to is checked only through Jun 30, so the kit's lapse still waits on a statement — spoke "over
+   * budget by at least $200.00" under "no later import can undo that"; once July was checked through, no row added,
+   * the kit lapsed and the row read "Awaiting statements" at $700.00 of $940.00. ⚖️ default built, not asked
+   * (2026-10-29): the verdict stands (his rule), its spend is a floor, how far past the line is not — and the line
+   * says what can still roll over, in the words of what it waits for: July's statements, not its import.
+   */
+  describe("…on a rolling budget whose closed month, read whole, subtracted a bill that may have stopped", () => {
+    const JULY = { start: "2026-07-01", end: "2026-07-31" };
+
+    /** Food $500.00 rolling from Jul 1; a $450.00 Meal Kit last paid Apr 25 on a card checked only through Jun 30 */
+    function rollingFoodWithAQuietKit(): { s: BudgetPaceStatus; checkJuly: () => void } {
+      const chase = bundle.db.select().from(institutions).where(eq(institutions.name, "Chase")).get()!;
+      const card = createAccount(bundle.db, { institutionId: chase.id, name: "Card", type: "credit" });
+      const fresh = createAccount(bundle.db, { institutionId: chase.id, name: "Fresh", type: "credit" });
+      const kit = bundle.db
+        .insert(recurringSeries)
+        .values({
+          name: "Meal Kit",
+          kind: "bill",
+          cadence: "monthly",
+          intervalDaysAvg: 30,
+          amountCentsAvg: -45_000,
+          nextExpectedOn: "2026-05-25",
+          nextExpectedAmountCents: -45_000,
+          status: "confirmed",
+          lastMatchedOn: "2026-04-25",
+          userCategoryId: catId("Food"),
+        })
+        .returning({ id: recurringSeries.id })
+        .get().id;
+      const spend = (accountId: string, postedOn: string, cents: number, category: string, seriesId?: string) => {
+        const rawDescription = `SPEND ${postedOn} ${category} ${cents}`;
+        const row = { accountId, postedOn, amountCents: -cents, rawDescription };
+        const dedupe = dedupeHash({ ...row, occurrenceIndex: 0 });
+        bundle.db
+          .insert(transactions)
+          .values({
+            ...row,
+            normalizedDescription: rawDescription,
+            categoryId: catId(category),
+            recurringSeriesId: seriesId ?? null,
+            dedupeHash: dedupe,
+          })
+          .run();
+      };
+      spend(card, "2026-03-25", 45_000, "Food", kit);
+      spend(card, "2026-04-25", 45_000, "Food", kit); // its last payment: cancelled after April
+      spend(card, "2026-07-31", 500, "Shopping"); // the card's rows reach Jul 31: July is read whole…
+      checkedThrough(bundle.db, card, "2026-06-30"); // …and its balances are checked only through Jun 30
+      checkedThrough(bundle.db, fresh, TODAY);
+      spend(fresh, "2026-07-03", 6_000, "Food"); // July: $60.00 of Food found
+      spend(fresh, "2026-08-02", 70_000, "Food"); // August: $700.00 of a $500.00 line
+      spend(fresh, TODAY, 500, "Shopping");
+      const id = createBudget(bundle.db, {
+        categoryId: catId("Food"),
+        period: "monthly",
+        amountCents: 50_000,
+        startsOn: "2026-07-01",
+      });
+      setBudgetRollover(bundle.db, id, { enabled: true });
+      return { s: statusFor("Food"), checkJuly: () => checkedThrough(bundle.db, card, JULY.end, JULY.start) };
+    }
+
+    test("the over verdict stands, and the line says July can still roll over once its statements land", () => {
+      const { s, checkJuly } = rollingFoodWithAQuietKit();
+      // the conditions under which the row spoke a false floor — without them this test could not fail
+      expect([s.pace, s.uncoveredDays, s.rolloverCents, s.rolloverHeldBack]).toEqual(["over", 11, 0, []]);
+      expect([s.rolloverMayAddCents, s.rolloverBillMayLapse]).toEqual([44_000, [JULY]]);
+      const line =
+        "spending imported through Jul 31 · 11 days of this period unaccounted · more can still roll over from " +
+        "July 2026 once its statements land, if a bill subtracted from it has stopped";
+      const html = render(s);
+      expect(html).toContain("Over budget by 40%");
+      expect(html).toContain(`<p class="mt-2 text-xs text-ink-faint">${line}</p>`);
+      expect(spoken(html)).toContain(`. over budget by $200.00 — ${line}.`);
+      expect(spoken(html)).not.toContain("over budget by at least");
+      expect(html).toContain(BUDGET_JARGON.paceOverBillMayStop);
+      expect(html).not.toContain(BUDGET_JARGON.paceOver);
+
+      // …and it was right not to say more: July is checked through, no row added, and the kit is let go
+      checkJuly();
+      const after = statusFor("Food");
+      expect([after.spentCents, after.rolloverCents, after.availableCents]).toEqual([70_000, 44_000, 94_000]);
+      expect([after.rolloverMayAddCents, after.rolloverBillMayLapse]).toEqual([0, []]);
+    });
+  });
 });
 
 /*

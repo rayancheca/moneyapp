@@ -93,6 +93,11 @@ describe("jargon copy", () => {
         // ⚖️ …and the two of them whose line can still rise, a closed period still to bank (2026-10-29)
         "paceOverLineMayRise",
         "paceWithheldLineMayRise",
+        // ⚖️ …or a bill a period read whole subtracted that may have stopped, alone or beside one (2026-10-29)
+        "paceOverBillMayStop",
+        "paceWithheldBillMayStop",
+        "paceOverHeldBackAndBill",
+        "paceWithheldHeldBackAndBill",
         // ⚖️ §6A 64: withheld, and not one elapsed day read — the row prints no Spent and no Left
         "paceUnread",
         "paceCashOnly",

@@ -164,6 +164,29 @@ const BAR_PARTS = `The filled part is what has gone so far, and ${TODAY_MARK}`;
  */
 const BAR_ANATOMY = `${BAR_PARTS} — fill behind the mark means spending is slower than time.`;
 
+/**
+ * The halves every definition of a line that can still rise shares (`rollover-held-back::lineMayRise`) — the over
+ * row's and the withheld row's read in part — around what can still lift it (`lineRiseCause`), so no two of them say
+ * one thing two ways.
+ */
+const OVER_AS_IT_STANDS =
+  "Spending has already passed the line as it stands, and this reading is measured rather than a forecast — but the line itself can still rise";
+const OVER_BAR =
+  "The bar is full and no longer to scale, and the period mark is left off because there is nothing left for it to divide.";
+const WITHHELD_AMOUNT_ONLY =
+  "Days in this window have no imported spending yet, so the amount can only rise — it is a floor rather than a measurement — but the percentage can move either way: the line it is taken against can still rise too, because";
+const NO_READING_OVER_THEM = `No reading of where it is heading is offered over them, because calling an unimported month healthy is the one error this page must not make. ${BAR_PARTS}.`;
+/**
+ * ⚖️ default built, not asked (2026-10-29): what can lift it where a period READ WHOLE subtracted a bill that may still
+ * lapse (`lineRiseCause` "bill"), alone or beside a period held back ("both") — "stopped" as /recurring says of a bill
+ * it no longer forecasts, "subtracted" as the rollover panel says of its bills. 🔴 Review of ca938320 (round 2): the
+ * over row's "a closed period is not fully imported yet" would be false of a September imported through Sep 30.
+ */
+const BILL_MAY_HAVE_STOPPED =
+  "a bill subtracted from a closed period may have stopped, and once its statements land, what it leaves unspent to carry into this one can grow";
+const HELD_BACK_AND_BILL =
+  "a closed period is not fully imported yet, and a bill subtracted from another may have stopped — once their statements land, what they leave unspent to carry into this one can grow";
+
 export const BUDGET_JARGON = {
   /**
    * ONE of these three ever renders, and `incomeBasis` picks which — the same
@@ -221,12 +244,16 @@ export const BUDGET_JARGON = {
    * says what is true of the line as it stands. 🔴 Review of 48475ec4: Food, $30.00 rolling from Jul 1, read past its
    * line by $10.00 under "no later import can undo that", and an import later read $40.00 of $60.00, no Food added.
    */
-  paceOverLineMayRise:
-    "Spending has already passed the line as it stands, and this reading is measured rather than a forecast — but the line itself can still rise: a closed period is not fully imported yet, and what it leaves unspent carries into this one once its statements land. The bar is full and no longer to scale, and the period mark is left off because there is nothing left for it to divide.",
+  paceOverLineMayRise: `${OVER_AS_IT_STANDS}: a closed period is not fully imported yet, and what it leaves unspent carries into this one once its statements land. ${OVER_BAR}`,
+  // ⚖️ …where a bill a period read whole subtracted may have stopped (2026-10-29), alone or beside one held back
+  paceOverBillMayStop: `${OVER_AS_IT_STANDS}: ${BILL_MAY_HAVE_STOPPED}. ${OVER_BAR}`,
+  paceOverHeldBackAndBill: `${OVER_AS_IT_STANDS}: ${HELD_BACK_AND_BILL}. ${OVER_BAR}`,
   // ⚖️ decision 69 (2026-10-13): no projection beside it and no pace colour, so no pace reading off the mark either
   paceWithheld: `Days in this window have no imported spending yet, so the amount and the percentage can only rise — they are floors rather than measurements. No reading of where it is heading is offered over them, because calling an unimported month healthy is the one error this page must not make. ${BAR_PARTS}.`,
   // ⚖️ …and where the line can still rise (2026-10-29), the percentage taken against it is no floor, so it says so
-  paceWithheldLineMayRise: `Days in this window have no imported spending yet, so the amount can only rise — it is a floor rather than a measurement — but the percentage can move either way: the line it is taken against can still rise too, because a closed period is not fully imported yet and what it leaves unspent carries into this one once its statements land. No reading of where it is heading is offered over them, because calling an unimported month healthy is the one error this page must not make. ${BAR_PARTS}.`,
+  paceWithheldLineMayRise: `${WITHHELD_AMOUNT_ONLY} a closed period is not fully imported yet and what it leaves unspent carries into this one once its statements land. ${NO_READING_OVER_THEM}`,
+  paceWithheldBillMayStop: `${WITHHELD_AMOUNT_ONLY} ${BILL_MAY_HAVE_STOPPED}. ${NO_READING_OVER_THEM}`,
+  paceWithheldHeldBackAndBill: `${WITHHELD_AMOUNT_ONLY} ${HELD_BACK_AND_BILL}. ${NO_READING_OVER_THEM}`,
   /*
    * ⚖️ §6A 64 (2026-10-12): not one elapsed day read, so the row prints a dash for what has gone and what is left —
    * no amount, no percentage and no fill for a body to describe. It names the one mark the bar still draws.

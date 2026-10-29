@@ -1,6 +1,7 @@
 import { describe, expect, test } from "vitest";
 import {
   lineMayRise,
+  lineRiseCause,
   rolloverHeldBackSentence,
   rolloverMayRiseClause,
   rolloverToggleTitle,
@@ -99,6 +100,7 @@ describe("lineMayRise and rolloverMayRiseClause — a line that can still rise, 
   const row = (over: Partial<RolloverRiseInput> = {}): RolloverRiseInput => ({
     rolloverMayAddCents: 1_500,
     rolloverHeldBack: [SEPTEMBER],
+    rolloverBillMayLapse: [],
     budget: { period: "monthly" },
     bounds: { start: "2026-10-01" },
     ...over,
@@ -131,6 +133,35 @@ describe("lineMayRise and rolloverMayRiseClause — a line that can still rise, 
     expect(rolloverMayRiseClause(row({ ...week, budget: { period: "weekly" } }))).toBe(
       "more can still roll over from the week of Sep 28 once it is fully imported",
     );
+  });
+
+  /*
+   * 🔴 Review of ca938320 (round 2): a period READ WHOLE banked a bill as owed whose lapse still waited on a statement
+   * — its accounts checked short of its last day — so the line could rise with no period held back, and the clause,
+   * naming only those, said nothing. ⚖️ default built, not asked (2026-10-29): it names that period by what it waits
+   * for — its statements, not its import, which is whole — and why: a bill subtracted from it may have stopped.
+   */
+  test("a period read whole whose bill may have stopped, by its name — alone, two, and beside one held back", () => {
+    const august = { start: "2026-08-01", end: "2026-08-31" };
+    const bill = row({ rolloverHeldBack: [], rolloverBillMayLapse: [SEPTEMBER] });
+    expect([lineMayRise(bill), lineRiseCause(bill)]).toEqual([true, "bill"]);
+    expect(rolloverMayRiseClause(bill)).toBe(
+      "more can still roll over from September 2026 once its statements land, if a bill subtracted from it has stopped",
+    );
+    expect(rolloverMayRiseClause(row({ rolloverHeldBack: [], rolloverBillMayLapse: [august, SEPTEMBER] }))).toBe(
+      "more can still roll over from August 2026 and September 2026 once their statements land, if a bill " +
+        "subtracted from them has stopped",
+    );
+    const both = row({ rolloverHeldBack: [august], rolloverBillMayLapse: [SEPTEMBER] });
+    expect(lineRiseCause(both)).toBe("both");
+    expect(rolloverMayRiseClause(both)).toBe(
+      "more can still roll over from August 2026 once it is fully imported, and from September 2026 once its " +
+        "statements land, if a bill subtracted from it has stopped",
+    );
+    // ⛔ …and a line that cannot rise says nothing, whatever is named
+    const still = row({ rolloverMayAddCents: 0, rolloverBillMayLapse: [SEPTEMBER] });
+    expect([lineRiseCause(still), rolloverMayRiseClause(still)]).toEqual([null, null]);
+    expect(lineRiseCause(row())).toBe("held-back");
   });
 });
 
