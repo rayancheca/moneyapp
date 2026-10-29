@@ -165,7 +165,7 @@ export function overdueForSeries(
   for (const s of live) {
     const payments = paymentsBySeries.get(s.id) ?? [];
     const projectable = toProjectable(s);
-    const dueDays = dueDaysOf(projectable);
+    const dueDays = dueDaysOf(projectable, s);
     const occ = projectOccurrences(projectable, periodStart, through)
       .filter((o) => o.amountCents < 0)
       .filter((o) => paymentFor(payments, o.date, dueDays) === undefined);

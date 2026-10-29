@@ -377,6 +377,26 @@ describe("the posted average, per occurrence — his rent on the page, the All t
     sep3Named(car.insuranceId, TODAY, "-$448.36");
   });
 
+  type Rows = readonly (readonly [string, number])[];
+  /** a monthly series at the rate he set, these rows linked to it */
+  const seed = (name: string, kind: "bill" | "transfer", rate: number, rows: Rows) => {
+    const { id } = bundle.db
+      .insert(recurringSeries)
+      .values({ name, kind, cadence: "monthly", status: "confirmed", toleranceDays: 3, userAmountCents: rate })
+      .returning({ id: recurringSeries.id })
+      .get();
+    for (const [day, c] of rows) rent.charge(day, c, id);
+    return id;
+  };
+  /** no payment of the series covered more than one charge — on the series page, the All tab and the popover */
+  const namesNothing = (id: string, today: string) => {
+    expect(seriesDetail(bundle.db, id, today)!.paidAhead).toEqual([]);
+    expect(listSeries(bundle.db, today).find((s) => s.id === id)!.paidAhead).toEqual([]);
+    const popover = provenanceFor(bundle.db, { kind: "recurringSeries", id, today })!.headline;
+    expect(popover).toContain("which is not what you set");
+    expect(popover).not.toContain("covered more than one");
+  };
+
   /*
    * ⚖️ DEFAULT, BUILT, NOT ASKED (2026-10-22): …only of a bill or subscription that otherwise paid its rate. 🔴 At
    * 0c5c893 FPL, with one -$125.00 summer bill beside its -$14.21 and -$56.22 under the -$58.87 he set, read "Aug 27's
@@ -385,16 +405,6 @@ describe("the posted average, per occurrence — his rent on the page, the All t
    * added).
    */
   test("a bill whose amounts vary, and a transfer, paid nothing ahead — on all three", () => {
-    type Rows = readonly (readonly [string, number])[];
-    const seed = (name: string, kind: "bill" | "transfer", rate: number, rows: Rows) => {
-      const { id } = bundle.db
-        .insert(recurringSeries)
-        .values({ name, kind, cadence: "monthly", status: "confirmed", toleranceDays: 3, userAmountCents: rate })
-        .returning({ id: recurringSeries.id })
-        .get();
-      for (const [day, c] of rows) rent.charge(day, c, id);
-      return id;
-    };
     const fpl = seed("FPL (electricity)", "bill", -5_887, [
       ["2026-07-10", -1_421],
       ["2026-07-28", -5_622],
@@ -404,13 +414,53 @@ describe("the posted average, per occurrence — his rent on the page, the All t
       ["2026-08-12", -35_758],
       ["2026-09-03", -100_000],
     ]);
-    for (const id of [fpl, payoff]) {
-      expect(seriesDetail(bundle.db, id, TODAY)!.paidAhead).toEqual([]);
-      expect(listSeries(bundle.db, TODAY).find((s) => s.id === id)!.paidAhead).toEqual([]);
-      const { popover } = surfaces(id);
-      expect(popover).toContain("which is not what you set");
-      expect(popover).not.toContain("covered more than one");
-    }
+    for (const id of [fpl, payoff]) namesNothing(id, TODAY);
+  });
+
+  /*
+   * ⚖️ default built, not asked (2026-10-23): …and a payment below the rate is what a payment ahead left only when it
+   * posts after it. 🔴 At b6aa5dc FPL's -$14.21 Jul 10 and -$56.22 Jul 28, with -$58.87 Aug 28 at the rate he set and a
+   * -$125.00 Sep 28 bill linked, read "posted avg -$63.58 · Sep 28's -$125.00 covered more than one month" on the All
+   * tab and the series page, and the popover "average … is -$63.58, which is not what you set — Sep 28's -$125.00
+   * covered more than one month" (review of b6aa5dc; measured on his ledger copy 2026-10-23, those two rows linked).
+   */
+  test("a bill whose rate is its highest amount paid nothing ahead: FPL and Breezeline — on all three", () => {
+    const fpl = seed("FPL (electricity)", "bill", -5_887, [
+      ["2026-07-10", -1_421],
+      ["2026-07-28", -5_622],
+      ["2026-08-28", -5_887],
+      ["2026-09-28", -12_500],
+    ]);
+    namesNothing(fpl, TODAY);
+    // Breezeline's prorated -$40.32 first bill, then four at its $50.00 rate — and a charge of twice it
+    const breezeline = seed("Breezeline (internet)", "bill", -5_000, [
+      ["2026-06-20", -4_032],
+      ...["07", "08", "09", "10"].map((m) => [`2026-${m}-10`, -5_000] as const),
+      ["2026-11-10", -10_000],
+    ]);
+    namesNothing(breezeline, "2026-11-15");
+  });
+
+  /*
+   * ⚖️ default built, not asked (2026-10-23): …and one after it only when it is the remainder that payment implies.
+   * 🔴 At 66daebd a bill varying AFTER its one high month was named: a what-if on Venture X at a -$60.00 rate set from
+   * its Jun 8 bill, then Jul 8 -$130.00, Aug 8 -$55.00, Sep 8 -$40.00 and Oct 8 -$58.00, read "posted avg -$68.60 ·
+   * Jul 8's -$130.00 covered more than one month" on the All tab and the series page, and so did the popover (review
+   * of 66daebd; measured on his ledger copy 2026-10-23, that bill added). Car insurance's -$72.74 is what Sep 3 left
+   * (above); a -$50.00 there is not, and names nothing either.
+   */
+  test("a bill varying after its one high month paid nothing ahead — nor Sep 3 beside a -$50.00 — on all three", () => {
+    const varying = seed("What-if bill", "bill", -6_000, [
+      ["2026-06-08", -6_000],
+      ["2026-07-08", -13_000],
+      ["2026-08-08", -5_500],
+      ["2026-09-08", -4_000],
+      ["2026-10-08", -5_800],
+    ]);
+    namesNothing(varying, TODAY);
+    const car = seedHisCarSeries(bundle.db);
+    car.charge("2026-11-11", -5_000, car.insuranceId);
+    namesNothing(car.insuranceId, "2026-11-15");
   });
 
   /* ⛔ No schedule, no occurrence: he said it is not recurring. CC Vending's purchases of one day are purchases. */

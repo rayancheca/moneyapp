@@ -698,7 +698,9 @@ export function recurringCalendar(
    * The payment this grid NAMES for a bill's occurrence: the arrears' own (`paymentFor`), over the same payments — but
    * one ON TIME may be any of the payments within the day's grace, none of which pays another day, so of those the one
    * it draws itself first: its own posting inside the month, then its own, then its carrier's inside the month. Paid or
-   * not, and by a payment early or late, is `paymentFor`'s answer either way.
+   * not, and by a payment early or late, is `paymentFor`'s answer either way. (⚖️ A catch-up on time pays the day
+   * before it too — `paymentFor`'s own, named there late, whichever this day draws: default built, not asked,
+   * 2026-10-23.)
    *
    * 🔴 The arrears' nearest alone drew one occurrence twice (review of the 2026-10-08 batch): the rent paid in halves
    * either side of the edge — Sep 30 and Oct 2, each a day from Oct 1 — names the earlier of two as near, so October
@@ -884,7 +886,7 @@ export function recurringCalendar(
     const postedDates = postedDatesBySeries.get(s.id) ?? [];
     // the arrears' test of a covering posting (`paymentFor`), over the postings the arrears read, on its own due days
     const payments = paymentsBySeries.get(s.id) ?? [];
-    const dueDays = dueDaysOf(projectable);
+    const dueDays = dueDaysOf(projectable, s);
     const confidence = forecastConfidence(s);
     // ONE evidence word, the one the All tab files the series under: a series
     // that never charged is "never billed", not stale (see `CalendarEntry.isStale`).
