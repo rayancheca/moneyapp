@@ -58,7 +58,9 @@ import {
  * ⛔ The cards BEHIND the front are `inert`, as anything covered must be (see
  * the slot below): out of the pointer, the Tab order and a screen reader's
  * cursor, which reads the card on screen as the eye does — every card's name
- * is on its pip, and the grid reads all twelve at once.
+ * is on its pip, and the grid reads all twelve at once. So every way in steps
+ * through `turn`, which hands a focus on the front card to the deck before
+ * that card goes behind.
  */
 
 export interface DeckCard {
@@ -85,9 +87,30 @@ export function CardDeck({ cards, ariaLabel }: { cards: readonly DeckCard[]; ari
   const count = cards.length;
   const index = clampIndex(active, count);
 
-  const go = useCallback(
-    (direction: 1 | -1) => setActive((current) => stepIndex(clampIndex(current, count), count, direction)),
+  /*
+   * ⛔ Every step goes through here — an arrow, Home, End, the wheel, a drag, a pip, Previous, Next — and it hands the
+   * focus over BEFORE the card moves, while that card can still hold it. A step sends the front card behind, where it
+   * is `inert`, and the browser drops a focus left inside an inert card to the page, where the next arrow steps
+   * nothing. So a focus inside the deck moves to the deck, the one tab stop that says where you are, without a scroll:
+   * a bare focus() brings the deck's top into view, and a link low on a tall card sits below it. A focus outside the
+   * deck stays — a pip, Previous or Next keeps the focus its click put there.
+   *
+   * 🔴 Only an arrow key handed it over, from the key handler: a trackpad swipe (the wheel) after a click on Runway's
+   * "What Runway means" left the focus on <body> and ← → dead — the review of 04c5fd30, in headless Chromium.
+   */
+  const turn = useCallback(
+    (to: (current: number) => number) => {
+      const deck = deckRef.current;
+      const focused = deck?.ownerDocument.activeElement;
+      if (deck && focused && focused !== deck && deck.contains(focused)) deck.focus({ preventScroll: true });
+      setActive((current) => to(clampIndex(current, count)));
+    },
     [count],
+  );
+
+  const go = useCallback(
+    (direction: 1 | -1) => turn((current) => stepIndex(current, count, direction)),
+    [turn, count],
   );
 
   /*
@@ -172,20 +195,18 @@ export function CardDeck({ cards, ariaLabel }: { cards: readonly DeckCard[]; ari
   };
 
   const onKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    /*
+     * ⛔ A step key only reaches `turn`, which hands the focus to the deck; every other key is the browser's and
+     * leaves the focus where it is. Taken for every key, a Tab pressed on a link lands on the deck and walks back
+     * into the front card's first control, and Tab never leaves the deck — DECK, "What Runway means", DECK, … on
+     * his ledger copy, 2026-10-29 (pinned in CardDeck.test.ts).
+     */
     if (event.key === "ArrowRight") go(1);
     else if (event.key === "ArrowLeft") go(-1);
-    else if (event.key === "Home") setActive(0);
-    else if (event.key === "End") setActive(count - 1);
+    else if (event.key === "Home") turn(() => 0);
+    else if (event.key === "End") turn(() => count - 1);
     else return;
     event.preventDefault();
-    /*
-     * ⛔ An arrow pressed from a link ON the front card sends that card behind, where it is `inert`, and the
-     * browser drops a focus left inside an inert card to the page — where the next arrow steps nothing. The deck
-     * takes it first. ⛔ For a STEP only, so below the `return`: taken for every key, a Tab pressed on a link
-     * lands on the deck and walks back into the front card's first control, and Tab never leaves the deck —
-     * DECK, "What Runway means", DECK, … on his ledger copy, 2026-10-29 (pinned in CardDeck.test.ts).
-     */
-    if (event.target !== event.currentTarget) event.currentTarget.focus({ preventScroll: true });
   };
 
   if (count === 0) return null;
@@ -283,7 +304,7 @@ export function CardDeck({ cards, ariaLabel }: { cards: readonly DeckCard[]; ari
           <button
             key={card.id}
             type="button"
-            onClick={() => setActive(i)}
+            onClick={() => turn(() => i)}
             aria-label={card.label}
             aria-current={i === index ? "true" : undefined}
             className={`h-1.5 rounded-full transition-all duration-(--duration-normal) ${

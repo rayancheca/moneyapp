@@ -100,6 +100,39 @@ test.describe("the card deck", () => {
      * ⛔ The step sends the card holding the focus behind, where it is `inert`, and the browser drops a focus left
      * inside an inert card to the page — where the next arrow steps nothing. So a step hands the focus to the deck
      * (CardDeck.tsx); the keys it leaves alone are pinned in CardDeck.test.ts.
+     *
+     * 🔴 …and only the focus was read here: a deck that kept the card brought forward inert passed, and a Tab from the
+     * deck then skipped it for "Previous card" — every card after the first dead (the review of 04c5fd30). So each
+     * step also reads which card is live: the one brought forward, and not the one sent behind.
+     */
+    await page.goto("/?cards=deck");
+    const deck = page.locator(DECK);
+    const live = page.locator(`${SECTION} p[aria-live]`);
+    const slot = (n: number) => page.locator(`${DECK} > div`).nth(n);
+    await deck.scrollIntoViewIfNeeded();
+    await expect(live).toContainText("card 1 of");
+
+    await page.locator(`${DECK} > [aria-current="true"]`).getByRole("link").first().focus();
+    await page.keyboard.press("ArrowRight");
+    await expect(live).toContainText("card 2 of");
+    await expect(deck).toBeFocused();
+    await expect(slot(1)).toHaveAttribute("aria-current", "true");
+    await expect(slot(1)).not.toHaveAttribute("inert", "");
+    await expect(slot(0)).toHaveAttribute("inert", "");
+
+    await page.keyboard.press("ArrowRight");
+    await expect(live).toContainText("card 3 of");
+    await expect(deck).toBeFocused();
+    await expect(slot(2)).not.toHaveAttribute("inert", "");
+    await expect(slot(1)).toHaveAttribute("inert", "");
+  });
+
+  test("a trackpad swipe from the front card steps, and the arrows still step after it", async ({ page }) => {
+    /*
+     * 🔴 Only an arrow key handed the focus to the deck. A horizontal wheel — a trackpad's two-finger swipe — sent the
+     * card holding it behind, where it is `inert`, and the browser dropped it to <body>: after a click on Runway's
+     * "What Runway means", one swipe and ← → stepped nothing (the review of 04c5fd30, in headless Chromium). Every
+     * step hands it over now (CardDeck's `turn`); this presses the wheel itself, through the listener the page mounts.
      */
     await page.goto("/?cards=deck");
     const deck = page.locator(DECK);
@@ -108,7 +141,11 @@ test.describe("the card deck", () => {
     await expect(live).toContainText("card 1 of");
 
     await page.locator(`${DECK} > [aria-current="true"]`).getByRole("link").first().focus();
-    await page.keyboard.press("ArrowRight");
+    const box = await visibleBox(deck, "the card deck");
+    await page.mouse.move(box.x + box.width * 0.7, box.y + 60);
+    // the deck takes one step per burst, timed on the page's own clock from 0 (CardDeck's wheel lock): wait past it
+    await page.waitForFunction(() => performance.now() > 400);
+    await page.mouse.wheel(120, 0);
     await expect(live).toContainText("card 2 of");
     await expect(deck).toBeFocused();
 

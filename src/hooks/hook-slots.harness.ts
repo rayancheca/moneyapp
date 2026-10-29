@@ -31,8 +31,8 @@ export function routeHooks(real: ReactModule): ReactModule {
     // 🔴 the card deck reads reduced motion in one, measures its front card in another and listens for the wheel in a
     // third; unrouted, React's own ran outside a render and every key test of the deck died on a null dispatcher —
     // "Cannot read properties of null (reading 'useEffect')" — instead of pressing anything (2026-10-29)
-    useEffect: (fn: () => void, deps?: unknown[]) => (host ? host.useEffect() : real.useEffect(fn, deps)),
-    useLayoutEffect: (fn: () => void, deps?: unknown[]) => (host ? host.useEffect() : real.useLayoutEffect(fn, deps)),
+    useEffect: (fn: () => void, deps?: unknown[]) => (host ? host.useEffect(fn) : real.useEffect(fn, deps)),
+    useLayoutEffect: (fn: () => void, deps?: unknown[]) => (host ? host.useEffect(fn) : real.useLayoutEffect(fn, deps)),
   };
   return { ...real, ...routed } as unknown as ReactModule;
 }
@@ -40,10 +40,13 @@ export function routeHooks(real: ReactModule): ReactModule {
 export class HookSlots {
   private readonly values: unknown[] = [];
   private cursor = 0;
+  /** the effects the last render asked for, in its order — run only when a test mounts it (`mount`) */
+  private effects: (() => unknown)[] = [];
 
   render<P>(component: (props: P) => ReactNode, props: P): ReactNode {
     const previous = host;
     this.cursor = 0;
+    this.effects = [];
     host = this;
     try {
       return component(props);
@@ -84,9 +87,21 @@ export class HookSlots {
     return [false, (fn) => void fn()];
   }
 
-  // an effect runs after a mount, and nothing stepped here is mounted: as in a static render, it never runs
-  useEffect(): void {
+  // an effect runs after a mount, and nothing stepped here is mounted: as in a static render, it never runs — unless
+  // the test mounts the render that asked for it
+  useEffect(fn?: () => unknown): void {
     this.cursor++;
+    if (fn) this.effects.push(fn);
+  }
+
+  /**
+   * Run the effects the last render asked for, once each and in its order, as a mount does — for a component whose
+   * handler is wired up in one: 🔴 the card deck listens for the wheel in an effect, so a step taken by the wheel was
+   * out of every test's reach, and it dropped the focus to the page (the review of 04c5fd30, 2026-10-29). ⚠️ Nothing
+   * is cleaned up, and nothing re-runs when a dependency changes: mount once, then step through the handlers.
+   */
+  mount(): void {
+    for (const effect of this.effects) effect();
   }
 
   /**
