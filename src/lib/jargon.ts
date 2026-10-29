@@ -1,3 +1,5 @@
+import { ACCOUNT_NOT_READ } from "./unbanked-income";
+
 /**
  * Definitions for the terms these screens use without explaining them.
  *
@@ -293,8 +295,14 @@ export const RECURRING_JARGON = {
    */
   // one clause per reason a mark is unsettled (`UnsettledReason`, in `unsettledReasonWord`'s words). 🔴 A payday after
   // the checked day — "the ledger has not looked for its deposit" — had none (review of the pay-words batch).
-  notYetKnown:
-    "Nothing turned up, but the ledger cannot say whether it should have — the day, or the few days after it a payment may still post on, may not be covered by a statement yet; for pay, it may be that the ledger has not looked for its deposit, or the money may be cash you were handed and have not deposited; or this bill may not have charged enough times yet for the app to grade it. None of those is evidence that a payment failed.",
+  /*
+   * ⚖️ …and a checked payday's quiet names payroll as the card and /spending do (`ACCOUNT_NOT_READ`) — default built,
+   * not asked (2026-10-29): his pay is payroll by ACH since Aug 27 (decision 55). 🔴 It offered only "cash you were
+   * handed" (review of cc30142): on his ledger copy 2026-10-29 with a Salary-filed −$1,141.92 on Fri Sep 25 and Wells
+   * Fargo derived through Fri Oct 16, October drew Oct 1 and Oct 8 "never reached a bank" and Oct 15 "not banked yet",
+   * while /spending's note named payroll paid into an account the ledger does not read.
+   */
+  notYetKnown: `Nothing turned up, but the ledger cannot say whether it should have — the day, or the few days after it a payment may still post on, may not be covered by a statement yet; for pay, it may be that the ledger has not looked for its deposit, the money may be cash you were handed and have not deposited, or it may have been paid into ${ACCOUNT_NOT_READ}; or this bill may not have charged enough times yet for the app to grade it. None of those is evidence that a payment failed.`,
   upcoming: "Expected on or after today, so nothing has had the chance to happen yet.",
   scheduled:
     "You told the app this amount or this date, which makes it the firmest kind of claim here — firmer than a bill with years of history behind it.",

@@ -2,7 +2,7 @@ import { describe, expect, test } from "vitest";
 import { DAYS_TO_POST_NOT_OVER, NO_STATEMENT_YET } from "@/lib/arrears-reading";
 import { RECURRING_JARGON } from "@/lib/jargon";
 import { projectedEvidence, seriesEvidenceTone, seriesPostingWords, type SeriesEvidence } from "@/lib/series-evidence";
-import { notLookedForDeposits } from "@/lib/unbanked-income";
+import { ACCOUNT_NOT_READ, notLookedForDeposits } from "@/lib/unbanked-income";
 import type { ForecastComponent } from "@/services/forecast";
 import type { SeriesOccurrence, SeriesStaleness } from "@/services/recurring";
 import {
@@ -104,13 +104,20 @@ describe("unsettledReasonWord", () => {
    * The legend's "Not yet known" defines the grey "?" every reason above draws, so it names each of them. 🔴 It named
    * a statement, the days to post, undeposited cash and too few charges — not a payday after the checked day, whose
    * reason reads "the ledger has not looked for its deposit" (review of the pay-words batch).
+   * ⚖️ …and a checked payday as quiet as payroll can be, in /spending's and the card's phrase (`ACCOUNT_NOT_READ`) —
+   * default built, not asked (2026-10-29), the card's "Pay, never Cash pay" default carried over (decision 55). 🔴 It
+   * offered only "cash you were handed" (review of cc30142): on his ledger copy 2026-10-29 with a Salary-filed
+   * −$1,141.92 on Fri Sep 25 and Wells Fargo derived through Fri Oct 16, October drew Oct 1 and Oct 8 "never reached a
+   * bank" and Oct 15 "not banked yet" — payroll weeks — while /spending's note named payroll paid into an account the
+   * ledger does not read.
    */
   test("the legend's 'Not yet known' says each reason in the reasons' own words", () => {
     const tip = RECURRING_JARGON.notYetKnown;
     expect(tip).toContain("covered by a statement yet"); // not_imported
     expect(tip).toContain("a payment may still post on"); // in_grace
     expect(tip).toContain(`for pay, it may be that ${notLookedForDeposits(1)}`); // not_looked_for
-    expect(tip).toContain("cash you were handed and have not deposited"); // unbanked
+    expect(tip).toContain("cash you were handed and have not deposited"); // unbanked, never_banked — cash
+    expect(tip).toContain(`it may have been paid into ${ACCOUNT_NOT_READ}`); // unbanked, never_banked — payroll
     expect(tip).toContain("charged enough times yet"); // schedule_unproven
   });
 });

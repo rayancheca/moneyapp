@@ -15,7 +15,7 @@ import {
 } from "./section-notes";
 import { PATH_SEPARATOR } from "./category-path";
 import type { PayShortfall } from "./pay-shortfall";
-import { ACCOUNT_NOT_READ } from "./unbanked-income";
+import { ACCOUNT_NOT_READ, ACCOUNT_READ } from "./unbanked-income";
 
 const row =(over: Partial<Parameters<typeof budgetSectionNotes>[0]["rows"][number]> = {}) => ({
   categoryPath: "Food",
@@ -760,6 +760,26 @@ describe("cashEarningsSectionNotes", () => {
     expect(ACCOUNT_NOT_READ).toBe("an account the ledger does not read");
   });
 
+  /*
+   * ⚖️ …and the claim before it says where the ledger could see the money land: "reached an account the ledger reads"
+   * (`ACCOUNT_READ`) — default built, not asked (2026-10-29), the review's own wording. 🔴 Review of cc30142: "none of
+   * it reached an account" stood a sentence before "paid into an account the ledger does not read" — read literally,
+   * money that reached no account offered as paid into one. On his ledger copy 2026-10-29 with a Salary-filed
+   * −$1,141.92 on Fri Sep 25 and Wells Fargo derived through Fri Oct 16, 27 of /spending's 42 months, quarters, weeks
+   * and years printed both.
+   */
+  test("what reached an account is the ones the ledger reads, beside the one it does not", () => {
+    const none = notes()[0]!.body;
+    const only = notes({ impliedCents: 418_400, bankedCents: 144_700, unbankedCents: 273_700 })[0]!.body;
+    expect(none).toContain(`and none of it reached ${ACCOUNT_READ}. Across`);
+    expect(only).toContain(`and only $1,447.00 reached ${ACCOUNT_READ}. Across`);
+    expect(ACCOUNT_READ).toBe("an account the ledger reads");
+    for (const body of [none, only]) {
+      expect(body).toContain(`paid into ${ACCOUNT_NOT_READ}`);
+      expect(body).not.toMatch(/reached an account(?! the ledger reads)/u);
+    }
+  });
+
   test("a period that banked SOME of it names the part that landed", () => {
     // June 2026 on the live ledger: $4,184.00 implied, $1,447.00 banked in two
     // deposits, still stale because nothing has arrived since. "none of it
@@ -844,7 +864,7 @@ describe("cashEarningsSectionNotes", () => {
 
   test("a window straddling the frontier scopes the claim to the days that were read", () => {
     const [note] = notes({ ...checked, impliedCents: 418_800, unbankedCents: 418_800, periodsCovered: 4, checkedPeriodsCovered: 1 });
-    expect(note!.body).toContain("none of it reached an account through 2026-08-12");
+    expect(note!.body).toContain("none of it reached an account the ledger reads through 2026-08-12");
     expect(note!.body).toContain(
       "; the other 3 paydays fall after that, the last day every account that pay lands in has been checked through.",
     );
@@ -865,8 +885,8 @@ describe("cashEarningsSectionNotes", () => {
       checkedPeriodsCovered: 3,
     });
     expect(note!.body).toContain(
-      "none of it reached an account through 2026-08-12; the other payday falls after that, the last day every account " +
-        "that pay lands in has been checked through.",
+      "none of it reached an account the ledger reads through 2026-08-12; the other payday falls after that, the " +
+        "last day every account that pay lands in has been checked through.",
     );
     expect(note!.body).not.toContain("the other 1 ");
   });
@@ -880,8 +900,8 @@ describe("cashEarningsSectionNotes", () => {
       periodsCovered: 15,
       checkedPeriodsCovered: 10,
     });
-    expect(note!.body).toContain("only $1,447.00 reached an account through 2026-08-12");
-    expect(note!.body).not.toContain("only $1,447.00 reached an account.");
+    expect(note!.body).toContain("only $1,447.00 reached an account the ledger reads through 2026-08-12");
+    expect(note!.body).not.toContain("only $1,447.00 reached an account the ledger reads.");
   });
 
   test("a window and a silence read in full keep the sentence exactly as it was", () => {
@@ -895,7 +915,7 @@ describe("cashEarningsSectionNotes", () => {
     // but 5 of the schedule's 14 silent paydays do not — "14 … held as cash, spent
     // as cash, or ended" presented a list as complete over paydays nobody had read
     const [note] = notes({ ...checked, periodsSinceBanked: 14 });
-    expect(note!.body).toContain("none of it reached an account.");
+    expect(note!.body).toContain("none of it reached an account the ledger reads.");
     expect(note!.body).toContain("14 expected paydays have passed");
     expect(note!.body).toContain("9 of them fall on days the records cover, through 2026-08-12");
   });
@@ -1077,7 +1097,7 @@ describe("cashEarningsSectionNotes", () => {
     test("read in full: after what reached an account", () => {
       expect(lead({ bankedCents: 144_700 })).toBe(
         `Cash job (weekly pay) implies $5,230.00 of earnings over Jul 2 – 30, 2026 and only $1,447.00 reached an ` +
-          `account; ${BACK}.`,
+          `account the ledger reads; ${BACK}.`,
       );
     });
 
@@ -1089,8 +1109,8 @@ describe("cashEarningsSectionNotes", () => {
      */
     test("read in part: after the paydays past the checked day, which 'after that' still names", () => {
       expect(lead({ ...checked, periodsCovered: 5, checkedPeriodsCovered: 3 })).toContain(
-        `none of it reached an account through 2026-08-12; the other 2 paydays fall after that, the last day every ` +
-          `account that pay lands in has been checked through; ${BACK}.`,
+        `none of it reached an account the ledger reads through 2026-08-12; the other 2 paydays fall after that, the ` +
+          `last day every account that pay lands in has been checked through; ${BACK}.`,
       );
     });
 
@@ -1109,7 +1129,8 @@ describe("cashEarningsSectionNotes", () => {
 
     test("no money out: the claim is the one it always was", () => {
       expect(lead({ shortfall: { ...OUT, wentBackOut: [] } })).toBe(
-        "Cash job (weekly pay) implies $5,230.00 of earnings over Jul 2 – 30, 2026 and none of it reached an account.",
+        "Cash job (weekly pay) implies $5,230.00 of earnings over Jul 2 – 30, 2026 and none of it reached an account " +
+          "the ledger reads.",
       );
     });
 
@@ -1129,7 +1150,7 @@ describe("cashEarningsSectionNotes", () => {
       test("read in full: none of it reached an account inside the window, and who paid the rest", () => {
         expect(lead({ shortfall: { ...OUT, paidOutside: [EARLY], wentBackOut: [] } })).toBe(
           "Cash job (weekly pay) implies $5,230.00 of earnings over Jul 2 – 30, 2026 and none of it reached an account " +
-            `inside the window; ${PAID}.`,
+            `the ledger reads inside the window; ${PAID}.`,
         );
       });
 
@@ -1137,15 +1158,17 @@ describe("cashEarningsSectionNotes", () => {
         expect(
           lead({ ...checked, bankedCents: 104_600, checkedPeriodsCovered: 3, shortfall: { ...OUT, paidOutside: [EARLY] } }),
         ).toContain(
-          "only $1,046.00 reached an account inside the window through 2026-08-12; the other 2 paydays fall after " +
-            `that, the last day every account that pay lands in has been checked through; ${PAID}; ${BACK}.`,
+          "only $1,046.00 reached an account the ledger reads inside the window through 2026-08-12; the other 2 " +
+            "paydays fall after that, the last day every account that pay lands in has been checked through; " +
+            `${PAID}; ${BACK}.`,
         );
       });
 
       test("paid late, by a deposit after the window, is 'paid by', never 'early'", () => {
         const late = { ...EARLY, depositOn: "2026-08-03", paydays: ["2026-07-30"], early: false };
         expect(lead({ shortfall: { ...OUT, paidOutside: [late], wentBackOut: [] } })).toContain(
-          "none of it reached an account inside the window; $1,046.00 (Jul 30) was paid by the deposit of 2026-08-03.",
+          "none of it reached an account the ledger reads inside the window; $1,046.00 (Jul 30) was paid by the " +
+            "deposit of 2026-08-03.",
         );
       });
     });
@@ -1166,14 +1189,14 @@ describe("cashEarningsSectionNotes", () => {
       test("read in full: what reached an account is the window's own, and the rest is named", () => {
         expect(lead({ bankedCents: 209_200, shortfall: { ...OUT, paidAcross: [AHEAD], wentBackOut: [] } })).toBe(
           "Cash job (weekly pay) implies $5,230.00 of earnings over Jul 2 – 30, 2026 and only $1,046.00 reached an " +
-            `account inside the window; ${ANOTHER}.`,
+            `account the ledger reads inside the window; ${ANOTHER}.`,
         );
       });
 
       test("all of it paid another window's payday: none of it reached an account", () => {
         expect(lead({ bankedCents: 104_600, shortfall: { ...OUT, paidAcross: [AHEAD], wentBackOut: [] } })).toBe(
           "Cash job (weekly pay) implies $5,230.00 of earnings over Jul 2 – 30, 2026 and none of it reached an " +
-            `account inside the window; ${ANOTHER}.`,
+            `account the ledger reads inside the window; ${ANOTHER}.`,
         );
       });
 
@@ -1188,9 +1211,9 @@ describe("cashEarningsSectionNotes", () => {
             shortfall: { ...OUT, paidOutside: [paidIn], paidAcross: [AHEAD] },
           }),
         ).toContain(
-          "only $2,092.00 reached an account inside the window through 2026-08-12; the other 2 paydays fall after " +
-            "that, the last day every account that pay lands in has been checked through; $1,046.00 (Jul 2) was paid " +
-            `early, by the deposit of 2026-07-01; ${ANOTHER}; ${BACK}.`,
+          "only $2,092.00 reached an account the ledger reads inside the window through 2026-08-12; the other 2 " +
+            "paydays fall after that, the last day every account that pay lands in has been checked through; " +
+            `$1,046.00 (Jul 2) was paid early, by the deposit of 2026-07-01; ${ANOTHER}; ${BACK}.`,
         );
       });
 
@@ -1198,9 +1221,9 @@ describe("cashEarningsSectionNotes", () => {
         const late = { depositOn: "2026-07-03", paydays: ["2026-06-25"], cents: 104_600, early: false };
         expect(lead({ bankedCents: 313_800, shortfall: { ...OUT, paidAcross: [late, AHEAD], wentBackOut: [] } })).toBe(
           "Cash job (weekly pay) implies $5,230.00 of earnings over Jul 2 – 30, 2026 and only $1,046.00 reached an " +
-            "account inside the window; another $2,092.00 banked inside the window paid paydays outside it: " +
-            "$1,046.00, from the deposit of 2026-07-03, paid Jun 25's payday and $1,046.00, from the deposit of " +
-            "2026-07-29, paid Aug 6's payday early.",
+            "account the ledger reads inside the window; another $2,092.00 banked inside the window paid paydays " +
+            "outside it: $1,046.00, from the deposit of 2026-07-03, paid Jun 25's payday and $1,046.00, from the " +
+            "deposit of 2026-07-29, paid Aug 6's payday early.",
         );
       });
     });
@@ -1537,6 +1560,7 @@ describe("cashEarningsSectionNotes", () => {
         "and $1,141.92 never reached a bank; another $1,141.92 banked inside the window, from the deposit of " +
           "2026-09-03, paid Aug 27's payday.",
       );
+      // "none of them" of the lead's four paydays — of one, "that payday" (the test of Sep 21 – 27 below)
       expect(across(true)).toContain(
         "; another $3,425.76 banked inside the window paid none of them: $1,141.92, from the deposit of 2026-09-03, " +
           "paid Aug 27's payday and $2,283.84, from the deposit of 2026-09-30, paid the paydays of Oct 1 and Oct 8 " +
@@ -1667,12 +1691,15 @@ describe("cashEarningsSectionNotes", () => {
         wentBackOut: [{ postedOn: "2026-09-25", cents: 114_192 }],
       });
       // 🔴 it read "came to $1,141.92, and none of it reached a bank" — the return netted away the payday it paid
+      // 🔴 …and "paid none of them" of the one payday its lead names (review of batch 6; the week of Sep 21 – 27 on his
+      // ledger copy 2026-10-29 with the Sep 25 return and Wells Fargo derived through Oct 16)
       expect(note!.body).toBe(
         "It America LLC (weekly pay)'s payday on Sep 24, 2026 came to $1,141.92, and all of it was banked inside " +
-          "the window; another $4,567.68 banked inside the window paid none of them: $3,425.76, from the deposit of " +
-          "2026-09-23, paid the paydays of Sep 3, Sep 10, and Sep 17 and $1,141.92, from the deposit of 2026-09-24, " +
-          "paid Aug 27's payday; $1,141.92 went back out on 2026-09-25.",
+          "the window; another $4,567.68 banked inside the window did not pay that payday: $3,425.76, from the " +
+          "deposit of 2026-09-23, paid the paydays of Sep 3, Sep 10, and Sep 17 and $1,141.92, from the deposit of " +
+          "2026-09-24, paid Aug 27's payday; $1,141.92 went back out on 2026-09-25.",
       );
+      expect(note!.body).not.toContain("none of them");
     });
 
     test("a read payday paid from outside, and its own money for a payday past the checked day: named", () => {

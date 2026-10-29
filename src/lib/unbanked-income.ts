@@ -45,13 +45,25 @@ export const NOT_CHECKED = "the ledger has not checked every account that pay co
 
 /**
  * Where pay can land that no frontier speaks for — one of the explanations of an unbanked difference, in the dashboard
- * card's caveat ("payroll can land in …") and /spending's note for a stale schedule ("paid into …").
+ * card's caveat ("payroll can land in …"), /spending's note for a stale schedule ("paid into …") and the calendar
+ * legend's "Not yet known" ("it may have been paid into …", `RECURRING_JARGON.notYetKnown`).
  *
  * ⚖️ Default built, not asked (2026-10-21): since Aug 27, 2026 his pay is payroll by ACH (decision 55), and a payroll
  * moved to an account the ledger does not read is as quiet as pay never paid. 🔴 Review of 619ceb4 (MEDIUM): the card
- * named it while /spending's note beside it, of the same silence, listed only cash and an ended schedule.
+ * named it while /spending's note beside it, of the same silence, listed only cash and an ended schedule — and the
+ * legend, of the same quiet marks, only cash (review of cc30142).
  */
 export const ACCOUNT_NOT_READ = "an account the ledger does not read";
+
+/**
+ * `ACCOUNT_NOT_READ`'s counterpart: the accounts a sentence's "reached" is scoped to — /spending's note for a stale
+ * schedule, "none of it reached an account the ledger reads", before its quiet's "paid into" the other.
+ *
+ * ⚖️ Default built, not asked (2026-10-29), the review's own wording. 🔴 Review of cc30142: "none of it reached an
+ * account" beside "paid into an account the ledger does not read" — read literally, money that reached no account was
+ * offered as paid into one.
+ */
+export const ACCOUNT_READ = "an account the ledger reads";
 
 /**
  * What the quiet of a payday after `LAST_CHECKED_DAY` waits for — "the ledger has not looked for its deposit", or
