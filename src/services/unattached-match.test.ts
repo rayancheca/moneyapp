@@ -24,6 +24,7 @@ import { incomeExpectation } from "./budgets";
 import { cashEarningsReadings } from "./cash-earnings";
 import { checkedThrough } from "./checked-days-fixture";
 import { committedBook } from "./committed";
+import { dashboardData } from "./dashboard";
 import { forecastCurrentMonth } from "./forecast";
 import { incomeCard } from "./income-card";
 import { recurringCalendar } from "./recurring-calendar";
@@ -933,6 +934,66 @@ describe("a checked payday still inside its days to land: its row is named, and 
     });
     const line = incomeCard(bundle.db, IN_GRACE)!.pay[0]!;
     expect(line.gapLabel).toBe(`$1,141.92 of it never reached a bank; $1,141.92 is matched to the cent by ${ROW}.`);
+  });
+
+  /*
+   * ⛔ …and the other way round: a row answering a payday PAST its days to land takes back that payday's "never reaches
+   * a bank" alone — of the paydays no row answers, one still inside its days to land is "not banked yet" on every
+   * surface (`inGraceUnattachedCount` counts the rows of in-grace paydays only). 🔴 Review of cfb03c41 (MEDIUM): only
+   * the count's under-count was held — `unattached.length` passed the full suite (457 files, 10,104 tests) and called
+   * Oct 22, inside its three days to land, "Pay that never reaches a bank" on the forecast's note, his pay's page and
+   * the tile. Latent on his ledger copy 2026-10-30 (October's payroll all attached, Oct 29 after Wells Fargo's Oct 26);
+   * a copy with Oct 8's payroll detached and Oct 22's taken out, read Oct 24, prints this fixture's three subjects.
+   */
+  test("Oct 8's row past its days to land, Oct 22 inside them with no row: Oct 22 is not banked yet, every surface", () => {
+    const salary = categoryId("Salary", "Income");
+    for (const day of ["2026-10-01", "2026-10-15"]) row(day, 114_192, { seriesId: PAY, categoryId: salary });
+    const id = row("2026-10-08", 114_192, { categoryId: salary });
+    const oct8 = "a row of $1,141.92 on Oct 8 that is not attached to it";
+    const f = forecastCurrentMonth(bundle.db, IN_GRACE);
+    expect(f.unbankedIncome).toMatchObject({
+      occurrenceCount: 2,
+      checkedOccurrenceCount: 2,
+      pastGraceOccurrenceCount: 1,
+      inGraceUnattachedCount: 0,
+    });
+    expect(f.unbankedIncome.unattached?.map((m) => [m.date, m.row.id])).toEqual([["2026-10-08", id]]);
+    // the forecast's note
+    expect(textOf(createElement(UnbankedIncomeNote, { unbanked: f.unbankedIncome }))).toBe(
+      "2 paydays worth $2,283.84 already passed this month with no deposit attached to it (It America LLC (weekly pay)) " +
+        "— not counted above, and $1,141.92 of it not in EOM cash. Pay not banked yet, and pay matched to the cent by a " +
+        "row of $1,141.92 on Thu, Oct 8, 2026 that is not attached to it, cannot be projected as arriving; the month " +
+        "strip below counts it, because that line is the schedule.",
+    );
+    // his pay's page, in the warning's tone: Oct 8 is checked through its days to land, and its row pays nothing
+    expect(passedPaydaysWords(seriesDetail(bundle.db, PAY, IN_GRACE).unbankedPaydays!, formatDayShort)).toEqual({
+      count: "2 paydays",
+      passed: "already passed this month with no deposit attached to it",
+      unread: null,
+      notProjected: `Pay not banked yet, and pay matched to the cent by ${oct8}, cannot be projected as arriving`,
+      warning: true,
+    });
+    // the tile: Free to spend holds the row, not Oct 22's money
+    expect(dashboardData(bundle.db, IN_GRACE).pace!.paydaysLeftOut).toEqual({
+      text:
+        "2 paydays worth $2,283.84 already passed this month with no deposit attached to it — $1,141.92 of it not in " +
+        `Free to spend. Pay not banked yet, and pay matched to the cent by ${oct8}, cannot be projected as arriving.`,
+      warning: true,
+    });
+    // …and the surfaces that word each payday on their own: Earned vs banked, /spending and the calendar
+    expect(incomeCard(bundle.db, IN_GRACE)!.pay[0]!.gapLabel).toBe(
+      `$1,141.92 of it is matched to the cent by ${oct8}; $1,141.92 is for paydays whose days to land run past Oct 24, ` +
+        "the last day every account that pay lands in has been checked through — so it is not banked yet.",
+    );
+    expect(octoberNotes(IN_GRACE)).toBe(
+      "It America LLC (weekly pay)'s paydays over Oct 1 – 22, 2026 came to $4,567.68, of which $2,283.84 was banked " +
+        `inside the window, $1,141.92 is not banked yet, and $1,141.92 is matched to the cent by ${oct8}; Oct 22's days ` +
+        "to land run past Sat, Oct 24, 2026, the last day every account that pay lands in has been checked through.",
+    );
+    const october = recurringCalendar(bundle.db, "2026-10", IN_GRACE);
+    const mark = (day: string) => october.entriesByDay[day]!.find((e) => e.seriesId === PAY && e.transactionId === null)!;
+    expect(unsettledWords(mark("2026-10-08"))).toBe(`matched to the cent by ${oct8}`);
+    expect(unsettledWords(mark("2026-10-22"))).toBe("not banked yet");
   });
 
   /*
