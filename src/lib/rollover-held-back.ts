@@ -179,22 +179,23 @@ function periodName(p: PeriodBounds, period: BudgetPeriodKind, reference: string
 }
 
 /**
- * "September 2026", "July 2026 and August 2026", "3 months, July 2026 to September 2026," — the periods held back
- * (never none), named both or counted between the first and the last, days and weeks by their days ("4 days, Oct 10 –
- * Oct 13,"). ⛔ One naming for the panel's sentence (`rolloverHeldBackSentence`) and the row's clause
- * (`rolloverMayRiseClause`), so the two cannot name one wait two ways.
+ * "September 2026", "July 2026 and August 2026", "3 months, July 2026 to September 2026," — the closed periods a carry
+ * waits on (never none): held back, or read whole with a bill that may still lapse. Named both or counted between the
+ * first and the last, days and weeks by their days ("4 days, Oct 10 – Oct 13,"). ⛔ One naming for the panel's
+ * sentence (`rolloverHeldBackSentence`) and the row's clause (`rolloverMayRiseClause`), so the two cannot name one wait
+ * two ways.
  */
-function heldBackNamed(heldBack: readonly PeriodBounds[], period: BudgetPeriodKind, reference: string): string {
-  const first = heldBack[0]!;
-  const last = heldBack[heldBack.length - 1]!;
+function periodsNamed(periods: readonly PeriodBounds[], period: BudgetPeriodKind, reference: string): string {
+  const first = periods[0]!;
+  const last = periods[periods.length - 1]!;
   const named = (p: PeriodBounds): string => periodName(p, period, reference);
   const span =
     period === "monthly" || period === "annual"
       ? `${named(first)} to ${named(last)}`
       : `${formatDayShortIn(first.start, reference)} – ${formatDayShortIn(last.end, reference)}`;
-  if (heldBack.length === 1) return named(first);
-  if (heldBack.length === 2) return `${named(first)} and ${named(last)}`;
-  return `${heldBack.length} ${PERIOD_NOUN[period]}, ${span},`;
+  if (periods.length === 1) return named(first);
+  if (periods.length === 2) return `${named(first)} and ${named(last)}`;
+  return `${periods.length} ${PERIOD_NOUN[period]}, ${span},`;
 }
 
 /**
@@ -208,7 +209,7 @@ export function rolloverHeldBackSentence(
   reference: string,
 ): string | null {
   if (heldBack.length === 0) return null;
-  const subject = heldBackNamed(heldBack, period, reference);
+  const subject = periodsNamed(heldBack, period, reference);
   const sentence =
     heldBack.length === 1
       ? `${subject} is not fully imported, so nothing rolls over from it yet.`
@@ -218,10 +219,12 @@ export function rolloverHeldBackSentence(
 
 /** What a rolling row's line can still do: the carry's facts (`services/budgets::BudgetStatus`). */
 export interface RolloverRiseInput {
-  /** the most the periods held back can still add to the carry as they are read (`BudgetStatus.rolloverMayAddCents`) */
+  /** the most the periods below can still add to the carry as they are read (`BudgetStatus.rolloverMayAddCents`) */
   rolloverMayAddCents: number;
-  /** those periods, oldest first (`BudgetStatus.rolloverHeldBack`) */
+  /** the closed periods held back, oldest first (`BudgetStatus.rolloverHeldBack`) */
   rolloverHeldBack: readonly PeriodBounds[];
+  /** …and those read whole that subtracted a bill that may still lapse (`BudgetStatus.rolloverBillMayLapse`) */
+  rolloverBillMayLapse: readonly PeriodBounds[];
   budget: { period: BudgetPeriodKind };
   /** the graded window: a day outside its year is printed with its year */
   bounds: { start: string };
@@ -245,9 +248,32 @@ export interface RolloverRiseInput {
  *
  * ⛔ One test for the row's verdict and definition (`budgetVerdict`), its line and spoken sentence
  * (`budgetCoverageLine`, `BudgetRow`), the category page's card and the page note (`budgetSectionNotes`).
+ *
+ * 🔴 Review of ca938320 (round 2): …and a period READ WHOLE lifts it too where a bill subtracted from it may still lapse
+ * (`BudgetStatus.rolloverBillMayLapse`) — its rows imported through its last day, the accounts that bill posts to
+ * checked short of it.
  */
 export function lineMayRise(row: Pick<RolloverRiseInput, "rolloverMayAddCents">): boolean {
   return row.rolloverMayAddCents > 0;
+}
+
+/**
+ * What can still lift a line that can still rise (`lineMayRise`): a closed period held back ("held-back"), a bill a
+ * period read whole subtracted that may have stopped ("bill"), or both — null where the line cannot rise. What the
+ * row's definition says it stands on (`budgetVerdict`). ⚠️ Every period of either kind counts, as the clause names
+ * them (`rolloverMayRiseClause`); one the carry hands in with neither named reads as held back, the words it had. A
+ * period read whole is handed in only where its bill, let go, can change what can still roll over
+ * (`services/budgets::billsThatCanLift`) — 🔴 review of 73d2cbc4: an August $100.00 past its plan with its bill gone,
+ * which can bank nothing back, made the definition say "…a bill subtracted from another may have stopped".
+ */
+export type LineRiseCause = "held-back" | "bill" | "both";
+
+export function lineRiseCause(
+  row: Pick<RolloverRiseInput, "rolloverMayAddCents" | "rolloverHeldBack" | "rolloverBillMayLapse">,
+): LineRiseCause | null {
+  if (!lineMayRise(row)) return null;
+  if (row.rolloverBillMayLapse.length === 0) return "held-back";
+  return row.rolloverHeldBack.length === 0 ? "bill" : "both";
 }
 
 /**
@@ -255,11 +281,32 @@ export function lineMayRise(row: Pick<RolloverRiseInput, "rolloverMayAddCents">)
  * (`lineMayRise`) says beside the readings that lean on the line standing still (`budgetCoverageLine`); null where it
  * cannot, or no period is named to wait on. In the toggle's words — what is left unspent carries over once a period is
  * fully imported (`rolloverToggleTitle`) — and the panel's naming of what it holds (`rolloverHeldBackSentence`).
- * ⚠️ It names every period held back, as the panel does, though one already past its plan adds nothing.
+ * ⚠️ It names every period held back, as the panel does, though one already past its plan adds nothing. ⛔ Not so a
+ * period read whole: the panel names none, so there is no naming to keep in step with, and the carry hands in only
+ * those whose bill, let go, can change what can still roll over (`services/budgets::RolloverCarry.billMayLapse`). 🔴
+ * Review of 73d2cbc4: "…and from August 2026 once its statements land, if a bill subtracted from it has stopped" of
+ * an August $100.00 past its plan with its bill gone — checked through Aug 31, nothing rolled over from it.
+ *
+ * ⚖️ default built, not asked (2026-10-29): …and a period read whole whose bill may still lapse
+ * (`rolloverBillMayLapse`) by what it waits for — its statements, its import being whole — and why: "…, and from
+ * September 2026 once its statements land, if a bill subtracted from it has stopped" — "stopped" as /recurring says of
+ * a bill it no longer forecasts ("quiet past the point a bill stops"), "subtracted" as the panel says of its bills
+ * (`ROLLOVER_SUBTRACTS`). 🔴 Review of ca938320 (round 2): with no period held back it said nothing, beside "Over budget
+ * by 40%" over a line its September's statement then lifted $440.00.
  */
 export function rolloverMayRiseClause(row: RolloverRiseInput): string | null {
   const held = row.rolloverHeldBack;
-  if (!lineMayRise(row) || held.length === 0) return null;
-  const named = heldBackNamed(held, row.budget.period, row.bounds.start);
-  return `more can still roll over from ${named} once ${held.length === 1 ? "it is" : "they are"} fully imported`;
+  const bill = row.rolloverBillMayLapse;
+  if (!lineMayRise(row) || (held.length === 0 && bill.length === 0)) return null;
+  const named = (periods: readonly PeriodBounds[]): string =>
+    periodsNamed(periods, row.budget.period, row.bounds.start);
+  const one = (periods: readonly PeriodBounds[]): boolean => periods.length === 1;
+  const waits = [
+    held.length === 0 ? null : `${named(held)} once ${one(held) ? "it is" : "they are"} fully imported`,
+    bill.length === 0
+      ? null
+      : `${named(bill)} once ${one(bill) ? "its" : "their"} statements land, if a bill subtracted from ` +
+        `${one(bill) ? "it" : "them"} has stopped`,
+  ].filter((part): part is string => part !== null);
+  return `more can still roll over from ${waits.join(", and from ")}`;
 }

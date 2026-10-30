@@ -12,6 +12,8 @@ const verdict = (over: Partial<BudgetVerdictInput> = {}) =>
     noDayRead: false,
     txnCount: 1,
     rolloverMayAddCents: 0,
+    rolloverHeldBack: [],
+    rolloverBillMayLapse: [],
     ...over,
   });
 
@@ -370,6 +372,37 @@ describe("budgetVerdict", () => {
       expect([over.lineMayRise, over.explanation]).toEqual([false, BUDGET_JARGON.paceOver]);
       expect(verdict({ uncoveredDays: 3 }).explanation).toBe(BUDGET_JARGON.paceWithheld);
     });
+
+    /*
+     * 🔴 Review of ca938320 (round 2): a period READ WHOLE can lift the line too — a bill subtracted from it may have
+     * stopped, which its statements, checked short of its last day, have yet to show — and there "a closed period is
+     * not fully imported yet" is false of it. ⚖️ default built, not asked (2026-10-29): each definition says what can
+     * still raise the line — a period held back, a bill that may have stopped, or both.
+     */
+    test("…and where a bill a period read whole subtracted may have stopped, the definitions say that instead", () => {
+      const AUGUST = { start: "2026-08-01", end: "2026-08-31" };
+      const SEPTEMBER = { start: "2026-09-01", end: "2026-09-30" };
+      const BILL = { rolloverMayAddCents: 44_000, rolloverBillMayLapse: [SEPTEMBER] };
+      const over = verdict({ pace: "over", pct: 1.4, uncoveredDays: 15, noDayRead: true, txnCount: 1, ...BILL });
+      expect([over.headline, over.floors, over.lineMayRise]).toEqual(["Over budget by 40%", true, true]);
+      expect(over.explanation).toBe(BUDGET_JARGON.paceOverBillMayStop);
+      expect(over.explanation).not.toContain("not fully imported");
+      expect(over.explanation).not.toContain("no later import can undo");
+      const withheld = verdict({ uncoveredDays: 3, ...BILL });
+      expect([withheld.headline, withheld.explanation]).toEqual([
+        "Awaiting statements",
+        BUDGET_JARGON.paceWithheldBillMayStop,
+      ]);
+      expect(withheld.explanation).not.toContain("not fully imported");
+      // both at once: each named
+      const BOTH = { ...BILL, rolloverHeldBack: [AUGUST] };
+      expect(verdict({ pace: "over", pct: 1.4, ...BOTH }).explanation).toBe(BUDGET_JARGON.paceOverHeldBackAndBill);
+      expect(verdict({ uncoveredDays: 3, ...BOTH }).explanation).toBe(BUDGET_JARGON.paceWithheldHeldBackAndBill);
+      // …and a period held back alone keeps the words it had
+      const HELD = { rolloverMayAddCents: 1_500, rolloverHeldBack: [SEPTEMBER] };
+      expect(verdict({ pace: "over", pct: 1.4, ...HELD }).explanation).toBe(BUDGET_JARGON.paceOverLineMayRise);
+      expect(verdict({ uncoveredDays: 3, ...HELD }).explanation).toBe(BUDGET_JARGON.paceWithheldLineMayRise);
+    });
   });
 });
 
@@ -394,6 +427,7 @@ describe("budgetCoverageLine — the line a budget row prints under its headline
     bounds: { start: "2026-10-01" },
     rolloverMayAddCents: 0,
     rolloverHeldBack: [],
+    rolloverBillMayLapse: [],
     budget: { period: "monthly" },
     ...over,
   });
@@ -438,5 +472,23 @@ describe("budgetCoverageLine — the line a budget row prints under its headline
       "spent only from a cash wallet since Apr 1 — no statement will ever cover it",
     );
     expect(budgetCoverageLine(row({ ...whole, ...rises }))).toBeNull();
+  });
+
+  /*
+   * 🔴 Review of ca938320 (round 2): with no period held back the clause had nothing to name, so an over row whose
+   * line a closed September could still lift — its Meal Kit, read whole by its rows, waiting on a statement to lapse —
+   * printed only "spending imported through Sep 30 · 15 days of this period unaccounted" under "no later import can
+   * undo that". ⚖️ default built, not asked (2026-10-29): the line names that period, and what it waits for.
+   */
+  test("⚖️ …and so is a line a period read whole can still lift, naming that period and what it waits for", () => {
+    const bill = { rolloverMayAddCents: 44_000, rolloverBillMayLapse: [{ start: "2026-09-01", end: "2026-09-30" }] };
+    const read = { importedThroughOn: "2026-09-30", uncoveredDays: 15 };
+    const SEP = "spending imported through Sep 30 · 15 days of this period unaccounted";
+    const RISES =
+      "more can still roll over from September 2026 once its statements land, if a bill subtracted from it has stopped";
+    expect(budgetCoverageLine(row({ pace: "over", pct: 1.4, ...read, ...bill }))).toBe(`${SEP} · ${RISES}`);
+    expect(budgetCoverageLine(row({ ...read, ...bill }))).toBe(`${SEP} · ${RISES}`);
+    const whole = { uncoveredDays: 0, noDayRead: false };
+    expect(budgetCoverageLine(row({ pace: "over", pct: 1.4, ...whole, ...bill }))).toBe(RISES);
   });
 });
